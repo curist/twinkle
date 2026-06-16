@@ -71,9 +71,9 @@ pub fn suite() runner.Suite {
       "make success response json",
       fn() {
         out := protocol.success_response(.IntId(7), .Str("ok"))
-        try assert.equal(try json.decode(out, json.field("jsonrpc", json.string())), "2.0")
-        try assert.equal(try json.decode(out, json.field("id", json.int())), 7)
-        try assert.equal(try json.decode(out, json.field("result", json.string())), "ok")
+        try assert.equal(try out.decode(json.field("jsonrpc", json.string())), "2.0")
+        try assert.equal(try out.decode(json.field("id", json.int())), 7)
+        try assert.equal(try out.decode(json.field("result", json.string())), "ok")
         .Ok({})
       },
     )
@@ -82,19 +82,16 @@ pub fn suite() runner.Suite {
       fn() {
         err := protocol.RpcError.{ code: -32601, message: "not found", data: .None }
         out := protocol.error_response(.NullId, err)
-        try assert.equal(try json.decode(out, json.field("jsonrpc", json.string())), "2.0")
+        try assert.equal(try out.decode(json.field("jsonrpc", json.string())), "2.0")
 
-        case try json.decode(out, json.field("id", json.raw())) {
+        case try out.decode(json.field("id", json.raw())) {
           .Null => {},
           _ => { return .Err("expected null id") },
         }
 
-        error_obj := try json.decode(out, json.field("error", json.raw()))
-        try assert.equal(try json.decode(error_obj, json.field("code", json.int())), -32601)
-        try assert.equal(
-          try json.decode(error_obj, json.field("message", json.string())),
-          "not found",
-        )
+        error_obj := try out.decode(json.field("error", json.raw()))
+        try assert.equal(try error_obj.decode(json.field("code", json.int())), -32601)
+        try assert.equal(try error_obj.decode(json.field("message", json.string())), "not found")
         .Ok({})
       },
     )

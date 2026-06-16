@@ -38,7 +38,7 @@ pub fn suite() runner.Suite {
       "non-generic alias value passes to underlying-typed function",
       fn() {
         b: AliasBase = .{ tag: 5 }
-        try assert.equal(base_label(b), "base:5")
+        try assert.equal(b.base_label(), "base:5")
         .Ok({})
       },
     )
@@ -46,7 +46,7 @@ pub fn suite() runner.Suite {
       "generic alias value passes to underlying-typed function",
       fn() {
         g: GAlias<Int, String, Bool> = .{ first: 9, second: "x", third: true }
-        try assert.equal(gbase_first(g), 9)
+        try assert.equal(g.gbase_first(), 9)
         .Ok({})
       },
     )

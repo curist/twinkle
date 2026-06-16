@@ -633,10 +633,10 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "Option.unwrap_or qualified call",
+      "Option.unwrap_or method call",
       fn() {
         opt: Int? = .None
-        try assert.equal(Option.unwrap_or(opt, 7), 7)
+        try assert.equal(opt.unwrap_or(7), 7)
         .Ok({})
       },
     )
@@ -836,20 +836,17 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "Option and Result combinators support qualified calls",
+      "Option and Result combinators support method calls",
       fn() {
         o: Int? = .Some(3)
-        om := Option.map(o, fn(x: Int) { x + 2 })
-        oa := Option.and_then(
-          om,
-          fn(x: Int) {
-            if x > 0 {
-              .Some(x * 2)
-            } else {
-              .None
-            }
-          },
-        )
+        om := o.map(fn(x: Int) { x + 2 })
+        oa := om.and_then(fn(x: Int) {
+          if x > 0 {
+            .Some(x * 2)
+          } else {
+            .None
+          }
+        })
         try assert.is_some(oa)
         oval := case oa {
           .Some(v) => v,
@@ -857,17 +854,14 @@ pub fn suite() runner.Suite {
         }
         try assert.equal(oval, 10)
         r: Result<Int, String> = .Ok(4)
-        rm := Result.map(r, fn(x: Int) { x + 1 })
-        ra := Result.and_then(
-          rm,
-          fn(x: Int) {
-            if x < 10 {
-              .Ok(x * 3)
-            } else {
-              .Err("too big")
-            }
-          },
-        )
+        rm := r.map(fn(x: Int) { x + 1 })
+        ra := rm.and_then(fn(x: Int) {
+          if x < 10 {
+            .Ok(x * 3)
+          } else {
+            .Err("too big")
+          }
+        })
         try assert.is_ok(ra)
         rval := case ra {
           .Ok(v) => v,

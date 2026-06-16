@@ -8,7 +8,6 @@ use compiler.fmt.formatter
 use compiler.lexer
 use compiler.parser
 use compiler.query.diag_render
-
 use lib.argparse.app.{ParseResult}
 use lib.source.diagnostics
 use lib.source.registry

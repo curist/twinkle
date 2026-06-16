@@ -14,10 +14,7 @@ pub fn document_symbol_response(index: line_index.LineIndex, symbols: Vector<Doc
 
 fn symbol_to_json(index: line_index.LineIndex, sym: DocumentSymbol) json.Json {
   range := index.byte_range_to_range(sym.range.start, sym.range.end, .Utf16)
-  sel_range := index.byte_range_to_range(sym.selection_range.start,
-    sym.selection_range.end,
-    .Utf16,
-  )
+  sel_range := index.byte_range_to_range(sym.selection_range.start, sym.selection_range.end, .Utf16)
   fields: Vector<json.Field> = [
     json.kv("name", .Str(sym.name)),
     json.kv("kind", .Int(symbol_kind_to_int(sym.kind))),

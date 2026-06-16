@@ -20,7 +20,6 @@
 /// pass (it would require tracking which anyrefs previously held typed sums).
 
 use compiler.backend.prepared_ir.{PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo}
-
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_layout.{WasmLayout, layout_of, mono_to_key, val_type_of_mono}

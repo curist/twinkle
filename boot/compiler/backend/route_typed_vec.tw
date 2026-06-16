@@ -16,7 +16,6 @@
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo,
 }
-
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.core_ir.{FuncId}
@@ -606,7 +605,7 @@ fn classify_op(
 
       for arm in arms {
         arm_use := classify_expr(arm.body, vs, len_id, builtins, slots)
-        acc = acc.merge_use(arm_use)
+        acc = .merge_use(arm_use)
       }
 
       acc
@@ -635,9 +634,9 @@ fn classify_op(
         if slot_in(f.value, vs) {
           if atom_is_int_vector_slot(f.value, slots) {
             key := "${tid.id}:${f.field.id}"
-            acc = acc.merge_use(.{ escapes: false, field_keys: [key] })
+            acc = .merge_use(.{ escapes: false, field_keys: [key] })
           } else {
-            acc = acc.merge_use(.{ escapes: true, field_keys: [] })
+            acc = .merge_use(.{ escapes: true, field_keys: [] })
           }
         }
       }

@@ -48,7 +48,9 @@ pub fn suite() runner.Suite {
     .test(
       "L4: unreachable after continue inside a loop body",
       fn() {
-        fs := findings("fn f() Int {\n  for true {\n    continue\n    println(\"x\")\n  }\n  0\n}\n")
+        fs := findings(
+          "fn f() Int {\n  for true {\n    continue\n    println(\"x\")\n  }\n  0\n}\n",
+        )
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].rule, "unreachable-code")
         .Ok({})
@@ -76,7 +78,9 @@ pub fn suite() runner.Suite {
     .test(
       "L3: flags a named-record copy",
       fn() {
-        fs := findings("fn dup(state: State) State {\n  State.{ initialized: state.initialized }\n}\n")
+        fs := findings(
+          "fn dup(state: State) State {\n  State.{ initialized: state.initialized }\n}\n",
+        )
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].rule, "record-copy-helper")
         .Ok({})

@@ -8,7 +8,7 @@ pub fn suite() runner.Suite {
       "to_string equals stringify",
       fn() {
         j: json.Json = .Array([.Int(1), .Str("x"), .Null])
-        try assert.equal(json.to_string(j), json.stringify(j))
+        try assert.equal(j.to_string(), j.stringify())
         .Ok({})
       },
     )
@@ -182,9 +182,9 @@ pub fn suite() runner.Suite {
       "parse arrays and objects",
       fn() {
         parsed := try json.parse("{\"name\":\"Ada\",\"nums\":[1,2,null]}")
-        name := try json.decode(parsed, json.field("name", json.string()))
+        name := try parsed.decode(json.field("name", json.string()))
         try assert.equal(name, "Ada")
-        nums := try json.decode(parsed, json.field("nums", json.list(json.raw())))
+        nums := try parsed.decode(json.field("nums", json.raw().list()))
         try assert.equal(nums.len(), 3)
 
         case nums[0] {
@@ -240,9 +240,9 @@ pub fn suite() runner.Suite {
       "object and kv construct object values",
       fn() {
         obj := json.object([json.kv("jsonrpc", .Str("2.0")), json.kv("id", .Int(1))])
-        version := try json.decode(obj, json.field("jsonrpc", json.string()))
+        version := try obj.decode(json.field("jsonrpc", json.string()))
         try assert.equal(version, "2.0")
-        id := try json.decode(obj, json.field("id", json.int()))
+        id := try obj.decode(json.field("id", json.int()))
         try assert.equal(id, 1)
         .Ok({})
       },
@@ -251,7 +251,7 @@ pub fn suite() runner.Suite {
       "array constructs array values",
       fn() {
         arr_json := json.array([.Str("a"), .Str("b")])
-        values := try json.decode(arr_json, json.list(json.string()))
+        values := try arr_json.decode(json.string().list())
         try assert.equal(values.len(), 2)
         try assert.equal(values[0], "a")
         try assert.equal(values[1], "b")
@@ -262,7 +262,7 @@ pub fn suite() runner.Suite {
       "decode raw returns json as-is",
       fn() {
         j: json.Json = .Int(99)
-        r := json.decode(j, json.raw())
+        r := j.decode(json.raw())
         try assert.is_ok(r)
         got := case r {
           .Ok(v) => v,
@@ -600,7 +600,7 @@ pub fn suite() runner.Suite {
     .test(
       "nullable returns none for null",
       fn() {
-        r := json.decode(.Null, json.nullable(json.int()))
+        r := json.decode(.Null, json.int().nullable())
         try assert.is_ok(r)
         opt := case r {
           .Ok(v) => v,
@@ -613,7 +613,7 @@ pub fn suite() runner.Suite {
     .test(
       "nullable returns some for non-null",
       fn() {
-        r := json.decode(.Int(7), json.nullable(json.int()))
+        r := json.decode(.Int(7), json.int().nullable())
         try assert.is_ok(r)
         opt := case r {
           .Ok(v) => v,
@@ -632,7 +632,7 @@ pub fn suite() runner.Suite {
       "list decodes array elements",
       fn() {
         arr: Vector<json.Json> = [.Int(1), .Int(2), .Int(3)]
-        r := json.decode(.Array(arr), json.list(json.int()))
+        r := json.decode(.Array(arr), json.int().list())
         try assert.is_ok(r)
         v := case r {
           .Ok(v) => v,
@@ -648,7 +648,7 @@ pub fn suite() runner.Suite {
       "list on empty array returns empty vector",
       fn() {
         arr: Vector<json.Json> = []
-        r := json.decode(.Array(arr), json.list(json.int()))
+        r := json.decode(.Array(arr), json.int().list())
         try assert.is_ok(r)
         v := case r {
           .Ok(v) => v,
@@ -662,14 +662,14 @@ pub fn suite() runner.Suite {
       "list fails on bad element",
       fn() {
         arr: Vector<json.Json> = [.Int(1), .Str("oops"), .Int(3)]
-        try assert.is_err(json.decode(.Array(arr), json.list(json.int())))
+        try assert.is_err(json.decode(.Array(arr), json.int().list()))
         .Ok({})
       },
     )
     .test(
       "list fails on non-array",
       fn() {
-        try assert.is_err(json.decode(.Null, json.list(json.int())))
+        try assert.is_err(json.decode(.Null, json.int().list()))
         .Ok({})
       },
     )
@@ -679,7 +679,7 @@ pub fn suite() runner.Suite {
         d: Dict<String, json.Json> = Dict.new()
         d["a"] = .Int(1)
         d["b"] = .Int(2)
-        r := json.decode(.Object(d), json.dict(json.int()))
+        r := json.decode(.Object(d), json.int().dict())
         try assert.is_ok(r)
         decoded := case r {
           .Ok(v) => v,
@@ -704,7 +704,7 @@ pub fn suite() runner.Suite {
         d: Dict<String, json.Json> = Dict.new()
         d["ok"] = .Int(1)
         d["bad"] = .Str("oops")
-        r := json.decode(.Object(d), json.dict(json.int()))
+        r := json.decode(.Object(d), json.int().dict())
         try assert.is_err(r)
         try assert.err_contains(r, "bad")
         .Ok({})
@@ -713,7 +713,7 @@ pub fn suite() runner.Suite {
     .test(
       "dict fails on non-object",
       fn() {
-        try assert.is_err(json.decode(.Null, json.dict(json.int())))
+        try assert.is_err(json.decode(.Null, json.int().dict()))
         .Ok({})
       },
     )

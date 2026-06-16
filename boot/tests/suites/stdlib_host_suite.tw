@@ -20,7 +20,7 @@ pub fn suite() runner.Suite {
       "proc.cwd returns non-empty string",
       fn() {
         cwd := proc.cwd()
-        try assert.is_true(String.len(cwd) > 0)
+        try assert.is_true(cwd.len() > 0)
         try assert.is_true(cwd.starts_with("/"))
         .Ok({})
       },
@@ -56,7 +56,7 @@ pub fn suite() runner.Suite {
 
         case result {
           .Ok(text) => {
-            try assert.is_true(String.len(text) > 0)
+            try assert.is_true(text.len() > 0)
             try assert.str_contains(text, "pub fn ok")
             .Ok({})
           },

@@ -16,8 +16,8 @@ pub fn suite() runner.Suite {
       "assign allocates sequential ids",
       fn() {
         reg := registry.empty(8)
-        out1 := registry.assign(reg, "/a.tw", "Foo")
-        out2 := registry.assign(out1.registry, "/a.tw", "Bar")
+        out1 := reg.assign("/a.tw", "Foo")
+        out2 := out1.registry.assign("/a.tw", "Bar")
         try assert.equal(out1.id.id, 8)
         try assert.equal(out2.id.id, 9)
         try assert.equal(out2.registry.next_id, 10)
@@ -28,8 +28,8 @@ pub fn suite() runner.Suite {
       "assign returns same id on repeated call",
       fn() {
         reg := registry.empty(8)
-        out1 := registry.assign(reg, "/a.tw", "Point")
-        out2 := registry.assign(out1.registry, "/a.tw", "Point")
+        out1 := reg.assign("/a.tw", "Point")
+        out2 := out1.registry.assign("/a.tw", "Point")
         try assert.equal(out1.id.id, out2.id.id)
         try assert.equal(out2.registry.next_id, 9)
         .Ok({})
@@ -39,8 +39,8 @@ pub fn suite() runner.Suite {
       "same name in different modules gets different ids",
       fn() {
         reg := registry.empty(8)
-        out1 := registry.assign(reg, "/a.tw", "Point")
-        out2 := registry.assign(out1.registry, "/b.tw", "Point")
+        out1 := reg.assign("/a.tw", "Point")
+        out2 := out1.registry.assign("/b.tw", "Point")
         try assert.is_true(out1.id.id != out2.id.id)
         .Ok({})
       },
@@ -49,8 +49,8 @@ pub fn suite() runner.Suite {
       "lookup finds assigned id",
       fn() {
         reg := registry.empty(8)
-        out := registry.assign(reg, "/a.tw", "Foo")
-        found := registry.lookup(out.registry, "/a.tw", "Foo")
+        out := reg.assign("/a.tw", "Foo")
+        found := out.registry.lookup("/a.tw", "Foo")
         try assert.is_some(found)
 
         case found {
@@ -65,7 +65,7 @@ pub fn suite() runner.Suite {
       "lookup returns None for unregistered type",
       fn() {
         reg := registry.empty(8)
-        found := registry.lookup(reg, "/a.tw", "Missing")
+        found := reg.lookup("/a.tw", "Missing")
         try assert.is_none(found)
         .Ok({})
       },
@@ -75,12 +75,12 @@ pub fn suite() runner.Suite {
       fn() {
         // First compile: A then B
         reg := registry.empty(8)
-        out_a1 := registry.assign(reg, "/a.tw", "TypeA")
-        out_b1 := registry.assign(out_a1.registry, "/b.tw", "TypeB")
+        out_a1 := reg.assign("/a.tw", "TypeA")
+        out_b1 := out_a1.registry.assign("/b.tw", "TypeB")
 
         // Second compile: B then A (different order, same registry)
-        out_b2 := registry.assign(out_b1.registry, "/b.tw", "TypeB")
-        out_a2 := registry.assign(out_b2.registry, "/a.tw", "TypeA")
+        out_b2 := out_b1.registry.assign("/b.tw", "TypeB")
+        out_a2 := out_b2.registry.assign("/a.tw", "TypeA")
 
         // Same ids regardless of access order
         try assert.equal(out_a1.id.id, out_a2.id.id)

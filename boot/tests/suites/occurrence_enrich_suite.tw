@@ -192,7 +192,7 @@ pub fn suite() runner.Suite {
           cache.empty(),
           diagnostics.DocumentInput.{ uri: "file:///m.tw", text: src1, version: .Some(1) },
         )
-        _old_idx := try cache.latest_occurrences(snap1.cache, "/m.tw")
+        _old_idx := try snap1.cache.latest_occurrences("/m.tw")
           .ok_or("expected first cached occurrences")
 
         src2 := "fn other() Int {\n  other()\n}\n"
@@ -200,7 +200,7 @@ pub fn suite() runner.Suite {
           snap1.cache,
           diagnostics.DocumentInput.{ uri: "file:///m.tw", text: src2, version: .Some(2) },
         )
-        idx := try cache.latest_occurrences(snap2.cache, "/m.tw")
+        idx := try snap2.cache.latest_occurrences("/m.tw")
           .ok_or("expected updated cached occurrences")
 
         try assert.ok(
@@ -223,8 +223,7 @@ pub fn suite() runner.Suite {
           diagnostics.DocumentInput.{ uri: "file:///m.tw", text: src, version: .Some(1) },
         )
 
-        cached := try cache.latest_occurrences(snap.cache, "/m.tw")
-          .ok_or("expected cached occurrences")
+        cached := try snap.cache.latest_occurrences("/m.tw").ok_or("expected cached occurrences")
         call := try at_nth(cached, src, "helper", 2).ok_or("expected the cached helper call")
 
         try assert.ok(call.kind == .Function, "cached occurrence should use enriched metadata")
@@ -268,7 +267,7 @@ pub fn suite() runner.Suite {
         call := try at_nth(idx, src, "helper", 2).ok_or("expected the helper call")
         try assert.ok(call.kind == .Function, "helper call should be enriched")
         try assert.ok(
-          cache.latest_occurrences(loaded.cache, "/m.tw") != .None,
+          loaded.cache.latest_occurrences("/m.tw") != .None,
           "helper should store the rebuilt occurrence index",
         )
         .Ok({})

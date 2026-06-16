@@ -703,7 +703,7 @@ pub fn suite() runner.Suite {
 
         // Spot-check a few key entries via builtins.by_id
         // println: (ref null $String) → void
-        println_fid := bi.id(builtins, "println")
+        println_fid := builtins.id("println")
 
         case builtins.by_id[println_fid.id] {
           .Some(entry) => {
@@ -714,7 +714,7 @@ pub fn suite() runner.Suite {
         }
 
         // dict$set: (ref null $Dict, anyref, anyref) → (ref $Dict)
-        dict_set_fid := bi.id(builtins, "dict$set")
+        dict_set_fid := builtins.id("dict$set")
 
         case builtins.by_id[dict_set_fid.id] {
           .Some(entry) => {
@@ -731,7 +731,7 @@ pub fn suite() runner.Suite {
         }
 
         // int$to_string: (i64) → (ref $String)
-        its_fid := bi.id(builtins, "int$to_string")
+        its_fid := builtins.id("int$to_string")
 
         case builtins.by_id[its_fid.id] {
           .Some(entry) => {
@@ -746,7 +746,7 @@ pub fn suite() runner.Suite {
         }
 
         // vector$set_unsafe: (ref null $Array, i32, anyref) → (ref $Array)
-        vs_fid := bi.id(builtins, "vector$set_unsafe")
+        vs_fid := builtins.id("vector$set_unsafe")
 
         case builtins.by_id[vs_fid.id] {
           .Some(entry) => {

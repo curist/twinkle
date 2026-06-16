@@ -72,7 +72,7 @@ fn bfs_reachable(index: ReachabilityIndex, queue: Vector<Int>, reachable: Dict<I
     fid := state.queue[qi]
     qi = qi + 1
     refs := index.get_body_refs(fid)
-    state = state.add_refs(refs)
+    state = .add_refs(refs)
   }
 
   state

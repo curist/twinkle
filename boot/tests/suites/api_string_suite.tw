@@ -34,7 +34,6 @@ pub fn suite() runner.Suite {
       fn() {
         try assert.is_true("".is_empty())
         try assert.is_false("hello".is_empty())
-        try assert.is_true(String.is_empty(""))
         .Ok({})
       },
     )
@@ -74,10 +73,10 @@ pub fn suite() runner.Suite {
       "string get returns option byte",
       fn() {
         s := "hi"
-        try assert.is_some(String.get(s, 0))
-        try assert.is_some(String.get(s, 1))
-        try assert.is_none(String.get(s, 2))
-        try assert.is_none(String.get(s, -1))
+        try assert.is_some(s.get(0))
+        try assert.is_some(s.get(1))
+        try assert.is_none(s.get(2))
+        try assert.is_none(s.get(-1))
         .Ok({})
       },
     )
@@ -158,8 +157,8 @@ pub fn suite() runner.Suite {
       "slice extracts byte range",
       fn() {
         s := "hello"
-        try assert.equal(String.slice(s, 1, 4), "ell")
-        try assert.equal(String.slice(s, 0, 5), "hello")
+        try assert.equal(s.slice(1, 4), "ell")
+        try assert.equal(s.slice(0, 5), "hello")
         .Ok({})
       },
     )
@@ -258,9 +257,9 @@ pub fn suite() runner.Suite {
     .test(
       "to_string on primitives",
       fn() {
-        try assert.equal(Int.to_string(42), "42")
-        try assert.equal(Bool.to_string(true), "true")
-        try assert.equal(Bool.to_string(false), "false")
+        try assert.equal(42.to_string(), "42")
+        try assert.equal(true.to_string(), "true")
+        try assert.equal(false.to_string(), "false")
         .Ok({})
       },
     )

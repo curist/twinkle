@@ -171,7 +171,7 @@ fn optimize_function_with_context(func: AnfFunctionDef, ctx: OptimizerContext) F
   tb0 := date.now()
   timing.defer_elim = timing.defer_elim + (tb0 - ta0)
   fixed := run_fixed_point_simplifications(deferred.body, deferred.op_result_mono, ctx)
-  timing = timing.add_pass_timing(fixed.timing)
+  timing = .add_pass_timing(fixed.timing)
   optimized := rebuild_func_with_body(deferred, fixed.expr)
   ta2 := date.now()
   f_consumed: Dict<Int, Bool> = case ctx.consumed_params[optimized.func_id.id] {
@@ -277,7 +277,7 @@ fn optimize_module_internal(
   funcs_at_cap: Int = 0
   new_funcs: Vector<AnfFunctionDef> = collect f in module.functions {
     result := optimize_function_with_context(f, ctx)
-    timing = timing.add_pass_timing(result.timing)
+    timing = .add_pass_timing(result.timing)
     total_rounds = total_rounds + result.rounds
 
     if result.at_cap {

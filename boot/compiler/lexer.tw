@@ -70,7 +70,8 @@ fn make_token(
   preceded_by_newline: Bool,
   leading_trivia: Vector<Trivia>,
 ) Token {
-  kind.make_with_trivia(source.slice(start, end),
+  kind.make_with_trivia(
+    source.slice(start, end),
     span.new(file_id, start, end),
     preceded_by_newline,
     leading_trivia,
@@ -86,11 +87,7 @@ fn make_token_text(
   preceded_by_newline: Bool,
   leading_trivia: Vector<Trivia>,
 ) Token {
-  kind.make_with_trivia(text,
-    span.new(file_id, start, end),
-    preceded_by_newline,
-    leading_trivia,
-  )
+  kind.make_with_trivia(text, span.new(file_id, start, end), preceded_by_newline, leading_trivia)
 }
 
 fn unescape_string(raw: String) String {
@@ -894,7 +891,8 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
 
       text := source.slice(token_start, i)
       out = .append(
-        keyword_or_ident(text).make_with_trivia(text,
+        keyword_or_ident(text).make_with_trivia(
+          text,
           span.new(file_id, token_start, i),
           preceded_by_newline,
           leading_trivia,

@@ -199,7 +199,7 @@ pub fn suite() runner.Suite {
             }
           },
         )
-        item := Iterator.next(it)
+        item := it.next()
         try assert.is_some(item)
         first := case item {
           .Some(i) => i.value,
@@ -700,7 +700,7 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "iterator combinators support qualified calls",
+      "iterator combinators support method calls",
       fn() {
         base := Iterator.unfold(
           0,
@@ -712,9 +712,13 @@ pub fn suite() runner.Suite {
             }
           },
         )
-        out := Iterator.drop(base, 8).to_vector()
-        rest := Iterator.drop_while(base, fn(x) { x < 8 }).to_vector()
-        head := Iterator.take_while(base, fn(x) { x < 3 }).to_vector()
+        out := base.drop(8).to_vector()
+        rest := base
+          .drop_while(fn(x) { x < 8 })
+          .to_vector()
+        head := base
+          .take_while(fn(x) { x < 3 })
+          .to_vector()
         try assert.equal(out.len(), 2)
         try assert.equal(out[0], 8)
         try assert.equal(rest.len(), 2)

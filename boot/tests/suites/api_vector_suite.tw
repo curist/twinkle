@@ -48,7 +48,7 @@ type SortStabItem = .{ key: Int, tag: Int }
 
 // Compare on key only; ties (equal keys) must keep input order for a stable sort.
 fn stab_cmp(a: SortStabItem, b: SortStabItem) Order {
-  Int.compare(a.key, b.key)
+  a.key.compare(b.key)
 }
 
 // Keys non-decreasing, and within an equal-key run the tags strictly increase
@@ -230,7 +230,7 @@ pub fn suite() runner.Suite {
         full: Vector<Int> = [1]
         try assert.is_true(empty.is_empty())
         try assert.is_false(full.is_empty())
-        try assert.is_true(Vector.is_empty(empty))
+        try assert.is_true(empty.is_empty())
         .Ok({})
       },
     )
@@ -770,16 +770,13 @@ pub fn suite() runner.Suite {
       fn() {
         xs: Vector<Int> = [5, 1, 4, 2, 3]
         asc := xs.sort_by(Int.compare)
-        desc := Vector.sort_by(
-          xs,
-          fn(a, b) {
-            case Int.compare(a, b) {
-              .Lt => .Gt,
-              .Eq => .Eq,
-              .Gt => .Lt,
-            }
-          },
-        )
+        desc := xs.sort_by(fn(a, b) {
+          case a.compare(b) {
+            .Lt => .Gt,
+            .Eq => .Eq,
+            .Gt => .Lt,
+          }
+        })
         try assert.equal(asc[0], 1)
         try assert.equal(asc[4], 5)
         try assert.equal(desc[0], 5)

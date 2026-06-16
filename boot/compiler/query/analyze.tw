@@ -277,7 +277,9 @@ fn analyze_module_impl(
   // initialization or mutually-recursive types cannot be broken and error.
   if stack.contains(canonical) {
     case state.interfaces[canonical] {
-      .Some(_) => { return .{ env: base, state, diagnostics: [], ok: true, rewrites: [], lints: [] } },
+      .Some(_) => {
+        return .{ env: base, state, diagnostics: [], ok: true, rewrites: [], lints: [] }
+      },
       .None => { return break_import_cycle(id, alias, base, state, stack, caller_id, use_span) },
     }
   }
@@ -328,10 +330,7 @@ fn analyze_module_impl(
   }
 
   t_plan0 := date.now()
-  dep_plan := case parsed_load.state.plan_dependencies(canonical,
-    parsed_load.parsed,
-    loaded.source,
-  ) {
+  dep_plan := case parsed_load.state.plan_dependencies(canonical, parsed_load.parsed, loaded.source) {
     .Ok(plan) => plan,
     .Err(err) => {
       return .{
@@ -410,7 +409,8 @@ fn analyze_module_impl(
     .None => {},
   }
 
-  local := case cur.resolve_and_check_local(canonical,
+  local := case cur.resolve_and_check_local(
+    canonical,
     runner,
     parsed_load.parsed,
     env,
@@ -430,7 +430,8 @@ fn analyze_module_impl(
     },
   }
   t_publish0 := date.now()
-  cur = local.state.publish_interface(canonical,
+  cur = local.state.publish_interface(
+    canonical,
     parsed_load.parsed,
     local.checked,
     local_type_start,
@@ -471,9 +472,8 @@ fn analyze_module_impl(
   local_lints: Vector<LintHit> = if cur.lint_mode and !dep_plan.is_internal {
     // Structural lints (L3/L4) from the AST visitor + type-dependent lints
     // (L2, …) collected by the checker.
-    all_findings := lint.lint_module(parsed_load.parsed.module, local.checked.env).concat(
-      local.checked.lints,
-    )
+    all_findings := lint.lint_module(parsed_load.parsed.module, local.checked.env)
+      .concat(local.checked.lints)
     collect f in all_findings {
       .{ path: loaded.source.identity.path, finding: f }
     }
@@ -501,7 +501,7 @@ fn load_source(
   source := case state.overlay.lookup(module_id) {
     .Ok(found) => found,
     .Err(err) => {
-      state.cache = state.cache.clear_module(canonical)
+      state.cache = .clear_module(canonical)
       err_id := case caller_id {
         .Some(cid) => cid,
         .None => module_id,
@@ -516,7 +516,7 @@ fn load_source(
     },
   }
   source_hash := keys.hash_text(source.text)
-  state.cache = state.cache.note_source_hash(canonical, source_hash)
+  state.cache = .note_source_hash(canonical, source_hash)
   .Ok(.{ state, source, source_hash })
 }
 
@@ -559,7 +559,7 @@ fn plan_dependencies(
   ) {
     .Ok(plan) => plan,
     .Err(err) => {
-      state.cache = state.cache.clear_resolved_and_later(canonical)
+      state.cache = .clear_resolved_and_later(canonical)
       d := synthetic_diag(source.identity, source.version, err.span, "import", err.message)
 
       return .Err(.{ state, diagnostics: [d] })
@@ -694,7 +694,8 @@ fn preliminary_type_interface(
     .Ok(value) => value,
     .Err(err) => { return .Err(err) },
   }
-  parsed_load := case loaded.state.parse_cached(dep.canonical_path,
+  parsed_load := case loaded.state.parse_cached(
+    dep.canonical_path,
     loaded.source,
     loaded.source_hash,
   ) {
@@ -738,13 +739,27 @@ fn break_import_cycle(
   loaded := case state.load_source(canonical, module_id, caller_id, use_span) {
     .Ok(value) => value,
     .Err(err) => {
-      return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false, rewrites: [], lints: [] }
+      return .{
+        env: base,
+        state: err.state,
+        diagnostics: err.diagnostics,
+        ok: false,
+        rewrites: [],
+        lints: [],
+      }
     },
   }
   parsed_load := case loaded.state.parse_cached(canonical, loaded.source, loaded.source_hash) {
     .Ok(value) => value,
     .Err(err) => {
-      return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false, rewrites: [], lints: [] }
+      return .{
+        env: base,
+        state: err.state,
+        diagnostics: err.diagnostics,
+        ok: false,
+        rewrites: [],
+        lints: [],
+      }
     },
   }
   cur := parsed_load.state
@@ -767,7 +782,14 @@ fn break_import_cycle(
   dep_plan := case cur.plan_dependencies(canonical, parsed, loaded.source) {
     .Ok(plan) => plan,
     .Err(err) => {
-      return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false, rewrites: [], lints: [] }
+      return .{
+        env: base,
+        state: err.state,
+        diagnostics: err.diagnostics,
+        ok: false,
+        rewrites: [],
+        lints: [],
+      }
     },
   }
 
@@ -988,17 +1010,25 @@ fn analyze_dependencies(
     }
   }
 
-  cur.cache = cur.cache.set_dependencies(canonical,
+  cur.cache = .set_dependencies(
+    canonical,
     collect dep in dep_plan.dependencies {
       dep.canonical_path
     },
   )
 
   if !deps_ok {
-    cur.cache = cur.cache.clear_resolved_and_later(canonical)
+    cur.cache = .clear_resolved_and_later(canonical)
   }
 
-  .{ env, state: cur, diagnostics: all_diags, ok: deps_ok, rewrites: all_rewrites, lints: all_lints }
+  .{
+    env,
+    state: cur,
+    diagnostics: all_diags,
+    ok: deps_ok,
+    rewrites: all_rewrites,
+    lints: all_lints,
+  }
 }
 
 fn dependency_hashes(store: cache.Store, dep_plan: imports.DependencyPlan) DependencyHashes {
@@ -1050,7 +1080,7 @@ fn resolve_and_check_local(
 ) LocalCheck!AnalysisError {
   shadow_diags := reserved_stdlib_shadow_diags(parsed, canonical)
   if shadow_diags.len() > 0 {
-    state.cache = state.cache.clear_resolved_and_later(canonical)
+    state.cache = .clear_resolved_and_later(canonical)
     diags := wrap_diags(source, "resolve", shadow_diags, type_name_snapshot(env))
 
     return .Err(.{ state, diagnostics: prior_diagnostics.concat(diags) })
@@ -1067,7 +1097,7 @@ fn resolve_and_check_local(
   resolved := resolved_out.value
 
   if resolved.diagnostics.len() > 0 {
-    state.cache = state.cache.clear_typed_and_later(canonical)
+    state.cache = .clear_typed_and_later(canonical)
     diags := wrap_diags(source, "resolve", resolved.diagnostics, type_name_snapshot(resolved.env))
 
     return .Err(.{ state, diagnostics: prior_diagnostics.concat(diags) })
@@ -1084,7 +1114,7 @@ fn resolve_and_check_local(
   checked := checked_out.value
 
   if checked.diagnostics.len() > 0 {
-    state.cache = state.cache.clear_lowered_and_hash(canonical)
+    state.cache = .clear_lowered_and_hash(canonical)
     diags := wrap_diags(source, "check", checked.diagnostics, type_name_snapshot(checked.env))
 
     return .Err(.{ state, diagnostics: prior_diagnostics.concat(diags) })
@@ -1107,8 +1137,8 @@ fn publish_interface(
   interface := make_module_interface(canonical, exports, cur.shared_type_origins)
   cur.exports[canonical] = exports
   cur.interfaces[canonical] = interface
-  cur.cache = cur.cache.set_exports_fingerprint(canonical, interface.fingerprint)
-  cur.cache = cur.cache.set_module_hash(canonical, keys.module_hash(source_hash, deps_hash))
+  cur.cache = .set_exports_fingerprint(canonical, interface.fingerprint)
+  cur.cache = .set_module_hash(canonical, keys.module_hash(source_hash, deps_hash))
   cur.module_order = .append(canonical)
   cur
 }

@@ -15,7 +15,7 @@ fn with_color() RenderConfig {
 
 fn make_reg(name: String, source: String) registry.FileRegistry {
   reg := registry.empty()
-  registry.add_file(reg, name, source)
+  reg.add_file(name, source)
   reg
 }
 

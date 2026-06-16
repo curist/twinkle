@@ -7,7 +7,7 @@ use tests.assert
 use tests.runner
 
 fn state_with_doc(uri: String, text: String) server_core.State {
-  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  docs := document_store.empty().open(uri, text, .Some(1))
   server_core.State.{
     initialized: true,
     shutdown_requested: false,
@@ -37,14 +37,14 @@ fn parse_folding_ranges(step: server_core.Step) Vector<FoldInfo>!String {
   }
 
   out := step.outgoing[0]
-  result := try json.decode(out, json.field("result", json.raw()))
-  items := try json.decode(result, json.list(json.raw()))
+  result := try out.decode(json.field("result", json.raw()))
+  items := try result.decode(json.raw().list())
   ranges: Vector<FoldInfo> = []
 
   for item in items {
-    start_line := try json.decode(item, json.field("startLine", json.int()))
-    end_line := try json.decode(item, json.field("endLine", json.int()))
-    kind: String? = case json.decode(item, json.field("kind", json.string())) {
+    start_line := try item.decode(json.field("startLine", json.int()))
+    end_line := try item.decode(json.field("endLine", json.int()))
+    kind: String? = case item.decode(json.field("kind", json.string())) {
       .Ok(k) => .Some(k),
       .Err(_) => .None,
     }
@@ -65,7 +65,7 @@ pub fn suite() runner.Suite {
         // Line 3: }
         src := "fn foo() Int {\n  a := 1\n  a\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, folding_range_request(1, "file:///a.tw"))
+        step := state.handle_message(folding_range_request(1, "file:///a.tw"))
         ranges := try parse_folding_ranges(step)
 
         // Function body should fold from line 0 to line 2 (closing brace on 3 stays visible).
@@ -81,7 +81,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "fn foo() Int { 42 }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, folding_range_request(1, "file:///a.tw"))
+        step := state.handle_message(folding_range_request(1, "file:///a.tw"))
         ranges := try parse_folding_ranges(step)
 
         // Filter for ranges that start at line 0 (the function).
@@ -108,7 +108,7 @@ pub fn suite() runner.Suite {
         // Line 3: }
         src := "type Point = .{\n  x: Int,\n  y: Int,\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, folding_range_request(1, "file:///a.tw"))
+        step := state.handle_message(folding_range_request(1, "file:///a.tw"))
         ranges := try parse_folding_ranges(step)
 
         try assert.ok(ranges.len() >= 1, "expected at least 1 folding range for type")
@@ -127,7 +127,7 @@ pub fn suite() runner.Suite {
         // Line 3: fn main() Int { 42 }
         src := "use @std.fs\nuse @std.path\n\nfn main() Int { 42 }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, folding_range_request(1, "file:///a.tw"))
+        step := state.handle_message(folding_range_request(1, "file:///a.tw"))
         ranges := try parse_folding_ranges(step)
 
         // Find the imports range.
@@ -161,7 +161,7 @@ pub fn suite() runner.Suite {
         // Line 6: }
         src := "fn foo(x: Int) Int {\n  if x > 0 {\n    x\n  } else {\n    0 - x\n  }\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, folding_range_request(1, "file:///a.tw"))
+        step := state.handle_message(folding_range_request(1, "file:///a.tw"))
         ranges := try parse_folding_ranges(step)
 
         // Should have at least the function range + the if range.
@@ -174,7 +174,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "fn foo() Int { 42 }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, folding_range_request(1, "file:///unknown.tw"))
+        step := state.handle_message(folding_range_request(1, "file:///unknown.tw"))
         ranges := try parse_folding_ranges(step)
         try assert.equal(ranges.len(), 0)
         .Ok({})

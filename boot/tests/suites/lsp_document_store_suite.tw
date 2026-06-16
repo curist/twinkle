@@ -8,8 +8,8 @@ pub fn suite() runner.Suite {
     .test(
       "opens and gets a document",
       fn() {
-        store := document_store.open(document_store.empty(), "file:///a.tw", "one\ntwo", .Some(1))
-        doc := try document_store.get(store, "file:///a.tw").ok_or("missing document")
+        store := document_store.empty().open("file:///a.tw", "one\ntwo", .Some(1))
+        doc := try store.get("file:///a.tw").ok_or("missing document")
         try assert.equal(doc.uri, "file:///a.tw")
         try assert.equal(doc.identity.path, "/a.tw")
         try assert.equal(doc.text, "one\ntwo")
@@ -23,9 +23,9 @@ pub fn suite() runner.Suite {
     .test(
       "changes full text and rebuilds index",
       fn() {
-        store := document_store.open(document_store.empty(), "file:///a.tw", "old", .Some(1))
-        changed := document_store.change_full_text(store, "file:///a.tw", "a𝄞b\ncd", .Some(2))
-        doc := try document_store.get(changed, "file:///a.tw").ok_or("missing document")
+        store := document_store.empty().open("file:///a.tw", "old", .Some(1))
+        changed := store.change_full_text("file:///a.tw", "a𝄞b\ncd", .Some(2))
+        doc := try changed.get("file:///a.tw").ok_or("missing document")
         try assert.equal(doc.text, "a𝄞b\ncd")
         try assert.equal(try doc.version.ok_or("missing version"), 2)
         pos := line_index.byte_offset_to_position(doc.index, 5, .Utf16)
@@ -37,42 +37,30 @@ pub fn suite() runner.Suite {
       "updates do not mutate previous store",
       fn() {
         original := document_store.empty()
-        opened := document_store.open(original, "file:///a.tw", "text", .None)
-        try assert.is_none(document_store.get(original, "file:///a.tw"))
-        try assert.is_some(document_store.get(opened, "file:///a.tw"))
+        opened := original.open("file:///a.tw", "text", .None)
+        try assert.is_none(original.get("file:///a.tw"))
+        try assert.is_some(opened.get("file:///a.tw"))
         .Ok({})
       },
     )
     .test(
       "closes a document",
       fn() {
-        store := document_store.open(document_store.empty(), "file:///a.tw", "text", .None)
-        closed := document_store.close(store, "file:///a.tw")
-        try assert.is_none(document_store.get(closed, "file:///a.tw"))
-        try assert.is_some(document_store.get(store, "file:///a.tw"))
+        store := document_store.empty().open("file:///a.tw", "text", .None)
+        closed := store.close("file:///a.tw")
+        try assert.is_none(closed.get("file:///a.tw"))
+        try assert.is_some(store.get("file:///a.tw"))
         .Ok({})
       },
     )
     .test(
       "incremental change inserts text",
       fn() {
-        store := document_store.open(
-          document_store.empty(),
-          "file:///a.tw",
-          "hello world",
-          .Some(1),
-        )
+        store := document_store.empty().open("file:///a.tw", "hello world", .Some(1))
 
         // Insert " beautiful" after "hello" (byte offset 5..5)
-        changed := document_store.change_incremental(
-          store,
-          "file:///a.tw",
-          5,
-          5,
-          " beautiful",
-          .Some(2),
-        )
-        doc := try document_store.get(changed, "file:///a.tw").ok_or("missing document")
+        changed := store.change_incremental("file:///a.tw", 5, 5, " beautiful", .Some(2))
+        doc := try changed.get("file:///a.tw").ok_or("missing document")
         try assert.equal(doc.text, "hello beautiful world")
         try assert.equal(try doc.version.ok_or("missing version"), 2)
         .Ok({})
@@ -81,11 +69,11 @@ pub fn suite() runner.Suite {
     .test(
       "incremental change deletes text",
       fn() {
-        store := document_store.open(document_store.empty(), "file:///a.tw", "abcdef", .Some(1))
+        store := document_store.empty().open("file:///a.tw", "abcdef", .Some(1))
 
         // Delete "cd" (byte offset 2..4)
-        changed := document_store.change_incremental(store, "file:///a.tw", 2, 4, "", .Some(2))
-        doc := try document_store.get(changed, "file:///a.tw").ok_or("missing document")
+        changed := store.change_incremental("file:///a.tw", 2, 4, "", .Some(2))
+        doc := try changed.get("file:///a.tw").ok_or("missing document")
         try assert.equal(doc.text, "abef")
         .Ok({})
       },
@@ -93,16 +81,11 @@ pub fn suite() runner.Suite {
     .test(
       "incremental change replaces text across lines",
       fn() {
-        store := document_store.open(
-          document_store.empty(),
-          "file:///a.tw",
-          "aaa\nbbb\nccc",
-          .Some(1),
-        )
+        store := document_store.empty().open("file:///a.tw", "aaa\nbbb\nccc", .Some(1))
 
         // Replace "bbb\nc" (byte offset 4..9) with "X"
-        changed := document_store.change_incremental(store, "file:///a.tw", 4, 9, "X", .Some(2))
-        doc := try document_store.get(changed, "file:///a.tw").ok_or("missing document")
+        changed := store.change_incremental("file:///a.tw", 4, 9, "X", .Some(2))
+        doc := try changed.get("file:///a.tw").ok_or("missing document")
         try assert.equal(doc.text, "aaa\nXcc")
 
         // Line index should be rebuilt — only 2 lines now
@@ -113,9 +96,9 @@ pub fn suite() runner.Suite {
     .test(
       "incremental change with invalid range returns store unchanged",
       fn() {
-        store := document_store.open(document_store.empty(), "file:///a.tw", "abc", .Some(1))
-        changed := document_store.change_incremental(store, "file:///a.tw", 2, 10, "X", .Some(2))
-        doc := try document_store.get(changed, "file:///a.tw").ok_or("missing document")
+        store := document_store.empty().open("file:///a.tw", "abc", .Some(1))
+        changed := store.change_incremental("file:///a.tw", 2, 10, "X", .Some(2))
+        doc := try changed.get("file:///a.tw").ok_or("missing document")
         try assert.equal(doc.text, "abc")
         try assert.equal(try doc.version.ok_or("missing version"), 1)
         .Ok({})
@@ -125,21 +108,16 @@ pub fn suite() runner.Suite {
       "incremental change on unknown document returns store unchanged",
       fn() {
         store := document_store.empty()
-        changed := document_store.change_incremental(store, "file:///a.tw", 0, 0, "X", .Some(1))
-        try assert.is_none(document_store.get(changed, "file:///a.tw"))
+        changed := store.change_incremental("file:///a.tw", 0, 0, "X", .Some(1))
+        try assert.is_none(changed.get("file:///a.tw"))
         .Ok({})
       },
     )
     .test(
       "exports overlay documents keyed by source identity",
       fn() {
-        store := document_store.open(
-          document_store.empty(),
-          "file:///tmp/a%20b.tw",
-          "text",
-          .Some(4),
-        )
-        docs := document_store.overlay_documents(store)
+        store := document_store.empty().open("file:///tmp/a%20b.tw", "text", .Some(4))
+        docs := store.overlay_documents()
         try assert.equal(docs.len(), 1)
         try assert.equal(docs[0].identity.path, "/tmp/a b.tw")
         try assert.equal(docs[0].text, "text")

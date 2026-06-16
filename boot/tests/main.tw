@@ -38,15 +38,14 @@ use .suites.equality_repro_suite
 use .suites.fingerprint_suite
 use .suites.first_class_method_suite
 use .suites.fix_suite
-use .suites.lint_command_suite
-use .suites.lint_pass_suite
 use .suites.fmt_suite
 use .suites.imports_suite
 use .suites.insert_boundaries_suite
 use .suites.lib_json_suite
 use .suites.line_index_suite
-use .suites.rewrite_suite
 use .suites.linker_suite
+use .suites.lint_command_suite
+use .suites.lint_pass_suite
 use .suites.lsp_completion_suite
 use .suites.lsp_definition_suite
 use .suites.lsp_diagnostics_suite
@@ -90,6 +89,7 @@ use .suites.query_stage_runner_suite
 use .suites.receiver_shorthand_suite
 use .suites.render_suite
 use .suites.resolver_suite
+use .suites.rewrite_suite
 use .suites.runtime_suite
 use .suites.scripting_string_suite
 use .suites.scripting_vector_suite

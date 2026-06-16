@@ -156,15 +156,15 @@ pub fn tight_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
   }
 
   concat([
-      text(open),
-      concat([
-          hard_line().if_break(nil()),
-          join(docs, concat([text(","), line()])),
-          text(",").if_break(nil()),
-        ]).indent(),
+    text(open),
+    concat([
       hard_line().if_break(nil()),
-      text(close),
-    ]).group()
+      join(docs, concat([text(","), line()])),
+      text(",").if_break(nil()),
+    ]).indent(),
+    hard_line().if_break(nil()),
+    text(close),
+  ]).group()
 }
 
 /// Spaced brackets: ".{ x: 1, y: 2 }" flat, or:
@@ -178,11 +178,11 @@ pub fn spaced_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
   }
 
   concat([
-      text(open),
-      concat([line(), join(docs, concat([text(","), line()])), text(",").if_break(nil())]).indent(),
-      line(),
-      text(close),
-    ]).group()
+    text(open),
+    concat([line(), join(docs, concat([text(","), line()])), text(",").if_break(nil())]).indent(),
+    line(),
+    text(close),
+  ]).group()
 }
 
 /// Build a Fill doc: alternating [item, sep, item, sep, ..., item].
@@ -221,13 +221,13 @@ pub fn fill_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
   }
 
   concat([
-      text(open),
-      concat([
-          hard_line().if_break(nil()),
-          fill_sep(docs, concat([text(","), line()])),
-          text(",").if_break(nil()),
-        ]).indent(),
+    text(open),
+    concat([
       hard_line().if_break(nil()),
-      text(close),
-    ]).group()
+      fill_sep(docs, concat([text(","), line()])),
+      text(",").if_break(nil()),
+    ]).indent(),
+    hard_line().if_break(nil()),
+    text(close),
+  ]).group()
 }

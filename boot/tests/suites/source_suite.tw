@@ -330,7 +330,7 @@ pub fn suite() runner.Suite {
         ov := overlay.from_documents([
           overlay.OverlayDocument.{ identity: id, text: "open text", version: .Some(7) },
         ])
-        source := try overlay.lookup(ov, id)
+        source := try ov.lookup(id)
         try assert.equal(source.text, "open text")
         try assert.is_true(source.from_overlay)
 

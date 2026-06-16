@@ -7,7 +7,7 @@ use tests.assert
 use tests.runner
 
 fn state_with_doc(uri: String, text: String) server_core.State {
-  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  docs := document_store.empty().open(uri, text, .Some(1))
   server_core.State.{
     initialized: true,
     shutdown_requested: false,
@@ -21,8 +21,8 @@ fn state_with_doc(uri: String, text: String) server_core.State {
 }
 
 fn state_with_two_docs(uri_a: String, text_a: String, uri_b: String, text_b: String) server_core.State {
-  docs0 := document_store.open(document_store.empty(), uri_a, text_a, .Some(1))
-  docs := document_store.open(docs0, uri_b, text_b, .Some(2))
+  docs0 := document_store.empty().open(uri_a, text_a, .Some(1))
+  docs := docs0.open(uri_b, text_b, .Some(2))
   server_core.State.{
     initialized: true,
     shutdown_requested: false,
@@ -51,8 +51,8 @@ fn sem_token_data(step: server_core.Step) Vector<Int>!String {
   }
 
   out := step.outgoing[0]
-  result := try json.decode(out, json.field("result", json.raw()))
-  data := try json.decode(result, json.field("data", json.list(json.int())))
+  result := try out.decode(json.field("result", json.raw()))
+  data := try result.decode(json.field("data", json.int().list()))
   .Ok(data)
 }
 
@@ -153,7 +153,7 @@ pub fn suite() runner.Suite {
         // fn foo() Int { 42 }
         src := "fn foo() Int { 42 }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sem_tokens_request(1, "file:///a.tw"))
+        step := state.handle_message(sem_tokens_request(1, "file:///a.tw"))
         data := try sem_token_data(step)
 
         // "foo" should appear as a function token with declaration modifier
@@ -183,7 +183,7 @@ pub fn suite() runner.Suite {
         // x := greet()
         src := "fn greet() String { \"hi\" }\nx := greet()\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sem_tokens_request(1, "file:///a.tw"))
+        step := state.handle_message(sem_tokens_request(1, "file:///a.tw"))
         data := try sem_token_data(step)
 
         // Find function tokens — one should be declaration, one should not
@@ -216,7 +216,7 @@ pub fn suite() runner.Suite {
         // type Point = .{ x: Int, y: Int }
         src := "type Point = .{ x: Int, y: Int }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sem_tokens_request(1, "file:///a.tw"))
+        step := state.handle_message(sem_tokens_request(1, "file:///a.tw"))
         data := try sem_token_data(step)
 
         // "Point" should be a type token with declaration modifier
@@ -245,7 +245,7 @@ pub fn suite() runner.Suite {
         // fn make() Msg { .{ text: "hi" } }
         src := "type Msg = .{ text: String }\nfn make() Msg { .{ text: \"hi\" } }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sem_tokens_request(1, "file:///a.tw"))
+        step := state.handle_message(sem_tokens_request(1, "file:///a.tw"))
         data := try sem_token_data(step)
 
         // Should have at least one type token for "Msg" without declaration (the return type)
@@ -273,7 +273,7 @@ pub fn suite() runner.Suite {
         // fn identity<T>(x: T) T { x }
         src := "fn identity<T>(x: T) T { x }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sem_tokens_request(1, "file:///a.tw"))
+        step := state.handle_message(sem_tokens_request(1, "file:///a.tw"))
         data := try sem_token_data(step)
 
         count := 0
@@ -300,7 +300,7 @@ pub fn suite() runner.Suite {
         // fn add(a: Int, b: Int) Int { a + b }
         src := "fn add(a: Int, b: Int) Int { a + b }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sem_tokens_request(1, "file:///a.tw"))
+        step := state.handle_message(sem_tokens_request(1, "file:///a.tw"))
         data := try sem_token_data(step)
 
         param_count := 0
@@ -328,7 +328,7 @@ pub fn suite() runner.Suite {
         // y := x + 1
         src := "x := 42\ny := x + 1\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sem_tokens_request(1, "file:///a.tw"))
+        step := state.handle_message(sem_tokens_request(1, "file:///a.tw"))
         data := try sem_token_data(step)
 
         var_count := 0
@@ -356,7 +356,7 @@ pub fn suite() runner.Suite {
         // fn get_x(p: Point) Int { p.x }
         src := "type Point = .{ x: Int, y: Int }\nfn get_x(p: Point) Int { p.x }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sem_tokens_request(1, "file:///a.tw"))
+        step := state.handle_message(sem_tokens_request(1, "file:///a.tw"))
         data := try sem_token_data(step)
 
         prop_count := 0
@@ -384,7 +384,7 @@ pub fn suite() runner.Suite {
         // c := Color.Red
         src := "type Color = { Red, Green, Blue }\nc := Color.Red\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sem_tokens_request(1, "file:///a.tw"))
+        step := state.handle_message(sem_tokens_request(1, "file:///a.tw"))
         data := try sem_token_data(step)
 
         enum_count := 0
@@ -410,7 +410,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "fn f() Vector<Int> {\n  groups: Dict<String, Int> = Dict.new()\n  groups.values()\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sem_tokens_request(1, "file:///a.tw"))
+        step := state.handle_message(sem_tokens_request(1, "file:///a.tw"))
         data := try sem_token_data(step)
 
         line := 0
@@ -462,7 +462,7 @@ pub fn suite() runner.Suite {
         main := "use lib\nx := lib.helper()\n"
         state := state_with_two_docs(lib_uri, lib, main_uri, main)
 
-        step := server_core.handle_message(state, sem_tokens_request(1, main_uri))
+        step := state.handle_message(sem_tokens_request(1, main_uri))
         data := try sem_token_data(step)
 
         ns_count := 0
@@ -492,7 +492,7 @@ pub fn suite() runner.Suite {
         tuple := "use .tuple.triple as triple_mod\n\npub type Pair<A, B> = .{ first: A, second: B }\n"
         state := state_with_two_docs(triple_uri, triple, tuple_uri, tuple)
 
-        step := server_core.handle_message(state, sem_tokens_request(1, tuple_uri))
+        step := state.handle_message(sem_tokens_request(1, tuple_uri))
         data := try sem_token_data(step)
 
         line := 0
@@ -538,7 +538,7 @@ pub fn suite() runner.Suite {
         main := "use .foo\nx := foo.helper()\n"
         state := state_with_two_docs(foo_uri, foo, main_uri, main)
 
-        step := server_core.handle_message(state, sem_tokens_request(1, main_uri))
+        step := state.handle_message(sem_tokens_request(1, main_uri))
         data := try sem_token_data(step)
         try assert.ok(
           token_count(data) > 0,
@@ -576,7 +576,7 @@ pub fn suite() runner.Suite {
         // Line 1: fn bar() Int { foo() }
         src := "fn foo() Int { 42 }\nfn bar() Int { foo() }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sem_tokens_request(1, "file:///a.tw"))
+        step := state.handle_message(sem_tokens_request(1, "file:///a.tw"))
         data := try sem_token_data(step)
 
         // All data should be multiples of 5
@@ -616,7 +616,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := ""
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sem_tokens_request(1, "file:///a.tw"))
+        step := state.handle_message(sem_tokens_request(1, "file:///a.tw"))
         data := try sem_token_data(step)
         try assert.equal(data.len(), 0)
         .Ok({})
@@ -626,7 +626,7 @@ pub fn suite() runner.Suite {
       "unknown document returns empty data",
       fn() {
         state := state_with_doc("file:///a.tw", "x := 1\n")
-        step := server_core.handle_message(state, sem_tokens_request(1, "file:///unknown.tw"))
+        step := state.handle_message(sem_tokens_request(1, "file:///unknown.tw"))
         data := try sem_token_data(step)
         try assert.equal(data.len(), 0)
         .Ok({})
@@ -636,29 +636,26 @@ pub fn suite() runner.Suite {
       "semanticTokensProvider advertised in capabilities",
       fn() {
         msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
 
         if step.outgoing.len() != 1 {
           return .Err("expected one message")
         }
 
         out := step.outgoing[0]
-        result := try json.decode(out, json.field("result", json.raw()))
-        caps := try json.decode(result, json.field("capabilities", json.raw()))
-        sem_cap := try json.decode(caps, json.field("semanticTokensProvider", json.raw()))
+        result := try out.decode(json.field("result", json.raw()))
+        caps := try result.decode(json.field("capabilities", json.raw()))
+        sem_cap := try caps.decode(json.field("semanticTokensProvider", json.raw()))
 
         // Should have a "legend" with tokenTypes and tokenModifiers
-        legend := try json.decode(sem_cap, json.field("legend", json.raw()))
-        token_types := try json.decode(legend, json.field("tokenTypes", json.list(json.string())))
-        token_modifiers := try json.decode(
-          legend,
-          json.field("tokenModifiers", json.list(json.string())),
-        )
+        legend := try sem_cap.decode(json.field("legend", json.raw()))
+        token_types := try legend.decode(json.field("tokenTypes", json.string().list()))
+        token_modifiers := try legend.decode(json.field("tokenModifiers", json.string().list()))
         try assert.ok(token_types.len() > 0, "expected non-empty tokenTypes")
         try assert.ok(token_modifiers.len() > 0, "expected non-empty tokenModifiers")
 
         // Should have "full" support
-        full := try json.decode(sem_cap, json.field("full", json.bool()))
+        full := try sem_cap.decode(json.field("full", json.bool()))
         try assert.equal(full, true)
         .Ok({})
       },
@@ -675,7 +672,7 @@ pub fn suite() runner.Suite {
         // }
         src := "type Shape = { Circle(Float), Rect(Float, Float) }\nfn area(s: Shape) Float {\n  case s {\n    .Circle(r) => r,\n    .Rect(w, h) => w,\n  }\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sem_tokens_request(1, "file:///a.tw"))
+        step := state.handle_message(sem_tokens_request(1, "file:///a.tw"))
         data := try sem_token_data(step)
 
         // Circle and Rect should be enumMember tokens

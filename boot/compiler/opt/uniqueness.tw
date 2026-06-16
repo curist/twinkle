@@ -217,7 +217,7 @@ fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
     .None => { return st.without_local_ownership(target) },
   }
   source_was_fresh_record := set_has(st.fresh_records, source.id)
-  st = st.without_local_ownership(target)
+  st = .without_local_ownership(target)
   st.ownership = .remove(source.id)
   st.ownership[target.id] = moved
   st.refreshed = .remove(source.id)
@@ -249,7 +249,7 @@ fn alias_or_transfer_owned(st: RwState, source: LocalId, target: LocalId, bind_l
   }
 
   if set_has(live_after, source.id) {
-    st = st.without_local_ownership(target)
+    st = .without_local_ownership(target)
     st.without_local_ownership(source)
   } else {
     st.transfer_owned_local(source, target)
@@ -257,7 +257,7 @@ fn alias_or_transfer_owned(st: RwState, source: LocalId, target: LocalId, bind_l
 }
 
 fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
-  st = st.with_local_ownership(local, .Deep)
+  st = .with_local_ownership(local, .Deep)
 
   if set_has(st.tainted, local.id) {
     st.refreshed[local.id] = true
@@ -608,7 +608,7 @@ fn rewrite_reusable_update(
           .None => {},
         }
 
-        st = st.with_consumed_update_result(bind_local)
+        st = .with_consumed_update_result(bind_local)
       },
     },
     _ => {},
@@ -659,7 +659,7 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
 
       case classify_producer_ownership(op, st.config) {
         .Some(ownership) => {
-          st = st.with_local_ownership(local, ownership)
+          st = .with_local_ownership(local, ownership)
         },
         .None => {},
       }
@@ -671,19 +671,19 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
       // caller. Only deep-owned records license in-place field mutation below.
       case op {
         .ARecord(_, fields) => if st.record_fields_all_deep(fields) {
-          st = st.with_local_ownership(local, .Deep)
+          st = .with_local_ownership(local, .Deep)
         },
         .ARecordUpdate(base_atom, _, value, _, _) => if st.atom_is_deep(base_atom)
           and st.atom_is_deep(value) {
-          st = st.with_local_ownership(local, .Deep)
+          st = .with_local_ownership(local, .Deep)
         },
         _ => {},
       }
 
       case op {
         .ACall(.AGlobalFunc(func_id), _) => if set_has(st.fresh_helper_ids, func_id.id) {
-          st = st.with_local_ownership(local, .Shallow)
-          st = st.with_fresh_record_local(local)
+          st = .with_local_ownership(local, .Shallow)
+          st = .with_fresh_record_local(local)
         },
         _ => {},
       }
@@ -692,7 +692,7 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
       // that ownership, but only if y is dead afterward (otherwise x aliases y).
       case op {
         .AInit(.ALocal(source)) => {
-          st = st.alias_or_transfer_owned(source, local, local)
+          st = .alias_or_transfer_owned(source, local, local)
         },
         _ => {},
       }
@@ -700,11 +700,11 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
       // AAssign ownership transfer
       case op {
         .AAssign(target, .ALocal(source)) => {
-          st = st.alias_or_transfer_owned(source, target, local)
+          st = .alias_or_transfer_owned(source, target, local)
         },
         .AAssign(target, _) => {
           // Non-local assign: kill ownership
-          st = st.without_local_ownership(target)
+          st = .without_local_ownership(target)
         },
         _ => {},
       }
@@ -723,10 +723,10 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
           }
 
           if st.local_has_shell_ownership(source) and !set_has(live_after_body, source.id) {
-            st = st.with_local_ownership(local, .Shallow)
+            st = .with_local_ownership(local, .Shallow)
           } else if set_has(st.fresh_records, source.id)
             and can_move_fresh_record_field(source, field_id, body) {
-            st = st.with_local_ownership(local, .Deep)
+            st = .with_local_ownership(local, .Deep)
             st = RwState.{
               tainted: st.tainted,
               ownership: st.ownership,
@@ -740,7 +740,7 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
             }
           } else if st.local_is_deep_owned(source)
             and is_field_borrow_and_update(local, body, st.config) {
-            st = st.with_local_ownership(local, .Deep)
+            st = .with_local_ownership(local, .Deep)
           }
         },
         _ => {},

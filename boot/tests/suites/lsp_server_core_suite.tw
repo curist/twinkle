@@ -16,8 +16,8 @@ fn only_out(step: server_core.Step) json.Json!String {
 
 fn published_for(step: server_core.Step, uri: String) json.Json!String {
   for out in step.outgoing {
-    params := try json.decode(out, json.field("params", json.raw()))
-    out_uri := try json.decode(params, json.field("uri", json.string()))
+    params := try out.decode(json.field("params", json.raw()))
+    out_uri := try params.decode(json.field("uri", json.string()))
 
     if out_uri == uri {
       return .Ok(out)
@@ -28,15 +28,15 @@ fn published_for(step: server_core.Step, uri: String) json.Json!String {
 }
 
 fn diagnostic_count(out: json.Json) Int!String {
-  params := try json.decode(out, json.field("params", json.raw()))
-  diagnostics := try json.decode(params, json.field("diagnostics", json.list(json.raw())))
+  params := try out.decode(json.field("params", json.raw()))
+  diagnostics := try params.decode(json.field("diagnostics", json.raw().list()))
   .Ok(diagnostics.len())
 }
 
 fn publish_due_now(step: server_core.Step) server_core.Step {
   state := step.state
   state.diagnostics_deadline_ms = 0.0
-  server_core.publish_due_diagnostics(state)
+  state.publish_due_diagnostics()
 }
 
 pub fn suite() runner.Suite {
@@ -45,17 +45,14 @@ pub fn suite() runner.Suite {
       "initialize returns minimal capabilities",
       fn() {
         msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
         out := try only_out(step)
-        result := try json.decode(out, json.field("result", json.raw()))
-        caps := try json.decode(result, json.field("capabilities", json.raw()))
-        try assert.equal(
-          try json.decode(caps, json.field("positionEncoding", json.string())),
-          "utf-16",
-        )
-        try assert.equal(try json.decode(caps, json.field("textDocumentSync", json.int())), 2)
-        info := try json.decode(result, json.field("serverInfo", json.raw()))
-        try assert.equal(try json.decode(info, json.field("name", json.string())), "twinkle-lsp")
+        result := try out.decode(json.field("result", json.raw()))
+        caps := try result.decode(json.field("capabilities", json.raw()))
+        try assert.equal(try caps.decode(json.field("positionEncoding", json.string())), "utf-16")
+        try assert.equal(try caps.decode(json.field("textDocumentSync", json.int())), 2)
+        info := try result.decode(json.field("serverInfo", json.raw()))
+        try assert.equal(try info.decode(json.field("name", json.string())), "twinkle-lsp")
         .Ok({})
       },
     )
@@ -63,7 +60,7 @@ pub fn suite() runner.Suite {
       "initialized notification updates state without response",
       fn() {
         msg := protocol.Message.Notification(.{ method: "initialized", params: .None })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
         try assert.is_true(step.state.initialized)
         try assert.equal(step.outgoing.len(), 0)
         .Ok({})
@@ -73,11 +70,11 @@ pub fn suite() runner.Suite {
       "shutdown responds null and marks state",
       fn() {
         msg := protocol.Message.Request(.{ id: .StringId("s"), method: "shutdown", params: .None })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
         try assert.is_true(step.state.shutdown_requested)
         out := try only_out(step)
 
-        case try json.decode(out, json.field("result", json.raw())) {
+        case try out.decode(json.field("result", json.raw())) {
           .Null => .Ok({}),
           _ => assert.fail("expected null result"),
         }
@@ -87,7 +84,7 @@ pub fn suite() runner.Suite {
       "exit notification requests exit",
       fn() {
         msg := protocol.Message.Notification(.{ method: "exit", params: .None })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
         try assert.is_true(step.state.should_exit)
         try assert.equal(step.outgoing.len(), 0)
         .Ok({})
@@ -97,14 +94,11 @@ pub fn suite() runner.Suite {
       "unknown request returns method not found",
       fn() {
         msg := protocol.Message.Request(.{ id: .IntId(9), method: "twinkle/nope", params: .None })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
         out := try only_out(step)
-        err := try json.decode(out, json.field("error", json.raw()))
-        try assert.equal(try json.decode(err, json.field("code", json.int())), -32601)
-        try assert.equal(
-          try json.decode(err, json.field("message", json.string())),
-          "method not found",
-        )
+        err := try out.decode(json.field("error", json.raw()))
+        try assert.equal(try err.decode(json.field("code", json.int())), -32601)
+        try assert.equal(try err.decode(json.field("message", json.string())), "method not found")
         .Ok({})
       },
     )
@@ -126,29 +120,25 @@ pub fn suite() runner.Suite {
           method: "textDocument/didOpen",
           params: .Some(params),
         })
-        step := server_core.handle_message(server_core.initial_state(), msg)
-        doc := try document_store.get(step.state.documents, "file:///a.tw")
-          .ok_or("missing document")
+        step := server_core.initial_state().handle_message(msg)
+        doc := try step.state.documents.get("file:///a.tw").ok_or("missing document")
         try assert.equal(doc.text, "x := 1\n")
         try assert.equal(try doc.version.ok_or("missing version"), 1)
         out := try only_out(step)
         try assert.equal(
-          try json.decode(out, json.field("method", json.string())),
+          try out.decode(json.field("method", json.string())),
           "textDocument/publishDiagnostics",
         )
-        params_out := try json.decode(out, json.field("params", json.raw()))
-        try assert.equal(
-          try json.decode(params_out, json.field("uri", json.string())),
-          "file:///a.tw",
-        )
-        try assert.equal(try json.decode(params_out, json.field("version", json.int())), 1)
+        params_out := try out.decode(json.field("params", json.raw()))
+        try assert.equal(try params_out.decode(json.field("uri", json.string())), "file:///a.tw")
+        try assert.equal(try params_out.decode(json.field("version", json.int())), 1)
         .Ok({})
       },
     )
     .test(
       "didChange replaces full document text",
       fn() {
-        opened := document_store.open(document_store.empty(), "file:///a.tw", "old", .Some(1))
+        opened := document_store.empty().open("file:///a.tw", "old", .Some(1))
         state := server_core.State.{
           initialized: true,
           shutdown_requested: false,
@@ -170,9 +160,8 @@ pub fn suite() runner.Suite {
           method: "textDocument/didChange",
           params: .Some(params),
         })
-        step := server_core.handle_message(state, msg)
-        doc := try document_store.get(step.state.documents, "file:///a.tw")
-          .ok_or("missing document")
+        step := state.handle_message(msg)
+        doc := try step.state.documents.get("file:///a.tw").ok_or("missing document")
         try assert.equal(doc.text, "new")
         try assert.equal(try doc.version.ok_or("missing version"), 2)
         try assert.is_true(step.state.diagnostics_pending)
@@ -184,12 +173,7 @@ pub fn suite() runner.Suite {
       "didChange applies incremental text change",
       fn() {
         // "hello world" — insert " beautiful" at offset 5 (line 0, char 5)
-        opened := document_store.open(
-          document_store.empty(),
-          "file:///a.tw",
-          "hello world",
-          .Some(1),
-        )
+        opened := document_store.empty().open("file:///a.tw", "hello world", .Some(1))
         state := server_core.State.{
           initialized: true,
           shutdown_requested: false,
@@ -224,9 +208,8 @@ pub fn suite() runner.Suite {
           method: "textDocument/didChange",
           params: .Some(params),
         })
-        step := server_core.handle_message(state, msg)
-        doc := try document_store.get(step.state.documents, "file:///a.tw")
-          .ok_or("missing document")
+        step := state.handle_message(msg)
+        doc := try step.state.documents.get("file:///a.tw").ok_or("missing document")
         try assert.equal(doc.text, "hello beautiful world")
         try assert.equal(try doc.version.ok_or("missing version"), 2)
         try assert.is_true(step.state.diagnostics_pending)
@@ -237,7 +220,7 @@ pub fn suite() runner.Suite {
       "didChange applies multiple incremental changes in order",
       fn() {
         // "aaa\nbbb" — two changes: replace "bbb" with "ccc", then insert "X" at start
-        opened := document_store.open(document_store.empty(), "file:///a.tw", "aaa\nbbb", .Some(1))
+        opened := document_store.empty().open("file:///a.tw", "aaa\nbbb", .Some(1))
         state := server_core.State.{
           initialized: true,
           shutdown_requested: false,
@@ -289,9 +272,8 @@ pub fn suite() runner.Suite {
           method: "textDocument/didChange",
           params: .Some(params),
         })
-        step := server_core.handle_message(state, msg)
-        doc := try document_store.get(step.state.documents, "file:///a.tw")
-          .ok_or("missing document")
+        step := state.handle_message(msg)
+        doc := try step.state.documents.get("file:///a.tw").ok_or("missing document")
         try assert.equal(doc.text, "Xaaa\nccc")
         .Ok({})
       },
@@ -328,7 +310,7 @@ pub fn suite() runner.Suite {
           method: "textDocument/didChange",
           params: .Some(params),
         })
-        step := publish_due_now(server_core.handle_message(state, msg))
+        step := publish_due_now(state.handle_message(msg))
         try assert.equal(step.outgoing.len(), 2)
         importer_out := try published_for(step, "file:///tmp/a.tw")
         try assert.is_true(try diagnostic_count(importer_out) > 0)
@@ -355,7 +337,7 @@ pub fn suite() runner.Suite {
           method: "textDocument/didOpen",
           params: .Some(params),
         })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
         try assert.is_false(step.state.should_exit)
         out := try published_for(step, "file:///tmp/missing_import.tw")
         try assert.is_true(try diagnostic_count(out) > 0)
@@ -377,25 +359,24 @@ pub fn suite() runner.Suite {
             ]),
           ),
         ])
-        open_step := server_core.handle_message(
-          server_core.initial_state(),
-          protocol.Message.Notification(.{
-            method: "textDocument/didOpen",
-            params: .Some(open_params),
-          }),
-        )
-        try assert.is_some(document_store.get(open_step.state.documents, uri))
+        open_step := server_core.initial_state()
+          .handle_message(
+            protocol.Message.Notification(.{
+              method: "textDocument/didOpen",
+              params: .Some(open_params),
+            }),
+          )
+        try assert.is_some(open_step.state.documents.get(uri))
         close_params := json.object([
           json.kv("textDocument", json.object([json.kv("uri", .Str(uri))])),
         ])
-        close_step := server_core.handle_message(
-          open_step.state,
+        close_step := open_step.state.handle_message(
           protocol.Message.Notification(.{
             method: "textDocument/didClose",
             params: .Some(close_params),
           }),
         )
-        try assert.is_none(document_store.get(close_step.state.documents, uri))
+        try assert.is_none(close_step.state.documents.get(uri))
         reopen_params := json.object([
           json.kv(
             "textDocument",
@@ -407,15 +388,13 @@ pub fn suite() runner.Suite {
             ]),
           ),
         ])
-        reopen_step := server_core.handle_message(
-          close_step.state,
+        reopen_step := close_step.state.handle_message(
           protocol.Message.Notification(.{
             method: "textDocument/didOpen",
             params: .Some(reopen_params),
           }),
         )
-        doc := try document_store.get(reopen_step.state.documents, uri)
-          .ok_or("missing reopened document")
+        doc := try reopen_step.state.documents.get(uri).ok_or("missing reopened document")
         try assert.equal(try doc.version.ok_or("missing version"), 2)
         change_params := json.object([
           json.kv(
@@ -424,15 +403,13 @@ pub fn suite() runner.Suite {
           ),
           json.kv("contentChanges", json.array([json.object([json.kv("text", .Str("x := 3\n"))])])),
         ])
-        change_step := server_core.handle_message(
-          reopen_step.state,
+        change_step := reopen_step.state.handle_message(
           protocol.Message.Notification(.{
             method: "textDocument/didChange",
             params: .Some(change_params),
           }),
         )
-        changed := try document_store.get(change_step.state.documents, uri)
-          .ok_or("missing changed document")
+        changed := try change_step.state.documents.get(uri).ok_or("missing changed document")
         try assert.equal(changed.text, "x := 3\n")
         try assert.equal(try changed.version.ok_or("missing version"), 3)
         try assert.is_false(change_step.state.should_exit)
@@ -469,7 +446,7 @@ pub fn suite() runner.Suite {
           method: "textDocument/didChange",
           params: .Some(params),
         })
-        step := publish_due_now(server_core.handle_message(state, msg))
+        step := publish_due_now(state.handle_message(msg))
         try assert.equal(step.outgoing.len(), 2)
         importer_out := try published_for(step, "file:///tmp/a.tw")
         try assert.equal(try diagnostic_count(importer_out), 0)
@@ -479,7 +456,7 @@ pub fn suite() runner.Suite {
     .test(
       "didClose removes the document",
       fn() {
-        opened := document_store.open(document_store.empty(), "file:///a.tw", "old", .Some(1))
+        opened := document_store.empty().open("file:///a.tw", "old", .Some(1))
         state := server_core.State.{
           initialized: true,
           shutdown_requested: false,
@@ -497,15 +474,15 @@ pub fn suite() runner.Suite {
           method: "textDocument/didClose",
           params: .Some(params),
         })
-        step := server_core.handle_message(state, msg)
-        try assert.is_none(document_store.get(step.state.documents, "file:///a.tw"))
+        step := state.handle_message(msg)
+        try assert.is_none(step.state.documents.get("file:///a.tw"))
         out := try only_out(step)
         try assert.equal(
-          try json.decode(out, json.field("method", json.string())),
+          try out.decode(json.field("method", json.string())),
           "textDocument/publishDiagnostics",
         )
-        params_out := try json.decode(out, json.field("params", json.raw()))
-        diagnostics := try json.decode(params_out, json.field("diagnostics", json.list(json.raw())))
+        params_out := try out.decode(json.field("params", json.raw()))
+        diagnostics := try params_out.decode(json.field("diagnostics", json.raw().list()))
         try assert.equal(diagnostics.len(), 0)
         .Ok({})
       },
@@ -514,10 +491,10 @@ pub fn suite() runner.Suite {
       "malformed document notification is ignored",
       fn() {
         msg := protocol.Message.Notification(.{ method: "textDocument/didOpen", params: .None })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
         try assert.equal(step.outgoing.len(), 0)
         try assert.is_false(step.state.should_exit)
-        try assert.is_none(document_store.get(step.state.documents, "file:///a.tw"))
+        try assert.is_none(step.state.documents.get("file:///a.tw"))
         .Ok({})
       },
     )
@@ -525,7 +502,7 @@ pub fn suite() runner.Suite {
       "unknown notification is ignored",
       fn() {
         msg := protocol.Message.Notification(.{ method: "twinkle/nope", params: .None })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
         try assert.equal(step.outgoing.len(), 0)
         try assert.is_false(step.state.should_exit)
         .Ok({})
@@ -535,11 +512,11 @@ pub fn suite() runner.Suite {
       "initialize advertises codeActionProvider",
       fn() {
         msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
         out := try only_out(step)
-        result := try json.decode(out, json.field("result", json.raw()))
-        caps := try json.decode(result, json.field("capabilities", json.raw()))
-        try assert.is_true(try json.decode(caps, json.field("codeActionProvider", json.bool())))
+        result := try out.decode(json.field("result", json.raw()))
+        caps := try result.decode(json.field("capabilities", json.raw()))
+        try assert.is_true(try caps.decode(json.field("codeActionProvider", json.bool())))
         .Ok({})
       },
     )
@@ -547,13 +524,11 @@ pub fn suite() runner.Suite {
       "initialize advertises documentFormattingProvider",
       fn() {
         msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
         out := try only_out(step)
-        result := try json.decode(out, json.field("result", json.raw()))
-        caps := try json.decode(result, json.field("capabilities", json.raw()))
-        try assert.is_true(
-          try json.decode(caps, json.field("documentFormattingProvider", json.bool())),
-        )
+        result := try out.decode(json.field("result", json.raw()))
+        caps := try result.decode(json.field("capabilities", json.raw()))
+        try assert.is_true(try caps.decode(json.field("documentFormattingProvider", json.bool())))
         .Ok({})
       },
     )
@@ -584,14 +559,14 @@ pub fn suite() runner.Suite {
           method: "textDocument/formatting",
           params: .Some(params),
         })
-        step := server_core.handle_message(state, msg)
+        step := state.handle_message(msg)
         out := try only_out(step)
-        result := try json.decode(out, json.field("result", json.raw()))
-        edits := try json.decode(result, json.list(json.raw()))
+        result := try out.decode(json.field("result", json.raw()))
+        edits := try result.decode(json.raw().list())
         try assert.equal(edits.len(), 1)
         edit := edits[0]
         try assert.equal(
-          try json.decode(edit, json.field("newText", json.string())),
+          try edit.decode(json.field("newText", json.string())),
           "fn f() String {\n  \"e\"\n}\n",
         )
         .Ok({})
@@ -676,31 +651,28 @@ pub fn suite() runner.Suite {
           method: "textDocument/codeAction",
           params: .Some(params),
         })
-        step := server_core.handle_message(state, msg)
+        step := state.handle_message(msg)
         out := try only_out(step)
-        result := try json.decode(out, json.field("result", json.raw()))
+        result := try out.decode(json.field("result", json.raw()))
 
         // Should return an array of code actions
-        actions := try json.decode(result, json.list(json.raw()))
+        actions := try result.decode(json.raw().list())
         try assert.is_true(actions.len() > 0)
         action := actions[0]
-        try assert.equal(try json.decode(action, json.field("kind", json.string())), "quickfix")
+        try assert.equal(try action.decode(json.field("kind", json.string())), "quickfix")
         try assert.equal(
-          try json.decode(action, json.field("title", json.string())),
+          try action.decode(json.field("title", json.string())),
           "remove unused import `B`",
         )
 
         // Should have a workspace edit
-        edit := try json.decode(action, json.field("edit", json.raw()))
-        changes := try json.decode(edit, json.field("changes", json.raw()))
-        file_edits := try json.decode(
-          changes,
-          json.field("file:///tmp/action.tw", json.list(json.raw())),
-        )
+        edit := try action.decode(json.field("edit", json.raw()))
+        changes := try edit.decode(json.field("changes", json.raw()))
+        file_edits := try changes.decode(json.field("file:///tmp/action.tw", json.raw().list()))
         try assert.is_true(file_edits.len() > 0)
         text_edit := file_edits[0]
         try assert.equal(
-          try json.decode(text_edit, json.field("newText", json.string())),
+          try text_edit.decode(json.field("newText", json.string())),
           "use foo.{A}\n",
         )
         .Ok({})
@@ -752,18 +724,18 @@ pub fn suite() runner.Suite {
           method: "textDocument/didChange",
           params: .Some(change_params),
         })
-        step := publish_due_now(server_core.handle_message(state, msg))
+        step := publish_due_now(state.handle_message(msg))
 
         // Find diagnostics for main_import.tw
         main_out := try published_for(step, "file:///tmp/main_import.tw")
-        params_out := try json.decode(main_out, json.field("params", json.raw()))
-        items := try json.decode(params_out, json.field("diagnostics", json.list(json.raw())))
+        params_out := try main_out.decode(json.field("params", json.raw()))
+        items := try params_out.decode(json.field("diagnostics", json.raw().list()))
 
         // Should have an unused import warning for unused_fn
         found_unused := false
 
         for item in items {
-          msg_str := case json.decode(item, json.field("message", json.string())) {
+          msg_str := case item.decode(json.field("message", json.string())) {
             .Ok(m) => m,
             .Err(_) => { continue },
           }
@@ -772,14 +744,14 @@ pub fn suite() runner.Suite {
             found_unused = true
 
             // Should have data with a uniform fix payload.
-            data := try json.decode(item, json.field("data", json.raw()))
-            fixes := try json.decode(data, json.field("fixes", json.list(json.raw())))
+            data := try item.decode(json.field("data", json.raw()))
+            fixes := try data.decode(json.field("fixes", json.raw().list()))
             fix := fixes[0]
-            edits := try json.decode(fix, json.field("edits", json.list(json.raw())))
+            edits := try fix.decode(json.field("edits", json.raw().list()))
             edit := edits[0]
 
             // Should have replacement that keeps only used_fn
-            replacement := try json.decode(edit, json.field("replacement", json.string()))
+            replacement := try edit.decode(json.field("replacement", json.string()))
             try assert.str_contains(replacement, "used_fn")
             try assert.is_false(replacement.contains("unused_fn"))
           }
@@ -838,10 +810,10 @@ pub fn suite() runner.Suite {
           method: "textDocument/codeAction",
           params: .Some(params),
         })
-        step := server_core.handle_message(state, msg)
+        step := state.handle_message(msg)
         out := try only_out(step)
-        result := try json.decode(out, json.field("result", json.raw()))
-        actions := try json.decode(result, json.list(json.raw()))
+        result := try out.decode(json.field("result", json.raw()))
+        actions := try result.decode(json.raw().list())
         try assert.equal(actions.len(), 0)
         .Ok({})
       },

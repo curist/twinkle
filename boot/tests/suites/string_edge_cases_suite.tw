@@ -37,7 +37,7 @@ pub fn suite() runner.Suite {
         }
 
         try assert.is_none(s.get(99))
-        try assert.is_none(String.get(s, -1))
+        try assert.is_none(s.get(-1))
         .Ok({})
       },
     )
@@ -46,7 +46,7 @@ pub fn suite() runner.Suite {
       fn() {
         s := "ab"
         try assert.is_none(s.get(4294967297))
-        try assert.is_none(String.get(s, 4294967297))
+        try assert.is_none(s.get(4294967297))
 
         case s.get(1) {
           .Some(b) => try assert.equal(b.to_int(), 98),

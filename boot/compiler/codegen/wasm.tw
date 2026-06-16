@@ -950,9 +950,9 @@ fn label_ctx_from_stack(label_stack: Vector<String>) LabelCtx {
 
   for label in label_stack {
     if label == "" {
-      ctx = ctx.label_ctx_enter_if()
+      ctx = .label_ctx_enter_if()
     } else {
-      ctx = ctx.label_ctx_enter_named(label)
+      ctx = .label_ctx_enter_named(label)
     }
   }
 
@@ -1222,10 +1222,7 @@ fn encode_instr_cached(
     .Return => .{ buf: emit_u8(buf, 0x0F), cache },
     .Unreachable => .{ buf: emit_u8(buf, 0x00), cache },
     .Nop => .{ buf: emit_u8(buf, 0x01), cache },
-    .Br(label) => .{
-      buf: emit_u32_leb(emit_u8(buf, 0x0C), label_ctx.label_depth_of(label)),
-      cache,
-    },
+    .Br(label) => .{ buf: emit_u32_leb(emit_u8(buf, 0x0C), label_ctx.label_depth_of(label)), cache },
     .BrIf(label) => .{
       buf: emit_u32_leb(emit_u8(buf, 0x0D), label_ctx.label_depth_of(label)),
       cache,

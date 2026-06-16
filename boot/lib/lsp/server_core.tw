@@ -163,7 +163,7 @@ fn handle_did_open(state: State, note: protocol.Notification) Step {
   case params.decode_did_open(note.params) {
     .Ok(open) => {
       doc := open.text_document
-      state.documents = state.documents.open(doc.uri, doc.text, .Some(doc.version))
+      state.documents = .open(doc.uri, doc.text, .Some(doc.version))
       state.publish_workspace_diagnostics(false)
     },
     .Err(_) => .{ state, outgoing: [] },
@@ -201,7 +201,8 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
               .Some(o) => o,
               .None => { continue },
             }
-            state.documents = state.documents.change_incremental(doc.uri,
+            state.documents = .change_incremental(
+              doc.uri,
               start_offset,
               end_offset,
               event.text,
@@ -210,10 +211,7 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
           },
           .None => {
             // Full-text change — no range means replace everything.
-            state.documents = state.documents.change_full_text(doc.uri,
-              event.text,
-              doc.version,
-            )
+            state.documents = .change_full_text(doc.uri, event.text, doc.version)
           },
         }
       }
@@ -222,7 +220,7 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
         .Some(d) => d.text,
         .None => { return .{ state, outgoing: [] } },
       }
-      state = state.note_changed_document_source(doc.uri, final_text)
+      state = .note_changed_document_source(doc.uri, final_text)
       state.mark_diagnostics_pending()
     },
     .Err(_) => .{ state, outgoing: [] },
@@ -237,7 +235,7 @@ fn handle_did_close(state: State, note: protocol.Notification) Step {
         .Some(doc) => doc.version,
         .None => .None,
       }
-      state.documents = state.documents.close(uri)
+      state.documents = .close(uri)
       .{ state, outgoing: [lsp_diagnostics.clear_diagnostics(uri, version)] }
     },
     .Err(_) => .{ state, outgoing: [] },
@@ -316,8 +314,7 @@ fn handle_definition(state: State, req: protocol.Request) Step {
       .{
         state,
         outgoing: [
-          req.id.success_response(lsp_definition.definition_response(target_index, result),
-          ),
+          req.id.success_response(lsp_definition.definition_response(target_index, result)),
         ],
       }
     },
@@ -347,8 +344,7 @@ fn handle_type_definition(state: State, req: protocol.Request) Step {
       .{
         state,
         outgoing: [
-          req.id.success_response(lsp_definition.definition_response(target_index, result),
-          ),
+          req.id.success_response(lsp_definition.definition_response(target_index, result)),
         ],
       }
     },
@@ -440,10 +436,7 @@ fn handle_completion(state: State, req: protocol.Request) Step {
   snap := state.editor_snapshot(doc)
   state.query_cache = snap.cache
   items := query_completion.complete(snap, offset, doc.text)
-  .{
-    state,
-    outgoing: [req.id.success_response(lsp_completion.completion_response(items))],
-  }
+  .{ state, outgoing: [req.id.success_response(lsp_completion.completion_response(items))] }
 }
 
 fn handle_code_action(state: State, req: protocol.Request) Step {
@@ -478,9 +471,7 @@ fn handle_signature_help(state: State, req: protocol.Request) Step {
   case query_signature_help.signature_help(snap, offset, doc.text) {
     .Some(result) => .{
       state,
-      outgoing: [
-        req.id.success_response(lsp_signature_help.signature_help_response(result)),
-      ],
+      outgoing: [req.id.success_response(lsp_signature_help.signature_help_response(result))],
     },
     .None => state.null_response_step(req),
   }
@@ -501,8 +492,7 @@ fn handle_document_symbol(state: State, req: protocol.Request) Step {
   .{
     state,
     outgoing: [
-      req.id.success_response(lsp_document_symbol.document_symbol_response(doc.index, symbols),
-      ),
+      req.id.success_response(lsp_document_symbol.document_symbol_response(doc.index, symbols)),
     ],
   }
 }
@@ -521,9 +511,7 @@ fn handle_folding_range(state: State, req: protocol.Request) Step {
   ranges := query_folding_range.folding_ranges(snap)
   .{
     state,
-    outgoing: [
-      req.id.success_response(lsp_folding_range.folding_range_response(ranges, doc.index)),
-    ],
+    outgoing: [req.id.success_response(lsp_folding_range.folding_range_response(ranges, doc.index))],
   }
 }
 
@@ -549,9 +537,7 @@ fn handle_inlay_hint(state: State, req: protocol.Request) Step {
   hints := query_inlay_hints.inlay_hints(snap, range_start, range_end)
   .{
     state,
-    outgoing: [
-      req.id.success_response(lsp_inlay_hint.inlay_hint_response(doc.index, hints)),
-    ],
+    outgoing: [req.id.success_response(lsp_inlay_hint.inlay_hint_response(doc.index, hints))],
   }
 }
 
@@ -561,9 +547,7 @@ fn handle_semantic_tokens(state: State, req: protocol.Request) Step {
     .Err(_) => {
       return .{
         state,
-        outgoing: [
-          req.id.success_response(json.object([json.kv("data", json.array([]))])),
-        ],
+        outgoing: [req.id.success_response(json.object([json.kv("data", json.array([]))]))],
       }
     },
   }
@@ -572,9 +556,7 @@ fn handle_semantic_tokens(state: State, req: protocol.Request) Step {
     .None => {
       return .{
         state,
-        outgoing: [
-          req.id.success_response(json.object([json.kv("data", json.array([]))])),
-        ],
+        outgoing: [req.id.success_response(json.object([json.kv("data", json.array([]))]))],
       }
     },
   }
@@ -584,8 +566,7 @@ fn handle_semantic_tokens(state: State, req: protocol.Request) Step {
   .{
     state,
     outgoing: [
-      req.id.success_response(lsp_semantic_tokens.semantic_tokens_response(doc.index, tokens),
-      ),
+      req.id.success_response(lsp_semantic_tokens.semantic_tokens_response(doc.index, tokens)),
     ],
   }
 }
@@ -726,9 +707,7 @@ fn note_changed_document_source(state: State, uri: String, text: String) State {
   }
   root := project_root_for_document(id.path)
   canonical := imports.canonical_module_path(id.path, imports.make_canonical_roots(root))
-  state.query_cache = state.query_cache.note_source_hash(canonical,
-    keys.hash_text(text),
-  )
+  state.query_cache = .note_source_hash(canonical, keys.hash_text(text))
   state
 }
 
@@ -786,7 +765,7 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
               group.diagnostics,
             ),
           )
-          state = state.mark_published_version(group_doc)
+          state = .mark_published_version(group_doc)
           published[group.uri] = true
         },
         .None => {},
@@ -822,7 +801,7 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
                 group.diagnostics,
               ),
             )
-            state = state.mark_published_version(group_doc)
+            state = .mark_published_version(group_doc)
             published[group.uri] = true
           },
           .None => {},

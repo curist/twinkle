@@ -7,7 +7,7 @@ use tests.assert
 use tests.runner
 
 fn state_with_doc(uri: String, text: String) server_core.State {
-  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  docs := document_store.empty().open(uri, text, .Some(1))
   server_core.State.{
     initialized: true,
     shutdown_requested: false,
@@ -21,8 +21,8 @@ fn state_with_doc(uri: String, text: String) server_core.State {
 }
 
 fn state_with_two_docs(uri_a: String, text_a: String, uri_b: String, text_b: String) server_core.State {
-  docs0 := document_store.open(document_store.empty(), uri_a, text_a, .Some(1))
-  docs := document_store.open(docs0, uri_b, text_b, .Some(1))
+  docs0 := document_store.empty().open(uri_a, text_a, .Some(1))
+  docs := docs0.open(uri_b, text_b, .Some(1))
   server_core.State.{
     initialized: true,
     shutdown_requested: false,
@@ -58,14 +58,14 @@ fn result_range(step: server_core.Step) RangeInfo!String {
   }
 
   out := step.outgoing[0]
-  result := try json.decode(out, json.field("result", json.raw()))
-  range := try json.decode(result, json.field("range", json.raw()))
-  start := try json.decode(range, json.field("start", json.raw()))
-  end := try json.decode(range, json.field("end", json.raw()))
-  start_line := try json.decode(start, json.field("line", json.int()))
-  start_char := try json.decode(start, json.field("character", json.int()))
-  end_line := try json.decode(end, json.field("line", json.int()))
-  end_char := try json.decode(end, json.field("character", json.int()))
+  result := try out.decode(json.field("result", json.raw()))
+  range := try result.decode(json.field("range", json.raw()))
+  start := try range.decode(json.field("start", json.raw()))
+  end := try range.decode(json.field("end", json.raw()))
+  start_line := try start.decode(json.field("line", json.int()))
+  start_char := try start.decode(json.field("character", json.int()))
+  end_line := try end.decode(json.field("line", json.int()))
+  end_char := try end.decode(json.field("character", json.int()))
   .Ok(.{ start_line, start_char, end_line, end_char })
 }
 
@@ -75,7 +75,7 @@ fn is_null_result(step: server_core.Step) Bool!String {
   }
 
   out := step.outgoing[0]
-  result := try json.decode(out, json.field("result", json.raw()))
+  result := try out.decode(json.field("result", json.raw()))
 
   case result {
     .Null => .Ok(true),
@@ -89,8 +89,8 @@ fn result_uri(step: server_core.Step) String!String {
   }
 
   out := step.outgoing[0]
-  result := try json.decode(out, json.field("result", json.raw()))
-  json.decode(result, json.field("uri", json.string()))
+  result := try out.decode(json.field("result", json.raw()))
+  result.decode(json.field("uri", json.string()))
 }
 
 pub fn suite() runner.Suite {
@@ -99,11 +99,11 @@ pub fn suite() runner.Suite {
       "initialize advertises typeDefinitionProvider",
       fn() {
         msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
         out := step.outgoing[0]
-        result := try json.decode(out, json.field("result", json.raw()))
-        caps := try json.decode(result, json.field("capabilities", json.raw()))
-        try assert.is_true(try json.decode(caps, json.field("typeDefinitionProvider", json.bool())))
+        result := try out.decode(json.field("result", json.raw()))
+        caps := try result.decode(json.field("capabilities", json.raw()))
+        try assert.is_true(try caps.decode(json.field("typeDefinitionProvider", json.bool())))
         .Ok({})
       },
     )
@@ -118,7 +118,7 @@ pub fn suite() runner.Suite {
         // }
         src := "type Point = .{ x: Int, y: Int }\nfn main() Int {\n  p := Point.{ x: 1, y: 2 }\n  p.x\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 3, 2))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 3, 2))
         r := try result_range(step)
         try assert.equal(r.start_line, 0)
         try assert.equal(r.start_char, 5)
@@ -138,7 +138,7 @@ pub fn suite() runner.Suite {
         // }
         src := "type Msg = .{ text: String }\nfn make() Msg { .{ text: \"hi\" } }\nfn main() String {\n  m := make()\n  m.text\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 4, 2))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 4, 2))
         r := try result_range(step)
         try assert.equal(r.start_line, 0)
         try assert.equal(r.start_char, 5)
@@ -157,7 +157,7 @@ pub fn suite() runner.Suite {
         // }
         src := "type Point = .{ x: Int, y: Int }\nfn main() Int {\n  p := Point.{ x: 1, y: 2 }\n  p.x\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 2, 2))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 2, 2))
         r := try result_range(step)
         try assert.equal(r.start_line, 0)
         try assert.equal(r.start_char, 5)
@@ -173,7 +173,7 @@ pub fn suite() runner.Suite {
         // ^  cursor on cfg
         src := "type Config = .{ debug: Bool }\ncfg := Config.{ debug: false }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 1, 0))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 1, 0))
         r := try result_range(step)
         try assert.equal(r.start_line, 0)
         try assert.equal(r.start_char, 5)
@@ -192,7 +192,7 @@ pub fn suite() runner.Suite {
         // cursor on c in case
         src := "type Color = { Red, Green, Blue }\nc := Color.Red\nfn main() Int {\n  case c { .Red => 1, .Green => 2, .Blue => 3 }\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 3, 7))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 3, 7))
         r := try result_range(step)
         try assert.equal(r.start_line, 0)
         try assert.equal(r.start_char, 5)
@@ -214,7 +214,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // cursor on "inner" in o.inner — at char 4
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 4, 4))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 4, 4))
         r := try result_range(step)
         try assert.equal(r.start_line, 0)
         try assert.equal(r.start_char, 5)
@@ -230,7 +230,7 @@ pub fn suite() runner.Suite {
         //            ^^^  cursor on Msg type annotation
         src := "type Msg = .{ text: String }\nfn send(m: Msg) Void { }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 1, 11))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 1, 11))
         r := try result_range(step)
         try assert.equal(r.start_line, 0)
         try assert.equal(r.start_char, 5)
@@ -246,7 +246,7 @@ pub fn suite() runner.Suite {
         //                          ^  cursor on p in body
         src := "type Point = .{ x: Int, y: Int }\nfn get_x(p: Point) Int { p.x }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 1, 25))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 1, 25))
         r := try result_range(step)
         try assert.equal(r.start_line, 0)
         try assert.equal(r.start_char, 5)
@@ -267,10 +267,7 @@ pub fn suite() runner.Suite {
         )
 
         // cursor on w in w.id
-        step := server_core.handle_message(
-          state,
-          typedef_request(1, "file:///tmp/lsp-typedef/main.tw", 3, 2),
-        )
+        step := state.handle_message(typedef_request(1, "file:///tmp/lsp-typedef/main.tw", 3, 2))
         uri := try result_uri(step)
         try assert.equal(uri, "file:///tmp/lsp-typedef/dep.tw")
         r := try result_range(step)
@@ -290,7 +287,7 @@ pub fn suite() runner.Suite {
         // }
         src := "fn main() Int {\n  x := 42\n  x\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 2, 2))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 2, 2))
         try assert.is_true(try is_null_result(step))
         .Ok({})
       },
@@ -300,7 +297,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "fn main() String {\n  s := \"hello\"\n  s\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 2, 2))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 2, 2))
         try assert.is_true(try is_null_result(step))
         .Ok({})
       },
@@ -310,7 +307,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "x := 42\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 0, 5))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 0, 5))
         try assert.is_true(try is_null_result(step))
         .Ok({})
       },
@@ -319,7 +316,7 @@ pub fn suite() runner.Suite {
       "unknown document returns null",
       fn() {
         state := state_with_doc("file:///a.tw", "x := 1\n")
-        step := server_core.handle_message(state, typedef_request(1, "file:///other.tw", 0, 0))
+        step := state.handle_message(typedef_request(1, "file:///other.tw", 0, 0))
         try assert.is_true(try is_null_result(step))
         .Ok({})
       },
@@ -337,7 +334,7 @@ pub fn suite() runner.Suite {
         // }
         src := "type Counter = .{ n: Int }\nfn inc(c: Counter) Counter { .{ n: c.n + 1 } }\nfn main() Int {\n  c := Counter.{ n: 0 }\n  d := c.inc()\n  d.n\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 5, 2))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 5, 2))
         r := try result_range(step)
         try assert.equal(r.start_line, 0)
         try assert.equal(r.start_char, 5)
@@ -359,7 +356,7 @@ pub fn suite() runner.Suite {
         // }
         src := "type Payload = .{ data: String }\ntype Event = { Click(Payload), Close }\nfn handle(e: Event) String {\n  case e {\n    .Click(p) => p.data,\n    .Close => \"\",\n  }\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 4, 17))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 4, 17))
         r := try result_range(step)
         try assert.equal(r.start_line, 0)
         try assert.equal(r.start_char, 5)
@@ -377,7 +374,7 @@ pub fn suite() runner.Suite {
         // }
         src := "fn main() Int {\n  xs := [1, 2, 3]\n  xs.len()\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 2, 2))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 2, 2))
         try assert.is_true(try is_null_result(step))
         .Ok({})
       },
@@ -396,7 +393,7 @@ pub fn suite() runner.Suite {
         // }
         src := "type Item = .{ id: Int }\nfn main() Int {\n  items := [Item.{ id: 1 }]\n  for item in items {\n    item.id\n  }\n  0\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 4, 4))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 4, 4))
         r := try result_range(step)
         try assert.equal(r.start_line, 0)
         try assert.equal(r.start_char, 5)
@@ -416,7 +413,7 @@ pub fn suite() runner.Suite {
         // }
         src := "type Config = .{ debug: Bool }\nfn find() Config? { .None }\nfn main() Int {\n  c := find()\n  0\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 3, 2))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 3, 2))
         r := try result_range(step)
         try assert.equal(r.start_line, 0)
         try assert.equal(r.start_char, 5)
@@ -436,7 +433,7 @@ pub fn suite() runner.Suite {
         // }
         src := "type Token = .{ kind: String }\nfn parse(s: String) Result<Token, String> { .Err(\"nope\") }\nfn main() Int {\n  r := parse(\"x\")\n  0\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 3, 2))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 3, 2))
         r := try result_range(step)
         try assert.equal(r.start_line, 0)
         try assert.equal(r.start_char, 5)
@@ -449,7 +446,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "fn find() Int? { .None }\nfn main() Int {\n  x := find()\n  0\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 2, 2))
+        step := state.handle_message(typedef_request(1, "file:///a.tw", 2, 2))
         try assert.is_true(try is_null_result(step))
         .Ok({})
       },

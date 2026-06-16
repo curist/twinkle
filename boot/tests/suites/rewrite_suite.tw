@@ -26,7 +26,7 @@ pub fn suite() runner.Suite {
           arg0_end: 13,
           second_start: .Some(15),
         })
-        fixes := rewrite.fixes(rw)
+        fixes := rw.fixes()
         try assert.equal(fixes.len(), 1)
         fix := fixes[0]
         try assert.equal(fix.edits.len(), 2)
@@ -51,7 +51,7 @@ pub fn suite() runner.Suite {
           arg0_end: 13,
           second_start: .None,
         })
-        fixes := rewrite.fixes(rw)
+        fixes := rw.fixes()
         try assert.equal(fixes.len(), 1)
         fix := fixes[0]
         try assert.equal(fix.edits.len(), 2)
@@ -76,10 +76,10 @@ pub fn suite() runner.Suite {
           arg0_end: 13,
           second_start: .Some(15),
         })
-        try assert.equal(rewrite.span(rw).start, 0)
-        try assert.equal(rewrite.span(rw).end, 17)
-        try assert.equal(rewrite.message(rw), "`map` can use inherent-method call syntax")
-        try assert.equal(rewrite.rule(rw), "inherent-calls")
+        try assert.equal(rw.span().start, 0)
+        try assert.equal(rw.span().end, 17)
+        try assert.equal(rw.message(), "`map` can use inherent-method call syntax")
+        try assert.equal(rw.rule(), "inherent-calls")
         .Ok({})
       },
     )

@@ -75,7 +75,9 @@ fn lint_block(block: Block) Vector<LintFinding> {
       // Flag the first statement after a diverging one; the rest of the block
       // is equally unreachable, so one finding per block is enough.
       if !reported {
-        out = .append(.{ span: stmt_span(stmt), message: "unreachable code", rule: "unreachable-code" })
+        out = .append(
+          .{ span: stmt_span(stmt), message: "unreachable code", rule: "unreachable-code" },
+        )
         reported = true
       }
     } else {
@@ -321,6 +323,7 @@ fn lint_record_copy(decl: FunctionDecl, env: ResolvedEnv) Vector<LintFinding> {
     .Some(e) => e,
     .None => { return [] },
   }
+
   // It must be a record literal; determine the nominal type it builds.
   pair: RecordResult? = case result.kind {
     .NamedRecord(name, entries) => .Some(.{ rec_type: name, entries }),

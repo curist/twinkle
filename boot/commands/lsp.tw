@@ -4,7 +4,6 @@ use @std.io
 use @std.proc
 
 use lib.argparse.app.{ParseResult}
-
 use lib.lsp.framing
 use lib.lsp.protocol
 use lib.lsp.server_core

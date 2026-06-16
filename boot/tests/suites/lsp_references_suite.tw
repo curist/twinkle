@@ -7,7 +7,7 @@ use tests.assert
 use tests.runner
 
 fn state_with_doc(uri: String, text: String) server_core.State {
-  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  docs := document_store.empty().open(uri, text, .Some(1))
   server_core.State.{
     initialized: true,
     shutdown_requested: false,
@@ -21,8 +21,8 @@ fn state_with_doc(uri: String, text: String) server_core.State {
 }
 
 fn state_with_two_docs(uri_a: String, text_a: String, uri_b: String, text_b: String) server_core.State {
-  docs0 := document_store.open(document_store.empty(), uri_a, text_a, .Some(1))
-  docs := document_store.open(docs0, uri_b, text_b, .Some(2))
+  docs0 := document_store.empty().open(uri_a, text_a, .Some(1))
+  docs := docs0.open(uri_b, text_b, .Some(2))
   server_core.State.{
     initialized: true,
     shutdown_requested: false,
@@ -59,19 +59,19 @@ fn ref_result_locations(step: server_core.Step) Vector<LocationInfo>!String {
   }
 
   out := step.outgoing[0]
-  result := try json.decode(out, json.field("result", json.raw()))
-  items := try json.decode(result, json.list(json.raw()))
+  result := try out.decode(json.field("result", json.raw()))
+  items := try result.decode(json.raw().list())
   locations: Vector<LocationInfo> = []
 
   for item in items {
-    uri := try json.decode(item, json.field("uri", json.string()))
-    range := try json.decode(item, json.field("range", json.raw()))
-    start := try json.decode(range, json.field("start", json.raw()))
-    end := try json.decode(range, json.field("end", json.raw()))
-    start_line := try json.decode(start, json.field("line", json.int()))
-    start_char := try json.decode(start, json.field("character", json.int()))
-    end_line := try json.decode(end, json.field("line", json.int()))
-    end_char := try json.decode(end, json.field("character", json.int()))
+    uri := try item.decode(json.field("uri", json.string()))
+    range := try item.decode(json.field("range", json.raw()))
+    start := try range.decode(json.field("start", json.raw()))
+    end := try range.decode(json.field("end", json.raw()))
+    start_line := try start.decode(json.field("line", json.int()))
+    start_char := try start.decode(json.field("character", json.int()))
+    end_line := try end.decode(json.field("line", json.int()))
+    end_char := try end.decode(json.field("character", json.int()))
     locations = .append(.{ uri, start_line, start_char, end_line, end_char })
   }
 
@@ -96,7 +96,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // Cursor on "a" at line 2, char 2
-        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 2, 2, false))
+        step := state.handle_message(ref_request(1, "file:///a.tw", 2, 2, false))
         locs := try ref_result_locations(step)
 
         // Should find 2 references (both uses on line 2), not the declaration
@@ -113,7 +113,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // Cursor on "a" at line 2, char 2; include declaration
-        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 2, 2, true))
+        step := state.handle_message(ref_request(1, "file:///a.tw", 2, 2, true))
         locs := try ref_result_locations(step)
 
         // 2 uses + 1 declaration = 3
@@ -131,7 +131,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // Cursor on "greet" call at line 1, char 5
-        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 1, 5, false))
+        step := state.handle_message(ref_request(1, "file:///a.tw", 1, 5, false))
         locs := try ref_result_locations(step)
 
         // Two call sites on lines 1 and 2
@@ -146,7 +146,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // Cursor on "greet" call at line 1, char 5; include declaration
-        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 1, 5, true))
+        step := state.handle_message(ref_request(1, "file:///a.tw", 1, 5, true))
         locs := try ref_result_locations(step)
 
         // 1 call site + 1 declaration = 2
@@ -163,7 +163,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // Cursor on "Msg" in return type at line 1, char 10
-        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 1, 10, false))
+        step := state.handle_message(ref_request(1, "file:///a.tw", 1, 10, false))
         count := try ref_result_count(step)
 
         // At least 1 ref (return type annotation)
@@ -178,7 +178,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // Cursor on "42" — a literal, no symbol
-        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 0, 15, false))
+        step := state.handle_message(ref_request(1, "file:///a.tw", 0, 15, false))
         count := try ref_result_count(step)
         try assert.equal(count, 0)
         .Ok({})
@@ -191,7 +191,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // Cursor on "greet" definition at line 0, char 3
-        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 0, 3, false))
+        step := state.handle_message(ref_request(1, "file:///a.tw", 0, 3, false))
         locs := try ref_result_locations(step)
 
         // One call site on line 1
@@ -213,7 +213,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // Cursor on first "a" definition at line 1, char 2
-        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 1, 2, false))
+        step := state.handle_message(ref_request(1, "file:///a.tw", 1, 2, false))
         locs := try ref_result_locations(step)
 
         // Only b := a on line 2 should match (the a after rebinding is a different binding)
@@ -231,16 +231,16 @@ pub fn suite() runner.Suite {
           method: "initialize",
           params: .Some(json.object([])),
         })
-        step := server_core.handle_message(state, init)
+        step := state.handle_message(init)
 
         if step.outgoing.len() != 1 {
           return .Err("expected one response")
         }
 
         out := step.outgoing[0]
-        result := try json.decode(out, json.field("result", json.raw()))
-        caps := try json.decode(result, json.field("capabilities", json.raw()))
-        refs_cap := try json.decode(caps, json.field("referencesProvider", json.bool()))
+        result := try out.decode(json.field("result", json.raw()))
+        caps := try result.decode(json.field("capabilities", json.raw()))
+        refs_cap := try caps.decode(json.field("referencesProvider", json.bool()))
         try assert.equal(refs_cap, true)
         .Ok({})
       },
@@ -257,7 +257,7 @@ pub fn suite() runner.Suite {
         state := state_with_two_docs(lib_uri, lib, main_uri, main)
 
         // Cursor on "helper" definition at line 0, char 7 in lib.tw
-        step := server_core.handle_message(state, ref_request(1, lib_uri, 0, 7, false))
+        step := state.handle_message(ref_request(1, lib_uri, 0, 7, false))
         locs := try ref_result_locations(step)
 
         // Two call sites in main.tw
@@ -280,7 +280,7 @@ pub fn suite() runner.Suite {
         state := state_with_two_docs(lib_uri, lib, main_uri, main)
 
         // Cursor on "helper" call in main.tw at line 1, char 9
-        step := server_core.handle_message(state, ref_request(1, main_uri, 1, 9, true))
+        step := state.handle_message(ref_request(1, main_uri, 1, 9, true))
         locs := try ref_result_locations(step)
 
         // 1 call site + 1 declaration = 2
@@ -309,7 +309,7 @@ pub fn suite() runner.Suite {
         state := state_with_two_docs(lib_uri, lib, main_uri, main)
 
         // Cursor on "Point" type definition in lib.tw at line 0, char 9
-        step := server_core.handle_message(state, ref_request(1, lib_uri, 0, 9, false))
+        step := state.handle_message(ref_request(1, lib_uri, 0, 9, false))
         locs := try ref_result_locations(step)
 
         // main.tw should have refs: the selective import and the return type annotation
@@ -334,7 +334,7 @@ pub fn suite() runner.Suite {
         main := "use lib\nfn f(p: lib.Point) lib.Point { p }\n"
         state := state_with_two_docs(lib_uri, lib, main_uri, main)
 
-        step := server_core.handle_message(state, ref_request(1, lib_uri, 0, 9, false))
+        step := state.handle_message(ref_request(1, lib_uri, 0, 9, false))
         locs := try ref_result_locations(step)
 
         found_param := false
@@ -363,7 +363,7 @@ pub fn suite() runner.Suite {
         src := "type Point = .{ x: Int, y: Int }\nfn origin() Point { Point.{ x: 0, y: 0 } }\n"
         state := state_with_doc("file:///a.tw", src)
 
-        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 0, 16, false))
+        step := state.handle_message(ref_request(1, "file:///a.tw", 0, 16, false))
         locs := try ref_result_locations(step)
 
         try assert.equal(locs.len(), 1)
@@ -379,7 +379,7 @@ pub fn suite() runner.Suite {
         src := "type Maybe = { None, Some(Int) }\nfn make() Maybe { .Some(1) }\nfn get(m: Maybe) Int { case m { .Some(v) => v, .None => 0 } }\n"
         state := state_with_doc("file:///a.tw", src)
 
-        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 0, 21, false))
+        step := state.handle_message(ref_request(1, "file:///a.tw", 0, 21, false))
         locs := try ref_result_locations(step)
 
         found_expr := false

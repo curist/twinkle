@@ -195,7 +195,8 @@ pub fn plan_wasm_types_impl(
 
   if timed {
     eprintln(
-      "[time:plan] funcs=${input.funcs.len().to_string()}  slot_reg_calls=${total_slot_reg.to_string()}  unique_types=${result.type_defs.len().to_string()}  strings=${result.string_pool_order.len().to_string()}",
+      "[time:plan] funcs=${input.funcs.len().to_string()}  slot_reg_calls=${total_slot_reg.to_string()}  unique_types=${result.type_defs.len()
+        .to_string()}  strings=${result.string_pool_order.len().to_string()}",
     )
     eprintln(
       "[time:plan] scan=${Float.to_string(t1 - t0)}ms  register_slots=${Float.to_string(t2 - t1)}ms  register_sigs=${Float.to_string(

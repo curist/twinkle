@@ -688,7 +688,8 @@ pub fn extract_exports_for_module(
   hidden_support_types: Dict<String, Bool> = Dict.new()
 
   for exported in visible_types {
-    hidden_support_types = env.collect_hidden_support_types_from_entry(exported.entry,
+    hidden_support_types = env.collect_hidden_support_types_from_entry(
+      exported.entry,
       hidden_support_types,
     )
   }
@@ -762,14 +763,16 @@ pub fn extract_exports_for_module(
             changed = true
 
             for param_ty in sig.params {
-              hidden_support_types = env.collect_hidden_support_types(param_ty,
+              hidden_support_types = env.collect_hidden_support_types(
+                param_ty,
                 hidden_support_types,
               )
             }
 
             case sig.ret {
               .Some(ret_ty) => {
-                hidden_support_types = env.collect_hidden_support_types(ret_ty,
+                hidden_support_types = env.collect_hidden_support_types(
+                  ret_ty,
                   hidden_support_types,
                 )
               },
@@ -895,12 +898,12 @@ fn register_imported_interface_types(
 
   for exported in exports.support_types {
     target_name := merged_export_type_name(alias, exported.name, exported.origin)
-    cur = cur.merge_exported_type(exported, target_name, type_ids, false)
+    cur = .merge_exported_type(exported, target_name, type_ids, false)
   }
 
   for exported in exports.visible_types {
     target_name := merged_export_type_name(alias, exported.name, exported.origin)
-    cur = cur.merge_exported_type(exported, target_name, type_ids, bind_visible_types)
+    cur = .merge_exported_type(exported, target_name, type_ids, bind_visible_types)
   }
 
   methods := cur.methods
@@ -2199,7 +2202,8 @@ fn collect_hidden_support_types(env: ResolvedEnv, ty: MonoType, needed: Dict<Str
       }
     },
     .Vector(inner) => env.collect_hidden_support_types(inner, needed),
-    .Dict(key, value) => env.collect_hidden_support_types(value,
+    .Dict(key, value) => env.collect_hidden_support_types(
+      value,
       env.collect_hidden_support_types(key, needed),
     ),
     .Function(params, ret) => {
@@ -2212,7 +2216,8 @@ fn collect_hidden_support_types(env: ResolvedEnv, ty: MonoType, needed: Dict<Str
       env.collect_hidden_support_types(ret, cur)
     },
     .Optional(inner) => env.collect_hidden_support_types(inner, needed),
-    .Result(ok, err) => env.collect_hidden_support_types(err,
+    .Result(ok, err) => env.collect_hidden_support_types(
+      err,
       env.collect_hidden_support_types(ok, needed),
     ),
     _ => needed,
@@ -2797,8 +2802,7 @@ fn mono_contains_circular(env: ResolvedEnv, ty: MonoType, visited: Dict<Int, Boo
     },
     .Optional(inner) => env.mono_contains_circular(inner, visited),
     .Vector(inner) => env.mono_contains_circular(inner, visited),
-    .Dict(k, v) => env.mono_contains_circular(k, visited)
-      or env.mono_contains_circular(v, visited),
+    .Dict(k, v) => env.mono_contains_circular(k, visited) or env.mono_contains_circular(v, visited),
     .Result(ok, err) => env.mono_contains_circular(ok, visited)
       or env.mono_contains_circular(err, visited),
     .Function(params, ret) => {

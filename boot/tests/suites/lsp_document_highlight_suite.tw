@@ -7,7 +7,7 @@ use tests.assert
 use tests.runner
 
 fn state_with_doc(uri: String, text: String) server_core.State {
-  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  docs := document_store.empty().open(uri, text, .Some(1))
   server_core.State.{
     initialized: true,
     shutdown_requested: false,
@@ -43,19 +43,19 @@ fn parse_highlights(step: server_core.Step) Vector<HighlightInfo>!String {
   }
 
   out := step.outgoing[0]
-  result := try json.decode(out, json.field("result", json.raw()))
-  items := try json.decode(result, json.list(json.raw()))
+  result := try out.decode(json.field("result", json.raw()))
+  items := try result.decode(json.raw().list())
   highlights: Vector<HighlightInfo> = []
 
   for item in items {
-    range := try json.decode(item, json.field("range", json.raw()))
-    kind := try json.decode(item, json.field("kind", json.int()))
-    start := try json.decode(range, json.field("start", json.raw()))
-    end := try json.decode(range, json.field("end", json.raw()))
-    start_line := try json.decode(start, json.field("line", json.int()))
-    start_char := try json.decode(start, json.field("character", json.int()))
-    end_line := try json.decode(end, json.field("line", json.int()))
-    end_char := try json.decode(end, json.field("character", json.int()))
+    range := try item.decode(json.field("range", json.raw()))
+    kind := try item.decode(json.field("kind", json.int()))
+    start := try range.decode(json.field("start", json.raw()))
+    end := try range.decode(json.field("end", json.raw()))
+    start_line := try start.decode(json.field("line", json.int()))
+    start_char := try start.decode(json.field("character", json.int()))
+    end_line := try end.decode(json.field("line", json.int()))
+    end_char := try end.decode(json.field("character", json.int()))
     highlights = .append(.{ start_line, start_char, end_line, end_char, kind })
   }
 
@@ -75,7 +75,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // Cursor on "a" at line 2, char 2
-        step := server_core.handle_message(state, highlight_request(1, "file:///a.tw", 2, 2))
+        step := state.handle_message(highlight_request(1, "file:///a.tw", 2, 2))
         highlights := try parse_highlights(step)
 
         // Should find: declaration (line 1) + two uses (line 2)
@@ -92,7 +92,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // Cursor on "greet" in the call at line 1, char 20
-        step := server_core.handle_message(state, highlight_request(1, "file:///a.tw", 1, 20))
+        step := state.handle_message(highlight_request(1, "file:///a.tw", 1, 20))
         highlights := try parse_highlights(step)
 
         // Should find: declaration (line 0) + call (line 1)
@@ -109,7 +109,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // Cursor on "Point" at line 0, char 5
-        step := server_core.handle_message(state, highlight_request(1, "file:///a.tw", 0, 5))
+        step := state.handle_message(highlight_request(1, "file:///a.tw", 0, 5))
         highlights := try parse_highlights(step)
 
         // Should find: declaration + return type annotation + named record constructor
@@ -124,7 +124,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // Cursor on space at line 0, char 13
-        step := server_core.handle_message(state, highlight_request(1, "file:///a.tw", 0, 13))
+        step := state.handle_message(highlight_request(1, "file:///a.tw", 0, 13))
         highlights := try parse_highlights(step)
         try assert.equal(highlights.len(), 0)
         .Ok({})
@@ -142,7 +142,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // Cursor on first "a" at line 1, char 2
-        step := server_core.handle_message(state, highlight_request(1, "file:///a.tw", 1, 2))
+        step := state.handle_message(highlight_request(1, "file:///a.tw", 1, 2))
         highlights := try parse_highlights(step)
 
         // First binding of "a": declaration (line 1) + RHS use in rebinding (line 2)
@@ -156,7 +156,7 @@ pub fn suite() runner.Suite {
         src := "fn foo() Int { 42 }\n"
         state := state_with_doc("file:///a.tw", src)
 
-        step := server_core.handle_message(state, highlight_request(1, "file:///unknown.tw", 0, 3))
+        step := state.handle_message(highlight_request(1, "file:///unknown.tw", 0, 3))
         highlights := try parse_highlights(step)
         try assert.equal(highlights.len(), 0)
         .Ok({})

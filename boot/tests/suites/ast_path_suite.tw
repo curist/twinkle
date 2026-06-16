@@ -45,7 +45,7 @@ pub fn suite() runner.Suite {
       "deepest returns None for empty path",
       fn() {
         path := ast_path.AstPath.{ nodes: [] }
-        try assert.is_none(ast_path.deepest(path))
+        try assert.is_none(path.deepest())
         .Ok({})
       },
     )
@@ -55,8 +55,8 @@ pub fn suite() runner.Suite {
         src := "x := 1"
         module := parse_src(src)
         path := ast_path.find_path(module, 0)
-        try assert.is_some(ast_path.deepest(path))
-        try assert.is_none(ast_path.parent(path))
+        try assert.is_some(path.deepest())
+        try assert.is_none(path.parent())
         .Ok({})
       },
     )
@@ -69,13 +69,13 @@ pub fn suite() runner.Suite {
         path := ast_path.find_path(module, off)
 
         // deepest should be an Expr (the int literal)
-        case ast_path.deepest(path) {
+        case path.deepest() {
           .Some(.Expr(_)) => {},
           other => { return assert.fail("expected Expr, got ${node_tag(other)}") },
         }
 
         // parent should be a Stmt
-        case ast_path.parent(path) {
+        case path.parent() {
           .Some(.Stmt(_)) => {},
           other => { return assert.fail("expected Stmt, got ${node_tag(other)}") },
         }
@@ -98,7 +98,7 @@ pub fn suite() runner.Suite {
         }
 
         // deepest should be an Expr (int literal)
-        case ast_path.deepest(path) {
+        case path.deepest() {
           .Some(.Expr(_)) => {},
           other => { return assert.fail("expected Expr deepest, got ${node_tag(other)}") },
         }
@@ -114,7 +114,7 @@ pub fn suite() runner.Suite {
         off := offset_of(src, "x + 1")
         path := ast_path.find_path(module, off)
 
-        case ast_path.enclosing_fn(path) {
+        case path.enclosing_fn() {
           .Some(decl) => try assert.equal(decl.name, "bar"),
           .None => { return assert.fail("expected enclosing_fn to return Some") },
         }
@@ -128,7 +128,7 @@ pub fn suite() runner.Suite {
         src := "x := 1"
         module := parse_src(src)
         path := ast_path.find_path(module, 0)
-        try assert.is_none(ast_path.enclosing_fn(path))
+        try assert.is_none(path.enclosing_fn())
         .Ok({})
       },
     )
@@ -146,7 +146,7 @@ pub fn suite() runner.Suite {
           other => { return assert.fail("expected FnDecl at root, got ${node_tag(.Some(other))}") },
         }
 
-        case ast_path.deepest(path) {
+        case path.deepest() {
           .Some(.Expr(_)) => {},
           other => { return assert.fail("expected Expr deepest, got ${node_tag(other)}") },
         }
@@ -162,7 +162,7 @@ pub fn suite() runner.Suite {
         off := offset_of(src, "_ =>")
         path := ast_path.find_path(module, off)
 
-        case ast_path.deepest(path) {
+        case path.deepest() {
           .Some(.Pattern(_)) => {},
           other => { return assert.fail("expected Pattern deepest, got ${node_tag(other)}") },
         }
@@ -190,7 +190,7 @@ pub fn suite() runner.Suite {
 
         try assert.is_true(arm_found)
 
-        case ast_path.deepest(path) {
+        case path.deepest() {
           .Some(.Expr(_)) => {},
           other => { return assert.fail("expected Expr deepest, got ${node_tag(other)}") },
         }
@@ -206,7 +206,7 @@ pub fn suite() runner.Suite {
         off := offset_of(src, "Point")
         path := ast_path.find_path(module, off)
 
-        case ast_path.deepest(path) {
+        case path.deepest() {
           .Some(.TypeDecl(_)) => {},
           other => { return assert.fail("expected TypeDecl, got ${node_tag(other)}") },
         }
@@ -222,7 +222,7 @@ pub fn suite() runner.Suite {
         off := offset_of(src, "span")
         path := ast_path.find_path(module, off)
 
-        case ast_path.deepest(path) {
+        case path.deepest() {
           .Some(.UseDecl(_)) => {},
           other => { return assert.fail("expected UseDecl, got ${node_tag(other)}") },
         }
@@ -237,7 +237,7 @@ pub fn suite() runner.Suite {
         module := parse_src(src)
         path := ast_path.find_path(module, 9999)
         try assert.equal(path.nodes.len(), 0)
-        try assert.is_none(ast_path.deepest(path))
+        try assert.is_none(path.deepest())
         .Ok({})
       },
     )

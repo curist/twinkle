@@ -7,7 +7,7 @@ use tests.assert
 use tests.runner
 
 fn state_with_doc(uri: String, text: String) server_core.State {
-  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  docs := document_store.empty().open(uri, text, .Some(1))
   server_core.State.{
     initialized: true,
     shutdown_requested: false,
@@ -45,7 +45,7 @@ fn extract_symbols(step: server_core.Step) Vector<SymbolInfo>!String {
   }
 
   out := step.outgoing[0]
-  result := try json.decode(out, json.field("result", json.raw()))
+  result := try out.decode(json.field("result", json.raw()))
   items := case result {
     .Array(arr) => arr,
     _ => { return .Err("expected array result") },
@@ -61,13 +61,11 @@ fn extract_symbols(step: server_core.Step) Vector<SymbolInfo>!String {
 }
 
 fn extract_one_symbol(item: json.Json) SymbolInfo!String {
-  name := try json.decode(item, json.field("name", json.string()))
-  kind := try json.decode(item, json.field("kind", json.int()))
-  range := try extract_range(try json.decode(item, json.field("range", json.raw())))
-  selection_range := try extract_range(
-    try json.decode(item, json.field("selectionRange", json.raw())),
-  )
-  children: Vector<SymbolInfo> = case json.decode(item, json.field("children", json.raw())) {
+  name := try item.decode(json.field("name", json.string()))
+  kind := try item.decode(json.field("kind", json.int()))
+  range := try extract_range(try item.decode(json.field("range", json.raw())))
+  selection_range := try extract_range(try item.decode(json.field("selectionRange", json.raw())))
+  children: Vector<SymbolInfo> = case item.decode(json.field("children", json.raw())) {
     .Ok(children_json) => case children_json {
       .Array(arr) => {
         result: Vector<SymbolInfo> = []
@@ -86,12 +84,12 @@ fn extract_one_symbol(item: json.Json) SymbolInfo!String {
 }
 
 fn extract_range(range_json: json.Json) RangeInfo!String {
-  start := try json.decode(range_json, json.field("start", json.raw()))
-  end := try json.decode(range_json, json.field("end", json.raw()))
-  start_line := try json.decode(start, json.field("line", json.int()))
-  start_char := try json.decode(start, json.field("character", json.int()))
-  end_line := try json.decode(end, json.field("line", json.int()))
-  end_char := try json.decode(end, json.field("character", json.int()))
+  start := try range_json.decode(json.field("start", json.raw()))
+  end := try range_json.decode(json.field("end", json.raw()))
+  start_line := try start.decode(json.field("line", json.int()))
+  start_char := try start.decode(json.field("character", json.int()))
+  end_line := try end.decode(json.field("line", json.int()))
+  end_char := try end.decode(json.field("character", json.int()))
   .Ok(.{ start_line, start_char, end_line, end_char })
 }
 
@@ -112,7 +110,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "fn greet() String { \"hi\" }\nfn add(a: Int, b: Int) Int { a + b }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        step := state.handle_message(symbol_request(1, "file:///a.tw"))
         symbols := try extract_symbols(step)
         try assert.equal(symbols.len(), 2)
         try assert.equal(symbols[0].name, "greet")
@@ -126,7 +124,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "type Point = .{ x: Int, y: Int }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        step := state.handle_message(symbol_request(1, "file:///a.tw"))
         symbols := try extract_symbols(step)
         try assert.equal(symbols.len(), 1)
         try assert.equal(symbols[0].name, "Point")
@@ -143,7 +141,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "type Shape = { Circle(Float), Rect(Float, Float), UnitSquare }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        step := state.handle_message(symbol_request(1, "file:///a.tw"))
         symbols := try extract_symbols(step)
         try assert.equal(symbols.len(), 1)
         try assert.equal(symbols[0].name, "Shape")
@@ -161,7 +159,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "extern wasi fn read(fd: Int, buf: Int) Int\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        step := state.handle_message(symbol_request(1, "file:///a.tw"))
         symbols := try extract_symbols(step)
         try assert.equal(symbols.len(), 1)
         try assert.equal(symbols[0].name, "read")
@@ -174,7 +172,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "extern host type Canvas\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        step := state.handle_message(symbol_request(1, "file:///a.tw"))
         symbols := try extract_symbols(step)
         try assert.equal(symbols.len(), 1)
         try assert.equal(symbols[0].name, "Canvas")
@@ -187,7 +185,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "use @std.fs\nuse @std.path\nfn main() Void { }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        step := state.handle_message(symbol_request(1, "file:///a.tw"))
         symbols := try extract_symbols(step)
         try assert.equal(symbols.len(), 3)
         try assert.equal(symbols[0].kind, 2) // Module
@@ -201,7 +199,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "use @std.fs\ntype Color = { Red, Green }\nfn paint() Void { }\ntype Size = .{ w: Int }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        step := state.handle_message(symbol_request(1, "file:///a.tw"))
         symbols := try extract_symbols(step)
         try assert.equal(symbols.len(), 4)
         try assert.equal(symbols[1].name, "Color")
@@ -214,7 +212,7 @@ pub fn suite() runner.Suite {
       "unknown document returns empty array",
       fn() {
         state := state_with_doc("file:///a.tw", "fn foo() Void { }\n")
-        step := server_core.handle_message(state, symbol_request(1, "file:///other.tw"))
+        step := state.handle_message(symbol_request(1, "file:///other.tw"))
         symbols := try extract_symbols(step)
         try assert.equal(symbols.len(), 0)
         .Ok({})
@@ -225,7 +223,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "type Name = String\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        step := state.handle_message(symbol_request(1, "file:///a.tw"))
         symbols := try extract_symbols(step)
         try assert.equal(symbols.len(), 1)
         try assert.equal(symbols[0].name, "Name")
@@ -243,7 +241,7 @@ pub fn suite() runner.Suite {
         //                 ^  field x name_span at char 16
         src := "fn greet() String { \"hi\" }\ntype Point = .{ x: Int, y: Int }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        step := state.handle_message(symbol_request(1, "file:///a.tw"))
         symbols := try extract_symbols(step)
 
         // Function selection range should be narrower than full range
@@ -272,7 +270,7 @@ pub fn suite() runner.Suite {
         // So "fn foo" starts at line 1, char 0.
         src := "x := \"café\"\nfn foo() Void { }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        step := state.handle_message(symbol_request(1, "file:///a.tw"))
         symbols := try extract_symbols(step)
 
         // The function should be on line 1
@@ -292,11 +290,11 @@ pub fn suite() runner.Suite {
       "initialize advertises documentSymbolProvider",
       fn() {
         msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
         out := step.outgoing[0]
-        result := try json.decode(out, json.field("result", json.raw()))
-        caps := try json.decode(result, json.field("capabilities", json.raw()))
-        try assert.is_true(try json.decode(caps, json.field("documentSymbolProvider", json.bool())))
+        result := try out.decode(json.field("result", json.raw()))
+        caps := try result.decode(json.field("capabilities", json.raw()))
+        try assert.is_true(try caps.decode(json.field("documentSymbolProvider", json.bool())))
         .Ok({})
       },
     )

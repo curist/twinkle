@@ -9,7 +9,6 @@
 
 use compiler.backend.facts as facts
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotId}
-
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.emit.helpers.{sanitize_name}
 use compiler.codegen.wasm_ir.{FieldDef, TypeDef, ValType}

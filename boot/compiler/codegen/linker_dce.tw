@@ -59,12 +59,12 @@ fn compute_reachable(linked: LinkedModule) Dict<String, Bool> {
   state := BfsState.{ queue: [], reachable: Dict.new() }
 
   for exp in linked.exports {
-    state = state.enqueue(exp.func_sym)
+    state = .enqueue(exp.func_sym)
   }
 
   for elem in linked.elems {
     for sym in elem.func_syms {
-      state = state.enqueue(sym)
+      state = .enqueue(sym)
     }
   }
 

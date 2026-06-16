@@ -7,7 +7,7 @@ use tests.assert
 use tests.runner
 
 fn state_with_doc(uri: String, text: String) server_core.State {
-  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  docs := document_store.empty().open(uri, text, .Some(1))
   server_core.State.{
     initialized: true,
     shutdown_requested: false,
@@ -27,15 +27,10 @@ fn state_with_warm_cache(uri: String, valid_text: String, incomplete_text: Strin
   state := state_with_doc(uri, valid_text)
 
   // Trigger a request on the valid code to populate the query cache
-  step := server_core.handle_message(state, sig_help_request(1, uri, 0, 0))
+  step := state.handle_message(sig_help_request(1, uri, 0, 0))
 
   // Now update the document with incomplete code
-  step.state.documents = document_store.change_full_text(
-    step.state.documents,
-    uri,
-    incomplete_text,
-    .Some(2),
-  )
+  step.state.documents = .change_full_text(uri, incomplete_text, .Some(2))
   step.state
 }
 
@@ -62,13 +57,13 @@ fn extract_sig_help(step: server_core.Step) SigHelpInfo?!String {
   }
 
   out := step.outgoing[0]
-  result := try json.decode(out, json.field("result", json.raw()))
+  result := try out.decode(json.field("result", json.raw()))
 
   case result {
     .Null => .Ok(.None),
     _ => {
-      active_param := try json.decode(result, json.field("activeParameter", json.int()))
-      sigs := try json.decode(result, json.field("signatures", json.raw()))
+      active_param := try result.decode(json.field("activeParameter", json.int()))
+      sigs := try result.decode(json.field("signatures", json.raw()))
       items := case sigs {
         .Array(arr) => arr,
         _ => { return .Err("expected signatures array") },
@@ -79,8 +74,8 @@ fn extract_sig_help(step: server_core.Step) SigHelpInfo?!String {
       }
 
       sig := items[0]
-      label := try json.decode(sig, json.field("label", json.string()))
-      params_json := try json.decode(sig, json.field("parameters", json.raw()))
+      label := try sig.decode(json.field("label", json.string()))
+      params_json := try sig.decode(json.field("parameters", json.raw()))
       param_items := case params_json {
         .Array(arr) => arr,
         _ => [],
@@ -88,7 +83,7 @@ fn extract_sig_help(step: server_core.Step) SigHelpInfo?!String {
       param_labels: Vector<String> = []
 
       for p in param_items {
-        pl := try json.decode(p, json.field("label", json.string()))
+        pl := try p.decode(json.field("label", json.string()))
         param_labels = .append(pl)
       }
 
@@ -107,7 +102,7 @@ pub fn suite() runner.Suite {
         //     ^ cursor here, char 4
         src := "fn add(a: Int, b: Int) Int { a + b }\nadd()\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 4))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 1, 4))
         info := try extract_sig_help(step)
 
         case info {
@@ -132,7 +127,7 @@ pub fn suite() runner.Suite {
         //        ^ cursor here, char 7
         src := "fn add(a: Int, b: Int) Int { a + b }\nadd(1, 2)\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 7))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 1, 7))
         info := try extract_sig_help(step)
 
         case info {
@@ -154,7 +149,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // "outer(inner(" is 12 chars on line 2, cursor at char 12
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 2, 12))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 2, 12))
         info := try extract_sig_help(step)
 
         case info {
@@ -179,7 +174,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // p.translate( is on line 5, cursor at char 12
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 5, 12))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 5, 12))
         info := try extract_sig_help(step)
 
         case info {
@@ -200,7 +195,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "unknown_fn()\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 0, 11))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 0, 11))
         info := try extract_sig_help(step)
         try assert.is_none(info)
         .Ok({})
@@ -213,7 +208,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // path.join( → cursor at char 10 on line 1
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 10))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 1, 10))
         info := try extract_sig_help(step)
 
         case info {
@@ -233,7 +228,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // cursor after comma: line 2 char 14
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 2, 14))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 2, 14))
         info := try extract_sig_help(step)
 
         case info {
@@ -256,7 +251,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // cursor after second comma: "make(1, \"x\", " → char 13
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 13))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 1, 13))
         info := try extract_sig_help(step)
 
         case info {
@@ -276,7 +271,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "fn noop() Void { }\nnoop()\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 5))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 1, 5))
         info := try extract_sig_help(step)
 
         case info {
@@ -303,7 +298,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", src)
 
         // cursor after comma on line 2, char 7
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 2, 7))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 2, 7))
         info := try extract_sig_help(step)
 
         case info {
@@ -326,7 +321,7 @@ pub fn suite() runner.Suite {
         state := state_with_warm_cache("file:///a.tw", valid, incomplete)
 
         // cursor at end of file: line 1, char 4
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 4))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 1, 4))
         info := try extract_sig_help(step)
 
         case info {
@@ -352,7 +347,7 @@ pub fn suite() runner.Suite {
         state := state_with_warm_cache("file:///a.tw", valid, incomplete)
 
         // cursor at end: line 1, char 7
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 7))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 1, 7))
         info := try extract_sig_help(step)
 
         case info {
@@ -377,7 +372,7 @@ pub fn suite() runner.Suite {
         state := state_with_warm_cache("file:///a.tw", valid, incomplete)
 
         // cursor at end: line 2, char 8
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 2, 8))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 2, 8))
         info := try extract_sig_help(step)
 
         case info {
@@ -404,7 +399,7 @@ pub fn suite() runner.Suite {
         state := state_with_warm_cache("file:///a.tw", valid, incomplete)
 
         // cursor at end: line 1, char 13
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 13))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 1, 13))
         info := try extract_sig_help(step)
 
         case info {
@@ -427,7 +422,7 @@ pub fn suite() runner.Suite {
         state := state_with_warm_cache("file:///a.tw", valid, incomplete)
 
         // cursor at end: line 1, char 13
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 13))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 1, 13))
         info := try extract_sig_help(step)
 
         case info {
@@ -450,7 +445,7 @@ pub fn suite() runner.Suite {
         state := state_with_warm_cache("file:///a.tw", valid, incomplete)
 
         // cursor at end: line 2, char 12
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 2, 12))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 2, 12))
         info := try extract_sig_help(step)
 
         case info {
@@ -475,7 +470,7 @@ pub fn suite() runner.Suite {
         state := state_with_warm_cache("file:///a.tw", valid, incomplete)
 
         // cursor at end: line 1, char 10
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 10))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 1, 10))
         info := try extract_sig_help(step)
 
         case info {
@@ -498,7 +493,7 @@ pub fn suite() runner.Suite {
         state := state_with_warm_cache("file:///a.tw", valid, edited)
 
         // cursor inside parens: line 1, char 11
-        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 11))
+        step := state.handle_message(sig_help_request(1, "file:///a.tw", 1, 11))
         info := try extract_sig_help(step)
 
         case info {
@@ -515,12 +510,12 @@ pub fn suite() runner.Suite {
       "initialize advertises signatureHelpProvider",
       fn() {
         msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
         out := step.outgoing[0]
-        result := try json.decode(out, json.field("result", json.raw()))
-        caps := try json.decode(result, json.field("capabilities", json.raw()))
-        sig_help := try json.decode(caps, json.field("signatureHelpProvider", json.raw()))
-        triggers := try json.decode(sig_help, json.field("triggerCharacters", json.raw()))
+        result := try out.decode(json.field("result", json.raw()))
+        caps := try result.decode(json.field("capabilities", json.raw()))
+        sig_help := try caps.decode(json.field("signatureHelpProvider", json.raw()))
+        triggers := try sig_help.decode(json.field("triggerCharacters", json.raw()))
 
         case triggers {
           .Array(arr) => try assert.is_true(arr.len() >= 2),

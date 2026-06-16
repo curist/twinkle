@@ -7,7 +7,7 @@ use tests.assert
 use tests.runner
 
 fn state_with_doc(uri: String, text: String) server_core.State {
-  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  docs := document_store.empty().open(uri, text, .Some(1))
   server_core.State.{
     initialized: true,
     shutdown_requested: false,
@@ -21,8 +21,8 @@ fn state_with_doc(uri: String, text: String) server_core.State {
 }
 
 fn state_with_two_docs(uri_a: String, text_a: String, uri_b: String, text_b: String) server_core.State {
-  docs0 := document_store.open(document_store.empty(), uri_a, text_a, .Some(1))
-  docs := document_store.open(docs0, uri_b, text_b, .Some(1))
+  docs0 := document_store.empty().open(uri_a, text_a, .Some(1))
+  docs := docs0.open(uri_b, text_b, .Some(1))
   server_core.State.{
     initialized: true,
     shutdown_requested: false,
@@ -52,9 +52,9 @@ fn hover_content(step: server_core.Step) String!String {
   }
 
   out := step.outgoing[0]
-  result := try json.decode(out, json.field("result", json.raw()))
-  contents := try json.decode(result, json.field("contents", json.raw()))
-  value := try json.decode(contents, json.field("value", json.string()))
+  result := try out.decode(json.field("result", json.raw()))
+  contents := try result.decode(json.field("contents", json.raw()))
+  value := try contents.decode(json.field("value", json.string()))
   .Ok(value)
 }
 
@@ -64,7 +64,7 @@ fn is_null_result(step: server_core.Step) Bool!String {
   }
 
   out := step.outgoing[0]
-  result := try json.decode(out, json.field("result", json.raw()))
+  result := try out.decode(json.field("result", json.raw()))
 
   case result {
     .Null => .Ok(true),
@@ -81,7 +81,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", "x := 42\n")
 
         // "42" is at offset 5-7, line 0 char 5
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 5))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 0, 5))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nInt\n```")
         .Ok({})
@@ -93,7 +93,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", "x := \"hello\"\n")
 
         // "hello" starts at offset 5, line 0 char 5
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 5))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 0, 5))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nString\n```")
         .Ok({})
@@ -103,7 +103,7 @@ pub fn suite() runner.Suite {
       "hover on boolean literal shows Bool",
       fn() {
         state := state_with_doc("file:///a.tw", "x := true\n")
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 5))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 0, 5))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nBool\n```")
         .Ok({})
@@ -116,7 +116,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", "x := 42\ny := x\n")
 
         // "x" on line 1 is at char 5
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 5))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 5))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nInt\n```")
         .Ok({})
@@ -127,7 +127,7 @@ pub fn suite() runner.Suite {
       fn() {
         source := "input := \"ab\"\nfor dir in input {\n  println(Byte.to_string(dir))\n}\n"
         state := state_with_doc("file:///a.tw", source)
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 4))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 4))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nByte\n```")
         .Ok({})
@@ -138,7 +138,7 @@ pub fn suite() runner.Suite {
       fn() {
         source := "input := \"ab\"\nxs := collect dir in input { dir }\n"
         state := state_with_doc("file:///a.tw", source)
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 14))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 14))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nByte\n```")
         .Ok({})
@@ -153,7 +153,7 @@ pub fn suite() runner.Suite {
         )
 
         // "add" on line 1 at char 5
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 5))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 5))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nfn(a: Int, b: Int) Int\n```")
         .Ok({})
@@ -168,7 +168,7 @@ pub fn suite() runner.Suite {
         )
 
         // "1" on line 1 at char 9
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 9))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 9))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nInt\n```")
         .Ok({})
@@ -178,7 +178,7 @@ pub fn suite() runner.Suite {
       "hover returns null for unknown document",
       fn() {
         state := state_with_doc("file:///a.tw", "x := 1\n")
-        step := server_core.handle_message(state, hover_request(1, "file:///other.tw", 0, 0))
+        step := state.handle_message(hover_request(1, "file:///other.tw", 0, 0))
         try assert.is_true(try is_null_result(step))
         .Ok({})
       },
@@ -189,7 +189,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", "x := 1\n\n\n")
 
         // line 2 is empty
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 2, 0))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 2, 0))
         try assert.is_true(try is_null_result(step))
         .Ok({})
       },
@@ -200,7 +200,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", "x := 1 + 2\n")
 
         // "1" at char 5
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 5))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 0, 5))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nInt\n```")
         .Ok({})
@@ -213,7 +213,7 @@ pub fn suite() runner.Suite {
           "file:///a.tw",
           "type Program = .{ source: String }\nfn f(x: Program) Program { x }\n",
         )
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 8))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 8))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nProgram\n```")
         .Ok({})
@@ -223,7 +223,7 @@ pub fn suite() runner.Suite {
       "hover on function declaration name shows signature",
       fn() {
         state := state_with_doc("file:///a.tw", "fn make(x: Int) Int { x }\n")
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 4))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 0, 4))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nfn(x: Int) Int\n```")
         .Ok({})
@@ -233,7 +233,7 @@ pub fn suite() runner.Suite {
       "hover on type declaration name shows type",
       fn() {
         state := state_with_doc("file:///a.tw", "type Program = .{ source: String }\n")
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 6))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 0, 6))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nProgram\n```")
         .Ok({})
@@ -243,7 +243,7 @@ pub fn suite() runner.Suite {
       "hover on top-level binding name shows inferred type",
       fn() {
         state := state_with_doc("file:///a.tw", "value := 42\n")
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 1))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 0, 1))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nInt\n```")
         .Ok({})
@@ -254,7 +254,7 @@ pub fn suite() runner.Suite {
       fn() {
         source := "type ParseError = { HelpRequested(String), Other }\nfn main(err: ParseError) String {\n  case err {\n    .HelpRequested(msg) => msg,\n    .Other => \"\",\n  }\n}\n"
         state := state_with_doc("file:///a.tw", source)
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 5))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 3, 5))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nParseError.HelpRequested(String)\n```")
         .Ok({})
@@ -265,10 +265,10 @@ pub fn suite() runner.Suite {
       fn() {
         source := "fn main() Int {\n  r: Int!String = .Ok(1)\n  case r {\n    .Ok(v) => v,\n    .Err(_) => 0,\n  }\n}\n"
         state := state_with_doc("file:///a.tw", source)
-        ok_step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 5))
+        ok_step := state.handle_message(hover_request(1, "file:///a.tw", 3, 5))
         ok_content := try hover_content(ok_step)
         try assert.equal(ok_content, "```twinkle\nResult.Ok(Int)\n```")
-        err_step := server_core.handle_message(state, hover_request(2, "file:///a.tw", 4, 5))
+        err_step := state.handle_message(hover_request(2, "file:///a.tw", 4, 5))
         err_content := try hover_content(err_step)
         try assert.equal(err_content, "```twinkle\nResult.Err(String)\n```")
         .Ok({})
@@ -284,7 +284,7 @@ pub fn suite() runner.Suite {
         //  0123456789012345
         //  result := n.inc()
         // "inc" starts at char 12
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 12))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 3, 12))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nfn(c: Counter) Counter\n```")
         .Ok({})
@@ -297,7 +297,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", source)
 
         // hover on "add" in the call on line 1 at char 5
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 5))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 5))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nfn(a: Int, b: Int) Int\n```")
         .Ok({})
@@ -314,8 +314,7 @@ pub fn suite() runner.Suite {
           "file:///tmp/lsp-hover-module/main.tw",
           main,
         )
-        step := server_core.handle_message(
-          state,
+        step := state.handle_message(
           hover_request(1, "file:///tmp/lsp-hover-module/main.tw", 2, 17),
         )
         content := try hover_content(step)
@@ -334,8 +333,7 @@ pub fn suite() runner.Suite {
           "file:///tmp/lsp-hover-import/main.tw",
           main,
         )
-        step := server_core.handle_message(
-          state,
+        step := state.handle_message(
           hover_request(1, "file:///tmp/lsp-hover-import/main.tw", 0, 10),
         )
         content := try hover_content(step)
@@ -354,8 +352,7 @@ pub fn suite() runner.Suite {
           "file:///tmp/lsp-hover-import-type/main.tw",
           main,
         )
-        step := server_core.handle_message(
-          state,
+        step := state.handle_message(
           hover_request(1, "file:///tmp/lsp-hover-import-type/main.tw", 0, 10),
         )
         content := try hover_content(step)
@@ -370,11 +367,11 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", source)
 
         // hover on first char 'i' of "inc" at char 12
-        step1 := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 12))
+        step1 := state.handle_message(hover_request(1, "file:///a.tw", 3, 12))
         c1 := try hover_content(step1)
 
         // hover on last char 'c' of "inc" at char 14
-        step2 := server_core.handle_message(state, hover_request(2, "file:///a.tw", 3, 14))
+        step2 := state.handle_message(hover_request(2, "file:///a.tw", 3, 14))
         c2 := try hover_content(step2)
         try assert.equal(c1, c2)
         .Ok({})
@@ -387,7 +384,7 @@ pub fn suite() runner.Suite {
         // line 0:                  0123456789...
         // "a" is at char 7
         state := state_with_doc("file:///a.tw", "fn add(a: Int, b: Int) Int { a + b }\n")
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 7))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 0, 7))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nInt\n```")
         .Ok({})
@@ -400,7 +397,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", source)
 
         // "x" on line 1 at char 2
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 2))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 2))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nInt\n```")
         .Ok({})
@@ -414,7 +411,7 @@ pub fn suite() runner.Suite {
 
         // "x" on line 2: "  for x in [1, 2, 3] {"
         //                  01234
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 2, 6))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 2, 6))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nInt\n```")
         .Ok({})
@@ -428,7 +425,7 @@ pub fn suite() runner.Suite {
 
         // "v" in ".Some(v)" on line 3: "    .Some(v) => v,"
         //                                0123456789
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 10))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 3, 10))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nInt\n```")
         .Ok({})
@@ -443,7 +440,7 @@ pub fn suite() runner.Suite {
         // "x" in "fn(x: Int)" on line 1: "  f := fn(x: Int) Int { x + 1 }"
         //                                  0123456789...
         // x is at char 10
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 10))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 10))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nInt\n```")
         .Ok({})
@@ -457,7 +454,7 @@ pub fn suite() runner.Suite {
 
         // "add_one" on line 5: "value := add_one(1)"
         //                       012345678
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 5, 9))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 5, 9))
         content := try hover_content(step)
         try assert.str_contains(content, "fn(x: Int) Int")
         try assert.str_contains(content, "Add one to x.")
@@ -472,7 +469,7 @@ pub fn suite() runner.Suite {
 
         // "add_one" on line 1: "fn add_one(x: Int) Int {"
         //                       0123
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 4))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 4))
         content := try hover_content(step)
         try assert.str_contains(content, "fn(x: Int) Int")
         try assert.str_contains(content, "Add one to x.")
@@ -487,7 +484,7 @@ pub fn suite() runner.Suite {
 
         // "Color" on line 1: "type Color = ..."
         //                      01234567
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 6))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 6))
         content := try hover_content(step)
         try assert.str_contains(content, "Color")
         try assert.str_contains(content, "RGB color value.")
@@ -499,7 +496,7 @@ pub fn suite() runner.Suite {
       fn() {
         source := "println(\"hello\")\n"
         state := state_with_doc("file:///a.tw", source)
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 1))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 0, 1))
         content := try hover_content(step)
         try assert.str_contains(content, "fn(s: String) Void")
         try assert.str_contains(content, "Print a string to stdout followed by a newline.")
@@ -511,7 +508,7 @@ pub fn suite() runner.Suite {
       fn() {
         source := "r := range(10)\n"
         state := state_with_doc("file:///a.tw", source)
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 6))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 0, 6))
         content := try hover_content(step)
         try assert.str_contains(content, "fn(end: Int) Range")
         try assert.str_contains(content, "Create a range from 0 to end (exclusive).")
@@ -523,7 +520,7 @@ pub fn suite() runner.Suite {
       fn() {
         source := "xs := [1, 2, 3]\nn := xs.len()\n"
         state := state_with_doc("file:///a.tw", source)
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 8))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 8))
         content := try hover_content(step)
         try assert.str_contains(content, "fn(xs: Vector<Int>) Int")
         try assert.str_contains(content, "Return the number of elements.")
@@ -535,7 +532,7 @@ pub fn suite() runner.Suite {
       fn() {
         source := "sum := Cell.new(0)\nsum.update(fn(s) { s + 1 })\n"
         state := state_with_doc("file:///a.tw", source)
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 5))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 5))
         content := try hover_content(step)
         try assert.str_contains(content, "fn(cell: Cell<Int>, f: fn(Int) Int) Void")
         try assert.str_contains(content, "Apply f to the current value and store the result.")
@@ -547,7 +544,7 @@ pub fn suite() runner.Suite {
       fn() {
         source := "sum := Cell.new(0)\nfor i in range(10) {\n  sum.update(fn(s) { s + i })\n}\n"
         state := state_with_doc("file:///a.tw", source)
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 2, 6))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 2, 6))
         content := try hover_content(step)
         try assert.str_contains(content, "fn(cell: Cell<Int>, f: fn(Int) Int) Void")
         try assert.str_contains(content, "Apply f to the current value and store the result.")
@@ -559,7 +556,7 @@ pub fn suite() runner.Suite {
       fn() {
         source := "x: Option<Int> = .Some(1)\n"
         state := state_with_doc("file:///a.tw", source)
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 3))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 0, 3))
         content := try hover_content(step)
         try assert.str_contains(content, "Option")
         try assert.str_contains(content, "Optional value: None or Some(T).")
@@ -571,7 +568,7 @@ pub fn suite() runner.Suite {
       fn() {
         source := "x := Int.from_string(\"42\")\n"
         state := state_with_doc("file:///a.tw", source)
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 10))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 0, 10))
         content := try hover_content(step)
         try assert.str_contains(content, "fn(s: String) Int?")
         try assert.str_contains(content, "Parse a string as an integer")
@@ -583,10 +580,10 @@ pub fn suite() runner.Suite {
       fn() {
         source := "fn main() Int {\n  x: Int? = .Some(42)\n  case x {\n    .Some(v) => v,\n    .None => 0,\n  }\n}\n"
         state := state_with_doc("file:///a.tw", source)
-        some_step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 5))
+        some_step := state.handle_message(hover_request(1, "file:///a.tw", 3, 5))
         some_content := try hover_content(some_step)
         try assert.equal(some_content, "```twinkle\nOption.Some(Int)\n```")
-        none_step := server_core.handle_message(state, hover_request(2, "file:///a.tw", 4, 5))
+        none_step := state.handle_message(hover_request(2, "file:///a.tw", 4, 5))
         none_content := try hover_content(none_step)
         try assert.equal(none_content, "```twinkle\nOption.None\n```")
         .Ok({})
@@ -597,7 +594,7 @@ pub fn suite() runner.Suite {
       fn() {
         source := "fn main() Int!String {\n  .Ok(1)\n}\n"
         state := state_with_doc("file:///variant-expr.tw", source)
-        step := server_core.handle_message(state, hover_request(1, "file:///variant-expr.tw", 1, 3))
+        step := state.handle_message(hover_request(1, "file:///variant-expr.tw", 1, 3))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nResult.Ok(Int)\n```")
         .Ok({})
@@ -608,10 +605,7 @@ pub fn suite() runner.Suite {
       fn() {
         source := "type Color = { Red, Rgb(Int, Int, Int) }\nfn main() Color { Color.Rgb(1, 2, 3) }\n"
         state := state_with_doc("file:///qualified-variant.tw", source)
-        step := server_core.handle_message(
-          state,
-          hover_request(1, "file:///qualified-variant.tw", 1, 24),
-        )
+        step := state.handle_message(hover_request(1, "file:///qualified-variant.tw", 1, 24))
         content := try hover_content(step)
         try assert.equal(content, "```twinkle\nColor.Rgb(Int, Int, Int)\n```")
         .Ok({})
@@ -628,8 +622,7 @@ pub fn suite() runner.Suite {
           "file:///tmp/lsp-hover-variant/main.tw",
           main,
         )
-        step := server_core.handle_message(
-          state,
+        step := state.handle_message(
           hover_request(1, "file:///tmp/lsp-hover-variant/main.tw", 1, 32),
         )
         content := try hover_content(step)
@@ -642,16 +635,10 @@ pub fn suite() runner.Suite {
       fn() {
         source := "type Box = { Box(Int?) }\nfn main(b: Box) Int {\n  case b {\n    .Box(.Some(v)) => v,\n  }\n}\n"
         state := state_with_doc("file:///nested-pattern.tw", source)
-        some_step := server_core.handle_message(
-          state,
-          hover_request(1, "file:///nested-pattern.tw", 3, 10),
-        )
+        some_step := state.handle_message(hover_request(1, "file:///nested-pattern.tw", 3, 10))
         some_content := try hover_content(some_step)
         try assert.equal(some_content, "```twinkle\nOption.Some(Int)\n```")
-        binder_step := server_core.handle_message(
-          state,
-          hover_request(2, "file:///nested-pattern.tw", 3, 15),
-        )
+        binder_step := state.handle_message(hover_request(2, "file:///nested-pattern.tw", 3, 15))
         binder_content := try hover_content(binder_step)
         try assert.equal(binder_content, "```twinkle\nInt\n```")
         .Ok({})
@@ -667,7 +654,7 @@ pub fn suite() runner.Suite {
 
         // "greet" on last line: "g := t.greet()"
         //                        01234567
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 4, 7))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 4, 7))
         content := try hover_content(step)
         try assert.str_contains(content, "fn(t: Text) String")
         .Ok({})
@@ -682,7 +669,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", source)
 
         // "Stringify" starts at char 11
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 13))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 0, 13))
         content := try hover_content(step)
         try assert.str_contains(content, "contract Stringify")
         try assert.str_contains(content, "to_string")
@@ -698,13 +685,13 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", source)
 
         // "Eq" starts at char 12
-        eq_step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 12))
+        eq_step := state.handle_message(hover_request(1, "file:///a.tw", 0, 12))
         eq_content := try hover_content(eq_step)
         try assert.str_contains(eq_content, "contract Eq")
         try assert.str_contains(eq_content, "eq")
 
         // "Stringify" starts at char 17
-        str_step := server_core.handle_message(state, hover_request(2, "file:///a.tw", 0, 19))
+        str_step := state.handle_message(hover_request(2, "file:///a.tw", 0, 19))
         str_content := try hover_content(str_step)
         try assert.str_contains(str_content, "contract Stringify")
         try assert.str_contains(str_content, "to_string")
@@ -718,7 +705,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", source)
 
         // "check" usage on line 1 at char 5
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 7))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 7))
         content := try hover_content(step)
         try assert.str_contains(content, "fn<T: Eq + Stringify>(a: T, b: T) Bool")
         .Ok({})
@@ -731,7 +718,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", source)
 
         // "first" usage on line 1 at char 5
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 7))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 7))
         content := try hover_content(step)
         try assert.str_contains(content, "fn<C: IndexRead<E>, E>(c: C) E")
         .Ok({})
@@ -746,7 +733,7 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", source)
 
         // "Stringify" starts at char 12
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 14))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 0, 14))
         content := try hover_content(step)
         try assert.str_contains(content, "contract Stringify")
         try assert.str_contains(content, "to_string")
@@ -761,7 +748,7 @@ pub fn suite() runner.Suite {
 
         // "to_string" on line 1: "  x.to_string()"
         //                         01234
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 5))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 5))
         content := try hover_content(step)
         try assert.str_contains(content, "fn to_string(value: Self) String")
         try assert.str_contains(content, "Contract method from")
@@ -777,7 +764,7 @@ pub fn suite() runner.Suite {
 
         // "eq" on line 1: "  a.eq(b)"
         //                  01234
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 4))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 4))
         content := try hover_content(step)
         try assert.str_contains(content, "fn eq(value: Self, other: Self) Bool")
         try assert.str_contains(content, "Contract method from")
@@ -793,7 +780,7 @@ pub fn suite() runner.Suite {
 
         // "compare" on line 1: "  a.compare(b)"
         //                       01234
-        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 5))
+        step := state.handle_message(hover_request(1, "file:///a.tw", 1, 5))
         content := try hover_content(step)
         try assert.str_contains(content, "fn compare(value: Self, other: Self) Order")
         try assert.str_contains(content, "Contract method from")
@@ -805,11 +792,11 @@ pub fn suite() runner.Suite {
       "initialize advertises hoverProvider",
       fn() {
         msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
         out := step.outgoing[0]
-        result := try json.decode(out, json.field("result", json.raw()))
-        caps := try json.decode(result, json.field("capabilities", json.raw()))
-        try assert.is_true(try json.decode(caps, json.field("hoverProvider", json.bool())))
+        result := try out.decode(json.field("result", json.raw()))
+        caps := try result.decode(json.field("capabilities", json.raw()))
+        try assert.is_true(try caps.decode(json.field("hoverProvider", json.bool())))
         .Ok({})
       },
     )

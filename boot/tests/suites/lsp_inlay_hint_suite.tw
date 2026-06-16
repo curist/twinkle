@@ -7,7 +7,7 @@ use tests.assert
 use tests.runner
 
 fn state_with_doc(uri: String, text: String) server_core.State {
-  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  docs := document_store.empty().open(uri, text, .Some(1))
   server_core.State.{
     initialized: true,
     shutdown_requested: false,
@@ -50,12 +50,12 @@ fn hint_labels(step: server_core.Step) Vector<String>!String {
   }
 
   out := step.outgoing[0]
-  result := try json.decode(out, json.field("result", json.raw()))
-  items := try json.decode(result, json.list(json.raw()))
+  result := try out.decode(json.field("result", json.raw()))
+  items := try result.decode(json.raw().list())
   labels: Vector<String> = []
 
   for item in items {
-    label := try json.decode(item, json.field("label", json.string()))
+    label := try item.decode(json.field("label", json.string()))
     labels = .append(label)
   }
 
@@ -68,12 +68,12 @@ fn hint_kinds(step: server_core.Step) Vector<Int>!String {
   }
 
   out := step.outgoing[0]
-  result := try json.decode(out, json.field("result", json.raw()))
-  items := try json.decode(result, json.list(json.raw()))
+  result := try out.decode(json.field("result", json.raw()))
+  items := try result.decode(json.raw().list())
   kinds: Vector<Int> = []
 
   for item in items {
-    kind := try json.decode(item, json.field("kind", json.int()))
+    kind := try item.decode(json.field("kind", json.int()))
     kinds = .append(kind)
   }
 
@@ -88,7 +88,7 @@ pub fn suite() runner.Suite {
         // x := [1, 2, 3]  — type is Vector<Int>, should get a hint
         src := "x := [1, 2, 3]\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 1))
+        step := state.handle_message(inlay_hint_request(1, "file:///a.tw", 0, 1))
         labels := try hint_labels(step)
         try assert.equal(labels.len(), 1)
         try assert.equal(labels[0], ": Vector<Int>")
@@ -100,7 +100,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "x := 42\ny := \"hello\"\nz := true\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 3))
+        step := state.handle_message(inlay_hint_request(1, "file:///a.tw", 0, 3))
         labels := try hint_labels(step)
         try assert.equal(labels.len(), 0)
         .Ok({})
@@ -111,7 +111,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "x: Int = 42\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 1))
+        step := state.handle_message(inlay_hint_request(1, "file:///a.tw", 0, 1))
         labels := try hint_labels(step)
         try assert.equal(labels.len(), 0)
         .Ok({})
@@ -122,7 +122,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "x := [1, 2]\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 1))
+        step := state.handle_message(inlay_hint_request(1, "file:///a.tw", 0, 1))
         kinds := try hint_kinds(step)
         try assert.equal(kinds.len(), 1)
         try assert.equal(kinds[0], 1)
@@ -134,7 +134,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "fn add(a: Int, b: Int) Int { a + b }\nx := add(1, 2)\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 2))
+        step := state.handle_message(inlay_hint_request(1, "file:///a.tw", 0, 2))
         labels := try hint_labels(step)
 
         // Should have type hint for x := add(1, 2) and param hints for a:, b:
@@ -148,7 +148,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "fn greet(name: String) String { name }\nname := \"world\"\nx := greet(name)\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 3))
+        step := state.handle_message(inlay_hint_request(1, "file:///a.tw", 0, 3))
         labels := try hint_labels(step)
 
         // Should NOT have a "name: " parameter hint since arg is already `name`
@@ -160,7 +160,7 @@ pub fn suite() runner.Suite {
       "empty result for unknown document",
       fn() {
         state := state_with_doc("file:///a.tw", "x := 1\n")
-        step := server_core.handle_message(state, inlay_hint_request(1, "file:///unknown.tw", 0, 1))
+        step := state.handle_message(inlay_hint_request(1, "file:///unknown.tw", 0, 1))
         labels := try hint_labels(step)
         try assert.equal(labels.len(), 0)
         .Ok({})
@@ -171,7 +171,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "xs := [1, 2, 3]\nfor x in xs {\n  x\n}\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 4))
+        step := state.handle_message(inlay_hint_request(1, "file:///a.tw", 0, 4))
         labels := try hint_labels(step)
         try assert.is_true(labels.contains(": Int"))
         .Ok({})
@@ -182,7 +182,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "xs := [1, 2, 3]\nys := collect x in xs { x + 1 }\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 2))
+        step := state.handle_message(inlay_hint_request(1, "file:///a.tw", 0, 2))
         labels := try hint_labels(step)
 
         // Should have hint for xs, ys, and x
@@ -195,7 +195,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "xs := [1, 2, 3]\nys := xs.map(fn(x) { x + 1 })\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 2))
+        step := state.handle_message(inlay_hint_request(1, "file:///a.tw", 0, 2))
         labels := try hint_labels(step)
 
         // Should have a type hint for the closure param x
@@ -208,7 +208,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "xs := [1, 2, 3]\nys := xs.map(fn(x: Int) { x + 1 })\n"
         state := state_with_doc("file:///a.tw", src)
-        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 2))
+        step := state.handle_message(inlay_hint_request(1, "file:///a.tw", 0, 2))
         labels := try hint_labels(step)
 
         // Count how many ": Int" hints — should NOT have one for the annotated closure param
@@ -223,16 +223,16 @@ pub fn suite() runner.Suite {
       "inlayHintProvider advertised in capabilities",
       fn() {
         msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
-        step := server_core.handle_message(server_core.initial_state(), msg)
+        step := server_core.initial_state().handle_message(msg)
 
         if step.outgoing.len() != 1 {
           return .Err("expected one message")
         }
 
         out := step.outgoing[0]
-        result := try json.decode(out, json.field("result", json.raw()))
-        caps := try json.decode(result, json.field("capabilities", json.raw()))
-        hint_cap := try json.decode(caps, json.field("inlayHintProvider", json.bool()))
+        result := try out.decode(json.field("result", json.raw()))
+        caps := try result.decode(json.field("capabilities", json.raw()))
+        hint_cap := try caps.decode(json.field("inlayHintProvider", json.bool()))
         try assert.is_true(hint_cap)
         .Ok({})
       },

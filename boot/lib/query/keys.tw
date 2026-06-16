@@ -44,15 +44,13 @@ fn wymix(a: Int, b: Int) Int {
 
 // Read 3 bytes for short keys (1-3 bytes).
 fn wyr3(bytes: Vector<Byte>, off: Int, len: Int) Int {
-  bytes[off].to_int() << 16
-    | bytes[off + (len >> 1)].to_int() << 8 | bytes[off + len - 1].to_int()
+  bytes[off].to_int() << 16 | bytes[off + (len >> 1)].to_int() << 8 | bytes[off + len - 1].to_int()
 }
 
 // Read 4 LE bytes as u64.
 fn wyr4(bytes: Vector<Byte>, off: Int) Int {
   bytes[off].to_int()
-    | bytes[off + 1].to_int() << 8 | bytes[off + 2].to_int() << 16
-    | bytes[off + 3].to_int() << 24
+    | bytes[off + 1].to_int() << 8 | bytes[off + 2].to_int() << 16 | bytes[off + 3].to_int() << 24
 }
 
 // Read 8 LE bytes as u64.

@@ -1,7 +1,6 @@
 /// Discovery helpers for extra runtime bridge functions needed by emission.
 
 use compiler.backend.prepared_ir.{PreparedExpr, PreparedFunc, PreparedOp}
-
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.emit.helpers.{get_sum_layout, variant_field_mono}
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key}

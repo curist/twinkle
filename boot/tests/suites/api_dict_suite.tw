@@ -36,7 +36,7 @@ pub fn suite() runner.Suite {
         full := make_dict()
         try assert.is_true(empty.is_empty())
         try assert.is_false(full.is_empty())
-        try assert.is_true(Dict.is_empty(empty))
+        try assert.is_true(empty.is_empty())
         .Ok({})
       },
     )

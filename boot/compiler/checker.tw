@@ -819,9 +819,8 @@ fn prove_contract_method(
     return .Err("unsupported contract receiver shape for ${contract_name(contract)}")
   }
 
-  recv_ctx := try inst.ctx.silent_unify(ty, inst.params[0]).ok_or(
-    "${req.method_name} does not apply to ${ctx.env.ty_to_string_env(ty)}",
-  )
+  recv_ctx := try inst.ctx.silent_unify(ty, inst.params[0])
+    .ok_or("${req.method_name} does not apply to ${ctx.env.ty_to_string_env(ty)}")
 
   // The receiver-determined element type (functional dependency Self -> Elem).
   // When the proof is triggered from a parameterized bound (`C: IndexRead<E>`),
@@ -846,9 +845,10 @@ fn prove_contract_method(
       .Int => MonoType.Int,
       .Elem => elem_ty,
     }
-    recv_ctx = try recv_ctx.silent_unify(expected_arg, inst.params[param_idx]).ok_or(
-      "${req.method_name} parameter ${param_idx} does not match ${ctx.env.ty_to_string_env(ty)}",
-    )
+    recv_ctx = try recv_ctx.silent_unify(expected_arg, inst.params[param_idx])
+      .ok_or(
+        "${req.method_name} parameter ${param_idx} does not match ${ctx.env.ty_to_string_env(ty)}",
+      )
   }
 
   ret_ty := zonk(inst.ret, recv_ctx.subst)
@@ -856,11 +856,12 @@ fn prove_contract_method(
 
   // Unify (not compare) so an `Elem`/`Receiver` return binds against the
   // satisfier's actual return type; for concrete shapes this is an equality check.
-  recv_ctx = try recv_ctx.silent_unify(expected_ret, ret_ty).ok_or(
-    "${req.method_name} returns ${recv_ctx.env.ty_to_string_env(ret_ty)}, expected ${recv_ctx.env.ty_to_string_env(
-      expected_ret,
-    )}",
-  )
+  recv_ctx = try recv_ctx.silent_unify(expected_ret, ret_ty)
+    .ok_or(
+      "${req.method_name} returns ${recv_ctx.env.ty_to_string_env(ret_ty)}, expected ${recv_ctx.env.ty_to_string_env(
+        expected_ret,
+      )}",
+    )
 
   cur_ctx := recv_ctx
 
@@ -1056,9 +1057,7 @@ fn prove_contract(
 
   case zonked {
     .Var(name) => case scoped_bound_for_contract(name, contract, ctx.type_var_scope) {
-      .Some(bound_args) => {
-        return .Ok(ctx.bind_elem_hint_to_scoped_bound(elem_hint, bound_args))
-      },
+      .Some(bound_args) => { return .Ok(ctx.bind_elem_hint_to_scoped_bound(elem_hint, bound_args)) },
       .None => {},
     },
     _ => {},
@@ -1665,8 +1664,8 @@ fn synth_call(
               cur_ctx = bounds_r.ctx
               cur_diags = bounds_r.diags
               callee_ty := MonoType.Function(info.field_types, named_ty)
-              cur_ctx = cur_ctx.set_type_map(base.id, named_ty)
-              cur_ctx = cur_ctx.set_type_map_span(callee.id, callee.span.start, callee_ty)
+              cur_ctx = .set_type_map(base.id, named_ty)
+              cur_ctx = .set_type_map_span(callee.id, callee.span.start, callee_ty)
               return .{ ty: named_ty, ctx: cur_ctx, diags: cur_diags }
             },
             _ => {},
@@ -1719,7 +1718,8 @@ fn synth_call(
 
           // Pre-unify return type to solve MetaVars before checking arguments
           pu := inst.ctx.pre_unify_return(inst.ret, call_expected, s, diags)
-          call_r := pu.ctx.check_instantiated_call(pu.diags,
+          call_r := pu.ctx.check_instantiated_call(
+            pu.diags,
             inst.params,
             inst.ret,
             args,
@@ -1909,7 +1909,8 @@ fn maybe_unused_value(ctx: InferCtx, span: Span, ty: MonoType) InferCtx {
 
   // Dedup by span across the checker's multiple passes.
   for existing in ctx.lints {
-    if existing.span.start == span.start and existing.span.end == span.end and existing.rule == "unused-must-use" {
+    if existing.span.start == span.start
+      and existing.span.end == span.end and existing.rule == "unused-must-use" {
       return ctx
     }
   }
@@ -2132,7 +2133,8 @@ fn try_synth_module_qualified_call(
   inst := instantiate(sig, ctx)
   pu := inst.ctx.pre_unify_return(inst.ret, call_expected, callee_span, diags)
   meta := MethodCallInfo.{ func_name: fn_name, has_receiver: false, contract: .None, method_name }
-  call_r := pu.ctx.check_instantiated_call(pu.diags,
+  call_r := pu.ctx.check_instantiated_call(
+    pu.diags,
     inst.params,
     inst.ret,
     args,
@@ -2142,12 +2144,7 @@ fn try_synth_module_qualified_call(
     .Some(meta),
   )
   bounds_r := check_instantiated_bounds(sig, inst.type_args, callee_span, call_r.ctx, call_r.diags)
-  out_ctx := bounds_r.ctx.maybe_inherent_rewrite(call_span,
-    method_name,
-    fn_name,
-    inst.params,
-    args,
-  )
+  out_ctx := bounds_r.ctx.maybe_inherent_rewrite(call_span, method_name, fn_name, inst.params, args)
   .Some(.{ ty: call_r.ty, ctx: out_ctx, diags: bounds_r.diags })
 }
 
@@ -2196,7 +2193,8 @@ fn try_synth_method_call(
       }
 
       return .Some(
-        pu.ctx.check_instantiated_call(pu.diags,
+        pu.ctx.check_instantiated_call(
+          pu.diags,
           extra_params,
           ret_ty,
           args,
@@ -2264,7 +2262,8 @@ fn try_synth_method_call(
     contract: .None,
     method_name,
   }
-  call_r := recv_u.ctx.check_instantiated_call(recv_u.diags,
+  call_r := recv_u.ctx.check_instantiated_call(
+    recv_u.diags,
     expected_args,
     inst.ret,
     args,
@@ -2826,10 +2825,7 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<DiagK
     .Collect(ce) => case expand_alias(zonk(expected, ctx.subst), ctx.env, 0) {
       .Vector(elem_ty) => {
         r := check_collect(ce, elem_ty, expr.span, ctx, diags)
-        return .{
-          ctx: r.ctx.set_type_map_span(expr.id, expr.span.start, expected),
-          diags: r.diags,
-        }
+        return .{ ctx: r.ctx.set_type_map_span(expr.id, expr.span.start, expected), diags: r.diags }
       },
       _ => {},
     },
@@ -2874,14 +2870,14 @@ fn synth_closure(
         cur_ctx = ann.ctx
         cur_diags = ann.diags
         param_tys = .append(ann.ty)
-        cur_ctx = cur_ctx.bind_local(p.name, ann.ty)
+        cur_ctx = .bind_local(p.name, ann.ty)
       },
       .None => {
         m := cur_ctx.fresh_meta()
         cur_ctx = m.ctx
         cur_diags = m.diags
         param_tys = .append(m.ty)
-        cur_ctx = cur_ctx.bind_local(p.name, m.ty)
+        cur_ctx = .bind_local(p.name, m.ty)
       },
     }
   }
@@ -2944,7 +2940,7 @@ fn check_closure(
               cur_diags = u.diags
             }
 
-            cur_ctx = cur_ctx.bind_local(p.name, ann.ty)
+            cur_ctx = .bind_local(p.name, ann.ty)
           },
           .None => {
             // Use expected param type
@@ -2956,7 +2952,7 @@ fn check_closure(
               fm.ty
             }
             param_tys = .append(pty)
-            cur_ctx = cur_ctx.bind_local(p.name, pty)
+            cur_ctx = .bind_local(p.name, pty)
           },
         }
       }
@@ -3719,7 +3715,8 @@ fn check_for(for_stmt: ForStmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut
 
   case for_stmt.iter {
     .Some(iter_expr) => {
-      ib := cur_ctx.bind_iterable_vars(iter_expr,
+      ib := cur_ctx.bind_iterable_vars(
+        iter_expr,
         for_stmt.pattern,
         for_stmt.index,
         "for-loop",
@@ -3756,16 +3753,16 @@ fn bind_iterable_vars(
   // iterable. Lowering consumes it directly instead of re-deriving the mode from
   // the receiver's `Var(_)` shape or a separate `method_calls` entry.
   cur_ctx.iterable_lowering[iter_expr.id] = .{ elem_ty: info.elem_ty, kind: info.kind }
-  cur_ctx = cur_ctx.bind_optional(pattern, info.elem_ty)
+  cur_ctx = .bind_optional(pattern, info.elem_ty)
 
   case index {
     .Some(idx_name) => if info.secondary_allowed {
       case info.secondary_ty {
         .Some(ty) => {
-          cur_ctx = cur_ctx.bind_local(idx_name, ty)
+          cur_ctx = .bind_local(idx_name, ty)
         },
         .None => {
-          cur_ctx = cur_ctx.bind_local(idx_name, MonoType.Int)
+          cur_ctx = .bind_local(idx_name, MonoType.Int)
         },
       }
     } else {
@@ -5085,7 +5082,7 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<DiagKind>) Ch
 
       // Bind parameters
       for i in 0..sig.params.len() {
-        fn_ctx = fn_ctx.bind_local(sig.param_names[i], sig.params[i])
+        fn_ctx = .bind_local(sig.param_names[i], sig.params[i])
       }
 
       // Set current_ret and type_var_scope

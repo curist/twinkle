@@ -59,10 +59,7 @@ fn build_occurrences_cached(
     .None => occurrence_build.build_lexical(canonical_path, uri, p.module),
   }
 
-  .{
-    cache: cached.store.put_occurrences(canonical_path, key, index),
-    occurrences: .Some(index),
-  }
+  .{ cache: cached.store.put_occurrences(canonical_path, key, index), occurrences: .Some(index) }
 }
 
 fn occurrence_key(store: cache.Store, canonical_path: String) Int {
@@ -292,7 +289,7 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
     .Err(_) => identity.from_path(input.uri),
   }
   source_hash := keys.hash_text(input.text)
-  store = store.note_source_hash(id.path, source_hash)
+  store = .note_source_hash(id.path, source_hash)
   runner := stage_runner.new(id.path, source_hash, 0, 0, false)
   parsed_out := runner.parse(store, input.text, 0)
   cur_cache := parsed_out.store
@@ -381,7 +378,7 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
     }
   }
 
-  cur_cache = cur_cache.set_module_hash(id.path, keys.module_hash(source_hash, 0))
+  cur_cache = .set_module_hash(id.path, keys.module_hash(source_hash, 0))
   occ_res := build_occurrences_cached(
     cur_cache,
     id.path,

@@ -5,7 +5,6 @@ use @std.proc
 use commands.common.{exit_usage_error, format_compile_error, get_positional, print_warnings}
 use compiler.ir_print
 use compiler.pipeline
-
 use lib.argparse.app.{ParseResult}
 
 fn has_any_ir_flag(parsed: ParseResult) Bool {

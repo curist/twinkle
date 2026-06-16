@@ -19,16 +19,16 @@ pub fn suite() runner.Suite {
       "byte offset converts to utf16 position",
       fn() {
         idx := line_index.new("a𝄞b\ncd")
-        p0 := line_index.byte_offset_to_position(idx, 0, .Utf16)
+        p0 := idx.byte_offset_to_position(0, .Utf16)
         try assert.equal(p0.line, 0)
         try assert.equal(p0.character, 0)
-        p1 := line_index.byte_offset_to_position(idx, 1, .Utf16)
+        p1 := idx.byte_offset_to_position(1, .Utf16)
         try assert.equal(p1.line, 0)
         try assert.equal(p1.character, 1)
-        p2 := line_index.byte_offset_to_position(idx, 5, .Utf16)
+        p2 := idx.byte_offset_to_position(5, .Utf16)
         try assert.equal(p2.line, 0)
         try assert.equal(p2.character, 3)
-        p3 := line_index.byte_offset_to_position(idx, 7, .Utf16)
+        p3 := idx.byte_offset_to_position(7, .Utf16)
         try assert.equal(p3.line, 1)
         try assert.equal(p3.character, 0)
         .Ok({})
@@ -39,34 +39,24 @@ pub fn suite() runner.Suite {
       fn() {
         idx := line_index.new("a𝄞b\ncd")
         try assert.equal(
-          try line_index.position_to_byte_offset(idx, .{ line: 0, character: 0 }, .Utf16)
-            .ok_or("missing"),
+          try idx.position_to_byte_offset(.{ line: 0, character: 0 }, .Utf16).ok_or("missing"),
           0,
         )
         try assert.equal(
-          try line_index.position_to_byte_offset(idx, .{ line: 0, character: 1 }, .Utf16)
-            .ok_or("missing"),
+          try idx.position_to_byte_offset(.{ line: 0, character: 1 }, .Utf16).ok_or("missing"),
           1,
         )
-        try assert.is_none(
-          line_index.position_to_byte_offset(idx, .{ line: 0, character: 2 }, .Utf16),
-        )
+        try assert.is_none(idx.position_to_byte_offset(.{ line: 0, character: 2 }, .Utf16))
         try assert.equal(
-          try line_index.position_to_byte_offset(idx, .{ line: 0, character: 3 }, .Utf16)
-            .ok_or("missing"),
+          try idx.position_to_byte_offset(.{ line: 0, character: 3 }, .Utf16).ok_or("missing"),
           5,
         )
         try assert.equal(
-          try line_index.position_to_byte_offset(idx, .{ line: 1, character: 1 }, .Utf16)
-            .ok_or("missing"),
+          try idx.position_to_byte_offset(.{ line: 1, character: 1 }, .Utf16).ok_or("missing"),
           8,
         )
-        try assert.is_none(
-          line_index.position_to_byte_offset(idx, .{ line: 9, character: 0 }, .Utf16),
-        )
-        try assert.is_none(
-          line_index.position_to_byte_offset(idx, .{ line: 1, character: 99 }, .Utf16),
-        )
+        try assert.is_none(idx.position_to_byte_offset(.{ line: 9, character: 0 }, .Utf16))
+        try assert.is_none(idx.position_to_byte_offset(.{ line: 1, character: 99 }, .Utf16))
         .Ok({})
       },
     )
@@ -74,18 +64,16 @@ pub fn suite() runner.Suite {
       "utf8 and utf32 encodings are supported",
       fn() {
         idx := line_index.new("a𝄞b")
-        p8 := line_index.byte_offset_to_position(idx, 5, .Utf8)
+        p8 := idx.byte_offset_to_position(5, .Utf8)
         try assert.equal(p8.character, 5)
-        p32 := line_index.byte_offset_to_position(idx, 5, .Utf32)
+        p32 := idx.byte_offset_to_position(5, .Utf32)
         try assert.equal(p32.character, 2)
         try assert.equal(
-          try line_index.position_to_byte_offset(idx, .{ line: 0, character: 5 }, .Utf8)
-            .ok_or("missing"),
+          try idx.position_to_byte_offset(.{ line: 0, character: 5 }, .Utf8).ok_or("missing"),
           5,
         )
         try assert.equal(
-          try line_index.position_to_byte_offset(idx, .{ line: 0, character: 2 }, .Utf32)
-            .ok_or("missing"),
+          try idx.position_to_byte_offset(.{ line: 0, character: 2 }, .Utf32).ok_or("missing"),
           5,
         )
         .Ok({})
@@ -95,7 +83,7 @@ pub fn suite() runner.Suite {
       "byte range converts to lsp range",
       fn() {
         idx := line_index.new("a𝄞b\ncd")
-        r := line_index.byte_range_to_range(idx, 1, 8, .Utf16)
+        r := idx.byte_range_to_range(1, 8, .Utf16)
         try assert.equal(r.start.line, 0)
         try assert.equal(r.start.character, 1)
         try assert.equal(r.end.line, 1)
@@ -107,17 +95,14 @@ pub fn suite() runner.Suite {
       "crlf line endings exclude carriage return from line content",
       fn() {
         idx := line_index.new("a\r\nb")
-        p := line_index.byte_offset_to_position(idx, 3, .Utf16)
+        p := idx.byte_offset_to_position(3, .Utf16)
         try assert.equal(p.line, 1)
         try assert.equal(p.character, 0)
         try assert.equal(
-          try line_index.position_to_byte_offset(idx, .{ line: 0, character: 1 }, .Utf16)
-            .ok_or("missing"),
+          try idx.position_to_byte_offset(.{ line: 0, character: 1 }, .Utf16).ok_or("missing"),
           1,
         )
-        try assert.is_none(
-          line_index.position_to_byte_offset(idx, .{ line: 0, character: 2 }, .Utf16),
-        )
+        try assert.is_none(idx.position_to_byte_offset(.{ line: 0, character: 2 }, .Utf16))
         .Ok({})
       },
     )

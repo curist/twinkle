@@ -92,12 +92,12 @@ pub fn suite() runner.Suite {
         idx := sample_index()
 
         // offset 3 is inside both [0,15) and [0,6); narrowest wins -> groups
-        inner := try occ.occurrence_at_offset(idx, 3).ok_or("expected an occurrence at offset 3")
+        inner := try idx.occurrence_at_offset(3).ok_or("expected an occurrence at offset 3")
         try assert.equal(inner.name, "groups")
         try assert.ok(inner.kind == .Local, "offset 3 should resolve to the local")
 
         // offset 9 is only inside [0,15) -> the values method
-        outer := try occ.occurrence_at_offset(idx, 9).ok_or("expected an occurrence at offset 9")
+        outer := try idx.occurrence_at_offset(9).ok_or("expected an occurrence at offset 9")
         try assert.equal(outer.name, "values")
         try assert.ok(outer.kind == .Method, "offset 9 should resolve to the method")
         .Ok({})
@@ -108,7 +108,7 @@ pub fn suite() runner.Suite {
       fn() {
         idx := sample_index()
 
-        case occ.occurrence_at_offset(idx, 20) {
+        case idx.occurrence_at_offset(20) {
           .Some(_) => .Err("offset 20 should not resolve to any occurrence"),
           .None => .Ok({}),
         }
@@ -118,10 +118,10 @@ pub fn suite() runner.Suite {
       "occurrence_for_expr resolves by expression id",
       fn() {
         idx := sample_index()
-        found := try occ.occurrence_for_expr(idx, 7).ok_or("expected an occurrence for expr 7")
+        found := try idx.occurrence_for_expr(7).ok_or("expected an occurrence for expr 7")
         try assert.equal(found.name, "groups")
 
-        case occ.occurrence_for_expr(idx, 999) {
+        case idx.occurrence_for_expr(999) {
           .Some(_) => .Err("unknown expr id should not resolve"),
           .None => .Ok({}),
         }
@@ -131,13 +131,13 @@ pub fn suite() runner.Suite {
       "occurrences_for_symbol groups declaration and references by key",
       fn() {
         idx := sample_index()
-        groups := occ.occurrences_for_symbol(idx, .Local("m", 1))
+        groups := idx.occurrences_for_symbol(.Local("m", 1))
         try assert.equal(groups.len(), 2)
 
-        values := occ.occurrences_for_symbol(idx, .Function("dict", "values"))
+        values := idx.occurrences_for_symbol(.Function("dict", "values"))
         try assert.equal(values.len(), 1)
 
-        none := occ.occurrences_for_symbol(idx, .Local("m", 999))
+        none := idx.occurrences_for_symbol(.Local("m", 999))
         try assert.equal(none.len(), 0)
         .Ok({})
       },
@@ -146,15 +146,15 @@ pub fn suite() runner.Suite {
       "definition_for_occurrence finds the declaring symbol",
       fn() {
         idx := sample_index()
-        ref := try occ.occurrence_at_offset(idx, 3).ok_or("expected the groups reference")
-        def := try occ.definition_for_occurrence(idx, ref).ok_or("expected a definition for groups")
+        ref := try idx.occurrence_at_offset(3).ok_or("expected the groups reference")
+        def := try idx.definition_for_occurrence(ref).ok_or("expected a definition for groups")
         try assert.equal(def.name, "groups")
         try assert.ok(def.kind == .Local, "definition should be a local")
 
         // a symbol with no recorded SymbolDef resolves to None
-        values_ref := try occ.occurrence_at_offset(idx, 9).ok_or("expected the values reference")
+        values_ref := try idx.occurrence_at_offset(9).ok_or("expected the values reference")
 
-        case occ.definition_for_occurrence(idx, values_ref) {
+        case idx.definition_for_occurrence(values_ref) {
           .Some(_) => .Err("values has no SymbolDef in this index"),
           .None => .Ok({}),
         }

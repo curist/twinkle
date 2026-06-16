@@ -1017,7 +1017,9 @@ fn format_block(block: Block, tm: TriviaMap) Doc {
   inner := join_block_docs(block, body_docs, has_author_blank, has_leading_comment)
   doc.concat([
     doc.text("{"),
-    doc.concat([doc.hard_line(), inner]).indent(),
+    doc
+      .concat([doc.hard_line(), inner])
+      .indent(),
     doc.hard_line(),
     doc.text("}"),
   ])
@@ -1441,7 +1443,14 @@ fn format_chained_binary(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_
     // Extract sep1 as the break point, then Fill the rest starting with item1.
     first_sep := fill_children[1]
     remaining := Doc.Fill(fill_children.slice(2, fill_children.len()))
-    doc.concat([first_doc, doc.concat([first_sep, remaining]).indent()]).group()
+    doc
+      .concat([
+        first_doc,
+        doc
+          .concat([first_sep, remaining])
+          .indent(),
+      ])
+      .group()
   } else {
     Doc.Fill(fill_children).group()
   }
@@ -1648,10 +1657,7 @@ fn format_call(callee: Expr, args: Vector<Expr>, container: Span, tm: TriviaMap)
           tail_parts = .append(seg.format_chain_segment(tm))
         }
 
-        return doc.concat([
-          format_receiver(chain.base, tm),
-          doc.concat(tail_parts).indent().group(),
-        ])
+        return doc.concat([format_receiver(chain.base, tm), doc.concat(tail_parts).indent().group()])
       }
 
       head_doc := doc.concat([format_receiver(chain.base, tm), first.format_chain_segment(tm)])
@@ -1794,7 +1800,9 @@ fn format_case(scrutinee: Expr, arms: Vector<CaseArm>, container: Span, tm: Triv
     doc.text("case "),
     format_expr(scrutinee, tm),
     doc.text(" {"),
-    doc.concat([doc.hard_line(), inner]).indent(),
+    doc
+      .concat([doc.hard_line(), inner])
+      .indent(),
     doc.hard_line(),
     doc.text("}"),
   ])
@@ -1822,18 +1830,24 @@ fn format_case_arm(arm: CaseArm, tm: TriviaMap) Doc {
       and tm.get_trivia(stmt_span(block.stmts[0]).start).len() == 0 {
       // Inline terminal statements: { continue }, { return expr }
       stmt_doc := format_stmt(block.stmts[0], tm)
-      doc.concat([
+      doc
+        .concat([
           doc.text("{"),
-          doc.concat([doc.line(), stmt_doc]).indent(),
+          doc
+            .concat([doc.line(), stmt_doc])
+            .indent(),
           doc.line(),
           doc.text("}"),
-        ]).group()
+        ])
+        .group()
     } else {
       format_block(block, tm)
     },
     _ => format_expr(arm.expr, tm),
   }
-  doc.concat([format_pattern(arm.pattern, tm), doc.text(" => "), body]).group()
+  doc
+    .concat([format_pattern(arm.pattern, tm), doc.text(" => "), body])
+    .group()
 }
 
 fn format_cond(arms: Vector<CondArm>, container: Span, tm: TriviaMap) Doc {
@@ -1858,7 +1872,9 @@ fn format_cond(arms: Vector<CondArm>, container: Span, tm: TriviaMap) Doc {
   inner := join_arm_docs(arm_docs, arm_spans, has_author_blank, container, tm)
   doc.concat([
     doc.text("cond {"),
-    doc.concat([doc.hard_line(), inner]).indent(),
+    doc
+      .concat([doc.hard_line(), inner])
+      .indent(),
     doc.hard_line(),
     doc.text("}"),
   ])
@@ -1884,12 +1900,16 @@ fn format_cond_arm(arm: CondArm, tm: TriviaMap) Doc {
       and block.tail.is_none() and is_arm_inline_stmt(block.stmts[0])
       and tm.get_trivia(stmt_span(block.stmts[0]).start).len() == 0 {
       stmt_doc := format_stmt(block.stmts[0], tm)
-      doc.concat([
+      doc
+        .concat([
           doc.text("{"),
-          doc.concat([doc.line(), stmt_doc]).indent(),
+          doc
+            .concat([doc.line(), stmt_doc])
+            .indent(),
           doc.line(),
           doc.text("}"),
-        ]).group()
+        ])
+        .group()
     } else {
       format_block(block, tm)
     },
@@ -1897,8 +1917,12 @@ fn format_cond_arm(arm: CondArm, tm: TriviaMap) Doc {
   }
 
   case arm.condition {
-    .Some(cond_expr) => doc.concat([format_expr(cond_expr, tm), doc.text(" => "), body]).group(),
-    .None => doc.concat([doc.text("_ => "), body]).group(),
+    .Some(cond_expr) => doc
+      .concat([format_expr(cond_expr, tm), doc.text(" => "), body])
+      .group(),
+    .None => doc
+      .concat([doc.text("_ => "), body])
+      .group(),
   }
 }
 
@@ -2018,7 +2042,9 @@ fn format_bracketed_items(
   inner := doc.join(parts, doc.hard_line())
   doc.concat([
     doc.text(open),
-    doc.concat([doc.hard_line(), inner]).indent(),
+    doc
+      .concat([doc.hard_line(), inner])
+      .indent(),
     doc.hard_line(),
     doc.text(close),
   ])
@@ -2283,7 +2309,11 @@ fn drop_trailing_space(parts: Vector<Doc>) Vector<Doc> {
 fn format_assigned(intro: Vector<Doc>, value: Expr, value_doc: Doc, tm: TriviaMap) Doc {
   case multiline_block_doc_for(value, tm) {
     .Some(block) => doc.concat(
-      drop_trailing_space(intro).append(doc.concat([doc.hard_line(), block]).indent()),
+      drop_trailing_space(intro).append(
+        doc
+          .concat([doc.hard_line(), block])
+          .indent(),
+      ),
     ),
     .None => doc.concat(intro.append(value_doc)),
   }

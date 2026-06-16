@@ -1,7 +1,6 @@
 /// Document-highlight query: find all occurrences of the symbol under the
 /// cursor within the current document, annotated with read/write kind.
 
-
 use compiler.query.semantic.{SemanticSnapshot}
 use lib.source.span.{Span}
 
