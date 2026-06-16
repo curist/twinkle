@@ -112,9 +112,9 @@ pub type AnalysisState = .{
   timings: FrontendTimings,
   counts: FrontendCounts,
   import_timings: Vector<ImportTiming>,
-  // Fixer (twk fix): when on, the checker collects rewrites; set only by the
-  // `twk fix` entry point. Off for build/check/LSP.
-  fix_mode: Bool,
+  // Review mode (twk lint): when on, the checker collects rewrites; set only by
+  // the `twk lint` entry point. Off for build/check/LSP.
+  lint_mode: Bool,
 }
 
 /// Public surface needed by downstream modules when importing this module.
@@ -127,17 +127,18 @@ pub type ModuleInterface = .{
   fingerprint: Int,
 }
 
-/// Safe rewrites for `twk fix`, grouped by file path. Populated only in
-/// fix_mode (entry module). Carried alongside diagnostics but never on the
-/// DiagKind stream.
-pub type RewriteEdit = .{ path: String, edits: Vector<report.FixEdit> }
+/// A safe rewrite (`twk lint --fix-<rule>`) tagged with its file path. Populated
+/// only in review mode (entry module). Carried alongside diagnostics but never on
+/// the DiagKind stream. The command projects span/message/edits via the `rewrite`
+/// module.
+pub type RewriteHit = .{ path: String, rewrite: rewrites_mod.Rewrite }
 
 pub type ModuleResult = .{
   env: ResolvedEnv,
   state: AnalysisState,
   diagnostics: Vector<AnalysisDiag>,
   ok: Bool,
-  rewrites: Vector<RewriteEdit>,
+  rewrites: Vector<RewriteHit>,
 }
 
 type SourceLoad = .{ state: AnalysisState, source: overlay.SourceText, source_hash: Int }
@@ -219,7 +220,7 @@ pub fn new_state(base: ResolvedEnv, store: cache.Store, ov: overlay.Overlay, pro
     timings: empty_timings(),
     counts: empty_counts(),
     import_timings: [],
-    fix_mode: false,
+    lint_mode: false,
   }
 }
 
@@ -451,30 +452,20 @@ fn analyze_module_impl(
     cur.timings.unused_imports = cur.timings.unused_imports + (date.now() - t_unused0)
   }
 
-  module_rewrites := if cur.fix_mode {
-    collect_rewrite_edits(loaded.source.identity.path, local.checked.rewrites)
+  module_rewrites: Vector<RewriteHit> = if cur.lint_mode {
+    collect rw in local.checked.rewrites {
+      .{ path: loaded.source.identity.path, rewrite: rw }
+    }
   } else {
     []
   }
-  .{ env: local.checked.env, state: cur, diagnostics: all_diags, ok: true, rewrites: module_rewrites }
-}
-
-/// Project the checker's rewrites for one module into path-tagged edit groups
-/// for `twk fix`. Each rewrite contributes its `fixes()` edits under `path`.
-fn collect_rewrite_edits(path: String, rewrites: Vector<rewrites_mod.Rewrite>) Vector<RewriteEdit> {
-  out: Vector<RewriteEdit> = []
-
-  for rw in rewrites {
-    edits: Vector<report.FixEdit> = []
-
-    for fix in rewrites_mod.fixes(rw) {
-      edits = .concat(fix.edits)
-    }
-
-    out = .append(.{ path, edits })
+  .{
+    env: local.checked.env,
+    state: cur,
+    diagnostics: all_diags,
+    ok: true,
+    rewrites: module_rewrites,
   }
-
-  out
 }
 
 // ── Analysis helpers ────────────────────────────────────────────────
@@ -774,7 +765,13 @@ fn break_import_cycle(
   deps := analyze_dependencies(base, cur, canonical, ext_plan, stack)
 
   if !deps.ok {
-    return .{ env: deps.env, state: deps.state, diagnostics: deps.diagnostics, ok: false, rewrites: [] }
+    return .{
+      env: deps.env,
+      state: deps.state,
+      diagnostics: deps.diagnostics,
+      ok: false,
+      rewrites: [],
+    }
   }
 
   cur = deps.state
@@ -804,7 +801,13 @@ fn break_import_cycle(
     prelim := case preliminary_type_interface(cur, env, dep, caller_id, use_span) {
       .Ok(value) => value,
       .Err(err) => {
-        return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false, rewrites: [] }
+        return .{
+          env: base,
+          state: err.state,
+          diagnostics: err.diagnostics,
+          ok: false,
+          rewrites: [],
+        }
       },
     }
     cur = prelim.state
@@ -1047,7 +1050,7 @@ fn resolve_and_check_local(
   }
 
   t_check0 := date.now()
-  checked_out := stage_runner.typecheck(runner, state.cache, parsed, resolved, state.fix_mode)
+  checked_out := stage_runner.typecheck(runner, state.cache, parsed, resolved, state.lint_mode)
   state.cache = checked_out.store
 
   if state.timed {

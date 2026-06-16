@@ -38,7 +38,7 @@ use .suites.equality_repro_suite
 use .suites.fingerprint_suite
 use .suites.first_class_method_suite
 use .suites.fix_suite
-use .suites.fix_command_suite
+use .suites.lint_command_suite
 use .suites.fmt_suite
 use .suites.imports_suite
 use .suites.insert_boundaries_suite
@@ -198,7 +198,7 @@ runner.run_all([
   ast_path_suite.suite(),
   diag_render_suite.suite(),
   fix_suite.suite(),
-  fix_command_suite.suite(),
+  lint_command_suite.suite(),
   rewrite_suite.suite(),
   query_diagnostics_suite.suite(),
   imports_suite.suite(),

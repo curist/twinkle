@@ -1,0 +1,266 @@
+/// `twk lint` — clippy-style review command.
+///
+/// Reports two kinds of finding (see docs/plans/linter.md): report-only lints
+/// (suspected bugs) and auto-fixable rewrites. Report-only by default; `--fix`
+/// applies all rewrites, `--fix-<rule>` applies one. build/check never run this.
+
+use @std.fs
+use @std.path
+use @std.proc
+
+use commands.common.{exit_usage_error, get_positional}
+use compiler.base_env.{builtin_env}
+use compiler.imports
+use compiler.query.analyze
+use compiler.query.cache as query_cache
+use lib.argparse.app
+use lib.argparse.app.{ParseResult}
+use lib.json
+use lib.module.loader
+use lib.source.identity
+use lib.source.overlay
+use lib.source.report.{FixEdit}
+use lib.source.rewrite
+use lib.text.line_index
+
+/// One reported finding. `edits` is empty for report-only lints; non-empty for
+/// auto-fixable rewrites, whose `rule` selects the `--fix-<rule>` flag.
+type Finding = .{ path: String, start: Int, message: String, rule: String, edits: Vector<FixEdit> }
+
+type FileResult = .{ path: String, count: Int }
+
+/// Apply a set of non-overlapping edits to source text. Edits are sorted by
+/// start offset descending and spliced end-to-start, so earlier offsets stay
+/// valid as later edits are applied. Pure.
+pub fn apply_edits(source: String, edits: Vector<FixEdit>) String {
+  sorted := edits.sort_by(fn(a: FixEdit, b: FixEdit) Order {
+    if b.start < a.start {
+      .Lt
+    } else if b.start > a.start {
+      .Gt
+    } else {
+      .Eq
+    }
+  })
+  result := source
+
+  for e in sorted {
+    before := result.slice(0, e.start)
+    after := result.slice(e.end, result.len())
+    result = before.concat(e.replacement).concat(after)
+  }
+
+  result
+}
+
+/// Parse the `data.fixes[].edits[]` JSON a diagnostic carries into FixEdits.
+fn parse_fix_edits(data: json.Json?) Vector<FixEdit> {
+  out: Vector<FixEdit> = []
+  value := case data {
+    .Some(v) => v,
+    .None => { return out },
+  }
+  fixes := case json.decode(value, json.field("fixes", json.list(json.raw()))) {
+    .Ok(v) => v,
+    .Err(_) => { return out },
+  }
+
+  for fix_obj in fixes {
+    edits := case json.decode(fix_obj, json.field("edits", json.list(json.raw()))) {
+      .Ok(v) => v,
+      .Err(_) => { continue },
+    }
+
+    for edit in edits {
+      start := case json.decode(edit, json.field("start", json.int())) {
+        .Ok(s) => s,
+        .Err(_) => { continue },
+      }
+      end := case json.decode(edit, json.field("end", json.int())) {
+        .Ok(e) => e,
+        .Err(_) => { continue },
+      }
+      replacement := case json.decode(edit, json.field("replacement", json.string())) {
+        .Ok(r) => r,
+        .Err(_) => { continue },
+      }
+      out = .append(.{ start, end, replacement })
+    }
+  }
+
+  out
+}
+
+/// Run the frontend (review mode) and collect every finding for `file`.
+fn gather_findings(file: String) Vector<Finding> {
+  dir := path.dirname(file)
+  project_root := loader.find_project_root(dir)
+  canonical_roots := imports.make_canonical_roots(project_root)
+  canonical_entry := imports.canonical_module_path(file, canonical_roots)
+  base_env := builtin_env()
+  entry_id := identity.from_path(canonical_entry)
+  a_state := analyze.new_state(base_env, query_cache.empty(), overlay.empty(), project_root)
+  a_state.lint_mode = true
+  a_result := analyze.analyze_module(entry_id, "__entry", base_env, a_state, [])
+  findings: Vector<Finding> = []
+
+  // R2: unused-import removals ride the UnusedImport warning's data.fixes.
+  for d in a_result.diagnostics {
+    case d.kind {
+      .Warning(.UnusedImport(_)) => {
+        findings = .append(
+          .{
+            path: d.identity.path,
+            start: d.kind.span().start,
+            message: d.kind.message(),
+            rule: "unused-imports",
+            edits: parse_fix_edits(d.data),
+          },
+        )
+      },
+      _ => {},
+    }
+  }
+
+  // R1 (and future sink-based rewrites): from the review-mode rewrite channel.
+  for h in a_result.rewrites {
+    edits: Vector<FixEdit> = []
+
+    for fix in rewrite.fixes(h.rewrite) {
+      edits = .concat(fix.edits)
+    }
+
+    findings = .append(
+      .{
+        path: h.path,
+        start: rewrite.span(h.rewrite).start,
+        message: rewrite.message(h.rewrite),
+        rule: rewrite.rule(h.rewrite),
+        edits,
+      },
+    )
+  }
+
+  findings
+}
+
+/// `file:line:col` for a byte offset, or `file:?:?` if the source can't be read.
+fn location(path_str: String, start: Int, indexes: Dict<String, line_index.LineIndex>) String {
+  case indexes[path_str] {
+    .Some(idx) => {
+      pos := line_index.byte_offset_to_position(idx, start, .Utf8)
+      "${path_str}:${pos.line + 1}:${pos.character + 1}"
+    },
+    .None => "${path_str}:?:?",
+  }
+}
+
+/// Build a line index per file path referenced by the findings.
+fn index_sources(findings: Vector<Finding>) Dict<String, line_index.LineIndex> {
+  indexes: Dict<String, line_index.LineIndex> = Dict.new()
+
+  for f in findings {
+    if !indexes.has(f.path) {
+      case fs.read_text(f.path) {
+        .Ok(text) => indexes[f.path] = line_index.new(text),
+        .Err(_) => {},
+      }
+    }
+  }
+
+  indexes
+}
+
+fn report_findings(findings: Vector<Finding>) {
+  indexes := index_sources(findings)
+
+  for f in findings {
+    loc := location(f.path, f.start, indexes)
+
+    if f.edits.len() > 0 {
+      println("${loc}: ${f.message} (twk lint --fix-${f.rule})")
+    } else {
+      println("${loc}: ${f.message}")
+    }
+  }
+}
+
+fn apply_to_files(edits_by_file: Dict<String, Vector<FixEdit>>) Vector<FileResult> {
+  results: Vector<FileResult> = []
+
+  for file_path in edits_by_file.keys() {
+    edits := case edits_by_file[file_path] {
+      .Some(e) => e,
+      .None => { continue },
+    }
+    source := case fs.read_text(file_path) {
+      .Ok(text) => text,
+      .Err(_) => {
+        eprintln("warning: could not read '${file_path}', skipping")
+        continue
+      },
+    }
+    updated := apply_edits(source, edits)
+
+    case fs.write_text(file_path, updated) {
+      .Ok(_) => {
+        results = .append(.{ path: file_path, count: edits.len() })
+      },
+      .Err(_) => eprintln("error: could not write '${file_path}'"),
+    }
+  }
+
+  results
+}
+
+pub fn run_lint_command(parsed: ParseResult) {
+  file := case get_positional(parsed, 0, "file") {
+    .Ok(p) => p,
+    .Err(msg) => exit_usage_error(msg),
+  }
+  fix_all := app.has_flag(parsed, "fix")
+  fix_unused := fix_all or app.has_flag(parsed, "fix-unused-imports")
+  fix_inherent := fix_all or app.has_flag(parsed, "fix-inherent-calls")
+  any_apply := fix_unused or fix_inherent
+  findings := gather_findings(file)
+
+  if findings.len() == 0 {
+    println("No findings.")
+
+    return {}
+  }
+
+  if !any_apply {
+    report_findings(findings)
+    eprintln("${findings.len()} finding(s); run `twk lint --fix` to apply rewrites")
+    proc.exit(1)
+  }
+
+  // Apply the selected rules; collect the rest to report.
+  edits_by_file: Dict<String, Vector<FixEdit>> = Dict.new()
+  remaining: Vector<Finding> = []
+
+  for f in findings {
+    selected := f.rule == "unused-imports" and fix_unused
+      or f.rule == "inherent-calls" and fix_inherent
+
+    if selected and f.edits.len() > 0 {
+      case edits_by_file[f.path] {
+        .Some(existing) => edits_by_file[f.path] = existing.concat(f.edits),
+        .None => edits_by_file[f.path] = f.edits,
+      }
+    } else {
+      remaining = .append(f)
+    }
+  }
+
+  results := apply_to_files(edits_by_file)
+
+  for r in results {
+    println("Fixed: ${r.path} (${r.count} edit(s))")
+  }
+
+  if remaining.len() > 0 {
+    report_findings(remaining)
+  }
+}

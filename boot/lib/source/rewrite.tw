@@ -1,8 +1,8 @@
-/// Safe code rewrites for `twk fix` — the fixer's own channel.
+/// Safe code rewrites for `twk lint` — the review command's rewrite channel.
 ///
 /// Rewrites are deliberately separate from `DiagKind`: they never ride the
 /// compiler's error/warning stream, never appear in `build`/`check`, and are
-/// applied only by `twk fix` (see docs/plans/fix.md). They reuse the
+/// applied only by `twk lint --fix*` (see docs/plans/linter.md). They reuse the
 /// `Report`/`FixEdit` types for output and machine-applicable edits.
 
 use compiler.ast.{ExprKind}
@@ -38,13 +38,35 @@ pub fn is_postfix_atomic(kind: ExprKind) Bool {
   }
 }
 
+/// The call span a rewrite targets (report squiggle / location).
+pub fn span(rewrite: Rewrite) Span {
+  case rewrite {
+    .InherentMethodCall(d) => d.span,
+  }
+}
+
+/// Human-readable description for `twk lint` report output.
+pub fn message(rewrite: Rewrite) String {
+  case rewrite {
+    .InherentMethodCall(d) => "`${d.method}` can use inherent-method call syntax",
+  }
+}
+
+/// The rule id — selects the `--fix-<rule>` flag that applies this rewrite.
+pub fn rule(rewrite: Rewrite) String {
+  case rewrite {
+    .InherentMethodCall(_) => "inherent-calls",
+  }
+}
+
 /// Structured, machine-applicable fix for a rewrite. Pure projection of the
-/// payload — consumed by `twk fix` to apply edits (and `--check` to report).
+/// payload — consumed by `twk lint` to apply edits (and report mode to preview).
 pub fn fixes(rewrite: Rewrite) Vector<SuggestedFix> {
   case rewrite {
     .InherentMethodCall(d) => {
       // Edit A: delete the `Callee(` prefix, preserving args[0] verbatim.
       del_prefix := FixEdit.{ start: d.span.start, end: d.arg0_start, replacement: "" }
+
       // Edit B: reinsert the method between args[0] and the rest.
       reinsert := case d.second_start {
         // Replace the `, ` separator with `.method(`.

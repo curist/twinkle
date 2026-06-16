@@ -19,9 +19,13 @@ pub fn suite() runner.Suite {
       "inherent-method fix: Vector.map(xs, f) -> xs.map(f)",
       fn() {
         // source: "Vector.map(xs, f)"  (len 17)
-        rw := Rewrite.InherentMethodCall(
-          .{ span: s(0, 17), method: "map", arg0_start: 11, arg0_end: 13, second_start: .Some(15) },
-        )
+        rw := Rewrite.InherentMethodCall(.{
+          span: s(0, 17),
+          method: "map",
+          arg0_start: 11,
+          arg0_end: 13,
+          second_start: .Some(15),
+        })
         fixes := rewrite.fixes(rw)
         try assert.equal(fixes.len(), 1)
         fix := fixes[0]
@@ -40,9 +44,13 @@ pub fn suite() runner.Suite {
     .test(
       "inherent-method fix: single-arg Vector.len(xs) -> xs.len()",
       fn() {
-        rw := Rewrite.InherentMethodCall(
-          .{ span: s(0, 14), method: "len", arg0_start: 11, arg0_end: 13, second_start: .None },
-        )
+        rw := Rewrite.InherentMethodCall(.{
+          span: s(0, 14),
+          method: "len",
+          arg0_start: 11,
+          arg0_end: 13,
+          second_start: .None,
+        })
         fixes := rewrite.fixes(rw)
         try assert.equal(fixes.len(), 1)
         fix := fixes[0]
@@ -55,6 +63,23 @@ pub fn suite() runner.Suite {
         try assert.equal(b.start, 13)
         try assert.equal(b.end, 14)
         try assert.equal(b.replacement, ".len()")
+        .Ok({})
+      },
+    )
+    .test(
+      "rewrite metadata: span / message / rule for InherentMethodCall",
+      fn() {
+        rw := Rewrite.InherentMethodCall(.{
+          span: s(0, 17),
+          method: "map",
+          arg0_start: 11,
+          arg0_end: 13,
+          second_start: .Some(15),
+        })
+        try assert.equal(rewrite.span(rw).start, 0)
+        try assert.equal(rewrite.span(rw).end, 17)
+        try assert.equal(rewrite.message(rw), "`map` can use inherent-method call syntax")
+        try assert.equal(rewrite.rule(rw), "inherent-calls")
         .Ok({})
       },
     )
@@ -79,7 +104,9 @@ pub fn suite() runner.Suite {
         b := expr(.Ident("b"))
         try assert.is_false(rewrite.is_postfix_atomic(.Binary(.LogicalOr, a, b)))
         try assert.is_false(rewrite.is_postfix_atomic(.Unary(.Neg, a)))
-        try assert.is_false(rewrite.is_postfix_atomic(.If(a, .{ stmts: [], tail: .None, span: s(0, 0) }, .None)))
+        try assert.is_false(
+          rewrite.is_postfix_atomic(.If(a, .{ stmts: [], tail: .None, span: s(0, 0) }, .None)),
+        )
         .Ok({})
       },
     )

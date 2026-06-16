@@ -3,9 +3,9 @@ use @std.proc
 use commands.build.{resolve_build_output, run_build_command}
 use commands.check.{run_check_command}
 use commands.common.{exit_usage_error, get_positional}
-use commands.fix.{run_fix_command}
 use commands.fmt.{run_fmt_command}
 use commands.ir.{run_ir_command}
+use commands.lint.{run_lint_command}
 use commands.lsp.{run_lsp_command}
 use commands.parse.{run_parse_command}
 use commands.run.{run_command_impl}
@@ -20,9 +20,12 @@ fn file_command(name: String, help: String) {
 
 parse_cmd := file_command("parse", "Parse source and print diagnostics")
 check_cmd := file_command("check", "Type-check source")
-fix_cmd := file_command("fix", "Apply safe rewrites").add_flag(
-  "check",
-  "Report pending rewrites without writing",
+lint_cmd := file_command("lint", "Review code: report lints and rewrites").add_flag(
+  "fix",
+  "Apply all auto-fixable rewrites",
+).add_flag("fix-unused-imports", "Apply only the unused-import rewrite").add_flag(
+  "fix-inherent-calls",
+  "Apply only the inherent-method-call rewrite",
 )
 ir_cmd := file_command("ir", "Compile and print compiler IR").add_flag(
   "core",
@@ -52,7 +55,7 @@ cli := app.make("twk", "Twinkle compiler")
   .add_commands([
     run_cmd,
     check_cmd,
-    fix_cmd,
+    lint_cmd,
     build_cmd,
     ir_cmd,
     parse_cmd,
@@ -87,7 +90,7 @@ fn run_help_command(parsed: ParseResult) {
     .None
   }
 
-  println(app.format_help(cli, cmd))
+  println(cli.format_help(cmd))
 }
 
 fn not_implemented(cmd: String, detail: String) {
@@ -154,7 +157,7 @@ fn run_command(parsed: ParseResult) {
   case parsed.command {
     .Some("parse") => run_parse_command(parsed),
     .Some("check") => run_check_command(parsed),
-    .Some("fix") => run_fix_command(parsed),
+    .Some("lint") => run_lint_command(parsed),
     .Some("ir") => run_ir_command(parsed),
     .Some("build") => run_build_command(parsed),
     .Some("lsp") => run_lsp_command(parsed),
@@ -176,10 +179,10 @@ fn run_command(parsed: ParseResult) {
 }
 
 argv := normalize_argv(proc.args())
-case app.parse(cli, argv) {
+case cli.parse(argv) {
   .Ok(parsed) => run_command(parsed),
   .Err(err) => case err {
     .HelpRequested(msg) => println(msg),
-    _ => exit_usage_error(app.error_message(err)),
+    _ => exit_usage_error(err.error_message()),
   },
 }

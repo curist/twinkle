@@ -1,29 +1,30 @@
-use commands.fix
+use commands.lint
 use compiler.base_env
 use compiler.query.analyze
 use compiler.query.cache
 use lib.source.identity
 use lib.source.overlay
 use lib.source.report.{FixEdit}
+use lib.source.rewrite
 use tests.assert
 use tests.runner
 
-fn analyze_src(text: String, fix_mode: Bool) analyze.ModuleResult {
+fn analyze_src(text: String, lint_mode: Bool) analyze.ModuleResult {
   ov := overlay.from_documents([
-    .{ identity: identity.from_path("/tmp/fixan/main.tw"), text, version: .Some(1) },
+    .{ identity: identity.from_path("/tmp/lintan/main.tw"), text, version: .Some(1) },
   ])
-  state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/fixan")
-  state.fix_mode = fix_mode
-  id := identity.from_path("/tmp/fixan/main.tw")
+  state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/lintan")
+  state.lint_mode = lint_mode
+  id := identity.from_path("/tmp/lintan/main.tw")
   analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("fix_command")
+  runner.suite("lint_command")
     .test(
       "apply_edits: single range replacement",
       fn() {
-        out := fix.apply_edits("abcdef", [FixEdit.{ start: 1, end: 3, replacement: "X" }])
+        out := lint.apply_edits("abcdef", [FixEdit.{ start: 1, end: 3, replacement: "X" }])
         try assert.equal(out, "aXdef")
         .Ok({})
       },
@@ -35,7 +36,7 @@ pub fn suite() runner.Suite {
           FixEdit.{ start: 0, end: 1, replacement: "" },
           FixEdit.{ start: 4, end: 6, replacement: "Z" },
         ]
-        out := fix.apply_edits("abcdef", edits)
+        out := lint.apply_edits("abcdef", edits)
         try assert.equal(out, "bcdZ")
         .Ok({})
       },
@@ -43,25 +44,28 @@ pub fn suite() runner.Suite {
     .test(
       "apply_edits: insertion (start == end)",
       fn() {
-        out := fix.apply_edits("ac", [FixEdit.{ start: 1, end: 1, replacement: "b" }])
+        out := lint.apply_edits("ac", [FixEdit.{ start: 1, end: 1, replacement: "b" }])
         try assert.equal(out, "abc")
         .Ok({})
       },
     )
     .test(
-      "R1 detection: Vector.map(xs, f) yields an inherent-method rewrite in fix mode",
+      "R1 detection: Vector.map(xs, f) yields an inherent-method rewrite in review mode",
       fn() {
         result := analyze_src("xs := [1]\nys := Vector.map(xs, fn(n) { n })\n", true)
         try assert.is_true(result.ok)
         try assert.equal(result.rewrites.len(), 1)
-        try assert.str_contains(result.rewrites[0].path, "main.tw")
+        hit := result.rewrites[0]
+        try assert.str_contains(hit.path, "main.tw")
+        try assert.equal(rewrite.rule(hit.rewrite), "inherent-calls")
+
         // delete `Vector.map(` prefix + replace `, ` with `.map(`
-        try assert.equal(result.rewrites[0].edits.len(), 2)
+        try assert.equal(rewrite.fixes(hit.rewrite)[0].edits.len(), 2)
         .Ok({})
       },
     )
     .test(
-      "R1 detection: no rewrites when fix mode is off",
+      "R1 detection: no rewrites when review mode is off",
       fn() {
         result := analyze_src("xs := [1]\nys := Vector.map(xs, fn(n) { n })\n", false)
         try assert.is_true(result.ok)

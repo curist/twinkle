@@ -398,7 +398,7 @@ fn warning_to_report(w: WarningDiag, ctx: RenderCtx) Report {
       severity: .Warning,
       title: "unused import `${d.binding}`",
       labels: [primary(d.span, .None)],
-      help_lines: ["run `twk fix` to remove automatically"],
+      help_lines: ["run `twk lint --fix-unused-imports` to remove automatically"],
     },
     .MultilineSingleLine(d) => .{
       severity: .Warning,
