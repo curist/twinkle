@@ -1,22 +1,23 @@
-# Inherent-method-call rewrite (`twk fix` R1)
+# Inherent-method-call rewrite (`twk lint` R1)
 
-> **Status: satellite design for `twk fix` rewrite R1 (`inherent-method-call`).**
-> This is the detailed design for the rewrite catalogued in [`fix.md`](fix.md).
-> It does **not** ship standalone: it lands with `twk fix`'s fix-mode + rewrite
-> sink plumbing (fix Stage 1). The trigger predicate, emission sites, and edits
-> below are the rule's substance; **surfacing follows the fixer's model** —
-> applied by `twk fix` (or listed by `twk fix --check`), off the compile path —
-> so this doc does not re-litigate it (see `fix.md` → "Command surface").
+> **Status: satellite design for `twk lint` rewrite R1 (`inherent-method-call`).**
+> This is the detailed design for the rewrite catalogued in
+> [`linter.md`](linter.md). It does **not** ship standalone: it rides the review
+> command's review-mode + rewrite sink. The trigger predicate, emission sites,
+> and edits below are the rule's substance; **surfacing follows the review
+> model** — reported by `twk lint`, applied by `twk lint --fix-inherent-calls`
+> (or `--fix`), off the `build`/`check` path — so this doc does not re-litigate it
+> (see `linter.md` → "Command surface").
 >
-> This rewrite is a *fixer*, not a lint, because it is provably
-> meaning-preserving: it is correct code respelled, not a suspected bug. (Why it
-> is not in the linter: see [`linter.md`](linter.md) → "The linter only detects".)
+> This is an auto-fixable *rewrite*, not a report-only lint, because it is
+> provably meaning-preserving: correct code respelled, not a suspected bug (the
+> auto-fixability rule in [`linter.md`](linter.md) → Motivation).
 
 ## Goal
 
 Rewrite a call written in **free-function form** into receiver-method (inherent)
-form when both provably resolve to the *same* function. Applied by `twk fix`;
-`twk fix --check` lists pending rewrites without writing. Never on the
+form when both provably resolve to the *same* function. Reported by `twk lint`
+and applied by `twk lint --fix-inherent-calls` (or `--fix`). Never on the
 `build`/`check` path.
 
 ```tw
@@ -98,8 +99,9 @@ it strips `!(…)` parens — treat reorder-as-text as unsafe by default.
 2. The `.Ident(name)` → `lookup_function(name)` arm of `synth_call`
    (the bare-call path). `M = name`, `fn_name = name`. `s` is already in scope.
 
-Both sites are guarded by `ctx.fix_mode` — when it is off (every `build`/`check`
-compile) the whole block is skipped, so there is zero cost outside `twk fix`.
+Both sites are guarded by `ctx.fix_mode` (the review-mode flag) — when it is off
+(every `build`/`check` compile) the whole block is skipped, so there is zero cost
+outside `twk lint`.
 
 A shared helper computes the optional rewrite:
 
@@ -117,13 +119,13 @@ fn inherent_method_rewrite(
 It returns the rewrite when the predicate holds, `.None` otherwise. The rewrite
 is collected into the **rewrite sink**, not the typecheck diagnostics the call
 site returns — keeping it off the `build`/`check`/LSP path. Exact plumbing (a
-`fix_mode`-gated accumulator on `InferCtx`, drained into the fixer's sink) is a
+`fix_mode`-gated accumulator on `InferCtx`, drained into the rewrite sink) is a
 Stage 1 detail; the constraint is that it never joins the general `DiagKind`
 stream.
 
 ## Representation
 
-The rewrite lives on the fixer's **separate sink** (not the shared `DiagKind`
+The rewrite lives on the **separate rewrite sink** (not the shared `DiagKind`
 diagnostics stream), so it needs **no** new arm on `DiagKind` — the dozens of
 exhaustive `case DiagKind` sites stay untouched. It is its own small type
 (`boot/lib/source/rewrite.tw`):
@@ -141,13 +143,12 @@ pub type Rewrite = {
 ```
 
 `fixes(rewrite)` projects this into the shared `report.{SuggestedFix, FixEdit}`
-(the byte-offset edits below); `twk fix` applies them, `twk fix --check` lists
-them. (This module + its `fixes()` and `is_postfix_atomic()` are already
-implemented and tested under the temporary name `lib/source/lint.tw`; they
-re-home to `rewrite.tw`.)
+(the byte-offset edits below); `twk lint --fix-inherent-calls` (or `--fix`) applies them, `twk lint` lists
+them. (This module + its `fixes()` and `is_postfix_atomic()` are implemented and
+tested in `boot/lib/source/rewrite.tw`.)
 
 - The rewrite **never fails a build**: it is never on the compile/typecheck path,
-  and `build`/`check` never run fix mode.
+  and `build`/`check` never run review mode.
 - `callee_start` is `span.start`; `call_end` is `span.end` (the Call node spans
   from callee through the closing paren), so they need not be stored separately.
 
@@ -181,28 +182,31 @@ different meaning even though the bytes are unchanged.
 
 Trivia between the affected tokens is dropped: Edit A removes any comment between
 the callee and `args[0]`, and Edit B removes any comment between `args[0]` and
-the next token. This is acceptable for a user-invoked `twk fix` rewrite — noted so
-it isn't mistaken for a bug later.
+the next token. This is acceptable for a user-invoked `twk lint --fix` rewrite —
+noted so it isn't mistaken for a bug later.
 
-### `--check` message
+### Report message
 
-For `twk fix --check`, each pending rewrite reports
+In `twk lint` report mode, each opportunity reports
 ``"`${method}` can use inherent-method call syntax"`` at the call span. The
-applied form is what `twk fix` writes; the structured `SuggestedFix` is the
-single source of truth for both.
+applied form is what `twk lint --fix-inherent-calls` writes; the structured
+`SuggestedFix` is the single source of truth for both.
 
 ## Surfacing
 
-Follows the fixer's model (see `fix.md` → "Command surface"): **applied by
-`twk fix`** (or listed by `twk fix --check`), never in `twk build` / `twk check`
-or ambient LSP diagnostics. Mechanism specific to this rule:
+Follows the review model (see `linter.md` → "Command surface"): **reported by
+`twk lint`**, applied by `twk lint --fix-inherent-calls` (or `--fix`), never in
+`twk build` / `twk check` or ambient LSP diagnostics. Mechanism specific to this
+rule:
 
-- The checker computes the rewrite at call-resolution sites **only in fix mode** —
-  a `fix_mode` flag on `InferCtx`, set exclusively by the `twk fix` entry point.
-  `build`/`check` leave it off, so the predicate never runs and costs nothing.
-- Results go to the fixer's **rewrite sink**, not the `diags` the checker returns.
-- `fixes()` projects to `report.{SuggestedFix, FixEdit}`; `twk fix` applies the
-  edits (reusing only the edit machinery, not the compiler diagnostic *path*).
+- The checker computes the rewrite at call-resolution sites **only in review
+  mode** — a `fix_mode` flag on `InferCtx`, set exclusively by the `twk lint`
+  entry point. `build`/`check` leave it off, so the predicate never runs and costs
+  nothing.
+- Results go to the **rewrite sink**, not the `diags` the checker returns.
+- `fixes()` projects to `report.{SuggestedFix, FixEdit}`; `twk lint --fix*`
+  applies the edits (reusing only the edit machinery, not the compiler diagnostic
+  *path*).
 
 Strong fit for an applied rewrite: the postfix-atomic guard and fail-closed
 resolution check keep false positives near zero, and the rewrite is always
@@ -214,9 +218,9 @@ Two layers:
 
 - **Pure (done):** `fixes()` edit projection and `is_postfix_atomic()` are unit
   tested in `boot/tests/suites/lint_suite.tw` (re-homes to a rewrite suite).
-- **Integration:** drive the **fix-mode path** (run the frontend with `fix_mode`
+- **Integration:** drive the **review-mode path** (run the frontend with `fix_mode`
   on, inspect the rewrite sink), *not* the typecheck diagnostics. A companion
-  assertion confirms `build`/`check` (fix mode off) produce **no** rewrites.
+  assertion confirms `build`/`check` (review mode off) produce **no** rewrites.
 
 - `Vector.map(xs, f)` produces an `InherentMethodCall` rewrite with method `map`
   and the two expected edits.
@@ -227,7 +231,7 @@ Two layers:
   advertised scope.
 - `point.translate(p, 1, 2)` and bare `translate(p, 1, 2)` each produce a rewrite.
 - Applying the edits to the source yields the inherent form and re-typechecks
-  cleanly (and is idempotent — a second `twk fix` is a no-op).
+  cleanly (and is idempotent — a second `twk lint --fix` is a no-op).
 - A single-arg call (`Vector.len(xs)`) produces the trailing-`)` edit form and the
   applied result is `xs.len()` — guards the span-threading fix (full call span,
   not `callee.span`).
@@ -239,5 +243,5 @@ Two layers:
 ## Non-goals
 
 - No Rust/stage0 emission of the rewrite (stage0 only compiles the new source).
-- Never on the compile path; applied only by `twk fix` (no config, no flag).
-- No layout normalization — that is `twk fmt`'s job, run after `twk fix`.
+- Never on the compile path; applied only by `twk lint --fix*` (no config).
+- No layout normalization — that is `twk fmt`'s job, run after `twk lint --fix`.
