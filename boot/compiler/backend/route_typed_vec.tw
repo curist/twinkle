@@ -21,14 +21,9 @@ use compiler.codegen.wasm_ir.{ValType}
 use compiler.core_ir.{FuncId}
 
 fn with_repr_wasm(info: SlotInfo, repr: ReprKind, wasm_type: ValType) SlotInfo {
-  .{
-    slot: info.slot,
-    source_local: info.source_local,
-    role: info.role,
-    mono: info.mono,
-    repr,
-    wasm_type,
-  }
+  info.repr = repr
+  info.wasm_type = wasm_type
+  info
 }
 
 type Cand = .{ v: Int, b: Int }
@@ -167,17 +162,9 @@ fn route_func(
     }
   }
 
-  .{
-    func_id: pf.func_id,
-    name: pf.name,
-    is_init: pf.is_init,
-    captures: pf.captures,
-    params: pf.params,
-    locals: pf.locals,
-    slots: new_slots,
-    body: new_body,
-    return_mono: pf.return_mono,
-  }
+  pf.slots = new_slots
+  pf.body = new_body
+  pf
 }
 
 // ── Candidate collection ────────────────────────────────────────────

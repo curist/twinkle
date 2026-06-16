@@ -40,15 +40,9 @@ pub fn eliminate_defers(func: AnfFunctionDef) AnfFunctionDef {
     new_mono[k] = ty
   }
 
-  AnfFunctionDef.{
-    func_id: func.func_id,
-    name: func.name,
-    is_init: func.is_init,
-    params: func.params,
-    op_result_mono: new_mono,
-    body,
-    return_ty: func.return_ty,
-  }
+  func.op_result_mono = new_mono
+  func.body = body
+  func
 }
 
 fn local_type_map(func: AnfFunctionDef) Dict<Int, MonoType> {

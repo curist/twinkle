@@ -17,7 +17,9 @@ pub fn merge(a: Span, b: Span) Span {
   } else {
     b.end
   }
-  .{ file_id: a.file_id, start, end }
+  a.start = start
+  a.end = end
+  a
 }
 
 pub fn contains(s: Span, offset: Int) Bool {

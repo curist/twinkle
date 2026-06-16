@@ -828,7 +828,8 @@ fn remap_expr(
       remap_expr(idx, remap, global_remap, remap_assign_targets),
     ),
   }
-  CoreExpr.{ kind: new_kind, ty: expr.ty, span: expr.span }
+  expr.kind = new_kind
+  expr
 }
 
 fn remap_exprs(

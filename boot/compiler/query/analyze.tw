@@ -663,7 +663,8 @@ fn preliminary_type_exports(parsed: cache.ParsedModule, canonical: String, start
 fn opaque_export_type(exported: ExportedType) ExportedType {
   entry := exported.entry
   entry.def = .None
-  ExportedType.{ name: exported.name, entry, origin: exported.origin }
+  exported.entry = entry
+  exported
 }
 
 fn opaque_type_exports(exports: ModuleExports) ModuleExports {

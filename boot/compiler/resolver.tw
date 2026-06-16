@@ -2309,15 +2309,10 @@ fn remap_function_sig(sig: FunctionSig, new_name: String, type_ids: Dict<Int, Ty
     .Some(ty) => .Some(remap_mono_type(ty, type_ids)),
     .None => .None,
   }
-  FunctionSig.{
-    name: new_name,
-    type_params: sig.type_params,
-    param_names: sig.param_names,
-    params,
-    ret,
-    doc: sig.doc,
-    extern_module: sig.extern_module,
-  }
+  sig.name = new_name
+  sig.params = params
+  sig.ret = ret
+  sig
 }
 
 fn remap_mono_type(ty: MonoType, type_ids: Dict<Int, TypeId>) MonoType {

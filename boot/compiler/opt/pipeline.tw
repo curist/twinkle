@@ -150,15 +150,8 @@ fn optimize_func(func: AnfFunctionDef, pinned: Dict<Int, Bool>, semantics: Optim
 }
 
 fn rebuild_func_with_body(func: AnfFunctionDef, body: AnfExpr) AnfFunctionDef {
-  AnfFunctionDef.{
-    func_id: func.func_id,
-    name: func.name,
-    is_init: func.is_init,
-    params: func.params,
-    op_result_mono: func.op_result_mono,
-    body,
-    return_ty: func.return_ty,
-  }
+  func.body = body
+  func
 }
 
 fn optimize_function_with_context(func: AnfFunctionDef, ctx: OptimizerContext) FunctionOptimizeResult {
@@ -301,10 +294,6 @@ fn optimize_module_internal(
     )
   }
 
-  AnfModule.{
-    functions: new_funcs,
-    init_func_id: module.init_func_id,
-    extern_imports: module.extern_imports,
-    global_monos: module.global_monos,
-  }
+  module.functions = new_funcs
+  module
 }

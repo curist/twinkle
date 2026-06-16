@@ -1416,7 +1416,8 @@ fn rewrite_calls(
   local_types: Dict<Int, MonoType>,
 ) CoreExpr {
   kind := rewrite_calls_kind(expr, spec_map, ctx, local_types)
-  CoreExpr.{ kind, ty: expr.ty, span: expr.span }
+  expr.kind = kind
+  expr
 }
 
 fn rewrite_calls_kind(
@@ -1845,12 +1846,6 @@ pub fn monomorphize(module: CoreModule) CoreModule {
     )
   }
 
-  CoreModule.{
-    functions: rewritten,
-    type_env: module.type_env,
-    init_func_id: module.init_func_id,
-    func_table: module.func_table,
-    extern_imports: module.extern_imports,
-    method_table: module.method_table,
-  }
+  module.functions = rewritten
+  module
 }

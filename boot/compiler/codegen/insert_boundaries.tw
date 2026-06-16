@@ -156,12 +156,8 @@ pub fn insert_boundaries(
   new_funcs := collect func in anf.functions {
     rewrite_func(func, registry, builtins, env, func_param_types, func_monos, anf.global_monos)
   }
-  AnfModule.{
-    functions: new_funcs,
-    init_func_id: anf.init_func_id,
-    extern_imports: anf.extern_imports,
-    global_monos: anf.global_monos,
-  }
+  anf.functions = new_funcs
+  anf
 }
 
 fn rewrite_func(
@@ -231,15 +227,9 @@ fn rewrite_func(
     }
   }
 
-  AnfFunctionDef.{
-    func_id: func.func_id,
-    name: func.name,
-    is_init: func.is_init,
-    params: func.params,
-    op_result_mono: new_mono,
-    body: result.expr,
-    return_ty: func.return_ty,
-  }
+  func.op_result_mono = new_mono
+  func.body = result.expr
+  func
 }
 
 // ── Expression rewriting ────────────────────────────────────────────
