@@ -475,7 +475,12 @@ fn analyze_module_impl(
     []
   }
   local_lints: Vector<LintHit> = if cur.lint_mode and !dep_plan.is_internal {
-    collect f in lint.lint_module(parsed_load.parsed.module, local.checked.env) {
+    // Structural lints (L3/L4) from the AST visitor + type-dependent lints
+    // (L2, …) collected by the checker.
+    all_findings := lint.lint_module(parsed_load.parsed.module, local.checked.env).concat(
+      local.checked.lints,
+    )
+    collect f in all_findings {
       .{ path: loaded.source.identity.path, finding: f }
     }
   } else {

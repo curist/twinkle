@@ -82,4 +82,31 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "L2 detection: an ignored Result yields a unused-must-use lint",
+      fn() {
+        src := "fn risky() Result<Int, String> {\n  .Ok(1)\n}\nfn run() {\n  risky()\n  println(\"x\")\n}\n"
+        result := analyze_src(src, true)
+        try assert.is_true(result.ok)
+        found := false
+
+        for h in result.lints {
+          if h.finding.rule == "unused-must-use" {
+            found = true
+          }
+        }
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "L2 detection: no lint when review mode is off",
+      fn() {
+        src := "fn risky() Result<Int, String> {\n  .Ok(1)\n}\nfn run() {\n  risky()\n  println(\"x\")\n}\n"
+        result := analyze_src(src, false)
+        try assert.is_true(result.ok)
+        try assert.equal(result.lints.len(), 0)
+        .Ok({})
+      },
+    )
 }

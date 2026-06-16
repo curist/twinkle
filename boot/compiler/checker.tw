@@ -13,6 +13,7 @@ use .ast.{
   Pattern, RecordEntry, ReturnStmt, Stmt, StringPart, TypeExpr, UnOp,
 }
 use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape}
+use .lint.{LintFinding}
 use .mono_type.{MonoType, TypeId}
 use .resolver.{
   FunctionSig, ResolvedEnv, ResolvedField, ResolvedTypeParam, plain_resolved_type_params,
@@ -39,6 +40,7 @@ pub type InferCtx = .{
   // Review (twk lint): only populated when lint_mode is on (off for build/check).
   lint_mode: Bool,
   rewrites: Vector<Rewrite>,
+  lints: Vector<LintFinding>,
 }
 
 pub type MethodCallInfo = .{
@@ -78,6 +80,7 @@ pub type CheckResult = .{
   pub_values: Dict<String, MonoType>,
   iterable_lowering: Dict<Int, IterableLoweringInfo>,
   rewrites: Vector<Rewrite>,
+  lints: Vector<LintFinding>,
 }
 
 // ── Context helpers ─────────────────────────────────────────────────
@@ -99,6 +102,7 @@ fn empty_ctx(env: ResolvedEnv, module_aliases: Dict<String, Bool>, lint_mode: Bo
     iterable_lowering: Dict.new(),
     lint_mode,
     rewrites: [],
+    lints: [],
   }
 }
 
@@ -1883,6 +1887,30 @@ fn maybe_inherent_rewrite(
     second_start,
   })
   ctx.rewrites = .append(rw)
+  ctx
+}
+
+/// Lint L2: flag a statement-position expression whose value is a `Result` or
+/// `Option` that is silently dropped (in `lint_mode`). `try`/`case`/binding all
+/// change the type away from Result/Option, so they never reach here.
+fn maybe_unused_result(ctx: InferCtx, span: Span, ty: MonoType) InferCtx {
+  if !ctx.lint_mode {
+    return ctx
+  }
+
+  message := case zonk(ty, ctx.subst) {
+    .Result(_, _) => "ignored `Result`: a possible error is discarded — handle it (`try`, `case`, `.ok_or`) or bind it",
+    .Optional(_) => "ignored `Option`: a possible `None` is discarded — handle it (`try`, `case`) or bind it",
+    _ => { return ctx },
+  }
+
+  // Dedup by span across the checker's multiple passes.
+  for existing in ctx.lints {
+    if existing.span.start == span.start and existing.span.end == span.end and existing.rule == "unused-must-use" {
+      return ctx
+    }
+  }
+  ctx.lints = .append(.{ span, message, rule: "unused-must-use" })
   ctx
 }
 
@@ -4935,7 +4963,7 @@ fn check_stmt(stmt: Stmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
     .Let(ls) => check_let(ls, ctx, diags),
     .Expr(es) => {
       r := ctx.synth(es.expr, diags)
-      .{ ctx: r.ctx, diags: r.diags }
+      .{ ctx: maybe_unused_result(r.ctx, es.expr.span, r.ty), diags: r.diags }
     },
     .Return(rs) => check_return(rs, ctx, diags),
     .For(fs) => check_for(fs, ctx, diags),
@@ -4964,7 +4992,7 @@ fn check_top_level_stmt(stmt: Stmt, ctx: InferCtx, diags: Vector<DiagKind>) Chec
   case stmt {
     .Expr(es) => {
       r := ctx.synth(es.expr, diags)
-      .{ ctx: r.ctx, diags: r.diags }
+      .{ ctx: maybe_unused_result(r.ctx, es.expr.span, r.ty), diags: r.diags }
     },
     .For(fs) => check_for(fs, ctx, diags),
     .Break(bs) => case bs.value {
@@ -5297,5 +5325,6 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
     pub_values,
     iterable_lowering: ctx.iterable_lowering,
     rewrites: ctx.rewrites,
+    lints: ctx.lints,
   }
 }
