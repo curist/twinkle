@@ -30,7 +30,7 @@ pub fn parse(runner: Runner, store: cache.Store, source: String, file_id: Int) S
   cache.ParsedModule,
 > {
   key := keys.parse_key(runner.path, runner.source_hash)
-  lookup := cache.get_parsed(store, runner.path, key)
+  lookup := store.get_parsed(runner.path, key)
 
   case lookup.value {
     .Some(parsed) => .{ store: lookup.store, value: parsed, cache_hit: true },
@@ -40,7 +40,7 @@ pub fn parse(runner: Runner, store: cache.Store, source: String, file_id: Int) S
         module: parsed_stage.value,
         diagnostics: parsed_stage.diagnostics,
       }
-      next := cache.put_parsed(lookup.store, runner.path, key, parsed)
+      next := lookup.store.put_parsed(runner.path, key, parsed)
       .{ store: next, value: parsed, cache_hit: false }
     },
   }
@@ -54,13 +54,13 @@ pub fn resolve(
 ) StageOut<resolver.ResolveResult> {
   base_key := keys.resolve_key(runner.path, runner.source_hash, runner.deps_hash)
   key := keys.with_context(base_key, runner.context_hash)
-  lookup := cache.get_resolved(store, runner.path, key)
+  lookup := store.get_resolved(runner.path, key)
 
   case lookup.value {
     .Some(resolved) => .{ store: lookup.store, value: resolved, cache_hit: true },
     .None => {
       resolved := env.resolve(module.module)
-      next := cache.put_resolved(lookup.store, runner.path, key, resolved)
+      next := lookup.store.put_resolved(runner.path, key, resolved)
       .{ store: next, value: resolved, cache_hit: false }
     },
   }
@@ -80,13 +80,13 @@ pub fn typecheck(
     runner.is_internal,
   )
   key := keys.with_context(base_key, runner.context_hash)
-  lookup := cache.get_typed(store, runner.path, key)
+  lookup := store.get_typed(runner.path, key)
 
   case lookup.value {
     .Some(typed) => .{ store: lookup.store, value: typed, cache_hit: true },
     .None => {
       typed := checker.check(module.module, resolved.env, lint_mode)
-      next := cache.put_typed(lookup.store, runner.path, key, typed)
+      next := lookup.store.put_typed(runner.path, key, typed)
       .{ store: next, value: typed, cache_hit: false }
     },
   }
@@ -101,13 +101,13 @@ pub fn lower(
 ) StageOut<lower_core.LowerResult> {
   base_key := keys.lower_key(runner.path, runner.source_hash, runner.deps_hash, 0)
   key := keys.with_context(base_key, runner.context_hash)
-  lookup := cache.get_lowered(store, runner.path, key)
+  lookup := store.get_lowered(runner.path, key)
 
   case lookup.value {
     .Some(lowered) => .{ store: lookup.store, value: lowered, cache_hit: true },
     .None => {
       lowered := lower_core.lower_module(module.module, typed, builtins)
-      next := cache.put_lowered(lookup.store, runner.path, key, lowered)
+      next := lookup.store.put_lowered(runner.path, key, lowered)
       .{ store: next, value: lowered, cache_hit: false }
     },
   }

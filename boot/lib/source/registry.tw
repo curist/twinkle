@@ -44,7 +44,7 @@ fn get_file(reg: FileRegistry, file_id: Int) SourceFile? {
 }
 
 pub fn snippet(reg: FileRegistry, s: Span) String? {
-  f := try get_file(reg, s.file_id)
+  f := try reg.get_file(s.file_id)
 
   if s.start >= 0 and s.end <= f.source.len() {
     .Some(f.source.slice(s.start, s.end))
@@ -79,7 +79,7 @@ pub fn line_col(reg: FileRegistry, s: Span) LineCol? {
     return .None
   }
 
-  f := try get_file(reg, s.file_id)
+  f := try reg.get_file(s.file_id)
   line_index := find_line_index(f.line_starts, s.start)
   line := line_index + 1
   line_start := f.line_starts[line_index]
@@ -89,7 +89,7 @@ pub fn line_col(reg: FileRegistry, s: Span) LineCol? {
 }
 
 pub fn file_name(reg: FileRegistry, file_id: Int) String? {
-  f := try get_file(reg, file_id)
+  f := try reg.get_file(file_id)
   .Some(f.name)
 }
 
@@ -98,7 +98,7 @@ pub fn line_text(reg: FileRegistry, s: Span) String? {
     return .None
   }
 
-  f := try get_file(reg, s.file_id)
+  f := try reg.get_file(s.file_id)
   line_index := find_line_index(f.line_starts, s.start)
   line_start := f.line_starts[line_index]
   line_end := if line_index + 1 < f.line_starts.len() {

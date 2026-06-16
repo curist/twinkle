@@ -155,7 +155,7 @@ fn local_is_deep_owned(st: RwState, local: LocalId) Bool {
 // (unaliased). Conservative: a non-deep-owned local may alias caller state.
 fn atom_is_deep(st: RwState, a: Atom) Bool {
   case a {
-    .ALocal(l) => local_is_deep_owned(st, l),
+    .ALocal(l) => st.local_is_deep_owned(l),
     _ => true,
   }
 }
@@ -164,7 +164,7 @@ fn atom_is_deep(st: RwState, a: Atom) Bool {
 // that mutating any field in place cannot reach state aliased elsewhere.
 fn record_fields_all_deep(st: RwState, fields: Vector<FieldAtom>) Bool {
   for fa in fields {
-    if !atom_is_deep(st, fa.value) {
+    if !st.atom_is_deep(fa.value) {
       return false
     }
   }
@@ -214,10 +214,10 @@ fn with_fresh_record_local(st: RwState, local: LocalId) RwState {
 fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
   moved := case st.ownership_of(source) {
     .Some(value) => value,
-    .None => { return without_local_ownership(st, target) },
+    .None => { return st.without_local_ownership(target) },
   }
   source_was_fresh_record := set_has(st.fresh_records, source.id)
-  st = without_local_ownership(st, target)
+  st = st.without_local_ownership(target)
   st.ownership = .remove(source.id)
   st.ownership[target.id] = moved
   st.refreshed = .remove(source.id)
@@ -249,15 +249,15 @@ fn alias_or_transfer_owned(st: RwState, source: LocalId, target: LocalId, bind_l
   }
 
   if set_has(live_after, source.id) {
-    st = without_local_ownership(st, target)
-    without_local_ownership(st, source)
+    st = st.without_local_ownership(target)
+    st.without_local_ownership(source)
   } else {
-    transfer_owned_local(st, source, target)
+    st.transfer_owned_local(source, target)
   }
 }
 
 fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
-  st = with_local_ownership(st, local, .Deep)
+  st = st.with_local_ownership(local, .Deep)
 
   if set_has(st.tainted, local.id) {
     st.refreshed[local.id] = true
@@ -573,7 +573,7 @@ fn rewrite_reusable_update(
         // interprocedurally-consumed param (Gap 2, interproc-uniqueness.md).
         // consumed_params is a separate gate: we do NOT add these to the
         // ownership set to prevent Gap 1 propagation to collection fields.
-        can_reuse := (local_has_shell_ownership(st, site.base_local)
+        can_reuse := (st.local_has_shell_ownership(site.base_local)
           or set_has(consumed_params, site.base_local.id))
           and base_reusable_after_binding_with_live(
             body,
@@ -591,7 +591,7 @@ fn rewrite_reusable_update(
           }
         }
       },
-      .Call => if local_is_deep_owned(st, site.base_local)
+      .Call => if st.local_is_deep_owned(site.base_local)
         and base_reusable_after_binding_with_live(
           body,
           site.base_local,
@@ -608,7 +608,7 @@ fn rewrite_reusable_update(
           .None => {},
         }
 
-        st = with_consumed_update_result(st, bind_local)
+        st = st.with_consumed_update_result(bind_local)
       },
     },
     _ => {},
@@ -659,7 +659,7 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
 
       case classify_producer_ownership(op, st.config) {
         .Some(ownership) => {
-          st = with_local_ownership(st, local, ownership)
+          st = st.with_local_ownership(local, ownership)
         },
         .None => {},
       }
@@ -670,20 +670,20 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
       // fresh dict/vector) from a param-derived one whose fields still alias the
       // caller. Only deep-owned records license in-place field mutation below.
       case op {
-        .ARecord(_, fields) => if record_fields_all_deep(st, fields) {
-          st = with_local_ownership(st, local, .Deep)
+        .ARecord(_, fields) => if st.record_fields_all_deep(fields) {
+          st = st.with_local_ownership(local, .Deep)
         },
-        .ARecordUpdate(base_atom, _, value, _, _) => if atom_is_deep(st, base_atom)
-          and atom_is_deep(st, value) {
-          st = with_local_ownership(st, local, .Deep)
+        .ARecordUpdate(base_atom, _, value, _, _) => if st.atom_is_deep(base_atom)
+          and st.atom_is_deep(value) {
+          st = st.with_local_ownership(local, .Deep)
         },
         _ => {},
       }
 
       case op {
         .ACall(.AGlobalFunc(func_id), _) => if set_has(st.fresh_helper_ids, func_id.id) {
-          st = with_local_ownership(st, local, .Shallow)
-          st = with_fresh_record_local(st, local)
+          st = st.with_local_ownership(local, .Shallow)
+          st = st.with_fresh_record_local(local)
         },
         _ => {},
       }
@@ -692,7 +692,7 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
       // that ownership, but only if y is dead afterward (otherwise x aliases y).
       case op {
         .AInit(.ALocal(source)) => {
-          st = alias_or_transfer_owned(st, source, local, local)
+          st = st.alias_or_transfer_owned(source, local, local)
         },
         _ => {},
       }
@@ -700,11 +700,11 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
       // AAssign ownership transfer
       case op {
         .AAssign(target, .ALocal(source)) => {
-          st = alias_or_transfer_owned(st, source, target, local)
+          st = st.alias_or_transfer_owned(source, target, local)
         },
         .AAssign(target, _) => {
           // Non-local assign: kill ownership
-          st = without_local_ownership(st, target)
+          st = st.without_local_ownership(target)
         },
         _ => {},
       }
@@ -722,11 +722,11 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
             .None => empty_live,
           }
 
-          if local_has_shell_ownership(st, source) and !set_has(live_after_body, source.id) {
-            st = with_local_ownership(st, local, .Shallow)
+          if st.local_has_shell_ownership(source) and !set_has(live_after_body, source.id) {
+            st = st.with_local_ownership(local, .Shallow)
           } else if set_has(st.fresh_records, source.id)
             and can_move_fresh_record_field(source, field_id, body) {
-            st = with_local_ownership(st, local, .Deep)
+            st = st.with_local_ownership(local, .Deep)
             st = RwState.{
               tainted: st.tainted,
               ownership: st.ownership,
@@ -738,9 +738,9 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
               next_local: st.next_local,
               monos: st.monos,
             }
-          } else if local_is_deep_owned(st, source)
+          } else if st.local_is_deep_owned(source)
             and is_field_borrow_and_update(local, body, st.config) {
-            st = with_local_ownership(st, local, .Deep)
+            st = st.with_local_ownership(local, .Deep)
           }
         },
         _ => {},
@@ -862,7 +862,7 @@ fn straight_line_chain_is_safe(st: RwState, chain: StraightLineChain) Bool {
       .Site(site) => {
         site_count = site_count + 1
 
-        if !straight_line_site_result_dead_after_assign(st, site) {
+        if !st.straight_line_site_result_dead_after_assign(site) {
           return false
         }
       },
@@ -958,11 +958,11 @@ fn try_straight_line_builder_rewrite(
   case op {
     .ACall(.AGlobalFunc(f), args) => if f.id == builder.push_id.id and args.len() == 2 {
       case args[0] {
-        .ALocal(base) => if local_is_deep_owned(st, base) {
+        .ALocal(base) => if st.local_is_deep_owned(base) {
           chain := try collect_straight_line_chain(result_local, op, body, base, builder)
 
-          if straight_line_chain_is_safe(st, chain) {
-            .Some(lower_straight_line_builder_chain(chain, base, st, builder))
+          if st.straight_line_chain_is_safe(chain) {
+            .Some(chain.lower_straight_line_builder_chain(base, st, builder))
           } else {
             .None
           }
@@ -1222,7 +1222,7 @@ fn try_loop_rewrite(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExpr, st: 
   candidates: Vector<Int> = collect k in st.ownership.keys() {
     local := LocalId.{ id: k }
 
-    if local_is_deep_owned(st, local) {
+    if st.local_is_deep_owned(local) {
       k
     } else {
       continue

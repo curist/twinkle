@@ -21,7 +21,7 @@ pub fn workspace_symbols(store: cache.Store, query: String) Vector<WorkspaceSymb
   result: Vector<WorkspaceSymbol> = []
 
   for canonical_path in store.parsed.keys() {
-    parsed := case cache.latest_parsed(store, canonical_path) {
+    parsed := case store.latest_parsed(canonical_path) {
       .Some(p) => p,
       .None => { continue },
     }

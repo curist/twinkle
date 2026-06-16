@@ -43,7 +43,7 @@ fn timings_enabled() Bool {
 }
 
 fn log_time(label: String, ms: Float) {
-  eprintln("[time] ${label}: ${Float.to_string(ms)}ms")
+  eprintln("[time] ${label}: ${ms.to_string()}ms")
 }
 
 fn verify_level_from_env() VerifyLevel {

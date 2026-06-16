@@ -18,5 +18,5 @@ pub fn position_to_json(pos: line_index.Position) json.Json {
 
 /// Build a range JSON object from byte offsets using line index.
 pub fn byte_range_to_lsp_range(index: line_index.LineIndex, start: Int, end: Int) json.Json {
-  range_to_json(line_index.byte_range_to_range(index, start, end, .Utf16))
+  range_to_json(index.byte_range_to_range(start, end, .Utf16))
 }

@@ -27,7 +27,7 @@ pub fn new(source: String) LineIndex {
 
 pub fn byte_offset_to_position(index: LineIndex, offset: Int, encoding: PositionEncoding) Position {
   clamped := clamp(offset, 0, index.source.len())
-  line := line_for_offset(index, clamped)
+  line := index.line_for_offset(clamped)
   start := index.line_starts[line]
   rel_bytes := clamped - start
   line_text := index.source.slice(start, clamped)
@@ -45,7 +45,7 @@ pub fn position_to_byte_offset(index: LineIndex, pos: Position, encoding: Positi
   }
 
   start := index.line_starts[pos.line]
-  end := line_content_end(index, pos.line)
+  end := index.line_content_end(pos.line)
   line_text := index.source.slice(start, end)
   rel := case encoding {
     .Utf8 => {
@@ -69,8 +69,8 @@ pub fn position_to_byte_offset(index: LineIndex, pos: Position, encoding: Positi
 
 pub fn byte_range_to_range(index: LineIndex, start: Int, end: Int, encoding: PositionEncoding) TextRange {
   .{
-    start: byte_offset_to_position(index, start, encoding),
-    end: byte_offset_to_position(index, end, encoding),
+    start: index.byte_offset_to_position(start, encoding),
+    end: index.byte_offset_to_position(end, encoding),
   }
 }
 

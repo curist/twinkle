@@ -8,7 +8,7 @@ use commands.common.{
   exit_usage_error, format_compile_error, fs_error_message, get_positional, print_warnings,
 }
 use compiler.pipeline
-use lib.argparse.app
+
 use lib.argparse.app.{ParseResult}
 
 fn default_build_output(file: String) String {
@@ -23,7 +23,7 @@ fn default_build_output(file: String) String {
 }
 
 pub fn resolve_build_output(parsed: ParseResult, file: String) String!String {
-  out := case app.get_option(parsed, "output") {
+  out := case parsed.get_option("output") {
     .Some(path) => path,
     .None => default_build_output(file),
   }

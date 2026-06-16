@@ -20,7 +20,7 @@ pub fn parse_message(input: String) Result<Message, String> {
 }
 
 pub fn decode_message(value: json.Json) Result<Message, String> {
-  version := try json.decode(value, json.field("jsonrpc", json.string()))
+  version := try value.decode(json.field("jsonrpc", json.string()))
 
   if version != "2.0" {
     return .Err("expected jsonrpc 2.0")
@@ -34,7 +34,7 @@ pub fn decode_message(value: json.Json) Result<Message, String> {
       has_error := has_key(obj, "error")
 
       if has_method {
-        method := try json.decode(value, json.field("method", json.string()))
+        method := try value.decode(json.field("method", json.string()))
         params := optional_raw(obj, "params")
 
         if has_id {
@@ -97,7 +97,7 @@ pub fn request_id_to_json(id: RequestId) json.Json {
 pub fn success_response(id: RequestId, result: json.Json) json.Json {
   json.object([
     json.kv("jsonrpc", .Str("2.0")),
-    json.kv("id", request_id_to_json(id)),
+    json.kv("id", id.request_id_to_json()),
     json.kv("result", result),
   ])
 }
@@ -105,8 +105,8 @@ pub fn success_response(id: RequestId, result: json.Json) json.Json {
 pub fn error_response(id: RequestId, err: RpcError) json.Json {
   json.object([
     json.kv("jsonrpc", .Str("2.0")),
-    json.kv("id", request_id_to_json(id)),
-    json.kv("error", rpc_error_to_json(err)),
+    json.kv("id", id.request_id_to_json()),
+    json.kv("error", err.rpc_error_to_json()),
   ])
 }
 
@@ -124,7 +124,7 @@ pub fn notification(method: String, params: json.Json?) json.Json {
 pub fn request(id: RequestId, method: String, params: json.Json?) json.Json {
   fields: Vector<json.Field> = [
     json.kv("jsonrpc", .Str("2.0")),
-    json.kv("id", request_id_to_json(id)),
+    json.kv("id", id.request_id_to_json()),
     json.kv("method", .Str(method)),
   ]
 
@@ -151,8 +151,8 @@ pub fn rpc_error_to_json(err: RpcError) json.Json {
 }
 
 fn decode_rpc_error(value: json.Json) Result<RpcError, String> {
-  code := try json.decode(value, json.field("code", json.int()))
-  message := try json.decode(value, json.field("message", json.string()))
+  code := try value.decode(json.field("code", json.int()))
+  message := try value.decode(json.field("message", json.string()))
   data := case value {
     .Object(obj) => optional_raw(obj, "data"),
     _ => .None,

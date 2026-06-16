@@ -16,7 +16,7 @@
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo,
 }
-use compiler.builtins as bi
+
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.core_ir.{FuncId}
@@ -47,14 +47,14 @@ type RouteIds = .{
 
 pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
   .{
-    builder_new: bi.id(builtins, "vector$builder_new").id,
-    builder_push: bi.id(builtins, "vector$builder_push").id,
-    builder_freeze: bi.id(builtins, "vector$builder_freeze").id,
-    len: bi.id(builtins, "vector$len").id,
-    builder_new_i64: bi.id(builtins, "vector$builder_new_i64").id,
-    builder_push_i64: bi.id(builtins, "vector$builder_push_i64").id,
-    builder_freeze_i64: bi.id(builtins, "vector$builder_freeze_i64").id,
-    len_i64: bi.id(builtins, "vector$len_i64").id,
+    builder_new: builtins.id("vector$builder_new").id,
+    builder_push: builtins.id("vector$builder_push").id,
+    builder_freeze: builtins.id("vector$builder_freeze").id,
+    len: builtins.id("vector$len").id,
+    builder_new_i64: builtins.id("vector$builder_new_i64").id,
+    builder_push_i64: builtins.id("vector$builder_push_i64").id,
+    builder_freeze_i64: builtins.id("vector$builder_freeze_i64").id,
+    len_i64: builtins.id("vector$len_i64").id,
   }
 }
 
@@ -504,7 +504,7 @@ fn user_direct_call_accepts_boxed_arg(
     return false
   }
 
-  case bi.entry(builtins, fid) {
+  case builtins.entry(fid) {
     .Some(_) => false,
     .None => true,
   }
@@ -557,7 +557,7 @@ fn classify_expr(
     .Let(_, op, body) => {
       op_use := classify_op(op, vs, len_id, builtins, slots)
       body_use := classify_expr(body, vs, len_id, builtins, slots)
-      merge_use(op_use, body_use)
+      op_use.merge_use(body_use)
     },
     .Atom(a) => .{ escapes: slot_in(a, vs), field_keys: [] },
     .Return(.Some(_)) => .{ escapes: false, field_keys: [] },
@@ -599,14 +599,14 @@ fn classify_op(
       cnd_esc: VGroupUse = .{ escapes: slot_in(cnd, vs), field_keys: [] }
       then_use := classify_expr(then_e, vs, len_id, builtins, slots)
       else_use := classify_expr(else_e, vs, len_id, builtins, slots)
-      merge_use(cnd_esc, merge_use(then_use, else_use))
+      cnd_esc.merge_use(then_use.merge_use(else_use))
     },
     .AMatch(scrut, arms) => {
       acc: VGroupUse = .{ escapes: slot_in(scrut, vs), field_keys: [] }
 
       for arm in arms {
         arm_use := classify_expr(arm.body, vs, len_id, builtins, slots)
-        acc = merge_use(acc, arm_use)
+        acc = acc.merge_use(arm_use)
       }
 
       acc
@@ -635,9 +635,9 @@ fn classify_op(
         if slot_in(f.value, vs) {
           if atom_is_int_vector_slot(f.value, slots) {
             key := "${tid.id}:${f.field.id}"
-            acc = merge_use(acc, .{ escapes: false, field_keys: [key] })
+            acc = acc.merge_use(.{ escapes: false, field_keys: [key] })
           } else {
-            acc = merge_use(acc, .{ escapes: true, field_keys: [] })
+            acc = acc.merge_use(.{ escapes: true, field_keys: [] })
           }
         }
       }
@@ -660,7 +660,7 @@ fn classify_op(
       }
 
       base_esc: VGroupUse = .{ escapes: slot_in(b, vs), field_keys: [] }
-      merge_use(base_esc, val_use)
+      base_esc.merge_use(val_use)
     },
     .AVariant(_, _, args) => .{ escapes: atoms_contain_any(args, vs), field_keys: [] },
     .AArrayLit(items) => .{ escapes: atoms_contain_any(items, vs), field_keys: [] },

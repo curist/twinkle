@@ -25,7 +25,7 @@ pub fn add_positional(cmd: Command, name: String, help: String) Command {
 }
 
 pub fn add_required_positional(cmd: Command, name: String, help: String) Command {
-  cmd.add_arg(arg.required(arg.positional(name, help)))
+  cmd.add_arg(arg.positional(name, help).required())
 }
 
 pub fn add_flag(cmd: Command, name: String, help: String) Command {
@@ -33,7 +33,7 @@ pub fn add_flag(cmd: Command, name: String, help: String) Command {
 }
 
 pub fn add_short_flag(cmd: Command, name: String, short_name: String, help: String) Command {
-  cmd.add_arg(arg.short(arg.flag(name, help), short_name))
+  cmd.add_arg(arg.flag(name, help).short(short_name))
 }
 
 pub fn add_option(cmd: Command, name: String, help: String) Command {
@@ -41,5 +41,5 @@ pub fn add_option(cmd: Command, name: String, help: String) Command {
 }
 
 pub fn add_short_option(cmd: Command, name: String, short_name: String, help: String) Command {
-  cmd.add_arg(arg.short(arg.option(name, help), short_name))
+  cmd.add_arg(arg.option(name, help).short(short_name))
 }

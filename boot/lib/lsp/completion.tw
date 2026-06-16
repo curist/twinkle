@@ -11,7 +11,7 @@ pub type CompletionItem = .{ label: String, kind: Int, detail: String?, document
 
 pub fn completion_response(items: Vector<CompletionItem>) json.Json {
   json.array(collect item in items {
-    item_to_json(item)
+    item.item_to_json()
   })
 }
 

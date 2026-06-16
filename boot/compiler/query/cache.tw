@@ -92,7 +92,7 @@ pub fn get_stats(store: Store) CacheStats {
 }
 
 pub fn set_dependencies(store: Store, module: String, deps: Vector<String>) Store {
-  store.graph = dependency.set_dependencies(store.graph, module, deps)
+  store.graph = store.graph.set_dependencies(module, deps)
   store
 }
 
@@ -129,13 +129,13 @@ pub fn note_source_hash(store: Store, module: String, source_hash: Int) Store {
   store.revision = store.revision + 1
   store.parsed = .remove(module)
   store.occurrences = .remove(module)
-  store = invalidate_changed_module(store, module)
+  store = store.invalidate_changed_module(module)
   store.source_hashes[module] = source_hash
   store
 }
 
 pub fn invalidate_changed_module(store: Store, module: String) Store {
-  affected := dependency.reverse_dependents_closure(store.graph, module)
+  affected := store.graph.reverse_dependents_closure(module)
 
   for path in affected {
     if path == module {
@@ -155,19 +155,19 @@ pub fn invalidate_changed_module(store: Store, module: String) Store {
 pub fn clear_module(store: Store, module: String) Store {
   store.parsed = .remove(module)
   store.occurrences = .remove(module)
-  store = clear_resolved_and_later(store, module)
+  store = store.clear_resolved_and_later(module)
   store
 }
 
 pub fn clear_resolved_and_later(store: Store, module: String) Store {
   store.resolved = .remove(module)
-  store = clear_typed_and_later(store, module)
+  store = store.clear_typed_and_later(module)
   store
 }
 
 pub fn clear_typed_and_later(store: Store, module: String) Store {
   store.typed = .remove(module)
-  store = clear_lowered_and_hash(store, module)
+  store = store.clear_lowered_and_hash(module)
   store
 }
 

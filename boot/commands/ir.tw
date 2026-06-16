@@ -5,25 +5,25 @@ use @std.proc
 use commands.common.{exit_usage_error, format_compile_error, get_positional, print_warnings}
 use compiler.ir_print
 use compiler.pipeline
-use lib.argparse.app
+
 use lib.argparse.app.{ParseResult}
 
 fn has_any_ir_flag(parsed: ParseResult) Bool {
-  app.has_flag(parsed, "core")
-    or app.has_flag(parsed, "mono")
-    or app.has_flag(parsed, "anf")
-    or app.has_flag(parsed, "opt")
-    or app.has_flag(parsed, "wat")
-    or app.has_flag(parsed, "all")
+  parsed.has_flag("core")
+    or parsed.has_flag("mono")
+    or parsed.has_flag("anf")
+    or parsed.has_flag("opt")
+    or parsed.has_flag("wat")
+    or parsed.has_flag("all")
 }
 
 fn should_show_ir(parsed: ParseResult, name: String) Bool {
-  if app.has_flag(parsed, "all") {
+  if parsed.has_flag("all") {
     return true
   }
 
   if has_any_ir_flag(parsed) {
-    return app.has_flag(parsed, name)
+    return parsed.has_flag(name)
   }
 
   name == "opt"

@@ -41,7 +41,7 @@ pub fn parse(input: String) Result<Json, String> {
 
 pub fn parse_decode<A>(input: String, da: Decoder<A>) Result<A, String> {
   value := try parse(input)
-  decode(value, da)
+  value.decode(da)
 }
 
 fn skip_ws(input: String, i: Int) Int {
@@ -612,7 +612,7 @@ pub fn list<A>(da: Decoder<A>) Decoder<Vector<A>> {
 
 // Decode every value of a JSON object, preserving the original keys.
 pub fn dict<A>(da: Decoder<A>) Decoder<Dict<String, A>> {
-  make(fn(json: Json) { decode_dict_values(json, da) })
+  make(fn(json: Json) { json.decode_dict_values(da) })
 }
 
 fn decode_dict_values<A>(json: Json, da: Decoder<A>) Result<Dict<String, A>, String> {
@@ -687,7 +687,7 @@ pub fn to_string(json: Json) String {
       parts: Vector<String> = []
 
       for item in arr {
-        parts = .append(to_string(item))
+        parts = .append(item.to_string())
       }
 
       "[".concat(parts.join(",")).concat("]")
@@ -706,7 +706,7 @@ pub fn to_string(json: Json) String {
           .Some(v) => v,
           .None => Json.Null,
         }
-        entry := quote_string(key).concat(":").concat(to_string(val))
+        entry := quote_string(key).concat(":").concat(val.to_string())
         parts = .append(entry)
       }
 
@@ -717,7 +717,7 @@ pub fn to_string(json: Json) String {
 
 // stringify is a conventional alias for to_string (mirrors JSON.stringify).
 pub fn stringify(json: Json) String {
-  to_string(json)
+  json.to_string()
 }
 
 fn quote_string(s: String) String {
@@ -727,7 +727,7 @@ fn quote_string(s: String) String {
   buf: Vector<Byte> = []
 
   for b in s.utf8_bytes() {
-    n := Byte.to_int(b)
+    n := b.to_int()
     escape := case n {
       0x22 => "\\\"",
       0x5C => "\\\\",

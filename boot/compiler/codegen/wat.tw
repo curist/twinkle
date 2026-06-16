@@ -91,7 +91,7 @@ fn emit_wat_parts(
   }
 
   for imp in imports {
-    idx := lookup_functype(ft_registry, imp.params, imp.results)
+    idx := ft_registry.lookup_functype(imp.params, imp.results)
     s := sym(imp.as_sym)
     ft := sym("functype_${idx}")
     lines = .append("  (import \"${imp.module}\" \"${imp.name}\" (func ${s} (type ${ft})))")
@@ -133,7 +133,7 @@ fn emit_wat_parts(
   }
 
   for f in funcs {
-    idx := lookup_functype(ft_registry, f.params, f.results)
+    idx := ft_registry.lookup_functype(f.params, f.results)
     func_lines := emit_func_def(f, idx)
 
     for fl in func_lines {
@@ -292,8 +292,8 @@ type FuncTypeRegistry = .{ entries: Vector<FuncSigPair>, keys: Dict<String, Int>
 
 fn build_functype_registry(imports: Vector<ImportDef>, funcs: Vector<FuncDef>) FuncTypeRegistry {
   init := FuncTypeRegistry.{ entries: [], keys: Dict.new() }
-  reg := imports.fold(init, fn(r, imp) { register_functype(r, imp.params, imp.results) })
-  funcs.fold(reg, fn(r, f) { register_functype(r, f.params, f.results) })
+  reg := imports.fold(init, fn(r, imp) { r.register_functype(imp.params, imp.results) })
+  funcs.fold(reg, fn(r, f) { r.register_functype(f.params, f.results) })
 }
 
 fn register_functype(reg: FuncTypeRegistry, params: Vector<ValType>, results: Vector<ValType>) FuncTypeRegistry {

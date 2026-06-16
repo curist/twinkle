@@ -290,12 +290,12 @@ fn analyze_module_impl(
   }
 
   t_load0 := date.now()
-  loaded := case load_source(state, canonical, module_id, caller_id, use_span) {
+  loaded := case state.load_source(canonical, module_id, caller_id, use_span) {
     .Ok(value) => value,
     .Err(err) => {
       return .{
         env: base,
-        state: mark_failed(err.state, canonical),
+        state: err.state.mark_failed(canonical),
         diagnostics: err.diagnostics,
         ok: false,
         rewrites: [],
@@ -309,12 +309,12 @@ fn analyze_module_impl(
   }
 
   t_parse0 := date.now()
-  parsed_load := case parse_cached(loaded.state, canonical, loaded.source, loaded.source_hash) {
+  parsed_load := case loaded.state.parse_cached(canonical, loaded.source, loaded.source_hash) {
     .Ok(value) => value,
     .Err(err) => {
       return .{
         env: base,
-        state: mark_failed(err.state, canonical),
+        state: err.state.mark_failed(canonical),
         diagnostics: err.diagnostics,
         ok: false,
         rewrites: [],
@@ -328,9 +328,7 @@ fn analyze_module_impl(
   }
 
   t_plan0 := date.now()
-  dep_plan := case plan_dependencies(
-    parsed_load.state,
-    canonical,
+  dep_plan := case parsed_load.state.plan_dependencies(canonical,
     parsed_load.parsed,
     loaded.source,
   ) {
@@ -338,7 +336,7 @@ fn analyze_module_impl(
     .Err(err) => {
       return .{
         env: base,
-        state: mark_failed(err.state, canonical),
+        state: err.state.mark_failed(canonical),
         diagnostics: err.diagnostics,
         ok: false,
         rewrites: [],
@@ -363,7 +361,7 @@ fn analyze_module_impl(
   if !deps.ok {
     return .{
       env: deps.env,
-      state: mark_failed(deps.state, canonical),
+      state: deps.state.mark_failed(canonical),
       diagnostics: deps.diagnostics,
       ok: false,
       rewrites: [],
@@ -412,9 +410,7 @@ fn analyze_module_impl(
     .None => {},
   }
 
-  local := case resolve_and_check_local(
-    cur,
-    canonical,
+  local := case cur.resolve_and_check_local(canonical,
     runner,
     parsed_load.parsed,
     env,
@@ -425,7 +421,7 @@ fn analyze_module_impl(
     .Err(err) => {
       return .{
         env,
-        state: mark_failed(err.state, canonical),
+        state: err.state.mark_failed(canonical),
         diagnostics: err.diagnostics,
         ok: false,
         rewrites: [],
@@ -434,9 +430,7 @@ fn analyze_module_impl(
     },
   }
   t_publish0 := date.now()
-  cur = publish_interface(
-    local.state,
-    canonical,
+  cur = local.state.publish_interface(canonical,
     parsed_load.parsed,
     local.checked,
     local_type_start,
@@ -504,10 +498,10 @@ fn load_source(
   caller_id: identity.SourceIdentity?,
   use_span: Span?,
 ) SourceLoad!AnalysisError {
-  source := case overlay.lookup(state.overlay, module_id) {
+  source := case state.overlay.lookup(module_id) {
     .Ok(found) => found,
     .Err(err) => {
-      state.cache = cache.clear_module(state.cache, canonical)
+      state.cache = state.cache.clear_module(canonical)
       err_id := case caller_id {
         .Some(cid) => cid,
         .None => module_id,
@@ -522,7 +516,7 @@ fn load_source(
     },
   }
   source_hash := keys.hash_text(source.text)
-  state.cache = cache.note_source_hash(state.cache, canonical, source_hash)
+  state.cache = state.cache.note_source_hash(canonical, source_hash)
   .Ok(.{ state, source, source_hash })
 }
 
@@ -533,7 +527,7 @@ fn parse_cached(
   source_hash: Int,
 ) ParseLoad!AnalysisError {
   parse_runner := stage_runner.new(canonical, source_hash, 0, 0, false)
-  parsed_out := stage_runner.parse(parse_runner, state.cache, source.text, 0)
+  parsed_out := parse_runner.parse(state.cache, source.text, 0)
   state.cache = parsed_out.store
   parsed := parsed_out.value
 
@@ -565,7 +559,7 @@ fn plan_dependencies(
   ) {
     .Ok(plan) => plan,
     .Err(err) => {
-      state.cache = cache.clear_resolved_and_later(state.cache, canonical)
+      state.cache = state.cache.clear_resolved_and_later(canonical)
       d := synthetic_diag(source.identity, source.version, err.span, "import", err.message)
 
       return .Err(.{ state, diagnostics: [d] })
@@ -696,13 +690,11 @@ fn preliminary_type_interface(
   use_span: Span?,
 ) PreliminaryInterface!AnalysisError {
   dep_id := identity.from_path(dep.canonical_path)
-  loaded := case load_source(state, dep.canonical_path, dep_id, caller_id, use_span) {
+  loaded := case state.load_source(dep.canonical_path, dep_id, caller_id, use_span) {
     .Ok(value) => value,
     .Err(err) => { return .Err(err) },
   }
-  parsed_load := case parse_cached(
-    loaded.state,
-    dep.canonical_path,
+  parsed_load := case loaded.state.parse_cached(dep.canonical_path,
     loaded.source,
     loaded.source_hash,
   ) {
@@ -743,13 +735,13 @@ fn break_import_cycle(
     .None => span.new(0, 0, 0),
   }
 
-  loaded := case load_source(state, canonical, module_id, caller_id, use_span) {
+  loaded := case state.load_source(canonical, module_id, caller_id, use_span) {
     .Ok(value) => value,
     .Err(err) => {
       return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false, rewrites: [], lints: [] }
     },
   }
-  parsed_load := case parse_cached(loaded.state, canonical, loaded.source, loaded.source_hash) {
+  parsed_load := case loaded.state.parse_cached(canonical, loaded.source, loaded.source_hash) {
     .Ok(value) => value,
     .Err(err) => {
       return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false, rewrites: [], lints: [] }
@@ -772,7 +764,7 @@ fn break_import_cycle(
     return .{ env: base, state: cur, diagnostics: [d], ok: false, rewrites: [], lints: [] }
   }
 
-  dep_plan := case plan_dependencies(cur, canonical, parsed, loaded.source) {
+  dep_plan := case cur.plan_dependencies(canonical, parsed, loaded.source) {
     .Ok(plan) => plan,
     .Err(err) => {
       return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false, rewrites: [], lints: [] }
@@ -827,7 +819,7 @@ fn break_import_cycle(
       continue
     }
 
-    prelim := case preliminary_type_interface(cur, env, dep, caller_id, use_span) {
+    prelim := case cur.preliminary_type_interface(env, dep, caller_id, use_span) {
       .Ok(value) => value,
       .Err(err) => {
         return .{
@@ -844,7 +836,7 @@ fn break_import_cycle(
     env = merge_import_interface(env, dep, prelim.interface)
   }
 
-  resolved_out := stage_runner.resolve(runner, cur.cache, parsed, env)
+  resolved_out := runner.resolve(cur.cache, parsed, env)
   cur.cache = resolved_out.store
   resolved := resolved_out.value
 
@@ -996,16 +988,14 @@ fn analyze_dependencies(
     }
   }
 
-  cur.cache = cache.set_dependencies(
-    cur.cache,
-    canonical,
+  cur.cache = cur.cache.set_dependencies(canonical,
     collect dep in dep_plan.dependencies {
       dep.canonical_path
     },
   )
 
   if !deps_ok {
-    cur.cache = cache.clear_resolved_and_later(cur.cache, canonical)
+    cur.cache = cur.cache.clear_resolved_and_later(canonical)
   }
 
   .{ env, state: cur, diagnostics: all_diags, ok: deps_ok, rewrites: all_rewrites, lints: all_lints }
@@ -1015,9 +1005,9 @@ fn dependency_hashes(store: cache.Store, dep_plan: imports.DependencyPlan) Depen
   dep_hash_entries: Vector<keys.DepEntry> = []
 
   for dep in dep_plan.dependencies {
-    dep_hash := case cache.exports_fingerprint(store, dep.canonical_path) {
+    dep_hash := case store.exports_fingerprint(dep.canonical_path) {
       .Some(fp) => fp,
-      .None => case cache.module_hash(store, dep.canonical_path) {
+      .None => case store.module_hash(dep.canonical_path) {
         .Some(hash) => hash,
         .None => 0,
       },
@@ -1060,14 +1050,14 @@ fn resolve_and_check_local(
 ) LocalCheck!AnalysisError {
   shadow_diags := reserved_stdlib_shadow_diags(parsed, canonical)
   if shadow_diags.len() > 0 {
-    state.cache = cache.clear_resolved_and_later(state.cache, canonical)
+    state.cache = state.cache.clear_resolved_and_later(canonical)
     diags := wrap_diags(source, "resolve", shadow_diags, type_name_snapshot(env))
 
     return .Err(.{ state, diagnostics: prior_diagnostics.concat(diags) })
   }
 
   t_resolve0 := date.now()
-  resolved_out := stage_runner.resolve(runner, state.cache, parsed, env)
+  resolved_out := runner.resolve(state.cache, parsed, env)
   state.cache = resolved_out.store
 
   if state.timed {
@@ -1077,14 +1067,14 @@ fn resolve_and_check_local(
   resolved := resolved_out.value
 
   if resolved.diagnostics.len() > 0 {
-    state.cache = cache.clear_typed_and_later(state.cache, canonical)
+    state.cache = state.cache.clear_typed_and_later(canonical)
     diags := wrap_diags(source, "resolve", resolved.diagnostics, type_name_snapshot(resolved.env))
 
     return .Err(.{ state, diagnostics: prior_diagnostics.concat(diags) })
   }
 
   t_check0 := date.now()
-  checked_out := stage_runner.typecheck(runner, state.cache, parsed, resolved, state.lint_mode)
+  checked_out := runner.typecheck(state.cache, parsed, resolved, state.lint_mode)
   state.cache = checked_out.store
 
   if state.timed {
@@ -1094,7 +1084,7 @@ fn resolve_and_check_local(
   checked := checked_out.value
 
   if checked.diagnostics.len() > 0 {
-    state.cache = cache.clear_lowered_and_hash(state.cache, canonical)
+    state.cache = state.cache.clear_lowered_and_hash(canonical)
     diags := wrap_diags(source, "check", checked.diagnostics, type_name_snapshot(checked.env))
 
     return .Err(.{ state, diagnostics: prior_diagnostics.concat(diags) })
@@ -1112,13 +1102,13 @@ fn publish_interface(
   source_hash: Int,
   deps_hash: Int,
 ) AnalysisState {
-  cur := capture_local_types(state, checked.env, canonical, local_type_start)
+  cur := state.capture_local_types(checked.env, canonical, local_type_start)
   exports := extract_exports_for_module(checked.env, parsed.module, canonical, checked.pub_values)
   interface := make_module_interface(canonical, exports, cur.shared_type_origins)
   cur.exports[canonical] = exports
   cur.interfaces[canonical] = interface
-  cur.cache = cache.set_exports_fingerprint(cur.cache, canonical, interface.fingerprint)
-  cur.cache = cache.set_module_hash(cur.cache, canonical, keys.module_hash(source_hash, deps_hash))
+  cur.cache = cur.cache.set_exports_fingerprint(canonical, interface.fingerprint)
+  cur.cache = cur.cache.set_module_hash(canonical, keys.module_hash(source_hash, deps_hash))
   cur.module_order = .append(canonical)
   cur
 }

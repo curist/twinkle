@@ -172,7 +172,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
     eprintln(
       "[time:imports] edges=${fc.import_edges}  module=${fc.import_module_edges}  selective=${fc.import_selective_edges}  prelude=${fc.import_prelude_edges}  export_entries=${fc.import_export_entries}",
     )
-    top_imports := a_result.state.import_timings.sort_by(fn(a, b) { Float.compare(a.ms, b.ms) })
+    top_imports := a_result.state.import_timings.sort_by(fn(a, b) { a.ms.compare(b.ms) })
     top_n := if top_imports.len() < 8 {
       top_imports.len()
     } else {

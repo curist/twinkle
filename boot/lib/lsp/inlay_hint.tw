@@ -18,7 +18,7 @@ fn hint_kind_to_int(kind: query_inlay_hints.InlayHintKind) Int {
 
 pub fn inlay_hint_response(index: line_index.LineIndex, hints: Vector<query_inlay_hints.InlayHint>) json.Json {
   items := collect hint in hints {
-    pos := line_index.byte_offset_to_position(index, hint.position, .Utf16)
+    pos := index.byte_offset_to_position(hint.position, .Utf16)
     json.object([
       json.kv("position", position_to_json(pos)),
       json.kv("label", .Str(hint.label)),

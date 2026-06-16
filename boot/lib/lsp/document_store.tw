@@ -23,11 +23,11 @@ pub fn empty() Store {
 }
 
 pub fn open(store: Store, uri: String, text: String, version: Int?) Store {
-  put(store, make_document(uri, text, version))
+  store.put(make_document(uri, text, version))
 }
 
 pub fn change_full_text(store: Store, uri: String, text: String, version: Int?) Store {
-  put(store, make_document(uri, text, version))
+  store.put(make_document(uri, text, version))
 }
 
 /// Apply an incremental text change to a document. Converts the LSP UTF-16
@@ -41,7 +41,7 @@ pub fn change_incremental(
   new_text: String,
   version: Int?,
 ) Store {
-  doc := case get(store, uri) {
+  doc := case store.get(uri) {
     .Some(d) => d,
     .None => { return store },
   }
@@ -53,7 +53,7 @@ pub fn change_incremental(
   updated := doc.text.slice(0, start_offset)
     .concat(new_text)
     .concat(doc.text.slice(end_offset, doc.text.len()))
-  put(store, make_document(uri, updated, version))
+  store.put(make_document(uri, updated, version))
 }
 
 pub fn close(store: Store, uri: String) Store {

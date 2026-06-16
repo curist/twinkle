@@ -70,9 +70,7 @@ fn make_token(
   preceded_by_newline: Bool,
   leading_trivia: Vector<Trivia>,
 ) Token {
-  tokens.make_with_trivia(
-    kind,
-    source.slice(start, end),
+  kind.make_with_trivia(source.slice(start, end),
     span.new(file_id, start, end),
     preceded_by_newline,
     leading_trivia,
@@ -88,9 +86,7 @@ fn make_token_text(
   preceded_by_newline: Bool,
   leading_trivia: Vector<Trivia>,
 ) Token {
-  tokens.make_with_trivia(
-    kind,
-    text,
+  kind.make_with_trivia(text,
     span.new(file_id, start, end),
     preceded_by_newline,
     leading_trivia,
@@ -432,7 +428,7 @@ fn scan_number(
       i = i + 1
     }
 
-    return op_scan(ctx, .IntLit, token_start, i, preceded_by_newline, leading_trivia)
+    return ctx.op_scan(.IntLit, token_start, i, preceded_by_newline, leading_trivia)
   }
 
   i := token_start + 1
@@ -452,7 +448,7 @@ fn scan_number(
     }
   }
 
-  op_scan(ctx, kind, token_start, i, preceded_by_newline, leading_trivia)
+  ctx.op_scan(kind, token_start, i, preceded_by_newline, leading_trivia)
 }
 
 // Character literal: lexes as an Int token carrying the code point. The raw
@@ -541,47 +537,47 @@ fn scan_operator(
   c := source[i]
 
   if c == ':' and i + 1 < n and source[i + 1] == '=' {
-    return op_scan(ctx, .ColonEq, token_start, i + 2, preceded_by_newline, leading_trivia)
+    return ctx.op_scan(.ColonEq, token_start, i + 2, preceded_by_newline, leading_trivia)
   }
 
   if c == '=' and i + 1 < n {
     c1 := source[i + 1]
 
     if c1 == '=' {
-      return op_scan(ctx, .EqEq, token_start, i + 2, preceded_by_newline, leading_trivia)
+      return ctx.op_scan(.EqEq, token_start, i + 2, preceded_by_newline, leading_trivia)
     }
 
     if c1 == '>' {
-      return op_scan(ctx, .FatArrow, token_start, i + 2, preceded_by_newline, leading_trivia)
+      return ctx.op_scan(.FatArrow, token_start, i + 2, preceded_by_newline, leading_trivia)
     }
   }
 
   if c == '!' and i + 1 < n and source[i + 1] == '=' {
-    return op_scan(ctx, .BangEq, token_start, i + 2, preceded_by_newline, leading_trivia)
+    return ctx.op_scan(.BangEq, token_start, i + 2, preceded_by_newline, leading_trivia)
   }
 
   if c == '<' and i + 1 < n and source[i + 1] == '=' {
-    return op_scan(ctx, .LtEq, token_start, i + 2, preceded_by_newline, leading_trivia)
+    return ctx.op_scan(.LtEq, token_start, i + 2, preceded_by_newline, leading_trivia)
   }
 
   if c == '<' and i + 1 < n and source[i + 1] == '<' {
-    return op_scan(ctx, .LtLt, token_start, i + 2, preceded_by_newline, leading_trivia)
+    return ctx.op_scan(.LtLt, token_start, i + 2, preceded_by_newline, leading_trivia)
   }
 
   if c == '>' and i + 1 < n and source[i + 1] == '=' {
-    return op_scan(ctx, .GtEq, token_start, i + 2, preceded_by_newline, leading_trivia)
+    return ctx.op_scan(.GtEq, token_start, i + 2, preceded_by_newline, leading_trivia)
   }
 
   if c == '&' and i + 1 < n and source[i + 1] == '&' {
-    return op_scan(ctx, .AmpAmp, token_start, i + 2, preceded_by_newline, leading_trivia)
+    return ctx.op_scan(.AmpAmp, token_start, i + 2, preceded_by_newline, leading_trivia)
   }
 
   if c == '|' and i + 1 < n and source[i + 1] == '|' {
-    return op_scan(ctx, .PipePipe, token_start, i + 2, preceded_by_newline, leading_trivia)
+    return ctx.op_scan(.PipePipe, token_start, i + 2, preceded_by_newline, leading_trivia)
   }
 
   if c == '.' and i + 1 < n and source[i + 1] == '.' {
-    return op_scan(ctx, .DotDot, token_start, i + 2, preceded_by_newline, leading_trivia)
+    return ctx.op_scan(.DotDot, token_start, i + 2, preceded_by_newline, leading_trivia)
   }
 
   kind: TokenKind? = case String.from_byte(c) {
@@ -617,7 +613,7 @@ fn scan_operator(
   }
 
   case kind {
-    .Some(k) => op_scan(ctx, k, token_start, i + 1, preceded_by_newline, leading_trivia),
+    .Some(k) => ctx.op_scan(k, token_start, i + 1, preceded_by_newline, leading_trivia),
     .None => .{
       next_index: i + 1,
       token: make_token(
@@ -898,9 +894,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
 
       text := source.slice(token_start, i)
       out = .append(
-        tokens.make_with_trivia(
-          keyword_or_ident(text),
-          text,
+        keyword_or_ident(text).make_with_trivia(text,
           span.new(file_id, token_start, i),
           preceded_by_newline,
           leading_trivia,
@@ -910,14 +904,14 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
     }
 
     if c.is_digit() {
-      num := scan_number(ctx, token_start, preceded_by_newline, leading_trivia)
+      num := ctx.scan_number(token_start, preceded_by_newline, leading_trivia)
       i = num.next_index
       out = .append(num.token)
       continue
     }
 
     if c == '\'' {
-      lit := scan_char_literal(ctx, token_start, preceded_by_newline, leading_trivia)
+      lit := ctx.scan_char_literal(token_start, preceded_by_newline, leading_trivia)
       i = lit.next_index
 
       case lit.diagnostic {
@@ -970,7 +964,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       continue
     }
 
-    op := scan_operator(ctx, token_start, preceded_by_newline, leading_trivia)
+    op := ctx.scan_operator(token_start, preceded_by_newline, leading_trivia)
     i = op.next_index
 
     case op.diagnostic {

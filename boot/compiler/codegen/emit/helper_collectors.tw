@@ -1,7 +1,7 @@
 /// Discovery helpers for extra runtime bridge functions needed by emission.
 
 use compiler.backend.prepared_ir.{PreparedExpr, PreparedFunc, PreparedOp}
-use compiler.builtins as bi
+
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.emit.helpers.{get_sum_layout, variant_field_mono}
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key}
@@ -13,7 +13,7 @@ use compiler.resolver.{ResolvedEnv}
 pub fn collect_iterator_next_helpers(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Vector<
   MonoType,
 > {
-  want_fid := bi.id(builtins, "iterator$next")
+  want_fid := builtins.id("iterator$next")
   seen: Dict<String, MonoType> = Dict.new()
   order: Vector<String> = []
 
@@ -109,7 +109,7 @@ fn collect_iterator_next_helpers_op(op: PreparedOp, func: PreparedFunc, want_fid
 pub fn collect_dict_get_inner_types(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Vector<
   MonoType,
 > {
-  want_fid := bi.id(builtins, "dict$get")
+  want_fid := builtins.id("dict$get")
   seen: Dict<String, MonoType> = Dict.new()
   order: Vector<String> = []
 

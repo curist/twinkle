@@ -26,7 +26,7 @@ pub fn workspace_symbol_response(
 }
 
 fn symbol_to_json(sym: WorkspaceSymbol, index: line_index.LineIndex) json.Json {
-  range := line_index.byte_range_to_range(index, sym.range.start, sym.range.end, .Utf16)
+  range := index.byte_range_to_range(sym.range.start, sym.range.end, .Utf16)
   location := json.object([json.kv("uri", .Str(sym.uri)), json.kv("range", range_to_json(range))])
   json.object([
     json.kv("name", .Str(sym.name)),

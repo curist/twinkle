@@ -1,7 +1,7 @@
 /// Call emission for direct, runtime, intrinsic, and closure calls.
 
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedFunc, SlotId}
-use compiler.builtins as bi
+
 use compiler.builtins.{RuntimeInfo}
 use compiler.codegen.emit.coercions.{adapt_runtime_result, emit_coerce_stack}
 use compiler.codegen.emit.context.{EmitCtx, lookup_func_sym}
@@ -49,7 +49,7 @@ pub fn emit_call(
   case callee {
     .AGlobalFunc(fid) => {
       // Check if it's a builtin
-      case bi.entry(ctx.builtins, fid) {
+      case ctx.builtins.entry(fid) {
         .Some(entry) => case entry.kind {
           .Runtime(info) => emit_runtime_call(
             fid,

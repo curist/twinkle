@@ -66,8 +66,8 @@ fn diagnostic_to_json(index: line_index.LineIndex, d: query_diagnostics.Diagnost
 
 fn diagnostic_range(index: line_index.LineIndex, d: query_diagnostics.Diagnostic) line_index.TextRange {
   case d.span {
-    .Some(sp) => line_index.byte_range_to_range(index, sp.start, sp.end, .Utf16),
-    .None => line_index.byte_range_to_range(index, 0, 0, .Utf16),
+    .Some(sp) => index.byte_range_to_range(sp.start, sp.end, .Utf16),
+    .None => index.byte_range_to_range(0, 0, .Utf16),
   }
 }
 

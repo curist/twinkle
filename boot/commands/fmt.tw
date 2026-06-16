@@ -8,7 +8,7 @@ use compiler.fmt.formatter
 use compiler.lexer
 use compiler.parser
 use compiler.query.diag_render
-use lib.argparse.app
+
 use lib.argparse.app.{ParseResult}
 use lib.source.diagnostics
 use lib.source.registry
@@ -20,7 +20,7 @@ pub fn run_fmt_command(parsed: ParseResult) {
     exit_usage_error("missing required positional argument 'file'")
   }
 
-  check := app.has_flag(parsed, "check")
+  check := parsed.has_flag("check")
   needs_reformat := false
   has_errors := false
 

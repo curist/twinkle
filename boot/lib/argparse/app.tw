@@ -235,13 +235,13 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
   // run the help command themselves.
   if a.commands.len() > 0 {
     if i >= argv.len() {
-      return .Err(.HelpRequested(format_help(a, .None)))
+      return .Err(.HelpRequested(a.format_help(.None)))
     }
 
     first := argv[i]
 
     if first == "--help" or first == "-h" {
-      return .Err(.HelpRequested(format_help(a, .None)))
+      return .Err(.HelpRequested(a.format_help(.None)))
     }
 
     if first == "--version" or first == "-V" {
@@ -273,7 +273,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
     }
 
     if current == "--help" or current == "-h" {
-      return .Err(.HelpRequested(format_help(a, cmd_name)))
+      return .Err(.HelpRequested(a.format_help(cmd_name)))
     }
 
     if current.starts_with("--") {

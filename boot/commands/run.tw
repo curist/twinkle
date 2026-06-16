@@ -4,11 +4,11 @@ use @std.proc
 
 use commands.common.{format_compile_error, print_warnings}
 use compiler.pipeline
-use lib.argparse.app
+
 use lib.argparse.app.{ParseResult}
 
 pub fn run_command_impl(parsed: ParseResult, file: String) {
-  if app.has_flag(parsed, "interpreter") {
+  if parsed.has_flag("interpreter") {
     eprintln("error: boot run does not support --interpreter yet")
     proc.exit(1)
   }

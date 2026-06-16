@@ -47,7 +47,7 @@ fn build_occurrences_cached(
     .None => { return .{ cache: store, occurrences: .None } },
   }
 
-  cached := cache.get_occurrences(store, canonical_path, key)
+  cached := store.get_occurrences(canonical_path, key)
 
   case cached.value {
     .Some(index) => { return .{ cache: cached.store, occurrences: .Some(index) } },
@@ -60,13 +60,13 @@ fn build_occurrences_cached(
   }
 
   .{
-    cache: cache.put_occurrences(cached.store, canonical_path, key, index),
+    cache: cached.store.put_occurrences(canonical_path, key, index),
     occurrences: .Some(index),
   }
 }
 
 fn occurrence_key(store: cache.Store, canonical_path: String) Int {
-  case cache.module_hash(store, canonical_path) {
+  case store.module_hash(canonical_path) {
     .Some(k) => k,
     .None => 0,
   }
@@ -86,8 +86,8 @@ pub fn occurrences_for_modules(store: cache.Store, modules: Vector<String>) Work
       store,
       canonical,
       id.uri,
-      cache.latest_parsed(store, canonical),
-      cache.latest_typed(store, canonical),
+      store.latest_parsed(canonical),
+      store.latest_typed(canonical),
       occurrence_key(store, canonical),
     )
     store = res.cache
@@ -136,15 +136,15 @@ pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.Work
     id.path,
     imports.make_canonical_roots(input.project_root),
   )
-  parsed := case cache.latest_parsed(store, canonical) {
+  parsed := case store.latest_parsed(canonical) {
     .Some(value) => value,
     .None => { return .None },
   }
-  resolved := case cache.latest_resolved(store, canonical) {
+  resolved := case store.latest_resolved(canonical) {
     .Some(value) => value,
     .None => { return .None },
   }
-  typed := case cache.latest_typed(store, canonical) {
+  typed := case store.latest_typed(canonical) {
     .Some(value) => value,
     .None => { return .None },
   }
@@ -210,10 +210,10 @@ pub fn snapshot_workspace_for_editor(store: cache.Store, input: diagnostics.Work
     imports.make_canonical_roots(input.project_root),
   )
 
-  snap.typed = cache.latest_typed(snap.cache, canonical)
+  snap.typed = snap.cache.latest_typed(canonical)
 
   if snap.resolved == .None {
-    snap.resolved = cache.latest_resolved(snap.cache, canonical)
+    snap.resolved = snap.cache.latest_resolved(canonical)
   }
 
   snap
@@ -260,9 +260,9 @@ pub fn snapshot_workspace(store: cache.Store, input: diagnostics.WorkspaceInput)
   }
 
   // Extract cached artifacts for the entry module.
-  parsed := cache.latest_parsed(cur_cache, canonical)
-  resolved := cache.latest_resolved(cur_cache, canonical)
-  typed := cache.latest_typed(cur_cache, canonical)
+  parsed := cur_cache.latest_parsed(canonical)
+  resolved := cur_cache.latest_resolved(canonical)
+  typed := cur_cache.latest_typed(canonical)
   occ_res := build_occurrences_cached(
     cur_cache,
     canonical,
@@ -292,9 +292,9 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
     .Err(_) => identity.from_path(input.uri),
   }
   source_hash := keys.hash_text(input.text)
-  store = cache.note_source_hash(store, id.path, source_hash)
+  store = store.note_source_hash(id.path, source_hash)
   runner := stage_runner.new(id.path, source_hash, 0, 0, false)
-  parsed_out := stage_runner.parse(runner, store, input.text, 0)
+  parsed_out := runner.parse(store, input.text, 0)
   cur_cache := parsed_out.store
   parsed := parsed_out.value
 
@@ -318,12 +318,12 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
       resolved: .None,
       typed: .None,
       occurrences: occ_res.occurrences,
-      diagnostics: diagnostics.convert_diagnostics(input, "parse", parsed.diagnostics),
+      diagnostics: input.convert_diagnostics("parse", parsed.diagnostics),
       ok: false,
     }
   }
 
-  resolved_out := stage_runner.resolve(runner, cur_cache, parsed, base_env.builtin_env())
+  resolved_out := runner.resolve(cur_cache, parsed, base_env.builtin_env())
   cur_cache = resolved_out.store
   resolved := resolved_out.value
 
@@ -347,12 +347,12 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
       resolved: .Some(resolved),
       typed: .None,
       occurrences: occ_res.occurrences,
-      diagnostics: diagnostics.convert_diagnostics(input, "resolve", resolved.diagnostics),
+      diagnostics: input.convert_diagnostics("resolve", resolved.diagnostics),
       ok: false,
     }
   }
 
-  checked_out := stage_runner.typecheck(runner, cur_cache, parsed, resolved, false)
+  checked_out := runner.typecheck(cur_cache, parsed, resolved, false)
   cur_cache = checked_out.store
   checked := checked_out.value
 
@@ -376,12 +376,12 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
       resolved: .Some(resolved),
       typed: .Some(checked),
       occurrences: occ_res.occurrences,
-      diagnostics: diagnostics.convert_diagnostics(input, "check", checked.diagnostics),
+      diagnostics: input.convert_diagnostics("check", checked.diagnostics),
       ok: false,
     }
   }
 
-  cur_cache = cache.set_module_hash(cur_cache, id.path, keys.module_hash(source_hash, 0))
+  cur_cache = cur_cache.set_module_hash(id.path, keys.module_hash(source_hash, 0))
   occ_res := build_occurrences_cached(
     cur_cache,
     id.path,

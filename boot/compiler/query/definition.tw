@@ -293,7 +293,7 @@ fn resolve_import_alias(snap: SemanticSnapshot, alias: String) DefinitionResult?
     .Some(path) => path,
     .None => { return .None },
   }
-  target := case cache.latest_parsed(snap.cache, dep_path) {
+  target := case snap.cache.latest_parsed(dep_path) {
     .Some(p) => p,
     .None => { return .None },
   }
@@ -371,7 +371,7 @@ fn local_name(name: String) String {
 }
 
 fn find_function_in_module(snap: SemanticSnapshot, module_path: String, name: String) DefinitionResult? {
-  parsed := case cache.latest_parsed(snap.cache, module_path) {
+  parsed := case snap.cache.latest_parsed(module_path) {
     .Some(p) => p,
     .None => { return .None },
   }
@@ -389,7 +389,7 @@ fn find_function_in_module(snap: SemanticSnapshot, module_path: String, name: St
 }
 
 fn find_type_in_module(snap: SemanticSnapshot, module_path: String, name: String) DefinitionResult? {
-  parsed := case cache.latest_parsed(snap.cache, module_path) {
+  parsed := case snap.cache.latest_parsed(module_path) {
     .Some(p) => p,
     .None => { return .None },
   }
@@ -412,7 +412,7 @@ fn find_variant_in_module(
   type_name: String,
   variant_name: String,
 ) DefinitionResult? {
-  parsed := case cache.latest_parsed(snap.cache, module_path) {
+  parsed := case snap.cache.latest_parsed(module_path) {
     .Some(p) => p,
     .None => { return .None },
   }
@@ -481,7 +481,7 @@ fn find_field_in_module(
   type_name: String,
   field_name: String,
 ) DefinitionResult? {
-  parsed := case cache.latest_parsed(snap.cache, module_path) {
+  parsed := case snap.cache.latest_parsed(module_path) {
     .Some(p) => p,
     .None => { return .None },
   }
@@ -531,7 +531,7 @@ fn dependency_path_for_alias(snap: SemanticSnapshot, parsed: cache.ParsedModule,
       )
       core_lib.exists(canonical)
         or fs.exists(canonical)
-        or cache.latest_parsed(snap.cache, canonical) != .None
+        or snap.cache.latest_parsed(canonical) != .None
     },
   ) {
     .Ok(p) => p,

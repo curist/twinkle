@@ -202,7 +202,7 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
     // Filter to only nodes actually in a cycle: those that can reach
     // themselves through forward edges restricted to unprocessed nodes.
     cycle_nodes := collect node in unprocessed.keys() {
-      if can_reach_self(g, node, unprocessed) {
+      if g.can_reach_self(node, unprocessed) {
         node
       } else {
         continue

@@ -627,7 +627,7 @@ fn array_elem_mono(mono: MonoType) MonoType? {
 fn materialize_global_func_for_expected_mono(atom: Atom, expected_mono: MonoType, ctx: BCtx) MaterializeResult? {
   case atom {
     .AGlobalFunc(fid) => if mono_is_function(expected_mono) {
-      pair := alloc_local(ctx)
+      pair := ctx.alloc_local()
       tmp := pair.local
       new_ctx := pair.ctx
       new_ctx.local_types[tmp.id] = materialized_global_func_mono(atom, expected_mono, ctx)
@@ -753,7 +753,7 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
         case arg {
           .AGlobalFunc(arg_fid) => if i < expected_param_monos.len()
             and mono_is_function(expected_param_monos[i]) {
-            pair := alloc_local(cur_ctx)
+            pair := cur_ctx.alloc_local()
             tmp := pair.local
             tmp_mono := materialized_global_func_mono(arg, expected_param_monos[i], cur_ctx)
             cur_ctx = pair.ctx
@@ -793,7 +793,7 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
           materialized_arg: Atom = case arg {
             .AGlobalFunc(arg_fid) => if i < expected_param_monos.len()
               and mono_is_function(expected_param_monos[i]) {
-              pair := alloc_local(cur_ctx)
+              pair := cur_ctx.alloc_local()
               tmp := pair.local
               tmp_mono := materialized_global_func_mono(arg, expected_param_monos[i], cur_ctx)
               cur_ctx = pair.ctx
@@ -816,7 +816,7 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
               .Some(m) => m,
               .None => .Void,
             }
-            pair := alloc_local(cur_ctx)
+            pair := cur_ctx.alloc_local()
             wrap_local := pair.local
             cur_ctx = pair.ctx
             cur_ctx.local_types[wrap_local.id] = .Anyref_
@@ -859,7 +859,7 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
       call_result_local := result_local
 
       if result_needs_unwrap {
-        pair := alloc_local(final_ctx)
+        pair := final_ctx.alloc_local()
         raw_local := pair.local
         final_ctx = pair.ctx
         mono: MonoType = case result_mono {
@@ -928,7 +928,7 @@ fn rewrite_index(
       // Array get returns anyref; unwrap if element type is not anyref
       if needs_unwrap(result_mono, .Anyref, ctx.env) {
         // Need to unwrap: raw_local = AIndex(...); result_local = AUnwrapAnyref(raw_local, mono)
-        pair := alloc_local(ctx)
+        pair := ctx.alloc_local()
         raw_local := pair.local
         new_ctx := pair.ctx
         new_ctx.local_types[raw_local.id] = .Anyref_
@@ -964,7 +964,7 @@ fn rewrite_index(
       wrap_expr: AnfExpr? = .None
 
       if wrap_key {
-        pair := alloc_local(cur_ctx)
+        pair := cur_ctx.alloc_local()
         key_local := pair.local
         cur_ctx = pair.ctx
         mono: MonoType = case index_mono {

@@ -4,7 +4,7 @@ use @std.io
 use @std.proc
 
 use lib.argparse.app.{ParseResult}
-use lib.json
+
 use lib.lsp.framing
 use lib.lsp.protocol
 use lib.lsp.server_core
@@ -16,7 +16,7 @@ pub fn run_lsp_command(_parsed: ParseResult) {
   buffer: Vector<Byte> = []
 
   for !state.should_exit {
-    chunk := case server_core.next_poll_timeout_ms(state) {
+    chunk := case state.next_poll_timeout_ms() {
       .Some(timeout_ms) => io.read_stdin_timeout(4096, timeout_ms),
       .None => io.read_stdin_chunk(4096),
     }
@@ -54,7 +54,7 @@ pub fn run_lsp_command(_parsed: ParseResult) {
           state = step.state
 
           for out in step.outgoing {
-            io.write_stdout_text(framing.encode_message(json.stringify(out)))
+            io.write_stdout_text(framing.encode_message(out.stringify()))
           }
 
           buffer = rest
@@ -66,11 +66,11 @@ pub fn run_lsp_command(_parsed: ParseResult) {
       }
     }
 
-    step := server_core.publish_due_diagnostics(state)
+    step := state.publish_due_diagnostics()
     state = step.state
 
     for out in step.outgoing {
-      io.write_stdout_text(framing.encode_message(json.stringify(out)))
+      io.write_stdout_text(framing.encode_message(out.stringify()))
     }
   }
 

@@ -413,7 +413,7 @@ pub fn val_type_of(layout: WasmLayout) ValType {
     .Vector_(_) => .Ref(true, .Named("rt_types__PVec")),
     .Dict_(_, _) => .Ref(true, .Named("rt_types__PDict")),
     .Iterator_(it) => .Ref(true, .Named(it.state_sym)),
-    .Cell_(inner) => .Ref(true, .Named("$Cell_${cell_layout_key(inner)}")),
+    .Cell_(inner) => .Ref(true, .Named("$Cell_${inner.cell_layout_key()}")),
   }
 }
 
@@ -431,7 +431,7 @@ fn val_type_key(layout: WasmLayout) String {
     .Vector_(_) => "arr",
     .Dict_(_, _) => "dict",
     .Iterator_(it) => it.state_sym,
-    .Cell_(inner) => "cell_${cell_layout_key(inner)}",
+    .Cell_(inner) => "cell_${inner.cell_layout_key()}",
   }
 }
 
@@ -459,7 +459,7 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
       }
 
       if is_iterator_type(env, tid) {
-        return val_type_of(layout_of_iterator(args, env))
+        return layout_of_iterator(args, env).val_type_of()
       }
 
       if is_task_type(env, tid) {

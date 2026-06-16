@@ -27,7 +27,7 @@ fn builder_init_call(init: BuilderInit, builder: BuilderConfig) AnfOp {
 pub fn lower_builder_region(region: BuilderRegion, builder: BuilderConfig) AnfExpr {
   AnfExpr.Let(
     region.builder_local,
-    builder_init_call(region.init, builder),
+    region.init.builder_init_call(builder),
     AnfExpr.Let(
       region.bind_local,
       .ALoop(region.loop_body),

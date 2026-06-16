@@ -262,7 +262,7 @@ pub fn runtime_with_abi(
   wasm_name: String,
   builtin_abi: AbiContract,
 ) BuiltinRegistry {
-  runtime_with_policy_and_abi(reg, name, wasm_module, wasm_name, .NotMaterializable, builtin_abi)
+  reg.runtime_with_policy_and_abi(name, wasm_module, wasm_name, .NotMaterializable, builtin_abi)
 }
 
 pub fn runtime_with_policy(
@@ -272,11 +272,11 @@ pub fn runtime_with_policy(
   wasm_name: String,
   closure_policy: BuiltinClosurePolicy,
 ) BuiltinRegistry {
-  runtime_with_policy_and_abi(reg, name, wasm_module, wasm_name, closure_policy, builtin_abi(name))
+  reg.runtime_with_policy_and_abi(name, wasm_module, wasm_name, closure_policy, builtin_abi(name))
 }
 
 pub fn runtime(reg: BuiltinRegistry, name: String, wasm_module: String, wasm_name: String) BuiltinRegistry {
-  runtime_with_abi(reg, name, wasm_module, wasm_name, builtin_abi(name))
+  reg.runtime_with_abi(name, wasm_module, wasm_name, builtin_abi(name))
 }
 
 pub fn intrinsic_with_policy_and_abi(
@@ -313,7 +313,7 @@ pub fn intrinsic_with_policy_and_abi(
 }
 
 pub fn intrinsic_with_abi(reg: BuiltinRegistry, name: String, builtin_abi: AbiContract) BuiltinRegistry {
-  intrinsic_with_policy_and_abi(reg, name, .NotMaterializable, builtin_abi)
+  reg.intrinsic_with_policy_and_abi(name, .NotMaterializable, builtin_abi)
 }
 
 pub fn intrinsic_with_policy(
@@ -321,11 +321,11 @@ pub fn intrinsic_with_policy(
   name: String,
   closure_policy: BuiltinClosurePolicy,
 ) BuiltinRegistry {
-  intrinsic_with_policy_and_abi(reg, name, closure_policy, builtin_abi(name))
+  reg.intrinsic_with_policy_and_abi(name, closure_policy, builtin_abi(name))
 }
 
 pub fn intrinsic(reg: BuiltinRegistry, name: String) BuiltinRegistry {
-  intrinsic_with_abi(reg, name, builtin_abi(name))
+  reg.intrinsic_with_abi(name, builtin_abi(name))
 }
 
 pub fn id(reg: BuiltinRegistry, name: String) FuncId {

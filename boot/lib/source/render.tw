@@ -102,7 +102,7 @@ fn max_label_line(labels: Vector<SpanLabel>, reg: registry.FileRegistry) Int {
   max := 1
 
   for l in labels {
-    case registry.line_col(reg, l.span) {
+    case reg.line_col(l.span) {
       .Some(lc) => if lc.line > max {
         max = lc.line
       },
@@ -125,7 +125,7 @@ fn find_primary(labels: Vector<SpanLabel>) SpanLabel? {
 
 // Number of characters covered by the span on its first line (minimum 1).
 fn underline_len(reg: registry.FileRegistry, s: Span) Int {
-  case registry.snippet(reg, s) {
+  case reg.snippet(s) {
     .Some(text) => {
       first := text.split("\n")[0]
       l := first.char_len()
@@ -155,10 +155,10 @@ pub fn render(report: Report, reg: registry.FileRegistry, config: RenderConfig) 
   // ── 2. Source context (only when labels are present) ─────────────
   case find_primary(report.labels) {
     .None => {},
-    .Some(pl) => case registry.line_col(reg, pl.span) {
+    .Some(pl) => case reg.line_col(pl.span) {
       .None => {},
       .Some(primary_lc) => {
-        fname := case registry.file_name(reg, pl.span.file_id) {
+        fname := case reg.file_name(pl.span.file_id) {
           .Some(n) => n,
           .None => "<unknown>",
         }
@@ -176,9 +176,9 @@ pub fn render(report: Report, reg: registry.FileRegistry, config: RenderConfig) 
         prev_line := 0
 
         for l, idx in report.labels {
-          case registry.line_col(reg, l.span) {
+          case reg.line_col(l.span) {
             .None => {},
-            .Some(lc) => case registry.line_text(reg, l.span) {
+            .Some(lc) => case reg.line_text(l.span) {
               .None => {},
               .Some(line_raw) => {
                 // Blank separator only when labels are non-adjacent
@@ -188,7 +188,7 @@ pub fn render(report: Report, reg: registry.FileRegistry, config: RenderConfig) 
 
                 prev_line = lc.line
                 line_str := strip_newline(line_raw)
-                num_str := pad_left(Int.to_string(lc.line), gutter_w)
+                num_str := pad_left(lc.line.to_string(), gutter_w)
                 lines = .append("${cyan(config, "${num_str} |")} ${line_str}")
 
                 // Underline below the source line

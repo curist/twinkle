@@ -20,7 +20,7 @@ pub fn find_references(snap: SemanticSnapshot, byte_offset: Int, include_declara
     .Some(i) => i,
     .None => { return [] },
   }
-  target := case occ.occurrence_at_offset(index, byte_offset) {
+  target := case index.occurrence_at_offset(byte_offset) {
     .Some(o) => o,
     .None => { return [] },
   }
@@ -30,7 +30,7 @@ pub fn find_references(snap: SemanticSnapshot, byte_offset: Int, include_declara
   seen: Dict<String, Bool> = Dict.new()
 
   for idx in indexes {
-    for site in occ.occurrences_for_symbol(idx, target.symbol_key) {
+    for site in idx.occurrences_for_symbol(target.symbol_key) {
       if !include_declaration and site.role == .Declaration {
         continue
       }
@@ -72,7 +72,7 @@ fn sort_locations(locations: Vector<ReferenceLocation>) Vector<ReferenceLocation
   for i in 1..sorted.len() {
     j := i
 
-    for j > 0 and location_after(sorted[j - 1], sorted[j]) {
+    for j > 0 and sorted[j - 1].location_after(sorted[j]) {
       tmp := sorted[j]
       sorted[j] = sorted[j - 1]
       sorted[j - 1] = tmp

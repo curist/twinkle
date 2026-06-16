@@ -9,7 +9,7 @@ use compiler.contracts.{BuiltinContract, resolve_builtin_contract_name, spec}
 use compiler.imports
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_expr, find_node_in_stmt}
-use compiler.query.cache
+
 use compiler.query.call_resolve
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.query.util.{find_map, find_map_indexed}
@@ -85,7 +85,7 @@ fn imported_module_doc(decl: UseDecl, snap: SemanticSnapshot) String? {
       continue
     }
 
-    dep_parsed := try cache.latest_parsed(snap.cache, dep.canonical_path)
+    dep_parsed := try snap.cache.latest_parsed(dep.canonical_path)
     return dep_parsed.module.doc
   }
 

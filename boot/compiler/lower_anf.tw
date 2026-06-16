@@ -416,7 +416,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
     .ContractCall(_, _, _, _) => error("lower_anf: unresolved contract call"),
     // ── Non-atomic ops ──
     .MakeClosure(func_id, free_vars) => {
-      r := fresh(state)
+      r := state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(accum, st, tmp, .AMakeClosure(func_id, free_vars), expr.ty)
@@ -426,7 +426,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       kind := op_kind_from(left.ty)
       la := atomize(left, state, accum)
       ra := atomize(right, la.state, la.accum)
-      r := fresh(ra.state)
+      r := ra.state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(ra.accum, st, tmp, .ABinOp(op, la.atom, ra.atom, kind), expr.ty)
@@ -435,7 +435,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
     .UnOp(op, inner) => {
       kind := op_kind_from(inner.ty)
       ia := atomize(inner, state, accum)
-      r := fresh(ia.state)
+      r := ia.state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(ia.accum, st, tmp, .AUnOp(op, ia.atom, kind), expr.ty)
@@ -454,7 +454,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
         cur_accum = aa.accum
       }
 
-      r := fresh(cur_state)
+      r := cur_state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .ACall(ca.atom, arg_atoms), expr.ty)
@@ -472,7 +472,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
         cur_accum = fa.accum
       }
 
-      r := fresh(cur_state)
+      r := cur_state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .ARecord(type_id, field_atoms), expr.ty)
@@ -481,7 +481,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
     .RecordGet(target, field) => {
       tid := type_id_from(target.ty)
       ta := atomize(target, state, accum)
-      r := fresh(ta.state)
+      r := ta.state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(ta.accum, st, tmp, .ARecordGet(ta.atom, field, tid), expr.ty)
@@ -491,7 +491,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       tid := type_id_from(base.ty)
       ba := atomize(base, state, accum)
       va := atomize(value, ba.state, ba.accum)
-      r := fresh(va.state)
+      r := va.state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(
@@ -515,7 +515,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
         cur_accum = aa.accum
       }
 
-      r := fresh(cur_state)
+      r := cur_state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .AVariant(type_id, variant, arg_atoms), expr.ty)
@@ -533,7 +533,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
         cur_accum = ea.accum
       }
 
-      r := fresh(cur_state)
+      r := cur_state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .AArrayLit(atoms), expr.ty)
@@ -543,7 +543,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       bty := index_kind_from(base.ty)
       ba := atomize(base, state, accum)
       ia := atomize(index, ba.state, ba.accum)
-      r := fresh(ia.state)
+      r := ia.state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(ia.accum, st, tmp, .AIndex(ba.atom, ia.atom, bty, expr.ty), expr.ty)
@@ -552,7 +552,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
     // ── Defer ──
     .Defer(inner) => {
       inner_r := lower_expr_top(inner, state)
-      r := fresh(inner_r.state)
+      r := inner_r.state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(accum, st, tmp, .ADefer(inner_r.expr), .Void)
@@ -561,7 +561,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
     // ── Assign ──
     .Assign(local, value) => {
       va := atomize(value, state, accum)
-      r := fresh(va.state)
+      r := va.state.fresh()
       tmp := r.local
       st := r.state
 
@@ -573,7 +573,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
     },
     .GlobalSet(gid, value) => {
       va := atomize(value, state, accum)
-      r := fresh(va.state)
+      r := va.state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(va.accum, st, tmp, .AGlobalSet(gid, va.atom), .Void)
@@ -609,7 +609,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       ca := atomize(cond_e, state, accum)
       then_r := lower_expr_top(then_e, ca.state)
       else_r := lower_expr_top(else_e, then_r.state)
-      r := fresh(else_r.state)
+      r := else_r.state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(ca.accum, st, tmp, .AIf(ca.atom, then_r.expr, else_r.expr), expr.ty)
@@ -626,7 +626,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
         cur_state = arm_r.state
       }
 
-      r := fresh(cur_state)
+      r := cur_state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(sa.accum, st, tmp, .AMatch(sa.atom, anf_arms), expr.ty)
@@ -634,7 +634,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
     },
     .Loop(body) => {
       body_r := lower_expr_top(body, state)
-      r := fresh(body_r.state)
+      r := body_r.state.fresh()
       tmp := r.local
       pa := push_accum(accum, r.state, tmp, .ALoop(body_r.expr), expr.ty)
       .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
@@ -682,7 +682,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
     .Return(_) => error("atomize: Return in operand position"),
     // Non-atomic ops — same as lower_expr but return atom
     .MakeClosure(func_id, free_vars) => {
-      r := fresh(state)
+      r := state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(accum, st, tmp, .AMakeClosure(func_id, free_vars), expr.ty)
@@ -692,7 +692,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       kind := op_kind_from(left.ty)
       la := atomize(left, state, accum)
       ra := atomize(right, la.state, la.accum)
-      r := fresh(ra.state)
+      r := ra.state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(ra.accum, st, tmp, .ABinOp(op, la.atom, ra.atom, kind), expr.ty)
@@ -701,7 +701,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
     .UnOp(op, inner) => {
       kind := op_kind_from(inner.ty)
       ia := atomize(inner, state, accum)
-      r := fresh(ia.state)
+      r := ia.state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(ia.accum, st, tmp, .AUnOp(op, ia.atom, kind), expr.ty)
@@ -720,7 +720,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
         cur_accum = aa.accum
       }
 
-      r := fresh(cur_state)
+      r := cur_state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .ACall(ca.atom, arg_atoms), expr.ty)
@@ -738,7 +738,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
         cur_accum = fa.accum
       }
 
-      r := fresh(cur_state)
+      r := cur_state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .ARecord(type_id, field_atoms), expr.ty)
@@ -747,7 +747,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
     .RecordGet(target, field) => {
       tid := type_id_from(target.ty)
       ta := atomize(target, state, accum)
-      r := fresh(ta.state)
+      r := ta.state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(ta.accum, st, tmp, .ARecordGet(ta.atom, field, tid), expr.ty)
@@ -757,7 +757,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       tid := type_id_from(base.ty)
       ba := atomize(base, state, accum)
       va := atomize(value, ba.state, ba.accum)
-      r := fresh(va.state)
+      r := va.state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(
@@ -781,7 +781,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
         cur_accum = aa.accum
       }
 
-      r := fresh(cur_state)
+      r := cur_state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .AVariant(type_id, variant, arg_atoms), expr.ty)
@@ -799,7 +799,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
         cur_accum = ea.accum
       }
 
-      r := fresh(cur_state)
+      r := cur_state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(cur_accum, st, tmp, .AArrayLit(atoms), expr.ty)
@@ -809,7 +809,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       bty := index_kind_from(base.ty)
       ba := atomize(base, state, accum)
       ia := atomize(index, ba.state, ba.accum)
-      r := fresh(ia.state)
+      r := ia.state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(ia.accum, st, tmp, .AIndex(ba.atom, ia.atom, bty, expr.ty), expr.ty)
@@ -817,7 +817,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
     },
     .Assign(local, value) => {
       va := atomize(value, state, accum)
-      r := fresh(va.state)
+      r := va.state.fresh()
       tmp := r.local
       st := r.state
       st.op_result_mono[local.id] = value.ty
@@ -826,7 +826,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
     },
     .GlobalSet(gid, value) => {
       va := atomize(value, state, accum)
-      r := fresh(va.state)
+      r := va.state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(va.accum, st, tmp, .AGlobalSet(gid, va.atom), .Void)
@@ -834,7 +834,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
     },
     .Defer(inner) => {
       inner_r := lower_expr_top(inner, state)
-      r := fresh(inner_r.state)
+      r := inner_r.state.fresh()
       tmp := r.local
       st := r.state
       pa := push_accum(accum, st, tmp, .ADefer(inner_r.expr), .Void)
@@ -846,7 +846,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
 // ── Structural form atomization ─────────────────────────────────────
 fn atomize_structural(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAccumResult {
   anf_r := lower_expr_top(expr, state)
-  r := fresh(anf_r.state)
+  r := anf_r.state.fresh()
   tmp := r.local
   st := r.state
 

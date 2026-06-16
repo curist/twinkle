@@ -46,7 +46,7 @@ pub fn compute_reachable(
   }
 
   // BFS: find all reachable functions
-  bfs_result := bfs_reachable(index, queue, reachable)
+  bfs_result := index.bfs_reachable(queue, reachable)
   bfs_result.reachable
 }
 
@@ -71,8 +71,8 @@ fn bfs_reachable(index: ReachabilityIndex, queue: Vector<Int>, reachable: Dict<I
   for qi < state.queue.len() {
     fid := state.queue[qi]
     qi = qi + 1
-    refs := get_body_refs(index, fid)
-    state = add_refs(state, refs)
+    refs := index.get_body_refs(fid)
+    state = state.add_refs(refs)
   }
 
   state

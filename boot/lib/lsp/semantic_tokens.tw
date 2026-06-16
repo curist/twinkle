@@ -47,8 +47,8 @@ pub fn semantic_tokens_response(
   prev_char := 0
 
   for tok in sorted {
-    pos := line_index.byte_offset_to_position(index, tok.start, .Utf16)
-    end_pos := line_index.byte_offset_to_position(index, tok.start + tok.length, .Utf16)
+    pos := index.byte_offset_to_position(tok.start, .Utf16)
+    end_pos := index.byte_offset_to_position(tok.start + tok.length, .Utf16)
 
     delta_line := pos.line - prev_line
     delta_char := if delta_line == 0 {

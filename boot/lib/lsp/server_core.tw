@@ -76,8 +76,8 @@ pub fn initial_state() State {
 
 pub fn handle_message(state: State, message: protocol.Message) Step {
   case message {
-    .Request(req) => handle_request(state, req),
-    .Notification(note) => handle_notification(state, note),
+    .Request(req) => state.handle_request(req),
+    .Notification(note) => state.handle_notification(note),
     .Response(_) => .{ state, outgoing: [] },
   }
 }
@@ -115,29 +115,29 @@ fn handle_request(state: State, req: protocol.Request) Step {
         ),
         json.kv("serverInfo", json.object([json.kv("name", .Str("twinkle-lsp"))])),
       ])
-      .{ state, outgoing: [protocol.success_response(req.id, result)] }
+      .{ state, outgoing: [req.id.success_response(result)] }
     },
-    "textDocument/hover" => handle_hover(state, req),
-    "textDocument/definition" => handle_definition(state, req),
-    "textDocument/typeDefinition" => handle_type_definition(state, req),
-    "textDocument/references" => handle_references(state, req),
-    "textDocument/documentHighlight" => handle_document_highlight(state, req),
-    "textDocument/completion" => handle_completion(state, req),
-    "textDocument/codeAction" => handle_code_action(state, req),
-    "textDocument/documentSymbol" => handle_document_symbol(state, req),
-    "textDocument/signatureHelp" => handle_signature_help(state, req),
-    "textDocument/formatting" => handle_formatting(state, req),
-    "textDocument/inlayHint" => handle_inlay_hint(state, req),
-    "textDocument/foldingRange" => handle_folding_range(state, req),
-    "textDocument/semanticTokens/full" => handle_semantic_tokens(state, req),
-    "workspace/symbol" => handle_workspace_symbol(state, req),
+    "textDocument/hover" => state.handle_hover(req),
+    "textDocument/definition" => state.handle_definition(req),
+    "textDocument/typeDefinition" => state.handle_type_definition(req),
+    "textDocument/references" => state.handle_references(req),
+    "textDocument/documentHighlight" => state.handle_document_highlight(req),
+    "textDocument/completion" => state.handle_completion(req),
+    "textDocument/codeAction" => state.handle_code_action(req),
+    "textDocument/documentSymbol" => state.handle_document_symbol(req),
+    "textDocument/signatureHelp" => state.handle_signature_help(req),
+    "textDocument/formatting" => state.handle_formatting(req),
+    "textDocument/inlayHint" => state.handle_inlay_hint(req),
+    "textDocument/foldingRange" => state.handle_folding_range(req),
+    "textDocument/semanticTokens/full" => state.handle_semantic_tokens(req),
+    "workspace/symbol" => state.handle_workspace_symbol(req),
     "shutdown" => {
       state.shutdown_requested = true
-      .{ state, outgoing: [protocol.success_response(req.id, .Null)] }
+      .{ state, outgoing: [req.id.success_response(.Null)] }
     },
     _ => {
       err := protocol.RpcError.{ code: -32601, message: "method not found", data: .None }
-      .{ state, outgoing: [protocol.error_response(req.id, err)] }
+      .{ state, outgoing: [req.id.error_response(err)] }
     },
   }
 }
@@ -152,9 +152,9 @@ fn handle_notification(state: State, note: protocol.Notification) Step {
       state.should_exit = true
       .{ state, outgoing: [] }
     },
-    "textDocument/didOpen" => handle_did_open(state, note),
-    "textDocument/didChange" => handle_did_change(state, note),
-    "textDocument/didClose" => handle_did_close(state, note),
+    "textDocument/didOpen" => state.handle_did_open(note),
+    "textDocument/didChange" => state.handle_did_change(note),
+    "textDocument/didClose" => state.handle_did_close(note),
     _ => .{ state, outgoing: [] },
   }
 }
@@ -163,8 +163,8 @@ fn handle_did_open(state: State, note: protocol.Notification) Step {
   case params.decode_did_open(note.params) {
     .Ok(open) => {
       doc := open.text_document
-      state.documents = document_store.open(state.documents, doc.uri, doc.text, .Some(doc.version))
-      publish_workspace_diagnostics(state, false)
+      state.documents = state.documents.open(doc.uri, doc.text, .Some(doc.version))
+      state.publish_workspace_diagnostics(false)
     },
     .Err(_) => .{ state, outgoing: [] },
   }
@@ -183,7 +183,7 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
         case event.range {
           .Some(range) => {
             // Incremental change — convert UTF-16 range to byte offsets.
-            cur_doc := case document_store.get(state.documents, doc.uri) {
+            cur_doc := case state.documents.get(doc.uri) {
               .Some(d) => d,
               .None => { continue },
             }
@@ -201,9 +201,7 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
               .Some(o) => o,
               .None => { continue },
             }
-            state.documents = document_store.change_incremental(
-              state.documents,
-              doc.uri,
+            state.documents = state.documents.change_incremental(doc.uri,
               start_offset,
               end_offset,
               event.text,
@@ -212,9 +210,7 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
           },
           .None => {
             // Full-text change — no range means replace everything.
-            state.documents = document_store.change_full_text(
-              state.documents,
-              doc.uri,
+            state.documents = state.documents.change_full_text(doc.uri,
               event.text,
               doc.version,
             )
@@ -222,12 +218,12 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
         }
       }
 
-      final_text := case document_store.get(state.documents, doc.uri) {
+      final_text := case state.documents.get(doc.uri) {
         .Some(d) => d.text,
         .None => { return .{ state, outgoing: [] } },
       }
-      state = note_changed_document_source(state, doc.uri, final_text)
-      mark_diagnostics_pending(state)
+      state = state.note_changed_document_source(doc.uri, final_text)
+      state.mark_diagnostics_pending()
     },
     .Err(_) => .{ state, outgoing: [] },
   }
@@ -237,11 +233,11 @@ fn handle_did_close(state: State, note: protocol.Notification) Step {
   case params.decode_did_close(note.params) {
     .Ok(close) => {
       uri := close.text_document.uri
-      version := case document_store.get(state.documents, uri) {
+      version := case state.documents.get(uri) {
         .Some(doc) => doc.version,
         .None => .None,
       }
-      state.documents = document_store.close(state.documents, uri)
+      state.documents = state.documents.close(uri)
       .{ state, outgoing: [lsp_diagnostics.clear_diagnostics(uri, version)] }
     },
     .Err(_) => .{ state, outgoing: [] },
@@ -249,7 +245,7 @@ fn handle_did_close(state: State, note: protocol.Notification) Step {
 }
 
 fn workspace_snapshot(state: State, doc: document_store.Document) semantic.SemanticSnapshot {
-  input := workspace_input(state, doc)
+  input := state.workspace_input(doc)
 
   case semantic.snapshot_workspace_from_cache(state.query_cache, input) {
     .Some(snap) => snap,
@@ -258,7 +254,7 @@ fn workspace_snapshot(state: State, doc: document_store.Document) semantic.Seman
 }
 
 fn editor_snapshot(state: State, doc: document_store.Document) semantic.SemanticSnapshot {
-  semantic.snapshot_workspace_for_editor(state.query_cache, workspace_input(state, doc))
+  semantic.snapshot_workspace_for_editor(state.query_cache, state.workspace_input(doc))
 }
 
 fn workspace_input(state: State, doc: document_store.Document) query_diagnostics.WorkspaceInput {
@@ -276,42 +272,42 @@ fn workspace_input(state: State, doc: document_store.Document) query_diagnostics
 fn handle_hover(state: State, req: protocol.Request) Step {
   hover_params := case params.decode_hover(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return null_response_step(state, req) },
+    .Err(_) => { return state.null_response_step(req) },
   }
-  doc := case document_store.get(state.documents, hover_params.text_document.uri) {
+  doc := case state.documents.get(hover_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return null_response_step(state, req) },
+    .None => { return state.null_response_step(req) },
   }
   offset := case position_offset(doc.index, hover_params.position) {
     .Some(o) => o,
-    .None => { return null_response_step(state, req) },
+    .None => { return state.null_response_step(req) },
   }
-  snap := workspace_snapshot(state, doc)
+  snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
 
   case query_hover.hover(snap, offset, doc.text) {
     .Some(result) => .{
       state,
-      outgoing: [protocol.success_response(req.id, lsp_hover.hover_response(doc.index, result))],
+      outgoing: [req.id.success_response(lsp_hover.hover_response(doc.index, result))],
     },
-    .None => null_response_step(state, req),
+    .None => state.null_response_step(req),
   }
 }
 
 fn handle_definition(state: State, req: protocol.Request) Step {
   def_params := case params.decode_definition(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return null_response_step(state, req) },
+    .Err(_) => { return state.null_response_step(req) },
   }
-  doc := case document_store.get(state.documents, def_params.text_document.uri) {
+  doc := case state.documents.get(def_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return null_response_step(state, req) },
+    .None => { return state.null_response_step(req) },
   }
   offset := case position_offset(doc.index, def_params.position) {
     .Some(o) => o,
-    .None => { return null_response_step(state, req) },
+    .None => { return state.null_response_step(req) },
   }
-  snap := workspace_snapshot(state, doc)
+  snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
 
   case query_definition.definition(snap, offset) {
@@ -320,31 +316,29 @@ fn handle_definition(state: State, req: protocol.Request) Step {
       .{
         state,
         outgoing: [
-          protocol.success_response(
-            req.id,
-            lsp_definition.definition_response(target_index, result),
+          req.id.success_response(lsp_definition.definition_response(target_index, result),
           ),
         ],
       }
     },
-    .None => null_response_step(state, req),
+    .None => state.null_response_step(req),
   }
 }
 
 fn handle_type_definition(state: State, req: protocol.Request) Step {
   def_params := case params.decode_definition(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return null_response_step(state, req) },
+    .Err(_) => { return state.null_response_step(req) },
   }
-  doc := case document_store.get(state.documents, def_params.text_document.uri) {
+  doc := case state.documents.get(def_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return null_response_step(state, req) },
+    .None => { return state.null_response_step(req) },
   }
   offset := case position_offset(doc.index, def_params.position) {
     .Some(o) => o,
-    .None => { return null_response_step(state, req) },
+    .None => { return state.null_response_step(req) },
   }
-  snap := workspace_snapshot(state, doc)
+  snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
 
   case query_definition.type_definition(snap, offset) {
@@ -353,40 +347,38 @@ fn handle_type_definition(state: State, req: protocol.Request) Step {
       .{
         state,
         outgoing: [
-          protocol.success_response(
-            req.id,
-            lsp_definition.definition_response(target_index, result),
+          req.id.success_response(lsp_definition.definition_response(target_index, result),
           ),
         ],
       }
     },
-    .None => null_response_step(state, req),
+    .None => state.null_response_step(req),
   }
 }
 
 fn handle_references(state: State, req: protocol.Request) Step {
   ref_params := case params.decode_references(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return empty_array_response_step(state, req) },
+    .Err(_) => { return state.empty_array_response_step(req) },
   }
-  doc := case document_store.get(state.documents, ref_params.text_document.uri) {
+  doc := case state.documents.get(ref_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return empty_array_response_step(state, req) },
+    .None => { return state.empty_array_response_step(req) },
   }
   offset := case position_offset(doc.index, ref_params.position) {
     .Some(o) => o,
-    .None => { return empty_array_response_step(state, req) },
+    .None => { return state.empty_array_response_step(req) },
   }
 
   // Populate the cache from all open documents so cross-module refs work.
   // Each open doc may be a separate import-graph root; snapshotting each one
   // ensures every reachable module is in the cache.
   for open_doc in state.documents.docs.values() {
-    ws := workspace_snapshot(state, open_doc)
+    ws := state.workspace_snapshot(open_doc)
     state.query_cache = ws.cache
   }
 
-  snap := workspace_snapshot(state, doc)
+  snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
   results := query_references.find_references(snap, offset, ref_params.context.include_declaration)
   response := lsp_references.references_response(
@@ -408,110 +400,108 @@ fn handle_references(state: State, req: protocol.Request) Step {
       }
     },
   )
-  .{ state, outgoing: [protocol.success_response(req.id, response)] }
+  .{ state, outgoing: [req.id.success_response(response)] }
 }
 
 fn handle_document_highlight(state: State, req: protocol.Request) Step {
   hl_params := case params.decode_definition(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return empty_array_response_step(state, req) },
+    .Err(_) => { return state.empty_array_response_step(req) },
   }
-  doc := case document_store.get(state.documents, hl_params.text_document.uri) {
+  doc := case state.documents.get(hl_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return empty_array_response_step(state, req) },
+    .None => { return state.empty_array_response_step(req) },
   }
   offset := case position_offset(doc.index, hl_params.position) {
     .Some(o) => o,
-    .None => { return empty_array_response_step(state, req) },
+    .None => { return state.empty_array_response_step(req) },
   }
 
-  snap := workspace_snapshot(state, doc)
+  snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
   results := query_document_highlight.document_highlights(snap, offset)
   response := lsp_document_highlight.document_highlight_response(results, doc.index)
-  .{ state, outgoing: [protocol.success_response(req.id, response)] }
+  .{ state, outgoing: [req.id.success_response(response)] }
 }
 
 fn handle_completion(state: State, req: protocol.Request) Step {
   comp_params := case params.decode_completion(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return empty_array_response_step(state, req) },
+    .Err(_) => { return state.empty_array_response_step(req) },
   }
-  doc := case document_store.get(state.documents, comp_params.text_document.uri) {
+  doc := case state.documents.get(comp_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return empty_array_response_step(state, req) },
+    .None => { return state.empty_array_response_step(req) },
   }
   offset := case position_offset(doc.index, comp_params.position) {
     .Some(o) => o,
-    .None => { return empty_array_response_step(state, req) },
+    .None => { return state.empty_array_response_step(req) },
   }
-  snap := editor_snapshot(state, doc)
+  snap := state.editor_snapshot(doc)
   state.query_cache = snap.cache
   items := query_completion.complete(snap, offset, doc.text)
   .{
     state,
-    outgoing: [protocol.success_response(req.id, lsp_completion.completion_response(items))],
+    outgoing: [req.id.success_response(lsp_completion.completion_response(items))],
   }
 }
 
 fn handle_code_action(state: State, req: protocol.Request) Step {
   action_params := case params.decode_code_action(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return empty_array_response_step(state, req) },
+    .Err(_) => { return state.empty_array_response_step(req) },
   }
-  doc := case document_store.get(state.documents, action_params.text_document.uri) {
+  doc := case state.documents.get(action_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return empty_array_response_step(state, req) },
+    .None => { return state.empty_array_response_step(req) },
   }
   actions := lsp_code_action.fix_actions(doc.uri, doc.index, action_params.context_diagnostics)
-  .{ state, outgoing: [protocol.success_response(req.id, json.array(actions))] }
+  .{ state, outgoing: [req.id.success_response(json.array(actions))] }
 }
 
 fn handle_signature_help(state: State, req: protocol.Request) Step {
   sig_params := case params.decode_signature_help(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return null_response_step(state, req) },
+    .Err(_) => { return state.null_response_step(req) },
   }
-  doc := case document_store.get(state.documents, sig_params.text_document.uri) {
+  doc := case state.documents.get(sig_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return null_response_step(state, req) },
+    .None => { return state.null_response_step(req) },
   }
   offset := case position_offset(doc.index, sig_params.position) {
     .Some(o) => o,
-    .None => { return null_response_step(state, req) },
+    .None => { return state.null_response_step(req) },
   }
-  snap := editor_snapshot(state, doc)
+  snap := state.editor_snapshot(doc)
   state.query_cache = snap.cache
 
   case query_signature_help.signature_help(snap, offset, doc.text) {
     .Some(result) => .{
       state,
       outgoing: [
-        protocol.success_response(req.id, lsp_signature_help.signature_help_response(result)),
+        req.id.success_response(lsp_signature_help.signature_help_response(result)),
       ],
     },
-    .None => null_response_step(state, req),
+    .None => state.null_response_step(req),
   }
 }
 
 fn handle_document_symbol(state: State, req: protocol.Request) Step {
   sym_params := case params.decode_document_symbol(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return empty_array_response_step(state, req) },
+    .Err(_) => { return state.empty_array_response_step(req) },
   }
-  doc := case document_store.get(state.documents, sym_params.text_document.uri) {
+  doc := case state.documents.get(sym_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return empty_array_response_step(state, req) },
+    .None => { return state.empty_array_response_step(req) },
   }
-  snap := workspace_snapshot(state, doc)
+  snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
   symbols := query_document_symbols.document_symbols(snap)
   .{
     state,
     outgoing: [
-      protocol.success_response(
-        req.id,
-        lsp_document_symbol.document_symbol_response(doc.index, symbols),
+      req.id.success_response(lsp_document_symbol.document_symbol_response(doc.index, symbols),
       ),
     ],
   }
@@ -520,19 +510,19 @@ fn handle_document_symbol(state: State, req: protocol.Request) Step {
 fn handle_folding_range(state: State, req: protocol.Request) Step {
   fr_params := case params.decode_folding_range(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return empty_array_response_step(state, req) },
+    .Err(_) => { return state.empty_array_response_step(req) },
   }
-  doc := case document_store.get(state.documents, fr_params.text_document.uri) {
+  doc := case state.documents.get(fr_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return empty_array_response_step(state, req) },
+    .None => { return state.empty_array_response_step(req) },
   }
-  snap := workspace_snapshot(state, doc)
+  snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
   ranges := query_folding_range.folding_ranges(snap)
   .{
     state,
     outgoing: [
-      protocol.success_response(req.id, lsp_folding_range.folding_range_response(ranges, doc.index)),
+      req.id.success_response(lsp_folding_range.folding_range_response(ranges, doc.index)),
     ],
   }
 }
@@ -540,11 +530,11 @@ fn handle_folding_range(state: State, req: protocol.Request) Step {
 fn handle_inlay_hint(state: State, req: protocol.Request) Step {
   hint_params := case params.decode_inlay_hint(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return empty_array_response_step(state, req) },
+    .Err(_) => { return state.empty_array_response_step(req) },
   }
-  doc := case document_store.get(state.documents, hint_params.text_document.uri) {
+  doc := case state.documents.get(hint_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return empty_array_response_step(state, req) },
+    .None => { return state.empty_array_response_step(req) },
   }
   range_start := case position_offset(doc.index, hint_params.range_start) {
     .Some(o) => o,
@@ -554,13 +544,13 @@ fn handle_inlay_hint(state: State, req: protocol.Request) Step {
     .Some(o) => o,
     .None => doc.text.len(),
   }
-  snap := workspace_snapshot(state, doc)
+  snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
   hints := query_inlay_hints.inlay_hints(snap, range_start, range_end)
   .{
     state,
     outgoing: [
-      protocol.success_response(req.id, lsp_inlay_hint.inlay_hint_response(doc.index, hints)),
+      req.id.success_response(lsp_inlay_hint.inlay_hint_response(doc.index, hints)),
     ],
   }
 }
@@ -572,31 +562,29 @@ fn handle_semantic_tokens(state: State, req: protocol.Request) Step {
       return .{
         state,
         outgoing: [
-          protocol.success_response(req.id, json.object([json.kv("data", json.array([]))])),
+          req.id.success_response(json.object([json.kv("data", json.array([]))])),
         ],
       }
     },
   }
-  doc := case document_store.get(state.documents, sem_params.text_document.uri) {
+  doc := case state.documents.get(sem_params.text_document.uri) {
     .Some(d) => d,
     .None => {
       return .{
         state,
         outgoing: [
-          protocol.success_response(req.id, json.object([json.kv("data", json.array([]))])),
+          req.id.success_response(json.object([json.kv("data", json.array([]))])),
         ],
       }
     },
   }
-  snap := workspace_snapshot(state, doc)
+  snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
   tokens := query_semantic_tokens.semantic_tokens(snap)
   .{
     state,
     outgoing: [
-      protocol.success_response(
-        req.id,
-        lsp_semantic_tokens.semantic_tokens_response(doc.index, tokens),
+      req.id.success_response(lsp_semantic_tokens.semantic_tokens_response(doc.index, tokens),
       ),
     ],
   }
@@ -605,20 +593,20 @@ fn handle_semantic_tokens(state: State, req: protocol.Request) Step {
 fn handle_workspace_symbol(state: State, req: protocol.Request) Step {
   ws_params := case params.decode_workspace_symbol(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return empty_array_response_step(state, req) },
+    .Err(_) => { return state.empty_array_response_step(req) },
   }
 
   // We need at least one open document to anchor workspace analysis.
   open_docs := state.documents.docs.values()
 
   if open_docs.len() == 0 {
-    return empty_array_response_step(state, req)
+    return state.empty_array_response_step(req)
   }
 
   // Use the first open doc to trigger workspace analysis, which populates
   // the cache with all reachable modules.
   doc := open_docs[0]
-  snap := workspace_snapshot(state, doc)
+  snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
 
   symbols := query_workspace_symbols.workspace_symbols(snap.cache, ws_params.query)
@@ -642,39 +630,39 @@ fn handle_workspace_symbol(state: State, req: protocol.Request) Step {
       }
     },
   )
-  .{ state, outgoing: [protocol.success_response(req.id, response)] }
+  .{ state, outgoing: [req.id.success_response(response)] }
 }
 
 fn handle_formatting(state: State, req: protocol.Request) Step {
   fmt_params := case params.decode_document_formatting(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return empty_array_response_step(state, req) },
+    .Err(_) => { return state.empty_array_response_step(req) },
   }
-  doc := case document_store.get(state.documents, fmt_params.text_document.uri) {
+  doc := case state.documents.get(fmt_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return empty_array_response_step(state, req) },
+    .None => { return state.empty_array_response_step(req) },
   }
   lexed := lexer.lex(doc.text, 0)
 
   if lexed.diagnostics.len() > 0 {
-    return empty_array_response_step(state, req)
+    return state.empty_array_response_step(req)
   }
 
   parsed := parser.parse_tokens(doc.text, 0, lexed.value, lexed.diagnostics)
 
   if parsed.diagnostics.len() > 0 {
-    return empty_array_response_step(state, req)
+    return state.empty_array_response_step(req)
   }
 
   formatted := formatter.format(parsed.value, lexed.value, doc.text)
 
   if formatted == doc.text {
-    return empty_array_response_step(state, req)
+    return state.empty_array_response_step(req)
   }
 
   range := lsp_range.byte_range_to_lsp_range(doc.index, 0, doc.text.len())
   edit := lsp_code_action.text_edit(range, formatted)
-  .{ state, outgoing: [protocol.success_response(req.id, json.array([edit]))] }
+  .{ state, outgoing: [req.id.success_response(json.array([edit]))] }
 }
 
 fn position_offset(index: line_index.LineIndex, position: params.Position) Int? {
@@ -686,11 +674,11 @@ fn position_offset(index: line_index.LineIndex, position: params.Position) Int? 
 }
 
 fn null_response_step(state: State, req: protocol.Request) Step {
-  .{ state, outgoing: [protocol.success_response(req.id, .Null)] }
+  .{ state, outgoing: [req.id.success_response(.Null)] }
 }
 
 fn empty_array_response_step(state: State, req: protocol.Request) Step {
-  .{ state, outgoing: [protocol.success_response(req.id, json.array([]))] }
+  .{ state, outgoing: [req.id.success_response(json.array([]))] }
 }
 
 fn project_root_for_document(file_path: String) String {
@@ -719,7 +707,7 @@ pub fn next_poll_timeout_ms(state: State) Int? {
 pub fn publish_due_diagnostics(state: State) Step {
   if state.diagnostics_pending and date.now() >= state.diagnostics_deadline_ms {
     state.diagnostics_pending = false
-    return publish_workspace_diagnostics(state, true)
+    return state.publish_workspace_diagnostics(true)
   }
 
   .{ state, outgoing: [] }
@@ -738,9 +726,7 @@ fn note_changed_document_source(state: State, uri: String, text: String) State {
   }
   root := project_root_for_document(id.path)
   canonical := imports.canonical_module_path(id.path, imports.make_canonical_roots(root))
-  state.query_cache = query_cache.note_source_hash(
-    state.query_cache,
-    canonical,
+  state.query_cache = state.query_cache.note_source_hash(canonical,
     keys.hash_text(text),
   )
   state
@@ -791,7 +777,7 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
 
       case document_by_identity_uri(state.documents, group.uri) {
         .Some(group_doc) => if !published.has(group.uri)
-          and should_publish_diagnostics(state, group_doc, suppress_duplicates) {
+          and state.should_publish_diagnostics(group_doc, suppress_duplicates) {
           outgoing = .append(
             lsp_diagnostics.publish_diagnostics(
               group_doc.uri,
@@ -800,7 +786,7 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
               group.diagnostics,
             ),
           )
-          state = mark_published_version(state, group_doc)
+          state = state.mark_published_version(group_doc)
           published[group.uri] = true
         },
         .None => {},
@@ -827,7 +813,7 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
 
         case document_by_identity_uri(state.documents, group.uri) {
           .Some(group_doc) => if !published.has(group.uri)
-            and should_publish_diagnostics(state, group_doc, suppress_duplicates) {
+            and state.should_publish_diagnostics(group_doc, suppress_duplicates) {
             outgoing = .append(
               lsp_diagnostics.publish_diagnostics(
                 group_doc.uri,
@@ -836,7 +822,7 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
                 group.diagnostics,
               ),
             )
-            state = mark_published_version(state, group_doc)
+            state = state.mark_published_version(group_doc)
             published[group.uri] = true
           },
           .None => {},

@@ -142,8 +142,8 @@ fn get_trailing_trivia_in_range(tm: TriviaMap, start: Int, end: Int) Vector<Triv
 // Catches both a comment on the item's own value token (when no trailing comma
 // was written) and one attached to the separating comma after it.
 fn item_trailing_trivia(tm: TriviaMap, item_end: Int, next_start: Int) Vector<Trivia> {
-  result := get_trailing_trivia(tm, item_end)
-  result = .concat(get_trailing_trivia_in_range(tm, item_end, next_start))
+  result := tm.get_trailing_trivia(item_end)
+  result = .concat(tm.get_trailing_trivia_in_range(item_end, next_start))
   result
 }
 
@@ -349,13 +349,13 @@ fn sort_import_blocks(items: Vector<Item>) Vector<Item> {
 }
 
 fn sort_uses(uses: Vector<UseDecl>) Vector<UseDecl> {
-  uses.sort_by(fn(a, b) { String.compare(import_sort_key(a), import_sort_key(b)) })
+  uses.sort_by(fn(a, b) { import_sort_key(a).compare(import_sort_key(b)) })
 }
 
 fn import_sort_key(decl: UseDecl) String {
-  group := Int.to_string(import_group(decl))
+  group := import_group(decl).to_string()
   path := decl.path.join(".")
-  variant := Int.to_string(import_variant_order(decl))
+  variant := import_variant_order(decl).to_string()
   "${group}:${path}:${variant}"
 }
 
@@ -382,7 +382,7 @@ fn import_variant_order(decl: UseDecl) Int {
 fn sort_selective_items(decl: UseDecl) UseDecl {
   case decl.items {
     .Some(items) => {
-      sorted := items.sort_by(fn(a, b) { String.compare(import_item_name(a), import_item_name(b)) })
+      sorted := items.sort_by(fn(a, b) { import_item_name(a).compare(import_item_name(b)) })
       decl.items = .Some(sorted)
       decl
     },
@@ -408,7 +408,7 @@ pub fn format_module(module: Module, tokens: Vector<Token>, source: String) Doc 
   tm := build_trivia_map(tokens, source)
   result := Doc.Nil
   original_first_start := item_span(module.items[0]).start
-  leading_file_trivia := get_trivia(tm, original_first_start)
+  leading_file_trivia := tm.get_trivia(original_first_start)
 
   if leading_file_trivia.len() > 0 {
     start := 0
@@ -451,7 +451,7 @@ pub fn format_module(module: Module, tokens: Vector<Token>, source: String) Doc 
     trivia := if item_span(item).start == original_first_start {
       []
     } else {
-      get_trivia(tm, item_span(item).start)
+      tm.get_trivia(item_span(item).start)
     }
     cur_import_group := case item {
       .Use(decl) => import_group(decl),
@@ -509,7 +509,7 @@ pub fn format_module(module: Module, tokens: Vector<Token>, source: String) Doc 
       if group_items.len() == 1 {
         // Single extern: emit standalone
         item_doc := format_item(item, tm)
-        trailing := get_trailing_trivia(tm, item_span(item).end)
+        trailing := tm.get_trailing_trivia(item_span(item).end)
 
         if trailing.len() > 0 {
           item_doc = doc.concat([item_doc, emit_trailing_trivia(trailing)])
@@ -529,7 +529,7 @@ pub fn format_module(module: Module, tokens: Vector<Token>, source: String) Doc 
     }
 
     item_doc := format_item(item, tm)
-    trailing := get_trailing_trivia(tm, item_span(item).end)
+    trailing := tm.get_trailing_trivia(item_span(item).end)
 
     if trailing.len() > 0 {
       item_doc = doc.concat([item_doc, emit_trailing_trivia(trailing)])
@@ -883,14 +883,14 @@ fn format_extern_block(module: String, is_pub: Bool, items: Vector<Item>, tm: Tr
       _ => doc.nil(),
     }
     inner_parts = .append(body)
-    trailing := get_trailing_trivia(tm, item_span(item).end)
+    trailing := tm.get_trailing_trivia(item_span(item).end)
 
     if trailing.len() > 0 {
       inner_parts = .append(emit_trailing_trivia(trailing))
     }
   }
 
-  parts = .append(doc.indent(doc.concat(inner_parts)))
+  parts = .append(doc.concat(inner_parts).indent())
   parts = .append(doc.hard_line())
   parts = .append(doc.text("}"))
   doc.concat(parts)
@@ -968,7 +968,7 @@ fn format_block(block: Block, tm: TriviaMap) Doc {
   has_leading_comment: Vector<Bool> = []
 
   for stmt, i in block.stmts {
-    raw_trivia := get_trivia(tm, stmt_span(stmt).start)
+    raw_trivia := tm.get_trivia(stmt_span(stmt).start)
     trivia := non_blank_trivia(raw_trivia)
     has_author_blank = .append(i > 0 and has_blank_in_trivia(raw_trivia))
     has_leading_comment = .append(i > 0 and has_comment_in_trivia(raw_trivia))
@@ -978,7 +978,7 @@ fn format_block(block: Block, tm: TriviaMap) Doc {
       stmt_doc = doc.concat([emit_trivia(trivia), stmt_doc])
     }
 
-    trailing := get_trailing_trivia(tm, stmt_span(stmt).end)
+    trailing := tm.get_trailing_trivia(stmt_span(stmt).end)
 
     if trailing.len() > 0 {
       stmt_doc = doc.concat([stmt_doc, emit_trailing_trivia(trailing)])
@@ -989,7 +989,7 @@ fn format_block(block: Block, tm: TriviaMap) Doc {
 
   case block.tail {
     .Some(expr) => {
-      raw_trivia := get_trivia(tm, expr.span.start)
+      raw_trivia := tm.get_trivia(expr.span.start)
       trivia := non_blank_trivia(raw_trivia)
       has_author_blank = .append(block.stmts.len() > 0 and has_blank_in_trivia(raw_trivia))
       has_leading_comment = .append(block.stmts.len() > 0 and has_comment_in_trivia(raw_trivia))
@@ -999,7 +999,7 @@ fn format_block(block: Block, tm: TriviaMap) Doc {
         tail_doc = doc.concat([emit_trivia(trivia), tail_doc])
       }
 
-      trailing := get_trailing_trivia(tm, expr.span.end)
+      trailing := tm.get_trailing_trivia(expr.span.end)
 
       if trailing.len() > 0 {
         tail_doc = doc.concat([tail_doc, emit_trailing_trivia(trailing)])
@@ -1017,7 +1017,7 @@ fn format_block(block: Block, tm: TriviaMap) Doc {
   inner := join_block_docs(block, body_docs, has_author_blank, has_leading_comment)
   doc.concat([
     doc.text("{"),
-    doc.indent(doc.concat([doc.hard_line(), inner])),
+    doc.concat([doc.hard_line(), inner]).indent(),
     doc.hard_line(),
     doc.text("}"),
   ])
@@ -1231,7 +1231,7 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
     .Ident(name) => doc.text(name),
     .IntLit(n) => case tm.literal_text.get(expr.span.start) {
       .Some(raw) => doc.text(raw),
-      .None => doc.text(Int.to_string(n)),
+      .None => doc.text(n.to_string()),
     },
     .FloatLit(f) => case tm.literal_text.get(expr.span.start) {
       .Some(raw) => doc.text(raw),
@@ -1380,7 +1380,7 @@ fn format_binary_inner(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_co
 }
 
 fn binary_chain_sep(tm: TriviaMap, prev_end: Int, next_end: Int) Doc {
-  trivia := non_blank_trivia(get_trivia_in_range(tm, prev_end, next_end))
+  trivia := non_blank_trivia(tm.get_trivia_in_range(prev_end, next_end))
 
   if trivia.len() > 0 {
     doc.concat([doc.hard_line(), emit_trivia(trivia)])
@@ -1402,18 +1402,18 @@ fn format_logical_or_binary(
   parts: Vector<Doc> = [first_doc]
 
   for piece in chain.pieces {
-    parts = .append(binary_chain_sep(tm, prev_end, piece.expr.span.end))
+    parts = .append(tm.binary_chain_sep(prev_end, piece.expr.span.end))
     parts = .append(doc.text("${binop_str(piece.op)} "))
     parts = .append(format_binary_child(piece.op, piece.expr, true, tm, false))
     prev_end = piece.expr.span.end
   }
 
   body := if indent_continuation and parts.len() > 1 {
-    doc.concat([parts[0], doc.indent(doc.concat(parts.slice(1, parts.len())))])
+    doc.concat([parts[0], doc.concat(parts.slice(1, parts.len())).indent()])
   } else {
     doc.concat(parts)
   }
-  doc.group(body)
+  body.group()
 }
 
 fn format_chained_binary(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_continuation: Bool) Doc {
@@ -1427,7 +1427,7 @@ fn format_chained_binary(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_
   fill_children: Vector<Doc> = [first_doc]
 
   for piece in chain.pieces {
-    fill_children = .append(binary_chain_sep(tm, prev_end, piece.expr.span.end))
+    fill_children = .append(tm.binary_chain_sep(prev_end, piece.expr.span.end))
     piece_doc := doc.concat([
       doc.text("${binop_str(piece.op)} "),
       format_binary_child(piece.op, piece.expr, true, tm, false),
@@ -1441,9 +1441,9 @@ fn format_chained_binary(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_
     // Extract sep1 as the break point, then Fill the rest starting with item1.
     first_sep := fill_children[1]
     remaining := Doc.Fill(fill_children.slice(2, fill_children.len()))
-    doc.group(doc.concat([first_doc, doc.indent(doc.concat([first_sep, remaining]))]))
+    doc.concat([first_doc, doc.concat([first_sep, remaining]).indent()]).group()
   } else {
-    doc.group(Doc.Fill(fill_children))
+    Doc.Fill(fill_children).group()
   }
 }
 
@@ -1620,7 +1620,7 @@ fn chain_segment_is_self_breaking(seg: ChainSegment) Bool {
 fn format_chain_segment(seg: ChainSegment, tm: TriviaMap) Doc {
   parts: Vector<Doc> = [doc.text(".${seg.name}")]
 
-  if chain_segment_is_self_breaking(seg) {
+  if seg.chain_segment_is_self_breaking() {
     parts = .append(doc.text("("))
     parts = .append(format_expr(seg.args[0], tm))
     parts = .append(doc.text(")"))
@@ -1640,21 +1640,21 @@ fn format_call(callee: Expr, args: Vector<Expr>, container: Span, tm: TriviaMap)
     .Some(chain) => {
       first := chain.segments[0]
 
-      if chain_segment_is_self_breaking(first) {
+      if first.chain_segment_is_self_breaking() {
         tail_parts: Vector<Doc> = []
 
         for seg in chain.segments {
           tail_parts = .append(doc.hard_line())
-          tail_parts = .append(format_chain_segment(seg, tm))
+          tail_parts = .append(seg.format_chain_segment(tm))
         }
 
         return doc.concat([
           format_receiver(chain.base, tm),
-          doc.group(doc.indent(doc.concat(tail_parts))),
+          doc.concat(tail_parts).indent().group(),
         ])
       }
 
-      head_doc := doc.concat([format_receiver(chain.base, tm), format_chain_segment(first, tm)])
+      head_doc := doc.concat([format_receiver(chain.base, tm), first.format_chain_segment(tm)])
       tail_parts: Vector<Doc> = []
 
       for seg, i in chain.segments {
@@ -1662,11 +1662,11 @@ fn format_call(callee: Expr, args: Vector<Expr>, container: Span, tm: TriviaMap)
           continue
         }
 
-        tail_parts = .append(doc.if_break(doc.hard_line(), doc.nil()))
-        tail_parts = .append(format_chain_segment(seg, tm))
+        tail_parts = .append(doc.hard_line().if_break(doc.nil()))
+        tail_parts = .append(seg.format_chain_segment(tm))
       }
 
-      return doc.concat([head_doc, doc.group(doc.indent(doc.concat(tail_parts)))])
+      return doc.concat([head_doc, doc.concat(tail_parts).indent().group()])
     },
     .None => {},
   }
@@ -1749,7 +1749,7 @@ fn join_arm_docs(
 
   for d, i in docs {
     line_doc := doc.concat([d, doc.text(",")])
-    trailing := item_trailing_trivia(tm, spans[i].end, trailing_bound(i))
+    trailing := tm.item_trailing_trivia(spans[i].end, trailing_bound(i))
 
     if has_comment_in_trivia(trailing) {
       line_doc = doc.concat([line_doc, emit_trailing_trivia(trailing)])
@@ -1776,7 +1776,7 @@ fn format_case(scrutinee: Expr, arms: Vector<CaseArm>, container: Span, tm: Triv
   has_author_blank: Vector<Bool> = []
 
   for arm, i in arms {
-    raw_trivia := get_trivia(tm, arm.span.start)
+    raw_trivia := tm.get_trivia(arm.span.start)
     trivia := non_blank_trivia(raw_trivia)
     has_author_blank = .append(i > 0 and has_blank_in_trivia(raw_trivia))
     arm_spans = .append(arm.span)
@@ -1794,7 +1794,7 @@ fn format_case(scrutinee: Expr, arms: Vector<CaseArm>, container: Span, tm: Triv
     doc.text("case "),
     format_expr(scrutinee, tm),
     doc.text(" {"),
-    doc.indent(doc.concat([doc.hard_line(), inner])),
+    doc.concat([doc.hard_line(), inner]).indent(),
     doc.hard_line(),
     doc.text("}"),
   ])
@@ -1806,8 +1806,8 @@ fn format_case_arm(arm: CaseArm, tm: TriviaMap) Doc {
       // Unwrap single-expression blocks: { expr } => expr
       case block.tail {
         .Some(expr) => {
-          trivia := get_trivia(tm, expr.span.start)
-          trailing_t := get_trailing_trivia(tm, expr.span.end)
+          trivia := tm.get_trivia(expr.span.start)
+          trailing_t := tm.get_trailing_trivia(expr.span.end)
 
           if trivia.len() == 0 and trailing_t.len() == 0 {
             format_expr(expr, tm)
@@ -1819,23 +1819,21 @@ fn format_case_arm(arm: CaseArm, tm: TriviaMap) Doc {
       }
     } else if block.stmts.len() == 1
       and block.tail.is_none() and is_arm_inline_stmt(block.stmts[0])
-      and get_trivia(tm, stmt_span(block.stmts[0]).start).len() == 0 {
+      and tm.get_trivia(stmt_span(block.stmts[0]).start).len() == 0 {
       // Inline terminal statements: { continue }, { return expr }
       stmt_doc := format_stmt(block.stmts[0], tm)
-      doc.group(
-        doc.concat([
+      doc.concat([
           doc.text("{"),
-          doc.indent(doc.concat([doc.line(), stmt_doc])),
+          doc.concat([doc.line(), stmt_doc]).indent(),
           doc.line(),
           doc.text("}"),
-        ]),
-      )
+        ]).group()
     } else {
       format_block(block, tm)
     },
     _ => format_expr(arm.expr, tm),
   }
-  doc.group(doc.concat([format_pattern(arm.pattern, tm), doc.text(" => "), body]))
+  doc.concat([format_pattern(arm.pattern, tm), doc.text(" => "), body]).group()
 }
 
 fn format_cond(arms: Vector<CondArm>, container: Span, tm: TriviaMap) Doc {
@@ -1844,7 +1842,7 @@ fn format_cond(arms: Vector<CondArm>, container: Span, tm: TriviaMap) Doc {
   has_author_blank: Vector<Bool> = []
 
   for arm, i in arms {
-    raw_trivia := get_trivia(tm, arm.span.start)
+    raw_trivia := tm.get_trivia(arm.span.start)
     trivia := non_blank_trivia(raw_trivia)
     has_author_blank = .append(i > 0 and has_blank_in_trivia(raw_trivia))
     arm_spans = .append(arm.span)
@@ -1860,7 +1858,7 @@ fn format_cond(arms: Vector<CondArm>, container: Span, tm: TriviaMap) Doc {
   inner := join_arm_docs(arm_docs, arm_spans, has_author_blank, container, tm)
   doc.concat([
     doc.text("cond {"),
-    doc.indent(doc.concat([doc.hard_line(), inner])),
+    doc.concat([doc.hard_line(), inner]).indent(),
     doc.hard_line(),
     doc.text("}"),
   ])
@@ -1871,8 +1869,8 @@ fn format_cond_arm(arm: CondArm, tm: TriviaMap) Doc {
     .BlockExpr(block) => if block.stmts.len() == 0 {
       case block.tail {
         .Some(expr) => {
-          trivia := get_trivia(tm, expr.span.start)
-          trailing_t := get_trailing_trivia(tm, expr.span.end)
+          trivia := tm.get_trivia(expr.span.start)
+          trailing_t := tm.get_trailing_trivia(expr.span.end)
 
           if trivia.len() == 0 and trailing_t.len() == 0 {
             format_expr(expr, tm)
@@ -1884,16 +1882,14 @@ fn format_cond_arm(arm: CondArm, tm: TriviaMap) Doc {
       }
     } else if block.stmts.len() == 1
       and block.tail.is_none() and is_arm_inline_stmt(block.stmts[0])
-      and get_trivia(tm, stmt_span(block.stmts[0]).start).len() == 0 {
+      and tm.get_trivia(stmt_span(block.stmts[0]).start).len() == 0 {
       stmt_doc := format_stmt(block.stmts[0], tm)
-      doc.group(
-        doc.concat([
+      doc.concat([
           doc.text("{"),
-          doc.indent(doc.concat([doc.line(), stmt_doc])),
+          doc.concat([doc.line(), stmt_doc]).indent(),
           doc.line(),
           doc.text("}"),
-        ]),
-      )
+        ]).group()
     } else {
       format_block(block, tm)
     },
@@ -1901,8 +1897,8 @@ fn format_cond_arm(arm: CondArm, tm: TriviaMap) Doc {
   }
 
   case arm.condition {
-    .Some(cond_expr) => doc.group(doc.concat([format_expr(cond_expr, tm), doc.text(" => "), body])),
-    .None => doc.group(doc.concat([doc.text("_ => "), body])),
+    .Some(cond_expr) => doc.concat([format_expr(cond_expr, tm), doc.text(" => "), body]).group(),
+    .None => doc.concat([doc.text("_ => "), body]).group(),
   }
 }
 
@@ -1940,7 +1936,7 @@ fn format_literal_expr(expr: Expr, tm: TriviaMap) Doc {
   case expr.kind {
     .IntLit(n) => case tm.literal_text.get(expr.span.start) {
       .Some(raw) => doc.text(raw),
-      .None => doc.text(Int.to_string(n)),
+      .None => doc.text(n.to_string()),
     },
     .FloatLit(f) => case tm.literal_text.get(expr.span.start) {
       .Some(raw) => doc.text(raw),
@@ -1988,8 +1984,8 @@ fn format_bracketed_items(
   has_comment := false
 
   for sp, i in spans {
-    if has_comment_in_trivia(get_trivia(tm, sp.start))
-      or has_comment_in_trivia(item_trailing_trivia(tm, sp.end, trailing_bound(i))) {
+    if has_comment_in_trivia(tm.get_trivia(sp.start))
+      or has_comment_in_trivia(tm.item_trailing_trivia(sp.end, trailing_bound(i))) {
       has_comment = true
     }
   }
@@ -2002,7 +1998,7 @@ fn format_bracketed_items(
 
   for d, i in item_docs {
     sp := spans[i]
-    leading := non_blank_trivia(get_trivia(tm, sp.start))
+    leading := non_blank_trivia(tm.get_trivia(sp.start))
     line_doc := d
 
     if leading.len() > 0 {
@@ -2010,7 +2006,7 @@ fn format_bracketed_items(
     }
 
     line_doc = doc.concat([line_doc, doc.text(",")])
-    trailing := item_trailing_trivia(tm, sp.end, trailing_bound(i))
+    trailing := tm.item_trailing_trivia(sp.end, trailing_bound(i))
 
     if has_comment_in_trivia(trailing) {
       line_doc = doc.concat([line_doc, emit_trailing_trivia(trailing)])
@@ -2022,7 +2018,7 @@ fn format_bracketed_items(
   inner := doc.join(parts, doc.hard_line())
   doc.concat([
     doc.text(open),
-    doc.indent(doc.concat([doc.hard_line(), inner])),
+    doc.concat([doc.hard_line(), inner]).indent(),
     doc.hard_line(),
     doc.text(close),
   ])
@@ -2126,8 +2122,8 @@ fn format_inline_closure_body(body: Block, tm: TriviaMap) Doc? {
   if body.stmts.len() == 0 {
     case body.tail {
       .Some(expr) => if is_simple_expr(expr)
-        and get_trivia(tm, expr.span.start).len() == 0
-        and get_trailing_trivia(tm, expr.span.end).len() == 0 {
+        and tm.get_trivia(expr.span.start).len() == 0
+        and tm.get_trailing_trivia(expr.span.end).len() == 0 {
         return .Some(doc.concat([doc.text("{ "), format_expr(expr, tm), doc.text(" }")]))
       },
       .None => {},
@@ -2137,8 +2133,8 @@ fn format_inline_closure_body(body: Block, tm: TriviaMap) Doc? {
   if body.stmts.len() == 1 and body.tail.is_none() {
     case body.stmts[0] {
       .Expr(stmt) => if is_simple_expr(stmt.expr)
-        and get_trivia(tm, stmt.expr.span.start).len() == 0
-        and get_trailing_trivia(tm, stmt.expr.span.end).len() == 0 {
+        and tm.get_trivia(stmt.expr.span.start).len() == 0
+        and tm.get_trailing_trivia(stmt.expr.span.end).len() == 0 {
         return .Some(doc.concat([doc.text("{ "), format_expr(stmt.expr, tm), doc.text(" }")]))
       },
       _ => {},
@@ -2287,7 +2283,7 @@ fn drop_trailing_space(parts: Vector<Doc>) Vector<Doc> {
 fn format_assigned(intro: Vector<Doc>, value: Expr, value_doc: Doc, tm: TriviaMap) Doc {
   case multiline_block_doc_for(value, tm) {
     .Some(block) => doc.concat(
-      drop_trailing_space(intro).append(doc.indent(doc.concat([doc.hard_line(), block]))),
+      drop_trailing_space(intro).append(doc.concat([doc.hard_line(), block]).indent()),
     ),
     .None => doc.concat(intro.append(value_doc)),
   }
@@ -2346,7 +2342,7 @@ fn format_string_interp(parts: Vector<StringPart>, start: Int, tm: TriviaMap) Do
 
 // --- Helpers ---
 fn format_float_literal(f: Float) String {
-  s := Float.to_string(f)
+  s := f.to_string()
 
   if s.contains(".") or s.contains("e") or s.contains("E") {
     s
@@ -2534,7 +2530,7 @@ fn hex_byte(b: Byte) String {
 
 fn hex_digit(n: Int) String {
   if n < 10 {
-    Int.to_string(n)
+    n.to_string()
   } else {
     case String.from_code_point(n - 10 + 97) {
       .Some(s) => s,

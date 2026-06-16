@@ -57,7 +57,7 @@ pub fn analyze_document(store: cache.Store, input: DocumentInput) AnalysisResult
   if parsed.diagnostics.len() > 0 {
     return .{
       cache: cur_cache,
-      diagnostics: convert_diagnostics(input, "parse", parsed.diagnostics),
+      diagnostics: input.convert_diagnostics("parse", parsed.diagnostics),
     }
   }
 
@@ -68,7 +68,7 @@ pub fn analyze_document(store: cache.Store, input: DocumentInput) AnalysisResult
   if resolved.diagnostics.len() > 0 {
     return .{
       cache: cur_cache,
-      diagnostics: convert_diagnostics(input, "resolve", resolved.diagnostics),
+      diagnostics: input.convert_diagnostics("resolve", resolved.diagnostics),
     }
   }
 
@@ -79,7 +79,7 @@ pub fn analyze_document(store: cache.Store, input: DocumentInput) AnalysisResult
   if checked.diagnostics.len() > 0 {
     return .{
       cache: cur_cache,
-      diagnostics: convert_diagnostics(input, "check", checked.diagnostics),
+      diagnostics: input.convert_diagnostics("check", checked.diagnostics),
     }
   }
 
@@ -128,7 +128,7 @@ fn dedupe_diagnostics(diags: Vector<Diagnostic>) Vector<Diagnostic> {
   out: Vector<Diagnostic> = []
 
   for d in diags {
-    key := diagnostic_key(d)
+    key := d.diagnostic_key()
 
     if seen.has(key) {
       continue

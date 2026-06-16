@@ -171,7 +171,7 @@ fn optimize_function_with_context(func: AnfFunctionDef, ctx: OptimizerContext) F
   tb0 := date.now()
   timing.defer_elim = timing.defer_elim + (tb0 - ta0)
   fixed := run_fixed_point_simplifications(deferred.body, deferred.op_result_mono, ctx)
-  timing = add_pass_timing(timing, fixed.timing)
+  timing = timing.add_pass_timing(fixed.timing)
   optimized := rebuild_func_with_body(deferred, fixed.expr)
   ta2 := date.now()
   f_consumed: Dict<Int, Bool> = case ctx.consumed_params[optimized.func_id.id] {
@@ -277,7 +277,7 @@ fn optimize_module_internal(
   funcs_at_cap: Int = 0
   new_funcs: Vector<AnfFunctionDef> = collect f in module.functions {
     result := optimize_function_with_context(f, ctx)
-    timing = add_pass_timing(timing, result.timing)
+    timing = timing.add_pass_timing(result.timing)
     total_rounds = total_rounds + result.rounds
 
     if result.at_cap {
@@ -289,23 +289,15 @@ fn optimize_module_internal(
 
   if timed {
     n := module.functions.len()
-    avg_rounds := Float.to_string(Int.to_float(total_rounds) / Int.to_float(n))
+    avg_rounds := Float.to_string(total_rounds.to_float() / n.to_float())
     eprintln(
-      "[time:opt] funcs=${Int.to_string(n)}  total_rounds=${Int.to_string(total_rounds)}  avg_rounds=${avg_rounds}  at_cap=${Int.to_string(
-        funcs_at_cap,
-      )}",
+      "[time:opt] funcs=${n.to_string()}  total_rounds=${total_rounds.to_string()}  avg_rounds=${avg_rounds}  at_cap=${funcs_at_cap.to_string()}",
     )
     eprintln(
-      "[time:opt] dead_let=${Float.to_string(timing.dead_let)}ms  copy_prop=${Float.to_string(
-        timing.copy_prop,
-      )}ms  const_fold=${Float.to_string(timing.const_fold)}ms  branch_simp=${Float.to_string(
-        timing.branch_simp,
-      )}ms",
+      "[time:opt] dead_let=${timing.dead_let.to_string()}ms  copy_prop=${timing.copy_prop.to_string()}ms  const_fold=${timing.const_fold.to_string()}ms  branch_simp=${timing.branch_simp.to_string()}ms",
     )
     eprintln(
-      "[time:opt] uniqueness=${Float.to_string(timing.uniqueness)}ms  defer_elim=${Float.to_string(
-        timing.defer_elim,
-      )}ms",
+      "[time:opt] uniqueness=${timing.uniqueness.to_string()}ms  defer_elim=${timing.defer_elim.to_string()}ms",
     )
   }
 

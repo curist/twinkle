@@ -224,7 +224,7 @@ fn register_methods_from_groups(env: ResolvedEnv, groups: Vector<signatures.Sign
   cur := env
 
   for group in groups {
-    entries := signatures.group_method_entries(group)
+    entries := group.group_method_entries()
 
     case group.receiver {
       .None => {},

@@ -9,7 +9,7 @@
 
 use compiler.backend.facts as facts
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotId}
-use compiler.builtins as bi
+
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.emit.helpers.{sanitize_name}
 use compiler.codegen.wasm_ir.{FieldDef, TypeDef, ValType}
@@ -41,8 +41,8 @@ pub type ClosureInfo = .{ body_fid: FuncId, captures: Vector<SlotId> }
 
 // ── Public API ──
 pub fn analyze_task_body(func: PreparedFunc, builtins: BuiltinRegistry, env: ResolvedEnv) TaskResumeInfo {
-  yield_fid := bi.id(builtins, "task$yield")
-  await_fid := bi.id(builtins, "task$await")
+  yield_fid := builtins.id("task$yield")
+  await_fid := builtins.id("task$await")
 
   // 1. Flatten the let-chain
   flat := flatten_inner(func.body, [])

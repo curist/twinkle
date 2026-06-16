@@ -16,7 +16,7 @@ pub fn document_highlight_response(
   items: Vector<json.Json> = []
 
   for result in results {
-    range := line_index.byte_range_to_range(index, result.span.start, result.span.end, .Utf16)
+    range := index.byte_range_to_range(result.span.start, result.span.end, .Utf16)
     kind := case result.kind {
       .Text => 1,
       .Read => 2,

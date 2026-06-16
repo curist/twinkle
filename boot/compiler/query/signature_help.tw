@@ -23,7 +23,7 @@ pub fn signature_help(snap: SemanticSnapshot, byte_offset: Int, source: String) 
       .Some(typed) => {
         for item in parsed.module.items {
           case find_call_in_item(item, byte_offset) {
-            .Some(call_info) => case resolve_call(call_info, typed, source, byte_offset) {
+            .Some(call_info) => case call_info.resolve_call(typed, source, byte_offset) {
               .Some(result) => { return .Some(result) },
               .None => {},
             },
@@ -237,7 +237,7 @@ fn find_call_in_interp(parts: Vector<StringPart>, offset: Int) CallInfo? {
 
 // ── Signature resolution ──────────────────────────────────────────
 fn resolve_call(info: CallInfo, typed: CheckResult, source: String, byte_offset: Int) SignatureHelpResult? {
-  active := compute_active_parameter(info, byte_offset, source)
+  active := info.compute_active_parameter(byte_offset, source)
   ci := try call_resolve.resolve_callee(info.callee, typed)
 
   // Method sugar with a receiver instantiates the signature from the receiver's

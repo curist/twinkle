@@ -37,21 +37,21 @@ pub fn fix_actions(uri: String, index: line_index.LineIndex, context_diagnostics
   actions: Vector<json.Json> = []
 
   for diag in context_diagnostics {
-    data := case json.decode(diag, json.field("data", json.raw())) {
+    data := case diag.decode(json.field("data", json.raw())) {
       .Ok(d) => d,
       .Err(_) => { continue },
     }
-    fixes := case json.decode(data, json.field("fixes", json.list(json.raw()))) {
+    fixes := case data.decode(json.field("fixes", json.raw().list())) {
       .Ok(fs) => fs,
       .Err(_) => { continue },
     }
 
     for fix in fixes {
-      title := case json.decode(fix, json.field("title", json.string())) {
+      title := case fix.decode(json.field("title", json.string())) {
         .Ok(t) => t,
         .Err(_) => "apply fix",
       }
-      edit_objs := case json.decode(fix, json.field("edits", json.list(json.raw()))) {
+      edit_objs := case fix.decode(json.field("edits", json.raw().list())) {
         .Ok(es) => es,
         .Err(_) => { continue },
       }
@@ -59,15 +59,15 @@ pub fn fix_actions(uri: String, index: line_index.LineIndex, context_diagnostics
       text_edits: Vector<json.Json> = []
 
       for e in edit_objs {
-        start := case json.decode(e, json.field("start", json.int())) {
+        start := case e.decode(json.field("start", json.int())) {
           .Ok(v) => v,
           .Err(_) => { continue },
         }
-        end := case json.decode(e, json.field("end", json.int())) {
+        end := case e.decode(json.field("end", json.int())) {
           .Ok(v) => v,
           .Err(_) => { continue },
         }
-        replacement := case json.decode(e, json.field("replacement", json.string())) {
+        replacement := case e.decode(json.field("replacement", json.string())) {
           .Ok(v) => v,
           .Err(_) => { continue },
         }

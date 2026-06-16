@@ -69,7 +69,7 @@ pub fn is_closure_materializable(
 }
 
 fn builtin_target(fid: FuncId, builtins: BuiltinRegistry, env: ResolvedEnv) CallableTargetInfo? {
-  entry := case bi.entry(builtins, fid) {
+  entry := case builtins.entry(fid) {
     .Some(e) => e,
     .None => { return .None },
   }

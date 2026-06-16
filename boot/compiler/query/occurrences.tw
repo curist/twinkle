@@ -134,7 +134,7 @@ pub fn add_occurrence(index: OccurrenceIndex, occ: Occurrence) OccurrenceIndex {
     .None => {},
   }
 
-  enc := encode_symbol_key(occ.symbol_key)
+  enc := occ.symbol_key.encode_symbol_key()
   existing := case index.by_symbol.get(enc) {
     .Some(v) => v,
     .None => [],
@@ -219,7 +219,7 @@ pub fn occurrence_for_expr(index: OccurrenceIndex, expr_id: Int) Occurrence? {
 
 /// All occurrences (declarations and uses) of a symbol within this file.
 pub fn occurrences_for_symbol(index: OccurrenceIndex, key: SymbolKey) Vector<Occurrence> {
-  enc := encode_symbol_key(key)
+  enc := key.encode_symbol_key()
 
   case index.by_symbol.get(enc) {
     .Some(ids) => collect i in ids {
@@ -232,10 +232,10 @@ pub fn occurrences_for_symbol(index: OccurrenceIndex, key: SymbolKey) Vector<Occ
 /// The defining symbol for an occurrence, looked up by key within this file.
 /// Cross-file definitions are resolved by loading the declaring module's index.
 pub fn definition_for_occurrence(index: OccurrenceIndex, occ: Occurrence) SymbolDef? {
-  target := encode_symbol_key(occ.symbol_key)
+  target := occ.symbol_key.encode_symbol_key()
 
   for def in index.symbols {
-    if encode_symbol_key(def.key) == target {
+    if def.key.encode_symbol_key() == target {
       return .Some(def)
     }
   }

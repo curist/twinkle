@@ -287,7 +287,7 @@ pub fn op_effect(op: AnfOp, semantics: OptimizerSemantics) EffectKind {
 
       .Pure
     },
-    .ACall(.AGlobalFunc(func_id), _) => case call_info(semantics, func_id) {
+    .ACall(.AGlobalFunc(func_id), _) => case semantics.call_info(func_id) {
       .Some(info) => info.effect,
       .None => .Control,
     },
@@ -308,7 +308,7 @@ pub fn op_has_fresh_result(op: AnfOp, semantics: OptimizerSemantics) Bool {
     .ARecord(_, _) => true,
     .ARecordUpdate(_, _, _, _, _) => true,
     .AVariant(_, _, _) => true,
-    .ACall(.AGlobalFunc(func_id), _) => case call_info(semantics, func_id) {
+    .ACall(.AGlobalFunc(func_id), _) => case semantics.call_info(func_id) {
       .Some(info) => info.fresh_result,
       .None => false,
     },
@@ -321,7 +321,7 @@ pub fn reusable_update_site(op: AnfOp, semantics: OptimizerSemantics) ReusableUp
     .ARecordUpdate(.ALocal(base), _, _, _, _) => .Some(
       ReusableUpdateSite.{ kind: .RecordUpdate, base_local: base, in_place_equivalent: .None },
     ),
-    .ACall(.AGlobalFunc(func_id), args) => case call_info(semantics, func_id) {
+    .ACall(.AGlobalFunc(func_id), args) => case semantics.call_info(func_id) {
       .Some(info) => case info.cow_base_arg {
         .Some(base_arg) => {
           if base_arg >= args.len() {

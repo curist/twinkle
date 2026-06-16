@@ -86,7 +86,7 @@ pub type Token = .{
 }
 
 pub fn make(kind: TokenKind, text: String, token_span: Span, preceded_by_newline: Bool) Token {
-  make_with_trivia(kind, text, token_span, preceded_by_newline, [])
+  kind.make_with_trivia(text, token_span, preceded_by_newline, [])
 }
 
 pub fn make_with_trivia(

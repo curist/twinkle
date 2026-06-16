@@ -28,7 +28,7 @@ pub fn nil() Doc {
 }
 
 pub fn group(d: Doc) Doc {
-  .Group(d, flat_width(d))
+  .Group(d, d.flat_width())
 }
 
 pub fn if_break(broken: Doc, flat: Doc) Doc {
@@ -53,14 +53,14 @@ pub fn flat_width(d: Doc) Int {
     .Text(s) => s.len(),
     .Line => 1,
     .HardLine => -1,
-    .Indent(_, inner) => flat_width(inner),
+    .Indent(_, inner) => inner.flat_width(),
     .Concat(a, b) => {
-      aw := flat_width(a)
+      aw := a.flat_width()
 
       if aw < 0 {
         -1
       } else {
-        bw := flat_width(b)
+        bw := b.flat_width()
 
         if bw < 0 {
           -1
@@ -73,7 +73,7 @@ pub fn flat_width(d: Doc) Int {
       total := 0
 
       for child in docs {
-        w := flat_width(child)
+        w := child.flat_width()
 
         if w < 0 {
           return -1
@@ -85,12 +85,12 @@ pub fn flat_width(d: Doc) Int {
       total
     },
     .Group(_, cached) => cached,
-    .IfBreak(_, flat) => flat_width(flat),
+    .IfBreak(_, flat) => flat.flat_width(),
     .Fill(children) => {
       total := 0
 
       for child in children {
-        w := flat_width(child)
+        w := child.flat_width()
 
         if w < 0 {
           return -1
@@ -155,20 +155,16 @@ pub fn tight_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
     return text("${open}${close}")
   }
 
-  group(
-    concat([
+  concat([
       text(open),
-      indent(
-        concat([
-          if_break(hard_line(), nil()),
+      concat([
+          hard_line().if_break(nil()),
           join(docs, concat([text(","), line()])),
-          if_break(text(","), nil()),
-        ]),
-      ),
-      if_break(hard_line(), nil()),
+          text(",").if_break(nil()),
+        ]).indent(),
+      hard_line().if_break(nil()),
       text(close),
-    ]),
-  )
+    ]).group()
 }
 
 /// Spaced brackets: ".{ x: 1, y: 2 }" flat, or:
@@ -181,14 +177,12 @@ pub fn spaced_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
     return text("${open}${close}")
   }
 
-  group(
-    concat([
+  concat([
       text(open),
-      indent(concat([line(), join(docs, concat([text(","), line()])), if_break(text(","), nil())])),
+      concat([line(), join(docs, concat([text(","), line()])), text(",").if_break(nil())]).indent(),
       line(),
       text(close),
-    ]),
-  )
+    ]).group()
 }
 
 /// Build a Fill doc: alternating [item, sep, item, sep, ..., item].
@@ -226,18 +220,14 @@ pub fn fill_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
     return text("${open}${close}")
   }
 
-  group(
-    concat([
+  concat([
       text(open),
-      indent(
-        concat([
-          if_break(hard_line(), nil()),
+      concat([
+          hard_line().if_break(nil()),
           fill_sep(docs, concat([text(","), line()])),
-          if_break(text(","), nil()),
-        ]),
-      ),
-      if_break(hard_line(), nil()),
+          text(",").if_break(nil()),
+        ]).indent(),
+      hard_line().if_break(nil()),
       text(close),
-    ]),
-  )
+    ]).group()
 }

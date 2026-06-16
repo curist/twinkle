@@ -67,108 +67,88 @@ pub type InlayHintParams = .{
 
 pub fn decode_did_open(params: json.Json?) Result<DidOpenTextDocumentParams, String> {
   value := try required_params(params)
-  text_document := try json.decode(value, json.field("textDocument", text_document_item_decoder()))
+  text_document := try value.decode(json.field("textDocument", text_document_item_decoder()))
   .Ok(.{ text_document })
 }
 
 pub fn decode_did_change(params: json.Json?) Result<DidChangeTextDocumentParams, String> {
   value := try required_params(params)
-  text_document := try json.decode(
-    value,
-    json.field("textDocument", versioned_text_document_identifier_decoder()),
+  text_document := try value.decode(json.field("textDocument", versioned_text_document_identifier_decoder()),
   )
-  content_changes := try json.decode(
-    value,
-    json.field("contentChanges", json.list(content_change_decoder())),
+  content_changes := try value.decode(json.field("contentChanges", content_change_decoder().list()),
   )
   .Ok(.{ text_document, content_changes })
 }
 
 pub fn decode_hover(params: json.Json?) Result<HoverParams, String> {
   value := try required_params(params)
-  text_document := try json.decode(
-    value,
-    json.field("textDocument", text_document_identifier_decoder()),
+  text_document := try value.decode(json.field("textDocument", text_document_identifier_decoder()),
   )
-  position := try json.decode(value, json.field("position", position_decoder()))
+  position := try value.decode(json.field("position", position_decoder()))
   .Ok(.{ text_document, position })
 }
 
 pub fn decode_definition(params: json.Json?) Result<DefinitionParams, String> {
   value := try required_params(params)
-  text_document := try json.decode(
-    value,
-    json.field("textDocument", text_document_identifier_decoder()),
+  text_document := try value.decode(json.field("textDocument", text_document_identifier_decoder()),
   )
-  position := try json.decode(value, json.field("position", position_decoder()))
+  position := try value.decode(json.field("position", position_decoder()))
   .Ok(.{ text_document, position })
 }
 
 pub fn decode_did_close(params: json.Json?) Result<DidCloseTextDocumentParams, String> {
   value := try required_params(params)
-  text_document := try json.decode(
-    value,
-    json.field("textDocument", text_document_identifier_decoder()),
+  text_document := try value.decode(json.field("textDocument", text_document_identifier_decoder()),
   )
   .Ok(.{ text_document })
 }
 
 pub fn decode_completion(params: json.Json?) Result<CompletionParams, String> {
   value := try required_params(params)
-  text_document := try json.decode(
-    value,
-    json.field("textDocument", text_document_identifier_decoder()),
+  text_document := try value.decode(json.field("textDocument", text_document_identifier_decoder()),
   )
-  position := try json.decode(value, json.field("position", position_decoder()))
+  position := try value.decode(json.field("position", position_decoder()))
   .Ok(.{ text_document, position })
 }
 
 pub fn decode_code_action(params: json.Json?) Result<CodeActionParams, String> {
   value := try required_params(params)
-  text_document := try json.decode(
-    value,
-    json.field("textDocument", text_document_identifier_decoder()),
+  text_document := try value.decode(json.field("textDocument", text_document_identifier_decoder()),
   )
-  range := try json.decode(value, json.field("range", json.raw()))
-  context := try json.decode(value, json.field("context", json.raw()))
-  context_diagnostics := try json.decode(context, json.field("diagnostics", json.list(json.raw())))
+  range := try value.decode(json.field("range", json.raw()))
+  context := try value.decode(json.field("context", json.raw()))
+  context_diagnostics := try context.decode(json.field("diagnostics", json.raw().list()))
   .Ok(.{ text_document, range, context_diagnostics })
 }
 
 pub fn decode_document_symbol(params: json.Json?) Result<DocumentSymbolParams, String> {
   value := try required_params(params)
-  text_document := try json.decode(
-    value,
-    json.field("textDocument", text_document_identifier_decoder()),
+  text_document := try value.decode(json.field("textDocument", text_document_identifier_decoder()),
   )
   .Ok(.{ text_document })
 }
 
 pub fn decode_signature_help(params: json.Json?) Result<SignatureHelpParams, String> {
   value := try required_params(params)
-  text_document := try json.decode(
-    value,
-    json.field("textDocument", text_document_identifier_decoder()),
+  text_document := try value.decode(json.field("textDocument", text_document_identifier_decoder()),
   )
-  position := try json.decode(value, json.field("position", position_decoder()))
+  position := try value.decode(json.field("position", position_decoder()))
   .Ok(.{ text_document, position })
 }
 
 pub fn decode_workspace_symbol(params: json.Json?) Result<WorkspaceSymbolParams, String> {
   value := try required_params(params)
-  query := try json.decode(value, json.field("query", json.string()))
+  query := try value.decode(json.field("query", json.string()))
   .Ok(.{ query })
 }
 
 pub fn decode_references(params: json.Json?) Result<ReferenceParams, String> {
   value := try required_params(params)
-  text_document := try json.decode(
-    value,
-    json.field("textDocument", text_document_identifier_decoder()),
+  text_document := try value.decode(json.field("textDocument", text_document_identifier_decoder()),
   )
-  position := try json.decode(value, json.field("position", position_decoder()))
-  context := try json.decode(value, json.field("context", json.raw()))
-  include_declaration := case json.decode(context, json.field("includeDeclaration", json.bool())) {
+  position := try value.decode(json.field("position", position_decoder()))
+  context := try value.decode(json.field("context", json.raw()))
+  include_declaration := case context.decode(json.field("includeDeclaration", json.bool())) {
     .Ok(b) => b,
     .Err(_) => false,
   }
@@ -177,39 +157,31 @@ pub fn decode_references(params: json.Json?) Result<ReferenceParams, String> {
 
 pub fn decode_inlay_hint(params: json.Json?) Result<InlayHintParams, String> {
   value := try required_params(params)
-  text_document := try json.decode(
-    value,
-    json.field("textDocument", text_document_identifier_decoder()),
+  text_document := try value.decode(json.field("textDocument", text_document_identifier_decoder()),
   )
-  range := try json.decode(value, json.field("range", json.raw()))
-  range_start := try json.decode(range, json.field("start", position_decoder()))
-  range_end := try json.decode(range, json.field("end", position_decoder()))
+  range := try value.decode(json.field("range", json.raw()))
+  range_start := try range.decode(json.field("start", position_decoder()))
+  range_end := try range.decode(json.field("end", position_decoder()))
   .Ok(.{ text_document, range_start, range_end })
 }
 
 pub fn decode_semantic_tokens(params: json.Json?) Result<SemanticTokensParams, String> {
   value := try required_params(params)
-  text_document := try json.decode(
-    value,
-    json.field("textDocument", text_document_identifier_decoder()),
+  text_document := try value.decode(json.field("textDocument", text_document_identifier_decoder()),
   )
   .Ok(.{ text_document })
 }
 
 pub fn decode_folding_range(params: json.Json?) Result<FoldingRangeParams, String> {
   value := try required_params(params)
-  text_document := try json.decode(
-    value,
-    json.field("textDocument", text_document_identifier_decoder()),
+  text_document := try value.decode(json.field("textDocument", text_document_identifier_decoder()),
   )
   .Ok(.{ text_document })
 }
 
 pub fn decode_document_formatting(params: json.Json?) Result<DocumentFormattingParams, String> {
   value := try required_params(params)
-  text_document := try json.decode(
-    value,
-    json.field("textDocument", text_document_identifier_decoder()),
+  text_document := try value.decode(json.field("textDocument", text_document_identifier_decoder()),
   )
   .Ok(.{ text_document })
 }
@@ -224,10 +196,10 @@ fn required_params(params: json.Json?) Result<json.Json, String> {
 fn text_document_item_decoder() json.Decoder<TextDocumentItem> {
   .{
     run: fn(value: json.Json) Result<TextDocumentItem, String> {
-      uri := try json.decode(value, json.field("uri", json.string()))
-      language_id := try json.decode(value, json.field("languageId", json.string()))
-      version := try json.decode(value, json.field("version", json.int()))
-      text := try json.decode(value, json.field("text", json.string()))
+      uri := try value.decode(json.field("uri", json.string()))
+      language_id := try value.decode(json.field("languageId", json.string()))
+      version := try value.decode(json.field("version", json.int()))
+      text := try value.decode(json.field("text", json.string()))
       .Ok(.{ uri, language_id, version, text })
     },
   }
@@ -236,8 +208,8 @@ fn text_document_item_decoder() json.Decoder<TextDocumentItem> {
 fn versioned_text_document_identifier_decoder() json.Decoder<VersionedTextDocumentIdentifier> {
   .{
     run: fn(value: json.Json) Result<VersionedTextDocumentIdentifier, String> {
-      uri := try json.decode(value, json.field("uri", json.string()))
-      version := try json.decode(value, json.optional_field("version", json.int()))
+      uri := try value.decode(json.field("uri", json.string()))
+      version := try value.decode(json.optional_field("version", json.int()))
       .Ok(.{ uri, version })
     },
   }
@@ -246,7 +218,7 @@ fn versioned_text_document_identifier_decoder() json.Decoder<VersionedTextDocume
 fn text_document_identifier_decoder() json.Decoder<TextDocumentIdentifier> {
   .{
     run: fn(value: json.Json) Result<TextDocumentIdentifier, String> {
-      uri := try json.decode(value, json.field("uri", json.string()))
+      uri := try value.decode(json.field("uri", json.string()))
       .Ok(.{ uri })
     },
   }
@@ -255,8 +227,8 @@ fn text_document_identifier_decoder() json.Decoder<TextDocumentIdentifier> {
 fn position_decoder() json.Decoder<Position> {
   .{
     run: fn(value: json.Json) Result<Position, String> {
-      line := try json.decode(value, json.field("line", json.int()))
-      character := try json.decode(value, json.field("character", json.int()))
+      line := try value.decode(json.field("line", json.int()))
+      character := try value.decode(json.field("character", json.int()))
       .Ok(.{ line, character })
     },
   }
@@ -265,8 +237,8 @@ fn position_decoder() json.Decoder<Position> {
 fn content_change_decoder() json.Decoder<TextDocumentContentChangeEvent> {
   .{
     run: fn(value: json.Json) Result<TextDocumentContentChangeEvent, String> {
-      text := try json.decode(value, json.field("text", json.string()))
-      range := try json.decode(value, json.optional_field("range", range_decoder()))
+      text := try value.decode(json.field("text", json.string()))
+      range := try value.decode(json.optional_field("range", range_decoder()))
       .Ok(.{ text, range })
     },
   }
@@ -275,8 +247,8 @@ fn content_change_decoder() json.Decoder<TextDocumentContentChangeEvent> {
 fn range_decoder() json.Decoder<TextRange> {
   .{
     run: fn(value: json.Json) Result<TextRange, String> {
-      start := try json.decode(value, json.field("start", position_decoder()))
-      end := try json.decode(value, json.field("end", position_decoder()))
+      start := try value.decode(json.field("start", position_decoder()))
+      end := try value.decode(json.field("end", position_decoder()))
       .Ok(.{ start, end })
     },
   }

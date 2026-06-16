@@ -493,7 +493,7 @@ fn augment_subst_from_contract_calls(
               arg_tys := [concrete_recv].concat(collect a in args {
                 apply_subst(a.ty, subst)
               })
-              concrete_ret := recover_call_return(ctx, fid.id, target, arg_tys, visited)
+              concrete_ret := ctx.recover_call_return(fid.id, target, arg_tys, visited)
 
               if !contains_var(concrete_ret) {
                 subst = match_type_against(expr.ty, concrete_ret, subst)
@@ -535,7 +535,7 @@ fn augment_subst_from_contract_calls(
               arg_tys := collect a in args {
                 apply_subst(a.ty, subst)
               }
-              concrete_ret := recover_call_return(ctx, fid.id, target, arg_tys, visited)
+              concrete_ret := ctx.recover_call_return(fid.id, target, arg_tys, visited)
 
               if !contains_var(concrete_ret) {
                 subst = match_type_against(expr.ty, concrete_ret, subst)

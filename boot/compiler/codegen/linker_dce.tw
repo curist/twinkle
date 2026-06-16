@@ -23,9 +23,9 @@ fn enqueue(state: BfsState, sym: String) BfsState {
 
 fn enqueue_instr_targets(instr: Instr, state: BfsState) BfsState {
   case instr {
-    .Call(sym) => enqueue(state, sym),
-    .ReturnCall(sym) => enqueue(state, sym),
-    .RefFunc(sym) => enqueue(state, sym),
+    .Call(sym) => state.enqueue(sym),
+    .ReturnCall(sym) => state.enqueue(sym),
+    .RefFunc(sym) => state.enqueue(sym),
     .If(_, then_body, else_body) => {
       state = enqueue_instrs_targets(then_body, state)
       enqueue_instrs_targets(else_body, state)
@@ -59,12 +59,12 @@ fn compute_reachable(linked: LinkedModule) Dict<String, Bool> {
   state := BfsState.{ queue: [], reachable: Dict.new() }
 
   for exp in linked.exports {
-    state = enqueue(state, exp.func_sym)
+    state = state.enqueue(exp.func_sym)
   }
 
   for elem in linked.elems {
     for sym in elem.func_syms {
-      state = enqueue(state, sym)
+      state = state.enqueue(sym)
     }
   }
 
