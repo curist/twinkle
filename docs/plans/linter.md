@@ -13,6 +13,24 @@ a pure call whose result is thrown away, an unhandled `Result`, a hand-written
 reading the code would agree are suspicious. The bar for shipping a lint is
 **near-zero false positives** — a noisy linter gets ignored, then disabled.
 
+`twk lint` is to Twinkle what `cargo clippy` is to Rust: a **separate,
+non-intrusive pass**. None of these lints are fatal — they all describe code that
+type-checks fine — so none of them belong in the compile path. They surface
+**only when you run `twk lint`**, never in `twk build` / `twk check` or ambient
+typecheck-driven LSP diagnostics. Opting in is just running the command. (The
+genuine compiler warnings that already exist — unused imports, single-line
+multiline blocks — are a separate, pre-existing channel and keep showing in
+`build`/`check`; this plan does not touch them.)
+
+**No per-rule configuration.** Every shipped lint is **always on** under
+`twk lint`; there is no `[lint]` table, no severity knobs, no allow-by-default
+tier. The discipline this enforces is the whole point: a lint earns its place
+*only* by clearing the near-zero-false-positive bar on real code (`boot/`). If a
+candidate is too noisy to be on for everyone, the answer is to **drop it**, not
+to hide it behind a flag. The single sanctioned way to silence a *specific,
+intentional* instance is in-source intent (the discard binding for L1/L2 — see
+Suppression), never a config switch.
+
 Twinkle's value model makes some of these lints far stronger than they are in
 other languages: because almost every function is pure, "you computed a value
 and discarded it" is, by default, dead code rather than a stylistic nit.
@@ -30,15 +48,39 @@ In scope (this plan):
   pattern CLAUDE.md forbids in favor of field rebinding.
 - **L4 — Unreachable statements**: code following a diverging statement
   (`return`, `break`, `continue`, `error(...)`/trap) in the same block.
-- **L5 — Wildcard `_ =>` over a project-local sum type** (opt-in, off by
-  default): a catch-all arm on an enum defined in this project, which silently
-  swallows future variants.
-- **L6 — Suspicious shadowing** (opt-in, off by default): a name rebound to a
-  value of an unrelated type within the same scope.
+- **L7 — Inherent-method-call hint**: a free-function call whose receiver-method
+  (inherent) form provably resolves to the *same* function — a meaning-preserving
+  idiom rewrite carrying a machine-applicable fix. Full design:
+  [`inherent-method-hint.md`](inherent-method-hint.md).
+
+**Deferred — does not yet clear the always-on bar:**
+
+- **L5 — Wildcard `_ =>` over a project-local sum type** was specced as
+  *off-by-default, opinionated* — i.e. it exists precisely because a blanket
+  version is too noisy to inflict on everyone. Under the no-config / always-on
+  rule it cannot ship in that form. It stays out of the catalog until someone
+  demonstrates a tightened trigger that is quiet enough on `boot/` to be on for
+  all; otherwise it is dropped. (Design sketch retained in git history.)
+
+**Rejected:**
+
+- **L6 — Suspicious shadowing** (rebinding a name to a value of an unrelated
+  type). Twinkle's semantics already make this a non-problem: `=` rebinding is
+  type-preserving — the checker checks the new value against the existing
+  binding's type (`check_let`, `boot/compiler/checker.tw`), so an accidental
+  wrong-typed clobber is a plain *type error*, not a silent shadow. The only way
+  to change a name's type is a deliberate fresh `:=` re-declaration, which is
+  idiomatic (like Rust's `let` shadowing) and, being statically checked at every
+  downstream use, cannot silently corrupt logic. A shadowing lint would only
+  fight Twinkle's core rebinding idiom and generate noise — so it is dropped, not
+  deferred.
 
 Explicitly **out of scope**:
 
-- Formatting / style (owned by `twk fmt`).
+- Formatting / *layout* (owned by `twk fmt`). Note: *idiom* rewrites that need
+  type information — e.g. L7's free-call → method-call — are distinct from layout
+  and belong here. `fmt` cannot perform them because it lacks type resolution;
+  only the checker knows the receiver type that makes the rewrite safe.
 - Unused bindings / params / imports / private fns. Unused-import detection
   already ships (`compiler/unused_imports.tw`, `twk check --fix-unused-imports`);
   the rest of this family is deliberately deferred.
@@ -52,33 +94,40 @@ Explicitly **out of scope**:
 The diagnostic plumbing is done; lints are mostly new *producers* on existing
 rails:
 
-- `lib/source/diagnostics.tw` — `Severity { Error, Warning, Hint, Info }`,
-  `WarningDiag`, `DiagKind`, plus `message`/`span`/`help_lines`/`format_diagnostics`
-  rendering. **We add new `WarningDiag` variants here.**
-- `compiler/query/analyze.tw` — `AnalysisDiag` carries `kind: DiagKind` tagged
-  with module identity, and `analyze_module_impl` already runs a post-typecheck
-  analysis (`check_unused_imports`) on non-internal modules and appends its
-  warnings to the module's diagnostics. **This is the hook point.**
-- `compiler/pipeline.tw` — already filters `AnalysisDiag` for `.Warning(_)` and
-  surfaces them on `PipelineArtifacts.warnings`, consumed by `build`, `check`,
-  and the LSP. Lints inherit all three surfaces for free.
-- `commands/check.tw` — already prints warnings via `print_warnings`.
+- `lib/source/diagnostics.tw` — `Report`, `SpanLabel`, `FixEdit`, `SuggestedFix`,
+  and the rendering helpers. **Lint findings reuse these rendering types**, so
+  `twk lint` output and machine-applicable fixes look like the rest of the
+  compiler's diagnostics — but they do *not* join the general `DiagKind`
+  diagnostics stream (see below), so the dozens of exhaustive `case DiagKind`
+  sites stay untouched.
+- `compiler/query/analyze.tw` — `analyze_module_impl` already runs a
+  post-typecheck analysis (`check_unused_imports`) on non-internal modules. The
+  structural lints hook in alongside it, **but only in lint mode**.
 - `compiler/unused_imports.tw` — the reference implementation for an AST-walking
-  analysis that emits `WarningDiag`s with spans.
+  analysis that produces span-carrying findings.
+
+What we add: a **separate lint channel**, distinct from the compiler's
+`warnings`/diagnostics. `PipelineArtifacts` gains a `lints` vector, populated
+only when the pipeline runs in **lint mode** — a flag set exclusively by the
+`twk lint` entry point. `build`/`check` leave lint mode off, so lints cost
+nothing and surface nowhere outside `twk lint`. No new `DiagKind` arm is needed:
+findings are their own small type, rendered through the shared `Report` path at
+`twk lint` time.
 
 ## Architecture
 
 There are two natural homes for a lint, chosen per-lint by whether it needs
 inferred types:
 
-### A. Type-dependent lints → emitted by the type checker (L1, L2)
+### A. Type-dependent lints → emitted by the type checker (L1, L2, L7)
 
 L1 and L2 need the inferred type of a statement-position expression (is it
 `Void`? is it `Result`/`Option`? is the callee effectful?). The type checker
-already computes exactly this at the moment it checks each statement. Emitting
-the warning there — as a `.Warning(...)` `DiagKind`, alongside the errors the
-checker already produces — is both the cheapest and the most accurate option,
-and avoids a second typed traversal.
+already computes exactly this at the moment it checks each statement. Computing
+the finding there — gated behind `InferCtx.lint_mode` and collected into the
+lint sink, *not* the `diags` the checker returns — is both the cheapest and the
+most accurate option, and avoids a second typed traversal. When lint mode is off
+(every `build`/`check`) the check is a single skipped branch.
 
 This requires the checker to know, per call, whether the callee is *pure*. We
 already distinguish the effectful builtins (`print`, `println`, `error`) ; the
@@ -89,27 +138,42 @@ them transitively is effectful; closures conservatively effectful) and be
 refined later. Until that analysis exists, L1 can ship in a conservative form
 (see Rollout).
 
+L7 also lives here, but emits at *call-resolution sites* rather than at
+statement boundaries: at each resolved call it asks whether the receiver-method
+form maps to the same function (`resolve_method_func_name` against the
+instantiated first parameter's head type). It needs no effect analysis — only
+the resolution machinery the checker already runs. It **must** run here because
+the rewrite needs both the *syntactic* free-call form and the resolved
+callee/receiver type, which only coexist at call resolution: after lowering,
+`xs.map(f)` and `Vector.map(xs, f)` are the identical `Call` node, so no
+post-lowering pass could tell them apart. Like the other home-A lints, it is
+`lint_mode`-gated and routed to the lint sink. See
+[`inherent-method-hint.md`](inherent-method-hint.md) for the exact predicate,
+emission sites, and the byte-offset fix.
+
 ### B. Structural lints → a dedicated AST visitor module (L3, L4, L5, L6)
 
 These are syntactic/structural and best run on the parsed `Module`, mirroring
 `unused_imports.tw`. New module `compiler/lint.tw` exposes:
 
 ```
-pub fn lint_module(module: Module, env: ResolvedEnv) Vector<DiagKind>
+pub fn lint_module(module: Module, env: ResolvedEnv) Vector<LintFinding>
 ```
 
-invoked from `analyze_module_impl` right after `check_unused_imports`, gated on
-`!dep_plan.is_internal`. It receives the resolved `env` so it can answer
-"is this nominal type defined in this project?" (L5) and "does this returned
-record type match this parameter's type?" (L3).
+invoked from `analyze_module_impl` right after `check_unused_imports` — but
+**only in lint mode**, and gated on `!dep_plan.is_internal`. Because this pass
+runs only when `twk lint` asks for it, it needs no per-finding gating. It
+receives the resolved `env` so it can answer "is this nominal type defined in
+this project?" (L5) and "does this returned record type match this parameter's
+type?" (L3).
 
-Both homes feed the same `WarningDiag` channel, so there is one rendering path
-and one config model.
+Both homes feed the same lint sink, so there is one rendering path.
 
 ## Lint catalog
 
-Each lint specifies its trigger, rationale, in-source escape hatch, default
-severity, and where it lives.
+Each lint specifies its trigger, rationale, in-source escape hatch, and where it
+lives. All shipped lints are always on; there is no per-lint severity (see
+Motivation).
 
 ### L1 — Discarded pure result  (`unused-result`)
 
@@ -119,7 +183,6 @@ severity, and where it lives.
 - **Rationale**: pure computation evaluated for nothing is dead code or a
   forgotten rebinding (`items.append(x)` instead of `items = items.append(x)`).
 - **Escape**: explicitly bind the value (see Suppression — discard binding).
-- **Default**: warn.
 - **Home**: type checker (A).
 
 ### L2 — Ignored `Result` / `Option`  (`unused-must-use`)
@@ -131,7 +194,6 @@ severity, and where it lives.
   sharper message.
 - **Rationale**: silently dropping an error/`None` is a correctness hazard.
 - **Escape**: handle it (`try`, `case`, `.ok_or`, …) or bind it explicitly.
-- **Default**: warn.
 - **Home**: type checker (A).
 
 ### L3 — `with_*` field-copy rebuild  (`record-copy-helper`)
@@ -147,7 +209,7 @@ severity, and where it lives.
   *Immutability and Rebinding*): use `p.field = v` rebinding, not copy helpers.
 - **Escape**: none needed — the trigger is precise. Rewriting with field
   rebinding removes the construct entirely.
-- **Default**: warn. **Help line**: show the rebinding rewrite.
+- **Help line**: show the rebinding rewrite.
 - **Home**: AST visitor (B), using `env` to confirm the nominal type match.
 
 ### L4 — Unreachable statements  (`unreachable-code`)
@@ -156,81 +218,86 @@ severity, and where it lives.
   block — `return`, `break`, `continue`, or a call to `error(...)`/other trap.
 - **Rationale**: the trailing code never runs; usually a logic error.
 - **Escape**: delete the dead code.
-- **Default**: warn.
 - **Home**: AST visitor (B). Complements the existing `UnreachableCaseArm`
   error, which covers only `case` arms. *Verify during implementation whether
   any general unreachable-after-divergence detection already exists; this lint
   fills that gap if not.*
 
-### L5 — Wildcard over project-local sum type  (`wildcard-local-enum`)
+*(L5 — wildcard over project-local enum — is deferred, and L6 — suspicious
+shadowing — is rejected as a non-problem under Twinkle's type-preserving rebind
+semantics; see Scope.)*
 
-- **Trigger**: a `case` whose scrutinee is a sum type **defined in this project**
-  (not stdlib/prelude) that uses a `_ =>` catch-all instead of listing variants.
-- **Rationale**: a catch-all means adding a variant later compiles silently
-  instead of surfacing every site that must change. For large stdlib enums
-  (token kinds, AST nodes) a catch-all is reasonable, hence the project-local
-  restriction.
-- **Escape**: enumerate the variants, or leave the lint off (it is opt-in).
-- **Default**: **off** (opt-in via config). Opinionated.
-- **Home**: AST visitor (B), using `env` to classify the scrutinee's origin.
+### L7 — Inherent-method-call hint  (`inherent-method-call`)
 
-### L6 — Suspicious shadowing  (`shadow`)
+- **Trigger**: a call written in **free-function form** whose receiver-method
+  (inherent) form provably resolves to the *same* function. Three syntaxes:
+  builtin type-qualified (`Vector.map(xs, f)`), user module-qualified
+  (`point.translate(p, …)`), and bare same-module (`translate(p, …)`). Fires
+  only when `resolve_method_func_name(head(inst.params[0]), M)` equals the
+  resolved callee **and** `args[0]` is postfix-atomic (so the reorder cannot
+  reparse with different precedence — the same hazard that bites `fmt` stripping
+  `!(…)`). Fails closed otherwise.
+- **Rationale**: receiver-method syntax is the house idiom and reads better; the
+  rewrite is provably meaning-preserving, so it ships a machine-applicable fix
+  (two non-overlapping byte-offset edits, no source slicing).
+- **Escape**: none per-site needed — and because the rewrite is always
+  meaning-preserving, none is wanted. Strong always-on candidate: the
+  postfix-atomic guard + fail-closed resolution check keep false positives at ~0.
+- **Home**: type checker (A), at call-resolution sites, gated behind
+  `InferCtx.lint_mode`.
+- **Full design**: [`inherent-method-hint.md`](inherent-method-hint.md) — the
+  trigger predicate, emission sites in `checker.tw`, fix edits, and tests.
 
-- **Trigger**: a binding that rebinds a name already in scope to a value of an
-  unrelated type. Because rebinding is idiomatic in Twinkle, same-type rebinding
-  is *never* flagged; only a type change is.
-- **Rationale**: catches accidental name collisions; deliberately narrow.
-- **Escape**: rename.
-- **Default**: **off** (opt-in). Needs care to stay quiet.
-- **Home**: AST visitor (B); needs inferred types, so may instead piggyback on
-  the checker — decide during implementation.
+## Suppression model (no config, no attributes)
 
-## Suppression model (no new syntax)
+There is **no per-lint config and no `@allow(...)` attribute** — those are
+exactly the knobs the always-on rule rejects (see Motivation). A lint that needs
+a switch to be tolerable is a lint that should be dropped.
 
-Per the constraint, **no `@allow(...)` attributes** are added to the language.
-Suppression has exactly two mechanisms:
+The only sanctioned way to silence a finding is **in-source intent that reads as
+ordinary code** — and it applies only to the value-discard lints (L1/L2), where
+discarding can be deliberate. The way to say "I really mean to throw this away"
+is to *bind* the value:
 
-1. **Project config in `twinkle.toml`** — a `[lint]` table sets per-lint
-   severity. This is the coarse, project-wide control (and how the opt-in lints
-   L5/L6 get turned on).
+```tw
+_ := some_pure_call(x)      // explicit discard — silences L1/L2
+```
 
-   ```toml
-   [lint]
-   unused-result      = "warn"   # off | warn | error
-   unused-must-use    = "error"
-   record-copy-helper = "warn"
-   unreachable-code   = "warn"
-   wildcard-local-enum = "off"
-   shadow             = "off"
-   ```
+`_` as a let target is a discard, not a usable name. This is the single language
+touch the linter motivates; it is intent expressed in the code, not lint
+metadata. **Open question** (below): adopt `_ :=` discard, or require binding to
+a named throwaway instead.
 
-2. **In-source intent via an explicit discard binding** — for the value-discard
-   lints (L1/L2), the way to say "I really mean to throw this away" is to *bind*
-   the value. Today Twinkle has no discard binding, so this plan proposes a
-   small, natural language affordance (distinct from an attribute):
+Every other lint (L3, L4, L7) has a precise enough trigger that no escape is
+needed — the fix removes the flagged construct outright. If a rule ever seems to
+*need* a blanket escape, that is the signal to drop the rule, not to add one.
 
-   ```tw
-   _ := some_pure_call(x)      // explicit discard — silences L1/L2
-   ```
+## Surfacing
 
-   `_` as a let target is a discard, not a usable name. This is the single
-   language touch the linter motivates; it is orthogonal to lint metadata and
-   reads as ordinary code. **Open question** (below): adopt `_ :=` discard, or
-   require binding to a named throwaway instead.
+Every lint surfaces through exactly one path: a **separate lint sink**
+(`PipelineArtifacts.lints`), populated only when the pipeline runs in **lint
+mode**, and reported only by `twk lint`. Lints never ride the compiler's
+`warnings`/diagnostics channel, never appear in `build`/`check`, and are not
+published as ambient LSP diagnostics. They reuse the `Report`/`FixEdit` rendering
+for output and fixes — that is sharing the formatting, not the diagnostic path.
 
-The structural lints (L3/L4) need no per-site escape: their triggers are precise
-and the fix removes the flagged construct.
+This keeps the everyday compile loop quiet and fast (lint mode off ⇒ home-A
+checks are skipped branches, the home-B pass never runs) and makes the lints a
+deliberate, opt-in step exactly like `cargo clippy`.
 
 ## Command surface
 
-- **`twk lint <file>`** — new command (`commands/lint.tw`): runs the frontend
-  (`pipeline` analysis only, no codegen), prints all lint diagnostics, and exits
-  non-zero if any lint at `error` severity fired. This is the CI entry point.
-- **`twk build` / `twk check`** — already print the shared warning channel, so
-  lints show up there automatically; no behavior change beyond new warnings.
-- **LSP** — `AnalysisDiag` already flows to the editor, so lints appear inline
-  with no extra wiring. L3's help line / suggested rewrite can later become a
-  code action, reusing the `unused_imports` edit pattern.
+- **`twk lint <file>`** — new command (`commands/lint.tw`): runs the frontend in
+  **lint mode** (analysis only, no codegen), prints every finding, and exits
+  non-zero if any finding fired (all lints are always on, so there is no severity
+  to consult). This is the sole surface for lints and the CI entry point.
+- **`twk build` / `twk check`** — unchanged. They show only the pre-existing
+  compiler warnings (unused imports, etc.); lints are invisible because lint mode
+  is off and never computed.
+- **LSP** — lints are *not* published as ambient diagnostics. If surfaced at all
+  it would be an explicit, on-demand lint/code-action request (future work),
+  keeping editors quiet by default. A finding's suggested rewrite (L3, L7) can
+  become a code action, reusing the `unused_imports` edit pattern.
 
 `twk fmt` is untouched.
 
@@ -240,19 +307,23 @@ Ship in stages, validating signal-to-noise on `boot/` itself at each step
 (it is a large real codebase — if a lint is noisy there, it is miscalibrated):
 
 1. **Plumbing + L4 (unreachable) + L3 (record-copy)** — pure AST lints, no type
-   or effect analysis required, near-zero false positives. Adds `compiler/lint.tw`,
-   the `WarningDiag` variants, the `analyze_module_impl` call, and `twk lint`.
-2. **L2 (ignored `Result`/`Option`)** — checker emits warnings; needs only the
-   inferred statement type, which the checker already has. Decide the discard
+   or effect analysis required, near-zero false positives. Adds `compiler/lint.tw`
+   + the `LintFinding` type, the lint sink (`PipelineArtifacts.lints`) +
+   `InferCtx.lint_mode`, the lint-mode-gated `analyze_module_impl` call, and
+   `twk lint`.
+2. **L2 (ignored `Result`/`Option`)** — checker computes the finding; needs only
+   the inferred statement type, which the checker already has. Decide the discard
    escape here (drives the `_ :=` open question).
 3. **L1 (unused pure result)** — needs the purity/effect flag on signatures.
    Until that lands, optionally ship a conservative L1 limited to calls of
    functions known-pure structurally (no transitive `print`/`error`).
-4. **L5, L6** — opt-in, off by default; enable on `boot/` experimentally to
-   tune before recommending.
+4. **L7** — the idiom hint. Independent of the effect analysis (it only needs
+   call resolution), so it can land as soon as the Stage 1 sink/`lint_mode`
+   plumbing exists. Validate on `boot/` that it stays quiet enough to be always
+   on before shipping.
 
-`twinkle.toml` `[lint]` config lands with stage 1 (even if only a couple of
-keys are meaningful at first).
+Each lint is gated on `boot/` before it ships: if it is noisy there, it is
+recalibrated or dropped — never demoted behind a config switch.
 
 ## Open questions
 
@@ -262,8 +333,9 @@ keys are meaningful at first).
 - **Effect analysis granularity** for L1: is "transitively calls `print`/
   `println`/`error`" a good enough purity approximation, or do we need to treat
   host externs / closures more precisely?
-- **`twk lint` vs folding into `twk check`**: a dedicated command keeps CI
-  intent explicit and lets `lint` default to non-zero exit on findings without
-  changing `check`'s contract. Confirm this is the desired split.
 - **L3 threshold**: exact cutoff for "mostly verbatim copies" before flagging,
   tuned against false positives on real constructors in `boot/`.
+- **Lint-sink plumbing**: exact shape of the separate channel — a `lints` vector
+  on `PipelineArtifacts` + an `InferCtx.lint_mode` flag is the working proposal.
+  Confirm the checker can carry `lint_mode` cheaply (one branch per call site,
+  skipped entirely when off) without threading churn.

@@ -49,7 +49,7 @@ Self-hosting is complete. Historical design and status docs live in
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
 | Tooling | Formatter (done), linter, LSP, package manager | In Progress | [tooling.md](tooling.md) |
-| Linter | `twk lint`: semantic lints (must-use, ignored Result/Option, record-copy helper, unreachable code) on the existing diagnostic channel | Planned | [linter.md](linter.md) |
+| Linter | `twk lint`: semantic lints (must-use, ignored Result/Option, record-copy helper, unreachable code) plus the clippy-style inherent-method-call idiom hint (L7, `twk lint`-only, design in [inherent-method-hint.md](inherent-method-hint.md)) | Planned | [linter.md](linter.md) |
 | LSP enhancements | Document symbols, references, rename, signature help, semantic tokens, workspace symbols, highlights, inlay hints, folding, and incremental sync | Planned | [lsp-enhancements.md](lsp-enhancements.md) |
 | LSP code actions | Quick-fix actions: missing case arms, auto-import, function type annotations | Planned | [lsp-code-actions.md](lsp-code-actions.md) |
 | LSP contract hover | Hover information for builtin contract bounds and contract-backed method calls | Done | [archive/lsp-contract-hover.md](archive/lsp-contract-hover.md) |

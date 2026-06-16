@@ -1,10 +1,20 @@
 # Inherent-method-call hint diagnostic
 
+> **Status: satellite design for linter rule L7 (`inherent-method-call`).**
+> This is the detailed design for the idiom lint catalogued in
+> [`linter.md`](linter.md). It does **not** ship standalone: it lands with the
+> linter's lint sink + `twk lint` plumbing (linter Stage 1). The trigger
+> predicate, emission sites, and fix below are the rule's substance; **surfacing
+> follows the linter's single model** — `twk lint`-only, separate lint sink, off
+> the compile path — so this doc does not re-litigate it (see `linter.md` →
+> "Surfacing").
+
 ## Goal
 
-Emit an `Info`-level diagnostic when a call is written in **free-function form**
-but the receiver-method (inherent) form would resolve to the *same* function.
-The diagnostic carries a machine-applicable fix that rewrites the call.
+Flag a call written in **free-function form** when the receiver-method
+(inherent) form would resolve to the *same* function, and offer a
+machine-applicable fix that rewrites the call. Surfaces **only** when you run
+`twk lint`, never in `build`/`check` or ambient LSP diagnostics.
 
 ```tw
 Vector.map(xs, f)          // hint → xs.map(f)
@@ -85,7 +95,10 @@ it strips `!(…)` parens — treat reorder-as-text as unsafe by default.
 2. The `.Ident(name)` → `lookup_function(name)` arm of `synth_call`
    (the bare-call path). `M = name`, `fn_name = name`. `s` is already in scope.
 
-A shared helper computes the optional hint:
+Both sites are guarded by `ctx.lint_mode` — when it is off (every `build`/`check`
+compile) the whole block is skipped, so there is zero cost outside `twk lint`.
+
+A shared helper computes the optional finding:
 
 ```
 fn inherent_method_hint(
@@ -95,22 +108,26 @@ fn inherent_method_hint(
   params: Vector<MonoType>,  // inst.params
   args: Vector<Expr>,
   ctx: InferCtx,
-) DiagKind?
+) LintFinding?
 ```
 
-It returns `.Some(.Info(.InherentMethodCall(...)))` when the predicate holds,
-`.None` otherwise. Append the result to the diagnostics vector that the call
-site actually **returns** (e.g. `bounds_r.diags` in
-`try_synth_module_qualified_call`), not the `diags` parameter — that input
-vector is re-bound and threaded through `check_instantiated_call`, so appending
-to it would be lost.
+It returns the finding when the predicate holds, `.None` otherwise. The finding
+is collected into the **lint sink**, not the typecheck diagnostics the call site
+returns — keeping it off the `build`/`check`/LSP path. Exact plumbing (a
+`lint_mode`-gated accumulator on `InferCtx`, drained into
+`PipelineArtifacts.lints`) is a Stage 1 detail; the constraint is that it never
+joins the general `DiagKind` stream.
 
 ## Representation
 
-New `Info` arm in `boot/lib/source/diagnostics.tw`:
+Because the hint lives on a **separate lint sink** (not the shared `DiagKind`
+diagnostics stream — see "Surfacing"), it does **not** need a new arm
+on the general `DiagKind` enum, and the dozens of exhaustive `case DiagKind`
+sites across the compiler stay untouched. It is its own small payload type
+carried by `PipelineArtifacts.lints`:
 
 ```tw
-pub type InfoDiag = {
+pub type LintFinding = {
   InherentMethodCall(.{
     span: Span,          // call span (squiggle target + Edit anchors)
     method: String,      // M, used in message and fix
@@ -119,25 +136,18 @@ pub type InfoDiag = {
     second_start: Int?,  // start byte of args[1] if present, else .None
   }),
 }
-
-pub type DiagKind = { Error(ErrorDiag), Warning(WarningDiag), Info(InfoDiag) }
 ```
 
-- `has_errors` returns `false` for `Info` — never fails a build.
+(Exact type name/location is a Stage 1 detail; the point is it is a lint-channel
+type, distinct from `DiagKind`.) For rendering, `twk lint` converts a
+`LintFinding` into the shared `Report`/`SpanLabel`/`FixEdit` structures — reusing
+the formatting machinery — and emits the byte-offset fix below as a
+`SuggestedFix`.
+
+- The hint **never fails a build**: it is never on the compile/typecheck path at
+  all, and `build`/`check` never run lint mode.
 - `callee_start` is `span.start`; `call_end` is `span.end` (the Call node spans
   from callee through the closing paren), so they need not be stored separately.
-
-### Exhaustive `case DiagKind` sites to extend
-
-- `boot/lib/source/diagnostics.tw`: `span`, `message`, `help_lines`,
-  `has_errors`, `fixes`, `format_diagnostics` (label `info`).
-- `boot/compiler/query/diagnostics.tw`: `kind_to_severity` (`.Info(_) => .Info`),
-  `kind_to_message`.
-- `boot/compiler/query/diag_render.tw`: `info_to_report` + the top-level
-  `case kind` arm; render at `Severity.Info`.
-- `boot/compiler/query/analyze.tw`: any exhaustive `DiagKind` match.
-- `boot/compiler/pipeline.tw`, `boot/compiler/module_compiler.tw`: the
-  `.Error/.Warning` collection matches gain an `.Info(_)` arm.
 
 ## Machine-applicable fix (no source slicing)
 
@@ -169,8 +179,8 @@ different meaning even though the bytes are unchanged.
 
 Trivia between the affected tokens is dropped: Edit A removes any comment between
 the callee and `args[0]`, and Edit B removes any comment between `args[0]` and
-the next token. This is acceptable for an opt-in rewrite — noted so it isn't
-mistaken for a bug later.
+the next token. This is acceptable for a user-invoked `twk lint` rewrite — noted
+so it isn't mistaken for a bug later.
 
 ### Message and preview
 
@@ -181,20 +191,35 @@ mistaken for a bug later.
   drives LSP code actions and `--fix`. (If a nicer terminal preview is wanted
   later, it requires source access at render time — out of scope here.)
 
-## Noise handling
+## Surfacing
 
-No new flag. The CLI `build`/`run` path (`pipeline.tw`) already collects only
-`.Warning` diagnostics into its surfaced set, so `Info` is invisible in CLI
-output by default — keeping the test suite and the boot self-compile clean.
-The LSP/analyze query (`convert_analysis_diags`) surfaces all severities, so
-hints appear as editor squiggles/code-actions, which is where they belong.
+Follows the linter's single model (see `linter.md` → "Surfacing"): **always on,
+no config**, surfaced **only when you run `twk lint`** — never in `twk build` /
+`twk check` or ambient LSP diagnostics. Recap of the mechanism specific to this
+rule:
+
+- The checker computes the hint at call-resolution sites **only in lint mode** —
+  a `lint_mode` flag on `InferCtx`, set exclusively by the `twk lint` entry
+  point. `build`/`check` leave it off, so the predicate never runs and costs
+  nothing there.
+- Results go to a **separate lint sink** (e.g. `PipelineArtifacts.lints`), not
+  the `diags` the checker returns to the general pipeline.
+- It **reuses** the `Report`/`FixEdit` rendering for nice `twk lint` output and
+  the machine-applicable fix; that is sharing the *formatting machinery*, not the
+  compiler diagnostic *path*.
+
+This rule is a strong always-on fit: the postfix-atomic guard and fail-closed
+resolution check keep false positives near zero, and the rewrite is always
+meaning-preserving, so there is nothing to configure away.
 
 ## Testing
 
-Drive assertions through the analyze/query API (not CLI output), matching the
-existing `diag_suite` / `lsp_diagnostics_suite` style:
+Drive assertions through the **lint-mode path** (run the frontend with
+`lint_mode` on and inspect the lint sink), *not* the typecheck diagnostics. A
+companion assertion confirms the general `build`/`check` path (lint mode off)
+produces **no** lint findings, so the isolation from the compile path is covered.
 
-- `Vector.map(xs, f)` produces an `Info` `InherentMethodCall` with method `map`
+- `Vector.map(xs, f)` produces an `InherentMethodCall` finding with method `map`
   and the two expected edits.
 - `String.len(s)` and `Dict.has(d, k)` each produce the hint — these exercise the
   builtin method-registration path the Scope section promises, which only fires if
@@ -215,5 +240,5 @@ existing `diag_suite` / `lsp_diagnostics_suite` style:
 ## Non-goals
 
 - No Rust/stage0 emission of the hint (stage0 only compiles the new source).
-- No CLI surfacing of `Info` by default.
+- Never on the compile path; surfaced only by `twk lint` (no config, no flag).
 - No human-readable full-rewrite terminal preview (would need render-time source).
