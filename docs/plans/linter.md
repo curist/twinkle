@@ -206,33 +206,37 @@ named throwaway.
 
 ## Rollout
 
-Engine and first rewrites are **done**; lints are next.
+The command, both rewrites, and the first two lints are **done**; the type-
+dependent lints (L1/L2) remain.
 
 1. **Done — rewrite engine + R2 (unused-imports)** — the collect→apply engine
    (`apply_edits` end-to-start splice), R2 migrated off the removed
    `twk check --fix-unused-imports`.
 2. **Done — R1 (inherent-method-call)** — review-mode flag + rewrite sink, the
    `Rewrite` type + `fixes()`, call-resolution detection, dedup by call span.
-   *(Currently shipped under a `twk fix` command and a `fix_mode` flag.)*
-3. **Now — fold into `twk lint`** — rename the command surface to `twk lint` with
-   report-only default + `--fix` / `--fix-<rule>`; add the location/description
-   **report renderer** (the gap that motivated this design); rename `fix_mode` →
-   the review-mode flag. Remove the standalone `twk fix` command.
-4. **Lints** — L4 (unreachable) + L3 (record-copy) first (pure AST, near-zero
-   false positives); then L2 (ignored Result/Option), then L1 (needs the
-   purity/effect flag). Gate each on `boot/`: if noisy there, recalibrate or
-   drop — never demote behind config.
+3. **Done — unified `twk lint`** — report-only default + `--fix` / `--fix-<rule>`;
+   the location/description **report renderer**; `lint_mode` flag; standalone
+   `twk fix` removed.
+4. **Done — L4 (unreachable) + L3 (record-copy)** — pure AST visitor
+   `compiler/lint.tw` (`lint_module`); report-only (no edits). Findings (rewrites
+   *and* lints) now aggregate **up the import chain** — the entry module plus
+   everything it imports, stdlib/internal excluded — so R1's entry-only limit is
+   gone.
+5. **Next — L2 (ignored Result/Option), then L1 (unused pure result)** — these
+   need inferred statement types (and, for L1, a purity/effect flag on
+   signatures), so they emit from the checker (home A) rather than the AST
+   visitor. Gate each on `boot/`: if noisy there, recalibrate or drop.
 
 ## Open questions
 
 - **Discard syntax**: adopt `_ :=` / `_ =` as a discard binding (small
   parser/checker change), or require a named throwaway? Leaning `_ :=`.
-- **`--fix` exit code**: report mode exits non-zero on any finding (CI). After
-  `--fix`, exit non-zero only if non-fixable lints remain? Decide during the
-  fold-in.
-- **Project-wide vs entry-only rewrites**: R1 currently collects rewrites for the
-  entry module only (R2 unused-imports is already project-wide via diagnostics);
-  whether `twk lint` walks the project for R1 is a follow-up.
+- **`--fix` exit code**: report mode exits non-zero on any finding (CI). `--fix`
+  currently exits 0 after applying (remaining report-only lints are printed).
+  Revisit if CI wants `--fix` to also fail on leftover lints.
+- **Scope** (resolved): findings follow the **import chain** — the entry file
+  plus everything it transitively imports (stdlib/internal excluded) — not a
+  directory crawl. Applies uniformly to rewrites and lints.
 - **Effect-analysis granularity** for L1: is "transitively calls
   `print`/`println`/`error`" a good enough purity approximation?
 - **L3 threshold**: cutoff for "mostly verbatim copies" before flagging.
