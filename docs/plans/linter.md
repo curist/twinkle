@@ -53,17 +53,14 @@ In scope (this plan):
   idiom rewrite carrying a machine-applicable fix. Full design:
   [`inherent-method-hint.md`](inherent-method-hint.md).
 
-**Deferred — does not yet clear the always-on bar:**
-
-- **L5 — Wildcard `_ =>` over a project-local sum type** was specced as
-  *off-by-default, opinionated* — i.e. it exists precisely because a blanket
-  version is too noisy to inflict on everyone. Under the no-config / always-on
-  rule it cannot ship in that form. It stays out of the catalog until someone
-  demonstrates a tightened trigger that is quiet enough on `boot/` to be on for
-  all; otherwise it is dropped. (Design sketch retained in git history.)
-
 **Rejected:**
 
+- **L5 — Wildcard `_ =>` over a project-local sum type**. A blanket catch-all
+  on a local enum is frequently *intentional* (a genuine default arm), and there
+  is no always-on trigger that reliably separates a lazy catch-all from a
+  deliberate one without per-project opt-in. Under the no-config / always-on rule
+  it cannot meet the near-zero-false-positive bar, so it is dropped. (Design
+  sketch retained in git history.)
 - **L6 — Suspicious shadowing** (rebinding a name to a value of an unrelated
   type). Twinkle's semantics already make this a non-problem: `=` rebinding is
   type-preserving — the checker checks the new value against the existing
@@ -72,8 +69,7 @@ In scope (this plan):
   to change a name's type is a deliberate fresh `:=` re-declaration, which is
   idiomatic (like Rust's `let` shadowing) and, being statically checked at every
   downstream use, cannot silently corrupt logic. A shadowing lint would only
-  fight Twinkle's core rebinding idiom and generate noise — so it is dropped, not
-  deferred.
+  fight Twinkle's core rebinding idiom and generate noise — so it is dropped.
 
 Explicitly **out of scope**:
 
@@ -151,7 +147,7 @@ post-lowering pass could tell them apart. Like the other home-A lints, it is
 [`inherent-method-hint.md`](inherent-method-hint.md) for the exact predicate,
 emission sites, and the byte-offset fix.
 
-### B. Structural lints → a dedicated AST visitor module (L3, L4, L5, L6)
+### B. Structural lints → a dedicated AST visitor module (L3, L4)
 
 These are syntactic/structural and best run on the parsed `Module`, mirroring
 `unused_imports.tw`. New module `compiler/lint.tw` exposes:
@@ -163,9 +159,8 @@ pub fn lint_module(module: Module, env: ResolvedEnv) Vector<LintFinding>
 invoked from `analyze_module_impl` right after `check_unused_imports` — but
 **only in lint mode**, and gated on `!dep_plan.is_internal`. Because this pass
 runs only when `twk lint` asks for it, it needs no per-finding gating. It
-receives the resolved `env` so it can answer "is this nominal type defined in
-this project?" (L5) and "does this returned record type match this parameter's
-type?" (L3).
+receives the resolved `env` so it can answer structural questions like "does this
+returned record type match this parameter's type?" (L3).
 
 Both homes feed the same lint sink, so there is one rendering path.
 
@@ -223,9 +218,8 @@ Motivation).
   any general unreachable-after-divergence detection already exists; this lint
   fills that gap if not.*
 
-*(L5 — wildcard over project-local enum — is deferred, and L6 — suspicious
-shadowing — is rejected as a non-problem under Twinkle's type-preserving rebind
-semantics; see Scope.)*
+*(L5 — wildcard over project-local enum — and L6 — suspicious shadowing — are
+both rejected; see Scope → Rejected.)*
 
 ### L7 — Inherent-method-call hint  (`inherent-method-call`)
 
