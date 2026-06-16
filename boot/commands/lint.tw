@@ -141,6 +141,19 @@ fn gather_findings(file: String) Vector<Finding> {
     )
   }
 
+  // Report-only structural lints (L3, L4): no edits.
+  for h in a_result.lints {
+    findings = .append(
+      .{
+        path: h.path,
+        start: h.finding.span.start,
+        message: h.finding.message,
+        rule: h.finding.rule,
+        edits: [],
+      },
+    )
+  }
+
   findings
 }
 

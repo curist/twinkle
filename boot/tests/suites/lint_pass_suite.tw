@@ -1,0 +1,101 @@
+use compiler.base_env
+use compiler.lint
+use compiler.parser
+use tests.assert
+use tests.runner
+
+fn findings(src: String) Vector<lint.LintFinding> {
+  parsed := parser.parse(src, 0)
+  lint.lint_module(parsed.value, base_env.builtin_env())
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("lint_pass")
+    .test(
+      "L4: unreachable statement after return",
+      fn() {
+        fs := findings("fn f() Int {\n  return 1\n  2\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "unreachable-code")
+        .Ok({})
+      },
+    )
+    .test(
+      "L4: no finding when return is last",
+      fn() {
+        fs := findings("fn f() Int {\n  x := 1\n  return x\n}\n")
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L4: unreachable after error() trap",
+      fn() {
+        fs := findings("fn f() Int {\n  error(\"boom\")\n  1\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "unreachable-code")
+        .Ok({})
+      },
+    )
+    .test(
+      "L4: plain reachable code is not flagged",
+      fn() {
+        fs := findings("fn f() Int {\n  x := 1\n  x + 1\n}\n")
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L4: unreachable after continue inside a loop body",
+      fn() {
+        fs := findings("fn f() Int {\n  for true {\n    continue\n    println(\"x\")\n  }\n  0\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "unreachable-code")
+        .Ok({})
+      },
+    )
+    .test(
+      "L4: one finding per block (first unreachable only)",
+      fn() {
+        fs := findings("fn f() Int {\n  return 1\n  2\n  3\n}\n")
+        try assert.equal(fs.len(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "L3: flags a with_* field-copy helper (anonymous record)",
+      fn() {
+        fs := findings(
+          "fn with_docs(state: State, docs: Int) State {\n  .{ initialized: state.initialized, docs }\n}\n",
+        )
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "record-copy-helper")
+        .Ok({})
+      },
+    )
+    .test(
+      "L3: flags a named-record copy",
+      fn() {
+        fs := findings("fn dup(state: State) State {\n  State.{ initialized: state.initialized }\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "record-copy-helper")
+        .Ok({})
+      },
+    )
+    .test(
+      "L3: does not flag a function doing real work",
+      fn() {
+        fs := findings("fn bump(state: State) State {\n  .{ count: state.count + 1 }\n}\n")
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L3: does not flag when no parameter shares the record type",
+      fn() {
+        fs := findings("fn make(n: Int) State {\n  .{ initialized: n }\n}\n")
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+}

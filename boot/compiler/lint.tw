@@ -1,0 +1,357 @@
+/// Structural lints for `twk lint` (report-only, no auto-fix).
+///
+/// A pure AST visitor over a parsed Module, producing LintFindings. Run only in
+/// review mode (see docs/plans/linter.md). Currently: L4 unreachable-code,
+/// L3 record-copy-helper.
+
+use compiler.ast.{Block, Expr, FunctionDecl, Module, RecordEntry, Stmt, TypeExpr}
+use compiler.resolver.{ResolvedEnv}
+use lib.source.span.{Span}
+
+/// A report-only lint finding (no machine-applicable edits).
+pub type LintFinding = .{ span: Span, message: String, rule: String }
+
+/// Lint a whole module. `env` is used by type-dependent structural lints (L3).
+pub fn lint_module(module: Module, env: ResolvedEnv) Vector<LintFinding> {
+  out: Vector<LintFinding> = []
+
+  for item in module.items {
+    case item {
+      .Function(decl) => {
+        out = .concat(lint_record_copy(decl, env))
+        out = .concat(lint_block(decl.body))
+      },
+      .Stmt(stmt) => out = .concat(lint_stmt(stmt)),
+      _ => {},
+    }
+  }
+
+  out
+}
+
+// ── L4: unreachable-code ─────────────────────────────────────────────
+fn stmt_span(stmt: Stmt) Span {
+  case stmt {
+    .Let(s) => s.span,
+    .For(s) => s.span,
+    .Return(s) => s.span,
+    .Break(s) => s.span,
+    .Continue(s) => s.span,
+    .Defer(s) => s.span,
+    .Expr(s) => s.span,
+    .ErrorStmt(sp) => sp,
+  }
+}
+
+/// Does this statement unconditionally leave the enclosing block?
+fn is_diverging(stmt: Stmt) Bool {
+  case stmt {
+    .Return(_) => true,
+    .Break(_) => true,
+    .Continue(_) => true,
+    .Expr(s) => is_error_call(s.expr),
+    _ => false,
+  }
+}
+
+/// `error(...)` traps — a call whose callee is the bare `error` builtin.
+fn is_error_call(expr: Expr) Bool {
+  case expr.kind {
+    .Call(callee, _) => case callee.kind {
+      .Ident(name) => name == "error",
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn lint_block(block: Block) Vector<LintFinding> {
+  out: Vector<LintFinding> = []
+  diverged := false
+  reported := false
+
+  for stmt in block.stmts {
+    if diverged {
+      // Flag the first statement after a diverging one; the rest of the block
+      // is equally unreachable, so one finding per block is enough.
+      if !reported {
+        out = .append(.{ span: stmt_span(stmt), message: "unreachable code", rule: "unreachable-code" })
+        reported = true
+      }
+    } else {
+      out = .concat(lint_stmt(stmt))
+
+      if is_diverging(stmt) {
+        diverged = true
+      }
+    }
+  }
+
+  case block.tail {
+    .Some(e) => if diverged {
+      if !reported {
+        out = .append(.{ span: e.span, message: "unreachable code", rule: "unreachable-code" })
+        reported = true
+      }
+    } else {
+      out = .concat(lint_expr(e))
+    },
+    .None => {},
+  }
+
+  out
+}
+
+fn lint_stmt(stmt: Stmt) Vector<LintFinding> {
+  case stmt {
+    .Let(s) => lint_expr(s.value),
+    .For(s) => {
+      out: Vector<LintFinding> = []
+
+      case s.iter {
+        .Some(e) => out = .concat(lint_expr(e)),
+        .None => {},
+      }
+
+      case s.condition {
+        .Some(e) => out = .concat(lint_expr(e)),
+        .None => {},
+      }
+      out = .concat(lint_block(s.body))
+      out
+    },
+    .Return(s) => case s.value {
+      .Some(e) => lint_expr(e),
+      .None => [],
+    },
+    .Break(s) => case s.value {
+      .Some(e) => lint_expr(e),
+      .None => [],
+    },
+    .Continue(_) => [],
+    .Defer(s) => lint_expr(s.expr),
+    .Expr(s) => lint_expr(s.expr),
+    .ErrorStmt(_) => [],
+  }
+}
+
+fn lint_expr(expr: Expr) Vector<LintFinding> {
+  case expr.kind {
+    .BlockExpr(b) => lint_block(b),
+    .If(c, then_b, else_e) => {
+      out := lint_expr(c)
+      out = .concat(lint_block(then_b))
+
+      case else_e {
+        .Some(e) => out = .concat(lint_expr(e)),
+        .None => {},
+      }
+      out
+    },
+    .Case(scrut, arms) => {
+      out := lint_expr(scrut)
+
+      for arm in arms {
+        out = .concat(lint_expr(arm.expr))
+      }
+      out
+    },
+    .Cond(arms) => {
+      out: Vector<LintFinding> = []
+
+      for arm in arms {
+        case arm.condition {
+          .Some(c) => out = .concat(lint_expr(c)),
+          .None => {},
+        }
+        out = .concat(lint_expr(arm.body))
+      }
+      out
+    },
+    .Closure(_, _, body) => lint_block(body),
+    .Collect(c) => {
+      out: Vector<LintFinding> = []
+
+      case c.iter {
+        .Some(e) => out = .concat(lint_expr(e)),
+        .None => {},
+      }
+
+      case c.condition {
+        .Some(e) => out = .concat(lint_expr(e)),
+        .None => {},
+      }
+      out = .concat(lint_block(c.body))
+      out
+    },
+    .Call(callee, args) => {
+      out := lint_expr(callee)
+
+      for a in args {
+        out = .concat(lint_expr(a))
+      }
+      out
+    },
+    .Binary(_, l, r) => lint_expr(l).concat(lint_expr(r)),
+    .Unary(_, e) => lint_expr(e),
+    .Field(base, _) => lint_expr(base),
+    .Index(base, idx) => lint_expr(base).concat(lint_expr(idx)),
+    .Array(elems) => {
+      out: Vector<LintFinding> = []
+
+      for e in elems {
+        out = .concat(lint_expr(e))
+      }
+      out
+    },
+    .Record(entries) => lint_record_entries(entries),
+    .NamedRecord(_, entries) => lint_record_entries(entries),
+    .Variant(_, args) => {
+      out: Vector<LintFinding> = []
+
+      for a in args {
+        out = .concat(lint_expr(a))
+      }
+      out
+    },
+    .StringInterp(parts) => {
+      out: Vector<LintFinding> = []
+
+      for p in parts {
+        case p {
+          .Interpolation(e) => out = .concat(lint_expr(e)),
+          .Literal(_) => {},
+        }
+      }
+      out
+    },
+    _ => [],
+  }
+}
+
+fn lint_record_entries(entries: Vector<RecordEntry>) Vector<LintFinding> {
+  out: Vector<LintFinding> = []
+
+  for en in entries {
+    case en.value {
+      .Some(e) => out = .concat(lint_expr(e)),
+      .None => {},
+    }
+  }
+
+  out
+}
+
+// ── L3: record-copy-helper ───────────────────────────────────────────
+/// The trailing nominal name of a type expression (`State`, `foo.State`,
+/// `State<T>` → "State"), or `.None` for structural/function types.
+fn type_name(te: TypeExpr) String? {
+  case te.kind {
+    .Path(tp) => last_segment(tp.segments),
+    .Applied(tp, _) => last_segment(tp.segments),
+    _ => .None,
+  }
+}
+
+fn last_segment(segments: Vector<String>) String? {
+  if segments.len() > 0 {
+    .Some(segments[segments.len() - 1])
+  } else {
+    .None
+  }
+}
+
+type EntryKind = { CopyFromP, Trivial, NonTrivial }
+
+/// Classify a record entry relative to the candidate copy-source param `pname`.
+fn classify_entry(pname: String, entry: RecordEntry) EntryKind {
+  case entry.value {
+    // Shorthand `f,` puns a same-named param/local — a trivial copy.
+    .None => .Trivial,
+    .Some(e) => case e.kind {
+      // Bare param/local reference.
+      .Ident(_) => .Trivial,
+      .Field(base, fname) => case base.kind {
+        .Ident(bn) => if bn == pname and fname == entry.name {
+          // `f: p.f` — a verbatim copy of `p`'s same-named field.
+          .CopyFromP
+        } else {
+          // Any other field access on a param/local is still trivial.
+          .Trivial
+        },
+        _ => .NonTrivial,
+      },
+      // Anything else (call, arithmetic, literal, nested record, …) is real work.
+      _ => .NonTrivial,
+    },
+  }
+}
+
+/// True when `entries` rebuild a record purely by copying `pname`'s fields and
+/// passing through other params/locals — with at least one verbatim copy of `p`.
+fn is_copy_rebuild(pname: String, entries: Vector<RecordEntry>) Bool {
+  copies := 0
+
+  for entry in entries {
+    case classify_entry(pname, entry) {
+      .CopyFromP => copies = copies + 1,
+      .Trivial => {},
+      .NonTrivial => { return false },
+    }
+  }
+
+  copies >= 1
+}
+
+fn copy_finding(decl: FunctionDecl, rec_type: String) Vector<LintFinding> {
+  [
+    .{
+      span: decl.name_span,
+      message: "`${decl.name}` rebuilds `${rec_type}` by copying fields; rebind directly (`p.field = v`) instead",
+      rule: "record-copy-helper",
+    },
+  ]
+}
+
+type RecordResult = .{ rec_type: String, entries: Vector<RecordEntry> }
+
+fn lint_record_copy(decl: FunctionDecl, env: ResolvedEnv) Vector<LintFinding> {
+  // The result expression is the body's trailing expression.
+  result := case decl.body.tail {
+    .Some(e) => e,
+    .None => { return [] },
+  }
+  // It must be a record literal; determine the nominal type it builds.
+  pair: RecordResult? = case result.kind {
+    .NamedRecord(name, entries) => .Some(.{ rec_type: name, entries }),
+    .Record(entries) => case decl.return_type {
+      .Some(rt) => case type_name(rt) {
+        .Some(name) => .Some(.{ rec_type: name, entries }),
+        .None => .None,
+      },
+      .None => .None,
+    },
+    _ => .None,
+  }
+  found := case pair {
+    .Some(p) => p,
+    .None => { return [] },
+  }
+
+  // Flag if some parameter of the same nominal type is copied field-by-field.
+  for param in decl.params {
+    same_type := case param.ty {
+      .Some(t) => case type_name(t) {
+        .Some(n) => n == found.rec_type,
+        .None => false,
+      },
+      .None => false,
+    }
+
+    if same_type and is_copy_rebuild(param.name, found.entries) {
+      return copy_finding(decl, found.rec_type)
+    }
+  }
+
+  []
+}

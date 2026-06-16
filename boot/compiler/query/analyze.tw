@@ -12,6 +12,7 @@ use compiler.base_env.{add_internal_host_builtins, reserved_stdlib_type_origin}
 use compiler.checker
 use compiler.imports
 use compiler.imports.{DependencyPlan, PlannedDep}
+use compiler.lint
 use compiler.mono_type.{TypeId}
 use compiler.query.cache
 use compiler.query.fingerprint
@@ -133,12 +134,17 @@ pub type ModuleInterface = .{
 /// module.
 pub type RewriteHit = .{ path: String, rewrite: rewrites_mod.Rewrite }
 
+/// A report-only structural lint finding tagged with its file path. Same
+/// channel discipline as RewriteHit; populated only in review mode.
+pub type LintHit = .{ path: String, finding: lint.LintFinding }
+
 pub type ModuleResult = .{
   env: ResolvedEnv,
   state: AnalysisState,
   diagnostics: Vector<AnalysisDiag>,
   ok: Bool,
   rewrites: Vector<RewriteHit>,
+  lints: Vector<LintHit>,
 }
 
 type SourceLoad = .{ state: AnalysisState, source: overlay.SourceText, source_hash: Int }
@@ -152,6 +158,8 @@ type DependencyAnalysis = .{
   state: AnalysisState,
   diagnostics: Vector<AnalysisDiag>,
   ok: Bool,
+  rewrites: Vector<RewriteHit>,
+  lints: Vector<LintHit>,
 }
 
 type DependencyHashes = .{ deps_hash: Int, context_hash: Int }
@@ -259,7 +267,7 @@ fn analyze_module_impl(
 
   // Already analyzed? Return cached exports.
   case state.exports[canonical] {
-    .Some(_) => { return .{ env: base, state, diagnostics: [], ok: true, rewrites: [] } },
+    .Some(_) => { return .{ env: base, state, diagnostics: [], ok: true, rewrites: [], lints: [] } },
     .None => {},
   }
 
@@ -269,7 +277,7 @@ fn analyze_module_impl(
   // initialization or mutually-recursive types cannot be broken and error.
   if stack.contains(canonical) {
     case state.interfaces[canonical] {
-      .Some(_) => { return .{ env: base, state, diagnostics: [], ok: true, rewrites: [] } },
+      .Some(_) => { return .{ env: base, state, diagnostics: [], ok: true, rewrites: [], lints: [] } },
       .None => { return break_import_cycle(id, alias, base, state, stack, caller_id, use_span) },
     }
   }
@@ -278,7 +286,7 @@ fn analyze_module_impl(
   // re-walking its subtree. Diagnostics were reported on the first failure;
   // re-reporting here would duplicate them.
   if state.failed.has(canonical) {
-    return .{ env: base, state, diagnostics: [], ok: false, rewrites: [] }
+    return .{ env: base, state, diagnostics: [], ok: false, rewrites: [], lints: [] }
   }
 
   t_load0 := date.now()
@@ -291,6 +299,7 @@ fn analyze_module_impl(
         diagnostics: err.diagnostics,
         ok: false,
         rewrites: [],
+        lints: [],
       }
     },
   }
@@ -309,6 +318,7 @@ fn analyze_module_impl(
         diagnostics: err.diagnostics,
         ok: false,
         rewrites: [],
+        lints: [],
       }
     },
   }
@@ -332,6 +342,7 @@ fn analyze_module_impl(
         diagnostics: err.diagnostics,
         ok: false,
         rewrites: [],
+        lints: [],
       }
     },
   }
@@ -356,6 +367,7 @@ fn analyze_module_impl(
       diagnostics: deps.diagnostics,
       ok: false,
       rewrites: [],
+      lints: [],
     }
   }
 
@@ -417,6 +429,7 @@ fn analyze_module_impl(
         diagnostics: err.diagnostics,
         ok: false,
         rewrites: [],
+        lints: [],
       }
     },
   }
@@ -452,9 +465,18 @@ fn analyze_module_impl(
     cur.timings.unused_imports = cur.timings.unused_imports + (date.now() - t_unused0)
   }
 
-  module_rewrites: Vector<RewriteHit> = if cur.lint_mode {
+  // Findings follow the import chain: this module's plus everything below it.
+  // Internal modules (stdlib/prelude) are never linted or rewritten.
+  local_rewrites: Vector<RewriteHit> = if cur.lint_mode and !dep_plan.is_internal {
     collect rw in local.checked.rewrites {
       .{ path: loaded.source.identity.path, rewrite: rw }
+    }
+  } else {
+    []
+  }
+  local_lints: Vector<LintHit> = if cur.lint_mode and !dep_plan.is_internal {
+    collect f in lint.lint_module(parsed_load.parsed.module, local.checked.env) {
+      .{ path: loaded.source.identity.path, finding: f }
     }
   } else {
     []
@@ -464,7 +486,8 @@ fn analyze_module_impl(
     state: cur,
     diagnostics: all_diags,
     ok: true,
-    rewrites: module_rewrites,
+    rewrites: deps.rewrites.concat(local_rewrites),
+    lints: deps.lints.concat(local_lints),
   }
 }
 
@@ -718,13 +741,13 @@ fn break_import_cycle(
   loaded := case load_source(state, canonical, module_id, caller_id, use_span) {
     .Ok(value) => value,
     .Err(err) => {
-      return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false, rewrites: [] }
+      return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false, rewrites: [], lints: [] }
     },
   }
   parsed_load := case parse_cached(loaded.state, canonical, loaded.source, loaded.source_hash) {
     .Ok(value) => value,
     .Err(err) => {
-      return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false, rewrites: [] }
+      return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false, rewrites: [], lints: [] }
     },
   }
   cur := parsed_load.state
@@ -741,13 +764,13 @@ fn break_import_cycle(
       "Top-level initialization cycle: module '${canonical}' has top-level statements and participates in an import cycle",
     )
 
-    return .{ env: base, state: cur, diagnostics: [d], ok: false, rewrites: [] }
+    return .{ env: base, state: cur, diagnostics: [d], ok: false, rewrites: [], lints: [] }
   }
 
   dep_plan := case plan_dependencies(cur, canonical, parsed, loaded.source) {
     .Ok(plan) => plan,
     .Err(err) => {
-      return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false, rewrites: [] }
+      return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false, rewrites: [], lints: [] }
     },
   }
 
@@ -771,6 +794,7 @@ fn break_import_cycle(
       diagnostics: deps.diagnostics,
       ok: false,
       rewrites: [],
+      lints: [],
     }
   }
 
@@ -807,6 +831,7 @@ fn break_import_cycle(
           diagnostics: err.diagnostics,
           ok: false,
           rewrites: [],
+          lints: [],
         }
       },
     }
@@ -828,7 +853,7 @@ fn break_import_cycle(
       "Circular import detected: '${canonical}' is already being analyzed",
     )
 
-    return .{ env: base, state: cur, diagnostics: [d], ok: false, rewrites: [] }
+    return .{ env: base, state: cur, diagnostics: [d], ok: false, rewrites: [], lints: [] }
   }
 
   // Publish a preliminary interface (signatures only). The module's own outer
@@ -839,7 +864,7 @@ fn break_import_cycle(
   interface := make_module_interface(canonical, exports, cur.shared_type_origins)
   cur.interfaces[canonical] = interface
 
-  .{ env: base, state: cur, diagnostics: [], ok: true, rewrites: [] }
+  .{ env: base, state: cur, diagnostics: [], ok: true, rewrites: [], lints: [] }
 }
 
 fn analyze_dependencies(
@@ -861,6 +886,8 @@ fn analyze_dependencies(
   dep_base := env
   dep_base_upto := cur.shared_types.len()
   all_diags: Vector<AnalysisDiag> = []
+  all_rewrites: Vector<RewriteHit> = []
+  all_lints: Vector<LintHit> = []
   deps_ok := true
   caller_id := identity.from_path(canonical)
 
@@ -886,6 +913,8 @@ fn analyze_dependencies(
     )
     cur = dep_result.state
     all_diags = .concat(dep_result.diagnostics)
+    all_rewrites = .concat(dep_result.rewrites)
+    all_lints = .concat(dep_result.lints)
 
     if !dep_result.ok {
       deps_ok = false
@@ -974,7 +1003,7 @@ fn analyze_dependencies(
     cur.cache = cache.clear_resolved_and_later(cur.cache, canonical)
   }
 
-  .{ env, state: cur, diagnostics: all_diags, ok: deps_ok }
+  .{ env, state: cur, diagnostics: all_diags, ok: deps_ok, rewrites: all_rewrites, lints: all_lints }
 }
 
 fn dependency_hashes(store: cache.Store, dep_plan: imports.DependencyPlan) DependencyHashes {
