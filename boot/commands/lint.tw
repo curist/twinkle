@@ -13,7 +13,6 @@ use compiler.base_env.{builtin_env}
 use compiler.imports
 use compiler.query.analyze
 use compiler.query.cache as query_cache
-use lib.argparse.app
 use lib.argparse.app.{ParseResult}
 use lib.json
 use lib.module.loader
@@ -161,7 +160,7 @@ fn gather_findings(file: String) Vector<Finding> {
 fn location(path_str: String, start: Int, indexes: Dict<String, line_index.LineIndex>) String {
   case indexes[path_str] {
     .Some(idx) => {
-      pos := line_index.byte_offset_to_position(idx, start, .Utf8)
+      pos := idx.byte_offset_to_position(start, .Utf8)
       "${path_str}:${pos.line + 1}:${pos.character + 1}"
     },
     .None => "${path_str}:?:?",
@@ -255,32 +254,13 @@ fn apply_to_files(edits_by_file: Dict<String, Vector<FixEdit>>) Vector<FileResul
   results
 }
 
-pub fn run_lint_command(parsed: ParseResult) {
-  file := case get_positional(parsed, 0, "file") {
-    .Ok(p) => p,
-    .Err(msg) => exit_usage_error(msg),
-  }
-  fix_all := app.has_flag(parsed, "fix")
-  fix_unused := fix_all or app.has_flag(parsed, "fix-unused-imports")
-  fix_inherent := fix_all or app.has_flag(parsed, "fix-inherent-calls")
-  any_apply := fix_unused or fix_inherent
-  findings := gather_findings(file)
-
-  if findings.len() == 0 {
-    println("No findings.")
-
-    return {}
-  }
-
-  if !any_apply {
-    report_findings(findings)
-    print_summary(findings)
-    proc.exit(1)
-  }
-
-  // Apply the selected rules; collect the rest to report.
+/// Edits for the selected rules, grouped by file path (skips report-only and
+/// rules not requested).
+fn select_edits(findings: Vector<Finding>, fix_unused: Bool, fix_inherent: Bool) Dict<
+  String,
+  Vector<FixEdit>,
+> {
   edits_by_file: Dict<String, Vector<FixEdit>> = Dict.new()
-  remaining: Vector<Finding> = []
 
   for f in findings {
     selected := f.rule == "unused-imports" and fix_unused
@@ -291,20 +271,76 @@ pub fn run_lint_command(parsed: ParseResult) {
         .Some(existing) => edits_by_file[f.path] = existing.concat(f.edits),
         .None => edits_by_file[f.path] = f.edits,
       }
-    } else {
-      remaining = .append(f)
     }
   }
 
-  results := apply_to_files(edits_by_file)
+  edits_by_file
+}
 
-  for r in results {
-    println("Fixed: ${r.path} (${r.count} edit(s))")
+pub fn run_lint_command(parsed: ParseResult) {
+  file := case get_positional(parsed, 0, "file") {
+    .Ok(p) => p,
+    .Err(msg) => exit_usage_error(msg),
   }
+  fix_all := parsed.has_flag("fix")
+  fix_unused := fix_all or parsed.has_flag("fix-unused-imports")
+  fix_inherent := fix_all or parsed.has_flag("fix-inherent-calls")
+  any_apply := fix_unused or fix_inherent
+
+  if !any_apply {
+    findings := gather_findings(file)
+
+    if findings.len() == 0 {
+      println("No findings.")
+
+      return {}
+    }
+    report_findings(findings)
+    print_summary(findings)
+    proc.exit(1)
+  }
+
+  // Apply the selected rules to a fixpoint: one rewrite can enable another
+  // (e.g. an inherent-call rewrite orphans an import), so re-analyze and apply
+  // again until nothing changes. Each rewrite is meaning-preserving and only
+  // removes findings, so this converges in a couple of passes.
+  applied: Dict<String, Int> = Dict.new()
+  iterations := 0
+
+  for iterations < 20 {
+    edits := select_edits(gather_findings(file), fix_unused, fix_inherent)
+
+    if edits.len() == 0 {
+      break
+    }
+
+    for r in apply_to_files(edits) {
+      prior := case applied[r.path] {
+        .Some(n) => n,
+        .None => 0,
+      }
+      applied[r.path] = prior + r.count
+    }
+    iterations = iterations + 1
+  }
+
+  if applied.len() == 0 {
+    println("No rewrites to apply.")
+  } else {
+    for path in applied.keys() {
+      count := case applied[path] {
+        .Some(n) => n,
+        .None => 0,
+      }
+      println("Fixed: ${path} (${count} edit(s))")
+    }
+  }
+
+  // Whatever is left: report-only lints, plus rewrites for rules not requested.
+  remaining := gather_findings(file)
 
   if remaining.len() > 0 {
     report_findings(remaining)
-    eprintln("")
-    eprintln("${remaining.len()} report-only finding(s) remain (not auto-fixable)")
+    print_summary(remaining)
   }
 }
