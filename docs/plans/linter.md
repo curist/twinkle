@@ -98,7 +98,7 @@ default, dead code rather than a stylistic nit.
   form provably resolves to the *same* function and the receiver is
   postfix-atomic (so the reorder can't reparse with different precedence).
   Provably meaning-preserving; fails closed.
-- *Full design*: [`inherent-method-hint.md`](inherent-method-hint.md) — predicate,
+- *Full design*: [`inherent-method-hint.md`](archive/inherent-method-hint.md) — predicate,
   the call-resolution emission sites in `checker.tw`, the two byte-offset edits,
   tests.
 
