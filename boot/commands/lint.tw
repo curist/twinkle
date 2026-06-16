@@ -188,12 +188,41 @@ fn report_findings(findings: Vector<Finding>) {
   indexes := index_sources(findings)
 
   for f in findings {
-    loc := location(f.path, f.start, indexes)
+    println("${location(f.path, f.start, indexes)}: ${f.message}")
+  }
+}
 
+/// End-of-run summary: total, and the flags that apply the auto-fixable ones.
+fn print_summary(findings: Vector<Finding>) {
+  by_rule: Dict<String, Int> = Dict.new()
+  fixable := 0
+  report_only := 0
+
+  for f in findings {
     if f.edits.len() > 0 {
-      println("${loc}: ${f.message} (twk lint --fix-${f.rule})")
+      fixable = fixable + 1
+      cur := case by_rule[f.rule] {
+        .Some(n) => n,
+        .None => 0,
+      }
+      by_rule[f.rule] = cur + 1
     } else {
-      println("${loc}: ${f.message}")
+      report_only = report_only + 1
+    }
+  }
+
+  eprintln("")
+  eprintln("${findings.len()} finding(s): ${fixable} auto-fixable, ${report_only} report-only")
+
+  if fixable > 0 {
+    eprintln("  twk lint --fix  — apply all ${fixable} rewrite(s), or one rule:")
+
+    for rule in by_rule.keys() {
+      n := case by_rule[rule] {
+        .Some(c) => c,
+        .None => 0,
+      }
+      eprintln("    --fix-${rule}  (${n})")
     }
   }
 }
@@ -245,7 +274,7 @@ pub fn run_lint_command(parsed: ParseResult) {
 
   if !any_apply {
     report_findings(findings)
-    eprintln("${findings.len()} finding(s); run `twk lint --fix` to apply rewrites")
+    print_summary(findings)
     proc.exit(1)
   }
 
@@ -275,5 +304,7 @@ pub fn run_lint_command(parsed: ParseResult) {
 
   if remaining.len() > 0 {
     report_findings(remaining)
+    eprintln("")
+    eprintln("${remaining.len()} report-only finding(s) remain (not auto-fixable)")
   }
 }
