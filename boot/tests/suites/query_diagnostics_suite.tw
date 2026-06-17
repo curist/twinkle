@@ -58,6 +58,35 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "qualified Option and Result variant constructors type-check",
+      fn() {
+        // Option/Result are both builtin type names and module aliases; the
+        // qualified constructor form must resolve to the canonical Optional /
+        // Result types rather than erroring or producing a Named type.
+        for src in [
+          "fn f() Int? { Option.Some(1) }\n",
+          "fn f() Int? { Option.None }\n",
+          "fn f() Result<Int, String> { Result.Ok(1) }\n",
+          "fn f() Result<Int, String> { Result.Err(\"e\") }\n",
+        ] {
+          result := diagnostics.analyze_document(cache.empty(), input(src))
+          try assert.equal(result.diagnostics.len(), 0)
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "qualified builtin variant constructor still rejects unknown variants",
+      fn() {
+        result := diagnostics.analyze_document(
+          cache.empty(),
+          input("fn f() Int? { Option.Nope(1) }\n"),
+        )
+        try assert.is_true(result.diagnostics.len() > 0)
+        .Ok({})
+      },
+    )
+    .test(
       "semantic snapshot exposes parsed resolved and typed artifacts",
       fn() {
         entry := "file:///tmp/semantic-main.tw"

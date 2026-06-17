@@ -1619,15 +1619,10 @@ fn synth_call(
 
           case module_call {
             .Some(r) => { return r },
-            .None => {
-              return .{
-                ty: .Void,
-                ctx: clean_ctx,
-                diags: diags.append(
-                  .Error(.UndefinedVar(.{ span: callee.span, name: "${alias}.${method_name}" })),
-                ),
-              }
-            },
+            // Fall through on miss: a name that is both a module alias and a
+            // type (Option, Result) may instead be a qualified variant
+            // constructor, handled just below.
+            .None => {},
           }
         },
         _ => {},
@@ -1636,7 +1631,7 @@ fn synth_call(
       // Qualified variant constructor form: TypeName.Variant(args)
       case try_resolve_type_from_expr(base, clean_ctx) {
         .Some(resolved) => {
-          named_ty := MonoType.Named(resolved.tid, resolved.type_args)
+          named_ty := canonical_named_type(resolved.tid, resolved.type_args, resolved.ctx.env)
 
           case resolve_variant_info(method_name, named_ty, resolved.ctx.env) {
             .Some(.Ok(info)) => {
@@ -2447,11 +2442,30 @@ fn try_resolve_type_from_expr(expr: Expr, ctx: InferCtx) ResolvedTypeExpr? {
   }
 }
 
+// Builtin Option/Result are represented by dedicated MonoType kinds, not Named,
+// so a qualified constructor (Option.Some, Result.Ok) must produce the canonical
+// kind — otherwise the result type is `Named(0/1, …)` and won't unify with `T?`
+// or `Result<T, E>`. resolve_variant_info already understands both kinds.
+fn canonical_named_type(tid: TypeId, type_args: Vector<MonoType>, env: ResolvedEnv) MonoType {
+  name := case env.find_type_name(tid) {
+    .Some(n) => n,
+    .None => "",
+  }
+
+  if name == "Option" and type_args.len() == 1 {
+    .Optional(type_args[0])
+  } else if name == "Result" and type_args.len() == 2 {
+    .Result(type_args[0], type_args[1])
+  } else {
+    .Named(tid, type_args)
+  }
+}
+
 fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
   // Check if base is a type name with a variant (TypeName.VariantName)
   case try_resolve_type_from_expr(base, ctx) {
     .Some(resolved) => {
-      named_ty := MonoType.Named(resolved.tid, resolved.type_args)
+      named_ty := canonical_named_type(resolved.tid, resolved.type_args, resolved.ctx.env)
 
       case resolve_variant_info(field_name, named_ty, resolved.ctx.env) {
         .Some(.Ok(info)) => {
