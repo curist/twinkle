@@ -79,15 +79,33 @@ fn get_trivia(tm: TriviaMap, offset: Int) Vector<Trivia> {
   }
 }
 
+fn first_position_after(positions: Vector<Int>, offset: Int) Int {
+  lo := 0
+  hi := positions.len()
+
+  for lo < hi {
+    mid := (lo + hi) / 2
+
+    if positions[mid] <= offset {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+
+  lo
+}
+
 // Collect all leading trivia at positions in (start, end) exclusive.
-// leading_positions is already sorted (tokens are appended in order).
+// leading_positions is already sorted (tokens are appended in order), so start
+// at the first candidate instead of re-scanning from the beginning for every
+// range query.
 fn get_trivia_in_range(tm: TriviaMap, start: Int, end: Int) Vector<Trivia> {
   result: Vector<Trivia> = []
+  i := first_position_after(tm.leading_positions, start)
 
-  for pos in tm.leading_positions {
-    if pos <= start {
-      continue
-    }
+  for i < tm.leading_positions.len() {
+    pos := tm.leading_positions[i]
 
     if pos >= end {
       break
@@ -99,6 +117,8 @@ fn get_trivia_in_range(tm: TriviaMap, start: Int, end: Int) Vector<Trivia> {
       },
       .None => {},
     }
+
+    i = i + 1
   }
 
   result
@@ -116,11 +136,10 @@ fn get_trailing_trivia(tm: TriviaMap, offset: Int) Vector<Trivia> {
 // which the lexer attaches to the comma rather than the item's value token.
 fn get_trailing_trivia_in_range(tm: TriviaMap, start: Int, end: Int) Vector<Trivia> {
   result: Vector<Trivia> = []
+  i := first_position_after(tm.trailing_positions, start)
 
-  for pos in tm.trailing_positions {
-    if pos <= start {
-      continue
-    }
+  for i < tm.trailing_positions.len() {
+    pos := tm.trailing_positions[i]
 
     if pos >= end {
       break
@@ -132,6 +151,8 @@ fn get_trailing_trivia_in_range(tm: TriviaMap, start: Int, end: Int) Vector<Triv
       },
       .None => {},
     }
+
+    i = i + 1
   }
 
   result
