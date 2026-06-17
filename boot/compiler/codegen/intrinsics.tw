@@ -58,13 +58,11 @@ pub fn module() WasmModule {
 }
 
 fn append_instrs(base: Vector<Instr>, tail: Vector<Instr>) Vector<Instr> {
-  out := base
-
   for i in tail {
-    out = .append(i)
+    base = .append(i)
   }
 
-  out
+  base
 }
 
 fn int_from_string_helper_fn() FuncDef {

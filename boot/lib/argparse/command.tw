@@ -11,13 +11,11 @@ pub fn add_arg(cmd: Command, a: arg.Arg) Command {
 }
 
 pub fn add_args(cmd: Command, args: Vector<arg.Arg>) Command {
-  out := cmd
-
   for a in args {
-    out = .add_arg(a)
+    cmd = .add_arg(a)
   }
 
-  out
+  cmd
 }
 
 pub fn add_positional(cmd: Command, name: String, help: String) Command {

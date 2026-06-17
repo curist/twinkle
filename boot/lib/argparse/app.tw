@@ -33,13 +33,11 @@ pub fn add_command(a: App, cmd: command.Command) App {
 }
 
 pub fn add_commands(a: App, cmds: Vector<command.Command>) App {
-  out := a
-
   for c in cmds {
-    out = .add_command(c)
+    a = .add_command(c)
   }
 
-  out
+  a
 }
 
 pub fn has_flag(r: ParseResult, name: String) Bool {

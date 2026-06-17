@@ -103,8 +103,14 @@ pub fn suite() runner.Suite {
     .test("reflows multiline block in return", assert_fmt_case("multiline_return"))
     .test("preserves multiline block in a record field", assert_fmt_case("multiline_record_field"))
     .test("preserves multiline block in a call argument", assert_fmt_case("multiline_call_arg"))
-    .test("preserves multiline block in an array element", assert_fmt_case("multiline_array_element"))
-    .test("preserves multiline block in a variant argument", assert_fmt_case("multiline_variant_arg"))
+    .test(
+      "preserves multiline block in an array element",
+      assert_fmt_case("multiline_array_element"),
+    )
+    .test(
+      "preserves multiline block in a variant argument",
+      assert_fmt_case("multiline_variant_arg"),
+    )
     .test("preserves raw interpolation", assert_fmt_case("raw_interpolation"))
     .test(
       "reflows and preserves multiline interpolation",

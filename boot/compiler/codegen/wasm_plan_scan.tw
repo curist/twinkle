@@ -166,17 +166,15 @@ fn scan_atoms(atoms: Vector<PreparedAtom>, is_init: Bool, out: ScanResult) ScanR
 fn scan_atom(atom: PreparedAtom, is_init: Bool, out: ScanResult) ScanResult {
   case atom {
     .ALitStr(s) => {
-      cur := out
-      cur.strings[s] = true
-      cur
+      out.strings[s] = true
+      out
     },
     .AGlobalLocal(lid) => {
       // Register the global whether the read is in a regular function or in an
       // init function (top-level user code lowers into an init function, and a
       // module global like `math.pi` may be read only from there).
-      cur := out
-      cur.module_globals[lid.id] = true
-      cur
+      out.module_globals[lid.id] = true
+      out
     },
     _ => out,
   }
@@ -185,9 +183,8 @@ fn scan_atom(atom: PreparedAtom, is_init: Bool, out: ScanResult) ScanResult {
 fn scan_pattern(pattern: PreparedPattern, out: ScanResult) ScanResult {
   case pattern {
     .LitStr(s) => {
-      cur := out
-      cur.strings[s] = true
-      cur
+      out.strings[s] = true
+      out
     },
     .Variant(_, _, fields) => {
       cur := out

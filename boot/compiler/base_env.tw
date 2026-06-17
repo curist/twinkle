@@ -265,8 +265,6 @@ fn set_prelude_function_origins(
   prelude_dir: String,
   canonical_roots: imports.CanonicalRoots,
 ) ResolvedEnv {
-  cur := env
-
   for group in groups {
     stem := case prelude_module_stem(group.receiver) {
       .Some(s) => s,
@@ -279,16 +277,14 @@ fn set_prelude_function_origins(
 
     for sig in group.sigs {
       internal_name := signatures.to_internal_name(group.receiver, sig.name)
-      cur = .set_function_origin(internal_name, .{ module_path, func_name: sig.name })
+      env = .set_function_origin(internal_name, .{ module_path, func_name: sig.name })
     }
   }
 
-  cur
+  env
 }
 
 fn bind_public_free_builtins(env: ResolvedEnv) ResolvedEnv {
-  cur := env
-
   for name in [
     "print",
     "println",
@@ -299,10 +295,10 @@ fn bind_public_free_builtins(env: ResolvedEnv) ResolvedEnv {
     "range_from",
     "range_step",
   ] {
-    cur = .bind_function(name, name)
+    env = .bind_function(name, name)
   }
 
-  cur
+  env
 }
 
 pub fn builtin_env() ResolvedEnv {

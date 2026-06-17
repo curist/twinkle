@@ -816,9 +816,8 @@ fn scan_consumers(
             } else {
               st := stat_of(stats0, key)
               st.bad_consumer = true
-              s2 := stats0
-              s2[key] = st
-              s2
+              stats0[key] = st
+              stats0
             }
           } else {
             stats0
