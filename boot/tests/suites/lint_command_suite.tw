@@ -181,4 +181,23 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "render_report: --explain includes the detailed rationale",
+      fn() {
+        findings := [
+          lint.Finding.{
+            path: "a.tw", start: 5, message: "`cur` is only an alias for `env`",
+            rule: "direct-rebinding", edits: [],
+          },
+        ]
+        plain := lint.render_report(findings, Dict.new(), false)
+        explained := lint.render_report(findings, Dict.new(), true)
+        try assert.is_true(!plain.contains("// Avoid"))
+        try assert.is_true(explained.contains("// Avoid"))
+        try assert.is_true(explained.contains("// Prefer"))
+        // detailed block is indented under the header
+        try assert.is_true(explained.contains("\n      // Avoid"))
+        .Ok({})
+      },
+    )
 }
