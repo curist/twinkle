@@ -1,10 +1,18 @@
 # Lint rule explanations + `twk lint --explain`
 
-> **Status: design.** Give every `twk lint` rule a registered brief/detailed
-> rationale, group the report by rule so each finding is unambiguously tied to
-> its rule without per-line noise, and let `--explain` expand the briefs to the
-> full rationale. Once rationale lives in the registry, the prescriptive
-> rebinding guidance in CLAUDE.md trims to a pointer.
+> **Status: completed.** `twk lint` now has a registered brief/detailed
+> rationale for each emitted rule, grouped reporting by rule, and `--explain`
+> expansion. The prescriptive rebinding guidance in CLAUDE.md has been trimmed
+> to point at the lint rules.
+
+## Completion
+
+Implemented in the boot compiler. The rule registry lives in
+`boot/compiler/lint_rules.tw`; `boot/commands/lint.tw` renders grouped reports
+and expands details with `--explain`; `boot/main.tw` registers the flag;
+`boot/tests/suites/lint_command_suite.tw` covers the registry, grouping,
+`--explain`, and colored headers. CLAUDE.md now points readers to `twk lint` for
+the rebinding/no-copy-helper guidance.
 
 ## Goal
 

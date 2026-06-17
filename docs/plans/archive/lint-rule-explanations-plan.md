@@ -1,12 +1,14 @@
 # Lint Rule Explanations + `--explain` Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Give every `twk lint` rule a registered brief/detailed rationale, group the report by rule (id + brief once per group), and add `--explain` to expand briefs to the full rationale; then trim CLAUDE.md's prescriptive rebinding block to a pointer.
 
 **Architecture:** A new boot module `compiler/lint_rules.tw` maps the existing kebab `rule` id → `RuleInfo { brief, detailed }`. The command's report rendering moves into a pure `render_report(findings, indexes, explain) String` that groups by rule, looks up the registry for headers, and prints findings indented underneath. `main.tw` registers an `--explain` flag threaded into the command. `detailed` strings are authored as Zig-style `\\` multi-line literals.
 
 **Tech Stack:** Twinkle (boot self-hosted compiler). Tests run via `target/twk run boot/tests/main.tw` with `TWK_TEST_FILTER`. Spec: `docs/plans/lint-rule-explanations.md`.
+
+**Completed:** Implemented and verified. The linter now has a rule-description registry, grouped reports, `--explain`, test coverage, and CLAUDE.md guidance trimmed to point at `twk lint`.
 
 ---
 
@@ -28,7 +30,7 @@ The six rule ids the codebase emits (verified): `direct-rebinding`, `record-copy
 - Create: `boot/compiler/lint_rules.tw`
 - Test: `boot/tests/suites/lint_command_suite.tw`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add these imports to the top of `boot/tests/suites/lint_command_suite.tw` (after the existing `use` lines):
 
@@ -85,12 +87,12 @@ Add these tests inside `suite()` (chain `.test(...)` calls before the closing of
     )
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `TWK_TEST_FILTER=lint_command target/twk run boot/tests/main.tw 2>&1 | tail -15`
 Expected: compile/lint error — `compiler.lint_rules` module does not exist (or `describe` undefined). This confirms the test targets missing code.
 
-- [ ] **Step 3: Write the registry**
+- [x] **Step 3: Write the registry**
 
 Create `boot/compiler/lint_rules.tw`:
 
@@ -175,12 +177,12 @@ pub fn describe(rule: String) RuleInfo? {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `TWK_TEST_FILTER=lint_command target/twk run boot/tests/main.tw 2>&1 | tail -6`
 Expected: all `lint_command` tests pass (count increased by 3, 0 failed).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add boot/compiler/lint_rules.tw boot/tests/suites/lint_command_suite.tw
@@ -195,7 +197,7 @@ git commit -m "Add lint rule description registry"
 - Modify: `boot/commands/lint.tw` (make `Finding` pub; add `render_report`; add `use compiler.lint_rules`)
 - Test: `boot/tests/suites/lint_command_suite.tw`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `suite()` in `boot/tests/suites/lint_command_suite.tw`:
 
@@ -231,12 +233,12 @@ Add to `suite()` in `boot/tests/suites/lint_command_suite.tw`:
 
 Note: `Dict.new()` is the empty line-index map; with no index, `location` renders `path:?:?`, which is fine — the test asserts on grouping, not line numbers.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `TWK_TEST_FILTER=lint_command target/twk run boot/tests/main.tw 2>&1 | tail -15`
 Expected: compile error — `Finding` not accessible (`type Finding` is private) and `render_report` undefined.
 
-- [ ] **Step 3: Make `Finding` public and add the renderer**
+- [x] **Step 3: Make `Finding` public and add the renderer**
 
 In `boot/commands/lint.tw`, add the registry import after the other `use` lines:
 
@@ -337,12 +339,12 @@ pub fn render_report(
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `TWK_TEST_FILTER=lint_command target/twk run boot/tests/main.tw 2>&1 | tail -6`
 Expected: all `lint_command` tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add boot/commands/lint.tw boot/tests/suites/lint_command_suite.tw
@@ -356,7 +358,7 @@ git commit -m "Add grouped pure render_report for lint findings"
 **Files:**
 - Test: `boot/tests/suites/lint_command_suite.tw` (renderer already supports `explain`; this proves it)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `suite()`:
 
@@ -384,12 +386,12 @@ Add to `suite()`:
 
 Note: `// Avoid` is authored flush-left in the registry; the renderer prepends 2 spaces, and the example body lines are themselves indented 4 spaces in the literal, so the rendered line is `\n      // Avoid` (6 leading spaces).
 
-- [ ] **Step 2: Run test to verify it fails or passes**
+- [x] **Step 2: Run test to verify it fails or passes**
 
 Run: `TWK_TEST_FILTER=lint_command target/twk run boot/tests/main.tw 2>&1 | tail -8`
 Expected: PASS (the renderer from Task 2 already implements `explain`). If it fails on the exact indentation assertion, adjust the expected leading-space count in the test to match the registry literal's indentation — do not change the registry to satisfy a miscount.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add boot/tests/suites/lint_command_suite.tw
@@ -404,7 +406,7 @@ git commit -m "Cover --explain detailed rationale rendering"
 - Modify: `boot/main.tw` (register flag)
 - Modify: `boot/commands/lint.tw` (`run_lint_command`, `print_summary`)
 
-- [ ] **Step 1: Register the flag in `main.tw`**
+- [x] **Step 1: Register the flag in `main.tw`**
 
 In `boot/main.tw`, extend the `lint_cmd` builder (currently ends at `.add_flag("fix-inherent-calls", ...)`):
 
@@ -418,7 +420,7 @@ lint_cmd := file_command("lint", "Review code: report lints and rewrites").add_f
 ).add_flag("explain", "Show the full rationale for each reported rule")
 ```
 
-- [ ] **Step 2: Thread `explain` into the command and renderer**
+- [x] **Step 2: Thread `explain` into the command and renderer**
 
 In `boot/commands/lint.tw`, update `print_summary` to take an `explain` flag and print the hint, and replace the two `report_findings(...)` + `print_summary(...)` call sites.
 
@@ -459,12 +461,12 @@ Replace the trailing report block (after applying fixes):
   }
 ```
 
-- [ ] **Step 3: Verify the boot suite still builds and passes**
+- [x] **Step 3: Verify the boot suite still builds and passes**
 
 Run: `TWK_TEST_FILTER=lint_command target/twk run boot/tests/main.tw 2>&1 | tail -6`
 Expected: all `lint_command` tests pass (the renderer/registry units are unchanged; this confirms the command file still compiles with the new signatures).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add boot/main.tw boot/commands/lint.tw
@@ -478,7 +480,7 @@ git commit -m "Wire --explain flag into the lint command"
 **Files:**
 - Modify: `CLAUDE.md`
 
-- [ ] **Step 1: Edit the Immutability and Rebinding section**
+- [x] **Step 1: Edit the Immutability and Rebinding section**
 
 Keep the *semantics* (the opening paragraph and the `p.x = 1 → RecordUpdate(...)` / `arr[i]=v` / `m[k]=v` desugaring code block). Remove the *prescriptive* "Do NOT write `with_*` helpers" block and its `❌ Don't write this / ✅ Write this instead` worked example. Replace that removed prescriptive block with:
 
@@ -489,7 +491,7 @@ guidance is enforced by `twk lint` (rules `direct-rebinding` and
 `twk lint --explain` for the worked Avoid/Prefer examples.
 ```
 
-- [ ] **Step 2: Add the lint step to the dev-flow guidance**
+- [x] **Step 2: Add the lint step to the dev-flow guidance**
 
 In the "Format Twinkle source" section (which tells you to run `target/twk fmt`), add a sibling note:
 
@@ -502,12 +504,12 @@ The linter is report-only by default; `--explain` prints the rationale for each
 rule that fired.
 ```
 
-- [ ] **Step 3: Verify the section reads correctly**
+- [x] **Step 3: Verify the section reads correctly**
 
 Run: `git diff CLAUDE.md`
 Expected: semantics + desugaring block retained; prescriptive `with_*` block replaced by the pointer; dev-flow lint hint added. No other sections touched.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add CLAUDE.md
@@ -520,27 +522,27 @@ git commit -m "Trim CLAUDE.md rebinding prescription to a twk lint pointer"
 
 **Files:** none (build + verify)
 
-- [ ] **Step 1: Run the full boot suite from source**
+- [x] **Step 1: Run the full boot suite from source**
 
 Run: `target/twk run boot/tests/main.tw 2>&1 | tail -4`
 Expected: `Ran NNNN tests: NNNN passed` (0 failed).
 
-- [ ] **Step 2: Rebundle the CLI**
+- [x] **Step 2: Rebundle the CLI**
 
 Run: `make bundle-cli 2>&1 | tail -5`
 Expected: `Fixed point reached: stage3 == stage4` then `Built Deno Twinkle CLI: target/twk`.
 
-- [ ] **Step 3: Dogfood default report**
+- [x] **Step 3: Dogfood default report**
 
 Run: `target/twk lint boot/main.tw 2>&1 | head -30`
 Expected: findings grouped under rule headers (e.g. `direct-rebinding  the temporary only aliases…`), each finding indented `  path:line:col: message`; footer ends with `run \`twk lint --explain\` for the full rationale`.
 
-- [ ] **Step 4: Dogfood `--explain`**
+- [x] **Step 4: Dogfood `--explain`**
 
 Run: `target/twk lint --explain boot/main.tw 2>&1 | head -40`
 Expected: each rule header followed by the indented detailed rationale (the `direct-rebinding` group shows the Avoid/Prefer block), then its findings. No `run --explain` hint line.
 
-- [ ] **Step 5: Commit any formatting fixups**
+- [x] **Step 5: Commit any formatting fixups**
 
 Run: `target/twk fmt boot/compiler/lint_rules.tw boot/commands/lint.tw boot/tests/suites/lint_command_suite.tw`
 Then if anything changed:
