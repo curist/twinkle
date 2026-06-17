@@ -1,83 +1,89 @@
 /// Human-facing rationale for each `twk lint` rule, keyed by its kebab `rule`
 /// id. `brief` is the one-line header summary; `detailed` is the full rationale
-/// shown under `--explain`. `detailed` is authored as a Zig-style multi-line
-/// literal bound to `detail` (a binding-RHS position the formatter preserves;
-/// in a record-field position `twk fmt` would cook it to an escaped string).
+/// shown under `--explain`, authored as a Zig-style multi-line literal.
 
 pub type RuleInfo = .{ brief: String, detailed: String }
 
 pub fn describe(rule: String) RuleInfo? {
   case rule {
-    "direct-rebinding" => {
-      detail :=
-        \\A temporary that only aliases a value, gets rebinding-updates applied,
-        \\then is copied back or returned is just ceremony. Twinkle assignment is
-        \\rebinding, so the field/index path can be updated in place:
-        \\
-        \\    // Avoid
-        \\    d := reg.by_name
-        \\    d[internal] = entry
-        \\    reg.by_name = d
-        \\
-        \\    // Prefer
-        \\    reg.by_name[internal] = entry
-      .Some(
-        .{
-          brief: "the temporary only aliases a value; rebind the field/index path directly",
-          detailed: detail,
-        },
-      )
-    },
-    "record-copy-helper" => {
-      detail :=
-        \\A function that returns a record literal copying most fields verbatim
-        \\from a parameter of the same type is a `with_*` helper. Rebind the
-        \\field you mean instead:
-        \\
-        \\    // Avoid
-        \\    fn with_docs(s: State, docs: Store) State {
-        \\      .{ initialized: s.initialized, docs, cache: s.cache }
-        \\    }
-        \\
-        \\    // Prefer
-        \\    s.docs = new_store
-      .Some(
-        .{
-          brief: "rebuilds a record by copying fields; rebind the changed field directly",
-          detailed: detail,
-        },
-      )
-    },
-    "unreachable-code" => {
-      detail :=
-        \\A statement following `return`, `break`, `continue`, or `error(...)` in
-        \\the same block can never execute. Usually a logic error: either the
-        \\early exit is wrong, or the trailing code should move before it.
-      .Some(.{ brief: "code after a diverging statement never runs", detailed: detail })
-    },
-    "unused-must-use" => {
-      detail :=
-        \\A statement-position `Result<_, _>` or `T?` that is neither `try`-ed,
-        \\matched, nor bound drops a possible error or `None`. Handle it with
-        \\`try`, `case`, `.ok_or(...)`, or bind it explicitly.
-      .Some(.{ brief: "a Result or Option is silently discarded", detailed: detail })
-    },
-    "unused-imports" => {
-      detail :=
-        \\This `use` brings in a name nothing references. Remove it. Auto-fixable
-        \\with `twk lint --fix-unused-imports`.
-      .Some(.{ brief: "an imported name is never used", detailed: detail })
-    },
-    "inherent-calls" => {
-      detail :=
-        \\When `M.f(x, ...)` resolves to the inherent method of `x`'s type, the
-        \\receiver form reads better: `x.f(...)`. Auto-fixable with
-        \\`twk lint --fix-inherent-calls`.
-        \\
-        \\    // Avoid            // Prefer
-        \\    Vector.map(xs, f)   xs.map(f)
-      .Some(.{ brief: "a free-function call can use inherent-method syntax", detailed: detail })
-    },
+    "direct-rebinding" => .Some(
+      .{
+        brief: "the temporary only aliases a value; rebind the field/index path directly",
+        detailed:
+          \\A temporary that only aliases a value, gets rebinding-updates applied,
+          \\then is copied back or returned is just ceremony. Twinkle assignment is
+          \\rebinding, so the field/index path can be updated in place:
+          \\
+          \\    // Avoid
+          \\    d := reg.by_name
+          \\    d[internal] = entry
+          \\    reg.by_name = d
+          \\
+          \\    // Prefer
+          \\    reg.by_name[internal] = entry
+        ,
+      },
+    ),
+    "record-copy-helper" => .Some(
+      .{
+        brief: "rebuilds a record by copying fields; rebind the changed field directly",
+        detailed:
+          \\A function that returns a record literal copying most fields verbatim
+          \\from a parameter of the same type is a `with_*` helper. Rebind the
+          \\field you mean instead:
+          \\
+          \\    // Avoid
+          \\    fn with_docs(s: State, docs: Store) State {
+          \\      .{ initialized: s.initialized, docs, cache: s.cache }
+          \\    }
+          \\
+          \\    // Prefer
+          \\    s.docs = new_store
+        ,
+      },
+    ),
+    "unreachable-code" => .Some(
+      .{
+        brief: "code after a diverging statement never runs",
+        detailed:
+          \\A statement following `return`, `break`, `continue`, or `error(...)` in
+          \\the same block can never execute. Usually a logic error: either the
+          \\early exit is wrong, or the trailing code should move before it.
+        ,
+      },
+    ),
+    "unused-must-use" => .Some(
+      .{
+        brief: "a Result or Option is silently discarded",
+        detailed:
+          \\A statement-position `Result<_, _>` or `T?` that is neither `try`-ed,
+          \\matched, nor bound drops a possible error or `None`. Handle it with
+          \\`try`, `case`, `.ok_or(...)`, or bind it explicitly.
+        ,
+      },
+    ),
+    "unused-imports" => .Some(
+      .{
+        brief: "an imported name is never used",
+        detailed:
+          \\This `use` brings in a name nothing references. Remove it. Auto-fixable
+          \\with `twk lint --fix-unused-imports`.
+        ,
+      },
+    ),
+    "inherent-calls" => .Some(
+      .{
+        brief: "a free-function call can use inherent-method syntax",
+        detailed:
+          \\When `M.f(x, ...)` resolves to the inherent method of `x`'s type, the
+          \\receiver form reads better: `x.f(...)`. Auto-fixable with
+          \\`twk lint --fix-inherent-calls`.
+          \\
+          \\    // Avoid            // Prefer
+          \\    Vector.map(xs, f)   xs.map(f)
+        ,
+      },
+    ),
     _ => .None,
   }
 }

@@ -1262,38 +1262,37 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
     .Cond(arms) => format_cond(arms, expr.span, tm),
     .Array(elems) => {
       elem_docs := collect e in elems {
-        format_expr(e, tm)
+        format_list_element(e, tm)
       }
-      format_bracketed_items(
-        "[",
-        "]",
-        doc.tight_bracketed("[", "]", elem_docs),
-        elem_docs,
-        expr_spans(elems),
-        expr.span.end,
-        tm,
-      )
+      ml_flags := collect e in elems {
+        expr_is_multiline(e, tm)
+      }
+
+      if any_true(ml_flags) {
+        format_items_with_multiline("[", "]", elem_docs, ml_flags)
+      } else {
+        format_bracketed_items(
+          "[",
+          "]",
+          doc.tight_bracketed("[", "]", elem_docs),
+          elem_docs,
+          expr_spans(elems),
+          expr.span.end,
+          tm,
+        )
+      }
     },
     .Record(entries) => {
       entry_docs := collect e in entries {
         format_record_entry(e, tm)
       }
-      format_bracketed_items(
-        ".{",
-        "}",
-        doc.spaced_bracketed(".{", "}", entry_docs),
-        entry_docs,
-        record_entry_spans(entries),
-        expr.span.end,
-        tm,
-      )
-    },
-    .NamedRecord(name, entries) => {
-      entry_docs := collect e in entries {
-        format_record_entry(e, tm)
+      ml_flags := collect e in entries {
+        record_entry_is_multiline(e, tm)
       }
-      doc.concat([
-        doc.text("${name}"),
+
+      if any_true(ml_flags) {
+        format_items_with_multiline(".{", "}", entry_docs, ml_flags)
+      } else {
         format_bracketed_items(
           ".{",
           "}",
@@ -1302,17 +1301,44 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
           record_entry_spans(entries),
           expr.span.end,
           tm,
-        ),
-      ])
+        )
+      }
+    },
+    .NamedRecord(name, entries) => {
+      entry_docs := collect e in entries {
+        format_record_entry(e, tm)
+      }
+      ml_flags := collect e in entries {
+        record_entry_is_multiline(e, tm)
+      }
+      body := if any_true(ml_flags) {
+        format_items_with_multiline(".{", "}", entry_docs, ml_flags)
+      } else {
+        format_bracketed_items(
+          ".{",
+          "}",
+          doc.spaced_bracketed(".{", "}", entry_docs),
+          entry_docs,
+          record_entry_spans(entries),
+          expr.span.end,
+          tm,
+        )
+      }
+
+      doc.concat([doc.text("${name}"), body])
     },
     .Variant(name, fields) => if fields.len() == 0 {
       doc.text(".${name}")
     } else {
       field_docs := collect f in fields {
-        format_expr(f, tm)
+        format_list_element(f, tm)
       }
-      doc.concat([
-        doc.text(".${name}"),
+      ml_flags := collect f in fields {
+        expr_is_multiline(f, tm)
+      }
+      body := if any_true(ml_flags) {
+        format_items_with_multiline("(", ")", field_docs, ml_flags)
+      } else {
         format_bracketed_items(
           "(",
           ")",
@@ -1321,8 +1347,10 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
           expr_spans(fields),
           expr.span.end,
           tm,
-        ),
-      ])
+        )
+      }
+
+      doc.concat([doc.text(".${name}"), body])
     },
     .Closure(params, ret_ty, body) => format_closure(params, ret_ty, body, tm),
     .Collect(coll) => format_collect(coll, tm),
@@ -1687,10 +1715,14 @@ fn format_call(callee: Expr, args: Vector<Expr>, container: Span, tm: TriviaMap)
   }
 
   arg_docs := collect a in args {
-    format_expr(a, tm)
+    format_list_element(a, tm)
   }
-  doc.concat([
-    format_expr(callee, tm),
+  ml_flags := collect a in args {
+    expr_is_multiline(a, tm)
+  }
+  args_body := if any_true(ml_flags) {
+    format_items_with_multiline("(", ")", arg_docs, ml_flags)
+  } else {
     format_bracketed_items(
       "(",
       ")",
@@ -1699,8 +1731,9 @@ fn format_call(callee: Expr, args: Vector<Expr>, container: Span, tm: TriviaMap)
       expr_spans(args),
       container.end,
       tm,
-    ),
-  ])
+    )
+  }
+  doc.concat([format_expr(callee, tm), args_body])
 }
 
 fn format_if(cond_e: Expr, then_block: Block, else_expr: Expr?, tm: TriviaMap) Doc {
@@ -2089,15 +2122,96 @@ fn import_item_span(item: ImportItem) Span {
 
 fn format_record_entry(entry: RecordEntry, tm: TriviaMap) Doc {
   case entry.value {
-    .Some(val) => case val.kind {
-      .Ident(name) => if name == entry.name {
-        doc.text(entry.name)
-      } else {
-        doc.concat([doc.text("${entry.name}: "), format_expr(val, tm)])
+    .Some(val) => case multiline_block_doc_for(val, tm) {
+      // `name:` then the `\\` block on its own indented lines (F1); the
+      // terminating comma is placed by the list layout on a fresh line.
+      .Some(block) => doc.concat([
+        doc.text("${entry.name}:"),
+        doc
+          .concat([doc.hard_line(), block])
+          .indent(),
+      ]),
+      .None => case val.kind {
+        .Ident(name) => if name == entry.name {
+          doc.text(entry.name)
+        } else {
+          doc.concat([doc.text("${entry.name}: "), format_expr(val, tm)])
+        },
+        _ => doc.concat([doc.text("${entry.name}: "), format_expr(val, tm)]),
       },
-      _ => doc.concat([doc.text("${entry.name}: "), format_expr(val, tm)]),
     },
     .None => doc.text(entry.name),
+  }
+}
+
+// True when a record entry's value is a `\\` multiline literal, which the list
+// layout must terminate with a comma on its own line.
+fn record_entry_is_multiline(entry: RecordEntry, tm: TriviaMap) Bool {
+  case entry.value {
+    .Some(val) => case multiline_block_doc_for(val, tm) {
+      .Some(_) => true,
+      .None => false,
+    },
+    .None => false,
+  }
+}
+
+fn any_true(flags: Vector<Bool>) Bool {
+  for f in flags {
+    if f {
+      return true
+    }
+  }
+
+  false
+}
+
+// Lay out a comma-separated bracketed list where one or more items are `\\`
+// multiline blocks. Each item is on its own line; a multiline item's
+// terminating comma sits on a fresh line (the block runs to end-of-line, so a
+// trailing comma on the same line would be swallowed into the string). Always
+// broken — a multiline block cannot be laid out flat.
+fn format_items_with_multiline(
+  open: String,
+  close: String,
+  item_docs: Vector<Doc>,
+  is_multiline: Vector<Bool>,
+) Doc {
+  parts: Vector<Doc> = []
+
+  for d, i in item_docs {
+    line_doc := if is_multiline[i] {
+      doc.concat([d, doc.hard_line(), doc.text(",")])
+    } else {
+      doc.concat([d, doc.text(",")])
+    }
+    parts = .append(line_doc)
+  }
+
+  inner := doc.join(parts, doc.hard_line())
+  doc.concat([
+    doc.text(open),
+    doc
+      .concat([doc.hard_line(), inner])
+      .indent(),
+    doc.hard_line(),
+    doc.text(close),
+  ])
+}
+
+// A list element's doc: the `\\` block form when it is a multiline literal,
+// else its normal formatting (which would cook a multiline value).
+fn format_list_element(e: Expr, tm: TriviaMap) Doc {
+  case multiline_block_doc_for(e, tm) {
+    .Some(block) => block,
+    .None => format_expr(e, tm),
+  }
+}
+
+fn expr_is_multiline(e: Expr, tm: TriviaMap) Bool {
+  case multiline_block_doc_for(e, tm) {
+    .Some(_) => true,
+    .None => false,
   }
 }
 

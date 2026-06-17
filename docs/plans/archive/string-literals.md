@@ -475,9 +475,13 @@ lint rules are defined in "Formatter & lint rules" above.
       so it is only emitted in **tail positions** — binding `:=`, typed binding
       `: ty =`, rebinding `=`, and `return`. A multiline value in a non-tail
       context (call arg, record field, array element) would have a following
-      delimiter swallowed, so there it deliberately falls back to the cooked
-      escaped form (value-preserving). Extending F1 to wrap those contexts
-      (closing delimiter on its own line) is a future refinement.
+      delimiter swallowed, so there it originally fell back to the cooked escaped
+      form (value-preserving). **Update:** F1 now also covers those non-tail
+      contexts — record fields, call args, array elements, and variant args
+      preserve `\\` form, placing the terminating comma on its own line
+      (`printer.tw` `format_items_with_multiline`). Fixtures:
+      `multiline_record_field`, `multiline_call_arg`, `multiline_array_element`,
+      `multiline_variant_arg`.
 
 **Task 4a.2 — formatter test cases** ✅ done
 
