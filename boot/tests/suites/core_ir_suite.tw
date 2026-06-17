@@ -385,7 +385,7 @@ pub fn suite() runner.Suite {
       fn() Result<Void, String> {
         mod := try parse_ok("fn f() Int { 42 }")
 
-        case mod.items[0] {
+        try case mod.items[0] {
           .Function(f) => case f.body.tail {
             .Some(expr) => assert.ok(expr.id >= 0, "expr.id should be non-negative"),
             .None => { return .Err("expected tail expression") },

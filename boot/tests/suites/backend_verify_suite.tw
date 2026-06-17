@@ -65,28 +65,23 @@ fn registry_with_closure_policy(
     .Some(entry) => entry,
     .None => error("registry_with_closure_policy: unknown builtin: ${name}"),
   }
-  updated := base_entry
-  updated.closure_policy = closure_policy
+  base_entry.closure_policy = closure_policy
+  reg.by_name[name] = base_entry
+  reg.by_id[base_entry.func_id.id] = base_entry
 
-  by_name := reg.by_name
-  by_id := reg.by_id
-  by_canonical := reg.by_canonical
-  by_name[name] = updated
-  by_id[updated.func_id.id] = updated
-
-  case updated.canonical_name {
-    .Some(canonical) => by_canonical[canonical] = updated,
+  case base_entry.canonical_name {
+    .Some(canonical) => reg.by_canonical[canonical] = base_entry,
     .None => {},
   }
 
-  entries := collect entry in reg.entries {
+  reg.entries = collect entry in reg.entries {
     if entry.name == name {
-      updated
+      base_entry
     } else {
       entry
     }
   }
-  BuiltinRegistry.{ by_name, by_id, by_canonical, entries, next_id: reg.next_id }
+  reg
 }
 
 fn mk_param(id: Int, ty: MonoType) Param {

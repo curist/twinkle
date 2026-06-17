@@ -965,7 +965,7 @@ pub fn test_plan_module_globals() Result<Void, String> {
   reg := plan(anf, resolver.empty_env(), empty_builtins())
 
   // local 0 should be a module global (referenced outside init, bound in init)
-  case reg.module_globals[0] {
+  try case reg.module_globals[0] {
     .Some(gentry) => {
       try assert.str_contains(gentry.sym, "0")
       result: Result<Void, String> = case gentry.mono {

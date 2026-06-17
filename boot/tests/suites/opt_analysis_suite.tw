@@ -169,7 +169,7 @@ fn test_collect_tainted_marks_non_base_cow_arg() Result<Void, String> {
     ),
   )
   tainted := collect_tainted(make_func(body), mock_semantics())
-  assert.is_false(set_has(tainted, 0))
+  try assert.is_false(set_has(tainted, 0))
   assert.is_true(set_has(tainted, 1))
 }
 
