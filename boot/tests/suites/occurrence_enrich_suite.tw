@@ -54,7 +54,8 @@ fn has(idx: occ.OccurrenceIndex, name: String, kind: occ.SymbolKind, role: occ.O
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("occurrence enrich (resolver/checker)")
+  runner
+    .suite("occurrence enrich (resolver/checker)")
     .test(
       "function declaration and call resolve to one function symbol",
       fn() {
@@ -192,7 +193,8 @@ pub fn suite() runner.Suite {
           cache.empty(),
           diagnostics.DocumentInput.{ uri: "file:///m.tw", text: src1, version: .Some(1) },
         )
-        _old_idx := try snap1.cache.latest_occurrences("/m.tw")
+        _old_idx := try snap1.cache
+          .latest_occurrences("/m.tw")
           .ok_or("expected first cached occurrences")
 
         src2 := "fn other() Int {\n  other()\n}\n"
@@ -200,7 +202,8 @@ pub fn suite() runner.Suite {
           snap1.cache,
           diagnostics.DocumentInput.{ uri: "file:///m.tw", text: src2, version: .Some(2) },
         )
-        idx := try snap2.cache.latest_occurrences("/m.tw")
+        idx := try snap2.cache
+          .latest_occurrences("/m.tw")
           .ok_or("expected updated cached occurrences")
 
         try assert.ok(

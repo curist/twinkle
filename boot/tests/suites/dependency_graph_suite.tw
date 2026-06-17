@@ -22,7 +22,8 @@ fn unwrap_sorted(result: Result<Vector<String>, graph.GraphError>) Result<Vector
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("dependency graph")
+  runner
+    .suite("dependency graph")
     .test(
       "empty graph has no forward or reverse entries",
       fn() {
@@ -149,7 +150,8 @@ pub fn suite() runner.Suite {
     .test(
       "reverse_dependents_closure returns sorted result",
       fn() {
-        g := graph.empty()
+        g := graph
+          .empty()
           .set_dependencies("z", ["x"])
           .set_dependencies("a", ["x"])
           .set_dependencies("m", ["x"])
@@ -204,7 +206,8 @@ pub fn suite() runner.Suite {
       "topo_sort diamond",
       fn() {
         // d -> b, d -> c, b -> a, c -> a
-        g := graph.empty()
+        g := graph
+          .empty()
           .set_dependencies("d", ["b", "c"])
           .set_dependencies("b", ["a"])
           .set_dependencies("c", ["a"])
@@ -263,7 +266,8 @@ pub fn suite() runner.Suite {
       "topo_sort detects multi-node cycle",
       fn() {
         // a -> b -> c -> a
-        g := graph.empty()
+        g := graph
+          .empty()
           .set_dependencies("a", ["b"])
           .set_dependencies("b", ["c"])
           .set_dependencies("c", ["a"])
@@ -288,7 +292,8 @@ pub fn suite() runner.Suite {
       fn() {
         // d -> a, a -> b -> c -> a (cycle)
         // d is blocked by the cycle but not part of it
-        g := graph.empty()
+        g := graph
+          .empty()
           .set_dependencies("d", ["a"])
           .set_dependencies("a", ["b"])
           .set_dependencies("b", ["c"])

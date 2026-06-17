@@ -87,10 +87,9 @@ fn find_call_in_stmt(stmt: Stmt, offset: Int) CallInfo? {
       .None
     },
     .For(fs) => if fs.span.contains(offset) {
-      find_call_in_opt_expr(fs.iter, offset).or_else(fn() { find_call_in_opt_expr(
-        fs.condition,
-        offset,
-      ) }).or_else(fn() { find_call_in_block(fs.body, offset) })
+      find_call_in_opt_expr(fs.iter, offset)
+        .or_else(fn() { find_call_in_opt_expr(fs.condition, offset) })
+        .or_else(fn() { find_call_in_block(fs.body, offset) })
     } else {
       .None
     },
@@ -145,10 +144,9 @@ fn find_call_in_expr(expr: Expr, offset: Int) CallInfo? {
       offset,
     ) }),
     .BlockExpr(block) => find_call_in_block(block, offset),
-    .If(cond_e, then_block, else_expr) => find_call_in_expr(cond_e, offset).or_else(fn() { find_call_in_block(
-      then_block,
-      offset,
-    ) }).or_else(fn() { find_call_in_opt_expr(else_expr, offset) }),
+    .If(cond_e, then_block, else_expr) => find_call_in_expr(cond_e, offset)
+      .or_else(fn() { find_call_in_block(then_block, offset) })
+      .or_else(fn() { find_call_in_opt_expr(else_expr, offset) }),
     .Case(scrutinee, arms) => find_call_in_expr(scrutinee, offset).or_else(fn() { find_call_in_case_arms(
       arms,
       offset,
@@ -159,10 +157,9 @@ fn find_call_in_expr(expr: Expr, offset: Int) CallInfo? {
     .NamedRecord(_, entries) => find_call_in_entries(entries, offset),
     .Variant(_, fields) => find_call_in_exprs(fields, offset),
     .Closure(_, _, body) => find_call_in_block(body, offset),
-    .Collect(col) => find_call_in_opt_expr(col.iter, offset).or_else(fn() { find_call_in_opt_expr(
-      col.condition,
-      offset,
-    ) }).or_else(fn() { find_call_in_block(col.body, offset) }),
+    .Collect(col) => find_call_in_opt_expr(col.iter, offset)
+      .or_else(fn() { find_call_in_opt_expr(col.condition, offset) })
+      .or_else(fn() { find_call_in_block(col.body, offset) }),
     .StringInterp(parts) => find_call_in_interp(parts, offset),
     _ => .None,
   }

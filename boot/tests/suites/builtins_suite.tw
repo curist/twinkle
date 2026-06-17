@@ -15,7 +15,8 @@ fn empty_registry() BuiltinRegistry {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("builtins registry")
+  runner
+    .suite("builtins registry")
     .test(
       "empty registry has next_id 0",
       fn() {
@@ -28,11 +29,9 @@ pub fn suite() runner.Suite {
     .test(
       "runtime registration assigns auto-incremented id",
       fn() {
-        reg := empty_registry().runtime("print", "rt.core", "print").runtime(
-          "println",
-          "rt.core",
-          "println",
-        )
+        reg := empty_registry()
+          .runtime("print", "rt.core", "print")
+          .runtime("println", "rt.core", "println")
         try assert.equal(reg.next_id, 2)
         try assert.equal(reg.entries.len(), 2)
         try assert.equal(reg.id("print").id, 0)
@@ -222,9 +221,11 @@ pub fn suite() runner.Suite {
       "full registry carries builtin closure policies",
       fn() {
         reg := make_builtin_registry()
-        int_to_string := try reg.entry(reg.method_id("Int", "to_string"))
+        int_to_string := try reg
+          .entry(reg.method_id("Int", "to_string"))
           .ok_or("missing Int.to_string")
-        byte_to_string := try reg.entry(reg.method_id("Byte", "to_string"))
+        byte_to_string := try reg
+          .entry(reg.method_id("Byte", "to_string"))
           .ok_or("missing Byte.to_string")
         cell_update := try reg.entry(reg.method_id("Cell", "update")).ok_or("missing Cell.update")
         vector_len := try reg.entry(reg.method_id("Vector", "len")).ok_or("missing Vector.len")

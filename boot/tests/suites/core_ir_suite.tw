@@ -379,7 +379,8 @@ fn has_call(expr: core_ir.CoreExpr) Bool {
 
 // ── M0: Expression identity ─────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("core_ir")
+  runner
+    .suite("core_ir")
     .test(
       "expr has id field",
       fn() Result<Void, String> {
@@ -1292,7 +1293,8 @@ pub fn suite() runner.Suite {
           span: s0,
           is_extern: false,
         }
-        env := resolver.empty_env()
+        env := resolver
+          .empty_env()
           .register_type_entry(option_entry, "Option")
           .bind_type("Option", option_tid)
           .register_type_entry(iter_entry, "dep.Iterator")
@@ -1482,7 +1484,8 @@ pub fn suite() runner.Suite {
           extern_module: .None,
         }
         origin := resolver.FunctionOrigin.{ module_path: "prelude/vector.tw", func_name: "filter" }
-        env := resolver.empty_env()
+        env := resolver
+          .empty_env()
           .with_functions([filter_sig, vector_filter_sig])
           .set_function_origin("filter", origin)
           .set_function_origin("vector_filter", origin)

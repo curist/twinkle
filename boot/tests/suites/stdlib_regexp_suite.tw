@@ -37,7 +37,8 @@ fn err_at(p: String, want_pos: Int) Result<Void, String> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("stdlib regexp")
+  runner
+    .suite("stdlib regexp")
     .test(
       "find substring and test",
       fn() {

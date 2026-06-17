@@ -89,7 +89,8 @@ fn find_symbol(symbols: Vector<SymbolInfo>, name: String) SymbolInfo? {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp workspace symbol")
+  runner
+    .suite("lsp workspace symbol")
     .test(
       "finds functions from open document",
       fn() {

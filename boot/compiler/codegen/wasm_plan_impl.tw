@@ -195,7 +195,8 @@ pub fn plan_wasm_types_impl(
 
   if timed {
     eprintln(
-      "[time:plan] funcs=${input.funcs.len().to_string()}  slot_reg_calls=${total_slot_reg.to_string()}  unique_types=${result.type_defs.len()
+      "[time:plan] funcs=${input.funcs.len().to_string()}  slot_reg_calls=${total_slot_reg.to_string()}  unique_types=${result.type_defs
+        .len()
         .to_string()}  strings=${result.string_pool_order.len().to_string()}",
     )
     eprintln(

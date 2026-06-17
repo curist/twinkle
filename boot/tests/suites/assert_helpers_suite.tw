@@ -10,7 +10,8 @@ fn parse_port(s: String) Result<Int, String> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("assert helpers")
+  runner
+    .suite("assert helpers")
     .test(
       "str_eq",
       fn() {

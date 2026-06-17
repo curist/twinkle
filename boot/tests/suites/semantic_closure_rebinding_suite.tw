@@ -14,7 +14,8 @@ fn make_counter() fn() Int {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("closure and rebinding")
+  runner
+    .suite("closure and rebinding")
     .test(
       "capture by value freezes at definition",
       fn() {

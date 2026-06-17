@@ -31,7 +31,8 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
   virtual_id := identity.from_path(virtual_path)
 
   // Put the source in an overlay so analyze_module finds it without disk access.
-  ov := overlay.empty()
+  ov := overlay
+    .empty()
     .put(overlay.OverlayDocument.{ identity: virtual_id, text: src, version: .None })
   builtins := make_builtin_registry()
   base_env := builtin_env()
@@ -54,9 +55,11 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
   compiled_modules: Vector<CompiledModule> = []
 
   for module_path in a_result.state.module_order {
-    parsed := try query_cache.latest_parsed(cur_cache, module_path)
+    parsed := try query_cache
+      .latest_parsed(cur_cache, module_path)
       .ok_or("internal: missing parsed cache for '${module_path}'")
-    typed := try query_cache.latest_typed(cur_cache, module_path)
+    typed := try query_cache
+      .latest_typed(cur_cache, module_path)
       .ok_or("internal: missing typed cache for '${module_path}'")
     runner := try a_result.state.module_runners[module_path].ok_or(
       "internal: missing runner for '${module_path}'",

@@ -44,7 +44,8 @@ fn signatures_dir() String {
 
 // ── suite ─────────────────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("signature loader")
+  runner
+    .suite("signature loader")
     .test(
       "load_signatures succeeds",
       fn() {

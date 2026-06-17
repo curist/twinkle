@@ -8,7 +8,8 @@ fn bytes(text: String) Vector<Byte> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("stdlib crypto")
+  runner
+    .suite("stdlib crypto")
     .test(
       "md5 hex vectors",
       fn() {
@@ -61,10 +62,12 @@ pub fn suite() runner.Suite {
           "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8",
         )
         try assert.equal(
-          crypto.hmac_sha256_bytes(
-            crypto.hex_decode("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b").unwrap(),
-            bytes("Hi There"),
-          ).hex(),
+          crypto
+            .hmac_sha256_bytes(
+              crypto.hex_decode("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b").unwrap(),
+              bytes("Hi There"),
+            )
+            .hex(),
           "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
         )
         .Ok({})

@@ -1628,7 +1628,8 @@ fn test_rt_dict_emits_wat() Result<Void, String> {
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("runtime modules (M10)")
+  runner
+    .suite("runtime modules (M10)")
     .test("rt.types: namespace", test_rt_types_namespace)
     .test("rt.types: no funcs/imports/exports", test_rt_types_no_funcs)
     .test("rt.types: Array is mutable anyref array", test_rt_types_array)

@@ -63,7 +63,8 @@ fn parse_highlights(step: server_core.Step) Vector<HighlightInfo>!String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp document highlight")
+  runner
+    .suite("lsp document highlight")
     .test(
       "highlight local variable",
       fn() {

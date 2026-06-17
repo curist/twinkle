@@ -31,7 +31,8 @@ fn make_use_decl(path: Vector<String>, items: Vector<ImportItem>?) UseDecl {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("unused imports")
+  runner
+    .suite("unused imports")
     .test(
       "reconstruct_use_decl: filters out single unused item from selective import",
       fn() {

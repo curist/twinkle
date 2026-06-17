@@ -38,7 +38,8 @@ fn expect_vector(actual: Vector<Int>, expected: Vector<Int>) Result<Void, String
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("stdlib queue")
+  runner
+    .suite("stdlib queue")
     .test(
       "new queue is empty",
       fn() {

@@ -73,7 +73,8 @@ fn is_null_result(step: server_core.Step) Bool!String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp hover")
+  runner
+    .suite("lsp hover")
     .test(
       "hover on integer literal shows Int",
       fn() {

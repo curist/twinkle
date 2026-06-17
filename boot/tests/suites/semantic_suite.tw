@@ -55,7 +55,8 @@ fn show<T: Stringify>(x: T) String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("semantic cases")
+  runner
+    .suite("semantic cases")
     .test(
       "closure capture by value",
       fn() {

@@ -40,7 +40,8 @@ fn offset_of(src: String, needle: String) Int {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("ast_path")
+  runner
+    .suite("ast_path")
     .test(
       "deepest returns None for empty path",
       fn() {

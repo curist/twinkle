@@ -36,7 +36,8 @@ fn lines(parts: Vector<String>) String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("render")
+  runner
+    .suite("render")
     .test(
       "error header only, no labels",
       fn() {

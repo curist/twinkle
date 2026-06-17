@@ -69,7 +69,8 @@ fn classify(n: Int) String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("control flow")
+  runner
+    .suite("control flow")
     .test(
       "if-else returns value",
       fn() {

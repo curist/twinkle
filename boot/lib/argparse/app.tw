@@ -122,7 +122,8 @@ fn format_arg_help(a: arg.Arg) String {
       val := style.dim("<value>")
 
       case a.short_name {
-        .Some(s) => "  ".concat(style.bold("-".concat(s)))
+        .Some(s) => "  "
+          .concat(style.bold("-".concat(s)))
           .concat(", ")
           .concat(long)
           .concat(" ")
@@ -246,9 +247,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
       return .Ok(ParseResult.{ command: .Some("version"), flags, options, positional: pos })
     }
 
-    c := try a.commands
-      .find(fn(c) { c.name == first })
-      .ok_or(.UnknownCommand(first))
+    c := try a.commands.find(fn(c) { c.name == first }).ok_or(.UnknownCommand(first))
     cmd_name = .Some(first)
     active_args = c.args
     i = i + 1

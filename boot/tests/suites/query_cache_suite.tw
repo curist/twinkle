@@ -10,7 +10,8 @@ fn parsed(text: String) cache.ParsedModule {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("query cache")
+  runner
+    .suite("query cache")
     .test(
       "parsed lookup hits when key matches",
       fn() {

@@ -2,7 +2,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("cell")
+  runner
+    .suite("cell")
     .test(
       "new and get returns initial value",
       fn() {

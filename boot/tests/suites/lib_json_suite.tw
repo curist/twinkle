@@ -3,7 +3,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("lib json")
+  runner
+    .suite("lib json")
     .test(
       "to_string equals stringify",
       fn() {

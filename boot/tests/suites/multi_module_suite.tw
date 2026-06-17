@@ -153,7 +153,8 @@ fn has_call_to(expr: CoreExpr, target_id: Int) Bool {
 pub fn suite() runner.Suite {
   dir := fixtures_dir()
   root := project_root()
-  runner.suite("multi-module compilation")
+  runner
+    .suite("multi-module compilation")
     .test(
       "compile single file with no imports",
       fn() {

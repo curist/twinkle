@@ -93,7 +93,8 @@ fn type_at(result: checker.CheckResult, src: String, needle: String) Result<Stri
 
 // ── Suite ────────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("checker coverage")
+  runner
+    .suite("checker coverage")
     .test(
       "function as value",
       fn() {

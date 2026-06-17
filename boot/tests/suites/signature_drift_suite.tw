@@ -68,7 +68,8 @@ fn check_ok_with_builtins(src: String) Result<Bool, String> {
 
 // ── suite ─────────────────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("signature drift")
+  runner
+    .suite("signature drift")
     .test(
       "every signature-file function appears in builtin_env by surface binding or registered target",
       fn() {

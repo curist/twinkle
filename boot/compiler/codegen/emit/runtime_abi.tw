@@ -94,7 +94,8 @@ pub fn emit_host_result_shim(entry_name: String, buf: Vector<Instr>) Vector<Inst
   }
 
   if is_host_read_file(entry_name) {
-    return buf.append(.RefCast(true, .Named("rt_types__Variant")))
+    return buf
+      .append(.RefCast(true, .Named("rt_types__Variant")))
       .append(.Call("rt_arr__from_read_file_result"))
       .append(.Call(host_read_file_result_helper_sym()))
   }

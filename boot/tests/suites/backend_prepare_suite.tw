@@ -212,7 +212,8 @@ fn collect_let_lids_expr(expr: AnfExpr) Vector<Int> {
 
 // ── Tests ────────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("backend prepare (Phase 4a)")
+  runner
+    .suite("backend prepare (Phase 4a)")
     .test(
       "user function with no ABI calls: no boundaries inserted",
       fn() {

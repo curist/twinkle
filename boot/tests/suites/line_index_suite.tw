@@ -3,7 +3,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("line index")
+  runner
+    .suite("line index")
     .test(
       "new records line starts",
       fn() {

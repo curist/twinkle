@@ -2,7 +2,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("byte")
+  runner
+    .suite("byte")
     .test(
       "arithmetic promotion to Int",
       fn() {

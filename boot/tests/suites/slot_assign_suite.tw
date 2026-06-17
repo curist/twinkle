@@ -546,7 +546,8 @@ fn test_collects_arm_locals_used_as_closure_free_vars() Result<Void, String> {
 
 // ── Suite ────────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("slot assignment")
+  runner
+    .suite("slot assignment")
     .test("simple params and local", test_simple_params_and_local)
     .test("capture params precede declared params", test_capture_params_precede_declared_params)
     .test("multiple captures in order", test_multiple_captures_ordered)

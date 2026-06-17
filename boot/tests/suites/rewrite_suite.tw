@@ -14,7 +14,8 @@ fn expr(kind: ExprKind) Expr {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("rewrite")
+  runner
+    .suite("rewrite")
     .test(
       "inherent-method fix: Vector.map(xs, f) -> xs.map(f)",
       fn() {

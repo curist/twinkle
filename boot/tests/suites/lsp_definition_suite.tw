@@ -96,7 +96,8 @@ fn def_result_uri(step: server_core.Step) String!String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp definition")
+  runner
+    .suite("lsp definition")
     .test(
       "goto def on function call jumps to function decl",
       fn() {

@@ -179,7 +179,8 @@ fn get_return_type(env: resolver.ResolvedEnv, fn_name: String) Result<String, St
 
 // ── Suite ────────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("resolver")
+  runner
+    .suite("resolver")
     .test(
       "resolve empty module",
       fn() {
@@ -712,7 +713,8 @@ pub fn suite() runner.Suite {
           span: span.Span.{ file_id: 0, start: 0, end: 0 },
           is_extern: false,
         }
-        env := resolver.empty_env()
+        env := resolver
+          .empty_env()
           .register_type_entry(entry, "dep.Point")
           .bind_type("Point", tid)
           .register_bound_methods(
@@ -1693,7 +1695,8 @@ pub fn suite() runner.Suite {
           extern_module: .None,
         }
         parsed := parser.parse("pub fn expose(x: Int) Int { x }", 0)
-        env := resolver.empty_env()
+        env := resolver
+          .empty_env()
           .register_type_entry(inner_entry, "dep.Inner")
           .register_type_entry(outer_entry, "dep.Outer")
           .with_functions([sig])
@@ -1745,7 +1748,8 @@ pub fn suite() runner.Suite {
           is_extern: false,
         }
         parsed := parser.parse("pub type Wrapper = .{ inner: Int }", 0)
-        env := resolver.empty_env()
+        env := resolver
+          .empty_env()
           .register_type_entry(support_entry, "dep.Support")
           .add_type(wrapper_entry, "Wrapper")
         exports := env.extract_exports(parsed.value)
@@ -1829,7 +1833,8 @@ pub fn suite() runner.Suite {
           doc: .None,
           extern_module: .None,
         }
-        env := resolver.empty_env()
+        env := resolver
+          .empty_env()
           .register_type_entry(env_entry, "dep.Env")
           .add_function(make_sig)
           .register_function(resolve_sig)
@@ -1923,9 +1928,7 @@ pub fn suite() runner.Suite {
         try assert.is_true(!env.has_type("dep.Support"))
         try assert.is_true(env.has_function("mod.expose"))
         try assert.equal(
-          try env
-            .find_type_name(mono_type.TypeId.{ id: 0 })
-            .ok_or("support type missing"),
+          try env.find_type_name(mono_type.TypeId.{ id: 0 }).ok_or("support type missing"),
           "dep.Support",
         )
         .Ok({})
@@ -2012,7 +2015,8 @@ pub fn suite() runner.Suite {
         env = .merge_selective_imports("diagnostic", "", exports, items)
         env = .merge_module_exports("diag", "", exports)
         bare := try env.lookup_type("Diagnostic").ok_or("missing selective type binding")
-        aliased := try env.lookup_type("diag.Diagnostic")
+        aliased := try env
+          .lookup_type("diag.Diagnostic")
           .ok_or("missing aliased module type binding")
         try assert.equal(bare.id.id, aliased.id.id)
         .Ok({})
@@ -2028,9 +2032,11 @@ pub fn suite() runner.Suite {
         env := resolver.empty_env()
         env = .merge_module_exports("diag_a", "", exports)
         env = .merge_module_exports("diag_b", "", exports)
-        first := try env.lookup_type("diag_a.Diagnostic")
+        first := try env
+          .lookup_type("diag_a.Diagnostic")
           .ok_or("missing first aliased module type binding")
-        second := try env.lookup_type("diag_b.Diagnostic")
+        second := try env
+          .lookup_type("diag_b.Diagnostic")
           .ok_or("missing second aliased module type binding")
         try assert.equal(first.id.id, second.id.id)
         .Ok({})
@@ -2128,9 +2134,7 @@ pub fn suite() runner.Suite {
         try assert.is_true(!env.has_type("Line"))
         try assert.is_true(!env.has_type("geom.Line"))
         try assert.equal(
-          try env
-            .find_type_name(mono_type.TypeId.{ id: 1 })
-            .ok_or("stored unselected type missing"),
+          try env.find_type_name(mono_type.TypeId.{ id: 1 }).ok_or("stored unselected type missing"),
           "geom.Line",
         )
 
@@ -2347,7 +2351,8 @@ pub fn suite() runner.Suite {
           doc: .None,
           extern_module: .None,
         }
-        env := resolver.empty_env()
+        env := resolver
+          .empty_env()
           .with_functions([imported, local])
           .set_function_origin("filter", .{ module_path: "prelude/vector.tw", func_name: "filter" })
         try assert.is_some(env.lookup_function_origin("filter"))

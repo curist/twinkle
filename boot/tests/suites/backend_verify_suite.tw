@@ -210,7 +210,8 @@ fn slots_with_wasm_type(pf: PreparedFunc, target_sid: Int, wasm_type: ValType) D
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("backend verify (Phase 5)")
+  runner
+    .suite("backend verify (Phase 5)")
     .test(
       "valid prepared module passes verification",
       fn() {

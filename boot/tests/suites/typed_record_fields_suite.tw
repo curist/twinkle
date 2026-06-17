@@ -108,7 +108,8 @@ fn typed_count(d: Dict<String, Bool>) Int {
 
 // Source fixtures (escaped newlines — Twinkle string literals don't span lines).
 fn positive_src() String {
-  "type Box = .{ xs: Vector<Int> }\n".concat("fn make(n: Int) Int {\n")
+  "type Box = .{ xs: Vector<Int> }\n"
+    .concat("fn make(n: Int) Int {\n")
     .concat("  ys := collect i in range(n) { i * 2 }\n")
     .concat("  b := Box.{ xs: ys }\n")
     .concat("  zs := b.xs\n")
@@ -118,7 +119,8 @@ fn positive_src() String {
 }
 
 fn boxed_src() String {
-  "type Box = .{ xs: Vector<Int> }\n".concat("fn wrap(ys: Vector<Int>) Int {\n")
+  "type Box = .{ xs: Vector<Int> }\n"
+    .concat("fn wrap(ys: Vector<Int>) Int {\n")
     .concat("  b := Box.{ xs: ys }\n")
     .concat("  zs := b.xs\n")
     .concat("  zs[0] + zs.len()\n")
@@ -127,7 +129,8 @@ fn boxed_src() String {
 }
 
 fn bad_consumer_src() String {
-  "type Box = .{ xs: Vector<Int> }\n".concat("fn use_box(n: Int) Vector<Int> {\n")
+  "type Box = .{ xs: Vector<Int> }\n"
+    .concat("fn use_box(n: Int) Vector<Int> {\n")
     .concat("  ys := collect i in range(n) { i * 2 }\n")
     .concat("  b := Box.{ xs: ys }\n")
     .concat("  zs := b.xs\n")
@@ -137,7 +140,8 @@ fn bad_consumer_src() String {
 }
 
 fn multi_field_src() String {
-  "type Pair = .{ a: Vector<Int>, b: Vector<Int> }\n".concat("fn dup(n: Int) Int {\n")
+  "type Pair = .{ a: Vector<Int>, b: Vector<Int> }\n"
+    .concat("fn dup(n: Int) Int {\n")
     .concat("  ys := collect i in range(n) { i * 2 }\n")
     .concat("  p := Pair.{ a: ys, b: ys }\n")
     .concat("  ra := p.a\n")
@@ -153,7 +157,8 @@ fn multi_field_src() String {
 // `Lx = init Lx` that lowering emits before the variant must not break the alias
 // chain that makes this escape visible.
 fn variant_payload_src() String {
-  "type CD = { IntCol(Vector<Int>), Other(Int) }\n".concat("fn build(n: Int) CD {\n")
+  "type CD = { IntCol(Vector<Int>), Other(Int) }\n"
+    .concat("fn build(n: Int) CD {\n")
     .concat("  ys := collect i in range(n) { i * 2 }\n")
     .concat("  CD.IntCol(ys)\n")
     .concat("}\n")
@@ -166,7 +171,8 @@ fn variant_payload_src() String {
 // typed-routable and no consumer escapes, so the field stays typed and the
 // PVecI64-into-PVecI64 copy-through is sound.
 fn record_update_src() String {
-  "type Col = .{ data: Vector<Int>, n: Int }\n".concat("fn build(n: Int) Col {\n")
+  "type Col = .{ data: Vector<Int>, n: Int }\n"
+    .concat("fn build(n: Int) Col {\n")
     .concat("  c := Col.{ data: collect i in range(n) { i }, n }\n")
     .concat("  c.data = collect i in range(n) { i * 2 }\n")
     .concat("  c\n")
@@ -184,7 +190,8 @@ fn record_update_src() String {
 // Contrast multi_field_src, which stores the SAME vector into both fields (and so
 // demotes both). Two distinct typed producers => both fields typed.
 fn two_typed_fields_src() String {
-  "type Pair = .{ a: Vector<Int>, b: Vector<Int>, n: Int }\n".concat("fn mk(n: Int) Pair {\n")
+  "type Pair = .{ a: Vector<Int>, b: Vector<Int>, n: Int }\n"
+    .concat("fn mk(n: Int) Pair {\n")
     .concat("  Pair.{ a: collect i in range(n) { i }, b: collect i in range(n) { i * 3 }, n }\n")
     .concat("}\n")
     .concat("fn use_pair(p: Pair) Int {\n")
@@ -196,7 +203,8 @@ fn two_typed_fields_src() String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("typed record fields")
+  runner
+    .suite("typed record fields")
     .test(
       "positive: collect into field, read via index, is typed",
       fn() {

@@ -10,7 +10,8 @@ fn findings(src: String) Vector<lint.LintFinding> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lint_pass")
+  runner
+    .suite("lint_pass")
     .test(
       "L4: unreachable statement after return",
       fn() {

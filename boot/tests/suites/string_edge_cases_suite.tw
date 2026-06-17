@@ -2,7 +2,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("string edge cases")
+  runner
+    .suite("string edge cases")
     .test(
       "len returns byte length for multibyte",
       fn() {

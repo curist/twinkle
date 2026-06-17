@@ -129,7 +129,8 @@ fn test_builder_config_matches_shared_family_config() Result<Void, String> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("Opt: Semantics")
+  runner
+    .suite("Opt: Semantics")
     .test("vector$len effect is read-only", test_vector_len_effect_is_read_only)
     .test(
       "vector$set_unsafe has in-place equivalent",

@@ -1025,7 +1025,8 @@ pub fn test_plan_recursive_record_terminates() Result<Void, String> {
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("wasm plan")
+  runner
+    .suite("wasm plan")
     .test("FuncSigEntry construction", test_func_sig_entry)
     .test("CaptureEntry construction", test_capture_entry)
     .test("StringPoolEntry construction", test_string_pool_entry)

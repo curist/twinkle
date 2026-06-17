@@ -6,7 +6,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("query stage runner")
+  runner
+    .suite("query stage runner")
     .test(
       "parse uses cache on second run",
       fn() {

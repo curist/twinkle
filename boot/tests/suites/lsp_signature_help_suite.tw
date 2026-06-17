@@ -93,7 +93,8 @@ fn extract_sig_help(step: server_core.Step) SigHelpInfo?!String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp signature help")
+  runner
+    .suite("lsp signature help")
     .test(
       "cursor after open paren reports active parameter 0",
       fn() {

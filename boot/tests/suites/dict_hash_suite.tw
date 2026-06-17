@@ -7,7 +7,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("dict hash")
+  runner
+    .suite("dict hash")
     .test(
       "FNV collision pair: both keys retrieve correctly",
       fn() {

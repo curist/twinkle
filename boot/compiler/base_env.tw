@@ -211,7 +211,8 @@ fn with_reserved_stdlib_origins(env: ResolvedEnv, start_id: Int) ResolvedEnv {
 pub fn builtin_type_env() ResolvedEnv {
   types := builtin_type_entries()
   reserved := reserved_stdlib_type_entries(types.len())
-  env := resolver.empty_env()
+  env := resolver
+    .empty_env()
     .with_types(
       types.concat(reserved),
       builtin_type_names(types).concat(reserved_stdlib_type_names()),
@@ -396,7 +397,8 @@ pub fn builtin_env() ResolvedEnv {
   all_named_type_names := builtin_type_names(builtin_named_types).concat(
     reserved_stdlib_type_names(),
   )
-  env := resolver.empty_env()
+  env := resolver
+    .empty_env()
     .with_types(all_named_types, all_named_type_names)
     .with_registered_functions(sig_fns.concat(prelude_fns).concat(hardcoded))
 
@@ -418,15 +420,16 @@ pub fn builtin_env() ResolvedEnv {
 }
 
 pub fn add_internal_host_builtins(env: ResolvedEnv) ResolvedEnv {
-  env.add_function(
-    builtin_sig(
-      "__host_read_file",
-      [],
-      ["path"],
-      [.String],
-      .Some(.Result(.Vector(.Byte), .String)),
-    ),
-  )
+  env
+    .add_function(
+      builtin_sig(
+        "__host_read_file",
+        [],
+        ["path"],
+        [.String],
+        .Some(.Result(.Vector(.Byte), .String)),
+      ),
+    )
     .add_function(
       builtin_sig("__host_write_file", [], ["path", "text"], [.String, .String], .Some(.Void)),
     )

@@ -35,7 +35,8 @@ fn for_collect_via_into_iterator<C: IntoIterator<E>, E>(c: C) Vector<E> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("range and iterator")
+  runner
+    .suite("range and iterator")
     .test(
       "IntoIterator: user type satisfies via iter() (non-indexable)",
       fn() {
@@ -437,9 +438,7 @@ pub fn suite() runner.Suite {
             }
           },
         )
-        evens := base
-          .filter(fn(x) { x % 2 == 0 })
-          .to_vector()
+        evens := base.filter(fn(x) { x % 2 == 0 }).to_vector()
         try assert.equal(evens.len(), 4)
         try assert.equal(evens[0], 0)
         try assert.equal(evens[1], 2)
@@ -461,9 +460,7 @@ pub fn suite() runner.Suite {
             }
           },
         )
-        out := base
-          .filter(fn(x) { x == 49999 })
-          .to_vector()
+        out := base.filter(fn(x) { x == 49999 }).to_vector()
         try assert.equal(out.len(), 1)
         try assert.equal(out[0], 49999)
         .Ok({})
@@ -556,9 +553,7 @@ pub fn suite() runner.Suite {
             }
           },
         )
-        out := base
-          .take_while(fn(x) { x < 4 })
-          .to_vector()
+        out := base.take_while(fn(x) { x < 4 }).to_vector()
         try assert.equal(out.len(), 4)
         try assert.equal(out[0], 0)
         try assert.equal(out[3], 3)
@@ -578,9 +573,7 @@ pub fn suite() runner.Suite {
             }
           },
         )
-        out := base
-          .drop_while(fn(x) { x < 4 })
-          .to_vector()
+        out := base.drop_while(fn(x) { x < 4 }).to_vector()
         try assert.equal(out.len(), 4)
         try assert.equal(out[0], 4)
         try assert.equal(out[3], 7)
@@ -600,12 +593,8 @@ pub fn suite() runner.Suite {
             }
           },
         )
-        none_a := base
-          .take_while(fn(x) { x < 0 })
-          .to_vector()
-        none_b := base
-          .drop_while(fn(x) { x < 10 })
-          .to_vector()
+        none_a := base.take_while(fn(x) { x < 0 }).to_vector()
+        none_b := base.drop_while(fn(x) { x < 10 }).to_vector()
         try assert.equal(none_a.len(), 0)
         try assert.equal(none_b.len(), 0)
         .Ok({})
@@ -660,10 +649,7 @@ pub fn suite() runner.Suite {
             }
           },
         )
-        adapted := base
-          .map(fn(x) { x + 1 })
-          .filter(fn(x) { x % 2 == 0 })
-          .take(2)
+        adapted := base.map(fn(x) { x + 1 }).filter(fn(x) { x % 2 == 0 }).take(2)
         first := adapted.to_vector()
         second := adapted.to_vector()
         try assert.equal(first.len(), 2)
@@ -713,12 +699,8 @@ pub fn suite() runner.Suite {
           },
         )
         out := base.drop(8).to_vector()
-        rest := base
-          .drop_while(fn(x) { x < 8 })
-          .to_vector()
-        head := base
-          .take_while(fn(x) { x < 3 })
-          .to_vector()
+        rest := base.drop_while(fn(x) { x < 8 }).to_vector()
+        head := base.take_while(fn(x) { x < 3 }).to_vector()
         try assert.equal(out.len(), 2)
         try assert.equal(out[0], 8)
         try assert.equal(rest.len(), 2)

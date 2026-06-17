@@ -22,7 +22,8 @@ fn record_via_param(ctx: Ctx, v: Int) Ctx {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("value-semantics")
+  runner
+    .suite("value-semantics")
     .test(
       "dict: update through alias leaves original untouched",
       fn() {

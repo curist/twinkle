@@ -40,7 +40,8 @@ fn publish_due_now(step: server_core.Step) server_core.Step {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp server core")
+  runner
+    .suite("lsp server core")
     .test(
       "initialize returns minimal capabilities",
       fn() {
@@ -281,7 +282,8 @@ pub fn suite() runner.Suite {
     .test(
       "didChange publishes diagnostics for open importers",
       fn() {
-        docs := document_store.empty()
+        docs := document_store
+          .empty()
           .open("file:///tmp/a.tw", "use dep\nx: Int = dep.answer()\n", .Some(1))
           .open("file:///tmp/dep.tw", "pub fn answer() Int { 1 }\n", .Some(1))
         state := server_core.State.{
@@ -359,7 +361,8 @@ pub fn suite() runner.Suite {
             ]),
           ),
         ])
-        open_step := server_core.initial_state()
+        open_step := server_core
+          .initial_state()
           .handle_message(
             protocol.Message.Notification(.{
               method: "textDocument/didOpen",
@@ -419,7 +422,8 @@ pub fn suite() runner.Suite {
     .test(
       "didChange clears stale importer diagnostics",
       fn() {
-        docs := document_store.empty()
+        docs := document_store
+          .empty()
           .open("file:///tmp/a.tw", "use dep\nx: Int = dep.answer()\n", .Some(1))
           .open("file:///tmp/dep.tw", "pub fn answer() String { \"nope\" }\n", .Some(1))
         state := server_core.State.{
@@ -535,7 +539,8 @@ pub fn suite() runner.Suite {
     .test(
       "formatting returns a full-document edit",
       fn() {
-        docs := document_store.empty()
+        docs := document_store
+          .empty()
           .open("file:///tmp/format.tw", "fn f() String { \"\\u{0065}\" }", .Some(1))
         state := server_core.State.{
           initialized: true,
@@ -576,7 +581,8 @@ pub fn suite() runner.Suite {
       "codeAction returns quickfix for unused import diagnostic data",
       fn() {
         // Set up a document with an unused import
-        docs := document_store.empty()
+        docs := document_store
+          .empty()
           .open("file:///tmp/action.tw", "use foo.{A, B}\nx := A\n", .Some(1))
         state := server_core.State.{
           initialized: true,
@@ -682,7 +688,8 @@ pub fn suite() runner.Suite {
       "didOpen publishes unused import diagnostics with data for code actions",
       fn() {
         // Open two files: dep defines something, main imports but doesn't use one
-        docs := document_store.empty()
+        docs := document_store
+          .empty()
           .open(
             "file:///tmp/dep.tw",
             "pub fn used_fn() Int { 1 }\npub fn unused_fn() Int { 2 }\n",

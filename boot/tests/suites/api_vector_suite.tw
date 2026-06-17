@@ -206,7 +206,8 @@ fn expect_range(actual: Vector<Int>, start: Int, end: Int) Result<Void, String> 
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("vector")
+  runner
+    .suite("vector")
     .test(
       "literal construction and len",
       fn() {

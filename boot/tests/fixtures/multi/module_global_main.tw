@@ -9,6 +9,7 @@ use .module_global_lib
 own := module_global_lib.Config.{ name: "main", level: module_global_consts.c0 }
 
 fn describe() String {
-  "${module_global_lib.config.name}:${module_global_lib.config.level.to_string()}:${module_global_lib.secret_token()
+  "${module_global_lib.config.name}:${module_global_lib.config.level.to_string()}:${module_global_lib
+    .secret_token()
     .to_string()}:${own.name}:${own.level.to_string()}"
 }

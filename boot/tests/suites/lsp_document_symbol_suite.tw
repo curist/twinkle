@@ -104,7 +104,8 @@ fn find_symbol(symbols: Vector<SymbolInfo>, name: String) SymbolInfo? {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp document symbol")
+  runner
+    .suite("lsp document symbol")
     .test(
       "functions appear as symbols",
       fn() {

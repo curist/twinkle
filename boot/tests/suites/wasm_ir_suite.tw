@@ -365,7 +365,8 @@ fn test_wasm_module_with_func() Result<Void, String> {
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("wasm ir types")
+  runner
+    .suite("wasm ir types")
     .test("HeapType Named", test_heap_type_named)
     .test("HeapType all variants", test_heap_type_variants)
     .test("ValType scalars", test_val_type_scalars)

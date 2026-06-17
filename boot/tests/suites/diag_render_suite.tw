@@ -25,7 +25,8 @@ fn ctx() RenderCtx {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("diag_render")
+  runner
+    .suite("diag_render")
     .test(
       "TypeMismatch: severity is Error",
       fn() {

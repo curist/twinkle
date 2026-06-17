@@ -35,10 +35,9 @@ pub fn find_node_in_stmt(stmt: Stmt, offset: Int) NodeContext? {
         return .None
       }
 
-      find_in_opt_expr(fs.iter, offset).or_else(fn() { find_in_opt_expr(fs.condition, offset) }).or_else(fn() { find_node_in_block(
-        fs.body,
-        offset,
-      ) })
+      find_in_opt_expr(fs.iter, offset)
+        .or_else(fn() { find_in_opt_expr(fs.condition, offset) })
+        .or_else(fn() { find_node_in_block(fs.body, offset) })
     },
     .Return(rs) => if rs.span.contains(offset) {
       find_in_opt_expr(rs.value, offset)
@@ -108,10 +107,9 @@ fn find_child_node(expr: Expr, offset: Int) NodeContext? {
       offset,
     ) }),
     .BlockExpr(block) => find_node_in_block(block, offset),
-    .If(cond_e, then_block, else_expr) => find_node_in_expr(cond_e, offset).or_else(fn() { find_node_in_block(
-      then_block,
-      offset,
-    ) }).or_else(fn() { find_in_opt_expr(else_expr, offset) }),
+    .If(cond_e, then_block, else_expr) => find_node_in_expr(cond_e, offset)
+      .or_else(fn() { find_node_in_block(then_block, offset) })
+      .or_else(fn() { find_in_opt_expr(else_expr, offset) }),
     .Case(scrutinee, arms) => find_node_in_expr(scrutinee, offset).or_else(fn() { find_node_in_case_arms(
       arms,
       scrutinee,
@@ -123,10 +121,9 @@ fn find_child_node(expr: Expr, offset: Int) NodeContext? {
     .NamedRecord(_, entries) => find_node_in_entries(entries, offset),
     .Variant(_, fields) => find_node_in_exprs(fields, offset),
     .Closure(_, _, body) => find_node_in_block(body, offset),
-    .Collect(col) => find_in_opt_expr(col.iter, offset).or_else(fn() { find_in_opt_expr(
-      col.condition,
-      offset,
-    ) }).or_else(fn() { find_node_in_block(col.body, offset) }),
+    .Collect(col) => find_in_opt_expr(col.iter, offset)
+      .or_else(fn() { find_in_opt_expr(col.condition, offset) })
+      .or_else(fn() { find_node_in_block(col.body, offset) }),
     .StringInterp(parts) => find_node_in_interp(parts, offset),
     _ => .None,
   }

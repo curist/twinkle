@@ -70,7 +70,8 @@ fn emit_materialized_closure(fid: FuncId, env_buf: Vector<Instr>, ctx: EmitCtx, 
     .Some(cl_mono) => case layout_of(cl_mono, ctx.env) {
       .Closure(cl) => {
         typed_tramp_sym := "$typed_tramp_${fid.id}"
-        buf.append(.RefFunc(tramp_sym))
+        buf
+          .append(.RefFunc(tramp_sym))
           .concat(env_buf)
           .append(.RefFunc(typed_tramp_sym))
           .append(.StructNew(cl.closure_sym))
@@ -168,7 +169,8 @@ fn try_emit_typed_closure_call(
         fns,
       )
 
-      out := buf.append(.LocalGet(entry.index))
+      out := buf
+        .append(.LocalGet(entry.index))
         .append(.RefTest(true, .Named(cl.closure_sym)))
         .append(.If(.None, typed_buf, fallback_buf))
 
@@ -192,7 +194,8 @@ pub fn emit_global_closure_call(
   fns: ClosureEmitFns,
 ) Vector<Instr> {
   // env (field 1)
-  out := buf.append(.GlobalGet(sym))
+  out := buf
+    .append(.GlobalGet(sym))
     .append(.RefCast(true, .Named("rt_types__Closure")))
     .append(.StructGet("rt_types__Closure", 1))
 
@@ -218,7 +221,8 @@ pub fn emit_global_closure_call(
     .Never => out,
     _ => {
       out = if is_sum_mono(result_mono, ctx.env) {
-        out.append(.RefCast(true, .Named("rt_types__Variant")))
+        out
+          .append(.RefCast(true, .Named("rt_types__Variant")))
           .append(.Call(variant_to_sum_helper_sym(result_mono)))
       } else {
         emit_unbox_from_anyref(result_mono, ctx.env, out)
@@ -238,7 +242,8 @@ fn emit_universal_closure_call(
   fns: ClosureEmitFns,
 ) Vector<Instr> {
   // Get env (field 1)
-  out := buf.append(.LocalGet(entry.index))
+  out := buf
+    .append(.LocalGet(entry.index))
     .append(.RefCast(true, .Named("rt_types__Closure")))
     .append(.StructGet("rt_types__Closure", 1))
 
@@ -268,7 +273,8 @@ fn emit_universal_closure_call(
     .Never => out,
     _ => {
       out = if is_sum_mono(result_mono, ctx.env) {
-        out.append(.RefCast(true, .Named("rt_types__Variant")))
+        out
+          .append(.RefCast(true, .Named("rt_types__Variant")))
           .append(.Call(variant_to_sum_helper_sym(result_mono)))
       } else {
         emit_unbox_from_anyref(result_mono, ctx.env, out)
@@ -326,7 +332,8 @@ pub fn emit_closure_tail_call(
       fallback_buf := emit_universal_closure_call_and_return(entry, args, result_mono, ctx, fns)
 
       // Branch on whether the closure has the concrete struct
-      out := buf.append(.LocalGet(entry.index))
+      out := buf
+        .append(.LocalGet(entry.index))
         .append(.RefTest(true, .Named(cl.closure_sym)))
         .append(.If(.None, typed_buf, fallback_buf))
 
@@ -379,7 +386,8 @@ fn emit_universal_closure_call_and_return(
     .Never => out.append(.Unreachable),
     _ => {
       out = if is_sum_mono(result_mono, ctx.env) {
-        out.append(.RefCast(true, .Named("rt_types__Variant")))
+        out
+          .append(.RefCast(true, .Named("rt_types__Variant")))
           .append(.Call(variant_to_sum_helper_sym(result_mono)))
       } else {
         emit_unbox_from_anyref(result_mono, ctx.env, out)

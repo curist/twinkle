@@ -3,7 +3,8 @@ use tests.helpers.codegen_harness
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("task concurrency")
+  runner
+    .suite("task concurrency")
     .test(
       "spawn and await returns value",
       fn() {

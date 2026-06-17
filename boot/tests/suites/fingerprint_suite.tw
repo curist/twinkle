@@ -15,7 +15,8 @@ fn exports_for(source: String) ModuleExports {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("fingerprint")
+  runner
+    .suite("fingerprint")
     .test(
       "same source produces same fingerprint",
       fn() {

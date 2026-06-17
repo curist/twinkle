@@ -272,7 +272,8 @@ fn prepared_pf(params: Vector<Param>, body: AnfExpr, mono_map: Dict<Int, MonoTyp
 
 // ── repr_of_mono tests ────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("backend repr assign (Phase 4b)")
+  runner
+    .suite("backend repr assign (Phase 4b)")
     .test("Int → I64", fn() { assert_repr(.Int, .I64) })
     .test("Float → F64", fn() { assert_repr(.Float, .F64) })
     .test("Bool → I32", fn() { assert_repr(.Bool, .I32) })

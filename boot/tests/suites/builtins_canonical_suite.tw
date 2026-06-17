@@ -13,7 +13,8 @@ fn empty_registry() BuiltinRegistry {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("builtins canonical mapping")
+  runner
+    .suite("builtins canonical mapping")
     .test(
       "entry canonical_name is None after plain registration",
       fn() {
@@ -26,10 +27,9 @@ pub fn suite() runner.Suite {
     .test(
       "with_canonical sets canonical_name on entry",
       fn() {
-        reg := empty_registry().runtime("string$len", "rt.str", "len").with_canonical(
-          "String.len",
-          "string$len",
-        )
+        reg := empty_registry()
+          .runtime("string$len", "rt.str", "len")
+          .with_canonical("String.len", "string$len")
         entry := try reg.entry(reg.id("string$len")).ok_or("missing")
         try assert.is_some(entry.canonical_name)
         cn := try entry.canonical_name.ok_or("no canonical_name")
@@ -40,10 +40,9 @@ pub fn suite() runner.Suite {
     .test(
       "with_canonical adds entry to by_canonical index",
       fn() {
-        reg := empty_registry().runtime("vector$append", "rt.arr", "push").with_canonical(
-          "Vector.append",
-          "vector$append",
-        )
+        reg := empty_registry()
+          .runtime("vector$append", "rt.arr", "push")
+          .with_canonical("Vector.append", "vector$append")
         entry := try reg.entry_by_canonical("Vector.append").ok_or("not in by_canonical")
         try assert.equal(entry.name, "vector$append")
         .Ok({})
@@ -60,14 +59,11 @@ pub fn suite() runner.Suite {
     .test(
       "id_by_canonical returns same FuncId as internal lookup",
       fn() {
-        reg := empty_registry().runtime("string$len", "rt.str", "len").runtime(
-          "vector$append",
-          "rt.arr",
-          "push",
-        ).with_canonical("String.len", "string$len").with_canonical(
-          "Vector.append",
-          "vector$append",
-        )
+        reg := empty_registry()
+          .runtime("string$len", "rt.str", "len")
+          .runtime("vector$append", "rt.arr", "push")
+          .with_canonical("String.len", "string$len")
+          .with_canonical("Vector.append", "vector$append")
         try assert.equal(reg.id_by_canonical("String.len").id, reg.id("string$len").id)
         try assert.equal(reg.id_by_canonical("Vector.append").id, reg.id("vector$append").id)
         .Ok({})
@@ -76,10 +72,11 @@ pub fn suite() runner.Suite {
     .test(
       "multiple canonical names can map to different internal names",
       fn() {
-        reg := empty_registry().runtime("dict$new", "rt.dict", "make").intrinsic("cell$new").with_canonical(
-          "Dict.new",
-          "dict$new",
-        ).with_canonical("Cell.new", "cell$new")
+        reg := empty_registry()
+          .runtime("dict$new", "rt.dict", "make")
+          .intrinsic("cell$new")
+          .with_canonical("Dict.new", "dict$new")
+          .with_canonical("Cell.new", "cell$new")
         try assert.equal(reg.id_by_canonical("Dict.new").id, reg.id("dict$new").id)
         try assert.equal(reg.id_by_canonical("Cell.new").id, reg.id("cell$new").id)
         .Ok({})
@@ -175,10 +172,9 @@ pub fn suite() runner.Suite {
     .test(
       "entry_by_canonical returns entry with correct kind",
       fn() {
-        reg := empty_registry().runtime("string$len", "rt.str", "len").with_canonical(
-          "String.len",
-          "string$len",
-        )
+        reg := empty_registry()
+          .runtime("string$len", "rt.str", "len")
+          .with_canonical("String.len", "string$len")
         entry := try reg.entry_by_canonical("String.len").ok_or("missing")
 
         case entry.kind {

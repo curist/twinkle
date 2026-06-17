@@ -8,7 +8,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp diagnostics")
+  runner
+    .suite("lsp diagnostics")
     .test(
       "converts query diagnostics to publishDiagnostics",
       fn() {

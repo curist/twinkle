@@ -16,7 +16,8 @@ fn doc(uri: String, text: String, version: Int) diagnostics.DocumentInput {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("query diagnostics")
+  runner
+    .suite("query diagnostics")
     .test(
       "clean document has no diagnostics",
       fn() {

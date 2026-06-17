@@ -73,9 +73,11 @@ pub fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Inst
   layout := layout_of(mono, env)
 
   case layout {
-    .Scalar(.WI64) => buf.append(.RefCast(false, .Named("rt_types__BoxedInt")))
+    .Scalar(.WI64) => buf
+      .append(.RefCast(false, .Named("rt_types__BoxedInt")))
       .append(.StructGet("rt_types__BoxedInt", 0)),
-    .Scalar(.WF64) => buf.append(.RefCast(false, .Named("rt_types__BoxedFloat")))
+    .Scalar(.WF64) => buf
+      .append(.RefCast(false, .Named("rt_types__BoxedFloat")))
       .append(.StructGet("rt_types__BoxedFloat", 0)),
     .Scalar(.WI32) => {
       // Could be Bool or Byte — both use i31ref
@@ -91,7 +93,8 @@ pub fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Inst
     .Scalar(.WExternref) => buf.append(.ExternConvertAny),
     .Scalar(.WNullableExternref) => buf.append(.ExternConvertAny),
     .Record(r) => buf.append(.RefCast(false, .Named(r.sym))),
-    .Sum(_) => buf.append(.RefCast(true, .Named("rt_types__Variant")))
+    .Sum(_) => buf
+      .append(.RefCast(true, .Named("rt_types__Variant")))
       .append(.Call(variant_to_sum_helper_sym(mono))),
     .Closure(_) => buf.append(.RefCast(false, .Named("rt_types__Closure"))),
     .Vector_(_) => buf.append(.RefCast(false, .Named("rt_types__PVec"))),

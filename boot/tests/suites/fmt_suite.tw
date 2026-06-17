@@ -85,7 +85,8 @@ fn test_dollar_string_formatting() Result<Void, String> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("fmt")
+  runner
+    .suite("fmt")
     .test("preserves right-nested non-associative binary parens", assert_fmt_case("binary_parens"))
     .test("breaks logical or chains by alternative", assert_fmt_case("logical_or_chain"))
     .test("formats declarations and top-level spacing", assert_fmt_case("declarations"))

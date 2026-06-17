@@ -22,7 +22,8 @@ fn plan_deps(module: ast.Module, path: String, root: String) Result<imports.Depe
 
 pub fn suite() runner.Suite {
   root := get_project_root()
-  runner.suite("imports")
+  runner
+    .suite("imports")
     .test(
       "no imports produces empty plan",
       fn() {

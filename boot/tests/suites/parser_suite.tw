@@ -139,7 +139,8 @@ fn assert_snapshot(fixture_path: String) Result<Void, String> {
 
 // ── Suite ────────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("parser")
+  runner
+    .suite("parser")
     .test(
       "import: bare use",
       fn() {

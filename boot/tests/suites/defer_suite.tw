@@ -2,7 +2,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("defer")
+  runner
+    .suite("defer")
     .test(
       "basic LIFO order",
       fn() {

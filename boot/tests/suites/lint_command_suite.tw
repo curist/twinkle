@@ -21,7 +21,8 @@ fn analyze_src(text: String, lint_mode: Bool) analyze.ModuleResult {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lint_command")
+  runner
+    .suite("lint_command")
     .test(
       "apply_edits: single range replacement",
       fn() {

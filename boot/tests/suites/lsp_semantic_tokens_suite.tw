@@ -146,7 +146,8 @@ fn token_count(data: Vector<Int>) Int {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp semantic tokens")
+  runner
+    .suite("lsp semantic tokens")
     .test(
       "function declaration gets function token with declaration modifier",
       fn() {

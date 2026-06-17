@@ -419,7 +419,8 @@ fn test_struct_array_instructions() Result<Void, String> {
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("wat (M8)")
+  runner
+    .suite("wat (M8)")
     .test("empty module emits (module)", test_empty_module)
     .test("struct type def", test_struct_type_def)
     .test("struct type with supertype", test_struct_type_with_supertype)

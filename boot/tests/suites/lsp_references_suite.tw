@@ -84,7 +84,8 @@ fn ref_result_count(step: server_core.Step) Int!String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp references")
+  runner
+    .suite("lsp references")
     .test(
       "find refs for local variable",
       fn() {

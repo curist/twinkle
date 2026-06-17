@@ -11,7 +11,8 @@ fn ov_doc(path: String, text: String) overlay.OverlayDocument {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("query analyze (shared path)")
+  runner
+    .suite("query analyze (shared path)")
     .test(
       "single module analysis succeeds via overlay",
       fn() {

@@ -4,7 +4,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("char literal")
+  runner
+    .suite("char literal")
     .test(
       "ASCII code points",
       fn() {

@@ -4,7 +4,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp document store")
+  runner
+    .suite("lsp document store")
     .test(
       "opens and gets a document",
       fn() {

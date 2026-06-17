@@ -20,7 +20,8 @@ fn linker_stress_key(i: Int) String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("dict")
+  runner
+    .suite("dict")
     .test(
       "new creates empty dict",
       fn() {

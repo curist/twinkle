@@ -28,7 +28,8 @@ fn expected_tree_string() String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("semantic tree stringify")
+  runner
+    .suite("semantic tree stringify")
     .test(
       "custom recursive container satisfies Stringify",
       fn() {

@@ -152,7 +152,8 @@ fn count_label(labels: Vector<String>, target: String) Int {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp completion")
+  runner
+    .suite("lsp completion")
     .test(
       "member completion on vector shows len",
       fn() {

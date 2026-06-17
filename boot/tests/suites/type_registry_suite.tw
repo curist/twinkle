@@ -3,7 +3,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("type registry")
+  runner
+    .suite("type registry")
     .test(
       "empty registry starts at given id",
       fn() {

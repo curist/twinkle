@@ -5,7 +5,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("stdlib host")
+  runner
+    .suite("stdlib host")
     .test(
       "proc.args returns a vector",
       fn() {

@@ -249,7 +249,8 @@ fn emit_br_table_match(mc: MatchCtx, arms: Vector<PreparedMatchArm>, buf: Vector
     }
   }
 
-  dispatch := mc.scrutinee_instrs.append(.StructGet(sum_layout.sym, 0))
+  dispatch := mc.scrutinee_instrs
+    .append(.StructGet(sum_layout.sym, 0))
     .append(.BrTable(table_labels, default_label))
   nested_body := dispatch
 
@@ -403,7 +404,8 @@ fn emit_tail_br_table_match(tc: TailMatchCtx, arms: Vector<PreparedMatchArm>, bu
     }
   }
 
-  dispatch := tc.scrutinee_instrs.append(.StructGet(sum_layout.sym, 0))
+  dispatch := tc.scrutinee_instrs
+    .append(.StructGet(sum_layout.sym, 0))
     .append(.BrTable(table_labels, default_label))
   nested_body := dispatch
 
@@ -590,7 +592,8 @@ fn emit_string_length_dispatch(
   if buckets.len() == 1 {
     len := buckets[0].len
 
-    return scrutinee_instrs.append(.RefAsNonNull)
+    return scrutinee_instrs
+      .append(.RefAsNonNull)
       .append(.ArrayLen)
       .append(.I32Const(len))
       .append(.I32Ne)
@@ -619,7 +622,8 @@ fn emit_string_length_dispatch(
       labels = .append(label_for_string_length(buckets, len, default_label, result_idx))
     }
 
-    return scrutinee_instrs.append(.RefAsNonNull)
+    return scrutinee_instrs
+      .append(.RefAsNonNull)
       .append(.ArrayLen)
       .append(.I32Const(min_len))
       .append(.I32Sub)
@@ -807,7 +811,8 @@ fn emit_byte_branch_chain(
 
   head := branches[0]
   tail := branches.slice(1, branches.len())
-  cond_e := mc.scrutinee_instrs.append(.RefAsNonNull)
+  cond_e := mc.scrutinee_instrs
+    .append(.RefAsNonNull)
     .append(.I32Const(pos))
     .append(.ArrayGetU("rt_types__String"))
     .append(.I32Const(head.byte))

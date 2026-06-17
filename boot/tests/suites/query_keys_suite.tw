@@ -3,7 +3,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("query keys")
+  runner
+    .suite("query keys")
     .test(
       "hash_text empty string matches reference",
       fn() {

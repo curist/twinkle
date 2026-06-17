@@ -10,7 +10,8 @@ fn make_point(x: Int, y: Int) Point {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("equality matrix")
+  runner
+    .suite("equality matrix")
     .test(
       "vector equality: equal flat vectors",
       fn() {

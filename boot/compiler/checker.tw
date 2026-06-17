@@ -804,7 +804,8 @@ fn prove_contract_method(
   fn_name := try resolve_method_func_name(ty, req.method_name, ctx.env).ok_or(
     "missing ${contract_requirement_summary(req)}",
   )
-  sig := try ctx.env.lookup_registered_function(fn_name)
+  sig := try ctx.env
+    .lookup_registered_function(fn_name)
     .ok_or("missing ${contract_requirement_summary(req)}")
   inst := instantiate(sig, ctx)
   expected_param_count := req.receiver_param_count + req.arg_shapes.len()
@@ -819,7 +820,8 @@ fn prove_contract_method(
     return .Err("unsupported contract receiver shape for ${contract_name(contract)}")
   }
 
-  recv_ctx := try inst.ctx.silent_unify(ty, inst.params[0])
+  recv_ctx := try inst.ctx
+    .silent_unify(ty, inst.params[0])
     .ok_or("${req.method_name} does not apply to ${ctx.env.ty_to_string_env(ty)}")
 
   // The receiver-determined element type (functional dependency Self -> Elem).
@@ -845,7 +847,8 @@ fn prove_contract_method(
       .Int => MonoType.Int,
       .Elem => elem_ty,
     }
-    recv_ctx = try recv_ctx.silent_unify(expected_arg, inst.params[param_idx])
+    recv_ctx = try recv_ctx
+      .silent_unify(expected_arg, inst.params[param_idx])
       .ok_or(
         "${req.method_name} parameter ${param_idx} does not match ${ctx.env.ty_to_string_env(ty)}",
       )
@@ -856,7 +859,8 @@ fn prove_contract_method(
 
   // Unify (not compare) so an `Elem`/`Receiver` return binds against the
   // satisfier's actual return type; for concrete shapes this is an equality check.
-  recv_ctx = try recv_ctx.silent_unify(expected_ret, ret_ty)
+  recv_ctx = try recv_ctx
+    .silent_unify(expected_ret, ret_ty)
     .ok_or(
       "${req.method_name} returns ${recv_ctx.env.ty_to_string_env(ret_ty)}, expected ${recv_ctx.env.ty_to_string_env(
         expected_ret,

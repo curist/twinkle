@@ -64,7 +64,8 @@ fn palindrome_via_view<C: IndexRead<E>, E: Eq>(c: C) Bool {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("view")
+  runner
+    .suite("view")
     .test(
       "from wraps the whole backing",
       fn() {
@@ -204,9 +205,7 @@ pub fn suite() runner.Suite {
       fn() {
         // Window to [20,30,40], then sub past its end: clamps within the
         // already-narrowed window, never escaping back into the source.
-        v := view
-          .from([10, 20, 30, 40, 50])
-          .sub(1, 4)
+        v := view.from([10, 20, 30, 40, 50]).sub(1, 4)
         w := v.sub(1, 99)
         try assert.equal(w.len(), 2)
         try assert.equal(w.at(0), 30)
@@ -233,10 +232,7 @@ pub fn suite() runner.Suite {
     .test(
       "to_vector materializes the window",
       fn() {
-        v := view
-          .from([10, 20, 30, 40])
-          .drop_first()
-          .drop_last()
+        v := view.from([10, 20, 30, 40]).drop_first().drop_last()
         out := v.to_vector()
         try assert.equal(out.len(), 2)
         try assert.equal(out[0], 20)
@@ -247,9 +243,7 @@ pub fn suite() runner.Suite {
     .test(
       "fold accumulates over the window",
       fn() {
-        v := view
-          .from([1, 2, 3, 4])
-          .drop_first()
+        v := view.from([1, 2, 3, 4]).drop_first()
         total := v.fold(0, fn(acc, x) { acc + x })
         try assert.equal(total, 9)
         .Ok({})
@@ -284,30 +278,10 @@ pub fn suite() runner.Suite {
       "take_while and drop_while return zero-copy subviews",
       fn() {
         v := view.from([1, 2, 3, 2, 1])
-        try assert.equal(
-          v
-            .take_while(fn(x) { x < 3 })
-            .to_vector(),
-          [1, 2],
-        )
-        try assert.equal(
-          v
-            .drop_while(fn(x) { x < 3 })
-            .to_vector(),
-          [3, 2, 1],
-        )
-        try assert.equal(
-          v
-            .take_while(fn(x) { x < 0 })
-            .len(),
-          0,
-        )
-        try assert.equal(
-          v
-            .drop_while(fn(x) { x < 9 })
-            .len(),
-          0,
-        )
+        try assert.equal(v.take_while(fn(x) { x < 3 }).to_vector(), [1, 2])
+        try assert.equal(v.drop_while(fn(x) { x < 3 }).to_vector(), [3, 2, 1])
+        try assert.equal(v.take_while(fn(x) { x < 0 }).len(), 0)
+        try assert.equal(v.drop_while(fn(x) { x < 9 }).len(), 0)
         .Ok({})
       },
     )
@@ -331,16 +305,9 @@ pub fn suite() runner.Suite {
         }
         try assert.equal(value, 30)
         try assert.equal(calls.get(), 3)
+        try assert.equal(view.from([1, 2, 3, 4]).count_where(fn(x) { x % 2 == 0 }), 2)
         try assert.equal(
-          view
-            .from([1, 2, 3, 4])
-            .count_where(fn(x) { x % 2 == 0 }),
-          2,
-        )
-        try assert.equal(
-          view
-            .from([1, 2, 3])
-            .zip_with(view.from([10, 20]), fn(a, b) { a + b }),
+          view.from([1, 2, 3]).zip_with(view.from([10, 20]), fn(a, b) { a + b }),
           [11, 22],
         )
         .Ok({})
@@ -349,40 +316,18 @@ pub fn suite() runner.Suite {
     .test(
       "chunks and windows carve view windows",
       fn() {
-        chunks := view
-          .from([1, 2, 3, 4, 5])
-          .chunks(2)
+        chunks := view.from([1, 2, 3, 4, 5]).chunks(2)
         try assert.equal(chunks.len(), 3)
         try assert.equal(chunks[0].to_vector(), [1, 2])
         try assert.equal(chunks[2].to_vector(), [5])
-        try assert.equal(
-          view
-            .from([1, 2, 3])
-            .chunks(0)
-            .len(),
-          0,
-        )
+        try assert.equal(view.from([1, 2, 3]).chunks(0).len(), 0)
 
-        windows := view
-          .from([1, 2, 3, 4])
-          .windows(3)
+        windows := view.from([1, 2, 3, 4]).windows(3)
         try assert.equal(windows.len(), 2)
         try assert.equal(windows[0].to_vector(), [1, 2, 3])
         try assert.equal(windows[1].to_vector(), [2, 3, 4])
-        try assert.equal(
-          view
-            .from([1, 2])
-            .windows(3)
-            .len(),
-          0,
-        )
-        try assert.equal(
-          view
-            .from([1, 2])
-            .windows(0)
-            .len(),
-          0,
-        )
+        try assert.equal(view.from([1, 2]).windows(3).len(), 0)
+        try assert.equal(view.from([1, 2]).windows(0).len(), 0)
         .Ok({})
       },
     )

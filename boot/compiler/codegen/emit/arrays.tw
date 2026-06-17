@@ -43,7 +43,8 @@ pub fn emit_array_literal(
 
   // Small literals fit entirely in the tail.
   if n <= 32 {
-    out := buf.append(.I32Const(n))
+    out := buf
+      .append(.I32Const(n))
       .append(.I32Const(0))
       .append(.RefNull(.Named("rt_types__VecInternal")))
 
@@ -65,7 +66,8 @@ pub fn emit_array_literal(
   // Larger literals must populate the trie prefix as elements spill past the
   // tail. Build them by repeated rt.arr.push calls so the runtime maintains the
   // correct root/tail shape.
-  out := buf.append(.I32Const(0))
+  out := buf
+    .append(.I32Const(0))
     .append(.I32Const(0))
     .append(.RefNull(.Named("rt_types__VecInternal")))
     .append(.ArrayNewFixed("rt_types__Array", 0))
@@ -176,7 +178,8 @@ pub fn emit_index_op(
             some_instrs = emit_erased_container_egress(value_mono, ctx.env, some_instrs)
             out := fns.emit_atom(base, ctx, buf)
             out = fns.emit_erased_container_ingress(index, ctx, out)
-            out.append(.Call("rt_dict__get"))
+            out
+              .append(.Call("rt_dict__get"))
               .append(.RefIsNull)
               .append(.If(.Some(result_vt_ext), none_instrs, some_instrs))
           } else {
@@ -199,7 +202,8 @@ pub fn emit_index_op(
             some_instrs = .append(.StructNew(sum_layout.sym))
             out := fns.emit_atom(base, ctx, buf)
             out = fns.emit_erased_container_ingress(index, ctx, out)
-            out.append(.Call("rt_dict__get"))
+            out
+              .append(.Call("rt_dict__get"))
               .append(.RefIsNull)
               .append(.If(.Some(.Ref(false, .Named(sum_layout.sym))), none_instrs, some_instrs))
           }

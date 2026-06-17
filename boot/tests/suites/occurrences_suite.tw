@@ -69,7 +69,8 @@ fn sample_index() occ.OccurrenceIndex {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("occurrences")
+  runner
+    .suite("occurrences")
     .test(
       "encode_symbol_key is injective across variants and arguments",
       fn() {

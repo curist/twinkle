@@ -3,7 +3,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("utf16")
+  runner
+    .suite("utf16")
     .test(
       "code unit length follows scalar range",
       fn() {

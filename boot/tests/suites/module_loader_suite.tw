@@ -6,7 +6,8 @@ use tests.runner
 
 pub fn suite() runner.Suite {
   root := loader.find_project_root(".")
-  runner.suite("module loader")
+  runner
+    .suite("module loader")
     .test(
       "find_project_root finds nearest twinkle.toml",
       fn() {

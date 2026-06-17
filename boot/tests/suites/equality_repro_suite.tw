@@ -4,7 +4,8 @@ use tests.runner
 type Point = .{ x: Int, y: Int }
 
 pub fn suite() runner.Suite {
-  runner.suite("equality repros")
+  runner
+    .suite("equality repros")
     .test(
       "vector structural equality repro",
       fn() {

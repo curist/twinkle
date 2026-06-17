@@ -263,7 +263,8 @@ fn first_unwrap_mono(expr: AnfExpr) MonoType? {
 
 // ── Tests ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("insert_boundaries (M4)")
+  runner
+    .suite("insert_boundaries (M4)")
     .test(
       "empty module passthrough",
       fn() {

@@ -81,7 +81,8 @@ fn hint_kinds(step: server_core.Step) Vector<Int>!String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp inlay hints")
+  runner
+    .suite("lsp inlay hints")
     .test(
       "type hint for inferred binding",
       fn() {
@@ -212,9 +213,7 @@ pub fn suite() runner.Suite {
         labels := try hint_labels(step)
 
         // Count how many ": Int" hints — should NOT have one for the annotated closure param
-        count := labels
-          .filter(fn(l) { l == ": Int" })
-          .len()
+        count := labels.filter(fn(l) { l == ": Int" }).len()
         try assert.equal(count, 0)
         .Ok({})
       },

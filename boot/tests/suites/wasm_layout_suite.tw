@@ -498,7 +498,8 @@ fn test_layout_record_vector_int_field_stays_boxed_when_not_flagged() Result<Voi
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("wasm layout")
+  runner
+    .suite("wasm layout")
     .test("WasmValType variants", test_wasm_val_type_variants)
     .test("layout_of Int", test_layout_int)
     .test("layout_of Float", test_layout_float)

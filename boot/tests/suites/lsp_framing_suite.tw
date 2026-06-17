@@ -3,7 +3,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp framing")
+  runner
+    .suite("lsp framing")
     .test(
       "encodes content length header",
       fn() {

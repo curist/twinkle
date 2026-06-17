@@ -32,7 +32,8 @@ fn require_method(type_name: String, method_name: String) Result<String, String>
 
 // ── function signature presence ──────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("base_env guardrails")
+  runner
+    .suite("base_env guardrails")
     .test(
       "builtin_env has string$len",
       fn() {

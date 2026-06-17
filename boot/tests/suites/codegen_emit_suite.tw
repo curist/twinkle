@@ -747,7 +747,8 @@ fn test_non_tail_closure_call_no_return_call_ref() Result<Void, String> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("codegen emit")
+  runner
+    .suite("codegen emit")
     .test(
       "function slots are not reinterpreted as module globals",
       test_param_local_id_can_overlap_module_global_id,

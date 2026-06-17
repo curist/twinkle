@@ -278,7 +278,8 @@ fn test_loop_push_reassign_elem_rejects_base_as_element() Result<Void, String> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("Opt: Analysis")
+  runner
+    .suite("Opt: Analysis")
     .test(
       "op uses local non-recursive direct operand",
       test_op_uses_local_non_recursive_direct_operand,

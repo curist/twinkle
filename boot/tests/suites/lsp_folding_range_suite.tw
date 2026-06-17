@@ -55,7 +55,8 @@ fn parse_folding_ranges(step: server_core.Step) Vector<FoldInfo>!String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp folding range")
+  runner
+    .suite("lsp folding range")
     .test(
       "fold multiline function",
       fn() {

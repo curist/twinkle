@@ -966,7 +966,8 @@ fn test_link_rewrites_array_new_data() Result<Void, String> {
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("linker (M9)")
+  runner
+    .suite("linker (M9)")
     .test("link empty modules", test_link_empty_modules)
     .test("single module qualifies funcs", test_link_single_module_qualifies_funcs)
     .test("single module qualifies types", test_link_single_module_qualifies_types)

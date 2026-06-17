@@ -2,7 +2,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("builtin identity collision")
+  runner
+    .suite("builtin identity collision")
     .test(
       "user functions may reuse internal builtin names",
       fn() {

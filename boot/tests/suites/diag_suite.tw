@@ -11,7 +11,8 @@ fn s(start: Int, end: Int) Span {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("diag")
+  runner
+    .suite("diag")
     .test(
       "has_errors is false for empty list",
       fn() {

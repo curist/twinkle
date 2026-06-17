@@ -33,7 +33,8 @@ fn compiler_mono_type_int() mono_type.MonoType {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("fix")
+  runner
+    .suite("fix")
     .test(
       "fixes: missing variants produces one fix with arm-text edits",
       fn() {

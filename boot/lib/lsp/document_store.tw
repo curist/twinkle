@@ -50,7 +50,8 @@ pub fn change_incremental(
     return store
   }
 
-  updated := doc.text.slice(0, start_offset)
+  updated := doc.text
+    .slice(0, start_offset)
     .concat(new_text)
     .concat(doc.text.slice(end_offset, doc.text.len()))
   store.put(make_document(uri, updated, version))

@@ -52,7 +52,8 @@ fn has_role(idx: occ.OccurrenceIndex, name: String, role: occ.OccurrenceRole) Bo
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("occurrence build (lexical)")
+  runner
+    .suite("occurrence build (lexical)")
     .test(
       "local let declaration and use resolve to one symbol",
       fn() {

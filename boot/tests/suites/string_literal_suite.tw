@@ -26,7 +26,8 @@ fn lex_diag_messages(src: String) String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("string literals")
+  runner
+    .suite("string literals")
     .test(
       "raw single-line keeps backslashes literal",
       fn() {

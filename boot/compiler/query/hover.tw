@@ -163,7 +163,8 @@ fn hover_function_decl(ctx: HoverContext, decl: FunctionDecl) HoverResult? {
     }
   }
 
-  ctx.hover_type_params(decl.type_params)
+  ctx
+    .hover_type_params(decl.type_params)
     .or_else(fn() { ctx.hover_function_params(decl.params, sig) })
     .or_else(fn() { ctx.hover_optional_type_expr(decl.return_type) })
     .or_else(fn() { ctx.hover_block(decl.body) })
@@ -338,7 +339,8 @@ fn hover_block(ctx: HoverContext, block: Block) HoverResult? {
 }
 
 fn hover_stmt(ctx: HoverContext, stmt: Stmt) HoverResult? {
-  ctx.hover_stmt_special(stmt)
+  ctx
+    .hover_stmt_special(stmt)
     .or_else(fn() {
       node := try find_node_in_stmt(stmt, ctx.offset)
       ctx.hover_for_node(node)
@@ -422,12 +424,9 @@ fn hover_for_node(ctx: HoverContext, node: NodeContext) HoverResult? {
         start: expr.span.end - field.len(),
         end: expr.span.end,
       }
-      hover_recorded_method(expr.id, base, field_span, typed).or_else(fn() { hover_method(
-        base,
-        field,
-        field_span,
-        typed,
-      ) }).or_else(fn() { expr_type(expr, typed) })
+      hover_recorded_method(expr.id, base, field_span, typed)
+        .or_else(fn() { hover_method(base, field, field_span, typed) })
+        .or_else(fn() { expr_type(expr, typed) })
     },
     .PatternNode(pat, scrutinee) => {
       s := try scrutinee

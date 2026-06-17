@@ -4,7 +4,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("stdlib path")
+  runner
+    .suite("stdlib path")
     .test(
       "is_absolute detects leading slash",
       fn() {

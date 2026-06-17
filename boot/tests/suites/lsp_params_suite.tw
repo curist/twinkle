@@ -13,7 +13,8 @@ fn text_doc_item(uri: String, version: Int, text: String) json.Json {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp params")
+  runner
+    .suite("lsp params")
     .test(
       "decodes didOpen params",
       fn() {

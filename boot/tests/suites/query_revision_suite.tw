@@ -7,7 +7,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("query revision")
+  runner
+    .suite("query revision")
     .test(
       "empty store starts at revision 0",
       fn() {

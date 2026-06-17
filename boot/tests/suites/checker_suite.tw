@@ -297,7 +297,8 @@ fn type_at_nth(result: checker.CheckResult, src: String, needle: String, n: Int)
 
 // ── Suite ────────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("checker")
+  runner
+    .suite("checker")
     .test(
       "int literal",
       fn() {
@@ -1499,7 +1500,8 @@ pub fn suite() runner.Suite {
           span: span.Span.{ file_id: 0, start: 0, end: 0 },
           is_extern: false,
         }
-        env := resolver.empty_env()
+        env := resolver
+          .empty_env()
           .register_type_entry(color_entry, "dep.Color")
           .bind_type("Color", color_tid)
         src := "fn f(c: Color) Int {\ncase c {\nColor.Red => 1,\nColor.Blue => 2,\n}\n}"
@@ -1558,7 +1560,8 @@ pub fn suite() runner.Suite {
           span: span.Span.{ file_id: 0, start: 0, end: 0 },
           is_extern: false,
         }
-        env := resolver.empty_env()
+        env := resolver
+          .empty_env()
           .register_type_entry(iter_entry, "dep.Iterator")
           .bind_type("Iterator", iter_tid)
         src := "fn f(it: Iterator<Int>) Void { for x in it { x } }"
@@ -2061,7 +2064,8 @@ pub fn suite() runner.Suite {
           doc: .None,
           extern_module: .None,
         }
-        env := resolver.empty_env()
+        env := resolver
+          .empty_env()
           .register_type_entry(point_entry, "dep.Point")
           .bind_type("Point", point_tid)
           .add_function(len_sig)

@@ -27,7 +27,8 @@ fn pop_value(opt: Pop<Int>?) Int {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("stdlib heap")
+  runner
+    .suite("stdlib heap")
     .test(
       "new heap is empty",
       fn() {

@@ -120,9 +120,11 @@ fn test_phase4_record_field_access() Result<Void, String> {
     .Some(d) => d,
     .None => { return .Err("failed to create dollar sign") },
   }
-  src: String = "type Pair = .{ x: Int, y: Int }\nfn main() Void { p := Pair.{ x: 41, y: 1 }\nprintln(\"".concat(
-    dollar,
-  ).concat("{p.x}\")\nprintln(\"").concat(dollar).concat("{p.y}\") }\nmain()\n")
+  src: String = "type Pair = .{ x: Int, y: Int }\nfn main() Void { p := Pair.{ x: 41, y: 1 }\nprintln(\""
+    .concat(dollar)
+    .concat("{p.x}\")\nprintln(\"")
+    .concat(dollar)
+    .concat("{p.y}\") }\nmain()\n")
   wat := try assert_codegen_src_compiles(src, "phase 4 record field access")
   try assert.str_contains(wat, "struct.get")
   .Ok({})
@@ -777,7 +779,8 @@ fn test_dict_index_materializes_typed_option() Result<Void, String> {
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("codegen integration (M11)")
+  runner
+    .suite("codegen integration (M11)")
     .test("emit_wat produces valid linked WAT", test_emit_wat_basic)
     .test(
       "codegen compiles a simple source program end to end",

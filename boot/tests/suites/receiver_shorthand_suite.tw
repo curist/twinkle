@@ -8,7 +8,8 @@ type Inner = .{ count: Vector<Int> }
 type Outer = .{ inner: Inner }
 
 pub fn suite() runner.Suite {
-  runner.suite("receiver shorthand")
+  runner
+    .suite("receiver shorthand")
     .test(
       "basic method shorthand",
       fn() {

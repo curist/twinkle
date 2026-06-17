@@ -7,7 +7,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("source")
+  runner
+    .suite("source")
     .test(
       "span len computes byte length",
       fn() {

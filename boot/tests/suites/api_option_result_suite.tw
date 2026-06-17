@@ -72,7 +72,8 @@ fn find_positive(xs: Vector<Int>) Int? {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("option and result")
+  runner
+    .suite("option and result")
     .test(
       "option some and none construction",
       fn() {

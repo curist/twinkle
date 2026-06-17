@@ -4,7 +4,8 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp protocol")
+  runner
+    .suite("lsp protocol")
     .test(
       "decode request message",
       fn() {

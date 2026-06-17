@@ -24,7 +24,8 @@ fn add(a: Adder, n: Int) Int {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("first-class method")
+  runner
+    .suite("first-class method")
     .test(
       "extract and call method value",
       fn() {

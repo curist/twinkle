@@ -33,7 +33,8 @@ fn doubled(c: Carrier) Int {
 type AliasCarrier = Carrier
 
 pub fn suite() runner.Suite {
-  runner.suite("alias re-export")
+  runner
+    .suite("alias re-export")
     .test(
       "non-generic alias value passes to underlying-typed function",
       fn() {

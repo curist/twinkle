@@ -94,7 +94,8 @@ fn result_uri(step: server_core.Step) String!String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp type definition")
+  runner
+    .suite("lsp type definition")
     .test(
       "initialize advertises typeDefinitionProvider",
       fn() {
