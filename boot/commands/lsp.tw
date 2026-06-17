@@ -8,6 +8,8 @@ use lib.lsp.framing
 use lib.lsp.protocol
 use lib.lsp.server_core
 
+type LoopState = .{ state: server_core.State, buffer: Vector<Byte> }
+
 pub fn run_lsp_command(_parsed: ParseResult) {
   // Streaming transport: read stdin incrementally, decode as many complete
   // frames as are available, and write byte-exact framed responses to stdout.
@@ -24,56 +26,86 @@ pub fn run_lsp_command(_parsed: ParseResult) {
       break
     }
 
-    if chunk.len() == 0 {
-      continue
+    if chunk.len() > 0 {
+      processed := process_buffer(.{ state, buffer: buffer.concat(chunk) })
+      state = processed.state
+      buffer = processed.buffer
     }
 
-    buffer = .concat(chunk)
-
-    for true {
-      decoded := case framing.try_decode_frame_bytes(buffer) {
-        .Ok(result) => result,
-        .Err(msg) => {
-          eprintln("error: invalid LSP frame: ${msg}")
-          proc.exit(1)
-        },
-      }
-
-      case decoded {
-        .NeedMoreBytes => { break },
-        .DecodedBytes(frame, rest) => {
-          message := case protocol.parse_message(frame.body) {
-            .Ok(msg) => msg,
-            .Err(msg) => {
-              eprintln("error: invalid JSON-RPC message: ${msg}")
-              proc.exit(1)
-            },
-          }
-          step := state.handle_message(message)
-          state = step.state
-
-          for out in step.outgoing {
-            io.write_stdout_text(framing.encode_message(out.stringify()))
-          }
-
-          buffer = rest
-
-          if state.should_exit {
-            break
-          }
-        },
-      }
+    if state.should_exit {
+      break
     }
 
-    step := state.publish_due_diagnostics()
-    state = step.state
+    // Workspace diagnostics is a synchronous compile that can take hundreds of
+    // milliseconds. Before committing to it, drain any input that is already
+    // waiting and handle it first — a format-on-save request in particular must
+    // not be left blocked behind the compile. The compile only runs once the
+    // client is genuinely idle.
+    if state.diagnostics_due() {
+      pending := io.read_stdin_timeout(4096, 0)
 
-    for out in step.outgoing {
-      io.write_stdout_text(framing.encode_message(out.stringify()))
+      if pending.len() > 0 {
+        processed := process_buffer(.{ state, buffer: buffer.concat(pending) })
+        state = processed.state
+        buffer = processed.buffer
+        continue
+      }
+
+      step := state.publish_due_diagnostics()
+      state = step.state
+
+      for out in step.outgoing {
+        io.write_stdout_text(framing.encode_message(out.stringify()))
+      }
     }
   }
 
   if state.should_exit and !state.shutdown_requested {
     proc.exit(1)
   }
+}
+
+// Decode and handle every complete frame currently buffered, writing each
+// response as it is produced. Returns the advanced state and the unconsumed
+// trailing bytes (a partial frame awaiting more input).
+fn process_buffer(loop_state: LoopState) LoopState {
+  state := loop_state.state
+  buffer := loop_state.buffer
+
+  for true {
+    decoded := case framing.try_decode_frame_bytes(buffer) {
+      .Ok(result) => result,
+      .Err(msg) => {
+        eprintln("error: invalid LSP frame: ${msg}")
+        proc.exit(1)
+      },
+    }
+
+    case decoded {
+      .NeedMoreBytes => { break },
+      .DecodedBytes(frame, rest) => {
+        message := case protocol.parse_message(frame.body) {
+          .Ok(msg) => msg,
+          .Err(msg) => {
+            eprintln("error: invalid JSON-RPC message: ${msg}")
+            proc.exit(1)
+          },
+        }
+        step := state.handle_message(message)
+        state = step.state
+
+        for out in step.outgoing {
+          io.write_stdout_text(framing.encode_message(out.stringify()))
+        }
+
+        buffer = rest
+
+        if state.should_exit {
+          break
+        }
+      },
+    }
+  }
+
+  .{ state, buffer }
 }

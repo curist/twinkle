@@ -685,6 +685,10 @@ pub fn next_poll_timeout_ms(state: State) Int? {
   }
 }
 
+pub fn diagnostics_due(state: State) Bool {
+  state.diagnostics_pending and date.now() >= state.diagnostics_deadline_ms
+}
+
 pub fn publish_due_diagnostics(state: State) Step {
   if state.diagnostics_pending and date.now() >= state.diagnostics_deadline_ms {
     state.diagnostics_pending = false
