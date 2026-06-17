@@ -149,6 +149,7 @@ pub fn suite() runner.Suite {
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
           last_published_versions: Dict.new(),
+          closure_snapshot: .None,
         }
         params := json.object([
           json.kv(
@@ -184,6 +185,7 @@ pub fn suite() runner.Suite {
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
           last_published_versions: Dict.new(),
+          closure_snapshot: .None,
         }
         change_event := json.object([
           json.kv("text", .Str(" beautiful")),
@@ -231,6 +233,7 @@ pub fn suite() runner.Suite {
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
           last_published_versions: Dict.new(),
+          closure_snapshot: .None,
         }
 
         // First change: replace "bbb" (line 1, char 0..3) with "ccc"
@@ -295,6 +298,7 @@ pub fn suite() runner.Suite {
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
           last_published_versions: Dict.new(),
+          closure_snapshot: .None,
         }
         params := json.object([
           json.kv(
@@ -435,6 +439,7 @@ pub fn suite() runner.Suite {
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
           last_published_versions: Dict.new(),
+          closure_snapshot: .None,
         }
         params := json.object([
           json.kv(
@@ -470,6 +475,7 @@ pub fn suite() runner.Suite {
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
           last_published_versions: Dict.new(),
+          closure_snapshot: .None,
         }
         params := json.object([
           json.kv("textDocument", json.object([json.kv("uri", .Str("file:///a.tw"))])),
@@ -551,6 +557,7 @@ pub fn suite() runner.Suite {
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
           last_published_versions: Dict.new(),
+          closure_snapshot: .None,
         }
         params := json.object([
           json.kv("textDocument", json.object([json.kv("uri", .Str("file:///tmp/format.tw"))])),
@@ -593,6 +600,7 @@ pub fn suite() runner.Suite {
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
           last_published_versions: Dict.new(),
+          closure_snapshot: .None,
         }
 
         // Build a codeAction request with a diagnostic carrying fix data
@@ -709,6 +717,7 @@ pub fn suite() runner.Suite {
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
           last_published_versions: Dict.new(),
+          closure_snapshot: .None,
         }
 
         // Trigger diagnostics via didChange on the main file
@@ -781,6 +790,7 @@ pub fn suite() runner.Suite {
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
           last_published_versions: Dict.new(),
+          closure_snapshot: .None,
         }
 
         // Diagnostic without data

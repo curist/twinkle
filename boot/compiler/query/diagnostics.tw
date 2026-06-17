@@ -9,6 +9,7 @@
 /// remains self-contained here.
 
 use compiler.base_env
+use compiler.imports
 use compiler.query.analyze
 use compiler.query.cache
 use compiler.query.stage_runner
@@ -39,6 +40,7 @@ pub type WorkspaceAnalysisResult = .{
   cache: cache.Store,
   diagnostics: Vector<Diagnostic>,
   diagnostics_by_uri: Vector<DiagnosticGroup>,
+  snapshot: analyze.ClosureSnapshot?,
 }
 
 pub type WorkspaceInput = .{
@@ -87,7 +89,11 @@ pub fn analyze_document(store: cache.Store, input: DocumentInput) AnalysisResult
   .{ cache: cur_cache, diagnostics: [] }
 }
 
-pub fn analyze_workspace(store: cache.Store, input: WorkspaceInput) WorkspaceAnalysisResult {
+pub fn analyze_workspace(
+  store: cache.Store,
+  input: WorkspaceInput,
+  prior_snapshot: analyze.ClosureSnapshot?,
+) WorkspaceAnalysisResult {
   entry_id := case identity.from_file_uri(input.entry_uri) {
     .Ok(id) => id,
     .Err(err) => {
@@ -97,6 +103,7 @@ pub fn analyze_workspace(store: cache.Store, input: WorkspaceInput) WorkspaceAna
         cache: store,
         diagnostics: diags,
         diagnostics_by_uri: group_diagnostics(diags, input.open_documents),
+        snapshot: .None,
       }
     },
   }
@@ -112,14 +119,107 @@ pub fn analyze_workspace(store: cache.Store, input: WorkspaceInput) WorkspaceAna
 
   base := base_env.builtin_env()
   ov := overlay.from_documents(docs)
-  state := analyze.new_state(base, store, ov, input.project_root)
+  roots := imports.make_canonical_roots(input.project_root)
+  entry_canonical := imports.canonical_module_path(entry_id.path, roots)
+
+  // Mirror load_source's change detection for open documents up front. The reuse
+  // path short-circuits dependencies (so load_source never runs for them); doing
+  // this here invalidates the module_hash of any changed open dependency before
+  // the reuse decision, keeping analyze_workspace correct on its own rather than
+  // relying on the caller to have noted the change.
+  cur_store := store
+
+  for doc in input.open_documents {
+    case identity.from_file_uri(doc.uri) {
+      .Ok(did) => {
+        canon := imports.canonical_module_path(did.path, roots)
+        cur_store = .note_source_hash(canon, keys.hash_text(doc.text))
+      },
+      .Err(_) => {},
+    }
+  }
+
+  // Reuse a prior dependency-closure snapshot when it belongs to this entry and
+  // every closure module is still clean (its module_hash survived cache
+  // invalidation). On reuse the entry's dependencies short-circuit and only the
+  // entry module is re-analyzed.
+  reuse: analyze.ClosureSnapshot? = case prior_snapshot {
+    .Some(s) => if s.entry == entry_canonical and all_closure_clean(cur_store, s) {
+      .Some(s)
+    } else {
+      .None
+    },
+    .None => .None,
+  }
+
+  state0 := analyze.new_state(base, cur_store, ov, input.project_root).with_snapshot_capture()
+  state := case reuse {
+    .Some(s) => state0.restore_snapshot(s),
+    .None => state0,
+  }
+
+  is_reuse := case reuse {
+    .Some(_) => true,
+    .None => false,
+  }
+  reuse_dep_diags: Vector<analyze.AnalysisDiag> = []
+
+  case reuse {
+    .Some(s) => {
+      reuse_dep_diags = s.dep_diagnostics
+    },
+    .None => {},
+  }
+
   result := analyze.analyze_module(entry_id, "__entry", base, state, [])
-  diags := dedupe_diagnostics(convert_analysis_diags(result.diagnostics))
+
+  // On reuse the dependency diagnostics were not recomputed (deps
+  // short-circuited), so prepend the closure diagnostics carried in the snapshot.
+  combined: Vector<analyze.AnalysisDiag> = if is_reuse {
+    reuse_dep_diags.concat(result.diagnostics)
+  } else {
+    result.diagnostics
+  }
+
+  // The freshly re-captured snapshot has empty dep diagnostics on the reuse path
+  // (deps short-circuited); carry the unchanged closure diagnostics forward.
+  snapshot_out: analyze.ClosureSnapshot? = .None
+
+  case result.state.entry_snapshot {
+    .Some(ns) => {
+      fixed := ns
+
+      if is_reuse {
+        fixed.dep_diagnostics = reuse_dep_diags
+      }
+
+      snapshot_out = .Some(fixed)
+    },
+    .None => {},
+  }
+
+  diags := dedupe_diagnostics(convert_analysis_diags(combined))
   .{
     cache: result.state.cache,
     diagnostics: diags,
     diagnostics_by_uri: group_diagnostics(diags, input.open_documents),
+    snapshot: snapshot_out,
   }
+}
+
+/// A snapshot is reusable only if every module in its dependency closure is
+/// still clean — i.e. its module_hash survived cache invalidation. Editing any
+/// closure module clears its module_hash (and its reverse-dependents'), so this
+/// detects when the closure changed.
+fn all_closure_clean(store: cache.Store, s: analyze.ClosureSnapshot) Bool {
+  for m in s.closure_modules {
+    case store.module_hash(m) {
+      .Some(_) => {},
+      .None => { return false },
+    }
+  }
+
+  true
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────

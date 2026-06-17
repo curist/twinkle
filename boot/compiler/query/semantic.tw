@@ -223,7 +223,7 @@ pub fn snapshot_workspace(store: cache.Store, input: diagnostics.WorkspaceInput)
   }
 
   // Run full workspace analysis (resolves imports from disk/overlays).
-  result := diagnostics.analyze_workspace(store, input)
+  result := diagnostics.analyze_workspace(store, input, .None)
   cur_cache := result.cache
 
   // Find the canonical path for this entry so we can look up cached artifacts.

@@ -116,6 +116,11 @@ pub type AnalysisState = .{
   // Review mode (twk lint): when on, the checker collects rewrites; set only by
   // the `twk lint` entry point. Off for build/check/LSP.
   lint_mode: Bool,
+  // Closure-snapshot capture: when on, the entry module (the only one analyzed
+  // with caller_id == .None) records a ClosureSnapshot of its dependency state
+  // before analyzing its own module. Set only by the LSP diagnostics path.
+  capture_snapshot: Bool,
+  entry_snapshot: ClosureSnapshot?,
 }
 
 /// Public surface needed by downstream modules when importing this module.
@@ -126,6 +131,25 @@ pub type ModuleInterface = .{
   exported_function_names: Vector<String>,
   type_origins: Dict<Int, String>,
   fingerprint: Int,
+}
+
+/// Snapshot of the analysis state for an entry's dependency closure, captured
+/// after the entry's dependencies are analyzed and before the entry's own
+/// module. Lets a re-analysis of the same entry with an unchanged closure
+/// restore the state and re-run only the entry module, skipping the dependency
+/// walk and import-merge. See docs/plans/lsp-diagnostics-closure-snapshot.md.
+pub type ClosureSnapshot = .{
+  entry: String,
+  entry_dep_paths: Vector<String>,
+  closure_modules: Vector<String>,
+  exports: Dict<String, ModuleExports>,
+  interfaces: Dict<String, ModuleInterface>,
+  shared_types: Vector<SharedTypeEntry>,
+  shared_type_origins: Dict<Int, String>,
+  module_order: Vector<String>,
+  module_runners: Dict<String, stage_runner.Runner>,
+  failed: Dict<String, Bool>,
+  dep_diagnostics: Vector<AnalysisDiag>,
 }
 
 /// A safe rewrite (`twk lint --fix-<rule>`) tagged with its file path. Populated
@@ -229,7 +253,29 @@ pub fn new_state(base: ResolvedEnv, store: cache.Store, ov: overlay.Overlay, pro
     counts: empty_counts(),
     import_timings: [],
     lint_mode: false,
+    capture_snapshot: false,
+    entry_snapshot: .None,
   }
+}
+
+/// Enable closure-snapshot capture for this analysis (LSP diagnostics path).
+pub fn with_snapshot_capture(state: AnalysisState) AnalysisState {
+  state.capture_snapshot = true
+  state
+}
+
+/// Restore a previously captured dependency-closure snapshot so the entry's
+/// dependencies short-circuit (their exports are present, hitting the
+/// already-analyzed early return) and only the entry module is re-analyzed.
+pub fn restore_snapshot(state: AnalysisState, s: ClosureSnapshot) AnalysisState {
+  state.exports = s.exports
+  state.interfaces = s.interfaces
+  state.shared_types = s.shared_types
+  state.shared_type_origins = s.shared_type_origins
+  state.module_order = s.module_order
+  state.module_runners = s.module_runners
+  state.failed = s.failed
+  state
 }
 
 /// Analyze a module and all its transitive dependencies.
@@ -369,6 +415,33 @@ fn analyze_module_impl(
   }
 
   cur := deps.state
+
+  // Capture the dependency-closure snapshot for the entry module (the only one
+  // reached with caller_id == .None) before analyzing its own module, so a
+  // later re-edit of the same entry can restore it and skip the dependency walk.
+  if cur.capture_snapshot {
+    case caller_id {
+      .None => cur.entry_snapshot = .Some(
+        .{
+          entry: canonical,
+          entry_dep_paths: collect dep in dep_plan.dependencies {
+            dep.canonical_path
+          },
+          closure_modules: cur.module_order,
+          exports: cur.exports,
+          interfaces: cur.interfaces,
+          shared_types: cur.shared_types,
+          shared_type_origins: cur.shared_type_origins,
+          module_order: cur.module_order,
+          module_runners: cur.module_runners,
+          failed: cur.failed,
+          dep_diagnostics: deps.diagnostics,
+        },
+      ),
+      .Some(_) => {},
+    }
+  }
+
   t_hash0 := date.now()
   hashes := dependency_hashes(cur.cache, dep_plan)
 

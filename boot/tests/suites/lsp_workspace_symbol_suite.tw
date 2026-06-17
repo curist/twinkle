@@ -17,6 +17,7 @@ fn state_with_doc(uri: String, text: String) server_core.State {
     diagnostics_pending: false,
     diagnostics_deadline_ms: 0.0,
     last_published_versions: Dict.new(),
+    closure_snapshot: .None,
   }
 }
 
@@ -38,6 +39,7 @@ fn state_with_docs(entries: Vector<DocEntry>) server_core.State {
     diagnostics_pending: false,
     diagnostics_deadline_ms: 0.0,
     last_published_versions: Dict.new(),
+    closure_snapshot: .None,
   }
 }
 
@@ -160,6 +162,7 @@ pub fn suite() runner.Suite {
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
           last_published_versions: Dict.new(),
+          closure_snapshot: .None,
         }
         step := state.handle_message(ws_symbol_request(1, "foo"))
         symbols := try extract_symbols(step)

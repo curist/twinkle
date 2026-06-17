@@ -182,6 +182,7 @@ pub fn suite() runner.Suite {
               doc(dep, "pub fn answer() Int { 42 }\n", 1),
             ],
           },
+          .None,
         )
         try assert.equal(result.diagnostics.len(), 0)
         .Ok({})
@@ -202,6 +203,7 @@ pub fn suite() runner.Suite {
               doc(dep, "pub fn answer() Int { 42 }\n", 1),
             ],
           },
+          .None,
         )
         try assert.equal(result.diagnostics.len(), 0)
         .Ok({})
@@ -219,6 +221,7 @@ pub fn suite() runner.Suite {
             project_root: root,
             open_documents: [doc(entry, "use @std.path\nx := path.join(\"a\", \"b\")\n", 1)],
           },
+          .None,
         )
         try assert.equal(result.diagnostics.len(), 0)
         .Ok({})
@@ -239,6 +242,7 @@ pub fn suite() runner.Suite {
               doc(dep, "pub fn answer() Int { 42 }\n", 1),
             ],
           },
+          .None,
         )
         second := diagnostics.analyze_workspace(
           first.cache,
@@ -250,6 +254,7 @@ pub fn suite() runner.Suite {
               doc(dep, "pub fn answer() Int { 42 }\n", 1),
             ],
           },
+          .None,
         )
         try assert.equal(second.diagnostics.len(), 0)
         stats := second.cache.get_stats()
@@ -274,6 +279,7 @@ pub fn suite() runner.Suite {
               doc(dep, "pub fn answer() Int { 42 }\n", 1),
             ],
           },
+          .None,
         )
         second := diagnostics.analyze_workspace(
           first.cache,
@@ -285,12 +291,128 @@ pub fn suite() runner.Suite {
               doc(dep, "pub fn answer() String { \"nope\" }\n", 2),
             ],
           },
+          .None,
         )
         try assert.is_true(second.diagnostics.len() > 0)
         stats := second.cache.get_stats()
         try assert.is_true(stats.parse_hits > 0)
         try assert.is_true(stats.resolve_misses > 0)
         try assert.is_true(stats.typecheck_misses > 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "closure snapshot reuse stays correct across an entry edit",
+      fn() {
+        entry := "file:///tmp/twinkle-query-snap/main.tw"
+        dep := "file:///tmp/twinkle-query-snap/snap_dep.tw"
+        first := diagnostics.analyze_workspace(
+          cache.empty(),
+          .{
+            entry_uri: entry,
+            project_root: "/tmp/twinkle-query-snap",
+            open_documents: [
+              doc(entry, "use snap_dep as dep\nx := dep.answer()\n", 1),
+              doc(dep, "pub fn answer() Int { 42 }\n", 1),
+            ],
+          },
+          .None,
+        )
+        try assert.equal(first.diagnostics.len(), 0)
+
+        // A snapshot was captured for the entry.
+        try assert.is_true(case first.snapshot {
+          .Some(_) => true,
+          .None => false,
+        })
+
+        // Re-analyze the same entry with the snapshot; the dependency is
+        // unchanged so it must short-circuit and stay clean.
+        second := diagnostics.analyze_workspace(
+          first.cache,
+          .{
+            entry_uri: entry,
+            project_root: "/tmp/twinkle-query-snap",
+            open_documents: [
+              doc(entry, "use snap_dep as dep\nx := dep.answer()\ny := 1\n", 2),
+              doc(dep, "pub fn answer() Int { 42 }\n", 1),
+            ],
+          },
+          first.snapshot,
+        )
+        try assert.equal(second.diagnostics.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "closure snapshot reuse still reports entry errors",
+      fn() {
+        entry := "file:///tmp/twinkle-query-snap/main.tw"
+        dep := "file:///tmp/twinkle-query-snap/snap_dep.tw"
+        first := diagnostics.analyze_workspace(
+          cache.empty(),
+          .{
+            entry_uri: entry,
+            project_root: "/tmp/twinkle-query-snap",
+            open_documents: [
+              doc(entry, "use snap_dep as dep\nx := dep.answer()\n", 1),
+              doc(dep, "pub fn answer() Int { 42 }\n", 1),
+            ],
+          },
+          .None,
+        )
+
+        // Edit the entry to reference an undefined name; the reused snapshot
+        // must not mask the freshly introduced entry error.
+        second := diagnostics.analyze_workspace(
+          first.cache,
+          .{
+            entry_uri: entry,
+            project_root: "/tmp/twinkle-query-snap",
+            open_documents: [
+              doc(entry, "use snap_dep as dep\nx := undefined_entry_name()\n", 2),
+              doc(dep, "pub fn answer() Int { 42 }\n", 1),
+            ],
+          },
+          first.snapshot,
+        )
+        try assert.is_true(second.diagnostics.len() > 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "closure snapshot busts when a dependency changes",
+      fn() {
+        entry := "file:///tmp/twinkle-query-snap/main.tw"
+        dep := "file:///tmp/twinkle-query-snap/snap_dep.tw"
+        first := diagnostics.analyze_workspace(
+          cache.empty(),
+          .{
+            entry_uri: entry,
+            project_root: "/tmp/twinkle-query-snap",
+            open_documents: [
+              doc(entry, "use snap_dep as dep\nx: Int = dep.answer()\n", 1),
+              doc(dep, "pub fn answer() Int { 42 }\n", 1),
+            ],
+          },
+          .None,
+        )
+
+        // The dependency's return type changes; passing the stale snapshot must
+        // not reuse it (the closure module changed), so the type error surfaces.
+        second := diagnostics.analyze_workspace(
+          first.cache,
+          .{
+            entry_uri: entry,
+            project_root: "/tmp/twinkle-query-snap",
+            open_documents: [
+              doc(entry, "use snap_dep as dep\nx: Int = dep.answer()\n", 1),
+              doc(dep, "pub fn answer() String { \"nope\" }\n", 2),
+            ],
+          },
+          first.snapshot,
+        )
+        try assert.is_true(second.diagnostics.len() > 0)
         .Ok({})
       },
     )
@@ -309,6 +431,7 @@ pub fn suite() runner.Suite {
               doc(dep, "pub fn answer() String { \"nope\" }\n", 2),
             ],
           },
+          .None,
         )
         try assert.is_true(result.diagnostics.len() > 0)
         try assert.equal(result.diagnostics_by_uri.len(), 2)
@@ -341,6 +464,7 @@ pub fn suite() runner.Suite {
               doc(dep, "pub fn answer() String { 42 }\n", 3),
             ],
           },
+          .None,
         )
         try assert.is_true(result.diagnostics.len() > 0)
         try assert.equal(result.diagnostics[0].uri, dep)
@@ -360,6 +484,7 @@ pub fn suite() runner.Suite {
             project_root: "/tmp",
             open_documents: [doc(entry, "use missing\nx := 1\n", 2)],
           },
+          .None,
         )
         try assert.is_true(result.diagnostics.len() > 0)
         try assert.equal(result.diagnostics[0].uri, entry)
@@ -383,6 +508,7 @@ pub fn suite() runner.Suite {
               doc(b, "use a\npub bv := a.av + 1\n", 1),
             ],
           },
+          .None,
         )
         try assert.is_true(result.diagnostics.len() > 0)
         try assert.equal(result.diagnostics[0].stage, "import")
@@ -407,6 +533,7 @@ pub fn suite() runner.Suite {
               doc(dep, "pub fn value() Int { 1 }\n", 1),
             ],
           },
+          .None,
         )
         try assert.equal(first.diagnostics.len(), 0)
 
@@ -421,6 +548,7 @@ pub fn suite() runner.Suite {
               doc(dep, "pub fn value() Int { 999 }\n", 2),
             ],
           },
+          .None,
         )
         try assert.equal(second.diagnostics.len(), 0)
 
@@ -447,6 +575,7 @@ pub fn suite() runner.Suite {
               doc(dep, "pub fn used_fn() Int { 1 }\npub fn unused_fn() Int { 2 }\n", 1),
             ],
           },
+          .None,
         )
 
         // Should have an unused import diagnostic for unused_fn

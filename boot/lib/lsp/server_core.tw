@@ -11,6 +11,7 @@ use compiler.fmt.formatter
 use compiler.imports
 use compiler.lexer
 use compiler.parser
+use compiler.query.analyze
 use compiler.query.cache as query_cache
 use compiler.query.completion as query_completion
 use compiler.query.definition as query_definition
@@ -57,6 +58,7 @@ pub type State = .{
   diagnostics_pending: Bool,
   diagnostics_deadline_ms: Float,
   last_published_versions: Dict<String, Int>,
+  closure_snapshot: analyze.ClosureSnapshot?,
 }
 
 pub type Step = .{ state: State, outgoing: Vector<json.Json> }
@@ -71,6 +73,7 @@ pub fn initial_state() State {
     diagnostics_pending: false,
     diagnostics_deadline_ms: 0.0,
     last_published_versions: Dict.new(),
+    closure_snapshot: .None,
   }
 }
 
@@ -750,8 +753,10 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
     result := query_diagnostics.analyze_workspace(
       cur_cache,
       .{ entry_uri: entry.uri, project_root: root, open_documents: overlay_docs },
+      state.closure_snapshot,
     )
     cur_cache = result.cache
+    state.closure_snapshot = result.snapshot
 
     for group in result.diagnostics_by_uri {
       if group.diagnostics.len() == 0 and group.uri != entry.identity.uri {
@@ -786,8 +791,10 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
       extra := query_diagnostics.analyze_workspace(
         cur_cache,
         .{ entry_uri: doc.uri, project_root: root, open_documents: overlay_docs },
+        state.closure_snapshot,
       )
       cur_cache = extra.cache
+      state.closure_snapshot = extra.snapshot
 
       for group in extra.diagnostics_by_uri {
         if group.diagnostics.len() == 0 and group.uri != doc.identity.uri {
