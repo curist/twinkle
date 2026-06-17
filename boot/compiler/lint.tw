@@ -1,10 +1,10 @@
 /// Structural lints for `twk lint` (report-only, no auto-fix).
 ///
 /// A pure AST visitor over a parsed Module, producing LintFindings. Run only in
-/// review mode (see docs/plans/linter.md). Currently: L4 unreachable-code,
-/// L3 record-copy-helper.
+/// review mode (see docs/plans/linter.md). Currently: L3 record-copy-helper,
+/// L4 unreachable-code, L5 direct-rebinding.
 
-use compiler.ast.{Block, Expr, FunctionDecl, Module, RecordEntry, Stmt, TypeExpr}
+use compiler.ast.{Block, Expr, ForStmt, FunctionDecl, Module, RecordEntry, Stmt, TypeExpr}
 use compiler.resolver.{ResolvedEnv}
 use lib.source.span.{Span}
 
@@ -66,7 +66,7 @@ fn is_error_call(expr: Expr) Bool {
 }
 
 fn lint_block(block: Block) Vector<LintFinding> {
-  out: Vector<LintFinding> = []
+  out: Vector<LintFinding> = lint_direct_rebinding(block)
   diverged := false
   reported := false
 
@@ -239,6 +239,316 @@ fn lint_record_entries(entries: Vector<RecordEntry>) Vector<LintFinding> {
       .Some(e) => out = .concat(lint_expr(e)),
       .None => {},
     }
+  }
+
+  out
+}
+
+// ── L5: direct-rebinding ─────────────────────────────────────────────
+/// Root identifier of a field/index path expression, else `.None`.
+fn path_root(e: Expr) String? {
+  case e.kind {
+    .Ident(n) => .Some(n),
+    .Field(base, _) => path_root(base),
+    .Index(base, _) => path_root(base),
+    _ => .None,
+  }
+}
+
+/// True for an identifier plus field-only postfixes (no indexes, no calls).
+fn is_field_path(e: Expr) Bool {
+  case e.kind {
+    .Ident(_) => true,
+    .Field(base, _) => is_field_path(base),
+    _ => false,
+  }
+}
+
+/// Structural equality of field/index path expressions (no source text).
+fn same_path(a: Expr, b: Expr) Bool {
+  case a.kind {
+    .Ident(na) => case b.kind {
+      .Ident(nb) => na == nb,
+      _ => false,
+    },
+    .Field(ba, fa) => case b.kind {
+      .Field(bb, fb) => fa == fb and same_path(ba, bb),
+      _ => false,
+    },
+    .Index(ba, ia) => case b.kind {
+      .Index(bb, ib) => same_path(ba, bb) and same_path(ia, ib),
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn is_ident_named(e: Expr, name: String) Bool {
+  case e.kind {
+    .Ident(n) => n == name,
+    _ => false,
+  }
+}
+
+/// Render a path expression for the finding message.
+fn path_string(e: Expr) String {
+  case e.kind {
+    .Ident(n) => n,
+    .Field(base, f) => "${path_string(base)}.${f}",
+    .Index(base, _) => "${path_string(base)}[..]",
+    _ => "?",
+  }
+}
+
+fn rebinding_finding(span: Span, tmp: String, src: Expr) LintFinding {
+  rendered := path_string(src)
+  .{
+    span,
+    message: "`${tmp}` is only an alias for `${rendered}`; rebind `${rendered}` directly",
+    rule: "direct-rebinding",
+  }
+}
+
+fn is_bare_ident(e: Expr) Bool {
+  case e.kind {
+    .Ident(_) => true,
+    _ => false,
+  }
+}
+
+fn opt_str_eq(a: String?, name: String) Bool {
+  case a {
+    .Some(v) => v == name,
+    .None => false,
+  }
+}
+
+/// Does identifier `name` appear anywhere as a read inside `e`? Statement-level
+/// assignment targets are handled by the caller, not here. Unhandled compound
+/// forms (blocks, if/case/cond, closures, comprehensions) conservatively count
+/// as a use so candidates that embed them fail closed.
+fn expr_uses_name(e: Expr, name: String) Bool {
+  case e.kind {
+    .Ident(n) => n == name,
+    .IntLit(_) => false,
+    .FloatLit(_) => false,
+    .StringLit(_) => false,
+    .BoolLit(_) => false,
+    .ErrorExpr => false,
+    .Unary(_, inner) => expr_uses_name(inner, name),
+    .Binary(_, l, r) => expr_uses_name(l, name) or expr_uses_name(r, name),
+    .Call(callee, args) => expr_uses_name(callee, name) or exprs_use_name(args, name),
+    .Field(base, _) => expr_uses_name(base, name),
+    .Index(base, idx) => expr_uses_name(base, name) or expr_uses_name(idx, name),
+    .Array(elems) => exprs_use_name(elems, name),
+    .Variant(_, args) => exprs_use_name(args, name),
+    .Record(entries) => record_entries_use_name(entries, name),
+    .NamedRecord(_, entries) => record_entries_use_name(entries, name),
+    .StringInterp(parts) => {
+      for p in parts {
+        case p {
+          .Interpolation(ie) => if expr_uses_name(ie, name) {
+            return true
+          },
+          .Literal(_) => {},
+        }
+      }
+      false
+    },
+    _ => true,
+  }
+}
+
+fn exprs_use_name(es: Vector<Expr>, name: String) Bool {
+  for e in es {
+    if expr_uses_name(e, name) {
+      return true
+    }
+  }
+  false
+}
+
+fn record_entries_use_name(entries: Vector<RecordEntry>, name: String) Bool {
+  for en in entries {
+    case en.value {
+      .Some(e) => if expr_uses_name(e, name) {
+        return true
+      },
+      .None => if en.name == name {
+        // Shorthand `{ name }` puns the local — a read.
+        return true
+      },
+    }
+  }
+  false
+}
+
+/// True when `e` is a chain rooted at `tmp` as a method-call receiver / path
+/// (`tmp`, `tmp.f`, `tmp[k]`, `tmp.m(args)`), with `tmp` never appearing in an
+/// argument or index. This is the shape predicate #5 can rewrite by renaming
+/// the root to the source.
+fn expr_rooted_at(e: Expr, tmp: String) Bool {
+  case e.kind {
+    .Ident(n) => n == tmp,
+    .Field(base, _) => expr_rooted_at(base, tmp),
+    .Index(base, idx) => expr_rooted_at(base, tmp) and !expr_uses_name(idx, tmp),
+    .Call(callee, args) => expr_rooted_at(callee, tmp) and !exprs_use_name(args, tmp),
+    _ => false,
+  }
+}
+
+/// Does any index sub-expression in path `e` use `name`?
+fn path_indices_use(e: Expr, name: String) Bool {
+  case e.kind {
+    .Field(base, _) => path_indices_use(base, name),
+    .Index(base, idx) => path_indices_use(base, name) or expr_uses_name(idx, name),
+    _ => false,
+  }
+}
+
+type StmtRole = { Update, CopyBack, Other }
+
+/// Classify a statement relative to a `tmp := src` candidate (root `src_root`).
+/// An update must be rooted at `tmp` and must not read the source independently.
+fn classify_rebinding_stmt(stmt: Stmt, tmp: String, src: Expr, src_root: String) StmtRole {
+  case stmt {
+    .Expr(es) => case es.expr.kind {
+      .Binary(.Assign, lhs, rhs) => if is_ident_named(rhs, tmp) and same_path(lhs, src) {
+        // copy-back `<path> = tmp`
+        .CopyBack
+      } else if opt_str_eq(path_root(lhs), tmp) and !same_path(lhs, src) {
+        // path-update on the temporary: `tmp.x = v`, `tmp[k] = v`
+        clean := !expr_uses_name(rhs, tmp)
+          and !expr_uses_name(rhs, src_root) and !path_indices_use(lhs, tmp)
+          and !path_indices_use(lhs, src_root)
+
+        if clean {
+          .Update
+        } else {
+          .Other
+        }
+      } else {
+        .Other
+      },
+      _ => .Other,
+    },
+    .Let(ls) => if ls.is_rebind and ls.name == tmp {
+      // self-rebind accumulator: `cur = cur.method(...)`
+      clean := expr_rooted_at(ls.value, tmp) and !expr_uses_name(ls.value, src_root)
+
+      if clean {
+        .Update
+      } else {
+        .Other
+      }
+    } else if ls.is_rebind
+      and is_bare_ident(src) and ls.name == src_root and is_ident_named(ls.value, tmp) {
+      // whole-value copy-back: `state = updated`
+      .CopyBack
+    } else {
+      .Other
+    },
+    .For(fs) => if for_is_update_region(fs, tmp, src, src_root) {
+      .Update
+    } else {
+      .Other
+    },
+    _ => .Other,
+  }
+}
+
+/// A loop counts as an update region when its header never touches `tmp`/source,
+/// it does not shadow them, and every body statement is itself a clean update.
+fn for_is_update_region(fs: ForStmt, tmp: String, src: Expr, src_root: String) Bool {
+  iter_clean := case fs.iter {
+    .Some(e) => !expr_uses_name(e, tmp) and !expr_uses_name(e, src_root),
+    .None => true,
+  }
+  cond_clean := case fs.condition {
+    .Some(e) => !expr_uses_name(e, tmp) and !expr_uses_name(e, src_root),
+    .None => true,
+  }
+  shadows := opt_str_eq(fs.pattern, tmp)
+    or opt_str_eq(fs.pattern, src_root)
+    or opt_str_eq(fs.index, tmp)
+    or opt_str_eq(fs.index, src_root)
+
+  if !iter_clean or !cond_clean or shadows {
+    return false
+  }
+
+  // A loop body with a tail expression is unusual; bail rather than reason about it.
+  case fs.body.tail {
+    .Some(_) => { return false },
+    .None => {},
+  }
+
+  updates := 0
+
+  for s in fs.body.stmts {
+    case classify_rebinding_stmt(s, tmp, src, src_root) {
+      .Update => updates = updates + 1,
+      _ => { return false },
+    }
+  }
+
+  updates > 0
+}
+
+/// Scan statements after a `tmp := src` binding for an update region completed
+/// either by a copy-back to the source or by returning `tmp` as the block tail.
+/// Fails closed on any other use.
+fn scan_rebinding_candidate(block: Block, start: Int, span: Span, tmp: String, src: Expr) LintFinding? {
+  src_root := case path_root(src) {
+    .Some(r) => r,
+    .None => { return .None },
+  }
+  stmts := block.stmts
+  has_update := false
+  j := start + 1
+
+  for j < stmts.len() {
+    case classify_rebinding_stmt(stmts[j], tmp, src, src_root) {
+      .Update => has_update = true,
+      .CopyBack => if has_update {
+        return .Some(rebinding_finding(span, tmp, src))
+      } else {
+        return .None
+      },
+      .Other => { return .None },
+    }
+    j = j + 1
+  }
+
+  // Tail-expression completion (whole-value alias only): the block returns the
+  // temporary itself. Path sources return an inner value, not the rebound root,
+  // so the suggestion would not apply — restrict to bare-identifier sources.
+  case block.tail {
+    .Some(t) => if has_update and is_bare_ident(src) and is_ident_named(t, tmp) {
+      .Some(rebinding_finding(span, tmp, src))
+    } else {
+      .None
+    },
+    .None => .None,
+  }
+}
+
+fn lint_direct_rebinding(block: Block) Vector<LintFinding> {
+  out: Vector<LintFinding> = []
+  stmts := block.stmts
+  i := 0
+
+  for i < stmts.len() {
+    case stmts[i] {
+      .Let(ls) => if !ls.is_rebind and is_field_path(ls.value) {
+        case scan_rebinding_candidate(block, i, ls.span, ls.name, ls.value) {
+          .Some(f) => out = .append(f),
+          .None => {},
+        }
+      },
+      _ => {},
+    }
+    i = i + 1
   }
 
   out

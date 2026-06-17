@@ -102,4 +102,129 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "L5: flags index temporary copied back to the same path",
+      fn() {
+        fs := findings(
+          "fn f(pf: PF) PF {\n  slots := pf.slots\n  slots[id] = info\n  pf.slots = slots\n  pf\n}\n",
+        )
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "direct-rebinding")
+        .Ok({})
+      },
+    )
+    .test(
+      "L5: flags whole-record temporary returned at tail",
+      fn() {
+        fs := findings(
+          "fn f(info: Info) Info {\n  updated := info\n  updated.repr = repr\n  updated\n}\n",
+        )
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "direct-rebinding")
+        .Ok({})
+      },
+    )
+    .test(
+      "L5: does not flag when temporary escapes to a call",
+      fn() {
+        fs := findings(
+          "fn f(pf: PF) PF {\n  slots := pf.slots\n  slots[id] = info\n  other(slots)\n  pf.slots = slots\n  pf\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L5: flags pure-alias accumulator over a loop",
+      fn() {
+        fs := findings(
+          "fn f(reg: Reg, specs: Specs) Reg {\n  cur := reg\n  for spec in specs {\n    cur = cur.add(spec)\n  }\n  cur\n}\n",
+        )
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "direct-rebinding")
+        .Ok({})
+      },
+    )
+    .test(
+      "L5: flags whole-record temporary assigned back to the source",
+      fn() {
+        fs := findings(
+          "fn f(state: State) State {\n  updated := state\n  updated.cache = cache\n  state = updated\n  state\n}\n",
+        )
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "direct-rebinding")
+        .Ok({})
+      },
+    )
+    .test(
+      "L5: does not flag when the alias mixes in the old source value",
+      fn() {
+        fs := findings(
+          "fn f(reg: Reg) Reg {\n  cur := reg\n  cur = cur.add(a)\n  cur = cur.merge(reg)\n  cur\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L5: does not flag when the source path is read between update and copy-back",
+      fn() {
+        fs := findings(
+          "fn f(reg: Reg) Reg {\n  tmp := reg.by_name\n  tmp[k] = v\n  log(reg.by_name.len())\n  reg.by_name = tmp\n  reg\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L5: flags a deep field path copied back",
+      fn() {
+        fs := findings(
+          "fn f(state: State) State {\n  tmp := state.registry.by_name\n  tmp[name] = entry\n  state.registry.by_name = tmp\n  state\n}\n",
+        )
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "direct-rebinding")
+        .Ok({})
+      },
+    )
+    .test(
+      "L5: does not flag an indexed source path",
+      fn() {
+        fs := findings(
+          "fn f(reg: Reg) Reg {\n  tmp := reg.by_name[key()]\n  tmp.value = v\n  reg.by_name[key()] = tmp\n  reg\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L5: does not flag an extracted (unwrapped) value",
+      fn() {
+        fs := findings(
+          "fn f(reg: Reg) Reg {\n  entry := reg.by_name[name].unwrap()\n  entry.canonical = c\n  reg.by_name[name] = entry\n  reg\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L5: does not flag a conditionally-updated temporary (not straight-line)",
+      fn() {
+        fs := findings(
+          "fn f(state: State) State {\n  tmp := state.config\n  if enabled {\n    tmp.debug = true\n  }\n  state.config = tmp\n  state\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L5: does not flag when a prefix of the source path is read",
+      fn() {
+        fs := findings(
+          "fn f(state: State) State {\n  tmp := state.registry.by_name\n  tmp[k] = v\n  log(state.registry)\n  state.registry.by_name = tmp\n  state\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
 }

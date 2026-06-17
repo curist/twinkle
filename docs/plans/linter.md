@@ -90,6 +90,22 @@ default, dead code rather than a stylistic nit.
 - *Home*: AST visitor (B). Complements the existing `UnreachableCaseArm` error
   (which covers only `case` arms).
 
+**L5 — Rebinding-through-path** (`direct-rebinding`)
+- *Trigger*: a `tmp := <ident-or-field-path>` binding whose only later uses are
+  rebinding updates rooted at `tmp` (`tmp[k] = v`, `tmp.x = v`,
+  `cur = cur.method(...)`), completed by either copying `tmp` back to the source
+  path (`reg.by_name = tmp`, `state = updated`) or returning `tmp` as the block
+  tail. Straight-line only; loop bodies of pure-alias accumulators are scanned,
+  but `if`/`case`/`cond`/closures/early returns are not crossed.
+- *Rationale*: the temporary is just an alias; rebinding the field/index path
+  directly states the house rule (CLAUDE.md *Immutability and Rebinding*) without
+  the extra name. Complements L3, which catches full record reconstruction.
+- *Conservative*: fails closed on any independent read of the source (or a prefix
+  of it), escape of `tmp` to a non-receiver position, shadowing, or indexed
+  source paths (deferred — would change call/evaluation count). See
+  [archive/rebinding-through-path-lint.md](archive/rebinding-through-path-lint.md).
+- *Home*: AST visitor (B); syntax/dataflow over one block, no checker needed.
+
 ### Rewrites (auto-fixable — `--fix-<rule>` / `--fix`)
 
 **R1 — Inherent-method-call** (`--fix-inherent-calls`) — **built**
@@ -206,8 +222,8 @@ named throwaway.
 
 ## Rollout
 
-The command, both rewrites, and L2/L3/L4 are **done**. L1 is **dropped for now**
-(see §6 for the scoping reasoning); the linter is otherwise complete.
+The command, both rewrites, and L2/L3/L4/L5 are **done**. L1 is **dropped for
+now** (see §6 for the scoping reasoning); the linter is otherwise complete.
 
 1. **Done — rewrite engine + R2 (unused-imports)** — the collect→apply engine
    (`apply_edits` end-to-start splice), R2 migrated off the removed
@@ -222,6 +238,12 @@ The command, both rewrites, and L2/L3/L4 are **done**. L1 is **dropped for now**
    *and* lints) now aggregate **up the import chain** — the entry module plus
    everything it imports, stdlib/internal excluded — so R1's entry-only limit is
    gone.
+4b. **Done — L5 (direct-rebinding)** — same AST visitor: a `tmp := <path>`
+   alias whose only uses are rebinding updates rooted at `tmp`, completed by a
+   copy-back to the source path or a tail return of `tmp`. Straight-line +
+   pure-alias loop bodies; fails closed on independent source reads, escapes,
+   shadowing, and indexed source paths. Design:
+   [archive/rebinding-through-path-lint.md](archive/rebinding-through-path-lint.md).
 5. **Done — L2 (ignored Result/Option)** — emitted by the checker (home A):
    `maybe_unused_value` flags a discarded statement-position expression of type
    `Result`/`Option`. Calibrated clean on `boot/` (0 findings — guards against
