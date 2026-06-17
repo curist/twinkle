@@ -19,12 +19,15 @@ fn file_command(name: String, help: String) {
 }
 
 parse_cmd := file_command("parse", "Parse source and print diagnostics")
+
 check_cmd := file_command("check", "Type-check source")
+
 lint_cmd := file_command("lint", "Review code: report lints and rewrites")
   .add_flag("fix", "Apply all auto-fixable rewrites")
   .add_flag("fix-unused-imports", "Apply only the unused-import rewrite")
   .add_flag("fix-inherent-calls", "Apply only the inherent-method-call rewrite")
   .add_flag("explain", "Show the full rationale for each reported rule")
+
 ir_cmd := file_command("ir", "Compile and print compiler IR")
   .add_flag("core", "Print lowered Core IR")
   .add_flag("mono", "Print monomorphized Core IR")
@@ -32,25 +35,32 @@ ir_cmd := file_command("ir", "Compile and print compiler IR")
   .add_flag("opt", "Print optimized ANF IR")
   .add_flag("wat", "Print final linked WAT")
   .add_flag("all", "Print all available IR stages")
+
 run_cmd := file_command("run", "Run program").add_short_flag(
   "interpreter",
   "i",
   "Run with interpreter backend",
 )
+
 build_cmd := file_command("build", "Compile to linked WAT or Wasm").add_short_option(
   "output",
   "o",
   "Output path (.wat or .wasm)",
 )
+
 lsp_cmd := command.make("lsp", "Start the Language Server Protocol server")
+
 version_cmd := command.make("version", "Print Twinkle compiler version")
+
 help_cmd := command
   .make("help", "Print help information")
   .add_positional("command", "Command to show help for")
+
 fmt_cmd := command
   .make("fmt", "Format source")
   .add_required_positional("file", "Path to a .tw source file (may be repeated)")
   .add_flag("check", "Check whether source is formatted")
+
 cli := app
   .make("twk", "Twinkle compiler")
   .add_commands([
