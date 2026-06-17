@@ -1017,9 +1017,7 @@ fn format_block(block: Block, tm: TriviaMap) Doc {
   inner := join_block_docs(block, body_docs, has_author_blank, has_leading_comment)
   doc.concat([
     doc.text("{"),
-    doc
-      .concat([doc.hard_line(), inner])
-      .indent(),
+    doc.concat([doc.hard_line(), inner]).indent(),
     doc.hard_line(),
     doc.text("}"),
   ])
@@ -1471,14 +1469,7 @@ fn format_chained_binary(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_
     // Extract sep1 as the break point, then Fill the rest starting with item1.
     first_sep := fill_children[1]
     remaining := Doc.Fill(fill_children.slice(2, fill_children.len()))
-    doc
-      .concat([
-        first_doc,
-        doc
-          .concat([first_sep, remaining])
-          .indent(),
-      ])
-      .group()
+    doc.concat([first_doc, doc.concat([first_sep, remaining]).indent()]).group()
   } else {
     Doc.Fill(fill_children).group()
   }
@@ -1607,6 +1598,22 @@ type ChainSegment = .{ name: String, args: Vector<Expr> }
 
 type ChainResult = .{ base: Expr, segments: Vector<ChainSegment> }
 
+fn finish_method_chain(base: Expr, segments: Vector<ChainSegment>) ChainResult? {
+  if segments.len() < 2 {
+    return .None
+  }
+
+  reversed: Vector<ChainSegment> = []
+  i := segments.len() - 1
+
+  for i >= 0 {
+    reversed = .append(segments[i])
+    i = i - 1
+  }
+
+  .Some(.{ base, segments: reversed })
+}
+
 fn collect_method_chain(callee: Expr, args: Vector<Expr>) ChainResult? {
   // Walk a Call(Field(obj, name), args) chain and collect segments.
   // Returns .None if this isn't a method chain (fewer than 2 segments).
@@ -1620,26 +1627,17 @@ fn collect_method_chain(callee: Expr, args: Vector<Expr>) ChainResult? {
         segments = .append(.{ name, args: cur_args })
 
         case obj.kind {
-          .Call(inner_callee, inner_args) => {
-            cur_callee = inner_callee
-            cur_args = inner_args
+          .Call(inner_callee, inner_args) => case inner_callee.kind {
+            .Field(_, _) => {
+              cur_callee = inner_callee
+              cur_args = inner_args
+            },
+            _ => { return finish_method_chain(obj, segments) },
           },
           _ => {
-            // obj is the base expression
-            if segments.len() < 2 {
-              return .None
-            }
-
-            // Reverse segments (collected outermost-first)
-            reversed: Vector<ChainSegment> = []
-            i := segments.len() - 1
-
-            for i >= 0 {
-              reversed = .append(segments[i])
-              i = i - 1
-            }
-
-            return .Some(.{ base: obj, segments: reversed })
+            // obj is the base expression; reverse segments collected
+            // outermost-first.
+            return finish_method_chain(obj, segments)
           },
         }
       },
@@ -1672,35 +1670,21 @@ fn format_chain_segment(seg: ChainSegment, tm: TriviaMap) Doc {
 }
 
 fn format_call(callee: Expr, args: Vector<Expr>, container: Span, tm: TriviaMap) Doc {
-  // Check for method chain: Call(Field(obj, name), args) with 2+ segments
+  // Check for method chain: Call(Field(obj, name), args) with 2+ segments.
+  // Treat the chain as one layout unit: either all segments stay flat after the
+  // receiver, or every segment moves to its own continuation line. This avoids
+  // mixed layouts where one segment's arguments break but later segments remain
+  // glued to its closing paren.
   case collect_method_chain(callee, args) {
     .Some(chain) => {
-      first := chain.segments[0]
-
-      if first.chain_segment_is_self_breaking() {
-        tail_parts: Vector<Doc> = []
-
-        for seg in chain.segments {
-          tail_parts = .append(doc.hard_line())
-          tail_parts = .append(seg.format_chain_segment(tm))
-        }
-
-        return doc.concat([format_receiver(chain.base, tm), doc.concat(tail_parts).indent().group()])
-      }
-
-      head_doc := doc.concat([format_receiver(chain.base, tm), first.format_chain_segment(tm)])
       tail_parts: Vector<Doc> = []
 
-      for seg, i in chain.segments {
-        if i == 0 {
-          continue
-        }
-
-        tail_parts = .append(doc.hard_line().if_break(doc.nil()))
+      for seg in chain.segments {
+        tail_parts = .append(doc.line().if_break(doc.nil()))
         tail_parts = .append(seg.format_chain_segment(tm))
       }
 
-      return doc.concat([head_doc, doc.concat(tail_parts).indent().group()])
+      return doc.concat([format_receiver(chain.base, tm), doc.concat(tail_parts).indent()]).group()
     },
     .None => {},
   }
@@ -1833,9 +1817,7 @@ fn format_case(scrutinee: Expr, arms: Vector<CaseArm>, container: Span, tm: Triv
     doc.text("case "),
     format_expr(scrutinee, tm),
     doc.text(" {"),
-    doc
-      .concat([doc.hard_line(), inner])
-      .indent(),
+    doc.concat([doc.hard_line(), inner]).indent(),
     doc.hard_line(),
     doc.text("}"),
   ])
@@ -1866,9 +1848,7 @@ fn format_case_arm(arm: CaseArm, tm: TriviaMap) Doc {
       doc
         .concat([
           doc.text("{"),
-          doc
-            .concat([doc.line(), stmt_doc])
-            .indent(),
+          doc.concat([doc.line(), stmt_doc]).indent(),
           doc.line(),
           doc.text("}"),
         ])
@@ -1878,9 +1858,7 @@ fn format_case_arm(arm: CaseArm, tm: TriviaMap) Doc {
     },
     _ => format_expr(arm.expr, tm),
   }
-  doc
-    .concat([format_pattern(arm.pattern, tm), doc.text(" => "), body])
-    .group()
+  doc.concat([format_pattern(arm.pattern, tm), doc.text(" => "), body]).group()
 }
 
 fn format_cond(arms: Vector<CondArm>, container: Span, tm: TriviaMap) Doc {
@@ -1905,9 +1883,7 @@ fn format_cond(arms: Vector<CondArm>, container: Span, tm: TriviaMap) Doc {
   inner := join_arm_docs(arm_docs, arm_spans, has_author_blank, container, tm)
   doc.concat([
     doc.text("cond {"),
-    doc
-      .concat([doc.hard_line(), inner])
-      .indent(),
+    doc.concat([doc.hard_line(), inner]).indent(),
     doc.hard_line(),
     doc.text("}"),
   ])
@@ -1936,9 +1912,7 @@ fn format_cond_arm(arm: CondArm, tm: TriviaMap) Doc {
       doc
         .concat([
           doc.text("{"),
-          doc
-            .concat([doc.line(), stmt_doc])
-            .indent(),
+          doc.concat([doc.line(), stmt_doc]).indent(),
           doc.line(),
           doc.text("}"),
         ])
@@ -1950,12 +1924,8 @@ fn format_cond_arm(arm: CondArm, tm: TriviaMap) Doc {
   }
 
   case arm.condition {
-    .Some(cond_expr) => doc
-      .concat([format_expr(cond_expr, tm), doc.text(" => "), body])
-      .group(),
-    .None => doc
-      .concat([doc.text("_ => "), body])
-      .group(),
+    .Some(cond_expr) => doc.concat([format_expr(cond_expr, tm), doc.text(" => "), body]).group(),
+    .None => doc.concat([doc.text("_ => "), body]).group(),
   }
 }
 
@@ -2075,9 +2045,7 @@ fn format_bracketed_items(
   inner := doc.join(parts, doc.hard_line())
   doc.concat([
     doc.text(open),
-    doc
-      .concat([doc.hard_line(), inner])
-      .indent(),
+    doc.concat([doc.hard_line(), inner]).indent(),
     doc.hard_line(),
     doc.text(close),
   ])
@@ -2127,9 +2095,7 @@ fn format_record_entry(entry: RecordEntry, tm: TriviaMap) Doc {
       // terminating comma is placed by the list layout on a fresh line.
       .Some(block) => doc.concat([
         doc.text("${entry.name}:"),
-        doc
-          .concat([doc.hard_line(), block])
-          .indent(),
+        doc.concat([doc.hard_line(), block]).indent(),
       ]),
       .None => case val.kind {
         .Ident(name) => if name == entry.name {
@@ -2191,9 +2157,7 @@ fn format_items_with_multiline(
   inner := doc.join(parts, doc.hard_line())
   doc.concat([
     doc.text(open),
-    doc
-      .concat([doc.hard_line(), inner])
-      .indent(),
+    doc.concat([doc.hard_line(), inner]).indent(),
     doc.hard_line(),
     doc.text(close),
   ])
@@ -2423,11 +2387,7 @@ fn drop_trailing_space(parts: Vector<Doc>) Vector<Doc> {
 fn format_assigned(intro: Vector<Doc>, value: Expr, value_doc: Doc, tm: TriviaMap) Doc {
   case multiline_block_doc_for(value, tm) {
     .Some(block) => doc.concat(
-      drop_trailing_space(intro).append(
-        doc
-          .concat([doc.hard_line(), block])
-          .indent(),
-      ),
+      drop_trailing_space(intro).append(doc.concat([doc.hard_line(), block]).indent()),
     ),
     .None => doc.concat(intro.append(value_doc)),
   }

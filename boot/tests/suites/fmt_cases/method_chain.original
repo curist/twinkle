@@ -1,11 +1,45 @@
 fn suite() Suite {
-  runner.suite("fmt").test("short name", fn() { do_a() }).test("another short name", fn() { do_b() }).test("a longer test name that forces the arguments to wrap onto the next line", fn() { do_c() }).test("yet another test case", fn() { do_d() })
+  runner.suite("fmt")
+    .test("short name", fn() { do_a() })
+    .test("another short name", fn() { do_b() })
+    .test(
+      "a longer test name that forces the arguments to wrap onto the next line",
+      fn() { do_c() },
+    )
+    .test("yet another test case", fn() { do_d() })
 }
 
 fn suite2() Suite {
-  runner.suite("fmt2").test("test with multi-statement body", fn() { x := do_a(); println(x) }).test("another multi-statement test", fn() { y := do_b(); z := do_c(); y + z })
+  runner.suite("fmt2")
+    .test(
+      "test with multi-statement body",
+      fn() {
+        x := do_a()
+        println(x)
+      },
+    )
+    .test(
+      "another multi-statement test",
+      fn() {
+        y := do_b()
+        z := do_c()
+        y + z
+      },
+    )
 }
 
 fn pipeline(base) {
-  out := base.map(fn(x) { x + 1 }).filter(fn(x) { x % 2 == 0 }).take_while(fn(x) { x < 8 }).to_vector()
+  out := base
+    .map(fn(x) { x + 1 })
+    .filter(fn(x) { x % 2 == 0 })
+    .take_while(fn(x) { x < 8 })
+    .to_vector()
 }
+
+lint_cmd := file_command("lint", "Review code: report lints and rewrites").add_flag(
+  "fix",
+  "Apply all auto-fixable rewrites",
+).add_flag("fix-unused-imports", "Apply only the unused-import rewrite").add_flag(
+  "fix-inherent-calls",
+  "Apply only the inherent-method-call rewrite",
+).add_flag("explain", "Show the full rationale for each reported rule")
