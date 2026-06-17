@@ -1,0 +1,44 @@
+fn some_value() Int? {
+  Option.Some(1)
+}
+
+fn none_value() Int? {
+  Option.None
+}
+
+fn ok_value() Result<Int, String> {
+  Result.Ok(1)
+}
+
+fn err_value() Result<Int, String> {
+  Result.Err("nope")
+}
+
+fn choose(flag: Bool) Int? {
+  x := if flag {
+    Option.Some(1)
+  } else {
+    Option.None
+  }
+  x
+}
+
+fn option_to_int(x: Int?) Int {
+  case x {
+    .Some(n) => n,
+    .None => 0,
+  }
+}
+
+fn result_to_int(x: Result<Int, String>) Int {
+  case x {
+    .Ok(n) => n,
+    .Err(_) => 0,
+  }
+}
+
+option_to_int(some_value())
+option_to_int(none_value())
+result_to_int(ok_value())
+result_to_int(err_value())
+option_to_int(choose(true))

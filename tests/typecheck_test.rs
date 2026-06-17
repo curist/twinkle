@@ -7,12 +7,10 @@ use twinkle::types::env::{TypeEnv, ValueEnv};
 
 /// Built-in module aliases recognised by the type checker.
 fn builtin_aliases() -> HashSet<String> {
-    [
-        "Cell", "Dict", "Iterator", "Vector", "String", "Int", "Float", "Bool",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
+    twinkle::intrinsics::registry::builtin_module_aliases()
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 #[test]
@@ -387,5 +385,37 @@ fn check(x: Int?) Bool { x == .Some("hello") }
     assert!(
         !errors.is_empty(),
         "expected type error for wrong payload type in .Some(\"hello\")"
+    );
+}
+
+#[test]
+fn test_qualified_builtin_variant_constructors_typecheck() {
+    let src = r#"
+fn some_value() Int? { Option.Some(1) }
+fn none_value() Int? { Option.None }
+fn ok_value() Result<Int, String> { Result.Ok(1) }
+fn err_value() Result<Int, String> { Result.Err("nope") }
+"#;
+    let errors = check_errors(src);
+    assert!(
+        errors.is_empty(),
+        "expected qualified builtin variants to typecheck, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
+fn test_qualified_builtin_variants_synthesize_branch_type() {
+    let src = r#"
+fn choose(flag: Bool) Int? {
+    x := if flag { Option.Some(1) } else { Option.None }
+    x
+}
+"#;
+    let errors = check_errors(src);
+    assert!(
+        errors.is_empty(),
+        "expected qualified builtin variants to synthesize branch type, got:\n{}",
+        errors.join("\n")
     );
 }

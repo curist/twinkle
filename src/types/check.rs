@@ -773,6 +773,7 @@ impl TypeChecker {
             ExprKind::FieldAccess { base, field } => {
                 if let ExprKind::Ident(alias) = &base.kind
                     && self.can_use_module_alias(alias)
+                    && !self.is_qualified_variant(base, field)
                 {
                     let qualified = format!("{}.{}", alias, field);
                     if let Some(ty) = self.value_env.lookup(&qualified) {
@@ -1137,6 +1138,7 @@ impl TypeChecker {
             ExprKind::FieldAccess { base, field } => {
                 if let ExprKind::Ident(alias) = &base.kind
                     && self.can_use_module_alias(alias)
+                    && !self.is_qualified_variant(base, field)
                 {
                     let alias = alias.clone();
                     let field = field.clone();
@@ -1511,9 +1513,13 @@ impl TypeChecker {
             field: method_name,
         } = &callee.kind
         {
-            // Check for module-qualified call FIRST (before synthesising base type)
+            // Check for module-qualified call FIRST (before synthesising base type),
+            // unless the name is actually a qualified variant constructor — names
+            // like Option/Result are both module aliases and types, and the
+            // variant form (Option.Some(x)) must win over the module form.
             if let ExprKind::Ident(alias) = &base.kind
                 && self.can_use_module_alias(alias)
+                && !self.is_qualified_variant(base, method_name)
             {
                 let alias = alias.clone();
                 let method_name = method_name.clone();
@@ -1524,70 +1530,40 @@ impl TypeChecker {
 
             // TypeName.Variant(args) or module.TypeName.Variant(args)
             if let Some(type_id) = self.try_resolve_type_from_expr(base)
-                && let Some(variant_idx) = self.type_env.get_variant_index(type_id, method_name)
+                && self
+                    .type_env
+                    .get_variant_index(type_id, method_name)
+                    .is_some()
             {
-                // Build named_ty with Var args for generic types
-                let type_var_args: Vec<MonoType> = self
-                    .type_env
-                    .get_def(type_id)
-                    .map(|d| {
-                        d.type_params()
-                            .iter()
-                            .map(|p| MonoType::Var(p.clone()))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let named_ty = MonoType::Named {
-                    type_id,
-                    args: type_var_args,
-                };
-                self.type_map.set_expr_type(base.id, named_ty.clone());
-                let variants = self
-                    .type_env
-                    .get_variants(type_id)
-                    .expect("variant exists, variants must exist");
-                let variant_fields = variants[variant_idx].fields.clone();
+                let (field_types, result_ty) =
+                    self.qualified_variant_signature(type_id, method_name);
+                self.type_map.set_expr_type(base.id, result_ty.clone());
                 // Check arity
-                if variant_fields.len() != args.len() {
+                if field_types.len() != args.len() {
                     self.errors.push(TypeError::WrongArity {
-                        expected: variant_fields.len(),
+                        expected: field_types.len(),
                         actual: args.len(),
                         span,
                     });
                     return Err(());
                 }
-                // Instantiate type params with MetaVars (no-op for non-generic types)
-                let type_params: Vec<String> = self
-                    .type_env
-                    .get_def(type_id)
-                    .map(|d| d.type_params().to_vec())
-                    .unwrap_or_default();
-                let inst_map: HashMap<String, MonoType> = type_params
-                    .iter()
-                    .map(|p| (p.clone(), self.fresh_meta()))
-                    .collect();
-                let inst_fields: Vec<MonoType> = variant_fields
-                    .iter()
-                    .map(|f| apply_subst(f, &inst_map))
-                    .collect();
-                let inst_named_ty = apply_subst(&named_ty, &inst_map);
-                // Check each arg against instantiated field type
-                for (arg, expected_ty) in args.iter().zip(inst_fields.iter()) {
+                // Check each arg against the field type
+                for (arg, expected_ty) in args.iter().zip(field_types.iter()) {
                     if let Err(()) = self.check_expr(arg, expected_ty) {
                         return Err(());
                     }
                 }
                 // Record callee type (constructor function) and return
-                let ctor_ty = if inst_fields.is_empty() {
-                    inst_named_ty.clone()
+                let ctor_ty = if field_types.is_empty() {
+                    result_ty.clone()
                 } else {
                     MonoType::Function {
-                        params: inst_fields,
-                        ret: Box::new(inst_named_ty.clone()),
+                        params: field_types,
+                        ret: Box::new(result_ty.clone()),
                     }
                 };
                 self.type_map.set_expr_type(callee.id, self.zonk(&ctor_ty));
-                return Ok(self.zonk(&inst_named_ty));
+                return Ok(self.zonk(&result_ty));
             }
 
             // Method call on a value: synthesise base type, then dispatch.
@@ -2743,46 +2719,100 @@ impl TypeChecker {
         self.type_env.lookup_type(&name)
     }
 
+    /// True when `base.name` denotes a qualified variant constructor
+    /// (e.g. `Option.Some`, `UserEnum.Variant`). Used to let a name that is both
+    /// a module alias and a type (Option, Result) construct a variant rather than
+    /// being intercepted as a module-qualified reference.
+    fn is_qualified_variant(&self, base: &Expr, name: &str) -> bool {
+        self.try_resolve_type_from_expr(base)
+            .map(|tid| self.type_env.get_variant_index(tid, name).is_some())
+            .unwrap_or(false)
+    }
+
+    /// Field types and result type of a qualified variant constructor
+    /// `Type.Variant`, with fresh metavars for the type parameters. Builtin
+    /// Option/Result store placeholder field types in their TypeDef, so they are
+    /// special-cased to use their type arguments (mirroring `check_variant_lit`).
+    /// The caller must have verified the variant exists.
+    fn qualified_variant_signature(
+        &mut self,
+        type_id: TypeId,
+        variant_name: &str,
+    ) -> (Vec<MonoType>, MonoType) {
+        if type_id == OPTION_TYPE_ID {
+            let m = self.fresh_meta();
+            let fields = if variant_name == "Some" {
+                vec![m.clone()]
+            } else {
+                vec![]
+            };
+            return (
+                fields,
+                MonoType::Named {
+                    type_id,
+                    args: vec![m],
+                },
+            );
+        }
+        if type_id == RESULT_TYPE_ID {
+            let ok = self.fresh_meta();
+            let err = self.fresh_meta();
+            let fields = if variant_name == "Ok" {
+                vec![ok.clone()]
+            } else {
+                vec![err.clone()]
+            };
+            return (
+                fields,
+                MonoType::Named {
+                    type_id,
+                    args: vec![ok, err],
+                },
+            );
+        }
+        // User-defined sum type: instantiate type params with fresh metas.
+        let type_params: Vec<String> = self
+            .type_env
+            .get_def(type_id)
+            .map(|d| d.type_params().to_vec())
+            .unwrap_or_default();
+        let variant_idx = self
+            .type_env
+            .get_variant_index(type_id, variant_name)
+            .expect("caller verified variant exists");
+        let raw_fields = self.type_env.get_variants(type_id).expect("variant exists")[variant_idx]
+            .fields
+            .clone();
+        let inst_map: HashMap<String, MonoType> = type_params
+            .iter()
+            .map(|p| (p.clone(), self.fresh_meta()))
+            .collect();
+        let type_var_args: Vec<MonoType> = type_params
+            .iter()
+            .map(|p| MonoType::Var(p.clone()))
+            .collect();
+        let named = apply_subst(
+            &MonoType::Named {
+                type_id,
+                args: type_var_args,
+            },
+            &inst_map,
+        );
+        let fields: Vec<MonoType> = raw_fields
+            .iter()
+            .map(|f| apply_subst(f, &inst_map))
+            .collect();
+        (fields, named)
+    }
+
     fn synth_field_access(&mut self, base: &Expr, field: &str, span: Span) -> Result<MonoType, ()> {
         // Check for TypeName.Variant or module.TypeName.Variant syntax
         if let Some(type_id) = self.try_resolve_type_from_expr(base)
-            && let Some(variant_idx) = self.type_env.get_variant_index(type_id, field)
+            && self.type_env.get_variant_index(type_id, field).is_some()
         {
-            // Instantiate generic type params with fresh MetaVars so that
-            // unification (e.g. unifying Done with Yield's type) can solve them.
-            let type_params: Vec<String> = self
-                .type_env
-                .get_def(type_id)
-                .map(|d| d.type_params().to_vec())
-                .unwrap_or_default();
-            let inst_map: HashMap<String, MonoType> = type_params
-                .iter()
-                .map(|p| (p.clone(), self.fresh_meta()))
-                .collect();
-            let type_var_args: Vec<MonoType> = type_params
-                .iter()
-                .map(|p| MonoType::Var(p.clone()))
-                .collect();
-            let raw_named = MonoType::Named {
-                type_id,
-                args: type_var_args,
-            };
-            let named_ty = if inst_map.is_empty() {
-                raw_named
-            } else {
-                apply_subst(&raw_named, &inst_map)
-            };
+            let (variant_fields, named_ty) = self.qualified_variant_signature(type_id, field);
             // Record type of the type-name base as Named (so lowerer can identify it)
             self.type_map.set_expr_type(base.id, named_ty.clone());
-            let variants = self
-                .type_env
-                .get_variants(type_id)
-                .expect("variant index exists, variants must exist");
-            let variant_fields_raw = variants[variant_idx].fields.clone();
-            let variant_fields: Vec<MonoType> = variant_fields_raw
-                .iter()
-                .map(|f| apply_subst(f, &inst_map))
-                .collect();
             return if variant_fields.is_empty() {
                 // Zero-arg variant — directly a value of the named type
                 Ok(named_ty)

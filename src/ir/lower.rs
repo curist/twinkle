@@ -543,6 +543,12 @@ impl Lowerer {
         }
     }
 
+    fn is_qualified_variant(&self, base: &Expr, name: &str) -> bool {
+        self.try_resolve_type_from_expr(base)
+            .map(|tid| self.type_env.get_variant_index(tid, name).is_some())
+            .unwrap_or(false)
+    }
+
     fn resolve_named_func_id(&mut self, name: &str, span: Span) -> Option<FuncId> {
         if let Some(target) = self.qualified_func_targets.get(name).cloned() {
             return Some(self.alloc_external_func_id(target));
@@ -2406,6 +2412,7 @@ impl Lowerer {
                 // Module alias first-class function/value reference: Vector.len, math.pi, etc.
                 if let ExprKind::Ident(alias) = &base.kind
                     && self.can_use_module_alias(alias)
+                    && !self.is_qualified_variant(base, field)
                 {
                     let qualified = format!("{}.{}", alias, field);
                     if self.qualified_func_targets.contains_key(&qualified)
@@ -2942,10 +2949,11 @@ impl Lowerer {
     ) -> Option<CoreExprKind> {
         // Field-access calls: module.func(args) or receiver.method(args)
         if let ExprKind::FieldAccess { base, field } = &callee.kind {
-            // Module-qualified call: alias.func(args) — check before constructor
-            // to match synth_call resolution order in the type checker.
+            // Module-qualified call: alias.func(args), unless the path names a
+            // qualified variant constructor such as Option.Some(args).
             if let ExprKind::Ident(alias) = &base.kind
                 && self.can_use_module_alias(alias)
+                && !self.is_qualified_variant(base, field)
             {
                 let qualified = format!("{}.{}", alias, field);
                 if self.qualified_func_targets.contains_key(&qualified)
