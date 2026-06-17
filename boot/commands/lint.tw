@@ -11,6 +11,7 @@ use @std.proc
 use commands.common.{exit_usage_error, get_positional}
 use compiler.base_env.{builtin_env}
 use compiler.imports
+use compiler.lint_rules
 use compiler.query.analyze
 use compiler.query.cache as query_cache
 use lib.argparse.app.{ParseResult}
@@ -24,7 +25,7 @@ use lib.text.line_index
 
 /// One reported finding. `edits` is empty for report-only lints; non-empty for
 /// auto-fixable rewrites, whose `rule` selects the `--fix-<rule>` flag.
-type Finding = .{ path: String, start: Int, message: String, rule: String, edits: Vector<FixEdit> }
+pub type Finding = .{ path: String, start: Int, message: String, rule: String, edits: Vector<FixEdit> }
 
 type FileResult = .{ path: String, count: Int }
 
@@ -183,12 +184,87 @@ fn index_sources(findings: Vector<Finding>) Dict<String, line_index.LineIndex> {
   indexes
 }
 
-fn report_findings(findings: Vector<Finding>) {
-  indexes := index_sources(findings)
+/// Indent every line of `text` by `prefix`.
+fn indent_block(text: String, prefix: String) String {
+  out := ""
+  first := true
+
+  for line in text.lines() {
+    sep := if first { "" } else { "\n" }
+    out = "${out}${sep}${prefix}${line}"
+    first = false
+  }
+
+  out
+}
+
+/// Distinct rule ids present in `findings`, sorted alphabetically.
+fn distinct_rules(findings: Vector<Finding>) Vector<String> {
+  seen: Dict<String, Bool> = Dict.new()
+  rules: Vector<String> = []
 
   for f in findings {
-    println("${location(f.path, f.start, indexes)}: ${f.message}")
+    if !seen.has(f.rule) {
+      seen[f.rule] = true
+      rules = .append(f.rule)
+    }
   }
+
+  rules.sort_by(String.compare)
+}
+
+/// Findings for one rule, sorted by path then start offset.
+fn findings_for(findings: Vector<Finding>, rule: String) Vector<Finding> {
+  group: Vector<Finding> = []
+
+  for f in findings {
+    if f.rule == rule {
+      group = .append(f)
+    }
+  }
+
+  group.sort_by(fn(a, b) {
+    case String.compare(a.path, b.path) {
+      .Eq => Int.compare(a.start, b.start),
+      other => other,
+    }
+  })
+}
+
+/// Render the findings body as a string: grouped by rule, each group headed by
+/// `<rule>  <brief>` (and, when `explain`, the detailed rationale), with
+/// findings indented underneath. Pure given a prebuilt line-index map.
+pub fn render_report(
+  findings: Vector<Finding>,
+  indexes: Dict<String, line_index.LineIndex>,
+  explain: Bool,
+) String {
+  out := ""
+  first_group := true
+
+  for rule in distinct_rules(findings) {
+    brief := case lint_rules.describe(rule) {
+      .Some(info) => info.brief,
+      .None => "",
+    }
+    header := if brief.len() > 0 { "${rule}  ${brief}" } else { rule }
+    group_sep := if first_group { "" } else { "\n\n" }
+    out = "${out}${group_sep}${header}"
+    first_group = false
+
+    if explain {
+      case lint_rules.describe(rule) {
+        .Some(info) => out = "${out}\n\n${indent_block(info.detailed, "  ")}\n",
+        .None => {},
+      }
+    }
+
+    for f in findings_for(findings, rule) {
+      out = "${out}\n  ${location(f.path, f.start, indexes)}: ${f.message}"
+    }
+  }
+
+  out
 }
 
 /// End-of-run summary: total, and the flags that apply the auto-fixable ones.
@@ -295,7 +371,7 @@ pub fn run_lint_command(parsed: ParseResult) {
 
       return {}
     }
-    report_findings(findings)
+    println(render_report(findings, index_sources(findings), false))
     print_summary(findings)
     proc.exit(1)
   }
@@ -340,7 +416,7 @@ pub fn run_lint_command(parsed: ParseResult) {
   remaining := gather_findings(file)
 
   if remaining.len() > 0 {
-    report_findings(remaining)
+    println(render_report(remaining, index_sources(remaining), false))
     print_summary(remaining)
   }
 }

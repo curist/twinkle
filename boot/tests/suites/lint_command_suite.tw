@@ -154,4 +154,31 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "render_report: groups findings by rule with brief headers, alphabetical",
+      fn() {
+        findings := [
+          lint.Finding.{
+            path: "z.tw", start: 0, message: "code after a return never runs",
+            rule: "unreachable-code", edits: [],
+          },
+          lint.Finding.{
+            path: "a.tw", start: 5, message: "`cur` is only an alias for `env`",
+            rule: "direct-rebinding", edits: [],
+          },
+        ]
+        out := lint.render_report(findings, Dict.new(), false)
+        // direct-rebinding sorts before unreachable-code (index_of returns Int?)
+        dr := try out.index_of("direct-rebinding").ok_or("direct-rebinding missing")
+        uc := try out.index_of("unreachable-code").ok_or("unreachable-code missing")
+        try assert.is_true(dr < uc)
+        // brief appears in the header
+        try assert.is_true(out.contains("rebind the field/index path directly"))
+        // the finding line is present and indented
+        try assert.is_true(out.contains("\n  a.tw:"))
+        // default mode does not include the detailed block
+        try assert.is_true(!out.contains("// Avoid"))
+        .Ok({})
+      },
+    )
 }
