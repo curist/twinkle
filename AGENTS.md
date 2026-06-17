@@ -80,6 +80,13 @@ target/twk fmt path/to/file.tw
 ```
 The formatter is idempotent — running it twice produces no further changes.
 
+After editing a `.tw` file, also run the linter to catch house-rule violations:
+```bash
+target/twk lint boot/main.tw   # or the relevant entry file
+```
+The linter is report-only by default; `--explain` prints the rationale for each
+rule that fired.
+
 ### Run Twinkle Programs
 - No `main` function — top-level statements execute directly.
 - Project roots are discovered by walking up to `twinkle.toml`.
@@ -121,28 +128,10 @@ m[k] = v                   // sugar: rebinds m
 m = Dict.set(m, k, v)
 ```
 
-**Do NOT write `with_*` helper functions** that copy all record fields just to
-update one or two. Use field rebinding directly:
-
-```tw
-// ❌ Don't write this:
-fn with_documents(state: State, documents: Store) State {
-  .{
-    initialized: state.initialized,
-    shutdown_requested: state.shutdown_requested,
-    documents,
-    query_cache: state.query_cache,
-  }
-}
-next := with_documents(state, new_store)
-
-// ✅ Write this instead:
-state.documents = new_store
-```
-
-This applies to any record type. The only exception is functions that do
-non-trivial work beyond field assignment (e.g. rebuilding indexes, filtering,
-merging collections).
+The "rebind the field/index path directly, don't write `with_*` copy helpers"
+guidance is enforced by `twk lint` (rules `direct-rebinding` and
+`record-copy-helper`). Run `twk lint <entry>` after editing; use
+`twk lint --explain` for the worked Avoid/Prefer examples.
 
 ### Type System
 - Rank-1 polymorphic (Damas–Milner) type system with bidirectional type checking
