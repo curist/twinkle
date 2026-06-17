@@ -26,7 +26,7 @@ lint_cmd := file_command("lint", "Review code: report lints and rewrites").add_f
 ).add_flag("fix-unused-imports", "Apply only the unused-import rewrite").add_flag(
   "fix-inherent-calls",
   "Apply only the inherent-method-call rewrite",
-)
+).add_flag("explain", "Show the full rationale for each reported rule")
 ir_cmd := file_command("ir", "Compile and print compiler IR").add_flag(
   "core",
   "Print lowered Core IR",

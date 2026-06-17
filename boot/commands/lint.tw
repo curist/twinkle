@@ -268,7 +268,7 @@ pub fn render_report(
 }
 
 /// End-of-run summary: total, and the flags that apply the auto-fixable ones.
-fn print_summary(findings: Vector<Finding>) {
+fn print_summary(findings: Vector<Finding>, explain: Bool) {
   by_rule: Dict<String, Int> = Dict.new()
   fixable := 0
   report_only := 0
@@ -299,6 +299,10 @@ fn print_summary(findings: Vector<Finding>) {
       }
       eprintln("    --fix-${rule}  (${n})")
     }
+  }
+
+  if !explain {
+    eprintln("run `twk lint --explain` for the full rationale")
   }
 }
 
@@ -361,6 +365,7 @@ pub fn run_lint_command(parsed: ParseResult) {
   fix_all := parsed.has_flag("fix")
   fix_unused := fix_all or parsed.has_flag("fix-unused-imports")
   fix_inherent := fix_all or parsed.has_flag("fix-inherent-calls")
+  explain := parsed.has_flag("explain")
   any_apply := fix_unused or fix_inherent
 
   if !any_apply {
@@ -371,8 +376,8 @@ pub fn run_lint_command(parsed: ParseResult) {
 
       return {}
     }
-    println(render_report(findings, index_sources(findings), false))
-    print_summary(findings)
+    println(render_report(findings, index_sources(findings), explain))
+    print_summary(findings, explain)
     proc.exit(1)
   }
 
@@ -416,7 +421,7 @@ pub fn run_lint_command(parsed: ParseResult) {
   remaining := gather_findings(file)
 
   if remaining.len() > 0 {
-    println(render_report(remaining, index_sources(remaining), false))
-    print_summary(remaining)
+    println(render_report(remaining, index_sources(remaining), explain))
+    print_summary(remaining, explain)
   }
 }
