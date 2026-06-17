@@ -1,5 +1,6 @@
 use commands.lint
 use compiler.base_env
+use compiler.lint_rules
 use compiler.query.analyze
 use compiler.query.cache
 use lib.source.identity
@@ -106,6 +107,50 @@ pub fn suite() runner.Suite {
         result := analyze_src(src, false)
         try assert.is_true(result.ok)
         try assert.equal(result.lints.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "lint_rules: describe returns brief for a known rule",
+      fn() {
+        info := try lint_rules.describe("direct-rebinding").ok_or("expected Some")
+        try assert.equal(
+          info.brief,
+          "the temporary only aliases a value; rebind the field/index path directly",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "lint_rules: describe returns None for an unknown rule",
+      fn() {
+        case lint_rules.describe("no-such-rule") {
+          .Some(_) => .Err("expected None"),
+          .None => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "lint_rules: every emitted rule id has a description",
+      fn() {
+        ids := [
+          "direct-rebinding",
+          "record-copy-helper",
+          "unreachable-code",
+          "unused-must-use",
+          "unused-imports",
+          "inherent-calls",
+        ]
+
+        for id in ids {
+          case lint_rules.describe(id) {
+            .Some(info) => {
+              try assert.is_true(info.brief.len() > 0)
+              try assert.is_true(info.detailed.len() > 0)
+            },
+            .None => { return .Err("no description for rule: ${id}") },
+          }
+        }
         .Ok({})
       },
     )
