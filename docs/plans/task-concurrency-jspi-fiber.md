@@ -73,17 +73,44 @@ A small cooperative scheduler in `runtime.mjs`, holding:
 - a **runnable queue** of pending resolvers (tasks ready to resume),
 - a **blocked set** of await-waiters keyed by target task id,
 - **pending-host accounting** (in-flight timers / stdin reads),
-- a **task registry** keyed by integer id (state, completion promise, result).
+- a **task registry** keyed by integer `task_id` (state, completion promise,
+  result-or-failure),
+- a **current-context id** (`scheduler.current`), see below.
+
+#### Handle ABI: integer ids only
+
+JS can hold an opaque Wasm reference, but it **cannot** construct a
+module-defined `rt_types__Task` GC struct or read its fields. So all host imports
+operate on a plain **`i32 task_id`**, never on the `Task<T>` struct. The Wasm
+side wraps a returned id into the `Task<T>` struct (and unwraps the id when
+passing a task back to `task_await`). The only opaque ref that crosses the
+boundary is the spawned **closure** (passed to `task_spawn`, handed back to
+`__task_run`), which JS holds without inspecting.
+
+#### Current-execution-context model
+
+A Suspending import must know *which* logical task is calling it. We do not
+thread a self-id through Twinkle code (that would reintroduce coloring). Instead
+the scheduler maintains `scheduler.current`: the id of the task (or top-level)
+whose stack is executing. It is set immediately before the scheduler resumes a
+stack and, because JS is single-threaded, stays valid throughout that stack's
+synchronous run until the next suspend. Every suspension intrinsic consults
+`scheduler.current` to identify its caller.
+
+**Top-level is a pseudo-task** with reserved id `0`, present in the registry so
+it can be parked as an await-waiter. `__twinkle_start` runs on its own
+`promising` stack; `scheduler.current` is `0` until the first task resume. This
+is what makes top-level `Task.await` work without special-casing.
 
 Host imports it implements:
 
 | Import | Kind | Behavior |
 |---|---|---|
-| `task_spawn(closure) -> handle` | sync | Register the closure, allocate a task id, return a `Task<T>` handle, and enqueue the task to start on the next scheduler tick. Does **not** run the body synchronously (eager-enqueue semantics). |
-| `task_await(handle) -> anyref` | Suspending | If the target is done, resolve immediately with its boxed result; otherwise park the caller as a waiter on the target and resolve when the target completes. |
-| `task_yield()` | Suspending | Re-enqueue the caller at the back of the runnable queue; resolve on the next scheduler tick. |
-| `task_sleep(ms)` | Suspending | `setTimeout(resolve, ms)`; counts as pending host while in flight. |
-| `task_read_stdin(max) -> bytes` | Suspending | Reuse the existing async stdin read; resolve with the chunk (or EOF). Counts as pending host while in flight. |
+| `task_spawn(closure) -> i32` | sync | Register the closure, allocate a `task_id`, enqueue the task to start on the next scheduler tick, and return the id. Does **not** run the body synchronously (eager-enqueue semantics). |
+| `task_await(target_id) -> anyref` | Suspending | Caller = `scheduler.current`. If the target is done, resolve immediately with its boxed result; if it failed, re-trap the caller; otherwise park the caller as a waiter on the target and resolve when the target settles. |
+| `task_yield()` | Suspending | Re-enqueue `scheduler.current` at the back of the runnable queue; resolve on the next scheduler tick. |
+| `task_sleep(ms)` | Suspending | `setTimeout(resolve, ms)`; counts as pending host while in flight; resumes `scheduler.current`. |
+| `task_read_stdin(max) -> bytes` | Suspending | Reuse the existing async stdin read; resolve with the chunk (or an empty result at EOF). Counts as pending host while in flight. |
 
 Cooperative semantics fall out of the event loop: because JS is single-threaded
 and the currently-running Wasm stack holds control until it suspends or
@@ -92,14 +119,21 @@ body until the current stack next yields control to the event loop.
 
 ### `Task<T>` representation and marshaling
 
-`Task<T>` remains a small Wasm GC struct carrying an integer id; the JS scheduler
-keys task records by that id. Task identity is id equality (consistent with the
-existing reference-equality design decision). Closures passed to `task_spawn` and
-boxed results returned from tasks cross the Wasm/JS boundary as opaque `anyref`,
-which the existing bridge already marshals. Result boxing/unboxing reuses the
-existing `emit_box_to_anyref` / `emit_unbox_from_anyref` helpers at spawn and
-await sites; the body's return value is boxed once by the universal closure
-trampoline.
+`Task<T>` remains a small Wasm GC struct carrying an integer `task_id`; the JS
+scheduler keys task records by that id. Task identity is id equality (consistent
+with the existing reference-equality design decision). The spawned closure
+crosses the boundary as an opaque `anyref` (JS holds it, hands it back to
+`__task_run`); the boxed result crosses back as `anyref`. Both are already
+marshaled by the existing bridge.
+
+Boxing is asymmetric:
+
+- **`Task.spawn`** passes only the closure (and receives the `task_id`). No
+  result exists yet, so there is nothing to box here.
+- **Result boxing** happens inside `__task_run` / the universal closure-return
+  trampoline, which boxes the body's return value to `anyref` once.
+- **Unboxing** happens at the **await** site, where the static result type `T`
+  is known, via `emit_unbox_from_anyref`.
 
 ## Compiler changes
 
@@ -119,10 +153,16 @@ trampoline.
 
 - `Task<T>` type, builtin registration, and type-checking remain.
 - Builtin signatures: keep `Task.spawn`/`Task.await`/`Task.yield`; add
-  `Task.sleep(ms: Int) Void` and `Task.read_stdin(max: Int) array<Byte>`.
-- Backend lowering becomes trivial: each of `Task.spawn`/`await`/`yield`/`sleep`/
-  `read_stdin` lowers directly to a call of the corresponding host import (with
-  boxing/unboxing at spawn/await). No transform pass; no validation pass.
+  `Task.sleep(ms: Int) Void` and `Task.read_stdin(max: Int) Vector<Byte>`.
+- Backend lowering becomes trivial, but lowers to **abstract suspension
+  intrinsics**, not directly to named JS host imports — this is the
+  forward-migration seam (see below) and is the implementation rule from Slice 1.
+  Each of `Task.spawn`/`await`/`yield`/`sleep`/`read_stdin` lowers to its
+  intrinsic (`task_create`, `suspend_await`, `suspend_yield`, `suspend_sleep`,
+  `suspend_read_stdin`), with the `Task` struct wrap/unwrap around the `i32`
+  id and result unboxing at the await site. A single backend binding table maps
+  those intrinsics to the JSPI host imports. No transform pass; no validation
+  pass.
 
 A direct consequence: suspension is legal **anywhere** — arbitrary call depth,
 inside higher-order callbacks, recursive helpers — and needs no diagnostics.
@@ -136,12 +176,23 @@ fn Task.spawn<T>(f: fn() T) Task<T>
 fn Task.await<T>(t: Task<T>) T
 fn Task.yield() Void
 fn Task.sleep(ms: Int) Void
-fn Task.read_stdin(max: Int) array<Byte>
+fn Task.read_stdin(max: Int) Vector<Byte>
 ```
+
+`Task.read_stdin` follows the existing `io.read_stdin_chunk` convention: an empty
+`Vector<Byte>` signals EOF (distinguishable via `io.stdin_eof()`).
 
 `sleep` and `read_stdin` are the host-readiness primitives that motivated the
 milestone: `sleep` for LSP debounce windows, `read_stdin` to feed an LSP framing
 buffer by parking until input (or EOF) arrives.
+
+**Non-goal: no user-facing Fiber API.** "Fiber" here names only the
+implementation mechanism (the per-task JSPI suspendable stack). The public
+surface is `Task<T>` and the operations above — there is no `Fiber.resume`,
+`Fiber.yield`-with-value, exposed fiber state, or manual control transfer.
+Keeping the surface at the `Task<T>` altitude is also what keeps the
+forward-migration seam free: the backend can change because the public API never
+commits to coroutine semantics.
 
 ## Lifecycle and deadlock
 
@@ -151,6 +202,31 @@ unawaited runnable tasks (preserving "a spawned task is a commitment to
 execute"). Deadlock is detected in JS: when the runnable queue is empty, no host
 operations are pending, and blocked tasks remain, the scheduler throws a
 trap-equivalent error (mirroring the old in-Wasm `sched_blocked > 0` check).
+
+## Failure and trap propagation
+
+A task body can fail two ways under JSPI: the body traps (its `promising` call
+rejects), or a suspending import rejects (e.g. a host I/O error). Either way the
+completion promise rejects. This is consistent with the existing decision that a
+task-body trap is an unrecoverable trap; recoverable failure stays explicit in
+the value via `Result<T, E>` and is *not* a separate task-failure channel.
+
+Scheduler rules:
+
+- On rejection, the task record is marked **failed** (storing the error), the
+  task leaves the runnable/blocked sets, and pending-host counters are
+  decremented as for completion.
+- **Awaiting a failed task re-traps the awaiter**: `task_await` on a failed
+  target rejects the awaiter's resume promise, which propagates the trap up that
+  task's stack (and recursively to *its* awaiters). A chain of awaiters all trap,
+  matching synchronous trap semantics.
+- An **unawaited failed task surfaces as a program-level error**: during drain,
+  if a task failed and no one awaited it, the scheduler propagates the failure as
+  the program's failure rather than swallowing it. (It does not silently
+  disappear the way a fire-and-forget success would.)
+- No `Task.try_await`/`Result`-returning await in the MVP. A future
+  trap-catching design can add one; this matches the deferred decision in the
+  superseded doc.
 
 ## Decisions
 
@@ -249,16 +325,23 @@ effort; everything else is deferred until the proposal is real.
 
 ## Slice breakdown
 
-1. **Strip the stackless backend.** Remove the scheduler/transform/validation,
-   reduce `Task.*` lowering to (temporarily stubbed or rejected) import calls.
-   `make stage2` green; existing non-task suites green. Mark the stackless design
-   doc superseded.
-2. **JS scheduler + core fibers.** Add `task_spawn`/`task_await`/`task_yield`
-   host imports and the `__task_run` trampoline; box/unbox at spawn/await. Tests
-   via `twk run`: spawn/await round-trip, interleaving, await-after-yield,
-   unawaited drain, deadlock detection.
-3. **Host readiness.** Add `task_sleep` and `task_read_stdin`; tests for a timer
-   waking an awaiting task, stdin readiness waking a reader task without
+1. **Strip the stackless backend + establish the intrinsic seam.** Remove the
+   scheduler/transform/validation. Re-lower `Task.*` to the **abstract suspension
+   intrinsics** (`task_create`, `suspend_await`/`yield`/`sleep`/`read_stdin`)
+   routed through one backend binding table — the migration seam, in place from
+   day one. Intrinsics may be temporarily stubbed/rejected at runtime. `make
+   stage2` green; existing non-task suites green. Mark the stackless design doc
+   superseded.
+2. **JS scheduler + core fibers.** Bind `task_create`/`suspend_await`/
+   `suspend_yield` to host imports operating on **`i32 task_id`** (not the `Task`
+   struct), add the `promising`-wrapped `__task_run(closure)` trampoline, the
+   registry, the runnable/blocked sets, the `scheduler.current` context, and the
+   top-level pseudo-task id `0`. Result boxing in `__task_run`, unboxing at await.
+   Tests via `twk run`: spawn/await round-trip, interleaving, await-after-yield,
+   unawaited drain, deadlock detection, and **failure propagation** (awaiting a
+   trapped task re-traps; unawaited failure surfaces at drain).
+3. **Host readiness.** Bind `suspend_sleep` and `suspend_read_stdin`; tests for a
+   timer waking an awaiting task, stdin readiness waking a reader task without
    busy-spinning, and deadlock-vs-pending-host distinction.
 4. **(Later) LSP migration.** Move `twk lsp` onto cooperative tasks (input
    reader, dispatcher, debounce, diagnostics), with generation tokens for stale
