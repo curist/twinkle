@@ -1,0 +1,38 @@
+// Phase A JSPI switching-cost probe (throwaway bench).
+// See docs/plans/task-concurrency-jspi-fiber.md, section "Spike: JSPI
+// switching cost". Measures raw JSPI suspend/resume cost with NO scheduler:
+//
+//   interval 0->1 : A1 baseline counted loop (no suspension)
+//   interval 1->2 : A2 Suspending import, already-resolved promise
+//   interval 2->3 : A3 Suspending import, microtask-deferred promise (real suspend)
+//
+// `bench.mark(label)` records performance.now() on the JS side per call.
+// Under JSPI the runtime wraps every extern in WebAssembly.Suspending, so
+// `mark` and `suspend_resolved` are both already-resolved suspends; the
+// per-call cost difference between them is noise. `suspend_micro` awaits one
+// microtask, forcing a true stack switch.
+
+extern bench {
+  fn mark(label: Int)
+  fn suspend_resolved()
+  fn suspend_micro()
+  fn sink(value: Int)
+}
+
+n := 100000
+
+bench.mark(0)
+acc := 0
+for i in range(n) {
+  acc = acc + i
+}
+bench.mark(1)
+for i in range(n) {
+  bench.suspend_resolved()
+}
+bench.mark(2)
+for i in range(n) {
+  bench.suspend_micro()
+}
+bench.mark(3)
+bench.sink(acc)

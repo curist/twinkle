@@ -522,4 +522,41 @@ continuations are available.
 
 ## Evidence
 
-Record commands and notes here as slices land.
+### Phase A spike — GO (2026-06-18)
+
+Raw JSPI suspend/resume cost, no scheduler. Harness:
+`boot/bench/jspi/{phase_a.tw,run.mjs}` (throwaway), run through the same
+`runWasmBytesAsync` async path as `twk run`, providing the `bench` externs so we
+control whether each suspends. `N=100000` per loop, 7 runs (median), 2 warmup.
+Platform: darwin arm64. Commit: `f3c4e9c` + uncommitted bench.
+
+| Measurement | Node 26.0.0 | Deno 2.8.3 |
+|---|---|---|
+| A1 baseline loop (no suspend) | 0.0009 µs/iter | 0.0002 µs/iter |
+| A2 suspend, already-resolved promise | 0.085 µs/iter | 0.081 µs/iter |
+| A3 suspend, microtask-deferred (real) | 0.112 µs/iter | 0.118 µs/iter |
+| A3 / A2 (resolved-promise fast-path tell) | 1.31× | 1.45× |
+| A3 − A1 (real per-suspend cost) | 0.111 µs/iter | 0.117 µs/iter |
+
+Findings:
+
+- A real JSPI suspend costs **~0.11–0.12 µs (≈110–120 ns)** on both runtimes —
+  2–3 orders of magnitude below the "tens of µs → proceed" budget and ~4 below
+  the "~1 ms → reconsider" threshold. **Proceed with the JSPI backend unchanged.**
+- The engine **does** fast-path already-resolved promises (A3/A2 ≈ 1.3–1.45×), so
+  A2 alone would under-report a true suspend — A3 is the honest floor. Both were
+  measured; the gap is small in absolute terms.
+- **A0 note (recorded):** the runtime wraps *every* extern in
+  `WebAssembly.Suspending` under JSPI, so a truly non-suspending host call is not
+  reachable on the real `twk run` path. The realistic "plain extern" cost is the
+  already-resolved suspend (A2 ≈ 0.08 µs). A1 (a bare Wasm loop iteration,
+  ≈1–2 ns) is the Wasm-call-scale denominator.
+- **Node/Deno parity:** within ~6% on the real-suspend number. No runtime/version
+  guard beyond `hasJspi` is needed. (Both are V8-derived; a non-V8 JSPI engine
+  would warrant a re-check, but none is a current target.)
+- Phase B (scheduler overhead + LSP-shaped decision benchmark) runs after Slices
+  2–3 on the real `Task.*` lowering.
+
+Commands:
+`target/twk build boot/bench/jspi/phase_a.tw -o boot/bench/jspi/phase_a.wasm`,
+`node boot/bench/jspi/run.mjs`, `deno run -A boot/bench/jspi/run.mjs`.
