@@ -14,7 +14,6 @@ use @std.proc
 use compiler.anf.{AnfModule}
 use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{prepare_backend}
-use compiler.backend.task_validate.{validate_tasks}
 use compiler.backend.verify.{VerifyLevel, verify_prepared_module_with_level}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.emit.{emit_module}
@@ -24,7 +23,6 @@ use compiler.codegen.linker_dce.{eliminate_dead_wasm}
 use compiler.codegen.runtime.arr as rt_arr
 use compiler.codegen.runtime.core as rt_core
 use compiler.codegen.runtime.dict as rt_dict
-use compiler.codegen.runtime.sched as rt_sched
 use compiler.codegen.runtime.str as rt_str
 use compiler.codegen.runtime.types as rt_types
 use compiler.codegen.wasm.{emit_linked_wasm}
@@ -60,7 +58,6 @@ pub fn runtime_modules(eq_layouts: EqTypeLayouts) Vector<WasmModule> {
     rt_arr.module(),
     rt_dict.module(),
     rt_core.module(eq_layouts),
-    rt_sched.module(),
     cg_intrinsics.module(),
   ]
 }
@@ -75,12 +72,6 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
 
   if timed {
     log_time("closure_convert", t1 - t0)
-  }
-
-  // 1b. Validate task suspension points.
-  case validate_tasks(closure_conversion.anf, builtins) {
-    .Ok(_) => {},
-    .Err(msg) => error(msg),
   }
 
   // 2. Prepare backend IR.

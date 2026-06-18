@@ -1,0 +1,82 @@
+/// Abstract suspension intrinsic binding.
+///
+/// The compiler lowers `Task.*` to operation-named suspension intrinsics
+/// (`task_create`, `suspend_await`, `suspend_yield`, `suspend_sleep`,
+/// `suspend_read_stdin`) and never to host-specific names. This module is the
+/// single place that binds those abstract operations to a concrete
+/// implementation — currently host imports satisfied by the JS scheduler under
+/// JSPI. A future Wasm-continuations backend replaces this table (and the
+/// runtime that backs it) without touching task lowering.
+
+use compiler.codegen.wasm_ir.{ImportDef}
+
+// Current binding: JS host imports under the "task" module. The JSPI scheduler
+// in runtime.mjs installs these before instantiation.
+fn host_module() String {
+  "task"
+}
+
+pub fn sym_task_create() String {
+  "task_create"
+}
+
+pub fn sym_suspend_await() String {
+  "suspend_await"
+}
+
+pub fn sym_suspend_yield() String {
+  "suspend_yield"
+}
+
+pub fn sym_suspend_sleep() String {
+  "suspend_sleep"
+}
+
+pub fn sym_suspend_read_stdin() String {
+  "suspend_read_stdin"
+}
+
+// Import declarations for the abstract operations, in their current JSPI
+// binding. All operate on plain scalars / opaque anyref so JS never touches a
+// `Task<T>` GC struct: ids are i32, closures and boxed results are anyref.
+// Unused operations are stripped by the linker's dead-import elimination, so
+// non-task programs carry none of these.
+pub fn imports() Vector<ImportDef> {
+  [
+    ImportDef.{
+      module: host_module(),
+      name: sym_task_create(),
+      as_sym: sym_task_create(),
+      params: [.Anyref],
+      results: [.I32],
+    },
+    ImportDef.{
+      module: host_module(),
+      name: sym_suspend_await(),
+      as_sym: sym_suspend_await(),
+      params: [.I32],
+      results: [.Anyref],
+    },
+    ImportDef.{
+      module: host_module(),
+      name: sym_suspend_yield(),
+      as_sym: sym_suspend_yield(),
+      params: [],
+      results: [],
+    },
+    ImportDef.{
+      module: host_module(),
+      name: sym_suspend_sleep(),
+      as_sym: sym_suspend_sleep(),
+      params: [.I64],
+      results: [],
+    },
+    ImportDef.{
+      module: host_module(),
+      name: sym_suspend_read_stdin(),
+      as_sym: sym_suspend_read_stdin(),
+      params: [.I64],
+      results: [.Anyref],
+    },
+  ]
+}

@@ -161,7 +161,7 @@ fn test_phase3_large_string_index_fixture() Result<Void, String> {
 // ── runtime_modules tests ───────────────────────────────────────────
 fn test_runtime_modules_count() Result<Void, String> {
   mods := runtime_modules(empty_eq_layouts())
-  try assert.equal(mods.len(), 7)
+  try assert.equal(mods.len(), 6)
   .Ok({})
 }
 
@@ -175,8 +175,7 @@ fn test_runtime_modules_namespaces() Result<Void, String> {
   try assert.ok(names[2] == "rt.arr", "third module should be rt.arr")
   try assert.ok(names[3] == "rt.dict", "fourth module should be rt.dict")
   try assert.ok(names[4] == "rt.core", "fifth module should be rt.core")
-  try assert.ok(names[5] == "rt.sched", "sixth module should be rt.sched")
-  try assert.ok(names[6] == "codegen.intrinsics", "seventh module should be codegen.intrinsics")
+  try assert.ok(names[5] == "codegen.intrinsics", "sixth module should be codegen.intrinsics")
   .Ok({})
 }
 

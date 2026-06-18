@@ -2,7 +2,6 @@ use commands.common.{format_compile_error}
 use compiler.anf.{AnfModule}
 use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{prepare_backend}
-use compiler.backend.task_validate.{validate_tasks}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.codegen.{codegen, runtime_modules}
 use compiler.codegen.emit.{emit_module}
@@ -30,13 +29,6 @@ pub fn codegen_path(path: String) Result<String, String> {
     .Err(err) => { return .Err(format_compile_error(err)) },
   }
   .Ok(codegen(artifacts.opt, artifacts.env, artifacts.builtins))
-}
-
-// Runs task validation on source code and returns the result.
-pub fn validate_task_src(src: String) Result<Void, String> {
-  inputs := try codegen_inputs(src)
-  closure_conversion := convert_closures(inputs.anf, inputs.env)
-  validate_tasks(closure_conversion.anf, inputs.builtins)
 }
 
 // Returns the linked module for structural inspection (before WAT emission).

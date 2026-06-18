@@ -81,7 +81,6 @@ pub fn emit_loop_op(
     prepared_funcs: ctx.prepared_funcs,
     is_init_func: ctx.is_init_func,
     loop_depth: ctx.loop_depth + 1,
-    suspending_bodies: ctx.suspending_bodies,
     intrinsic_table: ctx.intrinsic_table,
   }
 

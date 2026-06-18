@@ -15,7 +15,6 @@ use compiler.backend.prepared_ir.{
   PreparedPattern, ReprKind, SlotId,
 }
 use compiler.backend.repr_assign.{repr_of_mono}
-use compiler.backend.task_validate.{classify_task_bodies}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.emit.anyref.{
@@ -51,12 +50,10 @@ use compiler.codegen.emit.records as record_emit
 use compiler.codegen.emit.string_pool.{
   emit_string_data_segment, emit_string_pool_getters, emit_string_pool_globals,
 }
-use compiler.codegen.emit.task_resume.{
-  ClosureInfo, LetBinding, TaskResumeInfo, analyze_task_body, find_closure_for_slot,
-}
 use compiler.codegen.emit.variants as variant_emit
+use compiler.codegen.runtime.task_abi as task_abi
 use compiler.codegen.wasm_ir.{
-  DataSegment, FuncDef, GlobalDef, ImportDef, Instr, TypeDef, ValType, WasmModule,
+  DataSegment, ExportDef, FuncDef, GlobalDef, ImportDef, Instr, TypeDef, ValType, WasmModule,
 }
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key, val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
@@ -93,20 +90,6 @@ pub fn emit_module(
     prepared_funcs[pf.func_id.id] = pf
   }
 
-  // Analyze suspending task bodies for state-machine transform
-  suspending_bodies: Dict<Int, TaskResumeInfo> = Dict.new()
-  suspending_fids := classify_task_bodies(anf, builtins)
-
-  for fid in suspending_fids {
-    case prepared_funcs[fid.id] {
-      .Some(pf) => {
-        info := analyze_task_body(pf, builtins, env)
-        suspending_bodies[fid.id] = info
-      },
-      .None => {},
-    }
-  }
-
   // Base context (per-function state will be reset in emit_func)
   intrinsic_table := build_intrinsic_table(builtins)
   base_ctx := EmitCtx.{
@@ -122,7 +105,6 @@ pub fn emit_module(
     prepared_funcs,
     is_init_func: false,
     loop_depth: 0,
-    suspending_bodies,
     intrinsic_table,
   }
 
@@ -191,25 +173,6 @@ pub fn emit_module(
     }
   }
 
-  // Generate resume functions and frame types for suspending task bodies
-  resume_type_defs: Vector<TypeDef> = []
-
-  for fid in suspending_fids {
-    case suspending_bodies[fid.id] {
-      .Some(info) => {
-        resume_type_defs = .append(info.frame_type)
-
-        case prepared_funcs[fid.id] {
-          .Some(pf) => {
-            funcs = .append(emit_resume_func(info, pf, base_ctx))
-          },
-          .None => {},
-        }
-      },
-      .None => {},
-    }
-  }
-
   // String pool: globals, getter functions, data segment
   str_globals := emit_string_pool_globals(reg)
   str_getters := emit_string_pool_getters(reg)
@@ -256,7 +219,23 @@ pub fn emit_module(
     .Some(fid) => func_sym_map[fid.id],
     .None => .None,
   }
-  type_defs: Vector<TypeDef> = reg.type_defs.concat(resume_type_defs)
+  type_defs: Vector<TypeDef> = reg.type_defs
+
+  // A program that uses any Task.* operation needs the universal task-body
+  // entry point and the suspension-intrinsic host imports. Non-task programs
+  // carry neither (and the linker's dead-import elimination further trims any
+  // task intrinsic the program does not actually call).
+  uses_tasks := program_uses_tasks(prepared_funcs, builtins)
+
+  if uses_tasks {
+    funcs = .append(emit_task_run_func())
+  }
+
+  task_exports: Vector<ExportDef> = if uses_tasks {
+    [ExportDef.{ wasm_name: "__task_run", func_sym: "__task_run" }]
+  } else {
+    []
+  }
   extern_imports: Vector<ImportDef> = []
 
   for fid, ext in anf.extern_imports {
@@ -315,41 +294,13 @@ pub fn emit_module(
       params: [.Ref(true, .Named("rt_types__String"))],
       results: [.Anyref],
     })
-    .append(.{
-      module: "rt.sched",
-      name: "sched_enqueue",
-      as_sym: "sched_enqueue",
-      params: [.Ref(false, .Named("rt_types__Task"))],
-      results: [],
-    })
-    .append(.{
-      module: "rt.sched",
-      name: "sched_run_until",
-      as_sym: "sched_run_until",
-      params: [.Ref(false, .Named("rt_types__Task"))],
-      results: [.Anyref],
-    })
-    .append(.{
-      module: "rt.sched",
-      name: "sched_drain",
-      as_sym: "sched_drain",
-      params: [],
-      results: [],
-    })
-    .append(.{
-      module: "rt.sched",
-      name: "resume_rtc",
-      as_sym: "resume_rtc",
-      params: [.Ref(false, .Named("rt_types__Task"))],
-      results: [.I32],
-    })
-    .append(.{
-      module: "rt.sched",
-      name: "sched_append_waiter",
-      as_sym: "sched_append_waiter",
-      params: [.Ref(false, .Named("rt_types__Task")), .Ref(false, .Named("rt_types__Task"))],
-      results: [],
-    })
+
+  // Abstract suspension intrinsics (current binding: JSPI host imports). Only
+  // declared for task-using programs; unused operations are then DCE'd.
+  if uses_tasks {
+    runtime_imports = runtime_imports.concat(task_abi.imports())
+  }
+
   WasmModule.{
     namespace: "user",
     types: type_defs,
@@ -358,7 +309,7 @@ pub fn emit_module(
     globals,
     tables: [],
     elems: [],
-    exports: [],
+    exports: task_exports,
     memory_exports: [],
     memories: [],
     data,
@@ -465,16 +416,9 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     prepared_funcs: base_ctx.prepared_funcs,
     is_init_func: func.is_init,
     loop_depth: 0,
-    suspending_bodies: base_ctx.suspending_bodies,
     intrinsic_table: base_ctx.intrinsic_table,
   }
   body_instrs := emit_expr(prepared.body, prepared.return_mono, ctx, [])
-
-  // After the init function body, drain the scheduler to run any
-  // spawned-but-unawaited tasks before program exit.
-  if func.is_init {
-    body_instrs = .append(Instr.Call("rt_sched__sched_drain"))
-  }
 
   sym := lookup_func_sym(base_ctx.func_sym_map, func.func_id)
   fd := FuncDef.{
@@ -1439,6 +1383,8 @@ pub fn build_intrinsic_table(b: BuiltinRegistry) Dict<Int, IntrinsicTag> {
   t[b.method_id("Task", "spawn").id] = .TaskSpawn
   t[b.method_id("Task", "await").id] = .TaskAwait
   t[b.method_id("Task", "yield").id] = .TaskYield
+  t[b.method_id("Task", "sleep").id] = .TaskSleep
+  t[b.method_id("Task", "read_stdin").id] = .TaskReadStdin
   t[b.method_id("Cell", "new").id] = .CellNew
   t[b.method_id("Cell", "get").id] = .CellGet
   t[b.method_id("Cell", "set").id] = .CellSet
@@ -1508,10 +1454,9 @@ fn emit_intrinsic_call(
     },
     .TaskSpawn => emit_intrinsic_task_spawn(args, result_idx, result_mono, ctx, buf),
     .TaskAwait => emit_intrinsic_task_await(args, result_idx, result_mono, ctx, buf),
-    .TaskYield => {
-      // Top-level yield is a no-op: yield is only meaningful in task bodies.
-      buf.append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx))
-    },
+    .TaskYield => emit_intrinsic_task_yield(result_idx, buf),
+    .TaskSleep => emit_intrinsic_task_sleep(args, result_idx, ctx, buf),
+    .TaskReadStdin => emit_intrinsic_task_read_stdin(args, result_idx, result_mono, ctx, buf),
     .CellNew => emit_intrinsic_cell_new(args, result_idx, result_mono, ctx, buf),
     .CellGet => emit_intrinsic_cell_get(args, result_idx, result_mono, ctx, buf),
     .CellSet => emit_intrinsic_cell_set(args, result_idx, ctx, buf),
@@ -2152,10 +2097,12 @@ fn emit_intrinsic_cell_update(
     .append(.LocalSet(result_idx)) // return void
 }
 
-// ── Task intrinsics (scheduler-based) ─────────────────────────────────
-// Task.spawn(f) creates a Task struct with a run-to-completion frame
-// and enqueues it.  Task.await(task) drives the scheduler until the
-// target task completes, then unboxes the result.
+// ── Task intrinsics (stackful, JSPI backend) ─────────────────────────
+// Task operations lower to backend-neutral suspension intrinsics. The
+// compiler never names a host import directly; `task_abi` is the single
+// binding table mapping each operation to its current JSPI host import.
+// Suspension is legal at any call depth — there is no compiler transform
+// and no suspension-position validation.
 fn emit_intrinsic_task_spawn(
   args: Vector<PreparedAtom>,
   result_idx: Int,
@@ -2163,25 +2110,14 @@ fn emit_intrinsic_task_spawn(
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
-  // Check if this spawn is for a suspending task body
-  case args[0] {
-    .ASlot(closure_sid) => case current_prepared_func(ctx) {
-      .Some(pf) => case find_closure_for_slot(pf.body, closure_sid.id) {
-        .Some(closure_info) => case ctx.suspending_bodies[closure_info.body_fid.id] {
-          .Some(resume_info) => {
-            return emit_spawn_suspending(closure_info, resume_info, result_idx, ctx, buf)
-          },
-          .None => {},
-        },
-        .None => {},
-      },
-      .None => {},
-    },
-    _ => {},
-  }
-
-  // Non-suspending path (default): FrameRtc + resume_rtc
-  emit_spawn_rtc(args, result_idx, result_mono, ctx, buf)
+  // Spawn hands the task closure to `task_create`, which registers it and
+  // returns an i32 id; wrap that id in the `Task<T>` handle struct. No result
+  // is boxed here — the body has not run yet, so result boxing lives in
+  // `__task_run`.
+  buf = emit_atom(args[0], ctx, buf) // closure (anyref)
+  buf = .append(.Call(task_abi.sym_task_create())) // -> i32 task id
+  buf = .append(.StructNew("rt_types__Task"))
+  buf.append(.LocalSet(result_idx))
 }
 
 fn emit_intrinsic_task_await(
@@ -2191,523 +2127,115 @@ fn emit_intrinsic_task_await(
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
-  // Top-level await: fast-path check + scheduler fallback.
-  //
-  // The task atom (args[0]) already has its own local, so we can
-  // re-emit it multiple times without needing a temp.
-  //
-  // if task.state == DONE:
-  //   result = unbox(task.result)
-  // else:
-  //   result = unbox(sched_run_until(task))
-  // Check task.state == DONE (3)
+  // Unwrap the task id, suspend through `suspend_await`, and unbox the boxed
+  // result to the statically known type. The scheduler parks the caller until
+  // the target settles (or re-traps on a failed target).
   buf = emit_atom(args[0], ctx, buf)
   buf = .append(.RefCast(false, .Named("rt_types__Task")))
-  buf = .append(.StructGet("rt_types__Task", 0)) // state field
-  buf = .append(.I32Const(3)) // DONE
-  buf = .append(.I32Eq)
-
-  // We need to re-emit the atom inside each branch since
-  // the If consumes the condition and starts with empty stack.
-  // Build the then/else branch instruction vectors separately.
-  then_branch: Vector<Instr> = []
-  then_branch = emit_atom(args[0], ctx, then_branch)
-  then_branch = .append(.RefCast(false, .Named("rt_types__Task")))
-  then_branch = .append(.StructGet("rt_types__Task", 3)) // result field
-  else_branch: Vector<Instr> = []
-  else_branch = emit_atom(args[0], ctx, else_branch)
-  else_branch = .append(.RefCast(false, .Named("rt_types__Task")))
-  else_branch = .append(.Call("sched_run_until")) // returns anyref
-  buf = .append(.If(.Some(.Anyref), then_branch, else_branch))
-
-  // Unbox the anyref result to the concrete type
+  buf = .append(.StructGet("rt_types__Task", 0)) // task id
+  buf = .append(.Call(task_abi.sym_suspend_await())) // -> anyref result
   buf = emit_unbox_from_anyref(result_mono, ctx.env, buf)
   buf.append(.LocalSet(result_idx))
 }
 
-// ── Task spawn helpers ────────────────────────────────────────────────
-fn emit_spawn_rtc(
+fn emit_intrinsic_task_yield(result_idx: Int, buf: Vector<Instr>) Vector<Instr> {
+  buf = .append(.Call(task_abi.sym_suspend_yield()))
+  buf.append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx)) // void
+}
+
+fn emit_intrinsic_task_sleep(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  buf = emit_atom(args[0], ctx, buf) // ms (i64)
+  buf = .append(.Call(task_abi.sym_suspend_sleep()))
+  buf.append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx)) // void
+}
+
+fn emit_intrinsic_task_read_stdin(
   args: Vector<PreparedAtom>,
   result_idx: Int,
   result_mono: MonoType,
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
-  // Non-suspending: FrameRtc + resume_rtc
-  buf = .append(.I32Const(0)) // state = RUNNABLE
-  buf = emit_atom(args[0], ctx, buf) // closure
-  buf = .append(.StructNew("rt_types__FrameRtc"))
-  buf = .append(.RefFunc("resume_rtc")) // resume function ref
-  buf = .append(.RefNull(.None_)) // result = null
-  buf = .append(.RefNull(.Named("rt_types__Array"))) // waiters = null
-  buf = .append(.StructNew("rt_types__Task"))
-  buf = .append(.LocalSet(result_idx))
-  buf = .append(.LocalGet(result_idx))
-  buf = .append(.RefAsNonNull)
-  buf = .append(.Call("sched_enqueue"))
-  buf
+  buf = emit_atom(args[0], ctx, buf) // max (i64)
+  buf = .append(.Call(task_abi.sym_suspend_read_stdin())) // -> anyref (boxed Vector<Byte>)
+  buf = emit_unbox_from_anyref(result_mono, ctx.env, buf)
+  buf.append(.LocalSet(result_idx))
 }
 
-fn emit_spawn_suspending(
-  closure_info: ClosureInfo,
-  resume_info: TaskResumeInfo,
-  result_idx: Int,
-  ctx: EmitCtx,
-  buf: Vector<Instr>,
-) Vector<Instr> {
-  body_pf := case ctx.prepared_funcs[closure_info.body_fid.id] {
-    .Some(pf) => pf,
-    .None => error("emit_spawn_suspending: missing PreparedFunc"),
-  }
-
-  // Task fields: state, frame, resume, result, waiters
-  buf = .append(.I32Const(0)) // state = RUNNABLE
-
-  // Frame fields: pc, captures..., hoisted_locals..., await_targets...
-  buf = .append(.I32Const(0)) // pc = 0
-
-  for cap_sid in closure_info.captures {
-    buf = emit_atom(.ASlot(cap_sid), ctx, buf)
-  }
-
-  // Default values for non-capture hoisted locals
-  num_captures := closure_info.captures.len()
-  i := num_captures
-
-  for i < resume_info.hoisted_slots.len() {
-    sid := resume_info.hoisted_slots[i]
-    info_s := facts.slot_info(body_pf, sid)
-    vt := val_type_of_mono(info_s.mono, ctx.env)
-    buf = .append(default_for_vt(vt))
-    i = i + 1
-  }
-
-  // Null for await target fields
-  for af_idx in resume_info.await_target_fields {
-    if af_idx >= 0 {
-      buf = .append(.RefNull(.None_))
-    }
-  }
-
-  buf = .append(.StructNew(resume_info.frame_sym))
-  buf = .append(.RefFunc(resume_info.resume_sym))
-  buf = .append(.RefNull(.None_)) // result = null
-  buf = .append(.RefNull(.Named("rt_types__Array"))) // waiters = null
-  buf = .append(.StructNew("rt_types__Task"))
-  buf = .append(.LocalSet(result_idx))
-  buf = .append(.LocalGet(result_idx))
-  buf = .append(.RefAsNonNull)
-  buf = .append(.Call("sched_enqueue"))
-  buf
-}
-
-fn default_for_vt(vt: ValType) Instr {
-  case vt {
-    .I32 => .I32Const(0),
-    .I64 => .I64Const(0),
-    .F64 => .F64Const(0.0),
-    .Ref(_, ht) => .RefNull(ht),
-    _ => .RefNull(.None_),
-  }
-}
-
-// ── Resume function generation ────────────────────────────────────────
-fn emit_resume_func(info: TaskResumeInfo, func: PreparedFunc, base_ctx: EmitCtx) FuncDef {
-  // Resume function: (ref $Task) -> i32
-  // local 0: task (param)
-  // local 1: frame (extra)
-  // local 2: pc (extra)
-  // local 3+: one per slot
-  // last: result_temp (anyref)
-  task_local := 0
-  frame_local := 1
-  pc_local := 2
-  next_local := 3
-  extra_locals: Vector<ValType> = [ValType.Ref(true, .Named(info.frame_sym)), .I32]
-  local_map: Dict<Int, LocalEntry> = Dict.new()
-
-  for sid in func.captures {
-    info_s := facts.slot_info(func, sid)
-    vt := val_type_of_mono(info_s.mono, base_ctx.env)
-    local_map[sid.id] = LocalEntry.{
-      index: next_local,
-      val_type: vt,
-      mono: info_s.mono,
-      repr: info_s.repr,
-      source_local: info_s.source_local,
-    }
-    extra_locals = .append(vt)
-    next_local = next_local + 1
-  }
-
-  for sid in func.params {
-    info_s := facts.slot_info(func, sid)
-    vt := val_type_of_mono(info_s.mono, base_ctx.env)
-    local_map[sid.id] = LocalEntry.{
-      index: next_local,
-      val_type: vt,
-      mono: info_s.mono,
-      repr: info_s.repr,
-      source_local: info_s.source_local,
-    }
-    extra_locals = .append(vt)
-    next_local = next_local + 1
-  }
-
-  for sid in func.locals {
-    info_s := facts.slot_info(func, sid)
-    vt := val_type_of_mono(info_s.mono, base_ctx.env)
-    local_map[sid.id] = LocalEntry.{
-      index: next_local,
-      val_type: vt,
-      mono: info_s.mono,
-      repr: info_s.repr,
-      source_local: info_s.source_local,
-    }
-    extra_locals = .append(vt)
-    next_local = next_local + 1
-  }
-
-  result_temp_local := next_local
-  extra_locals = .append(.Anyref)
-  next_local = next_local + 1
-  ctx := EmitCtx.{
-    registry: base_ctx.registry,
-    builtins: base_ctx.builtins,
-    env: base_ctx.env,
-    local_map,
-    next_local,
-    wasm_locals: extra_locals,
-    label_stack: [],
-    current_func_id: .Some(func.func_id),
-    func_sym_map: base_ctx.func_sym_map,
-    prepared_funcs: base_ctx.prepared_funcs,
-    is_init_func: false,
-    loop_depth: 0,
-    suspending_bodies: base_ctx.suspending_bodies,
-    intrinsic_table: base_ctx.intrinsic_table,
-  }
-  body: Vector<Instr> = []
-
-  // Prologue: load frame from task
-  body = .append(.LocalGet(task_local))
-  body = .append(.StructGet("rt_types__Task", 1))
-  body = .append(.RefCast(false, .Named(info.frame_sym)))
-  body = .append(.LocalSet(frame_local))
-
-  // Load pc
-  body = .append(.LocalGet(frame_local))
-  body = .append(.StructGet(info.frame_sym, 0))
-  body = .append(.LocalSet(pc_local))
-
-  // Build segment bodies
-  segment_bodies: Vector<Vector<Instr>> = []
-
-  for seg_idx in 0..info.num_segments {
-    seg_body := emit_resume_segment(
-      seg_idx,
-      info,
-      func,
-      task_local,
-      frame_local,
-      result_temp_local,
-      ctx,
-    )
-    segment_bodies = .append(seg_body)
-  }
-
-  // PC dispatch — wrapped in a loop so await fast-path can re-dispatch
-  dispatch := build_pc_dispatch(pc_local, segment_bodies, 0)
-
-  // Reload pc at loop top (await fast-path updates pc then branches here)
-  loop_body: Vector<Instr> = [
-    Instr.LocalGet(frame_local),
-    Instr.StructGet(info.frame_sym, 0),
-    Instr.LocalSet(pc_local),
-  ]
-
-  for instr in dispatch {
-    loop_body = .append(instr)
-  }
-
-  body = .append(Instr.Loop("$resume_loop", .Some(.I32), loop_body))
+// Universal task-body entry point. The JS scheduler wraps this export with
+// `WebAssembly.promising` and calls it to run a task body on its own JSPI
+// stack. It invokes the closure through the generic closure ABI (env, no
+// args) and returns the already-boxed anyref result.
+fn emit_task_run_func() FuncDef {
   FuncDef.{
-    name: info.resume_sym,
-    params: [ValType.Ref(false, .Named("rt_types__Task"))],
-    results: [.I32],
-    locals: ctx.wasm_locals,
-    body,
+    name: "__task_run",
+    params: [.Anyref],
+    results: [.Anyref],
+    locals: [],
+    body: [
+      .LocalGet(0),
+      .RefCast(false, .Named("rt_types__Closure")),
+      .StructGet("rt_types__Closure", 1), // env
+      .RefNull(.None_), // no args
+      .LocalGet(0),
+      .RefCast(false, .Named("rt_types__Closure")),
+      .StructGet("rt_types__Closure", 0), // func ref
+      .CallRef("rt_types__ClosureFunc"),
+    ],
   }
 }
 
-fn emit_resume_segment(
-  seg_idx: Int,
-  info: TaskResumeInfo,
-  func: PreparedFunc,
-  task_local: Int,
-  frame_local: Int,
-  result_temp_local: Int,
-  ctx: EmitCtx,
-) Vector<Instr> {
-  buf: Vector<Instr> = []
+// True when the program calls any Task.* operation, so the universal task
+// entry point and suspension imports are emitted only when needed.
+fn program_uses_tasks(prepared_funcs: Dict<Int, PreparedFunc>, builtins: BuiltinRegistry) Bool {
+  ids: Dict<Int, Bool> = Dict.new()
+  ids[builtins.method_id("Task", "spawn").id] = true
+  ids[builtins.method_id("Task", "await").id] = true
+  ids[builtins.method_id("Task", "yield").id] = true
+  ids[builtins.method_id("Task", "sleep").id] = true
+  ids[builtins.method_id("Task", "read_stdin").id] = true
+  found := false
 
-  // Binding range for this segment
-  start_idx := if seg_idx == 0 {
-    0
-  } else {
-    info.suspension_points[seg_idx - 1].index + 1
-  }
-  end_idx := if seg_idx < info.suspension_points.len() {
-    info.suspension_points[seg_idx].index
-  } else {
-    info.bindings.len()
+  for k, pf in prepared_funcs {
+    if expr_calls_any(pf.body, ids) {
+      found = true
+    }
   }
 
-  // Restore hoisted locals from frame
-  for slot_sid in info.hoisted_slots {
-    case info.hoisted_set[slot_sid.id] {
-      .Some(field_idx) => {
-        entry := lookup_slot(ctx, slot_sid)
-        buf = .append(.LocalGet(frame_local))
-        buf = .append(.StructGet(info.frame_sym, field_idx))
+  found
+}
 
-        case entry.val_type {
-          .Ref(false, ht) => {
-            buf = .append(.RefCast(false, ht))
-          },
-          _ => {},
+fn expr_calls_any(expr: PreparedExpr, ids: Dict<Int, Bool>) Bool {
+  case expr {
+    .Let(_, op, body) => op_calls_any(op, ids) or expr_calls_any(body, ids),
+    _ => false,
+  }
+}
+
+fn op_calls_any(op: PreparedOp, ids: Dict<Int, Bool>) Bool {
+  case op {
+    .ACall(.AGlobalFunc(fid), _) => ids.has(fid.id),
+    .AIf(_, then_e, else_e) => expr_calls_any(then_e, ids) or expr_calls_any(else_e, ids),
+    .AMatch(_, arms) => {
+      r := false
+
+      for arm in arms {
+        if expr_calls_any(arm.body, ids) {
+          r = true
         }
+      }
 
-        buf = .append(.LocalSet(entry.index))
-      },
-      .None => {},
-    }
+      r
+    },
+    .ALoop(body) => expr_calls_any(body, ids),
+    .ADefer(body) => expr_calls_any(body, ids),
+    _ => false,
   }
-
-  // Handle resume value for segments after a suspension point
-  if seg_idx > 0 {
-    prev_sp := info.suspension_points[seg_idx - 1]
-
-    case prev_sp.kind {
-      .Await => {
-        at_field := info.await_target_fields[seg_idx - 1]
-
-        if at_field >= 0 {
-          entry := lookup_slot(ctx, prev_sp.slot)
-          buf = .append(.LocalGet(frame_local))
-          buf = .append(.StructGet(info.frame_sym, at_field))
-          buf = .append(.RefCast(false, .Named("rt_types__Task")))
-          buf = .append(.StructGet("rt_types__Task", 3)) // result
-          buf = emit_unbox_from_anyref(entry.mono, ctx.env, buf)
-          buf = .append(.LocalSet(entry.index))
-
-          // Null out await target field
-          buf = .append(.LocalGet(frame_local))
-          buf = .append(.RefNull(.None_))
-          buf = .append(.StructSet(info.frame_sym, at_field))
-        }
-      },
-      .Yield => {
-        entry := lookup_slot(ctx, prev_sp.slot)
-        buf = .append(.I32Const(0))
-        buf = .append(.RefI31)
-        buf = .append(.LocalSet(entry.index))
-      },
-    }
-  }
-
-  // Build sub-expression for this segment and emit it
-  if seg_idx < info.suspension_points.len() {
-    // Intermediate segment: emit bindings, then suspend
-    seg_expr := build_segment_expr(info.bindings, start_idx, end_idx, PreparedExpr.Atom(.ALitVoid))
-    seg_instrs := emit_expr(seg_expr, MonoType.Void, ctx, [])
-
-    for instr in seg_instrs {
-      buf = .append(instr)
-    }
-
-    // Save hoisted locals to frame
-    buf = save_hoisted_to_frame(info, frame_local, ctx, buf)
-
-    // Set next pc
-    buf = .append(.LocalGet(frame_local))
-    buf = .append(.I32Const(seg_idx + 1))
-    buf = .append(.StructSet(info.frame_sym, 0))
-    sp := info.suspension_points[seg_idx]
-
-    case sp.kind {
-      .Yield => {
-        buf = .append(.I32Const(1)) // YIELD
-      },
-      .Await => {
-        await_binding := info.bindings[sp.index]
-
-        case await_binding.op {
-          .ACall(_, args) => if args.len() > 0 {
-            at_field := info.await_target_fields[seg_idx]
-            entry := lookup_slot(ctx, sp.slot)
-
-            // Emit the awaited task ref
-            buf = emit_atom(args[0], ctx, buf)
-            buf = .append(.RefCast(false, .Named("rt_types__Task")))
-            buf = .append(.LocalSet(result_temp_local))
-
-            // Fast path: if target.state == DONE, read result and continue
-            fast_path: Vector<Instr> = []
-
-            // Read result, unbox, store to await slot
-            fast_path = .append(.LocalGet(result_temp_local))
-            fast_path = .append(.RefCast(false, .Named("rt_types__Task")))
-            fast_path = .append(.StructGet("rt_types__Task", 3))
-            fast_path = emit_unbox_from_anyref(entry.mono, ctx.env, fast_path)
-            fast_path = .append(.LocalSet(entry.index))
-
-            // Save the target too: the next segment's normal resume
-            // prologue consumes await_target to materialize the await slot.
-            fast_path = .append(.LocalGet(frame_local))
-            fast_path = .append(.LocalGet(result_temp_local))
-            fast_path = .append(.StructSet(info.frame_sym, at_field))
-
-            // Save hoisted, bump pc, re-dispatch
-            fast_path = save_hoisted_to_frame(info, frame_local, ctx, fast_path)
-            fast_path = .append(.LocalGet(frame_local))
-            fast_path = .append(.I32Const(seg_idx + 1))
-            fast_path = .append(.StructSet(info.frame_sym, 0))
-            fast_path = .append(.Br("$resume_loop"))
-
-            // Slow path: block and suspend
-            slow_path: Vector<Instr> = []
-
-            // Save target to frame
-            slow_path = .append(.LocalGet(frame_local))
-            slow_path = .append(.LocalGet(result_temp_local))
-            slow_path = .append(.StructSet(info.frame_sym, at_field))
-
-            // Set task state to BLOCKED
-            slow_path = .append(.LocalGet(task_local))
-            slow_path = .append(.I32Const(2))
-            slow_path = .append(.StructSet("rt_types__Task", 0))
-
-            // Increment sched_blocked
-            slow_path = .append(.GlobalGet("rt_sched__sched_blocked"))
-            slow_path = .append(.I32Const(1))
-            slow_path = .append(.I32Add)
-            slow_path = .append(.GlobalSet("rt_sched__sched_blocked"))
-
-            // Register as waiter
-            slow_path = .append(.LocalGet(result_temp_local))
-            slow_path = .append(.RefCast(false, .Named("rt_types__Task")))
-            slow_path = .append(.LocalGet(task_local))
-            slow_path = .append(.Call("sched_append_waiter"))
-            slow_path = .append(.I32Const(2)) // AWAIT
-
-            // Check: target.state == DONE?
-            buf = .append(.LocalGet(result_temp_local))
-            buf = .append(.RefCast(false, .Named("rt_types__Task")))
-            buf = .append(.StructGet("rt_types__Task", 0))
-            buf = .append(.I32Const(3)) // DONE
-            buf = .append(.I32Eq)
-            buf = .append(.If(.Some(.I32), fast_path, slow_path))
-          } else {
-            buf = .append(.I32Const(1))
-          },
-          _ => {
-            buf = .append(.I32Const(1))
-          },
-        }
-      },
-    }
-  } else {
-    // Last segment: emit bindings + tail, box result, store, return COMPLETE
-    seg_expr := build_segment_expr(
-      info.bindings,
-      start_idx,
-      end_idx,
-      PreparedExpr.Atom(info.tail_atom),
-    )
-    seg_instrs := emit_expr(seg_expr, func.return_mono, ctx, [])
-
-    for instr in seg_instrs {
-      buf = .append(instr)
-    }
-
-    // Void expressions do not leave a stack value when emitted with a Void
-    // expected type, but task results are always stored as an anyref sentinel.
-    case func.return_mono {
-      .Void => {
-        buf = .append(.I32Const(0))
-        buf = .append(.RefI31)
-      },
-      _ => {},
-    }
-
-    // Box the result
-    buf = emit_box_to_anyref(func.return_mono, ctx.env, buf)
-    buf = .append(.LocalSet(result_temp_local))
-
-    // Store in task.result
-    buf = .append(.LocalGet(task_local))
-    buf = .append(.LocalGet(result_temp_local))
-    buf = .append(.StructSet("rt_types__Task", 3))
-
-    // Null out the frame
-    buf = .append(.LocalGet(task_local))
-    buf = .append(.RefNull(.None_))
-    buf = .append(.StructSet("rt_types__Task", 1))
-    buf = .append(.I32Const(0)) // COMPLETE
-  }
-
-  buf
-}
-
-fn build_segment_expr(bindings: Vector<LetBinding>, start: Int, end: Int, tail: PreparedExpr) PreparedExpr {
-  result := tail
-  i := end - 1
-
-  for i >= start {
-    b := bindings[i]
-    result = PreparedExpr.Let(b.slot, b.op, result)
-    i = i - 1
-  }
-
-  result
-}
-
-fn build_pc_dispatch(pc_local: Int, segment_bodies: Vector<Vector<Instr>>, idx: Int) Vector<Instr> {
-  if idx >= segment_bodies.len() {
-    return [Instr.Unreachable]
-  }
-
-  if idx == segment_bodies.len() - 1 {
-    return segment_bodies[idx]
-  }
-
-  then_body := segment_bodies[idx]
-  else_body := build_pc_dispatch(pc_local, segment_bodies, idx + 1)
-  buf: Vector<Instr> = []
-  buf = .append(.LocalGet(pc_local))
-  buf = .append(.I32Const(idx))
-  buf = .append(.I32Eq)
-  buf = .append(.If(.Some(.I32), then_body, else_body))
-  buf
-}
-
-fn save_hoisted_to_frame(info: TaskResumeInfo, frame_local: Int, ctx: EmitCtx, buf: Vector<Instr>) Vector<
-  Instr,
-> {
-  for slot_sid in info.hoisted_slots {
-    case info.hoisted_set[slot_sid.id] {
-      .Some(field_idx) => {
-        entry := lookup_slot(ctx, slot_sid)
-        buf = .append(.LocalGet(frame_local))
-        buf = .append(.LocalGet(entry.index))
-        buf = .append(.StructSet(info.frame_sym, field_idx))
-      },
-      .None => {},
-    }
-  }
-
-  buf
 }
 
 // ── Range intrinsics ───────────────────────────────────────────────────

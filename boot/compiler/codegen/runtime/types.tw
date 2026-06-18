@@ -129,19 +129,10 @@ pub fn module() WasmModule {
         .None,
         false,
       ),
-      .Struct(
-        "Task",
-        [
-          .{ name: .Some("state"), mutable: true, ty: .I32 },
-          .{ name: .Some("frame"), mutable: true, ty: .Anyref },
-          .{ name: .Some("resume"), mutable: true, ty: .Funcref },
-          .{ name: .Some("result"), mutable: true, ty: .Anyref },
-          .{ name: .Some("waiters"), mutable: true, ty: .Ref(true, .Named("Array")) },
-        ],
-        .None,
-        true,
-      ),
-      .Struct("FrameRtc", [.{ name: .Some("closure"), mutable: true, ty: .Anyref }], .None, true),
+      // Task<T> is a Wasm-owned handle carrying only an integer task id.
+      // The scheduler lives in the JS host (JSPI binding); it keys task
+      // records by this id and never constructs or inspects this struct.
+      .Struct("Task", [.{ name: .Some("id"), mutable: false, ty: .I32 }], .None, true),
     ],
     imports: [],
     funcs: [],
