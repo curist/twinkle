@@ -376,54 +376,101 @@ effort; everything else is deferred until the proposal is real.
 
 ## Spike: JSPI switching cost
 
-Before committing the full scheduler implementation, run a small spike that
-measures the cost of JSPI suspension in the shapes this design will actually use.
-The goal is not to micro-optimize yet; it is to decide whether the JSPI backend is
-comfortably good enough for LSP-scale cooperative concurrency, and to identify
-which costs are JSPI stack switching versus host readiness.
+Measure the cost of JSPI suspension in the shapes this design actually uses. The
+goal is not to micro-optimize; it is to decide whether the JSPI backend is
+comfortably good enough for LSP-scale cooperative concurrency, and to separate
+JSPI stack-switching cost from host-readiness latency. The spike has two phases
+with different prerequisites — they cannot all run "before the scheduler exists,"
+since most of the interesting numbers *are* scheduler numbers.
+
+- **Phase A — gate (before Slice 2).** Raw JSPI cost with no scheduler. Decides
+  whether to build the JSPI backend at all.
+- **Phase B — validation (after Slices 2–3).** Scheduler overhead and the
+  LSP-shaped decision benchmark, on the real `Task.*` lowering.
+
+### Budget (decide the threshold up front)
+
+Set the bar before seeing numbers, to keep the decision honest. The intended
+workload is coarse-grained: a debounce window is ~50–250 ms, stdin/diagnostics
+waits are milliseconds. So:
+
+- **Proceed unchanged** if a `yield`/`await` round-trip is on the order of **tens
+  of microseconds or less** (≥3 orders of magnitude below a debounce window).
+- **Proceed but avoid fine-grained yielding in library code** if it is hundreds
+  of microseconds.
+- **Reconsider** (batching/yield-coalescing, or defer task adoption to native
+  continuations) if a single round-trip approaches **~1 ms** or the LSP-shaped
+  smoke spends a meaningful fraction of wall time in suspension overhead rather
+  than useful work or real host waits.
+
+Express raw JSPI cost as a multiple of a plain host-import call (Phase A,
+step A0) so "good enough" is interpretable rather than absolute.
 
 ### Questions to answer
 
-- What is the lower-bound cost of a Wasm stack suspending through an immediately
-  resolved `WebAssembly.Suspending` import and resuming through a `promising`
-  export?
+- What is the lower-bound cost of a Wasm stack suspending through a
+  `WebAssembly.Suspending` import and resuming through a `promising` export —
+  both when the Promise is already resolved and when it resolves on a later tick?
 - How much overhead does the task scheduler add on top of raw JSPI suspension for
   `Task.yield()` and blocked/resumed `Task.await()`?
-- Is the cost small relative to the intended workload: stdin readiness, debounce
-  timers, request dispatch, and diagnostics work?
-- Are Node and Deno behavior close enough for the bundled CLI target, or do we
-  need a runtime/version guard beyond `hasJspi`?
+- Is the cost small relative to the intended workload (stdin readiness, debounce
+  timers, request dispatch, diagnostics work) per the budget above?
+- Are Node and Deno (and the bundled `twk`) close enough for the CLI target, or
+  do we need a runtime/version guard beyond `hasJspi`?
 
-### Measurements
+### Phase A — gate (no scheduler)
 
-1. **Baseline loop:** run an empty counted loop in Wasm so host timing overhead
-   and compiler loop code are visible.
-2. **Raw JSPI suspend/resume:** call a temporary extern such as
-   `bench.suspend_now()` in a loop. The host implementation is wrapped in
-   `WebAssembly.Suspending` and returns an already-resolved Promise. This isolates
-   the minimum per-suspend cost without task bookkeeping.
-3. **Scheduler yield:** after Slice 2 exists, run one task that repeatedly calls
-   `Task.yield()`. This measures queue bookkeeping plus JSPI stack switching.
-4. **Scheduler ping-pong:** run tasks that alternate between yielding and awaiting
-   one another, so waiter registration and completion wakeups are included.
-5. **Host readiness:** measure `Task.sleep(0)`/short sleeps and
-   `Task.read_stdin(max)` separately. These numbers include timer/stream latency
-   and should not be interpreted as pure switching cost.
-6. **LSP-shaped smoke:** model an input-reader task, dispatcher task, and debounce
-   task doing small units of work. This is the decision benchmark: the scheduler
-   is acceptable if this shape spends its time in useful work or real host waits,
-   not in suspension overhead.
+A0. **Plain host call anchor:** a non-suspending extern called in a loop. This is
+   the denominator for expressing JSPI cost as a multiple.
+A1. **Baseline loop:** an empty counted Wasm loop, so host timing overhead and
+   loop code are visible.
+A2. **Raw JSPI, already-resolved:** call a temporary extern (e.g.
+   `bench.suspend_now()`) wrapped in `WebAssembly.Suspending` returning an
+   **already-resolved** Promise. Caveat: an engine may take a fast path here that
+   does *not* fully unwind/switch the stack, under-reporting true cost.
+A3. **Raw JSPI, next-tick:** same, but the Promise resolves on a later microtask
+   /macrotask (`queueMicrotask` or `setTimeout(0)`). The A3−A2 gap reveals whether
+   the engine fast-paths already-resolved promises; **A3 is the honest floor** for
+   a suspension that actually had to wait.
+
+If A2/A3 already blow the budget, stop here and revisit the backend before
+building the scheduler.
+
+### Phase B — validation (after Slices 2–3)
+
+B1. **Scheduler yield:** one task repeatedly calling `Task.yield()` — queue
+   bookkeeping plus JSPI stack switching.
+B2. **Scheduler ping-pong:** tasks alternating yield/await on one another, so
+   waiter registration and completion wakeups are included.
+B3. **Host readiness:** measure short `Task.sleep` and `Task.read_stdin(max)`
+   separately. Note `setTimeout(_, 0)` is clamped (~1 ms in Node), so `sleep(0)`
+   measures the timer floor, not switching; include a `queueMicrotask`-style
+   "yield to the loop" as a cheaper readiness baseline distinct from timers. These
+   numbers include timer/stream latency and are not pure switching cost.
+B4. **LSP-shaped smoke (the decision benchmark):** input-reader, dispatcher, and
+   debounce tasks doing small units of work. The backend is acceptable if this
+   shape spends its time in useful work or real host waits, not in suspension
+   overhead, per the budget.
+
+### Cross-runtime step
+
+Run Phase A (and, once it exists, B4) on **Node, Deno, and the bundled `twk`**,
+and compare. This is what actually answers the parity question; record per-runtime
+numbers, not a single representative run.
 
 ### Harness shape
 
-- Put the temporary harness under `tools/bench/jspi-switching/` or another
-  throwaway bench directory, not in the compiler test suite.
+- Put the temporary harness under `boot/bench/` (the existing bench convention)
+  or another throwaway bench directory — not in the compiler test suite.
 - Use the same `tools/js_runtime/runtime.mjs` async path as `twk run`, and fail
   clearly when `hasJspi` is false.
 - Time from the JS host with `performance.now()`; avoid printing inside measured
   loops.
 - Warm the module before measuring and run each case enough times to smooth out
   JIT and event-loop noise.
+- Each suspend allocates a Promise + resolver + queue entry; for the tight
+  yield/ping-pong cases, note GC pressure (or declare it out of scope). It is
+  negligible at LSP scale but can distort a microbenchmark.
 - Record runtime details with the result: Node/Deno version, platform, whether
   the CLI bundle or direct runtime was used, and the Twinkle commit.
 - Store summarized results in this document's Evidence section when the spike is
@@ -431,13 +478,12 @@ which costs are JSPI stack switching versus host readiness.
 
 ### Interpreting results
 
-Raw JSPI overhead only needs to be low enough for coarse-grained cooperative
-work. If `yield`/`await` overhead is insignificant next to LSP debounce windows,
-stdin waits, and diagnostics work, proceed with the JSPI backend unchanged. If it
-is visible but still acceptable, keep the backend and avoid fine-grained yielding
-in library code. If it dominates the LSP-shaped smoke, revisit batching,
-yield-coalescing, or delaying task adoption until native Wasm continuations are
-available.
+Apply the budget above. If `yield`/`await` overhead is insignificant next to LSP
+debounce windows, stdin waits, and diagnostics work, proceed with the JSPI
+backend unchanged. If it is visible but still acceptable, keep the backend and
+avoid fine-grained yielding in library code. If it dominates the LSP-shaped smoke,
+revisit batching, yield-coalescing, or delaying task adoption until native Wasm
+continuations are available.
 
 ## Risks and open items
 
