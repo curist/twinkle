@@ -1,17 +1,44 @@
-# Task Concurrency — JSPI-Fiber Direction
+# Task Concurrency — Stackful Tasks via JSPI Backend
 
 Status: **Design approved (2026-06-18); implementation not started.**
 
-This document supersedes the stackless state-machine plan for `Task<T>`. It
-records the design rationale and decisions for moving the scheduler into the JS
-host and backing task suspension with JavaScript Promise Integration (JSPI)
-stackful fibers.
+This document defines Twinkle's **stackful** implementation direction for
+`Task<T>`. The public API remains backend-independent. The near-term backend uses
+JSPI because Node/Deno already provide stack switching through
+`WebAssembly.promising` / `WebAssembly.Suspending`. The compiler lowers task
+operations to **abstract suspension intrinsics**, which the JSPI backend
+currently binds to host imports. A future Wasm continuations backend can satisfy
+the same intrinsic interface without changing user code.
+
+The thesis: **Twinkle commits to a backend-neutral, stackful `Task<T>` model;
+JSPI is the current backend, not the semantic foundation.**
 
 The earlier stackless design rationale lives in
 [task-concurrency.md](task-concurrency.md); the public `Task<T>` API and the
-"Why Task instead of Fiber" / future-migration discussion there still apply.
+"Why Task instead of Fiber" discussion there still apply.
 
-## Why the pivot
+## Layered model
+
+The design is four layers, of which only the first is user-visible:
+
+1. **Stable surface / API** (backend-independent) — `Task.spawn`, `Task.await`,
+   `Task.yield`, `Task.sleep`, `Task.read_stdin`.
+2. **Abstract suspension backend** (compiler lowering target) — `task_create`,
+   `suspend_await`, `suspend_yield`, `suspend_sleep`, `suspend_read_stdin`. The
+   compiler lowers the surface to these and *never* to a named host import.
+3. **Current binding: JSPI** — the intrinsics bind to JS host imports; the
+   scheduler lives in JS; task bodies run through
+   `WebAssembly.promising(__task_run)`.
+4. **Future binding: Wasm continuations** — the same intrinsics bind to an
+   in-Wasm continuation runtime; the scheduler can move back into Wasm; the JSPI
+   per-suspension cost disappears for pure task scheduling, leaving only true
+   host-readiness operations (`sleep`, stdin, future file/network I/O) crossing
+   the host boundary.
+
+Layers 1–2 are the stable contract. Layers 3–4 are interchangeable
+implementations behind the same intrinsic interface.
+
+## Why stackful, and why JSPI now
 
 The stackless Milestones A–C built a large amount of machinery whose only purpose
 was to *emulate* stack switching on an engine that lacked it: a CFG-based
@@ -31,28 +58,51 @@ at any call depth, including inside arbitrary higher-order callbacks and
 recursion, with no compiler transform and no coloring. The entire Milestone B/C
 problem space disappears.
 
-### Accepted tradeoff
+### Position of the stackless plan
 
-Tasks become **JSPI-host-only**. On a non-JSPI Wasm engine, task programs are
-unsupported. This is acceptable because the near-term consumer is the boot
-compiler's LSP, which runs on Node/Deno (JSPI-capable). The portable in-Wasm
-stackless model is preserved on the `archive/stackless-task-concurrency` branch
-(tip `4a83356`) and can be revived if a portable backend is ever required.
+The stackless plan remains useful as a **portability fallback and reference**,
+but it is not the preferred implementation, because it makes ordinary
+direct-style suspension impossible without function coloring or whole-program
+transforms. JSPI gives us the semantics we want *now*; Wasm continuations give us
+the portability/performance story *later*. Both are bindings of the same
+intrinsic interface, so neither is the semantic foundation.
+
+### Backend cost (current binding)
+
+JSPI imposes a host-boundary/Promise cost at each suspension. This is acceptable
+for the current LSP-oriented workload and avoids the compiler state-machine
+complexity entirely. If Wasm continuations become available, pure scheduler
+operations (`yield`, `await`, task wakeups) can move to native Wasm stack
+switching, leaving only true host-readiness operations (`sleep`, stdin,
+file/network I/O) to cross the host boundary.
+
+### Accepted tradeoff (current binding only)
+
+With the JSPI binding, tasks are **JSPI-host-only**: on a non-JSPI Wasm engine,
+task programs are unsupported. This is acceptable because the near-term consumer
+is the boot compiler's LSP, which runs on Node/Deno (JSPI-capable), and because
+the constraint is a property of the *binding*, not the model — the continuations
+binding lifts it. The stackless implementation is preserved on the
+`archive/stackless-task-concurrency` branch (tip `4a83356`).
 
 `main` was reset to `310a4ec` (just before Milestone A), keeping the Phase 1/2
 baseline: the `Task<T>` type, `spawn`/`await`/`yield` builtin signatures, and
 the older in-Wasm scheduler + straight-line transform. The frontend scaffolding
 is reused; the backend is replaced.
 
-## Architecture
+## Architecture (current JSPI binding)
+
+Everything in this section describes layer 3 — the JSPI binding of the abstract
+intrinsics. It is the current implementation, not the semantic foundation; a
+continuations binding would replace this section while leaving layers 1–2 intact.
 
 ### Core idea
 
-The scheduler lives in the JS host. Each task body runs on its own JSPI
-suspendable stack. Suspension operations (`yield`, `await`, `sleep`,
-`read_stdin`) are `WebAssembly.Suspending` host imports that return a Promise the
-JS scheduler controls. There is **no compiler suspension transform** — task
-bodies are ordinary Twinkle closures.
+Under the JSPI binding the scheduler lives in the JS host, and each task body
+runs on its own JSPI suspendable stack. The suspension intrinsics
+(`suspend_await`/`yield`/`sleep`/`read_stdin`) bind to `WebAssembly.Suspending`
+host imports that return a Promise the JS scheduler controls. There is **no
+compiler suspension transform** — task bodies are ordinary Twinkle closures.
 
 ### Execution mechanism
 
@@ -83,8 +133,8 @@ JS can hold an opaque Wasm reference, but it **cannot** construct a
 module-defined `rt_types__Task` GC struct or read its fields. So all host imports
 operate on a plain **`i32 task_id`**, never on the `Task<T>` struct. The Wasm
 side wraps a returned id into the `Task<T>` struct (and unwraps the id when
-passing a task back to `task_await`). The only opaque ref that crosses the
-boundary is the spawned **closure** (passed to `task_spawn`, handed back to
+passing a task back to `suspend_await`). The only opaque ref that crosses the
+boundary is the spawned **closure** (passed to `task_create`, handed back to
 `__task_run`), which JS holds without inspecting.
 
 #### Current-execution-context model
@@ -102,29 +152,40 @@ it can be parked as an await-waiter. `__twinkle_start` runs on its own
 `promising` stack; `scheduler.current` is `0` until the first task resume. This
 is what makes top-level `Task.await` work without special-casing.
 
-Host imports it implements:
+The JSPI binding implements one host import per abstract intrinsic (layer 3
+binding of layer 2):
+
+```text
+task_create(closure: anyref) -> i32
+suspend_await(task_id: i32)  -> anyref
+suspend_yield()              -> void
+suspend_sleep(ms: i64)       -> void
+suspend_read_stdin(max: i64) -> anyref   ;; boxed Vector<Byte>
+```
 
 | Import | Kind | Behavior |
 |---|---|---|
-| `task_spawn(closure) -> i32` | sync | Register the closure, allocate a `task_id`, enqueue the task to start on the next scheduler tick, and return the id. Does **not** run the body synchronously (eager-enqueue semantics). |
-| `task_await(target_id) -> anyref` | Suspending | Caller = `scheduler.current`. If the target is done, resolve immediately with its boxed result; if it failed, re-trap the caller; otherwise park the caller as a waiter on the target and resolve when the target settles. |
-| `task_yield()` | Suspending | Re-enqueue `scheduler.current` at the back of the runnable queue; resolve on the next scheduler tick. |
-| `task_sleep(ms)` | Suspending | `setTimeout(resolve, ms)`; counts as pending host while in flight; resumes `scheduler.current`. |
-| `task_read_stdin(max) -> bytes` | Suspending | Reuse the existing async stdin read; resolve with the chunk (or an empty result at EOF). Counts as pending host while in flight. |
+| `task_create(closure) -> i32` | sync | Register the closure, allocate a `task_id`, enqueue the task to start on the next scheduler tick, and return the id. Does **not** run the body synchronously (eager-enqueue semantics). |
+| `suspend_await(target_id) -> anyref` | Suspending | Caller = `scheduler.current`. If the target is done, resolve immediately with its boxed result; if it failed, re-trap the caller; otherwise park the caller as a waiter on the target and resolve when the target settles. |
+| `suspend_yield()` | Suspending | Re-enqueue `scheduler.current` at the back of the runnable queue; resolve on the next scheduler tick. |
+| `suspend_sleep(ms)` | Suspending | `setTimeout(resolve, ms)`; counts as pending host while in flight; resumes `scheduler.current`. |
+| `suspend_read_stdin(max) -> anyref` | Suspending | Reuse the existing async stdin read; resolve with the boxed chunk (empty `Vector<Byte>` at EOF). Counts as pending host while in flight. |
 
 Cooperative semantics fall out of the event loop: because JS is single-threaded
 and the currently-running Wasm stack holds control until it suspends or
-completes, a `task_spawn` issued by a running task does not start the spawned
+completes, a `Task.spawn` issued by a running task does not start the spawned
 body until the current stack next yields control to the event loop.
 
 ### `Task<T>` representation and marshaling
 
-`Task<T>` remains a small Wasm GC struct carrying an integer `task_id`; the JS
-scheduler keys task records by that id. Task identity is id equality (consistent
-with the existing reference-equality design decision). The spawned closure
-crosses the boundary as an opaque `anyref` (JS holds it, hands it back to
-`__task_run`); the boxed result crosses back as `anyref`. Both are already
-marshaled by the existing bridge.
+`Task<T>` remains a Wasm-owned GC struct containing an integer `task_id`. **JS
+never constructs or inspects `Task<T>` structs directly.** Lowering unwraps the
+id before calling scheduler imports and wraps returned ids back into `Task<T>`
+values; the JS scheduler keys task records by that id. Task identity is id
+equality (consistent with the existing reference-equality design decision).
+Closures and boxed task results cross the boundary as opaque refs — the spawned
+closure (JS holds it, hands it back to `__task_run`) and the boxed result — both
+already marshaled by the existing bridge.
 
 Boxing is asymmetric:
 
@@ -154,15 +215,16 @@ Boxing is asymmetric:
 - `Task<T>` type, builtin registration, and type-checking remain.
 - Builtin signatures: keep `Task.spawn`/`Task.await`/`Task.yield`; add
   `Task.sleep(ms: Int) Void` and `Task.read_stdin(max: Int) Vector<Byte>`.
-- Backend lowering becomes trivial, but lowers to **abstract suspension
-  intrinsics**, not directly to named JS host imports — this is the
-  forward-migration seam (see below) and is the implementation rule from Slice 1.
-  Each of `Task.spawn`/`await`/`yield`/`sleep`/`read_stdin` lowers to its
-  intrinsic (`task_create`, `suspend_await`, `suspend_yield`, `suspend_sleep`,
-  `suspend_read_stdin`), with the `Task` struct wrap/unwrap around the `i32`
-  id and result unboxing at the await site. A single backend binding table maps
-  those intrinsics to the JSPI host imports. No transform pass; no validation
-  pass.
+- Backend lowering becomes trivial. **Normative rule: the compiler must not lower
+  `Task.*` directly to JS host import names. It lowers to backend-neutral
+  suspension intrinsics.** The JSPI backend binds those intrinsics to host
+  imports; a future continuations backend can bind them to in-Wasm runtime
+  functions. Each of `Task.spawn`/`await`/`yield`/`sleep`/`read_stdin` lowers to
+  its intrinsic (`task_create`, `suspend_await`, `suspend_yield`,
+  `suspend_sleep`, `suspend_read_stdin`), with the `Task` struct wrap/unwrap
+  around the `i32` id and result unboxing at the await site. A single backend
+  binding table is the only place that knows a concrete binding exists. No
+  transform pass; no validation pass.
 
 A direct consequence: suspension is legal **anywhere** — arbitrary call depth,
 inside higher-order callbacks, recursive helpers — and needs no diagnostics.
@@ -216,7 +278,7 @@ Scheduler rules:
 - On rejection, the task record is marked **failed** (storing the error), the
   task leaves the runnable/blocked sets, and pending-host counters are
   decremented as for completion.
-- **Awaiting a failed task re-traps the awaiter**: `task_await` on a failed
+- **Awaiting a failed task re-traps the awaiter**: `suspend_await` on a failed
   target rejects the awaiter's resume promise, which propagates the trap up that
   task's stack (and recursively to *its* awaiters). A chain of awaiters all trap,
   matching synchronous trap semantics.
@@ -311,6 +373,71 @@ Adopt the abstract-intrinsic discipline now (Slice 1/2): name the lowering
 targets after the *operation*, not the *host*, and route them through one binding
 table. This is the only forward-migration work that belongs in the current
 effort; everything else is deferred until the proposal is real.
+
+## Spike: JSPI switching cost
+
+Before committing the full scheduler implementation, run a small spike that
+measures the cost of JSPI suspension in the shapes this design will actually use.
+The goal is not to micro-optimize yet; it is to decide whether the JSPI backend is
+comfortably good enough for LSP-scale cooperative concurrency, and to identify
+which costs are JSPI stack switching versus host readiness.
+
+### Questions to answer
+
+- What is the lower-bound cost of a Wasm stack suspending through an immediately
+  resolved `WebAssembly.Suspending` import and resuming through a `promising`
+  export?
+- How much overhead does the task scheduler add on top of raw JSPI suspension for
+  `Task.yield()` and blocked/resumed `Task.await()`?
+- Is the cost small relative to the intended workload: stdin readiness, debounce
+  timers, request dispatch, and diagnostics work?
+- Are Node and Deno behavior close enough for the bundled CLI target, or do we
+  need a runtime/version guard beyond `hasJspi`?
+
+### Measurements
+
+1. **Baseline loop:** run an empty counted loop in Wasm so host timing overhead
+   and compiler loop code are visible.
+2. **Raw JSPI suspend/resume:** call a temporary extern such as
+   `bench.suspend_now()` in a loop. The host implementation is wrapped in
+   `WebAssembly.Suspending` and returns an already-resolved Promise. This isolates
+   the minimum per-suspend cost without task bookkeeping.
+3. **Scheduler yield:** after Slice 2 exists, run one task that repeatedly calls
+   `Task.yield()`. This measures queue bookkeeping plus JSPI stack switching.
+4. **Scheduler ping-pong:** run tasks that alternate between yielding and awaiting
+   one another, so waiter registration and completion wakeups are included.
+5. **Host readiness:** measure `Task.sleep(0)`/short sleeps and
+   `Task.read_stdin(max)` separately. These numbers include timer/stream latency
+   and should not be interpreted as pure switching cost.
+6. **LSP-shaped smoke:** model an input-reader task, dispatcher task, and debounce
+   task doing small units of work. This is the decision benchmark: the scheduler
+   is acceptable if this shape spends its time in useful work or real host waits,
+   not in suspension overhead.
+
+### Harness shape
+
+- Put the temporary harness under `tools/bench/jspi-switching/` or another
+  throwaway bench directory, not in the compiler test suite.
+- Use the same `tools/js_runtime/runtime.mjs` async path as `twk run`, and fail
+  clearly when `hasJspi` is false.
+- Time from the JS host with `performance.now()`; avoid printing inside measured
+  loops.
+- Warm the module before measuring and run each case enough times to smooth out
+  JIT and event-loop noise.
+- Record runtime details with the result: Node/Deno version, platform, whether
+  the CLI bundle or direct runtime was used, and the Twinkle commit.
+- Store summarized results in this document's Evidence section when the spike is
+  complete.
+
+### Interpreting results
+
+Raw JSPI overhead only needs to be low enough for coarse-grained cooperative
+work. If `yield`/`await` overhead is insignificant next to LSP debounce windows,
+stdin waits, and diagnostics work, proceed with the JSPI backend unchanged. If it
+is visible but still acceptable, keep the backend and avoid fine-grained yielding
+in library code. If it dominates the LSP-shaped smoke, revisit batching,
+yield-coalescing, or delaying task adoption until native Wasm continuations are
+available.
 
 ## Risks and open items
 
