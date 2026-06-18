@@ -1,12 +1,18 @@
 # Task Concurrency — JSPI Backend Implementation Plan
 
-Status: **In progress (2026-06-18). Checkpoints 0–7 done (compiler side): the
-stackless scheduler/transform/validation are removed, `Task<T>` is an id-only
-handle, task ops lower through the `task_abi` suspension-intrinsic binding table,
-`__task_run` is exported, and `Task.sleep`/`Task.read_stdin` signatures exist.
-Self-host fixed point holds and all 2722 boot tests pass; `task_suite` is
-quarantined (its programs need the JS scheduler from CP8–15). Next: the JSPI
-runtime scheduler in `runtime.mjs` (Checkpoints 8–15).**
+Status: **In progress (2026-06-18). Checkpoints 0–16 done.** Compiler side
+(CP1–7): the stackless scheduler/transform/validation are removed, `Task<T>` is
+an id-only handle, task ops lower through the `task_abi` suspension-intrinsic
+binding table, `__task_run` is exported, and `Task.sleep`/`Task.read_stdin`
+exist. Runtime side (CP8–15): a cooperative JS scheduler in `runtime.mjs`
+implements the task host imports — eager-enqueue `task_create`,
+`promising(__task_run)` task bodies, a race-free `scheduler.current` resume
+discipline (strict one-task-per-microtask), FIFO `suspend_yield`, parking
+`suspend_await`, drain + deadlock detection, and `suspend_sleep`/
+`suspend_read_stdin` host readiness. `task_suite` is rewritten for the stackful
+model (CP16) and re-enabled. Remaining: Phase B scheduler benchmark (CP17),
+stage0 parity (CP18, deferred until boot source uses tasks), LSP adoption
+(CP19).
 
 This is the implementation plan for the stackful `Task<T>` design in
 [task-concurrency-jspi-fiber.md](task-concurrency-jspi-fiber.md). Keep this plan

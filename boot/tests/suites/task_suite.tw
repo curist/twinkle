@@ -1,6 +1,26 @@
 use tests.assert
-use tests.helpers.codegen_harness
 use tests.runner
+
+// Helpers proving stackful suspension is legal anywhere direct-style code runs:
+// inside ordinary functions, recursion, and higher-order callbacks. None of
+// these need a compiler transform or function coloring.
+fn yielding_helper(log: Cell<String>) {
+  log.update(fn(s) { s.concat("h") })
+  Task.yield()
+  log.update(fn(s) { s.concat("H") })
+}
+
+fn countdown(n: Int, acc: Cell<Int>) {
+  if n > 0 {
+    Task.yield()
+    acc.update(fn(v) { v + n })
+    countdown(n - 1, acc)
+  }
+}
+
+fn apply_twice(f: fn() Int) Int {
+  f() + f()
+}
 
 pub fn suite() runner.Suite {
   runner
@@ -332,77 +352,59 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "reject yield in ordinary function",
+      "suspend inside ordinary helper",
       fn() {
-        result := codegen_harness.validate_task_src("fn bad() { Task.yield() }\nbad()")
-
-        case result {
-          .Ok(_) => .Err("expected validation error for yield in ordinary function"),
-          .Err(msg) => {
-            try assert.str_contains(msg, "Task.yield()")
-            .Ok({})
-          },
-        }
+        log := Cell.new("")
+        t := Task.spawn(fn() { yielding_helper(log) })
+        t.await()
+        try assert.equal(log.get(), "hH")
+        .Ok({})
       },
     )
     .test(
-      "reject yield in top-level code",
+      "suspend inside recursive helper",
       fn() {
-        result := codegen_harness.validate_task_src("Task.yield()")
-
-        case result {
-          .Ok(_) => .Err("expected validation error for yield in top-level code"),
-          .Err(msg) => {
-            try assert.str_contains(msg, "Task.yield()")
-            .Ok({})
-          },
-        }
+        acc := Cell.new(0)
+        t := Task.spawn(fn() Int {
+          countdown(4, acc)
+          acc.get()
+        })
+        try assert.equal(t.await(), 10)
+        .Ok({})
       },
     )
     .test(
-      "reject yield in Cell.update callback",
+      "suspend inside higher-order callback",
       fn() {
-        src := "c := Cell.new(0)\nt := Task.spawn(fn() {\n  c.update(fn(n) {\n    Task.yield()\n    n + 1\n  })\n})\nt.await()"
-        result := codegen_harness.validate_task_src(src)
-
-        case result {
-          .Ok(_) => .Err("expected validation error for yield in Cell.update"),
-          .Err(msg) => {
-            try assert.str_contains(msg, "Task.yield()")
-            .Ok({})
-          },
-        }
+        c := Cell.new(0)
+        t := Task.spawn(fn() Int {
+          apply_twice(fn() {
+            Task.yield()
+            c.update(fn(n) { n + 1 })
+            5
+          })
+        })
+        try assert.equal(t.await(), 10)
+        try assert.equal(c.get(), 2)
+        .Ok({})
       },
     )
     .test(
-      "reject await in Cell.update callback",
+      "sleep yields control to other tasks",
       fn() {
-        src := "c := Cell.new(0)\nt1 := Task.spawn(fn() Int { 42 })\nt2 := Task.spawn(fn() {\n  c.update(fn(n) {\n    r := t1.await()\n    n + r\n  })\n})\nt2.await()"
-        result := codegen_harness.validate_task_src(src)
-
-        case result {
-          .Ok(_) => .Err("expected validation error for await in Cell.update"),
-          .Err(msg) => {
-            try assert.str_contains(msg, "Task.await()")
-            .Ok({})
-          },
-        }
-      },
-    )
-    .test(
-      "reject yield inside if branch in task body",
-      fn() {
-        src := "fn check() Bool { true }\nt := Task.spawn(fn() {\n  if check() {\n    Task.yield()\n  }\n})\nt.await()"
-        result := codegen_harness.validate_task_src(src)
-
-        case result {
-          .Ok(_) => .Err("expected validation error for yield inside if branch"),
-          .Err(msg) => {
-            try assert.str_contains(msg, "Task.yield()")
-            try assert.str_contains(msg, "if branch")
-            .Ok({})
-          },
-        }
+        log := Cell.new("")
+        sleeper := Task.spawn(fn() {
+          Task.sleep(5)
+          log.update(fn(s) { s.concat("slept") })
+        })
+        runner_task := Task.spawn(fn() {
+          log.update(fn(s) { s.concat("ran") })
+        })
+        sleeper.await()
+        runner_task.await()
+        // The non-sleeping task runs while the sleeper is parked on the timer.
+        try assert.equal(log.get(), "ranslept")
+        .Ok({})
       },
     )
 }

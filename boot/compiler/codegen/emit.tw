@@ -1456,7 +1456,7 @@ fn emit_intrinsic_call(
     .TaskAwait => emit_intrinsic_task_await(args, result_idx, result_mono, ctx, buf),
     .TaskYield => emit_intrinsic_task_yield(result_idx, buf),
     .TaskSleep => emit_intrinsic_task_sleep(args, result_idx, ctx, buf),
-    .TaskReadStdin => emit_intrinsic_task_read_stdin(args, result_idx, result_mono, ctx, buf),
+    .TaskReadStdin => emit_intrinsic_task_read_stdin(args, result_idx, ctx, buf),
     .CellNew => emit_intrinsic_cell_new(args, result_idx, result_mono, ctx, buf),
     .CellGet => emit_intrinsic_cell_get(args, result_idx, result_mono, ctx, buf),
     .CellSet => emit_intrinsic_cell_set(args, result_idx, ctx, buf),
@@ -2157,13 +2157,14 @@ fn emit_intrinsic_task_sleep(
 fn emit_intrinsic_task_read_stdin(
   args: Vector<PreparedAtom>,
   result_idx: Int,
-  result_mono: MonoType,
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
+  // The host returns a raw flat Array (empty at EOF); wrap it into a
+  // Vector<Byte> the same way the synchronous io.read_stdin_chunk path does.
   buf = emit_atom(args[0], ctx, buf) // max (i64)
-  buf = .append(.Call(task_abi.sym_suspend_read_stdin())) // -> anyref (boxed Vector<Byte>)
-  buf = emit_unbox_from_anyref(result_mono, ctx.env, buf)
+  buf = .append(.Call(task_abi.sym_suspend_read_stdin())) // -> ref Array
+  buf = .append(.Call("rt_arr__from_array")) // -> ref PVec (Vector<Byte>)
   buf.append(.LocalSet(result_idx))
 }
 

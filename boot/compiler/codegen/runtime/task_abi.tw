@@ -71,12 +71,14 @@ pub fn imports() Vector<ImportDef> {
       params: [.I64],
       results: [],
     },
+    // Returns a raw flat Array (like the host stdin builtins); the lowering
+    // wraps it into a Vector<Byte> via rt_arr__from_array.
     ImportDef.{
       module: host_module(),
       name: sym_suspend_read_stdin(),
       as_sym: sym_suspend_read_stdin(),
       params: [.I64],
-      results: [.Anyref],
+      results: [.Ref(false, .Named("rt_types__Array"))],
     },
   ]
 }

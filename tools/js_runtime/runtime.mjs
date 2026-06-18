@@ -529,6 +529,272 @@ export const hasJspi =
   typeof WebAssembly.promising === "function";
 
 // ---------------------------------------------------------------------------
+// Cooperative task scheduler (JSPI binding of the abstract suspension intrinsics)
+// ---------------------------------------------------------------------------
+
+/**
+ * The JS host side of Twinkle's stackful Task<T> model. The compiler lowers
+ * Task.* to operation-named intrinsics (task_create / suspend_await /
+ * suspend_yield / suspend_sleep / suspend_read_stdin) imported from the "task"
+ * module; this scheduler implements them.
+ *
+ * Each task body runs on its own JSPI stack via promising(__task_run). A body
+ * suspends by calling a Suspending import that returns a Promise the scheduler
+ * controls; resuming = resolving that Promise. All host imports speak plain
+ * i32 task ids — JS never constructs or inspects a Task<T> GC struct.
+ *
+ * Concurrency invariant: when a task's Wasm code runs, scheduler.current is its
+ * id. We keep this race-free by resuming strictly one task per microtask:
+ * runOne sets current, then resolves exactly one parked Promise (or starts one
+ * body); the resumed task runs until it next suspends or completes, and only
+ * then does it call schedule() to advance. No two resumes interleave, so the
+ * single global current is always valid for whichever stack is executing.
+ */
+function createTaskScheduler(b, runtime, makeByteArrayFn) {
+  const TOP = 0;
+  const s = {
+    nextId: 1,
+    current: TOP,
+    tasks: new Map(),
+    runnable: [], // entries: {kind:'start', id} | {kind:'resume', id, fire}
+    pendingHost: 0, // in-flight timers / stdin reads
+    blockedOnTask: 0, // tasks parked awaiting another task
+    pumping: false,
+    promisingTaskRun: null,
+    settled: false,
+    topLevelDone: false,
+    doneResolve: null,
+    doneReject: null,
+  };
+  s.done = new Promise((res, rej) => {
+    s.doneResolve = res;
+    s.doneReject = rej;
+  });
+
+  // Top-level is a pseudo-task so it can be parked as an await-waiter. It is
+  // "awaited" by definition (its failure is the program's failure).
+  s.tasks.set(TOP, {
+    id: TOP, closure: null, state: "running", result: undefined, error: null,
+    waiters: [], awaited: true,
+  });
+
+  const asError = (e) => (e instanceof Error ? e : new Error(String(e)));
+
+  function settleDone(fn) {
+    if (s.settled) return;
+    s.settled = true;
+    fn();
+  }
+
+  function checkQuiescence() {
+    if (s.pumping || s.runnable.length > 0 || s.pendingHost > 0) return;
+    // Nothing runnable and no task-host work outstanding.
+    if (s.blockedOnTask > 0) {
+      settleDone(() => s.doneReject(
+        new Error("task deadlock: remaining tasks are all blocked awaiting each other"),
+      ));
+      return;
+    }
+    // Top-level may be suspended on a host operation the scheduler does not
+    // track (e.g. run_wasm / non-task stdin). An empty task scheduler does not
+    // mean the program is done — only top-level completion does. Wait for it.
+    if (!s.topLevelDone) return;
+    // A spawned task that failed and was never awaited surfaces as the program's
+    // failure rather than being swallowed.
+    for (const t of s.tasks.values()) {
+      if (t.state === "failed" && !t.awaited) {
+        settleDone(() => s.doneReject(asError(t.error)));
+        return;
+      }
+    }
+    settleDone(() => s.doneResolve());
+  }
+
+  function schedule() {
+    if (s.pumping) return;
+    if (s.runnable.length === 0) {
+      checkQuiescence();
+      return;
+    }
+    s.pumping = true;
+    queueMicrotask(runOne);
+  }
+
+  function runOne() {
+    s.pumping = false;
+    const entry = s.runnable.shift();
+    if (!entry) {
+      checkQuiescence();
+      return;
+    }
+    if (entry.kind === "start") {
+      const rec = s.tasks.get(entry.id);
+      if (!rec || rec.state !== "new") {
+        schedule();
+        return;
+      }
+      rec.state = "running";
+      s.current = entry.id;
+      let p;
+      try {
+        p = s.promisingTaskRun(rec.closure);
+      } catch (e) {
+        onFail(entry.id, e);
+        return;
+      }
+      p.then((r) => onComplete(entry.id, r), (e) => onFail(entry.id, e));
+    } else {
+      // resume: deliver a parked value/rejection with current set to the owner.
+      s.current = entry.id;
+      entry.fire();
+    }
+  }
+
+  function wakeWaiters(rec) {
+    const ws = rec.waiters;
+    rec.waiters = [];
+    for (const w of ws) {
+      s.blockedOnTask--;
+      if (rec.state === "failed") {
+        const err = asError(rec.error);
+        s.runnable.push({ kind: "resume", id: w.id, fire: () => w.reject(err) });
+      } else {
+        const result = rec.result;
+        s.runnable.push({ kind: "resume", id: w.id, fire: () => w.resolve(result) });
+      }
+    }
+  }
+
+  function onComplete(id, result) {
+    const rec = s.tasks.get(id);
+    if (!rec) return;
+    rec.state = "done";
+    rec.result = result;
+    wakeWaiters(rec);
+    if (id === TOP) {
+      // Top-level finished; drain spawned-but-unawaited tasks before exit.
+      s.topLevelDone = true;
+    }
+    schedule();
+  }
+
+  function onFail(id, err) {
+    const rec = s.tasks.get(id);
+    if (!rec) return;
+    rec.state = "failed";
+    rec.error = err;
+    if (id === TOP) {
+      // A top-level trap/exit is the program's outcome; do not drain.
+      settleDone(() => s.doneReject(asError(err)));
+      return;
+    }
+    wakeWaiters(rec);
+    schedule();
+  }
+
+  // --- abstract suspension intrinsics (host import implementations) ---
+
+  // task_create(closure) -> i32 : eager-enqueue, do NOT run the body now.
+  function taskCreate(closure) {
+    const id = s.nextId++;
+    s.tasks.set(id, {
+      id, closure, state: "new", result: undefined, error: null,
+      waiters: [], awaited: false,
+    });
+    s.runnable.push({ kind: "start", id });
+    // The currently running stack keeps control until it suspends/completes,
+    // at which point schedule() starts this body. No synchronous start here.
+    return id;
+  }
+
+  // suspend_await(targetId) -> anyref
+  async function suspendAwait(targetId) {
+    const tid = Number(targetId);
+    const target = s.tasks.get(tid);
+    if (!target) throw new Error("Task.await: invalid task id " + tid);
+    target.awaited = true;
+    if (target.state === "done") return target.result;
+    if (target.state === "failed") throw asError(target.error);
+    const caller = s.current;
+    s.blockedOnTask++;
+    const p = new Promise((resolve, reject) => {
+      target.waiters.push({ id: caller, resolve, reject });
+    });
+    schedule();
+    return p;
+  }
+
+  // suspend_yield() -> void : re-enqueue at the back of the runnable queue.
+  function suspendYield() {
+    const caller = s.current;
+    return new Promise((resolve) => {
+      s.runnable.push({ kind: "resume", id: caller, fire: () => resolve() });
+      schedule();
+    });
+  }
+
+  // suspend_sleep(ms) -> void
+  function suspendSleep(ms) {
+    const caller = s.current;
+    const delay = Number(ms);
+    s.pendingHost++;
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        s.pendingHost--;
+        s.runnable.push({ kind: "resume", id: caller, fire: () => resolve() });
+        schedule();
+      }, delay > 0 ? delay : 0);
+    });
+  }
+
+  // suspend_read_stdin(max) -> anyref (boxed Vector<Byte>)
+  function suspendReadStdin(max) {
+    const caller = s.current;
+    s.pendingHost++;
+    return (async () => {
+      let bytes;
+      try {
+        bytes = await runtime.host.readStdinAsync(Number(max), 2147483647, runtime);
+      } catch (e) {
+        return await new Promise((_, reject) => {
+          s.pendingHost--;
+          s.runnable.push({ kind: "resume", id: caller, fire: () => reject(asError(e)) });
+          schedule();
+        });
+      }
+      const vec = makeByteArrayFn(b, bytes);
+      return await new Promise((resolve) => {
+        s.pendingHost--;
+        s.runnable.push({ kind: "resume", id: caller, fire: () => resolve(vec) });
+        schedule();
+      });
+    })();
+  }
+
+  s.imports = {
+    task_create: taskCreate,
+    suspend_await: new WebAssembly.Suspending(suspendAwait),
+    suspend_yield: new WebAssembly.Suspending(suspendYield),
+    suspend_sleep: new WebAssembly.Suspending(suspendSleep),
+    suspend_read_stdin: new WebAssembly.Suspending(suspendReadStdin),
+  };
+
+  s.onTopLevelComplete = () => onComplete(TOP, undefined);
+  s.onTopLevelFail = (e) => onFail(TOP, e);
+  s.kick = () => schedule();
+  return s;
+}
+
+/** True if the module imports any operation from the "task" module. */
+function moduleNeedsTasks(wasmModule) {
+  try {
+    return WebAssembly.Module.imports(wasmModule).some((imp) => imp.module === "task");
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Wasm preparation (shared by sync and async paths)
 // ---------------------------------------------------------------------------
 
@@ -567,9 +833,20 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
   const hostImports = makeHostImports(b, runtime, bridgeBytes);
   const mainModule = new WebAssembly.Module(wasmBytes);
   const externMeta = readExternMeta(mainModule);
+
+  // Install the cooperative task scheduler before auto-bridging so the task
+  // intrinsic imports are recognized as host-provided rather than treated as
+  // unresolved externs. Only when the module actually imports task operations.
+  const needsTasks = moduleNeedsTasks(mainModule);
+  let scheduler = null;
+  if (needsTasks && jspi) {
+    scheduler = createTaskScheduler(b, runtime, makeByteArray);
+    hostImports.task = scheduler.imports;
+  }
+
   autoBridgeExternImports(mainModule, hostImports, b, jspi, imports, externMeta);
 
-  return { mainModule, hostImports, b, runtime, imports, externMeta, jspi };
+  return { mainModule, hostImports, b, runtime, imports, externMeta, jspi, needsTasks, scheduler };
 }
 
 // ---------------------------------------------------------------------------
@@ -600,7 +877,14 @@ export function runWasmBytes(wasmBytes, opts = {}) {
 // ---------------------------------------------------------------------------
 
 export async function runWasmBytesAsync(wasmBytes, opts = {}) {
-  const { mainModule, hostImports, b, runtime, imports, externMeta, jspi } = prepareWasm(wasmBytes, opts, { jspi: hasJspi });
+  const { mainModule, hostImports, b, runtime, imports, externMeta, jspi, needsTasks, scheduler } = prepareWasm(wasmBytes, opts, { jspi: hasJspi });
+
+  if (needsTasks && !hasJspi) {
+    throw new Error(
+      "Task concurrency requires a JSPI-capable runtime " +
+      "(WebAssembly.Suspending/promising). This engine does not provide it.",
+    );
+  }
 
   if (hasJspi) {
     // Wrap stdin reads as suspending imports so the event loop stays free while
@@ -643,7 +927,16 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
   try {
     const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta);
     if (instance.exports.__twinkle_start) {
-      if (hasJspi) {
+      if (needsTasks) {
+        // Stackful task path: drive top-level (pseudo-task 0) and the spawned
+        // task bodies through the cooperative scheduler.
+        scheduler.promisingTaskRun = WebAssembly.promising(instance.exports.__task_run);
+        const start = WebAssembly.promising(instance.exports.__twinkle_start);
+        scheduler.current = 0;
+        start().then(scheduler.onTopLevelComplete, scheduler.onTopLevelFail);
+        scheduler.kick();
+        await scheduler.done;
+      } else if (hasJspi) {
         const start = WebAssembly.promising(instance.exports.__twinkle_start);
         await start();
       } else {
