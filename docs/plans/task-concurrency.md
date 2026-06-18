@@ -1,5 +1,13 @@
 # Task Concurrency
 
+> **Superseded (2026-06-18).** The stackless state-machine direction described
+> below has been retired in favor of a JSPI-fiber model with the scheduler in the
+> JS host. See [task-concurrency-jspi-fiber.md](task-concurrency-jspi-fiber.md)
+> for the current design. The implemented stackless Milestones A–C are preserved
+> on the `archive/stackless-task-concurrency` branch (tip `4a83356`). The public
+> `Task<T>` API rationale and the "Why Task instead of Fiber" / future
+> stack-switching discussion below remain relevant.
+
 ## Current conclusion
 
 The current Phase 2 implementation proves the scheduler, task representation,
