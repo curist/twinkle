@@ -1,6 +1,8 @@
 # Task Concurrency — JSPI Backend Implementation Plan
 
-Status: **In progress (2026-06-18). Checkpoints 0–16 done.** Compiler side
+Status: **In progress (2026-06-18). Checkpoints 0–17 done** (CP16 negative-path
+tests — failure/deadlock/lifecycle — validated by smokes but deferred to a
+subprocess harness; see CP16 note). Compiler side
 (CP1–7): the stackless scheduler/transform/validation are removed, `Task<T>` is
 an id-only handle, task ops lower through the `task_abi` suspension-intrinsic
 binding table, `__task_run` is exported, and `Task.sleep`/`Task.read_stdin`
@@ -62,16 +64,16 @@ new JSPI scheduler to work.
 
 Code changes:
 
-- [ ] Remove `boot/compiler/codegen/runtime/sched.tw` from runtime module assembly
+- [x] Remove `boot/compiler/codegen/runtime/sched.tw` from runtime module assembly
   and stop importing `sched_enqueue`, `sched_run_until`, `sched_drain`, and
   waiter helpers into user modules.
-- [ ] Remove the top-level `sched_drain` call currently appended after program
+- [x] Remove the top-level `sched_drain` call currently appended after program
   body emission. Draining will move to the JS scheduler after `__twinkle_start`
   settles.
-- [ ] Replace old task intrinsic lowering with explicit temporary stubs/traps, or
+- [x] Replace old task intrinsic lowering with explicit temporary stubs/traps, or
   with calls through the new intrinsic table if Checkpoint 2 is done in the same
   commit.
-- [ ] Keep non-task codegen unchanged.
+- [x] Keep non-task codegen unchanged.
 
 Suggested searches:
 
@@ -98,13 +100,13 @@ Goal: delete the compiler machinery whose only purpose was stackless suspension.
 
 Code changes:
 
-- [ ] Remove `boot/compiler/codegen/emit/task_resume.tw` from the emit pipeline.
-- [ ] Remove `TaskResumeInfo`, `suspending_bodies`, `classify_task_bodies`,
+- [x] Remove `boot/compiler/codegen/emit/task_resume.tw` from the emit pipeline.
+- [x] Remove `TaskResumeInfo`, `suspending_bodies`, `classify_task_bodies`,
   `analyze_task_body`, and resume-function emission from emit context/codegen.
-- [ ] Remove `boot/compiler/backend/task_validate.tw` from the codegen pipeline.
-- [ ] Update or delete direct validation helpers that exist only to assert old
+- [x] Remove `boot/compiler/backend/task_validate.tw` from the codegen pipeline.
+- [x] Update or delete direct validation helpers that exist only to assert old
   restrictions.
-- [ ] Convert old rejection tests into future positive tests, or quarantine them
+- [x] Convert old rejection tests into future positive tests, or quarantine them
   until the JSPI scheduler checkpoint lands.
 
 Suggested searches:
@@ -134,13 +136,13 @@ handle carrying an integer id.
 
 Code changes:
 
-- [ ] Change `rt_types__Task` to an id-carrying struct, e.g. one immutable or
+- [x] Change `rt_types__Task` to an id-carrying struct, e.g. one immutable or
   mutable `i32` field named `id`/`task_id`.
-- [ ] Remove frame/resume/result/waiter fields from `Task` and remove obsolete
+- [x] Remove frame/resume/result/waiter fields from `Task` and remove obsolete
   frame runtime structs that only served the stackless backend.
-- [ ] Update task equality/identity lowering to compare ids or preserve the
+- [x] Update task equality/identity lowering to compare ids or preserve the
   current equality semantics via the new handle representation.
-- [ ] Update any tests or WAT snapshots that mention the old task struct layout.
+- [x] Update any tests or WAT snapshots that mention the old task struct layout.
 
 Suggested searches:
 
@@ -166,18 +168,18 @@ Goal: establish the migration seam before the JSPI scheduler is implemented.
 
 Code changes:
 
-- [ ] Add a small backend binding table for the abstract operations:
+- [x] Add a small backend binding table for the abstract operations:
   - `task_create(closure: anyref) -> i32`
   - `suspend_await(task_id: i32) -> anyref`
   - `suspend_yield() -> Void`
   - `suspend_sleep(ms: Int) -> Void`
   - `suspend_read_stdin(max: Int) -> anyref`
-- [ ] Ensure call sites ask the table for symbols/imports. Avoid hard-coded host
+- [x] Ensure call sites ask the table for symbols/imports. Avoid hard-coded host
   module/name strings outside the table.
-- [ ] Add imports for the current JSPI binding through the table. The concrete
+- [x] Add imports for the current JSPI binding through the table. The concrete
   module/name choice is runtime policy; it should be centralized and easy to swap
   for a future continuations binding.
-- [ ] Keep temporary trap/stub implementations possible while the scheduler is
+- [x] Keep temporary trap/stub implementations possible while the scheduler is
   not yet installed.
 
 Done when:
@@ -201,14 +203,14 @@ Goal: expose the full MVP API before implementing host readiness.
 
 Code changes:
 
-- [ ] Register builtin/prelude signatures for:
+- [x] Register builtin/prelude signatures for:
   - `Task.sleep(ms: Int) Void`
   - `Task.read_stdin(max: Int) Vector<Byte>`
-- [ ] Add API docs/comments in the generated/prelude module source where the
+- [x] Add API docs/comments in the generated/prelude module source where the
   current `Task.spawn`/`await`/`yield` comments live.
-- [ ] Ensure `Task.read_stdin` follows the existing `@std.io` convention: empty
+- [x] Ensure `Task.read_stdin` follows the existing `@std.io` convention: empty
   vector means EOF/empty read, with EOF distinguished by existing stdin state.
-- [ ] Add completion/typechecking coverage for the new methods if the test suite
+- [x] Add completion/typechecking coverage for the new methods if the test suite
   has task/API completion coverage nearby.
 
 Done when:
@@ -230,15 +232,15 @@ Goal: make `Task.spawn`, `Task.await`, and `Task.yield` use the new ABI.
 
 Code changes:
 
-- [ ] Lower `Task.spawn(f)` by emitting `f`, calling `task_create`, and wrapping
+- [x] Lower `Task.spawn(f)` by emitting `f`, calling `task_create`, and wrapping
   the returned `i32` id in a `Task<T>` struct.
-- [ ] Lower `Task.await(t)` by unwrapping the `task_id`, calling
+- [x] Lower `Task.await(t)` by unwrapping the `task_id`, calling
   `suspend_await`, and unboxing the returned `anyref` to the statically known
   result type.
-- [ ] Lower `Task.yield()` to `suspend_yield()`.
-- [ ] Do not box a spawn result at the spawn site. The result does not exist yet;
+- [x] Lower `Task.yield()` to `suspend_yield()`.
+- [x] Do not box a spawn result at the spawn site. The result does not exist yet;
   result boxing belongs in `__task_run`.
-- [ ] Keep lowering valid at arbitrary call depth. No context check should depend
+- [x] Keep lowering valid at arbitrary call depth. No context check should depend
   on being inside a direct `Task.spawn` closure.
 
 Done when:
@@ -261,13 +263,13 @@ body on its own JSPI stack.
 
 Code changes:
 
-- [ ] Emit a function named/exported `__task_run` with one closure argument and an
+- [x] Emit a function named/exported `__task_run` with one closure argument and an
   `anyref` result.
-- [ ] Inside `__task_run`, cast/load the closure as needed, call it through the
+- [x] Inside `__task_run`, cast/load the closure as needed, call it through the
   universal closure path with no user arguments, and return the boxed result.
-- [ ] Ensure void-returning task bodies still return the canonical boxed/erased
+- [x] Ensure void-returning task bodies still return the canonical boxed/erased
   void value expected by existing `emit_box_to_anyref` / closure trampoline logic.
-- [ ] Add the export alongside `__twinkle_start`; do not turn it into a Wasm start
+- [x] Add the export alongside `__twinkle_start`; do not turn it into a Wasm start
   function.
 
 Done when:
@@ -290,15 +292,15 @@ instantiation.
 
 Runtime changes:
 
-- [ ] Create a small scheduler object during `runWasmBytesAsync` preparation when
+- [x] Create a small scheduler object during `runWasmBytesAsync` preparation when
   JSPI is available.
-- [ ] Install imports for `task_create`, `suspend_await`, `suspend_yield`,
+- [x] Install imports for `task_create`, `suspend_await`, `suspend_yield`,
   `suspend_sleep`, and `suspend_read_stdin` before instantiation.
-- [ ] Let the import closures capture the scheduler before the Wasm instance is
+- [x] Let the import closures capture the scheduler before the Wasm instance is
   known; attach `instance.exports` after instantiation.
-- [ ] If a module imports task operations and `hasJspi` is false, throw a clear
+- [x] If a module imports task operations and `hasJspi` is false, throw a clear
   "Task requires JSPI" error.
-- [ ] Keep non-task async extern behavior unchanged.
+- [x] Keep non-task async extern behavior unchanged.
 
 Done when:
 
@@ -329,13 +331,13 @@ Runtime model:
 
 Runtime changes:
 
-- [ ] `task_create(closure)` allocates an id, stores the closure, enqueues a
+- [x] `task_create(closure)` allocates an id, stores the closure, enqueues a
   start entry, and returns the id without running the body synchronously.
-- [ ] The pump starts runnable task entries FIFO. Before starting a task, set
+- [x] The pump starts runnable task entries FIFO. Before starting a task, set
   `scheduler.current` to the task id and call `promisingTaskRun(closure)`.
-- [ ] Task completion stores the boxed result and wakes waiters. Rejection stores
+- [x] Task completion stores the boxed result and wakes waiters. Rejection stores
   failure and wakes/rejects waiters.
-- [ ] Keep JS references to closures/results until the task record is no longer
+- [x] Keep JS references to closures/results until the task record is no longer
   needed; this provides the rooting expected by the design.
 
 Done when:
@@ -358,14 +360,14 @@ stack continues.
 
 Runtime changes:
 
-- [ ] Capture `caller = scheduler.current` at the start of every suspending task
+- [x] Capture `caller = scheduler.current` at the start of every suspending task
   import.
-- [ ] Return promises through a helper such as `resumeAs(caller, promise)` that
+- [x] Return promises through a helper such as `resumeAs(caller, promise)` that
   sets `scheduler.current = caller` immediately before the JSPI continuation is
   allowed to resume Wasm code.
-- [ ] When enqueueing a suspended continuation, enqueue the resolver/rejecter for
+- [x] When enqueueing a suspended continuation, enqueue the resolver/rejecter for
   that import promise, not a direct call into Wasm.
-- [ ] Avoid relying on a global `current` value left over from whichever task ran
+- [x] Avoid relying on a global `current` value left over from whichever task ran
   most recently; set it deliberately for every start/resume path.
 
 Done when:
@@ -386,11 +388,11 @@ Goal: provide cooperative interleaving.
 
 Runtime changes:
 
-- [ ] `suspend_yield()` captures the current id.
-- [ ] It returns a Promise whose resolver is enqueued at the back of the runnable
+- [x] `suspend_yield()` captures the current id.
+- [x] It returns a Promise whose resolver is enqueued at the back of the runnable
   queue.
-- [ ] The scheduler pump resolves runnable entries FIFO.
-- [ ] The resumed continuation passes through the `resumeAs(currentId, promise)`
+- [x] The scheduler pump resolves runnable entries FIFO.
+- [x] The resumed continuation passes through the `resumeAs(currentId, promise)`
   discipline from Checkpoint 10.
 
 Done when:
@@ -412,12 +414,12 @@ Goal: park callers until target tasks settle.
 
 Runtime changes:
 
-- [ ] Validate target id and trap clearly on invalid task handles.
-- [ ] If target is done, return/resolve immediately with the boxed result.
-- [ ] If target failed, reject so the awaiter re-traps.
-- [ ] If target is pending, mark the target as awaited, append the caller's
+- [x] Validate target id and trap clearly on invalid task handles.
+- [x] If target is done, return/resolve immediately with the boxed result.
+- [x] If target failed, reject so the awaiter re-traps.
+- [x] If target is pending, mark the target as awaited, append the caller's
   resolver/rejecter to the target waiters, and return a suspending Promise.
-- [ ] When a target settles, enqueue waiter resumes rather than recursively
+- [x] When a target settles, enqueue waiter resumes rather than recursively
   running them inline. This preserves cooperative FIFO behavior and avoids deep JS
   recursion.
 
@@ -441,14 +443,14 @@ and true deadlock is reported.
 
 Runtime changes:
 
-- [ ] After `__twinkle_start` resolves, run the scheduler drain until no runnable
+- [x] After `__twinkle_start` resolves, run the scheduler drain until no runnable
   tasks remain.
-- [ ] If runnable is empty, pending-host is zero, and blocked tasks remain, throw
+- [x] If runnable is empty, pending-host is zero, and blocked tasks remain, throw
   a trap-equivalent deadlock error.
-- [ ] If runnable is empty but pending-host is nonzero, wait for the next host
+- [x] If runnable is empty but pending-host is nonzero, wait for the next host
   completion instead of reporting deadlock.
-- [ ] If an unawaited task failed, surface that failure during drain.
-- [ ] Ensure ordinary successful unawaited tasks complete without requiring the
+- [x] If an unawaited task failed, surface that failure during drain.
+- [x] Ensure ordinary successful unawaited tasks complete without requiring the
   program to hold their handles.
 
 Done when:
@@ -471,12 +473,12 @@ Goal: add timer readiness with correct pending-host accounting.
 
 Runtime changes:
 
-- [ ] `suspend_sleep(ms)` captures the current id.
-- [ ] Increment `pendingHost` before scheduling the timer.
-- [ ] Decrement `pendingHost` exactly once when the timer fires or is cancelled by
+- [x] `suspend_sleep(ms)` captures the current id.
+- [x] Increment `pendingHost` before scheduling the timer.
+- [x] Decrement `pendingHost` exactly once when the timer fires or is cancelled by
   error handling.
-- [ ] Enqueue/resume the sleeping task through the normal resume discipline.
-- [ ] Decide and document behavior for negative durations; prefer trapping or
+- [x] Enqueue/resume the sleeping task through the normal resume discipline.
+- [x] Decide and document behavior for negative durations; prefer trapping or
   clamping in one place, not per call site.
 
 Done when:
@@ -497,13 +499,13 @@ Goal: add stdin readiness for LSP-style input loops.
 
 Runtime changes:
 
-- [ ] Reuse `runtime.host.readStdinAsync(max, timeout, runtime)` or the equivalent
+- [x] Reuse `runtime.host.readStdinAsync(max, timeout, runtime)` or the equivalent
   existing async stdin path.
-- [ ] Increment/decrement `pendingHost` around the read.
-- [ ] Convert returned bytes to the same `Vector<Byte>` representation used by
+- [x] Increment/decrement `pendingHost` around the read.
+- [x] Convert returned bytes to the same `Vector<Byte>` representation used by
   existing `@std.io` functions, then return it as `anyref`.
-- [ ] Preserve EOF behavior and compatibility with `io.stdin_eof()`.
-- [ ] Avoid mixing stream and blocking fd reads on Node; keep the existing JSPI IO
+- [x] Preserve EOF behavior and compatibility with `io.stdin_eof()`.
+- [x] Avoid mixing stream and blocking fd reads on Node; keep the existing JSPI IO
   path's stream-buffering invariant.
 
 Done when:
@@ -525,7 +527,7 @@ Goal: make tests describe the new model rather than the retired stackless model.
 
 Test changes:
 
-- [ ] Replace old validation-rejection tests with positive stackful tests:
+- [x] Replace old validation-rejection tests with positive stackful tests:
   - yield in ordinary helper;
   - await in ordinary helper;
   - yield/await in branches;
@@ -538,6 +540,13 @@ Test changes:
   unawaited failure during drain.
 - [ ] Add lifecycle tests: eager-enqueue spawn, unawaited drain, deadlock, and
   pending-host-vs-deadlock.
+
+> The three unchecked items above are **validated by standalone smoke programs**
+> (spawn/await failure traps, two-task deadlock, sleep readiness, eager-enqueue
+> ordering, read_stdin EOF — see the Phase B/runtime work), but not yet encoded
+> as committed regression tests: a task trap or deadlock aborts the in-process
+> test runner, so they need a **subprocess harness** (run a program via `twk`,
+> assert exit code / output). Tracked as follow-up.
 
 Done when:
 
@@ -558,23 +567,23 @@ Goal: measure the real scheduler path after the implementation exists.
 
 Benchmark work:
 
-- [ ] Extend `boot/bench/jspi/` or add a companion bench for:
+- [x] Extend `boot/bench/jspi/` or add a companion bench for:
   - repeated `Task.yield`;
   - await ping-pong;
   - sleep/readiness latency;
   - LSP-shaped reader/dispatcher/debounce smoke.
-- [ ] Run Node, Deno, and the bundled `target/twk` path.
-- [ ] Record summarized results in the design document's Evidence section.
-- [ ] Keep reusable benchmarks under `boot/bench/`; do not turn microbenchmarks
+- [x] Run Node, Deno, and the bundled `target/twk` path.
+- [x] Record summarized results in the design document's Evidence section.
+- [x] Keep reusable benchmarks under `boot/bench/`; do not turn microbenchmarks
   into compiler correctness tests.
 
 Decision:
 
-- [ ] Proceed unchanged if scheduler overhead stays within the design budget.
+- [x] Proceed unchanged if scheduler overhead stays within the design budget.
 - [ ] Document guidance to avoid fine-grained yielding if overhead is visible but
-  acceptable.
+  acceptable. *(N/A — overhead negligible.)*
 - [ ] Revisit batching/yield coalescing before LSP adoption if overhead dominates
-  the LSP-shaped smoke.
+  the LSP-shaped smoke. *(N/A — overhead negligible.)*
 
 ## Checkpoint 18 — stage0 parity gate
 
