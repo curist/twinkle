@@ -1,0 +1,85 @@
+// Phase B JSPI scheduler benchmark (throwaway bench).
+// See docs/plans/task-concurrency-jspi-fiber.md, section "Spike: JSPI
+// switching cost". Unlike Phase A (raw suspend, no scheduler), this exercises
+// the REAL Task.* lowering through the cooperative scheduler in runtime.mjs:
+//
+//   interval 0->1 : B1 single-task Task.yield() throughput
+//   interval 1->2 : B2 spawn + await round-trip (waiter park + completion wake)
+//   interval 2->3 : B3 Task.sleep(0) host-readiness latency (timer-floor bound)
+//   interval 3->4 : B4 LSP-shaped dispatch (per request: spawn worker, yield, await)
+//
+// `bench.mark(label)` records performance.now() on the JS side per call. The
+// runtime wraps the mark extern in a Suspending adapter, but that cost is a
+// single suspend per interval boundary — negligible against the per-interval
+// operation counts below.
+extern bench {
+  fn mark(label: Int)
+  fn sink(value: Int)
+}
+
+yields := 100000
+spawn_awaits := 50000
+sleeps := 200
+requests := 20000
+
+bench.mark(0)
+
+// B1 — one task yielding repeatedly.
+b1 := Task.spawn(fn() Int {
+  acc := 0
+
+  for i in range(yields) {
+    Task.yield()
+    acc = acc + 1
+  }
+
+  acc
+})
+r1 := b1.await()
+bench.mark(1)
+
+// B2 — a task that spawns a trivial child and awaits it, repeatedly. Exercises
+// task_create + waiter registration + completion wakeup + result unboxing.
+b2 := Task.spawn(fn() Int {
+  acc := 0
+
+  for i in range(spawn_awaits) {
+    w := Task.spawn(fn() Int { 1 })
+    acc = acc + w.await()
+  }
+
+  acc
+})
+r2 := b2.await()
+bench.mark(2)
+
+// B3 — sleep readiness. setTimeout(_, 0) is clamped (~1 ms in Node), so this
+// measures the timer floor, not pure switching cost.
+b3 := Task.spawn(fn() Int {
+  for i in range(sleeps) {
+    Task.sleep(0)
+  }
+
+  sleeps
+})
+r3 := b3.await()
+bench.mark(3)
+
+// B4 — LSP-shaped dispatch: each request is handled by a worker task that
+// yields once (cooperative work) then returns a result the dispatcher folds in.
+total := Cell.new(0)
+b4 := Task.spawn(fn() Int {
+  for i in range(requests) {
+    w := Task.spawn(fn() Int {
+      Task.yield()
+      i + 1
+    })
+    total.update(fn(n) { n + w.await() })
+  }
+
+  total.get()
+})
+r4 := b4.await()
+bench.mark(4)
+
+bench.sink(r1 + r2 + r3 + r4)

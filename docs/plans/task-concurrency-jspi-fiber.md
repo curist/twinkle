@@ -1,6 +1,6 @@
 # Task Concurrency — Stackful Tasks via JSPI Backend
 
-Status: **Design approved (2026-06-18); implementation not started.**
+Status: **Design approved (2026-06-18); Phase A switching-cost spike complete; implementation not started.**
 
 This document defines Twinkle's **stackful** implementation direction for
 `Task<T>`. The public API remains backend-independent. The near-term backend uses
@@ -496,29 +496,10 @@ continuations are available.
 - **Reentrancy of the trampoline**: nested `promising` stacks (top-level awaiting
   a task that awaits another) must compose correctly under JSPI.
 
-## Slice breakdown
+## Implementation plan
 
-1. **Strip the stackless backend + establish the intrinsic seam.** Remove the
-   scheduler/transform/validation. Re-lower `Task.*` to the **abstract suspension
-   intrinsics** (`task_create`, `suspend_await`/`yield`/`sleep`/`read_stdin`)
-   routed through one backend binding table — the migration seam, in place from
-   day one. Intrinsics may be temporarily stubbed/rejected at runtime. `make
-   stage2` green; existing non-task suites green. Mark the stackless design doc
-   superseded.
-2. **JS scheduler + core fibers.** Bind `task_create`/`suspend_await`/
-   `suspend_yield` to host imports operating on **`i32 task_id`** (not the `Task`
-   struct), add the `promising`-wrapped `__task_run(closure)` trampoline, the
-   registry, the runnable/blocked sets, the `scheduler.current` context, and the
-   top-level pseudo-task id `0`. Result boxing in `__task_run`, unboxing at await.
-   Tests via `twk run`: spawn/await round-trip, interleaving, await-after-yield,
-   unawaited drain, deadlock detection, and **failure propagation** (awaiting a
-   trapped task re-traps; unawaited failure surfaces at drain).
-3. **Host readiness.** Bind `suspend_sleep` and `suspend_read_stdin`; tests for a
-   timer waking an awaiting task, stdin readiness waking a reader task without
-   busy-spinning, and deadlock-vs-pending-host distinction.
-4. **(Later) LSP migration.** Move `twk lsp` onto cooperative tasks (input
-   reader, dispatcher, debounce, diagnostics), with generation tokens for stale
-   results. Tracked separately.
+Tracked separately in
+[task-concurrency-jspi-fiber-implementation.md](task-concurrency-jspi-fiber-implementation.md).
 
 ## Evidence
 
@@ -528,29 +509,36 @@ Raw JSPI suspend/resume cost, no scheduler. Harness:
 `boot/bench/jspi/{phase_a.tw,run.mjs}` (throwaway), run through the same
 `runWasmBytesAsync` async path as `twk run`, providing the `bench` externs so we
 control whether each suspends. `N=100000` per loop, 7 runs (median), 2 warmup.
-Platform: darwin arm64. Commit: `f3c4e9c` + uncommitted bench.
+Platform: darwin arm64. Commit: `267fd05`.
 
 | Measurement | Node 26.0.0 | Deno 2.8.3 |
 |---|---|---|
 | A1 baseline loop (no suspend) | 0.0009 µs/iter | 0.0002 µs/iter |
-| A2 suspend, already-resolved promise | 0.085 µs/iter | 0.081 µs/iter |
-| A3 suspend, microtask-deferred (real) | 0.112 µs/iter | 0.118 µs/iter |
-| A3 / A2 (resolved-promise fast-path tell) | 1.31× | 1.45× |
-| A3 − A1 (real per-suspend cost) | 0.111 µs/iter | 0.117 µs/iter |
+| A2 suspend, resolved extern through `twk run`'s async JSPI adapter | 0.085 µs/iter | 0.081 µs/iter |
+| A3 suspend, A2 plus one user-level microtask | 0.112 µs/iter | 0.118 µs/iter |
+| A3 / A2 (+microtask ratio) | 1.31× | 1.45× |
+| A3 − A1 (resolved-extern suspend cost) | 0.084 µs/iter | 0.081 µs/iter |
+| A3 − A1 (+microtask cost) | 0.111 µs/iter | 0.117 µs/iter |
 
 Findings:
 
-- A real JSPI suspend costs **~0.11–0.12 µs (≈110–120 ns)** on both runtimes —
-  2–3 orders of magnitude below the "tens of µs → proceed" budget and ~4 below
-  the "~1 ms → reconsider" threshold. **Proceed with the JSPI backend unchanged.**
-- The engine **does** fast-path already-resolved promises (A3/A2 ≈ 1.3–1.45×), so
-  A2 alone would under-report a true suspend — A3 is the honest floor. Both were
-  measured; the gap is small in absolute terms.
+- A suspend through the real `twk run` async JSPI extern adapter costs
+  **~0.08–0.09 µs (≈80–90 ns)** when the extern body resolves immediately, and
+  **~0.11–0.12 µs (≈110–120 ns)** with one extra user-level microtask on top.
+  Both are 2–3 orders of magnitude below the "tens of µs → proceed" budget and
+  ~4 below the "~1 ms → reconsider" threshold. **Proceed with the JSPI backend
+  unchanged.**
+- The A3/A2 gap measures the extra user-level microtask in this harness, not a
+  pure engine fast-path comparison. The real `twk run` path wraps every extern in
+  an async `WebAssembly.Suspending` adapter, so a manually constructed
+  already-fulfilled Promise boundary is not reachable through this Twinkle extern
+  harness. That is acceptable for the gate: the measured path is the path current
+  JSPI externs actually use, and the scheduler-specific Phase B will measure the
+  custom task imports directly.
 - **A0 note (recorded):** the runtime wraps *every* extern in
   `WebAssembly.Suspending` under JSPI, so a truly non-suspending host call is not
-  reachable on the real `twk run` path. The realistic "plain extern" cost is the
-  already-resolved suspend (A2 ≈ 0.08 µs). A1 (a bare Wasm loop iteration,
-  ≈1–2 ns) is the Wasm-call-scale denominator.
+  reachable on the real `twk run` extern path. A1 (a bare Wasm loop iteration,
+  ≈1–2 ns) remains the Wasm-loop-scale denominator.
 - **Node/Deno parity:** within ~6% on the real-suspend number. No runtime/version
   guard beyond `hasJspi` is needed. (Both are V8-derived; a non-V8 JSPI engine
   would warrant a re-check, but none is a current target.)
@@ -560,3 +548,45 @@ Findings:
 Commands:
 `target/twk build boot/bench/jspi/phase_a.tw -o boot/bench/jspi/phase_a.wasm`,
 `node boot/bench/jspi/run.mjs`, `deno run -A boot/bench/jspi/run.mjs`.
+
+### Phase B spike — GO (2026-06-18)
+
+Scheduler overhead on the real `Task.*` lowering, driven by the implemented JS
+scheduler. Harness: `boot/bench/jspi/{phase_b.tw,run_b.mjs}` (throwaway), run
+through the same `runWasmBytesAsync` async path as `twk run`, timing interval
+boundaries on the JS host via a `bench.mark` extern. 5 runs (median), 2 warmup.
+Platform: darwin arm64. Commit: `035a5d7`.
+
+| Measurement | Node 26.0.0 | Deno 2.8.3 |
+|---|---|---|
+| B1 `Task.yield()` round-trip | 0.164 µs/op | 0.154 µs/op |
+| B2 spawn + await round-trip | 0.727 µs/op | 0.755 µs/op |
+| B3 `Task.sleep(0)` (timer floor, not switching) | ~1.15 ms/op | ~2.26 ms/op |
+| B4 LSP-shaped dispatch (spawn + yield + await) | 1.764 µs/op | 1.884 µs/op |
+
+Findings:
+
+- **Pure scheduling is cheap.** A `Task.yield()` round-trip costs **~0.16 µs
+  (≈160 ns)** — the raw JSPI suspend (Phase A, ~80–120 ns) plus the scheduler's
+  queue bookkeeping. A spawn+await round-trip (task registration, waiter parking,
+  completion wakeup, result unboxing) is **~0.7 µs**, and the LSP-shaped
+  per-request cost (spawn a worker, yield once, await it) is **~1.8 µs**. All are
+  **1–2 orders of magnitude below the "tens of µs → proceed unchanged"** budget
+  and ~3 below the "~1 ms → reconsider" threshold. **Proceed with the JSPI
+  backend unchanged.**
+- **`Task.sleep` is host-readiness latency, not switching cost.** `sleep(0)` is
+  dominated by the engine's `setTimeout` clamp (~1.15 ms on Node, ~2.26 ms on
+  Deno), exactly as the budget anticipated. For the intended workload (debounce
+  windows of 50–250 ms) this floor is irrelevant; for fine-grained "yield to the
+  event loop" use `Task.yield()` (B1), which is ~0.16 µs.
+- **Node/Deno parity** holds on every switching metric (within ~8%). The only
+  cross-engine divergence is the timer floor (B3), which is a host property, not
+  the scheduler.
+- **LSP-scale verdict.** A dispatched request that does real compile work (ms and
+  up) spends well under 0.1% of its time in task scheduling, so the cooperative
+  scheduler is comfortably good enough for the LSP workload. No yield-coalescing
+  or fast paths are warranted until a real workload demonstrates otherwise.
+
+Commands:
+`target/twk build boot/bench/jspi/phase_b.tw -o boot/bench/jspi/phase_b.wasm`,
+`node boot/bench/jspi/run_b.mjs`, `deno run -A boot/bench/jspi/run_b.mjs`.

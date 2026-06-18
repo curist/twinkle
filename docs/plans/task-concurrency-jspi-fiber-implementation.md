@@ -10,9 +10,11 @@ implements the task host imports — eager-enqueue `task_create`,
 discipline (strict one-task-per-microtask), FIFO `suspend_yield`, parking
 `suspend_await`, drain + deadlock detection, and `suspend_sleep`/
 `suspend_read_stdin` host readiness. `task_suite` is rewritten for the stackful
-model (CP16) and re-enabled. Remaining: Phase B scheduler benchmark (CP17),
-stage0 parity (CP18, deferred until boot source uses tasks), LSP adoption
-(CP19).
+model (CP16) and re-enabled. Phase B scheduler benchmark (CP17) run on Node and
+Deno — GO: `Task.yield()` ~0.16 µs, spawn+await ~0.7 µs, LSP-shaped dispatch
+~1.8 µs (all far under budget); `sleep` is timer-floor host latency, not
+switching. Recorded in the design doc's Evidence section. Remaining: stage0
+parity (CP18, deferred until boot source uses tasks), LSP adoption (CP19).
 
 This is the implementation plan for the stackful `Task<T>` design in
 [task-concurrency-jspi-fiber.md](task-concurrency-jspi-fiber.md). Keep this plan

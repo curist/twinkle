@@ -40,7 +40,7 @@ Self-hosting is complete. Historical design and status docs live in
 |------|-------------|--------|---------|
 | Boot compiler layout | Reorganize `boot/compiler/` into focused subdirectories with stable end-state names | Planned | [boot-compiler-layout-reorg.md](boot-compiler-layout-reorg.md) |
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
-| Task concurrency | Add library-first cooperative `Task<T>` concurrency without new syntax | Planned | [task-concurrency.md](task-concurrency.md) |
+| Task concurrency | Add stackful cooperative `Task<T>` concurrency without new syntax; current backend uses JSPI fibers | Planned | [design](task-concurrency-jspi-fiber.md), [implementation](task-concurrency-jspi-fiber-implementation.md) |
 | Boot typed builtin type refs | Extend the typed-builtin-reference pattern (Option/Result variant refs, now done) to the remaining builtin *types* still referenced by raw id — `Order`, `Iterator`, `Range` — and audit `IterItem`/`UnfoldStep`/`Task` | Planned | [boot-typed-builtin-type-refs.md](boot-typed-builtin-type-refs.md) |
 
 

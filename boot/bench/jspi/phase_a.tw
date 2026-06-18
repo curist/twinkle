@@ -3,15 +3,14 @@
 // switching cost". Measures raw JSPI suspend/resume cost with NO scheduler:
 //
 //   interval 0->1 : A1 baseline counted loop (no suspension)
-//   interval 1->2 : A2 Suspending import, already-resolved promise
-//   interval 2->3 : A3 Suspending import, microtask-deferred promise (real suspend)
+//   interval 1->2 : A2 Suspending import, extern body resolves immediately
+//   interval 2->3 : A3 Suspending import, extern body awaits one extra microtask
 //
 // `bench.mark(label)` records performance.now() on the JS side per call.
-// Under JSPI the runtime wraps every extern in WebAssembly.Suspending, so
-// `mark` and `suspend_resolved` are both already-resolved suspends; the
-// per-call cost difference between them is noise. `suspend_micro` awaits one
-// microtask, forcing a true stack switch.
-
+// Under JSPI the runtime wraps every extern in an async WebAssembly.Suspending
+// adapter. That means A2 is the realistic "resolved extern through twk run"
+// cost, not a manually constructed already-fulfilled Promise boundary.
+// `suspend_micro` adds one extra user-level microtask on top of that path.
 extern bench {
   fn mark(label: Int)
   fn suspend_resolved()

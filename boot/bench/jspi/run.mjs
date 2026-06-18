@@ -5,7 +5,7 @@
 // `twk run`, providing the `bench` externs ourselves so we control whether each
 // suspends. Times are taken on the JS host via performance.now() inside the
 // `mark` extern. Reports per-iteration cost for A1/A2/A3 plus the A3/A2 ratio
-// (engine fast-path detection for already-resolved promises).
+// (the cost of adding one more user-level microtask on the real runtime path).
 //
 // Usage (run on each target runtime for the cross-runtime step):
 //   node boot/bench/jspi/run.mjs
@@ -34,9 +34,10 @@ let marks = [];
 const imports = {
   bench: {
     mark: () => { marks.push(performance.now()); },
-    // A2: already-resolved promise -> engine may fast-path (no real switch).
+    // A2: extern body resolves immediately. The runtime's async JSPI adapter
+    // still awaits it, so this is the realistic resolved-extern path for `twk run`.
     suspend_resolved: async () => {},
-    // A3: deferred one microtask -> forces a real suspend + resume.
+    // A3: add one extra user-level microtask on top of the runtime adapter path.
     suspend_micro: async () => { await Promise.resolve(); },
     // Keep `acc` live so the baseline loop is not dead-code-eliminated.
     sink: () => {},
@@ -88,10 +89,10 @@ console.log(`N=${N} per loop, ${RUNS} runs (median), ${WARMUP} warmup\n`);
 const row = (label, ms) =>
   console.log(`  ${label.padEnd(34)} ${usPerIter(ms).toFixed(4).padStart(9)} us/iter   (${ms.toFixed(2)} ms total)`);
 row("A1 baseline loop (no suspend)", a1);
-row("A2 suspend, already-resolved", a2);
-row("A3 suspend, microtask (real)", a3);
+row("A2 suspend, resolved extern", a2);
+row("A3 suspend, +1 user microtask", a3);
 console.log("");
-console.log(`  A3 / A2 ratio (fast-path tell):  ${(a3 / a2).toFixed(2)}x`);
-console.log(`  A2 - A1 (resolved suspend cost): ${usPerIter(a2 - a1).toFixed(4)} us/iter`);
-console.log(`  A3 - A1 (real suspend cost):     ${usPerIter(a3 - a1).toFixed(4)} us/iter`);
+console.log(`  A3 / A2 ratio (+microtask cost):  ${(a3 / a2).toFixed(2)}x`);
+console.log(`  A2 - A1 (resolved extern cost):  ${usPerIter(a2 - a1).toFixed(4)} us/iter`);
+console.log(`  A3 - A1 (+microtask cost):       ${usPerIter(a3 - a1).toFixed(4)} us/iter`);
 console.log("");
