@@ -5107,30 +5107,43 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<DiagKind>) Ch
       fn_ctx.current_ret = sig.ret
       fn_ctx.type_var_scope = sig.type_params
 
-      // Check or synth the body
-      case sig.ret {
-        .Some(ret_ty) => {
-          body_r := check_block(decl.body, ret_ty, fn_ctx, diags)
-          .{ ctx: body_r.ctx.pop_scope(), diags: body_r.diags }
+      // Check or synth the body. An explicit annotation checks the body
+      // against it; an unannotated function (whose sig.ret is a Pass-0 meta)
+      // synthesizes the body's real type — including Never for diverging bodies
+      // — and binds the meta to it, so every call site (forward references,
+      // recursion, top-level statements) resolves to the same inferred type.
+      case decl.return_type {
+        .Some(_) => case sig.ret {
+          .Some(ret_ty) => {
+            body_r := check_block(decl.body, ret_ty, fn_ctx, diags)
+            .{ ctx: body_r.ctx.pop_scope(), diags: body_r.diags }
+          },
+          .None => {
+            body_r := check_block(decl.body, .Void, fn_ctx, diags)
+            .{ ctx: body_r.ctx.pop_scope(), diags: body_r.diags }
+          },
         },
         .None => {
           body_r := synth_block(decl.body, fn_ctx, diags)
-
-          // Write inferred return type back to env so later functions see it.
-          // Limitation: this only works with source-order checking. Mutual recursion
-          // between unannotated functions is unsupported because inferred return types
-          // are only visible to functions checked later in source order.
           result_ctx := body_r.ctx.pop_scope()
           inferred_ret := zonk(body_r.ty, result_ctx.subst)
-          updated_fns := collect f in result_ctx.env.functions {
+
+          // Bind the Pass-0 meta directly (unify would not bind it for a Never
+          // body), then write the concrete inferred type back to the signature
+          // so lowering and later source-order lookups see it.
+          bound_ctx := case sig.ret {
+            .Some(.MetaVar(mid)) => result_ctx.set_subst(mid, inferred_ret),
+            _ => result_ctx,
+          }
+          updated_fns := collect f in bound_ctx.env.functions {
             if f.name == decl.name {
               f.ret = .Some(inferred_ret)
             }
 
             f
           }
-          result_ctx.env = .with_functions(updated_fns)
-          .{ ctx: result_ctx, diags: body_r.diags }
+          bound_ctx.env = .with_functions(updated_fns)
+          .{ ctx: bound_ctx, diags: body_r.diags }
         },
       }
     },
@@ -5193,6 +5206,30 @@ fn collect_module_aliases(module: Module) Dict<String, Bool> {
 pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
   ctx := empty_ctx(env, collect_module_aliases(module), lint_mode)
   cur_diags: Vector<DiagKind> = []
+
+  // Pass 0: give every unannotated function a fresh meta-var return type. Its
+  // body unifies with that meta during checking, and every call site (including
+  // top-level statements and forward / recursive references) instantiates the
+  // same meta — so definitions and callers agree on the return type, and the
+  // final zonk resolves it. Without this, an unannotated ret defaults to Void at
+  // call sites while the definition emits the body's value type, leaving a stray
+  // value on the stack.
+  pass0_fns: Vector<FunctionSig> = []
+
+  for f in ctx.env.functions {
+    case f.ret {
+      .None => {
+        fm := ctx.fresh_meta()
+        ctx = fm.ctx
+        f.ret = .Some(fm.ty)
+      },
+      .Some(_) => {},
+    }
+
+    pass0_fns = .append(f)
+  }
+
+  ctx.env = .with_functions(pass0_fns)
 
   // Pass 1: top-level statements/lets.
   // This makes top-level bindings available to all functions regardless of
@@ -5309,6 +5346,17 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
       }
     }
   }
+
+  // Resolve inferred (meta-var) function return types so lowering reads
+  // concrete signatures, consistent with the zonked call-site types above.
+  zonked_fns := collect f in ctx.env.functions {
+    f.ret = case f.ret {
+      .Some(r) => .Some(zonk(r, ctx.subst)),
+      .None => .None,
+    }
+    f
+  }
+  ctx.env = .with_functions(zonked_fns)
 
   // Collect pub value types from module-level scope.
   pub_values: Dict<String, MonoType> = Dict.new()

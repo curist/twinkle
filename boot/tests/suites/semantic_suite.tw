@@ -54,9 +54,47 @@ fn show<T: Stringify>(x: T) String {
   "${x}"
 }
 
+// Regression helpers: an unannotated function infers its return type from the
+// body, and that type must be usable consistently at every call site —
+// including forward references, recursion, and when the result is discarded as
+// a statement (which previously left a stray value on the wasm stack).
+fn inferred_value() {
+  19 + 23
+}
+
+fn calls_forward() Int {
+  forward_helper() + 1
+}
+
+fn forward_helper() {
+  41
+}
+
+fn countdown_sum(n: Int) {
+  if n <= 0 {
+    0
+  } else {
+    n + countdown_sum(n - 1)
+  }
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("semantic cases")
+    .test(
+      "unannotated function return type is inferred and usable",
+      fn() {
+        // Result is usable at the call site (was Void before the fix).
+        try assert.equal(inferred_value(), 42)
+        // Forward reference resolves to the callee's inferred return type.
+        try assert.equal(calls_forward(), 42)
+        // Recursion through an unannotated function infers consistently.
+        try assert.equal(countdown_sum(5), 15)
+        // Discarding the value as a statement must not corrupt the stack.
+        inferred_value()
+        .Ok({})
+      },
+    )
     .test(
       "closure capture by value",
       fn() {
