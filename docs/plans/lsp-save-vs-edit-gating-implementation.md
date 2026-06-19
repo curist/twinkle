@@ -135,7 +135,7 @@ pub type State = .{
   diagnostics_pending: Bool,
   diagnostics_deadline_ms: Float,
   diagnostics_tier: DiagTier,
-  parse_dirty_uris: Set<String>,
+  parse_dirty_uris: Dict<String, Bool>,
   full_dirty: Bool,
   last_published: Dict<String, String>,
   closure_snapshot: analyze.ClosureSnapshot?,
@@ -159,7 +159,7 @@ pub fn initial_state() State {
     diagnostics_pending: false,
     diagnostics_deadline_ms: 0.0,
     diagnostics_tier: .Full,
-    parse_dirty_uris: Set.new(),
+    parse_dirty_uris: Dict.new(),
     full_dirty: false,
     last_published: Dict.new(),
     closure_snapshot: .None,
@@ -265,14 +265,14 @@ In `boot/tests/suites/lsp_server_core_suite.tw`, every `server_core.State.{ … 
 
 ```tw
           diagnostics_tier: .Full,
-          parse_dirty_uris: Set.new(),
+          parse_dirty_uris: Dict.new(),
           full_dirty: false,
 ```
 
 Fast path (verify each site afterward): from the repo root,
 
 ```bash
-perl -0pi -e 's/last_published_versions: Dict\.new\(\),/last_published: Dict.new(),\n          diagnostics_tier: .Full,\n          parse_dirty_uris: Set.new(),\n          full_dirty: false,/g' boot/tests/suites/lsp_server_core_suite.tw
+perl -0pi -e 's/last_published_versions: Dict\.new\(\),/last_published: Dict.new(),\n          diagnostics_tier: .Full,\n          parse_dirty_uris: Dict.new(),\n          full_dirty: false,/g' boot/tests/suites/lsp_server_core_suite.tw
 target/twk fmt boot/tests/suites/lsp_server_core_suite.tw
 ```
 
@@ -313,7 +313,9 @@ Add to `boot/tests/suites/lsp_server_core_suite.tw` inside the suite chain:
         state.documents = opened
         state.diagnostics_pending = true
         state.diagnostics_tier = .Parse
-        state.parse_dirty_uris = Set.new().insert("file:///a.tw")
+        dirty: Dict<String, Bool> = Dict.new()
+        dirty["file:///a.tw"] = true
+        state.parse_dirty_uris = dirty
         state.full_dirty = true
         step := publish_due_now(state)
         out := try published_for(step, "file:///a.tw")
@@ -328,7 +330,7 @@ Add to `boot/tests/suites/lsp_server_core_suite.tw` inside the suite chain:
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `target/twk run boot/tests/main.tw 2>&1 | tail -5`
-Expected: FAIL — `diagnostics_tier`/`parse_dirty_uris` assignment compiles, but `publish_due_now` still runs the full path, so `full_dirty` is unexpectedly cleared / wrong messages. (Compile error if `.insert` path differs — fix per Set API: `Set.new().insert("…")`.)
+Expected: FAIL — `diagnostics_tier`/`parse_dirty_uris` assignment compiles, but `publish_due_now` still runs the full path, so `full_dirty` is unexpectedly cleared / wrong messages.
 
 - [ ] **Step 3: Implement tier marking**
 
@@ -343,7 +345,7 @@ fn mark_diagnostics_pending(state: State, tier: DiagTier, uri: String?) Step {
     .Parse => {
       state.diagnostics_deadline_ms = date.now() + 150.to_float()
       case uri {
-        .Some(u) => state.parse_dirty_uris = state.parse_dirty_uris.insert(u),
+        .Some(u) => state.parse_dirty_uris[u] = true,
         .None => {},
       }
     },
@@ -390,7 +392,7 @@ pub fn publish_due_diagnostics(state: State) Step {
       step := state.publish_workspace_diagnostics()
       done := step.state
       done.full_dirty = false
-      done.parse_dirty_uris = Set.new()
+      done.parse_dirty_uris = Dict.new()
       .{ state: done, outgoing: step.outgoing }
     },
   }
@@ -399,7 +401,7 @@ pub fn publish_due_diagnostics(state: State) Step {
 fn publish_parse_diagnostics(state: State) Step {
   outgoing: Vector<json.Json> = []
 
-  for uri in state.parse_dirty_uris.to_vector() {
+  for uri in state.parse_dirty_uris.keys() {
     doc := case state.documents.get(uri) {
       .Some(d) => d,
       .None => { continue },
@@ -418,7 +420,7 @@ fn publish_parse_diagnostics(state: State) Step {
     }
   }
 
-  state.parse_dirty_uris = Set.new()
+  state.parse_dirty_uris = Dict.new()
   .{ state, outgoing }
 }
 ```
@@ -501,7 +503,7 @@ Add to `boot/tests/suites/lsp_server_core_suite.tw`:
         step := state.handle_message(msg)
         try assert.is_true(step.state.diagnostics_pending)
         try assert.is_true(step.state.full_dirty)
-        try assert.is_true(step.state.parse_dirty_uris.contains("file:///a.tw"))
+        try assert.is_true(step.state.parse_dirty_uris.has("file:///a.tw"))
         case step.state.diagnostics_tier {
           .Parse => .Ok({}),
           _ => assert.fail("expected Parse tier"),
@@ -518,7 +520,9 @@ Add to `boot/tests/suites/lsp_server_core_suite.tw`:
         // Parse tier first (clean parse -> publishes empty diagnostics for the uri).
         state.diagnostics_pending = true
         state.diagnostics_tier = .Parse
-        state.parse_dirty_uris = Set.new().insert("file:///a.tw")
+        dirty: Dict<String, Bool> = Dict.new()
+        dirty["file:///a.tw"] = true
+        state.parse_dirty_uris = dirty
         state.full_dirty = true
         after_parse := publish_due_now(state)
         // Now a full run at the same version must still publish the type error.
@@ -543,7 +547,10 @@ Add to `boot/tests/suites/lsp_server_core_suite.tw`:
         state.documents = opened
         state.diagnostics_pending = true
         state.diagnostics_tier = .Parse
-        state.parse_dirty_uris = Set.new().insert("file:///a.tw").insert("file:///b.tw")
+        dirty: Dict<String, Bool> = Dict.new()
+        dirty["file:///a.tw"] = true
+        dirty["file:///b.tw"] = true
+        state.parse_dirty_uris = dirty
         state.full_dirty = true
         step := publish_due_now(state)
         a := try published_for(step, "file:///a.tw")
@@ -1020,7 +1027,7 @@ git commit -m "Debounce diagnostics by tier; progress only for full runs"
 
 ## Notes for the implementer
 
-- `Set` and `Dict` are prelude builtins (no `use` needed). Set API used here: `Set.new()`, `.insert(x)`, `.remove(x)`, `.contains(x)`, `.to_vector()`, `.len()`.
+- `parse_dirty_uris` is a `Dict<String, Bool>` used as a string set (matching the existing `published`/`seen` pattern in the codebase). Dict API: `Dict.new()`, index-set sugar `d[k] = true`, `.has(k)`, `.remove(k)` (returns a new dict), `.keys()`, `.len()`. (`Set<String>` is avoided as a record field because monomorphizing it inside `server_core` collides with the prelude's `set$*` methods at link time.)
 - `query_diagnostics` is the existing alias for `compiler.query.diagnostics` in `server_core.tw`.
 - Record literal updates require every field; the `State` shape changed in Task 2, so any new `State.{ … }` literal must include `diagnostics_tier`, `parse_dirty_uris`, `full_dirty`, and `last_published`.
 - If a test's entry URI is not `file:///main.tw`, substitute the URI that the test asserts on when adding `didSave` triggers.

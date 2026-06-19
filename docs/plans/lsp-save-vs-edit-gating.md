@@ -71,13 +71,15 @@ type DiagTier = { Parse, Full }
 type State = .{
   // …existing fields…
   diagnostics_tier: DiagTier,        // which work is queued (meaningful while pending)
-  parse_dirty_uris: Set<String>,     // docs awaiting a parse-tier publish
+  parse_dirty_uris: Dict<String, Bool>,  // docs awaiting a parse-tier publish (string set)
   full_dirty: Bool,                  // workspace changed since last completed Full run
   last_published: Dict<String, String>,  // URI -> last published signature (replaces last_published_versions)
 }
 ```
 
-`initial_state` seeds `diagnostics_tier: .Full`, `parse_dirty_uris: Set.new()`,
+`initial_state` seeds `diagnostics_tier: .Full`, `parse_dirty_uris: Dict.new()`
+(a `Dict<String, Bool>` used as a string set; `Set<String>` is avoided as a record
+field because it collides with the prelude's `set$*` methods at link time),
 `full_dirty: false`, `last_published: Dict.new()`.
 
 - `mark_diagnostics_pending(tier, uri?)`: set `diagnostics_pending = true`,
