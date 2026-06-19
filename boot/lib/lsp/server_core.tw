@@ -256,7 +256,19 @@ fn handle_did_close(state: State, note: protocol.Notification) Step {
         .None => .None,
       }
       state.documents = .close(uri)
-      .{ state, outgoing: [lsp_diagnostics.clear_diagnostics(uri, version)] }
+      state.parse_dirty_uris = .remove(uri)
+      cleared := lsp_diagnostics.clear_diagnostics(uri, version)
+
+      // Closing an unsaved overlay shifts the rest of the workspace back to
+      // disk-backed analysis, so refresh the remaining open docs. With nothing
+      // open there is nothing to analyze, so just clear the dirty flag.
+      if state.documents.docs.values().len() == 0 {
+        state.full_dirty = false
+        .{ state, outgoing: [cleared] }
+      } else {
+        refreshed := state.mark_diagnostics_pending(.Full, .None)
+        .{ state: refreshed.state, outgoing: [cleared] }
+      }
     },
     .Err(_) => .{ state, outgoing: [] },
   }

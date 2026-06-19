@@ -530,6 +530,51 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "closing the last document clears full_dirty",
+      fn() {
+        opened := document_store.empty().open("file:///a.tw", "x := 1\n", .Some(1))
+        state := server_core.initial_state()
+        state.documents = opened
+        state.full_dirty = true
+        params := json.object([
+          json.kv("textDocument", json.object([json.kv("uri", .Str("file:///a.tw"))])),
+        ])
+        msg := protocol.Message.Notification(.{
+          method: "textDocument/didClose",
+          params: .Some(params),
+        })
+        step := state.handle_message(msg)
+        try assert.is_true(!step.state.full_dirty)
+        try assert.equal(step.outgoing.len(), 1)
+        try assert.is_true(!step.state.diagnostics_pending)
+        .Ok({})
+      },
+    )
+    .test(
+      "closing one of several documents schedules a full run",
+      fn() {
+        opened := document_store
+          .empty()
+          .open("file:///a.tw", "x := 1\n", .Some(1))
+          .open("file:///b.tw", "y := 2\n", .Some(1))
+        state := server_core.initial_state()
+        state.documents = opened
+        params := json.object([
+          json.kv("textDocument", json.object([json.kv("uri", .Str("file:///a.tw"))])),
+        ])
+        msg := protocol.Message.Notification(.{
+          method: "textDocument/didClose",
+          params: .Some(params),
+        })
+        step := state.handle_message(msg)
+        try assert.is_true(step.state.diagnostics_pending)
+        case step.state.diagnostics_tier {
+          .Full => .Ok({}),
+          _ => assert.fail("expected Full tier"),
+        }
+      },
+    )
+    .test(
       "malformed document notification is ignored",
       fn() {
         msg := protocol.Message.Notification(.{ method: "textDocument/didOpen", params: .None })
