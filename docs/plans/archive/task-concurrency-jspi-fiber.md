@@ -1,6 +1,12 @@
 # Task Concurrency — Stackful Tasks via JSPI Backend
 
-Status: **Design approved (2026-06-18); Phase A switching-cost spike complete; implementation not started.**
+Status: **Archived / implemented.** The stackful JSPI task backend landed on
+branch `task-concurrency-jspi-fiber`. A later separation-of-concerns cleanup
+moved timer and stdin suspension points out of `Task` into `@std.time` and
+`@std.io`; the current task ABI is only `task_create`, `suspend_await`, and
+`suspend_yield`. The original design text below is preserved for rationale and
+historical context, but references to `Task.sleep`, `Task.read_stdin`,
+`suspend_sleep`, and `suspend_read_stdin` describe the pre-cleanup design.
 
 This document defines Twinkle's **stackful** implementation direction for
 `Task<T>`. The public API remains backend-independent. The near-term backend uses

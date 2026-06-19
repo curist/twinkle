@@ -167,6 +167,9 @@ Related historical context outside this folder:
 | [lsp-diagnostics-completion.md](lsp-diagnostics-completion.md) | Phase 2 plan for `twk lsp` diagnostics publishing, completion, and simple `///` doc comments |
 | [lsp-hover-goto-definition.md](lsp-hover-goto-definition.md) | Phase 1 implementation plan for `twk lsp` hover and go-to-definition |
 | [lsp-file-watching.md](lsp-file-watching.md) | Watched-file refresh plan for `twk lsp` disk snapshot updates and diagnostics refresh |
+| [task-concurrency.md](task-concurrency.md) | Superseded stackless task-concurrency plan; retained for public API rationale and historical context before the JSPI-fiber backend replaced the state-machine approach |
+| [task-concurrency-jspi-fiber.md](task-concurrency-jspi-fiber.md) | Stackful cooperative `Task<T>` design using JSPI fibers as the current backend, archived after implementation landed |
+| [task-concurrency-jspi-fiber-implementation.md](task-concurrency-jspi-fiber-implementation.md) | Checkpoint implementation plan for the JSPI task backend, archived after the scheduler, compiler lowering, stage0 parity, and LSP adoption landed |
 | [lsp-task-migration.md](lsp-task-migration.md) | CP19 migration of LSP transport, debounce timers, and diagnostics publication onto cooperative `Task` primitives; future worker-isolation end-game notes preserved in the plan |
 | [task-api-separation-of-concerns.md](task-api-separation-of-concerns.md) | Kept `Task<T>` focused on task composition by moving timer/stdin suspension points to `@std.time` and `@std.io`, with scheduler-aware host imports preserving JSPI task invariants |
 | [lsp-save-vs-edit-gating.md](lsp-save-vs-edit-gating.md) | Split LSP diagnostics into parse-only edit-tier work and full workspace analysis on open/save/close |

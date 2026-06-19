@@ -1,5 +1,7 @@
 # Task Concurrency
 
+Status: **Archived / superseded.**
+
 > **Superseded (2026-06-18).** The stackless state-machine direction described
 > below has been retired in favor of a JSPI-fiber model with the scheduler in the
 > JS host. See [task-concurrency-jspi-fiber.md](task-concurrency-jspi-fiber.md)

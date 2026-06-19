@@ -1,25 +1,16 @@
 # Task Concurrency — JSPI Backend Implementation Plan
 
-Status: **In progress (2026-06-18). Checkpoints 0–19 done** (CP16 negative-path
-tests — failure/deadlock/lifecycle — validated by smokes but deferred to a
-subprocess harness; see CP16 note). Compiler side
-(CP1–7): the stackless scheduler/transform/validation are removed, `Task<T>` is
-an id-only handle, task ops lower through the `task_abi` suspension-intrinsic
-binding table, `__task_run` is exported, and `Task.sleep`/`Task.read_stdin`
-exist. Runtime side (CP8–15): a cooperative JS scheduler in `runtime.mjs`
-implements the task host imports — eager-enqueue `task_create`,
-`promising(__task_run)` task bodies, a race-free `scheduler.current` resume
-discipline (strict one-task-per-microtask), FIFO `suspend_yield`, parking
-`suspend_await`, drain + deadlock detection, and `suspend_sleep`/
-`suspend_read_stdin` host readiness. `task_suite` is rewritten for the stackful
-model (CP16) and re-enabled. Phase B scheduler benchmark (CP17) run on Node and
-Deno — GO: `Task.yield()` ~0.16 µs, spawn+await ~0.7 µs, LSP-shaped dispatch
-~1.8 µs (all far under budget); `sleep` is timer-floor host latency, not
-switching. Recorded in the design doc's Evidence section. Stage0 parity (CP18)
-now emits the same id-based task ABI and carries the unannotated-return
-inference fix needed to compile current boot sources. LSP adoption (CP19) now
-has a dedicated migration plan, a reader/dispatcher task split, and a diagnostics
-worker model while preserving the cooperative single-threaded scope.
+Status: **Archived / implemented.** Checkpoints 0–19 landed on branch
+`task-concurrency-jspi-fiber`: the stackless scheduler/transform were removed,
+`Task<T>` became an id-only handle, task bodies run through `__task_run`, the JS
+runtime owns the cooperative JSPI scheduler, task tests were re-enabled, stage0
+parity was restored, and the LSP migrated onto tasks. A later
+separation-of-concerns cleanup moved timer and stdin suspension points out of
+`Task` into `@std.time` and `@std.io`; the current task ABI is only
+`task_create`, `suspend_await`, and `suspend_yield`. The original checkpoint text
+below is preserved for historical context, but references to `Task.sleep`,
+`Task.read_stdin`, `suspend_sleep`, and `suspend_read_stdin` describe the
+pre-cleanup implementation.
 
 This is the implementation plan for the stackful `Task<T>` design in
 [task-concurrency-jspi-fiber.md](task-concurrency-jspi-fiber.md). Keep this plan
