@@ -847,6 +847,27 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "parse tier publishes only the dirtied uri and keeps full_dirty",
+      fn() {
+        opened := document_store.empty().open("file:///a.tw", "fn f( {", .Some(1))
+        state := server_core.initial_state()
+        state.documents = opened
+        state.diagnostics_pending = true
+        state.diagnostics_tier = .Parse
+        dirty: Dict<String, Bool> = Dict.new()
+        dirty["file:///a.tw"] = true
+        state.parse_dirty_uris = dirty
+        state.full_dirty = true
+        state.diagnostics_deadline_ms = 0.0
+        step := state.publish_due_diagnostics()
+        out := try published_for(step, "file:///a.tw")
+        try assert.is_true(try diagnostic_count(out) > 0)
+        try assert.is_true(step.state.full_dirty)
+        try assert.equal(step.state.parse_dirty_uris.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
       "codeAction ignores diagnostics without unused_import data",
       fn() {
         docs := document_store.empty().open("file:///tmp/noaction.tw", "x := 1\n", .Some(1))

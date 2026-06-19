@@ -176,7 +176,7 @@ fn handle_did_open(state: State, note: protocol.Notification) Step {
       doc := open.text_document
       state.documents = .open(doc.uri, doc.text, .Some(doc.version))
       state = .note_changed_document_source(doc.uri, doc.text)
-      state.mark_diagnostics_pending()
+      state.mark_diagnostics_pending(.Full, .None)
     },
     .Err(_) => .{ state, outgoing: [] },
   }
@@ -233,7 +233,7 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
         .None => { return .{ state, outgoing: [] } },
       }
       state = .note_changed_document_source(doc.uri, final_text)
-      state.mark_diagnostics_pending()
+      state.mark_diagnostics_pending(.Full, .None)
     },
     .Err(_) => .{ state, outgoing: [] },
   }
@@ -717,17 +717,67 @@ pub fn diagnostics_due(state: State) Bool {
 }
 
 pub fn publish_due_diagnostics(state: State) Step {
-  if state.diagnostics_pending and date.now() >= state.diagnostics_deadline_ms {
-    state.diagnostics_pending = false
-    return state.publish_workspace_diagnostics()
+  if !(state.diagnostics_pending and date.now() >= state.diagnostics_deadline_ms) {
+    return .{ state, outgoing: [] }
   }
 
-  .{ state, outgoing: [] }
+  state.diagnostics_pending = false
+
+  case state.diagnostics_tier {
+    .Parse => state.publish_parse_diagnostics(),
+    .Full => {
+      step := state.publish_workspace_diagnostics()
+      done := step.state
+      done.full_dirty = false
+
+      // Full analysis supersedes any pending parse run, so drop the dirty set.
+      done.parse_dirty_uris = Dict.new()
+      .{ state: done, outgoing: step.outgoing }
+    },
+  }
 }
 
-fn mark_diagnostics_pending(state: State) Step {
+fn publish_parse_diagnostics(state: State) Step {
+  outgoing: Vector<json.Json> = []
+
+  for uri in state.parse_dirty_uris.keys() {
+    doc := case state.documents.get(uri) {
+      .Some(d) => d,
+      .None => { continue },
+    }
+    result := query_diagnostics.analyze_parse(
+      state.query_cache,
+      .{ uri: doc.uri, text: doc.text, version: doc.version },
+    )
+    state.query_cache = result.cache
+
+    if state.should_publish_diagnostics(doc, result.diagnostics) {
+      outgoing = .append(
+        lsp_diagnostics.publish_diagnostics(doc.uri, doc.version, doc.index, result.diagnostics),
+      )
+      state = .mark_published(doc, result.diagnostics)
+    }
+  }
+
+  state.parse_dirty_uris = Dict.new()
+  .{ state, outgoing }
+}
+
+fn mark_diagnostics_pending(state: State, tier: DiagTier, uri: String?) Step {
   state.diagnostics_pending = true
-  state.diagnostics_deadline_ms = date.now() + 150.to_float()
+  state.diagnostics_tier = tier
+
+  case tier {
+    .Parse => {
+      state.diagnostics_deadline_ms = date.now() + 150.to_float()
+      case uri {
+        .Some(u) => state.parse_dirty_uris[u] = true,
+        .None => {},
+      }
+    },
+    .Full => state.diagnostics_deadline_ms = date.now(),
+  }
+
   .{ state, outgoing: [] }
 }
 
@@ -739,6 +789,7 @@ fn note_changed_document_source(state: State, uri: String, text: String) State {
   root := project_root_for_document(id.path)
   canonical := imports.canonical_module_path(id.path, imports.make_canonical_roots(root))
   state.query_cache = .note_source_hash(canonical, keys.hash_text(text))
+  state.full_dirty = true
   state
 }
 
