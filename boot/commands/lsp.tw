@@ -1,36 +1,57 @@
 /// LSP command: start the Language Server Protocol server.
 ///
-/// Cooperative task model (see docs/plans/task-concurrency-jspi-fiber.md). The
-/// top-level acts as the input reader, parking on `Task.read_stdin` between
-/// chunks instead of polling with a timeout. Workspace-diagnostics publishing
-/// runs on its own debounce task: each diagnostics-arming message spawns a
-/// `Task.sleep`-backed task tagged with a generation token, and only the most
-/// recent generation actually publishes — a newer edit bumps the token and
-/// cancels the stale debounce. Server state is shared through a `Cell` so the
-/// reader and any in-flight debounce observe the same state.
+/// Cooperative task model (see docs/plans/lsp-task-migration.md). The top-level
+/// acts as the input reader, parking on `Task.read_stdin` between chunks instead
+/// of polling with a timeout. Chunks are handed to a dispatcher task through a
+/// small Cell-backed queue; the dispatcher owns frame decoding, JSON-RPC message
+/// handling, and response writes. Workspace diagnostics use a worker-style task:
+/// debounce tasks only enqueue generation-tagged jobs, and the diagnostics worker
+/// publishes only if its generation is still current. This is cooperative
+/// single-threaded concurrency, not CPU parallelism; synchronous analysis is not
+/// preempted once it starts.
 
 use @std.io
 use @std.proc
 
 use lib.argparse.app.{ParseResult}
+use lib.json
 use lib.lsp.framing
 use lib.lsp.protocol
 use lib.lsp.server_core
 
-fn debounce_ms() Int {
-  150
+debounce_ms := 1000
+idle_sleep_ms := 1
+
+type ChunkQueue = .{ items: Cell<Vector<Vector<Byte>>>, closed: Cell<Bool>, pending: Cell<Int> }
+
+type DiagnosticsQueue = .{ items: Cell<Vector<Int>>, closed: Cell<Bool> }
+
+type LoopCtx = .{
+  shared: Cell<server_core.State>,
+  gen: Cell<Int>,
+  progress: Cell<Int>,
+  supports_progress: Cell<Bool>,
+  chunks: ChunkQueue,
+  diagnostics: DiagnosticsQueue,
 }
 
-type LoopCtx = .{ shared: Cell<server_core.State>, gen: Cell<Int> }
-
 pub fn run_lsp_command(_parsed: ParseResult) {
-  ctx := LoopCtx.{ shared: Cell.new(server_core.initial_state()), gen: Cell.new(0) }
-  buffer: Vector<Byte> = []
+  ctx := LoopCtx.{
+    shared: Cell.new(server_core.initial_state()),
+    gen: Cell.new(0),
+    progress: Cell.new(0),
+    supports_progress: Cell.new(false),
+    chunks: new_chunk_queue(),
+    diagnostics: new_diagnostics_queue(),
+  }
+
+  dispatcher: Task<Void> = Task.spawn(fn() { ctx.dispatch_loop() })
+  diagnostics: Task<Void> = Task.spawn(fn() { ctx.diagnostics_loop() })
 
   for !ctx.shared.get().should_exit {
-    // Park on stdin until a chunk (or EOF) is available; the scheduler runs any
-    // pending debounce task while we wait, so diagnostics still fire when the
-    // client goes idle.
+    // Park on stdin until a chunk (or EOF) is available. After queueing a chunk,
+    // wait for the dispatcher to drain it before parking again so an `exit`
+    // notification cannot leave the reader asleep on stdin.
     chunk := Task.read_stdin(4096)
 
     if chunk.len() == 0 and io.stdin_eof() {
@@ -38,7 +59,8 @@ pub fn run_lsp_command(_parsed: ParseResult) {
     }
 
     if chunk.len() > 0 {
-      buffer = ctx.process_buffer(buffer.concat(chunk))
+      ctx.chunks.push_chunk(chunk)
+      ctx.wait_for_dispatcher()
     }
 
     if ctx.shared.get().should_exit {
@@ -46,14 +68,213 @@ pub fn run_lsp_command(_parsed: ParseResult) {
     }
   }
 
+  ctx.chunks.close_chunks()
+  dispatcher.await()
+
+  ctx.diagnostics.close_diagnostics()
+  diagnostics.await()
+
   if ctx.shared.get().should_exit and !ctx.shared.get().shutdown_requested {
     proc.exit(1)
   }
 }
 
+fn new_chunk_queue() ChunkQueue {
+  .{ items: Cell.new([]), closed: Cell.new(false), pending: Cell.new(0) }
+}
+
+fn push_chunk(queue: ChunkQueue, chunk: Vector<Byte>) {
+  queue.items.set(queue.items.get().append(chunk))
+  queue.pending.set(queue.pending.get() + 1)
+}
+
+fn pop_chunk(queue: ChunkQueue) Vector<Byte>? {
+  items := queue.items.get()
+
+  if items.len() == 0 {
+    return .None
+  }
+
+  first := items[0]
+  queue.items.set(items.slice(1, items.len()))
+  .Some(first)
+}
+
+fn finish_chunk(queue: ChunkQueue) {
+  queue.pending.set(queue.pending.get() - 1)
+}
+
+fn has_pending(queue: ChunkQueue) Bool {
+  queue.pending.get() > 0
+}
+
+fn close_chunks(queue: ChunkQueue) {
+  queue.closed.set(true)
+}
+
+fn new_diagnostics_queue() DiagnosticsQueue {
+  .{ items: Cell.new([]), closed: Cell.new(false) }
+}
+
+fn push_job(queue: DiagnosticsQueue, gen: Int) {
+  queue.items.set(queue.items.get().append(gen))
+}
+
+fn pop_job(queue: DiagnosticsQueue) Int? {
+  items := queue.items.get()
+
+  if items.len() == 0 {
+    return .None
+  }
+
+  first := items[0]
+  queue.items.set(items.slice(1, items.len()))
+  .Some(first)
+}
+
+fn close_diagnostics(queue: DiagnosticsQueue) {
+  queue.closed.set(true)
+}
+
+fn wait_for_dispatcher(ctx: LoopCtx) {
+  for ctx.chunks.has_pending() and !ctx.shared.get().should_exit {
+    Task.sleep(idle_sleep_ms)
+  }
+}
+
+fn dispatch_loop(ctx: LoopCtx) {
+  buffer: Vector<Byte> = []
+
+  for true {
+    if ctx.shared.get().should_exit {
+      break
+    }
+
+    case ctx.chunks.pop_chunk() {
+      .Some(chunk) => {
+        buffer = ctx.process_buffer(buffer.concat(chunk))
+        ctx.chunks.finish_chunk()
+        Task.yield()
+      },
+      .None => {
+        if ctx.chunks.closed.get() {
+          break
+        }
+        Task.sleep(idle_sleep_ms)
+      },
+    }
+  }
+}
+
+fn diagnostics_loop(ctx: LoopCtx) {
+  for true {
+    case ctx.diagnostics.pop_job() {
+      .Some(job_gen) => ctx.run_diagnostics_job(job_gen),
+      .None => {
+        if ctx.diagnostics.closed.get() or ctx.shared.get().should_exit {
+          break
+        }
+        Task.sleep(idle_sleep_ms)
+      },
+    }
+  }
+}
+
+fn write_message(ctx: LoopCtx, out: json.Json) {
+  io.write_stdout_text(framing.encode_message(out.stringify()))
+}
+
+fn note_client_capabilities(ctx: LoopCtx, message: protocol.Message) {
+  case message {
+    .Request(req) => if req.method == "initialize" and supports_work_done_progress(req.params) {
+      ctx.supports_progress.set(true)
+    },
+    _ => {},
+  }
+}
+
+fn supports_work_done_progress(params: json.Json?) Bool {
+  value := case params {
+    .Some(v) => v,
+    .None => { return false },
+  }
+  caps := case value.decode(json.field("capabilities", json.raw())) {
+    .Ok(v) => v,
+    .Err(_) => { return false },
+  }
+  window := case caps.decode(json.field("window", json.raw())) {
+    .Ok(v) => v,
+    .Err(_) => { return false },
+  }
+  case window.decode(json.field("workDoneProgress", json.bool())) {
+    .Ok(v) => v,
+    .Err(_) => false,
+  }
+}
+
+fn begin_progress(ctx: LoopCtx, title: String, message: String, percentage: Int) String {
+  if !ctx.supports_progress.get() {
+    return ""
+  }
+
+  next := ctx.progress.get() + 1
+  ctx.progress.set(next)
+  token := "twinkle-lsp-${next}"
+
+  ctx.write_message(
+    protocol.request(
+      .StringId("twinkle-lsp-create-${next}"),
+      "window/workDoneProgress/create",
+      .Some(json.object([json.kv("token", .Str(token))])),
+    ),
+  )
+  ctx.write_message(progress_notification(token, "begin", title, message, percentage))
+  token
+}
+
+fn report_progress(ctx: LoopCtx, token: String, message: String, percentage: Int) {
+  if token == "" {
+    return
+  }
+
+  ctx.write_message(progress_notification(token, "report", "", message, percentage))
+}
+
+fn end_progress(ctx: LoopCtx, token: String, message: String) {
+  if token == "" {
+    return
+  }
+
+  ctx.write_message(progress_notification(token, "end", "", message, 100))
+}
+
+fn progress_notification(
+  token: String,
+  kind: String,
+  title: String,
+  message: String,
+  percentage: Int,
+) json.Json {
+  value_fields: Vector<json.Field> = [
+    json.kv("kind", .Str(kind)),
+    json.kv("message", .Str(message)),
+    json.kv("percentage", .Int(percentage)),
+  ]
+
+  if title != "" {
+    value_fields = .append(json.kv("title", .Str(title)))
+    value_fields = .append(json.kv("cancellable", .Bool(false)))
+  }
+
+  protocol.notification(
+    "$/progress",
+    .Some(json.object([json.kv("token", .Str(token)), json.kv("value", json.object(value_fields))])),
+  )
+}
+
 // Decode and handle every complete frame currently buffered, mutating the
 // shared state Cell and writing each response as it is produced. Re-arms the
-// debounce task whenever a handled message refreshes the diagnostics deadline.
+// debounce timer whenever a handled message refreshes the diagnostics deadline.
 // Returns the unconsumed trailing bytes (a partial frame awaiting more input).
 fn process_buffer(ctx: LoopCtx, buffer: Vector<Byte>) Vector<Byte> {
   buf := buffer
@@ -77,16 +298,17 @@ fn process_buffer(ctx: LoopCtx, buffer: Vector<Byte>) Vector<Byte> {
             proc.exit(1)
           },
         }
+        ctx.note_client_capabilities(message)
         before := ctx.shared.get()
         step := before.handle_message(message)
         ctx.shared.set(step.state)
 
         for out in step.outgoing {
-          io.write_stdout_text(framing.encode_message(out.stringify()))
+          ctx.write_message(out)
         }
 
         // A message that (re)armed diagnostics refreshes the deadline; start a
-        // fresh debounce so the publish fires once the client falls idle.
+        // fresh debounce so the worker publishes once the client falls idle.
         if step.state.diagnostics_pending
           and step.state.diagnostics_deadline_ms != before.diagnostics_deadline_ms {
           ctx.schedule_diagnostics()
@@ -104,23 +326,41 @@ fn process_buffer(ctx: LoopCtx, buffer: Vector<Byte>) Vector<Byte> {
   buf
 }
 
-// Spawn a debounce task: wait the debounce window, then publish workspace
-// diagnostics iff no newer change bumped the generation token meanwhile. The
-// task is fire-and-forget — the scheduler runs it while the reader is parked on
-// stdin and drains it at exit.
+// Spawn a debounce task: wait the debounce window, then enqueue a diagnostics
+// job iff no newer change bumped the generation token meanwhile. The worker owns
+// synchronous publication so all diagnostics output passes through one place.
 fn schedule_diagnostics(ctx: LoopCtx) {
   my_gen := ctx.gen.get() + 1
   ctx.gen.set(my_gen)
   Task.spawn(fn() {
-    Task.sleep(debounce_ms())
+    Task.sleep(debounce_ms)
 
     if ctx.gen.get() == my_gen {
-      step := ctx.shared.get().publish_due_diagnostics()
-      ctx.shared.set(step.state)
-
-      for out in step.outgoing {
-        io.write_stdout_text(framing.encode_message(out.stringify()))
-      }
+      ctx.diagnostics.push_job(my_gen)
     }
   })
+}
+
+fn run_diagnostics_job(ctx: LoopCtx, job_gen: Int) {
+  if ctx.gen.get() != job_gen or !ctx.shared.get().diagnostics_due() {
+    return
+  }
+
+  token := ctx.begin_progress("Checking workspace", "Preparing diagnostics", 0)
+  ctx.report_progress(token, "Analyzing open documents", 10)
+
+  step := ctx.shared.get().publish_due_diagnostics()
+
+  if ctx.gen.get() == job_gen {
+    ctx.report_progress(token, "Publishing diagnostics", 90)
+    ctx.shared.set(step.state)
+
+    for out in step.outgoing {
+      ctx.write_message(out)
+    }
+
+    ctx.end_progress(token, "Diagnostics ready")
+  } else {
+    ctx.end_progress(token, "Diagnostics superseded")
+  }
 }

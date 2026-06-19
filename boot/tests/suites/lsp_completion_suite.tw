@@ -3,7 +3,14 @@ use lib.lsp.protocol
 use lib.lsp.server_core
 use tests.runner
 
-// Simulate editor flow: didOpen with valid source, didChange with completion source, then complete.
+fn publish_due_now(step: server_core.Step) server_core.Step {
+  state := step.state
+  state.diagnostics_deadline_ms = 0.0
+  state.publish_due_diagnostics()
+}
+
+// Simulate editor flow: didOpen with valid source, let diagnostics warm the cache,
+// didChange with completion source, then complete.
 fn open_then_complete(valid_src: String, completion_src: String, line: Int, character: Int) server_core.Step {
   uri := "file:///a.tw"
 
@@ -23,7 +30,7 @@ fn open_then_complete(valid_src: String, completion_src: String, line: Int, char
     method: "textDocument/didOpen",
     params: .Some(open_params),
   })
-  step1 := server_core.initial_state().handle_message(open_msg)
+  step1 := publish_due_now(server_core.initial_state().handle_message(open_msg))
 
   // didChange with incomplete source
   change_params := json.object([
@@ -75,7 +82,7 @@ fn open_change_publish_then_complete(
     method: "textDocument/didOpen",
     params: .Some(open_params),
   })
-  step1 := server_core.initial_state().handle_message(open_msg)
+  step1 := publish_due_now(server_core.initial_state().handle_message(open_msg))
 
   change_params := json.object([
     json.kv("textDocument", json.object([json.kv("uri", .Str(uri)), json.kv("version", .Int(2))])),

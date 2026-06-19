@@ -167,7 +167,8 @@ fn handle_did_open(state: State, note: protocol.Notification) Step {
     .Ok(open) => {
       doc := open.text_document
       state.documents = .open(doc.uri, doc.text, .Some(doc.version))
-      state.publish_workspace_diagnostics(false)
+      state = .note_changed_document_source(doc.uri, doc.text)
+      state.mark_diagnostics_pending()
     },
     .Err(_) => .{ state, outgoing: [] },
   }
@@ -489,6 +490,9 @@ fn handle_document_symbol(state: State, req: protocol.Request) Step {
     .Some(d) => d,
     .None => { return state.empty_array_response_step(req) },
   }
+  if state.diagnostics_pending {
+    return state.empty_array_response_step(req)
+  }
   snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
   symbols := query_document_symbols.document_symbols(snap)
@@ -509,6 +513,9 @@ fn handle_folding_range(state: State, req: protocol.Request) Step {
     .Some(d) => d,
     .None => { return state.empty_array_response_step(req) },
   }
+  if state.diagnostics_pending {
+    return state.empty_array_response_step(req)
+  }
   snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
   ranges := query_folding_range.folding_ranges(snap)
@@ -526,6 +533,9 @@ fn handle_inlay_hint(state: State, req: protocol.Request) Step {
   doc := case state.documents.get(hint_params.text_document.uri) {
     .Some(d) => d,
     .None => { return state.empty_array_response_step(req) },
+  }
+  if state.diagnostics_pending {
+    return state.empty_array_response_step(req)
   }
   range_start := case position_offset(doc.index, hint_params.range_start) {
     .Some(o) => o,
@@ -562,6 +572,12 @@ fn handle_semantic_tokens(state: State, req: protocol.Request) Step {
         outgoing: [req.id.success_response(json.object([json.kv("data", json.array([]))]))],
       }
     },
+  }
+  if state.diagnostics_pending {
+    return .{
+      state,
+      outgoing: [req.id.success_response(json.object([json.kv("data", json.array([]))]))],
+    }
   }
   snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
