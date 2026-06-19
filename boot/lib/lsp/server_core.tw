@@ -520,12 +520,12 @@ fn handle_document_symbol(state: State, req: protocol.Request) Step {
     .Some(d) => d,
     .None => { return state.empty_array_response_step(req) },
   }
+  if state.full_dirty {
+    return state.empty_array_response_step(req)
+  }
   snap := case state.workspace_snapshot_cached(doc) {
     .Some(s) => s,
     .None => { return state.empty_array_response_step(req) },
-  }
-  if state.full_dirty {
-    return state.empty_array_response_step(req)
   }
   state.query_cache = snap.cache
   symbols := query_document_symbols.document_symbols(snap)
@@ -546,12 +546,12 @@ fn handle_folding_range(state: State, req: protocol.Request) Step {
     .Some(d) => d,
     .None => { return state.empty_array_response_step(req) },
   }
+  if state.full_dirty {
+    return state.empty_array_response_step(req)
+  }
   snap := case state.workspace_snapshot_cached(doc) {
     .Some(s) => s,
     .None => { return state.empty_array_response_step(req) },
-  }
-  if state.full_dirty {
-    return state.empty_array_response_step(req)
   }
   state.query_cache = snap.cache
   ranges := query_folding_range.folding_ranges(snap)
@@ -578,12 +578,12 @@ fn handle_inlay_hint(state: State, req: protocol.Request) Step {
     .Some(o) => o,
     .None => doc.text.len(),
   }
+  if state.full_dirty {
+    return state.empty_array_response_step(req)
+  }
   snap := case state.workspace_snapshot_cached(doc) {
     .Some(s) => s,
     .None => { return state.empty_array_response_step(req) },
-  }
-  if state.full_dirty {
-    return state.empty_array_response_step(req)
   }
   state.query_cache = snap.cache
   hints := query_inlay_hints.inlay_hints(snap, range_start, range_end)
@@ -612,6 +612,12 @@ fn handle_semantic_tokens(state: State, req: protocol.Request) Step {
       }
     },
   }
+  if state.full_dirty {
+    return .{
+      state,
+      outgoing: [req.id.success_response(json.object([json.kv("data", json.array([]))]))],
+    }
+  }
   snap := case state.workspace_snapshot_cached(doc) {
     .Some(s) => s,
     .None => {
@@ -620,12 +626,6 @@ fn handle_semantic_tokens(state: State, req: protocol.Request) Step {
         outgoing: [req.id.success_response(json.object([json.kv("data", json.array([]))]))],
       }
     },
-  }
-  if state.full_dirty {
-    return .{
-      state,
-      outgoing: [req.id.success_response(json.object([json.kv("data", json.array([]))]))],
-    }
   }
   state.query_cache = snap.cache
   tokens := query_semantic_tokens.semantic_tokens(snap)

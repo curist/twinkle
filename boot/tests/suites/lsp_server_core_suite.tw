@@ -566,8 +566,15 @@ pub fn suite() runner.Suite {
       "document symbols return empty while full_dirty and without inline analysis",
       fn() {
         opened := document_store.empty().open("file:///a.tw", "fn f() Void { }\n", .Some(1))
-        state := server_core.initial_state()
-        state.documents = opened
+        warm := server_core.initial_state()
+        warm.documents = opened
+        warm.diagnostics_pending = true
+        warm.diagnostics_tier = .Full
+        warm.diagnostics_deadline_ms = 0.0
+
+        // A full pass warms the cache so a snapshot is available; full_dirty must
+        // still force an empty response (and never run inline analysis).
+        state := warm.publish_due_diagnostics().state
         state.full_dirty = true
         req := protocol.Message.Request(.{
           id: .IntId(7),

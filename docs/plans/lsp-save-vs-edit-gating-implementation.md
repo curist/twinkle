@@ -790,17 +790,36 @@ For `handle_semantic_tokens`, replace the same two lines with the empty-`data` r
   state.query_cache = snap.cache
 ```
 
-- [ ] **Step 5: Run tests**
+- [ ] **Step 5: Warm the cache in the heavy-feature suite helpers**
+
+The existing `lsp_document_symbol_suite`, `lsp_folding_range_suite`, `lsp_inlay_hint_suite`, and `lsp_semantic_tokens_suite` rely on the handler computing the snapshot *inline* from a cold `query_cache`. With the cache-only gating, a cold cache yields empty (and tests that index `result[0]` would trap). Update each suite's `state_with_doc` (and `state_with_two_docs` in the semantic-tokens suite) helper to warm the cache with a full diagnostics pass before returning. Change the helper from returning the `State.{ … }` literal directly to:
+
+```tw
+  base := server_core.State.{
+    …
+    diagnostics_pending: true,
+    …
+  }
+  // Heavy features serve only a completed full snapshot, so warm the cache with a
+  // full diagnostics pass before issuing feature requests.
+  base.publish_due_diagnostics().state
+```
+
+(`publish_due_diagnostics` on a `.Full`, deadline-`0.0`, pending state runs `analyze_workspace`, populating parsed/resolved/typed in the cache and clearing `full_dirty`, so `workspace_snapshot_cached` then returns `Some`.) Leave any *other* inline `State.{ }` literals in those suites (e.g. "returns empty while pending" tests) untouched — they use a cold cache and correctly still return empty.
+
+- [ ] **Step 6: Run tests**
 
 Run: `target/twk run boot/tests/main.tw 2>&1 | tail -5`
 Expected: `Ran N tests: N passed`.
 
-- [ ] **Step 6: Format, lint, commit**
+- [ ] **Step 7: Format, lint, commit**
 
 ```bash
-target/twk fmt boot/lib/lsp/server_core.tw boot/tests/suites/lsp_server_core_suite.tw
+target/twk fmt boot/lib/lsp/server_core.tw boot/tests/suites/lsp_server_core_suite.tw \
+  boot/tests/suites/lsp_document_symbol_suite.tw boot/tests/suites/lsp_folding_range_suite.tw \
+  boot/tests/suites/lsp_inlay_hint_suite.tw boot/tests/suites/lsp_semantic_tokens_suite.tw
 target/twk lint boot/main.tw
-git add boot/lib/lsp/server_core.tw boot/tests/suites/lsp_server_core_suite.tw
+git add -A
 git commit -m "Serve heavy LSP features from cached snapshot only, gated on full_dirty"
 ```
 
