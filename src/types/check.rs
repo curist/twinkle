@@ -102,6 +102,38 @@ impl TypeChecker {
             pending_meta_let_bindings: Vec::new(),
         };
 
+        // Pass 0: give every unannotated function a fresh MetaVar return type.
+        // All call sites (including top-level statements, forward references,
+        // and recursion) then instantiate the same return type instead of
+        // falling back to Void before the body has been checked.
+        let unannotated_source_fns: HashMap<String, Span> = ast
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Function(decl) if decl.return_type.is_none() => {
+                    Some((decl.name.clone(), decl.body.span))
+                }
+                _ => None,
+            })
+            .collect();
+        let pass0_seed: Vec<_> = checker
+            .value_env
+            .all_functions()
+            .map(|(_, sig)| sig.clone())
+            .collect();
+        let pass0_functions: Vec<_> = pass0_seed
+            .into_iter()
+            .map(|mut sig| {
+                if sig.ret.is_none() && unannotated_source_fns.contains_key(sig.name.as_str()) {
+                    sig.ret = Some(checker.fresh_meta());
+                }
+                sig
+            })
+            .collect();
+        for sig in pass0_functions {
+            checker.value_env.update_function(sig);
+        }
+
         // Build dependency graph and topologically sort top-level items.
         // This ensures each binding is checked after everything it depends on,
         // eliminating the need for multi-pass re-checking.
@@ -227,6 +259,26 @@ impl TypeChecker {
         let meta_subst = std::mem::take(&mut checker.meta_subst);
         checker.type_map.zonk(&meta_subst);
         checker.value_env.zonk_values(&meta_subst);
+        checker.value_env.zonk_functions(&meta_subst);
+
+        let unresolved_returns: Vec<_> = checker
+            .value_env
+            .all_functions()
+            .filter_map(|(name, sig)| {
+                let span = *unannotated_source_fns.get(name)?;
+                sig.ret
+                    .as_ref()
+                    .is_some_and(contains_meta)
+                    .then(|| (name.to_string(), span))
+            })
+            .collect();
+        for (name, span) in unresolved_returns {
+            checker.errors.push(TypeError::AmbiguousType {
+                name: format!("return type of `{name}`"),
+                span,
+                note: "return type cannot be inferred; add a type annotation or call the generic value".to_string(),
+            });
+        }
 
         if checker.errors.is_empty() {
             Ok(TypedModule {
@@ -294,33 +346,34 @@ impl TypeChecker {
         self.current_function_ret = sig.ret.clone();
         self.in_function = true;
 
-        // Type-check the function body
-        // The body is a Block, which should evaluate to the return type
-        if let Some(expected_ret) = &sig.ret {
-            // Explicit return type — use bidirectional check so that the
-            // expected type flows into the last expression (e.g. anonymous
-            // record literals in return position).
-            let _ = self.check_block(&decl.body, expected_ret);
+        // Type-check the function body. An explicit annotation checks the body
+        // against it; an unannotated function (whose signature return is a
+        // Pass-0 MetaVar) synthesizes the body's real type — including Never for
+        // diverging bodies — and binds the MetaVar to it so every call site sees
+        // the same inferred return.
+        if decl.return_type.is_some() {
+            if let Some(expected_ret) = &sig.ret {
+                // Explicit return type — use bidirectional check so that the
+                // expected type flows into the last expression (e.g. anonymous
+                // record literals in return position).
+                let _ = self.check_block(&decl.body, expected_ret);
+            } else {
+                let _ = self.check_block(&decl.body, &MonoType::Void);
+            }
         } else {
-            // No explicit return type - infer from body
             match self.synth_block(&decl.body) {
                 Ok(body_ty) => {
                     let body_ty = self.zonk(&body_ty);
-                    if contains_meta(&body_ty) {
-                        // Return type contains unsolved MetaVars — the body holds a
-                        // generic reference that was never called.  Reject it to
-                        // prevent MetaVars from escaping into the TypeMap / lowered IR.
-                        self.errors.push(TypeError::AmbiguousType {
-                            name: format!("return type of `{}`", decl.name),
-                            span: decl.body.span,
-                            note: "return type cannot be inferred; add a type annotation or call the generic value".to_string(),
-                        });
-                    } else {
-                        // Update the function signature with the inferred return type
-                        let mut updated_sig = sig.clone();
-                        updated_sig.ret = Some(body_ty);
-                        self.value_env.update_function(updated_sig);
+                    if let Some(MonoType::MetaVar(id)) = sig.ret.as_ref() {
+                        self.meta_subst.insert(*id, body_ty.clone());
                     }
+                    // Update the function signature with the inferred return type
+                    // so later source-order lookups can reuse it. If the type still
+                    // contains MetaVars, final module checking reports ambiguity only
+                    // after other recursive functions have had a chance to solve them.
+                    let mut updated_sig = sig.clone();
+                    updated_sig.ret = Some(body_ty);
+                    self.value_env.update_function(updated_sig);
                 }
                 Err(()) => {
                     // Type checking failed, can't infer return type
@@ -329,10 +382,11 @@ impl TypeChecker {
         }
 
         // Zonk TypeMap entries and propagate resolved metas to value_env so
-        // that top-level bindings retain correct types when meta_subst is cleared.
+        // that cross-item metas survive when meta_subst is cleared.
         let meta_subst = std::mem::take(&mut self.meta_subst);
         self.type_map.zonk(&meta_subst);
         self.value_env.zonk_values(&meta_subst);
+        self.value_env.zonk_functions(&meta_subst);
 
         // Clean up
         self.current_function_ret = None;
@@ -4502,10 +4556,9 @@ fn topo_sort_top_level(ast: &SourceFile, _value_env: &ValueEnv) -> Vec<usize> {
         }
     }
 
-    // Any remaining items are in dependency cycles.  Append them in source
-    // order — the checker will still produce correct errors for genuine
-    // circular type dependencies (e.g. mutually recursive unannotated functions
-    // will see Void return types, same as before).
+    // Any remaining items are in dependency cycles. Append them in source
+    // order; unannotated functions already have Pass-0 MetaVar returns, so
+    // recursive call sites share the same inferred type where constraints solve it.
     for idx in 0..n {
         if checkable[idx] && in_degree[idx] > 0 {
             result.push(idx);
@@ -4522,7 +4575,13 @@ mod tests {
 
     fn typecheck(source: &str) -> Result<TypedModule, Vec<TypeError>> {
         let (ast, _) = parse_source(source, "test.tw").expect("parse should succeed");
-        TypeChecker::check_module(&ast, TypeEnv::new(), ValueEnv::new(), HashSet::new())
+        let resolved = crate::types::Resolver::resolve(&ast, TypeEnv::new(), ValueEnv::new())
+            .expect("resolve should succeed");
+        let aliases = crate::intrinsics::registry::builtin_module_aliases()
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<HashSet<_>>();
+        TypeChecker::check_module(&ast, resolved.type_env, resolved.value_env, aliases)
     }
 
     #[test]
@@ -4568,6 +4627,22 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, TypeError::PubBindingRebinding { name, .. } if name == "x")),
             "expected PubBindingRebinding error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_unannotated_function_return_type_is_shared_with_call_sites() {
+        let result = typecheck(
+            "fn inferred_value() {\n  19 + 23\n}\n\
+             fn calls_forward() Int {\n  forward_helper() + 1\n}\n\
+             fn forward_helper() {\n  41\n}\n\
+             fn countdown_sum(n: Int) {\n  if n <= 0 { 0 } else { n + countdown_sum(n - 1) }\n}\n\
+             x := calls_forward() + countdown_sum(5)\n\
+             inferred_value()\n",
+        );
+        assert!(
+            result.is_ok(),
+            "expected inferred return types to flow to all call sites, got: {result:?}"
         );
     }
 

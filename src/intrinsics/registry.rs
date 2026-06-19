@@ -119,12 +119,16 @@ pub enum LoweringKind {
     StringCompare,
     /// Byte.compare: i32 unsigned comparison → Order variant.
     ByteCompare,
-    /// Task.spawn: constructs task GC struct with thunk.
+    /// Task.spawn: registers a task closure with the host scheduler.
     TaskSpawn,
-    /// Task.await: blocks on task completion, extracts result.
+    /// Task.await: suspends until a task id settles and unboxes its result.
     TaskAwait,
-    /// Task.yield: yields execution (currently a no-op stub).
+    /// Task.yield: cooperative suspension point.
     TaskYield,
+    /// Task.sleep: timer-backed suspension point.
+    TaskSleep,
+    /// Task.read_stdin: stdin-readiness suspension point.
+    TaskReadStdin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -466,6 +470,15 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
     spec!(TASK_SPAWN, "Task.spawn", Intrinsic, true, true, TaskSpawn),
     spec!(TASK_AWAIT, "Task.await", Intrinsic, true, true, TaskAwait),
     spec!(TASK_YIELD, "Task.yield", Intrinsic, true, true, TaskYield),
+    spec!(TASK_SLEEP, "Task.sleep", Intrinsic, true, true, TaskSleep),
+    spec!(
+        TASK_READ_STDIN,
+        "Task.read_stdin",
+        Intrinsic,
+        true,
+        true,
+        TaskReadStdin
+    ),
     spec!(HOST_READ_FILE, "__host_read_file", Runtime, false, false),
     spec!(HOST_WRITE_FILE, "__host_write_file", Runtime, false, false),
     spec!(

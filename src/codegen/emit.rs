@@ -22,8 +22,8 @@ use crate::ir::core::CorePattern;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
     T_ARRAY, T_BOXED_FLOAT, T_BOXED_INT, T_CLOSURE, T_CLOSURE_ENV, T_CLOSURE_FUNC, T_ITER_STATE,
-    T_PVEC, T_STRING, T_VARIANT, ref_array, ref_array_null, ref_iter_state_null, ref_pdict_null,
-    ref_pvec, ref_pvec_null, ref_string, ref_string_null,
+    T_PVEC, T_STRING, T_TASK, T_VARIANT, ref_array, ref_array_null, ref_iter_state_null,
+    ref_pdict_null, ref_pvec, ref_pvec_null, ref_string, ref_string_null,
 };
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
@@ -368,6 +368,14 @@ pub(crate) fn emit_named_module_from_plan(
     if let Some(init) = emit_user_init_func(anf) {
         module.start = Some(init.name.clone());
         module.funcs.push(init);
+    }
+
+    if program_uses_tasks(anf) {
+        module.funcs.push(emit_task_run_func());
+        module.exports.push(ExportDef {
+            wasm_name: "__task_run".to_string(),
+            func_sym: "__task_run".to_string(),
+        });
     }
 
     let string_literals = ctx.requested_string_literals().clone();
@@ -4744,10 +4752,9 @@ fn emit_prelude_call(
         LoweringKind::ByteCompare => emit_byte_compare_intrinsic(args, bind_ty, ctx),
         LoweringKind::TaskSpawn => emit_task_spawn_intrinsic(args, bind_ty, ctx),
         LoweringKind::TaskAwait => emit_task_await_intrinsic(args, bind_ty, ctx),
-        LoweringKind::TaskYield => {
-            // Phase 1 stub: yield is a no-op (no scheduler yet in stage0)
-            vec![]
-        }
+        LoweringKind::TaskYield => emit_task_yield_intrinsic(bind_ty, ctx),
+        LoweringKind::TaskSleep => emit_task_sleep_intrinsic(args, bind_ty, ctx),
+        LoweringKind::TaskReadStdin => emit_task_read_stdin_intrinsic(args, bind_ty, ctx),
     }
 }
 
@@ -5576,21 +5583,26 @@ fn emit_cell_update_intrinsic(
 }
 
 // --- Task intrinsics ---
-// Phase 1: run-to-completion.  Task.spawn(f) calls f() immediately and wraps
-// the result in a 1-element rt_types__Array.  Task.await(task) unwraps it.
+// Task operations lower to backend-neutral suspension intrinsics. The compiler
+// never names a host import directly outside these helpers; the current binding
+// is the JSPI scheduler's `task` import module.
+
+const TASK_HOST_MODULE: &str = "task";
+const TASK_CREATE: &str = "task_create";
+const SUSPEND_AWAIT: &str = "suspend_await";
+const SUSPEND_YIELD: &str = "suspend_yield";
+const SUSPEND_SLEEP: &str = "suspend_sleep";
+const SUSPEND_READ_STDIN: &str = "suspend_read_stdin";
 
 fn emit_task_spawn_intrinsic(
     args: &[Atom],
     _bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    // Phase 1: call the thunk f() immediately and wrap result in a Task.
-    // The result must be boxed to anyref for storage in the task array.
-    let closure_atom = &args[0];
-    let anyref_ty = ValType::Anyref;
-    let mut instrs = emit_closure_call(closure_atom, &[], &anyref_ty, ctx);
-    // Wrap the result in a 1-element array to create the Task object.
-    instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+    ensure_task_create_import(ctx);
+    let mut instrs = emit_atom(&args[0], Some(&ValType::Anyref), ctx);
+    instrs.push(Instr::Call(TASK_CREATE.to_string()));
+    instrs.push(Instr::StructNew(T_TASK.to_string()));
     instrs
 }
 
@@ -5599,13 +5611,117 @@ fn emit_task_await_intrinsic(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
-    // Unwrap: load element 0 from the task array.
-    let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
-    instrs.push(Instr::I32Const(0));
-    instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
-    // Cast from anyref to the expected result type.
+    ensure_suspend_await_import(ctx);
+    let mut instrs = emit_atom(&args[0], Some(&task_ref_null()), ctx);
+    instrs.push(Instr::RefCast {
+        nullable: false,
+        heap: HeapType::Named(T_TASK.to_string()),
+    });
+    instrs.push(Instr::StructGet(T_TASK.to_string(), 0));
+    instrs.push(Instr::Call(SUSPEND_AWAIT.to_string()));
     instrs.extend(emit_coerce_stack(&ValType::Anyref, bind_ty));
     instrs
+}
+
+fn emit_task_yield_intrinsic(bind_ty: &ValType, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    ensure_suspend_yield_import(ctx);
+    let mut instrs = vec![Instr::Call(SUSPEND_YIELD.to_string())];
+    instrs.extend(emit_void_value(Some(bind_ty)));
+    instrs
+}
+
+fn emit_task_sleep_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    ensure_suspend_sleep_import(ctx);
+    let mut instrs = emit_atom(&args[0], Some(&ValType::I64), ctx);
+    instrs.push(Instr::Call(SUSPEND_SLEEP.to_string()));
+    instrs.extend(emit_void_value(Some(bind_ty)));
+    instrs
+}
+
+fn emit_task_read_stdin_intrinsic(
+    args: &[Atom],
+    _bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    ensure_suspend_read_stdin_import(ctx);
+    ensure_rt_arr_from_array_import(ctx);
+    let mut instrs = emit_atom(&args[0], Some(&ValType::I64), ctx);
+    instrs.push(Instr::Call(SUSPEND_READ_STDIN.to_string()));
+    instrs.push(Instr::Call("rt_arr__from_array".to_string()));
+    instrs
+}
+
+fn task_ref_null() -> ValType {
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_TASK.to_string()),
+    }
+}
+
+fn emit_task_run_func() -> FuncDef {
+    FuncDef {
+        name: "__task_run".to_string(),
+        params: vec![ValType::Anyref],
+        results: vec![ValType::Anyref],
+        locals: vec![],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::RefCast {
+                nullable: false,
+                heap: HeapType::Named(T_CLOSURE.to_string()),
+            },
+            Instr::StructGet(T_CLOSURE.to_string(), 1),
+            Instr::RefNull(HeapType::None),
+            Instr::LocalGet(0),
+            Instr::RefCast {
+                nullable: false,
+                heap: HeapType::Named(T_CLOSURE.to_string()),
+            },
+            Instr::StructGet(T_CLOSURE.to_string(), 0),
+            Instr::CallRef(T_CLOSURE_FUNC.to_string()),
+        ],
+    }
+}
+
+fn program_uses_tasks(anf: &AnfModule) -> bool {
+    anf.functions
+        .iter()
+        .any(|func| expr_uses_task_ops(&func.body))
+}
+
+fn expr_uses_task_ops(expr: &AnfExpr) -> bool {
+    match expr {
+        AnfExpr::Let { op, body, .. } => op_uses_task_ops(op) || expr_uses_task_ops(body),
+        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => false,
+    }
+}
+
+fn op_uses_task_ops(op: &AnfOp) -> bool {
+    match op {
+        AnfOp::ACall {
+            callee: Atom::AGlobalFunc(func_id),
+            ..
+        } => matches!(
+            *func_id,
+            prelude_ids::TASK_SPAWN
+                | prelude_ids::TASK_AWAIT
+                | prelude_ids::TASK_YIELD
+                | prelude_ids::TASK_SLEEP
+                | prelude_ids::TASK_READ_STDIN
+        ),
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => expr_uses_task_ops(then_branch) || expr_uses_task_ops(else_branch),
+        AnfOp::AMatch { arms, .. } => arms.iter().any(|arm| expr_uses_task_ops(&arm.body)),
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => expr_uses_task_ops(body),
+        _ => false,
+    }
 }
 
 // --- Iterator intrinsics ---
@@ -7651,6 +7767,56 @@ fn ensure_rt_arr_from_read_file_result_import(ctx: &mut EmitCtx<'_>) {
             nullable: true,
             heap: HeapType::Named(T_VARIANT.into()),
         }],
+    });
+}
+
+fn ensure_task_create_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: TASK_HOST_MODULE.to_string(),
+        name: TASK_CREATE.to_string(),
+        as_sym: TASK_CREATE.to_string(),
+        params: vec![ValType::Anyref],
+        results: vec![ValType::I32],
+    });
+}
+
+fn ensure_suspend_await_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: TASK_HOST_MODULE.to_string(),
+        name: SUSPEND_AWAIT.to_string(),
+        as_sym: SUSPEND_AWAIT.to_string(),
+        params: vec![ValType::I32],
+        results: vec![ValType::Anyref],
+    });
+}
+
+fn ensure_suspend_yield_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: TASK_HOST_MODULE.to_string(),
+        name: SUSPEND_YIELD.to_string(),
+        as_sym: SUSPEND_YIELD.to_string(),
+        params: vec![],
+        results: vec![],
+    });
+}
+
+fn ensure_suspend_sleep_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: TASK_HOST_MODULE.to_string(),
+        name: SUSPEND_SLEEP.to_string(),
+        as_sym: SUSPEND_SLEEP.to_string(),
+        params: vec![ValType::I64],
+        results: vec![],
+    });
+}
+
+fn ensure_suspend_read_stdin_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: TASK_HOST_MODULE.to_string(),
+        name: SUSPEND_READ_STDIN.to_string(),
+        as_sym: SUSPEND_READ_STDIN.to_string(),
+        params: vec![ValType::I64],
+        results: vec![ref_array()],
     });
 }
 

@@ -254,6 +254,58 @@ mod tests {
     }
 
     #[test]
+    fn build_wat_task_ops_emit_jspi_abi() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "twinkle-task-stage0-{}-{stamp}.tw",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            "t := Task.spawn(fn() Int {\n  Task.yield()\n  42\n})\nTask.sleep(1)\nbytes := Task.read_stdin(1)\nbytes.len() + Task.await(t)\n",
+        )
+        .expect("write task smoke source");
+        let wat = build_wat(path.to_str().unwrap())
+            .unwrap_or_else(|e| panic!("build_wat failed for task smoke: {e}"));
+        let _ = fs::remove_file(&path);
+
+        assert!(
+            wat.contains(r#"(import "task" "task_create""#),
+            "missing task_create import"
+        );
+        assert!(
+            wat.contains(r#"(import "task" "suspend_await""#),
+            "missing suspend_await import"
+        );
+        assert!(
+            wat.contains(r#"(import "task" "suspend_yield""#),
+            "missing suspend_yield import"
+        );
+        assert!(
+            wat.contains(r#"(import "task" "suspend_sleep""#),
+            "missing suspend_sleep import"
+        );
+        assert!(
+            wat.contains(r#"(import "task" "suspend_read_stdin""#),
+            "missing suspend_read_stdin import"
+        );
+        assert!(
+            wat.contains("(export \"__task_run\""),
+            "missing __task_run export"
+        );
+        assert!(
+            wat.contains("$rt_types__Task"),
+            "missing id-based Task handle type"
+        );
+        wat::parse_str(&wat).expect("task ABI WAT should assemble");
+    }
+
+    #[test]
     fn build_wat_extern_types_validate_and_cross_anyref_boundaries() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let path = root.join("tests/run/extern_types.tw");

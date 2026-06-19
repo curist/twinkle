@@ -159,7 +159,7 @@ fn rewrite_type_refs(body: &mut [Instr], renames: &HashMap<String, String>) {
 /// Returns true if this import module name is an external import (not a Twinkle module).
 /// "host" is always external; user-declared extern modules are in `extern_modules`.
 fn is_external_module(module: &str, extern_modules: &HashSet<String>) -> bool {
-    module == "host" || extern_modules.contains(module)
+    module == "host" || module == "task" || extern_modules.contains(module)
 }
 
 fn rewrite_val_type(vt: &mut ValType, renames: &HashMap<String, String>) {
@@ -450,14 +450,20 @@ pub fn link_with_extern_modules(
             });
         }
 
-        // Merge exports (qualify wasm_name to avoid duplicates across modules)
+        // Merge exports. Most module exports are namespace-qualified to avoid
+        // duplicates, but runtime entry-point names are part of the host ABI.
         for exp in module.exports {
             let resolved_sym = func_renames
                 .get(&exp.func_sym)
                 .cloned()
                 .unwrap_or_else(|| qualify(ns, &exp.func_sym));
+            let wasm_name = if exp.wasm_name == "__task_run" {
+                exp.wasm_name
+            } else {
+                qualify(ns, &exp.wasm_name)
+            };
             merged_exports.push(ExportDef {
-                wasm_name: qualify(ns, &exp.wasm_name),
+                wasm_name,
                 func_sym: resolved_sym,
             });
         }

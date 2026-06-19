@@ -394,6 +394,24 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
             ret: MonoType::Void,
             abi_result: None,
         }),
+        id if id == prelude_ids::TASK_SLEEP => Some(IntrinsicContract {
+            func_id,
+            twinkle_name: "Task.sleep",
+            dispatch: IntrinsicDispatch::Intrinsic,
+            type_params: vec![],
+            params: vec![MonoType::Int],
+            ret: MonoType::Void,
+            abi_result: None,
+        }),
+        id if id == prelude_ids::TASK_READ_STDIN => Some(IntrinsicContract {
+            func_id,
+            twinkle_name: "Task.read_stdin",
+            dispatch: IntrinsicDispatch::Intrinsic,
+            type_params: vec![],
+            params: vec![MonoType::Int],
+            ret: MonoType::Vector(Box::new(MonoType::Byte)),
+            abi_result: Some(IntrinsicAbiResult::Anyref),
+        }),
         id if id == prelude_ids::VECTOR_APPEND => {
             let t = ty_var("T");
             let vec_t = MonoType::Vector(Box::new(t.clone()));
@@ -901,6 +919,9 @@ fn builtin_doc(name: &str) -> Option<&'static str> {
             "Spawn a task that runs the given function and eventually produces a value."
         }
         "Task.await" => "Wait for a task to complete and return its result.",
+        "Task.yield" => "Yield control to the scheduler, allowing other tasks to run.",
+        "Task.sleep" => "Suspend the current task for at least the requested milliseconds.",
+        "Task.read_stdin" => "Park until stdin has bytes available or reaches EOF.",
 
         _ => return None,
     })

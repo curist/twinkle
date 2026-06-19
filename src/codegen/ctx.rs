@@ -11,7 +11,7 @@ use crate::ir::anf::analysis::{
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom, OpKind};
 use crate::ir::core::CorePattern;
 use crate::runtime::types::{
-    T_ARRAY, T_CLOSURE, T_ITER_STATE, T_PDICT, T_PVEC, T_STRING, T_VARIANT,
+    T_ARRAY, T_CLOSURE, T_ITER_STATE, T_PDICT, T_PVEC, T_STRING, T_TASK, T_VARIANT,
 };
 use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::env::TypeEnv;
@@ -2572,8 +2572,7 @@ fn mono_named_to_valtype(type_id: TypeId, type_env: &TypeEnv) -> ValType {
         return ref_named(true, T_ITER_STATE);
     }
     if type_id == TASK_TYPE_ID {
-        // Phase 1: Task is a 1-element rt_types__Array wrapping the result.
-        return ref_named(true, T_ARRAY);
+        return ref_named(true, T_TASK);
     }
     match type_env.get_def(type_id) {
         Some(TypeDef::Sum { .. }) => ref_named(true, T_VARIANT),

@@ -1235,9 +1235,8 @@ impl ValueEnv {
     pub fn lookup(&self, name: &str) -> Option<MonoType> {
         // Check functions first
         if let Some(sig) = self.functions.get(name) {
-            // If return type is not yet inferred (no explicit annotation), default to Void.
-            // This allows top-level expressions to call functions before their bodies are
-            // type-checked in pass 2; the actual return type is verified when the body is checked.
+            // Unannotated functions receive a shared MetaVar return in checker
+            // Pass 0, so call sites agree with the eventual inferred body type.
             let ret = sig.ret.clone().unwrap_or(MonoType::Void);
             return Some(MonoType::Function {
                 params: sig.params.clone(),
@@ -1271,6 +1270,19 @@ impl ValueEnv {
         use crate::types::ty::zonk_ty;
         for ty in self.values.values_mut() {
             *ty = zonk_ty(ty, meta_subst);
+        }
+    }
+
+    /// Apply meta-variable substitution to function signatures.
+    pub fn zonk_functions(&mut self, meta_subst: &std::collections::HashMap<u32, MonoType>) {
+        use crate::types::ty::zonk_ty;
+        for sig in self.functions.values_mut() {
+            sig.params = sig
+                .params
+                .iter()
+                .map(|ty| zonk_ty(ty, meta_subst))
+                .collect();
+            sig.ret = sig.ret.as_ref().map(|ty| zonk_ty(ty, meta_subst));
         }
     }
 

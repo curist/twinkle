@@ -1,6 +1,6 @@
 # Task Concurrency — JSPI Backend Implementation Plan
 
-Status: **In progress (2026-06-18). Checkpoints 0–17 done** (CP16 negative-path
+Status: **In progress (2026-06-18). Checkpoints 0–18 done** (CP16 negative-path
 tests — failure/deadlock/lifecycle — validated by smokes but deferred to a
 subprocess harness; see CP16 note). Compiler side
 (CP1–7): the stackless scheduler/transform/validation are removed, `Task<T>` is
@@ -15,8 +15,10 @@ discipline (strict one-task-per-microtask), FIFO `suspend_yield`, parking
 model (CP16) and re-enabled. Phase B scheduler benchmark (CP17) run on Node and
 Deno — GO: `Task.yield()` ~0.16 µs, spawn+await ~0.7 µs, LSP-shaped dispatch
 ~1.8 µs (all far under budget); `sleep` is timer-floor host latency, not
-switching. Recorded in the design doc's Evidence section. Remaining: stage0
-parity (CP18, deferred until boot source uses tasks), LSP adoption (CP19).
+switching. Recorded in the design doc's Evidence section. Stage0 parity (CP18)
+now emits the same id-based task ABI and carries the unannotated-return
+inference fix needed to compile current boot sources. Remaining: LSP adoption
+(CP19).
 
 This is the implementation plan for the stackful `Task<T>` design in
 [task-concurrency-jspi-fiber.md](task-concurrency-jspi-fiber.md). Keep this plan
@@ -587,15 +589,17 @@ Decision:
 
 ## Checkpoint 18 — stage0 parity gate
 
+Status: complete.
+
 Goal: defer stage0 work until it is actually needed, then keep it minimal.
 
 Work:
 
-- [ ] Add stage0 lowering for the same abstract intrinsic operations when boot
+- [x] Add stage0 lowering for the same abstract intrinsic operations when boot
   source starts using tasks in code stage0 must compile.
-- [ ] Keep stage0 free of scheduler/state-machine logic; it should only emit the
+- [x] Keep stage0 free of scheduler/state-machine logic; it should only emit the
   same id-based intrinsic calls and `__task_run` export shape.
-- [ ] Add focused parity tests or snapshots for the emitted imports/exports.
+- [x] Add focused parity tests or snapshots for the emitted imports/exports.
 
 Done when:
 

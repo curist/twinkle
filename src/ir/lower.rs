@@ -123,6 +123,8 @@ pub mod prelude {
     pub const TASK_SPAWN: FuncId = FuncId(1034); // Task.spawn(f: fn() T) -> Task<T>
     pub const TASK_AWAIT: FuncId = FuncId(1035); // Task.await(task: Task<T>) -> T
     pub const TASK_YIELD: FuncId = FuncId(1036); // Task.yield() -> Void
+    pub const TASK_SLEEP: FuncId = FuncId(1104); // Task.sleep(ms: Int) -> Void
+    pub const TASK_READ_STDIN: FuncId = FuncId(1105); // Task.read_stdin(max: Int) -> Vector<Byte>
 
     pub const BYTE_TO_INT: FuncId = FuncId(1022); // Byte.to_int(b: Byte) -> Int
     pub const BYTE_FROM_INT: FuncId = FuncId(1023); // Byte.from_int(n: Int) -> Option<Byte>

@@ -1,4 +1,13 @@
 /// LSP command: start the Language Server Protocol server.
+///
+/// Cooperative task model (see docs/plans/task-concurrency-jspi-fiber.md). The
+/// top-level acts as the input reader, parking on `Task.read_stdin` between
+/// chunks instead of polling with a timeout. Workspace-diagnostics publishing
+/// runs on its own debounce task: each diagnostics-arming message spawns a
+/// `Task.sleep`-backed task tagged with a generation token, and only the most
+/// recent generation actually publishes — a newer edit bumps the token and
+/// cancels the stale debounce. Server state is shared through a `Cell` so the
+/// reader and any in-flight debounce observe the same state.
 
 use @std.io
 use @std.proc
@@ -8,72 +17,49 @@ use lib.lsp.framing
 use lib.lsp.protocol
 use lib.lsp.server_core
 
-type LoopState = .{ state: server_core.State, buffer: Vector<Byte> }
+fn debounce_ms() Int {
+  150
+}
+
+type LoopCtx = .{ shared: Cell<server_core.State>, gen: Cell<Int> }
 
 pub fn run_lsp_command(_parsed: ParseResult) {
-  // Streaming transport: read stdin incrementally, decode as many complete
-  // frames as are available, and write byte-exact framed responses to stdout.
-  state := server_core.initial_state()
+  ctx := LoopCtx.{ shared: Cell.new(server_core.initial_state()), gen: Cell.new(0) }
   buffer: Vector<Byte> = []
 
-  for !state.should_exit {
-    chunk := case state.next_poll_timeout_ms() {
-      .Some(timeout_ms) => io.read_stdin_timeout(4096, timeout_ms),
-      .None => io.read_stdin_chunk(4096),
-    }
+  for !ctx.shared.get().should_exit {
+    // Park on stdin until a chunk (or EOF) is available; the scheduler runs any
+    // pending debounce task while we wait, so diagnostics still fire when the
+    // client goes idle.
+    chunk := Task.read_stdin(4096)
 
     if chunk.len() == 0 and io.stdin_eof() {
       break
     }
 
     if chunk.len() > 0 {
-      processed := process_buffer(.{ state, buffer: buffer.concat(chunk) })
-      state = processed.state
-      buffer = processed.buffer
+      buffer = ctx.process_buffer(buffer.concat(chunk))
     }
 
-    if state.should_exit {
+    if ctx.shared.get().should_exit {
       break
-    }
-
-    // Workspace diagnostics is a synchronous compile that can take hundreds of
-    // milliseconds. Before committing to it, drain any input that is already
-    // waiting and handle it first — a format-on-save request in particular must
-    // not be left blocked behind the compile. The compile only runs once the
-    // client is genuinely idle.
-    if state.diagnostics_due() {
-      pending := io.read_stdin_timeout(4096, 0)
-
-      if pending.len() > 0 {
-        processed := process_buffer(.{ state, buffer: buffer.concat(pending) })
-        state = processed.state
-        buffer = processed.buffer
-        continue
-      }
-
-      step := state.publish_due_diagnostics()
-      state = step.state
-
-      for out in step.outgoing {
-        io.write_stdout_text(framing.encode_message(out.stringify()))
-      }
     }
   }
 
-  if state.should_exit and !state.shutdown_requested {
+  if ctx.shared.get().should_exit and !ctx.shared.get().shutdown_requested {
     proc.exit(1)
   }
 }
 
-// Decode and handle every complete frame currently buffered, writing each
-// response as it is produced. Returns the advanced state and the unconsumed
-// trailing bytes (a partial frame awaiting more input).
-fn process_buffer(loop_state: LoopState) LoopState {
-  state := loop_state.state
-  buffer := loop_state.buffer
+// Decode and handle every complete frame currently buffered, mutating the
+// shared state Cell and writing each response as it is produced. Re-arms the
+// debounce task whenever a handled message refreshes the diagnostics deadline.
+// Returns the unconsumed trailing bytes (a partial frame awaiting more input).
+fn process_buffer(ctx: LoopCtx, buffer: Vector<Byte>) Vector<Byte> {
+  buf := buffer
 
   for true {
-    decoded := case framing.try_decode_frame_bytes(buffer) {
+    decoded := case framing.try_decode_frame_bytes(buf) {
       .Ok(result) => result,
       .Err(msg) => {
         eprintln("error: invalid LSP frame: ${msg}")
@@ -91,21 +77,50 @@ fn process_buffer(loop_state: LoopState) LoopState {
             proc.exit(1)
           },
         }
-        step := state.handle_message(message)
-        state = step.state
+        before := ctx.shared.get()
+        step := before.handle_message(message)
+        ctx.shared.set(step.state)
 
         for out in step.outgoing {
           io.write_stdout_text(framing.encode_message(out.stringify()))
         }
 
-        buffer = rest
+        // A message that (re)armed diagnostics refreshes the deadline; start a
+        // fresh debounce so the publish fires once the client falls idle.
+        if step.state.diagnostics_pending
+          and step.state.diagnostics_deadline_ms != before.diagnostics_deadline_ms {
+          ctx.schedule_diagnostics()
+        }
 
-        if state.should_exit {
+        buf = rest
+
+        if step.state.should_exit {
           break
         }
       },
     }
   }
 
-  .{ state, buffer }
+  buf
+}
+
+// Spawn a debounce task: wait the debounce window, then publish workspace
+// diagnostics iff no newer change bumped the generation token meanwhile. The
+// task is fire-and-forget — the scheduler runs it while the reader is parked on
+// stdin and drains it at exit.
+fn schedule_diagnostics(ctx: LoopCtx) {
+  my_gen := ctx.gen.get() + 1
+  ctx.gen.set(my_gen)
+  Task.spawn(fn() {
+    Task.sleep(debounce_ms())
+
+    if ctx.gen.get() == my_gen {
+      step := ctx.shared.get().publish_due_diagnostics()
+      ctx.shared.set(step.state)
+
+      for out in step.outgoing {
+        io.write_stdout_text(framing.encode_message(out.stringify()))
+      }
+    }
+  })
 }
