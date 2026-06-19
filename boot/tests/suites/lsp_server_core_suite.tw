@@ -563,6 +563,29 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "document symbols return empty while full_dirty and without inline analysis",
+      fn() {
+        opened := document_store.empty().open("file:///a.tw", "fn f() Void { }\n", .Some(1))
+        state := server_core.initial_state()
+        state.documents = opened
+        state.full_dirty = true
+        req := protocol.Message.Request(.{
+          id: .IntId(7),
+          method: "textDocument/documentSymbol",
+          params: .Some(
+            json.object([
+              json.kv("textDocument", json.object([json.kv("uri", .Str("file:///a.tw"))])),
+            ]),
+          ),
+        })
+        step := state.handle_message(req)
+        out := try only_out(step)
+        result := try out.decode(json.field("result", json.raw().list()))
+        try assert.equal(result.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
       "initialize advertises documentFormattingProvider",
       fn() {
         msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })

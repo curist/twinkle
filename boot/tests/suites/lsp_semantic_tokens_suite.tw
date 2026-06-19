@@ -8,13 +8,13 @@ use tests.runner
 
 fn state_with_doc(uri: String, text: String) server_core.State {
   docs := document_store.empty().open(uri, text, .Some(1))
-  server_core.State.{
+  base := server_core.State.{
     initialized: true,
     shutdown_requested: false,
     should_exit: false,
     documents: docs,
     query_cache: query_cache.empty(),
-    diagnostics_pending: false,
+    diagnostics_pending: true,
     diagnostics_deadline_ms: 0.0,
     last_published: Dict.new(),
     diagnostics_tier: .Full,
@@ -22,18 +22,22 @@ fn state_with_doc(uri: String, text: String) server_core.State {
     full_dirty: false,
     closure_snapshot: .None,
   }
+
+  // Heavy features serve only a completed full snapshot, so warm the cache with a
+  // full diagnostics pass before issuing feature requests.
+  base.publish_due_diagnostics().state
 }
 
 fn state_with_two_docs(uri_a: String, text_a: String, uri_b: String, text_b: String) server_core.State {
   docs0 := document_store.empty().open(uri_a, text_a, .Some(1))
   docs := docs0.open(uri_b, text_b, .Some(2))
-  server_core.State.{
+  base := server_core.State.{
     initialized: true,
     shutdown_requested: false,
     should_exit: false,
     documents: docs,
     query_cache: query_cache.empty(),
-    diagnostics_pending: false,
+    diagnostics_pending: true,
     diagnostics_deadline_ms: 0.0,
     last_published: Dict.new(),
     diagnostics_tier: .Full,
@@ -41,6 +45,10 @@ fn state_with_two_docs(uri_a: String, text_a: String, uri_b: String, text_b: Str
     full_dirty: false,
     closure_snapshot: .None,
   }
+
+  // Heavy features serve only a completed full snapshot, so warm the cache with a
+  // full diagnostics pass before issuing feature requests.
+  base.publish_due_diagnostics().state
 }
 
 fn sem_tokens_request(id: Int, uri: String) protocol.Message {

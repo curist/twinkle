@@ -278,6 +278,13 @@ fn workspace_snapshot(state: State, doc: document_store.Document) semantic.Seman
   }
 }
 
+// Cache-only snapshot: returns the last completed full snapshot when present, and
+// never falls back to inline workspace analysis. Heavy editor features use this so
+// a request can never block the dispatcher on a compiler pass.
+fn workspace_snapshot_cached(state: State, doc: document_store.Document) semantic.SemanticSnapshot? {
+  semantic.snapshot_workspace_from_cache(state.query_cache, state.workspace_input(doc))
+}
+
 fn editor_snapshot(state: State, doc: document_store.Document) semantic.SemanticSnapshot {
   semantic.snapshot_workspace_for_editor(state.query_cache, state.workspace_input(doc))
 }
@@ -513,10 +520,13 @@ fn handle_document_symbol(state: State, req: protocol.Request) Step {
     .Some(d) => d,
     .None => { return state.empty_array_response_step(req) },
   }
-  if state.diagnostics_pending {
+  snap := case state.workspace_snapshot_cached(doc) {
+    .Some(s) => s,
+    .None => { return state.empty_array_response_step(req) },
+  }
+  if state.full_dirty {
     return state.empty_array_response_step(req)
   }
-  snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
   symbols := query_document_symbols.document_symbols(snap)
   .{
@@ -536,10 +546,13 @@ fn handle_folding_range(state: State, req: protocol.Request) Step {
     .Some(d) => d,
     .None => { return state.empty_array_response_step(req) },
   }
-  if state.diagnostics_pending {
+  snap := case state.workspace_snapshot_cached(doc) {
+    .Some(s) => s,
+    .None => { return state.empty_array_response_step(req) },
+  }
+  if state.full_dirty {
     return state.empty_array_response_step(req)
   }
-  snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
   ranges := query_folding_range.folding_ranges(snap)
   .{
@@ -557,9 +570,6 @@ fn handle_inlay_hint(state: State, req: protocol.Request) Step {
     .Some(d) => d,
     .None => { return state.empty_array_response_step(req) },
   }
-  if state.diagnostics_pending {
-    return state.empty_array_response_step(req)
-  }
   range_start := case position_offset(doc.index, hint_params.range_start) {
     .Some(o) => o,
     .None => 0,
@@ -568,7 +578,13 @@ fn handle_inlay_hint(state: State, req: protocol.Request) Step {
     .Some(o) => o,
     .None => doc.text.len(),
   }
-  snap := state.workspace_snapshot(doc)
+  snap := case state.workspace_snapshot_cached(doc) {
+    .Some(s) => s,
+    .None => { return state.empty_array_response_step(req) },
+  }
+  if state.full_dirty {
+    return state.empty_array_response_step(req)
+  }
   state.query_cache = snap.cache
   hints := query_inlay_hints.inlay_hints(snap, range_start, range_end)
   .{
@@ -596,13 +612,21 @@ fn handle_semantic_tokens(state: State, req: protocol.Request) Step {
       }
     },
   }
-  if state.diagnostics_pending {
+  snap := case state.workspace_snapshot_cached(doc) {
+    .Some(s) => s,
+    .None => {
+      return .{
+        state,
+        outgoing: [req.id.success_response(json.object([json.kv("data", json.array([]))]))],
+      }
+    },
+  }
+  if state.full_dirty {
     return .{
       state,
       outgoing: [req.id.success_response(json.object([json.kv("data", json.array([]))]))],
     }
   }
-  snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
   tokens := query_semantic_tokens.semantic_tokens(snap)
   .{
