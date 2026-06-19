@@ -197,7 +197,7 @@ Render is pure, so these assert on the returned string rather than captured IO.
 
 ## Relationship to existing work
 
-Builds directly on the shipped linter (`docs/plans/linter.md`): rules L2–L5 +
+Builds directly on the shipped linter (`docs/plans/archive/linter.md`): rules L2–L5 +
 R1/R2 already emit a stable kebab `rule`. This adds the description layer and the
 report grouping on top, and completes the CLAUDE.md consolidation the
 `direct-rebinding` rule began (see

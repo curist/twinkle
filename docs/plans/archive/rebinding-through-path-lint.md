@@ -49,7 +49,7 @@ back.
 Proposed report-only lint: `direct-rebinding`.
 
 Catalog slot: this is a report-only lint, so it lands as the next `L` rule
-(`L5`) in `docs/plans/linter.md`. Note the `L5`/`L6` that an earlier linter
+(`L5`) in `docs/plans/archive/linter.md`. Note the `L5`/`L6` that an earlier linter
 draft *rejected* were different rules (whole-program effect analysis); there is
 no clash, but linter.md must be updated so the rule catalog stays the single
 source of truth. Name style follows the existing `record-copy-helper`

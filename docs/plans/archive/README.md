@@ -87,6 +87,7 @@ Related historical context outside this folder:
 | Plan | Description |
 |------|-------------|
 | [formatter.md](formatter.md) | Source formatter (`twk fmt`) — lossless trivia model, Wadler-Lindig Doc IR, AST printer, Fill layout for imports, trailing comment preservation |
+| [linter.md](linter.md) | `twk lint`: opt-in review command with report-only lints L2/L3/L4/L5, auto-fixable rewrites R1/R2, import-chain scope, per-rule `--fix-*`, and `--explain`; L1 unused-pure-result explicitly deferred |
 | [inherent-method-hint.md](inherent-method-hint.md) | `twk lint` R1 rewrite: free-function calls rewritten into equivalent inherent-method call syntax when resolution proves the forms identical |
 | [rebinding-through-path-lint.md](rebinding-through-path-lint.md) | `twk lint` L5 `direct-rebinding`: report-only lint flagging a `tmp := <path>` alias whose only use is rebinding-updates-then-copy-back, where direct field/index-path rebinding expresses the update. Report-only rule shipped (auto-fix deferred); structural AST visitor in `compiler/lint.tw` |
 | [js-package-browser-command-api.md](js-package-browser-command-api.md) | Browser `command(args, opts)` API for `@twinkle-lang/twinkle/web`, exposing the shipped compiler payload to embedders for `fmt`, `check`, `ir`, and `build` against an in-memory project |

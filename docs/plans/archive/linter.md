@@ -1,7 +1,10 @@
 # Linter (`twk lint`) — Design Plan
 
-Status: proposal (engine + first rewrites built; see Rollout). Target
-implementation: boot compiler (`boot/`).
+Status: **Archived / implemented.** `twk lint` shipped in the boot compiler with
+report-only lints L2/L3/L4/L5, auto-fixable rewrites R1/R2, import-chain scope,
+`--fix`, per-rule fix flags, and `--explain`. L1 (`unused-result`) was explicitly
+dropped/deferred; see Rollout §6. The design text below is preserved as the
+implemented rationale and rollout record.
 
 ## Motivation
 

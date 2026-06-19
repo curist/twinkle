@@ -2,16 +2,16 @@
 
 > **Status: archived; implemented as `twk lint` rewrite R1 (`inherent-method-call`).**
 > This is the detailed design for the rewrite catalogued in
-> [`linter.md`](../linter.md). It does **not** ship standalone: it rides the review
+> [`linter.md`](linter.md). It does **not** ship standalone: it rides the review
 > command's review-mode + rewrite sink. The trigger predicate, emission sites,
 > and edits below are the rule's substance; **surfacing follows the review
 > model** — reported by `twk lint`, applied by `twk lint --fix-inherent-calls`
 > (or `--fix`), off the `build`/`check` path — so this doc does not re-litigate it
-> (see `../linter.md` → "Command surface").
+> (see `linter.md` → "Command surface").
 >
 > This is an auto-fixable *rewrite*, not a report-only lint, because it is
 > provably meaning-preserving: correct code respelled, not a suspected bug (the
-> auto-fixability rule in [`linter.md`](../linter.md) → Motivation).
+> auto-fixability rule in [`linter.md`](linter.md) → Motivation).
 
 ## Goal
 
@@ -194,7 +194,7 @@ applied form is what `twk lint --fix-inherent-calls` writes; the structured
 
 ## Surfacing
 
-Follows the review model (see `../linter.md` → "Command surface"): **reported by
+Follows the review model (see `linter.md` → "Command surface"): **reported by
 `twk lint`**, applied by `twk lint --fix-inherent-calls` (or `--fix`), never in
 `twk build` / `twk check` or ambient LSP diagnostics. Mechanism specific to this
 rule:

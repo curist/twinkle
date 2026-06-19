@@ -1,6 +1,6 @@
 /// `twk lint` — clippy-style review command.
 ///
-/// Reports two kinds of finding (see docs/plans/linter.md): report-only lints
+/// Reports two kinds of finding (see docs/plans/archive/linter.md): report-only lints
 /// (suspected bugs) and auto-fixable rewrites. Report-only by default; `--fix`
 /// applies all rewrites, `--fix-<rule>` applies one. build/check never run this.
 
