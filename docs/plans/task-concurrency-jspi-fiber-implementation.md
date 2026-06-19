@@ -1,6 +1,6 @@
 # Task Concurrency — JSPI Backend Implementation Plan
 
-Status: **In progress (2026-06-18). Checkpoints 0–18 done** (CP16 negative-path
+Status: **In progress (2026-06-18). Checkpoints 0–19 done** (CP16 negative-path
 tests — failure/deadlock/lifecycle — validated by smokes but deferred to a
 subprocess harness; see CP16 note). Compiler side
 (CP1–7): the stackless scheduler/transform/validation are removed, `Task<T>` is
@@ -17,8 +17,9 @@ Deno — GO: `Task.yield()` ~0.16 µs, spawn+await ~0.7 µs, LSP-shaped dispatch
 ~1.8 µs (all far under budget); `sleep` is timer-floor host latency, not
 switching. Recorded in the design doc's Evidence section. Stage0 parity (CP18)
 now emits the same id-based task ABI and carries the unannotated-return
-inference fix needed to compile current boot sources. Remaining: LSP adoption
-(CP19).
+inference fix needed to compile current boot sources. LSP adoption (CP19) now
+has a dedicated migration plan, a reader/dispatcher task split, and a diagnostics
+worker model while preserving the cooperative single-threaded scope.
 
 This is the implementation plan for the stackful `Task<T>` design in
 [task-concurrency-jspi-fiber.md](task-concurrency-jspi-fiber.md). Keep this plan
@@ -613,10 +614,10 @@ and scheduler overhead are proven.
 
 Work:
 
-- [ ] Track LSP migration in a separate plan/commit series.
-- [ ] Move LSP internals onto cooperative tasks: input reader, dispatcher,
+- [x] Track LSP migration in a separate plan/commit series.
+- [x] Move LSP internals onto cooperative tasks: input reader, dispatcher,
   debounce timers, diagnostics workers, and generation tokens for stale results.
-- [ ] Keep parallel compilation out of scope. This plan gives cooperative
+- [x] Keep parallel compilation out of scope. This plan gives cooperative
   single-threaded concurrency; worker-backed parallelism is a separate design.
 
 Done when:
