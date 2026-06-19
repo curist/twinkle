@@ -42,8 +42,6 @@ pub type IntrinsicTag = {
   TaskSpawn,
   TaskAwait,
   TaskYield,
-  TaskSleep,
-  TaskReadStdin,
   CellNew,
   CellGet,
   CellSet,

@@ -298,7 +298,7 @@ pub fn emit_module(
   // Abstract suspension intrinsics (current binding: JSPI host imports). Only
   // declared for task-using programs; unused operations are then DCE'd.
   if uses_tasks {
-    runtime_imports = runtime_imports.concat(task_abi.imports())
+    runtime_imports = .concat(task_abi.imports())
   }
 
   WasmModule.{
@@ -1383,8 +1383,6 @@ pub fn build_intrinsic_table(b: BuiltinRegistry) Dict<Int, IntrinsicTag> {
   t[b.method_id("Task", "spawn").id] = .TaskSpawn
   t[b.method_id("Task", "await").id] = .TaskAwait
   t[b.method_id("Task", "yield").id] = .TaskYield
-  t[b.method_id("Task", "sleep").id] = .TaskSleep
-  t[b.method_id("Task", "read_stdin").id] = .TaskReadStdin
   t[b.method_id("Cell", "new").id] = .CellNew
   t[b.method_id("Cell", "get").id] = .CellGet
   t[b.method_id("Cell", "set").id] = .CellSet
@@ -1455,8 +1453,6 @@ fn emit_intrinsic_call(
     .TaskSpawn => emit_intrinsic_task_spawn(args, result_idx, result_mono, ctx, buf),
     .TaskAwait => emit_intrinsic_task_await(args, result_idx, result_mono, ctx, buf),
     .TaskYield => emit_intrinsic_task_yield(result_idx, buf),
-    .TaskSleep => emit_intrinsic_task_sleep(args, result_idx, ctx, buf),
-    .TaskReadStdin => emit_intrinsic_task_read_stdin(args, result_idx, ctx, buf),
     .CellNew => emit_intrinsic_cell_new(args, result_idx, result_mono, ctx, buf),
     .CellGet => emit_intrinsic_cell_get(args, result_idx, result_mono, ctx, buf),
     .CellSet => emit_intrinsic_cell_set(args, result_idx, ctx, buf),
@@ -2099,10 +2095,10 @@ fn emit_intrinsic_cell_update(
 
 // ── Task intrinsics (stackful, JSPI backend) ─────────────────────────
 // Task operations lower to backend-neutral suspension intrinsics. The
-// compiler never names a host import directly; `task_abi` is the single
-// binding table mapping each operation to its current JSPI host import.
-// Suspension is legal at any call depth — there is no compiler transform
-// and no suspension-position validation.
+// compiler never names timer or I/O imports here; `task_abi` is only the
+// binding table for task composition primitives. Suspension is legal at any
+// call depth — there is no compiler transform and no suspension-position
+// validation.
 fn emit_intrinsic_task_spawn(
   args: Vector<PreparedAtom>,
   result_idx: Int,
@@ -2143,31 +2139,6 @@ fn emit_intrinsic_task_yield(result_idx: Int, buf: Vector<Instr>) Vector<Instr> 
   buf.append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx)) // void
 }
 
-fn emit_intrinsic_task_sleep(
-  args: Vector<PreparedAtom>,
-  result_idx: Int,
-  ctx: EmitCtx,
-  buf: Vector<Instr>,
-) Vector<Instr> {
-  buf = emit_atom(args[0], ctx, buf) // ms (i64)
-  buf = .append(.Call(task_abi.sym_suspend_sleep()))
-  buf.append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx)) // void
-}
-
-fn emit_intrinsic_task_read_stdin(
-  args: Vector<PreparedAtom>,
-  result_idx: Int,
-  ctx: EmitCtx,
-  buf: Vector<Instr>,
-) Vector<Instr> {
-  // The host returns a raw flat Array (empty at EOF); wrap it into a
-  // Vector<Byte> the same way the synchronous io.read_stdin_chunk path does.
-  buf = emit_atom(args[0], ctx, buf) // max (i64)
-  buf = .append(.Call(task_abi.sym_suspend_read_stdin())) // -> ref Array
-  buf = .append(.Call("rt_arr__from_array")) // -> ref PVec (Vector<Byte>)
-  buf.append(.LocalSet(result_idx))
-}
-
 // Universal task-body entry point. The JS scheduler wraps this export with
 // `WebAssembly.promising` and calls it to run a task body on its own JSPI
 // stack. It invokes the closure through the generic closure ABI (env, no
@@ -2198,8 +2169,6 @@ fn program_uses_tasks(prepared_funcs: Dict<Int, PreparedFunc>, builtins: Builtin
   ids[builtins.method_id("Task", "spawn").id] = true
   ids[builtins.method_id("Task", "await").id] = true
   ids[builtins.method_id("Task", "yield").id] = true
-  ids[builtins.method_id("Task", "sleep").id] = true
-  ids[builtins.method_id("Task", "read_stdin").id] = true
   found := false
 
   for k, pf in prepared_funcs {

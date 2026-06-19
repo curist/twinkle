@@ -168,6 +168,7 @@ Related historical context outside this folder:
 | [lsp-hover-goto-definition.md](lsp-hover-goto-definition.md) | Phase 1 implementation plan for `twk lsp` hover and go-to-definition |
 | [lsp-file-watching.md](lsp-file-watching.md) | Watched-file refresh plan for `twk lsp` disk snapshot updates and diagnostics refresh |
 | [lsp-task-migration.md](lsp-task-migration.md) | CP19 migration of LSP transport, debounce timers, and diagnostics publication onto cooperative `Task` primitives; future worker-isolation end-game notes preserved in the plan |
+| [task-api-separation-of-concerns.md](task-api-separation-of-concerns.md) | Kept `Task<T>` focused on task composition by moving timer/stdin suspension points to `@std.time` and `@std.io`, with scheduler-aware host imports preserving JSPI task invariants |
 | [lsp-save-vs-edit-gating.md](lsp-save-vs-edit-gating.md) | Split LSP diagnostics into parse-only edit-tier work and full workspace analysis on open/save/close |
 | [lsp-save-vs-edit-gating-implementation.md](lsp-save-vs-edit-gating-implementation.md) | Implementation checklist for save-vs-edit diagnostics gating, archived after the branch landed |
 | [boot-lsp-query-layer.md](boot-lsp-query-layer.md) | Boot LSP query layer for workspace-aware diagnostics, source overlays, cache invalidation, and reusable semantic snapshots |

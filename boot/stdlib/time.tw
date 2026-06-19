@@ -1,0 +1,9 @@
+/// Return monotonic-ish milliseconds elapsed since the runtime time origin.
+pub fn now() Float {
+  __host_now()
+}
+
+/// Suspend for at least `ms` milliseconds when running on an async/JSPI runtime.
+pub fn sleep(ms: Int) Void {
+  __host_sleep(ms)
+}

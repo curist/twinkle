@@ -125,10 +125,6 @@ pub enum LoweringKind {
     TaskAwait,
     /// Task.yield: cooperative suspension point.
     TaskYield,
-    /// Task.sleep: timer-backed suspension point.
-    TaskSleep,
-    /// Task.read_stdin: stdin-readiness suspension point.
-    TaskReadStdin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -470,15 +466,6 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
     spec!(TASK_SPAWN, "Task.spawn", Intrinsic, true, true, TaskSpawn),
     spec!(TASK_AWAIT, "Task.await", Intrinsic, true, true, TaskAwait),
     spec!(TASK_YIELD, "Task.yield", Intrinsic, true, true, TaskYield),
-    spec!(TASK_SLEEP, "Task.sleep", Intrinsic, true, true, TaskSleep),
-    spec!(
-        TASK_READ_STDIN,
-        "Task.read_stdin",
-        Intrinsic,
-        true,
-        true,
-        TaskReadStdin
-    ),
     spec!(HOST_READ_FILE, "__host_read_file", Runtime, false, false),
     spec!(HOST_WRITE_FILE, "__host_write_file", Runtime, false, false),
     spec!(
@@ -496,6 +483,7 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
     spec!(HOST_CWD, "__host_cwd", Runtime, false, false),
     spec!(HOST_EXIT, "__host_exit", Runtime, false, false),
     spec!(HOST_NOW, "__host_now", Runtime, false, false),
+    spec!(HOST_SLEEP, "__host_sleep", Runtime, false, false),
     spec!(HOST_RUN_WASM, "__host_run_wasm", Runtime, false, false),
     spec!(
         HOST_STDIN_READ_CHUNK,
@@ -584,6 +572,7 @@ const COMMON_BOOTSTRAP_FUNC_NAMES: &[(&str, FuncId)] = &[
     ("__host_cwd", prelude_ids::HOST_CWD),
     ("__host_exit", prelude_ids::HOST_EXIT),
     ("__host_now", prelude_ids::HOST_NOW),
+    ("__host_sleep", prelude_ids::HOST_SLEEP),
     ("__host_run_wasm", prelude_ids::HOST_RUN_WASM),
     (
         "__host_stdin_read_chunk",

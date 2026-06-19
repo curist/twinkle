@@ -87,15 +87,13 @@ Mutable reference cell for imperative state.
 
 ### `Task<T>`
 
-Cooperative task handle. Tasks run on the same program thread and switch only at explicit suspension points (`await`, `yield`, `sleep`, or task-aware host operations); they are not CPU-parallel.
+Cooperative task handle. Tasks run on the same program thread and switch only at explicit task points (`await`, `yield`) or task-aware host operations such as `time.sleep` / stdin reads; they are not CPU-parallel.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `Task.spawn` | `fn<T>(f: fn() T) Task<T>` | Start `f` as a task and return a handle for its eventual result |
 | `Task.await` | `fn<T>(task: Task<T>) T` | Suspend until `task` completes, then return its result; propagates a task failure as a trap |
 | `Task.yield` | `fn() Void` | Yield control to the scheduler so another runnable task can make progress |
-| `Task.sleep` | `fn(ms: Int) Void` | Suspend the current task for at least `ms` milliseconds |
-| `Task.read_stdin` | `fn(max: Int) Vector<Byte>` | Suspend until stdin has up to `max` bytes available or reaches EOF; returns an empty vector at EOF |
 
 ### `Range`
 Record with fields `{ start: Int, end: Int, step: Int }`. Iterable in `for` loops.
@@ -485,7 +483,7 @@ fn single_number(nums: Vector<Int>) Int {
 
 Everything above (primitives, built-in types, I/O, type conversions, String/Vector/Dict methods, operators) is available as **prelude** — no import needed.
 
-Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`, `use @std.date`, `use @std.view`, `use @std.math`, `use @std.tuple`, `use @std.regexp`, `use @std.crypto`.
+Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.io`, `use @std.proc`, `use @std.date`, `use @std.time`, `use @std.view`, `use @std.math`, `use @std.tuple`, `use @std.regexp`, `use @std.crypto`.
 
 ### `@std.crypto`
 
@@ -692,6 +690,18 @@ type DirEntry = .{ name: String, kind: EntryKind }
 | `list_dir` | `fn(path: String) Vector<DirEntry>!FsError` | List directory entries |
 | `exists` | `fn(path: String) Bool` | Check if path exists |
 
+### `@std.io`
+
+Standard input and output helpers. Stdin reads may suspend cooperatively under a task-capable async runtime, but they remain I/O APIs rather than `Task` APIs.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `read_stdin_chunk` | `fn(max_bytes: Int) Vector<Byte>` | Read up to `max_bytes` from stdin; returns an empty vector at EOF |
+| `read_stdin_timeout` | `fn(max_bytes: Int, timeout_ms: Int) Vector<Byte>` | Read up to `max_bytes`, waiting at most `timeout_ms`; returns empty on timeout or EOF |
+| `stdin_eof` | `fn() Bool` | True after stdin reaches EOF |
+| `write_stdout_bytes` | `fn(bytes: Vector<Byte>) Void` | Write raw bytes to stdout |
+| `write_stdout_text` | `fn(text: String) Void` | Write UTF-8 text to stdout |
+
 ### `@std.proc`
 
 Process and environment.
@@ -705,11 +715,20 @@ Process and environment.
 
 ### `@std.date`
 
-Timing utilities.
+Compatibility timing utilities. Prefer `@std.time.now()` for elapsed/runtime timing; `date` is reserved for calendar/date APIs over time.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `now` | `fn() Float` | Current time as milliseconds since the time origin (`performance.now()` in Node/browser; ms since Unix epoch in the interpreter) |
+
+### `@std.time`
+
+Runtime timing utilities.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `now` | `fn() Float` | Monotonic-ish milliseconds since the runtime time origin |
+| `sleep` | `fn(ms: Int) Void` | Suspend for at least `ms` milliseconds under the async/JSPI runtime |
 
 ### `@std.view`
 

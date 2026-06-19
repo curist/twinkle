@@ -10,12 +10,3 @@ pub fn await<T>(task: Task<T>) T {
 
 /// Yield control to the scheduler, allowing other tasks to run.
 pub fn yield() Void {}
-
-/// Suspend the current task for at least `ms` milliseconds.
-pub fn sleep(ms: Int) Void {}
-
-/// Park the current task until stdin has up to `max` bytes (or EOF).
-/// Returns an empty vector at EOF, matching `@std.io.read_stdin_chunk`.
-pub fn read_stdin(max: Int) Vector<Byte> {
-  []
-}

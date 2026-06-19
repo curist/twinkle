@@ -1,9 +1,9 @@
 /// Abstract suspension intrinsic binding.
 ///
-/// The compiler lowers `Task.*` to operation-named suspension intrinsics
-/// (`task_create`, `suspend_await`, `suspend_yield`, `suspend_sleep`,
-/// `suspend_read_stdin`) and never to host-specific names. This module is the
-/// single place that binds those abstract operations to a concrete
+/// The compiler lowers task composition operations to operation-named
+/// suspension intrinsics (`task_create`, `suspend_await`, `suspend_yield`).
+/// Timer and I/O suspension points stay under their own host modules. This
+/// module is the single place that binds task operations to a concrete
 /// implementation — currently host imports satisfied by the JS scheduler under
 /// JSPI. A future Wasm-continuations backend replaces this table (and the
 /// runtime that backs it) without touching task lowering.
@@ -26,14 +26,6 @@ pub fn sym_suspend_await() String {
 
 pub fn sym_suspend_yield() String {
   "suspend_yield"
-}
-
-pub fn sym_suspend_sleep() String {
-  "suspend_sleep"
-}
-
-pub fn sym_suspend_read_stdin() String {
-  "suspend_read_stdin"
 }
 
 // Import declarations for the abstract operations, in their current JSPI
@@ -63,22 +55,6 @@ pub fn imports() Vector<ImportDef> {
       as_sym: sym_suspend_yield(),
       params: [],
       results: [],
-    },
-    ImportDef.{
-      module: host_module(),
-      name: sym_suspend_sleep(),
-      as_sym: sym_suspend_sleep(),
-      params: [.I64],
-      results: [],
-    },
-    // Returns a raw flat Array (like the host stdin builtins); the lowering
-    // wraps it into a Vector<Byte> via rt_arr__from_array.
-    ImportDef.{
-      module: host_module(),
-      name: sym_suspend_read_stdin(),
-      as_sym: sym_suspend_read_stdin(),
-      params: [.I64],
-      results: [.Ref(false, .Named("rt_types__Array"))],
     },
   ]
 }

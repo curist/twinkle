@@ -1,8 +1,8 @@
 /// LSP command: start the Language Server Protocol server.
 ///
 /// Cooperative task model (see docs/plans/lsp-task-migration.md). The top-level
-/// acts as the input reader, parking on `Task.read_stdin` between chunks instead
-/// of polling with a timeout. Chunks are handed to a dispatcher task through a
+/// acts as the input reader, parking on `io.read_stdin_chunk` between chunks
+/// instead of polling with a timeout. Chunks are handed to a dispatcher task through a
 /// small Cell-backed queue; the dispatcher owns frame decoding, JSON-RPC message
 /// handling, and response writes. Workspace diagnostics use a worker-style task:
 /// debounce tasks only enqueue generation-tagged jobs, and the diagnostics worker
@@ -13,6 +13,7 @@
 use @std.date
 use @std.io
 use @std.proc
+use @std.time
 
 use lib.argparse.app.{ParseResult}
 use lib.json
@@ -52,7 +53,7 @@ pub fn run_lsp_command(_parsed: ParseResult) {
     // Park on stdin until a chunk (or EOF) is available. After queueing a chunk,
     // wait for the dispatcher to drain it before parking again so an `exit`
     // notification cannot leave the reader asleep on stdin.
-    chunk := Task.read_stdin(4096)
+    chunk := io.read_stdin_chunk(4096)
 
     if chunk.len() == 0 and io.stdin_eof() {
       break
@@ -138,7 +139,7 @@ fn close_diagnostics(queue: DiagnosticsQueue) {
 
 fn wait_for_dispatcher(ctx: LoopCtx) {
   for ctx.chunks.has_pending() and !ctx.shared.get().should_exit {
-    Task.sleep(idle_sleep_ms)
+    time.sleep(idle_sleep_ms)
   }
 }
 
@@ -160,7 +161,7 @@ fn dispatch_loop(ctx: LoopCtx) {
         if ctx.chunks.closed.get() {
           break
         }
-        Task.sleep(idle_sleep_ms)
+        time.sleep(idle_sleep_ms)
       },
     }
   }
@@ -174,7 +175,7 @@ fn diagnostics_loop(ctx: LoopCtx) {
         if ctx.diagnostics.closed.get() or ctx.shared.get().should_exit {
           break
         }
-        Task.sleep(idle_sleep_ms)
+        time.sleep(idle_sleep_ms)
       },
     }
   }
@@ -337,7 +338,7 @@ fn schedule_diagnostics(ctx: LoopCtx) {
     wait := deadline - date.now()
 
     if wait > 0.0 {
-      Task.sleep(wait.to_int())
+      time.sleep(wait.to_int())
     }
 
     if ctx.gen.get() == my_gen {

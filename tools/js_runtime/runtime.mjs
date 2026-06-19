@@ -378,6 +378,9 @@ function makeHostImports(b, runtime, bridgeBytes) {
         throw new HostExit(c);
       },
       now: () => performance.now(),
+      sleep: (_ms) => {
+        throw new Error("host.sleep requires the async JSPI runtime");
+      },
       run_wasm: (bytesRef, argvRef) => {
         const childBytes = decodeByteArray(b, bytesRef);
         const childArgv = decodeStringArray(b, argvRef);
@@ -534,9 +537,10 @@ export const hasJspi =
 
 /**
  * The JS host side of Twinkle's stackful Task<T> model. The compiler lowers
- * Task.* to operation-named intrinsics (task_create / suspend_await /
- * suspend_yield / suspend_sleep / suspend_read_stdin) imported from the "task"
- * module; this scheduler implements them.
+ * task composition operations to operation-named intrinsics
+ * (task_create / suspend_await / suspend_yield) imported from the "task"
+ * module; this scheduler implements them and can also route suspending host
+ * imports back through the scheduler.
  *
  * Each task body runs on its own JSPI stack via promising(__task_run). A body
  * suspends by calling a Suspending import that returns a Promise the scheduler
@@ -550,7 +554,7 @@ export const hasJspi =
  * then does it call schedule() to advance. No two resumes interleave, so the
  * single global current is always valid for whichever stack is executing.
  */
-function createTaskScheduler(b, runtime, makeByteArrayFn) {
+function createTaskScheduler() {
   const TOP = 0;
   const s = {
     nextId: 1,
@@ -595,9 +599,8 @@ function createTaskScheduler(b, runtime, makeByteArrayFn) {
       ));
       return;
     }
-    // Top-level may be suspended on a host operation the scheduler does not
-    // track (e.g. run_wasm / non-task stdin). An empty task scheduler does not
-    // mean the program is done — only top-level completion does. Wait for it.
+    // An empty task scheduler does not mean the program is done while the
+    // top-level pseudo-task is still suspended. Wait for explicit completion.
     if (!s.topLevelDone) return;
     // A spawned task that failed and was never awaited surfaces as the program's
     // failure rather than being swallowed.
@@ -733,51 +736,42 @@ function createTaskScheduler(b, runtime, makeByteArrayFn) {
     });
   }
 
-  // suspend_sleep(ms) -> void
-  function suspendSleep(ms) {
-    const caller = s.current;
-    const delay = Number(ms);
+  function schedulerAwareHost(caller, op) {
     s.pendingHost++;
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        s.pendingHost--;
-        s.runnable.push({ kind: "resume", id: caller, fire: () => resolve() });
-        schedule();
-      }, delay > 0 ? delay : 0);
+    const p = new Promise((resolve, reject) => {
+      Promise.resolve()
+        .then(op)
+        .then(
+          (value) => {
+            s.pendingHost--;
+            s.runnable.push({ kind: "resume", id: caller, fire: () => resolve(value) });
+            schedule();
+          },
+          (err) => {
+            s.pendingHost--;
+            s.runnable.push({ kind: "resume", id: caller, fire: () => reject(asError(err)) });
+            schedule();
+          },
+        );
     });
+    schedule();
+    return p;
   }
 
-  // suspend_read_stdin(max) -> anyref (boxed Vector<Byte>)
-  function suspendReadStdin(max) {
-    const caller = s.current;
-    s.pendingHost++;
-    return (async () => {
-      let bytes;
-      try {
-        bytes = await runtime.host.readStdinAsync(Number(max), 2147483647, runtime);
-      } catch (e) {
-        return await new Promise((_, reject) => {
-          s.pendingHost--;
-          s.runnable.push({ kind: "resume", id: caller, fire: () => reject(asError(e)) });
-          schedule();
-        });
-      }
-      const vec = makeByteArrayFn(b, bytes);
-      return await new Promise((resolve) => {
-        s.pendingHost--;
-        s.runnable.push({ kind: "resume", id: caller, fire: () => resolve(vec) });
-        schedule();
-      });
-    })();
+  function wrapHostSuspending(op) {
+    return (...args) => {
+      const caller = s.current;
+      return schedulerAwareHost(caller, () => op(...args));
+    };
   }
 
   s.imports = {
     task_create: taskCreate,
     suspend_await: new WebAssembly.Suspending(suspendAwait),
     suspend_yield: new WebAssembly.Suspending(suspendYield),
-    suspend_sleep: new WebAssembly.Suspending(suspendSleep),
-    suspend_read_stdin: new WebAssembly.Suspending(suspendReadStdin),
   };
+
+  s.wrapHostSuspending = (op) => new WebAssembly.Suspending(wrapHostSuspending(op));
 
   s.onTopLevelComplete = () => onComplete(TOP, undefined);
   s.onTopLevelFail = (e) => onFail(TOP, e);
@@ -840,7 +834,7 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
   const needsTasks = moduleNeedsTasks(mainModule);
   let scheduler = null;
   if (needsTasks && jspi) {
-    scheduler = createTaskScheduler(b, runtime, makeByteArray);
+    scheduler = createTaskScheduler();
     hostImports.task = scheduler.imports;
   }
 
@@ -887,23 +881,32 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
   }
 
   if (hasJspi) {
+    const suspendHost = needsTasks
+      ? (op) => scheduler.wrapHostSuspending(op)
+      : (op) => new WebAssembly.Suspending(op);
+
+    hostImports.host.sleep = suspendHost(
+      (ms) => new Promise((resolve) => setTimeout(resolve, Number(ms) > 0 ? Number(ms) : 0)),
+    );
+
     // Wrap stdin reads as suspending imports so the event loop stays free while
     // Twinkle waits for LSP input. Keep chunk and timeout reads on the same
     // stream-based path; mixing process.stdin.read() with fs.readSync(0, ...)
     // can strand bytes in Node's stream buffer.
-    hostImports.host.stdin_read_chunk = new WebAssembly.Suspending(
+    hostImports.host.stdin_read_chunk = suspendHost(
       async (maxBytes) =>
         makeByteArray(b, await runtime.host.readStdinAsync(maxBytes, 2147483647, runtime)),
     );
-    hostImports.host.stdin_read_timeout = new WebAssembly.Suspending(
+    hostImports.host.stdin_read_timeout = suspendHost(
       async (maxBytes, timeoutMs) =>
         makeByteArray(b, await runtime.host.readStdinAsync(maxBytes, timeoutMs, runtime)),
     );
 
     // Wrap run_wasm as a suspending import so child programs can themselves use
-    // JSPI suspending imports.
+    // JSPI suspending imports. In task-enabled programs this also preserves the
+    // scheduler's single-resume discipline.
     const childBridgeBytes = opts.bridgeBytes;
-    hostImports.host.run_wasm = new WebAssembly.Suspending(
+    hostImports.host.run_wasm = suspendHost(
       async (bytesRef, argvRef) => {
         const childBytes = decodeByteArray(b, bytesRef);
         const childArgv = decodeStringArray(b, argvRef);

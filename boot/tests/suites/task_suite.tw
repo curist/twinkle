@@ -1,3 +1,5 @@
+use @std.time
+
 use tests.assert
 use tests.runner
 
@@ -394,7 +396,7 @@ pub fn suite() runner.Suite {
       fn() {
         log := Cell.new("")
         sleeper := Task.spawn(fn() {
-          Task.sleep(5)
+          time.sleep(5)
           log.update(fn(s) { s.concat("slept") })
         })
         runner_task := Task.spawn(fn() {
@@ -402,6 +404,7 @@ pub fn suite() runner.Suite {
         })
         sleeper.await()
         runner_task.await()
+
         // The non-sleeping task runs while the sleeper is parked on the timer.
         try assert.equal(log.get(), "ranslept")
         .Ok({})

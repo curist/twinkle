@@ -267,7 +267,7 @@ mod tests {
         ));
         fs::write(
             &path,
-            "t := Task.spawn(fn() Int {\n  Task.yield()\n  42\n})\nTask.sleep(1)\nbytes := Task.read_stdin(1)\nbytes.len() + Task.await(t)\n",
+            "use @std.io\nuse @std.time\n\nt := Task.spawn(fn() Int {\n  Task.yield()\n  time.sleep(1)\n  42\n})\nbytes := io.read_stdin_chunk(1)\nbytes.len() + Task.await(t)\n",
         )
         .expect("write task smoke source");
         let wat = build_wat(path.to_str().unwrap())
@@ -287,12 +287,20 @@ mod tests {
             "missing suspend_yield import"
         );
         assert!(
-            wat.contains(r#"(import "task" "suspend_sleep""#),
-            "missing suspend_sleep import"
+            wat.contains(r#"(import "host" "sleep""#),
+            "missing host.sleep import"
         );
         assert!(
-            wat.contains(r#"(import "task" "suspend_read_stdin""#),
-            "missing suspend_read_stdin import"
+            wat.contains(r#"(import "host" "stdin_read_chunk""#),
+            "missing host.stdin_read_chunk import"
+        );
+        assert!(
+            !wat.contains(r#"(import "task" "suspend_sleep""#),
+            "sleep should import host.sleep, not task.suspend_sleep"
+        );
+        assert!(
+            !wat.contains(r#"(import "task" "suspend_read_stdin""#),
+            "stdin should import host.stdin_read_chunk, not task.suspend_read_stdin"
         );
         assert!(
             wat.contains("(export \"__task_run\""),

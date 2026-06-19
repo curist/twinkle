@@ -1162,6 +1162,13 @@ impl ValueEnv {
             },
         );
         env.builtins.insert(
+            "__host_sleep".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Int],
+                ret: Box::new(MonoType::Void),
+            },
+        );
+        env.builtins.insert(
             "__host_run_wasm".to_string(),
             MonoType::Function {
                 params: vec![

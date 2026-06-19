@@ -4753,8 +4753,6 @@ fn emit_prelude_call(
         LoweringKind::TaskSpawn => emit_task_spawn_intrinsic(args, bind_ty, ctx),
         LoweringKind::TaskAwait => emit_task_await_intrinsic(args, bind_ty, ctx),
         LoweringKind::TaskYield => emit_task_yield_intrinsic(bind_ty, ctx),
-        LoweringKind::TaskSleep => emit_task_sleep_intrinsic(args, bind_ty, ctx),
-        LoweringKind::TaskReadStdin => emit_task_read_stdin_intrinsic(args, bind_ty, ctx),
     }
 }
 
@@ -5591,8 +5589,6 @@ const TASK_HOST_MODULE: &str = "task";
 const TASK_CREATE: &str = "task_create";
 const SUSPEND_AWAIT: &str = "suspend_await";
 const SUSPEND_YIELD: &str = "suspend_yield";
-const SUSPEND_SLEEP: &str = "suspend_sleep";
-const SUSPEND_READ_STDIN: &str = "suspend_read_stdin";
 
 fn emit_task_spawn_intrinsic(
     args: &[Atom],
@@ -5627,31 +5623,6 @@ fn emit_task_yield_intrinsic(bind_ty: &ValType, ctx: &mut EmitCtx<'_>) -> Vec<In
     ensure_suspend_yield_import(ctx);
     let mut instrs = vec![Instr::Call(SUSPEND_YIELD.to_string())];
     instrs.extend(emit_void_value(Some(bind_ty)));
-    instrs
-}
-
-fn emit_task_sleep_intrinsic(
-    args: &[Atom],
-    bind_ty: &ValType,
-    ctx: &mut EmitCtx<'_>,
-) -> Vec<Instr> {
-    ensure_suspend_sleep_import(ctx);
-    let mut instrs = emit_atom(&args[0], Some(&ValType::I64), ctx);
-    instrs.push(Instr::Call(SUSPEND_SLEEP.to_string()));
-    instrs.extend(emit_void_value(Some(bind_ty)));
-    instrs
-}
-
-fn emit_task_read_stdin_intrinsic(
-    args: &[Atom],
-    _bind_ty: &ValType,
-    ctx: &mut EmitCtx<'_>,
-) -> Vec<Instr> {
-    ensure_suspend_read_stdin_import(ctx);
-    ensure_rt_arr_from_array_import(ctx);
-    let mut instrs = emit_atom(&args[0], Some(&ValType::I64), ctx);
-    instrs.push(Instr::Call(SUSPEND_READ_STDIN.to_string()));
-    instrs.push(Instr::Call("rt_arr__from_array".to_string()));
     instrs
 }
 
@@ -5707,11 +5678,7 @@ fn op_uses_task_ops(op: &AnfOp) -> bool {
             ..
         } => matches!(
             *func_id,
-            prelude_ids::TASK_SPAWN
-                | prelude_ids::TASK_AWAIT
-                | prelude_ids::TASK_YIELD
-                | prelude_ids::TASK_SLEEP
-                | prelude_ids::TASK_READ_STDIN
+            prelude_ids::TASK_SPAWN | prelude_ids::TASK_AWAIT | prelude_ids::TASK_YIELD
         ),
         AnfOp::AIf {
             then_branch,
@@ -7797,26 +7764,6 @@ fn ensure_suspend_yield_import(ctx: &mut EmitCtx<'_>) {
         as_sym: SUSPEND_YIELD.to_string(),
         params: vec![],
         results: vec![],
-    });
-}
-
-fn ensure_suspend_sleep_import(ctx: &mut EmitCtx<'_>) {
-    ctx.add_import(ImportDef {
-        module: TASK_HOST_MODULE.to_string(),
-        name: SUSPEND_SLEEP.to_string(),
-        as_sym: SUSPEND_SLEEP.to_string(),
-        params: vec![ValType::I64],
-        results: vec![],
-    });
-}
-
-fn ensure_suspend_read_stdin_import(ctx: &mut EmitCtx<'_>) {
-    ctx.add_import(ImportDef {
-        module: TASK_HOST_MODULE.to_string(),
-        name: SUSPEND_READ_STDIN.to_string(),
-        as_sym: SUSPEND_READ_STDIN.to_string(),
-        params: vec![ValType::I64],
-        results: vec![ref_array()],
     });
 }
 

@@ -5,13 +5,15 @@
 //
 //   interval 0->1 : B1 single-task Task.yield() throughput
 //   interval 1->2 : B2 spawn + await round-trip (waiter park + completion wake)
-//   interval 2->3 : B3 Task.sleep(0) host-readiness latency (timer-floor bound)
+//   interval 2->3 : B3 time.sleep(0) host-readiness latency (timer-floor bound)
 //   interval 3->4 : B4 LSP-shaped dispatch (per request: spawn worker, yield, await)
 //
 // `bench.mark(label)` records performance.now() on the JS side per call. The
 // runtime wraps the mark extern in a Suspending adapter, but that cost is a
 // single suspend per interval boundary — negligible against the per-interval
 // operation counts below.
+use @std.time
+
 extern bench {
   fn mark(label: Int)
   fn sink(value: Int)
@@ -57,7 +59,7 @@ bench.mark(2)
 // measures the timer floor, not pure switching cost.
 b3 := Task.spawn(fn() Int {
   for i in range(sleeps) {
-    Task.sleep(0)
+    time.sleep(0)
   }
 
   sleeps

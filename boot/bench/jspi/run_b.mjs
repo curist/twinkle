@@ -92,6 +92,6 @@ const row = (label, ms, n) =>
   );
 row(`B1 Task.yield() round-trip`, b1, YIELDS);
 row(`B2 spawn + await round-trip`, b2, SPAWN_AWAITS);
-row(`B3 Task.sleep(0) (timer floor, not switch)`, b3, SLEEPS);
+row(`B3 time.sleep(0) (timer floor, not switch)`, b3, SLEEPS);
 row(`B4 LSP-shaped dispatch (spawn+yield+await)`, b4, REQUESTS);
 console.log("");
