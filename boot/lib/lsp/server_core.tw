@@ -49,6 +49,8 @@ use lib.query.keys
 use lib.source.identity
 use lib.text.line_index
 
+pub type DiagTier = { Parse, Full }
+
 pub type State = .{
   initialized: Bool,
   shutdown_requested: Bool,
@@ -57,7 +59,10 @@ pub type State = .{
   query_cache: query_cache.Store,
   diagnostics_pending: Bool,
   diagnostics_deadline_ms: Float,
-  last_published_versions: Dict<String, Int>,
+  diagnostics_tier: DiagTier,
+  parse_dirty_uris: Dict<String, Bool>,
+  full_dirty: Bool,
+  last_published: Dict<String, String>,
   closure_snapshot: analyze.ClosureSnapshot?,
 }
 
@@ -72,7 +77,10 @@ pub fn initial_state() State {
     query_cache: query_cache.empty(),
     diagnostics_pending: false,
     diagnostics_deadline_ms: 0.0,
-    last_published_versions: Dict.new(),
+    diagnostics_tier: .Full,
+    parse_dirty_uris: Dict.new(),
+    full_dirty: false,
+    last_published: Dict.new(),
     closure_snapshot: .None,
   }
 }
@@ -711,7 +719,7 @@ pub fn diagnostics_due(state: State) Bool {
 pub fn publish_due_diagnostics(state: State) Step {
   if state.diagnostics_pending and date.now() >= state.diagnostics_deadline_ms {
     state.diagnostics_pending = false
-    return state.publish_workspace_diagnostics(true)
+    return state.publish_workspace_diagnostics()
   }
 
   .{ state, outgoing: [] }
@@ -734,7 +742,7 @@ fn note_changed_document_source(state: State, uri: String, text: String) State {
   state
 }
 
-fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
+fn publish_workspace_diagnostics(state: State) Step {
   open_docs := state.documents.docs.values()
   overlay_docs := collect doc in open_docs {
     query_diagnostics.DocumentInput.{ uri: doc.uri, text: doc.text, version: doc.version }
@@ -781,7 +789,7 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
 
       case document_by_identity_uri(state.documents, group.uri) {
         .Some(group_doc) => if !published.has(group.uri)
-          and state.should_publish_diagnostics(group_doc, suppress_duplicates) {
+          and state.should_publish_diagnostics(group_doc, group.diagnostics) {
           outgoing = .append(
             lsp_diagnostics.publish_diagnostics(
               group_doc.uri,
@@ -790,7 +798,7 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
               group.diagnostics,
             ),
           )
-          state = .mark_published_version(group_doc)
+          state = .mark_published(group_doc, group.diagnostics)
           published[group.uri] = true
         },
         .None => {},
@@ -819,7 +827,7 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
 
         case document_by_identity_uri(state.documents, group.uri) {
           .Some(group_doc) => if !published.has(group.uri)
-            and state.should_publish_diagnostics(group_doc, suppress_duplicates) {
+            and state.should_publish_diagnostics(group_doc, group.diagnostics) {
             outgoing = .append(
               lsp_diagnostics.publish_diagnostics(
                 group_doc.uri,
@@ -828,7 +836,7 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
                 group.diagnostics,
               ),
             )
-            state = .mark_published_version(group_doc)
+            state = .mark_published(group_doc, group.diagnostics)
             published[group.uri] = true
           },
           .None => {},
@@ -841,26 +849,38 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
   .{ state, outgoing }
 }
 
-fn should_publish_diagnostics(state: State, doc: document_store.Document, suppress_duplicates: Bool) Bool {
-  if !suppress_duplicates {
-    return true
+fn diagnostics_signature(version: Int?, diags: Vector<query_diagnostics.Diagnostic>) String {
+  acc := case version {
+    .Some(n) => "${n}",
+    .None => "none",
   }
 
-  case doc.version {
-    .Some(version) => case state.last_published_versions[doc.identity.uri] {
-      .Some(last_version) => last_version != version,
-      .None => true,
-    },
+  for d in diags {
+    acc = "${acc}\n${query_diagnostics.diagnostic_key(d)}"
+  }
+
+  acc
+}
+
+fn should_publish_diagnostics(
+  state: State,
+  doc: document_store.Document,
+  diags: Vector<query_diagnostics.Diagnostic>,
+) Bool {
+  sig := diagnostics_signature(doc.version, diags)
+
+  case state.last_published[doc.identity.uri] {
+    .Some(prev) => prev != sig,
     .None => true,
   }
 }
 
-fn mark_published_version(state: State, doc: document_store.Document) State {
-  case doc.version {
-    .Some(version) => state.last_published_versions[doc.identity.uri] = version,
-    .None => {},
-  }
-
+fn mark_published(
+  state: State,
+  doc: document_store.Document,
+  diags: Vector<query_diagnostics.Diagnostic>,
+) State {
+  state.last_published[doc.identity.uri] = diagnostics_signature(doc.version, diags)
   state
 }
 

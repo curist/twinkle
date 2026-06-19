@@ -142,7 +142,10 @@ pub fn suite() runner.Suite {
           query_cache: query_cache.empty(),
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
-          last_published_versions: Dict.new(),
+          last_published: Dict.new(),
+          diagnostics_tier: .Full,
+          parse_dirty_uris: Dict.new(),
+          full_dirty: false,
           closure_snapshot: .None,
         }
         params := json.object([
@@ -178,7 +181,10 @@ pub fn suite() runner.Suite {
           query_cache: query_cache.empty(),
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
-          last_published_versions: Dict.new(),
+          last_published: Dict.new(),
+          diagnostics_tier: .Full,
+          parse_dirty_uris: Dict.new(),
+          full_dirty: false,
           closure_snapshot: .None,
         }
         change_event := json.object([
@@ -226,7 +232,10 @@ pub fn suite() runner.Suite {
           query_cache: query_cache.empty(),
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
-          last_published_versions: Dict.new(),
+          last_published: Dict.new(),
+          diagnostics_tier: .Full,
+          parse_dirty_uris: Dict.new(),
+          full_dirty: false,
           closure_snapshot: .None,
         }
 
@@ -291,7 +300,10 @@ pub fn suite() runner.Suite {
           query_cache: query_cache.empty(),
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
-          last_published_versions: Dict.new(),
+          last_published: Dict.new(),
+          diagnostics_tier: .Full,
+          parse_dirty_uris: Dict.new(),
+          full_dirty: false,
           closure_snapshot: .None,
         }
         params := json.object([
@@ -432,7 +444,10 @@ pub fn suite() runner.Suite {
           query_cache: query_cache.empty(),
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
-          last_published_versions: Dict.new(),
+          last_published: Dict.new(),
+          diagnostics_tier: .Full,
+          parse_dirty_uris: Dict.new(),
+          full_dirty: false,
           closure_snapshot: .None,
         }
         params := json.object([
@@ -468,7 +483,10 @@ pub fn suite() runner.Suite {
           query_cache: query_cache.empty(),
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
-          last_published_versions: Dict.new(),
+          last_published: Dict.new(),
+          diagnostics_tier: .Full,
+          parse_dirty_uris: Dict.new(),
+          full_dirty: false,
           closure_snapshot: .None,
         }
         params := json.object([
@@ -550,7 +568,10 @@ pub fn suite() runner.Suite {
           query_cache: query_cache.empty(),
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
-          last_published_versions: Dict.new(),
+          last_published: Dict.new(),
+          diagnostics_tier: .Full,
+          parse_dirty_uris: Dict.new(),
+          full_dirty: false,
           closure_snapshot: .None,
         }
         params := json.object([
@@ -592,7 +613,10 @@ pub fn suite() runner.Suite {
           query_cache: query_cache.empty(),
           diagnostics_pending: true,
           diagnostics_deadline_ms: 999999999999.0,
-          last_published_versions: Dict.new(),
+          last_published: Dict.new(),
+          diagnostics_tier: .Full,
+          parse_dirty_uris: Dict.new(),
+          full_dirty: false,
           closure_snapshot: .None,
         }
         params := json.object([
@@ -638,7 +662,10 @@ pub fn suite() runner.Suite {
           query_cache: query_cache.empty(),
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
-          last_published_versions: Dict.new(),
+          last_published: Dict.new(),
+          diagnostics_tier: .Full,
+          parse_dirty_uris: Dict.new(),
+          full_dirty: false,
           closure_snapshot: .None,
         }
 
@@ -755,7 +782,10 @@ pub fn suite() runner.Suite {
           query_cache: query_cache.empty(),
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
-          last_published_versions: Dict.new(),
+          last_published: Dict.new(),
+          diagnostics_tier: .Full,
+          parse_dirty_uris: Dict.new(),
+          full_dirty: false,
           closure_snapshot: .None,
         }
 
@@ -828,7 +858,10 @@ pub fn suite() runner.Suite {
           query_cache: query_cache.empty(),
           diagnostics_pending: false,
           diagnostics_deadline_ms: 0.0,
-          last_published_versions: Dict.new(),
+          last_published: Dict.new(),
+          diagnostics_tier: .Full,
+          parse_dirty_uris: Dict.new(),
+          full_dirty: false,
           closure_snapshot: .None,
         }
 

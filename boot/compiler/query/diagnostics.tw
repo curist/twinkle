@@ -254,7 +254,7 @@ fn dedupe_diagnostics(diags: Vector<Diagnostic>) Vector<Diagnostic> {
   out
 }
 
-fn diagnostic_key(d: Diagnostic) String {
+pub fn diagnostic_key(d: Diagnostic) String {
   span_key := case d.span {
     .Some(s) => "${s.start}:${s.end}",
     .None => "none",
