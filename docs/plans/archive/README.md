@@ -167,6 +167,9 @@ Related historical context outside this folder:
 | [lsp-diagnostics-completion.md](lsp-diagnostics-completion.md) | Phase 2 plan for `twk lsp` diagnostics publishing, completion, and simple `///` doc comments |
 | [lsp-hover-goto-definition.md](lsp-hover-goto-definition.md) | Phase 1 implementation plan for `twk lsp` hover and go-to-definition |
 | [lsp-file-watching.md](lsp-file-watching.md) | Watched-file refresh plan for `twk lsp` disk snapshot updates and diagnostics refresh |
+| [lsp-task-migration.md](lsp-task-migration.md) | CP19 migration of LSP transport, debounce timers, and diagnostics publication onto cooperative `Task` primitives; future worker-isolation end-game notes preserved in the plan |
+| [lsp-save-vs-edit-gating.md](lsp-save-vs-edit-gating.md) | Split LSP diagnostics into parse-only edit-tier work and full workspace analysis on open/save/close |
+| [lsp-save-vs-edit-gating-implementation.md](lsp-save-vs-edit-gating-implementation.md) | Implementation checklist for save-vs-edit diagnostics gating, archived after the branch landed |
 | [boot-lsp-query-layer.md](boot-lsp-query-layer.md) | Boot LSP query layer for workspace-aware diagnostics, source overlays, cache invalidation, and reusable semantic snapshots |
 | [boot-lsp-hover-parity.md](boot-lsp-hover-parity.md) | Boot LSP hover parity with stage0: symbol-aware function/method hover, binders, user and prelude docs, variant hover, and UTF-16 stability |
 | [twinkle-test-runner-suites.md](twinkle-test-runner-suites.md) | Twinkle-native test runner and suite infrastructure in `boot/tests/` |

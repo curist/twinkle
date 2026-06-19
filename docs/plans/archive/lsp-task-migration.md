@@ -1,6 +1,6 @@
 # LSP Task Migration Plan
 
-Status: **In progress**.
+Status: **Archived.** CP19 (the LSP task migration) is complete, and the first slice of the non-blocking end-game — save-vs-edit diagnostics gating (M6) — is implemented (branch `task-concurrency-jspi-fiber`, commits `5f638f7`..`384f2b2`; design archived alongside this file as `lsp-save-vs-edit-gating.md`). The remaining non-blocking end-game work below — host primitives (spawn/kill/channel), Tier-B worker isolation, the sole-owner actor refactor, per-root state, message ordering, and layered snapshots — is **not yet implemented** and is captured here for whoever picks it up.
 
 This plan tracks CP19 from `task-concurrency-jspi-fiber-implementation.md`: moving the LSP transport and background work onto Twinkle `Task` primitives after the JSPI scheduler and Task ABI are in place.
 

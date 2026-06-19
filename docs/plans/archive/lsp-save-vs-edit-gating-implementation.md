@@ -1,5 +1,7 @@
 # LSP Save-vs-Edit Diagnostics Gating — Implementation Plan
 
+Status: **Implemented** — all seven tasks landed on branch `task-concurrency-jspi-fiber` (commits `5f638f7`..`384f2b2`), each spec- and quality-reviewed; self-host green, boot suite passing. Archived for reference; the unchecked checkboxes below reflect the original plan, not remaining work.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Split LSP diagnostics by trigger — cheap parse-only analysis of changed documents while editing, full workspace analysis only on open/save — so typing no longer pays for a whole-workspace typecheck.
@@ -8,7 +10,7 @@
 
 **Tech Stack:** Twinkle (`.tw`), the boot compiler. Build: `target/twk build`. Tests: `target/twk run boot/tests/main.tw`. No Rust/stage0 changes (boot-only).
 
-**Design source:** `docs/plans/lsp-save-vs-edit-gating.md`.
+**Design source:** [lsp-save-vs-edit-gating.md](lsp-save-vs-edit-gating.md).
 
 ---
 

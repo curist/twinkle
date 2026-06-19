@@ -85,6 +85,18 @@ Mutable reference cell for imperative state.
 | `.set(v)` | `fn<T>(c: Cell<T>, v: T) Void` | Overwrite value |
 | `.update(f)` | `fn<T>(c: Cell<T>, f: fn(T) T) Void` | Apply `f` to current value and store result |
 
+### `Task<T>`
+
+Cooperative task handle. Tasks run on the same program thread and switch only at explicit suspension points (`await`, `yield`, `sleep`, or task-aware host operations); they are not CPU-parallel.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Task.spawn` | `fn<T>(f: fn() T) Task<T>` | Start `f` as a task and return a handle for its eventual result |
+| `Task.await` | `fn<T>(task: Task<T>) T` | Suspend until `task` completes, then return its result; propagates a task failure as a trap |
+| `Task.yield` | `fn() Void` | Yield control to the scheduler so another runnable task can make progress |
+| `Task.sleep` | `fn(ms: Int) Void` | Suspend the current task for at least `ms` milliseconds |
+| `Task.read_stdin` | `fn(max: Int) Vector<Byte>` | Suspend until stdin has up to `max` bytes available or reaches EOF; returns an empty vector at EOF |
+
 ### `Range`
 Record with fields `{ start: Int, end: Int, step: Int }`. Iterable in `for` loops.
 

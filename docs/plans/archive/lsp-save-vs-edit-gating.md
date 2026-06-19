@@ -1,6 +1,6 @@
 # LSP Save-vs-Edit Diagnostics Gating (M6)
 
-Status: **Design approved**.
+Status: **Implemented** (branch `task-concurrency-jspi-fiber`, commits `5f638f7`..`384f2b2`; self-host green, boot suite passing).
 
 This is the first slice of the non-blocking end-game tracked in
 [lsp-task-migration.md](lsp-task-migration.md) (the "Non-blocking end-game"
