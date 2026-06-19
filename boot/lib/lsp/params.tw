@@ -31,6 +31,8 @@ pub type DefinitionParams = .{ text_document: TextDocumentIdentifier, position: 
 
 pub type DidCloseTextDocumentParams = .{ text_document: TextDocumentIdentifier }
 
+pub type DidSaveTextDocumentParams = .{ text_document: TextDocumentIdentifier }
+
 pub type CompletionParams = .{ text_document: TextDocumentIdentifier, position: Position }
 
 pub type CodeActionParams = .{
@@ -95,6 +97,12 @@ pub fn decode_definition(params: json.Json?) Result<DefinitionParams, String> {
 }
 
 pub fn decode_did_close(params: json.Json?) Result<DidCloseTextDocumentParams, String> {
+  value := try required_params(params)
+  text_document := try value.decode(json.field("textDocument", text_document_identifier_decoder()))
+  .Ok(.{ text_document })
+}
+
+pub fn decode_did_save(params: json.Json?) Result<DidSaveTextDocumentParams, String> {
   value := try required_params(params)
   text_document := try value.decode(json.field("textDocument", text_document_identifier_decoder()))
   .Ok(.{ text_document })

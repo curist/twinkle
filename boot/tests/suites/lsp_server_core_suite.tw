@@ -51,7 +51,11 @@ pub fn suite() runner.Suite {
         result := try out.decode(json.field("result", json.raw()))
         caps := try result.decode(json.field("capabilities", json.raw()))
         try assert.equal(try caps.decode(json.field("positionEncoding", json.string())), "utf-16")
-        try assert.equal(try caps.decode(json.field("textDocumentSync", json.int())), 2)
+        sync := try caps.decode(json.field("textDocumentSync", json.raw()))
+        try assert.is_true(try sync.decode(json.field("openClose", json.bool())))
+        try assert.equal(try sync.decode(json.field("change", json.int())), 2)
+        save := try sync.decode(json.field("save", json.raw()))
+        try assert.is_true(!try save.decode(json.field("includeText", json.bool())))
         info := try result.decode(json.field("serverInfo", json.raw()))
         try assert.equal(try info.decode(json.field("name", json.string())), "twinkle-lsp")
         .Ok({})
@@ -322,7 +326,15 @@ pub fn suite() runner.Suite {
           method: "textDocument/didChange",
           params: .Some(params),
         })
-        step := publish_due_now(state.handle_message(msg))
+        changed := state.handle_message(msg)
+        save_params := json.object([
+          json.kv("textDocument", json.object([json.kv("uri", .Str("file:///tmp/dep.tw"))])),
+        ])
+        save_msg := protocol.Message.Notification(.{
+          method: "textDocument/didSave",
+          params: .Some(save_params),
+        })
+        step := publish_due_now(changed.state.handle_message(save_msg))
         try assert.equal(step.outgoing.len(), 2)
         importer_out := try published_for(step, "file:///tmp/a.tw")
         try assert.is_true(try diagnostic_count(importer_out) > 0)
@@ -464,7 +476,15 @@ pub fn suite() runner.Suite {
           method: "textDocument/didChange",
           params: .Some(params),
         })
-        step := publish_due_now(state.handle_message(msg))
+        changed := state.handle_message(msg)
+        save_params := json.object([
+          json.kv("textDocument", json.object([json.kv("uri", .Str("file:///tmp/dep.tw"))])),
+        ])
+        save_msg := protocol.Message.Notification(.{
+          method: "textDocument/didSave",
+          params: .Some(save_params),
+        })
+        step := publish_due_now(changed.state.handle_message(save_msg))
         try assert.equal(step.outgoing.len(), 2)
         importer_out := try published_for(step, "file:///tmp/a.tw")
         try assert.equal(try diagnostic_count(importer_out), 0)
@@ -809,7 +829,15 @@ pub fn suite() runner.Suite {
           method: "textDocument/didChange",
           params: .Some(change_params),
         })
-        step := publish_due_now(state.handle_message(msg))
+        changed := state.handle_message(msg)
+        save_params := json.object([
+          json.kv("textDocument", json.object([json.kv("uri", .Str("file:///tmp/main_import.tw"))])),
+        ])
+        save_msg := protocol.Message.Notification(.{
+          method: "textDocument/didSave",
+          params: .Some(save_params),
+        })
+        step := publish_due_now(changed.state.handle_message(save_msg))
 
         // Find diagnostics for main_import.tw
         main_out := try published_for(step, "file:///tmp/main_import.tw")
@@ -925,6 +953,101 @@ pub fn suite() runner.Suite {
         result := try out.decode(json.field("result", json.raw()))
         actions := try result.decode(json.raw().list())
         try assert.equal(actions.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "didSave schedules a full diagnostics run",
+      fn() {
+        opened := document_store.empty().open("file:///a.tw", "x := 1\n", .Some(1))
+        state := server_core.initial_state()
+        state.documents = opened
+        params := json.object([
+          json.kv("textDocument", json.object([json.kv("uri", .Str("file:///a.tw"))])),
+        ])
+        msg := protocol.Message.Notification(.{
+          method: "textDocument/didSave",
+          params: .Some(params),
+        })
+        step := state.handle_message(msg)
+        try assert.is_true(step.state.diagnostics_pending)
+        case step.state.diagnostics_tier {
+          .Full => .Ok({}),
+          _ => assert.fail("expected Full tier"),
+        }
+      },
+    )
+    .test(
+      "didChange schedules the parse tier",
+      fn() {
+        opened := document_store.empty().open("file:///a.tw", "old", .Some(1))
+        state := server_core.initial_state()
+        state.documents = opened
+        params := json.object([
+          json.kv(
+            "textDocument",
+            json.object([json.kv("uri", .Str("file:///a.tw")), json.kv("version", .Int(2))]),
+          ),
+          json.kv("contentChanges", json.array([json.object([json.kv("text", .Str("new"))])])),
+        ])
+        msg := protocol.Message.Notification(.{
+          method: "textDocument/didChange",
+          params: .Some(params),
+        })
+        step := state.handle_message(msg)
+        try assert.is_true(step.state.diagnostics_pending)
+        try assert.is_true(step.state.full_dirty)
+        try assert.is_true(step.state.parse_dirty_uris.has("file:///a.tw"))
+        case step.state.diagnostics_tier {
+          .Parse => .Ok({}),
+          _ => assert.fail("expected Parse tier"),
+        }
+      },
+    )
+    .test(
+      "parse publish does not suppress the save-time full publish at the same version",
+      fn() {
+        opened := document_store.empty().open("file:///a.tw", "fn answer() String { 42 }", .Some(1))
+        state := server_core.initial_state()
+        state.documents = opened
+        state.diagnostics_pending = true
+        state.diagnostics_tier = .Parse
+        dirty: Dict<String, Bool> = Dict.new()
+        dirty["file:///a.tw"] = true
+        state.parse_dirty_uris = dirty
+        state.full_dirty = true
+        after_parse := publish_due_now(.{ state, outgoing: [] })
+        full_state := after_parse.state
+        full_state.diagnostics_pending = true
+        full_state.diagnostics_tier = .Full
+        full_state.diagnostics_deadline_ms = 0.0
+        full_step := full_state.publish_due_diagnostics()
+        out := try published_for(full_step, "file:///a.tw")
+        try assert.is_true(try diagnostic_count(out) > 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "rapid edits in two docs withdraw stale diagnostics for both",
+      fn() {
+        opened := document_store
+          .empty()
+          .open("file:///a.tw", "fn f( {", .Some(2))
+          .open("file:///b.tw", "fn g( {", .Some(2))
+        state := server_core.initial_state()
+        state.documents = opened
+        state.diagnostics_pending = true
+        state.diagnostics_tier = .Parse
+        dirty: Dict<String, Bool> = Dict.new()
+        dirty["file:///a.tw"] = true
+        dirty["file:///b.tw"] = true
+        state.parse_dirty_uris = dirty
+        state.full_dirty = true
+        step := publish_due_now(.{ state, outgoing: [] })
+        a := try published_for(step, "file:///a.tw")
+        b := try published_for(step, "file:///b.tw")
+        try assert.is_true(try diagnostic_count(a) > 0)
+        try assert.is_true(try diagnostic_count(b) > 0)
         .Ok({})
       },
     )

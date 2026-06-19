@@ -101,7 +101,14 @@ fn handle_request(state: State, req: protocol.Request) Step {
           "capabilities",
           json.object([
             json.kv("positionEncoding", .Str("utf-16")),
-            json.kv("textDocumentSync", .Int(2)),
+            json.kv(
+              "textDocumentSync",
+              json.object([
+                json.kv("openClose", .Bool(true)),
+                json.kv("change", .Int(2)),
+                json.kv("save", json.object([json.kv("includeText", .Bool(false))])),
+              ]),
+            ),
             json.kv("hoverProvider", .Bool(true)),
             json.kv("definitionProvider", .Bool(true)),
             json.kv("typeDefinitionProvider", .Bool(true)),
@@ -166,6 +173,7 @@ fn handle_notification(state: State, note: protocol.Notification) Step {
     "textDocument/didOpen" => state.handle_did_open(note),
     "textDocument/didChange" => state.handle_did_change(note),
     "textDocument/didClose" => state.handle_did_close(note),
+    "textDocument/didSave" => state.handle_did_save(note),
     _ => .{ state, outgoing: [] },
   }
 }
@@ -233,7 +241,7 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
         .None => { return .{ state, outgoing: [] } },
       }
       state = .note_changed_document_source(doc.uri, final_text)
-      state.mark_diagnostics_pending(.Full, .None)
+      state.mark_diagnostics_pending(.Parse, .Some(doc.uri))
     },
     .Err(_) => .{ state, outgoing: [] },
   }
@@ -250,6 +258,13 @@ fn handle_did_close(state: State, note: protocol.Notification) Step {
       state.documents = .close(uri)
       .{ state, outgoing: [lsp_diagnostics.clear_diagnostics(uri, version)] }
     },
+    .Err(_) => .{ state, outgoing: [] },
+  }
+}
+
+fn handle_did_save(state: State, note: protocol.Notification) Step {
+  case params.decode_did_save(note.params) {
+    .Ok(_) => state.mark_diagnostics_pending(.Full, .None),
     .Err(_) => .{ state, outgoing: [] },
   }
 }
