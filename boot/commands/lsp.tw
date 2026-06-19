@@ -10,6 +10,7 @@
 /// single-threaded concurrency, not CPU parallelism; synchronous analysis is not
 /// preempted once it starts.
 
+use @std.date
 use @std.io
 use @std.proc
 
@@ -19,7 +20,6 @@ use lib.lsp.framing
 use lib.lsp.protocol
 use lib.lsp.server_core
 
-debounce_ms := 1000
 idle_sleep_ms := 1
 
 type ChunkQueue = .{ items: Cell<Vector<Vector<Byte>>>, closed: Cell<Bool>, pending: Cell<Int> }
@@ -332,8 +332,13 @@ fn process_buffer(ctx: LoopCtx, buffer: Vector<Byte>) Vector<Byte> {
 fn schedule_diagnostics(ctx: LoopCtx) {
   my_gen := ctx.gen.get() + 1
   ctx.gen.set(my_gen)
+  deadline := ctx.shared.get().diagnostics_deadline_ms
   Task.spawn(fn() {
-    Task.sleep(debounce_ms)
+    wait := deadline - date.now()
+
+    if wait > 0.0 {
+      Task.sleep(wait.to_int())
+    }
 
     if ctx.gen.get() == my_gen {
       ctx.diagnostics.push_job(my_gen)
@@ -346,13 +351,27 @@ fn run_diagnostics_job(ctx: LoopCtx, job_gen: Int) {
     return
   }
 
-  token := ctx.begin_progress("Checking workspace", "Preparing diagnostics", 0)
-  ctx.report_progress(token, "Analyzing open documents", 10)
+  is_full := case ctx.shared.get().diagnostics_tier {
+    .Full => true,
+    .Parse => false,
+  }
+
+  token := if is_full {
+    ctx.begin_progress("Checking workspace", "Preparing diagnostics", 0)
+  } else {
+    ""
+  }
+
+  if is_full {
+    ctx.report_progress(token, "Analyzing open documents", 10)
+  }
 
   step := ctx.shared.get().publish_due_diagnostics()
 
   if ctx.gen.get() == job_gen {
-    ctx.report_progress(token, "Publishing diagnostics", 90)
+    if is_full {
+      ctx.report_progress(token, "Publishing diagnostics", 90)
+    }
     ctx.shared.set(step.state)
 
     for out in step.outgoing {
