@@ -184,6 +184,26 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "analyze_parse reports parse diagnostics",
+      fn() {
+        result := diagnostics.analyze_parse(cache.empty(), input("fn f( {"))
+        try assert.is_true(result.diagnostics.len() > 0)
+        try assert.equal(result.diagnostics[0].stage, "parse")
+        try assert.equal(result.diagnostics[0].uri, "file:///main.tw")
+        try assert.equal(try result.diagnostics[0].version.ok_or("missing version"), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "analyze_parse ignores type errors (no false positives)",
+      fn() {
+        // analyze_document flags this as a "check" type mismatch; parse-only must not.
+        result := diagnostics.analyze_parse(cache.empty(), input("fn answer() String { 42 }"))
+        try assert.equal(result.diagnostics.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
       "reuses cached stages on second analysis",
       fn() {
         first := diagnostics.analyze_document(cache.empty(), input("x := 1\n"))

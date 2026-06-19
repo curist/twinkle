@@ -89,6 +89,19 @@ pub fn analyze_document(store: cache.Store, input: DocumentInput) AnalysisResult
   .{ cache: cur_cache, diagnostics: [] }
 }
 
+/// Parse-only single-document analysis. Unlike `analyze_document` this stops
+/// after parsing, so it never emits the false resolve/typecheck diagnostics that
+/// single-file analysis produces for any document with `use` imports. Used by the
+/// LSP edit tier, where only syntactic errors are reliably correct without the
+/// import closure.
+pub fn analyze_parse(store: cache.Store, input: DocumentInput) AnalysisResult {
+  source_hash := keys.hash_text(input.text)
+  runner := stage_runner.new(input.uri, source_hash, 0, 0, false)
+  parsed_out := stage_runner.parse(runner, store, input.text, 0)
+  parsed := parsed_out.value
+  .{ cache: parsed_out.store, diagnostics: input.convert_diagnostics("parse", parsed.diagnostics) }
+}
+
 pub fn analyze_workspace(
   store: cache.Store,
   input: WorkspaceInput,
