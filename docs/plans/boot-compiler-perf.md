@@ -23,90 +23,102 @@ For wall-clock checks, run the same build without timing output:
 Use same-session A/B comparisons for optimization work. Whole-pipeline timings
 are noisy enough that a single sample should not justify a change by itself.
 
-## Current baseline: 2026-05-13
+## Current baseline: 2026-06-20
 
-Measured with the current bundled CLI (`target/twk`) compiling `boot/main.tw`.
-The boot compiler currently loads 174 modules and emits 1995 functions for this
-workload.
+Measured with the current bundled CLI (`target/twk`) compiling `boot/main.tw`,
+two same-session timing runs plus three wall-clock samples. The boot compiler now
+loads 215 modules and emits 2939 functions for this workload — a much larger
+graph than the May snapshot (174 modules / 1995 functions), reflecting the
+channels, task-concurrency, terminal-framework, and LSP work that has landed
+since.
 
-Wall-clock self-compilation remains roughly in the same range as the previous
-baseline:
-
-```text
-real: ~2.8s - 3.0s
-```
-
-Representative phase timing:
+Wall-clock self-compilation has grown roughly in proportion to the larger graph:
 
 ```text
-compile_modules    ~1095ms
-emit_module         ~339ms
-optimize            ~251ms
-prepare_backend     ~205ms
-emit_wasm_binary    ~188ms
-verify              ~175ms
-link                ~117ms
-core_link           ~107ms
-plan_wasm_types      ~61ms
-lower_anf            ~50ms
-monomorphize         ~48ms
-closure_convert      ~18ms
+real: ~4.07s - 4.11s
 ```
 
-Frontend subphase timing is now instrumented under `TWINKLE_TIMINGS=1`:
+Representative phase timing (range across the two runs):
 
 ```text
-load_source       ~142ms
-parse              ~56ms
-plan_deps         ~114ms
-dep_hashes          ~5ms
-env_extend          ~8ms
-import_merge      ~276ms
-resolve            ~92ms
-typecheck         ~168ms
-publish            ~51ms
-unused_imports     ~21ms
-lower             ~143ms
+compile_modules    ~1690 - 1850ms
+emit_module         ~386 - 409ms
+optimize            ~331 - 373ms
+prepare_backend     ~316 - 337ms
+verify              ~290 - 295ms
+emit_wasm_binary    ~236 - 256ms
+core_link           ~232 - 243ms
+link                ~185 - 197ms
+plan_wasm_types     ~103 - 107ms
+lower_anf            ~86 - 92ms
+monomorphize         ~68 - 72ms
+wasm_dce             ~44 - 54ms
+closure_convert      ~22 - 25ms
 ```
 
-The standout frontend cost is import/interface merging. Type checking, module
-lowering, source loading, and dependency planning form the next tier. The
-instrumented frontend buckets account for nearly all of `compile_modules`; the
-remaining uninstrumented overhead in the representative run was about 20ms.
+`wasm_dce` is a new phase since the May baseline. The biggest relative growth is
+in the frontend (see below) and in `verify` (~175ms → ~290ms), tracking the
+larger function count.
+
+Frontend subphase timing (range across the two runs):
+
+```text
+import_merge      ~408 - 443ms
+typecheck         ~369 - 406ms
+lower             ~248 - 257ms
+plan_deps         ~189 - 204ms
+resolve           ~130 - 144ms
+load_source       ~123 - 139ms
+parse              ~93 - 106ms
+publish            ~56 - 62ms
+env_extend         ~17 - 20ms
+unused_imports     ~14 - 17ms
+dep_hashes          ~6ms
+```
+
+Import/interface merging is still the standout frontend cost, but `typecheck`
+(~168ms → ~390ms) and `lower` (~143ms → ~250ms) have grown the most in absolute
+terms and are now firmly in the same tier. The instrumented frontend buckets
+account for nearly all of `compile_modules`.
 
 Deeper import timing shows this is cumulative rather than one pathological edge:
 
 ```text
-import edges:       2316
-module imports:      272, ~59ms total
-selective imports:   604, ~165ms total
-prelude imports:    1440, ~41ms total
-export entries processed while merging: ~91500
+import edges:       3426
+module imports:      357, ~77ms total
+selective imports:   717, ~180ms total
+prelude imports:    2352, ~180ms total
+export entries processed while merging: ~144900
 ```
 
-Selective imports are the largest import-merge bucket despite fewer edges than
-prelude imports. The current selective path registers the full imported
-interface first, then binds only selected names, so many `use module.{...}` edges
-still pay full-interface registration cost. No single import edge dominates;
-the largest observed edges were only around one to two milliseconds, so this is
-cumulative modular overhead rather than an isolated pathological dependency.
+Selective and prelude imports are now tied as the largest import-merge buckets.
+Prelude edges grew the most (1440 → 2352) as the prelude surface widened, so
+their cumulative cost has caught up to selective imports despite each prelude
+edge being individually tiny. The selective path still registers the full
+imported interface first, then binds only selected names, so many `use
+module.{...}` edges still pay full-interface registration cost. No single import
+edge dominates; the largest observed edges were only a few microseconds, so this
+remains cumulative modular overhead rather than an isolated pathological
+dependency.
 
 Optimizer subphase shape:
 
 ```text
-dead_let       ~60 - 65ms
-copy_prop      ~62 - 68ms
-uniqueness     ~59 - 63ms
-defer_elim      ~9 - 10ms
-const_fold      ~5 - 7ms
-branch_simp     ~5 - 7ms
+funcs=2939  total_rounds=6271  avg_rounds=2.13  at_cap=24
+
+uniqueness     ~96ms
+dead_let       ~90ms
+copy_prop      ~90ms
+defer_elim     ~18ms
+const_fold     ~12ms
+branch_simp    ~11ms
 ```
 
 Backend planning and verification details:
 
 ```text
-plan_wasm_types: ~83686 slot registration calls, 737 unique types
-verify:          ~81691 slots, dominated by expression walking
+plan_wasm_types: ~120358 slot registration calls, 1022 unique types
+verify:          ~117419 slots; expr_walk ~194ms dominates slot_checks ~99ms
 ```
 
 ## What changed since the old plan
@@ -139,19 +151,20 @@ Important historical lessons that still apply:
 The bottleneck has moved back to the frontend, but the frontend profile is now
 mostly many small reasonable costs across a large module graph rather than one
 obvious runaway stage. `compile_modules` is larger than any single backend
-phase, yet its main buckets are spread over 174 modules and thousands of import
+phase, yet its main buckets are spread over 215 modules and thousands of import
 edges.
 
 The next tier is broad rather than a single obvious hotspot: optimization,
 module emission, backend preparation, wasm binary emission, linking, and
 verification are all close enough that local sub-timings matter. `emit_wasm_binary`
-serializes the 1.8 MiB compiler payload in roughly 190ms, dominated by code
+serializes the ~2.7 MiB compiler payload in roughly 240ms, dominated by code
 section encoding; this is worth keeping efficient but is not a large enough
 fraction of the build to be a primary speed lever.
 
-The current module graph is also much larger than the historical 84-module
-workload, so older absolute timings should not be used for regressions. Treat
-this snapshot as the active baseline.
+The current module graph (215 modules / 2939 functions) is much larger than both
+the historical 84-module workload and the May 174-module snapshot, so older
+absolute timings should not be used for regressions. Treat this snapshot as the
+active baseline.
 
 ## Plan
 
@@ -164,17 +177,17 @@ parsing or name resolution; it is cumulative import/interface merging.
 Current frontend timing shape:
 
 ```text
-import_merge      ~276ms
-typecheck         ~168ms
-lower             ~143ms
-load_source       ~142ms
-plan_deps         ~114ms
-resolve            ~92ms
-parse              ~56ms
-publish            ~51ms
-unused_imports     ~21ms
-env_extend          ~8ms
-dep_hashes          ~5ms
+import_merge      ~408 - 443ms
+typecheck         ~369 - 406ms
+lower             ~248 - 257ms
+plan_deps         ~189 - 204ms
+resolve           ~130 - 144ms
+load_source       ~123 - 139ms
+parse              ~93 - 106ms
+publish            ~56 - 62ms
+unused_imports     ~14 - 17ms
+env_extend         ~17 - 20ms
+dep_hashes          ~6ms
 ```
 
 Interpretation:
@@ -183,10 +196,12 @@ Interpretation:
   is distributed across many small edges. A meaningful improvement probably
   requires a broader interface/environment representation change rather than a
   local tweak.
-- Typecheck, lower, source loading, and dependency planning are each around one
-  millisecond or less per module on this workload. Further digging may still
-  find small fast paths, but they should not be expected to produce a large
-  structural speedup.
+- Typecheck has grown faster than the module count (~1.7ms/module now, up from
+  ~1ms in May) and has joined import merging as a top frontend bucket; it is now
+  worth its own subphase instrumentation. Lower, source loading, and dependency
+  planning are each still around one millisecond or less per module. Further
+  digging may find small fast paths, but outside typecheck they should not be
+  expected to produce a large structural speedup.
 
 Possible future probes, if frontend work resumes:
 
