@@ -1,4 +1,4 @@
-/// Internal — unstable. Ast → compiled Program. Not part of the public surface.
+//! Internal — unstable. Ast → compiled Program. Not part of the public surface.
 
 use .types.{Ast, Inst}
 

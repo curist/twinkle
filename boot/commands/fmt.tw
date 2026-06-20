@@ -1,4 +1,4 @@
-/// Format command: format Twinkle source code.
+//! Format command: format Twinkle source code.
 
 use @std.fs
 use @std.proc

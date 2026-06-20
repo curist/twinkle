@@ -1,8 +1,8 @@
-/// Tests for boot/compiler/backend/slot_assign.tw
-///
-/// Verifies that assign_slots() correctly classifies function locals into
-/// CaptureParam, Param, Local, PatternLocal, and DeadPlaceholder slots,
-/// with correct ABI ordering and mono type resolution.
+//! Tests for boot/compiler/backend/slot_assign.tw
+//!
+//! Verifies that assign_slots() correctly classifies function locals into
+//! CaptureParam, Param, Local, PatternLocal, and DeadPlaceholder slots,
+//! with correct ABI ordering and mono type resolution.
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, SlotInfo, SlotRole}

@@ -1,4 +1,4 @@
-/// ANSI terminal styling helpers
+//! ANSI terminal styling helpers
 
 use @std.proc
 

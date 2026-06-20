@@ -1,5 +1,5 @@
-/// Inlay hints query: emit type hints for inferred `:=` bindings
-/// and parameter name hints at call sites.
+//! Inlay hints query: emit type hints for inferred `:=` bindings
+//! and parameter name hints at call sites.
 
 use compiler.ast.{Block, CollectExpr, Expr, ForStmt, FunctionDecl, Item, LetStmt, Param, Stmt}
 use compiler.checker.{CheckResult}

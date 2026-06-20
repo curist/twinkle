@@ -1,12 +1,12 @@
-/// DiagKind → Report renderer.
-///
-/// `to_report(kind, ctx)` converts a structured DiagKind into a Report
-/// ready for terminal rendering (M3). Type names are resolved via
-/// `ctx.env` when available; `ty_to_string` is used as a fallback.
-///
-/// `ctx.module` is carried for future use by renderers that need
-/// enclosing-function context via `find_path` (none of the current
-/// variants require it, but M5 may add them).
+//! DiagKind → Report renderer.
+//!
+//! `to_report(kind, ctx)` converts a structured DiagKind into a Report
+//! ready for terminal rendering (M3). Type names are resolved via
+//! `ctx.env` when available; `ty_to_string` is used as a fallback.
+//!
+//! `ctx.module` is carried for future use by renderers that need
+//! enclosing-function context via `find_path` (none of the current
+//! variants require it, but M5 may add them).
 
 use compiler.ast.{Module}
 use compiler.mono_type.{MonoType, ty_to_string}

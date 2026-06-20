@@ -1,14 +1,14 @@
-/// LSP command: start the Language Server Protocol server.
-///
-/// Cooperative task model (see docs/plans/lsp-task-migration.md). The top-level
-/// acts as the input reader, parking on `io.read_stdin_chunk` between chunks
-/// instead of polling with a timeout. Chunks are handed to a dispatcher task through a
-/// small Cell-backed queue; the dispatcher owns frame decoding, JSON-RPC message
-/// handling, and response writes. Workspace diagnostics use a worker-style task:
-/// debounce tasks only enqueue generation-tagged jobs, and the diagnostics worker
-/// publishes only if its generation is still current. This is cooperative
-/// single-threaded concurrency, not CPU parallelism; synchronous analysis is not
-/// preempted once it starts.
+//! LSP command: start the Language Server Protocol server.
+//!
+//! Cooperative task model (see docs/plans/lsp-task-migration.md). The top-level
+//! acts as the input reader, parking on `io.read_stdin_chunk` between chunks
+//! instead of polling with a timeout. Chunks are handed to a dispatcher task through a
+//! small Cell-backed queue; the dispatcher owns frame decoding, JSON-RPC message
+//! handling, and response writes. Workspace diagnostics use a worker-style task:
+//! debounce tasks only enqueue generation-tagged jobs, and the diagnostics worker
+//! publishes only if its generation is still current. This is cooperative
+//! single-threaded concurrency, not CPU parallelism; synchronous analysis is not
+//! preempted once it starts.
 
 use @std.date
 use @std.io

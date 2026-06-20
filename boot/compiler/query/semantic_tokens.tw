@@ -1,4 +1,4 @@
-/// Semantic token query backed by the shared occurrence index.
+//! Semantic token query backed by the shared occurrence index.
 
 use compiler.query.occurrences as occ
 use compiler.query.semantic.{SemanticSnapshot}

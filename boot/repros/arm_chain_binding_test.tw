@@ -1,5 +1,5 @@
-/// Test arm-chain pattern matching (< 3 explicit arms on named enums).
-/// If can_match_variant_pattern is broken, these bindings would be empty.
+//! Test arm-chain pattern matching (< 3 explicit arms on named enums).
+//! If can_match_variant_pattern is broken, these bindings would be empty.
 
 type Color3 = { Red, Green, Blue }
 

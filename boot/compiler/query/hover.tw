@@ -1,4 +1,4 @@
-/// Hover query: find the type of the expression at a given byte offset.
+//! Hover query: find the type of the expression at a given byte offset.
 
 use compiler.ast.{
   Block, CollectExpr, Expr, ForStmt, FunctionDecl, ImportItem, Item, LetStmt, Param, Pattern,

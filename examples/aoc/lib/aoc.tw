@@ -1,8 +1,8 @@
-/// Shared helpers for Advent of Code solutions.
-///
-/// Paths are resolved relative to the process working directory, which the
-/// Makefile pins to the `examples/aoc` root — so a day passes its own
-/// `aoc.day_dir(year, day)` (e.g. "y2024/day01") and reads files beneath it.
+//! Shared helpers for Advent of Code solutions.
+//!
+//! Paths are resolved relative to the process working directory, which the
+//! Makefile pins to the `examples/aoc` root — so a day passes its own
+//! `aoc.day_dir(year, day)` (e.g. "y2024/day01") and reads files beneath it.
 
 use @std.fs
 use @std.regexp

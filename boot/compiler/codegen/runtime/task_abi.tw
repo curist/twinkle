@@ -1,12 +1,12 @@
-/// Abstract suspension intrinsic binding.
-///
-/// The compiler lowers task composition operations to operation-named
-/// suspension intrinsics (`task_create`, `suspend_await`, `suspend_yield`).
-/// Timer and I/O suspension points stay under their own host modules. This
-/// module is the single place that binds task operations to a concrete
-/// implementation — currently host imports satisfied by the JS scheduler under
-/// JSPI. A future Wasm-continuations backend replaces this table (and the
-/// runtime that backs it) without touching task lowering.
+//! Abstract suspension intrinsic binding.
+//!
+//! The compiler lowers task composition operations to operation-named
+//! suspension intrinsics (`task_create`, `suspend_await`, `suspend_yield`).
+//! Timer and I/O suspension points stay under their own host modules. This
+//! module is the single place that binds task operations to a concrete
+//! implementation — currently host imports satisfied by the JS scheduler under
+//! JSPI. A future Wasm-continuations backend replaces this table (and the
+//! runtime that backs it) without touching task lowering.
 
 use compiler.codegen.wasm_ir.{ImportDef}
 

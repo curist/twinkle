@@ -1,4 +1,4 @@
-/// LSP signatureHelp response adapter.
+//! LSP signatureHelp response adapter.
 
 use compiler.query.signature_help.{SignatureHelpResult}
 use lib.json

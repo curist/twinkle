@@ -1,4 +1,4 @@
-/// Runtime bridge function emission helpers.
+//! Runtime bridge function emission helpers.
 
 use compiler.codegen.emit.anyref.{
   emit_box_to_anyref, emit_erased_container_egress, sum_to_variant_helper_sym,

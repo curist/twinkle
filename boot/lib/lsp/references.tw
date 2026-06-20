@@ -1,6 +1,6 @@
-/// LSP references response adapter.
-///
-/// Converts internal ReferenceLocation list into an LSP Location JSON array.
+//! LSP references response adapter.
+//!
+//! Converts internal ReferenceLocation list into an LSP Location JSON array.
 
 use compiler.query.references as query_references
 use lib.json

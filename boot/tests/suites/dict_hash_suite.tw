@@ -1,7 +1,7 @@
-/// Dict hashing regression and coverage tests.
-///
-/// Verifies wyhash v3 migration correctness: known collision pair, insertion
-/// order, generated-symbol workloads, and wyhash v3 parity vectors.
+//! Dict hashing regression and coverage tests.
+//!
+//! Verifies wyhash v3 migration correctness: known collision pair, insertion
+//! order, generated-symbol workloads, and wyhash v3 parity vectors.
 
 use tests.assert
 use tests.runner

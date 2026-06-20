@@ -1,13 +1,13 @@
-/// Shared semantic occurrence map for editor query features.
-///
-/// An occurrence index answers one question consistently: for a source span or
-/// AST node, what declared symbol does this occurrence resolve to, and how
-/// should tooling describe it? It is the common source of truth for semantic
-/// tokens, hover, definition, references, document highlights, and friends, so
-/// each feature stops re-walking the AST and rebuilding partial scope knowledge.
-///
-/// Phase 1 defines the data model plus lookup/builder helpers. Populating an
-/// index from the AST and checker metadata happens in later phases.
+//! Shared semantic occurrence map for editor query features.
+//!
+//! An occurrence index answers one question consistently: for a source span or
+//! AST node, what declared symbol does this occurrence resolve to, and how
+//! should tooling describe it? It is the common source of truth for semantic
+//! tokens, hover, definition, references, document highlights, and friends, so
+//! each feature stops re-walking the AST and rebuilding partial scope knowledge.
+//!
+//! Phase 1 defines the data model plus lookup/builder helpers. Populating an
+//! index from the AST and checker metadata happens in later phases.
 
 use lib.source.span.{Span}
 

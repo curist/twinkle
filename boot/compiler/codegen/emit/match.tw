@@ -1,4 +1,4 @@
-/// Pattern-match control-flow emission helpers.
+//! Pattern-match control-flow emission helpers.
 
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedMatchArm, PreparedPattern}
 use compiler.codegen.emit.context.{EmitCtx}

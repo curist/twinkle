@@ -1,4 +1,4 @@
-/// Return true if the option is Some.
+//! Return true if the option is Some.
 
 pub fn is_some<T>(opt: Option<T>) Bool {
   case opt {

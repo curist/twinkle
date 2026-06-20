@@ -1,4 +1,4 @@
-/// Lowering context and context-local helpers.
+//! Lowering context and context-local helpers.
 
 use compiler.ast.{Expr}
 use compiler.builtins.{BuiltinRegistry}

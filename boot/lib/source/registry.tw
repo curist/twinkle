@@ -1,4 +1,4 @@
-/// FileRegistry: stores source files and provides span-based lookups.
+//! FileRegistry: stores source files and provides span-based lookups.
 
 use .span.{Span}
 

@@ -1,8 +1,8 @@
-/// Source identity helpers for workspace-aware compiler queries.
-///
-/// Query stages use canonical paths as stable cache keys. LSP keeps the original
-/// URI for protocol output, but source lookup and dependency planning should
-/// converge on SourceIdentity.path.
+//! Source identity helpers for workspace-aware compiler queries.
+//!
+//! Query stages use canonical paths as stable cache keys. LSP keeps the original
+//! URI for protocol output, but source lookup and dependency planning should
+//! converge on SourceIdentity.path.
 
 use @std.path
 

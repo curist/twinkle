@@ -18,6 +18,23 @@ Design goals:
 
 Source files end with `.tw`. Top-level statements execute directly.
 
+### Comments and documentation comments
+
+Line comments start with `//` and continue to the end of the line.
+
+Documentation comments are line comments with a documentation marker:
+
+```tw
+//! Module documentation for the containing file/module.
+
+/// Documentation for the next declaration.
+pub fn answer() Int { 42 }
+```
+
+A contiguous leading `//!` block at the start of a file documents the module. A
+contiguous `///` block immediately before a function or type declaration
+documents that declaration. Plain `//` comments are never documentation comments.
+
 ---
 
 ## 2. Value Model

@@ -1,7 +1,7 @@
-/// LSP folding-range response adapter.
-///
-/// Converts internal FoldingRange list into an LSP FoldingRange JSON array.
-/// Only emits ranges that span more than one line.
+//! LSP folding-range response adapter.
+//!
+//! Converts internal FoldingRange list into an LSP FoldingRange JSON array.
+//! Only emits ranges that span more than one line.
 
 use compiler.query.folding_range as query
 use lib.json

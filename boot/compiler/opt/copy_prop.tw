@@ -1,7 +1,7 @@
-/// Copy propagation: inline Let(t, AInit(lit), body) where lit is a non-local
-/// atom and t is used exactly once (excluding closure free_var positions).
-///
-/// Also provides subst_atom for general atom substitution.
+//! Copy propagation: inline Let(t, AInit(lit), body) where lit is a non-local
+//! atom and t is used exactly once (excluding closure free_var positions).
+//!
+//! Also provides subst_atom for general atom substitution.
 
 use compiler.anf.{AnfExpr, AnfMatchArm, AnfOp, Atom, FieldAtom}
 use compiler.anf_analysis.{collect_assigned_locals, set_has}

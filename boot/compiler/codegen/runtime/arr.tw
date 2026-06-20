@@ -1,7 +1,7 @@
-/// rt.arr — persistent bit-partitioned trie vector operations.
-///
-/// Mirrors stage0 src/runtime/arr.rs.
-/// Branching factor 32, tail buffer, O(log32 N) get/set, amortized O(1) push.
+//! rt.arr — persistent bit-partitioned trie vector operations.
+//!
+//! Mirrors stage0 src/runtime/arr.rs.
+//! Branching factor 32, tail buffer, O(log32 N) get/set, amortized O(1) push.
 
 use compiler.codegen.wasm_ir.{ExportDef, FuncDef, Instr, ValType, WasmModule}
 

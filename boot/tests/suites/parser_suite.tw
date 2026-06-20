@@ -142,6 +142,33 @@ pub fn suite() runner.Suite {
   runner
     .suite("parser")
     .test(
+      "module docs use bang comments",
+      fn() {
+        mod := try parse_ok("//! Module docs.\n//! More detail.\n\nfn f() Int { 1 }\n")
+        try assert.equal(try mod.doc.ok_or("missing module doc"), "Module docs.\nMore detail.")
+
+        case mod.items[0] {
+          .Function(decl) => assert.is_none(decl.doc),
+          _ => assert.fail("expected function"),
+        }
+      },
+    )
+    .test(
+      "top-of-file item docs do not become module docs",
+      fn() {
+        mod := try parse_ok("/// Function docs.\nfn f() Int { 1 }\n")
+        try assert.is_none(mod.doc)
+
+        case mod.items[0] {
+          .Function(decl) => assert.equal(
+            try decl.doc.ok_or("missing function doc"),
+            "Function docs.",
+          ),
+          _ => assert.fail("expected function"),
+        }
+      },
+    )
+    .test(
       "import: bare use",
       fn() {
         item := try parse_first_item("use foo.bar")

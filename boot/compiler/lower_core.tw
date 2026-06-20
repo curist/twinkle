@@ -1,8 +1,8 @@
-/// AST → Core IR lowering for the boot compiler.
-///
-/// Pure pipeline: LowerCtx is threaded functionally. Every lowering
-/// function returns an ExprOut or similar record carrying the result
-/// and updated context.
+//! AST → Core IR lowering for the boot compiler.
+//!
+//! Pure pipeline: LowerCtx is threaded functionally. Every lowering
+//! function returns an ExprOut or similar record carrying the result
+//! and updated context.
 
 use lib.source.diagnostics.{DiagKind}
 use lib.source.span.{Span}

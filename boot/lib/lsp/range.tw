@@ -1,6 +1,6 @@
-/// Shared LSP range/position JSON helpers.
-///
-/// Used by diagnostics, hover, definition, and code action adapters.
+//! Shared LSP range/position JSON helpers.
+//!
+//! Used by diagnostics, hover, definition, and code action adapters.
 
 use lib.json
 use lib.text.line_index

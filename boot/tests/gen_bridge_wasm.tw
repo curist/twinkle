@@ -1,5 +1,5 @@
-/// Regenerates tools/bridge.wasm from the Twinkle-owned bridge WasmModule.
-/// Run: cargo run --release -- run boot/tests/gen_bridge_wasm.tw
+//! Regenerates tools/bridge.wasm from the Twinkle-owned bridge WasmModule.
+//! Run: cargo run --release -- run boot/tests/gen_bridge_wasm.tw
 
 use @std.fs
 

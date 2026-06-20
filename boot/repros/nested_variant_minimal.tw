@@ -1,5 +1,5 @@
-/// Minimal repro for nested variant pattern bug.
-/// Tests `.Some(.Variant(...))` patterns — the shape that caused stage2 traps.
+//! Minimal repro for nested variant pattern bug.
+//! Tests `.Some(.Variant(...))` patterns — the shape that caused stage2 traps.
 
 type Color = { Red, Green, Blue }
 

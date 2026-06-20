@@ -1,4 +1,4 @@
-/// Compare two Ints.
+//! Compare two Ints.
 
 pub fn compare(a: Int, b: Int) Order {
   if a < b {

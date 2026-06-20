@@ -1,13 +1,13 @@
-/// Use counting for ANF locals.
-///
-/// Two variants:
-/// - count_uses: counts ALL references (including AMakeClosure.free_vars)
-/// - count_uses_excluding_free_vars: excludes closure free_var positions
-///
-/// A "use" is any ALocal(id) in an operand/atom position.
-/// Let binders and AAssign targets are NOT counted as uses.
-///
-/// Dict is COW in Twinkle, so every function threads and returns the updated dict.
+//! Use counting for ANF locals.
+//!
+//! Two variants:
+//! - count_uses: counts ALL references (including AMakeClosure.free_vars)
+//! - count_uses_excluding_free_vars: excludes closure free_var positions
+//!
+//! A "use" is any ALocal(id) in an operand/atom position.
+//! Let binders and AAssign targets are NOT counted as uses.
+//!
+//! Dict is COW in Twinkle, so every function threads and returns the updated dict.
 
 use compiler.anf.{AnfExpr, AnfOp, Atom}
 use compiler.opt.semantics.{OptimizerSemantics, empty_optimizer_semantics, is_pure_with_semantics}

@@ -1,4 +1,4 @@
-/// Literal parsing helpers for the Twinkle parser.
+//! Literal parsing helpers for the Twinkle parser.
 
 use compiler.escape
 

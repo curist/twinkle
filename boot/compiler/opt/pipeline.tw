@@ -1,5 +1,5 @@
-/// Fixed-point optimization pipeline: wire dead_let, copy_prop, const_fold,
-/// branch_simp into a loop, with module-level orchestration and pinned locals.
+//! Fixed-point optimization pipeline: wire dead_let, copy_prop, const_fold,
+//! branch_simp into a loop, with module-level orchestration and pinned locals.
 
 use @std.date
 use @std.proc

@@ -1,4 +1,4 @@
-/// Return true if the result is Ok.
+//! Return true if the result is Ok.
 
 pub fn is_ok<T, E>(res: Result<T, E>) Bool {
   case res {

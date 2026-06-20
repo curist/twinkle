@@ -1,4 +1,4 @@
-/// Minimal JSON-RPC/LSP protocol envelope helpers.
+//! Minimal JSON-RPC/LSP protocol envelope helpers.
 
 use lib.json
 

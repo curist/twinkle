@@ -1,7 +1,7 @@
-/// Collect folding ranges from a parsed module AST.
-///
-/// Returns ranges that span more than one line. The caller converts byte
-/// offsets to LSP line numbers.
+//! Collect folding ranges from a parsed module AST.
+//!
+//! Returns ranges that span more than one line. The caller converts byte
+//! offsets to LSP line numbers.
 
 use compiler.ast
 use compiler.query.semantic.{SemanticSnapshot}

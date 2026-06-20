@@ -1,8 +1,8 @@
-/// Wasm planner public facade.
-///
-/// Planning consumes PreparedModule directly. Capture layouts are authoritative
-/// prepared-backend facts; planner traversal of `prepared.anf` is limited to
-/// body-discovery concerns like strings and builtin calls.
+//! Wasm planner public facade.
+//!
+//! Planning consumes PreparedModule directly. Capture layouts are authoritative
+//! prepared-backend facts; planner traversal of `prepared.anf` is limited to
+//! body-discovery concerns like strings and builtin calls.
 
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.prepared_ir.{CaptureParam}

@@ -1,7 +1,7 @@
-/// Source overlay for workspace-aware queries.
-///
-/// Open editor buffers take precedence over disk, while query/cache keys use the
-/// canonical source identity path.
+//! Source overlay for workspace-aware queries.
+//!
+//! Open editor buffers take precedence over disk, while query/cache keys use the
+//! canonical source identity path.
 
 use @std.fs
 

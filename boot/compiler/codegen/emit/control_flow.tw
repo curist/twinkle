@@ -1,4 +1,4 @@
-/// Control-flow emission helpers for Wasm emission.
+//! Control-flow emission helpers for Wasm emission.
 
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr}
 use compiler.codegen.emit.context.{EmitCtx, LabelPair}

@@ -1,8 +1,8 @@
-/// Dead code elimination for the linker.
-///
-/// BFS-based reachability analysis starting from init + entry functions.
-/// Collects FuncId references from expression trees and resolves contract
-/// calls to their concrete implementations.
+//! Dead code elimination for the linker.
+//!
+//! BFS-based reachability analysis starting from init + entry functions.
+//! Collects FuncId references from expression trees and resolves contract
+//! calls to their concrete implementations.
 
 use compiler.core_ir.{CoreExpr, FuncId, FunctionDef}
 use compiler.mono_type.{MonoType}

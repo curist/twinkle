@@ -1,7 +1,7 @@
-/// Internal SHA-1 implementation for `@std.crypto`.
-///
-/// SHA-1 is a legacy digest algorithm. It is provided for compatibility; do not
-/// use it for collision-resistant security decisions.
+//! Internal SHA-1 implementation for `@std.crypto`.
+//!
+//! SHA-1 is a legacy digest algorithm. It is provided for compatibility; do not
+//! use it for collision-resistant security decisions.
 
 use .schedule as sched
 

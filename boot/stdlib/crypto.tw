@@ -1,10 +1,10 @@
-/// Cryptographic and legacy digest helpers.
-///
-/// The module is organized as an umbrella over pure Twinkle implementations.
-/// MD5 and SHA-1 are provided for compatibility with old protocols, checksums,
-/// and programming puzzles; do not use them for passwords, signatures, or
-/// collision-resistant security decisions. Prefer SHA-256 or HMAC-SHA-256 for
-/// new digest/MAC use cases.
+//! Cryptographic and legacy digest helpers.
+//!
+//! The module is organized as an umbrella over pure Twinkle implementations.
+//! MD5 and SHA-1 are provided for compatibility with old protocols, checksums,
+//! and programming puzzles; do not use them for passwords, signatures, or
+//! collision-resistant security decisions. Prefer SHA-256 or HMAC-SHA-256 for
+//! new digest/MAC use cases.
 
 use .crypto.md5 as md5_impl
 use .crypto.sha1 as sha1_impl

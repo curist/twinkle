@@ -1,10 +1,10 @@
-/// Find-references query over semantic occurrence indexes.
-///
-/// Resolves the occurrence under the cursor to a shared SymbolKey, then gathers
-/// all occurrences with the same key from the current file or cached workspace
-/// occurrence indexes. This keeps references aligned with definition,
-/// document-highlight, and semantic-token classification without a private
-/// symbol-identity model or local lexical walker.
+//! Find-references query over semantic occurrence indexes.
+//!
+//! Resolves the occurrence under the cursor to a shared SymbolKey, then gathers
+//! all occurrences with the same key from the current file or cached workspace
+//! occurrence indexes. This keeps references aligned with definition,
+//! document-highlight, and semantic-token classification without a private
+//! symbol-identity model or local lexical walker.
 
 use compiler.query.occurrences as occ
 use compiler.query.semantic

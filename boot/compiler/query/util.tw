@@ -1,5 +1,5 @@
-/// Shared helpers for query modules (hover, completion, definition, etc.).
-/// Return the first mapped value that is not None.
+//! Shared helpers for query modules (hover, completion, definition, etc.).
+//! Return the first mapped value that is not None.
 
 pub fn find_map<A, B>(xs: Vector<A>, f: fn(A) B?) B? {
   for x in xs {

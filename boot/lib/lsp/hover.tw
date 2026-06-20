@@ -1,6 +1,6 @@
-/// LSP hover response adapter.
-///
-/// Converts internal HoverResult into LSP Hover JSON responses.
+//! LSP hover response adapter.
+//!
+//! Converts internal HoverResult into LSP Hover JSON responses.
 
 use compiler.query.hover as query_hover
 use lib.json

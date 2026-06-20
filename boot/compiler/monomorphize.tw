@@ -1,7 +1,7 @@
-/// Monomorphization pass for the boot compiler.
-///
-/// Specializes generic functions per unique concrete instantiation.
-/// Algorithm: BFS seed → specialize → rewrite → drop generics.
+//! Monomorphization pass for the boot compiler.
+//!
+//! Specializes generic functions per unique concrete instantiation.
+//! Algorithm: BFS seed → specialize → rewrite → drop generics.
 
 use .contracts.{BuiltinContract}
 use .core_ir.{

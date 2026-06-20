@@ -1,4 +1,4 @@
-/// Extract document symbols from a parsed module AST.
+//! Extract document symbols from a parsed module AST.
 
 use compiler.ast
 use compiler.query.semantic.{SemanticSnapshot}

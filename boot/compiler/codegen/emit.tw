@@ -1,11 +1,11 @@
-/// Core emission — prepared backend module → WasmModule
-///
-/// Translates the prepared backend module into Wasm IR.
-/// Key simplification vs stage0:
-///   - No flow-sensitive metadata — layout derived from MonoType via registry
-///   - No SumRepr — all sums are typed structs
-///   - Boundaries explicit — AWrapAnyref / AUnwrapAnyref already in IR
-///   - Pattern match arm chains are delegated to codegen.emit.match
+//! Core emission — prepared backend module → WasmModule
+//!
+//! Translates the prepared backend module into Wasm IR.
+//! Key simplification vs stage0:
+//!   - No flow-sensitive metadata — layout derived from MonoType via registry
+//!   - No SumRepr — all sums are typed structs
+//!   - Boundaries explicit — AWrapAnyref / AUnwrapAnyref already in IR
+//!   - Pattern match arm chains are delegated to codegen.emit.match
 
 use compiler.anf.{AnfFunctionDef, IndexKind, OpKind}
 use compiler.backend.facts as facts

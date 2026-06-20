@@ -1,4 +1,4 @@
-/// Shared Core lowering expression/pattern constructors.
+//! Shared Core lowering expression/pattern constructors.
 
 use compiler.ast.{Expr}
 use compiler.core_ir.{CoreExpr, CorePattern, FieldId, FuncId, LocalId}

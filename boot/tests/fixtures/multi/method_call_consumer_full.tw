@@ -1,4 +1,4 @@
-/// bridge first, full source second
+//! bridge first, full source second
 
 use .method_call_bridge
 use .method_call_src

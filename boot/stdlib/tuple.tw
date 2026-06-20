@@ -1,18 +1,18 @@
-/// Ad-hoc multi-value grouping without declaring a domain record.
-///
-/// `Pair<A, B>` is the common case; `Triple<A, B, C>` is the escalation. Both
-/// are nominal records, so they get conditional structural `==`/`!=` for free
-/// when their fields satisfy `Eq`, and both satisfy `Stringify` so `${p}` and
-/// `${t}` render as `(a, b)` / `(a, b, c)`.
-///
-/// Two import lines give the full surface (mirroring `@std.view`):
-///
-///   use @std.tuple          // `tuple.pair(a, b)`, `tuple.triple(a, b, c)`
-///   use @std.tuple.{Pair, Triple}   // name the types in annotations
-///
-/// `Triple` is re-exported here through a transparent type alias; its nominal
-/// home and its own `to_string` live in the `triple` submodule, because a single
-/// module cannot hold two `to_string` witnesses.
+//! Ad-hoc multi-value grouping without declaring a domain record.
+//!
+//! `Pair<A, B>` is the common case; `Triple<A, B, C>` is the escalation. Both
+//! are nominal records, so they get conditional structural `==`/`!=` for free
+//! when their fields satisfy `Eq`, and both satisfy `Stringify` so `${p}` and
+//! `${t}` render as `(a, b)` / `(a, b, c)`.
+//!
+//! Two import lines give the full surface (mirroring `@std.view`):
+//!
+//!   use @std.tuple          // `tuple.pair(a, b)`, `tuple.triple(a, b, c)`
+//!   use @std.tuple.{Pair, Triple}   // name the types in annotations
+//!
+//! `Triple` is re-exported here through a transparent type alias; its nominal
+//! home and its own `to_string` live in the `triple` submodule, because a single
+//! module cannot hold two `to_string` witnesses.
 
 use .tuple.triple as triple_mod
 

@@ -1,4 +1,4 @@
-/// Entry module that calls imported functions and produces output.
+//! Entry module that calls imported functions and produces output.
 
 use .math_lib
 

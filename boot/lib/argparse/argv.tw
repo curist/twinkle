@@ -1,4 +1,4 @@
-/// Argv normalization for the twk CLI.
+//! Argv normalization for the twk CLI.
 
 fn is_program_path(s: String) Bool {
   s.ends_with(".tw") or s.ends_with(".wat") or s.ends_with(".wasm")

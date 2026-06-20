@@ -1,4 +1,4 @@
-/// Shared backend verifier helpers.
+//! Shared backend verifier helpers.
 
 use compiler.backend.prepared_ir.{PreparedFunc, ReprKind, SlotInfo, SlotRole}
 use compiler.codegen.wasm_ir.{HeapType, ValType}

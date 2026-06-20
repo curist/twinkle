@@ -1,4 +1,4 @@
-/// Internal SHA-256 implementation for `@std.crypto`.
+//! Internal SHA-256 implementation for `@std.crypto`.
 
 use .schedule as sched
 

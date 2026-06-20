@@ -676,6 +676,8 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
 
       if i + 2 < n and source[i + 2] == '/' {
         kind = .DocComment
+      } else if i + 2 < n and source[i + 2] == '!' {
+        kind = .ModuleDocComment
       }
 
       i = i + 2

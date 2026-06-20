@@ -1,5 +1,5 @@
-/// Guardrail tests: lock the current behaviour of builtin_env() so that any
-/// unintended regression is caught immediately.
+//! Guardrail tests: lock the current behaviour of builtin_env() so that any
+//! unintended regression is caught immediately.
 
 use compiler.base_env.{builtin_env}
 use compiler.resolver.{

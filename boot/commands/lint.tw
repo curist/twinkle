@@ -1,8 +1,8 @@
-/// `twk lint` — clippy-style review command.
-///
-/// Reports two kinds of finding (see docs/plans/archive/linter.md): report-only lints
-/// (suspected bugs) and auto-fixable rewrites. Report-only by default; `--fix`
-/// applies all rewrites, `--fix-<rule>` applies one. build/check never run this.
+//! `twk lint` — clippy-style review command.
+//!
+//! Reports two kinds of finding (see docs/plans/archive/linter.md): report-only lints
+//! (suspected bugs) and auto-fixable rewrites. Report-only by default; `--fix`
+//! applies all rewrites, `--fix-<rule>` applies one. build/check never run this.
 
 use @std.fs
 use @std.path

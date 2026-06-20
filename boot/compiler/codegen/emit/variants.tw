@@ -1,4 +1,4 @@
-/// Variant construction emission helpers.
+//! Variant construction emission helpers.
 
 use compiler.backend.prepared_ir.{PreparedAtom}
 use compiler.codegen.emit.coercions.{emit_coerce_stack}

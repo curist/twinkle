@@ -1,11 +1,11 @@
-/// Typed references to compiler-known builtin variants.
-///
-/// `try` lowering and `for`-loop iterator lowering go through the builtin
-/// `Option.Some` / `Option.None` and `Result.Ok` / `Result.Err` variants.
-/// Rather than hardcoding their layout ids — which depend on construction order
-/// in `base_env.tw` — resolve them by name from the resolved `ResolvedEnv` at
-/// the point of use. Source-level builtin names live only here, at the
-/// bootstrap boundary; a missing builtin is a compiler bug and traps loudly.
+//! Typed references to compiler-known builtin variants.
+//!
+//! `try` lowering and `for`-loop iterator lowering go through the builtin
+//! `Option.Some` / `Option.None` and `Result.Ok` / `Result.Err` variants.
+//! Rather than hardcoding their layout ids — which depend on construction order
+//! in `base_env.tw` — resolve them by name from the resolved `ResolvedEnv` at
+//! the point of use. Source-level builtin names live only here, at the
+//! bootstrap boundary; a missing builtin is a compiler bug and traps loudly.
 
 use compiler.mono_type.{TypeId}
 use compiler.resolver.{ResolvedEnv, ResolvedVariant}

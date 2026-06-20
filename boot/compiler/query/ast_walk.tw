@@ -1,7 +1,7 @@
-/// Shared offset-based AST walker for hover and definition.
-///
-/// Finds the deepest AST node at a given byte offset, returning a NodeContext
-/// that both hover and definition can pattern-match on to do their specific work.
+//! Shared offset-based AST walker for hover and definition.
+//!
+//! Finds the deepest AST node at a given byte offset, returning a NodeContext
+//! that both hover and definition can pattern-match on to do their specific work.
 
 use compiler.ast.{Block, CaseArm, CondArm, Expr, Pattern, RecordEntry, Stmt, StringPart}
 use compiler.query.util.{find_map}

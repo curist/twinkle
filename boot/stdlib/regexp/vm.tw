@@ -1,5 +1,5 @@
-/// Internal — unstable. Single-pass Pike VM. Not part of the public surface.
-/// See docs/plans/regexp.md ("Unanchored search" / "vm") for the algorithm.
+//! Internal — unstable. Single-pass Pike VM. Not part of the public surface.
+//! See docs/plans/regexp.md ("Unanchored search" / "vm") for the algorithm.
 
 use .types.{ClassItem, Inst}
 

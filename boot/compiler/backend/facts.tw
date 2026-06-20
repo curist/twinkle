@@ -1,8 +1,8 @@
-/// Shared accessors for prepared backend IR facts.
-///
-/// These helpers are deliberately limited to facts already materialized in
-/// PreparedFunc and related prepared-IR records. They should not rediscover
-/// semantic ANF facts or depend on Wasm planning/emission state.
+//! Shared accessors for prepared backend IR facts.
+//!
+//! These helpers are deliberately limited to facts already materialized in
+//! PreparedFunc and related prepared-IR records. They should not rediscover
+//! semantic ANF facts or depend on Wasm planning/emission state.
 
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedFunc, ReprKind, SlotId, SlotInfo}
 use compiler.codegen.wasm_ir.{ValType}

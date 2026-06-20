@@ -1,8 +1,8 @@
-/// rt.dict — persistent HAMT dictionary with insertion-order tracking.
-///
-/// Mirrors stage0 src/runtime/dict.rs.
-/// Key comparison uses rt.core.eq (structural equality).
-/// Key types: Int (BoxedInt or I31/Byte), String.
+//! rt.dict — persistent HAMT dictionary with insertion-order tracking.
+//!
+//! Mirrors stage0 src/runtime/dict.rs.
+//! Key comparison uses rt.core.eq (structural equality).
+//! Key types: Int (BoxedInt or I31/Byte), String.
 
 use compiler.codegen.wasm_ir.{ExportDef, FuncDef, GlobalDef, Instr, ValType, WasmModule}
 

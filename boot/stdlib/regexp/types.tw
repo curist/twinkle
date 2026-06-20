@@ -1,6 +1,6 @@
-/// Internal — unstable. Shared data types for the regexp engine, kept in one
-/// module so `parse`, `program`, and `vm` can all reference them without import
-/// cycles. Not part of the `@std.regexp` public surface.
+//! Internal — unstable. Shared data types for the regexp engine, kept in one
+//! module so `parse`, `program`, and `vm` can all reference them without import
+//! cycles. Not part of the `@std.regexp` public surface.
 
 pub type ClassItem = .{ lo: Int, hi: Int }
 

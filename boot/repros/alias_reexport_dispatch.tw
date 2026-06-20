@@ -1,14 +1,14 @@
-/// Bug 2 repro: an alias-typed value passed into a position expecting the
-/// underlying type must resolve to the underlying nominal type.
-///
-/// Before the fix, the alias TypeId leaked past the checker:
-///   - non-generic alias -> backend verifier: "arg 0 has mono Named(Tn), expected Named(Tm)"
-///   - generic alias     -> "lookup_func_sym: unknown FuncId NNN"
-///
-/// Expected output:
-///   base
-///   gen
-///   alias-method
+//! Bug 2 repro: an alias-typed value passed into a position expecting the
+//! underlying type must resolve to the underlying nominal type.
+//!
+//! Before the fix, the alias TypeId leaked past the checker:
+//!   - non-generic alias -> backend verifier: "arg 0 has mono Named(Tn), expected Named(Tm)"
+//!   - generic alias     -> "lookup_func_sym: unknown FuncId NNN"
+//!
+//! Expected output:
+//!   base
+//!   gen
+//!   alias-method
 // ── Non-generic alias passed to a function on the underlying type ────
 type Base = .{ tag: Int }
 

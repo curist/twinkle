@@ -1,10 +1,10 @@
-/// Lightweight prepared-body scan for wasm planning.
-///
-/// This deliberately collects only planner-side body facts:
-/// - string literals
-/// - closure-materialized FuncIds from AMakeClosure
-/// - direct builtin FuncIds from ACall callee sites
-/// - explicit module-global references from non-init prepared bodies
+//! Lightweight prepared-body scan for wasm planning.
+//!
+//! This deliberately collects only planner-side body facts:
+//! - string literals
+//! - closure-materialized FuncIds from AMakeClosure
+//! - direct builtin FuncIds from ACall callee sites
+//! - explicit module-global references from non-init prepared bodies
 
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.prepared_ir.{

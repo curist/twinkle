@@ -1,5 +1,5 @@
-/// Signature help query: find the active call at a cursor position and return
-/// the callee's signature with active parameter index.
+//! Signature help query: find the active call at a cursor position and return
+//! the callee's signature with active parameter index.
 
 use compiler.ast.{Block, CaseArm, CondArm, Expr, FunctionDecl, Item, RecordEntry, Stmt, StringPart}
 use compiler.checker.{CheckResult}

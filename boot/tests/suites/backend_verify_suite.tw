@@ -1,4 +1,4 @@
-/// Tests for boot/compiler/backend/verify.tw — Phase 5.
+//! Tests for boot/compiler/backend/verify.tw — Phase 5.
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
 use compiler.backend.prepare.{PreparedModule, prepare_backend}

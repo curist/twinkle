@@ -1,4 +1,4 @@
-/// Check command: type-check source.
+//! Check command: type-check source.
 
 use @std.proc
 

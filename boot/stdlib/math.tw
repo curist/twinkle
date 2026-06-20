@@ -1,14 +1,14 @@
-/// Math helpers.
-///
-/// The integer helpers (`abs`, `sign`, `gcd`, `lcm`, `pow`, `isqrt`) are pure
-/// Twinkle. The floating-point helpers bridge to the host's `Math` object via
-/// `extern`, so they require the JS/Deno runner (the same host that backs
-/// `target/twk run`); the imports are tree-shaken away when only the integer
-/// helpers and constants are used.
-///
-/// `Int.min`, `Int.max`, and `Int.clamp` already live in the prelude, so they
-/// are not duplicated here. JS `Math` constants are exported as lowercase
-/// Twinkle values because value identifiers are snake_case.
+//! Math helpers.
+//!
+//! The integer helpers (`abs`, `sign`, `gcd`, `lcm`, `pow`, `isqrt`) are pure
+//! Twinkle. The floating-point helpers bridge to the host's `Math` object via
+//! `extern`, so they require the JS/Deno runner (the same host that backs
+//! `target/twk run`); the imports are tree-shaken away when only the integer
+//! helpers and constants are used.
+//!
+//! `Int.min`, `Int.max`, and `Int.clamp` already live in the prelude, so they
+//! are not duplicated here. JS `Math` constants are exported as lowercase
+//! Twinkle values because value identifiers are snake_case.
 
 /// Host `Math` object (globalThis.Math under the JS/Deno runner).
 extern Math {

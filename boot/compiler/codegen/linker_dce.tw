@@ -1,9 +1,9 @@
-/// Wasm-level dead code elimination.
-///
-/// Runs after linking to remove functions and imports that are not
-/// reachable from the final export surface. This catches runtime
-/// helpers, codegen intrinsics, and host imports that the Core IR
-/// DCE cannot see because they are introduced by codegen.
+//! Wasm-level dead code elimination.
+//!
+//! Runs after linking to remove functions and imports that are not
+//! reachable from the final export surface. This catches runtime
+//! helpers, codegen intrinsics, and host imports that the Core IR
+//! DCE cannot see because they are introduced by codegen.
 
 use compiler.codegen.linker.{LinkedModule}
 use compiler.codegen.wasm_ir.{ExternMeta, FuncDef, ImportDef, Instr}

@@ -1,15 +1,15 @@
-/// Linker — merge user module with runtime modules.
-///
-/// Takes a list of WasmModules (each with a namespace), qualifies all
-/// symbols with namespace prefixes, resolves inter-module imports
-/// against exports, and produces a flat LinkedModule.
-///
-/// Algorithm (mirrors stage0 src/wasm/linker.rs):
-///   1. Build export map: (namespace, wasm_name) → qualified func sym
-///   2. Build per-module rename maps for funcs, types, globals
-///   3. Resolve inter-module imports against export map
-///   4. Merge & rewrite all artifacts with qualified names
-///   5. Synthesize __linked_init and export as __twinkle_start
+//! Linker — merge user module with runtime modules.
+//!
+//! Takes a list of WasmModules (each with a namespace), qualifies all
+//! symbols with namespace prefixes, resolves inter-module imports
+//! against exports, and produces a flat LinkedModule.
+//!
+//! Algorithm (mirrors stage0 src/wasm/linker.rs):
+//!   1. Build export map: (namespace, wasm_name) → qualified func sym
+//!   2. Build per-module rename maps for funcs, types, globals
+//!   3. Resolve inter-module imports against export map
+//!   4. Merge & rewrite all artifacts with qualified names
+//!   5. Synthesize __linked_init and export as __twinkle_start
 
 use compiler.codegen.wasm_ir.{
   DataSegment, ElemDef, ExportDef, ExternMeta, FieldDef, FuncDef, GlobalDef, HeapType, ImportDef,

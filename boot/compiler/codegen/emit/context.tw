@@ -1,4 +1,4 @@
-/// Shared context types and lookup helpers for Wasm emission.
+//! Shared context types and lookup helpers for Wasm emission.
 
 use compiler.backend.prepared_ir.{PreparedFunc, ReprKind, SlotId}
 use compiler.builtins.{BuiltinRegistry}

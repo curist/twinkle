@@ -1,7 +1,7 @@
-/// LSP semantic tokens response adapter.
-///
-/// Converts internal SemanticToken results into the LSP delta-encoded
-/// integer array format and builds the capability/legend JSON.
+//! LSP semantic tokens response adapter.
+//!
+//! Converts internal SemanticToken results into the LSP delta-encoded
+//! integer array format and builds the capability/legend JSON.
 
 use compiler.query.semantic_tokens as query_semantic_tokens
 use lib.json

@@ -1,5 +1,5 @@
-/// Assertion helpers for test suites.
-/// Each returns Result<Void, String> — Ok on pass, Err(message) on fail.
+//! Assertion helpers for test suites.
+//! Each returns Result<Void, String> — Ok on pass, Err(message) on fail.
 
 pub fn ok(cond_e: Bool, msg: String) Result<Void, String> {
   if cond_e {

@@ -1,4 +1,4 @@
-/// Closure-specific helpers for Core lowering.
+//! Closure-specific helpers for Core lowering.
 
 use compiler.ast.{Block, Param as AstParam}
 use compiler.core_ir.{CoreExpr, CorePattern, FunctionDef, LocalId, Param}

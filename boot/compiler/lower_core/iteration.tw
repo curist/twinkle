@@ -1,4 +1,4 @@
-/// Collect and for-loop lowering helpers.
+//! Collect and for-loop lowering helpers.
 
 use compiler.ast.{Block, CollectExpr, Expr, ForStmt}
 use compiler.builder_family.{BuilderConfig, vector_builder_config}

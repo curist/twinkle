@@ -1,4 +1,4 @@
-/// Backend verifier slot/table invariants.
+//! Backend verifier slot/table invariants.
 
 use compiler.backend.facts as facts
 use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, SlotId, SlotInfo, SlotRole}

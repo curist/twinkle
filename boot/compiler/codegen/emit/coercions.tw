@@ -1,4 +1,4 @@
-/// Stack value coercion helpers for Wasm emission.
+//! Stack value coercion helpers for Wasm emission.
 
 use compiler.codegen.emit.anyref.{emit_box_to_anyref, emit_unbox_from_anyref}
 use compiler.codegen.emit.context.{EmitCtx}

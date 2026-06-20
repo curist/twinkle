@@ -1,6 +1,6 @@
-/// LSP completion response adapter.
-///
-/// Converts internal CompletionItem records into LSP CompletionItem JSON.
+//! LSP completion response adapter.
+//!
+//! Converts internal CompletionItem records into LSP CompletionItem JSON.
 
 use lib.json
 

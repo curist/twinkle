@@ -1,16 +1,16 @@
-/// Build an occurrence index from the AST plus resolver/checker metadata.
-///
-/// `build_lexical` produces only the lexical layer (Phase 2): a local symbol for
-/// every binder (params, lets, closure params, for/collect binders, case pattern
-/// idents) with shadowing modeled by a threaded per-scope environment.
-///
-/// `build` additionally enriches the index with global resolution (Phase 3):
-/// declarations for functions/types/type-params/fields/variants and selective
-/// imports, classification of non-local identifiers as functions or types,
-/// type-expression references, and member classification (namespace / method /
-/// variant / property) using checker `method_calls`. Member/variant/field
-/// *references* currently carry best-effort keys; precise cross-file keys via the
-/// checker type map are a later refinement (Phase 3b).
+//! Build an occurrence index from the AST plus resolver/checker metadata.
+//!
+//! `build_lexical` produces only the lexical layer (Phase 2): a local symbol for
+//! every binder (params, lets, closure params, for/collect binders, case pattern
+//! idents) with shadowing modeled by a threaded per-scope environment.
+//!
+//! `build` additionally enriches the index with global resolution (Phase 3):
+//! declarations for functions/types/type-params/fields/variants and selective
+//! imports, classification of non-local identifiers as functions or types,
+//! type-expression references, and member classification (namespace / method /
+//! variant / property) using checker `method_calls`. Member/variant/field
+//! *references* currently carry best-effort keys; precise cross-file keys via the
+//! checker type map are a later refinement (Phase 3b).
 
 use compiler.ast.{
   Block, CollectExpr, Expr, ForStmt, FunctionDecl, ImportItem, Module, Pattern, RecordEntry, Stmt,

@@ -1,8 +1,8 @@
-/// Boot Wasm Binary Serializer — wasm.tw
-///
-/// Serializes WasmModule / LinkedModule IR to .wasm binary bytes.
-/// Scope: only the IR subset that boot/compiler/codegen currently emits.
-/// Unsupported IR forms call error() rather than silently producing invalid wasm.
+//! Boot Wasm Binary Serializer — wasm.tw
+//!
+//! Serializes WasmModule / LinkedModule IR to .wasm binary bytes.
+//! Scope: only the IR subset that boot/compiler/codegen currently emits.
+//! Unsupported IR forms call error() rather than silently producing invalid wasm.
 
 use @std.date
 use @std.proc

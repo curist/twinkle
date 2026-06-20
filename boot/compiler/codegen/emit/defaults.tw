@@ -1,4 +1,4 @@
-/// Default-value instruction helpers for Wasm emission.
+//! Default-value instruction helpers for Wasm emission.
 
 use compiler.codegen.wasm_ir.{Instr, ValType}
 

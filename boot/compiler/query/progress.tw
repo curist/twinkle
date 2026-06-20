@@ -1,10 +1,10 @@
-/// Transport-neutral analysis progress model.
-///
-/// The query/analyze path emits coarse module-stage events through a
-/// `ProgressSink`. The model has no dependency on LSP protocol or JSON so the
-/// same events can drive diagnostics progress, semantic snapshots, or any future
-/// editor feature. The default path uses no sink, so non-LSP build/CLI/test runs
-/// pay nothing.
+//! Transport-neutral analysis progress model.
+//!
+//! The query/analyze path emits coarse module-stage events through a
+//! `ProgressSink`. The model has no dependency on LSP protocol or JSON so the
+//! same events can drive diagnostics progress, semantic snapshots, or any future
+//! editor feature. The default path uses no sink, so non-LSP build/CLI/test runs
+//! pay nothing.
 
 /// A coarse stage boundary within a single module's analysis. These mirror the
 /// existing timing boundaries in `analyze_module_impl`. `Resolving` covers the

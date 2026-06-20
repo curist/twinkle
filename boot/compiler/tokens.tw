@@ -72,7 +72,7 @@ pub type TokenKind = {
   Error,
 }
 
-pub type TriviaKind = { LineComment, DocComment, BlankLine }
+pub type TriviaKind = { LineComment, DocComment, ModuleDocComment, BlankLine }
 
 pub type Trivia = .{ kind: TriviaKind, text: String, span: Span }
 

@@ -1,14 +1,14 @@
-/// Tests for boot/compiler/backend/prepare.tw — Phase 4a.
-///
-/// Verifies that prepare_backend() absorbs boundary insertion: the returned
-/// PreparedModule.anf contains post-boundary ANF (AWrapAnyref/AUnwrapAnyref
-/// nodes present where needed), and slot maps in PreparedModule.funcs include
-/// boundary temporaries allocated during insertion.
-///
-/// Phase 4a exit criteria covered here:
-///   - boundary insertion has an explicit architectural home (inside prepare_backend)
-///   - prepared backend IR has an explicit representation-transition story
-///   - slot maps reflect post-boundary locals including wrap/unwrap temporaries
+//! Tests for boot/compiler/backend/prepare.tw — Phase 4a.
+//!
+//! Verifies that prepare_backend() absorbs boundary insertion: the returned
+//! PreparedModule.anf contains post-boundary ANF (AWrapAnyref/AUnwrapAnyref
+//! nodes present where needed), and slot maps in PreparedModule.funcs include
+//! boundary temporaries allocated during insertion.
+//!
+//! Phase 4a exit criteria covered here:
+//!   - boundary insertion has an explicit architectural home (inside prepare_backend)
+//!   - prepared backend IR has an explicit representation-transition story
+//!   - slot maps reflect post-boundary locals including wrap/unwrap temporaries
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp}
 use compiler.backend.closure_convert.{convert_closures}

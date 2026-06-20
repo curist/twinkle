@@ -1,4 +1,4 @@
-/// Top-level value initialization cycle across modules (entry): must be rejected.
+//! Top-level value initialization cycle across modules (entry): must be rejected.
 
 use .cycle_value_b
 

@@ -1,14 +1,14 @@
-/// Terminal renderer for rich diagnostic Reports.
-///
-/// `render(report, registry, config)` produces a String with optional
-/// ANSI color. The format follows rustc/Gleam style:
-///
-///   error: some message
-///    --> file.tw:5:3
-///     |
-///   5 | source line here
-///     |   ^^^
-///     = help: hint text
+//! Terminal renderer for rich diagnostic Reports.
+//!
+//! `render(report, registry, config)` produces a String with optional
+//! ANSI color. The format follows rustc/Gleam style:
+//!
+//!   error: some message
+//!    --> file.tw:5:3
+//!     |
+//!   5 | source line here
+//!     |   ^^^
+//!     = help: hint text
 
 use .registry
 use .report.{RenderConfig, Report, ReportSeverity, SpanLabel}

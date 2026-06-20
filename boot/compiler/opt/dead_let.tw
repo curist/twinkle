@@ -1,4 +1,4 @@
-/// Dead let elimination: remove Let(t, pure_op, body) where t is never used.
+//! Dead let elimination: remove Let(t, pure_op, body) where t is never used.
 
 use compiler.anf.{AnfExpr, AnfMatchArm, AnfOp}
 use compiler.anf_analysis.{collect_assigned_locals, set_has}

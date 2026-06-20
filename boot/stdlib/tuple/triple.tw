@@ -1,11 +1,11 @@
-/// The nominal home of `Triple`. `@std.tuple` re-exports this type through a
-/// transparent alias so users see a single `@std.tuple.{Pair, Triple}` surface
-/// without knowing `Triple` physically lives in a submodule.
-///
-/// `Pair` and `Triple` each need their own inherent `to_string` to satisfy
-/// `Stringify`, but a module has a single value namespace with no overloads, so
-/// the two `to_string` witnesses cannot share a module. `Triple` therefore lives
-/// here, owning its own `to_string`.
+//! The nominal home of `Triple`. `@std.tuple` re-exports this type through a
+//! transparent alias so users see a single `@std.tuple.{Pair, Triple}` surface
+//! without knowing `Triple` physically lives in a submodule.
+//!
+//! `Pair` and `Triple` each need their own inherent `to_string` to satisfy
+//! `Stringify`, but a module has a single value namespace with no overloads, so
+//! the two `to_string` witnesses cannot share a module. `Triple` therefore lives
+//! here, owning its own `to_string`.
 
 pub type Triple<A, B, C> = .{ first: A, second: B, third: C }
 

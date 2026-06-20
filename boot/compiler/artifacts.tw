@@ -1,7 +1,7 @@
-/// Shared pipeline artifact types.
-///
-/// Extracted from pipeline.tw to break circular imports between
-/// pipeline.tw and module_compiler.tw.
+//! Shared pipeline artifact types.
+//!
+//! Extracted from pipeline.tw to break circular imports between
+//! pipeline.tw and module_compiler.tw.
 
 use compiler.anf.{AnfModule}
 use compiler.builtins.{BuiltinRegistry}

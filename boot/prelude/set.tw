@@ -1,4 +1,4 @@
-/// Create an empty set.
+//! Create an empty set.
 
 pub fn new<K>() Set<K> {
   Set.{ entries: Dict.new() }

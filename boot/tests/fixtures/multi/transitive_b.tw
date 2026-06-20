@@ -1,4 +1,4 @@
-/// Middle of the chain: imports c.
+//! Middle of the chain: imports c.
 
 use .transitive_c
 

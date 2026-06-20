@@ -237,6 +237,9 @@ fn emit_trivia(trivia: Vector<Trivia>) Doc {
       .DocComment => {
         result = doc.concat([result, doc.text(t.text), doc.hard_line()])
       },
+      .ModuleDocComment => {
+        result = doc.concat([result, doc.text(t.text), doc.hard_line()])
+      },
     }
   }
 
@@ -247,6 +250,7 @@ fn is_comment_trivia(t: Trivia) Bool {
   case t.kind {
     .LineComment => true,
     .DocComment => true,
+    .ModuleDocComment => true,
     _ => false,
   }
 }
@@ -254,6 +258,7 @@ fn is_comment_trivia(t: Trivia) Bool {
 fn is_doc_trivia(t: Trivia) Bool {
   case t.kind {
     .DocComment => true,
+    .ModuleDocComment => true,
     _ => false,
   }
 }
@@ -265,10 +270,27 @@ fn is_blank_trivia(t: Trivia) Bool {
   }
 }
 
-fn has_doc_in_trivia(trivia: Vector<Trivia>) Bool {
+fn has_module_doc_in_trivia(trivia: Vector<Trivia>) Bool {
   for t in trivia {
-    if is_doc_trivia(t) {
-      return true
+    case t.kind {
+      .ModuleDocComment => { return true },
+      _ => {},
+    }
+  }
+
+  false
+}
+
+fn ends_with_module_doc_trivia(trivia: Vector<Trivia>) Bool {
+  idx := trivia.len() - 1
+
+  for idx >= 0 {
+    case trivia[idx].kind {
+      .BlankLine => {
+        idx = idx - 1
+      },
+      .ModuleDocComment => { return true },
+      _ => { return false },
     }
   }
 
@@ -444,16 +466,9 @@ pub fn format_module(module: Module, tokens: Vector<Token>, source: String) Doc 
         emit_trivia(leading_file_trivia.slice(start, leading_file_trivia.len())),
       ])
 
-      // Separate a leading doc comment from the code that follows when it is
-      // module-level: either it sits above the imports, or the author already
-      // separated it from the first declaration with a blank line (preserved here
-      // because emit_trivia drops a trailing blank). A doc comment sitting directly
-      // on the first declaration, with no blank, is that declaration's own doc and
-      // stays attached.
-      authored_blank := is_blank_trivia(leading_file_trivia[leading_file_trivia.len() - 1])
-
-      if has_doc_in_trivia(leading_file_trivia)
-        and (item_kind_name(items[0]) == "use" or authored_blank) {
+      // Separate a leading module doc comment from the code that follows.
+      if has_module_doc_in_trivia(leading_file_trivia)
+        and ends_with_module_doc_trivia(leading_file_trivia) {
         result = doc.concat([result, doc.hard_line()])
       }
     }

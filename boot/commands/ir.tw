@@ -1,4 +1,4 @@
-/// IR command: compile and print IR stages.
+//! IR command: compile and print IR stages.
 
 use @std.proc
 

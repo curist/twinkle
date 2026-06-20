@@ -1,8 +1,8 @@
-/// Grid helpers for Advent of Code-style integer coordinate puzzles.
-///
-/// `Pos` is a 2D coordinate with `x` growing east and `y` growing south. Use
-/// `key` when storing positions in `Set<Int>` or `Dict<Int, T>`; it maps every
-/// signed coordinate pair to one stable integer key.
+//! Grid helpers for Advent of Code-style integer coordinate puzzles.
+//!
+//! `Pos` is a 2D coordinate with `x` growing east and `y` growing south. Use
+//! `key` when storing positions in `Set<Int>` or `Dict<Int, T>`; it maps every
+//! signed coordinate pair to one stable integer key.
 
 pub type Pos = .{ x: Int, y: Int }
 

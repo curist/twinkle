@@ -1,4 +1,4 @@
-/// Exercises module-level pub *record* value bindings (exported and private).
+//! Exercises module-level pub *record* value bindings (exported and private).
 
 pub type Config = .{ name: String, level: Int }
 

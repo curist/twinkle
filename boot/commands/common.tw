@@ -1,4 +1,4 @@
-/// Shared helpers for CLI commands.
+//! Shared helpers for CLI commands.
 
 use @std.fs
 use @std.proc

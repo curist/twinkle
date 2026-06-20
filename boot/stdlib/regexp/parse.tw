@@ -1,4 +1,4 @@
-/// Internal — unstable. Pattern string → Ast. Not part of the public surface.
+//! Internal — unstable. Pattern string → Ast. Not part of the public surface.
 
 use @std.tuple
 use @std.tuple.{Pair}

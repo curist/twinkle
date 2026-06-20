@@ -1,5 +1,5 @@
-/// Entry that calls a function referencing a cross-module pub value.
-/// The pub value must be initialized via global.set in the lib's $init.
+//! Entry that calls a function referencing a cross-module pub value.
+//! The pub value must be initialized via global.set in the lib's $init.
 
 use .module_global_init_lib as lib
 

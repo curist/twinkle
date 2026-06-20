@@ -1,4 +1,4 @@
-/// Anyref boxing and unboxing helpers for Wasm emission.
+//! Anyref boxing and unboxing helpers for Wasm emission.
 
 use compiler.codegen.wasm_ir.{Instr}
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key}

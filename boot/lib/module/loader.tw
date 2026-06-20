@@ -1,7 +1,7 @@
-/// Module path resolution for multi-module compilation.
-///
-/// Prelude and stdlib sources are embedded in the compiler via core_lib,
-/// so they resolve without any filesystem layout requirement.
+//! Module path resolution for multi-module compilation.
+//!
+//! Prelude and stdlib sources are embedded in the compiler via core_lib,
+//! so they resolve without any filesystem layout requirement.
 
 use @std.fs
 use @std.path

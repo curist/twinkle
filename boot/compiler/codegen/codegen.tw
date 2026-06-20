@@ -1,12 +1,12 @@
-/// Codegen integration pipeline.
-///
-/// Wires closure_captures → prepare_backend → verify → plan_wasm_types →
-/// emit_module → link → emit_wat.
-///
-/// ARCHITECTURE NOTE: prepare_backend() is the explicit boundary between
-/// optimized semantic ANF and the backend. All backend passes must flow
-/// through that boundary. See boot/compiler/backend/prepare.tw for the
-/// migration contract and per-phase plan.
+//! Codegen integration pipeline.
+//!
+//! Wires closure_captures → prepare_backend → verify → plan_wasm_types →
+//! emit_module → link → emit_wat.
+//!
+//! ARCHITECTURE NOTE: prepare_backend() is the explicit boundary between
+//! optimized semantic ANF and the backend. All backend passes must flow
+//! through that boundary. See boot/compiler/backend/prepare.tw for the
+//! migration contract and per-phase plan.
 
 use @std.date
 use @std.proc

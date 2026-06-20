@@ -1,9 +1,9 @@
-/// JSON-RPC transport framing helpers for LSP stdio streams.
-///
-/// LSP messages are encoded as ASCII headers followed by a UTF-8 JSON body:
-/// Content-Length: <byte-count>\r\n
-/// \r\n
-/// <body>
+//! JSON-RPC transport framing helpers for LSP stdio streams.
+//!
+//! LSP messages are encoded as ASCII headers followed by a UTF-8 JSON body:
+//! Content-Length: <byte-count>\r\n
+//! \r\n
+//! <body>
 
 pub type Frame = .{ headers: Dict<String, String>, body: String }
 

@@ -1,4 +1,4 @@
-/// Minimal test runner with colored output.
+//! Minimal test runner with colored output.
 
 use @std.proc
 

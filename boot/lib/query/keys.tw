@@ -1,7 +1,7 @@
-/// Deterministic cache keys for compiler stages.
-///
-/// Uses wyhash v3 for stable, reproducible keys across runs.
-/// Reference: src/query/keys.rs
+//! Deterministic cache keys for compiler stages.
+//!
+//! Uses wyhash v3 for stable, reproducible keys across runs.
+//! Reference: src/query/keys.rs
 
 pub fn cache_schema_version() Int {
   2

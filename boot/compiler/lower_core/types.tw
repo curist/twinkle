@@ -1,4 +1,4 @@
-/// Type-shape helpers shared by Core lowering routines.
+//! Type-shape helpers shared by Core lowering routines.
 
 use compiler.builtin_refs
 use compiler.mono_type.{MonoType, TypeId}

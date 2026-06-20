@@ -1,10 +1,10 @@
-/// Core IR → ANF IR lowering pass.
-///
-/// Transforms block-structured Core IR into flat let-chains (ANF) where
-/// every intermediate computation is bound to a named local.
-///
-/// Uses an explicit let-accumulator pattern: bindings are collected into
-/// a Vector<LetBinding>, then wrapped around a tail expression via build_lets.
+//! Core IR → ANF IR lowering pass.
+//!
+//! Transforms block-structured Core IR into flat let-chains (ANF) where
+//! every intermediate computation is bound to a named local.
+//!
+//! Uses an explicit let-accumulator pattern: bindings are collected into
+//! a Vector<LetBinding>, then wrapped around a tail expression via build_lets.
 
 use .anf.{
   AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom, FieldAtom, IndexKind, OpKind,

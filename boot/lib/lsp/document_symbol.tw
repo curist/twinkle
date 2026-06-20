@@ -1,4 +1,4 @@
-/// LSP documentSymbol response adapter.
+//! LSP documentSymbol response adapter.
 
 use compiler.query.document_symbols.{DocumentSymbol, SymbolKind}
 use lib.json

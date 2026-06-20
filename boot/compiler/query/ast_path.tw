@@ -1,12 +1,12 @@
-/// Path-returning AST walk for rich diagnostic rendering and LSP context.
-///
-/// find_path() walks from the module root to the deepest node containing a
-/// byte offset, returning the full ancestor chain (root-most first, deepest
-/// last). This gives renderers the enclosing function, block, and expression
-/// context needed to produce useful error messages.
-///
-/// Contrast with ast_walk.find_node_in_block, which starts from a block and
-/// returns only the deepest NodeContext — no parent chain, no module-level items.
+//! Path-returning AST walk for rich diagnostic rendering and LSP context.
+//!
+//! find_path() walks from the module root to the deepest node containing a
+//! byte offset, returning the full ancestor chain (root-most first, deepest
+//! last). This gives renderers the enclosing function, block, and expression
+//! context needed to produce useful error messages.
+//!
+//! Contrast with ast_walk.find_node_in_block, which starts from a block and
+//! returns only the deepest NodeContext — no parent chain, no module-level items.
 
 use compiler.ast.{
   Block, CaseArm, CollectExpr, Expr, FunctionDecl, Module, Pattern, RecordEntry, Stmt, TypeDecl,

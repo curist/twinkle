@@ -1,8 +1,8 @@
-/// Structural lints for `twk lint` (report-only, no auto-fix).
-///
-/// A pure AST visitor over a parsed Module, producing LintFindings. Run only in
-/// review mode (see docs/plans/archive/linter.md). Currently: L3 record-copy-helper,
-/// L4 unreachable-code, L5 direct-rebinding.
+//! Structural lints for `twk lint` (report-only, no auto-fix).
+//!
+//! A pure AST visitor over a parsed Module, producing LintFindings. Run only in
+//! review mode (see docs/plans/archive/linter.md). Currently: L3 record-copy-helper,
+//! L4 unreachable-code, L5 direct-rebinding.
 
 use compiler.ast.{Block, Expr, ForStmt, FunctionDecl, Module, RecordEntry, Stmt, TypeExpr}
 use compiler.resolver.{ResolvedEnv}

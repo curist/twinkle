@@ -1,17 +1,17 @@
-/// Typed Vector<Int> routing (typed-vector representation, S2.0).
-///
-/// Conservative, intra-function rewrite: when a `Vector<Int>` produced by a
-/// `collect`/builder is used ONLY by indexed reads (`xs[i]`) and `xs.len()`, it
-/// never crosses a representation boundary, so we can store it physically as a
-/// typed `PVecI64` (raw i64 leaves, no BoxedInt pointer-chase per read). We swap
-/// the builder/len builtin calls to their `_i64` variants and retype the result
-/// slot to PVecI64; the index reads are routed in emit by the base wasm type.
-/// Return-position escape is allowed: emission inserts the `PVecI64 -> PVec`
-/// boxing adapter at the function boundary. Other boundary uses remain
-/// disallowed.
-///
-/// Runs after assign_repr_for_module (so wasm_type overrides stick and push
-/// elements are already boxed — builder_push_i64 takes the boxed element).
+//! Typed Vector<Int> routing (typed-vector representation, S2.0).
+//!
+//! Conservative, intra-function rewrite: when a `Vector<Int>` produced by a
+//! `collect`/builder is used ONLY by indexed reads (`xs[i]`) and `xs.len()`, it
+//! never crosses a representation boundary, so we can store it physically as a
+//! typed `PVecI64` (raw i64 leaves, no BoxedInt pointer-chase per read). We swap
+//! the builder/len builtin calls to their `_i64` variants and retype the result
+//! slot to PVecI64; the index reads are routed in emit by the base wasm type.
+//! Return-position escape is allowed: emission inserts the `PVecI64 -> PVec`
+//! boxing adapter at the function boundary. Other boundary uses remain
+//! disallowed.
+//!
+//! Runs after assign_repr_for_module (so wasm_type overrides stick and push
+//! elements are already boxed — builder_push_i64 takes the boxed element).
 
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo,

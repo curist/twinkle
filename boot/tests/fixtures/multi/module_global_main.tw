@@ -1,7 +1,7 @@
-/// Entry that reads a cross-module pub record value at its own top level,
-/// references a perturbing module of pub constants, calls a function backed by
-/// a private module-global record, and binds its own top-level record value.
-/// This is the end-to-end shape that the source-LocalId collision broke.
+//! Entry that reads a cross-module pub record value at its own top level,
+//! references a perturbing module of pub constants, calls a function backed by
+//! a private module-global record, and binds its own top-level record value.
+//! This is the end-to-end shape that the source-LocalId collision broke.
 
 use .module_global_consts
 use .module_global_lib

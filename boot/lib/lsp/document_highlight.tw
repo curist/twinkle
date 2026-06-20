@@ -1,7 +1,7 @@
-/// LSP document-highlight response adapter.
-///
-/// Converts internal DocumentHighlight list into an LSP DocumentHighlight JSON
-/// array.
+//! LSP document-highlight response adapter.
+//!
+//! Converts internal DocumentHighlight list into an LSP DocumentHighlight JSON
+//! array.
 
 use compiler.query.document_highlight as query
 use lib.json

@@ -1,4 +1,4 @@
-/// Runtime ABI shim helpers for Wasm emission.
+//! Runtime ABI shim helpers for Wasm emission.
 
 use compiler.codegen.wasm_ir.{Instr}
 

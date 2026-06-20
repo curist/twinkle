@@ -1,4 +1,4 @@
-/// Mutually recursive functions across modules (entry): a <-> b.
+//! Mutually recursive functions across modules (entry): a <-> b.
 
 use .cycle_fn_b
 

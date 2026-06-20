@@ -1,7 +1,7 @@
-/// Shared call-site resolution for editor queries (hover, signature help, inlay
-/// hints). Resolves the callee of a `Call` expression to a `FunctionSig` plus the
-/// receiver facts those features need, so each consumer stops re-inspecting
-/// `method_calls` + `lookup_function`/`lookup_registered_function` on its own.
+//! Shared call-site resolution for editor queries (hover, signature help, inlay
+//! hints). Resolves the callee of a `Call` expression to a `FunctionSig` plus the
+//! receiver facts those features need, so each consumer stops re-inspecting
+//! `method_calls` + `lookup_function`/`lookup_registered_function` on its own.
 
 use compiler.ast.{Expr}
 use compiler.checker.{CheckResult}

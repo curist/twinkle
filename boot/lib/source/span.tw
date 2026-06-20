@@ -1,4 +1,4 @@
-/// Span: file ID and byte offset range into source text.
+//! Span: file ID and byte offset range into source text.
 
 pub type Span = .{ file_id: Int, start: Int, end: Int }
 

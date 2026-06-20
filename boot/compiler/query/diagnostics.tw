@@ -1,12 +1,12 @@
-/// Pure diagnostics query for compiler-aware tooling.
-///
-/// This module exposes structured diagnostics over in-memory document text. It
-/// intentionally stops at type checking: LSP diagnostics do not need lowering,
-/// linking, monomorphization, or codegen.
-///
-/// Workspace analysis delegates to the shared analyze module, which is also
-/// used by module_compiler for builds. Single-document analysis (no imports)
-/// remains self-contained here.
+//! Pure diagnostics query for compiler-aware tooling.
+//!
+//! This module exposes structured diagnostics over in-memory document text. It
+//! intentionally stops at type checking: LSP diagnostics do not need lowering,
+//! linking, monomorphization, or codegen.
+//!
+//! Workspace analysis delegates to the shared analyze module, which is also
+//! used by module_compiler for builds. Single-document analysis (no imports)
+//! remains self-contained here.
 
 use compiler.base_env
 use compiler.imports

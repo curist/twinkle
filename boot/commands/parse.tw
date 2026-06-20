@@ -1,4 +1,4 @@
-/// Parse command: parse source and print diagnostics.
+//! Parse command: parse source and print diagnostics.
 
 use @std.fs
 use @std.proc

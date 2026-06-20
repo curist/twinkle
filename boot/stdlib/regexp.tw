@@ -1,5 +1,5 @@
-/// Regular expressions (pure Twinkle). Public surface: `@std.regexp`.
-/// See docs/plans/regexp.md for the design and supported subset.
+//! Regular expressions (pure Twinkle). Public surface: `@std.regexp`.
+//! See docs/plans/regexp.md for the design and supported subset.
 
 use .regexp.parse
 use .regexp.program

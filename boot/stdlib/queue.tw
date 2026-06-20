@@ -1,10 +1,10 @@
-/// Persistent double-ended queue built from two vectors.
-///
-/// The public sequence is `front.reverse().concat(back)`: `front` stores the
-/// front side in reverse order and `back` stores the back side in normal order.
-/// This lets pushes and same-side pops use vector append/drop-last fast paths.
-/// When the active side is empty, the queue is rebalanced by materializing the
-/// remaining logical sequence and splitting it across both sides.
+//! Persistent double-ended queue built from two vectors.
+//!
+//! The public sequence is `front.reverse().concat(back)`: `front` stores the
+//! front side in reverse order and `back` stores the back side in normal order.
+//! This lets pushes and same-side pops use vector append/drop-last fast paths.
+//! When the active side is empty, the queue is rebalanced by materializing the
+//! remaining logical sequence and splitting it across both sides.
 
 pub type Queue<T> = .{ front: Vector<T>, back: Vector<T> }
 

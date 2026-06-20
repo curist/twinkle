@@ -1,4 +1,4 @@
-/// Mutually recursive types across modules (entry): ANode <-> BNode.
+//! Mutually recursive types across modules (entry): ANode <-> BNode.
 
 use .cycle_type_b
 

@@ -1,4 +1,4 @@
-/// Shared 16-word ring schedule for digest compression functions.
+//! Shared 16-word ring schedule for digest compression functions.
 
 pub type Schedule = .{
   w0: Int,

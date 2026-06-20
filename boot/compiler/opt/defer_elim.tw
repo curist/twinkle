@@ -1,23 +1,23 @@
-/// ANF defer elimination pass.
-///
-/// Removes all ADefer nodes by rewriting exit points (Return, Break,
-/// Continue, terminal Atom) to execute deferred expressions in LIFO order
-/// before transferring control.
-///
-/// Threads two defer lists:
-///   fn_defers    — declared outside the current loop; fired on Return
-///                  and normal function exit (terminal Atom at function tail).
-///   loop_defers  — declared inside the current loop iteration; fired on
-///                  Break, Continue, and end-of-iteration (terminal Atom
-///                  at loop body tail).
-///
-/// When Return fires inside a loop, BOTH lists run (inner loop defers
-/// before outer function defers — true LIFO).
-///
-/// Entering a loop resets loop_defers = [] and folds the previous
-/// loop_defers into fn_defers.
-///
-/// After this pass no ADefer nodes remain.
+//! ANF defer elimination pass.
+//!
+//! Removes all ADefer nodes by rewriting exit points (Return, Break,
+//! Continue, terminal Atom) to execute deferred expressions in LIFO order
+//! before transferring control.
+//!
+//! Threads two defer lists:
+//!   fn_defers    — declared outside the current loop; fired on Return
+//!                  and normal function exit (terminal Atom at function tail).
+//!   loop_defers  — declared inside the current loop iteration; fired on
+//!                  Break, Continue, and end-of-iteration (terminal Atom
+//!                  at loop body tail).
+//!
+//! When Return fires inside a loop, BOTH lists run (inner loop defers
+//! before outer function defers — true LIFO).
+//!
+//! Entering a loop resets loop_defers = [] and folds the previous
+//! loop_defers into fn_defers.
+//!
+//! After this pass no ADefer nodes remain.
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom, FieldAtom}
 use compiler.anf_analysis.{collect_free_locals}

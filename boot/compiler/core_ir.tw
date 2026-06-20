@@ -1,7 +1,7 @@
-/// Core IR types for the boot compiler.
-///
-/// Every node carries its resolved MonoType. The lowerer populates `ty`
-/// from the checker's type_map (keyed by expr.id).
+//! Core IR types for the boot compiler.
+//!
+//! Every node carries its resolved MonoType. The lowerer populates `ty`
+//! from the checker's type_map (keyed by expr.id).
 
 use lib.source.span.{Span}
 

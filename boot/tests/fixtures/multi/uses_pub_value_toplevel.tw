@@ -1,4 +1,4 @@
-/// Access pub values in top-level init code (not inside a function).
+//! Access pub values in top-level init code (not inside a function).
 
 use .pub_value_lib
 

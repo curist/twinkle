@@ -1,9 +1,9 @@
-/// Go-to-definition query over semantic snapshots.
-///
-/// The resolver below uses the typed environment and workspace cache to follow
-/// canonical symbol identities across imports.  Local bindings are resolved from
-/// lexical source structure; imported/top-level functions and types are resolved
-/// through resolver origins rather than name-only matching.
+//! Go-to-definition query over semantic snapshots.
+//!
+//! The resolver below uses the typed environment and workspace cache to follow
+//! canonical symbol identities across imports.  Local bindings are resolved from
+//! lexical source structure; imported/top-level functions and types are resolved
+//! through resolver origins rather than name-only matching.
 
 use @std.fs
 

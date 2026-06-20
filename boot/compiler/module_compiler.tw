@@ -1,11 +1,11 @@
-/// Multi-module compiler: recursive module loading with caching and cycle detection.
-///
-/// Orchestrates the compilation of a module and all its transitive dependencies.
-/// Frontend analysis (parse → resolve → typecheck → exports) is delegated to the
-/// shared analyze module, which is also used by the LSP diagnostics path.
-/// This module adds lowering to Core IR on top, then links all modules.
-///
-/// Reference: src/module/mod.rs (compile_module, compile_planned_dependencies)
+//! Multi-module compiler: recursive module loading with caching and cycle detection.
+//!
+//! Orchestrates the compilation of a module and all its transitive dependencies.
+//! Frontend analysis (parse → resolve → typecheck → exports) is delegated to the
+//! shared analyze module, which is also used by the LSP diagnostics path.
+//! This module adds lowering to Core IR on top, then links all modules.
+//!
+//! Reference: src/module/mod.rs (compile_module, compile_planned_dependencies)
 
 use @std.date
 use @std.path

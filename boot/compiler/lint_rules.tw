@@ -1,6 +1,6 @@
-/// Human-facing rationale for each `twk lint` rule, keyed by its kebab `rule`
-/// id. `brief` is the one-line header summary; `detailed` is the full rationale
-/// shown under `--explain`, authored as a Zig-style multi-line literal.
+//! Human-facing rationale for each `twk lint` rule, keyed by its kebab `rule`
+//! id. `brief` is the one-line header summary; `detailed` is the full rationale
+//! shown under `--explain`, authored as a Zig-style multi-line literal.
 
 pub type RuleInfo = .{ brief: String, detailed: String }
 

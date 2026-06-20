@@ -1,4 +1,4 @@
-/// Operator mapping and unit-variant equality helpers for Core lowering.
+//! Operator mapping and unit-variant equality helpers for Core lowering.
 
 use compiler.ast.{BinOp as AstBinOp, Expr, UnOp as AstUnOp}
 use compiler.core_ir.{BinOp, CoreExpr, CoreExprKind, FuncId, MatchArm, UnOp}

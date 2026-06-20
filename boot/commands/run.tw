@@ -1,4 +1,4 @@
-/// Run command: compile and execute via Wasm backend.
+//! Run command: compile and execute via Wasm backend.
 
 use @std.proc
 

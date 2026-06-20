@@ -1,4 +1,4 @@
-/// Shared wasm planner types used by the legacy planner, emitter, and tests.
+//! Shared wasm planner types used by the legacy planner, emitter, and tests.
 
 use compiler.codegen.wasm_ir.{ImportDef, TypeDef}
 use compiler.codegen.wasm_layout.{WasmLayout}

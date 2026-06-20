@@ -1,18 +1,18 @@
-/// Phase 4 tests: validation and drift detection.
-///
-/// These tests ensure that:
-///   - every function defined in prelude/signatures/*.tw appears in builtin_env()
-///     as either a public free binding or a registered internal callable target,
-///     depending on its surface visibility class
-///   - every canonical name in make_builtin_registry() traces back to a
-///     prelude/signatures/*.tw entry (catches registry entries that are no
-///     longer backed by a signature stub)
-///   - signature-file entries that are implemented as prelude witnesses rather
-///     than builtin-registry intrinsics/runtime helpers still surface correctly
-///     through builtin_env()
-///   - known internal-only builtins carry no canonical name
-///   - module-qualified, dot-method, and free-function builtin call forms each
-///     resolve and type-check without errors
+//! Phase 4 tests: validation and drift detection.
+//!
+//! These tests ensure that:
+//!   - every function defined in prelude/signatures/*.tw appears in builtin_env()
+//!     as either a public free binding or a registered internal callable target,
+//!     depending on its surface visibility class
+//!   - every canonical name in make_builtin_registry() traces back to a
+//!     prelude/signatures/*.tw entry (catches registry entries that are no
+//!     longer backed by a signature stub)
+//!   - signature-file entries that are implemented as prelude witnesses rather
+//!     than builtin-registry intrinsics/runtime helpers still surface correctly
+//!     through builtin_env()
+//!   - known internal-only builtins carry no canonical name
+//!   - module-qualified, dot-method, and free-function builtin call forms each
+//!     resolve and type-check without errors
 
 use @std.path
 

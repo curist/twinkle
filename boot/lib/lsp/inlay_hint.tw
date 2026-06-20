@@ -1,6 +1,6 @@
-/// LSP inlay hint response adapter.
-///
-/// Converts internal InlayHint results into LSP InlayHint[] JSON.
+//! LSP inlay hint response adapter.
+//!
+//! Converts internal InlayHint results into LSP InlayHint[] JSON.
 
 use compiler.query.inlay_hints as query_inlay_hints
 use lib.json

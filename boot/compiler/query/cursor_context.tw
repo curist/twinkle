@@ -1,8 +1,8 @@
-/// Shared cursor/source context helpers for editor-oriented query features.
-///
-/// This module intentionally stays syntax-only: it may inspect source text,
-/// bytes, and lexer tokens, but it does not perform semantic lookup or build
-/// LSP response objects.
+//! Shared cursor/source context helpers for editor-oriented query features.
+//!
+//! This module intentionally stays syntax-only: it may inspect source text,
+//! bytes, and lexer tokens, but it does not perform semantic lookup or build
+//! LSP response objects.
 
 use compiler.lexer
 use compiler.tokens.{Token}

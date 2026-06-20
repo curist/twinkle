@@ -1,4 +1,4 @@
-/// Record emission helpers.
+//! Record emission helpers.
 
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedFieldAtom}
 use compiler.codegen.emit.coercions.{emit_coerce_stack}

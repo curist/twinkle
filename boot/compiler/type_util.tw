@@ -1,7 +1,7 @@
-/// Shared MonoType traversal and substitution helpers.
-///
-/// These helpers are semantic type utilities: they operate on resolver MonoType
-/// values and do not depend on backend preparation or Wasm layout facts.
+//! Shared MonoType traversal and substitution helpers.
+//!
+//! These helpers are semantic type utilities: they operate on resolver MonoType
+//! values and do not depend on backend preparation or Wasm layout facts.
 
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedTypeParam}

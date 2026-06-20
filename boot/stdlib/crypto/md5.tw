@@ -1,8 +1,8 @@
-/// Internal MD5 implementation for `@std.crypto`.
-///
-/// MD5 is a legacy digest algorithm. It is provided for compatibility with old
-/// protocols, checksums, and programming puzzles; do not use it for passwords,
-/// signatures, or collision-resistant security decisions.
+//! Internal MD5 implementation for `@std.crypto`.
+//!
+//! MD5 is a legacy digest algorithm. It is provided for compatibility with old
+//! protocols, checksums, and programming puzzles; do not use it for passwords,
+//! signatures, or collision-resistant security decisions.
 
 use .schedule as sched
 

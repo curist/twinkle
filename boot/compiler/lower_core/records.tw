@@ -1,4 +1,4 @@
-/// Record construction and field access lowering.
+//! Record construction and field access lowering.
 
 use compiler.ast as ast
 use compiler.ast.{Expr}

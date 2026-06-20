@@ -1,19 +1,19 @@
-/// A read-only, zero-copy window over any `IndexRead` backing.
-///
-/// A `View` is just a backing (`source`) plus a `start` offset and element
-/// `count`. Element reads delegate through the `IndexRead` access contract, so
-/// after monomorphization `at` is a direct read into the backing (O(1) for a
-/// `String`, O(log n) for a `Vector`) plus a single integer add — no closure,
-/// no indirection. The window ops `drop_first` / `drop_last` / `sub` are O(1):
-/// they only adjust `start` / `count` and share the one backing.
-///
-/// Because a `View` provides its own `len` / `at`, it itself satisfies
-/// `IndexRead<E>`, so views compose (a view's `source` can be another view) and
-/// plug into the same generic algorithms as their backings.
-///
-/// The element type `E` is never stored — it is recovered at each method from
-/// the backing's `IndexRead<E>` via the contract's functional dependency, so
-/// `View` needs only the backing parameter `C`.
+//! A read-only, zero-copy window over any `IndexRead` backing.
+//!
+//! A `View` is just a backing (`source`) plus a `start` offset and element
+//! `count`. Element reads delegate through the `IndexRead` access contract, so
+//! after monomorphization `at` is a direct read into the backing (O(1) for a
+//! `String`, O(log n) for a `Vector`) plus a single integer add — no closure,
+//! no indirection. The window ops `drop_first` / `drop_last` / `sub` are O(1):
+//! they only adjust `start` / `count` and share the one backing.
+//!
+//! Because a `View` provides its own `len` / `at`, it itself satisfies
+//! `IndexRead<E>`, so views compose (a view's `source` can be another view) and
+//! plug into the same generic algorithms as their backings.
+//!
+//! The element type `E` is never stored — it is recovered at each method from
+//! the backing's `IndexRead<E>` via the contract's functional dependency, so
+//! `View` needs only the backing parameter `C`.
 
 pub type View<C> = .{ source: C, start: Int, count: Int }
 

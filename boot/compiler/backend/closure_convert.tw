@@ -1,15 +1,15 @@
-/// Final closure conversion pass.
-///
-/// Walks optimized ANF, computes the explicit capture set for every hoisted
-/// closure function, and rewrites hoisted bodies so captured outer locals become
-/// explicit leading capture params with rewritten LocalIds.
-///
-/// Capture ordering: matches the free_vars order in AMakeClosure exactly.
-/// Construction sites and hoisted function ABIs are in agreement by construction.
-///
-/// GlobalFunc-as-argument cases (functions passed to higher-order callers
-/// without a closure wrapper) still receive empty capture lists in wasm_plan.tw —
-/// that path remains transitional and should be absorbed here later.
+//! Final closure conversion pass.
+//!
+//! Walks optimized ANF, computes the explicit capture set for every hoisted
+//! closure function, and rewrites hoisted bodies so captured outer locals become
+//! explicit leading capture params with rewritten LocalIds.
+//!
+//! Capture ordering: matches the free_vars order in AMakeClosure exactly.
+//! Construction sites and hoisted function ABIs are in agreement by construction.
+//!
+//! GlobalFunc-as-argument cases (functions passed to higher-order callers
+//! without a closure wrapper) still receive empty capture lists in wasm_plan.tw —
+//! that path remains transitional and should be absorbed here later.
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom, FieldAtom}
 use compiler.backend.prepared_ir.{CaptureParam}

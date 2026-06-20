@@ -1,5 +1,5 @@
-/// a module doc
-/// useful description regarding this module
+//! a module doc
+//! useful description regarding this module
 
 /// foo does bar
 pub fn foo() Int {

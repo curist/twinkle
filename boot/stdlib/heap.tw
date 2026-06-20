@@ -1,14 +1,14 @@
-/// Persistent priority queue implemented as a pairing heap.
-///
-/// A `Heap<T>` is a comparator plus a pairing-heap tree: every node's value
-/// orders before (`.Lt`) all of its children. The element that orders before
-/// all others is at the root, so `peek` / `pop` are cheap. The comparator is
-/// stored in the heap, so `push` / `pop` / `merge` take no comparator argument
-/// and the same heap is a min-heap or max-heap purely by how it was built
-/// (`Int.compare` gives a min-heap; a reversed comparator gives a max-heap).
-///
-/// `Tree<T>` is a representation detail. Use the module API and treat `root`
-/// as opaque.
+//! Persistent priority queue implemented as a pairing heap.
+//!
+//! A `Heap<T>` is a comparator plus a pairing-heap tree: every node's value
+//! orders before (`.Lt`) all of its children. The element that orders before
+//! all others is at the root, so `peek` / `pop` are cheap. The comparator is
+//! stored in the heap, so `push` / `pop` / `merge` take no comparator argument
+//! and the same heap is a min-heap or max-heap purely by how it was built
+//! (`Int.compare` gives a min-heap; a reversed comparator gives a max-heap).
+//!
+//! `Tree<T>` is a representation detail. Use the module API and treat `root`
+//! as opaque.
 
 pub type Heap<T> = .{ root: Tree<T>, cmp: fn(T, T) Order, size: Int }
 

@@ -1,6 +1,6 @@
-/// LSP workspace/symbol response adapter.
-///
-/// Returns a flat SymbolInformation[] array (not hierarchical DocumentSymbol).
+//! LSP workspace/symbol response adapter.
+//!
+//! Returns a flat SymbolInformation[] array (not hierarchical DocumentSymbol).
 
 use compiler.query.document_symbols.{SymbolKind}
 use compiler.query.workspace_symbols.{WorkspaceSymbol}

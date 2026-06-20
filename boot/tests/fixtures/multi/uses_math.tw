@@ -1,4 +1,4 @@
-/// Module that imports math_lib.
+//! Module that imports math_lib.
 
 use .math_lib
 

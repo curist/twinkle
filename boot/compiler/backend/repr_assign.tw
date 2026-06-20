@@ -1,23 +1,23 @@
-/// Representation assignment pass.
-///
-/// assign_repr_for_module() takes a vector of PreparedFuncs (with slot_assign
-/// defaults: OpaqueAnyref / Anyref) and fills in the correct ReprKind and
-/// wasm_type for each slot, using:
-///
-///   1. MonoType → ReprKind derivation (covers most slots)
-///   2. Boundary-node override:
-///      - AWrapAnyref result locals → OpaqueAnyref (the result is untyped anyref)
-///      - AUnwrapAnyref result locals → repr derived from the unwrap target MonoType
-///   3. DeadPlaceholder slots → DeadValue
-///
-/// Branch join rules: the type checker already unified branch result types,
-/// so the let-bound result local's MonoType is consistent. The mono-derived
-/// repr is correct for all branch joins that do not involve erasing boundaries.
-/// Erasing boundaries are explicit in post-boundary ANF as AUnwrapAnyref nodes,
-/// so the override in rule 2 handles those cases correctly.
-///
-/// ErasedSum is reserved for future use. It is not currently produced by this
-/// pass (it would require tracking which anyrefs previously held typed sums).
+//! Representation assignment pass.
+//!
+//! assign_repr_for_module() takes a vector of PreparedFuncs (with slot_assign
+//! defaults: OpaqueAnyref / Anyref) and fills in the correct ReprKind and
+//! wasm_type for each slot, using:
+//!
+//!   1. MonoType → ReprKind derivation (covers most slots)
+//!   2. Boundary-node override:
+//!      - AWrapAnyref result locals → OpaqueAnyref (the result is untyped anyref)
+//!      - AUnwrapAnyref result locals → repr derived from the unwrap target MonoType
+//!   3. DeadPlaceholder slots → DeadValue
+//!
+//! Branch join rules: the type checker already unified branch result types,
+//! so the let-bound result local's MonoType is consistent. The mono-derived
+//! repr is correct for all branch joins that do not involve erasing boundaries.
+//! Erasing boundaries are explicit in post-boundary ANF as AUnwrapAnyref nodes,
+//! so the override in rule 2 handles those cases correctly.
+//!
+//! ErasedSum is reserved for future use. It is not currently produced by this
+//! pass (it would require tracking which anyrefs previously held typed sums).
 
 use compiler.backend.prepared_ir.{PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo}
 use compiler.builtins.{BuiltinRegistry}

@@ -86,10 +86,13 @@ pub fn suite() runner.Suite {
       fn() {
         // Result is usable at the call site (was Void before the fix).
         try assert.equal(inferred_value(), 42)
+
         // Forward reference resolves to the callee's inferred return type.
         try assert.equal(calls_forward(), 42)
+
         // Recursion through an unannotated function infers consistently.
         try assert.equal(countdown_sum(5), 15)
+
         // Discarding the value as a statement must not corrupt the stack.
         inferred_value()
         .Ok({})

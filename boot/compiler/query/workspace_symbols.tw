@@ -1,4 +1,4 @@
-/// Extract symbols from all workspace modules for workspace/symbol queries.
+//! Extract symbols from all workspace modules for workspace/symbol queries.
 
 use compiler.ast
 use compiler.query.cache

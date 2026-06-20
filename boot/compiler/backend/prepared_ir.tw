@@ -1,8 +1,8 @@
-/// Prepared backend IR types.
-///
-/// These types make closure captures, physical slot identity, and runtime
-/// representation metadata explicit so later backend passes can consume verified
-/// facts instead of rediscovering them.
+//! Prepared backend IR types.
+//!
+//! These types make closure captures, physical slot identity, and runtime
+//! representation metadata explicit so later backend passes can consume verified
+//! facts instead of rediscovering them.
 
 use compiler.anf.{IndexKind, OpKind}
 use compiler.codegen.wasm_ir.{ValType}

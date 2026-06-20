@@ -1,7 +1,7 @@
-/// Type checker: bidirectional inference with Damas-Milner unification.
-///
-/// Consumes ResolvedEnv + Module AST, produces TypeMap + diagnostics.
-/// InferCtx is threaded functionally through every call; updates use COW field mutation.
+//! Type checker: bidirectional inference with Damas-Milner unification.
+//!
+//! Consumes ResolvedEnv + Module AST, produces TypeMap + diagnostics.
+//! InferCtx is threaded functionally through every call; updates use COW field mutation.
 
 use lib.source.diagnostics.{DiagKind, MissingVariant}
 use lib.source.rewrite

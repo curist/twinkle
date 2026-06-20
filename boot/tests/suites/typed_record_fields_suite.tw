@@ -1,15 +1,15 @@
-/// Tests for analyze_typed_fields in boot/compiler/backend/route_typed_vec.tw.
-///
-/// analyze_typed_fields decides, per (TypeId, FieldId), whether a Vector<Int>
-/// record field can be physically stored as PVecI64. The conservative policy
-/// (Approach B): a field is typed iff it has at least one typed-routable producer
-/// (a collect/builder whose only other uses are index/len) and every producer and
-/// consumer is typed-friendly. Any boxed producer (param/combinator result),
-/// escaping consumer, or a value feeding multiple fields demotes the field.
-///
-/// These are end-to-end fixtures: each test compiles a tiny .tw source through
-/// the real pipeline (compile_source -> closure_convert -> prepare_backend), then
-/// runs analyze_typed_fields on the prepared funcs and inspects the decision dict.
+//! Tests for analyze_typed_fields in boot/compiler/backend/route_typed_vec.tw.
+//!
+//! analyze_typed_fields decides, per (TypeId, FieldId), whether a Vector<Int>
+//! record field can be physically stored as PVecI64. The conservative policy
+//! (Approach B): a field is typed iff it has at least one typed-routable producer
+//! (a collect/builder whose only other uses are index/len) and every producer and
+//! consumer is typed-friendly. Any boxed producer (param/combinator result),
+//! escaping consumer, or a value feeding multiple fields demotes the field.
+//!
+//! These are end-to-end fixtures: each test compiles a tiny .tw source through
+//! the real pipeline (compile_source -> closure_convert -> prepare_backend), then
+//! runs analyze_typed_fields on the prepared funcs and inspects the decision dict.
 
 use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{PreparedModule, prepare_backend, prepare_backend_preroute}

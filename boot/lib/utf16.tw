@@ -1,7 +1,7 @@
-/// UTF-8 traversal and UTF-16 code-unit accounting helpers.
-///
-/// LSP positions are commonly expressed in UTF-16 code units. Twinkle strings
-/// are byte-indexed UTF-8, so LSP support needs small conversion primitives.
+//! UTF-8 traversal and UTF-16 code-unit accounting helpers.
+//!
+//! LSP positions are commonly expressed in UTF-16 code units. Twinkle strings
+//! are byte-indexed UTF-8, so LSP support needs small conversion primitives.
 
 pub type CodePoint = .{ value: Int, byte_start: Int, byte_end: Int }
 

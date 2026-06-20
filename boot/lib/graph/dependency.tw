@@ -1,6 +1,6 @@
-/// Dependency graph for module compilation ordering and invalidation.
-///
-/// Reference: src/query/graph.rs
+//! Dependency graph for module compilation ordering and invalidation.
+//!
+//! Reference: src/query/graph.rs
 
 pub type DependencyGraph = .{
   forward: Dict<String, Vector<String>>,

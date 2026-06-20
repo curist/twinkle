@@ -1,8 +1,8 @@
-/// Compiler-owned builtin contract metadata.
-///
-/// This module defines the builtin contracts (starting with Stringify) and
-/// exposes queries for contract metadata. It intentionally does not depend on
-/// resolver-owned types such as MonoType to avoid a contracts↔resolver cycle.
+//! Compiler-owned builtin contract metadata.
+//!
+//! This module defines the builtin contracts (starting with Stringify) and
+//! exposes queries for contract metadata. It intentionally does not depend on
+//! resolver-owned types such as MonoType to avoid a contracts↔resolver cycle.
 
 pub type BuiltinContract = { Stringify, Eq, Ord, IndexRead, IndexWrite, IntoIterator, Sliceable }
 

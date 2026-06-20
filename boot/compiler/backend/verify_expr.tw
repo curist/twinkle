@@ -1,4 +1,4 @@
-/// Backend verifier expression/control-flow invariants.
+//! Backend verifier expression/control-flow invariants.
 
 use compiler.anf.{OpKind}
 use compiler.backend.callable_targets as callable_targets

@@ -1,4 +1,4 @@
-/// Control-flow Core lowering and rewriting helpers.
+//! Control-flow Core lowering and rewriting helpers.
 
 use compiler.ast.{Block, Expr}
 use compiler.builtin_refs

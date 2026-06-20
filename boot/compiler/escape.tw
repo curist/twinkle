@@ -1,11 +1,11 @@
-/// Shared escape-sequence decoding for string and character literals.
-///
-/// Single source of truth for what `\n`, `\xNN`, `\u{...}`, and the other
-/// escapes mean. Three call sites share it: the string unescaper
-/// (`unescape_string`), the character-literal validator, and the
-/// character-literal value decoder (`parse_char_literal`). Each applies its own
-/// policy to the result — strings keep a malformed escape verbatim, while
-/// character literals surface `error` as a diagnostic.
+//! Shared escape-sequence decoding for string and character literals.
+//!
+//! Single source of truth for what `\n`, `\xNN`, `\u{...}`, and the other
+//! escapes mean. Three call sites share it: the string unescaper
+//! (`unescape_string`), the character-literal validator, and the
+//! character-literal value decoder (`parse_char_literal`). Each applies its own
+//! policy to the result — strings keep a malformed escape verbatim, while
+//! character literals surface `error` as a diagnostic.
 // Outcome of decoding one escape body (the characters after a backslash).
 // `error` is empty on success. `consumed` counts the body characters (not the
 // backslash) and is only meaningful on success.

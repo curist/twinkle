@@ -1,4 +1,4 @@
-/// Optimizer-facing transient builder region representation.
+//! Optimizer-facing transient builder region representation.
 
 use compiler.anf.{AnfExpr, AnfOp}
 use compiler.builder_family.{BuilderConfig}

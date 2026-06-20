@@ -1,11 +1,11 @@
-/// Completion query: gather completion candidates at a given byte offset.
-///
-/// Uses cursor-hole token injection: the lexer inserts a CursorHole token at
-/// the cursor offset, which acts as a syntactic fence preventing the parser
-/// from consuming tokens after the cursor to repair the construct before it.
-///
-/// Works with the existing SemanticSnapshot, falling back to stale cached
-/// state when the current analysis fails.
+//! Completion query: gather completion candidates at a given byte offset.
+//!
+//! Uses cursor-hole token injection: the lexer inserts a CursorHole token at
+//! the cursor offset, which acts as a syntactic fence preventing the parser
+//! from consuming tokens after the cursor to repair the construct before it.
+//!
+//! Works with the existing SemanticSnapshot, falling back to stale cached
+//! state when the current analysis fails.
 
 use @std.fs
 use @std.path

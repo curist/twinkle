@@ -1,9 +1,9 @@
-/// Safe code rewrites for `twk lint` — the review command's rewrite channel.
-///
-/// Rewrites are deliberately separate from `DiagKind`: they never ride the
-/// compiler's error/warning stream, never appear in `build`/`check`, and are
-/// applied only by `twk lint --fix*` (see docs/plans/archive/linter.md). They reuse the
-/// `Report`/`FixEdit` types for output and machine-applicable edits.
+//! Safe code rewrites for `twk lint` — the review command's rewrite channel.
+//!
+//! Rewrites are deliberately separate from `DiagKind`: they never ride the
+//! compiler's error/warning stream, never appear in `build`/`check`, and are
+//! applied only by `twk lint --fix*` (see docs/plans/archive/linter.md). They reuse the
+//! `Report`/`FixEdit` types for output and machine-applicable edits.
 
 use compiler.ast.{ExprKind}
 

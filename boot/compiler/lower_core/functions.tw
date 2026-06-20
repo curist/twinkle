@@ -1,4 +1,4 @@
-/// Function lowering helpers.
+//! Function lowering helpers.
 
 use compiler.ast.{Block, FunctionDecl}
 use compiler.core_ir.{FuncId, FunctionDef, Param}

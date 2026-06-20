@@ -1,6 +1,6 @@
-/// Constant folding: evaluate ABinOp/AUnOp with literal operands at compile time.
-///
-/// Division/modulo by zero are left as-is (runtime trap is intended).
+//! Constant folding: evaluate ABinOp/AUnOp with literal operands at compile time.
+//!
+//! Division/modulo by zero are left as-is (runtime trap is intended).
 
 use compiler.anf.{AnfExpr, AnfMatchArm, AnfOp, Atom}
 use compiler.core_ir.{BinOp, UnOp}
