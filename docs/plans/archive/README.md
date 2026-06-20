@@ -61,6 +61,7 @@ Related historical context outside this folder:
 | [string-literals.md](string-literals.md) | Raw single-line (`r"…"`) and Zig-style `\\` multiline string literals, both with interpolation; lexer-only resolution emitting the existing string tokens, formatter form-preservation (incl. interpolated raw/multiline), lint L1 for single-line `\\` blocks, EBNF + tree-sitter grammar. Supersedes [regexp-percent-escapes.md](regexp-percent-escapes.md) |
 | [regexp-v2-linear.md](regexp-v2-linear.md) | Extended `@std.regexp` with option flags, scoped inline flags, lazy quantifiers, named groups, and explicit rejection of backreference syntax while preserving the Pike VM linear-time model |
 | [not-operator-transition.md](not-operator-transition.md) | Decision record rejecting a migration from prefix `!` to word-form `not`; keeps `!` as canonical boolean negation |
+| [direct-control-flow-case-arms.md](direct-control-flow-case-arms.md) | Direct `return`, `break`, and `continue` arm bodies for `case`/`cond`, plus formatter normalization from braced terminal arm blocks |
 
 ---
 
