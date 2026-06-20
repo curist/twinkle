@@ -334,6 +334,7 @@ fn kind_to_message(kind: DiagKind) String {
       .TryReturnMismatch(d) => "try on ${d.expected_kind}: function must return ${d.expected_kind}",
       .CannotInterpolate(d) => "cannot interpolate: ${d.reason}",
       .DeferDiverge(_) => "defer body cannot diverge",
+      .InvalidControlFlow(d) => d.message,
       .CompilerBug(d) => "compiler bug: ${d.message}",
       .ReservedTypeName(d) => "type name '${d.name}' is reserved",
       .DuplicateName(d) => "duplicate ${d.kind}: ${d.name}",

@@ -311,12 +311,26 @@ CondArms =
     CondArm { "," CondArm } [ "," ] ;
 
 CondArm =
-      Expr "=>" Expr
-    | "_" "=>" Expr ;
+      Expr "=>" ArmBody
+    | "_" "=>" ArmBody ;
+
+ArmBody =
+      Expr
+    | ArmReturnStmt
+    | ArmBreakStmt
+    | ContinueStmt ;
+
+ArmReturnStmt =
+    "return" [ Expr ] ;
+
+ArmBreakStmt =
+    "break" ;
 (* Implementation note:
    - Each condition must have type Bool.
    - The `_` arm is the default and must appear last when present.
    - `cond {}` (empty) is a parse error.
+   - Direct terminal arm bodies (`return`, `break`, `continue`) are only parsed
+     in arm-body position and are treated as diverging branches.
    - Desugars to nested If/Else in Core IR — no new IR nodes. *)
 
 (* ===== Pattern Matching ===== *)
@@ -328,7 +342,7 @@ CaseArms =
     CaseArm { "," CaseArm } [ "," ] ;
 
 CaseArm =
-    Pattern "=>" Expr ;
+    Pattern "=>" ArmBody ;
 
 Pattern =
       EnumPattern
@@ -493,10 +507,12 @@ ContinueStmt =
     "continue" ;
 
 ReturnStmt =
-    "return" Expr ;
+    "return" [ Expr ] ;
 (* Implementation note:
    - `return expr` allowed in any function; type must match function return.
-   - For `void` returns, use `return {}` (empty block evaluates to `void`). *)
+   - Bare `return` is allowed for `Void` returns.
+   - `break` and `continue` are only valid in loop/collect bodies.
+   - `break expr` is not supported. *)
 
 IfExpr =
     "if" Expr Block [ "else" ( IfExpr | Block ) ] ;

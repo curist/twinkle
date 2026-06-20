@@ -1091,6 +1091,12 @@ fn is_arm_inline_stmt(stmt: Stmt) Bool {
   }
 }
 
+fn can_unwrap_arm_stmt(stmt: Stmt, tm: TriviaMap) Bool {
+  stmt_s := stmt_span(stmt)
+  is_arm_inline_stmt(stmt)
+    and tm.get_trivia(stmt_s.start).len() == 0 and tm.get_trailing_trivia(stmt_s.end).len() == 0
+}
+
 fn format_stmt(stmt: Stmt, tm: TriviaMap) Doc {
   case stmt {
     .Let(s) => format_let(s, tm),
@@ -1877,18 +1883,8 @@ fn format_case_arm(arm: CaseArm, tm: TriviaMap) Doc {
         .None => format_block(block, tm),
       }
     } else if block.stmts.len() == 1
-      and block.tail.is_none() and is_arm_inline_stmt(block.stmts[0])
-      and tm.get_trivia(stmt_span(block.stmts[0]).start).len() == 0 {
-      // Inline terminal statements: { continue }, { return expr }
-      stmt_doc := format_stmt(block.stmts[0], tm)
-      doc
-        .concat([
-          doc.text("{"),
-          doc.concat([doc.line(), stmt_doc]).indent(),
-          doc.line(),
-          doc.text("}"),
-        ])
-        .group()
+      and block.tail.is_none() and can_unwrap_arm_stmt(block.stmts[0], tm) {
+      format_stmt(block.stmts[0], tm)
     } else {
       format_block(block, tm)
     },
@@ -1942,17 +1938,8 @@ fn format_cond_arm(arm: CondArm, tm: TriviaMap) Doc {
         .None => format_block(block, tm),
       }
     } else if block.stmts.len() == 1
-      and block.tail.is_none() and is_arm_inline_stmt(block.stmts[0])
-      and tm.get_trivia(stmt_span(block.stmts[0]).start).len() == 0 {
-      stmt_doc := format_stmt(block.stmts[0], tm)
-      doc
-        .concat([
-          doc.text("{"),
-          doc.concat([doc.line(), stmt_doc]).indent(),
-          doc.line(),
-          doc.text("}"),
-        ])
-        .group()
+      and block.tail.is_none() and can_unwrap_arm_stmt(block.stmts[0], tm) {
+      format_stmt(block.stmts[0], tm)
     } else {
       format_block(block, tm)
     },

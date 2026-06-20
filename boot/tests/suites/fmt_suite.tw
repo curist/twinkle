@@ -123,6 +123,8 @@ pub fn suite() runner.Suite {
     )
     .test("formats literals and wrapped calls", assert_fmt_case("literals_and_calls"))
     .test("formats control-flow blocks", assert_fmt_case("control_flow"))
+    .test("formats direct terminal arms", assert_fmt_case("direct_terminal_arms"))
+    .test("preserves terminal arm comments", assert_fmt_case("terminal_arm_comments"))
     .test(
       "does not auto-insert blank lines around flow statements",
       assert_fmt_case("cond_arm_compact_block"),

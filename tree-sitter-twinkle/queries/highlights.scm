@@ -23,7 +23,7 @@
 
 "try" @keyword.exception
 
-; Control flow keywords
+; Control flow keywords, including terminal case/cond arm bodies
 (break_statement) @keyword.control
 (continue_statement) @keyword.control
 

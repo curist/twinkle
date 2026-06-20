@@ -1,3 +1,2 @@
 2:4: error: 'return' is a statement and cannot be used where an expression is expected in grouped expression
 hint: wrap it in a block expression, e.g. `=> { return ... }`
-3:1: error: expected ')'

@@ -343,7 +343,7 @@ pub answer := 42
     fn parse_error_reports_statement_in_expression_with_hint() {
         let source = r#"fn f() Int {
   case 1 {
-    1 => return 1,
+    1 => defer,
     _ => 0,
   }
 }
@@ -353,7 +353,7 @@ pub answer := 42
         let rendered = err.to_string();
         assert!(
             rendered.contains(
-                "'return' is a statement and cannot be used where an expression is expected"
+                "'defer' is a statement and cannot be used where an expression is expected"
             ),
             "expected clearer statement-vs-expression message, got: {rendered}"
         );
@@ -365,7 +365,7 @@ pub answer := 42
 
     #[test]
     fn statement_in_expression_context_case_arm() {
-        let source = "fn f() Int { case 1 { 1 => return 1, _ => 0 } }";
+        let source = "fn f() Int { case 1 { 1 => defer, _ => 0 } }";
         let err = parse_source(source, "test.tw").expect_err("parse should fail");
         let rendered = err.to_string();
         assert!(

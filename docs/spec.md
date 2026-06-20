@@ -1261,6 +1261,26 @@ if x > 0 { a } else { b }
 On enums: exhaustive or `_ =>`.
 On primitives (`Int`, `Bool`, `String`, `Byte`): must include `_`.
 
+Arm bodies are normally expressions. Terminal control flow may be written
+without an extra block:
+
+```tw
+case opt {
+  .Some(v) => v,
+  .None => return 0,
+}
+
+for item in items {
+  case classify(item) {
+    .Skip => continue,
+    .Stop => break,
+    .Use(v) => consume(v),
+  }
+}
+```
+
+Use a block for multi-statement arms or for non-terminal statements.
+
 ### Loops
 
 All `for` loops are statements returning `Void`.
@@ -1338,7 +1358,9 @@ to ensure exhaustiveness. In statement position the default may be omitted — i
 no arm matches the whole `cond` evaluates to `Void`.
 
 Arms are evaluated top-to-bottom; the first match wins even if later arms would
-also match. Bodies can be block expressions:
+also match. Bodies are normally expressions, and `return`, `break`, or
+`continue` may be written directly as terminal arm bodies. Use block expressions
+for multi-statement bodies:
 
 ```tw
 label := cond {
@@ -1363,15 +1385,20 @@ cond {
 }
 ```
 
-### Diverging expressions
+### Diverging branches
 
-Some expressions do not complete normally, for example:
+Some control paths do not complete normally, for example:
 
 * `return expr`
+* `break`
+* `continue`
 * `error("message")`
 * infinite loops (e.g. `for true { ... }`)
 
-Such expressions are allowed in any expression position.
+`return`, `break`, and `continue` are statements, not general expressions.
+They are also accepted directly as `case`/`cond` arm bodies because those arm
+bodies are branch positions. Elsewhere, use an explicit block when a statement
+is needed in expression position.
 
 When type-checking an expression with multiple branches (e.g. `if` or `case`), branches that do not complete normally do not affect the resulting type. The type of the whole expression is determined only by branches that complete normally.
 

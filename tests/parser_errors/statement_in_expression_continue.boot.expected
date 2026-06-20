@@ -1,2 +1,2 @@
-3:10: error: 'continue' is a statement and cannot be used where an expression is expected in case arm body
+2:7: error: 'continue' is a statement and cannot be used where an expression is expected in call argument
 hint: wrap it in a block expression, e.g. `=> { continue ... }`

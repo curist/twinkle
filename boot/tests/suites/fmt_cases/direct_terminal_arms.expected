@@ -1,0 +1,26 @@
+fn classify(x: Bool) Int {
+  case x {
+    true => return 1,
+    false => 0,
+  }
+}
+
+fn loop_items(xs: Vector<Int>) Void {
+  for x in xs {
+    case x {
+      0 => continue,
+      1 => break,
+      _ => {},
+    }
+  }
+}
+
+fn cond_loop(x: Int) Void {
+  for true {
+    cond {
+      x < 0 => break,
+      x == 0 => continue,
+      _ => {},
+    }
+  }
+}

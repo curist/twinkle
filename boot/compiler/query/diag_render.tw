@@ -272,6 +272,12 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       d.span,
       .Some("return, break, continue, or error() not allowed in defer"),
     ),
+    .InvalidControlFlow(d) => .{
+      severity: .Error,
+      title: d.message,
+      labels: [primary(d.span, .None)],
+      help_lines: d.help_lines,
+    },
     .CompilerBug(d) => .{
       severity: .Error,
       title: "compiler bug: ${d.message}",

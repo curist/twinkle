@@ -1,6 +1,6 @@
 fn f() {
   case 1 {
-    1 => defer cleanup(),
+    1 => defer,
     _ => {},
   }
 }

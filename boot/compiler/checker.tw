@@ -9,8 +9,8 @@ use lib.source.rewrite.{Rewrite}
 use lib.source.span.{Span}
 
 use .ast.{
-  BinOp, Block, CaseArm, CollectExpr, CondArm, Expr, ForStmt, FunctionDecl, LetStmt, Module, Param,
-  Pattern, RecordEntry, ReturnStmt, Stmt, StringPart, TypeExpr, UnOp,
+  BinOp, Block, BreakStmt, CaseArm, CollectExpr, CondArm, ContinueStmt, Expr, ForStmt, FunctionDecl,
+  LetStmt, Module, Param, Pattern, RecordEntry, ReturnStmt, Stmt, StringPart, TypeExpr, UnOp,
 }
 use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape}
 use .lint.{LintFinding}
@@ -29,6 +29,7 @@ pub type InferCtx = .{
   subst: Dict<Int, MonoType>,
   next_meta: Int,
   current_ret: MonoType?,
+  loop_depth: Int,
   type_var_scope: Vector<ResolvedTypeParam>,
   type_map: Dict<Int, MonoType>,
   expr_spans: Dict<Int, Int>,
@@ -92,6 +93,7 @@ fn empty_ctx(env: ResolvedEnv, module_aliases: Dict<String, Bool>, lint_mode: Bo
     subst: Dict.new(),
     next_meta: 0,
     current_ret: .None,
+    loop_depth: 0,
     type_var_scope: [],
     type_map: Dict.new(),
     expr_spans: Dict.new(),
@@ -2877,6 +2879,8 @@ fn synth_closure(
   cur_ctx := ctx.push_scope()
   cur_diags := diags
   prev_ret := cur_ctx.current_ret
+  prev_loop_depth := cur_ctx.loop_depth
+  cur_ctx.loop_depth = 0
 
   // Resolve param types (annotated or fresh meta)
   param_tys: Vector<MonoType> = []
@@ -2910,12 +2914,14 @@ fn synth_closure(
       body_r := check_block(body, ann.ty, cur_ctx, cur_diags)
       cur_ctx = body_r.ctx.pop_scope()
       cur_ctx.current_ret = prev_ret
+      cur_ctx.loop_depth = prev_loop_depth
       .{ ty: .Function(param_tys, ann.ty), ctx: cur_ctx, diags: body_r.diags }
     },
     .None => {
       body_r := synth_block(body, cur_ctx, cur_diags)
       cur_ctx = body_r.ctx.pop_scope()
       cur_ctx.current_ret = prev_ret
+      cur_ctx.loop_depth = prev_loop_depth
       .{ ty: .Function(param_tys, body_r.ty), ctx: cur_ctx, diags: body_r.diags }
     },
   }
@@ -2938,7 +2944,9 @@ fn check_closure(
       cur_ctx := ctx.push_scope()
       cur_diags := diags
       prev_ret := cur_ctx.current_ret
+      prev_loop_depth := cur_ctx.loop_depth
       cur_ctx.current_ret = .Some(exp_ret)
+      cur_ctx.loop_depth = 0
       param_tys: Vector<MonoType> = []
 
       for i in 0..params.len() {
@@ -2995,6 +3003,7 @@ fn check_closure(
       body_r := check_block(body, body_expected, cur_ctx, cur_diags)
       out_ctx := body_r.ctx.pop_scope()
       out_ctx.current_ret = prev_ret
+      out_ctx.loop_depth = prev_loop_depth
       .{ ctx: out_ctx, diags: body_r.diags }
     },
     _ => {
@@ -3746,9 +3755,13 @@ fn check_for(for_stmt: ForStmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut
     .None => {},
   }
 
-  // Check the body
-  body_stmts := synth_block(for_stmt.body, cur_ctx, cur_diags)
-  .{ ctx: body_stmts.ctx.pop_scope(), diags: body_stmts.diags }
+  // Check the body with break/continue enabled only for the loop body.
+  body_ctx := cur_ctx
+  body_ctx.loop_depth = body_ctx.loop_depth + 1
+  body_stmts := synth_block(for_stmt.body, body_ctx, cur_diags)
+  out_ctx := body_stmts.ctx.pop_scope()
+  out_ctx.loop_depth = ctx.loop_depth
+  .{ ctx: out_ctx, diags: body_stmts.diags }
 }
 
 type IterBindResult = .{ ctx: InferCtx, diags: Vector<DiagKind>, elem_ty: MonoType }
@@ -3940,8 +3953,12 @@ fn synth_collect(ce: CollectExpr, s: Span, ctx: InferCtx, diags: Vector<DiagKind
   cond_r := check_optional_condition(ce.condition, cur_ctx, cur_diags)
   cur_ctx = cond_r.ctx
   cur_diags = cond_r.diags
-  body_r := synth_block(ce.body, cur_ctx, cur_diags)
-  .{ ty: MonoType.Vector(body_r.ty), ctx: body_r.ctx.pop_scope(), diags: body_r.diags }
+  body_ctx := cur_ctx
+  body_ctx.loop_depth = body_ctx.loop_depth + 1
+  body_r := synth_block(ce.body, body_ctx, cur_diags)
+  out_ctx := body_r.ctx.pop_scope()
+  out_ctx.loop_depth = ctx.loop_depth
+  .{ ty: MonoType.Vector(body_r.ty), ctx: out_ctx, diags: body_r.diags }
 }
 
 fn check_collect(
@@ -3966,8 +3983,12 @@ fn check_collect(
   cond_r := check_optional_condition(ce.condition, cur_ctx, cur_diags)
   cur_ctx = cond_r.ctx
   cur_diags = cond_r.diags
-  body_r := check_block(ce.body, expected_elem, cur_ctx, cur_diags)
-  .{ ctx: body_r.ctx.pop_scope(), diags: body_r.diags }
+  body_ctx := cur_ctx
+  body_ctx.loop_depth = body_ctx.loop_depth + 1
+  body_r := check_block(ce.body, expected_elem, body_ctx, cur_diags)
+  out_ctx := body_r.ctx.pop_scope()
+  out_ctx.loop_depth = ctx.loop_depth
+  .{ ctx: out_ctx, diags: body_r.diags }
 }
 
 // ── Operators ───────────────────────────────────────────────────────
@@ -4973,6 +4994,59 @@ fn block_diverges(block: Block, ctx: InferCtx) Bool {
   }
 }
 
+fn invalid_control_flow(span_in: Span, message: String, help_lines: Vector<String>) DiagKind {
+  .Error(.InvalidControlFlow(.{ span: span_in, message, help_lines }))
+}
+
+fn check_break_stmt(bs: BreakStmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+  cur_ctx := ctx
+  cur_diags := diags
+
+  if ctx.loop_depth <= 0 {
+    cur_diags = .append(
+      invalid_control_flow(
+        bs.span,
+        "break is only valid inside a loop",
+        ["remove this break or wrap it in a loop"],
+      ),
+    )
+  }
+
+  case bs.value {
+    .Some(val) => {
+      r := cur_ctx.synth(val, cur_diags)
+      cur_ctx = r.ctx
+      cur_diags = r.diags.append(
+        invalid_control_flow(
+          bs.span,
+          "break with a value is not supported",
+          ["write `break` without a value"],
+        ),
+      )
+    },
+    .None => {},
+  }
+
+  .{ ctx: cur_ctx, diags: cur_diags }
+}
+
+fn check_continue_stmt(cs: ContinueStmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+  if ctx.loop_depth <= 0 {
+    return .{
+      ctx,
+      diags: diags.append(
+        invalid_control_flow(
+          cs.span,
+          "continue is only valid inside a loop",
+          ["remove this continue or wrap it in a loop"],
+        ),
+      ),
+    }
+  }
+
+  .{ ctx, diags }
+}
+
 fn check_stmt(stmt: Stmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
   case stmt {
     .Let(ls) => check_let(ls, ctx, diags),
@@ -4982,14 +5056,8 @@ fn check_stmt(stmt: Stmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
     },
     .Return(rs) => check_return(rs, ctx, diags),
     .For(fs) => check_for(fs, ctx, diags),
-    .Break(bs) => case bs.value {
-      .Some(val) => {
-        r := ctx.synth(val, diags)
-        .{ ctx: r.ctx, diags: r.diags }
-      },
-      .None => .{ ctx, diags },
-    },
-    .Continue(_) => .{ ctx, diags },
+    .Break(bs) => check_break_stmt(bs, ctx, diags),
+    .Continue(cs) => check_continue_stmt(cs, ctx, diags),
     .Defer(ds) => {
       r := ctx.synth(ds.expr, diags)
       deferred_ty := zonk(r.ty, r.ctx.subst)
@@ -5010,14 +5078,8 @@ fn check_top_level_stmt(stmt: Stmt, ctx: InferCtx, diags: Vector<DiagKind>) Chec
       .{ ctx: r.ctx.maybe_unused_value(es.expr.span, r.ty), diags: r.diags }
     },
     .For(fs) => check_for(fs, ctx, diags),
-    .Break(bs) => case bs.value {
-      .Some(val) => {
-        r := ctx.synth(val, diags)
-        .{ ctx: r.ctx, diags: r.diags }
-      },
-      .None => .{ ctx, diags },
-    },
-    .Continue(_) => .{ ctx, diags },
+    .Break(bs) => check_break_stmt(bs, ctx, diags),
+    .Continue(cs) => check_continue_stmt(cs, ctx, diags),
     .Return(rs) => case rs.value {
       .Some(val) => {
         r := ctx.synth(val, diags)

@@ -1,5 +1,6 @@
 ---
 source: tests/integration_test.rs
+assertion_line: 162
 expression: err_msg
 ---
-"statement_in_expression_break.tw:3:10: 'break' is a statement and cannot be used where an expression is expected in case arm body\nhint: wrap it in a block expression, e.g. `=> { break ... }`\n   3 |     1 => break,\n\n               ^----"
+"statement_in_expression_break.tw:2:7: 'break' is a statement and cannot be used where an expression is expected in call argument\nhint: wrap it in a block expression, e.g. `=> { break ... }`\n   2 |   foo(break)\n\n            ^----"

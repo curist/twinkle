@@ -167,6 +167,17 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "compile direct terminal case arms",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/direct_terminal_arms.tw")
+
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
       "compile file importing relative module (functions)",
       fn() {
         result := module_compiler.compile_entry("${dir}/uses_math.tw")

@@ -1,0 +1,11 @@
+fn f(x: Bool) Int {
+  case x {
+    true => {
+      // keep this attached to return
+      return 1
+    },
+    false => {
+      return 0 // keep this inside the block
+    },
+  }
+}

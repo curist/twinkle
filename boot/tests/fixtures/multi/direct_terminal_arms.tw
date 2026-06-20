@@ -1,0 +1,24 @@
+fn choose(x: Bool) Int {
+  case x {
+    true => return 1,
+    false => 2,
+  }
+}
+
+fn walk(xs: Vector<Int>) Int {
+  acc := 0
+
+  for x in xs {
+    case x {
+      0 => continue,
+      9 => break,
+      _ => {
+        acc = acc + x
+      },
+    }
+  }
+
+  acc
+}
+
+result := choose(false) + walk([1, 0, 2, 9, 100])

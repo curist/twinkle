@@ -2,7 +2,7 @@ type Foo = { Bar, Baz }
 
 fn f(foo: Foo) String {
   case foo {
-    .Bar => return "",
+    .Bar => defer,
     .Baz => "baz"
   }
 }

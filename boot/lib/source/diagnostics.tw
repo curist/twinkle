@@ -57,6 +57,7 @@ pub type ErrorDiag = {
   TryReturnMismatch(.{ span: Span, expected_kind: String }),
   CannotInterpolate(.{ span: Span, ty: MonoType, reason: String }),
   DeferDiverge(.{ span: Span }),
+  InvalidControlFlow(GenericDiag),
   CompilerBug(.{ span: Span, message: String }),
   ReservedTypeName(.{ span: Span, name: String }),
   DuplicateName(.{ span: Span, kind: String, name: String }),
@@ -151,6 +152,7 @@ pub fn span(kind: DiagKind) Span {
       .TryReturnMismatch(d) => d.span,
       .CannotInterpolate(d) => d.span,
       .DeferDiverge(d) => d.span,
+      .InvalidControlFlow(d) => d.span,
       .CompilerBug(d) => d.span,
       .ReservedTypeName(d) => d.span,
       .DuplicateName(d) => d.span,
@@ -216,6 +218,7 @@ pub fn message(kind: DiagKind) String {
       .TryReturnMismatch(d) => "try on ${d.expected_kind} requires function to return ${d.expected_kind}",
       .CannotInterpolate(d) => "cannot interpolate ${ty_to_string(d.ty)}: ${d.reason}",
       .DeferDiverge(_) => "defer body cannot diverge (return, break, continue, or error(...))",
+      .InvalidControlFlow(d) => d.message,
       .CompilerBug(d) => d.message,
       .ReservedTypeName(d) => "type name '${d.name}' is reserved",
       .DuplicateName(d) => "duplicate ${d.kind}: ${d.name}",
@@ -252,6 +255,7 @@ pub fn help_lines(kind: DiagKind) Vector<String> {
     .Error(e) => case e {
       .ParseError(d) => d.help_lines,
       .LowerError(d) => d.help_lines,
+      .InvalidControlFlow(d) => d.help_lines,
       .StringConcatOperator(_) => [
         "prefer string interpolation (`\"\${...}\"`); use `String.concat(a, b)` for explicit function calls",
       ],

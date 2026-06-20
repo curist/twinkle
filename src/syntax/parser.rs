@@ -1713,7 +1713,7 @@ impl Parser {
     fn parse_case_arm(&mut self) -> ParseResult<CaseArm> {
         let pattern = self.parse_pattern()?;
         self.expect(TokenKind::FatArrow)?;
-        let body = self.parse_expr_in("case arm body")?;
+        let body = self.parse_arm_body_expr("case arm body")?;
         let span = pattern.span().merge(&body.span);
 
         Ok(CaseArm {
@@ -1721,6 +1721,66 @@ impl Parser {
             body,
             span,
         })
+    }
+
+    fn arm_terminal_value_terminates(&self) -> bool {
+        matches!(
+            self.peek_kind(),
+            Some(TokenKind::Comma | TokenKind::RBrace | TokenKind::Semi | TokenKind::Eof) | None
+        ) || self.peek_preceded_by_newline()
+    }
+
+    fn block_expr_from_arm_stmt(&mut self, stmt: Stmt, span: Span) -> Expr {
+        Expr::new(
+            self.alloc_expr_id(),
+            ExprKind::Block(Block {
+                stmts: vec![stmt],
+                span,
+            }),
+            span,
+        )
+    }
+
+    fn parse_arm_return_expr(&mut self) -> ParseResult<Expr> {
+        let start = self.expect(TokenKind::Return)?;
+        let value = if self.arm_terminal_value_terminates() {
+            None
+        } else {
+            Some(self.parse_expr()?)
+        };
+        let span = value
+            .as_ref()
+            .map(|v| start.span.merge(&v.span))
+            .unwrap_or(start.span);
+        Ok(self.block_expr_from_arm_stmt(Stmt::Return { value, span }, span))
+    }
+
+    fn parse_arm_break_expr(&mut self) -> ParseResult<Expr> {
+        let start = self.expect(TokenKind::Break)?;
+        let value = if self.arm_terminal_value_terminates() {
+            None
+        } else {
+            Some(self.parse_expr()?)
+        };
+        let span = value
+            .as_ref()
+            .map(|v| start.span.merge(&v.span))
+            .unwrap_or(start.span);
+        Ok(self.block_expr_from_arm_stmt(Stmt::Break { value, span }, span))
+    }
+
+    fn parse_arm_continue_expr(&mut self) -> ParseResult<Expr> {
+        let start = self.expect(TokenKind::Continue)?;
+        Ok(self.block_expr_from_arm_stmt(Stmt::Continue { span: start.span }, start.span))
+    }
+
+    fn parse_arm_body_expr(&mut self, context: &'static str) -> ParseResult<Expr> {
+        match self.peek_kind() {
+            Some(TokenKind::Return) => self.parse_arm_return_expr(),
+            Some(TokenKind::Break) => self.parse_arm_break_expr(),
+            Some(TokenKind::Continue) => self.parse_arm_continue_expr(),
+            _ => self.parse_expr_in(context),
+        }
     }
 
     fn parse_cond(&mut self) -> ParseResult<Expr> {
@@ -1737,7 +1797,7 @@ impl Parser {
                 Some(self.parse_expr()?)
             };
             self.expect(TokenKind::FatArrow)?;
-            let body = self.parse_expr_in("cond arm body")?;
+            let body = self.parse_arm_body_expr("cond arm body")?;
             let span = arm_start.merge(&body.span);
             let is_default = condition.is_none();
             arms.push(CondArm {
@@ -2751,6 +2811,26 @@ foo
                 _ => panic!("Expected method call expression"),
             },
             _ => panic!("Expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn test_parse_direct_terminal_case_arms() {
+        let expr = parse_expr("case true { true => return 1, _ => break }").unwrap();
+
+        match expr.kind {
+            ExprKind::Case { arms, .. } => {
+                assert_eq!(arms.len(), 2);
+                assert!(matches!(
+                    arms[0].body.kind,
+                    ExprKind::Block(Block { ref stmts, .. }) if matches!(stmts.as_slice(), [Stmt::Return { value: Some(_), .. }])
+                ));
+                assert!(matches!(
+                    arms[1].body.kind,
+                    ExprKind::Block(Block { ref stmts, .. }) if matches!(stmts.as_slice(), [Stmt::Break { value: None, .. }])
+                ));
+            }
+            _ => panic!("Expected case expression"),
         }
     }
 

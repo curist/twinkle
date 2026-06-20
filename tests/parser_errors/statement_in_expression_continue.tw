@@ -1,6 +1,3 @@
-fn f() Int {
-  case 1 {
-    1 => continue,
-    _ => 0,
-  }
+fn f() {
+  foo(continue)
 }

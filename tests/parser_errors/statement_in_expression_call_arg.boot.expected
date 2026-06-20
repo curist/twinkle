@@ -1,7 +1,2 @@
 3:7: error: 'return' is a statement and cannot be used where an expression is expected in call argument
 hint: wrap it in a block expression, e.g. `=> { return ... }`
-4:1: error: expected ',' or ')' in call arguments
-5:1: error: expected expression
-1:1: error: expected ',' or ')' in call arguments
-1:1: error: expected ')' after call arguments
-1:1: error: expected '}' to close block

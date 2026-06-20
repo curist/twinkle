@@ -211,11 +211,11 @@ fn parse_expr_in(c: Cursor, context: String) ExprParse {
       last_span := kw_span
 
       // Skip the rest of the statement on the same line to suppress cascade errors.
-      // Stop at line boundaries or structural delimiters (comma, brace, EOF).
+      // Stop at line boundaries or structural delimiters (comma, closers, EOF).
       for c.pos < c.tokens.len() and !c.preceded_by_newline() {
         k := c.kind()
 
-        if k == .RBrace or k == .Comma or k == .Eof {
+        if k == .RBrace or k == .RParen or k == .RBracket or k == .Comma or k == .Eof {
           break
         }
 
@@ -227,6 +227,77 @@ fn parse_expr_in(c: Cursor, context: String) ExprParse {
       .{ value: err, cursor: c, diagnostics }
     },
     .None => parse_expr_bp(c, 0),
+  }
+}
+
+fn arm_terminal_value_terminates(c: Cursor) Bool {
+  k := c.kind()
+  k == .Comma or k == .RBrace or k == .Semi or k == .Eof or c.preceded_by_newline()
+}
+
+fn stmt_span_for_arm(stmt: Stmt) Span {
+  case stmt {
+    .Return(s) => s.span,
+    .Break(s) => s.span,
+    .Continue(s) => s.span,
+    _ => span.new(0, 0, 0),
+  }
+}
+
+fn block_expr_from_arm_stmt(stmt: Stmt, c: Cursor) Expr {
+  s := stmt_span_for_arm(stmt)
+  block := Block.{ stmts: [stmt], tail: .None, span: s }
+  Expr.{ id: c.alloc_expr_id(), kind: .BlockExpr(block), span: s }
+}
+
+fn parse_arm_return_expr(c: Cursor) ExprParse {
+  diagnostics_out: Vector<DiagKind> = []
+  start_pos := c.pos
+  c = .advance()
+  value: Expr? = .None
+
+  if !arm_terminal_value_terminates(c) {
+    parsed := parse_expr_bp(c, 0)
+    diagnostics_out = .concat(parsed.diagnostics)
+    value = .Some(parsed.value)
+    c = parsed.cursor
+  }
+
+  stmt: Stmt = .Return(ReturnStmt.{ value, span: c.span_from(start_pos) })
+  expr := block_expr_from_arm_stmt(stmt, c)
+  .{ value: expr, cursor: c, diagnostics: diagnostics_out }
+}
+
+fn parse_arm_break_expr(c: Cursor) ExprParse {
+  diagnostics_out: Vector<DiagKind> = []
+  start_pos := c.pos
+  c = .advance()
+  value: Expr? = .None
+
+  if !arm_terminal_value_terminates(c) {
+    parsed := parse_expr_bp(c, 0)
+    diagnostics_out = .concat(parsed.diagnostics)
+    value = .Some(parsed.value)
+    c = parsed.cursor
+  }
+
+  stmt: Stmt = .Break(BreakStmt.{ value, span: c.span_from(start_pos) })
+  expr := block_expr_from_arm_stmt(stmt, c)
+  .{ value: expr, cursor: c, diagnostics: diagnostics_out }
+}
+
+fn parse_arm_continue_expr(c: Cursor) ExprParse {
+  stmt: Stmt = .Continue(ContinueStmt.{ span: c.span() })
+  expr := block_expr_from_arm_stmt(stmt, c)
+  .{ value: expr, cursor: c.advance(), diagnostics: [] }
+}
+
+fn parse_arm_body_expr(c: Cursor, context: String) ExprParse {
+  case c.kind() {
+    .Return => parse_arm_return_expr(c),
+    .Break => parse_arm_break_expr(c),
+    .Continue => parse_arm_continue_expr(c),
+    _ => parse_expr_in(c, context),
   }
 }
 
@@ -1754,7 +1825,7 @@ fn parse_case_expr(c: Cursor) ExprParse {
       c = .advance()
     }
 
-    parsed_arm_expr := parse_expr_in(c, "case arm body")
+    parsed_arm_expr := parse_arm_body_expr(c, "case arm body")
     diagnostics_out = .concat(parsed_arm_expr.diagnostics)
     arm_expr := parsed_arm_expr.value
     c = parsed_arm_expr.cursor
@@ -1827,7 +1898,7 @@ fn parse_cond_expr(c: Cursor) ExprParse {
       c = .advance()
     }
 
-    parsed_body := parse_expr_in(c, "cond arm body")
+    parsed_body := parse_arm_body_expr(c, "cond arm body")
     diagnostics_out = .concat(parsed_body.diagnostics)
     body := parsed_body.value
     c = parsed_body.cursor

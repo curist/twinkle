@@ -1578,6 +1578,34 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "C3 direct terminal case arms ok",
+      fn() {
+        src := "fn f(x: Bool) Int { case x { true => return 1, false => 2 } }\nfn g() Void { for true { case true { true => continue, _ => break } } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "C3 break and continue outside loop are diagnostics",
+      fn() {
+        break_msgs := try check_errs("fn f() Void { case true { true => break, _ => {} } }")
+        try assert.is_true(break_msgs[0].contains("break is only valid inside a loop"))
+        continue_msgs := try check_errs("fn f() Void { case true { true => continue, _ => {} } }")
+        try assert.is_true(continue_msgs[0].contains("continue is only valid inside a loop"))
+        .Ok({})
+      },
+    )
+    .test(
+      "C3 break with value is a diagnostic",
+      fn() {
+        msgs := try check_errs(
+          "fn f() Void { for true { case true { true => break 1, _ => {} } } }",
+        )
+        try assert.is_true(msgs[0].contains("break with a value is not supported"))
+        .Ok({})
+      },
+    )
+    .test(
       "C3 defer synths body",
       fn() {
         src := "fn f() Void { defer 42 + true }"

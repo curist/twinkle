@@ -445,7 +445,7 @@ module.exports = grammar({
     cond_arm: $ => seq(
       field('condition', choice($._expression, $.wildcard_pattern)),
       '=>',
-      field('value', choice($.break_statement, $.continue_statement, $._expression)),
+      field('value', $._arm_body),
     ),
 
     // ===== Pattern Matching =====
@@ -467,7 +467,14 @@ module.exports = grammar({
     case_arm: $ => seq(
       field('pattern', $._pattern),
       '=>',
-      field('value', choice($.break_statement, $.continue_statement, $._expression)),
+      field('value', $._arm_body),
+    ),
+
+    _arm_body: $ => choice(
+      $.return_statement,
+      $.break_statement,
+      $.continue_statement,
+      $._expression,
     ),
 
     _pattern: $ => choice(

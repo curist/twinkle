@@ -1979,7 +1979,7 @@ pub fn suite() runner.Suite {
     .test(
       "diagnostics: return in expression position",
       fn() {
-        parsed := parser.parse("fn f() Int { case 1 { 1 => return 1, _ => 0 } }", 0)
+        parsed := parser.parse("fn f() { foo(return 1) }", 0)
         try assert.is_true(parsed.diagnostics.len() > 0)
         msg := parsed.diagnostics[0].message()
         try assert.is_true(msg.contains("is a statement"))
@@ -1991,7 +1991,7 @@ pub fn suite() runner.Suite {
     .test(
       "diagnostics: break in expression position",
       fn() {
-        parsed := parser.parse("fn f() { case 1 { 1 => break, _ => {} } }", 0)
+        parsed := parser.parse("fn f() { foo(break) }", 0)
         try assert.is_true(parsed.diagnostics.len() > 0)
         msg := parsed.diagnostics[0].message()
         try assert.is_true(msg.contains("is a statement"))
@@ -2003,7 +2003,7 @@ pub fn suite() runner.Suite {
     .test(
       "diagnostics: continue in expression position",
       fn() {
-        parsed := parser.parse("fn f() { case 1 { 1 => continue, _ => {} } }", 0)
+        parsed := parser.parse("fn f() { foo(continue) }", 0)
         try assert.is_true(parsed.diagnostics.len() > 0)
         msg := parsed.diagnostics[0].message()
         try assert.is_true(msg.contains("is a statement"))
@@ -2015,7 +2015,7 @@ pub fn suite() runner.Suite {
     .test(
       "diagnostics: defer in expression position",
       fn() {
-        parsed := parser.parse("fn f() { case 1 { 1 => defer cleanup(), _ => {} } }", 0)
+        parsed := parser.parse("fn f() { case 1 { 1 => defer, _ => {} } }", 0)
         try assert.is_true(parsed.diagnostics.len() > 0)
         msg := parsed.diagnostics[0].message()
         try assert.is_true(msg.contains("is a statement"))
@@ -2037,41 +2037,61 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "diagnostics: return span points at keyword",
+      "case arm accepts direct return",
       fn() {
-        src := "fn f() Int { case 1 { 1 => return 1, _ => 0 } }"
-        parsed := parser.parse(src, 0)
-        try assert.is_true(parsed.diagnostics.len() > 0)
-        diag_span := parsed.diagnostics[0].span()
+        expr := try parse_body_tail("fn f() Int { case 1 { 1 => return 1, _ => 0 } }")
 
-        // The span should cover the 'return' keyword (6 chars)
-        assert.equal(diag_span.end - diag_span.start, 6)
-      },
-    )
-    .test(
-      "diagnostics: statement-in-expr recovers to next fn",
-      fn() {
-        src := "fn bad() Int { case 1 { 1 => return 1, _ => 0 } }\nfn ok() {}"
-        parsed := parser.parse(src, 0)
-        try assert.is_true(parsed.diagnostics.len() > 0)
-        found_ok := false
+        case expr.kind {
+          .Case(_, arms) => {
+            try assert.equal(arms.len(), 2)
 
-        for item in parsed.value.items {
-          case item {
-            .Function(f) => if f.name == "ok" {
-              found_ok = true
-            },
-            _ => {},
-          }
+            case arms[0].expr.kind {
+              .BlockExpr(block) => {
+                try assert.equal(block.stmts.len(), 1)
+
+                case block.stmts[0] {
+                  .Return(s) => assert.is_some(s.value),
+                  _ => assert.fail("expected Return"),
+                }
+              },
+              _ => assert.fail("expected BlockExpr"),
+            }
+          },
+          _ => assert.fail("expected Case"),
         }
-
-        assert.is_true(found_ok)
       },
     )
     .test(
-      "diagnostics: statement in case arm mentions context",
+      "case arm accepts direct bare return before comma",
       fn() {
-        parsed := parser.parse("fn f() Int { case 1 { 1 => return 1, _ => 0 } }", 0)
+        expr := try parse_body_tail("fn f() Void { case true { true => return, _ => {} } }")
+
+        case expr.kind {
+          .Case(_, arms) => case arms[0].expr.kind {
+            .BlockExpr(block) => case block.stmts[0] {
+              .Return(s) => assert.is_none(s.value),
+              _ => assert.fail("expected Return"),
+            },
+            _ => assert.fail("expected BlockExpr"),
+          },
+          _ => assert.fail("expected Case"),
+        }
+      },
+    )
+    .test(
+      "case and cond arms accept direct break and continue",
+      fn() {
+        parsed := parser.parse(
+          "fn f() { for true { case 1 { 1 => break, _ => continue }\ncond { true => break, _ => continue } } }",
+          0,
+        )
+        assert.equal(parsed.diagnostics.len(), 0)
+      },
+    )
+    .test(
+      "diagnostics: non-terminal statement in case arm mentions context",
+      fn() {
+        parsed := parser.parse("fn f() Int { case 1 { 1 => defer, _ => 0 } }", 0)
         try assert.is_true(parsed.diagnostics.len() > 0)
         assert.is_true(parsed.diagnostics[0].message().contains("case arm body"))
       },
