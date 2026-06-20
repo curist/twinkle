@@ -1,6 +1,7 @@
 //! Closure-specific helpers for Core lowering.
 
 use compiler.ast.{Block, Param as AstParam}
+use compiler.core_fold.{fold_children}
 use compiler.core_ir.{CoreExpr, CorePattern, FunctionDef, LocalId, Param}
 use compiler.lower_core.context.{ExprOut, LowerCtx}
 use compiler.lower_core.types.{expand_alias_for_iter}
@@ -45,31 +46,6 @@ fn collect_free_vars_inner(
 
       collect_free_vars_inner(value, bound, captured, result)
     },
-    // A global store targets a module global, not a captured free local.
-    .GlobalSet(_, value) => collect_free_vars_inner(value, bound, captured, result),
-    .BinOp(_, lhs, rhs) => {
-      st := collect_free_vars_inner(lhs, bound, captured, result)
-      collect_free_vars_inner(rhs, st.bound, st.captured, st.result)
-    },
-    .UnOp(_, inner) => collect_free_vars_inner(inner, bound, captured, result),
-    .Call(callee, args) => args.fold(
-      collect_free_vars_inner(callee, bound, captured, result),
-      fn(st, arg) { collect_free_vars_inner(arg, st.bound, st.captured, st.result) },
-    ),
-    // A contract call (e.g. `for v in ch` lowers the receiver into
-    // `ContractCall(.IntoIterator, "iter", receiver, args)`) carries free
-    // variables in its receiver and args just like a plain call. Without this
-    // arm the receiver local is never captured, and a captured iterable degrades
-    // to a bogus module-global reference inside the closure.
-    .ContractCall(_, _, receiver, args) => args.fold(
-      collect_free_vars_inner(receiver, bound, captured, result),
-      fn(st, arg) { collect_free_vars_inner(arg, st.bound, st.captured, st.result) },
-    ),
-    .If(cond_e, then_e, else_e) => {
-      st := collect_free_vars_inner(cond_e, bound, captured, result)
-      st = collect_free_vars_inner(then_e, st.bound, st.captured, st.result)
-      collect_free_vars_inner(else_e, st.bound, st.captured, st.result)
-    },
     .Match(scrut, arms) => {
       st := collect_free_vars_inner(scrut, bound, captured, result)
 
@@ -79,36 +55,6 @@ fn collect_free_vars_inner(
       }
 
       st
-    },
-    .Loop(body) => collect_free_vars_inner(body, bound, captured, result),
-    .Break(val) => case val {
-      .Some(v) => collect_free_vars_inner(v, bound, captured, result),
-      .None => .{ bound, captured, result },
-    },
-    .Return(val) => case val {
-      .Some(v) => collect_free_vars_inner(v, bound, captured, result),
-      .None => .{ bound, captured, result },
-    },
-    .Record(_, fields) => fields.fold(
-      FreeVarState.{ bound, captured, result },
-      fn(st, fi) { collect_free_vars_inner(fi.value, st.bound, st.captured, st.result) },
-    ),
-    .RecordGet(target, _) => collect_free_vars_inner(target, bound, captured, result),
-    .RecordUpdate(base, _, value) => {
-      st := collect_free_vars_inner(base, bound, captured, result)
-      collect_free_vars_inner(value, st.bound, st.captured, st.result)
-    },
-    .Variant(_, _, args) => args.fold(
-      FreeVarState.{ bound, captured, result },
-      fn(st, a) { collect_free_vars_inner(a, st.bound, st.captured, st.result) },
-    ),
-    .ArrayLit(elems) => elems.fold(
-      FreeVarState.{ bound, captured, result },
-      fn(st, e) { collect_free_vars_inner(e, st.bound, st.captured, st.result) },
-    ),
-    .Index(base, idx) => {
-      st := collect_free_vars_inner(base, bound, captured, result)
-      collect_free_vars_inner(idx, st.bound, st.captured, st.result)
     },
     .MakeClosure(_, free_vars) => {
       for id in free_vars {
@@ -120,8 +66,16 @@ fn collect_free_vars_inner(
 
       .{ bound, captured, result }
     },
-    .Defer(inner) => collect_free_vars_inner(inner, bound, captured, result),
-    _ => .{ bound, captured, result },
+    // Every non-binding, non-special node: recurse into all children with the
+    // same bound-set. This sound default replaces ~15 hand-written recurse arms
+    // and covers ContractCall and any future non-binding variant for free.
+    // (Let/Match stay explicit above because they introduce bindings, which
+    // fold_children is intentionally unaware of.)
+    _ => fold_children(
+      expr,
+      FreeVarState.{ bound, captured, result },
+      fn(st, child) { collect_free_vars_inner(child, st.bound, st.captured, st.result) },
+    ),
   }
 }
 
