@@ -1,0 +1,81 @@
+//! Generic one-level child traversal for Core IR analysis passes.
+//!
+//! `fold_children` is the SINGLE exhaustive enumeration of every CoreExprKind's
+//! immediate CoreExpr children. Analysis passes keep explicit arms only for the
+//! nodes they specialize and delegate the rest via `_ => fold_children(...)`,
+//! whose default soundly recurses into all children.
+//!
+//! INVARIANT: keep this `case` exhaustive — NEVER add a `_ =>` arm here. Adding a
+//! CoreExprKind variant must break this function until its children are wired;
+//! that is the compiler-enforced checklist keeping every analysis pass correct.
+//!
+//! BINDING-UNAWARE: this folds `Let` body and `Match` arm bodies with no context
+//! change. Scope-sensitive passes (threading a bound-set) must special-case
+//! `Let`/`Match` themselves and must NOT delegate them to `fold_children`.
+
+use compiler.core_ir.{CoreExpr}
+
+pub fn fold_children<A>(expr: CoreExpr, acc: A, f: fn(A, CoreExpr) A) A {
+  case expr.kind {
+    .LitInt(_) => acc,
+    .LitFloat(_) => acc,
+    .LitBool(_) => acc,
+    .LitStr(_) => acc,
+    .LitVoid => acc,
+    .Local(_) => acc,
+    .GlobalLocal(_) => acc,
+    .GlobalFunc(_) => acc,
+    .Continue => acc,
+    .Let(_, value, body) => {
+      cur := f(acc, value)
+      f(cur, body)
+    },
+    .Assign(_, value) => f(acc, value),
+    .GlobalSet(_, value) => f(acc, value),
+    .BinOp(_, lhs, rhs) => {
+      cur := f(acc, lhs)
+      f(cur, rhs)
+    },
+    .UnOp(_, inner) => f(acc, inner),
+    .Call(callee, args) => {
+      cur := f(acc, callee)
+      args.fold(cur, f)
+    },
+    .ContractCall(_, _, recv, args) => {
+      cur := f(acc, recv)
+      args.fold(cur, f)
+    },
+    .MakeClosure(_, _) => acc,
+    .If(cond_e, then_e, else_e) => {
+      cur := f(acc, cond_e)
+      cur = f(cur, then_e)
+      f(cur, else_e)
+    },
+    .Match(scrut, arms) => {
+      cur := f(acc, scrut)
+      arms.fold(cur, fn(a, arm) { f(a, arm.body) })
+    },
+    .Loop(body) => f(acc, body),
+    .Break(val) => case val {
+      .Some(v) => f(acc, v),
+      .None => acc,
+    },
+    .Return(val) => case val {
+      .Some(v) => f(acc, v),
+      .None => acc,
+    },
+    .Defer(inner) => f(acc, inner),
+    .Record(_, fields) => fields.fold(acc, fn(a, fi) { f(a, fi.value) }),
+    .RecordGet(target, _) => f(acc, target),
+    .RecordUpdate(base, _, value) => {
+      cur := f(acc, base)
+      f(cur, value)
+    },
+    .Variant(_, _, args) => args.fold(acc, f),
+    .ArrayLit(elems) => elems.fold(acc, f),
+    .Index(base, idx) => {
+      cur := f(acc, base)
+      f(cur, idx)
+    },
+  }
+}

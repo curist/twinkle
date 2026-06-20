@@ -28,6 +28,7 @@ use .suites.checker_coverage_suite
 use .suites.checker_suite
 use .suites.codegen_emit_suite
 use .suites.codegen_integration_suite
+use .suites.core_fold_suite
 use .suites.core_ir_suite
 use .suites.defer_suite
 use .suites.dependency_graph_suite
@@ -158,6 +159,7 @@ runner.run_all([
   resolver_suite.suite(),
   checker_suite.suite(),
   checker_coverage_suite.suite(),
+  core_fold_suite.suite(),
   core_ir_suite.suite(),
   anf_suite.suite(),
   anf_lower_suite.suite(),

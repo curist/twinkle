@@ -1,0 +1,104 @@
+use compiler.core_fold.{fold_children}
+use compiler.core_ir.{CoreExpr}
+use lib.source.span
+use tests.assert
+use tests.runner
+
+fn lit_int(n: Int) CoreExpr {
+  .{ kind: .LitInt(n), ty: .Void, span: span.new(0, 0, 0) }
+}
+
+// Collect the LitInt values of the IMMEDIATE children only (fold_children is
+// one level deep; it does not descend).
+fn child_ints(expr: CoreExpr) Vector<Int> {
+  fold_children(
+    expr,
+    [],
+    fn(acc, child) {
+      case child.kind {
+        .LitInt(n) => acc.append(n),
+        _ => acc,
+      }
+    },
+  )
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("core_fold")
+    .test(
+      "call folds callee then args in order",
+      fn() {
+        e := CoreExpr.{
+          kind: .Call(lit_int(1), [lit_int(2), lit_int(3)]),
+          ty: .Void,
+          span: span.new(0, 0, 0),
+        }
+        try assert.equal(child_ints(e), [1, 2, 3])
+        .Ok({})
+      },
+    )
+    .test(
+      "contract call folds receiver then args",
+      fn() {
+        e := CoreExpr.{
+          kind: .ContractCall(.IntoIterator, "iter", lit_int(7), [lit_int(8)]),
+          ty: .Void,
+          span: span.new(0, 0, 0),
+        }
+        try assert.equal(child_ints(e), [7, 8])
+        .Ok({})
+      },
+    )
+    .test(
+      "let folds value before body",
+      fn() {
+        e := CoreExpr.{
+          kind: .Let(.{ id: 0 }, lit_int(1), lit_int(2)),
+          ty: .Void,
+          span: span.new(0, 0, 0),
+        }
+        try assert.equal(child_ints(e), [1, 2])
+        .Ok({})
+      },
+    )
+    .test(
+      "if folds cond then else in order",
+      fn() {
+        e := CoreExpr.{
+          kind: .If(lit_int(1), lit_int(2), lit_int(3)),
+          ty: .Void,
+          span: span.new(0, 0, 0),
+        }
+        try assert.equal(child_ints(e), [1, 2, 3])
+        .Ok({})
+      },
+    )
+    .test(
+      "leaf has no children",
+      fn() {
+        try assert.equal(child_ints(lit_int(5)), [])
+        .Ok({})
+      },
+    )
+    .test(
+      "make closure has no expr children",
+      fn() {
+        e := CoreExpr.{ kind: .MakeClosure(.{ id: 0 }, []), ty: .Void, span: span.new(0, 0, 0) }
+        try assert.equal(child_ints(e), [])
+        .Ok({})
+      },
+    )
+    .test(
+      "folds one level only (does not descend)",
+      fn() {
+        inner := CoreExpr.{ kind: .Call(lit_int(9), []), ty: .Void, span: span.new(0, 0, 0) }
+        e := CoreExpr.{ kind: .Call(inner, [lit_int(2)]), ty: .Void, span: span.new(0, 0, 0) }
+
+        // Visits `inner` (a Call, not a LitInt) and lit_int(2); does NOT descend
+        // into `inner` to reach lit_int(9).
+        try assert.equal(child_ints(e), [2])
+        .Ok({})
+      },
+    )
+}
