@@ -6,7 +6,7 @@ use tests.runner
 
 fn findings(src: String) Vector<lint.LintFinding> {
   parsed := parser.parse(src, 0)
-  lint.lint_module(parsed.value, base_env.builtin_env())
+  lint.lint_module(parsed.value, base_env.builtin_env(), src)
 }
 
 pub fn suite() runner.Suite {
@@ -224,6 +224,87 @@ pub fn suite() runner.Suite {
         fs := findings(
           "fn f(state: State) State {\n  tmp := state.registry.by_name\n  tmp[k] = v\n  log(state.registry)\n  state.registry.by_name = tmp\n  state\n}\n",
         )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "constant-fn: flags a private string-returning nullary fn",
+      fn() {
+        fs := findings("fn sym() String {\n  \"channel_send\"\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "constant-fn")
+        try assert.str_contains(fs[0].message, "sym: String = \"channel_send\"")
+        .Ok({})
+      },
+    )
+    .test(
+      "constant-fn: preserves pub and renders annotated form",
+      fn() {
+        fs := findings("pub fn answer() Int {\n  42\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "constant-fn")
+        try assert.str_contains(fs[0].message, "pub answer: Int = 42")
+        .Ok({})
+      },
+    )
+    .test(
+      "constant-fn: renders inferred form when return type is omitted",
+      fn() {
+        fs := findings("fn flag() {\n  true\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "constant-fn")
+        try assert.str_contains(fs[0].message, "flag := true")
+        .Ok({})
+      },
+    )
+    .test(
+      "constant-fn: flags a float literal",
+      fn() {
+        fs := findings("fn pi() Float {\n  3.14\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "constant-fn")
+        .Ok({})
+      },
+    )
+    .test(
+      "constant-fn: flags a direct negative numeric literal",
+      fn() {
+        fs := findings("fn neg() Int {\n  -1\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "constant-fn")
+        try assert.str_contains(fs[0].message, "neg: Int = -1")
+        .Ok({})
+      },
+    )
+    .test(
+      "constant-fn: does not flag a parameterized fn",
+      fn() {
+        fs := findings("fn id(x: Int) Int {\n  1\n}\n")
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "constant-fn: does not flag a type-parameterized fn",
+      fn() {
+        fs := findings("fn z<T>() Int {\n  1\n}\n")
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "constant-fn: does not flag a non-literal expression body",
+      fn() {
+        fs := findings("fn k() Int {\n  1 + 2\n}\n")
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "constant-fn: does not flag a body with statements before the literal",
+      fn() {
+        fs := findings("fn k() Int {\n  println(\"hi\")\n  1\n}\n")
         try assert.equal(fs.len(), 0)
         .Ok({})
       },

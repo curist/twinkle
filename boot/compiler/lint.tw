@@ -2,7 +2,10 @@
 //!
 //! A pure AST visitor over a parsed Module, producing LintFindings. Run only in
 //! review mode (see docs/plans/archive/linter.md). Currently: L3 record-copy-helper,
-//! L4 unreachable-code, L5 direct-rebinding.
+//! L4 unreachable-code, L5 direct-rebinding, constant-fn.
+//!
+//! `source` is the module's source text; structural lints that suggest a literal
+//! spelling (constant-fn) slice it by span rather than re-rendering AST values.
 
 use compiler.ast.{Block, Expr, ForStmt, FunctionDecl, Module, RecordEntry, Stmt, TypeExpr}
 use compiler.resolver.{ResolvedEnv}
@@ -11,14 +14,16 @@ use lib.source.span.{Span}
 /// A report-only lint finding (no machine-applicable edits).
 pub type LintFinding = .{ span: Span, message: String, rule: String }
 
-/// Lint a whole module. `env` is used by type-dependent structural lints (L3).
-pub fn lint_module(module: Module, env: ResolvedEnv) Vector<LintFinding> {
+/// Lint a whole module. `env` is used by type-dependent structural lints (L3);
+/// `source` renders span-sliced suggestions (constant-fn).
+pub fn lint_module(module: Module, env: ResolvedEnv, source: String) Vector<LintFinding> {
   out: Vector<LintFinding> = []
 
   for item in module.items {
     case item {
       .Function(decl) => {
         out = .concat(lint_record_copy(decl, env))
+        out = .concat(lint_constant_fn(decl, source))
         out = .concat(lint_block(decl.body))
       },
       .Stmt(stmt) => out = .concat(lint_stmt(stmt)),
@@ -27,6 +32,73 @@ pub fn lint_module(module: Module, env: ResolvedEnv) Vector<LintFinding> {
   }
 
   out
+}
+
+// ── constant-fn: nullary function returning only a constant ───────────
+/// A scalar literal, or a direct unary-minus over an integer/float literal
+/// (`-1`, `-1.0`). Collection/variant literals are out of v1 scope.
+fn is_constant_literal(e: Expr) Bool {
+  case e.kind {
+    .StringLit(_) => true,
+    .IntLit(_) => true,
+    .FloatLit(_) => true,
+    .BoolLit(_) => true,
+    .Unary(op, inner) => case op {
+      .Neg => is_numeric_literal(inner),
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn is_numeric_literal(e: Expr) Bool {
+  case e.kind {
+    .IntLit(_) => true,
+    .FloatLit(_) => true,
+    _ => false,
+  }
+}
+
+/// Flag a zero-argument function whose whole body is a single scalar constant —
+/// a module constant wearing a function costume. Report-only: safe call-site
+/// rewriting needs a closed-world reference graph Twinkle does not have.
+fn lint_constant_fn(decl: FunctionDecl, source: String) Vector<LintFinding> {
+  if decl.params.len() > 0 or decl.type_params.len() > 0 {
+    return []
+  }
+
+  // A body with side-effect statements before the literal tail is real work.
+  if decl.body.stmts.len() > 0 {
+    return []
+  }
+  lit := case decl.body.tail {
+    .Some(e) => if is_constant_literal(e) {
+      e
+    } else {
+      return []
+    },
+    .None => return [],
+  }
+  literal_text := source.slice(lit.span.start, lit.span.end)
+  vis := if decl.is_pub {
+    "pub "
+  } else {
+    ""
+  }
+
+  // Preserve an explicit return annotation (`name: T = lit`); otherwise the
+  // inferred constant form (`name := lit`).
+  suggestion := case decl.return_type {
+    .Some(rt) => "${vis}${decl.name}: ${source.slice(rt.span.start, rt.span.end)} = ${literal_text}",
+    .None => "${vis}${decl.name} := ${literal_text}",
+  }
+  [
+    .{
+      span: decl.name_span,
+      message: "`${decl.name}` returns only a constant; declare a module constant instead: `${suggestion}` (call sites drop `()`)",
+      rule: "constant-fn",
+    },
+  ]
 }
 
 // ── L4: unreachable-code ─────────────────────────────────────────────
