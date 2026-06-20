@@ -411,11 +411,9 @@ pub fn validate_compiled_module_links(
           "core_linker.link: imported FuncId=${local_id} in module '${m.path}' targets missing function '${ext.func_name}' in module '${ext.module_path}'",
         )
       },
-      .None => {
-        return .Err(
-          "core_linker.link: imported FuncId=${local_id} in module '${m.path}' targets unknown module '${ext.module_path}'",
-        )
-      },
+      .None => return .Err(
+        "core_linker.link: imported FuncId=${local_id} in module '${m.path}' targets unknown module '${ext.module_path}'",
+      ),
     }
   }
 

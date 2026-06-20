@@ -52,7 +52,7 @@ fn resolve_type_name(id: Int, ctx: RenderCtx) String {
   // 1. diagnostic-local snapshot
   case ctx.type_names {
     .Some(names) => case names[id] {
-      .Some(n) => { return n },
+      .Some(n) => return n,
       .None => {},
     },
     .None => {},
@@ -61,7 +61,7 @@ fn resolve_type_name(id: Int, ctx: RenderCtx) String {
   // 2. render context env
   case ctx.env {
     .Some(env) => case env.find_type_name(.{ id }) {
-      .Some(n) => { return n },
+      .Some(n) => return n,
       .None => {},
     },
     .None => {},

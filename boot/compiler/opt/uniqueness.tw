@@ -214,7 +214,7 @@ fn with_fresh_record_local(st: RwState, local: LocalId) RwState {
 fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
   moved := case st.ownership_of(source) {
     .Some(value) => value,
-    .None => { return st.without_local_ownership(target) },
+    .None => return st.without_local_ownership(target),
   }
   source_was_fresh_record := set_has(st.fresh_records, source.id)
   st = .without_local_ownership(target)
@@ -652,7 +652,7 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
       // one matches, so at most one fires for a given op.
       for builder in [st.config.builder, st.config.string_builder] {
         case try_straight_line_builder_rewrite(local, op, body, st, builder) {
-          .Some(rewritten) => { return rewrite_expr(rewritten.expr, rewritten.st, consumed_params) },
+          .Some(rewritten) => return rewrite_expr(rewritten.expr, rewritten.st, consumed_params),
           .None => {},
         }
       }
@@ -1258,7 +1258,7 @@ fn try_loop_rewrite(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExpr, st: 
         false,
         builder,
       ) {
-        .Some(result) => { return .Some(result) },
+        .Some(result) => return .Some(result),
         .None => {},
       }
     }

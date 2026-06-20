@@ -17,7 +17,7 @@ pub fn references_response(
   for result in results {
     index := case get_index(result.uri) {
       .Some(idx) => idx,
-      .None => { continue },
+      .None => continue,
     }
 
     range := index.byte_range_to_range(result.span.start, result.span.end, .Utf16)

@@ -160,7 +160,7 @@ fn lookup_method_entries(entries: Vector<MethodEntry>, method_name: String) Stri
 pub fn lookup_method(env: ResolvedEnv, type_name: String, method_name: String) String? {
   entries := case env.methods[type_name] {
     .Some(v) => v,
-    .None => { return .None },
+    .None => return .None,
   }
   lookup_method_entries(entries, method_name)
 }
@@ -168,7 +168,7 @@ pub fn lookup_method(env: ResolvedEnv, type_name: String, method_name: String) S
 pub fn lookup_type_method(env: ResolvedEnv, tid: TypeId, method_name: String) String? {
   entries := case env.methods_by_type[tid.id] {
     .Some(v) => v,
-    .None => { return .None },
+    .None => return .None,
   }
   lookup_method_entries(entries, method_name)
 }
@@ -1012,7 +1012,7 @@ pub fn merge_module_exports(
   module_entries := collect exported in exports.functions {
     // Extern functions are namespaced by their extern module, not the import alias
     case exported.sig.extern_module {
-      .Some(_) => { continue },
+      .Some(_) => continue,
       .None => me(exported.name, qualify_name(alias, exported.name)),
     }
   }
@@ -1232,7 +1232,7 @@ pub fn merge_prelude_exports(
 pub fn has_top_level_statements(module: Module) Bool {
   for item in module.items {
     case item {
-      .Stmt(_) => { return true },
+      .Stmt(_) => return true,
       _ => {},
     }
   }
@@ -1304,7 +1304,7 @@ fn next_available_type_id(env: ResolvedEnv) Int {
 fn unresolved_type_binding(env: ResolvedEnv, name: String) Bool {
   entry := case env.lookup_type(name) {
     .Some(found) => found,
-    .None => { return false },
+    .None => return false,
   }
 
   entry.def == .None
@@ -1427,7 +1427,7 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagK
   type_decls := collect item in module.items {
     case item {
       .Type(decl) => decl,
-      _ => { continue },
+      _ => continue,
     }
   }
   sorted := topo_sort_type_decls(type_decls)
@@ -1524,11 +1524,11 @@ fn detect_inherent_methods(
     tid := case f.params[0] {
       .Named(t, _) => t,
       .ExternRef(t) => t,
-      _ => { continue },
+      _ => continue,
     }
     type_name := case env.find_type_name(tid) {
       .Some(n) => n,
-      .None => { continue },
+      .None => continue,
     }
 
     // Only register methods for types defined in this module
@@ -1813,7 +1813,7 @@ fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
 fn set_type_def(env: ResolvedEnv, name: String, def: ResolvedTypeDef) ResolvedEnv {
   target_tid := case env.type_bindings[name] {
     .Some(tid) => tid,
-    .None => { return env },
+    .None => return env,
   }
   env.set_type_def_by_id(target_tid, def)
 }
@@ -1986,7 +1986,7 @@ fn resolve_applied_type(
 
     case r.ty {
       .Some(ty) => ty,
-      .None => { continue },
+      .None => continue,
     }
   }
 
@@ -2012,7 +2012,7 @@ fn resolve_fn_type(
 
     case r.ty {
       .Some(ty) => ty,
-      .None => { continue },
+      .None => continue,
     }
   }
   r := env.resolve_type_expr(ret_expr, type_vars)
@@ -2024,7 +2024,7 @@ fn resolve_fn_type(
 
   ret_ty := case r.ty {
     .Some(t) => t,
-    .None => { return .{ ty: .None, diagnostics: all_diags } },
+    .None => return .{ ty: .None, diagnostics: all_diags },
   }
   .{ ty: .Some(MonoType.Function(param_types, ret_ty)), diagnostics: all_diags }
 }
@@ -2051,11 +2051,11 @@ fn resolve_result_type(
   all_diags = .concat(r_err.diagnostics)
   ok_ty := case r_ok.ty {
     .Some(t) => t,
-    .None => { return .{ ty: .None, diagnostics: all_diags } },
+    .None => return .{ ty: .None, diagnostics: all_diags },
   }
   err_ty := case r_err.ty {
     .Some(t) => t,
-    .None => { return .{ ty: .None, diagnostics: all_diags } },
+    .None => return .{ ty: .None, diagnostics: all_diags },
   }
   .{ ty: .Some(MonoType.Result(ok_ty, err_ty)), diagnostics: all_diags }
 }
@@ -2189,7 +2189,7 @@ fn collect_hidden_support_types(env: ResolvedEnv, ty: MonoType, needed: Dict<Str
 
       name := case env.find_type_name(tid) {
         .Some(found) => found,
-        .None => { return cur },
+        .None => return cur,
       }
 
       if is_builtin_interface_type(name) or cur.has(name) {
@@ -2372,12 +2372,12 @@ fn resolve_single_name(
   // Check builtins (no type args)
   if args.len() == 0 {
     case name {
-      "Int" => { return type_ok(MonoType.Int) },
-      "Float" => { return type_ok(MonoType.Float) },
-      "Bool" => { return type_ok(MonoType.Bool) },
-      "Byte" => { return type_ok(MonoType.Byte) },
-      "String" => { return type_ok(MonoType.String) },
-      "Void" => { return type_ok(MonoType.Void) },
+      "Int" => return type_ok(MonoType.Int),
+      "Float" => return type_ok(MonoType.Float),
+      "Bool" => return type_ok(MonoType.Bool),
+      "Byte" => return type_ok(MonoType.Byte),
+      "String" => return type_ok(MonoType.String),
+      "Void" => return type_ok(MonoType.Void),
       _ => {},
     }
   }
@@ -2419,7 +2419,7 @@ fn resolve_single_name(
   check := env.check_user_type_arity(name, args, s)
 
   case check {
-    .Some(err_result) => { return err_result },
+    .Some(err_result) => return err_result,
     .None => {},
   }
 
@@ -2457,7 +2457,7 @@ fn expand_alias_named(env: ResolvedEnv, ty: MonoType, depth: Int) MonoType {
     .Named(tid, type_args) => {
       def := case env.lookup_type_def(tid) {
         .Some(d) => d,
-        .None => { return ty },
+        .None => return ty,
       }
 
       case def {
@@ -2530,7 +2530,7 @@ fn def_type_param_count(def: ResolvedTypeDef) Int {
 fn check_user_type_arity(env: ResolvedEnv, name: String, args: Vector<MonoType>, s: Span) TypeResolveResult? {
   entry := case env.lookup_type(name) {
     .Some(e) => e,
-    .None => { return .None },
+    .None => return .None,
   }
 
   if args.len() != entry.arity {
@@ -2742,11 +2742,11 @@ fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<diag.DiagKind>) Vecto
   for i in 0..env.type_names.len() {
     def := case env.types[i].def {
       .Some(d) => d,
-      .None => { continue },
+      .None => continue,
     }
     aname := case def {
       .Alias(name, _, _) => name,
-      _ => { continue },
+      _ => continue,
     }
 
     // Track visited types by TypeId identity, not name: an alias and its
@@ -2769,11 +2769,11 @@ fn is_circular_alias(env: ResolvedEnv, tid: TypeId, visited: Dict<Int, Bool>) Bo
   new_visited[tid.id] = true
   entry := case env.lookup_type_by_id(tid) {
     .Some(e) => e,
-    .None => { return false },
+    .None => return false,
   }
   def := case entry.def {
     .Some(d) => d,
-    .None => { return false },
+    .None => return false,
   }
 
   case def {

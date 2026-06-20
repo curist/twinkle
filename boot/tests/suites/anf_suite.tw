@@ -34,22 +34,22 @@ fn test_atom_literals() Result<Void, String> {
 
   case ai {
     .ALitInt(n) => try assert.equal(n, 99),
-    _ => { return .Err("expected ALitInt") },
+    _ => return .Err("expected ALitInt"),
   }
 
   case ab {
     .ALitBool(b) => try assert.equal(b, true),
-    _ => { return .Err("expected ALitBool") },
+    _ => return .Err("expected ALitBool"),
   }
 
   case as_ {
     .ALitStr(s) => try assert.equal(s, "hello"),
-    _ => { return .Err("expected ALitStr") },
+    _ => return .Err("expected ALitStr"),
   }
 
   case av {
     .ALitVoid => {},
-    _ => { return .Err("expected ALitVoid") },
+    _ => return .Err("expected ALitVoid"),
   }
 
   .Ok({})
@@ -82,9 +82,9 @@ fn test_expr_let_chain() Result<Void, String> {
       case op {
         .AInit(a) => case a {
           .ALitInt(n) => try assert.equal(n, 1),
-          _ => { return .Err("expected ALitInt") },
+          _ => return .Err("expected ALitInt"),
         },
-        _ => { return .Err("expected AInit") },
+        _ => return .Err("expected AInit"),
       }
 
       // body is another Let
@@ -111,17 +111,17 @@ fn test_expr_return_break_continue() Result<Void, String> {
 
   case r {
     .Return(.Some(.ALitInt(n))) => try assert.equal(n, 42),
-    _ => { return .Err("expected Return(Some)") },
+    _ => return .Err("expected Return(Some)"),
   }
 
   case b {
     .Break(.None) => {},
-    _ => { return .Err("expected Break(None)") },
+    _ => return .Err("expected Break(None)"),
   }
 
   case c {
     .Continue => {},
-    _ => { return .Err("expected Continue") },
+    _ => return .Err("expected Continue"),
   }
 
   .Ok({})
@@ -135,7 +135,7 @@ fn test_op_call() Result<Void, String> {
     .ACall(callee, args) => {
       case callee {
         .AGlobalFunc(id) => try assert.equal(id.id, 1),
-        _ => { return .Err("expected AGlobalFunc") },
+        _ => return .Err("expected AGlobalFunc"),
       }
 
       try assert.equal(args.len(), 1)
@@ -152,12 +152,12 @@ fn test_op_binop() Result<Void, String> {
     .ABinOp(binop, left, right, kind) => {
       case binop {
         .Add => {},
-        _ => { return .Err("expected Add") },
+        _ => return .Err("expected Add"),
       }
 
       case kind {
         .Int => {},
-        _ => { return .Err("expected Int kind") },
+        _ => return .Err("expected Int kind"),
       }
 
       .Ok({})
@@ -173,7 +173,7 @@ fn test_op_unop() Result<Void, String> {
     .AUnOp(unop, atom, kind) => {
       case unop {
         .Neg => {},
-        _ => { return .Err("expected Neg") },
+        _ => return .Err("expected Neg"),
       }
 
       case atom {
@@ -192,17 +192,17 @@ fn test_op_if() Result<Void, String> {
     .AIf(cond_e, then_e, else_e) => {
       case cond_e {
         .ALitBool(b) => try assert.equal(b, true),
-        _ => { return .Err("expected ALitBool") },
+        _ => return .Err("expected ALitBool"),
       }
 
       case then_e {
         .Atom(.ALitInt(n)) => try assert.equal(n, 1),
-        _ => { return .Err("expected Atom(1)") },
+        _ => return .Err("expected Atom(1)"),
       }
 
       case else_e {
         .Atom(.ALitInt(n)) => try assert.equal(n, 2),
-        _ => { return .Err("expected Atom(2)") },
+        _ => return .Err("expected Atom(2)"),
       }
 
       .Ok({})
@@ -329,7 +329,7 @@ fn test_op_index() Result<Void, String> {
     .AIndex(base, idx, kind, result_ty) => {
       case kind {
         .Array => {},
-        _ => { return .Err("expected Array kind") },
+        _ => return .Err("expected Array kind"),
       }
 
       case result_ty {
@@ -348,9 +348,9 @@ fn test_op_init_assign() Result<Void, String> {
   case init_op {
     .AInit(a) => case a {
       .ALitInt(n) => try assert.equal(n, 42),
-      _ => { return .Err("expected ALitInt") },
+      _ => return .Err("expected ALitInt"),
     },
-    _ => { return .Err("expected AInit") },
+    _ => return .Err("expected AInit"),
   }
 
   case assign_op {
@@ -432,22 +432,22 @@ fn test_op_kind() Result<Void, String> {
 
   case ki {
     .Int => {},
-    _ => { return .Err("expected Int") },
+    _ => return .Err("expected Int"),
   }
 
   case kf {
     .Float => {},
-    _ => { return .Err("expected Float") },
+    _ => return .Err("expected Float"),
   }
 
   case kb {
     .Bool => {},
-    _ => { return .Err("expected Bool") },
+    _ => return .Err("expected Bool"),
   }
 
   case ks {
     .Str => {},
-    _ => { return .Err("expected Str") },
+    _ => return .Err("expected Str"),
   }
 
   .Ok({})
@@ -460,17 +460,17 @@ fn test_index_kind() Result<Void, String> {
 
   case a {
     .Array => {},
-    _ => { return .Err("expected Array") },
+    _ => return .Err("expected Array"),
   }
 
   case d {
     .Dict => {},
-    _ => { return .Err("expected Dict") },
+    _ => return .Err("expected Dict"),
   }
 
   case s {
     .Str => {},
-    _ => { return .Err("expected Str") },
+    _ => return .Err("expected Str"),
   }
 
   .Ok({})

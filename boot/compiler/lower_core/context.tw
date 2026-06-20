@@ -109,7 +109,7 @@ pub fn lookup_local(ctx: LowerCtx, name: String) LocalId? {
 
   for _ in 0..ctx.locals.len() {
     case ctx.locals[i][name] {
-      .Some(id) => { return .Some(id) },
+      .Some(id) => return .Some(id),
       .None => {},
     }
 

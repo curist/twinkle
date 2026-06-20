@@ -201,7 +201,7 @@ fn get_eof_trivia(tokens: Vector<Token>) Vector<Trivia> {
           .BlankLine => {
             trivia = .drop_last()
           },
-          _ => { break },
+          _ => break,
         }
       }
 
@@ -273,7 +273,7 @@ fn is_blank_trivia(t: Trivia) Bool {
 fn has_module_doc_in_trivia(trivia: Vector<Trivia>) Bool {
   for t in trivia {
     case t.kind {
-      .ModuleDocComment => { return true },
+      .ModuleDocComment => return true,
       _ => {},
     }
   }
@@ -289,8 +289,8 @@ fn ends_with_module_doc_trivia(trivia: Vector<Trivia>) Bool {
       .BlankLine => {
         idx = idx - 1
       },
-      .ModuleDocComment => { return true },
-      _ => { return false },
+      .ModuleDocComment => return true,
+      _ => return false,
     }
   }
 
@@ -371,7 +371,7 @@ fn sort_import_blocks(items: Vector<Item>) Vector<Item> {
               uses = .append(sort_selective_items(decl))
               i = i + 1
             },
-            _ => { break },
+            _ => break,
           }
         }
 
@@ -1674,7 +1674,7 @@ fn collect_method_chain(callee: Expr, args: Vector<Expr>) ChainResult? {
               cur_callee = inner_callee
               cur_args = inner_args
             },
-            _ => { return finish_method_chain(obj, segments) },
+            _ => return finish_method_chain(obj, segments),
           },
           _ => {
             // obj is the base expression; reverse segments collected
@@ -1683,7 +1683,7 @@ fn collect_method_chain(callee: Expr, args: Vector<Expr>) ChainResult? {
           },
         }
       },
-      _ => { return .None },
+      _ => return .None,
     }
   }
 

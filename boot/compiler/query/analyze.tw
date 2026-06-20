@@ -293,17 +293,17 @@ fn note_progress(state: AnalysisState, stage: progress.AnalysisStage, canonical:
 /// an `@std/` prefix; anything outside the known roots falls back to its filename.
 fn display_module_name(state: AnalysisState, canonical: String) String {
   case strip_root(canonical, state.canonical_roots.stdlib_root) {
-    .Some(rel) => { return "@std/${rel}" },
+    .Some(rel) => return "@std/${rel}",
     .None => {},
   }
 
   case strip_root(canonical, state.canonical_roots.prelude_root) {
-    .Some(rel) => { return rel },
+    .Some(rel) => return rel,
     .None => {},
   }
 
   case strip_root(canonical, path.normalize(state.project_root)) {
-    .Some(rel) => { return rel },
+    .Some(rel) => return rel,
     .None => {},
   }
   path.basename(canonical)
@@ -377,7 +377,7 @@ fn analyze_module_impl(
 
   // Already analyzed? Return cached exports.
   case state.exports[canonical] {
-    .Some(_) => { return .{ env: base, state, diagnostics: [], ok: true, rewrites: [], lints: [] } },
+    .Some(_) => return .{ env: base, state, diagnostics: [], ok: true, rewrites: [], lints: [] },
     .None => {},
   }
 
@@ -387,10 +387,8 @@ fn analyze_module_impl(
   // initialization or mutually-recursive types cannot be broken and error.
   if stack.contains(canonical) {
     case state.interfaces[canonical] {
-      .Some(_) => {
-        return .{ env: base, state, diagnostics: [], ok: true, rewrites: [], lints: [] }
-      },
-      .None => { return break_import_cycle(id, alias, base, state, stack, caller_id, use_span) },
+      .Some(_) => return .{ env: base, state, diagnostics: [], ok: true, rewrites: [], lints: [] },
+      .None => return break_import_cycle(id, alias, base, state, stack, caller_id, use_span),
     }
   }
 
@@ -405,15 +403,13 @@ fn analyze_module_impl(
   t_load0 := date.now()
   loaded := case state.load_source(canonical, module_id, caller_id, use_span) {
     .Ok(value) => value,
-    .Err(err) => {
-      return .{
-        env: base,
-        state: err.state.mark_failed(canonical),
-        diagnostics: err.diagnostics,
-        ok: false,
-        rewrites: [],
-        lints: [],
-      }
+    .Err(err) => return .{
+      env: base,
+      state: err.state.mark_failed(canonical),
+      diagnostics: err.diagnostics,
+      ok: false,
+      rewrites: [],
+      lints: [],
     },
   }
 
@@ -425,15 +421,13 @@ fn analyze_module_impl(
   t_parse0 := date.now()
   parsed_load := case loaded.state.parse_cached(canonical, loaded.source, loaded.source_hash) {
     .Ok(value) => value,
-    .Err(err) => {
-      return .{
-        env: base,
-        state: err.state.mark_failed(canonical),
-        diagnostics: err.diagnostics,
-        ok: false,
-        rewrites: [],
-        lints: [],
-      }
+    .Err(err) => return .{
+      env: base,
+      state: err.state.mark_failed(canonical),
+      diagnostics: err.diagnostics,
+      ok: false,
+      rewrites: [],
+      lints: [],
     },
   }
 
@@ -445,15 +439,13 @@ fn analyze_module_impl(
   t_plan0 := date.now()
   dep_plan := case parsed_load.state.plan_dependencies(canonical, parsed_load.parsed, loaded.source) {
     .Ok(plan) => plan,
-    .Err(err) => {
-      return .{
-        env: base,
-        state: err.state.mark_failed(canonical),
-        diagnostics: err.diagnostics,
-        ok: false,
-        rewrites: [],
-        lints: [],
-      }
+    .Err(err) => return .{
+      env: base,
+      state: err.state.mark_failed(canonical),
+      diagnostics: err.diagnostics,
+      ok: false,
+      rewrites: [],
+      lints: [],
     },
   }
 
@@ -560,15 +552,13 @@ fn analyze_module_impl(
     deps.diagnostics,
   ) {
     .Ok(value) => value,
-    .Err(err) => {
-      return .{
-        env,
-        state: err.state.mark_failed(canonical),
-        diagnostics: err.diagnostics,
-        ok: false,
-        rewrites: [],
-        lints: [],
-      }
+    .Err(err) => return .{
+      env,
+      state: err.state.mark_failed(canonical),
+      diagnostics: err.diagnostics,
+      ok: false,
+      rewrites: [],
+      lints: [],
     },
   }
   local.state.note_progress(.Publishing, canonical)
@@ -835,7 +825,7 @@ fn preliminary_type_interface(
   dep_id := identity.from_path(dep.canonical_path)
   loaded := case state.load_source(dep.canonical_path, dep_id, caller_id, use_span) {
     .Ok(value) => value,
-    .Err(err) => { return .Err(err) },
+    .Err(err) => return .Err(err),
   }
   parsed_load := case loaded.state.parse_cached(
     dep.canonical_path,
@@ -843,7 +833,7 @@ fn preliminary_type_interface(
     loaded.source_hash,
   ) {
     .Ok(value) => value,
-    .Err(err) => { return .Err(err) },
+    .Err(err) => return .Err(err),
   }
   exports := preliminary_type_exports(
     parsed_load.parsed,
@@ -881,28 +871,24 @@ fn break_import_cycle(
 
   loaded := case state.load_source(canonical, module_id, caller_id, use_span) {
     .Ok(value) => value,
-    .Err(err) => {
-      return .{
-        env: base,
-        state: err.state,
-        diagnostics: err.diagnostics,
-        ok: false,
-        rewrites: [],
-        lints: [],
-      }
+    .Err(err) => return .{
+      env: base,
+      state: err.state,
+      diagnostics: err.diagnostics,
+      ok: false,
+      rewrites: [],
+      lints: [],
     },
   }
   parsed_load := case loaded.state.parse_cached(canonical, loaded.source, loaded.source_hash) {
     .Ok(value) => value,
-    .Err(err) => {
-      return .{
-        env: base,
-        state: err.state,
-        diagnostics: err.diagnostics,
-        ok: false,
-        rewrites: [],
-        lints: [],
-      }
+    .Err(err) => return .{
+      env: base,
+      state: err.state,
+      diagnostics: err.diagnostics,
+      ok: false,
+      rewrites: [],
+      lints: [],
     },
   }
   cur := parsed_load.state
@@ -924,15 +910,13 @@ fn break_import_cycle(
 
   dep_plan := case cur.plan_dependencies(canonical, parsed, loaded.source) {
     .Ok(plan) => plan,
-    .Err(err) => {
-      return .{
-        env: base,
-        state: err.state,
-        diagnostics: err.diagnostics,
-        ok: false,
-        rewrites: [],
-        lints: [],
-      }
+    .Err(err) => return .{
+      env: base,
+      state: err.state,
+      diagnostics: err.diagnostics,
+      ok: false,
+      rewrites: [],
+      lints: [],
     },
   }
 
@@ -986,15 +970,13 @@ fn break_import_cycle(
 
     prelim := case cur.preliminary_type_interface(env, dep, caller_id, use_span) {
       .Ok(value) => value,
-      .Err(err) => {
-        return .{
-          env: base,
-          state: err.state,
-          diagnostics: err.diagnostics,
-          ok: false,
-          rewrites: [],
-          lints: [],
-        }
+      .Err(err) => return .{
+        env: base,
+        state: err.state,
+        diagnostics: err.diagnostics,
+        ok: false,
+        rewrites: [],
+        lints: [],
       },
     }
     cur = prelim.state

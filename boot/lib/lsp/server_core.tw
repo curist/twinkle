@@ -206,21 +206,21 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
             // Incremental change — convert UTF-16 range to byte offsets.
             cur_doc := case state.documents.get(doc.uri) {
               .Some(d) => d,
-              .None => { continue },
+              .None => continue,
             }
             start_offset := case position_offset(
               cur_doc.index,
               .{ line: range.start.line, character: range.start.character },
             ) {
               .Some(o) => o,
-              .None => { continue },
+              .None => continue,
             }
             end_offset := case position_offset(
               cur_doc.index,
               .{ line: range.end.line, character: range.end.character },
             ) {
               .Some(o) => o,
-              .None => { continue },
+              .None => continue,
             }
             state.documents = .change_incremental(
               doc.uri,
@@ -239,7 +239,7 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
 
       final_text := case state.documents.get(doc.uri) {
         .Some(d) => d.text,
-        .None => { return .{ state, outgoing: [] } },
+        .None => return .{ state, outgoing: [] },
       }
       state = .note_changed_document_source(doc.uri, final_text)
       state.mark_diagnostics_pending(.Parse, .Some(doc.uri))
@@ -317,15 +317,15 @@ fn workspace_input(state: State, doc: document_store.Document) query_diagnostics
 fn handle_hover(state: State, req: protocol.Request) Step {
   hover_params := case params.decode_hover(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return state.null_response_step(req) },
+    .Err(_) => return state.null_response_step(req),
   }
   doc := case state.documents.get(hover_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return state.null_response_step(req) },
+    .None => return state.null_response_step(req),
   }
   offset := case position_offset(doc.index, hover_params.position) {
     .Some(o) => o,
-    .None => { return state.null_response_step(req) },
+    .None => return state.null_response_step(req),
   }
   snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
@@ -342,15 +342,15 @@ fn handle_hover(state: State, req: protocol.Request) Step {
 fn handle_definition(state: State, req: protocol.Request) Step {
   def_params := case params.decode_definition(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return state.null_response_step(req) },
+    .Err(_) => return state.null_response_step(req),
   }
   doc := case state.documents.get(def_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return state.null_response_step(req) },
+    .None => return state.null_response_step(req),
   }
   offset := case position_offset(doc.index, def_params.position) {
     .Some(o) => o,
-    .None => { return state.null_response_step(req) },
+    .None => return state.null_response_step(req),
   }
   snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
@@ -372,15 +372,15 @@ fn handle_definition(state: State, req: protocol.Request) Step {
 fn handle_type_definition(state: State, req: protocol.Request) Step {
   def_params := case params.decode_definition(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return state.null_response_step(req) },
+    .Err(_) => return state.null_response_step(req),
   }
   doc := case state.documents.get(def_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return state.null_response_step(req) },
+    .None => return state.null_response_step(req),
   }
   offset := case position_offset(doc.index, def_params.position) {
     .Some(o) => o,
-    .None => { return state.null_response_step(req) },
+    .None => return state.null_response_step(req),
   }
   snap := state.workspace_snapshot(doc)
   state.query_cache = snap.cache
@@ -402,15 +402,15 @@ fn handle_type_definition(state: State, req: protocol.Request) Step {
 fn handle_references(state: State, req: protocol.Request) Step {
   ref_params := case params.decode_references(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return state.empty_array_response_step(req) },
+    .Err(_) => return state.empty_array_response_step(req),
   }
   doc := case state.documents.get(ref_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return state.empty_array_response_step(req) },
+    .None => return state.empty_array_response_step(req),
   }
   offset := case position_offset(doc.index, ref_params.position) {
     .Some(o) => o,
-    .None => { return state.empty_array_response_step(req) },
+    .None => return state.empty_array_response_step(req),
   }
 
   // Populate the cache from all open documents so cross-module refs work.
@@ -428,13 +428,13 @@ fn handle_references(state: State, req: protocol.Request) Step {
     results,
     fn(uri: String) line_index.LineIndex? {
       case document_by_identity_uri(state.documents, uri) {
-        .Some(d) => { return .Some(d.index) },
+        .Some(d) => return .Some(d.index),
         .None => {},
       }
 
       p := case identity_path_from_uri(uri) {
         .Some(path) => path,
-        .None => { return .None },
+        .None => return .None,
       }
 
       case fs.read_text(p) {
@@ -449,15 +449,15 @@ fn handle_references(state: State, req: protocol.Request) Step {
 fn handle_document_highlight(state: State, req: protocol.Request) Step {
   hl_params := case params.decode_definition(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return state.empty_array_response_step(req) },
+    .Err(_) => return state.empty_array_response_step(req),
   }
   doc := case state.documents.get(hl_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return state.empty_array_response_step(req) },
+    .None => return state.empty_array_response_step(req),
   }
   offset := case position_offset(doc.index, hl_params.position) {
     .Some(o) => o,
-    .None => { return state.empty_array_response_step(req) },
+    .None => return state.empty_array_response_step(req),
   }
 
   snap := state.workspace_snapshot(doc)
@@ -470,15 +470,15 @@ fn handle_document_highlight(state: State, req: protocol.Request) Step {
 fn handle_completion(state: State, req: protocol.Request) Step {
   comp_params := case params.decode_completion(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return state.empty_array_response_step(req) },
+    .Err(_) => return state.empty_array_response_step(req),
   }
   doc := case state.documents.get(comp_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return state.empty_array_response_step(req) },
+    .None => return state.empty_array_response_step(req),
   }
   offset := case position_offset(doc.index, comp_params.position) {
     .Some(o) => o,
-    .None => { return state.empty_array_response_step(req) },
+    .None => return state.empty_array_response_step(req),
   }
   snap := state.editor_snapshot(doc)
   state.query_cache = snap.cache
@@ -489,11 +489,11 @@ fn handle_completion(state: State, req: protocol.Request) Step {
 fn handle_code_action(state: State, req: protocol.Request) Step {
   action_params := case params.decode_code_action(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return state.empty_array_response_step(req) },
+    .Err(_) => return state.empty_array_response_step(req),
   }
   doc := case state.documents.get(action_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return state.empty_array_response_step(req) },
+    .None => return state.empty_array_response_step(req),
   }
   actions := lsp_code_action.fix_actions(doc.uri, doc.index, action_params.context_diagnostics)
   .{ state, outgoing: [req.id.success_response(json.array(actions))] }
@@ -502,15 +502,15 @@ fn handle_code_action(state: State, req: protocol.Request) Step {
 fn handle_signature_help(state: State, req: protocol.Request) Step {
   sig_params := case params.decode_signature_help(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return state.null_response_step(req) },
+    .Err(_) => return state.null_response_step(req),
   }
   doc := case state.documents.get(sig_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return state.null_response_step(req) },
+    .None => return state.null_response_step(req),
   }
   offset := case position_offset(doc.index, sig_params.position) {
     .Some(o) => o,
-    .None => { return state.null_response_step(req) },
+    .None => return state.null_response_step(req),
   }
   snap := state.editor_snapshot(doc)
   state.query_cache = snap.cache
@@ -527,18 +527,18 @@ fn handle_signature_help(state: State, req: protocol.Request) Step {
 fn handle_document_symbol(state: State, req: protocol.Request) Step {
   sym_params := case params.decode_document_symbol(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return state.empty_array_response_step(req) },
+    .Err(_) => return state.empty_array_response_step(req),
   }
   doc := case state.documents.get(sym_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return state.empty_array_response_step(req) },
+    .None => return state.empty_array_response_step(req),
   }
   if state.full_dirty {
     return state.empty_array_response_step(req)
   }
   snap := case state.workspace_snapshot_cached(doc) {
     .Some(s) => s,
-    .None => { return state.empty_array_response_step(req) },
+    .None => return state.empty_array_response_step(req),
   }
   state.query_cache = snap.cache
   symbols := query_document_symbols.document_symbols(snap)
@@ -553,18 +553,18 @@ fn handle_document_symbol(state: State, req: protocol.Request) Step {
 fn handle_folding_range(state: State, req: protocol.Request) Step {
   fr_params := case params.decode_folding_range(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return state.empty_array_response_step(req) },
+    .Err(_) => return state.empty_array_response_step(req),
   }
   doc := case state.documents.get(fr_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return state.empty_array_response_step(req) },
+    .None => return state.empty_array_response_step(req),
   }
   if state.full_dirty {
     return state.empty_array_response_step(req)
   }
   snap := case state.workspace_snapshot_cached(doc) {
     .Some(s) => s,
-    .None => { return state.empty_array_response_step(req) },
+    .None => return state.empty_array_response_step(req),
   }
   state.query_cache = snap.cache
   ranges := query_folding_range.folding_ranges(snap)
@@ -577,11 +577,11 @@ fn handle_folding_range(state: State, req: protocol.Request) Step {
 fn handle_inlay_hint(state: State, req: protocol.Request) Step {
   hint_params := case params.decode_inlay_hint(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return state.empty_array_response_step(req) },
+    .Err(_) => return state.empty_array_response_step(req),
   }
   doc := case state.documents.get(hint_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return state.empty_array_response_step(req) },
+    .None => return state.empty_array_response_step(req),
   }
   range_start := case position_offset(doc.index, hint_params.range_start) {
     .Some(o) => o,
@@ -596,7 +596,7 @@ fn handle_inlay_hint(state: State, req: protocol.Request) Step {
   }
   snap := case state.workspace_snapshot_cached(doc) {
     .Some(s) => s,
-    .None => { return state.empty_array_response_step(req) },
+    .None => return state.empty_array_response_step(req),
   }
   state.query_cache = snap.cache
   hints := query_inlay_hints.inlay_hints(snap, range_start, range_end)
@@ -609,20 +609,16 @@ fn handle_inlay_hint(state: State, req: protocol.Request) Step {
 fn handle_semantic_tokens(state: State, req: protocol.Request) Step {
   sem_params := case params.decode_semantic_tokens(req.params) {
     .Ok(p) => p,
-    .Err(_) => {
-      return .{
-        state,
-        outgoing: [req.id.success_response(json.object([json.kv("data", json.array([]))]))],
-      }
+    .Err(_) => return .{
+      state,
+      outgoing: [req.id.success_response(json.object([json.kv("data", json.array([]))]))],
     },
   }
   doc := case state.documents.get(sem_params.text_document.uri) {
     .Some(d) => d,
-    .None => {
-      return .{
-        state,
-        outgoing: [req.id.success_response(json.object([json.kv("data", json.array([]))]))],
-      }
+    .None => return .{
+      state,
+      outgoing: [req.id.success_response(json.object([json.kv("data", json.array([]))]))],
     },
   }
   if state.full_dirty {
@@ -633,11 +629,9 @@ fn handle_semantic_tokens(state: State, req: protocol.Request) Step {
   }
   snap := case state.workspace_snapshot_cached(doc) {
     .Some(s) => s,
-    .None => {
-      return .{
-        state,
-        outgoing: [req.id.success_response(json.object([json.kv("data", json.array([]))]))],
-      }
+    .None => return .{
+      state,
+      outgoing: [req.id.success_response(json.object([json.kv("data", json.array([]))]))],
     },
   }
   state.query_cache = snap.cache
@@ -653,7 +647,7 @@ fn handle_semantic_tokens(state: State, req: protocol.Request) Step {
 fn handle_workspace_symbol(state: State, req: protocol.Request) Step {
   ws_params := case params.decode_workspace_symbol(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return state.empty_array_response_step(req) },
+    .Err(_) => return state.empty_array_response_step(req),
   }
 
   // We need at least one open document to anchor workspace analysis.
@@ -675,13 +669,13 @@ fn handle_workspace_symbol(state: State, req: protocol.Request) Step {
     fn(uri: String) line_index.LineIndex? {
       // Prefer open-doc indexes; fall back to reading from disk.
       case document_by_identity_uri(state.documents, uri) {
-        .Some(d) => { return .Some(d.index) },
+        .Some(d) => return .Some(d.index),
         .None => {},
       }
 
       p := case identity_path_from_uri(uri) {
         .Some(path) => path,
-        .None => { return .None },
+        .None => return .None,
       }
 
       case fs.read_text(p) {
@@ -696,11 +690,11 @@ fn handle_workspace_symbol(state: State, req: protocol.Request) Step {
 fn handle_formatting(state: State, req: protocol.Request) Step {
   fmt_params := case params.decode_document_formatting(req.params) {
     .Ok(p) => p,
-    .Err(_) => { return state.empty_array_response_step(req) },
+    .Err(_) => return state.empty_array_response_step(req),
   }
   doc := case state.documents.get(fmt_params.text_document.uri) {
     .Some(d) => d,
-    .None => { return state.empty_array_response_step(req) },
+    .None => return state.empty_array_response_step(req),
   }
   lexed := lexer.lex(doc.text, 0)
 
@@ -802,7 +796,7 @@ fn publish_parse_diagnostics(state: State) Step {
   for uri in state.parse_dirty_uris.keys() {
     doc := case state.documents.get(uri) {
       .Some(d) => d,
-      .None => { continue },
+      .None => continue,
     }
     result := query_diagnostics.analyze_parse(
       state.query_cache,
@@ -878,7 +872,7 @@ fn publish_workspace_diagnostics(state: State, progress: ProgressSink?) Step {
   for root in by_project.keys() {
     docs := case by_project[root] {
       .Some(ds) => ds,
-      .None => { continue },
+      .None => continue,
     }
 
     // Use first doc as entry — analysis walks all deps anyway.
@@ -1011,13 +1005,13 @@ fn definition_target_index(
   fallback: line_index.LineIndex,
 ) line_index.LineIndex {
   case document_by_identity_uri(store, target_uri) {
-    .Some(target_doc) => { return target_doc.index },
+    .Some(target_doc) => return target_doc.index,
     .None => {},
   }
 
   target_path := case identity_path_from_uri(target_uri) {
     .Some(p) => p,
-    .None => { return fallback },
+    .None => return fallback,
   }
 
   case fs.read_text(target_path) {

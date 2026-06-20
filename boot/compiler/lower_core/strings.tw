@@ -10,7 +10,7 @@ use lib.source.span.{Span}
 fn stringify_target_id(ctx: LowerCtx, part_ty: MonoType, func_name: String, method_name: String) FuncId {
   case builtin_type_name(part_ty) {
     .Some(type_name) => case ctx.builtins.try_method_id(type_name, method_name) {
-      .Some(id) => { return id },
+      .Some(id) => return id,
       .None => {},
     },
     .None => {},

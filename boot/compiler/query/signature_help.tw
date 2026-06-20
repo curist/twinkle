@@ -24,7 +24,7 @@ pub fn signature_help(snap: SemanticSnapshot, byte_offset: Int, source: String) 
         for item in parsed.module.items {
           case find_call_in_item(item, byte_offset) {
             .Some(call_info) => case call_info.resolve_call(typed, source, byte_offset) {
-              .Some(result) => { return .Some(result) },
+              .Some(result) => return .Some(result),
               .None => {},
             },
             .None => {},
@@ -63,7 +63,7 @@ fn find_call_in_params_or_body(decl: FunctionDecl, offset: Int) CallInfo? {
 fn find_call_in_block(block: Block, offset: Int) CallInfo? {
   for stmt in block.stmts {
     case find_call_in_stmt(stmt, offset) {
-      .Some(r) => { return .Some(r) },
+      .Some(r) => return .Some(r),
       .None => {},
     }
   }
@@ -120,7 +120,7 @@ fn find_call_in_expr(expr: Expr, offset: Int) CallInfo? {
       // First try to find a call deeper in the arguments (innermost wins)
       for arg in args {
         case find_call_in_expr(arg, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         }
       }
@@ -168,7 +168,7 @@ fn find_call_in_expr(expr: Expr, offset: Int) CallInfo? {
 fn find_call_in_exprs(exprs: Vector<Expr>, offset: Int) CallInfo? {
   for e in exprs {
     case find_call_in_expr(e, offset) {
-      .Some(r) => { return .Some(r) },
+      .Some(r) => return .Some(r),
       .None => {},
     }
   }
@@ -180,7 +180,7 @@ fn find_call_in_entries(entries: Vector<RecordEntry>, offset: Int) CallInfo? {
   for e in entries {
     case e.value {
       .Some(v) => case find_call_in_expr(v, offset) {
-        .Some(r) => { return .Some(r) },
+        .Some(r) => return .Some(r),
         .None => {},
       },
       .None => {},
@@ -205,7 +205,7 @@ fn find_call_in_cond_arms(arms: Vector<CondArm>, offset: Int) CallInfo? {
     if arm.span.contains(offset) {
       case arm.condition {
         .Some(cond_e) => case find_call_in_expr(cond_e, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         },
         .None => {},
@@ -222,7 +222,7 @@ fn find_call_in_interp(parts: Vector<StringPart>, offset: Int) CallInfo? {
   for part in parts {
     case part {
       .Interpolation(e) => case find_call_in_expr(e, offset) {
-        .Some(r) => { return .Some(r) },
+        .Some(r) => return .Some(r),
         .None => {},
       },
       _ => {},

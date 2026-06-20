@@ -53,7 +53,7 @@ pub fn suite() runner.Suite {
       fn() {
         case try framing.try_decode_frame("Content-Length: 2\r\n") {
           .NeedMore => {},
-          .Decoded(_, _) => { return assert.fail("expected need more for header") },
+          .Decoded(_, _) => return assert.fail("expected need more for header"),
         }
 
         case try framing.try_decode_frame("Content-Length: 4\r\n\r\n{}") {
@@ -78,7 +78,7 @@ pub fn suite() runner.Suite {
 
         case try framing.try_decode_frame_bytes(partial) {
           .NeedMoreBytes => {},
-          .DecodedBytes(_, _) => { return assert.fail("expected need more") },
+          .DecodedBytes(_, _) => return assert.fail("expected need more"),
         }
 
         complete := partial.concat("}rest".utf8_bytes())

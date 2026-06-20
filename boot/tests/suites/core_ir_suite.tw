@@ -389,9 +389,9 @@ pub fn suite() runner.Suite {
         try case mod.items[0] {
           .Function(f) => case f.body.tail {
             .Some(expr) => assert.ok(expr.id >= 0, "expr.id should be non-negative"),
-            .None => { return .Err("expected tail expression") },
+            .None => return .Err("expected tail expression"),
           },
-          _ => { return .Err("expected function") },
+          _ => return .Err("expected function"),
         }
 
         .Ok({})
@@ -410,11 +410,11 @@ pub fn suite() runner.Suite {
                 try assert.ok(expr.id != rhs.id, "binary and rhs should have different ids")
                 assert.ok(lhs.id != rhs.id, "lhs and rhs should have different ids")
               },
-              _ => { return .Err("expected binary expression") },
+              _ => return .Err("expected binary expression"),
             },
-            .None => { return .Err("expected tail expression") },
+            .None => return .Err("expected tail expression"),
           },
-          _ => { return .Err("expected function") },
+          _ => return .Err("expected function"),
         }
       },
     )
@@ -430,11 +430,11 @@ pub fn suite() runner.Suite {
                 call_expr.id != callee.id,
                 "call expr and callee should have different ids",
               ),
-              _ => { return .Err("expected call expression") },
+              _ => return .Err("expected call expression"),
             },
-            .None => { return .Err("expected tail expression") },
+            .None => return .Err("expected tail expression"),
           },
-          _ => { return .Err("expected function") },
+          _ => return .Err("expected function"),
         }
       },
     )
@@ -804,11 +804,11 @@ pub fn suite() runner.Suite {
                 try assert.ok(call_has, "call expr type not found in type_map")
                 assert.ok(callee_has, "callee type not found in type_map")
               },
-              _ => { return .Err("expected call expression") },
+              _ => return .Err("expected call expression"),
             },
-            .None => { return .Err("expected tail expression") },
+            .None => return .Err("expected tail expression"),
           },
-          _ => { return .Err("expected function") },
+          _ => return .Err("expected function"),
         }
       },
     )
@@ -888,7 +888,7 @@ pub fn suite() runner.Suite {
         // Use from_code_point(36) to get "$" without triggering interpolation
         dollar: String = case String.from_code_point(36) {
           .Some(d) => d,
-          .None => { return .Err("failed to create dollar sign") },
+          .None => return .Err("failed to create dollar sign"),
         }
         src: String = "fn f(n: Int) String { \"value: ".concat(dollar).concat("{n}\" }")
         lr := try lower_src(src)
@@ -1091,11 +1091,11 @@ pub fn suite() runner.Suite {
         try assert.ok(!has_generic_fail, "generic fail should be dropped")
         sid := case spec_fail_id {
           .Some(id) => id,
-          .None => { return .Err("expected specialized fail function") },
+          .None => return .Err("expected specialized fail function"),
         }
         body := case f_body {
           .Some(b) => b,
-          .None => { return .Err("expected f body") },
+          .None => return .Err("expected f body"),
         }
         try assert.ok(has_func_id(body, sid), "expected f body to reference specialized fail")
         .Ok({})
@@ -1126,7 +1126,7 @@ pub fn suite() runner.Suite {
         try assert.ok(!has_generic_compose, "generic compose should be dropped")
         body := case compose_body {
           .Some(b) => b,
-          .None => { return .Err("expected specialized compose function") },
+          .None => return .Err("expected specialized compose function"),
         }
         targets := make_closure_targets(body, [])
         try assert.ok(targets.len() > 0, "expected specialized compose body to contain MakeClosure")

@@ -167,7 +167,7 @@ pub fn find_map<C: IndexRead<E>, E, U>(v: View<C>, f: fn(E) Option<U>) Option<U>
 
   for i < v.count {
     case f(v.at(i)) {
-      .Some(value) => { return .Some(value) },
+      .Some(value) => return .Some(value),
       .None => {},
     }
 

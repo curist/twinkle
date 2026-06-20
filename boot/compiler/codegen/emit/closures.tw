@@ -131,14 +131,14 @@ fn try_emit_typed_closure_call(
   // Keep result handling to a single LocalSet: only value-returning closures.
   // Void/Never closures (rare, not the comparator shape) take the universal path.
   case result_mono {
-    .Void => { return .None },
-    .Never => { return .None },
+    .Void => return .None,
+    .Never => return .None,
     _ => {},
   }
 
   case entry.mono {
     .Function(_, _) => {},
-    _ => { return .None },
+    _ => return .None,
   }
 
   case cached_layout_of(entry.mono, ctx) {
@@ -301,7 +301,7 @@ pub fn emit_closure_tail_call(
 
   case entry.mono {
     .Function(_, _) => {},
-    _ => { return .None },
+    _ => return .None,
   }
 
   layout := cached_layout_of(entry.mono, ctx)
@@ -436,7 +436,7 @@ pub fn emit_builtin_trampolines(ctx: EmitCtx) Vector<FuncDef> {
       ctx.env,
     ) {
       .Some(info) => info,
-      .None => { continue },
+      .None => continue,
     }
 
     if !target.closure_materializable {
@@ -445,11 +445,11 @@ pub fn emit_builtin_trampolines(ctx: EmitCtx) Vector<FuncDef> {
 
     entry := case bi.entry(ctx.builtins, func_id) {
       .Some(e) => e,
-      .None => { continue },
+      .None => continue,
     }
     sig := case ctx.registry.concrete_func_sigs[fid] {
       .Some(s) => s,
-      .None => { continue },
+      .None => continue,
     }
     out = .append(emit_builtin_universal_trampoline(entry, sig, target.wrapper_kind, ctx))
   }

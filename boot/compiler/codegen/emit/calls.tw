@@ -167,7 +167,7 @@ fn emit_direct_arg(
   case expected {
     .Some(exp) => case exp.mono {
       .Byte => case a {
-        .ALitInt(n) => { return buf.append(.I32Const(n)) },
+        .ALitInt(n) => return buf.append(.I32Const(n)),
         _ => {},
       },
       _ => {},

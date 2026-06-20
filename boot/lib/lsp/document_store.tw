@@ -43,7 +43,7 @@ pub fn change_incremental(
 ) Store {
   doc := case store.get(uri) {
     .Some(d) => d,
-    .None => { return store },
+    .None => return store,
   }
 
   if start_offset < 0 or end_offset < start_offset or end_offset > doc.text.len() {

@@ -169,7 +169,7 @@ pub fn suite() runner.Suite {
             try assert.equal(info.wasm_module, "rt.core")
             try assert.equal(info.wasm_name, "print")
           },
-          .Intrinsic => { return .Err("print should be Runtime") },
+          .Intrinsic => return .Err("print should be Runtime"),
         }
 
         // intrinsic check
@@ -177,7 +177,7 @@ pub fn suite() runner.Suite {
 
         case sg_entry.kind {
           .Intrinsic => {},
-          .Runtime(_) => { return .Err("string$get should be Intrinsic") },
+          .Runtime(_) => return .Err("string$get should be Intrinsic"),
         }
 
         // vector ops
@@ -208,7 +208,7 @@ pub fn suite() runner.Suite {
 
         case print_entry.closure_policy {
           .NotMaterializable => {},
-          _ => { return .Err("runtime helper should default to NotMaterializable") },
+          _ => return .Err("runtime helper should default to NotMaterializable"),
         }
 
         case get_entry.closure_policy {
@@ -232,17 +232,17 @@ pub fn suite() runner.Suite {
 
         case int_to_string.closure_policy {
           .GenericClosure => {},
-          _ => { return .Err("Int.to_string should use generic closure policy") },
+          _ => return .Err("Int.to_string should use generic closure policy"),
         }
 
         case byte_to_string.closure_policy {
           .WrapperClosure(.ByteToString) => {},
-          _ => { return .Err("Byte.to_string should use wrapper closure policy") },
+          _ => return .Err("Byte.to_string should use wrapper closure policy"),
         }
 
         case cell_update.closure_policy {
           .WrapperClosure(.CellUpdate) => {},
-          _ => { return .Err("Cell.update should use wrapper closure policy") },
+          _ => return .Err("Cell.update should use wrapper closure policy"),
         }
 
         case vector_len.closure_policy {

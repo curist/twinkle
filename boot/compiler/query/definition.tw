@@ -41,18 +41,18 @@ type Ref = {
 pub fn type_definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
   parsed := case snap.parsed {
     .Some(value) => value,
-    .None => { return .None },
+    .None => return .None,
   }
   typed := case snap.typed {
     .Some(t) => t,
-    .None => { return .None },
+    .None => return .None,
   }
 
   // Type annotations: cursor on a type name jumps to the type definition
   // (same as go-to-definition for types).
   case find_type_ref_in_items(parsed.module.items, byte_offset) {
     .Some(r) => case resolve_ref(snap, r, byte_offset) {
-      .Some(target) => { return .Some(target) },
+      .Some(target) => return .Some(target),
       .None => {},
     },
     .None => {},
@@ -61,12 +61,12 @@ pub fn type_definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResul
   // Find the expression at the cursor and look up its type.
   expr_id := case find_typed_expr_id(parsed.module.items, byte_offset) {
     .Some(id) => id,
-    .None => { return .None },
+    .None => return .None,
   }
 
   mono := case typed.type_map[expr_id] {
     .Some(t) => t,
-    .None => { return .None },
+    .None => return .None,
   }
 
   resolve_type_id_from_mono(snap, typed.env, mono)
@@ -74,20 +74,20 @@ pub fn type_definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResul
 
 pub fn definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
   case occurrence_definition(snap, byte_offset) {
-    .Some(target) => { return .Some(target) },
+    .Some(target) => return .Some(target),
     .None => {},
   }
 
   parsed := case snap.parsed {
     .Some(value) => value,
-    .None => { return .None },
+    .None => return .None,
   }
 
   // Imports and type syntax are not expression nodes, so check them before the
   // expression walk.
   case find_import_ref(parsed.module.items, byte_offset) {
     .Some(r) => case resolve_ref(snap, r, byte_offset) {
-      .Some(target) => { return .Some(target) },
+      .Some(target) => return .Some(target),
       .None => {},
     },
     .None => {},
@@ -95,7 +95,7 @@ pub fn definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
 
   case find_type_ref_in_items(parsed.module.items, byte_offset) {
     .Some(r) => case resolve_ref(snap, r, byte_offset) {
-      .Some(target) => { return .Some(target) },
+      .Some(target) => return .Some(target),
       .None => {},
     },
     .None => {},
@@ -103,7 +103,7 @@ pub fn definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
 
   case find_pattern_variant_ref(parsed.module.items, byte_offset) {
     .Some(r) => case resolve_ref(snap, r, byte_offset) {
-      .Some(target) => { return .Some(target) },
+      .Some(target) => return .Some(target),
       .None => {},
     },
     .None => {},
@@ -111,7 +111,7 @@ pub fn definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
 
   ref := case find_expr_ref_in_items(parsed.module.items, byte_offset) {
     .Some(r) => r,
-    .None => { return .None },
+    .None => return .None,
   }
   resolve_ref(snap, ref, byte_offset)
 }
@@ -119,11 +119,11 @@ pub fn definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
 fn occurrence_definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
   index := case snap.occurrences {
     .Some(i) => i,
-    .None => { return .None },
+    .None => return .None,
   }
   first := case occ.occurrence_at_offset(index, byte_offset) {
     .Some(o) => o,
-    .None => { return .None },
+    .None => return .None,
   }
   occurrence := prefer_shorthand_value(index, first)
 
@@ -135,13 +135,13 @@ fn occurrence_definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionRes
   }
 
   case occ.definition_for_occurrence(index, occurrence) {
-    .Some(def) => { return definition_result_from_symbol(def) },
+    .Some(def) => return definition_result_from_symbol(def),
     .None => {},
   }
 
   for candidate in semantic.occurrences_for_cached_modules(snap.cache).indexes {
     case occ.definition_for_occurrence(candidate, occurrence) {
-      .Some(def) => { return definition_result_from_symbol(def) },
+      .Some(def) => return definition_result_from_symbol(def),
       .None => {},
     }
   }
@@ -163,11 +163,11 @@ fn prefer_shorthand_value(index: occ.OccurrenceIndex, first: occ.Occurrence) occ
 fn definition_result_from_symbol(def: occ.SymbolDef) DefinitionResult? {
   span := case def.declaration_span {
     .Some(s) => s,
-    .None => { return .None },
+    .None => return .None,
   }
   uri := case def.declaration_uri {
     .Some(u) => u,
-    .None => { return .None },
+    .None => return .None,
   }
 
   .Some(.{ uri, span })
@@ -176,11 +176,11 @@ fn definition_result_from_symbol(def: occ.SymbolDef) DefinitionResult? {
 fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionResult? {
   parsed := case snap.parsed {
     .Some(p) => p,
-    .None => { return .None },
+    .None => return .None,
   }
   typed := case snap.typed {
     .Some(t) => t,
-    .None => { return .None },
+    .None => return .None,
   }
   ctx := DefCtx.{ snap, env: typed.env }
 
@@ -197,19 +197,19 @@ fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionRes
       case base.kind {
         .Ident(alias) => {
           case ctx.resolve_function_name("${alias}.${field}") {
-            .Some(target) => { return .Some(target) },
+            .Some(target) => return .Some(target),
             .None => {},
           }
 
           case ctx.resolve_type_name("${alias}.${field}") {
-            .Some(target) => { return .Some(target) },
+            .Some(target) => return .Some(target),
             .None => {},
           }
 
           // Type.Variant constructor: Color.Red
           case typed.env.lookup_type(alias) {
             .Some(entry) => case ctx.find_variant_by_type_id(entry.id, field) {
-              .Some(target) => { return .Some(target) },
+              .Some(target) => return .Some(target),
               .None => {},
             },
             .None => {},
@@ -252,7 +252,7 @@ fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionRes
 fn resolve_function_name(ctx: DefCtx, name: String) DefinitionResult? {
   registered := case ctx.env.function_bindings[name] {
     .Some(target) => target,
-    .None => { return .None },
+    .None => return .None,
   }
   ctx.resolve_registered_function(registered)
 }
@@ -267,7 +267,7 @@ fn resolve_registered_function(ctx: DefCtx, registered: String) DefinitionResult
 fn resolve_type_name(ctx: DefCtx, name: String) DefinitionResult? {
   entry := case ctx.env.lookup_type(name) {
     .Some(e) => e,
-    .None => { return .None },
+    .None => return .None,
   }
 
   case ctx.env.type_origins[entry.id.id] {
@@ -287,15 +287,15 @@ fn resolve_type_name(ctx: DefCtx, name: String) DefinitionResult? {
 fn resolve_import_alias(snap: SemanticSnapshot, alias: String) DefinitionResult? {
   parsed := case snap.parsed {
     .Some(p) => p,
-    .None => { return .None },
+    .None => return .None,
   }
   dep_path := case dependency_path_for_alias(snap, parsed, alias) {
     .Some(path) => path,
-    .None => { return .None },
+    .None => return .None,
   }
   target := case snap.cache.latest_parsed(dep_path) {
     .Some(p) => p,
-    .None => { return .None },
+    .None => return .None,
   }
   .Some(.{ uri: identity.from_path(dep_path).uri, span: target.module.span })
 }
@@ -305,13 +305,13 @@ fn resolve_variant_name(ctx: DefCtx, name: String, scrutinee: Expr?) DefinitionR
   // (`.Some`) without relying on globally unique variant names.
   typed := case ctx.snap.typed {
     .Some(t) => t,
-    .None => { return .None },
+    .None => return .None,
   }
 
   case scrutinee {
     .Some(expr) => case typed.type_map[expr.id] {
       .Some(.Named(tid, _)) => case ctx.find_variant_by_type_id(tid, name) {
-        .Some(target) => { return .Some(target) },
+        .Some(target) => return .Some(target),
         .None => {},
       },
       _ => {},
@@ -324,7 +324,7 @@ fn resolve_variant_name(ctx: DefCtx, name: String, scrutinee: Expr?) DefinitionR
     entry := ctx.env.types[i]
 
     case ctx.find_variant_by_type_id(entry.id, name) {
-      .Some(target) => { return .Some(target) },
+      .Some(target) => return .Some(target),
       .None => {},
     }
   }
@@ -339,7 +339,7 @@ fn find_variant_by_type_id(ctx: DefCtx, tid: TypeId, variant_name: String) Defin
     .Some(idx) => {
       type_name = ctx.env.type_names[idx]
     },
-    .None => { return .None },
+    .None => return .None,
   }
 
   module_path := ctx.snap.canonical_path
@@ -373,7 +373,7 @@ fn local_name(name: String) String {
 fn find_function_in_module(snap: SemanticSnapshot, module_path: String, name: String) DefinitionResult? {
   parsed := case snap.cache.latest_parsed(module_path) {
     .Some(p) => p,
-    .None => { return .None },
+    .None => return .None,
   }
 
   for item in parsed.module.items {
@@ -391,7 +391,7 @@ fn find_function_in_module(snap: SemanticSnapshot, module_path: String, name: St
 fn find_type_in_module(snap: SemanticSnapshot, module_path: String, name: String) DefinitionResult? {
   parsed := case snap.cache.latest_parsed(module_path) {
     .Some(p) => p,
-    .None => { return .None },
+    .None => return .None,
   }
 
   for item in parsed.module.items {
@@ -414,7 +414,7 @@ fn find_variant_in_module(
 ) DefinitionResult? {
   parsed := case snap.cache.latest_parsed(module_path) {
     .Some(p) => p,
-    .None => { return .None },
+    .None => return .None,
   }
 
   for item in parsed.module.items {
@@ -454,7 +454,7 @@ fn find_variant_in_module(
 fn resolve_record_field(ctx: DefCtx, tid: TypeId, field_name: String) DefinitionResult? {
   type_name := case ctx.env.type_id_index[tid.id] {
     .Some(idx) => ctx.env.type_names[idx],
-    .None => { return .None },
+    .None => return .None,
   }
 
   module_path := ctx.snap.canonical_path
@@ -483,7 +483,7 @@ fn find_field_in_module(
 ) DefinitionResult? {
   parsed := case snap.cache.latest_parsed(module_path) {
     .Some(p) => p,
-    .None => { return .None },
+    .None => return .None,
   }
 
   for item in parsed.module.items {
@@ -535,7 +535,7 @@ fn dependency_path_for_alias(snap: SemanticSnapshot, parsed: cache.ParsedModule,
     },
   ) {
     .Ok(p) => p,
-    .Err(_) => { return .None },
+    .Err(_) => return .None,
   }
 
   for dep in plan.dependencies {
@@ -598,7 +598,7 @@ fn find_type_ref_in_items(items: Vector<Item>, offset: Int) Ref? {
         }
 
         case find_type_ref_in_def(decl.def, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         }
       },
@@ -606,7 +606,7 @@ fn find_type_ref_in_items(items: Vector<Item>, offset: Int) Ref? {
         for p in decl.params {
           case p.ty {
             .Some(t) => case find_type_ref(t, offset) {
-              .Some(r) => { return .Some(r) },
+              .Some(r) => return .Some(r),
               .None => {},
             },
             .None => {},
@@ -615,19 +615,19 @@ fn find_type_ref_in_items(items: Vector<Item>, offset: Int) Ref? {
 
         case decl.return_type {
           .Some(t) => case find_type_ref(t, offset) {
-            .Some(r) => { return .Some(r) },
+            .Some(r) => return .Some(r),
             .None => {},
           },
           .None => {},
         }
 
         case find_type_ref_in_block(decl.body, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         }
       },
       .Stmt(stmt) => case find_type_ref_in_stmt(stmt, offset) {
-        .Some(r) => { return .Some(r) },
+        .Some(r) => return .Some(r),
         .None => {},
       },
       _ => {},
@@ -642,7 +642,7 @@ fn find_type_ref_in_def(def: TypeDef, offset: Int) Ref? {
     .Record(fields) => {
       for f in fields {
         case find_type_ref(f.ty, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         }
       }
@@ -653,7 +653,7 @@ fn find_type_ref_in_def(def: TypeDef, offset: Int) Ref? {
       for v in vars {
         for t in v.fields {
           case find_type_ref(t, offset) {
-            .Some(r) => { return .Some(r) },
+            .Some(r) => return .Some(r),
             .None => {},
           }
         }
@@ -675,13 +675,13 @@ fn find_type_ref(t: TypeExpr, offset: Int) Ref? {
     .Path(path) => find_type_path_ref(path, offset),
     .Applied(path, args) => {
       case find_type_path_ref(path, offset) {
-        .Some(r) => { return .Some(r) },
+        .Some(r) => return .Some(r),
         .None => {},
       }
 
       for a in args {
         case find_type_ref(a, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         }
       }
@@ -691,7 +691,7 @@ fn find_type_ref(t: TypeExpr, offset: Int) Ref? {
     .Function(params, ret) => {
       for p in params {
         case find_type_ref(p, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         }
       }
@@ -706,7 +706,7 @@ fn find_type_ref(t: TypeExpr, offset: Int) Ref? {
     .Record(fields) => {
       for f in fields {
         case find_type_ref(f.ty, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         }
       }
@@ -717,7 +717,7 @@ fn find_type_ref(t: TypeExpr, offset: Int) Ref? {
       for v in vars {
         for f in v.fields {
           case find_type_ref(f, offset) {
-            .Some(r) => { return .Some(r) },
+            .Some(r) => return .Some(r),
             .None => {},
           }
         }
@@ -740,7 +740,7 @@ fn find_type_path_ref(path: TypePath, offset: Int) Ref? {
 fn find_type_ref_in_block(block: Block, offset: Int) Ref? {
   for stmt in block.stmts {
     case find_type_ref_in_stmt(stmt, offset) {
-      .Some(r) => { return .Some(r) },
+      .Some(r) => return .Some(r),
       .None => {},
     }
   }
@@ -782,7 +782,7 @@ fn find_type_ref_in_expr(expr: Expr, offset: Int) Ref? {
       for p in params {
         case p.ty {
           .Some(t) => case find_type_ref(t, offset) {
-            .Some(r) => { return .Some(r) },
+            .Some(r) => return .Some(r),
             .None => {},
           },
           .None => {},
@@ -791,7 +791,7 @@ fn find_type_ref_in_expr(expr: Expr, offset: Int) Ref? {
 
       case ret {
         .Some(t) => case find_type_ref(t, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         },
         .None => {},
@@ -808,11 +808,11 @@ fn find_pattern_variant_ref(items: Vector<Item>, offset: Int) Ref? {
   for item in items {
     case item {
       .Function(decl) => case find_pattern_variant_in_block(decl.body, offset, .None) {
-        .Some(r) => { return .Some(r) },
+        .Some(r) => return .Some(r),
         .None => {},
       },
       .Stmt(stmt) => case find_pattern_variant_in_stmt(stmt, offset, .None) {
-        .Some(r) => { return .Some(r) },
+        .Some(r) => return .Some(r),
         .None => {},
       },
       _ => {},
@@ -825,7 +825,7 @@ fn find_pattern_variant_ref(items: Vector<Item>, offset: Int) Ref? {
 fn find_pattern_variant_in_block(block: Block, offset: Int, scrutinee: Expr?) Ref? {
   for stmt in block.stmts {
     case find_pattern_variant_in_stmt(stmt, offset, scrutinee) {
-      .Some(r) => { return .Some(r) },
+      .Some(r) => return .Some(r),
       .None => {},
     }
   }
@@ -862,18 +862,18 @@ fn find_pattern_variant_in_expr(expr: Expr, offset: Int) Ref? {
   case expr.kind {
     .Case(scrutinee, arms) => {
       case find_pattern_variant_in_expr(scrutinee, offset) {
-        .Some(r) => { return .Some(r) },
+        .Some(r) => return .Some(r),
         .None => {},
       }
 
       for arm in arms {
         case find_pattern_variant_in_pattern(arm.pattern, offset, .Some(scrutinee)) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         }
 
         case find_pattern_variant_in_expr(arm.expr, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         }
       }
@@ -895,14 +895,14 @@ fn find_pattern_variant_in_expr(expr: Expr, offset: Int) Ref? {
       for arm in arms {
         case arm.condition {
           .Some(cond_expr) => case find_pattern_variant_in_expr(cond_expr, offset) {
-            .Some(r) => { return .Some(r) },
+            .Some(r) => return .Some(r),
             .None => {},
           },
           .None => {},
         }
 
         case find_pattern_variant_in_expr(arm.body, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         }
       }
@@ -926,7 +926,7 @@ fn find_pattern_variant_in_expr(expr: Expr, offset: Int) Ref? {
     .Collect(col) => {
       case col.iter {
         .Some(e) => case find_pattern_variant_in_expr(e, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         },
         .None => {},
@@ -934,7 +934,7 @@ fn find_pattern_variant_in_expr(expr: Expr, offset: Int) Ref? {
 
       case col.condition {
         .Some(e) => case find_pattern_variant_in_expr(e, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         },
         .None => {},
@@ -949,7 +949,7 @@ fn find_pattern_variant_in_expr(expr: Expr, offset: Int) Ref? {
 fn find_pattern_variant_in_exprs(exprs: Vector<Expr>, offset: Int) Ref? {
   for e in exprs {
     case find_pattern_variant_in_expr(e, offset) {
-      .Some(r) => { return .Some(r) },
+      .Some(r) => return .Some(r),
       .None => {},
     }
   }
@@ -961,7 +961,7 @@ fn find_pattern_variant_in_entries(entries: Vector<RecordEntry>, offset: Int) Re
   for entry in entries {
     case entry.value {
       .Some(e) => case find_pattern_variant_in_expr(e, offset) {
-        .Some(r) => { return .Some(r) },
+        .Some(r) => return .Some(r),
         .None => {},
       },
       .None => {},
@@ -984,7 +984,7 @@ fn find_pattern_variant_in_pattern(pat: Pattern, offset: Int, scrutinee: Expr?) 
 
       for p in subs {
         case find_pattern_variant_in_pattern(p, offset, scrutinee) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         }
       }
@@ -998,7 +998,7 @@ fn find_pattern_variant_in_pattern(pat: Pattern, offset: Int, scrutinee: Expr?) 
 
       for p in subs {
         case find_pattern_variant_in_pattern(p, offset, scrutinee) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         }
       }
@@ -1015,7 +1015,7 @@ fn find_expr_ref_in_items(items: Vector<Item>, offset: Int) Ref? {
       .Function(decl) => if decl.span.contains(offset) {
         case find_node_in_block(decl.body, offset) {
           .Some(ctx) => case expr_ref_from_node(ctx, offset) {
-            .Some(r) => { return .Some(r) },
+            .Some(r) => return .Some(r),
             .None => {},
           },
           .None => {},
@@ -1023,7 +1023,7 @@ fn find_expr_ref_in_items(items: Vector<Item>, offset: Int) Ref? {
       },
       .Stmt(stmt) => case find_node_in_stmt(stmt, offset) {
         .Some(ctx) => case expr_ref_from_node(ctx, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         },
         .None => {},
@@ -1088,7 +1088,7 @@ fn find_expr_ref_in_pattern(pat: Pattern, offset: Int) Ref? {
     .Variant(_, subs) => {
       for p in subs {
         case find_expr_ref_in_pattern(p, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         }
       }
@@ -1098,7 +1098,7 @@ fn find_expr_ref_in_pattern(pat: Pattern, offset: Int) Ref? {
     .QualifiedVariant(_, _, subs) => {
       for p in subs {
         case find_expr_ref_in_pattern(p, offset) {
-          .Some(r) => { return .Some(r) },
+          .Some(r) => return .Some(r),
           .None => {},
         }
       }
@@ -1144,12 +1144,12 @@ fn find_typed_expr_id(items: Vector<Item>, offset: Int) Int? {
         // (param types are available via type annotations, not type_map).
         // Check let binding names in the body.
         case find_let_value_id_in_block(decl.body, offset) {
-          .Some(id) => { return .Some(id) },
+          .Some(id) => return .Some(id),
           .None => {},
         }
 
         case find_node_in_block(decl.body, offset) {
-          .Some(ctx) => { return expr_id_from_context(ctx) },
+          .Some(ctx) => return expr_id_from_context(ctx),
           .None => {},
         }
       },
@@ -1162,7 +1162,7 @@ fn find_typed_expr_id(items: Vector<Item>, offset: Int) Int? {
         }
 
         case find_node_in_stmt(stmt, offset) {
-          .Some(ctx) => { return expr_id_from_context(ctx) },
+          .Some(ctx) => return expr_id_from_context(ctx),
           .None => {},
         }
       },

@@ -127,7 +127,7 @@ pub fn drop_while<A>(xs: Vector<A>, pred: fn(A) Bool) Vector<A> {
 pub fn find_map<A, B>(xs: Vector<A>, f: fn(A) Option<B>) Option<B> {
   for x in xs {
     case f(x) {
-      .Some(value) => { return .Some(value) },
+      .Some(value) => return .Some(value),
       .None => {},
     }
   }
@@ -478,7 +478,7 @@ pub fn compare<T: Ord>(a: Vector<T>, b: Vector<T>) Order {
   for i < min_len {
     case a[i].compare(b[i]) {
       .Eq => {},
-      other => { return other },
+      other => return other,
     }
 
     i = i + 1

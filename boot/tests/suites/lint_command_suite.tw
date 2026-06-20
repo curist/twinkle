@@ -149,7 +149,7 @@ pub fn suite() runner.Suite {
               try assert.is_true(info.brief.len() > 0)
               try assert.is_true(info.detailed.len() > 0)
             },
-            .None => { return .Err("no description for rule: ${id}") },
+            .None => return .Err("no description for rule: ${id}"),
           }
         }
         .Ok({})

@@ -79,7 +79,7 @@ pub fn list_prelude_modules(prelude_root: String) Vector<String> {
       .Ok(entries) => collect entry in entries {
         entry.name
       },
-      .Err(_) => { return [] },
+      .Err(_) => return [],
     },
   }
   filtered: Vector<String> = []

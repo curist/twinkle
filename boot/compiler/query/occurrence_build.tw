@@ -853,7 +853,7 @@ fn expr_type(ctx: Ctx, expr_id: Int) MonoType? {
 fn type_by_name(ctx: Ctx, name: String) MonoType? {
   env := case ctx.env {
     .Some(e) => e,
-    .None => { return .None },
+    .None => return .None,
   }
   entry := try env.lookup_type(name)
   .Some(.Named(entry.id, []))
@@ -878,7 +878,7 @@ fn type_parts_for_id(ctx: Ctx, env: ResolvedEnv, tid: TypeId, fallback_name: Str
 fn field_key_for_type(ctx: Ctx, ty: MonoType?, field_name: String) occ.SymbolKey {
   env := case ctx.env {
     .Some(e) => e,
-    .None => { return .Field(ctx.mod, "", field_name) },
+    .None => return .Field(ctx.mod, "", field_name),
   }
 
   case ty {
@@ -903,7 +903,7 @@ fn field_key_for_type(ctx: Ctx, ty: MonoType?, field_name: String) occ.SymbolKey
 fn variant_key_for_type(ctx: Ctx, ty: MonoType?, variant_name: String) occ.SymbolKey {
   env := case ctx.env {
     .Some(e) => e,
-    .None => { return .Variant(ctx.mod, "", variant_name) },
+    .None => return .Variant(ctx.mod, "", variant_name),
   }
 
   case ty {
@@ -928,12 +928,12 @@ fn variant_key_for_type(ctx: Ctx, ty: MonoType?, variant_name: String) occ.Symbo
 fn method_key(ctx: Ctx, meta: MethodCallInfo, fallback_name: String) occ.SymbolKey {
   env := case ctx.env {
     .Some(e) => e,
-    .None => { return .Function(ctx.mod, fallback_name) },
+    .None => return .Function(ctx.mod, fallback_name),
   }
 
   if meta.func_name != "" {
     case env.lookup_function_origin(meta.func_name) {
-      .Some(origin) => { return .Function(origin.module_path, origin.func_name) },
+      .Some(origin) => return .Function(origin.module_path, origin.func_name),
       .None => {},
     }
   }

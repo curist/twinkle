@@ -17,7 +17,7 @@ pub type SymbolKind = { Module, Function, Struct, Enum, EnumMember, Field, TypeP
 pub fn document_symbols(snap: SemanticSnapshot) Vector<DocumentSymbol> {
   parsed := case snap.parsed {
     .Some(p) => p,
-    .None => { return [] },
+    .None => return [],
   }
 
   result: Vector<DocumentSymbol> = []

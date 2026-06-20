@@ -108,7 +108,7 @@ fn test_rt_types_array() Result<Void, String> {
         "Array elem should be anyref",
       )
     },
-    _ => { return assert.fail("first type should be Array") },
+    _ => return assert.fail("first type should be Array"),
   }
 
   .Ok({})
@@ -132,7 +132,7 @@ fn test_rt_types_string() Result<Void, String> {
         "String elem should be i8",
       )
     },
-    _ => { return assert.fail("second type should be String array") },
+    _ => return assert.fail("second type should be String array"),
   }
 
   .Ok({})
@@ -173,7 +173,7 @@ fn test_rt_types_pdict() Result<Void, String> {
         "field 3 should be tombstones",
       )
     },
-    _ => { return assert.fail("missing PDict type") },
+    _ => return assert.fail("missing PDict type"),
   }
 
   .Ok({})
@@ -187,7 +187,7 @@ fn test_rt_types_closure_non_final() Result<Void, String> {
       try assert.ok(!is_final, "Closure should be non-final (sub)")
       try assert.equal(fields.len(), 2)
     },
-    _ => { return assert.fail("missing Closure type") },
+    _ => return assert.fail("missing Closure type"),
   }
 
   .Ok({})
@@ -214,7 +214,7 @@ fn test_rt_types_variant() Result<Void, String> {
         "variant_id should be i32",
       )
     },
-    _ => { return assert.fail("missing Variant type") },
+    _ => return assert.fail("missing Variant type"),
   }
 
   .Ok({})
@@ -234,7 +234,7 @@ fn test_rt_types_boxed_int() Result<Void, String> {
         "BoxedInt.v should be i64",
       )
     },
-    _ => { return assert.fail("missing BoxedInt type") },
+    _ => return assert.fail("missing BoxedInt type"),
   }
 
   .Ok({})
@@ -254,7 +254,7 @@ fn test_rt_types_boxed_float() Result<Void, String> {
         "BoxedFloat.v should be f64",
       )
     },
-    _ => { return assert.fail("missing BoxedFloat type") },
+    _ => return assert.fail("missing BoxedFloat type"),
   }
 
   .Ok({})
@@ -268,7 +268,7 @@ fn test_rt_types_iter_state_non_final() Result<Void, String> {
       try assert.ok(!is_final, "IterState should be non-final (sub)")
       try assert.equal(fields.len(), 2)
     },
-    _ => { return assert.fail("missing IterState type") },
+    _ => return assert.fail("missing IterState type"),
   }
 
   .Ok({})
@@ -288,10 +288,10 @@ fn test_rt_types_vec_children() Result<Void, String> {
 
       case elem.ty {
         .Ref(nullable, .Eq) => try assert.ok(nullable, "VecChildren elem should be nullable eqref"),
-        _ => { return assert.fail("VecChildren elem should be ref null eq") },
+        _ => return assert.fail("VecChildren elem should be ref null eq"),
       }
     },
-    _ => { return assert.fail("VecChildren should be an Array type") },
+    _ => return assert.fail("VecChildren should be an Array type"),
   }
 
   .Ok({})
@@ -318,7 +318,7 @@ fn test_rt_types_vec_internal() Result<Void, String> {
           try assert.ok(!nullable, "children should be non-null ref")
           try assert.equal(n, "VecChildren")
         },
-        _ => { return assert.fail("children should be ref VecChildren") },
+        _ => return assert.fail("children should be ref VecChildren"),
       }
 
       try assert.ok(
@@ -335,10 +335,10 @@ fn test_rt_types_vec_internal() Result<Void, String> {
           try assert.ok(nullable, "sizes should be a nullable ref")
           try assert.equal(n, "I32Array")
         },
-        _ => { return assert.fail("sizes should be ref null I32Array") },
+        _ => return assert.fail("sizes should be ref null I32Array"),
       }
     },
-    _ => { return assert.fail("VecInternal should be a Struct type") },
+    _ => return assert.fail("VecInternal should be a Struct type"),
   }
 
   .Ok({})
@@ -393,7 +393,7 @@ fn test_rt_types_pvec() Result<Void, String> {
           try assert.ok(nullable, "root should be nullable")
           try assert.equal(n, "VecInternal")
         },
-        _ => { return assert.fail("root should be ref null VecInternal") },
+        _ => return assert.fail("root should be ref null VecInternal"),
       }
 
       try assert.ok(
@@ -410,10 +410,10 @@ fn test_rt_types_pvec() Result<Void, String> {
           try assert.ok(!nullable, "tail should be non-null")
           try assert.equal(n, "Array")
         },
-        _ => { return assert.fail("tail should be ref Array") },
+        _ => return assert.fail("tail should be ref Array"),
       }
     },
-    _ => { return assert.fail("PVec should be a Struct type") },
+    _ => return assert.fail("PVec should be a Struct type"),
   }
 
   .Ok({})

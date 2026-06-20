@@ -129,12 +129,12 @@ fn test_instr_constants() Result<Void, String> {
 
   case a {
     .I32Const(n) => try assert.equal(n, 42),
-    _ => { return .Err("expected I32Const") },
+    _ => return .Err("expected I32Const"),
   }
 
   case b {
     .I64Const(n) => try assert.equal(n, 100),
-    _ => { return .Err("expected I64Const") },
+    _ => return .Err("expected I64Const"),
   }
 
   .Ok({})
@@ -147,17 +147,17 @@ fn test_instr_local_ops() Result<Void, String> {
 
   case a {
     .LocalGet(i) => try assert.equal(i, 0),
-    _ => { return .Err("expected LocalGet") },
+    _ => return .Err("expected LocalGet"),
   }
 
   case b {
     .LocalSet(i) => try assert.equal(i, 1),
-    _ => { return .Err("expected LocalSet") },
+    _ => return .Err("expected LocalSet"),
   }
 
   case c {
     .LocalTee(i) => try assert.equal(i, 2),
-    _ => { return .Err("expected LocalTee") },
+    _ => return .Err("expected LocalTee"),
   }
 
   .Ok({})
@@ -170,7 +170,7 @@ fn test_instr_struct_ops() Result<Void, String> {
 
   case a {
     .StructNew(s) => try assert.equal(s, "$Point"),
-    _ => { return .Err("expected StructNew") },
+    _ => return .Err("expected StructNew"),
   }
 
   case b {
@@ -189,12 +189,12 @@ fn test_instr_call() Result<Void, String> {
 
   case a {
     .Call(s) => try assert.equal(s, "$my_func"),
-    _ => { return .Err("expected Call") },
+    _ => return .Err("expected Call"),
   }
 
   case b {
     .CallRef(s) => try assert.equal(s, "$ft_closure"),
-    _ => { return .Err("expected CallRef") },
+    _ => return .Err("expected CallRef"),
   }
 
   .Ok({})
@@ -289,7 +289,7 @@ fn test_table_def() Result<Void, String> {
 
   case t.max {
     .Some(n) => try assert.equal(n, 100),
-    .None => { return .Err("expected Some") },
+    .None => return .Err("expected Some"),
   }
 
   .Ok({})

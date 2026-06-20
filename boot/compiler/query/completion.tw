@@ -49,7 +49,7 @@ fn member_completions(snap: SemanticSnapshot, dot_offset: Int, source: String) V
 > {
   typed := case snap.typed {
     .Some(v) => v,
-    .None => { return [] },
+    .None => return [],
   }
 
   if dot_offset <= 0 {
@@ -224,9 +224,9 @@ fn resolve_receiver_by_name(items: Vector<Item>, typed: CheckResult, offset: Int
         name := case find_node_in_stmt(stmt, offset) {
           .Some(.ExprNode(e)) => case e.kind {
             .Ident(n) => n,
-            _ => { continue },
+            _ => continue,
           },
-          _ => { continue },
+          _ => continue,
         }
 
         // Check earlier top-level let-bindings
@@ -517,11 +517,11 @@ fn local_completions(snap: SemanticSnapshot, offset: Int, prefix: String) Vector
 > {
   typed := case snap.typed {
     .Some(v) => v,
-    .None => { return [] },
+    .None => return [],
   }
   parsed := case snap.parsed {
     .Some(v) => v,
-    .None => { return [] },
+    .None => return [],
   }
 
   result: Vector<lsp_completion.CompletionItem> = []
@@ -731,7 +731,7 @@ fn list_modules_in_dir(dir: String, prefix: String) Vector<lsp_completion.Comple
       .Ok(dir_entries) => collect e in dir_entries {
         e.name
       },
-      .Err(_) => { return [] },
+      .Err(_) => return [],
     },
   }
   result: Vector<lsp_completion.CompletionItem> = []
@@ -767,11 +767,11 @@ fn list_modules_in_dir(dir: String, prefix: String) Vector<lsp_completion.Comple
 fn variant_completions(snap: SemanticSnapshot, offset: Int) Vector<lsp_completion.CompletionItem> {
   typed := case snap.typed {
     .Some(v) => v,
-    .None => { return all_variant_completions(snap) },
+    .None => return all_variant_completions(snap),
   }
   parsed := case snap.parsed {
     .Some(v) => v,
-    .None => { return all_variant_completions(snap) },
+    .None => return all_variant_completions(snap),
   }
 
   // Try to find the enclosing case expression's scrutinee type and existing arms
@@ -791,11 +791,11 @@ fn variant_completions(snap: SemanticSnapshot, offset: Int) Vector<lsp_completio
   )
   ci := case info {
     .Some(ci) => ci,
-    .None => { return all_variant_completions(snap) },
+    .None => return all_variant_completions(snap),
   }
   ty := case typed.type_map[ci.scrutinee.id] {
     .Some(ty) => ty,
-    .None => { return all_variant_completions(snap) },
+    .None => return all_variant_completions(snap),
   }
   covered := covered_variant_names(ci.arms)
   items := variants_for_type(typed.env, ty)
@@ -863,7 +863,7 @@ fn variant_items(type_name: String, variants: Vector<ResolvedVariant>) Vector<
 fn all_variant_completions(snap: SemanticSnapshot) Vector<lsp_completion.CompletionItem> {
   env := case snap.best_env() {
     .Some(e) => e,
-    .None => { return [] },
+    .None => return [],
   }
   items: Vector<lsp_completion.CompletionItem> = []
 
@@ -993,7 +993,7 @@ fn find_case_info_in_expr(expr: Expr, offset: Int) CaseInfo? {
       for arm in arms {
         if arm.span.contains(offset) {
           case find_case_info_in_expr(arm.expr, offset) {
-            .Some(s) => { return .Some(s) },
+            .Some(s) => return .Some(s),
             .None => {},
           }
 
@@ -1019,7 +1019,7 @@ fn find_case_info_in_expr(expr: Expr, offset: Int) CaseInfo? {
         if arm.span.contains(offset) {
           case arm.condition {
             .Some(cond_expr) => case find_case_info_in_expr(cond_expr, offset) {
-              .Some(s) => { return .Some(s) },
+              .Some(s) => return .Some(s),
               .None => {},
             },
             .None => {},

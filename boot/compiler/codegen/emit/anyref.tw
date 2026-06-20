@@ -35,8 +35,8 @@ fn is_channel_mono(mono: MonoType, env: ResolvedEnv) Bool {
 
 pub fn emit_box_to_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Instr>) Vector<Instr> {
   case mono {
-    .Never => { return buf },
-    .Void => { return buf },
+    .Never => return buf,
+    .Void => return buf,
     _ => {},
   }
 
@@ -70,9 +70,9 @@ pub fn emit_erased_container_egress(mono: MonoType, env: ResolvedEnv, buf: Vecto
 
 pub fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Instr>) Vector<Instr> {
   case mono {
-    .Never => { return buf.append(.Unreachable) },
-    .Void => { return buf.append(.Drop).append(.I32Const(0)).append(.RefI31) },
-    .String => { return buf.append(.RefCast(true, .Named("rt_types__String"))) },
+    .Never => return buf.append(.Unreachable),
+    .Void => return buf.append(.Drop).append(.I32Const(0)).append(.RefI31),
+    .String => return buf.append(.RefCast(true, .Named("rt_types__String"))),
     _ => {},
   }
 

@@ -62,7 +62,7 @@ pub fn run_lsp_command(_parsed: ParseResult) {
 
       case ctx.chunk_acks.recv() {
         .Some(_) => {},
-        .None => { break },
+        .None => break,
       }
     }
 
@@ -97,7 +97,7 @@ fn dispatch_loop(ctx: LoopCtx) {
 
         Task.yield()
       },
-      .None => { break },
+      .None => break,
     }
   }
 
@@ -108,7 +108,7 @@ fn diagnostics_loop(ctx: LoopCtx) {
   for true {
     case ctx.diagnostics.recv() {
       .Some(job_gen) => ctx.run_diagnostics_job(job_gen),
-      .None => { break },
+      .None => break,
     }
   }
 }
@@ -129,15 +129,15 @@ fn note_client_capabilities(ctx: LoopCtx, message: protocol.Message) {
 fn supports_work_done_progress(params: json.Json?) Bool {
   value := case params {
     .Some(v) => v,
-    .None => { return false },
+    .None => return false,
   }
   caps := case value.decode(json.field("capabilities", json.raw())) {
     .Ok(v) => v,
-    .Err(_) => { return false },
+    .Err(_) => return false,
   }
   window := case caps.decode(json.field("window", json.raw())) {
     .Ok(v) => v,
-    .Err(_) => { return false },
+    .Err(_) => return false,
   }
   case window.decode(json.field("workDoneProgress", json.bool())) {
     .Ok(v) => v,
@@ -228,7 +228,7 @@ fn process_buffer(ctx: LoopCtx, buffer: Vector<Byte>) Vector<Byte> {
     }
 
     case decoded {
-      .NeedMoreBytes => { break },
+      .NeedMoreBytes => break,
       .DecodedBytes(frame, rest) => {
         message := case protocol.parse_message(frame.body) {
           .Ok(msg) => msg,

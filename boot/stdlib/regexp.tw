@@ -168,7 +168,7 @@ fn replace_n(re: Regexp, s: String, repl: String, limit: Int) String {
           pos = m.end + 1
         }
       },
-      .None => { return finish(out, chars, last, len) },
+      .None => return finish(out, chars, last, len),
     }
   }
 

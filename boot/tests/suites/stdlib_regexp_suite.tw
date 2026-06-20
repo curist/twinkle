@@ -47,7 +47,7 @@ pub fn suite() runner.Suite {
             try assert.equal(m.text(), "abc")
             try assert.equal(m.start, 2)
           },
-          .None => { return assert.fail("expected match") },
+          .None => return assert.fail("expected match"),
         }
         try assert.is_true(regexp.must("abc").test("zabcz"))
         try assert.is_false(regexp.must("abc").test("abx"))
@@ -64,7 +64,7 @@ pub fn suite() runner.Suite {
             try assert.equal(group_or(m, 1, "?"), "42")
             try assert.equal(group_or(m, 2, "?"), "17")
           },
-          .None => { return assert.fail("expected raw-pattern match") },
+          .None => return assert.fail("expected raw-pattern match"),
         }
         .Ok({})
       },
@@ -100,12 +100,12 @@ pub fn suite() runner.Suite {
             try assert.equal(group_or(m, 1, "?"), "12")
             try assert.equal(group_or(m, 2, "?"), "34")
           },
-          .None => { return assert.fail("expected match") },
+          .None => return assert.fail("expected match"),
         }
 
         case regexp.must("a(b)?c").find("ac") {
           .Some(m) => try assert.is_none(m.group(1)),
-          .None => { return assert.fail("expected optional-group match") },
+          .None => return assert.fail("expected optional-group match"),
         }
         .Ok({})
       },
@@ -246,12 +246,12 @@ pub fn suite() runner.Suite {
             try assert.equal(named_or(m, "color", "?"), "red")
             try assert.is_none(m.group_named("missing"))
           },
-          .None => { return assert.fail("expected named-group match") },
+          .None => return assert.fail("expected named-group match"),
         }
 
         case regexp.must(r"(?P<n>\d+)").find("x42") {
           .Some(m) => try assert.equal(named_or(m, "n", "?"), "42"),
-          .None => { return assert.fail("expected (?P<name>) match") },
+          .None => return assert.fail("expected (?P<name>) match"),
         }
         .Ok({})
       },

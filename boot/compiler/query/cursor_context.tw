@@ -48,7 +48,7 @@ pub fn classify_completion(source: String, offset: Int) CompletionContext {
   // Import context detection must run before dot/member checks since
   // `use @std.` should be Import, not Member.
   case try_extract_import_path(tokens, cursor_idx, source) {
-    .Some(ip) => { return .Import(ip) },
+    .Some(ip) => return .Import(ip),
     .None => {},
   }
 
@@ -163,7 +163,7 @@ fn try_extract_import_path(tokens: Vector<Token>, cursor_idx: Int, source: Strin
       .At => {
         is_stdlib = true
       },
-      _ => { break },
+      _ => break,
     }
 
     i = i - 1

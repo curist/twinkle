@@ -137,7 +137,7 @@ fn slot_for_local(pf: PreparedFunc, lid_id: Int) SlotInfo? {
 // assert_slot_repr: check ReprKind for a given LocalId's slot in a PreparedFunc
 fn assert_slot_repr(pf: PreparedFunc, lid_id: Int, expected: ReprKind) Result<Void, String> {
   case slot_for_local(pf, lid_id) {
-    .None => { return .Err("L${lid_id} has no slot") },
+    .None => return .Err("L${lid_id} has no slot"),
     .Some(info) => {
       repr_ok := case expected {
         .I64 => case info.repr {
@@ -190,7 +190,7 @@ fn assert_slot_repr(pf: PreparedFunc, lid_id: Int, expected: ReprKind) Result<Vo
 // assert_wasm_type: check wasm_type for a given LocalId's slot
 fn assert_wasm_type(pf: PreparedFunc, lid_id: Int, expected: ValType) Result<Void, String> {
   case slot_for_local(pf, lid_id) {
-    .None => { return .Err("L${lid_id} has no slot") },
+    .None => return .Err("L${lid_id} has no slot"),
     .Some(info) => {
       wt_ok := case expected {
         .I64 => case info.wasm_type {

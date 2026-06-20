@@ -386,11 +386,9 @@ fn test_source_locals_are_unique() Result<Void, String> {
   for k in pf.slots.keys() {
     case pf.slots[k] {
       .Some(info) => case seen[info.source_local.id] {
-        .Some(other_sid) => {
-          return assert.fail(
-            "L${info.source_local.id} appears in both slot ${other_sid} and slot ${info.slot.id}",
-          )
-        },
+        .Some(other_sid) => return assert.fail(
+          "L${info.source_local.id} appears in both slot ${other_sid} and slot ${info.slot.id}",
+        ),
         .None => seen[info.source_local.id] = info.slot.id,
       },
       .None => {},

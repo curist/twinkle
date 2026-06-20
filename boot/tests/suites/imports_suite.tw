@@ -283,7 +283,7 @@ pub fn suite() runner.Suite {
                 try assert.equal(items.len(), 2)
                 found = true
               },
-              .None => { return .Err("expected selective items") },
+              .None => return .Err("expected selective items"),
             }
           }
         }

@@ -53,7 +53,7 @@ pub fn emit_variant_literal(
   // Payload-free variant hoisted to a shared immutable global: read it back
   // instead of allocating a fresh struct at every use site.
   case ctx.registry.variant_singletons["${sum.sym}#${vid.id}"] {
-    .Some(entry) => { return buf.append(.GlobalGet(entry.global_sym)) },
+    .Some(entry) => return buf.append(.GlobalGet(entry.global_sym)),
     .None => {},
   }
 

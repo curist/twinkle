@@ -284,7 +284,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
 
           case def.kind {
             .Opt => options[key] = val,
-            _ => { return .Err(.UnknownFlag("--${key}")) },
+            _ => return .Err(.UnknownFlag("--${key}")),
           }
         },
         .None => {
@@ -337,7 +337,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
           return .Err(.MissingRequired(def.name))
         },
         .Opt => case options[def.name] {
-          .None => { return .Err(.MissingRequired(def.name)) },
+          .None => return .Err(.MissingRequired(def.name)),
           .Some(_) => {},
         },
         .Flag => {},

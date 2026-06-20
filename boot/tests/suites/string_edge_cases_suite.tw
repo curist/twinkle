@@ -29,12 +29,12 @@ pub fn suite() runner.Suite {
 
         case s.get(0) {
           .Some(b) => try assert.equal(b.to_int(), 104),
-          .None => { return assert.fail("expected Some") },
+          .None => return assert.fail("expected Some"),
         }
 
         case s.get(1) {
           .Some(b) => try assert.equal(b.to_int(), 105),
-          .None => { return assert.fail("expected Some") },
+          .None => return assert.fail("expected Some"),
         }
 
         try assert.is_none(s.get(99))
@@ -51,7 +51,7 @@ pub fn suite() runner.Suite {
 
         case s.get(1) {
           .Some(b) => try assert.equal(b.to_int(), 98),
-          .None => { return assert.fail("expected Some") },
+          .None => return assert.fail("expected Some"),
         }
 
         .Ok({})
@@ -210,12 +210,12 @@ pub fn suite() runner.Suite {
 
         case cp {
           .Some(n) => try assert_fcp(n, "你"),
-          .None => { return assert.fail("expected Some") },
+          .None => return assert.fail("expected Some"),
         }
 
         case String.from_code_point(128077) {
           .Some(emoji) => try assert_cp(emoji, 0, 128077),
-          .None => { return assert.fail("expected Some") },
+          .None => return assert.fail("expected Some"),
         }
 
         .Ok({})

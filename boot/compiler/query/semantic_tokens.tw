@@ -34,7 +34,7 @@ pub type SemanticToken = .{ start: Int, length: Int, kind: TokenKind, is_declara
 pub fn semantic_tokens(snap: SemanticSnapshot) Vector<SemanticToken> {
   index := case snap.occurrences {
     .Some(i) => i,
-    .None => { return [] },
+    .None => return [],
   }
 
   out: Vector<SemanticToken> = []

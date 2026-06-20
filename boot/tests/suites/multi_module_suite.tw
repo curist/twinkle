@@ -649,11 +649,9 @@ pub fn suite() runner.Suite {
       fn() {
         artifacts := case module_compiler.compile_entry("${dir}/contract_fallback_main.tw") {
           .Ok(value) => value,
-          .Err(err) => {
-            return .Err(
-              "expected contract fallback fixture to compile, got: ${format_compile_error(err)}",
-            )
-          },
+          .Err(err) => return .Err(
+            "expected contract fallback fixture to compile, got: ${format_compile_error(err)}",
+          ),
         }
         found := artifacts.core.functions.any(fn(func) { has_box_to_string_param(
           artifacts.core.type_env,
@@ -689,15 +687,13 @@ pub fn suite() runner.Suite {
       fn() {
         artifacts := case module_compiler.compile_entry("${dir}/contract_generic_fallback_main.tw") {
           .Ok(value) => value,
-          .Err(err) => {
-            return .Err("expected fixture to compile, got: ${format_compile_error(err)}")
-          },
+          .Err(err) => return .Err("expected fixture to compile, got: ${format_compile_error(err)}"),
         }
 
         // Find the Box type's TypeId in the linked environment.
         box_tid := case artifacts.core.type_env.lookup_registered_type("Box") {
           .Some(entry) => entry.id,
-          .None => { return .Err("Box type not found in linked env") },
+          .None => return .Err("Box type not found in linked env"),
         }
         key := "t${box_tid.id}::to_string"
 
@@ -758,7 +754,7 @@ pub fn suite() runner.Suite {
       fn() {
         artifacts := case pipeline.compile_entry_path("${dir}/contract_generic_fallback_main.tw") {
           .Ok(a) => a,
-          .Err(err) => { return .Err("compile failed: ${format_compile_error(err)}") },
+          .Err(err) => return .Err("compile failed: ${format_compile_error(err)}"),
         }
 
         // After monomorphization, no ContractCall should remain in any function body.
@@ -778,13 +774,13 @@ pub fn suite() runner.Suite {
       fn() {
         artifacts := case pipeline.compile_entry_path("${dir}/contract_generic_fallback_main.tw") {
           .Ok(a) => a,
-          .Err(err) => { return .Err("compile failed: ${format_compile_error(err)}") },
+          .Err(err) => return .Err("compile failed: ${format_compile_error(err)}"),
         }
 
         // Find the Box.to_string FuncId from the method table.
         box_tid := case artifacts.mono.type_env.lookup_registered_type("Box") {
           .Some(entry) => entry.id,
-          .None => { return .Err("Box type not found in linked env") },
+          .None => return .Err("Box type not found in linked env"),
         }
         key := "t${box_tid.id}::to_string"
 
@@ -803,7 +799,7 @@ pub fn suite() runner.Suite {
 
         func := case show_func {
           .Some(f) => f,
-          .None => { return .Err("no specialized show__* function found in mono IR") },
+          .None => return .Err("no specialized show__* function found in mono IR"),
         }
 
         // The specialized show function should call the Box.to_string specialization.
@@ -845,7 +841,7 @@ pub fn suite() runner.Suite {
         // collision broke.
         artifacts := case pipeline.compile_entry_path("${dir}/module_global_main.tw") {
           .Ok(a) => a,
-          .Err(err) => { return .Err("compile failed: ${format_compile_error(err)}") },
+          .Err(err) => return .Err("compile failed: ${format_compile_error(err)}"),
         }
         wat := pipeline.emit_wat(artifacts)
 

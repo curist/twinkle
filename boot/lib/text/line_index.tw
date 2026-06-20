@@ -57,11 +57,11 @@ pub fn position_to_byte_offset(index: LineIndex, pos: Position, encoding: Positi
     },
     .Utf16 => case utf16.code_units_to_byte_offset(line_text, pos.character) {
       .Some(v) => v,
-      .None => { return .None },
+      .None => return .None,
     },
     .Utf32 => case scalars_to_byte_offset(line_text, pos.character) {
       .Some(v) => v,
-      .None => { return .None },
+      .None => return .None,
     },
   }
   .Some(start + rel)

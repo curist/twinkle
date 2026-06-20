@@ -114,18 +114,16 @@ pub fn lower_call(
     .Some(info) => {
       case info.contract {
         .Some(contract) => case callee_expr.kind {
-          .Field(receiver, _) => {
-            return lower_contract_call(
-              ctx,
-              contract,
-              info.method_name,
-              receiver,
-              args,
-              ty,
-              s,
-              lower_expr_fn,
-            )
-          },
+          .Field(receiver, _) => return lower_contract_call(
+            ctx,
+            contract,
+            info.method_name,
+            receiver,
+            args,
+            ty,
+            s,
+            lower_expr_fn,
+          ),
           _ => {},
         },
         .None => {},

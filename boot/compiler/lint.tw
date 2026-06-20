@@ -479,7 +479,7 @@ fn for_is_update_region(fs: ForStmt, tmp: String, src: Expr, src_root: String) B
 
   // A loop body with a tail expression is unusual; bail rather than reason about it.
   case fs.body.tail {
-    .Some(_) => { return false },
+    .Some(_) => return false,
     .None => {},
   }
 
@@ -488,7 +488,7 @@ fn for_is_update_region(fs: ForStmt, tmp: String, src: Expr, src_root: String) B
   for s in fs.body.stmts {
     case classify_rebinding_stmt(s, tmp, src, src_root) {
       .Update => updates = updates + 1,
-      _ => { return false },
+      _ => return false,
     }
   }
 
@@ -501,7 +501,7 @@ fn for_is_update_region(fs: ForStmt, tmp: String, src: Expr, src_root: String) B
 fn scan_rebinding_candidate(block: Block, start: Int, span: Span, tmp: String, src: Expr) LintFinding? {
   src_root := case path_root(src) {
     .Some(r) => r,
-    .None => { return .None },
+    .None => return .None,
   }
   stmts := block.stmts
   has_update := false
@@ -515,7 +515,7 @@ fn scan_rebinding_candidate(block: Block, start: Int, span: Span, tmp: String, s
       } else {
         return .None
       },
-      .Other => { return .None },
+      .Other => return .None,
     }
     j = j + 1
   }
@@ -608,7 +608,7 @@ fn is_copy_rebuild(pname: String, entries: Vector<RecordEntry>) Bool {
     case classify_entry(pname, entry) {
       .CopyFromP => copies = copies + 1,
       .Trivial => {},
-      .NonTrivial => { return false },
+      .NonTrivial => return false,
     }
   }
 
@@ -631,7 +631,7 @@ fn lint_record_copy(decl: FunctionDecl, env: ResolvedEnv) Vector<LintFinding> {
   // The result expression is the body's trailing expression.
   result := case decl.body.tail {
     .Some(e) => e,
-    .None => { return [] },
+    .None => return [],
   }
 
   // It must be a record literal; determine the nominal type it builds.
@@ -648,7 +648,7 @@ fn lint_record_copy(decl: FunctionDecl, env: ResolvedEnv) Vector<LintFinding> {
   }
   found := case pair {
     .Some(p) => p,
-    .None => { return [] },
+    .None => return [],
   }
 
   // Flag if some parameter of the same nominal type is copied field-by-field.

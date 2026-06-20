@@ -135,7 +135,7 @@ pub fn lower_field(
 
       // Try typed builtin identity first via the builtin registry
       case ctx.builtins.try_method_id(name, field_name) {
-        .Some(fid) => { return .{ expr: .{ kind: .GlobalFunc(fid), ty, span: s }, ctx } },
+        .Some(fid) => return .{ expr: .{ kind: .GlobalFunc(fid), ty, span: s }, ctx },
         .None => {},
       }
 
@@ -154,7 +154,7 @@ pub fn lower_field(
 
       case fn_name {
         .Some(fn_name) => case ctx.func_table[fn_name] {
-          .Some(fid) => { return .{ expr: .{ kind: .GlobalFunc(fid), ty, span: s }, ctx } },
+          .Some(fid) => return .{ expr: .{ kind: .GlobalFunc(fid), ty, span: s }, ctx },
           .None => {},
         },
         .None => {
@@ -162,8 +162,9 @@ pub fn lower_field(
           qualified := "${name}.${field_name}"
 
           case ctx.module_globals[qualified] {
-            .Some(gid) => {
-              return .{ expr: .{ kind: .GlobalLocal(GlobalId.{ id: gid.id }), ty, span: s }, ctx }
+            .Some(gid) => return .{
+              expr: .{ kind: .GlobalLocal(GlobalId.{ id: gid.id }), ty, span: s },
+              ctx,
             },
             .None => {},
           }
@@ -193,7 +194,7 @@ pub fn lower_field(
 fn lookup_method_value_target(ctx: LowerCtx, receiver_ty: MonoType, method_name: String) FuncId? {
   case builtin_type_name(receiver_ty) {
     .Some(type_name) => case ctx.builtins.try_method_id(type_name, method_name) {
-      .Some(fid) => { return .Some(fid) },
+      .Some(fid) => return .Some(fid),
       .None => {},
     },
     .None => {},

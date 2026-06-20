@@ -1531,7 +1531,7 @@ fn test_fresh_wrapper_destructure_rewrites_dict_set() Result<Void, String> {
 
   case find_dict_set(result.body) {
     .Some(f) => try assert.equal(f.id, mock_dict_set_in_place().id),
-    .None => { return .Err("expected dict_set call") },
+    .None => return .Err("expected dict_set call"),
   }
 
   case find_record_update_can_reuse(result.body) {
@@ -1741,14 +1741,14 @@ fn test_loop_rewrite_authors_builder_monos() Result<Void, String> {
 
   case result.op_result_mono[4] {
     .Some(.Vector(.Int)) => {},
-    .Some(_) => { return .Err("expected builder local mono Vector<Int>") },
-    .None => { return .Err("expected builder local mono entry") },
+    .Some(_) => return .Err("expected builder local mono Vector<Int>"),
+    .None => return .Err("expected builder local mono entry"),
   }
 
   case result.op_result_mono[5] {
     .Some(.Vector(.Int)) => {},
-    .Some(_) => { return .Err("expected freeze local mono Vector<Int>") },
-    .None => { return .Err("expected freeze local mono entry") },
+    .Some(_) => return .Err("expected freeze local mono Vector<Int>"),
+    .None => return .Err("expected freeze local mono entry"),
   }
 
   case result.op_result_mono[6] {

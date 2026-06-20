@@ -17,11 +17,11 @@ type HintCtx = .{ typed: CheckResult, range_start: Int, range_end: Int }
 pub fn inlay_hints(snap: SemanticSnapshot, range_start: Int, range_end: Int) Vector<InlayHint> {
   parsed := case snap.parsed {
     .Some(p) => p,
-    .None => { return [] },
+    .None => return [],
   }
   typed := case snap.typed {
     .Some(t) => t,
-    .None => { return [] },
+    .None => return [],
   }
   ctx := HintCtx.{ typed, range_start, range_end }
   out: Vector<InlayHint> = []
@@ -89,7 +89,7 @@ fn hints_from_stmt(ctx: HintCtx, stmt: Stmt) Vector<InlayHint> {
 fn hints_from_let(ctx: HintCtx, ls: LetStmt) Vector<InlayHint> {
   // Only show type hints for inferred bindings (`:=` syntax means ty == .None)
   case ls.ty {
-    .Some(_) => { return [] },
+    .Some(_) => return [],
     .None => {},
   }
 
@@ -221,7 +221,7 @@ fn hints_from_expr(ctx: HintCtx, expr: Expr) Vector<InlayHint> {
 fn hints_from_for_pattern(ctx: HintCtx, fs: ForStmt) Vector<InlayHint> {
   ps := case fs.pattern_span {
     .Some(s) => s,
-    .None => { return [] },
+    .None => return [],
   }
 
   if ps.end < ctx.range_start or ps.start > ctx.range_end {
@@ -230,12 +230,12 @@ fn hints_from_for_pattern(ctx: HintCtx, fs: ForStmt) Vector<InlayHint> {
 
   iter_expr := case fs.iter {
     .Some(e) => e,
-    .None => { return [] },
+    .None => return [],
   }
 
   iter_ty := case ctx.typed.type_map[iter_expr.id] {
     .Some(ty) => ty,
-    .None => { return [] },
+    .None => return [],
   }
 
   elem_ty := iter_element_type(iter_ty)
@@ -246,7 +246,7 @@ fn hints_from_for_pattern(ctx: HintCtx, fs: ForStmt) Vector<InlayHint> {
 fn hints_from_collect_pattern(ctx: HintCtx, ce: CollectExpr) Vector<InlayHint> {
   ps := case ce.pattern_span {
     .Some(s) => s,
-    .None => { return [] },
+    .None => return [],
   }
 
   if ps.end < ctx.range_start or ps.start > ctx.range_end {
@@ -255,12 +255,12 @@ fn hints_from_collect_pattern(ctx: HintCtx, ce: CollectExpr) Vector<InlayHint> {
 
   iter_expr := case ce.iter {
     .Some(e) => e,
-    .None => { return [] },
+    .None => return [],
   }
 
   iter_ty := case ctx.typed.type_map[iter_expr.id] {
     .Some(ty) => ty,
-    .None => { return [] },
+    .None => return [],
   }
 
   elem_ty := iter_element_type(iter_ty)
@@ -273,7 +273,7 @@ fn hints_from_closure_params(ctx: HintCtx, closure_expr: Expr, params: Vector<Pa
 > {
   param_types := case ctx.typed.type_map[closure_expr.id] {
     .Some(.Function(pts, _)) => pts,
-    _ => { return [] },
+    _ => return [],
   }
 
   out: Vector<InlayHint> = []
@@ -283,7 +283,7 @@ fn hints_from_closure_params(ctx: HintCtx, closure_expr: Expr, params: Vector<Pa
 
     // Skip if already annotated
     case p.ty {
-      .Some(_) => { continue },
+      .Some(_) => continue,
       .None => {},
     }
 
@@ -322,7 +322,7 @@ fn param_hints_for_call(ctx: HintCtx, callee: Expr, args: Vector<Expr>) Vector<I
 
   ci := case call_resolve.resolve_callee(callee, ctx.typed) {
     .Some(c) => c,
-    .None => { return [] },
+    .None => return [],
   }
   sig := ci.sig
 

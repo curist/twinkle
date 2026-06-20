@@ -39,9 +39,9 @@ fn canonical_capture_source_local(ctx: VerifyCtx, info: SlotInfo) LocalId {
   caps := case info.role {
     .CaptureParam => case ctx.closure_captures[ctx.pf.func_id.id] {
       .Some(caps) => caps,
-      .None => { return info.source_local },
+      .None => return info.source_local,
     },
-    _ => { return info.source_local },
+    _ => return info.source_local,
   }
 
   for cap in caps {
@@ -117,20 +117,20 @@ fn verify_op(ctx: VerifyCtx, result_info: SlotInfo, op: PreparedOp) Result<Void,
     .AMakeClosure(fid, free_vars) => {
       target := case callable_targets.callable_target(fid, ctx.funcs_by_id, ctx.builtins, ctx.env) {
         .Some(info) => info,
-        .None => {
-          return fail_slot(ctx.pf, result_info, "AMakeClosure targets unknown callable F${fid.id}")
-        },
+        .None => return fail_slot(
+          ctx.pf,
+          result_info,
+          "AMakeClosure targets unknown callable F${fid.id}",
+        ),
       }
 
       case result_info.repr {
         .ClosureRef => {},
-        _ => {
-          return fail_slot(
-            ctx.pf,
-            result_info,
-            "AMakeClosure result must have ClosureRef repr, got ${repr_name(result_info.repr)}",
-          )
-        },
+        _ => return fail_slot(
+          ctx.pf,
+          result_info,
+          "AMakeClosure result must have ClosureRef repr, got ${repr_name(result_info.repr)}",
+        ),
       }
 
       case target.builtin_name {
@@ -386,7 +386,7 @@ fn verify_call_shape(ctx: VerifyCtx, callee: PreparedAtom, args: Vector<Prepared
     .AGlobalFunc(fid) => {
       target := case callable_targets.callable_target(fid, ctx.funcs_by_id, ctx.builtins, ctx.env) {
         .Some(target) => target,
-        .None => { return .Ok({}) },
+        .None => return .Ok({}),
       }
 
       case target.builtin_name {
@@ -432,7 +432,7 @@ fn verify_builtin_call_shape(ctx: VerifyCtx, fid: Int, args: Vector<PreparedAtom
 > {
   entry := case ctx.builtins.by_id[fid] {
     .Some(entry) => entry,
-    .None => { return .Ok({}) },
+    .None => return .Ok({}),
   }
 
   if !abi_has_types(entry.abi.param_types, entry.abi.result_types) {
@@ -470,7 +470,7 @@ fn verify_return_expr(ctx: VerifyCtx, atom: PreparedAtom?) Result<Void, String> 
     _ => {
       a := case atom {
         .Some(a) => a,
-        .None => { return fail_func(ctx.pf, "non-void function must return a value") },
+        .None => return fail_func(ctx.pf, "non-void function must return a value"),
       }
       try ctx.verify_atom_use(a, "return")
       try ctx.verify_return_value_type(a)
@@ -644,7 +644,7 @@ fn verify_atom_coercible_to_val_type(
 
   actual_vt := case ctx.infer_atom_val_type(atom) {
     .Some(vt) => vt,
-    .None => { return .Ok({}) },
+    .None => return .Ok({}),
   }
 
   if can_emit_coerce_stack(actual_vt, expected_vt) {
@@ -704,14 +704,14 @@ fn pvec_named(vt: ValType) String? {
 fn pvec_repr_mismatch(ctx: VerifyCtx, atom: PreparedAtom, expected_vt: ValType) Bool {
   expected_name := case pvec_named(expected_vt) {
     .Some(n) => n,
-    .None => { return false },
+    .None => return false,
   }
   actual_name := case ctx.infer_atom_val_type(atom) {
     .Some(vt) => case pvec_named(vt) {
       .Some(n) => n,
-      .None => { return false },
+      .None => return false,
     },
-    .None => { return false },
+    .None => return false,
   }
   expected_name != actual_name
 }
@@ -725,9 +725,11 @@ fn verify_record_field_payloads(
   for field in fields {
     expected_vt := case record_field_val_type(result_info.mono, field.field.id, ctx.env) {
       .Some(vt) => vt,
-      .None => {
-        return fail_slot(ctx.pf, result_info, "record field ${field.field.id} missing from layout")
-      },
+      .None => return fail_slot(
+        ctx.pf,
+        result_info,
+        "record field ${field.field.id} missing from layout",
+      ),
     }
 
     if ctx.pvec_repr_mismatch(field.value, expected_vt) {
@@ -760,9 +762,11 @@ fn verify_record_update_value(
 ) Result<Void, String> {
   expected_vt := case record_field_val_type(result_info.mono, fid.id, ctx.env) {
     .Some(vt) => vt,
-    .None => {
-      return fail_slot(ctx.pf, result_info, "record update field ${fid.id} missing from layout")
-    },
+    .None => return fail_slot(
+      ctx.pf,
+      result_info,
+      "record update field ${fid.id} missing from layout",
+    ),
   }
 
   if ctx.pvec_repr_mismatch(value, expected_vt) {
@@ -801,7 +805,7 @@ fn verify_variant_payloads(
 
       return fail_slot(ctx.pf, result_info, "variant ${vid.id} missing from sum layout")
     },
-    _ => { return fail_slot(ctx.pf, result_info, "variant result has non-sum layout") },
+    _ => return fail_slot(ctx.pf, result_info, "variant result has non-sum layout"),
   }
   payload_types
   .Ok({})
@@ -926,7 +930,7 @@ fn verify_dead_placeholder_value(
   context: String,
 ) Result<Void, String> {
   case atom {
-    .ALitVoid => { return .Ok({}) },
+    .ALitVoid => return .Ok({}),
     _ => {},
   }
 
@@ -949,7 +953,7 @@ fn verify_value_for_slot(ctx: VerifyCtx, target: SlotInfo, atom: PreparedAtom, c
   String,
 > {
   case atom {
-    .ALitVoid => { return .Ok({}) },
+    .ALitVoid => return .Ok({}),
     .ALitInt(n) => case target.mono {
       .Byte => if n >= 0 and n <= 255 {
         return .Ok({})

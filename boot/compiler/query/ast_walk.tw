@@ -167,7 +167,7 @@ fn find_node_in_cond_arms(arms: Vector<CondArm>, offset: Int) NodeContext? {
           r := find_node_in_expr(cond_expr, offset)
 
           case r {
-            .Some(_) => { return r },
+            .Some(_) => return r,
             .None => {},
           }
         },

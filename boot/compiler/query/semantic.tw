@@ -44,13 +44,13 @@ fn build_occurrences_cached(
 ) OccBuildResult {
   p := case parsed {
     .Some(value) => value,
-    .None => { return .{ cache: store, occurrences: .None } },
+    .None => return .{ cache: store, occurrences: .None },
   }
 
   cached := store.get_occurrences(canonical_path, key)
 
   case cached.value {
-    .Some(index) => { return .{ cache: cached.store, occurrences: .Some(index) } },
+    .Some(index) => return .{ cache: cached.store, occurrences: .Some(index) },
     .None => {},
   }
 
@@ -135,15 +135,15 @@ pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.Work
   )
   parsed := case store.latest_parsed(canonical) {
     .Some(value) => value,
-    .None => { return .None },
+    .None => return .None,
   }
   resolved := case store.latest_resolved(canonical) {
     .Some(value) => value,
-    .None => { return .None },
+    .None => return .None,
   }
   typed := case store.latest_typed(canonical) {
     .Some(value) => value,
-    .None => { return .None },
+    .None => return .None,
   }
   version: Int? = .None
 
@@ -187,14 +187,14 @@ pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.Work
 
 pub fn snapshot_workspace_for_editor(store: cache.Store, input: diagnostics.WorkspaceInput) SemanticSnapshot {
   case snapshot_workspace_from_cache(store, input) {
-    .Some(snap) => { return snap },
+    .Some(snap) => return snap,
     .None => {},
   }
 
   snap := snapshot_workspace(store, input)
 
   case snap.typed {
-    .Some(_) => { return snap },
+    .Some(_) => return snap,
     .None => {},
   }
 
@@ -406,7 +406,7 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
 pub fn symbol_at_position(snap: SemanticSnapshot, byte_offset: Int) SymbolAtPosition? {
   parsed := case snap.parsed {
     .Some(value) => value,
-    .None => { return .None },
+    .None => return .None,
   }
 
   for item in parsed.module.items {
@@ -436,7 +436,7 @@ pub fn symbol_at_position(snap: SemanticSnapshot, byte_offset: Int) SymbolAtPosi
 pub fn enclosing_syntax(snap: SemanticSnapshot, byte_offset: Int) EnclosingSyntax? {
   parsed := case snap.parsed {
     .Some(value) => value,
-    .None => { return .None },
+    .None => return .None,
   }
 
   for item in parsed.module.items {

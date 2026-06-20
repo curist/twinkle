@@ -330,7 +330,7 @@ fn test_subst_atom_does_not_enter_closure_free_vars() Result<Void, String> {
   case result {
     .Let(_, op, _) => case op {
       .AMakeClosure(_, free_vars) => assert.equal(free_vars[0].id, 5),
-      _ => { return .Err("expected AMakeClosure") },
+      _ => return .Err("expected AMakeClosure"),
     },
     _ => .Err("expected Let"),
   }

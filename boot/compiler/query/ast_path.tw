@@ -89,7 +89,7 @@ pub fn enclosing_fn(path: AstPath) FunctionDecl? {
 
   for i >= 0 {
     case path.nodes[i] {
-      .FnDecl(decl) => { return .Some(decl) },
+      .FnDecl(decl) => return .Some(decl),
       _ => {},
     }
 

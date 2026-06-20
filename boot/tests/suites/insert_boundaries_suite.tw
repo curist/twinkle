@@ -656,7 +656,7 @@ pub fn suite() runner.Suite {
 
         for id in locals {
           case seen[id] {
-            .Some(_) => { return assert.fail("duplicate local ID: ${id}") },
+            .Some(_) => return assert.fail("duplicate local ID: ${id}"),
             .None => seen[id] = true,
           }
         }
@@ -686,8 +686,8 @@ pub fn suite() runner.Suite {
 
         case result.functions[0].op_result_mono[11] {
           .Some(.Anyref_) => {},
-          .Some(_) => { return assert.fail("expected wrap temp local 11 to be typed as Anyref_") },
-          .None => { return assert.fail("missing wrap temp local 11") },
+          .Some(_) => return assert.fail("expected wrap temp local 11 to be typed as Anyref_"),
+          .None => return assert.fail("missing wrap temp local 11"),
         }
 
         case result.functions[0].op_result_mono[12] {
@@ -711,7 +711,7 @@ pub fn suite() runner.Suite {
             try assert.equal(entry.abi.param_types.len(), 1)
             try assert.equal(entry.abi.result_types.len(), 0)
           },
-          .None => { return assert.fail("missing entry for println") },
+          .None => return assert.fail("missing entry for println"),
         }
 
         // dict$set: (ref null $Dict, anyref, anyref) → (ref $Dict)
@@ -725,10 +725,10 @@ pub fn suite() runner.Suite {
             // Second param should be anyref (key)
             case entry.abi.param_types[1] {
               .Anyref => {},
-              _ => { return assert.fail("dict$set param 1 should be anyref") },
+              _ => return assert.fail("dict$set param 1 should be anyref"),
             }
           },
-          .None => { return assert.fail("missing entry for dict$set") },
+          .None => return assert.fail("missing entry for dict$set"),
         }
 
         // int$to_string: (i64) → (ref $String)
@@ -740,10 +740,10 @@ pub fn suite() runner.Suite {
 
             case entry.abi.param_types[0] {
               .I64 => {},
-              _ => { return assert.fail("int$to_string param should be I64") },
+              _ => return assert.fail("int$to_string param should be I64"),
             }
           },
-          .None => { return assert.fail("missing entry for int$to_string") },
+          .None => return assert.fail("missing entry for int$to_string"),
         }
 
         // vector$set_unsafe: (ref null $Array, i32, anyref) → (ref $Array)
@@ -755,10 +755,10 @@ pub fn suite() runner.Suite {
 
             case entry.abi.param_types[2] {
               .Anyref => {},
-              _ => { return assert.fail("vector$set_unsafe param 2 should be anyref") },
+              _ => return assert.fail("vector$set_unsafe param 2 should be anyref"),
             }
           },
-          .None => { return assert.fail("missing entry for vector$set_unsafe") },
+          .None => return assert.fail("missing entry for vector$set_unsafe"),
         }
 
         .Ok({})

@@ -31,7 +31,7 @@ pub fn lower_lvalue_assign(
             base_ty := ctx.expr_type(base)
             tid := case type_id_from_mono(base_ty, ctx.env) {
               .Some(id) => id,
-              .None => { return .None },
+              .None => return .None,
             }
             fid_idx := find_field_index_in_type(ctx.env, base_ty, field_name)
             fid := FieldId.{ id: fid_idx }
@@ -56,7 +56,7 @@ pub fn lower_lvalue_assign(
           base_ty := ctx.expr_type(base)
           tid := case type_id_from_mono(base_ty, ctx.env) {
             .Some(id) => id,
-            .None => { return .None },
+            .None => return .None,
           }
           fid_idx := find_field_index_in_type(ctx.env, base_ty, field_name)
           fid := FieldId.{ id: fid_idx }

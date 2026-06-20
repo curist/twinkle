@@ -65,31 +65,31 @@ fn parse_fix_edits(data: json.Json?) Vector<FixEdit> {
   out: Vector<FixEdit> = []
   value := case data {
     .Some(v) => v,
-    .None => { return out },
+    .None => return out,
   }
   fixes := case json.decode(value, json.field("fixes", json.list(json.raw()))) {
     .Ok(v) => v,
-    .Err(_) => { return out },
+    .Err(_) => return out,
   }
 
   for fix_obj in fixes {
     edits := case json.decode(fix_obj, json.field("edits", json.list(json.raw()))) {
       .Ok(v) => v,
-      .Err(_) => { continue },
+      .Err(_) => continue,
     }
 
     for edit in edits {
       start := case json.decode(edit, json.field("start", json.int())) {
         .Ok(s) => s,
-        .Err(_) => { continue },
+        .Err(_) => continue,
       }
       end := case json.decode(edit, json.field("end", json.int())) {
         .Ok(e) => e,
-        .Err(_) => { continue },
+        .Err(_) => continue,
       }
       replacement := case json.decode(edit, json.field("replacement", json.string())) {
         .Ok(r) => r,
-        .Err(_) => { continue },
+        .Err(_) => continue,
       }
       out = .append(.{ start, end, replacement })
     }
@@ -343,7 +343,7 @@ fn apply_to_files(edits_by_file: Dict<String, Vector<FixEdit>>) Vector<FileResul
   for file_path in edits_by_file.keys() {
     edits := case edits_by_file[file_path] {
       .Some(e) => e,
-      .None => { continue },
+      .None => continue,
     }
     source := case fs.read_text(file_path) {
       .Ok(text) => text,

@@ -29,7 +29,7 @@ fn resolve_variant_ref(env: ResolvedEnv, type_name: String, variant_name: String
   entry := try env.lookup_type(type_name).ok_or("builtin_refs: missing builtin type ${type_name}")
   variants := case entry.def {
     .Some(.Sum(_, _, vs)) => vs,
-    _ => { return .Err("builtin_refs: builtin type ${type_name} is not a sum type") },
+    _ => return .Err("builtin_refs: builtin type ${type_name} is not a sum type"),
   }
   vid := try find_variant_index(variants, variant_name).ok_or(
     "builtin_refs: builtin type ${type_name} has no variant ${variant_name}",

@@ -76,7 +76,7 @@ fn imported_module_doc(decl: UseDecl, snap: SemanticSnapshot) String? {
   parsed := try snap.parsed
   plan := case imports.plan_dependencies(parsed.module, snap.canonical_path, snap.project_root) {
     .Ok(value) => value,
-    .Err(_) => { return .None },
+    .Err(_) => return .None,
   }
 
   for dep in plan.dependencies {
@@ -362,9 +362,9 @@ fn hover_let_stmt(ctx: HoverContext, ls: LetStmt) HoverResult? {
 
   if ls.name_span.contains(ctx.offset) {
     case ctx.typed.type_map[ls.value.id] {
-      .Some(ty) => {
-        return .Some(.{ content: ty_to_string_env(ctx.typed.env, ty), span: ls.name_span })
-      },
+      .Some(ty) => return .Some(
+        .{ content: ty_to_string_env(ctx.typed.env, ty), span: ls.name_span },
+      ),
       .None => {},
     }
   }
@@ -500,7 +500,7 @@ fn hover_module_alias(ctx: HoverContext, name: String, span: Span) HoverResult? 
         }
 
         case decl.items {
-          .Some(_) => { continue },
+          .Some(_) => continue,
           .None => {},
         }
 
@@ -521,12 +521,12 @@ fn hover_module_alias(ctx: HoverContext, name: String, span: Span) HoverResult? 
 
 fn hover_closure_expr(ctx: HoverContext, expr: Expr, params: Vector<Param>) HoverResult? {
   case ctx.hover_closure_param_names(expr, params) {
-    .Some(r) => { return .Some(r) },
+    .Some(r) => return .Some(r),
     .None => {},
   }
 
   case ctx.hover_closure_param_types(params) {
-    .Some(r) => { return .Some(r) },
+    .Some(r) => return .Some(r),
     .None => {},
   }
 
@@ -562,7 +562,7 @@ fn hover_variant_expr(ctx: HoverContext, expr: Expr, name: String) HoverResult? 
     ty := try ctx.typed.type_map[expr.id]
 
     case variant_hover_for_type(ctx.typed.env, ty, name, name_span) {
-      .Some(r) => { return .Some(r) },
+      .Some(r) => return .Some(r),
       .None => {},
     }
   }
@@ -586,7 +586,7 @@ fn hover_recorded_method(callee_id: Int, base: Expr, method_span: Span, typed: C
 
         return .Some(.{ content, span: method_span })
       },
-      .None => { return .None },
+      .None => return .None,
     }
   }
 
@@ -623,7 +623,7 @@ fn hover_named_method(base: Expr, method: String, method_span: Span, typed: Chec
 fn method_function_name(base: Expr, method: String, typed: CheckResult) String? {
   case typed.type_map[base.id] {
     .Some(ty) => case method_function_name_for_type(ty, method, typed.env) {
-      .Some(func_name) => { return .Some(func_name) },
+      .Some(func_name) => return .Some(func_name),
       .None => {},
     },
     .None => {},
@@ -722,7 +722,7 @@ fn hover_type_path(ctx: HoverContext, path: TypePath) HoverResult? {
 
   case ctx.typed.env.lookup_type(name) {
     .Some(entry) => case entry.def {
-      .Some(def) => { return type_def_hover(def, path.span) },
+      .Some(def) => return type_def_hover(def, path.span),
       .None => {},
     },
     .None => {},

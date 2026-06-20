@@ -11,11 +11,11 @@ pub type DocumentHighlight = .{ span: Span, kind: HighlightKind }
 pub fn document_highlights(snap: SemanticSnapshot, byte_offset: Int) Vector<DocumentHighlight> {
   index := case snap.occurrences {
     .Some(i) => i,
-    .None => { return [] },
+    .None => return [],
   }
   target := case index.occurrence_at_offset(byte_offset) {
     .Some(o) => o,
-    .None => { return [] },
+    .None => return [],
   }
 
   highlights: Vector<DocumentHighlight> = []

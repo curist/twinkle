@@ -26,7 +26,7 @@ pub fn codegen_src(src: String) Result<String, String> {
 pub fn codegen_path(path: String) Result<String, String> {
   artifacts := case pipeline.compile_entry_path(path) {
     .Ok(a) => a,
-    .Err(err) => { return .Err(format_compile_error(err)) },
+    .Err(err) => return .Err(format_compile_error(err)),
   }
   .Ok(codegen(artifacts.opt, artifacts.env, artifacts.builtins))
 }

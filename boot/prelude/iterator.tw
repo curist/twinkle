@@ -37,7 +37,7 @@ fn filter_step<T>(state: FilterState<T>) UnfoldStep<T, FilterState<T>> {
 
         current = item.rest
       },
-      .None => { return UnfoldStep.Done },
+      .None => return UnfoldStep.Done,
     }
   }
 
@@ -68,7 +68,7 @@ fn drop_step<T>(state: DropState<T>) UnfoldStep<T, DropState<T>> {
         current = item.rest
         remaining = remaining - 1
       },
-      .None => { return UnfoldStep.Done },
+      .None => return UnfoldStep.Done,
     }
   }
 
@@ -103,7 +103,7 @@ fn drop_while_step<T>(state: DropWhileState<T>) UnfoldStep<T, DropWhileState<T>>
           DropWhileState.{ it: item.rest, pred: state.pred, dropping: false },
         )
       },
-      .None => { return UnfoldStep.Done },
+      .None => return UnfoldStep.Done,
     }
   }
 

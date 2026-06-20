@@ -112,7 +112,7 @@ pub fn plan_wasm_types_impl(
     reg.closure_materialized_funcs[fid] = true
     target := case callable_targets.callable_target(FuncId.{ id: fid }, funcs_by_id, builtins, env) {
       .Some(info) => info,
-      .None => { continue },
+      .None => continue,
     }
 
     // Use concrete mono from prepared IR when available — generic builtins
@@ -318,7 +318,7 @@ fn register_mono(reg: WasmTypeRegistry, ty: MonoType, env: ResolvedEnv) WasmType
         .Some(_) => reg,
         .None => {
           case reg.in_progress[key] {
-            .Some(true) => { return reg },
+            .Some(true) => return reg,
             _ => {},
           }
 

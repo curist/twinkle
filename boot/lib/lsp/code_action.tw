@@ -39,11 +39,11 @@ pub fn fix_actions(uri: String, index: line_index.LineIndex, context_diagnostics
   for diag in context_diagnostics {
     data := case diag.decode(json.field("data", json.raw())) {
       .Ok(d) => d,
-      .Err(_) => { continue },
+      .Err(_) => continue,
     }
     fixes := case data.decode(json.field("fixes", json.raw().list())) {
       .Ok(fs) => fs,
-      .Err(_) => { continue },
+      .Err(_) => continue,
     }
 
     for fix in fixes {
@@ -53,7 +53,7 @@ pub fn fix_actions(uri: String, index: line_index.LineIndex, context_diagnostics
       }
       edit_objs := case fix.decode(json.field("edits", json.raw().list())) {
         .Ok(es) => es,
-        .Err(_) => { continue },
+        .Err(_) => continue,
       }
 
       text_edits: Vector<json.Json> = []
@@ -61,15 +61,15 @@ pub fn fix_actions(uri: String, index: line_index.LineIndex, context_diagnostics
       for e in edit_objs {
         start := case e.decode(json.field("start", json.int())) {
           .Ok(v) => v,
-          .Err(_) => { continue },
+          .Err(_) => continue,
         }
         end := case e.decode(json.field("end", json.int())) {
           .Ok(v) => v,
-          .Err(_) => { continue },
+          .Err(_) => continue,
         }
         replacement := case e.decode(json.field("replacement", json.string())) {
           .Ok(v) => v,
-          .Err(_) => { continue },
+          .Err(_) => continue,
         }
         range := byte_range_to_lsp_range(index, start, end)
         text_edits = .append(text_edit(range, replacement))

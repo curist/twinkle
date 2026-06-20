@@ -13,7 +13,7 @@ pub type FoldingRangeKind = { Imports, Comment, Region }
 pub fn folding_ranges(snap: SemanticSnapshot) Vector<FoldingRange> {
   parsed := case snap.parsed {
     .Some(p) => p,
-    .None => { return [] },
+    .None => return [],
   }
 
   result: Vector<FoldingRange> = []

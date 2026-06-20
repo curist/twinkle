@@ -38,12 +38,10 @@ pub fn verify_prepared_func_slots(
     src_id := info.source_local.id
 
     case seen_source_locals[src_id] {
-      .Some(existing_sid) => {
-        return fail_func(
-          pf,
-          "slot S${existing_sid} and slot S${info.slot.id} both claim source local L${src_id}",
-        )
-      },
+      .Some(existing_sid) => return fail_func(
+        pf,
+        "slot S${existing_sid} and slot S${info.slot.id} both claim source local L${src_id}",
+      ),
       .None => seen_source_locals[src_id] = info.slot.id,
     }
 
@@ -147,13 +145,11 @@ fn verify_slot_metadata(pf: PreparedFunc, info: SlotInfo, env: ResolvedEnv) Void
 
       case info.repr {
         .DeadValue => {},
-        _ => {
-          return fail_slot(
-            pf,
-            info,
-            "DeadPlaceholder must have DeadValue repr, got ${repr_name(info.repr)}",
-          )
-        },
+        _ => return fail_slot(
+          pf,
+          info,
+          "DeadPlaceholder must have DeadValue repr, got ${repr_name(info.repr)}",
+        ),
       }
 
       if !val_type_eq(info.wasm_type, .Anyref) {
@@ -166,7 +162,7 @@ fn verify_slot_metadata(pf: PreparedFunc, info: SlotInfo, env: ResolvedEnv) Void
   }
 
   case info.repr {
-    .DeadValue => { return fail_slot(pf, info, "live slot cannot have DeadValue repr") },
+    .DeadValue => return fail_slot(pf, info, "live slot cannot have DeadValue repr"),
     _ => {},
   }
 

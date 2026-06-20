@@ -245,7 +245,7 @@ fn all_closure_clean(store: cache.Store, s: analyze.ClosureSnapshot) Bool {
   for m in s.closure_modules {
     case store.module_hash(m) {
       .Some(_) => {},
-      .None => { return false },
+      .None => return false,
     }
   }
 

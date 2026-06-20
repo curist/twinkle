@@ -65,7 +65,7 @@ pub fn suite() runner.Suite {
 
         case x {
           .Some(v) => try assert.equal(v, 42),
-          .None => { return .Err("expected Some") },
+          .None => return .Err("expected Some"),
         }
 
         .Ok({})

@@ -460,7 +460,7 @@ pub fn suite() runner.Suite {
 
             case rewritten.body {
               .Atom(.ALocal(l)) => try assert.equal(l.id, caps[0].param_local.id),
-              _ => { return .Err("rewritten hoisted body did not use the explicit capture param") },
+              _ => return .Err("rewritten hoisted body did not use the explicit capture param"),
             }
 
             .Ok({})
@@ -495,7 +495,7 @@ pub fn suite() runner.Suite {
 
             case rewritten.body {
               .Let(_, .AAssign(target, _), _) => try assert.equal(target.id, caps[0].param_local.id),
-              _ => { return .Err("rewritten hoisted body did not rewrite captured assign target") },
+              _ => return .Err("rewritten hoisted body did not rewrite captured assign target"),
             }
 
             .Ok({})

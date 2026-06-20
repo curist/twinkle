@@ -639,7 +639,7 @@ fn recover_bound_elem(
 
   elem_name := case bound_args[0] {
     .Var(n) => n,
-    _ => { return subst },
+    _ => return subst,
   }
 
   case subst.get(elem_name) {
@@ -651,7 +651,7 @@ fn recover_bound_elem(
 
   recv := case subst.get(recv_param_name) {
     .Some(t) => apply_subst(t, subst),
-    .None => { return subst },
+    .None => return subst,
   }
 
   if contains_var(recv) {
@@ -670,13 +670,13 @@ fn recover_bound_elem(
 
 fn recover_contract_elem(ctx: MonoCtx, recv: MonoType, contract: BuiltinContract) MonoType? {
   case builtin_container_elem(recv, contract) {
-    .Some(e) => { return .Some(e) },
+    .Some(e) => return .Some(e),
     .None => {},
   }
 
   for req in contract.methods() {
     case req.ret {
-      .Elem => { return ctx.resolve_method_return_from_sig(recv, req.method_name) },
+      .Elem => return ctx.resolve_method_return_from_sig(recv, req.method_name),
       .IteratorElem => case ctx.resolve_method_return_from_sig(recv, req.method_name) {
         .Some(ret) => case ret {
           .Named(_, args) => if args.len() > 0 {
@@ -693,7 +693,7 @@ fn recover_contract_elem(ctx: MonoCtx, recv: MonoType, contract: BuiltinContract
 
     for shape in req.arg_shapes {
       case shape {
-        .Elem => { return ctx.resolve_method_arg_from_sig(recv, req.method_name, j + 1) },
+        .Elem => return ctx.resolve_method_arg_from_sig(recv, req.method_name, j + 1),
         _ => {},
       }
 
@@ -756,7 +756,7 @@ fn lookup_method_sig(ctx: MonoCtx, recv: MonoType, method_name: String) Function
 
   case fn_name {
     .Some(name) => case lookup_registered_function(ctx.env, name) {
-      .Some(sig) => { return .Some(sig) },
+      .Some(sig) => return .Some(sig),
       .None => {},
     },
     .None => {},
@@ -809,7 +809,7 @@ fn recover_sig_subst(ctx: MonoCtx, sig: FunctionSig, recv: MonoType) Dict<String
 fn resolve_method_return_from_sig(ctx: MonoCtx, recv: MonoType, method_name: String) MonoType? {
   sig := case ctx.lookup_method_sig(recv, method_name) {
     .Some(found) => found,
-    .None => { return .None },
+    .None => return .None,
   }
   subst := ctx.recover_sig_subst(sig, recv)
   ret := case sig.ret {
@@ -823,7 +823,7 @@ fn resolve_method_return_from_sig(ctx: MonoCtx, recv: MonoType, method_name: Str
 fn resolve_method_arg_from_sig(ctx: MonoCtx, recv: MonoType, method_name: String, arg_index: Int) MonoType? {
   sig := case ctx.lookup_method_sig(recv, method_name) {
     .Some(found) => found,
-    .None => { return .None },
+    .None => return .None,
   }
 
   if arg_index >= sig.params.len() {
@@ -1464,21 +1464,17 @@ fn rewrite_calls_kind(
                 if ctx.is_vector_sort(fid) and type_args.len() == 1 {
                   case type_args[0] {
                     .Int => case ctx.vector_sort_i64_fid() {
-                      .Some(sort_fid) => {
-                        return .Call(
-                          CoreExpr.{ kind: .GlobalFunc(sort_fid), ty: callee.ty, span: callee.span },
-                          new_args,
-                        )
-                      },
+                      .Some(sort_fid) => return .Call(
+                        CoreExpr.{ kind: .GlobalFunc(sort_fid), ty: callee.ty, span: callee.span },
+                        new_args,
+                      ),
                       .None => {},
                     },
                     .Float => case ctx.vector_sort_f64_fid() {
-                      .Some(sort_fid) => {
-                        return .Call(
-                          CoreExpr.{ kind: .GlobalFunc(sort_fid), ty: callee.ty, span: callee.span },
-                          new_args,
-                        )
-                      },
+                      .Some(sort_fid) => return .Call(
+                        CoreExpr.{ kind: .GlobalFunc(sort_fid), ty: callee.ty, span: callee.span },
+                        new_args,
+                      ),
                       .None => {},
                     },
                     _ => {},
@@ -1488,12 +1484,10 @@ fn rewrite_calls_kind(
                 key := spec_key(fid, type_args)
 
                 case spec_map[key] {
-                  .Some(new_fid) => {
-                    return .Call(
-                      CoreExpr.{ kind: .GlobalFunc(new_fid), ty: callee.ty, span: callee.span },
-                      new_args,
-                    )
-                  },
+                  .Some(new_fid) => return .Call(
+                    CoreExpr.{ kind: .GlobalFunc(new_fid), ty: callee.ty, span: callee.span },
+                    new_args,
+                  ),
                   .None => {},
                 }
               },
@@ -1547,7 +1541,7 @@ fn rewrite_calls_kind(
             key := spec_key(fid, type_args)
 
             case spec_map[key] {
-              .Some(new_fid) => { return .GlobalFunc(new_fid) },
+              .Some(new_fid) => return .GlobalFunc(new_fid),
               .None => {},
             }
           },
@@ -1580,7 +1574,7 @@ fn rewrite_calls_kind(
               key := spec_key(fid, type_args)
 
               case spec_map[key] {
-                .Some(new_fid) => { return .MakeClosure(new_fid, free_vars) },
+                .Some(new_fid) => return .MakeClosure(new_fid, free_vars),
                 .None => {},
               }
             }

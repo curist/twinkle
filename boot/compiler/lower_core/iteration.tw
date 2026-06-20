@@ -412,9 +412,9 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
   // wrapped into an `Iterator<E>` by `setup_indexed_iter`, so it pulls via the
   // iterator loop too. Everything else falls through to the indexed loop below.
   case setup.kind {
-    .Range => { return setup.build_range_loop(inner_action, s) },
-    .Iterator => { return setup.build_iterator_loop(inner_action, s) },
-    .IntoIteratorContract => { return setup.build_iterator_loop(inner_action, s) },
+    .Range => return setup.build_range_loop(inner_action, s),
+    .Iterator => return setup.build_iterator_loop(inner_action, s),
+    .IntoIteratorContract => return setup.build_iterator_loop(inner_action, s),
     _ => {},
   }
 

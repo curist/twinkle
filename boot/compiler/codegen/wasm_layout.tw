@@ -318,7 +318,7 @@ fn layout_of_sum_def(
 fn layout_of_optional(inner: MonoType, env: ResolvedEnv) WasmLayout {
   // Option<ExternRef> → nullable externref (no struct wrapper)
   case inner {
-    .ExternRef(_) => { return .Scalar(.WNullableExternref) },
+    .ExternRef(_) => return .Scalar(.WNullableExternref),
     _ => {},
   }
 

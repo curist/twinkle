@@ -18,11 +18,11 @@ pub fn find_references(snap: SemanticSnapshot, byte_offset: Int, include_declara
 > {
   index := case snap.occurrences {
     .Some(i) => i,
-    .None => { return [] },
+    .None => return [],
   }
   target := case index.occurrence_at_offset(byte_offset) {
     .Some(o) => o,
-    .None => { return [] },
+    .None => return [],
   }
 
   indexes := candidate_indexes(snap, target.symbol_key)
@@ -51,7 +51,7 @@ pub fn find_references(snap: SemanticSnapshot, byte_offset: Int, include_declara
 fn candidate_indexes(snap: SemanticSnapshot, key: occ.SymbolKey) Vector<occ.OccurrenceIndex> {
   current := case snap.occurrences {
     .Some(i) => i,
-    .None => { return [] },
+    .None => return [],
   }
 
   case key {

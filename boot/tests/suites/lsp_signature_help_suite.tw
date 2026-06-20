@@ -70,7 +70,7 @@ fn extract_sig_help(step: server_core.Step) SigHelpInfo?!String {
       sigs := try result.decode(json.field("signatures", json.raw()))
       items := case sigs {
         .Array(arr) => arr,
-        _ => { return .Err("expected signatures array") },
+        _ => return .Err("expected signatures array"),
       }
 
       if items.len() == 0 {
@@ -118,7 +118,7 @@ pub fn suite() runner.Suite {
             try assert.equal(h.param_labels[0], "a: Int")
             try assert.equal(h.param_labels[1], "b: Int")
           },
-          .None => { return .Err("expected signature help, got null") },
+          .None => return .Err("expected signature help, got null"),
         }
 
         .Ok({})
@@ -137,7 +137,7 @@ pub fn suite() runner.Suite {
 
         case info {
           .Some(h) => try assert.equal(h.active_param, 1),
-          .None => { return .Err("expected signature help, got null") },
+          .None => return .Err("expected signature help, got null"),
         }
 
         .Ok({})
@@ -162,7 +162,7 @@ pub fn suite() runner.Suite {
             try assert.str_contains(h.label, "inner")
             try assert.equal(h.param_labels[0], "a: String")
           },
-          .None => { return .Err("expected signature help for inner, got null") },
+          .None => return .Err("expected signature help for inner, got null"),
         }
 
         .Ok({})
@@ -189,7 +189,7 @@ pub fn suite() runner.Suite {
             try assert.equal(h.param_labels[0], "dx: Int")
             try assert.equal(h.param_labels[1], "dy: Int")
           },
-          .None => { return .Err("expected signature help for method call, got null") },
+          .None => return .Err("expected signature help for method call, got null"),
         }
 
         .Ok({})
@@ -218,7 +218,7 @@ pub fn suite() runner.Suite {
 
         case info {
           .Some(h) => try assert.str_contains(h.label, "join"),
-          .None => { return .Err("expected signature help for qualified call, got null") },
+          .None => return .Err("expected signature help for qualified call, got null"),
         }
 
         .Ok({})
@@ -243,7 +243,7 @@ pub fn suite() runner.Suite {
             try assert.equal(h.param_labels[0], "name: String")
             try assert.equal(h.param_labels[1], "loud: Bool")
           },
-          .None => { return .Err("expected signature help inside fn body, got null") },
+          .None => return .Err("expected signature help inside fn body, got null"),
         }
 
         .Ok({})
@@ -265,7 +265,7 @@ pub fn suite() runner.Suite {
             try assert.equal(h.param_labels.len(), 3)
             try assert.equal(h.param_labels[2], "c: Bool")
           },
-          .None => { return .Err("expected active param 2, got null") },
+          .None => return .Err("expected active param 2, got null"),
         }
 
         .Ok({})
@@ -285,7 +285,7 @@ pub fn suite() runner.Suite {
             try assert.equal(h.param_labels.len(), 0)
             try assert.equal(h.active_param, 0)
           },
-          .None => { return .Err("expected signature help for zero-arg fn, got null") },
+          .None => return .Err("expected signature help for zero-arg fn, got null"),
         }
 
         .Ok({})
@@ -311,7 +311,7 @@ pub fn suite() runner.Suite {
             try assert.str_contains(h.label, "add")
             try assert.equal(h.active_param, 1)
           },
-          .None => { return .Err("expected signature help after multibyte text, got null") },
+          .None => return .Err("expected signature help after multibyte text, got null"),
         }
 
         .Ok({})
@@ -337,7 +337,7 @@ pub fn suite() runner.Suite {
             try assert.equal(h.param_labels[0], "a: Int")
             try assert.equal(h.param_labels[1], "b: Int")
           },
-          .None => { return .Err("expected signature help for incomplete call, got null") },
+          .None => return .Err("expected signature help for incomplete call, got null"),
         }
 
         .Ok({})
@@ -360,9 +360,7 @@ pub fn suite() runner.Suite {
             try assert.str_contains(h.label, "add")
             try assert.equal(h.active_param, 1)
           },
-          .None => {
-            return .Err("expected signature help for incomplete call after comma, got null")
-          },
+          .None => return .Err("expected signature help for incomplete call after comma, got null"),
         }
 
         .Ok({})
@@ -387,9 +385,7 @@ pub fn suite() runner.Suite {
             try assert.equal(h.param_labels[0], "name: String")
             try assert.equal(h.param_labels[1], "loud: Bool")
           },
-          .None => {
-            return .Err("expected signature help for incomplete call in fn body, got null")
-          },
+          .None => return .Err("expected signature help for incomplete call in fn body, got null"),
         }
 
         .Ok({})
@@ -412,7 +408,7 @@ pub fn suite() runner.Suite {
             try assert.str_contains(h.label, "make")
             try assert.equal(h.active_param, 2)
           },
-          .None => { return .Err("expected active param 2 for incomplete call, got null") },
+          .None => return .Err("expected active param 2 for incomplete call, got null"),
         }
 
         .Ok({})
@@ -435,7 +431,7 @@ pub fn suite() runner.Suite {
             try assert.str_contains(h.label, "make")
             try assert.equal(h.active_param, 1)
           },
-          .None => { return .Err("expected signature help with nested comma, got null") },
+          .None => return .Err("expected signature help with nested comma, got null"),
         }
 
         .Ok({})
@@ -458,9 +454,9 @@ pub fn suite() runner.Suite {
             try assert.str_contains(h.label, "inner")
             try assert.equal(h.param_labels[0], "a: String")
           },
-          .None => {
-            return .Err("expected signature help for inner in incomplete nested call, got null")
-          },
+          .None => return .Err(
+            "expected signature help for inner in incomplete nested call, got null",
+          ),
         }
 
         .Ok({})
@@ -480,9 +476,7 @@ pub fn suite() runner.Suite {
 
         case info {
           .Some(h) => try assert.str_contains(h.label, "join"),
-          .None => {
-            return .Err("expected signature help for incomplete qualified call, got null")
-          },
+          .None => return .Err("expected signature help for incomplete qualified call, got null"),
         }
 
         .Ok({})
@@ -503,9 +497,9 @@ pub fn suite() runner.Suite {
 
         case info {
           .Some(h) => try assert.str_contains(h.label, "join"),
-          .None => {
-            return .Err("expected signature help for parseable but unresolved call, got null")
-          },
+          .None => return .Err(
+            "expected signature help for parseable but unresolved call, got null",
+          ),
         }
 
         .Ok({})
@@ -524,7 +518,7 @@ pub fn suite() runner.Suite {
 
         case triggers {
           .Array(arr) => try assert.is_true(arr.len() >= 2),
-          _ => { return .Err("expected triggerCharacters array") },
+          _ => return .Err("expected triggerCharacters array"),
         }
 
         .Ok({})

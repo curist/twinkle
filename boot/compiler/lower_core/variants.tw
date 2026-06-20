@@ -123,15 +123,9 @@ pub fn lower_index(
   // such record and keep the direct `Index` op.
   case ir.ctx.method_calls[index_expr.id] {
     .Some(info) => case info.contract {
-      .Some(contract) => {
-        return .{
-          expr: .{
-            kind: .ContractCall(contract, info.method_name, br.expr, [ir.expr]),
-            ty,
-            span: s,
-          },
-          ctx: ir.ctx,
-        }
+      .Some(contract) => return .{
+        expr: .{ kind: .ContractCall(contract, info.method_name, br.expr, [ir.expr]), ty, span: s },
+        ctx: ir.ctx,
       },
       .None => {},
     },

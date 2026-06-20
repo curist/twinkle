@@ -56,7 +56,7 @@ fn extract_symbols(step: server_core.Step) Vector<SymbolInfo>!String {
   result := try out.decode(json.field("result", json.raw()))
   items := case result {
     .Array(arr) => arr,
-    _ => { return .Err("expected array result") },
+    _ => return .Err("expected array result"),
   }
 
   result: Vector<SymbolInfo> = []
