@@ -1,0 +1,28 @@
+/// Transport-neutral analysis progress model.
+///
+/// The query/analyze path emits coarse module-stage events through a
+/// `ProgressSink`. The model has no dependency on LSP protocol or JSON so the
+/// same events can drive diagnostics progress, semantic snapshots, or any future
+/// editor feature. The default path uses no sink, so non-LSP build/CLI/test runs
+/// pay nothing.
+
+/// A coarse stage boundary within a single module's analysis. These mirror the
+/// existing timing boundaries in `analyze_module_impl`. `Resolving` covers the
+/// combined resolve+typecheck step because the current implementation does not
+/// separate those boundaries.
+pub type AnalysisStage = {
+  Loading,
+  Parsing,
+  PlanningImports,
+  AnalyzingDependencies,
+  Resolving,
+  Publishing,
+}
+
+/// A single progress event: a stage transition for one module. `module` is a
+/// display-friendly name (relative to its project/stdlib/prelude root), not an
+/// absolute path, so it can be shown directly to a user.
+pub type AnalysisProgress = .{ stage: AnalysisStage, module: String }
+
+/// A consumer of progress events. Called synchronously at each emission point.
+pub type ProgressSink = fn(AnalysisProgress) Void

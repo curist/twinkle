@@ -15,6 +15,7 @@ use @std.io
 use @std.proc
 use @std.time
 
+use compiler.query.progress
 use lib.argparse.app.{ParseResult}
 use lib.json
 use lib.lsp.framing
@@ -213,7 +214,7 @@ fn supports_work_done_progress(params: json.Json?) Bool {
   }
 }
 
-fn begin_progress(ctx: LoopCtx, title: String, message: String, percentage: Int) String {
+fn begin_progress(ctx: LoopCtx, title: String, message: String, percentage: Int?) String {
   if !ctx.supports_progress.get() {
     return ""
   }
@@ -233,7 +234,7 @@ fn begin_progress(ctx: LoopCtx, title: String, message: String, percentage: Int)
   token
 }
 
-fn report_progress(ctx: LoopCtx, token: String, message: String, percentage: Int) {
+fn report_progress(ctx: LoopCtx, token: String, message: String, percentage: Int?) {
   if token == "" {
     return
   }
@@ -246,7 +247,7 @@ fn end_progress(ctx: LoopCtx, token: String, message: String) {
     return
   }
 
-  ctx.write_message(progress_notification(token, "end", "", message, 100))
+  ctx.write_message(progress_notification(token, "end", "", message, .None))
 }
 
 fn progress_notification(
@@ -254,13 +255,19 @@ fn progress_notification(
   kind: String,
   title: String,
   message: String,
-  percentage: Int,
+  percentage: Int?,
 ) json.Json {
   value_fields: Vector<json.Field> = [
     json.kv("kind", .Str(kind)),
     json.kv("message", .Str(message)),
-    json.kv("percentage", .Int(percentage)),
   ]
+
+  // Omit `percentage` for indeterminate (spinner-style) progress; include it
+  // only when a concrete value is supplied.
+  case percentage {
+    .Some(pct) => value_fields = .append(json.kv("percentage", .Int(pct))),
+    .None => {},
+  }
 
   if title != "" {
     value_fields = .append(json.kv("title", .Str(title)))
@@ -358,21 +365,37 @@ fn run_diagnostics_job(ctx: LoopCtx, job_gen: Int) {
   }
 
   token := if is_full {
-    ctx.begin_progress("Checking workspace", "Preparing diagnostics", 0)
+    ctx.begin_progress("Checking workspace", "Preparing diagnostics", .None)
   } else {
     ""
   }
 
-  if is_full {
-    ctx.report_progress(token, "Analyzing open documents", 10)
+  // Bridge compiler stage events to spinner-style progress reports, throttled so
+  // a fast cold walk does not flood the client. The first distinct message goes
+  // out immediately (last sent at time 0); terminal messages below bypass this.
+  sink: progress.ProgressSink? = if is_full and token != "" {
+    last_msg := Cell.new("")
+    last_time := Cell.new(0.0)
+    .Some(
+      fn(ev) {
+        msg := progress_message(ev)
+        now := date.now()
+
+        if msg != last_msg.get() and now - last_time.get() >= progress_throttle_ms {
+          ctx.report_progress(token, msg, .None)
+          last_msg.set(msg)
+          last_time.set(now)
+        }
+      },
+    )
+  } else {
+    .None
   }
 
-  step := ctx.shared.get().publish_due_diagnostics()
+  step := ctx.shared.get().publish_due_diagnostics_with_progress(sink)
 
   if ctx.gen.get() == job_gen {
-    if is_full {
-      ctx.report_progress(token, "Publishing diagnostics", 90)
-    }
+    ctx.report_progress(token, "Publishing diagnostics", .None)
     ctx.shared.set(step.state)
 
     for out in step.outgoing {
@@ -382,5 +405,21 @@ fn run_diagnostics_job(ctx: LoopCtx, job_gen: Int) {
     ctx.end_progress(token, "Diagnostics ready")
   } else {
     ctx.end_progress(token, "Diagnostics superseded")
+  }
+}
+
+/// Minimum gap between distinct spinner messages, in milliseconds. Conservative
+/// default; the only knob for client-facing progress noise.
+progress_throttle_ms := 50.0
+
+/// Map a compiler stage event to a user-facing progress message.
+fn progress_message(ev: progress.AnalysisProgress) String {
+  case ev.stage {
+    .Loading => "Loading ${ev.module}",
+    .Parsing => "Parsing ${ev.module}",
+    .PlanningImports => "Resolving imports for ${ev.module}",
+    .AnalyzingDependencies => "Analyzing dependencies for ${ev.module}",
+    .Resolving => "Typechecking ${ev.module}",
+    .Publishing => "Finalizing ${ev.module}",
   }
 }

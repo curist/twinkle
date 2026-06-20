@@ -2,10 +2,22 @@ use @std.proc
 
 use compiler.query.cache
 use compiler.query.diagnostics
+use compiler.query.progress
 use compiler.query.semantic
 use lib.json
 use tests.assert
 use tests.runner
+
+fn stage_tag(stage: progress.AnalysisStage) String {
+  case stage {
+    .Loading => "loading",
+    .Parsing => "parsing",
+    .PlanningImports => "planning",
+    .AnalyzingDependencies => "deps",
+    .Resolving => "resolving",
+    .Publishing => "publishing",
+  }
+}
 
 fn input(text: String) diagnostics.DocumentInput {
   .{ uri: "file:///main.tw", text, version: .Some(1) }
@@ -231,6 +243,79 @@ pub fn suite() runner.Suite {
               doc(dep, "pub fn answer() Int { 42 }\n", 1),
             ],
           },
+          .None,
+        )
+        try assert.equal(result.diagnostics.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "progress-aware workspace analysis emits module stage events",
+      fn() {
+        entry := "file:///tmp/twinkle-query-main.tw"
+        dep := "file:///tmp/dep.tw"
+        events := Cell.new([])
+        result := diagnostics.analyze_workspace_with_progress(
+          cache.empty(),
+          .{
+            entry_uri: entry,
+            project_root: "/tmp",
+            open_documents: [
+              doc(entry, "use dep\nx := dep.answer()\n", 1),
+              doc(dep, "pub fn answer() Int { 42 }\n", 1),
+            ],
+          },
+          .None,
+          .Some(
+            fn(ev) {
+              events.set(events.get().append("${stage_tag(ev.stage)}:${ev.module}"))
+            },
+          ),
+        )
+        try assert.equal(result.diagnostics.len(), 0)
+        seen := events.get()
+
+        // Both the entry and its dependency should have emitted stage events.
+        try assert.is_true(seen.len() > 0)
+
+        modules: Dict<String, Bool> = Dict.new()
+        saw_parsing := false
+        saw_resolving := false
+
+        for tag in seen {
+          parts := tag.split(":")
+          module := parts[1]
+          modules[module] = true
+
+          // Module names must be display-friendly, not absolute paths.
+          try assert.is_false(module.starts_with("/"))
+
+          if parts[0] == "parsing" {
+            saw_parsing = true
+          }
+
+          if parts[0] == "resolving" {
+            saw_resolving = true
+          }
+        }
+        try assert.is_true(saw_parsing)
+        try assert.is_true(saw_resolving)
+
+        // Entry plus dependency = at least two distinct modules.
+        try assert.is_true(modules.keys().len() >= 2)
+
+        // The workspace entry shows relative to its project root.
+        try assert.is_true(modules.has("twinkle-query-main.tw"))
+        .Ok({})
+      },
+    )
+    .test(
+      "plain workspace analysis still works without a progress sink",
+      fn() {
+        entry := "file:///tmp/twinkle-query-main.tw"
+        result := diagnostics.analyze_workspace(
+          cache.empty(),
+          .{ entry_uri: entry, project_root: "/tmp", open_documents: [doc(entry, "x := 1\n", 1)] },
           .None,
         )
         try assert.equal(result.diagnostics.len(), 0)

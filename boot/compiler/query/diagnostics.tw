@@ -12,6 +12,7 @@ use compiler.base_env
 use compiler.imports
 use compiler.query.analyze
 use compiler.query.cache
+use compiler.query.progress.{ProgressSink}
 use compiler.query.stage_runner
 use lib.json.{Json}
 use lib.query.keys
@@ -107,6 +108,18 @@ pub fn analyze_workspace(
   input: WorkspaceInput,
   prior_snapshot: analyze.ClosureSnapshot?,
 ) WorkspaceAnalysisResult {
+  analyze_workspace_with_progress(store, input, prior_snapshot, .None)
+}
+
+/// Progress-aware variant of `analyze_workspace`. When `progress` is `.Some`,
+/// each analyzed module emits coarse stage events through the sink. The plain
+/// `analyze_workspace` delegates here with `.None`.
+pub fn analyze_workspace_with_progress(
+  store: cache.Store,
+  input: WorkspaceInput,
+  prior_snapshot: analyze.ClosureSnapshot?,
+  progress: ProgressSink?,
+) WorkspaceAnalysisResult {
   entry_id := case identity.from_file_uri(input.entry_uri) {
     .Ok(id) => id,
     .Err(err) => {
@@ -165,7 +178,11 @@ pub fn analyze_workspace(
     .None => .None,
   }
 
-  state0 := analyze.new_state(base, cur_store, ov, input.project_root).with_snapshot_capture()
+  state_base := analyze.new_state(base, cur_store, ov, input.project_root).with_snapshot_capture()
+  state0 := case progress {
+    .Some(sink) => state_base.with_progress(sink),
+    .None => state_base,
+  }
   state := case reuse {
     .Some(s) => state0.restore_snapshot(s),
     .None => state0,

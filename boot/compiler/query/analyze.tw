@@ -6,6 +6,7 @@
 
 use @std.date
 use @std.fs
+use @std.path
 use @std.proc
 
 use compiler.base_env.{add_internal_host_builtins, reserved_stdlib_type_origin}
@@ -16,6 +17,8 @@ use compiler.lint
 use compiler.mono_type.{TypeId}
 use compiler.query.cache
 use compiler.query.fingerprint
+use compiler.query.progress
+use compiler.query.progress.{ProgressSink}
 use compiler.query.stage_runner
 use compiler.query.type_registry
 use compiler.resolver.{
@@ -121,6 +124,10 @@ pub type AnalysisState = .{
   // before analyzing its own module. Set only by the LSP diagnostics path.
   capture_snapshot: Bool,
   entry_snapshot: ClosureSnapshot?,
+  // Optional progress sink: when set (LSP diagnostics path), each module emits
+  // coarse stage events as it is analyzed. `.None` for build/CLI/test runs, so
+  // those pay nothing.
+  progress: ProgressSink?,
 }
 
 /// Public surface needed by downstream modules when importing this module.
@@ -255,6 +262,7 @@ pub fn new_state(base: ResolvedEnv, store: cache.Store, ov: overlay.Overlay, pro
     lint_mode: false,
     capture_snapshot: false,
     entry_snapshot: .None,
+    progress: .None,
   }
 }
 
@@ -262,6 +270,62 @@ pub fn new_state(base: ResolvedEnv, store: cache.Store, ov: overlay.Overlay, pro
 pub fn with_snapshot_capture(state: AnalysisState) AnalysisState {
   state.capture_snapshot = true
   state
+}
+
+/// Attach a progress sink so each analyzed module emits coarse stage events.
+pub fn with_progress(state: AnalysisState, sink: ProgressSink) AnalysisState {
+  state.progress = .Some(sink)
+  state
+}
+
+/// Emit a stage event for `canonical` when a sink is attached; otherwise no-op.
+/// The event carries a display-friendly module name (relative to its project,
+/// stdlib, or prelude root) rather than the absolute canonical path.
+fn note_progress(state: AnalysisState, stage: progress.AnalysisStage, canonical: String) {
+  case state.progress {
+    .Some(sink) => sink(.{ stage, module: state.display_module_name(canonical) }),
+    .None => {},
+  }
+}
+
+/// Shorten an absolute canonical path to a readable module name by stripping the
+/// project / stdlib / prelude root it belongs to. Stdlib modules are marked with
+/// an `@std/` prefix; anything outside the known roots falls back to its filename.
+fn display_module_name(state: AnalysisState, canonical: String) String {
+  case strip_root(canonical, state.canonical_roots.stdlib_root) {
+    .Some(rel) => { return "@std/${rel}" },
+    .None => {},
+  }
+
+  case strip_root(canonical, state.canonical_roots.prelude_root) {
+    .Some(rel) => { return rel },
+    .None => {},
+  }
+
+  case strip_root(canonical, path.normalize(state.project_root)) {
+    .Some(rel) => { return rel },
+    .None => {},
+  }
+  path.basename(canonical)
+}
+
+/// Return `canonical` relative to `root` (without the leading separator), or
+/// `.None` when it does not live under `root`.
+fn strip_root(canonical: String, root: String) String? {
+  if root == "" {
+    return .None
+  }
+  prefix := if root.ends_with("/") {
+    root
+  } else {
+    "${root}/"
+  }
+
+  if canonical.starts_with(prefix) {
+    .Some(canonical.substring(prefix.len(), canonical.len()))
+  } else {
+    .None
+  }
 }
 
 /// Restore a previously captured dependency-closure snapshot so the entry's
@@ -337,6 +401,7 @@ fn analyze_module_impl(
     return .{ env: base, state, diagnostics: [], ok: false, rewrites: [], lints: [] }
   }
 
+  state.note_progress(.Loading, canonical)
   t_load0 := date.now()
   loaded := case state.load_source(canonical, module_id, caller_id, use_span) {
     .Ok(value) => value,
@@ -356,6 +421,7 @@ fn analyze_module_impl(
     loaded.state.timings.load_source = loaded.state.timings.load_source + (date.now() - t_load0)
   }
 
+  loaded.state.note_progress(.Parsing, canonical)
   t_parse0 := date.now()
   parsed_load := case loaded.state.parse_cached(canonical, loaded.source, loaded.source_hash) {
     .Ok(value) => value,
@@ -375,6 +441,7 @@ fn analyze_module_impl(
     parsed_load.state.timings.parse = parsed_load.state.timings.parse + (date.now() - t_parse0)
   }
 
+  parsed_load.state.note_progress(.PlanningImports, canonical)
   t_plan0 := date.now()
   dep_plan := case parsed_load.state.plan_dependencies(canonical, parsed_load.parsed, loaded.source) {
     .Ok(plan) => plan,
@@ -395,6 +462,7 @@ fn analyze_module_impl(
     + (date.now() - t_plan0)
   }
 
+  parsed_load.state.note_progress(.AnalyzingDependencies, canonical)
   deps := analyze_dependencies(
     base,
     parsed_load.state,
@@ -482,6 +550,7 @@ fn analyze_module_impl(
     .None => {},
   }
 
+  cur.note_progress(.Resolving, canonical)
   local := case cur.resolve_and_check_local(
     canonical,
     runner,
@@ -502,6 +571,7 @@ fn analyze_module_impl(
       }
     },
   }
+  local.state.note_progress(.Publishing, canonical)
   t_publish0 := date.now()
   cur = local.state.publish_interface(
     canonical,

@@ -21,6 +21,7 @@ use compiler.query.document_symbols as query_document_symbols
 use compiler.query.folding_range as query_folding_range
 use compiler.query.hover as query_hover
 use compiler.query.inlay_hints as query_inlay_hints
+use compiler.query.progress.{ProgressSink}
 use compiler.query.references as query_references
 use compiler.query.semantic
 use compiler.query.semantic_tokens as query_semantic_tokens
@@ -768,6 +769,13 @@ pub fn diagnostics_due(state: State) Bool {
 }
 
 pub fn publish_due_diagnostics(state: State) Step {
+  state.publish_due_diagnostics_with_progress(.None)
+}
+
+/// Progress-aware variant of `publish_due_diagnostics`. When `progress` is
+/// `.Some`, full workspace analysis emits coarse module-stage events through the
+/// sink. The plain entry point delegates here with `.None`.
+pub fn publish_due_diagnostics_with_progress(state: State, progress: ProgressSink?) Step {
   if !(state.diagnostics_pending and date.now() >= state.diagnostics_deadline_ms) {
     return .{ state, outgoing: [] }
   }
@@ -777,7 +785,7 @@ pub fn publish_due_diagnostics(state: State) Step {
   case state.diagnostics_tier {
     .Parse => state.publish_parse_diagnostics(),
     .Full => {
-      step := state.publish_workspace_diagnostics()
+      step := state.publish_workspace_diagnostics(progress)
       done := step.state
       done.full_dirty = false
 
@@ -844,7 +852,7 @@ fn note_changed_document_source(state: State, uri: String, text: String) State {
   state
 }
 
-fn publish_workspace_diagnostics(state: State) Step {
+fn publish_workspace_diagnostics(state: State, progress: ProgressSink?) Step {
   open_docs := state.documents.docs.values()
   overlay_docs := collect doc in open_docs {
     query_diagnostics.DocumentInput.{ uri: doc.uri, text: doc.text, version: doc.version }
@@ -876,10 +884,11 @@ fn publish_workspace_diagnostics(state: State) Step {
     // Use first doc as entry — analysis walks all deps anyway.
     // Track which open-doc URIs are covered by this analysis.
     entry := docs[0]
-    result := query_diagnostics.analyze_workspace(
+    result := query_diagnostics.analyze_workspace_with_progress(
       cur_cache,
       .{ entry_uri: entry.uri, project_root: root, open_documents: overlay_docs },
       state.closure_snapshot,
+      progress,
     )
     cur_cache = result.cache
     state.closure_snapshot = result.snapshot
