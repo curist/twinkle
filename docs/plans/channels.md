@@ -33,6 +33,19 @@ stackful JSPI suspension already underlying `Task`), not a public surface.
   if a consumer lags), matching Go.
 - Stage0 (Rust) parity. Boot + runtime only, consistent with `Task`.
 
+## Why not a pull/iterator abstraction?
+
+A natural question: why a new primitive instead of "just another iterator"? Because
+**iterators pull; channels push and park.** An iterator is lazy and caller-driven —
+the consumer asks for the next element, and two iterators over a collection iterate
+independently. A channel is the inverse: producers push values into a shared stream,
+and a consumer that asks for a value with none available *parks* (suspends via the
+scheduler) until a producer supplies one. That parking — cross-task, scheduler-
+managed, with backpressure — is exactly the thing an iterator does not model, and
+exactly what removes the LSP poll loops. Channels reuse the `IntoIterator` contract
+for the `for v in ch { }` *syntax*, but the semantics are push/park, not pull (see
+"Iterating a channel consumes a shared stream").
+
 ## API surface
 
 `Channel<T>` is a compiler-registered builtin reference type (same family as
@@ -44,17 +57,14 @@ Channel.new<T>() Channel<T>                  // unbuffered (rendezvous)
 Channel.bounded<T>(capacity: Int) Channel<T> // buffered, capacity >= 1
 
 // Send — blocks per the backpressure rules below
-ch.send(v)        Result<Void, SendError>    // .Err(.Closed) if channel is closed
+ch.send(v)        Bool                       // false if the channel is closed (not delivered)
 
 // Receive
-ch.recv()         Result<T, RecvError>       // .Err(.Closed) once closed AND drained
+ch.recv()         T?                          // .None once closed AND drained
 for v in ch { }                              // drains until closed (IntoIterator)
 
 // Close — idempotent, no-op if already closed
 ch.close()
-
-type SendError = { Closed }
-type RecvError = { Closed }
 ```
 
 Rationale:
@@ -62,33 +72,41 @@ Rationale:
 - **Unbuffered + bounded** (Go's model): rendezvous handoff and a fixed-capacity
   buffer with natural backpressure (send blocks when full). Two constructors
   rather than a single `new(capacity)` with a magic `0`. `capacity < 1` traps.
-- **`Result`-based `recv`/`send`**: explicit and non-trapping. Verbosity is a
-  non-issue because the common consumption path is `for v in ch { }` (no
-  per-recv unwrapping — the closed `Err` is just loop termination), propagation
-  is `v := try ch.recv()`, and the prelude already provides the full unwrap
-  family (`unwrap_or`, `unwrap_or_else`, `ok()` → `Option`, `map`, `and_then`,
-  …). (`send` → `Bool` is the fallback if a must-use-`Result` lint makes the
-  `Result` noisy.)
+- **`recv() T?`, `send(v) Bool`** — non-trapping, and minimal because a channel
+  has exactly one terminal condition (closed). There is no
+  timeout/cancelled/disconnected to distinguish, so `Option`/`Bool` carry all the
+  information a full `Result` would. `recv`'s `.None` = closed+drained; `send`'s
+  `false` = closed (value not delivered). The common path stays clean:
+  `for v in ch { }` (no unwrapping — closed is loop end), `v := try ch.recv()` to
+  propagate in an `Option`-returning fn, and the prelude `Option` family
+  (`unwrap_or`, `unwrap_or_else`, …) for one-offs. If a later op needs richer
+  outcomes (a `recv_timeout`, or `select`), it gets its own return type — `recv`
+  stays `T?`. The runtime boundary uses an extensible tagged result (see
+  Implementation) so adding those later does not re-plumb anything.
 - **Single `Channel<T>` handle**; multiple producers/consumers allowed
   (fan-in/out falls out of the wait-queue design).
+- **Constructor naming:** `bounded(n)` over `with_capacity(n)`. `with_capacity`
+  reads (esp. to Rust users) as a soft preallocation hint that can still grow;
+  `bounded` names the actual semantic — a hard cap with backpressure.
 
 ## Semantics
 
 **Unbuffered (`Channel.new`)** — rendezvous:
 
-- `send(v)`: receiver parked → hand `v` over, wake it, return `.Ok`. Else park
-  the sender (holding `v`) until a receiver arrives or close.
-- `recv()`: sender parked → take its `v`, wake it (its `send` returns `.Ok`),
-  return `.Ok(v)`. Else closed → `.Err(.Closed)`. Else park the receiver.
+- `send(v)`: receiver parked → hand `v` over, wake it, return `true`. Else park
+  the sender (holding `v`) until a receiver arrives (→ `true`) or close (→ `false`).
+- `recv()`: sender parked → take its `v`, wake it (its `send` returns `true`),
+  return `.Some(v)`. Else closed → `.None`. Else park the receiver.
 
 **Bounded (`Channel.bounded(n)`, n ≥ 1)** — buffer with backpressure:
 
-- `send(v)`: closed → `.Err(.Closed)`; receiver parked (buffer empty) → hand off
-  directly; buffer has space → enqueue, return `.Ok` (no block); buffer full →
-  park the sender (holding `v`) until space frees or close.
+- `send(v)`: closed → `false`; receiver parked (buffer empty) → hand off
+  directly, `true`; buffer has space → enqueue, return `true` (no block); buffer
+  full → park the sender (holding `v`) until space frees (→ `true`) or close
+  (→ `false`).
 - `recv()`: buffer non-empty → dequeue front; if a sender was parked on a full
-  buffer, move its value into the tail and wake it; return `.Ok(v)`. Empty +
-  closed → `.Err(.Closed)`. Empty + open → park the receiver.
+  buffer, move its value into the tail and wake it (→ `true`); return `.Some(v)`.
+  Empty + closed → `.None`. Empty + open → park the receiver.
 - Invariant: never parked receivers with a non-empty buffer, nor parked senders
   with a non-full buffer.
 
@@ -96,11 +114,11 @@ Rationale:
 
 - Idempotent — a second close is a no-op (non-trapping).
 - Wakes **all** parked receivers: they drain remaining buffered values first
-  (`.Ok` each), then further `recv()` returns `.Err(.Closed)`. Buffered values
-  survive close (drain-then-closed, like Go).
-- Wakes **all** parked senders: their `send` returns `.Err(.Closed)`; the pending
-  value is dropped.
-- `send` after close → `.Err(.Closed)`.
+  (`.Some` each), then further `recv()` returns `.None`. Buffered values survive
+  close (drain-then-closed, like Go).
+- Wakes **all** parked senders: their `send` returns `false`; the pending value
+  is dropped.
+- `send` after close → `false`.
 
 **Ordering & fairness:** FIFO throughout — values received in send order; parked
 senders and receivers each woken FIFO; one value to exactly one receiver (no
@@ -110,15 +128,51 @@ duplication).
 parks via the scheduler (same Suspending machinery as `await`/`sleep`); the host
 event loop stays free. This is what removes the LSP poll loops.
 
-**Deadlock detection:** a task parked on a channel counts as blocked. If the
-scheduler goes quiescent with all remaining tasks parked on channels and nothing
-pending (no runnable, no host I/O/timers), that surfaces as a deadlock —
-extending the existing `blockedOnTask`/`checkQuiescence` accounting with a
-`blockedOnChannel` counter.
+**Deadlock detection:** a task parked on a channel counts as blocked
+(`blockedOnChannel`, alongside `blockedOnTask`). A deadlock is declared **only**
+when the scheduler is fully quiescent: no runnable tasks, **`pendingHost == 0`**
+(no stdin/socket/timer in flight), and the remaining tasks are parked on
+channels/awaits. This deliberately does *not* flag a long-lived daemon/service
+that sits idle: a server parked on stdin (or any host I/O, or a timer) keeps
+`pendingHost > 0`, so it stays alive. Only a task graph where nothing could ever
+make progress is reported.
 
 **Edge cases:** `recv()` on a forever-empty open channel parks indefinitely (as
 in Go), caught by deadlock detection only if the whole scheduler is otherwise
 idle. `Channel.bounded(n)` with `n < 1` traps.
+
+### Close ownership (convention)
+
+`Channel<T>` is a single handle and any holder *can* call `close()`. v1 does not
+enforce who closes (no split `SendChannel`/`RecvChannel` types — YAGNI). The
+**convention is that the producer side owns close**: the task(s) that send are
+responsible for closing once done, and receivers never close. This keeps "no more
+values will arrive" meaning exactly "the producer said so," and avoids the
+send-after-close races that unstructured closing causes. Tooling could enforce it
+later via endpoint types if it proves necessary.
+
+### Iterating a channel consumes a shared stream
+
+`for v in ch { }` does **not** behave like iterating a collection. Multiple
+iterators over the same channel *compete* for values — each value goes to exactly
+one of them (a work queue), not to all of them (no broadcast):
+
+```tw
+Task.spawn(fn() { for v in ch { ... } })   // these two
+Task.spawn(fn() { for v in ch { ... } })   // split the stream, round-robin-ish
+```
+
+This is intended (it's how you fan work out to a pool), but it differs from the
+usual "independent iteration" intuition, so it is called out explicitly.
+
+### Cancellation
+
+v1 has no separate cancellation primitive: **closing the channel is the shutdown
+mechanism.** A worker blocked in `recv()` (or `for v in ch`) unblocks when the
+channel closes (`.None` / loop end) and returns. This is sufficient when a worker
+waits on a single channel. Cancelling a worker that must wait on *several* things
+at once (work *or* a shutdown signal) is what `select` is for — and `select` is
+deferred (see Non-goals), so multi-way cancellation waits for it.
 
 ## Implementation
 
@@ -152,11 +206,14 @@ A channel is an object owned by the scheduler:
 
 New scheduler imports: `channel_new(cap)`, `channel_send(ch, v)`,
 `channel_recv(ch)`, `channel_close(ch)`. Values cross as `anyref` (the compiler
-boxes `T`, as it does for generic containers / `Task` results). `recv` signals
-closed-and-drained with a distinct runtime **carrier**: a non-null carrier wraps
-a real value; `null` means closed. The carrier (not bare-null) avoids colliding
-with values whose own representation is null-ish (e.g. an `Option`'s `.None`). A
-thin Twinkle wrapper turns the carrier/null into the `Result`.
+boxes `T`, as it does for generic containers / `Task` results). `recv` returns an
+extensible **tagged result** object — `{ kind: "value", value }` or
+`{ kind: "closed" }` — rather than a carrier/`null` sentinel. A `null` sentinel
+would be a tagged union in disguise (and would collide with values whose own
+representation is null-ish, e.g. an `Option`'s `.None`); the tagged object avoids
+both and grows cleanly if future ops need more kinds (`timeout`, `cancelled`). The
+thin Twinkle wrapper maps `value` → `.Some(v)` and `closed` → `.None` for `recv`;
+`send` returns the scheduler's delivered/closed boolean directly.
 
 ### Compiler (boot only)
 
@@ -165,14 +222,14 @@ thin Twinkle wrapper turns the carrier/null into the `Result`.
   `send` / `recv` / `close`, lowering to the intrinsics above (mirrors
   `Task.spawn` → `task_create`).
 - Make `Channel` satisfy the existing **`IntoIterator`** contract so
-  `for v in ch { }` lowers to a `recv`-until-`.Closed` loop, reusing the
+  `for v in ch { }` lowers to a `recv`-until-`.None` loop, reusing the
   access-contracts machinery.
 
 ### Twinkle surface (thin wrapper)
 
-A small module provides the `Result`-building wrappers, the
-`SendError`/`RecvError` enums, and the `IntoIterator` satisfier. The concurrency
-stays in the runtime; the Twinkle side is shape/marshaling only.
+A small module provides the `recv` → `Option` and `send` → `Bool` wrappers and the
+`IntoIterator` satisfier. The concurrency stays in the runtime; the Twinkle side is
+shape/marshaling only.
 
 ## Testing
 
@@ -185,13 +242,14 @@ Most behavior is observable from Twinkle, so the bulk lives in a new
 - Bounded buffering & backpressure: sends up to capacity don't block; the
   (capacity+1)-th send parks and resumes only after a `recv` frees space.
 - `for v in ch`: drains FIFO and ends exactly at close.
-- Close: buffered values still drain after close, then `.Err(.Closed)`; parked
-  receivers get `.Closed`; parked senders get `.Err(.Closed)`; `send` after close
-  → `.Err(.Closed)`; double `close` is a no-op.
-- Fan-in/out: N producers, M consumers — every value received exactly once.
-- `try` integration: a `Result`-returning fn using `v := try ch.recv()`.
-- Carrier encoding: send/recv a `.None` and a `Void` value to prove the closed
-  sentinel never collides with a real value.
+- Close: buffered values still drain after close, then `recv()` → `.None`; parked
+  receivers get `.None`; parked senders get `false`; `send` after close → `false`;
+  double `close` is a no-op.
+- Fan-in/out: N producers, M consumers — every value received exactly once
+  (work-queue distribution, not broadcast).
+- `try` integration: an `Option`-returning fn using `v := try ch.recv()`.
+- Tagged-result encoding: send/recv a `.None` (`Option`) and a `Void` value to
+  prove the closed result is distinct from any real value.
 - Deadlock detection: a `recv` with no possible sender and nothing else runnable
   surfaces the scheduler's deadlock error — an integration test (`target/twk run`
   a deadlocking `.tw`, expect nonzero exit + message), since asserting inline
@@ -219,7 +277,7 @@ Most behavior is observable from Twinkle, so the bulk lives in a new
 
 - Parking/waking races → reuse the one-task-per-microtask discipline +
   `blockedOnChannel` accounting; heavy fan-in/out coverage.
-- Boundary carrier encoding → the `.None`/`Void` carrier tests.
+- Boundary tagged-result encoding → the `.None`/`Void` distinctness tests.
 - Self-host breakage → the `make bundle-cli` fixed-point gate.
 
 ## Related
