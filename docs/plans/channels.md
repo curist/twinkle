@@ -120,6 +120,12 @@ Rationale:
   is dropped.
 - `send` after close → `false`.
 
+Conceptually: **close is normal stream termination for receivers** — `recv()` →
+`.None`, exactly like an iterator ending, not an error. For senders the stream is
+gone, so `send` after close fails as `false`. This is why `recv` returns
+`Option<T>` and `send` returns `Bool` rather than `Result`: there is no
+exceptional failure here to describe, only "no next value" / "not delivered."
+
 **Ordering & fairness:** FIFO throughout — values received in send order; parked
 senders and receivers each woken FIFO; one value to exactly one receiver (no
 duplication).
