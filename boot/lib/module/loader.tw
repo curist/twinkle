@@ -49,12 +49,12 @@ pub fn resolve_relative_module_path(importing_file: String, module_path: Vector<
 
 /// Return the stdlib root bundled into the compiler.
 pub fn resolve_stdlib_root() String {
-  path.join(core_lib.root(), "stdlib")
+  path.join(core_lib.root, "stdlib")
 }
 
 /// Return the prelude root bundled into the compiler.
 pub fn resolve_prelude_root() String {
-  path.join(core_lib.root(), "prelude")
+  path.join(core_lib.root, "prelude")
 }
 
 /// Resolve a stdlib import path from a given stdlib root.

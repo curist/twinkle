@@ -203,7 +203,7 @@ pub fn emit_host_read_file_result_helper(env: ResolvedEnv) FuncDef {
     .StructNew(result_layout.sym),
   ]
   FuncDef.{
-    name: host_read_file_result_helper_sym(),
+    name: host_read_file_result_helper_sym,
     params: [variant_ref],
     results: [ValType.Ref(true, .Named(result_layout.sym))],
     locals: [],

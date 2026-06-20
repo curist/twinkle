@@ -13,13 +13,9 @@ fn str_ref() ValType {
   .Ref(false, HeapType.Named("rt_types__String"))
 }
 
-fn t_string() String {
-  "rt_types__String"
-}
+t_string := "rt_types__String"
 
-fn t_strbuilder() String {
-  "rt_types__StrBuilder"
-}
+t_strbuilder := "rt_types__StrBuilder"
 
 fn sb_ref() ValType {
   .Ref(false, HeapType.Named("rt_types__StrBuilder"))
@@ -83,7 +79,7 @@ fn len_fn() FuncDef {
 
 // concat(a: String?, b: String?) -> String
 fn concat_fn() FuncDef {
-  ts := t_string()
+  ts := t_string
 
   // Locals: p2=len_a, p3=len_b, p4=total, p5=result
   FuncDef.{
@@ -132,7 +128,7 @@ fn concat_fn() FuncDef {
 
 // substring(s: String?, start: i32, end: i32) -> String
 fn substring_fn() FuncDef {
-  ts := t_string()
+  ts := t_string
 
   // Locals: p3=len/new_len, p4=result
   FuncDef.{
@@ -189,7 +185,7 @@ fn substring_fn() FuncDef {
 
 // eq(a: String?, b: String?) -> i32 — byte-by-byte equality
 fn eq_fn() FuncDef {
-  ts := t_string()
+  ts := t_string
 
   // Locals: p2=len, p3=i
   FuncDef.{
@@ -248,7 +244,7 @@ fn eq_fn() FuncDef {
 
 // cmp(a: String?, b: String?) -> i32 — returns -1, 0, or 1 (lexicographic)
 fn cmp_fn() FuncDef {
-  ts := t_string()
+  ts := t_string
 
   // Locals: p2=min_len, p3=i, p4=byte_a, p5=byte_b, p6=len_a, p7=len_b
   FuncDef.{
@@ -329,7 +325,7 @@ fn cmp_fn() FuncDef {
 // from_i64(n: i64) -> String
 // Locals: p1=neg, p2=work, p3=pos, p4=result_len, p5=buf, p6=result
 fn from_i64_fn() FuncDef {
-  ts := t_string()
+  ts := t_string
   FuncDef.{
     name: "from_i64",
     params: [.I64],
@@ -464,7 +460,7 @@ fn from_f64_fn() FuncDef {
 
 // from_bool(b: i32) -> String
 fn from_bool_fn() FuncDef {
-  ts := t_string()
+  ts := t_string
   FuncDef.{
     name: "from_bool",
     params: [.I32],
@@ -495,8 +491,8 @@ fn from_bool_fn() FuncDef {
 // builder_from(base: String?) -> StrBuilder
 // Initial capacity == base length (an empty base allocates a 0-length buffer).
 fn builder_from_fn() FuncDef {
-  ts := t_string()
-  tb := t_strbuilder()
+  ts := t_string
+  tb := t_strbuilder
 
   // p0=base; L1=len; L2=buf
   .{
@@ -540,8 +536,8 @@ fn builder_from_fn() FuncDef {
 // builder_extend(builder: StrBuilder?, chunk: String?) -> void
 // Appends chunk's bytes, doubling the backing buffer when it must grow.
 fn builder_extend_fn() FuncDef {
-  ts := t_string()
-  tb := t_strbuilder()
+  ts := t_string
+  tb := t_strbuilder
 
   // p0=builder, p1=chunk
   // L2=cur_len, L3=chunk_len, L4=needed, L5=buf, L6=cap, L7=new_cap, L8=new_buf
@@ -643,8 +639,8 @@ fn builder_extend_fn() FuncDef {
 // Returns the backing buffer directly when it is exactly full, else an
 // exact-size copy.
 fn builder_freeze_fn() FuncDef {
-  ts := t_string()
-  tb := t_strbuilder()
+  ts := t_string
+  tb := t_strbuilder
 
   // p0=builder; L1=len; L2=buf; L3=result
   .{

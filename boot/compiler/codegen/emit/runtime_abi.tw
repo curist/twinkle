@@ -83,10 +83,7 @@ pub fn emit_host_arg_shim(entry_name: String, index: Int, buf: Vector<Instr>) Ve
   buf
 }
 
-// ABI shim: wrap flat Array or variant results back into PVec after host calls.
-pub fn host_read_file_result_helper_sym() String {
-  "host_read_file_result_helper"
-}
+pub host_read_file_result_helper_sym := "host_read_file_result_helper"
 
 pub fn emit_host_result_shim(entry_name: String, buf: Vector<Instr>) Vector<Instr> {
   if is_host_vector_returning(entry_name) {
@@ -97,7 +94,7 @@ pub fn emit_host_result_shim(entry_name: String, buf: Vector<Instr>) Vector<Inst
     return buf
       .append(.RefCast(true, .Named("rt_types__Variant")))
       .append(.Call("rt_arr__from_read_file_result"))
-      .append(.Call(host_read_file_result_helper_sym()))
+      .append(.Call(host_read_file_result_helper_sym))
   }
 
   buf

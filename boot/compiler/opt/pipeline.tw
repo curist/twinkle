@@ -75,9 +75,7 @@ fn compute_pinned(module: AnfModule) Dict<Int, Bool> {
 }
 
 // ── pass manager data ───────────────────────────────────────────────
-fn fixed_point_cap() Int {
-  10
-}
+fixed_point_cap := 10
 
 type OptimizerContext = .{
   pinned: Dict<Int, Bool>,
@@ -196,7 +194,7 @@ fn run_fixed_point_simplifications(
   timing := zero_pass_timing()
   cur := expr
   round := 0
-  cap := fixed_point_cap()
+  cap := fixed_point_cap
 
   for round < cap {
     round = round + 1

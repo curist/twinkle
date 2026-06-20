@@ -1,11 +1,4 @@
-//! Deterministic cache keys for compiler stages.
-//!
-//! Uses wyhash v3 for stable, reproducible keys across runs.
-//! Reference: src/query/keys.rs
-
-pub fn cache_schema_version() Int {
-  2
-}
+pub cache_schema_version := 2
 
 // -- wyhash v3 constants --
 // Source: https://github.com/wangyi-fudan/wyhash (v3 final, commit 991aa3d)
@@ -157,12 +150,12 @@ fn mix_many(words: Vector<Int>) Int {
 // -- Stage keys --
 /// Cache key for parsed module.
 pub fn parse_key(path: String, source_hash: Int) Int {
-  mix_many([cache_schema_version(), hash_text("parse"), hash_text(path), source_hash])
+  mix_many([cache_schema_version, hash_text("parse"), hash_text(path), source_hash])
 }
 
 /// Cache key for resolved module.
 pub fn resolve_key(path: String, source_hash: Int, deps_hash: Int) Int {
-  mix_many([cache_schema_version(), hash_text("resolve"), hash_text(path), source_hash, deps_hash])
+  mix_many([cache_schema_version, hash_text("resolve"), hash_text(path), source_hash, deps_hash])
 }
 
 /// Cache key for type-checked module.
@@ -173,7 +166,7 @@ pub fn typecheck_key(path: String, source_hash: Int, deps_hash: Int, allow_host_
     0
   }
   mix_many([
-    cache_schema_version(),
+    cache_schema_version,
     hash_text("typecheck"),
     hash_text(path),
     source_hash,
@@ -185,7 +178,7 @@ pub fn typecheck_key(path: String, source_hash: Int, deps_hash: Int, allow_host_
 /// Cache key for lowered module.
 pub fn lower_key(path: String, source_hash: Int, deps_hash: Int, next_global_local_id: Int) Int {
   mix_many([
-    cache_schema_version(),
+    cache_schema_version,
     hash_text("lower"),
     hash_text(path),
     source_hash,
@@ -211,7 +204,7 @@ pub fn deps_hash(entries: Vector<DepEntry>) Int {
 
 /// Hash combining source hash and deps hash for a module.
 pub fn module_hash(source_hash: Int, deps_hash: Int) Int {
-  mix_many([cache_schema_version(), hash_text("module"), source_hash, deps_hash])
+  mix_many([cache_schema_version, hash_text("module"), source_hash, deps_hash])
 }
 
 /// Hash a sorted set of (path, module_hash) context entries.
@@ -237,7 +230,7 @@ pub fn context_hash(entries: Vector<DepEntry>) Int {
 
 /// Combine a base key with a context hash.
 pub fn with_context(base_key: Int, ctx_hash: Int) Int {
-  mix_many([cache_schema_version(), hash_text("with_ctx"), base_key, ctx_hash])
+  mix_many([cache_schema_version, hash_text("with_ctx"), base_key, ctx_hash])
 }
 
 // -- Types --
