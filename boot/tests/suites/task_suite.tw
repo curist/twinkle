@@ -1,3 +1,4 @@
+use @std.date
 use @std.time
 
 use tests.assert
@@ -407,6 +408,30 @@ pub fn suite() runner.Suite {
 
         // The non-sleeping task runs while the sleeper is parked on the timer.
         try assert.equal(log.get(), "ranslept")
+        .Ok({})
+      },
+    )
+    .test(
+      "Task.yield does not starve host timers",
+      fn() {
+        woke := Cell.new(false)
+        sleeper := Task.spawn(fn() {
+          time.sleep(5)
+          woke.set(true)
+        })
+
+        // Busy-yield for ~60ms of wall time. A 5ms sleeper must wake well within
+        // that window; if Task.yield only re-scheduled via a microtask it would
+        // starve the host timer phase and the sleeper would not fire until the
+        // loop ended.
+        start := date.now()
+
+        for date.now() - start < 60.0 {
+          Task.yield()
+        }
+        woke_during_loop := woke.get()
+        sleeper.await()
+        try assert.is_true(woke_during_loop)
         .Ok({})
       },
     )

@@ -556,6 +556,13 @@ export const hasJspi =
  */
 function createTaskScheduler() {
   const TOP = 0;
+  // Upper bound on how long continuous Task.yield()ing may withhold the host
+  // event loop. suspend_yield normally re-schedules via a microtask (cheap), but
+  // a task that yields in a tight loop would then keep the microtask queue
+  // non-empty forever and starve the host's timer/IO (macrotask) phase — pending
+  // stdin never gets read, setTimeout never fires. Forcing a macrotask hop at
+  // least this often lets the event loop service timers and IO between yields.
+  const YIELD_MACROTASK_MS = 4;
   const s = {
     nextId: 1,
     current: TOP,
@@ -569,6 +576,7 @@ function createTaskScheduler() {
     topLevelDone: false,
     doneResolve: null,
     doneReject: null,
+    lastYieldMacrotask: 0, // Date.now() of the last forced macrotask yield hop
   };
   s.done = new Promise((res, rej) => {
     s.doneResolve = res;
@@ -728,11 +736,30 @@ function createTaskScheduler() {
   }
 
   // suspend_yield() -> void : re-enqueue at the back of the runnable queue.
+  //
+  // Fast path: re-schedule via a microtask so tasks round-robin without host
+  // overhead. But to keep continuous yielding from starving the host event loop
+  // (see YIELD_MACROTASK_MS), force a macrotask hop (setTimeout) at least that
+  // often. The hop is accounted as pendingHost so quiescence/await detection
+  // does not treat the yielding task as finished while the timer is in flight.
   function suspendYield() {
     const caller = s.current;
     return new Promise((resolve) => {
-      s.runnable.push({ kind: "resume", id: caller, fire: () => resolve() });
-      schedule();
+      const resume = () => {
+        s.runnable.push({ kind: "resume", id: caller, fire: () => resolve() });
+        schedule();
+      };
+      const now = Date.now();
+      if (now - s.lastYieldMacrotask >= YIELD_MACROTASK_MS) {
+        s.lastYieldMacrotask = now;
+        s.pendingHost++;
+        setTimeout(() => {
+          s.pendingHost--;
+          resume();
+        }, 0);
+      } else {
+        resume();
+      }
     });
   }
 

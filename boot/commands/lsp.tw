@@ -373,17 +373,15 @@ fn run_diagnostics_job(ctx: LoopCtx, job_gen: Int) {
   // During a full analysis the sink serves two purposes:
   //   1. Bridge compiler stage events to spinner-style progress reports
   //      (only when the client supports work-done progress, i.e. token != "").
-  //   2. Periodically return control to the host event loop so the
-  //      single-threaded reader/dispatcher can service requests (e.g.
-  //      format-on-save) during a long cold analysis, which would otherwise
-  //      block until the synchronous walk completes.
-  // The yield uses time.sleep, NOT Task.yield: Task.yield re-schedules via a
-  // microtask, which never lets the host event loop reach its I/O (poll) phase,
-  // so incoming stdin stays unread until analysis ends. time.sleep suspends via
-  // a host timer (a macrotask), which does drain pending stdin.
-  // Both actions are time-throttled to bound client noise and the cost of
-  // event-loop round-trips. The sink runs for every full analysis, even without
-  // a progress token, since responsiveness must not depend on progress support.
+  //   2. Periodically yield so the single-threaded reader/dispatcher can service
+  //      requests (e.g. format-on-save) during a long cold analysis, which would
+  //      otherwise block until the synchronous walk completes.
+  // Task.yield is event-loop-fair: the scheduler forces a macrotask hop at least
+  // every few ms so continuous yielding cannot starve pending stdin/timers (see
+  // suspend_yield in tools/js_runtime/runtime.mjs). We still throttle our own
+  // yields so a big cold build does not pay for an event-loop round-trip on every
+  // module-stage event. The sink runs for every full analysis, even without a
+  // progress token, since responsiveness must not depend on progress support.
   sink: progress.ProgressSink? = if is_full {
     last_msg := Cell.new("")
     last_time := Cell.new(0.0)
@@ -404,7 +402,7 @@ fn run_diagnostics_job(ctx: LoopCtx, job_gen: Int) {
 
         if now - last_yield.get() >= progress_yield_ms {
           last_yield.set(now)
-          time.sleep(0)
+          Task.yield()
         }
       },
     )
@@ -432,10 +430,9 @@ fn run_diagnostics_job(ctx: LoopCtx, job_gen: Int) {
 /// default; the only knob for client-facing progress noise.
 progress_throttle_ms := 50.0
 
-/// Minimum gap between event-loop yields (time.sleep) during a full analysis, in
-/// milliseconds. Small enough to keep format-on-save responsive mid-compile,
-/// large enough that a big cold build does not pay for excessive event-loop
-/// round-trips.
+/// Minimum gap between Task.yield()s during a full analysis, in milliseconds.
+/// Small enough to keep format-on-save responsive mid-compile, large enough that
+/// a big cold build does not pay for an event-loop round-trip on every event.
 progress_yield_ms := 25.0
 
 /// Map a compiler stage event to a user-facing progress message.
