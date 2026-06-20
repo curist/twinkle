@@ -60,6 +60,7 @@ Self-hosting is complete. Historical design and status docs live in
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
 | [static-uniqueness-plan.md](static-uniqueness-plan.md) | Extend the static uniqueness optimizer to cover more realistic linear-update patterns without changing the runtime model |
 | [vector-perf/](vector-perf/README.md) | **Ongoing endeavor.** Make idiomatic `Vector`/`sort_by`/`order_by` code fast (vs ~7× behind Clojure). Measurement points at vector read cost + typed representation as the master lever; comparator and allocation micro-opts proven small. Gathers all sort/native-sort/typed-vector plans and the rejected approaches |
+| [channels.md](channels.md) | CSP-style `Channel<T>` (unbuffered + bounded, Go-style) on top of the cooperative `Task` scheduler — `send`/`recv`/`close`/`for v in ch`, `Result`-based recv, `select` deferred. Replaces the LSP's `Cell`-backed queues + poll loops. Design done |
 
 ### Archived reference docs
 
