@@ -153,6 +153,13 @@ fn is_task_type(env: ResolvedEnv, tid: TypeId) Bool {
   }
 }
 
+fn is_channel_type(env: ResolvedEnv, tid: TypeId) Bool {
+  case env.type_index["Channel"] {
+    .Some(idx) => env.types[idx].id.id == tid.id,
+    .None => false,
+  }
+}
+
 fn is_cell_type(env: ResolvedEnv, tid: TypeId) Bool {
   case env.type_index["Cell"] {
     .Some(idx) => env.types[idx].id.id == tid.id,
@@ -197,10 +204,10 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
     return layout_of_iterator(args, env)
   }
 
-  // Task<T> is an opaque GC reference to rt_types__Task.
-  // Layout stays Scalar(.WAnyref) for boxing/unboxing purposes
-  // (identity boxing since it's already a GC ref).
-  if is_task_type(env, tid) {
+  // Task<T> and Channel<T> are opaque GC references to runtime handle structs.
+  // Layout stays Scalar(.WAnyref) for boxing/unboxing purposes (identity boxing
+  // since they are already GC refs).
+  if is_task_type(env, tid) or is_channel_type(env, tid) {
     return .Scalar(.WAnyref)
   }
 
@@ -464,6 +471,10 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
 
       if is_task_type(env, tid) {
         return .Ref(true, .Named("rt_types__Task"))
+      }
+
+      if is_channel_type(env, tid) {
+        return .Ref(true, .Named("rt_types__Channel"))
       }
 
       entry := find_type_entry(env, tid)

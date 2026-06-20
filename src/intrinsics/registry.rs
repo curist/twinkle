@@ -125,6 +125,16 @@ pub enum LoweringKind {
     TaskAwait,
     /// Task.yield: cooperative suspension point.
     TaskYield,
+    /// Channel.new: creates an unbuffered channel handle.
+    ChannelNew,
+    /// Channel.bounded: creates a buffered channel handle.
+    ChannelBounded,
+    /// Channel.send: scheduler-backed send with backpressure.
+    ChannelSend,
+    /// Channel.recv: scheduler-backed receive.
+    ChannelRecv,
+    /// Channel.close: closes the channel.
+    ChannelClose,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -466,6 +476,46 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
     spec!(TASK_SPAWN, "Task.spawn", Intrinsic, true, true, TaskSpawn),
     spec!(TASK_AWAIT, "Task.await", Intrinsic, true, true, TaskAwait),
     spec!(TASK_YIELD, "Task.yield", Intrinsic, true, true, TaskYield),
+    spec!(
+        CHANNEL_NEW,
+        "Channel.new",
+        Intrinsic,
+        true,
+        true,
+        ChannelNew
+    ),
+    spec!(
+        CHANNEL_BOUNDED,
+        "Channel.bounded",
+        Intrinsic,
+        true,
+        true,
+        ChannelBounded
+    ),
+    spec!(
+        CHANNEL_SEND,
+        "Channel.send",
+        Intrinsic,
+        true,
+        true,
+        ChannelSend
+    ),
+    spec!(
+        CHANNEL_RECV,
+        "Channel.recv",
+        Intrinsic,
+        true,
+        true,
+        ChannelRecv
+    ),
+    spec!(
+        CHANNEL_CLOSE,
+        "Channel.close",
+        Intrinsic,
+        true,
+        true,
+        ChannelClose
+    ),
     spec!(HOST_READ_FILE, "__host_read_file", Runtime, false, false),
     spec!(HOST_WRITE_FILE, "__host_write_file", Runtime, false, false),
     spec!(
@@ -629,8 +679,8 @@ pub fn populate_func_table(
 
 pub fn builtin_module_aliases() -> &'static [&'static str] {
     &[
-        "Cell", "Dict", "Iterator", "Option", "Result", "Set", "Task", "Vector", "String", "Int",
-        "Float", "Bool", "Byte",
+        "Cell", "Channel", "Dict", "Iterator", "Option", "Result", "Set", "Task", "Vector",
+        "String", "Int", "Float", "Bool", "Byte",
     ]
 }
 

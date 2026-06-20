@@ -1,0 +1,13 @@
+type ChannelIterState<T> = .{ ch: Channel<T> }
+
+fn iter_step<T>(state: ChannelIterState<T>) UnfoldStep<T, ChannelIterState<T>> {
+  case state.ch.recv() {
+    .Some(value) => UnfoldStep.Yield(value, state),
+    .None => UnfoldStep.Done,
+  }
+}
+
+/// Iterate values from the shared channel stream until it is closed and drained.
+pub fn iter<T>(ch: Channel<T>) Iterator<T> {
+  Iterator.unfold(ChannelIterState.{ ch }, iter_step)
+}

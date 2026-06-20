@@ -42,6 +42,11 @@ pub type IntrinsicTag = {
   TaskSpawn,
   TaskAwait,
   TaskYield,
+  ChannelNew,
+  ChannelBounded,
+  ChannelSend,
+  ChannelRecv,
+  ChannelClose,
   CellNew,
   CellGet,
   CellSet,
@@ -68,6 +73,7 @@ pub type EmitCtx = .{
   prepared_funcs: Dict<Int, PreparedFunc>,
   is_init_func: Bool,
   loop_depth: Int,
+  scratch_anyref_local: Int,
   intrinsic_table: Dict<Int, IntrinsicTag>,
 }
 

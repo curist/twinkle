@@ -105,6 +105,7 @@ pub fn emit_module(
     prepared_funcs,
     is_init_func: false,
     loop_depth: 0,
+    scratch_anyref_local: -1,
     intrinsic_table,
   }
 
@@ -397,6 +398,12 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     idx = idx + 1
   }
 
+  // Scratch local for intrinsic shims that need to hold an opaque host anyref
+  // while constructing a typed Wasm value (Channel.recv's tagged result).
+  scratch_anyref_local := idx
+  extra_locals = .append(.Anyref)
+  idx = idx + 1
+
   // Return type
   ret_vt: Vector<ValType> = case prepared.return_mono {
     .Void => [],
@@ -416,6 +423,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     prepared_funcs: base_ctx.prepared_funcs,
     is_init_func: func.is_init,
     loop_depth: 0,
+    scratch_anyref_local,
     intrinsic_table: base_ctx.intrinsic_table,
   }
   body_instrs := emit_expr(prepared.body, prepared.return_mono, ctx, [])
@@ -1383,6 +1391,11 @@ pub fn build_intrinsic_table(b: BuiltinRegistry) Dict<Int, IntrinsicTag> {
   t[b.method_id("Task", "spawn").id] = .TaskSpawn
   t[b.method_id("Task", "await").id] = .TaskAwait
   t[b.method_id("Task", "yield").id] = .TaskYield
+  t[b.method_id("Channel", "new").id] = .ChannelNew
+  t[b.method_id("Channel", "bounded").id] = .ChannelBounded
+  t[b.method_id("Channel", "send").id] = .ChannelSend
+  t[b.method_id("Channel", "recv").id] = .ChannelRecv
+  t[b.method_id("Channel", "close").id] = .ChannelClose
   t[b.method_id("Cell", "new").id] = .CellNew
   t[b.method_id("Cell", "get").id] = .CellGet
   t[b.method_id("Cell", "set").id] = .CellSet
@@ -1453,6 +1466,11 @@ fn emit_intrinsic_call(
     .TaskSpawn => emit_intrinsic_task_spawn(args, result_idx, result_mono, ctx, buf),
     .TaskAwait => emit_intrinsic_task_await(args, result_idx, result_mono, ctx, buf),
     .TaskYield => emit_intrinsic_task_yield(result_idx, buf),
+    .ChannelNew => emit_intrinsic_channel_new(result_idx, buf),
+    .ChannelBounded => emit_intrinsic_channel_bounded(args, result_idx, ctx, buf),
+    .ChannelSend => emit_intrinsic_channel_send(args, result_idx, ctx, buf),
+    .ChannelRecv => emit_intrinsic_channel_recv(args, result_idx, result_mono, ctx, buf),
+    .ChannelClose => emit_intrinsic_channel_close(args, result_idx, ctx, buf),
     .CellNew => emit_intrinsic_cell_new(args, result_idx, result_mono, ctx, buf),
     .CellGet => emit_intrinsic_cell_get(args, result_idx, result_mono, ctx, buf),
     .CellSet => emit_intrinsic_cell_set(args, result_idx, ctx, buf),
@@ -2111,7 +2129,7 @@ fn emit_intrinsic_task_spawn(
   // is boxed here — the body has not run yet, so result boxing lives in
   // `__task_run`.
   buf = emit_atom(args[0], ctx, buf) // closure (anyref)
-  buf = .append(.Call(task_abi.sym_task_create())) // -> i32 task id
+  buf = .append(.Call(task_abi.sym_task_create)) // -> i32 task id
   buf = .append(.StructNew("rt_types__Task"))
   buf.append(.LocalSet(result_idx))
 }
@@ -2129,14 +2147,108 @@ fn emit_intrinsic_task_await(
   buf = emit_atom(args[0], ctx, buf)
   buf = .append(.RefCast(false, .Named("rt_types__Task")))
   buf = .append(.StructGet("rt_types__Task", 0)) // task id
-  buf = .append(.Call(task_abi.sym_suspend_await())) // -> anyref result
+  buf = .append(.Call(task_abi.sym_suspend_await)) // -> anyref result
   buf = emit_unbox_from_anyref(result_mono, ctx.env, buf)
   buf.append(.LocalSet(result_idx))
 }
 
 fn emit_intrinsic_task_yield(result_idx: Int, buf: Vector<Instr>) Vector<Instr> {
-  buf = .append(.Call(task_abi.sym_suspend_yield()))
+  buf = .append(.Call(task_abi.sym_suspend_yield))
   buf.append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx)) // void
+}
+
+// ── Channel intrinsics (scheduler-backed) ─────────────────────────────
+fn emit_channel_id(arg: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+  buf2 := emit_atom(arg, ctx, buf)
+  buf2
+    .append(.RefCast(false, .Named("rt_types__Channel")))
+    .append(.StructGet("rt_types__Channel", 0))
+}
+
+fn emit_intrinsic_channel_new(result_idx: Int, buf: Vector<Instr>) Vector<Instr> {
+  buf
+    .append(.Call(task_abi.sym_channel_new))
+    .append(.StructNew("rt_types__Channel"))
+    .append(.LocalSet(result_idx))
+}
+
+fn emit_intrinsic_channel_bounded(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  buf2 := emit_checked_i32_narrow(args[0], ctx, buf)
+  buf2
+    .append(.Call(task_abi.sym_channel_bounded))
+    .append(.StructNew("rt_types__Channel"))
+    .append(.LocalSet(result_idx))
+}
+
+fn emit_intrinsic_channel_send(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  buf2 := emit_channel_id(args[0], ctx, buf)
+  buf3 := emit_erased_container_ingress(args[1], ctx, buf2)
+  buf3.append(.Call(task_abi.sym_channel_send)).append(.LocalSet(result_idx))
+}
+
+fn emit_intrinsic_channel_recv(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  elem_mono := case result_mono {
+    .Optional(inner) => inner,
+    _ => error("Channel.recv: expected Option<T> result"),
+  }
+  sum_layout := get_sum_layout_ctx(result_mono, ctx)
+  some_variant := sum_layout.variants[1]
+  default_payload := if some_variant.payload_types.len() > 0 {
+    emit_default_value(some_variant.payload_types[0], [])
+  } else {
+    []
+  }
+  result_ref := ValType.Ref(false, .Named(sum_layout.sym))
+  raw_local := ctx.scratch_anyref_local
+
+  some_body: Vector<Instr> = [
+    .I32Const(1),
+    .LocalGet(raw_local),
+    .Call(task_abi.sym_channel_recv_value),
+  ]
+  some_body = emit_erased_container_egress(elem_mono, ctx.env, some_body)
+  some_body = .append(.StructNew(sum_layout.sym))
+  none_body: Vector<Instr> = [.I32Const(0)]
+  none_body = .concat(default_payload).append(.StructNew(sum_layout.sym))
+
+  buf2 := emit_channel_id(args[0], ctx, buf)
+  buf2
+    .append(.Call(task_abi.sym_channel_recv))
+    .append(.LocalSet(raw_local))
+    .append(.LocalGet(raw_local))
+    .append(.Call(task_abi.sym_channel_recv_is_value))
+    .append(.If(.Some(result_ref), some_body, none_body))
+    .append(.LocalSet(result_idx))
+}
+
+fn emit_intrinsic_channel_close(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  buf2 := emit_channel_id(args[0], ctx, buf)
+  buf2
+    .append(.Call(task_abi.sym_channel_close))
+    .append(.I32Const(0))
+    .append(.RefI31)
+    .append(.LocalSet(result_idx))
 }
 
 // Universal task-body entry point. The JS scheduler wraps this export with
@@ -2169,6 +2281,11 @@ fn program_uses_tasks(prepared_funcs: Dict<Int, PreparedFunc>, builtins: Builtin
   ids[builtins.method_id("Task", "spawn").id] = true
   ids[builtins.method_id("Task", "await").id] = true
   ids[builtins.method_id("Task", "yield").id] = true
+  ids[builtins.method_id("Channel", "new").id] = true
+  ids[builtins.method_id("Channel", "bounded").id] = true
+  ids[builtins.method_id("Channel", "send").id] = true
+  ids[builtins.method_id("Channel", "recv").id] = true
+  ids[builtins.method_id("Channel", "close").id] = true
   found := false
 
   for k, pf in prepared_funcs {

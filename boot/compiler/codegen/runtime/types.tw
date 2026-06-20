@@ -129,10 +129,11 @@ pub fn module() WasmModule {
         .None,
         false,
       ),
-      // Task<T> is a Wasm-owned handle carrying only an integer task id.
-      // The scheduler lives in the JS host (JSPI binding); it keys task
-      // records by this id and never constructs or inspects this struct.
+      // Task<T> and Channel<T> are Wasm-owned handles carrying only integer ids.
+      // The scheduler lives in the JS host (JSPI binding); it keys records by
+      // these ids and never constructs or inspects these structs.
       .Struct("Task", [.{ name: .Some("id"), mutable: false, ty: .I32 }], .None, true),
+      .Struct("Channel", [.{ name: .Some("id"), mutable: false, ty: .I32 }], .None, true),
     ],
     imports: [],
     funcs: [],

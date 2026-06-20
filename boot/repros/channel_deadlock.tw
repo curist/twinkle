@@ -1,0 +1,11 @@
+// Channel deadlock detection (manual repro — cannot be an inline test, since the
+// scheduler aborts the whole program).
+//
+// Receiving from a never-fed, never-closed channel with nothing else runnable
+// must surface the scheduler's deadlock error and exit non-zero — not hang.
+//
+//   target/twk run boot/repros/channel_deadlock.tw   # expect non-zero exit +
+//                                                     # "task deadlock ... channels/awaits"
+ch: Channel<Int> = Channel.new()
+v := ch.recv()
+println("unreachable: ${v}")

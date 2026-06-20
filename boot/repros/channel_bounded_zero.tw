@@ -1,0 +1,10 @@
+// Channel.bounded capacity validation (manual repro — cannot be an inline test,
+// since a trap aborts the whole program).
+//
+// Channel.bounded requires capacity >= 1; passing 0 (or negative) must trap with
+// a clear message and exit non-zero. Use Channel.new() for an unbuffered channel.
+//
+//   target/twk run boot/repros/channel_bounded_zero.tw   # expect non-zero exit +
+//                                                         # "capacity must be >= 1"
+ch: Channel<Int> = Channel.bounded(0)
+println("unreachable: ${ch.send(1)}")

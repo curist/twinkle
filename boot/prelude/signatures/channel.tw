@@ -1,0 +1,22 @@
+/// Create an unbuffered rendezvous channel.
+pub fn new<T>() Channel<T> {
+  []
+}
+
+/// Create a buffered channel with a fixed positive capacity.
+pub fn bounded<T>(capacity: Int) Channel<T> {
+  []
+}
+
+/// Send a value, suspending when backpressure requires it. Returns false if closed.
+pub fn send<T>(ch: Channel<T>, value: T) Bool {
+  false
+}
+
+/// Receive the next value, or None once the channel is closed and drained.
+pub fn recv<T>(ch: Channel<T>) T? {
+  .None
+}
+
+/// Close the channel. Closing an already-closed channel is a no-op.
+pub fn close<T>(ch: Channel<T>) Void {}

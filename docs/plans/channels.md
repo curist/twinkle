@@ -1,6 +1,6 @@
 # Channels (CSP-style concurrency)
 
-Status: Design (2026-06-20)
+Status: Implementation in progress (2026-06-20)
 
 ## Goal
 
@@ -33,8 +33,8 @@ stackful JSPI suspension already underlying `Task`), not a public surface.
   if a consumer lags), matching Go.
 - Stage0 (Rust) **execution** of channels — the Rust interpreter need not *run*
   the scheduler (boot runs under the JS runtime), as with `Task`. Stage0 must
-  still *emit/lower* the `Channel` builtins once Phase 2 puts them in
-  `boot/main.tw`; see Rollout.
+  still *emit/lower* the `Channel` builtins (from Phase 1, since
+  `boot/prelude/channel.tw` is auto-imported into `boot/main.tw`); see Rollout.
 
 ## Why not a pull/iterator abstraction?
 
@@ -224,26 +224,33 @@ change. A channel object:
 
 ### Boundary encoding
 
-New scheduler imports: `channel_new(cap)`, `channel_send(ch, v)`,
-`channel_recv(ch)`, `channel_close(ch)`. Values cross as `anyref` (the compiler
-boxes `T`, as it does for generic containers / `Task` results). `recv` returns an
-extensible **tagged result** object — `{ kind: "value", value }` or
-`{ kind: "closed" }` — rather than a carrier/`null` sentinel. A `null` sentinel
-would be a tagged union in disguise (and would collide with values whose own
-representation is null-ish, e.g. an `Option`'s `.None`); the tagged object avoids
-both and grows cleanly if future ops need more kinds (`timeout`, `cancelled`). The
-thin Twinkle wrapper maps `value` → `.Some(v)` and `closed` → `.None` for `recv`;
-`send` returns the scheduler's delivered/closed boolean directly.
+New scheduler imports: `channel_new()`, `channel_bounded(capacity)`,
+`channel_send(ch, v)`, `channel_recv(ch)`, `channel_recv_is_value(result)`,
+`channel_recv_value(result)`, and `channel_close(ch)`. Values cross as `anyref`
+(the compiler boxes `T`, as it does for generic containers / `Task` results).
+`recv` returns an extensible **opaque tagged result** JS object —
+`{ kind: "value", value }` or `{ kind: "closed" }` — rather than a carrier/`null`
+sentinel. Wasm cannot inspect JS object fields directly, so the compiler-emitted
+`Channel.recv` wrapper immediately decodes the object via the synchronous accessor
+imports: `channel_recv_is_value(raw)` branches, and `channel_recv_value(raw)`
+extracts the payload for the `.Some(v)` arm. A `null` sentinel would be a tagged
+union in disguise (and would collide with values whose own representation is
+null-ish, e.g. an `Option`'s `.None`); the tagged object avoids both and grows
+cleanly if future ops need more kinds (`timeout`, `cancelled`). `send` returns the
+scheduler's delivered/closed boolean directly.
 
 ### Compiler (boot)
 
-- Register `Channel` as a builtin generic type (new builtin `TypeId`), plus
-  builtin constructors `Channel.new` / `Channel.bounded` and methods
-  `send` / `recv` / `close`, lowering to the intrinsics above. Mirror the `Task`
-  wiring: `intr(...)` in `boot/compiler/builtins.tw`, a `BuiltinOp` +
-  `emit_intrinsic_*` in `boot/compiler/codegen/emit.tw`, and the import
-  declarations in `boot/compiler/codegen/runtime/task_abi.tw` (add the channel
-  imports there, under the same `"task"` module).
+- Register `Channel` as a builtin generic type (new builtin `TypeId`) in
+  `boot/compiler/base_env.tw`, plus builtin constructors `Channel.new` /
+  `Channel.bounded` and methods `send` / `recv` / `close`, lowering to the
+  intrinsics above. Mirror the `Task` wiring: `intr(...)` in
+  `boot/compiler/builtins.tw`, `IntrinsicTag` variants + `emit_intrinsic_*` in
+  `boot/compiler/codegen/emit.tw`, the import declarations in
+  `boot/compiler/codegen/runtime/task_abi.tw` (add the channel imports there,
+  under the same `"task"` module), `rt_types__Channel` in
+  `boot/compiler/codegen/runtime/types.tw`, and Task-like handling in
+  `boot/compiler/codegen/wasm_layout.tw` / `boot/compiler/codegen/emit/anyref.tw`.
 - **Handle ABI:** `Channel<T>` is a GC struct (`rt_types__Channel`) wrapping an
   `i32` channel id, mirroring `Task<T>`. `channel_new`/`channel_bounded` return
   `i32`; `send`/`recv`/`close` take the `i32`; payloads cross as `anyref` (boxed
@@ -259,21 +266,29 @@ thin Twinkle wrapper maps `value` → `.Some(v)` and `closed` → `.None` for `r
   `Channel.iter` returns an `Iterator<T>` built with `Iterator.unfold` whose step
   calls `recv()`: `.Some(v)` yields and continues, `.None` ends iteration.
 
-### Stage0 (Rust) — emit-only support, needed for Phase 2
+### Stage0 (Rust) — emit-only support, needed from Phase 1
 
-Because Phase 2 uses channels in `boot/commands/lsp.tw` (part of `boot/main.tw`)
-and `make stage2` starts from the Rust stage0 building `boot/main.tw`, stage0 must
-*lower/emit* the `Channel` builtins — not execute them. Mirror the existing `Task`
-support: a `CHANNEL_TYPE_ID` (`src/types/ty.rs`), builtin `FuncId`s
-(`src/ir/lower.rs`, cf. `TASK_SPAWN`), and type resolution/check/env entries
-(`src/types/{resolve,check,env}.rs`). Phase 1 needs no stage0 changes (channels
-live only in tests + the stdlib wrapper, off `boot/main.tw`'s compile path).
+`boot/prelude/channel.tw` is **auto-imported into `boot/main.tw`**, and
+`make stage2` builds `boot/main.tw` from the Rust stage0. So stage0 must
+*lower/emit* the `Channel` builtins — not execute them — from **Phase 1 onward**
+(not, as an earlier draft claimed, only at Phase 2): without it the prelude does
+not compile under stage0 and self-host breaks. (Phase 2 additionally *calls*
+channels in `lsp.tw`, but the stage0 support is already in place by then.) Mirror
+the existing `Task` support: a `CHANNEL_TYPE_ID` (`src/types/ty.rs`), builtin
+`FuncId`s (`src/ir/lower.rs`, cf. `TASK_SPAWN`), type resolution/check/env entries
+(`src/types/{resolve,check,env}.rs`), intrinsic registry/signature entries
+(`src/intrinsics/{registry,signatures}.rs`), prelude/codegen wiring
+(`src/codegen/{prelude,emit}.rs`), and `rt_types__Channel` in
+`src/runtime/types.rs`.
 
 ### Twinkle surface (thin wrapper)
 
-A small module provides the `recv` → `Option` and `send` → `Bool` wrappers and the
-`IntoIterator` satisfier. The concurrency stays in the runtime; the Twinkle side is
-shape/marshaling only.
+A small prelude module provides the user-visible signatures and `IntoIterator`
+satisfier. The `recv` → `Option` and `send` → `Bool` shaping is compiler-emitted
+around the runtime intrinsics/accessors; the Twinkle side is only API surface and
+iteration glue. After adding prelude/signature files, regenerate
+`boot/lib/module/core_lib.tw` with `tools/generate_core_lib.py` (the `make stage2`
+rule also does this).
 
 ## Testing
 
@@ -303,10 +318,11 @@ Most behavior is observable from Twinkle, so the bulk lives in a new
 
 ## Rollout (independently shippable phases)
 
-1. **Core primitive** — runtime ops + intrinsics + compiler builtin + thin
-   wrapper + `IntoIterator` + `channel_suite`. Self-host green. Ships channels.
-   Boot + runtime only — **no stage0 changes** (channels appear only in tests and
-   the stdlib wrapper, off `boot/main.tw`'s compile path).
+1. **Core primitive** — runtime ops + intrinsics + compiler builtin + prelude
+   wrapper + `IntoIterator` + `channel_suite`, **plus the emit-only Rust stage0
+   support** (needed already because `boot/prelude/channel.tw` is auto-imported
+   into `boot/main.tw`, which `make stage2` builds from stage0). Self-host green.
+   Ships channels.
 2. **LSP migration (first real adopter)** — replace `ChunkQueue` /
    `DiagnosticsQueue` and the `time.sleep(1)` poll loops in
    `boot/commands/lsp.tw` with channels; drop `wait_for_dispatcher` and the
@@ -314,9 +330,8 @@ Most behavior is observable from Twinkle, so the bulk lives in a new
    stdio driver that sends a formatting request mid cold-analysis (the harness
    used to validate the diagnostics responsiveness work — latency stays low, poll
    loops gone) and the full boot suite incl. LSP suites. Validates the API on real
-   code and delivers the idle-CPU / latency payoff. **Requires the emit-only Rust
-   stage0 support above** (channels now live in `boot/main.tw`, which `make
-   stage2` compiles from stage0).
+   code and delivers the idle-CPU / latency payoff. (Stage0 emit support is
+   already in place from Phase 1.)
 3. **Docs / later** — `docs/API.md` channel section; revisit `select` /
    `recv_timeout` only if a concrete need appears.
 

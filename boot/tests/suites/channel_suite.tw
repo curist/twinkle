@@ -1,0 +1,179 @@
+use tests.assert
+use tests.runner
+
+fn recv_int(ch: Channel<Int>) Int? {
+  value := try ch.recv()
+  .Some(value)
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("channel concurrency")
+    .test(
+      "unbuffered rendezvous hands off a value",
+      fn() {
+        ch: Channel<Int> = Channel.new()
+        producer := Task.spawn(fn() Bool { ch.send(42) })
+        try assert.equal(ch.recv(), .Some(42))
+        try assert.is_true(producer.await())
+        .Ok({})
+      },
+    )
+    .test(
+      "bounded channel buffers and drains in FIFO order",
+      fn() {
+        ch: Channel<Int> = Channel.bounded(2)
+        try assert.is_true(ch.send(1))
+        try assert.is_true(ch.send(2))
+        ch.close()
+        try assert.equal(ch.recv(), .Some(1))
+        try assert.equal(ch.recv(), .Some(2))
+        try assert.equal(ch.recv(), .None)
+        .Ok({})
+      },
+    )
+    .test(
+      "bounded send parks until space frees",
+      fn() {
+        ch: Channel<Int> = Channel.bounded(1)
+        try assert.is_true(ch.send(1))
+        sent := Cell.new(false)
+        producer := Task.spawn(fn() {
+          ok := ch.send(2)
+          sent.set(ok)
+        })
+        Task.yield()
+        try assert.is_false(sent.get())
+        try assert.equal(ch.recv(), .Some(1))
+        producer.await()
+        try assert.is_true(sent.get())
+        try assert.equal(ch.recv(), .Some(2))
+        .Ok({})
+      },
+    )
+    .test(
+      "for loop drains until close",
+      fn() {
+        ch: Channel<Int> = Channel.bounded(3)
+        try assert.is_true(ch.send(3))
+        try assert.is_true(ch.send(4))
+        try assert.is_true(ch.send(5))
+        ch.close()
+        sum := 0
+
+        for value in ch {
+          sum = sum + value
+        }
+
+        try assert.equal(sum, 12)
+        .Ok({})
+      },
+    )
+    .test(
+      "close wakes receiver and makes sends fail",
+      fn() {
+        ch: Channel<Int> = Channel.new()
+        got := Cell.new(99)
+        consumer := Task.spawn(fn() {
+          case ch.recv() {
+            .Some(v) => got.set(v),
+            .None => got.set(-1),
+          }
+        })
+        Task.yield()
+        ch.close()
+        ch.close()
+        consumer.await()
+        try assert.equal(got.get(), -1)
+        try assert.is_false(ch.send(1))
+        .Ok({})
+      },
+    )
+    .test(
+      "close wakes parked sender as not delivered",
+      fn() {
+        ch: Channel<Int> = Channel.new()
+        delivered := Cell.new(true)
+        producer := Task.spawn(fn() { delivered.set(ch.send(7)) })
+        Task.yield()
+        ch.close()
+        producer.await()
+        try assert.is_false(delivered.get())
+        .Ok({})
+      },
+    )
+    .test(
+      "try propagates recv none",
+      fn() {
+        ch: Channel<Int> = Channel.new()
+        ch.close()
+        try assert.equal(recv_int(ch), .None)
+        .Ok({})
+      },
+    )
+    .test(
+      "option none payload is distinct from closed",
+      fn() {
+        ch: Channel<Int?> = Channel.bounded(1)
+        try assert.is_true(ch.send(.None))
+        ch.close()
+        try assert.equal(ch.recv(), .Some(.None))
+        try assert.equal(ch.recv(), .None)
+        .Ok({})
+      },
+    )
+    .test(
+      "void payload is distinct from closed",
+      fn() {
+        ch: Channel<Void> = Channel.bounded(1)
+        try assert.is_true(ch.send({}))
+        ch.close()
+        try assert.is_some(ch.recv())
+        try assert.is_none(ch.recv())
+        .Ok({})
+      },
+    )
+    .test(
+      "fan-in fan-out delivers every value exactly once",
+      fn() {
+        total := 30
+        ch: Channel<Int> = Channel.bounded(total)
+
+        // Three producers each send a distinct block of values.
+        producers := collect p in range(3) {
+          Task.spawn(fn() {
+            for i in range(10) {
+              ch.send(p * 10 + i)
+            }
+          })
+        }
+
+        for prod in producers {
+          prod.await()
+        }
+        ch.close()
+
+        // Two consumers compete for the shared stream; each value must land with
+        // exactly one of them (work queue, not broadcast).
+        count := Cell.new(0)
+        sum := Cell.new(0)
+        consumers := collect _ in range(2) {
+          Task.spawn(fn() {
+            for value in ch {
+              count.update(fn(c) { c + 1 })
+              sum.update(fn(s) { s + value })
+            }
+          })
+        }
+
+        for cons in consumers {
+          cons.await()
+        }
+        try assert.equal(count.get(), total)
+
+        // Sum of 0..30 — proves no value was duplicated or dropped.
+        try assert.equal(sum.get(), 435)
+        .Ok({})
+      },
+    )
+}

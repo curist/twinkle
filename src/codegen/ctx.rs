@@ -11,13 +11,13 @@ use crate::ir::anf::analysis::{
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom, OpKind};
 use crate::ir::core::CorePattern;
 use crate::runtime::types::{
-    T_ARRAY, T_CLOSURE, T_ITER_STATE, T_PDICT, T_PVEC, T_STRING, T_TASK, T_VARIANT,
+    T_ARRAY, T_CHANNEL, T_CLOSURE, T_ITER_STATE, T_PDICT, T_PVEC, T_STRING, T_TASK, T_VARIANT,
 };
 use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
-    CELL_TYPE_ID, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID,
-    TASK_TYPE_ID, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
+    CELL_TYPE_ID, CHANNEL_TYPE_ID, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID,
+    RESULT_TYPE_ID, TASK_TYPE_ID, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
 };
 use crate::wasm::ir::{FuncSym, HeapType, ImportDef, Label, ValType};
 
@@ -279,6 +279,7 @@ pub struct EmitCtx<'a> {
     /// even though the surface type is only `Iterator<T>`.
     pub user_func_iterator_states: HashMap<FuncId, IteratorStateInfo>,
     specialized_types: SpecializedTypeRegistry,
+    scratch_anyref_local: Option<u32>,
 }
 
 impl<'a> EmitCtx<'a> {
@@ -309,6 +310,7 @@ impl<'a> EmitCtx<'a> {
             concrete_func_sigs: HashMap::new(),
             user_func_iterator_states: HashMap::new(),
             specialized_types: SpecializedTypeRegistry::default(),
+            scratch_anyref_local: None,
         }
     }
 
@@ -544,6 +546,8 @@ impl<'a> EmitCtx<'a> {
 
         let mut wasm_locals = Vec::new();
         self.assign_expr_locals(&func.body, &mut next_idx, &mut wasm_locals);
+        self.scratch_anyref_local = Some(next_idx);
+        wasm_locals.push(ValType::Anyref);
 
         #[cfg(debug_assertions)]
         self.verify_codegen_metadata(&func.name, func.func_id);
@@ -775,6 +779,11 @@ impl<'a> EmitCtx<'a> {
 
     pub fn local(&self, local_id: LocalId) -> Option<&(u32, ValType)> {
         self.local_map.get(&local_id)
+    }
+
+    pub fn scratch_anyref_local(&self) -> u32 {
+        self.scratch_anyref_local
+            .expect("scratch anyref local requested before setup_locals")
     }
 
     pub fn set_module_globals(&mut self, module_globals: HashMap<LocalId, String>) {
@@ -2573,6 +2582,9 @@ fn mono_named_to_valtype(type_id: TypeId, type_env: &TypeEnv) -> ValType {
     }
     if type_id == TASK_TYPE_ID {
         return ref_named(true, T_TASK);
+    }
+    if type_id == CHANNEL_TYPE_ID {
+        return ref_named(true, T_CHANNEL);
     }
     match type_env.get_def(type_id) {
         Some(TypeDef::Sum { .. }) => ref_named(true, T_VARIANT),

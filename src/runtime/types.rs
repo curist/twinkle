@@ -18,6 +18,7 @@ pub const T_BOXED_INT: &str = "rt_types__BoxedInt";
 pub const T_BOXED_FLOAT: &str = "rt_types__BoxedFloat";
 pub const T_ITER_STATE: &str = "rt_types__IterState";
 pub const T_TASK: &str = "rt_types__Task";
+pub const T_CHANNEL: &str = "rt_types__Channel";
 pub const T_VEC_CHILDREN: &str = "rt_types__VecChildren";
 pub const T_VEC_INTERNAL: &str = "rt_types__VecInternal";
 pub const T_I32_ARRAY: &str = "rt_types__I32Array";
@@ -491,10 +492,20 @@ pub fn make() -> ModuleIR {
         ],
     });
 
-    // Task<T> is a Wasm-owned handle carrying only an integer task id. The
-    // scheduler lives in the JS host (JSPI binding) and keys records by this id.
+    // Task<T> and Channel<T> are Wasm-owned handles carrying only integer ids.
+    // The scheduler lives in the JS host (JSPI binding) and keys records by ids.
     m.types.push(TypeDef::Struct {
         name: "Task".into(),
+        supertype: None,
+        non_final: true,
+        fields: vec![FieldDef {
+            name: Some("id".into()),
+            mutable: false,
+            ty: ValType::I32,
+        }],
+    });
+    m.types.push(TypeDef::Struct {
+        name: "Channel".into(),
         supertype: None,
         non_final: true,
         fields: vec![FieldDef {

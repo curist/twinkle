@@ -3899,6 +3899,13 @@ fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<
       },
       .Some("Iterator") => single_arg_named_iterable_info(args, .Iterator, s, zonked, diags),
       .Some("Set") => single_arg_named_iterable_info(args, .IntoIteratorContract, s, zonked, diags),
+      .Some("Channel") => single_arg_named_iterable_info(
+        args,
+        .IntoIteratorContract,
+        s,
+        zonked,
+        diags,
+      ),
       _ => .{
         elem_ty: MonoType.Int,
         secondary_ty: .Some(MonoType.Int),
@@ -5155,6 +5162,7 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<DiagKind>) Ch
 fn collect_module_aliases(module: Module) Dict<String, Bool> {
   builtin_module_aliases: Vector<String> = [
     "Cell",
+    "Channel",
     "Dict",
     "Iterator",
     "Option",

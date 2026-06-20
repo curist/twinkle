@@ -123,6 +123,11 @@ pub mod prelude {
     pub const TASK_SPAWN: FuncId = FuncId(1034); // Task.spawn(f: fn() T) -> Task<T>
     pub const TASK_AWAIT: FuncId = FuncId(1035); // Task.await(task: Task<T>) -> T
     pub const TASK_YIELD: FuncId = FuncId(1036); // Task.yield() -> Void
+    pub const CHANNEL_NEW: FuncId = FuncId(1107); // Channel.new() -> Channel<T>
+    pub const CHANNEL_BOUNDED: FuncId = FuncId(1108); // Channel.bounded(capacity) -> Channel<T>
+    pub const CHANNEL_SEND: FuncId = FuncId(1109); // Channel.send(ch, value) -> Bool
+    pub const CHANNEL_RECV: FuncId = FuncId(1110); // Channel.recv(ch) -> Option<T>
+    pub const CHANNEL_CLOSE: FuncId = FuncId(1111); // Channel.close(ch) -> Void
 
     pub const BYTE_TO_INT: FuncId = FuncId(1022); // Byte.to_int(b: Byte) -> Int
     pub const BYTE_FROM_INT: FuncId = FuncId(1023); // Byte.from_int(n: Int) -> Option<Byte>

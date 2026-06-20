@@ -8,8 +8,8 @@ use crate::syntax::{ast::Item, parse_source};
 use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::resolve::Resolver;
 use crate::types::ty::{
-    CELL_TYPE_ID, FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID,
-    RANGE_TYPE_ID, TASK_TYPE_ID, UNFOLD_STEP_TYPE_ID,
+    CELL_TYPE_ID, CHANNEL_TYPE_ID, FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID,
+    MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID, TASK_TYPE_ID, UNFOLD_STEP_TYPE_ID,
 };
 
 pub use crate::intrinsics::registry::IntrinsicDispatch;
@@ -394,6 +394,66 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
             ret: MonoType::Void,
             abi_result: None,
         }),
+        id if id == prelude_ids::CHANNEL_NEW => {
+            let t = ty_var("T");
+            Some(IntrinsicContract {
+                func_id,
+                twinkle_name: "Channel.new",
+                dispatch: IntrinsicDispatch::Intrinsic,
+                type_params: vec!["T".to_string()],
+                params: vec![],
+                ret: channel_ty(t),
+                abi_result: Some(IntrinsicAbiResult::Anyref),
+            })
+        }
+        id if id == prelude_ids::CHANNEL_BOUNDED => {
+            let t = ty_var("T");
+            Some(IntrinsicContract {
+                func_id,
+                twinkle_name: "Channel.bounded",
+                dispatch: IntrinsicDispatch::Intrinsic,
+                type_params: vec!["T".to_string()],
+                params: vec![MonoType::Int],
+                ret: channel_ty(t),
+                abi_result: Some(IntrinsicAbiResult::Anyref),
+            })
+        }
+        id if id == prelude_ids::CHANNEL_SEND => {
+            let t = ty_var("T");
+            Some(IntrinsicContract {
+                func_id,
+                twinkle_name: "Channel.send",
+                dispatch: IntrinsicDispatch::Intrinsic,
+                type_params: vec!["T".to_string()],
+                params: vec![channel_ty(t.clone()), t],
+                ret: MonoType::Bool,
+                abi_result: None,
+            })
+        }
+        id if id == prelude_ids::CHANNEL_RECV => {
+            let t = ty_var("T");
+            Some(IntrinsicContract {
+                func_id,
+                twinkle_name: "Channel.recv",
+                dispatch: IntrinsicDispatch::Intrinsic,
+                type_params: vec!["T".to_string()],
+                params: vec![channel_ty(t.clone())],
+                ret: option_ty(t),
+                abi_result: Some(IntrinsicAbiResult::Anyref),
+            })
+        }
+        id if id == prelude_ids::CHANNEL_CLOSE => {
+            let t = ty_var("T");
+            Some(IntrinsicContract {
+                func_id,
+                twinkle_name: "Channel.close",
+                dispatch: IntrinsicDispatch::Intrinsic,
+                type_params: vec!["T".to_string()],
+                params: vec![channel_ty(t)],
+                ret: MonoType::Void,
+                abi_result: None,
+            })
+        }
         id if id == prelude_ids::VECTOR_APPEND => {
             let t = ty_var("T");
             let vec_t = MonoType::Vector(Box::new(t.clone()));
@@ -724,6 +784,11 @@ const SIGNATURE_SOURCE_MODULES: &[SignatureSourceModule] = &[
         source: include_str!("../../boot/prelude/signatures/task.tw"),
     },
     SignatureSourceModule {
+        virtual_path: "/virtual/prelude/signatures/channel.tw",
+        module_alias: Some("Channel"),
+        source: include_str!("../../boot/prelude/signatures/channel.tw"),
+    },
+    SignatureSourceModule {
         virtual_path: "/virtual/prelude/signatures/byte.tw",
         module_alias: Some("Byte"),
         source: include_str!("../../boot/prelude/signatures/byte.tw"),
@@ -956,6 +1021,13 @@ fn unfold_step_ty(yield_ty: MonoType, seed_ty: MonoType) -> MonoType {
 fn task_ty(inner: MonoType) -> MonoType {
     MonoType::Named {
         type_id: TASK_TYPE_ID,
+        args: vec![inner],
+    }
+}
+
+fn channel_ty(inner: MonoType) -> MonoType {
+    MonoType::Named {
+        type_id: CHANNEL_TYPE_ID,
         args: vec![inner],
     }
 }

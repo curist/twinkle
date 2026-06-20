@@ -565,11 +565,14 @@ function createTaskScheduler() {
   const YIELD_MACROTASK_MS = 4;
   const s = {
     nextId: 1,
+    nextChannelId: 1,
     current: TOP,
     tasks: new Map(),
+    channels: new Map(),
     runnable: [], // entries: {kind:'start', id} | {kind:'resume', id, fire}
     pendingHost: 0, // in-flight timers / stdin reads
     blockedOnTask: 0, // tasks parked awaiting another task
+    blockedOnChannel: 0, // tasks parked sending/receiving on a channel
     pumping: false,
     promisingTaskRun: null,
     settled: false,
@@ -600,11 +603,15 @@ function createTaskScheduler() {
 
   function checkQuiescence() {
     if (s.pumping || s.runnable.length > 0 || s.pendingHost > 0) return;
-    // Nothing runnable and no task-host work outstanding.
-    if (s.blockedOnTask > 0) {
-      settleDone(() => s.doneReject(
-        new Error("task deadlock: remaining tasks are all blocked awaiting each other"),
-      ));
+    // Nothing runnable and no task-host work outstanding. A top-level pseudo-task
+    // parked on a channel is counted here too, so `ch.recv()` with no possible
+    // sender reports a deadlock instead of hanging behind the top-level special
+    // case below.
+    if (s.blockedOnTask > 0 || s.blockedOnChannel > 0) {
+      const msg = s.blockedOnChannel > 0
+        ? "task deadlock: remaining tasks are all blocked on channels/awaits"
+        : "task deadlock: remaining tasks are all blocked awaiting each other";
+      settleDone(() => s.doneReject(new Error(msg)));
       return;
     }
     // An empty task scheduler does not mean the program is done while the
@@ -792,10 +799,133 @@ function createTaskScheduler() {
     };
   }
 
+  function enqueueResume(id, resolve, value) {
+    s.runnable.push({ kind: "resume", id, fire: () => resolve(value) });
+  }
+
+  function wakeChannelWaiter(waiter, value) {
+    s.blockedOnChannel--;
+    enqueueResume(waiter.id, waiter.resolve, value);
+  }
+
+  function requireChannel(id) {
+    const cid = Number(id);
+    const ch = s.channels.get(cid);
+    if (!ch) throw new Error("Channel: invalid channel id " + cid);
+    return ch;
+  }
+
+  function channelNew() {
+    const id = s.nextChannelId++;
+    s.channels.set(id, { capacity: 0, buffer: [], sendQ: [], recvQ: [], closed: false });
+    return id;
+  }
+
+  function channelBounded(capacity) {
+    const cap = Number(capacity);
+    if (!Number.isInteger(cap) || cap < 1) {
+      throw new Error("Channel.bounded: capacity must be >= 1");
+    }
+    const id = s.nextChannelId++;
+    s.channels.set(id, { capacity: cap, buffer: [], sendQ: [], recvQ: [], closed: false });
+    return id;
+  }
+
+  function channelSend(id, value) {
+    const ch = requireChannel(id);
+    if (ch.closed) return false;
+
+    const receiver = ch.recvQ.shift();
+    if (receiver) {
+      wakeChannelWaiter(receiver, { kind: "value", value });
+      return true;
+    }
+
+    if (ch.capacity > 0 && ch.buffer.length < ch.capacity) {
+      ch.buffer.push(value);
+      return true;
+    }
+
+    const caller = s.current;
+    s.blockedOnChannel++;
+    const p = new Promise((resolve) => {
+      ch.sendQ.push({ id: caller, value, resolve });
+    });
+    schedule();
+    return p;
+  }
+
+  function channelRecv(id) {
+    const ch = requireChannel(id);
+
+    if (ch.buffer.length > 0) {
+      const value = ch.buffer.shift();
+      const sender = ch.sendQ.shift();
+      if (sender) {
+        if (ch.closed) {
+          wakeChannelWaiter(sender, false);
+        } else {
+          ch.buffer.push(sender.value);
+          wakeChannelWaiter(sender, true);
+        }
+      }
+      return { kind: "value", value };
+    }
+
+    const sender = ch.sendQ.shift();
+    if (sender) {
+      wakeChannelWaiter(sender, true);
+      return { kind: "value", value: sender.value };
+    }
+
+    if (ch.closed) return { kind: "closed" };
+
+    const caller = s.current;
+    s.blockedOnChannel++;
+    const p = new Promise((resolve) => {
+      ch.recvQ.push({ id: caller, resolve });
+    });
+    schedule();
+    return p;
+  }
+
+  function channelClose(id) {
+    const ch = requireChannel(id);
+    if (ch.closed) return;
+    ch.closed = true;
+
+    for (;;) {
+      const receiver = ch.recvQ.shift();
+      if (!receiver) break;
+      wakeChannelWaiter(receiver, { kind: "closed" });
+    }
+    for (;;) {
+      const sender = ch.sendQ.shift();
+      if (!sender) break;
+      wakeChannelWaiter(sender, false);
+    }
+  }
+
+  function channelRecvIsValue(result) {
+    return result?.kind === "value" ? 1 : 0;
+  }
+
+  function channelRecvValue(result) {
+    if (result?.kind !== "value") throw new Error("Channel.recv: closed result has no value");
+    return result.value;
+  }
+
   s.imports = {
     task_create: taskCreate,
     suspend_await: new WebAssembly.Suspending(suspendAwait),
     suspend_yield: new WebAssembly.Suspending(suspendYield),
+    channel_new: channelNew,
+    channel_bounded: channelBounded,
+    channel_send: new WebAssembly.Suspending(channelSend),
+    channel_recv: new WebAssembly.Suspending(channelRecv),
+    channel_recv_is_value: channelRecvIsValue,
+    channel_recv_value: channelRecvValue,
+    channel_close: channelClose,
   };
 
   s.wrapHostSuspending = (op) => new WebAssembly.Suspending(wrapHostSuspending(op));

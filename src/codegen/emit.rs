@@ -21,9 +21,9 @@ use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Ato
 use crate::ir::core::CorePattern;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
-    T_ARRAY, T_BOXED_FLOAT, T_BOXED_INT, T_CLOSURE, T_CLOSURE_ENV, T_CLOSURE_FUNC, T_ITER_STATE,
-    T_PVEC, T_STRING, T_TASK, T_VARIANT, ref_array, ref_array_null, ref_iter_state_null,
-    ref_pdict_null, ref_pvec, ref_pvec_null, ref_string, ref_string_null,
+    T_ARRAY, T_BOXED_FLOAT, T_BOXED_INT, T_CHANNEL, T_CLOSURE, T_CLOSURE_ENV, T_CLOSURE_FUNC,
+    T_ITER_STATE, T_PVEC, T_STRING, T_TASK, T_VARIANT, ref_array, ref_array_null,
+    ref_iter_state_null, ref_pdict_null, ref_pvec, ref_pvec_null, ref_string, ref_string_null,
 };
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
@@ -4753,6 +4753,11 @@ fn emit_prelude_call(
         LoweringKind::TaskSpawn => emit_task_spawn_intrinsic(args, bind_ty, ctx),
         LoweringKind::TaskAwait => emit_task_await_intrinsic(args, bind_ty, ctx),
         LoweringKind::TaskYield => emit_task_yield_intrinsic(bind_ty, ctx),
+        LoweringKind::ChannelNew => emit_channel_new_intrinsic(bind_ty, ctx),
+        LoweringKind::ChannelBounded => emit_channel_bounded_intrinsic(args, bind_ty, ctx),
+        LoweringKind::ChannelSend => emit_channel_send_intrinsic(args, bind_ty, ctx),
+        LoweringKind::ChannelRecv => emit_channel_recv_intrinsic(args, bind_ty, ctx),
+        LoweringKind::ChannelClose => emit_channel_close_intrinsic(args, bind_ty, ctx),
     }
 }
 
@@ -5589,6 +5594,13 @@ const TASK_HOST_MODULE: &str = "task";
 const TASK_CREATE: &str = "task_create";
 const SUSPEND_AWAIT: &str = "suspend_await";
 const SUSPEND_YIELD: &str = "suspend_yield";
+const CHANNEL_NEW: &str = "channel_new";
+const CHANNEL_BOUNDED: &str = "channel_bounded";
+const CHANNEL_SEND: &str = "channel_send";
+const CHANNEL_RECV: &str = "channel_recv";
+const CHANNEL_RECV_IS_VALUE: &str = "channel_recv_is_value";
+const CHANNEL_RECV_VALUE: &str = "channel_recv_value";
+const CHANNEL_CLOSE: &str = "channel_close";
 
 fn emit_task_spawn_intrinsic(
     args: &[Atom],
@@ -5622,6 +5634,111 @@ fn emit_task_await_intrinsic(
 fn emit_task_yield_intrinsic(bind_ty: &ValType, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
     ensure_suspend_yield_import(ctx);
     let mut instrs = vec![Instr::Call(SUSPEND_YIELD.to_string())];
+    instrs.extend(emit_void_value(Some(bind_ty)));
+    instrs
+}
+
+fn channel_ref_null() -> ValType {
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_CHANNEL.to_string()),
+    }
+}
+
+fn emit_channel_id(arg: &Atom, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    let mut instrs = emit_atom(arg, Some(&channel_ref_null()), ctx);
+    instrs.push(Instr::RefCast {
+        nullable: false,
+        heap: HeapType::Named(T_CHANNEL.to_string()),
+    });
+    instrs.push(Instr::StructGet(T_CHANNEL.to_string(), 0));
+    instrs
+}
+
+fn emit_channel_new_intrinsic(bind_ty: &ValType, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    ensure_channel_new_import(ctx);
+    let mut instrs = vec![Instr::Call(CHANNEL_NEW.to_string())];
+    instrs.push(Instr::StructNew(T_CHANNEL.to_string()));
+    instrs.extend(emit_coerce_stack(&channel_ref_null(), bind_ty));
+    instrs
+}
+
+fn emit_channel_bounded_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    ensure_channel_bounded_import(ctx);
+    let mut instrs = emit_atom(&args[0], Some(&ValType::I64), ctx);
+    instrs.push(Instr::I32WrapI64);
+    instrs.push(Instr::Call(CHANNEL_BOUNDED.to_string()));
+    instrs.push(Instr::StructNew(T_CHANNEL.to_string()));
+    instrs.extend(emit_coerce_stack(&channel_ref_null(), bind_ty));
+    instrs
+}
+
+fn emit_channel_send_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    ensure_channel_send_import(ctx);
+    let mut instrs = emit_channel_id(&args[0], ctx);
+    instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
+    instrs.push(Instr::Call(CHANNEL_SEND.to_string()));
+    instrs.extend(emit_coerce_stack(&ValType::I32, bind_ty));
+    instrs
+}
+
+fn emit_channel_recv_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    ensure_channel_recv_import(ctx);
+    ensure_channel_recv_is_value_import(ctx);
+    ensure_channel_recv_value_import(ctx);
+    let raw = ctx.scratch_anyref_local();
+
+    let mut some_body = vec![
+        Instr::I32Const(OPTION_TYPE_ID.0 as i32),
+        Instr::I32Const(1),
+        Instr::LocalGet(raw),
+        Instr::Call(CHANNEL_RECV_VALUE.to_string()),
+        Instr::ArrayNewFixed(T_ARRAY.to_string(), 1),
+        Instr::StructNew(T_VARIANT.to_string()),
+    ];
+    some_body.extend(emit_coerce_stack(&ref_variant(), bind_ty));
+
+    let mut none_body = vec![
+        Instr::I32Const(OPTION_TYPE_ID.0 as i32),
+        Instr::I32Const(0),
+        Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+        Instr::StructNew(T_VARIANT.to_string()),
+    ];
+    none_body.extend(emit_coerce_stack(&ref_variant(), bind_ty));
+
+    let mut instrs = emit_channel_id(&args[0], ctx);
+    instrs.push(Instr::Call(CHANNEL_RECV.to_string()));
+    instrs.push(Instr::LocalSet(raw));
+    instrs.push(Instr::LocalGet(raw));
+    instrs.push(Instr::Call(CHANNEL_RECV_IS_VALUE.to_string()));
+    instrs.push(Instr::If {
+        result: Some(bind_ty.clone()),
+        then_body: some_body,
+        else_body: none_body,
+    });
+    instrs
+}
+
+fn emit_channel_close_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    ensure_channel_close_import(ctx);
+    let mut instrs = emit_channel_id(&args[0], ctx);
+    instrs.push(Instr::Call(CHANNEL_CLOSE.to_string()));
     instrs.extend(emit_void_value(Some(bind_ty)));
     instrs
 }
@@ -5678,7 +5795,14 @@ fn op_uses_task_ops(op: &AnfOp) -> bool {
             ..
         } => matches!(
             *func_id,
-            prelude_ids::TASK_SPAWN | prelude_ids::TASK_AWAIT | prelude_ids::TASK_YIELD
+            prelude_ids::TASK_SPAWN
+                | prelude_ids::TASK_AWAIT
+                | prelude_ids::TASK_YIELD
+                | prelude_ids::CHANNEL_NEW
+                | prelude_ids::CHANNEL_BOUNDED
+                | prelude_ids::CHANNEL_SEND
+                | prelude_ids::CHANNEL_RECV
+                | prelude_ids::CHANNEL_CLOSE
         ),
         AnfOp::AIf {
             then_branch,
@@ -7763,6 +7887,76 @@ fn ensure_suspend_yield_import(ctx: &mut EmitCtx<'_>) {
         name: SUSPEND_YIELD.to_string(),
         as_sym: SUSPEND_YIELD.to_string(),
         params: vec![],
+        results: vec![],
+    });
+}
+
+fn ensure_channel_new_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: TASK_HOST_MODULE.to_string(),
+        name: CHANNEL_NEW.to_string(),
+        as_sym: CHANNEL_NEW.to_string(),
+        params: vec![],
+        results: vec![ValType::I32],
+    });
+}
+
+fn ensure_channel_bounded_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: TASK_HOST_MODULE.to_string(),
+        name: CHANNEL_BOUNDED.to_string(),
+        as_sym: CHANNEL_BOUNDED.to_string(),
+        params: vec![ValType::I32],
+        results: vec![ValType::I32],
+    });
+}
+
+fn ensure_channel_send_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: TASK_HOST_MODULE.to_string(),
+        name: CHANNEL_SEND.to_string(),
+        as_sym: CHANNEL_SEND.to_string(),
+        params: vec![ValType::I32, ValType::Anyref],
+        results: vec![ValType::I32],
+    });
+}
+
+fn ensure_channel_recv_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: TASK_HOST_MODULE.to_string(),
+        name: CHANNEL_RECV.to_string(),
+        as_sym: CHANNEL_RECV.to_string(),
+        params: vec![ValType::I32],
+        results: vec![ValType::Anyref],
+    });
+}
+
+fn ensure_channel_recv_is_value_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: TASK_HOST_MODULE.to_string(),
+        name: CHANNEL_RECV_IS_VALUE.to_string(),
+        as_sym: CHANNEL_RECV_IS_VALUE.to_string(),
+        params: vec![ValType::Anyref],
+        results: vec![ValType::I32],
+    });
+}
+
+fn ensure_channel_recv_value_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: TASK_HOST_MODULE.to_string(),
+        name: CHANNEL_RECV_VALUE.to_string(),
+        as_sym: CHANNEL_RECV_VALUE.to_string(),
+        params: vec![ValType::Anyref],
+        results: vec![ValType::Anyref],
+    });
+}
+
+fn ensure_channel_close_import(ctx: &mut EmitCtx<'_>) {
+    ctx.add_import(ImportDef {
+        module: TASK_HOST_MODULE.to_string(),
+        name: CHANNEL_CLOSE.to_string(),
+        as_sym: CHANNEL_CLOSE.to_string(),
+        params: vec![ValType::I32],
         results: vec![],
     });
 }

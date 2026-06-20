@@ -137,6 +137,7 @@ fn builtin_type_entries() Vector<TypeEntry> {
         1,
         .Record("Set", rtp_t, [.{ name: "entries", ty: .Dict(t, .Void) }]),
       ),
+      builtin_type_entry(next_type_id, 1, .Record("Channel", rtp_t, [])),
     ],
   )
   types
@@ -204,8 +205,8 @@ fn with_reserved_stdlib_origins(env: ResolvedEnv, start_id: Int) ResolvedEnv {
 }
 
 /// Returns a ResolvedEnv seeded with the builtin named types (Option, Result,
-/// Cell, Range, Iterator, IterItem, UnfoldStep, Order, Task, Set) plus the
-/// reserved stdlib forward declarations.  No function signatures are added.
+/// Cell, Range, Iterator, IterItem, UnfoldStep, Order, Task, Set, Channel) plus
+/// the reserved stdlib forward declarations.  No function signatures are added.
 /// Used by the signature-only bootstrap loader to resolve TypeExprs in
 /// prelude/signatures/*.tw without creating a circular dependency.
 pub fn builtin_type_env() ResolvedEnv {
@@ -245,6 +246,7 @@ fn prelude_module_stem(receiver: String?) String? {
       "Bool" => .Some("bool"),
       "Byte" => .Some("byte"),
       "Cell" => .Some("cell"),
+      "Channel" => .Some("channel"),
       "Dict" => .Some("dict"),
       "Float" => .Some("float"),
       "Int" => .Some("int"),

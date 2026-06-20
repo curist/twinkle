@@ -652,6 +652,10 @@ impl Resolver {
                         type_id: crate::types::ty::TASK_TYPE_ID,
                         args: resolved_args,
                     }),
+                    "Channel" if resolved_args.len() == 1 => Ok(MonoType::Named {
+                        type_id: crate::types::ty::CHANNEL_TYPE_ID,
+                        args: resolved_args,
+                    }),
                     _ => {
                         // User-defined generic type: look up TypeId and use pre-resolved args
                         match self.type_env.lookup_type(name) {

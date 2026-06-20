@@ -4,9 +4,9 @@ use super::error::TypeError;
 use super::ty::{
     BUILTIN_BOOL_TYPE_ID, BUILTIN_BYTE_TYPE_ID, BUILTIN_DICT_TYPE_ID, BUILTIN_FLOAT_TYPE_ID,
     BUILTIN_INT_TYPE_ID, BUILTIN_STRING_TYPE_ID, BUILTIN_VECTOR_TYPE_ID, CELL_TYPE_ID,
-    FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID,
-    ORDER_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, SET_TYPE_ID, TASK_TYPE_ID, TypeDef,
-    TypeId, UNFOLD_STEP_TYPE_ID, VIEW_TYPE_ID, Variant,
+    CHANNEL_TYPE_ID, FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType,
+    OPTION_TYPE_ID, ORDER_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, SET_TYPE_ID,
+    TASK_TYPE_ID, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID, VIEW_TYPE_ID, Variant,
 };
 use crate::intrinsics::signatures;
 use crate::syntax::ast::Type as AstType;
@@ -272,7 +272,18 @@ impl TypeEnv {
             SET_TYPE_ID,
         );
 
-        // TypeId(10) = View<C> — reserved stdlib type filled by @std.view.
+        // TypeId(10) = Channel<T> — opaque scheduler-backed channel handle
+        assert_eq!(
+            env.add_type(TypeDef::Record {
+                name: "Channel".to_string(),
+                type_params: vec!["T".to_string()],
+                fields: vec![],
+                doc: Some("Scheduler-backed value channel.".to_string()),
+            }),
+            CHANNEL_TYPE_ID,
+        );
+
+        // TypeId(11) = View<C> — reserved stdlib type filled by @std.view.
         assert_eq!(
             env.add_type(TypeDef::Record {
                 name: "View".to_string(),
@@ -330,6 +341,11 @@ impl TypeEnv {
             (ITERATOR_TYPE_ID, "next", "Iterator.next"),
             // Task
             (TASK_TYPE_ID, "await", "Task.await"),
+            // Channel
+            (CHANNEL_TYPE_ID, "send", "Channel.send"),
+            (CHANNEL_TYPE_ID, "recv", "Channel.recv"),
+            (CHANNEL_TYPE_ID, "close", "Channel.close"),
+            (CHANNEL_TYPE_ID, "iter", "Channel.iter"),
             // Option and Result methods are registered dynamically from
             // prelude/option.tw and prelude/result.tw via
             // ensure_prelude_method_signatures_registered.
@@ -742,6 +758,23 @@ impl TypeEnv {
                         let inner = self.resolve_type(&args[0], errors)?;
                         Ok(MonoType::Named {
                             type_id: TASK_TYPE_ID,
+                            args: vec![inner],
+                        })
+                    }
+                    "Channel" => {
+                        if args.len() != 1 {
+                            errors.push(TypeError::UndefinedType {
+                                name: format!(
+                                    "Channel (expected 1 type argument, found {})",
+                                    args.len()
+                                ),
+                                span: *span,
+                            });
+                            return Err(());
+                        }
+                        let inner = self.resolve_type(&args[0], errors)?;
+                        Ok(MonoType::Named {
+                            type_id: CHANNEL_TYPE_ID,
                             args: vec![inner],
                         })
                     }

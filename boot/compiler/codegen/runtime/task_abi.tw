@@ -12,21 +12,17 @@ use compiler.codegen.wasm_ir.{ImportDef}
 
 // Current binding: JS host imports under the "task" module. The JSPI scheduler
 // in runtime.mjs installs these before instantiation.
-fn host_module() String {
-  "task"
-}
-
-pub fn sym_task_create() String {
-  "task_create"
-}
-
-pub fn sym_suspend_await() String {
-  "suspend_await"
-}
-
-pub fn sym_suspend_yield() String {
-  "suspend_yield"
-}
+host_module := "task"
+pub sym_task_create := "task_create"
+pub sym_suspend_await := "suspend_await"
+pub sym_suspend_yield := "suspend_yield"
+pub sym_channel_new := "channel_new"
+pub sym_channel_bounded := "channel_bounded"
+pub sym_channel_send := "channel_send"
+pub sym_channel_recv := "channel_recv"
+pub sym_channel_recv_is_value := "channel_recv_is_value"
+pub sym_channel_recv_value := "channel_recv_value"
+pub sym_channel_close := "channel_close"
 
 // Import declarations for the abstract operations, in their current JSPI
 // binding. All operate on plain scalars / opaque anyref so JS never touches a
@@ -36,24 +32,73 @@ pub fn sym_suspend_yield() String {
 pub fn imports() Vector<ImportDef> {
   [
     ImportDef.{
-      module: host_module(),
-      name: sym_task_create(),
-      as_sym: sym_task_create(),
+      module: host_module,
+      name: sym_task_create,
+      as_sym: sym_task_create,
       params: [.Anyref],
       results: [.I32],
     },
     ImportDef.{
-      module: host_module(),
-      name: sym_suspend_await(),
-      as_sym: sym_suspend_await(),
+      module: host_module,
+      name: sym_suspend_await,
+      as_sym: sym_suspend_await,
       params: [.I32],
       results: [.Anyref],
     },
     ImportDef.{
-      module: host_module(),
-      name: sym_suspend_yield(),
-      as_sym: sym_suspend_yield(),
+      module: host_module,
+      name: sym_suspend_yield,
+      as_sym: sym_suspend_yield,
       params: [],
+      results: [],
+    },
+    ImportDef.{
+      module: host_module,
+      name: sym_channel_new,
+      as_sym: sym_channel_new,
+      params: [],
+      results: [.I32],
+    },
+    ImportDef.{
+      module: host_module,
+      name: sym_channel_bounded,
+      as_sym: sym_channel_bounded,
+      params: [.I32],
+      results: [.I32],
+    },
+    ImportDef.{
+      module: host_module,
+      name: sym_channel_send,
+      as_sym: sym_channel_send,
+      params: [.I32, .Anyref],
+      results: [.I32],
+    },
+    ImportDef.{
+      module: host_module,
+      name: sym_channel_recv,
+      as_sym: sym_channel_recv,
+      params: [.I32],
+      results: [.Anyref],
+    },
+    ImportDef.{
+      module: host_module,
+      name: sym_channel_recv_is_value,
+      as_sym: sym_channel_recv_is_value,
+      params: [.Anyref],
+      results: [.I32],
+    },
+    ImportDef.{
+      module: host_module,
+      name: sym_channel_recv_value,
+      as_sym: sym_channel_recv_value,
+      params: [.Anyref],
+      results: [.Anyref],
+    },
+    ImportDef.{
+      module: host_module,
+      name: sym_channel_close,
+      as_sym: sym_channel_close,
+      params: [.I32],
       results: [],
     },
   ]

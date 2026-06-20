@@ -1,8 +1,14 @@
 # Channels — implementation handoff
 
 Start-of-session note for implementing `Channel<T>`. The full design is
-`docs/plans/channels.md` (read it first — this note assumes it). Status: **design
-final + reviewed, no implementation yet.**
+`docs/plans/channels.md` (read it first — this note assumes it). Status: **Phase 1
+(core primitive) complete and committed; Phase 2 (LSP migration) pending.** During
+Phase 1 a latent codegen bug was found and fixed: closure free-variable analysis
+(`lower_core/closures.tw`) didn't descend into `ContractCall`, so an IntoIterator
+iterable (e.g. a channel) consumed via `for v in ch` inside a `Task.spawn` closure
+degraded to a bogus module-global reference. Stage0's Rust closure-capture pass may
+have the same gap, but it is not triggered (boot/main.tw has no such pattern); fix
+it there too if Phase 2 introduces one.
 
 ## Repo state
 
@@ -12,7 +18,7 @@ final + reviewed, no implementation yet.**
   - `6aca841` `Task.yield` macrotask-hop fix (scheduler fairness)
   - `211ce65` / `3051ebe` / `26ddfe5` / `8bc53ac` channels design spec (+ reviews)
 - Confirm green before starting: `make bundle-cli` reaches a self-host fixed point;
-  `target/twk run boot/tests/main.tw` (2764 tests) passes.
+  `target/twk run boot/tests/main.tw` passes.
 
 ## Final API (see spec for semantics)
 
@@ -50,44 +56,60 @@ The cleanest path is "do what `Task` does." Concrete pointers:
   nothing else changes.
 
 **Compiler — boot:**
+- `boot/compiler/base_env.tw`: register `Channel<T>` as a builtin named type.
 - `boot/compiler/codegen/runtime/task_abi.tw`: `host_module()` returns `"task"`;
-  add the channel `ImportDef`s in `imports()` (i32 ids, anyref payload).
-- `boot/compiler/builtins.tw`: register the `Channel` builtin type + `intr(...)`
-  entries for `Channel.new/bounded/send/recv/close` (see the Task intrinsics block
-  ~line 213/499).
-- `boot/compiler/codegen/emit.tw`: add `BuiltinOp` variants + `emit_intrinsic_*`
-  for each channel op (cf. `emit_intrinsic_task_spawn/await/yield`, ~line 1453,
-  2109); register the method-id → op mapping (~line 1383). **Extend
-  `program_uses_tasks` (line 2167)** to also include the `Channel` method ids so
-  `__task_run` + scheduler support get emitted.
+  add the channel `ImportDef`s in `imports()` (i32 ids, anyref payload/result,
+  plus sync tagged-result accessors `channel_recv_is_value` /
+  `channel_recv_value`). Runtime import names are `channel_new()` and
+  `channel_bounded(capacity)`, not a magic-capacity `channel_new(cap)`.
+- `boot/compiler/builtins.tw`: register `intr(...)` entries for
+  `Channel.new/bounded/send/recv/close` (see the Task intrinsics block).
+- `boot/compiler/codegen/runtime/types.tw`: add `rt_types__Channel`, an immutable
+  one-field struct wrapping the i32 channel id.
+- `boot/compiler/codegen/wasm_layout.tw` and `boot/compiler/codegen/emit/anyref.tw`:
+  handle `Channel<T>` like `Task<T>` (opaque GC ref for layout/boxing).
+- `boot/compiler/codegen/emit.tw`: add `IntrinsicTag` variants +
+  `emit_intrinsic_*` for each channel op (cf. `emit_intrinsic_task_spawn/await/yield`);
+  register the method-id → op mapping. **Extend `program_uses_tasks`** to also
+  include the `Channel` method ids so `__task_run` + scheduler support get emitted.
+- `Channel.recv` lowering: `channel_recv` returns an opaque tagged JS object;
+  Wasm decodes it with `channel_recv_is_value(raw)` and `channel_recv_value(raw)`
+  and constructs the typed `Option<T>` itself. Do not rely on Twinkle/wasm
+  inspecting JS object properties directly.
 - `Channel<T>` is a GC struct `rt_types__Channel` wrapping an `i32` id (mirror
   `Task<T>`); JS only ever sees the i32.
 - `for v in ch`: give `Channel` an inherent `iter(self) Iterator<T>` (the
   `IntoIterator` contract is satisfied via `iter()` — see `checker.tw`, "satisfied
   via inherent"). Implement `iter` with `Iterator.unfold` whose step calls `recv`
   (`.Some`→yield+continue, `.None`→stop).
+- After adding `boot/prelude/channel.tw` / `boot/prelude/signatures/channel.tw`,
+  regenerate `boot/lib/module/core_lib.tw` (`python3 tools/generate_core_lib.py`,
+  then format it).
 
-**Thin Twinkle wrapper module** (e.g. `boot/stdlib/...` or prelude): the
-`recv`→`Option` / `send`→`Bool` shaping + the `iter()` satisfier. Concurrency
-stays in the runtime.
+**Thin Twinkle wrapper module** (prelude): user-facing signatures and the
+`iter()` satisfier. The `recv`→`Option` / `send`→`Bool` shaping is compiler-emitted
+around the runtime intrinsics/accessors; concurrency stays in the runtime.
 
-**Stage0 (Rust `src/`) — Phase 2 only, emit-only:** mirror Task —
+**Stage0 (Rust `src/`) — emit-only, needed from Phase 1:** mirror Task —
 `CHANNEL_TYPE_ID` (`src/types/ty.rs`, cf. `TASK_TYPE_ID`), `FuncId`s
-(`src/ir/lower.rs`, cf. `TASK_SPAWN`), and `src/types/{resolve,check,env}.rs`
-entries. Needed because Phase 2 puts channels in `boot/main.tw`, which `make
-stage2` compiles from Rust stage0. Phase 1 needs no `src/` changes.
+(`src/ir/lower.rs`, cf. `TASK_SPAWN`), `src/types/{resolve,check,env}.rs`,
+`src/intrinsics/{registry,signatures}.rs`, `src/codegen/{prelude,emit}.rs`, and
+`src/runtime/types.rs`. Needed already in Phase 1 because
+`boot/prelude/channel.tw` is auto-imported into `boot/main.tw`, which `make
+stage2` builds from Rust stage0 — without it the prelude won't compile under
+stage0 and self-host breaks. (Stage0 only *emits* channels; it never runs them.)
 
 ## Phases
 
-1. **Core primitive** — runtime ops + intrinsics + boot builtin + wrapper +
-   `iter()` + `boot/tests/suites/channel_suite.tw`. No stage0. Gate:
-   `make bundle-cli` fixed point + boot suite green. (Channel usage stays in tests
-   + wrapper, off `boot/main.tw`.)
+1. **Core primitive** — runtime ops + intrinsics + boot builtin + prelude wrapper
+   + `iter()` + `boot/tests/suites/channel_suite.tw` + the emit-only Rust stage0
+   support (the prelude is auto-imported into `boot/main.tw`). Gate:
+   `make bundle-cli` fixed point + boot suite green.
 2. **LSP migration** — replace `ChunkQueue`/`DiagnosticsQueue` + the
    `time.sleep(1)` poll loops (`wait_for_dispatcher`, `diagnostics_loop`, the
    `pending` counter) in `boot/commands/lsp.tw` with channels; fold exit into
-   close. Needs the emit-only stage0 support. Re-verify the cold-analysis
-   format-latency driver + full boot suite.
+   close. (Stage0 support already in place from Phase 1.) Re-verify the
+   cold-analysis format-latency driver + full boot suite.
 
 ## Verification
 
@@ -112,7 +134,7 @@ stage2` compiles from Rust stage0. Phase 1 needs no `src/` changes.
 - `Task.yield` is now event-loop-fair (commit 6aca841) — see
   `reference_task_scheduler_microtask_macrotask` memory; channels rely on the same
   scheduler discipline (one-task-per-microtask, `pendingHost` accounting).
-- Memory `project_channels` has the decision log; `reference_intrinsic_builtin_wiring`
-  / `reference_runtime_builtin_wiring` cover the builtin-wiring mechanics.
+- Keep the implementation notes in this file and `docs/plans/channels.md` as the
+  source of truth; avoid relying on ephemeral session memory.
 - After any `.tw` edit: `target/twk fmt` then `target/twk lint <entry>`. Boot
   changes ⇒ `make bundle-cli` (full self-host), not `quick-bundle-cli`.

@@ -23,6 +23,16 @@ fn is_task_mono(mono: MonoType, env: ResolvedEnv) Bool {
   }
 }
 
+fn is_channel_mono(mono: MonoType, env: ResolvedEnv) Bool {
+  case mono {
+    .Named(tid, _) => case env.type_index["Channel"] {
+      .Some(idx) => env.types[idx].id.id == tid.id,
+      .None => false,
+    },
+    _ => false,
+  }
+}
+
 pub fn emit_box_to_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Instr>) Vector<Instr> {
   case mono {
     .Never => { return buf },
@@ -68,6 +78,10 @@ pub fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Inst
 
   if is_task_mono(mono, env) {
     return buf.append(.RefCast(true, .Named("rt_types__Task")))
+  }
+
+  if is_channel_mono(mono, env) {
+    return buf.append(.RefCast(true, .Named("rt_types__Channel")))
   }
 
   layout := layout_of(mono, env)
