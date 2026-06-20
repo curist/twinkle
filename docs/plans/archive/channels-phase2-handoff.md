@@ -1,8 +1,14 @@
 # Channels Phase 2 — LSP migration handoff
 
-Start-of-session note for **Phase 2**: replace the LSP server's hand-rolled
+Status: **completed**. Phase 2 replaced the LSP server's hand-rolled
 `Cell`-backed queues and 1ms poll loops with the `Channel<T>` primitive shipped in
-Phase 1. Read `docs/plans/channels.md` (design) and `channels-impl-handoff.md`
+Phase 1. The implementation keeps an unbuffered chunk channel plus an unbuffered
+ack channel so the reader does not park on stdin until the dispatcher has processed
+an `exit` notification; diagnostics use a small bounded channel.
+
+Original start-of-session note for **Phase 2**: replace the LSP server's hand-rolled
+`Cell`-backed queues and 1ms poll loops with the `Channel<T>` primitive shipped in
+Phase 1. Read `channels.md` (design) and `channels-impl-handoff.md`
 (Phase 1 map) first.
 
 ## State going in

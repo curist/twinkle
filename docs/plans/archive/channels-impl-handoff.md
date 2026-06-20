@@ -1,9 +1,9 @@
 # Channels — implementation handoff
 
 Start-of-session note for implementing `Channel<T>`. The full design is
-`docs/plans/channels.md` (read it first — this note assumes it). Status: **Phase 1
-(core primitive) complete and committed; Phase 2 (LSP migration) pending.** During
-Phase 1 a latent codegen bug was found and fixed: closure free-variable analysis
+`channels.md` (read it first — this note assumes it). Status: **Phase 1
+(core primitive) and Phase 2 (LSP migration) are complete.** During Phase 1 a latent
+codegen bug was found and fixed: closure free-variable analysis
 (`lower_core/closures.tw`) didn't descend into `ContractCall`, so an IntoIterator
 iterable (e.g. a channel) consumed via `for v in ch` inside a `Task.spawn` closure
 degraded to a bogus module-global reference. Stage0's Rust closure-capture pass may
@@ -105,11 +105,12 @@ stage0 and self-host breaks. (Stage0 only *emits* channels; it never runs them.)
    + `iter()` + `boot/tests/suites/channel_suite.tw` + the emit-only Rust stage0
    support (the prelude is auto-imported into `boot/main.tw`). Gate:
    `make bundle-cli` fixed point + boot suite green.
-2. **LSP migration** — replace `ChunkQueue`/`DiagnosticsQueue` + the
+2. **LSP migration — complete** — replaced `ChunkQueue`/`DiagnosticsQueue` + the
    `time.sleep(1)` poll loops (`wait_for_dispatcher`, `diagnostics_loop`, the
-   `pending` counter) in `boot/commands/lsp.tw` with channels; fold exit into
-   close. (Stage0 support already in place from Phase 1.) Re-verify the
-   cold-analysis format-latency driver + full boot suite.
+   `pending` counter) in `boot/commands/lsp.tw` with channels; exit is folded into
+   channel close. The dispatcher uses `recv()` loops rather than `for v in ch` so
+   Rust stage0 can still bootstrap `boot/main.tw`; the runtime behavior still parks
+   on the channel instead of polling.
 
 ## Verification
 
@@ -134,7 +135,7 @@ stage0 and self-host breaks. (Stage0 only *emits* channels; it never runs them.)
 - `Task.yield` is now event-loop-fair (commit 6aca841) — see
   `reference_task_scheduler_microtask_macrotask` memory; channels rely on the same
   scheduler discipline (one-task-per-microtask, `pendingHost` accounting).
-- Keep the implementation notes in this file and `docs/plans/channels.md` as the
+- Keep the implementation notes in this file and `channels.md` as the
   source of truth; avoid relying on ephemeral session memory.
 - After any `.tw` edit: `target/twk fmt` then `target/twk lint <entry>`. Boot
   changes ⇒ `make bundle-cli` (full self-host), not `quick-bundle-cli`.

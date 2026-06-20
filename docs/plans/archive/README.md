@@ -99,6 +99,9 @@ Related historical context outside this folder:
 
 | Plan | Description |
 |------|-------------|
+| [channels.md](channels.md) | CSP-style `Channel<T>` on top of the cooperative `Task` scheduler: unbuffered/bounded channels, `send`/`recv`/`close`, iterator support, and LSP migration away from `Cell` queues and poll loops |
+| [channels-impl-handoff.md](channels-impl-handoff.md) | Historical Phase 1 implementation handoff for the channel primitive, including compiler/runtime/stage0 integration notes |
+| [channels-phase2-handoff.md](channels-phase2-handoff.md) | Historical Phase 2 handoff for migrating the LSP queues to channels |
 | [node-standalone-runtime.md](node-standalone-runtime.md) | Standalone Node.js Twinkle compiler/runtime entry (`twk_boot.mjs` + `run_wasm_node.mjs`) without requiring Rust `twk` |
 | [builtin-surface-binding-cleanup.md](builtin-surface-binding-cleanup.md) | Make boot builtin visibility explicit — canonical public names and internal helpers separated by construction via `with_registered_functions` + `bind_public_free_builtins` |
 | [builtin-identity-resolution.md](builtin-identity-resolution.md) | Separate compiler-owned builtin identities from user function names across lowering, backend callable materialization, and codegen dispatch |

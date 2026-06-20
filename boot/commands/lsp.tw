@@ -2,13 +2,12 @@
 //!
 //! Cooperative task model (see docs/plans/lsp-task-migration.md). The top-level
 //! acts as the input reader, parking on `io.read_stdin_chunk` between chunks
-//! instead of polling with a timeout. Chunks are handed to a dispatcher task through a
-//! small Cell-backed queue; the dispatcher owns frame decoding, JSON-RPC message
-//! handling, and response writes. Workspace diagnostics use a worker-style task:
-//! debounce tasks only enqueue generation-tagged jobs, and the diagnostics worker
-//! publishes only if its generation is still current. This is cooperative
-//! single-threaded concurrency, not CPU parallelism; synchronous analysis is not
-//! preempted once it starts.
+//! instead of polling with a timeout. Chunks are handed to a dispatcher task through
+//! a channel; the dispatcher owns frame decoding, JSON-RPC message handling, and
+//! response writes. Workspace diagnostics use a worker-style task: debounce tasks
+//! only enqueue generation-tagged jobs, and the diagnostics worker publishes only if
+//! its generation is still current. This is cooperative single-threaded concurrency,
+//! not CPU parallelism; synchronous analysis is not preempted once it starts.
 
 use @std.date
 use @std.io
@@ -22,19 +21,14 @@ use lib.lsp.framing
 use lib.lsp.protocol
 use lib.lsp.server_core
 
-idle_sleep_ms := 1
-
-type ChunkQueue = .{ items: Cell<Vector<Vector<Byte>>>, closed: Cell<Bool>, pending: Cell<Int> }
-
-type DiagnosticsQueue = .{ items: Cell<Vector<Int>>, closed: Cell<Bool> }
-
 type LoopCtx = .{
   shared: Cell<server_core.State>,
   gen: Cell<Int>,
   progress: Cell<Int>,
   supports_progress: Cell<Bool>,
-  chunks: ChunkQueue,
-  diagnostics: DiagnosticsQueue,
+  chunks: Channel<Vector<Byte>>,
+  chunk_acks: Channel<Bool>,
+  diagnostics: Channel<Int>,
 }
 
 pub fn run_lsp_command(_parsed: ParseResult) {
@@ -43,16 +37,17 @@ pub fn run_lsp_command(_parsed: ParseResult) {
     gen: Cell.new(0),
     progress: Cell.new(0),
     supports_progress: Cell.new(false),
-    chunks: new_chunk_queue(),
-    diagnostics: new_diagnostics_queue(),
+    chunks: Channel.new(),
+    chunk_acks: Channel.new(),
+    diagnostics: Channel.bounded(8),
   }
 
   dispatcher: Task<Void> = Task.spawn(fn() { ctx.dispatch_loop() })
   diagnostics: Task<Void> = Task.spawn(fn() { ctx.diagnostics_loop() })
 
   for !ctx.shared.get().should_exit {
-    // Park on stdin until a chunk (or EOF) is available. After queueing a chunk,
-    // wait for the dispatcher to drain it before parking again so an `exit`
+    // Park on stdin until a chunk (or EOF) is available. After handing a chunk to
+    // the dispatcher, wait for its ack before parking again so an `exit`
     // notification cannot leave the reader asleep on stdin.
     chunk := io.read_stdin_chunk(4096)
 
@@ -61,8 +56,14 @@ pub fn run_lsp_command(_parsed: ParseResult) {
     }
 
     if chunk.len() > 0 {
-      ctx.chunks.push_chunk(chunk)
-      ctx.wait_for_dispatcher()
+      if !ctx.chunks.send(chunk) {
+        break
+      }
+
+      case ctx.chunk_acks.recv() {
+        .Some(_) => {},
+        .None => { break },
+      }
     }
 
     if ctx.shared.get().should_exit {
@@ -70,10 +71,10 @@ pub fn run_lsp_command(_parsed: ParseResult) {
     }
   }
 
-  ctx.chunks.close_chunks()
+  ctx.chunks.close()
   dispatcher.await()
 
-  ctx.diagnostics.close_diagnostics()
+  ctx.diagnostics.close()
   diagnostics.await()
 
   if ctx.shared.get().should_exit and !ctx.shared.get().shutdown_requested {
@@ -81,103 +82,33 @@ pub fn run_lsp_command(_parsed: ParseResult) {
   }
 }
 
-fn new_chunk_queue() ChunkQueue {
-  .{ items: Cell.new([]), closed: Cell.new(false), pending: Cell.new(0) }
-}
-
-fn push_chunk(queue: ChunkQueue, chunk: Vector<Byte>) {
-  queue.items.set(queue.items.get().append(chunk))
-  queue.pending.set(queue.pending.get() + 1)
-}
-
-fn pop_chunk(queue: ChunkQueue) Vector<Byte>? {
-  items := queue.items.get()
-
-  if items.len() == 0 {
-    return .None
-  }
-
-  first := items[0]
-  queue.items.set(items.slice(1, items.len()))
-  .Some(first)
-}
-
-fn finish_chunk(queue: ChunkQueue) {
-  queue.pending.set(queue.pending.get() - 1)
-}
-
-fn has_pending(queue: ChunkQueue) Bool {
-  queue.pending.get() > 0
-}
-
-fn close_chunks(queue: ChunkQueue) {
-  queue.closed.set(true)
-}
-
-fn new_diagnostics_queue() DiagnosticsQueue {
-  .{ items: Cell.new([]), closed: Cell.new(false) }
-}
-
-fn push_job(queue: DiagnosticsQueue, gen: Int) {
-  queue.items.set(queue.items.get().append(gen))
-}
-
-fn pop_job(queue: DiagnosticsQueue) Int? {
-  items := queue.items.get()
-
-  if items.len() == 0 {
-    return .None
-  }
-
-  first := items[0]
-  queue.items.set(items.slice(1, items.len()))
-  .Some(first)
-}
-
-fn close_diagnostics(queue: DiagnosticsQueue) {
-  queue.closed.set(true)
-}
-
-fn wait_for_dispatcher(ctx: LoopCtx) {
-  for ctx.chunks.has_pending() and !ctx.shared.get().should_exit {
-    time.sleep(idle_sleep_ms)
-  }
-}
-
 fn dispatch_loop(ctx: LoopCtx) {
   buffer: Vector<Byte> = []
 
   for true {
-    if ctx.shared.get().should_exit {
-      break
-    }
-
-    case ctx.chunks.pop_chunk() {
+    case ctx.chunks.recv() {
       .Some(chunk) => {
         buffer = ctx.process_buffer(buffer.concat(chunk))
-        ctx.chunks.finish_chunk()
-        Task.yield()
-      },
-      .None => {
-        if ctx.chunks.closed.get() {
+        ctx.chunk_acks.send(true)
+
+        if ctx.shared.get().should_exit {
           break
         }
-        time.sleep(idle_sleep_ms)
+
+        Task.yield()
       },
+      .None => { break },
     }
   }
+
+  ctx.chunk_acks.close()
 }
 
 fn diagnostics_loop(ctx: LoopCtx) {
   for true {
-    case ctx.diagnostics.pop_job() {
+    case ctx.diagnostics.recv() {
       .Some(job_gen) => ctx.run_diagnostics_job(job_gen),
-      .None => {
-        if ctx.diagnostics.closed.get() or ctx.shared.get().should_exit {
-          break
-        }
-        time.sleep(idle_sleep_ms)
-      },
+      .None => { break },
     }
   }
 }
@@ -349,7 +280,7 @@ fn schedule_diagnostics(ctx: LoopCtx) {
     }
 
     if ctx.gen.get() == my_gen {
-      ctx.diagnostics.push_job(my_gen)
+      sent := ctx.diagnostics.send(my_gen)
     }
   })
 }

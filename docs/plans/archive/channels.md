@@ -1,6 +1,6 @@
 # Channels (CSP-style concurrency)
 
-Status: Implementation in progress (2026-06-20)
+Status: Implemented (2026-06-20)
 
 ## Goal
 
