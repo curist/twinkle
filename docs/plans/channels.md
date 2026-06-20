@@ -31,7 +31,10 @@ stackful JSPI suspension already underlying `Task`), not a public surface.
   `Channel<T>` handle.
 - Unbounded channels (send never blocks). Omitted deliberately (unbounded memory
   if a consumer lags), matching Go.
-- Stage0 (Rust) parity. Boot + runtime only, consistent with `Task`.
+- Stage0 (Rust) **execution** of channels — the Rust interpreter need not *run*
+  the scheduler (boot runs under the JS runtime), as with `Task`. Stage0 must
+  still *emit/lower* the `Channel` builtins once Phase 2 puts them in
+  `boot/main.tw`; see Rollout.
 
 ## Why not a pull/iterator abstraction?
 
@@ -52,9 +55,11 @@ for the `for v in ch { }` *syntax*, but the semantics are push/park, not pull (s
 `Task`, `Dict`, `Cell`); no import needed.
 
 ```tw
-// Construction
-Channel.new<T>() Channel<T>                  // unbuffered (rendezvous)
-Channel.bounded<T>(capacity: Int) Channel<T> // buffered, capacity >= 1
+// Construction — generic in T; T is fixed by the binding annotation / inference,
+// not call-site type args (Twinkle uses HM inference, no `Channel.new<Int>()`):
+//   reqs: Channel<Request> = Channel.bounded(32)
+Channel.new()                Channel<T>      // unbuffered (rendezvous)
+Channel.bounded(capacity: Int) Channel<T>    // buffered, capacity >= 1
 
 // Send — blocks per the backpressure rules below
 ch.send(v)        Bool                       // false if the channel is closed (not delivered)
@@ -141,7 +146,11 @@ when the scheduler is fully quiescent: no runnable tasks, **`pendingHost == 0`**
 channels/awaits. This deliberately does *not* flag a long-lived daemon/service
 that sits idle: a server parked on stdin (or any host I/O, or a timer) keeps
 `pendingHost > 0`, so it stays alive. Only a task graph where nothing could ever
-make progress is reported.
+make progress is reported. Implementation note: `checkQuiescence` today
+special-cases the top-level pseudo-task and counts only `blockedOnTask`; it must
+also count `blockedOnChannel` for **both spawned and top-level** tasks, so a
+top-level blocked on `recv()` with nothing pending is reported as a deadlock
+rather than silently exiting or hanging.
 
 **Edge cases:** `recv()` on a forever-empty open channel parks indefinitely (as
 in Go), caught by deadlock detection only if the whole scheduler is otherwise
@@ -189,7 +198,12 @@ in pure Twinkle without reintroducing polling.
 
 ### Runtime — channel object + scheduler integration (`tools/js_runtime/runtime.mjs`)
 
-A channel is an object owned by the scheduler:
+The scheduler keeps `channels: Map<i32, channel>` and hands out `i32` ids
+(mirroring task ids); every `channel_*` intrinsic looks the channel up by id. The
+channel imports are registered on `s.imports` under the **same `"task"` host
+module** as the task ops, so the runtime's `moduleNeedsTasks` (which keys on
+`imp.module === "task"`, runtime.mjs) installs the scheduler with no detection
+change. A channel object:
 
 ```js
 { capacity, buffer: [], sendQ: [], recvQ: [], closed: false }
@@ -221,15 +235,39 @@ both and grows cleanly if future ops need more kinds (`timeout`, `cancelled`). T
 thin Twinkle wrapper maps `value` → `.Some(v)` and `closed` → `.None` for `recv`;
 `send` returns the scheduler's delivered/closed boolean directly.
 
-### Compiler (boot only)
+### Compiler (boot)
 
 - Register `Channel` as a builtin generic type (new builtin `TypeId`), plus
   builtin constructors `Channel.new` / `Channel.bounded` and methods
-  `send` / `recv` / `close`, lowering to the intrinsics above (mirrors
-  `Task.spawn` → `task_create`).
-- Make `Channel` satisfy the existing **`IntoIterator`** contract so
-  `for v in ch { }` lowers to a `recv`-until-`.None` loop, reusing the
-  access-contracts machinery.
+  `send` / `recv` / `close`, lowering to the intrinsics above. Mirror the `Task`
+  wiring: `intr(...)` in `boot/compiler/builtins.tw`, a `BuiltinOp` +
+  `emit_intrinsic_*` in `boot/compiler/codegen/emit.tw`, and the import
+  declarations in `boot/compiler/codegen/runtime/task_abi.tw` (add the channel
+  imports there, under the same `"task"` module).
+- **Handle ABI:** `Channel<T>` is a GC struct (`rt_types__Channel`) wrapping an
+  `i32` channel id, mirroring `Task<T>`. `channel_new`/`channel_bounded` return
+  `i32`; `send`/`recv`/`close` take the `i32`; payloads cross as `anyref` (boxed
+  by the compiler). JS never touches the GC struct — same discipline as the task
+  ABI (`task_abi.tw` header).
+- **Scheduler-use detection:** extend `program_uses_tasks`
+  (`boot/compiler/codegen/emit.tw:2167` — it builds an id set of `Task` methods)
+  to also include the `Channel` method ids, so any channel use flips on the
+  `__task_run` export + scheduler support (channels suspend, so they need it).
+- **`for v in ch`:** `IntoIterator` is satisfied by an **inherent
+  `iter(self) Iterator<T>`** method (the contract is satisfied via `iter()`, not a
+  bespoke loop lowering — `checker.tw`, "satisfied via inherent ... `iter()`").
+  `Channel.iter` returns an `Iterator<T>` built with `Iterator.unfold` whose step
+  calls `recv()`: `.Some(v)` yields and continues, `.None` ends iteration.
+
+### Stage0 (Rust) — emit-only support, needed for Phase 2
+
+Because Phase 2 uses channels in `boot/commands/lsp.tw` (part of `boot/main.tw`)
+and `make stage2` starts from the Rust stage0 building `boot/main.tw`, stage0 must
+*lower/emit* the `Channel` builtins — not execute them. Mirror the existing `Task`
+support: a `CHANNEL_TYPE_ID` (`src/types/ty.rs`), builtin `FuncId`s
+(`src/ir/lower.rs`, cf. `TASK_SPAWN`), and type resolution/check/env entries
+(`src/types/{resolve,check,env}.rs`). Phase 1 needs no stage0 changes (channels
+live only in tests + the stdlib wrapper, off `boot/main.tw`'s compile path).
 
 ### Twinkle surface (thin wrapper)
 
@@ -267,7 +305,8 @@ Most behavior is observable from Twinkle, so the bulk lives in a new
 
 1. **Core primitive** — runtime ops + intrinsics + compiler builtin + thin
    wrapper + `IntoIterator` + `channel_suite`. Self-host green. Ships channels.
-   Boot + runtime only, no stage0.
+   Boot + runtime only — **no stage0 changes** (channels appear only in tests and
+   the stdlib wrapper, off `boot/main.tw`'s compile path).
 2. **LSP migration (first real adopter)** — replace `ChunkQueue` /
    `DiagnosticsQueue` and the `time.sleep(1)` poll loops in
    `boot/commands/lsp.tw` with channels; drop `wait_for_dispatcher` and the
@@ -275,7 +314,9 @@ Most behavior is observable from Twinkle, so the bulk lives in a new
    stdio driver that sends a formatting request mid cold-analysis (the harness
    used to validate the diagnostics responsiveness work — latency stays low, poll
    loops gone) and the full boot suite incl. LSP suites. Validates the API on real
-   code and delivers the idle-CPU / latency payoff.
+   code and delivers the idle-CPU / latency payoff. **Requires the emit-only Rust
+   stage0 support above** (channels now live in `boot/main.tw`, which `make
+   stage2` compiles from stage0).
 3. **Docs / later** — `docs/API.md` channel section; revisit `select` /
    `recv_timeout` only if a concrete need appears.
 
