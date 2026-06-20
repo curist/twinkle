@@ -1,6 +1,6 @@
 # Lint: `constant-fn` — nullary function returning only a constant
 
-Status: **Design.** Extends the shipped linter
+Status: **Shipped (report-only).** Extends the shipped linter
 ([archive/linter.md](archive/linter.md)) with one new report-only lint. Follows
 that doc's conventions (catalog membership, auto-fixability rule, no-config /
 near-zero-false-positive bar, import-chain scope). Auto-fix is intentionally out
