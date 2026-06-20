@@ -56,6 +56,15 @@ fn collect_free_vars_inner(
       collect_free_vars_inner(callee, bound, captured, result),
       fn(st, arg) { collect_free_vars_inner(arg, st.bound, st.captured, st.result) },
     ),
+    // A contract call (e.g. `for v in ch` lowers the receiver into
+    // `ContractCall(.IntoIterator, "iter", receiver, args)`) carries free
+    // variables in its receiver and args just like a plain call. Without this
+    // arm the receiver local is never captured, and a captured iterable degrades
+    // to a bogus module-global reference inside the closure.
+    .ContractCall(_, _, receiver, args) => args.fold(
+      collect_free_vars_inner(receiver, bound, captured, result),
+      fn(st, arg) { collect_free_vars_inner(arg, st.bound, st.captured, st.result) },
+    ),
     .If(cond_e, then_e, else_e) => {
       st := collect_free_vars_inner(cond_e, bound, captured, result)
       st = collect_free_vars_inner(then_e, st.bound, st.captured, st.result)
