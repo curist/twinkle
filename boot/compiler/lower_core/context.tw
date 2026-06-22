@@ -41,7 +41,7 @@ pub fn new_ctx(check_result: CheckResult, reg: BuiltinRegistry) LowerCtx {
   for entry in reg.entries {
     func_table[entry.name] = entry.func_id
 
-    if entry.name.starts_with("host_") {
+    if entry.name.starts_with("host_") or entry.name.starts_with("buf_") {
       func_table["__${entry.name}"] = entry.func_id
     }
   }
