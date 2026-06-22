@@ -41,6 +41,7 @@ Self-hosting is complete. Historical design and status docs live in
 | Boot compiler layout | Reorganize `boot/compiler/` into focused subdirectories with stable end-state names | Planned | [boot-compiler-layout-reorg.md](boot-compiler-layout-reorg.md) |
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
 | Boot typed builtin type refs | Extend the typed-builtin-reference pattern (Option/Result variant refs, now done) to the remaining builtin *types* still referenced by raw id — `Order`, `Iterator`, `Range` — and audit `IterItem`/`UnfoldStep`/`Task` | Planned | [boot-typed-builtin-type-refs.md](boot-typed-builtin-type-refs.md) |
+| Linear-memory Buffer | Introduce linear-memory buffers foundation-first (byte-addressed `Buffer` + typed views, arena-scoped); M1 proves it by making `Vector<Int>.sort()` faster via a dense linear-scratch merge sort | Planned | spec [buffer-linear-memory.md](buffer-linear-memory.md), M1 plan [buffer-linear-memory-m1-plan.md](buffer-linear-memory-m1-plan.md) |
 
 
 ### Later — Tooling & Ecosystem
