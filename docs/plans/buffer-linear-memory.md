@@ -1,333 +1,239 @@
-# Linear-Memory `Buffer` (foundation-first)
+# Linear-Memory `Buffer`
 
-Status: **GO. M1's sort proxy was at parity, but M3 — the right proxy — is a decisive win: linear-memory byte decode is ~30× faster than GC `Vector<Byte>`.** The linear-memory direction is validated on the workload it is actually for (dense byte indexing / codecs). Branch: `buffer-linear-memory` (off `main`).
+Status: **M1 + M3 validated (GO).** The linear-memory direction is proven on the
+workload it is actually for — dense byte indexing / codecs — where it is decisively
+faster than GC `Vector<Byte>`. **M2 (the user-facing `Buffer` type) is the active
+milestone; its design is below.** Branch: `buffer-linear-memory` (off `main`).
 
-### M3 result (2026-06-22) — GO
+The detailed M1 and M3 *execution* plans are completed and archived under
+`docs/plans/archive/buffer-linear-memory-m{1,3}-plan.md`; their validated findings are
+condensed here as the evidence base for M2.
 
-The honest go/no-go the sort never answered. A LEB128 varint codec was implemented
-twice — once decoding over linear memory (`i32.load8_u` via the `__buf_*` builtins),
-once over a GC `Vector<Byte>` — and A/B'd on a decode-dominated workload
-(`boot/bench/buf_codec_bench.tw`, 4,000,000 varints, data encoded natively into each
-representation, **no cross-gather**, decode-only timed). Same machine, rebundled CLI;
-both paths produce the identical checksum (gated by a pre-timing correctness trap):
+## Validated results
 
-| build | decode 4M varints (warm) |
-|---|---|
-| GC `Vector<Byte>` (`bytes[i]`) | ~337 ms |
-| linear memory (`i32.load8_u`) | ~11 ms |
+A LEB128 varint codec and a self-contained MD5, each implemented twice (once decoding
+over linear memory via `i32.load8_u`, once over a GC `Vector<Byte>`), A/B'd on
+decode-dominated workloads with data filled natively into each representation (no
+cross-gather, decode/compress timed). Identical checksums, gated by a pre-timing
+correctness trap. Same machine, rebundled CLI.
 
-**~30× faster.** The gap exceeds the naive ~log₃₂ n depth advantage because each
-`Vector<Byte>` index pays a persistent-trie walk **plus** a GC ref-cast/unbox per
-byte, whereas the linear path is a single near-native byte load. This is exactly the
-property the M1 sort failed to exercise (the sort is comparator-bound and reads each
-scratch slot ~once; a codec is indexing-bound and byte-dense).
+| workload | GC `Vector<Byte>` | linear memory | ratio |
+|---|---|---|---|
+| LEB128 decode, 4M varints (warm) | ~337 ms | ~11 ms | **~30×** |
+| MD5 of 4M bytes (warm) | ~105 ms | ~47 ms | **~2.2×** |
+| `Vector<Int>.sort()`, 1M ints (warm) | ~59–66 ms | ~59–63 ms | parity |
 
-**Decision:** the linear-memory direction pays off for byte-indexing / codec workloads.
-Proceed toward the real targets — **M3b** (a genuine flat IR/Wasm-module codec replacing
-the O(n·log n) `Vector<Byte>` decode that sank Phase G) and **M4** (shared-memory worker
-transport). The M1 `rt.buf` infrastructure + this probe are the foundation. Before any
-broad adoption, still address the M1 caveat (the program memory is emitted on every
-module — make it conditional on use) and narrow/remove the probe-only `__buf_*` surface
-(it is currently global; see the M3 plan's Task 2 caveat). M3 probe artifacts
-(`boot/lib/buf_codec.tw`, `boot/bench/buf_codec_bench.tw`, `buf_codec_suite`) are
-throwaway scaffolding to remove or promote when M3b begins.
+The codec gap exceeds the naive ~log₃₂ n depth advantage because each `Vector<Byte>`
+index pays a persistent-trie walk **plus** a GC ref-cast/unbox per byte, whereas the
+linear path is a single near-native byte load. MD5's ~47 ms floor is irreducible
+compression arithmetic; the ~58 ms difference is pure byte-read overhead — i.e. byte
+reads were ~55% of MD5's wall time over `Vector<Byte>`. The sort lands at parity
+because it is comparator-bound and reads each scratch slot ~once (it was M1's
+bellwether, not its target).
 
-### Crypto application probe (2026-06-22)
-
-Tested whether the byte-decode win extends to crypto hashing (`@std.crypto`).
-A faithful self-contained MD5 with two byte-sources sharing identical compression
-(`boot/bench/md5_linear_bench.tw`, data filled natively into each representation, no
-cross-gather, correctness gated on `MD5("abc")` + a vec/linear cross-check):
-
-| byte source | MD5 of 4M bytes (warm) |
-|---|---|
-| GC `Vector<Byte>` (`input[i]`) | ~105 ms |
-| linear memory (`i32.load8_u`) | ~47 ms |
-
-**~2.2×.** The ~47 ms floor is irreducible compression arithmetic; the ~58 ms
-difference is pure byte-read overhead — i.e. **byte reads were ~55% of MD5's wall time
-over `Vector<Byte>`**. (This corrects an earlier op-count dismissal of crypto as a
-linear-memory target: in Twinkle, hashing over `Vector<Byte>` is genuinely
-byte-read-bound because each GC-array index pays a trie walk + unbox.) The win is
-moderate rather than codec-scale because compression doesn't shrink.
-
-**Caveat (gather trap):** this 2.2× is the *upper bound*, real only when the message
-bytes **originate in linear memory**. For the current `digest_bytes(Vector<Byte>)`
-API, copying a vector into linear costs the read overhead it saves → wash. The real
-payoff shape is `crypto.digest_file(path)` / `digest_stream` reading I/O straight into
-a linear buffer and hashing in place — which all hashes (MD5/SHA-1/SHA-256) benefit
-from identically (shared read-once block structure). That requires the same
-**I/O-into-linear primitive** M4 needs: export the `rt.buf` memory + a host
-read-into-buffer builtin. Not yet built; recorded as a validated future milestone.
-
-### M1 result (2026-06-22)
-
-All hard gates pass: emitted wasm validates and runs under V8 with the program
-memory + new load/store; the self-host fixed point holds (stage3 == stage4); the
-full boot suite is green. The infrastructure is sound and the linear-memory
-primitive does **not** trip any GC↔linear coexistence problem under V8.
-
-**The perf proof did not land.** `examples/sort-bench/sort_repeat_probe.tw`,
-`native xs.sort()` on 1,000,000 ints, warm (run2/run3 after V8 tier-up), measured
-on the same machine with self-host-rebuilt CLIs:
-
-| build | warm `native xs.sort()` | cold (run1) |
-|---|---|---|
-| `main` (GC-array merge) | ~59–66 ms | ~125–129 ms |
-| this branch (dense linear-memory scratch) | ~59–63 ms | ~124 ms |
-
-The dense linear-memory sort lands at **parity** — inside run-to-run noise, no
-clear win. The good news vs. the reverted GC-array `Scratch<T>` (`b915637`, which
-regressed ~16%): linear memory does **not** regress, so the gather/scatter +
-`i64.load`/`i64.store` path fully absorbs its own overhead. But parity is not the
-win the go/no-go called for.
-
-**Caveat — cost imposed on all programs:** `rt.buf` adds a 16-page (`1 MiB`)
-linear memory to *every* emitted module (the memory section survives DCE even when
-`sort_i64` is eliminated), so non-sorting programs pay a baseline footprint for a
-feature that is, at best, parity for the one workload that uses it.
-
-**What this does and does not decide.** The sort was picked as M1's go/no-go
-because it is a cheap, self-contained bellwether — *"if linear memory can't win the
-one workload we already know is read-bound, be skeptical."* It didn't win. So:
-
-- **Settled:** a linear-memory scratch sort is *not* the lever for the typed
-  `Vector<Int>` read wall. That lever remains typed `PVecI64` storage
-  (`project_typed_vector_repr`), not the sort's scratch mechanism. Don't re-run this
-  experiment expecting a win.
-- **NOT settled (never tested here):** whether linear memory pays off for its
-  *actual* motivations — the **M3 fast IR codec** (a flat byte artifact with O(1)
-  decode, attacking the Phase G result-decode wall) and **M4 shared-memory worker
-  buffers** (`SharedArrayBuffer`-backed byte payloads moved between compile Workers
-  without structured-clone copies). The sort touches none of that. Judging the
-  direction by the sort conflated a tactical proof with the strategic goal.
-
-**What M1 leaves behind, by reusability:**
-
-- *Foundational, reusable for M3/M4 regardless of the sort result:* the wider
-  load/store IR (`i32/i64/f64.load/store`, `memory.size/grow`) and the program
-  memory-section emit + linker wiring. These are prerequisites for any
-  linear-memory use. They earn their keep independent of the sort.
-- *Tactical, proved only coexistence:* the `rt.buf` bump allocator and the dense
-  `sort_i64`. They de-risked "GC + a linear memory validate and run together under
-  V8," but are not what an M3 codec or M4 shared transport would reuse.
-
-**Caveat to fix before any merge:** `rt.buf` adds a 16-page (`1 MiB`) linear memory
-to *every* emitted module (the memory section survives DCE even when `sort_i64` is
-eliminated). A real adoption must make the program memory **conditional on actual
-use**, so non-sorting / non-buffer programs pay nothing.
-
-**Decision:** keep the branch unmerged for reference; do not adopt the dense sort.
-The forward question is not "did the sort win" but "do we invest in linear memory as
-the substrate for M3/M4" — see *Post-M1: the strategic case (untested)* below.
+**Takeaways that shape M2:**
+- Linear memory pays off for **byte-indexing / codec / decode** workloads, not sorts.
+  (The sort read-wall lever remains typed `PVecI64` storage — `project_typed_vector_repr`.)
+- The MD5 win is real only when message bytes **originate in linear memory**; copying a
+  `Vector<Byte>` in costs the read overhead it saves. The same I/O-into-linear primitive
+  is what a future `crypto.digest_file` and M4 both need.
 
 ## Motivation
 
-Twinkle is entirely Wasm-GC: every collection is a GC object, and the only
-mutable flat storage (`rt_types__Array`, the PVec backing) is reachable solely
-inside `rt.arr`. The recurring cost of having no raw, in-place, unboxed buffer
-shows up across the codebase:
+Twinkle is entirely Wasm-GC: every collection is a GC object, and the only mutable
+flat storage (`rt_types__Array`, the PVec backing) is reachable solely inside `rt.arr`.
+The cost of having no raw, in-place, unboxed buffer recurs across the codebase: the
+typed-`Vector<Int>` read wall (PVec random access is O(log₃₂ n)); the reverted native
+dense sort (`b915637`, GC-array `Scratch<T>` regressed ~16% on `anyref` cast + call per
+touch); columnar workloads (dataframe gather cliffs); and the Phase G result-decode
+wall (a byte decoder over `Vector<Byte>` is O(n·log n)).
 
-- the typed-`Vector<Int>` "read wall" (PVec random access is O(log₃₂ n));
-- the reverted native dense sort (`b915637`): a GC-array `Scratch<T>` merge sort
-  regressed plain `Vector<Int>` sort ~16% because every touch paid an `anyref`
-  cast + call, plus two extra copies;
-- columnar workloads (dataframe `Vector<Float>` columns, gather cliffs);
-- the Phase G result-decode wall: a binary IR codec was abandoned because a
-  byte-level decoder over `Vector<Byte>` is O(n·log n) — GC arrays have O(log n)
-  random indexing.
-
-Linear memory provides exactly what is missing: **O(1) indexed, unboxed,
-cache-local mutable storage**, with `SharedArrayBuffer` as a much-later door to
-shared-memory parallelism. This effort introduces that capability foundation-first.
-
-## Scope and driver
-
-The driver is **general raw-buffer performance**, not parallelism. The fast IR
-codec and any shared-memory parallelism are deferred consumers that become
-natural once the primitive exists and is proven.
+Linear memory provides what is missing: **O(1) indexed, unboxed, cache-local mutable
+storage**, with `SharedArrayBuffer` as a much-later door to shared-memory parallelism.
 
 ### Hard constraint that shapes everything
 
-Linear memory can hold **only unboxed primitives** (`Int`/`i64`, `Float`/`f64`,
-`Byte`/`u8`, `Bool`). GC references (`String`, records, closures) cannot live in
-it. This aligns with where the pain is — primitive numeric arrays and byte
-buffers — so `Buffer` *augments* `Vector`; it never replaces it. GC-element
-collections keep using PVec.
-
-## The `Buffer` primitive (target design)
-
-- **`Buffer`** — a byte-addressed, mutable, linear-memory region.
-  Conceptually: `Buffer.new(nbytes)`, `get_u8/set_u8`, `get_i64/set_i64`,
-  `get_f64/set_f64`, `len()` (bytes). It mutates in place.
-- **Typed views** — thin GC handles (`{ buffer, byte_off, count }`, no extra
-  linear allocation) giving ergonomic element-indexed access:
-  `v := buf.view_i64(off, n)` → `v.get(i)`, `v.set(i, x)`, `v.len()` (elements).
-  Everyday numeric code lives on views; raw bytes serve future codec / shared-memory uses.
-- **`Buffer` and `Cell` are Twinkle's only two mutate-in-place types.** Like
-  `Cell`, a `Buffer` is a reference: aliasing means shared mutation, and that is
-  the contract. No uniqueness or linear-type machinery is required — the rest of
-  the language stays immutable, and these two are the explicit escape hatches.
-- **Lifetime: arena-scoped.** Wasm GC has no finalizers, so a `Buffer`'s region
-  is not reclaimed when its handle becomes garbage. Buffers allocate from an
-  arena that is bulk-reset at a boundary (deterministic, trivial allocator, zero
-  per-buffer cost). The trade-off — a buffer must not outlive its arena — is
-  acceptable for transient/scratch use and is the M1 scope.
+Linear memory can hold **only unboxed primitives** (`Int`/i64, `Float`/f64, `Byte`/u8,
+`Bool`). GC references (`String`, records, closures) cannot live in it. This aligns
+with where the pain is — primitive numeric arrays and byte buffers — so `Buffer`
+*augments* `Vector`; it never replaces it. GC-element collections keep using PVec.
 
 ## Roadmap
 
-The work is staged so each milestone proves its predecessor before adding surface.
+- **M1 — linear-memory infrastructure (DONE).** Wider load/store IR
+  (`i32/i64/f64.load/store`, `memory.size/grow`) + a program memory + a bump allocator
+  (`rt.buf`), proven to coexist with GC under V8. Internal machinery only; no
+  user-facing type. Sort proxy came back parity — settled that a linear scratch sort is
+  not the read-wall lever, but left the infrastructure intact.
+- **M3 probe — byte codec (DONE, GO).** Raw `__buf_*` byte accessors + a LEB128 codec
+  decisively beat `Vector<Byte>` (~30×). This is the honest go/no-go the sort never
+  answered. Probe artifacts are throwaway.
+- **M2 — user-facing `Buffer` + typed views (ACTIVE — design below).** A clean, safe,
+  ergonomic type as the abstraction over linear memory. Success is the *type*, not a
+  perf number; the perf consumers come later.
+- **M3b — fast IR codec (future).** A flat linear-memory artifact format with O(1)
+  decode, attacking the Phase G result-decode wall — the first real perf consumer.
+- **M4 — shared-memory parallelism (future, the original ask).**
+  `SharedArrayBuffer`-backed byte buffers across compile Workers. Needs `shared` memory
+  + atomics + SAB runtime backing on top of M1's IR (see *Strategic case* below).
 
-- **M1 — internal-first (this spec's detailed scope).** Land the linear-memory
-  infrastructure (wider load/store, a program memory, a bump/arena allocator) as
-  internal compiler-runtime machinery with **no user-facing `Buffer` type**, and
-  prove it on the dense sort that was already tried and reverted. Defers the
-  hardest design question (user-facing arena scoping + escape safety).
-- **M2 — user-facing `Buffer` + typed views.** Surface syntax for arenas
-  (`with_arena { ... }` or an explicit `Arena` value), the view API, escape
-  discipline, and codegen for user code. Only after M1 proves the primitive pays off.
-- **M3 — fast IR codec.** A flat linear-memory artifact format with O(1) decode,
-  attacking the Phase G result-decode wall. *Recommended go/no-go for the whole
-  direction* (the sort was the wrong proxy — see Post-M1 below).
-- **M4 — shared-memory parallelism (the original motivation).**
-  `SharedArrayBuffer`-backed byte buffers across compile Workers, avoiding
-  structured-clone copies in the parallel-compile transport. Unproven and unbuilt,
-  but it is *why* linear memory was wanted; needs `shared` memory + atomics + SAB
-  runtime backing on top of M1's IR (none of which M1 added). See Post-M1 below.
+---
 
-Each milestone is additive on proven infrastructure.
+## M2 — user-facing `Buffer` + typed views (active design)
 
-## Post-M1: the strategic case (untested)
+### Philosophy and safety model
 
-M1's sort proxy failed, but the reasons to want linear memory are M3 and M4, and
-neither was exercised. This section scopes what they actually require so the
-direction can be judged on its real merits — and to be explicit that M1, despite
-naming a memory, does **not** yet deliver the pieces these need.
+`Buffer` is an **opt-in, low-level, manually-managed** linear-memory region — Twinkle's
+**second mutate-in-place reference type alongside `Cell`**, and the explicit escape
+hatch from an otherwise-immutable language. It is **fully first-class**: returnable,
+storable in records/collections, freely captured. Correctness — calling `free`, not
+using after free — is the **programmer's responsibility, like C**. The one safety floor
+Wasm gives for free: all access is sandboxed within the linear memory, so the worst
+case is reading/corrupting *another buffer's* bytes or trapping at the memory edge —
+never true UB or an escape from the sandbox.
 
-### Two distinct targets (different urgency, shared substrate)
+This deliberately rejects the heavier alternatives considered (arena scoping,
+second-class/non-escaping `Buffer`, escape analysis). Manual management gives maximum
+leverage and is markedly simpler to build, and it matches the intent: linear memory is
+a low-level construct, so the surface should expose precise control of it.
 
-- **M3 — byte-level IR codec (single-process, nearer-term).** A flat
-  linear-memory artifact format the compiler decodes with O(1) random indexing,
-  replacing the O(n·log n) `Vector<Byte>` decode that sank Phase G. Needs only a
-  *plain* (non-shared) memory + byte/word load/store — which M1's IR already
-  provides. This is the lowest-risk way to actually test whether linear memory
-  pays off, on a workload that genuinely indexes bytes (unlike the sort, which only
-  used linear memory as scratch). **If we want one proof of the direction, this is
-  the one to run, not the sort.**
-- **M4 — shared-memory worker buffers (the original ask).** Move serialized
-  payloads (a compiled Wasm module, an IR blob) between compile Workers through a
-  `SharedArrayBuffer`-backed memory, avoiding the structured-clone copies the
-  current `postMessage` remote-channel transport pays. Ties directly into the
-  parallel-compile-workers roadmap, whose next step is already *"spawn_worker ABI +
-  Wasm codec"* (`project_parallel_compile_workers`) — and that Wasm codec is
-  exactly the flat byte payload M3 produces. So M3 is effectively a dependency of a
-  *fast* M4.
+### Lifetime
 
-### Hard constraint that gates both
+Manual `Buffer.new` / `buf.free()`. The idiomatic scope hook is **`defer`**:
 
-**Only flat bytes live in linear memory — never GC objects.** Twinkle values
-(`String`, records, `Vector`, closures) are Wasm-GC heap objects and cannot be
-placed in or shared through a linear memory. So linear memory helps move/serialize
-*byte representations* (IR, Wasm, packed columns), not live object graphs. This is
-why a byte codec (M3) is the unlock: it's what turns GC artifacts into the flat
-form that shared memory (M4) can transport.
+```tw
+buf := Buffer.new(1024)
+defer buf.free()              // runs at block exit, LIFO, captures the handle by value
+buf.set_i64(0, 42)
+```
 
-### Concrete IR/runtime gaps M1 did NOT close
+`defer` is tied to the nearest enclosing `{ }` block, runs on every exit except trap,
+fires LIFO, and captures by value — so `defer buf.free()` is correct and composes with
+nested allocations. It is the common pattern, not the only legal one (first-class
+buffers may also be freed wherever their owner decides).
 
-What M1 built (load/store + a plain per-instance memory) is necessary but not
-sufficient for M4. To express and run *shared* memory we still need:
+### Public API (`use @std.buffer`)
 
-- **`MemoryDef` cannot express `shared`.** Today
-  `MemoryDef = { name, min_pages, max_pages? }` and the limits encoder
-  (`encode_memory_section_payload`, `wasm.tw`) emits only flag `0x00` (min) or
-  `0x01` (min+max). A shared memory requires a `shared: Bool` field and limits flag
-  `0x03` (shared **must** carry a max). Small, additive IR change — but real.
-- **No atomics.** Cross-worker coordination needs `i32/i64.atomic.load/store`,
-  `atomic.rmw.*`, and `memory.atomic.wait32/notify`. None exist in the `Instr`
-  enum; each is an emit + WAT arm like M1's load/store work.
-- **Runtime: SAB-backed shared memory.** `runtime.mjs`/`deno_main.mjs` must
-  instantiate the memory from a `SharedArrayBuffer` and pass the *same*
-  `WebAssembly.Memory` into every Worker instance (imported, not module-owned).
-  Needs `crossOriginIsolated` (COOP/COEP headers in the browser; fine under Deno).
-- **Conditional memory emission.** Per the M1 caveat, a shared (or any) program
-  memory must be emitted only when actually used, not unconditionally on every
-  module.
+```tw
+use @std.buffer.{Buffer}
 
-### Recommended next probe (if we pursue this)
+// construction / lifetime
+Buffer.new(nbytes: Int) Buffer
+Buffer.from_bytes(bytes: Vector<Byte>) Buffer      // alloc + copy in
+buf.free()                                          // release the region
+buf.len() Int                                       // byte length
+buf.to_bytes() Vector<Byte>                         // copy out
 
-Run **M3 (byte codec) as the honest go/no-go**, not another sort. Build a minimal
-flat IR (or Wasm-module) codec over the M1 load/store IR, decode it with O(1)
-indexing, and compare against the current `Vector<Byte>` decode on a realistic
-artifact. That measures the property linear memory is actually good at (dense byte
-indexing). Only if M3 wins is M4 (add `shared` + atomics + SAB transport) worth the
-larger lift. The dense sort stays parked as proof-of-coexistence, nothing more.
+// raw access — BYTE-addressed (offset is a byte offset), little-endian, unaligned ok
+buf.get_u8(off: Int) Byte        buf.set_u8(off: Int, v: Byte)
+buf.get_i64(off: Int) Int        buf.set_i64(off: Int, v: Int)
+buf.get_f64(off: Int) Float      buf.set_f64(off: Int, v: Float)
 
-## M1 — Linear-memory infrastructure, proven on the dense sort
+// typed views — ELEMENT-indexed handles over a region, no extra allocation
+buf.view_u8(byte_off: Int, count: Int)             // -> U8View
+buf.view_i64(byte_off: Int, count: Int)            // -> I64View
+buf.view_f64(byte_off: Int, count: Int)            // -> F64View
+v.get(i: Int) T        v.set(i: Int, x: T)         // element i
+v.len() Int                                         // element count
+v.slice(lo: Int, hi: Int)                          // sub-view, shares backing, no alloc
+v[i]                                                // read sugar -> v.get(i) (IndexRead)
+for x in v { ... }                                  // IntoIterator
+```
 
-### What already exists (de-risks M1)
+### Semantics
 
-- `WasmModule.memories` + `MemoryDef { name, min_pages, max_pages? }`, memory-section
-  encoding (`encode_memory_section_payload` in `wasm.tw`), and linker memory concat
-  (`linker.tw` concatenates each module's `memories`).
-- Byte instructions: `I32Load8U`, `I32Store8`, `MemoryGrow`, with emit + WAT.
-- The separate `bridge.wasm` already declares a `"staging"` memory and uses byte
-  load/store for host data staging — proof a memory validates and runs under V8.
-- The **output program module currently declares no memory** (`emit.tw: memories: []`);
-  it gets its own single memory at index 0, so no multi-memory proposal is needed.
+- **Raw `Buffer` = byte offsets; views = element indices.** On a raw buffer the width
+  is explicit per call (`get_u8`/`get_i64`/`get_f64`) and the argument is a byte
+  offset; on a view the argument is an element index and the width is fixed by the view
+  type. This split keeps both honest.
+- **Endianness / alignment:** little-endian (native Wasm), unaligned access allowed.
+- **Bounds:** access is **unchecked** against a buffer/view's logical length; only
+  Wasm's whole-memory bound traps. Indexing past `len` but inside the memory reads
+  garbage or corrupts a neighboring buffer (logically wrong, sandbox-safe). This
+  preserves the bare-load speed that motivates linear memory.
+- **Index sugar:** views satisfy **`IndexRead`** so `v[i]` reads (lowering to
+  `v.get(i)`) — essentially free once `get` exists. Writes stay explicit `v.set(i, x)`:
+  no `IndexWrite`, because `arr[i] = v` desugars to *rebind-and-build-new* for `Vector`,
+  which would silently conflict with `Buffer`'s mutate-in-place contract. Raw `Buffer`
+  stays methods-only (no `[]`, since it is multi-width).
+- **Double-free / use-after-free:** documented-undefined — corrupts the allocator's
+  bookkeeping but stays within the sandbox. No runtime guard in M2.
 
-### New work (all boot-codegen; no stage0 parity needed)
+### Representation
 
-The linear-memory machinery is boot codegen that *constructs* wasm IR. The new
-Instr variants are ordinary enum additions to `wasm_ir.tw`; stage0 compiles the
-boot source that uses them like any other enum, so this follows the established
-"no-stage0-parity for boot-codegen" rule.
+- `Buffer = .{ ptr: Int, len: Int }` — a GC record; `ptr` is the linear-memory offset,
+  `len` the byte length. Being an ordinary GC ref is what makes it first-class
+  (storable/returnable).
+- **Three concrete view types** — `U8View`, `I64View`, `F64View` — each a thin
+  `.{ ptr: Int, byte_off: Int, count: Int }` record, **not** a single generic
+  `View<T>`. Without traits, one generic view cannot dispatch `get`/`set` to per-width
+  load/store intrinsics nor vary its return type by `T`; three concrete types are the
+  honest no-trait expression.
 
-1. **Wider load/store instructions.** Add `I32Load`/`I32Store`, `I64Load`/`I64Store`,
-   `F64Load`/`F64Store` (each carrying an align + offset memarg) to `wasm_ir.tw`,
-   with opcode emit in `wasm.tw` and WAT rendering in `wat.tw`. Byte ops already exist.
-2. **Program memory + bump/arena allocator.** A new `boot/compiler/codegen/runtime/buf.tw`:
-   - contributes one `MemoryDef` for the program module (flows through the linker concat);
-   - a mutable `i32` global `buf_heap_ptr`;
-   - `buf_alloc(nbytes) -> ptr` that bumps the pointer and grows the memory via
-     `MemoryGrow` when the region would overflow the current pages;
-   - arena `buf_mark() -> i32` and `buf_reset(mark)` = save/restore `buf_heap_ptr`
-     (high-water reset).
-   These are internal runtime functions only — no user-facing `Buffer` type, no
-   surface syntax.
-3. **Dense typed sort over linear scratch.** Near `sort_typed_fn` in `arr.tw`,
-   add a merge sort that, for `i64`/`f64` element vectors: gathers the vector into
-   an arena-allocated linear scratch region, merges through linear memory using the
-   new O(1) load/store (no `anyref` casts, no GC-array copies — the exact costs that
-   sank the reverted `Scratch<T>`), scatters the sorted result back into a fresh
-   typed vector, then `buf_reset`s the arena before returning. Non-primitive element
-   types keep the existing recursive-merge path.
+### Implementation (mostly reuses M1/M3)
 
-### Validation / success criteria
+1. **`rt.buf` → free-list allocator.** Replace the bump-only allocator with a free-list
+   + coalescing (`buf_alloc(nbytes) -> ptr`, `buf_free(ptr)`), since first-class
+   buffers are freed in arbitrary (non-LIFO) order. Add `i64`/`f64` load/store runtime
+   funcs (byte funcs `buf_load_u8`/`buf_store_u8` already exist from M3).
+2. **Intrinsics (3-site recipe).** Add `__buf_free`, `__buf_load_i64`/`__buf_store_i64`,
+   `__buf_load_f64`/`__buf_store_f64` (`builtins.tw` rt entry + `builtin_abi` declaring
+   the i64↔i32 wasm bridge — not automatic; plus the `new_ctx` `__`-alias gate). **Move
+   all `__buf_*` out of the global `builtin_env` into internal-host builtins** reachable
+   only from `@std.buffer` — closing the M3 global-surface leak.
+3. **`@std.buffer` module.** The `Buffer` record + three view records, all methods,
+   `from_bytes`/`to_bytes` (copy loops), `slice`, the `IndexRead` satisfier for `v[i]`,
+   and the `IntoIterator` satisfier for `for x in v`. Pure Twinkle over the intrinsics,
+   per the stdlib-module wiring recipe (little/no Rust stage0 change expected).
+4. **Conditional memory emission.** Emit the `rt.buf` memory + funcs **only when
+   reachable after DCE**, so programs that don't `use @std.buffer` pay zero (today the
+   ~1 MiB memory is emitted on every module). This falls out naturally from the opt-in
+   module: no import → no `__buf_*` reachable → no memory.
+5. **Remove probe artifacts:** `boot/lib/buf_codec.tw`, `boot/bench/buf_codec_bench.tw`,
+   `boot/bench/md5_linear_bench.tw`, `boot/tests/suites/buf_codec_suite.tw`.
+6. **Docs + hygiene:** `docs/spec.md` (`Buffer` as the second mutate-in-place type) and
+   `docs/API.md` entries; `twk fmt` + `twk lint` on every edited `.tw`.
 
-- **Hard gates:**
-  - emitted wasm validates and runs under Deno with the program memory + new load/store;
-  - the **self-host fixed point holds** (stage3 == stage4);
-  - the full boot test suite passes.
-- **The proof (go/no-go for the whole direction):** the sort benches in
-  `examples/sort-bench/` (e.g. `sort_repeat_probe.tw`, `sort_by_component_probe.tw`)
-  show the linear-memory dense sort **beats both** the current recursive merge and
-  the reverted GC-array `Scratch<T>` on plain `Vector<Int>` sort — the workload
-  `Scratch<T>` regressed ~16%. Report before/after; if linear memory does not clearly
-  win here, the direction stops at M1.
+### Non-goals (M2)
 
-### Risks
-
-- **GC ↔ linear coexistence** in one program module under V8 — low: the bridge
-  already proves a memory validates and runs; M1 just adds one to the program module.
-- **Gather/scatter overhead.** Copying a GC `Vector<Int>` into linear scratch and
-  the sorted result back is an extra pass. The win must exceed it; the bench decides.
-- **Memory growth.** The bump allocator must grow pages on demand and the arena
-  reset must reclaim the high-water mark so repeated sorts do not leak within a run.
-
-## Non-goals (M1)
-
-- No user-facing `Buffer` type, view API, or arena syntax (that is M2).
-- No long-lived / columnar / escaping buffers (transient/scratch only).
-- No IR codec or shared-memory work (M3/M4).
+- No arena, second-class/escape safety, or `IndexWrite` sugar (all considered and
+  rejected above).
+- No M3b IR codec or M4 shared-memory/atomics consumer — M2 ships the safe type only.
+- No leak detection, double-free guard, or alignment-required fast paths.
 - No change to `Vector` semantics; `Buffer` augments, never replaces.
-- No stage0 language-level linear-memory support.
+
+---
+
+## Strategic case — M3b / M4 (future, untested)
+
+The reasons to want linear memory beyond M3's probe are a single-process **byte codec**
+and cross-Worker **shared memory**. Both rest on the same hard constraint:
+
+> **Only flat bytes live in linear memory — never GC objects.** Twinkle values
+> (`String`, records, `Vector`, closures) are Wasm-GC heap objects. So linear memory
+> helps move/serialize *byte representations* (IR, Wasm, packed columns), not live
+> object graphs. A byte codec is the unlock that turns GC artifacts into the flat form
+> shared memory can transport.
+
+- **M3b — byte-level IR codec (nearer-term).** A flat linear-memory artifact the
+  compiler decodes with O(1) indexing, replacing the O(n·log n) `Vector<Byte>` decode
+  that sank Phase G. Needs only the *plain* memory + load/store M1 already provides. The
+  lowest-risk first real consumer of the M2 type.
+- **M4 — shared-memory worker buffers (the original ask).** Move serialized payloads (a
+  compiled Wasm module, an IR blob) between compile Workers through a
+  `SharedArrayBuffer`-backed memory, avoiding the structured-clone copies the current
+  `postMessage` remote-channel transport pays (`project_parallel_compile_workers`, whose
+  next step — "spawn_worker ABI + Wasm codec" — is exactly the flat payload M3b produces).
+
+### IR/runtime gaps M1 did NOT close (needed for M4)
+
+- **`MemoryDef` cannot express `shared`.** Add a `shared: Bool` field; the limits
+  encoder (`encode_memory_section_payload`, `wasm.tw`) must emit flag `0x03` (shared
+  requires a max). Small additive IR change.
+- **No atomics.** `i32/i64.atomic.load/store`, `atomic.rmw.*`,
+  `memory.atomic.wait32/notify` — none exist in the `Instr` enum; each is an emit + WAT
+  arm like M1's load/store work.
+- **Runtime: SAB-backed shared memory.** `runtime.mjs`/`deno_main.mjs` must instantiate
+  the memory from a `SharedArrayBuffer` and pass the *same* `WebAssembly.Memory`
+  (imported, not module-owned) into every Worker. Needs `crossOriginIsolated`.
+- **Conditional memory emission** — also an M2 deliverable (above).
