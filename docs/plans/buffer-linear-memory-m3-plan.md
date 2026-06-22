@@ -156,11 +156,19 @@ git commit -m "codegen: add rt.buf byte accessors (buf_load_u8/buf_store_u8)"
 
 ## Task 2: Expose `__buf_*` builtins
 
-Make the allocator + accessors callable from `.tw` as `__buf_alloc`, `__buf_mark`, `__buf_reset`, `__buf_load_u8`, `__buf_store_u8`. The `__`-prefix-to-builtin convention is exactly how `boot/stdlib/io.tw` reaches `__host_stdout_write_bytes` (registered as `host_stdout_write_bytes`). Two wiring sites: the registry (`builtins.tw`) and the type signatures (`base_env.tw`). FuncIds are positional — **append at the end** of `builtin_specs()` to preserve existing IDs.
+Make the allocator + accessors callable from `.tw` as `__buf_alloc`, `__buf_mark`, `__buf_reset`, `__buf_load_u8`, `__buf_store_u8`. The `__`-prefix-to-builtin convention is exactly how `boot/stdlib/io.tw` reaches `__host_stdout_write_bytes` (registered as `host_stdout_write_bytes`).
 
-**Files:**
-- Modify: `boot/compiler/builtins.tw` (`builtin_specs()` list)
-- Modify: `boot/compiler/base_env.tw` (the `builtin_sig(...)` list)
+> **Implementation note (corrected against the actual wiring — committed `d536a09c`).** This plan originally claimed two sites and "automatic" i64↔i32 bridging. That was wrong; the real recipe is **three** sites, and the i64↔i32 bridge is **not** automatic:
+> 1. **`boot/compiler/builtins.tw` — `builtin_specs()`**: append the five `rt("buf_*", "rt.buf", ...)` specs at the **end** (FuncIds are positional). *Also* add five entries to **`builtin_abi()`** in the same file declaring the wasm types (`"buf_alloc" => abi([.I32], [.I32])`, `"buf_mark" => abi([], [.I32])`, `"buf_reset" => abi([.I32], [])`, `"buf_load_u8" => abi([.I32, .I32], [.I32])`, `"buf_store_u8" => abi([.I32, .I32, .I32], [])`). These ABI entries are what drive the i64→i32 arg narrowing / i32→i64 result widening at the call boundary — the same way `vector$get`/`host_*` have `builtin_abi` entries. Without them the i64 Twinkle values would mismatch the i32 rt.buf functions.
+> 2. **`boot/compiler/base_env.tw` — `builtin_env()`**: register the signatures with `.add_function(builtin_sig("__buf_alloc", [], ["nbytes"], [.Int], .Some(.Int)))` etc. — note the name carries the `__` prefix, and `add_function` (which both registers and binds) is required (a plain `builtin_sig` in the `sig_fns` list does not create a callable binding). Registering in `builtin_env()` (global) rather than `add_internal_host_builtins()` (internal-only) makes `__buf_*` callable from `boot/lib`, the test suites, and the bench. **Caveat:** unlike `__host_*` (internal-only), this exposes raw linear-memory ops to *every* program — an acceptable probe leak, but narrow it (or remove it) when M3 is resolved.
+> 3. **`boot/compiler/lower_core/context.tw` — `new_ctx`**: the `__${name}` alias loop gates on `entry.name.starts_with("host_")`; extend it to `or entry.name.starts_with("buf_")` so `__buf_*` source names resolve to the `buf_*` FuncIds.
+>
+> The original two-site steps below remain as a record of intent; follow the corrected recipe above.
+
+**Files (actual):**
+- Modify: `boot/compiler/builtins.tw` (`builtin_specs()` **and** `builtin_abi()`)
+- Modify: `boot/compiler/base_env.tw` (`builtin_env()` via `add_function`)
+- Modify: `boot/compiler/lower_core/context.tw` (`new_ctx` `__`-alias loop)
 
 - [ ] **Step 1: Write the failing smoke program**
 
