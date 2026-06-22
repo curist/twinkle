@@ -1,0 +1,70 @@
+use lib.buf_codec.{
+  decode_varints_linear, decode_varints_vec, enc_varint_linear, enc_varint_vec, sum_varints_linear,
+  sum_varints_vec,
+}
+use tests.assert
+use tests.runner
+
+fn sample_values() Vector<Int> {
+  [0, 1, 127, 128, 255, 300, 16383, 16384, 1000000, 2147483647]
+}
+
+fn expected_sum(values: Vector<Int>) Int {
+  total := 0
+  for v in values {
+    total = total + v
+  }
+  total
+}
+
+// Encode the samples into a linear region, decode, and cross-check against the
+// Vector<Byte> path and the known sum.
+fn test_varint_roundtrip_and_crosscheck() Result<Void, String> {
+  values := sample_values()
+
+  // Vector<Byte> path: encode natively into a GC array.
+  vbytes: Vector<Byte> = []
+  for v in values {
+    vbytes = enc_varint_vec(vbytes, v)
+  }
+
+  // Linear path: encode natively into linear memory (worst case 5 bytes / u32).
+  mark := __buf_mark()
+  base := __buf_alloc(values.len() * 5)
+  pos := 0
+  for v in values {
+    pos = enc_varint_linear(base, pos, v)
+  }
+
+  // Exact decode equality.
+  dec_lin := decode_varints_linear(base, values.len())
+  dec_vec := decode_varints_vec(vbytes, values.len())
+  try assert.equal(dec_lin, values)
+  try assert.equal(dec_vec, values)
+  try assert.equal(dec_lin, dec_vec)
+
+  // Allocation-free sum (the bench path) agrees with the oracle.
+  try assert.equal(sum_varints_linear(base, values.len()), expected_sum(values))
+  try assert.equal(sum_varints_vec(vbytes, values.len()), expected_sum(values))
+
+  __buf_reset(mark)
+  .Ok({})
+}
+
+// Empty stream is a no-op on both paths.
+fn test_varint_empty() Result<Void, String> {
+  mark := __buf_mark()
+  base := __buf_alloc(8)
+  try assert.equal(sum_varints_linear(base, 0), 0)
+  __buf_reset(mark)
+  empty: Vector<Byte> = []
+  try assert.equal(sum_varints_vec(empty, 0), 0)
+  .Ok({})
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("buf_codec")
+    .test("varint round-trip + linear/vec cross-check", test_varint_roundtrip_and_crosscheck)
+    .test("empty varint stream", test_varint_empty)
+}

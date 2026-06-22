@@ -1,0 +1,122 @@
+//! Probe-only LEB128 varint codec for the M3 linear-memory go/no-go.
+//! Two parallel implementations — one over a linear-memory region (via the
+//! __buf_* builtins), one over a GC Vector<Byte> — used to A/B decode speed.
+//! Not a public API; remove or promote after the go/no-go decision.
+// ── Linear-memory region (base offset = byte 0 of the stream) ──────────
+// Encode `value` as LEB128 at `base + pos`; return the next write position.
+pub fn enc_varint_linear(base: Int, pos: Int, value: Int) Int {
+  v := value
+  p := pos
+  for v >= 128 {
+    __buf_store_u8(base, p, v & 127 | 128)
+    v = v >> 7
+    p = p + 1
+  }
+  __buf_store_u8(base, p, v)
+  p + 1
+}
+
+// Decode `count` varints starting at byte 0 of `base`; return their sum.
+pub fn sum_varints_linear(base: Int, count: Int) Int {
+  acc := 0
+  pos := 0
+  n := 0
+  for n < count {
+    result := 0
+    shift := 0
+    more := true
+    for more {
+      b := __buf_load_u8(base, pos)
+      pos = pos + 1
+      result = result | (b & 127) << shift
+      shift = shift + 7
+      if b < 128 {
+        more = false
+      }
+    }
+    acc = acc + result
+    n = n + 1
+  }
+  acc
+}
+
+// Decode `count` varints into a vector (exact-correctness oracle).
+pub fn decode_varints_linear(base: Int, count: Int) Vector<Int> {
+  out: Vector<Int> = []
+  pos := 0
+  n := 0
+  for n < count {
+    result := 0
+    shift := 0
+    more := true
+    for more {
+      b := __buf_load_u8(base, pos)
+      pos = pos + 1
+      result = result | (b & 127) << shift
+      shift = shift + 7
+      if b < 128 {
+        more = false
+      }
+    }
+    out = .append(result)
+    n = n + 1
+  }
+  out
+}
+
+// ── Vector<Byte> baseline (same logic, GC-array indexing) ──────────────
+pub fn enc_varint_vec(out: Vector<Byte>, value: Int) Vector<Byte> {
+  bytes := out
+  v := value
+  for v >= 128 {
+    bytes = .append(Byte.from_int(v & 127 | 128).unwrap())
+    v = v >> 7
+  }
+  bytes.append(Byte.from_int(v).unwrap())
+}
+
+pub fn sum_varints_vec(bytes: Vector<Byte>, count: Int) Int {
+  acc := 0
+  pos := 0
+  n := 0
+  for n < count {
+    result := 0
+    shift := 0
+    more := true
+    for more {
+      b := bytes[pos].to_int()
+      pos = pos + 1
+      result = result | (b & 127) << shift
+      shift = shift + 7
+      if b < 128 {
+        more = false
+      }
+    }
+    acc = acc + result
+    n = n + 1
+  }
+  acc
+}
+
+pub fn decode_varints_vec(bytes: Vector<Byte>, count: Int) Vector<Int> {
+  out: Vector<Int> = []
+  pos := 0
+  n := 0
+  for n < count {
+    result := 0
+    shift := 0
+    more := true
+    for more {
+      b := bytes[pos].to_int()
+      pos = pos + 1
+      result = result | (b & 127) << shift
+      shift = shift + 7
+      if b < 128 {
+        more = false
+      }
+    }
+    out = .append(result)
+    n = n + 1
+  }
+  out
+}
