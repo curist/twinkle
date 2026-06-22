@@ -26,6 +26,28 @@
 
 ---
 
+## Build & test methodology (read first — critical)
+
+There are two kinds of change here, tested differently:
+
+- **Library code exercised by a test** (Task 1's WAT renderer, Task 2's `rt_buf.module()` shape). A suite that *imports and calls* the edited module exercises the edit directly, because `target/twk run boot/tests/main.tw <filter>` compiles the edited boot source into the test program and runs it. The stale bundled `target/twk` is fine as the *builder* here — it only needs to compile ordinary Twinkle (new enum variants + match arms), not understand them.
+- **Codegen emission** (Task 2's program memory + allocator injected via `runtime_modules`, Task 3's dense sort the compiler *emits*). These change what the compiler *outputs*, so they take effect **only after the boot compiler is rebuilt**. Running the stale `target/twk` will emit the OLD code — Task 3's sort tests would silently pass using the OLD sort. You MUST rebuild.
+
+**Fast rebuild loop** (use while iterating on Tasks 2–3):
+
+```bash
+cargo build --release                                   # stage0 (Rust); once, unless you change src/
+./target/release/twk build boot/main.tw -o /tmp/stage1.wasm   # stage0 compiles edited boot → stage1 (has your codegen edits)
+# run a program / the suite with the freshly-built compiler:
+BOOT_WASM=/tmp/stage1.wasm deno run --allow-read --allow-write --allow-env tools/js_runtime/deno_main.mjs run <program.tw>
+```
+
+`stage1.wasm` is the boot compiler built from your edited sources, so it emits your new codegen. (`stage0` only needs to *compile* the edited boot source — it never needs linear-memory knowledge itself, which is why there is no stage0 work.)
+
+**Full gate** (Task 4): `make bundle-cli` runs the stage0→1→2→3→4 self-host loop and asserts the stage3==stage4 fixed point, then rebuilds `target/twk`.
+
+---
+
 ## Task 1: Add memory load/store/size instructions (IR + emit + WAT)
 
 The encode match in `wasm.tw` and the render match in `wat.tw` are exhaustive over `Instr`, so the variant, its emit arm, and its WAT arm must land together or the build breaks.
@@ -327,29 +349,52 @@ and in `runtime_modules`, add `rt_buf.module()` to the returned list alongside `
     rt_buf.module(),
 ```
 
-- [ ] **Step 3: Build a trivial program and confirm the memory + allocator link in**
+- [ ] **Step 3: Unit-test the module shape (stale `target/twk` is fine here)**
 
-Create a throwaway `/tmp/mem_smoke.tw`:
+Add a test to `boot/tests/suites/codegen_integration_suite.tw` (or the nearest codegen suite) that imports `compiler.codegen.runtime.buf as rt_buf` and asserts the module shape — this calls the edited `rt_buf.module()` directly, so it works without a rebuild:
 
 ```tw
-println("ok")
+fn test_rt_buf_module_shape() Result<Void, String> {
+  m := rt_buf.module()
+  try assert.equal(m.namespace, "rt.buf")
+  try assert.equal(m.memories.len(), 1)
+  try assert.equal(m.funcs.len(), 3)
+  try assert.equal(m.exports.len(), 3)
+  .Ok(void)
+}
 ```
 
-Run: `target/twk build /tmp/mem_smoke.tw -o /tmp/mem_smoke.wat`
-Then: `grep -E '\(memory|buf_alloc|buf_heap_ptr' /tmp/mem_smoke.wat`
-Expected: the WAT contains `(memory` and the `buf_alloc`/`buf_heap_ptr` symbols — the program module now owns a linear memory and the allocator, even though nothing calls it yet.
+Run: `target/twk run boot/tests/main.tw codegen`
+Expected: PASS.
 
-- [ ] **Step 4: Confirm it runs and the full suite is green**
+- [ ] **Step 4: Rebuild the compiler and confirm emitted programs gain the memory**
 
-Run: `target/twk run /tmp/mem_smoke.tw`
-Expected: prints `ok` (module with both GC and a linear memory validates and runs under V8).
-Run: `target/twk run boot/tests/main.tw`
-Expected: all tests pass.
-
-- [ ] **Step 5: Commit**
+`runtime_modules` runs *inside* the compiler, so the program memory only appears after a rebuild (per "Build & test methodology"). Build a fresh compiler and inspect its output:
 
 ```bash
-git add boot/compiler/codegen/runtime/buf.tw boot/compiler/codegen/codegen.tw
+cargo build --release
+./target/release/twk build boot/main.tw -o /tmp/stage1.wasm
+echo 'println("ok")' > /tmp/mem_smoke.tw
+BOOT_WASM=/tmp/stage1.wasm deno run --allow-read --allow-write --allow-env tools/js_runtime/deno_main.mjs build /tmp/mem_smoke.tw -o /tmp/mem_smoke.wat
+grep -E '\(memory|buf_alloc|buf_heap_ptr' /tmp/mem_smoke.wat
+```
+
+Expected: stage1 builds without error (the edited boot compiles under stage0), and `/tmp/mem_smoke.wat` now contains `(memory` plus the `buf_alloc`/`buf_heap_ptr` symbols — the program module owns a linear memory and the allocator, even though nothing calls it yet.
+
+- [ ] **Step 5: Confirm the rebuilt compiler still runs programs and the suite is green**
+
+```bash
+BOOT_WASM=/tmp/stage1.wasm deno run --allow-read --allow-write --allow-env tools/js_runtime/deno_main.mjs run /tmp/mem_smoke.tw
+```
+Expected: prints `ok` (a program module with both GC and a linear memory validates and runs under V8).
+
+Run: `target/twk run boot/tests/main.tw`
+Expected: all tests pass (the suite still builds cleanly with the edited sources).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add boot/compiler/codegen/runtime/buf.tw boot/compiler/codegen/codegen.tw boot/tests/suites/codegen_integration_suite.tw
 git commit -m "codegen: add rt.buf program memory + bump/arena allocator"
 ```
 
@@ -397,20 +442,29 @@ Address arithmetic helper pattern (inline at each access; `base` and `idx` are i
 
 In `arr.tw` near line 151, replace `elem_i64().sort_typed_fn()` with `sort_i64_dense_fn()`. Leave `elem_f64().sort_typed_fn()` unchanged (f64 dense sort is out of M1 scope).
 
-- [ ] **Step 5: Run the sort correctness oracle**
+- [ ] **Step 5: Rebuild the compiler and run the sort correctness oracle**
 
-Run: `target/twk run boot/tests/main.tw vector`
-Expected: PASS — identical results to Step 1 (dense path is behavior-preserving). Pay attention to: empty vector, single element, already-sorted, reverse-sorted, duplicates, large n crossing the initial 16-page memory (forces `memory.grow`).
+The dense sort is emitted *by* the compiler, so it only takes effect after a rebuild (per "Build & test methodology"). Do NOT use the stale `target/twk` here — it would run the OLD sort and pass misleadingly.
 
-- [ ] **Step 6: Run the full boot suite**
+```bash
+cargo build --release
+./target/release/twk build boot/main.tw -o /tmp/stage1.wasm
+BOOT_WASM=/tmp/stage1.wasm deno run --allow-read --allow-write --allow-env tools/js_runtime/deno_main.mjs run boot/tests/main.tw vector
+```
 
-Run: `target/twk run boot/tests/main.tw`
-Expected: all tests pass.
+Expected: stage1 builds without error, and the `vector` suite PASSES — identical results to Step 1, now produced by the dense path. The suite must cover: empty vector, single element, already-sorted, reverse-sorted, duplicates, and large `n` crossing the initial 16-page memory (forces `memory.grow`). If the `vector` suite does not already exercise a large random sort (n ≥ 100k), add one to `api_vector_suite.tw` that sorts and asserts the result is non-decreasing.
+
+- [ ] **Step 6: Run the full boot suite with the rebuilt compiler**
+
+```bash
+BOOT_WASM=/tmp/stage1.wasm deno run --allow-read --allow-write --allow-env tools/js_runtime/deno_main.mjs run boot/tests/main.tw
+```
+Expected: all tests pass — the dense sort is behavior-preserving across the whole suite.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add boot/compiler/codegen/runtime/arr.tw
+git add boot/compiler/codegen/runtime/arr.tw boot/tests/suites/api_vector_suite.tw
 git commit -m "codegen: dense Vector<Int> sort over linear-memory scratch"
 ```
 
