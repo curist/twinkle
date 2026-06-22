@@ -1,6 +1,40 @@
 # Linear-Memory `Buffer` (foundation-first)
 
-Status: Design approved; M1 not started. Branch: `buffer-linear-memory` (off `main`).
+Status: **M1 built; perf go/no-go = NO-GO (dense sort at parity, not a win).** Branch: `buffer-linear-memory` (off `main`).
+
+### M1 result (2026-06-22)
+
+All hard gates pass: emitted wasm validates and runs under V8 with the program
+memory + new load/store; the self-host fixed point holds (stage3 == stage4); the
+full boot suite is green. The infrastructure is sound and the linear-memory
+primitive does **not** trip any GC↔linear coexistence problem under V8.
+
+**The perf proof did not land.** `examples/sort-bench/sort_repeat_probe.tw`,
+`native xs.sort()` on 1,000,000 ints, warm (run2/run3 after V8 tier-up), measured
+on the same machine with self-host-rebuilt CLIs:
+
+| build | warm `native xs.sort()` | cold (run1) |
+|---|---|---|
+| `main` (GC-array merge) | ~59–66 ms | ~125–129 ms |
+| this branch (dense linear-memory scratch) | ~59–63 ms | ~124 ms |
+
+The dense linear-memory sort lands at **parity** — inside run-to-run noise, no
+clear win. The good news vs. the reverted GC-array `Scratch<T>` (`b915637`, which
+regressed ~16%): linear memory does **not** regress, so the gather/scatter +
+`i64.load`/`i64.store` path fully absorbs its own overhead. But parity is not the
+win the go/no-go called for.
+
+**Caveat — cost imposed on all programs:** `rt.buf` adds a 16-page (`1 MiB`)
+linear memory to *every* emitted module (the memory section survives DCE even when
+`sort_i64` is eliminated), so non-sorting programs pay a baseline footprint for a
+feature that is, at best, parity for the one workload that uses it.
+
+**Decision:** stop at M1 per the spec's go/no-go. The linear-memory direction does
+not pay off for the typed sort, which was the bellwether workload. Do not proceed
+to M2 (user-facing `Buffer`) on the strength of this signal. The M1 infrastructure
+(wider load/store IR + `rt.buf`) is left on this unmerged branch for reference; see
+the open question of whether to keep it, trim the dense sort back to `main`'s
+GC-array path (retaining only the load/store IR), or abandon the branch.
 
 ## Motivation
 
