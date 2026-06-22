@@ -148,7 +148,7 @@ pub fn module() WasmModule {
     pop_tail_fn(),
     drop_last_fn(),
     gather_fn(),
-    elem_i64().sort_typed_fn(),
+    sort_i64_dense_fn(),
     elem_f64().sort_typed_fn(),
     family_i64().pvec_len_fn(),
     family_i64().pvec_get_fn(),
@@ -176,7 +176,11 @@ pub fn module() WasmModule {
   .{
     namespace: "rt.arr",
     types: [],
-    imports: [],
+    imports: [
+      .{ module: "rt.buf", name: "buf_alloc", as_sym: "buf_alloc", params: [.I32], results: [.I32] },
+      .{ module: "rt.buf", name: "buf_mark", as_sym: "buf_mark", params: [], results: [.I32] },
+      .{ module: "rt.buf", name: "buf_reset", as_sym: "buf_reset", params: [.I32], results: [] },
+    ],
     funcs,
     globals: [
       .{ name: "empty_leaf", mutable: false, ty: arr_ref(), init: [.ArrayNewFixed(t_array, 0)] },
@@ -3725,6 +3729,341 @@ fn sort_typed_fn(e: VecElem) FuncDef {
               ),
             ],
           ),
+          .LocalGet(l_builder),
+          .Call("builder_freeze"),
+        ],
+      ),
+    ],
+  }
+}
+
+// sort_i64(vec: PVec?) -> PVec
+// Dense i64 typed sort over two arena-allocated linear-memory scratch regions.
+// Identical merge-sort semantics to sort_typed_fn's i64 case, but the src/aux
+// scratch lives in rt.buf linear memory instead of GC ArrayI64. Each element i
+// of a region whose base offset is `base` lives at byte offset base + i*8, read
+// via i64.load(align=3) and written via i64.store(align=3). The arena is marked
+// at entry and reset just before freezing the result.
+fn sort_i64_dense_fn() FuncDef {
+  p_vec := 0
+  l_n := 1
+  l_src_base := 2
+  l_aux_base := 3
+  l_i := 4
+  l_builder := 5
+  l_width := 6
+  l_lo := 7
+  l_mid := 8
+  l_hi := 9
+  l_j := 10
+  l_k := 11
+  l_tmp := 12
+  l_mark := 13
+
+  // p0=vec; L1=n, L2=src_base(i32), L3=aux_base(i32), L4=i/loop, L5=builder,
+  // L6=width, L7=lo, L8=mid, L9=hi, L10=j, L11=k, L12=tmp(i32), L13=mark(i32)
+  .{
+    name: "sort_i64",
+    params: [pvec_null()],
+    results: [pvec_ref()],
+    locals: [.I32, .I32, .I32, .I32, arr_null(), .I32, .I32, .I32, .I32, .I32, .I32, .I32, .I32],
+    body: [
+      .LocalGet(p_vec),
+      .Call("len"),
+      .LocalSet(l_n),
+      .LocalGet(l_n),
+      .I32Const(1),
+      .I32LeS,
+      .If(
+        .Some(pvec_ref()),
+        [.LocalGet(p_vec), .RefAsNonNull],
+        [
+          .Call("buf_mark"),
+          .LocalSet(l_mark),
+          // src_base = buf_alloc(n * 8)
+          .LocalGet(l_n),
+          .I32Const(8),
+          .I32Mul,
+          .Call("buf_alloc"),
+          .LocalSet(l_src_base),
+          // aux_base = buf_alloc(n * 8)
+          .LocalGet(l_n),
+          .I32Const(8),
+          .I32Mul,
+          .Call("buf_alloc"),
+          .LocalSet(l_aux_base),
+          .I32Const(0),
+          .LocalSet(l_i),
+          .Block(
+            "copy_brk",
+            .None,
+            [
+              .Loop(
+                "copy_lp",
+                .None,
+                [
+                  .LocalGet(l_i),
+                  .LocalGet(l_n),
+                  .I32GeS,
+                  .BrIf("copy_brk"),
+                  // store vec[i] into src_base + i*8
+                  .LocalGet(l_src_base),
+                  .LocalGet(l_i),
+                  .I32Const(8),
+                  .I32Mul,
+                  .I32Add,
+                  .LocalGet(p_vec),
+                  .LocalGet(l_i),
+                  .Call("get"),
+                  .RefCast(false, .Named(t_boxed_int)),
+                  .StructGet(t_boxed_int, 0),
+                  .I64Store(3, 0),
+                  .LocalGet(l_i),
+                  .I32Const(1),
+                  .I32Add,
+                  .LocalSet(l_i),
+                  .Br("copy_lp"),
+                ],
+              ),
+            ],
+          ),
+          .I32Const(1),
+          .LocalSet(l_width),
+          .Block(
+            "w_brk",
+            .None,
+            [
+              .Loop(
+                "w_lp",
+                .None,
+                [
+                  .LocalGet(l_width),
+                  .LocalGet(l_n),
+                  .I32GeS,
+                  .BrIf("w_brk"),
+                  .I32Const(0),
+                  .LocalSet(l_lo),
+                  .Block(
+                    "lo_brk",
+                    .None,
+                    [
+                      .Loop(
+                        "lo_lp",
+                        .None,
+                        [
+                          .LocalGet(l_lo),
+                          .LocalGet(l_n),
+                          .I32GeS,
+                          .BrIf("lo_brk"),
+                          .LocalGet(l_lo),
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalGet(l_n),
+                          .LocalGet(l_lo),
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalGet(l_n),
+                          .I32LtS,
+                          .Select,
+                          .LocalSet(l_mid),
+                          .LocalGet(l_lo),
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalGet(l_n),
+                          .LocalGet(l_lo),
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalGet(l_n),
+                          .I32LtS,
+                          .Select,
+                          .LocalSet(l_hi),
+                          .LocalGet(l_lo),
+                          .LocalSet(l_i),
+                          .LocalGet(l_mid),
+                          .LocalSet(l_j),
+                          .LocalGet(l_lo),
+                          .LocalSet(l_k),
+                          .Block(
+                            "m_brk",
+                            .None,
+                            [
+                              .Loop(
+                                "m_lp",
+                                .None,
+                                [
+                                  .LocalGet(l_k),
+                                  .LocalGet(l_hi),
+                                  .I32GeS,
+                                  .BrIf("m_brk"),
+                                  // write address for aux_base + k*8 (pushed first)
+                                  .LocalGet(l_aux_base),
+                                  .LocalGet(l_k),
+                                  .I32Const(8),
+                                  .I32Mul,
+                                  .I32Add,
+                                  .LocalGet(l_i),
+                                  .LocalGet(l_mid),
+                                  .I32GeS,
+                                  .If(
+                                    .Some(.I64),
+                                    [
+                                      // take src[j]
+                                      .LocalGet(l_src_base),
+                                      .LocalGet(l_j),
+                                      .I32Const(8),
+                                      .I32Mul,
+                                      .I32Add,
+                                      .I64Load(3, 0),
+                                      .LocalGet(l_j),
+                                      .I32Const(1),
+                                      .I32Add,
+                                      .LocalSet(l_j),
+                                    ],
+                                    [
+                                      .LocalGet(l_j),
+                                      .LocalGet(l_hi),
+                                      .I32GeS,
+                                      .If(
+                                        .Some(.I64),
+                                        [
+                                          // take src[i]
+                                          .LocalGet(l_src_base),
+                                          .LocalGet(l_i),
+                                          .I32Const(8),
+                                          .I32Mul,
+                                          .I32Add,
+                                          .I64Load(3, 0),
+                                          .LocalGet(l_i),
+                                          .I32Const(1),
+                                          .I32Add,
+                                          .LocalSet(l_i),
+                                        ],
+                                        [
+                                          // src[i] <= src[j] ?
+                                          .LocalGet(l_src_base),
+                                          .LocalGet(l_i),
+                                          .I32Const(8),
+                                          .I32Mul,
+                                          .I32Add,
+                                          .I64Load(3, 0),
+                                          .LocalGet(l_src_base),
+                                          .LocalGet(l_j),
+                                          .I32Const(8),
+                                          .I32Mul,
+                                          .I32Add,
+                                          .I64Load(3, 0),
+                                          .I64LeS,
+                                          .If(
+                                            .Some(.I64),
+                                            [
+                                              // take src[i]
+                                              .LocalGet(l_src_base),
+                                              .LocalGet(l_i),
+                                              .I32Const(8),
+                                              .I32Mul,
+                                              .I32Add,
+                                              .I64Load(3, 0),
+                                              .LocalGet(l_i),
+                                              .I32Const(1),
+                                              .I32Add,
+                                              .LocalSet(l_i),
+                                            ],
+                                            [
+                                              // take src[j]
+                                              .LocalGet(l_src_base),
+                                              .LocalGet(l_j),
+                                              .I32Const(8),
+                                              .I32Mul,
+                                              .I32Add,
+                                              .I64Load(3, 0),
+                                              .LocalGet(l_j),
+                                              .I32Const(1),
+                                              .I32Add,
+                                              .LocalSet(l_j),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                  .I64Store(3, 0),
+                                  .LocalGet(l_k),
+                                  .I32Const(1),
+                                  .I32Add,
+                                  .LocalSet(l_k),
+                                  .Br("m_lp"),
+                                ],
+                              ),
+                            ],
+                          ),
+                          .LocalGet(l_lo),
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalSet(l_lo),
+                          .Br("lo_lp"),
+                        ],
+                      ),
+                    ],
+                  ),
+                  // ping-pong src_base <-> aux_base via tmp
+                  .LocalGet(l_src_base),
+                  .LocalSet(l_tmp),
+                  .LocalGet(l_aux_base),
+                  .LocalSet(l_src_base),
+                  .LocalGet(l_tmp),
+                  .LocalSet(l_aux_base),
+                  .LocalGet(l_width),
+                  .I32Const(1),
+                  .I32Shl,
+                  .LocalSet(l_width),
+                  .Br("w_lp"),
+                ],
+              ),
+            ],
+          ),
+          .Call("builder_new"),
+          .LocalSet(l_builder),
+          .I32Const(0),
+          .LocalSet(l_i),
+          .Block(
+            "push_brk",
+            .None,
+            [
+              .Loop(
+                "push_lp",
+                .None,
+                [
+                  .LocalGet(l_i),
+                  .LocalGet(l_n),
+                  .I32GeS,
+                  .BrIf("push_brk"),
+                  .LocalGet(l_builder),
+                  // read src_base + i*8, box, push
+                  .LocalGet(l_src_base),
+                  .LocalGet(l_i),
+                  .I32Const(8),
+                  .I32Mul,
+                  .I32Add,
+                  .I64Load(3, 0),
+                  .StructNew(t_boxed_int),
+                  .Call("builder_push"),
+                  .LocalGet(l_i),
+                  .I32Const(1),
+                  .I32Add,
+                  .LocalSet(l_i),
+                  .Br("push_lp"),
+                ],
+              ),
+            ],
+          ),
+          .LocalGet(l_mark),
+          .Call("buf_reset"),
           .LocalGet(l_builder),
           .Call("builder_freeze"),
         ],

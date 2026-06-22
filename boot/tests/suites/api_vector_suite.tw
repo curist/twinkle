@@ -866,6 +866,16 @@ pub fn suite() runner.Suite {
         s2 := ex.sort()
         try assert.equal(s2[0], -9223372036854775808)
         try assert.equal(s2[4], 9223372036854775807)
+
+        // large pseudo-random input: two n*8-byte scratch regions exceed the
+        // initial 16-page linear memory, forcing memory.grow in the dense path.
+        big := collect i in range(150000) {
+          (i * 2654435761 + 12345) % 1000000 - 500000
+        }
+        sorted_big := big.sort()
+        try assert.equal(sorted_big.len(), 150000)
+        try assert.is_true(sort_suite_is_sorted(sorted_big))
+        try assert.equal(sort_suite_sum(sorted_big), sort_suite_sum(big))
         .Ok({})
       },
     )
