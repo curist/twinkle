@@ -1,6 +1,6 @@
 # Linear-Memory `Buffer` (foundation-first)
 
-Status: **M1 built; perf go/no-go = NO-GO (dense sort at parity, not a win).** Branch: `buffer-linear-memory` (off `main`).
+Status: **M1 built. The dense sort — M1's chosen *proxy* — came back at parity, so it is not a viable perf lever. That verdict is about the sort, NOT about the linear-memory direction:** the strategic case (M3 fast IR codec, M4 shared-memory worker buffers) was never on trial here, and the foundational load/store IR stands regardless. Branch: `buffer-linear-memory` (off `main`).
 
 ### M1 result (2026-06-22)
 
@@ -29,12 +29,39 @@ linear memory to *every* emitted module (the memory section survives DCE even wh
 `sort_i64` is eliminated), so non-sorting programs pay a baseline footprint for a
 feature that is, at best, parity for the one workload that uses it.
 
-**Decision:** stop at M1 per the spec's go/no-go. The linear-memory direction does
-not pay off for the typed sort, which was the bellwether workload. Do not proceed
-to M2 (user-facing `Buffer`) on the strength of this signal. The M1 infrastructure
-(wider load/store IR + `rt.buf`) is left on this unmerged branch for reference; see
-the open question of whether to keep it, trim the dense sort back to `main`'s
-GC-array path (retaining only the load/store IR), or abandon the branch.
+**What this does and does not decide.** The sort was picked as M1's go/no-go
+because it is a cheap, self-contained bellwether — *"if linear memory can't win the
+one workload we already know is read-bound, be skeptical."* It didn't win. So:
+
+- **Settled:** a linear-memory scratch sort is *not* the lever for the typed
+  `Vector<Int>` read wall. That lever remains typed `PVecI64` storage
+  (`project_typed_vector_repr`), not the sort's scratch mechanism. Don't re-run this
+  experiment expecting a win.
+- **NOT settled (never tested here):** whether linear memory pays off for its
+  *actual* motivations — the **M3 fast IR codec** (a flat byte artifact with O(1)
+  decode, attacking the Phase G result-decode wall) and **M4 shared-memory worker
+  buffers** (`SharedArrayBuffer`-backed byte payloads moved between compile Workers
+  without structured-clone copies). The sort touches none of that. Judging the
+  direction by the sort conflated a tactical proof with the strategic goal.
+
+**What M1 leaves behind, by reusability:**
+
+- *Foundational, reusable for M3/M4 regardless of the sort result:* the wider
+  load/store IR (`i32/i64/f64.load/store`, `memory.size/grow`) and the program
+  memory-section emit + linker wiring. These are prerequisites for any
+  linear-memory use. They earn their keep independent of the sort.
+- *Tactical, proved only coexistence:* the `rt.buf` bump allocator and the dense
+  `sort_i64`. They de-risked "GC + a linear memory validate and run together under
+  V8," but are not what an M3 codec or M4 shared transport would reuse.
+
+**Caveat to fix before any merge:** `rt.buf` adds a 16-page (`1 MiB`) linear memory
+to *every* emitted module (the memory section survives DCE even when `sort_i64` is
+eliminated). A real adoption must make the program memory **conditional on actual
+use**, so non-sorting / non-buffer programs pay nothing.
+
+**Decision:** keep the branch unmerged for reference; do not adopt the dense sort.
+The forward question is not "did the sort win" but "do we invest in linear memory as
+the substrate for M3/M4" — see *Post-M1: the strategic case (untested)* below.
 
 ## Motivation
 
@@ -102,11 +129,80 @@ The work is staged so each milestone proves its predecessor before adding surfac
   (`with_arena { ... }` or an explicit `Arena` value), the view API, escape
   discipline, and codegen for user code. Only after M1 proves the primitive pays off.
 - **M3 — fast IR codec.** A flat linear-memory artifact format with O(1) decode,
-  attacking the Phase G result-decode wall.
-- **M4 (speculative) — shared-memory parallelism.** `SharedArrayBuffer`-backed
-  buffers across Workers. Only meaningful once artifacts live in linear memory.
+  attacking the Phase G result-decode wall. *Recommended go/no-go for the whole
+  direction* (the sort was the wrong proxy — see Post-M1 below).
+- **M4 — shared-memory parallelism (the original motivation).**
+  `SharedArrayBuffer`-backed byte buffers across compile Workers, avoiding
+  structured-clone copies in the parallel-compile transport. Unproven and unbuilt,
+  but it is *why* linear memory was wanted; needs `shared` memory + atomics + SAB
+  runtime backing on top of M1's IR (none of which M1 added). See Post-M1 below.
 
 Each milestone is additive on proven infrastructure.
+
+## Post-M1: the strategic case (untested)
+
+M1's sort proxy failed, but the reasons to want linear memory are M3 and M4, and
+neither was exercised. This section scopes what they actually require so the
+direction can be judged on its real merits — and to be explicit that M1, despite
+naming a memory, does **not** yet deliver the pieces these need.
+
+### Two distinct targets (different urgency, shared substrate)
+
+- **M3 — byte-level IR codec (single-process, nearer-term).** A flat
+  linear-memory artifact format the compiler decodes with O(1) random indexing,
+  replacing the O(n·log n) `Vector<Byte>` decode that sank Phase G. Needs only a
+  *plain* (non-shared) memory + byte/word load/store — which M1's IR already
+  provides. This is the lowest-risk way to actually test whether linear memory
+  pays off, on a workload that genuinely indexes bytes (unlike the sort, which only
+  used linear memory as scratch). **If we want one proof of the direction, this is
+  the one to run, not the sort.**
+- **M4 — shared-memory worker buffers (the original ask).** Move serialized
+  payloads (a compiled Wasm module, an IR blob) between compile Workers through a
+  `SharedArrayBuffer`-backed memory, avoiding the structured-clone copies the
+  current `postMessage` remote-channel transport pays. Ties directly into the
+  parallel-compile-workers roadmap, whose next step is already *"spawn_worker ABI +
+  Wasm codec"* (`project_parallel_compile_workers`) — and that Wasm codec is
+  exactly the flat byte payload M3 produces. So M3 is effectively a dependency of a
+  *fast* M4.
+
+### Hard constraint that gates both
+
+**Only flat bytes live in linear memory — never GC objects.** Twinkle values
+(`String`, records, `Vector`, closures) are Wasm-GC heap objects and cannot be
+placed in or shared through a linear memory. So linear memory helps move/serialize
+*byte representations* (IR, Wasm, packed columns), not live object graphs. This is
+why a byte codec (M3) is the unlock: it's what turns GC artifacts into the flat
+form that shared memory (M4) can transport.
+
+### Concrete IR/runtime gaps M1 did NOT close
+
+What M1 built (load/store + a plain per-instance memory) is necessary but not
+sufficient for M4. To express and run *shared* memory we still need:
+
+- **`MemoryDef` cannot express `shared`.** Today
+  `MemoryDef = { name, min_pages, max_pages? }` and the limits encoder
+  (`encode_memory_section_payload`, `wasm.tw`) emits only flag `0x00` (min) or
+  `0x01` (min+max). A shared memory requires a `shared: Bool` field and limits flag
+  `0x03` (shared **must** carry a max). Small, additive IR change — but real.
+- **No atomics.** Cross-worker coordination needs `i32/i64.atomic.load/store`,
+  `atomic.rmw.*`, and `memory.atomic.wait32/notify`. None exist in the `Instr`
+  enum; each is an emit + WAT arm like M1's load/store work.
+- **Runtime: SAB-backed shared memory.** `runtime.mjs`/`deno_main.mjs` must
+  instantiate the memory from a `SharedArrayBuffer` and pass the *same*
+  `WebAssembly.Memory` into every Worker instance (imported, not module-owned).
+  Needs `crossOriginIsolated` (COOP/COEP headers in the browser; fine under Deno).
+- **Conditional memory emission.** Per the M1 caveat, a shared (or any) program
+  memory must be emitted only when actually used, not unconditionally on every
+  module.
+
+### Recommended next probe (if we pursue this)
+
+Run **M3 (byte codec) as the honest go/no-go**, not another sort. Build a minimal
+flat IR (or Wasm-module) codec over the M1 load/store IR, decode it with O(1)
+indexing, and compare against the current `Vector<Byte>` decode on a realistic
+artifact. That measures the property linear memory is actually good at (dense byte
+indexing). Only if M3 wins is M4 (add `shared` + atomics + SAB transport) worth the
+larger lift. The dense sort stays parked as proof-of-coexistence, nothing more.
 
 ## M1 — Linear-memory infrastructure, proven on the dense sort
 
