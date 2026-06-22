@@ -164,8 +164,11 @@ fn test_rt_buf_module_shape() Result<Void, String> {
   m := rt_buf.module()
   try assert.equal(m.namespace, "rt.buf")
   try assert.equal(m.memories.len(), 1)
-  try assert.equal(m.funcs.len(), 3)
-  try assert.equal(m.exports.len(), 3)
+  try assert.equal(m.funcs.len(), 5)
+  try assert.equal(m.exports.len(), 5)
+  names := collect e in m.exports { e.wasm_name }
+  try assert.ok(names.contains("buf_load_u8"), "exports buf_load_u8")
+  try assert.ok(names.contains("buf_store_u8"), "exports buf_store_u8")
   .Ok({})
 }
 

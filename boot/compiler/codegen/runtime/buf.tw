@@ -10,7 +10,7 @@ pub fn module() WasmModule {
     namespace: "rt.buf",
     types: [],
     imports: [],
-    funcs: [alloc_fn(), mark_fn(), reset_fn()],
+    funcs: [alloc_fn(), mark_fn(), reset_fn(), load_u8_fn(), store_u8_fn()],
     globals: [GlobalDef.{ name: "buf_heap_ptr", mutable: true, ty: .I32, init: [.I32Const(8)] }],
     tables: [],
     elems: [],
@@ -18,6 +18,8 @@ pub fn module() WasmModule {
       ExportDef.{ wasm_name: "buf_alloc", func_sym: "buf_alloc" },
       ExportDef.{ wasm_name: "buf_mark", func_sym: "buf_mark" },
       ExportDef.{ wasm_name: "buf_reset", func_sym: "buf_reset" },
+      ExportDef.{ wasm_name: "buf_load_u8", func_sym: "buf_load_u8" },
+      ExportDef.{ wasm_name: "buf_store_u8", func_sym: "buf_store_u8" },
     ],
     memory_exports: [],
     memories: [MemoryDef.{ name: "heap", min_pages: 16, max_pages: .None }],
@@ -85,5 +87,27 @@ fn reset_fn() FuncDef {
     results: [],
     locals: [],
     body: [.LocalGet(0), .GlobalSet("buf_heap_ptr")],
+  }
+}
+
+// buf_load_u8(base, i) -> u8 zero-extended. addr = base + i (1-byte stride).
+fn load_u8_fn() FuncDef {
+  .{
+    name: "buf_load_u8",
+    params: [.I32, .I32],
+    results: [.I32],
+    locals: [],
+    body: [.LocalGet(0), .LocalGet(1), .I32Add, .I32Load8U(0, 0)],
+  }
+}
+
+// buf_store_u8(base, i, v) — writes the low byte of v at addr = base + i.
+fn store_u8_fn() FuncDef {
+  .{
+    name: "buf_store_u8",
+    params: [.I32, .I32, .I32],
+    results: [],
+    locals: [],
+    body: [.LocalGet(0), .LocalGet(1), .I32Add, .LocalGet(2), .I32Store8(0, 0)],
   }
 }
