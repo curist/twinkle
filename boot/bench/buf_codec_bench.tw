@@ -1,0 +1,60 @@
+use @std.date
+
+use lib.buf_codec.{enc_varint_linear, enc_varint_vec, sum_varints_linear, sum_varints_vec}
+
+// Deterministic, identical value stream for both representations; kept < 2^31.
+fn value_at(i: Int) Int {
+  i * 2654435761 % 2000000000
+}
+
+fn expected_sum(count: Int) Int {
+  total := 0
+  for i in range(count) {
+    total = total + value_at(i)
+  }
+  total
+}
+
+count := 4000000
+
+// Encode natively into a Vector<Byte> (baseline origination).
+vbytes: Vector<Byte> = []
+for i in range(count) {
+  vbytes = enc_varint_vec(vbytes, value_at(i))
+}
+
+// Encode natively into linear memory (linear origination, no Vector<Byte> gather).
+mark := __buf_mark()
+base := __buf_alloc(count * 5)
+wp := 0
+for i in range(count) {
+  wp = enc_varint_linear(base, wp, value_at(i))
+}
+
+// Correctness gate before timing — trap on any mismatch.
+want := expected_sum(count)
+if sum_varints_vec(vbytes, count) != want {
+  error("vec decode mismatch")
+}
+if sum_varints_linear(base, count) != want {
+  error("linear decode mismatch")
+}
+
+// Time decode only, each twice (run1 cold / run2 warm after tier-up).
+start1 := date.now()
+s1 := sum_varints_vec(vbytes, count)
+println("run1 Vector<Byte> decode  ${date.now() - start1}ms (sum ${s1})")
+
+start2 := date.now()
+s2 := sum_varints_linear(base, count)
+println("run1 linear-memory decode ${date.now() - start2}ms (sum ${s2})")
+
+start3 := date.now()
+s3 := sum_varints_vec(vbytes, count)
+println("run2 Vector<Byte> decode  ${date.now() - start3}ms (sum ${s3})")
+
+start4 := date.now()
+s4 := sum_varints_linear(base, count)
+println("run2 linear-memory decode ${date.now() - start4}ms (sum ${s4})")
+
+__buf_reset(mark)

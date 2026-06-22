@@ -1,6 +1,36 @@
 # Linear-Memory `Buffer` (foundation-first)
 
-Status: **M1 built. The dense sort — M1's chosen *proxy* — came back at parity, so it is not a viable perf lever. That verdict is about the sort, NOT about the linear-memory direction:** the strategic case (M3 fast IR codec, M4 shared-memory worker buffers) was never on trial here, and the foundational load/store IR stands regardless. Branch: `buffer-linear-memory` (off `main`).
+Status: **GO. M1's sort proxy was at parity, but M3 — the right proxy — is a decisive win: linear-memory byte decode is ~30× faster than GC `Vector<Byte>`.** The linear-memory direction is validated on the workload it is actually for (dense byte indexing / codecs). Branch: `buffer-linear-memory` (off `main`).
+
+### M3 result (2026-06-22) — GO
+
+The honest go/no-go the sort never answered. A LEB128 varint codec was implemented
+twice — once decoding over linear memory (`i32.load8_u` via the `__buf_*` builtins),
+once over a GC `Vector<Byte>` — and A/B'd on a decode-dominated workload
+(`boot/bench/buf_codec_bench.tw`, 4,000,000 varints, data encoded natively into each
+representation, **no cross-gather**, decode-only timed). Same machine, rebundled CLI;
+both paths produce the identical checksum (gated by a pre-timing correctness trap):
+
+| build | decode 4M varints (warm) |
+|---|---|
+| GC `Vector<Byte>` (`bytes[i]`) | ~337 ms |
+| linear memory (`i32.load8_u`) | ~11 ms |
+
+**~30× faster.** The gap exceeds the naive ~log₃₂ n depth advantage because each
+`Vector<Byte>` index pays a persistent-trie walk **plus** a GC ref-cast/unbox per
+byte, whereas the linear path is a single near-native byte load. This is exactly the
+property the M1 sort failed to exercise (the sort is comparator-bound and reads each
+scratch slot ~once; a codec is indexing-bound and byte-dense).
+
+**Decision:** the linear-memory direction pays off for byte-indexing / codec workloads.
+Proceed toward the real targets — **M3b** (a genuine flat IR/Wasm-module codec replacing
+the O(n·log n) `Vector<Byte>` decode that sank Phase G) and **M4** (shared-memory worker
+transport). The M1 `rt.buf` infrastructure + this probe are the foundation. Before any
+broad adoption, still address the M1 caveat (the program memory is emitted on every
+module — make it conditional on use) and narrow/remove the probe-only `__buf_*` surface
+(it is currently global; see the M3 plan's Task 2 caveat). M3 probe artifacts
+(`boot/lib/buf_codec.tw`, `boot/bench/buf_codec_bench.tw`, `buf_codec_suite`) are
+throwaway scaffolding to remove or promote when M3b begins.
 
 ### M1 result (2026-06-22)
 
