@@ -394,6 +394,22 @@ fn test_ref_types_in_val_type() Result<Void, String> {
   .Ok({})
 }
 
+fn test_memory_instr_wat() Result<Void, String> {
+  module := mod_with_funcs([
+    FuncDef.{
+      name: "f",
+      params: [],
+      results: [],
+      locals: [],
+      body: [Instr.I32Const(0), Instr.I64Load(3, 16), Instr.Drop, Instr.MemorySize, Instr.Drop],
+    },
+  ])
+  wat := emit_wat_unlinked_for_test(module)
+  try assert.str_contains(wat, "i64.load offset=16 align=8")
+  try assert.str_contains(wat, "memory.size")
+  .Ok({})
+}
+
 fn test_struct_array_instructions() Result<Void, String> {
   m := mod_with_funcs([
     FuncDef.{
@@ -439,4 +455,5 @@ pub fn suite() runner.Suite {
     .test("functype deduplication", test_functype_deduplication)
     .test("ref types in val_type", test_ref_types_in_val_type)
     .test("struct/array instructions", test_struct_array_instructions)
+    .test("memory load/store/size instructions", test_memory_instr_wat)
 }

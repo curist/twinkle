@@ -132,7 +132,14 @@ pub type Instr = {
   BrTable(Vector<String>, String),
   I32Load8U(Int, Int),
   I32Store8(Int, Int),
+  I32Load(Int, Int),
+  I32Store(Int, Int),
+  I64Load(Int, Int),
+  I64Store(Int, Int),
+  F64Load(Int, Int),
+  F64Store(Int, Int),
   MemoryGrow,
+  MemorySize,
 }
 
 // ── Function definitions ────────────────────────────────────────────

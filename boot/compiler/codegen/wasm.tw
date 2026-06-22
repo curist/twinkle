@@ -1273,8 +1273,41 @@ fn encode_instr_cached(
       out = emit_u32_leb(out, align)
       .{ buf: emit_u32_leb(out, offset), cache }
     },
+    .I32Load(align, offset) => {
+      out := emit_u8(buf, 0x28) // i32.load
+      out = emit_u32_leb(out, align)
+      .{ buf: emit_u32_leb(out, offset), cache }
+    },
+    .I32Store(align, offset) => {
+      out := emit_u8(buf, 0x36) // i32.store
+      out = emit_u32_leb(out, align)
+      .{ buf: emit_u32_leb(out, offset), cache }
+    },
+    .I64Load(align, offset) => {
+      out := emit_u8(buf, 0x29) // i64.load
+      out = emit_u32_leb(out, align)
+      .{ buf: emit_u32_leb(out, offset), cache }
+    },
+    .I64Store(align, offset) => {
+      out := emit_u8(buf, 0x37) // i64.store
+      out = emit_u32_leb(out, align)
+      .{ buf: emit_u32_leb(out, offset), cache }
+    },
+    .F64Load(align, offset) => {
+      out := emit_u8(buf, 0x2B) // f64.load
+      out = emit_u32_leb(out, align)
+      .{ buf: emit_u32_leb(out, offset), cache }
+    },
+    .F64Store(align, offset) => {
+      out := emit_u8(buf, 0x39) // f64.store
+      out = emit_u32_leb(out, align)
+      .{ buf: emit_u32_leb(out, offset), cache }
+    },
     .MemoryGrow => {
       .{ buf: emit_u8(emit_u8(buf, 0x40), 0x00), cache } // memory.grow mem=0
+    },
+    .MemorySize => {
+      .{ buf: emit_u8(emit_u8(buf, 0x3F), 0x00), cache } // memory.size mem=0
     },
   }
 }
