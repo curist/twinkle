@@ -68,9 +68,9 @@ with where the pain is — primitive numeric arrays and byte buffers — so `Buf
 - **M3 probe — byte codec (DONE, GO).** Raw `__buf_*` byte accessors + a LEB128 codec
   decisively beat `Vector<Byte>` (~30×). This is the honest go/no-go the sort never
   answered. Probe artifacts are throwaway.
-- **M2 — user-facing `Buffer` + typed views (ACTIVE — design below).** A clean, safe,
-  ergonomic type as the abstraction over linear memory. Success is the *type*, not a
-  perf number; the perf consumers come later.
+- **M2 — user-facing `Buffer` + typed views (ACTIVE — design below).** A sandboxed,
+  low-level, ergonomic type as the abstraction over linear memory. Success is the *type*,
+  not a perf number; the perf consumers come later.
 - **M3b — fast IR codec (future).** A flat linear-memory artifact format with O(1)
   decode, attacking the Phase G result-decode wall — the first real perf consumer.
 - **M4 — shared-memory parallelism (future, the original ask).**
@@ -83,14 +83,15 @@ with where the pain is — primitive numeric arrays and byte buffers — so `Buf
 
 ### Philosophy and safety model
 
-`Buffer` is an **opt-in, low-level, manually-managed** linear-memory region — Twinkle's
-**second mutate-in-place reference type alongside `Cell`**, and the explicit escape
-hatch from an otherwise-immutable language. It is **fully first-class**: returnable,
-storable in records/collections, freely captured. Correctness — calling `free`, not
-using after free — is the **programmer's responsibility, like C**. The one safety floor
-Wasm gives for free: all access is sandboxed within the linear memory, so the worst
-case is reading/corrupting *another buffer's* bytes or trapping at the memory edge —
-never true UB or an escape from the sandbox.
+`Buffer` is an **opt-in, sandboxed-but-low-level, manually-managed** linear-memory
+region — Twinkle's **second mutate-in-place reference type alongside `Cell`**, and the
+explicit escape hatch from an otherwise-immutable language. It is **fully first-class**:
+returnable, storable in records/collections, freely captured. Correctness — calling
+`free`, not using after free — is the **programmer's responsibility, like C**. It is
+*not* a "safe" abstraction; the only floor Wasm gives for free is that all access is
+sandboxed within the linear memory, so the worst case is reading/corrupting *another
+buffer's* bytes or trapping at the memory edge — never true UB or an escape from the
+sandbox. Throughout this doc "sandboxed low-level," not "safe," is the accurate framing.
 
 This deliberately rejects the heavier alternatives considered (arena scoping,
 second-class/non-escaping `Buffer`, escape analysis). Manual management gives maximum
@@ -99,10 +100,10 @@ a low-level construct, so the surface should expose precise control of it.
 
 ### Lifetime
 
-Manual `Buffer.new` / `buf.free()`. The idiomatic scope hook is **`defer`**:
+Manual `buffer.new` / `buf.free()`. The idiomatic scope hook is **`defer`**:
 
 ```tw
-buf := Buffer.new(1024)
+buf := buffer.new(1024)
 defer buf.free()              // runs at block exit, LIFO, captures the handle by value
 buf.set_i64(0, 42)
 ```
@@ -112,14 +113,25 @@ fires LIFO, and captures by value — so `defer buf.free()` is correct and compo
 nested allocations. It is the common pattern, not the only legal one (first-class
 buffers may also be freed wherever their owner decides).
 
-### Public API (`use @std.buffer`)
+### Public API
+
+Two import lines, per the stdlib-module convention (the plain form binds the module
+alias `buffer` for constructors; the destructuring form binds the type names for
+annotations):
 
 ```tw
-use @std.buffer.{Buffer}
+use @std.buffer                                    // module alias -> buffer.new(...)
+use @std.buffer.{Buffer, U8View, I64View, F64View} // type names for annotations
+```
 
+Constructors are **module-qualified functions** (`buffer.new`), not type-qualified
+statics (`Buffer.new`): a pure stdlib module has no `Type.fn` static-call form — that is
+reserved for compiler builtins like `Cell.new`. This mirrors `@std.view`'s `view.from`.
+
+```tw
 // construction / lifetime
-Buffer.new(nbytes: Int) Buffer
-Buffer.from_bytes(bytes: Vector<Byte>) Buffer      // alloc + copy in
+buffer.new(nbytes: Int) Buffer
+buffer.from_bytes(bytes: Vector<Byte>) Buffer      // alloc + copy in
 buf.free()                                          // release the region
 buf.len() Int                                       // byte length
 buf.to_bytes() Vector<Byte>                         // copy out
@@ -133,12 +145,18 @@ buf.get_f64(off: Int) Float      buf.set_f64(off: Int, v: Float)
 buf.view_u8(byte_off: Int, count: Int)             // -> U8View
 buf.view_i64(byte_off: Int, count: Int)            // -> I64View
 buf.view_f64(byte_off: Int, count: Int)            // -> F64View
-v.get(i: Int) T        v.set(i: Int, x: T)         // element i
-v.len() Int                                         // element count
+v.at(i: Int) T         v.set(i: Int, x: T)         // element i  (read / write)
+v.len() Int                                         // element count  (with at: satisfies IndexRead)
 v.slice(lo: Int, hi: Int)                          // sub-view, shares backing, no alloc
-v[i]                                                // read sugar -> v.get(i) (IndexRead)
-for x in v { ... }                                  // IntoIterator
+v.iter() Iterator<T>                               // for x in v.iter() { ... }
+v[lo..hi]                                           // slice sugar -> v.slice (Sliceable; works on concrete)
 ```
+
+**Method names track the contracts:** `IndexRead` is `at(self, Int) E` + `len(self) Int`
+(not `get`). Providing both makes each view *satisfy* `IndexRead<T>`, so views compose
+and can be passed to `IndexRead`-bounded generics (e.g. `view.from`, `view.fold`) — the
+same way `@std.view` does. See *Index/iteration sugar* below for why this does **not**
+imply `v[i]` element sugar.
 
 ### Semantics
 
@@ -151,11 +169,23 @@ for x in v { ... }                                  // IntoIterator
   Wasm's whole-memory bound traps. Indexing past `len` but inside the memory reads
   garbage or corrupts a neighboring buffer (logically wrong, sandbox-safe). This
   preserves the bare-load speed that motivates linear memory.
-- **Index sugar:** views satisfy **`IndexRead`** so `v[i]` reads (lowering to
-  `v.get(i)`) — essentially free once `get` exists. Writes stay explicit `v.set(i, x)`:
-  no `IndexWrite`, because `arr[i] = v` desugars to *rebind-and-build-new* for `Vector`,
-  which would silently conflict with `Buffer`'s mutate-in-place contract. Raw `Buffer`
-  stays methods-only (no `[]`, since it is multi-width).
+- **Index / iteration sugar (scoped down after verifying the checker):** element reads
+  use the explicit method **`v.at(i)`**, *not* `v[i]`. `synth_index` only lowers `c[i]`
+  to a contract `at` call for **type variables** bounded `IndexRead` (and direct for the
+  builtins `Vector`/`Dict`/`String`); a **concrete** named type — exactly what a view is
+  — falls through to `NotIndexable`. So `v[i]` element sugar would require new
+  checker/lowering work (extend `synth_index`'s concrete-receiver arm) and is **deferred
+  out of M2** (it would also light up `@std.view`'s own `v[i]`, so it is a general
+  improvement worth its own change, not a buffer detail). Likewise `for x in v` does not
+  fire for a concrete type; M2 ships **`v.iter()`** (a builtin `Iterator<T>` built via
+  `Iterator.unfold`) so `for x in v.iter()` works with zero checker changes.
+  - **Slice sugar `v[lo..hi]` *does* work** on concrete views: `synth_slice` accepts a
+    concrete receiver with an inherent `slice` method and lowering emits a uniform
+    `Sliceable` contract call. So views get range-slice sugar for free; only element
+    `[i]` does not.
+  - Writes stay explicit `v.set(i, x)`: no `IndexWrite`, because `arr[i] = v` desugars to
+    *rebind-and-build-new* for `Vector`, which would silently conflict with `Buffer`'s
+    mutate-in-place contract. Raw `Buffer` stays methods-only (no `[]`, multi-width).
 - **Double-free / use-after-free:** documented-undefined — corrupts the allocator's
   bookkeeping but stays within the sandbox. No runtime guard in M2.
 
@@ -166,29 +196,63 @@ for x in v { ... }                                  // IntoIterator
   (storable/returnable).
 - **Three concrete view types** — `U8View`, `I64View`, `F64View` — each a thin
   `.{ ptr: Int, byte_off: Int, count: Int }` record, **not** a single generic
-  `View<T>`. Without traits, one generic view cannot dispatch `get`/`set` to per-width
+  `View<T>`. Without traits, one generic view cannot dispatch `at`/`set` to per-width
   load/store intrinsics nor vary its return type by `T`; three concrete types are the
   honest no-trait expression.
+- **Handles are forgeable — accepted under the sandboxed-low-level model.** A `pub type
+  Buffer = .{ ptr, len }` exposes its fields, so a user can construct an arbitrary
+  `Buffer.{ ptr: 999, len: 8 }` or rebind `buf.ptr`. Twinkle has no record-field privacy,
+  and this is consistent with the model: a forged handle can still only touch the
+  sandboxed linear memory (no worse than the already-unchecked `get/set`), and "rebinding"
+  a field is immutable-build-new (it cannot corrupt an existing handle's bytes). M2 does
+  **not** add an opaque representation; if a future milestone wants real handle integrity,
+  the option is to promote `Buffer` to an opaque compiler builtin (recorded, not built).
 
 ### Implementation (mostly reuses M1/M3)
 
-1. **`rt.buf` → free-list allocator.** Replace the bump-only allocator with a free-list
-   + coalescing (`buf_alloc(nbytes) -> ptr`, `buf_free(ptr)`), since first-class
-   buffers are freed in arbitrary (non-LIFO) order. Add `i64`/`f64` load/store runtime
-   funcs (byte funcs `buf_load_u8`/`buf_store_u8` already exist from M3).
+1. **`rt.buf` → free-list allocator (contract specified).** Replace the bump-only
+   allocator with a free-list + coalescing, since first-class buffers are freed in
+   arbitrary (non-LIFO) order. Concrete contract:
+   - **Block layout:** each block carries an 8-byte header `[ size: i32 ][ free: i32 ]`
+     immediately before its 8-byte-aligned payload; `buf_alloc` returns the payload
+     pointer, `buf_free(ptr)` reads the header at `ptr - 8`. (Size lives in the header,
+     so `free` needs only the pointer — no caller-supplied length.)
+   - **`buf_alloc(nbytes) -> ptr`:** first-fit over the free list, splitting a larger
+     free block when the remainder fits another header+payload; otherwise bump the heap
+     end, growing via `memory.grow` and **trapping if grow fails**.
+   - **`buf_free(ptr)`:** mark the block free and coalesce with adjacent free neighbors.
+   - **Edge cases:** `nbytes` is a Twinkle `Int` (i64) narrowed to i32 at the abi
+     boundary — trap on negative or on a size that would overflow i32 / exceed the max
+     memory. Addresses fit i32 (linear memory < 4 GiB). Double-free/use-after-free
+     corrupt this bookkeeping (documented-undefined, still sandboxed).
+   - Add `i64`/`f64` load/store runtime funcs (byte funcs `buf_load_u8`/`buf_store_u8`
+     already exist from M3).
 2. **Intrinsics (3-site recipe).** Add `__buf_free`, `__buf_load_i64`/`__buf_store_i64`,
    `__buf_load_f64`/`__buf_store_f64` (`builtins.tw` rt entry + `builtin_abi` declaring
    the i64↔i32 wasm bridge — not automatic; plus the `new_ctx` `__`-alias gate). **Move
    all `__buf_*` out of the global `builtin_env` into internal-host builtins** reachable
    only from `@std.buffer` — closing the M3 global-surface leak.
 3. **`@std.buffer` module.** The `Buffer` record + three view records, all methods,
-   `from_bytes`/`to_bytes` (copy loops), `slice`, the `IndexRead` satisfier for `v[i]`,
-   and the `IntoIterator` satisfier for `for x in v`. Pure Twinkle over the intrinsics,
-   per the stdlib-module wiring recipe (little/no Rust stage0 change expected).
-4. **Conditional memory emission.** Emit the `rt.buf` memory + funcs **only when
-   reachable after DCE**, so programs that don't `use @std.buffer` pay zero (today the
-   ~1 MiB memory is emitted on every module). This falls out naturally from the opt-in
-   module: no import → no `__buf_*` reachable → no memory.
+   `from_bytes`/`to_bytes` (copy loops), `at`/`set`/`len` (the `at`+`len` pair makes each
+   view satisfy `IndexRead`), `slice` (satisfies `Sliceable` → `v[lo..hi]`), and `iter()`
+   (a builtin `Iterator<T>` via `Iterator.unfold`, backing `for x in v.iter()`). Pure
+   Twinkle over the intrinsics, per the stdlib-module wiring recipe (little/no Rust stage0
+   change expected). Element `v[i]` sugar is **not** wired here (it needs checker work —
+   see *Index/iteration sugar*).
+4. **Conditional memory emission (explicit linker/codegen work — does NOT fall out of
+   DCE).** Wasm DCE removes unused funcs/imports but **not** memories, globals, or data,
+   and today `runtime_modules()` (`codegen.tw`) pushes `rt_buf.module()` unconditionally.
+   Worse, `rt.arr`'s M1 dense linear-scratch sort imports `buf_alloc`/`buf_mark`/`buf_reset`,
+   so **any `Vector.sort()` pulls in `rt.buf`** independent of `@std.buffer`. Two steps:
+   - **Sever `rt.arr → rt.buf`.** Remove the M1 dense linear-scratch merge sort from
+     `arr.tw` (it benched at *parity* — the read-wall lever is typed `PVecI64`, not this
+     scratch), restoring the recursive-merge path. After this, `rt.buf` is reachable
+     **only** through `@std.buffer`'s `__buf_*` intrinsics.
+   - **Gate `rt.buf` inclusion at module-assembly time.** Make `runtime_modules()` /
+     module assembly include `rt_buf.module()` (and therefore its `MemoryDef` + globals)
+     **only when the lowered program references a buffer intrinsic** — a pre-link
+     reachability check over the user module's calls, not a post-emit DCE pass. Programs
+     that never `use @std.buffer` then emit no linear memory at all.
 5. **Remove probe artifacts:** `boot/lib/buf_codec.tw`, `boot/bench/buf_codec_bench.tw`,
    `boot/bench/md5_linear_bench.tw`, `boot/tests/suites/buf_codec_suite.tw`.
 6. **Docs + hygiene:** `docs/spec.md` (`Buffer` as the second mutate-in-place type) and
@@ -198,8 +262,14 @@ for x in v { ... }                                  // IntoIterator
 
 - No arena, second-class/escape safety, or `IndexWrite` sugar (all considered and
   rejected above).
-- No M3b IR codec or M4 shared-memory/atomics consumer — M2 ships the safe type only.
-- No leak detection, double-free guard, or alignment-required fast paths.
+- **No `v[i]` element-index sugar and no bare `for x in v`** — both need new
+  concrete-receiver access-contract lowering in the checker; M2 ships `v.at(i)` and
+  `v.iter()` instead. (Slice sugar `v[lo..hi]` *is* in, since it already works on
+  concrete types.)
+- No M3b IR codec or M4 shared-memory/atomics consumer — M2 ships the sandboxed
+  low-level type only.
+- No leak detection, double-free guard, opaque/forge-proof handle, or
+  alignment-required fast paths.
 - No change to `Vector` semantics; `Buffer` augments, never replaces.
 
 ---
