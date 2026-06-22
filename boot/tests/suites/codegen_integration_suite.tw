@@ -1,5 +1,6 @@
 use compiler.codegen.codegen.{codegen, runtime_modules}
 use compiler.codegen.linker.{LinkedModule, link}
+use compiler.codegen.runtime.buf as rt_buf
 use compiler.codegen.runtime.types as rt_types
 use compiler.codegen.wasm_ir.{Instr}
 use compiler.codegen.wasm_layout.{EqTypeLayouts}
@@ -158,10 +159,20 @@ fn test_phase3_large_string_index_fixture() Result<Void, String> {
   .Ok({})
 }
 
+// ── rt.buf module shape ─────────────────────────────────────────────
+fn test_rt_buf_module_shape() Result<Void, String> {
+  m := rt_buf.module()
+  try assert.equal(m.namespace, "rt.buf")
+  try assert.equal(m.memories.len(), 1)
+  try assert.equal(m.funcs.len(), 3)
+  try assert.equal(m.exports.len(), 3)
+  .Ok({})
+}
+
 // ── runtime_modules tests ───────────────────────────────────────────
 fn test_runtime_modules_count() Result<Void, String> {
   mods := runtime_modules(empty_eq_layouts())
-  try assert.equal(mods.len(), 6)
+  try assert.equal(mods.len(), 7)
   .Ok({})
 }
 
@@ -174,8 +185,9 @@ fn test_runtime_modules_namespaces() Result<Void, String> {
   try assert.ok(names[1] == "rt.str", "second module should be rt.str")
   try assert.ok(names[2] == "rt.arr", "third module should be rt.arr")
   try assert.ok(names[3] == "rt.dict", "fourth module should be rt.dict")
-  try assert.ok(names[4] == "rt.core", "fifth module should be rt.core")
-  try assert.ok(names[5] == "codegen.intrinsics", "sixth module should be codegen.intrinsics")
+  try assert.ok(names[4] == "rt.buf", "fifth module should be rt.buf")
+  try assert.ok(names[5] == "rt.core", "sixth module should be rt.core")
+  try assert.ok(names[6] == "codegen.intrinsics", "seventh module should be codegen.intrinsics")
   .Ok({})
 }
 
@@ -816,6 +828,7 @@ pub fn suite() runner.Suite {
       "cell record field uses declared typed cell symbol",
       test_cell_record_field_uses_declared_typed_cell_symbol,
     )
+    .test("rt.buf module has correct shape", test_rt_buf_module_shape)
     .test("runtime_modules returns all runtime modules", test_runtime_modules_count)
     .test("runtime_modules has correct namespaces", test_runtime_modules_namespaces)
     .test("linking runtime resolves all inter-module imports", test_link_runtime_resolves_imports)

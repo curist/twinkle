@@ -21,6 +21,7 @@ use compiler.codegen.intrinsics as cg_intrinsics
 use compiler.codegen.linker.{LinkedModule, link}
 use compiler.codegen.linker_dce.{eliminate_dead_wasm}
 use compiler.codegen.runtime.arr as rt_arr
+use compiler.codegen.runtime.buf as rt_buf
 use compiler.codegen.runtime.core as rt_core
 use compiler.codegen.runtime.dict as rt_dict
 use compiler.codegen.runtime.str as rt_str
@@ -57,6 +58,7 @@ pub fn runtime_modules(eq_layouts: EqTypeLayouts) Vector<WasmModule> {
     rt_str.module(),
     rt_arr.module(),
     rt_dict.module(),
+    rt_buf.module(),
     rt_core.module(eq_layouts),
     cg_intrinsics.module(),
   ]

@@ -1,0 +1,89 @@
+//! rt.buf — program linear memory + bump/arena allocator for transient
+//! (scratch) buffers. Internal compiler-runtime machinery; no user-facing
+//! Buffer type yet. Lifetime is arena-scoped: buf_mark()/buf_reset(mark)
+//! save and restore the bump pointer (high-water reset).
+
+use compiler.codegen.wasm_ir.{ExportDef, FuncDef, GlobalDef, MemoryDef, WasmModule}
+
+pub fn module() WasmModule {
+  .{
+    namespace: "rt.buf",
+    types: [],
+    imports: [],
+    funcs: [alloc_fn(), mark_fn(), reset_fn()],
+    globals: [GlobalDef.{ name: "buf_heap_ptr", mutable: true, ty: .I32, init: [.I32Const(8)] }],
+    tables: [],
+    elems: [],
+    exports: [
+      ExportDef.{ wasm_name: "buf_alloc", func_sym: "buf_alloc" },
+      ExportDef.{ wasm_name: "buf_mark", func_sym: "buf_mark" },
+      ExportDef.{ wasm_name: "buf_reset", func_sym: "buf_reset" },
+    ],
+    memory_exports: [],
+    memories: [MemoryDef.{ name: "heap", min_pages: 16, max_pages: .None }],
+    data: [],
+    start: .None,
+  }
+}
+
+// buf_alloc(nbytes) -> ptr : bump-allocate an 8-byte-aligned region, growing
+// the memory by whole pages when the bump would exceed current capacity.
+fn alloc_fn() FuncDef {
+  p_n := 0
+  l_cur := 1
+  l_new := 2
+  l_need := 3
+  l_have := 4
+  .{
+    name: "buf_alloc",
+    params: [.I32],
+    results: [.I32],
+    locals: [.I32, .I32, .I32, .I32],
+    body: [
+      .GlobalGet("buf_heap_ptr"),
+      .LocalSet(l_cur),
+      // new = (cur + nbytes + 7) & ~7
+      .LocalGet(l_cur),
+      .LocalGet(p_n),
+      .I32Add,
+      .I32Const(7),
+      .I32Add,
+      .I32Const(-8),
+      .I32And,
+      .LocalSet(l_new),
+      // need_pages = (new + 65535) >> 16
+      .LocalGet(l_new),
+      .I32Const(65535),
+      .I32Add,
+      .I32Const(16),
+      .I32ShrU,
+      .LocalSet(l_need),
+      // have_pages = memory.size
+      .MemorySize,
+      .LocalSet(l_have),
+      // if need_pages > have_pages: memory.grow(need - have); drop result
+      .LocalGet(l_need),
+      .LocalGet(l_have),
+      .I32GtS,
+      .If(.None, [.LocalGet(l_need), .LocalGet(l_have), .I32Sub, .MemoryGrow, .Drop], []),
+      // buf_heap_ptr = new; return cur
+      .LocalGet(l_new),
+      .GlobalSet("buf_heap_ptr"),
+      .LocalGet(l_cur),
+    ],
+  }
+}
+
+fn mark_fn() FuncDef {
+  .{ name: "buf_mark", params: [], results: [.I32], locals: [], body: [.GlobalGet("buf_heap_ptr")] }
+}
+
+fn reset_fn() FuncDef {
+  .{
+    name: "buf_reset",
+    params: [.I32],
+    results: [],
+    locals: [],
+    body: [.LocalGet(0), .GlobalSet("buf_heap_ptr")],
+  }
+}
