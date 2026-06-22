@@ -178,6 +178,24 @@ fn parse_json_string(input: String, i: Int) Result<ParseResult<String>, String> 
     return .Err("expected string at ${i}")
   }
 
+  // Fast path: scan verbatim content up to the first quote, escape, or control
+  // byte. When the string has no escapes (the common case), the content is the
+  // literal source slice — return it in one shot, skipping the per-byte buffer
+  // build and utf-8 re-decode. Escaped strings fall through to the slow path.
+  k := i + 1
+
+  for k < input.len() and input[k] != 0x22 and input[k] != 0x5C and input[k] >= 0x20 {
+    k = k + 1
+  }
+
+  if k < input.len() and input[k] == 0x22 {
+    return .Ok(.{ value: input.slice(i + 1, k), next: k + 1 })
+  }
+
+  if k < input.len() and input[k] < 0x20 {
+    return .Err("unescaped control character in string at ${k}")
+  }
+
   out: Vector<Byte> = []
   j := i + 1
 
