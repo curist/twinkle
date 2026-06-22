@@ -32,6 +32,34 @@ module — make it conditional on use) and narrow/remove the probe-only `__buf_*
 (`boot/lib/buf_codec.tw`, `boot/bench/buf_codec_bench.tw`, `buf_codec_suite`) are
 throwaway scaffolding to remove or promote when M3b begins.
 
+### Crypto application probe (2026-06-22)
+
+Tested whether the byte-decode win extends to crypto hashing (`@std.crypto`).
+A faithful self-contained MD5 with two byte-sources sharing identical compression
+(`boot/bench/md5_linear_bench.tw`, data filled natively into each representation, no
+cross-gather, correctness gated on `MD5("abc")` + a vec/linear cross-check):
+
+| byte source | MD5 of 4M bytes (warm) |
+|---|---|
+| GC `Vector<Byte>` (`input[i]`) | ~105 ms |
+| linear memory (`i32.load8_u`) | ~47 ms |
+
+**~2.2×.** The ~47 ms floor is irreducible compression arithmetic; the ~58 ms
+difference is pure byte-read overhead — i.e. **byte reads were ~55% of MD5's wall time
+over `Vector<Byte>`**. (This corrects an earlier op-count dismissal of crypto as a
+linear-memory target: in Twinkle, hashing over `Vector<Byte>` is genuinely
+byte-read-bound because each GC-array index pays a trie walk + unbox.) The win is
+moderate rather than codec-scale because compression doesn't shrink.
+
+**Caveat (gather trap):** this 2.2× is the *upper bound*, real only when the message
+bytes **originate in linear memory**. For the current `digest_bytes(Vector<Byte>)`
+API, copying a vector into linear costs the read overhead it saves → wash. The real
+payoff shape is `crypto.digest_file(path)` / `digest_stream` reading I/O straight into
+a linear buffer and hashing in place — which all hashes (MD5/SHA-1/SHA-256) benefit
+from identically (shared read-once block structure). That requires the same
+**I/O-into-linear primitive** M4 needs: export the `rt.buf` memory + a host
+read-into-buffer builtin. Not yet built; recorded as a validated future milestone.
+
 ### M1 result (2026-06-22)
 
 All hard gates pass: emitted wasm validates and runs under V8 with the program
