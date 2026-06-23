@@ -1,5 +1,4 @@
 use @std.buffer
-use @std.buffer.{Buffer, F64View, I64View, U8View}
 
 use tests.assert
 use tests.runner

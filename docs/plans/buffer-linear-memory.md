@@ -194,7 +194,9 @@ imply `v[i]` element sugar.
 
 ### Representation
 
-- `Buffer = .{ ptr: Int, len: Int }` — a GC record; `ptr` is the linear-memory offset,
+- `Buffer = .{ ptr: Int, size: Int }` — a GC record; `ptr` is the linear-memory offset,
+  `size` the byte length (the field is `size`, not `len`, because a record field and the
+  inherent `len()` method may not share a name); the public surface is `buf.len()`.
   `len` the byte length. Being an ordinary GC ref is what makes it first-class
   (storable/returnable).
 - **Three concrete view types** — `U8View`, `I64View`, `F64View` — each a thin
@@ -218,8 +220,8 @@ imply `v[i]` element sugar.
     `@std.buffer` — the dependency is one-directional (`buffer` → view submodules), no
     cycle. They reach `__buf_*` through `add_internal_host_builtins` like any stdlib module.
 - **Handles are forgeable — accepted under the sandboxed-low-level model.** A `pub type
-  Buffer = .{ ptr, len }` exposes its fields, so a user can construct an arbitrary
-  `Buffer.{ ptr: 999, len: 8 }` or rebind `buf.ptr`. Twinkle has no record-field privacy,
+  Buffer = .{ ptr, size }` exposes its fields, so a user can construct an arbitrary
+  `Buffer.{ ptr: 999, size: 8 }` or rebind `buf.ptr`. Twinkle has no record-field privacy,
   and this is consistent with the model: a forged handle can still only touch the
   sandboxed linear memory (no worse than the already-unchecked `get/set`), and "rebinding"
   a field is immutable-build-new (it cannot corrupt an existing handle's bytes). M2 does

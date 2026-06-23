@@ -901,8 +901,9 @@ buf.free()
 ```
 
 **Manual-lifetime caveat.** There is no automatic `free`, no use-after-free
-detection, and no double-free guard. These are programmer responsibilities. The
-idiomatic pattern (once `defer` is available) will be `defer buf.free()` at the
-allocation site; until then, every allocation path must call `buf.free()`
-explicitly. A freed region may be reused by the next `buffer.new` call (address-ordered free-list coalescing), so use-after-free silently reads or corrupts the next
-allocation.
+detection, and no double-free guard. These are programmer responsibilities. Inside a
+function or block body the idiomatic pattern is `defer buf.free()` at the allocation
+site (a `defer` runs when its enclosing `{ }` block exits); a top-level script scope
+has no enclosing block, so there you must call `buf.free()` explicitly. A freed region
+may be reused by the next `buffer.new` call (address-ordered free-list coalescing), so
+use-after-free silently reads or corrupts the next allocation.
