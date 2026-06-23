@@ -199,6 +199,21 @@ imply `v[i]` element sugar.
   `View<T>`. Without traits, one generic view cannot dispatch `at`/`set` to per-width
   load/store intrinsics nor vary its return type by `T`; three concrete types are the
   honest no-trait expression.
+- **Each view type lives in its own submodule, transparently re-exported from
+  `@std.buffer` (the `@std.tuple` / `@std.tuple.triple` precedent).** A Twinkle module's
+  function namespace has no overloading (`resolver.tw` raises `DuplicateName` on a repeated
+  `pub fn`, and inherent dispatch uses `method_name = f.name`), so a *single* module
+  cannot hold three `at`/`set`/`len` witnesses — exactly the constraint `tuple.tw` notes
+  ("a single module cannot hold two `to_string` witnesses"). So:
+  - `boot/stdlib/buffer/u8view.tw` → `@std.buffer.u8view` defines `U8View` + its `at`/
+    `set`/`len`/`slice`/`iter`; likewise `i64view.tw` and `f64view.tw`.
+  - `boot/stdlib/buffer.tw` → `@std.buffer` re-exports them transparently
+    (`use .buffer.i64view as i64view_mod` + `pub type I64View = i64view_mod.I64View`), so
+    one import surface (`use @std.buffer.{Buffer, U8View, I64View, F64View}`) names all
+    four types while each view's methods resolve via its nominal home.
+  - The view submodules hold a raw `ptr: Int` (not a `Buffer`), so they do **not** import
+    `@std.buffer` — the dependency is one-directional (`buffer` → view submodules), no
+    cycle. They reach `__buf_*` through `add_internal_host_builtins` like any stdlib module.
 - **Handles are forgeable — accepted under the sandboxed-low-level model.** A `pub type
   Buffer = .{ ptr, len }` exposes its fields, so a user can construct an arbitrary
   `Buffer.{ ptr: 999, len: 8 }` or rebind `buf.ptr`. Twinkle has no record-field privacy,
@@ -232,13 +247,16 @@ imply `v[i]` element sugar.
    the i64↔i32 wasm bridge — not automatic; plus the `new_ctx` `__`-alias gate). **Move
    all `__buf_*` out of the global `builtin_env` into internal-host builtins** reachable
    only from `@std.buffer` — closing the M3 global-surface leak.
-3. **`@std.buffer` module.** The `Buffer` record + three view records, all methods,
-   `from_bytes`/`to_bytes` (copy loops), `at`/`set`/`len` (the `at`+`len` pair makes each
-   view satisfy `IndexRead`), `slice` (satisfies `Sliceable` → `v[lo..hi]`), and `iter()`
-   (a builtin `Iterator<T>` via `Iterator.unfold`, backing `for x in v.iter()`). Pure
-   Twinkle over the intrinsics, per the stdlib-module wiring recipe (little/no Rust stage0
-   change expected). Element `v[i]` sugar is **not** wired here (it needs checker work —
-   see *Index/iteration sugar*).
+3. **`@std.buffer` module + three view submodules.** `boot/stdlib/buffer.tw` holds the
+   `Buffer` record, raw accessors, `from_bytes`/`to_bytes` (copy loops), the `view_*`
+   constructors, and transparent re-exports of the view types. Each view type is its own
+   submodule (`boot/stdlib/buffer/{u8view,i64view,f64view}.tw`) defining that type +
+   `at`/`set`/`len` (the `at`+`len` pair makes it satisfy `IndexRead`), `slice` (satisfies
+   `Sliceable` → `v[lo..hi]`), and `iter()` (a builtin `Iterator<T>` via `Iterator.unfold`,
+   backing `for x in v.iter()`). Pure Twinkle over the intrinsics, per the stdlib-module
+   wiring recipe (no Rust stage0 change — `boot/main.tw` does not use `@std.buffer`).
+   Element `v[i]` sugar is **not** wired (it needs checker work — see *Index/iteration
+   sugar*).
 4. **Conditional memory emission (explicit linker/codegen work — does NOT fall out of
    DCE).** Wasm DCE removes unused funcs/imports but **not** memories, globals, or data,
    and today `runtime_modules()` (`codegen.tw`) pushes `rt_buf.module()` unconditionally.
