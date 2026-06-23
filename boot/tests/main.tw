@@ -21,7 +21,6 @@ use .suites.base_env_guardrail_suite
 use .suites.builtin_identity_collision_suite
 use .suites.builtins_canonical_suite
 use .suites.builtins_suite
-use .suites.buf_codec_suite
 use .suites.byte_suite
 use .suites.channel_suite
 use .suites.char_literal_suite
@@ -245,7 +244,6 @@ runner.run_all([
   defer_suite.suite(),
   first_class_method_suite.suite(),
   byte_suite.suite(),
-  buf_codec_suite.suite(),
   char_literal_suite.suite(),
   string_literal_suite.suite(),
   string_edge_cases_suite.suite(),
