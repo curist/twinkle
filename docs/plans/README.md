@@ -41,7 +41,7 @@ Self-hosting is complete. Historical design and status docs live in
 | Boot compiler layout | Reorganize `boot/compiler/` into focused subdirectories with stable end-state names | Planned | [boot-compiler-layout-reorg.md](boot-compiler-layout-reorg.md) |
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
 | Boot typed builtin type refs | Extend the typed-builtin-reference pattern (Option/Result variant refs, now done) to the remaining builtin *types* still referenced by raw id — `Order`, `Iterator`, `Range` — and audit `IterItem`/`UnfoldStep`/`Task` | Planned | [boot-typed-builtin-type-refs.md](boot-typed-builtin-type-refs.md) |
-| Linear-memory Buffer | Linear-memory buffers foundation-first (byte-addressed `Buffer` + typed views). M1 (infra) + M3 (byte-codec proxy, ~30×) validated; M2 — the opt-in, manually-managed, first-class user-facing `Buffer` in `@std.buffer` — is active | M2 (plan) | spec [buffer-linear-memory.md](buffer-linear-memory.md), plan [buffer-linear-memory-m2-plan.md](buffer-linear-memory-m2-plan.md) |
+| Linear-memory Buffer | Linear-memory buffers foundation-first (byte-addressed `Buffer` + typed views). M1 (infra) + M3 (byte-codec proxy, ~30×) validated; M2 (opt-in first-class `@std.buffer` `Buffer` + views) shipped. Next: M3b fast IR codec | M2 shipped; M3b next | spec [buffer-linear-memory.md](buffer-linear-memory.md) |
 
 
 ### Later — Tooling & Ecosystem

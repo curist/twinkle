@@ -1,9 +1,11 @@
 # Linear-Memory `Buffer`
 
-Status: **M1 + M3 validated (GO).** The linear-memory direction is proven on the
-workload it is actually for — dense byte indexing / codecs — where it is decisively
-faster than GC `Vector<Byte>`. **M2 (the user-facing `Buffer` type) is the active
-milestone; its design is below.** Branch: `buffer-linear-memory` (off `main`).
+Status: **M1 + M3 validated (GO); M2 DONE.** The linear-memory direction is proven on
+the workload it is actually for — dense byte indexing / codecs — where it is decisively
+faster than GC `Vector<Byte>`. **M2 (the user-facing `@std.buffer` `Buffer` type + typed
+views) shipped** on branch `buffer-linear-memory` (self-host fixed point holds, full boot
+suite green, linear memory emitted only when a buffer op is live). The next consumer is
+**M3b (fast IR codec)**. Branch: `buffer-linear-memory` (off `main`).
 
 The detailed M1 and M3 *execution* plans are completed and archived under
 `docs/plans/archive/buffer-linear-memory-m{1,3}-plan.md`; their validated findings are
@@ -68,9 +70,10 @@ with where the pain is — primitive numeric arrays and byte buffers — so `Buf
 - **M3 probe — byte codec (DONE, GO).** Raw `__buf_*` byte accessors + a LEB128 codec
   decisively beat `Vector<Byte>` (~30×). This is the honest go/no-go the sort never
   answered. Probe artifacts are throwaway.
-- **M2 — user-facing `Buffer` + typed views (ACTIVE — design below).** A sandboxed,
-  low-level, ergonomic type as the abstraction over linear memory. Success is the *type*,
-  not a perf number; the perf consumers come later.
+- **M2 — user-facing `Buffer` + typed views (DONE).** A sandboxed, low-level, ergonomic
+  type as the abstraction over linear memory (`@std.buffer`: first-class manually-managed
+  `Buffer` + `U8View`/`I64View`/`F64View`). Success was the *type*, not a perf number; the
+  perf consumers come later. The design below is what shipped.
 - **M3b — fast IR codec (future).** A flat linear-memory artifact format with O(1)
   decode, attacking the Phase G result-decode wall — the first real perf consumer.
 - **M4 — shared-memory parallelism (future, the original ask).**
