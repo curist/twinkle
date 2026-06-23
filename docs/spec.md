@@ -46,7 +46,7 @@ documents that declaration. Plain `//` comments are never documentation comments
 * Primitives, strings, vectors, records, dicts, and functions cannot be mutated in place.
 * There is no observable in-place mutation of values in the language model.
 * Updates are expressed through rebinding: constructing a new value and binding a name to it.
-* Shared mutable state is explicit and only available through `Cell<T>` APIs (`Cell.set`, `Cell.update`).
+* Shared mutable state is explicit and only available through two opt-in, mutate-in-place reference types: `Cell<T>` (a typed GC-managed cell; see §17.1) and `@std.buffer`'s `Buffer` (a sandboxed linear-memory region, manually allocated and freed; see [docs/plans/buffer-linear-memory.md](plans/buffer-linear-memory.md)).
 
 ### Primitives (unboxed)
 
@@ -64,6 +64,7 @@ documents that declaration. Plain `//` comments are never documentation comments
 * `Dict<K,V>` — immutable persistent hash map, implemented with HAMT-style structural sharing.
 * `function` — closure with captured environment (GC).
 * `Cell<T>` — mutable cell reference for explicit shared state.
+* `Buffer` (from `@std.buffer`) — sandboxed linear-memory region; mutate-in-place, manually allocated and freed.
 
 ### `Void`
 

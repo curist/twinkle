@@ -483,7 +483,7 @@ fn single_number(nums: Vector<Int>) Int {
 
 Everything above (primitives, built-in types, I/O, type conversions, String/Vector/Dict methods, operators) is available as **prelude** — no import needed.
 
-Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.io`, `use @std.proc`, `use @std.date`, `use @std.time`, `use @std.view`, `use @std.math`, `use @std.tuple`, `use @std.regexp`, `use @std.crypto`.
+Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.io`, `use @std.proc`, `use @std.date`, `use @std.time`, `use @std.view`, `use @std.math`, `use @std.tuple`, `use @std.regexp`, `use @std.crypto`, `use @std.buffer`.
 
 ### `@std.crypto`
 
@@ -813,3 +813,96 @@ rest := top.second
 t: Triple<Int, Int, Bool> = tuple.triple(1, 2, true)
 "${t}"   // "(1, 2, true)"
 ```
+
+### `@std.buffer`
+
+Sandboxed, low-level, manually-managed linear-memory buffers — Twinkle's second
+mutate-in-place reference type alongside `Cell`. `Buffer` is an opt-in escape
+hatch for workloads where GC-managed `Vector<Byte>` is too slow (e.g. byte codecs,
+dense numeric arrays). Correctness — calling `free`, not using after free — is the
+**programmer's responsibility, like C**. The only safety floor Wasm provides for
+free is that all access stays within linear memory, so the worst case is corrupting
+another buffer's bytes or trapping, never an escape from the sandbox. See
+[docs/plans/buffer-linear-memory.md](plans/buffer-linear-memory.md) for the
+design rationale.
+
+Like `@std.view` and `@std.tuple`, two import lines give the full surface:
+
+```tw
+use @std.buffer                                    // buffer.new(n), buf.view_i64(..)
+use @std.buffer.{Buffer, U8View, I64View, F64View} // type names for annotations
+```
+
+The constructors are module-qualified (`buffer.new`, not `Buffer.new`).
+
+**`Buffer` type:** `pub type Buffer = .{ ptr: Int, size: Int }` — a GC record
+whose `ptr` is the linear-memory offset and `size` is the allocation size in
+bytes. Both fields are public but raw; treat them as opaque outside `@std.buffer`.
+
+**Lifetime:**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `buffer.new(nbytes)` | `fn(nbytes: Int) Buffer` | Allocate an uninitialized region. Traps on a negative or oversized request (linear-memory pointers are 32-bit) |
+| `buffer.from_bytes(bytes)` | `fn(bytes: Vector<Byte>) Buffer` | Allocate and copy a byte vector into linear memory |
+| `buf.free()` | `fn(b: Buffer) Void` | Release the region. Double-free corrupts allocator bookkeeping |
+| `buf.len()` | `fn(b: Buffer) Int` | Byte length of the region |
+| `buf.to_bytes()` | `fn(b: Buffer) Vector<Byte>` | Copy the bytes back out into an owned `Vector<Byte>` |
+
+**Raw byte-addressed accessors** (byte `off`, little-endian, unaligned OK, **unchecked against `len`** — only the whole-memory bound traps):
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `buf.get_u8(off)` | `fn(b: Buffer, off: Int) Byte` | Read one byte at byte offset `off` |
+| `buf.set_u8(off, v)` | `fn(b: Buffer, off: Int, v: Byte) Void` | Write one byte |
+| `buf.get_i64(off)` | `fn(b: Buffer, off: Int) Int` | Read 8 bytes as a little-endian i64 |
+| `buf.set_i64(off, v)` | `fn(b: Buffer, off: Int, v: Int) Void` | Write 8 bytes as a little-endian i64 |
+| `buf.get_f64(off)` | `fn(b: Buffer, off: Int) Float` | Read 8 bytes as a little-endian f64 |
+| `buf.set_f64(off, v)` | `fn(b: Buffer, off: Int, v: Float) Void` | Write 8 bytes as a little-endian f64 |
+
+**Element-indexed views** (handles over a slice of the buffer; O(1) construction, no extra allocation; element index `i`, **unchecked against `count`**):
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `buf.view_u8(byte_off, count)` | `fn(b: Buffer, byte_off: Int, count: Int) U8View` | Byte-element view over `[byte_off, byte_off + count)` |
+| `buf.view_i64(byte_off, count)` | `fn(b: Buffer, byte_off: Int, count: Int) I64View` | i64-element view; `count` is in elements, `byte_off` in bytes |
+| `buf.view_f64(byte_off, count)` | `fn(b: Buffer, byte_off: Int, count: Int) F64View` | f64-element view; `count` is in elements, `byte_off` in bytes |
+
+Each view type (`U8View`, `I64View`, `F64View`) exposes the same interface:
+
+| Method | Element type | Description |
+|--------|-------------|-------------|
+| `v.len()` | — | Element count |
+| `v.at(i)` | `Int` / `Int` / `Float` | Element at index `i` (unchecked) |
+| `v.set(i, x)` | — | Write element at index `i` in place (unchecked) |
+| `v.slice(lo, hi)` | same view type | Sub-window `[lo, hi)` — O(1), shares backing, endpoints clamped |
+| `v.iter()` | `Iterator<Int>` / `Iterator<Int>` / `Iterator<Float>` | Iterate elements for `for x in v.iter()` |
+
+`U8View` elements are raw byte values in the `Int` domain (0–255), avoiding the
+`Byte.from_int` round-trip in hot loops. `I64View` elements are `Int`; `F64View`
+elements are `Float`.
+
+```tw
+use @std.buffer
+use @std.buffer.{Buffer, I64View}
+
+// alloc, write, read back, free
+buf := buffer.new(64)
+v := buf.view_i64(0, 8)   // 8-element i64 window over the first 64 bytes
+i := 0
+for i < 8 {
+  v.set(i, i * 10)
+  i = i + 1
+}
+total := 0
+for x in v.iter() { total = total + x }
+println("${total}")   // 280
+buf.free()
+```
+
+**Manual-lifetime caveat.** There is no automatic `free`, no use-after-free
+detection, and no double-free guard. These are programmer responsibilities. The
+idiomatic pattern (once `defer` is available) will be `defer buf.free()` at the
+allocation site; until then, every allocation path must call `buf.free()`
+explicitly. A freed region may be reused by the next `buffer.new` call (address-ordered free-list coalescing), so use-after-free silently reads or corrupts the next
+allocation.
