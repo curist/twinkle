@@ -147,6 +147,19 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
 
   // 7. Wasm-level dead code elimination
   linked = eliminate_dead_wasm(linked)
+
+  // 8. Conditional linear-memory emission: rt.buf's memory + globals survive
+  // Wasm DCE (which only prunes funcs), so drop them when no buffer op is live.
+  // Names are linker-qualified: rt.buf funcs/globals -> "rt_buf__*"; the memory
+  // keeps its unqualified name "heap" (linker concatenates memories without
+  // renaming).
+  buf_live := linked.funcs.any(fn(f) { f.name.starts_with("rt_buf__") })
+
+  if !buf_live {
+    linked.memories = .filter(fn(m) { m.name != "heap" })
+    linked.globals = .filter(fn(g) { !g.name.starts_with("rt_buf__") })
+  }
+
   t7 := date.now()
 
   if timed {
