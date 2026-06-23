@@ -103,6 +103,7 @@ use .suites.signature_drift_suite
 use .suites.signature_loader_suite
 use .suites.slot_assign_suite
 use .suites.source_suite
+use .suites.stdlib_buffer_suite
 use .suites.stdlib_crypto_suite
 use .suites.stdlib_heap_suite
 use .suites.stdlib_host_suite
@@ -150,6 +151,7 @@ runner.run_all([
   stdlib_regexp_suite.suite(),
   stdlib_tuple_suite.suite(),
   stdlib_crypto_suite.suite(),
+  stdlib_buffer_suite.suite(),
   stdlib_math_suite.suite(),
   stdlib_host_suite.suite(),
   source_suite.suite(),

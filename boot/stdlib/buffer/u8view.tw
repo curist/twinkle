@@ -1,0 +1,36 @@
+//! Element-indexed byte window over a linear-memory buffer. Elements are raw
+//! byte values in the Int domain (0..255). See i64view.tw.
+
+pub type U8View = .{ ptr: Int, byte_off: Int, count: Int }
+
+type IterState = .{ v: U8View, i: Int }
+
+fn iter_step(s: IterState) UnfoldStep<Int, IterState> {
+  if s.i < s.v.count {
+    UnfoldStep.Yield(s.v.at(s.i), IterState.{ v: s.v, i: s.i + 1 })
+  } else {
+    UnfoldStep.Done
+  }
+}
+
+pub fn len(v: U8View) Int {
+  v.count
+}
+
+pub fn at(v: U8View, i: Int) Int {
+  __buf_load_u8(v.ptr, v.byte_off + i)
+}
+
+pub fn set(v: U8View, i: Int, x: Int) {
+  __buf_store_u8(v.ptr, v.byte_off + i, x)
+}
+
+pub fn slice(v: U8View, lo: Int, hi: Int) U8View {
+  start := lo.clamp(0, v.count)
+  end := hi.clamp(start, v.count)
+  .{ ptr: v.ptr, byte_off: v.byte_off + start, count: end - start }
+}
+
+pub fn iter(v: U8View) Iterator<Int> {
+  Iterator.unfold(IterState.{ v, i: 0 }, iter_step)
+}

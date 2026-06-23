@@ -1,0 +1,35 @@
+//! Element-indexed f64 window over a linear-memory buffer. See i64view.tw.
+
+pub type F64View = .{ ptr: Int, byte_off: Int, count: Int }
+
+type IterState = .{ v: F64View, i: Int }
+
+fn iter_step(s: IterState) UnfoldStep<Float, IterState> {
+  if s.i < s.v.count {
+    UnfoldStep.Yield(s.v.at(s.i), IterState.{ v: s.v, i: s.i + 1 })
+  } else {
+    UnfoldStep.Done
+  }
+}
+
+pub fn len(v: F64View) Int {
+  v.count
+}
+
+pub fn at(v: F64View, i: Int) Float {
+  __buf_load_f64(v.ptr, v.byte_off + i * 8)
+}
+
+pub fn set(v: F64View, i: Int, x: Float) {
+  __buf_store_f64(v.ptr, v.byte_off + i * 8, x)
+}
+
+pub fn slice(v: F64View, lo: Int, hi: Int) F64View {
+  start := lo.clamp(0, v.count)
+  end := hi.clamp(start, v.count)
+  .{ ptr: v.ptr, byte_off: v.byte_off + start * 8, count: end - start }
+}
+
+pub fn iter(v: F64View) Iterator<Float> {
+  Iterator.unfold(IterState.{ v, i: 0 }, iter_step)
+}

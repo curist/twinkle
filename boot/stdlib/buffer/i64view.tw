@@ -1,0 +1,43 @@
+//! Element-indexed i64 window over a linear-memory buffer. Holds a raw `ptr`
+//! (a linear offset), not a `Buffer`, so this submodule does not import
+//! `@std.buffer` — the dependency is one-directional. Satisfies `IndexRead<Int>`
+//! via `at` + `len`, and `Sliceable` via `slice`.
+
+pub type I64View = .{ ptr: Int, byte_off: Int, count: Int }
+
+type IterState = .{ v: I64View, i: Int }
+
+fn iter_step(s: IterState) UnfoldStep<Int, IterState> {
+  if s.i < s.v.count {
+    UnfoldStep.Yield(s.v.at(s.i), IterState.{ v: s.v, i: s.i + 1 })
+  } else {
+    UnfoldStep.Done
+  }
+}
+
+/// Element count. With `at`, satisfies `IndexRead<Int>`.
+pub fn len(v: I64View) Int {
+  v.count
+}
+
+/// Element `i` (unchecked against `count`; only the whole-memory bound traps).
+pub fn at(v: I64View, i: Int) Int {
+  __buf_load_i64(v.ptr, v.byte_off + i * 8)
+}
+
+/// In-place element write.
+pub fn set(v: I64View, i: Int, x: Int) {
+  __buf_store_i64(v.ptr, v.byte_off + i * 8, x)
+}
+
+/// Sub-window `[lo, hi)` (O(1), shares the backing). Clamped like `@std.view`.
+pub fn slice(v: I64View, lo: Int, hi: Int) I64View {
+  start := lo.clamp(0, v.count)
+  end := hi.clamp(start, v.count)
+  .{ ptr: v.ptr, byte_off: v.byte_off + start * 8, count: end - start }
+}
+
+/// Iterator over the elements, for `for x in v.iter()`.
+pub fn iter(v: I64View) Iterator<Int> {
+  Iterator.unfold(IterState.{ v, i: 0 }, iter_step)
+}

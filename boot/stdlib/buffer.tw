@@ -1,0 +1,123 @@
+//! Sandboxed, low-level, manually-managed linear-memory buffers — Twinkle's
+//! second mutate-in-place reference type alongside `Cell`. Opt-in; correctness
+//! (calling `free`, no use-after-free) is the programmer's responsibility.
+//!
+//! Two import lines give the full surface (mirroring `@std.view` / `@std.tuple`):
+//!
+//!   use @std.buffer                          // `buffer.new(n)`, `buf.view_i64(..)`
+//!   use @std.buffer.{Buffer, U8View, I64View, F64View}   // name the types
+//!
+//! Each view type has its own nominal home (a submodule) and is re-exported here
+//! transparently, because a single module cannot hold three `at`/`set`/`len`
+//! witnesses.
+
+use .buffer.f64view as f64view_mod
+use .buffer.i64view as i64view_mod
+use .buffer.u8view as u8view_mod
+
+pub type Buffer = .{ ptr: Int, size: Int }
+
+pub type U8View = u8view_mod.U8View
+
+pub type I64View = i64view_mod.I64View
+
+pub type F64View = f64view_mod.F64View
+
+/// Allocate an uninitialized `nbytes`-byte region. Must be freed with `free`.
+/// Traps on a negative request or one too large to address (linear-memory
+/// pointers are 32-bit), since the raw allocator's ABI narrows `Int` to i32.
+pub fn new(nbytes: Int) Buffer {
+  if nbytes < 0 {
+    error("Buffer.new: negative size")
+  }
+
+  if nbytes > 0x70000000 {
+    error("Buffer.new: size too large")
+  }
+
+  .{ ptr: __buf_alloc(nbytes), size: nbytes }
+}
+
+/// Allocate and copy a byte vector into linear memory (a copy bridge — see the
+/// gather-trap caveat in the design doc).
+pub fn from_bytes(bytes: Vector<Byte>) Buffer {
+  b := new(bytes.len())
+  i := 0
+  n := bytes.len()
+
+  for i < n {
+    b.set_u8(i, bytes[i])
+    i = i + 1
+  }
+
+  b
+}
+
+/// Release the region. Double-free is undefined (corrupts allocator bookkeeping).
+pub fn free(b: Buffer) {
+  __buf_free(b.ptr)
+}
+
+/// Byte length.
+pub fn len(b: Buffer) Int {
+  b.size
+}
+
+/// Copy the bytes out into an owned `Vector<Byte>`.
+pub fn to_bytes(b: Buffer) Vector<Byte> {
+  out: Vector<Byte> = []
+  i := 0
+
+  for i < b.size {
+    out = .append(b.get_u8(i))
+    i = i + 1
+  }
+
+  out
+}
+
+/// Byte read at `off` (byte offset). Unchecked against `len`.
+pub fn get_u8(b: Buffer, off: Int) Byte {
+  case Byte.from_int(__buf_load_u8(b.ptr, off)) {
+    .Some(byte) => byte,
+    .None => error("buffer get_u8: byte out of range"),
+  }
+}
+
+/// Byte write at `off` (byte offset).
+pub fn set_u8(b: Buffer, off: Int, v: Byte) {
+  __buf_store_u8(b.ptr, off, v.to_int())
+}
+
+/// i64 read at byte offset `off` (little-endian, unaligned ok).
+pub fn get_i64(b: Buffer, off: Int) Int {
+  __buf_load_i64(b.ptr, off)
+}
+
+pub fn set_i64(b: Buffer, off: Int, v: Int) {
+  __buf_store_i64(b.ptr, off, v)
+}
+
+/// f64 read at byte offset `off`.
+pub fn get_f64(b: Buffer, off: Int) Float {
+  __buf_load_f64(b.ptr, off)
+}
+
+pub fn set_f64(b: Buffer, off: Int, v: Float) {
+  __buf_store_f64(b.ptr, off, v)
+}
+
+/// Element-indexed byte view over `[byte_off, byte_off + count)`.
+pub fn view_u8(b: Buffer, byte_off: Int, count: Int) U8View {
+  .{ ptr: b.ptr, byte_off, count }
+}
+
+/// Element-indexed i64 view; `count` is in elements, `byte_off` in bytes.
+pub fn view_i64(b: Buffer, byte_off: Int, count: Int) I64View {
+  .{ ptr: b.ptr, byte_off, count }
+}
+
+/// Element-indexed f64 view; `count` is in elements, `byte_off` in bytes.
+pub fn view_f64(b: Buffer, byte_off: Int, count: Int) F64View {
+  .{ ptr: b.ptr, byte_off, count }
+}

@@ -1,0 +1,104 @@
+use @std.buffer
+use @std.buffer.{Buffer, F64View, I64View, U8View}
+
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("stdlib buffer")
+    .test(
+      "raw i64 round-trip and free reuse",
+      fn() {
+        b := buffer.new(16)
+        b.set_i64(0, 42)
+        b.set_i64(8, -99)
+        try assert.equal(b.get_i64(0), 42)
+        try assert.equal(b.get_i64(8), -99)
+        ptr := b.ptr
+        b.free()
+        b2 := buffer.new(16)
+        try assert.equal(b2.ptr, ptr)
+        b2.free()
+        .Ok({})
+      },
+    )
+    .test(
+      "f64 and u8 raw access",
+      fn() {
+        b := buffer.new(16)
+        b.set_f64(0, 2.5)
+        try assert.equal(b.get_f64(0), 2.5)
+        b.set_u8(8, b.get_u8(0))
+        try assert.equal(b.get_u8(8).to_int(), b.get_u8(0).to_int())
+        b.free()
+        .Ok({})
+      },
+    )
+    .test(
+      "from_bytes / to_bytes round-trip",
+      fn() {
+        src: Vector<Byte> = "hi".utf8_bytes()
+        b := buffer.from_bytes(src)
+        try assert.equal(b.len(), 2)
+        try assert.equal(b.to_bytes(), src)
+        b.free()
+        .Ok({})
+      },
+    )
+    .test(
+      "i64 view get/set/len and slice",
+      fn() {
+        b := buffer.new(64)
+        v := b.view_i64(0, 8)
+        i := 0
+
+        for i < 8 {
+          v.set(i, i * 10)
+          i = i + 1
+        }
+
+        try assert.equal(v.len(), 8)
+        try assert.equal(v.at(3), 30)
+        sub := v.slice(2, 5)
+        try assert.equal(sub.len(), 3)
+        try assert.equal(sub.at(0), 20)
+        b.free()
+        .Ok({})
+      },
+    )
+    .test(
+      "view iteration sums elements",
+      fn() {
+        b := buffer.new(32)
+        v := b.view_i64(0, 4)
+        v.set(0, 1)
+        v.set(1, 2)
+        v.set(2, 3)
+        v.set(3, 4)
+        total := 0
+
+        for x in v.iter() {
+          total = total + x
+        }
+
+        try assert.equal(total, 10)
+        b.free()
+        .Ok({})
+      },
+    )
+    .test(
+      "coalescing: two adjacent frees reused by one larger alloc",
+      fn() {
+        a := buffer.new(16)
+        base := a.ptr
+        c := buffer.new(16)
+        a.free()
+        c.free()
+        big := buffer.new(40)
+        try assert.is_true(big.ptr <= base)
+        big.free()
+        .Ok({})
+      },
+    )
+}
