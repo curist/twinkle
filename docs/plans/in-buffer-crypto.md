@@ -1,7 +1,7 @@
 # In-Buffer Crypto (`Buffer` word accessors + `crypto.*_buf`)
 
 Status: **DESIGN (approved, pre-plan).** A focused follow-on to the shipped linear-memory
-`Buffer` ([[archive/buffer-linear-memory]]). Boot-only.
+`Buffer` ([archive/buffer-linear-memory.md](archive/buffer-linear-memory.md)). Boot-only.
 
 ## Goal
 
@@ -31,10 +31,13 @@ every iteration runs at path-C speed.
 
 Reading the actual `@std.crypto` code surfaced a second, source-independent cost: the
 shared schedule (`crypto.schedule`) is a **functional 16-field record**, and the block loop
-does `w = sched.set(w, j, ...)` — **each `set` rebuilds the whole 16-field record**. MD5/
-SHA-1 do ~16 rebuilds per 64-byte block; SHA-256 expands to 64 words → **~64 record
-rebuilds per block** (~4096 allocations for one 4 KiB SHA-256). This GC churn is
-independent of the byte source, so it must be attacked too or the read win is diluted.
+does `w = sched.set(w, j, ...)` — **each `set` rebuilds the whole 16-field record**. MD5
+does ~16 rebuilds per 64-byte block (it reads the 16 words once and only permutes their
+order). **SHA-1 and SHA-256 both expand the schedule across the rounds**, doing a
+`sched.set` per expansion step: SHA-1 updates its 16-word ring for rounds 16..79
+(`sha1.tw:118-125`) and SHA-256 expands to 64 words for rounds 16..63 — so **~80 / ~64
+record rebuilds per block** (thousands of allocations for one 4 KiB digest). This GC churn
+is independent of the byte source, so it must be attacked too or the read win is diluted.
 
 So the in-buffer path uses **two levers**: word-load the message (Lever A) **and** store the
 schedule in an in-place `Buffer` scratch (Lever B).
@@ -45,7 +48,8 @@ schedule in an in-place `Buffer` scratch (Lever B).
   sub-range.
 - File-I/O-into-buffer (`read_file_buf`, `crypto.digest_file`, exporting `rt.buf` memory) —
   a separate later milestone; it does **not** affect this bench (which reads no files).
-- Changing, replacing, or optimizing the `_bytes` / `_small` paths.
+- Changing, replacing, or optimizing the existing `_bytes` paths or the string/small-input
+  hashing.
 - Any `src/` (Rust stage0) change — `boot/main.tw` uses none of this.
 
 ## Design
@@ -63,9 +67,9 @@ buf.set_u32(off: Int, v: Int)  // 32-bit LE store (low 32 bits of v)
 - Byte-addressed (`off` is a byte offset), little-endian, **unchecked** against `len` —
   consistent with `get_u8`/`get_i64`/`get_f64`.
 - `get_u32` is an unsigned load (zero-extended), so a word with the high bit set is a
-  positive `Int` in `0 .. 2^32`. Implementation: a 32-bit unsigned linear load widened to
-  i64 (`i64.load32_u`, adding that `Instr` variant if absent, or `i32.load` +
-  `i64.extend_i32_u`).
+  positive `Int` in `0 .. 2^32`. Implementation: reuse the existing `I32Load` +
+  `I64ExtendI32U` route (no new IR variant); only add a dedicated `i64.load32_u` `Instr`
+  if a measured need appears.
 - `Buffer` stays endianness-neutral: these are the Wasm-native LE ops. Crypto owns its own
   byte order (§3). No `_be` accessor on `Buffer`.
 
@@ -81,16 +85,26 @@ Each `digest_buf`:
 - **Message length** = `buf.len()`. Padding for `pos ≥ len` (the `0x80` terminator, zero
   fill, and the 64-bit length) is **computed**, not stored — the buffer holds only the raw
   message, no over-allocation.
-- **Lever B — schedule scratch.** Allocate a small scratch `Buffer` (64 B for MD5/SHA-1's
-  16 words; 256 B for SHA-256's 64-word expansion). Fill and (for SHA-256) expand it with
-  `set_u32`/`get_u32` by computed index — **in-place, zero GC churn** — replacing the
-  functional `Schedule` record. Compression reads schedule words via `get_u32(idx*4)`
-  (no 16-arm case-match). Free the scratch before returning.
-- **Lever A — message reads.** Fill each block's 16 words with one `get_u32` per word on
-  the fast path (the word lies fully within `len`). The trailing 1–2 words that straddle
-  the message end fall back to per-byte synthesis — the existing `padded_byte` logic,
-  reading real bytes from the buffer via `get_u8`. So ~all of the message is read a word at
-  a time.
+- **Lever B — schedule scratch.** Allocate a small scratch `Buffer`: 64 B for MD5's 16
+  words and SHA-1's 16-word ring; 256 B for SHA-256's 64-word schedule. Replace the
+  functional `Schedule` record with **in-place** `set_u32`/`get_u32` by computed index —
+  zero GC churn:
+  - MD5 fills the 16 words once, then reads them permuted via `get_u32(word_index(i)*4)`.
+  - SHA-1 fills 16 words, then **updates the ring in place** for rounds 16..79
+    (`set_u32((i & 15)*4, rotl(...))`), reading neighbours with `get_u32`.
+  - SHA-256 fills 16 words, then **expands in place** to 64 words for rounds 16..63.
+
+  Free the scratch before returning.
+- **Lever A — message reads.** Fill each block's 16 words from the message. The precise
+  rule (correctness-critical): use the fast `get_u32(base)` **only when `base + 4 <= len`**
+  — the entire word lies inside the real message. **Every other word must be synthesized**
+  per byte (real bytes via `get_u8` for `pos < len`, then the `0x80` terminator at
+  `pos == len`, zero fill, and the 64-bit length) — the existing `padded_byte` logic over
+  the buffer. This is not merely a "trailing word or two": a block-aligned input (e.g. the
+  4 KiB bench, an exact multiple of 64) appends an **entire synthetic padding block** whose
+  every word is synthesized. Reading `get_u32` past `len` is forbidden — it would read the
+  uninitialized, 8-byte-rounded allocation tail. The fast path still covers ~all of the
+  real message a word at a time; only the boundary/padding words take the slow path.
 - **Shared math.** The pure round helpers (`u32`, `rotl32`, `not32`, `s`, `k`, `round_f`,
   `word_index`, SHA `sigma`s) are reused from the existing submodule; only the ~20–30-line
   block/schedule loop is duplicated (no closure indirection in the hot loop).
@@ -116,6 +130,9 @@ free is negligible.
 ### 5. Bench changes (`examples/crypto-bench/twinkle/main.tw`)
 
 - Build `large_buf := buffer.from_bytes(large)` once (copy amortized over 501 iters).
+- **Warm up** the `_buf` paths after building `large_buf` (one `crypto.*_buf(large_buf)`
+  call each), mirroring the existing warm-up block, so timing is comparable and the scratch
+  free-list slot is primed before the timed loops.
 - Add `md5_4k_buf`, `sha1_4k_buf`, `sha256_4k_buf` cases calling `crypto.*_buf(large_buf)`.
 - **Keep** the existing `_bytes` 4 KiB cases for the side-by-side delta.
 - Free `large_buf` at the end.
@@ -128,10 +145,11 @@ baselines (which hash a native buffer); the `_bytes` cases show Twinkle's naive 
 - `boot/tests/suites/stdlib_buffer_suite.tw`: `get_u32`/`set_u32` round-trip and LE byte
   layout (e.g. `set_u32(0, 0x04030201)` ⇒ `get_u8(0)==1 … get_u8(3)==4`; high-bit word
   round-trips as a positive `Int`).
-- Crypto cross-equivalence (new or existing crypto suite): for each hash,
-  `crypto.X_buf(buffer.from_bytes(v)) == crypto.X_bytes(v)` across edge lengths — empty,
-  `< 4`, exactly 4, the 55/56/64-byte padding boundaries, a non-4-aligned length, and
-  4 KiB.
+- Crypto cross-equivalence (new or existing crypto suite): for each hash, **allocate a
+  buffer, hash it, free it**, and assert it matches the `_bytes` digest — i.e.
+  `b := buffer.from_bytes(v); d := crypto.X_buf(b); b.free()` then `d == crypto.X_bytes(v)`.
+  (`digest_buf` must **not** free a caller-owned buffer.) Cover edge lengths: empty, `< 4`,
+  exactly 4, the 55/56/64-byte padding boundaries, a non-4-aligned length, and 4 KiB.
 
 ### 7. Success criterion
 
@@ -143,8 +161,9 @@ bench input — but no algorithm changes beyond the two levers.
 
 ## File touch map (for the plan)
 
-- `boot/compiler/codegen/runtime/buf.tw` — `buf_load_u32`/`buf_store_u32` funcs (+ exports);
-  possibly an `i64.load32_u` `Instr` in `wasm_ir.tw`/`wasm.tw`/`wat.tw`.
+- `boot/compiler/codegen/runtime/buf.tw` — `buf_load_u32` (`I32Load` + `I64ExtendI32U` →
+  i64) / `buf_store_u32` (`I32Store`, value narrowed at the ABI like `store_u8`) funcs +
+  exports. No new `Instr` variant needed (both already exist in `wasm_ir.tw`).
 - `boot/compiler/builtins.tw` — `builtin_abi` + `builtin_specs` for the two ops.
 - `boot/compiler/base_env.tw` — `__buf_load_u32`/`__buf_store_u32` in
   `add_internal_host_builtins`.
