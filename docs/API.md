@@ -855,6 +855,8 @@ bytes. Both fields are public but raw; treat them as opaque outside `@std.buffer
 |----------|-----------|-------------|
 | `buf.get_u8(off)` | `fn(b: Buffer, off: Int) Byte` | Read one byte at byte offset `off` |
 | `buf.set_u8(off, v)` | `fn(b: Buffer, off: Int, v: Byte) Void` | Write one byte |
+| `buf.get_u32(off)` | `fn(b: Buffer, off: Int) Int` | Read 4 bytes as an unsigned little-endian word, zero-extended to `Int` |
+| `buf.set_u32(off, v)` | `fn(b: Buffer, off: Int, v: Int) Void` | Write the low 32 bits of `v` as a little-endian word |
 | `buf.get_i64(off)` | `fn(b: Buffer, off: Int) Int` | Read 8 bytes as a little-endian i64 |
 | `buf.set_i64(off, v)` | `fn(b: Buffer, off: Int, v: Int) Void` | Write 8 bytes as a little-endian i64 |
 | `buf.get_f64(off)` | `fn(b: Buffer, off: Int) Float` | Read 8 bytes as a little-endian f64 |

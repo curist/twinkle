@@ -22,6 +22,8 @@ pub fn module() WasmModule {
       free_fn(),
       load_u8_fn(),
       store_u8_fn(),
+      load_u32_fn(),
+      store_u32_fn(),
       load_i64_fn(),
       store_i64_fn(),
       load_f64_fn(),
@@ -38,6 +40,8 @@ pub fn module() WasmModule {
       ExportDef.{ wasm_name: "buf_free", func_sym: "buf_free" },
       ExportDef.{ wasm_name: "buf_load_u8", func_sym: "buf_load_u8" },
       ExportDef.{ wasm_name: "buf_store_u8", func_sym: "buf_store_u8" },
+      ExportDef.{ wasm_name: "buf_load_u32", func_sym: "buf_load_u32" },
+      ExportDef.{ wasm_name: "buf_store_u32", func_sym: "buf_store_u32" },
       ExportDef.{ wasm_name: "buf_load_i64", func_sym: "buf_load_i64" },
       ExportDef.{ wasm_name: "buf_store_i64", func_sym: "buf_store_i64" },
       ExportDef.{ wasm_name: "buf_load_f64", func_sym: "buf_load_f64" },
@@ -392,6 +396,28 @@ fn store_u8_fn() FuncDef {
     results: [],
     locals: [],
     body: [.LocalGet(0), .LocalGet(1), .I32Add, .LocalGet(2), .I32Store8(0, 0)],
+  }
+}
+
+// buf_load_u32(base, off) -> i64 : unsigned 32-bit LE load, zero-extended.
+fn load_u32_fn() FuncDef {
+  .{
+    name: "buf_load_u32",
+    params: [.I32, .I32],
+    results: [.I64],
+    locals: [],
+    body: [.LocalGet(0), .LocalGet(1), .I32Add, .I32Load(0, 0), .I64ExtendI32U],
+  }
+}
+
+// buf_store_u32(base, off, v) — stores the low 32 bits of v at base+off (LE).
+fn store_u32_fn() FuncDef {
+  .{
+    name: "buf_store_u32",
+    params: [.I32, .I32, .I64],
+    results: [],
+    locals: [],
+    body: [.LocalGet(0), .LocalGet(1), .I32Add, .LocalGet(2), .I32WrapI64, .I32Store(0, 0)],
   }
 }
 

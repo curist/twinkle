@@ -35,6 +35,26 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "u32 word load/store, little-endian, unsigned",
+      fn() {
+        b := buffer.new(16)
+        b.set_u32(0, 0x04030201)
+        try assert.equal(b.get_u32(0), 0x04030201)
+
+        // little-endian byte layout
+        try assert.equal(b.get_u8(0).to_int(), 1)
+        try assert.equal(b.get_u8(1).to_int(), 2)
+        try assert.equal(b.get_u8(2).to_int(), 3)
+        try assert.equal(b.get_u8(3).to_int(), 4)
+
+        // high-bit word round-trips as a positive Int (unsigned, zero-extended)
+        b.set_u32(8, 0x80000000)
+        try assert.equal(b.get_u32(8), 2147483648)
+        b.free()
+        .Ok({})
+      },
+    )
+    .test(
       "from_bytes / to_bytes round-trip",
       fn() {
         src: Vector<Byte> = "hi".utf8_bytes()

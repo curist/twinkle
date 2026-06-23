@@ -486,6 +486,10 @@ pub fn add_internal_host_builtins(env: ResolvedEnv) ResolvedEnv {
     .add_function(
       builtin_sig("__buf_store_u8", [], ["base", "i", "v"], [.Int, .Int, .Int], .Some(.Void)),
     )
+    .add_function(builtin_sig("__buf_load_u32", [], ["base", "i"], [.Int, .Int], .Some(.Int)))
+    .add_function(
+      builtin_sig("__buf_store_u32", [], ["base", "i", "v"], [.Int, .Int, .Int], .Some(.Void)),
+    )
     .add_function(builtin_sig("__buf_load_i64", [], ["base", "i"], [.Int, .Int], .Some(.Int)))
     .add_function(
       builtin_sig("__buf_store_i64", [], ["base", "i", "v"], [.Int, .Int, .Int], .Some(.Void)),

@@ -89,6 +89,16 @@ pub fn set_u8(b: Buffer, off: Int, v: Byte) {
   __buf_store_u8(b.ptr, off, v.to_int())
 }
 
+/// 32-bit unsigned little-endian read at byte offset `off` (unaligned ok).
+pub fn get_u32(b: Buffer, off: Int) Int {
+  __buf_load_u32(b.ptr, off)
+}
+
+/// 32-bit little-endian write (low 32 bits of `v`) at byte offset `off`.
+pub fn set_u32(b: Buffer, off: Int, v: Int) {
+  __buf_store_u32(b.ptr, off, v)
+}
+
 /// i64 read at byte offset `off` (little-endian, unaligned ok).
 pub fn get_i64(b: Buffer, off: Int) Int {
   __buf_load_i64(b.ptr, off)
