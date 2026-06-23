@@ -177,10 +177,13 @@ fn builtin_abi(name: String) AbiContract {
     "host_stdin_eof" => abi([], [.I32]),
     "host_stdout_write_bytes" => abi([arr_n()], []),
     "buf_alloc" => abi([.I32], [.I32]),
-    "buf_mark" => abi([], [.I32]),
-    "buf_reset" => abi([.I32], []),
+    "buf_free" => abi([.I32], []),
     "buf_load_u8" => abi([.I32, .I32], [.I32]),
     "buf_store_u8" => abi([.I32, .I32, .I32], []),
+    "buf_load_i64" => abi([.I32, .I32], [.I64]),
+    "buf_store_i64" => abi([.I32, .I32, .I64], []),
+    "buf_load_f64" => abi([.I32, .I32], [.F64]),
+    "buf_store_f64" => abi([.I32, .I32, .F64], []),
     // Intrinsics that still cross the anyref boundary after M4.
     "vector$append" => abi([pvec_n(), .Anyref], [pvec_()]),
     "vector$get" => abi([pvec_n(), .I32], [.Anyref]),
@@ -542,10 +545,13 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("vector$builder_push_i64", "rt.arr", "builder_push_i64", .None),
     rt("vector$builder_freeze_i64", "rt.arr", "builder_freeze_i64", .None),
     rt("buf_alloc", "rt.buf", "buf_alloc", .None),
-    rt("buf_mark", "rt.buf", "buf_mark", .None),
-    rt("buf_reset", "rt.buf", "buf_reset", .None),
+    rt("buf_free", "rt.buf", "buf_free", .None),
     rt("buf_load_u8", "rt.buf", "buf_load_u8", .None),
     rt("buf_store_u8", "rt.buf", "buf_store_u8", .None),
+    rt("buf_load_i64", "rt.buf", "buf_load_i64", .None),
+    rt("buf_store_i64", "rt.buf", "buf_store_i64", .None),
+    rt("buf_load_f64", "rt.buf", "buf_load_f64", .None),
+    rt("buf_store_f64", "rt.buf", "buf_store_f64", .None),
   ]
 }
 

@@ -1,7 +1,14 @@
-//! rt.buf — program linear memory + bump/arena allocator for transient
-//! (scratch) buffers. Internal compiler-runtime machinery; no user-facing
-//! Buffer type yet. Lifetime is arena-scoped: buf_mark()/buf_reset(mark)
-//! save and restore the bump pointer (high-water reset).
+//! rt.buf — program linear memory + free-list allocator for manually-managed
+//! buffers. Internal compiler-runtime machinery backing `@std.buffer`.
+//!
+//! Memory layout: bytes 0–7 are reserved so payload pointer 0 doubles as null.
+//! Two mutable i32 globals: `buf_heap_ptr` (bump frontier, init 8) and
+//! `buf_free_head` (address-ordered free-list head, init 0 = empty). Each block
+//! is an 8-byte header + 8-aligned payload — header+0 = payload size (multiple
+//! of 8), header+4 = next free-block address for free blocks (0 for allocated).
+//! `buf_alloc` returns block+8; `buf_free(p)` recovers block = p-8 and splices
+//! the block back into the address-ordered list, coalescing with adjacent free
+//! neighbours.
 
 use compiler.codegen.wasm_ir.{ExportDef, FuncDef, GlobalDef, MemoryDef, WasmModule}
 
@@ -10,16 +17,31 @@ pub fn module() WasmModule {
     namespace: "rt.buf",
     types: [],
     imports: [],
-    funcs: [alloc_fn(), mark_fn(), reset_fn(), load_u8_fn(), store_u8_fn()],
-    globals: [GlobalDef.{ name: "buf_heap_ptr", mutable: true, ty: .I32, init: [.I32Const(8)] }],
+    funcs: [
+      alloc_fn(),
+      free_fn(),
+      load_u8_fn(),
+      store_u8_fn(),
+      load_i64_fn(),
+      store_i64_fn(),
+      load_f64_fn(),
+      store_f64_fn(),
+    ],
+    globals: [
+      GlobalDef.{ name: "buf_heap_ptr", mutable: true, ty: .I32, init: [.I32Const(8)] },
+      GlobalDef.{ name: "buf_free_head", mutable: true, ty: .I32, init: [.I32Const(0)] },
+    ],
     tables: [],
     elems: [],
     exports: [
       ExportDef.{ wasm_name: "buf_alloc", func_sym: "buf_alloc" },
-      ExportDef.{ wasm_name: "buf_mark", func_sym: "buf_mark" },
-      ExportDef.{ wasm_name: "buf_reset", func_sym: "buf_reset" },
+      ExportDef.{ wasm_name: "buf_free", func_sym: "buf_free" },
       ExportDef.{ wasm_name: "buf_load_u8", func_sym: "buf_load_u8" },
       ExportDef.{ wasm_name: "buf_store_u8", func_sym: "buf_store_u8" },
+      ExportDef.{ wasm_name: "buf_load_i64", func_sym: "buf_load_i64" },
+      ExportDef.{ wasm_name: "buf_store_i64", func_sym: "buf_store_i64" },
+      ExportDef.{ wasm_name: "buf_load_f64", func_sym: "buf_load_f64" },
+      ExportDef.{ wasm_name: "buf_store_f64", func_sym: "buf_store_f64" },
     ],
     memory_exports: [],
     memories: [MemoryDef.{ name: "heap", min_pages: 16, max_pages: .None }],
@@ -28,69 +50,330 @@ pub fn module() WasmModule {
   }
 }
 
-// buf_alloc(nbytes) -> ptr : bump-allocate an 8-byte-aligned region, growing
-// the memory by whole pages when the bump would exceed current capacity.
+// buf_alloc(nbytes) -> ptr : first-fit over the address-ordered free list,
+// splitting an oversized block when the remainder can still hold a header plus
+// a minimum (8-byte) payload; otherwise bump-allocates a fresh block, growing
+// the memory by whole pages when the frontier would exceed current capacity.
 fn alloc_fn() FuncDef {
   p_n := 0
-  l_cur := 1
-  l_new := 2
-  l_need := 3
-  l_have := 4
+  l_need := 1
+  l_prev := 2
+  l_cur := 3
+  l_size := 4
+  l_newblk := 5
+  l_block := 6
+  l_end := 7
+  l_pages := 8
   .{
     name: "buf_alloc",
     params: [.I32],
     results: [.I32],
-    locals: [.I32, .I32, .I32, .I32],
+    locals: [.I32, .I32, .I32, .I32, .I32, .I32, .I32, .I32],
     body: [
-      .GlobalGet("buf_heap_ptr"),
-      .LocalSet(l_cur),
-      // new = (cur + nbytes + 7) & ~7
-      .LocalGet(l_cur),
+      // need = (n + 7) & ~7
       .LocalGet(p_n),
-      .I32Add,
       .I32Const(7),
       .I32Add,
       .I32Const(-8),
       .I32And,
-      .LocalSet(l_new),
-      // need_pages = (new + 65535) >> 16
-      .LocalGet(l_new),
+      .LocalSet(l_need),
+      // prev = 0; cur = buf_free_head
+      .I32Const(0),
+      .LocalSet(l_prev),
+      .GlobalGet("buf_free_head"),
+      .LocalSet(l_cur),
+      .Block(
+        "scan_done",
+        .None,
+        [
+          .Loop(
+            "scan",
+            .None,
+            [
+              // if cur == 0 break out of the scan loop
+              .LocalGet(l_cur),
+              .I32Eqz,
+              .BrIf("scan_done"),
+              // size = i32.load[cur+0]
+              .LocalGet(l_cur),
+              .I32Load(0, 0),
+              .LocalSet(l_size),
+              // if size >= need: try to use this block
+              .LocalGet(l_size),
+              .LocalGet(l_need),
+              .I32GeU,
+              .If(
+                .None,
+                [
+                  // if size >= need + 16: split
+                  .LocalGet(l_size),
+                  .LocalGet(l_need),
+                  .I32Const(16),
+                  .I32Add,
+                  .I32GeU,
+                  .If(
+                    .None,
+                    [
+                      // newblk = cur + 8 + need
+                      .LocalGet(l_cur),
+                      .I32Const(8),
+                      .I32Add,
+                      .LocalGet(l_need),
+                      .I32Add,
+                      .LocalSet(l_newblk),
+                      // i32.store[newblk+0] = size - need - 8
+                      .LocalGet(l_newblk),
+                      .LocalGet(l_size),
+                      .LocalGet(l_need),
+                      .I32Sub,
+                      .I32Const(8),
+                      .I32Sub,
+                      .I32Store(0, 0),
+                      // i32.store[newblk+4] = i32.load[cur+4]
+                      .LocalGet(l_newblk),
+                      .LocalGet(l_cur),
+                      .I32Load(0, 4),
+                      .I32Store(0, 4),
+                      // i32.store[cur+0] = need
+                      .LocalGet(l_cur),
+                      .LocalGet(l_need),
+                      .I32Store(0, 0),
+                      // unlink: if prev == 0 buf_free_head = newblk else prev.next = newblk
+                      .LocalGet(l_prev),
+                      .I32Eqz,
+                      .If(
+                        .None,
+                        [.LocalGet(l_newblk), .GlobalSet("buf_free_head")],
+                        [.LocalGet(l_prev), .LocalGet(l_newblk), .I32Store(0, 4)],
+                      ),
+                    ],
+                    [
+                      // no split: unlink cur entirely
+                      // if prev == 0 buf_free_head = cur.next else prev.next = cur.next
+                      .LocalGet(l_prev),
+                      .I32Eqz,
+                      .If(
+                        .None,
+                        [.LocalGet(l_cur), .I32Load(0, 4), .GlobalSet("buf_free_head")],
+                        [.LocalGet(l_prev), .LocalGet(l_cur), .I32Load(0, 4), .I32Store(0, 4)],
+                      ),
+                    ],
+                  ),
+                  // i32.store[cur+4] = 0; return cur + 8
+                  .LocalGet(l_cur),
+                  .I32Const(0),
+                  .I32Store(0, 4),
+                  .LocalGet(l_cur),
+                  .I32Const(8),
+                  .I32Add,
+                  .Return,
+                ],
+                [],
+              ),
+              // prev = cur; cur = i32.load[cur+4]; continue
+              .LocalGet(l_cur),
+              .LocalSet(l_prev),
+              .LocalGet(l_cur),
+              .I32Load(0, 4),
+              .LocalSet(l_cur),
+              .Br("scan"),
+            ],
+          ),
+        ],
+      ),
+      // scan exhausted (free list had no fit): bump-allocate a fresh block
+      // block = buf_heap_ptr; end = block + 8 + need
+      .GlobalGet("buf_heap_ptr"),
+      .LocalSet(l_block),
+      .LocalGet(l_block),
+      .I32Const(8),
+      .I32Add,
+      .LocalGet(l_need),
+      .I32Add,
+      .LocalSet(l_end),
+      // grow_to(end): need_pages = (end + 65535) >> 16
+      .LocalGet(l_end),
       .I32Const(65535),
       .I32Add,
       .I32Const(16),
       .I32ShrU,
-      .LocalSet(l_need),
-      // have_pages = memory.size
+      .LocalSet(l_pages),
+      // if need_pages > memory.size: if memory.grow(need_pages - memory.size) == -1 unreachable
+      .LocalGet(l_pages),
       .MemorySize,
-      .LocalSet(l_have),
-      // if need_pages > have_pages: memory.grow(need - have); drop result
-      .LocalGet(l_need),
-      .LocalGet(l_have),
       .I32GtS,
-      .If(.None, [.LocalGet(l_need), .LocalGet(l_have), .I32Sub, .MemoryGrow, .Drop], []),
-      // buf_heap_ptr = new; return cur
-      .LocalGet(l_new),
+      .If(
+        .None,
+        [
+          .LocalGet(l_pages),
+          .MemorySize,
+          .I32Sub,
+          .MemoryGrow,
+          .I32Const(-1),
+          .I32Eq,
+          .If(.None, [.Unreachable], []),
+        ],
+        [],
+      ),
+      // i32.store[block+0] = need; i32.store[block+4] = 0
+      .LocalGet(l_block),
+      .LocalGet(l_need),
+      .I32Store(0, 0),
+      .LocalGet(l_block),
+      .I32Const(0),
+      .I32Store(0, 4),
+      // buf_heap_ptr = end; return block + 8
+      .LocalGet(l_end),
       .GlobalSet("buf_heap_ptr"),
-      .LocalGet(l_cur),
+      .LocalGet(l_block),
+      .I32Const(8),
+      .I32Add,
     ],
   }
 }
 
-fn mark_fn() FuncDef {
-  .{ name: "buf_mark", params: [], results: [.I32], locals: [], body: [.GlobalGet("buf_heap_ptr")] }
-}
-
-fn reset_fn() FuncDef {
+// buf_free(ptr) : splice block = ptr - 8 back into the address-ordered free
+// list, coalescing forward with the successor and backward with the
+// predecessor when they are physically adjacent.
+fn free_fn() FuncDef {
+  p_ptr := 0
+  l_block := 1
+  l_size := 2
+  l_prev := 3
+  l_cur := 4
   .{
-    name: "buf_reset",
+    name: "buf_free",
     params: [.I32],
     results: [],
-    locals: [],
-    body: [.LocalGet(0), .GlobalSet("buf_heap_ptr")],
+    locals: [.I32, .I32, .I32, .I32],
+    body: [
+      // block = ptr - 8; size = i32.load[block+0]
+      .LocalGet(p_ptr),
+      .I32Const(8),
+      .I32Sub,
+      .LocalSet(l_block),
+      .LocalGet(l_block),
+      .I32Load(0, 0),
+      .LocalSet(l_size),
+      // prev = 0; cur = buf_free_head
+      .I32Const(0),
+      .LocalSet(l_prev),
+      .GlobalGet("buf_free_head"),
+      .LocalSet(l_cur),
+      // while cur != 0 and cur < block: prev = cur; cur = cur.next
+      .Block(
+        "walk_done",
+        .None,
+        [
+          .Loop(
+            "walk",
+            .None,
+            [
+              .LocalGet(l_cur),
+              .I32Eqz,
+              .BrIf("walk_done"),
+              .LocalGet(l_cur),
+              .LocalGet(l_block),
+              .I32GeU,
+              .BrIf("walk_done"),
+              .LocalGet(l_cur),
+              .LocalSet(l_prev),
+              .LocalGet(l_cur),
+              .I32Load(0, 4),
+              .LocalSet(l_cur),
+              .Br("walk"),
+            ],
+          ),
+        ],
+      ),
+      // if cur != 0 and block + 8 + size == cur: coalesce forward
+      .LocalGet(l_cur),
+      // I32Eqz twice = normalize cur to 0/1 so the I32And below is logical-and
+      .I32Eqz,
+      .I32Eqz,
+      .LocalGet(l_block),
+      .I32Const(8),
+      .I32Add,
+      .LocalGet(l_size),
+      .I32Add,
+      .LocalGet(l_cur),
+      .I32Eq,
+      .I32And,
+      .If(
+        .None,
+        [
+          // size = size + 8 + cur.size
+          .LocalGet(l_size),
+          .I32Const(8),
+          .I32Add,
+          .LocalGet(l_cur),
+          .I32Load(0, 0),
+          .I32Add,
+          .LocalSet(l_size),
+          // block.size = size; block.next = cur.next
+          .LocalGet(l_block),
+          .LocalGet(l_size),
+          .I32Store(0, 0),
+          .LocalGet(l_block),
+          .LocalGet(l_cur),
+          .I32Load(0, 4),
+          .I32Store(0, 4),
+        ],
+        [
+          // block.next = cur
+          .LocalGet(l_block),
+          .LocalGet(l_cur),
+          .I32Store(0, 4),
+        ],
+      ),
+      // if prev == 0: buf_free_head = block
+      .LocalGet(l_prev),
+      .I32Eqz,
+      .If(
+        .None,
+        [.LocalGet(l_block), .GlobalSet("buf_free_head")],
+        [
+          // else if prev + 8 + prev.size == block: coalesce backward
+          .LocalGet(l_prev),
+          .I32Const(8),
+          .I32Add,
+          .LocalGet(l_prev),
+          .I32Load(0, 0),
+          .I32Add,
+          .LocalGet(l_block),
+          .I32Eq,
+          .If(
+            .None,
+            [
+              // prev.size = prev.size + 8 + size
+              .LocalGet(l_prev),
+              .LocalGet(l_prev),
+              .I32Load(0, 0),
+              .I32Const(8),
+              .I32Add,
+              .LocalGet(l_size),
+              .I32Add,
+              .I32Store(0, 0),
+              // prev.next = block.next
+              .LocalGet(l_prev),
+              .LocalGet(l_block),
+              .I32Load(0, 4),
+              .I32Store(0, 4),
+            ],
+            [
+              // else prev.next = block
+              .LocalGet(l_prev),
+              .LocalGet(l_block),
+              .I32Store(0, 4),
+            ],
+          ),
+        ],
+      ),
+    ],
   }
 }
 
-// buf_load_u8(base, i) -> u8 zero-extended. addr = base + i (1-byte stride).
+// buf_load_u8(base, off) -> u8 zero-extended. addr = base + off (byte offset).
 fn load_u8_fn() FuncDef {
   .{
     name: "buf_load_u8",
@@ -101,7 +384,7 @@ fn load_u8_fn() FuncDef {
   }
 }
 
-// buf_store_u8(base, i, v) — writes the low byte of v at addr = base + i.
+// buf_store_u8(base, off, v) — writes the low byte of v at addr = base + off.
 fn store_u8_fn() FuncDef {
   .{
     name: "buf_store_u8",
@@ -109,5 +392,49 @@ fn store_u8_fn() FuncDef {
     results: [],
     locals: [],
     body: [.LocalGet(0), .LocalGet(1), .I32Add, .LocalGet(2), .I32Store8(0, 0)],
+  }
+}
+
+// buf_load_i64(base, off) -> i64 at addr = base + off.
+fn load_i64_fn() FuncDef {
+  .{
+    name: "buf_load_i64",
+    params: [.I32, .I32],
+    results: [.I64],
+    locals: [],
+    body: [.LocalGet(0), .LocalGet(1), .I32Add, .I64Load(0, 0)],
+  }
+}
+
+// buf_store_i64(base, off, v) — writes i64 v at addr = base + off.
+fn store_i64_fn() FuncDef {
+  .{
+    name: "buf_store_i64",
+    params: [.I32, .I32, .I64],
+    results: [],
+    locals: [],
+    body: [.LocalGet(0), .LocalGet(1), .I32Add, .LocalGet(2), .I64Store(0, 0)],
+  }
+}
+
+// buf_load_f64(base, off) -> f64 at addr = base + off.
+fn load_f64_fn() FuncDef {
+  .{
+    name: "buf_load_f64",
+    params: [.I32, .I32],
+    results: [.F64],
+    locals: [],
+    body: [.LocalGet(0), .LocalGet(1), .I32Add, .F64Load(0, 0)],
+  }
+}
+
+// buf_store_f64(base, off, v) — writes f64 v at addr = base + off.
+fn store_f64_fn() FuncDef {
+  .{
+    name: "buf_store_f64",
+    params: [.I32, .I32, .F64],
+    results: [],
+    locals: [],
+    body: [.LocalGet(0), .LocalGet(1), .I32Add, .LocalGet(2), .F64Store(0, 0)],
   }
 }

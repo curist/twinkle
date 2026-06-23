@@ -922,15 +922,12 @@ fn test_rt_arr_exports_all_funcs() Result<Void, String> {
   .Ok({})
 }
 
-fn test_rt_arr_imports_buf() Result<Void, String> {
+fn test_rt_arr_no_buf_imports() Result<Void, String> {
   m := rt_arr.module()
 
-  // rt.arr imports the rt.buf arena allocator for the dense i64 sort.
-  try assert.equal(m.imports.len(), 3)
-  try assert.equal(m.imports[0].module, "rt.buf")
-  try assert.equal(m.imports[0].name, "buf_alloc")
-  try assert.equal(m.imports[1].name, "buf_mark")
-  try assert.equal(m.imports[2].name, "buf_reset")
+  // rt.arr is severed from rt.buf: the i64 sort runs over a GC typed array
+  // (sort_typed_fn's i64 case), so there are no linear-memory imports.
+  try assert.equal(m.imports.len(), 0)
   .Ok({})
 }
 
@@ -1672,7 +1669,7 @@ pub fn suite() runner.Suite {
     .test("rt.str: emits valid WAT", test_rt_str_emits_wat)
     .test("rt.arr: namespace", test_rt_arr_namespace)
     .test("rt.arr: exports all funcs", test_rt_arr_exports_all_funcs)
-    .test("rt.arr: imports rt.buf allocator", test_rt_arr_imports_buf)
+    .test("rt.arr: severed from rt.buf (no imports)", test_rt_arr_no_buf_imports)
     .test("rt.arr: has empty_leaf/empty_pvec globals", test_rt_arr_has_globals)
     .test("rt.arr: has internal trie helpers", test_rt_arr_has_internal_helpers)
     .test("rt.arr: has bridge helpers", test_rt_arr_has_bridge_helpers)

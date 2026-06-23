@@ -424,11 +424,13 @@ pub fn builtin_env() ResolvedEnv {
   // programs) so that stdlib modules and integration tests can call them without
   // going through the internal-only add_internal_host_builtins path.
   env = .add_function(builtin_sig("__buf_alloc", [], ["nbytes"], [.Int], .Some(.Int))).add_function(
-    builtin_sig("__buf_mark", [], [], [], .Some(.Int)),
-  ).add_function(builtin_sig("__buf_reset", [], ["mark"], [.Int], .Some(.Void))).add_function(
-    builtin_sig("__buf_load_u8", [], ["base", "i"], [.Int, .Int], .Some(.Int)),
-  ).add_function(
+    builtin_sig("__buf_free", [], ["ptr"], [.Int], .Some(.Void)),
+  ).add_function(builtin_sig("__buf_load_u8", [], ["base", "i"], [.Int, .Int], .Some(.Int))).add_function(
     builtin_sig("__buf_store_u8", [], ["base", "i", "v"], [.Int, .Int, .Int], .Some(.Void)),
+  ).add_function(builtin_sig("__buf_load_i64", [], ["base", "i"], [.Int, .Int], .Some(.Int))).add_function(
+    builtin_sig("__buf_store_i64", [], ["base", "i", "v"], [.Int, .Int, .Int], .Some(.Void)),
+  ).add_function(builtin_sig("__buf_load_f64", [], ["base", "i"], [.Int, .Int], .Some(.Float))).add_function(
+    builtin_sig("__buf_store_f64", [], ["base", "i", "v"], [.Int, .Int, .Float], .Some(.Void)),
   )
   env
 }
