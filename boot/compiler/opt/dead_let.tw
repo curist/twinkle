@@ -2,10 +2,13 @@
 
 use compiler.anf.{AnfExpr, AnfMatchArm, AnfOp}
 use compiler.anf_analysis.{collect_assigned_locals, set_has}
+use compiler.core_ir.{LocalId}
 use compiler.opt.semantics.{OptimizerSemantics, empty_optimizer_semantics}
 use compiler.opt.use_count.{count_uses, is_pure_with_optimizer_semantics}
 
 pub type ElimResult = .{ expr: AnfExpr, changed: Bool }
+
+type DeadLetFrame = .{ local: LocalId, op: AnfOp }
 
 pub fn dead_let_elim(expr: AnfExpr) ElimResult {
   dead_let_elim_with_pinned(expr, Dict.new())
@@ -38,24 +41,52 @@ fn dead_let_inner(
   semantics: OptimizerSemantics,
 ) ElimResult {
   case expr {
-    .Let(local, op, body) => {
-      use_count := uses[local.id].unwrap_or(0)
-
-      if use_count == 0
-        and !set_has(assigned, local.id) and is_pure_with_optimizer_semantics(op, body, semantics) {
-        result := dead_let_inner(body, uses, assigned, semantics)
-        return ElimResult.{ expr: result.expr, changed: true }
-      }
-
-      op_result := dead_let_op(op, uses, assigned, semantics)
-      body_result := dead_let_inner(body, uses, assigned, semantics)
-      ElimResult.{
-        expr: .Let(local, op_result.op, body_result.expr),
-        changed: op_result.changed or body_result.changed,
-      }
-    },
+    .Let(_, _, _) => dead_let_spine(expr, uses, assigned, semantics),
     _ => ElimResult.{ expr, changed: false },
   }
+}
+
+fn dead_let_spine(
+  expr: AnfExpr,
+  uses: Dict<Int, Int>,
+  assigned: Dict<Int, Bool>,
+  semantics: OptimizerSemantics,
+) ElimResult {
+  frames: Vector<DeadLetFrame> = []
+  cur_expr := expr
+  changed := false
+  done := false
+
+  for !done {
+    case cur_expr {
+      .Let(local, op, body) => {
+        use_count := uses[local.id].unwrap_or(0)
+
+        if use_count == 0
+          and !set_has(assigned, local.id) and is_pure_with_optimizer_semantics(op, body, semantics) {
+          changed = true
+        } else {
+          op_result := dead_let_op(op, uses, assigned, semantics)
+          frames = .append(.{ local, op: op_result.op })
+          changed = changed or op_result.changed
+        }
+
+        cur_expr = body
+      },
+      _ => done = true,
+    }
+  }
+
+  result := cur_expr
+  i := frames.len() - 1
+
+  for i >= 0 {
+    frame := frames[i]
+    result = .Let(frame.local, frame.op, result)
+    i = i - 1
+  }
+
+  ElimResult.{ expr: result, changed }
 }
 
 type OpElimResult = .{ op: AnfOp, changed: Bool }

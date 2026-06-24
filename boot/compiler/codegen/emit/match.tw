@@ -1,6 +1,7 @@
 //! Pattern-match control-flow emission helpers.
 
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedMatchArm, PreparedPattern}
+use compiler.codegen.dense_table_plan.{dense_table_plan}
 use compiler.codegen.emit.context.{EmitCtx}
 use compiler.codegen.emit.control_flow.{append_result_store}
 use compiler.codegen.emit.helpers.{all_arms_diverge, expr_always_diverges, pattern_is_trivial}
@@ -74,6 +75,8 @@ pub fn emit_match_op(
 
   if is_br_table_eligible(arms, scrutinee_mono, ctx) {
     mc.emit_br_table_match(arms, buf)
+  } else if dense_table_registered(ctx, arms, scrutinee_mono) {
+    mc.emit_dense_data_table_match(arms, buf)
   } else if is_string_trie_eligible(arms, scrutinee_mono) {
     mc.emit_string_trie_match(arms, buf)
   } else {
@@ -81,46 +84,133 @@ pub fn emit_match_op(
   }
 }
 
+/// True when this match is a dense int/byte `case` over constant Int results
+/// whose lookup table was registered by the planner scan.
+fn dense_table_registered(ctx: EmitCtx, arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoType) Bool {
+  case scrutinee_mono {
+    .Int => {},
+    .Byte => {},
+    _ => return false,
+  }
+
+  case dense_table_plan(arms) {
+    .Some(plan) => ctx.registry.dense_tables.has(plan.key),
+    .None => false,
+  }
+}
+
+dense_table_array_type: String = "rt_types__ArrayI64"
+
+/// Range guard `min <= scrut <= max` leaving an i32 bool on the stack.
+fn emit_dense_range_cond(scrutinee_instrs: Vector<Instr>, min_val: Int, max_val: Int, is_byte: Bool) Vector<
+  Instr,
+> {
+  if is_byte {
+    return scrutinee_instrs
+      .append(.I32Const(min_val))
+      .append(.I32GeS)
+      .concat(scrutinee_instrs)
+      .append(.I32Const(max_val))
+      .append(.I32LeS)
+      .append(.I32And)
+  }
+
+  scrutinee_instrs
+    .append(.I64Const(min_val))
+    .append(.I64GeS)
+    .concat(scrutinee_instrs)
+    .append(.I64Const(max_val))
+    .append(.I64LeS)
+    .append(.I32And)
+}
+
+/// `table[scrut - min]` leaving the i64 result on the stack. Assumes the range
+/// guard has already proven `scrut` in `[min, max]`.
+fn emit_dense_table_load(
+  getter_sym: String,
+  scrutinee_instrs: Vector<Instr>,
+  min_val: Int,
+  is_byte: Bool,
+) Vector<Instr> {
+  index := if is_byte {
+    scrutinee_instrs.append(.I32Const(min_val)).append(.I32Sub)
+  } else {
+    scrutinee_instrs.append(.I64Const(min_val)).append(.I64Sub).append(.I32WrapI64)
+  }
+
+  [Instr.Call(getter_sym)].concat(index).append(.ArrayGet(dense_table_array_type))
+}
+
+fn emit_dense_data_table_match(mc: MatchCtx, arms: Vector<PreparedMatchArm>, buf: Vector<Instr>) Vector<
+  Instr,
+> {
+  plan := case dense_table_plan(arms) {
+    .Some(p) => p,
+    .None => return mc.emit_arm_chain(arms, buf),
+  }
+  getter := case mc.ctx.registry.dense_tables[plan.key] {
+    .Some(e) => e.getter_sym,
+    .None => return mc.emit_arm_chain(arms, buf),
+  }
+  is_byte := mc.scrutinee_mono == .Byte
+  max_val := plan.min + plan.values.len() - 1
+  range_guard := emit_dense_range_cond(mc.scrutinee_instrs, plan.min, max_val, is_byte)
+  then_body := append_result_store(
+    emit_dense_table_load(getter, mc.scrutinee_instrs, plan.min, is_byte),
+    mc.result_idx,
+    mc.result_mono,
+  )
+  else_body := append_result_store([Instr.I64Const(plan.default)], mc.result_idx, mc.result_mono)
+  buf.concat(range_guard).append(.If(.None, then_body, else_body))
+}
+
+// Emit arms as a flat sequence of guarded `if`s inside one end block, rather
+// than a right-nested if/else tree. Each arm is `<cond> if { <body>; store;
+// br $end }`; the first match stores its result and branches out, so later arms
+// are skipped exactly as the nested form skipped them via the `else`. Keeping
+// the structure flat (depth 2, not depth N) means neither this builder nor the
+// recursive Wasm serializer overflows the host stack on very wide matches.
 fn emit_arm_chain(mc: MatchCtx, arms: Vector<PreparedMatchArm>, buf: Vector<Instr>) Vector<Instr> {
   if arms.len() == 0 {
     return buf.append(.Unreachable)
   }
 
-  head := arms[0]
-  tail: Vector<PreparedMatchArm> = arms.slice(1, arms.len())
+  end_label := arm_chain_end_label(mc.result_idx)
+  seq: Vector<Instr> = []
 
-  // Pattern condition is used as sub-body content — use fresh []
-  cond_instrs := mc.fns.emit_pattern_condition(
-    head.pattern,
-    mc.scrutinee_instrs,
-    mc.scrutinee_mono,
-    mc.ctx,
-    [],
-  )
+  for arm in arms {
+    // cond / bindings / body are sub-bodies — build in fresh []
+    cond_instrs := mc.fns.emit_pattern_condition(
+      arm.pattern,
+      mc.scrutinee_instrs,
+      mc.scrutinee_mono,
+      mc.ctx,
+      [],
+    )
+    bindings := mc.fns.emit_pattern_bindings(
+      arm.pattern,
+      mc.scrutinee_instrs,
+      mc.scrutinee_mono,
+      mc.ctx,
+    )
+    body_instrs := mc.fns.emit_expr(arm.body, mc.result_mono, mc.ctx, [])
+    then_body := bindings.concat(body_instrs)
 
-  // Then: bindings + body + store result — all fresh [] (sub-body)
-  bindings := mc.fns.emit_pattern_bindings(
-    head.pattern,
-    mc.scrutinee_instrs,
-    mc.scrutinee_mono,
-    mc.ctx,
-  )
-  body_instrs := mc.fns.emit_expr(head.body, mc.result_mono, mc.ctx, [])
-  head_div := expr_always_diverges(head.body)
-  then_body := bindings.concat(body_instrs)
-  then_body = if !head_div {
-    append_result_store(then_body, mc.result_idx, mc.result_mono)
-  } else {
-    then_body
+    if !expr_always_diverges(arm.body) {
+      then_body = append_result_store(then_body, mc.result_idx, mc.result_mono).append(
+        .Br(end_label),
+      )
+    }
+
+    seq = .concat(cond_instrs).append(.If(.None, then_body, []))
   }
 
-  // Else: recurse on tail — fresh [] (sub-body)
-  else_body := mc.emit_arm_chain(tail, [])
-  tail_div := all_arms_diverge(tail)
-  both_div := head_div and tail_div
-  out := buf.concat(cond_instrs).append(.If(.None, then_body, else_body))
+  // No arm matched: an exhaustive match traps here (unreachable), matching the
+  // nested form bottoming out at `emit_arm_chain([])`.
+  seq = .append(.Unreachable)
+  out := buf.append(.Block(end_label, .None, seq))
 
-  if both_div {
+  if all_arms_diverge(arms) {
     out = .append(.Unreachable)
   }
 
@@ -202,6 +292,10 @@ fn is_br_table_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoType
 
 fn case_arm_label(result_idx: Int, tag: Int) String {
   "$case_${result_idx}_arm_${tag}"
+}
+
+fn arm_chain_end_label(result_idx: Int) String {
+  "$casechain_${result_idx}_end"
 }
 
 fn case_default_label(result_idx: Int) String {
@@ -319,11 +413,39 @@ pub fn emit_tail_match_op(
 
   if is_br_table_eligible(arms, scrutinee_mono, ctx) {
     tc.emit_tail_br_table_match(arms, buf)
+  } else if dense_table_registered(ctx, arms, scrutinee_mono) {
+    tc.emit_tail_dense_data_table_match(arms, buf)
   } else {
     tc.emit_tail_arm_chain(arms, buf)
   }
 }
 
+fn emit_tail_dense_data_table_match(
+  tc: TailMatchCtx,
+  arms: Vector<PreparedMatchArm>,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  plan := case dense_table_plan(arms) {
+    .Some(p) => p,
+    .None => return tc.emit_tail_arm_chain(arms, buf),
+  }
+  getter := case tc.ctx.registry.dense_tables[plan.key] {
+    .Some(e) => e.getter_sym,
+    .None => return tc.emit_tail_arm_chain(arms, buf),
+  }
+  is_byte := tc.scrutinee_mono == .Byte
+  max_val := plan.min + plan.values.len() - 1
+  range_guard := emit_dense_range_cond(tc.scrutinee_instrs, plan.min, max_val, is_byte)
+  then_body := emit_dense_table_load(getter, tc.scrutinee_instrs, plan.min, is_byte).append(.Return)
+  else_body: Vector<Instr> = [.I64Const(plan.default), .Return]
+  buf.concat(range_guard).append(.If(.None, then_body, else_body))
+}
+
+// Flat tail equivalent of emit_arm_chain. Tail bodies return (or tail-call)
+// themselves — emit_tail_expr never leaves a value on the stack, which is why
+// the nested form could use `.If(.None, ...)` — so each arm is just `<cond> if
+// { <body> }` with no result store, no end block, and no `br`. A non-match
+// falls through to the trailing unreachable.
 fn emit_tail_arm_chain(tc: TailMatchCtx, arms: Vector<PreparedMatchArm>, buf: Vector<Instr>) Vector<
   Instr,
 > {
@@ -331,39 +453,28 @@ fn emit_tail_arm_chain(tc: TailMatchCtx, arms: Vector<PreparedMatchArm>, buf: Ve
     return buf.append(.Unreachable)
   }
 
-  head := arms[0]
-  tail: Vector<PreparedMatchArm> = arms.slice(1, arms.len())
+  out := buf
 
-  cond_instrs := tc.fns.emit_pattern_condition(
-    head.pattern,
-    tc.scrutinee_instrs,
-    tc.scrutinee_mono,
-    tc.ctx,
-    [],
-  )
-
-  // Bindings + body in tail context (no result store — emit_tail_expr handles return)
-  bindings := tc.fns.emit_pattern_bindings(
-    head.pattern,
-    tc.scrutinee_instrs,
-    tc.scrutinee_mono,
-    tc.ctx,
-  )
-  body_instrs := tc.fns.emit_expr(head.body, tc.result_mono, tc.ctx, [])
-  then_body := bindings.concat(body_instrs)
-
-  else_body := tc.emit_tail_arm_chain(tail, [])
-
-  head_div := expr_always_diverges(head.body)
-  tail_div := all_arms_diverge(tail)
-  both_div := head_div and tail_div
-  out := buf.concat(cond_instrs).append(.If(.None, then_body, else_body))
-
-  if both_div {
-    out = .append(.Unreachable)
+  for arm in arms {
+    cond_instrs := tc.fns.emit_pattern_condition(
+      arm.pattern,
+      tc.scrutinee_instrs,
+      tc.scrutinee_mono,
+      tc.ctx,
+      [],
+    )
+    bindings := tc.fns.emit_pattern_bindings(
+      arm.pattern,
+      tc.scrutinee_instrs,
+      tc.scrutinee_mono,
+      tc.ctx,
+    )
+    body_instrs := tc.fns.emit_expr(arm.body, tc.result_mono, tc.ctx, [])
+    then_body := bindings.concat(body_instrs)
+    out = .concat(cond_instrs).append(.If(.None, then_body, []))
   }
 
-  out
+  out.append(.Unreachable)
 }
 
 fn emit_tail_br_table_match(tc: TailMatchCtx, arms: Vector<PreparedMatchArm>, buf: Vector<Instr>) Vector<

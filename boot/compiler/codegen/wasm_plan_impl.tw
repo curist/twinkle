@@ -16,8 +16,8 @@ use compiler.codegen.wasm_layout.{
 }
 use compiler.codegen.wasm_plan_scan.{ScanResult, scan_module_bodies}
 use compiler.codegen.wasm_plan_types.{
-  CaptureEntry, FuncSigEntry, ModuleGlobalEntry, StringPoolEntry, VariantSingletonEntry,
-  WasmTypeRegistry,
+  CaptureEntry, DenseTableEntry, FuncSigEntry, ModuleGlobalEntry, StringPoolEntry,
+  VariantSingletonEntry, WasmTypeRegistry,
 }
 use compiler.core_ir.{FuncId}
 use compiler.mono_type.{MonoType, TypeId}
@@ -52,6 +52,8 @@ pub fn plan_wasm_types_impl(
     string_pool_next_offset: 0,
     runtime_imports: [],
     variant_singletons: Dict.new(),
+    dense_tables: Dict.new(),
+    dense_tables_order: [],
   }
   t0 := date.now()
   scan := scan_module_bodies(input, builtins)
@@ -106,6 +108,13 @@ pub fn plan_wasm_types_impl(
 
   for s in scan.strings.keys() {
     reg = register_string(reg, s)
+  }
+
+  for key in scan.dense_tables.keys() {
+    case scan.dense_tables[key] {
+      .Some(values) => reg = register_dense_table(reg, key, values),
+      .None => {},
+    }
   }
 
   for fid in scan.closure_materialized_funcs.keys() {
@@ -635,6 +644,23 @@ fn register_string(reg: WasmTypeRegistry, s: String) WasmTypeRegistry {
       reg.string_pool[s] = entry
       reg.string_pool_order = .append(s)
       reg.string_pool_next_offset = reg.string_pool_next_offset + byte_len
+      reg
+    },
+  }
+}
+
+// ── Dense lookup tables ─────────────────────────────────────────────
+fn register_dense_table(reg: WasmTypeRegistry, key: String, values: Vector<Int>) WasmTypeRegistry {
+  case reg.dense_tables[key] {
+    .Some(_) => reg,
+    .None => {
+      idx := reg.dense_tables_order.len()
+      reg.dense_tables[key] = DenseTableEntry.{
+        global_sym: "$dense_tbl_${idx}",
+        getter_sym: "$dense_tbl_${idx}_get",
+        values,
+      }
+      reg.dense_tables_order = .append(key)
       reg
     },
   }

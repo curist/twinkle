@@ -12,6 +12,7 @@ use compiler.backend.prepared_ir.{
 }
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.dense_table_plan.{dense_table_plan}
 use compiler.codegen.wasm_layout.{mono_to_key}
 use compiler.mono_type.{MonoType}
 
@@ -27,6 +28,8 @@ pub type ScanResult = .{
   direct_builtin_calls: Dict<Int, Bool>,
   module_globals: Dict<Int, Bool>,
   nullary_variants: Dict<String, NullaryVariantReq>,
+  // Dense lookup tables discovered in match bodies, keyed by content → values.
+  dense_tables: Dict<String, Vector<Int>>,
 }
 
 pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) ScanResult {
@@ -37,6 +40,7 @@ pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) Scan
     direct_builtin_calls: Dict.new(),
     module_globals: Dict.new(),
     nullary_variants: Dict.new(),
+    dense_tables: Dict.new(),
   }
 
   for func in input.funcs {
@@ -53,24 +57,59 @@ pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) Scan
 }
 
 fn scan_expr(expr: PreparedExpr, builtins: BuiltinRegistry, is_init: Bool, out: ScanResult) ScanResult {
-  case expr {
-    .Let(_, op, body) => {
-      cur := scan_op(op, builtins, is_init, out)
-      scan_expr(body, builtins, is_init, cur)
-    },
-    .Atom(atom) => scan_atom(atom, is_init, out),
-    .Return(.Some(atom)) => scan_atom(atom, is_init, out),
-    .Break(.Some(atom)) => scan_atom(atom, is_init, out),
-    .Return(.None) => out,
-    .Break(.None) => out,
-    .Continue => out,
+  cur := out
+  stack: Vector<PreparedExpr> = [expr]
+
+  for stack.len() > 0 {
+    cur_expr := stack[stack.len() - 1]
+    stack = .drop_last()
+    done := false
+
+    for !done {
+      case cur_expr {
+        .Let(_, op, body) => {
+          r := scan_op(op, builtins, is_init, cur, stack)
+          cur = r.out
+          stack = r.stack
+          cur_expr = body
+        },
+        .Atom(atom) => {
+          cur = scan_atom(atom, is_init, cur)
+          done = true
+        },
+        .Return(.Some(atom)) => {
+          cur = scan_atom(atom, is_init, cur)
+          done = true
+        },
+        .Break(.Some(atom)) => {
+          cur = scan_atom(atom, is_init, cur)
+          done = true
+        },
+        .Return(.None) => done = true,
+        .Break(.None) => done = true,
+        .Continue => done = true,
+      }
+    }
   }
+
+  cur
 }
 
-fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, is_init: Bool, out: ScanResult) ScanResult {
-  case op {
+type ScanOpResult = .{ out: ScanResult, stack: Vector<PreparedExpr> }
+
+fn scan_op(
+  op: PreparedOp,
+  builtins: BuiltinRegistry,
+  is_init: Bool,
+  out: ScanResult,
+  stack: Vector<PreparedExpr>,
+) ScanOpResult {
+  cur_stack := stack
+  cur_out := out
+
+  result: ScanResult = case op {
     .ACall(callee, args) => {
-      cur := scan_atom(callee, is_init, out)
+      cur := scan_atom(callee, is_init, cur_out)
 
       for arg in args {
         cur = scan_atom(arg, is_init, cur)
@@ -88,29 +127,48 @@ fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, is_init: Bool, out: ScanRe
       }
     },
     .AIf(cond_e, then_e, else_e) => {
-      cur := scan_atom(cond_e, is_init, out)
-      cur = scan_expr(then_e, builtins, is_init, cur)
-      scan_expr(else_e, builtins, is_init, cur)
+      cur := scan_atom(cond_e, is_init, cur_out)
+      cur_stack = .append(else_e)
+      cur_stack = .append(then_e)
+      cur
     },
     .AMatch(scrutinee, arms) => {
-      cur := scan_atom(scrutinee, is_init, out)
+      cur := scan_atom(scrutinee, is_init, cur_out)
+
+      i := arms.len() - 1
+
+      for i >= 0 {
+        cur_stack = .append(arms[i].body)
+        i = i - 1
+      }
 
       for arm in arms {
         cur = scan_pattern(arm.pattern, cur)
-        cur = scan_expr(arm.body, builtins, is_init, cur)
       }
 
-      cur
+      case dense_table_plan(arms) {
+        .Some(plan) => {
+          cur.dense_tables[plan.key] = plan.values
+          cur
+        },
+        .None => cur,
+      }
     },
-    .ALoop(body) => scan_expr(body, builtins, is_init, out),
-    .ADefer(body) => scan_expr(body, builtins, is_init, out),
+    .ALoop(body) => {
+      cur_stack = .append(body)
+      cur_out
+    },
+    .ADefer(body) => {
+      cur_stack = .append(body)
+      cur_out
+    },
     .ABinOp(_, left, right, _) => {
-      cur := scan_atom(left, is_init, out)
+      cur := scan_atom(left, is_init, cur_out)
       scan_atom(right, is_init, cur)
     },
-    .AUnOp(_, inner, _) => scan_atom(inner, is_init, out),
+    .AUnOp(_, inner, _) => scan_atom(inner, is_init, cur_out),
     .AMakeClosure(fid, free_vars) => {
-      cur := out
+      cur := cur_out
       cur.closure_materialized_funcs[fid.id] = true
 
       for fv in free_vars {
@@ -120,7 +178,7 @@ fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, is_init: Bool, out: ScanRe
       cur
     },
     .ARecord(_, fields) => {
-      cur := out
+      cur := cur_out
 
       for field in fields {
         cur = scan_atom(field.value, is_init, cur)
@@ -128,29 +186,31 @@ fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, is_init: Bool, out: ScanRe
 
       cur
     },
-    .ARecordGet(target, _, _) => scan_atom(target, is_init, out),
+    .ARecordGet(target, _, _) => scan_atom(target, is_init, cur_out),
     .ARecordUpdate(base, _, value, _, _) => {
-      cur := scan_atom(base, is_init, out)
+      cur := scan_atom(base, is_init, cur_out)
       scan_atom(value, is_init, cur)
     },
-    .AVariant(_, _, args) => scan_atoms(args, is_init, out),
-    .AArrayLit(items) => scan_atoms(items, is_init, out),
+    .AVariant(_, _, args) => scan_atoms(args, is_init, cur_out),
+    .AArrayLit(items) => scan_atoms(items, is_init, cur_out),
     .AIndex(base, index, _, _) => {
-      cur := scan_atom(base, is_init, out)
+      cur := scan_atom(base, is_init, cur_out)
       scan_atom(index, is_init, cur)
     },
-    .AInit(atom) => scan_atom(atom, is_init, out),
-    .AAssign(_, atom) => scan_atom(atom, is_init, out),
+    .AInit(atom) => scan_atom(atom, is_init, cur_out),
+    .AAssign(_, atom) => scan_atom(atom, is_init, cur_out),
     .AGlobalSet(gid, atom) => {
       // Register the written global so it gets a registry entry and a wasm
       // global declaration even if no read of it is scanned.
-      cur := scan_atom(atom, is_init, out)
+      cur := scan_atom(atom, is_init, cur_out)
       cur.module_globals[gid.id] = true
       cur
     },
-    .AWrapAnyref(atom, _) => scan_atom(atom, is_init, out),
-    .AUnwrapAnyref(atom, _) => scan_atom(atom, is_init, out),
+    .AWrapAnyref(atom, _) => scan_atom(atom, is_init, cur_out),
+    .AUnwrapAnyref(atom, _) => scan_atom(atom, is_init, cur_out),
   }
+
+  .{ out: result, stack: cur_stack }
 }
 
 fn scan_atoms(atoms: Vector<PreparedAtom>, is_init: Bool, out: ScanResult) ScanResult {
@@ -204,13 +264,28 @@ fn scan_pattern(pattern: PreparedPattern, out: ScanResult) ScanResult {
 // from the slot that each AMakeClosure result is bound to. This gives
 // the planner specialized types for generic builtins.
 fn extract_closure_monos(expr: PreparedExpr, slots: Dict<Int, SlotInfo>, out: ScanResult) ScanResult {
-  case expr {
-    .Let(sid, op, body) => {
-      cur := extract_closure_monos_op(sid, op, slots, out)
-      extract_closure_monos(body, slots, cur)
-    },
-    _ => out,
+  cur := out
+  stack: Vector<PreparedExpr> = [expr]
+
+  for stack.len() > 0 {
+    cur_expr := stack[stack.len() - 1]
+    stack = .drop_last()
+    done := false
+
+    for !done {
+      case cur_expr {
+        .Let(sid, op, body) => {
+          r := extract_closure_monos_op(sid, op, slots, cur, stack)
+          cur = r.out
+          stack = r.stack
+          cur_expr = body
+        },
+        _ => done = true,
+      }
+    }
   }
+
+  cur
 }
 
 fn extract_closure_monos_op(
@@ -218,8 +293,10 @@ fn extract_closure_monos_op(
   op: PreparedOp,
   slots: Dict<Int, SlotInfo>,
   out: ScanResult,
-) ScanResult {
-  case op {
+  stack: Vector<PreparedExpr>,
+) ScanOpResult {
+  cur_stack := stack
+  result: ScanResult = case op {
     .AMakeClosure(fid, _) => case slots[sid.id] {
       .Some(info) => {
         out.closure_materialized_monos[fid.id] = info.mono
@@ -242,20 +319,30 @@ fn extract_closure_monos_op(
       out
     },
     .AIf(_, then_e, else_e) => {
-      cur := extract_closure_monos(then_e, slots, out)
-      extract_closure_monos(else_e, slots, cur)
+      cur_stack = .append(else_e)
+      cur_stack = .append(then_e)
+      out
     },
     .AMatch(_, arms) => {
-      cur := out
+      i := arms.len() - 1
 
-      for arm in arms {
-        cur = extract_closure_monos(arm.body, slots, cur)
+      for i >= 0 {
+        cur_stack = .append(arms[i].body)
+        i = i - 1
       }
 
-      cur
+      out
     },
-    .ALoop(body) => extract_closure_monos(body, slots, out),
-    .ADefer(body) => extract_closure_monos(body, slots, out),
+    .ALoop(body) => {
+      cur_stack = .append(body)
+      out
+    },
+    .ADefer(body) => {
+      cur_stack = .append(body)
+      out
+    },
     _ => out,
   }
+
+  .{ out: result, stack: cur_stack }
 }

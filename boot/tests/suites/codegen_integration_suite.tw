@@ -556,6 +556,38 @@ fn test_match_literal_int() Result<Void, String> {
   .Ok({})
 }
 
+fn test_match_dense_int_data_table() Result<Void, String> {
+  // Dense integer case with constant Int results lowers to a flat ArrayI64
+  // lookup table (array.get) rather than a chain of i64.eq comparisons.
+  wat := try assert_codegen_src_compiles(
+    "fn classify(n: Int) Int {\n  case n {\n    0 => 10,\n    1 => 20,\n    2 => 30,\n    3 => 40,\n    4 => 50,\n    _ => 0,\n  }\n}\nprintln(Int.to_string(classify(2)))\n",
+    "match dense int data table",
+  )
+  try assert.str_contains(wat, "array.get $rt_types__ArrayI64")
+  .Ok({})
+}
+
+fn test_match_dense_byte_data_table() Result<Void, String> {
+  // Dense Byte case with constant Int results lowers to a data table.
+  wat := try assert_codegen_src_compiles(
+    "fn rank(b: Byte) Int {\n  case b {\n    0x41 => 1,\n    0x42 => 2,\n    0x43 => 3,\n    0x44 => 4,\n    _ => 0,\n  }\n}\nprintln(Int.to_string(rank(0x42)))\n",
+    "match dense byte data table",
+  )
+  try assert.str_contains(wat, "array.get $rt_types__ArrayI64")
+  .Ok({})
+}
+
+fn test_match_sparse_int_stays_chain() Result<Void, String> {
+  // Sparse integer case (literals far apart) is not dense enough for a lookup
+  // table; it stays a comparison chain.
+  wat := try assert_codegen_src_compiles(
+    "fn classify(n: Int) Int {\n  case n {\n    0 => 1,\n    1000 => 2,\n    50000 => 3,\n    999999 => 4,\n    _ => 0,\n  }\n}\nprintln(Int.to_string(classify(0)))\n",
+    "match sparse int chain",
+  )
+  try assert.str_contains(wat, "i64.eq")
+  .Ok({})
+}
+
 fn test_match_result_ok_err() Result<Void, String> {
   // Result<Int, String> dispatch: Ok/Err variant matching
   wat := try assert_codegen_src_compiles(
@@ -910,6 +942,9 @@ pub fn suite() runner.Suite {
     .test("match: string literal emits rt_str__eq", test_match_literal_string)
     .test("match: string trie dispatch", test_match_string_trie_dispatch)
     .test("match: int literal emits i64.eq", test_match_literal_int)
+    .test("match: dense int data-table dispatch", test_match_dense_int_data_table)
+    .test("match: dense byte data-table dispatch", test_match_dense_byte_data_table)
+    .test("match: sparse int stays comparison chain", test_match_sparse_int_stays_chain)
     .test("match: Result Ok/Err dispatch", test_match_result_ok_err)
     .test("match: wildcard catch-all arm", test_match_wildcard_catch_all)
     .test("match: all-diverging arms", test_match_all_diverging_arms)

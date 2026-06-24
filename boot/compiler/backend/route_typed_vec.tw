@@ -14,7 +14,7 @@
 //! elements are already boxed — builder_push_i64 takes the boxed element).
 
 use compiler.backend.prepared_ir.{
-  PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo,
+  PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotId, SlotInfo,
 }
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
@@ -81,8 +81,18 @@ fn route_func(
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
 ) PreparedFunc {
+  if prepared_depth_exceeds(pf.body, 512) {
+    return pf
+  }
+
   // 1. Collect (v, b) candidates: v = builder_freeze(b) where v: Vector<Int>.
   cands := collect_candidates(pf.body, pf.slots, ids, [])
+
+  field_read_sids := collect_typed_field_reads(pf.body, typed_fields, [])
+
+  if cands.len() == 0 and field_read_sids.len() == 0 {
+    return pf
+  }
 
   // 2. Keep only candidates whose v never escapes except by direct return
   //    (used solely by index/len/return) and any record-field stores it makes go
@@ -128,8 +138,6 @@ fn route_func(
   //     lineage (the field is already physically typed), so these only join
   //     eligible_v — index/len over the result route to _i64 like any other
   //     eligible_v slot.
-  field_read_sids := collect_typed_field_reads(pf.body, typed_fields, [])
-
   for sid in field_read_sids {
     eligible_v[sid] = true
   }
@@ -168,6 +176,70 @@ fn route_func(
 }
 
 // ── Candidate collection ────────────────────────────────────────────
+type DepthWork = .{ expr: PreparedExpr, depth: Int }
+
+fn prepared_depth_exceeds(expr: PreparedExpr, limit: Int) Bool {
+  stack: Vector<DepthWork> = [.{ expr, depth: 1 }]
+
+  for stack.len() > 0 {
+    item := stack[stack.len() - 1]
+    stack = .drop_last()
+
+    if item.depth > limit {
+      return true
+    }
+
+    cur_depth := item.depth
+    cur_expr := item.expr
+    done := false
+
+    for !done {
+      if cur_depth > limit {
+        return true
+      }
+
+      child_depth := cur_depth + 1
+
+      case cur_expr {
+        .Let(_, op, body) => {
+          stack = push_prepared_op_children_with_depth(op, child_depth, stack)
+          cur_expr = body
+          cur_depth = child_depth
+        },
+        _ => done = true,
+      }
+    }
+  }
+
+  false
+}
+
+fn push_prepared_op_children_with_depth(op: PreparedOp, depth: Int, stack: Vector<DepthWork>) Vector<
+  DepthWork,
+> {
+  cur_stack := stack
+
+  case op {
+    .AIf(_, then_e, else_e) => {
+      cur_stack = .append(.{ expr: else_e, depth })
+      cur_stack = .append(.{ expr: then_e, depth })
+    },
+    .AMatch(_, arms) => {
+      i := arms.len() - 1
+
+      for i >= 0 {
+        cur_stack = .append(.{ expr: arms[i].body, depth })
+        i = i - 1
+      }
+    },
+    .ALoop(inner) => cur_stack = .append(.{ expr: inner, depth }),
+    .ADefer(inner) => cur_stack = .append(.{ expr: inner, depth }),
+    _ => {},
+  }
+
+  cur_stack
+}
+
 fn is_int_vector(mono_key: String) Bool {
   mono_key == "vec_i64"
 }
@@ -185,58 +257,81 @@ fn collect_candidates(
   ids: RouteIds,
   acc: Vector<Cand>,
 ) Vector<Cand> {
-  case expr {
-    .Let(slot, op, body) => {
-      acc2 := case op {
-        .ACall(.AGlobalFunc(fid), args) => if fid.id == ids.builder_freeze and args.len() == 1 {
-          case args[0] {
-            .ASlot(b) => case slots[slot.id] {
-              .Some(info) => if is_int_vector(mono_key_of(info)) {
-                acc.append(.{ v: slot.id, b: b.id })
-              } else {
-                acc
-              },
-              .None => acc,
-            },
-            _ => acc,
-          }
-        } else {
-          acc
-        },
-        _ => acc,
-      }
+  cur_acc := acc
+  stack: Vector<PreparedExpr> = [expr]
 
-      acc3 := collect_candidates_op(op, slots, ids, acc2)
-      collect_candidates(body, slots, ids, acc3)
-    },
-    _ => acc,
+  for stack.len() > 0 {
+    cur_expr := stack[stack.len() - 1]
+    stack = .drop_last()
+    done := false
+
+    for !done {
+      case cur_expr {
+        .Let(slot, op, body) => {
+          cur_acc = collect_candidate_from_op(slot, op, slots, ids, cur_acc)
+          r := collect_candidates_op(op, stack)
+          stack = r.stack
+          cur_expr = body
+        },
+        _ => done = true,
+      }
+    }
   }
+
+  cur_acc
 }
 
-fn collect_candidates_op(
+type CandidateOpResult = .{ stack: Vector<PreparedExpr> }
+
+fn collect_candidate_from_op(
+  slot: SlotId,
   op: PreparedOp,
   slots: Dict<Int, SlotInfo>,
   ids: RouteIds,
   acc: Vector<Cand>,
 ) Vector<Cand> {
   case op {
-    .AIf(_, then_e, else_e) => {
-      acc2 := collect_candidates(then_e, slots, ids, acc)
-      collect_candidates(else_e, slots, ids, acc2)
-    },
-    .AMatch(_, arms) => {
-      cur := acc
-
-      for arm in arms {
-        cur = collect_candidates(arm.body, slots, ids, cur)
+    .ACall(.AGlobalFunc(fid), args) => if fid.id == ids.builder_freeze and args.len() == 1 {
+      case args[0] {
+        .ASlot(b) => case slots[slot.id] {
+          .Some(info) => if is_int_vector(mono_key_of(info)) {
+            acc.append(.{ v: slot.id, b: b.id })
+          } else {
+            acc
+          },
+          .None => acc,
+        },
+        _ => acc,
       }
-
-      cur
+    } else {
+      acc
     },
-    .ALoop(inner) => collect_candidates(inner, slots, ids, acc),
-    .ADefer(inner) => collect_candidates(inner, slots, ids, acc),
     _ => acc,
   }
+}
+
+fn collect_candidates_op(op: PreparedOp, stack: Vector<PreparedExpr>) CandidateOpResult {
+  cur_stack := stack
+
+  case op {
+    .AIf(_, then_e, else_e) => {
+      cur_stack = .append(else_e)
+      cur_stack = .append(then_e)
+    },
+    .AMatch(_, arms) => {
+      i := arms.len() - 1
+
+      for i >= 0 {
+        cur_stack = .append(arms[i].body)
+        i = i - 1
+      }
+    },
+    .ALoop(inner) => cur_stack = .append(inner),
+    .ADefer(inner) => cur_stack = .append(inner),
+    _ => {},
+  }
+
+  .{ stack: cur_stack }
 }
 
 // Collect the result sids of `ARecordGet(_, fid, tid)` reads whose field key
@@ -246,49 +341,71 @@ fn collect_candidates_op(
 fn collect_typed_field_reads(expr: PreparedExpr, typed_fields: Dict<String, Bool>, acc: Vector<Int>) Vector<
   Int,
 > {
-  case expr {
-    .Let(slot, op, body) => {
-      acc2 := case op {
-        .ARecordGet(_, fid, tid) => {
-          key := "${tid.id}:${fid.id}"
+  cur_acc := acc
+  stack: Vector<PreparedExpr> = [expr]
 
-          if typed_fields.has(key) {
-            acc.append(slot.id)
-          } else {
-            acc
-          }
+  for stack.len() > 0 {
+    cur_expr := stack[stack.len() - 1]
+    stack = .drop_last()
+    done := false
+
+    for !done {
+      case cur_expr {
+        .Let(slot, op, body) => {
+          cur_acc = collect_typed_field_read_from_op(slot, op, typed_fields, cur_acc)
+          stack = push_prepared_op_children(op, stack)
+          cur_expr = body
         },
-        _ => acc,
+        _ => done = true,
       }
+    }
+  }
 
-      acc3 := collect_typed_field_reads_op(op, typed_fields, acc2)
-      collect_typed_field_reads(body, typed_fields, acc3)
+  cur_acc
+}
+
+fn collect_typed_field_read_from_op(
+  slot: SlotId,
+  op: PreparedOp,
+  typed_fields: Dict<String, Bool>,
+  acc: Vector<Int>,
+) Vector<Int> {
+  case op {
+    .ARecordGet(_, fid, tid) => {
+      key := "${tid.id}:${fid.id}"
+
+      if typed_fields.has(key) {
+        acc.append(slot.id)
+      } else {
+        acc
+      }
     },
     _ => acc,
   }
 }
 
-fn collect_typed_field_reads_op(op: PreparedOp, typed_fields: Dict<String, Bool>, acc: Vector<Int>) Vector<
-  Int,
-> {
+fn push_prepared_op_children(op: PreparedOp, stack: Vector<PreparedExpr>) Vector<PreparedExpr> {
+  cur_stack := stack
+
   case op {
     .AIf(_, then_e, else_e) => {
-      acc2 := collect_typed_field_reads(then_e, typed_fields, acc)
-      collect_typed_field_reads(else_e, typed_fields, acc2)
+      cur_stack = .append(else_e)
+      cur_stack = .append(then_e)
     },
     .AMatch(_, arms) => {
-      cur := acc
+      i := arms.len() - 1
 
-      for arm in arms {
-        cur = collect_typed_field_reads(arm.body, typed_fields, cur)
+      for i >= 0 {
+        cur_stack = .append(arms[i].body)
+        i = i - 1
       }
-
-      cur
     },
-    .ALoop(inner) => collect_typed_field_reads(inner, typed_fields, acc),
-    .ADefer(inner) => collect_typed_field_reads(inner, typed_fields, acc),
-    _ => acc,
+    .ALoop(inner) => cur_stack = .append(inner),
+    .ADefer(inner) => cur_stack = .append(inner),
+    _ => {},
   }
+
+  cur_stack
 }
 
 // Map each slot defined by a plain copy `Let(dst, AInit(ASlot(src)), _)` to its

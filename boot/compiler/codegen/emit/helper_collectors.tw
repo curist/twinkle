@@ -40,69 +40,61 @@ pub fn collect_iterator_next_helpers(funcs: Vector<PreparedFunc>, builtins: Buil
 fn collect_iterator_next_helpers_expr(expr: PreparedExpr, func: PreparedFunc, want_fid: FuncId) Vector<
   MonoType,
 > {
-  // Iterative Let-chain traversal avoids O(N) recursive calls for deep ANF bodies.
   out: Vector<MonoType> = []
-  cur_expr := expr
+  stack: Vector<PreparedExpr> = [expr]
 
-  for true {
-    case cur_expr {
-      .Let(sid, op, body) => {
-        from_op := collect_iterator_next_helpers_op(op, func, want_fid)
+  for stack.len() > 0 {
+    cur_expr := stack[stack.len() - 1]
+    stack = .drop_last()
+    done := false
 
-        for mono in from_op {
-          out = .append(mono)
-        }
+    for !done {
+      case cur_expr {
+        .Let(sid, op, body) => {
+          stack = push_op_children(op, stack)
 
-        case func.slots[sid.id] {
-          .Some(info) => case op {
-            .ACall(.AGlobalFunc(fid), _) => if fid.id == want_fid.id {
-              out = .append(info.mono)
+          case func.slots[sid.id] {
+            .Some(info) => case op {
+              .ACall(.AGlobalFunc(fid), _) => if fid.id == want_fid.id {
+                out = .append(info.mono)
+              },
+              _ => {},
             },
-            _ => {},
-          },
-          .None => {},
-        }
+            .None => {},
+          }
 
-        cur_expr = body
-      },
-      _ => return out,
+          cur_expr = body
+        },
+        _ => done = true,
+      }
     }
   }
 
   out
 }
 
-fn collect_iterator_next_helpers_op(op: PreparedOp, func: PreparedFunc, want_fid: FuncId) Vector<
-  MonoType,
-> {
+fn push_op_children(op: PreparedOp, stack: Vector<PreparedExpr>) Vector<PreparedExpr> {
+  cur_stack := stack
+
   case op {
     .AIf(_, then_e, else_e) => {
-      out := collect_iterator_next_helpers_expr(then_e, func, want_fid)
-      more := collect_iterator_next_helpers_expr(else_e, func, want_fid)
-
-      for mono in more {
-        out = .append(mono)
-      }
-
-      out
+      cur_stack = .append(else_e)
+      cur_stack = .append(then_e)
     },
     .AMatch(_, arms) => {
-      out: Vector<MonoType> = []
+      i := arms.len() - 1
 
-      for arm in arms {
-        more := collect_iterator_next_helpers_expr(arm.body, func, want_fid)
-
-        for mono in more {
-          out = .append(mono)
-        }
+      for i >= 0 {
+        cur_stack = .append(arms[i].body)
+        i = i - 1
       }
-
-      out
     },
-    .ALoop(body) => collect_iterator_next_helpers_expr(body, func, want_fid),
-    .ADefer(body) => collect_iterator_next_helpers_expr(body, func, want_fid),
-    _ => [],
+    .ALoop(body) => cur_stack = .append(body),
+    .ADefer(body) => cur_stack = .append(body),
+    _ => {},
   }
+
+  cur_stack
 }
 
 pub fn collect_dict_get_inner_types(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Vector<
@@ -137,73 +129,42 @@ fn collect_dict_get_inner_types_expr(expr: PreparedExpr, func: PreparedFunc, wan
   MonoType,
 > {
   out: Vector<MonoType> = []
-  cur_expr := expr
+  stack: Vector<PreparedExpr> = [expr]
 
-  for true {
-    case cur_expr {
-      .Let(sid, op, body) => {
-        from_op := collect_dict_get_inner_types_op(op, func, want_fid)
+  for stack.len() > 0 {
+    cur_expr := stack[stack.len() - 1]
+    stack = .drop_last()
+    done := false
 
-        for mono in from_op {
-          out = .append(mono)
-        }
+    for !done {
+      case cur_expr {
+        .Let(sid, op, body) => {
+          stack = push_op_children(op, stack)
 
-        case func.slots[sid.id] {
-          .Some(info) => case op {
-            .ACall(.AGlobalFunc(fid), _) => if fid.id == want_fid.id {
-              // The slot type is Optional(inner); extract inner
-              case info.mono {
-                .Optional(inner) => {
-                  out = .append(inner)
-                },
-                _ => {},
-              }
+          case func.slots[sid.id] {
+            .Some(info) => case op {
+              .ACall(.AGlobalFunc(fid), _) => if fid.id == want_fid.id {
+                // The slot type is Optional(inner); extract inner
+                case info.mono {
+                  .Optional(inner) => {
+                    out = .append(inner)
+                  },
+                  _ => {},
+                }
+              },
+              _ => {},
             },
-            _ => {},
-          },
-          .None => {},
-        }
+            .None => {},
+          }
 
-        cur_expr = body
-      },
-      _ => return out,
+          cur_expr = body
+        },
+        _ => done = true,
+      }
     }
   }
 
   out
-}
-
-fn collect_dict_get_inner_types_op(op: PreparedOp, func: PreparedFunc, want_fid: FuncId) Vector<
-  MonoType,
-> {
-  case op {
-    .AIf(_, then_e, else_e) => {
-      out := collect_dict_get_inner_types_expr(then_e, func, want_fid)
-      more := collect_dict_get_inner_types_expr(else_e, func, want_fid)
-
-      for mono in more {
-        out = .append(mono)
-      }
-
-      out
-    },
-    .AMatch(_, arms) => {
-      out: Vector<MonoType> = []
-
-      for arm in arms {
-        more := collect_dict_get_inner_types_expr(arm.body, func, want_fid)
-
-        for mono in more {
-          out = .append(mono)
-        }
-      }
-
-      out
-    },
-    .ALoop(body) => collect_dict_get_inner_types_expr(body, func, want_fid),
-    .ADefer(body) => collect_dict_get_inner_types_expr(body, func, want_fid),
-    _ => [],
-  }
 }
 
 pub fn is_sum_mono(mono: MonoType, env: ResolvedEnv) Bool {

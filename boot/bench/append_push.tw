@@ -1,0 +1,24 @@
+// Tail-buffer push — amortized-O(1) append, one element at a time. This is the
+// case where Twinkle's tail buffer should shine: a pure RRB tree (no tail, e.g.
+// Racket's treelist) must descend the right spine on every push. Linear here;
+// the whole build is timed.
+//
+//   target/twk run boot/bench/append_push.tw
+use @std.date
+
+fn bench(n: Int) {
+  t0 := date.now()
+  acc: Vector<Int> = []
+
+  for i in range(n) {
+    acc = .append(i)
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${acc[acc.len() - 1]}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

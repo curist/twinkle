@@ -38,11 +38,51 @@ pub fn collect_pattern_bindings(pattern: CorePattern, out: Dict<Int, Bool>) Dict
 // ── collect_free_locals ─────────────────────────────────────────────
 pub fn collect_free_locals(expr: AnfExpr, declared: Dict<Int, Bool>) Dict<Int, Bool> {
   free: Dict<Int, Bool> = Dict.new()
-  r := collect_free_expr(expr, declared, free)
-  r.free
+  stack: Vector<FreeWork> = [FreeWork.{ expr, declared }]
+
+  for stack.len() > 0 {
+    work := stack[stack.len() - 1]
+    stack = .drop_last()
+    cur_expr := work.expr
+    cur_declared := work.declared
+    done := false
+
+    for !done {
+      case cur_expr {
+        .Let(local, op, body) => {
+          op_r := collect_free_op_iter(op, cur_declared, free, stack)
+          free = op_r.free
+          stack = op_r.stack
+          cur_declared = set_add(cur_declared, local.id)
+          cur_expr = body
+        },
+        .Atom(atom) => {
+          free = add_free_atom(atom, cur_declared, free)
+          done = true
+        },
+        .Return(.Some(atom)) => {
+          free = add_free_atom(atom, cur_declared, free)
+          done = true
+        },
+        .Break(.Some(atom)) => {
+          free = add_free_atom(atom, cur_declared, free)
+          done = true
+        },
+        .Return(.None) => done = true,
+        .Break(.None) => done = true,
+        .Continue => done = true,
+      }
+    }
+  }
+
+  free
 }
 
 type FreeState = .{ declared: Dict<Int, Bool>, free: Dict<Int, Bool> }
+
+type FreeWork = .{ expr: AnfExpr, declared: Dict<Int, Bool> }
+
+type FreeIterResult = .{ free: Dict<Int, Bool>, stack: Vector<FreeWork> }
 
 fn free_atom(atom: Atom, st: FreeState) FreeState {
   case atom {
@@ -53,6 +93,107 @@ fn free_atom(atom: Atom, st: FreeState) FreeState {
     },
     _ => st,
   }
+}
+
+fn add_free_atom(atom: Atom, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) Dict<Int, Bool> {
+  case atom {
+    .ALocal(id) => if !set_has(declared, id.id) {
+      set_add(free, id.id)
+    } else {
+      free
+    },
+    _ => free,
+  }
+}
+
+fn collect_free_op_iter(
+  op: AnfOp,
+  declared: Dict<Int, Bool>,
+  free: Dict<Int, Bool>,
+  stack: Vector<FreeWork>,
+) FreeIterResult {
+  cur_free := free
+  cur_stack := stack
+
+  case op {
+    .ACall(callee, args) => {
+      cur_free = add_free_atom(callee, declared, cur_free)
+
+      for a in args {
+        cur_free = add_free_atom(a, declared, cur_free)
+      }
+    },
+    .AIf(cond_e, then_e, else_e) => {
+      cur_free = add_free_atom(cond_e, declared, cur_free)
+      cur_stack = .append(FreeWork.{ expr: else_e, declared })
+      cur_stack = .append(FreeWork.{ expr: then_e, declared })
+    },
+    .AMatch(scrutinee, arms) => {
+      cur_free = add_free_atom(scrutinee, declared, cur_free)
+      i := arms.len() - 1
+
+      for i >= 0 {
+        arm_declared := collect_pattern_bindings(arms[i].pattern, declared)
+        cur_stack = .append(FreeWork.{ expr: arms[i].body, declared: arm_declared })
+        i = i - 1
+      }
+    },
+    .ALoop(body) => {
+      cur_stack = .append(FreeWork.{ expr: body, declared })
+    },
+    .ADefer(body) => {
+      cur_stack = .append(FreeWork.{ expr: body, declared })
+    },
+    .ABinOp(_, left, right, _) => {
+      cur_free = add_free_atom(left, declared, cur_free)
+      cur_free = add_free_atom(right, declared, cur_free)
+    },
+    .AUnOp(_, inner, _) => cur_free = add_free_atom(inner, declared, cur_free),
+    .AMakeClosure(_, free_vars) => {
+      for v in free_vars {
+        if !set_has(declared, v.id) {
+          cur_free = set_add(cur_free, v.id)
+        }
+      }
+    },
+    .ARecord(_, fields) => {
+      for f in fields {
+        cur_free = add_free_atom(f.value, declared, cur_free)
+      }
+    },
+    .ARecordGet(target, _, _) => cur_free = add_free_atom(target, declared, cur_free),
+    .ARecordUpdate(base, _, value, _, _) => {
+      cur_free = add_free_atom(base, declared, cur_free)
+      cur_free = add_free_atom(value, declared, cur_free)
+    },
+    .AVariant(_, _, args) => {
+      for a in args {
+        cur_free = add_free_atom(a, declared, cur_free)
+      }
+    },
+    .AArrayLit(elems) => {
+      for a in elems {
+        cur_free = add_free_atom(a, declared, cur_free)
+      }
+    },
+    .AIndex(base, index, _, _) => {
+      cur_free = add_free_atom(base, declared, cur_free)
+      cur_free = add_free_atom(index, declared, cur_free)
+    },
+    .AInit(value) => cur_free = add_free_atom(value, declared, cur_free),
+    .AAssign(local, value) => {
+      if !set_has(declared, local.id) {
+        cur_free = set_add(cur_free, local.id)
+      }
+
+      cur_free = add_free_atom(value, declared, cur_free)
+    },
+    .AGlobalSet(_, value) => cur_free = add_free_atom(value, declared, cur_free),
+    .AWrapAnyref(a, _) => cur_free = add_free_atom(a, declared, cur_free),
+    .AUnwrapAnyref(a, _) => cur_free = add_free_atom(a, declared, cur_free),
+  }
+
+  .{ free: cur_free, stack: cur_stack }
 }
 
 fn collect_free_expr(expr: AnfExpr, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) FreeState {
@@ -211,7 +352,53 @@ fn collect_bound_op(op: AnfOp, out: Dict<Int, Bool>) Dict<Int, Bool> {
 // source-level module bindings; other let-bound locals are compiler temporaries
 // whose ids can collide numerically with locals from other functions.
 pub fn collect_init_binding_locals(expr: AnfExpr) Dict<Int, Bool> {
-  collect_init_binding_expr(expr, Dict.new())
+  out: Dict<Int, Bool> = Dict.new()
+  stack: Vector<AnfExpr> = [expr]
+
+  for stack.len() > 0 {
+    cur_expr := stack[stack.len() - 1]
+    stack = .drop_last()
+    done := false
+
+    for !done {
+      case cur_expr {
+        .Let(local, op, body) => {
+          if is_init_op(op) {
+            out = set_add(out, local.id)
+          }
+          stack = push_init_op_exprs(op, stack)
+          cur_expr = body
+        },
+        _ => done = true,
+      }
+    }
+  }
+
+  out
+}
+
+fn push_init_op_exprs(op: AnfOp, stack: Vector<AnfExpr>) Vector<AnfExpr> {
+  out := stack
+
+  case op {
+    .AIf(_, then_e, else_e) => {
+      out = .append(else_e)
+      out = .append(then_e)
+    },
+    .AMatch(_, arms) => {
+      i := arms.len() - 1
+
+      for i >= 0 {
+        out = .append(arms[i].body)
+        i = i - 1
+      }
+    },
+    .ALoop(body) => out = .append(body),
+    .ADefer(body) => out = .append(body),
+    _ => {},
+  }
+
+  out
 }
 
 fn collect_init_binding_expr(expr: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
@@ -259,7 +446,30 @@ fn is_init_op(op: AnfOp) Bool {
 
 // ── collect_assigned_locals ─────────────────────────────────────────
 pub fn collect_assigned_locals(expr: AnfExpr) Dict<Int, Bool> {
-  collect_assigned_expr(expr, Dict.new())
+  out: Dict<Int, Bool> = Dict.new()
+  stack: Vector<AnfExpr> = [expr]
+
+  for stack.len() > 0 {
+    cur_expr := stack[stack.len() - 1]
+    stack = .drop_last()
+    done := false
+
+    for !done {
+      case cur_expr {
+        .Let(_, op, body) => {
+          case op {
+            .AAssign(local, _) => out = set_add(out, local.id),
+            _ => {},
+          }
+          stack = push_init_op_exprs(op, stack)
+          cur_expr = body
+        },
+        _ => done = true,
+      }
+    }
+  }
+
+  out
 }
 
 fn collect_assigned_expr(expr: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {

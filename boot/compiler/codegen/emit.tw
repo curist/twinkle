@@ -34,6 +34,7 @@ use compiler.codegen.emit.context.{
 }
 use compiler.codegen.emit.control_flow as control_emit
 use compiler.codegen.emit.defaults.{emit_default_value}
+use compiler.codegen.emit.dense_table.{emit_dense_table_getters, emit_dense_table_globals}
 use compiler.codegen.emit.helper_collectors.{
   collect_dict_get_inner_types, collect_iterator_next_helpers, collect_sum_variant_helpers,
 }
@@ -184,6 +185,14 @@ pub fn emit_module(
 
   str_data := emit_string_data_segment(reg)
 
+  // Dense lookup tables: globals + lazy getter functions (registered during
+  // function emission in emit/match.tw).
+  dense_table_globals := emit_dense_table_globals(reg)
+
+  for g in emit_dense_table_getters(reg) {
+    funcs = .append(g)
+  }
+
   // Module globals
   mod_globals := emit_module_globals(reg, anf, env)
 
@@ -203,7 +212,10 @@ pub fn emit_module(
   }
 
   // Assemble all globals
-  globals: Vector<GlobalDef> = mod_globals.concat(str_globals).concat(singleton_globals)
+  globals: Vector<GlobalDef> = mod_globals
+    .concat(str_globals)
+    .concat(singleton_globals)
+    .concat(dense_table_globals)
 
   // Data segments
   data: Vector<DataSegment> = []
@@ -472,23 +484,41 @@ fn collect_vector_builder_slots_expr(
   ids: BuilderSlotIds,
   known: Dict<Int, Bool>,
 ) Dict<Int, Bool> {
-  case expr {
-    .Let(sid, op, body) => {
-      cur := known
-      cur = collect_vector_builder_slots_op(op, sid, ids, cur)
-      collect_vector_builder_slots_expr(body, ids, cur)
-    },
-    _ => known,
+  cur := known
+  stack: Vector<PreparedExpr> = [expr]
+
+  for stack.len() > 0 {
+    cur_expr := stack[stack.len() - 1]
+    stack = .drop_last()
+    done := false
+
+    for !done {
+      case cur_expr {
+        .Let(sid, op, body) => {
+          r := collect_vector_builder_slots_op(op, sid, ids, cur, stack)
+          cur = r.known
+          stack = r.stack
+          cur_expr = body
+        },
+        _ => done = true,
+      }
+    }
   }
+
+  cur
 }
+
+type BuilderSlotCollectResult = .{ known: Dict<Int, Bool>, stack: Vector<PreparedExpr> }
 
 fn collect_vector_builder_slots_op(
   op: PreparedOp,
   sid: SlotId,
   ids: BuilderSlotIds,
   known: Dict<Int, Bool>,
-) Dict<Int, Bool> {
+  stack: Vector<PreparedExpr>,
+) BuilderSlotCollectResult {
   cur := known
+  cur_stack := stack
 
   case op {
     .ACall(.AGlobalFunc(fid), args) => {
@@ -520,22 +550,32 @@ fn collect_vector_builder_slots_op(
       cur
     },
     .AIf(_, then_e, else_e) => {
-      cur = collect_vector_builder_slots_expr(then_e, ids, cur)
-      collect_vector_builder_slots_expr(else_e, ids, cur)
+      cur_stack = .append(else_e)
+      cur_stack = .append(then_e)
+      cur
     },
     .AMatch(_, arms) => {
-      out := cur
+      i := arms.len() - 1
 
-      for arm in arms {
-        out = collect_vector_builder_slots_expr(arm.body, ids, out)
+      for i >= 0 {
+        cur_stack = .append(arms[i].body)
+        i = i - 1
       }
 
-      out
+      cur
     },
-    .ALoop(body) => collect_vector_builder_slots_expr(body, ids, cur),
-    .ADefer(body) => collect_vector_builder_slots_expr(body, ids, cur),
+    .ALoop(body) => {
+      cur_stack = .append(body)
+      cur
+    },
+    .ADefer(body) => {
+      cur_stack = .append(body)
+      cur
+    },
     _ => cur,
   }
+
+  .{ known: cur, stack: cur_stack }
 }
 
 // ── Expression emission ────────────────────────────────────────────────
@@ -710,6 +750,120 @@ fn emit_tail_let(
 }
 
 // ── Tail-call detection ────────────────────────────────────────────────
+type IfPrefixBinding = .{ slot: SlotId, op: PreparedOp }
+
+type TailIfSpineFrame = .{
+  prefix: Vector<IfPrefixBinding>,
+  condition: PreparedAtom,
+  then_expr: PreparedExpr,
+}
+
+type TailIfSpine = .{ frames: Vector<TailIfSpineFrame>, tail: PreparedExpr }
+
+type ElseIfMatch = .{
+  prefix: Vector<IfPrefixBinding>,
+  condition: PreparedAtom,
+  then_expr: PreparedExpr,
+  next_else: PreparedExpr,
+}
+
+fn collect_tail_if_else_spine(cond_e: PreparedAtom, then_e: PreparedExpr, else_e: PreparedExpr) TailIfSpine {
+  frames: Vector<TailIfSpineFrame> = [.{ prefix: [], condition: cond_e, then_expr: then_e }]
+  cur_else := else_e
+  done := false
+
+  for !done {
+    case match_else_if_frame(cur_else) {
+      .Some(frame) => {
+        frames = .append(
+          .{ prefix: frame.prefix, condition: frame.condition, then_expr: frame.then_expr },
+        )
+        cur_else = frame.next_else
+      },
+      .None => done = true,
+    }
+  }
+
+  .{ frames, tail: cur_else }
+}
+
+fn match_else_if_frame(expr: PreparedExpr) ElseIfMatch? {
+  prefix: Vector<IfPrefixBinding> = []
+  cur := expr
+
+  for true {
+    case cur {
+      .Let(local, .AIf(next_cond, next_then, next_else), .Atom(.ASlot(ret))) => if ret.id
+        == local.id {
+        return .Some(.{ prefix, condition: next_cond, then_expr: next_then, next_else })
+      } else {
+        return .None
+      },
+      .Let(local, .AIf(next_cond, next_then, next_else), .Return(.Some(.ASlot(ret)))) => if ret.id
+        == local.id {
+        return .Some(.{ prefix, condition: next_cond, then_expr: next_then, next_else })
+      } else {
+        return .None
+      },
+      .Let(local, op, body) => case op {
+        .AIf(_, _, _) => return .None,
+        .AMatch(_, _) => return .None,
+        .ALoop(_) => return .None,
+        .ADefer(_) => return .None,
+        _ => {
+          prefix = .append(.{ slot: local, op })
+          cur = body
+        },
+      },
+      _ => return .None,
+    }
+  }
+
+  .None
+}
+
+fn emit_if_prefix(bindings: Vector<IfPrefixBinding>, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+  out := buf
+
+  for binding in bindings {
+    entry := lookup_slot(ctx, binding.slot)
+    result_vt: ValType? = case entry.mono {
+      .Never => .None,
+      _ => .Some(entry.val_type),
+    }
+    out = emit_op(binding.op, entry.index, result_vt, entry.mono, ctx, out)
+  }
+
+  out
+}
+
+fn try_emit_tail_if_spine(
+  cond_e: PreparedAtom,
+  then_e: PreparedExpr,
+  else_e: PreparedExpr,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr>? {
+  spine := collect_tail_if_else_spine(cond_e, then_e, else_e)
+
+  if spine.frames.len() <= 512 {
+    return .None
+  }
+
+  out := buf
+
+  for frame in spine.frames {
+    cond_instrs := emit_if_prefix(frame.prefix, ctx, [])
+    cond_instrs = emit_atom(frame.condition, ctx, cond_instrs)
+    then_instrs := emit_tail_expr(frame.then_expr, result_mono, ctx, [])
+    out = .concat(cond_instrs).append(.If(.None, then_instrs, []))
+  }
+
+  out = .concat(emit_tail_expr(spine.tail, result_mono, ctx, []))
+  .Some(out)
+}
+
 // try_emit_tail_op checks if (op, body) form a tail-call pattern and emits
 // optimized code. Returns .Some(buf) if a tail call was emitted, .None otherwise.
 //
@@ -779,12 +933,22 @@ fn try_emit_tail_op(
         closure_emit.ClosureEmitFns.{ emit_atom, atom_mono },
       )
     },
-    .AIf(cond_e, then_e, else_e) => {
-      // Emit condition, then each branch in tail context
-      out := emit_atom(cond_e, ctx, buf)
-      then_instrs := emit_tail_expr(then_e, result_mono, ctx, [])
-      else_instrs := emit_tail_expr(else_e, result_mono, ctx, [])
-      .Some(out.append(.If(.None, then_instrs, else_instrs)))
+    .AIf(cond_e, then_e, else_e) => case try_emit_tail_if_spine(
+      cond_e,
+      then_e,
+      else_e,
+      result_mono,
+      ctx,
+      buf,
+    ) {
+      .Some(out) => .Some(out),
+      .None => {
+        // Emit condition, then each branch in tail context
+        out := emit_atom(cond_e, ctx, buf)
+        then_instrs := emit_tail_expr(then_e, result_mono, ctx, [])
+        else_instrs := emit_tail_expr(else_e, result_mono, ctx, [])
+        .Some(out.append(.If(.None, then_instrs, else_instrs)))
+      },
     },
     .AMatch(scrutinee, arms) => {
       // Emit match with tail-position arms
@@ -1045,9 +1209,9 @@ fn emit_atom(atom: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr>
       .Some(gentry) => buf.append(.GlobalGet(gentry.sym)),
       .None => error("emit_atom: unknown module-global local L${lid.id}"),
     },
-    .AGlobalFunc(fid) => {
-      sym := lookup_func_sym(ctx.func_sym_map, fid)
-      buf.append(.RefFunc(sym))
+    .AGlobalFunc(fid) => case ctx.func_sym_map[fid.id] {
+      .Some(sym) => buf.append(.RefFunc(sym)),
+      .None => emit_make_closure(fid, [], ctx, buf),
     },
   }
 }
@@ -2542,6 +2706,41 @@ fn emit_index_op(
 }
 
 // ── If emission ────────────────────────────────────────────────────────
+fn try_emit_if_spine(
+  cond_e: PreparedAtom,
+  then_e: PreparedExpr,
+  else_e: PreparedExpr,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr>? {
+  spine := collect_tail_if_else_spine(cond_e, then_e, else_e)
+
+  if spine.frames.len() <= 512 {
+    return .None
+  }
+
+  done_label := "$if_spine_${result_idx}"
+  body: Vector<Instr> = []
+
+  for frame in spine.frames {
+    cond_instrs := emit_if_prefix(frame.prefix, ctx, [])
+    cond_instrs = emit_atom(frame.condition, ctx, cond_instrs)
+    then_body := emit_expr(frame.then_expr, result_mono, ctx, [])
+    then_body = control_emit.append_result_store(then_body, result_idx, result_mono)
+    then_body = .append(.Br(done_label))
+
+    body = .concat(cond_instrs).append(.If(.None, then_body, []))
+  }
+
+  tail_body := emit_expr(spine.tail, result_mono, ctx, [])
+  tail_body = control_emit.append_result_store(tail_body, result_idx, result_mono)
+
+  body = .concat(tail_body)
+  .Some(buf.append(.Block(done_label, .None, body)))
+}
+
 fn emit_if_op(
   cond_e: PreparedAtom,
   then_e: PreparedExpr,
@@ -2552,17 +2751,20 @@ fn emit_if_op(
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
-  control_emit.emit_if_op(
-    cond_e,
-    then_e,
-    else_e,
-    result_idx,
-    result_vt,
-    result_mono,
-    ctx,
-    buf,
-    control_emit.ControlEmitFns.{ emit_atom, emit_expr },
-  )
+  case try_emit_if_spine(cond_e, then_e, else_e, result_idx, result_mono, ctx, buf) {
+    .Some(out) => out,
+    .None => control_emit.emit_if_op(
+      cond_e,
+      then_e,
+      else_e,
+      result_idx,
+      result_vt,
+      result_mono,
+      ctx,
+      buf,
+      control_emit.ControlEmitFns.{ emit_atom, emit_expr },
+    ),
+  }
 }
 
 fn emit_loop_op(

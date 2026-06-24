@@ -25,6 +25,13 @@ pub type ModuleGlobalEntry = .{ sym: String, mono: MonoType }
 // at each use site via global.get.
 pub type VariantSingletonEntry = .{ global_sym: String, mono: MonoType, vid: Int }
 
+// A dense integer/byte `case` over constant Int results, materialized as a flat
+// `rt_types__ArrayI64` lookup table built once via `array.new_fixed`. `values`
+// holds one i64 per offset across `[min, max]`, with holes pre-filled by the
+// (constant) default arm. Keyed in the registry by content so identical tables
+// share one global.
+pub type DenseTableEntry = .{ global_sym: String, getter_sym: String, values: Vector<Int> }
+
 pub type WasmTypeRegistry = .{
   type_defs: Vector<TypeDef>,
   layout_cache: Dict<String, WasmLayout>,
@@ -42,4 +49,6 @@ pub type WasmTypeRegistry = .{
   string_pool_next_offset: Int,
   runtime_imports: Vector<ImportDef>,
   variant_singletons: Dict<String, VariantSingletonEntry>,
+  dense_tables: Dict<String, DenseTableEntry>,
+  dense_tables_order: Vector<String>,
 }

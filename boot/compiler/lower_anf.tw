@@ -25,6 +25,8 @@ fn fresh(state: LowerState) FreshResult {
 // ── Let accumulator ─────────────────────────────────────────────────
 type LetBinding = .{ local: LocalId, op: AnfOp }
 
+type IfFrame = .{ condition: Atom, then_expr: AnfExpr, accum: Vector<LetBinding>, ty: MonoType }
+
 fn build_lets(accum: Vector<LetBinding>, tail: AnfExpr) AnfExpr {
   result := tail
   i := accum.len() - 1
@@ -89,145 +91,128 @@ fn max_local_id_in_func(func: FunctionDef) Int {
 }
 
 fn max_local_id_in_expr(expr: CoreExpr, max: Int) Int {
-  case expr.kind {
-    .Local(id) => if id.id > max {
-      id.id
-    } else {
-      max
-    },
-    .GlobalLocal(id) => if id.id > max {
-      id.id
-    } else {
-      max
-    },
-    .Let(local, value, body) => {
-      m := if local.id > max {
-        local.id
-      } else {
-        max
-      }
-      m = max_local_id_in_expr(value, m)
-      max_local_id_in_expr(body, m)
-    },
-    .Assign(local, value) => {
-      m := if local.id > max {
-        local.id
-      } else {
-        max
-      }
-      max_local_id_in_expr(value, m)
-    },
-    .GlobalSet(gid, value) => {
-      m := if gid.id > max {
-        gid.id
-      } else {
-        max
-      }
-      max_local_id_in_expr(value, m)
-    },
-    .MakeClosure(_, free_vars) => {
-      m := max
+  m := max
+  stack: Vector<CoreExpr> = [expr]
 
-      for v in free_vars {
-        if v.id > m {
-          m = v.id
+  for stack.len() > 0 {
+    cur := stack[stack.len() - 1]
+    stack = .drop_last()
+
+    case cur.kind {
+      .Local(id) => if id.id > m {
+        m = id.id
+      },
+      .GlobalLocal(id) => if id.id > m {
+        m = id.id
+      },
+      .Let(local, value, body) => {
+        if local.id > m {
+          m = local.id
         }
-      }
-
-      m
-    },
-    .BinOp(_, left, right) => {
-      m := max_local_id_in_expr(left, max)
-      max_local_id_in_expr(right, m)
-    },
-    .UnOp(_, inner) => max_local_id_in_expr(inner, max),
-    .Call(callee, args) => {
-      m := max_local_id_in_expr(callee, max)
-
-      for a in args {
-        m = max_local_id_in_expr(a, m)
-      }
-
-      m
-    },
-    .ContractCall(_, _, receiver, args) => {
-      m := max_local_id_in_expr(receiver, max)
-
-      for a in args {
-        m = max_local_id_in_expr(a, m)
-      }
-
-      m
-    },
-    .If(cond_e, then_e, else_e) => {
-      m := max_local_id_in_expr(cond_e, max)
-      m = max_local_id_in_expr(then_e, m)
-      max_local_id_in_expr(else_e, m)
-    },
-    .Match(scrutinee, arms) => {
-      m := max_local_id_in_expr(scrutinee, max)
-
-      for arm in arms {
-        m = max_local_id_in_pattern(arm.pattern, m)
-        m = max_local_id_in_expr(arm.body, m)
-      }
-
-      m
-    },
-    .Loop(body) => max_local_id_in_expr(body, max),
-    .Break(val) => case val {
-      .Some(v) => max_local_id_in_expr(v, max),
-      .None => max,
-    },
-    .Return(val) => case val {
-      .Some(v) => max_local_id_in_expr(v, max),
-      .None => max,
-    },
-    .Record(_, fields) => {
-      m := max
-
-      for f in fields {
-        m = max_local_id_in_expr(f.value, m)
-      }
-
-      m
-    },
-    .RecordGet(target, _) => max_local_id_in_expr(target, max),
-    .RecordUpdate(base, _, value) => {
-      m := max_local_id_in_expr(base, max)
-      max_local_id_in_expr(value, m)
-    },
-    .Variant(_, _, args) => {
-      m := max
-
-      for a in args {
-        m = max_local_id_in_expr(a, m)
-      }
-
-      m
-    },
-    .ArrayLit(elements) => {
-      m := max
-
-      for e in elements {
-        m = max_local_id_in_expr(e, m)
-      }
-
-      m
-    },
-    .Index(base, index) => {
-      m := max_local_id_in_expr(base, max)
-      max_local_id_in_expr(index, m)
-    },
-    .Defer(inner) => max_local_id_in_expr(inner, max),
-    .LitInt(_) => max,
-    .LitFloat(_) => max,
-    .LitBool(_) => max,
-    .LitStr(_) => max,
-    .LitVoid => max,
-    .GlobalFunc(_) => max,
-    .Continue => max,
+        stack = push_core_expr(stack, body)
+        stack = push_core_expr(stack, value)
+      },
+      .Assign(local, value) => {
+        if local.id > m {
+          m = local.id
+        }
+        stack = push_core_expr(stack, value)
+      },
+      .GlobalSet(gid, value) => {
+        if gid.id > m {
+          m = gid.id
+        }
+        stack = push_core_expr(stack, value)
+      },
+      .MakeClosure(_, free_vars) => {
+        for v in free_vars {
+          if v.id > m {
+            m = v.id
+          }
+        }
+      },
+      .BinOp(_, left, right) => {
+        stack = push_core_expr(stack, right)
+        stack = push_core_expr(stack, left)
+      },
+      .UnOp(_, inner) => stack = push_core_expr(stack, inner),
+      .Call(callee, args) => {
+        stack = push_core_exprs_reverse(stack, args)
+        stack = push_core_expr(stack, callee)
+      },
+      .ContractCall(_, _, receiver, args) => {
+        stack = push_core_exprs_reverse(stack, args)
+        stack = push_core_expr(stack, receiver)
+      },
+      .If(cond_e, then_e, else_e) => {
+        stack = push_core_expr(stack, else_e)
+        stack = push_core_expr(stack, then_e)
+        stack = push_core_expr(stack, cond_e)
+      },
+      .Match(scrutinee, arms) => {
+        i := arms.len() - 1
+        for i >= 0 {
+          m = max_local_id_in_pattern(arms[i].pattern, m)
+          stack = push_core_expr(stack, arms[i].body)
+          i = i - 1
+        }
+        stack = push_core_expr(stack, scrutinee)
+      },
+      .Loop(body) => stack = push_core_expr(stack, body),
+      .Break(val) => case val {
+        .Some(v) => stack = push_core_expr(stack, v),
+        .None => {},
+      },
+      .Return(val) => case val {
+        .Some(v) => stack = push_core_expr(stack, v),
+        .None => {},
+      },
+      .Record(_, fields) => {
+        i := fields.len() - 1
+        for i >= 0 {
+          stack = push_core_expr(stack, fields[i].value)
+          i = i - 1
+        }
+      },
+      .RecordGet(target, _) => stack = push_core_expr(stack, target),
+      .RecordUpdate(base, _, value) => {
+        stack = push_core_expr(stack, value)
+        stack = push_core_expr(stack, base)
+      },
+      .Variant(_, _, args) => stack = push_core_exprs_reverse(stack, args),
+      .ArrayLit(elements) => stack = push_core_exprs_reverse(stack, elements),
+      .Index(base, index) => {
+        stack = push_core_expr(stack, index)
+        stack = push_core_expr(stack, base)
+      },
+      .Defer(inner) => stack = push_core_expr(stack, inner),
+      .LitInt(_) => {},
+      .LitFloat(_) => {},
+      .LitBool(_) => {},
+      .LitStr(_) => {},
+      .LitVoid => {},
+      .GlobalFunc(_) => {},
+      .Continue => {},
+    }
   }
+
+  m
+}
+
+fn push_core_expr(stack: Vector<CoreExpr>, expr: CoreExpr) Vector<CoreExpr> {
+  stack.append(expr)
+}
+
+fn push_core_exprs_reverse(stack: Vector<CoreExpr>, exprs: Vector<CoreExpr>) Vector<CoreExpr> {
+  out := stack
+  i := exprs.len() - 1
+
+  for i >= 0 {
+    out = push_core_expr(out, exprs[i])
+    i = i - 1
+  }
+
+  out
 }
 
 fn max_local_id_in_pattern(pattern: CorePattern, max: Int) Int {
@@ -259,101 +244,82 @@ fn max_local_id_in_pattern(pattern: CorePattern, max: Int) Int {
 // defined global has exactly one store whose value type is concrete, so this is
 // a complete, authoritative oracle for backend type resolution.
 fn collect_global_monos_expr(expr: CoreExpr, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
-  case expr.kind {
-    .GlobalSet(gid, value) => {
-      out[gid.id] = value.ty
-      collect_global_monos_expr(value, out)
-    },
-    .Let(_, value, body) => {
-      cur := collect_global_monos_expr(value, out)
-      collect_global_monos_expr(body, cur)
-    },
-    .Assign(_, value) => collect_global_monos_expr(value, out),
-    .BinOp(_, lhs, rhs) => {
-      cur := collect_global_monos_expr(lhs, out)
-      collect_global_monos_expr(rhs, cur)
-    },
-    .UnOp(_, inner) => collect_global_monos_expr(inner, out),
-    .Call(callee, args) => {
-      cur := collect_global_monos_expr(callee, out)
+  cur := out
+  stack: Vector<CoreExpr> = [expr]
 
-      for a in args {
-        cur = collect_global_monos_expr(a, cur)
-      }
+  for stack.len() > 0 {
+    e := stack[stack.len() - 1]
+    stack = .drop_last()
 
-      cur
-    },
-    .ContractCall(_, _, recv, args) => {
-      cur := collect_global_monos_expr(recv, out)
-
-      for a in args {
-        cur = collect_global_monos_expr(a, cur)
-      }
-
-      cur
-    },
-    .If(c, t, e) => {
-      cur := collect_global_monos_expr(c, out)
-      cur = collect_global_monos_expr(t, cur)
-      collect_global_monos_expr(e, cur)
-    },
-    .Match(scrut, arms) => {
-      cur := collect_global_monos_expr(scrut, out)
-
-      for arm in arms {
-        cur = collect_global_monos_expr(arm.body, cur)
-      }
-
-      cur
-    },
-    .Loop(body) => collect_global_monos_expr(body, out),
-    .Break(opt) => case opt {
-      .Some(e) => collect_global_monos_expr(e, out),
-      .None => out,
-    },
-    .Return(opt) => case opt {
-      .Some(e) => collect_global_monos_expr(e, out),
-      .None => out,
-    },
-    .Defer(inner) => collect_global_monos_expr(inner, out),
-    .Record(_, fields) => {
-      cur := out
-
-      for f in fields {
-        cur = collect_global_monos_expr(f.value, cur)
-      }
-
-      cur
-    },
-    .RecordGet(target, _) => collect_global_monos_expr(target, out),
-    .RecordUpdate(base, _, value) => {
-      cur := collect_global_monos_expr(base, out)
-      collect_global_monos_expr(value, cur)
-    },
-    .Variant(_, _, args) => {
-      cur := out
-
-      for a in args {
-        cur = collect_global_monos_expr(a, cur)
-      }
-
-      cur
-    },
-    .ArrayLit(items) => {
-      cur := out
-
-      for a in items {
-        cur = collect_global_monos_expr(a, cur)
-      }
-
-      cur
-    },
-    .Index(base, index) => {
-      cur := collect_global_monos_expr(base, out)
-      collect_global_monos_expr(index, cur)
-    },
-    _ => out,
+    case e.kind {
+      .GlobalSet(gid, value) => {
+        cur[gid.id] = value.ty
+        stack = push_core_expr(stack, value)
+      },
+      .Let(_, value, body) => {
+        stack = push_core_expr(stack, body)
+        stack = push_core_expr(stack, value)
+      },
+      .Assign(_, value) => stack = push_core_expr(stack, value),
+      .BinOp(_, lhs, rhs) => {
+        stack = push_core_expr(stack, rhs)
+        stack = push_core_expr(stack, lhs)
+      },
+      .UnOp(_, inner) => stack = push_core_expr(stack, inner),
+      .Call(callee, args) => {
+        stack = push_core_exprs_reverse(stack, args)
+        stack = push_core_expr(stack, callee)
+      },
+      .ContractCall(_, _, recv, args) => {
+        stack = push_core_exprs_reverse(stack, args)
+        stack = push_core_expr(stack, recv)
+      },
+      .If(c, t, e2) => {
+        stack = push_core_expr(stack, e2)
+        stack = push_core_expr(stack, t)
+        stack = push_core_expr(stack, c)
+      },
+      .Match(scrut, arms) => {
+        i := arms.len() - 1
+        for i >= 0 {
+          stack = push_core_expr(stack, arms[i].body)
+          i = i - 1
+        }
+        stack = push_core_expr(stack, scrut)
+      },
+      .Loop(body) => stack = push_core_expr(stack, body),
+      .Break(opt) => case opt {
+        .Some(e2) => stack = push_core_expr(stack, e2),
+        .None => {},
+      },
+      .Return(opt) => case opt {
+        .Some(e2) => stack = push_core_expr(stack, e2),
+        .None => {},
+      },
+      .Defer(inner) => stack = push_core_expr(stack, inner),
+      .Record(_, fields) => {
+        i := fields.len() - 1
+        for i >= 0 {
+          stack = push_core_expr(stack, fields[i].value)
+          i = i - 1
+        }
+      },
+      .RecordGet(target, _) => stack = push_core_expr(stack, target),
+      .RecordUpdate(base, _, value) => {
+        stack = push_core_expr(stack, value)
+        stack = push_core_expr(stack, base)
+      },
+      .Variant(_, _, args) => stack = push_core_exprs_reverse(stack, args),
+      .ArrayLit(items) => stack = push_core_exprs_reverse(stack, items),
+      .Index(base, index) => {
+        stack = push_core_expr(stack, index)
+        stack = push_core_expr(stack, base)
+      },
+      _ => {},
+    }
   }
+
+  cur
 }
 
 pub fn lower_module(module: CoreModule) AnfModule {
@@ -580,41 +546,9 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       .{ expr: .Atom(.ALitVoid), state: pa.state, accum: pa.accum }
     },
     // ── Let ──
-    .Let(orig_local, value, body) => {
-      // Lower value in isolated accumulator
-      vr := lower_expr(value, state, [])
-
-      case vr.expr {
-        .Atom(atom) => {
-          // Value reduced to atom — extend outer accum, push AInit
-          merged := accum
-
-          for b in vr.accum {
-            merged = .append(b)
-          }
-
-          pa := push_accum(merged, vr.state, orig_local, .AInit(atom), value.ty)
-
-          // Continue with body
-          lower_expr(body, pa.state, pa.accum)
-        },
-        _ => {
-          // Terminal (Return/Break/Continue) — body is unreachable
-          .{ expr: build_lets(vr.accum, vr.expr), state: vr.state, accum }
-        },
-      }
-    },
+    .Let(_, _, _) => lower_let_spine(expr, state, accum),
     // ── Control flow ──
-    .If(cond_e, then_e, else_e) => {
-      ca := atomize(cond_e, state, accum)
-      then_r := lower_expr_top(then_e, ca.state)
-      else_r := lower_expr_top(else_e, then_r.state)
-      r := else_r.state.fresh()
-      tmp := r.local
-      st := r.state
-      pa := push_accum(ca.accum, st, tmp, .AIf(ca.atom, then_r.expr, else_r.expr), expr.ty)
-      .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
-    },
+    .If(_, _, _) => lower_if_else_spine(expr, state, accum),
     .Match(scrutinee, arms) => {
       sa := atomize(scrutinee, state, accum)
       cur_state := sa.state
@@ -656,6 +590,100 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       .None => .{ expr: .Return(.None), state, accum },
     },
   }
+}
+
+fn lower_let_spine(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) ExprAccumResult {
+  cur_expr := expr
+  cur_state := state
+  cur_accum := accum
+  done := false
+
+  for !done {
+    case cur_expr.kind {
+      .Let(orig_local, value, body) => {
+        // Lower value in isolated accumulator
+        vr := lower_expr(value, cur_state, [])
+
+        case vr.expr {
+          .Atom(atom) => {
+            // Value reduced to atom — extend outer accum, push AInit
+            for b in vr.accum {
+              cur_accum = .append(b)
+            }
+
+            pa := push_accum(cur_accum, vr.state, orig_local, .AInit(atom), value.ty)
+            cur_state = pa.state
+            cur_accum = pa.accum
+            cur_expr = body
+          },
+          _ => {
+            // Terminal (Return/Break/Continue) — body is unreachable
+            return .{ expr: build_lets(vr.accum, vr.expr), state: vr.state, accum: cur_accum }
+          },
+        }
+      },
+      _ => done = true,
+    }
+  }
+
+  lower_expr(cur_expr, cur_state, cur_accum)
+}
+
+fn lower_if_else_spine(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) ExprAccumResult {
+  frames: Vector<IfFrame> = []
+  cur_expr := expr
+  cur_state := state
+  cur_accum := accum
+  done := false
+
+  for !done {
+    case cur_expr.kind {
+      .If(cond_e, then_e, else_e) => {
+        ca := atomize(cond_e, cur_state, cur_accum)
+        then_r := lower_expr_top(then_e, ca.state)
+        frames = .append(
+          .{ condition: ca.atom, then_expr: then_r.expr, accum: ca.accum, ty: cur_expr.ty },
+        )
+        cur_state = then_r.state
+        cur_accum = []
+        cur_expr = else_e
+      },
+      _ => done = true,
+    }
+  }
+
+  tail_r := lower_expr_top(cur_expr, cur_state)
+  branch_expr := tail_r.expr
+  cur_state = tail_r.state
+  i := frames.len() - 1
+
+  for i >= 1 {
+    frame := frames[i]
+    r := cur_state.fresh()
+    tmp := r.local
+    pa := push_accum(
+      frame.accum,
+      r.state,
+      tmp,
+      .AIf(frame.condition, frame.then_expr, branch_expr),
+      frame.ty,
+    )
+    branch_expr = build_lets(pa.accum, .Atom(.ALocal(tmp)))
+    cur_state = pa.state
+    i = i - 1
+  }
+
+  frame := frames[0]
+  r := cur_state.fresh()
+  tmp := r.local
+  pa := push_accum(
+    frame.accum,
+    r.state,
+    tmp,
+    .AIf(frame.condition, frame.then_expr, branch_expr),
+    frame.ty,
+  )
+  .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
 }
 
 // ── atomize ─────────────────────────────────────────────────────────
