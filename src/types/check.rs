@@ -15,6 +15,35 @@ use crate::syntax::ast::{
 use crate::syntax::span::Span;
 use std::collections::{HashMap, HashSet, VecDeque};
 
+/// Parameterized container contracts whose single type argument is the element
+/// type, exposing a `Self -> Elem` functional dependency.
+const CONTAINER_ELEM_CONTRACTS: [&str; 3] = ["IndexRead", "IndexWrite", "IntoIterator"];
+
+/// Split a comma-separated type-argument list at the top level, respecting `<>`
+/// and `()` nesting so nested generics stay intact:
+/// `"String, Dict<Int, Bool>"` -> `["String", "Dict<Int, Bool>"]`.
+fn split_top_level_type_args(s: &str) -> Vec<&str> {
+    let mut args = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' | '(' => depth += 1,
+            '>' | ')' => depth -= 1,
+            ',' if depth == 0 => {
+                args.push(s[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = s[start..].trim();
+    if !last.is_empty() {
+        args.push(last);
+    }
+    args
+}
+
 /// Bidirectional type checker
 ///
 /// Uses synthesis mode (infer type) and checking mode (validate against expected type)
@@ -1810,6 +1839,33 @@ impl TypeChecker {
     }
 
     fn mono_from_bound_arg(&self, name: &str) -> MonoType {
+        let name = name.trim();
+        // Generic application written in the bound string, e.g. `Option<Int>` or
+        // `Dict<String, Vector<Int>>`. Resolve the head and recurse on each
+        // top-level argument so nested generics survive.
+        if let Some(open) = name.find('<')
+            && let Some(without_close) = name.strip_suffix('>')
+        {
+            let head = name[..open].trim();
+            let args: Vec<MonoType> = split_top_level_type_args(&without_close[open + 1..])
+                .into_iter()
+                .map(|arg| self.mono_from_bound_arg(arg))
+                .collect();
+            return match head {
+                "Vector" if args.len() == 1 => {
+                    MonoType::Vector(Box::new(args.into_iter().next().unwrap()))
+                }
+                "Dict" if args.len() == 2 => {
+                    let mut it = args.into_iter();
+                    MonoType::Dict(Box::new(it.next().unwrap()), Box::new(it.next().unwrap()))
+                }
+                _ => self
+                    .type_env
+                    .lookup_type(head)
+                    .map(|type_id| MonoType::Named { type_id, args })
+                    .unwrap_or(MonoType::Void),
+            };
+        }
         match name {
             "Int" => MonoType::Int,
             "Float" => MonoType::Float,
@@ -1838,36 +1894,36 @@ impl TypeChecker {
         }
     }
 
-    fn into_iterator_bound_elem(&self, ty: &MonoType) -> Option<MonoType> {
+    /// Strip a parameterized contract bound (`Contract<Inner>`) and return the
+    /// trimmed `Inner`. The single place that knows the `Contract<...>` bound-string
+    /// shape; shared by the per-contract element lookups and the bound-element
+    /// recovery for the `Self -> Elem` functional dependency.
+    fn contract_bound_arg<'a>(bound: &'a str, contract: &str) -> Option<&'a str> {
+        bound
+            .strip_prefix(contract)?
+            .strip_prefix('<')?
+            .strip_suffix('>')
+            .map(str::trim)
+    }
+
+    /// Element type written in a `Var`'s `Contract<Elem>` bound, if any.
+    fn contract_bound_elem(&self, ty: &MonoType, contract: &str) -> Option<MonoType> {
         let MonoType::Var(name) = ty else {
             return None;
         };
         let bounds = self.current_type_param_bounds.get(name)?;
-        for bound in bounds {
-            if let Some(inner) = bound
-                .strip_prefix("IntoIterator<")
-                .and_then(|rest| rest.strip_suffix('>'))
-            {
-                return Some(self.mono_from_bound_arg(inner.trim()));
-            }
-        }
-        None
+        bounds
+            .iter()
+            .find_map(|bound| Self::contract_bound_arg(bound, contract))
+            .map(|inner| self.mono_from_bound_arg(inner))
+    }
+
+    fn into_iterator_bound_elem(&self, ty: &MonoType) -> Option<MonoType> {
+        self.contract_bound_elem(ty, "IntoIterator")
     }
 
     fn index_read_bound_elem(&self, ty: &MonoType) -> Option<MonoType> {
-        let MonoType::Var(name) = ty else {
-            return None;
-        };
-        let bounds = self.current_type_param_bounds.get(name)?;
-        for bound in bounds {
-            if let Some(inner) = bound
-                .strip_prefix("IndexRead<")
-                .and_then(|rest| rest.strip_suffix('>'))
-            {
-                return Some(self.mono_from_bound_arg(inner.trim()));
-            }
-        }
-        None
+        self.contract_bound_elem(ty, "IndexRead")
     }
 
     fn validate_stringify_type(
@@ -2103,23 +2159,20 @@ impl TypeChecker {
         type_param_bounds: &HashMap<String, Vec<String>>,
         var_to_meta: &[(String, MonoType)],
     ) {
-        const PARAM_CONTRACTS: [&str; 3] = ["IndexRead<", "IndexWrite<", "IntoIterator<"];
         for (name, meta_ty) in var_to_meta {
             let Some(bounds) = type_param_bounds.get(name) else {
                 continue;
             };
             for bound in bounds {
-                let Some(inner) = PARAM_CONTRACTS
+                let Some(inner) = CONTAINER_ELEM_CONTRACTS
                     .iter()
-                    .find_map(|p| bound.strip_prefix(p))
-                    .and_then(|rest| rest.strip_suffix('>'))
+                    .find_map(|contract| Self::contract_bound_arg(bound, contract))
                 else {
                     continue;
                 };
                 // The element argument is itself a type param of this signature
                 // (e.g. `E`); locate its metavar so we can solve it.
-                let Some((_, elem_meta)) = var_to_meta.iter().find(|(n, _)| n == inner.trim())
-                else {
+                let Some((_, elem_meta)) = var_to_meta.iter().find(|(n, _)| n == inner) else {
                     continue;
                 };
                 if !matches!(self.zonk(elem_meta), MonoType::MetaVar(_)) {

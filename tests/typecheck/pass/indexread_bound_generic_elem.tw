@@ -1,0 +1,7 @@
+type Box<T> = .{ v: T }
+
+fn first<C: IndexRead<Box<Int>>>(xs: C) Box<Int> {
+  xs.at(0)
+}
+
+x := first([Box.{ v: 1 }])

@@ -624,25 +624,27 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     let ast = parsed.ast.clone();
     let file_registry = parsed.file_registry.clone();
 
+    let prelude_root_canonical = adapter.canonicalize(&adapter.prelude_root());
+    let is_prelude_module = canonical.starts_with(&prelude_root_canonical);
+
     // The prelude is globally available to every module, including stdlib
     // (`@std.*`) modules — `@std.view`, for instance, calls `Int.clamp`. Stdlib
     // modules cannot take the prelude as a dependency (the prelude itself imports
     // stdlib, e.g. `prelude/vector.tw` uses `@std.view`, so a dependency edge would
-    // cycle). Instead, register the prelude method signatures into the base env at
-    // the root, before any per-module snapshot is captured, so they are visible
-    // everywhere without a dependency edge.
-    if importing_stack.is_empty() {
+    // cycle). Instead, register the prelude method signatures into the base env,
+    // before any per-module snapshot is captured, so they are visible everywhere
+    // without a dependency edge. This runs at the root (covers every normal entry)
+    // and whenever a prelude module is the compilation target — the latter still
+    // matters because each prelude dependency restores a fresh env snapshot and
+    // resets the registration flag (see `compile_planned_dependencies`). The flag
+    // makes the call idempotent, so triggering it from both is harmless.
+    if importing_stack.is_empty() || is_prelude_module {
         ensure_prelude_method_signatures_registered(state, adapter)?;
     }
 
     // Compile dependencies from an explicit plan:
     // source-order imports, then deterministic prelude auto-imports.
     let dep_plan = plan_module_dependencies(file_path, &canonical, &ast, adapter)?;
-    let prelude_root_canonical = adapter.canonicalize(&adapter.prelude_root());
-    let is_prelude_module = canonical.starts_with(&prelude_root_canonical);
-    if is_prelude_module {
-        ensure_prelude_method_signatures_registered(state, adapter)?;
-    }
 
     importing_stack.push(canonical.clone());
 
