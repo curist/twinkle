@@ -1820,7 +1820,21 @@ impl TypeChecker {
             other if self.type_var_scope.iter().any(|param| param == other) => {
                 MonoType::Var(other.to_string())
             }
-            _ => MonoType::Void,
+            other => self
+                .type_env
+                .lookup_type(other)
+                .and_then(|type_id| {
+                    let arity = self
+                        .type_env
+                        .get_def(type_id)
+                        .map(|def| def.type_params().len())
+                        .unwrap_or(0);
+                    (arity == 0).then_some(MonoType::Named {
+                        type_id,
+                        args: vec![],
+                    })
+                })
+                .unwrap_or(MonoType::Void),
         }
     }
 

@@ -1,0 +1,7 @@
+type D = { A }
+
+fn first<C: IndexRead<D>>(xs: C) D {
+  xs.at(0)
+}
+
+x := first([D.A])
