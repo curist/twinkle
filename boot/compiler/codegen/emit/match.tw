@@ -164,46 +164,53 @@ fn emit_dense_data_table_match(mc: MatchCtx, arms: Vector<PreparedMatchArm>, buf
   buf.concat(range_guard).append(.If(.None, then_body, else_body))
 }
 
+// Emit arms as a flat sequence of guarded `if`s inside one end block, rather
+// than a right-nested if/else tree. Each arm is `<cond> if { <body>; store;
+// br $end }`; the first match stores its result and branches out, so later arms
+// are skipped exactly as the nested form skipped them via the `else`. Keeping
+// the structure flat (depth 2, not depth N) means neither this builder nor the
+// recursive Wasm serializer overflows the host stack on very wide matches.
 fn emit_arm_chain(mc: MatchCtx, arms: Vector<PreparedMatchArm>, buf: Vector<Instr>) Vector<Instr> {
   if arms.len() == 0 {
     return buf.append(.Unreachable)
   }
 
-  head := arms[0]
-  tail: Vector<PreparedMatchArm> = arms.slice(1, arms.len())
+  end_label := arm_chain_end_label(mc.result_idx)
+  seq: Vector<Instr> = []
 
-  // Pattern condition is used as sub-body content — use fresh []
-  cond_instrs := mc.fns.emit_pattern_condition(
-    head.pattern,
-    mc.scrutinee_instrs,
-    mc.scrutinee_mono,
-    mc.ctx,
-    [],
-  )
+  for arm in arms {
+    // cond / bindings / body are sub-bodies — build in fresh []
+    cond_instrs := mc.fns.emit_pattern_condition(
+      arm.pattern,
+      mc.scrutinee_instrs,
+      mc.scrutinee_mono,
+      mc.ctx,
+      [],
+    )
+    bindings := mc.fns.emit_pattern_bindings(
+      arm.pattern,
+      mc.scrutinee_instrs,
+      mc.scrutinee_mono,
+      mc.ctx,
+    )
+    body_instrs := mc.fns.emit_expr(arm.body, mc.result_mono, mc.ctx, [])
+    then_body := bindings.concat(body_instrs)
 
-  // Then: bindings + body + store result — all fresh [] (sub-body)
-  bindings := mc.fns.emit_pattern_bindings(
-    head.pattern,
-    mc.scrutinee_instrs,
-    mc.scrutinee_mono,
-    mc.ctx,
-  )
-  body_instrs := mc.fns.emit_expr(head.body, mc.result_mono, mc.ctx, [])
-  head_div := expr_always_diverges(head.body)
-  then_body := bindings.concat(body_instrs)
-  then_body = if !head_div {
-    append_result_store(then_body, mc.result_idx, mc.result_mono)
-  } else {
-    then_body
+    if !expr_always_diverges(arm.body) {
+      then_body = append_result_store(then_body, mc.result_idx, mc.result_mono).append(
+        .Br(end_label),
+      )
+    }
+
+    seq = .concat(cond_instrs).append(.If(.None, then_body, []))
   }
 
-  // Else: recurse on tail — fresh [] (sub-body)
-  else_body := mc.emit_arm_chain(tail, [])
-  tail_div := all_arms_diverge(tail)
-  both_div := head_div and tail_div
-  out := buf.concat(cond_instrs).append(.If(.None, then_body, else_body))
+  // No arm matched: an exhaustive match traps here (unreachable), matching the
+  // nested form bottoming out at `emit_arm_chain([])`.
+  seq = .append(.Unreachable)
+  out := buf.append(.Block(end_label, .None, seq))
 
-  if both_div {
+  if all_arms_diverge(arms) {
     out = .append(.Unreachable)
   }
 
@@ -285,6 +292,10 @@ fn is_br_table_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoType
 
 fn case_arm_label(result_idx: Int, tag: Int) String {
   "$case_${result_idx}_arm_${tag}"
+}
+
+fn arm_chain_end_label(result_idx: Int) String {
+  "$casechain_${result_idx}_end"
 }
 
 fn case_default_label(result_idx: Int) String {
@@ -430,6 +441,11 @@ fn emit_tail_dense_data_table_match(
   buf.concat(range_guard).append(.If(.None, then_body, else_body))
 }
 
+// Flat tail equivalent of emit_arm_chain. Tail bodies return (or tail-call)
+// themselves — emit_tail_expr never leaves a value on the stack, which is why
+// the nested form could use `.If(.None, ...)` — so each arm is just `<cond> if
+// { <body> }` with no result store, no end block, and no `br`. A non-match
+// falls through to the trailing unreachable.
 fn emit_tail_arm_chain(tc: TailMatchCtx, arms: Vector<PreparedMatchArm>, buf: Vector<Instr>) Vector<
   Instr,
 > {
@@ -437,39 +453,28 @@ fn emit_tail_arm_chain(tc: TailMatchCtx, arms: Vector<PreparedMatchArm>, buf: Ve
     return buf.append(.Unreachable)
   }
 
-  head := arms[0]
-  tail: Vector<PreparedMatchArm> = arms.slice(1, arms.len())
+  out := buf
 
-  cond_instrs := tc.fns.emit_pattern_condition(
-    head.pattern,
-    tc.scrutinee_instrs,
-    tc.scrutinee_mono,
-    tc.ctx,
-    [],
-  )
-
-  // Bindings + body in tail context (no result store — emit_tail_expr handles return)
-  bindings := tc.fns.emit_pattern_bindings(
-    head.pattern,
-    tc.scrutinee_instrs,
-    tc.scrutinee_mono,
-    tc.ctx,
-  )
-  body_instrs := tc.fns.emit_expr(head.body, tc.result_mono, tc.ctx, [])
-  then_body := bindings.concat(body_instrs)
-
-  else_body := tc.emit_tail_arm_chain(tail, [])
-
-  head_div := expr_always_diverges(head.body)
-  tail_div := all_arms_diverge(tail)
-  both_div := head_div and tail_div
-  out := buf.concat(cond_instrs).append(.If(.None, then_body, else_body))
-
-  if both_div {
-    out = .append(.Unreachable)
+  for arm in arms {
+    cond_instrs := tc.fns.emit_pattern_condition(
+      arm.pattern,
+      tc.scrutinee_instrs,
+      tc.scrutinee_mono,
+      tc.ctx,
+      [],
+    )
+    bindings := tc.fns.emit_pattern_bindings(
+      arm.pattern,
+      tc.scrutinee_instrs,
+      tc.scrutinee_mono,
+      tc.ctx,
+    )
+    body_instrs := tc.fns.emit_expr(arm.body, tc.result_mono, tc.ctx, [])
+    then_body := bindings.concat(body_instrs)
+    out = .concat(cond_instrs).append(.If(.None, then_body, []))
   }
 
-  out
+  out.append(.Unreachable)
 }
 
 fn emit_tail_br_table_match(tc: TailMatchCtx, arms: Vector<PreparedMatchArm>, buf: Vector<Instr>) Vector<
