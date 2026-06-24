@@ -1,0 +1,75 @@
+//! Dense lookup-table emission helpers.
+//!
+//! A dense integer/byte `case` over constant Int results is lowered (in
+//! `emit/match.tw`) to a flat `rt_types__ArrayI64` indexed load. The table
+//! itself is a module global, built once on first use by a lazy getter via
+//! `array.new_fixed`, mirroring how the string pool materializes its strings.
+
+use compiler.codegen.wasm_ir.{FuncDef, GlobalDef, Instr}
+use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
+
+dense_table_array_type: String = "rt_types__ArrayI64"
+
+pub fn emit_dense_table_globals(reg: WasmTypeRegistry) Vector<GlobalDef> {
+  globals: Vector<GlobalDef> = []
+
+  for k in reg.dense_tables_order {
+    case reg.dense_tables[k] {
+      .Some(entry) => {
+        globals = .append(
+          GlobalDef.{
+            name: entry.global_sym,
+            mutable: true,
+            ty: .Ref(true, .Named(dense_table_array_type)),
+            init: [.RefNull(.Named(dense_table_array_type))],
+          },
+        )
+      },
+      .None => {},
+    }
+  }
+
+  globals
+}
+
+pub fn emit_dense_table_getters(reg: WasmTypeRegistry) Vector<FuncDef> {
+  funcs: Vector<FuncDef> = []
+  arr_ty := dense_table_array_type
+
+  for k in reg.dense_tables_order {
+    case reg.dense_tables[k] {
+      .Some(entry) => {
+        // Push every constant, then array.new_fixed to build the table; cache
+        // it in the global so later calls just load it.
+        build: Vector<Instr> = []
+
+        for v in entry.values {
+          build = .append(.I64Const(v))
+        }
+
+        build = .append(.ArrayNewFixed(arr_ty, entry.values.len())).append(
+          .GlobalSet(entry.global_sym),
+        )
+        body: Vector<Instr> = [
+          .GlobalGet(entry.global_sym),
+          .RefIsNull,
+          .If(.None, build, []),
+          .GlobalGet(entry.global_sym),
+          .RefAsNonNull,
+        ]
+        funcs = .append(
+          FuncDef.{
+            name: entry.getter_sym,
+            params: [],
+            results: [.Ref(false, .Named(arr_ty))],
+            locals: [],
+            body,
+          },
+        )
+      },
+      .None => {},
+    }
+  }
+
+  funcs
+}

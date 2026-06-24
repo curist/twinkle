@@ -34,6 +34,7 @@ use compiler.codegen.emit.context.{
 }
 use compiler.codegen.emit.control_flow as control_emit
 use compiler.codegen.emit.defaults.{emit_default_value}
+use compiler.codegen.emit.dense_table.{emit_dense_table_getters, emit_dense_table_globals}
 use compiler.codegen.emit.helper_collectors.{
   collect_dict_get_inner_types, collect_iterator_next_helpers, collect_sum_variant_helpers,
 }
@@ -184,6 +185,14 @@ pub fn emit_module(
 
   str_data := emit_string_data_segment(reg)
 
+  // Dense lookup tables: globals + lazy getter functions (registered during
+  // function emission in emit/match.tw).
+  dense_table_globals := emit_dense_table_globals(reg)
+
+  for g in emit_dense_table_getters(reg) {
+    funcs = .append(g)
+  }
+
   // Module globals
   mod_globals := emit_module_globals(reg, anf, env)
 
@@ -203,7 +212,10 @@ pub fn emit_module(
   }
 
   // Assemble all globals
-  globals: Vector<GlobalDef> = mod_globals.concat(str_globals).concat(singleton_globals)
+  globals: Vector<GlobalDef> = mod_globals
+    .concat(str_globals)
+    .concat(singleton_globals)
+    .concat(dense_table_globals)
 
   // Data segments
   data: Vector<DataSegment> = []

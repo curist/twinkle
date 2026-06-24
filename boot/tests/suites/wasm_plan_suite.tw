@@ -864,6 +864,8 @@ pub fn test_registry_empty() Result<Void, String> {
     string_pool_next_offset: 0,
     runtime_imports: [],
     variant_singletons: Dict.new(),
+    dense_tables: Dict.new(),
+    dense_tables_order: [],
   }
   try assert.equal(reg.type_defs.len(), 0)
   try assert.equal(reg.runtime_imports.len(), 0)

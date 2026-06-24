@@ -1,0 +1,140 @@
+//! Shared eligibility + table computation for the dense lookup-table lowering.
+//!
+//! A dense integer/byte `case` over constant Int results can be lowered to a
+//! flat `rt_types__ArrayI64` indexed load instead of a comparison chain. This
+//! module is the single source of truth for *whether* a match qualifies and
+//! *what* the table holds, so the planner scan (which registers the table
+//! global) and the emitter (which references it) agree exactly.
+//!
+//! `LitInt` patterns only ever occur over an `Int`/`Byte` scrutinee, so deciding
+//! eligibility from the arms alone is sound; the emitter still inspects the
+//! scrutinee mono to choose i64 vs i32 dispatch.
+
+use compiler.backend.prepared_ir.{PreparedExpr, PreparedMatchArm}
+
+// span cap keeps tables small; density gate keeps them from being mostly holes.
+max_span: Int = 1024
+
+min_explicit: Int = 4
+
+pub type DenseTablePlan = .{ key: String, values: Vector<Int>, min: Int, default: Int }
+
+fn const_int_body(body: PreparedExpr) Int? {
+  case body {
+    .Atom(a) => case a {
+      .ALitInt(n) => .Some(n),
+      _ => .None,
+    },
+    _ => .None,
+  }
+}
+
+fn int_vector_contains(xs: Vector<Int>, x: Int) Bool {
+  for y in xs {
+    if y == x {
+      return true
+    }
+  }
+
+  false
+}
+
+/// Returns a table plan when `arms` is a dense int/byte `case` whose explicit
+/// arms and trailing default all yield constant Int values; otherwise `.None`.
+pub fn dense_table_plan(arms: Vector<PreparedMatchArm>) DenseTablePlan? {
+  last_idx := arms.len() - 1
+  explicit_count := 0
+  catch_all_seen := false
+  has_min := false
+  min_val := 0
+  max_val := 0
+  default_val := 0
+  has_default := false
+  lits: Vector<Int> = []
+  vals: Vector<Int> = []
+
+  for arm, i in arms {
+    case arm.pattern {
+      .LitInt(n) => {
+        if catch_all_seen {
+          return .None
+        }
+
+        if int_vector_contains(lits, n) {
+          return .None
+        }
+
+        v := try const_int_body(arm.body)
+        lits = .append(n)
+        vals = .append(v)
+
+        if !has_min {
+          min_val = n
+          max_val = n
+          has_min = true
+        } else {
+          if n < min_val {
+            min_val = n
+          }
+
+          if n > max_val {
+            max_val = n
+          }
+        }
+
+        explicit_count = explicit_count + 1
+      },
+      .Wildcard => {
+        if i != last_idx or catch_all_seen {
+          return .None
+        }
+
+        default_val = try const_int_body(arm.body)
+        has_default = true
+        catch_all_seen = true
+      },
+      .Var(_) => {
+        if i != last_idx or catch_all_seen {
+          return .None
+        }
+
+        default_val = try const_int_body(arm.body)
+        has_default = true
+        catch_all_seen = true
+      },
+      _ => return .None,
+    }
+  }
+
+  if !has_default or explicit_count < min_explicit {
+    return .None
+  }
+
+  span := max_val - min_val + 1
+
+  if span > explicit_count * 4 or span > max_span {
+    return .None
+  }
+
+  // Pre-fill the table with the default, then drop each explicit value in.
+  values: Vector<Int> = collect _ in 0..span {
+    default_val
+  }
+
+  for lit, i in lits {
+    values[lit - min_val] = vals[i]
+  }
+
+  key := dense_table_key(min_val, values)
+  .Some(.{ key, values, min: min_val, default: default_val })
+}
+
+pub fn dense_table_key(min_val: Int, values: Vector<Int>) String {
+  parts := "dti_${min_val}"
+
+  for v in values {
+    parts = "${parts}_${v}"
+  }
+
+  parts
+}

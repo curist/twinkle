@@ -12,6 +12,7 @@ use compiler.backend.prepared_ir.{
 }
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.dense_table_plan.{dense_table_plan}
 use compiler.codegen.wasm_layout.{mono_to_key}
 use compiler.mono_type.{MonoType}
 
@@ -27,6 +28,8 @@ pub type ScanResult = .{
   direct_builtin_calls: Dict<Int, Bool>,
   module_globals: Dict<Int, Bool>,
   nullary_variants: Dict<String, NullaryVariantReq>,
+  // Dense lookup tables discovered in match bodies, keyed by content → values.
+  dense_tables: Dict<String, Vector<Int>>,
 }
 
 pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) ScanResult {
@@ -37,6 +40,7 @@ pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) Scan
     direct_builtin_calls: Dict.new(),
     module_globals: Dict.new(),
     nullary_variants: Dict.new(),
+    dense_tables: Dict.new(),
   }
 
   for func in input.funcs {
@@ -100,7 +104,13 @@ fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, is_init: Bool, out: ScanRe
         cur = scan_expr(arm.body, builtins, is_init, cur)
       }
 
-      cur
+      case dense_table_plan(arms) {
+        .Some(plan) => {
+          cur.dense_tables[plan.key] = plan.values
+          cur
+        },
+        .None => cur,
+      }
     },
     .ALoop(body) => scan_expr(body, builtins, is_init, out),
     .ADefer(body) => scan_expr(body, builtins, is_init, out),

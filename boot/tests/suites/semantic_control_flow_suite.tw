@@ -68,6 +68,68 @@ fn classify(n: Int) String {
   }
 }
 
+fn dense_classify(n: Int) Int {
+  case n {
+    0 => 100,
+    1 => 101,
+    2 => 102,
+    3 => 103,
+    4 => 104,
+    _ => -1,
+  }
+}
+
+fn dense_holes(n: Int) Int {
+  case n {
+    1 => 11,
+    2 => 22,
+    4 => 44,
+    5 => 55,
+    7 => 77,
+    _ => -1,
+  }
+}
+
+fn dense_grade(n: Int) Int {
+  case n {
+    90 => 4,
+    91 => 4,
+    92 => 4,
+    93 => 4,
+    _ => 3,
+  }
+}
+
+fn dense_byte_rank(b: Byte) Int {
+  case b {
+    0x41 => 1,
+    0x42 => 2,
+    0x43 => 3,
+    0x44 => 4,
+    _ => 0,
+  }
+}
+
+fn dense_tail_label(n: Int) Int {
+  case n {
+    10 => 1010,
+    11 => 1011,
+    12 => 1012,
+    13 => 1013,
+    _ => -1,
+  }
+}
+
+fn sparse_classify(n: Int) Int {
+  case n {
+    0 => 1,
+    1000 => 2,
+    50000 => 3,
+    999999 => 4,
+    _ => -1,
+  }
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("control flow")
@@ -336,6 +398,76 @@ pub fn suite() runner.Suite {
           _ => "?",
         }
         try assert.equal(result, "h")
+        .Ok({})
+      },
+    )
+    .test(
+      "dense int case dispatches every arm correctly",
+      fn() {
+        try assert.equal(dense_classify(0), 100)
+        try assert.equal(dense_classify(2), 102)
+        try assert.equal(dense_classify(4), 104)
+        try assert.equal(dense_classify(5), -1)
+        .Ok({})
+      },
+    )
+    .test(
+      "dense int case with holes falls through to wildcard",
+      fn() {
+        try assert.equal(dense_holes(1), 11)
+        try assert.equal(dense_holes(4), 44)
+        try assert.equal(dense_holes(7), 77)
+
+        // Holes (3, 6) and out-of-range values take the default.
+        try assert.equal(dense_holes(3), -1)
+        try assert.equal(dense_holes(6), -1)
+        try assert.equal(dense_holes(0), -1)
+        try assert.equal(dense_holes(8), -1)
+        .Ok({})
+      },
+    )
+    .test(
+      "dense int case with non-zero min",
+      fn() {
+        try assert.equal(dense_grade(90), 4)
+        try assert.equal(dense_grade(93), 4)
+        try assert.equal(dense_grade(89), 3)
+        try assert.equal(dense_grade(94), 3)
+
+        // A far-away value must not alias an in-range table index.
+        try assert.equal(dense_grade(90 + 0x100000000), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "dense byte case dispatches correctly",
+      fn() {
+        try assert.equal(dense_byte_rank(0x41), 1)
+        try assert.equal(dense_byte_rank(0x43), 3)
+        try assert.equal(dense_byte_rank(0x44), 4)
+        try assert.equal(dense_byte_rank(0x45), 0)
+        try assert.equal(dense_byte_rank(0x00), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "dense int case in tail position",
+      fn() {
+        // dense_tail_label's body is a bare `case`, lowered through the tail path.
+        try assert.equal(dense_tail_label(10), 1010)
+        try assert.equal(dense_tail_label(13), 1013)
+        try assert.equal(dense_tail_label(9), -1)
+        try assert.equal(dense_tail_label(14), -1)
+        .Ok({})
+      },
+    )
+    .test(
+      "sparse int case still dispatches correctly",
+      fn() {
+        try assert.equal(sparse_classify(0), 1)
+        try assert.equal(sparse_classify(1000), 2)
+        try assert.equal(sparse_classify(999999), 4)
+        try assert.equal(sparse_classify(7), -1)
         .Ok({})
       },
     )
