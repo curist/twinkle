@@ -29,6 +29,39 @@ fn sort_suite_sum(xs: Vector<Int>) Int {
   total
 }
 
+// Regression: a collect-built Vector<Int> read with `xs[i]` is promoted to the
+// typed PVecI64 repr; reassigning that same local from a boxed slice-wrapper
+// (take / drop_first / drop) in a loop must not store a boxed value into the
+// typed slot. Before the route_typed_vec fix this failed WASM validation (typed
+// slot vs boxed value) at codegen, so a passing build is itself the guard.
+fn typed_drain_take(n: Int) Int {
+  acc: Vector<Int> = collect i in range(n) {
+    i
+  }
+  total := 0
+
+  for acc.len() > 1 {
+    total = total + acc[acc.len() - 1]
+    acc = .take(acc.len() - 1)
+  }
+
+  total
+}
+
+fn typed_drain_drop_first(n: Int) Int {
+  acc: Vector<Int> = collect i in range(n) {
+    i
+  }
+  total := 0
+
+  for acc.len() > 1 {
+    total = total + acc[0]
+    acc = .drop_first()
+  }
+
+  total
+}
+
 fn sort_suite_is_sorted_f(xs: Vector<Float>) Bool {
   ok := true
   i := 1
@@ -483,6 +516,16 @@ pub fn suite() runner.Suite {
         try expect_range(relaxed.slice(1099, 1100), 1099, 1100)
         try assert.equal(regular.slice(17, 17).len(), 0)
         try assert.equal(relaxed.slice(17, 17).len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "typed Vector<Int> reassigned from a slice-wrapper in a loop",
+      fn() {
+        // n=40 crosses the branching-factor boundary. take drops the last each
+        // step (reads 39..1), drop_first drops the first (reads 0..38).
+        try assert.equal(typed_drain_take(40), 780)
+        try assert.equal(typed_drain_drop_first(40), 741)
         .Ok({})
       },
     )

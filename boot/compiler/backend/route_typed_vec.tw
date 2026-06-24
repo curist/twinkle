@@ -573,7 +573,10 @@ fn op_group_escapes(op: PreparedOp, vs: Dict<Int, Bool>, len_id: Int, builtins: 
     .AVariant(_, _, args) => atoms_contain_any(args, vs),
     .AArrayLit(items) => atoms_contain_any(items, vs),
     .AInit(a) => false,
-    .AAssign(_, a) => slot_in(a, vs),
+    // Reassigning a v-group slot from a value not in the group stores that
+    // (boxed) value into a slot the group would retype to PVecI64 — e.g. a loop
+    // `acc = acc.take(...)` where take returns the boxed family. Disqualify.
+    .AAssign(dst, a) => slot_in(a, vs) or vs.has(dst.id),
     .AGlobalSet(_, a) => slot_in(a, vs),
     .AWrapAnyref(a, _) => slot_in(a, vs),
     .AUnwrapAnyref(a, _) => slot_in(a, vs),
@@ -768,7 +771,10 @@ fn classify_op(
     .AVariant(_, _, args) => .{ escapes: atoms_contain_any(args, vs), field_keys: [] },
     .AArrayLit(items) => .{ escapes: atoms_contain_any(items, vs), field_keys: [] },
     .AInit(_) => .{ escapes: false, field_keys: [] },
-    .AAssign(_, a) => .{ escapes: slot_in(a, vs), field_keys: [] },
+    // Reassigning a v-group slot from a value not in the group stores that
+    // (boxed) value into a slot the group would retype to PVecI64 — e.g. a loop
+    // `acc = acc.take(...)` where take returns the boxed family. Disqualify.
+    .AAssign(dst, a) => .{ escapes: slot_in(a, vs) or vs.has(dst.id), field_keys: [] },
     .AGlobalSet(_, a) => .{ escapes: slot_in(a, vs), field_keys: [] },
     .AWrapAnyref(a, _) => .{ escapes: slot_in(a, vs), field_keys: [] },
     .AUnwrapAnyref(a, _) => .{ escapes: slot_in(a, vs), field_keys: [] },
