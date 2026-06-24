@@ -487,6 +487,27 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "slice left-drop keeps the root/tail invariant across size boundaries",
+      fn() {
+        // slice(start, len) is the left-drop family (drop_first / drop). For
+        // every start it must hold root==null iff len<=bf, the invariant the
+        // fast path can violate right at the branching-factor boundary.
+        sizes: Vector<Int> = [32, 33, 34, 64, 65, 66, 96, 97, 128, 129, 130]
+        si := 0
+        for si < sizes.len() {
+          n := sizes[si]
+          v := build_seq(n)
+          start := 0
+          for start <= n {
+            try expect_range(v.slice(start, n), start, n)
+            start = start + 1
+          }
+          si = si + 1
+        }
+        .Ok({})
+      },
+    )
+    .test(
       "Vector satisfies IndexRead (generic at/len over the bound)",
       fn() {
         xs: Vector<Int> = [10, 20, 30]

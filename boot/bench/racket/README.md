@@ -54,6 +54,10 @@ build phase outside the timed region, same sink to defeat dead-code elimination.
 - **concat_prepend / get_relaxed:** roughly even, both near-linear — Twinkle's
   recently-landed RRB concat and relaxed-node navigation behave correctly.
 - **get_regular:** Racket ~1.6× faster (native CS vs wasm/V8), both linear.
-- **slice_dropfirst:** Racket wins decisively — Twinkle is **quadratic** here
-  (`slice` re-copies), while `treelist-drop` is O(log N). This is the RRB
-  relaxed-aware-slice work that has not landed in Twinkle yet.
+- **slice_dropfirst:** both O(log N) per op (loop is O(N log N), not quadratic).
+  The general `slice` originally folded the tail into the trie and re-split it on
+  every call, leaving Twinkle ~14× behind `treelist-drop`. After adding a
+  left-drop fast path to `slice` (trim only the left spine, share the tail) the
+  gap is ~2×, which is essentially the `get_regular` runtime baseline — i.e. the
+  algorithmic deficit is gone. The fast path covers the `end == len` family
+  (`drop_first`, `drop`, `slice(k, len)`); `take` (a right-trim) is unchanged.
