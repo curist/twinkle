@@ -11,6 +11,8 @@ pub type ControlEmitFns = .{
   emit_expr: fn(PreparedExpr, MonoType, EmitCtx, Vector<Instr>) Vector<Instr>,
 }
 
+type IfSpineFrame = .{ condition: PreparedAtom, then_expr: PreparedExpr }
+
 pub fn emit_if_op(
   cond_e: PreparedAtom,
   then_e: PreparedExpr,
@@ -22,6 +24,12 @@ pub fn emit_if_op(
   buf: Vector<Instr>,
   fns: ControlEmitFns,
 ) Vector<Instr> {
+  spine := collect_if_else_spine(cond_e, then_e, else_e)
+
+  if spine.frames.len() > 512 {
+    return emit_if_else_spine(spine.frames, spine.tail, result_idx, result_mono, ctx, buf, fns)
+  }
+
   out := fns.emit_atom(cond_e, ctx, buf)
 
   // Nested sub-bodies must use fresh []
@@ -52,6 +60,61 @@ pub fn emit_if_op(
 
     out.append(.If(.None, then_body, else_body))
   }
+}
+
+type IfSpine = .{ frames: Vector<IfSpineFrame>, tail: PreparedExpr }
+
+fn collect_if_else_spine(cond_e: PreparedAtom, then_e: PreparedExpr, else_e: PreparedExpr) IfSpine {
+  frames: Vector<IfSpineFrame> = [.{ condition: cond_e, then_expr: then_e }]
+  cur_else := else_e
+  done := false
+
+  for !done {
+    case cur_else {
+      .Let(local, .AIf(next_cond, next_then, next_else), .Atom(.ASlot(ret))) => if ret.id
+        == local.id {
+        frames = .append(.{ condition: next_cond, then_expr: next_then })
+        cur_else = next_else
+      } else {
+        done = true
+      },
+      .Let(local, .AIf(next_cond, next_then, next_else), .Return(.Some(.ASlot(ret)))) => if ret.id
+        == local.id {
+        frames = .append(.{ condition: next_cond, then_expr: next_then })
+        cur_else = next_else
+      } else {
+        done = true
+      },
+      _ => done = true,
+    }
+  }
+
+  .{ frames, tail: cur_else }
+}
+
+fn emit_if_else_spine(
+  frames: Vector<IfSpineFrame>,
+  tail: PreparedExpr,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+  fns: ControlEmitFns,
+) Vector<Instr> {
+  nested := fns.emit_expr(tail, result_mono, ctx, [])
+  nested = append_result_store(nested, result_idx, result_mono)
+  i := frames.len() - 1
+
+  for i >= 0 {
+    frame := frames[i]
+    then_body := fns.emit_expr(frame.then_expr, result_mono, ctx, [])
+    then_body = append_result_store(then_body, result_idx, result_mono)
+    cond_instrs := fns.emit_atom(frame.condition, ctx, [])
+    nested = cond_instrs.append(.If(.None, then_body, nested))
+    i = i - 1
+  }
+
+  buf.concat(nested)
 }
 
 pub fn emit_loop_op(

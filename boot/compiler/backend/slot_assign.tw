@@ -146,17 +146,89 @@ pub fn assign_slots(
   }
 }
 
+type LowerValue = { ExprValue(PreparedExpr), OpValue(PreparedOp) }
+
+type LowerWork = { ExprWork(AnfExpr), OpWork(AnfOp), FinishLet(SlotId), FinishIf(PreparedAtom) }
+
 fn lower_expr(expr: AnfExpr, local_to_slot: Dict<Int, SlotId>, func_name: String) PreparedExpr {
-  case expr {
-    .Let(local, op, body) => .Let(
-      lookup_slot_for(local_to_slot, local.id, "let result", func_name),
-      lower_op(op, local_to_slot, func_name),
-      lower_expr(body, local_to_slot, func_name),
-    ),
-    .Atom(atom) => .Atom(lower_atom(atom, local_to_slot)),
-    .Return(atom) => .Return(lower_atom_opt(atom, local_to_slot)),
-    .Break(atom) => .Break(lower_atom_opt(atom, local_to_slot)),
-    .Continue => .Continue,
+  work: Vector<LowerWork> = [.ExprWork(expr)]
+  values: Vector<LowerValue> = []
+
+  for work.len() > 0 {
+    item := work[work.len() - 1]
+    work = .drop_last()
+
+    case item {
+      .ExprWork(cur_expr) => case cur_expr {
+        .Let(local, op, body) => {
+          slot := lookup_slot_for(local_to_slot, local.id, "let result", func_name)
+          work = .append(.FinishLet(slot))
+          work = .append(.ExprWork(body))
+          work = .append(.OpWork(op))
+        },
+        .Atom(atom) => values = .append(.ExprValue(.Atom(lower_atom(atom, local_to_slot)))),
+        .Return(atom) => values = .append(.ExprValue(.Return(lower_atom_opt(atom, local_to_slot)))),
+        .Break(atom) => values = .append(.ExprValue(.Break(lower_atom_opt(atom, local_to_slot)))),
+        .Continue => values = .append(.ExprValue(.Continue)),
+      },
+      .OpWork(op) => case op {
+        .AIf(cond_e, then_e, else_e) => {
+          work = .append(.FinishIf(lower_atom(cond_e, local_to_slot)))
+          work = .append(.ExprWork(else_e))
+          work = .append(.ExprWork(then_e))
+        },
+        _ => values = .append(.OpValue(lower_op(op, local_to_slot, func_name))),
+      },
+      .FinishLet(slot) => {
+        body := pop_expr_value(values, "slot_assign lower_expr let body")
+        values = body.rest
+        op := pop_op_value(values, "slot_assign lower_expr let op")
+        values = op.rest
+        values = .append(.ExprValue(.Let(slot, op.op, body.expr)))
+      },
+      .FinishIf(condition) => {
+        else_v := pop_expr_value(values, "slot_assign lower_expr if else")
+        values = else_v.rest
+        then_v := pop_expr_value(values, "slot_assign lower_expr if then")
+        values = then_v.rest
+        values = .append(.OpValue(.AIf(condition, then_v.expr, else_v.expr)))
+      },
+    }
+  }
+
+  result := pop_expr_value(values, "slot_assign lower_expr result")
+  result.expr
+}
+
+type PopExprResult = .{ expr: PreparedExpr, rest: Vector<LowerValue> }
+
+type PopOpResult = .{ op: PreparedOp, rest: Vector<LowerValue> }
+
+fn pop_expr_value(values: Vector<LowerValue>, context: String) PopExprResult {
+  if values.len() == 0 {
+    error("${context}: missing expression value")
+  }
+
+  last := values[values.len() - 1]
+  rest := values.drop_last()
+
+  case last {
+    .ExprValue(expr) => .{ expr, rest },
+    .OpValue(_) => error("${context}: expected expression value"),
+  }
+}
+
+fn pop_op_value(values: Vector<LowerValue>, context: String) PopOpResult {
+  if values.len() == 0 {
+    error("${context}: missing op value")
+  }
+
+  last := values[values.len() - 1]
+  rest := values.drop_last()
+
+  case last {
+    .OpValue(op) => .{ op, rest },
+    .ExprValue(_) => error("${context}: expected op value"),
   }
 }
 

@@ -110,8 +110,20 @@ async function main() {
   process.exit(exitCode);
 }
 
+function isWasmStackOverflow(e) {
+  return e instanceof RangeError && /Maximum call stack size exceeded/.test(e.message ?? "");
+}
+
 main().catch((e) => {
   if (e.message?.startsWith("host.error:")) process.exit(1);
+  if (isWasmStackOverflow(e)) {
+    console.error(
+      "error: compiler stack exhausted while walking deeply nested IR. "
+        + "Refactor very large cond/if chains or long statement sequences; "
+        + "stack-safe compiler passes are being implemented.",
+    );
+    process.exit(1);
+  }
   console.error(e.stack || e.message || e);
   process.exit(1);
 });

@@ -1,7 +1,12 @@
 # Compiler stack-safety for deeply-nested IR
 
-Status: **Planned** (not started). Drafted after the wide-`case`/`cond` overflow
-investigation on branch `dense-int-case-lowering`.
+Status: **Paused at green checkpoint**. This branch lands the first stack-safety
+work: iterative handling for several deep `Let`/else-`If` paths, temporary safe
+fallbacks around remaining recursive hot spots, and clearer CLI stack-overflow
+reporting. The `check` path now handles the deep `cond` and side-effecting
+statement-sequence repros at much larger sizes. This is not complete:
+`build` can still overflow later in backend/codegen walks, and recursive
+serializer paths remain future work.
 
 ## Problem
 
@@ -14,7 +19,7 @@ Because V8 caps the Wasm execution stack at a fixed size, any sufficiently
 This is **not** a Wasm spec limit (e.g. the 256-arm myth) and **not** specific
 to one construct. It is a property of recursive tree-walks over deep IR.
 
-### Reproductions (all overflow around ~160–200 nesting levels)
+### Reproductions (all overflow around 160–200 nesting levels)
 
 ```
 # wide cond → nested CoreExpr.If
@@ -38,8 +43,8 @@ effects (so the spine can't collapse) and it overflows. So the apparent
 
 ## What is already fixed, and why it was special
 
-`case` literal arm chains were flattened (commit on branch: "emit literal case
-arm chains as a flat sequence"). That worked because `case` lowers all the way
+`case` literal arm chains were flattened by emitting the arms as a flat sequence.
+That worked because `case` lowers all the way
 to a flat **Wasm instruction vector** (a single `Block` whose body is a flat
 `Vector<Instr>` iterated by a `for`-loop in the serializer), so the emitted
 structure is constant-depth. `cond` and statement sequences cannot be flattened
@@ -60,19 +65,44 @@ inherently nested `Let`, and `cond` desugars to nested `If` (`lower_core.tw`
 Conclusion: the host stack cannot be grown enough to matter; the fix must remove
 the deep recursion from the passes.
 
+### Why Wasm tail calls are not enough
+
+Twinkle-generated Wasm already uses `return_call` / `return_call_ref` for true
+tail-position calls (see [archive/wasm-tail-calls.md](archive/wasm-tail-calls.md)).
+That helps tail-recursive programs and any compiler helpers that are genuinely
+tail-recursive, but it does not make general tree rewrites stack-safe. Most
+problematic walkers recurse into children and then rebuild or combine IR nodes
+after the recursive call, so the recursion is not in tail position. Multi-child
+nodes such as `If`/`Match` have the same issue. These passes still need explicit
+work stacks, trampolines, or flatter IR shapes.
+
 ## Root cause: recursive tree-walks in every pass
 
 The IR is walked recursively (depth = IR nesting) in, at least:
 
-- `lower_core` — `lower_expr` / `lower_block` / `lower_stmts` (and the per-kind
-  lowerers) recurse into children; `lower_cond` builds a nested `If`.
+- `lower_core` — `lower_expr` / `lower_block` (and the per-kind lowerers)
+  recurse into children; `lower_cond` builds a nested `If`. `lower_stmts` has
+  been rewritten to build `Let` spines iteratively, so long statement blocks no
+  longer spend compiler stack during statement-chain construction.
 - Core-level optimization passes (`opt/*`: copy-prop, use-count, uniqueness,
   dce, etc.) — each walks `CoreExpr` recursively.
-- `monomorphize`, `core_linker`, `anf_analysis`.
-- `lower_anf` — `CoreExpr` → ANF, recursive; ANF then has nested `Let`/`If`.
-- `backend/prepare` — ANF → `PreparedExpr`, recursive.
+- `monomorphize`, `core_linker`, `anf_analysis`. Several hot-path walks are now
+  explicit worklists: linker function-reference collection and remapping of deep
+  `Let`/else-`If` spines, monomorphization collection/rewriting of deep
+  `Let`/else-`If` spines, and ANF free/init/assigned/use-count analyses used by
+  optimization setup. Other walkers remain recursive.
+- `lower_anf` — `CoreExpr` → ANF, still recursive for general trees, but now
+  handles deep `Let` spines and else-`If` spines iteratively, including the
+  pre-lowering Core max-local/global-mono scans. ANF then has nested `Let`/`If`.
+- `backend/prepare` — ANF → `PreparedExpr`; slot lowering now uses an explicit
+  work stack for deep `Let`/`AIf` spines, closure-conversion and boundary local
+  scans avoid recursive max-local walks, and deep prepared bodies skip the
+  typed-vector routing/verifier optimization checks as temporary safe fallbacks.
+  Other backend helper walkers remain recursive.
 - `codegen/emit` — `emit_expr` recurses on `PreparedExpr` (notably the `AIf`
-  else-spine for `cond`/`if`).
+  else-spine for `cond`/`if`). Some pre-emission collectors and wasm-plan scans
+  now use worklists, and `emit_if_op` has a first stack-safe else-if-spine path,
+  but deep `cond` build still overflows in emission.
 - `codegen/wasm.tw` `encode_instrs_cached` + `collect_ref_funcs_instr`, and
   `codegen/wat.tw` `emit_instr` — recurse on nested `Instr`. (An iterative
   rewrite of the binary serializer was prototyped this session and reverted as
@@ -90,11 +120,12 @@ codegen. So a partial fix only moves the wall.
    exact output (validated by self-host fixed point + suite).
 
 2. **Shared iterative traversal combinator.** Provide one stack-safe traversal
-   (cf. the designed `fold_core_expr` / `fold_children` combinator, see memory
-   `fold-core-expr`) and refactor passes to express themselves as folds/visitors
-   over it, so fixing the combinator fixes every pass that adopts it. Highest
-   leverage, but requires reshaping passes into the combinator's shape and only
-   covers passes that adopt it. Binding-aware passes (scope-sensitive) need care.
+   (cf. the designed `fold_core_expr` / `fold_children` combinator in
+   [archive/fold-core-expr.md](archive/fold-core-expr.md)) and refactor passes
+   to express themselves as folds/visitors over it, so fixing the combinator
+   fixes every pass that adopts it. Highest leverage, but requires reshaping
+   passes into the combinator's shape and only covers passes that adopt it.
+   Binding-aware passes (scope-sensitive) need care.
 
 3. **Introduce a flat sequence/multiway node in the IR.** Add a flat
    `Seq(Vector<...>)` and/or `CondChain`/`Switch` node carried Core → ANF →
@@ -109,12 +140,20 @@ codegen. So a partial fix only moves the wall.
 
 ### Recommended sequence
 
-- **Phase 0 (stopgap):** Option 4 — a depth guard with a real diagnostic, so
-  users get a clear message rather than a stack-overflow crash. Small, shippable.
+- **Phase 0 (stopgap):** Option 4 — clear stack-overflow reporting, so users get
+  an actionable message rather than a raw Wasm stack trace. The CLI wrappers now
+  catch host `RangeError` stack overflows and print a compiler stack-exhaustion
+  diagnostic; a pre-pass depth guard remains an option once it can avoid false
+  positives on real compiler/test-suite code.
 - **Phase 1:** Pick Option 1 or 2 and make the **lowering + opt** passes
-  stack-safe first (that's the earliest wall — `check`/`ir` overflow). Validate
-  `ir`/`check` no longer overflow on `cond`/`if`/deep-seq.
-- **Phase 2:** Make `lower_anf` + `prepare` + `emit_expr` stack-safe.
+  stack-safe first (that's the earliest wall — `check`/`ir` overflow). Kickoff:
+  statement-chain lowering, key linker/monomorphize/ANF scans, and lower_anf's
+  deep `Let`/else-`If` paths now use explicit worklists. The optimizer also
+  detects very deep ANF and skips the recursive optimization suite after defer
+  elimination, preserving correctness while avoiding a crash. Continue replacing
+  the remaining recursive optimizer walkers so this fallback can be removed.
+- **Phase 2:** Make `prepare` + `emit_expr` stack-safe, and finish any remaining
+  general-recursion gaps in `lower_anf`.
 - **Phase 3:** Make the serializers (`wasm.tw` `encode_instrs_cached` +
   `collect_ref_funcs_instr`; `wat.tw` `emit_instr`) iterative. The binary
   serializer prototype from this session is a good starting point.
@@ -138,7 +177,7 @@ catches regressions).
 
 - Large, cross-cutting; touches the whole pass infrastructure. High blast radius
   (every program's codegen). Each change must preserve exact behavior, validated
-  by `make bundle-cli` self-host fixed point + the full boot suite (2817 tests).
+  by `make bundle-cli` self-host fixed point + the full boot suite.
 - Best done from a clean baseline in a dedicated session, incrementally, with
   the reproductions above as the moving acceptance test.
 

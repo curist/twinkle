@@ -103,6 +103,10 @@ type FunctionOptimizeResult = .{
   at_cap: Bool,
 }
 
+type DepthWork = .{ expr: AnfExpr, depth: Int }
+
+max_stack_safe_opt_depth: Int = 512
+
 fn zero_pass_timing() PassTiming {
   PassTiming.{
     dead_let: 0.0,
@@ -123,6 +127,48 @@ fn add_pass_timing(a: PassTiming, b: PassTiming) PassTiming {
     uniqueness: a.uniqueness + b.uniqueness,
     defer_elim: a.defer_elim + b.defer_elim,
   }
+}
+
+fn anf_depth_exceeds(expr: AnfExpr, limit: Int) Bool {
+  stack: Vector<DepthWork> = [DepthWork.{ expr, depth: 1 }]
+
+  for stack.len() > 0 {
+    item := stack[stack.len() - 1]
+    stack = .drop_last()
+
+    if item.depth > limit {
+      return true
+    }
+
+    child_depth := item.depth + 1
+
+    case item.expr {
+      .Let(_, op, body) => {
+        stack = .append(DepthWork.{ expr: body, depth: child_depth })
+
+        case op {
+          .AIf(_, then_e, else_e) => {
+            stack = .append(DepthWork.{ expr: else_e, depth: child_depth })
+            stack = .append(DepthWork.{ expr: then_e, depth: child_depth })
+          },
+          .AMatch(_, arms) => {
+            i := arms.len() - 1
+
+            for i >= 0 {
+              stack = .append(DepthWork.{ expr: arms[i].body, depth: child_depth })
+              i = i - 1
+            }
+          },
+          .ALoop(loop_body) => stack = .append(DepthWork.{ expr: loop_body, depth: child_depth }),
+          .ADefer(inner) => stack = .append(DepthWork.{ expr: inner, depth: child_depth }),
+          _ => {},
+        }
+      },
+      _ => {},
+    }
+  }
+
+  false
 }
 
 fn optimizer_context(module: AnfModule, semantics: OptimizerSemantics?, cow_config: CowConfig?) OptimizerContext {
@@ -161,6 +207,11 @@ fn optimize_function_with_context(func: AnfFunctionDef, ctx: OptimizerContext) F
   deferred := eliminate_defers(func)
   tb0 := date.now()
   timing.defer_elim = timing.defer_elim + (tb0 - ta0)
+
+  if anf_depth_exceeds(deferred.body, max_stack_safe_opt_depth) {
+    return FunctionOptimizeResult.{ func: deferred, timing, rounds: 0, at_cap: false }
+  }
+
   fixed := run_fixed_point_simplifications(deferred.body, deferred.op_result_mono, ctx)
   timing = .add_pass_timing(fixed.timing)
   optimized := rebuild_func_with_body(deferred, fixed.expr)
@@ -262,6 +313,22 @@ fn optimize_module_internal(
     .Some(_) => true,
     .None => false,
   }
+
+  deep_module := false
+
+  for f in module.functions {
+    if anf_depth_exceeds(f.body, max_stack_safe_opt_depth) {
+      deep_module = true
+    }
+  }
+
+  if deep_module {
+    module.functions = collect f in module.functions {
+      eliminate_defers(f)
+    }
+    return module
+  }
+
   ctx := optimizer_context(module, semantics, cow_config)
   timing := zero_pass_timing()
   total_rounds: Int = 0

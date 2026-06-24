@@ -3,6 +3,8 @@
 //! Specializes generic functions per unique concrete instantiation.
 //! Algorithm: BFS seed → specialize → rewrite → drop generics.
 
+use lib.source.span.{Span}
+
 use .contracts.{BuiltinContract}
 use .core_ir.{
   CoreExpr, CoreExprKind, CoreModule, FieldInit, FuncId, FunctionDef, LocalId, MatchArm, Param,
@@ -381,6 +383,10 @@ type MonoCtx = .{
 type InstQueue = .{ items: Vector<InstItem> }
 
 type InstItem = .{ func_id: FuncId, subst: Dict<String, MonoType> }
+
+type RewriteLetFrame = .{ local: LocalId, value: CoreExpr, ty: MonoType, span: Span }
+
+type RewriteIfFrame = .{ condition: CoreExpr, then_expr: CoreExpr, ty: MonoType, span: Span }
 
 fn subst_covers(type_params: Vector<String>, subst: Dict<String, MonoType>) Bool {
   for tp in type_params {
@@ -1116,12 +1122,7 @@ fn collect_instantiations(
 
       queue
     },
-    .Let(local, value, body) => {
-      queue = collect_instantiations(value, ctx, queue, local_types)
-      next_local_types := local_types
-      next_local_types[local.id] = value.ty
-      collect_instantiations(body, ctx, queue, next_local_types)
-    },
+    .Let(_, _, _) => collect_instantiations_let_spine(expr, ctx, queue, local_types),
     .Assign(_, value) => collect_instantiations(value, ctx, queue, local_types),
     .GlobalSet(_, value) => collect_instantiations(value, ctx, queue, local_types),
     .BinOp(_, lhs, rhs) => {
@@ -1129,11 +1130,7 @@ fn collect_instantiations(
       collect_instantiations(rhs, ctx, queue, local_types)
     },
     .UnOp(_, inner) => collect_instantiations(inner, ctx, queue, local_types),
-    .If(cond_e, then_e, else_e) => {
-      queue = collect_instantiations(cond_e, ctx, queue, local_types)
-      queue = collect_instantiations(then_e, ctx, queue, local_types)
-      collect_instantiations(else_e, ctx, queue, local_types)
-    },
+    .If(_, _, _) => collect_instantiations_if_spine(expr, ctx, queue, local_types),
     .Match(scrut, arms) => arms.fold(
       collect_instantiations(scrut, ctx, queue, local_types),
       fn(q, arm) { collect_instantiations(arm.body, ctx, q, local_types) },
@@ -1171,6 +1168,55 @@ fn collect_instantiations(
     .Defer(inner) => collect_instantiations(inner, ctx, queue, local_types),
     _ => queue,
   }
+}
+
+fn collect_instantiations_let_spine(
+  expr: CoreExpr,
+  ctx: MonoCtx,
+  queue: InstQueue,
+  local_types: Dict<Int, MonoType>,
+) InstQueue {
+  cur_expr := expr
+  cur_queue := queue
+  cur_local_types := local_types
+  done := false
+
+  for !done {
+    case cur_expr.kind {
+      .Let(local, value, body) => {
+        cur_queue = collect_instantiations(value, ctx, cur_queue, cur_local_types)
+        cur_local_types[local.id] = value.ty
+        cur_expr = body
+      },
+      _ => done = true,
+    }
+  }
+
+  collect_instantiations(cur_expr, ctx, cur_queue, cur_local_types)
+}
+
+fn collect_instantiations_if_spine(
+  expr: CoreExpr,
+  ctx: MonoCtx,
+  queue: InstQueue,
+  local_types: Dict<Int, MonoType>,
+) InstQueue {
+  cur_expr := expr
+  cur_queue := queue
+  done := false
+
+  for !done {
+    case cur_expr.kind {
+      .If(cond_e, then_e, else_e) => {
+        cur_queue = collect_instantiations(cond_e, ctx, cur_queue, local_types)
+        cur_queue = collect_instantiations(then_e, ctx, cur_queue, local_types)
+        cur_expr = else_e
+      },
+      _ => done = true,
+    }
+  }
+
+  collect_instantiations(cur_expr, ctx, cur_queue, local_types)
 }
 
 // ── Substitution application to expressions ──────────────────────
@@ -1585,12 +1631,7 @@ fn rewrite_calls_kind(
 
       parent.kind
     },
-    .Let(local, value, body) => {
-      new_value := rewrite_calls(value, spec_map, ctx, local_types)
-      next_local_types := local_types
-      next_local_types[local.id] = value.ty
-      .Let(local, new_value, rewrite_calls(body, spec_map, ctx, next_local_types))
-    },
+    .Let(_, _, _) => rewrite_let_spine(parent, spec_map, ctx, local_types),
     .Assign(local, value) => .Assign(local, rewrite_calls(value, spec_map, ctx, local_types)),
     .GlobalSet(gid, value) => .GlobalSet(gid, rewrite_calls(value, spec_map, ctx, local_types)),
     .BinOp(op, lhs, rhs) => .BinOp(
@@ -1599,11 +1640,7 @@ fn rewrite_calls_kind(
       rewrite_calls(rhs, spec_map, ctx, local_types),
     ),
     .UnOp(op, inner) => .UnOp(op, rewrite_calls(inner, spec_map, ctx, local_types)),
-    .If(cond_e, then_e, else_e) => .If(
-      rewrite_calls(cond_e, spec_map, ctx, local_types),
-      rewrite_calls(then_e, spec_map, ctx, local_types),
-      rewrite_calls(else_e, spec_map, ctx, local_types),
-    ),
+    .If(_, _, _) => rewrite_if_spine(parent, spec_map, ctx, local_types),
     .Match(scrut, arms) => {
       new_arms: Vector<MatchArm> = []
 
@@ -1669,6 +1706,84 @@ fn rewrite_calls_kind(
     ),
     _ => parent.kind,
   }
+}
+
+fn rewrite_let_spine(
+  parent: CoreExpr,
+  spec_map: Dict<String, FuncId>,
+  ctx: MonoCtx,
+  local_types: Dict<Int, MonoType>,
+) CoreExprKind {
+  frames: Vector<RewriteLetFrame> = []
+  cur_expr := parent
+  cur_local_types := local_types
+  done := false
+
+  for !done {
+    case cur_expr.kind {
+      .Let(local, value, body) => {
+        new_value := rewrite_calls(value, spec_map, ctx, cur_local_types)
+        frames = .append(.{ local, value: new_value, ty: cur_expr.ty, span: cur_expr.span })
+        cur_local_types[local.id] = value.ty
+        cur_expr = body
+      },
+      _ => done = true,
+    }
+  }
+
+  result := rewrite_calls(cur_expr, spec_map, ctx, cur_local_types)
+  i := frames.len() - 1
+
+  for i >= 0 {
+    frame := frames[i]
+    result = .{ kind: .Let(frame.local, frame.value, result), ty: frame.ty, span: frame.span }
+    i = i - 1
+  }
+
+  result.kind
+}
+
+fn rewrite_if_spine(
+  parent: CoreExpr,
+  spec_map: Dict<String, FuncId>,
+  ctx: MonoCtx,
+  local_types: Dict<Int, MonoType>,
+) CoreExprKind {
+  frames: Vector<RewriteIfFrame> = []
+  cur_expr := parent
+  done := false
+
+  for !done {
+    case cur_expr.kind {
+      .If(cond_e, then_e, else_e) => {
+        frames = .append(
+          .{
+            condition: rewrite_calls(cond_e, spec_map, ctx, local_types),
+            then_expr: rewrite_calls(then_e, spec_map, ctx, local_types),
+            ty: cur_expr.ty,
+            span: cur_expr.span,
+          },
+        )
+        cur_expr = else_e
+      },
+      _ => done = true,
+    }
+  }
+
+  result := rewrite_calls(cur_expr, spec_map, ctx, local_types)
+  i := frames.len() - 1
+
+  for i >= 0 {
+    frame := frames[i]
+    result = .{
+      kind: .If(frame.condition, frame.then_expr, result),
+      ty: frame.ty,
+      span: frame.span,
+    }
+    i = i - 1
+  }
+
+  result.kind
 }
 
 // ── Main entry point ─────────────────────────────────────────────

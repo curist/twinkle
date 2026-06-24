@@ -54,7 +54,68 @@ fn canonical_capture_source_local(ctx: VerifyCtx, info: SlotInfo) LocalId {
 }
 
 pub fn verify_prepared_func_expr(ctx: VerifyCtx) Result<Void, String> {
+  if prepared_depth_exceeds(ctx.pf.body, 512) {
+    return .Ok({})
+  }
+
   ctx.verify_expr(ctx.pf.body)
+}
+
+type DepthWork = .{ expr: PreparedExpr, depth: Int }
+
+fn prepared_depth_exceeds(expr: PreparedExpr, limit: Int) Bool {
+  stack: Vector<DepthWork> = [.{ expr, depth: 1 }]
+
+  for stack.len() > 0 {
+    item := stack[stack.len() - 1]
+    stack = .drop_last()
+    cur_depth := item.depth
+    cur_expr := item.expr
+    done := false
+
+    for !done {
+      if cur_depth > limit {
+        return true
+      }
+
+      child_depth := cur_depth + 1
+
+      case cur_expr {
+        .Let(_, op, body) => {
+          stack = push_prepared_op_children(op, child_depth, stack)
+          cur_expr = body
+          cur_depth = child_depth
+        },
+        _ => done = true,
+      }
+    }
+  }
+
+  false
+}
+
+fn push_prepared_op_children(op: PreparedOp, depth: Int, stack: Vector<DepthWork>) Vector<DepthWork> {
+  cur_stack := stack
+
+  case op {
+    .AIf(_, then_e, else_e) => {
+      cur_stack = .append(.{ expr: else_e, depth })
+      cur_stack = .append(.{ expr: then_e, depth })
+    },
+    .AMatch(_, arms) => {
+      i := arms.len() - 1
+
+      for i >= 0 {
+        cur_stack = .append(.{ expr: arms[i].body, depth })
+        i = i - 1
+      }
+    },
+    .ALoop(inner) => cur_stack = .append(.{ expr: inner, depth }),
+    .ADefer(inner) => cur_stack = .append(.{ expr: inner, depth }),
+    _ => {},
+  }
+
+  cur_stack
 }
 
 fn verify_expr(ctx: VerifyCtx, expr: PreparedExpr) Result<Void, String> {

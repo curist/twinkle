@@ -209,6 +209,11 @@ fn rewrite_func(
     func_monos,
     global_monos,
   }
+
+  if !needs_boundary_rewrite_expr(func.body, ctx) {
+    return func
+  }
+
   result := rewrite_expr(func.body, ctx)
 
   // Build updated op_result_mono: original entries + new locals from boundary insertion.
@@ -234,6 +239,281 @@ fn rewrite_func(
 
 // ── Expression rewriting ────────────────────────────────────────────
 type RewriteResult = .{ expr: AnfExpr, ctx: BCtx }
+
+type BoundaryNeedResult = .{ needed: Bool, stack: Vector<AnfExpr> }
+
+fn needs_boundary_rewrite_expr(expr: AnfExpr, ctx: BCtx) Bool {
+  stack: Vector<AnfExpr> = [expr]
+
+  for stack.len() > 0 {
+    cur_expr := stack[stack.len() - 1]
+    stack = .drop_last()
+    done := false
+
+    for !done {
+      case cur_expr {
+        .Let(local, op, body) => {
+          r := needs_boundary_rewrite_op(local, op, ctx, stack)
+          if r.needed {
+            return true
+          }
+
+          stack = r.stack
+          cur_expr = body
+        },
+        .Atom(a) => {
+          if atom_materializes_for_expected(a, ctx.current_return_mono, ctx) {
+            return true
+          }
+
+          done = true
+        },
+        .Return(.Some(a)) => {
+          if atom_materializes_for_expected(a, ctx.current_return_mono, ctx) {
+            return true
+          }
+
+          done = true
+        },
+        .Return(.None) => done = true,
+        _ => done = true,
+      }
+    }
+  }
+
+  false
+}
+
+fn needs_boundary_rewrite_op(local: LocalId, op: AnfOp, ctx: BCtx, stack: Vector<AnfExpr>) BoundaryNeedResult {
+  cur_stack := stack
+
+  case op {
+    .ACall(callee, args) => .{
+      needed: call_needs_boundary_rewrite(local, callee, args, ctx),
+      stack: cur_stack,
+    },
+    .AIndex(base, index, kind, result_mono) => .{
+      needed: index_needs_boundary_rewrite(index, kind, result_mono, ctx),
+      stack: cur_stack,
+    },
+    .AInit(atom) => .{ needed: atom_materializes_for_local(atom, local, ctx), stack: cur_stack },
+    .AAssign(target, atom) => .{
+      needed: atom_materializes_for_local(atom, target, ctx),
+      stack: cur_stack,
+    },
+    .AGlobalSet(gid, atom) => .{
+      needed: atom_materializes_for_global(atom, gid, ctx),
+      stack: cur_stack,
+    },
+    .AArrayLit(elems) => .{
+      needed: array_lit_needs_boundary_rewrite(local, elems, ctx),
+      stack: cur_stack,
+    },
+    .ARecord(tid, fields) => .{
+      needed: record_needs_boundary_rewrite(local, tid, fields, ctx),
+      stack: cur_stack,
+    },
+    .AVariant(tid, vid, args) => .{
+      needed: variant_needs_boundary_rewrite(local, tid, vid, args, ctx),
+      stack: cur_stack,
+    },
+    .ARecordUpdate(base, fid, value, _, tid) => .{
+      needed: record_update_needs_boundary_rewrite(base, fid, value, tid, ctx),
+      stack: cur_stack,
+    },
+    .AIf(_, then_e, else_e) => {
+      cur_stack = .append(else_e)
+      cur_stack = .append(then_e)
+      .{ needed: false, stack: cur_stack }
+    },
+    .AMatch(_, arms) => {
+      i := arms.len() - 1
+
+      for i >= 0 {
+        cur_stack = .append(arms[i].body)
+        i = i - 1
+      }
+
+      .{ needed: false, stack: cur_stack }
+    },
+    .ALoop(inner) => {
+      cur_stack = .append(inner)
+      .{ needed: false, stack: cur_stack }
+    },
+    .ADefer(_) => .{ needed: true, stack: cur_stack },
+    _ => .{ needed: false, stack: cur_stack },
+  }
+}
+
+fn atom_materializes_for_expected(atom: Atom, expected_mono: MonoType, ctx: BCtx) Bool {
+  case atom {
+    .AGlobalFunc(_) => mono_is_function(expected_mono),
+    _ => false,
+  }
+}
+
+fn atom_materializes_for_local(atom: Atom, local: LocalId, ctx: BCtx) Bool {
+  case ctx.local_types[local.id] {
+    .Some(mono) => atom_materializes_for_expected(atom, mono, ctx),
+    .None => false,
+  }
+}
+
+fn atom_materializes_for_global(atom: Atom, gid: GlobalId, ctx: BCtx) Bool {
+  case ctx.global_monos[gid.id] {
+    .Some(mono) => atom_materializes_for_expected(atom, mono, ctx),
+    .None => false,
+  }
+}
+
+fn array_lit_needs_boundary_rewrite(local: LocalId, elems: Vector<Atom>, ctx: BCtx) Bool {
+  elem_mono := array_elem_mono(case ctx.local_types[local.id] {
+    .Some(m) => m,
+    .None => .Void,
+  })
+
+  case elem_mono {
+    .Some(mono) => {
+      for elem in elems {
+        if atom_materializes_for_expected(elem, mono, ctx) {
+          return true
+        }
+      }
+
+      false
+    },
+    .None => false,
+  }
+}
+
+fn record_needs_boundary_rewrite(local: LocalId, tid: TypeId, fields: Vector<FieldAtom>, ctx: BCtx) Bool {
+  result_mono := case ctx.local_types[local.id] {
+    .Some(m) => m,
+    .None => .Named(tid, []),
+  }
+
+  for field in fields {
+    expected := record_field_mono_for_tid(tid, result_mono, field.field.id, ctx.env)
+    if atom_materializes_for_expected(field.value, expected, ctx) {
+      return true
+    }
+  }
+
+  false
+}
+
+fn variant_needs_boundary_rewrite(
+  local: LocalId,
+  tid: TypeId,
+  vid: VariantId,
+  args: Vector<Atom>,
+  ctx: BCtx,
+) Bool {
+  result_mono := case ctx.local_types[local.id] {
+    .Some(m) => m,
+    .None => .Named(tid, []),
+  }
+
+  for arg, i in args {
+    expected := variant_payload_mono_for_tid(tid, result_mono, vid.id, i, ctx.env)
+    if atom_materializes_for_expected(arg, expected, ctx) {
+      return true
+    }
+  }
+
+  false
+}
+
+fn record_update_needs_boundary_rewrite(
+  base: Atom,
+  fid: FieldId,
+  value: Atom,
+  tid: TypeId,
+  ctx: BCtx,
+) Bool {
+  base_mono := case atom_mono(base, ctx) {
+    .Some(m) => m,
+    .None => .Named(tid, []),
+  }
+  expected := record_field_mono_for_tid(tid, base_mono, fid.id, ctx.env)
+  atom_materializes_for_expected(value, expected, ctx)
+}
+
+fn index_needs_boundary_rewrite(index: Atom, kind: IndexKind, result_mono: MonoType, ctx: BCtx) Bool {
+  case kind {
+    .Array => needs_unwrap(result_mono, .Anyref, ctx.env),
+    .Dict => case atom_mono(index, ctx) {
+      .Some(mono) => !is_anyref_subtype(mono_val_type(mono, ctx.env)),
+      .None => false,
+    },
+    .Str => false,
+  }
+}
+
+fn call_needs_boundary_rewrite(result_local: LocalId, callee: Atom, args: Vector<Atom>, ctx: BCtx) Bool {
+  is_intrinsic := case callee {
+    .AGlobalFunc(fid) => case bi.entry(ctx.builtins, fid) {
+      .Some(entry) => case entry.kind {
+        .Intrinsic => true,
+        .Runtime(_) => false,
+      },
+      .None => false,
+    },
+    _ => false,
+  }
+  abi_contract: AbiContract? = case callee {
+    .AGlobalFunc(fid) => case bi.entry(ctx.builtins, fid) {
+      .Some(entry) => if has_abi(entry.abi) {
+        .Some(entry.abi)
+      } else {
+        .None
+      },
+      .None => .None,
+    },
+    _ => .None,
+  }
+  expected_param_monos := call_expected_param_monos(callee, ctx)
+
+  for arg, i in args {
+    if i < expected_param_monos.len()
+      and atom_materializes_for_expected(arg, expected_param_monos[i], ctx) {
+      return true
+    }
+  }
+
+  case abi_contract {
+    .None => false,
+    .Some(abi) => {
+      for arg, i in args {
+        if i < abi.param_types.len() {
+          materialized_mono := atom_mono(arg, ctx)
+          should_wrap := case materialized_mono {
+            .Some(mono) => needs_wrap(mono, abi.param_types[i], ctx.env),
+            .None => false,
+          }
+
+          if should_wrap {
+            return true
+          }
+        }
+      }
+
+      if is_intrinsic {
+        return false
+      }
+
+      result_mono := ctx.local_types[result_local.id]
+      case result_mono {
+        .Some(mono) => if abi.result_types.len() > 0 {
+          needs_unwrap(mono, abi.result_types[0], ctx.env)
+        } else {
+          false
+        },
+        .None => false,
+      }
+    },
+  }
+}
 
 fn rewrite_expr(expr: AnfExpr, ctx: BCtx) RewriteResult {
   case expr {
@@ -1006,127 +1286,145 @@ fn rewrite_index(
 
 // ── Max local helper ────────────────────────────────────────────────
 fn find_max_local_expr(expr: AnfExpr, m: Int) Int {
-  case expr {
-    .Let(local, op, body) => {
-      r := if local.id > m {
-        local.id
-      } else {
-        m
+  max_id := m
+  stack: Vector<AnfExpr> = [expr]
+
+  for stack.len() > 0 {
+    cur_expr := stack[stack.len() - 1]
+    stack = .drop_last()
+    done := false
+
+    for !done {
+      case cur_expr {
+        .Let(local, op, body) => {
+          max_id = max_local_id(local, max_id)
+          r := find_max_local_op_with_stack(op, max_id, stack)
+          max_id = r.max_id
+          stack = r.stack
+          cur_expr = body
+        },
+        .Atom(a) => {
+          max_id = find_max_local_atom(a, max_id)
+          done = true
+        },
+        .Return(.Some(a)) => {
+          max_id = find_max_local_atom(a, max_id)
+          done = true
+        },
+        .Return(.None) => done = true,
+        .Break(.Some(a)) => {
+          max_id = find_max_local_atom(a, max_id)
+          done = true
+        },
+        .Break(.None) => done = true,
+        .Continue => done = true,
       }
-      r = find_max_local_op(op, r)
-      find_max_local_expr(body, r)
-    },
-    .Atom(a) => find_max_local_atom(a, m),
-    .Return(.Some(a)) => find_max_local_atom(a, m),
-    .Return(.None) => m,
-    .Break(.Some(a)) => find_max_local_atom(a, m),
-    .Break(.None) => m,
-    .Continue => m,
+    }
   }
+
+  max_id
 }
 
+type MaxLocalResult = .{ max_id: Int, stack: Vector<AnfExpr> }
+
 fn find_max_local_op(op: AnfOp, m: Int) Int {
+  r := find_max_local_op_with_stack(op, m, [])
+  max_id := r.max_id
+  stack := r.stack
+
+  for stack.len() > 0 {
+    expr := stack[stack.len() - 1]
+    stack = .drop_last()
+    max_id = find_max_local_expr(expr, max_id)
+  }
+
+  max_id
+}
+
+fn find_max_local_op_with_stack(op: AnfOp, m: Int, stack: Vector<AnfExpr>) MaxLocalResult {
+  r := m
+  cur_stack := stack
+
   case op {
     .ACall(callee, args) => {
-      r := find_max_local_atom(callee, m)
+      r = find_max_local_atom(callee, r)
 
       for a in args {
         r = find_max_local_atom(a, r)
       }
-
-      r
     },
     .AIf(_, then_e, else_e) => {
-      r := find_max_local_expr(then_e, m)
-      find_max_local_expr(else_e, r)
+      cur_stack = .append(else_e)
+      cur_stack = .append(then_e)
     },
     .AMatch(_, arms) => {
-      r := m
+      i := arms.len() - 1
 
-      for arm in arms {
-        r = find_max_local_expr(arm.body, r)
+      for i >= 0 {
+        cur_stack = .append(arms[i].body)
+        i = i - 1
       }
-
-      r
     },
-    .ALoop(body) => find_max_local_expr(body, m),
-    .ADefer(body) => find_max_local_expr(body, m),
+    .ALoop(body) => cur_stack = .append(body),
+    .ADefer(body) => cur_stack = .append(body),
     .ABinOp(_, left, right, _) => {
-      r := find_max_local_atom(left, m)
-      find_max_local_atom(right, r)
+      r = find_max_local_atom(left, r)
+      r = find_max_local_atom(right, r)
     },
-    .AUnOp(_, inner, _) => find_max_local_atom(inner, m),
+    .AUnOp(_, inner, _) => r = find_max_local_atom(inner, r),
     .AMakeClosure(_, free_vars) => {
-      r := m
-
       for v in free_vars {
-        r = if v.id > r {
-          v.id
-        } else {
-          r
-        }
+        r = max_local_id(v, r)
       }
-
-      r
     },
     .ARecord(_, fields) => {
-      r := m
-
       for f in fields {
         r = find_max_local_atom(f.value, r)
       }
-
-      r
     },
-    .ARecordGet(target, _, _) => find_max_local_atom(target, m),
+    .ARecordGet(target, _, _) => r = find_max_local_atom(target, r),
     .ARecordUpdate(base, _, value, _, _) => {
-      r := find_max_local_atom(base, m)
-      find_max_local_atom(value, r)
+      r = find_max_local_atom(base, r)
+      r = find_max_local_atom(value, r)
     },
     .AVariant(_, _, args) => {
-      r := m
-
       for a in args {
         r = find_max_local_atom(a, r)
       }
-
-      r
     },
     .AArrayLit(elems) => {
-      r := m
-
       for a in elems {
         r = find_max_local_atom(a, r)
       }
-
-      r
     },
     .AIndex(base, index, _, _) => {
-      r := find_max_local_atom(base, m)
-      find_max_local_atom(index, r)
+      r = find_max_local_atom(base, r)
+      r = find_max_local_atom(index, r)
     },
-    .AInit(value) => find_max_local_atom(value, m),
+    .AInit(value) => r = find_max_local_atom(value, r),
     .AAssign(target, value) => {
-      r := if target.id > m {
-        target.id
-      } else {
-        m
-      }
-      find_max_local_atom(value, r)
+      r = max_local_id(target, r)
+      r = find_max_local_atom(value, r)
     },
-    .AGlobalSet(_, value) => find_max_local_atom(value, m),
-    .AWrapAnyref(a, _) => find_max_local_atom(a, m),
-    .AUnwrapAnyref(a, _) => find_max_local_atom(a, m),
+    .AGlobalSet(_, value) => r = find_max_local_atom(value, r),
+    .AWrapAnyref(a, _) => r = find_max_local_atom(a, r),
+    .AUnwrapAnyref(a, _) => r = find_max_local_atom(a, r),
+  }
+
+  .{ max_id: r, stack: cur_stack }
+}
+
+fn max_local_id(lid: LocalId, m: Int) Int {
+  if lid.id > m {
+    lid.id
+  } else {
+    m
   }
 }
 
 fn find_max_local_atom(atom: Atom, m: Int) Int {
   case atom {
-    .ALocal(lid) => if lid.id > m {
-      lid.id
-    } else {
-      m
-    },
+    .ALocal(lid) => max_local_id(lid, m),
     _ => m,
   }
 }

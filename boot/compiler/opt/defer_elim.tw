@@ -27,6 +27,10 @@ use compiler.opt.analysis.{next_local_id}
 
 // ── Public entry point ─────────────────────────────────────────────
 pub fn eliminate_defers(func: AnfFunctionDef) AnfFunctionDef {
+  if !has_defer(func.body) {
+    return func
+  }
+
   next := Cell.new(next_local_id(func))
   snap_types: Cell<Dict<Int, MonoType>> = Cell.new(Dict.new())
   type_map := local_type_map(func)
@@ -53,6 +57,42 @@ fn local_type_map(func: AnfFunctionDef) Dict<Int, MonoType> {
   }
 
   result
+}
+
+fn has_defer(expr: AnfExpr) Bool {
+  stack: Vector<AnfExpr> = [expr]
+
+  for stack.len() > 0 {
+    cur := stack[stack.len() - 1]
+    stack = .drop_last()
+
+    case cur {
+      .Let(_, op, body) => {
+        case op {
+          .ADefer(_) => return true,
+          .AIf(_, then_e, else_e) => {
+            stack = .append(else_e)
+            stack = .append(then_e)
+          },
+          .AMatch(_, arms) => {
+            i := arms.len() - 1
+            for i >= 0 {
+              stack = .append(arms[i].body)
+              i = i - 1
+            }
+          },
+          .ALoop(loop_body) => {
+            stack = .append(loop_body)
+          },
+          _ => {},
+        }
+        stack = .append(body)
+      },
+      _ => {},
+    }
+  }
+
+  false
 }
 
 // ── Core recursive rewrite ─────────────────────────────────────────

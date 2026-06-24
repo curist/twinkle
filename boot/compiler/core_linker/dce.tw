@@ -146,83 +146,125 @@ fn contract_call_refs(method_name: String, receiver_ty: MonoType, index: Reachab
 
 pub fn collect_func_refs_indexed(expr: CoreExpr, index: ReachabilityIndex) Vector<Int> {
   refs: Vector<Int> = []
-  collect_func_refs_into(expr, refs, index)
-}
+  stack: Vector<CoreExpr> = [expr]
 
-fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>, index: ReachabilityIndex) Vector<Int> {
-  case expr.kind {
-    .LitInt(_) => refs,
-    .LitFloat(_) => refs,
-    .LitBool(_) => refs,
-    .LitStr(_) => refs,
-    .LitVoid => refs,
-    .Local(_) => refs,
-    .GlobalLocal(_) => refs,
-    .GlobalFunc(id) => refs.append(id.id),
-    .Let(_, value, body) => {
-      r := collect_func_refs_into(value, refs, index)
-      collect_func_refs_into(body, r, index)
-    },
-    .Assign(_, value) => collect_func_refs_into(value, refs, index),
-    .GlobalSet(_, value) => collect_func_refs_into(value, refs, index),
-    .BinOp(_, lhs, rhs) => {
-      r := collect_func_refs_into(lhs, refs, index)
-      collect_func_refs_into(rhs, r, index)
-    },
-    .UnOp(_, operand) => collect_func_refs_into(operand, refs, index),
-    .Call(callee, args) => {
-      r := collect_func_refs_into(callee, refs, index)
-      collect_func_refs_list(args, r, index)
-    },
-    .ContractCall(_, method_name, receiver, args) => {
-      r := contract_call_refs(method_name, receiver.ty, index).fold(
-        refs,
-        fn(out, id) { out.append(id) },
-      )
-      r = collect_func_refs_into(receiver, r, index)
-      collect_func_refs_list(args, r, index)
-    },
-    .MakeClosure(func_id, _) => refs.append(func_id.id),
-    .If(cond_e, then_br, else_br) => {
-      r := collect_func_refs_into(cond_e, refs, index)
-      r = collect_func_refs_into(then_br, r, index)
-      collect_func_refs_into(else_br, r, index)
-    },
-    .Match(scrutinee, arms) => arms.fold(
-      collect_func_refs_into(scrutinee, refs, index),
-      fn(r, arm) { collect_func_refs_into(arm.body, r, index) },
-    ),
-    .Loop(body) => collect_func_refs_into(body, refs, index),
-    .Break(val) => case val {
-      .Some(v) => collect_func_refs_into(v, refs, index),
-      .None => refs,
-    },
-    .Continue => refs,
-    .Return(val) => case val {
-      .Some(v) => collect_func_refs_into(v, refs, index),
-      .None => refs,
-    },
-    .Defer(body) => collect_func_refs_into(body, refs, index),
-    .Record(_, fields) => fields.fold(
-      refs,
-      fn(r, fi) { collect_func_refs_into(fi.value, r, index) },
-    ),
-    .RecordGet(rec, _) => collect_func_refs_into(rec, refs, index),
-    .RecordUpdate(rec, _, value) => {
-      r := collect_func_refs_into(rec, refs, index)
-      collect_func_refs_into(value, r, index)
-    },
-    .Variant(_, _, args) => collect_func_refs_list(args, refs, index),
-    .ArrayLit(elems) => collect_func_refs_list(elems, refs, index),
-    .Index(arr, idx) => {
-      r := collect_func_refs_into(arr, refs, index)
-      collect_func_refs_into(idx, r, index)
-    },
+  for stack.len() > 0 {
+    cur := stack[stack.len() - 1]
+    stack = .drop_last()
+
+    case cur.kind {
+      .LitInt(_) => {},
+      .LitFloat(_) => {},
+      .LitBool(_) => {},
+      .LitStr(_) => {},
+      .LitVoid => {},
+      .Local(_) => {},
+      .GlobalLocal(_) => {},
+      .GlobalFunc(id) => {
+        refs = .append(id.id)
+      },
+      .Let(_, value, body) => {
+        stack = push_expr(stack, body)
+        stack = push_expr(stack, value)
+      },
+      .Assign(_, value) => {
+        stack = push_expr(stack, value)
+      },
+      .GlobalSet(_, value) => {
+        stack = push_expr(stack, value)
+      },
+      .BinOp(_, lhs, rhs) => {
+        stack = push_expr(stack, rhs)
+        stack = push_expr(stack, lhs)
+      },
+      .UnOp(_, operand) => {
+        stack = push_expr(stack, operand)
+      },
+      .Call(callee, args) => {
+        stack = push_exprs_reverse(stack, args)
+        stack = push_expr(stack, callee)
+      },
+      .ContractCall(_, method_name, receiver, args) => {
+        refs = contract_call_refs(method_name, receiver.ty, index).fold(
+          refs,
+          fn(out, id) { out.append(id) },
+        )
+        stack = push_exprs_reverse(stack, args)
+        stack = push_expr(stack, receiver)
+      },
+      .MakeClosure(func_id, _) => {
+        refs = .append(func_id.id)
+      },
+      .If(cond_e, then_br, else_br) => {
+        stack = push_expr(stack, else_br)
+        stack = push_expr(stack, then_br)
+        stack = push_expr(stack, cond_e)
+      },
+      .Match(scrutinee, arms) => {
+        i := arms.len() - 1
+        for i >= 0 {
+          stack = push_expr(stack, arms[i].body)
+          i = i - 1
+        }
+        stack = push_expr(stack, scrutinee)
+      },
+      .Loop(body) => {
+        stack = push_expr(stack, body)
+      },
+      .Break(val) => case val {
+        .Some(v) => stack = push_expr(stack, v),
+        .None => {},
+      },
+      .Continue => {},
+      .Return(val) => case val {
+        .Some(v) => stack = push_expr(stack, v),
+        .None => {},
+      },
+      .Defer(body) => {
+        stack = push_expr(stack, body)
+      },
+      .Record(_, fields) => {
+        i := fields.len() - 1
+        for i >= 0 {
+          stack = push_expr(stack, fields[i].value)
+          i = i - 1
+        }
+      },
+      .RecordGet(rec, _) => {
+        stack = push_expr(stack, rec)
+      },
+      .RecordUpdate(rec, _, value) => {
+        stack = push_expr(stack, value)
+        stack = push_expr(stack, rec)
+      },
+      .Variant(_, _, args) => {
+        stack = push_exprs_reverse(stack, args)
+      },
+      .ArrayLit(elems) => {
+        stack = push_exprs_reverse(stack, elems)
+      },
+      .Index(arr, idx) => {
+        stack = push_expr(stack, idx)
+        stack = push_expr(stack, arr)
+      },
+    }
   }
+
+  refs
 }
 
-fn collect_func_refs_list(exprs: Vector<CoreExpr>, refs: Vector<Int>, index: ReachabilityIndex) Vector<
-  Int,
-> {
-  exprs.fold(refs, fn(r, e) { collect_func_refs_into(e, r, index) })
+fn push_expr(stack: Vector<CoreExpr>, expr: CoreExpr) Vector<CoreExpr> {
+  stack.append(expr)
+}
+
+fn push_exprs_reverse(stack: Vector<CoreExpr>, exprs: Vector<CoreExpr>) Vector<CoreExpr> {
+  out := stack
+  i := exprs.len() - 1
+
+  for i >= 0 {
+    out = push_expr(out, exprs[i])
+    i = i - 1
+  }
+
+  out
 }

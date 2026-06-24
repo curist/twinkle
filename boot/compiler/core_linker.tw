@@ -19,6 +19,14 @@ use lib.source.span.{Span}
 
 use .core_linker.dce.{build_reachability_index, collect_func_refs_indexed, compute_reachable}
 
+type RemapTypeLetFrame = .{ local: LocalId, value: CoreExpr, ty: MonoType, span: Span }
+
+type RemapTypeIfFrame = .{ condition: CoreExpr, then_expr: CoreExpr, ty: MonoType, span: Span }
+
+type RemapLetFrame = .{ local: LocalId, value: CoreExpr, ty: MonoType, span: Span }
+
+type RemapIfFrame = .{ condition: CoreExpr, then_expr: CoreExpr, ty: MonoType, span: Span }
+
 fn is_builtin_method_type(type_name: String) Bool {
   type_name == "Int"
     or type_name == "Float"
@@ -588,11 +596,7 @@ fn remap_pattern_types(pattern: CorePattern, type_remap: Dict<Int, TypeId>) Core
 
 fn remap_expr_types(expr: CoreExpr, type_remap: Dict<Int, TypeId>) CoreExpr {
   new_kind: CoreExprKind = case expr.kind {
-    .Let(local, value, body) => .Let(
-      local,
-      remap_expr_types(value, type_remap),
-      remap_expr_types(body, type_remap),
-    ),
+    .Let(_, _, _) => remap_let_expr_types(expr, type_remap).kind,
     .Assign(local, value) => .Assign(local, remap_expr_types(value, type_remap)),
     .GlobalSet(gid, value) => .GlobalSet(gid, remap_expr_types(value, type_remap)),
     .BinOp(op, lhs, rhs) => .BinOp(
@@ -611,11 +615,7 @@ fn remap_expr_types(expr: CoreExpr, type_remap: Dict<Int, TypeId>) CoreExpr {
       remap_expr_types(receiver, type_remap),
       remap_expr_types_list(args, type_remap),
     ),
-    .If(cond_e, then_br, else_br) => .If(
-      remap_expr_types(cond_e, type_remap),
-      remap_expr_types(then_br, type_remap),
-      remap_expr_types(else_br, type_remap),
-    ),
+    .If(_, _, _) => remap_if_expr_types(expr, type_remap).kind,
     .Match(scrutinee, arms) => {
       new_arms := collect arm in arms {
         MatchArm.{
@@ -663,6 +663,78 @@ fn remap_expr_types_list(exprs: Vector<CoreExpr>, type_remap: Dict<Int, TypeId>)
   collect expr in exprs {
     remap_expr_types(expr, type_remap)
   }
+}
+
+fn remap_let_expr_types(expr: CoreExpr, type_remap: Dict<Int, TypeId>) CoreExpr {
+  frames: Vector<RemapTypeLetFrame> = []
+  cur_expr := expr
+  done := false
+
+  for !done {
+    case cur_expr.kind {
+      .Let(local, value, body) => {
+        frames = .append(
+          .{
+            local,
+            value: remap_expr_types(value, type_remap),
+            ty: remap_mono_type(cur_expr.ty, type_remap),
+            span: cur_expr.span,
+          },
+        )
+        cur_expr = body
+      },
+      _ => done = true,
+    }
+  }
+
+  result := remap_expr_types(cur_expr, type_remap)
+  i := frames.len() - 1
+
+  for i >= 0 {
+    frame := frames[i]
+    result = .{ kind: .Let(frame.local, frame.value, result), ty: frame.ty, span: frame.span }
+    i = i - 1
+  }
+
+  result
+}
+
+fn remap_if_expr_types(expr: CoreExpr, type_remap: Dict<Int, TypeId>) CoreExpr {
+  frames: Vector<RemapTypeIfFrame> = []
+  cur_expr := expr
+  done := false
+
+  for !done {
+    case cur_expr.kind {
+      .If(cond_e, then_br, else_br) => {
+        frames = .append(
+          .{
+            condition: remap_expr_types(cond_e, type_remap),
+            then_expr: remap_expr_types(then_br, type_remap),
+            ty: remap_mono_type(cur_expr.ty, type_remap),
+            span: cur_expr.span,
+          },
+        )
+        cur_expr = else_br
+      },
+      _ => done = true,
+    }
+  }
+
+  result := remap_expr_types(cur_expr, type_remap)
+  i := frames.len() - 1
+
+  for i >= 0 {
+    frame := frames[i]
+    result = .{
+      kind: .If(frame.condition, frame.then_expr, result),
+      ty: frame.ty,
+      span: frame.span,
+    }
+    i = i - 1
+  }
+
+  result
 }
 
 fn remap_type_param_bounds(params: Vector<ResolvedTypeParam>, type_remap: Dict<Int, TypeId>) Vector<
@@ -734,11 +806,7 @@ fn remap_expr(
     .Local(_) => expr.kind,
     .GlobalLocal(id) => .GlobalLocal(remap_global_id(id, global_remap)),
     .GlobalFunc(id) => .GlobalFunc(remap_func_id(id, remap)),
-    .Let(local, value, body) => .Let(
-      local,
-      remap_expr(value, remap, global_remap, remap_assign_targets),
-      remap_expr(body, remap, global_remap, remap_assign_targets),
-    ),
+    .Let(_, _, _) => remap_let_expr(expr, remap, global_remap, remap_assign_targets).kind,
     .Assign(local, value) => .Assign(
       if remap_assign_targets {
         remap_local_id(local, global_remap)
@@ -773,11 +841,7 @@ fn remap_expr(
       }
       .MakeClosure(remap_func_id(func_id, remap), remapped_captures)
     },
-    .If(cond_e, then_br, else_br) => .If(
-      remap_expr(cond_e, remap, global_remap, remap_assign_targets),
-      remap_expr(then_br, remap, global_remap, remap_assign_targets),
-      remap_expr(else_br, remap, global_remap, remap_assign_targets),
-    ),
+    .If(_, _, _) => remap_if_expr(expr, remap, global_remap, remap_assign_targets).kind,
     .Match(scrutinee, arms) => {
       new_arms := collect arm in arms {
         MatchArm.{
@@ -840,6 +904,88 @@ fn remap_exprs(
   collect e in exprs {
     remap_expr(e, remap, global_remap, remap_assign_targets)
   }
+}
+
+fn remap_let_expr(
+  expr: CoreExpr,
+  remap: Dict<Int, Int>,
+  global_remap: Dict<Int, Int>,
+  remap_assign_targets: Bool,
+) CoreExpr {
+  frames: Vector<RemapLetFrame> = []
+  cur_expr := expr
+  done := false
+
+  for !done {
+    case cur_expr.kind {
+      .Let(local, value, body) => {
+        frames = .append(
+          .{
+            local,
+            value: remap_expr(value, remap, global_remap, remap_assign_targets),
+            ty: cur_expr.ty,
+            span: cur_expr.span,
+          },
+        )
+        cur_expr = body
+      },
+      _ => done = true,
+    }
+  }
+
+  result := remap_expr(cur_expr, remap, global_remap, remap_assign_targets)
+  i := frames.len() - 1
+
+  for i >= 0 {
+    frame := frames[i]
+    result = .{ kind: .Let(frame.local, frame.value, result), ty: frame.ty, span: frame.span }
+    i = i - 1
+  }
+
+  result
+}
+
+fn remap_if_expr(
+  expr: CoreExpr,
+  remap: Dict<Int, Int>,
+  global_remap: Dict<Int, Int>,
+  remap_assign_targets: Bool,
+) CoreExpr {
+  frames: Vector<RemapIfFrame> = []
+  cur_expr := expr
+  done := false
+
+  for !done {
+    case cur_expr.kind {
+      .If(cond_e, then_br, else_br) => {
+        frames = .append(
+          .{
+            condition: remap_expr(cond_e, remap, global_remap, remap_assign_targets),
+            then_expr: remap_expr(then_br, remap, global_remap, remap_assign_targets),
+            ty: cur_expr.ty,
+            span: cur_expr.span,
+          },
+        )
+        cur_expr = else_br
+      },
+      _ => done = true,
+    }
+  }
+
+  result := remap_expr(cur_expr, remap, global_remap, remap_assign_targets)
+  i := frames.len() - 1
+
+  for i >= 0 {
+    frame := frames[i]
+    result = .{
+      kind: .If(frame.condition, frame.then_expr, result),
+      ty: frame.ty,
+      span: frame.span,
+    }
+    i = i - 1
+  }
+
+  result
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
