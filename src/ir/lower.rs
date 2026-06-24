@@ -2250,26 +2250,7 @@ impl Lowerer {
         result_ty: MonoType,
         span: Span,
     ) -> CoreExpr {
-        if matches!(base_expr.ty, MonoType::String) {
-            // String indexing returns Byte at byte offset (traps on OOB)
-            CoreExpr {
-                kind: CoreExprKind::Index {
-                    base: Box::new(base_expr),
-                    index: Box::new(index_expr),
-                },
-                ty: MonoType::Byte,
-                span,
-            }
-        } else {
-            CoreExpr {
-                kind: CoreExprKind::Index {
-                    base: Box::new(base_expr),
-                    index: Box::new(index_expr),
-                },
-                ty: result_ty,
-                span,
-            }
-        }
+        CoreExpr::index_read(base_expr, index_expr, result_ty, span)
     }
 
     fn lower_expr_kind(

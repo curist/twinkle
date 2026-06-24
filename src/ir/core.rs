@@ -176,6 +176,29 @@ pub enum CoreExprKind {
     },
 }
 
+impl CoreExpr {
+    /// Build an unchecked positional read (`base[index]`) — the single Core IR
+    /// shape for `IndexRead`. Used both when lowering source `xs[i]` / `xs.at(i)`
+    /// and when the monomorphizer resolves an `IndexRead.at` contract call on a
+    /// builtin container. Indexing a `String` yields a `Byte`; every other
+    /// container yields `elem_ty` (the element type recovered by the type checker).
+    pub fn index_read(base: CoreExpr, index: CoreExpr, elem_ty: MonoType, span: Span) -> CoreExpr {
+        let ty = if matches!(base.ty, MonoType::String) {
+            MonoType::Byte
+        } else {
+            elem_ty
+        };
+        CoreExpr {
+            kind: CoreExprKind::Index {
+                base: Box::new(base),
+                index: Box::new(index),
+            },
+            ty,
+            span,
+        }
+    }
+}
+
 /// Match arm in Core IR
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {

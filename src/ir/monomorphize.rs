@@ -786,6 +786,27 @@ fn rewrite_calls_in_kind(
                     rewrite_calls_in_expr(a, module, spec_map, generic_funcs, prelude_sort_fid)
                 })
                 .collect();
+
+            // `IndexRead.at` on a builtin container (`Vector`/`String`) is the
+            // unchecked positional read. The prelude satisfier `Vector.at` is
+            // literally `xs[index]`, so it lowers to the same primitive `Index`
+            // node — and, unlike a user-type satisfier such as `View.at`, no
+            // standalone function for it is linked into the module to resolve to.
+            if contract == "IndexRead"
+                && method == "at"
+                && matches!(new_receiver.ty, MonoType::Vector(_) | MonoType::String)
+                && new_args.len() == 1
+            {
+                let mut new_args = new_args;
+                return CoreExpr::index_read(
+                    new_receiver,
+                    new_args.remove(0),
+                    parent.ty.clone(),
+                    parent.span,
+                )
+                .kind;
+            }
+
             let target =
                 resolve_builtin_contract_method(module, &new_receiver.ty, contract, method);
             if let Some(mut fid) = target {

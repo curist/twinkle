@@ -2034,12 +2034,99 @@ impl TypeChecker {
         Ok(())
     }
 
+    /// Recover the element type `E` for a concrete container that satisfies one of
+    /// the parameterized container contracts (`IndexRead<E>` / `IndexWrite<E>` /
+    /// `IntoIterator<E>`). Builtins resolve directly (`Vector<T>` → `T`, `String` →
+    /// `Byte`); a satisfier record like `View<C>` resolves through its inherent
+    /// `at` method, whose return type is the element. Returns `None` when the
+    /// container type is not yet concrete (e.g. an unsolved metavar).
+    fn container_contract_elem(&mut self, concrete: &MonoType) -> Option<MonoType> {
+        match concrete {
+            MonoType::Vector(elem) => Some((**elem).clone()),
+            MonoType::String => Some(MonoType::Byte),
+            MonoType::Named { .. } => {
+                let type_id = method_receiver_type_id(concrete)?;
+                let method_info = self.type_env.get_method(type_id, "at").cloned()?;
+                let sig = method_info
+                    .signature
+                    .or_else(|| self.value_env.get_function(&method_info.func_name).cloned())?;
+                let full_fn_ty = MonoType::Function {
+                    params: sig.params.clone(),
+                    ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
+                };
+                let (inst_ty, _) = self.instantiate_vars(&sig.type_params, &full_fn_ty);
+                let (inst_params, inst_ret) = match inst_ty {
+                    MonoType::Function { params, ret } => (params, *ret),
+                    _ => return None,
+                };
+                let recv = inst_params.first()?;
+                let span = Span::new(crate::syntax::span::FileId(0), 0, 0);
+                let errors_before = self.errors.len();
+                let ok = self.unify(concrete, recv, span).is_ok();
+                self.errors.truncate(errors_before);
+                if !ok {
+                    return None;
+                }
+                let elem = self.zonk(&inst_ret);
+                if matches!(elem, MonoType::MetaVar(_)) {
+                    None
+                } else {
+                    Some(elem)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// For a parameterized container bound `C: IndexRead<E>` (or `IndexWrite` /
+    /// `IntoIterator`), recover `E` once `C` is concrete and unify it with the
+    /// element metavar. `E` appears only in the bound — never in a value parameter
+    /// — so without this its metavar stays unsolved (e.g. `view.at` returning an
+    /// unresolved type). This is the contract's `Self -> Elem` functional
+    /// dependency, mirrored from the boot monomorphizer.
+    fn recover_container_bound_elems(
+        &mut self,
+        type_param_bounds: &HashMap<String, Vec<String>>,
+        var_to_meta: &[(String, MonoType)],
+    ) {
+        const PARAM_CONTRACTS: [&str; 3] = ["IndexRead<", "IndexWrite<", "IntoIterator<"];
+        for (name, meta_ty) in var_to_meta {
+            let Some(bounds) = type_param_bounds.get(name) else {
+                continue;
+            };
+            for bound in bounds {
+                let Some(inner) = PARAM_CONTRACTS
+                    .iter()
+                    .find_map(|p| bound.strip_prefix(p))
+                    .and_then(|rest| rest.strip_suffix('>'))
+                else {
+                    continue;
+                };
+                // The element argument is itself a type param of this signature
+                // (e.g. `E`); locate its metavar so we can solve it.
+                let Some((_, elem_meta)) = var_to_meta.iter().find(|(n, _)| n == inner.trim())
+                else {
+                    continue;
+                };
+                if !matches!(self.zonk(elem_meta), MonoType::MetaVar(_)) {
+                    continue;
+                }
+                let concrete = self.zonk(meta_ty);
+                if let Some(elem) = self.container_contract_elem(&concrete) {
+                    let span = Span::new(crate::syntax::span::FileId(0), 0, 0);
+                    let _ = self.unify(elem_meta, &elem, span);
+                }
+            }
+        }
+    }
+
     fn check_instantiated_contract_bounds(
         &mut self,
         sig: &crate::types::ty::FunctionSignature,
         var_to_meta: &[(String, MonoType)],
         span: Span,
     ) -> Result<(), ()> {
+        self.recover_container_bound_elems(&sig.type_param_bounds, var_to_meta);
         for (name, meta_ty) in var_to_meta {
             let bounds = sig.type_param_bounds.get(name);
             if bounds.map(|b| b.contains(&"Stringify".to_string())) == Some(true) {

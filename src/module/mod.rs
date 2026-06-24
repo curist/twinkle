@@ -624,6 +624,17 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     let ast = parsed.ast.clone();
     let file_registry = parsed.file_registry.clone();
 
+    // The prelude is globally available to every module, including stdlib
+    // (`@std.*`) modules — `@std.view`, for instance, calls `Int.clamp`. Stdlib
+    // modules cannot take the prelude as a dependency (the prelude itself imports
+    // stdlib, e.g. `prelude/vector.tw` uses `@std.view`, so a dependency edge would
+    // cycle). Instead, register the prelude method signatures into the base env at
+    // the root, before any per-module snapshot is captured, so they are visible
+    // everywhere without a dependency edge.
+    if importing_stack.is_empty() {
+        ensure_prelude_method_signatures_registered(state, adapter)?;
+    }
+
     // Compile dependencies from an explicit plan:
     // source-order imports, then deterministic prelude auto-imports.
     let dep_plan = plan_module_dependencies(file_path, &canonical, &ast, adapter)?;

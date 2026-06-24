@@ -225,9 +225,15 @@ pub fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {
 }
 
 #[test]
-fn compile_entry_from_source_map_does_not_leak_prelude_into_stdlib_by_import_order() {
+fn compile_entry_from_source_map_exposes_prelude_to_stdlib_regardless_of_import_order() {
     reset_global_cache();
 
+    // The prelude is globally available, so stdlib (`@std.*`) modules may call
+    // prelude methods (e.g. the real `@std.view` uses `Int.clamp`). Crucially this
+    // is deterministic: the prelude is registered into the base env at the root,
+    // not accidentally leaked through whichever module compiled first, so both
+    // import orders below behave identically. (See the `__prelude_*` aliases stay
+    // private — that is covered separately.)
     let project_root = PathBuf::from("/virtual/prelude_isolation");
     let stdlib_root = project_root.join("stdlib");
     let prelude_root = project_root.join("prelude");
@@ -251,7 +257,7 @@ pub fn ok() Int {
     shared_sources.insert(
         stdlib_foo,
         r#"
-pub fn broken() Int {
+pub fn uses_prelude() Int {
   xs := [1, 2]
   ys := xs.map(fn(x: Int) Int { x + 1 })
   ys.len()
@@ -274,31 +280,25 @@ pub fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {
 use user
 use @std.foo
 
-println("${foo.broken()}")
+println("${foo.uses_prelude()}")
 "#,
         r#"
 use @std.foo
 use user
 
-println("${foo.broken()}")
+println("${foo.uses_prelude()}")
 "#,
     ] {
         let mut sources = shared_sources.clone();
         sources.insert(entry.clone(), main_src.to_string());
 
-        let err = twinkle::module::compile_entry_from_source_map(
+        twinkle::module::compile_entry_from_source_map(
             &entry,
             &sources,
             &project_root,
             &stdlib_root,
         )
-        .expect_err("stdlib module should not see auto-prelude methods");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("Vector has no method 'map'"),
-            "unexpected error:\n{}",
-            msg
-        );
+        .expect("stdlib module should see auto-prelude methods regardless of import order");
     }
 }
 
