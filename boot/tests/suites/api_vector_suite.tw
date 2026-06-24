@@ -530,6 +530,20 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "slice(0, n) right-trim across the tail boundary",
+      fn() {
+        // build_seq(2000) is a strict radix vector: trie_count = 1984, tail = 16.
+        // Exercises both right-trim fast-path branches plus the boundary itself.
+        big := build_seq(2000)
+        try expect_range(big.slice(0, 50), 0, 50)
+        try expect_range(big.slice(0, 1024), 0, 1024)
+        try expect_range(big.slice(0, 1984), 0, 1984)
+        try expect_range(big.slice(0, 1985), 0, 1985)
+        try expect_range(big.slice(0, 1999), 0, 1999)
+        .Ok({})
+      },
+    )
+    .test(
       "slice left-drop keeps the root/tail invariant across size boundaries",
       fn() {
         // slice(start, len) is the left-drop family (drop_first / drop). For

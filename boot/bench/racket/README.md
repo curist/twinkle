@@ -60,4 +60,10 @@ build phase outside the timed region, same sink to defeat dead-code elimination.
   left-drop fast path to `slice` (trim only the left spine, share the tail) the
   gap is ~2×, which is essentially the `get_regular` runtime baseline — i.e. the
   algorithmic deficit is gone. The fast path covers the `end == len` family
-  (`drop_first`, `drop`, `slice(k, len)`); `take` (a right-trim) is unchanged.
+  (`drop_first`, `drop`, `slice(k, len)`).
+- **take (`slice(0, n)` right-trim):** had the same fold tax (~14× behind
+  `treelist-take`). A right-trim fast path (`start == 0`: truncate the tail when
+  `end` reaches it, else trim the trie right and drop the tail — never fold) now
+  makes `take` ~1.45× *faster* than `treelist-take` and on par with Twinkle's
+  `drop_last` op. Mid-range one-shot `slice(a, b)` (both ends interior) still
+  uses the general fold path.
