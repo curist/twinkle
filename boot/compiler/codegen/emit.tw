@@ -67,14 +67,15 @@ use compiler.type_util.{subst_type_params}
 // Map a MonoType to its Wasm ValType at an extern import boundary.
 // Vector<Byte> and Vector<String> cross the boundary as flat $Array (not $PVec);
 // the rt.arr conversions at the call site perform the actual translation.
-// Result<Vector<Byte>, String> is the read_file shape: the host returns a raw
-// $Array and rt_arr__from_read_file_result wraps it into the Result, so we
-// declare the import as returning $Array.
+// Result<Vector<Byte>, String> is the read_file shape: the host returns the
+// Result as a Variant (with an $Array payload) and rt_arr__from_read_file_result
+// (Variant -> Variant) rewrites the payload to a $PVec, so the import returns a
+// Variant.
 fn extern_boundary_val_type(ty: MonoType, env: ResolvedEnv) ValType {
   case ty {
     .Vector(.Byte) => .Ref(true, .Named("rt_types__Array")),
     .Vector(.String) => .Ref(true, .Named("rt_types__Array")),
-    .Result(.Vector(.Byte), .String) => .Ref(true, .Named("rt_types__Array")),
+    .Result(.Vector(.Byte), .String) => .Ref(true, .Named("rt_types__Variant")),
     _ => val_type_of_mono(ty, env),
   }
 }

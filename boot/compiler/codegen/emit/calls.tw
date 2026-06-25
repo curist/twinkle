@@ -6,8 +6,8 @@ use compiler.codegen.emit.coercions.{adapt_runtime_result, emit_coerce_stack}
 use compiler.codegen.emit.context.{EmitCtx, lookup_func_sym}
 use compiler.codegen.emit.defaults.{emit_default_value}
 use compiler.codegen.emit.runtime_abi.{
-  emit_builder_arg_shim, emit_host_arg_shim, emit_host_result_shim, is_builder_buffer_arg,
-  is_builder_seed, is_builder_void_push, is_host_vector_arg, is_typed_vec_freeze,
+  emit_builder_arg_shim, emit_host_arg_shim, emit_host_result_shim, host_read_file_result_helper_sym,
+  is_builder_buffer_arg, is_builder_seed, is_builder_void_push, is_host_vector_arg, is_typed_vec_freeze,
 }
 use compiler.codegen.wasm_ir.{AbiContract, Instr, ValType}
 use compiler.codegen.wasm_layout.{val_type_of_mono}
@@ -140,9 +140,13 @@ fn emit_direct_call(
         // The extern import returns (ref null $Array); rt_arr__from_array expects
         // non-null, so insert ref.as_non_null to satisfy the type system.
         .ConvFromArray => out.append(.RefAsNonNull).append(.Call("rt_arr__from_array")),
+        // read_file: rt_arr__from_read_file_result rewrites the $Array payload to
+        // a $PVec (still a Variant), then host_read_file_result_helper builds the
+        // typed Result<Vector<Byte>, String> struct. Mirrors the magic path.
         .ConvFromReadFileResult => out
           .append(.RefCast(true, .Named("rt_types__Variant")))
-          .append(.Call("rt_arr__from_read_file_result")),
+          .append(.Call("rt_arr__from_read_file_result"))
+          .append(.Call(host_read_file_result_helper_sym)),
         .ConvNone => out,
       }
 

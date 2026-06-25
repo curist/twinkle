@@ -287,16 +287,16 @@ mod tests {
             "missing suspend_yield import"
         );
         assert!(
-            wat.contains(r#"(import "host" "sleep""#),
-            "missing host.sleep import"
+            wat.contains(r#"(import "twinkle_runtime" "sleep""#),
+            "missing twinkle_runtime.sleep import"
         );
         assert!(
-            wat.contains(r#"(import "host" "stdin_read_chunk""#),
-            "missing host.stdin_read_chunk import"
+            wat.contains(r#"(import "twinkle_runtime" "stdin_read_chunk""#),
+            "missing twinkle_runtime.stdin_read_chunk import"
         );
         assert!(
             !wat.contains(r#"(import "task" "suspend_sleep""#),
-            "sleep should import host.sleep, not task.suspend_sleep"
+            "sleep should import twinkle_runtime.sleep, not task.suspend_sleep"
         );
         assert!(
             !wat.contains(r#"(import "task" "suspend_read_stdin""#),

@@ -903,14 +903,21 @@ fn is_extern_readfile_return(ty: &MonoType) -> bool {
 }
 
 /// Map a param/result MonoType to the Wasm ValType used at the extern import
-/// declaration boundary. Vector<Byte>, Vector<String>, and
-/// Result<Vector<Byte>, String> all cross as flat $Array; the call site inserts
-/// rt.arr conversions.
+/// declaration boundary. Vector<Byte> and Vector<String> cross as flat $Array;
+/// the read_file shape (Result<Vector<Byte>, String>) crosses as a Variant
+/// (the host returns the Result with an $Array payload, and
+/// rt_arr__from_read_file_result rewrites the payload to a $PVec). The call site
+/// inserts the rt.arr conversions.
 fn extern_boundary_valtype(ty: &MonoType, type_env: &TypeEnv) -> ValType {
-    if is_extern_vector_boundary(ty) || is_extern_readfile_return(ty) {
+    if is_extern_vector_boundary(ty) {
         ValType::Ref {
             nullable: true,
             heap: HeapType::Named(T_ARRAY.to_string()),
+        }
+    } else if is_extern_readfile_return(ty) {
+        ValType::Ref {
+            nullable: true,
+            heap: HeapType::Named(T_VARIANT.to_string()),
         }
     } else {
         mono_to_valtype(ty, type_env)

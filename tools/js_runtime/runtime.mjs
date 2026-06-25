@@ -550,6 +550,20 @@ function makeHostImports(b, runtime, bridgeBytes) {
     read_buffer_len_raw: h.read_buffer_len_raw,
     read_buffer_raw: h.read_buffer_raw,
     write_buffer_raw: h.write_buffer_raw,
+    // Vector-trafficking fns. The extern import signatures declare $Array
+    // params/results (read_file: a Variant), which is exactly what these host
+    // fns already accept/return, so they alias the raw host impls directly. The
+    // async ones (stdin reads, run_wasm) are re-pointed at the suspending
+    // versions in the JSPI block above.
+    read_file: h.read_file,
+    write_bytes: h.write_bytes,
+    list_dir: h.list_dir,
+    args: h.args,
+    env: h.env,
+    stdout_write_bytes: h.stdout_write_bytes,
+    stdin_read_chunk: h.stdin_read_chunk,
+    stdin_read_timeout: h.stdin_read_timeout,
+    run_wasm: h.run_wasm,
   };
 
   return result;
