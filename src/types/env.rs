@@ -1239,6 +1239,52 @@ impl ValueEnv {
                 ret: Box::new(MonoType::Void),
             },
         );
+        env.builtins.insert(
+            "__buf_alloc".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Int],
+                ret: Box::new(MonoType::Int),
+            },
+        );
+        env.builtins.insert(
+            "__buf_free".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Int],
+                ret: Box::new(MonoType::Void),
+            },
+        );
+        for name in ["__buf_load_u8", "__buf_load_u32", "__buf_load_i64"] {
+            env.builtins.insert(
+                name.to_string(),
+                MonoType::Function {
+                    params: vec![MonoType::Int, MonoType::Int],
+                    ret: Box::new(MonoType::Int),
+                },
+            );
+        }
+        for name in ["__buf_store_u8", "__buf_store_u32", "__buf_store_i64"] {
+            env.builtins.insert(
+                name.to_string(),
+                MonoType::Function {
+                    params: vec![MonoType::Int, MonoType::Int, MonoType::Int],
+                    ret: Box::new(MonoType::Void),
+                },
+            );
+        }
+        env.builtins.insert(
+            "__buf_load_f64".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Int, MonoType::Int],
+                ret: Box::new(MonoType::Float),
+            },
+        );
+        env.builtins.insert(
+            "__buf_store_f64".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Int, MonoType::Int, MonoType::Float],
+                ret: Box::new(MonoType::Void),
+            },
+        );
 
         // Note: len() is intentionally NOT pre-registered as a builtin here.
         // It will be handled specially in check.rs::synth_call() to support both

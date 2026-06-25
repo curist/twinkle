@@ -1,6 +1,11 @@
+use @std.buffer
 use @std.buffer.{Buffer}
 
-extern host fn write_buffer_raw(path: String, ptr: Int, len: Int) Void
+extern host {
+  fn read_buffer_len_raw(path: String) Int
+  fn read_buffer_raw(path: String, ptr: Int, len: Int) Int
+  fn write_buffer_raw(path: String, ptr: Int, len: Int) Void
+}
 
 /// File system error type.
 pub type FsError = { NotFound, PermissionDenied, InvalidUtf8, Other(String) }
@@ -27,6 +32,25 @@ pub fn read_text(path: String) String!FsError {
     .Some(text) => .Ok(text),
     .None => .Err(FsError.InvalidUtf8),
   }
+}
+
+/// Read raw file bytes directly into a linear-memory Buffer.
+pub fn read_buffer(path: String) Buffer!FsError {
+  size := host.read_buffer_len_raw(path)
+
+  if size < 0 {
+    return .Err(FsError.NotFound)
+  }
+
+  buf := buffer.new(size)
+  read := host.read_buffer_raw(path, buf.ptr, buf.size)
+
+  if read != size {
+    buf.free()
+    return .Err(FsError.Other("read_buffer failed for '${path}'"))
+  }
+
+  .Ok(buf)
 }
 
 /// Write a string to a file.

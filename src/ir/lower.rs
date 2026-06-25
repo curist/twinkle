@@ -170,6 +170,18 @@ pub mod prelude {
     pub const HOST_STDIN_EOF: FuncId = FuncId(1038); // () -> Bool
     pub const HOST_STDOUT_WRITE_BYTES: FuncId = FuncId(1033); // (bytes: Vector<Byte>) -> Void
 
+    // Linear-memory Buffer host shims used by stage0 while boot owns rt.buf.
+    pub const BUF_ALLOC: FuncId = FuncId(1112); // (nbytes: Int) -> Int
+    pub const BUF_FREE: FuncId = FuncId(1113); // (ptr: Int) -> Void
+    pub const BUF_LOAD_U8: FuncId = FuncId(1114); // (base: Int, i: Int) -> Int
+    pub const BUF_STORE_U8: FuncId = FuncId(1115); // (base: Int, i: Int, v: Int) -> Void
+    pub const BUF_LOAD_U32: FuncId = FuncId(1116); // (base: Int, i: Int) -> Int
+    pub const BUF_STORE_U32: FuncId = FuncId(1117); // (base: Int, i: Int, v: Int) -> Void
+    pub const BUF_LOAD_I64: FuncId = FuncId(1118); // (base: Int, i: Int) -> Int
+    pub const BUF_STORE_I64: FuncId = FuncId(1119); // (base: Int, i: Int, v: Int) -> Void
+    pub const BUF_LOAD_F64: FuncId = FuncId(1120); // (base: Int, i: Int) -> Float
+    pub const BUF_STORE_F64: FuncId = FuncId(1121); // (base: Int, i: Int, v: Float) -> Void
+
     // User functions start here
     pub const USER_FUNC_START: u32 = 41;
 

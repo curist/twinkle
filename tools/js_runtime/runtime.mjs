@@ -349,6 +349,18 @@ function write(stream, text) {
 }
 
 function makeHostImports(b, runtime, bridgeBytes) {
+  const ensureHostBuffer = (needed = 0) => {
+    const state = runtime.hostBuffer ??= { bytes: new Uint8Array(1024 * 1024), next: 8 };
+    if (needed <= state.bytes.length) return state;
+    let cap = state.bytes.length;
+    while (cap < needed) cap *= 2;
+    const bytes = new Uint8Array(cap);
+    bytes.set(state.bytes);
+    state.bytes = bytes;
+    return state;
+  };
+  const hostBufOffset = (ptr, off) => Number(ptr) + Number(off);
+
   return {
     host: {
       // --- I/O ---
@@ -418,15 +430,70 @@ function makeHostImports(b, runtime, bridgeBytes) {
         const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
         runtime.host.writeBytes(filePath, decodeByteArray(b, bytesRef));
       },
+      read_buffer_len_raw: (pathRef) => {
+        const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+        try {
+          return BigInt(runtime.host.readFile(filePath).length);
+        } catch {
+          return -1n;
+        }
+      },
+      read_buffer_raw: (pathRef, ptr, len) => {
+        const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+        try {
+          const bytes = runtime.host.readFile(filePath);
+          const start = Number(ptr);
+          const size = Number(len);
+          if (bytes.length > size) return -1n;
+          const memory = runtime.instance?.exports?.memory;
+          if (memory) {
+            new Uint8Array(memory.buffer, start, bytes.length).set(bytes);
+          } else {
+            ensureHostBuffer(start + bytes.length).bytes.set(bytes, start);
+          }
+          return BigInt(bytes.length);
+        } catch {
+          return -1n;
+        }
+      },
       write_buffer_raw: (pathRef, ptr, len) => {
         const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
-        const memory = runtime.instance?.exports?.memory;
-        if (!memory) {
-          throw new Error("host.write_buffer_raw requires the guest to export linear memory");
-        }
         const start = Number(ptr);
         const size = Number(len);
-        runtime.host.writeBytes(filePath, new Uint8Array(memory.buffer, start, size).slice());
+        const memory = runtime.instance?.exports?.memory;
+        if (memory) {
+          runtime.host.writeBytes(filePath, new Uint8Array(memory.buffer, start, size).slice());
+        } else {
+          const state = ensureHostBuffer(start + size);
+          runtime.host.writeBytes(filePath, state.bytes.slice(start, start + size));
+        }
+      },
+      buf_alloc: (nbytes) => {
+        const n = Number(nbytes);
+        if (n < 0) throw new Error("host.buf_alloc: negative size");
+        const size = (n + 7) & ~7;
+        const state = ensureHostBuffer();
+        const ptr = state.next;
+        state.next += size;
+        ensureHostBuffer(state.next);
+        return BigInt(ptr);
+      },
+      buf_free: (_ptr) => {},
+      buf_load_u8: (ptr, off) => BigInt(ensureHostBuffer(hostBufOffset(ptr, off) + 1).bytes[hostBufOffset(ptr, off)]),
+      buf_store_u8: (ptr, off, v) => {
+        ensureHostBuffer(hostBufOffset(ptr, off) + 1).bytes[hostBufOffset(ptr, off)] = Number(v) & 0xff;
+      },
+      buf_load_u32: (ptr, off) => BigInt(new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 4).bytes.buffer).getUint32(hostBufOffset(ptr, off), true)),
+      buf_store_u32: (ptr, off, v) => {
+        new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 4).bytes.buffer).setUint32(hostBufOffset(ptr, off), Number(v), true);
+      },
+      buf_load_i64: (ptr, off) => new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 8).bytes.buffer).getBigInt64(hostBufOffset(ptr, off), true),
+      buf_store_i64: (ptr, off, v) => {
+        new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 8).bytes.buffer).setBigInt64(hostBufOffset(ptr, off), BigInt(v), true);
+      },
+      buf_load_f64: (ptr, off) => new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 8).bytes.buffer).getFloat64(hostBufOffset(ptr, off), true),
+      buf_store_f64: (ptr, off, v) => {
+        new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 8).bytes.buffer).setFloat64(hostBufOffset(ptr, off), v, true);
       },
       stdin_read_chunk: (maxBytes) => makeByteArray(b, runtime.host.readStdin(maxBytes, 2147483647, runtime)),
       stdin_read_timeout: (maxBytes, timeoutMs) => makeByteArray(b, runtime.host.readStdin(maxBytes, timeoutMs, runtime)),

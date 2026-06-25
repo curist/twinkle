@@ -66,6 +66,27 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "fs.read_buffer reads a known file",
+      fn() {
+        result := fs.read_buffer("boot/tests/assert.tw")
+        try assert.is_ok(result)
+
+        case result {
+          .Ok(buf) => {
+            bytes := buf.to_bytes()
+            buf.free()
+            text := case String.from_utf8(bytes) {
+              .Some(s) => s,
+              .None => return assert.fail("read_buffer returned invalid utf8"),
+            }
+            try assert.str_contains(text, "pub fn ok")
+            .Ok({})
+          },
+          .Err(_) => assert.fail("unreachable"),
+        }
+      },
+    )
+    .test(
       "fs.read_text returns error for missing file",
       fn() {
         result := fs.read_text("__nonexistent_file_xyz__")

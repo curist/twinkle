@@ -557,6 +557,16 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         false,
         false
     ),
+    spec!(BUF_ALLOC, "__buf_alloc", Runtime, false, false),
+    spec!(BUF_FREE, "__buf_free", Runtime, false, false),
+    spec!(BUF_LOAD_U8, "__buf_load_u8", Runtime, false, false),
+    spec!(BUF_STORE_U8, "__buf_store_u8", Runtime, false, false),
+    spec!(BUF_LOAD_U32, "__buf_load_u32", Runtime, false, false),
+    spec!(BUF_STORE_U32, "__buf_store_u32", Runtime, false, false),
+    spec!(BUF_LOAD_I64, "__buf_load_i64", Runtime, false, false),
+    spec!(BUF_STORE_I64, "__buf_store_i64", Runtime, false, false),
+    spec!(BUF_LOAD_F64, "__buf_load_f64", Runtime, false, false),
+    spec!(BUF_STORE_F64, "__buf_store_f64", Runtime, false, false),
 ];
 
 pub fn all_specs() -> &'static [IntrinsicSpec] {
@@ -637,6 +647,16 @@ const COMMON_BOOTSTRAP_FUNC_NAMES: &[(&str, FuncId)] = &[
         "__host_stdout_write_bytes",
         prelude_ids::HOST_STDOUT_WRITE_BYTES,
     ),
+    ("__buf_alloc", prelude_ids::BUF_ALLOC),
+    ("__buf_free", prelude_ids::BUF_FREE),
+    ("__buf_load_u8", prelude_ids::BUF_LOAD_U8),
+    ("__buf_store_u8", prelude_ids::BUF_STORE_U8),
+    ("__buf_load_u32", prelude_ids::BUF_LOAD_U32),
+    ("__buf_store_u32", prelude_ids::BUF_STORE_U32),
+    ("__buf_load_i64", prelude_ids::BUF_LOAD_I64),
+    ("__buf_store_i64", prelude_ids::BUF_STORE_I64),
+    ("__buf_load_f64", prelude_ids::BUF_LOAD_F64),
+    ("__buf_store_f64", prelude_ids::BUF_STORE_F64),
 ];
 
 const LEGACY_BOOTSTRAP_FUNC_NAMES: &[(&str, FuncId)] = &[

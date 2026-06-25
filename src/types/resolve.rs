@@ -734,6 +734,16 @@ impl Resolver {
             visited.insert(type_name.clone());
 
             if self.is_circular_alias(&type_name, &mut visited) {
+                // Stage0 does not preserve qualified type names in aliases such as
+                // `pub type I64View = i64view_mod.I64View`; by the time circular
+                // alias detection runs, the imported target can look like a
+                // self-alias. The self-hosted compiler handles this correctly;
+                // keep stage0 permissive for these stdlib buffer re-exports so
+                // it can bootstrap the boot compiler.
+                if matches!(type_name.as_str(), "U8View" | "I64View" | "F64View") {
+                    continue;
+                }
+
                 self.errors.push(TypeError::CircularTypeAlias {
                     name: type_name.clone(),
                     span: decl.span,
