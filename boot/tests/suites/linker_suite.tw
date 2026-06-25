@@ -633,7 +633,7 @@ fn test_link_preserves_host_imports() Result<Void, String> {
     types: [],
     imports: [
       ImportDef.{
-        module: "host",
+        module: "twinkle_runtime",
         name: "print",
         as_sym: "host_print",
         params: [.Anyref],
@@ -660,8 +660,11 @@ fn test_link_preserves_host_imports() Result<Void, String> {
   }
   linked := try link_ok([m], .None)
 
-  // Host import should be preserved (but qualified)
-  try assert.ok(has_import(linked, "host", "print"), "host import should be preserved")
+  // Runtime import should be preserved (but qualified)
+  try assert.ok(
+    has_import(linked, "twinkle_runtime", "print"),
+    "twinkle_runtime import should be preserved",
+  )
   .Ok({})
 }
 

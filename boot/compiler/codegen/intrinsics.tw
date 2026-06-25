@@ -38,7 +38,7 @@ pub fn module() WasmModule {
     types: [],
     imports: [
       ImportDef.{
-        module: "host",
+        module: "twinkle_runtime",
         name: "parse_float",
         as_sym: "host_parse_float",
         params: [str_null()],

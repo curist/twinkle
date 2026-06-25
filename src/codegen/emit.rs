@@ -6707,7 +6707,7 @@ fn emit_float_from_string_intrinsic(
 
 fn ensure_host_parse_float_import(ctx: &mut EmitCtx<'_>) {
     ctx.add_import(ImportDef {
-        module: "host".to_string(),
+        module: "twinkle_runtime".to_string(),
         name: "parse_float".to_string(),
         as_sym: "host_parse_float".to_string(),
         params: vec![ref_string_null()],

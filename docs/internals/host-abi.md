@@ -1,23 +1,33 @@
 # Host ABI Reference
 
-Twinkle compiles to WebAssembly GC modules that import host functions from two
-namespaces. Any host (Wasmtime, browser, Node.js) must provide the imports a
-given module actually references to run it.
+Twinkle compiles to WebAssembly GC modules that import every host capability from
+a single namespace, **`"twinkle_runtime"`**. Any host (browser, Node.js, Deno,
+Wasmtime) must provide the imports a given module actually references to run it.
+A module only imports what it uses, so most programs reference a small subset.
 
-- **`"host"`** — a small fixed set of core runtime builtins (console I/O) and
-  pure helpers (float formatting/parsing) emitted directly by the compiler.
-  These are not user-declarable; the compiler emits them as needed.
-- **`"twinkle_runtime"`** — the OS / process / filesystem / stdin capability
-  surface. These are declared in stdlib source with `extern twinkle_runtime { … }`
-  (see `@std.fs`, `@std.io`, `@std.proc`, `@std.time`) and auto-bridged by the
-  JS runtime. A non-JS host provides them the same way it provides `host.*`.
+The `twinkle_runtime` namespace holds two kinds of functions, but they share one
+import module:
 
-The reference implementations live in `tools/js_runtime/runtime.mjs` (JS) and
-`src/cli/run_wasm.rs` (the Rust reference host).
+- **Core builtins** — console I/O, float formatting, and numeric parsing — are
+  emitted directly by the compiler (from `rt.core`, `rt.str`, and the intrinsics
+  module). They are not user-declarable. The stage0 (Rust) compiler also emits a
+  host-side linear-memory buffer shim (`buf_*`) here; the boot compiler
+  implements those in Wasm instead.
+- **OS / process / filesystem / stdin capabilities** are declared in stdlib
+  source with `extern twinkle_runtime { … }` (see `@std.fs`, `@std.io`,
+  `@std.proc`, `@std.time`) and auto-bridged by the JS runtime.
 
-> Historical note: the OS functions below were previously compiler-internal
-> `__host_*` intrinsics that imported under `host.*`. They are now ordinary
-> `extern twinkle_runtime` declarations; the `__host_*` surface no longer exists.
+A separate `"task"` namespace carries the cooperative-concurrency intrinsics
+(`task_create`, `suspend_await`, `channel_*`, …) and appears only when a program
+uses `Task`/`Channel`; it is provided by the JSPI scheduler in the JS runtime.
+
+The reference host implementation lives in `tools/js_runtime/runtime.mjs`
+(`makeHostImports`). The Rust compiler only builds Wasm; it does not run it, so
+there is no Rust reference host.
+
+> Historical note: OS functions were once compiler-internal `__host_*`
+> intrinsics, and core builtins imported under a separate `"host"` module. Both
+> are gone — every host import is now an ordinary `twinkle_runtime` symbol.
 
 ---
 
@@ -33,6 +43,9 @@ extern twinkle_runtime {
 }
 ```
 
+Extern functions must declare a return type (there is no body to infer one from);
+use `Void` for fire-and-forget calls.
+
 The compiler maps each extern parameter/result to its Wasm boundary type and,
 where a parameter or result is a `Vector<…>`, inserts the `$PVec`↔`$Array`
 conversions (`rt_arr__to_array` / `rt_arr__from_array`) around the call so the
@@ -40,11 +53,10 @@ host always sees the flat `$Array` representation. `Vector<Byte>!String`
 (the `read_file` shape) crosses as a `$Variant` and is rebuilt into the typed
 `Result` after the call. Diverging fns may be declared `Never` (emits no result).
 
-The JS runtime exposes `twinkle_runtime.*` from the same implementations that back
-`host.*` (see `makeHostImports`), so a fn like `read_file` is shared, not
-duplicated. The generic extern bridge can also marshal `bytes`/`strvec`/`readfile`
-kinds for *externally-provided* imports, but the stdlib pre-populates these
-entries, so it deliberately bypasses that path (see `bridgeExternImports`).
+The JS runtime provides all of `twinkle_runtime.*` from `makeHostImports`. The
+generic extern bridge can also marshal `bytes`/`strvec`/`readfile` kinds for
+*externally-provided* imports, but `makeHostImports` pre-populates these entries,
+so it deliberately bypasses that path (see `bridgeExternImports`).
 
 ---
 
@@ -58,52 +70,53 @@ Array values use `ref null $rt_types__Array` (`(array (mut anyref))`).
 
 ---
 
-## `host.*` — core builtins and pure helpers
+## Core builtins
 
-These are emitted by the compiler (not declared in source) and remain on the
-`host` namespace.
+Emitted by the compiler (not declared in source).
 
 ### Console I/O
 
 | Import | Signature | Description |
 |---|---|---|
-| `host.print` | `(ref null $String) → ()` | Write string to stdout (no newline) |
-| `host.println` | `(ref null $String) → ()` | Write string to stdout with newline |
-| `host.eprint` | `(ref null $String) → ()` | Write string to stderr (no newline) |
-| `host.eprintln` | `(ref null $String) → ()` | Write string to stderr with newline |
-| `host.error` | `(ref null $String) → ()` | Trap with error message (must not return) |
+| `twinkle_runtime.print` | `(ref null $String) → ()` | Write string to stdout (no newline) |
+| `twinkle_runtime.println` | `(ref null $String) → ()` | Write string to stdout with newline |
+| `twinkle_runtime.eprint` | `(ref null $String) → ()` | Write string to stderr (no newline) |
+| `twinkle_runtime.eprintln` | `(ref null $String) → ()` | Write string to stderr with newline |
+| `twinkle_runtime.error` | `(ref null $String) → ()` | Trap with error message (must not return) |
 
-Source: `src/runtime/core.rs`
+Source: `src/runtime/core.rs` (stage0), `boot/compiler/codegen/runtime/core.tw` (boot)
 
-### String Conversion
+### String conversion
 
 | Import | Signature | Description |
 |---|---|---|
-| `host.f64_to_string` | `(f64) → (ref $String)` | Format a float as a decimal string |
+| `twinkle_runtime.f64_to_string` | `(f64) → (ref $String)` | Format a float as a decimal string |
 
 Needed because float-to-string formatting is complex to implement in pure Wasm.
 Integer and boolean conversions are handled entirely in the runtime module (`rt_str`).
 
-Source: `src/runtime/str.rs`
-
-### Numeric Parsing
+### Numeric parsing
 
 | Import | Signature | Description |
 |---|---|---|
-| `host.parse_float` | `(ref null $String) → (f64, i32)` | Parse float from string; returns `(value, ok)` where `ok=1` on success |
+| `twinkle_runtime.parse_float` | `(ref null $String) → (f64, i32)` | Parse float from string; returns `(value, ok)` where `ok=1` on success |
 
 The public APIs are `Int.from_string` and `Float.from_string`. Integer parsing is
 implemented in pure Wasm (no host import needed); float parsing delegates here
 because decimals, exponents, and special values are impractical in inline Wasm.
 
-Source: `src/codegen/emit.rs` (`ensure_host_parse_float_import`)
+### Linear-memory buffer shim (stage0 only)
+
+The stage0 (Rust) compiler emits `buf_alloc` / `buf_free` / `buf_load_*` /
+`buf_store_*` as host imports, used only when the guest exports no memory of its
+own. The boot compiler implements these as ordinary Wasm functions, so
+boot-compiled programs never import them.
 
 ---
 
-## `twinkle_runtime.*` — OS / process / filesystem / stdin
+## OS / process / filesystem / stdin
 
-Declared via `extern twinkle_runtime` in the stdlib. The JS runtime provides
-these in `makeHostImports`.
+Declared via `extern twinkle_runtime` in the stdlib.
 
 ### File I/O
 
@@ -150,10 +163,9 @@ shim when the guest exports none).
 
 **Async (JSPI):** `sleep`, `stdin_read_chunk`, `stdin_read_timeout`, and
 `run_wasm` are Promise-suspending under the JSPI runtime. The JS runtime installs
-their suspending implementations after the extern imports are bridged and
-re-points the `twinkle_runtime` aliases at them (see the `hasJspi` block in
-`runtime.mjs`). Under a synchronous runtime, `sleep` traps (sleeping requires the
-async runtime).
+their suspending implementations on `twinkle_runtime` after the extern imports are
+bridged (see the `hasJspi` block in `runtime.mjs`). Under a synchronous runtime,
+`sleep` traps (sleeping requires the async runtime).
 
 | Import | Signature | Description |
 |---|---|---|
@@ -163,14 +175,13 @@ async runtime).
 
 ## Notes for Host Implementors
 
-- **Conditional imports:** Not all programs import all host functions. The host
-  only needs to provide functions that the specific module actually imports.
-  Console I/O and `f64_to_string` are always present (from the runtime modules);
-  `twinkle_runtime.*` imports appear only when the corresponding stdlib APIs are
-  used.
+- **Conditional imports:** Not all programs import all functions. The host only
+  needs to provide functions the specific module actually imports. Console I/O and
+  `f64_to_string` are present in nearly every program; `twinkle_runtime.*` OS
+  imports appear only when the corresponding stdlib APIs are used.
 
-- **`host.error` must not return.** It should trap/abort the Wasm instance. The
-  same applies to `twinkle_runtime.exit`.
+- **`twinkle_runtime.error` must not return.** It should trap/abort the Wasm
+  instance. The same applies to `twinkle_runtime.exit`.
 
 - **`twinkle_runtime.env` returns an array**, not a nullable string, to avoid
   needing Option encoding at the host boundary. Empty array = not set.
@@ -179,5 +190,5 @@ async runtime).
   Return `Result.Err(String)` instead. `Result.Ok` carries `Vector<Byte>`; hosts
   should avoid implicit UTF-8 decoding at this boundary.
 
-- **`host.parse_float` uses multi-value return:** `(f64, i32)` where `i32` is
-  1 on success, 0 on failure. On failure the `f64` value is unspecified.
+- **`twinkle_runtime.parse_float` uses multi-value return:** `(f64, i32)` where
+  `i32` is 1 on success, 0 on failure. On failure the `f64` value is unspecified.

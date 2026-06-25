@@ -214,9 +214,9 @@ fn test_link_runtime_resolves_imports() Result<Void, String> {
     .Ok(linked) => {
       // rt.core's import of rt.str.eq should be resolved (not in linked imports)
       for imp in linked.imports {
-        // Only host imports should survive
+        // Only twinkle_runtime imports should survive
         try assert.ok(
-          imp.module == "host",
+          imp.module == "twinkle_runtime",
           "non-host import survived linking: ${imp.module}.${imp.name}",
         )
       }
@@ -771,12 +771,12 @@ fn test_structural_user_func_present() Result<Void, String> {
 }
 
 fn test_structural_host_imports_are_host_only() Result<Void, String> {
-  // After linking, all remaining imports must come from "host" module.
+  // After linking, all remaining imports must come from "twinkle_runtime" module.
   linked := try codegen_harness.codegen_linked("println(\"hi\")")
 
   for imp in linked.imports {
     try assert.ok(
-      imp.module == "host",
+      imp.module == "twinkle_runtime",
       "non-host import survived linking: ${imp.module}.${imp.name}",
     )
   }

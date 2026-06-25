@@ -365,208 +365,189 @@ function makeHostImports(b, runtime, bridgeBytes) {
   };
   const hostBufOffset = (ptr, off) => Number(ptr) + Number(off);
 
-  const result = {
-    host: {
-      // --- I/O ---
-      print: (s) => write(runtime.stdout, decodeString(b, s)),
-      println: (s) => write(runtime.stdout, decodeString(b, s) + "\n"),
-      error: (s) => {
-        const msg = decodeString(b, s);
-        write(runtime.stderr, msg + "\n");
-        throw new Error("host.error: " + msg);
-      },
-      eprint: (s) => write(runtime.stderr, decodeString(b, s)),
-      eprintln: (s) => write(runtime.stderr, decodeString(b, s) + "\n"),
+  // Every host capability lives under a single import namespace,
+  // "twinkle_runtime": the compiler-emitted core builtins (console I/O,
+  // f64_to_string, numeric parsing, the stage0 linear-memory buffer shim) and
+  // the OS / process / filesystem / stdin surface declared in stdlib via
+  // `extern twinkle_runtime { … }`. See docs/internals/host-abi.md.
+  const twinkle_runtime = {
+    // --- Console I/O ---
+    print: (s) => write(runtime.stdout, decodeString(b, s)),
+    println: (s) => write(runtime.stdout, decodeString(b, s) + "\n"),
+    error: (s) => {
+      const msg = decodeString(b, s);
+      write(runtime.stderr, msg + "\n");
+      throw new Error("host.error: " + msg);
+    },
+    eprint: (s) => write(runtime.stderr, decodeString(b, s)),
+    eprintln: (s) => write(runtime.stderr, decodeString(b, s) + "\n"),
 
-      // --- String conversion ---
-      f64_to_string: (n) => encodeString(b, n.toString()),
+    // --- String conversion ---
+    f64_to_string: (n) => encodeString(b, n.toString()),
 
-      // --- Process ---
-      args: () => makeStringArray(b, runtime.programArgs),
-      env: (keyRef) => {
-        const key = decodeString(b, keyRef);
-        const val = runtime.env[key];
-        return val === undefined ? makeStringArray(b, []) : makeStringArray(b, [val]);
-      },
-      cwd: () => encodeString(b, runtime.cwd),
-      exit: (code) => {
-        const c = typeof code === "bigint" ? Number(code) : code;
-        throw new HostExit(c);
-      },
-      now: () => performance.now(),
-      sleep: (_ms) => {
-        throw new Error("host.sleep requires the async JSPI runtime");
-      },
-      run_wasm: (bytesRef, argvRef) => {
-        const childBytes = decodeByteArray(b, bytesRef);
-        const childArgv = decodeStringArray(b, argvRef);
-        const [programPath, ...guestArgs] = childArgv;
-        const exitCode = runWasmBytes(childBytes, {
-          programPath: programPath ?? "<memory>.wasm",
-          guestArgs,
-          cwd: runtime.cwd,
-          env: runtime.env,
-          stdout: runtime.stdout,
-          stderr: runtime.stderr,
-          imports: runtime.imports,
-          host: runtime.host,
-          bridgeBytes,
-        });
-        return BigInt(exitCode);
-      },
+    // --- Numeric parsing ---
+    parse_int: (sRef) => {
+      const s = decodeString(b, sRef);
+      const n = parseInt(s, 10);
+      return isNaN(n) ? 0n : BigInt(n);
+    },
+    parse_float: (sRef) => {
+      const s = decodeString(b, sRef);
+      const f = parseFloat(s);
+      return isNaN(f) ? [0.0, 0] : [f, 1];
+    },
 
-      // --- File system (routed through the injected host adapter) ---
-      read_file: (pathRef) => {
-        const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
-        try {
-          const bytes = runtime.host.readFile(filePath);
-          return makeResultOk(b, makeByteArray(b, bytes));
-        } catch (e) {
-          const msg = `host.read_file failed for '${filePath}': ${e.message}`;
-          return makeResultErr(b, encodeString(b, msg));
-        }
-      },
-      write_file: (pathRef, contentRef) => {
-        const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
-        runtime.host.writeFile(filePath, decodeString(b, contentRef));
-      },
-      write_bytes: (pathRef, bytesRef) => {
-        const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
-        runtime.host.writeBytes(filePath, decodeByteArray(b, bytesRef));
-      },
-      read_buffer_len_raw: (pathRef) => {
-        const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
-        try {
-          return BigInt(runtime.host.readFile(filePath).length);
-        } catch {
-          return -1n;
-        }
-      },
-      read_buffer_raw: (pathRef, ptr, len) => {
-        const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
-        try {
-          const bytes = runtime.host.readFile(filePath);
-          const start = Number(ptr);
-          const size = Number(len);
-          if (bytes.length > size) return -1n;
-          const memory = runtime.instance?.exports?.memory;
-          if (memory) {
-            new Uint8Array(memory.buffer, start, bytes.length).set(bytes);
-          } else {
-            ensureHostBuffer(start + bytes.length).bytes.set(bytes, start);
-          }
-          return BigInt(bytes.length);
-        } catch {
-          return -1n;
-        }
-      },
-      write_buffer_raw: (pathRef, ptr, len) => {
-        const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+    // --- Linear-memory buffer shim (stage0 only; used when the guest exports
+    //     no memory of its own). ---
+    buf_alloc: (nbytes) => {
+      const n = Number(nbytes);
+      if (n < 0) throw new Error("host.buf_alloc: negative size");
+      const size = (n + 7) & ~7;
+      const state = ensureHostBuffer();
+      const ptr = state.next;
+      state.next += size;
+      ensureHostBuffer(state.next);
+      return BigInt(ptr);
+    },
+    buf_free: (_ptr) => {},
+    buf_load_u8: (ptr, off) => BigInt(ensureHostBuffer(hostBufOffset(ptr, off) + 1).bytes[hostBufOffset(ptr, off)]),
+    buf_store_u8: (ptr, off, v) => {
+      ensureHostBuffer(hostBufOffset(ptr, off) + 1).bytes[hostBufOffset(ptr, off)] = Number(v) & 0xff;
+    },
+    buf_load_u32: (ptr, off) => BigInt(new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 4).bytes.buffer).getUint32(hostBufOffset(ptr, off), true)),
+    buf_store_u32: (ptr, off, v) => {
+      new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 4).bytes.buffer).setUint32(hostBufOffset(ptr, off), Number(v), true);
+    },
+    buf_load_i64: (ptr, off) => new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 8).bytes.buffer).getBigInt64(hostBufOffset(ptr, off), true),
+    buf_store_i64: (ptr, off, v) => {
+      new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 8).bytes.buffer).setBigInt64(hostBufOffset(ptr, off), BigInt(v), true);
+    },
+    buf_load_f64: (ptr, off) => new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 8).bytes.buffer).getFloat64(hostBufOffset(ptr, off), true),
+    buf_store_f64: (ptr, off, v) => {
+      new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 8).bytes.buffer).setFloat64(hostBufOffset(ptr, off), v, true);
+    },
+
+    // --- Process ---
+    args: () => makeStringArray(b, runtime.programArgs),
+    env: (keyRef) => {
+      const key = decodeString(b, keyRef);
+      const val = runtime.env[key];
+      return val === undefined ? makeStringArray(b, []) : makeStringArray(b, [val]);
+    },
+    cwd: () => encodeString(b, runtime.cwd),
+    exit: (code) => {
+      const c = typeof code === "bigint" ? Number(code) : code;
+      throw new HostExit(c);
+    },
+    now: () => performance.now(),
+    // sleep / stdin reads / run_wasm get re-pointed at suspending versions in
+    // the JSPI block (runWasmBytesAsync); these are the synchronous fallbacks.
+    sleep: (_ms) => {
+      throw new Error("twinkle_runtime.sleep requires the async JSPI runtime");
+    },
+    run_wasm: (bytesRef, argvRef) => {
+      const childBytes = decodeByteArray(b, bytesRef);
+      const childArgv = decodeStringArray(b, argvRef);
+      const [programPath, ...guestArgs] = childArgv;
+      const exitCode = runWasmBytes(childBytes, {
+        programPath: programPath ?? "<memory>.wasm",
+        guestArgs,
+        cwd: runtime.cwd,
+        env: runtime.env,
+        stdout: runtime.stdout,
+        stderr: runtime.stderr,
+        imports: runtime.imports,
+        host: runtime.host,
+        bridgeBytes,
+      });
+      return BigInt(exitCode);
+    },
+
+    // --- File system (routed through the injected host adapter) ---
+    read_file: (pathRef) => {
+      const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+      try {
+        const bytes = runtime.host.readFile(filePath);
+        return makeResultOk(b, makeByteArray(b, bytes));
+      } catch (e) {
+        const msg = `twinkle_runtime.read_file failed for '${filePath}': ${e.message}`;
+        return makeResultErr(b, encodeString(b, msg));
+      }
+    },
+    write_file: (pathRef, contentRef) => {
+      const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+      runtime.host.writeFile(filePath, decodeString(b, contentRef));
+    },
+    write_bytes: (pathRef, bytesRef) => {
+      const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+      runtime.host.writeBytes(filePath, decodeByteArray(b, bytesRef));
+    },
+    mkdirp: (pathRef) => {
+      const dirPath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+      runtime.host.mkdirp(dirPath);
+    },
+    list_dir: (pathRef) => {
+      const dirPath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+      return makeStringArray(b, runtime.host.listDir(dirPath));
+    },
+    exists: (pathRef) => {
+      const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+      return runtime.host.exists(filePath) ? 1 : 0;
+    },
+
+    // --- Buffer (linear-memory) file I/O ---
+    read_buffer_len_raw: (pathRef) => {
+      const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+      try {
+        return BigInt(runtime.host.readFile(filePath).length);
+      } catch {
+        return -1n;
+      }
+    },
+    read_buffer_raw: (pathRef, ptr, len) => {
+      const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+      try {
+        const bytes = runtime.host.readFile(filePath);
         const start = Number(ptr);
         const size = Number(len);
+        if (bytes.length > size) return -1n;
         const memory = runtime.instance?.exports?.memory;
         if (memory) {
-          runtime.host.writeBytes(filePath, new Uint8Array(memory.buffer, start, size).slice());
+          new Uint8Array(memory.buffer, start, bytes.length).set(bytes);
         } else {
-          const state = ensureHostBuffer(start + size);
-          runtime.host.writeBytes(filePath, state.bytes.slice(start, start + size));
+          ensureHostBuffer(start + bytes.length).bytes.set(bytes, start);
         }
-      },
-      buf_alloc: (nbytes) => {
-        const n = Number(nbytes);
-        if (n < 0) throw new Error("host.buf_alloc: negative size");
-        const size = (n + 7) & ~7;
-        const state = ensureHostBuffer();
-        const ptr = state.next;
-        state.next += size;
-        ensureHostBuffer(state.next);
-        return BigInt(ptr);
-      },
-      buf_free: (_ptr) => {},
-      buf_load_u8: (ptr, off) => BigInt(ensureHostBuffer(hostBufOffset(ptr, off) + 1).bytes[hostBufOffset(ptr, off)]),
-      buf_store_u8: (ptr, off, v) => {
-        ensureHostBuffer(hostBufOffset(ptr, off) + 1).bytes[hostBufOffset(ptr, off)] = Number(v) & 0xff;
-      },
-      buf_load_u32: (ptr, off) => BigInt(new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 4).bytes.buffer).getUint32(hostBufOffset(ptr, off), true)),
-      buf_store_u32: (ptr, off, v) => {
-        new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 4).bytes.buffer).setUint32(hostBufOffset(ptr, off), Number(v), true);
-      },
-      buf_load_i64: (ptr, off) => new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 8).bytes.buffer).getBigInt64(hostBufOffset(ptr, off), true),
-      buf_store_i64: (ptr, off, v) => {
-        new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 8).bytes.buffer).setBigInt64(hostBufOffset(ptr, off), BigInt(v), true);
-      },
-      buf_load_f64: (ptr, off) => new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 8).bytes.buffer).getFloat64(hostBufOffset(ptr, off), true),
-      buf_store_f64: (ptr, off, v) => {
-        new DataView(ensureHostBuffer(hostBufOffset(ptr, off) + 8).bytes.buffer).setFloat64(hostBufOffset(ptr, off), v, true);
-      },
-      stdin_read_chunk: (maxBytes) => makeByteArray(b, runtime.host.readStdin(maxBytes, 2147483647, runtime)),
-      stdin_read_timeout: (maxBytes, timeoutMs) => makeByteArray(b, runtime.host.readStdin(maxBytes, timeoutMs, runtime)),
-      stdin_eof: () => runtime.stdinEof ? 1 : 0,
-      stdout_write_bytes: (bytesRef) => {
-        // Streams accept a Uint8Array chunk; each adapter's write() handles the
-        // platform write (fd write on Node, writeSync on Deno, postMessage in a
-        // worker), so no Buffer/fd handling is needed here.
-        runtime.stdout.write(decodeByteArray(b, bytesRef));
-      },
-      mkdirp: (pathRef) => {
-        const dirPath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
-        runtime.host.mkdirp(dirPath);
-      },
-      list_dir: (pathRef) => {
-        const dirPath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
-        return makeStringArray(b, runtime.host.listDir(dirPath));
-      },
-      exists: (pathRef) => {
-        const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
-        return runtime.host.exists(filePath) ? 1 : 0;
-      },
+        return BigInt(bytes.length);
+      } catch {
+        return -1n;
+      }
+    },
+    write_buffer_raw: (pathRef, ptr, len) => {
+      const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+      const start = Number(ptr);
+      const size = Number(len);
+      const memory = runtime.instance?.exports?.memory;
+      if (memory) {
+        runtime.host.writeBytes(filePath, new Uint8Array(memory.buffer, start, size).slice());
+      } else {
+        const state = ensureHostBuffer(start + size);
+        runtime.host.writeBytes(filePath, state.bytes.slice(start, start + size));
+      }
+    },
 
-      // --- Parsing ---
-      parse_int: (sRef) => {
-        const s = decodeString(b, sRef);
-        const n = parseInt(s, 10);
-        return isNaN(n) ? 0n : BigInt(n);
-      },
-      parse_float: (sRef) => {
-        const s = decodeString(b, sRef);
-        const f = parseFloat(s);
-        return isNaN(f) ? [0.0, 0] : [f, 1];
-      },
+    // --- Stdin / stdout (byte streams) ---
+    stdin_read_chunk: (maxBytes) => makeByteArray(b, runtime.host.readStdin(maxBytes, 2147483647, runtime)),
+    stdin_read_timeout: (maxBytes, timeoutMs) => makeByteArray(b, runtime.host.readStdin(maxBytes, timeoutMs, runtime)),
+    stdin_eof: () => runtime.stdinEof ? 1 : 0,
+    stdout_write_bytes: (bytesRef) => {
+      // Streams accept a Uint8Array chunk; each adapter's write() handles the
+      // platform write (fd write on Node, writeSync on Deno, postMessage in a
+      // worker), so no Buffer/fd handling is needed here.
+      runtime.stdout.write(decodeByteArray(b, bytesRef));
     },
   };
 
-  // Expose the same implementations under the twinkle_runtime import module.
-  // References into the already-constructed host object — no duplicated bodies.
-  const h = result.host;
-  result.twinkle_runtime = {
-    write_file: h.write_file,
-    mkdirp: h.mkdirp,
-    exists: h.exists,
-    cwd: h.cwd,
-    exit: h.exit,
-    now: h.now,
-    sleep: h.sleep,
-    stdin_eof: h.stdin_eof,
-    read_buffer_len_raw: h.read_buffer_len_raw,
-    read_buffer_raw: h.read_buffer_raw,
-    write_buffer_raw: h.write_buffer_raw,
-    // Vector-trafficking fns. The extern import signatures declare $Array
-    // params/results (read_file: a Variant), which is exactly what these host
-    // fns already accept/return, so they alias the raw host impls directly. The
-    // async ones (stdin reads, run_wasm) are re-pointed at the suspending
-    // versions in the JSPI block above.
-    read_file: h.read_file,
-    write_bytes: h.write_bytes,
-    list_dir: h.list_dir,
-    args: h.args,
-    env: h.env,
-    stdout_write_bytes: h.stdout_write_bytes,
-    stdin_read_chunk: h.stdin_read_chunk,
-    stdin_read_timeout: h.stdin_read_timeout,
-    run_wasm: h.run_wasm,
-  };
-
-  return result;
+  return { twinkle_runtime };
 }
 
 // ---------------------------------------------------------------------------
@@ -1055,7 +1036,15 @@ function moduleNeedsTasks(wasmModule) {
   try {
     return WebAssembly.Module.imports(wasmModule).some((imp) => imp.module === "task");
   } catch {
-    return false;
+    // Import introspection unavailable (e.g. Safari on GC modules). Fall back to
+    // the export side: the compiler emits the `__task_run` export iff the module
+    // uses task operations, so it's an equivalent signal that survives when
+    // `Module.imports` does not.
+    try {
+      return WebAssembly.Module.exports(wasmModule).some((e) => e.name === "__task_run");
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -1157,7 +1146,16 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
       ? (op) => scheduler.wrapHostSuspending(op)
       : (op) => new WebAssembly.Suspending(op);
 
-    hostImports.host.sleep = suspendHost(
+    // sleep, the stdin reads, and run_wasm are twinkle_runtime imports whose
+    // synchronous stubs were installed by makeHostImports. autoBridgeExternImports
+    // (in prepareWasm) saw those stubs already present and skipped them, so the
+    // suspending versions installed here — after bridging, before instantiation —
+    // become what the module links against. The stubs already return the exact
+    // wire types the extern signatures expect ($Array for byte vectors, raw i64
+    // for sleep), so bypassing the extern bridge's marshalling is correct.
+    const rt = hostImports.twinkle_runtime;
+
+    rt.sleep = suspendHost(
       (ms) => new Promise((resolve) => setTimeout(resolve, Number(ms) > 0 ? Number(ms) : 0)),
     );
 
@@ -1165,11 +1163,11 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
     // Twinkle waits for LSP input. Keep chunk and timeout reads on the same
     // stream-based path; mixing process.stdin.read() with fs.readSync(0, ...)
     // can strand bytes in Node's stream buffer.
-    hostImports.host.stdin_read_chunk = suspendHost(
+    rt.stdin_read_chunk = suspendHost(
       async (maxBytes) =>
         makeByteArray(b, await runtime.host.readStdinAsync(maxBytes, 2147483647, runtime)),
     );
-    hostImports.host.stdin_read_timeout = suspendHost(
+    rt.stdin_read_timeout = suspendHost(
       async (maxBytes, timeoutMs) =>
         makeByteArray(b, await runtime.host.readStdinAsync(maxBytes, timeoutMs, runtime)),
     );
@@ -1178,7 +1176,7 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
     // JSPI suspending imports. In task-enabled programs this also preserves the
     // scheduler's single-resume discipline.
     const childBridgeBytes = opts.bridgeBytes;
-    hostImports.host.run_wasm = suspendHost(
+    rt.run_wasm = suspendHost(
       async (bytesRef, argvRef) => {
         const childBytes = decodeByteArray(b, bytesRef);
         const childArgv = decodeStringArray(b, argvRef);
@@ -1197,21 +1195,6 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
         return BigInt(exitCode);
       },
     );
-
-    // autoBridgeExternImports (in prepareWasm) already wrapped the
-    // twinkle_runtime.* extern imports, capturing the pre-JSPI sync stubs for
-    // these async host fns. Re-point the migrated twinkle_runtime aliases at the
-    // suspending versions installed above. The host fns already return the exact
-    // wire types the extern import signatures expect ($Array for byte vectors,
-    // raw i64 for sleep), so bypassing the extern bridge's marshalling is correct.
-    // Runs after bridging, before instantiation.
-    if (hostImports.twinkle_runtime) {
-      for (const name of ["sleep", "stdin_read_chunk", "stdin_read_timeout", "run_wasm"]) {
-        if (name in hostImports.twinkle_runtime) {
-          hostImports.twinkle_runtime[name] = hostImports.host[name];
-        }
-      }
-    }
   }
 
   try {

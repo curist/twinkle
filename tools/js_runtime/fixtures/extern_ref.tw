@@ -1,13 +1,12 @@
 // Exercises section-driven FFI marshaling: an externref-typed value flows
 // through get_context -> fill_rect untouched, while String args are decoded.
-
 extern canvas {
   type Ctx
   fn get_context(id: String) Ctx?
-  fn fill_rect(ctx: Ctx, x: Float, y: Float, w: Float, h: Float)
+  fn fill_rect(ctx: Ctx, x: Float, y: Float, w: Float, h: Float) Void
 }
 
-extern probe fn record(label: String)
+extern probe fn record(label: String) Void
 
 case canvas.get_context("2d") {
   .Some(ctx) => {

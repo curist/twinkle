@@ -7,7 +7,7 @@ pub fn make() -> ModuleIR {
 
     // from_f64 delegates to a host import (IEEE 754 → decimal is non-trivial in Wasm GC)
     m.imports.push(ImportDef {
-        module: "host".into(),
+        module: "twinkle_runtime".into(),
         name: "f64_to_string".into(),
         as_sym: "host_f64_to_string".into(),
         params: vec![ValType::F64],

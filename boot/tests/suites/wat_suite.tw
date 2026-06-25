@@ -237,7 +237,7 @@ fn test_func_type_def() Result<Void, String> {
 fn test_import_emission() Result<Void, String> {
   m := mod_with_imports([
     ImportDef.{
-      module: "host",
+      module: "twinkle_runtime",
       name: "print",
       as_sym: "host_print",
       params: [.Anyref],
@@ -245,7 +245,10 @@ fn test_import_emission() Result<Void, String> {
     },
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(import \"host\" \"print\" (func $host_print"), "should have import")
+  try assert.ok(
+    contains(wat, "(import \"twinkle_runtime\" \"print\" (func $host_print"),
+    "should have import",
+  )
   .Ok({})
 }
 

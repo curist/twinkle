@@ -47,7 +47,7 @@ pub fn module() WasmModule {
     types: [],
     imports: [
       ImportDef.{
-        module: "host",
+        module: "twinkle_runtime",
         name: "f64_to_string",
         as_sym: "host_f64_to_string",
         params: [.F64],

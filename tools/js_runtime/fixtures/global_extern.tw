@@ -1,10 +1,6 @@
 // Math and console resolve from globalThis with zero wiring.
-extern Math {
-  fn sqrt(x: Float) Float
-}
+extern Math fn sqrt(x: Float) Float
 
-extern console {
-  fn log(msg: String)
-}
+extern console fn log(msg: String) Void
 
 console.log("sqrt 16 = ${Math.sqrt(16.0)}")

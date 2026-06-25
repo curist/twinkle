@@ -8,7 +8,7 @@ use crate::types::ty::{MonoType, TypeId};
 /// Metadata for an extern function declaration (maps to a WASM import).
 #[derive(Debug, Clone)]
 pub struct ExternImport {
-    /// WASM import module name (e.g., "console", "host", "env")
+    /// WASM import module name (e.g., "twinkle_runtime", "console", "env")
     pub wasm_module: String,
     /// WASM import field name (the function name)
     pub wasm_name: String,

@@ -6,35 +6,35 @@ pub fn make() -> ModuleIR {
     let mut m = ModuleIR::new("rt.core");
 
     m.imports.push(ImportDef {
-        module: "host".into(),
+        module: "twinkle_runtime".into(),
         name: "print".into(),
         as_sym: "host_print".into(),
         params: vec![ref_string_null()],
         results: vec![],
     });
     m.imports.push(ImportDef {
-        module: "host".into(),
+        module: "twinkle_runtime".into(),
         name: "println".into(),
         as_sym: "host_println".into(),
         params: vec![ref_string_null()],
         results: vec![],
     });
     m.imports.push(ImportDef {
-        module: "host".into(),
+        module: "twinkle_runtime".into(),
         name: "error".into(),
         as_sym: "host_error".into(),
         params: vec![ref_string_null()],
         results: vec![],
     });
     m.imports.push(ImportDef {
-        module: "host".into(),
+        module: "twinkle_runtime".into(),
         name: "eprint".into(),
         as_sym: "host_eprint".into(),
         params: vec![ref_string_null()],
         results: vec![],
     });
     m.imports.push(ImportDef {
-        module: "host".into(),
+        module: "twinkle_runtime".into(),
         name: "eprintln".into(),
         as_sym: "host_eprintln".into(),
         params: vec![ref_string_null()],

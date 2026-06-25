@@ -465,7 +465,7 @@ fn test_rt_core_host_imports() Result<Void, String> {
   found_eprintln := false
 
   for imp in m.imports {
-    if imp.module == "host" {
+    if imp.module == "twinkle_runtime" {
       host_count = host_count + 1
 
       if imp.name == "print" {
@@ -685,7 +685,7 @@ fn test_rt_str_host_f64_import() Result<Void, String> {
   found := false
 
   for imp in m.imports {
-    if imp.module == "host" and imp.name == "f64_to_string" {
+    if imp.module == "twinkle_runtime" and imp.name == "f64_to_string" {
       found = true
       try assert.equal(imp.as_sym, "host_f64_to_string")
     }

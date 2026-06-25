@@ -157,9 +157,10 @@ fn rewrite_type_refs(body: &mut [Instr], renames: &HashMap<String, String>) {
 }
 
 /// Returns true if this import module name is an external import (not a Twinkle module).
-/// "host" is always external; user-declared extern modules are in `extern_modules`.
+/// "twinkle_runtime" (the single host-capability namespace) and "task" are always
+/// external; user-declared extern modules are in `extern_modules`.
 fn is_external_module(module: &str, extern_modules: &HashSet<String>) -> bool {
-    module == "host" || module == "task" || extern_modules.contains(module)
+    module == "twinkle_runtime" || module == "task" || extern_modules.contains(module)
 }
 
 fn rewrite_val_type(vt: &mut ValType, renames: &HashMap<String, String>) {

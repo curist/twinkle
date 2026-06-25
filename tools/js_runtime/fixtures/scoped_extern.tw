@@ -1,6 +1,4 @@
 // host_app is NOT on globalThis — must be wired via the imports option.
-extern host_app {
-  fn emit(msg: String)
-}
+extern host_app fn emit(msg: String) Void
 
 host_app.emit("hello from twinkle")

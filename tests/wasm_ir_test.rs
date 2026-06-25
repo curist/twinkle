@@ -52,9 +52,9 @@ fn test_emit_simple_struct() {
 fn test_emit_import_call() {
     let mut m = ModuleIR::new("user");
 
-    // import host.println(i64) -> void
+    // import twinkle_runtime.println(i64) -> void
     m.imports.push(ImportDef {
-        module: "host".into(),
+        module: "twinkle_runtime".into(),
         name: "println".into(),
         as_sym: "host_println".into(),
         params: vec![ValType::I64],

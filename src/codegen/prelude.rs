@@ -343,7 +343,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
         )),
         id if id == prelude_ids::BUF_ALLOC => Some(PreludeEntry::runtime(
             twinkle_name,
-            "host",
+            "twinkle_runtime",
             "buf_alloc",
             "host_buf_alloc",
             vec![ValType::I64],
@@ -351,7 +351,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
         )),
         id if id == prelude_ids::BUF_FREE => Some(PreludeEntry::runtime(
             twinkle_name,
-            "host",
+            "twinkle_runtime",
             "buf_free",
             "host_buf_free",
             vec![ValType::I64],
@@ -359,7 +359,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
         )),
         id if id == prelude_ids::BUF_LOAD_U8 => Some(PreludeEntry::runtime(
             twinkle_name,
-            "host",
+            "twinkle_runtime",
             "buf_load_u8",
             "host_buf_load_u8",
             vec![ValType::I64, ValType::I64],
@@ -367,7 +367,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
         )),
         id if id == prelude_ids::BUF_STORE_U8 => Some(PreludeEntry::runtime(
             twinkle_name,
-            "host",
+            "twinkle_runtime",
             "buf_store_u8",
             "host_buf_store_u8",
             vec![ValType::I64, ValType::I64, ValType::I64],
@@ -375,7 +375,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
         )),
         id if id == prelude_ids::BUF_LOAD_U32 => Some(PreludeEntry::runtime(
             twinkle_name,
-            "host",
+            "twinkle_runtime",
             "buf_load_u32",
             "host_buf_load_u32",
             vec![ValType::I64, ValType::I64],
@@ -383,7 +383,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
         )),
         id if id == prelude_ids::BUF_STORE_U32 => Some(PreludeEntry::runtime(
             twinkle_name,
-            "host",
+            "twinkle_runtime",
             "buf_store_u32",
             "host_buf_store_u32",
             vec![ValType::I64, ValType::I64, ValType::I64],
@@ -391,7 +391,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
         )),
         id if id == prelude_ids::BUF_LOAD_I64 => Some(PreludeEntry::runtime(
             twinkle_name,
-            "host",
+            "twinkle_runtime",
             "buf_load_i64",
             "host_buf_load_i64",
             vec![ValType::I64, ValType::I64],
@@ -399,7 +399,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
         )),
         id if id == prelude_ids::BUF_STORE_I64 => Some(PreludeEntry::runtime(
             twinkle_name,
-            "host",
+            "twinkle_runtime",
             "buf_store_i64",
             "host_buf_store_i64",
             vec![ValType::I64, ValType::I64, ValType::I64],
@@ -407,7 +407,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
         )),
         id if id == prelude_ids::BUF_LOAD_F64 => Some(PreludeEntry::runtime(
             twinkle_name,
-            "host",
+            "twinkle_runtime",
             "buf_load_f64",
             "host_buf_load_f64",
             vec![ValType::I64, ValType::I64],
@@ -415,7 +415,7 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
         )),
         id if id == prelude_ids::BUF_STORE_F64 => Some(PreludeEntry::runtime(
             twinkle_name,
-            "host",
+            "twinkle_runtime",
             "buf_store_f64",
             "host_buf_store_f64",
             vec![ValType::I64, ValType::I64, ValType::F64],
