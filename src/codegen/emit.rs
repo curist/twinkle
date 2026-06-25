@@ -424,7 +424,7 @@ pub(crate) fn emit_named_module_from_plan(
         let import_results: Vec<ValType> = ext
             .return_ty
             .as_ref()
-            .filter(|ty| !matches!(ty, MonoType::Void))
+            .filter(|ty| !matches!(ty, MonoType::Void | MonoType::Never))
             .map(|ty| {
                 if is_option_extern_ref(ty) {
                     ValType::Ref {

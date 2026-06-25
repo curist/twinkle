@@ -1,5 +1,6 @@
 extern twinkle_runtime {
   fn cwd() String
+  fn exit(code: Int) Never
 }
 
 /// Return the current process argument vector.
@@ -31,9 +32,6 @@ pub fn cwd() String {
 }
 
 /// Exit the current process with status code.
-/// Stays on the legacy `__host_*` path: its diverging (`Never`) return is not
-/// expressible in extern surface syntax. Revisited when the magic path is
-/// retired (Phase 3 of the extern-host migration).
 pub fn exit(code: Int) {
-  __host_exit(code)
+  twinkle_runtime.exit(code)
 }

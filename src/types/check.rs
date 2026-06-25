@@ -1873,6 +1873,7 @@ impl TypeChecker {
             "Byte" => MonoType::Byte,
             "String" => MonoType::String,
             "Void" => MonoType::Void,
+            "Never" => MonoType::Never,
             other if self.type_var_scope.iter().any(|param| param == other) => {
                 MonoType::Var(other.to_string())
             }

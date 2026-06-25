@@ -562,6 +562,8 @@ impl Resolver {
                 Ok(())
             }
             MonoType::Void if allow_void => Ok(()),
+            // Diverging host fns (e.g. proc.exit) emit no Wasm result, like Void.
+            MonoType::Never => Ok(()),
             _ => {
                 self.errors.push(TypeError::UnsupportedFeature {
                     feature: "extern functions only support primitive and extern boundary types",

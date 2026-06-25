@@ -626,6 +626,18 @@ impl TypeEnv {
                         }
                         Ok(MonoType::Void)
                     }
+                    "Never" => {
+                        if !args.is_empty() {
+                            errors.push(TypeError::GenericNotSupported {
+                                name: "Never".to_string(),
+                                span: *span,
+                                note: "Never is a primitive type and takes no type arguments"
+                                    .to_string(),
+                            });
+                            return Err(());
+                        }
+                        Ok(MonoType::Never)
+                    }
                     "Vector" => {
                         // Vector<T> requires exactly one type argument
                         if args.len() != 1 {

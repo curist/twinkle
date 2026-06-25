@@ -284,6 +284,7 @@ pub fn emit_module(
     }
     results: Vector<ValType> = case ext.return_ty {
       .Some(.Void) => [],
+      .Some(.Never) => [],
       .Some(ty) => [extern_boundary_val_type(ty, env)],
       .None => [],
     }
