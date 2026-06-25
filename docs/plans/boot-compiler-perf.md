@@ -293,8 +293,13 @@ Areas to probe:
 - `prepare_backend`: remaining slot/repr assignment scans and repeated
   mono-derived facts not covered by the existing cache.
 - `emit_wasm_binary`: code-section body encoding is still the largest wasm
-  subphase. The whole binary emission phase is only a modest share of the build,
-  so even a strong local win here is useful but not transformative.
+  subphase. A `@std.buffer.Buffer` serializer spike reduced the internal
+  `code_section` timing, but made total `emit_wasm_binary` slower because the
+  compiler API and `fs.write_bytes` still require a final `Vector<Byte>`; the
+  Buffer→Vector copy erased the local win. Do not migrate this path unless the
+  final output consumer can take a Buffer directly (or an equivalent zero-copy
+  byte sink). The whole binary emission phase is only a modest share of the
+  build, so even a strong local win here is useful but not transformative.
 - `link`: current timings are higher than the older post-HAMT snapshots; measure
   symbol resolution, map merges, and final module assembly separately.
 
