@@ -1,7 +1,10 @@
 use @std.buffer
 use @std.buffer.{Buffer}
 
-extern host {
+extern twinkle_runtime {
+  fn write_file(path: String, text: String) Void
+  fn mkdirp(path: String) Void
+  fn exists(path: String) Bool
   fn read_buffer_len_raw(path: String) Int
   fn read_buffer_raw(path: String, ptr: Int, len: Int) Int
   fn write_buffer_raw(path: String, ptr: Int, len: Int) Void
@@ -36,14 +39,14 @@ pub fn read_text(path: String) String!FsError {
 
 /// Read raw file bytes directly into a linear-memory Buffer.
 pub fn read_buffer(path: String) Buffer!FsError {
-  size := host.read_buffer_len_raw(path)
+  size := twinkle_runtime.read_buffer_len_raw(path)
 
   if size < 0 {
     return .Err(FsError.NotFound)
   }
 
   buf := buffer.new(size)
-  read := host.read_buffer_raw(path, buf.ptr, buf.size)
+  read := twinkle_runtime.read_buffer_raw(path, buf.ptr, buf.size)
 
   if read != size {
     buf.free()
@@ -55,7 +58,7 @@ pub fn read_buffer(path: String) Buffer!FsError {
 
 /// Write a string to a file.
 pub fn write_text(path: String, content: String) Void!FsError {
-  __host_write_file(path, content)
+  twinkle_runtime.write_file(path, content)
   .Ok({})
 }
 
@@ -67,19 +70,19 @@ pub fn write_bytes(path: String, bytes: Vector<Byte>) Void!FsError {
 
 /// Write bytes directly from a linear-memory Buffer.
 pub fn write_buffer(path: String, buf: Buffer) Void!FsError {
-  host.write_buffer_raw(path, buf.ptr, buf.size)
+  twinkle_runtime.write_buffer_raw(path, buf.ptr, buf.size)
   .Ok({})
 }
 
 /// Create a directory and any missing parents.
 pub fn mkdirp(path: String) Void!FsError {
-  __host_mkdirp(path)
+  twinkle_runtime.mkdirp(path)
   .Ok({})
 }
 
 /// List entries in a directory.
 pub fn list_dir(path: String) Vector<DirEntry>!FsError {
-  if !__host_exists(path) {
+  if !twinkle_runtime.exists(path) {
     return .Err(FsError.NotFound)
   }
 
@@ -92,5 +95,5 @@ pub fn list_dir(path: String) Vector<DirEntry>!FsError {
 
 /// Return true if path exists on the filesystem.
 pub fn exists(path: String) Bool {
-  __host_exists(path)
+  twinkle_runtime.exists(path)
 }
