@@ -1,3 +1,7 @@
+extern twinkle_runtime {
+  fn cwd() String
+}
+
 /// Return the current process argument vector.
 pub fn args() Vector<String> {
   __host_args()
@@ -23,10 +27,13 @@ pub fn env(name: String) String? {
 
 /// Return the current working directory.
 pub fn cwd() String {
-  __host_cwd()
+  twinkle_runtime.cwd()
 }
 
 /// Exit the current process with status code.
+/// Stays on the legacy `__host_*` path: its diverging (`Never`) return is not
+/// expressible in extern surface syntax. Revisited when the magic path is
+/// retired (Phase 3 of the extern-host migration).
 pub fn exit(code: Int) {
   __host_exit(code)
 }
