@@ -10,7 +10,7 @@ use commands.common.{
 use compiler.pipeline
 use lib.argparse.app.{ParseResult}
 
-extern host fn write_buffer_raw(path: String, ptr: Int, len: Int) Void
+extern twinkle_runtime fn write_buffer_raw(path: String, ptr: Int, len: Int) Void
 
 fn default_build_output(file: String) String {
   dir := path.dirname(file)
@@ -75,7 +75,7 @@ pub fn run_build_command(parsed: ParseResult) {
       .None => {
         bytes := pipeline.emit_wasm_buffer(artifacts)
 
-        host.write_buffer_raw(out, bytes.ptr, bytes.size)
+        twinkle_runtime.write_buffer_raw(out, bytes.ptr, bytes.size)
         bytes.free()
         println("WASM output: ${out}")
       },
