@@ -142,6 +142,7 @@ pub fn emit_loop_op(
     current_func_id: ctx.current_func_id,
     func_sym_map: ctx.func_sym_map,
     prepared_funcs: ctx.prepared_funcs,
+    extern_imports: ctx.extern_imports,
     is_init_func: ctx.is_init_func,
     loop_depth: ctx.loop_depth + 1,
     scratch_anyref_local: ctx.scratch_anyref_local,

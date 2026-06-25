@@ -63,6 +63,32 @@ use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv}
 use compiler.type_util.{subst_type_params}
 
+// ── Extern boundary helpers ────────────────────────────────────────────
+// Map a MonoType to its Wasm ValType at an extern import boundary.
+// Vector<Byte> and Vector<String> cross the boundary as flat $Array (not $PVec);
+// the rt.arr conversions at the call site perform the actual translation.
+// Result<Vector<Byte>, String> is the read_file shape: the host returns a raw
+// $Array and rt_arr__from_read_file_result wraps it into the Result, so we
+// declare the import as returning $Array.
+fn extern_boundary_val_type(ty: MonoType, env: ResolvedEnv) ValType {
+  case ty {
+    .Vector(.Byte) => .Ref(true, .Named("rt_types__Array")),
+    .Vector(.String) => .Ref(true, .Named("rt_types__Array")),
+    .Result(.Vector(.Byte), .String) => .Ref(true, .Named("rt_types__Array")),
+    _ => val_type_of_mono(ty, env),
+  }
+}
+
+// Returns true when an extern param type requires PVec→Array conversion.
+// Mirrors extern_param_needs_to_array in calls.tw — kept in sync manually.
+fn extern_param_needs_to_array(ty: MonoType) Bool {
+  case ty {
+    .Vector(.Byte) => true,
+    .Vector(.String) => true,
+    _ => false,
+  }
+}
+
 // ── Module emission ────────────────────────────────────────────────────
 pub fn emit_module(
   prepared: PreparedModule,
@@ -104,6 +130,7 @@ pub fn emit_module(
     current_func_id: .None,
     func_sym_map,
     prepared_funcs,
+    extern_imports: anf.extern_imports,
     is_init_func: false,
     loop_depth: 0,
     scratch_anyref_local: -1,
@@ -253,11 +280,11 @@ pub fn emit_module(
 
   for fid, ext in anf.extern_imports {
     params := collect ty in ext.param_tys {
-      val_type_of_mono(ty, env)
+      extern_boundary_val_type(ty, env)
     }
     results: Vector<ValType> = case ext.return_ty {
       .Some(.Void) => [],
-      .Some(ty) => [val_type_of_mono(ty, env)],
+      .Some(ty) => [extern_boundary_val_type(ty, env)],
       .None => [],
     }
     extern_imports = .append(
@@ -433,6 +460,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     current_func_id: .Some(func.func_id),
     func_sym_map: base_ctx.func_sym_map,
     prepared_funcs: base_ctx.prepared_funcs,
+    extern_imports: base_ctx.extern_imports,
     is_init_func: func.is_init,
     loop_depth: 0,
     scratch_anyref_local,
@@ -900,25 +928,52 @@ fn try_emit_tail_op(
 
   case op {
     .ACall(.AGlobalFunc(fid), args) => {
-      // Direct tail call — only for non-builtin functions
+      // Direct tail call — only for non-builtin, non-vector-marshaled functions.
+      // Extern imports that need Array↔PVec conversion cannot be tail-called
+      // because the conversion instruction must run after the call returns.
+      is_extern_with_conv := case ctx.extern_imports[fid.id] {
+        .Some(ext) => {
+          has_vec_param := false
+
+          for ty in ext.param_tys {
+            if extern_param_needs_to_array(ty) {
+              has_vec_param = true
+            }
+          }
+
+          has_vec_return := case ext.return_ty {
+            .Some(.Vector(.Byte)) => true,
+            .Some(.Vector(.String)) => true,
+            .Some(.Result(.Vector(.Byte), .String)) => true,
+            _ => false,
+          }
+          has_vec_param or has_vec_return
+        },
+        .None => false,
+      }
+
       case bi.entry(ctx.builtins, fid) {
-        .None => .Some(
-          call_emit.emit_direct_tail_call(
-            fid,
-            args,
-            ctx,
-            buf,
-            call_emit.CallEmitFns.{
-              emit_atom,
-              atom_val_type,
-              atom_mono,
-              emit_checked_i32_narrow,
-              emit_intrinsic_call,
-              emit_closure_call,
-              emit_global_closure_call,
-            },
-          ),
-        ),
+        .None => if is_extern_with_conv {
+          .None
+        } else {
+          .Some(
+            call_emit.emit_direct_tail_call(
+              fid,
+              args,
+              ctx,
+              buf,
+              call_emit.CallEmitFns.{
+                emit_atom,
+                atom_val_type,
+                atom_mono,
+                emit_checked_i32_narrow,
+                emit_intrinsic_call,
+                emit_closure_call,
+                emit_global_closure_call,
+              },
+            ),
+          )
+        },
         _ => .None,
       }
     },

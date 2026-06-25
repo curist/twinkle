@@ -402,7 +402,9 @@ pub(crate) fn emit_named_module_from_plan(
         let has_option_extern_ret = ext.return_ty.as_ref().is_some_and(is_option_extern_ref);
         let needs_bridge = has_option_extern_param || has_option_extern_ret;
 
-        // Import params/results: use raw externref for Option<ExternRef> at the boundary
+        // Import params/results: map boundary types to their host-side Wasm types.
+        // Option<ExternRef> → nullable externref; Vector<Byte>/Vector<String>/
+        // Result<Vector<Byte>,String> → $Array (flat host array, marshaled by rt.arr).
         let import_params: Vec<ValType> = ext
             .param_tys
             .iter()
@@ -413,7 +415,7 @@ pub(crate) fn emit_named_module_from_plan(
                         heap: HeapType::Extern,
                     }
                 } else {
-                    mono_to_valtype(ty, type_env)
+                    extern_boundary_valtype(ty, type_env)
                 }
             })
             .collect();
@@ -428,7 +430,7 @@ pub(crate) fn emit_named_module_from_plan(
                         heap: HeapType::Extern,
                     }
                 } else {
-                    mono_to_valtype(ty, type_env)
+                    extern_boundary_valtype(ty, type_env)
                 }
             })
             .into_iter()
@@ -877,6 +879,40 @@ fn is_option_extern_ref(ty: &MonoType) -> bool {
                 && args.len() == 1
                 && matches!(args[0], MonoType::ExternRef(_))
     )
+}
+
+/// Returns true when the MonoType must cross the extern boundary as a flat
+/// $Array (i.e., requires PVec↔Array marshaling at the call site).
+fn is_extern_vector_boundary(ty: &MonoType) -> bool {
+    matches!(ty, MonoType::Vector(e) if matches!(e.as_ref(), MonoType::Byte | MonoType::String))
+}
+
+/// Returns true when the extern return type is the readfile shape
+/// Result<Vector<Byte>, String>, which arrives from the host as a raw $Array.
+fn is_extern_readfile_return(ty: &MonoType) -> bool {
+    matches!(
+        ty,
+        MonoType::Named { type_id, args }
+            if *type_id == RESULT_TYPE_ID
+                && args.len() == 2
+                && matches!(&args[0], MonoType::Vector(e) if matches!(e.as_ref(), MonoType::Byte))
+                && matches!(args[1], MonoType::String)
+    )
+}
+
+/// Map a param/result MonoType to the Wasm ValType used at the extern import
+/// declaration boundary. Vector<Byte>, Vector<String>, and
+/// Result<Vector<Byte>, String> all cross as flat $Array; the call site inserts
+/// rt.arr conversions.
+fn extern_boundary_valtype(ty: &MonoType, type_env: &TypeEnv) -> ValType {
+    if is_extern_vector_boundary(ty) || is_extern_readfile_return(ty) {
+        ValType::Ref {
+            nullable: true,
+            heap: HeapType::Named(T_ARRAY.to_string()),
+        }
+    } else {
+        mono_to_valtype(ty, type_env)
+    }
 }
 
 /// Generate a bridge function that wraps an extern import with Option<ExternRef>

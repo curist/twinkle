@@ -90,6 +90,25 @@ pub fn emit_call(
 
 type DirectExpected = .{ mono: MonoType, val_type: ValType }
 
+fn extern_param_needs_to_array(ty: MonoType) Bool {
+  case ty {
+    .Vector(.Byte) => true,
+    .Vector(.String) => true,
+    _ => false,
+  }
+}
+
+type ExternResultConv = { ConvNone, ConvFromArray, ConvFromReadFileResult }
+
+fn extern_result_conv(return_ty: MonoType?) ExternResultConv {
+  case return_ty {
+    .Some(.Vector(.Byte)) => .ConvFromArray,
+    .Some(.Vector(.String)) => .ConvFromArray,
+    .Some(.Result(.Vector(.Byte), .String)) => .ConvFromReadFileResult,
+    _ => .ConvNone,
+  }
+}
+
 fn emit_direct_call(
   fid: FuncId,
   args: Vector<PreparedAtom>,
@@ -102,23 +121,60 @@ fn emit_direct_call(
   sym := lookup_func_sym(ctx.func_sym_map, fid)
   out := buf
 
-  expected_func := ctx.prepared_funcs[fid.id]
+  case ctx.extern_imports[fid.id] {
+    .Some(ext) => {
+      // Extern import: marshal Vector<Byte>/Vector<String> args through $Array
+      for a, i in args {
+        out = fns.emit_atom(a, ctx, out)
 
-  for a, i in args {
-    expected := direct_expected_arg(expected_func, i)
-    out = emit_direct_arg(a, expected, ctx, out, fns)
-  }
+        if i < ext.param_tys.len() and extern_param_needs_to_array(ext.param_tys[i]) {
+          out = .append(.Call("rt_arr__to_array"))
+        }
+      }
 
-  out = .append(.Call(sym))
+      out = .append(.Call(sym))
 
-  case result_mono {
-    .Void => {
-      out = .append(.I32Const(0))
-      out = .append(.RefI31)
-      out.append(.LocalSet(result_idx))
+      conv := extern_result_conv(ext.return_ty)
+
+      out = case conv {
+        .ConvFromArray => out.append(.Call("rt_arr__from_array")),
+        .ConvFromReadFileResult => out
+          .append(.RefCast(true, .Named("rt_types__Variant")))
+          .append(.Call("rt_arr__from_read_file_result")),
+        .ConvNone => out,
+      }
+
+      case result_mono {
+        .Void => {
+          out = .append(.I32Const(0))
+          out = .append(.RefI31)
+          out.append(.LocalSet(result_idx))
+        },
+        .Never => out,
+        _ => out.append(.LocalSet(result_idx)),
+      }
     },
-    .Never => out,
-    _ => out.append(.LocalSet(result_idx)),
+    .None => {
+      // Regular user function: direct call with per-slot coercion
+      expected_func := ctx.prepared_funcs[fid.id]
+
+      for a, i in args {
+        expected := direct_expected_arg(expected_func, i)
+        out = emit_direct_arg(a, expected, ctx, out, fns)
+      }
+
+      out = .append(.Call(sym))
+
+      case result_mono {
+        .Void => {
+          out = .append(.I32Const(0))
+          out = .append(.RefI31)
+          out.append(.LocalSet(result_idx))
+        },
+        .Never => out,
+        _ => out.append(.LocalSet(result_idx)),
+      }
+    },
   }
 }
 

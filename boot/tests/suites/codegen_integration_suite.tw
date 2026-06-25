@@ -835,6 +835,33 @@ fn test_dict_index_materializes_typed_option() Result<Void, String> {
 }
 
 // ── Suite ───────────────────────────────────────────────────────────
+// ── Extern Vector<Byte> marshaling tests ───────────────────────────
+fn test_extern_vector_byte_import_uses_array_type() Result<Void, String> {
+  // extern twinkle_runtime { fn echo_bytes(xs: Vector<Byte>) Vector<Byte> }
+  // The host boundary must declare the import as $Array (not $PVec) for both
+  // param and result. The call site must wrap the arg with rt_arr__to_array and
+  // unwrap the result with rt_arr__from_array.
+  src := "extern twinkle_runtime {\n  fn echo_bytes(xs: Vector<Byte>) Vector<Byte>\n}\nfn go(xs: Vector<Byte>) Vector<Byte> { twinkle_runtime.echo_bytes(xs) }\ngo([1, 2, 3])\n"
+  wat := try assert_codegen_src_compiles(src, "extern Vector<Byte> marshaling")
+
+  // The import functype that takes/returns $Array must exist. Since all echo_bytes
+  // traffic goes through a single functype, find the pattern
+  // "(func (param (ref null $rt_types__Array)) (result (ref null $rt_types__Array)))".
+  // This confirms the extern import signature uses $Array, not $PVec.
+  try assert.str_contains(
+    wat,
+    "(func (param (ref null $rt_types__Array)) (result (ref null $rt_types__Array)))",
+  )
+
+  // Call site must wrap the PVec arg to Array before the call
+  try assert.str_contains(wat, "call $rt_arr__to_array")
+
+  // Call site must unwrap the Array result to PVec after the call
+  try assert.str_contains(wat, "call $rt_arr__from_array")
+
+  .Ok({})
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("codegen integration (M11)")
@@ -968,5 +995,9 @@ pub fn suite() runner.Suite {
         try assert_codegen_src_compiles(src, "anon record variant")
         .Ok({})
       },
+    )
+    .test(
+      "extern Vector<Byte> import uses $Array at boundary and wraps call site",
+      test_extern_vector_byte_import_uses_array_type,
     )
 }

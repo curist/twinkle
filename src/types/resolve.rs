@@ -546,6 +546,21 @@ impl Resolver {
             {
                 Ok(())
             }
+            // Vector<Byte> and Vector<String> cross as flat $Array at the host boundary
+            MonoType::Vector(elem)
+                if matches!(elem.as_ref(), MonoType::Byte | MonoType::String) =>
+            {
+                Ok(())
+            }
+            // Result<Vector<Byte>, String> is the read_file return shape
+            MonoType::Named { type_id, args }
+                if *type_id == crate::types::ty::RESULT_TYPE_ID
+                    && args.len() == 2
+                    && matches!(&args[0], MonoType::Vector(e) if matches!(e.as_ref(), MonoType::Byte))
+                    && matches!(args[1], MonoType::String) =>
+            {
+                Ok(())
+            }
             MonoType::Void if allow_void => Ok(()),
             _ => {
                 self.errors.push(TypeError::UnsupportedFeature {

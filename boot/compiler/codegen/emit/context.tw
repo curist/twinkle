@@ -4,7 +4,7 @@ use compiler.backend.prepared_ir.{PreparedFunc, ReprKind, SlotId}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
-use compiler.core_ir.{FuncId, LocalId}
+use compiler.core_ir.{ExternImport, FuncId, LocalId}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
 
@@ -71,6 +71,7 @@ pub type EmitCtx = .{
   current_func_id: FuncId?,
   func_sym_map: Dict<Int, String>,
   prepared_funcs: Dict<Int, PreparedFunc>,
+  extern_imports: Dict<Int, ExternImport>,
   is_init_func: Bool,
   loop_depth: Int,
   scratch_anyref_local: Int,

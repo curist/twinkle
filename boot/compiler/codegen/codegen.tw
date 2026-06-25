@@ -185,6 +185,9 @@ fn mono_type_kind(ty: MonoType) String {
     .Byte => "i32",
     .ExternRef(_) => "ref",
     .Optional(inner) => mono_type_kind(inner),
+    .Vector(.Byte) => "bytes",
+    .Vector(.String) => "strvec",
+    .Result(.Vector(.Byte), .String) => "readfile",
     _ => "ref",
   }
 }

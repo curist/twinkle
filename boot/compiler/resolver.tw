@@ -1839,6 +1839,9 @@ fn is_extern_safe_type(ty: MonoType, allow_void: Bool) Bool {
     .Void => allow_void,
     .ExternRef(_) => true,
     .Optional(.ExternRef(_)) => true,
+    .Vector(.Byte) => true,
+    .Vector(.String) => true,
+    .Result(.Vector(.Byte), .String) => true,
     _ => false,
   }
 }
