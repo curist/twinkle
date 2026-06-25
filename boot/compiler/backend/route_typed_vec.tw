@@ -176,68 +176,55 @@ fn route_func(
 }
 
 // ── Candidate collection ────────────────────────────────────────────
-type DepthWork = .{ expr: PreparedExpr, depth: Int }
-
+// Recursion depth is bounded by `limit` (returns as soon as depth exceeds it),
+// so this stays stack-safe while iterating the Let spine without a worklist.
 fn prepared_depth_exceeds(expr: PreparedExpr, limit: Int) Bool {
-  stack: Vector<DepthWork> = [.{ expr, depth: 1 }]
+  prepared_depth_exceeds_at(expr, 1, limit)
+}
 
-  for stack.len() > 0 {
-    item := stack[stack.len() - 1]
-    stack = .drop_last()
+fn prepared_depth_exceeds_at(expr: PreparedExpr, depth: Int, limit: Int) Bool {
+  cur := expr
+  d := depth
+  done := false
 
-    if item.depth > limit {
+  for !done {
+    if d > limit {
       return true
     }
 
-    cur_depth := item.depth
-    cur_expr := item.expr
-    done := false
+    case cur {
+      .Let(_, op, body) => {
+        if op_children_depth_exceeds(op, d + 1, limit) {
+          return true
+        }
 
-    for !done {
-      if cur_depth > limit {
-        return true
-      }
-
-      child_depth := cur_depth + 1
-
-      case cur_expr {
-        .Let(_, op, body) => {
-          stack = push_prepared_op_children_with_depth(op, child_depth, stack)
-          cur_expr = body
-          cur_depth = child_depth
-        },
-        _ => done = true,
-      }
+        cur = body
+        d = d + 1
+      },
+      _ => done = true,
     }
   }
 
   false
 }
 
-fn push_prepared_op_children_with_depth(op: PreparedOp, depth: Int, stack: Vector<DepthWork>) Vector<
-  DepthWork,
-> {
-  cur_stack := stack
-
+fn op_children_depth_exceeds(op: PreparedOp, depth: Int, limit: Int) Bool {
   case op {
-    .AIf(_, then_e, else_e) => {
-      cur_stack = .append(.{ expr: else_e, depth })
-      cur_stack = .append(.{ expr: then_e, depth })
-    },
+    .AIf(_, then_e, else_e) => prepared_depth_exceeds_at(then_e, depth, limit)
+      or prepared_depth_exceeds_at(else_e, depth, limit),
     .AMatch(_, arms) => {
-      i := arms.len() - 1
-
-      for i >= 0 {
-        cur_stack = .append(.{ expr: arms[i].body, depth })
-        i = i - 1
+      for arm in arms {
+        if prepared_depth_exceeds_at(arm.body, depth, limit) {
+          return true
+        }
       }
-    },
-    .ALoop(inner) => cur_stack = .append(.{ expr: inner, depth }),
-    .ADefer(inner) => cur_stack = .append(.{ expr: inner, depth }),
-    _ => {},
-  }
 
-  cur_stack
+      false
+    },
+    .ALoop(inner) => prepared_depth_exceeds_at(inner, depth, limit),
+    .ADefer(inner) => prepared_depth_exceeds_at(inner, depth, limit),
+    _ => false,
+  }
 }
 
 fn is_int_vector(mono_key: String) Bool {
@@ -257,31 +244,49 @@ fn collect_candidates(
   ids: RouteIds,
   acc: Vector<Cand>,
 ) Vector<Cand> {
+  cur := expr
   cur_acc := acc
-  stack: Vector<PreparedExpr> = [expr]
+  done := false
 
-  for stack.len() > 0 {
-    cur_expr := stack[stack.len() - 1]
-    stack = .drop_last()
-    done := false
-
-    for !done {
-      case cur_expr {
-        .Let(slot, op, body) => {
-          cur_acc = collect_candidate_from_op(slot, op, slots, ids, cur_acc)
-          r := collect_candidates_op(op, stack)
-          stack = r.stack
-          cur_expr = body
-        },
-        _ => done = true,
-      }
+  for !done {
+    case cur {
+      .Let(slot, op, body) => {
+        cur_acc = collect_candidate_from_op(slot, op, slots, ids, cur_acc)
+        cur_acc = collect_candidates_op_branches(op, slots, ids, cur_acc)
+        cur = body
+      },
+      _ => done = true,
     }
   }
 
   cur_acc
 }
 
-type CandidateOpResult = .{ stack: Vector<PreparedExpr> }
+fn collect_candidates_op_branches(
+  op: PreparedOp,
+  slots: Dict<Int, SlotInfo>,
+  ids: RouteIds,
+  acc: Vector<Cand>,
+) Vector<Cand> {
+  cur := acc
+
+  case op {
+    .AIf(_, then_e, else_e) => {
+      cur = collect_candidates(then_e, slots, ids, cur)
+      cur = collect_candidates(else_e, slots, ids, cur)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        cur = collect_candidates(arm.body, slots, ids, cur)
+      }
+    },
+    .ALoop(inner) => cur = collect_candidates(inner, slots, ids, cur),
+    .ADefer(inner) => cur = collect_candidates(inner, slots, ids, cur),
+    _ => {},
+  }
+
+  cur
+}
 
 fn collect_candidate_from_op(
   slot: SlotId,
@@ -310,30 +315,6 @@ fn collect_candidate_from_op(
   }
 }
 
-fn collect_candidates_op(op: PreparedOp, stack: Vector<PreparedExpr>) CandidateOpResult {
-  cur_stack := stack
-
-  case op {
-    .AIf(_, then_e, else_e) => {
-      cur_stack = .append(else_e)
-      cur_stack = .append(then_e)
-    },
-    .AMatch(_, arms) => {
-      i := arms.len() - 1
-
-      for i >= 0 {
-        cur_stack = .append(arms[i].body)
-        i = i - 1
-      }
-    },
-    .ALoop(inner) => cur_stack = .append(inner),
-    .ADefer(inner) => cur_stack = .append(inner),
-    _ => {},
-  }
-
-  .{ stack: cur_stack }
-}
-
 // Collect the result sids of `ARecordGet(_, fid, tid)` reads whose field key
 // "${tid}:${fid}" is in `typed_fields` — these read from a physically-typed
 // field, so the loaded Vector<Int> is already PVecI64 and the result slot is a
@@ -341,27 +322,47 @@ fn collect_candidates_op(op: PreparedOp, stack: Vector<PreparedExpr>) CandidateO
 fn collect_typed_field_reads(expr: PreparedExpr, typed_fields: Dict<String, Bool>, acc: Vector<Int>) Vector<
   Int,
 > {
+  cur := expr
   cur_acc := acc
-  stack: Vector<PreparedExpr> = [expr]
+  done := false
 
-  for stack.len() > 0 {
-    cur_expr := stack[stack.len() - 1]
-    stack = .drop_last()
-    done := false
-
-    for !done {
-      case cur_expr {
-        .Let(slot, op, body) => {
-          cur_acc = collect_typed_field_read_from_op(slot, op, typed_fields, cur_acc)
-          stack = push_prepared_op_children(op, stack)
-          cur_expr = body
-        },
-        _ => done = true,
-      }
+  for !done {
+    case cur {
+      .Let(slot, op, body) => {
+        cur_acc = collect_typed_field_read_from_op(slot, op, typed_fields, cur_acc)
+        cur_acc = collect_typed_field_reads_op_branches(op, typed_fields, cur_acc)
+        cur = body
+      },
+      _ => done = true,
     }
   }
 
   cur_acc
+}
+
+fn collect_typed_field_reads_op_branches(
+  op: PreparedOp,
+  typed_fields: Dict<String, Bool>,
+  acc: Vector<Int>,
+) Vector<Int> {
+  cur := acc
+
+  case op {
+    .AIf(_, then_e, else_e) => {
+      cur = collect_typed_field_reads(then_e, typed_fields, cur)
+      cur = collect_typed_field_reads(else_e, typed_fields, cur)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        cur = collect_typed_field_reads(arm.body, typed_fields, cur)
+      }
+    },
+    .ALoop(inner) => cur = collect_typed_field_reads(inner, typed_fields, cur),
+    .ADefer(inner) => cur = collect_typed_field_reads(inner, typed_fields, cur),
+    _ => {},
+  }
+
+  cur
 }
 
 fn collect_typed_field_read_from_op(
@@ -382,30 +383,6 @@ fn collect_typed_field_read_from_op(
     },
     _ => acc,
   }
-}
-
-fn push_prepared_op_children(op: PreparedOp, stack: Vector<PreparedExpr>) Vector<PreparedExpr> {
-  cur_stack := stack
-
-  case op {
-    .AIf(_, then_e, else_e) => {
-      cur_stack = .append(else_e)
-      cur_stack = .append(then_e)
-    },
-    .AMatch(_, arms) => {
-      i := arms.len() - 1
-
-      for i >= 0 {
-        cur_stack = .append(arms[i].body)
-        i = i - 1
-      }
-    },
-    .ALoop(inner) => cur_stack = .append(inner),
-    .ADefer(inner) => cur_stack = .append(inner),
-    _ => {},
-  }
-
-  cur_stack
 }
 
 // Map each slot defined by a plain copy `Let(dst, AInit(ASlot(src)), _)` to its

@@ -240,108 +240,77 @@ fn rewrite_func(
 // ── Expression rewriting ────────────────────────────────────────────
 type RewriteResult = .{ expr: AnfExpr, ctx: BCtx }
 
-type BoundaryNeedResult = .{ needed: Bool, stack: Vector<AnfExpr> }
-
 fn needs_boundary_rewrite_expr(expr: AnfExpr, ctx: BCtx) Bool {
-  stack: Vector<AnfExpr> = [expr]
+  cur := expr
+  done := false
 
-  for stack.len() > 0 {
-    cur_expr := stack[stack.len() - 1]
-    stack = .drop_last()
-    done := false
+  for !done {
+    case cur {
+      .Let(local, op, body) => {
+        if needs_boundary_rewrite_op(local, op, ctx) {
+          return true
+        }
 
-    for !done {
-      case cur_expr {
-        .Let(local, op, body) => {
-          r := needs_boundary_rewrite_op(local, op, ctx, stack)
-          if r.needed {
-            return true
-          }
+        cur = body
+      },
+      .Atom(a) => {
+        if atom_materializes_for_expected(a, ctx.current_return_mono, ctx) {
+          return true
+        }
 
-          stack = r.stack
-          cur_expr = body
-        },
-        .Atom(a) => {
-          if atom_materializes_for_expected(a, ctx.current_return_mono, ctx) {
-            return true
-          }
+        done = true
+      },
+      .Return(.Some(a)) => {
+        if atom_materializes_for_expected(a, ctx.current_return_mono, ctx) {
+          return true
+        }
 
-          done = true
-        },
-        .Return(.Some(a)) => {
-          if atom_materializes_for_expected(a, ctx.current_return_mono, ctx) {
-            return true
-          }
-
-          done = true
-        },
-        .Return(.None) => done = true,
-        _ => done = true,
-      }
+        done = true
+      },
+      .Return(.None) => done = true,
+      _ => done = true,
     }
   }
 
   false
 }
 
-fn needs_boundary_rewrite_op(local: LocalId, op: AnfOp, ctx: BCtx, stack: Vector<AnfExpr>) BoundaryNeedResult {
-  cur_stack := stack
-
+fn needs_boundary_rewrite_op(local: LocalId, op: AnfOp, ctx: BCtx) Bool {
   case op {
-    .ACall(callee, args) => .{
-      needed: call_needs_boundary_rewrite(local, callee, args, ctx),
-      stack: cur_stack,
-    },
-    .AIndex(base, index, kind, result_mono) => .{
-      needed: index_needs_boundary_rewrite(index, kind, result_mono, ctx),
-      stack: cur_stack,
-    },
-    .AInit(atom) => .{ needed: atom_materializes_for_local(atom, local, ctx), stack: cur_stack },
-    .AAssign(target, atom) => .{
-      needed: atom_materializes_for_local(atom, target, ctx),
-      stack: cur_stack,
-    },
-    .AGlobalSet(gid, atom) => .{
-      needed: atom_materializes_for_global(atom, gid, ctx),
-      stack: cur_stack,
-    },
-    .AArrayLit(elems) => .{
-      needed: array_lit_needs_boundary_rewrite(local, elems, ctx),
-      stack: cur_stack,
-    },
-    .ARecord(tid, fields) => .{
-      needed: record_needs_boundary_rewrite(local, tid, fields, ctx),
-      stack: cur_stack,
-    },
-    .AVariant(tid, vid, args) => .{
-      needed: variant_needs_boundary_rewrite(local, tid, vid, args, ctx),
-      stack: cur_stack,
-    },
-    .ARecordUpdate(base, fid, value, _, tid) => .{
-      needed: record_update_needs_boundary_rewrite(base, fid, value, tid, ctx),
-      stack: cur_stack,
-    },
-    .AIf(_, then_e, else_e) => {
-      cur_stack = .append(else_e)
-      cur_stack = .append(then_e)
-      .{ needed: false, stack: cur_stack }
-    },
+    .ACall(callee, args) => call_needs_boundary_rewrite(local, callee, args, ctx),
+    .AIndex(base, index, kind, result_mono) => index_needs_boundary_rewrite(
+      index,
+      kind,
+      result_mono,
+      ctx,
+    ),
+    .AInit(atom) => atom_materializes_for_local(atom, local, ctx),
+    .AAssign(target, atom) => atom_materializes_for_local(atom, target, ctx),
+    .AGlobalSet(gid, atom) => atom_materializes_for_global(atom, gid, ctx),
+    .AArrayLit(elems) => array_lit_needs_boundary_rewrite(local, elems, ctx),
+    .ARecord(tid, fields) => record_needs_boundary_rewrite(local, tid, fields, ctx),
+    .AVariant(tid, vid, args) => variant_needs_boundary_rewrite(local, tid, vid, args, ctx),
+    .ARecordUpdate(base, fid, value, _, tid) => record_update_needs_boundary_rewrite(
+      base,
+      fid,
+      value,
+      tid,
+      ctx,
+    ),
+    .AIf(_, then_e, else_e) => needs_boundary_rewrite_expr(then_e, ctx)
+      or needs_boundary_rewrite_expr(else_e, ctx),
     .AMatch(_, arms) => {
-      i := arms.len() - 1
-
-      for i >= 0 {
-        cur_stack = .append(arms[i].body)
-        i = i - 1
+      for arm in arms {
+        if needs_boundary_rewrite_expr(arm.body, ctx) {
+          return true
+        }
       }
 
-      .{ needed: false, stack: cur_stack }
+      false
     },
-    .ALoop(inner) => {
-      cur_stack = .append(inner)
-      .{ needed: false, stack: cur_stack }
-    },
-    .ADefer(_) => .{ needed: true, stack: cur_stack },
-    _ => .{ needed: false, stack: cur_stack },
+    .ALoop(inner) => needs_boundary_rewrite_expr(inner, ctx),
+    .ADefer(_) => true,
+    _ => false,
   }
 }
 
@@ -1286,64 +1255,39 @@ fn rewrite_index(
 
 // ── Max local helper ────────────────────────────────────────────────
 fn find_max_local_expr(expr: AnfExpr, m: Int) Int {
+  cur := expr
   max_id := m
-  stack: Vector<AnfExpr> = [expr]
+  done := false
 
-  for stack.len() > 0 {
-    cur_expr := stack[stack.len() - 1]
-    stack = .drop_last()
-    done := false
-
-    for !done {
-      case cur_expr {
-        .Let(local, op, body) => {
-          max_id = max_local_id(local, max_id)
-          r := find_max_local_op_with_stack(op, max_id, stack)
-          max_id = r.max_id
-          stack = r.stack
-          cur_expr = body
-        },
-        .Atom(a) => {
-          max_id = find_max_local_atom(a, max_id)
-          done = true
-        },
-        .Return(.Some(a)) => {
-          max_id = find_max_local_atom(a, max_id)
-          done = true
-        },
-        .Return(.None) => done = true,
-        .Break(.Some(a)) => {
-          max_id = find_max_local_atom(a, max_id)
-          done = true
-        },
-        .Break(.None) => done = true,
-        .Continue => done = true,
-      }
+  for !done {
+    case cur {
+      .Let(local, op, body) => {
+        max_id = find_max_local_op(op, max_local_id(local, max_id))
+        cur = body
+      },
+      .Atom(a) => {
+        max_id = find_max_local_atom(a, max_id)
+        done = true
+      },
+      .Return(.Some(a)) => {
+        max_id = find_max_local_atom(a, max_id)
+        done = true
+      },
+      .Return(.None) => done = true,
+      .Break(.Some(a)) => {
+        max_id = find_max_local_atom(a, max_id)
+        done = true
+      },
+      .Break(.None) => done = true,
+      .Continue => done = true,
     }
   }
 
   max_id
 }
 
-type MaxLocalResult = .{ max_id: Int, stack: Vector<AnfExpr> }
-
 fn find_max_local_op(op: AnfOp, m: Int) Int {
-  r := find_max_local_op_with_stack(op, m, [])
-  max_id := r.max_id
-  stack := r.stack
-
-  for stack.len() > 0 {
-    expr := stack[stack.len() - 1]
-    stack = .drop_last()
-    max_id = find_max_local_expr(expr, max_id)
-  }
-
-  max_id
-}
-
-fn find_max_local_op_with_stack(op: AnfOp, m: Int, stack: Vector<AnfExpr>) MaxLocalResult {
   r := m
-  cur_stack := stack
 
   case op {
     .ACall(callee, args) => {
@@ -1354,19 +1298,16 @@ fn find_max_local_op_with_stack(op: AnfOp, m: Int, stack: Vector<AnfExpr>) MaxLo
       }
     },
     .AIf(_, then_e, else_e) => {
-      cur_stack = .append(else_e)
-      cur_stack = .append(then_e)
+      r = find_max_local_expr(then_e, r)
+      r = find_max_local_expr(else_e, r)
     },
     .AMatch(_, arms) => {
-      i := arms.len() - 1
-
-      for i >= 0 {
-        cur_stack = .append(arms[i].body)
-        i = i - 1
+      for arm in arms {
+        r = find_max_local_expr(arm.body, r)
       }
     },
-    .ALoop(body) => cur_stack = .append(body),
-    .ADefer(body) => cur_stack = .append(body),
+    .ALoop(body) => r = find_max_local_expr(body, r),
+    .ADefer(body) => r = find_max_local_expr(body, r),
     .ABinOp(_, left, right, _) => {
       r = find_max_local_atom(left, r)
       r = find_max_local_atom(right, r)
@@ -1411,7 +1352,7 @@ fn find_max_local_op_with_stack(op: AnfOp, m: Int, stack: Vector<AnfExpr>) MaxLo
     .AUnwrapAnyref(a, _) => r = find_max_local_atom(a, r),
   }
 
-  .{ max_id: r, stack: cur_stack }
+  r
 }
 
 fn max_local_id(lid: LocalId, m: Int) Int {

@@ -150,7 +150,61 @@ type LowerValue = { ExprValue(PreparedExpr), OpValue(PreparedOp) }
 
 type LowerWork = { ExprWork(AnfExpr), OpWork(AnfOp), FinishLet(SlotId), FinishIf(PreparedAtom) }
 
+type LowerSpineEntry = .{ slot: SlotId, op: PreparedOp }
+
+// Fast path: walk the Let spine iteratively and recurse into ops. Recursion
+// through nested else-if chains (the deep case) is bounded by the depth limit;
+// past it we fall back to the explicit work-stack walk in lower_expr_safe so
+// deeply-nested IR can't overflow the host stack.
 fn lower_expr(expr: AnfExpr, local_to_slot: Dict<Int, SlotId>, func_name: String) PreparedExpr {
+  lower_expr_at(expr, local_to_slot, func_name, 0)
+}
+
+fn lower_expr_at(expr: AnfExpr, local_to_slot: Dict<Int, SlotId>, func_name: String, depth: Int) PreparedExpr {
+  if depth > 256 {
+    return lower_expr_safe(expr, local_to_slot, func_name)
+  }
+
+  spine: Vector<LowerSpineEntry> = []
+  cur := expr
+  terminal: PreparedExpr = .Continue
+  done := false
+
+  for !done {
+    case cur {
+      .Let(local, op, body) => {
+        slot := lookup_slot_for(local_to_slot, local.id, "let result", func_name)
+        spine = .append(.{ slot, op: lower_op(op, local_to_slot, func_name, depth + 1) })
+        cur = body
+      },
+      .Atom(atom) => {
+        terminal = .Atom(lower_atom(atom, local_to_slot))
+        done = true
+      },
+      .Return(atom) => {
+        terminal = .Return(lower_atom_opt(atom, local_to_slot))
+        done = true
+      },
+      .Break(atom) => {
+        terminal = .Break(lower_atom_opt(atom, local_to_slot))
+        done = true
+      },
+      .Continue => done = true,
+    }
+  }
+
+  result := terminal
+  i := spine.len() - 1
+
+  for i >= 0 {
+    result = .Let(spine[i].slot, spine[i].op, result)
+    i = i - 1
+  }
+
+  result
+}
+
+fn lower_expr_safe(expr: AnfExpr, local_to_slot: Dict<Int, SlotId>, func_name: String) PreparedExpr {
   work: Vector<LowerWork> = [.ExprWork(expr)]
   values: Vector<LowerValue> = []
 
@@ -177,7 +231,7 @@ fn lower_expr(expr: AnfExpr, local_to_slot: Dict<Int, SlotId>, func_name: String
           work = .append(.ExprWork(else_e))
           work = .append(.ExprWork(then_e))
         },
-        _ => values = .append(.OpValue(lower_op(op, local_to_slot, func_name))),
+        _ => values = .append(.OpValue(lower_op(op, local_to_slot, func_name, 0))),
       },
       .FinishLet(slot) => {
         body := pop_expr_value(values, "slot_assign lower_expr let body")
@@ -232,7 +286,7 @@ fn pop_op_value(values: Vector<LowerValue>, context: String) PopOpResult {
   }
 }
 
-fn lower_op(op: AnfOp, local_to_slot: Dict<Int, SlotId>, func_name: String) PreparedOp {
+fn lower_op(op: AnfOp, local_to_slot: Dict<Int, SlotId>, func_name: String, depth: Int) PreparedOp {
   case op {
     .ACall(callee, args) => .ACall(
       lower_atom(callee, local_to_slot),
@@ -242,19 +296,19 @@ fn lower_op(op: AnfOp, local_to_slot: Dict<Int, SlotId>, func_name: String) Prep
     ),
     .AIf(cond_e, then_e, else_e) => .AIf(
       lower_atom(cond_e, local_to_slot),
-      lower_expr(then_e, local_to_slot, func_name),
-      lower_expr(else_e, local_to_slot, func_name),
+      lower_expr_at(then_e, local_to_slot, func_name, depth),
+      lower_expr_at(else_e, local_to_slot, func_name, depth),
     ),
     .AMatch(scrutinee, arms) => .AMatch(
       lower_atom(scrutinee, local_to_slot),
       collect arm in arms {
         PreparedMatchArm.{
           pattern: lower_pattern(arm.pattern, local_to_slot, func_name),
-          body: lower_expr(arm.body, local_to_slot, func_name),
+          body: lower_expr_at(arm.body, local_to_slot, func_name, depth),
         }
       },
     ),
-    .ALoop(body) => .ALoop(lower_expr(body, local_to_slot, func_name)),
+    .ALoop(body) => .ALoop(lower_expr_at(body, local_to_slot, func_name, depth)),
     .ABinOp(bop, lhs, rhs, kind) => .ABinOp(
       bop,
       lower_atom(lhs, local_to_slot),
@@ -306,7 +360,7 @@ fn lower_op(op: AnfOp, local_to_slot: Dict<Int, SlotId>, func_name: String) Prep
       lower_atom(atom, local_to_slot),
     ),
     .AGlobalSet(gid, atom) => .AGlobalSet(gid, lower_atom(atom, local_to_slot)),
-    .ADefer(body) => .ADefer(lower_expr(body, local_to_slot, func_name)),
+    .ADefer(body) => .ADefer(lower_expr_at(body, local_to_slot, func_name, depth)),
     .AWrapAnyref(atom, mono) => .AWrapAnyref(lower_atom(atom, local_to_slot), mono),
     .AUnwrapAnyref(atom, mono) => .AUnwrapAnyref(lower_atom(atom, local_to_slot), mono),
   }

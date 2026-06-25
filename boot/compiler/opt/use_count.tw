@@ -19,45 +19,42 @@ fn inc(uses: Dict<Int, Int>, id: Int) Dict<Int, Int> {
 
 // ── count_uses ──────────────────────────────────────────────────────
 pub fn count_uses(expr: AnfExpr) Dict<Int, Int> {
-  uses: Dict<Int, Int> = Dict.new()
-  stack: Vector<AnfExpr> = [expr]
+  count_uses_into(expr, Dict.new())
+}
 
-  for stack.len() > 0 {
-    cur_expr := stack[stack.len() - 1]
-    stack = .drop_last()
-    done := false
+// Iterate the Let spine (the deep direction), recurse only into shallow
+// control-flow branch bodies. Threads `uses` as the accumulator.
+fn count_uses_into(expr: AnfExpr, uses: Dict<Int, Int>) Dict<Int, Int> {
+  cur := expr
+  u := uses
+  done := false
 
-    for !done {
-      case cur_expr {
-        .Let(_, op, body) => {
-          r := count_op_iter(op, uses, stack)
-          uses = r.uses
-          stack = r.stack
-          cur_expr = body
-        },
-        .Atom(a) => {
-          uses = count_atom(a, uses)
-          done = true
-        },
-        .Return(.Some(a)) => {
-          uses = count_atom(a, uses)
-          done = true
-        },
-        .Return(.None) => done = true,
-        .Break(.Some(a)) => {
-          uses = count_atom(a, uses)
-          done = true
-        },
-        .Break(.None) => done = true,
-        .Continue => done = true,
-      }
+  for !done {
+    case cur {
+      .Let(_, op, body) => {
+        u = count_op_branch(op, u)
+        cur = body
+      },
+      .Atom(a) => {
+        u = count_atom(a, u)
+        done = true
+      },
+      .Return(.Some(a)) => {
+        u = count_atom(a, u)
+        done = true
+      },
+      .Return(.None) => done = true,
+      .Break(.Some(a)) => {
+        u = count_atom(a, u)
+        done = true
+      },
+      .Break(.None) => done = true,
+      .Continue => done = true,
     }
   }
 
-  uses
+  u
 }
-
-type CountIterResult = .{ uses: Dict<Int, Int>, stack: Vector<AnfExpr> }
 
 fn count_atom(atom: Atom, uses: Dict<Int, Int>) Dict<Int, Int> {
   case atom {
@@ -66,9 +63,8 @@ fn count_atom(atom: Atom, uses: Dict<Int, Int>) Dict<Int, Int> {
   }
 }
 
-fn count_op_iter(op: AnfOp, uses: Dict<Int, Int>, stack: Vector<AnfExpr>) CountIterResult {
+fn count_op_branch(op: AnfOp, uses: Dict<Int, Int>) Dict<Int, Int> {
   u := uses
-  s := stack
 
   case op {
     .ACall(callee, args) => {
@@ -80,19 +76,17 @@ fn count_op_iter(op: AnfOp, uses: Dict<Int, Int>, stack: Vector<AnfExpr>) CountI
     },
     .AIf(cond_e, then_e, else_e) => {
       u = count_atom(cond_e, u)
-      s = .append(else_e)
-      s = .append(then_e)
+      u = count_uses_into(then_e, u)
+      u = count_uses_into(else_e, u)
     },
     .AMatch(scrutinee, arms) => {
       u = count_atom(scrutinee, u)
-      i := arms.len() - 1
 
-      for i >= 0 {
-        s = .append(arms[i].body)
-        i = i - 1
+      for arm in arms {
+        u = count_uses_into(arm.body, u)
       }
     },
-    .ALoop(body) => s = .append(body),
+    .ALoop(body) => u = count_uses_into(body, u),
     .ABinOp(_, left, right, _) => {
       u = count_atom(left, u)
       u = count_atom(right, u)
@@ -130,12 +124,12 @@ fn count_op_iter(op: AnfOp, uses: Dict<Int, Int>, stack: Vector<AnfExpr>) CountI
     .AInit(value) => u = count_atom(value, u),
     .AAssign(_, value) => u = count_atom(value, u),
     .AGlobalSet(_, value) => u = count_atom(value, u),
-    .ADefer(inner) => s = .append(inner),
+    .ADefer(inner) => u = count_uses_into(inner, u),
     .AWrapAnyref(a, _) => u = count_atom(a, u),
     .AUnwrapAnyref(a, _) => u = count_atom(a, u),
   }
 
-  .{ uses: u, stack: s }
+  u
 }
 
 fn count_expr(expr: AnfExpr, uses: Dict<Int, Int>) Dict<Int, Int> {
@@ -307,47 +301,47 @@ pub fn is_pure_with_optimizer_semantics(op: AnfOp, body: AnfExpr, semantics: Opt
 }
 
 fn expr_is_pure_with_semantics(expr: AnfExpr, semantics: OptimizerSemantics) Bool {
-  stack: Vector<AnfExpr> = [expr]
+  cur := expr
+  done := false
 
-  for stack.len() > 0 {
-    cur_expr := stack[stack.len() - 1]
-    stack = .drop_last()
-    done := false
+  for !done {
+    case cur {
+      .Let(_, op, body) => {
+        if !is_pure_with_semantics(op, semantics) {
+          return false
+        }
 
-    for !done {
-      case cur_expr {
-        .Let(_, op, body) => {
-          if !is_pure_with_semantics(op, semantics) {
-            return false
-          }
+        if !op_branches_pure(op, semantics) {
+          return false
+        }
 
-          case op {
-            .AIf(_, then_e, else_e) => {
-              stack = .append(else_e)
-              stack = .append(then_e)
-            },
-            .AMatch(_, arms) => {
-              i := arms.len() - 1
-
-              for i >= 0 {
-                stack = .append(arms[i].body)
-                i = i - 1
-              }
-            },
-            .ALoop(loop_body) => stack = .append(loop_body),
-            .ADefer(inner) => stack = .append(inner),
-            _ => {},
-          }
-
-          cur_expr = body
-        },
-        .Atom(_) => done = true,
-        .Return(_) => return false,
-        .Break(_) => return false,
-        .Continue => return false,
-      }
+        cur = body
+      },
+      .Atom(_) => done = true,
+      .Return(_) => return false,
+      .Break(_) => return false,
+      .Continue => return false,
     }
   }
 
   true
+}
+
+fn op_branches_pure(op: AnfOp, semantics: OptimizerSemantics) Bool {
+  case op {
+    .AIf(_, then_e, else_e) => expr_is_pure_with_semantics(then_e, semantics)
+      and expr_is_pure_with_semantics(else_e, semantics),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if !expr_is_pure_with_semantics(arm.body, semantics) {
+          return false
+        }
+      }
+
+      true
+    },
+    .ALoop(loop_body) => expr_is_pure_with_semantics(loop_body, semantics),
+    .ADefer(inner) => expr_is_pure_with_semantics(inner, semantics),
+    _ => true,
+  }
 }

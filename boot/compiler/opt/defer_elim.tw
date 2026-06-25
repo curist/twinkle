@@ -59,40 +59,47 @@ fn local_type_map(func: AnfFunctionDef) Dict<Int, MonoType> {
   result
 }
 
+// Walk the deep direction — the linear Let spine, which is the real
+// stack-overflow risk on large bodies — iteratively, and recurse only into
+// control-flow branch bodies (if/match/loop), whose nesting is shallow. This
+// keeps native-call speed without the per-node GC boxing a full Vector worklist
+// pays, while staying stack-safe on long Let chains.
 fn has_defer(expr: AnfExpr) Bool {
-  stack: Vector<AnfExpr> = [expr]
+  cur := expr
+  result := false
+  done := false
 
-  for stack.len() > 0 {
-    cur := stack[stack.len() - 1]
-    stack = .drop_last()
-
+  for !done {
     case cur {
-      .Let(_, op, body) => {
-        case op {
-          .ADefer(_) => return true,
-          .AIf(_, then_e, else_e) => {
-            stack = .append(else_e)
-            stack = .append(then_e)
-          },
-          .AMatch(_, arms) => {
-            i := arms.len() - 1
-            for i >= 0 {
-              stack = .append(arms[i].body)
-              i = i - 1
-            }
-          },
-          .ALoop(loop_body) => {
-            stack = .append(loop_body)
-          },
-          _ => {},
-        }
-        stack = .append(body)
+      .Let(_, op, body) => if has_defer_op(op) {
+        result = true
+        done = true
+      } else {
+        cur = body
       },
-      _ => {},
+      _ => done = true,
     }
   }
 
-  false
+  result
+}
+
+fn has_defer_op(op: AnfOp) Bool {
+  case op {
+    .ADefer(_) => true,
+    .AIf(_, then_e, else_e) => has_defer(then_e) or has_defer(else_e),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if has_defer(arm.body) {
+          return true
+        }
+      }
+
+      false
+    },
+    .ALoop(loop_body) => has_defer(loop_body),
+    _ => false,
+  }
 }
 
 // ── Core recursive rewrite ─────────────────────────────────────────

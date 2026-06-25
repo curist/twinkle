@@ -23,42 +23,84 @@ For wall-clock checks, run the same build without timing output:
 Use same-session A/B comparisons for optimization work. Whole-pipeline timings
 are noisy enough that a single sample should not justify a change by itself.
 
-## Current baseline: 2026-06-20
+## Current baseline: 2026-06-25
 
-Measured with the current bundled CLI (`target/twk`) compiling `boot/main.tw`,
-two same-session timing runs plus three wall-clock samples. The boot compiler now
-loads 215 modules and emits 2939 functions for this workload — a much larger
-graph than the May snapshot (174 modules / 1995 functions), reflecting the
-channels, task-concurrency, terminal-framework, and LSP work that has landed
-since.
-
-Wall-clock self-compilation has grown roughly in proportion to the larger graph:
-
-```text
-real: ~4.07s - 4.11s
-```
+Measured compiling `boot/main.tw` (218 modules / 3007 functions), self-hosted
+boot compiler. Two same-session timing runs. These backend numbers were taken
+via the `deno` runtime driving the freshly built `target/boot.wasm`
+(`BOOT_WASM=target/boot.wasm deno run … tools/js_runtime/deno_main.mjs build
+boot/main.tw …`); the internal `[time]` phase numbers are harness-independent and
+comparable to earlier snapshots, but wall-clock under this runner (~4.5s) carries
+more startup/runtime overhead than the compiled standalone `target/twk` used for
+the June 20 wall-clock (~4.1s), so do not compare the two wall-clock figures
+directly.
 
 Representative phase timing (range across the two runs):
 
 ```text
-compile_modules    ~1690 - 1850ms
-emit_module         ~386 - 409ms
-optimize            ~331 - 373ms
-prepare_backend     ~316 - 337ms
-verify              ~290 - 295ms
-emit_wasm_binary    ~236 - 256ms
-core_link           ~232 - 243ms
-link                ~185 - 197ms
-plan_wasm_types     ~103 - 107ms
-lower_anf            ~86 - 92ms
-monomorphize         ~68 - 72ms
-wasm_dce             ~44 - 54ms
-closure_convert      ~22 - 25ms
+compile_modules    ~1740 - 1770ms
+emit_module         ~448 - 511ms
+optimize            ~426 - 459ms
+prepare_backend     ~330 - 345ms
+verify              ~303 - 308ms
+emit_wasm_binary    ~263 - 283ms
+core_link           ~252 - 270ms
+link                ~208 - 230ms
+plan_wasm_types     ~108 - 110ms
+lower_anf           ~107 - 122ms
+monomorphize         ~70 - 90ms
+wasm_dce             ~53 - 66ms
+closure_convert      ~20 - 22ms
 ```
 
-`wasm_dce` is a new phase since the May baseline. The biggest relative growth is
-in the frontend (see below) and in `verify` (~175ms → ~290ms), tracking the
-larger function count.
+The frontend (`compile_modules`) remains the largest bucket and was not affected
+by the backend regression/recovery described below; its subphase shape is
+unchanged from June 20 (import merge and typecheck still dominate).
+
+### Deep-IR stack-safety regression (f1a80dd3) and recovery
+
+Between June 20 and 25, `f1a80dd3` ("compiler: improve stack safety for deep IR")
+converted many backend/optimizer IR traversals from native recursion to explicit
+`Vector`-backed worklists, to stop deeply-nested IR from overflowing the host
+stack. The worklists box every child node into a GC `Vector<anyref>` and pay an
+`append`/`drop_last` per node — roughly 2-9× slower per node than native call
+frames — and several ran unconditionally on every function. This regressed the
+post-monomorphize phases sharply while leaving the frontend untouched:
+
+```text
+                  June 20    regressed   recovered
+optimize           ~350       ~687        ~430
+  defer_elim       ~18        ~112        ~7.7
+closure_convert    ~22        ~155        ~20
+prepare_backend    ~327       ~796        ~330
+plan_wasm_types    ~105       ~148        ~110
+emit_module        ~398       ~557        ~448
+```
+
+The recovery (committed in this branch) replaces those worklists with a single
+shape: **walk the deep direction — the linear `Let` spine — iteratively, and
+recurse only into control-flow branch bodies (`if`/`match`/`loop`/`defer`), whose
+nesting is shallow.** This keeps native-call speed without per-node GC boxing
+while staying stack-safe on long `Let` chains. Touched: `opt/defer_elim`,
+`opt/use_count`, `backend/closure_convert`, `backend/route_typed_vec`,
+`backend/prepare`, `codegen/wasm_plan_scan`, `codegen/insert_boundaries`.
+
+`backend/slot_assign`'s `lower_expr` is the exception: it must build the
+`PreparedExpr` and handle deep **else-if chains** (the genuine deep-recursion
+case), so it uses a **depth-gated hybrid** — the fast iterative-spine path for
+the common shallow case, falling back to the original work-stack walk past a
+depth limit (256) so deeply-nested IR still cannot overflow. Each change was
+gated on the self-host fixed point (`stage3 == stage4`, byte-identical output).
+
+Durable lesson: a `Vector` worklist over IR nodes is a real per-node tax; prefer
+iterating the unbounded *spine* and recursing only the bounded *nesting*, and
+reserve an explicit worklist (or a depth-gated fallback) for the one or two walks
+where nesting itself is genuinely unbounded.
+
+Residual gap to the June 20 backend numbers is small and lives in the not-yet-
+converted worklists (`lower_anf`, `anf_analysis`, `core_linker/dce`,
+`codegen/emit`, `codegen/emit/helper_collectors`, `opt/pipeline`,
+`backend/verify_expr`), worth ~100ms in aggregate if a follow-up wants them.
 
 Frontend subphase timing (range across the two runs):
 
@@ -151,17 +193,17 @@ Important historical lessons that still apply:
 The bottleneck has moved back to the frontend, but the frontend profile is now
 mostly many small reasonable costs across a large module graph rather than one
 obvious runaway stage. `compile_modules` is larger than any single backend
-phase, yet its main buckets are spread over 215 modules and thousands of import
+phase, yet its main buckets are spread over 218 modules and thousands of import
 edges.
 
 The next tier is broad rather than a single obvious hotspot: optimization,
 module emission, backend preparation, wasm binary emission, linking, and
 verification are all close enough that local sub-timings matter. `emit_wasm_binary`
-serializes the ~2.7 MiB compiler payload in roughly 240ms, dominated by code
+serializes the ~3.0 MiB compiler payload in roughly 270ms, dominated by code
 section encoding; this is worth keeping efficient but is not a large enough
 fraction of the build to be a primary speed lever.
 
-The current module graph (215 modules / 2939 functions) is much larger than both
+The current module graph (218 modules / 3007 functions) is much larger than both
 the historical 84-module workload and the May 174-module snapshot, so older
 absolute timings should not be used for regressions. Treat this snapshot as the
 active baseline.

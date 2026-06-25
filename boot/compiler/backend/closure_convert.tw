@@ -48,56 +48,47 @@ type ConversionState = .{ captures: Dict<Int, Vector<CaptureParam>>, next_local:
 /// explicit values. Leaf helpers that need only one of these keep narrow params.
 type ConvCtx = .{ func: AnfFunctionDef, env: ResolvedEnv }
 
+// Walk the Let spine iteratively (long chains are the stack-overflow risk) and
+// recurse only into control-flow branch bodies, whose nesting is shallow. Keeps
+// native-call speed without per-node GC boxing into a Vector worklist.
 fn scan_expr(ctx: ConvCtx, expr: AnfExpr, state: ConversionState) ConversionState {
+  cur := expr
   cur_state := state
-  stack: Vector<AnfExpr> = [expr]
+  done := false
 
-  for stack.len() > 0 {
-    cur_expr := stack[stack.len() - 1]
-    stack = .drop_last()
-
-    case cur_expr {
+  for !done {
+    case cur {
       .Let(_, op, body) => {
-        // Recursive order is scan_op(op), then scan_expr(body). Push the
-        // continuation first so nested op bodies are processed before it.
-        stack = .append(body)
-        r := ctx.scan_op(op, cur_state, stack)
-        cur_state = r.state
-        stack = r.stack
+        cur_state = ctx.scan_op(op, cur_state)
+        cur = body
       },
-      _ => {},
+      _ => done = true,
     }
   }
 
   cur_state
 }
 
-type ScanOpResult = .{ state: ConversionState, stack: Vector<AnfExpr> }
-
-fn scan_op(ctx: ConvCtx, op: AnfOp, state: ConversionState, stack: Vector<AnfExpr>) ScanOpResult {
+fn scan_op(ctx: ConvCtx, op: AnfOp, state: ConversionState) ConversionState {
   cur_state := state
-  cur_stack := stack
 
   case op {
     .AMakeClosure(fid, free_vars) => cur_state = ctx.record_captures(fid, free_vars, cur_state),
     .AIf(_, then_e, else_e) => {
-      cur_stack = .append(else_e)
-      cur_stack = .append(then_e)
+      cur_state = ctx.scan_expr(then_e, cur_state)
+      cur_state = ctx.scan_expr(else_e, cur_state)
     },
     .AMatch(_, arms) => {
-      i := arms.len() - 1
-
-      for i >= 0 {
-        cur_stack = .append(arms[i].body)
-        i = i - 1
+      for arm in arms {
+        cur_state = ctx.scan_expr(arm.body, cur_state)
       }
     },
-    .ALoop(body) => cur_stack = .append(body),
-    .ADefer(body) => cur_stack = .append(body),
+    .ALoop(body) => cur_state = ctx.scan_expr(body, cur_state),
+    .ADefer(body) => cur_state = ctx.scan_expr(body, cur_state),
     _ => {},
   }
 
-  .{ state: cur_state, stack: cur_stack }
+  cur_state
 }
 
 fn record_captures(ctx: ConvCtx, fid: FuncId, free_vars: Vector<LocalId>, state: ConversionState) ConversionState {
@@ -313,122 +304,89 @@ fn max_local_id_func(func: AnfFunctionDef) Int {
 }
 
 fn max_local_id_expr(expr: AnfExpr) Int {
+  cur := expr
   max_id := -1
-  stack: Vector<AnfExpr> = [expr]
+  done := false
 
-  for stack.len() > 0 {
-    cur_expr := stack[stack.len() - 1]
-    stack = .drop_last()
-    done := false
-
-    for !done {
-      case cur_expr {
-        .Let(local, op, body) => {
-          max_id = max_int(max_id, local.id)
-          r := max_local_id_op_with_stack(op, max_id, stack)
-          max_id = r.max_id
-          stack = r.stack
-          cur_expr = body
-        },
-        .Atom(atom) => {
-          max_id = max_int(max_id, max_local_id_atom(atom))
-          done = true
-        },
-        .Return(atom) => {
-          max_id = max_int(max_id, max_local_id_atom_opt(atom))
-          done = true
-        },
-        .Break(atom) => {
-          max_id = max_int(max_id, max_local_id_atom_opt(atom))
-          done = true
-        },
-        .Continue => done = true,
-      }
+  for !done {
+    case cur {
+      .Let(local, op, body) => {
+        max_id = max_int(max_id, max_int(local.id, max_local_id_op(op)))
+        cur = body
+      },
+      .Atom(atom) => {
+        max_id = max_int(max_id, max_local_id_atom(atom))
+        done = true
+      },
+      .Return(atom) => {
+        max_id = max_int(max_id, max_local_id_atom_opt(atom))
+        done = true
+      },
+      .Break(atom) => {
+        max_id = max_int(max_id, max_local_id_atom_opt(atom))
+        done = true
+      },
+      .Continue => done = true,
     }
   }
 
   max_id
 }
 
-type MaxLocalResult = .{ max_id: Int, stack: Vector<AnfExpr> }
-
+// Spine walked iteratively in max_local_id_expr; this recurses only into the
+// branch bodies of control-flow ops, mirroring the other backend walks.
 fn max_local_id_op(op: AnfOp) Int {
-  r := max_local_id_op_with_stack(op, -1, [])
-  max_id := r.max_id
-  stack := r.stack
-
-  for stack.len() > 0 {
-    expr := stack[stack.len() - 1]
-    stack = .drop_last()
-    max_id = max_int(max_id, max_local_id_expr(expr))
-  }
-
-  max_id
-}
-
-fn max_local_id_op_with_stack(op: AnfOp, max_id: Int, stack: Vector<AnfExpr>) MaxLocalResult {
-  cur_max := max_id
-  cur_stack := stack
-
   case op {
-    .ACall(callee, args) => cur_max = max_int(
-      max_local_id_atom(callee),
-      max_int(cur_max, max_local_id_atoms(args)),
+    .ACall(callee, args) => max_int(max_local_id_atom(callee), max_local_id_atoms(args)),
+    .AIf(cond_e, then_e, else_e) => max_int(
+      max_local_id_atom(cond_e),
+      max_int(max_local_id_expr(then_e), max_local_id_expr(else_e)),
     ),
-    .AIf(cond_e, then_e, else_e) => {
-      cur_max = max_int(cur_max, max_local_id_atom(cond_e))
-      cur_stack = .append(else_e)
-      cur_stack = .append(then_e)
-    },
     .AMatch(scrutinee, arms) => {
-      cur_max = max_int(cur_max, max_local_id_atom(scrutinee))
-      i := arms.len() - 1
+      m := max_local_id_atom(scrutinee)
 
-      for i >= 0 {
-        cur_max = max_int(cur_max, max_local_id_pattern(arms[i].pattern))
-        cur_stack = .append(arms[i].body)
-        i = i - 1
+      for arm in arms {
+        m = max_int(m, max_int(max_local_id_pattern(arm.pattern), max_local_id_expr(arm.body)))
       }
+
+      m
     },
-    .ALoop(body) => cur_stack = .append(body),
-    .ABinOp(_, lhs, rhs, _) => cur_max = max_int(
-      cur_max,
-      max_int(max_local_id_atom(lhs), max_local_id_atom(rhs)),
-    ),
-    .AUnOp(_, atom, _) => cur_max = max_int(cur_max, max_local_id_atom(atom)),
+    .ALoop(body) => max_local_id_expr(body),
+    .ABinOp(_, lhs, rhs, _) => max_int(max_local_id_atom(lhs), max_local_id_atom(rhs)),
+    .AUnOp(_, atom, _) => max_local_id_atom(atom),
     .AMakeClosure(_, free_vars) => {
+      m := -1
+
       for lid in free_vars {
-        cur_max = max_int(cur_max, lid.id)
+        m = max_int(m, lid.id)
       }
+
+      m
     },
     .ARecord(_, fields) => {
-      for field in fields {
-        cur_max = max_int(cur_max, max_local_id_atom(field.value))
-      }
-    },
-    .ARecordGet(target, _, _) => cur_max = max_int(cur_max, max_local_id_atom(target)),
-    .ARecordUpdate(base, _, value, _, _) => cur_max = max_int(
-      cur_max,
-      max_int(max_local_id_atom(base), max_local_id_atom(value)),
-    ),
-    .AVariant(_, _, args) => cur_max = max_int(cur_max, max_local_id_atoms(args)),
-    .AArrayLit(items) => cur_max = max_int(cur_max, max_local_id_atoms(items)),
-    .AIndex(base, index, _, _) => cur_max = max_int(
-      cur_max,
-      max_int(max_local_id_atom(base), max_local_id_atom(index)),
-    ),
-    .AInit(atom) => cur_max = max_int(cur_max, max_local_id_atom(atom)),
-    .AAssign(target, atom) => cur_max = max_int(
-      cur_max,
-      max_int(target.id, max_local_id_atom(atom)),
-    ),
-    .AGlobalSet(_, atom) => cur_max = max_int(cur_max, max_local_id_atom(atom)),
-    .ADefer(body) => cur_stack = .append(body),
-    .AWrapAnyref(atom, _) => cur_max = max_int(cur_max, max_local_id_atom(atom)),
-    .AUnwrapAnyref(atom, _) => cur_max = max_int(cur_max, max_local_id_atom(atom)),
-  }
+      m := -1
 
-  .{ max_id: cur_max, stack: cur_stack }
+      for field in fields {
+        m = max_int(m, max_local_id_atom(field.value))
+      }
+
+      m
+    },
+    .ARecordGet(target, _, _) => max_local_id_atom(target),
+    .ARecordUpdate(base, _, value, _, _) => max_int(
+      max_local_id_atom(base),
+      max_local_id_atom(value),
+    ),
+    .AVariant(_, _, args) => max_local_id_atoms(args),
+    .AArrayLit(items) => max_local_id_atoms(items),
+    .AIndex(base, index, _, _) => max_int(max_local_id_atom(base), max_local_id_atom(index)),
+    .AInit(atom) => max_local_id_atom(atom),
+    .AAssign(target, atom) => max_int(target.id, max_local_id_atom(atom)),
+    .AGlobalSet(_, atom) => max_local_id_atom(atom),
+    .ADefer(body) => max_local_id_expr(body),
+    .AWrapAnyref(atom, _) => max_local_id_atom(atom),
+    .AUnwrapAnyref(atom, _) => max_local_id_atom(atom),
+  }
 }
 
 fn max_local_id_atoms(atoms: Vector<Atom>) Int {

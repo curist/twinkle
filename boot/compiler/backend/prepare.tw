@@ -89,8 +89,6 @@ pub fn prepare_backend(
   .{ anf: pre.anf, closure_captures, funcs: funcs3, typed_vector_fields: typed_fields }
 }
 
-type DepthWork = .{ expr: PreparedExpr, depth: Int }
-
 fn prepared_funcs_depth_exceeds(funcs: Vector<PreparedFunc>, limit: Int) Bool {
   for func in funcs {
     if prepared_depth_exceeds(func.body, limit) {
@@ -101,59 +99,55 @@ fn prepared_funcs_depth_exceeds(funcs: Vector<PreparedFunc>, limit: Int) Bool {
   false
 }
 
+// Recursion is bounded by `limit` (returns as soon as depth exceeds it), so
+// this walks the Let spine iteratively without a worklist and stays stack-safe.
 fn prepared_depth_exceeds(expr: PreparedExpr, limit: Int) Bool {
-  stack: Vector<DepthWork> = [.{ expr, depth: 1 }]
+  prepared_depth_exceeds_at(expr, 1, limit)
+}
 
-  for stack.len() > 0 {
-    item := stack[stack.len() - 1]
-    stack = .drop_last()
-    cur_depth := item.depth
-    cur_expr := item.expr
-    done := false
+fn prepared_depth_exceeds_at(expr: PreparedExpr, depth: Int, limit: Int) Bool {
+  cur := expr
+  d := depth
+  done := false
 
-    for !done {
-      if cur_depth > limit {
-        return true
-      }
+  for !done {
+    if d > limit {
+      return true
+    }
 
-      child_depth := cur_depth + 1
+    case cur {
+      .Let(_, op, body) => {
+        if op_children_depth_exceeds(op, d + 1, limit) {
+          return true
+        }
 
-      case cur_expr {
-        .Let(_, op, body) => {
-          stack = push_prepared_op_children(op, child_depth, stack)
-          cur_expr = body
-          cur_depth = child_depth
-        },
-        _ => done = true,
-      }
+        cur = body
+        d = d + 1
+      },
+      _ => done = true,
     }
   }
 
   false
 }
 
-fn push_prepared_op_children(op: PreparedOp, depth: Int, stack: Vector<DepthWork>) Vector<DepthWork> {
-  cur_stack := stack
-
+fn op_children_depth_exceeds(op: PreparedOp, depth: Int, limit: Int) Bool {
   case op {
-    .AIf(_, then_e, else_e) => {
-      cur_stack = .append(.{ expr: else_e, depth })
-      cur_stack = .append(.{ expr: then_e, depth })
-    },
+    .AIf(_, then_e, else_e) => prepared_depth_exceeds_at(then_e, depth, limit)
+      or prepared_depth_exceeds_at(else_e, depth, limit),
     .AMatch(_, arms) => {
-      i := arms.len() - 1
-
-      for i >= 0 {
-        cur_stack = .append(.{ expr: arms[i].body, depth })
-        i = i - 1
+      for arm in arms {
+        if prepared_depth_exceeds_at(arm.body, depth, limit) {
+          return true
+        }
       }
-    },
-    .ALoop(inner) => cur_stack = .append(.{ expr: inner, depth }),
-    .ADefer(inner) => cur_stack = .append(.{ expr: inner, depth }),
-    _ => {},
-  }
 
-  cur_stack
+      false
+    },
+    .ALoop(inner) => prepared_depth_exceeds_at(inner, depth, limit),
+    .ADefer(inner) => prepared_depth_exceeds_at(inner, depth, limit),
+    _ => false,
+  }
 }
 
 fn empty_registry() WasmTypeRegistry {
