@@ -2,9 +2,12 @@ use @std.buffer
 use @std.buffer.{Buffer}
 
 extern twinkle_runtime {
+  fn read_file(path: String) Vector<Byte>!String
   fn write_file(path: String, text: String) Void
+  fn write_bytes(path: String, bytes: Vector<Byte>) Void
   fn mkdirp(path: String) Void
   fn exists(path: String) Bool
+  fn list_dir(path: String) Vector<String>
   fn read_buffer_len_raw(path: String) Int
   fn read_buffer_raw(path: String, ptr: Int, len: Int) Int
   fn write_buffer_raw(path: String, ptr: Int, len: Int) Void
@@ -21,7 +24,7 @@ pub type DirEntry = .{ name: String, kind: EntryKind }
 
 /// Read raw file bytes from path.
 pub fn read_bytes(path: String) Vector<Byte>!FsError {
-  case __host_read_file(path) {
+  case twinkle_runtime.read_file(path) {
     .Ok(bytes) => .Ok(bytes),
     .Err(msg) => .Err(FsError.Other(msg)),
   }
@@ -64,7 +67,7 @@ pub fn write_text(path: String, content: String) Void!FsError {
 
 /// Write raw bytes to a file.
 pub fn write_bytes(path: String, bytes: Vector<Byte>) Void!FsError {
-  __host_write_bytes(path, bytes)
+  twinkle_runtime.write_bytes(path, bytes)
   .Ok({})
 }
 
@@ -86,7 +89,7 @@ pub fn list_dir(path: String) Vector<DirEntry>!FsError {
     return .Err(FsError.NotFound)
   }
 
-  names := __host_list_dir(path)
+  names := twinkle_runtime.list_dir(path)
   entries := collect name in names {
     DirEntry.{ name, kind: EntryKind.Other }
   }

@@ -1,14 +1,19 @@
-extern twinkle_runtime fn stdin_eof() Bool
+extern twinkle_runtime {
+  fn stdin_read_chunk(max_bytes: Int) Vector<Byte>
+  fn stdin_read_timeout(max_bytes: Int, timeout_ms: Int) Vector<Byte>
+  fn stdin_eof() Bool
+  fn stdout_write_bytes(bytes: Vector<Byte>) Void
+}
 
 /// Read up to max_bytes from stdin. Returns an empty vector at EOF.
 pub fn read_stdin_chunk(max_bytes: Int) Vector<Byte> {
-  __host_stdin_read_chunk(max_bytes)
+  twinkle_runtime.stdin_read_chunk(max_bytes)
 }
 
 /// Read up to max_bytes from stdin, waiting at most timeout_ms milliseconds.
 /// Returns an empty vector on timeout or EOF; call stdin_eof() to distinguish.
 pub fn read_stdin_timeout(max_bytes: Int, timeout_ms: Int) Vector<Byte> {
-  __host_stdin_read_timeout(max_bytes, timeout_ms)
+  twinkle_runtime.stdin_read_timeout(max_bytes, timeout_ms)
 }
 
 /// True after stdin has reached EOF.
@@ -18,7 +23,7 @@ pub fn stdin_eof() Bool {
 
 /// Write raw bytes to stdout.
 pub fn write_stdout_bytes(bytes: Vector<Byte>) {
-  __host_stdout_write_bytes(bytes)
+  twinkle_runtime.stdout_write_bytes(bytes)
 }
 
 /// Write a string to stdout as UTF-8 bytes.

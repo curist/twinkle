@@ -1,23 +1,26 @@
 extern twinkle_runtime {
   fn cwd() String
   fn exit(code: Int) Never
+  fn args() Vector<String>
+  fn env(name: String) Vector<String>
+  fn run_wasm(bytes: Vector<Byte>, argv: Vector<String>) Int
 }
 
 /// Return the current process argument vector.
 pub fn args() Vector<String> {
-  __host_args()
+  twinkle_runtime.args()
 }
 
 /// Run a compiled Wasm module with the provided argv vector.
 ///
 /// `argv[0]` should be the logical program path presented to the guest.
 pub fn run_wasm(bytes: Vector<Byte>, argv: Vector<String>) Int {
-  __host_run_wasm(bytes, argv)
+  twinkle_runtime.run_wasm(bytes, argv)
 }
 
 /// Return the environment variable value when present.
 pub fn env(name: String) String? {
-  values := __host_env(name)
+  values := twinkle_runtime.env(name)
 
   if values.len() == 0 {
     .None
