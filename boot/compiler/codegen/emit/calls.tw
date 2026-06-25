@@ -7,7 +7,8 @@ use compiler.codegen.emit.context.{EmitCtx, lookup_func_sym}
 use compiler.codegen.emit.defaults.{emit_default_value}
 use compiler.codegen.emit.runtime_abi.{
   emit_builder_arg_shim, emit_host_arg_shim, emit_host_result_shim, host_read_file_result_helper_sym,
-  is_builder_buffer_arg, is_builder_seed, is_builder_void_push, is_host_vector_arg, is_typed_vec_freeze,
+  is_builder_buffer_arg, is_builder_seed, is_builder_void_push, is_host_vector_arg,
+  is_typed_vec_freeze,
 }
 use compiler.codegen.wasm_ir.{AbiContract, Instr, ValType}
 use compiler.codegen.wasm_layout.{val_type_of_mono}
