@@ -373,26 +373,6 @@ pub fn builtin_env() ResolvedEnv {
     builtin_sig("vector$builder_push", ["T"], ["xs", "value"], [.Vector(t), t], .Some(.Void)),
     builtin_sig("vector$builder_freeze", ["T"], ["xs"], [.Vector(t)], .Some(.Vector(t))),
     builtin_sig("vector$builder_from", ["T"], ["xs"], [.Vector(t)], .Some(.Vector(t))),
-    builtin_sig("host_read_file", [], ["path"], [.String], .Some(.String)),
-    builtin_sig("host_write_file", [], ["path", "text"], [.String, .String], .Some(.Void)),
-    builtin_sig("host_mkdirp", [], ["path"], [.String], .Some(.Void)),
-    builtin_sig("host_list_dir", [], ["path"], [.String], .Some(.Vector(.String))),
-    builtin_sig("host_exists", [], ["path"], [.String], .Some(.Bool)),
-    builtin_sig("host_args", [], [], [], .Some(.Vector(.String))),
-    builtin_sig("host_env", [], ["name"], [.String], .Some(.Vector(.String))),
-    builtin_sig("host_cwd", [], [], [], .Some(.String)),
-    builtin_sig("host_exit", [], ["code"], [.Int], .Some(.Never)),
-    builtin_sig("host_sleep", [], ["ms"], [.Int], .Some(.Void)),
-    builtin_sig("host_stdin_read_chunk", [], ["max_bytes"], [.Int], .Some(.Vector(.Byte))),
-    builtin_sig(
-      "host_stdin_read_timeout",
-      [],
-      ["max_bytes", "timeout_ms"],
-      [.Int, .Int],
-      .Some(.Vector(.Byte)),
-    ),
-    builtin_sig("host_stdin_eof", [], [], [], .Some(.Bool)),
-    builtin_sig("host_stdout_write_bytes", [], ["bytes"], [.Vector(.Byte)], .Some(.Void)),
   ]
   builtin_named_types := builtin_type_entries()
   reserved_types := reserved_stdlib_type_entries(builtin_named_types.len())
@@ -423,63 +403,10 @@ pub fn builtin_env() ResolvedEnv {
   env
 }
 
-pub fn add_internal_host_builtins(env: ResolvedEnv) ResolvedEnv {
+/// Register the internal linear-memory Buffer intrinsics (`__buf_*`). These are
+/// reached only through `@std.buffer`; they have no user-facing surface.
+pub fn add_internal_buf_builtins(env: ResolvedEnv) ResolvedEnv {
   env
-    .add_function(
-      builtin_sig(
-        "__host_read_file",
-        [],
-        ["path"],
-        [.String],
-        .Some(.Result(.Vector(.Byte), .String)),
-      ),
-    )
-    .add_function(
-      builtin_sig("__host_write_file", [], ["path", "text"], [.String, .String], .Some(.Void)),
-    )
-    .add_function(
-      builtin_sig(
-        "__host_write_bytes",
-        [],
-        ["path", "bytes"],
-        [.String, .Vector(.Byte)],
-        .Some(.Void),
-      ),
-    )
-    .add_function(builtin_sig("__host_mkdirp", [], ["path"], [.String], .Some(.Void)))
-    .add_function(builtin_sig("__host_list_dir", [], ["path"], [.String], .Some(.Vector(.String))))
-    .add_function(builtin_sig("__host_exists", [], ["path"], [.String], .Some(.Bool)))
-    .add_function(builtin_sig("__host_args", [], [], [], .Some(.Vector(.String))))
-    .add_function(builtin_sig("__host_env", [], ["name"], [.String], .Some(.Vector(.String))))
-    .add_function(builtin_sig("__host_cwd", [], [], [], .Some(.String)))
-    .add_function(builtin_sig("__host_exit", [], ["code"], [.Int], .Some(.Never)))
-    .add_function(builtin_sig("__host_now", [], [], [], .Some(.Float)))
-    .add_function(builtin_sig("__host_sleep", [], ["ms"], [.Int], .Some(.Void)))
-    .add_function(
-      builtin_sig(
-        "__host_run_wasm",
-        [],
-        ["bytes", "argv"],
-        [.Vector(.Byte), .Vector(.String)],
-        .Some(.Int),
-      ),
-    )
-    .add_function(
-      builtin_sig("__host_stdin_read_chunk", [], ["max_bytes"], [.Int], .Some(.Vector(.Byte))),
-    )
-    .add_function(
-      builtin_sig(
-        "__host_stdin_read_timeout",
-        [],
-        ["max_bytes", "timeout_ms"],
-        [.Int, .Int],
-        .Some(.Vector(.Byte)),
-      ),
-    )
-    .add_function(builtin_sig("__host_stdin_eof", [], [], [], .Some(.Bool)))
-    .add_function(
-      builtin_sig("__host_stdout_write_bytes", [], ["bytes"], [.Vector(.Byte)], .Some(.Void)),
-    )
     .add_function(builtin_sig("__buf_alloc", [], ["nbytes"], [.Int], .Some(.Int)))
     .add_function(builtin_sig("__buf_free", [], ["ptr"], [.Int], .Some(.Void)))
     .add_function(builtin_sig("__buf_load_u8", [], ["base", "i"], [.Int, .Int], .Some(.Int)))

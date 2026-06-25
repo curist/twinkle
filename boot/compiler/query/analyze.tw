@@ -9,7 +9,7 @@ use @std.fs
 use @std.path
 use @std.proc
 
-use compiler.base_env.{add_internal_host_builtins, reserved_stdlib_type_origin}
+use compiler.base_env.{add_internal_buf_builtins, reserved_stdlib_type_origin}
 use compiler.checker
 use compiler.imports
 use compiler.imports.{DependencyPlan, PlannedDep}
@@ -512,7 +512,7 @@ fn analyze_module_impl(
   env := deps.env
 
   if dep_plan.is_internal {
-    env = add_internal_host_builtins(env)
+    env = add_internal_buf_builtins(env)
   }
 
   local_type_start := env.types.len()
@@ -956,7 +956,7 @@ fn break_import_cycle(
   env := deps.env
 
   if dep_plan.is_internal {
-    env = add_internal_host_builtins(env)
+    env = add_internal_buf_builtins(env)
   }
 
   // For type-only cycles, resolving this module's signatures needs to see the
