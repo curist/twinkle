@@ -1183,6 +1183,21 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
         return BigInt(exitCode);
       },
     );
+
+    // autoBridgeExternImports (in prepareWasm) already wrapped the
+    // twinkle_runtime.* extern imports, capturing the pre-JSPI sync stubs for
+    // these async host fns. Re-point the migrated twinkle_runtime aliases at the
+    // suspending versions installed above. The host fns already return the exact
+    // wire types the extern import signatures expect ($Array for byte vectors,
+    // raw i64 for sleep), so bypassing the extern bridge's marshalling is correct.
+    // Runs after bridging, before instantiation.
+    if (hostImports.twinkle_runtime) {
+      for (const name of ["sleep", "stdin_read_chunk", "stdin_read_timeout", "run_wasm"]) {
+        if (name in hostImports.twinkle_runtime) {
+          hostImports.twinkle_runtime[name] = hostImports.host[name];
+        }
+      }
+    }
   }
 
   try {
