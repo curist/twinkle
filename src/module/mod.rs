@@ -18,7 +18,7 @@ use crate::ir::lower::LowerInput;
 use crate::ir::lower::prelude;
 use crate::query::api::{
     QueryDiagnostic, QuerySpan, preassign_module_function_ids, resolve_stage_internal,
-    resolve_stage_with_diagnostics, typecheck_stage_with_diagnostics_and_options,
+    resolve_stage_with_diagnostics, typecheck_stage_with_diagnostics,
 };
 use crate::query::cache::with_global_cache;
 use crate::query::keys as query_keys;
@@ -763,12 +763,11 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
 
     // Typecheck — pure function; takes explicit envs and returns updated envs + TypeMap
     let typed = if analysis_collector.is_enabled() {
-        match typecheck_stage_with_diagnostics_and_options(
+        match typecheck_stage_with_diagnostics(
             &ast,
             resolved.clone(),
             state.module_aliases.clone(),
             &file_registry,
-            is_internal,
         ) {
             Ok(typed) => {
                 record_stage_trace(stage_trace, &canonical, CompileStage::Typecheck, false);

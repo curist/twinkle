@@ -170,23 +170,7 @@ pub fn typecheck_stage(
     resolved: ResolvedModule,
     module_aliases: HashSet<String>,
 ) -> Result<TypedModule, Vec<TypeError>> {
-    typecheck_stage_with_options(ast, resolved, module_aliases, false)
-}
-
-/// Type-check a module with optional access to internal host intrinsics.
-pub fn typecheck_stage_with_options(
-    ast: &SourceFile,
-    resolved: ResolvedModule,
-    module_aliases: HashSet<String>,
-    allow_internal_host_builtins: bool,
-) -> Result<TypedModule, Vec<TypeError>> {
-    TypeChecker::check_module_with_options(
-        ast,
-        resolved.type_env,
-        resolved.value_env,
-        module_aliases,
-        allow_internal_host_builtins,
-    )
+    TypeChecker::check_module(ast, resolved.type_env, resolved.value_env, module_aliases)
 }
 
 /// Type-check with structured diagnostics suitable for tooling.
@@ -196,20 +180,8 @@ pub fn typecheck_stage_with_diagnostics(
     module_aliases: HashSet<String>,
     registry: &FileRegistry,
 ) -> Result<TypedModule, Vec<QueryDiagnostic>> {
-    typecheck_stage_with_diagnostics_and_options(ast, resolved, module_aliases, registry, false)
-}
-
-/// Type-check with structured diagnostics and internal-host access control.
-pub fn typecheck_stage_with_diagnostics_and_options(
-    ast: &SourceFile,
-    resolved: ResolvedModule,
-    module_aliases: HashSet<String>,
-    registry: &FileRegistry,
-    allow_internal_host_builtins: bool,
-) -> Result<TypedModule, Vec<QueryDiagnostic>> {
     let type_env_for_fmt = resolved.type_env.clone();
-    match typecheck_stage_with_options(ast, resolved, module_aliases, allow_internal_host_builtins)
-    {
+    match typecheck_stage(ast, resolved, module_aliases) {
         Ok(t) => Ok(t),
         Err(errors) => Err(errors
             .iter()

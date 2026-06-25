@@ -113,19 +113,13 @@ pub fn resolve_key(path: &Path, source_hash: u64, deps_hash: u64) -> u64 {
     ])
 }
 
-pub fn typecheck_key(
-    path: &Path,
-    source_hash: u64,
-    deps_hash: u64,
-    allow_internal_host_builtins: bool,
-) -> u64 {
+pub fn typecheck_key(path: &Path, source_hash: u64, deps_hash: u64) -> u64 {
     mix_many(&[
         CACHE_SCHEMA_VERSION,
         hash_text("typecheck"),
         hash_text(&path.to_string_lossy()),
         source_hash,
         deps_hash,
-        allow_internal_host_builtins as u64,
     ])
 }
 

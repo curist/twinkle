@@ -78,9 +78,6 @@ pub struct TypeChecker {
     /// return type *before* checking arguments, solving MetaVars earlier.
     call_expected_ret: Option<MonoType>,
 
-    // Internal host intrinsics are only callable from stdlib/prelude modules.
-    allow_internal_host_builtins: bool,
-
     // Deferred ambiguity checks for collection literals (Dict.new(), []) whose
     // type args are MetaVars at binding time but may be resolved by downstream
     // usage before scope exit.  Each entry: (variable_name, span).
@@ -101,17 +98,6 @@ impl TypeChecker {
         value_env: ValueEnv,
         module_aliases: HashSet<String>,
     ) -> Result<TypedModule, Vec<TypeError>> {
-        Self::check_module_with_options(ast, type_env, value_env, module_aliases, false)
-    }
-
-    /// Type-check a module with internal host builtin access control.
-    pub fn check_module_with_options(
-        ast: &SourceFile,
-        type_env: TypeEnv,
-        value_env: ValueEnv,
-        module_aliases: HashSet<String>,
-        allow_internal_host_builtins: bool,
-    ) -> Result<TypedModule, Vec<TypeError>> {
         let mut checker = TypeChecker {
             type_env,
             value_env,
@@ -127,7 +113,6 @@ impl TypeChecker {
             next_meta: 0,
             meta_subst: HashMap::new(),
             call_expected_ret: None,
-            allow_internal_host_builtins,
             pending_meta_let_bindings: Vec::new(),
         };
 
@@ -820,15 +805,6 @@ impl TypeChecker {
                     // Don't record instantiation here — MetaVars aren't solved yet.
                     // They'll be recorded at the call site after unification.
                     return Ok(inst_ty);
-                }
-                if !self.allow_internal_host_builtins
-                    && self.value_env.is_visible_internal_host_builtin(name)
-                {
-                    self.errors.push(TypeError::UndefinedVariable {
-                        name: name.clone(),
-                        span: expr.span,
-                    });
-                    return Err(());
                 }
                 // Non-function values (top-level lets, builtins)
                 if let Some(ty) = self.value_env.lookup(name) {

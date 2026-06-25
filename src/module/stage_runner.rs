@@ -8,8 +8,7 @@ use anyhow::{Result, anyhow};
 
 use crate::ir::lower::LowerInput;
 use crate::query::api::{
-    ParsedModule, lower_stage, parse_source_module, resolve_stage_internal,
-    typecheck_stage_with_options,
+    ParsedModule, lower_stage, parse_source_module, resolve_stage_internal, typecheck_stage,
 };
 use crate::query::cache::with_global_cache;
 use crate::query::keys as query_keys;
@@ -127,12 +126,7 @@ impl<'a> ModuleStageRunner<'a> {
         file_registry: &FileRegistry,
     ) -> Result<StageResult<TypedModule>> {
         let typecheck_key = query_keys::with_context(
-            query_keys::typecheck_key(
-                self.canonical,
-                self.source_hash,
-                self.deps_hash,
-                self.is_internal,
-            ),
+            query_keys::typecheck_key(self.canonical, self.source_hash, self.deps_hash),
             self.context_hash,
         );
         if let Some(cached) =
@@ -146,7 +140,7 @@ impl<'a> ModuleStageRunner<'a> {
 
         let type_env_for_errs = resolved.type_env.clone();
         let typed =
-            match typecheck_stage_with_options(ast, resolved, module_aliases, self.is_internal) {
+            match typecheck_stage(ast, resolved, module_aliases) {
                 Ok(typed) => typed,
                 Err(errors) => {
                     let msgs: Vec<String> = errors
