@@ -365,7 +365,7 @@ function makeHostImports(b, runtime, bridgeBytes) {
   };
   const hostBufOffset = (ptr, off) => Number(ptr) + Number(off);
 
-  return {
+  const result = {
     host: {
       // --- I/O ---
       print: (s) => write(runtime.stdout, decodeString(b, s)),
@@ -534,6 +534,25 @@ function makeHostImports(b, runtime, bridgeBytes) {
       },
     },
   };
+
+  // Expose the same implementations under the twinkle_runtime import module.
+  // References into the already-constructed host object — no duplicated bodies.
+  const h = result.host;
+  result.twinkle_runtime = {
+    write_file: h.write_file,
+    mkdirp: h.mkdirp,
+    exists: h.exists,
+    cwd: h.cwd,
+    exit: h.exit,
+    now: h.now,
+    sleep: h.sleep,
+    stdin_eof: h.stdin_eof,
+    read_buffer_len_raw: h.read_buffer_len_raw,
+    read_buffer_raw: h.read_buffer_raw,
+    write_buffer_raw: h.write_buffer_raw,
+  };
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
