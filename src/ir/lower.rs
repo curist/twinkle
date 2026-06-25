@@ -152,23 +152,6 @@ pub mod prelude {
     // Host stdlib bridge intrinsics used by `@std.fs` and `@std.proc`.
     // Kept outside the fixed 1..=40 prelude range so existing user FuncId
     // assignments (USER_FUNC_START=41) remain stable.
-    pub const HOST_READ_FILE: FuncId = FuncId(1001); // (path: String) -> Result<Vector<Byte>, String>
-    pub const HOST_WRITE_FILE: FuncId = FuncId(1002); // (path: String, content: String) -> Void
-    pub const HOST_WRITE_BYTES: FuncId = FuncId(1003); // (path: String, bytes: Array<Int>) -> Void
-    pub const HOST_MKDIRP: FuncId = FuncId(1004); // (path: String) -> Void
-    pub const HOST_LIST_DIR: FuncId = FuncId(1005); // (path: String) -> Array<String>
-    pub const HOST_EXISTS: FuncId = FuncId(1006); // (path: String) -> Bool
-    pub const HOST_ARGS: FuncId = FuncId(1009); // () -> Array<String>
-    pub const HOST_ENV: FuncId = FuncId(1010); // (name: String) -> Array<String> (0/1 values)
-    pub const HOST_CWD: FuncId = FuncId(1011); // () -> String
-    pub const HOST_EXIT: FuncId = FuncId(1012); // (code: Int) -> Never
-    pub const HOST_NOW: FuncId = FuncId(1030); // () -> Float (milliseconds since time origin)
-    pub const HOST_SLEEP: FuncId = FuncId(1106); // (ms: Int) -> Void
-    pub const HOST_RUN_WASM: FuncId = FuncId(1031); // (bytes: Vector<Byte>, argv: Vector<String>) -> Int
-    pub const HOST_STDIN_READ_CHUNK: FuncId = FuncId(1032); // (max_bytes: Int) -> Vector<Byte>
-    pub const HOST_STDIN_READ_TIMEOUT: FuncId = FuncId(1037); // (max_bytes: Int, timeout_ms: Int) -> Vector<Byte>
-    pub const HOST_STDIN_EOF: FuncId = FuncId(1038); // () -> Bool
-    pub const HOST_STDOUT_WRITE_BYTES: FuncId = FuncId(1033); // (bytes: Vector<Byte>) -> Void
 
     // Linear-memory Buffer host shims used by stage0 while boot owns rt.buf.
     pub const BUF_ALLOC: FuncId = FuncId(1112); // (nbytes: Int) -> Int
