@@ -4675,6 +4675,9 @@ fn emit_extern_import_call(
     let ret_conv = extern_return_conv(ext.return_ty.as_ref());
     match ret_conv {
         ExternReturnConv::FromArray => {
+            // The extern import returns (ref null $Array); rt_arr__from_array
+            // expects non-null, so insert ref.as_non_null to satisfy the type system.
+            instrs.push(Instr::RefAsNonNull);
             ensure_rt_arr_from_array_import(ctx);
             instrs.push(Instr::Call("rt_arr__from_array".to_string()));
             instrs.extend(emit_coerce_stack(&ref_pvec(), bind_ty));

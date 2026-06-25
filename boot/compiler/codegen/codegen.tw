@@ -159,6 +159,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   if !buf_live {
     linked.memories = .filter(fn(m) { m.name != "heap" })
     linked.globals = .filter(fn(g) { !g.name.starts_with("rt_buf__") })
+    linked.memory_exports = .filter(fn(me) { me.wasm_name != "memory" })
   } else if linked.memory_exports.len() == 0 {
     linked.memory_exports = [MemoryExportDef.{ wasm_name: "memory", memory_idx: 0 }]
   }

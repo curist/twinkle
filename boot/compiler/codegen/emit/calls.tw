@@ -137,7 +137,9 @@ fn emit_direct_call(
       conv := extern_result_conv(ext.return_ty)
 
       out = case conv {
-        .ConvFromArray => out.append(.Call("rt_arr__from_array")),
+        // The extern import returns (ref null $Array); rt_arr__from_array expects
+        // non-null, so insert ref.as_non_null to satisfy the type system.
+        .ConvFromArray => out.append(.RefAsNonNull).append(.Call("rt_arr__from_array")),
         .ConvFromReadFileResult => out
           .append(.RefCast(true, .Named("rt_types__Variant")))
           .append(.Call("rt_arr__from_read_file_result")),
