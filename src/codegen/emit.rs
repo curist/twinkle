@@ -118,6 +118,7 @@ pub(crate) fn build_module_emit_plan_impl(
         build_user_sig_map_typed(anf, type_env, &closure_capture_layouts, &concrete_func_sigs);
     let mut ctx = EmitCtx::new(type_env, &prelude, &user_sigs);
     ctx.set_concrete_func_sigs(concrete_func_sigs.clone());
+    ctx.set_extern_imports(anf.extern_imports.clone());
     let module_global_ids = collect_module_global_locals(anf);
     let module_global_map = module_global_ids
         .iter()
@@ -166,6 +167,7 @@ pub(crate) fn emit_named_module_from_plan(
     let user_sigs = plan.user_sigs.clone();
     let mut ctx = EmitCtx::new(type_env, &prelude, &user_sigs);
     ctx.set_concrete_func_sigs(plan.concrete_func_sigs.clone());
+    ctx.set_extern_imports(anf.extern_imports.clone());
     ctx.set_module_globals(plan.module_global_map.clone());
     ctx.set_capture_mono_by_func(plan.capture_mono_by_func.clone());
     ctx.set_user_func_iterator_states(plan.user_func_iterator_states.clone());
@@ -912,6 +914,24 @@ fn extern_boundary_valtype(ty: &MonoType, type_env: &TypeEnv) -> ValType {
         }
     } else {
         mono_to_valtype(ty, type_env)
+    }
+}
+
+/// Enum describing what post-call conversion is needed for an extern return.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExternReturnConv {
+    None,
+    /// Emit `call $rt_arr__from_array` — host returned flat $Array, convert to $PVec.
+    FromArray,
+    /// Emit `ref.cast $rt_types__Variant` + `call $rt_arr__from_read_file_result`.
+    FromReadFileResult,
+}
+
+fn extern_return_conv(return_ty: Option<&MonoType>) -> ExternReturnConv {
+    match return_ty {
+        Some(ty) if is_extern_vector_boundary(ty) => ExternReturnConv::FromArray,
+        Some(ty) if is_extern_readfile_return(ty) => ExternReturnConv::FromReadFileResult,
+        _ => ExternReturnConv::None,
     }
 }
 
@@ -2692,6 +2712,17 @@ fn emit_tail_direct_user_call(
     return_ty: Option<&ValType>,
     ctx: &mut EmitCtx<'_>,
 ) -> Option<Vec<Instr>> {
+    // Extern imports with vector boundary marshalling cannot use tail calls
+    // because we need to insert conversion instructions after the call.
+    // Fall back to None so the caller emits a regular (non-tail) call instead.
+    if let Some(ext) = ctx.get_extern_import(func_id).cloned() {
+        let needs_vector_marshal = ext.param_tys.iter().any(is_extern_vector_boundary)
+            || extern_return_conv(ext.return_ty.as_ref()) != ExternReturnConv::None;
+        if needs_vector_marshal {
+            return None;
+        }
+    }
+
     let abi = ctx
         .user_func_abi(func_id)
         .unwrap_or_else(|| panic!("missing ABI for function FuncId({})", func_id.0));
@@ -4570,6 +4601,11 @@ fn emit_direct_user_call(
     bind_ty: &ValType,
     ctx: &mut EmitCtx<'_>,
 ) -> Vec<Instr> {
+    // Check if this is an extern import — if so, marshal vector boundary types.
+    if let Some(ext) = ctx.get_extern_import(func_id).cloned() {
+        return emit_extern_import_call(func_id, &ext, args, bind_ty, ctx);
+    }
+
     let abi = ctx
         .user_func_abi(func_id)
         .unwrap_or_else(|| panic!("missing ABI for function FuncId({})", func_id.0));
@@ -4597,6 +4633,81 @@ fn emit_direct_user_call(
         Some(result_ty) => instrs.extend(emit_coerce_stack(result_ty, bind_ty)),
         None => {
             instrs.extend(emit_void_value(Some(bind_ty)));
+        }
+    }
+
+    instrs
+}
+
+/// Emit a call to an extern import, inserting PVec↔Array marshalling for
+/// Vector<Byte>/Vector<String> params/results and the readfile-result shape.
+fn emit_extern_import_call(
+    func_id: FuncId,
+    ext: &crate::ir::core::ExternImport,
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    let mut instrs = Vec::new();
+
+    // Push each arg; for vector boundary params, convert PVec → Array first.
+    for (i, arg) in args.iter().enumerate() {
+        let param_mono = ext.param_tys.get(i);
+        let needs_to_array = param_mono.is_some_and(is_extern_vector_boundary);
+
+        if needs_to_array {
+            // Push as PVec (the Twinkle internal representation)
+            instrs.extend(emit_atom(arg, Some(&ref_pvec_null()), ctx));
+            ensure_rt_arr_to_array_import(ctx);
+            instrs.push(Instr::Call("rt_arr__to_array".to_string()));
+        } else {
+            // Use internal ABI type for the parameter
+            let param_wasm_ty = param_mono
+                .map(|ty| mono_to_valtype(ty, ctx.type_env))
+                .unwrap_or(ValType::Anyref);
+            instrs.extend(emit_atom(arg, Some(&param_wasm_ty), ctx));
+        }
+    }
+
+    instrs.push(Instr::Call(user_func_sym(func_id)));
+
+    // After the call, convert the return value if needed.
+    let ret_conv = extern_return_conv(ext.return_ty.as_ref());
+    match ret_conv {
+        ExternReturnConv::FromArray => {
+            ensure_rt_arr_from_array_import(ctx);
+            instrs.push(Instr::Call("rt_arr__from_array".to_string()));
+            instrs.extend(emit_coerce_stack(&ref_pvec(), bind_ty));
+        }
+        ExternReturnConv::FromReadFileResult => {
+            ensure_rt_arr_from_read_file_result_import(ctx);
+            instrs.push(Instr::RefCast {
+                nullable: true,
+                heap: HeapType::Named(T_VARIANT.to_string()),
+            });
+            instrs.push(Instr::Call("rt_arr__from_read_file_result".to_string()));
+            // Result is already a Variant (erased), coerce to bind_ty
+            let variant_ref = ValType::Ref {
+                nullable: true,
+                heap: HeapType::Named(T_VARIANT.to_string()),
+            };
+            instrs.extend(emit_coerce_stack(&variant_ref, bind_ty));
+        }
+        ExternReturnConv::None => {
+            // No return conversion needed; coerce internal return type to bind_ty
+            if let Some(ret_ty) = &ext.return_ty {
+                match ret_ty {
+                    MonoType::Void | MonoType::Never => {
+                        instrs.extend(emit_void_value(Some(bind_ty)));
+                    }
+                    other => {
+                        let result_wasm = mono_to_valtype(other, ctx.type_env);
+                        instrs.extend(emit_coerce_stack(&result_wasm, bind_ty));
+                    }
+                }
+            } else {
+                instrs.extend(emit_void_value(Some(bind_ty)));
+            }
         }
     }
 

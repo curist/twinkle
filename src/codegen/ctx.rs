@@ -9,7 +9,7 @@ use crate::ir::anf::analysis::{
     DivergenceOptions, collect_assigned_locals, expr_always_diverges_with,
 };
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom, OpKind};
-use crate::ir::core::CorePattern;
+use crate::ir::core::{CorePattern, ExternImport};
 use crate::runtime::types::{
     T_ARRAY, T_CHANNEL, T_CLOSURE, T_ITER_STATE, T_PDICT, T_PVEC, T_STRING, T_TASK, T_VARIANT,
 };
@@ -271,6 +271,9 @@ pub struct EmitCtx<'a> {
     pub type_env: &'a TypeEnv,
     pub prelude: &'a PreludeMap,
     user_funcs: &'a HashMap<FuncId, FuncSigInfo>,
+    /// Extern import declarations from the AnfModule.  Keyed by FuncId.
+    /// Used at call sites to insert PVec↔Array marshalling for vector boundaries.
+    pub extern_imports: HashMap<FuncId, ExternImport>,
     /// Functions with fully-concrete signatures that appear in `AMakeClosure`
     /// nodes.  Maps `func_id → (real_param_types, return_type)`.
     pub concrete_func_sigs: HashMap<FuncId, (Vec<MonoType>, MonoType)>,
@@ -307,11 +310,23 @@ impl<'a> EmitCtx<'a> {
             type_env,
             prelude,
             user_funcs,
+            extern_imports: HashMap::new(),
             concrete_func_sigs: HashMap::new(),
             user_func_iterator_states: HashMap::new(),
             specialized_types: SpecializedTypeRegistry::default(),
             scratch_anyref_local: None,
         }
+    }
+
+    /// Install the extern import map for vector boundary marshalling at call sites.
+    pub fn set_extern_imports(&mut self, imports: HashMap<FuncId, ExternImport>) {
+        self.extern_imports = imports;
+    }
+
+    /// Return the ExternImport descriptor for `func_id`, or `None` if it is not
+    /// an extern import.
+    pub fn get_extern_import(&self, func_id: FuncId) -> Option<&ExternImport> {
+        self.extern_imports.get(&func_id)
     }
 
     /// Install the concrete-function-signature map for Stage 9.6 typed

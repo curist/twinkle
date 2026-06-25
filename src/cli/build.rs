@@ -408,4 +408,87 @@ mod tests {
         let _ = fs::remove_file(&out);
         assert!(bytes.starts_with(b"\0asm"), "missing wasm magic header");
     }
+
+    /// Split WAT text into individual `(func ...)` blocks by detecting lines
+    /// that start with exactly two spaces followed by `(func $`.
+    fn split_wat_func_blocks(wat: &str) -> Vec<String> {
+        let lines: Vec<&str> = wat.lines().collect();
+        let mut blocks = Vec::new();
+        let mut current: Vec<&str> = Vec::new();
+        for line in &lines {
+            if line.starts_with("  (func $") && !current.is_empty() {
+                blocks.push(current.join("\n"));
+                current.clear();
+            }
+            current.push(line);
+        }
+        if !current.is_empty() {
+            blocks.push(current.join("\n"));
+        }
+        blocks
+    }
+
+    #[test]
+    fn extern_vec_boundary_call_site_marshals_pvec_to_array() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "twinkle-extern-vec-{}-{stamp}.tw",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            "extern twinkle_runtime {\n  fn echo_bytes(xs: Vector<Byte>) Vector<Byte>\n}\npub fn go(xs: Vector<Byte>) Vector<Byte> { twinkle_runtime.echo_bytes(xs) }\ngo([1, 2, 3])\n",
+        )
+        .expect("write extern vec source");
+        let wat = build_wat(path.to_str().unwrap())
+            .unwrap_or_else(|e| panic!("build_wat failed for extern vec boundary: {e}"));
+        let _ = fs::remove_file(&path);
+
+        // Import must declare $Array (not $PVec) for both param and result
+        assert!(
+            wat.contains("(func (param (ref null $rt_types__Array)) (result (ref null $rt_types__Array)))"),
+            "extern import functype must use $Array for Vector<Byte> param/result:\n{wat}"
+        );
+
+        // Find the call symbol for the echo_bytes import (e.g. $user__func_169).
+        // The import line looks like:
+        //   (import "twinkle_runtime" "echo_bytes" (func $<sym> ...))
+        let echo_sym = wat
+            .lines()
+            .find(|l| l.contains("echo_bytes"))
+            .and_then(|l| {
+                // extract the $<sym> token following "(func "
+                let after = l.split("(func ").nth(1)?;
+                after.split_whitespace().next().map(|s| s.trim_end_matches(')'))
+            })
+            .unwrap_or_else(|| panic!("could not find echo_bytes import line in WAT:\n{wat}"));
+
+        // Find the function block that calls the echo_bytes import symbol and verify
+        // it also contains PVec↔Array marshalling — in the same function, not just
+        // anywhere in the module (which would include rt.arr internal functions).
+        let func_blocks = split_wat_func_blocks(&wat);
+        let call_needle = format!("call {echo_sym}");
+        let caller_block = func_blocks.iter().find(|b| b.contains(&call_needle));
+        let caller = caller_block.unwrap_or_else(|| {
+            panic!(
+                "no function block calls {echo_sym} in WAT:\n{wat}"
+            )
+        });
+
+        assert!(
+            caller.contains("rt_arr__to_array"),
+            "function calling echo_bytes must emit rt_arr__to_array before the call:\n{caller}"
+        );
+        assert!(
+            caller.contains("rt_arr__from_array"),
+            "function calling echo_bytes must emit rt_arr__from_array after the call:\n{caller}"
+        );
+
+        wat::parse_str(&wat).expect("extern vec boundary WAT should assemble");
+    }
 }
