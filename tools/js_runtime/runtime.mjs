@@ -243,6 +243,8 @@ function bridgeExternImports(importList, hostImports, b, jspi = false, imports =
     if (typeof arg === "number") return arg;
     const k = spec?.[i];
     if (k === "ref" || k === "raw") return arg;
+    if (k === "bytes") return decodeByteArray(b, arg);
+    if (k === "strvec") return decodeStringArray(b, arg);
     return decodeString(b, arg);
   });
 
@@ -257,6 +259,8 @@ function bridgeExternImports(importList, hostImports, b, jspi = false, imports =
       case "i64": return typeof result === "number" ? BigInt(result) : result;
       case "f64": case "i32": return result;
       case "void": return undefined;
+      case "bytes": return makeByteArray(b, result);
+      case "strvec": return makeStringArray(b, result);
     }
     if (typeof result === "string") return encodeString(b, result);
     if (typeof result === "number") return result;
