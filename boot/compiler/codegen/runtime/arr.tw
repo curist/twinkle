@@ -6,72 +6,72 @@
 use compiler.codegen.wasm_ir.{ExportDef, FuncDef, Instr, ValType, WasmModule}
 
 // ── Constants ───────────────────────────────────────────────────────
-b_ := 5 // bits per level
+rt_BITS := 5 // bits per level
 
-bf := 32 // branching factor = 1 << 5
+rt_BF := 32 // branching factor = 1 << 5
 
-mask := 31 // bf - 1
+rt_MASK := 31 // rt_BF - 1
 
 // ── Qualified type names (after linking) ────────────────────────────
-t_array := "rt_types__Array"
+t_ARRAY := "rt_types__Array"
 
-t_pvec := "rt_types__PVec"
+t_PVEC := "rt_types__PVec"
 
-t_vec_children := "rt_types__VecChildren"
+t_VEC_CHILDREN := "rt_types__VecChildren"
 
-t_vec_internal := "rt_types__VecInternal"
+t_VEC_INTERNAL := "rt_types__VecInternal"
 
-t_i32_array := "rt_types__I32Array"
+t_I32_ARRAY := "rt_types__I32Array"
 
-t_array_i64 := "rt_types__ArrayI64"
+t_ARRAY_I64 := "rt_types__ArrayI64"
 
-t_array_f64 := "rt_types__ArrayF64"
+t_ARRAY_F64 := "rt_types__ArrayF64"
 
-t_boxed_int := "rt_types__BoxedInt"
+t_BOXED_INT := "rt_types__BoxedInt"
 
-t_boxed_float := "rt_types__BoxedFloat"
+t_BOXED_FLOAT := "rt_types__BoxedFloat"
 
-t_variant := "rt_types__Variant"
+t_VARIANT := "rt_types__Variant"
 
 // ── Ref type helpers ────────────────────────────────────────────────
 fn arr_null() ValType {
-  .Ref(true, .Named(t_array))
+  .Ref(true, .Named(t_ARRAY))
 }
 
 fn arr_ref() ValType {
-  .Ref(false, .Named(t_array))
+  .Ref(false, .Named(t_ARRAY))
 }
 
 fn pvec_null() ValType {
-  .Ref(true, .Named(t_pvec))
+  .Ref(true, .Named(t_PVEC))
 }
 
 fn pvec_ref() ValType {
-  .Ref(false, .Named(t_pvec))
+  .Ref(false, .Named(t_PVEC))
 }
 
 fn vec_children_null() ValType {
-  .Ref(true, .Named(t_vec_children))
+  .Ref(true, .Named(t_VEC_CHILDREN))
 }
 
 fn vec_children_ref() ValType {
-  .Ref(false, .Named(t_vec_children))
+  .Ref(false, .Named(t_VEC_CHILDREN))
 }
 
 fn vec_internal_null() ValType {
-  .Ref(true, .Named(t_vec_internal))
+  .Ref(true, .Named(t_VEC_INTERNAL))
 }
 
 fn i32_array_null() ValType {
-  .Ref(true, .Named(t_i32_array))
+  .Ref(true, .Named(t_I32_ARRAY))
 }
 
 fn arr_i64_null() ValType {
-  .Ref(true, .Named(t_array_i64))
+  .Ref(true, .Named(t_ARRAY_I64))
 }
 
 fn arr_f64_null() ValType {
-  .Ref(true, .Named(t_array_f64))
+  .Ref(true, .Named(t_ARRAY_F64))
 }
 
 fn ref_eq_() ValType {
@@ -86,33 +86,33 @@ fn ref_eq_null() ValType {
 // helpers (new_path/wrap_leaf/concat_trees) are shared with the boxed family —
 // they treat leaves as opaque `ref eq` — so only these thin PVecI64-struct
 // wrappers are i64-specific.
-t_pvec_i64 := "rt_types__PVecI64"
+t_PVEC_I64 := "rt_types__PVecI64"
 
 fn pvec_i64_null() ValType {
-  .Ref(true, .Named(t_pvec_i64))
+  .Ref(true, .Named(t_PVEC_I64))
 }
 
 fn pvec_i64_ref() ValType {
-  .Ref(false, .Named(t_pvec_i64))
+  .Ref(false, .Named(t_PVEC_I64))
 }
 
 fn arr_i64_ref() ValType {
-  .Ref(false, .Named(t_array_i64))
+  .Ref(false, .Named(t_ARRAY_I64))
 }
 
 // PVec field indices
-pv_len := 0
+pv_LEN := 0
 
-pv_shift := 1
+pv_SHIFT := 1
 
-pv_root := 2
+pv_ROOT := 2
 
-pv_tail := 3
+pv_TAIL := 3
 
 // VecInternal field indices
-vi_children := 0
+vi_CHILDREN := 0
 
-vi_sizes := 1
+vi_SIZES := 1
 
 // ── Module ──────────────────────────────────────────────────────────
 pub fn module() WasmModule {
@@ -180,7 +180,7 @@ pub fn module() WasmModule {
     imports: [],
     funcs,
     globals: [
-      .{ name: "empty_leaf", mutable: false, ty: arr_ref(), init: [.ArrayNewFixed(t_array, 0)] },
+      .{ name: "empty_leaf", mutable: false, ty: arr_ref(), init: [.ArrayNewFixed(t_ARRAY, 0)] },
       .{
         name: "empty_pvec",
         mutable: false,
@@ -188,16 +188,16 @@ pub fn module() WasmModule {
         init: [
           .I32Const(0),
           .I32Const(0),
-          .RefNull(.Named(t_vec_internal)),
+          .RefNull(.Named(t_VEC_INTERNAL)),
           .GlobalGet("empty_leaf"),
-          .StructNew(t_pvec),
+          .StructNew(t_PVEC),
         ],
       },
       .{
         name: "empty_leaf_i64",
         mutable: false,
         ty: arr_i64_ref(),
-        init: [.ArrayNewFixed(t_array_i64, 0)],
+        init: [.ArrayNewFixed(t_ARRAY_I64, 0)],
       },
       .{
         name: "empty_pvec_i64",
@@ -206,9 +206,9 @@ pub fn module() WasmModule {
         init: [
           .I32Const(0),
           .I32Const(0),
-          .RefNull(.Named(t_vec_internal)),
+          .RefNull(.Named(t_VEC_INTERNAL)),
           .GlobalGet("empty_leaf_i64"),
-          .StructNew(t_pvec_i64),
+          .StructNew(t_PVEC_I64),
         ],
       },
     ],
@@ -235,12 +235,20 @@ fn tailoff_fn() FuncDef {
     locals: [],
     body: [
       .LocalGet(0),
-      .I32Const(bf),
+      .I32Const(rt_BF),
       .I32LeS,
       .If(
         .Some(.I32),
         [.I32Const(0)],
-        [.LocalGet(0), .I32Const(1), .I32Sub, .I32Const(b_), .I32ShrU, .I32Const(b_), .I32Shl],
+        [
+          .LocalGet(0),
+          .I32Const(1),
+          .I32Sub,
+          .I32Const(rt_BITS),
+          .I32ShrU,
+          .I32Const(rt_BITS),
+          .I32Shl,
+        ],
       ),
     ],
   }
@@ -251,7 +259,7 @@ fn tailoff_fn() FuncDef {
 //
 // Convention: regular (radix) nodes leave idx UNCHANGED so the fully-regular
 // fast path is byte-identical to the original pure-radix navigation (callers
-// still take the in-leaf index as `idx & mask`). A relaxed node first *rebases*
+// still take the in-leaf index as `idx & rt_MASK`). A relaxed node first *rebases*
 // idx to be relative to its own subtree — clearing the high bits that regular
 // ancestors selected via radix but never subtracted — then advances from the
 // radix guess (a lower bound) while sizes[slot] <= idx and subtracts the
@@ -264,23 +272,23 @@ fn vi_nav_fn() FuncDef {
   // p0=node, p1=idx, p2=shift; L3=sizes, L4=slot
   .{
     name: "vi_nav",
-    params: [.Ref(false, .Named(t_vec_internal)), .I32, .I32],
+    params: [.Ref(false, .Named(t_VEC_INTERNAL)), .I32, .I32],
     results: [.I32, .I32],
     locals: [i32_array_null(), .I32],
     body: [
       .LocalGet(0),
-      .StructGet(t_vec_internal, vi_sizes),
+      .StructGet(t_VEC_INTERNAL, vi_SIZES),
       .LocalSet(3),
       .LocalGet(3),
       .RefIsNull,
       .If(
         .None,
-        [.LocalGet(1), .LocalGet(2), .I32ShrU, .I32Const(mask), .I32And, .LocalSet(4)],
+        [.LocalGet(1), .LocalGet(2), .I32ShrU, .I32Const(rt_MASK), .I32And, .LocalSet(4)],
         [
           .LocalGet(1),
           .I32Const(1),
           .LocalGet(2),
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .I32Add,
           .I32Shl,
           .I32Const(1),
@@ -290,7 +298,7 @@ fn vi_nav_fn() FuncDef {
           .LocalGet(1),
           .LocalGet(2),
           .I32ShrU,
-          .I32Const(mask),
+          .I32Const(rt_MASK),
           .I32And,
           .LocalSet(4),
           .Block(
@@ -304,7 +312,7 @@ fn vi_nav_fn() FuncDef {
                   .LocalGet(3),
                   .RefAsNonNull,
                   .LocalGet(4),
-                  .ArrayGet(t_i32_array),
+                  .ArrayGet(t_I32_ARRAY),
                   .LocalGet(1),
                   .I32GtS,
                   .BrIf("sbrk"),
@@ -329,7 +337,7 @@ fn vi_nav_fn() FuncDef {
               .LocalGet(4),
               .I32Const(1),
               .I32Sub,
-              .ArrayGet(t_i32_array),
+              .ArrayGet(t_I32_ARRAY),
               .I32Sub,
               .LocalSet(1),
             ],
@@ -350,12 +358,12 @@ fn child_count_fn() FuncDef {
   // p0=node; L1=sizes, L2=i
   .{
     name: "child_count",
-    params: [.Ref(false, .Named(t_vec_internal))],
+    params: [.Ref(false, .Named(t_VEC_INTERNAL))],
     results: [.I32],
     locals: [i32_array_null(), .I32],
     body: [
       .LocalGet(0),
-      .StructGet(t_vec_internal, vi_sizes),
+      .StructGet(t_VEC_INTERNAL, vi_SIZES),
       .LocalSet(1),
       .LocalGet(1),
       .RefIsNull,
@@ -373,13 +381,13 @@ fn child_count_fn() FuncDef {
                 .None,
                 [
                   .LocalGet(2),
-                  .I32Const(bf),
+                  .I32Const(rt_BF),
                   .I32GeS,
                   .BrIf("brk"),
                   .LocalGet(0),
-                  .StructGet(t_vec_internal, vi_children),
+                  .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
                   .LocalGet(2),
-                  .ArrayGet(t_vec_children),
+                  .ArrayGet(t_VEC_CHILDREN),
                   .RefIsNull,
                   .BrIf("brk"),
                   .LocalGet(2),
@@ -404,12 +412,12 @@ fn child_count_fn() FuncDef {
 // returning the next free offset. Relaxed-aware: walks actual children/leaf
 // lengths rather than assuming full 32-element leaves.
 fn copy_leaves_fn() FuncDef {
-  ta := t_array
+  ta := t_ARRAY
 
   // p0=node, p1=shift, p2=dest, p3=off; L4=count, L5=i, L6=child
   .{
     name: "copy_leaves",
-    params: [.Ref(false, .Named(t_vec_internal)), .I32, arr_ref(), .I32],
+    params: [.Ref(false, .Named(t_VEC_INTERNAL)), .I32, arr_ref(), .I32],
     results: [.I32],
     locals: [.I32, .I32, ref_eq_null()],
     body: [
@@ -431,12 +439,12 @@ fn copy_leaves_fn() FuncDef {
               .I32GeS,
               .BrIf("brk"),
               .LocalGet(0),
-              .StructGet(t_vec_internal, vi_children),
+              .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
               .LocalGet(5),
-              .ArrayGet(t_vec_children),
+              .ArrayGet(t_VEC_CHILDREN),
               .LocalSet(6),
               .LocalGet(1),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Eq,
               .If(
                 .None,
@@ -463,9 +471,9 @@ fn copy_leaves_fn() FuncDef {
                 [
                   .LocalGet(6),
                   .RefAsNonNull,
-                  .RefCast(false, .Named(t_vec_internal)),
+                  .RefCast(false, .Named(t_VEC_INTERNAL)),
                   .LocalGet(1),
-                  .I32Const(b_),
+                  .I32Const(rt_BITS),
                   .I32Sub,
                   .LocalGet(2),
                   .LocalGet(3),
@@ -503,11 +511,11 @@ fn node_total_size_fn() FuncDef {
       .I32Eqz,
       .If(
         .Some(.I32),
-        [.LocalGet(0), .RefCast(false, .Named(t_array)), .ArrayLen],
+        [.LocalGet(0), .RefCast(false, .Named(t_ARRAY)), .ArrayLen],
         [
           .LocalGet(0),
-          .RefCast(false, .Named(t_vec_internal)),
-          .StructGet(t_vec_internal, vi_sizes),
+          .RefCast(false, .Named(t_VEC_INTERNAL)),
+          .StructGet(t_VEC_INTERNAL, vi_SIZES),
           .LocalSet(2),
           .LocalGet(2),
           .RefIsNull,
@@ -515,7 +523,7 @@ fn node_total_size_fn() FuncDef {
             .Some(.I32),
             [
               .LocalGet(0),
-              .RefCast(false, .Named(t_vec_internal)),
+              .RefCast(false, .Named(t_VEC_INTERNAL)),
               .Call("child_count"),
               .LocalSet(3),
               .LocalGet(3),
@@ -526,15 +534,15 @@ fn node_total_size_fn() FuncDef {
               .I32Shl,
               .I32Mul,
               .LocalGet(0),
-              .RefCast(false, .Named(t_vec_internal)),
-              .StructGet(t_vec_internal, vi_children),
+              .RefCast(false, .Named(t_VEC_INTERNAL)),
+              .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
               .LocalGet(3),
               .I32Const(1),
               .I32Sub,
-              .ArrayGet(t_vec_children),
+              .ArrayGet(t_VEC_CHILDREN),
               .RefAsNonNull,
               .LocalGet(1),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Sub,
               .Call("node_total_size"),
               .I32Add,
@@ -547,7 +555,7 @@ fn node_total_size_fn() FuncDef {
               .ArrayLen,
               .I32Const(1),
               .I32Sub,
-              .ArrayGet(t_i32_array),
+              .ArrayGet(t_I32_ARRAY),
             ],
           ),
         ],
@@ -565,12 +573,12 @@ fn make_relaxed_fn() FuncDef {
   .{
     name: "make_relaxed",
     params: [vec_children_ref(), .I32, .I32],
-    results: [.Ref(false, .Named(t_vec_internal))],
+    results: [.Ref(false, .Named(t_VEC_INTERNAL))],
     locals: [i32_array_null(), .I32, .I32, .I32, .I32],
     body: [
       .I32Const(0),
       .LocalGet(1),
-      .ArrayNew(t_i32_array),
+      .ArrayNew(t_I32_ARRAY),
       .LocalSet(3),
       .I32Const(0),
       .LocalSet(4),
@@ -592,10 +600,10 @@ fn make_relaxed_fn() FuncDef {
               .BrIf("brk"),
               .LocalGet(0),
               .LocalGet(5),
-              .ArrayGet(t_vec_children),
+              .ArrayGet(t_VEC_CHILDREN),
               .RefAsNonNull,
               .LocalGet(2),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Sub,
               .Call("node_total_size"),
               .LocalSet(7),
@@ -607,7 +615,7 @@ fn make_relaxed_fn() FuncDef {
               .RefAsNonNull,
               .LocalGet(5),
               .LocalGet(4),
-              .ArraySet(t_i32_array),
+              .ArraySet(t_I32_ARRAY),
               .LocalGet(5),
               .LocalGet(1),
               .I32Const(1),
@@ -636,9 +644,9 @@ fn make_relaxed_fn() FuncDef {
       ),
       .LocalGet(6),
       .If(
-        .Some(.Ref(false, .Named(t_vec_internal))),
-        [.LocalGet(0), .RefNull(.Named(t_i32_array)), .StructNew(t_vec_internal)],
-        [.LocalGet(0), .LocalGet(3), .RefAsNonNull, .StructNew(t_vec_internal)],
+        .Some(.Ref(false, .Named(t_VEC_INTERNAL))),
+        [.LocalGet(0), .RefNull(.Named(t_I32_ARRAY)), .StructNew(t_VEC_INTERNAL)],
+        [.LocalGet(0), .LocalGet(3), .RefAsNonNull, .StructNew(t_VEC_INTERNAL)],
       ),
     ],
   }
@@ -673,14 +681,14 @@ fn pack_children_fn() FuncDef {
     ],
     body: [
       .LocalGet(1),
-      .I32Const(bf),
+      .I32Const(rt_BF),
       .I32LeS,
       .If(
         .None,
         [
           .RefNull(.Eq),
-          .I32Const(bf),
-          .ArrayNew(t_vec_children),
+          .I32Const(rt_BF),
+          .ArrayNew(t_VEC_CHILDREN),
           .LocalSet(3),
           .LocalGet(3),
           .RefAsNonNull,
@@ -688,7 +696,7 @@ fn pack_children_fn() FuncDef {
           .LocalGet(0),
           .I32Const(0),
           .LocalGet(1),
-          .ArrayCopy(t_vec_children, t_vec_children),
+          .ArrayCopy(t_VEC_CHILDREN, t_VEC_CHILDREN),
           .LocalGet(3),
           .RefAsNonNull,
           .LocalGet(1),
@@ -700,11 +708,11 @@ fn pack_children_fn() FuncDef {
         ],
         [
           .LocalGet(1),
-          .I32Const(bf),
+          .I32Const(rt_BF),
           .I32Const(1),
           .I32Sub,
           .I32Add,
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .I32ShrU,
           .LocalSet(10),
           .LocalGet(1),
@@ -718,8 +726,8 @@ fn pack_children_fn() FuncDef {
           .I32Sub,
           .LocalSet(12),
           .RefNull(.Eq),
-          .I32Const(bf),
-          .ArrayNew(t_vec_children),
+          .I32Const(rt_BF),
+          .ArrayNew(t_VEC_CHILDREN),
           .LocalSet(6),
           .I32Const(0),
           .LocalSet(4),
@@ -744,8 +752,8 @@ fn pack_children_fn() FuncDef {
                   .I32Add,
                   .LocalSet(5),
                   .RefNull(.Eq),
-                  .I32Const(bf),
-                  .ArrayNew(t_vec_children),
+                  .I32Const(rt_BF),
+                  .ArrayNew(t_VEC_CHILDREN),
                   .LocalSet(3),
                   .LocalGet(3),
                   .RefAsNonNull,
@@ -753,7 +761,7 @@ fn pack_children_fn() FuncDef {
                   .LocalGet(0),
                   .LocalGet(4),
                   .LocalGet(5),
-                  .ArrayCopy(t_vec_children, t_vec_children),
+                  .ArrayCopy(t_VEC_CHILDREN, t_VEC_CHILDREN),
                   .LocalGet(6),
                   .RefAsNonNull,
                   .LocalGet(7),
@@ -762,7 +770,7 @@ fn pack_children_fn() FuncDef {
                   .LocalGet(5),
                   .LocalGet(2),
                   .Call("make_relaxed"),
-                  .ArraySet(t_vec_children),
+                  .ArraySet(t_VEC_CHILDREN),
                   .LocalGet(7),
                   .I32Const(1),
                   .I32Add,
@@ -780,12 +788,12 @@ fn pack_children_fn() FuncDef {
           .RefAsNonNull,
           .LocalGet(7),
           .LocalGet(2),
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .I32Add,
           .Call("make_relaxed"),
           .LocalSet(8),
           .LocalGet(2),
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .I32Add,
           .LocalSet(9),
         ],
@@ -814,9 +822,9 @@ fn get_leaf_fn() FuncDef {
     locals: [.I32, vec_internal_null(), .I32, .I32],
     body: [
       .LocalGet(p_vec),
-      .StructGet(t_pvec, pv_len),
+      .StructGet(t_PVEC, pv_LEN),
       .LocalGet(p_vec),
-      .StructGet(t_pvec, pv_tail),
+      .StructGet(t_PVEC, pv_TAIL),
       .ArrayLen,
       .I32Sub,
       .LocalSet(l_trie_count),
@@ -827,7 +835,7 @@ fn get_leaf_fn() FuncDef {
         .None,
         [
           .LocalGet(p_vec),
-          .StructGet(t_pvec, pv_tail),
+          .StructGet(t_PVEC, pv_TAIL),
           .LocalGet(p_idx),
           .LocalGet(l_trie_count),
           .I32Sub,
@@ -836,10 +844,10 @@ fn get_leaf_fn() FuncDef {
         [],
       ),
       .LocalGet(p_vec),
-      .StructGet(t_pvec, pv_root),
+      .StructGet(t_PVEC, pv_ROOT),
       .LocalSet(l_node),
       .LocalGet(p_vec),
-      .StructGet(t_pvec, pv_shift),
+      .StructGet(t_PVEC, pv_SHIFT),
       .LocalSet(l_level),
       .Block(
         "brk",
@@ -850,7 +858,7 @@ fn get_leaf_fn() FuncDef {
             .None,
             [
               .LocalGet(l_level),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32LeS,
               .BrIf("brk"),
               .LocalGet(l_node),
@@ -862,13 +870,13 @@ fn get_leaf_fn() FuncDef {
               .LocalSet(l_slot),
               .LocalGet(l_node),
               .RefAsNonNull,
-              .StructGet(t_vec_internal, vi_children),
+              .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
               .LocalGet(l_slot),
-              .ArrayGet(t_vec_children),
-              .RefCast(true, .Named(t_vec_internal)),
+              .ArrayGet(t_VEC_CHILDREN),
+              .RefCast(true, .Named(t_VEC_INTERNAL)),
               .LocalSet(l_node),
               .LocalGet(l_level),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Sub,
               .LocalSet(l_level),
               .Br("lp"),
@@ -885,12 +893,12 @@ fn get_leaf_fn() FuncDef {
       .LocalSet(l_slot),
       .LocalGet(l_node),
       .RefAsNonNull,
-      .StructGet(t_vec_internal, vi_children),
+      .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
       .LocalGet(l_slot),
-      .ArrayGet(t_vec_children),
-      .RefCast(false, .Named(t_array)),
+      .ArrayGet(t_VEC_CHILDREN),
+      .RefCast(false, .Named(t_ARRAY)),
       .LocalGet(p_idx),
-      .I32Const(mask),
+      .I32Const(rt_MASK),
       .I32And,
     ],
   }
@@ -917,22 +925,22 @@ fn new_path_fn() FuncDef {
               .I32Eqz,
               .BrIf("brk"),
               .RefNull(.Eq),
-              .I32Const(bf),
-              .ArrayNew(t_vec_children),
+              .I32Const(rt_BF),
+              .ArrayNew(t_VEC_CHILDREN),
               .LocalSet(2),
               .LocalGet(2),
               .RefAsNonNull,
               .I32Const(0),
               .LocalGet(1),
-              .ArraySet(t_vec_children),
+              .ArraySet(t_VEC_CHILDREN),
               .LocalGet(2),
               .RefAsNonNull,
-              .RefNull(.Named(t_i32_array)),
-              .StructNew(t_vec_internal),
+              .RefNull(.Named(t_I32_ARRAY)),
+              .StructNew(t_VEC_INTERNAL),
               .RefCast(false, .Eq),
               .LocalSet(1),
               .LocalGet(0),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Sub,
               .LocalSet(0),
               .Br("lp"),
@@ -960,47 +968,47 @@ fn push_tail_fn() FuncDef {
       .I32Sub,
       .LocalGet(1),
       .I32ShrU,
-      .I32Const(mask),
+      .I32Const(rt_MASK),
       .I32And,
       .LocalSet(5),
       .RefNull(.Eq),
-      .I32Const(bf),
-      .ArrayNew(t_vec_children),
+      .I32Const(rt_BF),
+      .ArrayNew(t_VEC_CHILDREN),
       .LocalSet(4),
       .LocalGet(4),
       .RefAsNonNull,
       .I32Const(0),
       .LocalGet(2),
       .RefAsNonNull,
-      .StructGet(t_vec_internal, vi_children),
+      .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
       .I32Const(0),
-      .I32Const(bf),
-      .ArrayCopy(t_vec_children, t_vec_children),
+      .I32Const(rt_BF),
+      .ArrayCopy(t_VEC_CHILDREN, t_VEC_CHILDREN),
       .LocalGet(1),
-      .I32Const(b_),
+      .I32Const(rt_BITS),
       .I32Eq,
       .If(
         .None,
-        [.LocalGet(4), .RefAsNonNull, .LocalGet(5), .LocalGet(3), .ArraySet(t_vec_children)],
+        [.LocalGet(4), .RefAsNonNull, .LocalGet(5), .LocalGet(3), .ArraySet(t_VEC_CHILDREN)],
         [
           .LocalGet(2),
           .RefAsNonNull,
-          .StructGet(t_vec_internal, vi_children),
+          .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
           .LocalGet(5),
-          .ArrayGet(t_vec_children),
+          .ArrayGet(t_VEC_CHILDREN),
           .LocalSet(6),
           .LocalGet(6),
           .RefIsNull,
           .If(
             .Some(ref_eq_()),
-            [.LocalGet(1), .I32Const(b_), .I32Sub, .LocalGet(3), .Call("new_path")],
+            [.LocalGet(1), .I32Const(rt_BITS), .I32Sub, .LocalGet(3), .Call("new_path")],
             [
               .LocalGet(0),
               .LocalGet(1),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Sub,
               .LocalGet(6),
-              .RefCast(true, .Named(t_vec_internal)),
+              .RefCast(true, .Named(t_VEC_INTERNAL)),
               .LocalGet(3),
               .Call("push_tail"),
             ],
@@ -1010,13 +1018,13 @@ fn push_tail_fn() FuncDef {
           .RefAsNonNull,
           .LocalGet(5),
           .LocalGet(6),
-          .ArraySet(t_vec_children),
+          .ArraySet(t_VEC_CHILDREN),
         ],
       ),
       .LocalGet(4),
       .RefAsNonNull,
-      .RefNull(.Named(t_i32_array)),
-      .StructNew(t_vec_internal),
+      .RefNull(.Named(t_I32_ARRAY)),
+      .StructNew(t_VEC_INTERNAL),
       .RefCast(false, .Eq),
     ],
   }
@@ -1038,13 +1046,13 @@ fn do_set_fn() FuncDef {
         .Some(ref_eq_()),
         [
           .LocalGet(1),
-          .RefCast(false, .Named(t_array)),
+          .RefCast(false, .Named(t_ARRAY)),
           .LocalSet(7),
           .RefNull(.None_),
           .LocalGet(7),
           .RefAsNonNull,
           .ArrayLen,
-          .ArrayNew(t_array),
+          .ArrayNew(t_ARRAY),
           .LocalSet(6),
           .LocalGet(6),
           .RefAsNonNull,
@@ -1055,61 +1063,61 @@ fn do_set_fn() FuncDef {
           .LocalGet(7),
           .RefAsNonNull,
           .ArrayLen,
-          .ArrayCopy(t_array, t_array),
+          .ArrayCopy(t_ARRAY, t_ARRAY),
           .LocalGet(6),
           .RefAsNonNull,
           .LocalGet(2),
-          .I32Const(mask),
+          .I32Const(rt_MASK),
           .I32And,
           .LocalGet(3),
-          .ArraySet(t_array),
+          .ArraySet(t_ARRAY),
           .LocalGet(6),
           .RefAsNonNull,
           .RefCast(false, .Eq),
         ],
         [
           .LocalGet(1),
-          .RefCast(false, .Named(t_vec_internal)),
+          .RefCast(false, .Named(t_VEC_INTERNAL)),
           .LocalGet(2),
           .LocalGet(0),
           .Call("vi_nav"),
           .LocalSet(2),
           .LocalSet(5),
           .RefNull(.Eq),
-          .I32Const(bf),
-          .ArrayNew(t_vec_children),
+          .I32Const(rt_BF),
+          .ArrayNew(t_VEC_CHILDREN),
           .LocalSet(4),
           .LocalGet(4),
           .RefAsNonNull,
           .I32Const(0),
           .LocalGet(1),
-          .RefCast(false, .Named(t_vec_internal)),
-          .StructGet(t_vec_internal, vi_children),
+          .RefCast(false, .Named(t_VEC_INTERNAL)),
+          .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
           .I32Const(0),
-          .I32Const(bf),
-          .ArrayCopy(t_vec_children, t_vec_children),
+          .I32Const(rt_BF),
+          .ArrayCopy(t_VEC_CHILDREN, t_VEC_CHILDREN),
           .LocalGet(4),
           .RefAsNonNull,
           .LocalGet(5),
           .LocalGet(0),
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .I32Sub,
           .LocalGet(1),
-          .RefCast(false, .Named(t_vec_internal)),
-          .StructGet(t_vec_internal, vi_children),
+          .RefCast(false, .Named(t_VEC_INTERNAL)),
+          .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
           .LocalGet(5),
-          .ArrayGet(t_vec_children),
+          .ArrayGet(t_VEC_CHILDREN),
           .RefAsNonNull,
           .LocalGet(2),
           .LocalGet(3),
           .Call("do_set"),
-          .ArraySet(t_vec_children),
+          .ArraySet(t_VEC_CHILDREN),
           .LocalGet(4),
           .RefAsNonNull,
           .LocalGet(1),
-          .RefCast(false, .Named(t_vec_internal)),
-          .StructGet(t_vec_internal, vi_sizes),
-          .StructNew(t_vec_internal),
+          .RefCast(false, .Named(t_VEC_INTERNAL)),
+          .StructGet(t_VEC_INTERNAL, vi_SIZES),
+          .StructNew(t_VEC_INTERNAL),
           .RefCast(false, .Eq),
         ],
       ),
@@ -1137,14 +1145,14 @@ fn push_fn() FuncDef {
     locals: [.I32, .I32, arr_null(), ref_eq_null(), .I32, vec_children_null()],
     body: [
       .LocalGet(p_vec),
-      .StructGet(t_pvec, pv_len),
+      .StructGet(t_PVEC, pv_LEN),
       .LocalSet(l_len),
       .LocalGet(p_vec),
-      .StructGet(t_pvec, pv_tail),
+      .StructGet(t_PVEC, pv_TAIL),
       .ArrayLen,
       .LocalSet(l_tail_len),
       .LocalGet(l_tail_len),
-      .I32Const(bf),
+      .I32Const(rt_BF),
       .I32LtS,
       .If(
         .Some(pvec_ref()),
@@ -1153,7 +1161,7 @@ fn push_fn() FuncDef {
           .LocalGet(l_tail_len),
           .I32Const(1),
           .I32Add,
-          .ArrayNew(t_array),
+          .ArrayNew(t_ARRAY),
           .LocalSet(l_new_tail),
           .LocalGet(l_tail_len),
           .I32Eqz,
@@ -1165,73 +1173,73 @@ fn push_fn() FuncDef {
               .RefAsNonNull,
               .I32Const(0),
               .LocalGet(p_vec),
-              .StructGet(t_pvec, pv_tail),
+              .StructGet(t_PVEC, pv_TAIL),
               .I32Const(0),
               .LocalGet(l_tail_len),
-              .ArrayCopy(t_array, t_array),
+              .ArrayCopy(t_ARRAY, t_ARRAY),
             ],
           ),
           .LocalGet(l_new_tail),
           .RefAsNonNull,
           .LocalGet(l_tail_len),
           .LocalGet(p_val),
-          .ArraySet(t_array),
+          .ArraySet(t_ARRAY),
           .LocalGet(l_len),
           .I32Const(1),
           .I32Add,
           .LocalGet(p_vec),
-          .StructGet(t_pvec, pv_shift),
+          .StructGet(t_PVEC, pv_SHIFT),
           .LocalGet(p_vec),
-          .StructGet(t_pvec, pv_root),
+          .StructGet(t_PVEC, pv_ROOT),
           .LocalGet(l_new_tail),
           .RefAsNonNull,
-          .StructNew(t_pvec),
+          .StructNew(t_PVEC),
         ],
         [
           .LocalGet(p_vec),
-          .StructGet(t_pvec, pv_shift),
+          .StructGet(t_PVEC, pv_SHIFT),
           .LocalSet(l_new_shift),
           .LocalGet(p_vec),
-          .StructGet(t_pvec, pv_root),
+          .StructGet(t_PVEC, pv_ROOT),
           .RefIsNull,
           .If(
             .None,
             [
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .LocalSet(l_new_shift),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .LocalGet(p_vec),
-              .StructGet(t_pvec, pv_tail),
+              .StructGet(t_PVEC, pv_TAIL),
               .RefCast(false, .Eq),
               .Call("new_path"),
               .LocalSet(l_new_root),
             ],
             [
               .LocalGet(p_vec),
-              .StructGet(t_pvec, pv_root),
+              .StructGet(t_PVEC, pv_ROOT),
               .RefAsNonNull,
               .LocalGet(l_new_shift),
               .LocalGet(p_vec),
-              .StructGet(t_pvec, pv_tail),
+              .StructGet(t_PVEC, pv_TAIL),
               .Call("wrap_leaf"),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .Call("concat_trees"),
               .LocalSet(l_new_shift),
               .LocalSet(l_new_root),
             ],
           ),
           .LocalGet(p_val),
-          .ArrayNewFixed(t_array, 1),
+          .ArrayNewFixed(t_ARRAY, 1),
           .LocalSet(l_new_tail),
           .LocalGet(l_len),
           .I32Const(1),
           .I32Add,
           .LocalGet(l_new_shift),
           .LocalGet(l_new_root),
-          .RefCast(true, .Named(t_vec_internal)),
+          .RefCast(true, .Named(t_VEC_INTERNAL)),
           .LocalGet(l_new_tail),
           .RefAsNonNull,
-          .StructNew(t_pvec),
+          .StructNew(t_PVEC),
         ],
       ),
     ],
@@ -1315,10 +1323,10 @@ fn family_boxed() PVecFamily {
     get_name: "get",
     builder_new_name: "builder_new",
     builder_freeze_name: "builder_freeze",
-    pvec_ty: t_pvec,
+    pvec_ty: t_PVEC,
     pvec_null: pvec_null(),
     pvec_ref: pvec_ref(),
-    arr_ty: t_array,
+    arr_ty: t_ARRAY,
     arr_null: arr_null(),
     elem_ty: .Anyref,
     empty_pvec_global: "empty_pvec",
@@ -1332,10 +1340,10 @@ fn family_i64() PVecFamily {
     get_name: "get_i64",
     builder_new_name: "builder_new_i64",
     builder_freeze_name: "builder_freeze_i64",
-    pvec_ty: t_pvec_i64,
+    pvec_ty: t_PVEC_I64,
     pvec_null: pvec_i64_null(),
     pvec_ref: pvec_i64_ref(),
-    arr_ty: t_array_i64,
+    arr_ty: t_ARRAY_I64,
     arr_null: arr_i64_null(),
     elem_ty: .I64,
     empty_pvec_global: "empty_pvec_i64",
@@ -1350,7 +1358,7 @@ fn pvec_len_fn(f: PVecFamily) FuncDef {
     params: [f.pvec_null],
     results: [.I32],
     locals: [],
-    body: [.LocalGet(0), .RefAsNonNull, .StructGet(f.pvec_ty, pv_len)],
+    body: [.LocalGet(0), .RefAsNonNull, .StructGet(f.pvec_ty, pv_LEN)],
   }
 }
 
@@ -1365,19 +1373,19 @@ fn pvec_get_fn(f: PVecFamily) FuncDef {
     body: [
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(f.pvec_ty, pv_len),
+      .StructGet(f.pvec_ty, pv_LEN),
       .LocalSet(2),
       .LocalGet(2),
-      .I32Const(bf),
+      .I32Const(rt_BF),
       .I32LeS,
       .If(
         .Some(f.elem_ty),
         [
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(f.pvec_ty, pv_tail),
+          .StructGet(f.pvec_ty, pv_TAIL),
           .LocalGet(1),
-          .I32Const(mask),
+          .I32Const(rt_MASK),
           .I32And,
           .ArrayGet(f.arr_ty),
         ],
@@ -1385,7 +1393,7 @@ fn pvec_get_fn(f: PVecFamily) FuncDef {
           .LocalGet(2),
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(f.pvec_ty, pv_tail),
+          .StructGet(f.pvec_ty, pv_TAIL),
           .ArrayLen,
           .I32Sub,
           .LocalSet(3),
@@ -1397,7 +1405,7 @@ fn pvec_get_fn(f: PVecFamily) FuncDef {
             [
               .LocalGet(0),
               .RefAsNonNull,
-              .StructGet(f.pvec_ty, pv_tail),
+              .StructGet(f.pvec_ty, pv_TAIL),
               .LocalGet(1),
               .LocalGet(3),
               .I32Sub,
@@ -1406,11 +1414,11 @@ fn pvec_get_fn(f: PVecFamily) FuncDef {
             [
               .LocalGet(0),
               .RefAsNonNull,
-              .StructGet(f.pvec_ty, pv_root),
+              .StructGet(f.pvec_ty, pv_ROOT),
               .LocalSet(4),
               .LocalGet(0),
               .RefAsNonNull,
-              .StructGet(f.pvec_ty, pv_shift),
+              .StructGet(f.pvec_ty, pv_SHIFT),
               .LocalSet(5),
               .Block(
                 "brk",
@@ -1421,12 +1429,12 @@ fn pvec_get_fn(f: PVecFamily) FuncDef {
                     .None,
                     [
                       .LocalGet(5),
-                      .I32Const(b_),
+                      .I32Const(rt_BITS),
                       .I32LeS,
                       .BrIf("brk"),
                       .LocalGet(4),
                       .RefAsNonNull,
-                      .StructGet(t_vec_internal, vi_sizes),
+                      .StructGet(t_VEC_INTERNAL, vi_SIZES),
                       .LocalSet(7),
                       .LocalGet(7),
                       .RefIsNull,
@@ -1436,7 +1444,7 @@ fn pvec_get_fn(f: PVecFamily) FuncDef {
                           .LocalGet(1),
                           .LocalGet(5),
                           .I32ShrU,
-                          .I32Const(mask),
+                          .I32Const(rt_MASK),
                           .I32And,
                           .LocalSet(6),
                         ],
@@ -1452,13 +1460,13 @@ fn pvec_get_fn(f: PVecFamily) FuncDef {
                       ),
                       .LocalGet(4),
                       .RefAsNonNull,
-                      .StructGet(t_vec_internal, vi_children),
+                      .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
                       .LocalGet(6),
-                      .ArrayGet(t_vec_children),
-                      .RefCast(true, .Named(t_vec_internal)),
+                      .ArrayGet(t_VEC_CHILDREN),
+                      .RefCast(true, .Named(t_VEC_INTERNAL)),
                       .LocalSet(4),
                       .LocalGet(5),
-                      .I32Const(b_),
+                      .I32Const(rt_BITS),
                       .I32Sub,
                       .LocalSet(5),
                       .Br("lp"),
@@ -1468,13 +1476,13 @@ fn pvec_get_fn(f: PVecFamily) FuncDef {
               ),
               .LocalGet(4),
               .RefAsNonNull,
-              .StructGet(t_vec_internal, vi_sizes),
+              .StructGet(t_VEC_INTERNAL, vi_SIZES),
               .LocalSet(7),
               .LocalGet(7),
               .RefIsNull,
               .If(
                 .None,
-                [.LocalGet(1), .LocalGet(5), .I32ShrU, .I32Const(mask), .I32And, .LocalSet(6)],
+                [.LocalGet(1), .LocalGet(5), .I32ShrU, .I32Const(rt_MASK), .I32And, .LocalSet(6)],
                 [
                   .LocalGet(4),
                   .RefAsNonNull,
@@ -1487,12 +1495,12 @@ fn pvec_get_fn(f: PVecFamily) FuncDef {
               ),
               .LocalGet(4),
               .RefAsNonNull,
-              .StructGet(t_vec_internal, vi_children),
+              .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
               .LocalGet(6),
-              .ArrayGet(t_vec_children),
+              .ArrayGet(t_VEC_CHILDREN),
               .RefCast(false, .Named(f.arr_ty)),
               .LocalGet(1),
-              .I32Const(mask),
+              .I32Const(rt_MASK),
               .I32And,
               .ArrayGet(f.arr_ty),
             ],
@@ -1515,9 +1523,9 @@ fn pvec_builder_new_fn(f: PVecFamily) FuncDef {
       .I32Const(0),
       .RefI31,
       f.zero_value,
-      .I32Const(bf),
+      .I32Const(rt_BF),
       .ArrayNew(f.arr_ty),
-      .ArrayNewFixed(t_array, 3),
+      .ArrayNewFixed(t_ARRAY, 3),
     ],
   }
 }
@@ -1534,20 +1542,20 @@ fn pvec_builder_freeze_fn(f: PVecFamily) FuncDef {
       .LocalGet(0),
       .RefAsNonNull,
       .I32Const(0),
-      .ArrayGet(t_array),
+      .ArrayGet(t_ARRAY),
       .RefCast(true, .Named(f.pvec_ty)),
       .LocalSet(1),
       .LocalGet(0),
       .RefAsNonNull,
       .I32Const(1),
-      .ArrayGet(t_array),
+      .ArrayGet(t_ARRAY),
       .RefCast(false, .I31),
       .I31GetU,
       .LocalSet(2),
       .LocalGet(0),
       .RefAsNonNull,
       .I32Const(2),
-      .ArrayGet(t_array),
+      .ArrayGet(t_ARRAY),
       .RefCast(true, .Named(f.arr_ty)),
       .LocalSet(3),
       .LocalGet(2),
@@ -1570,15 +1578,15 @@ fn pvec_builder_freeze_fn(f: PVecFamily) FuncDef {
           .ArrayCopy(f.arr_ty, f.arr_ty),
           .LocalGet(1),
           .RefAsNonNull,
-          .StructGet(f.pvec_ty, pv_len),
+          .StructGet(f.pvec_ty, pv_LEN),
           .LocalGet(2),
           .I32Add,
           .LocalGet(1),
           .RefAsNonNull,
-          .StructGet(f.pvec_ty, pv_shift),
+          .StructGet(f.pvec_ty, pv_SHIFT),
           .LocalGet(1),
           .RefAsNonNull,
-          .StructGet(f.pvec_ty, pv_root),
+          .StructGet(f.pvec_ty, pv_ROOT),
           .LocalGet(4),
           .RefAsNonNull,
           .StructNew(f.pvec_ty),
@@ -1599,10 +1607,10 @@ fn set_fn() FuncDef {
     body: [
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_pvec, pv_len),
+      .StructGet(t_PVEC, pv_LEN),
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_pvec, pv_tail),
+      .StructGet(t_PVEC, pv_TAIL),
       .ArrayLen,
       .I32Sub,
       .LocalSet(3),
@@ -1615,65 +1623,65 @@ fn set_fn() FuncDef {
           .RefNull(.None_),
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_tail),
+          .StructGet(t_PVEC, pv_TAIL),
           .ArrayLen,
-          .ArrayNew(t_array),
+          .ArrayNew(t_ARRAY),
           .LocalSet(4),
           .LocalGet(4),
           .RefAsNonNull,
           .I32Const(0),
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_tail),
+          .StructGet(t_PVEC, pv_TAIL),
           .I32Const(0),
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_tail),
+          .StructGet(t_PVEC, pv_TAIL),
           .ArrayLen,
-          .ArrayCopy(t_array, t_array),
+          .ArrayCopy(t_ARRAY, t_ARRAY),
           .LocalGet(4),
           .RefAsNonNull,
           .LocalGet(1),
           .LocalGet(3),
           .I32Sub,
           .LocalGet(2),
-          .ArraySet(t_array),
+          .ArraySet(t_ARRAY),
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_len),
+          .StructGet(t_PVEC, pv_LEN),
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_shift),
+          .StructGet(t_PVEC, pv_SHIFT),
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_root),
+          .StructGet(t_PVEC, pv_ROOT),
           .LocalGet(4),
           .RefAsNonNull,
-          .StructNew(t_pvec),
+          .StructNew(t_PVEC),
         ],
         [
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_len),
+          .StructGet(t_PVEC, pv_LEN),
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_shift),
+          .StructGet(t_PVEC, pv_SHIFT),
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_shift),
+          .StructGet(t_PVEC, pv_SHIFT),
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_root),
+          .StructGet(t_PVEC, pv_ROOT),
           .RefAsNonNull,
           .RefCast(false, .Eq),
           .LocalGet(1),
           .LocalGet(2),
           .Call("do_set"),
-          .RefCast(true, .Named(t_vec_internal)),
+          .RefCast(true, .Named(t_VEC_INTERNAL)),
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_tail),
-          .StructNew(t_pvec),
+          .StructGet(t_PVEC, pv_TAIL),
+          .StructNew(t_PVEC),
         ],
       ),
     ],
@@ -1700,7 +1708,7 @@ fn set_in_place_fn() FuncDef {
       .LocalGet(p_idx),
       .Call("get_leaf"),
       .LocalGet(p_val),
-      .ArraySet(t_array),
+      .ArraySet(t_ARRAY),
       .LocalGet(p_vec),
       .RefAsNonNull,
     ],
@@ -1735,20 +1743,20 @@ fn promote_full_tail_i64_fn() FuncDef {
     locals: [.I32, .I32, .I32, ref_eq_null(), vec_children_null()],
     body: [
       .LocalGet(p_prefix),
-      .StructGet(t_pvec_i64, pv_len),
+      .StructGet(t_PVEC_I64, pv_LEN),
       .LocalSet(l_cnt),
       .LocalGet(p_prefix),
-      .StructGet(t_pvec_i64, pv_shift),
+      .StructGet(t_PVEC_I64, pv_SHIFT),
       .LocalSet(l_shift),
       .LocalGet(p_prefix),
-      .StructGet(t_pvec_i64, pv_root),
+      .StructGet(t_PVEC_I64, pv_ROOT),
       .RefIsNull,
       .If(
         .None,
         [
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .LocalSet(l_new_shift),
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .LocalGet(p_full_tail),
           .RefCast(false, .Eq),
           .Call("new_path"),
@@ -1756,7 +1764,7 @@ fn promote_full_tail_i64_fn() FuncDef {
         ],
         [
           .LocalGet(l_cnt),
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .I32ShrU,
           .I32Const(1),
           .LocalGet(l_shift),
@@ -1766,21 +1774,21 @@ fn promote_full_tail_i64_fn() FuncDef {
             .None,
             [
               .LocalGet(l_shift),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Add,
               .LocalSet(l_new_shift),
               .RefNull(.Eq),
-              .I32Const(bf),
-              .ArrayNew(t_vec_children),
+              .I32Const(rt_BF),
+              .ArrayNew(t_VEC_CHILDREN),
               .LocalSet(l_nc),
               .LocalGet(l_nc),
               .RefAsNonNull,
               .I32Const(0),
               .LocalGet(p_prefix),
-              .StructGet(t_pvec_i64, pv_root),
+              .StructGet(t_PVEC_I64, pv_ROOT),
               .RefAsNonNull,
               .RefCast(false, .Eq),
-              .ArraySet(t_vec_children),
+              .ArraySet(t_VEC_CHILDREN),
               .LocalGet(l_nc),
               .RefAsNonNull,
               .I32Const(1),
@@ -1788,11 +1796,11 @@ fn promote_full_tail_i64_fn() FuncDef {
               .LocalGet(p_full_tail),
               .RefCast(false, .Eq),
               .Call("new_path"),
-              .ArraySet(t_vec_children),
+              .ArraySet(t_VEC_CHILDREN),
               .LocalGet(l_nc),
               .RefAsNonNull,
-              .RefNull(.Named(t_i32_array)),
-              .StructNew(t_vec_internal),
+              .RefNull(.Named(t_I32_ARRAY)),
+              .StructNew(t_VEC_INTERNAL),
               .RefCast(false, .Eq),
               .LocalSet(l_new_root),
             ],
@@ -1800,11 +1808,11 @@ fn promote_full_tail_i64_fn() FuncDef {
               .LocalGet(l_shift),
               .LocalSet(l_new_shift),
               .LocalGet(l_cnt),
-              .I32Const(bf),
+              .I32Const(rt_BF),
               .I32Add,
               .LocalGet(l_shift),
               .LocalGet(p_prefix),
-              .StructGet(t_pvec_i64, pv_root),
+              .StructGet(t_PVEC_I64, pv_ROOT),
               .LocalGet(p_full_tail),
               .RefCast(false, .Eq),
               .Call("push_tail"),
@@ -1814,22 +1822,22 @@ fn promote_full_tail_i64_fn() FuncDef {
         ],
       ),
       .LocalGet(l_cnt),
-      .I32Const(bf),
+      .I32Const(rt_BF),
       .I32Add,
       .LocalGet(l_new_shift),
       .LocalGet(l_new_root),
-      .RefCast(true, .Named(t_vec_internal)),
+      .RefCast(true, .Named(t_VEC_INTERNAL)),
       .GlobalGet("empty_leaf_i64"),
-      .StructNew(t_pvec_i64),
+      .StructNew(t_PVEC_I64),
     ],
   }
 }
 
 // builder_push_i64(builder: Array?, elem: i64) -> void
 fn builder_push_i64_fn() FuncDef {
-  ta := t_array
-  tai := t_array_i64
-  tbi := t_boxed_int
+  ta := t_ARRAY
+  tai := t_ARRAY_I64
+  tbi := t_BOXED_INT
 
   // p0=builder, p1=elem (BoxedInt anyref); L2=tail_buf, L3=tail_len,
   // L4=pvec_so_far, L5=elem unboxed to i64. Takes a boxed element so the
@@ -1860,7 +1868,7 @@ fn builder_push_i64_fn() FuncDef {
       .I31GetU,
       .LocalSet(3),
       .LocalGet(3),
-      .I32Const(bf),
+      .I32Const(rt_BF),
       .I32LtS,
       .If(
         .None,
@@ -1884,7 +1892,7 @@ fn builder_push_i64_fn() FuncDef {
           .RefAsNonNull,
           .I32Const(0),
           .ArrayGet(ta),
-          .RefCast(true, .Named(t_pvec_i64)),
+          .RefCast(true, .Named(t_PVEC_I64)),
           .LocalSet(4),
           .LocalGet(0),
           .RefAsNonNull,
@@ -1896,7 +1904,7 @@ fn builder_push_i64_fn() FuncDef {
           .Call("promote_full_tail_i64"),
           .ArraySet(ta),
           .I64Const(0),
-          .I32Const(bf),
+          .I32Const(rt_BF),
           .ArrayNew(tai),
           .LocalSet(2),
           .LocalGet(2),
@@ -1926,7 +1934,7 @@ fn builder_push_i64_fn() FuncDef {
 // through the ordinary boxed Vector<Int> ABI. This pays one boxing pass at the
 // boundary while preserving raw i64 storage for in-function indexed reads.
 fn box_i64_fn() FuncDef {
-  tbi := t_boxed_int
+  tbi := t_BOXED_INT
 
   // p0=vec; L1=n, L2=i, L3=boxed_builder
   .{
@@ -1997,24 +2005,24 @@ fn append_centre_fn() FuncDef {
           .LocalGet(0),
           .LocalGet(1),
           .LocalGet(2),
-          .ArraySet(t_vec_children),
+          .ArraySet(t_VEC_CHILDREN),
           .LocalGet(1),
           .I32Const(1),
           .I32Add,
         ],
         [
           .LocalGet(2),
-          .RefCast(false, .Named(t_vec_internal)),
+          .RefCast(false, .Named(t_VEC_INTERNAL)),
           .Call("child_count"),
           .LocalSet(5),
           .LocalGet(0),
           .LocalGet(1),
           .LocalGet(2),
-          .RefCast(false, .Named(t_vec_internal)),
-          .StructGet(t_vec_internal, vi_children),
+          .RefCast(false, .Named(t_VEC_INTERNAL)),
+          .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
           .I32Const(0),
           .LocalGet(5),
-          .ArrayCopy(t_vec_children, t_vec_children),
+          .ArrayCopy(t_VEC_CHILDREN, t_VEC_CHILDREN),
           .LocalGet(1),
           .LocalGet(5),
           .I32Add,
@@ -2030,8 +2038,8 @@ fn append_centre_fn() FuncDef {
 // at most 32 (growing a level when the repacked count exceeds 32). Produces
 // relaxed seam nodes; make_relaxed canonicalizes back to regular where it can.
 fn concat_trees_fn() FuncDef {
-  vc := t_vec_children
-  vi := t_vec_internal
+  vc := t_VEC_CHILDREN
+  vi := t_VEC_INTERNAL
   vir := ValType.Ref(false, .Named(vi))
 
   // p0=l, p1=sl, p2=r, p3=sr
@@ -2069,7 +2077,7 @@ fn concat_trees_fn() FuncDef {
         .None,
         [
           .LocalGet(1),
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .I32Eq,
           .If(
             .None,
@@ -2081,18 +2089,18 @@ fn concat_trees_fn() FuncDef {
               .Call("child_count"),
               .LocalSet(9),
               .LocalGet(0),
-              .StructGet(vi, vi_children),
+              .StructGet(vi, vi_CHILDREN),
               .LocalGet(8),
               .I32Const(1),
               .I32Sub,
               .ArrayGet(vc),
-              .RefCast(true, .Named(t_array)),
+              .RefCast(true, .Named(t_ARRAY)),
               .LocalSet(12),
               .LocalGet(2),
-              .StructGet(vi, vi_children),
+              .StructGet(vi, vi_CHILDREN),
               .I32Const(0),
               .ArrayGet(vc),
-              .RefCast(true, .Named(t_array)),
+              .RefCast(true, .Named(t_ARRAY)),
               .LocalSet(13),
               .LocalGet(12),
               .RefAsNonNull,
@@ -2103,14 +2111,14 @@ fn concat_trees_fn() FuncDef {
               .I32Add,
               .LocalSet(14),
               .LocalGet(14),
-              .I32Const(bf),
+              .I32Const(rt_BF),
               .I32LeS,
               .If(
                 .None,
                 [
                   .RefNull(.None_),
                   .LocalGet(14),
-                  .ArrayNew(t_array),
+                  .ArrayNew(t_ARRAY),
                   .LocalSet(15),
                   .LocalGet(15),
                   .RefAsNonNull,
@@ -2121,7 +2129,7 @@ fn concat_trees_fn() FuncDef {
                   .LocalGet(12),
                   .RefAsNonNull,
                   .ArrayLen,
-                  .ArrayCopy(t_array, t_array),
+                  .ArrayCopy(t_ARRAY, t_ARRAY),
                   .LocalGet(15),
                   .RefAsNonNull,
                   .LocalGet(12),
@@ -2133,12 +2141,12 @@ fn concat_trees_fn() FuncDef {
                   .LocalGet(13),
                   .RefAsNonNull,
                   .ArrayLen,
-                  .ArrayCopy(t_array, t_array),
+                  .ArrayCopy(t_ARRAY, t_ARRAY),
                   .LocalGet(6),
                   .RefAsNonNull,
                   .I32Const(0),
                   .LocalGet(0),
-                  .StructGet(vi, vi_children),
+                  .StructGet(vi, vi_CHILDREN),
                   .I32Const(0),
                   .LocalGet(8),
                   .I32Const(1),
@@ -2162,7 +2170,7 @@ fn concat_trees_fn() FuncDef {
                   .RefAsNonNull,
                   .LocalGet(7),
                   .LocalGet(2),
-                  .StructGet(vi, vi_children),
+                  .StructGet(vi, vi_CHILDREN),
                   .I32Const(1),
                   .LocalGet(9),
                   .I32Const(1),
@@ -2180,7 +2188,7 @@ fn concat_trees_fn() FuncDef {
                   .RefAsNonNull,
                   .I32Const(0),
                   .LocalGet(0),
-                  .StructGet(vi, vi_children),
+                  .StructGet(vi, vi_CHILDREN),
                   .I32Const(0),
                   .LocalGet(8),
                   .ArrayCopy(vc, vc),
@@ -2190,7 +2198,7 @@ fn concat_trees_fn() FuncDef {
                   .RefAsNonNull,
                   .LocalGet(7),
                   .LocalGet(2),
-                  .StructGet(vi, vi_children),
+                  .StructGet(vi, vi_CHILDREN),
                   .I32Const(0),
                   .LocalGet(9),
                   .ArrayCopy(vc, vc),
@@ -2213,7 +2221,7 @@ fn concat_trees_fn() FuncDef {
               .Call("child_count"),
               .LocalSet(8),
               .LocalGet(0),
-              .StructGet(vi, vi_children),
+              .StructGet(vi, vi_CHILDREN),
               .LocalGet(8),
               .I32Const(1),
               .I32Sub,
@@ -2221,16 +2229,16 @@ fn concat_trees_fn() FuncDef {
               .RefAsNonNull,
               .RefCast(false, .Named(vi)),
               .LocalGet(1),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Sub,
               .LocalGet(2),
-              .StructGet(vi, vi_children),
+              .StructGet(vi, vi_CHILDREN),
               .I32Const(0),
               .ArrayGet(vc),
               .RefAsNonNull,
               .RefCast(false, .Named(vi)),
               .LocalGet(3),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Sub,
               .Call("concat_trees"),
               .LocalSet(5),
@@ -2239,7 +2247,7 @@ fn concat_trees_fn() FuncDef {
               .RefAsNonNull,
               .I32Const(0),
               .LocalGet(0),
-              .StructGet(vi, vi_children),
+              .StructGet(vi, vi_CHILDREN),
               .I32Const(0),
               .LocalGet(8),
               .I32Const(1),
@@ -2256,7 +2264,7 @@ fn concat_trees_fn() FuncDef {
               .RefAsNonNull,
               .LocalGet(5),
               .LocalGet(1),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Sub,
               .Call("append_centre"),
               .LocalSet(7),
@@ -2267,7 +2275,7 @@ fn concat_trees_fn() FuncDef {
               .RefAsNonNull,
               .LocalGet(7),
               .LocalGet(2),
-              .StructGet(vi, vi_children),
+              .StructGet(vi, vi_CHILDREN),
               .I32Const(1),
               .LocalGet(9),
               .I32Const(1),
@@ -2300,7 +2308,7 @@ fn concat_trees_fn() FuncDef {
               .Call("child_count"),
               .LocalSet(8),
               .LocalGet(0),
-              .StructGet(vi, vi_children),
+              .StructGet(vi, vi_CHILDREN),
               .LocalGet(8),
               .I32Const(1),
               .I32Sub,
@@ -2308,7 +2316,7 @@ fn concat_trees_fn() FuncDef {
               .RefAsNonNull,
               .RefCast(false, .Named(vi)),
               .LocalGet(1),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Sub,
               .LocalGet(2),
               .LocalGet(3),
@@ -2319,7 +2327,7 @@ fn concat_trees_fn() FuncDef {
               .RefAsNonNull,
               .I32Const(0),
               .LocalGet(0),
-              .StructGet(vi, vi_children),
+              .StructGet(vi, vi_CHILDREN),
               .I32Const(0),
               .LocalGet(8),
               .I32Const(1),
@@ -2336,7 +2344,7 @@ fn concat_trees_fn() FuncDef {
               .RefAsNonNull,
               .LocalGet(5),
               .LocalGet(1),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Sub,
               .Call("append_centre"),
               .LocalSet(7),
@@ -2352,13 +2360,13 @@ fn concat_trees_fn() FuncDef {
               .LocalGet(0),
               .LocalGet(1),
               .LocalGet(2),
-              .StructGet(vi, vi_children),
+              .StructGet(vi, vi_CHILDREN),
               .I32Const(0),
               .ArrayGet(vc),
               .RefAsNonNull,
               .RefCast(false, .Named(vi)),
               .LocalGet(3),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Sub,
               .Call("concat_trees"),
               .LocalSet(5),
@@ -2370,7 +2378,7 @@ fn concat_trees_fn() FuncDef {
               .RefAsNonNull,
               .LocalGet(5),
               .LocalGet(3),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Sub,
               .Call("append_centre"),
               .LocalSet(7),
@@ -2381,7 +2389,7 @@ fn concat_trees_fn() FuncDef {
               .RefAsNonNull,
               .LocalGet(7),
               .LocalGet(2),
-              .StructGet(vi, vi_children),
+              .StructGet(vi, vi_CHILDREN),
               .I32Const(1),
               .LocalGet(9),
               .I32Const(1),
@@ -2419,22 +2427,22 @@ fn wrap_leaf_fn() FuncDef {
   .{
     name: "wrap_leaf",
     params: [ref_eq_()],
-    results: [.Ref(false, .Named(t_vec_internal))],
+    results: [.Ref(false, .Named(t_VEC_INTERNAL))],
     locals: [vec_children_null()],
     body: [
       .RefNull(.Eq),
-      .I32Const(bf),
-      .ArrayNew(t_vec_children),
+      .I32Const(rt_BF),
+      .ArrayNew(t_VEC_CHILDREN),
       .LocalSet(1),
       .LocalGet(1),
       .RefAsNonNull,
       .I32Const(0),
       .LocalGet(0),
-      .ArraySet(t_vec_children),
+      .ArraySet(t_VEC_CHILDREN),
       .LocalGet(1),
       .RefAsNonNull,
       .I32Const(1),
-      .I32Const(b_),
+      .I32Const(rt_BITS),
       .Call("make_relaxed"),
     ],
   }
@@ -2450,7 +2458,7 @@ fn concat_fn() FuncDef {
   l_merged := 5
   l_merged_shift := 6
 
-  vi := t_vec_internal
+  vi := t_VEC_INTERNAL
 
   // p0=a, p1=b; L2=builder, L3=aL, L4=aLs, L5=merged, L6=ms
   .{
@@ -2461,7 +2469,7 @@ fn concat_fn() FuncDef {
     body: [
       .LocalGet(p_b),
       .RefAsNonNull,
-      .StructGet(t_pvec, pv_len),
+      .StructGet(t_PVEC, pv_LEN),
       .I32Eqz,
       .If(
         .Some(pvec_ref()),
@@ -2469,7 +2477,7 @@ fn concat_fn() FuncDef {
         [
           .LocalGet(p_a),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_len),
+          .StructGet(t_PVEC, pv_LEN),
           .I32Eqz,
           .If(
             .Some(pvec_ref()),
@@ -2477,7 +2485,7 @@ fn concat_fn() FuncDef {
             [
               .LocalGet(p_b),
               .RefAsNonNull,
-              .StructGet(t_pvec, pv_root),
+              .StructGet(t_PVEC, pv_ROOT),
               .RefIsNull,
               .If(
                 .Some(pvec_ref()),
@@ -2494,32 +2502,32 @@ fn concat_fn() FuncDef {
                 [
                   .LocalGet(p_a),
                   .RefAsNonNull,
-                  .StructGet(t_pvec, pv_root),
+                  .StructGet(t_PVEC, pv_ROOT),
                   .RefIsNull,
                   .If(
                     .None,
                     [
                       .LocalGet(p_a),
                       .RefAsNonNull,
-                      .StructGet(t_pvec, pv_tail),
+                      .StructGet(t_PVEC, pv_TAIL),
                       .Call("wrap_leaf"),
                       .LocalSet(l_a_node),
-                      .I32Const(b_),
+                      .I32Const(rt_BITS),
                       .LocalSet(l_a_shift),
                     ],
                     [
                       .LocalGet(p_a),
                       .RefAsNonNull,
-                      .StructGet(t_pvec, pv_root),
+                      .StructGet(t_PVEC, pv_ROOT),
                       .RefAsNonNull,
                       .LocalGet(p_a),
                       .RefAsNonNull,
-                      .StructGet(t_pvec, pv_shift),
+                      .StructGet(t_PVEC, pv_SHIFT),
                       .LocalGet(p_a),
                       .RefAsNonNull,
-                      .StructGet(t_pvec, pv_tail),
+                      .StructGet(t_PVEC, pv_TAIL),
                       .Call("wrap_leaf"),
-                      .I32Const(b_),
+                      .I32Const(rt_BITS),
                       .Call("concat_trees"),
                       .LocalSet(l_a_shift),
                       .LocalSet(l_a_node),
@@ -2531,20 +2539,20 @@ fn concat_fn() FuncDef {
                   .LocalGet(l_a_shift),
                   .LocalGet(p_b),
                   .RefAsNonNull,
-                  .StructGet(t_pvec, pv_root),
+                  .StructGet(t_PVEC, pv_ROOT),
                   .RefAsNonNull,
                   .LocalGet(p_b),
                   .RefAsNonNull,
-                  .StructGet(t_pvec, pv_shift),
+                  .StructGet(t_PVEC, pv_SHIFT),
                   .Call("concat_trees"),
                   .LocalSet(l_merged_shift),
                   .LocalSet(l_merged),
                   .LocalGet(p_a),
                   .RefAsNonNull,
-                  .StructGet(t_pvec, pv_len),
+                  .StructGet(t_PVEC, pv_LEN),
                   .LocalGet(p_b),
                   .RefAsNonNull,
-                  .StructGet(t_pvec, pv_len),
+                  .StructGet(t_PVEC, pv_LEN),
                   .I32Add,
                   .LocalGet(l_merged_shift),
                   .LocalGet(l_merged),
@@ -2552,8 +2560,8 @@ fn concat_fn() FuncDef {
                   .RefCast(false, .Named(vi)),
                   .LocalGet(p_b),
                   .RefAsNonNull,
-                  .StructGet(t_pvec, pv_tail),
-                  .StructNew(t_pvec),
+                  .StructGet(t_PVEC, pv_TAIL),
+                  .StructNew(t_PVEC),
                 ],
               ),
             ],
@@ -2568,9 +2576,9 @@ fn concat_fn() FuncDef {
 // Keep the first n elements of a full (tail-included) tree. Copies only the
 // right boundary spine; all children left of the spine are shared.
 fn slice_trim_right_fn() FuncDef {
-  ta := t_array
-  vi := t_vec_internal
-  vc := t_vec_children
+  ta := t_ARRAY
+  vi := t_VEC_INTERNAL
+  vc := t_VEC_CHILDREN
 
   // p0=node, p1=shift, p2=n; L3=node, L4=slot, L5=sub, L6=children,
   // L7=child, L8=new_child, L9=leaf, L10=new_leaf, L11=keep
@@ -2640,18 +2648,18 @@ fn slice_trim_right_fn() FuncDef {
           .LocalSet(4),
           .LocalGet(3),
           .RefAsNonNull,
-          .StructGet(vi, vi_children),
+          .StructGet(vi, vi_CHILDREN),
           .LocalGet(4),
           .ArrayGet(vc),
           .LocalSet(7),
           .LocalGet(1),
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .I32Eq,
           .If(
             .None,
             [
               .LocalGet(5),
-              .I32Const(mask),
+              .I32Const(rt_MASK),
               .I32And,
               .I32Const(1),
               .I32Add,
@@ -2694,7 +2702,7 @@ fn slice_trim_right_fn() FuncDef {
               .RefCast(false, .Named(vi)),
               .RefCast(false, .Eq),
               .LocalGet(1),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Sub,
               .LocalGet(5),
               .I32Const(1),
@@ -2704,7 +2712,7 @@ fn slice_trim_right_fn() FuncDef {
             ],
           ),
           .RefNull(.Eq),
-          .I32Const(bf),
+          .I32Const(rt_BF),
           .ArrayNew(vc),
           .LocalSet(6),
           .LocalGet(6),
@@ -2712,7 +2720,7 @@ fn slice_trim_right_fn() FuncDef {
           .I32Const(0),
           .LocalGet(3),
           .RefAsNonNull,
-          .StructGet(vi, vi_children),
+          .StructGet(vi, vi_CHILDREN),
           .I32Const(0),
           .LocalGet(4),
           .I32Const(1),
@@ -2741,9 +2749,9 @@ fn slice_trim_right_fn() FuncDef {
 // Drop the first start elements from a full tree, sharing everything to the
 // right of the left boundary spine.
 fn slice_trim_left_fn() FuncDef {
-  ta := t_array
-  vi := t_vec_internal
-  vc := t_vec_children
+  ta := t_ARRAY
+  vi := t_VEC_INTERNAL
+  vc := t_VEC_CHILDREN
 
   // p0=node, p1=shift, p2=start; L3=node, L4=slot, L5=sub, L6=count,
   // L7=new_count, L8=children, L9=child, L10=new_child, L11=leaf,
@@ -2826,18 +2834,18 @@ fn slice_trim_left_fn() FuncDef {
           .LocalSet(7),
           .LocalGet(3),
           .RefAsNonNull,
-          .StructGet(vi, vi_children),
+          .StructGet(vi, vi_CHILDREN),
           .LocalGet(4),
           .ArrayGet(vc),
           .LocalSet(9),
           .LocalGet(1),
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .I32Eq,
           .If(
             .None,
             [
               .LocalGet(5),
-              .I32Const(mask),
+              .I32Const(rt_MASK),
               .I32And,
               .LocalSet(13),
               .LocalGet(9),
@@ -2881,7 +2889,7 @@ fn slice_trim_left_fn() FuncDef {
               .RefCast(false, .Named(vi)),
               .RefCast(false, .Eq),
               .LocalGet(1),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Sub,
               .LocalGet(5),
               .Call("slice_trim_left"),
@@ -2889,7 +2897,7 @@ fn slice_trim_left_fn() FuncDef {
             ],
           ),
           .RefNull(.Eq),
-          .I32Const(bf),
+          .I32Const(rt_BF),
           .ArrayNew(vc),
           .LocalSet(8),
           .LocalGet(8),
@@ -2897,7 +2905,7 @@ fn slice_trim_left_fn() FuncDef {
           .I32Const(0),
           .LocalGet(3),
           .RefAsNonNull,
-          .StructGet(vi, vi_children),
+          .StructGet(vi, vi_CHILDREN),
           .LocalGet(4),
           .LocalGet(7),
           .ArrayCopy(vc, vc),
@@ -2920,8 +2928,8 @@ fn slice_trim_left_fn() FuncDef {
 
 // slice_last_leaf(node, shift) -> Array
 fn slice_last_leaf_fn() FuncDef {
-  vi := t_vec_internal
-  vc := t_vec_children
+  vi := t_VEC_INTERNAL
+  vc := t_VEC_CHILDREN
 
   // p0=node, p1=shift; L2=node, L3=count
   .{
@@ -2934,7 +2942,7 @@ fn slice_last_leaf_fn() FuncDef {
       .I32Eqz,
       .If(
         .Some(arr_ref()),
-        [.LocalGet(0), .RefCast(false, .Named(t_array))],
+        [.LocalGet(0), .RefCast(false, .Named(t_ARRAY))],
         [
           .LocalGet(0),
           .RefCast(false, .Named(vi)),
@@ -2945,14 +2953,14 @@ fn slice_last_leaf_fn() FuncDef {
           .LocalSet(3),
           .LocalGet(2),
           .RefAsNonNull,
-          .StructGet(vi, vi_children),
+          .StructGet(vi, vi_CHILDREN),
           .LocalGet(3),
           .I32Const(1),
           .I32Sub,
           .ArrayGet(vc),
           .RefAsNonNull,
           .LocalGet(1),
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .I32Sub,
           .Call("slice_last_leaf"),
         ],
@@ -2963,8 +2971,8 @@ fn slice_last_leaf_fn() FuncDef {
 
 // slice_collapse_root(root, shift) -> (root, shift)
 fn slice_collapse_root_fn() FuncDef {
-  vi := t_vec_internal
-  vc := t_vec_children
+  vi := t_VEC_INTERNAL
+  vc := t_VEC_CHILDREN
 
   // p0=root, p1=shift; L2=count
   .{
@@ -2985,7 +2993,7 @@ fn slice_collapse_root_fn() FuncDef {
               .RefIsNull,
               .BrIf("brk"),
               .LocalGet(1),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32LeS,
               .BrIf("brk"),
               .LocalGet(0),
@@ -2998,13 +3006,13 @@ fn slice_collapse_root_fn() FuncDef {
               .BrIf("brk"),
               .LocalGet(0),
               .RefAsNonNull,
-              .StructGet(vi, vi_children),
+              .StructGet(vi, vi_CHILDREN),
               .I32Const(0),
               .ArrayGet(vc),
               .RefCast(true, .Named(vi)),
               .LocalSet(0),
               .LocalGet(1),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Sub,
               .LocalSet(1),
               .Br("lp"),
@@ -3021,7 +3029,7 @@ fn slice_collapse_root_fn() FuncDef {
 // slice_from_full_tree(node, shift, len) -> PVec
 // Split the full tree back into PVec root + trailing leaf tail.
 fn slice_from_full_tree_fn() FuncDef {
-  vi := t_vec_internal
+  vi := t_VEC_INTERNAL
 
   // p0=node, p1=shift, p2=len; L3=tail, L4=root, L5=shift
   .{
@@ -3031,7 +3039,7 @@ fn slice_from_full_tree_fn() FuncDef {
     locals: [arr_null(), vec_internal_null(), .I32],
     body: [
       .LocalGet(2),
-      .I32Const(bf),
+      .I32Const(rt_BF),
       .I32LeS,
       .If(
         .Some(pvec_ref()),
@@ -3042,7 +3050,7 @@ fn slice_from_full_tree_fn() FuncDef {
           .LocalGet(0),
           .LocalGet(1),
           .Call("slice_last_leaf"),
-          .StructNew(t_pvec),
+          .StructNew(t_PVEC),
         ],
         [
           .LocalGet(0),
@@ -3068,7 +3076,7 @@ fn slice_from_full_tree_fn() FuncDef {
           .LocalGet(4),
           .LocalGet(3),
           .RefAsNonNull,
-          .StructNew(t_pvec),
+          .StructNew(t_PVEC),
         ],
       ),
     ],
@@ -3076,13 +3084,13 @@ fn slice_from_full_tree_fn() FuncDef {
 }
 
 // slice_take_fast(vec: PVec?, end: i32) -> PVec
-// Right-trim for take(0, end) when end > bf and end < len (the result needs a
+// Right-trim for take(0, end) when end > rt_BF and end < len (the result needs a
 // root). Mirror of the left-drop fast path: never folds the tail into the trie.
 // If end reaches into the tail region (end > trie_count) the whole trie is kept
 // and the tail is truncated; otherwise the trie is trimmed on the right and the
 // tail is dropped. Caller guarantees the source root is non-null.
 fn slice_take_fast_fn() FuncDef {
-  ta := t_array
+  ta := t_ARRAY
 
   p_v := 0
   p_end := 1
@@ -3098,10 +3106,10 @@ fn slice_take_fast_fn() FuncDef {
       // trie_count = len - tail.len
       .LocalGet(p_v),
       .RefAsNonNull,
-      .StructGet(t_pvec, pv_len),
+      .StructGet(t_PVEC, pv_LEN),
       .LocalGet(p_v),
       .RefAsNonNull,
-      .StructGet(t_pvec, pv_tail),
+      .StructGet(t_PVEC, pv_TAIL),
       .ArrayLen,
       .I32Sub,
       .LocalSet(l_trie),
@@ -3124,7 +3132,7 @@ fn slice_take_fast_fn() FuncDef {
           .I32Const(0),
           .LocalGet(p_v),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_tail),
+          .StructGet(t_PVEC, pv_TAIL),
           .RefAsNonNull,
           .I32Const(0),
           .LocalGet(p_end),
@@ -3134,31 +3142,31 @@ fn slice_take_fast_fn() FuncDef {
           .LocalGet(p_end),
           .LocalGet(p_v),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_shift),
+          .StructGet(t_PVEC, pv_SHIFT),
           .LocalGet(p_v),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_root),
+          .StructGet(t_PVEC, pv_ROOT),
           .LocalGet(l_newtail),
           .RefAsNonNull,
-          .StructNew(t_pvec),
+          .StructNew(t_PVEC),
         ],
         [
           // end stays within the trie: trim the trie on the right and drop the
           // tail entirely (slice_from_full_tree re-splits a fresh tail).
           .LocalGet(p_v),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_root),
+          .StructGet(t_PVEC, pv_ROOT),
           .RefAsNonNull,
           .RefCast(false, .Eq),
           .LocalGet(p_v),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_shift),
+          .StructGet(t_PVEC, pv_SHIFT),
           .LocalGet(p_end),
           .Call("slice_trim_right"),
           .RefAsNonNull,
           .LocalGet(p_v),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_shift),
+          .StructGet(t_PVEC, pv_SHIFT),
           .LocalGet(p_end),
           .Call("slice_from_full_tree"),
         ],
@@ -3169,8 +3177,8 @@ fn slice_take_fast_fn() FuncDef {
 
 // slice(vec: PVec?, start: i32, end: i32) -> PVec
 fn slice_fn() FuncDef {
-  ta := t_array
-  vi := t_vec_internal
+  ta := t_ARRAY
+  vi := t_VEC_INTERNAL
 
   // p0=vec, p1=start, p2=end; L3=len, L4=tmp_array, L5=tmp_leaf,
   // L6=full_node, L7=full_shift, L8=trimmed, L9=new_root, L10=new_shift
@@ -3204,7 +3212,7 @@ fn slice_fn() FuncDef {
           .LocalGet(2),
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_len),
+          .StructGet(t_PVEC, pv_LEN),
           .I32Eq,
           .I32And,
           .If(
@@ -3218,15 +3226,15 @@ fn slice_fn() FuncDef {
               .LocalGet(2),
               .LocalGet(0),
               .RefAsNonNull,
-              .StructGet(t_pvec, pv_len),
+              .StructGet(t_PVEC, pv_LEN),
               .I32Eq,
               .LocalGet(3),
-              .I32Const(bf),
+              .I32Const(rt_BF),
               .I32GtS,
               .I32And,
               .LocalGet(0),
               .RefAsNonNull,
-              .StructGet(t_pvec, pv_root),
+              .StructGet(t_PVEC, pv_ROOT),
               .RefIsNull,
               .I32Eqz,
               .I32And,
@@ -3235,18 +3243,18 @@ fn slice_fn() FuncDef {
                 [
                   .LocalGet(0),
                   .RefAsNonNull,
-                  .StructGet(t_pvec, pv_root),
+                  .StructGet(t_PVEC, pv_ROOT),
                   .RefAsNonNull,
                   .RefCast(false, .Eq),
                   .LocalGet(0),
                   .RefAsNonNull,
-                  .StructGet(t_pvec, pv_shift),
+                  .StructGet(t_PVEC, pv_SHIFT),
                   .LocalGet(1),
                   .Call("slice_trim_left"),
                   .RefCast(false, .Named(vi)),
                   .LocalGet(0),
                   .RefAsNonNull,
-                  .StructGet(t_pvec, pv_shift),
+                  .StructGet(t_PVEC, pv_SHIFT),
                   .Call("slice_collapse_root"),
                   .LocalSet(10),
                   .LocalSet(9),
@@ -3255,9 +3263,9 @@ fn slice_fn() FuncDef {
                   .LocalGet(9),
                   .LocalGet(0),
                   .RefAsNonNull,
-                  .StructGet(t_pvec, pv_tail),
+                  .StructGet(t_PVEC, pv_TAIL),
                   .RefAsNonNull,
-                  .StructNew(t_pvec),
+                  .StructNew(t_PVEC),
                 ],
                 [
                   // take (right-trim) fast path: start==0 (so end<len here) and
@@ -3266,7 +3274,7 @@ fn slice_fn() FuncDef {
                   .LocalGet(1),
                   .I32Eqz,
                   .LocalGet(3),
-                  .I32Const(bf),
+                  .I32Const(rt_BF),
                   .I32GtS,
                   .I32And,
                   .If(
@@ -3274,7 +3282,7 @@ fn slice_fn() FuncDef {
                     [.LocalGet(0), .LocalGet(2), .Call("slice_take_fast")],
                     [
                       .LocalGet(3),
-                      .I32Const(bf),
+                      .I32Const(rt_BF),
                       .I32LeS,
                       .If(
                         .Some(pvec_ref()),
@@ -3301,14 +3309,14 @@ fn slice_fn() FuncDef {
                         [
                           .LocalGet(0),
                           .RefAsNonNull,
-                          .StructGet(t_pvec, pv_root),
+                          .StructGet(t_PVEC, pv_ROOT),
                           .RefIsNull,
                           .If(
                             .None,
                             [
                               .LocalGet(0),
                               .RefAsNonNull,
-                              .StructGet(t_pvec, pv_tail),
+                              .StructGet(t_PVEC, pv_TAIL),
                               .RefCast(false, .Eq),
                               .LocalSet(6),
                               .I32Const(0),
@@ -3317,7 +3325,7 @@ fn slice_fn() FuncDef {
                             [
                               .LocalGet(0),
                               .RefAsNonNull,
-                              .StructGet(t_pvec, pv_tail),
+                              .StructGet(t_PVEC, pv_TAIL),
                               .ArrayLen,
                               .I32Eqz,
                               .If(
@@ -3325,28 +3333,28 @@ fn slice_fn() FuncDef {
                                 [
                                   .LocalGet(0),
                                   .RefAsNonNull,
-                                  .StructGet(t_pvec, pv_root),
+                                  .StructGet(t_PVEC, pv_ROOT),
                                   .RefAsNonNull,
                                   .RefCast(false, .Eq),
                                   .LocalSet(6),
                                   .LocalGet(0),
                                   .RefAsNonNull,
-                                  .StructGet(t_pvec, pv_shift),
+                                  .StructGet(t_PVEC, pv_SHIFT),
                                   .LocalSet(7),
                                 ],
                                 [
                                   .LocalGet(0),
                                   .RefAsNonNull,
-                                  .StructGet(t_pvec, pv_root),
+                                  .StructGet(t_PVEC, pv_ROOT),
                                   .RefAsNonNull,
                                   .LocalGet(0),
                                   .RefAsNonNull,
-                                  .StructGet(t_pvec, pv_shift),
+                                  .StructGet(t_PVEC, pv_SHIFT),
                                   .LocalGet(0),
                                   .RefAsNonNull,
-                                  .StructGet(t_pvec, pv_tail),
+                                  .StructGet(t_PVEC, pv_TAIL),
                                   .Call("wrap_leaf"),
-                                  .I32Const(b_),
+                                  .I32Const(rt_BITS),
                                   .Call("concat_trees"),
                                   .LocalSet(7),
                                   .LocalSet(6),
@@ -3418,23 +3426,23 @@ fn pop_tail_fn() FuncDef {
       .Call("child_count"),
       .LocalSet(l_count),
       .LocalGet(p_level),
-      .I32Const(b_),
+      .I32Const(rt_BITS),
       .I32GtS,
       .If(
         .None,
         [
           .LocalGet(p_len),
           .LocalGet(p_level),
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .I32Sub,
           .LocalGet(p_node),
           .RefAsNonNull,
-          .StructGet(t_vec_internal, vi_children),
+          .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
           .LocalGet(l_count),
           .I32Const(1),
           .I32Sub,
-          .ArrayGet(t_vec_children),
-          .RefCast(true, .Named(t_vec_internal)),
+          .ArrayGet(t_VEC_CHILDREN),
+          .RefCast(true, .Named(t_VEC_INTERNAL)),
           .Call("pop_tail"),
           .LocalSet(l_new_child),
           .LocalGet(l_count),
@@ -3459,18 +3467,18 @@ fn pop_tail_fn() FuncDef {
         [.RefNull(.Eq)],
         [
           .RefNull(.Eq),
-          .I32Const(bf),
-          .ArrayNew(t_vec_children),
+          .I32Const(rt_BF),
+          .ArrayNew(t_VEC_CHILDREN),
           .LocalSet(l_new_children),
           .LocalGet(l_new_children),
           .RefAsNonNull,
           .I32Const(0),
           .LocalGet(p_node),
           .RefAsNonNull,
-          .StructGet(t_vec_internal, vi_children),
+          .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
           .I32Const(0),
           .LocalGet(l_new_count),
-          .ArrayCopy(t_vec_children, t_vec_children),
+          .ArrayCopy(t_VEC_CHILDREN, t_VEC_CHILDREN),
           .LocalGet(l_new_child),
           .RefIsNull,
           .If(
@@ -3483,7 +3491,7 @@ fn pop_tail_fn() FuncDef {
               .I32Const(1),
               .I32Sub,
               .LocalGet(l_new_child),
-              .ArraySet(t_vec_children),
+              .ArraySet(t_VEC_CHILDREN),
             ],
           ),
           .LocalGet(l_new_children),
@@ -3531,8 +3539,8 @@ fn gather_fn() FuncDef {
               .LocalGet(1),
               .LocalGet(4),
               .Call("get"),
-              .RefCast(false, .Named(t_boxed_int)),
-              .StructGet(t_boxed_int, 0),
+              .RefCast(false, .Named(t_BOXED_INT)),
+              .StructGet(t_BOXED_INT, 0),
               .I32WrapI64,
               .LocalSet(5),
               .LocalGet(3),
@@ -3569,9 +3577,9 @@ type VecElem = .{
 fn elem_i64() VecElem {
   .{
     suffix: "i64",
-    arr_ty: t_array_i64,
+    arr_ty: t_ARRAY_I64,
     arr_null: arr_i64_null(),
-    boxed_ty: t_boxed_int,
+    boxed_ty: t_BOXED_INT,
     elem_ty: .I64,
     le_op: .I64LeS,
   }
@@ -3580,9 +3588,9 @@ fn elem_i64() VecElem {
 fn elem_f64() VecElem {
   .{
     suffix: "f64",
-    arr_ty: t_array_f64,
+    arr_ty: t_ARRAY_F64,
     arr_null: arr_f64_null(),
-    boxed_ty: t_boxed_float,
+    boxed_ty: t_BOXED_FLOAT,
     elem_ty: .F64,
     le_op: .F64Le,
   }
@@ -3917,7 +3925,7 @@ fn drop_last_fn() FuncDef {
   l_leaf := 8
   l_copy_len := 9
 
-  ta := t_array
+  ta := t_ARRAY
 
   // p0=vec
   // L1=len, L2=trie_count, L3=tail_len, L4=new_tail, L5=new_root, L6=new_shift, L7=shift, L8=leaf, L9=copy_len
@@ -3929,7 +3937,7 @@ fn drop_last_fn() FuncDef {
     body: [
       .LocalGet(p_vec),
       .RefAsNonNull,
-      .StructGet(t_pvec, pv_len),
+      .StructGet(t_PVEC, pv_LEN),
       .LocalSet(l_len),
       .LocalGet(l_len),
       .I32Const(1),
@@ -3940,7 +3948,7 @@ fn drop_last_fn() FuncDef {
         [
           .LocalGet(p_vec),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_tail),
+          .StructGet(t_PVEC, pv_TAIL),
           .ArrayLen,
           .LocalSet(l_tail_len),
           .LocalGet(l_len),
@@ -3964,7 +3972,7 @@ fn drop_last_fn() FuncDef {
               .I32Const(0),
               .LocalGet(p_vec),
               .RefAsNonNull,
-              .StructGet(t_pvec, pv_tail),
+              .StructGet(t_PVEC, pv_TAIL),
               .I32Const(0),
               .LocalGet(l_tail_len),
               .I32Const(1),
@@ -3975,18 +3983,18 @@ fn drop_last_fn() FuncDef {
               .I32Sub,
               .LocalGet(p_vec),
               .RefAsNonNull,
-              .StructGet(t_pvec, pv_shift),
+              .StructGet(t_PVEC, pv_SHIFT),
               .LocalGet(p_vec),
               .RefAsNonNull,
-              .StructGet(t_pvec, pv_root),
+              .StructGet(t_PVEC, pv_ROOT),
               .LocalGet(l_new_tail),
               .RefAsNonNull,
-              .StructNew(t_pvec),
+              .StructNew(t_PVEC),
             ],
             [
               .LocalGet(p_vec),
               .RefAsNonNull,
-              .StructGet(t_pvec, pv_shift),
+              .StructGet(t_PVEC, pv_SHIFT),
               .LocalSet(l_shift),
               .LocalGet(p_vec),
               .RefAsNonNull,
@@ -4019,7 +4027,7 @@ fn drop_last_fn() FuncDef {
               .LocalGet(l_shift),
               .LocalGet(p_vec),
               .RefAsNonNull,
-              .StructGet(t_pvec, pv_root),
+              .StructGet(t_PVEC, pv_ROOT),
               .Call("pop_tail"),
               .LocalSet(l_new_root),
               .LocalGet(l_shift),
@@ -4031,13 +4039,13 @@ fn drop_last_fn() FuncDef {
                 [.I32Const(0), .LocalSet(l_new_shift)],
                 [
                   .LocalGet(l_shift),
-                  .I32Const(b_),
+                  .I32Const(rt_BITS),
                   .I32GtS,
                   .If(
                     .None,
                     [
                       .LocalGet(l_new_root),
-                      .RefCast(false, .Named(t_vec_internal)),
+                      .RefCast(false, .Named(t_VEC_INTERNAL)),
                       .Call("child_count"),
                       .I32Const(1),
                       .I32Eq,
@@ -4045,13 +4053,13 @@ fn drop_last_fn() FuncDef {
                         .None,
                         [
                           .LocalGet(l_new_root),
-                          .RefCast(false, .Named(t_vec_internal)),
-                          .StructGet(t_vec_internal, vi_children),
+                          .RefCast(false, .Named(t_VEC_INTERNAL)),
+                          .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
                           .I32Const(0),
-                          .ArrayGet(t_vec_children),
+                          .ArrayGet(t_VEC_CHILDREN),
                           .LocalSet(l_new_root),
                           .LocalGet(l_shift),
-                          .I32Const(b_),
+                          .I32Const(rt_BITS),
                           .I32Sub,
                           .LocalSet(l_new_shift),
                         ],
@@ -4067,10 +4075,10 @@ fn drop_last_fn() FuncDef {
               .I32Sub,
               .LocalGet(l_new_shift),
               .LocalGet(l_new_root),
-              .RefCast(true, .Named(t_vec_internal)),
+              .RefCast(true, .Named(t_VEC_INTERNAL)),
               .LocalGet(l_new_tail),
               .RefAsNonNull,
-              .StructNew(t_pvec),
+              .StructNew(t_PVEC),
             ],
           ),
         ],
@@ -4105,22 +4113,22 @@ fn promote_full_tail_fn() FuncDef {
     locals: [.I32, .I32, ref_eq_null()],
     body: [
       .LocalGet(p_prefix),
-      .StructGet(t_pvec, pv_len),
-      .I32Const(bf),
+      .StructGet(t_PVEC, pv_LEN),
+      .I32Const(rt_BF),
       .I32Add,
       .LocalSet(l_len),
       .LocalGet(p_prefix),
-      .StructGet(t_pvec, pv_shift),
+      .StructGet(t_PVEC, pv_SHIFT),
       .LocalSet(l_shift),
       .LocalGet(p_prefix),
-      .StructGet(t_pvec, pv_root),
+      .StructGet(t_PVEC, pv_ROOT),
       .RefIsNull,
       .If(
         .None,
         [
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .LocalSet(l_shift),
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .LocalGet(p_full_tail),
           .RefCast(false, .Eq),
           .Call("new_path"),
@@ -4128,12 +4136,12 @@ fn promote_full_tail_fn() FuncDef {
         ],
         [
           .LocalGet(p_prefix),
-          .StructGet(t_pvec, pv_root),
+          .StructGet(t_PVEC, pv_ROOT),
           .RefAsNonNull,
           .LocalGet(l_shift),
           .LocalGet(p_full_tail),
           .Call("wrap_leaf"),
-          .I32Const(b_),
+          .I32Const(rt_BITS),
           .Call("concat_trees"),
           .LocalSet(l_shift),
           .LocalSet(l_new_root),
@@ -4142,9 +4150,9 @@ fn promote_full_tail_fn() FuncDef {
       .LocalGet(l_len),
       .LocalGet(l_shift),
       .LocalGet(l_new_root),
-      .RefCast(true, .Named(t_vec_internal)),
+      .RefCast(true, .Named(t_VEC_INTERNAL)),
       .GlobalGet("empty_leaf"),
-      .StructNew(t_pvec),
+      .StructNew(t_PVEC),
     ],
   }
 }
@@ -4157,7 +4165,7 @@ fn promote_full_tail_fn() FuncDef {
 // until S2 routes idiomatic code to the typed family; remove or fold into a
 // unit test then.)
 fn vec_i64_roundtrip_fn() FuncDef {
-  tbi := t_boxed_int
+  tbi := t_BOXED_INT
 
   // p0=xs; L1=n, L2=bi (i64 builder), L3=i, L4=pv64, L5=bo (boxed builder)
   .{
@@ -4168,7 +4176,7 @@ fn vec_i64_roundtrip_fn() FuncDef {
     body: [
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_pvec, pv_len),
+      .StructGet(t_PVEC, pv_LEN),
       .LocalSet(1),
       .Call("builder_new_i64"),
       .LocalSet(2),
@@ -4243,7 +4251,7 @@ fn vec_i64_roundtrip_fn() FuncDef {
 
 // builder_from(vec: PVec?) -> Array
 fn builder_from_fn() FuncDef {
-  ta := t_array
+  ta := t_ARRAY
 
   // p0=vec, L1=tail_data, L2=tail_len, L3=new_tail_buf, L4=trie_prefix
   .{
@@ -4254,14 +4262,14 @@ fn builder_from_fn() FuncDef {
     body: [
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_pvec, pv_tail),
+      .StructGet(t_PVEC, pv_TAIL),
       .LocalSet(1),
       .LocalGet(1),
       .RefAsNonNull,
       .ArrayLen,
       .LocalSet(2),
       .RefNull(.None_),
-      .I32Const(bf),
+      .I32Const(rt_BF),
       .ArrayNew(ta),
       .LocalSet(3),
       .LocalGet(2),
@@ -4282,17 +4290,17 @@ fn builder_from_fn() FuncDef {
       ),
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_pvec, pv_len),
+      .StructGet(t_PVEC, pv_LEN),
       .LocalGet(2),
       .I32Sub,
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_pvec, pv_shift),
+      .StructGet(t_PVEC, pv_SHIFT),
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_pvec, pv_root),
+      .StructGet(t_PVEC, pv_ROOT),
       .GlobalGet("empty_leaf"),
-      .StructNew(t_pvec),
+      .StructNew(t_PVEC),
       .LocalSet(4),
       .LocalGet(4),
       .RefAsNonNull,
@@ -4306,7 +4314,7 @@ fn builder_from_fn() FuncDef {
 
 // builder_push(builder: Array?, elem: anyref) -> void
 fn builder_push_fn() FuncDef {
-  ta := t_array
+  ta := t_ARRAY
 
   // p0=builder, p1=elem
   // L2=tail_buf, L3=tail_len, L4=pvec_so_far
@@ -4330,7 +4338,7 @@ fn builder_push_fn() FuncDef {
       .I31GetU,
       .LocalSet(3),
       .LocalGet(3),
-      .I32Const(bf),
+      .I32Const(rt_BF),
       .I32LtS,
       .If(
         .None,
@@ -4354,7 +4362,7 @@ fn builder_push_fn() FuncDef {
           .RefAsNonNull,
           .I32Const(0),
           .ArrayGet(ta),
-          .RefCast(true, .Named(t_pvec)),
+          .RefCast(true, .Named(t_PVEC)),
           .LocalSet(4),
           .LocalGet(0),
           .RefAsNonNull,
@@ -4366,7 +4374,7 @@ fn builder_push_fn() FuncDef {
           .Call("promote_full_tail"),
           .ArraySet(ta),
           .RefNull(.None_),
-          .I32Const(bf),
+          .I32Const(rt_BF),
           .ArrayNew(ta),
           .LocalSet(2),
           .LocalGet(2),
@@ -4396,7 +4404,7 @@ fn builder_push_fn() FuncDef {
 // as needed. This preserves the builder-region append fast path without routing
 // each element through builder_push.
 fn builder_append_leaf_range_fn() FuncDef {
-  ta := t_array
+  ta := t_ARRAY
 
   // p0=builder, p1=leaf, p2=start, p3=len
   // L4=tail_buf, L5=tail_len, L6=space, L7=take, L8=pvec_so_far
@@ -4431,7 +4439,7 @@ fn builder_append_leaf_range_fn() FuncDef {
               .I31GetU,
               .LocalSet(5),
               .LocalGet(5),
-              .I32Const(bf),
+              .I32Const(rt_BF),
               .I32Eq,
               .If(
                 .None,
@@ -4440,7 +4448,7 @@ fn builder_append_leaf_range_fn() FuncDef {
                   .RefAsNonNull,
                   .I32Const(0),
                   .ArrayGet(ta),
-                  .RefCast(true, .Named(t_pvec)),
+                  .RefCast(true, .Named(t_PVEC)),
                   .LocalSet(8),
                   .LocalGet(0),
                   .RefAsNonNull,
@@ -4452,7 +4460,7 @@ fn builder_append_leaf_range_fn() FuncDef {
                   .Call("promote_full_tail"),
                   .ArraySet(ta),
                   .RefNull(.None_),
-                  .I32Const(bf),
+                  .I32Const(rt_BF),
                   .ArrayNew(ta),
                   .LocalSet(4),
                   .LocalGet(0),
@@ -4470,7 +4478,7 @@ fn builder_append_leaf_range_fn() FuncDef {
                 ],
                 [],
               ),
-              .I32Const(bf),
+              .I32Const(rt_BF),
               .LocalGet(5),
               .I32Sub,
               .LocalSet(6),
@@ -4505,7 +4513,7 @@ fn builder_append_leaf_range_fn() FuncDef {
               .I32Sub,
               .LocalSet(3),
               .LocalGet(5),
-              .I32Const(bf),
+              .I32Const(rt_BF),
               .I32Eq,
               .LocalGet(3),
               .I32Const(0),
@@ -4518,7 +4526,7 @@ fn builder_append_leaf_range_fn() FuncDef {
                   .RefAsNonNull,
                   .I32Const(0),
                   .ArrayGet(ta),
-                  .RefCast(true, .Named(t_pvec)),
+                  .RefCast(true, .Named(t_PVEC)),
                   .LocalSet(8),
                   .LocalGet(0),
                   .RefAsNonNull,
@@ -4530,7 +4538,7 @@ fn builder_append_leaf_range_fn() FuncDef {
                   .Call("promote_full_tail"),
                   .ArraySet(ta),
                   .RefNull(.None_),
-                  .I32Const(bf),
+                  .I32Const(rt_BF),
                   .ArrayNew(ta),
                   .LocalSet(4),
                   .LocalGet(0),
@@ -4560,12 +4568,12 @@ fn builder_append_leaf_range_fn() FuncDef {
 // Relaxed-aware leaf traversal for builder_extend: walks actual children and
 // copies whole leaf ranges into the builder tail buffer.
 fn builder_extend_node_fn() FuncDef {
-  ta := t_array
+  ta := t_ARRAY
 
   // p0=builder, p1=node, p2=shift; L3=count, L4=i, L5=child, L6=leaf
   .{
     name: "builder_extend_node",
-    params: [arr_null(), .Ref(false, .Named(t_vec_internal)), .I32],
+    params: [arr_null(), .Ref(false, .Named(t_VEC_INTERNAL)), .I32],
     results: [],
     locals: [.I32, .I32, ref_eq_null(), arr_null()],
     body: [
@@ -4587,12 +4595,12 @@ fn builder_extend_node_fn() FuncDef {
               .I32GeS,
               .BrIf("brk"),
               .LocalGet(1),
-              .StructGet(t_vec_internal, vi_children),
+              .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
               .LocalGet(4),
-              .ArrayGet(t_vec_children),
+              .ArrayGet(t_VEC_CHILDREN),
               .LocalSet(5),
               .LocalGet(2),
-              .I32Const(b_),
+              .I32Const(rt_BITS),
               .I32Eq,
               .If(
                 .None,
@@ -4614,9 +4622,9 @@ fn builder_extend_node_fn() FuncDef {
                   .LocalGet(0),
                   .LocalGet(5),
                   .RefAsNonNull,
-                  .RefCast(false, .Named(t_vec_internal)),
+                  .RefCast(false, .Named(t_VEC_INTERNAL)),
                   .LocalGet(2),
-                  .I32Const(b_),
+                  .I32Const(rt_BITS),
                   .I32Sub,
                   .Call("builder_extend_node"),
                 ],
@@ -4645,14 +4653,14 @@ fn builder_extend_fn() FuncDef {
     body: [
       .LocalGet(1),
       .RefAsNonNull,
-      .StructGet(t_pvec, pv_len),
+      .StructGet(t_PVEC, pv_LEN),
       .LocalSet(2),
       .LocalGet(2),
       .I32Eqz,
       .If(.None, [.Return], []),
       .LocalGet(1),
       .RefAsNonNull,
-      .StructGet(t_pvec, pv_tail),
+      .StructGet(t_PVEC, pv_TAIL),
       .ArrayLen,
       .LocalSet(3),
       .LocalGet(2),
@@ -4668,11 +4676,11 @@ fn builder_extend_fn() FuncDef {
           .LocalGet(0),
           .LocalGet(1),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_root),
+          .StructGet(t_PVEC, pv_ROOT),
           .RefAsNonNull,
           .LocalGet(1),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_shift),
+          .StructGet(t_PVEC, pv_SHIFT),
           .Call("builder_extend_node"),
         ],
       ),
@@ -4685,7 +4693,7 @@ fn builder_extend_fn() FuncDef {
           .LocalGet(0),
           .LocalGet(1),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_tail),
+          .StructGet(t_PVEC, pv_TAIL),
           .I32Const(0),
           .LocalGet(3),
           .Call("builder_append_leaf_range"),
@@ -4700,7 +4708,7 @@ fn builder_extend_fn() FuncDef {
 // ═══════════════════════════════════════════════════════════════════════
 // from_array(arr: Array) -> PVec
 fn from_array_fn() FuncDef {
-  ta := t_array
+  ta := t_ARRAY
 
   // p0=arr, L1=len, L2=pvec, L3=i, L4=leaf, L5=remaining, L6=tail
   FuncDef.{
@@ -4719,16 +4727,16 @@ fn from_array_fn() FuncDef {
         [.GlobalGet("empty_pvec")],
         [
           .LocalGet(1),
-          .I32Const(bf),
+          .I32Const(rt_BF),
           .I32LeS,
           .If(
             .Some(pvec_ref()),
             [
               .LocalGet(1),
               .I32Const(0),
-              .RefNull(.Named(t_vec_internal)),
+              .RefNull(.Named(t_VEC_INTERNAL)),
               .LocalGet(0),
-              .StructNew(t_pvec),
+              .StructNew(t_PVEC),
             ],
             [
               .GlobalGet("empty_pvec"),
@@ -4744,13 +4752,13 @@ fn from_array_fn() FuncDef {
                     .None,
                     [
                       .LocalGet(3),
-                      .I32Const(bf),
+                      .I32Const(rt_BF),
                       .I32Add,
                       .LocalGet(1),
                       .I32GeS,
                       .BrIf("brk"),
                       .RefNull(.None_),
-                      .I32Const(bf),
+                      .I32Const(rt_BF),
                       .ArrayNew(ta),
                       .LocalSet(4),
                       .LocalGet(4),
@@ -4758,7 +4766,7 @@ fn from_array_fn() FuncDef {
                       .I32Const(0),
                       .LocalGet(0),
                       .LocalGet(3),
-                      .I32Const(bf),
+                      .I32Const(rt_BF),
                       .ArrayCopy(ta, ta),
                       .LocalGet(2),
                       .RefAsNonNull,
@@ -4767,7 +4775,7 @@ fn from_array_fn() FuncDef {
                       .Call("promote_full_tail"),
                       .LocalSet(2),
                       .LocalGet(3),
-                      .I32Const(bf),
+                      .I32Const(rt_BF),
                       .I32Add,
                       .LocalSet(3),
                       .Br("lp"),
@@ -4800,18 +4808,18 @@ fn from_array_fn() FuncDef {
               ),
               .LocalGet(2),
               .RefAsNonNull,
-              .StructGet(t_pvec, pv_len),
+              .StructGet(t_PVEC, pv_LEN),
               .LocalGet(5),
               .I32Add,
               .LocalGet(2),
               .RefAsNonNull,
-              .StructGet(t_pvec, pv_shift),
+              .StructGet(t_PVEC, pv_SHIFT),
               .LocalGet(2),
               .RefAsNonNull,
-              .StructGet(t_pvec, pv_root),
+              .StructGet(t_PVEC, pv_ROOT),
               .LocalGet(6),
               .RefAsNonNull,
-              .StructNew(t_pvec),
+              .StructNew(t_PVEC),
             ],
           ),
         ],
@@ -4822,7 +4830,7 @@ fn from_array_fn() FuncDef {
 
 // to_array(vec: PVec?) -> Array
 fn to_array_fn() FuncDef {
-  ta := t_array
+  ta := t_ARRAY
 
   // p0=vec, L1=len, L2=result, L4=tail, L5=tail_len, L6=trie_count
   FuncDef.{
@@ -4833,7 +4841,7 @@ fn to_array_fn() FuncDef {
     body: [
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_pvec, pv_len),
+      .StructGet(t_PVEC, pv_LEN),
       .LocalSet(1),
       .RefNull(.None_),
       .LocalGet(1),
@@ -4841,7 +4849,7 @@ fn to_array_fn() FuncDef {
       .LocalSet(2),
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_pvec, pv_tail),
+      .StructGet(t_PVEC, pv_TAIL),
       .LocalSet(4),
       .LocalGet(4),
       .ArrayLen,
@@ -4858,11 +4866,11 @@ fn to_array_fn() FuncDef {
         [
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_root),
+          .StructGet(t_PVEC, pv_ROOT),
           .RefAsNonNull,
           .LocalGet(0),
           .RefAsNonNull,
-          .StructGet(t_pvec, pv_shift),
+          .StructGet(t_PVEC, pv_SHIFT),
           .LocalGet(2),
           .RefAsNonNull,
           .I32Const(0),
@@ -4895,8 +4903,8 @@ fn to_array_fn() FuncDef {
 // from_read_file_result(v: Variant?) -> Variant?
 // Host read_file returns Result<Array, String>; rewrite Ok(Array) to Ok(PVec).
 fn from_read_file_result_fn() FuncDef {
-  ta := t_array
-  tv := t_variant
+  ta := t_ARRAY
+  tv := t_VARIANT
   variant_ref := ValType.Ref(true, .Named(tv))
 
   // p0=v, L1=payload
