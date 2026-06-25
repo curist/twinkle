@@ -1125,6 +1125,13 @@ fn parse_function(c: Cursor) ItemParse {
 
   name := c.text()
   name_span := c.span()
+
+  if is_upper_ascii_name(name) {
+    diagnostics_out = .append(
+      diag.error(name_span, "function name must start with a lowercase letter"),
+    )
+  }
+
   c = .advance()
   parsed_type_params := parse_type_params(c)
   type_params := parsed_type_params.value

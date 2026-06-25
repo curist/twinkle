@@ -76,58 +76,21 @@ fn sem_token_data(step: server_core.Step) Vector<Int>!String {
 // namespace=0, type=1, typeParameter=2, function=3, method=4,
 // parameter=5, variable=6, property=7, enumMember=8, keyword=9,
 // string=10, number=11
-fn TK_NAMESPACE() Int {
-  0
-}
-
-fn TK_TYPE() Int {
-  1
-}
-
-fn TK_TYPE_PARAMETER() Int {
-  2
-}
-
-fn TK_FUNCTION() Int {
-  3
-}
-
-fn TK_METHOD() Int {
-  4
-}
-
-fn TK_PARAMETER() Int {
-  5
-}
-
-fn TK_VARIABLE() Int {
-  6
-}
-
-fn TK_PROPERTY() Int {
-  7
-}
-
-fn TK_ENUM_MEMBER() Int {
-  8
-}
+tk_NAMESPACE: Int = 0
+tk_TYPE: Int = 1
+tk_TYPE_PARAMETER: Int = 2
+tk_FUNCTION: Int = 3
+tk_METHOD: Int = 4
+tk_PARAMETER: Int = 5
+tk_VARIABLE: Int = 6
+tk_PROPERTY: Int = 7
+tk_ENUM_MEMBER: Int = 8
 
 // Modifier bitmask values.
-fn MOD_DECLARATION() Int {
-  1
-}
-
-fn MOD_DEFINITION() Int {
-  2
-}
-
-fn MOD_READONLY() Int {
-  4
-}
-
-fn MOD_DEFAULT_LIBRARY() Int {
-  8
-}
+mod_DECLARATION: Int = 1
+mod_DEFINITION: Int = 2
+mod_READONLY: Int = 4
+mod_DEFAULT_LIBRARY: Int = 8
 
 // Extract the nth token tuple from the flat data array.
 // Returns (deltaLine, deltaStart, length, tokenType, tokenModifiers).
@@ -180,7 +143,7 @@ pub fn suite() runner.Suite {
         for i < token_count(data) {
           tok := try nth_token(data, i)
 
-          if tok.token_type == TK_FUNCTION() and (tok.modifiers & MOD_DECLARATION()) != 0 {
+          if tok.token_type == tk_FUNCTION and (tok.modifiers & mod_DECLARATION) != 0 {
             // "foo" is 3 chars
             try assert.equal(tok.length, 3)
             found = true
@@ -211,8 +174,8 @@ pub fn suite() runner.Suite {
         for i < token_count(data) {
           tok := try nth_token(data, i)
 
-          if tok.token_type == TK_FUNCTION() and tok.length == 5 {
-            if (tok.modifiers & MOD_DECLARATION()) != 0 {
+          if tok.token_type == tk_FUNCTION and tok.length == 5 {
+            if (tok.modifiers & mod_DECLARATION) != 0 {
               decl_count = decl_count + 1
             } else {
               call_count = call_count + 1
@@ -243,8 +206,8 @@ pub fn suite() runner.Suite {
         for i < token_count(data) {
           tok := try nth_token(data, i)
 
-          if tok.token_type == TK_TYPE()
-            and tok.length == 5 and (tok.modifiers & MOD_DECLARATION()) != 0 {
+          if tok.token_type == tk_TYPE
+            and tok.length == 5 and (tok.modifiers & mod_DECLARATION) != 0 {
             found = true
           }
 
@@ -272,8 +235,8 @@ pub fn suite() runner.Suite {
         for i < token_count(data) {
           tok := try nth_token(data, i)
 
-          if tok.token_type == TK_TYPE()
-            and tok.length == 3 and (tok.modifiers & MOD_DECLARATION()) == 0 {
+          if tok.token_type == tk_TYPE
+            and tok.length == 3 and (tok.modifiers & mod_DECLARATION) == 0 {
             ref_count = ref_count + 1
           }
 
@@ -299,7 +262,7 @@ pub fn suite() runner.Suite {
         for i < token_count(data) {
           tok := try nth_token(data, i)
 
-          if tok.token_type == TK_TYPE_PARAMETER() and tok.length == 1 {
+          if tok.token_type == tk_TYPE_PARAMETER and tok.length == 1 {
             count = count + 1
           }
 
@@ -326,7 +289,7 @@ pub fn suite() runner.Suite {
         for i < token_count(data) {
           tok := try nth_token(data, i)
 
-          if tok.token_type == TK_PARAMETER() and tok.length == 1 {
+          if tok.token_type == tk_PARAMETER and tok.length == 1 {
             param_count = param_count + 1
           }
 
@@ -354,7 +317,7 @@ pub fn suite() runner.Suite {
         for i < token_count(data) {
           tok := try nth_token(data, i)
 
-          if tok.token_type == TK_VARIABLE() {
+          if tok.token_type == tk_VARIABLE {
             var_count = var_count + 1
           }
 
@@ -382,7 +345,7 @@ pub fn suite() runner.Suite {
         for i < token_count(data) {
           tok := try nth_token(data, i)
 
-          if tok.token_type == TK_PROPERTY() {
+          if tok.token_type == tk_PROPERTY {
             prop_count = prop_count + 1
           }
 
@@ -410,7 +373,7 @@ pub fn suite() runner.Suite {
         for i < token_count(data) {
           tok := try nth_token(data, i)
 
-          if tok.token_type == TK_ENUM_MEMBER() {
+          if tok.token_type == tk_ENUM_MEMBER {
             enum_count = enum_count + 1
           }
 
@@ -447,11 +410,11 @@ pub fn suite() runner.Suite {
           }
 
           if line == 2 and col == 2 and tok.length == 6 {
-            if tok.token_type == TK_VARIABLE() {
+            if tok.token_type == tk_VARIABLE {
               found_local_receiver = true
             }
 
-            if tok.token_type == TK_NAMESPACE() {
+            if tok.token_type == tk_NAMESPACE {
               found_namespace_receiver = true
             }
           }
@@ -488,7 +451,7 @@ pub fn suite() runner.Suite {
         for i < token_count(data) {
           tok := try nth_token(data, i)
 
-          if tok.token_type == TK_NAMESPACE() {
+          if tok.token_type == tk_NAMESPACE {
             ns_count = ns_count + 1
           }
 
@@ -529,12 +492,12 @@ pub fn suite() runner.Suite {
           }
 
           if line == 2
-            and col == 9 and tok.length == 4 and tok.token_type == TK_TYPE()
-            and (tok.modifiers & MOD_DECLARATION()) != 0 {
+            and col == 9 and tok.length == 4 and tok.token_type == tk_TYPE
+            and (tok.modifiers & mod_DECLARATION) != 0 {
             found_pair = true
           }
 
-          if line == 2 and col == 5 and tok.length == 4 and tok.token_type == TK_TYPE() {
+          if line == 2 and col == 5 and tok.length == 4 and tok.token_type == tk_TYPE {
             found_split_type_keyword = true
           }
 
@@ -699,7 +662,7 @@ pub fn suite() runner.Suite {
         for i < token_count(data) {
           tok := try nth_token(data, i)
 
-          if tok.token_type == TK_ENUM_MEMBER() {
+          if tok.token_type == tk_ENUM_MEMBER {
             enum_count = enum_count + 1
           }
 

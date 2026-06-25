@@ -1552,13 +1552,12 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "naming: uppercase function name parses without error (no enforcement in boot)",
+      "naming: uppercase function name is rejected",
       fn() {
-        // The boot parser does not enforce naming conventions, unlike the Rust parser
+        // Function names must start with a lowercase letter, matching the Rust parser.
         parsed := parser.parse("fn Greet() {}", 0)
 
-        // Boot parser currently allows this — no diagnostics
-        assert.equal(parsed.diagnostics.len(), 0)
+        assert.equal(parsed.diagnostics.len(), 1)
       },
     )
     .test(
