@@ -418,6 +418,16 @@ function makeHostImports(b, runtime, bridgeBytes) {
         const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
         runtime.host.writeBytes(filePath, decodeByteArray(b, bytesRef));
       },
+      write_buffer_raw: (pathRef, ptr, len) => {
+        const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+        const memory = runtime.instance?.exports?.memory;
+        if (!memory) {
+          throw new Error("host.write_buffer_raw requires the guest to export linear memory");
+        }
+        const start = Number(ptr);
+        const size = Number(len);
+        runtime.host.writeBytes(filePath, new Uint8Array(memory.buffer, start, size).slice());
+      },
       stdin_read_chunk: (maxBytes) => makeByteArray(b, runtime.host.readStdin(maxBytes, 2147483647, runtime)),
       stdin_read_timeout: (maxBytes, timeoutMs) => makeByteArray(b, runtime.host.readStdin(maxBytes, timeoutMs, runtime)),
       stdin_eof: () => runtime.stdinEof ? 1 : 0,
@@ -1005,9 +1015,10 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
 // ---------------------------------------------------------------------------
 
 export function runWasmBytes(wasmBytes, opts = {}) {
-  const { mainModule, hostImports, b, imports, externMeta, jspi } = prepareWasm(wasmBytes, opts);
+  const { mainModule, hostImports, b, runtime, imports, externMeta, jspi } = prepareWasm(wasmBytes, opts);
   try {
     const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta);
+    runtime.instance = instance;
     // Boot-compiled modules export __twinkle_start instead of using a Wasm
     // start section. Stage0-compiled modules still use the start section and
     // run during instantiation above.
@@ -1086,6 +1097,7 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
 
   try {
     const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta);
+    runtime.instance = instance;
     if (instance.exports.__twinkle_start) {
       if (needsTasks) {
         // Stackful task path: drive top-level (pseudo-task 0) and the spawned

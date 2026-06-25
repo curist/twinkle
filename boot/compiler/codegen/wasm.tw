@@ -4,6 +4,8 @@
 //! Scope: only the IR subset that boot/compiler/codegen currently emits.
 //! Unsupported IR forms call error() rather than silently producing invalid wasm.
 
+use @std.buffer as linear_buffer
+use @std.buffer.{Buffer}
 use @std.date
 use @std.proc
 
@@ -16,6 +18,8 @@ use compiler.codegen.wasm_ir.{
 use compiler.codegen.wasm_type_util.{val_type_eq}
 
 // ── Byte buffer primitives ─────────────────────────────────────────────
+type WasmBuf = .{ buf: Buffer, len: Int }
+
 fn byte(n: Int) Byte {
   case Byte.from_int(n) {
     .Some(b) => b,
@@ -23,16 +27,92 @@ fn byte(n: Int) Byte {
   }
 }
 
-fn emit_u8(buf: Vector<Byte>, b: Int) Vector<Byte> {
-  buf.append(byte(b))
+fn empty_wasm_buf() WasmBuf {
+  wasm_buf_with_capacity(256)
 }
 
-fn emit_bytes(buf: Vector<Byte>, bytes: Vector<Byte>) Vector<Byte> {
-  buf.concat(bytes)
+fn wasm_buf_with_capacity(capacity: Int) WasmBuf {
+  cap := if capacity < 8 {
+    8
+  } else {
+    capacity
+  }
+  .{ buf: linear_buffer.new(cap), len: 0 }
+}
+
+fn reserve_wasm_buf(buf: WasmBuf, extra: Int) WasmBuf {
+  needed := buf.len + extra
+
+  if needed <= buf.buf.len() {
+    return buf
+  }
+
+  new_cap := buf.buf.len() * 2
+
+  for new_cap < needed {
+    new_cap = new_cap * 2
+  }
+
+  next := linear_buffer.new(new_cap)
+  i := 0
+
+  for i < buf.len {
+    next.set_u8(i, buf.buf.get_u8(i))
+    i = i + 1
+  }
+
+  buf.buf.free()
+  buf.buf = next
+  buf
+}
+
+fn wasm_buf_to_buffer(buf: WasmBuf) Buffer {
+  .{ ptr: buf.buf.ptr, size: buf.len }
+}
+
+fn wasm_buf_to_bytes(buf: WasmBuf) Vector<Byte> {
+  out := collect i in 0..buf.len {
+    buf.buf.get_u8(i)
+  }
+  buf.buf.free()
+  out
+}
+
+fn emit_u8(buf: WasmBuf, b: Int) WasmBuf {
+  out := buf.reserve_wasm_buf(1)
+  out.buf.set_u8(out.len, byte(b))
+  out.len = out.len + 1
+  out
+}
+
+fn emit_bytes(buf: WasmBuf, bytes: Vector<Byte>) WasmBuf {
+  out := buf.reserve_wasm_buf(bytes.len())
+  i := 0
+
+  for b in bytes {
+    out.buf.set_u8(out.len + i, b)
+    i = i + 1
+  }
+
+  out.len = out.len + bytes.len()
+  out
+}
+
+fn emit_wasm_buf(buf: WasmBuf, bytes: WasmBuf) WasmBuf {
+  out := buf.reserve_wasm_buf(bytes.len)
+  i := 0
+
+  for i < bytes.len {
+    out.buf.set_u8(out.len + i, bytes.buf.get_u8(i))
+    i = i + 1
+  }
+
+  out.len = out.len + bytes.len
+  out
 }
 
 // Unsigned LEB128 for u32 (all values must be >= 0).
-fn emit_u32_leb(buf: Vector<Byte>, n: Int) Vector<Byte> {
+fn emit_u32_leb(buf: WasmBuf, n: Int) WasmBuf {
   cur := n
   result := buf
   done := false
@@ -42,10 +122,10 @@ fn emit_u32_leb(buf: Vector<Byte>, n: Int) Vector<Byte> {
     cur = cur >> 7
 
     if cur == 0 {
-      result = emit_u8(result, b)
+      result = .emit_u8(b)
       done = true
     } else {
-      result = emit_u8(result, b | 0x80)
+      result = .emit_u8(b | 0x80)
     }
   }
 
@@ -54,7 +134,7 @@ fn emit_u32_leb(buf: Vector<Byte>, n: Int) Vector<Byte> {
 
 // Signed LEB128 — handles positive and negative Int values.
 // Used for i32/i64 immediates and positive s33 type indices.
-fn emit_sleb128(buf: Vector<Byte>, n: Int) Vector<Byte> {
+fn emit_sleb128(buf: WasmBuf, n: Int) WasmBuf {
   cur := n
   result := buf
   done := false
@@ -65,60 +145,67 @@ fn emit_sleb128(buf: Vector<Byte>, n: Int) Vector<Byte> {
     sign_bit := b >> 6 & 1
 
     if sign_bit == 0 and cur == 0 or sign_bit == 1 and cur == -1 {
-      result = emit_u8(result, b)
+      result = .emit_u8(b)
       done = true
     } else {
-      result = emit_u8(result, b | 0x80)
+      result = .emit_u8(b | 0x80)
     }
   }
 
   result
 }
 
-fn emit_i32_leb(buf: Vector<Byte>, n: Int) Vector<Byte> {
-  emit_sleb128(buf, n)
+fn emit_i32_leb(buf: WasmBuf, n: Int) WasmBuf {
+  buf.emit_sleb128(n)
 }
 
-fn emit_i64_leb(buf: Vector<Byte>, n: Int) Vector<Byte> {
-  emit_sleb128(buf, n)
+fn emit_i64_leb(buf: WasmBuf, n: Int) WasmBuf {
+  buf.emit_sleb128(n)
 }
 
 // Positive s33 for named type indices in heap type positions.
-fn emit_s33_leb(buf: Vector<Byte>, n: Int) Vector<Byte> {
-  emit_sleb128(buf, n)
+fn emit_s33_leb(buf: WasmBuf, n: Int) WasmBuf {
+  buf.emit_sleb128(n)
 }
 
 // Wasm name: u32 byte length + UTF-8 bytes.
-fn emit_name(buf: Vector<Byte>, s: String) Vector<Byte> {
+fn emit_name(buf: WasmBuf, s: String) WasmBuf {
   utf8 := s.utf8_bytes()
-  buf = emit_u32_leb(buf, utf8.len())
-  emit_bytes(buf, utf8)
+  buf.emit_u32_leb(utf8.len()).emit_bytes(utf8)
 }
 
-fn emit_f64_bytes(buf: Vector<Byte>, v: Float) Vector<Byte> {
+fn emit_f64_bytes(buf: WasmBuf, v: Float) WasmBuf {
   // IEEE-754 double as 8 little-endian bytes via Float.bits()
   bits := v.bits()
-  emit_u64_le(buf, bits)
+  buf.emit_u64_le(bits)
 }
 
-fn emit_u64_le(buf: Vector<Byte>, n: Int) Vector<Byte> {
+fn emit_u64_le(buf: WasmBuf, n: Int) WasmBuf {
   // Write Int (i64) as 8 little-endian bytes
-  b0 := byte(n & 0xFF)
-  b1 := byte(n >> 8 & 0xFF)
-  b2 := byte(n >> 16 & 0xFF)
-  b3 := byte(n >> 24 & 0xFF)
-  b4 := byte(n >> 32 & 0xFF)
-  b5 := byte(n >> 40 & 0xFF)
-  b6 := byte(n >> 48 & 0xFF)
-  b7 := byte(n >> 56 & 0xFF)
-  buf.append(b0).append(b1).append(b2).append(b3).append(b4).append(b5).append(b6).append(b7)
+  b0 := n & 0xFF
+  b1 := n >> 8 & 0xFF
+  b2 := n >> 16 & 0xFF
+  b3 := n >> 24 & 0xFF
+  b4 := n >> 32 & 0xFF
+  b5 := n >> 40 & 0xFF
+  b6 := n >> 48 & 0xFF
+  b7 := n >> 56 & 0xFF
+  buf
+    .emit_u8(b0)
+    .emit_u8(b1)
+    .emit_u8(b2)
+    .emit_u8(b3)
+    .emit_u8(b4)
+    .emit_u8(b5)
+    .emit_u8(b6)
+    .emit_u8(b7)
 }
 
 // Append a payload buffer as a wasm binary section.
-fn emit_section_into(buf: Vector<Byte>, id: Int, payload: Vector<Byte>) Vector<Byte> {
-  out := emit_u8(buf, id)
-  out = emit_u32_leb(out, payload.len())
-  emit_bytes(out, payload)
+fn emit_section_into(buf: WasmBuf, id: Int, payload: WasmBuf) WasmBuf {
+  out := buf.emit_u8(id).emit_u32_leb(payload.len).emit_wasm_buf(payload)
+  payload.buf.free()
+  out
 }
 
 // ── Context ────────────────────────────────────────────────────────────
@@ -322,115 +409,114 @@ fn build_ctx(
 }
 
 // ── Type encoding ──────────────────────────────────────────────────────
-fn encode_heap_type(ht: HeapType, ctx: WasmCtx) Vector<Byte> {
-  encode_heap_type_into([], ht, ctx)
+fn encode_heap_type(ht: HeapType, ctx: WasmCtx) WasmBuf {
+  empty_wasm_buf().encode_heap_type_into(ht, ctx)
 }
 
-fn encode_heap_type_into(buf: Vector<Byte>, ht: HeapType, ctx: WasmCtx) Vector<Byte> {
+fn encode_heap_type_into(buf: WasmBuf, ht: HeapType, ctx: WasmCtx) WasmBuf {
   case ht {
-    .Any => emit_u8(buf, 0x6E),
-    .Eq => emit_u8(buf, 0x6D),
-    .I31 => emit_u8(buf, 0x6C),
-    .Func => emit_u8(buf, 0x70),
-    .None_ => emit_u8(buf, 0x71),
-    .Extern => emit_u8(buf, 0x6F),
-    .Named(name) => emit_s33_leb(buf, ctx.type_idx_of(name)),
+    .Any => buf.emit_u8(0x6E),
+    .Eq => buf.emit_u8(0x6D),
+    .I31 => buf.emit_u8(0x6C),
+    .Func => buf.emit_u8(0x70),
+    .None_ => buf.emit_u8(0x71),
+    .Extern => buf.emit_u8(0x6F),
+    .Named(name) => buf.emit_s33_leb(ctx.type_idx_of(name)),
   }
 }
 
-fn encode_val_type(vt: ValType, ctx: WasmCtx) Vector<Byte> {
-  encode_val_type_into([], vt, ctx)
+fn encode_val_type(vt: ValType, ctx: WasmCtx) WasmBuf {
+  empty_wasm_buf().encode_val_type_into(vt, ctx)
 }
 
-fn encode_val_type_into(buf: Vector<Byte>, vt: ValType, ctx: WasmCtx) Vector<Byte> {
+fn encode_val_type_into(buf: WasmBuf, vt: ValType, ctx: WasmCtx) WasmBuf {
   case vt {
-    .I32 => emit_u8(buf, 0x7F),
-    .I64 => emit_u8(buf, 0x7E),
-    .F64 => emit_u8(buf, 0x7C),
+    .I32 => buf.emit_u8(0x7F),
+    .I64 => buf.emit_u8(0x7E),
+    .F64 => buf.emit_u8(0x7C),
     .I8 => error("encode_val_type: I8 is a packed storage type, not a standalone valtype"),
-    .Anyref => emit_u8(buf, 0x6E),
-    .I31ref => emit_u8(buf, 0x6C),
-    .Funcref => emit_u8(buf, 0x70),
+    .Anyref => buf.emit_u8(0x6E),
+    .I31ref => buf.emit_u8(0x6C),
+    .Funcref => buf.emit_u8(0x70),
     .Ref(nullable, ht) => {
       prefix := if nullable {
         0x63
       } else {
         0x64
       }
-      encode_heap_type_into(emit_u8(buf, prefix), ht, ctx)
+      buf.emit_u8(prefix).encode_heap_type_into(ht, ctx)
     },
   }
 }
 
 // Storage type: packed i8 or a regular valtype.
-fn encode_storage_type_into(buf: Vector<Byte>, vt: ValType, ctx: WasmCtx) Vector<Byte> {
+fn encode_storage_type_into(buf: WasmBuf, vt: ValType, ctx: WasmCtx) WasmBuf {
   case vt {
-    .I8 => emit_u8(buf, 0x78),
-    _ => encode_val_type_into(buf, vt, ctx),
+    .I8 => buf.emit_u8(0x78),
+    _ => buf.encode_val_type_into(vt, ctx),
   }
 }
 
-fn encode_field_type_into(buf: Vector<Byte>, f: FieldDef, ctx: WasmCtx) Vector<Byte> {
-  emit_u8(
-    encode_storage_type_into(buf, f.ty, ctx),
-    if f.mutable {
+fn encode_field_type_into(buf: WasmBuf, f: FieldDef, ctx: WasmCtx) WasmBuf {
+  buf
+    .encode_storage_type_into(f.ty, ctx)
+    .emit_u8(if f.mutable {
       0x01
     } else {
       0x00
-    },
-  )
+    })
 }
 
 fn encode_func_comptype_into(
-  buf: Vector<Byte>,
+  buf: WasmBuf,
   params: Vector<ValType>,
   results: Vector<ValType>,
   ctx: WasmCtx,
-) Vector<Byte> {
-  buf = emit_u8(buf, 0x60)
-  buf = emit_u32_leb(buf, params.len())
+) WasmBuf {
+  buf = .emit_u8(0x60)
+  buf = .emit_u32_leb(params.len())
 
   for p in params {
-    buf = encode_val_type_into(buf, p, ctx)
+    buf = .encode_val_type_into(p, ctx)
   }
 
-  buf = emit_u32_leb(buf, results.len())
+  buf = .emit_u32_leb(results.len())
 
   for r in results {
-    buf = encode_val_type_into(buf, r, ctx)
+    buf = .encode_val_type_into(r, ctx)
   }
 
   buf
 }
 
-fn encode_comptype_into(buf: Vector<Byte>, td: TypeDef, ctx: WasmCtx) Vector<Byte> {
+fn encode_comptype_into(buf: WasmBuf, td: TypeDef, ctx: WasmCtx) WasmBuf {
   case td {
     .Struct(_, fields, _, _) => {
-      buf = emit_u8(buf, 0x5F)
-      buf = emit_u32_leb(buf, fields.len())
+      buf = .emit_u8(0x5F)
+      buf = .emit_u32_leb(fields.len())
 
       for f in fields {
-        buf = encode_field_type_into(buf, f, ctx)
+        buf = .encode_field_type_into(f, ctx)
       }
 
       buf
     },
-    .Array(_, field) => encode_field_type_into(emit_u8(buf, 0x5E), field, ctx),
-    .FuncType(_, params, results) => encode_func_comptype_into(buf, params, results, ctx),
+    .Array(_, field) => buf.emit_u8(0x5E).encode_field_type_into(field, ctx),
+    .FuncType(_, params, results) => buf.encode_func_comptype_into(params, results, ctx),
   }
 }
 
 // Encode one subtype entry into buf (used both standalone and inside rec groups).
 // Shorthand (just comptype) is used for final types with no supertypes.
-fn encode_subtype_into(buf: Vector<Byte>, td: TypeDef, ctx: WasmCtx) Vector<Byte> {
+fn encode_subtype_into(buf: WasmBuf, td: TypeDef, ctx: WasmCtx) WasmBuf {
   case td {
     .Struct(_, _, super_type, is_final) => case super_type {
       .None => if is_final {
-        encode_comptype_into(buf, td, ctx) // shorthand: final struct, no supers
+        buf.encode_comptype_into(td, ctx) // shorthand: final struct, no supers
       } else {
-        buf = emit_u8(buf, 0x50)
-        buf = emit_u32_leb(buf, 0)
-        encode_comptype_into(buf, td, ctx)
+        buf = .emit_u8(0x50)
+        buf = .emit_u32_leb(0)
+        buf.encode_comptype_into(td, ctx)
       },
       .Some(parent) => {
         tag := if is_final {
@@ -438,15 +524,15 @@ fn encode_subtype_into(buf: Vector<Byte>, td: TypeDef, ctx: WasmCtx) Vector<Byte
         } else {
           0x50
         }
-        buf = emit_u8(buf, tag)
-        buf = emit_u32_leb(buf, 1)
-        buf = emit_u32_leb(buf, ctx.type_idx_of(parent))
-        encode_comptype_into(buf, td, ctx)
+        buf = .emit_u8(tag)
+        buf = .emit_u32_leb(1)
+        buf = .emit_u32_leb(ctx.type_idx_of(parent))
+        buf.encode_comptype_into(td, ctx)
       },
     },
     // Arrays and FuncTypes have no supertype flag in the IR — treat as final.
-    .Array(_, _) => encode_comptype_into(buf, td, ctx),
-    .FuncType(_, _, _) => encode_comptype_into(buf, td, ctx),
+    .Array(_, _) => buf.encode_comptype_into(td, ctx),
+    .FuncType(_, _, _) => buf.encode_comptype_into(td, ctx),
   }
 }
 
@@ -457,7 +543,7 @@ fn encode_type_section_payload(
   types: Vector<TypeDef>,
   anon_ft: Vector<FuncSigPair>,
   ctx: WasmCtx,
-) Vector<Byte> {
+) WasmBuf {
   types_by_name: Dict<String, TypeDef> = Dict.new()
 
   for td in types {
@@ -465,7 +551,7 @@ fn encode_type_section_payload(
   }
 
   entry_count := ordered_sccs.len() + anon_ft.len()
-  payload := emit_u32_leb([], entry_count)
+  payload := empty_wasm_buf().emit_u32_leb(entry_count)
 
   for scc in ordered_sccs {
     first_td := case types_by_name[scc[0]] {
@@ -475,70 +561,71 @@ fn encode_type_section_payload(
     needs_rec := scc.len() > 1 or type_def_has_self_edge(first_td)
 
     if needs_rec {
-      group_bytes: Vector<Byte> = []
+      group_bytes := empty_wasm_buf()
 
       for member in scc {
         td := case types_by_name[member] {
           .Some(t) => t,
           .None => error("wasm: encode_type_section_payload: missing type '${member}'"),
         }
-        group_bytes = encode_subtype_into(group_bytes, td, ctx)
+        group_bytes = .encode_subtype_into(td, ctx)
       }
 
-      payload = emit_u8(payload, 0x4E)
-      payload = emit_u32_leb(payload, scc.len())
-      payload = emit_bytes(payload, group_bytes)
+      payload = .emit_u8(0x4E)
+      payload = .emit_u32_leb(scc.len())
+      payload = .emit_wasm_buf(group_bytes)
+      group_bytes.buf.free()
     } else {
-      payload = encode_subtype_into(payload, first_td, ctx)
+      payload = .encode_subtype_into(first_td, ctx)
     }
   }
 
   for ft in anon_ft {
-    payload = encode_func_comptype_into(payload, ft.params, ft.results, ctx)
+    payload = .encode_func_comptype_into(ft.params, ft.results, ctx)
   }
 
   payload
 }
 
 // ── Section encoders ───────────────────────────────────────────────────
-fn encode_import_section_payload(imports: Vector<ImportDef>, ctx: WasmCtx) Vector<Byte> {
-  payload := emit_u32_leb([], imports.len())
+fn encode_import_section_payload(imports: Vector<ImportDef>, ctx: WasmCtx) WasmBuf {
+  payload := empty_wasm_buf().emit_u32_leb(imports.len())
 
   for imp in imports {
-    payload = emit_name(payload, imp.module)
-    payload = emit_name(payload, imp.name)
-    payload = emit_u8(payload, 0x00) // func import
-    payload = emit_u32_leb(payload, ctx.anon_ft_idx_of(imp.params, imp.results))
+    payload = .emit_name(imp.module)
+    payload = .emit_name(imp.name)
+    payload = .emit_u8(0x00) // func import
+    payload = .emit_u32_leb(ctx.anon_ft_idx_of(imp.params, imp.results))
   }
 
   payload
 }
 
-fn encode_function_section_payload(funcs: Vector<FuncDef>, ctx: WasmCtx) Vector<Byte> {
-  payload := emit_u32_leb([], funcs.len())
+fn encode_function_section_payload(funcs: Vector<FuncDef>, ctx: WasmCtx) WasmBuf {
+  payload := empty_wasm_buf().emit_u32_leb(funcs.len())
 
   for f in funcs {
-    payload = emit_u32_leb(payload, ctx.anon_ft_idx_of(f.params, f.results))
+    payload = .emit_u32_leb(ctx.anon_ft_idx_of(f.params, f.results))
   }
 
   payload
 }
 
-fn encode_table_section_payload(tables: Vector<TableDef>, ctx: WasmCtx) Vector<Byte> {
-  payload := emit_u32_leb([], tables.len())
+fn encode_table_section_payload(tables: Vector<TableDef>, ctx: WasmCtx) WasmBuf {
+  payload := empty_wasm_buf().emit_u32_leb(tables.len())
 
   for tbl in tables {
-    payload = encode_val_type_into(payload, tbl.elem_type, ctx)
+    payload = .encode_val_type_into(tbl.elem_type, ctx)
 
     case tbl.max {
       .None => {
-        payload = emit_u8(payload, 0x00)
-        payload = emit_u32_leb(payload, tbl.min)
+        payload = .emit_u8(0x00)
+        payload = .emit_u32_leb(tbl.min)
       },
       .Some(m) => {
-        payload = emit_u8(payload, 0x01)
-        payload = emit_u32_leb(payload, tbl.min)
-        payload = emit_u32_leb(payload, m)
+        payload = .emit_u8(0x01)
+        payload = .emit_u32_leb(tbl.min)
+        payload = .emit_u32_leb(m)
       },
     }
   }
@@ -546,39 +633,38 @@ fn encode_table_section_payload(tables: Vector<TableDef>, ctx: WasmCtx) Vector<B
   payload
 }
 
-fn encode_global_section_payload(globals: Vector<GlobalDef>, ctx: WasmCtx) Vector<Byte> {
-  payload := emit_u32_leb([], globals.len())
+fn encode_global_section_payload(globals: Vector<GlobalDef>, ctx: WasmCtx) WasmBuf {
+  payload := empty_wasm_buf().emit_u32_leb(globals.len())
 
   for g in globals {
-    payload = encode_val_type_into(payload, g.ty, ctx)
-    payload = emit_u8(
-      payload,
+    payload = .encode_val_type_into(g.ty, ctx)
+    payload = .emit_u8(
       if g.mutable {
         0x01
       } else {
         0x00
       },
     )
-    payload = encode_instrs(payload, g.init, [], ctx)
-    payload = emit_u8(payload, 0x0B) // end
+    payload = .encode_instrs(g.init, [], ctx)
+    payload = .emit_u8(0x0B) // end
   }
 
   payload
 }
 
-fn encode_memory_section_payload(memories: Vector<MemoryDef>) Vector<Byte> {
-  payload := emit_u32_leb([], memories.len())
+fn encode_memory_section_payload(memories: Vector<MemoryDef>) WasmBuf {
+  payload := empty_wasm_buf().emit_u32_leb(memories.len())
 
   for mem in memories {
     case mem.max_pages {
       .Some(max) => {
-        payload = emit_u8(payload, 0x01) // has max
-        payload = emit_u32_leb(payload, mem.min_pages)
-        payload = emit_u32_leb(payload, max)
+        payload = .emit_u8(0x01) // has max
+        payload = .emit_u32_leb(mem.min_pages)
+        payload = .emit_u32_leb(max)
       },
       .None => {
-        payload = emit_u8(payload, 0x00) // no max
-        payload = emit_u32_leb(payload, mem.min_pages)
+        payload = .emit_u8(0x00) // no max
+        payload = .emit_u32_leb(mem.min_pages)
       },
     }
   }
@@ -590,26 +676,26 @@ fn encode_export_section_payload(
   exports: Vector<ExportDef>,
   memory_exports: Vector<MemoryExportDef>,
   ctx: WasmCtx,
-) Vector<Byte> {
-  payload := emit_u32_leb([], exports.len() + memory_exports.len())
+) WasmBuf {
+  payload := empty_wasm_buf().emit_u32_leb(exports.len() + memory_exports.len())
 
   for exp in exports {
-    payload = emit_name(payload, exp.wasm_name)
-    payload = emit_u8(payload, 0x00) // func export
-    payload = emit_u32_leb(payload, ctx.func_idx_of(exp.func_sym))
+    payload = .emit_name(exp.wasm_name)
+    payload = .emit_u8(0x00) // func export
+    payload = .emit_u32_leb(ctx.func_idx_of(exp.func_sym))
   }
 
   for mexp in memory_exports {
-    payload = emit_name(payload, mexp.wasm_name)
-    payload = emit_u8(payload, 0x02) // memory export
-    payload = emit_u32_leb(payload, mexp.memory_idx)
+    payload = .emit_name(mexp.wasm_name)
+    payload = .emit_u8(0x02) // memory export
+    payload = .emit_u32_leb(mexp.memory_idx)
   }
 
   payload
 }
 
-fn encode_start_section_payload(start_name: String, ctx: WasmCtx) Vector<Byte> {
-  emit_u32_leb([], ctx.func_idx_of(start_name))
+fn encode_start_section_payload(start_name: String, ctx: WasmCtx) WasmBuf {
+  empty_wasm_buf().emit_u32_leb(ctx.func_idx_of(start_name))
 }
 
 fn collect_ref_func_syms(funcs: Vector<FuncDef>, elems: Vector<ElemDef>) Vector<String> {
@@ -672,36 +758,36 @@ fn encode_elem_section_payload_with_refs(
   elems: Vector<ElemDef>,
   ref_func_syms: Vector<String>,
   ctx: WasmCtx,
-) Vector<Byte> {
+) WasmBuf {
   extra_decl_count := if ref_func_syms.len() > 0 {
     1
   } else {
     0
   }
-  payload := emit_u32_leb([], elems.len() + extra_decl_count)
+  payload := empty_wasm_buf().emit_u32_leb(elems.len() + extra_decl_count)
 
   for elem in elems {
     // Active explicit-table form (tag 2): tableidx, offset_expr, elemkind 0x00, vec(funcidx)
-    payload = emit_u32_leb(payload, 2)
-    payload = emit_u32_leb(payload, ctx.table_idx_of(elem.table))
-    payload = encode_instrs(payload, elem.offset, [], ctx)
-    payload = emit_u8(payload, 0x0B) // end
-    payload = emit_u8(payload, 0x00) // elemkind: funcref
-    payload = emit_u32_leb(payload, elem.func_syms.len())
+    payload = .emit_u32_leb(2)
+    payload = .emit_u32_leb(ctx.table_idx_of(elem.table))
+    payload = .encode_instrs(elem.offset, [], ctx)
+    payload = .emit_u8(0x0B) // end
+    payload = .emit_u8(0x00) // elemkind: funcref
+    payload = .emit_u32_leb(elem.func_syms.len())
 
     for sym in elem.func_syms {
-      payload = emit_u32_leb(payload, ctx.func_idx_of(sym))
+      payload = .emit_u32_leb(ctx.func_idx_of(sym))
     }
   }
 
   if ref_func_syms.len() > 0 {
     // Declarative func segment (tag 3): elemkind 0x00, vec(funcidx)
-    payload = emit_u32_leb(payload, 3)
-    payload = emit_u8(payload, 0x00)
-    payload = emit_u32_leb(payload, ref_func_syms.len())
+    payload = .emit_u32_leb(3)
+    payload = .emit_u8(0x00)
+    payload = .emit_u32_leb(ref_func_syms.len())
 
     for sym in ref_func_syms {
-      payload = emit_u32_leb(payload, ctx.func_idx_of(sym))
+      payload = .emit_u32_leb(ctx.func_idx_of(sym))
     }
   }
 
@@ -719,7 +805,7 @@ type CodeSectionCache = .{
 
 type CachedIdxResult = .{ idx: Int, cache: CodeSectionCache }
 
-type EncodeInstrResult = .{ buf: Vector<Byte>, cache: CodeSectionCache }
+type EncodeInstrResult = .{ buf: WasmBuf, cache: CodeSectionCache }
 
 type LabelCtx = .{ depth: Int, named_levels: Dict<String, Int> }
 
@@ -849,54 +935,55 @@ fn compress_locals(locals: Vector<ValType>) Vector<LocalGroup> {
   groups
 }
 
-fn encode_code_section_payload(funcs: Vector<FuncDef>, ctx: WasmCtx) Vector<Byte> {
-  payload := emit_u32_leb([], funcs.len())
+fn encode_code_section_payload(funcs: Vector<FuncDef>, ctx: WasmCtx) WasmBuf {
+  payload := empty_wasm_buf().emit_u32_leb(funcs.len())
   cache := empty_code_section_cache()
 
   for f in funcs {
     // Encode function body into a temporary buffer to measure its size.
-    body_buf: Vector<Byte> = []
+    body_buf := empty_wasm_buf()
     groups := compress_locals(f.locals)
-    body_buf = emit_u32_leb(body_buf, groups.len())
+    body_buf = .emit_u32_leb(groups.len())
 
     for g in groups {
-      body_buf = emit_u32_leb(body_buf, g.count)
-      body_buf = encode_val_type_into(body_buf, g.ty, ctx)
+      body_buf = .emit_u32_leb(g.count)
+      body_buf = .encode_val_type_into(g.ty, ctx)
     }
 
-    instr_result := encode_instrs_cached(body_buf, f.body, empty_label_ctx(), ctx, cache)
+    instr_result := body_buf.encode_instrs_cached(f.body, empty_label_ctx(), ctx, cache)
     body_buf = instr_result.buf
     cache = instr_result.cache
-    body_buf = emit_u8(body_buf, 0x0B) // end
+    body_buf = .emit_u8(0x0B) // end
 
     // Prefix entry with u32 byte size.
-    payload = emit_u32_leb(payload, body_buf.len())
-    payload = emit_bytes(payload, body_buf)
+    payload = .emit_u32_leb(body_buf.len)
+    payload = .emit_wasm_buf(body_buf)
+    body_buf.buf.free()
   }
 
   payload
 }
 
-fn encode_data_count_section_payload(data: Vector<DataSegment>) Vector<Byte> {
-  emit_u32_leb([], data.len())
+fn encode_data_count_section_payload(data: Vector<DataSegment>) WasmBuf {
+  empty_wasm_buf().emit_u32_leb(data.len())
 }
 
-fn encode_data_section_payload(data: Vector<DataSegment>, ctx: WasmCtx) Vector<Byte> {
-  payload := emit_u32_leb([], data.len())
+fn encode_data_section_payload(data: Vector<DataSegment>, ctx: WasmCtx) WasmBuf {
+  payload := empty_wasm_buf().emit_u32_leb(data.len())
 
   for seg in data {
     if seg.offset.len() == 0 {
       // Passive segment: tag 1, vec(byte)
-      payload = emit_u32_leb(payload, 1)
-      payload = emit_u32_leb(payload, seg.bytes.len())
-      payload = emit_bytes(payload, seg.bytes)
+      payload = .emit_u32_leb(1)
+      payload = .emit_u32_leb(seg.bytes.len())
+      payload = .emit_bytes(seg.bytes)
     } else {
       // Active memory-0 segment: tag 0, offset_expr, vec(byte)
-      payload = emit_u32_leb(payload, 0)
-      payload = encode_instrs(payload, seg.offset, [], ctx)
-      payload = emit_u8(payload, 0x0B) // end
-      payload = emit_u32_leb(payload, seg.bytes.len())
-      payload = emit_bytes(payload, seg.bytes)
+      payload = .emit_u32_leb(0)
+      payload = .encode_instrs(seg.offset, [], ctx)
+      payload = .emit_u8(0x0B) // end
+      payload = .emit_u32_leb(seg.bytes.len())
+      payload = .emit_bytes(seg.bytes)
     }
   }
 
@@ -919,30 +1006,23 @@ fn find_label_depth(label_stack: Vector<String>, label: String) Int {
   error("wasm: label not found in stack: '${label}'")
 }
 
-fn encode_block_type(bt: ValType?, ctx: WasmCtx) Vector<Byte> {
-  encode_block_type_into([], bt, ctx)
+fn encode_block_type(bt: ValType?, ctx: WasmCtx) WasmBuf {
+  empty_wasm_buf().encode_block_type_into(bt, ctx)
 }
 
-fn encode_block_type_into(buf: Vector<Byte>, bt: ValType?, ctx: WasmCtx) Vector<Byte> {
+fn encode_block_type_into(buf: WasmBuf, bt: ValType?, ctx: WasmCtx) WasmBuf {
   case bt {
-    .None => emit_u8(buf, 0x40),
-    .Some(vt) => encode_val_type_into(buf, vt, ctx),
+    .None => buf.emit_u8(0x40),
+    .Some(vt) => buf.encode_val_type_into(vt, ctx),
   }
 }
 
-fn encode_instrs(
-  buf: Vector<Byte>,
-  instrs: Vector<Instr>,
-  label_stack: Vector<String>,
-  ctx: WasmCtx,
-) Vector<Byte> {
-  out := buf
-
+fn encode_instrs(buf: WasmBuf, instrs: Vector<Instr>, label_stack: Vector<String>, ctx: WasmCtx) WasmBuf {
   for instr in instrs {
-    out = encode_instr(out, instr, label_stack, ctx)
+    buf = .encode_instr(instr, label_stack, ctx)
   }
 
-  out
+  buf
 }
 
 fn label_ctx_from_stack(label_stack: Vector<String>) LabelCtx {
@@ -959,23 +1039,18 @@ fn label_ctx_from_stack(label_stack: Vector<String>) LabelCtx {
   ctx
 }
 
-fn encode_heap_type_into_cached(
-  buf: Vector<Byte>,
-  ht: HeapType,
-  ctx: WasmCtx,
-  cache: CodeSectionCache,
-) EncodeInstrResult {
+fn encode_heap_type_into_cached(buf: WasmBuf, ht: HeapType, ctx: WasmCtx, cache: CodeSectionCache) EncodeInstrResult {
   case ht {
     .Named(name) => {
       result := ctx.cached_type_idx_of(name, cache)
-      .{ buf: emit_s33_leb(buf, result.idx), cache: result.cache }
+      .{ buf: buf.emit_s33_leb(result.idx), cache: result.cache }
     },
-    _ => .{ buf: encode_heap_type_into(buf, ht, ctx), cache },
+    _ => .{ buf: buf.encode_heap_type_into(ht, ctx), cache },
   }
 }
 
 fn encode_instrs_cached(
-  buf: Vector<Byte>,
+  buf: WasmBuf,
   instrs: Vector<Instr>,
   label_ctx: LabelCtx,
   ctx: WasmCtx,
@@ -985,7 +1060,7 @@ fn encode_instrs_cached(
   cache2 := cache
 
   for instr in instrs {
-    result := encode_instr_cached(out, instr, label_ctx, ctx, cache2)
+    result := out.encode_instr_cached(instr, label_ctx, ctx, cache2)
     out = result.buf
     cache2 = result.cache
   }
@@ -993,20 +1068,12 @@ fn encode_instrs_cached(
   .{ buf: out, cache: cache2 }
 }
 
-fn encode_instr(buf: Vector<Byte>, instr: Instr, label_stack: Vector<String>, ctx: WasmCtx) Vector<
-  Byte,
-> {
-  encode_instr_cached(
-    buf,
-    instr,
-    label_ctx_from_stack(label_stack),
-    ctx,
-    empty_code_section_cache(),
-  ).buf
+fn encode_instr(buf: WasmBuf, instr: Instr, label_stack: Vector<String>, ctx: WasmCtx) WasmBuf {
+  buf.encode_instr_cached(instr, label_ctx_from_stack(label_stack), ctx, empty_code_section_cache()).buf
 }
 
 fn encode_instr_cached(
-  buf: Vector<Byte>,
+  buf: WasmBuf,
   instr: Instr,
   label_ctx: LabelCtx,
   ctx: WasmCtx,
@@ -1014,114 +1081,114 @@ fn encode_instr_cached(
 ) EncodeInstrResult {
   case instr {
     // Locals & globals
-    .LocalGet(i) => .{ buf: emit_u32_leb(emit_u8(buf, 0x20), i), cache },
-    .LocalSet(i) => .{ buf: emit_u32_leb(emit_u8(buf, 0x21), i), cache },
-    .LocalTee(i) => .{ buf: emit_u32_leb(emit_u8(buf, 0x22), i), cache },
+    .LocalGet(i) => .{ buf: buf.emit_u8(0x20).emit_u32_leb(i), cache },
+    .LocalSet(i) => .{ buf: buf.emit_u8(0x21).emit_u32_leb(i), cache },
+    .LocalTee(i) => .{ buf: buf.emit_u8(0x22).emit_u32_leb(i), cache },
     .GlobalGet(name) => {
       result := ctx.cached_global_idx_of(name, cache)
-      .{ buf: emit_u32_leb(emit_u8(buf, 0x23), result.idx), cache: result.cache }
+      .{ buf: buf.emit_u8(0x23).emit_u32_leb(result.idx), cache: result.cache }
     },
     .GlobalSet(name) => {
       result := ctx.cached_global_idx_of(name, cache)
-      .{ buf: emit_u32_leb(emit_u8(buf, 0x24), result.idx), cache: result.cache }
+      .{ buf: buf.emit_u8(0x24).emit_u32_leb(result.idx), cache: result.cache }
     },
     // Constants
-    .I32Const(v) => .{ buf: emit_i32_leb(emit_u8(buf, 0x41), v), cache },
-    .I64Const(v) => .{ buf: emit_i64_leb(emit_u8(buf, 0x42), v), cache },
-    .F64Const(v) => .{ buf: emit_f64_bytes(emit_u8(buf, 0x44), v), cache },
+    .I32Const(v) => .{ buf: buf.emit_u8(0x41).emit_i32_leb(v), cache },
+    .I64Const(v) => .{ buf: buf.emit_u8(0x42).emit_i64_leb(v), cache },
+    .F64Const(v) => .{ buf: buf.emit_u8(0x44).emit_f64_bytes(v), cache },
     // i32 arithmetic
-    .I32Add => .{ buf: emit_u8(buf, 0x6A), cache },
-    .I32Sub => .{ buf: emit_u8(buf, 0x6B), cache },
-    .I32Mul => .{ buf: emit_u8(buf, 0x6C), cache },
-    .I32DivS => .{ buf: emit_u8(buf, 0x6D), cache },
-    .I32RemS => .{ buf: emit_u8(buf, 0x6F), cache },
-    .I32Eqz => .{ buf: emit_u8(buf, 0x45), cache },
-    .I32Eq => .{ buf: emit_u8(buf, 0x46), cache },
-    .I32Ne => .{ buf: emit_u8(buf, 0x47), cache },
-    .I32LtS => .{ buf: emit_u8(buf, 0x48), cache },
-    .I32LtU => .{ buf: emit_u8(buf, 0x49), cache },
-    .I32GtS => .{ buf: emit_u8(buf, 0x4A), cache },
-    .I32GtU => .{ buf: emit_u8(buf, 0x4B), cache },
-    .I32LeS => .{ buf: emit_u8(buf, 0x4C), cache },
-    .I32LeU => .{ buf: emit_u8(buf, 0x4D), cache },
-    .I32GeS => .{ buf: emit_u8(buf, 0x4E), cache },
-    .I32GeU => .{ buf: emit_u8(buf, 0x4F), cache },
-    .I32And => .{ buf: emit_u8(buf, 0x71), cache },
-    .I32Or => .{ buf: emit_u8(buf, 0x72), cache },
-    .I32Xor => .{ buf: emit_u8(buf, 0x73), cache },
-    .I32Shl => .{ buf: emit_u8(buf, 0x74), cache },
-    .I32ShrU => .{ buf: emit_u8(buf, 0x76), cache },
-    .I32Popcnt => .{ buf: emit_u8(buf, 0x69), cache },
+    .I32Add => .{ buf: buf.emit_u8(0x6A), cache },
+    .I32Sub => .{ buf: buf.emit_u8(0x6B), cache },
+    .I32Mul => .{ buf: buf.emit_u8(0x6C), cache },
+    .I32DivS => .{ buf: buf.emit_u8(0x6D), cache },
+    .I32RemS => .{ buf: buf.emit_u8(0x6F), cache },
+    .I32Eqz => .{ buf: buf.emit_u8(0x45), cache },
+    .I32Eq => .{ buf: buf.emit_u8(0x46), cache },
+    .I32Ne => .{ buf: buf.emit_u8(0x47), cache },
+    .I32LtS => .{ buf: buf.emit_u8(0x48), cache },
+    .I32LtU => .{ buf: buf.emit_u8(0x49), cache },
+    .I32GtS => .{ buf: buf.emit_u8(0x4A), cache },
+    .I32GtU => .{ buf: buf.emit_u8(0x4B), cache },
+    .I32LeS => .{ buf: buf.emit_u8(0x4C), cache },
+    .I32LeU => .{ buf: buf.emit_u8(0x4D), cache },
+    .I32GeS => .{ buf: buf.emit_u8(0x4E), cache },
+    .I32GeU => .{ buf: buf.emit_u8(0x4F), cache },
+    .I32And => .{ buf: buf.emit_u8(0x71), cache },
+    .I32Or => .{ buf: buf.emit_u8(0x72), cache },
+    .I32Xor => .{ buf: buf.emit_u8(0x73), cache },
+    .I32Shl => .{ buf: buf.emit_u8(0x74), cache },
+    .I32ShrU => .{ buf: buf.emit_u8(0x76), cache },
+    .I32Popcnt => .{ buf: buf.emit_u8(0x69), cache },
     // i64 arithmetic
-    .I64Add => .{ buf: emit_u8(buf, 0x7C), cache },
-    .I64Sub => .{ buf: emit_u8(buf, 0x7D), cache },
-    .I64Mul => .{ buf: emit_u8(buf, 0x7E), cache },
-    .I64DivS => .{ buf: emit_u8(buf, 0x7F), cache },
-    .I64RemS => .{ buf: emit_u8(buf, 0x81), cache },
-    .I64Eqz => .{ buf: emit_u8(buf, 0x50), cache },
-    .I64Eq => .{ buf: emit_u8(buf, 0x51), cache },
-    .I64Ne => .{ buf: emit_u8(buf, 0x52), cache },
-    .I64LtS => .{ buf: emit_u8(buf, 0x53), cache },
-    .I64GtS => .{ buf: emit_u8(buf, 0x55), cache },
-    .I64LeS => .{ buf: emit_u8(buf, 0x57), cache },
-    .I64GeS => .{ buf: emit_u8(buf, 0x59), cache },
-    .I64And => .{ buf: emit_u8(buf, 0x83), cache },
-    .I64Or => .{ buf: emit_u8(buf, 0x84), cache },
-    .I64Xor => .{ buf: emit_u8(buf, 0x85), cache },
-    .I64Shl => .{ buf: emit_u8(buf, 0x86), cache },
-    .I64ShrS => .{ buf: emit_u8(buf, 0x87), cache },
-    .I64ShrU => .{ buf: emit_u8(buf, 0x88), cache },
+    .I64Add => .{ buf: buf.emit_u8(0x7C), cache },
+    .I64Sub => .{ buf: buf.emit_u8(0x7D), cache },
+    .I64Mul => .{ buf: buf.emit_u8(0x7E), cache },
+    .I64DivS => .{ buf: buf.emit_u8(0x7F), cache },
+    .I64RemS => .{ buf: buf.emit_u8(0x81), cache },
+    .I64Eqz => .{ buf: buf.emit_u8(0x50), cache },
+    .I64Eq => .{ buf: buf.emit_u8(0x51), cache },
+    .I64Ne => .{ buf: buf.emit_u8(0x52), cache },
+    .I64LtS => .{ buf: buf.emit_u8(0x53), cache },
+    .I64GtS => .{ buf: buf.emit_u8(0x55), cache },
+    .I64LeS => .{ buf: buf.emit_u8(0x57), cache },
+    .I64GeS => .{ buf: buf.emit_u8(0x59), cache },
+    .I64And => .{ buf: buf.emit_u8(0x83), cache },
+    .I64Or => .{ buf: buf.emit_u8(0x84), cache },
+    .I64Xor => .{ buf: buf.emit_u8(0x85), cache },
+    .I64Shl => .{ buf: buf.emit_u8(0x86), cache },
+    .I64ShrS => .{ buf: buf.emit_u8(0x87), cache },
+    .I64ShrU => .{ buf: buf.emit_u8(0x88), cache },
     // f64 arithmetic
-    .F64Add => .{ buf: emit_u8(buf, 0xA0), cache },
-    .F64Sub => .{ buf: emit_u8(buf, 0xA1), cache },
-    .F64Mul => .{ buf: emit_u8(buf, 0xA2), cache },
-    .F64Div => .{ buf: emit_u8(buf, 0xA3), cache },
-    .F64Eq => .{ buf: emit_u8(buf, 0x61), cache },
-    .F64Ne => .{ buf: emit_u8(buf, 0x62), cache },
-    .F64Lt => .{ buf: emit_u8(buf, 0x63), cache },
-    .F64Gt => .{ buf: emit_u8(buf, 0x64), cache },
-    .F64Le => .{ buf: emit_u8(buf, 0x65), cache },
-    .F64Ge => .{ buf: emit_u8(buf, 0x66), cache },
-    .F64Abs => .{ buf: emit_u8(buf, 0x99), cache },
-    .F64Neg => .{ buf: emit_u8(buf, 0x9A), cache },
-    .F64Ceil => .{ buf: emit_u8(buf, 0x9B), cache },
-    .F64Floor => .{ buf: emit_u8(buf, 0x9C), cache },
-    .F64Sqrt => .{ buf: emit_u8(buf, 0x9F), cache },
+    .F64Add => .{ buf: buf.emit_u8(0xA0), cache },
+    .F64Sub => .{ buf: buf.emit_u8(0xA1), cache },
+    .F64Mul => .{ buf: buf.emit_u8(0xA2), cache },
+    .F64Div => .{ buf: buf.emit_u8(0xA3), cache },
+    .F64Eq => .{ buf: buf.emit_u8(0x61), cache },
+    .F64Ne => .{ buf: buf.emit_u8(0x62), cache },
+    .F64Lt => .{ buf: buf.emit_u8(0x63), cache },
+    .F64Gt => .{ buf: buf.emit_u8(0x64), cache },
+    .F64Le => .{ buf: buf.emit_u8(0x65), cache },
+    .F64Ge => .{ buf: buf.emit_u8(0x66), cache },
+    .F64Abs => .{ buf: buf.emit_u8(0x99), cache },
+    .F64Neg => .{ buf: buf.emit_u8(0x9A), cache },
+    .F64Ceil => .{ buf: buf.emit_u8(0x9B), cache },
+    .F64Floor => .{ buf: buf.emit_u8(0x9C), cache },
+    .F64Sqrt => .{ buf: buf.emit_u8(0x9F), cache },
     // Misc
-    .Select => .{ buf: emit_u8(buf, 0x1B), cache },
-    .Drop => .{ buf: emit_u8(buf, 0x1A), cache },
+    .Select => .{ buf: buf.emit_u8(0x1B), cache },
+    .Drop => .{ buf: buf.emit_u8(0x1A), cache },
     // Conversions
-    .I32WrapI64 => .{ buf: emit_u8(buf, 0xA7), cache },
-    .I64ExtendI32S => .{ buf: emit_u8(buf, 0xAC), cache },
-    .I64ExtendI32U => .{ buf: emit_u8(buf, 0xAD), cache },
-    .I64TruncF64S => .{ buf: emit_u8(buf, 0xB0), cache },
-    .F64ConvertI64S => .{ buf: emit_u8(buf, 0xB9), cache },
+    .I32WrapI64 => .{ buf: buf.emit_u8(0xA7), cache },
+    .I64ExtendI32S => .{ buf: buf.emit_u8(0xAC), cache },
+    .I64ExtendI32U => .{ buf: buf.emit_u8(0xAD), cache },
+    .I64TruncF64S => .{ buf: buf.emit_u8(0xB0), cache },
+    .F64ConvertI64S => .{ buf: buf.emit_u8(0xB9), cache },
     .F64ReinterpretI32 => error(
       "wasm: F64ReinterpretI32 is not a standard wasm opcode — unsupported",
     ),
-    .I64ReinterpretF64 => .{ buf: emit_u8(buf, 0xBD), cache },
+    .I64ReinterpretF64 => .{ buf: buf.emit_u8(0xBD), cache },
     // References (single-byte prefix)
-    .RefNull(ht) => encode_heap_type_into_cached(emit_u8(buf, 0xD0), ht, ctx, cache),
-    .RefIsNull => .{ buf: emit_u8(buf, 0xD1), cache },
+    .RefNull(ht) => buf.emit_u8(0xD0).encode_heap_type_into_cached(ht, ctx, cache),
+    .RefIsNull => .{ buf: buf.emit_u8(0xD1), cache },
     .RefFunc(name) => {
       result := ctx.cached_func_idx_of(name, cache)
-      .{ buf: emit_u32_leb(emit_u8(buf, 0xD2), result.idx), cache: result.cache }
+      .{ buf: buf.emit_u8(0xD2).emit_u32_leb(result.idx), cache: result.cache }
     },
-    .RefEq => .{ buf: emit_u8(buf, 0xD3), cache },
-    .RefAsNonNull => .{ buf: emit_u8(buf, 0xD4), cache },
+    .RefEq => .{ buf: buf.emit_u8(0xD3), cache },
+    .RefAsNonNull => .{ buf: buf.emit_u8(0xD4), cache },
     // GC / typed-reference (0xFB prefix)
-    .AnyConvertExtern => .{ buf: emit_u32_leb(emit_u8(buf, 0xFB), 0x1A), cache },
-    .ExternConvertAny => .{ buf: emit_u32_leb(emit_u8(buf, 0xFB), 0x1B), cache },
-    .RefI31 => .{ buf: emit_u32_leb(emit_u8(buf, 0xFB), 28), cache },
-    .I31GetS => .{ buf: emit_u32_leb(emit_u8(buf, 0xFB), 29), cache },
-    .I31GetU => .{ buf: emit_u32_leb(emit_u8(buf, 0xFB), 30), cache },
+    .AnyConvertExtern => .{ buf: buf.emit_u8(0xFB).emit_u32_leb(0x1A), cache },
+    .ExternConvertAny => .{ buf: buf.emit_u8(0xFB).emit_u32_leb(0x1B), cache },
+    .RefI31 => .{ buf: buf.emit_u8(0xFB).emit_u32_leb(28), cache },
+    .I31GetS => .{ buf: buf.emit_u8(0xFB).emit_u32_leb(29), cache },
+    .I31GetU => .{ buf: buf.emit_u8(0xFB).emit_u32_leb(30), cache },
     .RefTest(nullable, ht) => {
       sub := if nullable {
         21
       } else {
         20
       }
-      encode_heap_type_into_cached(emit_u32_leb(emit_u8(buf, 0xFB), sub), ht, ctx, cache)
+      buf.emit_u8(0xFB).emit_u32_leb(sub).encode_heap_type_into_cached(ht, ctx, cache)
     },
     .RefCast(nullable, ht) => {
       sub := if nullable {
@@ -1129,191 +1196,196 @@ fn encode_instr_cached(
       } else {
         22
       }
-      encode_heap_type_into_cached(emit_u32_leb(emit_u8(buf, 0xFB), sub), ht, ctx, cache)
+      buf.emit_u8(0xFB).emit_u32_leb(sub).encode_heap_type_into_cached(ht, ctx, cache)
     },
     // Struct
     .StructNew(ty) => {
       result := ctx.cached_type_idx_of(ty, cache)
-      .{ buf: emit_u32_leb(emit_u32_leb(emit_u8(buf, 0xFB), 0), result.idx), cache: result.cache }
+      .{ buf: buf.emit_u8(0xFB).emit_u32_leb(0).emit_u32_leb(result.idx), cache: result.cache }
     },
     .StructGet(ty, field) => {
       result := ctx.cached_type_idx_of(ty, cache)
-      out := emit_u32_leb(emit_u8(buf, 0xFB), 2)
-      .{ buf: emit_u32_leb(emit_u32_leb(out, result.idx), field), cache: result.cache }
+      out := buf.emit_u8(0xFB).emit_u32_leb(2)
+      .{ buf: out.emit_u32_leb(result.idx).emit_u32_leb(field), cache: result.cache }
     },
     .StructGetS(ty, field) => {
       result := ctx.cached_type_idx_of(ty, cache)
-      out := emit_u32_leb(emit_u8(buf, 0xFB), 3)
-      .{ buf: emit_u32_leb(emit_u32_leb(out, result.idx), field), cache: result.cache }
+      out := buf.emit_u8(0xFB).emit_u32_leb(3)
+      .{ buf: out.emit_u32_leb(result.idx).emit_u32_leb(field), cache: result.cache }
     },
     .StructSet(ty, field) => {
       result := ctx.cached_type_idx_of(ty, cache)
-      out := emit_u32_leb(emit_u8(buf, 0xFB), 5)
-      .{ buf: emit_u32_leb(emit_u32_leb(out, result.idx), field), cache: result.cache }
+      out := buf.emit_u8(0xFB).emit_u32_leb(5)
+      .{ buf: out.emit_u32_leb(result.idx).emit_u32_leb(field), cache: result.cache }
     },
     // Array
     .ArrayNew(ty) => {
       result := ctx.cached_type_idx_of(ty, cache)
-      .{ buf: emit_u32_leb(emit_u32_leb(emit_u8(buf, 0xFB), 6), result.idx), cache: result.cache }
+      .{ buf: buf.emit_u8(0xFB).emit_u32_leb(6).emit_u32_leb(result.idx), cache: result.cache }
     },
     .ArrayNewDefault(ty) => {
       result := ctx.cached_type_idx_of(ty, cache)
-      .{ buf: emit_u32_leb(emit_u32_leb(emit_u8(buf, 0xFB), 7), result.idx), cache: result.cache }
+      .{ buf: buf.emit_u8(0xFB).emit_u32_leb(7).emit_u32_leb(result.idx), cache: result.cache }
     },
     .ArrayNewFixed(ty, n) => {
       result := ctx.cached_type_idx_of(ty, cache)
-      out := emit_u32_leb(emit_u8(buf, 0xFB), 8)
-      .{ buf: emit_u32_leb(emit_u32_leb(out, result.idx), n), cache: result.cache }
+      out := buf.emit_u8(0xFB).emit_u32_leb(8)
+      .{ buf: out.emit_u32_leb(result.idx).emit_u32_leb(n), cache: result.cache }
     },
     .ArrayNewData(ty, data_name) => {
       type_result := ctx.cached_type_idx_of(ty, cache)
       data_result := ctx.cached_data_idx_of(data_name, type_result.cache)
-      out := emit_u32_leb(emit_u8(buf, 0xFB), 9)
+      out := buf.emit_u8(0xFB).emit_u32_leb(9)
       .{
-        buf: emit_u32_leb(emit_u32_leb(out, type_result.idx), data_result.idx),
+        buf: out.emit_u32_leb(type_result.idx).emit_u32_leb(data_result.idx),
         cache: data_result.cache,
       }
     },
     .ArrayGet(ty) => {
       result := ctx.cached_type_idx_of(ty, cache)
-      .{ buf: emit_u32_leb(emit_u32_leb(emit_u8(buf, 0xFB), 11), result.idx), cache: result.cache }
+      .{ buf: buf.emit_u8(0xFB).emit_u32_leb(11).emit_u32_leb(result.idx), cache: result.cache }
     },
     .ArrayGetU(ty) => {
       result := ctx.cached_type_idx_of(ty, cache)
-      .{ buf: emit_u32_leb(emit_u32_leb(emit_u8(buf, 0xFB), 13), result.idx), cache: result.cache }
+      .{ buf: buf.emit_u8(0xFB).emit_u32_leb(13).emit_u32_leb(result.idx), cache: result.cache }
     },
     .ArraySet(ty) => {
       result := ctx.cached_type_idx_of(ty, cache)
-      .{ buf: emit_u32_leb(emit_u32_leb(emit_u8(buf, 0xFB), 14), result.idx), cache: result.cache }
+      .{ buf: buf.emit_u8(0xFB).emit_u32_leb(14).emit_u32_leb(result.idx), cache: result.cache }
     },
-    .ArrayLen => .{ buf: emit_u32_leb(emit_u8(buf, 0xFB), 15), cache },
+    .ArrayLen => .{ buf: buf.emit_u8(0xFB).emit_u32_leb(15), cache },
     .ArrayCopy(dst, src) => {
       dst_result := ctx.cached_type_idx_of(dst, cache)
       src_result := ctx.cached_type_idx_of(src, dst_result.cache)
-      out := emit_u32_leb(emit_u8(buf, 0xFB), 17)
+      out := buf.emit_u8(0xFB).emit_u32_leb(17)
       .{
-        buf: emit_u32_leb(emit_u32_leb(out, dst_result.idx), src_result.idx),
+        buf: out.emit_u32_leb(dst_result.idx).emit_u32_leb(src_result.idx),
         cache: src_result.cache,
       }
     },
     // Calls
     .Call(name) => {
       result := ctx.cached_func_idx_of(name, cache)
-      .{ buf: emit_u32_leb(emit_u8(buf, 0x10), result.idx), cache: result.cache }
+      .{ buf: buf.emit_u8(0x10).emit_u32_leb(result.idx), cache: result.cache }
     },
     .ReturnCall(name) => {
       result := ctx.cached_func_idx_of(name, cache)
-      .{ buf: emit_u32_leb(emit_u8(buf, 0x12), result.idx), cache: result.cache }
+      .{ buf: buf.emit_u8(0x12).emit_u32_leb(result.idx), cache: result.cache }
     },
     .CallRef(ty) => {
       result := ctx.cached_type_idx_of(ty, cache)
-      .{ buf: emit_u32_leb(emit_u8(buf, 0x14), result.idx), cache: result.cache }
+      .{ buf: buf.emit_u8(0x14).emit_u32_leb(result.idx), cache: result.cache }
     },
     .ReturnCallRef(ty) => {
       result := ctx.cached_type_idx_of(ty, cache)
-      .{ buf: emit_u32_leb(emit_u8(buf, 0x15), result.idx), cache: result.cache }
+      .{ buf: buf.emit_u8(0x15).emit_u32_leb(result.idx), cache: result.cache }
     },
     .CallIndirect(ty, table_idx_val) => {
       result := ctx.cached_type_idx_of(ty, cache)
-      out := emit_u32_leb(emit_u8(buf, 0x11), result.idx)
-      .{ buf: emit_u32_leb(out, table_idx_val), cache: result.cache }
+      out := buf.emit_u8(0x11).emit_u32_leb(result.idx)
+      .{ buf: out.emit_u32_leb(table_idx_val), cache: result.cache }
     },
     // Control flow
-    .Return => .{ buf: emit_u8(buf, 0x0F), cache },
-    .Unreachable => .{ buf: emit_u8(buf, 0x00), cache },
-    .Nop => .{ buf: emit_u8(buf, 0x01), cache },
-    .Br(label) => .{ buf: emit_u32_leb(emit_u8(buf, 0x0C), label_ctx.label_depth_of(label)), cache },
-    .BrIf(label) => .{
-      buf: emit_u32_leb(emit_u8(buf, 0x0D), label_ctx.label_depth_of(label)),
-      cache,
-    },
+    .Return => .{ buf: buf.emit_u8(0x0F), cache },
+    .Unreachable => .{ buf: buf.emit_u8(0x00), cache },
+    .Nop => .{ buf: buf.emit_u8(0x01), cache },
+    .Br(label) => .{ buf: buf.emit_u8(0x0C).emit_u32_leb(label_ctx.label_depth_of(label)), cache },
+    .BrIf(label) => .{ buf: buf.emit_u8(0x0D).emit_u32_leb(label_ctx.label_depth_of(label)), cache },
     .BrTable(labels, default_label) => {
-      out := emit_u32_leb(emit_u8(buf, 0x0E), labels.len())
+      out := buf.emit_u8(0x0E).emit_u32_leb(labels.len())
 
       for lbl in labels {
-        out = emit_u32_leb(out, label_ctx.label_depth_of(lbl))
+        out = .emit_u32_leb(label_ctx.label_depth_of(lbl))
       }
 
-      .{ buf: emit_u32_leb(out, label_ctx.label_depth_of(default_label)), cache }
+      .{ buf: out.emit_u32_leb(label_ctx.label_depth_of(default_label)), cache }
     },
     .If(bt, then_body, else_body) => {
-      out := encode_block_type_into(emit_u8(buf, 0x04), bt, ctx)
+      out := buf.emit_u8(0x04).encode_block_type_into(bt, ctx)
       child_ctx := label_ctx.label_ctx_enter_if()
-      then_result := encode_instrs_cached(out, then_body, child_ctx, ctx, cache)
+      then_result := out.encode_instrs_cached(then_body, child_ctx, ctx, cache)
       out = then_result.buf
       cache2 := then_result.cache
 
       if else_body.len() > 0 {
-        out = emit_u8(out, 0x05)
-        else_result := encode_instrs_cached(out, else_body, child_ctx, ctx, cache2)
+        out = .emit_u8(0x05)
+        else_result := out.encode_instrs_cached(else_body, child_ctx, ctx, cache2)
         out = else_result.buf
         cache2 = else_result.cache
       }
 
-      .{ buf: emit_u8(out, 0x0B), cache: cache2 }
+      .{ buf: out.emit_u8(0x0B), cache: cache2 }
     },
     .Block(label, bt, body) => {
-      out := encode_block_type_into(emit_u8(buf, 0x02), bt, ctx)
-      result := encode_instrs_cached(out, body, label_ctx.label_ctx_enter_named(label), ctx, cache)
-      .{ buf: emit_u8(result.buf, 0x0B), cache: result.cache }
+      out := buf.emit_u8(0x02).encode_block_type_into(bt, ctx)
+      result := out.encode_instrs_cached(body, label_ctx.label_ctx_enter_named(label), ctx, cache)
+      .{ buf: result.buf.emit_u8(0x0B), cache: result.cache }
     },
     .Loop(label, bt, body) => {
-      out := encode_block_type_into(emit_u8(buf, 0x03), bt, ctx)
-      result := encode_instrs_cached(out, body, label_ctx.label_ctx_enter_named(label), ctx, cache)
-      .{ buf: emit_u8(result.buf, 0x0B), cache: result.cache }
+      out := buf.emit_u8(0x03).encode_block_type_into(bt, ctx)
+      result := out.encode_instrs_cached(body, label_ctx.label_ctx_enter_named(label), ctx, cache)
+      .{ buf: result.buf.emit_u8(0x0B), cache: result.cache }
     },
     // Memory instructions
     .I32Load8U(align, offset) => {
-      out := emit_u8(buf, 0x2D) // i32.load8_u
-      out = emit_u32_leb(out, align)
-      .{ buf: emit_u32_leb(out, offset), cache }
+      out := buf.emit_u8(0x2D) // i32.load8_u
+      out = .emit_u32_leb(align)
+      .{ buf: out.emit_u32_leb(offset), cache }
     },
     .I32Store8(align, offset) => {
-      out := emit_u8(buf, 0x3A) // i32.store8
-      out = emit_u32_leb(out, align)
-      .{ buf: emit_u32_leb(out, offset), cache }
+      out := buf.emit_u8(0x3A) // i32.store8
+      out = .emit_u32_leb(align)
+      .{ buf: out.emit_u32_leb(offset), cache }
     },
     .I32Load(align, offset) => {
-      out := emit_u8(buf, 0x28) // i32.load
-      out = emit_u32_leb(out, align)
-      .{ buf: emit_u32_leb(out, offset), cache }
+      out := buf.emit_u8(0x28) // i32.load
+      out = .emit_u32_leb(align)
+      .{ buf: out.emit_u32_leb(offset), cache }
     },
     .I32Store(align, offset) => {
-      out := emit_u8(buf, 0x36) // i32.store
-      out = emit_u32_leb(out, align)
-      .{ buf: emit_u32_leb(out, offset), cache }
+      out := buf.emit_u8(0x36) // i32.store
+      out = .emit_u32_leb(align)
+      .{ buf: out.emit_u32_leb(offset), cache }
     },
     .I64Load(align, offset) => {
-      out := emit_u8(buf, 0x29) // i64.load
-      out = emit_u32_leb(out, align)
-      .{ buf: emit_u32_leb(out, offset), cache }
+      out := buf.emit_u8(0x29) // i64.load
+      out = .emit_u32_leb(align)
+      .{ buf: out.emit_u32_leb(offset), cache }
     },
     .I64Store(align, offset) => {
-      out := emit_u8(buf, 0x37) // i64.store
-      out = emit_u32_leb(out, align)
-      .{ buf: emit_u32_leb(out, offset), cache }
+      out := buf.emit_u8(0x37) // i64.store
+      out = .emit_u32_leb(align)
+      .{ buf: out.emit_u32_leb(offset), cache }
     },
     .F64Load(align, offset) => {
-      out := emit_u8(buf, 0x2B) // f64.load
-      out = emit_u32_leb(out, align)
-      .{ buf: emit_u32_leb(out, offset), cache }
+      out := buf.emit_u8(0x2B) // f64.load
+      out = .emit_u32_leb(align)
+      .{ buf: out.emit_u32_leb(offset), cache }
     },
     .F64Store(align, offset) => {
-      out := emit_u8(buf, 0x39) // f64.store
-      out = emit_u32_leb(out, align)
-      .{ buf: emit_u32_leb(out, offset), cache }
+      out := buf.emit_u8(0x39) // f64.store
+      out = .emit_u32_leb(align)
+      .{ buf: out.emit_u32_leb(offset), cache }
     },
     .MemoryGrow => {
-      .{ buf: emit_u8(emit_u8(buf, 0x40), 0x00), cache } // memory.grow mem=0
+      .{ buf: buf.emit_u8(0x40).emit_u8(0x00), cache } // memory.grow mem=0
     },
     .MemorySize => {
-      .{ buf: emit_u8(emit_u8(buf, 0x3F), 0x00), cache } // memory.size mem=0
+      .{ buf: buf.emit_u8(0x3F).emit_u8(0x00), cache } // memory.size mem=0
     },
   }
 }
 
 // ── Module entry points ────────────────────────────────────────────────
 pub fn emit_wasm(module: WasmModule) Vector<Byte> {
+  emit_wasm_module_buf(module).wasm_buf_to_bytes()
+}
+
+pub fn emit_wasm_buffer(module: WasmModule) Buffer {
+  emit_wasm_module_buf(module).wasm_buf_to_buffer()
+}
+
+fn emit_wasm_module_buf(module: WasmModule) WasmBuf {
   emit_wasm_parts(
     module.types,
     module.imports,
@@ -1330,6 +1402,14 @@ pub fn emit_wasm(module: WasmModule) Vector<Byte> {
 }
 
 pub fn emit_linked_wasm(linked: LinkedModule) Vector<Byte> {
+  emit_linked_wasm_buf(linked).wasm_buf_to_bytes()
+}
+
+pub fn emit_linked_wasm_buffer(linked: LinkedModule) Buffer {
+  emit_linked_wasm_buf(linked).wasm_buf_to_buffer()
+}
+
+fn emit_linked_wasm_buf(linked: LinkedModule) WasmBuf {
   buf := emit_wasm_parts(
     linked.types,
     linked.imports,
@@ -1349,15 +1429,15 @@ pub fn emit_linked_wasm(linked: LinkedModule) Vector<Byte> {
   if linked.extern_meta.len() == 0 {
     buf
   } else {
-    emit_section_into(buf, 0x00, encode_extern_meta_section_payload(linked.extern_meta))
+    buf.emit_section_into(0x00, encode_extern_meta_section_payload(linked.extern_meta))
   }
 }
 
 // ── twinkle.externs custom section ─────────────────────────────────────
-fn encode_extern_meta_section_payload(meta: Vector<ExternMeta>) Vector<Byte> {
+fn encode_extern_meta_section_payload(meta: Vector<ExternMeta>) WasmBuf {
   // Custom section payload = section name (length-prefixed) + raw content bytes.
-  named := emit_name([], "twinkle.externs")
-  emit_bytes(named, extern_meta_json(meta).utf8_bytes())
+  named := empty_wasm_buf().emit_name("twinkle.externs")
+  named.emit_bytes(extern_meta_json(meta).utf8_bytes())
 }
 
 fn extern_meta_json(meta: Vector<ExternMeta>) String {
@@ -1410,7 +1490,7 @@ fn emit_wasm_parts(
   memories: Vector<MemoryDef>,
   data: Vector<DataSegment>,
   start: String?,
-) Vector<Byte> {
+) WasmBuf {
   timed := case proc.env("TWINKLE_TIMINGS") {
     .Some(_) => true,
     .None => false,
@@ -1431,26 +1511,21 @@ fn emit_wasm_parts(
   }
 
   // Module header: magic + version
-  buf: Vector<Byte> = [
-    byte(0x00),
-    byte(0x61),
-    byte(0x73),
-    byte(0x6D),
-    byte(0x01),
-    byte(0x00),
-    byte(0x00),
-    byte(0x00),
-  ]
+  buf := wasm_buf_with_capacity(1024)
+  buf = .emit_u8(0x00)
+  buf = .emit_u8(0x61)
+  buf = .emit_u8(0x73)
+  buf = .emit_u8(0x6D)
+  buf = .emit_u8(0x01)
+  buf = .emit_u8(0x00)
+  buf = .emit_u8(0x00)
+  buf = .emit_u8(0x00)
 
   // 1. Type section (id=1)
   total_types := ctx.anon_ft_base + ctx.anon_ft.len()
 
   if total_types > 0 {
-    buf = emit_section_into(
-      buf,
-      1,
-      encode_type_section_payload(ordered_sccs, types, ctx.anon_ft, ctx),
-    )
+    buf = .emit_section_into(1, encode_type_section_payload(ordered_sccs, types, ctx.anon_ft, ctx))
   }
 
   t2 := date.now()
@@ -1461,38 +1536,38 @@ fn emit_wasm_parts(
 
   // 2. Import section (id=2)
   if imports.len() > 0 {
-    buf = emit_section_into(buf, 2, encode_import_section_payload(imports, ctx))
+    buf = .emit_section_into(2, encode_import_section_payload(imports, ctx))
   }
 
   // 3. Function section (id=3)
   if funcs.len() > 0 {
-    buf = emit_section_into(buf, 3, encode_function_section_payload(funcs, ctx))
+    buf = .emit_section_into(3, encode_function_section_payload(funcs, ctx))
   }
 
   // 4. Table section (id=4)
   if tables.len() > 0 {
-    buf = emit_section_into(buf, 4, encode_table_section_payload(tables, ctx))
+    buf = .emit_section_into(4, encode_table_section_payload(tables, ctx))
   }
 
   // 5. Memory section (id=5)
   if memories.len() > 0 {
-    buf = emit_section_into(buf, 5, encode_memory_section_payload(memories))
+    buf = .emit_section_into(5, encode_memory_section_payload(memories))
   }
 
   // 6. Global section (id=6)
   if globals.len() > 0 {
-    buf = emit_section_into(buf, 6, encode_global_section_payload(globals, ctx))
+    buf = .emit_section_into(6, encode_global_section_payload(globals, ctx))
   }
 
   // 7. Export section (id=7)
   if exports.len() > 0 or memory_exports.len() > 0 {
-    buf = emit_section_into(buf, 7, encode_export_section_payload(exports, memory_exports, ctx))
+    buf = .emit_section_into(7, encode_export_section_payload(exports, memory_exports, ctx))
   }
 
   // 8. Start section (id=8)
   case start {
     .Some(name) => {
-      buf = emit_section_into(buf, 8, encode_start_section_payload(name, ctx))
+      buf = .emit_section_into(8, encode_start_section_payload(name, ctx))
     },
     .None => {},
   }
@@ -1501,7 +1576,7 @@ fn emit_wasm_parts(
   ref_syms := collect_ref_func_syms(funcs, elems)
 
   if elems.len() > 0 or ref_syms.len() > 0 {
-    buf = emit_section_into(buf, 9, encode_elem_section_payload_with_refs(elems, ref_syms, ctx))
+    buf = .emit_section_into(9, encode_elem_section_payload_with_refs(elems, ref_syms, ctx))
   }
 
   t3 := date.now()
@@ -1512,12 +1587,12 @@ fn emit_wasm_parts(
 
   // 12. Data count section (id=12) — required before code when data segments exist
   if data.len() > 0 {
-    buf = emit_section_into(buf, 12, encode_data_count_section_payload(data))
+    buf = .emit_section_into(12, encode_data_count_section_payload(data))
   }
 
   // 10. Code section (id=10)
   if funcs.len() > 0 {
-    buf = emit_section_into(buf, 10, encode_code_section_payload(funcs, ctx))
+    buf = .emit_section_into(10, encode_code_section_payload(funcs, ctx))
   }
 
   t4 := date.now()
@@ -1528,7 +1603,7 @@ fn emit_wasm_parts(
 
   // 11. Data section (id=11)
   if data.len() > 0 {
-    buf = emit_section_into(buf, 11, encode_data_section_payload(data, ctx))
+    buf = .emit_section_into(11, encode_data_section_payload(data, ctx))
   }
 
   buf

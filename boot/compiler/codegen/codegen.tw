@@ -8,6 +8,7 @@
 //! through that boundary. See boot/compiler/backend/prepare.tw for the
 //! migration contract and per-phase plan.
 
+use @std.buffer.{Buffer}
 use @std.date
 use @std.proc
 
@@ -26,8 +27,8 @@ use compiler.codegen.runtime.core as rt_core
 use compiler.codegen.runtime.dict as rt_dict
 use compiler.codegen.runtime.str as rt_str
 use compiler.codegen.runtime.types as rt_types
-use compiler.codegen.wasm.{emit_linked_wasm}
-use compiler.codegen.wasm_ir.{ExternMeta, WasmModule}
+use compiler.codegen.wasm.{emit_linked_wasm, emit_linked_wasm_buffer}
+use compiler.codegen.wasm_ir.{ExternMeta, MemoryExportDef, WasmModule}
 use compiler.codegen.wasm_layout.{EqTypeLayouts, collect_eq_type_layouts}
 use compiler.codegen.wasm_plan.{plan_wasm_types}
 use compiler.codegen.wat.{emit_wat}
@@ -158,6 +159,8 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   if !buf_live {
     linked.memories = .filter(fn(m) { m.name != "heap" })
     linked.globals = .filter(fn(g) { !g.name.starts_with("rt_buf__") })
+  } else if linked.memory_exports.len() == 0 {
+    linked.memory_exports = [MemoryExportDef.{ wasm_name: "memory", memory_idx: 0 }]
   }
 
   t7 := date.now()
@@ -215,6 +218,20 @@ pub fn codegen_wasm(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   timed := timings_enabled()
   t0 := date.now()
   bytes := emit_linked_wasm(linked)
+  t1 := date.now()
+
+  if timed {
+    log_time("emit_wasm_binary", t1 - t0)
+  }
+
+  bytes
+}
+
+pub fn codegen_wasm_buffer(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) Buffer {
+  linked := link_program(anf, env, builtins)
+  timed := timings_enabled()
+  t0 := date.now()
+  bytes := emit_linked_wasm_buffer(linked)
   t1 := date.now()
 
   if timed {

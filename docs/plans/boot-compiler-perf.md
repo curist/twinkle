@@ -25,7 +25,7 @@ are noisy enough that a single sample should not justify a change by itself.
 
 ## Current baseline: 2026-06-25
 
-Measured compiling `boot/main.tw` (218 modules / 3007 functions), self-hosted
+Measured compiling `boot/main.tw` (222 modules / 3029 functions), self-hosted
 boot compiler. Two same-session timing runs. These backend numbers were taken
 via the `deno` runtime driving the freshly built `target/boot.wasm`
 (`BOOT_WASM=target/boot.wasm deno run … tools/js_runtime/deno_main.mjs build
@@ -43,7 +43,7 @@ emit_module         ~448 - 511ms
 optimize            ~426 - 459ms
 prepare_backend     ~330 - 345ms
 verify              ~303 - 308ms
-emit_wasm_binary    ~263 - 283ms
+emit_wasm_binary    ~190 - 200ms
 core_link           ~252 - 270ms
 link                ~208 - 230ms
 plan_wasm_types     ~108 - 110ms
@@ -193,17 +193,18 @@ Important historical lessons that still apply:
 The bottleneck has moved back to the frontend, but the frontend profile is now
 mostly many small reasonable costs across a large module graph rather than one
 obvious runaway stage. `compile_modules` is larger than any single backend
-phase, yet its main buckets are spread over 218 modules and thousands of import
+phase, yet its main buckets are spread over 222 modules and thousands of import
 edges.
 
 The next tier is broad rather than a single obvious hotspot: optimization,
 module emission, backend preparation, wasm binary emission, linking, and
 verification are all close enough that local sub-timings matter. `emit_wasm_binary`
-serializes the ~3.0 MiB compiler payload in roughly 270ms, dominated by code
-section encoding; this is worth keeping efficient but is not a large enough
-fraction of the build to be a primary speed lever.
+serializes the ~3.0 MiB compiler payload in roughly 190ms on the normal
+Buffer-backed `.wasm` output path, dominated by code section encoding; this is
+worth keeping efficient but is not a large enough fraction of the build to be a
+primary speed lever.
 
-The current module graph (218 modules / 3007 functions) is much larger than both
+The current module graph (222 modules / 3029 functions) is much larger than both
 the historical 84-module workload and the May 174-module snapshot, so older
 absolute timings should not be used for regressions. Treat this snapshot as the
 active baseline.
@@ -293,13 +294,15 @@ Areas to probe:
 - `prepare_backend`: remaining slot/repr assignment scans and repeated
   mono-derived facts not covered by the existing cache.
 - `emit_wasm_binary`: code-section body encoding is still the largest wasm
-  subphase. A `@std.buffer.Buffer` serializer spike reduced the internal
-  `code_section` timing, but made total `emit_wasm_binary` slower because the
-  compiler API and `fs.write_bytes` still require a final `Vector<Byte>`; the
-  Buffer→Vector copy erased the local win. Do not migrate this path unless the
-  final output consumer can take a Buffer directly (or an equivalent zero-copy
-  byte sink). The whole binary emission phase is only a modest share of the
-  build, so even a strong local win here is useful but not transformative.
+  subphase. The serializer now writes into `@std.buffer.Buffer` and the build
+  command writes that buffer directly via `fs.write_buffer`, avoiding the old
+  final `Vector<Byte>` materialization on the normal `.wasm` output path. The
+  internal `code_section` timing drops substantially and total binary emission
+  is now around 190ms in same-session checks. A `TWINKLE_WRITE_BYTES_FALLBACK=1`
+  escape hatch keeps the first bootstrap generation working when it was emitted
+  by an older compiler that did not export the buffer linear memory. The whole
+  binary emission phase is only a modest share of the build, so even a strong
+  local win here is useful but not transformative.
 - `link`: current timings are higher than the older post-HAMT snapshots; measure
   symbol resolution, map merges, and final module assembly separately.
 

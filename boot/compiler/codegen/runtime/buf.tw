@@ -10,7 +10,7 @@
 //! the block back into the address-ordered list, coalescing with adjacent free
 //! neighbours.
 
-use compiler.codegen.wasm_ir.{ExportDef, FuncDef, GlobalDef, MemoryDef, WasmModule}
+use compiler.codegen.wasm_ir.{ExportDef, FuncDef, GlobalDef, MemoryDef, MemoryExportDef, WasmModule}
 
 pub fn module() WasmModule {
   .{
@@ -47,7 +47,7 @@ pub fn module() WasmModule {
       ExportDef.{ wasm_name: "buf_load_f64", func_sym: "buf_load_f64" },
       ExportDef.{ wasm_name: "buf_store_f64", func_sym: "buf_store_f64" },
     ],
-    memory_exports: [],
+    memory_exports: [MemoryExportDef.{ wasm_name: "memory", memory_idx: 0 }],
     memories: [MemoryDef.{ name: "heap", min_pages: 16, max_pages: .None }],
     data: [],
     start: .None,

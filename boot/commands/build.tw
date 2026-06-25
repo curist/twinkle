@@ -10,6 +10,8 @@ use commands.common.{
 use compiler.pipeline
 use lib.argparse.app.{ParseResult}
 
+extern host fn write_buffer_raw(path: String, ptr: Int, len: Int) Void
+
 fn default_build_output(file: String) String {
   dir := path.dirname(file)
   stem := path.stem(file)
@@ -58,13 +60,24 @@ pub fn run_build_command(parsed: ParseResult) {
   ext := path.extension(out)
 
   if ext == ".wasm" {
-    bytes := pipeline.emit_wasm(artifacts)
+    case proc.env("TWINKLE_WRITE_BYTES_FALLBACK") {
+      .Some(_) => {
+        bytes := pipeline.emit_wasm(artifacts)
 
-    case fs.write_bytes(out, bytes) {
-      .Ok(_) => println("WASM output: ${out}"),
-      .Err(err) => {
-        eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
-        proc.exit(1)
+        case fs.write_bytes(out, bytes) {
+          .Ok(_) => println("WASM output: ${out}"),
+          .Err(err) => {
+            eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
+            proc.exit(1)
+          },
+        }
+      },
+      .None => {
+        bytes := pipeline.emit_wasm_buffer(artifacts)
+
+        host.write_buffer_raw(out, bytes.ptr, bytes.size)
+        bytes.free()
+        println("WASM output: ${out}")
       },
     }
   } else {

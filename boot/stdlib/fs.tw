@@ -1,3 +1,7 @@
+use @std.buffer.{Buffer}
+
+extern host fn write_buffer_raw(path: String, ptr: Int, len: Int) Void
+
 /// File system error type.
 pub type FsError = { NotFound, PermissionDenied, InvalidUtf8, Other(String) }
 
@@ -34,6 +38,12 @@ pub fn write_text(path: String, content: String) Void!FsError {
 /// Write raw bytes to a file.
 pub fn write_bytes(path: String, bytes: Vector<Byte>) Void!FsError {
   __host_write_bytes(path, bytes)
+  .Ok({})
+}
+
+/// Write bytes directly from a linear-memory Buffer.
+pub fn write_buffer(path: String, buf: Buffer) Void!FsError {
+  host.write_buffer_raw(path, buf.ptr, buf.size)
   .Ok({})
 }
 

@@ -1,7 +1,9 @@
+use @std.buffer.{Buffer}
+
 use compiler.artifacts.{CompileError, PipelineArtifacts}
 use compiler.base_env.{builtin_env}
 use compiler.builtins.{make_builtin_registry}
-use compiler.codegen.codegen.{codegen, codegen_wasm}
+use compiler.codegen.codegen.{codegen, codegen_wasm, codegen_wasm_buffer}
 use compiler.core_ir.{CompiledModule, ExternalRef, ExternalValueRef}
 use compiler.core_linker
 use compiler.imports
@@ -202,4 +204,8 @@ pub fn emit_wat(artifacts: PipelineArtifacts) String {
 
 pub fn emit_wasm(artifacts: PipelineArtifacts) Vector<Byte> {
   codegen_wasm(artifacts.opt, artifacts.env, artifacts.builtins)
+}
+
+pub fn emit_wasm_buffer(artifacts: PipelineArtifacts) Buffer {
+  codegen_wasm_buffer(artifacts.opt, artifacts.env, artifacts.builtins)
 }
