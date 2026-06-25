@@ -41,6 +41,12 @@ pub fn read_text(path: String) String!FsError {
 }
 
 /// Read raw file bytes directly into a linear-memory Buffer.
+///
+/// NOTE: the host reads the file twice — once for its length (to size the
+/// Buffer) and once to fill it — so there is a TOCTOU window where the file can
+/// change size between the two calls (the length check below turns that into an
+/// error rather than corruption). A future single-call host op that allocates,
+/// fills, and returns the length would remove both the double read and the race.
 pub fn read_buffer(path: String) Buffer!FsError {
   size := twinkle_runtime.read_buffer_len_raw(path)
 

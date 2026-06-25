@@ -757,6 +757,13 @@ impl Resolver {
                 // self-alias. The self-hosted compiler handles this correctly;
                 // keep stage0 permissive for these stdlib buffer re-exports so
                 // it can bootstrap the boot compiler.
+                //
+                // TODO: this hard-coded allowlist is a bootstrap hack — a user
+                // type named U8View/I64View/F64View would silently bypass
+                // circular-alias detection, and any new stdlib view type must be
+                // added here. The real fix is to preserve qualified names through
+                // stage0 alias resolution so re-exports like `pub type X = mod.X`
+                // aren't mistaken for self-aliases; then this can be deleted.
                 if matches!(type_name.as_str(), "U8View" | "I64View" | "F64View") {
                     continue;
                 }
