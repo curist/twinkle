@@ -69,20 +69,40 @@ Inspecting `sha256_buf`'s `digest_buf` in emitted WAT:
 
 ### Route 1 — Inline the hot loop + table the constants
 **Effort: low. No new language features. Touches: `boot/stdlib/crypto/*.tw`.**
+**Status: PROTOTYPED on MD5 (2026-06-26). The inlining premise did not hold; the
+real lever turned out to be mask reduction. Not implemented — deferred pending a
+decision on whether the measured ~9–13% is worth the churn on a legacy hash.**
 
-Eliminate the per-round calls: inline `rotr32`/`rotl32`/`ch`/`maj`/the sigmas/
-`round_f` into the round body, and replace `k(i)`/`s(i)` (currently function calls
-over a `case`) with a single load from a constant table built once in the scratch
-`Buffer` (or a module-global `array<Int>`). Pure boot-stdlib work.
+The original idea: eliminate the per-round calls by inlining `rotl32`/`ch`/`maj`/
+the sigmas/`round_f` into the round body, and replace `k(i)`/`s(i)` (function calls
+over a `case`) with a single load from a constant table.
 
-Expected **~1.5–2.5×** across all four hashes; likely gets MD5 to ~3–4× of native
-on its own. **This is the obvious first step.** Validate by prototyping on MD5
-(simplest, and the hash where we can get closest to native), measure, then apply
-to SHA-1/SHA-256.
+**What the MD5 prototype actually measured** (4 KiB, `digest_buf`, best-of-5,
+relative to current; the runtime is V8 via `runtime.mjs`):
+
+| change | speedup | note |
+|---|---|---|
+| inline helpers + 4-group unroll, keep `k()` | **~3%** | nearly nothing — V8 already inlines small wasm fns in hot loops |
+| inline `rotl32` + drop one redundant `& 0xffffffff`/round | **~9%** | the surprise winner; pure arithmetic, no new state |
+| + k-table (module-global `Buffer`, linear-memory load vs 64-arm `case`) | **~12%** | k-table adds ~3% over mask-drop alone |
+| + 4-group unroll on top | **~13%** | unroll buys only ~1%, not worth the code |
+
+The decisive correction: **inlining the round helpers is ~a no-op on a V8-class
+engine** — the gap the WAT's `call` instructions implied is closed by the JIT, not
+by us. The genuine software-only lever is **reducing the i64→u32 masking**:
+addition's low 32 bits depend only on the operands' low 32 bits, so the rotate's
+own mask can be folded into the final `& 0xffffffff` (3 masks/round → 2). The
+k-table helps a little more by turning a branchy 64-arm `case` into one linear load
+(needs a module-global `Buffer`, verified to initialize at import).
+
+So Route 1's realistic ceiling is **~10–13%, not ~1.5–2.5×**, and it points at
+Route 2 (drop the masking entirely via an i32-typed path) as the real arithmetic
+lever. Re-derive the SHA estimates from this before scheduling them.
 
 Risk: hand-inlining duplicates the round constants/logic that the helper functions
 currently centralize — keep the functional `digest_bytes` as the equivalence
 reference (already wired into the crypto suite) so a transcription slip is caught.
+(The prototype cross-checked every variant byte-for-byte against `digest_buf`.)
 
 ### Route 2 — 32-bit-typed hot path
 **Effort: medium. Language/backend lever. Ties into typed-vector/typed-arithmetic work.**
@@ -133,12 +153,17 @@ where real workloads (hashing files) actually get their win.
 
 ## Suggested sequencing
 
-1. Route 1 on MD5 → measure → roll to SHA-1/SHA-256 (cheap, proves the software half).
+1. ~~Route 1 on MD5~~ DONE (prototyped) — the inlining half is a no-op on V8; only
+   the **mask-reduction** sub-lever (~9%) and k-table (~12% total) pay off. Roll the
+   mask-reduction idea to SHA-1/SHA-256 only if a ~10% win there is worth the churn.
 2. Route 3 base64 (self-contained, large relative win).
-3. Route 2 once the typed-arithmetic path exists.
+3. Route 2 once the typed-arithmetic path exists — this is where the masking the
+   Route 1 prototype could only *reduce* gets dropped entirely; the real ALU lever.
 4. Route 5 alongside any buffer-native I/O work.
 5. Route 4 only when SIMD is wanted language-wide.
 
-Realistic end state for the software-only routes (1–3): **MD5 ~2–3×, SHA-1 ~4–5×,
-base64 ~5–10×** of native; **SHA-256 stays ~15–20×** until Wasm gains crypto
-intrinsics that do not currently exist.
+Realistic end state, corrected by the MD5 prototype: software-only inlining/tabling
+buys only **~10–13%** per hash (the round helpers are already JIT-inlined), so
+**MD5 stays ~8–9×** of native without the i32-typed path (Route 2); **base64
+~5–10×** via Route 3; **SHA-256 stays ~15–20×** until Wasm gains crypto intrinsics
+that do not currently exist.
