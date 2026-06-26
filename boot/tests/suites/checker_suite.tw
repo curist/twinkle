@@ -514,6 +514,59 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "enum tag: .tag on field-less enum is Int",
+      fn() {
+        src := "type K = { A, B }\nfn f(k: K) Int { k.tag }"
+        r := try check_ok(src)
+        try assert.str_contains(try type_at(r, src, "k.tag"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "enum tag: D2 rejects .tag on payload enum",
+      fn() {
+        src := "type Shape = { Circle(Float), Unit }\nfn f(s: Shape) Int { s.tag }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "`.tag` is only available on field-less enums")
+        .Ok({})
+      },
+    )
+    .test(
+      "enum tag: from_tag on field-less enum returns Option",
+      fn() {
+        src := "type K = { A, B }\nfn f() K? { K.from_tag(0) }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "enum tag: from_tag arg must be Int",
+      fn() {
+        src := "type K = { A, B }\nfn f() K? { K.from_tag(\"x\") }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
+      "enum tag: D3 rejects from_tag on payload enum",
+      fn() {
+        src := "type Shape = { Circle(Float), Unit }\nfn f() Shape? { Shape.from_tag(0) }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "`from_tag` is only available on field-less enums")
+        .Ok({})
+      },
+    )
+    .test(
+      "enum tag: from_tag method collision is rejected",
+      fn() {
+        src := "type K = { A, B }\nfn from_tag(k: K) Int { 0 }\nfn g() K? { K.from_tag(0) }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "`from_tag` is reserved on field-less enums")
+        .Ok({})
+      },
+    )
+    .test(
       "record missing field",
       fn() {
         src := "type Point = .{ x: Int, y: Int }\nfn make() Point { .{ x: 1 } }"

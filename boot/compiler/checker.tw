@@ -3,7 +3,7 @@
 //! Consumes ResolvedEnv + Module AST, produces TypeMap + diagnostics.
 //! InferCtx is threaded functionally through every call; updates use COW field mutation.
 
-use lib.source.diagnostics.{DiagKind, MissingVariant}
+use lib.source.diagnostics.{DiagKind, MissingVariant, error_with_help}
 use lib.source.rewrite
 use lib.source.rewrite.{Rewrite}
 use lib.source.span.{Span}
@@ -16,8 +16,8 @@ use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape}
 use .lint.{LintFinding}
 use .mono_type.{MonoType, TypeId}
 use .resolver.{
-  FunctionSig, ResolvedEnv, ResolvedField, ResolvedTypeParam, plain_resolved_type_params,
-  resolved_type_param_names,
+  FunctionSig, ResolvedEnv, ResolvedField, ResolvedTypeParam, ResolvedVariant,
+  plain_resolved_type_params, resolved_type_param_names,
 }
 use .type_util.{subst_type_params}
 
@@ -1669,6 +1669,14 @@ fn synth_call(
             },
             _ => {},
           }
+
+          // Reserved static `T.from_tag(n)` on a field-less enum.
+          if method_name == "from_tag" {
+            case resolved.try_synth_from_tag_call(named_ty, args, s, resolved.ctx, diags) {
+              .Some(r) => return r,
+              .None => {},
+            }
+          }
         },
         .None => {},
       }
@@ -2461,6 +2469,94 @@ fn canonical_named_type(tid: TypeId, type_args: Vector<MonoType>, env: ResolvedE
   }
 }
 
+// The name of the first payload-carrying variant, if any. `.None` means every
+// variant is field-less, so the enum is eligible for `.tag` / `from_tag`.
+fn first_payload_variant_name(variants: Vector<ResolvedVariant>) String? {
+  for v in variants {
+    if v.fields.len() > 0 {
+      return .Some(v.name)
+    }
+  }
+
+  .None
+}
+
+// Synthesize the reserved static `T.from_tag(n: Int) Option<T>` for a field-less
+// enum. Returns `.None` for any non-enum receiver so the caller falls through to
+// ordinary method resolution; emits D3 for a payload enum and a collision error
+// when the enum's module also declares a `from_tag` method.
+fn try_synth_from_tag_call(
+  resolved: ResolvedTypeExpr,
+  named_ty: MonoType,
+  args: Vector<Expr>,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut? {
+  def := case ctx.env.lookup_type_def(resolved.tid) {
+    .Some(d) => d,
+    .None => return .None,
+  }
+
+  case def {
+    .Sum(sum_name, _, variants) => {
+      case first_payload_variant_name(variants) {
+        .Some(pv) => return .Some(
+          .{
+            ty: .Optional(named_ty),
+            ctx,
+            diags: diags.append(
+              error_with_help(
+                s,
+                "`from_tag` is only available on field-less enums",
+                [
+                  "`${sum_name}` has a payload-carrying variant `${pv}`",
+                  "decode a payload-carrying enum explicitly with your own `Int -> ${sum_name}?` function",
+                ],
+              ),
+            ),
+          },
+        ),
+        .None => {},
+      }
+
+      case ctx.env.lookup_type_method(resolved.tid, "from_tag") {
+        .Some(_) => return .Some(
+          .{
+            ty: .Optional(named_ty),
+            ctx,
+            diags: diags.append(
+              error_with_help(
+                s,
+                "`from_tag` is reserved on field-less enums and cannot also be a method",
+                [
+                  "`${sum_name}` is a field-less enum, so `from_tag` is synthesized",
+                  "rename the `from_tag` method declared for `${sum_name}`",
+                ],
+              ),
+            ),
+          },
+        ),
+        .None => {},
+      }
+
+      if args.len() != 1 {
+        return .Some(
+          .{
+            ty: .Optional(named_ty),
+            ctx,
+            diags: diags.append(.Error(.WrongArity(.{ span: s, expected: 1, found: args.len() }))),
+          },
+        )
+      }
+
+      ar := ctx.check_expr(args[0], .Int, diags)
+      .Some(.{ ty: .Optional(named_ty), ctx: ar.ctx, diags: ar.diags })
+    },
+    _ => .None,
+  }
+}
+
 fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
   // Check if base is a type name with a variant (TypeName.VariantName)
   case try_resolve_type_from_expr(base, ctx) {
@@ -2508,6 +2604,31 @@ fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Ve
           ctx: br.ctx,
           diags: br.diags.append(.Error(.NotARecord(.{ span: s, ty: zonked_base }))),
         },
+      }
+
+      // Reserved `.tag` accessor on enums: `Int` for a field-less enum, else D2.
+      // Resolved before record/method lookup so the message is specific.
+      if field_name == "tag" {
+        case def {
+          .Sum(sum_name, _, variants) => return case first_payload_variant_name(variants) {
+            .Some(pv) => .{
+              ty: .Int,
+              ctx: br.ctx,
+              diags: br.diags.append(
+                error_with_help(
+                  s,
+                  "`.tag` is only available on field-less enums",
+                  [
+                    "`${sum_name}` has a payload-carrying variant `${pv}`, so it has no integer tag",
+                    "map a payload-carrying enum to integers explicitly with a `case`",
+                  ],
+                ),
+              ),
+            },
+            .None => .{ ty: .Int, ctx: br.ctx, diags: br.diags },
+          },
+          _ => {},
+        }
       }
 
       case def {
