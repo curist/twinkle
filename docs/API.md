@@ -493,6 +493,11 @@ for compatibility with old protocols, checksums, and programming puzzles; do not
 use them for passwords, signatures, or collision-resistant security decisions.
 Prefer SHA-256 or HMAC-SHA-256 for new digest/MAC use cases.
 
+The `*_bytes` digests (and the `String` entry points) route through a transient
+linear-memory `Buffer` scratch internally — faster than the functional path even
+counting the copy-in, so any program that hashes pulls in a Wasm memory section.
+The `*_buf` variants skip the copy when the bytes already live in a reused `Buffer`.
+
 ```tw
 type Digest = .{ bytes: Vector<Byte> }
 ```

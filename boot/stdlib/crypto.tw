@@ -5,7 +5,14 @@
 //! and programming puzzles; do not use them for passwords, signatures, or
 //! collision-resistant security decisions. Prefer SHA-256 or HMAC-SHA-256 for
 //! new digest/MAC use cases.
+//!
+//! The `*_bytes` digests route through a transient linear-memory `Buffer` scratch
+//! (word loads + an in-place schedule), which is faster than the functional path
+//! even counting the copy-in, so any program that hashes pulls in a Wasm memory
+//! section. The `*_buf` variants skip the copy when the bytes already live in a
+//! reused `Buffer`. HMAC stays on the functional segmented path.
 
+use @std.buffer
 use @std.buffer.{Buffer}
 
 use .crypto.md5 as md5_impl
@@ -73,7 +80,10 @@ pub fn md5(input: String) Digest {
 
 /// Compute the MD5 digest of raw bytes.
 pub fn md5_bytes(input: Vector<Byte>) Digest {
-  .{ bytes: md5_impl.digest_bytes(input) }
+  b := buffer.from_bytes(input)
+  out := md5_impl.digest_buf(b)
+  b.free()
+  .{ bytes: out }
 }
 
 /// MD5 digest of the bytes already in a `Buffer` (hashes `buf.len()` bytes).
@@ -88,7 +98,10 @@ pub fn sha1(input: String) Digest {
 
 /// Compute the SHA-1 digest of raw bytes.
 pub fn sha1_bytes(input: Vector<Byte>) Digest {
-  .{ bytes: sha1_impl.digest_bytes(input) }
+  b := buffer.from_bytes(input)
+  out := sha1_impl.digest_buf(b)
+  b.free()
+  .{ bytes: out }
 }
 
 /// SHA-1 digest of the bytes already in a `Buffer` (hashes `buf.len()` bytes).
@@ -103,7 +116,10 @@ pub fn sha256(input: String) Digest {
 
 /// Compute the SHA-256 digest of raw bytes.
 pub fn sha256_bytes(input: Vector<Byte>) Digest {
-  .{ bytes: sha256_impl.digest_bytes(input) }
+  b := buffer.from_bytes(input)
+  out := sha256_impl.digest_buf(b)
+  b.free()
+  .{ bytes: out }
 }
 
 /// SHA-256 digest of the bytes already in a `Buffer` (hashes `buf.len()` bytes).

@@ -1,4 +1,7 @@
 use @std.buffer
+use @std.crypto.md5 as md5_ref
+use @std.crypto.sha1 as sha1_ref
+use @std.crypto.sha256 as sha256_ref
 use @std.crypto
 
 use tests.assert
@@ -20,25 +23,35 @@ fn make_bytes(n: Int) Vector<Byte> {
   out
 }
 
+// The default `*_bytes` digests are now buffer-routed, so the functional
+// `digest_bytes` in each impl submodule is the independent correctness
+// reference. Each helper checks both the `*_buf` path and the rerouted
+// `*_bytes` default against it.
 fn md5_equiv(v: Vector<Byte>) Result<Void, String> {
+  ref_hex := crypto.hex_encode(md5_ref.digest_bytes(v))
   b := buffer.from_bytes(v)
-  got := crypto.md5_buf(b).hex()
+  buf_hex := crypto.md5_buf(b).hex()
   b.free()
-  assert.equal(got, crypto.md5_bytes(v).hex())
+  try assert.equal(buf_hex, ref_hex)
+  assert.equal(crypto.md5_bytes(v).hex(), ref_hex)
 }
 
 fn sha1_equiv(v: Vector<Byte>) Result<Void, String> {
+  ref_hex := crypto.hex_encode(sha1_ref.digest_bytes(v))
   b := buffer.from_bytes(v)
-  got := crypto.sha1_buf(b).hex()
+  buf_hex := crypto.sha1_buf(b).hex()
   b.free()
-  assert.equal(got, crypto.sha1_bytes(v).hex())
+  try assert.equal(buf_hex, ref_hex)
+  assert.equal(crypto.sha1_bytes(v).hex(), ref_hex)
 }
 
 fn sha256_equiv(v: Vector<Byte>) Result<Void, String> {
+  ref_hex := crypto.hex_encode(sha256_ref.digest_bytes(v))
   b := buffer.from_bytes(v)
-  got := crypto.sha256_buf(b).hex()
+  buf_hex := crypto.sha256_buf(b).hex()
   b.free()
-  assert.equal(got, crypto.sha256_bytes(v).hex())
+  try assert.equal(buf_hex, ref_hex)
+  assert.equal(crypto.sha256_bytes(v).hex(), ref_hex)
 }
 
 pub fn suite() runner.Suite {
