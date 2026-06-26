@@ -1,3 +1,4 @@
+use @std.buffer
 use @std.crypto
 
 use tests.assert
@@ -5,6 +6,25 @@ use tests.runner
 
 fn bytes(text: String) Vector<Byte> {
   text.utf8_bytes()
+}
+
+fn make_bytes(n: Int) Vector<Byte> {
+  out: Vector<Byte> = []
+  i := 0
+
+  for i < n {
+    out = .append(Byte.from_int(i * 31 + 7 & 0xff).unwrap())
+    i = i + 1
+  }
+
+  out
+}
+
+fn md5_equiv(v: Vector<Byte>) Result<Void, String> {
+  b := buffer.from_bytes(v)
+  got := crypto.md5_buf(b).hex()
+  b.free()
+  assert.equal(got, crypto.md5_bytes(v).hex())
 }
 
 pub fn suite() runner.Suite {
@@ -105,6 +125,20 @@ pub fn suite() runner.Suite {
         try assert.equal(digest.base64(), "kAFQmDzST7DWlj99KOF/cg==")
         try assert.equal(digest.to_bytes().len(), 16)
         try assert.equal("${digest}", "900150983cd24fb0d6963f7d28e17f72")
+        .Ok({})
+      },
+    )
+    .test(
+      "md5_buf matches md5_bytes across edge lengths",
+      fn() {
+        try md5_equiv([])
+        try md5_equiv(make_bytes(3))
+        try md5_equiv(make_bytes(4))
+        try md5_equiv(make_bytes(55))
+        try md5_equiv(make_bytes(56))
+        try md5_equiv(make_bytes(64))
+        try md5_equiv(make_bytes(100))
+        try md5_equiv(make_bytes(4096))
         .Ok({})
       },
     )

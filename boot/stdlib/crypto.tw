@@ -6,6 +6,8 @@
 //! collision-resistant security decisions. Prefer SHA-256 or HMAC-SHA-256 for
 //! new digest/MAC use cases.
 
+use @std.buffer.{Buffer}
+
 use .crypto.md5 as md5_impl
 use .crypto.sha1 as sha1_impl
 use .crypto.sha256 as sha256_impl
@@ -72,6 +74,11 @@ pub fn md5(input: String) Digest {
 /// Compute the MD5 digest of raw bytes.
 pub fn md5_bytes(input: Vector<Byte>) Digest {
   .{ bytes: md5_impl.digest_bytes(input) }
+}
+
+/// MD5 digest of the bytes already in a `Buffer` (hashes `buf.len()` bytes).
+pub fn md5_buf(input: Buffer) Digest {
+  .{ bytes: md5_impl.digest_buf(input) }
 }
 
 /// Compute the SHA-1 digest of a UTF-8 string.
