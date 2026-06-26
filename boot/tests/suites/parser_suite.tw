@@ -463,6 +463,60 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "type decl: explicit integer tags (pre-resolution)",
+      fn() {
+        item := try parse_first_item("type X = { A, B = 5, C }")
+
+        case item {
+          .Type(t) => case t.def {
+            .Sum(variants) => {
+              try assert.equal(variants.len(), 3)
+              try assert.is_none(variants[0].tag)
+              try case variants[1].tag {
+                .Some(n) => assert.equal(n, 5),
+                .None => assert.fail("expected B to carry an explicit tag"),
+              }
+              assert.is_none(variants[2].tag)
+            },
+            _ => assert.fail("expected sum type def"),
+          },
+          _ => assert.fail("expected type declaration"),
+        }
+      },
+    )
+    .test(
+      "type decl: negative integer tag",
+      fn() {
+        item := try parse_first_item("type Code = { Ok = 0, NotFound = -32601 }")
+
+        case item {
+          .Type(t) => case t.def {
+            .Sum(variants) => {
+              try case variants[0].tag {
+                .Some(n) => assert.equal(n, 0),
+                .None => assert.fail("expected Ok to carry a tag"),
+              }
+              case variants[1].tag {
+                .Some(n) => assert.equal(n, 0 - 32601),
+                .None => assert.fail("expected NotFound to carry a tag"),
+              }
+            },
+            _ => assert.fail("expected sum type def"),
+          },
+          _ => assert.fail("expected type declaration"),
+        }
+      },
+    )
+    .test(
+      "type decl: non-literal tag value reports D5",
+      fn() {
+        parsed := parser.parse("type X = { A = 1 + 1 }", 0)
+
+        try assert.equal(parsed.diagnostics.len(), 1)
+        assert.equal(parsed.diagnostics[0].message(), "an enum tag must be an integer literal")
+      },
+    )
+    .test(
       "expr: integer literal",
       fn() {
         expr := try parse_body_tail("fn f() Int { 42 }")

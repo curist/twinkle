@@ -631,6 +631,16 @@ fn parse_type_record_fields(c: Cursor) RecordFieldsParse {
   .{ value: fields, cursor: c, diagnostics: diagnostics_out }
 }
 
+// A variant's `= N` tag value ends at a comma, the closing brace, EOF, or a new
+// top-level item on its own line (an unclosed brace). Used to bound the D5
+// error span when the value is not a plain integer literal.
+fn is_tag_terminator(c: Cursor) Bool {
+  c.kind() == .Comma
+    or c.kind() == .RBrace
+    or c.kind() == .Eof
+    or c.preceded_by_newline() and is_item_start(c.kind())
+}
+
 fn parse_sum_variants(c: Cursor) SumVariantsParse {
   diagnostics_out: Vector<DiagKind> = []
   variants: Vector<VariantDecl> = []
@@ -662,6 +672,7 @@ fn parse_sum_variants(c: Cursor) SumVariantsParse {
     name := c.text()
     c = .advance()
     fields: Vector<TypeExpr> = []
+    tag: Int? = .None
 
     if c.kind() == .LParen {
       c = .advance()
@@ -677,9 +688,48 @@ fn parse_sum_variants(c: Cursor) SumVariantsParse {
       }
     }
 
+    // Optional explicit integer tag: `= N` or `= -N`. The value must be a plain
+    // integer literal — a non-literal value (e.g. `1 + 1`) covers to the next
+    // terminator and reports D5. Auto-increment/distinctness is resolved later.
+    if c.kind() == .Eq {
+      c = .advance()
+      value_start := c.pos
+
+      negative := c.kind() == .Minus
+      lit := if negative {
+        c.advance()
+      } else {
+        c
+      }
+      is_literal := lit.kind() == .IntLit
+
+      if is_literal {
+        c = lit.advance()
+      }
+
+      if is_literal and is_tag_terminator(c) {
+        magnitude := parse_int_literal(lit.text())
+        tag = .Some(
+          if negative {
+            0 - magnitude
+          } else {
+            magnitude
+          },
+        )
+      } else {
+        for !is_tag_terminator(c) {
+          c = .advance()
+        }
+
+        diagnostics_out = .append(
+          diag.error(c.span_from(value_start), "an enum tag must be an integer literal"),
+        )
+      }
+    }
+
     variant_end_span := c.at(-1).span()
     variants = .append(
-      VariantDecl.{ name, fields, span: c.tokens[variant_start].span.merge(variant_end_span) },
+      VariantDecl.{ name, fields, span: c.tokens[variant_start].span.merge(variant_end_span), tag },
     )
 
     if c.kind() == .Comma {

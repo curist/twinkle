@@ -80,7 +80,9 @@ pub type TypeDef = {
 
 pub type RecordField = .{ name: String, ty: TypeExpr, span: Span, name_span: Span }
 
-pub type VariantDecl = .{ name: String, fields: Vector<TypeExpr>, span: Span }
+// `tag` holds the explicitly-written `= N` value (pre-resolution); auto-increment
+// and distinctness are resolved later. `.None` means no `= N` was written.
+pub type VariantDecl = .{ name: String, fields: Vector<TypeExpr>, span: Span, tag: Int? }
 
 // `type_args` is populated only for a parameterized contract bound (`IndexRead<E>`);
 // in type-expression position applied types use `TypeExprKind.Applied` instead, so
