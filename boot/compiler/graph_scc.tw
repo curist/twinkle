@@ -78,6 +78,9 @@ fn visit(st: State, node: String, edges: Dict<String, Vector<String>>) State {
       }
     }
 
+    // Reverse to get root-first intra-component order (stack is LIFO)
+    component = .reverse()
+
     cur.components = .append(component)
   }
 
