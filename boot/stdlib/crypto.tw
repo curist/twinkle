@@ -91,6 +91,11 @@ pub fn sha1_bytes(input: Vector<Byte>) Digest {
   .{ bytes: sha1_impl.digest_bytes(input) }
 }
 
+/// SHA-1 digest of the bytes already in a `Buffer` (hashes `buf.len()` bytes).
+pub fn sha1_buf(input: Buffer) Digest {
+  .{ bytes: sha1_impl.digest_buf(input) }
+}
+
 /// Compute the SHA-256 digest of a UTF-8 string.
 pub fn sha256(input: String) Digest {
   sha256_bytes(input.utf8_bytes())

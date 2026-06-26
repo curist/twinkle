@@ -27,6 +27,13 @@ fn md5_equiv(v: Vector<Byte>) Result<Void, String> {
   assert.equal(got, crypto.md5_bytes(v).hex())
 }
 
+fn sha1_equiv(v: Vector<Byte>) Result<Void, String> {
+  b := buffer.from_bytes(v)
+  got := crypto.sha1_buf(b).hex()
+  b.free()
+  assert.equal(got, crypto.sha1_bytes(v).hex())
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("stdlib crypto")
@@ -139,6 +146,20 @@ pub fn suite() runner.Suite {
         try md5_equiv(make_bytes(64))
         try md5_equiv(make_bytes(100))
         try md5_equiv(make_bytes(4096))
+        .Ok({})
+      },
+    )
+    .test(
+      "sha1_buf matches sha1_bytes across edge lengths",
+      fn() {
+        try sha1_equiv([])
+        try sha1_equiv(make_bytes(3))
+        try sha1_equiv(make_bytes(4))
+        try sha1_equiv(make_bytes(55))
+        try sha1_equiv(make_bytes(56))
+        try sha1_equiv(make_bytes(64))
+        try sha1_equiv(make_bytes(100))
+        try sha1_equiv(make_bytes(4096))
         .Ok({})
       },
     )
