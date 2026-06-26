@@ -501,10 +501,13 @@ type Digest = .{ bytes: Vector<Byte> }
 |----------|-----------|-------------|
 | `crypto.md5` | `fn(input: String) Digest` | MD5 digest of a UTF-8 string |
 | `crypto.md5_bytes` | `fn(input: Vector<Byte>) Digest` | MD5 digest of raw bytes |
+| `crypto.md5_buf` | `fn(input: Buffer) Digest` | MD5 digest of the whole `Buffer` (`buf.len()` bytes); pair with `buffer.from_bytes` to amortize the copy when hashing reused data |
 | `crypto.sha1` | `fn(input: String) Digest` | SHA-1 digest of a UTF-8 string |
 | `crypto.sha1_bytes` | `fn(input: Vector<Byte>) Digest` | SHA-1 digest of raw bytes |
+| `crypto.sha1_buf` | `fn(input: Buffer) Digest` | SHA-1 digest of the whole `Buffer` (`buf.len()` bytes) |
 | `crypto.sha256` | `fn(input: String) Digest` | SHA-256 digest of a UTF-8 string |
 | `crypto.sha256_bytes` | `fn(input: Vector<Byte>) Digest` | SHA-256 digest of raw bytes |
+| `crypto.sha256_buf` | `fn(input: Buffer) Digest` | SHA-256 digest of the whole `Buffer` (`buf.len()` bytes) |
 | `crypto.hmac_sha256` | `fn(key: String, message: String) Digest` | HMAC-SHA-256 over UTF-8 key/message strings |
 | `crypto.hmac_sha256_bytes` | `fn(key: Vector<Byte>, message: Vector<Byte>) Digest` | HMAC-SHA-256 over raw key/message bytes |
 | `crypto.hex_encode` | `fn(bytes: Vector<Byte>) String` | Lowercase hexadecimal encoding |

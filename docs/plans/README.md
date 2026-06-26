@@ -38,7 +38,6 @@ Self-hosting is complete. Historical design and status docs live in
 
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
-| In-buffer crypto | `Buffer.get_u32`/`set_u32` + `crypto.{md5,sha1,sha256}_buf(Buffer)` hashing data already in linear memory (word-loaded message + in-place buffer schedule), to win the 4k crypto-bench cases. `_bytes` paths untouched | Plan | spec [in-buffer-crypto.md](in-buffer-crypto.md), plan [in-buffer-crypto-plan.md](in-buffer-crypto-plan.md) |
 | Boot compiler layout | Reorganize `boot/compiler/` into focused subdirectories with stable end-state names | Planned | [boot-compiler-layout-reorg.md](boot-compiler-layout-reorg.md) |
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
 | Boot typed builtin type refs | Extend the typed-builtin-reference pattern (Option/Result variant refs, now done) to the remaining builtin *types* still referenced by raw id — `Order`, `Iterator`, `Range` — and audit `IterItem`/`UnfoldStep`/`Task` | Planned | [boot-typed-builtin-type-refs.md](boot-typed-builtin-type-refs.md) |

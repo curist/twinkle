@@ -1,7 +1,7 @@
 # In-Buffer Crypto (`Buffer` word accessors + `crypto.*_buf`)
 
-Status: **DESIGN (approved, pre-plan).** A focused follow-on to the shipped linear-memory
-`Buffer` ([archive/buffer-linear-memory.md](archive/buffer-linear-memory.md)). Boot-only.
+Status: **DONE.** A focused follow-on to the shipped linear-memory
+`Buffer` ([buffer-linear-memory.md](buffer-linear-memory.md)). Boot-only.
 
 ## Goal
 
@@ -158,6 +158,25 @@ Run `examples/crypto-bench/run.sh` (or just the Twinkle bench). `md5_4k_buf` /
 counterparts and narrow the gap to the native baselines. If the 4 KiB win is small
 (per-block setup still dominates even after Lever B), record it and consider adding a larger
 bench input — but no algorithm changes beyond the two levers.
+
+**Result (measured, 4 KiB, median µs/op):**
+
+| case | `_bytes` | `_buf` | speedup |
+|---|---|---|---|
+| md5_4k | ~68.8 | ~46.1 | ~1.5× |
+| sha1_4k | ~66.0 | ~17.9 | ~3.7× |
+| sha256_4k | ~80.8 | ~57.5 | ~1.4× |
+
+SHA-1 gains the most: the in-place 16-word ring (Lever B) eliminates its per-round
+schedule churn outright. MD5 and SHA-256 gains are bounded by their round-function cost —
+MD5 never expands its schedule (so Lever B saves little; the win is mostly Lever A's word
+loads), and SHA-256's compression dominates the per-block time. The wins are real without a
+larger bench input.
+
+**Implementation note (not in the original design):** SHA-1 and SHA-256 encode the trailing
+64-bit length field **big-endian**; the in-buffer `buf_padded_byte` must therefore use
+`shift = (7 - (pos - len_start)) * 8`, not MD5's little-endian `(pos - len_start) * 8`.
+Empty input hides the bug (zero length is endian-agnostic).
 
 ## File touch map (for the plan)
 

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Boot compiler only (`boot/`), Twinkle (`.tw`), hand-written Wasm IR (`.Instr` DSL). No `src/`/stage0 changes — `boot/main.tw` uses none of this; the self-host fixed point + boot suite are the gates.
 
-**Design doc:** `docs/plans/in-buffer-crypto.md` — read it first.
+**Design doc:** [`in-buffer-crypto.md`](in-buffer-crypto.md) — read it first.
 
 ---
 
