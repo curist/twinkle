@@ -1,0 +1,110 @@
+//! Generic string-keyed strongly-connected-components (Tarjan).
+//!
+//! Components are returned in reverse-topological order: a component appears
+//! before any component that depends on it. A single node with no self-edge is
+//! its own singleton component.
+
+type State = .{
+  next_index: Int,
+  indices: Dict<String, Int>,
+  lowlinks: Dict<String, Int>,
+  on_stack: Dict<String, Bool>,
+  stack: Vector<String>,
+  components: Vector<Vector<String>>,
+}
+
+fn dict_int(d: Dict<String, Int>, key: String, msg: String) Int {
+  case d[key] {
+    .Some(v) => v,
+    .None => error("graph_scc: ${msg}: missing '${key}'"),
+  }
+}
+
+fn visit(st: State, node: String, edges: Dict<String, Vector<String>>) State {
+  cur := st
+  idx := cur.next_index
+  cur.indices[node] = idx
+  cur.lowlinks[node] = idx
+  cur.next_index = idx + 1
+  cur.stack = .append(node)
+  cur.on_stack[node] = true
+
+  deps := case edges[node] {
+    .Some(ds) => ds,
+    .None => [],
+  }
+
+  for dep in deps {
+    if !cur.indices.has(dep) {
+      cur = visit(cur, dep, edges)
+      dep_low := dict_int(cur.lowlinks, dep, "lowlink")
+      self_low := dict_int(cur.lowlinks, node, "lowlink")
+
+      if dep_low < self_low {
+        cur.lowlinks[node] = dep_low
+      }
+    } else {
+      is_on := case cur.on_stack[dep] {
+        .Some(b) => b,
+        .None => false,
+      }
+
+      if is_on {
+        dep_idx := dict_int(cur.indices, dep, "index")
+        self_low := dict_int(cur.lowlinks, node, "lowlink")
+
+        if dep_idx < self_low {
+          cur.lowlinks[node] = dep_idx
+        }
+      }
+    }
+  }
+
+  name_low := dict_int(cur.lowlinks, node, "lowlink")
+  name_idx := dict_int(cur.indices, node, "index")
+
+  if name_low == name_idx {
+    component: Vector<String> = []
+    done := false
+
+    for !done {
+      top := cur.stack[cur.stack.len() - 1]
+      cur.stack = .drop_last()
+      cur.on_stack[top] = false
+      component = .append(top)
+
+      if top == node {
+        done = true
+      }
+    }
+
+    cur.components = .append(component)
+  }
+
+  cur
+}
+
+/// Return all strongly-connected components of a string-labelled directed graph.
+/// `nodes` is the set of vertices; `edges` maps each node to its direct
+/// successors (dependencies). Components are in dependency-before-dependent
+/// order (a component appears before any that depends on it).
+pub fn strongly_connected(nodes: Vector<String>, edges: Dict<String, Vector<String>>) Vector<
+  Vector<String>,
+> {
+  st := State.{
+    next_index: 0,
+    indices: Dict.new(),
+    lowlinks: Dict.new(),
+    on_stack: Dict.new(),
+    stack: [],
+    components: [],
+  }
+
+  for node in nodes {
+    if !st.indices.has(node) {
+      st = visit(st, node, edges)
+    }
+  }
+
+  st.components
+}

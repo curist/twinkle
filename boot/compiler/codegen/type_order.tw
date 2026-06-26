@@ -5,6 +5,7 @@
 //! recursive type grouping cannot drift apart.
 
 use compiler.codegen.wasm_ir.{TypeDef, ValType}
+use compiler.graph_scc
 
 pub fn type_def_name(td: TypeDef) String {
   case td {
@@ -70,25 +71,6 @@ fn append_unique(base: Vector<String>, extra: Vector<String>) Vector<String> {
   out
 }
 
-fn reverse_strings(items: Vector<String>) Vector<String> {
-  out: Vector<String> = []
-  i := items.len() - 1
-
-  for i >= 0 {
-    out = .append(items[i])
-    i = i - 1
-  }
-
-  out
-}
-
-fn dict_int(dict: Dict<String, Int>, key: String, msg: String) Int {
-  case dict[key] {
-    .Some(v) => v,
-    .None => error("${msg}: ${key}"),
-  }
-}
-
 pub fn type_def_has_self_edge(td: TypeDef) Bool {
   name := type_def_name(td)
 
@@ -109,123 +91,6 @@ pub fn find_type_def(types: Vector<TypeDef>, name: String) TypeDef {
   }
 
   error("type_order: missing type ${name}")
-}
-
-type TarjanTypeState = .{
-  next_index: Int,
-  indices: Dict<String, Int>,
-  lowlinks: Dict<String, Int>,
-  on_stack: Dict<String, Bool>,
-  stack: Vector<String>,
-  components: Vector<Vector<String>>,
-}
-
-fn tarjan_visit(
-  name: String,
-  types_by_name: Dict<String, TypeDef>,
-  type_name_set: Dict<String, Bool>,
-  next_index: Int,
-  indices: Dict<String, Int>,
-  lowlinks: Dict<String, Int>,
-  on_stack: Dict<String, Bool>,
-  stack: Vector<String>,
-  components: Vector<Vector<String>>,
-) TarjanTypeState {
-  cur_next := next_index
-  cur_indices := indices
-  cur_lowlinks := lowlinks
-  cur_on_stack := on_stack
-  cur_stack := stack
-  cur_components := components
-  cur_indices[name] = cur_next
-  cur_lowlinks[name] = cur_next
-  cur_next = cur_next + 1
-  cur_stack = .append(name)
-  cur_on_stack[name] = true
-  td := case types_by_name[name] {
-    .Some(t) => t,
-    .None => error("type_order: tarjan_visit: missing type '${name}'"),
-  }
-
-  for dep in type_def_deps(td) {
-    if !type_name_set.has(dep) {
-      continue
-    }
-
-    if !cur_indices.has(dep) {
-      result := tarjan_visit(
-        dep,
-        types_by_name,
-        type_name_set,
-        cur_next,
-        cur_indices,
-        cur_lowlinks,
-        cur_on_stack,
-        cur_stack,
-        cur_components,
-      )
-      cur_next = result.next_index
-      cur_indices = result.indices
-      cur_lowlinks = result.lowlinks
-      cur_on_stack = result.on_stack
-      cur_stack = result.stack
-      cur_components = result.components
-      dep_low := dict_int(cur_lowlinks, dep, "type_order: tarjan_visit dep lowlink")
-      self_low := dict_int(cur_lowlinks, name, "type_order: tarjan_visit self lowlink")
-
-      if dep_low < self_low {
-        cur_lowlinks[name] = dep_low
-      }
-    } else {
-      is_on_stack := case cur_on_stack[dep] {
-        .Some(v) => v,
-        .None => false,
-      }
-
-      if is_on_stack {
-        dep_idx := dict_int(cur_indices, dep, "type_order: tarjan_visit dep index")
-        self_low := dict_int(cur_lowlinks, name, "type_order: tarjan_visit self lowlink")
-
-        if dep_idx < self_low {
-          cur_lowlinks[name] = dep_idx
-        }
-      }
-    }
-  }
-
-  name_low := dict_int(cur_lowlinks, name, "type_order: tarjan_visit lowlink")
-  name_idx := dict_int(cur_indices, name, "type_order: tarjan_visit index")
-
-  if name_low == name_idx {
-    component: Vector<String> = []
-    done := false
-
-    for !done {
-      if cur_stack.len() == 0 {
-        error("type_order: tarjan_visit: empty stack")
-      }
-
-      top := cur_stack[cur_stack.len() - 1]
-      cur_stack = .drop_last()
-      cur_on_stack[top] = false
-      component = .append(top)
-
-      if top == name {
-        done = true
-      }
-    }
-
-    cur_components = .append(reverse_strings(component))
-  }
-
-  TarjanTypeState.{
-    next_index: cur_next,
-    indices: cur_indices,
-    lowlinks: cur_lowlinks,
-    on_stack: cur_on_stack,
-    stack: cur_stack,
-    components: cur_components,
-  }
 }
 
 // Returns SCC groups in topological order (dependencies before dependents).
@@ -250,34 +115,27 @@ pub fn compute_type_order(types: Vector<TypeDef>) Vector<Vector<String>> {
     type_name_set[name] = true
   }
 
-  next_index := 0
-  indices: Dict<String, Int> = Dict.new()
-  lowlinks: Dict<String, Int> = Dict.new()
-  on_stack: Dict<String, Bool> = Dict.new()
-  stack: Vector<String> = []
-  components: Vector<Vector<String>> = []
+  // Build the edges dict, filtering out deps that are not in our type set
+  // (external type references are irrelevant to intra-module SCC grouping).
+  edges: Dict<String, Vector<String>> = Dict.new()
 
   for name in names {
-    if !indices.has(name) {
-      result := tarjan_visit(
-        name,
-        types_by_name,
-        type_name_set,
-        next_index,
-        indices,
-        lowlinks,
-        on_stack,
-        stack,
-        components,
-      )
-      next_index = result.next_index
-      indices = result.indices
-      lowlinks = result.lowlinks
-      on_stack = result.on_stack
-      stack = result.stack
-      components = result.components
+    td := case types_by_name[name] {
+      .Some(t) => t,
+      .None => error("type_order: compute_type_order: missing type '${name}'"),
     }
+    filtered_deps: Vector<String> = []
+
+    for dep in type_def_deps(td) {
+      if type_name_set.has(dep) {
+        filtered_deps = .append(dep)
+      }
+    }
+
+    edges[name] = filtered_deps
   }
+
+  components := graph_scc.strongly_connected(names, edges)
 
   name_to_comp_id: Dict<String, String> = Dict.new()
 

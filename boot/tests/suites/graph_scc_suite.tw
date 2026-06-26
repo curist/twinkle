@@ -1,0 +1,54 @@
+use compiler.graph_scc
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("graph_scc")
+    .test(
+      "singletons in reverse-topological order",
+      fn() {
+        // a -> b -> c (a depends on b, b depends on c)
+        edges: Dict<String, Vector<String>> = Dict.new()
+        edges["a"] = ["b"]
+        edges["b"] = ["c"]
+        edges["c"] = []
+        comps := graph_scc.strongly_connected(["a", "b", "c"], edges)
+
+        // dependency-before-dependent: c, then b, then a
+        try assert.equal(comps.len(), 3)
+        try assert.equal(comps[0].len(), 1)
+        try assert.equal(comps[0][0], "c")
+        try assert.equal(comps[1].len(), 1)
+        try assert.equal(comps[1][0], "b")
+        try assert.equal(comps[2].len(), 1)
+        try assert.equal(comps[2][0], "a")
+        .Ok({})
+      },
+    )
+    .test(
+      "a 2-cycle is one component",
+      fn() {
+        edges: Dict<String, Vector<String>> = Dict.new()
+        edges["a"] = ["b"]
+        edges["b"] = ["a"]
+        comps := graph_scc.strongly_connected(["a", "b"], edges)
+        try assert.equal(comps.len(), 1)
+        try assert.equal(comps[0].len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "three-module cycle a->b->c->a is one component",
+      fn() {
+        edges: Dict<String, Vector<String>> = Dict.new()
+        edges["a"] = ["b"]
+        edges["b"] = ["c"]
+        edges["c"] = ["a"]
+        comps := graph_scc.strongly_connected(["a", "b", "c"], edges)
+        try assert.equal(comps.len(), 1)
+        try assert.equal(comps[0].len(), 3)
+        .Ok({})
+      },
+    )
+}
