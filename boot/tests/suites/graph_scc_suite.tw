@@ -35,6 +35,8 @@ pub fn suite() runner.Suite {
         comps := graph_scc.strongly_connected(["a", "b"], edges)
         try assert.equal(comps.len(), 1)
         try assert.equal(comps[0].len(), 2)
+        try assert.vec_contains(comps[0], "a")
+        try assert.vec_contains(comps[0], "b")
         .Ok({})
       },
     )
@@ -48,6 +50,36 @@ pub fn suite() runner.Suite {
         comps := graph_scc.strongly_connected(["a", "b", "c"], edges)
         try assert.equal(comps.len(), 1)
         try assert.equal(comps[0].len(), 3)
+        try assert.vec_contains(comps[0], "a")
+        try assert.vec_contains(comps[0], "b")
+        try assert.vec_contains(comps[0], "c")
+        .Ok({})
+      },
+    )
+    .test(
+      "self-loop is a singleton SCC",
+      fn() {
+        edges: Dict<String, Vector<String>> = Dict.new()
+        edges["a"] = ["a"]
+        comps := graph_scc.strongly_connected(["a"], edges)
+        try assert.equal(comps.len(), 1)
+        try assert.equal(comps[0].len(), 1)
+        try assert.vec_contains(comps[0], "a")
+        .Ok({})
+      },
+    )
+    .test(
+      "disconnected graph yields multiple singleton components",
+      fn() {
+        edges: Dict<String, Vector<String>> = Dict.new()
+        edges["a"] = []
+        edges["b"] = []
+        comps := graph_scc.strongly_connected(["a", "b"], edges)
+        try assert.equal(comps.len(), 2)
+        try assert.equal(comps[0].len(), 1)
+        try assert.equal(comps[1].len(), 1)
+        try assert.vec_contains(comps[0], "a")
+        try assert.vec_contains(comps[1], "b")
         .Ok({})
       },
     )
