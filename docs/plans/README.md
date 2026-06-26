@@ -42,7 +42,6 @@ Self-hosting is complete. Historical design and status docs live in
 | Boot compiler layout | Reorganize `boot/compiler/` into focused subdirectories with stable end-state names | Planned | [boot-compiler-layout-reorg.md](boot-compiler-layout-reorg.md) |
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
 | Boot typed builtin type refs | Extend the typed-builtin-reference pattern (Option/Result variant refs, now done) to the remaining builtin *types* still referenced by raw id — `Order`, `Iterator`, `Range` — and audit `IterItem`/`UnfoldStep`/`Task` | Planned | [boot-typed-builtin-type-refs.md](boot-typed-builtin-type-refs.md) |
-| Enum integer tags | Field-less enums get explicit, checked integer tags: `.tag` / `from_tag`, C-style auto-increment with holes, duplicate-rejection, decoupled from the dispatch discriminant. Replaces loose `Int` constant groups (`kinds.tw`, wasm section IDs, JSON-RPC codes) | Design | [enum-integer-tags.md](enum-integer-tags.md) |
 
 
 ### Later — Tooling & Ecosystem

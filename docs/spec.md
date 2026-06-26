@@ -167,6 +167,35 @@ case s {
 
 Match must be exhaustive unless `_ => ...`.
 
+### Integer tags (field-less enums)
+
+A **field-less** enum (every variant nullary) may carry explicit integer tags,
+turning a group of named integers — wire kinds, section IDs, error codes — into a
+real nominal type instead of loose `Int` constants:
+
+```tw
+type CompletionKind = { Text = 1, Method = 2, Function = 3, Field = 5, Constant = 21 }
+```
+
+- **Values:** the first variant defaults to `0`; each subsequent variant is one
+  past the previous resolved value unless an explicit `= N` overrides it (which is
+  what produces holes). `N` is an integer literal, optionally negative. Every
+  resolved tag must be distinct.
+- **`k.tag : Int`** — the integer for a variant value (the wire boundary).
+- **`T.from_tag(n: Int) : T?`** — recover a variant from its integer, `.None` for
+  any unmapped value.
+
+```tw
+CompletionKind.Method.tag        // 2
+CompletionKind.from_tag(5)       // .Some(.Field)
+CompletionKind.from_tag(4)       // .None  (a hole)
+```
+
+Keep the enum type in your model and call `.tag` only at the serialization edge;
+`from_tag` recovers the type on decode. The tag is a separate value mapping from
+the enum's dispatch discriminant, so pattern matching is unaffected. `= N`,
+`.tag`, and `from_tag` are rejected on enums with any payload-carrying variant.
+
 ---
 
 ## 6. Records

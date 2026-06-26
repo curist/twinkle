@@ -4,8 +4,12 @@
 constant groups (LSP wire kinds, wasm section IDs, JSON-RPC error codes) can be
 real nominal types instead of loose `Int` constants.
 
-**Status:** Design settled. Bite-sized implementation plan is the next step
-(needs resolver/lowering mapping; see *Implementation map* below).
+**Status:** SHIPPED (boot compiler + Rust stage0). Field-less enums support
+explicit `= N` tags, `.tag`, and `from_tag` end-to-end; `boot/lib/lsp/kinds.tw`
+is the first adopter. Stage0 carries the happy-path bootstrap support (no D1–D5);
+the boot compiler is the source of truth for diagnostics. Documented in
+`docs/spec.md` §5. The wasm-section-ID and JSON-RPC-error-code migrations noted
+below remain available as future adopters.
 
 ---
 
