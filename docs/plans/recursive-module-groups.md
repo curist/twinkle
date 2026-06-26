@@ -94,7 +94,12 @@ import cycles that participate in a **top-level value initialization** cycle, wi
 a clear diagnostic. (A later phase could define a deterministic init order or lazy
 initialization — see open questions.)
 
-## Future SCC design (deferred)
+## Future SCC design (now being implemented)
+
+> **Update:** this SCC approach is now an approved design — see
+> [scc-module-groups-design.md](scc-module-groups-design.md), which supersedes
+> the deferred notes below and replaces the back-edge mechanism in the boot
+> compiler.
 
 The implementation below is the cleaner long-term architecture if recursive
 modules become central enough to justify the refactor. Compared with the landed
