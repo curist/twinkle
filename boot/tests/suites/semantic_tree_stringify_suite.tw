@@ -23,9 +23,7 @@ fn sample_tree() Tree<Int> {
   )
 }
 
-fn expected_tree_string() String {
-  "Node(5, Node(3, Node(1, Empty, Empty), Node(4, Empty, Empty)), Node(8, Node(7, Empty, Empty), Empty))"
-}
+expected_tree_string: String = "Node(5, Node(3, Node(1, Empty, Empty), Node(4, Empty, Empty)), Node(8, Node(7, Empty, Empty), Empty))"
 
 pub fn suite() runner.Suite {
   runner
@@ -34,7 +32,7 @@ pub fn suite() runner.Suite {
       "custom recursive container satisfies Stringify",
       fn() {
         tree := sample_tree()
-        expected := expected_tree_string()
+        expected := expected_tree_string
         try assert.equal(tree.to_string(), expected)
         try assert.equal("${tree}", expected)
         try assert.equal(show(tree), expected)
@@ -46,7 +44,7 @@ pub fn suite() runner.Suite {
       fn() {
         tree := sample_tree()
         trees: Vector<Tree<Int>> = [tree, Tree.Empty]
-        try assert.equal(trees.to_string(), "[${expected_tree_string()}, Empty]")
+        try assert.equal(trees.to_string(), "[${expected_tree_string}, Empty]")
         .Ok({})
       },
     )

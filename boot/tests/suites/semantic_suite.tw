@@ -66,8 +66,11 @@ fn calls_forward() Int {
   forward_helper() + 1
 }
 
+// Body is an expression (like inferred_value) so this stays a forward-referenced
+// function with an inferred return type — the property under test — rather than a
+// bare-constant function the linter would push toward a module constant.
 fn forward_helper() {
-  41
+  40 + 1
 }
 
 fn countdown_sum(n: Int) {
