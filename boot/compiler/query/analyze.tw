@@ -1248,6 +1248,30 @@ fn resolve_and_check_local(
   .Ok(.{ state, checked })
 }
 
+/// Publish a module's interface, capturing its local types from
+/// `env.types[local_type_start..local_type_end)`. The explicit range lets group
+/// members attribute only their own interleaved slice of a shared env.
+fn publish_interface_range(
+  state: AnalysisState,
+  canonical: String,
+  parsed: cache.ParsedModule,
+  checked: checker.CheckResult,
+  local_type_start: Int,
+  local_type_end: Int,
+  source_hash: Int,
+  deps_hash: Int,
+) AnalysisState {
+  cur := state.capture_local_types_range(checked.env, canonical, local_type_start, local_type_end)
+  exports := extract_exports_for_module(checked.env, parsed.module, canonical, checked.pub_values)
+  interface := make_module_interface(canonical, exports, cur.shared_type_origins)
+  cur.exports[canonical] = exports
+  cur.interfaces[canonical] = interface
+  cur.cache = .set_exports_fingerprint(canonical, interface.fingerprint)
+  cur.cache = .set_module_hash(canonical, keys.module_hash(source_hash, deps_hash))
+  cur.module_order = .append(canonical)
+  cur
+}
+
 fn publish_interface(
   state: AnalysisState,
   canonical: String,
@@ -1257,15 +1281,15 @@ fn publish_interface(
   source_hash: Int,
   deps_hash: Int,
 ) AnalysisState {
-  cur := state.capture_local_types(checked.env, canonical, local_type_start)
-  exports := extract_exports_for_module(checked.env, parsed.module, canonical, checked.pub_values)
-  interface := make_module_interface(canonical, exports, cur.shared_type_origins)
-  cur.exports[canonical] = exports
-  cur.interfaces[canonical] = interface
-  cur.cache = .set_exports_fingerprint(canonical, interface.fingerprint)
-  cur.cache = .set_module_hash(canonical, keys.module_hash(source_hash, deps_hash))
-  cur.module_order = .append(canonical)
-  cur
+  state.publish_interface_range(
+    canonical,
+    parsed,
+    checked,
+    local_type_start,
+    checked.env.types.len(),
+    source_hash,
+    deps_hash,
+  )
 }
 
 fn merge_import_interface(env: ResolvedEnv, dep: imports.PlannedDep, interface: ModuleInterface) ResolvedEnv {
@@ -1372,11 +1396,16 @@ fn extend_env_from_shared(base: ResolvedEnv, state: AnalysisState) ResolvedEnv {
 }
 
 // ── Type accumulation ────────────────────────────────────────────────
-fn capture_local_types(
+/// Capture the types in `env.types[local_type_start..local_type_end)` as this
+/// module's locals, and refresh any shared types below `local_type_start`.
+/// The explicit range is needed when group members' types are interleaved in one
+/// env so each member attributes only its own slice, not siblings'.
+fn capture_local_types_range(
   state: AnalysisState,
   env: ResolvedEnv,
   canonical: String,
   local_type_start: Int,
+  local_type_end: Int,
 ) AnalysisState {
   reg := state.cache.type_registry
 
@@ -1400,7 +1429,7 @@ fn capture_local_types(
     }
   }
 
-  for i in local_type_start..env.types.len() {
+  for i in local_type_start..local_type_end {
     entry := env.types[i]
     name := env.type_names[i]
     state.shared_types = .append(.{ entry, name })
@@ -1421,6 +1450,15 @@ fn capture_local_types(
 
   state.cache.type_registry = reg
   state
+}
+
+fn capture_local_types(
+  state: AnalysisState,
+  env: ResolvedEnv,
+  canonical: String,
+  local_type_start: Int,
+) AnalysisState {
+  state.capture_local_types_range(env, canonical, local_type_start, env.types.len())
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
