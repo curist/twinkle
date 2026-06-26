@@ -38,7 +38,6 @@ Self-hosting is complete. Historical design and status docs live in
 
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
-| Boot compiler layout | Reorganize `boot/compiler/` into focused subdirectories with stable end-state names | Planned | [boot-compiler-layout-reorg.md](boot-compiler-layout-reorg.md) |
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
 | Crypto performance | Routes to close the `@std.crypto`/base64 gap to native: hot-loop inlining + constant tables, 32-bit-typed math, buffer-native table base64, Wasm SIMD, buffer-native I/O. Software routes target MD5 ~2–3×, SHA-1 ~4–5×, base64 ~5–10×; SHA-256 stays ~15–20× (no Wasm crypto intrinsics) | Routes | [crypto-perf.md](crypto-perf.md) |
 | Boot typed builtin type refs | Extend the typed-builtin-reference pattern (Option/Result variant refs, now done) to the remaining builtin *types* still referenced by raw id — `Order`, `Iterator`, `Range` — and audit `IterItem`/`UnfoldStep`/`Task` | Planned | [boot-typed-builtin-type-refs.md](boot-typed-builtin-type-refs.md) |
@@ -61,7 +60,6 @@ Self-hosting is complete. Historical design and status docs live in
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
 | [static-uniqueness-plan.md](static-uniqueness-plan.md) | Extend the static uniqueness optimizer to cover more realistic linear-update patterns without changing the runtime model |
 | [vector-perf/](vector-perf/README.md) | **Ongoing endeavor.** Make idiomatic `Vector`/`sort_by`/`order_by` code fast (vs ~7× behind Clojure). Measurement points at vector read cost + typed representation as the master lever; comparator and allocation micro-opts proven small. Gathers all sort/native-sort/typed-vector plans and the rejected approaches |
-| [extern-host-migration.md](extern-host-migration.md) | Replace the magic `__host_*` builtin path with declarative `extern twinkle_runtime { … }` everywhere, deleting the per-function compiler wiring and its `emit.rs`/`context.tw` special-casing. Phase 0 generalizes `extern` to marshal `Vector<Byte>`/`Vector<String>` (the only host shape it can't express today); later phases migrate the stdlib and delete the magic path from both compilers + runtime |
 | [compiler-stack-safety.md](compiler-stack-safety.md) | Make the compiler's recursive IR tree-walks stack-safe so deeply-nested IR (wide `cond`, long side-effecting statement sequences, deep `if/else`) doesn't overflow the V8 Wasm stack. Wide `case` already fixed (flat instruction vector); runtime stack-size mitigation verified non-viable. Phased: depth-guard stopgap → iterative lowering/opt → anf/prepare/emit → serializers |
 
 ### Archived reference docs
