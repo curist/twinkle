@@ -12,7 +12,16 @@ pub type DocumentSymbol = .{
   children: Vector<DocumentSymbol>,
 }
 
-pub type SymbolKind = { Module, Function, Struct, Enum, EnumMember, Field, TypeParameter }
+// LSP SymbolKind wire values. `k.tag` gives the LSP number at the JSON edge.
+pub type SymbolKind = {
+  Module = 2,
+  Function = 12,
+  Struct = 23,
+  Enum = 10,
+  EnumMember = 22,
+  Field = 8,
+  TypeParameter = 26,
+}
 
 pub fn document_symbols(snap: SemanticSnapshot) Vector<DocumentSymbol> {
   parsed := case snap.parsed {

@@ -2,7 +2,6 @@
 //!
 //! Returns a flat SymbolInformation[] array (not hierarchical DocumentSymbol).
 
-use compiler.query.document_symbols.{SymbolKind}
 use compiler.query.workspace_symbols.{WorkspaceSymbol}
 use lib.json
 use lib.text.line_index
@@ -30,20 +29,8 @@ fn symbol_to_json(sym: WorkspaceSymbol, index: line_index.LineIndex) json.Json {
   location := json.object([json.kv("uri", .Str(sym.uri)), json.kv("range", range_to_json(range))])
   json.object([
     json.kv("name", .Str(sym.name)),
-    json.kv("kind", .Int(symbol_kind_to_int(sym.kind))),
+    json.kv("kind", .Int(sym.kind.tag)),
     json.kv("location", location),
     json.kv("containerName", .Str(sym.container_name)),
   ])
-}
-
-fn symbol_kind_to_int(kind: SymbolKind) Int {
-  case kind {
-    .Module => 2,
-    .Function => 12,
-    .Struct => 23,
-    .Enum => 10,
-    .EnumMember => 22,
-    .Field => 8,
-    .TypeParameter => 26,
-  }
 }
