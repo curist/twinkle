@@ -3,11 +3,14 @@
 //! Converts internal CompletionItem records into LSP CompletionItem JSON.
 
 use lib.json
+use lib.lsp.kinds.{CompletionKind}
 
-/// LSP CompletionItemKind numeric values.
-// 1=Text, 2=Method, 3=Function, 5=Field, 6=Variable,
-// 7=Class(type), 9=Module, 13=Enum, 14=Keyword, 20=EnumMember(variant), 21=Constant
-pub type CompletionItem = .{ label: String, kind: Int, detail: String?, documentation: String? }
+pub type CompletionItem = .{
+  label: String,
+  kind: CompletionKind,
+  detail: String?,
+  documentation: String?,
+}
 
 pub fn completion_response(items: Vector<CompletionItem>) json.Json {
   json.array(collect item in items {
@@ -18,7 +21,7 @@ pub fn completion_response(items: Vector<CompletionItem>) json.Json {
 fn item_to_json(item: CompletionItem) json.Json {
   fields: Vector<json.Field> = [
     json.kv("label", .Str(item.label)),
-    json.kv("kind", .Int(item.kind)),
+    json.kv("kind", .Int(item.kind.completion_tag())),
   ]
 
   case item.detail {
