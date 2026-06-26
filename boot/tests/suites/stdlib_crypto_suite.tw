@@ -23,6 +23,12 @@ fn make_bytes(n: Int) Vector<Byte> {
   out
 }
 
+fn b64_roundtrip(v: Vector<Byte>) Result<Void, String> {
+  text := crypto.base64_encode(v)
+  back := try crypto.base64_decode(text)
+  assert.equal(crypto.hex_encode(back), crypto.hex_encode(v))
+}
+
 // The default `*_bytes` digests are now buffer-routed, so the functional
 // `digest_bytes` in each impl submodule is the independent correctness
 // reference. Each helper checks both the `*_buf` path and the rerouted
@@ -137,6 +143,20 @@ pub fn suite() runner.Suite {
         try assert.equal(crypto.base64_encode(bytes("f")), "Zg==")
         try assert.equal(crypto.base64_encode(bytes("fo")), "Zm8=")
         try assert.equal(crypto.base64_encode(bytes("foo")), "Zm9v")
+        .Ok({})
+      },
+    )
+    .test(
+      "base64 roundtrip across lengths",
+      fn() {
+        try b64_roundtrip([])
+        try b64_roundtrip(make_bytes(1))
+        try b64_roundtrip(make_bytes(2))
+        try b64_roundtrip(make_bytes(3))
+        try b64_roundtrip(make_bytes(55))
+        try b64_roundtrip(make_bytes(56))
+        try b64_roundtrip(make_bytes(100))
+        try b64_roundtrip(make_bytes(4096))
         .Ok({})
       },
     )

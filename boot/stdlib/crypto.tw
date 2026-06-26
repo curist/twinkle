@@ -61,15 +61,17 @@ fn b64_char(n: Int) String {
   String.from_byte(Byte.from_int(code).unwrap()).unwrap()
 }
 
-fn b64_value(b: Byte) Int? {
+// 6-bit value of a Base64 digit byte, or -1 if it is not a valid digit. Avoids
+// an Option allocation per character on the decode hot path.
+fn b64_value(b: Byte) Int {
   n := b.to_int()
   cond {
-    n >= 0x41 and n <= 0x5a => .Some(n - 0x41),
-    n >= 0x61 and n <= 0x7a => .Some(26 + n - 0x61),
-    n >= 0x30 and n <= 0x39 => .Some(52 + n - 0x30),
-    n == 0x2b => .Some(62),
-    n == 0x2f => .Some(63),
-    _ => .None,
+    n >= 0x41 and n <= 0x5a => n - 0x41,
+    n >= 0x61 and n <= 0x7a => 26 + n - 0x61,
+    n >= 0x30 and n <= 0x39 => 52 + n - 0x30,
+    n == 0x2b => 62,
+    n == 0x2f => 63,
+    _ => -1,
   }
 }
 
@@ -253,17 +255,20 @@ pub fn base64_decode(text: String) Result<Vector<Byte>, String> {
       return .Err("base64_decode: padding before final group")
     }
 
-    v0 := try b64_value(c0).ok_or("base64_decode: invalid character")
-    v1 := try b64_value(c1).ok_or("base64_decode: invalid character")
+    v0 := b64_value(c0)
+    v1 := b64_value(c1)
     v2 := if pad2 {
       0
     } else {
-      try b64_value(c2).ok_or("base64_decode: invalid character")
+      b64_value(c2)
     }
     v3 := if pad3 {
       0
     } else {
-      try b64_value(c3).ok_or("base64_decode: invalid character")
+      b64_value(c3)
+    }
+    if v0 < 0 or v1 < 0 or v2 < 0 or v3 < 0 {
+      return .Err("base64_decode: invalid character")
     }
     n := v0 << 18 | v1 << 12 | v2 << 6 | v3
 
