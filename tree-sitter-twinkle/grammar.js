@@ -134,6 +134,8 @@ module.exports = grammar({
     variant_definition: $ => seq(
       field('name', $.identifier),
       optional(seq('(', $.type_list, ')')),
+      // Optional explicit integer tag: `= N` or `= -N` (literal only).
+      optional(seq('=', optional('-'), field('tag', $.int_literal))),
     ),
 
     // ===== Functions =====

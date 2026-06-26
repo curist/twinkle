@@ -162,6 +162,10 @@
 (variant_definition
   name: (identifier) @constructor)
 
+; Explicit enum integer tag value (`= N`); themable distinctly from other numbers.
+(variant_definition
+  tag: (int_literal) @number)
+
 (shorthand_enum_pattern
   variant: (identifier) @constructor)
 

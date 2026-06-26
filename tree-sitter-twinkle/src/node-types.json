@@ -2749,6 +2749,16 @@
             "named": true
           }
         ]
+      },
+      "tag": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "int_literal",
+            "named": true
+          }
+        ]
       }
     },
     "children": {

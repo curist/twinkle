@@ -83,7 +83,7 @@ VariantDefList =
     VariantDef { "," VariantDef } [ "," ] ;
 
 VariantDef =
-    UpperIdent [ "(" TypeList ")" ] ;
+    UpperIdent [ "(" TypeList ")" ] [ "=" [ "-" ] IntLiteral ] ;
 (* Implementation note:
    - `type Color = { Red, Green, Blue }`
    - `type Result<T, E> = { Ok(T), Err(E) }`
@@ -91,7 +91,11 @@ VariantDef =
    - Constructors are exposed as `TypeName.Variant` in expressions
      (e.g. `Result.Ok(42)`), and as `.Variant(...)` / `TypeName.Variant(...)`
      in patterns (EnumPattern rules).
-   - Variant names MUST start with an uppercase letter (UpperIdent). *)
+   - Variant names MUST start with an uppercase letter (UpperIdent).
+   - The optional `= N` is an explicit integer tag (literal only, leading `-`
+     allowed). Accepted syntactically on any variant, but semantically only
+     valid when every variant is field-less; `e.tag` / `T.from_tag(n)` then
+     map between the variant and its integer. See docs/spec.md §5. *)
 
 (* ===== Functions (Declarations & Function Types) ===== *)
 
