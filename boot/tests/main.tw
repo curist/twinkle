@@ -91,6 +91,7 @@ use .suites.query_revision_suite
 use .suites.query_stage_runner_suite
 use .suites.receiver_shorthand_suite
 use .suites.render_suite
+use .suites.resolver_passes_suite
 use .suites.resolver_suite
 use .suites.rewrite_suite
 use .suites.runtime_suite
@@ -159,6 +160,7 @@ runner.run_all([
   diag_suite.suite(),
   render_suite.suite(),
   parser_suite.suite(),
+  resolver_passes_suite.suite(),
   resolver_suite.suite(),
   checker_suite.suite(),
   checker_coverage_suite.suite(),

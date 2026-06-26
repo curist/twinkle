@@ -555,6 +555,11 @@ pub fn has_function(env: ResolvedEnv, name: String) Bool {
 
 pub type ResolveResult = .{ env: ResolvedEnv, diagnostics: Vector<diag.DiagKind> }
 
+/// Result of cursor-threaded declaration collection.
+/// `start_id` / `next_id` delimit the TypeId range this module allocated,
+/// so a group can thread a shared cursor and keep IDs disjoint across members.
+pub type DeclCollection = .{ result: ResolveResult, start_id: Int, next_id: Int }
+
 fn all_exported_types(exports: ModuleExports) Vector<ExportedType> {
   exports.visible_types.concat(exports.support_types)
 }
@@ -1304,6 +1309,11 @@ fn next_available_type_id(env: ResolvedEnv) Int {
   max_id + 1
 }
 
+/// Public wrapper: first TypeId that would be allocated in `env`.
+pub fn next_type_id(env: ResolvedEnv) Int {
+  env.next_available_type_id()
+}
+
 fn unresolved_type_binding(env: ResolvedEnv, name: String) Bool {
   entry := case env.lookup_type(name) {
     .Some(found) => found,
@@ -1313,11 +1323,17 @@ fn unresolved_type_binding(env: ResolvedEnv, name: String) Bool {
   entry.def == .None
 }
 
-fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
+/// Collect declarations starting TypeId allocation at `id_start`.
+/// A group can thread the cursor across members and keep IDs globally unique:
+/// member 1 passes base.next_type_id(), member 2 passes c1.next_id, etc.
+/// When id_start == env.next_available_type_id() the produced TypeIds are
+/// byte-identical to the private collect_declarations path (singleton invariant).
+pub fn collect_declarations_from(env: ResolvedEnv, module: Module, id_start: Int) DeclCollection {
   cur := env
   diags: Vector<diag.DiagKind> = []
   seen_types: Dict<String, Bool> = Dict.new()
   seen_fns: Dict<String, Bool> = Dict.new()
+  next_id := id_start
 
   for item in module.items {
     case item {
@@ -1335,7 +1351,8 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
         )
       } else {
         seen_types[decl.name] = true
-        tid := TypeId.{ id: cur.next_available_type_id() }
+        tid := TypeId.{ id: next_id }
+        next_id = next_id + 1
         cur = .add_type(
           .{ id: tid, arity: decl.type_params.len(), def: .None, span: decl.span, is_extern: false },
           decl.name,
@@ -1349,7 +1366,8 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
               if variant.fields.len() == 1 {
                 case variant.fields[0].kind {
                   .Record(_) => {
-                    synth_tid := TypeId.{ id: cur.next_available_type_id() }
+                    synth_tid := TypeId.{ id: next_id }
+                    next_id = next_id + 1
                     display_name := "${decl.name}.${variant.name}"
                     cur = .register_type_entry(
                       .{
@@ -1404,7 +1422,8 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
         )
       } else {
         seen_types[decl.name] = true
-        tid := TypeId.{ id: cur.next_available_type_id() }
+        tid := TypeId.{ id: next_id }
+        next_id = next_id + 1
         cur = .add_type(
           .{ id: tid, arity: 0, def: .None, span: decl.span, is_extern: true },
           decl.name,
@@ -1418,11 +1437,15 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
     }
   }
 
-  .{ env: cur, diagnostics: diags }
+  .{ result: .{ env: cur, diagnostics: diags }, start_id: id_start, next_id }
+}
+
+fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
+  env.collect_declarations_from(module, env.next_available_type_id()).result
 }
 
 // ── Pass 2: Resolution ──────────────────────────────────────────────
-fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagKind>) ResolveResult {
+pub fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagKind>) ResolveResult {
   cur := env
   result_diags := diags
 
@@ -2874,7 +2897,7 @@ fn add_name_index(name: String, names: Vector<String>, acc: TypeRefs) TypeRefs {
 }
 
 // ── Pass 3: Circular Alias Detection ────────────────────────────────
-fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<diag.DiagKind>) Vector<diag.DiagKind> {
+pub fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<diag.DiagKind>) Vector<diag.DiagKind> {
   result := diags
 
   for i in 0..env.type_names.len() {

@@ -1,0 +1,73 @@
+use compiler.parser
+use compiler.resolver
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("resolver_passes")
+    .test(
+      "group declaration collection allocates disjoint TypeId ranges",
+      fn() {
+        base := resolver.empty_env()
+
+        parsed1 := parser.parse("pub type A = .{ x: Int }", 0)
+        c1 := resolver.collect_declarations_from(base, parsed1.value, base.next_type_id())
+
+        // Module 1 allocated at least one type
+        try assert.is_true(c1.next_id > c1.start_id)
+
+        parsed2 := parser.parse("pub type B = .{ y: Int }", 0)
+        c2 := resolver.collect_declarations_from(base, parsed2.value, c1.next_id)
+
+        // Module 2 range starts where module 1 ended (disjoint)
+        try assert.equal(c2.start_id, c1.next_id)
+        try assert.is_true(c2.next_id > c2.start_id)
+
+        .Ok({})
+      },
+    )
+    .test(
+      "synthesized record-variant type IDs are included in the cursor range",
+      fn() {
+        base := resolver.empty_env()
+
+        // Shape allocates its main ID plus a synthesized type for Rect's anonymous record field
+        parsed := parser.parse("type Shape = { Circle(Float), Rect(.{ w: Int, h: Int }) }", 0)
+        c := resolver.collect_declarations_from(base, parsed.value, base.next_type_id())
+
+        // Shape (main) + Rect's synthesized record type = 2 IDs
+        try assert.equal(c.next_id, c.start_id + 2)
+
+        .Ok({})
+      },
+    )
+    .test(
+      "cursor-threaded IDs match the default next_available_type_id sequence",
+      fn() {
+        base := resolver.empty_env()
+
+        // Collect via default path (singleton)
+        src := "pub type Foo = .{ a: Int, b: String }"
+        parsed := parser.parse(src, 0)
+        default_result := base.resolve(parsed.value)
+
+        // Collect via cursor-threaded path starting at the same id_start
+        parsed2 := parser.parse(src, 0)
+        c := resolver.collect_declarations_from(base, parsed2.value, base.next_type_id())
+
+        // Both paths must allocate the same TypeId for Foo
+        default_tid := case default_result.env.lookup_type("Foo") {
+          .Some(entry) => entry.id.id,
+          .None => return .Err("Foo not found in default result"),
+        }
+        cursor_tid := case c.result.env.lookup_type("Foo") {
+          .Some(entry) => entry.id.id,
+          .None => return .Err("Foo not found in cursor result"),
+        }
+        try assert.equal(cursor_tid, default_tid)
+
+        .Ok({})
+      },
+    )
+}
