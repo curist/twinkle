@@ -106,6 +106,11 @@ pub fn sha256_bytes(input: Vector<Byte>) Digest {
   .{ bytes: sha256_impl.digest_bytes(input) }
 }
 
+/// SHA-256 digest of the bytes already in a `Buffer` (hashes `buf.len()` bytes).
+pub fn sha256_buf(input: Buffer) Digest {
+  .{ bytes: sha256_impl.digest_buf(input) }
+}
+
 /// Compute HMAC-SHA-256 over UTF-8 key/message strings.
 pub fn hmac_sha256(key: String, message: String) Digest {
   hmac_sha256_bytes(key.utf8_bytes(), message.utf8_bytes())

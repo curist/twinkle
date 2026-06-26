@@ -34,6 +34,13 @@ fn sha1_equiv(v: Vector<Byte>) Result<Void, String> {
   assert.equal(got, crypto.sha1_bytes(v).hex())
 }
 
+fn sha256_equiv(v: Vector<Byte>) Result<Void, String> {
+  b := buffer.from_bytes(v)
+  got := crypto.sha256_buf(b).hex()
+  b.free()
+  assert.equal(got, crypto.sha256_bytes(v).hex())
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("stdlib crypto")
@@ -160,6 +167,20 @@ pub fn suite() runner.Suite {
         try sha1_equiv(make_bytes(64))
         try sha1_equiv(make_bytes(100))
         try sha1_equiv(make_bytes(4096))
+        .Ok({})
+      },
+    )
+    .test(
+      "sha256_buf matches sha256_bytes across edge lengths",
+      fn() {
+        try sha256_equiv([])
+        try sha256_equiv(make_bytes(3))
+        try sha256_equiv(make_bytes(4))
+        try sha256_equiv(make_bytes(55))
+        try sha256_equiv(make_bytes(56))
+        try sha256_equiv(make_bytes(64))
+        try sha256_equiv(make_bytes(100))
+        try sha256_equiv(make_bytes(4096))
         .Ok({})
       },
     )
