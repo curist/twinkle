@@ -22,6 +22,9 @@ fn ok_or_try_helper(opt: Int?) Result<Int, String> {
 
 type LookupErr = { Missing(String), Bad }
 
+// Field-less enum with explicit integer tags (default 0, explicit 5, resume 6).
+type TagColor = { Red, Green = 5, Blue }
+
 // The bare variant literal `.Missing(...)` only resolves because `try` propagates
 // the enclosing Result's error type (LookupErr) into the ok_or call's error arg.
 fn ok_or_enum_helper(opt: Int?) Result<Int, LookupErr> {
@@ -100,6 +103,40 @@ pub fn suite() runner.Suite {
         word: String? = .Some("hi")
         try assert.equal(word.to_string(), "Some(hi)")
         .Ok({})
+      },
+    )
+    .test(
+      "enum tag: forward accessor uses resolved values",
+      fn() {
+        red := TagColor.Red
+        green := TagColor.Green
+        blue := TagColor.Blue
+        try assert.equal(red.tag, 0)
+        try assert.equal(green.tag, 5)
+        try assert.equal(blue.tag, 6)
+        .Ok({})
+      },
+    )
+    .test(
+      "enum tag: from_tag round-trips and rejects holes",
+      fn() {
+        // round-trip: from_tag(v.tag) recovers the variant
+        try case TagColor.from_tag(6) {
+          .Some(c) => assert.equal(c.tag, 6),
+          .None => assert.fail("expected Some for tag 6"),
+        }
+
+        // unmapped int → None
+        try case TagColor.from_tag(99) {
+          .Some(_) => assert.fail("expected None for unmapped 99"),
+          .None => .Ok({}),
+        }
+
+        // a hole between explicit values → None
+        case TagColor.from_tag(1) {
+          .Some(_) => assert.fail("expected None for hole 1"),
+          .None => .Ok({}),
+        }
       },
     )
     .test(

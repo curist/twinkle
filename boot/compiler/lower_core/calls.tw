@@ -1,13 +1,14 @@
 //! Call and method-name helpers for Core lowering.
 
 use compiler.ast.{Expr}
+use compiler.builtin_refs
 use compiler.contracts.{BuiltinContract}
-use compiler.core_ir.{CoreExpr, FuncId}
+use compiler.core_ir.{CoreExpr, FuncId, MatchArm}
 use compiler.lower_core.context.{ExprOut, LowerCtx}
-use compiler.lower_core.helpers.{extract_type_name_expr}
+use compiler.lower_core.helpers.{extract_type_name_expr, variant_expr}
 use compiler.lower_core.types.{find_variant_index}
-use compiler.mono_type.{MonoType}
-use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType, TypeId}
+use compiler.resolver.{ResolvedEnv, ResolvedVariant}
 use lib.source.span.{Span}
 
 /// Extract the canonical PascalCase type name for builtin registry lookup.
@@ -71,6 +72,42 @@ pub fn lower_contract_call(
   }
 }
 
+// `T.from_tag(n)` → `match n { tag0 => .Some(.V0), …, _ => .None }`: a select
+// over the resolved tags into each variant's singleton value, wrapped in Option.
+// Not a cast — there is no int→ref conversion, so even the dense default case is
+// a real switch.
+fn lower_from_tag(
+  ctx: LowerCtx,
+  tid: TypeId,
+  variants: Vector<ResolvedVariant>,
+  args: Vector<Expr>,
+  ty: MonoType,
+  s: Span,
+  lower_expr_fn: fn(LowerCtx, Expr) ExprOut,
+) ExprOut {
+  ar := lower_expr_fn(ctx, args[0])
+  cur_ctx := ar.ctx
+  scrutinee := ar.expr
+
+  some_ref := builtin_refs.option_some(cur_ctx.env)
+  none_ref := builtin_refs.option_none(cur_ctx.env)
+
+  inner_ty := case ty {
+    .Optional(inner) => inner,
+    _ => ty,
+  }
+
+  arms: Vector<MatchArm> = collect v, vi in variants {
+    variant_val := variant_expr(tid, vi, [], inner_ty, s)
+    some_val := variant_expr(some_ref.tid, some_ref.vid, [variant_val], ty, s)
+    .{ pattern: .LitInt(v.tag), body: some_val }
+  }
+
+  none_val := variant_expr(none_ref.tid, none_ref.vid, [], ty, s)
+  all_arms := arms.append(.{ pattern: .Wildcard, body: none_val })
+  .{ expr: .{ kind: .Match(scrutinee, all_arms), ty, span: s }, ctx: cur_ctx }
+}
+
 pub fn lower_call(
   ctx: LowerCtx,
   callee_expr: Expr,
@@ -99,6 +136,22 @@ pub fn lower_call(
             return .{
               expr: .{ kind: .Variant(entry.id, .{ id: vid_idx }, lowered_args), ty, span: s },
               ctx: cur_ctx,
+            }
+          }
+
+          // Reserved static `T.from_tag(n)` on a field-less enum.
+          if field_name == "from_tag" {
+            case ctx.env.lookup_type_def(entry.id) {
+              .Some(.Sum(_, _, variants)) => return lower_from_tag(
+                ctx,
+                entry.id,
+                variants,
+                args,
+                ty,
+                s,
+                lower_expr_fn,
+              ),
+              _ => {},
             }
           }
         },

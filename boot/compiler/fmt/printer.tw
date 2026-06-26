@@ -790,13 +790,18 @@ fn format_record_field(field: RecordField) Doc {
 }
 
 fn format_variant_decl(v: VariantDecl) Doc {
-  if v.fields.len() == 0 {
+  base := if v.fields.len() == 0 {
     doc.text(v.name)
   } else {
     field_docs := collect f in v.fields {
       format_type_expr(f)
     }
     doc.concat([doc.text(v.name), doc.tight_bracketed("(", ")", field_docs)])
+  }
+
+  case v.tag {
+    .Some(n) => doc.concat([base, doc.text(" = ${n}")]),
+    .None => base,
   }
 }
 

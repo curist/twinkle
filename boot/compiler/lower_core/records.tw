@@ -2,15 +2,18 @@
 
 use compiler.ast as ast
 use compiler.ast.{Expr}
-use compiler.core_ir.{CoreExpr, FieldId, FieldInit, FuncId, FunctionDef, GlobalId, Param, VariantId}
+use compiler.core_ir.{
+  CoreExpr, FieldId, FieldInit, FuncId, FunctionDef, GlobalId, MatchArm, Param, VariantId,
+}
 use compiler.lower_core.calls.{builtin_type_name, resolve_user_method_target}
 use compiler.lower_core.context.{ExprOut, LowerCtx}
-use compiler.lower_core.helpers.{extract_type_name_expr, void_expr}
+use compiler.lower_core.helpers.{extract_type_name_expr, variant_pattern, void_expr}
 use compiler.lower_core.types.{
   find_field_index, find_field_index_in_type, find_field_type_in_type, find_variant_index,
   resolve_type_id, type_id_from_mono,
 }
 use compiler.mono_type.{MonoType, TypeId}
+use compiler.resolver.{ResolvedVariant}
 use lib.source.span.{Span}
 
 pub fn lower_named_record(
@@ -177,6 +180,17 @@ pub fn lower_field(
   br := lower_expr_fn(ctx, base_expr)
   base_ty := br.ctx.expr_type(base_expr)
 
+  // Reserved `.tag` accessor on a field-less enum: select each variant's tag.
+  if field_name == "tag" {
+    case type_id_from_mono(base_ty, br.ctx.env) {
+      .Some(tid) => case br.ctx.env.lookup_type_def(tid) {
+        .Some(.Sum(_, _, variants)) => return lower_enum_tag(br.ctx, br.expr, tid, variants, ty, s),
+        _ => {},
+      },
+      .None => {},
+    }
+  }
+
   case type_id_from_mono(base_ty, ctx.env) {
     .Some(tid) => {
       fid_idx := find_field_index(br.ctx.env, tid, field_name)
@@ -189,6 +203,23 @@ pub fn lower_field(
   }
 
   lower_method_value(br.ctx, br.expr, base_ty, field_name, ty, s)
+}
+
+// `e.tag` → `match e { .V0 => tag0, .V1 => tag1, … }`. Uniform for default and
+// custom tags; the variant set is exhaustive so no wildcard arm is needed.
+fn lower_enum_tag(
+  ctx: LowerCtx,
+  scrutinee: CoreExpr,
+  tid: TypeId,
+  variants: Vector<ResolvedVariant>,
+  ty: MonoType,
+  s: Span,
+) ExprOut {
+  arms: Vector<MatchArm> = collect v, vi in variants {
+    .{ pattern: variant_pattern(tid, vi, []), body: .{ kind: .LitInt(v.tag), ty: .Int, span: s } }
+  }
+
+  .{ expr: .{ kind: .Match(scrutinee, arms), ty, span: s }, ctx }
 }
 
 fn lookup_method_value_target(ctx: LowerCtx, receiver_ty: MonoType, method_name: String) FuncId? {

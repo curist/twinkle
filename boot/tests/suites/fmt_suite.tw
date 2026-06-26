@@ -84,9 +84,22 @@ fn test_dollar_string_formatting() Result<Void, String> {
   assert.equal(interpolation_sentinel, interpolation_expected)
 }
 
+fn test_enum_integer_tags_preserved() Result<Void, String> {
+  // The explicit `= N` tags must survive formatting; resume values stay implicit.
+  formatted := try format_ok("type X = { A, B = 5, C }")
+  assert.equal(formatted, "type X = { A, B = 5, C }\n")
+}
+
+fn test_negative_enum_tag_preserved() Result<Void, String> {
+  formatted := try format_ok("type Code = { Ok = 0, NotFound = -32601 }")
+  assert.equal(formatted, "type Code = { Ok = 0, NotFound = -32601 }\n")
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("fmt")
+    .test("preserves explicit enum integer tags", test_enum_integer_tags_preserved)
+    .test("preserves negative enum tags", test_negative_enum_tag_preserved)
     .test("preserves right-nested non-associative binary parens", assert_fmt_case("binary_parens"))
     .test("breaks logical or chains by alternative", assert_fmt_case("logical_or_chain"))
     .test("formats declarations and top-level spacing", assert_fmt_case("declarations"))
