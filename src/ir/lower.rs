@@ -9,7 +9,7 @@ use crate::syntax::span::Span;
 use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::ty::{
     ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, ORDER_TYPE_ID, RANGE_TYPE_ID,
-    RESULT_TYPE_ID, TypeId, method_receiver_type_id,
+    RESULT_TYPE_ID, TypeDef, TypeId, method_receiver_type_id,
 };
 use crate::types::type_map::TypeMap;
 
@@ -2429,6 +2429,34 @@ impl Lowerer {
 
                 match &base_ty {
                     MonoType::Named { type_id, .. } => {
+                        // `e.tag` on a field-less enum → match each variant to its tag.
+                        if field == "tag"
+                            && let Some(TypeDef::Sum { variants, .. }) =
+                                self.type_env.get_def(*type_id)
+                            && variants.iter().all(|v| v.fields.is_empty())
+                        {
+                            let arms = variants
+                                .iter()
+                                .enumerate()
+                                .map(|(vi, v)| MatchArm {
+                                    pattern: CorePattern::Variant {
+                                        type_id: *type_id,
+                                        variant: VariantId(vi),
+                                        fields: vec![],
+                                    },
+                                    body: CoreExpr {
+                                        kind: CoreExprKind::LitInt(v.tag),
+                                        ty: MonoType::Int,
+                                        span,
+                                    },
+                                })
+                                .collect();
+                            return Some(CoreExprKind::Match {
+                                scrutinee: Box::new(base_expr),
+                                arms,
+                            });
+                        }
+
                         if let Some(idx) = self.type_env.get_field_index(*type_id, field) {
                             Some(CoreExprKind::RecordGet {
                                 target: Box::new(base_expr),

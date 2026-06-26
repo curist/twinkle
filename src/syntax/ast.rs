@@ -120,6 +120,8 @@ pub struct Variant {
     pub name: String,
     pub fields: Vec<Type>,
     pub span: Span,
+    /// Explicitly-written `= N` integer tag (pre-resolution); `None` if omitted.
+    pub tag: Option<i64>,
 }
 
 /// Function declaration

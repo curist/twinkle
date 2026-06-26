@@ -329,7 +329,13 @@ impl Resolver {
             }
             AstTypeDef::Sum { variants } => {
                 let mut resolved_variants = Vec::new();
+                // First variant defaults to 0; each subsequent resumes one past the
+                // previous resolved value unless an explicit `= N` overrides it.
+                let mut next_tag: i64 = 0;
                 for variant in variants {
+                    let resolved_tag = variant.tag.unwrap_or(next_tag);
+                    next_tag = resolved_tag + 1;
+
                     if variant.fields.len() == 1
                         && let AstType::Record { fields, .. } = &variant.fields[0]
                     {
@@ -370,6 +376,7 @@ impl Resolver {
                                 type_id: synth_id,
                                 args: synth_args,
                             }],
+                            tag: resolved_tag,
                         });
                         continue;
                     }
@@ -386,6 +393,7 @@ impl Resolver {
                     resolved_variants.push(Variant {
                         name: variant.name.clone(),
                         fields: resolved_fields,
+                        tag: resolved_tag,
                     });
                 }
                 TypeDef::Sum {

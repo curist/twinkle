@@ -508,6 +508,20 @@ impl Parser {
                     Vec::new()
                 };
 
+                // Optional explicit integer tag: `= N` or `= -N`.
+                let tag = if self.peek_is(TokenKind::Eq) {
+                    self.expect(TokenKind::Eq)?;
+                    let negative = self.peek_is(TokenKind::Minus);
+                    if negative {
+                        self.expect(TokenKind::Minus)?;
+                    }
+                    let lit = self.expect(TokenKind::IntLit)?;
+                    let magnitude = Self::parse_int_value(&lit)?;
+                    Some(if negative { -magnitude } else { magnitude })
+                } else {
+                    None
+                };
+
                 let variant_span = if let Some(last) = fields.last() {
                     variant_start.span.merge(&last.span())
                 } else {
@@ -518,6 +532,7 @@ impl Parser {
                     name: variant_name,
                     fields,
                     span: variant_span,
+                    tag,
                 });
 
                 if !self.peek_is(TokenKind::RBrace) {

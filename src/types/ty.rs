@@ -341,6 +341,8 @@ pub struct RecordField {
 pub struct Variant {
     pub name: String,
     pub fields: Vec<MonoType>,
+    /// Resolved integer tag (default 0..n, or the custom mapping from `= N`).
+    pub tag: i64,
 }
 
 /// Function signature for value environment

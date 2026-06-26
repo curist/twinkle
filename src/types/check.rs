@@ -2994,6 +2994,15 @@ impl TypeChecker {
         (fields, named)
     }
 
+    /// True when `type_id` is a sum type whose every variant is field-less, the
+    /// precondition for the reserved `.tag` / `from_tag` enum-integer-tag members.
+    fn is_fieldless_enum(&self, type_id: crate::types::ty::TypeId) -> bool {
+        matches!(
+            self.type_env.get_def(type_id),
+            Some(TypeDef::Sum { variants, .. }) if variants.iter().all(|v| v.fields.is_empty())
+        )
+    }
+
     fn synth_field_access(&mut self, base: &Expr, field: &str, span: Span) -> Result<MonoType, ()> {
         // Check for TypeName.Variant or module.TypeName.Variant syntax
         if let Some(type_id) = self.try_resolve_type_from_expr(base)
@@ -3021,6 +3030,11 @@ impl TypeChecker {
                 type_id,
                 args: ref type_args,
             } => {
+                // Reserved `.tag` accessor on a field-less enum yields its Int tag.
+                if field == "tag" && self.is_fieldless_enum(type_id) {
+                    return Ok(MonoType::Int);
+                }
+
                 // Check for field/method collision
                 let has_field = self.type_env.has_field(type_id, field);
                 let has_method = self.type_env.has_method(type_id, field);

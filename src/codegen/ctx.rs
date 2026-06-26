@@ -3312,10 +3312,12 @@ mod tests {
                 Variant {
                     name: "None".to_string(),
                     fields: vec![],
+                    tag: 0,
                 },
                 Variant {
                     name: "Some".to_string(),
                     fields: vec![MonoType::Int],
+                    tag: 1,
                 },
             ],
             doc: None,

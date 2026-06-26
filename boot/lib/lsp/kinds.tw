@@ -1,58 +1,17 @@
-//! LSP CompletionItemKind, modeled as an enum with a hand-written
-//! forward/inverse tag mapping.
-//!
-//! The eventual enum-integer-tags feature will generate `completion_tag` and
-//! `completion_from_tag` automatically from `= N` annotations on each variant;
-//! the values they would carry are noted in the comment below. Until the
-//! syntax parses, the enum is bare and the values live only in the `case`.
-//
-//   Text = 1, Method = 2, Function = 3, Field = 5, Variable = 6, Class = 7,
-//   Module = 9, Enum = 13, Keyword = 14, EnumMember = 20, Constant = 21
+//! LSP CompletionItemKind values, as a field-less enum with explicit integer
+//! tags. `k.tag` gives the LSP wire number; `CompletionKind.from_tag(n)` decodes
+//! one back (used at the JSON boundary, not in the in-memory model).
+
 pub type CompletionKind = {
-  Text,
-  Method,
-  Function,
-  Field,
-  Variable,
-  Class,
-  Module,
-  Enum,
-  Keyword,
-  EnumMember,
-  Constant,
-}
-
-/// Forward mapping: the LSP numeric CompletionItemKind for a kind.
-pub fn completion_tag(k: CompletionKind) Int {
-  case k {
-    .Text => 1,
-    .Method => 2,
-    .Function => 3,
-    .Field => 5,
-    .Variable => 6,
-    .Class => 7,
-    .Module => 9,
-    .Enum => 13,
-    .Keyword => 14,
-    .EnumMember => 20,
-    .Constant => 21,
-  }
-}
-
-/// Inverse mapping: recover a kind from its LSP numeric value, if any.
-pub fn completion_from_tag(n: Int) CompletionKind? {
-  case n {
-    1 => .Some(.Text),
-    2 => .Some(.Method),
-    3 => .Some(.Function),
-    5 => .Some(.Field),
-    6 => .Some(.Variable),
-    7 => .Some(.Class),
-    9 => .Some(.Module),
-    13 => .Some(.Enum),
-    14 => .Some(.Keyword),
-    20 => .Some(.EnumMember),
-    21 => .Some(.Constant),
-    _ => .None,
-  }
+  Text = 1,
+  Method = 2,
+  Function = 3,
+  Field = 5,
+  Variable = 6,
+  Class = 7,
+  Module = 9,
+  Enum = 13,
+  Keyword = 14,
+  EnumMember = 20,
+  Constant = 21,
 }

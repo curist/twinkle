@@ -102,11 +102,13 @@ impl TypeEnv {
                 variants: vec![
                     Variant {
                         name: "None".to_string(),
-                        fields: vec![]
+                        fields: vec![],
+                        tag: 0,
                     },
                     Variant {
                         name: "Some".to_string(),
-                        fields: vec![MonoType::Void]
+                        fields: vec![MonoType::Void],
+                        tag: 1,
                     },
                 ],
                 doc: Some("Optional value: None or Some(T).".to_string()),
@@ -120,11 +122,13 @@ impl TypeEnv {
                 variants: vec![
                     Variant {
                         name: "Ok".to_string(),
-                        fields: vec![MonoType::Void]
+                        fields: vec![MonoType::Void],
+                        tag: 0,
                     },
                     Variant {
                         name: "Err".to_string(),
-                        fields: vec![MonoType::Void]
+                        fields: vec![MonoType::Void],
+                        tag: 1,
                     },
                 ],
                 doc: Some("Result value: Ok(T) or Err(E).".to_string()),
@@ -203,7 +207,8 @@ impl TypeEnv {
                 variants: vec![
                     Variant {
                         name: "Done".to_string(),
-                        fields: vec![]
+                        fields: vec![],
+                        tag: 0,
                     },
                     Variant {
                         name: "Yield".to_string(),
@@ -211,6 +216,7 @@ impl TypeEnv {
                             MonoType::Var("T".to_string()),
                             MonoType::Var("S".to_string())
                         ],
+                        tag: 1,
                     },
                 ],
                 doc: Some(
@@ -229,14 +235,17 @@ impl TypeEnv {
                     Variant {
                         name: "Lt".to_string(),
                         fields: vec![],
+                        tag: 0,
                     },
                     Variant {
                         name: "Eq".to_string(),
                         fields: vec![],
+                        tag: 1,
                     },
                     Variant {
                         name: "Gt".to_string(),
                         fields: vec![],
+                        tag: 2,
                     },
                 ],
                 doc: Some("Comparison result: Lt, Eq, or Gt.".to_string()),
