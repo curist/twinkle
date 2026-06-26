@@ -10,7 +10,7 @@ use lib.source.span.{Span}
 
 use .ast.{
   ExternFunctionDecl, FunctionDecl, ImportItem, Module, TypeDecl, TypeExpr, TypeParam, TypePath,
-  type_param_names,
+  VariantDecl, type_param_names,
 }
 use .contracts.{BuiltinContract, resolve_builtin_contract_name}
 use .mono_type.{MonoType, TypeId}
@@ -18,7 +18,10 @@ use .mono_type.{MonoType, TypeId}
 // ── Resolved Types ──────────────────────────────────────────────────
 pub type ResolvedField = .{ name: String, ty: MonoType }
 
-pub type ResolvedVariant = .{ name: String, fields: Vector<MonoType> }
+// `tag` is the resolved integer tag (default 0..n, or the custom mapping from
+// explicit `= N` values). Meaningful for field-less enums; for payload-carrying
+// enums it is just the dense discriminant and is never surfaced.
+pub type ResolvedVariant = .{ name: String, fields: Vector<MonoType>, tag: Int }
 
 /// A reference to a builtin contract, as resolved from source. The `Vector<MonoType>`
 /// carries the contract's type arguments (e.g. `E` in `IndexRead<E>`), empty for
@@ -1631,6 +1634,127 @@ fn check_dup_names(names: Vector<String>, kind: String, s: Span) Vector<diag.Dia
   }
 }
 
+type VariantTagResolution = .{ tags: Vector<Int>, diagnostics: Vector<diag.DiagKind> }
+
+// Resolve the integer tags for a sum type's variants. The first variant defaults
+// to 0; each subsequent variant is one past the previous resolved value unless it
+// carries an explicit `= N`, which sets it (and the next resumes from N + 1).
+// Emits D1 (explicit tags require field-less variants) and D4 (a resolved tag
+// shared by two variants, with the derivation that produced the collision).
+fn resolve_variant_tags(type_name: String, variants: Vector<VariantDecl>) VariantTagResolution {
+  diags: Vector<diag.DiagKind> = []
+
+  tags: Vector<Int> = []
+  next := 0
+
+  for v in variants {
+    resolved := case v.tag {
+      .Some(n) => n,
+      .None => next,
+    }
+    tags = .append(resolved)
+    next = resolved + 1
+  }
+
+  // Locate the first explicit tag and the first payload-carrying variant.
+  first_explicit: VariantDecl? = .None
+  first_payload: VariantDecl? = .None
+
+  for v in variants {
+    case v.tag {
+      .Some(_) => case first_explicit {
+        .None => {
+          first_explicit = .Some(v)
+        },
+        .Some(_) => {},
+      },
+      .None => {},
+    }
+
+    if v.fields.len() > 0 {
+      case first_payload {
+        .None => {
+          first_payload = .Some(v)
+        },
+        .Some(_) => {},
+      }
+    }
+  }
+
+  // D1: an explicit `= N` is only allowed when every variant is field-less.
+  d1_fired := false
+
+  case first_explicit {
+    .Some(ev) => case first_payload {
+      .Some(pv) => {
+        d1_fired = true
+        diags = .append(
+          diag.error_with_help(
+            ev.span,
+            "integer tags require every variant to be field-less",
+            [
+              "`${pv.name}` carries a payload, so `${type_name}` cannot have integer tags",
+              "remove the payload from `${pv.name}`, or drop the tags and map `${type_name}` with a `case`",
+            ],
+          ),
+        )
+      },
+      .None => {},
+    },
+    .None => {},
+  }
+
+  // D4: every resolved tag must be distinct (skipped once D1 invalidates the set).
+  if !d1_fired {
+    seen: Dict<Int, Int> = Dict.new()
+
+    for v, vi in variants {
+      n := tags[vi]
+
+      case seen[n] {
+        .Some(earlier) => {
+          diags = .append(duplicate_tag_diag(type_name, variants, tags, earlier, vi))
+        },
+        .None => seen[n] = vi,
+      }
+    }
+  }
+
+  .{ tags, diagnostics: diags }
+}
+
+fn duplicate_tag_diag(
+  type_name: String,
+  variants: Vector<VariantDecl>,
+  tags: Vector<Int>,
+  earlier: Int,
+  current: Int,
+) diag.DiagKind {
+  n := tags[current]
+  earlier_name := variants[earlier].name
+  current_name := variants[current].name
+
+  // When the colliding variant has no explicit tag, the auto-increment is the
+  // surprising part — name it, so the user is not staring at a bare variant.
+  help: Vector<String> = case variants[current].tag {
+    .Some(_) => [
+      "`${earlier_name}` is also set to ${n}",
+      "give one of them a different tag so every tag is distinct",
+    ],
+    .None => [
+      "`${current_name}` has no explicit tag, so it auto-increments to ${n}",
+      "`${earlier_name}` already resolves to ${n}",
+      "give `${current_name}` an explicit tag, or adjust the earlier values",
+    ],
+  }
+
+  diag.error_with_help(
+    variants[current].span,
+    "tag value ${n} is assigned to more than one variant of `${type_name}`",
+    help,
+  )
+}
+
 fn check_dup_type_params(type_params: Vector<String>, s: Span) Vector<diag.DiagKind> {
   seen: Dict<String, Bool> = Dict.new()
 
@@ -1735,9 +1859,11 @@ fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
         v.name
       }
       diags = .concat(check_dup_names(variant_names, "variant", decl.span))
+      tag_res := resolve_variant_tags(decl.name, variants)
+      diags = .concat(tag_res.diagnostics)
       resolved_variants: Vector<ResolvedVariant> = []
 
-      for variant in variants {
+      for variant, vi in variants {
         is_anon_record := variant.fields.len() == 1
           and case variant.fields[0].kind {
             .Record(_) => true,
@@ -1775,7 +1901,11 @@ fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
             MonoType.Var(tp.name)
           }
           resolved_variants = .append(
-            .{ name: variant.name, fields: [MonoType.Named(synth_tid, synth_args)] },
+            .{
+              name: variant.name,
+              fields: [MonoType.Named(synth_tid, synth_args)],
+              tag: tag_res.tags[vi],
+            },
           )
         } else {
           resolved_fields: Vector<MonoType> = collect field_ty in variant.fields {
@@ -1787,7 +1917,9 @@ fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
               .None => MonoType.ErrorType,
             }
           }
-          resolved_variants = .append(.{ name: variant.name, fields: resolved_fields })
+          resolved_variants = .append(
+            .{ name: variant.name, fields: resolved_fields, tag: tag_res.tags[vi] },
+          )
         }
       }
 
@@ -2296,7 +2428,7 @@ fn remap_type_def(def: ResolvedTypeDef, new_name: String, type_ids: Dict<Int, Ty
         fields := collect field in variant.fields {
           remap_mono_type(field, type_ids)
         }
-        ResolvedVariant.{ name: variant.name, fields }
+        ResolvedVariant.{ name: variant.name, fields, tag: variant.tag }
       }
       .Sum(new_name, type_params, remapped_variants)
     },

@@ -482,8 +482,8 @@ fn test_tail_call_in_case_arms() Result<Void, String> {
 
 /// Build a minimal ResolvedEnv containing a single sum type with the given variants.
 fn env_with_sum_type(tid: TypeId, name: String, variant_names: Vector<String>) ResolvedEnv {
-  variants: Vector<ResolvedVariant> = collect vn in variant_names {
-    ResolvedVariant.{ name: vn, fields: [] }
+  variants: Vector<ResolvedVariant> = collect vn, i in variant_names {
+    ResolvedVariant.{ name: vn, fields: [], tag: i }
   }
   entry := TypeEntry.{
     id: tid,

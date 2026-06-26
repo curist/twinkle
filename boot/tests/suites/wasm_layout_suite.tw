@@ -146,9 +146,9 @@ fn test_layout_sum() Result<Void, String> {
     "Shape",
     11,
     [
-      ResolvedVariant.{ name: "Circle", fields: [.Float] },
-      ResolvedVariant.{ name: "Rect", fields: [.Float, .Float] },
-      ResolvedVariant.{ name: "Unit", fields: [] },
+      ResolvedVariant.{ name: "Circle", fields: [.Float], tag: 0 },
+      ResolvedVariant.{ name: "Rect", fields: [.Float, .Float], tag: 1 },
+      ResolvedVariant.{ name: "Unit", fields: [], tag: 2 },
     ],
   )
   l := layout_of(.Named(TypeId.{ id: 11 }, []), env)

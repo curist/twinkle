@@ -131,7 +131,7 @@ fn env_with_record_and_sum() ResolvedEnv {
       ResolvedTypeDef.Sum(
         "Box",
         [],
-        [ResolvedVariant.{ name: "Wrap", fields: [MonoType.Function([.Int], .Int)] }],
+        [ResolvedVariant.{ name: "Wrap", fields: [MonoType.Function([.Int], .Int)], tag: 0 }],
       ),
     ),
     span: .{ file_id: 0, start: 0, end: 0 },

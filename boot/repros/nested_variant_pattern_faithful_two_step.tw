@@ -79,8 +79,8 @@ fn build_env() ResolvedEnv {
         "InnerDef",
         ["T"],
         [
-          ResolvedVariant.{ name: "Leaf", fields: [MonoType.Var("T")] },
-          ResolvedVariant.{ name: "Stop", fields: [] },
+          ResolvedVariant.{ name: "Leaf", fields: [MonoType.Var("T")], tag: 0 },
+          ResolvedVariant.{ name: "Stop", fields: [], tag: 1 },
         ],
       ),
     ),

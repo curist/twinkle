@@ -804,15 +804,15 @@ fn variant_info_for_type(env: ResolvedEnv, ty: MonoType, variant_name: String) V
     .Named(tid, args) => variant_info_for_named(env, tid, args, variant_name),
     .Optional(inner) => {
       variants: Vector<ResolvedVariant> = [
-        .{ name: "None", fields: [] },
-        .{ name: "Some", fields: [inner] },
+        .{ name: "None", fields: [], tag: 0 },
+        .{ name: "Some", fields: [inner], tag: 1 },
       ]
       variant_info_from_variants(env, "Option", [], [], variants, variant_name)
     },
     .Result(ok, err) => {
       variants: Vector<ResolvedVariant> = [
-        .{ name: "Ok", fields: [ok] },
-        .{ name: "Err", fields: [err] },
+        .{ name: "Ok", fields: [ok], tag: 0 },
+        .{ name: "Err", fields: [err], tag: 1 },
       ]
       variant_info_from_variants(env, "Result", [], [], variants, variant_name)
     },

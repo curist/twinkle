@@ -1250,8 +1250,8 @@ pub fn suite() runner.Suite {
               "Option",
               plain_resolved_type_params(["T"]),
               [
-                resolver.ResolvedVariant.{ name: "None", fields: [] },
-                resolver.ResolvedVariant.{ name: "Some", fields: [t] },
+                resolver.ResolvedVariant.{ name: "None", fields: [], tag: 0 },
+                resolver.ResolvedVariant.{ name: "Some", fields: [t], tag: 1 },
               ],
             ),
           ),
@@ -1268,7 +1268,7 @@ pub fn suite() runner.Suite {
             resolver.ResolvedTypeDef.Sum(
               "Iterator",
               plain_resolved_type_params(["T"]),
-              [resolver.ResolvedVariant.{ name: "Item", fields: [t] }],
+              [resolver.ResolvedVariant.{ name: "Item", fields: [t], tag: 0 }],
             ),
           ),
           span: s0,

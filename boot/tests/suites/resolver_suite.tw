@@ -154,6 +154,23 @@ fn get_variant_count(env: resolver.ResolvedEnv, type_name: String) Result<Int, S
   }
 }
 
+fn get_variant_tags(env: resolver.ResolvedEnv, type_name: String) Result<Vector<Int>, String> {
+  case env.lookup_type(type_name) {
+    .Some(entry) => case entry.def {
+      .Some(def) => case def {
+        .Sum(_, _, variants) => .Ok(
+          collect v in variants {
+            v.tag
+          },
+        ),
+        _ => .Err("${type_name} is not a sum type"),
+      },
+      .None => .Err("${type_name} has no definition"),
+    },
+    .None => .Err("type ${type_name} not found"),
+  }
+}
+
 fn get_param_type(env: resolver.ResolvedEnv, fn_name: String, idx: Int) Result<String, String> {
   case env.lookup_function(fn_name) {
     .Some(sig) => {
@@ -219,6 +236,51 @@ pub fn suite() runner.Suite {
         try assert.is_true(env.has_type("Shape"))
         try assert.equal(try get_variant_count(env, "Shape"), 3)
         .Ok({})
+      },
+    )
+    .test(
+      "resolve enum tags: default, explicit, resume",
+      fn() {
+        env := try resolve_ok("type X = { A, B = 5, C }")
+        tags := try get_variant_tags(env, "X")
+        try assert.equal(tags.len(), 3)
+        try assert.equal(tags[0], 0)
+        try assert.equal(tags[1], 5)
+        assert.equal(tags[2], 6)
+      },
+    )
+    .test(
+      "resolve enum tags: D1 rejects explicit tag on payload enum",
+      fn() {
+        msgs := try resolve_errs("type Shape = { Circle(Float), Rect = 2 }")
+        assert.str_contains(msgs[0], "integer tags require every variant to be field-less")
+      },
+    )
+    .test(
+      "resolve enum tags: D4 names the auto-incremented collision",
+      fn() {
+        r := resolve_src("type X = { A = 2, B = 1, C }")
+        try assert.equal(r.diagnostics.len(), 1)
+        d := r.diagnostics[0]
+        try assert.str_contains(
+          d.message(),
+          "tag value 2 is assigned to more than one variant of `X`",
+        )
+
+        // The derivation note must name why the bare variant `C` resolved to 2.
+        help := d.help_lines().join(" || ")
+        assert.str_contains(help, "`C` has no explicit tag, so it auto-increments to 2")
+      },
+    )
+    .test(
+      "resolve enum tags: D4 explicit-vs-explicit collision",
+      fn() {
+        r := resolve_src("type Y = { A = 0, B = 0 }")
+        try assert.equal(r.diagnostics.len(), 1)
+        d := r.diagnostics[0]
+        try assert.str_contains(d.message(), "tag value 0 is assigned to more than one variant")
+        help := d.help_lines().join(" || ")
+        assert.str_contains(help, "`A` is also set to 0")
       },
     )
     .test(

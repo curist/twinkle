@@ -82,12 +82,20 @@ fn builtin_type_entries() Vector<TypeEntry> {
     builtin_type_entry(
       next_type_id,
       1,
-      .Sum("Option", rtp_t, [.{ name: "None", fields: [] }, .{ name: "Some", fields: [t] }]),
+      .Sum(
+        "Option",
+        rtp_t,
+        [.{ name: "None", fields: [], tag: 0 }, .{ name: "Some", fields: [t], tag: 1 }],
+      ),
     ),
     builtin_type_entry(
       next_type_id,
       2,
-      .Sum("Result", rtp_te, [.{ name: "Ok", fields: [t] }, .{ name: "Err", fields: [e] }]),
+      .Sum(
+        "Result",
+        rtp_te,
+        [.{ name: "Ok", fields: [t], tag: 0 }, .{ name: "Err", fields: [e], tag: 1 }],
+      ),
     ),
     builtin_type_entry(next_type_id, 1, .Record("Cell", rtp_t, [])),
     builtin_type_entry(
@@ -119,7 +127,7 @@ fn builtin_type_entries() Vector<TypeEntry> {
         .Sum(
           "UnfoldStep",
           rtp_ts,
-          [.{ name: "Done", fields: [] }, .{ name: "Yield", fields: [t, s] }],
+          [.{ name: "Done", fields: [], tag: 0 }, .{ name: "Yield", fields: [t, s], tag: 1 }],
         ),
       ),
       builtin_type_entry(
@@ -128,7 +136,11 @@ fn builtin_type_entries() Vector<TypeEntry> {
         .Sum(
           "Order",
           [],
-          [.{ name: "Lt", fields: [] }, .{ name: "Eq", fields: [] }, .{ name: "Gt", fields: [] }],
+          [
+            .{ name: "Lt", fields: [], tag: 0 },
+            .{ name: "Eq", fields: [], tag: 1 },
+            .{ name: "Gt", fields: [], tag: 2 },
+          ],
         ),
       ),
       builtin_type_entry(next_type_id, 1, .Record("Task", rtp_t, [])),
