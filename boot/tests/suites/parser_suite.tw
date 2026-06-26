@@ -517,6 +517,29 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "type decl: complete tag then missing comma reports a separator error, not D5",
+      fn() {
+        // `5` is a complete tag; `B` is the next variant — the real error is the
+        // missing comma, so D5 must not mask it.
+        parsed := parser.parse("type X = { A = 5 B }", 0)
+
+        try assert.equal(parsed.diagnostics.len(), 1)
+        try assert.str_contains(parsed.diagnostics[0].message(), "expected ',' or '}'")
+
+        // The valid tag on A is still recorded.
+        case parsed.value.items[0] {
+          .Type(t) => case t.def {
+            .Sum(variants) => case variants[0].tag {
+              .Some(n) => assert.equal(n, 5),
+              .None => assert.fail("expected A to keep its tag"),
+            },
+            _ => assert.fail("expected sum type def"),
+          },
+          _ => assert.fail("expected type declaration"),
+        }
+      },
+    )
+    .test(
       "expr: integer literal",
       fn() {
         expr := try parse_body_tail("fn f() Int { 42 }")

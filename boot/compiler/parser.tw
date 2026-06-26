@@ -707,7 +707,12 @@ fn parse_sum_variants(c: Cursor) SumVariantsParse {
         c = lit.advance()
       }
 
-      if is_literal and is_tag_terminator(c) {
+      // Accept the tag when the literal is complete: either it is followed by a
+      // terminator, or by an `Ident` — a missing comma before the next variant,
+      // which the main loop reports as a separator error rather than masking it
+      // here as a bad tag value. Only genuine non-literal continuations (e.g.
+      // `1 + 1`) fall through to D5.
+      if is_literal and (is_tag_terminator(c) or c.kind() == .Ident) {
         magnitude := parse_int_literal(lit.text())
         tag = .Some(
           if negative {
