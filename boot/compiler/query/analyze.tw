@@ -1541,3 +1541,111 @@ fn wrap_diags(
     }
   }
 }
+
+// ── Phase 1 Discovery ───────────────────────────────────────────────
+/// Result of env-independent Phase 1 discovery: the dependency adjacency graph
+/// for the module closure rooted at a given entry, built by only
+/// load/parse/plan without any resolution or ResolvedEnv.
+pub type Discovery = .{
+  state: AnalysisState,
+  order: Vector<String>,
+  edges: Dict<String, Vector<String>>,
+  failed: Dict<String, Bool>,
+  diagnostics: Vector<AnalysisDiag>,
+}
+
+type DiscoveryAcc = .{
+  state: AnalysisState,
+  seen: Dict<String, Bool>,
+  order: Vector<String>,
+  edges: Dict<String, Vector<String>>,
+  failed: Dict<String, Bool>,
+  diagnostics: Vector<AnalysisDiag>,
+}
+
+fn discover_module(
+  canonical: String,
+  caller_id: identity.SourceIdentity?,
+  use_span: Span?,
+  acc: DiscoveryAcc,
+) DiscoveryAcc {
+  if acc.seen.has(canonical) {
+    return acc
+  }
+
+  acc.seen[canonical] = true
+  acc.order = .append(canonical)
+
+  module_id := identity.from_path(canonical)
+
+  loaded := case acc.state.load_source(canonical, module_id, caller_id, use_span) {
+    .Ok(v) => v,
+    .Err(err) => {
+      acc.state = err.state
+      acc.failed[canonical] = true
+      acc.diagnostics = .concat(err.diagnostics)
+      return acc
+    },
+  }
+  acc.state = loaded.state
+
+  parsed_load := case acc.state.parse_cached(canonical, loaded.source, loaded.source_hash) {
+    .Ok(v) => v,
+    .Err(err) => {
+      acc.state = err.state
+      acc.failed[canonical] = true
+      acc.diagnostics = .concat(err.diagnostics)
+      return acc
+    },
+  }
+  acc.state = parsed_load.state
+
+  dep_plan := case acc.state.plan_dependencies(canonical, parsed_load.parsed, loaded.source) {
+    .Ok(plan) => plan,
+    .Err(err) => {
+      acc.state = err.state
+      acc.failed[canonical] = true
+      acc.diagnostics = .concat(err.diagnostics)
+      return acc
+    },
+  }
+
+  dep_canonicals: Vector<String> = collect dep in dep_plan.dependencies {
+    dep.canonical_path
+  }
+  acc.edges[canonical] = dep_canonicals
+
+  parent_id := identity.from_path(canonical)
+
+  for dep in dep_plan.dependencies {
+    acc = discover_module(dep.canonical_path, .Some(parent_id), .Some(dep.span), acc)
+  }
+
+  acc
+}
+
+/// Phase 1: build the module dependency graph for the closure rooted at `id`.
+/// Only loads/parses/plans — no resolution, no ResolvedEnv. The input to Tarjan
+/// condensation.
+pub fn discover_closure(id: identity.SourceIdentity, state: AnalysisState) Discovery {
+  canonical := imports.canonical_module_path(id.path, state.canonical_roots)
+
+  acc := DiscoveryAcc.{
+    state,
+    seen: Dict.new(),
+    order: [],
+    edges: Dict.new(),
+    failed: Dict.new(),
+    diagnostics: [],
+  }
+
+  acc = discover_module(canonical, .None, .None, acc)
+
+  Discovery.{
+    state: acc.state,
+    order: acc.order,
+    edges: acc.edges,
+    failed: acc.failed,
+    diagnostics: acc.diagnostics,
+  }
+}

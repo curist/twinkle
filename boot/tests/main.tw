@@ -35,6 +35,7 @@ use .suites.dependency_graph_suite
 use .suites.diag_render_suite
 use .suites.diag_suite
 use .suites.dict_hash_suite
+use .suites.discovery_suite
 use .suites.equality_matrix_suite
 use .suites.equality_repro_suite
 use .suites.fingerprint_suite
@@ -196,6 +197,7 @@ runner.run_all([
   runtime_suite.suite(),
   module_loader_suite.suite(),
   dependency_graph_suite.suite(),
+  discovery_suite.suite(),
   query_keys_suite.suite(),
   query_cache_suite.suite(),
   query_revision_suite.suite(),

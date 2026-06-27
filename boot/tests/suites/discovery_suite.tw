@@ -1,0 +1,41 @@
+use @std.path
+
+use compiler.base_env.{builtin_env}
+use compiler.imports
+use compiler.query.analyze
+use compiler.query.cache
+use lib.module.loader
+use lib.source.identity
+use lib.source.overlay
+use tests.assert
+use tests.runner
+
+fn fixtures_dir() String {
+  root := loader.find_project_root("boot")
+  "${root}/tests/fixtures/multi"
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("Phase 1 discovery")
+    .test(
+      "discover_closure walks cycle_type fixture without errors",
+      fn() {
+        dir := fixtures_dir()
+        entry_path := "${dir}/cycle_type_a.tw"
+        entry_dir := path.dirname(entry_path)
+        project_root := loader.find_project_root(entry_dir)
+        canonical_roots := imports.make_canonical_roots(project_root)
+        canonical_entry := imports.canonical_module_path(entry_path, canonical_roots)
+        base_env := builtin_env()
+        state := analyze.new_state(base_env, cache.empty(), overlay.empty(), project_root)
+        entry_id := identity.from_path(canonical_entry)
+        d := analyze.discover_closure(entry_id, state)
+
+        try assert.is_true(d.edges.has(canonical_entry))
+        try assert.is_true(d.order.len() >= 2)
+        try assert.equal(d.diagnostics.len(), 0)
+        .Ok({})
+      },
+    )
+}
