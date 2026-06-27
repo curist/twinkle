@@ -1563,6 +1563,13 @@ type DiscoveryAcc = .{
   diagnostics: Vector<AnalysisDiag>,
 }
 
+fn record_failure(acc: DiscoveryAcc, canonical: String, err: AnalysisError) DiscoveryAcc {
+  acc.state = err.state
+  acc.failed[canonical] = true
+  acc.diagnostics = .concat(err.diagnostics)
+  acc
+}
+
 fn discover_module(
   canonical: String,
   caller_id: identity.SourceIdentity?,
@@ -1580,34 +1587,19 @@ fn discover_module(
 
   loaded := case acc.state.load_source(canonical, module_id, caller_id, use_span) {
     .Ok(v) => v,
-    .Err(err) => {
-      acc.state = err.state
-      acc.failed[canonical] = true
-      acc.diagnostics = .concat(err.diagnostics)
-      return acc
-    },
+    .Err(err) => return acc.record_failure(canonical, err),
   }
   acc.state = loaded.state
 
   parsed_load := case acc.state.parse_cached(canonical, loaded.source, loaded.source_hash) {
     .Ok(v) => v,
-    .Err(err) => {
-      acc.state = err.state
-      acc.failed[canonical] = true
-      acc.diagnostics = .concat(err.diagnostics)
-      return acc
-    },
+    .Err(err) => return acc.record_failure(canonical, err),
   }
   acc.state = parsed_load.state
 
   dep_plan := case acc.state.plan_dependencies(canonical, parsed_load.parsed, loaded.source) {
     .Ok(plan) => plan,
-    .Err(err) => {
-      acc.state = err.state
-      acc.failed[canonical] = true
-      acc.diagnostics = .concat(err.diagnostics)
-      return acc
-    },
+    .Err(err) => return acc.record_failure(canonical, err),
   }
 
   dep_canonicals: Vector<String> = collect dep in dep_plan.dependencies {
@@ -1615,10 +1607,8 @@ fn discover_module(
   }
   acc.edges[canonical] = dep_canonicals
 
-  parent_id := identity.from_path(canonical)
-
   for dep in dep_plan.dependencies {
-    acc = discover_module(dep.canonical_path, .Some(parent_id), .Some(dep.span), acc)
+    acc = discover_module(dep.canonical_path, .Some(module_id), .Some(dep.span), acc)
   }
 
   acc

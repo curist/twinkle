@@ -15,6 +15,16 @@ fn fixtures_dir() String {
   "${root}/tests/fixtures/multi"
 }
 
+fn get_vec(d: Dict<String, Vector<String>>, key: String) Vector<String> {
+  case d[key] {
+    .Some(v) => v,
+    .None => {
+      empty: Vector<String> = []
+      empty
+    },
+  }
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("Phase 1 discovery")
@@ -27,6 +37,7 @@ pub fn suite() runner.Suite {
         project_root := loader.find_project_root(entry_dir)
         canonical_roots := imports.make_canonical_roots(project_root)
         canonical_entry := imports.canonical_module_path(entry_path, canonical_roots)
+        canonical_dep := imports.canonical_module_path("${dir}/cycle_type_b.tw", canonical_roots)
         base_env := builtin_env()
         state := analyze.new_state(base_env, cache.empty(), overlay.empty(), project_root)
         entry_id := identity.from_path(canonical_entry)
@@ -35,6 +46,8 @@ pub fn suite() runner.Suite {
         try assert.is_true(d.edges.has(canonical_entry))
         try assert.is_true(d.order.len() >= 2)
         try assert.equal(d.diagnostics.len(), 0)
+        entry_edges := get_vec(d.edges, canonical_entry)
+        try assert.vec_contains(entry_edges, canonical_dep)
         .Ok({})
       },
     )
