@@ -12,6 +12,22 @@
 
 ---
 
+## Progress / Resume Here (updated 2026-06-27)
+
+Executing on branch `scc-module-groups` (branched from `main` after the design+plan commits). Tasks 1–5 are **DONE, reviewed (spec + quality), and committed**. Suite at **2852 tests green**, self-host fixed point holds, and acyclic output is **byte-identical** (verified). Working tree clean at the Task 5 commit.
+
+- [x] **Task 1** — `boot/compiler/graph_scc.tw` (reusable Tarjan SCC); `type_order.tw` routed through it; hardened tests (self-loop/membership/disconnected). Commits `a21fe64b`, `5036bdd4` (restored root-first intra-component order for byte-parity), `b10d57e4`.
+- [x] **Task 2** — resolver passes exposed (`resolve_references`/`detect_circular_aliases` pub) + `collect_declarations_from(env, module, id_start)` / `DeclCollection` / `next_type_id` threading a TypeId cursor; `collect_declarations` delegates. Commit `6cefb982`. (Accepted-minor: `id_start` vs `start_id` naming; `next_type_id` wraps `next_available_type_id`.)
+- [x] **Task 3** — range-aware `capture_local_types_range` / `publish_interface_range`; singleton wrappers unchanged. Commit `a1a4d243`.
+- [x] **Task 4** — env-independent `discover_closure` (Phase 1) + `Discovery` type; deduped identity, `record_failure` helper, edge-assert test. Commits `ba904ae5`, `4129ea79`.
+- [x] **Task 5** — `build_import_env` extracted (named result `ImportEnvResult`; stage0 has no anon-record returns) and `analyze_dependencies` retrofitted to use it; byte-identical self-host. Commit `83436934`.
+
+**RESTRUCTURE for Tasks 6–7 (decided during execution):** `resolve_group` cannot be unit-tested in isolation (validating it needs a driver that resolves the group's *external* deps first in SCC order). So the Phase-2 **driver function** is folded into Task 6 as a NEW `pub fn analyze_module_scc(id, alias, base, state) ModuleResult` that is **proven on real cycle fixtures by tests but NOT yet wired into `compile_entry`**. Task 7 is then narrowed to: flip the production entry to `analyze_module_scc`, achieve byte-identical self-host fidelity for singletons (entry_snapshot, progress, timings, mark_failed), and delete the back-edge code. The pre-Task-7 human checkpoint still holds — it now gates "make the proven SCC driver the production driver."
+
+- [ ] **Task 6 — NOT STARTED (next).** The opus implementer was dispatched but hit an account session limit before doing any work (tree clean, nothing to recover). Re-dispatch the SAME detailed Task-6 prompt (opus): implement `resolve_group` (steps A–D: value-init guard naming all members sorted → collect declarations for all members with shared cursor + per-member scoped envs + declaration-only interfaces published for sibling visibility → resolve_references per member against own-decls+merged-siblings env → per-member `detect_circular_aliases` → typecheck via `stage_runner.typecheck` fed the group-resolved ResolveResult + `publish_interface_range` with the member's INDEX range) and `analyze_module_scc`; new suite `group_resolution_suite.tw` proving cycle_type_a/cycle_fn_a/circular_a compile, cycle_value_a rejected ("initialization cycle"), and one acyclic fixture works through the new driver. Key gotchas captured: capture range is an env.types INDEX range (not the TypeId cursor range); do NOT use `stage_runner.resolve`/`env.resolve` for group members; reuse `preliminary_type_exports`/`preliminary_type_interface` for the declaration-only interface; step-B env must contain the member's own decls AND merged sibling decl-interfaces.
+
+---
+
 ## Orientation (read before starting)
 
 Key files and current behavior:
