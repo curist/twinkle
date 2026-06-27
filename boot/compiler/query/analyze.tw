@@ -195,6 +195,8 @@ type DependencyAnalysis = .{
 
 type DependencyHashes = .{ deps_hash: Int, context_hash: Int }
 
+type ImportEnvResult = .{ env: ResolvedEnv, ok: Bool }
+
 type LocalCheck = .{ state: AnalysisState, checked: checker.CheckResult }
 
 type PreliminaryInterface = .{ state: AnalysisState, interface: ModuleInterface }
@@ -1135,6 +1137,15 @@ fn analyze_dependencies(
     }
   }
 
+  // Rebuild the returned env from published dep interfaces so Phase 2 SCC can reuse
+  // build_import_env directly. All shared types exist in cur at this point, so a single
+  // extend_env_from_shared + per-dep merge is equivalent to the incremental path above.
+  import_env_result := build_import_env(base, cur, dep_plan)
+
+  if import_env_result.ok {
+    env = import_env_result.env
+  }
+
   cur.cache = .set_dependencies(
     canonical,
     collect dep in dep_plan.dependencies {
@@ -1393,6 +1404,28 @@ fn extend_env_from_shared(base: ResolvedEnv, state: AnalysisState) ResolvedEnv {
   }
 
   base.extend_types_from(types, names, state.shared_type_origins)
+}
+
+/// Build the resolution env for a module from base + shared types + the already-published
+/// interfaces of its deps in `dep_plan`. Precondition: every dep's interface is already
+/// published in `state.interfaces`. Returns ok=false if a required dep interface is missing.
+/// Used by Phase 2 SCC resolution to construct a member's env from a fully-analyzed state.
+fn build_import_env(
+  base: ResolvedEnv,
+  state: AnalysisState,
+  dep_plan: imports.DependencyPlan,
+) ImportEnvResult {
+  env := extend_env_from_shared(base, state)
+
+  for dep in dep_plan.dependencies {
+    interface := case state.interfaces[dep.canonical_path] {
+      .Some(i) => i,
+      .None => return ImportEnvResult.{ env, ok: false },
+    }
+    env = merge_import_interface(env, dep, interface)
+  }
+
+  ImportEnvResult.{ env, ok: true }
 }
 
 // ── Type accumulation ────────────────────────────────────────────────
