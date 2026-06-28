@@ -319,6 +319,76 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "group with failed external dep reports only dependency diagnostics",
+      fn() {
+        ov := overlay.from_documents([
+          ov_doc(
+            "/tmp/analyze/group_ext_a.tw",
+            "use group_ext_b\nuse broken\npub type A = .{ b: group_ext_b.B }\npub fn f() Int { broken.nope() }\n",
+          ),
+          ov_doc(
+            "/tmp/analyze/group_ext_b.tw",
+            "use group_ext_a\npub type B = .{ a: group_ext_a.A }\n",
+          ),
+          ov_doc("/tmp/analyze/broken.tw", "pub fn nope() Int { missing }\n"),
+        ])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/group_ext_a.tw")
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
+        try assert.is_false(result.ok)
+        try assert.equal(result.diagnostics.len(), 1)
+        try assert.equal(result.diagnostics[0].identity.path, "/tmp/analyze/broken.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "group members reject reserved stdlib type shadowing",
+      fn() {
+        ov := overlay.from_documents([
+          ov_doc(
+            "/tmp/analyze/reserved_cycle_a.tw",
+            "use reserved_cycle_b\npub type View = .{ x: Int }\npub fn f(v: reserved_cycle_b.B) Int { 1 }\n",
+          ),
+          ov_doc(
+            "/tmp/analyze/reserved_cycle_b.tw",
+            "use reserved_cycle_a\npub type B = .{ x: Int }\npub fn g(v: reserved_cycle_a.View<Int>) Int { 2 }\n",
+          ),
+        ])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/reserved_cycle_a.tw")
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
+        try assert.is_false(result.ok)
+        try assert.is_true(result.diagnostics.len() > 0)
+        try assert.equal(result.diagnostics[0].stage, "resolve")
+        try assert.str_contains(result.diagnostics[0].kind.message(), "reserved")
+        .Ok({})
+      },
+    )
+    .test(
+      "failed group does not publish partial member interfaces",
+      fn() {
+        ov := overlay.from_documents([
+          ov_doc(
+            "/tmp/analyze/partial_group_a.tw",
+            "use partial_group_b\npub type A = .{ b: partial_group_b.B }\npub fn bad() Int { missing }\n",
+          ),
+          ov_doc(
+            "/tmp/analyze/partial_group_b.tw",
+            "use partial_group_a\npub type B = .{ a: partial_group_a.A }\npub fn ok() Int { 1 }\n",
+          ),
+        ])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/partial_group_a.tw")
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
+        try assert.is_false(result.ok)
+        try assert.is_false(result.state.exports.has("/tmp/analyze/partial_group_a.tw"))
+        try assert.is_false(result.state.exports.has("/tmp/analyze/partial_group_b.tw"))
+        try assert.is_false(result.state.module_order.contains("/tmp/analyze/partial_group_a.tw"))
+        try assert.is_false(result.state.module_order.contains("/tmp/analyze/partial_group_b.tw"))
+        .Ok({})
+      },
+    )
+    .test(
       "early cutoff: dep body change preserves importer cache hits",
       fn() {
         ov1 := overlay.from_documents([

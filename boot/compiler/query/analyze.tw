@@ -1076,6 +1076,13 @@ type GroupMember = .{
   resolved_diags: Vector<diag.DiagKind>,
 }
 
+type TypedGroupMember = .{
+  member: GroupMember,
+  typed: checker.CheckResult,
+  runner: stage_runner.Runner,
+  group_deps_hash: Int,
+}
+
 fn build_member_set(members: Vector<String>) Dict<String, Bool> {
   s: Dict<String, Bool> = Dict.new()
 
@@ -1089,6 +1096,25 @@ fn build_member_set(members: Vector<String>) Dict<String, Bool> {
 fn mark_members_failed(state: AnalysisState, members: Vector<String>) AnalysisState {
   for m in members {
     state = .mark_failed(m)
+  }
+
+  state
+}
+
+fn clear_group_artifacts(state: AnalysisState, members: Vector<String>) AnalysisState {
+  for m in members {
+    state.cache = .clear_resolved_and_later(m)
+    state.exports = .remove(m)
+    state.interfaces = .remove(m)
+    state.module_runners = .remove(m)
+  }
+
+  state.module_order = collect m in state.module_order {
+    if members.contains(m) {
+      continue
+    }
+
+    m
   }
 
   state
@@ -1525,6 +1551,26 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     }
   }
 
+  // Match the singleton path's pre-resolve reserved-name guard before any group
+  // declaration interfaces are published. Without this, a cyclic user module can
+  // shadow reserved stdlib surface names and leave opaque builtins in the group
+  // interface.
+  for lm in loaded_members {
+    shadow_diags := reserved_stdlib_shadow_diags(lm.parsed, lm.canonical)
+
+    if shadow_diags.len() > 0 {
+      diags := wrap_diags(lm.source, "resolve", shadow_diags, type_name_snapshot(base))
+      return GroupResult.{
+        member_envs: Dict.new(),
+        state: cur.clear_group_artifacts(members).mark_members_failed(members),
+        diagnostics: diags,
+        ok: false,
+        rewrites: [],
+        lints: [],
+      }
+    }
+  }
+
   // Step A — collect declarations for all members against a shared TypeId
   // cursor and per-member external-only envs. Each member's own declarations
   // occupy [idx_start, idx_end) of its decl env; publish a declaration-only
@@ -1540,6 +1586,18 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
   for lm in loaded_members {
     ext_plan := external_dep_plan(lm.dep_plan, mset)
     ext_res := build_import_env(base, cur, ext_plan)
+
+    if !ext_res.ok {
+      return GroupResult.{
+        member_envs: Dict.new(),
+        state: cur.clear_group_artifacts(members).mark_members_failed(members),
+        diagnostics: [],
+        ok: false,
+        rewrites: [],
+        lints: [],
+      }
+    }
+
     ext_env := ext_res.env
 
     if lm.dep_plan.is_internal {
@@ -1609,15 +1667,14 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     step_c = .append(member)
   }
 
-  // Step D — typecheck + publish per member. The typecheck env is the member's
-  // resolved env with the now-signature-complete sibling interfaces re-merged
-  // (register_type_entry dedups by TypeId, register_function replaces by name,
-  // so re-merging only adds the siblings' resolved functions). Publish captures
-  // the member's own types via its step-A INDEX range.
+  // Step D — typecheck every member first, then publish only if the whole group
+  // is clean. Group resolution is atomic: a failed member must not leave sibling
+  // exports, interfaces, module_order entries, or typed artifacts behind.
   member_envs: Dict<String, ResolvedEnv> = Dict.new()
   all_diags: Vector<AnalysisDiag> = []
   group_rewrites: Vector<RewriteHit> = []
   group_lints: Vector<LintHit> = []
+  typed_members: Vector<TypedGroupMember> = []
   group_ok := true
 
   for mc in step_c {
@@ -1635,7 +1692,6 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     }
 
     if mc.resolved_diags.len() > 0 {
-      cur.cache = .clear_resolved_and_later(mc.canonical)
       diags := wrap_diags(mc.source, "resolve", mc.resolved_diags, type_name_snapshot(tc_env))
       all_diags = .concat(diags)
       group_ok = false
@@ -1658,14 +1714,30 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     typed := typed_out.value
 
     if typed.diagnostics.len() > 0 {
-      cur.cache = .clear_lowered_and_hash(mc.canonical)
       diags := wrap_diags(mc.source, "check", typed.diagnostics, type_name_snapshot(typed.env))
       all_diags = .concat(diags)
       group_ok = false
       continue
     }
 
-    cur.module_runners[mc.canonical] = runner
+    typed_members = .append(TypedGroupMember.{ member: mc, typed, runner, group_deps_hash })
+  }
+
+  if !group_ok {
+    return GroupResult.{
+      member_envs,
+      state: cur.clear_group_artifacts(members).mark_members_failed(members),
+      diagnostics: all_diags,
+      ok: false,
+      rewrites: [],
+      lints: [],
+    }
+  }
+
+  for tm in typed_members {
+    mc := tm.member
+    typed := tm.typed
+    cur.module_runners[mc.canonical] = tm.runner
 
     // Apply the step-A capture range against the typechecked env. This is
     // sound because of the INVARIANT on GroupMember.idx_start/idx_end:
@@ -1680,7 +1752,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
       mc.idx_start,
       mc.idx_end,
       mc.source_hash,
-      group_deps_hash,
+      tm.group_deps_hash,
     )
     member_envs[mc.canonical] = typed.env
 
@@ -1692,15 +1764,11 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     group_lints = .concat(findings.lints)
   }
 
-  if !group_ok {
-    cur = .mark_members_failed(members)
-  }
-
   GroupResult.{
     member_envs,
     state: cur,
     diagnostics: all_diags,
-    ok: group_ok,
+    ok: true,
     rewrites: group_rewrites,
     lints: group_lints,
   }
