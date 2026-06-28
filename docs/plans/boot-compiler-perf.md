@@ -23,7 +23,82 @@ For wall-clock checks, run the same build without timing output:
 Use same-session A/B comparisons for optimization work. Whole-pipeline timings
 are noisy enough that a single sample should not justify a change by itself.
 
-## Current baseline: 2026-06-25
+## Current baseline: 2026-06-28
+
+Measured on the `scc-module-groups` branch after the SCC frontend landed, using
+`target/twk build boot/main.tw`. Two same-session timing runs plus one wall-clock
+run with timing disabled.
+
+Representative phase timing (range across the two runs):
+
+```text
+compile_modules    ~2002 - 2017ms
+emit_module         ~444 - 445ms
+optimize            ~423 - 449ms
+prepare_backend     ~327 - 328ms
+verify              ~303 - 305ms
+core_link           ~247 - 250ms
+emit_wasm_binary    ~191 - 219ms
+link                ~202 - 204ms
+plan_wasm_types     ~110 - 111ms
+lower_anf           ~104 - 106ms
+monomorphize         ~71 - 72ms
+wasm_dce             ~53 - 55ms
+closure_convert      ~21 - 22ms
+```
+
+Wall-clock check without timing output:
+
+```text
+real 4.67s
+user 7.61s
+sys  0.47s
+```
+
+Frontend subphase timing currently has an instrumentation gap after the SCC
+driver swap: `dep_hashes`, `env_extend`, `import_merge`, and the detailed import
+edge counters report zero because the old recursive `analyze_dependencies`
+instrumentation no longer owns import-env construction. The non-zero frontend
+buckets from the same runs were:
+
+```text
+load_source       ~122ms
+parse              ~96 - 97ms
+plan_deps         ~177 - 189ms
+resolve           ~142 - 144ms
+typecheck         ~376 - 379ms
+publish            ~55 - 60ms
+unused_imports     ~17 - 18ms
+lower             ~257 - 260ms
+```
+
+Interpretation: the backend shape is still close to the June 25 recovered
+baseline. The frontend bucket grew after the SCC driver landed, but the missing
+import-env sub-timings mean the old “import merge dominates” claim cannot be
+revalidated from this run. Restoring import/env/deps-hash timing in the SCC path
+is the next observability task before drawing fine-grained frontend conclusions.
+
+Optimizer subphase shape:
+
+```text
+funcs=3051  total_rounds=6518  avg_rounds=2.14  at_cap=25
+
+dead_let       ~126 - 137ms
+copy_prop      ~117 - 120ms
+uniqueness      ~89 - 93ms
+defer_elim      ~7 - 8ms
+const_fold      ~7 - 9ms
+branch_simp     ~7ms
+```
+
+Backend planning and verification details:
+
+```text
+plan_wasm_types: 125308 slot registration calls, 1070 unique types
+verify:          122257 slots; expr_walk ~196 - 201ms dominates slot_checks ~103 - 105ms
+```
+
+## Previous baseline: 2026-06-25
 
 Measured compiling `boot/main.tw` (222 modules / 3029 functions), self-hosted
 boot compiler. Two same-session timing runs. These backend numbers were taken
