@@ -21,7 +21,7 @@ pub fn suite() runner.Suite {
         ])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/main.tw")
-        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_true(result.ok)
         try assert.equal(result.diagnostics.len(), 0)
         try assert.is_true(result.state.exports.has("/tmp/analyze/main.tw"))
@@ -37,7 +37,7 @@ pub fn suite() runner.Suite {
         ])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/main.tw")
-        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_true(result.ok)
         try assert.equal(result.diagnostics.len(), 0)
         try assert.is_true(result.state.exports.has("/tmp/analyze/dep.tw"))
@@ -54,7 +54,7 @@ pub fn suite() runner.Suite {
         ])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/a.tw")
-        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_false(result.ok)
         try assert.is_true(result.diagnostics.len() > 0)
         msg := result.diagnostics[0].kind.message()
@@ -68,7 +68,7 @@ pub fn suite() runner.Suite {
         ov := overlay.from_documents([ov_doc("/tmp/analyze/bad.tw", "fn f( {")])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/bad.tw")
-        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_false(result.ok)
         try assert.is_true(result.diagnostics.len() > 0)
         try assert.equal(result.diagnostics[0].stage, "parse")
@@ -81,7 +81,7 @@ pub fn suite() runner.Suite {
         ov := overlay.from_documents([ov_doc("/tmp/analyze/err.tw", "fn answer() String { 42 }")])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/err.tw")
-        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_false(result.ok)
         try assert.is_true(result.diagnostics.len() > 0)
         try assert.equal(result.diagnostics[0].stage, "check")
@@ -103,7 +103,7 @@ pub fn suite() runner.Suite {
         ])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/main.tw")
-        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_false(result.ok)
         try assert.equal(result.diagnostics.len(), 1)
         try assert.is_true(result.state.failed.has("/tmp/analyze/broken.tw"))
@@ -116,12 +116,12 @@ pub fn suite() runner.Suite {
         ov := overlay.from_documents([ov_doc("/tmp/analyze/cached.tw", "x := 1\n")])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/cached.tw")
-        first := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        first := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_true(first.ok)
 
         // Re-analyze with same source — should get cache hits
         state2 := analyze.new_state(base_env.builtin_env(), first.state.cache, ov, "/tmp/analyze")
-        second := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state2, [])
+        second := analyze.analyze_module(id, base_env.builtin_env(), state2)
         try assert.is_true(second.ok)
         stats := cache.get_stats(second.state.cache)
         try assert.is_true(stats.parse_hits > 0)
@@ -139,7 +139,7 @@ pub fn suite() runner.Suite {
         ])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/main.tw")
-        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_true(result.ok)
 
         // dep should come before main (dependency order), with bundled prelude modules allowed.
@@ -174,7 +174,7 @@ pub fn suite() runner.Suite {
         ])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/main.tw")
-        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_false(result.ok)
         try assert.is_true(result.diagnostics.len() > 0)
 
@@ -191,7 +191,7 @@ pub fn suite() runner.Suite {
         ov := overlay.from_documents([ov_doc("/tmp/analyze/main.tw", "use missing\nx := 1\n")])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/main.tw")
-        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_false(result.ok)
         try assert.is_true(result.diagnostics.len() > 0)
         try assert.equal(result.diagnostics[0].stage, "import")
@@ -206,7 +206,7 @@ pub fn suite() runner.Suite {
         ov := overlay.from_documents([ov_doc("/tmp/analyze/main.tw", "use missing\nx := 1\n")])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/main.tw")
-        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_false(result.ok)
         d := result.diagnostics[0]
 
@@ -230,7 +230,7 @@ pub fn suite() runner.Suite {
         ])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/a.tw")
-        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_false(result.ok)
         try assert.is_true(result.diagnostics.len() > 0)
         d := result.diagnostics[0]
@@ -251,7 +251,7 @@ pub fn suite() runner.Suite {
         ])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/main.tw")
-        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_false(result.ok)
         try assert.is_true(result.diagnostics.len() > 0)
         try assert.equal(result.diagnostics[0].stage, "resolve")
@@ -269,7 +269,7 @@ pub fn suite() runner.Suite {
         ])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/main.tw")
-        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        result := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_true(result.ok)
 
         // Every module in module_order should have a runner
@@ -289,7 +289,7 @@ pub fn suite() runner.Suite {
         ])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov1, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/main.tw")
-        first := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        first := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_true(first.ok)
 
         // Change dep body but keep same signature
@@ -298,7 +298,7 @@ pub fn suite() runner.Suite {
           ov_doc("/tmp/analyze/helper.tw", "pub fn value() Int { 999 }\n"),
         ])
         state2 := analyze.new_state(base_env.builtin_env(), first.state.cache, ov2, "/tmp/analyze")
-        second := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state2, [])
+        second := analyze.analyze_module(id, base_env.builtin_env(), state2)
         try assert.is_true(second.ok)
         stats := cache.get_stats(second.state.cache)
 
@@ -317,7 +317,7 @@ pub fn suite() runner.Suite {
         ])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov1, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/main.tw")
-        first := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        first := analyze.analyze_module(id, base_env.builtin_env(), state)
         try assert.is_true(first.ok)
         first_changed := cache.changed_at(first.state.cache, "/tmp/analyze/main.tw", .Typed)
         ov2 := overlay.from_documents([
@@ -325,7 +325,7 @@ pub fn suite() runner.Suite {
           ov_doc("/tmp/analyze/helper.tw", "pub fn value() String { \"one\" }\n"),
         ])
         state2 := analyze.new_state(base_env.builtin_env(), first.state.cache, ov2, "/tmp/analyze")
-        second := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state2, [])
+        second := analyze.analyze_module(id, base_env.builtin_env(), state2)
         try assert.is_false(second.ok)
         try assert.is_true(second.diagnostics.len() > 0)
         try assert.is_true(

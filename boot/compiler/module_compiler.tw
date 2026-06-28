@@ -49,7 +49,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
   t_modules_start := date.now()
   entry_id := identity.from_path(canonical_entry)
   a_state := analyze.new_state(base_env, query_cache.empty(), overlay.empty(), project_root)
-  a_result := analyze.analyze_module(entry_id, "__entry", base_env, a_state, [])
+  a_result := analyze.analyze_module(entry_id, base_env, a_state)
 
   if !a_result.ok {
     if a_result.diagnostics.len() > 0 {

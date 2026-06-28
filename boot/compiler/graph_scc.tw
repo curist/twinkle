@@ -36,7 +36,7 @@ fn visit(st: State, node: String, edges: Dict<String, Vector<String>>) State {
 
   for dep in deps {
     if !cur.indices.has(dep) {
-      cur = visit(cur, dep, edges)
+      cur = .visit(dep, edges)
       dep_low := dict_int(cur.lowlinks, dep, "lowlink")
       self_low := dict_int(cur.lowlinks, node, "lowlink")
 
@@ -105,7 +105,7 @@ pub fn strongly_connected(nodes: Vector<String>, edges: Dict<String, Vector<Stri
 
   for node in nodes {
     if !st.indices.has(node) {
-      st = visit(st, node, edges)
+      st = .visit(node, edges)
     }
   }
 

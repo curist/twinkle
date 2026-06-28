@@ -12,27 +12,25 @@
 
 ---
 
-## Progress / Resume Here (updated 2026-06-27)
+## Progress / Resume Here (updated 2026-06-28)
 
-Executing on branch `scc-module-groups` (branched from `main` after the design+plan commits). Tasks 1–5 are **DONE, reviewed (spec + quality), and committed**. Suite at **2852 tests green**, self-host fixed point holds, and acyclic output is **byte-identical** (verified). Working tree clean at the Task 5 commit.
+Executing on branch `scc-module-groups` (branched from `main` after the design+plan commits). Tasks 1–8 are **DONE**. The production frontend uses the SCC two-pass driver, and the old recursive back-edge mechanism has been removed.
 
 - [x] **Task 1** — `boot/compiler/graph_scc.tw` (reusable Tarjan SCC); `type_order.tw` routed through it; hardened tests (self-loop/membership/disconnected). Commits `a21fe64b`, `5036bdd4` (restored root-first intra-component order for byte-parity), `b10d57e4`.
 - [x] **Task 2** — resolver passes exposed (`resolve_references`/`detect_circular_aliases` pub) + `collect_declarations_from(env, module, id_start)` / `DeclCollection` / `next_type_id` threading a TypeId cursor; `collect_declarations` delegates. Commit `6cefb982`. (Accepted-minor: `id_start` vs `start_id` naming; `next_type_id` wraps `next_available_type_id`.)
 - [x] **Task 3** — range-aware `capture_local_types_range` / `publish_interface_range`; singleton wrappers unchanged. Commit `a1a4d243`.
 - [x] **Task 4** — env-independent `discover_closure` (Phase 1) + `Discovery` type; deduped identity, `record_failure` helper, edge-assert test. Commits `ba904ae5`, `4129ea79`.
 - [x] **Task 5** — `build_import_env` extracted (named result `ImportEnvResult`; stage0 has no anon-record returns) and `analyze_dependencies` retrofitted to use it; byte-identical self-host. Commit `83436934`.
+- [x] **Task 6** — `resolve_group` (steps A–D) + `resolve_singleton` + new `pub fn analyze_module_scc` driver in `analyze.tw`, not yet wired at that point. Commits `a3463a29`, `fe633fe8`. New `group_resolution_suite.tw` proves cycle fixtures compile through the SCC path and value-init cycles are rejected. Implementer caught a real bug: the TypeId cursor must seed from `extend_env_from_shared(base, cur).next_type_id()` (NOT `base`), else collected decls alias onto prelude TypeIds. Spec review verified per-member scoped envs (no flat-env collision), disjoint cursor ranges, step-B own-decls+merged-siblings env, value-init naming, and step-D via `stage_runner.typecheck` (no re-allocation).
+- [x] **Task 7 — DONE, committed `b19b2678`.** `analyze_module` now delegates to `analyze_module_scc`, making Phase 1 discovery → Tarjan condensation → Phase 2 SCC-ordered resolution the production path. Singleton fidelity gaps are closed: closure snapshot capture, progress events, timings, dependency-failure cache clearing/`mark_failed`, unused-import warnings, and lint/rewrite findings are restored. Existing back-edge code is intentionally left present but unreferenced for Task 8 deletion. The implementation did **not** extract Phase 2 into `analyze_scc.tw`; keep that as an optional cleanup after deleting the dead back-edge code if the split is still worthwhile.
 
-**RESTRUCTURE for Tasks 6–7 (decided during execution):** `resolve_group` cannot be unit-tested in isolation (validating it needs a driver that resolves the group's *external* deps first in SCC order). So the Phase-2 **driver function** is folded into Task 6 as a NEW `pub fn analyze_module_scc(id, alias, base, state) ModuleResult` that is **proven on real cycle fixtures by tests but NOT yet wired into `compile_entry`**. Task 7 is then narrowed to: flip the production entry to `analyze_module_scc`, achieve byte-identical self-host fidelity for singletons (entry_snapshot, progress, timings, mark_failed), and delete the back-edge code. The pre-Task-7 human checkpoint still holds — it now gates "make the proven SCC driver the production driver."
+**Carry forward:**
+- **INVARIANT (documented in code):** group publish captures the member's `[idx_start, idx_end)` env.types INDEX range computed on the *declaration* env but applied to the *typechecked* env. Sound ONLY because `resolve_references`/`check` never insert type entries within that slice (they fill defs in place + append only functions/sibling types past it). If a future resolver/checker change appends a member-owned type within the slice, group capture must be recomputed on the typechecked env. (Record this for the stage0 mirror too.)
+- **Step C is per-member** `detect_circular_aliases`, not the design's combined-view — cross-module type-alias cycles uncaught (bounded by `expand_alias` depth-10, can't hang). Close when mirroring to stage0.
 
-- [x] **Task 6 — DONE, reviewed (spec + quality), committed `a3463a29` + polish `fe633fe8`.** `resolve_group` (steps A–D) + `resolve_singleton` + new `pub fn analyze_module_scc` driver in `analyze.tw`, NOT yet wired into `compile_entry`. New `group_resolution_suite.tw` proves cycle_type_a/cycle_fn_a/circular_a compile, cycle_value_a rejected ("initialization cycle"), and an acyclic fixture works through the singleton path. **2857 tests green, self-host fixed point holds.** Implementer caught a real bug: the TypeId cursor must seed from `extend_env_from_shared(base, cur).next_type_id()` (NOT `base`), else collected decls alias onto prelude TypeIds. Spec review verified per-member scoped envs (no flat-env collision), disjoint cursor ranges, step-B own-decls+merged-siblings env, value-init naming, and step-D via `stage_runner.typecheck` (no re-allocation).
+- [x] **Task 8 — DONE.** Deleted the dead back-edge mechanism: `analyze_module_impl`, `analyze_dependencies`, `break_import_cycle`, `next_preliminary_type_id`, preliminary-interface helpers, opaque stubs, the stack/back-edge branch, and public `analyze_module` stack/alias plumbing. `resolve_group` keeps the reusable `opaque_type_exports` helper for declaration/signature-complete group interfaces. Validation passed: `make boot-test`, `make stage2` (already up to date after boot-test), `target/twk lint boot/main.tw`, and `make rust-test`.
 
-  **Carry into Task 7:**
-  - **INVARIANT (documented in code):** group publish captures the member's `[idx_start, idx_end)` env.types INDEX range computed on the *declaration* env but applied to the *typechecked* env. Sound ONLY because `resolve_references`/`check` never insert type entries within that slice (they fill defs in place + append only functions/sibling types past it). If a future resolver/checker change appends a member-owned type within the slice, group capture must be recomputed on the typechecked env. (Record this for the stage0 mirror too.)
-  - **Step C is per-member** `detect_circular_aliases`, not the design's combined-view — cross-module type-alias cycles uncaught (bounded by `expand_alias` depth-10, can't hang). Close when mirroring to stage0.
-  - **Code-quality recommendation:** as the FIRST step of Task 7, extract the Phase-2 block (`resolve_group`/`resolve_singleton`/`analyze_module_scc`/`GroupMember`) out of the already-huge `analyze.tw` into `boot/compiler/query/analyze_scc.tw` before it entangles with the production path.
-  - **Singleton fidelity gaps to close in Task 7** (noted in code comments): `analyze_module_scc` omits `entry_snapshot` capture, progress events, timings, and unused-import/lint findings (`rewrites`/`lints` return empty); `alias` param unused. These must be restored for byte-identical self-host + LSP parity when flipping the production entry.
-
-- [ ] **Task 7 — NEXT (human checkpoint before starting).** Flip production: extract Phase-2 to `analyze_scc.tw` (recommendation above), point `analyze_module`/`compile_entry` at the SCC driver, restore singleton fidelity (entry_snapshot/progress/timings/lint/unused-imports) until `make stage2` is byte-identical and the FULL suite + LSP/diagnostics suites pass, then proceed to Task 8 (delete back-edge: `break_import_cycle`/`next_preliminary_type_id`/opaque stubs/back-edge branch; KEEP `preliminary_type_exports`/`preliminary_type_interface` — now the group's decl-only interface).
+- [ ] **Task 9 — NEXT.** Add group-correctness fixtures/tests: three-module cycle, cross-module shared local type names, and a value-init diagnostic that names all participating modules.
 
 ---
 
@@ -40,14 +38,12 @@ Executing on branch `scc-module-groups` (branched from `main` after the design+p
 
 Key files and current behavior:
 
-- `boot/compiler/query/analyze.tw` — the frontend driver. `analyze_module_impl`
-  (line ~366) is a recursive DFS with an explicit `stack`. Back-edges
-  (`stack.contains`, ~388) route to `break_import_cycle` (~851). Per module it
-  does `load_source` → `parse_cached` → `plan_dependencies` → `analyze_dependencies`
-  (recurse) → `resolve_and_check_local` (~1197) → `publish_interface` (~1251).
-  `publish_interface` calls `capture_local_types` (~1375), which partitions the
-  env by a single `local_type_start` offset. `module_order` (state field) is
-  appended in `publish_interface` (~1267).
+- `boot/compiler/query/analyze.tw` — the frontend driver. `analyze_module` now
+  delegates to `analyze_module_scc`: Phase 1 `discover_closure` loads/parses/plans
+  the closure, Tarjan condenses it, and Phase 2 resolves singleton SCCs via
+  `resolve_singleton` or multi-module SCCs via `resolve_group`. Range-aware
+  `publish_interface_range` captures each group's member-owned type slice, and
+  `module_order` is appended as SCCs publish.
 - `boot/compiler/resolver.tw` — `resolve()` (~1246) welds three passes:
   `collect_declarations` (~1316) → `resolve_references` (~1425) →
   `detect_circular_aliases` (~2877). `next_available_type_id` (~1283) is max+1
@@ -56,9 +52,8 @@ Key files and current behavior:
 - `boot/compiler/query/stage_runner.tw` — `resolve` (~49) wraps `env.resolve(module)`
   with caching keyed on `source_hash`/`deps_hash`/`context_hash`; `typecheck`
   (~69) wraps `checker.check(module, resolved.env, lint_mode)`.
-- `boot/compiler/codegen/type_order.tw` — a working string-keyed Tarjan
-  (`tarjan_visit`, ~123; `Dict<String,Int>` lowlinks/on_stack; components as
-  `Vector<Vector<String>>`).
+- `boot/compiler/graph_scc.tw` — shared string-keyed Tarjan SCC utility used by
+  both module grouping and `boot/compiler/codegen/type_order.tw`.
 - `boot/compiler/imports.tw` — `plan_dependencies` yields a `DependencyPlan`
   whose `dependencies` carry `canonical_path`, `alias`, `kind`, `items`, `span`.
 - `boot/compiler/module_compiler.tw` — `compile_entry` calls `analyze_module`
@@ -70,8 +65,8 @@ Key files and current behavior:
 
 **Non-negotiable invariant:** acyclic programs are all singleton SCCs. The
 self-host fixed point (`make stage2`) and full boot suite (`make boot-test`) must
-stay green at every commit. The driver swap (Task 7) is the high-risk integration;
-its real acceptance gate is the full suite + self-host, not a single unit test.
+stay green at every commit. Multi-module groups must resolve after their external
+dependencies and publish each member independently.
 
 **Commands used throughout:**
 - Build CLI in use: `target/twk` (already built).

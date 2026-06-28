@@ -108,7 +108,7 @@ fn gather_findings(file: String) Vector<Finding> {
   entry_id := identity.from_path(canonical_entry)
   a_state := analyze.new_state(base_env, query_cache.empty(), overlay.empty(), project_root)
   a_state.lint_mode = true
-  a_result := analyze.analyze_module(entry_id, "__entry", base_env, a_state, [])
+  a_result := analyze.analyze_module(entry_id, base_env, a_state)
   findings: Vector<Finding> = []
 
   // R2: unused-import removals ride the UnusedImport warning's data.fixes.

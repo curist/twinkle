@@ -27,7 +27,7 @@ fn run_scc(entry_path: String) analyze.ModuleResult {
   base_env := builtin_env()
   state := analyze.new_state(base_env, cache.empty(), overlay.empty(), project_root)
   entry_id := identity.from_path(canon(entry_path))
-  analyze.analyze_module_scc(entry_id, "__entry", base_env, state)
+  analyze.analyze_module_scc(entry_id, base_env, state)
 }
 
 fn error_diag_count(result: analyze.ModuleResult) Int {

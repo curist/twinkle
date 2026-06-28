@@ -17,7 +17,7 @@ fn analyze_src(text: String, lint_mode: Bool) analyze.ModuleResult {
   state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/lintan")
   state.lint_mode = lint_mode
   id := identity.from_path("/tmp/lintan/main.tw")
-  analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+  analyze.analyze_module(id, base_env.builtin_env(), state)
 }
 
 pub fn suite() runner.Suite {

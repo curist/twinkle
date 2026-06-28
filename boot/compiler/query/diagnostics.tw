@@ -201,7 +201,7 @@ pub fn analyze_workspace_with_progress(
     .None => {},
   }
 
-  result := analyze.analyze_module(entry_id, "__entry", base, state, [])
+  result := analyze.analyze_module(entry_id, base, state)
 
   // On reuse the dependency diagnostics were not recomputed (deps
   // short-circuited), so prepend the closure diagnostics carried in the snapshot.

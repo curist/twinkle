@@ -42,7 +42,7 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
 
   // Phase 1: Frontend analysis (parse → resolve → typecheck)
   a_state := analyze.new_state(base_env, query_cache.empty(), ov, project_root)
-  a_result := analyze.analyze_module(virtual_id, "__input", base_env, a_state, [])
+  a_result := analyze.analyze_module(virtual_id, base_env, a_state)
 
   if !a_result.ok {
     return .Err(format_analysis_diags_inline(a_result.env, src, a_result.diagnostics))

@@ -13,9 +13,8 @@ use compiler.base_env.{add_internal_buf_builtins, reserved_stdlib_type_origin}
 use compiler.checker
 use compiler.graph_scc
 use compiler.imports
-use compiler.imports.{DependencyPlan, PlannedDep}
+use compiler.imports.{DependencyPlan}
 use compiler.lint
-use compiler.mono_type.{TypeId}
 use compiler.query.cache
 use compiler.query.fingerprint
 use compiler.query.progress
@@ -185,22 +184,11 @@ type AnalysisError = .{ state: AnalysisState, diagnostics: Vector<AnalysisDiag> 
 
 type ParseLoad = .{ state: AnalysisState, parsed: cache.ParsedModule }
 
-type DependencyAnalysis = .{
-  env: ResolvedEnv,
-  state: AnalysisState,
-  diagnostics: Vector<AnalysisDiag>,
-  ok: Bool,
-  rewrites: Vector<RewriteHit>,
-  lints: Vector<LintHit>,
-}
-
 type DependencyHashes = .{ deps_hash: Int, context_hash: Int }
 
 type ImportEnvResult = .{ env: ResolvedEnv, ok: Bool }
 
 type LocalCheck = .{ state: AnalysisState, checked: checker.CheckResult }
-
-type PreliminaryInterface = .{ state: AnalysisState, interface: ModuleInterface }
 
 // ── Public API ──────────────────────────────────────────────────────
 /// Create a fresh analysis state.
@@ -349,17 +337,8 @@ pub fn restore_snapshot(state: AnalysisState, s: ClosureSnapshot) AnalysisState 
 ///
 /// Uses the overlay for source reading (falls back to disk).
 /// Accumulates diagnostics rather than short-circuiting.
-pub fn analyze_module(
-  id: identity.SourceIdentity,
-  alias: String,
-  base: ResolvedEnv,
-  state: AnalysisState,
-  stack: Vector<String>,
-) ModuleResult {
-  // Two-pass SCC driver is the production frontend. The `stack` parameter is
-  // retained for signature parity with every existing call site; the driver
-  // discovers cycles up front (Tarjan) and needs no caller-threaded stack.
-  analyze_module_scc(id, alias, base, state)
+pub fn analyze_module(id: identity.SourceIdentity, base: ResolvedEnv, state: AnalysisState) ModuleResult {
+  analyze_module_scc(id, base, state)
 }
 
 /// Record that `canonical` failed analysis so later paths to it short-circuit
@@ -367,267 +346,6 @@ pub fn analyze_module(
 fn mark_failed(state: AnalysisState, canonical: String) AnalysisState {
   state.failed[canonical] = true
   state
-}
-
-fn analyze_module_impl(
-  id: identity.SourceIdentity,
-  alias: String,
-  base: ResolvedEnv,
-  state: AnalysisState,
-  stack: Vector<String>,
-  caller_id: identity.SourceIdentity?,
-  use_span: Span?,
-) ModuleResult {
-  canonical := imports.canonical_module_path(id.path, state.canonical_roots)
-  module_id := identity.from_path(canonical)
-
-  // Already analyzed? Return cached exports.
-  case state.exports[canonical] {
-    .Some(_) => return .{ env: base, state, diagnostics: [], ok: true, rewrites: [], lints: [] },
-    .None => {},
-  }
-
-  // Import cycle reached via a back-edge. If a preliminary interface is already
-  // published for this module, let the caller merge it. Otherwise try to break
-  // the cycle by publishing one (signatures only); modules with top-level
-  // initialization or mutually-recursive types cannot be broken and error.
-  if stack.contains(canonical) {
-    case state.interfaces[canonical] {
-      .Some(_) => return .{ env: base, state, diagnostics: [], ok: true, rewrites: [], lints: [] },
-      .None => return break_import_cycle(id, alias, base, state, stack, caller_id, use_span),
-    }
-  }
-
-  // Already failed on an earlier path? Return the memoized failure without
-  // re-walking its subtree. Diagnostics were reported on the first failure;
-  // re-reporting here would duplicate them.
-  if state.failed.has(canonical) {
-    return .{ env: base, state, diagnostics: [], ok: false, rewrites: [], lints: [] }
-  }
-
-  state.note_progress(.Loading, canonical)
-  t_load0 := date.now()
-  loaded := case state.load_source(canonical, module_id, caller_id, use_span) {
-    .Ok(value) => value,
-    .Err(err) => return .{
-      env: base,
-      state: err.state.mark_failed(canonical),
-      diagnostics: err.diagnostics,
-      ok: false,
-      rewrites: [],
-      lints: [],
-    },
-  }
-
-  if loaded.state.timed {
-    loaded.state.timings.load_source = loaded.state.timings.load_source + (date.now() - t_load0)
-  }
-
-  loaded.state.note_progress(.Parsing, canonical)
-  t_parse0 := date.now()
-  parsed_load := case loaded.state.parse_cached(canonical, loaded.source, loaded.source_hash) {
-    .Ok(value) => value,
-    .Err(err) => return .{
-      env: base,
-      state: err.state.mark_failed(canonical),
-      diagnostics: err.diagnostics,
-      ok: false,
-      rewrites: [],
-      lints: [],
-    },
-  }
-
-  if parsed_load.state.timed {
-    parsed_load.state.timings.parse = parsed_load.state.timings.parse + (date.now() - t_parse0)
-  }
-
-  parsed_load.state.note_progress(.PlanningImports, canonical)
-  t_plan0 := date.now()
-  dep_plan := case parsed_load.state.plan_dependencies(canonical, parsed_load.parsed, loaded.source) {
-    .Ok(plan) => plan,
-    .Err(err) => return .{
-      env: base,
-      state: err.state.mark_failed(canonical),
-      diagnostics: err.diagnostics,
-      ok: false,
-      rewrites: [],
-      lints: [],
-    },
-  }
-
-  if parsed_load.state.timed {
-    parsed_load.state.timings.plan_deps = parsed_load.state.timings.plan_deps
-    + (date.now() - t_plan0)
-  }
-
-  parsed_load.state.note_progress(.AnalyzingDependencies, canonical)
-  deps := analyze_dependencies(
-    base,
-    parsed_load.state,
-    canonical,
-    dep_plan,
-    stack.append(canonical),
-  )
-
-  if !deps.ok {
-    return .{
-      env: deps.env,
-      state: deps.state.mark_failed(canonical),
-      diagnostics: deps.diagnostics,
-      ok: false,
-      rewrites: [],
-      lints: [],
-    }
-  }
-
-  cur := deps.state
-
-  // Capture the dependency-closure snapshot for the entry module (the only one
-  // reached with caller_id == .None) before analyzing its own module, so a
-  // later re-edit of the same entry can restore it and skip the dependency walk.
-  if cur.capture_snapshot {
-    case caller_id {
-      .None => cur.entry_snapshot = .Some(
-        .{
-          entry: canonical,
-          entry_dep_paths: collect dep in dep_plan.dependencies {
-            dep.canonical_path
-          },
-          closure_modules: cur.module_order,
-          exports: cur.exports,
-          interfaces: cur.interfaces,
-          shared_types: cur.shared_types,
-          shared_type_origins: cur.shared_type_origins,
-          module_order: cur.module_order,
-          module_runners: cur.module_runners,
-          failed: cur.failed,
-          dep_diagnostics: deps.diagnostics,
-        },
-      ),
-      .Some(_) => {},
-    }
-  }
-
-  t_hash0 := date.now()
-  hashes := dependency_hashes(cur.cache, dep_plan)
-
-  if cur.timed {
-    cur.timings.dep_hashes = cur.timings.dep_hashes + (date.now() - t_hash0)
-  }
-
-  env := deps.env
-
-  if dep_plan.is_internal {
-    env = add_internal_buf_builtins(env)
-  }
-
-  local_type_start := env.types.len()
-
-  // The same module can be analyzed first as an entry and later as a dependency
-  // after more shared types have been installed in the base environment. Include
-  // the base type count so cached resolved/checked artifacts are only reused
-  // with a compatible TypeId layout.
-  context_hash := keys.mix_word(hashes.context_hash, local_type_start)
-  runner := stage_runner.new(
-    canonical,
-    loaded.source_hash,
-    hashes.deps_hash,
-    context_hash,
-    dep_plan.is_internal,
-  )
-  cur.module_runners[canonical] = runner
-
-  // If a dependency reached this module through a cycle, it may have published
-  // an opaque preliminary interface for our own exported types/functions. Merge
-  // it back unqualified so the final resolve reuses those TypeIds and fills in
-  // the real definitions instead of allocating duplicate local types.
-  case cur.interfaces[canonical] {
-    .Some(prelim) => if !cur.exports.has(canonical) {
-      env = .merge_module_exports("", canonical, prelim.exports)
-    },
-    .None => {},
-  }
-
-  cur.note_progress(.Resolving, canonical)
-  local := case cur.resolve_and_check_local(
-    canonical,
-    runner,
-    parsed_load.parsed,
-    env,
-    loaded.source,
-    deps.diagnostics,
-  ) {
-    .Ok(value) => value,
-    .Err(err) => return .{
-      env,
-      state: err.state.mark_failed(canonical),
-      diagnostics: err.diagnostics,
-      ok: false,
-      rewrites: [],
-      lints: [],
-    },
-  }
-  local.state.note_progress(.Publishing, canonical)
-  t_publish0 := date.now()
-  cur = local.state.publish_interface(
-    canonical,
-    parsed_load.parsed,
-    local.checked,
-    local_type_start,
-    loaded.source_hash,
-    hashes.deps_hash,
-  )
-
-  if cur.timed {
-    cur.timings.publish = cur.timings.publish + (date.now() - t_publish0)
-  }
-
-  // Emit unused import warnings for non-internal modules
-  all_diags := deps.diagnostics
-  t_unused0 := date.now()
-
-  if !dep_plan.is_internal {
-    import_result := unused_imports.check_unused_imports(parsed_load.parsed.module)
-
-    if import_result.items.len() > 0 {
-      warn_diags := convert_unused_import_diags(loaded.source, import_result)
-      all_diags = .concat(warn_diags)
-    }
-  }
-
-  if cur.timed {
-    cur.timings.unused_imports = cur.timings.unused_imports + (date.now() - t_unused0)
-  }
-
-  // Findings follow the import chain: this module's plus everything below it.
-  // Internal modules (stdlib/prelude) are never linted or rewritten.
-  local_rewrites: Vector<RewriteHit> = if cur.lint_mode and !dep_plan.is_internal {
-    collect rw in local.checked.rewrites {
-      .{ path: loaded.source.identity.path, rewrite: rw }
-    }
-  } else {
-    []
-  }
-  local_lints: Vector<LintHit> = if cur.lint_mode and !dep_plan.is_internal {
-    // Structural lints (L3/L4) from the AST visitor + type-dependent lints
-    // (L2, …) collected by the checker.
-    all_findings := lint
-      .lint_module(parsed_load.parsed.module, local.checked.env, loaded.source.text)
-      .concat(local.checked.lints)
-    collect f in all_findings {
-      .{ path: loaded.source.identity.path, finding: f }
-    }
-  } else {
-    []
-  }
-  .{
-    env: local.checked.env,
-    state: cur,
-    diagnostics: all_diags,
-    ok: true,
-    rewrites: deps.rewrites.concat(local_rewrites),
-    lints: deps.lints.concat(local_lints),
-  }
 }
 
 // ── Analysis helpers ────────────────────────────────────────────────
@@ -708,95 +426,12 @@ fn plan_dependencies(
   .Ok(dep_plan)
 }
 
-/// Break an import cycle by publishing a preliminary interface for `id`.
-///
-/// Reached from a back-edge: this module is already being analyzed up the stack.
-/// We resolve only its signatures (not bodies) against its non-cycle
-/// dependencies, then publish a preliminary interface so the dependent can
-/// merge it; the module's own outer call later publishes the final interface.
-///
-/// Two cases cannot be broken this way and error:
-/// - the module has top-level statements (undefined initialization order), or
-/// - resolving its signatures still fails after cycle-sibling type stubs are visible.
-fn next_preliminary_type_id(env: ResolvedEnv) Int {
-  max_id := -1
-
-  for entry in env.types {
-    if entry.id.id > max_id {
-      max_id = entry.id.id
-    }
-  }
-
-  max_id + 1
-}
-
 fn reserved_stdlib_type_allowed(name: String, canonical: String) Bool {
   origin := "${canonical}::${name}"
   case reserved_stdlib_type_origin(name) {
     .Some(reserved_origin) => reserved_origin == origin
       or name == "View" and canonical.ends_with("/stdlib/view.tw"),
     .None => true,
-  }
-}
-
-fn preliminary_type_exports(parsed: cache.ParsedModule, canonical: String, start_id: Int) ModuleExports {
-  visible_types: Vector<ExportedType> = []
-  next_id := start_id
-
-  for item in parsed.module.items {
-    case item {
-      .Type(decl) => if decl.is_pub {
-        origin := "${canonical}::${decl.name}"
-        if !reserved_stdlib_type_allowed(decl.name, canonical) {
-          continue
-        }
-        visible_types = .append(
-          ExportedType.{
-            name: decl.name,
-            entry: TypeEntry.{
-              id: TypeId.{ id: next_id },
-              arity: decl.type_params.len(),
-              def: .None,
-              span: decl.span,
-              is_extern: false,
-            },
-            origin: .Some(origin),
-          },
-        )
-        next_id = next_id + 1
-      },
-      .ExternType(decl) => if decl.is_pub {
-        origin := "${canonical}::${decl.name}"
-        if !reserved_stdlib_type_allowed(decl.name, canonical) {
-          continue
-        }
-        visible_types = .append(
-          ExportedType.{
-            name: decl.name,
-            entry: TypeEntry.{
-              id: TypeId.{ id: next_id },
-              arity: 0,
-              def: .None,
-              span: decl.span,
-              is_extern: true,
-            },
-            origin: .Some(origin),
-          },
-        )
-        next_id = next_id + 1
-      },
-      _ => {},
-    }
-  }
-
-  ModuleExports.{
-    doc: parsed.module.doc,
-    visible_types,
-    support_types: [],
-    functions: [],
-    support_functions: [],
-    methods: Dict.new(),
-    values: [],
   }
 }
 
@@ -818,356 +453,6 @@ fn opaque_type_exports(exports: ModuleExports) ModuleExports {
     support_functions: exports.support_functions,
     methods: exports.methods,
     values: exports.values,
-  }
-}
-
-fn preliminary_type_interface(
-  state: AnalysisState,
-  env: ResolvedEnv,
-  dep: PlannedDep,
-  caller_id: identity.SourceIdentity?,
-  use_span: Span?,
-) PreliminaryInterface!AnalysisError {
-  dep_id := identity.from_path(dep.canonical_path)
-  loaded := case state.load_source(dep.canonical_path, dep_id, caller_id, use_span) {
-    .Ok(value) => value,
-    .Err(err) => return .Err(err),
-  }
-  parsed_load := case loaded.state.parse_cached(
-    dep.canonical_path,
-    loaded.source,
-    loaded.source_hash,
-  ) {
-    .Ok(value) => value,
-    .Err(err) => return .Err(err),
-  }
-  exports := preliminary_type_exports(
-    parsed_load.parsed,
-    dep.canonical_path,
-    next_preliminary_type_id(env),
-  )
-  interface := make_module_interface(
-    dep.canonical_path,
-    exports,
-    parsed_load.state.shared_type_origins,
-  )
-  .Ok(.{ state: parsed_load.state, interface })
-}
-
-fn break_import_cycle(
-  id: identity.SourceIdentity,
-  alias: String,
-  base: ResolvedEnv,
-  state: AnalysisState,
-  stack: Vector<String>,
-  caller_id: identity.SourceIdentity?,
-  use_span: Span?,
-) ModuleResult {
-  canonical := imports.canonical_module_path(id.path, state.canonical_roots)
-  module_id := identity.from_path(canonical)
-
-  err_id := case caller_id {
-    .Some(cid) => cid,
-    .None => module_id,
-  }
-  err_span := case use_span {
-    .Some(s) => s,
-    .None => span.new(0, 0, 0),
-  }
-
-  loaded := case state.load_source(canonical, module_id, caller_id, use_span) {
-    .Ok(value) => value,
-    .Err(err) => return .{
-      env: base,
-      state: err.state,
-      diagnostics: err.diagnostics,
-      ok: false,
-      rewrites: [],
-      lints: [],
-    },
-  }
-  parsed_load := case loaded.state.parse_cached(canonical, loaded.source, loaded.source_hash) {
-    .Ok(value) => value,
-    .Err(err) => return .{
-      env: base,
-      state: err.state,
-      diagnostics: err.diagnostics,
-      ok: false,
-      rewrites: [],
-      lints: [],
-    },
-  }
-  cur := parsed_load.state
-  parsed := parsed_load.parsed
-
-  // A module with top-level executable statements cannot be part of a cycle:
-  // its initialization order relative to the cycle is undefined.
-  if has_top_level_statements(parsed.module) {
-    d := synthetic_diag(
-      err_id,
-      .None,
-      err_span,
-      "import",
-      "Top-level initialization cycle: module '${canonical}' has top-level statements and participates in an import cycle",
-    )
-
-    return .{ env: base, state: cur, diagnostics: [d], ok: false, rewrites: [], lints: [] }
-  }
-
-  dep_plan := case cur.plan_dependencies(canonical, parsed, loaded.source) {
-    .Ok(plan) => plan,
-    .Err(err) => return .{
-      env: base,
-      state: err.state,
-      diagnostics: err.diagnostics,
-      ok: false,
-      rewrites: [],
-      lints: [],
-    },
-  }
-
-  // Resolve only the dependencies outside the current cycle; siblings still on
-  // the analysis stack are excluded — their interfaces arrive later.
-  external_deps := collect dep in dep_plan.dependencies {
-    if stack.contains(dep.canonical_path) {
-      continue
-    }
-
-    dep
-  }
-  ext_plan := DependencyPlan.{ dependencies: external_deps, is_internal: dep_plan.is_internal }
-
-  deps := analyze_dependencies(base, cur, canonical, ext_plan, stack)
-
-  if !deps.ok {
-    return .{
-      env: deps.env,
-      state: deps.state,
-      diagnostics: deps.diagnostics,
-      ok: false,
-      rewrites: [],
-      lints: [],
-    }
-  }
-
-  cur = deps.state
-  hashes := dependency_hashes(cur.cache, dep_plan)
-  runner := stage_runner.new(
-    canonical,
-    loaded.source_hash,
-    hashes.deps_hash,
-    hashes.context_hash,
-    dep_plan.is_internal,
-  )
-  env := deps.env
-
-  if dep_plan.is_internal {
-    env = add_internal_buf_builtins(env)
-  }
-
-  // For type-only cycles, resolving this module's signatures needs to see the
-  // type names of siblings still on the import stack. Publish those sibling
-  // names into this temporary env as opaque nominal stubs; the siblings' outer
-  // analyses will later publish their full checked interfaces.
-  for dep in dep_plan.dependencies {
-    if !stack.contains(dep.canonical_path) {
-      continue
-    }
-
-    prelim := case cur.preliminary_type_interface(env, dep, caller_id, use_span) {
-      .Ok(value) => value,
-      .Err(err) => return .{
-        env: base,
-        state: err.state,
-        diagnostics: err.diagnostics,
-        ok: false,
-        rewrites: [],
-        lints: [],
-      },
-    }
-    cur = prelim.state
-    env = merge_import_interface(env, dep, prelim.interface)
-  }
-
-  resolved_out := runner.resolve(cur.cache, parsed, env)
-  cur.cache = resolved_out.store
-  resolved := resolved_out.value
-
-  if resolved.diagnostics.len() > 0 {
-    // Signatures alone cannot break the cycle.
-    d := synthetic_diag(
-      err_id,
-      .None,
-      err_span,
-      "import",
-      "Circular import detected: '${canonical}' is already being analyzed",
-    )
-
-    return .{ env: base, state: cur, diagnostics: [d], ok: false, rewrites: [], lints: [] }
-  }
-
-  // Publish a preliminary interface (signatures only). The module's own outer
-  // analysis publishes the final interface (with checked bodies and exports).
-  exports := opaque_type_exports(
-    extract_exports_for_module(resolved.env, parsed.module, canonical, Dict.new()),
-  )
-  interface := make_module_interface(canonical, exports, cur.shared_type_origins)
-  cur.interfaces[canonical] = interface
-
-  .{ env: base, state: cur, diagnostics: [], ok: true, rewrites: [], lints: [] }
-}
-
-fn analyze_dependencies(
-  base: ResolvedEnv,
-  state: AnalysisState,
-  canonical: String,
-  dep_plan: imports.DependencyPlan,
-  stack: Vector<String>,
-) DependencyAnalysis {
-  t_env0 := date.now()
-  env := extend_env_from_shared(base, state)
-  cur := state
-
-  if cur.timed {
-    cur.timings.env_extend = cur.timings.env_extend + (date.now() - t_env0)
-  }
-
-  // Track how far dep_base has been extended to avoid re-extending from scratch.
-  dep_base := env
-  dep_base_upto := cur.shared_types.len()
-  all_diags: Vector<AnalysisDiag> = []
-  all_rewrites: Vector<RewriteHit> = []
-  all_lints: Vector<LintHit> = []
-  deps_ok := true
-  caller_id := identity.from_path(canonical)
-
-  for dep in dep_plan.dependencies {
-    dep_id := identity.from_path(dep.canonical_path)
-    shared_type_start := cur.shared_types.len()
-    t_dep_extend0 := date.now()
-    dep_base = extend_new_shared_types_from(dep_base, cur, dep_base_upto)
-    dep_base_upto = cur.shared_types.len()
-
-    if cur.timed {
-      cur.timings.env_extend = cur.timings.env_extend + (date.now() - t_dep_extend0)
-    }
-
-    dep_result := analyze_module_impl(
-      dep_id,
-      dep.alias,
-      dep_base,
-      cur,
-      stack,
-      .Some(caller_id),
-      .Some(dep.span),
-    )
-    cur = dep_result.state
-    all_diags = .concat(dep_result.diagnostics)
-    all_rewrites = .concat(dep_result.rewrites)
-    all_lints = .concat(dep_result.lints)
-
-    if !dep_result.ok {
-      deps_ok = false
-      continue
-    }
-
-    t_import0 := date.now()
-    t_import_extend0 := date.now()
-    env = extend_new_shared_types_from(env, cur, shared_type_start)
-
-    if cur.timed {
-      cur.timings.import_extend = cur.timings.import_extend + (date.now() - t_import_extend0)
-    }
-
-    t_lookup0 := date.now()
-    dep_interface := case cur.interfaces[dep.canonical_path] {
-      .Some(interface) => interface,
-      .None => {
-        deps_ok = false
-        continue
-      },
-    }
-
-    if cur.timed {
-      cur.timings.import_lookup = cur.timings.import_lookup + (date.now() - t_lookup0)
-    }
-
-    export_entries := dep_interface.exports.visible_types.len()
-      + dep_interface.exports.support_types.len() + dep_interface.exports.functions.len()
-      + dep_interface.exports.support_functions.len() + dep_interface.exports.values.len()
-
-    if cur.timed {
-      cur.counts.import_edges = cur.counts.import_edges + 1
-      cur.counts.import_export_entries = cur.counts.import_export_entries + export_entries
-    }
-
-    t_merge_kind0 := date.now()
-    env = merge_import_interface(env, dep, dep_interface)
-
-    if cur.timed {
-      dt := date.now() - t_merge_kind0
-      kind_name := ""
-
-      case dep.kind {
-        .Import => case dep.items {
-          .Some(_) => {
-            cur.timings.import_selective = cur.timings.import_selective + dt
-            cur.counts.import_selective_edges = cur.counts.import_selective_edges + 1
-            kind_name = "selective"
-          },
-          .None => {
-            cur.timings.import_module = cur.timings.import_module + dt
-            cur.counts.import_module_edges = cur.counts.import_module_edges + 1
-            kind_name = "module"
-          },
-        },
-        .Prelude => {
-          cur.timings.import_prelude = cur.timings.import_prelude + dt
-          cur.counts.import_prelude_edges = cur.counts.import_prelude_edges + 1
-          kind_name = "prelude"
-        },
-      }
-
-      cur.import_timings = .append(
-        .{
-          ms: dt,
-          kind: kind_name,
-          importer: canonical,
-          dependency: dep.canonical_path,
-          export_entries,
-        },
-      )
-      cur.timings.import_merge = cur.timings.import_merge + (date.now() - t_import0)
-    }
-  }
-
-  // Rebuild the returned env from published dep interfaces so Phase 2 SCC can reuse
-  // build_import_env directly. All shared types exist in cur at this point, so a single
-  // extend_env_from_shared + per-dep merge is equivalent to the incremental path above.
-  import_env_result := build_import_env(base, cur, dep_plan)
-
-  if import_env_result.ok {
-    env = import_env_result.env
-  }
-
-  cur.cache = .set_dependencies(
-    canonical,
-    collect dep in dep_plan.dependencies {
-      dep.canonical_path
-    },
-  )
-
-  if !deps_ok {
-    cur.cache = .clear_resolved_and_later(canonical)
-  }
-
-  .{
-    env,
-    state: cur,
-    diagnostics: all_diags,
-    ok: deps_ok,
-    rewrites: all_rewrites,
-    lints: all_lints,
   }
 }
 
@@ -1558,9 +843,8 @@ fn convert_unused_import_diags(
 }
 
 /// A module's own report-only findings: unused-import warnings (always, for
-/// non-internal modules) plus lint/rewrite hits (review mode only). Mirrors the
-/// tail of `analyze_module_impl` so both the singleton and group SCC paths emit
-/// the same findings the per-module path did.
+/// non-internal modules) plus lint/rewrite hits (review mode only). Used by both
+/// singleton and group SCC paths so they emit the same per-module findings.
 type LocalFindings = .{
   diagnostics: Vector<AnalysisDiag>,
   rewrites: Vector<RewriteHit>,
@@ -1744,12 +1028,9 @@ pub fn discover_closure(id: identity.SourceIdentity, state: AnalysisState) Disco
 
 // ── Phase 2 SCC resolution ──────────────────────────────────────────
 //
-// The two-pass driver below (`analyze_module_scc`) is NOT yet wired into
-// `compile_entry`; the production path still goes through `analyze_module` /
-// `analyze_module_impl` / the back-edge mechanism. This is the proven-on-cycle-
-// fixtures SCC implementation that Task 7 will flip to production (adding
-// entry_snapshot, progress, timings, unused-import/lint fidelity, and back-edge
-// deletion). For now it intentionally omits those concerns.
+// The two-pass driver below (`analyze_module_scc`) is the production frontend:
+// `analyze_module` delegates to it, so build, diagnostics, and lint all use the
+// Phase 1 discovery → Tarjan → Phase 2 SCC-ordered resolution path.
 type SingletonResult = .{
   env: ResolvedEnv,
   state: AnalysisState,
@@ -1834,16 +1115,16 @@ fn self_edge(edges: Dict<String, Vector<String>>, node: String) Bool {
   }
 }
 
-/// Resolve + typecheck + publish a single-module SCC, mirroring the tail of
-/// `analyze_module_impl` (build_import_env → resolve_and_check_local →
-/// publish_interface). Reuses the existing helpers so the published interface
-/// matches the per-module path. Omits the Task-7 fidelity concerns noted above.
+/// Resolve + typecheck + publish a single-module SCC using the normal per-module
+/// tail (build_import_env → resolve_and_check_local → publish_interface). Reuses
+/// the existing helpers so the published interface
+/// matches the per-module path, including progress, timings, and local lint /
+/// unused-import findings.
 fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String) SingletonResult {
   cur := state
 
   // Already published (warm-snapshot restore, or this module's interface arrived
-  // through a restored dependency closure). Mirror analyze_module_impl's
-  // exports[canonical] early return: its diagnostics were reported on first
+  // through a restored dependency closure). Its diagnostics were reported on first
   // analysis, so re-reporting here would duplicate them.
   case cur.exports[canonical] {
     .Some(_) => return SingletonResult.{
@@ -1911,7 +1192,7 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
     // A dependency failed (its interface was never published). Drop any stale
     // resolved/typed artifacts for this module so a re-analysis after a dep
     // breaks doesn't surface semantics built against the now-gone dependency —
-    // mirrors analyze_dependencies clearing the importer on `!deps_ok`.
+    // mirrors the old recursive path clearing the importer on dependency failure.
     cur.cache = .clear_resolved_and_later(canonical)
     return SingletonResult.{
       env: base,
@@ -1941,9 +1222,8 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
   )
   cur.module_runners[canonical] = runner
 
-  // No back-edge preliminary-interface merge here (unlike analyze_module_impl's
-  // cur.interfaces[canonical] check): an SCC singleton has no self-edge, so no
-  // preliminary interface for this module can exist. The omission is intentional.
+  // SCC singletons have no self-edge, so no declaration-only cycle interface for
+  // this module can exist.
   cur.note_progress(.Resolving, canonical)
   local := case cur.resolve_and_check_local(
     canonical,
@@ -2002,8 +1282,7 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
 
 /// The closing back-edge of a cycle: the importing module and the span of the
 /// `use` that targets an ancestor still on the DFS path. Used to attribute a
-/// value-init-cycle diagnostic the same way analyze_module_impl's back-edge path
-/// did (importer file + its `use` statement span).
+/// value-init-cycle diagnostic on the importer file + its `use` statement span.
 type BackEdge = .{ source: String, span: Span }
 
 type DfsAcc = .{
@@ -2206,7 +1485,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     names := sorted.join(", ")
 
     // Attribute the diagnostic to the cycle's closing back-edge — the importing
-    // module and its `use` span — matching analyze_module_impl's back-edge path.
+    // module and its `use` span.
     be := find_group_back_edge(members, loaded_members, mset)
     d := synthetic_diag(
       identity.from_path(be.source),
@@ -2414,12 +1693,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
 /// It restores the per-module path's fidelity: progress events (in discovery
 /// and resolution), timings, unused-import + lint/rewrite findings, and the
 /// dependency-closure snapshot captured just before the entry's own SCC.
-pub fn analyze_module_scc(
-  id: identity.SourceIdentity,
-  alias: String,
-  base: ResolvedEnv,
-  state: AnalysisState,
-) ModuleResult {
+pub fn analyze_module_scc(id: identity.SourceIdentity, base: ResolvedEnv, state: AnalysisState) ModuleResult {
   canonical := imports.canonical_module_path(id.path, state.canonical_roots)
   disc := discover_closure(id, state)
 
@@ -2452,8 +1726,8 @@ pub fn analyze_module_scc(
     is_entry_comp := comp.contains(canonical)
 
     // Capture the dependency-closure snapshot just before the entry's own SCC —
-    // the SCC analog of analyze_module_impl capturing after the entry's deps and
-    // before its own module. The entry depends on everything, so its SCC is the
+    // the SCC analog of capturing after the entry's deps and before its own
+    // module. The entry depends on everything, so its SCC is the
     // last; module_order / exports / interfaces here hold exactly the closure.
     if cur.capture_snapshot and is_entry_comp {
       cur.entry_snapshot = .Some(
