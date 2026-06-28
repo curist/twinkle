@@ -1,13 +1,13 @@
 # SCC-based recursive module groups — design
 
-Status: **design approved, not yet implemented.**
+Status: **implemented in the boot compiler; stage0 mirror pending.**
 
-This supersedes the "Future SCC design (deferred)" section of
-[recursive-module-groups.md](recursive-module-groups.md). That document describes
-the *landed* surgical back-edge approach (`break_import_cycle` + preliminary
-interfaces). This design replaces that mechanism with proper Tarjan SCC grouping
-in the boot compiler. stage0 stays on its current cycle-rejecting path until the
-boot implementation is proven, then is mirrored as a follow-up.
+This supersedes the "Future SCC design" section of
+[recursive-module-groups.md](recursive-module-groups.md). The boot compiler now
+uses this Tarjan SCC grouping architecture in production; the earlier surgical
+back-edge approach (`break_import_cycle` + preliminary interfaces) has been
+removed. stage0 stays on its current cycle-rejecting path until a follow-up
+mirror is scheduled.
 
 ## Goal
 
@@ -35,13 +35,13 @@ easier to mirror faithfully into stage0/Rust than the back-edge hack.
 
 ## Key observation
 
-The current `analyze_module_impl` DFS is *already Tarjan-shaped*: it carries an
-explicit `stack` and checks `stack.contains(canonical)` for back-edges, and its
-post-order `resolve_and_check_local` → `publish_interface` unwinding is exactly
-SCC-ordered resolution **for the acyclic case** (every module is a singleton
-SCC). "Proper SCC" therefore means: detect multi-module SCCs and resolve each as
-a group, instead of breaking back-edges with signatures-only preliminary
-interfaces.
+The former `analyze_module_impl` DFS was Tarjan-shaped: it carried an explicit
+`stack` and checked `stack.contains(canonical)` for back-edges, and its
+post-order `resolve_and_check_local` → `publish_interface` unwinding matched
+SCC-ordered resolution for the acyclic case. The implemented SCC frontend makes
+that structure explicit: discover the graph first, detect multi-module SCCs, and
+resolve each as a group instead of breaking back-edges with signatures-only
+preliminary interfaces.
 
 A second observation shapes the architecture: **discovery is env-independent.**
 `load_source`, `parse_cached`, and `plan_dependencies` need no `ResolvedEnv` —
@@ -179,10 +179,10 @@ uses discovery order).
 ## Caching
 
 Per-module cache keys are retained. Each member of a multi-module SCC folds all
-its group siblings into its `deps_hash`/`context_hash`, so editing any member
-invalidates and re-resolves the whole group through ordinary hash invalidation.
-No new cache data structure. Acyclic programs are all singleton SCCs, so their
-caching is unaffected.
+same-SCC sibling source hashes into its `deps_hash`, so editing any member
+invalidates the whole group's typecheck/lower artifacts through ordinary hash
+invalidation. No new cache data structure. Acyclic programs are all singleton
+SCCs, so their caching is unaffected.
 
 ## Prelude / stdlib injection
 
@@ -198,13 +198,11 @@ The back-edge *discovery* mechanism in `query/analyze.tw` is deleted:
 preliminary interface back" block in `analyze_module_impl`. Cycles are no longer
 discovered by back-edge; they are known from Tarjan before any resolution begins.
 
-The declaration-only export construction (`preliminary_type_exports` /
-`preliminary_type_interface`) is **generalized and retained**, not deleted: it
-becomes the group's step-A declaration interface. Group resolution still produces
-and selectively merges per-member declaration interfaces — it just allocates all
-TypeIds up front via the threaded id cursor and is driven by Tarjan grouping
-instead of reactive back-edge discovery. (Whether these helpers move/rename out
-of the back-edge code into a group module is an implementation detail.)
+The old preliminary-interface helpers were removed with the back-edge path. Group
+resolution now builds declaration-only and signature-complete interfaces directly
+from each member's collected/resolved env, using `opaque_type_exports` to hide
+incomplete type definitions while preserving the real TypeIds allocated by the
+threaded cursor.
 
 ## Touch points (boot compiler)
 

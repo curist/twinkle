@@ -1,58 +1,41 @@
 # Recursive module groups — allow mutually-recursive modules
 
-Status: **practical boot-compiler support landed**. Function/import cycles and
-simple mutual type cycles now compile, and top-level value-initialization cycles
-are rejected, via a preliminary-interface break in `analyze.tw`
-(`break_import_cycle`) — see "Landed so far" below. Prelude-into-prelude
-injection is now enabled in the boot compiler. Decision: keep this surgical
-DFS/back-edge implementation for now; full SCC-based group analysis is deferred
-as architectural hardening rather than required MVP work. The stage0 mirror also
-remains deferred. Resolves open-question #3
-([../open-questions.md](../open-questions.md)). Motivated by the prelude/stdlib
-injection detour ([access-contracts.md](archive/access-contracts.md) family): lifting the
-acyclic-modules restriction is what would let prelude modules use each other's
-functions (blanket prelude-into-prelude injection), and more generally lets user
-code split mutually-recursive domain types across files.
+Status: **SCC-based boot-compiler implementation landed**. The boot frontend now
+discovers the import closure, condenses it with Tarjan SCCs, and resolves each
+component in dependency-before-dependent order. Singleton SCCs use the normal
+per-module path; multi-module SCCs use group declaration collection, reference
+resolution, alias checking, typechecking, and per-member publish. Function/type
+cycles compile, top-level value-initialization cycles are rejected with a
+whole-cycle diagnostic, and group members fold sibling source hashes into their
+cache keys. stage0 remains deferred. Resolves open-question #3
+([../open-questions.md](../open-questions.md)). See
+[scc-module-groups-design.md](scc-module-groups-design.md) for the implemented
+architecture and [scc-module-groups-plan.md](scc-module-groups-plan.md) for the
+execution record.
 
-## Landed so far (boot compiler)
+## Landed in boot compiler
 
-A surgical first slice that keeps the acyclic path byte-identical (it never enters
-the new code, so the self-host loop is unaffected):
-
-- On a back-edge (`analyze_module_impl`, the old "Circular import detected" point),
-  instead of erroring we call `break_import_cycle`: resolve the module's
-  **signatures only** (not bodies) against its *non-cycle* dependencies, then
-  publish a **preliminary interface** so the dependent can merge it. The module's
-  own outer call later publishes the final interface (with checked bodies).
-- For type-only cycles, the back-edge path now also injects opaque nominal stubs
-  for sibling modules still on the import stack before resolving the preliminary
-  interface. This lets records/enums in different files refer to each other by
-  imported type name; final checked interfaces still come from each module's
-  outer analysis.
-- This works because `resolver.resolve` produces interfaces (types + function
-  signatures) while bodies are checked separately by the checker — so a cycle
-  member's signature resolves with preliminary sibling type names, and the
-  sibling's body then typechecks against the preliminary interface.
-- **Value-init cycles are rejected** structurally: a module reached via a
-  back-edge that has top-level `Stmt` items (value bindings / executable
-  statements) gets a `"Top-level initialization cycle"` diagnostic, since its
-  init order relative to the cycle is undefined (`resolver.has_top_level_statements`).
-- Preliminary resolve hashes now include the full dependency plan, including
-  in-cycle siblings, so cache keys see edits to cyclic peers instead of only
-  external dependencies.
-- Prelude injection now applies to prelude modules too, skipping only the module
-  itself. Safe recursive-module handling makes the prelude a function/type-only
-  cycle rather than a special-case exclusion.
-- Tests in `multi_module_suite` cover import cycles, mutually-recursive
-  functions, mutually-recursive types, and value-init rejection; query analysis
-  and diagnostics suites cover cycle diagnostics; import-planning tests cover
-  prelude-into-prelude injection without self-importing.
+- `graph_scc.strongly_connected` provides the shared Tarjan SCC utility used by
+  module grouping and type ordering.
+- `discover_closure` performs env-independent load/parse/import planning and
+  records the module dependency graph.
+- `analyze_module_scc` is the production driver: discover → condense → resolve
+  SCCs in dependency-before-dependent order.
+- Singleton SCCs retain the normal per-module path, including progress events,
+  timings, closure snapshots, unused-import diagnostics, and lint/rewrite data.
+- Multi-module SCCs run group resolution: declaration collection for all members
+  with a shared TypeId cursor, reference resolution with sibling declaration
+  interfaces, circular-alias checking, typechecking, and range-aware publish for
+  each member.
+- Top-level value-init cycles are rejected before group resolution, and the
+  diagnostic names the modules in the cycle.
+- Group members mix sibling source hashes into their cache keys so editing any
+  member invalidates the whole group.
+- The old DFS/back-edge preliminary-interface mechanism has been removed from the
+  boot compiler.
 
 Still open: the **stage0 mirror** (stage0 still rejects all cycles; fine for
-bootstrap since `boot/main.tw` is acyclic). True SCC group analysis remains a
-possible future cleanup if the current implementation shows order-dependent edge
-cases, stale cache behavior, duplicate TypeId issues, or diagnostics that need a
-whole-cycle view; it is not on the critical path for the MVP.
+bootstrap since `boot/main.tw` is acyclic).
 
 ## The restriction is architectural, not semantic
 
@@ -94,19 +77,11 @@ import cycles that participate in a **top-level value initialization** cycle, wi
 a clear diagnostic. (A later phase could define a deterministic init order or lazy
 initialization — see open questions.)
 
-## Future SCC design (now being implemented)
+## SCC design (implemented in boot)
 
-> **Update:** this SCC approach is now an approved design — see
-> [scc-module-groups-design.md](scc-module-groups-design.md), which supersedes
-> the deferred notes below and replaces the back-edge mechanism in the boot
-> compiler.
-
-The implementation below is the cleaner long-term architecture if recursive
-modules become central enough to justify the refactor. Compared with the landed
-back-edge approach, it would make the recursive group explicit, use the group as
-the natural cache/invalidation unit, and produce diagnostics with complete cycle
-knowledge. For now, the smaller landed approach provides the needed semantics
-without a broad module-analysis rewrite.
+The SCC approach below is now the boot compiler's production architecture — see
+[scc-module-groups-design.md](scc-module-groups-design.md) for the canonical
+design. It replaced the earlier surgical DFS/back-edge approach.
 
 ### 1. Build the module dependency graph
 

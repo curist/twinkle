@@ -14,7 +14,7 @@
 
 ## Progress / Resume Here (updated 2026-06-28)
 
-Executing on branch `scc-module-groups` (branched from `main` after the design+plan commits). Tasks 1–8 are **DONE**. The production frontend uses the SCC two-pass driver, and the old recursive back-edge mechanism has been removed.
+Executing on branch `scc-module-groups` (branched from `main` after the design+plan commits). Tasks 1–11 are **DONE** for the boot compiler. The production frontend uses the SCC two-pass driver, the old recursive back-edge mechanism has been removed, group cache invalidation is wired, docs are updated, and the bundled CLI has been rebuilt. stage0 mirror remains a follow-up.
 
 - [x] **Task 1** — `boot/compiler/graph_scc.tw` (reusable Tarjan SCC); `type_order.tw` routed through it; hardened tests (self-loop/membership/disconnected). Commits `a21fe64b`, `5036bdd4` (restored root-first intra-component order for byte-parity), `b10d57e4`.
 - [x] **Task 2** — resolver passes exposed (`resolve_references`/`detect_circular_aliases` pub) + `collect_declarations_from(env, module, id_start)` / `DeclCollection` / `next_type_id` threading a TypeId cursor; `collect_declarations` delegates. Commit `6cefb982`. (Accepted-minor: `id_start` vs `start_id` naming; `next_type_id` wraps `next_available_type_id`.)
@@ -30,7 +30,9 @@ Executing on branch `scc-module-groups` (branched from `main` after the design+p
 
 - [x] **Task 8 — DONE.** Deleted the dead back-edge mechanism: `analyze_module_impl`, `analyze_dependencies`, `break_import_cycle`, `next_preliminary_type_id`, preliminary-interface helpers, opaque stubs, the stack/back-edge branch, and public `analyze_module` stack/alias plumbing. `resolve_group` keeps the reusable `opaque_type_exports` helper for declaration/signature-complete group interfaces. Validation passed: `make boot-test`, `make stage2` (already up to date after boot-test), `target/twk lint boot/main.tw`, and `make rust-test`.
 
-- [ ] **Task 9 — NEXT.** Add group-correctness fixtures/tests: three-module cycle, cross-module shared local type names, and a value-init diagnostic that names all participating modules.
+- [x] **Task 9 — DONE.** Added fixtures/tests for a three-module cycle, cycle members that reuse the same private local type name, and a value-init diagnostic that names all participating modules.
+- [x] **Task 10 — DONE.** `resolve_group` folds same-SCC sibling source hashes into each member's deps hash so editing any cycle member invalidates the whole group's typecheck/lower artifacts. Added an incremental query test that edits one cycle member and verifies another member's typed artifact is refreshed.
+- [x] **Task 11 — DONE.** Rebuilt `target/twk` with `make bundle-cli`, reran `make boot-test`, updated recursive-module-group docs/design/index status, and reran lint/Rust validation. stage0 mirror remains pending.
 
 ---
 
