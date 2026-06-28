@@ -43,6 +43,7 @@ use .suites.first_class_method_suite
 use .suites.fix_suite
 use .suites.fmt_suite
 use .suites.graph_scc_suite
+use .suites.group_resolution_suite
 use .suites.imports_suite
 use .suites.insert_boundaries_suite
 use .suites.lib_json_suite
@@ -206,6 +207,7 @@ runner.run_all([
   query_stage_runner_suite.suite(),
   fmt_suite.suite(),
   graph_scc_suite.suite(),
+  group_resolution_suite.suite(),
   query_analyze_suite.suite(),
   ast_path_suite.suite(),
   diag_render_suite.suite(),

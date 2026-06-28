@@ -11,6 +11,7 @@ use @std.proc
 
 use compiler.base_env.{add_internal_buf_builtins, reserved_stdlib_type_origin}
 use compiler.checker
+use compiler.graph_scc
 use compiler.imports
 use compiler.imports.{DependencyPlan, PlannedDep}
 use compiler.lint
@@ -22,7 +23,7 @@ use compiler.query.progress.{ProgressSink}
 use compiler.query.stage_runner
 use compiler.query.type_registry
 use compiler.resolver.{
-  ExportedType, ModuleExports, ResolvedEnv, TypeEntry, extract_exports_for_module,
+  ExportedType, ModuleExports, ResolveResult, ResolvedEnv, TypeEntry, extract_exports_for_module,
   has_top_level_statements,
 }
 use compiler.unused_imports
@@ -1410,11 +1411,7 @@ fn extend_env_from_shared(base: ResolvedEnv, state: AnalysisState) ResolvedEnv {
 /// interfaces of its deps in `dep_plan`. Precondition: every dep's interface is already
 /// published in `state.interfaces`. Returns ok=false if a required dep interface is missing.
 /// Used by Phase 2 SCC resolution to construct a member's env from a fully-analyzed state.
-fn build_import_env(
-  base: ResolvedEnv,
-  state: AnalysisState,
-  dep_plan: imports.DependencyPlan,
-) ImportEnvResult {
+fn build_import_env(base: ResolvedEnv, state: AnalysisState, dep_plan: imports.DependencyPlan) ImportEnvResult {
   env := extend_env_from_shared(base, state)
 
   for dep in dep_plan.dependencies {
@@ -1671,4 +1668,516 @@ pub fn discover_closure(id: identity.SourceIdentity, state: AnalysisState) Disco
     failed: acc.failed,
     diagnostics: acc.diagnostics,
   }
+}
+
+// ── Phase 2 SCC resolution ──────────────────────────────────────────
+//
+// The two-pass driver below (`analyze_module_scc`) is NOT yet wired into
+// `compile_entry`; the production path still goes through `analyze_module` /
+// `analyze_module_impl` / the back-edge mechanism. This is the proven-on-cycle-
+// fixtures SCC implementation that Task 7 will flip to production (adding
+// entry_snapshot, progress, timings, unused-import/lint fidelity, and back-edge
+// deletion). For now it intentionally omits those concerns.
+type SingletonResult = .{
+  env: ResolvedEnv,
+  state: AnalysisState,
+  diagnostics: Vector<AnalysisDiag>,
+  ok: Bool,
+}
+
+type GroupResult = .{
+  member_envs: Dict<String, ResolvedEnv>,
+  state: AnalysisState,
+  diagnostics: Vector<AnalysisDiag>,
+  ok: Bool,
+}
+
+/// One SCC member's threaded state across group steps A–D. The fields are
+/// filled progressively: step A sets the declaration env + index range, step B
+/// fills the resolved env, step C updates the resolved diagnostics.
+type GroupMember = .{
+  canonical: String,
+  parsed: cache.ParsedModule,
+  source: overlay.SourceText,
+  source_hash: Int,
+  dep_plan: DependencyPlan,
+  decl_env: ResolvedEnv,
+  decl_diags: Vector<diag.DiagKind>,
+  // [idx_start, idx_end) is an INDEX range into `decl_env.types`, not a TypeId
+  // range: the slice this member's declarations occupy, used for range-aware
+  // local-type capture on publish.
+  idx_start: Int,
+  idx_end: Int,
+  resolved_env: ResolvedEnv,
+  resolved_diags: Vector<diag.DiagKind>,
+}
+
+fn build_member_set(members: Vector<String>) Dict<String, Bool> {
+  s: Dict<String, Bool> = Dict.new()
+
+  for m in members {
+    s[m] = true
+  }
+
+  s
+}
+
+fn mark_members_failed(state: AnalysisState, members: Vector<String>) AnalysisState {
+  for m in members {
+    state = .mark_failed(m)
+  }
+
+  state
+}
+
+/// The dependencies of `dep_plan` that fall OUTSIDE the group (already published
+/// by an earlier SCC), as a standalone plan for `build_import_env`.
+fn external_dep_plan(dep_plan: DependencyPlan, mset: Dict<String, Bool>) DependencyPlan {
+  ext := collect dep in dep_plan.dependencies {
+    if mset.has(dep.canonical_path) {
+      continue
+    }
+
+    dep
+  }
+  dep_plan.dependencies = ext
+  dep_plan
+}
+
+fn self_edge(edges: Dict<String, Vector<String>>, node: String) Bool {
+  case edges[node] {
+    .Some(deps) => deps.contains(node),
+    .None => false,
+  }
+}
+
+/// Resolve + typecheck + publish a single-module SCC, mirroring the tail of
+/// `analyze_module_impl` (build_import_env → resolve_and_check_local →
+/// publish_interface). Reuses the existing helpers so the published interface
+/// matches the per-module path. Omits the Task-7 fidelity concerns noted above.
+fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String) SingletonResult {
+  cur := state
+
+  if cur.failed.has(canonical) {
+    return SingletonResult.{ env: base, state: cur, diagnostics: [], ok: false }
+  }
+
+  module_id := identity.from_path(canonical)
+  loaded := case cur.load_source(canonical, module_id, .None, .None) {
+    .Ok(v) => v,
+    .Err(err) => return SingletonResult.{
+      env: base,
+      state: err.state.mark_failed(canonical),
+      diagnostics: err.diagnostics,
+      ok: false,
+    },
+  }
+  cur = loaded.state
+  parsed_load := case cur.parse_cached(canonical, loaded.source, loaded.source_hash) {
+    .Ok(v) => v,
+    .Err(err) => return SingletonResult.{
+      env: base,
+      state: err.state.mark_failed(canonical),
+      diagnostics: err.diagnostics,
+      ok: false,
+    },
+  }
+  cur = parsed_load.state
+  dep_plan := case cur.plan_dependencies(canonical, parsed_load.parsed, loaded.source) {
+    .Ok(p) => p,
+    .Err(err) => return SingletonResult.{
+      env: base,
+      state: err.state.mark_failed(canonical),
+      diagnostics: err.diagnostics,
+      ok: false,
+    },
+  }
+
+  ienv := build_import_env(base, cur, dep_plan)
+
+  if !ienv.ok {
+    return SingletonResult.{
+      env: base,
+      state: cur.mark_failed(canonical),
+      diagnostics: [],
+      ok: false,
+    }
+  }
+
+  env := ienv.env
+
+  if dep_plan.is_internal {
+    env = add_internal_buf_builtins(env)
+  }
+
+  local_type_start := env.types.len()
+  hashes := dependency_hashes(cur.cache, dep_plan)
+  context_hash := keys.mix_word(hashes.context_hash, local_type_start)
+  runner := stage_runner.new(
+    canonical,
+    loaded.source_hash,
+    hashes.deps_hash,
+    context_hash,
+    dep_plan.is_internal,
+  )
+  cur.module_runners[canonical] = runner
+  local := case cur.resolve_and_check_local(
+    canonical,
+    runner,
+    parsed_load.parsed,
+    env,
+    loaded.source,
+    [],
+  ) {
+    .Ok(v) => v,
+    .Err(err) => return SingletonResult.{
+      env: base,
+      state: err.state.mark_failed(canonical),
+      diagnostics: err.diagnostics,
+      ok: false,
+    },
+  }
+  next := local.state.publish_interface(
+    canonical,
+    parsed_load.parsed,
+    local.checked,
+    local_type_start,
+    loaded.source_hash,
+    hashes.deps_hash,
+  )
+  SingletonResult.{ env: local.checked.env, state: next, diagnostics: [], ok: true }
+}
+
+/// Resolve + typecheck + publish every member of a MULTI-module SCC as a group.
+/// Precondition: all deps OUTSIDE `members` are already published in `state`.
+///
+/// Steps (see docs/plans/scc-module-groups-design.md "Group resolution"):
+///   A — collect declarations for all members against a shared TypeId cursor and
+///       per-member external-only envs; publish declaration-only interfaces so
+///       siblings become visible.
+///   B — resolve references for all members against own-decls + merged sibling
+///       declaration interfaces; re-publish a signature-complete (opaque-type)
+///       interface so a sibling's typecheck sees its function signatures.
+///   C — circular-alias check per member (see limitation note below).
+///   D — typecheck + publish per member, attributing the member's own types via
+///       its step-A INDEX range.
+fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String>) GroupResult {
+  cur := state
+  mset := build_member_set(members)
+
+  // Load parsed module / source / dep plan for each member (idempotent —
+  // discovery already cached these).
+  loaded_members: Vector<GroupMember> = []
+
+  for m in members {
+    module_id := identity.from_path(m)
+    ld := case cur.load_source(m, module_id, .None, .None) {
+      .Ok(v) => v,
+      .Err(err) => return GroupResult.{
+        member_envs: Dict.new(),
+        state: err.state.mark_members_failed(members),
+        diagnostics: err.diagnostics,
+        ok: false,
+      },
+    }
+    cur = ld.state
+    pl := case cur.parse_cached(m, ld.source, ld.source_hash) {
+      .Ok(v) => v,
+      .Err(err) => return GroupResult.{
+        member_envs: Dict.new(),
+        state: err.state.mark_members_failed(members),
+        diagnostics: err.diagnostics,
+        ok: false,
+      },
+    }
+    cur = pl.state
+    dp := case cur.plan_dependencies(m, pl.parsed, ld.source) {
+      .Ok(p) => p,
+      .Err(err) => return GroupResult.{
+        member_envs: Dict.new(),
+        state: err.state.mark_members_failed(members),
+        diagnostics: err.diagnostics,
+        ok: false,
+      },
+    }
+    empty_diags: Vector<diag.DiagKind> = []
+    loaded_members = .append(
+      GroupMember.{
+        canonical: m,
+        parsed: pl.parsed,
+        source: ld.source,
+        source_hash: ld.source_hash,
+        dep_plan: dp,
+        decl_env: base,
+        decl_diags: empty_diags,
+        idx_start: 0,
+        idx_end: 0,
+        resolved_env: base,
+        resolved_diags: empty_diags,
+      },
+    )
+  }
+
+  // Value-init guard: a multi-module cycle whose members include top-level
+  // executable statements has undefined cross-module init order — reject the
+  // whole group, naming all members sorted by canonical path.
+  has_init := false
+
+  for lm in loaded_members {
+    if has_top_level_statements(lm.parsed.module) {
+      has_init = true
+    }
+  }
+
+  if has_init {
+    sorted := members.sort_by(fn(a, b) { a.compare(b) })
+    names := sorted.join(", ")
+    first := sorted[0]
+    d := synthetic_diag(
+      identity.from_path(first),
+      .None,
+      span.new(0, 0, 0),
+      "import",
+      "Top-level initialization cycle: modules ${names} form an import cycle and have top-level statements",
+    )
+
+    return GroupResult.{
+      member_envs: Dict.new(),
+      state: cur.mark_members_failed(members),
+      diagnostics: [d],
+      ok: false,
+    }
+  }
+
+  // Step A — collect declarations for all members against a shared TypeId
+  // cursor and per-member external-only envs. Each member's own declarations
+  // occupy [idx_start, idx_end) of its decl env; publish a declaration-only
+  // interface so step B's reference resolution can see sibling type names.
+  //
+  // The cursor must start above EVERY TypeId already visible to any member —
+  // not just `base`'s builtins, but all shared/prelude types folded into the
+  // members' import envs — or freshly collected decls would collide with
+  // existing shared TypeIds and silently alias the wrong entry on dedup.
+  cursor := extend_env_from_shared(base, cur).next_type_id()
+  step_a: Vector<GroupMember> = []
+
+  for lm in loaded_members {
+    ext_plan := external_dep_plan(lm.dep_plan, mset)
+    ext_res := build_import_env(base, cur, ext_plan)
+    ext_env := ext_res.env
+
+    if lm.dep_plan.is_internal {
+      ext_env = add_internal_buf_builtins(ext_env)
+    }
+
+    idx_start := ext_env.types.len()
+    c := ext_env.collect_declarations_from(lm.parsed.module, cursor)
+    idx_end := c.result.env.types.len()
+    cursor = c.next_id
+    decl_exports := opaque_type_exports(
+      extract_exports_for_module(c.result.env, lm.parsed.module, lm.canonical, Dict.new()),
+    )
+    decl_iface := make_module_interface(lm.canonical, decl_exports, cur.shared_type_origins)
+    cur.interfaces[lm.canonical] = decl_iface
+    member := lm
+    member.decl_env = c.result.env
+    member.decl_diags = c.result.diagnostics
+    member.idx_start = idx_start
+    member.idx_end = idx_end
+    member.resolved_env = c.result.env
+    member.resolved_diags = c.result.diagnostics
+    step_a = .append(member)
+  }
+
+  // Step B — resolve references for all members. Each member's env is its own
+  // declarations plus the selectively-merged declaration interfaces of the
+  // sibling group members it imports. After resolving, re-publish a
+  // signature-complete (opaque-type) interface so later members' typechecks see
+  // resolved sibling function signatures.
+  step_b: Vector<GroupMember> = []
+
+  for ma in step_a {
+    env_b := ma.decl_env
+
+    for dep in ma.dep_plan.dependencies {
+      if !mset.has(dep.canonical_path) {
+        continue
+      }
+
+      case cur.interfaces[dep.canonical_path] {
+        .Some(iface) => env_b = merge_import_interface(env_b, dep, iface),
+        .None => {},
+      }
+    }
+
+    r := env_b.resolve_references(ma.parsed.module, ma.decl_diags)
+    sig_exports := opaque_type_exports(
+      extract_exports_for_module(r.env, ma.parsed.module, ma.canonical, Dict.new()),
+    )
+    sig_iface := make_module_interface(ma.canonical, sig_exports, cur.shared_type_origins)
+    cur.interfaces[ma.canonical] = sig_iface
+    member := ma
+    member.resolved_env = r.env
+    member.resolved_diags = r.diagnostics
+    step_b = .append(member)
+  }
+
+  // Step C — circular-alias check. Run per member over its resolved env. A
+  // type-alias cycle that spans modules is an edge case neither this nor the
+  // back-edge path catches across the module boundary; per-member is acceptable
+  // for this MVP.
+  step_c: Vector<GroupMember> = []
+
+  for mb in step_b {
+    member := mb
+    member.resolved_diags = mb.resolved_env.detect_circular_aliases(mb.resolved_diags)
+    step_c = .append(member)
+  }
+
+  // Step D — typecheck + publish per member. The typecheck env is the member's
+  // resolved env with the now-signature-complete sibling interfaces re-merged
+  // (register_type_entry dedups by TypeId, register_function replaces by name,
+  // so re-merging only adds the siblings' resolved functions). Publish captures
+  // the member's own types via its step-A INDEX range.
+  member_envs: Dict<String, ResolvedEnv> = Dict.new()
+  all_diags: Vector<AnalysisDiag> = []
+  group_ok := true
+
+  for mc in step_c {
+    tc_env := mc.resolved_env
+
+    for dep in mc.dep_plan.dependencies {
+      if !mset.has(dep.canonical_path) {
+        continue
+      }
+
+      case cur.interfaces[dep.canonical_path] {
+        .Some(iface) => tc_env = merge_import_interface(tc_env, dep, iface),
+        .None => {},
+      }
+    }
+
+    if mc.resolved_diags.len() > 0 {
+      cur.cache = .clear_resolved_and_later(mc.canonical)
+      diags := wrap_diags(mc.source, "resolve", mc.resolved_diags, type_name_snapshot(tc_env))
+      all_diags = .concat(diags)
+      group_ok = false
+      continue
+    }
+
+    hashes := dependency_hashes(cur.cache, mc.dep_plan)
+    context_hash := keys.mix_word(hashes.context_hash, mc.idx_start)
+    runner := stage_runner.new(
+      mc.canonical,
+      mc.source_hash,
+      hashes.deps_hash,
+      context_hash,
+      mc.dep_plan.is_internal,
+    )
+    resolved_result := ResolveResult.{ env: tc_env, diagnostics: [] }
+    typed_out := runner.typecheck(cur.cache, mc.parsed, resolved_result, cur.lint_mode)
+    cur.cache = typed_out.store
+    typed := typed_out.value
+
+    if typed.diagnostics.len() > 0 {
+      cur.cache = .clear_lowered_and_hash(mc.canonical)
+      diags := wrap_diags(mc.source, "check", typed.diagnostics, type_name_snapshot(typed.env))
+      all_diags = .concat(diags)
+      group_ok = false
+      continue
+    }
+
+    cur.module_runners[mc.canonical] = runner
+    cur = .publish_interface_range(
+      mc.canonical,
+      mc.parsed,
+      typed,
+      mc.idx_start,
+      mc.idx_end,
+      mc.source_hash,
+      hashes.deps_hash,
+    )
+    member_envs[mc.canonical] = typed.env
+  }
+
+  if !group_ok {
+    cur = .mark_members_failed(members)
+  }
+
+  GroupResult.{ member_envs, state: cur, diagnostics: all_diags, ok: group_ok }
+}
+
+/// Two-pass SCC frontend driver (Phase 1 discovery → Tarjan condensation →
+/// Phase 2 SCC-ordered resolution). Singleton SCCs go through the existing
+/// per-module path; multi-member SCCs through `resolve_group`.
+///
+/// NOT yet wired into `compile_entry` — this is the Task-6 deliverable proven on
+/// real cycle fixtures. Rewrites/lints are left empty and entry_snapshot /
+/// progress / timing fidelity are deferred to Task 7.
+pub fn analyze_module_scc(
+  id: identity.SourceIdentity,
+  alias: String,
+  base: ResolvedEnv,
+  state: AnalysisState,
+) ModuleResult {
+  canonical := imports.canonical_module_path(id.path, state.canonical_roots)
+  disc := discover_closure(id, state)
+
+  if disc.diagnostics.len() > 0 or disc.failed.has(canonical) {
+    return .{
+      env: base,
+      state: disc.state,
+      diagnostics: disc.diagnostics,
+      ok: false,
+      rewrites: [],
+      lints: [],
+    }
+  }
+
+  comps := graph_scc.strongly_connected(disc.order, disc.edges)
+  cur := disc.state
+  entry_env := base
+  all_diags: Vector<AnalysisDiag> = []
+  ok := true
+
+  for comp in comps {
+    is_singleton := comp.len() == 1 and !self_edge(disc.edges, vec_first(comp))
+
+    if is_singleton {
+      member := vec_first(comp)
+      sres := resolve_singleton(base, cur, member)
+      cur = sres.state
+      all_diags = .concat(sres.diagnostics)
+
+      if !sres.ok {
+        ok = false
+      }
+
+      if member == canonical {
+        entry_env = sres.env
+      }
+    } else {
+      gres := resolve_group(base, cur, comp)
+      cur = gres.state
+      all_diags = .concat(gres.diagnostics)
+
+      if !gres.ok {
+        ok = false
+      }
+
+      case gres.member_envs[canonical] {
+        .Some(e) => entry_env = e,
+        .None => {},
+      }
+    }
+  }
+
+  .{ env: entry_env, state: cur, diagnostics: all_diags, ok, rewrites: [], lints: [] }
+}
+
+fn vec_first(v: Vector<String>) String {
+  if v.len() == 0 {
+    error("analyze_module_scc: empty SCC component")
+  }
+  v[0]
 }
