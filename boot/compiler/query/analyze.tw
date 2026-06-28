@@ -1706,6 +1706,13 @@ type GroupMember = .{
   // [idx_start, idx_end) is an INDEX range into `decl_env.types`, not a TypeId
   // range: the slice this member's declarations occupy, used for range-aware
   // local-type capture on publish.
+  //
+  // INVARIANT: resolve_references and check must not insert type entries within
+  // [idx_start, idx_end); they fill defs in place and append only functions /
+  // sibling types past the slice. Step D applies this same range against the
+  // typechecked env (typed.env), which is only sound if that invariant holds. If
+  // the resolver or checker ever appends type entries within a member's slice,
+  // group capture must be recomputed on the typechecked env.
   idx_start: Int,
   idx_end: Int,
   resolved_env: ResolvedEnv,
@@ -1821,6 +1828,10 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
     dep_plan.is_internal,
   )
   cur.module_runners[canonical] = runner
+
+  // No back-edge preliminary-interface merge here (unlike analyze_module_impl's
+  // cur.interfaces[canonical] check): an SCC singleton has no self-edge, so no
+  // preliminary interface for this module can exist. The omission is intentional.
   local := case cur.resolve_and_check_local(
     canonical,
     runner,
@@ -1984,8 +1995,6 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     member.decl_diags = c.result.diagnostics
     member.idx_start = idx_start
     member.idx_end = idx_end
-    member.resolved_env = c.result.env
-    member.resolved_diags = c.result.diagnostics
     step_a = .append(member)
   }
 
@@ -2088,6 +2097,12 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     }
 
     cur.module_runners[mc.canonical] = runner
+
+    // Apply the step-A capture range against the typechecked env. This is
+    // sound because of the INVARIANT on GroupMember.idx_start/idx_end:
+    // resolve_references and check never insert type entries within
+    // [idx_start, idx_end), so the range captured on the declaration env
+    // correctly identifies the same member-owned slice in typed.env.
     cur = .publish_interface_range(
       mc.canonical,
       mc.parsed,
@@ -2141,10 +2156,10 @@ pub fn analyze_module_scc(
   ok := true
 
   for comp in comps {
-    is_singleton := comp.len() == 1 and !self_edge(disc.edges, vec_first(comp))
+    is_singleton := comp.len() == 1 and !self_edge(disc.edges, comp[0])
 
     if is_singleton {
-      member := vec_first(comp)
+      member := comp[0]
       sres := resolve_singleton(base, cur, member)
       cur = sres.state
       all_diags = .concat(sres.diagnostics)
@@ -2173,11 +2188,4 @@ pub fn analyze_module_scc(
   }
 
   .{ env: entry_env, state: cur, diagnostics: all_diags, ok, rewrites: [], lints: [] }
-}
-
-fn vec_first(v: Vector<String>) String {
-  if v.len() == 0 {
-    error("analyze_module_scc: empty SCC component")
-  }
-  v[0]
 }
