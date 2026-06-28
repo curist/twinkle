@@ -1115,6 +1115,26 @@ fn self_edge(edges: Dict<String, Vector<String>>, node: String) Bool {
   }
 }
 
+/// Fold same-SCC siblings into a member's cache hash so any edit in a cycle
+/// invalidates every member's typecheck/lower artifacts, not just the edited
+/// file. Siblings are sorted for deterministic cache keys independent of Tarjan
+/// traversal order within the component.
+fn fold_group_sibling_hashes(deps_hash: Int, member: String, group: Vector<GroupMember>) Int {
+  h := keys.mix_word(deps_hash, keys.hash_text("group-siblings"))
+  sorted := group.sort_by(fn(a, b) { a.canonical.compare(b.canonical) })
+
+  for sib in sorted {
+    if sib.canonical == member {
+      continue
+    }
+
+    h = keys.mix_word(h, keys.hash_text(sib.canonical))
+    h = keys.mix_word(h, sib.source_hash)
+  }
+
+  h
+}
+
 /// Resolve + typecheck + publish a single-module SCC using the normal per-module
 /// tail (build_import_env → resolve_and_check_local → publish_interface). Reuses
 /// the existing helpers so the published interface
@@ -1623,11 +1643,12 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     }
 
     hashes := dependency_hashes(cur.cache, mc.dep_plan)
+    group_deps_hash := fold_group_sibling_hashes(hashes.deps_hash, mc.canonical, loaded_members)
     context_hash := keys.mix_word(hashes.context_hash, mc.idx_start)
     runner := stage_runner.new(
       mc.canonical,
       mc.source_hash,
-      hashes.deps_hash,
+      group_deps_hash,
       context_hash,
       mc.dep_plan.is_internal,
     )
@@ -1659,7 +1680,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
       mc.idx_start,
       mc.idx_end,
       mc.source_hash,
-      hashes.deps_hash,
+      group_deps_hash,
     )
     member_envs[mc.canonical] = typed.env
 

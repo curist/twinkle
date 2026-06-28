@@ -465,6 +465,30 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "three-module cycle a->b->c->a compiles",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/cycle3_a.tw")
+
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected 3-module cycle to compile, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "mutually-recursive modules may reuse a local type name",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/cycle_shared_name_a.tw")
+
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected shared local name across cycle to compile, got: ${format_compile_error(err)}",
+          ),
+        }
+      },
+    )
+    .test(
       "top-level value-init cycle across modules is rejected",
       fn() {
         result := module_compiler.compile_entry("${dir}/cycle_value_a.tw")
@@ -474,6 +498,23 @@ pub fn suite() runner.Suite {
           .Err(err) => {
             msg := format_compile_error(err)
             try assert.is_true(msg.contains("initialization cycle"))
+            .Ok({})
+          },
+        }
+      },
+    )
+    .test(
+      "value-init cycle diagnostic names all participating modules",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/cycle_value_a.tw")
+
+        case result {
+          .Ok(_) => .Err("expected value-init cycle rejection"),
+          .Err(err) => {
+            msg := format_compile_error(err)
+            try assert.is_true(msg.contains("initialization cycle"))
+            try assert.is_true(msg.contains("cycle_value_a"))
+            try assert.is_true(msg.contains("cycle_value_b"))
             .Ok({})
           },
         }

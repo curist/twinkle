@@ -1,0 +1,18 @@
+//! Cycle whose members both have a private local type named Entry.
+
+use .cycle_shared_name_a
+
+type Entry = .{ code: Int }
+
+fn entry_code(entry: Entry) Int {
+  entry.code
+}
+
+pub fn pong(n: Int) Int {
+  local := entry_code(Entry.{ code: n })
+  if n == 0 {
+    local
+  } else {
+    cycle_shared_name_a.ping(n - 1) + local
+  }
+}

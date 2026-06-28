@@ -281,6 +281,44 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "cycle sibling edit invalidates every group member",
+      fn() {
+        ov1 := overlay.from_documents([
+          ov_doc(
+            "/tmp/analyze/cyc_a.tw",
+            "use cyc_b\npub fn a(n: Int) Int { if n == 0 { 0 } else { cyc_b.b(n - 1) + 1 } }\n",
+          ),
+          ov_doc(
+            "/tmp/analyze/cyc_b.tw",
+            "use cyc_a\npub fn b(n: Int) Int { if n == 0 { 0 } else { cyc_a.a(n - 1) + 1 } }\n",
+          ),
+        ])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov1, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/cyc_a.tw")
+        first := analyze.analyze_module(id, base_env.builtin_env(), state)
+        try assert.is_true(first.ok)
+        first_a_typed := cache.changed_at(first.state.cache, "/tmp/analyze/cyc_a.tw", .Typed)
+
+        ov2 := overlay.from_documents([
+          ov_doc(
+            "/tmp/analyze/cyc_a.tw",
+            "use cyc_b\npub fn a(n: Int) Int { if n == 0 { 0 } else { cyc_b.b(n - 1) + 1 } }\n",
+          ),
+          ov_doc(
+            "/tmp/analyze/cyc_b.tw",
+            "use cyc_a\npub fn b(n: Int) Int { if n == 0 { 1 } else { cyc_a.a(n - 1) + 1 } }\n",
+          ),
+        ])
+        state2 := analyze.new_state(base_env.builtin_env(), first.state.cache, ov2, "/tmp/analyze")
+        second := analyze.analyze_module(id, base_env.builtin_env(), state2)
+        try assert.is_true(second.ok)
+        try assert.is_true(
+          cache.changed_at(second.state.cache, "/tmp/analyze/cyc_a.tw", .Typed) != first_a_typed,
+        )
+        .Ok({})
+      },
+    )
+    .test(
       "early cutoff: dep body change preserves importer cache hits",
       fn() {
         ov1 := overlay.from_documents([

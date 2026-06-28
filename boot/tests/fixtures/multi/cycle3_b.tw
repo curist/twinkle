@@ -1,0 +1,11 @@
+//! Three-module recursive function cycle: b -> c.
+
+use .cycle3_c
+
+pub fn b_count(n: Int) Int {
+  if n == 0 {
+    0
+  } else {
+    cycle3_c.c_count(n - 1) + 1
+  }
+}
