@@ -356,7 +356,10 @@ pub fn analyze_module(
   state: AnalysisState,
   stack: Vector<String>,
 ) ModuleResult {
-  analyze_module_impl(id, alias, base, state, stack, .None, .None)
+  // Two-pass SCC driver is the production frontend. The `stack` parameter is
+  // retained for signature parity with every existing call site; the driver
+  // discovers cycles up front (Tarjan) and needs no caller-threaded stack.
+  analyze_module_scc(id, alias, base, state)
 }
 
 /// Record that `canonical` failed analysis so later paths to it short-circuit
@@ -1554,6 +1557,55 @@ fn convert_unused_import_diags(
   }
 }
 
+/// A module's own report-only findings: unused-import warnings (always, for
+/// non-internal modules) plus lint/rewrite hits (review mode only). Mirrors the
+/// tail of `analyze_module_impl` so both the singleton and group SCC paths emit
+/// the same findings the per-module path did.
+type LocalFindings = .{
+  diagnostics: Vector<AnalysisDiag>,
+  rewrites: Vector<RewriteHit>,
+  lints: Vector<LintHit>,
+}
+
+fn collect_local_findings(
+  state: AnalysisState,
+  parsed: cache.ParsedModule,
+  checked: checker.CheckResult,
+  source: overlay.SourceText,
+  is_internal: Bool,
+) LocalFindings {
+  // Unused import warnings for non-internal modules.
+  warns: Vector<AnalysisDiag> = []
+
+  if !is_internal {
+    import_result := unused_imports.check_unused_imports(parsed.module)
+
+    if import_result.items.len() > 0 {
+      warns = convert_unused_import_diags(source, import_result)
+    }
+  }
+
+  // Findings ride the review-mode channel only; internal modules are never linted.
+  local_rewrites: Vector<RewriteHit> = if state.lint_mode and !is_internal {
+    collect rw in checked.rewrites {
+      .{ path: source.identity.path, rewrite: rw }
+    }
+  } else {
+    []
+  }
+  local_lints: Vector<LintHit> = if state.lint_mode and !is_internal {
+    // Structural lints (L3/L4) from the AST visitor + type-dependent lints
+    // (L2, …) collected by the checker.
+    all_findings := lint.lint_module(parsed.module, checked.env, source.text).concat(checked.lints)
+    collect f in all_findings {
+      .{ path: source.identity.path, finding: f }
+    }
+  } else {
+    []
+  }
+  .{ diagnostics: warns, rewrites: local_rewrites, lints: local_lints }
+}
+
 fn wrap_diags(
   source: overlay.SourceText,
   stage: String,
@@ -1615,27 +1667,47 @@ fn discover_module(
 
   module_id := identity.from_path(canonical)
 
+  acc.state.note_progress(.Loading, canonical)
+  t_load0 := date.now()
   loaded := case acc.state.load_source(canonical, module_id, caller_id, use_span) {
     .Ok(v) => v,
     .Err(err) => return acc.record_failure(canonical, err),
   }
   acc.state = loaded.state
 
+  if acc.state.timed {
+    acc.state.timings.load_source = acc.state.timings.load_source + (date.now() - t_load0)
+  }
+
+  acc.state.note_progress(.Parsing, canonical)
+  t_parse0 := date.now()
   parsed_load := case acc.state.parse_cached(canonical, loaded.source, loaded.source_hash) {
     .Ok(v) => v,
     .Err(err) => return acc.record_failure(canonical, err),
   }
   acc.state = parsed_load.state
 
+  if acc.state.timed {
+    acc.state.timings.parse = acc.state.timings.parse + (date.now() - t_parse0)
+  }
+
+  acc.state.note_progress(.PlanningImports, canonical)
+  t_plan0 := date.now()
   dep_plan := case acc.state.plan_dependencies(canonical, parsed_load.parsed, loaded.source) {
     .Ok(plan) => plan,
     .Err(err) => return acc.record_failure(canonical, err),
+  }
+
+  if acc.state.timed {
+    acc.state.timings.plan_deps = acc.state.timings.plan_deps + (date.now() - t_plan0)
   }
 
   dep_canonicals: Vector<String> = collect dep in dep_plan.dependencies {
     dep.canonical_path
   }
   acc.edges[canonical] = dep_canonicals
+
+  acc.state.note_progress(.AnalyzingDependencies, canonical)
 
   for dep in dep_plan.dependencies {
     acc = discover_module(dep.canonical_path, .Some(module_id), .Some(dep.span), acc)
@@ -1683,6 +1755,8 @@ type SingletonResult = .{
   state: AnalysisState,
   diagnostics: Vector<AnalysisDiag>,
   ok: Bool,
+  rewrites: Vector<RewriteHit>,
+  lints: Vector<LintHit>,
 }
 
 type GroupResult = .{
@@ -1690,6 +1764,8 @@ type GroupResult = .{
   state: AnalysisState,
   diagnostics: Vector<AnalysisDiag>,
   ok: Bool,
+  rewrites: Vector<RewriteHit>,
+  lints: Vector<LintHit>,
 }
 
 /// One SCC member's threaded state across group steps A–D. The fields are
@@ -1765,8 +1841,31 @@ fn self_edge(edges: Dict<String, Vector<String>>, node: String) Bool {
 fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String) SingletonResult {
   cur := state
 
+  // Already published (warm-snapshot restore, or this module's interface arrived
+  // through a restored dependency closure). Mirror analyze_module_impl's
+  // exports[canonical] early return: its diagnostics were reported on first
+  // analysis, so re-reporting here would duplicate them.
+  case cur.exports[canonical] {
+    .Some(_) => return SingletonResult.{
+      env: base,
+      state: cur,
+      diagnostics: [],
+      ok: true,
+      rewrites: [],
+      lints: [],
+    },
+    .None => {},
+  }
+
   if cur.failed.has(canonical) {
-    return SingletonResult.{ env: base, state: cur, diagnostics: [], ok: false }
+    return SingletonResult.{
+      env: base,
+      state: cur,
+      diagnostics: [],
+      ok: false,
+      rewrites: [],
+      lints: [],
+    }
   }
 
   module_id := identity.from_path(canonical)
@@ -1777,6 +1876,8 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
       state: err.state.mark_failed(canonical),
       diagnostics: err.diagnostics,
       ok: false,
+      rewrites: [],
+      lints: [],
     },
   }
   cur = loaded.state
@@ -1787,6 +1888,8 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
       state: err.state.mark_failed(canonical),
       diagnostics: err.diagnostics,
       ok: false,
+      rewrites: [],
+      lints: [],
     },
   }
   cur = parsed_load.state
@@ -1797,17 +1900,26 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
       state: err.state.mark_failed(canonical),
       diagnostics: err.diagnostics,
       ok: false,
+      rewrites: [],
+      lints: [],
     },
   }
 
   ienv := build_import_env(base, cur, dep_plan)
 
   if !ienv.ok {
+    // A dependency failed (its interface was never published). Drop any stale
+    // resolved/typed artifacts for this module so a re-analysis after a dep
+    // breaks doesn't surface semantics built against the now-gone dependency —
+    // mirrors analyze_dependencies clearing the importer on `!deps_ok`.
+    cur.cache = .clear_resolved_and_later(canonical)
     return SingletonResult.{
       env: base,
       state: cur.mark_failed(canonical),
       diagnostics: [],
       ok: false,
+      rewrites: [],
+      lints: [],
     }
   }
 
@@ -1832,6 +1944,7 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
   // No back-edge preliminary-interface merge here (unlike analyze_module_impl's
   // cur.interfaces[canonical] check): an SCC singleton has no self-edge, so no
   // preliminary interface for this module can exist. The omission is intentional.
+  cur.note_progress(.Resolving, canonical)
   local := case cur.resolve_and_check_local(
     canonical,
     runner,
@@ -1846,8 +1959,12 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
       state: err.state.mark_failed(canonical),
       diagnostics: err.diagnostics,
       ok: false,
+      rewrites: [],
+      lints: [],
     },
   }
+  local.state.note_progress(.Publishing, canonical)
+  t_publish0 := date.now()
   next := local.state.publish_interface(
     canonical,
     parsed_load.parsed,
@@ -1856,7 +1973,122 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
     loaded.source_hash,
     hashes.deps_hash,
   )
-  SingletonResult.{ env: local.checked.env, state: next, diagnostics: [], ok: true }
+
+  if next.timed {
+    next.timings.publish = next.timings.publish + (date.now() - t_publish0)
+  }
+
+  t_unused0 := date.now()
+  findings := next.collect_local_findings(
+    parsed_load.parsed,
+    local.checked,
+    loaded.source,
+    dep_plan.is_internal,
+  )
+
+  if next.timed {
+    next.timings.unused_imports = next.timings.unused_imports + (date.now() - t_unused0)
+  }
+
+  SingletonResult.{
+    env: local.checked.env,
+    state: next,
+    diagnostics: findings.diagnostics,
+    ok: true,
+    rewrites: findings.rewrites,
+    lints: findings.lints,
+  }
+}
+
+/// The closing back-edge of a cycle: the importing module and the span of the
+/// `use` that targets an ancestor still on the DFS path. Used to attribute a
+/// value-init-cycle diagnostic the same way analyze_module_impl's back-edge path
+/// did (importer file + its `use` statement span).
+type BackEdge = .{ source: String, span: Span }
+
+type DfsAcc = .{
+  visited: Dict<String, Bool>,
+  path: Dict<String, Bool>,
+  found: Bool,
+  source: String,
+  span: Span,
+}
+
+fn dfs_back_edge(
+  node: String,
+  by_canon: Dict<String, GroupMember>,
+  mset: Dict<String, Bool>,
+  acc: DfsAcc,
+) DfsAcc {
+  if acc.found {
+    return acc
+  }
+
+  acc.visited[node] = true
+  acc.path[node] = true
+
+  deps := case by_canon[node] {
+    .Some(m) => m.dep_plan.dependencies,
+    .None => [],
+  }
+
+  for dep in deps {
+    if acc.found {
+      continue
+    }
+
+    if !mset.has(dep.canonical_path) {
+      continue
+    }
+
+    on_path := case acc.path[dep.canonical_path] {
+      .Some(b) => b,
+      .None => false,
+    }
+
+    if on_path {
+      acc.found = true
+      acc.source = node
+      acc.span = dep.span
+    } else {
+      visited := case acc.visited[dep.canonical_path] {
+        .Some(b) => b,
+        .None => false,
+      }
+
+      if !visited {
+        acc = dfs_back_edge(dep.canonical_path, by_canon, mset, acc)
+      }
+    }
+  }
+
+  acc.path[node] = false
+  acc
+}
+
+/// Find the cycle's closing back-edge by a DFS from the SCC root. `members` is
+/// root-first (graph_scc emits components root-first), so members[0] is the node
+/// the entry-rooted DFS first reached in this SCC.
+fn find_group_back_edge(
+  members: Vector<String>,
+  loaded_members: Vector<GroupMember>,
+  mset: Dict<String, Bool>,
+) BackEdge {
+  by_canon: Dict<String, GroupMember> = Dict.new()
+
+  for lm in loaded_members {
+    by_canon[lm.canonical] = lm
+  }
+
+  acc := DfsAcc.{
+    visited: Dict.new(),
+    path: Dict.new(),
+    found: false,
+    source: members[0],
+    span: span.new(0, 0, 0),
+  }
+  acc = dfs_back_edge(members[0], by_canon, mset, acc)
+  BackEdge.{ source: acc.source, span: acc.span }
 }
 
 /// Resolve + typecheck + publish every member of a MULTI-module SCC as a group.
@@ -1876,6 +2108,29 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
   cur := state
   mset := build_member_set(members)
 
+  // Already published (warm-snapshot restore of a fully-resolved cyclic group):
+  // every member's interface is present, so re-resolving would duplicate work
+  // and diagnostics. The entry's own group is never short-circuited here — the
+  // snapshot is captured before the entry component, so its members are unpublished.
+  all_published := true
+
+  for m in members {
+    if !cur.exports.has(m) {
+      all_published = false
+    }
+  }
+
+  if all_published {
+    return GroupResult.{
+      member_envs: Dict.new(),
+      state: cur,
+      diagnostics: [],
+      ok: true,
+      rewrites: [],
+      lints: [],
+    }
+  }
+
   // Load parsed module / source / dep plan for each member (idempotent —
   // discovery already cached these).
   loaded_members: Vector<GroupMember> = []
@@ -1889,6 +2144,8 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
         state: err.state.mark_members_failed(members),
         diagnostics: err.diagnostics,
         ok: false,
+        rewrites: [],
+        lints: [],
       },
     }
     cur = ld.state
@@ -1899,6 +2156,8 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
         state: err.state.mark_members_failed(members),
         diagnostics: err.diagnostics,
         ok: false,
+        rewrites: [],
+        lints: [],
       },
     }
     cur = pl.state
@@ -1909,6 +2168,8 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
         state: err.state.mark_members_failed(members),
         diagnostics: err.diagnostics,
         ok: false,
+        rewrites: [],
+        lints: [],
       },
     }
     empty_diags: Vector<diag.DiagKind> = []
@@ -1943,11 +2204,14 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
   if has_init {
     sorted := members.sort_by(fn(a, b) { a.compare(b) })
     names := sorted.join(", ")
-    first := sorted[0]
+
+    // Attribute the diagnostic to the cycle's closing back-edge — the importing
+    // module and its `use` span — matching analyze_module_impl's back-edge path.
+    be := find_group_back_edge(members, loaded_members, mset)
     d := synthetic_diag(
-      identity.from_path(first),
+      identity.from_path(be.source),
       .None,
-      span.new(0, 0, 0),
+      be.span,
       "import",
       "Top-level initialization cycle: modules ${names} form an import cycle and have top-level statements",
     )
@@ -1957,6 +2221,8 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
       state: cur.mark_members_failed(members),
       diagnostics: [d],
       ok: false,
+      rewrites: [],
+      lints: [],
     }
   }
 
@@ -2019,6 +2285,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
       }
     }
 
+    cur.note_progress(.Resolving, ma.canonical)
     r := env_b.resolve_references(ma.parsed.module, ma.decl_diags)
     sig_exports := opaque_type_exports(
       extract_exports_for_module(r.env, ma.parsed.module, ma.canonical, Dict.new()),
@@ -2050,6 +2317,8 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
   // the member's own types via its step-A INDEX range.
   member_envs: Dict<String, ResolvedEnv> = Dict.new()
   all_diags: Vector<AnalysisDiag> = []
+  group_rewrites: Vector<RewriteHit> = []
+  group_lints: Vector<LintHit> = []
   group_ok := true
 
   for mc in step_c {
@@ -2103,6 +2372,7 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     // resolve_references and check never insert type entries within
     // [idx_start, idx_end), so the range captured on the declaration env
     // correctly identifies the same member-owned slice in typed.env.
+    cur.note_progress(.Publishing, mc.canonical)
     cur = .publish_interface_range(
       mc.canonical,
       mc.parsed,
@@ -2113,22 +2383,37 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
       hashes.deps_hash,
     )
     member_envs[mc.canonical] = typed.env
+
+    // Per-member unused-import + lint/rewrite findings, exactly as the per-module
+    // path emits for each cycle member.
+    findings := cur.collect_local_findings(mc.parsed, typed, mc.source, mc.dep_plan.is_internal)
+    all_diags = .concat(findings.diagnostics)
+    group_rewrites = .concat(findings.rewrites)
+    group_lints = .concat(findings.lints)
   }
 
   if !group_ok {
     cur = .mark_members_failed(members)
   }
 
-  GroupResult.{ member_envs, state: cur, diagnostics: all_diags, ok: group_ok }
+  GroupResult.{
+    member_envs,
+    state: cur,
+    diagnostics: all_diags,
+    ok: group_ok,
+    rewrites: group_rewrites,
+    lints: group_lints,
+  }
 }
 
 /// Two-pass SCC frontend driver (Phase 1 discovery → Tarjan condensation →
 /// Phase 2 SCC-ordered resolution). Singleton SCCs go through the existing
 /// per-module path; multi-member SCCs through `resolve_group`.
 ///
-/// NOT yet wired into `compile_entry` — this is the Task-6 deliverable proven on
-/// real cycle fixtures. Rewrites/lints are left empty and entry_snapshot /
-/// progress / timing fidelity are deferred to Task 7.
+/// This is THE production frontend driver (`analyze_module` delegates here).
+/// It restores the per-module path's fidelity: progress events (in discovery
+/// and resolution), timings, unused-import + lint/rewrite findings, and the
+/// dependency-closure snapshot captured just before the entry's own SCC.
 pub fn analyze_module_scc(
   id: identity.SourceIdentity,
   alias: String,
@@ -2153,9 +2438,41 @@ pub fn analyze_module_scc(
   cur := disc.state
   entry_env := base
   all_diags: Vector<AnalysisDiag> = []
+  all_rewrites: Vector<RewriteHit> = []
+  all_lints: Vector<LintHit> = []
   ok := true
 
+  // The entry's direct dependency paths, for the closure snapshot.
+  entry_dep_paths := case disc.edges[canonical] {
+    .Some(deps) => deps,
+    .None => [],
+  }
+
   for comp in comps {
+    is_entry_comp := comp.contains(canonical)
+
+    // Capture the dependency-closure snapshot just before the entry's own SCC —
+    // the SCC analog of analyze_module_impl capturing after the entry's deps and
+    // before its own module. The entry depends on everything, so its SCC is the
+    // last; module_order / exports / interfaces here hold exactly the closure.
+    if cur.capture_snapshot and is_entry_comp {
+      cur.entry_snapshot = .Some(
+        .{
+          entry: canonical,
+          entry_dep_paths,
+          closure_modules: cur.module_order,
+          exports: cur.exports,
+          interfaces: cur.interfaces,
+          shared_types: cur.shared_types,
+          shared_type_origins: cur.shared_type_origins,
+          module_order: cur.module_order,
+          module_runners: cur.module_runners,
+          failed: cur.failed,
+          dep_diagnostics: all_diags,
+        },
+      )
+    }
+
     is_singleton := comp.len() == 1 and !self_edge(disc.edges, comp[0])
 
     if is_singleton {
@@ -2163,6 +2480,8 @@ pub fn analyze_module_scc(
       sres := resolve_singleton(base, cur, member)
       cur = sres.state
       all_diags = .concat(sres.diagnostics)
+      all_rewrites = .concat(sres.rewrites)
+      all_lints = .concat(sres.lints)
 
       if !sres.ok {
         ok = false
@@ -2175,6 +2494,8 @@ pub fn analyze_module_scc(
       gres := resolve_group(base, cur, comp)
       cur = gres.state
       all_diags = .concat(gres.diagnostics)
+      all_rewrites = .concat(gres.rewrites)
+      all_lints = .concat(gres.lints)
 
       if !gres.ok {
         ok = false
@@ -2187,5 +2508,12 @@ pub fn analyze_module_scc(
     }
   }
 
-  .{ env: entry_env, state: cur, diagnostics: all_diags, ok, rewrites: [], lints: [] }
+  .{
+    env: entry_env,
+    state: cur,
+    diagnostics: all_diags,
+    ok,
+    rewrites: all_rewrites,
+    lints: all_lints,
+  }
 }
