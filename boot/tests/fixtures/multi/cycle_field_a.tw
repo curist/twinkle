@@ -1,0 +1,9 @@
+//! Cycle (entry): defines a record type and delegates a value of it to the sibling.
+
+use .cycle_field_b
+
+pub type Box = .{ n: Int }
+
+pub fn show(b: Box) Int {
+  cycle_field_b.read(b)
+}

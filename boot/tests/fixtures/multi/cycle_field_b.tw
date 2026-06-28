@@ -1,0 +1,7 @@
+//! Cycle: consumes a value of a sibling-defined record type and reads its field.
+
+use .cycle_field_a.{Box}
+
+pub fn read(b: Box) Int {
+  b.n
+}

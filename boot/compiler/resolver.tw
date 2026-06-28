@@ -265,7 +265,7 @@ pub fn register_type_methods(
   methods
 }
 
-fn find_type_entry_index(env: ResolvedEnv, tid: TypeId) Int? {
+pub fn find_type_entry_index(env: ResolvedEnv, tid: TypeId) Int? {
   env.type_id_index[tid.id]
 }
 

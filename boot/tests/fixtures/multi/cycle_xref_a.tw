@@ -1,0 +1,19 @@
+//! Cycle (entry): mutually-referencing record types where a value of the sibling
+//! type is field-accessed THROUGH its cross-reference back to this module's type.
+
+use .cycle_xref_b
+
+pub type ANode = .{ tag: Int, peer: cycle_xref_b.BNode? }
+
+pub fn back_tag(b: cycle_xref_b.BNode) Int {
+  case b.back {
+    .Some(a) => a.tag,
+    .None => 0,
+  }
+}
+
+fn main() {
+  a: ANode = ANode.{ tag: 1, peer: .None }
+  b := cycle_xref_b.make(a)
+  total := back_tag(b)
+}

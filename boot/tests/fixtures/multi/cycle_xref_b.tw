@@ -1,0 +1,10 @@
+//! Cycle: defines BNode (referencing the sibling's ANode) and consumes an ANode
+//! value, reading a field of the sibling-defined type.
+
+use .cycle_xref_a
+
+pub type BNode = .{ tag: Int, back: cycle_xref_a.ANode? }
+
+pub fn make(a: cycle_xref_a.ANode) BNode {
+  BNode.{ tag: a.tag, back: .Some(a) }
+}

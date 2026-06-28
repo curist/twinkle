@@ -95,6 +95,30 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "a value of a sibling-defined record type keeps its fields across the cycle",
+      fn() {
+        dir := fixtures_dir()
+        result := run_scc("${dir}/cycle_field_a.tw")
+        try assert.is_true(result.ok)
+        try assert.equal(error_diag_count(result), 0)
+        try assert.vec_contains(result.state.module_order, canon("${dir}/cycle_field_a.tw"))
+        try assert.vec_contains(result.state.module_order, canon("${dir}/cycle_field_b.tw"))
+        .Ok({})
+      },
+    )
+    .test(
+      "cross-referencing types keep resolved fields when accessed through the cycle",
+      fn() {
+        dir := fixtures_dir()
+        result := run_scc("${dir}/cycle_xref_a.tw")
+        try assert.is_true(result.ok)
+        try assert.equal(error_diag_count(result), 0)
+        try assert.vec_contains(result.state.module_order, canon("${dir}/cycle_xref_a.tw"))
+        try assert.vec_contains(result.state.module_order, canon("${dir}/cycle_xref_b.tw"))
+        .Ok({})
+      },
+    )
+    .test(
       "top-level value-init cycle is rejected with an initialization-cycle diagnostic",
       fn() {
         dir := fixtures_dir()

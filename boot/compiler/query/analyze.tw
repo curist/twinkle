@@ -1429,6 +1429,78 @@ fn find_group_back_edge(
 ///   C — circular-alias check per member (see limitation note below).
 ///   D — typecheck + publish per member, attributing the member's own types via
 ///       its step-A INDEX range.
+type GroupTypeBundle = .{
+  types: Vector<TypeEntry>,
+  names: Vector<String>,
+  origins: Dict<Int, String>,
+}
+
+/// Collect every group member's own-declared types (their `[idx_start, idx_end)`
+/// slice) into one bundle, tagging each with the same synthetic origin
+/// (`canonical::Name`) that `extract_exports_for_module` stamps on a module's
+/// own exported types. `use_resolved` picks the resolved env (full defs, for the
+/// typecheck phase) over the declaration env (for reference resolution).
+fn group_member_type_bundle(members: Vector<GroupMember>, use_resolved: Bool) GroupTypeBundle {
+  types: Vector<TypeEntry> = []
+  names: Vector<String> = []
+  origins: Dict<Int, String> = Dict.new()
+
+  for m in members {
+    env := if use_resolved {
+      m.resolved_env
+    } else {
+      m.decl_env
+    }
+
+    for i in m.idx_start..m.idx_end {
+      entry := env.types[i]
+      name := env.type_names[i]
+      types = .append(entry)
+      names = .append(name)
+      origins[entry.id.id] = "${m.canonical}::${name}"
+    }
+  }
+
+  .{ types, names, origins }
+}
+
+/// Register the bundle's type entries into `env` under their canonical ids and
+/// synthetic origins. This is what lets the import-merge dedup (`plan_export_type_ids`)
+/// resolve a sibling's type back to its canonical id instead of minting a fresh
+/// one — the source of the cross-cycle `Named(20)` vs `Named(21)` identity split.
+/// With `overwrite`, an already-present entry is replaced (used at typecheck to
+/// upgrade a declaration-time placeholder to its fully-resolved definition).
+fn inject_group_member_types(env: ResolvedEnv, bundle: GroupTypeBundle, overwrite: Bool) ResolvedEnv {
+  cur := env
+
+  for i in 0..bundle.types.len() {
+    entry := bundle.types[i]
+    name := bundle.names[i]
+
+    case cur.find_type_entry_index(entry.id) {
+      .Some(idx) => if overwrite {
+        cur.types[idx] = entry
+        cur.type_index[name] = idx
+        cur.type_id_index[entry.id.id] = idx
+      },
+      .None => {
+        cur.type_index[name] = cur.types.len()
+        cur.type_id_index[entry.id.id] = cur.types.len()
+        cur.types = .append(entry)
+        cur.type_names = .append(name)
+      },
+    }
+  }
+
+  for tid, origin in bundle.origins {
+    if !cur.type_origins.has(tid) {
+      cur.type_origins[tid] = origin
+    }
+  }
+
+  cur
+}
+
 fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String>) GroupResult {
   cur := state
   mset := build_member_set(members)
@@ -1627,9 +1699,13 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
   // signature-complete (opaque-type) interface so later members' typechecks see
   // resolved sibling function signatures.
   step_b: Vector<GroupMember> = []
+  decl_bundle := group_member_type_bundle(step_a, false)
 
   for ma in step_a {
-    env_b := ma.decl_env
+    // Seed sibling-declared types under their canonical ids + origins so the
+    // import-merge dedups references back to those ids rather than minting fresh
+    // ones (the cross-cycle identity split). Own types dedup harmlessly.
+    env_b := inject_group_member_types(ma.decl_env, decl_bundle, false)
 
     for dep in ma.dep_plan.dependencies {
       if !mset.has(dep.canonical_path) {
@@ -1676,9 +1752,12 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
   group_lints: Vector<LintHit> = []
   typed_members: Vector<TypedGroupMember> = []
   group_ok := true
+  resolved_bundle := group_member_type_bundle(step_c, true)
 
   for mc in step_c {
-    tc_env := mc.resolved_env
+    // Upgrade sibling types to their fully-resolved definitions so a value of a
+    // sibling-defined record/enum keeps its fields during this member's typecheck.
+    tc_env := inject_group_member_types(mc.resolved_env, resolved_bundle, true)
 
     for dep in mc.dep_plan.dependencies {
       if !mset.has(dep.canonical_path) {
