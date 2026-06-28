@@ -1,6 +1,6 @@
 # Recursive module groups — allow mutually-recursive modules
 
-Status: **SCC-based boot-compiler implementation landed**. The boot frontend now
+Status: **archived; SCC-based boot-compiler implementation landed**. The boot frontend now
 discovers the import closure, condenses it with Tarjan SCCs, and resolves each
 component in dependency-before-dependent order. Singleton SCCs use the normal
 per-module path; multi-module SCCs use group declaration collection, reference
@@ -8,7 +8,7 @@ resolution, alias checking, typechecking, and per-member publish. Function/type
 cycles compile, top-level value-initialization cycles are rejected with a
 whole-cycle diagnostic, and group members fold sibling source hashes into their
 cache keys. stage0 remains deferred. Resolves open-question #3
-([../open-questions.md](../open-questions.md)). See
+([../../open-questions.md](../../open-questions.md)). See
 [scc-module-groups-design.md](scc-module-groups-design.md) for the implemented
 architecture and [scc-module-groups-plan.md](scc-module-groups-plan.md) for the
 execution record.
@@ -34,8 +34,9 @@ execution record.
 - The old DFS/back-edge preliminary-interface mechanism has been removed from the
   boot compiler.
 
-Still open: the **stage0 mirror** (stage0 still rejects all cycles; fine for
-bootstrap since `boot/main.tw` is acyclic).
+Deferred: the **stage0 mirror** (stage0 still rejects all cycles; fine for
+bootstrap since `boot/main.tw` is acyclic). Treat this as separate future work
+only if stage0 parity becomes active again.
 
 ## The restriction is architectural, not semantic
 

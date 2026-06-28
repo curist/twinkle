@@ -161,6 +161,7 @@ Related historical context outside this folder:
 | [intrinsic-registry-unification.md](intrinsic-registry-unification.md) | Unify intrinsic/prelude metadata into one canonical registry |
 | [stdlib-signature-source-of-truth.md](stdlib-signature-source-of-truth.md) | Make `prelude/*` and `stdlib/*` the signature source of truth; remove cross-file Rust signature duplication |
 | [module-compile-orchestrator-refactor.md](module-compile-orchestrator-refactor.md) | Refactor module compile orchestration into dependency, stage-runner, and env-integration layers |
+| [recursive-module-groups.md](recursive-module-groups.md) | SCC-based recursive module groups in the boot compiler: Tarjan closure discovery, group resolution, value-init cycle rejection, and group cache invalidation. Design and execution record in [scc-module-groups-design.md](scc-module-groups-design.md) and [scc-module-groups-plan.md](scc-module-groups-plan.md) |
 | [codegen-boundary-separation.md](codegen-boundary-separation.md) | Separate codegen planning, representation-flow analysis, and instruction emission |
 | [boot-shared-type-helpers.md](boot-shared-type-helpers.md) | Consolidate shared boot compiler type substitution, prepared backend fact, and Wasm type comparison helpers |
 | [boot-contract-reachability-index.md](boot-contract-reachability-index.md) | Pre-index contract-call fallback targets in the Core linker reachability pass |

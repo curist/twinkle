@@ -1,13 +1,12 @@
 # SCC-based recursive module groups — design
 
-Status: **implemented in the boot compiler; stage0 mirror pending.**
+Status: **archived; implemented in the boot compiler.** stage0 parity is deferred to a separate future plan only if stage0 is revived as an active target.
 
 This supersedes the "Future SCC design" section of
 [recursive-module-groups.md](recursive-module-groups.md). The boot compiler now
 uses this Tarjan SCC grouping architecture in production; the earlier surgical
 back-edge approach (`break_import_cycle` + preliminary interfaces) has been
-removed. stage0 stays on its current cycle-rejecting path until a follow-up
-mirror is scheduled.
+removed. stage0 remains on its current cycle-rejecting path.
 
 ## Goal
 
@@ -30,8 +29,8 @@ easier to mirror faithfully into stage0/Rust than the back-edge hack.
 - No lazy/deferred top-level evaluation.
 - No first-class "group" cache object — group invalidation is achieved by folding
   group siblings into each member's existing per-module hash (see Caching).
-- stage0 changes are explicitly out of scope for this change; they follow once
-  boot is proven.
+- stage0 changes are explicitly out of scope for this change; they are deferred
+  unless stage0 parity becomes active work again.
 
 ## Key observation
 
@@ -238,8 +237,8 @@ threaded cursor.
 
 ## stage0 follow-up (out of scope here)
 
-Once boot is proven on the self-host loop, mirror the discovery + group-resolution
-structure in `src/module/` (`planner.rs`, `compile_module`,
+If stage0 parity becomes active work again, mirror the discovery +
+group-resolution structure in `src/module/` (`planner.rs`, `compile_module`,
 `compile_planned_dependencies`) and the `src/types/` resolver entry points:
 Phase 1 discovery + Tarjan condensation + Phase 2 group resolution (steps A–D),
 plus the planner tests that currently assert acyclic-only behavior.

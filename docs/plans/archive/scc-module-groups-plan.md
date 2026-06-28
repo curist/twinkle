@@ -1,5 +1,7 @@
 # SCC-based recursive module groups — Implementation Plan
 
+Status: **archived; completed for the boot compiler.** stage0 parity is deferred to a separate future plan only if stage0 is revived as an active target.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the boot compiler's surgical back-edge cycle handling with proper Tarjan SCC grouping — an explicit two-pass driver (env-independent discovery → Tarjan condensation → SCC-ordered group resolution).
@@ -8,13 +10,13 @@
 
 **Tech stack:** Twinkle (`.tw`), boot compiler in `boot/compiler/`. Tests in `boot/tests/suites/`, run via `make boot-test`. Self-host fixed point via `make stage2`. Final CLI via `make bundle-cli`.
 
-**Design reference:** `docs/plans/scc-module-groups-design.md`.
+**Design reference:** [`scc-module-groups-design.md`](scc-module-groups-design.md).
 
 ---
 
 ## Progress / Resume Here (updated 2026-06-28)
 
-Executing on branch `scc-module-groups` (branched from `main` after the design+plan commits). Tasks 1–11 are **DONE** for the boot compiler. The production frontend uses the SCC two-pass driver, the old recursive back-edge mechanism has been removed, group cache invalidation is wired, docs are updated, and the bundled CLI has been rebuilt. stage0 mirror remains a follow-up.
+Executing on branch `scc-module-groups` (branched from `main` after the design+plan commits). Tasks 1–11 are **DONE** for the boot compiler. The production frontend uses the SCC two-pass driver, the old recursive back-edge mechanism has been removed, group cache invalidation is wired, docs are updated, and the bundled CLI has been rebuilt. stage0 parity is deferred to separate future work only if needed.
 
 - [x] **Task 1** — `boot/compiler/graph_scc.tw` (reusable Tarjan SCC); `type_order.tw` routed through it; hardened tests (self-loop/membership/disconnected). Commits `a21fe64b`, `5036bdd4` (restored root-first intra-component order for byte-parity), `b10d57e4`.
 - [x] **Task 2** — resolver passes exposed (`resolve_references`/`detect_circular_aliases` pub) + `collect_declarations_from(env, module, id_start)` / `DeclCollection` / `next_type_id` threading a TypeId cursor; `collect_declarations` delegates. Commit `6cefb982`. (Accepted-minor: `id_start` vs `start_id` naming; `next_type_id` wraps `next_available_type_id`.)
