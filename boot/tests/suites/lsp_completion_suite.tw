@@ -711,7 +711,9 @@ pub fn suite() runner.Suite {
         }
 
         if has_label(labels, "Up") or has_label(labels, "Down") {
-          return .Err("expected ONLY Color variants (real resolution); got Dir variants too: ${labels}")
+          return .Err(
+            "expected ONLY Color variants (real resolution); got Dir variants too: ${labels}",
+          )
         }
 
         .Ok({})
@@ -722,6 +724,7 @@ pub fn suite() runner.Suite {
       fn() {
         valid := "xs := [1, 2, 3]\nxs\n"
         incomplete := "xs := [1, 2, 3]\nxs = .\n"
+
         // `xs = .`: x=0 s=1 ' '=2 ==3 ' '=4 .=5  → cursor after dot is column 6
         step := open_then_complete(valid, incomplete, 1, 6)
         labels := try completion_labels(step)
@@ -736,6 +739,44 @@ pub fn suite() runner.Suite {
 
         if has_label(labels, "len") {
           return .Err("did not expect 'len' (returns Int, not Vector), got: ${labels}")
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "rebind continuation on field path filters by field type",
+      fn() {
+        valid := "type S = .{ items: Vector<Int> }\ns := S.{ items: [1] }\ns.items\n"
+        incomplete := "type S = .{ items: Vector<Int> }\ns := S.{ items: [1] }\ns.items = .\n"
+
+        // `s.items = .`: s=0 .=1 i=2 t=3 e=4 m=5 s=6 ' '=7 ==8 ' '=9 .=10 → cursor after dot is column 11
+        step := open_then_complete(valid, incomplete, 2, 11)
+        labels := try completion_labels(step)
+
+        if !has_label(labels, "append") {
+          return .Err("expected 'append' for Vector<Int> field, got: ${labels}")
+        }
+
+        if has_label(labels, "len") {
+          return .Err("did not expect 'len', got: ${labels}")
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "typed binding does not offer methods",
+      fn() {
+        valid := "xs: Vector<Int> = [1]\nxs\n"
+        incomplete := "xs: Vector<Int> = [1]\nxs: Vector<Int> = .\n"
+
+        // `xs: Vector<Int> = .`: x=0 s=1 :=2 ' '=3 V=4 e=5 c=6 t=7 o=8 r=9 <=10 I=11 n=12 t=13 >=14 ' '=15 ==16 ' '=17 .=18 → cursor after dot is column 19
+        step := open_then_complete(valid, incomplete, 1, 19)
+        labels := try completion_labels(step)
+
+        if has_label(labels, "append") or has_label(labels, "len") {
+          return .Err("typed binding must not offer methods, got: ${labels}")
         }
 
         .Ok({})
