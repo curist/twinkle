@@ -5333,6 +5333,23 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<DiagKind>) Ch
   }
 }
 
+// Check every function body in source order, threading ctx and diagnostics.
+// Used by Pass 2 and re-used by Pass 4 (which re-checks them against top-level
+// let types corrected in Pass 3).
+fn check_module_functions(module: Module, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+  for item in module.items {
+    case item {
+      .Function(decl) => {
+        r := check_function(decl, ctx, diags)
+        ctx = r.ctx
+        diags = r.diags
+      },
+      _ => {},
+    }
+  }
+  .{ ctx, diags }
+}
+
 // ── Public API ──────────────────────────────────────────────────────
 fn collect_module_aliases(module: Module) Dict<String, Bool> {
   builtin_module_aliases: Vector<String> = [
@@ -5388,7 +5405,6 @@ fn collect_module_aliases(module: Module) Dict<String, Bool> {
 
 pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
   ctx := empty_ctx(env, collect_module_aliases(module), lint_mode)
-  cur_diags: Vector<DiagKind> = []
 
   // Pass 0: give every unannotated function a fresh meta-var return type. Its
   // body unifies with that meta during checking, and every call site (including
@@ -5414,56 +5430,55 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
 
   ctx.env = .with_functions(pass0_fns)
 
+  // Diagnostics are accumulated in three independent streams — top-level
+  // statements (Pass 1), function bodies (Pass 2/4), and re-checked unannotated
+  // lets (Pass 3) — concatenated once after Pass 5. Each pass owns its stream, so
+  // re-running a pass replaces only its own diagnostics; no offset arithmetic,
+  // and one pass's errors can never clobber another's.
   // Pass 1: top-level statements/lets.
   // This makes top-level bindings available to all functions regardless of
   // source order. For unannotated lets, diagnostics are suppressed because
   // function return types may not be inferred yet (ret = None defaults to
   // Void). Pass 3 re-checks these with full type information.
+  pass1_diags: Vector<DiagKind> = []
+
   for item in module.items {
     case item {
       .Stmt(stmt) => {
         r := case stmt {
           .Let(ls) => case ls.ty {
-            .Some(_) => check_let(ls, ctx, cur_diags),
+            .Some(_) => check_let(ls, ctx, pass1_diags),
             .None => {
               // Suppress diagnostics — re-checked in Pass 3
               trial := check_let(ls, ctx, [])
-              .{ ctx: trial.ctx, diags: cur_diags }
+              .{ ctx: trial.ctx, diags: pass1_diags }
             },
           },
-          _ => check_top_level_stmt(stmt, ctx, cur_diags),
+          _ => check_top_level_stmt(stmt, ctx, pass1_diags),
         }
         ctx = r.ctx
-        cur_diags = r.diags
+        pass1_diags = r.diags
       },
       _ => {},
     }
   }
 
   // Pass 2: function bodies.
-  diags_before_pass2 := cur_diags.len()
-
-  for item in module.items {
-    case item {
-      .Function(decl) => {
-        r := check_function(decl, ctx, cur_diags)
-        ctx = r.ctx
-        cur_diags = r.diags
-      },
-      _ => {},
-    }
-  }
+  pass2 := check_module_functions(module, ctx, [])
+  ctx = pass2.ctx
+  fn_diags := pass2.diags
 
   // Pass 3: re-check unannotated top-level lets.
   // Now that all function return types are inferred, re-synthesize these
   // bindings to get correct types and report real errors.
   any_type_updated := false
+  pass3_diags: Vector<DiagKind> = []
 
   for item in module.items {
     case item {
       .Stmt(.Let(ls)) => case ls.ty {
         .None => {
-          r := check_let(ls, ctx, cur_diags)
+          r := check_let(ls, ctx, pass3_diags)
 
           // Check if the type changed from Pass 1
           case r.ctx.lookup_local(ls.name) {
@@ -5479,7 +5494,7 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
           }
 
           ctx = r.ctx
-          cur_diags = r.diags
+          pass3_diags = r.diags
         },
         _ => {},
       },
@@ -5487,22 +5502,16 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
     }
   }
 
-  // Pass 4: if any top-level let type was corrected in Pass 3, re-check
-  // functions that may have seen stale types.
-  if any_type_updated and cur_diags.len() > diags_before_pass2 {
-    cur_diags = .slice(0, diags_before_pass2)
-
-    for item in module.items {
-      case item {
-        .Function(decl) => {
-          r := check_function(decl, ctx, cur_diags)
-          ctx = r.ctx
-          cur_diags = r.diags
-        },
-        _ => {},
-      }
-    }
+  // Pass 4: a Pass-3 type correction can leave the Pass-2 function diagnostics
+  // stale (they were checked against the pre-correction types), so recompute
+  // them. Only fn_diags is replaced — pass1_diags and pass3_diags are untouched.
+  if any_type_updated and fn_diags.len() + pass3_diags.len() > 0 {
+    pass4 := check_module_functions(module, ctx, [])
+    ctx = pass4.ctx
+    fn_diags = pass4.diags
   }
+
+  cur_diags := pass1_diags.concat(fn_diags).concat(pass3_diags)
 
   // Zonk all type_map entries and detect unsolved MetaVars.
   // Deduplicate by span_start so one root ambiguity emits at most one diagnostic.

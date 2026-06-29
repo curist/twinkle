@@ -70,6 +70,25 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "absent-method error survives a top-level let type correction",
+      fn() {
+        // Regression: `a := make()` calls an unannotated function, so `a`'s type
+        // is a fresh metavar in checker Pass 1 and only resolved to `Int` in
+        // Pass 3 — flipping `any_type_updated`. That used to truncate the Pass-3
+        // diagnostics, silently dropping the real "no method" error on the
+        // following let (and, for a generic stdlib receiver like `View`, letting
+        // the unresolved call crash lowering). The error must survive.
+        result := diagnostics.analyze_document(
+          cache.empty(),
+          input("fn make() {\n  42\n}\na := make()\nb := a.bogus()\n"),
+        )
+        try assert.is_true(result.diagnostics.len() > 0)
+        try assert.equal(result.diagnostics[0].stage, "check")
+        try assert.str_contains(result.diagnostics[0].message, "no method")
+        .Ok({})
+      },
+    )
+    .test(
       "qualified Option and Result variant constructors type-check",
       fn() {
         // Option/Result are both builtin type names and module aliases; the
