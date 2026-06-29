@@ -62,3 +62,10 @@ pub fn utf8_bytes(s: String) Vector<Byte> {
 pub fn from_utf8(bytes: Vector<Byte>) Option<String> {
   .None
 }
+
+/// Wrap `len` raw linear-memory bytes at address `ptr` as a String, skipping
+/// UTF-8 validation. Low-level; backs `@std.buffer`'s `to_string`. The caller
+/// must guarantee the range is in-bounds and holds valid UTF-8.
+pub fn from_mem(ptr: Int, len: Int) String {
+  ""
+}

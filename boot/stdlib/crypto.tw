@@ -50,15 +50,15 @@ fn hex_value(b: Byte) Int? {
   }
 }
 
-fn b64_char(n: Int) String {
-  code := cond {
+// ASCII code of the Base64 digit for a 6-bit value.
+fn b64_code(n: Int) Int {
+  cond {
     n < 26 => 0x41 + n,
     n < 52 => 0x61 + (n - 26),
     n < 62 => 0x30 + (n - 52),
     n == 62 => 0x2b,
     _ => 0x2f,
   }
-  String.from_byte(Byte.from_int(code).unwrap()).unwrap()
 }
 
 // 6-bit value of a Base64 digit byte, or -1 if it is not a valid digit. Avoids
@@ -192,13 +192,26 @@ pub fn hex_decode(text: String) Result<Vector<Byte>, String> {
 }
 
 /// Encode bytes with standard Base64 and `=` padding.
+///
+/// The encoded ASCII is written straight into a linear-memory `Buffer` and
+/// materialized with a single `to_string`, skipping the per-character string
+/// builder the naive form pays.
 pub fn base64_encode(bytes: Vector<Byte>) String {
-  out := ""
+  n := bytes.len()
+  if n == 0 {
+    return ""
+  }
+
+  out_len := (n + 2) / 3 * 4
+  out := buffer.new(out_len)
+  pad := 0x3d
+
   i := 0
-  for i < bytes.len() {
+  j := 0
+  for i < n {
     b0 := bytes[i].to_int()
-    have1 := i + 1 < bytes.len()
-    have2 := i + 2 < bytes.len()
+    have1 := i + 1 < n
+    have2 := i + 2 < n
     b1 := if have1 {
       bytes[i + 1].to_int()
     } else {
@@ -209,27 +222,33 @@ pub fn base64_encode(bytes: Vector<Byte>) String {
     } else {
       0
     }
-    n := b0 << 16 | b1 << 8 | b2
+    x := b0 << 16 | b1 << 8 | b2
 
-    out = .concat(b64_char(n >> 18 & 0x3f))
-    out = .concat(b64_char(n >> 12 & 0x3f))
-    out = .concat(
+    out.set_byte(j, b64_code(x >> 18 & 0x3f))
+    out.set_byte(j + 1, b64_code(x >> 12 & 0x3f))
+    out.set_byte(
+      j + 2,
       if have1 {
-        b64_char(n >> 6 & 0x3f)
+        b64_code(x >> 6 & 0x3f)
       } else {
-        "="
+        pad
       },
     )
-    out = .concat(
+    out.set_byte(
+      j + 3,
       if have2 {
-        b64_char(n & 0x3f)
+        b64_code(x & 0x3f)
       } else {
-        "="
+        pad
       },
     )
     i = i + 3
+    j = j + 4
   }
-  out
+
+  result := out.to_string(0, out_len)
+  out.free()
+  result
 }
 
 /// Decode standard Base64 with `=` padding.

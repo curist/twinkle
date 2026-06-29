@@ -858,6 +858,7 @@ bytes. Both fields are public but raw; treat them as opaque outside `@std.buffer
 | `buf.free()` | `fn(b: Buffer) Void` | Release the region. Double-free corrupts allocator bookkeeping |
 | `buf.len()` | `fn(b: Buffer) Int` | Byte length of the region |
 | `buf.to_bytes()` | `fn(b: Buffer) Vector<Byte>` | Copy the bytes back out into an owned `Vector<Byte>` |
+| `buf.to_string(off, len)` | `fn(b: Buffer, off: Int, len: Int) String` | Decode `len` bytes at `off` directly into a `String`, skipping the per-byte `Vector<Byte>`/builder round-trip and UTF-8 validation. **Caller guarantees the range is in-bounds and holds valid UTF-8** |
 
 **Raw byte-addressed accessors** (byte `off`, little-endian, unaligned OK, **unchecked against `len`** — only the whole-memory bound traps):
 
@@ -865,6 +866,7 @@ bytes. Both fields are public but raw; treat them as opaque outside `@std.buffer
 |----------|-----------|-------------|
 | `buf.get_u8(off)` | `fn(b: Buffer, off: Int) Byte` | Read one byte at byte offset `off` |
 | `buf.set_u8(off, v)` | `fn(b: Buffer, off: Int, v: Byte) Void` | Write one byte |
+| `buf.set_byte(off, v)` | `fn(b: Buffer, off: Int, v: Int) Void` | Write the low 8 bits of an `Int` directly, skipping the `Byte` wrapper — for hot codec loops that already hold the value as an `Int` |
 | `buf.get_u32(off)` | `fn(b: Buffer, off: Int) Int` | Read 4 bytes as an unsigned little-endian word, zero-extended to `Int` |
 | `buf.set_u32(off, v)` | `fn(b: Buffer, off: Int, v: Int) Void` | Write the low 32 bits of `v` as a little-endian word |
 | `buf.get_i64(off)` | `fn(b: Buffer, off: Int) Int` | Read 8 bytes as a little-endian i64 |

@@ -331,6 +331,13 @@ pub fn emit_module(
     })
     .append(.{
       module: "codegen.intrinsics",
+      name: "string_from_mem",
+      as_sym: "string_from_mem",
+      params: [.I32, .I32],
+      results: [.Ref(false, .Named("rt_types__String"))],
+    })
+    .append(.{
+      module: "codegen.intrinsics",
       name: "float_from_string_helper",
       as_sym: "float_from_string_helper",
       params: [.Ref(true, .Named("rt_types__String"))],
@@ -1605,6 +1612,7 @@ pub fn build_intrinsic_table(b: BuiltinRegistry) Dict<Int, IntrinsicTag> {
   t[b.method_id("String", "from_code_point").id] = .StringFromCodePoint
   t[b.method_id("String", "utf8_bytes").id] = .StringUtf8Bytes
   t[b.method_id("String", "from_utf8").id] = .StringFromUtf8
+  t[b.method_id("String", "from_mem").id] = .StringFromMem
   t[b.method_id("Byte", "to_int").id] = .ByteToInt
   t[b.method_id("Byte", "from_int").id] = .ByteFromInt
   t[b.method_id("Byte", "to_string").id] = .ByteToString
@@ -1670,6 +1678,7 @@ fn emit_intrinsic_call(
     .StringFromCodePoint => emit_intrinsic_from_code_point(args, result_idx, result_mono, ctx, buf),
     .StringUtf8Bytes => emit_intrinsic_string_utf8_bytes(args, result_idx, ctx, buf),
     .StringFromUtf8 => emit_intrinsic_string_from_utf8(args, result_idx, result_mono, ctx, buf),
+    .StringFromMem => emit_intrinsic_string_from_mem(args, result_idx, ctx, buf),
     .ByteToInt => {
       buf2 := emit_atom(args[0], ctx, buf)
       buf2.append(.I64ExtendI32U).append(.LocalSet(result_idx))
@@ -2175,6 +2184,18 @@ fn emit_intrinsic_string_from_utf8(
     .append(.RefCast(true, .Named("rt_types__Variant")))
     .append(.Call(option_from_variant_helper_sym(MonoType.String)))
     .append(.LocalSet(result_idx))
+}
+
+// ── string_from_mem: (Int ptr, Int len) → String (no UTF-8 validation) ──
+fn emit_intrinsic_string_from_mem(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  buf2 := emit_atom(args[0], ctx, buf).append(.I32WrapI64)
+  buf3 := emit_atom(args[1], ctx, buf2).append(.I32WrapI64)
+  buf3.append(.Call("string_from_mem")).append(.LocalSet(result_idx))
 }
 
 // ── byte_from_int: Int → Option<Byte> ──────────────────────────────────

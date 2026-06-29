@@ -4855,6 +4855,7 @@ fn emit_prelude_call(
         LoweringKind::FromCodePoint => emit_from_code_point_intrinsic(args, bind_ty, ctx),
         LoweringKind::StringUtf8Bytes => emit_string_utf8_bytes_intrinsic(args, bind_ty, ctx),
         LoweringKind::StringFromUtf8 => emit_string_from_utf8_intrinsic(args, bind_ty, ctx),
+        LoweringKind::StringFromMem => emit_string_from_mem_intrinsic(args, bind_ty, ctx),
         LoweringKind::IntFromString => emit_int_from_string_intrinsic(args, bind_ty, ctx),
         LoweringKind::FloatFromString => emit_float_from_string_intrinsic(args, bind_ty, ctx),
         LoweringKind::ByteToInt => emit_byte_to_int_intrinsic(args, ctx),
@@ -6692,6 +6693,19 @@ fn emit_int_from_string_intrinsic(
     let mut instrs = emit_atom(&args[0], Some(&ref_string_null()), ctx);
     instrs.push(Instr::Call("$int_from_string_helper".to_string()));
     instrs
+}
+
+// String.from_mem(ptr, len) -> String. Stage0 buffers live in host memory
+// (the runtime.mjs shim), so there is no guest linear-memory range to read;
+// the real in-wasm implementation lives in the boot compiler. This path is
+// never reached when compiling the boot compiler (which never calls
+// @std.buffer.to_string at compile time), so it traps if ever invoked.
+fn emit_string_from_mem_intrinsic(
+    _args: &[Atom],
+    _bind_ty: &ValType,
+    _ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    vec![Instr::Unreachable]
 }
 
 fn emit_float_from_string_intrinsic(

@@ -35,6 +35,7 @@ pub type IntrinsicTag = {
   StringFromCodePoint,
   StringUtf8Bytes,
   StringFromUtf8,
+  StringFromMem,
   ByteToInt,
   ByteFromInt,
   ByteToString,

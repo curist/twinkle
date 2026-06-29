@@ -215,6 +215,15 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
             ret: option_ty(MonoType::String),
             abi_result: Some(IntrinsicAbiResult::Anyref),
         }),
+        id if id == prelude_ids::STRING_FROM_MEM => Some(IntrinsicContract {
+            func_id,
+            twinkle_name: "String.from_mem",
+            dispatch: IntrinsicDispatch::Intrinsic,
+            type_params: vec![],
+            params: vec![MonoType::Int, MonoType::Int],
+            ret: MonoType::String,
+            abi_result: Some(IntrinsicAbiResult::RefStringNullable),
+        }),
         id if id == prelude_ids::INT_FROM_STRING => Some(IntrinsicContract {
             func_id,
             twinkle_name: "Int.from_string",
@@ -907,6 +916,9 @@ fn builtin_doc(name: &str) -> Option<&'static str> {
         "String.substring" => "Return a substring by byte offsets (no boundary check).",
         "String.utf8_bytes" => "Copy the string's UTF-8 bytes into a `Vector<Byte>`.",
         "String.from_utf8" => "Validate UTF-8 bytes and create a string. Returns `String?`.",
+        "String.from_mem" => {
+            "Wrap raw linear-memory bytes as a string without UTF-8 validation (low-level; backs @std.buffer.to_string)."
+        }
         "String.from_char_code" => {
             "Create a string from an integer code (ASCII range). Returns `String?`."
         }

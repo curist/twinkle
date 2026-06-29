@@ -28,6 +28,7 @@ pub fn module() WasmModule {
     from_code_point_helper_fn(),
     string_utf8_bytes_helper_fn(),
     string_from_utf8_helper_fn(),
+    string_from_mem_fn(),
     float_from_string_helper_fn(),
   ]
   exports := collect f in funcs {
@@ -688,6 +689,56 @@ fn string_from_utf8_helper_fn() FuncDef {
       .LocalGet(5),
       .I32Eqz,
       .If(.Some(.Anyref), none_body, some_body),
+    ],
+  }
+}
+
+// Wrap `len` linear-memory bytes starting at `ptr` into a fresh GC String,
+// without UTF-8 validation. Backs `@std.buffer`'s `to_string`; the caller owns
+// the bounds/validity guarantee. Mirrors the bridge's `bulk_string_new` copy
+// loop but reads from `ptr + i` instead of a fixed scratch at offset 0.
+// params: (0) ptr: i32, (1) len: i32 ; locals: (2) i: i32, (3) str: ref String
+fn string_from_mem_fn() FuncDef {
+  .{
+    name: "string_from_mem",
+    params: [.I32, .I32],
+    results: [str_ref()],
+    locals: [.I32, str_ref()],
+    body: [
+      .LocalGet(1),
+      .ArrayNewDefault("rt_types__String"),
+      .LocalSet(3),
+      .I32Const(0),
+      .LocalSet(2),
+      .Block(
+        "from_mem_break",
+        .None,
+        [
+          .Loop(
+            "from_mem_continue",
+            .None,
+            [
+              .LocalGet(2),
+              .LocalGet(1),
+              .I32GeU,
+              .BrIf("from_mem_break"),
+              .LocalGet(3),
+              .LocalGet(2),
+              .LocalGet(0),
+              .LocalGet(2),
+              .I32Add,
+              .I32Load8U(0, 0),
+              .ArraySet("rt_types__String"),
+              .LocalGet(2),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(2),
+              .Br("from_mem_continue"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(3),
     ],
   }
 }

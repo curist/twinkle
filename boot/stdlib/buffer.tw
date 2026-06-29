@@ -76,6 +76,13 @@ pub fn to_bytes(b: Buffer) Vector<Byte> {
   out
 }
 
+/// Decode `len` bytes starting at byte offset `off` directly into a `String`,
+/// skipping the per-byte `Vector<Byte>`/builder round-trip and UTF-8 validation
+/// that `String.from_utf8` pays. The bytes must be valid UTF-8 and in-bounds.
+pub fn to_string(b: Buffer, off: Int, len: Int) String {
+  String.from_mem(b.ptr + off, len)
+}
+
 /// Byte read at `off` (byte offset). Unchecked against `len`.
 pub fn get_u8(b: Buffer, off: Int) Byte {
   case Byte.from_int(__buf_load_u8(b.ptr, off)) {
@@ -87,6 +94,15 @@ pub fn get_u8(b: Buffer, off: Int) Byte {
 /// Byte write at `off` (byte offset).
 pub fn set_u8(b: Buffer, off: Int, v: Byte) {
   __buf_store_u8(b.ptr, off, v.to_int())
+}
+
+/// Store the low 8 bits of `v` at byte offset `off`. The raw-`Int` counterpart
+/// to `set_u8`, paralleling `set_u32`/`set_i64`/`set_f64` (which also take a bare
+/// scalar). For hot codec loops that already hold the value as an `Int`: `set_u8`
+/// would force an `Int -> Byte -> Int` round-trip plus an `Option<Byte>` alloc per
+/// store (from `Byte.from_int(..).unwrap()`); this skips both.
+pub fn set_byte(b: Buffer, off: Int, v: Int) {
+  __buf_store_u8(b.ptr, off, v)
 }
 
 /// 32-bit unsigned little-endian read at byte offset `off` (unaligned ok).

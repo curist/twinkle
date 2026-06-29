@@ -98,6 +98,9 @@ pub enum LoweringKind {
     StringUtf8Bytes,
     /// String.from_utf8: validates and creates string from byte array.
     StringFromUtf8,
+    /// String.from_mem: wrap raw linear-memory bytes as a String (boot-only;
+    /// stage0 has no guest memory for buffers, so this lowers to a trap).
+    StringFromMem,
     /// Int.from_string: runtime-assisted parse with i64 result.
     IntFromString,
     /// Float.from_string: runtime-assisted parse with f64 result.
@@ -431,6 +434,14 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         true,
         true,
         StringFromUtf8
+    ),
+    spec!(
+        STRING_FROM_MEM,
+        "String.from_mem",
+        Intrinsic,
+        true,
+        true,
+        StringFromMem
     ),
     spec!(FLOAT_BITS, "Float.bits", Intrinsic, true, true, FloatBits),
     spec!(

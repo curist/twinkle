@@ -136,6 +136,7 @@ pub mod prelude {
     pub const FROM_CODE_POINT: FuncId = FuncId(1026); // String.from_code_point(n: Int) -> Option<String>
     pub const STRING_UTF8_BYTES: FuncId = FuncId(1027); // String.utf8_bytes(s: String) -> Vector<Byte>
     pub const STRING_FROM_UTF8: FuncId = FuncId(1028); // String.from_utf8(bytes: Vector<Byte>) -> Option<String>
+    pub const STRING_FROM_MEM: FuncId = FuncId(1030); // String.from_mem(ptr, len) -> String (boot-only; stage0 stub)
     pub const FLOAT_BITS: FuncId = FuncId(1029); // Float.bits(f: Float) -> Int  (IEEE 754 bit pattern as i64)
     pub const INT_COMPARE: FuncId = FuncId(1040); // Int.compare(a, b) -> Order
     pub const FLOAT_COMPARE: FuncId = FuncId(1041); // Float.compare(a, b) -> Order
