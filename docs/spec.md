@@ -1333,15 +1333,22 @@ The `for x in coll` syntax supports the following types, each with dedicated typ
 * `String` — lowered to an indexed loop over UTF-8 bytes (`str[i]`).
 * `Range` — lowered to a simple integer loop over the range bounds.
 * `Dict<K, V>` — lowered to iteration over key–value pairs.
+* `Set<K>` — lowered through its `iter()` (insertion order).
 * `Iterator<T>` — lowered to repeated `Iterator.next` calls (see [docs/design/iterator.md](design/iterator.md)).
 
-Any value used in `for x in coll` whose type is not one of the above is a **compile-time error**.
+In addition, a generic type parameter bounded by an access contract iterates
+through that contract — `IndexRead<E>` (by index) or `IntoIterator<E>` (by
+`iter()`).
+
+Any other value used in `for x in coll` is a **compile-time error**. Types that
+are not directly iterable (e.g. `View<C>` and the `@std.buffer` element views)
+still iterate through an explicit `iter()`: `for x in value.iter()`.
 
 **Indexed form:**
 
 * `i: Int` starts from 0 and increments each iteration.
 * Break/continue as usual.
-* The indexed form (`for x, i in coll`) is supported for `Vector<T>`, `String`, `Range`, and `Dict<K,V>`. It is not supported for `Iterator<T>`.
+* The indexed form (`for x, i in coll`) is supported for `Vector<T>`, `String`, `Range`, `Dict<K,V>`, and `Set<K>`. It is not supported for `Iterator<T>`.
 
 **User Extensions:**
 
@@ -1502,11 +1509,11 @@ zs := collect n < 10 { n }
 Rules:
 
 * Produces `Vector<T>`.
-* Works with the same collection types as `for` loops (see Section 12): `Vector<T>`, `String`, `Range`, `Dict<K,V>`, and `Iterator<T>`.
+* Works with the same collection types as `for` loops (see Section 12): `Vector<T>`, `String`, `Range`, `Dict<K,V>`, `Set<K>`, and `Iterator<T>`.
 * Also supports conditional form `collect condition { body }`:
   * `condition` must be `Bool`.
   * Evaluates like a `while` loop and collects values produced by `body`.
-* Supports indexed/binary form `collect x, i in coll { ... }` for `Vector<T>`, `String`, `Range`, and `Dict<K,V>`:
+* Supports indexed/binary form `collect x, i in coll { ... }` for `Vector<T>`, `String`, `Range`, `Dict<K,V>`, and `Set<K>`:
   * For `Vector<T>`, `String`, and `Range`, `i: Int` is the iteration index.
   * For `String`, `x: Byte` (byte iteration).
   * For `Dict<K,V>`, the second binder has type `V` (value), while the first binder is key `K`.
@@ -1968,8 +1975,8 @@ note: dot syntax only resolves record fields and inherent methods from the defin
 
 ```
 error: cannot iterate over value of type Tree<Int>
-note: for loops only support Vector<T>, Range, and Dict<K,V>
-help: consider defining a helper function that returns Vector<Int>
+note: for loops support Vector<T>, String, Range, Dict<K,V>, Set<K>, and Iterator<T>
+help: define a helper that returns one of those, or expose `iter() Iterator<Int>` and write `for x in t.iter()`
 ```
 
 **Mutation attempt on non-name**:
