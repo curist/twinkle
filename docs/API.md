@@ -750,6 +750,15 @@ share the one backing. A `View` itself satisfies `IndexRead<E>`. Requires
 `E` follows from the backing via the functional dependency. See
 [plans/view.md](plans/archive/view.md).
 
+**API shape:** a `View` method returns a `View` (cheaper sub-window), a scalar /
+`Option` (a reduction), or an `Iterator` — it never silently materializes a
+`Vector` of transformed elements. To transform or collect, opt in explicitly:
+`v.iter().map(f).filter(g).to_vector()` (lazy, via `Iterator`) or `v.to_vector()`
+(eager). Iterate with `for x in v.iter()`, mirroring the buffer views
+(`@std.buffer`). The only `Vector`-returning members are the explicit
+materializer `to_vector` and the structural windowers `chunks` / `windows`
+(which yield sub-`View`s, not copied elements).
+
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `view.from(c)` | `fn<C: IndexRead<E>, E>(c: C) View<C>` | Wrap a whole backing in a window (O(1)) |
@@ -763,6 +772,7 @@ share the one backing. A `View` itself satisfies `IndexRead<E>`. Requires
 | `.sub(a, b)` | `fn<C>(v: View<C>, a: Int, b: Int) View<C>` | Relative sub-window `[a, b)` (O(1), shares backing; total — endpoints clamp into `[0, len()]`, so out-of-range or reversed args yield a valid/empty window) |
 | `.slice(a, b)` | `fn<C>(v: View<C>, a: Int, b: Int) View<C>` | Alias for `.sub`; the `Sliceable` satisfier backing `v[a..b]` |
 | `.to_vector()` | `fn<C: IndexRead<E>, E>(v: View<C>) Vector<E>` | Materialize the window into an owned `Vector` |
+| `.iter()` | `fn<C: IndexRead<E>, E>(v: View<C>) Iterator<E>` | Zero-copy iterator over the window; backs `for x in v.iter()` and lazy `iter()`-driven transformation chains |
 | `.fold(init, f)` | `fn<C: IndexRead<E>, E, B>(v: View<C>, init: B, f: fn(B, E) B) B` | Left-fold over the window |
 | `.take(n)` | `fn<C>(v: View<C>, n: Int) View<C>` | First `n` elements (O(1), shares backing; clamps like `sub`) |
 | `.drop(n)` | `fn<C>(v: View<C>, n: Int) View<C>` | Skip first `n` elements (O(1), shares backing; clamps like `sub`) |
@@ -770,16 +780,12 @@ share the one backing. A `View` itself satisfies `IndexRead<E>`. Requires
 | `.drop_while(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) View<C>` | Suffix after the prefix whose elements satisfy `f` (O(1) result, shares backing) |
 | `.find_map(f)` | `fn<C: IndexRead<E>, E, U>(v: View<C>, f: fn(E) Option<U>) Option<U>` | First `.Some` produced by `f`, short-circuiting |
 | `.count_where(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) Int` | Count elements satisfying `f` |
-| `.zip_with(other, f)` | `fn<A: IndexRead<EA>, EA, B: IndexRead<EB>, EB, R>(a: View<A>, b: View<B>, f: fn(EA, EB) R) Vector<R>` | Combine elementwise, stopping at the shorter input |
 | `.chunks(size)` | `fn<C>(v: View<C>, size: Int) Vector<View<C>>` | Non-overlapping contiguous windows; invalid sizes return empty |
 | `.windows(size)` | `fn<C>(v: View<C>, size: Int) Vector<View<C>>` | Sliding contiguous windows; invalid or too-large sizes return empty |
-| `.map(f)` | `fn<C: IndexRead<E>, E, U>(v: View<C>, f: fn(E) U) Vector<U>` | Transform each element, materializing |
-| `.filter(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) Vector<E>` | Keep matching elements, materializing |
 | `.find(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) Option<E>` | First element matching predicate |
 | `.any(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) Bool` | True if any element matches |
 | `.all(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) Bool` | True if all elements match |
 | `.position(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) Option<Int>` | Index of first matching element |
-| `.flat_map(f)` | `fn<C: IndexRead<E>, E, U>(v: View<C>, f: fn(E) Vector<U>) Vector<U>` | Map each element to a vector and flatten |
 
 ### `@std.tuple`
 

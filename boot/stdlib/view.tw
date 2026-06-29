@@ -114,6 +114,24 @@ pub fn to_vector<C: IndexRead<E>, E>(v: View<C>) Vector<E> {
   out
 }
 
+type ViewIterState<C> = .{ v: View<C>, i: Int }
+
+/// Iterator over the window's elements (zero-copy), for `for x in v.iter()` and
+/// lazy `iter()`-driven transformation chains. Pairs with `to_vector` to
+/// materialize a transformed result: `v.iter().map(f).to_vector()`.
+pub fn iter<C: IndexRead<E>, E>(v: View<C>) Iterator<E> {
+  Iterator.unfold(
+    ViewIterState.{ v, i: 0 },
+    fn(state: ViewIterState<C>) {
+      if state.i < state.v.count {
+        UnfoldStep.Yield(state.v.at(state.i), ViewIterState.{ v: state.v, i: state.i + 1 })
+      } else {
+        UnfoldStep.Done
+      }
+    },
+  )
+}
+
 /// Left-fold over the window.
 pub fn fold<C: IndexRead<E>, E, B>(v: View<C>, init: B, f: fn(B, E) B) B {
   acc := init
@@ -193,28 +211,6 @@ pub fn count_where<C: IndexRead<E>, E>(v: View<C>, pred: fn(E) Bool) Int {
   count
 }
 
-/// Combine two views elementwise, stopping at the shorter input.
-pub fn zip_with<A: IndexRead<EA>, EA, B: IndexRead<EB>, EB, R>(
-  a: View<A>,
-  b: View<B>,
-  f: fn(EA, EB) R,
-) Vector<R> {
-  n := if a.len() < b.len() {
-    a.len()
-  } else {
-    b.len()
-  }
-  out: Vector<R> = []
-  i := 0
-
-  for i < n {
-    out = .append(f(a.at(i), b.at(i)))
-    i = i + 1
-  }
-
-  out
-}
-
 /// Non-overlapping contiguous windows. Invalid sizes return an empty vector.
 pub fn chunks<C>(v: View<C>, size: Int) Vector<View<C>> {
   if size <= 0 {
@@ -243,37 +239,6 @@ pub fn windows<C>(v: View<C>, size: Int) Vector<View<C>> {
 
   for i + size <= v.count {
     out = .append(v.sub(i, i + size))
-    i = i + 1
-  }
-
-  out
-}
-
-/// Transform each element, materializing the result.
-pub fn map<C: IndexRead<E>, E, U>(v: View<C>, f: fn(E) U) Vector<U> {
-  out: Vector<U> = []
-  i := 0
-
-  for i < v.count {
-    out = .append(f(v.at(i)))
-    i = i + 1
-  }
-
-  out
-}
-
-/// Keep elements where pred returns true, materializing the result.
-pub fn filter<C: IndexRead<E>, E>(v: View<C>, pred: fn(E) Bool) Vector<E> {
-  out: Vector<E> = []
-  i := 0
-
-  for i < v.count {
-    x: E = v.at(i)
-
-    if pred(x) {
-      out = .append(x)
-    }
-
     i = i + 1
   }
 
@@ -340,20 +305,4 @@ pub fn position<C: IndexRead<E>, E>(v: View<C>, pred: fn(E) Bool) Option<Int> {
   }
 
   .None
-}
-
-/// Map each element to a vector and flatten the results.
-pub fn flat_map<C: IndexRead<E>, E, U>(v: View<C>, f: fn(E) Vector<U>) Vector<U> {
-  out: Vector<U> = []
-  i := 0
-
-  for i < v.count {
-    for y in f(v.at(i)) {
-      out = .append(y)
-    }
-
-    i = i + 1
-  }
-
-  out
 }
