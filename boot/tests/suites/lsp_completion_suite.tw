@@ -698,4 +698,19 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "rebind continuation on enum shows variants",
+      fn() {
+        valid := "type Color = { Red, Green }\nc := Color.Red\nc\n"
+        incomplete := "type Color = { Red, Green }\nc := Color.Red\nc = .\n"
+        step := open_then_complete(valid, incomplete, 2, 5)
+        labels := try completion_labels(step)
+
+        if !has_label(labels, "Red") or !has_label(labels, "Green") {
+          return .Err("expected 'Red' and 'Green', got: ${labels}")
+        }
+
+        .Ok({})
+      },
+    )
 }

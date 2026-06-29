@@ -17,7 +17,7 @@ use compiler.mono_type.{MonoType}
 use compiler.parser
 use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_stmt}
 use compiler.query.cursor_context
-use compiler.query.cursor_context.{ImportPrefix}
+use compiler.query.cursor_context.{ImportPrefix, RebindInfo, RebindTarget}
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.query.util.{find_map}
 use compiler.resolver.{
@@ -39,7 +39,7 @@ pub fn complete(snap: SemanticSnapshot, offset: Int, source: String) Vector<
     .General(prefix) => general_completions(snap, prefix, offset),
     .Import(ip) => import_completions(snap, ip),
     .Variant => variant_completions(snap, offset),
-    .RebindContinuation(_) => [],
+    .RebindContinuation(info) => rebind_continuation_completions(snap, info, source),
   }
 }
 
@@ -920,6 +920,73 @@ fn all_variant_completions(snap: SemanticSnapshot) Vector<lsp_completion.Complet
     },
   )
   items
+}
+
+// ── Rebind continuation completions ─────────────────────────────────
+fn rebind_continuation_completions(snap: SemanticSnapshot, info: RebindInfo, source: String) Vector<
+  lsp_completion.CompletionItem,
+> {
+  typed := case snap.typed {
+    .Some(v) => v,
+    .None => return [],
+  }
+
+  dot_offset := info.dot_offset
+  if dot_offset <= 0 {
+    return []
+  }
+
+  search_offset := dot_offset - 1
+
+  cursor_offset := dot_offset + 1
+  lexed := lexer.lex_with_cursor(source, 0, cursor_offset)
+  reparsed := parser.parse_tokens(source, 0, lexed.value, lexed.diagnostics)
+  reparse_items := reparsed.value.items
+
+  ty := case resolve_target_type(reparse_items, typed, search_offset, info.target) {
+    .Some(t) => t,
+    .None => return all_variant_completions(snap),
+  }
+
+  // Variants of the target type construct it directly.
+  variants_for_type(typed.env, ty)
+}
+
+fn resolve_target_type(items: Vector<Item>, typed: CheckResult, offset: Int, target: RebindTarget) MonoType? {
+  case target {
+    .Ident(name) => resolve_receiver_by_name(items, typed, offset, name),
+    .FieldPath(segments) => {
+      base := try resolve_receiver_by_name(items, typed, offset, segments[0])
+      walk_field_path(typed.env, base, segments, 1)
+    },
+  }
+}
+
+fn walk_field_path(env: ResolvedEnv, ty: MonoType, segments: Vector<String>, idx: Int) MonoType? {
+  if idx >= segments.len() {
+    return .Some(ty)
+  }
+
+  next := try field_type(env, ty, segments[idx])
+  walk_field_path(env, next, segments, idx + 1)
+}
+
+fn field_type(env: ResolvedEnv, ty: MonoType, field_name: String) MonoType? {
+  case ty {
+    .Named(tid, args) => case env.lookup_type_def(tid) {
+      .Some(.Record(_, params, fields)) => {
+        for f in fields {
+          if f.name == field_name {
+            return .Some(type_util.subst_type_params_lenient(f.ty, params, args))
+          }
+        }
+
+        .None
+      },
+      _ => .None,
+    },
+    _ => .None,
+  }
 }
 
 // ── Case info finding ──────────────────────────────────────────────
