@@ -717,4 +717,28 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "rebind continuation on vector shows A-returning methods, hides len",
+      fn() {
+        valid := "xs := [1, 2, 3]\nxs\n"
+        incomplete := "xs := [1, 2, 3]\nxs = .\n"
+        // `xs = .`: x=0 s=1 ' '=2 ==3 ' '=4 .=5  → cursor after dot is column 6
+        step := open_then_complete(valid, incomplete, 1, 6)
+        labels := try completion_labels(step)
+
+        if !has_label(labels, "append") {
+          return .Err("expected 'append', got: ${labels}")
+        }
+
+        if !has_label(labels, "map") {
+          return .Err("expected 'map', got: ${labels}")
+        }
+
+        if has_label(labels, "len") {
+          return .Err("did not expect 'len' (returns Int, not Vector), got: ${labels}")
+        }
+
+        .Ok({})
+      },
+    )
 }

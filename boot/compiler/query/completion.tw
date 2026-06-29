@@ -1079,6 +1079,60 @@ fn method_return_unifies(sig: FunctionSig, ty: MonoType) Bool {
   types_match_wildcard(ret2, ty)
 }
 
+fn methods_returning(env: ResolvedEnv, ty: MonoType) Vector<lsp_completion.CompletionItem> {
+  items: Vector<lsp_completion.CompletionItem> = []
+
+  case ty {
+    .Named(tid, _) => case lookup_type_methods(env, tid) {
+      .Some(entries) => {
+        items = .concat(filter_method_entries(env, entries, ty))
+      },
+      .None => {},
+    },
+    _ => {},
+  }
+
+  case builtin_type_name(ty) {
+    .Some(name) => case env.methods[name] {
+      .Some(entries) => {
+        items = .concat(filter_method_entries(env, entries, ty))
+      },
+      .None => {},
+    },
+    .None => {},
+  }
+
+  items
+}
+
+fn filter_method_entries(env: ResolvedEnv, entries: Vector<MethodEntry>, ty: MonoType) Vector<
+  lsp_completion.CompletionItem,
+> {
+  result: Vector<lsp_completion.CompletionItem> = []
+
+  for e in entries {
+    sig := case env.lookup_registered_function(e.function_name) {
+      .Some(s) => s,
+      .None => continue,
+    }
+
+    if !method_return_unifies(sig, ty) {
+      continue
+    }
+
+    result = .append(
+      lsp_completion.CompletionItem.{
+        label: e.method_name,
+        kind: .Method,
+        detail: .Some(sig_to_detail(env, sig)),
+        documentation: sig.doc,
+      },
+    )
+  }
+
+  result
+}
+
 // ── Rebind continuation completions ─────────────────────────────────
 fn rebind_continuation_completions(snap: SemanticSnapshot, info: RebindInfo, source: String) Vector<
   lsp_completion.CompletionItem,
@@ -1103,8 +1157,10 @@ fn rebind_continuation_completions(snap: SemanticSnapshot, info: RebindInfo, sou
     .None => return all_variant_completions(snap),
   }
 
-  // Variants of the target type construct it directly.
-  variants_for_type(typed.env, ty)
+  // Methods whose return unifies with the target type, plus variants of the
+  // target type (which construct it directly).
+  items := methods_returning(typed.env, ty)
+  items.concat(variants_for_type(typed.env, ty))
 }
 
 /// Resolve the type of a rebind target identifier by name, using `cutoff` (the
