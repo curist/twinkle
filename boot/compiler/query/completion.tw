@@ -936,14 +936,12 @@ fn rebind_continuation_completions(snap: SemanticSnapshot, info: RebindInfo, sou
     return []
   }
 
-  search_offset := dot_offset - 1
-
   cursor_offset := dot_offset + 1
   lexed := lexer.lex_with_cursor(source, 0, cursor_offset)
   reparsed := parser.parse_tokens(source, 0, lexed.value, lexed.diagnostics)
   reparse_items := reparsed.value.items
 
-  ty := case resolve_target_type(reparse_items, typed, search_offset, info.target) {
+  ty := case resolve_target_type(reparse_items, typed, info.lhs_offset, info.target) {
     .Some(t) => t,
     .None => return all_variant_completions(snap),
   }
@@ -952,11 +950,51 @@ fn rebind_continuation_completions(snap: SemanticSnapshot, info: RebindInfo, sou
   variants_for_type(typed.env, ty)
 }
 
-fn resolve_target_type(items: Vector<Item>, typed: CheckResult, offset: Int, target: RebindTarget) MonoType? {
+/// Resolve the type of a rebind target identifier by name, using `cutoff` (the
+/// byte offset of the LHS identifier) as the upper bound so the rebind line
+/// itself is excluded and the latest earlier binding wins.
+fn resolve_rebind_ident_type(items: Vector<Item>, typed: CheckResult, name: String, cutoff: Int) MonoType? {
+  // Function-body rebind: parameters first, then earlier let-bindings.
+  for item in items {
+    case item {
+      .Function(decl) => if decl.span.contains(cutoff) {
+        case typed.env.lookup_function(decl.name) {
+          .Some(sig) => {
+            for i in 0..decl.params.len() {
+              if decl.params[i].name == name and i < sig.params.len() {
+                return .Some(sig.params[i])
+              }
+            }
+          },
+          .None => {},
+        }
+
+        return find_let_type_in_block(decl.body, name, typed.type_map, cutoff)
+      },
+      _ => {},
+    }
+  }
+
+  // Top-level rebind: latest matching let-binding before the cursor wins.
+  found: MonoType? = .None
+
+  for item in items {
+    case item {
+      .Stmt(.Let(ls)) => if ls.name == name and ls.span.end <= cutoff {
+        found = typed.type_map[ls.value.id]
+      },
+      _ => {},
+    }
+  }
+
+  found
+}
+
+fn resolve_target_type(items: Vector<Item>, typed: CheckResult, cutoff: Int, target: RebindTarget) MonoType? {
   case target {
-    .Ident(name) => resolve_receiver_by_name(items, typed, offset, name),
+    .Ident(name) => resolve_rebind_ident_type(items, typed, name, cutoff),
     .FieldPath(segments) => {
-      base := try resolve_receiver_by_name(items, typed, offset, segments[0])
+      base := try resolve_rebind_ident_type(items, typed, segments[0], cutoff)
       walk_field_path(typed.env, base, segments, 1)
     },
   }

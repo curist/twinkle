@@ -20,7 +20,9 @@ pub type MemberContext = .{ dot_offset: Int, receiver_name: String? }
 
 pub type RebindTarget = { Ident(String), FieldPath(Vector<String>) }
 
-pub type RebindInfo = .{ dot_offset: Int, target: RebindTarget }
+pub type RebindInfo = .{ dot_offset: Int, lhs_offset: Int, target: RebindTarget }
+
+type LhsClassification = .{ target: RebindTarget, lhs_offset: Int }
 
 pub type CompletionContext = {
   Member(MemberContext),
@@ -63,7 +65,9 @@ pub fn classify_completion(source: String, offset: Int) CompletionContext {
 
       if before_dot.kind == .Eq {
         case classify_rebind_lhs(tokens, cursor_idx - 2, source) {
-          .Some(target) => return .RebindContinuation(.{ dot_offset: prev.span.start, target }),
+          .Some(c) => return .RebindContinuation(
+            .{ dot_offset: prev.span.start, lhs_offset: c.lhs_offset, target: c.target },
+          ),
           .None => return .Variant,
         }
       }
@@ -214,7 +218,7 @@ pub fn extract_ident_before(source: String, offset: Int) String {
   source.slice(start, end)
 }
 
-fn classify_rebind_lhs(tokens: Vector<Token>, eq_idx: Int, source: String) RebindTarget? {
+fn classify_rebind_lhs(tokens: Vector<Token>, eq_idx: Int, source: String) LhsClassification? {
   if eq_idx < 1 {
     return .None
   }
@@ -262,10 +266,12 @@ fn classify_rebind_lhs(tokens: Vector<Token>, eq_idx: Int, source: String) Rebin
     i = i + 1
   }
 
+  lhs_offset := tokens[head_idx].span.start
+
   if names.len() == 1 {
-    .Some(.Ident(names[0]))
+    .Some(.{ target: .Ident(names[0]), lhs_offset })
   } else {
-    .Some(.FieldPath(names))
+    .Some(.{ target: .FieldPath(names), lhs_offset })
   }
 }
 
