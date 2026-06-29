@@ -39,8 +39,8 @@ Self-hosting is complete. Historical design and status docs live in
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
-| Crypto performance | Routes to close the `@std.crypto`/base64 gap to native: hot-loop inlining + constant tables, 32-bit-typed math, buffer-native table base64, Wasm SIMD, buffer-native I/O. Software routes target MD5 ~2–3×, SHA-1 ~4–5×, base64 ~5–10×; SHA-256 stays ~15–20× (no Wasm crypto intrinsics) | Routes | [crypto-perf.md](crypto-perf.md) |
 | Boot typed builtin type refs | Extend the typed-builtin-reference pattern (Option/Result variant refs, now done) to the remaining builtin *types* still referenced by raw id — `Order`, `Iterator`, `Range` — and audit `IterItem`/`UnfoldStep`/`Task` | Planned | [boot-typed-builtin-type-refs.md](boot-typed-builtin-type-refs.md) |
+| Case-of-known-constructor fusion | Core-IR pass that cancels a sum constructor immediately consumed by `case`/`unwrap`/`try`, so `X.from_y(..).unwrap()` and inline `try .Ok(v)` don't allocate a throwaway variant. Surfaced by base64 (`Byte.from_int(..).unwrap()` cost ~13% of encode); a win would let `@std.buffer.set_byte` be dropped | Spike | [case-of-known-constructor.md](case-of-known-constructor.md) |
 
 
 ### Later — Tooling & Ecosystem

@@ -1,9 +1,27 @@
 # Crypto Performance — Routes to Native Speed
 
-Status: **ROUTES / RESEARCH (not scheduled).** A living catalogue of the directions
-that could make `@std.crypto` (and the related codecs) faster, with grounded
-measurements, realistic ceilings, and the effort/payoff of each route. Pick items
-from here into their own implementation plans when scheduled.
+Status: **CLOSED (2026-06-29).** A catalogue of directions that could make
+`@std.crypto`/base64 faster. Two things were settled here:
+
+1. **Tabling alone is a dud.** Route 1 (hash inline+table) buys ~10–13%; a
+   table-driven base64 (the original Route 3) buys ~3% on the roundtrip. On a
+   V8-class engine the JIT already inlines the small helpers, so the char↔value
+   mapping a table optimizes is not where the time goes.
+2. **The value boundary is where the time goes — and one boundary was killed.**
+   The remaining cost is the language's GC-value boundary work: the string
+   builder, `Vector<Byte>` append, `from_utf8` validation, per-element reads.
+   Tables can't touch those, but a *bridge primitive* can. This work shipped
+   `String.from_mem` / `buffer.to_string` (write encoded bytes into a linear-memory
+   `Buffer`, materialize the `String` in one pass, no UTF-8 validation) plus
+   `buffer.set_byte` (raw store, no `Byte` box). **`base64_encode` rewritten onto
+   that bridge: encode ~50µs → ~30µs (~40%), roundtrip ~99µs → ~75µs (~24%).**
+
+What remains is the **decode** half: it builds a `Vector<Byte>` via `.append` and
+that loop now dominates the roundtrip. Closing it needs the *dual* bridge — a
+bulk `Buffer`→`Vector<Byte>` construct or a `base64_decode_buf` returning a
+`Buffer` — which is Route 5 (buffer-native I/O) territory and not scheduled.
+SHA-256 stays silicon-bound (~15–20×, no Wasm crypto intrinsics). Archived: the
+shippable software win on this surface has been taken; the rest waits on Route 2/5.
 
 Builds on the shipped, archived in-buffer-crypto work
 ([archive/in-buffer-crypto.md](archive/in-buffer-crypto.md)): `*_bytes` digests
@@ -112,20 +130,72 @@ Do the round math in i32 to drop the pervasive i64→u32 masking. Worth
 ALU-heavy). Depends on the backend exposing i32 arithmetic on a typed path; see
 the typed-vector representation effort for the adjacent machinery.
 
-### Route 3 — Buffer-native, table-driven base64
-**Effort: medium. Self-contained. Touches: `boot/stdlib/crypto.tw` (+ a `Buffer`).**
+### Route 3 — Buffer-native base64
+**Effort: medium. Touches: `boot/stdlib/crypto.tw`, `boot/stdlib/buffer.tw`, the
+boot/stage0 intrinsic surface.**
+**Status: ENCODE LANDED via a new value-boundary bridge (2026-06-29); decode
+remains. The table-driven shape was prototyped first and dropped (~3%); the real
+lever was the missing `Buffer`→`String` bridge.**
 
-A 256-entry decode lookup table and an encode table living in a `Buffer`, with the
-4↔3 byte transform done through linear-memory loads/stores and a single conversion
-at each end (input `String`→bytes once, output bytes→`String` once). Scalar
-table-driven base64 is the standard fast technique.
+The original idea (a `Buffer`-resident decode/encode lookup table, 4↔3 transform
+through linear-memory loads/stores) was prototyped and **measured ~3% on the
+roundtrip** — see the table below. The table is not the lever; the conversions
+back to the GC API types (`String` builder, `Vector<Byte>` append, `from_utf8`
+validation) are. Adding the missing bridge primitive is what paid off:
 
-Expected **base64 roundtrip ~102µs → ~15–25µs** (~5–10× of native). Good standalone
-project. **Note the trap already learned:** do *not* rebuild `base64_encode` as a
-`Vector<Byte>` + `String.from_utf8` reassembly — that measured *slower* (54→91µs)
-because the existing `out.concat(...)` loop already lowers to the transient string
-builder and `from_utf8` adds a full UTF-8 validation pass. A buffer + table is a
-different, genuinely faster shape; re-measure encode specifically.
+- **Shipped:** `String.from_mem(ptr, len)` — a GC intrinsic that copies a
+  linear-memory byte range straight into a fresh `String` with **no UTF-8
+  validation** (mirrors the bridge's `bulk_string_new`, but from `ptr+i` instead of
+  a fixed scratch). Wrapped as `buffer.to_string(off, len)`. Plus `buffer.set_byte`
+  (raw `__buf_store_u8`, skips the `Byte` box on the hot store). Boot codegen +
+  stage0 (the stage0 path has no guest memory for buffers, so it lowers to a trap;
+  the boot compiler never calls `to_string` at compile time, so this is sound).
+- **`base64_encode` rewritten** to write ASCII into a `Buffer` and emit one
+  `to_string`: **~50µs → ~30µs (~40%)**, roundtrip **~99µs → ~75µs (~24%)**. All
+  crypto + boot tests green.
+- **Decode untouched** — it builds a `Vector<Byte>` via `.append` and that loop now
+  dominates the roundtrip. Closing it needs the *dual* bridge (bulk
+  `Buffer`→`Vector<Byte>`, or a `base64_decode_buf` returning a `Buffer`), i.e.
+  Route 5; not scheduled.
+
+**What the prototype actually measured** (4 KiB, 501 iters, best-of, `target/twk`;
+correctness cross-checked byte-for-byte against the current implementation,
+including the 1- and 2-byte tails):
+
+| variant | µs/op | vs current |
+|---|---|---|
+| **encode** current (per-char `cond` + `from_byte` + concat) | ~50 | — |
+| **encode** 12-bit/2-char module-global string table, 2 concats/group | ~43 | **~15% faster** |
+| **encode** build `Vector<Byte>` of ASCII + `String.from_utf8` once | ~106 | **2× slower** (re-confirms the trap below) |
+| **decode** current (per-char `cond`, `.append` output) | ~41.5 | — |
+| **decode** 256-entry `Buffer` lookup table replacing the `cond` | ~44 | **wash / slight regression** |
+| **roundtrip** (encode+decode) current | ~97 | — |
+| **roundtrip** table-driven (best encode + table decode) | ~94 | **~3%** |
+
+The decisive findings:
+
+- **Encode's only real lever is collapsing concats, not tabling the char map.** A
+  12-bit→2-char table (one module-global `Vector<String>`, built once at import)
+  emits two `concat`s per 3 bytes instead of four and is ~15% faster. Replacing the
+  `b64_char` `cond` with a `Buffer` byte-load on its own does ~nothing — same story
+  as Route 1's "inlining is a no-op."
+- **Decode does not improve at all.** The cost is the `Vector<Byte>` `.append`
+  output loop, not the `b64_value` `cond`; a `Buffer` lookup table is a wash-to-
+  regression (the `get_u8` + `to_int` per char is no cheaper than the branch).
+- **The buffer-native "single conversion at each end" shape is blocked by the API
+  boundary.** There is no `Buffer`→`String` bridge — the only many-byte `String`
+  constructor is `String.from_utf8(Vector<Byte>)`, which runs a full UTF-8
+  validation pass and was measured at ~106µs (2× slower), exactly the trap recorded
+  for the earlier `Vector<Byte>` reassembly attempt. So encode is stuck on the
+  transient string builder and decode is stuck on `Vector<Byte>` append; linear
+  memory can speed the *interior* transform but the conversions back to the API
+  types dominate and erase the win.
+
+The honest verdict: tabling *inside* the current API is a ~3% change, but adding
+the missing `Buffer`→`String` bridge primitive turned the encode half into a real
+~40% win (roundtrip ~24%) — and that primitive (`String.from_mem`/`buffer.to_string`)
+is general, not base64-specific. The decode half still wants the dual bridge
+(**Route 5**) or a typed path (**Route 2**) to drop its `Vector<Byte>` append.
 
 ### Route 4 — Wasm SIMD (`v128`) backend support
 **Effort: large. Strategic. Touches: the backend (new `v128` type + intrinsics + codegen).**
@@ -153,17 +223,26 @@ where real workloads (hashing files) actually get their win.
 
 ## Suggested sequencing
 
-1. ~~Route 1 on MD5~~ DONE (prototyped) — the inlining half is a no-op on V8; only
-   the **mask-reduction** sub-lever (~9%) and k-table (~12% total) pay off. Roll the
-   mask-reduction idea to SHA-1/SHA-256 only if a ~10% win there is worth the churn.
-2. Route 3 base64 (self-contained, large relative win).
+1. ~~Route 1 on MD5~~ DONE (prototyped, not implemented) — the inlining half is a
+   no-op on V8; only the **mask-reduction** sub-lever (~9%) and k-table (~12% total)
+   pay off. Not worth the churn on a legacy hash.
+2. ~~Route 3 base64~~ ENCODE DONE — the table form was dropped (~3%); the
+   `Buffer`→`String` bridge (`String.from_mem`/`buffer.to_string` + `buffer.set_byte`)
+   landed encode at ~40% (roundtrip ~24%). Decode still wants the dual bridge
+   (Route 5).
 3. Route 2 once the typed-arithmetic path exists — this is where the masking the
    Route 1 prototype could only *reduce* gets dropped entirely; the real ALU lever.
-4. Route 5 alongside any buffer-native I/O work.
+4. Route 5 alongside any buffer-native I/O work — the home of the base64 **decode**
+   win (bulk `Buffer`→`Vector<Byte>`), and the way the `_buf` digest path becomes
+   the natural one for file/socket data.
 5. Route 4 only when SIMD is wanted language-wide.
 
-Realistic end state, corrected by the MD5 prototype: software-only inlining/tabling
-buys only **~10–13%** per hash (the round helpers are already JIT-inlined), so
-**MD5 stays ~8–9×** of native without the i32-typed path (Route 2); **base64
-~5–10×** via Route 3; **SHA-256 stays ~15–20×** until Wasm gains crypto intrinsics
-that do not currently exist.
+Realistic end state, corrected by the prototypes and the shipped bridge: tabling
+*inside* the API is a dud (~10–13% per hash via Route 1; ~3% on base64), because the
+JIT already inlines the helpers and the GC value-boundary work dominates. Killing
+*one* boundary with a bridge primitive is what pays — base64 **encode ~40%** once
+`String.from_mem` existed. The rest of the gap is more boundaries: base64 decode
+(Route 5 dual bridge) and the hashes (Route 2 typed path). **MD5 stays ~8–9×**,
+**base64 roundtrip now ~30–35×** (was ~45×) and drops further only when decode gets
+its bridge; **SHA-256 stays ~15–20×** until Wasm gains crypto intrinsics that do not
+currently exist.
