@@ -1,6 +1,51 @@
 # Case-of-Known-Constructor Fusion
 
-Status: **SPIKE / PROPOSED (not scheduled).** A general Core-IR simplification that
+Status: **DROPPED (spike concluded 2026-06-29).** The box is a real cost, but the
+rewrite can't fire on this compiler's IR without large missing infrastructure, and
+the only cheap variant just re-delivers a win `@std.buffer.set_byte` already
+provides. Finding recorded below; `set_byte` stays as the documented escape hatch.
+
+## Spike finding (why dropped)
+
+A microbench isolating the box (`Byte.from_int(x).unwrap().to_int()` vs a
+hand-written range check, 20M iterations) confirmed the `StructNew` of
+`Option<Byte>` + the `unwrap` match is **~44% of the boxed loop** (~16.4ms →
+~9.3ms) — consistent with the ~13%-of-base64 figure. So the allocation is genuine.
+
+But the optimized IR for `Byte.from_int(n).unwrap()` is:
+
+```
+let L2: Byte? = call Fn67(L1)     // from_int — an OPAQUE call, not a constructor node
+let L3: Byte  = call Fn284(L2)    // unwrap — a SEPARATE function call
+fn unwrap__Byte [Fn284] params=[L2: Byte?]
+  body: match L2 { Some(L3) => L3, None => error(...) }
+```
+
+The plan rewrites `Match(MakeVariant(tag, args), arms)`. **Neither operand exists in
+that form:**
+
+- **No `MakeVariant` node.** `Byte.from_int` is a *backend intrinsic*
+  (`emit_intrinsic_byte_from_int` in `codegen/emit.tw`); the `StructNew` is
+  materialized only at WAT-emit time. At Core IR / ANF it's an opaque `Call`.
+- **No adjacent `Match`.** `unwrap` is a normal prelude function whose `case` lives
+  in its own body, and there is **no inliner** in the pipeline (even `--opt` keeps
+  `unwrap__Byte` distinct). The construct and destruct are split by a call boundary.
+
+So the general approach needs two pieces that don't exist — an inliner *and* a
+Core-IR representation of intrinsic constructors — before the pass could match
+anything; that's a large project at arguably the wrong layer (the box only ever
+exists in the backend). The only cheap variant is a peephole keyed on specific
+intrinsic FuncId *pairs* (`Call(unwrap, Call(byte$from_int, x))` → fused
+range-check-and-trap), which is special-casing that must enumerate every
+safe-constructor × `unwrap` combination, and it still won't punch through `set_u8`
+to let `set_byte` be deleted. Absolute cost is ~0.36ns/iter, only relevant in
+mill-of-bytes crypto/codec loops that already have `set_byte`. Not worth it.
+
+---
+
+Original proposal (kept for reference):
+
+A general Core-IR simplification that
 cancels a sum-value constructor immediately consumed by a destructor (`case` /
 `unwrap` / `try`) in the same expression, so the intermediate boxed variant is
 never allocated. Surfaced while optimizing `@std.crypto` base64

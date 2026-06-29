@@ -40,7 +40,6 @@ Self-hosting is complete. Historical design and status docs live in
 |------|-------------|--------|---------|
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
 | Boot typed builtin type refs | Extend the typed-builtin-reference pattern (Option/Result variant refs, now done) to the remaining builtin *types* still referenced by raw id — `Order`, `Iterator`, `Range` — and audit `IterItem`/`UnfoldStep`/`Task` | Planned | [boot-typed-builtin-type-refs.md](boot-typed-builtin-type-refs.md) |
-| Case-of-known-constructor fusion | Core-IR pass that cancels a sum constructor immediately consumed by `case`/`unwrap`/`try`, so `X.from_y(..).unwrap()` and inline `try .Ok(v)` don't allocate a throwaway variant. Surfaced by base64 (`Byte.from_int(..).unwrap()` cost ~13% of encode); a win would let `@std.buffer.set_byte` be dropped | Spike | [case-of-known-constructor.md](case-of-known-constructor.md) |
 
 
 ### Later — Tooling & Ecosystem
