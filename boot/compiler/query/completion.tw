@@ -39,6 +39,7 @@ pub fn complete(snap: SemanticSnapshot, offset: Int, source: String) Vector<
     .General(prefix) => general_completions(snap, prefix, offset),
     .Import(ip) => import_completions(snap, ip),
     .Variant => variant_completions(snap, offset),
+    .RebindContinuation(_) => [],
   }
 }
 

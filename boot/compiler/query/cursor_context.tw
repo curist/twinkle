@@ -18,11 +18,16 @@ pub type ImportPrefix = .{
 
 pub type MemberContext = .{ dot_offset: Int, receiver_name: String? }
 
+pub type RebindTarget = { Ident(String), FieldPath(Vector<String>) }
+
+pub type RebindInfo = .{ dot_offset: Int, target: RebindTarget }
+
 pub type CompletionContext = {
   Member(MemberContext),
   General(String),
   Import(ImportPrefix),
   Variant,
+  RebindContinuation(RebindInfo),
 }
 
 pub type CallContext = .{ name: String, paren_offset: Int, active_parameter: Int }
