@@ -49,7 +49,6 @@ Self-hosting is complete. Historical design and status docs live in
 | Tooling | Formatter (done), linter, LSP, package manager | In Progress | [tooling.md](tooling.md) |
 | LSP enhancements | Document symbols, references, rename, signature help, semantic tokens, workspace symbols, highlights, inlay hints, folding, and incremental sync | Planned | [lsp-enhancements.md](lsp-enhancements.md) |
 | LSP code actions | Quick-fix actions: missing case arms, auto-import, function type annotations | Planned | [lsp-code-actions.md](lsp-code-actions.md) |
-| LSP completion continuation | Limit `LHS = .` completion to meaningful continuations (results that unify with the target type) | Planned | [lsp-completion-rebind-continuation.md](lsp-completion-rebind-continuation.md) |
 | LSP contract hover | Hover information for builtin contract bounds and contract-backed method calls | Done | [archive/lsp-contract-hover.md](archive/lsp-contract-hover.md) |
 
 ### Active cross-cutting plans

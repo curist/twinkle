@@ -1,6 +1,6 @@
 # LSP completion — meaningful continuation at `LHS = .`
 
-Status: Planned · Boot-only · 2026-06-29
+Status: Done (landed on branch `lsp-completion-continuation`) · Boot-only · 2026-06-29
 
 ## Goal
 
