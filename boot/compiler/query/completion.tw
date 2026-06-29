@@ -17,7 +17,7 @@ use compiler.mono_type.{MonoType}
 use compiler.parser
 use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_stmt}
 use compiler.query.cursor_context
-use compiler.query.cursor_context.{ImportPrefix}
+use compiler.query.cursor_context.{ImportPrefix, RebindInfo, RebindTarget}
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.query.util.{find_map}
 use compiler.resolver.{
@@ -39,6 +39,7 @@ pub fn complete(snap: SemanticSnapshot, offset: Int, source: String) Vector<
     .General(prefix) => general_completions(snap, prefix, offset),
     .Import(ip) => import_completions(snap, ip),
     .Variant => variant_completions(snap, offset),
+    .RebindContinuation(info) => rebind_continuation_completions(snap, info, source),
   }
 }
 
@@ -919,6 +920,324 @@ fn all_variant_completions(snap: SemanticSnapshot) Vector<lsp_completion.Complet
     },
   )
   items
+}
+
+// ── Return-type unification (one-directional matchability) ──────────
+fn is_wild(t: MonoType) Bool {
+  case t {
+    .Var(_) => true,
+    .MetaVar(_) => true,
+    _ => false,
+  }
+}
+
+fn all_match(xs: Vector<MonoType>, ys: Vector<MonoType>) Bool {
+  for i in 0..xs.len() {
+    if !types_match_wildcard(xs[i], ys[i]) {
+      return false
+    }
+  }
+
+  true
+}
+
+fn types_match_wildcard(a: MonoType, b: MonoType) Bool {
+  if is_wild(a) or is_wild(b) {
+    return true
+  }
+
+  case a {
+    .Int => case b {
+      .Int => true,
+      _ => false,
+    },
+    .Float => case b {
+      .Float => true,
+      _ => false,
+    },
+    .Bool => case b {
+      .Bool => true,
+      _ => false,
+    },
+    .Byte => case b {
+      .Byte => true,
+      _ => false,
+    },
+    .String => case b {
+      .String => true,
+      _ => false,
+    },
+    .Void => case b {
+      .Void => true,
+      _ => false,
+    },
+    .Vector(x) => case b {
+      .Vector(y) => types_match_wildcard(x, y),
+      _ => false,
+    },
+    .Optional(x) => case b {
+      .Optional(y) => types_match_wildcard(x, y),
+      _ => false,
+    },
+    .Result(xo, xe) => case b {
+      .Result(yo, ye) => types_match_wildcard(xo, yo) and types_match_wildcard(xe, ye),
+      _ => false,
+    },
+    .Dict(xk, xv) => case b {
+      .Dict(yk, yv) => types_match_wildcard(xk, yk) and types_match_wildcard(xv, yv),
+      _ => false,
+    },
+    .Named(ta, aa) => case b {
+      .Named(tb, bb) => ta == tb and aa.len() == bb.len() and all_match(aa, bb),
+      _ => false,
+    },
+    .Function(pa, ra) => case b {
+      .Function(pb, rb) => pa.len() == pb.len()
+        and all_match(pa, pb) and types_match_wildcard(ra, rb),
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn bind_vars(pat: MonoType, ground: MonoType, subst: Dict<String, MonoType>) Dict<String, MonoType> {
+  case pat {
+    .Var(name) => subst.set(name, ground),
+    .Vector(p) => case ground {
+      .Vector(g) => bind_vars(p, g, subst),
+      _ => subst,
+    },
+    .Optional(p) => case ground {
+      .Optional(g) => bind_vars(p, g, subst),
+      _ => subst,
+    },
+    .Result(po, pe) => case ground {
+      .Result(go, ge) => bind_vars(pe, ge, bind_vars(po, go, subst)),
+      _ => subst,
+    },
+    .Dict(pk, pv) => case ground {
+      .Dict(gk, gv) => bind_vars(pv, gv, bind_vars(pk, gk, subst)),
+      _ => subst,
+    },
+    .Named(_, pargs) => case ground {
+      .Named(_, gargs) => {
+        s := subst
+
+        for i in 0..pargs.len() {
+          if i < gargs.len() {
+            s = bind_vars(pargs[i], gargs[i], s)
+          }
+        }
+
+        s
+      },
+      _ => subst,
+    },
+    _ => subst,
+  }
+}
+
+fn apply_subst(ty: MonoType, subst: Dict<String, MonoType>) MonoType {
+  case ty {
+    .Var(name) => case subst[name] {
+      .Some(t) => t,
+      .None => ty,
+    },
+    .Vector(e) => .Vector(apply_subst(e, subst)),
+    .Optional(e) => .Optional(apply_subst(e, subst)),
+    .Result(o, e) => .Result(apply_subst(o, subst), apply_subst(e, subst)),
+    .Dict(k, v) => .Dict(apply_subst(k, subst), apply_subst(v, subst)),
+    .Named(tid, args) => .Named(
+      tid,
+      collect a in args {
+        apply_subst(a, subst)
+      },
+    ),
+    .Function(ps, r) => .Function(
+      collect p in ps {
+        apply_subst(p, subst)
+      },
+      apply_subst(r, subst),
+    ),
+    _ => ty,
+  }
+}
+
+fn method_return_unifies(sig: FunctionSig, ty: MonoType) Bool {
+  ret := case sig.ret {
+    .Some(r) => r,
+    .None => return false,
+  }
+
+  if sig.params.len() == 0 {
+    return false
+  }
+
+  recv := sig.params[0]
+  subst := bind_vars(recv, ty, Dict.new())
+  ret2 := apply_subst(ret, subst)
+  types_match_wildcard(ret2, ty)
+}
+
+fn methods_returning(env: ResolvedEnv, ty: MonoType) Vector<lsp_completion.CompletionItem> {
+  items: Vector<lsp_completion.CompletionItem> = []
+
+  case ty {
+    .Named(tid, _) => case lookup_type_methods(env, tid) {
+      .Some(entries) => {
+        items = .concat(filter_method_entries(env, entries, ty))
+      },
+      .None => {},
+    },
+    _ => {},
+  }
+
+  case builtin_type_name(ty) {
+    .Some(name) => case env.methods[name] {
+      .Some(entries) => {
+        items = .concat(filter_method_entries(env, entries, ty))
+      },
+      .None => {},
+    },
+    .None => {},
+  }
+
+  items
+}
+
+fn filter_method_entries(env: ResolvedEnv, entries: Vector<MethodEntry>, ty: MonoType) Vector<
+  lsp_completion.CompletionItem,
+> {
+  result: Vector<lsp_completion.CompletionItem> = []
+
+  for e in entries {
+    sig := case env.lookup_registered_function(e.function_name) {
+      .Some(s) => s,
+      .None => continue,
+    }
+
+    if !method_return_unifies(sig, ty) {
+      continue
+    }
+
+    result = .append(
+      lsp_completion.CompletionItem.{
+        label: e.method_name,
+        kind: .Method,
+        detail: .Some(sig_to_detail(env, sig)),
+        documentation: sig.doc,
+      },
+    )
+  }
+
+  result
+}
+
+// ── Rebind continuation completions ─────────────────────────────────
+fn rebind_continuation_completions(snap: SemanticSnapshot, info: RebindInfo, source: String) Vector<
+  lsp_completion.CompletionItem,
+> {
+  typed := case snap.typed {
+    .Some(v) => v,
+    .None => return [],
+  }
+
+  dot_offset := info.dot_offset
+  if dot_offset <= 0 {
+    return []
+  }
+
+  cursor_offset := dot_offset + 1
+  lexed := lexer.lex_with_cursor(source, 0, cursor_offset)
+  reparsed := parser.parse_tokens(source, 0, lexed.value, lexed.diagnostics)
+  reparse_items := reparsed.value.items
+
+  ty := case resolve_target_type(reparse_items, typed, info.lhs_offset, info.target) {
+    .Some(t) => t,
+    .None => return all_variant_completions(snap),
+  }
+
+  // Methods whose return unifies with the target type, plus variants of the
+  // target type (which construct it directly).
+  items := methods_returning(typed.env, ty)
+  items.concat(variants_for_type(typed.env, ty))
+}
+
+/// Resolve the type of a rebind target identifier by name, using `cutoff` (the
+/// byte offset of the LHS identifier) as the upper bound so the rebind line
+/// itself is excluded and the latest earlier binding wins.
+fn resolve_rebind_ident_type(items: Vector<Item>, typed: CheckResult, name: String, cutoff: Int) MonoType? {
+  // Function-body rebind: parameters first, then earlier let-bindings.
+  for item in items {
+    case item {
+      .Function(decl) => if decl.span.contains(cutoff) {
+        case typed.env.lookup_function(decl.name) {
+          .Some(sig) => {
+            for i in 0..decl.params.len() {
+              if decl.params[i].name == name and i < sig.params.len() {
+                return .Some(sig.params[i])
+              }
+            }
+          },
+          .None => {},
+        }
+
+        return find_let_type_in_block(decl.body, name, typed.type_map, cutoff)
+      },
+      _ => {},
+    }
+  }
+
+  // Top-level rebind: latest matching let-binding before the cursor wins.
+  found: MonoType? = .None
+
+  for item in items {
+    case item {
+      .Stmt(.Let(ls)) => if ls.name == name and ls.span.end <= cutoff {
+        found = typed.type_map[ls.value.id]
+      },
+      _ => {},
+    }
+  }
+
+  found
+}
+
+fn resolve_target_type(items: Vector<Item>, typed: CheckResult, cutoff: Int, target: RebindTarget) MonoType? {
+  case target {
+    .Ident(name) => resolve_rebind_ident_type(items, typed, name, cutoff),
+    .FieldPath(segments) => {
+      base := try resolve_rebind_ident_type(items, typed, segments[0], cutoff)
+      walk_field_path(typed.env, base, segments, 1)
+    },
+  }
+}
+
+fn walk_field_path(env: ResolvedEnv, ty: MonoType, segments: Vector<String>, idx: Int) MonoType? {
+  if idx >= segments.len() {
+    return .Some(ty)
+  }
+
+  next := try field_type(env, ty, segments[idx])
+  walk_field_path(env, next, segments, idx + 1)
+}
+
+fn field_type(env: ResolvedEnv, ty: MonoType, field_name: String) MonoType? {
+  case ty {
+    .Named(tid, args) => case env.lookup_type_def(tid) {
+      .Some(.Record(_, params, fields)) => {
+        for f in fields {
+          if f.name == field_name {
+            return .Some(type_util.subst_type_params_lenient(f.ty, params, args))
+          }
+        }
+
+        .None
+      },
+      _ => .None,
+    },
+    _ => .None,
+  }
 }
 
 // ── Case info finding ──────────────────────────────────────────────

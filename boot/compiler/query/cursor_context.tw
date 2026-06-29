@@ -18,11 +18,18 @@ pub type ImportPrefix = .{
 
 pub type MemberContext = .{ dot_offset: Int, receiver_name: String? }
 
+pub type RebindTarget = { Ident(String), FieldPath(Vector<String>) }
+
+pub type RebindInfo = .{ dot_offset: Int, lhs_offset: Int, target: RebindTarget }
+
+type LhsClassification = .{ target: RebindTarget, lhs_offset: Int }
+
 pub type CompletionContext = {
   Member(MemberContext),
   General(String),
   Import(ImportPrefix),
   Variant,
+  RebindContinuation(RebindInfo),
 }
 
 pub type CallContext = .{ name: String, paren_offset: Int, active_parameter: Int }
@@ -56,11 +63,19 @@ pub fn classify_completion(source: String, offset: Int) CompletionContext {
     if cursor_idx >= 2 {
       before_dot := tokens[cursor_idx - 2]
 
+      if before_dot.kind == .Eq {
+        case classify_rebind_lhs(tokens, cursor_idx - 2, source) {
+          .Some(c) => return .RebindContinuation(
+            .{ dot_offset: prev.span.start, lhs_offset: c.lhs_offset, target: c.target },
+          ),
+          .None => return .Variant,
+        }
+      }
+
       if before_dot.kind == .LBrace
         or before_dot.kind == .FatArrow
         or before_dot.kind == .Comma
-        or before_dot.kind == .ColonEq
-        or before_dot.kind == .Eq {
+        or before_dot.kind == .ColonEq {
         return .Variant
       }
     } else {
@@ -201,6 +216,63 @@ pub fn extract_ident_before(source: String, offset: Int) String {
   }
 
   source.slice(start, end)
+}
+
+fn classify_rebind_lhs(tokens: Vector<Token>, eq_idx: Int, source: String) LhsClassification? {
+  if eq_idx < 1 {
+    return .None
+  }
+
+  j := eq_idx - 1
+
+  // The token immediately before `=` must be the last LHS segment.
+  if tokens[j].kind != .Ident {
+    return .None
+  }
+
+  // Walk back over an `Ident (Dot Ident)*` run to find its head.
+  head_idx := j
+  k := j - 1
+
+  for k >= 1 and tokens[k].kind == .Dot and tokens[k - 1].kind == .Ident {
+    head_idx = k - 1
+    k = k - 2
+  }
+
+  // Typed binding (`a: T = .`): not a rebind, receiver shorthand can't fire.
+  if head_idx >= 1 and tokens[head_idx - 1].kind == .Colon {
+    return .None
+  }
+
+  // The run must start a statement (or be the very first token, or follow a
+  // clear block/stmt opener). Otherwise this `=` is not a rebinding LHS.
+  if head_idx > 0 and !tokens[head_idx].preceded_by_newline {
+    before := tokens[head_idx - 1]
+
+    if before.kind != .LBrace and before.kind != .FatArrow {
+      return .None
+    }
+  }
+
+  // Collect segment names left-to-right.
+  names: Vector<String> = []
+  i := head_idx
+
+  for i <= eq_idx - 1 {
+    if tokens[i].kind == .Ident {
+      names = .append(source.slice(tokens[i].span.start, tokens[i].span.end))
+    }
+
+    i = i + 1
+  }
+
+  lhs_offset := tokens[head_idx].span.start
+
+  if names.len() == 1 {
+    .Some(.{ target: .Ident(names[0]), lhs_offset })
+  } else {
+    .Some(.{ target: .FieldPath(names), lhs_offset })
+  }
 }
 
 fn scan_back_to_call(bytes: Vector<Byte>, offset: Int) ScanResult? {
