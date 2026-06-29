@@ -40,6 +40,7 @@ Self-hosting is complete. Historical design and status docs live in
 |------|-------------|--------|---------|
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
 | Boot typed builtin type refs | Extend the typed-builtin-reference pattern (Option/Result variant refs, now done) to the remaining builtin *types* still referenced by raw id — `Order`, `Iterator`, `Range` — and audit `IterItem`/`UnfoldStep`/`Task` | Planned | [boot-typed-builtin-type-refs.md](boot-typed-builtin-type-refs.md) |
+| View method-not-found diagnostic | Calling an absent method on a `View` (or other generic stdlib satisfier) crashes lowering/backend instead of a clean "no method" error; fix the checker owner-lookup + harden the not-found recovery | Planned | [view-method-not-found-diagnostic.md](view-method-not-found-diagnostic.md) |
 
 
 ### Later — Tooling & Ecosystem
