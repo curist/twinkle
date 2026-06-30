@@ -1,0 +1,6 @@
+[project]
+name = "reachfix"
+entries = ["main.tw"]
+
+[test]
+entries = ["other.tw"]

@@ -5,11 +5,13 @@
 //! commands operate on a single project model instead of re-deriving it.
 
 use @std.path
+use @std.proc
 
 use compiler.base_env.{builtin_env}
 use compiler.imports
 use compiler.query.analyze
 use compiler.query.cache as query_cache
+use lib.module.loader
 use lib.project.config
 use lib.source.identity
 use lib.source.overlay
@@ -50,6 +52,20 @@ pub fn derive_target_name(rel_path: String, project_name: String?) String {
       .None => "main",
     },
   }
+}
+
+/// Discover the project context for the current working directory: walk up to
+/// the nearest `twinkle.toml`, load it, and build the entry targets.
+pub fn discover() Result<ProjectContext, String> {
+  discover_in(proc.cwd())
+}
+
+/// Discover the project context rooted at the nearest `twinkle.toml` at or above
+/// `start`. Use `discover` for the process working directory.
+pub fn discover_in(start: String) Result<ProjectContext, String> {
+  root := loader.find_project_root(start)
+  cfg := try config.load(root)
+  from_root(root, cfg)
 }
 
 /// Build a `ProjectContext` from an already-resolved root and config. Pure:

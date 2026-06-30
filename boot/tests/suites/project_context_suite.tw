@@ -124,4 +124,17 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "discover_in loads the nearest config and builds entry targets",
+      fn() {
+        ctx := try context.discover_in(fixture_root())
+        try assert.equal(ctx.root, fixture_root())
+        try assert.equal(ctx.project_entries.len(), 1)
+        try assert.equal(ctx.project_entries[0].name, "reachfix")
+        try assert.equal(ctx.project_entries[0].rel_path, "main.tw")
+        try assert.equal(ctx.test_entries.len(), 1)
+        try assert.equal(ctx.test_entries[0].rel_path, "other.tw")
+        .Ok({})
+      },
+    )
 }
