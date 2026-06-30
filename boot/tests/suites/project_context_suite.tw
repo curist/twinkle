@@ -18,30 +18,11 @@ pub fn suite() runner.Suite {
   runner
     .suite("project context")
     .test(
-      "target name is the stem for a nested non-main entry",
+      "target name is the entry file stem",
       fn() {
-        try assert.equal(context.derive_target_name("cmd/server.tw", .None), "server")
-        .Ok({})
-      },
-    )
-    .test(
-      "target name is the parent dir for a nested main entry",
-      fn() {
-        try assert.equal(context.derive_target_name("cmd/server/main.tw", .None), "server")
-        .Ok({})
-      },
-    )
-    .test(
-      "root main entry uses the project name when present",
-      fn() {
-        try assert.equal(context.derive_target_name("main.tw", .Some("demo")), "demo")
-        .Ok({})
-      },
-    )
-    .test(
-      "root main entry falls back to 'main' without a project name",
-      fn() {
-        try assert.equal(context.derive_target_name("main.tw", .None), "main")
+        try assert.equal(context.derive_target_name("cmd/server.tw"), "server")
+        try assert.equal(context.derive_target_name("cmd/server/main.tw"), "main")
+        try assert.equal(context.derive_target_name("main.tw"), "main")
         .Ok({})
       },
     )
@@ -238,7 +219,7 @@ pub fn suite() runner.Suite {
         ctx := try context.discover_in(fixture_root())
         try assert.equal(ctx.root, fixture_root())
         try assert.equal(ctx.project_entries.len(), 1)
-        try assert.equal(ctx.project_entries[0].name, "reachfix")
+        try assert.equal(ctx.project_entries[0].name, "main")
         try assert.equal(ctx.project_entries[0].rel_path, "main.tw")
         try assert.equal(ctx.test_entries.len(), 1)
         try assert.equal(ctx.test_entries[0].rel_path, "other.tw")

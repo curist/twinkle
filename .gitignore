@@ -1,6 +1,4 @@
-# Build artifacts: the repo-root target/ plus per-project target/ dirs created by
-# project-mode `twk build` (e.g. boot/target/, examples/*/target/).
-target/
+/target
 
 boot/tests/*.wasm
 boot/lib/module/core_lib.tw

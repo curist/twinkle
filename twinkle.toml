@@ -1,5 +1,6 @@
 [project]
 name = "twinkle"
+entries = ["boot/main.tw"]
 
 [test]
 entries = ["boot/tests/main.tw"]

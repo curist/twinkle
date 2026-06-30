@@ -35,23 +35,10 @@ pub type ProjectContext = .{
   test_entries: Vector<EntryTarget>,
 }
 
-/// Derive a target name from an entry's project-relative path. A `main.tw`
-/// entry takes its parent directory's name, or the project name (then "main")
-/// when it sits at the project root; any other file uses its stem.
-pub fn derive_target_name(rel_path: String, project_name: String?) String {
-  s := path.stem(rel_path)
-  if s != "main" {
-    return s
-  }
-
-  parent := path.basename(path.dirname(rel_path))
-  cond {
-    parent != "" and parent != "." and parent != "/" => parent,
-    _ => case project_name {
-      .Some(n) => n,
-      .None => "main",
-    },
-  }
+/// Derive a target name from an entry's project-relative path. Target names are
+/// the entry file stem; `main.tw` is just `main`.
+pub fn derive_target_name(rel_path: String) String {
+  path.stem(rel_path)
 }
 
 /// Discover the project context for the current working directory: walk up to
@@ -71,19 +58,15 @@ pub fn discover_in(start: String) Result<ProjectContext, String> {
 /// Build a `ProjectContext` from an already-resolved root and config. Pure:
 /// callers that need filesystem discovery use `discover`.
 pub fn from_root(root: String, cfg: config.Config) Result<ProjectContext, String> {
-  project := build_entries(root, cfg.project_entries, cfg.name)
-  test := build_entries(root, cfg.test_entries, cfg.name)
+  project := build_entries(root, cfg.project_entries)
+  test := build_entries(root, cfg.test_entries)
   try reject_conflicts(project)
   .Ok(ProjectContext.{ root, config: cfg, project_entries: project, test_entries: test })
 }
 
-fn build_entries(root: String, rels: Vector<String>, project_name: String?) Vector<EntryTarget> {
+fn build_entries(root: String, rels: Vector<String>) Vector<EntryTarget> {
   collect rel in rels {
-    EntryTarget.{
-      name: derive_target_name(rel, project_name),
-      rel_path: rel,
-      abs_path: path.join(root, rel),
-    }
+    EntryTarget.{ name: derive_target_name(rel), rel_path: rel, abs_path: path.join(root, rel) }
   }
 }
 

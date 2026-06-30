@@ -132,9 +132,9 @@ twk run          # run the single project entry
 twk test         # run the configured test entries
 ```
 
-A target name is derived from each entry path (`cmd/server.tw` → `server`).
-With more than one project entry, `build` needs `--all` or `--target <name>`,
-and `run` needs `--target <name>`:
+A target name is derived from each entry file stem (`cmd/server.tw` → `server`,
+`cmd/server/main.tw` → `main`). With more than one project entry, `build` needs
+`--all` or `--target <name>`, and `run` needs `--target <name>`:
 
 ```bash
 twk build --all              # build every project entry

@@ -90,15 +90,16 @@ an arbitrary file.
 
 ### Target names
 
-For build/run project entries, derive a target name from the entry path:
+For build/run project entries, derive a target name from the entry file stem:
 
 * `cmd/server.tw` -> `server`
-* `cmd/server/main.tw` -> `server`
-* `main.tw` -> project name when present, otherwise `main`
+* `cmd/server/main.tw` -> `main`
+* `main.tw` -> `main`
 
-If two project entries derive the same target name, report a configuration error
-and ask the user to choose distinct entry paths for now. Do not introduce a
-richer target table until conflicts become common enough to justify it.
+There is no special `main.tw` parent-directory traversal. If two project entries
+share the same stem, report a configuration error and ask the user to choose
+distinct entry paths for now. Do not introduce a richer target table until
+conflicts become common enough to justify it.
 
 Future extension, intentionally deferred:
 
@@ -414,19 +415,18 @@ it so the manifest is the single source of truth:
 
 Artifact-output migration (driven by the `target/<name>.wasm` convention):
 
-* **Bootstrap builds stay explicit.** The self-host loop builds to exact paths
-  (`target/boot-stage1.wasm`, `target/boot.wasm`, the stage3/stage4 temps) and
-  downstream rules key off them. These keep their explicit `-o` flags — do not
-  route them through project mode. Note the derived name for `main.tw` is the
-  *project* name (root project is `twinkle` → `target/twinkle.wasm`), so it does
-  not collide with the `target/boot.wasm` payload today; the collision is only a
-  theoretical caution if a project is ever named `boot`.
-* **`.gitignore` — DONE.** The old `/target` rule was repo-root-anchored, so it
-  did NOT cover sub-project artifact dirs. Migrated to an unanchored `target/`
-  pattern, which matches a `target/` directory at any depth — repo root,
-  `boot/target/`, and `examples/*/target/` (verified with `git check-ignore`).
-  No tracked files were affected. For user projects, scaffold the same `target/`
-  ignore via any future `twk init`.
+* **Bootstrap builds use project mode with explicit outputs where possible.**
+  The Rust stage0 compiler still receives `boot/main.tw` explicitly, but the
+  self-hosted stage1+ compiler invocations can use the manifest's sole
+  `[project].entries` root and keep only the required `-o` paths
+  (`target/boot.wasm`, the stage3/stage4 temps). This keeps the manifest as the
+  source of truth for the boot compiler entry while preserving the fixed output
+  paths downstream rules key off.
+* **`.gitignore` stays repo-root anchored.** The repository now has a top-level
+  `twinkle.toml`, so project-mode builds from the repo root write into the
+  existing root `target/` directory. Nested projects should own their own ignore
+  rules (or get one from a future `twk init`) rather than broadening this repo's
+  ignore pattern to every nested `target/` directory.
 * **GitHub Actions:** `test.yml` runs `make test` and caches `target`; it makes
   no per-artifact path assertions, so it needs no change unless a future CI step
   references a specific built `.wasm` path. `deploy-playground.yml` builds from
