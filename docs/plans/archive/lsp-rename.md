@@ -1,5 +1,13 @@
 # LSP Rename Plan
 
+> **Status: shipped (boot).** `prepareRename`/`rename` are implemented in
+> `compiler/query/rename.tw` and `lib/lsp/rename.tw`, advertised as
+> `renameProvider { prepareProvider: true }`. Renamability is gated on a
+> user-defined declaration (builtins/stdlib refused), names are validated against
+> the parser's conventions, and edits cover references plus the declaration
+> across project-local modules. The out-of-scope items below (file/module path
+> renames, cross-package rename) remain future work.
+
 ## Goal
 
 Implement safe symbol rename through `textDocument/prepareRename` and

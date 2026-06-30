@@ -36,7 +36,7 @@ plan; whole-document format-on-save is good enough for now.
 |---------|------------------------|----------|--------|---------|
 | Document symbols | `textDocument/documentSymbol` | High | **Done** | [archived](archive/lsp-document-symbols.md) |
 | Find references | `textDocument/references` | High | **Done** | [archived](archive/lsp-references.md) |
-| Rename | `textDocument/rename`, `textDocument/prepareRename` | High | Planned | [lsp-rename.md](lsp-rename.md) |
+| Rename | `textDocument/rename`, `textDocument/prepareRename` | High | **Done** | [archived](archive/lsp-rename.md) |
 | Signature help | `textDocument/signatureHelp` | High | **Done** | [archived](archive/lsp-signature-help.md) |
 | Semantic tokens | `textDocument/semanticTokens/full` | Medium | **Done** | [archived](archive/lsp-semantic-tokens.md) |
 | Workspace symbols | `workspace/symbol` | Medium | **Done** | [archived](archive/lsp-workspace-symbols.md) |
@@ -61,7 +61,7 @@ Existing related plans:
    workspace symbols.~~ **Done.**
 2. ~~Find references: establishes symbol identity and use-site collection needed
    for rename and highlights.~~ **Done.**
-3. Rename: build on references with scope-aware edit generation.
+3. ~~Rename: build on references with scope-aware edit generation.~~ **Done.**
 4. ~~Signature help: reuses type/signature rendering and call-site analysis.~~
    **Done.**
 5. ~~Semantic tokens: improve syntax highlighting with compiler knowledge.~~ **Done.**

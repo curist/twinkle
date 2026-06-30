@@ -47,7 +47,7 @@ boot/tests/
   main.tw              # runs all suites (CI entry point)
   test_*.tw            # grouped entry points
   runner.tw            # test harness (Suite, Test, run_all)
-  assert.tw            # assertion helpers (str_eq, int_eq, is_true, ...)
+  assert.tw            # assertion helpers (equal, is_true, is_some, ...)
   helpers/             # shared test utilities
   suites/              # one file per test suite
     parser_suite.tw

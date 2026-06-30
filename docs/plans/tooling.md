@@ -26,18 +26,26 @@ Available today:
 
 | Area | Priority | Status | Details |
 |------|----------|--------|---------|
-| Project configuration | High | Planned | This document |
+| Project configuration | High | In Progress | This document |
 | LSP enhancements | High | Planned | [lsp-enhancements.md](lsp-enhancements.md) |
 | Additional LSP code actions | Medium | Planned | [lsp-code-actions.md](lsp-code-actions.md) |
 | Whole-project formatter UX | Medium | Planned | This document |
 | Linter | Medium | Planned | This document |
-| Test runner UX | Medium | Planned | This document |
+| Test runner UX | Medium | In Progress | This document |
 | Documentation generator | Low | Planned | This document |
 | Package/project tooling | Low | Planned | This document |
 
 ---
 
 ## T0 — Project Configuration via `twinkle.toml`
+
+> **Shipped (boot):** a constrained reader in `boot/lib/project/config.tw`
+> parses an optional top-level `name` (legacy root-marker form), `[project]`
+> `name`/`entries`, and `[test]` `entries`, validating entries as project-local
+> `.tw` paths. The LSP seeds workspace analysis from the configured entries
+> (open-document fallback when none), and `twk test` consumes `[test].entries`.
+> The broader `fmt`/`check`/`build`/`run` entry-driven behavior below is still
+> planned.
 
 `twinkle.toml` currently acts mostly as a project-root marker. Tooling should
 turn it into the shared source of truth for project-level behavior while keeping
@@ -286,6 +294,14 @@ Design notes:
 ---
 
 ## T3 — Test Runner UX
+
+> **Shipped (boot):** the harness is promoted to `@std.testing` plus
+> `@std.testing.assert` (a conservative copy of `boot/tests/runner.tw` /
+> `assert.tw`), and `twk test` loads `twinkle.toml`, resolves `[test].entries`,
+> and runs each as a normal Twinkle program (falling back to `tests/main.tw`),
+> exiting non-zero if any fail and honoring `TWK_TEST_FILTER` / `TWK_TEST_REPORT`
+> / `NO_COLOR`. Still open: migrating the boot suites onto `@std.testing` and
+> explicit CLI filter flags.
 
 The boot test suite already has Twinkle-native suite infrastructure:
 `runner.suite(name)`, `.test(name, fn() Result<Void, String>)`,
