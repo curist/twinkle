@@ -397,18 +397,20 @@ For multi-entry commands:
 Once project mode is stable, collapse the repo's own `Makefile` invocations onto
 it so the manifest is the single source of truth:
 
-* Replace the `fmt` target's `find boot -name '*.tw' ... | xargs target/twk fmt`
-  with project-mode `target/twk fmt`, relying on `[project].entries` /
-  `[test].entries` for coverage. The generated `boot/lib/module/core_lib.tw`
-  must stay excluded — project mode skips bundled/generated sources, but verify
-  it is not reachable-and-rewritten before deleting the explicit `find` filter.
-* `boot-test` already uses project-mode `target/twk test`; once root discovery
-  from subdirectories is fixed (Phase 1), confirm it still resolves the boot
-  project root.
-* Audit other targets (`core_lib.tw` formatting step, any future `lint`/`check`
-  hooks) for the same `find | xargs` pattern and migrate them too.
-* Keep the migration behavior-preserving: the set of files formatted/linted
-  before and after must match, so diff the file lists during cutover.
+* **`make fmt` swap — REJECTED (not behavior-preserving).** The `fmt` target's
+  `find boot -name '*.tw'` formats ~125 files that project mode cannot reach:
+  `boot/tests/fixtures/` (86, loaded at runtime, never imported), `boot/bench/`
+  (28), and `boot/repros/` (11). Project-mode `twk fmt` only covers modules
+  reachable from the configured entries, so swapping it in would silently stop
+  formatting those scratch/fixture sources. Per the behavior-preserving rule
+  below, the target keeps its `find` form. (If those dirs are ever dropped or
+  made reachable, revisit.)
+* `boot-test` already uses project-mode `target/twk test` (and `twk test`'s
+  nested-root discovery was already correct — see Phase 1). No change.
+* `core_lib.tw` formatting step stays explicit: it formats one generated file by
+  name, which has no project-mode equivalent.
+* Behavior-preserving rule (the reason for the rejection above): the set of files
+  formatted/linted before and after a cutover must match.
 
 Artifact-output migration (driven by the `target/<name>.wasm` convention):
 
@@ -419,14 +421,12 @@ Artifact-output migration (driven by the `target/<name>.wasm` convention):
   *project* name (root project is `twinkle` → `target/twinkle.wasm`), so it does
   not collide with the `target/boot.wasm` payload today; the collision is only a
   theoretical caution if a project is ever named `boot`.
-* **`.gitignore`:** the current `/target` rule is repo-root-anchored, so it does
-  NOT cover sub-project artifact dirs — `boot/target/`, `examples/*/target/`,
-  etc. Project roots are wherever a `twinkle.toml` sits (root, `boot/`, each
-  `examples/*`), and a project-mode build there emits to `<that-root>/target/`.
-  Migrate `/target` to an unanchored `target/` pattern (matches a `target/`
-  directory at any depth) so every project root's artifacts are ignored, or add
-  per-project rules. For user projects, scaffold the same `target/` ignore via
-  any future `twk init`.
+* **`.gitignore` — DONE.** The old `/target` rule was repo-root-anchored, so it
+  did NOT cover sub-project artifact dirs. Migrated to an unanchored `target/`
+  pattern, which matches a `target/` directory at any depth — repo root,
+  `boot/target/`, and `examples/*/target/` (verified with `git check-ignore`).
+  No tracked files were affected. For user projects, scaffold the same `target/`
+  ignore via any future `twk init`.
 * **GitHub Actions:** `test.yml` runs `make test` and caches `target`; it makes
   no per-artifact path assertions, so it needs no change unless a future CI step
   references a specific built `.wasm` path. `deploy-playground.yml` builds from
