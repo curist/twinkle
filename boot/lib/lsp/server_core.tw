@@ -46,6 +46,7 @@ use lib.lsp.semantic_tokens as lsp_semantic_tokens
 use lib.lsp.signature_help as lsp_signature_help
 use lib.lsp.workspace_symbol as lsp_workspace_symbol
 use lib.module.loader
+use lib.project.config
 use lib.query.keys
 use lib.source.identity
 use lib.text.line_index
@@ -735,6 +736,27 @@ fn empty_array_response_step(state: State, req: protocol.Request) Step {
   .{ state, outgoing: [req.id.success_response(json.array([]))] }
 }
 
+// Analysis seed entry URIs for a project root. When `twinkle.toml` configures
+// `[project]`/`[test]` entries, those become the roots so the whole configured
+// project is analyzed; otherwise we fall back to the open documents.
+fn analysis_entry_uris(root: String, docs: Vector<document_store.Document>) Vector<String> {
+  cfg := case config.load(root) {
+    .Ok(c) => c,
+    .Err(_) => config.empty(),
+  }
+
+  paths := cfg.entry_paths(root)
+  if paths.len() == 0 {
+    return collect doc in docs {
+      doc.uri
+    }
+  }
+
+  collect entry_path in paths {
+    identity.from_path(entry_path).uri
+  }
+}
+
 fn project_root_for_document(file_path: String) String {
   dir := path.dirname(file_path)
   root := loader.find_project_root(dir)
@@ -875,38 +897,40 @@ fn publish_workspace_diagnostics(state: State, progress: ProgressSink?) Step {
       .None => continue,
     }
 
-    // Use first doc as entry — analysis walks all deps anyway.
-    // Track which open-doc URIs are covered by this analysis.
-    entry := docs[0]
-    result := query_diagnostics.analyze_workspace_with_progress(
-      cur_cache,
-      .{ entry_uri: entry.uri, project_root: root, open_documents: overlay_docs },
-      state.closure_snapshot,
-      progress,
-    )
-    cur_cache = result.cache
-    state.closure_snapshot = result.snapshot
+    // Seed analysis from the configured project/test entries when twinkle.toml
+    // lists any, otherwise from the open documents (the historical fallback).
+    // Analysis walks all deps from each seed; we only publish for open docs.
+    for seed_uri in analysis_entry_uris(root, docs) {
+      result := query_diagnostics.analyze_workspace_with_progress(
+        cur_cache,
+        .{ entry_uri: seed_uri, project_root: root, open_documents: overlay_docs },
+        state.closure_snapshot,
+        progress,
+      )
+      cur_cache = result.cache
+      state.closure_snapshot = result.snapshot
 
-    for group in result.diagnostics_by_uri {
-      if group.diagnostics.len() == 0 and group.uri != entry.identity.uri {
-        continue
-      }
+      for group in result.diagnostics_by_uri {
+        if group.diagnostics.len() == 0 and group.uri != seed_uri {
+          continue
+        }
 
-      case document_by_identity_uri(state.documents, group.uri) {
-        .Some(group_doc) => if !published.has(group.uri)
-          and state.should_publish_diagnostics(group_doc, group.diagnostics) {
-          outgoing = .append(
-            lsp_diagnostics.publish_diagnostics(
-              group_doc.uri,
-              group_doc.version,
-              group_doc.index,
-              group.diagnostics,
-            ),
-          )
-          state = .mark_published(group_doc, group.diagnostics)
-          published[group.uri] = true
-        },
-        .None => {},
+        case document_by_identity_uri(state.documents, group.uri) {
+          .Some(group_doc) => if !published.has(group.uri)
+            and state.should_publish_diagnostics(group_doc, group.diagnostics) {
+            outgoing = .append(
+              lsp_diagnostics.publish_diagnostics(
+                group_doc.uri,
+                group_doc.version,
+                group_doc.index,
+                group.diagnostics,
+              ),
+            )
+            state = .mark_published(group_doc, group.diagnostics)
+            published[group.uri] = true
+          },
+          .None => {},
+        }
       }
     }
 

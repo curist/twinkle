@@ -108,4 +108,35 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "entries unions project then test entries",
+      fn() {
+        cfg := try config.parse(
+          "[project]\nentries = [\"cmd/app.tw\"]\n[test]\nentries = [\"tests/main.tw\"]\n",
+        )
+        all := cfg.entries()
+        try assert.equal(all.len(), 2)
+        try assert.equal(all[0], "cmd/app.tw")
+        try assert.equal(all[1], "tests/main.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "entry_paths resolves entries against the project root",
+      fn() {
+        cfg := try config.parse("[test]\nentries = [\"tests/main.tw\"]\n")
+        paths := cfg.entry_paths("/proj")
+        try assert.equal(paths.len(), 1)
+        try assert.equal(paths[0], "/proj/tests/main.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "entry_paths is empty when no entries are configured",
+      fn() {
+        cfg := config.empty()
+        try assert.equal(cfg.entry_paths("/proj").len(), 0)
+        .Ok({})
+      },
+    )
 }

@@ -134,6 +134,21 @@ fn parse_string_array(value: String) Result<Vector<String>, String> {
   .Ok(out)
 }
 
+/// The configured entries as a single list: project entries first, then test
+/// entries. This is the set tooling treats as the whole-project view.
+pub fn entries(cfg: Config) Vector<String> {
+  cfg.project_entries.concat(cfg.test_entries)
+}
+
+/// Resolve all configured entries against `project_root`, yielding absolute
+/// (or root-relative) `.tw` paths. Empty when nothing is configured, which
+/// lets callers fall back to their default discovery.
+pub fn entry_paths(cfg: Config, project_root: String) Vector<String> {
+  collect entry in cfg.entries() {
+    path.join(project_root, entry)
+  }
+}
+
 /// Validate that all configured entries are project-local `.tw` files.
 pub fn validate(cfg: Config) Result<Void, String> {
   for entry in cfg.project_entries {
