@@ -1,3 +1,4 @@
+use compiler.base_env
 use compiler.checker
 use compiler.parser
 use compiler.resolver
@@ -10,6 +11,40 @@ fn check_src(src: String) checker.CheckResult {
   parsed := parser.parse(src, 0)
   resolved := resolver.empty_env().resolve(parsed.value)
   checker.check(parsed.value, resolved.env, false)
+}
+
+// Resolves against the full builtin env so sources that synthesize builtin
+// types (`Range`, `Iterator`, `Order`) can look them up by name.
+fn check_src_builtins(src: String) checker.CheckResult {
+  parsed := parser.parse(src, 0)
+  resolved := base_env.builtin_env().resolve(parsed.value)
+  checker.check(parsed.value, resolved.env, false)
+}
+
+fn check_ok_builtins(src: String) Result<checker.CheckResult, String> {
+  r := check_src_builtins(src)
+
+  if r.diagnostics.len() > 0 {
+    return .Err("expected no diagnostics, got: ${r.diagnostics[0].message()}")
+  }
+
+  .Ok(r)
+}
+
+fn check_errs_builtins(src: String) Result<Vector<String>, String> {
+  r := check_src_builtins(src)
+
+  if r.diagnostics.len() == 0 {
+    return .Err("expected diagnostics, got none")
+  }
+
+  msgs: Vector<String> = []
+
+  for d in r.diagnostics {
+    msgs = .append(d.message())
+  }
+
+  .Ok(msgs)
 }
 
 fn check_ok(src: String) Result<checker.CheckResult, String> {
@@ -156,7 +191,7 @@ pub fn suite() runner.Suite {
       fn() {
         // Range is TypeId(3), so mono_to_string renders it as "Named(3)"
         src := "fn f() { x := 0..10\nx }"
-        r := try check_ok(src)
+        r := try check_ok_builtins(src)
         ty := try type_at(r, src, "0..10")
         assert.equal(ty, "Named(3)")
       },
@@ -165,7 +200,7 @@ pub fn suite() runner.Suite {
       "range literal rejects non-Int operand",
       fn() {
         src := "fn f() { \"a\"..10 }"
-        errs := try check_errs(src)
+        errs := try check_errs_builtins(src)
         has_mismatch := false
 
         for msg in errs {

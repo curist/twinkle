@@ -12,6 +12,7 @@ use .ast.{
   BinOp, Block, BreakStmt, CaseArm, CollectExpr, CondArm, ContinueStmt, Expr, ForStmt, FunctionDecl,
   LetStmt, Module, Param, Pattern, RecordEntry, ReturnStmt, Stmt, StringPart, TypeExpr, UnOp,
 }
+use .builtin_refs
 use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape}
 use .lint.{LintFinding}
 use .mono_type.{MonoType, TypeId}
@@ -604,16 +605,20 @@ fn contract_name(contract: BuiltinContract) String {
   contract.spec().name
 }
 
-fn contract_return_type(shape: ContractReturnShape, recv_ty: MonoType, elem_ty: MonoType) MonoType {
+fn contract_return_type(
+  env: ResolvedEnv,
+  shape: ContractReturnShape,
+  recv_ty: MonoType,
+  elem_ty: MonoType,
+) MonoType {
   case shape {
     .String => .String,
     .Bool => .Bool,
-    .Order => MonoType.Named(TypeId.{ id: 7 }, []),
+    .Order => builtin_refs.order_type(env),
     .Int => .Int,
     .Receiver => recv_ty,
     .Elem => elem_ty,
-    // `Iterator<Elem>` — the builtin `Iterator` is TypeId 4 (see base_env).
-    .IteratorElem => MonoType.Named(TypeId.{ id: 4 }, [elem_ty]),
+    .IteratorElem => builtin_refs.iterator_type(env, elem_ty),
   }
 }
 
@@ -855,7 +860,7 @@ fn prove_contract_method(
   }
 
   ret_ty := zonk(inst.ret, recv_ctx.subst)
-  expected_ret := contract_return_type(req.ret, ty, elem_ty)
+  expected_ret := contract_return_type(ctx.env, req.ret, ty, elem_ty)
 
   // Unify (not compare) so an `Elem`/`Receiver` return binds against the
   // satisfier's actual return type; for concrete shapes this is an equality check.
@@ -2179,7 +2184,7 @@ fn try_synth_method_call(
       } else {
         base_ty
       }
-      ret_ty := contract_return_type(m.req.ret, base_ty, elem_ty)
+      ret_ty := contract_return_type(br.ctx.env, m.req.ret, base_ty, elem_ty)
 
       extra_params: Vector<MonoType> = []
 
@@ -2311,7 +2316,7 @@ fn try_synth_method_value(
 
       return .Some(
         .{
-          ty: .Function(extra_params, contract_return_type(m.req.ret, base_ty, elem_ty)),
+          ty: .Function(extra_params, contract_return_type(ctx.env, m.req.ret, base_ty, elem_ty)),
           ctx,
           diags,
         },
@@ -4271,7 +4276,7 @@ fn synth_range_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
   u1 := lr.ctx.unify(lr.ty, MonoType.Int, lhs.span, lr.diags)
   rr := u1.ctx.synth(rhs, u1.diags)
   u2 := rr.ctx.unify(rr.ty, MonoType.Int, rhs.span, rr.diags)
-  .{ ty: MonoType.Named(TypeId.{ id: 3 }, []), ctx: u2.ctx, diags: u2.diags }
+  .{ ty: builtin_refs.range_type(ctx.env), ctx: u2.ctx, diags: u2.diags }
 }
 
 fn is_int_or_byte(ty: MonoType) Bool {

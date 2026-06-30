@@ -828,7 +828,7 @@ pub fn suite() runner.Suite {
       "IntoIterator bound: iter() yields Iterator<E>",
       fn() {
         src := "fn to_iter<C: IntoIterator<E>, E>(c: C) Iterator<E> { c.iter() }"
-        r := try check_ok(src)
+        r := try check_ok_builtins(src)
         try assert.str_contains(try type_at(r, src, "c.iter()"), "4")
         .Ok({})
       },

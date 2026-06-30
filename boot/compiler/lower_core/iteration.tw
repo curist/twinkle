@@ -12,7 +12,7 @@ use compiler.lower_core.helpers.{
   global_func_expr, local_expr, record_get_expr, variant_pattern, void_expr,
 }
 use compiler.lower_core.types.{find_field_index, iter_elem_type, resolve_type_id, type_id_from_mono}
-use compiler.mono_type.{MonoType, TypeId}
+use compiler.mono_type.{MonoType}
 use lib.source.span.{Span}
 
 // ── Shared indexed-iteration helpers ────────────────────────────────
@@ -63,9 +63,8 @@ fn setup_indexed_iter(
 
   // An `IntoIterator<E>` iterable is driven through `iter()`: wrap the receiver
   // in an `IntoIterator.iter` contract call typed `Iterator<E>` so the dispatch
-  // below routes it to the iterator loop (the builtin `Iterator` is TypeId 4).
-  // Other iterables keep their direct expression and take the indexed/Range/Dict
-  // paths.
+  // below routes it to the iterator loop. Other iterables keep their direct
+  // expression and take the indexed/Range/Dict paths.
   is_into_iter := case kind {
     .IntoIteratorContract => true,
     _ => false,
@@ -73,7 +72,7 @@ fn setup_indexed_iter(
   iter_core_expr := if is_into_iter {
     CoreExpr.{
       kind: .ContractCall(.IntoIterator, "iter", ar.expr, []),
-      ty: MonoType.Named(TypeId.{ id: 4 }, [elem_ty]),
+      ty: builtin_refs.iterator_type(ctx.env, elem_ty),
       span: s,
     }
   } else {

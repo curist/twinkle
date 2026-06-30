@@ -1,6 +1,7 @@
 //! Operator mapping and unit-variant equality helpers for Core lowering.
 
 use compiler.ast.{BinOp as AstBinOp, Expr, UnOp as AstUnOp}
+use compiler.builtin_refs
 use compiler.core_ir.{BinOp, CoreExpr, CoreExprKind, FuncId, MatchArm, UnOp}
 use compiler.lower_core.context.{ExprOut, LowerCtx, lookup_func}
 use compiler.lower_core.control_flow.{lower_try}
@@ -261,21 +262,13 @@ fn is_cmp_op(op: AstBinOp) Bool {
   }
 }
 
-// Order TypeId = 7, variants: Lt=0, Eq=1, Gt=2
-fn order_type_id() TypeId {
-  TypeId.{ id: 7 }
-}
-
-fn order_type() MonoType {
-  MonoType.Named(order_type_id(), [])
-}
-
-fn build_cmp_match(ast_op: AstBinOp, compare_expr: CoreExpr, s: Span) CoreExpr {
+// Order variants: Lt=0, Eq=1, Gt=2
+fn build_cmp_match(env: ResolvedEnv, ast_op: AstBinOp, compare_expr: CoreExpr, s: Span) CoreExpr {
   // a < b  => case compare(a,b) { .Lt => true, _ => false }
   // a > b  => case compare(a,b) { .Gt => true, _ => false }
   // a <= b => case compare(a,b) { .Gt => false, _ => true }
   // a >= b => case compare(a,b) { .Lt => false, _ => true }
-  tid := order_type_id()
+  tid := builtin_refs.order_type_id(env)
   vid := case ast_op {
     .Lt => 0,
     .Gt => 2,
@@ -332,14 +325,14 @@ fn lower_ord_cmp(ctx: LowerCtx, ast_op: AstBinOp, left: CoreExpr, right: CoreExp
   // For concrete types: direct call to compare
   case explicit_compare_func_id(ctx, left.ty) {
     .Some(fid) => {
-      callee_ty := MonoType.Function([left.ty, right.ty], order_type())
+      callee_ty := MonoType.Function([left.ty, right.ty], builtin_refs.order_type(ctx.env))
       compare_expr := CoreExpr.{
         kind: .Call(CoreExpr.{ kind: .GlobalFunc(fid), ty: callee_ty, span: s }, [left, right]),
-        ty: order_type(),
+        ty: builtin_refs.order_type(ctx.env),
         span: s,
       }
 
-      return .Some(build_cmp_match(ast_op, compare_expr, s).kind)
+      return .Some(build_cmp_match(ctx.env, ast_op, compare_expr, s).kind)
     },
     .None => {},
   }
@@ -350,11 +343,11 @@ fn lower_ord_cmp(ctx: LowerCtx, ast_op: AstBinOp, left: CoreExpr, right: CoreExp
     .Var(name) => {
       compare_expr := CoreExpr.{
         kind: .ContractCall(.Ord, "compare", left, [right]),
-        ty: order_type(),
+        ty: builtin_refs.order_type(ctx.env),
         span: s,
       }
 
-      return .Some(build_cmp_match(ast_op, compare_expr, s).kind)
+      return .Some(build_cmp_match(ctx.env, ast_op, compare_expr, s).kind)
     },
     _ => {},
   }

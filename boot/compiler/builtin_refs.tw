@@ -7,7 +7,7 @@
 //! the point of use. Source-level builtin names live only here, at the
 //! bootstrap boundary; a missing builtin is a compiler bug and traps loudly.
 
-use compiler.mono_type.{TypeId}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv, ResolvedVariant}
 
 pub type VariantRef = .{ tid: TypeId, vid: Int }
@@ -93,4 +93,41 @@ pub fn option_variant_index(env: ResolvedEnv, variant_name: String) Int {
 
 pub fn result_variant_index(env: ResolvedEnv, variant_name: String) Int {
   variant_index_of(env, "Result", variant_name)
+}
+
+// Trapping type-id accessors, distinct from the `TypeId?`-returning
+// `option_type_id` / `result_type_id` above. Those feed
+// `types.type_id_from_mono`, whose optional contract lets a caller bail. The
+// sites below (`Order` comparisons, `Range`/`Iterator` loop and contract return
+// types) unconditionally build a `MonoType.Named` and cannot proceed without a
+// definite id, so a missing builtin is a loud compiler bug.
+fn require_type_id(env: ResolvedEnv, type_name: String) TypeId {
+  case type_id_of(env, type_name) {
+    .Some(tid) => tid,
+    .None => error("internal error: builtin_refs: missing builtin type ${type_name}"),
+  }
+}
+
+pub fn order_type_id(env: ResolvedEnv) TypeId {
+  require_type_id(env, "Order")
+}
+
+pub fn iterator_type_id(env: ResolvedEnv) TypeId {
+  require_type_id(env, "Iterator")
+}
+
+pub fn range_type_id(env: ResolvedEnv) TypeId {
+  require_type_id(env, "Range")
+}
+
+pub fn order_type(env: ResolvedEnv) MonoType {
+  MonoType.Named(order_type_id(env), [])
+}
+
+pub fn iterator_type(env: ResolvedEnv, elem_ty: MonoType) MonoType {
+  MonoType.Named(iterator_type_id(env), [elem_ty])
+}
+
+pub fn range_type(env: ResolvedEnv) MonoType {
+  MonoType.Named(range_type_id(env), [])
 }

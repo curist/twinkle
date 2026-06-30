@@ -39,7 +39,6 @@ Self-hosting is complete. Historical design and status docs live in
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
-| Boot typed builtin type refs | Extend the typed-builtin-reference pattern (Option/Result variant refs, now done) to the remaining builtin *types* still referenced by raw id — `Order`, `Iterator`, `Range` — and audit `IterItem`/`UnfoldStep`/`Task` | Planned | [boot-typed-builtin-type-refs.md](boot-typed-builtin-type-refs.md) |
 
 
 ### Later — Tooling & Ecosystem

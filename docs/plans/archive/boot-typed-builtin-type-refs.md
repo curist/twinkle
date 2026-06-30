@@ -1,5 +1,15 @@
 # Boot Typed Builtin Type References
 
+> **Status: Completed.** The five `Order`/`Iterator`/`Range` id literals were
+> replaced with trapping `builtin_refs` accessors (`order_type` / `iterator_type`
+> / `range_type`), env threaded into `contract_return_type` and the
+> `lower_ord_cmp` / IntoIterator lowering sites; `synth_range_op` uses `ctx.env`.
+> `IterItem` / `UnfoldStep` / `Task` were audited — already name-based, no
+> accessors added. Two unit tests (`checker_suite`'s IntoIterator-bound test,
+> `checker_coverage_suite`'s range tests) migrated from `empty_env` to the
+> builtin env. Self-host reaches a fixed point with ids unchanged (`Order`=7,
+> `Iterator`=4, `Range`=3); all boot tests pass.
+
 ## Goal
 
 Extend the typed-builtin-reference pattern established in
