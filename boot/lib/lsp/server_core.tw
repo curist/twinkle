@@ -454,6 +454,27 @@ fn handle_references(state: State, req: protocol.Request) Step {
 
 type RenameWarm = .{ state: State, snap: semantic.SemanticSnapshot }
 
+// Fast snapshot for `prepareRename`: prefer the completed workspace snapshot,
+// but never kick off full workspace analysis while the editor is just deciding
+// whether to show the rename UI. If no workspace snapshot is ready, fall back to
+// a standalone document snapshot, which is enough for local symbols and same-file
+// declarations without walking every configured project/test entry.
+fn prepare_rename_snapshot(state: State, doc: document_store.Document) RenameWarm {
+  if !state.full_dirty {
+    case state.workspace_snapshot_cached(doc) {
+      .Some(snap) => return .{ state, snap },
+      .None => {},
+    }
+  }
+
+  snap := semantic.snapshot(
+    state.query_cache,
+    .{ uri: doc.uri, text: doc.text, version: doc.version },
+  )
+  state.query_cache = snap.cache
+  .{ state, snap }
+}
+
 // Warm the query cache for `doc`'s project by seeding analysis from the
 // configured project/test entries (or the open documents when none are
 // configured), mirroring diagnostics. This lets cross-module rename see the
@@ -493,9 +514,9 @@ fn handle_prepare_rename(state: State, req: protocol.Request) Step {
     .None => return state.null_response_step(req),
   }
 
-  warm := state.warm_rename_workspace(doc)
-  state = warm.state
-  snap := warm.snap
+  prepared := state.prepare_rename_snapshot(doc)
+  state = prepared.state
+  snap := prepared.snap
 
   case query_rename.prepare_rename(snap, offset) {
     .Some(target) => {
@@ -520,36 +541,69 @@ fn handle_rename(state: State, req: protocol.Request) Step {
     .None => return state.rename_error_step(req, "invalid position"),
   }
 
-  warm := state.warm_rename_workspace(doc)
-  state = warm.state
-  snap := warm.snap
+  // Most renames are locals/type parameters/module aliases. Those are confined
+  // to this document, so answer them from the same lightweight snapshot as
+  // prepareRename and avoid warming the whole workspace.
+  local_warm := state.prepare_rename_snapshot(doc)
+  state = local_warm.state
+  local_snap := local_warm.snap
+  if query_rename.is_document_local_rename(local_snap, offset) {
+    state.query_cache = local_snap.cache
+    case query_rename.compute_rename(local_snap, offset, rename_params.new_name) {
+      .Ok(locations) => return state.rename_success_step(req, locations, rename_params.new_name),
+      .Err(msg) => return state.rename_error_step(req, msg),
+    }
+  }
+
+  snap := if !state.full_dirty {
+    case state.workspace_snapshot_cached(doc) {
+      .Some(s) => s,
+      .None => {
+        warm := state.warm_rename_workspace(doc)
+        state = warm.state
+        warm.snap
+      },
+    }
+  } else {
+    warm := state.warm_rename_workspace(doc)
+    state = warm.state
+    warm.snap
+  }
+  state.query_cache = snap.cache
 
   case query_rename.compute_rename(snap, offset, rename_params.new_name) {
-    .Ok(locations) => {
-      response := lsp_rename.workspace_edit_response(
-        locations,
-        rename_params.new_name,
-        fn(uri: String) line_index.LineIndex? {
-          case document_by_identity_uri(state.documents, uri) {
-            .Some(d) => return .Some(d.index),
-            .None => {},
-          }
-
-          p := case identity_path_from_uri(uri) {
-            .Some(path) => path,
-            .None => return .None,
-          }
-
-          case fs.read_text(p) {
-            .Ok(text) => .Some(line_index.new(text)),
-            .Err(_) => .None,
-          }
-        },
-      )
-      .{ state, outgoing: [req.id.success_response(response)] }
-    },
+    .Ok(locations) => state.rename_success_step(req, locations, rename_params.new_name),
     .Err(msg) => state.rename_error_step(req, msg),
   }
+}
+
+fn rename_success_step(
+  state: State,
+  req: protocol.Request,
+  locations: Vector<query_references.ReferenceLocation>,
+  new_name: String,
+) Step {
+  response := lsp_rename.workspace_edit_response(
+    locations,
+    new_name,
+    fn(uri: String) line_index.LineIndex? {
+      case document_by_identity_uri(state.documents, uri) {
+        .Some(d) => return .Some(d.index),
+        .None => {},
+      }
+
+      p := case identity_path_from_uri(uri) {
+        .Some(path) => path,
+        .None => return .None,
+      }
+
+      case fs.read_text(p) {
+        .Ok(text) => .Some(line_index.new(text)),
+        .Err(_) => .None,
+      }
+    },
+  )
+  .{ state, outgoing: [req.id.success_response(response)] }
 }
 
 fn rename_error_step(state: State, req: protocol.Request, message: String) Step {

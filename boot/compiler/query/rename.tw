@@ -14,6 +14,23 @@ use lib.source.span.{Span}
 
 pub type RenameTarget = .{ name: String, kind: occ.SymbolKind, span: Span }
 
+/// True when the symbol under the cursor is confined to the current document, so
+/// rename can be answered from a single-document snapshot instead of warming the
+/// whole workspace.
+pub fn is_document_local_rename(snap: SemanticSnapshot, byte_offset: Int) Bool {
+  target := case occurrence_at(snap, byte_offset) {
+    .Some(o) => o,
+    .None => return false,
+  }
+
+  case target.symbol_key {
+    .Local(_, _) => true,
+    .TypeParam(_, _) => true,
+    .ModuleAlias(_, _) => true,
+    _ => false,
+  }
+}
+
 /// The editable range for the symbol under the cursor, if it is renamable.
 /// Drives `textDocument/prepareRename`.
 pub fn prepare_rename(snap: SemanticSnapshot, byte_offset: Int) RenameTarget? {
