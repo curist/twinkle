@@ -1,1 +1,5 @@
+[project]
 name = "dataframe"
+
+[test]
+entries = ["main.tw"]

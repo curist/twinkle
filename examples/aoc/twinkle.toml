@@ -1,1 +1,5 @@
+[project]
 name = "aoc"
+
+[test]
+entries = ["main.tw"]

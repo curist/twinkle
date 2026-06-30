@@ -1,0 +1,5 @@
+[project]
+name = "twinkle"
+
+[test]
+entries = ["boot/tests/main.tw"]
