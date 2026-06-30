@@ -14,6 +14,20 @@ use lib.source.report
 
 pub usage_hint := "Usage: twk <command> [options]\nRun 'twk help' for usage."
 
+/// Render `p` for display relative to the current working directory when it
+/// sits under it; otherwise return it unchanged. Progress meters and reports
+/// resolve modules to absolute canonical paths, which are noisy to read — this
+/// trims the cwd prefix so output stays concise and clickable.
+pub fn display_path(p: String) String {
+  prefix := "${proc.cwd()}/"
+
+  if p.starts_with(prefix) {
+    p.slice(prefix.len(), p.len())
+  } else {
+    p
+  }
+}
+
 pub fn get_positional(parsed: ParseResult, idx: Int, name: String) String!String {
   if idx < parsed.positional.len() {
     .Ok(parsed.positional[idx])

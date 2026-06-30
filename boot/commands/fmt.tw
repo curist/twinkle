@@ -7,7 +7,7 @@
 use @std.fs
 use @std.proc
 
-use commands.common.{format_analysis_diags, fs_error_message}
+use commands.common.{display_path, format_analysis_diags, fs_error_message}
 use commands.progress
 use compiler.fmt.formatter
 use compiler.lexer
@@ -78,12 +78,13 @@ fn format_files(files: Vector<String>, check: Bool) FmtOutcome {
 
   for file in files {
     index = index + 1
-    meter = .update(index, file)
+    shown := display_path(file)
+    meter = .update(index, shown)
     source := case fs.read_text(file) {
       .Ok(text) => text,
       .Err(err) => {
         meter = .clear()
-        eprintln("error: failed to read '${file}': ${fs_error_message(err)}")
+        eprintln("error: failed to read '${shown}': ${fs_error_message(err)}")
         has_errors = true
         continue
       },
@@ -106,7 +107,7 @@ fn format_files(files: Vector<String>, check: Bool) FmtOutcome {
     if check {
       if source != formatted {
         meter = .clear()
-        eprintln("Would reformat: ${file}")
+        eprintln("Would reformat: ${shown}")
         needs_reformat = true
       }
     } else {
@@ -114,11 +115,11 @@ fn format_files(files: Vector<String>, check: Bool) FmtOutcome {
         case fs.write_text(file, formatted) {
           .Ok(_) => {
             meter = .clear()
-            println("Formatted: ${file}")
+            println("Formatted: ${shown}")
           },
           .Err(err) => {
             meter = .clear()
-            eprintln("error: failed to write '${file}': ${fs_error_message(err)}")
+            eprintln("error: failed to write '${shown}': ${fs_error_message(err)}")
             has_errors = true
           },
         }

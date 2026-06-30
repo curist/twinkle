@@ -151,9 +151,11 @@ bench-guard: target/twk
 bench-compare: target/twk
 	python3 tools/bench_persistent_compare.py
 
-# Format all .tw source files owned by boot, excluding generated core_lib.
+# Format the boot project's reachable modules (project mode over the configured
+# entries in twinkle.toml). Note: this excludes the bundled stdlib/prelude
+# sources and unreachable trees (bench/, repros/); format those explicitly.
 fmt: target/twk
-	@find boot -name '*.tw' -not -path 'boot/lib/module/core_lib.tw' | xargs target/twk fmt
+	@target/twk fmt
 
 clean:
 	cargo clean

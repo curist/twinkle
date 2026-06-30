@@ -8,7 +8,7 @@ use @std.fs
 use @std.path
 use @std.proc
 
-use commands.common.{format_analysis_diags, unique_analysis_diags}
+use commands.common.{display_path, format_analysis_diags, unique_analysis_diags}
 use commands.progress
 use compiler.base_env.{builtin_env}
 use compiler.imports
@@ -237,12 +237,14 @@ fn resolve_lint_targets(parsed: ParseResult) Result<Vector<String>, String> {
 
 /// `file:line:col` for a byte offset, or `file:?:?` if the source can't be read.
 fn location(path_str: String, start: Int, indexes: Dict<String, line_index.LineIndex>) String {
+  shown := display_path(path_str)
+
   case indexes[path_str] {
     .Some(idx) => {
       pos := idx.byte_offset_to_position(start, .Utf8)
-      "${path_str}:${pos.line + 1}:${pos.character + 1}"
+      "${shown}:${pos.line + 1}:${pos.character + 1}"
     },
-    .None => "${path_str}:?:?",
+    .None => "${shown}:?:?",
   }
 }
 
@@ -542,7 +544,7 @@ pub fn run_lint_command(parsed: ParseResult) {
         .Some(n) => n,
         .None => 0,
       }
-      println("Fixed: ${path} (${count} edit(s))")
+      println("Fixed: ${display_path(path)} (${count} edit(s))")
     }
   }
 
