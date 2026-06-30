@@ -1,32 +1,44 @@
+//! Shared I/O helpers. Stream-specific operations live in submodules:
+//! - `@std.io.stdin`
+//! - `@std.io.stdout`
+//! - `@std.io.stderr`
+
 extern twinkle_runtime {
-  fn stdin_read_chunk(max_bytes: Int) Vector<Byte>
-  fn stdin_read_timeout(max_bytes: Int, timeout_ms: Int) Vector<Byte>
-  fn stdin_eof() Bool
   fn stdout_write_bytes(bytes: Vector<Byte>) Void
+  fn stderr_write_bytes(bytes: Vector<Byte>) Void
+  fn is_terminal(fd: Int) Bool
 }
 
-/// Read up to max_bytes from stdin. Returns an empty vector at EOF.
-pub fn read_stdin_chunk(max_bytes: Int) Vector<Byte> {
-  twinkle_runtime.stdin_read_chunk(max_bytes)
+/// Standard stream file descriptors.
+pub type Fd = { Stdin, Stdout, Stderr }
+
+fn fd_number(fd: Fd) Int {
+  case fd {
+    .Stdin => 0,
+    .Stdout => 1,
+    .Stderr => 2,
+  }
 }
 
-/// Read up to max_bytes from stdin, waiting at most timeout_ms milliseconds.
-/// Returns an empty vector on timeout or EOF; call stdin_eof() to distinguish.
-pub fn read_stdin_timeout(max_bytes: Int, timeout_ms: Int) Vector<Byte> {
-  twinkle_runtime.stdin_read_timeout(max_bytes, timeout_ms)
+/// True when the selected standard stream is attached to a terminal.
+pub fn is_terminal(fd: Fd) Bool {
+  twinkle_runtime.is_terminal(fd_number(fd))
 }
 
-/// True after stdin has reached EOF.
-pub fn stdin_eof() Bool {
-  twinkle_runtime.stdin_eof()
+/// Write raw bytes to the selected output stream.
+///
+/// Passing `.Stdin` traps; use `.Stdout` or `.Stderr`.
+pub fn write_bytes(fd: Fd, bytes: Vector<Byte>) {
+  case fd {
+    .Stdout => twinkle_runtime.stdout_write_bytes(bytes),
+    .Stderr => twinkle_runtime.stderr_write_bytes(bytes),
+    .Stdin => error("cannot write to stdin"),
+  }
 }
 
-/// Write raw bytes to stdout.
-pub fn write_stdout_bytes(bytes: Vector<Byte>) {
-  twinkle_runtime.stdout_write_bytes(bytes)
-}
-
-/// Write a string to stdout as UTF-8 bytes.
-pub fn write_stdout_text(text: String) {
-  write_stdout_bytes(text.utf8_bytes())
+/// Write a string to the selected output stream as UTF-8 bytes.
+///
+/// Passing `.Stdin` traps; use `.Stdout` or `.Stderr`.
+pub fn write_text(fd: Fd, text: String) {
+  write_bytes(fd, text.utf8_bytes())
 }

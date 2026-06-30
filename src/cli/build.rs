@@ -267,7 +267,7 @@ mod tests {
         ));
         fs::write(
             &path,
-            "use @std.io\nuse @std.time\n\nt := Task.spawn(fn() Int {\n  Task.yield()\n  time.sleep(1)\n  42\n})\nbytes := io.read_stdin_chunk(1)\nbytes.len() + Task.await(t)\n",
+            "use @std.io.stdin\nuse @std.time\n\nt := Task.spawn(fn() Int {\n  Task.yield()\n  time.sleep(1)\n  42\n})\nbytes := stdin.read_chunk(1)\nbytes.len() + Task.await(t)\n",
         )
         .expect("write task smoke source");
         let wat = build_wat(path.to_str().unwrap())

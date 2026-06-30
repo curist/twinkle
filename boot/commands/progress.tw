@@ -1,0 +1,58 @@
+//! Small terminal progress helper for CLI commands.
+//!
+//! The meter writes to stderr using carriage-return + clear-line escape codes,
+//! and only enables itself when stderr is attached to an interactive terminal.
+
+use @std.io.{is_terminal}
+use @std.proc
+
+pub type Meter = .{ active: Bool, label: String, total: Int }
+
+fn terminal_progress_enabled() Bool {
+  if !is_terminal(.Stderr) {
+    return false
+  }
+
+  case proc.env("TERM") {
+    .Some("dumb") => false,
+    _ => true,
+  }
+}
+
+pub fn make(label: String, total: Int) Meter {
+  Meter.{ active: terminal_progress_enabled() and total > 0, label, total }
+}
+
+pub fn make_count(label: String) Meter {
+  Meter.{ active: terminal_progress_enabled(), label, total: 0 }
+}
+
+pub fn clear(meter: Meter) Meter {
+  if meter.active {
+    eprint("\r\e[2K")
+  }
+
+  meter
+}
+
+pub fn update(meter: Meter, current: Int, path: String) Meter {
+  if meter.active {
+    eprint("\r\e[2K${meter.label} ${current}/${meter.total}: ${path}")
+  }
+
+  meter
+}
+
+pub fn update_count(meter: Meter, current: Int, name: String) Meter {
+  if meter.active {
+    eprint("\r\e[2K${meter.label} ${current}: ${name}")
+  }
+
+  meter
+}
+
+pub fn finish(meter: Meter) {
+  if meter.active {
+    eprint("\r\e[2K")
+  }
+}

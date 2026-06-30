@@ -1,0 +1,27 @@
+extern twinkle_runtime {
+  fn stdin_read_chunk(max_bytes: Int) Vector<Byte>
+  fn stdin_read_timeout(max_bytes: Int, timeout_ms: Int) Vector<Byte>
+  fn stdin_eof() Bool
+  fn is_terminal(fd: Int) Bool
+}
+
+/// Read up to max_bytes from stdin. Returns an empty vector at EOF.
+pub fn read_chunk(max_bytes: Int) Vector<Byte> {
+  twinkle_runtime.stdin_read_chunk(max_bytes)
+}
+
+/// Read up to max_bytes from stdin, waiting at most timeout_ms milliseconds.
+/// Returns an empty vector on timeout or EOF; call eof() to distinguish.
+pub fn read_timeout(max_bytes: Int, timeout_ms: Int) Vector<Byte> {
+  twinkle_runtime.stdin_read_timeout(max_bytes, timeout_ms)
+}
+
+/// True after stdin has reached EOF.
+pub fn eof() Bool {
+  twinkle_runtime.stdin_eof()
+}
+
+/// True when stdin is attached to a terminal.
+pub fn is_terminal() Bool {
+  twinkle_runtime.is_terminal(0)
+}

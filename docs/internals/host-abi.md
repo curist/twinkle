@@ -160,6 +160,8 @@ shim when the guest exports none).
 | `twinkle_runtime.stdin_read_timeout` | `(i64, i64) → (ref $Array)` | Read up to `max_bytes`, waiting at most `timeout_ms` |
 | `twinkle_runtime.stdin_eof` | `() → (i32)` | True (1) after stdin reaches EOF |
 | `twinkle_runtime.stdout_write_bytes` | `(ref null $Array) → ()` | Write raw bytes to stdout |
+| `twinkle_runtime.stderr_write_bytes` | `(ref null $Array) → ()` | Write raw bytes to stderr |
+| `twinkle_runtime.is_terminal` | `(i64) → (i32)` | True (1) when standard fd `0`, `1`, or `2` is attached to a terminal |
 
 **Async (JSPI):** `sleep`, `stdin_read_chunk`, `stdin_read_timeout`, and
 `run_wasm` are Promise-suspending under the JSPI runtime. The JS runtime installs

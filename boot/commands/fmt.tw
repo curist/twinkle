@@ -8,6 +8,7 @@ use @std.fs
 use @std.proc
 
 use commands.common.{format_analysis_diags, fs_error_message}
+use commands.progress
 use compiler.fmt.formatter
 use compiler.lexer
 use compiler.parser
@@ -67,11 +68,21 @@ pub fn run_fmt_command(parsed: ParseResult) {
 fn format_files(files: Vector<String>, check: Bool) FmtOutcome {
   needs_reformat := false
   has_errors := false
+  label := if check {
+    "Checking format"
+  } else {
+    "Formatting"
+  }
+  meter := progress.make(label, files.len())
+  index := 0
 
   for file in files {
+    index = index + 1
+    meter = .update(index, file)
     source := case fs.read_text(file) {
       .Ok(text) => text,
       .Err(err) => {
+        meter = .clear()
         eprintln("error: failed to read '${file}': ${fs_error_message(err)}")
         has_errors = true
         continue
@@ -84,6 +95,7 @@ fn format_files(files: Vector<String>, check: Bool) FmtOutcome {
     parsed_mod := parser.parse_tokens(source, file_id, lexed.value, lexed.diagnostics)
 
     if parsed_mod.diagnostics.len() > 0 {
+      meter = .clear()
       print_parse_errors(reg, parsed_mod.diagnostics)
       has_errors = true
       continue
@@ -93,14 +105,19 @@ fn format_files(files: Vector<String>, check: Bool) FmtOutcome {
 
     if check {
       if source != formatted {
+        meter = .clear()
         eprintln("Would reformat: ${file}")
         needs_reformat = true
       }
     } else {
       if source != formatted {
         case fs.write_text(file, formatted) {
-          .Ok(_) => println("Formatted: ${file}"),
+          .Ok(_) => {
+            meter = .clear()
+            println("Formatted: ${file}")
+          },
           .Err(err) => {
+            meter = .clear()
             eprintln("error: failed to write '${file}': ${fs_error_message(err)}")
             has_errors = true
           },
@@ -109,6 +126,7 @@ fn format_files(files: Vector<String>, check: Bool) FmtOutcome {
     }
   }
 
+  meter.finish()
   .{ needs_reformat, has_errors }
 }
 

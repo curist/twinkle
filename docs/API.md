@@ -483,7 +483,7 @@ fn single_number(nums: Vector<Int>) Int {
 
 Everything above (primitives, built-in types, I/O, type conversions, String/Vector/Dict methods, operators) is available as **prelude** — no import needed.
 
-Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.io`, `use @std.proc`, `use @std.date`, `use @std.time`, `use @std.view`, `use @std.math`, `use @std.tuple`, `use @std.regexp`, `use @std.crypto`, `use @std.buffer`.
+Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.io`, `use @std.io.stdin`, `use @std.io.stdout`, `use @std.io.stderr`, `use @std.proc`, `use @std.date`, `use @std.time`, `use @std.view`, `use @std.math`, `use @std.tuple`, `use @std.regexp`, `use @std.crypto`, `use @std.buffer`.
 
 ### `@std.crypto`
 
@@ -700,17 +700,46 @@ type DirEntry = .{ name: String, kind: EntryKind }
 | `list_dir` | `fn(path: String) Vector<DirEntry>!FsError` | List directory entries |
 | `exists` | `fn(path: String) Bool` | Check if path exists |
 
-### `@std.io`
+### `@std.io`, `@std.io.stdin`, `@std.io.stdout`, `@std.io.stderr`
 
-Standard input and output helpers. Stdin reads may suspend cooperatively under a task-capable async runtime, but they remain I/O APIs rather than `Task` APIs.
+Shared and stream-specific terminal I/O helpers. Stdin reads may suspend cooperatively under a task-capable async runtime, but they remain I/O APIs rather than `Task` APIs.
+
+`@std.io`:
+
+```tw
+type Fd = { Stdin, Stdout, Stderr }
+```
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `read_stdin_chunk` | `fn(max_bytes: Int) Vector<Byte>` | Read up to `max_bytes` from stdin; returns an empty vector at EOF |
-| `read_stdin_timeout` | `fn(max_bytes: Int, timeout_ms: Int) Vector<Byte>` | Read up to `max_bytes`, waiting at most `timeout_ms`; returns empty on timeout or EOF |
-| `stdin_eof` | `fn() Bool` | True after stdin reaches EOF |
-| `write_stdout_bytes` | `fn(bytes: Vector<Byte>) Void` | Write raw bytes to stdout |
-| `write_stdout_text` | `fn(text: String) Void` | Write UTF-8 text to stdout |
+| `is_terminal` | `fn(fd: Fd) Bool` | True when the selected standard stream is attached to a terminal |
+| `write_bytes` | `fn(fd: Fd, bytes: Vector<Byte>) Void` | Write raw bytes to stdout or stderr (`Stdin` traps) |
+| `write_text` | `fn(fd: Fd, text: String) Void` | Write UTF-8 text to stdout or stderr (`Stdin` traps) |
+
+`@std.io.stdin`:
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `read_chunk` | `fn(max_bytes: Int) Vector<Byte>` | Read up to `max_bytes` from stdin; returns an empty vector at EOF |
+| `read_timeout` | `fn(max_bytes: Int, timeout_ms: Int) Vector<Byte>` | Read up to `max_bytes`, waiting at most `timeout_ms`; returns empty on timeout or EOF |
+| `eof` | `fn() Bool` | True after stdin reaches EOF |
+| `is_terminal` | `fn() Bool` | True when stdin is attached to a terminal |
+
+`@std.io.stdout`:
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `write_bytes` | `fn(bytes: Vector<Byte>) Void` | Write raw bytes to stdout |
+| `write_text` | `fn(text: String) Void` | Write UTF-8 text to stdout |
+| `is_terminal` | `fn() Bool` | True when stdout is attached to a terminal |
+
+`@std.io.stderr`:
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `write_bytes` | `fn(bytes: Vector<Byte>) Void` | Write raw bytes to stderr |
+| `write_text` | `fn(text: String) Void` | Write UTF-8 text to stderr |
+| `is_terminal` | `fn() Bool` | True when stderr is attached to a terminal |
 
 ### `@std.proc`
 

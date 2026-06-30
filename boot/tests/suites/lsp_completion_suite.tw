@@ -1,7 +1,8 @@
+use @std.testing as runner
+
 use lib.json
 use lib.lsp.protocol
 use lib.lsp.server_core
-use @std.testing as runner
 
 fn publish_due_now(step: server_core.Step) server_core.Step {
   state := step.state
@@ -488,34 +489,34 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "module member completion for io. in assignment",
+      "module member completion for stdin. in assignment",
       fn() {
-        // `use @std.io` imports the io module; `foo := io.` should
-        // complete with io's exported functions.
-        valid := "use @std.io\nfoo := io.stdin_eof()\n"
-        incomplete := "use @std.io\nfoo := io.\n"
-        step := open_then_complete(valid, incomplete, 1, 10)
+        // `use @std.io.stdin` imports the stdin module; `foo := stdin.` should
+        // complete with stdin's exported functions.
+        valid := "use @std.io.stdin\nfoo := stdin.eof()\n"
+        incomplete := "use @std.io.stdin\nfoo := stdin.\n"
+        step := open_then_complete(valid, incomplete, 1, 13)
         labels := try completion_labels(step)
 
-        if !has_label(labels, "read_stdin_chunk") {
-          return .Err("expected 'read_stdin_chunk' in io module completions, got: ${labels}")
+        if !has_label(labels, "read_chunk") {
+          return .Err("expected 'read_chunk' in stdin module completions, got: ${labels}")
         }
 
         .Ok({})
       },
     )
     .test(
-      "module member completion for io. at top level",
+      "module member completion for stdin. at top level",
       fn() {
-        // Top-level `io.` (without assignment) should also trigger
+        // Top-level `stdin.` (without assignment) should also trigger
         // module member completions.
-        valid := "use @std.io\nio.stdin_eof()\n"
-        incomplete := "use @std.io\nio.\n"
-        step := open_then_complete(valid, incomplete, 1, 3)
+        valid := "use @std.io.stdin\nstdin.eof()\n"
+        incomplete := "use @std.io.stdin\nstdin.\n"
+        step := open_then_complete(valid, incomplete, 1, 6)
         labels := try completion_labels(step)
 
-        if !has_label(labels, "stdin_eof") {
-          return .Err("expected 'stdin_eof' in top-level io completions, got: ${labels}")
+        if !has_label(labels, "eof") {
+          return .Err("expected 'eof' in top-level stdin completions, got: ${labels}")
         }
 
         .Ok({})
@@ -524,15 +525,15 @@ pub fn suite() runner.Suite {
     .test(
       "module member completion does not continue previous import line",
       fn() {
-        // The `io.` on the second line must be classified as member access, not
-        // as a continuation of `use @std.io` from the first line.
-        valid := "use @std.io\nio.stdin_eof()\n"
-        incomplete := "use @std.io\nio.\n"
-        step := open_then_complete(valid, incomplete, 1, 3)
+        // The `stdin.` on the second line must be classified as member access, not
+        // as a continuation of `use @std.io.stdin` from the first line.
+        valid := "use @std.io.stdin\nstdin.eof()\n"
+        incomplete := "use @std.io.stdin\nstdin.\n"
+        step := open_then_complete(valid, incomplete, 1, 6)
         labels := try completion_labels(step)
 
-        if !has_label(labels, "stdin_eof") {
-          return .Err("expected io member completions after import line, got: ${labels}")
+        if !has_label(labels, "eof") {
+          return .Err("expected stdin member completions after import line, got: ${labels}")
         }
 
         if has_label(labels, "fs") or has_label(labels, "path") {
@@ -545,13 +546,13 @@ pub fn suite() runner.Suite {
     .test(
       "module member completion inside function body",
       fn() {
-        valid := "use @std.io\nfn foo() Bool {\n  io.stdin_eof()\n}\n"
-        incomplete := "use @std.io\nfn foo() Bool {\n  io.\n}\n"
-        step := open_then_complete(valid, incomplete, 2, 5)
+        valid := "use @std.io.stdin\nfn foo() Bool {\n  stdin.eof()\n}\n"
+        incomplete := "use @std.io.stdin\nfn foo() Bool {\n  stdin.\n}\n"
+        step := open_then_complete(valid, incomplete, 2, 8)
         labels := try completion_labels(step)
 
-        if !has_label(labels, "stdin_eof") or !has_label(labels, "read_stdin_chunk") {
-          return .Err("expected io functions in completions inside fn body, got: ${labels}")
+        if !has_label(labels, "eof") or !has_label(labels, "read_chunk") {
+          return .Err("expected stdin functions in completions inside fn body, got: ${labels}")
         }
 
         .Ok({})
@@ -560,13 +561,13 @@ pub fn suite() runner.Suite {
     .test(
       "module member completion as function argument",
       fn() {
-        valid := "use @std.io\nfn check(b: Bool) { }\ncheck(io.stdin_eof())\n"
-        incomplete := "use @std.io\nfn check(b: Bool) { }\ncheck(io.)\n"
-        step := open_then_complete(valid, incomplete, 2, 9)
+        valid := "use @std.io.stdin\nfn check(b: Bool) { }\ncheck(stdin.eof())\n"
+        incomplete := "use @std.io.stdin\nfn check(b: Bool) { }\ncheck(stdin.)\n"
+        step := open_then_complete(valid, incomplete, 2, 12)
         labels := try completion_labels(step)
 
-        if !has_label(labels, "stdin_eof") {
-          return .Err("expected io functions in fn argument context, got: ${labels}")
+        if !has_label(labels, "eof") {
+          return .Err("expected stdin functions in fn argument context, got: ${labels}")
         }
 
         .Ok({})
@@ -626,13 +627,13 @@ pub fn suite() runner.Suite {
     .test(
       "module member completion in if body",
       fn() {
-        valid := "use @std.io\nif true {\n  io.stdin_eof()\n}\n"
-        incomplete := "use @std.io\nif true {\n  io.\n}\n"
-        step := open_then_complete(valid, incomplete, 2, 5)
+        valid := "use @std.io.stdin\nif true {\n  stdin.eof()\n}\n"
+        incomplete := "use @std.io.stdin\nif true {\n  stdin.\n}\n"
+        step := open_then_complete(valid, incomplete, 2, 8)
         labels := try completion_labels(step)
 
-        if !has_label(labels, "stdin_eof") {
-          return .Err("expected io functions in if body, got: ${labels}")
+        if !has_label(labels, "eof") {
+          return .Err("expected stdin functions in if body, got: ${labels}")
         }
 
         .Ok({})
@@ -641,13 +642,13 @@ pub fn suite() runner.Suite {
     .test(
       "module member completion with partial identifier",
       fn() {
-        // Typing `io.rea` should still trigger module member completions
+        // Typing `stdin.rea` should still trigger module member completions
         // since classify_context sees Ident after Dot and returns Member.
-        valid := "use @std.io\nfoo := io.read_stdin_chunk(1024)\n"
-        incomplete := "use @std.io\nfoo := io.rea\n"
+        valid := "use @std.io.stdin\nfoo := stdin.read_chunk(1024)\n"
+        incomplete := "use @std.io.stdin\nfoo := stdin.rea\n"
 
-        // Cursor after `rea`: line 1, col 13 → after the partial identifier
-        step := open_then_complete(valid, incomplete, 1, 13)
+        // Cursor after `rea`: line 1, col 16 → after the partial identifier
+        step := open_then_complete(valid, incomplete, 1, 16)
 
         if step.outgoing.len() != 1 {
           return .Err("expected one outgoing message, got ${step.outgoing.len()}")
@@ -655,8 +656,8 @@ pub fn suite() runner.Suite {
 
         labels := try completion_labels(step)
 
-        if !has_label(labels, "read_stdin_chunk") {
-          return .Err("expected 'read_stdin_chunk' with partial 'rea', got: ${labels}")
+        if !has_label(labels, "read_chunk") {
+          return .Err("expected 'read_chunk' with partial 'rea', got: ${labels}")
         }
 
         .Ok({})
@@ -665,19 +666,19 @@ pub fn suite() runner.Suite {
     .test(
       "module member completion with multiple imports",
       fn() {
-        // Both io and path are imported; completing `io.` should show io
+        // Both stdin and path are imported; completing `stdin.` should show stdin
         // functions, not path functions.
-        valid := "use @std.io\nuse @std.path\nfoo := io.stdin_eof()\n"
-        incomplete := "use @std.io\nuse @std.path\nfoo := io.\n"
-        step := open_then_complete(valid, incomplete, 2, 10)
+        valid := "use @std.io.stdin\nuse @std.path\nfoo := stdin.eof()\n"
+        incomplete := "use @std.io.stdin\nuse @std.path\nfoo := stdin.\n"
+        step := open_then_complete(valid, incomplete, 2, 13)
         labels := try completion_labels(step)
 
-        if !has_label(labels, "stdin_eof") {
-          return .Err("expected io functions, got: ${labels}")
+        if !has_label(labels, "eof") {
+          return .Err("expected stdin functions, got: ${labels}")
         }
 
         if has_label(labels, "is_absolute") {
-          return .Err("should not contain path functions in io completions, got: ${labels}")
+          return .Err("should not contain path functions in stdin completions, got: ${labels}")
         }
 
         .Ok({})

@@ -439,6 +439,7 @@ function makeHostImports(b, runtime) {
       return val === undefined ? makeStringArray(b, []) : makeStringArray(b, [val]);
     },
     cwd: () => encodeString(b, runtime.cwd),
+    is_terminal: (fd) => runtime.host.isTerminal?.(Number(fd), runtime) ? 1 : 0,
     exit: (code) => {
       const c = typeof code === "bigint" ? Number(code) : code;
       throw new HostExit(c);
@@ -548,6 +549,9 @@ function makeHostImports(b, runtime) {
       // worker), so no Buffer/fd handling is needed here.
       runtime.stdout.write(decodeByteArray(b, bytesRef));
     },
+    stderr_write_bytes: (bytesRef) => {
+      runtime.stderr.write(decodeByteArray(b, bytesRef));
+    },
   };
 
   return { twinkle_runtime };
@@ -608,6 +612,7 @@ export function createMemoryHost(initialFiles) {
       runtime.stdinEof = true;
       return Promise.resolve(new Uint8Array(0));
     },
+    isTerminal() { return false; },
   };
 }
 

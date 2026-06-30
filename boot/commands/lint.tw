@@ -9,11 +9,13 @@ use @std.path
 use @std.proc
 
 use commands.common.{format_analysis_diags, unique_analysis_diags}
+use commands.progress
 use compiler.base_env.{builtin_env}
 use compiler.imports
 use compiler.lint_rules
 use compiler.query.analyze
 use compiler.query.cache as query_cache
+use compiler.query.progress as query_progress
 use lib.argparse.app.{ParseResult}
 use lib.argparse.style
 use lib.json
@@ -102,7 +104,7 @@ fn parse_fix_edits(data: json.Json?) Vector<FixEdit> {
 }
 
 /// Run the frontend (review mode) and collect every finding/error for `file`.
-fn gather_lint(file: String) LintResult {
+fn gather_lint(file: String, sink: query_progress.ProgressSink?) LintResult {
   dir := path.dirname(file)
   project_root := loader.find_project_root(dir)
   canonical_roots := imports.make_canonical_roots(project_root)
@@ -110,6 +112,10 @@ fn gather_lint(file: String) LintResult {
   base_env := builtin_env()
   entry_id := identity.from_path(canonical_entry)
   a_state := analyze.new_state(base_env, query_cache.empty(), overlay.empty(), project_root)
+  case sink {
+    .Some(s) => a_state = .with_progress(s),
+    .None => {},
+  }
   a_state.lint_mode = true
   a_result := analyze.analyze_module(entry_id, base_env, a_state)
   findings: Vector<Finding> = []
@@ -177,9 +183,21 @@ pub fn gather_lint_multi(files: Vector<String>) LintResult {
   seen_diags: Dict<String, Bool> = Dict.new()
   findings: Vector<Finding> = []
   diagnostics: Vector<analyze.AnalysisDiag> = []
+  meter := Cell.new(progress.make_count("Linting"))
+  module_count := Cell.new(0)
+  sink := fn(ev: query_progress.AnalysisProgress) {
+    case ev.stage {
+      .Loading => {
+        n := module_count.get() + 1
+        module_count.set(n)
+        meter.set(meter.get().update_count(n, ev.module))
+      },
+      _ => {},
+    }
+  }
 
   for file in files {
-    result := gather_lint(file)
+    result := gather_lint(file, .Some(sink))
     unique := unique_analysis_diags(result.diagnostics, seen_diags)
     seen_diags = unique.seen
     diagnostics = .concat(unique.diagnostics)
@@ -198,6 +216,7 @@ pub fn gather_lint_multi(files: Vector<String>) LintResult {
     }
   }
 
+  meter.get().finish()
   .{ findings, diagnostics }
 }
 

@@ -318,8 +318,8 @@ fn source_scan_signature_help(env: ResolvedEnv, byte_offset: Int, source: String
   call := try cursor_context.call_at(source, byte_offset)
   name := call.name
 
-  // Try full qualified name first (e.g. "io.write_stdout_text"),
-  // then just the last segment (e.g. "write_stdout_text")
+  // Try full qualified name first (e.g. "stdout.write_text"),
+  // then just the last segment (e.g. "write_text")
   sig := case env.lookup_function(name) {
     .Some(s) => s,
     .None => {

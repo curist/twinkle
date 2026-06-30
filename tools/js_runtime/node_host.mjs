@@ -15,6 +15,7 @@
 //   mkdirp(path)
 //   readStdin(maxBytes, timeoutMs, runtime)      -> Uint8Array   (sync)
 //   readStdinAsync(maxBytes, timeoutMs, runtime) -> Promise<Uint8Array>
+//   isTerminal(fd, runtime) -> boolean            (fd 0/1/2)
 //
 // The stdin helpers set runtime.stdinEof when the stream reaches EOF.
 
@@ -58,6 +59,25 @@ function readStdinTimeout(maxBytes, timeoutMs, runtime) {
       throw e;
     }
   }
+}
+
+function isTerminal(fd) {
+  const n = Number(fd);
+  const deno = globalThis.Deno;
+  if (deno) {
+    try {
+      if (n === 0 && typeof deno.stdin?.isTerminal === "function") return deno.stdin.isTerminal();
+      if (n === 1 && typeof deno.stdout?.isTerminal === "function") return deno.stdout.isTerminal();
+      if (n === 2 && typeof deno.stderr?.isTerminal === "function") return deno.stderr.isTerminal();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  if (n === 0) return !!process.stdin?.isTTY;
+  if (n === 1) return !!process.stdout?.isTTY;
+  if (n === 2) return !!process.stderr?.isTTY;
+  return false;
 }
 
 function readStdinTimeoutAsync(maxBytes, timeoutMs, runtime) {
@@ -130,4 +150,5 @@ export const nodeHost = {
   mkdirp(path) { mkdirSync(path, { recursive: true }); },
   readStdin: readStdinTimeout,
   readStdinAsync: readStdinTimeoutAsync,
+  isTerminal,
 };

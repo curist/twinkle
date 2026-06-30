@@ -1,0 +1,19 @@
+extern twinkle_runtime {
+  fn stdout_write_bytes(bytes: Vector<Byte>) Void
+  fn is_terminal(fd: Int) Bool
+}
+
+/// Write raw bytes to stdout.
+pub fn write_bytes(bytes: Vector<Byte>) {
+  twinkle_runtime.stdout_write_bytes(bytes)
+}
+
+/// Write a string to stdout as UTF-8 bytes.
+pub fn write_text(text: String) {
+  write_bytes(text.utf8_bytes())
+}
+
+/// True when stdout is attached to a terminal.
+pub fn is_terminal() Bool {
+  twinkle_runtime.is_terminal(1)
+}

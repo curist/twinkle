@@ -103,7 +103,7 @@ fn member_completions(snap: SemanticSnapshot, dot_offset: Int, source: String) V
   }
 
   // Module member completion: if the receiver is a module alias (e.g. `io`
-  // from `use @std.io`), look up its exported functions in the methods dict.
+  // from `use @std.io.stdin`), look up its exported functions in the methods dict.
   // Extract the identifier directly from the source text before the dot,
   // since the parser may not produce a valid AST node for incomplete
   // expressions like `io.` at top level.

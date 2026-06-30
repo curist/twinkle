@@ -1,7 +1,7 @@
 //! LSP command: start the Language Server Protocol server.
 //!
 //! Cooperative task model (see docs/plans/lsp-task-migration.md). The top-level
-//! acts as the input reader, parking on `io.read_stdin_chunk` between chunks
+//! acts as the input reader, parking on `stdin.read_chunk` between chunks
 //! instead of polling with a timeout. Chunks are handed to a dispatcher task through
 //! a channel; the dispatcher owns frame decoding, JSON-RPC message handling, and
 //! response writes. Workspace diagnostics use a worker-style task: debounce tasks
@@ -10,7 +10,8 @@
 //! not CPU parallelism; synchronous analysis is not preempted once it starts.
 
 use @std.date
-use @std.io
+use @std.io.stdin
+use @std.io.stdout
 use @std.proc
 use @std.time
 
@@ -49,9 +50,9 @@ pub fn run_lsp_command(_parsed: ParseResult) {
     // Park on stdin until a chunk (or EOF) is available. After handing a chunk to
     // the dispatcher, wait for its ack before parking again so an `exit`
     // notification cannot leave the reader asleep on stdin.
-    chunk := io.read_stdin_chunk(4096)
+    chunk := stdin.read_chunk(4096)
 
-    if chunk.len() == 0 and io.stdin_eof() {
+    if chunk.len() == 0 and stdin.eof() {
       break
     }
 
@@ -114,7 +115,7 @@ fn diagnostics_loop(ctx: LoopCtx) {
 }
 
 fn write_message(ctx: LoopCtx, out: json.Json) {
-  io.write_stdout_text(framing.encode_message(out.stringify()))
+  stdout.write_text(framing.encode_message(out.stringify()))
 }
 
 fn note_client_capabilities(ctx: LoopCtx, message: protocol.Message) {
