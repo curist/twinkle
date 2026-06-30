@@ -59,9 +59,22 @@ entries = ["tests/main.tw"]
 ```
 
 `project.entries` are the package's buildable entry points. They also serve as
-the default roots for project-level `fmt`, `check`, docs reachability, and other
-whole-project tooling. Tool-specific entries should be added only when the tool
-really needs a separate root set; tests are the first likely case.
+the default roots for project-level `fmt`, `check`, docs reachability, LSP
+workspace analysis, and other whole-project tooling. Tool-specific entries
+should be added only when the tool really needs a separate root set; tests are
+the first likely case.
+
+`test.entries` are executable test entry points, not per-test discovery globs.
+Each listed file is a normal Twinkle program that is expected to run a test
+harness and exit non-zero on failure. This matches the existing boot test model
+(`boot/tests/main.tw` imports suite modules and calls `runner.run_all([...])`) and
+keeps the MVP free of reflection, macros, or test annotations.
+
+LSP features that need a whole-workspace view should treat the configured
+project as the union of `project.entries` and `test.entries`, plus open-document
+overlays. This is especially important for rename: references in tests should be
+updated when tests are configured. When a project has no configured entries, the
+LSP keeps the current fallback behavior of analyzing from open documents.
 
 Planned work:
 
@@ -71,7 +84,9 @@ Planned work:
 * Validate configured entries: paths must be project-local `.tw` files,
   canonicalized paths must be unique, and derived artifact names must not
   conflict.
-* Share config loading across commands that need project metadata.
+* Preserve current root-marker files such as `name = "twinkle-boot"` as valid
+  legacy shorthand; prefer `[project].name` for new projects.
+* Share config loading across commands and LSP workspace analysis.
 * Keep command-line flags higher precedence than config values.
 * Avoid per-tool knobs unless they solve a real workflow problem.
 * Report unknown or malformed config keys with source spans once the parser can
@@ -89,8 +104,8 @@ Near-term consumers:
 * `twk run`: with no file arguments, run the only configured entry; with a file
   path, run that entry as a one-off; with `--target <name>`, run a configured
   entry by derived target name.
-* `twk test`: run configured test entries; later may accept explicit test entry
-  paths or filters.
+* `twk test`: run configured test entries as normal Twinkle programs using the
+  standard test harness; later may accept explicit test entry paths or filters.
 * future package tooling: project name, package metadata, and dependency data.
 
 Non-goals for now:
@@ -272,16 +287,45 @@ Design notes:
 
 ## T3 — Test Runner UX
 
-The boot test suite already has Twinkle-native suite infrastructure. The next
-step is making it a user-facing tool.
+The boot test suite already has Twinkle-native suite infrastructure:
+`runner.suite(name)`, `.test(name, fn() Result<Void, String>)`,
+`runner.run_all([...])`, assertion helpers that return `Result<Void, String>`,
+compact/verbose reporting, and substring filtering through `TWK_TEST_FILTER`.
+The next step is making that model available to user projects instead of
+inventing a separate test-discovery mechanism.
+
+MVP decisions:
+
+* `[test].entries` lists executable test entry programs. `twk test` runs those
+  entries; it does not scan for annotated test functions or auto-discover suite
+  files.
+* Test entry programs manually aggregate suites, just like `boot/tests/main.tw`:
+  suite modules export `pub fn suite() testing.Suite`, and the entry calls
+  `testing.run_all([suite_a.suite(), suite_b.suite()])`.
+* Promote the existing boot-only harness into the standard library, initially as
+  `@std.testing` plus assertion helpers (for example `@std.testing.assert`). The
+  API should be a conservative copy of `boot/tests/runner.tw` and
+  `boot/tests/assert.tw` unless user-project needs justify changes.
+* Keep environment-variable compatibility for the first CLI layer
+  (`TWK_TEST_FILTER`, `TWK_TEST_REPORT`, `NO_COLOR`), then add explicit CLI flags
+  only if the workflow needs them.
 
 Planned work:
 
-* Add a `twk test` command that discovers project tests.
-* Define conventional test file/module discovery.
-* Support filtering by suite/test name.
-* Produce concise human output and CI-friendly failure output.
-* Decide how tests should expose pass/fail APIs in normal user projects.
+* Add `@std.testing` with `Suite`, `Test`, `RunOptions`, `run_all`, and related
+  runner helpers.
+* Add standard assertion helpers matching the current boot helpers:
+  equality, boolean, option/result, string containment/prefix/suffix, vector
+  length/contains, and explicit failure.
+* Move the boot test suite toward the standard harness or keep a thin compatibility
+  wrapper so project tests and compiler tests exercise the same API.
+* Add a `twk test` command that loads `twinkle.toml`, resolves `[test].entries`,
+  and runs each configured entry as a normal Twinkle program.
+* If `[test].entries` is absent, either report a clear "no test entries
+  configured" message or use a tiny convention such as `tests/main.tw`; choose
+  before shipping the command.
+* Support filtering by suite/test name using the existing runner semantics.
+* Produce concise human output and CI-friendly non-zero exit behavior.
 
 ---
 

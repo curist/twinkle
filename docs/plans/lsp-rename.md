@@ -31,6 +31,13 @@ from [lsp-references.md](lsp-references.md). `prepareRename` verifies that the
 cursor is on a renamable symbol and returns the editable name range. `rename`
 validates the new name, finds all references, and returns a `WorkspaceEdit`.
 
+Rename depends on the project-configuration work in [tooling.md](tooling.md): the
+LSP needs a stable project graph before it can promise complete workspace edits.
+For configured projects, reference collection should analyze the union of
+`[project].entries` and `[test].entries` reachable modules, with open documents
+as overlays. For projects without configured entries, keep the current open-doc
+fallback and avoid advertising rename as complete-project safe.
+
 Validation rules:
 
 * Values, functions, fields, modules: lowercase/snake-case identifier start.
@@ -42,11 +49,15 @@ Validation rules:
 
 ## Implementation Steps
 
+0. Land the project-config/LSP workspace-root prerequisite from
+   [tooling.md](tooling.md), including configured `[project].entries` and
+   `[test].entries` as workspace roots.
 1. Add `PrepareRenameParams` and `RenameParams` decoders.
 2. Add identifier validation helpers, ideally shared with parser naming rules.
 3. Implement `prepareRename` using symbol-at-position.
 4. Implement `rename` using reference collection and workspace edit builders.
-5. Advertise `renameProvider` with prepare support.
+5. Advertise `renameProvider` with prepare support only when workspace roots are
+   known well enough for deterministic edits, or document the fallback limits.
 6. Add tests covering successful and rejected renames.
 
 ---

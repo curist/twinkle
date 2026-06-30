@@ -38,7 +38,7 @@ use tests.assert
 pub fn suite() runner.Suite {
   runner.suite("my domain")
     .test("behavior under test", fn() {
-      try assert.int_eq(1 + 1, 2)
+      try assert.equal(1 + 1, 2)
       .Ok({})
     })
 }

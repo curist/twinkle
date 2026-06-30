@@ -67,7 +67,7 @@ use tests.assert
 pub fn suite() runner.Suite {
   runner.suite("my feature")
     .test("does the thing", fn() {
-      try assert.str_eq(actual, "expected")
+      try assert.equal(actual, "expected")
       .Ok({})
     })
 }
