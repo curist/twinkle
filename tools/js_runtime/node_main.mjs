@@ -76,21 +76,6 @@ function loadPackageVersion() {
   return undefined;
 }
 
-function loadBridgeWasm() {
-  const override = process.env.BRIDGE_WASM;
-  if (override) return readFileSync(resolve(override));
-  try {
-    return readFirst([
-      `${here}/bridge.wasm`,    // packaged
-      `${here}/../bridge.wasm`, // dev fallback (tools/bridge.wasm)
-    ]);
-  } catch (e) {
-    console.error(`Error: bridge wasm not found: ${e.message}`);
-    console.error("Regenerate with: ./target/release/twk run boot/tests/gen_bridge_wasm.tw");
-    process.exit(1);
-  }
-}
-
 async function main() {
   const bootOverride = process.env.BOOT_WASM;
   const env = { ...process.env };
@@ -104,7 +89,6 @@ async function main() {
     env,
     stdout: nodeStream(1),
     stderr: nodeStream(2),
-    bridgeBytes: loadBridgeWasm(),
     host: nodeHost,
   });
   process.exit(exitCode);

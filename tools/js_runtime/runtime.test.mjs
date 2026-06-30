@@ -1,6 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { resolveExternImports } from "./runtime.mjs";
+import { bridgeBytes } from "./bridge_bytes.mjs";
+
+const here = dirname(fileURLToPath(import.meta.url));
+
+test("embedded bridge bytes match tools/bridge.wasm (guard against a stale embed)", () => {
+  const onDisk = readFileSync(join(here, "..", "bridge.wasm"));
+  assert.equal(
+    Buffer.compare(Buffer.from(bridgeBytes), onDisk),
+    0,
+    "bridge_bytes.mjs is stale; regenerate with `node tools/generate_bridge_bytes.mjs`",
+  );
+  // The embedded module must be instantiable on its own (it imports nothing).
+  new WebAssembly.Instance(new WebAssembly.Module(bridgeBytes));
+});
 
 test("scoped imports win over globals", () => {
   const scopedFn = () => "scoped";

@@ -14,6 +14,10 @@
 //   - tools/js_runtime/node_main.mjs  (Node CLI, host: nodeHost)
 //   - tools/js_runtime/index.mjs      (embeddable library, host: nodeHost)
 
+// The bridge module is embedded (base64) rather than loaded from disk/network,
+// so every entry point gets it with the runtime. See tools/generate_bridge_bytes.mjs.
+import { bridgeBytes } from "./bridge_bytes.mjs";
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -352,7 +356,7 @@ function write(stream, text) {
   stream.write(text);
 }
 
-function makeHostImports(b, runtime, bridgeBytes) {
+function makeHostImports(b, runtime) {
   const ensureHostBuffer = (needed = 0) => {
     const state = runtime.hostBuffer ??= { bytes: new Uint8Array(1024 * 1024), next: 8 };
     if (needed <= state.bytes.length) return state;
@@ -458,7 +462,6 @@ function makeHostImports(b, runtime, bridgeBytes) {
         stderr: runtime.stderr,
         imports: runtime.imports,
         host: runtime.host,
-        bridgeBytes,
       });
       return BigInt(exitCode);
     },
@@ -612,7 +615,9 @@ export function createMemoryHost(initialFiles) {
 // Bridge instantiation
 // ---------------------------------------------------------------------------
 
-function instantiateBridge(bridgeBytes) {
+// The bridge is stateless except for its staging memory, which is reset per
+// run; instantiate a fresh one each call so concurrent runs don't share it.
+function instantiateBridge() {
   const bridgeModule = new WebAssembly.Module(bridgeBytes);
   const bridgeInstance = new WebAssembly.Instance(bridgeModule);
   return bridgeInstance.exports;
@@ -1060,19 +1065,15 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
     env = {},
     stdout,
     stderr,
-    bridgeBytes,
     host,
     imports = {},
   } = opts;
 
-  if (!bridgeBytes) {
-    throw new Error("runWasmBytes: bridgeBytes is required");
-  }
   if (!host) {
     throw new Error("runWasmBytes: host adapter is required (see node_host.mjs)");
   }
 
-  const b = instantiateBridge(bridgeBytes);
+  const b = instantiateBridge();
   const runtime = {
     programArgs: [programPath, ...guestArgs],
     cwd,
@@ -1084,7 +1085,7 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
     imports,
   };
 
-  const hostImports = makeHostImports(b, runtime, bridgeBytes);
+  const hostImports = makeHostImports(b, runtime);
   const mainModule = new WebAssembly.Module(wasmBytes);
   const externMeta = readExternMeta(mainModule);
 
@@ -1175,7 +1176,6 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
     // Wrap run_wasm as a suspending import so child programs can themselves use
     // JSPI suspending imports. In task-enabled programs this also preserves the
     // scheduler's single-resume discipline.
-    const childBridgeBytes = opts.bridgeBytes;
     rt.run_wasm = suspendHost(
       async (bytesRef, argvRef) => {
         const childBytes = decodeByteArray(b, bytesRef);
@@ -1190,7 +1190,6 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
           stderr: runtime.stderr,
           imports: runtime.imports,
           host: runtime.host,
-          bridgeBytes: childBridgeBytes,
         });
         return BigInt(exitCode);
       },

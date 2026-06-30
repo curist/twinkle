@@ -19,10 +19,10 @@ This plan introduces a second **build kind** that closes that gap for the
 smallest feasible ABI, and surfaces a compiler-free loader so the built program
 (not the megabyte compiler) is what gets embedded.
 
-> **Depends on [bridge-in-runtime.md](bridge-in-runtime.md)** — folding the
-> JS↔Wasm-GC bridge into the runtime (removing the separate `bridge.wasm` asset)
-> is what lets the embedded artifact be a single `<name>.lib.wasm` file. Land
-> that first.
+> **Depended on [bridge-in-runtime.md](archive/bridge-in-runtime.md)** — folding
+> the JS↔Wasm-GC bridge into the runtime (removing the separate `bridge.wasm`
+> asset) is what lets the embedded artifact be a single `<name>.lib.wasm` file.
+> That is now landed, so this dependency is satisfied.
 
 ---
 
@@ -116,11 +116,11 @@ lib.pi;        // 3.14159 — exported value global
 globals and any module state are initialized), reads `twinkle.exports`, and
 returns an object of typed wrapper functions plus value getters.
 
-> **Depends on [bridge-in-runtime.md](bridge-in-runtime.md).** For the embedded
-> artifact to be a single file, the JS↔Wasm-GC bridge must ship inside the
-> runtime rather than as a separate `bridge.wasm` asset. That folding is tracked
-> as its own plan and is a prerequisite for the "only ship `<name>.lib.wasm`"
-> guarantee here.
+> **Depended on [bridge-in-runtime.md](archive/bridge-in-runtime.md).** For the
+> embedded artifact to be a single file, the JS↔Wasm-GC bridge must ship inside
+> the runtime rather than as a separate `bridge.wasm` asset. That folding has
+> landed (the bridge is embedded in `runtime.mjs` via `bridge_bytes.mjs`), so the
+> "only ship `<name>.lib.wasm`" guarantee here is now unblocked.
 
 ### Scaffold — Node + web harness
 

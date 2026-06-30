@@ -6,28 +6,25 @@
 //
 // Unlike index.mjs (Node: temp files, node:fs), this is browser-first: it
 // self-loads the compiler wasm that ships beside it and uses an in-memory
-// filesystem by default, so callers never touch boot.wasm/bridge.wasm or
-// construct a host adapter.
+// filesystem by default, so callers never touch boot.wasm or construct a host
+// adapter. The JS<->Wasm-GC bridge is embedded in runtime.mjs.
 
 import { runWasmBytesAsync, createMemoryHost } from "./runtime.mjs";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-// boot.wasm / bridge.wasm are published next to this module. `new URL(...,
-// import.meta.url)` lets the consumer's bundler emit them as assets (Vite,
-// webpack, native ESM all understand this), so no `?url` import is needed.
+// boot.wasm is published next to this module. `new URL(..., import.meta.url)`
+// lets the consumer's bundler emit it as an asset (Vite, webpack, native ESM
+// all understand this), so no `?url` import is needed. The bridge ships
+// embedded in runtime.mjs, so only boot.wasm is fetched here.
 let assetsPromise;
 
 function loadAssets() {
   if (!assetsPromise) {
-    assetsPromise = Promise.all([
-      fetch(new URL("./boot.wasm", import.meta.url)).then((r) => r.arrayBuffer()),
-      fetch(new URL("./bridge.wasm", import.meta.url)).then((r) => r.arrayBuffer()),
-    ]).then(([boot, bridge]) => ({
-      bootBytes: new Uint8Array(boot),
-      bridgeBytes: new Uint8Array(bridge),
-    }));
+    assetsPromise = fetch(new URL("./boot.wasm", import.meta.url))
+      .then((r) => r.arrayBuffer())
+      .then((boot) => ({ bootBytes: new Uint8Array(boot) }));
   }
   return assetsPromise;
 }
@@ -135,7 +132,7 @@ export async function command(args, opts = {}) {
   const cwd = opts.cwd ?? "/";
   assertPath(cwd, "cwd");
 
-  const { bootBytes, bridgeBytes } = await loadAssets();
+  const { bootBytes } = await loadAssets();
   const host = opts.host ?? createMemoryHost();
 
   if (opts.files !== undefined) {
@@ -160,7 +157,6 @@ export async function command(args, opts = {}) {
     env: opts.env ?? {},
     stdout: stdoutCapture.stream,
     stderr: stderrCapture.stream,
-    bridgeBytes,
     host,
     imports: opts.imports ?? {},
   });

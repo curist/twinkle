@@ -63,6 +63,8 @@ $(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target
 	./target/release/twk build boot/main.tw -o $(STAGE1_WASM)
 	@printf '\n==> Build bridge module via stage1\n'
 	BOOT_WASM=$(STAGE1_WASM) $(TWK_CLI) run boot/tests/gen_bridge_wasm.tw
+	@printf '\n==> Embed bridge bytes into the JS runtime\n'
+	node tools/generate_bridge_bytes.mjs
 	@printf '\n==> Self-hosted project check via stage1\n'
 	BOOT_WASM=$(STAGE1_WASM) $(TWK_CLI) check
 	@printf '\n==> Build stage2 compiler with stage1 -> $(STAGE2_WASM)\n'
@@ -99,7 +101,7 @@ quick-bundle-cli:
 # ---------------------------------------------------------------------------
 #
 # The playground is a plain Vite app that consumes the published packages
-# (@twinkle-lang/twinkle for the compiler runtime + boot.wasm/bridge.wasm, and
+# (@twinkle-lang/twinkle for the compiler runtime + boot.wasm, and
 # tree-sitter-twinkle for the grammar wasm + highlight query).
 #
 # `make playground` builds from the published packages (just npm + vite, no
@@ -127,11 +129,11 @@ tree-sitter-twinkle/tree-sitter-twinkle.wasm: tree-sitter-twinkle/grammar.js
 
 # Dev server against the in-repo compiler (TWINKLE_LOCAL aliases to in-repo
 # artifacts), so unreleased compiler/runtime changes show up in the playground.
-# web.mjs self-loads wasm via `new URL('./boot.wasm', import.meta.url)`, so stage
-# the in-repo wasm next to it (the published package ships them flattened).
-playground-dev: $(STAGE2_WASM) tools/bridge.wasm tools/js_runtime/runtime.mjs tools/js_runtime/web.mjs tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
+# web.mjs self-loads boot.wasm via `new URL('./boot.wasm', import.meta.url)`, so
+# stage it next to web.mjs (the published package ships it flattened). The bridge
+# is embedded in runtime.mjs via bridge_bytes.mjs, so no bridge.wasm is staged.
+playground-dev: $(STAGE2_WASM) tools/js_runtime/bridge_bytes.mjs tools/js_runtime/runtime.mjs tools/js_runtime/web.mjs tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
 	cp $(STAGE2_WASM) tools/js_runtime/boot.wasm
-	cp tools/bridge.wasm tools/js_runtime/bridge.wasm
 	cd playground && TWINKLE_LOCAL=1 npx vite
 
 # Run the Vector benchmark suite (RRB Gate B baselines). See boot/bench/README.md.

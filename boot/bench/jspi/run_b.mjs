@@ -30,7 +30,6 @@ if (!hasJspi) {
 }
 
 const wasmBytes = readFileSync(`${here}/phase_b.wasm`);
-const bridgeBytes = readFileSync(`${here}/../../../tools/bridge.wasm`);
 
 // Recorded by the `mark` extern, in call order: [t0, t1, t2, t3, t4].
 let marks = [];
@@ -51,7 +50,6 @@ async function oneRun() {
     env: globalThis.process?.env ?? {},
     stdout: globalThis.process?.stdout,
     stderr: globalThis.process?.stderr,
-    bridgeBytes,
     host: nodeHost,
     imports,
   });

@@ -32,7 +32,6 @@ const localAlias = process.env.TWINKLE_LOCAL
       { find: /^@twinkle-lang\/twinkle\/web$/, replacement: at('../tools/js_runtime/web.mjs') },
       { find: /^@twinkle-lang\/twinkle\/runtime\.mjs$/, replacement: at('../tools/js_runtime/runtime.mjs') },
       { find: /^@twinkle-lang\/twinkle\/boot\.wasm/, replacement: at('../target/boot.wasm') },
-      { find: /^@twinkle-lang\/twinkle\/bridge\.wasm/, replacement: at('../tools/bridge.wasm') },
       { find: /^tree-sitter-twinkle\/queries\/highlights\.scm/, replacement: at('../tree-sitter-twinkle/queries/highlights.scm') },
       { find: /^tree-sitter-twinkle\/tree-sitter-twinkle\.wasm/, replacement: at('../tree-sitter-twinkle/tree-sitter-twinkle.wasm') },
     ]

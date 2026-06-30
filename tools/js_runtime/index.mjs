@@ -3,7 +3,7 @@
 //   import { compile, run, runFile } from "@twinkle-lang/twinkle";
 //
 // compile(input)        -> Uint8Array  (loads boot.wasm)
-// run(wasmBytes, opts)  -> exitCode    (loads only bridge.wasm)
+// run(wasmBytes, opts)  -> exitCode    (bridge is embedded in the runtime)
 // runFile(path, opts)   -> exitCode    (compile + run)
 
 import { readFileSync, writeFileSync, rmSync, mkdtempSync } from "node:fs";
@@ -28,15 +28,6 @@ function loadBootWasm() {
   return readFirst([
     `${here}/boot.wasm`,
     `${here}/../../target/boot.wasm`,
-  ]);
-}
-
-function loadBridgeWasm() {
-  const override = process.env.BRIDGE_WASM;
-  if (override) return readFileSync(resolve(override));
-  return readFirst([
-    `${here}/bridge.wasm`,
-    `${here}/../bridge.wasm`,
   ]);
 }
 
@@ -67,7 +58,6 @@ function collectingStream() {
  */
 export async function compile(input, opts = {}) {
   const bootBytes = loadBootWasm();
-  const bridgeBytes = loadBridgeWasm();
 
   let srcPath;
   let cleanupDir;
@@ -95,7 +85,6 @@ export async function compile(input, opts = {}) {
       env: process.env,
       stdout: out,
       stderr: err,
-      bridgeBytes,
       host: nodeHost,
     });
     if (code !== 0) {
@@ -122,7 +111,6 @@ export async function run(wasmBytes, opts = {}) {
     env: opts.env ?? process.env,
     stdout: opts.stdout ?? process.stdout,
     stderr: opts.stderr ?? process.stderr,
-    bridgeBytes: loadBridgeWasm(),
     host: nodeHost,
     imports: opts.imports ?? {},
   });

@@ -1,8 +1,9 @@
 // Deno-compiled entry wrapper for the Twinkle CLI.
 //
-// `deno compile` embeds the verified boot compiler and bridge Wasm as data
-// files. This wrapper loads those assets, adapts Deno's stdio handles to the
-// shared host runtime interface, then delegates to the shared runtime.
+// `deno compile` embeds the verified boot compiler Wasm as a data file. This
+// wrapper loads that asset, adapts Deno's stdio handles to the shared host
+// runtime interface, then delegates to the shared runtime (the JS<->Wasm-GC
+// bridge is embedded in runtime.mjs).
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -86,27 +87,8 @@ function loadPackageVersion() {
   return undefined;
 }
 
-function loadBridgeWasm() {
-  const override = Deno.env.get("BRIDGE_WASM");
-  if (override) return readFileSync(resolve(override));
-
-  try {
-    return readFirst([
-      // Embedded by tools/build_deno_cli.sh.
-      `${import.meta.dirname}/../../target/deno-assets/bridge.wasm.bin`,
-      // Direct `deno run` fallback for development.
-      `${rootDir}/tools/bridge.wasm`,
-    ]);
-  } catch (e) {
-    console.error(`Error: bridge wasm not found: ${e.message}`);
-    console.error("Regenerate with: ./target/release/twk run boot/tests/gen_bridge_wasm.tw");
-    Deno.exit(1);
-  }
-}
-
 async function main() {
   const bootOverride = Deno.env.get("BOOT_WASM");
-  const bridgeBytes = loadBridgeWasm();
   const env = Deno.env.toObject();
   const version = loadPackageVersion();
   if (version !== undefined) env.TWK_VERSION = version;
@@ -118,7 +100,6 @@ async function main() {
     env,
     stdout: denoStream(Deno.stdout),
     stderr: denoStream(Deno.stderr),
-    bridgeBytes,
     host: nodeHost,
   });
   Deno.exit(exitCode);
