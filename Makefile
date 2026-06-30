@@ -30,7 +30,7 @@ help:
 
 # Fast day-to-day validation for boot compiler changes.
 boot-test: target/twk
-	target/twk run boot/tests/main.tw
+	target/twk test
 
 rust-test:
 	cargo test --release
