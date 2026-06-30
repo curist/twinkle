@@ -4523,7 +4523,8 @@ fn emit_closure_call(
         #[cfg(debug_assertions)]
         bump_boundary!(typed_closure_calls);
         match ret {
-            MonoType::Void | MonoType::Never => {
+            MonoType::Never => instrs.push(Instr::Unreachable),
+            MonoType::Void => {
                 instrs.extend(emit_void_value(Some(bind_ty)));
             }
             _ => {
@@ -4597,7 +4598,11 @@ fn emit_direct_user_call(
     match abi.results.first() {
         Some(result_ty) => instrs.extend(emit_coerce_stack(result_ty, bind_ty)),
         None => {
-            instrs.extend(emit_void_value(Some(bind_ty)));
+            if matches!(abi.semantic_result_mono, Some(MonoType::Never)) {
+                instrs.push(Instr::Unreachable);
+            } else {
+                instrs.extend(emit_void_value(Some(bind_ty)));
+            }
         }
     }
 
@@ -4665,7 +4670,8 @@ fn emit_extern_import_call(
             // No return conversion needed; coerce internal return type to bind_ty
             if let Some(ret_ty) = &ext.return_ty {
                 match ret_ty {
-                    MonoType::Void | MonoType::Never => {
+                    MonoType::Never => instrs.push(Instr::Unreachable),
+                    MonoType::Void => {
                         instrs.extend(emit_void_value(Some(bind_ty)));
                     }
                     other => {
@@ -8950,41 +8956,40 @@ fn build_user_sig_map_typed(
         (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
     >,
 ) -> HashMap<FuncId, FuncSigInfo> {
-    let mut sigs: HashMap<FuncId, FuncSigInfo> =
-        anf.functions
-            .iter()
-            .map(|func| {
-                let capture_count = closure_capture_layouts
-                    .get(&func.func_id)
-                    .map_or(0, Vec::len);
-                let mut params = func
-                    .param_tys
-                    .iter()
-                    .map(|ty| mono_to_valtype_for_user_abi_param(ty, type_env, concrete_func_sigs))
-                    .collect::<Vec<_>>();
-                params.extend(vec![ValType::Anyref; capture_count]);
-                let result = match &func.return_ty {
-                    crate::types::ty::MonoType::Void | crate::types::ty::MonoType::Never => None,
-                    other => Some(mono_to_valtype_for_user_abi_result(
-                        other,
-                        type_env,
-                        concrete_func_sigs,
-                    )),
-                };
-                (
-                    func.func_id,
-                    FuncSigInfo {
-                        params,
-                        result,
-                        result_mono: match &func.return_ty {
-                            crate::types::ty::MonoType::Void
-                            | crate::types::ty::MonoType::Never => None,
-                            other => Some(other.clone()),
-                        },
+    let mut sigs: HashMap<FuncId, FuncSigInfo> = anf
+        .functions
+        .iter()
+        .map(|func| {
+            let capture_count = closure_capture_layouts
+                .get(&func.func_id)
+                .map_or(0, Vec::len);
+            let mut params = func
+                .param_tys
+                .iter()
+                .map(|ty| mono_to_valtype_for_user_abi_param(ty, type_env, concrete_func_sigs))
+                .collect::<Vec<_>>();
+            params.extend(vec![ValType::Anyref; capture_count]);
+            let result = match &func.return_ty {
+                crate::types::ty::MonoType::Void | crate::types::ty::MonoType::Never => None,
+                other => Some(mono_to_valtype_for_user_abi_result(
+                    other,
+                    type_env,
+                    concrete_func_sigs,
+                )),
+            };
+            (
+                func.func_id,
+                FuncSigInfo {
+                    params,
+                    result,
+                    result_mono: match &func.return_ty {
+                        crate::types::ty::MonoType::Void => None,
+                        other => Some(other.clone()),
                     },
-                )
-            })
-            .collect::<HashMap<_, _>>();
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
 
     // Add extern function signatures so calls to extern fns resolve their ABI
     for (func_id, ext) in &anf.extern_imports {
@@ -9001,7 +9006,7 @@ fn build_user_sig_map_typed(
         let result_mono = ext
             .return_ty
             .as_ref()
-            .filter(|ty| !matches!(ty, MonoType::Void | MonoType::Never))
+            .filter(|ty| !matches!(ty, MonoType::Void))
             .cloned();
         sigs.insert(
             *func_id,
@@ -10091,6 +10096,30 @@ mod tests {
             !instrs
                 .iter()
                 .any(|i| matches!(i, Instr::ReturnCall(_) | Instr::ReturnCallRef(_)))
+        );
+    }
+
+    #[test]
+    fn never_user_call_satisfies_reference_context_with_unreachable() {
+        let type_env = TypeEnv::new();
+        let prelude = build_prelude_map();
+        let mut user_funcs = HashMap::new();
+        user_funcs.insert(
+            FuncId(100),
+            FuncSigInfo {
+                params: vec![],
+                result: None,
+                result_mono: Some(MonoType::Never),
+            },
+        );
+        let mut ctx = EmitCtx::new(&type_env, &prelude, &user_funcs);
+        let bind_ty = ref_user_record_null(TypeId(21));
+
+        let instrs = emit_direct_user_call(FuncId(100), &[], &bind_ty, &mut ctx);
+
+        assert_eq!(
+            instrs,
+            vec![Instr::Call("func_100".to_string()), Instr::Unreachable]
         );
     }
 

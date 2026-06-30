@@ -35,6 +35,6 @@ pub fn cwd() String {
 }
 
 /// Exit the current process with status code.
-pub fn exit(code: Int) {
+pub fn exit(code: Int) Never {
   twinkle_runtime.exit(code)
 }
