@@ -248,9 +248,9 @@ Notes:
   project config.
 * Keep environment-variable compatibility (`TWK_TEST_FILTER`,
   `TWK_TEST_REPORT=verbose`, `NO_COLOR`).
-* First release ships env-var control only; CLI flags (`--filter`, etc.) are
-  deferred to Phase 4 once the base project-mode behavior is stable, so flag/env
-  precedence and naming aren't locked in prematurely.
+* `twk test --filter <substr>` and `--verbose` are forwarded to each test
+  program as arguments; the `@std.testing` runner reads them, preferring an
+  explicit flag over the corresponding `TWK_TEST_*` environment variable.
 
 ### `twk parse` and `twk ir`
 

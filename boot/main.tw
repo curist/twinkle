@@ -55,7 +55,10 @@ build_cmd := command
   .add_option("target", "In project mode, the project entry to build")
   .add_flag("all", "In project mode, build every project entry")
 
-test_cmd := command.make("test", "Run configured project test entries")
+test_cmd := command
+  .make("test", "Run configured project test entries")
+  .add_option("filter", "Only run tests whose name contains this substring")
+  .add_flag("verbose", "Print per-test output")
 
 lsp_cmd := command.make("lsp", "Start the Language Server Protocol server")
 
