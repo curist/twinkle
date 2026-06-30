@@ -72,6 +72,7 @@ use .suites.lsp_workspace_symbol_suite
 use .suites.module_loader_suite
 use .suites.multi_module_suite
 use .suites.occurrence_build_suite
+use .suites.project_config_suite
 use .suites.occurrence_enrich_suite
 use .suites.occurrences_suite
 use .suites.opt_analysis_suite
@@ -197,6 +198,7 @@ runner.run_all([
   linker_suite.suite(),
   runtime_suite.suite(),
   module_loader_suite.suite(),
+  project_config_suite.suite(),
   dependency_graph_suite.suite(),
   discovery_suite.suite(),
   query_keys_suite.suite(),

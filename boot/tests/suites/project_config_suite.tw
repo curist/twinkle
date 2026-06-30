@@ -1,0 +1,111 @@
+use lib.project.config
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("project config")
+    .test(
+      "empty content yields defaults",
+      fn() {
+        cfg := try config.parse("")
+        try assert.equal(cfg.name, .None)
+        try assert.equal(cfg.project_entries.len(), 0)
+        try assert.equal(cfg.test_entries.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "legacy top-level name is accepted",
+      fn() {
+        cfg := try config.parse("name = \"twinkle-boot\"")
+        try assert.equal(cfg.name, .Some("twinkle-boot"))
+        .Ok({})
+      },
+    )
+    .test(
+      "project section name and entries parse",
+      fn() {
+        cfg := try config.parse(
+          "[project]\nname = \"demo\"\nentries = [\"cmd/app.tw\", \"cmd/server.tw\"]\n",
+        )
+        try assert.equal(cfg.name, .Some("demo"))
+        try assert.equal(cfg.project_entries.len(), 2)
+        try assert.equal(cfg.project_entries[0], "cmd/app.tw")
+        try assert.equal(cfg.project_entries[1], "cmd/server.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "test section entries parse",
+      fn() {
+        cfg := try config.parse("[test]\nentries = [\"tests/main.tw\"]\n")
+        try assert.equal(cfg.test_entries.len(), 1)
+        try assert.equal(cfg.test_entries[0], "tests/main.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "comments and blank lines are ignored",
+      fn() {
+        cfg := try config.parse("# a comment\n\n[project]\n  # indented comment\nname = \"x\"\n")
+        try assert.equal(cfg.name, .Some("x"))
+        .Ok({})
+      },
+    )
+    .test(
+      "unknown key reports an error",
+      fn() {
+        case config.parse("[project]\nbogus = \"y\"\n") {
+          .Ok(_) => .Err("expected unknown-key error"),
+          .Err(_) => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "malformed line reports an error",
+      fn() {
+        case config.parse("not a valid line") {
+          .Ok(_) => .Err("expected malformed-line error"),
+          .Err(_) => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "validate accepts project-local .tw entries",
+      fn() {
+        cfg := try config.parse("[test]\nentries = [\"tests/main.tw\"]\n")
+        try config.validate(cfg)
+        .Ok({})
+      },
+    )
+    .test(
+      "validate rejects non-.tw entry",
+      fn() {
+        cfg := try config.parse("[test]\nentries = [\"tests/main.txt\"]\n")
+        case config.validate(cfg) {
+          .Ok(_) => .Err("expected non-.tw rejection"),
+          .Err(_) => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "validate rejects path escaping the project root",
+      fn() {
+        cfg := try config.parse("[project]\nentries = [\"../outside.tw\"]\n")
+        case config.validate(cfg) {
+          .Ok(_) => .Err("expected escaping-path rejection"),
+          .Err(_) => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "load returns defaults when no twinkle.toml is present",
+      fn() {
+        cfg := try config.load("/nonexistent-twinkle-dir-xyz")
+        try assert.equal(cfg.name, .None)
+        try assert.equal(cfg.project_entries.len(), 0)
+        .Ok({})
+      },
+    )
+}

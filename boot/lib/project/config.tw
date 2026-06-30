@@ -1,0 +1,160 @@
+//! Constrained reader for `twinkle.toml` project configuration.
+//!
+//! This is intentionally not a full TOML parser. It understands only the small
+//! shape the tooling needs: an optional `name`, a `[project]` section with
+//! `name`/`entries`, and a `[test]` section with `entries`. A legacy top-level
+//! `name = "..."` (the original root-marker form) is still accepted.
+
+use @std.fs
+use @std.path
+
+pub type Config = .{ name: String?, project_entries: Vector<String>, test_entries: Vector<String> }
+
+/// The defaults used for a missing or empty `twinkle.toml`.
+pub fn empty() Config {
+  .{ name: .None, project_entries: [], test_entries: [] }
+}
+
+/// Load and validate the project config rooted at `project_root`.
+/// A missing `twinkle.toml` yields defaults so existing projects keep working.
+pub fn load(project_root: String) Result<Config, String> {
+  toml_path := path.join(project_root, "twinkle.toml")
+
+  if !fs.exists(toml_path) {
+    return .Ok(empty())
+  }
+
+  content := case fs.read_text(toml_path) {
+    .Ok(text) => text,
+    .Err(_) => return .Err("failed to read ${toml_path}"),
+  }
+
+  cfg := try parse(content)
+  try cfg.validate()
+  .Ok(cfg)
+}
+
+/// Parse the constrained TOML subset into a `Config`.
+pub fn parse(content: String) Result<Config, String> {
+  cfg := empty()
+  section := ""
+
+  for raw in content.split("\n") {
+    line := raw.trim()
+
+    if line == "" or line.starts_with("#") {
+      continue
+    }
+
+    if line.starts_with("[") {
+      closed := line.ends_with("]")
+      if !closed {
+        return .Err("malformed section header: ${line}")
+      }
+      name := line.substring(1, line.len() - 1).trim()
+      if name != "project" and name != "test" {
+        return .Err("unknown section: [${name}]")
+      }
+      section = name
+      continue
+    }
+
+    eq := case line.index_of("=") {
+      .Some(i) => i,
+      .None => return .Err("malformed line: ${line}"),
+    }
+    key := line.substring(0, eq).trim()
+    value := line.substring(eq + 1, line.len()).trim()
+    cfg = try cfg.apply_entry(section, key, value)
+  }
+
+  .Ok(cfg)
+}
+
+fn apply_entry(cfg: Config, section: String, key: String, value: String) Result<Config, String> {
+  if section == "" {
+    if key == "name" {
+      cfg.name = .Some(try parse_string(value))
+      return .Ok(cfg)
+    }
+    return .Err("unknown top-level key: ${key}")
+  }
+
+  if section == "project" {
+    if key == "name" {
+      cfg.name = .Some(try parse_string(value))
+      return .Ok(cfg)
+    }
+    if key == "entries" {
+      cfg.project_entries = try parse_string_array(value)
+      return .Ok(cfg)
+    }
+    return .Err("unknown key in [project]: ${key}")
+  }
+
+  if section == "test" {
+    if key == "entries" {
+      cfg.test_entries = try parse_string_array(value)
+      return .Ok(cfg)
+    }
+    return .Err("unknown key in [test]: ${key}")
+  }
+
+  .Err("unknown section: ${section}")
+}
+
+fn parse_string(value: String) Result<String, String> {
+  quoted := value.len() >= 2 and value.starts_with("\"") and value.ends_with("\"")
+  if !quoted {
+    return .Err("expected a quoted string, got: ${value}")
+  }
+  .Ok(value.substring(1, value.len() - 1))
+}
+
+fn parse_string_array(value: String) Result<Vector<String>, String> {
+  bracketed := value.starts_with("[") and value.ends_with("]")
+  if !bracketed {
+    return .Err("expected an array, got: ${value}")
+  }
+
+  inner := value.substring(1, value.len() - 1).trim()
+  out: Vector<String> = []
+  if inner == "" {
+    return .Ok(out)
+  }
+
+  for part in inner.split(",") {
+    item := part.trim()
+    if item == "" {
+      continue
+    }
+    out = .append(try parse_string(item))
+  }
+
+  .Ok(out)
+}
+
+/// Validate that all configured entries are project-local `.tw` files.
+pub fn validate(cfg: Config) Result<Void, String> {
+  for entry in cfg.project_entries {
+    try validate_entry(entry)
+  }
+  for entry in cfg.test_entries {
+    try validate_entry(entry)
+  }
+  .Ok({})
+}
+
+fn validate_entry(entry: String) Result<Void, String> {
+  is_tw := entry.ends_with(".tw")
+  if !is_tw {
+    return .Err("entry must be a .tw file: ${entry}")
+  }
+  if entry.starts_with("/") {
+    return .Err("entry must be project-local, not absolute: ${entry}")
+  }
+  if entry.starts_with("..") or entry.contains("/../") {
+    return .Err("entry must not escape the project root: ${entry}")
+  }
+  .Ok({})
+}

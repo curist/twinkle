@@ -11,6 +11,7 @@ use tests.suites.imports_suite
 use tests.suites.lib_json_suite
 use tests.suites.module_loader_suite
 use tests.suites.multi_module_suite
+use tests.suites.project_config_suite
 use tests.suites.query_analyze_suite
 use tests.suites.query_keys_suite
 use tests.suites.source_suite
@@ -21,6 +22,7 @@ runner.run_all([
   lib_json_suite.suite(),
   assert_helpers_suite.suite(),
   module_loader_suite.suite(),
+  project_config_suite.suite(),
   dependency_graph_suite.suite(),
   query_keys_suite.suite(),
   query_analyze_suite.suite(),
