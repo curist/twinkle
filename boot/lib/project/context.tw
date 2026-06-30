@@ -174,17 +174,19 @@ pub fn default_output_path(ctx: ProjectContext, entry: EntryTarget) String {
 /// env-independent Phase 1 discovery (load/parse/plan only). Deduped across
 /// entries; stdlib/prelude are traversed but excluded from the result.
 pub fn reachable_modules(ctx: ProjectContext, entries: Vector<EntryTarget>) Reachable {
-  state := analyze.new_state(builtin_env(), query_cache.empty(), overlay.empty(), ctx.root)
-  roots := state.canonical_roots
-
   seen: Dict<String, Bool> = Dict.new()
   modules: Vector<String> = []
   failed: Vector<String> = []
   diagnostics: Vector<analyze.AnalysisDiag> = []
 
   for e in entries {
+    // Resolve module paths against the entry's own nearest project root, the
+    // same way `compile_entry`/`lint` do — an entry may live in a nested project
+    // (its own twinkle.toml) below `ctx.root`, where imports resolve differently.
+    entry_root := loader.find_project_root(path.dirname(e.abs_path))
+    state := analyze.new_state(builtin_env(), query_cache.empty(), overlay.empty(), entry_root)
+    roots := state.canonical_roots
     d := analyze.discover_closure(identity.from_path(e.abs_path), state)
-    state = d.state
 
     for canonical in d.order {
       if !is_project_local(canonical, roots) {
