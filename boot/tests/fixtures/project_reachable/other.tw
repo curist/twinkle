@@ -1,0 +1,5 @@
+use .helper
+
+pub fn other() Int {
+  helper.value()
+}

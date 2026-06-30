@@ -1,11 +1,17 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use lib.module.loader
 use lib.project.config
 use lib.project.context
 
 fn cfg_with(name: String?, project: Vector<String>, test: Vector<String>) config.Config {
   config.Config.{ name, project_entries: project, test_entries: test }
+}
+
+fn fixture_root() String {
+  root := loader.find_project_root("boot")
+  "${root}/tests/fixtures/project_reachable"
 }
 
 pub fn suite() runner.Suite {
@@ -71,6 +77,51 @@ pub fn suite() runner.Suite {
           .Ok(_) => .Err("expected duplicate target-name rejection"),
           .Err(_) => .Ok({}),
         }
+      },
+    )
+    .test(
+      "reachable_modules returns project-local modules and excludes stdlib",
+      fn() {
+        cfg := cfg_with(.None, ["main.tw"], [])
+        ctx := try context.from_root(fixture_root(), cfg)
+        r := context.reachable_modules(ctx, ctx.project_entries)
+        try assert.equal(r.failed.len(), 0)
+
+        // main.tw imports a project-local sibling (helper.tw) and @std.path;
+        // only the two project-local files are reported.
+        try assert.equal(r.modules.len(), 2)
+
+        for m in r.modules {
+          try assert.is_false(m.starts_with("/__twinkle_core"))
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "reachable_modules dedupes a module shared across entries",
+      fn() {
+        cfg := cfg_with(.None, ["main.tw", "other.tw"], [])
+        ctx := try context.from_root(fixture_root(), cfg)
+        r := context.reachable_modules(ctx, ctx.project_entries)
+
+        // main.tw + other.tw + the shared helper.tw, counted once.
+        try assert.equal(r.modules.len(), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "reachable_modules records a failing entry without aborting siblings",
+      fn() {
+        // `missing.tw` does not exist on disk, so discovery fails to load it.
+        cfg := cfg_with(.None, ["missing.tw", "main.tw"], [])
+        ctx := try context.from_root(fixture_root(), cfg)
+        r := context.reachable_modules(ctx, ctx.project_entries)
+        try assert.is_true(r.failed.len() >= 1)
+
+        // The sibling entry is still fully discovered.
+        try assert.is_true(r.modules.len() >= 2)
+        .Ok({})
       },
     )
 }

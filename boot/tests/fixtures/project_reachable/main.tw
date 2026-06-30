@@ -1,0 +1,7 @@
+use @std.path
+
+use .helper
+
+pub fn go() Int {
+  helper.value() + String.len(path.basename("a/b"))
+}
