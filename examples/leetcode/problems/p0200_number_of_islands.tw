@@ -1,5 +1,5 @@
-use assert
-use runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 // https://leetcode.com/problems/number-of-islands/
 // Count 4-connected components of land (1) in a 0/1 grid. The grid is

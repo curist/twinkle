@@ -42,12 +42,14 @@ TWK_TEST_REPORT=verbose cargo run --release -- run -i boot/tests/test_api.tw
 
 ## Structure
 
+The harness itself lives in the standard library: `@std.testing` (Suite, Test,
+`run_all`) and `@std.testing.assert` (assertion helpers). The boot suites import
+them aliased as `runner`/`assert`.
+
 ```
 boot/tests/
   main.tw              # runs all suites (CI entry point)
   test_*.tw            # grouped entry points
-  runner.tw            # test harness (Suite, Test, run_all)
-  assert.tw            # assertion helpers (equal, is_true, is_some, ...)
   helpers/             # shared test utilities
   suites/              # one file per test suite
     parser_suite.tw
@@ -61,8 +63,8 @@ boot/tests/
 1. Create `suites/my_feature_suite.tw`:
 
 ```tw
-use tests.runner
-use tests.assert
+use @std.testing as runner
+use @std.testing.assert as assert
 
 pub fn suite() runner.Suite {
   runner.suite("my feature")

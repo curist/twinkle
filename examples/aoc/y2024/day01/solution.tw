@@ -7,9 +7,9 @@
 // then lock in the real-input answer once `make pull` + `make solve` confirm it.
 use @std.math
 
-use assert
+use @std.testing.assert as assert
 use lib.aoc
-use runner
+use @std.testing as runner
 
 type Cols = .{ left: Vector<Int>, right: Vector<Int> }
 

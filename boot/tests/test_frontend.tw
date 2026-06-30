@@ -1,4 +1,4 @@
-use .runner
+use @std.testing as runner
 use .suites.base_env_guardrail_suite
 use .suites.checker_coverage_suite
 use .suites.checker_suite

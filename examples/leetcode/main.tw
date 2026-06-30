@@ -16,7 +16,7 @@ use problems.p0543_diameter_of_binary_tree
 use problems.p0560_subarray_sum_equals_k
 use problems.p0973_k_closest_points
 use problems.p1979_gcd_of_array
-use runner
+use @std.testing as runner
 
 runner.run_all([
   p0001_two_sum.suite(),

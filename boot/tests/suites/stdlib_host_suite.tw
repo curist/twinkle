@@ -1,8 +1,7 @@
 use @std.fs
 use @std.proc
-
-use tests.assert
-use tests.runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 pub fn suite() runner.Suite {
   runner
@@ -52,7 +51,7 @@ pub fn suite() runner.Suite {
     .test(
       "fs.read_text reads a known file",
       fn() {
-        result := fs.read_text("boot/tests/assert.tw")
+        result := fs.read_text("boot/stdlib/testing/assert.tw")
         try assert.is_ok(result)
 
         case result {
@@ -68,7 +67,7 @@ pub fn suite() runner.Suite {
     .test(
       "fs.read_buffer reads a known file",
       fn() {
-        result := fs.read_buffer("boot/tests/assert.tw")
+        result := fs.read_buffer("boot/stdlib/testing/assert.tw")
         try assert.is_ok(result)
 
         case result {

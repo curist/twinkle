@@ -1,8 +1,8 @@
 use @std.tuple
 use @std.tuple.{Pair}
 
-use assert
-use runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 // https://leetcode.com/problems/decode-string/
 // Expand encodings like "3[a2[c]]" -> "accaccacc". Two stacks hold the pending

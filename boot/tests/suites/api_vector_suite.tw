@@ -1,8 +1,8 @@
 use @std.view
 use @std.view.{View}
 
-use tests.assert
-use tests.runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 fn sort_suite_is_sorted(xs: Vector<Int>) Bool {
   ok := true

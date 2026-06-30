@@ -1,5 +1,5 @@
-use assert
-use runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 // https://leetcode.com/problems/minimum-path-sum/
 // Minimize the path sum from top-left to bottom-right, moving only right or down.

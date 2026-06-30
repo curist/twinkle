@@ -1,4 +1,4 @@
-use tests.runner
+use @std.testing as runner
 use tests.suites.semantic_suite
 use tests.suites.semantic_tree_stringify_suite
 

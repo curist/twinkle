@@ -1,8 +1,8 @@
 use @std.date
 use @std.time
 
-use tests.assert
-use tests.runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 // Helpers proving stackful suspension is legal anywhere direct-style code runs:
 // inside ordinary functions, recursion, and higher-order callbacks. None of

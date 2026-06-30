@@ -1,5 +1,5 @@
-use assert
-use runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 // https://leetcode.com/problems/group-anagrams/
 // Group words that are anagrams of each other. The grouping key is the word

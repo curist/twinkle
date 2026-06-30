@@ -1,5 +1,5 @@
-use assert
-use runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 // https://leetcode.com/problems/longest-substring-without-repeating-characters/
 // Sliding window; a Dict<Byte, Int> remembers the position just past each

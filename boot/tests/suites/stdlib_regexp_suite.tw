@@ -1,8 +1,8 @@
 use @std.regexp
 use @std.regexp.{Match}
 
-use tests.assert
-use tests.runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 fn text_or(m: Match?, missing: String) String {
   case m {

@@ -1,4 +1,4 @@
-use .runner
+use @std.testing as runner
 use .suites.backend_verify_suite
 use .suites.codegen_integration_suite
 use .suites.insert_boundaries_suite

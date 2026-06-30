@@ -3,8 +3,8 @@ use lib.source.diagnostics as diag
 use lib.source.diagnostics.{DiagKind}
 use lib.source.span
 use lib.source.span.{Span}
-use tests.assert
-use tests.runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 fn s(start: Int, end: Int) Span {
   span.new(0, start, end)

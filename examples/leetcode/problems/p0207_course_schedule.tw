@@ -1,5 +1,5 @@
-use assert
-use runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 // https://leetcode.com/problems/course-schedule/
 // Can all courses be finished given prerequisite edges [course, prereq]?

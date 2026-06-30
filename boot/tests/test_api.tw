@@ -1,4 +1,4 @@
-use tests.runner
+use @std.testing as runner
 use tests.suites.api_cell_suite
 use tests.suites.api_dict_suite
 use tests.suites.api_option_result_suite

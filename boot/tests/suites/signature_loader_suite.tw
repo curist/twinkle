@@ -12,8 +12,8 @@ use compiler.base_env.{builtin_type_env}
 use compiler.resolver.{FunctionSig}
 use compiler.signatures.{SignatureGroup, load_signatures}
 use lib.module.loader
-use tests.assert
-use tests.runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 fn find_group(groups: Vector<SignatureGroup>, name: String) SignatureGroup? {

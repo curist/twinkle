@@ -1,5 +1,5 @@
-use assert
-use runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 // https://leetcode.com/problems/subarray-sum-equals-k/
 // Count contiguous subarrays summing to k. A Dict<Int, Int> tallies how often

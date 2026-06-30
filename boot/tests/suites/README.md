@@ -1,6 +1,7 @@
 # Twinkle Test Suites
 
-Test suites run via the Twinkle-native test runner (`boot/tests/runner.tw`).
+Test suites run via the Twinkle-native test runner (`@std.testing`, imported
+aliased as `runner`).
 
 ## Suite Contract
 
@@ -32,8 +33,8 @@ TWK_TEST_FILTER='closure' cargo run -- run -i boot/tests/main.tw
 ## Template
 
 ```tw
-use tests.runner
-use tests.assert
+use @std.testing as runner
+use @std.testing.assert as assert
 
 pub fn suite() runner.Suite {
   runner.suite("my domain")

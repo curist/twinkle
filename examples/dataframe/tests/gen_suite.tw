@@ -1,6 +1,6 @@
-use assert
+use @std.testing.assert as assert
 use frame.gen
-use runner
+use @std.testing as runner
 
 pub fn suite() {
   runner.suite("gen")

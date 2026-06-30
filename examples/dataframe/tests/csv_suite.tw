@@ -1,8 +1,8 @@
-use assert
+use @std.testing.assert as assert
 use frame.column
 use frame.column.{DType}
 use frame.csv
-use runner
+use @std.testing as runner
 
 pub fn suite() {
   runner.suite("csv")

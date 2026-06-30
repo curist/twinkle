@@ -1,7 +1,7 @@
 use @std.math
 
-use assert
-use runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 // https://leetcode.com/problems/find-greatest-common-divisor-of-array/
 // GCD of the smallest and largest elements of the array.

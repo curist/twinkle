@@ -1,4 +1,4 @@
-use .runner
+use @std.testing as runner
 use .suites.alias_reexport_suite
 use .suites.anf_analysis_suite
 use .suites.anf_lower_suite

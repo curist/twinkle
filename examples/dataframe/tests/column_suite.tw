@@ -1,8 +1,8 @@
-use assert
+use @std.testing.assert as assert
 use frame.cell.{Scalar}
 use frame.column
 use frame.column.{ColData, DType}
-use runner
+use @std.testing as runner
 
 pub fn suite() {
   runner.suite("column")

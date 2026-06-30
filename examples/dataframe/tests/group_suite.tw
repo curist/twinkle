@@ -1,10 +1,10 @@
-use assert
+use @std.testing.assert as assert
 use frame.cell.{Scalar}
 use frame.column
 use frame.group
 use frame.table
 use frame.table.{Table}
-use runner
+use @std.testing as runner
 
 fn numbers() Table {
   cols := [column.int_col([1, 2, 3, 4])]

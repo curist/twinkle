@@ -1,5 +1,5 @@
-use assert
-use runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 // https://leetcode.com/problems/climbing-stairs/
 // Number of distinct ways to climb `n` steps taking 1 or 2 at a time.

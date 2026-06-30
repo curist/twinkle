@@ -1,8 +1,8 @@
-use assert
+use @std.testing.assert as assert
 use frame.column
 use frame.table
 use frame.table.{RowRef, Table}
-use runner
+use @std.testing as runner
 
 fn sample() Table {
   cols := [column.int_col([10, 20]), column.str_col(["x", "y"])]

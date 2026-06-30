@@ -8,10 +8,10 @@
 //   3. Implement parse / part1 / part2 until the sample passes.
 //   4. `make pull` + `make solve` to get the real answers, then record them in
 //      the `part_ input` expectations to lock in a regression.
-use assert
+use @std.testing.assert as assert
 use lib.aoc
 use lib.grid
-use runner
+use @std.testing as runner
 
 fn parse(input: String) Vector<Byte> {
   collect dir in input.trim() {

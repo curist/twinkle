@@ -1,5 +1,5 @@
-use assert
-use runner
+use @std.testing.assert as assert
+use @std.testing as runner
 use frame.column
 use frame.table
 use frame.table.{Table}

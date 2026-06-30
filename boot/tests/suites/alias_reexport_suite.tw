@@ -1,5 +1,5 @@
-use tests.assert
-use tests.runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 // Transparent type aliases (spec: "type aliases don't create distinct nominal
 // types"). These regression-test the resolver's eager alias expansion: a value

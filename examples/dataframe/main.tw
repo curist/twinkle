@@ -7,7 +7,7 @@ use tests.query_suite
 use tests.group_suite
 use tests.join_suite
 use tests.gen_suite
-use runner
+use @std.testing as runner
 
 runner.run_all([
   cell_suite.suite(),

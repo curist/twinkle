@@ -4,9 +4,9 @@ use compiler.module_compiler
 use compiler.pipeline
 use compiler.resolver.{ResolvedEnv}
 use lib.module.loader
-use tests.assert
+use @std.testing.assert as assert
 use tests.helpers.codegen_harness
-use tests.runner
+use @std.testing as runner
 
 fn fixtures_dir() String {
   root := loader.find_project_root("boot")

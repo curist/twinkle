@@ -2,8 +2,8 @@ use compiler.ast.{Module}
 use compiler.parser
 use compiler.query.occurrence_build
 use compiler.query.occurrences as occ
-use tests.assert
-use tests.runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 fn parse_src(src: String) Module {
   parser.parse(src, 0).value

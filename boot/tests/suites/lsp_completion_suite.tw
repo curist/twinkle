@@ -1,7 +1,7 @@
 use lib.json
 use lib.lsp.protocol
 use lib.lsp.server_core
-use tests.runner
+use @std.testing as runner
 
 fn publish_due_now(step: server_core.Step) server_core.Step {
   state := step.state

@@ -1,5 +1,5 @@
-use assert
-use runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 // https://leetcode.com/problems/find-first-and-last-position-of-element-in-sorted-array/
 // Return [first, last] indices of target in a sorted array, or [-1, -1].

@@ -1,5 +1,5 @@
-use assert
-use runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 // https://leetcode.com/problems/diameter-of-binary-tree/
 // Longest path (in edges) between any two nodes. A single post-order walk

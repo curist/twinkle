@@ -19,8 +19,8 @@ use compiler.backend.verify.{verify_prepared_module_with_level}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.pipeline
 use compiler.resolver.{ResolvedEnv}
-use tests.assert
-use tests.runner
+use @std.testing.assert as assert
+use @std.testing as runner
 
 // Compile source to the prepared backend funcs + builtin registry, then run the
 // whole-program typed-field analysis on them.

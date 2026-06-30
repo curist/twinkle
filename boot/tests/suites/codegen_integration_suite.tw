@@ -5,9 +5,9 @@ use compiler.codegen.runtime.types as rt_types
 use compiler.codegen.wasm_ir.{Instr}
 use compiler.codegen.wasm_layout.{EqTypeLayouts}
 use compiler.codegen.wat.{emit_wat}
-use tests.assert
+use @std.testing.assert as assert
 use tests.helpers.codegen_harness
-use tests.runner
+use @std.testing as runner
 
 fn empty_eq_layouts() EqTypeLayouts {
   .{ records: [], sums: [] }
