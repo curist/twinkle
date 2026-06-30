@@ -1,3 +1,6 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.codegen.codegen.{codegen, runtime_modules}
 use compiler.codegen.linker.{LinkedModule, link}
 use compiler.codegen.runtime.buf as rt_buf
@@ -5,9 +8,7 @@ use compiler.codegen.runtime.types as rt_types
 use compiler.codegen.wasm_ir.{Instr}
 use compiler.codegen.wasm_layout.{EqTypeLayouts}
 use compiler.codegen.wat.{emit_wat}
-use @std.testing.assert as assert
 use tests.helpers.codegen_harness
-use @std.testing as runner
 
 fn empty_eq_layouts() EqTypeLayouts {
   .{ records: [], sums: [] }
@@ -862,6 +863,20 @@ fn test_extern_vector_byte_import_uses_array_type() Result<Void, String> {
   .Ok({})
 }
 
+fn test_extern_omitted_return_type_is_void() Result<Void, String> {
+  // An extern fn declared without a return type means Void. The call must
+  // typecheck and compile as a void-producing call (no leftover stack value,
+  // no ambiguous-type error from an unbound inference meta).
+  src := "extern host {\n  fn log(msg: String)\n}\nhost.log(\"hi\")\n"
+  wat := try assert_codegen_src_compiles(src, "extern omitted return type is Void")
+
+  // The import is declared, and its functype has a param but no result —
+  // i.e. the omitted return type lowered to Void rather than a stray value.
+  try assert.str_contains(wat, "(import \"host\" \"log\"")
+  try assert.str_contains(wat, "(func (param (ref null $rt_types__String)))")
+  .Ok({})
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("codegen integration (M11)")
@@ -999,5 +1014,9 @@ pub fn suite() runner.Suite {
     .test(
       "extern Vector<Byte> import uses $Array at boundary and wraps call site",
       test_extern_vector_byte_import_uses_array_type,
+    )
+    .test(
+      "extern fn with omitted return type compiles as Void",
+      test_extern_omitted_return_type_is_void,
     )
 }

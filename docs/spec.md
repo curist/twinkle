@@ -274,10 +274,11 @@ the declaring Twinkle module. Extern types have no fields or variants and cannot
 be pattern matched. They do not provide equality, ordering, or hashing by
 default; use explicit host functions for those operations.
 
-Extern parameters must be annotated. Phase 1 boundary types are `Int`, `Float`,
-`Bool`, `String`, extern types, and `Void`/`()`. Compound values such as records,
-enums, `Vector`, `Dict`, callbacks, `Option`, and `Result` are not valid extern
-boundary types.
+Extern parameters must be annotated. An omitted return type means `Void`
+(`extern console fn log(msg: String)` returns `Void`). Phase 1 boundary types are
+`Int`, `Float`, `Bool`, `String`, extern types, and `Void`/`()`. Compound values
+such as records, enums, `Vector`, `Dict`, callbacks, `Option`, and `Result` are
+not valid extern boundary types.
 
 Extern types are non-null. If a host function declared as returning an extern
 type returns `null` or `undefined`, the Wasm runtime traps at the import

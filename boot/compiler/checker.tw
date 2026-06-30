@@ -5418,14 +5418,21 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
   // final zonk resolves it. Without this, an unannotated ret defaults to Void at
   // call sites while the definition emits the body's value type, leaving a stray
   // value on the stack.
+  //
+  // Extern functions are excluded: they have no body to unify the meta against,
+  // so an omitted return type means Void (instantiate defaults `.None` to Void).
+  // Assigning a meta would leave it unbound and make every call ambiguous.
   pass0_fns: Vector<FunctionSig> = []
 
   for f in ctx.env.functions {
     case f.ret {
-      .None => {
-        fm := ctx.fresh_meta()
-        ctx = fm.ctx
-        f.ret = .Some(fm.ty)
+      .None => case f.extern_module {
+        .None => {
+          fm := ctx.fresh_meta()
+          ctx = fm.ctx
+          f.ret = .Some(fm.ty)
+        },
+        .Some(_) => {},
       },
       .Some(_) => {},
     }
