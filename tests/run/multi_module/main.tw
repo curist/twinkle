@@ -4,8 +4,7 @@
 //   4
 //   3
 //   25
-
-use vec2
+use .vec2
 
 a: vec2.Vec2 = vec2.make(0, 3)
 b: vec2.Vec2 = vec2.make(4, 0)

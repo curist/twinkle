@@ -1,8 +1,7 @@
 // Expected output:
 //   12.56
-
 // Import only Circle — Rect's methods should NOT be available
-use shapes.{Circle}
+use .shapes.{Circle}
 
 c := Circle.{ radius: 2.0 }
 

@@ -1,10 +1,11 @@
-use math.{add, Vec2}
+use .math.{Vec2, add}
 
 fn main() {
-    // Direct use of destructured names should work
-    result := add(1, 2)
-    // Qualified access via parent module should NOT work —
-    // destructured imports don't bring the parent into scope
-    q := math.add(3, 4)
-    println("${q}")
+  // Direct use of destructured names should work
+  result := add(1, 2)
+
+  // Qualified access via parent module should NOT work —
+  // destructured imports don't bring the parent into scope
+  q := math.add(3, 4)
+  println("${q}")
 }

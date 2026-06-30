@@ -1,5 +1,5 @@
-use math.{nonexistent}
+use .math.{nonexistent}
 
 fn main() {
-    println("should not compile")
+  println("should not compile")
 }

@@ -1,10 +1,11 @@
-use point
+use .point
 
 fn main() {
-    p: point.Point = point.Point.{ x: 3, y: 4 }
-    // Inherent method call: desugars to point.translate(p, 1, 2)
-    p2 := p.translate(1, 2)
-    mag := p2.magnitude_sq()
-    println("${p2.x}")
-    println("${mag}")
+  p: point.Point = point.Point.{ x: 3, y: 4 }
+
+  // Inherent method call: desugars to point.translate(p, 1, 2)
+  p2 := p.translate(1, 2)
+  mag := p2.magnitude_sq()
+  println("${p2.x}")
+  println("${mag}")
 }

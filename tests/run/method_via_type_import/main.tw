@@ -2,9 +2,8 @@
 //   4
 //   3
 //   25
-
 // Import only the type — inherent methods should still resolve
-use vec2.{Vec2}
+use .vec2.{Vec2}
 
 a := Vec2.{ x: 0, y: 3 }
 b := Vec2.{ x: 4, y: 0 }

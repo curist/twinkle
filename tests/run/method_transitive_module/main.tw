@@ -2,10 +2,9 @@
 //   (0, 0)
 //   (5, 0)
 //   (5, 3)
-
 // Module C: uses module B, does NOT import module A (point) at all.
 // B's functions that involve A's types should still work fine.
-use geometry
+use .geometry
 
 p := geometry.origin()
 println(geometry.describe(p))

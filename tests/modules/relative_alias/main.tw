@@ -1,6 +1,6 @@
-use lib.app
+use .lib.app
 
 fn main() {
-    result := app.run()
-    println(result)
+  result := app.run()
+  println(result)
 }

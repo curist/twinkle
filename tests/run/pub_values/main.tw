@@ -2,8 +2,7 @@
 //   3.14159
 //   100
 //   12.56636
-
-use consts
+use .consts
 
 println("${consts.pi}")
 println("${consts.max_items}")

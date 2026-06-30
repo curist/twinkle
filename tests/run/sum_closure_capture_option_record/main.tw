@@ -2,12 +2,10 @@
 //   found: b (tag=hello, pri=2)
 //   not found
 //   high priority: b
-
 // Closures capturing variables used to match on Option/Result fields
 // inside cross-module records — exercises closure capture + sum boundary
 // at module boundaries simultaneously.
-
-use defs
+use .defs
 
 fn find_by_tag(items: Vector<defs.Item>, t: String) defs.Item? {
   items.find(fn(x: defs.Item) Bool {

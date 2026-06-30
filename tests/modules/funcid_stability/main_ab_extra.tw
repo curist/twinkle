@@ -1,5 +1,5 @@
-use dep_a
-use dep_b
+use .dep_a
+use .dep_b
 
 fn noise() Int {
   42

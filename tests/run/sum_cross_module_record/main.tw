@@ -3,11 +3,9 @@
 //   beta: val=none status=err:unset
 //   alpha: val=none status=ok:good
 //   beta: val=99 status=err:unset
-
 // Cross-module records with Option and Result fields — exercises
 // sum representation boundaries at module/function boundaries.
-
-use types
+use .types
 
 fn show(c: types.Config) {
   val_str := case c.value {

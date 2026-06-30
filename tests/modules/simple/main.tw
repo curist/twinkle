@@ -1,8 +1,8 @@
-use math
+use .math
 
 fn main() {
-    result := math.add(1, 2)
-    v: math.Vec2 = math.make_vec(10, 20)
-    println("${result}")
-    println("${v.x}")
+  result := math.add(1, 2)
+  v: math.Vec2 = math.make_vec(10, 20)
+  println("${result}")
+  println("${v.x}")
 }

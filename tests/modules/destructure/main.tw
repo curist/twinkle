@@ -1,12 +1,12 @@
-use math.{add, make_vec, Vec2}
+use .math.{Vec2, add, make_vec}
 
 fn main() {
-    result := add(1, 2)
-    v: Vec2 = make_vec(10, 20)
-    println("${result}")
-    println("${v.x}")
+  result := add(1, 2)
+  v: Vec2 = make_vec(10, 20)
+  println("${result}")
+  println("${v.x}")
 
-    // destructured names work directly
-    q := add(3, 4)
-    println("${q}")
+  // destructured names work directly
+  q := add(3, 4)
+  println("${q}")
 }

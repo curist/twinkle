@@ -203,7 +203,6 @@ impl<'a> ModuleStageRunner<'a> {
 mod tests {
     use std::sync::{Mutex, OnceLock};
 
-    use crate::module::context::default_module_aliases;
     use crate::query::cache::reset_global_cache;
     use crate::query::keys;
 

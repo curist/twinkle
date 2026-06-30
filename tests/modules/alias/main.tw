@@ -1,7 +1,7 @@
-use geometry as pt
+use .geometry as pt
 
 fn main() {
-    p: pt.Point = pt.translate(pt.Point.{ x: 0, y: 0 }, 3, 4)
-    println("${p.x}")
-    println("${p.y}")
+  p: pt.Point = pt.translate(pt.Point.{ x: 0, y: 0 }, 3, 4)
+  println("${p.x}")
+  println("${p.y}")
 }

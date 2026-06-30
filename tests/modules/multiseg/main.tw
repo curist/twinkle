@@ -1,7 +1,7 @@
-use math.vec
+use .math.vec
 
 fn main() {
-    // use math.vec loads math/vec.tw; alias is the last segment "vec"
-    v: vec.Vec2 = vec.Vec2.{ x: 3.0, y: 4.0 }
-    println("${v.x}")
+  // use math.vec loads math/vec.tw; alias is the last segment "vec"
+  v: vec.Vec2 = vec.Vec2.{ x: 3.0, y: 4.0 }
+  println("${v.x}")
 }

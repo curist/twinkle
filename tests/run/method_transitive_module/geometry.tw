@@ -1,14 +1,14 @@
 // Module B: uses module A, exports functions that work with A's types
-use point.{Point}
+use .point.{Point}
 
 pub fn origin() Point {
-    Point.{ x: 0, y: 0 }
+  Point.{ x: 0, y: 0 }
 }
 
 pub fn move_right(p: Point, n: Int) Point {
-    p.translate(n, 0)
+  p.translate(n, 0)
 }
 
 pub fn describe(p: Point) String {
-    "(${p.x}, ${p.y})"
+  "(${p.x}, ${p.y})"
 }

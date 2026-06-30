@@ -1,8 +1,7 @@
 // Expected output:
 //   25
 //   4,6
-
-use geom
+use .geom
 
 p: geom.Point = geom.Point.{ x: 3, y: 4 }
 

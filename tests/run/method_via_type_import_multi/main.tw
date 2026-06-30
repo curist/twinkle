@@ -1,9 +1,8 @@
 // Expected output:
 //   10
 //   14
-
 // Import multiple types — each gets its own methods
-use shapes.{Circle, Rect}
+use .shapes.{Circle, Rect}
 
 c := Circle.{ radius: 5 }
 println("${c.diameter()}")

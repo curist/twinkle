@@ -3,8 +3,7 @@
 //   4
 //   4
 //   6
-
-use geom as g
+use .geom as g
 
 p: g.Point = g.Point.{ x: 3, y: 4 }
 println("${p.x}")

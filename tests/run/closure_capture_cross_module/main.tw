@@ -1,7 +1,6 @@
 // Expected output:
 //   found: b
-
-use item
+use .item
 
 items: Vector<item.Item> = [item.make("a"), item.make("b")]
 target := "b"

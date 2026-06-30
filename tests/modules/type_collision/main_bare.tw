@@ -1,9 +1,9 @@
-use mod_a
-use mod_b
+use .mod_a
+use .mod_b
 
 fn main() {
-    // Bare `Color` is ambiguous — must fail after bare names are scoped to
-    // the module that defined them.
-    c: Color = mod_a.red()
-    println("${c.r}")
+  // Bare `Color` is ambiguous — must fail after bare names are scoped to
+  // the module that defined them.
+  c: Color = mod_a.red()
+  println("${c.r}")
 }

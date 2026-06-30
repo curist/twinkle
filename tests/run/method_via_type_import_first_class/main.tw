@@ -1,8 +1,7 @@
 // Expected output:
 //   25
-
 // First-class method value reference via destructured import
-use vec2.{Vec2}
+use .vec2.{Vec2}
 
 p := Vec2.{ x: 3, y: 4 }
 f := p.magnitude_sq

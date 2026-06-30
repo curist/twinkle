@@ -6,8 +6,7 @@
 //   unit square
 //   empty
 //   hold 42
-
-use types
+use .types
 
 // Zero-arg variant via module.Type.Variant
 c1 := types.Color.Red

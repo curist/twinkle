@@ -5,8 +5,7 @@
 //   err2:fail
 //   active
 //   ok2:7
-
-use types
+use .types
 
 // Basic qualified constructors
 println(types.show_status(types.Status.Active))
@@ -23,10 +22,12 @@ fn roundtrip_status(s: types.Status) types.Status {
     .Inactive => types.Status.Inactive,
   }
 }
+
 println(types.show_status(roundtrip_status(types.Status.Active)))
 
 // Qualified variant as function argument inline
 fn apply(r: types.Result2<Int, String>) String {
   types.show_result2(r)
 }
+
 println(apply(types.Result2.Ok2(7)))

@@ -1,7 +1,6 @@
 // Expected output:
 //   found by tag: b
-
-use item
+use .item
 
 fn find_by_tag(items: Vector<item.Item>, t: String) item.Item? {
   items.find(fn(x: item.Item) Bool {
