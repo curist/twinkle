@@ -2,6 +2,8 @@
 //! Each returns Result<Void, String> — Ok on pass, Err(message) on fail.
 //! Use with `try` inside a test callback: `try assert.equal(actual, expected)`.
 
+/// Pass when `cond_e` is true, otherwise fail with `msg`. The general-purpose
+/// escape hatch for conditions the typed helpers below don't cover.
 pub fn ok(cond_e: Bool, msg: String) Result<Void, String> {
   if cond_e {
     .Ok({})
@@ -10,10 +12,12 @@ pub fn ok(cond_e: Bool, msg: String) Result<Void, String> {
   }
 }
 
+/// Always fail with `msg`. Useful for marking unreachable branches.
 pub fn fail(msg: String) Result<Void, String> {
   .Err(msg)
 }
 
+/// Pass when `actual` contains `expected_substring`.
 pub fn str_contains(actual: String, expected_substring: String) Result<Void, String> {
   if actual.contains(expected_substring) {
     .Ok({})
@@ -22,6 +26,7 @@ pub fn str_contains(actual: String, expected_substring: String) Result<Void, Str
   }
 }
 
+/// Pass when `actual` starts with `expected_prefix`.
 pub fn str_starts_with(actual: String, expected_prefix: String) Result<Void, String> {
   if actual.starts_with(expected_prefix) {
     .Ok({})
@@ -30,6 +35,7 @@ pub fn str_starts_with(actual: String, expected_prefix: String) Result<Void, Str
   }
 }
 
+/// Pass when `actual` ends with `expected_suffix`.
 pub fn str_ends_with(actual: String, expected_suffix: String) Result<Void, String> {
   if actual.ends_with(expected_suffix) {
     .Ok({})
@@ -38,6 +44,8 @@ pub fn str_ends_with(actual: String, expected_suffix: String) Result<Void, Strin
   }
 }
 
+/// Pass when `actual` equals `expected`. Works for any type that is comparable
+/// (`Eq`) and printable (`Stringify`), so failures report both values.
 pub fn equal<T: Eq + Stringify>(actual: T, expected: T) Result<Void, String> {
   if actual == expected {
     .Ok({})
@@ -46,6 +54,7 @@ pub fn equal<T: Eq + Stringify>(actual: T, expected: T) Result<Void, String> {
   }
 }
 
+/// Pass when `actual` is true.
 pub fn is_true(actual: Bool) Result<Void, String> {
   if actual {
     .Ok({})
@@ -54,6 +63,7 @@ pub fn is_true(actual: Bool) Result<Void, String> {
   }
 }
 
+/// Pass when `actual` is false.
 pub fn is_false(actual: Bool) Result<Void, String> {
   if !actual {
     .Ok({})
@@ -62,6 +72,7 @@ pub fn is_false(actual: Bool) Result<Void, String> {
   }
 }
 
+/// Pass when `opt` is `.Some(_)`.
 pub fn is_some<A>(opt: A?) Result<Void, String> {
   case opt {
     .Some(_) => .Ok({}),
@@ -69,6 +80,7 @@ pub fn is_some<A>(opt: A?) Result<Void, String> {
   }
 }
 
+/// Pass when `opt` is `.None`.
 pub fn is_none<A>(opt: A?) Result<Void, String> {
   case opt {
     .Some(_) => .Err("expected None, got Some"),
@@ -76,6 +88,7 @@ pub fn is_none<A>(opt: A?) Result<Void, String> {
   }
 }
 
+/// Pass when `res` is `.Ok(_)`.
 pub fn is_ok<A, E>(res: Result<A, E>) Result<Void, String> {
   case res {
     .Ok(_) => .Ok({}),
@@ -83,6 +96,7 @@ pub fn is_ok<A, E>(res: Result<A, E>) Result<Void, String> {
   }
 }
 
+/// Pass when `res` is `.Err(_)`.
 pub fn is_err<A, E>(res: Result<A, E>) Result<Void, String> {
   case res {
     .Ok(_) => .Err("expected Err, got Ok"),
@@ -90,6 +104,7 @@ pub fn is_err<A, E>(res: Result<A, E>) Result<Void, String> {
   }
 }
 
+/// Pass when `res` is `.Err(e)` and `e` equals `expected_error`.
 pub fn err_eq<A>(res: Result<A, String>, expected_error: String) Result<Void, String> {
   case res {
     .Ok(_) => .Err("expected Err(\"${expected_error}\"), got Ok"),
@@ -97,6 +112,7 @@ pub fn err_eq<A>(res: Result<A, String>, expected_error: String) Result<Void, St
   }
 }
 
+/// Pass when `res` is `.Err(e)` and `e` contains `expected_substring`.
 pub fn err_contains<A>(res: Result<A, String>, expected_substring: String) Result<Void, String> {
   case res {
     .Ok(_) => .Err("expected Err containing \"${expected_substring}\", got Ok"),
@@ -104,6 +120,7 @@ pub fn err_contains<A>(res: Result<A, String>, expected_substring: String) Resul
   }
 }
 
+/// Pass when `v` has exactly `expected_len` elements.
 pub fn vec_len<A>(v: Vector<A>, expected_len: Int) Result<Void, String> {
   if v.len() == expected_len {
     .Ok({})
@@ -112,6 +129,7 @@ pub fn vec_len<A>(v: Vector<A>, expected_len: Int) Result<Void, String> {
   }
 }
 
+/// Pass when `v` contains `item`.
 pub fn vec_contains(v: Vector<String>, item: String) Result<Void, String> {
   for s in v {
     if s == item {

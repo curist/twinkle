@@ -17,12 +17,19 @@
 
 use @std.proc
 
+/// A single named test. `run` returns `.Ok` on success or `.Err(message)` on
+/// failure.
 pub type Test = .{ name: String, run: fn() Result<Void, String> }
 
+/// A named group of tests, built fluently with `suite(name).test(...)`.
 pub type Suite = .{ name: String, tests: Vector<Test> }
 
+/// Reporting options: an optional substring `filter`, ANSI `color`, and
+/// `verbose` (per-test) vs compact (dots) output.
 pub type RunOptions = .{ filter: String?, color: Bool, verbose: Bool }
 
+/// Aggregate counts for a run: `total` tests, plus how many `passed`, `failed`,
+/// and were `filtered` out.
 pub type RunStats = .{ total: Int, passed: Int, failed: Int, filtered: Int }
 
 type FailedTest = .{ suite_name: String, test_name: String, message: String }
@@ -85,6 +92,8 @@ fn env_verbose_enabled() Bool {
   }
 }
 
+/// Reporting options derived from the environment: `TWK_TEST_FILTER` (substring
+/// filter), `TWK_TEST_REPORT=verbose` (per-test output), and `NO_COLOR`.
 pub fn default_options() RunOptions {
   .{ filter: env_filter(), color: env_color_enabled(), verbose: env_verbose_enabled() }
 }
@@ -99,27 +108,33 @@ fn matches_filter(filter: String?, suite_name: String, test_name: String) Bool {
   }
 }
 
-// API
+/// Start an empty suite named `name`. Chain `.test(...)` to add tests.
 pub fn suite(name: String) Suite {
   Suite.{ name, tests: [] }
 }
 
+/// Append a test named `name` running `f` to `s`, returning the extended suite.
 pub fn test(s: Suite, name: String, f: fn() Result<Void, String>) Suite {
   Suite.{ name: s.name, tests: s.tests.append(Test.{ name, run: f }) }
 }
 
+/// Run `s` with the default (environment-derived) options. Returns true when
+/// every test passed.
 pub fn run(s: Suite) Bool {
   s.run_with(default_options())
 }
 
+/// Run `s` with explicit `opts`. Returns true when no test failed.
 pub fn run_with(s: Suite, opts: RunOptions) Bool {
   s.suite_stats_with(opts).failed == 0
 }
 
+/// Run `s` with default options and return its `RunStats`.
 pub fn suite_stats(s: Suite) RunStats {
   s.suite_stats_with(default_options())
 }
 
+/// Run `s` with explicit `opts`, print its report, and return its `RunStats`.
 pub fn suite_stats_with(s: Suite, opts: RunOptions) RunStats {
   if !opts.verbose {
     opts.print_compact_filter()
@@ -253,10 +268,15 @@ fn run_suite(opts: RunOptions, s: Suite) SuiteRun {
   SuiteRun.{ stats: RunStats.{ total, passed, failed, filtered }, failures }
 }
 
+/// Run every suite with default options, printing a combined report, and exit
+/// the process non-zero if any test failed. The usual entry point for a test
+/// program (`testing.run_all([suite_a.suite(), suite_b.suite()])`).
 pub fn run_all(suites: Vector<Suite>) Void {
   run_all_with(suites, default_options())
 }
 
+/// Run every suite with default options and return the combined `RunStats`
+/// without exiting.
 pub fn run_all_stats(suites: Vector<Suite>) RunStats {
   run_all_stats_with(suites, default_options())
 }
@@ -275,6 +295,8 @@ fn print_totals(opts: RunOptions, total: Int, passed: Int, failed: Int, filtered
   println(bold(opts.color, line))
 }
 
+/// Run every suite with explicit `opts`, print the combined report, and return
+/// the combined `RunStats` without exiting.
 pub fn run_all_stats_with(suites: Vector<Suite>, opts: RunOptions) RunStats {
   total := 0
   passed := 0
@@ -305,6 +327,8 @@ pub fn run_all_stats_with(suites: Vector<Suite>, opts: RunOptions) RunStats {
   RunStats.{ total, passed, failed, filtered }
 }
 
+/// Run every suite with explicit `opts` and exit the process non-zero if any
+/// test failed.
 pub fn run_all_with(suites: Vector<Suite>, opts: RunOptions) Void {
   st := run_all_stats_with(suites, opts)
 
