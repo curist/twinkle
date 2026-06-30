@@ -63,17 +63,17 @@ $(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target
 	./target/release/twk build boot/main.tw -o $(STAGE1_WASM)
 	@printf '\n==> Build bridge module via stage1\n'
 	BOOT_WASM=$(STAGE1_WASM) $(TWK_CLI) run boot/tests/gen_bridge_wasm.tw
-	@printf '\n==> Self-hosted check via stage1\n'
-	BOOT_WASM=$(STAGE1_WASM) $(TWK_CLI) check boot/main.tw
+	@printf '\n==> Self-hosted project check via stage1\n'
+	BOOT_WASM=$(STAGE1_WASM) $(TWK_CLI) check
 	@printf '\n==> Build stage2 compiler with stage1 -> $(STAGE2_WASM)\n'
-	BOOT_WASM=$(STAGE1_WASM) $(TWK_CLI) build boot/main.tw -o $(STAGE2_WASM)
+	BOOT_WASM=$(STAGE1_WASM) $(TWK_CLI) build -o $(STAGE2_WASM)
 	@printf '\n==> Build stage3 compiler with stage2 -> $(STAGE3_WASM)\n'
 	@mkdir -p $(dir $(STAGE3_WASM))
-	BOOT_WASM=$(STAGE2_WASM) $(TWK_CLI) build boot/main.tw -o $(STAGE3_WASM)
+	BOOT_WASM=$(STAGE2_WASM) $(TWK_CLI) build -o $(STAGE3_WASM)
 	@printf '\n==> Adopt stage3 as stage2 (converge to boot-compiled baseline)\n'
 	@cp $(STAGE3_WASM) $(STAGE2_WASM)
 	@printf '\n==> Build stage4 compiler with stage3 -> $(STAGE4_WASM)\n'
-	BOOT_WASM=$(STAGE2_WASM) $(TWK_CLI) build boot/main.tw -o $(STAGE4_WASM)
+	BOOT_WASM=$(STAGE2_WASM) $(TWK_CLI) build -o $(STAGE4_WASM)
 	@printf '\n==> Compare stage3 and stage4 WASM\n'
 	@cmp -s $(STAGE2_WASM) $(STAGE4_WASM) \
 		&& printf 'Fixed point reached: stage3 == stage4\n' \

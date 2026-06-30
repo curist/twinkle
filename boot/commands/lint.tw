@@ -8,7 +8,7 @@ use @std.fs
 use @std.path
 use @std.proc
 
-use commands.common.{exit_usage_error, get_positional}
+use commands.common.{format_analysis_diags, unique_analysis_diags}
 use compiler.base_env.{builtin_env}
 use compiler.imports
 use compiler.lint_rules
@@ -18,6 +18,7 @@ use lib.argparse.app.{ParseResult}
 use lib.argparse.style
 use lib.json
 use lib.module.loader
+use lib.project.context
 use lib.source.identity
 use lib.source.overlay
 use lib.source.report.{FixEdit, default_config}
@@ -35,6 +36,8 @@ pub type Finding = .{
 }
 
 type FileResult = .{ path: String, count: Int }
+
+pub type LintResult = .{ findings: Vector<Finding>, diagnostics: Vector<analyze.AnalysisDiag> }
 
 /// Apply a set of non-overlapping edits to source text. Edits are sorted by
 /// start offset descending and spliced end-to-start, so earlier offsets stay
@@ -98,8 +101,8 @@ fn parse_fix_edits(data: json.Json?) Vector<FixEdit> {
   out
 }
 
-/// Run the frontend (review mode) and collect every finding for `file`.
-fn gather_findings(file: String) Vector<Finding> {
+/// Run the frontend (review mode) and collect every finding/error for `file`.
+fn gather_lint(file: String) LintResult {
   dir := path.dirname(file)
   project_root := loader.find_project_root(dir)
   canonical_roots := imports.make_canonical_roots(project_root)
@@ -110,6 +113,7 @@ fn gather_findings(file: String) Vector<Finding> {
   a_state.lint_mode = true
   a_result := analyze.analyze_module(entry_id, base_env, a_state)
   findings: Vector<Finding> = []
+  diagnostics: Vector<analyze.AnalysisDiag> = []
 
   // R2: unused-import removals ride the UnusedImport warning's data.fixes.
   for d in a_result.diagnostics {
@@ -125,6 +129,7 @@ fn gather_findings(file: String) Vector<Finding> {
           },
         )
       },
+      .Error(_) => diagnostics = .append(d),
       _ => {},
     }
   }
@@ -161,7 +166,54 @@ fn gather_findings(file: String) Vector<Finding> {
     )
   }
 
-  findings
+  .{ findings, diagnostics }
+}
+
+// Gather results across several entries, deduping diagnostics/findings for
+// modules reached through more than one entry and dropping bundled stdlib/prelude
+// sources (which are analyzed as dependencies but never rewritten).
+pub fn gather_lint_multi(files: Vector<String>) LintResult {
+  seen_findings: Dict<String, Bool> = Dict.new()
+  seen_diags: Dict<String, Bool> = Dict.new()
+  findings: Vector<Finding> = []
+  diagnostics: Vector<analyze.AnalysisDiag> = []
+
+  for file in files {
+    result := gather_lint(file)
+    unique := unique_analysis_diags(result.diagnostics, seen_diags)
+    seen_diags = unique.seen
+    diagnostics = .concat(unique.diagnostics)
+
+    for f in result.findings {
+      if f.path.starts_with("/__twinkle_core") {
+        continue
+      }
+
+      key := "${f.path}|${f.start}|${f.rule}|${f.message}"
+
+      if !seen_findings.has(key) {
+        seen_findings[key] = true
+        findings = .append(f)
+      }
+    }
+  }
+
+  .{ findings, diagnostics }
+}
+
+// Entry files to lint: the explicit positionals, or — in project mode — the
+// configured project and test entries discovered from the working directory.
+fn resolve_lint_targets(parsed: ParseResult) Result<Vector<String>, String> {
+  if parsed.positional.len() > 0 {
+    return .Ok(parsed.positional)
+  }
+
+  ctx := try context.discover()
+  .Ok(
+    collect e in ctx.all_entries() {
+      e.abs_path
+    },
+  )
 }
 
 /// `file:line:col` for a byte offset, or `file:?:?` if the source can't be read.
@@ -365,6 +417,17 @@ fn apply_to_files(edits_by_file: Dict<String, Vector<FixEdit>>) Vector<FileResul
   results
 }
 
+fn report_lint_result(result: LintResult, explain: Bool, color: Bool) {
+  if result.diagnostics.len() > 0 {
+    eprintln(format_analysis_diags(result.diagnostics))
+  }
+
+  if result.findings.len() > 0 {
+    println(render_report(result.findings, index_sources(result.findings), explain, color))
+    print_summary(result.findings, explain)
+  }
+}
+
 /// Edits for the selected rules, grouped by file path (skips report-only and
 /// rules not requested).
 fn select_edits(findings: Vector<Finding>, fix_unused: Bool, fix_inherent: Bool) Dict<
@@ -389,9 +452,12 @@ fn select_edits(findings: Vector<Finding>, fix_unused: Bool, fix_inherent: Bool)
 }
 
 pub fn run_lint_command(parsed: ParseResult) {
-  file := case get_positional(parsed, 0, "file") {
-    .Ok(p) => p,
-    .Err(msg) => exit_usage_error(msg),
+  targets := case resolve_lint_targets(parsed) {
+    .Ok(t) => t,
+    .Err(msg) => {
+      eprintln("error: ${msg}")
+      proc.exit(1)
+    },
   }
   fix_all := parsed.has_flag("fix")
   fix_unused := fix_all or parsed.has_flag("fix-unused-imports")
@@ -401,15 +467,20 @@ pub fn run_lint_command(parsed: ParseResult) {
   any_apply := fix_unused or fix_inherent
 
   if !any_apply {
-    findings := gather_findings(file)
+    result := gather_lint_multi(targets)
+    result.report_lint_result(explain, color)
 
-    if findings.len() == 0 {
+    if result.diagnostics.len() == 0 and result.findings.len() == 0 {
       println("No findings.")
-
       return {}
     }
-    println(render_report(findings, index_sources(findings), explain, color))
-    print_summary(findings, explain)
+
+    proc.exit(1)
+  }
+
+  initial := gather_lint_multi(targets)
+  if initial.diagnostics.len() > 0 {
+    initial.report_lint_result(explain, color)
     proc.exit(1)
   }
 
@@ -421,7 +492,14 @@ pub fn run_lint_command(parsed: ParseResult) {
   iterations := 0
 
   for iterations < 20 {
-    edits := select_edits(gather_findings(file), fix_unused, fix_inherent)
+    current := gather_lint_multi(targets)
+
+    if current.diagnostics.len() > 0 {
+      current.report_lint_result(explain, color)
+      proc.exit(1)
+    }
+
+    edits := select_edits(current.findings, fix_unused, fix_inherent)
 
     if edits.len() == 0 {
       break
@@ -450,10 +528,10 @@ pub fn run_lint_command(parsed: ParseResult) {
   }
 
   // Whatever is left: report-only lints, plus rewrites for rules not requested.
-  remaining := gather_findings(file)
+  remaining := gather_lint_multi(targets)
+  remaining.report_lint_result(explain, color)
 
-  if remaining.len() > 0 {
-    println(render_report(remaining, index_sources(remaining), explain, color))
-    print_summary(remaining, explain)
+  if remaining.diagnostics.len() > 0 {
+    proc.exit(1)
   }
 }

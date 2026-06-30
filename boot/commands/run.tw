@@ -1,17 +1,51 @@
 //! Run command: compile and execute via Wasm backend.
+//!
+//! Explicit mode runs the named file. Project mode (no file argument) runs the
+//! sole configured project entry, or the one named by `--target`.
 
 use @std.proc
 
 use commands.common.{format_compile_error, print_warnings}
 use compiler.pipeline
 use lib.argparse.app.{ParseResult}
+use lib.project.context
 
-pub fn run_command_impl(parsed: ParseResult, file: String) {
+pub fn run_run_command(parsed: ParseResult) {
   if parsed.has_flag("interpreter") {
     eprintln("error: boot run does not support --interpreter yet")
     proc.exit(1)
   }
 
+  if parsed.positional.len() > 0 {
+    file := parsed.positional[0]
+    user_args := if parsed.positional.len() > 1 {
+      parsed.positional.slice(1, parsed.positional.len())
+    } else {
+      []
+    }
+    run_file(file, [file].concat(user_args))
+    return
+  }
+
+  // Project mode: run the selected project entry (no program arguments yet).
+  ctx := case context.discover() {
+    .Ok(c) => c,
+    .Err(err) => {
+      eprintln("error: ${err}")
+      proc.exit(1)
+    },
+  }
+  entry := case ctx.select_single(parsed.get_option("target")) {
+    .Ok(e) => e,
+    .Err(msg) => {
+      eprintln("error: ${msg}")
+      proc.exit(1)
+    },
+  }
+  run_file(entry.abs_path, [entry.abs_path])
+}
+
+fn run_file(file: String, argv: Vector<String>) {
   artifacts := case pipeline.compile_entry_path(file) {
     .Ok(result) => result,
     .Err(err) => {
@@ -21,12 +55,6 @@ pub fn run_command_impl(parsed: ParseResult, file: String) {
   }
   print_warnings(artifacts.warnings)
   wasm_bytes := pipeline.emit_wasm(artifacts)
-  user_args := if parsed.positional.len() > 1 {
-    parsed.positional.slice(1, parsed.positional.len())
-  } else {
-    []
-  }
-  argv := [file].concat(user_args)
   exit_code := proc.run_wasm(wasm_bytes, argv)
 
   if exit_code != 0 {

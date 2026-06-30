@@ -1,25 +1,99 @@
 //! Check command: type-check source.
+//!
+//! Explicit mode checks the named files. Project mode (no file argument) checks
+//! the configured project entries, plus test entries when `--all` is given.
 
 use @std.proc
 
-use commands.common.{exit_usage_error, format_compile_error, get_positional, print_warnings}
+use commands.common.{
+  format_analysis_diags_with_env, format_compile_error, print_warnings, unique_analysis_diags,
+}
+use compiler.artifacts.{CompileError}
 use compiler.pipeline
 use lib.argparse.app.{ParseResult}
+use lib.project.context
+
+type CheckOneResult = .{ ok: Bool, seen_diags: Dict<String, Bool> }
 
 pub fn run_check_command(parsed: ParseResult) {
-  file := case get_positional(parsed, 0, "file") {
-    .Ok(path) => path,
-    .Err(msg) => exit_usage_error(msg),
+  files := case check_targets(parsed) {
+    .Ok(f) => f,
+    .Err(msg) => {
+      eprintln("error: ${msg}")
+      proc.exit(1)
+    },
   }
 
+  if files.len() == 0 {
+    eprintln("error: no project entries configured in twinkle.toml")
+    proc.exit(1)
+  }
+
+  failed := false
+  seen_diags: Dict<String, Bool> = Dict.new()
+
+  for file in files {
+    result := check_one(file, seen_diags)
+    seen_diags = result.seen_diags
+
+    if !result.ok {
+      failed = true
+    }
+  }
+
+  if failed {
+    proc.exit(1)
+  }
+}
+
+// Files to check: the explicit positionals, or — in project mode — the project
+// entries (plus test entries when `--all`).
+fn check_targets(parsed: ParseResult) Result<Vector<String>, String> {
+  if parsed.positional.len() > 0 {
+    return .Ok(parsed.positional)
+  }
+
+  ctx := try context.discover()
+  entries := if parsed.has_flag("all") {
+    ctx.all_entries()
+  } else {
+    ctx.project_entries
+  }
+  .Ok(
+    collect e in entries {
+      e.abs_path
+    },
+  )
+}
+
+fn check_one(file: String, seen_diags: Dict<String, Bool>) CheckOneResult {
   case pipeline.compile_entry_path(file) {
     .Ok(artifacts) => {
       print_warnings(artifacts.warnings)
       println("Type checking succeeded: ${file}")
+      .{ ok: true, seen_diags }
     },
     .Err(err) => {
+      result := print_compile_error(err, seen_diags)
+      .{ ok: false, seen_diags: result }
+    },
+  }
+}
+
+fn print_compile_error(err: CompileError, seen_diags: Dict<String, Bool>) Dict<String, Bool> {
+  case err {
+    .Diagnostics(de) => {
+      unique := unique_analysis_diags(de.diagnostics, seen_diags)
+
+      if unique.diagnostics.len() > 0 {
+        eprintln(format_analysis_diags_with_env(.Some(de.env), unique.diagnostics))
+      }
+
+      unique.seen
+    },
+    .Internal(_) => {
       eprintln(format_compile_error(err))
-      proc.exit(1)
+      seen_diags
     },
   }
 }

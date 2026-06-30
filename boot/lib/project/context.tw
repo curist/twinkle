@@ -1,0 +1,219 @@
+//! Project command context: the shared project model derived from twinkle.toml.
+//!
+//! `ProjectContext` resolves the project root, its config, and the configured
+//! project/test entries into `EntryTarget`s with derived target names, so CLI
+//! commands operate on a single project model instead of re-deriving it.
+
+use @std.path
+use @std.proc
+
+use compiler.base_env.{builtin_env}
+use compiler.imports
+use compiler.query.analyze
+use compiler.query.cache as query_cache
+use lib.module.loader
+use lib.project.config
+use lib.source.identity
+use lib.source.overlay
+
+pub type EntryTarget = .{ name: String, rel_path: String, abs_path: String }
+
+/// Project-local modules reachable from a set of entries, plus the entries'
+/// canonical paths that failed to load/parse/plan and the diagnostics raised
+/// during discovery. `modules` excludes stdlib/prelude and is deduped across
+/// entries in discovery order.
+pub type Reachable = .{
+  modules: Vector<String>,
+  failed: Vector<String>,
+  diagnostics: Vector<analyze.AnalysisDiag>,
+}
+
+pub type ProjectContext = .{
+  root: String,
+  config: config.Config,
+  project_entries: Vector<EntryTarget>,
+  test_entries: Vector<EntryTarget>,
+}
+
+/// Derive a target name from an entry's project-relative path. Target names are
+/// the entry file stem; `main.tw` is just `main`.
+pub fn derive_target_name(rel_path: String) String {
+  path.stem(rel_path)
+}
+
+/// Discover the project context for the current working directory: walk up to
+/// the nearest `twinkle.toml`, load it, and build the entry targets.
+pub fn discover() Result<ProjectContext, String> {
+  discover_in(proc.cwd())
+}
+
+/// Discover the project context rooted at the nearest `twinkle.toml` at or above
+/// `start`. Use `discover` for the process working directory.
+pub fn discover_in(start: String) Result<ProjectContext, String> {
+  root := loader.find_project_root(start)
+  cfg := try config.load(root)
+  from_root(root, cfg)
+}
+
+/// Build a `ProjectContext` from an already-resolved root and config. Pure:
+/// callers that need filesystem discovery use `discover`.
+pub fn from_root(root: String, cfg: config.Config) Result<ProjectContext, String> {
+  project := build_entries(root, cfg.project_entries)
+  test := build_entries(root, cfg.test_entries)
+  try reject_conflicts(project)
+  .Ok(ProjectContext.{ root, config: cfg, project_entries: project, test_entries: test })
+}
+
+fn build_entries(root: String, rels: Vector<String>) Vector<EntryTarget> {
+  collect rel in rels {
+    EntryTarget.{ name: derive_target_name(rel), rel_path: rel, abs_path: path.join(root, rel) }
+  }
+}
+
+// Reject project entries whose paths derive the same target name, so build/run
+// target selection stays unambiguous.
+fn reject_conflicts(entries: Vector<EntryTarget>) Result<Void, String> {
+  seen: Dict<String, String> = Dict.new()
+
+  for e in entries {
+    case seen.get(e.name) {
+      .Some(prev) => return .Err(
+        "target name '${e.name}' is derived from both '${prev}' and '${e.rel_path}'; choose distinct entry paths",
+      ),
+      .None => {},
+    }
+
+    seen[e.name] = e.rel_path
+  }
+
+  .Ok({})
+}
+
+/// All configured entries: project entries followed by test entries. This is
+/// the maintenance-command set (`fmt`, `lint`) per the project model.
+pub fn all_entries(ctx: ProjectContext) Vector<EntryTarget> {
+  ctx.project_entries.concat(ctx.test_entries)
+}
+
+/// Select one project entry to act on (`run`, `build --target`): the entry whose
+/// derived target name is `target`, or the sole project entry when `target` is
+/// absent. Errors (listing available names) when the choice is ambiguous, the
+/// named target is unknown, or no project entries are configured.
+pub fn select_single(ctx: ProjectContext, target: String?) Result<EntryTarget, String> {
+  case target {
+    .Some(name) => ctx.find_target(name),
+    .None => {
+      entries := ctx.project_entries
+      cond {
+        entries.len() == 0 => .Err("no project entries configured in twinkle.toml"),
+        entries.len() == 1 => .Ok(entries[0]),
+        _ => .Err(
+          "multiple project entries; pass --target <name> (available: ${target_names(entries)})",
+        ),
+      }
+    },
+  }
+}
+
+/// Select the project entries to build: `--all` builds every project entry,
+/// otherwise the single entry chosen as in `select_single`.
+pub fn select_build_targets(ctx: ProjectContext, target: String?, all: Bool) Result<
+  Vector<EntryTarget>,
+  String,
+> {
+  if all {
+    return .Ok(ctx.project_entries)
+  }
+
+  case target {
+    .Some(name) => {
+      e := try ctx.find_target(name)
+      .Ok([e])
+    },
+    .None => {
+      entries := ctx.project_entries
+      cond {
+        entries.len() == 0 => .Err("no project entries configured in twinkle.toml"),
+        entries.len() == 1 => .Ok([entries[0]]),
+        _ => .Err(
+          "multiple project entries; pass --target <name> or --all (available: ${target_names(
+            entries,
+          )})",
+        ),
+      }
+    },
+  }
+}
+
+// The project entry whose derived target name is `name`, or an error listing the
+// available target names.
+fn find_target(ctx: ProjectContext, name: String) Result<EntryTarget, String> {
+  for e in ctx.project_entries {
+    if e.name == name {
+      return .Ok(e)
+    }
+  }
+
+  .Err("no project entry named '${name}' (available: ${target_names(ctx.project_entries)})")
+}
+
+fn target_names(entries: Vector<EntryTarget>) String {
+  names := collect e in entries {
+    e.name
+  }
+  names.join(", ")
+}
+
+/// Default project-mode build output for an entry: `<root>/target/<name>.wasm`,
+/// rooted at the project (not the working directory).
+pub fn default_output_path(ctx: ProjectContext, entry: EntryTarget) String {
+  path.join(path.join(ctx.root, "target"), "${entry.name}.wasm")
+}
+
+/// Project-local modules reachable from `entries`, via the shared frontend's
+/// env-independent Phase 1 discovery (load/parse/plan only). Deduped across
+/// entries; stdlib/prelude are traversed but excluded from the result.
+pub fn reachable_modules(ctx: ProjectContext, entries: Vector<EntryTarget>) Reachable {
+  state := analyze.new_state(builtin_env(), query_cache.empty(), overlay.empty(), ctx.root)
+  roots := state.canonical_roots
+
+  seen: Dict<String, Bool> = Dict.new()
+  modules: Vector<String> = []
+  failed: Vector<String> = []
+  diagnostics: Vector<analyze.AnalysisDiag> = []
+
+  for e in entries {
+    d := analyze.discover_closure(identity.from_path(e.abs_path), state)
+    state = d.state
+
+    for canonical in d.order {
+      if !is_project_local(canonical, roots) {
+        continue
+      }
+
+      if seen.has(canonical) {
+        continue
+      }
+
+      seen[canonical] = true
+
+      if d.failed.has(canonical) {
+        failed = .append(canonical)
+      } else {
+        modules = .append(canonical)
+      }
+    }
+
+    diagnostics = .concat(d.diagnostics)
+  }
+
+  Reachable.{ modules, failed, diagnostics }
+}
+
+// A discovered module is project-local when it sits under neither the bundled
+// stdlib nor prelude root; those are traversed for the graph but never rewritten.
+fn is_project_local(canonical: String, roots: imports.CanonicalRoots) Bool {
+  under_prelude := canonical.starts_with(roots.prelude_root)
+  under_stdlib := canonical.starts_with(roots.stdlib_root)
+  !under_prelude and !under_stdlib
+}

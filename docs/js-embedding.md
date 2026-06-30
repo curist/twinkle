@@ -29,6 +29,12 @@ npm install -g @twinkle-lang/twinkle
 twk run program.tw
 ```
 
+`fmt`, `lint`, `check`, `build`, `run`, and `test` also run in **project mode**
+when given no file argument: they discover the nearest `twinkle.toml` and act on
+its `[project].entries` / `[test].entries`. See the
+[project-mode section in the README](../README.md#project-mode) for the
+single-entry and multi-entry (`--target` / `--all`) workflows.
+
 ## Library
 
 The package is ESM-only — use `import`:

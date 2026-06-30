@@ -104,7 +104,48 @@ twk run program.tw            # compile and run
 twk build program.tw -o out.wasm
 twk check program.tw          # type-check only
 twk fmt program.tw            # format in place
+twk lint program.tw           # report lints and rewrites
 ```
+
+### Project mode
+
+`fmt`, `lint`, `check`, `build`, `run`, and `test` also work without a file
+argument. In that **project mode** they discover the nearest `twinkle.toml`
+(walking up from the current directory) and operate on its configured entries:
+
+```toml
+# twinkle.toml
+[project]
+name = "demo"
+entries = ["cmd/server.tw"]   # buildable/runnable program roots
+
+[test]
+entries = ["tests/main.tw"]   # executable test programs
+```
+
+```bash
+twk fmt          # format every project-local module reachable from the entries
+twk lint         # lint the same set (twk lint --fix applies safe rewrites)
+twk check        # type-check the project entries (--all also checks test entries)
+twk build        # build the entries to target/<name>.wasm
+twk run          # run the single project entry
+twk test         # run the configured test entries
+```
+
+A target name is derived from each entry file stem (`cmd/server.tw` → `server`,
+`cmd/server/main.tw` → `main`). With more than one project entry, `build` needs
+`--all` or `--target <name>`, and `run` needs `--target <name>`:
+
+```bash
+twk build --all              # build every project entry
+twk build --target server    # build one, to target/server.wasm
+twk run --target server      # run one entry
+```
+
+Passing explicit file paths always overrides project mode and operates only on
+those files, exactly as before. `twk test` also accepts `--filter <substr>` and
+`--verbose` (equivalent to the `TWK_TEST_FILTER` / `TWK_TEST_REPORT=verbose`
+environment variables).
 
 To run a one-off without installing, invoke it through `npx` by naming the
 **package** (the bare bin name `twk` won't resolve to the scoped package):
@@ -122,10 +163,12 @@ Usage: twk <command> [options]
 Commands:
   run                 Run program
   check               Type-check source
+  lint                Review code: report lints and rewrites
   build               Compile to linked WAT or Wasm
   ir                  Compile and print compiler IR
   parse               Parse source and print diagnostics
   fmt                 Format source
+  test                Run configured project test entries
   lsp                 Start the Language Server Protocol server
   version             Print Twinkle compiler version
   help                Print help information

@@ -1,14 +1,24 @@
 //! Build command: compile to linked WAT or Wasm.
+//!
+//! Explicit mode builds the named file to `-o` (or a `.wat` beside the source).
+//! Project mode (no file argument) builds the configured project entries to
+//! `<root>/target/<name>.wasm`: the sole entry, the one named by `--target`, or
+//! every entry with `--all`.
 
 use @std.fs
 use @std.path
 use @std.proc
 
 use commands.common.{
-  exit_usage_error, format_compile_error, fs_error_message, get_positional, print_warnings,
+  format_analysis_diags_with_env, format_compile_error, fs_error_message, print_warnings,
+  unique_analysis_diags,
 }
+use compiler.artifacts.{CompileError, PipelineArtifacts}
 use compiler.pipeline
 use lib.argparse.app.{ParseResult}
+use lib.project.context
+
+type BuildResult = .{ ok: Bool, seen_diags: Dict<String, Bool> }
 
 extern twinkle_runtime fn write_buffer_raw(path: String, ptr: Int, len: Int) Void
 
@@ -28,6 +38,11 @@ pub fn resolve_build_output(parsed: ParseResult, file: String) String!String {
     .Some(path) => path,
     .None => default_build_output(file),
   }
+
+  validate_output_ext(out)
+}
+
+fn validate_output_ext(out: String) String!String {
   ext := path.extension(out)
 
   if ext != ".wat" and ext != ".wasm" {
@@ -38,57 +53,173 @@ pub fn resolve_build_output(parsed: ParseResult, file: String) String!String {
 }
 
 pub fn run_build_command(parsed: ParseResult) {
-  file := case get_positional(parsed, 0, "file") {
-    .Ok(path) => path,
-    .Err(msg) => exit_usage_error(msg),
-  }
-  out := case resolve_build_output(parsed, file) {
-    .Ok(path) => path,
-    .Err(msg) => {
-      eprintln(msg)
-      proc.exit(1)
-    },
-  }
-  artifacts := case pipeline.compile_entry_path(file) {
-    .Ok(result) => result,
-    .Err(err) => {
-      eprintln(format_compile_error(err))
-      proc.exit(1)
-    },
-  }
-  print_warnings(artifacts.warnings)
-  ext := path.extension(out)
-
-  if ext == ".wasm" {
-    case proc.env("TWINKLE_WRITE_BYTES_FALLBACK") {
-      .Some(_) => {
-        bytes := pipeline.emit_wasm(artifacts)
-
-        case fs.write_bytes(out, bytes) {
-          .Ok(_) => println("WASM output: ${out}"),
-          .Err(err) => {
-            eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
-            proc.exit(1)
-          },
-        }
-      },
-      .None => {
-        bytes := pipeline.emit_wasm_buffer(artifacts)
-
-        twinkle_runtime.write_buffer_raw(out, bytes.ptr, bytes.size)
-        bytes.free()
-        println("WASM output: ${out}")
-      },
-    }
-  } else {
-    wat := pipeline.emit_wat(artifacts)
-
-    case fs.write_text(out, wat) {
-      .Ok(_) => println("WAT output: ${out}"),
-      .Err(err) => {
-        eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
+  if parsed.positional.len() > 0 {
+    file := parsed.positional[0]
+    out := case resolve_build_output(parsed, file) {
+      .Ok(path) => path,
+      .Err(msg) => {
+        eprintln(msg)
         proc.exit(1)
       },
     }
+
+    if !build_to(file, out, Dict.new()).ok {
+      proc.exit(1)
+    }
+
+    return
+  }
+
+  run_build_project(parsed)
+}
+
+// Project mode: build the selected project entries, each to its default
+// `<root>/target/<name>.wasm` (or to `-o` for a single target).
+fn run_build_project(parsed: ParseResult) {
+  ctx := case context.discover() {
+    .Ok(c) => c,
+    .Err(err) => {
+      eprintln("error: ${err}")
+      proc.exit(1)
+    },
+  }
+  targets := case ctx.select_build_targets(parsed.get_option("target"), parsed.has_flag("all")) {
+    .Ok(t) => t,
+    .Err(msg) => {
+      eprintln("error: ${msg}")
+      proc.exit(1)
+    },
+  }
+
+  if targets.len() == 0 {
+    eprintln("error: no project entries configured in twinkle.toml")
+    proc.exit(1)
+  }
+
+  output_opt := parsed.get_option("output")
+
+  if targets.len() > 1 and output_opt.is_some() {
+    eprintln("error: -o cannot be used when building multiple targets; pass --target or drop -o")
+    proc.exit(1)
+  }
+
+  failed := false
+  seen_diags: Dict<String, Bool> = Dict.new()
+
+  for t in targets {
+    out := case output_opt {
+      .Some(o) => case validate_output_ext(o) {
+        .Ok(valid) => valid,
+        .Err(msg) => {
+          eprintln(msg)
+          proc.exit(1)
+        },
+      },
+      .None => ctx.default_output_path(t),
+    }
+
+    result := build_to(t.abs_path, out, seen_diags)
+    seen_diags = result.seen_diags
+
+    if !result.ok {
+      failed = true
+    }
+  }
+
+  if failed {
+    proc.exit(1)
+  }
+}
+
+// Compile `file` and write the artifact to `out`, choosing Wasm or WAT by the
+// output extension. Returns whether the build succeeded.
+fn build_to(file: String, out: String, seen_diags: Dict<String, Bool>) BuildResult {
+  artifacts := case pipeline.compile_entry_path(file) {
+    .Ok(result) => result,
+    .Err(err) => {
+      result := print_compile_error(err, seen_diags)
+      return .{ ok: false, seen_diags: result }
+    },
+  }
+  print_warnings(artifacts.warnings)
+
+  parent := path.dirname(out)
+
+  if parent != "." and parent != "" {
+    case fs.mkdirp(parent) {
+      .Ok(_) => {},
+      .Err(err) => {
+        eprintln("error: failed to create '${parent}': ${fs_error_message(err)}")
+        return .{ ok: false, seen_diags }
+      },
+    }
+  }
+
+  ok := if path.extension(out) == ".wasm" {
+    write_wasm(artifacts, out)
+  } else {
+    write_wat(artifacts, out)
+  }
+
+  .{ ok, seen_diags }
+}
+
+fn print_compile_error(err: CompileError, seen_diags: Dict<String, Bool>) Dict<String, Bool> {
+  case err {
+    .Diagnostics(de) => {
+      unique := unique_analysis_diags(de.diagnostics, seen_diags)
+
+      if unique.diagnostics.len() > 0 {
+        eprintln(format_analysis_diags_with_env(.Some(de.env), unique.diagnostics))
+      }
+
+      unique.seen
+    },
+    .Internal(_) => {
+      eprintln(format_compile_error(err))
+      seen_diags
+    },
+  }
+}
+
+fn write_wasm(artifacts: PipelineArtifacts, out: String) Bool {
+  case proc.env("TWINKLE_WRITE_BYTES_FALLBACK") {
+    .Some(_) => {
+      bytes := pipeline.emit_wasm(artifacts)
+
+      case fs.write_bytes(out, bytes) {
+        .Ok(_) => {
+          println("WASM output: ${out}")
+          true
+        },
+        .Err(err) => {
+          eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
+          false
+        },
+      }
+    },
+    .None => {
+      bytes := pipeline.emit_wasm_buffer(artifacts)
+
+      twinkle_runtime.write_buffer_raw(out, bytes.ptr, bytes.size)
+      bytes.free()
+      println("WASM output: ${out}")
+      true
+    },
+  }
+}
+
+fn write_wat(artifacts: PipelineArtifacts, out: String) Bool {
+  wat := pipeline.emit_wat(artifacts)
+
+  case fs.write_text(out, wat) {
+    .Ok(_) => {
+      println("WAT output: ${out}")
+      true
+    },
+    .Err(err) => {
+      eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
+      false
+    },
   }
 }

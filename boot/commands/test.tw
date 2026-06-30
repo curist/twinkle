@@ -37,10 +37,13 @@ pub fn run_test_command(parsed: ParseResult) {
     proc.exit(1)
   }
 
+  // `--filter`/`--verbose` are forwarded to each test program as arguments; the
+  // @std.testing runner reads them (preferring them over TWK_TEST_* env vars).
+  reporting_args := reporting_args_from(parsed)
   failed := false
 
   for entry in entries {
-    if !run_test_entry(path.join(root, entry)) {
+    if !run_test_entry(path.join(root, entry), reporting_args) {
       failed = true
     }
   }
@@ -48,6 +51,22 @@ pub fn run_test_command(parsed: ParseResult) {
   if failed {
     proc.exit(1)
   }
+}
+
+// CLI reporting flags translated into the arguments the test runner reads.
+fn reporting_args_from(parsed: ParseResult) Vector<String> {
+  args: Vector<String> = []
+
+  case parsed.get_option("filter") {
+    .Some(f) => args = .concat(["--filter", f]),
+    .None => {},
+  }
+
+  if parsed.has_flag("verbose") {
+    args = .append("--verbose")
+  }
+
+  args
 }
 
 // Configured test entries, falling back to a conventional `tests/main.tw`
@@ -66,7 +85,8 @@ fn resolve_test_entries(root: String, cfg: config.Config) Vector<String> {
 }
 
 // Compile and run one test entry. Returns true when the program exits 0.
-fn run_test_entry(file: String) Bool {
+// `reporting_args` are forwarded to the test program (e.g. `--filter`).
+fn run_test_entry(file: String, reporting_args: Vector<String>) Bool {
   artifacts := case pipeline.compile_entry_path(file) {
     .Ok(result) => result,
     .Err(err) => {
@@ -77,5 +97,5 @@ fn run_test_entry(file: String) Bool {
 
   print_warnings(artifacts.warnings)
   wasm_bytes := pipeline.emit_wasm(artifacts)
-  proc.run_wasm(wasm_bytes, [file]) == 0
+  proc.run_wasm(wasm_bytes, [file].concat(reporting_args)) == 0
 }

@@ -1,0 +1,230 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use lib.module.loader
+use lib.project.config
+use lib.project.context
+
+fn cfg_with(name: String?, project: Vector<String>, test: Vector<String>) config.Config {
+  config.Config.{ name, project_entries: project, test_entries: test }
+}
+
+fn fixture_root() String {
+  root := loader.find_project_root("boot")
+  "${root}/tests/fixtures/project_reachable"
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("project context")
+    .test(
+      "target name is the entry file stem",
+      fn() {
+        try assert.equal(context.derive_target_name("cmd/server.tw"), "server")
+        try assert.equal(context.derive_target_name("cmd/server/main.tw"), "main")
+        try assert.equal(context.derive_target_name("main.tw"), "main")
+        .Ok({})
+      },
+    )
+    .test(
+      "from_root builds entry targets with derived names and absolute paths",
+      fn() {
+        cfg := cfg_with(.Some("demo"), ["cmd/server.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        try assert.equal(ctx.project_entries.len(), 1)
+        try assert.equal(ctx.project_entries[0].name, "server")
+        try assert.equal(ctx.project_entries[0].rel_path, "cmd/server.tw")
+        try assert.equal(ctx.project_entries[0].abs_path, "/proj/cmd/server.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "from_root keeps project and test entries separate",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw"], ["tests/main.tw"])
+        ctx := try context.from_root("/proj", cfg)
+        try assert.equal(ctx.project_entries.len(), 1)
+        try assert.equal(ctx.test_entries.len(), 1)
+        try assert.equal(ctx.test_entries[0].rel_path, "tests/main.tw")
+        try assert.equal(ctx.test_entries[0].abs_path, "/proj/tests/main.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "from_root rejects project entries that derive the same target name",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/server.tw", "other/server.tw"], [])
+        case context.from_root("/proj", cfg) {
+          .Ok(_) => .Err("expected duplicate target-name rejection"),
+          .Err(_) => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "reachable_modules returns project-local modules and excludes stdlib",
+      fn() {
+        cfg := cfg_with(.None, ["main.tw"], [])
+        ctx := try context.from_root(fixture_root(), cfg)
+        r := ctx.reachable_modules(ctx.project_entries)
+        try assert.equal(r.failed.len(), 0)
+
+        // main.tw imports a project-local sibling (helper.tw) and @std.path;
+        // only the two project-local files are reported.
+        try assert.equal(r.modules.len(), 2)
+
+        for m in r.modules {
+          try assert.is_false(m.starts_with("/__twinkle_core"))
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "reachable_modules dedupes a module shared across entries",
+      fn() {
+        cfg := cfg_with(.None, ["main.tw", "other.tw"], [])
+        ctx := try context.from_root(fixture_root(), cfg)
+        r := ctx.reachable_modules(ctx.project_entries)
+
+        // main.tw + other.tw + the shared helper.tw, counted once.
+        try assert.equal(r.modules.len(), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "reachable_modules records a failing entry without aborting siblings",
+      fn() {
+        // `missing.tw` does not exist on disk, so discovery fails to load it.
+        cfg := cfg_with(.None, ["missing.tw", "main.tw"], [])
+        ctx := try context.from_root(fixture_root(), cfg)
+        r := ctx.reachable_modules(ctx.project_entries)
+        try assert.is_true(r.failed.len() >= 1)
+        try assert.is_true(r.diagnostics.len() >= 1)
+
+        // The sibling entry is still fully discovered.
+        try assert.is_true(r.modules.len() >= 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "select_single returns the sole project entry when no target is named",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        e := try ctx.select_single(.None)
+        try assert.equal(e.name, "app")
+        .Ok({})
+      },
+    )
+    .test(
+      "select_single picks the named target among several",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw", "cmd/server.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        e := try ctx.select_single(.Some("server"))
+        try assert.equal(e.rel_path, "cmd/server.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "select_single errors on an unknown target name",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        case ctx.select_single(.Some("nope")) {
+          .Ok(_) => .Err("expected unknown-target error"),
+          .Err(_) => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "select_single errors when multiple entries need a target",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw", "cmd/server.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        case ctx.select_single(.None) {
+          .Ok(_) => .Err("expected ambiguous-target error"),
+          .Err(_) => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "select_single errors when no project entries are configured",
+      fn() {
+        cfg := cfg_with(.None, [], [])
+        ctx := try context.from_root("/proj", cfg)
+        case ctx.select_single(.None) {
+          .Ok(_) => .Err("expected no-entries error"),
+          .Err(_) => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "select_build_targets with --all returns every project entry",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw", "cmd/server.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        targets := try ctx.select_build_targets(.None, true)
+        try assert.equal(targets.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "select_build_targets errors on multiple entries without --all or --target",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw", "cmd/server.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        case ctx.select_build_targets(.None, false) {
+          .Ok(_) => .Err("expected ambiguous-target error"),
+          .Err(_) => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "select_build_targets builds the sole entry by default",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        targets := try ctx.select_build_targets(.None, false)
+        try assert.equal(targets.len(), 1)
+        try assert.equal(targets[0].name, "app")
+        .Ok({})
+      },
+    )
+    .test(
+      "default_output_path is <root>/target/<name>.wasm",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/server.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        out := ctx.default_output_path(ctx.project_entries[0])
+        try assert.equal(out, "/proj/target/server.wasm")
+        .Ok({})
+      },
+    )
+    .test(
+      "all_entries is project entries followed by test entries",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw", "cmd/server.tw"], ["tests/main.tw"])
+        ctx := try context.from_root("/proj", cfg)
+        all := ctx.all_entries()
+        try assert.equal(all.len(), 3)
+        try assert.equal(all[0].rel_path, "cmd/app.tw")
+        try assert.equal(all[1].rel_path, "cmd/server.tw")
+        try assert.equal(all[2].rel_path, "tests/main.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "discover_in loads the nearest config and builds entry targets",
+      fn() {
+        ctx := try context.discover_in(fixture_root())
+        try assert.equal(ctx.root, fixture_root())
+        try assert.equal(ctx.project_entries.len(), 1)
+        try assert.equal(ctx.project_entries[0].name, "main")
+        try assert.equal(ctx.project_entries[0].rel_path, "main.tw")
+        try assert.equal(ctx.test_entries.len(), 1)
+        try assert.equal(ctx.test_entries[0].rel_path, "other.tw")
+        .Ok({})
+      },
+    )
+}
