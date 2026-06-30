@@ -86,6 +86,8 @@ fmt_cmd := command
 cli := app
   .make("twk", "Twinkle compiler")
   .add_commands([
+    new_cmd,
+    init_cmd,
     run_cmd,
     check_cmd,
     lint_cmd,
@@ -94,8 +96,6 @@ cli := app
     parse_cmd,
     fmt_cmd,
     test_cmd,
-    new_cmd,
-    init_cmd,
     lsp_cmd,
     version_cmd,
     help_cmd,
