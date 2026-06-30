@@ -1,14 +1,29 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use commands.common
 use commands.lint
 use compiler.base_env
 use compiler.lint_rules
 use compiler.query.analyze
 use compiler.query.cache
+use lib.source.diagnostics
 use lib.source.identity
 use lib.source.overlay
 use lib.source.report.{FixEdit}
 use lib.source.rewrite
-use @std.testing.assert as assert
-use @std.testing as runner
+use lib.source.span
+
+fn analysis_diag(path: String, start: Int, end: Int, message: String) analyze.AnalysisDiag {
+  analyze.AnalysisDiag.{
+    identity: identity.from_path(path),
+    version: .None,
+    kind: diagnostics.error(span.new(0, start, end), message),
+    stage: "parse",
+    data: .None,
+    type_names: Dict.new(),
+  }
+}
 
 fn analyze_src(text: String, lint_mode: Bool) analyze.ModuleResult {
   ov := overlay.from_documents([
@@ -48,6 +63,42 @@ pub fn suite() runner.Suite {
       fn() {
         out := lint.apply_edits("ac", [FixEdit.{ start: 1, end: 1, replacement: "b" }])
         try assert.equal(out, "abc")
+        .Ok({})
+      },
+    )
+    .test(
+      "unique_analysis_diags dedupes shared dependency diagnostics",
+      fn() {
+        first := analysis_diag("/tmp/shared.tw", 4, 8, "boom")
+        duplicate := analysis_diag("/tmp/shared.tw", 4, 8, "boom")
+        other := analysis_diag("/tmp/other.tw", 4, 8, "boom")
+        result := common.unique_analysis_diags([first, duplicate, other], Dict.new())
+        try assert.equal(result.diagnostics.len(), 2)
+        try assert.equal(result.diagnostics[0].identity.path, "/tmp/shared.tw")
+        try assert.equal(result.diagnostics[1].identity.path, "/tmp/other.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "format_analysis_diags renders discovery errors with their message",
+      fn() {
+        rendered := common.format_analysis_diags([
+          analysis_diag("/tmp/bad.tw", 0, 1, "expected expression"),
+        ])
+        try assert.str_contains(rendered, "parse:")
+        try assert.str_contains(rendered, "expected expression")
+        try assert.str_contains(rendered, "/tmp/bad.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "lint collection surfaces analysis errors",
+      fn() {
+        result := lint.gather_lint_multi(["/tmp/twinkle-definitely-missing-lint-entry.tw"])
+        try assert.equal(result.findings.len(), 0)
+        try assert.is_true(result.diagnostics.len() > 0)
+        rendered := common.format_analysis_diags(result.diagnostics)
+        try assert.str_contains(rendered, "Cannot read")
         .Ok({})
       },
     )

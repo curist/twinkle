@@ -460,8 +460,9 @@ sections above.
   target name and the `twinkle.toml` location (not cwd). Explicit mode unchanged.
 * **`fmt`/`lint` scope:** reachable-from-entries only; orphan files use explicit
   file/glob args. A dedicated tree/glob mode is deferred.
-* **Test filter/report:** first release ships env-var control only
-  (`TWK_TEST_FILTER`, `TWK_TEST_REPORT`, `NO_COLOR`); CLI flags land in Phase 4.
+* **Test filter/report:** `twk test --filter <substr>` and `--verbose` forward
+  reporting arguments to each test program, taking precedence over the existing
+  environment controls (`TWK_TEST_FILTER`, `TWK_TEST_REPORT=verbose`, `NO_COLOR`).
 
 ---
 

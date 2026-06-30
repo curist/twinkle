@@ -99,6 +99,7 @@ pub fn suite() runner.Suite {
         ctx := try context.from_root(fixture_root(), cfg)
         r := ctx.reachable_modules(ctx.project_entries)
         try assert.is_true(r.failed.len() >= 1)
+        try assert.is_true(r.diagnostics.len() >= 1)
 
         // The sibling entry is still fully discovered.
         try assert.is_true(r.modules.len() >= 2)

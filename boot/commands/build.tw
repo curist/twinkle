@@ -9,11 +9,16 @@ use @std.fs
 use @std.path
 use @std.proc
 
-use commands.common.{format_compile_error, fs_error_message, print_warnings}
-use compiler.artifacts.{PipelineArtifacts}
+use commands.common.{
+  format_analysis_diags_with_env, format_compile_error, fs_error_message, print_warnings,
+  unique_analysis_diags,
+}
+use compiler.artifacts.{CompileError, PipelineArtifacts}
 use compiler.pipeline
 use lib.argparse.app.{ParseResult}
 use lib.project.context
+
+type BuildResult = .{ ok: Bool, seen_diags: Dict<String, Bool> }
 
 extern twinkle_runtime fn write_buffer_raw(path: String, ptr: Int, len: Int) Void
 
@@ -58,7 +63,7 @@ pub fn run_build_command(parsed: ParseResult) {
       },
     }
 
-    if !build_to(file, out) {
+    if !build_to(file, out, Dict.new()).ok {
       proc.exit(1)
     }
 
@@ -99,6 +104,7 @@ fn run_build_project(parsed: ParseResult) {
   }
 
   failed := false
+  seen_diags: Dict<String, Bool> = Dict.new()
 
   for t in targets {
     out := case output_opt {
@@ -112,7 +118,10 @@ fn run_build_project(parsed: ParseResult) {
       .None => ctx.default_output_path(t),
     }
 
-    if !build_to(t.abs_path, out) {
+    result := build_to(t.abs_path, out, seen_diags)
+    seen_diags = result.seen_diags
+
+    if !result.ok {
       failed = true
     }
   }
@@ -124,12 +133,12 @@ fn run_build_project(parsed: ParseResult) {
 
 // Compile `file` and write the artifact to `out`, choosing Wasm or WAT by the
 // output extension. Returns whether the build succeeded.
-fn build_to(file: String, out: String) Bool {
+fn build_to(file: String, out: String, seen_diags: Dict<String, Bool>) BuildResult {
   artifacts := case pipeline.compile_entry_path(file) {
     .Ok(result) => result,
     .Err(err) => {
-      eprintln(format_compile_error(err))
-      return false
+      result := print_compile_error(err, seen_diags)
+      return .{ ok: false, seen_diags: result }
     },
   }
   print_warnings(artifacts.warnings)
@@ -141,15 +150,35 @@ fn build_to(file: String, out: String) Bool {
       .Ok(_) => {},
       .Err(err) => {
         eprintln("error: failed to create '${parent}': ${fs_error_message(err)}")
-        return false
+        return .{ ok: false, seen_diags }
       },
     }
   }
 
-  if path.extension(out) == ".wasm" {
+  ok := if path.extension(out) == ".wasm" {
     write_wasm(artifacts, out)
   } else {
     write_wat(artifacts, out)
+  }
+
+  .{ ok, seen_diags }
+}
+
+fn print_compile_error(err: CompileError, seen_diags: Dict<String, Bool>) Dict<String, Bool> {
+  case err {
+    .Diagnostics(de) => {
+      unique := unique_analysis_diags(de.diagnostics, seen_diags)
+
+      if unique.diagnostics.len() > 0 {
+        eprintln(format_analysis_diags_with_env(.Some(de.env), unique.diagnostics))
+      }
+
+      unique.seen
+    },
+    .Internal(_) => {
+      eprintln(format_compile_error(err))
+      seen_diags
+    },
   }
 }
 

@@ -5,10 +5,15 @@
 
 use @std.proc
 
-use commands.common.{format_compile_error, print_warnings}
+use commands.common.{
+  format_analysis_diags_with_env, format_compile_error, print_warnings, unique_analysis_diags,
+}
+use compiler.artifacts.{CompileError}
 use compiler.pipeline
 use lib.argparse.app.{ParseResult}
 use lib.project.context
+
+type CheckOneResult = .{ ok: Bool, seen_diags: Dict<String, Bool> }
 
 pub fn run_check_command(parsed: ParseResult) {
   files := case check_targets(parsed) {
@@ -25,9 +30,13 @@ pub fn run_check_command(parsed: ParseResult) {
   }
 
   failed := false
+  seen_diags: Dict<String, Bool> = Dict.new()
 
   for file in files {
-    if !check_one(file) {
+    result := check_one(file, seen_diags)
+    seen_diags = result.seen_diags
+
+    if !result.ok {
       failed = true
     }
   }
@@ -57,16 +66,34 @@ fn check_targets(parsed: ParseResult) Result<Vector<String>, String> {
   )
 }
 
-fn check_one(file: String) Bool {
+fn check_one(file: String, seen_diags: Dict<String, Bool>) CheckOneResult {
   case pipeline.compile_entry_path(file) {
     .Ok(artifacts) => {
       print_warnings(artifacts.warnings)
       println("Type checking succeeded: ${file}")
-      true
+      .{ ok: true, seen_diags }
     },
     .Err(err) => {
+      result := print_compile_error(err, seen_diags)
+      .{ ok: false, seen_diags: result }
+    },
+  }
+}
+
+fn print_compile_error(err: CompileError, seen_diags: Dict<String, Bool>) Dict<String, Bool> {
+  case err {
+    .Diagnostics(de) => {
+      unique := unique_analysis_diags(de.diagnostics, seen_diags)
+
+      if unique.diagnostics.len() > 0 {
+        eprintln(format_analysis_diags_with_env(.Some(de.env), unique.diagnostics))
+      }
+
+      unique.seen
+    },
+    .Internal(_) => {
       eprintln(format_compile_error(err))
-      false
+      seen_diags
     },
   }
 }

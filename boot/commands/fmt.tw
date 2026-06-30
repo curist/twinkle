@@ -7,8 +7,7 @@
 use @std.fs
 use @std.proc
 
-use commands.common.{fs_error_message}
-
+use commands.common.{format_analysis_diags, fs_error_message}
 use compiler.fmt.formatter
 use compiler.lexer
 use compiler.parser
@@ -44,8 +43,12 @@ pub fn run_fmt_command(parsed: ParseResult) {
   }
   reach := ctx.reachable_modules(ctx.all_entries())
 
-  for f in reach.failed {
-    eprintln("error: failed to read project module '${f}'")
+  if reach.diagnostics.len() > 0 {
+    eprintln(format_analysis_diags(reach.diagnostics))
+  } else {
+    for f in reach.failed {
+      eprintln("error: failed to discover project module '${f}'")
+    }
   }
 
   if reach.modules.len() == 0 and reach.failed.len() == 0 {

@@ -44,13 +44,46 @@ pub fn fs_error_message(err: fs.FsError) String {
 /// Format a CompileError into a human-readable string.
 pub fn format_compile_error(err: CompileError) String {
   case err {
-    .Diagnostics(de) => format_analysis_diags(de.env, de.diagnostics),
+    .Diagnostics(de) => format_analysis_diags_with_env(.Some(de.env), de.diagnostics),
     .Internal(msg) => msg,
   }
 }
 
+/// A stable key for deduping diagnostics reached through multiple entries.
+pub fn analysis_diag_key(d: analyze.AnalysisDiag) String {
+  sp := d.kind.span()
+  "${d.identity.path}|${d.stage}|${sp.start}|${sp.end}|${d.kind.message()}"
+}
+
+pub type UniqueAnalysisDiags = .{
+  diagnostics: Vector<analyze.AnalysisDiag>,
+  seen: Dict<String, Bool>,
+}
+
+/// Return diagnostics not already present in `seen`, plus the updated seen set.
+pub fn unique_analysis_diags(diags: Vector<analyze.AnalysisDiag>, seen: Dict<String, Bool>) UniqueAnalysisDiags {
+  cur := seen
+  out: Vector<analyze.AnalysisDiag> = []
+
+  for d in diags {
+    key := analysis_diag_key(d)
+
+    if !cur.has(key) {
+      cur[key] = true
+      out = .append(d)
+    }
+  }
+
+  .{ diagnostics: out, seen: cur }
+}
+
+/// Format analysis diagnostics with source locations when no resolved env is available.
+pub fn format_analysis_diags(diags: Vector<analyze.AnalysisDiag>) String {
+  format_analysis_diags_with_env(.None, diags)
+}
+
 /// Format analysis diagnostics with source locations, grouped by file.
-fn format_analysis_diags(env: ResolvedEnv, diags: Vector<analyze.AnalysisDiag>) String {
+pub fn format_analysis_diags_with_env(env: ResolvedEnv?, diags: Vector<analyze.AnalysisDiag>) String {
   if diags.len() == 0 {
     return "compilation failed"
   }
@@ -68,7 +101,7 @@ fn format_analysis_diags(env: ResolvedEnv, diags: Vector<analyze.AnalysisDiag>) 
     registry.add_file(reg, d.identity.path, source)
     ctx := diag_render.RenderCtx.{
       registry: reg,
-      env: .Some(env),
+      env,
       module: .None,
       config,
       type_names: .Some(d.type_names),
