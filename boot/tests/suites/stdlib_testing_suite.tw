@@ -1,0 +1,51 @@
+use @std.testing.assert as std_assert
+use @std.testing as std_testing
+
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("std testing")
+    .test(
+      "suite builder accumulates tests",
+      fn() {
+        s := std_testing
+          .suite("inner")
+          .test(
+            "a",
+            fn() {
+              .Ok({})
+            },
+          )
+          .test(
+            "b",
+            fn() {
+              .Ok({})
+            },
+          )
+        try assert.equal(s.name, "inner")
+        try assert.equal(s.tests.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "std assert.equal reports pass and fail",
+      fn() {
+        try assert.is_ok(std_assert.equal(2, 2))
+        try assert.is_err(std_assert.equal(2, 3))
+        .Ok({})
+      },
+    )
+    .test(
+      "std assert string and option helpers behave",
+      fn() {
+        try assert.is_ok(std_assert.str_contains("hello", "ell"))
+        try assert.is_ok(std_assert.is_true(true))
+        try assert.is_ok(std_assert.is_some(.Some(1)))
+        absent: Int? = .None
+        try assert.is_err(std_assert.is_some(absent))
+        .Ok({})
+      },
+    )
+}

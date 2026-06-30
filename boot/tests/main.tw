@@ -115,6 +115,7 @@ use .suites.stdlib_host_suite
 use .suites.stdlib_math_suite
 use .suites.stdlib_path_suite
 use .suites.stdlib_queue_suite
+use .suites.stdlib_testing_suite
 use .suites.stdlib_regexp_suite
 use .suites.stdlib_tuple_suite
 use .suites.string_edge_cases_suite
@@ -159,6 +160,7 @@ runner.run_all([
   stdlib_buffer_suite.suite(),
   stdlib_math_suite.suite(),
   stdlib_host_suite.suite(),
+  stdlib_testing_suite.suite(),
   source_suite.suite(),
   diag_suite.suite(),
   render_suite.suite(),

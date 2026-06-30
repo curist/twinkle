@@ -17,6 +17,7 @@ use tests.suites.query_keys_suite
 use tests.suites.source_suite
 use tests.suites.stdlib_host_suite
 use tests.suites.stdlib_path_suite
+use tests.suites.stdlib_testing_suite
 
 runner.run_all([
   lib_json_suite.suite(),
@@ -36,5 +37,6 @@ runner.run_all([
   api_range_iterator_suite.suite(),
   stdlib_path_suite.suite(),
   stdlib_host_suite.suite(),
+  stdlib_testing_suite.suite(),
   source_suite.suite(),
 ])
