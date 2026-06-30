@@ -44,8 +44,8 @@ Available today:
 > `name`/`entries`, and `[test]` `entries`, validating entries as project-local
 > `.tw` paths. The LSP seeds workspace analysis from the configured entries
 > (open-document fallback when none), and `twk test` consumes `[test].entries`.
-> The broader `fmt`/`check`/`build`/`run` entry-driven behavior below is still
-> planned.
+> The broader `fmt`/`lint`/`check`/`build`/`run` command migration is tracked in
+> [project-subcommands.md](project-subcommands.md).
 
 `twinkle.toml` currently acts mostly as a project-root marker. Tooling should
 turn it into the shared source of truth for project-level behavior while keeping
