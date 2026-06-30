@@ -1,0 +1,75 @@
+//! Project command context: the shared project model derived from twinkle.toml.
+//!
+//! `ProjectContext` resolves the project root, its config, and the configured
+//! project/test entries into `EntryTarget`s with derived target names, so CLI
+//! commands operate on a single project model instead of re-deriving it.
+
+use @std.path
+
+use lib.project.config
+
+pub type EntryTarget = .{ name: String, rel_path: String, abs_path: String }
+
+pub type ProjectContext = .{
+  root: String,
+  config: config.Config,
+  project_entries: Vector<EntryTarget>,
+  test_entries: Vector<EntryTarget>,
+}
+
+/// Derive a target name from an entry's project-relative path. A `main.tw`
+/// entry takes its parent directory's name, or the project name (then "main")
+/// when it sits at the project root; any other file uses its stem.
+pub fn derive_target_name(rel_path: String, project_name: String?) String {
+  s := path.stem(rel_path)
+  if s != "main" {
+    return s
+  }
+
+  parent := path.basename(path.dirname(rel_path))
+  cond {
+    parent != "" and parent != "." and parent != "/" => parent,
+    _ => case project_name {
+      .Some(n) => n,
+      .None => "main",
+    },
+  }
+}
+
+/// Build a `ProjectContext` from an already-resolved root and config. Pure:
+/// callers that need filesystem discovery use `discover`.
+pub fn from_root(root: String, cfg: config.Config) Result<ProjectContext, String> {
+  project := build_entries(root, cfg.project_entries, cfg.name)
+  test := build_entries(root, cfg.test_entries, cfg.name)
+  try reject_conflicts(project)
+  .Ok(ProjectContext.{ root, config: cfg, project_entries: project, test_entries: test })
+}
+
+fn build_entries(root: String, rels: Vector<String>, project_name: String?) Vector<EntryTarget> {
+  collect rel in rels {
+    EntryTarget.{
+      name: derive_target_name(rel, project_name),
+      rel_path: rel,
+      abs_path: path.join(root, rel),
+    }
+  }
+}
+
+// Reject project entries whose paths derive the same target name, so build/run
+// target selection stays unambiguous.
+fn reject_conflicts(entries: Vector<EntryTarget>) Result<Void, String> {
+  seen: Dict<String, String> = Dict.new()
+
+  for e in entries {
+    case seen.get(e.name) {
+      .Some(prev) => return .Err(
+        "target name '${e.name}' is derived from both '${prev}' and '${e.rel_path}'; choose distinct entry paths",
+      ),
+      .None => {},
+    }
+
+    seen[e.name] = e.rel_path
+  }
+
+  .Ok({})
+}

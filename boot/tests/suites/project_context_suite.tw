@@ -1,0 +1,76 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use lib.project.config
+use lib.project.context
+
+fn cfg_with(name: String?, project: Vector<String>, test: Vector<String>) config.Config {
+  config.Config.{ name, project_entries: project, test_entries: test }
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("project context")
+    .test(
+      "target name is the stem for a nested non-main entry",
+      fn() {
+        try assert.equal(context.derive_target_name("cmd/server.tw", .None), "server")
+        .Ok({})
+      },
+    )
+    .test(
+      "target name is the parent dir for a nested main entry",
+      fn() {
+        try assert.equal(context.derive_target_name("cmd/server/main.tw", .None), "server")
+        .Ok({})
+      },
+    )
+    .test(
+      "root main entry uses the project name when present",
+      fn() {
+        try assert.equal(context.derive_target_name("main.tw", .Some("demo")), "demo")
+        .Ok({})
+      },
+    )
+    .test(
+      "root main entry falls back to 'main' without a project name",
+      fn() {
+        try assert.equal(context.derive_target_name("main.tw", .None), "main")
+        .Ok({})
+      },
+    )
+    .test(
+      "from_root builds entry targets with derived names and absolute paths",
+      fn() {
+        cfg := cfg_with(.Some("demo"), ["cmd/server.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        try assert.equal(ctx.project_entries.len(), 1)
+        try assert.equal(ctx.project_entries[0].name, "server")
+        try assert.equal(ctx.project_entries[0].rel_path, "cmd/server.tw")
+        try assert.equal(ctx.project_entries[0].abs_path, "/proj/cmd/server.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "from_root keeps project and test entries separate",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw"], ["tests/main.tw"])
+        ctx := try context.from_root("/proj", cfg)
+        try assert.equal(ctx.project_entries.len(), 1)
+        try assert.equal(ctx.test_entries.len(), 1)
+        try assert.equal(ctx.test_entries[0].rel_path, "tests/main.tw")
+        try assert.equal(ctx.test_entries[0].abs_path, "/proj/tests/main.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "from_root rejects project entries that derive the same target name",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/server.tw", "other/server.tw"], [])
+        case context.from_root("/proj", cfg) {
+          .Ok(_) => .Err("expected duplicate target-name rejection"),
+          .Err(_) => .Ok({}),
+        }
+      },
+    )
+}
