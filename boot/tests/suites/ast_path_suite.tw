@@ -1,9 +1,10 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.ast.{Module}
 use compiler.parser
 use compiler.query.ast_path
 use compiler.query.ast_path.{NodeRef}
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn parse_src(src: String) Module {
   parser.parse(src, 0).value

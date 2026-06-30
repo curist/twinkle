@@ -1,8 +1,7 @@
-use @std.view
-use @std.view.{View}
-
 use @std.testing.assert as assert
 use @std.testing as runner
+use @std.view
+use @std.view.{View}
 
 fn unwrap_or(opt: Int?, fallback: Int) Int {
   case opt {

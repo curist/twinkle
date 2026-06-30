@@ -1,10 +1,11 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.base_env
 use compiler.checker
 use compiler.parser
 use compiler.query.fingerprint
 use compiler.resolver.{ModuleExports, extract_exports_for_module}
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn exports_for(source: String) ModuleExports {
   parsed := parser.parse(source, 0)

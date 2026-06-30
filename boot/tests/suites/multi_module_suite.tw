@@ -1,12 +1,13 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use commands.common.{format_compile_error}
 use compiler.core_ir.{CoreExpr, FunctionDef}
 use compiler.module_compiler
 use compiler.pipeline
 use compiler.resolver.{ResolvedEnv}
 use lib.module.loader
-use @std.testing.assert as assert
 use tests.helpers.codegen_harness
-use @std.testing as runner
 
 fn fixtures_dir() String {
   root := loader.find_project_root("boot")

@@ -1,10 +1,11 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.base_env
 use compiler.checker
 use compiler.parser
 use compiler.query.cache
 use lib.query.keys
-use @std.testing.assert as assert
-use @std.testing as runner
 
 pub fn suite() runner.Suite {
   runner

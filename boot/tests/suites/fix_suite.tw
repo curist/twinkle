@@ -1,3 +1,6 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.mono_type as mono_type
 use compiler.query.analyze
 use lib.json
@@ -7,8 +10,6 @@ use lib.source.diagnostics.{DiagKind}
 use lib.source.report as report
 use lib.source.span
 use lib.text.line_index
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn s(start: Int, end: Int) span.Span {
   span.new(0, start, end)

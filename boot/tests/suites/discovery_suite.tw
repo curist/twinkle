@@ -1,4 +1,6 @@
 use @std.path
+use @std.testing.assert as assert
+use @std.testing as runner
 
 use compiler.base_env.{builtin_env}
 use compiler.imports
@@ -7,8 +9,6 @@ use compiler.query.cache
 use lib.module.loader
 use lib.source.identity
 use lib.source.overlay
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn fixtures_dir() String {
   root := loader.find_project_root("boot")

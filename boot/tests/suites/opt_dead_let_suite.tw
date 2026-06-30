@@ -1,3 +1,6 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.anf.{AnfExpr, AnfMatchArm, AnfOp}
 use compiler.builtins.{make_builtin_registry}
 use compiler.core_ir.{FuncId, LocalId, VariantId}
@@ -6,8 +9,6 @@ use compiler.opt.copy_prop.{copy_propagate, subst_atom}
 use compiler.opt.dead_let.{dead_let_elim, dead_let_elim_with_pinned_and_semantics}
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.opt.use_count.{count_uses, count_uses_excluding_free_vars, is_pure}
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(id: Int) LocalId {

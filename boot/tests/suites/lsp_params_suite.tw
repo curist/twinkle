@@ -1,7 +1,8 @@
-use lib.json
-use lib.lsp.params
 use @std.testing.assert as assert
 use @std.testing as runner
+
+use lib.json
+use lib.lsp.params
 
 fn text_doc_item(uri: String, version: Int, text: String) json.Json {
   json.object([

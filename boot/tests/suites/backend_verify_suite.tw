@@ -1,5 +1,8 @@
 //! Tests for boot/compiler/backend/verify.tw — Phase 5.
 
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
 use compiler.backend.prepare.{PreparedModule, prepare_backend}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, SlotInfo}
@@ -12,8 +15,6 @@ use compiler.core_ir.{FieldId, FuncId, LocalId, Param}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv}
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn lid(n: Int) LocalId {
   LocalId.{ id: n }

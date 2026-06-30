@@ -1,3 +1,6 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.codegen.wasm_layout.{
   WasmRecordLayout, WasmValType, layout_of, mono_to_key, val_type_of, val_type_of_mono,
 }
@@ -8,8 +11,6 @@ use compiler.resolver.{
   plain_resolved_type_params,
 }
 use lib.source.span.{Span}
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn dummy_span() Span {

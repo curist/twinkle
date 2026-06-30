@@ -1,3 +1,6 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.base_env
 use compiler.checker
 use compiler.mono_type as mono_type
@@ -5,8 +8,6 @@ use compiler.parser
 use compiler.resolver
 use compiler.resolver.{plain_resolved_type_params}
 use lib.source.span
-use @std.testing.assert as assert
-use @std.testing as runner
 use tests.suites.resolver_suite as rsuite
 
 // ── Helpers ──────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
-use compiler.graph_scc
 use @std.testing.assert as assert
 use @std.testing as runner
+
+use compiler.graph_scc
 
 pub fn suite() runner.Suite {
   runner

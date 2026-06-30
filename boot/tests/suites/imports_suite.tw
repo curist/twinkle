@@ -1,9 +1,10 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.ast
 use compiler.imports
 use compiler.parser
 use lib.module.loader
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn parse_module(src: String) ast.Module {
   parser.parse(src, 0).value

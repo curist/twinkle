@@ -1,8 +1,9 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.codegen.wasm_ir.{AbiContract}
 use compiler.core_ir.{FuncId}
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn empty_registry() BuiltinRegistry {
   BuiltinRegistry.{

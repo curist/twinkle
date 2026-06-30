@@ -1,12 +1,12 @@
 use @std.proc
+use @std.testing.assert as assert
+use @std.testing as runner
 
 use compiler.query.cache
 use compiler.query.diagnostics
 use compiler.query.progress
 use compiler.query.semantic
 use lib.json
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn stage_tag(stage: progress.AnalysisStage) String {
   case stage {

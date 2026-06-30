@@ -1,10 +1,11 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.anf.{AnfExpr, AnfFunctionDef}
 use compiler.anf_analysis.{set_has}
 use compiler.core_ir.{FieldId, FuncId, LocalId, Param}
 use compiler.mono_type.{TypeId}
 use compiler.opt.liveness.{annotate_in_place, live_after}
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(id: Int) LocalId {

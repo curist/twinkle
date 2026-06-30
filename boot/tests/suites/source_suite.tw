@@ -1,10 +1,11 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use lib.source.diagnostics as diag
 use lib.source.identity
 use lib.source.overlay
 use lib.source.registry
 use lib.source.span
-use @std.testing.assert as assert
-use @std.testing as runner
 
 pub fn suite() runner.Suite {
   runner

@@ -1,11 +1,12 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.query.diagnostics as query_diagnostics
 use lib.json
 use lib.lsp.diagnostics
 use lib.source.diagnostics as diag
 use lib.source.span
 use lib.text.line_index
-use @std.testing.assert as assert
-use @std.testing as runner
 
 pub fn suite() runner.Suite {
   runner

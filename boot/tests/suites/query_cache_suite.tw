@@ -1,8 +1,9 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.parser
 use compiler.query.cache
 use lib.query.keys
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn parsed(text: String) cache.ParsedModule {
   p := parser.parse(text, 0)

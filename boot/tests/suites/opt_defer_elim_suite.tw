@@ -1,8 +1,9 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfOp}
 use compiler.core_ir.{FuncId, LocalId, Param}
 use compiler.opt.defer_elim.{eliminate_defers}
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(id: Int) LocalId {

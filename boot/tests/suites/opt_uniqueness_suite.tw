@@ -1,3 +1,6 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, FieldAtom}
 use compiler.builder_family.{BuilderConfig}
 use compiler.core_ir.{FieldId, FuncId, LocalId, Param, VariantId}
@@ -6,8 +9,6 @@ use compiler.opt.semantics.{CallSemantics, OptimizerSemantics}
 use compiler.opt.uniqueness.{
   uniqueness_rewrite_with_semantics, uniqueness_rewrite_with_semantics_and_consumed_and_fresh,
 }
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(id: Int) LocalId {

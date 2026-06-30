@@ -15,6 +15,8 @@
 //!     resolve and type-check without errors
 
 use @std.path
+use @std.testing.assert as assert
+use @std.testing as runner
 
 use compiler.base_env.{builtin_env, builtin_type_env}
 use compiler.builtins.{make_builtin_registry}
@@ -23,8 +25,6 @@ use compiler.parser
 use compiler.resolver.{lookup_function, lookup_method, lookup_registered_function}
 use compiler.signatures.{load_signatures, to_internal_name}
 use lib.module.loader
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 fn signatures_dir() String {

@@ -1,7 +1,6 @@
 use @std.testing.assert as std_assert
-use @std.testing as std_testing
-
 use @std.testing.assert as assert
+use @std.testing as std_testing
 use @std.testing as runner
 
 pub fn suite() runner.Suite {

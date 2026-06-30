@@ -4,14 +4,15 @@
 //! CaptureParam, Param, Local, PatternLocal, and DeadPlaceholder slots,
 //! with correct ABI ordering and mono type resolution.
 
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, SlotInfo, SlotRole}
 use compiler.backend.slot_assign.{assign_slots}
 use compiler.core_ir.{FuncId, LocalId, Param, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn mk_local(n: Int) LocalId {

@@ -1,3 +1,6 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
 use compiler.builtins.{make_builtin_registry}
 use compiler.checker
@@ -6,8 +9,6 @@ use compiler.lower_core
 use compiler.monomorphize
 use compiler.parser
 use compiler.resolver
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── Pipeline helpers ────────────────────────────────────────────────
 fn anf_src(src: String) Result<AnfModule, String> {

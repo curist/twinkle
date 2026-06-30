@@ -1,3 +1,6 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, FieldAtom}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
@@ -9,8 +12,6 @@ use compiler.core_ir.{FieldId, FuncId, LocalId, Param, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv, ResolvedField, ResolvedTypeDef, ResolvedVariant, TypeEntry}
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(n: Int) LocalId {

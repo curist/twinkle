@@ -1,8 +1,7 @@
-use @std.tuple
-use @std.tuple.{Pair, Triple}
-
 use @std.testing.assert as assert
 use @std.testing as runner
+use @std.tuple
+use @std.tuple.{Pair, Triple}
 
 pub fn suite() runner.Suite {
   runner

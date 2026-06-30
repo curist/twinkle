@@ -1,3 +1,6 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.mono_type.{MonoType}
 use compiler.query.diag_render
 use compiler.query.diag_render.{RenderCtx}
@@ -7,8 +10,6 @@ use lib.source.registry
 use lib.source.report.{RenderConfig}
 use lib.source.span
 use lib.source.span.{Span}
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn s(start: Int, end: Int) Span {
   span.new(0, start, end)

@@ -1,3 +1,6 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, FieldAtom}
 use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{PreparedModule, prepare_backend}
@@ -13,8 +16,6 @@ use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv, ResolvedField, ResolvedTypeDef, TypeEntry}
 use lib.source.span
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn dummy_span() span.Span {

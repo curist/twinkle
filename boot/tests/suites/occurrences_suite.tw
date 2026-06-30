@@ -1,7 +1,8 @@
-use compiler.query.occurrences as occ
-use lib.source.span
 use @std.testing.assert as assert
 use @std.testing as runner
+
+use compiler.query.occurrences as occ
+use lib.source.span
 
 fn sp(start: Int, end: Int) span.Span {
   span.new(0, start, end)

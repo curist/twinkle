@@ -1,6 +1,7 @@
-use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use @std.testing.assert as assert
 use @std.testing as runner
+
+use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 
 fn empty_registry() BuiltinRegistry {
   BuiltinRegistry.{

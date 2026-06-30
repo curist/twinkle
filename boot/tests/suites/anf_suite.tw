@@ -1,10 +1,11 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.anf.{
   AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom, FieldAtom, IndexKind, OpKind,
 }
 use compiler.core_ir.{FieldId, FuncId, LocalId, Param, VariantId}
 use compiler.mono_type.{TypeId}
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── Atom construction & matching ────────────────────────────────────
 fn test_atom_local() Result<Void, String> {

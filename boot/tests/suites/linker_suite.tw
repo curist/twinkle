@@ -1,10 +1,11 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.codegen.linker.{LinkedModule, link}
 use compiler.codegen.wasm_ir.{
   DataSegment, ElemDef, ExportDef, FieldDef, FuncDef, GlobalDef, HeapType, ImportDef, Instr,
   TableDef, TypeDef, ValType, WasmModule,
 }
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn empty_module(ns: String) WasmModule {

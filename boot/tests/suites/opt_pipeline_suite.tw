@@ -1,10 +1,11 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
 use compiler.builtins.{make_builtin_registry}
 use compiler.core_ir.{FuncId, LocalId, Param}
 use compiler.opt.pipeline.{optimize_module, optimize_module_with_semantics}
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(id: Int) LocalId {

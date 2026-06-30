@@ -1,10 +1,11 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.query.cache as query_cache
 use lib.json
 use lib.lsp.document_store
 use lib.lsp.protocol
 use lib.lsp.server_core
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn only_out(step: server_core.Step) json.Json!String {
   if step.outgoing.len() != 1 {

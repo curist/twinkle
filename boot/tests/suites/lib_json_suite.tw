@@ -1,6 +1,7 @@
-use lib.json
 use @std.testing.assert as assert
 use @std.testing as runner
+
+use lib.json
 
 pub fn suite() runner.Suite {
   runner

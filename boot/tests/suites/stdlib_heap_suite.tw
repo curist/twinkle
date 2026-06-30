@@ -1,6 +1,5 @@
 use @std.heap
 use @std.heap.{Heap, Pop}
-
 use @std.testing.assert as assert
 use @std.testing as runner
 

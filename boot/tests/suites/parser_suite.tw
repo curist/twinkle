@@ -1,13 +1,13 @@
 use @std.fs
 use @std.proc
+use @std.testing.assert as assert
+use @std.testing as runner
 
 use compiler.ast
 use compiler.lexer
 use compiler.parser
 use lib.source.diagnostics as diag
 use lib.source.registry
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── Helpers ──────────────────────────────────────────────────────────
 fn parse_ok(src: String) Result<ast.Module, String> {

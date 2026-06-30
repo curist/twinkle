@@ -1,3 +1,6 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.anf.{AnfOp}
 use compiler.builder_family.{vector_builder_config}
 use compiler.builtins.{make_builtin_registry}
@@ -6,8 +9,6 @@ use compiler.opt.semantics.{
   is_pure_with_semantics, make_prelude_optimizer_semantics, op_effect, op_has_fresh_result,
   reusable_update_site,
 }
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn lid(id: Int) LocalId {
   LocalId.{ id }

@@ -1,7 +1,8 @@
-use lib.json
-use lib.lsp.protocol
 use @std.testing.assert as assert
 use @std.testing as runner
+
+use lib.json
+use lib.lsp.protocol
 
 pub fn suite() runner.Suite {
   runner

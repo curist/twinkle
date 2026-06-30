@@ -1,8 +1,9 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.base_env
 use compiler.lint
 use compiler.parser
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn findings(src: String) Vector<lint.LintFinding> {
   parsed := parser.parse(src, 0)

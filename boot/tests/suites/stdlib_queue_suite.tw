@@ -1,6 +1,5 @@
 use @std.queue
 use @std.queue.{Pop, Queue}
-
 use @std.testing.assert as assert
 use @std.testing as runner
 

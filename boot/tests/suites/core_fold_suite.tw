@@ -1,8 +1,9 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.core_fold.{fold_children}
 use compiler.core_ir.{CoreExpr}
 use lib.source.span
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn lit_int(n: Int) CoreExpr {
   .{ kind: .LitInt(n), ty: .Void, span: span.new(0, 0, 0) }

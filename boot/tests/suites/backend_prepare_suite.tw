@@ -10,6 +10,9 @@
 //!   - prepared backend IR has an explicit representation-transition story
 //!   - slot maps reflect post-boundary locals including wrap/unwrap temporaries
 
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp}
 use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{prepare_backend}
@@ -22,8 +25,6 @@ use compiler.core_ir.{CorePattern, FuncId, LocalId, Param}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv}
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── Construction helpers ─────────────────────────────────────────────
 fn lid(n: Int) LocalId {

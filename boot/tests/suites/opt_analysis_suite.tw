@@ -1,3 +1,6 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp}
 use compiler.anf_analysis.{set_has}
 use compiler.builder_family.{empty_builder_config}
@@ -8,8 +11,6 @@ use compiler.opt.analysis.{
   loop_push_reassign_elem, next_local_id, op_uses_local_non_recursive,
 }
 use compiler.opt.semantics.{CallSemantics, OptimizerSemantics}
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn lid(id: Int) LocalId {
   LocalId.{ id }

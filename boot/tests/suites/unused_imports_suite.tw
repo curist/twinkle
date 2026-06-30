@@ -1,10 +1,11 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.ast.{
   Expr, ExprKind, ExprStmt, ImportItem, ImportTypeItem, ImportValueItem, Item, Module, Stmt, UseDecl,
 }
 use compiler.unused_imports.{check_unused_imports, reconstruct_use_decl}
 use lib.source.span
-use @std.testing.assert as assert
-use @std.testing as runner
 
 fn dummy_span() span.Span {
   span.Span.{ file_id: 0, start: 0, end: 0 }

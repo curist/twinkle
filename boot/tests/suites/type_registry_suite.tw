@@ -1,6 +1,7 @@
-use compiler.query.type_registry as registry
 use @std.testing.assert as assert
 use @std.testing as runner
+
+use compiler.query.type_registry as registry
 
 pub fn suite() runner.Suite {
   runner

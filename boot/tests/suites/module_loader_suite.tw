@@ -1,8 +1,8 @@
 use @std.path
-
-use lib.module.loader
 use @std.testing.assert as assert
 use @std.testing as runner
+
+use lib.module.loader
 
 pub fn suite() runner.Suite {
   root := loader.find_project_root(".")

@@ -1,3 +1,6 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.checker
 use compiler.parser
 use compiler.query.cache
@@ -6,8 +9,6 @@ use compiler.query.occurrence_build
 use compiler.query.occurrences as occ
 use compiler.query.semantic
 use compiler.resolver
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // Build a fully enriched index (resolver + checker metadata) from source.
 fn build(src: String) occ.OccurrenceIndex {

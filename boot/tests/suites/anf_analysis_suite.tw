@@ -1,3 +1,6 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
 use compiler.anf.{AnfExpr, AnfMatchArm}
 use compiler.anf_analysis.{
   collect_assigned_locals, collect_bound_locals, collect_free_locals, collect_pattern_bindings,
@@ -5,8 +8,6 @@ use compiler.anf_analysis.{
 }
 use compiler.core_ir.{CorePattern, FuncId, LocalId, VariantId}
 use compiler.mono_type.{TypeId}
-use @std.testing.assert as assert
-use @std.testing as runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn lid(id: Int) LocalId {
