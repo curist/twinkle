@@ -8,7 +8,7 @@ use commands.ir.{run_ir_command}
 use commands.lint.{run_lint_command}
 use commands.lsp.{run_lsp_command}
 use commands.parse.{run_parse_command}
-use commands.run.{run_command_impl}
+use commands.run.{run_run_command}
 use commands.test.{run_test_command}
 use lib.argparse.app
 use lib.argparse.app.{ParseResult}
@@ -21,7 +21,10 @@ fn file_command(name: String, help: String) {
 
 parse_cmd := file_command("parse", "Parse source and print diagnostics")
 
-check_cmd := file_command("check", "Type-check source")
+check_cmd := command
+  .make("check", "Type-check source")
+  .add_positional("file", "Path to a .tw source file (omit for project mode)")
+  .add_flag("all", "In project mode, also check test entries")
 
 lint_cmd := command
   .make("lint", "Review code: report lints and rewrites")
@@ -39,17 +42,18 @@ ir_cmd := file_command("ir", "Compile and print compiler IR")
   .add_flag("wat", "Print final linked WAT")
   .add_flag("all", "Print all available IR stages")
 
-run_cmd := file_command("run", "Run program").add_short_flag(
-  "interpreter",
-  "i",
-  "Run with interpreter backend",
-)
+run_cmd := command
+  .make("run", "Run program")
+  .add_positional("file", "Path to a .tw source file (omit for project mode)")
+  .add_short_flag("interpreter", "i", "Run with interpreter backend")
+  .add_option("target", "In project mode, the project entry to run")
 
-build_cmd := file_command("build", "Compile to linked WAT or Wasm").add_short_option(
-  "output",
-  "o",
-  "Output path (.wat or .wasm)",
-)
+build_cmd := command
+  .make("build", "Compile to linked WAT or Wasm")
+  .add_positional("file", "Path to a .tw source file (omit for project mode)")
+  .add_short_option("output", "o", "Output path (.wat or .wasm)")
+  .add_option("target", "In project mode, the project entry to build")
+  .add_flag("all", "In project mode, build every project entry")
 
 test_cmd := command.make("test", "Run configured project test entries")
 
@@ -182,13 +186,7 @@ fn run_command(parsed: ParseResult) {
     .Some("help") => run_help_command(parsed),
     .Some("fmt") => run_fmt_command(parsed),
     .Some("test") => run_test_command(parsed),
-    .Some("run") => {
-      file := case get_positional(parsed, 0, "file") {
-        .Ok(path) => path,
-        .Err(msg) => exit_usage_error(msg),
-      }
-      run_command_impl(parsed, file)
-    },
+    .Some("run") => run_run_command(parsed),
     _ => case build_command_plan(parsed) {
       .Ok(plan) => not_implemented(plan.cmd, plan.detail),
       .Err(msg) => exit_usage_error(msg),

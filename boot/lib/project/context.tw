@@ -112,6 +112,81 @@ pub fn all_entries(ctx: ProjectContext) Vector<EntryTarget> {
   ctx.project_entries.concat(ctx.test_entries)
 }
 
+/// Select one project entry to act on (`run`, `build --target`): the entry whose
+/// derived target name is `target`, or the sole project entry when `target` is
+/// absent. Errors (listing available names) when the choice is ambiguous, the
+/// named target is unknown, or no project entries are configured.
+pub fn select_single(ctx: ProjectContext, target: String?) Result<EntryTarget, String> {
+  case target {
+    .Some(name) => ctx.find_target(name),
+    .None => {
+      entries := ctx.project_entries
+      cond {
+        entries.len() == 0 => .Err("no project entries configured in twinkle.toml"),
+        entries.len() == 1 => .Ok(entries[0]),
+        _ => .Err(
+          "multiple project entries; pass --target <name> (available: ${target_names(entries)})",
+        ),
+      }
+    },
+  }
+}
+
+/// Select the project entries to build: `--all` builds every project entry,
+/// otherwise the single entry chosen as in `select_single`.
+pub fn select_build_targets(ctx: ProjectContext, target: String?, all: Bool) Result<
+  Vector<EntryTarget>,
+  String,
+> {
+  if all {
+    return .Ok(ctx.project_entries)
+  }
+
+  case target {
+    .Some(name) => {
+      e := try ctx.find_target(name)
+      .Ok([e])
+    },
+    .None => {
+      entries := ctx.project_entries
+      cond {
+        entries.len() == 0 => .Err("no project entries configured in twinkle.toml"),
+        entries.len() == 1 => .Ok([entries[0]]),
+        _ => .Err(
+          "multiple project entries; pass --target <name> or --all (available: ${target_names(
+            entries,
+          )})",
+        ),
+      }
+    },
+  }
+}
+
+// The project entry whose derived target name is `name`, or an error listing the
+// available target names.
+fn find_target(ctx: ProjectContext, name: String) Result<EntryTarget, String> {
+  for e in ctx.project_entries {
+    if e.name == name {
+      return .Ok(e)
+    }
+  }
+
+  .Err("no project entry named '${name}' (available: ${target_names(ctx.project_entries)})")
+}
+
+fn target_names(entries: Vector<EntryTarget>) String {
+  names := collect e in entries {
+    e.name
+  }
+  names.join(", ")
+}
+
+/// Default project-mode build output for an entry: `<root>/target/<name>.wasm`,
+/// rooted at the project (not the working directory).
+pub fn default_output_path(ctx: ProjectContext, entry: EntryTarget) String {
+  path.join(path.join(ctx.root, "target"), "${entry.name}.wasm")
+}
+
 /// Project-local modules reachable from `entries`, via the shared frontend's
 /// env-independent Phase 1 discovery (load/parse/plan only). Deduped across
 /// entries; stdlib/prelude are traversed but excluded from the result.

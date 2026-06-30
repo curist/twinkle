@@ -125,6 +125,101 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "select_single returns the sole project entry when no target is named",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        e := try context.select_single(ctx, .None)
+        try assert.equal(e.name, "app")
+        .Ok({})
+      },
+    )
+    .test(
+      "select_single picks the named target among several",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw", "cmd/server.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        e := try context.select_single(ctx, .Some("server"))
+        try assert.equal(e.rel_path, "cmd/server.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "select_single errors on an unknown target name",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        case context.select_single(ctx, .Some("nope")) {
+          .Ok(_) => .Err("expected unknown-target error"),
+          .Err(_) => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "select_single errors when multiple entries need a target",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw", "cmd/server.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        case context.select_single(ctx, .None) {
+          .Ok(_) => .Err("expected ambiguous-target error"),
+          .Err(_) => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "select_single errors when no project entries are configured",
+      fn() {
+        cfg := cfg_with(.None, [], [])
+        ctx := try context.from_root("/proj", cfg)
+        case context.select_single(ctx, .None) {
+          .Ok(_) => .Err("expected no-entries error"),
+          .Err(_) => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "select_build_targets with --all returns every project entry",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw", "cmd/server.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        targets := try context.select_build_targets(ctx, .None, true)
+        try assert.equal(targets.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "select_build_targets errors on multiple entries without --all or --target",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw", "cmd/server.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        case context.select_build_targets(ctx, .None, false) {
+          .Ok(_) => .Err("expected ambiguous-target error"),
+          .Err(_) => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "select_build_targets builds the sole entry by default",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        targets := try context.select_build_targets(ctx, .None, false)
+        try assert.equal(targets.len(), 1)
+        try assert.equal(targets[0].name, "app")
+        .Ok({})
+      },
+    )
+    .test(
+      "default_output_path is <root>/target/<name>.wasm",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/server.tw"], [])
+        ctx := try context.from_root("/proj", cfg)
+        out := context.default_output_path(ctx, ctx.project_entries[0])
+        try assert.equal(out, "/proj/target/server.wasm")
+        .Ok({})
+      },
+    )
+    .test(
       "all_entries is project entries followed by test entries",
       fn() {
         cfg := cfg_with(.None, ["cmd/app.tw", "cmd/server.tw"], ["tests/main.tw"])
