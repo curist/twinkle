@@ -77,6 +77,7 @@ fn test_param_local_id_can_overlap_module_global_id() Result<Void, String> {
     init_func_id: .None,
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
   slots: Dict<Int, SlotInfo> = Dict.new()
   slots[0] = SlotInfo.{
@@ -138,6 +139,7 @@ fn make_one_func_module(
     init_func_id: .None,
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
   prepared_func := PreparedFunc.{
     func_id,
@@ -344,6 +346,7 @@ fn test_tail_call_in_if_branches() Result<Void, String> {
     init_func_id: .None,
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
 
   callee_slots: Dict<Int, SlotInfo> = Dict.new()
@@ -441,6 +444,7 @@ fn test_tail_call_in_case_arms() Result<Void, String> {
     init_func_id: .None,
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
 
   callee_slots: Dict<Int, SlotInfo> = Dict.new()
@@ -608,6 +612,7 @@ fn test_tail_call_in_br_table_match() Result<Void, String> {
     init_func_id: .None,
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
 
   callee_slots: Dict<Int, SlotInfo> = Dict.new()

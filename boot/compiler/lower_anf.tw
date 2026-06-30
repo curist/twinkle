@@ -352,6 +352,7 @@ pub fn lower_module(module: CoreModule) AnfModule {
     init_func_id: module.init_func_id,
     extern_imports: module.extern_imports,
     global_monos,
+    lib_exports: module.lib_exports,
   }
 }
 

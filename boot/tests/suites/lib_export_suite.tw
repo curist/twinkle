@@ -1,0 +1,145 @@
+//! Tests for the `--lib` export-surface selection in module_compiler.
+//!
+//! Each test compiles a tiny .tw source through `compile_source_lib`, the
+//! in-memory equivalent of a `twk build --lib`, then inspects the resulting
+//! `anf.lib_exports` (the eligible surface) and `warnings` (members skipped as
+//! ineligible). v1 exports only primitive `pub` members; generics and
+//! non-primitive types are skipped with a warning rather than exported.
+
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.core_ir.{LibExport, LibPrimitive}
+use compiler.pipeline
+use compiler.query.analyze
+use lib.source.diagnostics as diag
+
+fn find_export(exports: Vector<LibExport>, name: String) LibExport? {
+  for e in exports {
+    if e.name == name {
+      return .Some(e)
+    }
+  }
+  .None
+}
+
+fn is_function_target(e: LibExport) Bool {
+  case e.target {
+    .Function(_) => true,
+    .Value(_) => false,
+  }
+}
+
+fn prim_eq(p: LibPrimitive, want: LibPrimitive) Bool {
+  case p {
+    .Int => case want {
+      .Int => true,
+      _ => false,
+    },
+    .Float => case want {
+      .Float => true,
+      _ => false,
+    },
+    .Bool => case want {
+      .Bool => true,
+      _ => false,
+    },
+    .Void => case want {
+      .Void => true,
+      _ => false,
+    },
+  }
+}
+
+// Join every warning message so a test can assert a member was skipped without
+// depending on warning ordering.
+fn warning_text(warnings: Vector<analyze.AnalysisDiag>) String {
+  parts := collect w in warnings {
+    diag.message(w.kind)
+  }
+  parts.join("\n")
+}
+
+fn eligible_src() String {
+  "pub fn add(a: Int, b: Int) Int {\n  a + b\n}\n\npub fn is_positive(n: Int) Bool {\n  n > 0\n}\n\npub pi: Float = 3.14159\n"
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("lib exports")
+    .test(
+      "selects primitive pub fn with its param/return kinds",
+      fn() {
+        artifacts := try pipeline.compile_source_lib(eligible_src())
+        add := try find_export(artifacts.anf.lib_exports, "add").ok_or("add not exported")
+        try assert.equal(is_function_target(add), true)
+        try assert.equal(add.wasm_name, "add")
+        try assert.equal(add.params.len(), 2)
+        try assert.equal(prim_eq(add.params[0], .Int), true)
+        try assert.equal(prim_eq(add.params[1], .Int), true)
+        try assert.equal(prim_eq(add.ret, .Int), true)
+        .Ok({})
+      },
+    )
+    .test(
+      "Bool return is carried through",
+      fn() {
+        artifacts := try pipeline.compile_source_lib(eligible_src())
+        f := try find_export(artifacts.anf.lib_exports, "is_positive").ok_or("missing")
+        try assert.equal(prim_eq(f.ret, .Bool), true)
+        .Ok({})
+      },
+    )
+    .test(
+      "primitive pub value global is exported as a getter",
+      fn() {
+        artifacts := try pipeline.compile_source_lib(eligible_src())
+        pi := try find_export(artifacts.anf.lib_exports, "pi").ok_or("pi not exported")
+        try assert.equal(is_function_target(pi), false)
+        try assert.equal(pi.wasm_name, "__get_pi")
+        try assert.equal(pi.params.len(), 0)
+        try assert.equal(prim_eq(pi.ret, .Float), true)
+        .Ok({})
+      },
+    )
+    .test(
+      "String-typed pub fn is skipped with a warning, not exported",
+      fn() {
+        src := "${eligible_src()}\npub fn greet(name: String) String {\n  name\n}\n"
+        artifacts := try pipeline.compile_source_lib(src)
+        try assert.equal(find_export(artifacts.anf.lib_exports, "greet").is_some(), false)
+        text := warning_text(artifacts.warnings)
+        try assert.str_contains(text, "`greet`")
+        try assert.str_contains(text, "skipped from lib exports")
+        .Ok({})
+      },
+    )
+    .test(
+      "generic pub fn is skipped with a warning",
+      fn() {
+        src := "${eligible_src()}\npub fn identity<T>(x: T) T {\n  x\n}\n"
+        artifacts := try pipeline.compile_source_lib(src)
+        try assert.equal(find_export(artifacts.anf.lib_exports, "identity").is_some(), false)
+        try assert.str_contains(warning_text(artifacts.warnings), "`identity`")
+        .Ok({})
+      },
+    )
+    .test(
+      "non-pub functions are neither exported nor warned about",
+      fn() {
+        src := "${eligible_src()}\nfn secret() Int {\n  42\n}\n"
+        artifacts := try pipeline.compile_source_lib(src)
+        try assert.equal(find_export(artifacts.anf.lib_exports, "secret").is_some(), false)
+        try assert.equal(warning_text(artifacts.warnings).contains("secret"), false)
+        .Ok({})
+      },
+    )
+    .test(
+      "a non-lib compile selects no exports even with pub members",
+      fn() {
+        artifacts := try pipeline.compile_source(eligible_src())
+        try assert.equal(artifacts.anf.lib_exports.len(), 0)
+        .Ok({})
+      },
+    )
+}

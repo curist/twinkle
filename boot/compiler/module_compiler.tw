@@ -12,20 +12,28 @@ use @std.path
 use @std.proc
 
 use compiler.artifacts.{CompileError, PipelineArtifacts}
+use compiler.ast.{Module}
 use compiler.base_env.{builtin_env}
 use compiler.builtins.{make_builtin_registry}
-use compiler.core_ir.{CompiledModule, ExternalRef, ExternalValueRef}
+use compiler.checker.{CheckResult}
+use compiler.core_ir.{
+  CompiledModule, ExternalRef, ExternalValueRef, GlobalId, LibExport, LibPrimitive,
+}
 use compiler.core_linker
 use compiler.imports
 use compiler.lower_anf
+use compiler.lower_core.{LowerResult}
+use compiler.mono_type.{MonoType, ty_to_string}
 use compiler.monomorphize
 use compiler.opt.pipeline.{optimize_module}
 use compiler.query.analyze
 use compiler.query.cache as query_cache
 use compiler.query.stage_runner
+use compiler.resolver.{ResolvedEnv}
 use lib.module.loader
 use lib.source.identity
 use lib.source.overlay
+use lib.source.span.{Span}
 
 // ── Public API ──────────────────────────────────────────────────────
 /// Compile an entry file and all its transitive dependencies.
@@ -33,6 +41,17 @@ use lib.source.overlay
 /// Returns PipelineArtifacts for the fully linked, monomorphized,
 /// and optimized program.
 pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError> {
+  compile_entry_with_lib(entry_path, false)
+}
+
+pub fn compile_entry_lib(entry_path: String) Result<PipelineArtifacts, CompileError> {
+  compile_entry_with_lib(entry_path, true)
+}
+
+fn compile_entry_with_lib(entry_path: String, lib_build: Bool) Result<
+  PipelineArtifacts,
+  CompileError,
+> {
   dir := path.dirname(entry_path)
   project_root := loader.find_project_root(dir)
   canonical_roots := imports.make_canonical_roots(project_root)
@@ -137,6 +156,14 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
       value_refs[lid] = origin
     }
 
+    lib_exports: Vector<LibExport> = []
+
+    if lib_build and module_path == canonical_entry {
+      selected := select_lib_exports(parsed.module, typed, lowered, module_path, a_result.env)
+      lib_exports = selected.exports
+      compile_warnings = .concat(selected.warnings)
+    }
+
     compiled_modules = .append(
       .{
         path: module_path,
@@ -148,6 +175,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
         value_exports,
         value_refs,
         defined_global_count: lowered.next_global_local_id,
+        lib_exports,
       },
     )
   }
@@ -224,4 +252,208 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
   }
 
   .Ok(.{ env: a_result.env, builtins, core, mono, anf, opt, warnings: compile_warnings })
+}
+
+pub type LibSelection = .{ exports: Vector<LibExport>, warnings: Vector<analyze.AnalysisDiag> }
+
+/// Pick the eligible `pub` lib-export surface of an entry module: every
+/// all-primitive `pub fn` and every primitive `pub` value global. Ineligible
+/// members (generic, or using non-primitive types) come back as warnings rather
+/// than exports. Shared by the project lib build and `compile_source_lib`.
+pub fn select_lib_exports(
+  module: Module,
+  typed: CheckResult,
+  lowered: LowerResult,
+  module_path: String,
+  env: ResolvedEnv,
+) LibSelection {
+  exports: Vector<LibExport> = []
+  warnings: Vector<analyze.AnalysisDiag> = []
+  type_names := analyze.type_name_snapshot(env)
+
+  for item in module.items {
+    case item {
+      .Function(decl) => if decl.is_pub {
+        if decl.type_params.len() > 0 {
+          warnings = .append(
+            lib_warning(
+              module_path,
+              decl.name_span,
+              decl.name,
+              "generic functions are not yet supported in lib exports",
+              type_names,
+            ),
+          )
+          continue
+        }
+
+        sig := case typed.env.lookup_function(decl.name) {
+          .Some(s) => s,
+          .None => {
+            warnings = .append(
+              lib_warning(
+                module_path,
+                decl.name_span,
+                decl.name,
+                "could not resolve function signature",
+                type_names,
+              ),
+            )
+            continue
+          },
+        }
+
+        params: Vector<LibPrimitive> = []
+        unsupported := ""
+
+        for ty in sig.params {
+          case lib_primitive(ty) {
+            .Some(p) => params = .append(p),
+            .None => if unsupported == "" {
+              unsupported = "${ty_to_string(ty)} parameters are not yet supported in lib exports"
+            },
+          }
+        }
+
+        ret_ty := case sig.ret {
+          .Some(t) => t,
+          .None => MonoType.Void,
+        }
+        ret := case lib_primitive(ret_ty) {
+          .Some(p) => p,
+          .None => {
+            if unsupported == "" {
+              unsupported = "${ty_to_string(ret_ty)} returns are not yet supported in lib exports"
+            }
+            LibPrimitive.Void
+          },
+        }
+
+        if unsupported != "" {
+          warnings = .append(
+            lib_warning(module_path, decl.name_span, decl.name, unsupported, type_names),
+          )
+          continue
+        }
+
+        fid := case lowered.func_table[decl.name] {
+          .Some(id) => id,
+          .None => {
+            warnings = .append(
+              lib_warning(
+                module_path,
+                decl.name_span,
+                decl.name,
+                "could not resolve lowered function",
+                type_names,
+              ),
+            )
+            continue
+          },
+        }
+
+        exports = .append(
+          LibExport.{ name: decl.name, wasm_name: decl.name, target: .Function(fid), params, ret },
+        )
+      },
+      .Stmt(stmt) => case stmt {
+        .Let(ls) => if ls.is_pub {
+          ty := case typed.pub_values[ls.name] {
+            .Some(t) => t,
+            .None => {
+              warnings = .append(
+                lib_warning(
+                  module_path,
+                  ls.name_span,
+                  ls.name,
+                  "could not resolve value type",
+                  type_names,
+                ),
+              )
+              continue
+            },
+          }
+          prim := case lib_primitive(ty) {
+            .Some(p) => p,
+            .None => {
+              warnings = .append(
+                lib_warning(
+                  module_path,
+                  ls.name_span,
+                  ls.name,
+                  "${ty_to_string(ty)} values are not yet supported in lib exports",
+                  type_names,
+                ),
+              )
+              continue
+            },
+          }
+          gid := case lowered.pub_value_globals[ls.name] {
+            .Some(local) => local,
+            .None => {
+              warnings = .append(
+                lib_warning(
+                  module_path,
+                  ls.name_span,
+                  ls.name,
+                  "could not resolve lowered value",
+                  type_names,
+                ),
+              )
+              continue
+            },
+          }
+          exports = .append(
+            LibExport.{
+              name: ls.name,
+              wasm_name: "__get_${ls.name}",
+              target: .Value(GlobalId.{ id: gid.id }),
+              params: [],
+              ret: prim,
+            },
+          )
+        },
+        _ => {},
+      },
+      _ => {},
+    }
+  }
+
+  .{ exports, warnings }
+}
+
+fn lib_primitive(ty: MonoType) LibPrimitive? {
+  case ty {
+    .Int => .Some(.Int),
+    .Float => .Some(.Float),
+    .Bool => .Some(.Bool),
+    .Void => .Some(.Void),
+    .Never => .Some(.Void),
+    _ => .None,
+  }
+}
+
+fn lib_warning(
+  module_path: String,
+  span: Span,
+  name: String,
+  reason: String,
+  type_names: Dict<Int, String>,
+) analyze.AnalysisDiag {
+  analyze.AnalysisDiag.{
+    identity: identity.from_path(module_path),
+    version: .None,
+    kind: .Warning(
+      .LibExportSkipped(
+        .{
+          span,
+          message: "`${name}` skipped from lib exports: ${reason}",
+          help_lines: ["v1 lib exports support only Int, Float, Bool, and Void"],
+        },
+      ),
+    ),
+    stage: "lib-export",
+    data: .None,
+    type_names,
+  }
 }

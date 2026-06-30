@@ -114,6 +114,18 @@ pub type ExternImport = .{
   return_ty: MonoType?,
 }
 
+pub type LibPrimitive = { Int, Float, Bool, Void }
+
+pub type LibExportTarget = { Function(FuncId), Value(GlobalId) }
+
+pub type LibExport = .{
+  name: String,
+  wasm_name: String,
+  target: LibExportTarget,
+  params: Vector<LibPrimitive>,
+  ret: LibPrimitive,
+}
+
 pub type CoreModule = .{
   functions: Vector<FunctionDef>,
   type_env: ResolvedEnv,
@@ -121,6 +133,7 @@ pub type CoreModule = .{
   func_table: Dict<String, FuncId>,
   extern_imports: Dict<Int, ExternImport>,
   method_table: Dict<String, FuncId>,
+  lib_exports: Vector<LibExport>,
 }
 
 // ── Linker types ────────────────────────────────────────────────────
@@ -135,6 +148,7 @@ pub type CompiledModule = .{
   value_exports: Dict<String, Int>,
   value_refs: Dict<Int, ExternalValueRef>,
   defined_global_count: Int,
+  lib_exports: Vector<LibExport>,
 }
 
 /// Tracks where a phantom FuncId (imported function) lives.

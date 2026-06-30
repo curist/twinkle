@@ -9,7 +9,7 @@
 // filesystem by default, so callers never touch boot.wasm or construct a host
 // adapter. The JS<->Wasm-GC bridge is embedded in runtime.mjs.
 
-import { runWasmBytesAsync, createMemoryHost } from "./runtime.mjs";
+import { loadLibBytes, runWasmBytesAsync, createMemoryHost } from "./runtime.mjs";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -180,6 +180,31 @@ export async function command(args, opts = {}) {
  * @param {object} [opts.host]     Override the host adapter entirely (advanced).
  * @returns {Promise<number>} exit code
  */
+async function libBytes(input) {
+  if (input instanceof Uint8Array) return input;
+  if (input instanceof ArrayBuffer) return new Uint8Array(input);
+  if (typeof input === "string" || input instanceof URL) {
+    const response = await fetch(input);
+    if (!response.ok) throw new Error(`failed to fetch ${input}: ${response.status}`);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+  throw new TypeError("wasm must be a URL, path string, Uint8Array, or ArrayBuffer");
+}
+
+export async function loadLib(wasm, opts = {}) {
+  const wasmBytes = await libBytes(wasm);
+  return loadLibBytes(wasmBytes, {
+    programPath: opts.path ?? "<library>.wasm",
+    guestArgs: [],
+    cwd: opts.cwd ?? "/",
+    env: opts.env ?? {},
+    stdout: opts.stdout ?? defaultStream((s) => console.log(s)),
+    stderr: opts.stderr ?? defaultStream((s) => console.error(s)),
+    host: opts.host ?? createMemoryHost(),
+    imports: opts.imports ?? {},
+  });
+}
+
 export async function run(source, opts = {}) {
   const path = opts.path ?? "/input/main.tw";
   const result = await command(["run", path], {

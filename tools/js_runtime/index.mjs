@@ -9,7 +9,7 @@
 import { readFileSync, writeFileSync, rmSync, mkdtempSync } from "node:fs";
 import { resolve, dirname, join, basename } from "node:path";
 import { tmpdir } from "node:os";
-import { runWasmBytesAsync } from "./runtime.mjs";
+import { loadLibBytes, runWasmBytesAsync } from "./runtime.mjs";
 import { nodeHost } from "./node_host.mjs";
 
 const here = import.meta.dirname;
@@ -54,6 +54,9 @@ function collectingStream() {
  *   walk-up to `twinkle.toml`). Or `{ source, path? }` — written to a temp dir
  *   and compiled single-file only; relative imports and project-root discovery
  *   will NOT resolve as they would at the original location.
+ * @param {{cwd?: string, lib?: boolean}} [opts]
+ *   `lib: true` builds the host-callable library surface (`build --lib`),
+ *   exporting the entry module's eligible `pub` members for `loadLib`.
  * @returns {Promise<Uint8Array>}
  */
 export async function compile(input, opts = {}) {
@@ -78,9 +81,12 @@ export async function compile(input, opts = {}) {
   const out = collectingStream();
   const err = collectingStream();
   try {
+    const buildArgs = opts.lib
+      ? ["build", "--lib", srcPath, "-o", outPath]
+      : ["build", srcPath, "-o", outPath];
     const code = await runWasmBytesAsync(bootBytes, {
       programPath: "twk.wasm",
-      guestArgs: ["build", srcPath, "-o", outPath],
+      guestArgs: buildArgs,
       cwd: opts.cwd ?? dirname(srcPath),
       env: process.env,
       stdout: out,
@@ -95,6 +101,32 @@ export async function compile(input, opts = {}) {
     try { rmSync(outDir, { recursive: true, force: true }); } catch {}
     if (cleanupDir) { try { rmSync(cleanupDir, { recursive: true, force: true }); } catch {} }
   }
+}
+
+async function loadBytes(input) {
+  if (input instanceof Uint8Array) return input;
+  if (input instanceof ArrayBuffer) return new Uint8Array(input);
+  if (typeof input === "string" || input instanceof URL) return new Uint8Array(readFileSync(input));
+  throw new TypeError("wasm must be a path, URL, Uint8Array, or ArrayBuffer");
+}
+
+/**
+ * Load a prebuilt Twinkle library wasm and return callable exports.
+ * @param {string | URL | Uint8Array | ArrayBuffer} wasm
+ * @param {{imports?, cwd?, env?, stdout?, stderr?, path?}} opts
+ */
+export async function loadLib(wasm, opts = {}) {
+  const wasmBytes = await loadBytes(wasm);
+  return loadLibBytes(wasmBytes, {
+    programPath: opts.path ?? (typeof wasm === "string" ? resolve(wasm) : "<library>.wasm"),
+    guestArgs: [],
+    cwd: opts.cwd ?? process.cwd(),
+    env: opts.env ?? process.env,
+    stdout: opts.stdout ?? process.stdout,
+    stderr: opts.stderr ?? process.stderr,
+    host: nodeHost,
+    imports: opts.imports ?? {},
+  });
 }
 
 /**

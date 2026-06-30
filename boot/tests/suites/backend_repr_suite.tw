@@ -249,6 +249,7 @@ fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
     init_func_id: .None,
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
 }
 

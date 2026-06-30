@@ -8,11 +8,16 @@
 use @std.fs
 use @std.path
 
-pub type Config = .{ name: String?, project_entries: Vector<String>, test_entries: Vector<String> }
+pub type Config = .{
+  name: String?,
+  project_entries: Vector<String>,
+  test_entries: Vector<String>,
+  lib_entry: String?,
+}
 
 /// The defaults used for a missing or empty `twinkle.toml`.
 pub fn empty() Config {
-  .{ name: .None, project_entries: [], test_entries: [] }
+  .{ name: .None, project_entries: [], test_entries: [], lib_entry: .None }
 }
 
 /// Load and validate the project config rooted at `project_root`.
@@ -52,7 +57,7 @@ pub fn parse(content: String) Result<Config, String> {
         return .Err("malformed section header: ${line}")
       }
       name := line.substring(1, line.len() - 1).trim()
-      if name != "project" and name != "test" {
+      if name != "project" and name != "test" and name != "lib" {
         return .Err("unknown section: [${name}]")
       }
       section = name
@@ -100,6 +105,14 @@ fn apply_entry(cfg: Config, section: String, key: String, value: String) Result<
     return .Err("unknown key in [test]: ${key}")
   }
 
+  if section == "lib" {
+    if key == "entry" {
+      cfg.lib_entry = .Some(try parse_string(value))
+      return .Ok(cfg)
+    }
+    return .Err("unknown key in [lib]: ${key}")
+  }
+
   .Err("unknown section: ${section}")
 }
 
@@ -137,7 +150,12 @@ fn parse_string_array(value: String) Result<Vector<String>, String> {
 /// The configured entries as a single list: project entries first, then test
 /// entries. This is the set tooling treats as the whole-project view.
 pub fn entries(cfg: Config) Vector<String> {
-  cfg.project_entries.concat(cfg.test_entries)
+  out := cfg.project_entries.concat(cfg.test_entries)
+  case cfg.lib_entry {
+    .Some(entry) => out = .append(entry),
+    .None => {},
+  }
+  out
 }
 
 /// Resolve all configured entries against `project_root`, yielding absolute
@@ -156,6 +174,10 @@ pub fn validate(cfg: Config) Result<Void, String> {
   }
   for entry in cfg.test_entries {
     try validate_entry(entry)
+  }
+  case cfg.lib_entry {
+    .Some(entry) => try validate_entry(entry),
+    .None => {},
   }
   .Ok({})
 }

@@ -475,6 +475,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
       func_table: ctx.func_table,
       extern_imports: ctx.extern_imports,
       method_table: Dict.new(),
+      lib_exports: [],
     },
     diagnostics: ctx.errors,
     func_table: ctx.func_table,

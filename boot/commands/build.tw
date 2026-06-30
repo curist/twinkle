@@ -16,6 +16,7 @@ use commands.common.{
 use compiler.artifacts.{CompileError, PipelineArtifacts}
 use compiler.pipeline
 use lib.argparse.app.{ParseResult}
+use lib.module.loader
 use lib.project.context
 
 type BuildResult = .{ ok: Bool, seen_diags: Dict<String, Bool> }
@@ -31,6 +32,11 @@ fn default_build_output(file: String) String {
   } else {
     path.join(dir, "${stem}.wat")
   }
+}
+
+fn default_lib_build_output(file: String) String {
+  root := loader.find_project_root(path.dirname(file))
+  path.join(path.join(root, "target"), "${path.stem(file)}.lib.wasm")
 }
 
 pub fn resolve_build_output(parsed: ParseResult, file: String) String!String {
@@ -53,28 +59,81 @@ fn validate_output_ext(out: String) String!String {
 }
 
 pub fn run_build_command(parsed: ParseResult) {
+  lib_build := parsed.has_flag("lib")
+
   if parsed.positional.len() > 0 {
     file := parsed.positional[0]
-    out := case resolve_build_output(parsed, file) {
-      .Ok(path) => path,
-      .Err(msg) => {
-        eprintln(msg)
-        proc.exit(1)
+    out := case parsed.get_option("output") {
+      .Some(_) => case resolve_build_output(parsed, file) {
+        .Ok(path) => path,
+        .Err(msg) => {
+          eprintln(msg)
+          proc.exit(1)
+        },
+      },
+      .None => if lib_build {
+        default_lib_build_output(file)
+      } else {
+        default_build_output(file)
       },
     }
 
-    if !build_to(file, out, Dict.new()).ok {
+    if !build_to(file, out, Dict.new(), lib_build).ok {
       proc.exit(1)
     }
 
     return
   }
 
-  run_build_project(parsed)
+  if lib_build {
+    run_build_lib_project(parsed)
+  } else {
+    run_build_project(parsed)
+  }
 }
 
 // Project mode: build the selected project entries, each to its default
 // `<root>/target/<name>.wasm` (or to `-o` for a single target).
+fn run_build_lib_project(parsed: ParseResult) {
+  if parsed.has_flag("all") {
+    eprintln("error: --all cannot be used with --lib")
+    proc.exit(1)
+  }
+  if parsed.get_option("target").is_some() {
+    eprintln("error: --target cannot be used with --lib")
+    proc.exit(1)
+  }
+
+  ctx := case context.discover() {
+    .Ok(c) => c,
+    .Err(err) => {
+      eprintln("error: ${err}")
+      proc.exit(1)
+    },
+  }
+  entry := case ctx.lib_entry {
+    .Some(e) => e,
+    .None => {
+      eprintln("error: no [lib] entry configured in twinkle.toml")
+      proc.exit(1)
+    },
+  }
+  out := case parsed.get_option("output") {
+    .Some(o) => case validate_output_ext(o) {
+      .Ok(valid) => valid,
+      .Err(msg) => {
+        eprintln(msg)
+        proc.exit(1)
+      },
+    },
+    .None => ctx.default_lib_output_path(entry),
+  }
+
+  if !build_to(entry.abs_path, out, Dict.new(), true).ok {
+    proc.exit(1)
+  }
+}
+
 fn run_build_project(parsed: ParseResult) {
   ctx := case context.discover() {
     .Ok(c) => c,
@@ -118,7 +177,7 @@ fn run_build_project(parsed: ParseResult) {
       .None => ctx.default_output_path(t),
     }
 
-    result := build_to(t.abs_path, out, seen_diags)
+    result := build_to(t.abs_path, out, seen_diags, false)
     seen_diags = result.seen_diags
 
     if !result.ok {
@@ -133,8 +192,12 @@ fn run_build_project(parsed: ParseResult) {
 
 // Compile `file` and write the artifact to `out`, choosing Wasm or WAT by the
 // output extension. Returns whether the build succeeded.
-fn build_to(file: String, out: String, seen_diags: Dict<String, Bool>) BuildResult {
-  artifacts := case pipeline.compile_entry_path(file) {
+fn build_to(file: String, out: String, seen_diags: Dict<String, Bool>, lib_build: Bool) BuildResult {
+  artifacts := case if lib_build {
+    pipeline.compile_entry_path_lib(file)
+  } else {
+    pipeline.compile_entry_path(file)
+  } {
     .Ok(result) => result,
     .Err(err) => {
       result := print_compile_error(err, seen_diags)

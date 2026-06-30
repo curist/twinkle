@@ -212,6 +212,22 @@ function readExternMeta(wasmModule) {
   }
 }
 
+function readExportMeta(wasmModule) {
+  let sections;
+  try {
+    sections = WebAssembly.Module.customSections(wasmModule, "twinkle.exports");
+  } catch {
+    return [];
+  }
+  if (!sections || sections.length === 0) return [];
+  try {
+    const list = JSON.parse(new TextDecoder().decode(new Uint8Array(sections[0])));
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
 function importListFromExternMeta(externMeta) {
   const list = [];
   for (const [module, entries] of Object.entries(externMeta)) {
@@ -1136,6 +1152,74 @@ export function runWasmBytes(wasmBytes, opts = {}) {
 // ---------------------------------------------------------------------------
 // Public API — async (JSPI-aware)
 // ---------------------------------------------------------------------------
+
+// `int` is i64 at the wasm boundary, which crosses to JS as BigInt. Accept
+// either a Number or a BigInt as an argument (coercing to BigInt for the call),
+// but return the BigInt unchanged so no precision is lost — the host downcasts
+// to Number itself when it knows the value fits.
+function coerceLibArg(value, kind) {
+  switch (kind) {
+    case "int": return typeof value === "bigint" ? value : BigInt(value);
+    case "float": return Number(value);
+    case "bool": return value ? 1 : 0;
+    case "void": return undefined;
+    default: return value;
+  }
+}
+
+function coerceLibReturn(value, kind) {
+  switch (kind) {
+    case "int": return value;
+    case "float": return Number(value);
+    case "bool": return !!value;
+    case "void": return undefined;
+    default: return value;
+  }
+}
+
+export async function loadLibBytes(wasmBytes, opts = {}) {
+  const { mainModule, hostImports, b, runtime, imports, externMeta, jspi, needsTasks, scheduler } = prepareWasm(wasmBytes, opts, { jspi: hasJspi });
+
+  if (needsTasks && !hasJspi) {
+    throw new Error("Task concurrency requires a JSPI-capable runtime.");
+  }
+
+  const exportMeta = readExportMeta(mainModule);
+  const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta);
+  runtime.instance = instance;
+
+  if (instance.exports.__twinkle_start) {
+    if (needsTasks) {
+      scheduler.promisingTaskRun = WebAssembly.promising(instance.exports.__task_run);
+      const start = WebAssembly.promising(instance.exports.__twinkle_start);
+      scheduler.current = 0;
+      start().then(scheduler.onTopLevelComplete, scheduler.onTopLevelFail);
+      scheduler.kick();
+      await scheduler.done;
+    } else if (hasJspi) {
+      await WebAssembly.promising(instance.exports.__twinkle_start)();
+    } else {
+      instance.exports.__twinkle_start();
+    }
+  }
+
+  const lib = {};
+  for (const meta of exportMeta) {
+    const wasmName = meta.wasmName ?? meta.wasm_name ?? meta.name;
+    const fn = instance.exports[wasmName];
+    if (typeof fn !== "function") continue;
+    if (meta.kind === "value") {
+      lib[meta.name] = coerceLibReturn(fn(), meta.ret);
+    } else {
+      lib[meta.name] = (...args) => {
+        const coerced = (meta.args ?? []).map((kind, i) => coerceLibArg(args[i], kind));
+        return coerceLibReturn(fn(...coerced), meta.ret);
+      };
+    }
+  }
+  Object.defineProperty(lib, "instance", { value: instance, enumerable: false });
+  return lib;
+}
 
 export async function runWasmBytesAsync(wasmBytes, opts = {}) {
   const { mainModule, hostImports, b, runtime, imports, externMeta, jspi, needsTasks, scheduler } = prepareWasm(wasmBytes, opts, { jspi: hasJspi });

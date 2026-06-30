@@ -5,7 +5,8 @@
 //! map directly to Wasm instructions.
 
 use .core_ir.{
-  BinOp, CorePattern, ExternImport, FieldId, FuncId, GlobalId, LocalId, Param, UnOp, VariantId,
+  BinOp, CorePattern, ExternImport, FieldId, FuncId, GlobalId, LibExport, LocalId, Param, UnOp,
+  VariantId,
 }
 use .mono_type.{MonoType, TypeId}
 
@@ -83,4 +84,5 @@ pub type AnfModule = .{
   // type), so the backend resolves a global's type by its program-wide identity
   // rather than by a per-module, collision-prone source LocalId.
   global_monos: Dict<Int, MonoType>,
+  lib_exports: Vector<LibExport>,
 }

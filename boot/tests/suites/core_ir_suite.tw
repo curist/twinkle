@@ -485,6 +485,7 @@ pub fn suite() runner.Suite {
           func_table: Dict.new(),
           extern_imports: Dict.new(),
           method_table: Dict.new(),
+          lib_exports: [],
         }
         assert.equal(mod.functions.len(), 0)
       },
@@ -1541,6 +1542,7 @@ pub fn suite() runner.Suite {
             func_table: Dict.new(),
             extern_imports: Dict.new(),
             method_table: Dict.new(),
+            lib_exports: [],
           },
           func_table: Dict.new(),
           external_refs: Dict.new(),
@@ -1549,6 +1551,7 @@ pub fn suite() runner.Suite {
           value_exports: Dict.new(),
           value_refs: Dict.new(),
           defined_global_count: 0,
+          lib_exports: [],
         }
         global_ids: Dict<String, Dict<String, Int>> = Dict.new()
         mod_globals: Dict<String, Int> = Dict.new()
@@ -1601,6 +1604,7 @@ pub fn suite() runner.Suite {
             func_table: Dict.new(),
             extern_imports: Dict.new(),
             method_table: Dict.new(),
+            lib_exports: [],
           },
           func_table: Dict.new(),
           external_refs: ext_refs,
@@ -1609,6 +1613,7 @@ pub fn suite() runner.Suite {
           value_exports: Dict.new(),
           value_refs: Dict.new(),
           defined_global_count: 0,
+          lib_exports: [],
         }
         global_ids: Dict<String, Dict<String, Int>> = Dict.new()
         main_globals: Dict<String, Int> = Dict.new()

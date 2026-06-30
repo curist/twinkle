@@ -74,6 +74,7 @@ fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
     init_func_id: .None,
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
   m
 }
@@ -189,6 +190,7 @@ pub fn test_plan_empty_module() Result<Void, String> {
     init_func_id: .None,
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
   env := resolver.empty_env()
   builtins := empty_builtins()
@@ -962,6 +964,7 @@ pub fn test_plan_module_globals() Result<Void, String> {
     init_func_id: .Some(mk_func(1)),
     extern_imports: Dict.new(),
     global_monos,
+    lib_exports: [],
   }
   reg := plan(anf, resolver.empty_env(), empty_builtins())
 

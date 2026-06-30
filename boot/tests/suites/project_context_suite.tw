@@ -6,7 +6,11 @@ use lib.project.config
 use lib.project.context
 
 fn cfg_with(name: String?, project: Vector<String>, test: Vector<String>) config.Config {
-  config.Config.{ name, project_entries: project, test_entries: test }
+  config.Config.{ name, project_entries: project, test_entries: test, lib_entry: .None }
+}
+
+fn cfg_with_lib(name: String?, project: Vector<String>, test: Vector<String>, lib_entry: String?) config.Config {
+  config.Config.{ name, project_entries: project, test_entries: test, lib_entry }
 }
 
 fn fixture_root() String {
@@ -202,15 +206,21 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "all_entries is project entries followed by test entries",
+      "all_entries is project entries followed by test and lib entries",
       fn() {
-        cfg := cfg_with(.None, ["cmd/app.tw", "cmd/server.tw"], ["tests/main.tw"])
+        cfg := cfg_with_lib(
+          .None,
+          ["cmd/app.tw", "cmd/server.tw"],
+          ["tests/main.tw"],
+          .Some("demo.tw"),
+        )
         ctx := try context.from_root("/proj", cfg)
         all := ctx.all_entries()
-        try assert.equal(all.len(), 3)
+        try assert.equal(all.len(), 4)
         try assert.equal(all[0].rel_path, "cmd/app.tw")
         try assert.equal(all[1].rel_path, "cmd/server.tw")
         try assert.equal(all[2].rel_path, "tests/main.tw")
+        try assert.equal(all[3].rel_path, "demo.tw")
         .Ok({})
       },
     )

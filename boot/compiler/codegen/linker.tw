@@ -12,8 +12,8 @@
 //!   5. Synthesize __linked_init and export as __twinkle_start
 
 use compiler.codegen.wasm_ir.{
-  DataSegment, ElemDef, ExportDef, ExternMeta, FieldDef, FuncDef, GlobalDef, HeapType, ImportDef,
-  Instr, MemoryDef, MemoryExportDef, TableDef, TypeDef, ValType, WasmModule,
+  DataSegment, ElemDef, ExportDef, ExportMeta, ExternMeta, FieldDef, FuncDef, GlobalDef, HeapType,
+  ImportDef, Instr, MemoryDef, MemoryExportDef, TableDef, TypeDef, ValType, WasmModule,
 }
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -30,6 +30,7 @@ pub type LinkedModule = .{
   data: Vector<DataSegment>,
   start: String?,
   extern_meta: Vector<ExternMeta>,
+  export_meta: Vector<ExportMeta>,
 }
 
 pub type LinkError = { MissingExport(String, String) }
@@ -443,6 +444,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
       start,
       // Populated by link_program from the source extern_imports (post-DCE).
       extern_meta: [],
+      export_meta: [],
     },
   )
 }

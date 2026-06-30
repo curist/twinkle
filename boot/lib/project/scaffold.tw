@@ -52,6 +52,9 @@ pub fn make(name: String, root: String) Result<Scaffold, String> {
     ScaffoldFile.{ path: path.join(root, "twinkle.toml"), content: twinkle_toml(name) },
     ScaffoldFile.{ path: path.join(root, ".gitignore"), content: gitignore_content },
     ScaffoldFile.{ path: path.join(root, "${name}.tw"), content: library_module(name) },
+    ScaffoldFile.{ path: path.join(root, "host.mjs"), content: node_host(name) },
+    ScaffoldFile.{ path: path.join(root, "index.html"), content: web_host(name) },
+    ScaffoldFile.{ path: path.join(root, "package.json"), content: package_json(name) },
     ScaffoldFile.{
       path: path.join(path.join(root, "cmd"), "${name}.tw"),
       content: command_entry(name),
@@ -63,11 +66,23 @@ pub fn make(name: String, root: String) Result<Scaffold, String> {
 }
 
 fn twinkle_toml(name: String) String {
-  "[project]\nname = \"${name}\"\nentries = [\"cmd/${name}.tw\"]\n\n[test]\nentries = [\"tests/main.tw\"]\n"
+  "[project]\nname = \"${name}\"\nentries = [\"cmd/${name}.tw\"]\n\n[lib]\nentry = \"${name}.tw\"\n\n[test]\nentries = [\"tests/main.tw\"]\n"
 }
 
 fn library_module(name: String) String {
-  "pub greeting: String = \"Hello from ${name}!\"\n"
+  "pub greeting: String = \"Hello from ${name}!\"\n\npub pi: Float = 3.14159\n\npub fn add(a: Int, b: Int) Int {\n  a + b\n}\n"
+}
+
+fn node_host(name: String) String {
+  "import { loadLib } from \"@twinkle-lang/twinkle\";\n\nconst lib = await loadLib(new URL(\"./target/${name}.lib.wasm\", import.meta.url));\n\nconsole.log(\"2 + 3 = \" + lib.add(2, 3));\nconsole.log(\"pi = \" + lib.pi);\n"
+}
+
+fn web_host(name: String) String {
+  "<!doctype html>\n<html>\n  <body>\n    <pre id=\"out\">Loading...</pre>\n    <script type=\"module\">\n      import { loadLib } from \"@twinkle-lang/twinkle/web\";\n\n      const lib = await loadLib(new URL(\"./target/${name}.lib.wasm\", import.meta.url));\n      document.getElementById(\"out\").textContent = \"2 + 3 = \" + lib.add(2, 3) + \"\\npi = \" + lib.pi;\n    </script>\n  </body>\n</html>\n"
+}
+
+fn package_json(name: String) String {
+  "{\n  \"type\": \"module\",\n  \"dependencies\": {\n    \"@twinkle-lang/twinkle\": \"^0.15.0\"\n  }\n}\n"
 }
 
 fn command_entry(name: String) String {

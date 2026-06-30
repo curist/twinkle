@@ -48,6 +48,7 @@ use .suites.graph_scc_suite
 use .suites.group_resolution_suite
 use .suites.imports_suite
 use .suites.insert_boundaries_suite
+use .suites.lib_export_suite
 use .suites.lib_json_suite
 use .suites.line_index_suite
 use .suites.linker_suite
@@ -229,6 +230,7 @@ runner.run_all([
   rewrite_suite.suite(),
   query_diagnostics_suite.suite(),
   imports_suite.suite(),
+  lib_export_suite.suite(),
   lib_json_suite.suite(),
   utf16_suite.suite(),
   line_index_suite.suite(),

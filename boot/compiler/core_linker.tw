@@ -11,7 +11,7 @@
 
 use compiler.core_ir.{
   CompiledModule, CoreExpr, CoreExprKind, CoreModule, CorePattern, ExternImport, FieldInit, FuncId,
-  FunctionDef, GlobalId, LocalId, MatchArm, Param,
+  FunctionDef, GlobalId, LibExport, LibExportTarget, LocalId, MatchArm, Param,
 }
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedContractRef, ResolvedEnv, ResolvedTypeParam}
@@ -61,6 +61,7 @@ pub fn link(
       func_table: Dict.new(),
       extern_imports: Dict.new(),
       method_table: Dict.new(),
+      lib_exports: [],
     }
   }
 
@@ -141,6 +142,7 @@ pub fn link(
   all_init_ids: Vector<FuncId> = []
   entry_init: FuncId? = .None
   entry_func_ids: Vector<Int> = []
+  linked_lib_exports: Vector<LibExport> = []
 
   // Accumulate method table entries from all modules during linking.
   pre_dce_method_table: Dict<String, FuncId> = Dict.new()
@@ -296,6 +298,10 @@ pub fn link(
       for f in m.core.functions {
         entry_func_ids = .append(remap_func_id(f.func_id, remap).id)
       }
+
+      for exp in m.lib_exports {
+        linked_lib_exports = .append(remap_lib_export(exp, remap, global_remap))
+      }
     }
 
     // Track init functions.
@@ -364,6 +370,28 @@ pub fn link(
     func_table: live_func_table,
     extern_imports: live_extern_imports,
     method_table,
+    lib_exports: collect exp in linked_lib_exports {
+      if lib_export_is_reachable(exp, reachable) {
+        exp
+      } else {
+        continue
+      }
+    },
+  }
+}
+
+fn remap_lib_export(exp: LibExport, remap: Dict<Int, Int>, global_remap: Dict<Int, Int>) LibExport {
+  exp.target = case exp.target {
+    .Function(fid) => LibExportTarget.Function(remap_func_id(fid, remap)),
+    .Value(gid) => LibExportTarget.Value(GlobalId.{ id: remap_global_id(gid, global_remap).id }),
+  }
+  exp
+}
+
+fn lib_export_is_reachable(exp: LibExport, reachable: Dict<Int, Bool>) Bool {
+  case exp.target {
+    .Function(fid) => reachable.has(fid.id),
+    .Value(_) => true,
   }
 }
 

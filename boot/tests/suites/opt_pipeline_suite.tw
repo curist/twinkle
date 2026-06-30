@@ -78,6 +78,7 @@ fn test_cross_round_chain() Result<Void, String> {
     init_func_id: .None,
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
   result := optimize_module(module)
   optimized := result.functions[0].body
@@ -109,6 +110,7 @@ fn test_branch_simp_then_dead_elim() Result<Void, String> {
     init_func_id: .None,
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
   result := optimize_module(module)
   optimized := result.functions[0].body
@@ -136,6 +138,7 @@ fn test_pinned_locals_preserved() Result<Void, String> {
     init_func_id: .Some(fid(100)),
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
   result := optimize_module(module)
   init_optimized := result.functions[0].body
@@ -157,6 +160,7 @@ fn test_no_init_no_pinning() Result<Void, String> {
     init_func_id: .None,
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
   result := optimize_module(module)
   optimized := result.functions[0].body
@@ -190,6 +194,7 @@ fn test_multiple_functions_optimized() Result<Void, String> {
     init_func_id: .None,
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
   result := optimize_module(module)
 
@@ -216,6 +221,7 @@ fn test_already_optimal() Result<Void, String> {
     init_func_id: .None,
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
   result := optimize_module(module)
   optimized := result.functions[0].body
@@ -245,6 +251,7 @@ fn test_copy_prop_respects_pinned() Result<Void, String> {
     init_func_id: .Some(fid(100)),
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
   result := optimize_module(module)
   init_optimized := result.functions[0].body
@@ -279,6 +286,7 @@ fn test_nested_multi_round() Result<Void, String> {
     init_func_id: .None,
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
   result := optimize_module(module)
   optimized := result.functions[0].body
@@ -306,6 +314,7 @@ fn test_optimize_module_with_semantics_matches_default() Result<Void, String> {
     init_func_id: .None,
     extern_imports: Dict.new(),
     global_monos: Dict.new(),
+    lib_exports: [],
   }
   reg := make_builtin_registry()
   semantics := make_prelude_optimizer_semantics(reg)

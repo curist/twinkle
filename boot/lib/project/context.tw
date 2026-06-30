@@ -33,6 +33,7 @@ pub type ProjectContext = .{
   config: config.Config,
   project_entries: Vector<EntryTarget>,
   test_entries: Vector<EntryTarget>,
+  lib_entry: EntryTarget?,
 }
 
 /// Derive a target name from an entry's project-relative path. Target names are
@@ -60,8 +61,14 @@ pub fn discover_in(start: String) Result<ProjectContext, String> {
 pub fn from_root(root: String, cfg: config.Config) Result<ProjectContext, String> {
   project := build_entries(root, cfg.project_entries)
   test := build_entries(root, cfg.test_entries)
+  lib_entry: EntryTarget? = case cfg.lib_entry {
+    .Some(rel) => .Some(
+      EntryTarget.{ name: derive_target_name(rel), rel_path: rel, abs_path: path.join(root, rel) },
+    ),
+    .None => .None,
+  }
   try reject_conflicts(project)
-  .Ok(ProjectContext.{ root, config: cfg, project_entries: project, test_entries: test })
+  .Ok(ProjectContext.{ root, config: cfg, project_entries: project, test_entries: test, lib_entry })
 }
 
 fn build_entries(root: String, rels: Vector<String>) Vector<EntryTarget> {
@@ -92,7 +99,12 @@ fn reject_conflicts(entries: Vector<EntryTarget>) Result<Void, String> {
 /// All configured entries: project entries followed by test entries. This is
 /// the maintenance-command set (`fmt`, `lint`) per the project model.
 pub fn all_entries(ctx: ProjectContext) Vector<EntryTarget> {
-  ctx.project_entries.concat(ctx.test_entries)
+  out := ctx.project_entries.concat(ctx.test_entries)
+  case ctx.lib_entry {
+    .Some(e) => out = .append(e),
+    .None => {},
+  }
+  out
 }
 
 /// Select one project entry to act on (`run`, `build --target`): the entry whose
@@ -168,6 +180,10 @@ fn target_names(entries: Vector<EntryTarget>) String {
 /// rooted at the project (not the working directory).
 pub fn default_output_path(ctx: ProjectContext, entry: EntryTarget) String {
   path.join(path.join(ctx.root, "target"), "${entry.name}.wasm")
+}
+
+pub fn default_lib_output_path(ctx: ProjectContext, entry: EntryTarget) String {
+  path.join(path.join(ctx.root, "target"), "${entry.name}.lib.wasm")
 }
 
 /// Project-local modules reachable from `entries`, via the shared frontend's

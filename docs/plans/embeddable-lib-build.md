@@ -1,5 +1,7 @@
 # Embeddable `lib` Build
 
+**Status:** Implemented.
+
 ## Goal
 
 Let a Twinkle project be **embedded into an existing Node or web application as a
@@ -137,7 +139,7 @@ A command build leaves `lib_exports` empty, so this whole path is inert unless
 A new helper instantiates a *prebuilt* program wasm with host externs and
 returns a typed handle. It does **not** load the compiler.
 
-* **Node** — in `tools/npm` `index.mjs`, beside the existing `run(wasm, …)`.
+* **Node** — in `tools/js_runtime/index.mjs` (staged as the npm `index.mjs`), beside the existing `run(wasm, …)`.
 * **Web** — in `tools/js_runtime/web.mjs`. The web entry currently only exposes
   source-based `run`/`command` (which self-load `boot.wasm`); this surfaces
   `runtime.mjs`'s existing compiler-free `runWasmBytesAsync` path, closing the
@@ -182,8 +184,9 @@ returns an object of typed wrapper functions plus value getters.
 
 ## Future Planned
 
-These are intentionally **out of v1**. The headline follow-up is the fuller ABI
-(noted here so the direction is on record):
+These are intentionally **out of v1**. The fuller ABI now has its own plan,
+[lib-export-abi.md](lib-export-abi.md); the items below are the headline pieces
+it covers (kept here so the direction is on record):
 
 * **String args/returns** — marshal `String` across the boundary via the existing
   bridge. Covers the common "compute and return text" library.
@@ -209,13 +212,16 @@ These are intentionally **out of v1**. The headline follow-up is the fuller ABI
 
 ## Testing
 
-* **Boot** — a suite (in the style of `boot/tests/suites/project_scaffold_suite.tw`)
-  covering: lib-entry resolution from `[lib]`, export-surface selection (eligible
-  primitives kept, ineligible members skipped with the expected warnings),
-  `twinkle.exports` metadata content, and export retention through DCE.
-* **Runtime** — a Node test that instantiates a built primitives lib via
-  `loadLib` and asserts `add(2, 3) === 5`, reads an exported value global, and
-  confirms a `String`-typed `pub fn` was skipped (warning surfaced, not exported).
+* **Boot** — `boot/tests/suites/lib_export_suite.tw` drives `compile_source_lib`
+  (the in-memory `--lib` build) and checks export-surface selection: primitive
+  `pub` functions kept with their param/return kinds, primitive value globals
+  exported as `__get_*` getters, and generic / `String` members skipped with the
+  expected warnings (non-`pub` members neither exported nor warned). Lib-entry
+  resolution from `[lib]` is covered by `project_config_suite` / `project_context_suite`.
+* **Runtime** — `tools/js_runtime/runtime.test.mjs` builds a primitives lib via
+  `compile(src, { lib: true })`, `loadLib`s it, and asserts `add(2, 3) === 5n`
+  (`Int` returns are `BigInt`), a `Bool` round-trip, an exported value global
+  (`pi`), and that a `String`-typed `pub fn` is absent from the surface.
 
 ---
 
@@ -232,6 +238,6 @@ These are intentionally **out of v1**. The headline follow-up is the fuller ABI
 | `boot/compiler/codegen/emit.tw` | add an `ExportDef` per eligible member (DCE root, automatic); synthesize a zero-arg getter func per value global |
 | `boot/compiler/codegen/{codegen,wasm,wat}.tw` | emit the `twinkle.exports` custom section from `lib_exports`, mirroring `collect_extern_meta` / `encode_extern_meta_section_payload`. **No change to `linker.tw` / `retain_final_exports`** |
 | `boot/lib/project/scaffold.tw` + `boot/commands/scaffold.tw` | `[lib]` entry, `host.mjs`, `index.html`, `package.json` templates |
-| `tools/npm/index.mjs` | Node `loadLib` |
+| `tools/js_runtime/index.mjs` | Node `loadLib` (staged to npm as `index.mjs`) |
 | `tools/js_runtime/web.mjs` | web `loadLib` (compiler-free) |
 | `src/` (stage0) | only if the lib build is exercised within `boot/` source itself (likely not — no stage0 parity needed) |

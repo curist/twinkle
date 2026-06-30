@@ -201,5 +201,15 @@ pub type WasmModule = .{
 /// "str" | "i64" | "f64" | "i32" | "ref" | "void".
 pub type ExternMeta = .{ module: String, name: String, args: Vector<String>, ret: String }
 
+/// Host-callable lib export metadata emitted into `twinkle.exports`.
+/// `kind` is `fn` or `value`; value exports point at synthesized getter funcs.
+pub type ExportMeta = .{
+  name: String,
+  wasm_name: String,
+  kind: String,
+  args: Vector<String>,
+  ret: String,
+}
+
 // ── ABI contract ─────────────────────────────────────────────────────
 pub type AbiContract = .{ param_types: Vector<ValType>, result_types: Vector<ValType> }

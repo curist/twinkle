@@ -7,7 +7,7 @@
 //!   - Boundaries explicit — AWrapAnyref / AUnwrapAnyref already in IR
 //!   - Pattern match arm chains are delegated to codegen.emit.match
 
-use compiler.anf.{AnfFunctionDef, IndexKind, OpKind}
+use compiler.anf.{AnfFunctionDef, AnfModule, IndexKind, OpKind}
 use compiler.backend.facts as facts
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.prepared_ir.{
@@ -58,7 +58,7 @@ use compiler.codegen.wasm_ir.{
 }
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key, val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
-use compiler.core_ir.{BinOp, FieldId, FuncId, UnOp, VariantId}
+use compiler.core_ir.{BinOp, FieldId, FuncId, LibPrimitive, UnOp, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv}
 use compiler.type_util.{subst_type_params}
@@ -277,6 +277,9 @@ pub fn emit_module(
   } else {
     []
   }
+  lib_result := emit_lib_exports(anf, reg, func_sym_map)
+  funcs = .concat(lib_result.funcs)
+  user_exports := task_exports.concat(lib_result.exports)
   extern_imports: Vector<ImportDef> = []
 
   for fid, ext in anf.extern_imports {
@@ -358,11 +361,55 @@ pub fn emit_module(
     globals,
     tables: [],
     elems: [],
-    exports: task_exports,
+    exports: user_exports,
     memory_exports: [],
     memories: [],
     data,
     start,
+  }
+}
+
+type LibEmitResult = .{ funcs: Vector<FuncDef>, exports: Vector<ExportDef> }
+
+fn emit_lib_exports(anf: AnfModule, reg: WasmTypeRegistry, func_sym_map: Dict<Int, String>) LibEmitResult {
+  funcs: Vector<FuncDef> = []
+  exports: Vector<ExportDef> = []
+
+  for exp in anf.lib_exports {
+    case exp.target {
+      .Function(fid) => {
+        sym := lookup_func_sym(func_sym_map, fid)
+        exports = .append(ExportDef.{ wasm_name: exp.wasm_name, func_sym: sym })
+      },
+      .Value(gid) => case reg.module_globals[gid.id] {
+        .Some(gentry) => {
+          body: Vector<Instr> = if exp.ret == LibPrimitive.Void {
+            []
+          } else {
+            [Instr.GlobalGet(gentry.sym)]
+          }
+          results: Vector<ValType> = if exp.ret == LibPrimitive.Void {
+            []
+          } else {
+            [lib_primitive_val_type(gentry.mono)]
+          }
+          funcs = .append(FuncDef.{ name: exp.wasm_name, params: [], results, locals: [], body })
+          exports = .append(ExportDef.{ wasm_name: exp.wasm_name, func_sym: exp.wasm_name })
+        },
+        .None => error("emit_lib_exports: missing module global G${gid.id}"),
+      },
+    }
+  }
+
+  .{ funcs, exports }
+}
+
+fn lib_primitive_val_type(ty: MonoType) ValType {
+  case ty {
+    .Int => .I64,
+    .Float => .F64,
+    .Bool => .I32,
+    _ => .Anyref,
   }
 }
 

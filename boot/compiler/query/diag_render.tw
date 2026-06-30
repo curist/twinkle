@@ -412,5 +412,11 @@ fn warning_to_report(w: WarningDiag, ctx: RenderCtx) Report {
       labels: [primary(d.span, .None)],
       help_lines: ["a one-line `\\\\` block reads better as ${d.suggestion}"],
     },
+    .LibExportSkipped(d) => .{
+      severity: .Warning,
+      title: d.message,
+      labels: [primary(d.span, .None)],
+      help_lines: d.help_lines,
+    },
   }
 }

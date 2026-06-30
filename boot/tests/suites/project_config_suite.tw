@@ -13,6 +13,7 @@ pub fn suite() runner.Suite {
         try assert.equal(cfg.name, .None)
         try assert.equal(cfg.project_entries.len(), 0)
         try assert.equal(cfg.test_entries.len(), 0)
+        try assert.equal(cfg.lib_entry, .None)
         .Ok({})
       },
     )
@@ -43,6 +44,14 @@ pub fn suite() runner.Suite {
         cfg := try config.parse("[test]\nentries = [\"tests/main.tw\"]\n")
         try assert.equal(cfg.test_entries.len(), 1)
         try assert.equal(cfg.test_entries[0], "tests/main.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "lib section entry parses",
+      fn() {
+        cfg := try config.parse("[lib]\nentry = \"demo.tw\"\n")
+        try assert.equal(cfg.lib_entry, .Some("demo.tw"))
         .Ok({})
       },
     )
@@ -110,15 +119,16 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "entries unions project then test entries",
+      "entries unions project then test then lib entries",
       fn() {
         cfg := try config.parse(
-          "[project]\nentries = [\"cmd/app.tw\"]\n[test]\nentries = [\"tests/main.tw\"]\n",
+          "[project]\nentries = [\"cmd/app.tw\"]\n[test]\nentries = [\"tests/main.tw\"]\n[lib]\nentry = \"demo.tw\"\n",
         )
         all := cfg.entries()
-        try assert.equal(all.len(), 2)
+        try assert.equal(all.len(), 3)
         try assert.equal(all[0], "cmd/app.tw")
         try assert.equal(all[1], "tests/main.tw")
+        try assert.equal(all[2], "demo.tw")
         .Ok({})
       },
     )

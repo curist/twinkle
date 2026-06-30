@@ -116,7 +116,13 @@ fn mk_func_def(
 }
 
 fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
-  .{ functions: funcs, init_func_id: .None, extern_imports: Dict.new(), global_monos: Dict.new() }
+  .{
+    functions: funcs,
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+    lib_exports: [],
+  }
 }
 
 fn prepared_module(

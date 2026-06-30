@@ -28,10 +28,11 @@ use compiler.codegen.runtime.dict as rt_dict
 use compiler.codegen.runtime.str as rt_str
 use compiler.codegen.runtime.types as rt_types
 use compiler.codegen.wasm.{emit_linked_wasm, emit_linked_wasm_buffer}
-use compiler.codegen.wasm_ir.{ExternMeta, MemoryExportDef, WasmModule}
+use compiler.codegen.wasm_ir.{ExportMeta, ExternMeta, MemoryExportDef, WasmModule}
 use compiler.codegen.wasm_layout.{EqTypeLayouts, collect_eq_type_layouts}
 use compiler.codegen.wasm_plan.{plan_wasm_types}
 use compiler.codegen.wat.{emit_wat}
+use compiler.core_ir.{LibPrimitive}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
 
@@ -145,6 +146,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   // derived from the source extern_imports (MonoTypes), before Wasm DCE filters
   // it down to the live imports.
   linked.extern_meta = collect_extern_meta(anf)
+  linked.export_meta = collect_export_meta(anf)
 
   // 7. Wasm-level dead code elimination
   linked = eliminate_dead_wasm(linked)
@@ -212,6 +214,33 @@ fn collect_extern_meta(anf: AnfModule) Vector<ExternMeta> {
   }
 
   result
+}
+
+fn export_primitive_kind(p: LibPrimitive) String {
+  case p {
+    .Int => "int",
+    .Float => "float",
+    .Bool => "bool",
+    .Void => "void",
+  }
+}
+
+fn collect_export_meta(anf: AnfModule) Vector<ExportMeta> {
+  collect exp in anf.lib_exports {
+    kind := case exp.target {
+      .Function(_) => "fn",
+      .Value(_) => "value",
+    }
+    ExportMeta.{
+      name: exp.name,
+      wasm_name: exp.wasm_name,
+      kind,
+      args: collect p in exp.params {
+        export_primitive_kind(p)
+      },
+      ret: export_primitive_kind(exp.ret),
+    }
+  }
 }
 
 pub fn codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) String {

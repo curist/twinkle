@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { resolveExternImports } from "./runtime.mjs";
 import { bridgeBytes } from "./bridge_bytes.mjs";
+import { compile, loadLib } from "./index.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -80,4 +81,42 @@ test("skips non-function imports", () => {
   );
   assert.deepEqual(missing, []);
   assert.equal(found.length, 0);
+});
+
+test("loadLib exposes primitive pub exports and skips ineligible ones", async () => {
+  const src = [
+    "pub fn add(a: Int, b: Int) Int {",
+    "  a + b",
+    "}",
+    "",
+    "pub fn is_positive(n: Int) Bool {",
+    "  n > 0",
+    "}",
+    "",
+    "pub pi: Float = 3.14159",
+    "",
+    // Ineligible: String is not a v1 primitive, so this is skipped (not exported).
+    "pub fn greet(name: String) String {",
+    "  name",
+    "}",
+    "",
+    // Non-pub functions are never exported.
+    "fn secret() Int {",
+    "  42",
+    "}",
+  ].join("\n");
+
+  const wasm = await compile({ source: src }, { lib: true });
+  const lib = await loadLib(wasm);
+
+  // Int args accept plain numbers; Int returns come back as BigInt (no downcast).
+  assert.equal(lib.add(2, 3), 5n);
+  // Bool round-trips as a JS boolean.
+  assert.equal(lib.is_positive(5), true);
+  assert.equal(lib.is_positive(-1), false);
+  // Value globals are read once after start and exposed as a property.
+  assert.ok(Math.abs(lib.pi - 3.14159) < 1e-9);
+  // Ineligible and non-pub members are absent from the surface.
+  assert.equal(lib.greet, undefined);
+  assert.equal(lib.secret, undefined);
 });
