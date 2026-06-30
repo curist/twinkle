@@ -14,9 +14,10 @@ CORE_LIB_SRCS := $(shell find boot/prelude boot/stdlib -name '*.tw')
 
 help:
 	@printf 'Twinkle development targets:\n'
-	@printf '  make test              Run Rust and boot compiler tests\n'
+	@printf '  make test              Run Rust, boot compiler, and JS runtime tests\n'
 	@printf '  make boot-test         Run boot compiler test suite\n'
 	@printf '  make rust-test         Run Rust test suite\n'
+	@printf '  make npm-test          Run JS runtime/lib/CLI test suite\n'
 	@printf '  make stage0            Build the Rust stage0 compiler\n'
 	@printf '  make stage2            Rebuild target/boot.wasm via self-host loop\n'
 	@printf '  make bundle-cli        Rebuild stage2 payload and build Deno target/twk\n'
@@ -35,7 +36,7 @@ boot-test: target/twk
 rust-test:
 	cargo test --release
 
-test: rust-test boot-test
+test: rust-test boot-test npm-test
 
 # Build the Rust stage0 compiler used to bootstrap the self-hosted compiler.
 # File target so downstream rules rebuild only when Rust sources change.
@@ -177,6 +178,9 @@ npm-publish: $(STAGE2_WASM) tools/build_npm_pkg.sh tools/npm/package.json tools/
 	tools/build_npm_pkg.sh
 	cd target/npm && npm publish
 
-# Run the JS runtime/lib/CLI test suite (needs target/boot.wasm present).
+# Run the JS runtime/lib/CLI test suite. web.test.mjs reads ./boot.wasm next to
+# web.mjs and index.mjs's compile() prefers it, so stage a fresh copy first —
+# otherwise a stale playground-dev artifact silently shadows the current build.
 npm-test: $(STAGE2_WASM)
+	cp $(STAGE2_WASM) tools/js_runtime/boot.wasm
 	node --test tools/js_runtime/*.test.mjs
