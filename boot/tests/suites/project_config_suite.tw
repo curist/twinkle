@@ -1,6 +1,7 @@
-use lib.project.config
 use @std.testing.assert as assert
 use @std.testing as runner
+
+use lib.project.config
 
 pub fn suite() runner.Suite {
   runner
@@ -75,7 +76,7 @@ pub fn suite() runner.Suite {
       "validate accepts project-local .tw entries",
       fn() {
         cfg := try config.parse("[test]\nentries = [\"tests/main.tw\"]\n")
-        try config.validate(cfg)
+        try cfg.validate()
         .Ok({})
       },
     )
@@ -83,7 +84,7 @@ pub fn suite() runner.Suite {
       "validate rejects non-.tw entry",
       fn() {
         cfg := try config.parse("[test]\nentries = [\"tests/main.txt\"]\n")
-        case config.validate(cfg) {
+        case cfg.validate() {
           .Ok(_) => .Err("expected non-.tw rejection"),
           .Err(_) => .Ok({}),
         }
@@ -93,7 +94,7 @@ pub fn suite() runner.Suite {
       "validate rejects path escaping the project root",
       fn() {
         cfg := try config.parse("[project]\nentries = [\"../outside.tw\"]\n")
-        case config.validate(cfg) {
+        case cfg.validate() {
           .Ok(_) => .Err("expected escaping-path rejection"),
           .Err(_) => .Ok({}),
         }

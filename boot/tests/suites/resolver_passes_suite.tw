@@ -1,7 +1,8 @@
-use compiler.parser
-use compiler.resolver
 use @std.testing.assert as assert
 use @std.testing as runner
+
+use compiler.parser
+use compiler.resolver
 
 pub fn suite() runner.Suite {
   runner
@@ -12,13 +13,13 @@ pub fn suite() runner.Suite {
         base := resolver.empty_env()
 
         parsed1 := parser.parse("pub type A = .{ x: Int }", 0)
-        c1 := resolver.collect_declarations_from(base, parsed1.value, base.next_type_id())
+        c1 := base.collect_declarations_from(parsed1.value, base.next_type_id())
 
         // Module 1 allocated at least one type
         try assert.is_true(c1.next_id > c1.start_id)
 
         parsed2 := parser.parse("pub type B = .{ y: Int }", 0)
-        c2 := resolver.collect_declarations_from(base, parsed2.value, c1.next_id)
+        c2 := base.collect_declarations_from(parsed2.value, c1.next_id)
 
         // Module 2 range starts where module 1 ended (disjoint)
         try assert.equal(c2.start_id, c1.next_id)
@@ -34,7 +35,7 @@ pub fn suite() runner.Suite {
 
         // Shape allocates its main ID plus a synthesized type for Rect's anonymous record field
         parsed := parser.parse("type Shape = { Circle(Float), Rect(.{ w: Int, h: Int }) }", 0)
-        c := resolver.collect_declarations_from(base, parsed.value, base.next_type_id())
+        c := base.collect_declarations_from(parsed.value, base.next_type_id())
 
         // Shape (main) + Rect's synthesized record type = 2 IDs
         try assert.equal(c.next_id, c.start_id + 2)
@@ -54,7 +55,7 @@ pub fn suite() runner.Suite {
 
         // Collect via cursor-threaded path starting at the same id_start
         parsed2 := parser.parse(src, 0)
-        c := resolver.collect_declarations_from(base, parsed2.value, base.next_type_id())
+        c := base.collect_declarations_from(parsed2.value, base.next_type_id())
 
         // Both paths must allocate the same TypeId for Foo
         default_tid := case default_result.env.lookup_type("Foo") {
