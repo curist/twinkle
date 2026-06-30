@@ -1,0 +1,79 @@
+//! Test command: run a project's configured test entries.
+//!
+//! Each `[test].entries` file is a normal Twinkle program that aggregates
+//! suites and calls `testing.run_all([...])`, exiting non-zero on failure.
+//! `twk test` compiles and runs each one and exits non-zero if any failed.
+//! Reporting environment variables (`TWK_TEST_FILTER`, `TWK_TEST_REPORT`,
+//! `NO_COLOR`) are read by the test program itself, so they pass through.
+
+use @std.fs
+use @std.path
+use @std.proc
+
+use commands.common.{format_compile_error, print_warnings}
+use compiler.pipeline
+use lib.argparse.app.{ParseResult}
+use lib.module.loader
+use lib.project.config
+
+pub fn run_test_command(parsed: ParseResult) {
+  root := loader.find_project_root(".")
+
+  cfg := case config.load(root) {
+    .Ok(c) => c,
+    .Err(err) => {
+      eprintln("error: ${err}")
+      proc.exit(1)
+    },
+  }
+
+  entries := resolve_test_entries(root, cfg)
+  if entries.len() == 0 {
+    eprintln(
+      "error: no test entries configured; add [test].entries to twinkle.toml or create tests/main.tw",
+    )
+    proc.exit(1)
+  }
+
+  failed := false
+
+  for entry in entries {
+    if !run_test_entry(path.join(root, entry)) {
+      failed = true
+    }
+  }
+
+  if failed {
+    proc.exit(1)
+  }
+}
+
+// Configured test entries, falling back to a conventional `tests/main.tw`
+// when twinkle.toml lists none.
+fn resolve_test_entries(root: String, cfg: config.Config) Vector<String> {
+  if cfg.test_entries.len() > 0 {
+    return cfg.test_entries
+  }
+
+  fallback := "tests/main.tw"
+  if fs.exists(path.join(root, fallback)) {
+    return [fallback]
+  }
+
+  []
+}
+
+// Compile and run one test entry. Returns true when the program exits 0.
+fn run_test_entry(file: String) Bool {
+  artifacts := case pipeline.compile_entry_path(file) {
+    .Ok(result) => result,
+    .Err(err) => {
+      eprintln(format_compile_error(err))
+      return false
+    },
+  }
+
+  print_warnings(artifacts.warnings)
+  wasm_bytes := pipeline.emit_wasm(artifacts)
+  proc.run_wasm(wasm_bytes, [file]) == 0
+}
