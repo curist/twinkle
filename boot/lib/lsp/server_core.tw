@@ -452,6 +452,33 @@ fn handle_references(state: State, req: protocol.Request) Step {
   .{ state, outgoing: [req.id.success_response(response)] }
 }
 
+type RenameWarm = .{ state: State, snap: semantic.SemanticSnapshot }
+
+// Warm the query cache for `doc`'s project by seeding analysis from the
+// configured project/test entries (or the open documents when none are
+// configured), mirroring diagnostics. This lets cross-module rename see the
+// whole configured project graph even when the module holding a reference is
+// not open. Returns the state with the warmed cache and the snapshot for `doc`.
+fn warm_rename_workspace(state: State, doc: document_store.Document) RenameWarm {
+  open_docs := state.documents.docs.values()
+  overlay_docs := collect d in open_docs {
+    query_diagnostics.DocumentInput.{ uri: d.uri, text: d.text, version: d.version }
+  }
+  root := project_root_for_document(doc.identity.path)
+
+  for seed_uri in analysis_entry_uris(root, open_docs) {
+    ws := semantic.snapshot_workspace(
+      state.query_cache,
+      .{ entry_uri: seed_uri, project_root: root, open_documents: overlay_docs },
+    )
+    state.query_cache = ws.cache
+  }
+
+  snap := state.workspace_snapshot(doc)
+  state.query_cache = snap.cache
+  .{ state, snap }
+}
+
 fn handle_prepare_rename(state: State, req: protocol.Request) Step {
   position_params := case params.decode_definition(req.params) {
     .Ok(p) => p,
@@ -466,14 +493,9 @@ fn handle_prepare_rename(state: State, req: protocol.Request) Step {
     .None => return state.null_response_step(req),
   }
 
-  // Warm the cache from every open document so cross-module symbols resolve.
-  for open_doc in state.documents.docs.values() {
-    ws := state.workspace_snapshot(open_doc)
-    state.query_cache = ws.cache
-  }
-
-  snap := state.workspace_snapshot(doc)
-  state.query_cache = snap.cache
+  warm := state.warm_rename_workspace(doc)
+  state = warm.state
+  snap := warm.snap
 
   case query_rename.prepare_rename(snap, offset) {
     .Some(target) => {
@@ -498,14 +520,9 @@ fn handle_rename(state: State, req: protocol.Request) Step {
     .None => return state.rename_error_step(req, "invalid position"),
   }
 
-  // Warm the cache from every open document so cross-module symbols resolve.
-  for open_doc in state.documents.docs.values() {
-    ws := state.workspace_snapshot(open_doc)
-    state.query_cache = ws.cache
-  }
-
-  snap := state.workspace_snapshot(doc)
-  state.query_cache = snap.cache
+  warm := state.warm_rename_workspace(doc)
+  state = warm.state
+  snap := warm.snap
 
   case query_rename.compute_rename(snap, offset, rename_params.new_name) {
     .Ok(locations) => {
@@ -982,7 +999,14 @@ fn publish_workspace_diagnostics(state: State, progress: ProgressSink?) Step {
 
   cur_cache := state.query_cache
   outgoing: Vector<json.Json> = []
+
+  // `published` guards against publishing a doc twice in this run.
+  // `seeded` records the URIs already analyzed as a seed entry, so the
+  // disjoint-graph pass below does not re-analyze them when they publish
+  // nothing this run (e.g. a clean doc whose empty diagnostics were already
+  // published on an earlier run and so dedup to no-op now).
   published: Dict<String, Bool> = Dict.new()
+  seeded: Dict<String, Bool> = Dict.new()
 
   for root in by_project.keys() {
     docs := case by_project[root] {
@@ -994,6 +1018,7 @@ fn publish_workspace_diagnostics(state: State, progress: ProgressSink?) Step {
     // lists any, otherwise from the open documents (the historical fallback).
     // Analysis walks all deps from each seed; we only publish for open docs.
     for seed_uri in analysis_entry_uris(root, docs) {
+      seeded[seed_uri] = true
       result := query_diagnostics.analyze_workspace_with_progress(
         cur_cache,
         .{ entry_uri: seed_uri, project_root: root, open_documents: overlay_docs },
@@ -1030,7 +1055,7 @@ fn publish_workspace_diagnostics(state: State, progress: ProgressSink?) Step {
     // If any open docs in this project weren't covered, analyze them
     // as separate entries to catch disjoint dependency graphs.
     for doc in docs {
-      if published.has(doc.identity.uri) {
+      if published.has(doc.identity.uri) or seeded.has(doc.uri) {
         continue
       }
 
