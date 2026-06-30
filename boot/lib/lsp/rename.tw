@@ -1,0 +1,47 @@
+//! LSP rendering for rename: builds a `WorkspaceEdit` from reference locations.
+
+use compiler.query.references.{ReferenceLocation}
+use lib.json
+use lib.lsp.range as lsp_range
+use lib.text.line_index
+
+/// Build a `WorkspaceEdit` JSON value that replaces every reference location
+/// with `new_name`. Edits are grouped by document URI; `index_for` supplies the
+/// line index used to convert byte spans to LSP ranges (locations whose index
+/// cannot be resolved are skipped).
+pub fn workspace_edit_response(
+  locations: Vector<ReferenceLocation>,
+  new_name: String,
+  index_for: fn(String) line_index.LineIndex?,
+) json.Json {
+  by_uri: Dict<String, Vector<json.Json>> = Dict.new()
+  order: Vector<String> = []
+
+  for loc in locations {
+    idx := case index_for(loc.uri) {
+      .Some(i) => i,
+      .None => continue,
+    }
+    range := lsp_range.byte_range_to_lsp_range(idx, loc.span.start, loc.span.end)
+    edit := json.object([json.kv("range", range), json.kv("newText", .Str(new_name))])
+
+    existing := case by_uri[loc.uri] {
+      .Some(es) => es,
+      .None => {
+        order = .append(loc.uri)
+        []
+      },
+    }
+    by_uri[loc.uri] = existing.append(edit)
+  }
+
+  change_pairs := collect uri in order {
+    edits := case by_uri[uri] {
+      .Some(es) => es,
+      .None => [],
+    }
+    json.kv(uri, json.array(edits))
+  }
+
+  json.object([json.kv("changes", json.object(change_pairs))])
+}

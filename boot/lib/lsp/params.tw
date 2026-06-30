@@ -61,6 +61,12 @@ pub type ReferenceParams = .{
   context: ReferenceContext,
 }
 
+pub type RenameParams = .{
+  text_document: TextDocumentIdentifier,
+  position: Position,
+  new_name: String,
+}
+
 pub type InlayHintParams = .{
   text_document: TextDocumentIdentifier,
   range_start: Position,
@@ -153,6 +159,14 @@ pub fn decode_references(params: json.Json?) Result<ReferenceParams, String> {
     .Err(_) => false,
   }
   .Ok(.{ text_document, position, context: .{ include_declaration } })
+}
+
+pub fn decode_rename(params: json.Json?) Result<RenameParams, String> {
+  value := try required_params(params)
+  text_document := try value.decode(json.field("textDocument", text_document_identifier_decoder()))
+  position := try value.decode(json.field("position", position_decoder()))
+  new_name := try value.decode(json.field("newName", json.string()))
+  .Ok(.{ text_document, position, new_name })
 }
 
 pub fn decode_inlay_hint(params: json.Json?) Result<InlayHintParams, String> {

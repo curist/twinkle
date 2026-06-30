@@ -64,6 +64,7 @@ use .suites.lsp_inlay_hint_suite
 use .suites.lsp_params_suite
 use .suites.lsp_protocol_suite
 use .suites.lsp_references_suite
+use .suites.lsp_rename_suite
 use .suites.lsp_semantic_tokens_suite
 use .suites.lsp_server_core_suite
 use .suites.lsp_signature_help_suite
@@ -239,6 +240,7 @@ runner.run_all([
   lsp_workspace_symbol_suite.suite(),
   lsp_inlay_hint_suite.suite(),
   lsp_references_suite.suite(),
+  lsp_rename_suite.suite(),
   lsp_document_highlight_suite.suite(),
   lsp_folding_range_suite.suite(),
   lsp_semantic_tokens_suite.suite(),

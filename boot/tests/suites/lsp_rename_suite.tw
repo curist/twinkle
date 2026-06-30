@@ -1,0 +1,222 @@
+use compiler.query.cache as query_cache
+use lib.json
+use lib.lsp.document_store
+use lib.lsp.protocol
+use lib.lsp.server_core
+use tests.assert
+use tests.runner
+
+fn state_with_doc(uri: String, text: String) server_core.State {
+  docs := document_store.empty().open(uri, text, .Some(1))
+  server_core.State.{
+    initialized: true,
+    shutdown_requested: false,
+    should_exit: false,
+    documents: docs,
+    query_cache: query_cache.empty(),
+    diagnostics_pending: false,
+    diagnostics_deadline_ms: 0.0,
+    last_published: Dict.new(),
+    diagnostics_tier: .Full,
+    parse_dirty_uris: Dict.new(),
+    full_dirty: false,
+    closure_snapshot: .None,
+  }
+}
+
+fn prepare_request(id: Int, uri: String, line: Int, character: Int) protocol.Message {
+  params := json.object([
+    json.kv("textDocument", json.object([json.kv("uri", .Str(uri))])),
+    json.kv(
+      "position",
+      json.object([json.kv("line", .Int(line)), json.kv("character", .Int(character))]),
+    ),
+  ])
+  protocol.Message.Request(.{
+    id: .IntId(id),
+    method: "textDocument/prepareRename",
+    params: .Some(params),
+  })
+}
+
+fn rename_request(id: Int, uri: String, line: Int, character: Int, new_name: String) protocol.Message {
+  params := json.object([
+    json.kv("textDocument", json.object([json.kv("uri", .Str(uri))])),
+    json.kv(
+      "position",
+      json.object([json.kv("line", .Int(line)), json.kv("character", .Int(character))]),
+    ),
+    json.kv("newName", .Str(new_name)),
+  ])
+  protocol.Message.Request(.{ id: .IntId(id), method: "textDocument/rename", params: .Some(params) })
+}
+
+fn response_has_error(step: server_core.Step) Bool!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+
+  case step.outgoing[0].decode(json.field("error", json.raw())) {
+    .Ok(_) => .Ok(true),
+    .Err(_) => .Ok(false),
+  }
+}
+
+fn result_is_null(step: server_core.Step) Bool!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+
+  result := try step.outgoing[0].decode(json.field("result", json.raw()))
+  case result {
+    .Null => .Ok(true),
+    _ => .Ok(false),
+  }
+}
+
+// Returns the new texts for every edit targeting `uri` in a rename WorkspaceEdit.
+fn rename_edit_texts(step: server_core.Step, uri: String) Vector<String>!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+
+  result := try step.outgoing[0].decode(json.field("result", json.raw()))
+  changes := try result.decode(json.field("changes", json.raw()))
+  edits := try changes.decode(json.field(uri, json.raw().list()))
+  texts: Vector<String> = []
+
+  for edit in edits {
+    text := try edit.decode(json.field("newText", json.string()))
+    texts = .append(text)
+  }
+
+  .Ok(texts)
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("lsp rename")
+    .test(
+      "advertises renameProvider with prepare support",
+      fn() {
+        state := state_with_doc("file:///a.tw", "")
+        init := protocol.Message.Request(.{
+          id: .IntId(1),
+          method: "initialize",
+          params: .Some(json.object([])),
+        })
+        step := state.handle_message(init)
+        out := step.outgoing[0]
+        result := try out.decode(json.field("result", json.raw()))
+        caps := try result.decode(json.field("capabilities", json.raw()))
+        rename_cap := try caps.decode(json.field("renameProvider", json.raw()))
+        prepare := try rename_cap.decode(json.field("prepareProvider", json.bool()))
+        try assert.equal(prepare, true)
+        .Ok({})
+      },
+    )
+    .test(
+      "prepareRename on a local returns a range",
+      fn() {
+        src := "fn foo() Int {\n  a := 42\n  a + a\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := state.handle_message(prepare_request(1, "file:///a.tw", 2, 2))
+        null := try result_is_null(step)
+        try assert.is_false(null)
+        .Ok({})
+      },
+    )
+    .test(
+      "prepareRename on a literal returns null",
+      fn() {
+        src := "fn foo() Int { 42 }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := state.handle_message(prepare_request(1, "file:///a.tw", 0, 15))
+        try assert.is_true(try result_is_null(step))
+        .Ok({})
+      },
+    )
+    .test(
+      "rename local rewrites all occurrences including declaration",
+      fn() {
+        src := "fn foo() Int {\n  a := 42\n  a + a\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := state.handle_message(rename_request(1, "file:///a.tw", 2, 2, "b"))
+        texts := try rename_edit_texts(step, "file:///a.tw")
+
+        // declaration + two uses
+        try assert.equal(texts.len(), 3)
+
+        for t in texts {
+          try assert.equal(t, "b")
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "rename function rewrites declaration and call sites",
+      fn() {
+        src := "fn greet() String { \"hi\" }\nx := greet()\ny := greet()\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := state.handle_message(rename_request(1, "file:///a.tw", 0, 3, "hello"))
+        texts := try rename_edit_texts(step, "file:///a.tw")
+
+        // declaration + two calls
+        try assert.equal(texts.len(), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "rename type rewrites declaration and annotations",
+      fn() {
+        src := "type Msg = .{ text: String }\nfn make() Msg { .{ text: \"hi\" } }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := state.handle_message(rename_request(1, "file:///a.tw", 0, 5, "Note"))
+        texts := try rename_edit_texts(step, "file:///a.tw")
+
+        // declaration plus the return-type annotation
+        try assert.ok(texts.len() >= 2, "expected at least 2 edits, got ${texts.len()}")
+
+        for t in texts {
+          try assert.equal(t, "Note")
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "rename rejects an invalid case for a type name",
+      fn() {
+        src := "type Msg = .{ text: String }\nfn make() Msg { .{ text: \"hi\" } }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // Cursor on the Msg declaration; rename to lowercase is illegal for a type.
+        step := state.handle_message(rename_request(1, "file:///a.tw", 0, 5, "msg"))
+        try assert.is_true(try response_has_error(step))
+        .Ok({})
+      },
+    )
+    .test(
+      "rename rejects a reserved keyword",
+      fn() {
+        src := "fn foo() Int {\n  a := 42\n  a\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := state.handle_message(rename_request(1, "file:///a.tw", 1, 2, "for"))
+        try assert.is_true(try response_has_error(step))
+        .Ok({})
+      },
+    )
+    .test(
+      "rename refuses a builtin symbol",
+      fn() {
+        src := "fn foo() Void {\n  println(\"hi\")\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // Cursor on the println call.
+        step := state.handle_message(rename_request(1, "file:///a.tw", 1, 4, "shout"))
+        try assert.is_true(try response_has_error(step))
+        .Ok({})
+      },
+    )
+}

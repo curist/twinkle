@@ -23,6 +23,7 @@ use compiler.query.hover as query_hover
 use compiler.query.inlay_hints as query_inlay_hints
 use compiler.query.progress.{ProgressSink}
 use compiler.query.references as query_references
+use compiler.query.rename as query_rename
 use compiler.query.semantic
 use compiler.query.semantic_tokens as query_semantic_tokens
 use compiler.query.signature_help as query_signature_help
@@ -42,6 +43,7 @@ use lib.lsp.params
 use lib.lsp.protocol
 use lib.lsp.range as lsp_range
 use lib.lsp.references as lsp_references
+use lib.lsp.rename as lsp_rename
 use lib.lsp.semantic_tokens as lsp_semantic_tokens
 use lib.lsp.signature_help as lsp_signature_help
 use lib.lsp.workspace_symbol as lsp_workspace_symbol
@@ -115,6 +117,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
             json.kv("definitionProvider", .Bool(true)),
             json.kv("typeDefinitionProvider", .Bool(true)),
             json.kv("referencesProvider", .Bool(true)),
+            json.kv("renameProvider", json.object([json.kv("prepareProvider", .Bool(true))])),
             json.kv("documentHighlightProvider", .Bool(true)),
             json.kv("documentFormattingProvider", .Bool(true)),
             json.kv(
@@ -141,6 +144,8 @@ fn handle_request(state: State, req: protocol.Request) Step {
     "textDocument/definition" => state.handle_definition(req),
     "textDocument/typeDefinition" => state.handle_type_definition(req),
     "textDocument/references" => state.handle_references(req),
+    "textDocument/prepareRename" => state.handle_prepare_rename(req),
+    "textDocument/rename" => state.handle_rename(req),
     "textDocument/documentHighlight" => state.handle_document_highlight(req),
     "textDocument/completion" => state.handle_completion(req),
     "textDocument/codeAction" => state.handle_code_action(req),
@@ -445,6 +450,94 @@ fn handle_references(state: State, req: protocol.Request) Step {
     },
   )
   .{ state, outgoing: [req.id.success_response(response)] }
+}
+
+fn handle_prepare_rename(state: State, req: protocol.Request) Step {
+  position_params := case params.decode_definition(req.params) {
+    .Ok(p) => p,
+    .Err(_) => return state.null_response_step(req),
+  }
+  doc := case state.documents.get(position_params.text_document.uri) {
+    .Some(d) => d,
+    .None => return state.null_response_step(req),
+  }
+  offset := case position_offset(doc.index, position_params.position) {
+    .Some(o) => o,
+    .None => return state.null_response_step(req),
+  }
+
+  // Warm the cache from every open document so cross-module symbols resolve.
+  for open_doc in state.documents.docs.values() {
+    ws := state.workspace_snapshot(open_doc)
+    state.query_cache = ws.cache
+  }
+
+  snap := state.workspace_snapshot(doc)
+  state.query_cache = snap.cache
+
+  case query_rename.prepare_rename(snap, offset) {
+    .Some(target) => {
+      range := lsp_range.byte_range_to_lsp_range(doc.index, target.span.start, target.span.end)
+      .{ state, outgoing: [req.id.success_response(range)] }
+    },
+    .None => state.null_response_step(req),
+  }
+}
+
+fn handle_rename(state: State, req: protocol.Request) Step {
+  rename_params := case params.decode_rename(req.params) {
+    .Ok(p) => p,
+    .Err(msg) => return state.rename_error_step(req, msg),
+  }
+  doc := case state.documents.get(rename_params.text_document.uri) {
+    .Some(d) => d,
+    .None => return state.rename_error_step(req, "document is not open"),
+  }
+  offset := case position_offset(doc.index, rename_params.position) {
+    .Some(o) => o,
+    .None => return state.rename_error_step(req, "invalid position"),
+  }
+
+  // Warm the cache from every open document so cross-module symbols resolve.
+  for open_doc in state.documents.docs.values() {
+    ws := state.workspace_snapshot(open_doc)
+    state.query_cache = ws.cache
+  }
+
+  snap := state.workspace_snapshot(doc)
+  state.query_cache = snap.cache
+
+  case query_rename.compute_rename(snap, offset, rename_params.new_name) {
+    .Ok(locations) => {
+      response := lsp_rename.workspace_edit_response(
+        locations,
+        rename_params.new_name,
+        fn(uri: String) line_index.LineIndex? {
+          case document_by_identity_uri(state.documents, uri) {
+            .Some(d) => return .Some(d.index),
+            .None => {},
+          }
+
+          p := case identity_path_from_uri(uri) {
+            .Some(path) => path,
+            .None => return .None,
+          }
+
+          case fs.read_text(p) {
+            .Ok(text) => .Some(line_index.new(text)),
+            .Err(_) => .None,
+          }
+        },
+      )
+      .{ state, outgoing: [req.id.success_response(response)] }
+    },
+    .Err(msg) => state.rename_error_step(req, msg),
+  }
+}
+
+fn rename_error_step(state: State, req: protocol.Request, message: String) Step {
+  err := protocol.RpcError.{ code: -32602, message, data: .None }
+  .{ state, outgoing: [req.id.error_response(err)] }
 }
 
 fn handle_document_highlight(state: State, req: protocol.Request) Step {

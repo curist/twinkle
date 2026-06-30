@@ -48,6 +48,31 @@ pub fn find_references(snap: SemanticSnapshot, byte_offset: Int, include_declara
   sort_locations(out)
 }
 
+/// Location of the declaration of the symbol under the cursor, if a declaration
+/// occurrence exists in the workspace occurrence indexes. Returns `.None` for
+/// symbols whose declaration is not in an analyzed module (e.g. builtins), which
+/// lets rename refuse symbols it cannot safely edit.
+pub fn declaration_location(snap: SemanticSnapshot, byte_offset: Int) ReferenceLocation? {
+  index := case snap.occurrences {
+    .Some(i) => i,
+    .None => return .None,
+  }
+  target := case index.occurrence_at_offset(byte_offset) {
+    .Some(o) => o,
+    .None => return .None,
+  }
+
+  for idx in candidate_indexes(snap, target.symbol_key) {
+    for site in idx.occurrences_for_symbol(target.symbol_key) {
+      if site.role == .Declaration {
+        return .Some(ReferenceLocation.{ uri: idx.uri, span: site.span })
+      }
+    }
+  }
+
+  .None
+}
+
 fn candidate_indexes(snap: SemanticSnapshot, key: occ.SymbolKey) Vector<occ.OccurrenceIndex> {
   current := case snap.occurrences {
     .Some(i) => i,

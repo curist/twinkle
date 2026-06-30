@@ -1,0 +1,190 @@
+//! Rename query: validate a rename request and collect the edit locations.
+//!
+//! Builds on the shared occurrence model and the find-references query so
+//! rename stays aligned with definition and reference classification. A symbol
+//! is renamable only when it is user-defined (its declaration lives in an
+//! editable workspace module) and the requested new name obeys Twinkle's
+//! parser-enforced naming conventions.
+
+use compiler.query.occurrences as occ
+use compiler.query.references
+use compiler.query.references.{ReferenceLocation}
+use compiler.query.semantic.{SemanticSnapshot}
+use lib.source.span.{Span}
+
+pub type RenameTarget = .{ name: String, kind: occ.SymbolKind, span: Span }
+
+/// The editable range for the symbol under the cursor, if it is renamable.
+/// Drives `textDocument/prepareRename`.
+pub fn prepare_rename(snap: SemanticSnapshot, byte_offset: Int) RenameTarget? {
+  target := case occurrence_at(snap, byte_offset) {
+    .Some(o) => o,
+    .None => return .None,
+  }
+
+  if !is_renamable(snap, target, byte_offset) {
+    return .None
+  }
+
+  .Some(.{ name: target.name, kind: target.kind, span: target.span })
+}
+
+/// Validate `new_name` and collect every location to edit (references plus the
+/// declaration). Drives `textDocument/rename`.
+pub fn compute_rename(snap: SemanticSnapshot, byte_offset: Int, new_name: String) Result<
+  Vector<ReferenceLocation>,
+  String,
+> {
+  target := case occurrence_at(snap, byte_offset) {
+    .Some(o) => o,
+    .None => return .Err("there is no renamable symbol at this position"),
+  }
+
+  if !is_renamable(snap, target, byte_offset) {
+    return .Err("this symbol cannot be renamed")
+  }
+
+  try validate_new_name(target.kind, new_name)
+
+  locations := references.find_references(snap, byte_offset, true)
+  if locations.len() == 0 {
+    return .Err("found no occurrences to rename")
+  }
+
+  .Ok(locations)
+}
+
+fn occurrence_at(snap: SemanticSnapshot, byte_offset: Int) occ.Occurrence? {
+  index := case snap.occurrences {
+    .Some(i) => i,
+    .None => return .None,
+  }
+  index.occurrence_at_offset(byte_offset)
+}
+
+fn is_renamable(snap: SemanticSnapshot, target: occ.Occurrence, byte_offset: Int) Bool {
+  case target.symbol_key {
+    // Lexical symbols always live in the file under the cursor.
+    .Local(_, _) => true,
+    .TypeParam(_, _) => true,
+    .ModuleAlias(_, _) => true,
+    .ExternNamespace(_) => false,
+    // Global symbols are renamable only when their declaration is in an
+    // editable workspace module (not a bundled stdlib/prelude module).
+    _ => case references.declaration_location(snap, byte_offset) {
+      .Some(loc) => {
+        in_core := loc.uri.contains("/__twinkle_core/")
+        !in_core
+      },
+      .None => false,
+    },
+  }
+}
+
+fn validate_new_name(kind: occ.SymbolKind, new_name: String) Result<Void, String> {
+  if new_name == "" {
+    return .Err("the new name must not be empty")
+  }
+
+  expect_upper := case kind {
+    .Type => true,
+    .Variant => true,
+    .TypeParameter => true,
+    _ => false,
+  }
+
+  if !valid_identifier(new_name, expect_upper) {
+    msg := if expect_upper {
+      "types and variants must start with an uppercase letter"
+    } else {
+      "this name must start with a lowercase letter or underscore"
+    }
+    return .Err(msg)
+  }
+
+  if is_keyword(new_name) {
+    return .Err("'${new_name}' is a reserved keyword")
+  }
+
+  .Ok({})
+}
+
+fn valid_identifier(name: String, expect_upper: Bool) Bool {
+  n := name.char_len()
+  if n == 0 {
+    return false
+  }
+
+  first := case name.code_point_at(0) {
+    .Some(c) => c,
+    .None => return false,
+  }
+  ok_first := if expect_upper {
+    is_upper_cp(first)
+  } else {
+    is_lower_cp(first) or first == 95
+  }
+  if !ok_first {
+    return false
+  }
+
+  i := 1
+  for i < n {
+    c := case name.code_point_at(i) {
+      .Some(cp) => cp,
+      .None => return false,
+    }
+    is_tail := is_alnum_cp(c) or c == 95
+    if !is_tail {
+      return false
+    }
+    i = i + 1
+  }
+
+  true
+}
+
+fn is_upper_cp(c: Int) Bool {
+  c >= 65 and c <= 90
+}
+
+fn is_lower_cp(c: Int) Bool {
+  c >= 97 and c <= 122
+}
+
+fn is_digit_cp(c: Int) Bool {
+  c >= 48 and c <= 57
+}
+
+fn is_alnum_cp(c: Int) Bool {
+  is_upper_cp(c) or is_lower_cp(c) or is_digit_cp(c)
+}
+
+fn is_keyword(name: String) Bool {
+  case name {
+    "use" => true,
+    "as" => true,
+    "fn" => true,
+    "pub" => true,
+    "type" => true,
+    "extern" => true,
+    "if" => true,
+    "else" => true,
+    "case" => true,
+    "cond" => true,
+    "for" => true,
+    "in" => true,
+    "collect" => true,
+    "return" => true,
+    "break" => true,
+    "continue" => true,
+    "true" => true,
+    "false" => true,
+    "try" => true,
+    "and" => true,
+    "or" => true,
+    "let" => true,
+    "defer" => true,
+    _ => false,
+  }
+}
