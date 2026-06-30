@@ -1,0 +1,42 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use commands.common
+use lib.argparse.app
+use lib.argparse.command
+
+fn sample_app() app.App {
+  app
+    .make("twk", "Twinkle compiler")
+    .add_commands([
+      command.make("run", "Run program"),
+      command
+        .make("help", "Print help information")
+        .add_positional("command", "Command to show help for"),
+    ])
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("argparse")
+    .test(
+      "top-level help keeps per-command help hint",
+      fn() {
+        help := sample_app().format_help(.None)
+        try assert.str_contains(help, "Run '")
+        try assert.str_contains(help, "twk <command> --help")
+        try assert.str_contains(help, "' for more information.")
+        .Ok({})
+      },
+    )
+    .test(
+      "usage errors point to twk help",
+      fn() {
+        try assert.equal(
+          common.usage_hint,
+          "Usage: twk <command> [options]\nRun 'twk help' for usage.",
+        )
+        .Ok({})
+      },
+    )
+}

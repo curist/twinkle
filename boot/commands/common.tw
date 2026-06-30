@@ -12,7 +12,7 @@ use lib.source.registry
 use lib.source.render
 use lib.source.report
 
-pub usage_hint := "Usage: twk <command> [options]\nRun 'twk <command> --help' for more information."
+pub usage_hint := "Usage: twk <command> [options]\nRun 'twk help' for usage."
 
 pub fn get_positional(parsed: ParseResult, idx: Int, name: String) String!String {
   if idx < parsed.positional.len() {

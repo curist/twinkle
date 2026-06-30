@@ -1,4 +1,5 @@
 use @std.testing as runner
+
 use .suites.alias_reexport_suite
 use .suites.anf_analysis_suite
 use .suites.anf_lower_suite
@@ -12,6 +13,7 @@ use .suites.api_set_suite
 use .suites.api_string_suite
 use .suites.api_vector_suite
 use .suites.api_view_suite
+use .suites.argparse_suite
 use .suites.assert_helpers_suite
 use .suites.ast_path_suite
 use .suites.backend_prepare_suite
@@ -73,8 +75,6 @@ use .suites.lsp_workspace_symbol_suite
 use .suites.module_loader_suite
 use .suites.multi_module_suite
 use .suites.occurrence_build_suite
-use .suites.project_config_suite
-use .suites.project_context_suite
 use .suites.occurrence_enrich_suite
 use .suites.occurrences_suite
 use .suites.opt_analysis_suite
@@ -88,6 +88,8 @@ use .suites.opt_pipeline_suite
 use .suites.opt_semantics_suite
 use .suites.opt_uniqueness_suite
 use .suites.parser_suite
+use .suites.project_config_suite
+use .suites.project_context_suite
 use .suites.query_analyze_suite
 use .suites.query_cache_suite
 use .suites.query_diagnostics_suite
@@ -117,8 +119,8 @@ use .suites.stdlib_host_suite
 use .suites.stdlib_math_suite
 use .suites.stdlib_path_suite
 use .suites.stdlib_queue_suite
-use .suites.stdlib_testing_suite
 use .suites.stdlib_regexp_suite
+use .suites.stdlib_testing_suite
 use .suites.stdlib_tuple_suite
 use .suites.string_edge_cases_suite
 use .suites.string_literal_suite
@@ -135,6 +137,7 @@ use .suites.wat_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
+  argparse_suite.suite(),
   alias_reexport_suite.suite(),
   semantic_suite.suite(),
   semantic_tree_stringify_suite.suite(),
