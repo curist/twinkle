@@ -355,7 +355,9 @@ For multi-entry commands:
 ### Phase 1 — Shared context and root discovery
 
 * Add `ProjectContext` helper.
-* Fix `twk test` root discovery from nested directories.
+* ~~Fix `twk test` root discovery from nested directories.~~ Already done:
+  `test.tw` discovers via `find_project_root(proc.cwd())` and walks up
+  correctly (verified from a subdirectory). No change needed.
 * Build the reachable-module helper on `ProjectContext` over
   `analyze.discover_closure`: run discovery per entry, take its `order` as the
   reachable canonical set, filter to project-local paths (drop stdlib/prelude

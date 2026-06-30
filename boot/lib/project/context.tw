@@ -106,6 +106,12 @@ fn reject_conflicts(entries: Vector<EntryTarget>) Result<Void, String> {
   .Ok({})
 }
 
+/// All configured entries: project entries followed by test entries. This is
+/// the maintenance-command set (`fmt`, `lint`) per the project model.
+pub fn all_entries(ctx: ProjectContext) Vector<EntryTarget> {
+  ctx.project_entries.concat(ctx.test_entries)
+}
+
 /// Project-local modules reachable from `entries`, via the shared frontend's
 /// env-independent Phase 1 discovery (load/parse/plan only). Deduped across
 /// entries; stdlib/prelude are traversed but excluded from the result.

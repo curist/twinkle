@@ -125,6 +125,19 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "all_entries is project entries followed by test entries",
+      fn() {
+        cfg := cfg_with(.None, ["cmd/app.tw", "cmd/server.tw"], ["tests/main.tw"])
+        ctx := try context.from_root("/proj", cfg)
+        all := context.all_entries(ctx)
+        try assert.equal(all.len(), 3)
+        try assert.equal(all[0].rel_path, "cmd/app.tw")
+        try assert.equal(all[1].rel_path, "cmd/server.tw")
+        try assert.equal(all[2].rel_path, "tests/main.tw")
+        .Ok({})
+      },
+    )
+    .test(
       "discover_in loads the nearest config and builds entry targets",
       fn() {
         ctx := try context.discover_in(fixture_root())

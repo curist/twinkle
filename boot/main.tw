@@ -23,7 +23,9 @@ parse_cmd := file_command("parse", "Parse source and print diagnostics")
 
 check_cmd := file_command("check", "Type-check source")
 
-lint_cmd := file_command("lint", "Review code: report lints and rewrites")
+lint_cmd := command
+  .make("lint", "Review code: report lints and rewrites")
+  .add_positional("file", "Path to a .tw source file (omit for project mode)")
   .add_flag("fix", "Apply all auto-fixable rewrites")
   .add_flag("fix-unused-imports", "Apply only the unused-import rewrite")
   .add_flag("fix-inherent-calls", "Apply only the inherent-method-call rewrite")
@@ -61,7 +63,7 @@ help_cmd := command
 
 fmt_cmd := command
   .make("fmt", "Format source")
-  .add_required_positional("file", "Path to a .tw source file (may be repeated)")
+  .add_positional("file", "Path to a .tw source file (repeatable; omit for project mode)")
   .add_flag("check", "Check whether source is formatted")
 
 cli := app

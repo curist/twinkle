@@ -1,34 +1,77 @@
 //! Format command: format Twinkle source code.
+//!
+//! Explicit mode formats exactly the files named on the command line. Project
+//! mode (no file arguments) formats the project-local modules reachable from
+//! the configured project and test entries in twinkle.toml.
 
 use @std.fs
 use @std.proc
 
-use commands.common.{exit_usage_error, fs_error_message}
+use commands.common.{fs_error_message}
+
 use compiler.fmt.formatter
 use compiler.lexer
 use compiler.parser
 use compiler.query.diag_render
 use lib.argparse.app.{ParseResult}
+use lib.project.context
 use lib.source.diagnostics
 use lib.source.registry
 use lib.source.render
 use lib.source.report
 
+type FmtOutcome = .{ needs_reformat: Bool, has_errors: Bool }
+
 pub fn run_fmt_command(parsed: ParseResult) {
-  if parsed.positional.len() == 0 {
-    exit_usage_error("missing required positional argument 'file'")
+  check := parsed.has_flag("check")
+
+  if parsed.positional.len() > 0 {
+    outcome := format_files(parsed.positional, check)
+    if outcome.has_errors or outcome.needs_reformat {
+      proc.exit(1)
+    }
+
+    return
   }
 
-  check := parsed.has_flag("check")
+  // Project mode: format modules reachable from project + test entries.
+  ctx := case context.discover() {
+    .Ok(c) => c,
+    .Err(err) => {
+      eprintln("error: ${err}")
+      proc.exit(1)
+    },
+  }
+  reach := ctx.reachable_modules(ctx.all_entries())
+
+  for f in reach.failed {
+    eprintln("error: failed to read project module '${f}'")
+  }
+
+  if reach.modules.len() == 0 and reach.failed.len() == 0 {
+    println("No project entries to format.")
+    return
+  }
+
+  outcome := format_files(reach.modules, check)
+  if outcome.has_errors or outcome.needs_reformat or reach.failed.len() > 0 {
+    proc.exit(1)
+  }
+}
+
+// Format each file in turn, continuing past read/parse failures so independent
+// files are still reported. Returns whether any file errored or needs work.
+fn format_files(files: Vector<String>, check: Bool) FmtOutcome {
   needs_reformat := false
   has_errors := false
 
-  for file in parsed.positional {
+  for file in files {
     source := case fs.read_text(file) {
       .Ok(text) => text,
       .Err(err) => {
         eprintln("error: failed to read '${file}': ${fs_error_message(err)}")
-        proc.exit(1)
+        has_errors = true
+        continue
       },
     }
     reg := registry.empty()
@@ -56,16 +99,14 @@ pub fn run_fmt_command(parsed: ParseResult) {
           .Ok(_) => println("Formatted: ${file}"),
           .Err(err) => {
             eprintln("error: failed to write '${file}': ${fs_error_message(err)}")
-            proc.exit(1)
+            has_errors = true
           },
         }
       }
     }
   }
 
-  if has_errors or needs_reformat {
-    proc.exit(1)
-  }
+  .{ needs_reformat, has_errors }
 }
 
 fn print_parse_errors(reg: registry.FileRegistry, diagnostics: Vector<diagnostics.DiagKind>) {
