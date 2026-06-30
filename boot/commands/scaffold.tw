@@ -1,0 +1,93 @@
+//! Project scaffolding commands: `twk new` and `twk init`.
+
+use @std.fs
+use @std.path
+use @std.proc
+
+use commands.common.{fs_error_message}
+use lib.argparse.app.{ParseResult}
+use lib.argparse.style
+use lib.project.scaffold
+use lib.project.scaffold.{Scaffold}
+
+fn fail(msg: String) Never {
+  eprintln("${style.bold(style.red("error:"))} ${msg}")
+  proc.exit(1)
+}
+
+pub fn run_new_command(parsed: ParseResult) {
+  name := parsed.positional[0]
+  root := path.join(proc.cwd(), name)
+
+  if fs.exists(root) {
+    fail("'${root}' already exists")
+  }
+
+  plan := build_plan(name, root)
+  write_plan(plan)
+  print_created(plan, true)
+}
+
+pub fn run_init_command(parsed: ParseResult) {
+  root := proc.cwd()
+  name := if parsed.positional.len() > 0 {
+    parsed.positional[0]
+  } else {
+    path.basename(root)
+  }
+
+  plan := build_plan(name, root)
+  ensure_no_file_collisions(plan)
+  write_plan(plan)
+  print_created(plan, false)
+}
+
+fn build_plan(name: String, root: String) Scaffold {
+  case scaffold.make(name, root) {
+    .Ok(plan) => plan,
+    .Err(msg) => fail(msg),
+  }
+}
+
+fn ensure_no_file_collisions(plan: Scaffold) {
+  for file in plan.files {
+    if fs.exists(file.path) {
+      fail("'${file.path}' already exists")
+    }
+  }
+}
+
+fn write_plan(plan: Scaffold) {
+  for dir in plan.dirs {
+    case fs.mkdirp(dir) {
+      .Ok(_) => {},
+      .Err(err) => fail("failed to create '${dir}': ${fs_error_message(err)}"),
+    }
+  }
+
+  for file in plan.files {
+    case fs.write_text(file.path, file.content) {
+      .Ok(_) => {},
+      .Err(err) => fail("failed to write '${file.path}': ${fs_error_message(err)}"),
+    }
+  }
+}
+
+fn print_created(plan: Scaffold, new_dir: Bool) {
+  verb := if new_dir {
+    "Created"
+  } else {
+    "Initialized"
+  }
+  project := style.bold("'${plan.name}'")
+  println("${style.green(style.bold(verb))} Twinkle project ${project} at ${style.dim(plan.root)}")
+  println("")
+  println(style.bold(style.yellow("Next steps:")))
+
+  if new_dir {
+    println("  ${style.cyan("cd ${plan.name}")}")
+  }
+
+  println("  ${style.cyan("twk run")}")
+  println("  ${style.cyan("twk test")}")
+}

@@ -1,0 +1,67 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use lib.project.scaffold
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("project scaffold")
+    .test(
+      "validate_name accepts snake_case module names",
+      fn() {
+        try assert.is_ok(scaffold.validate_name("my_project2"))
+        .Ok({})
+      },
+    )
+    .test(
+      "validate_name rejects names that cannot be modules",
+      fn() {
+        try assert.is_err(scaffold.validate_name("MyProject"))
+        try assert.is_err(scaffold.validate_name("my-project"))
+        try assert.is_err(scaffold.validate_name("2fast"))
+        try assert.is_err(scaffold.validate_name("cmd"))
+        .Ok({})
+      },
+    )
+    .test(
+      "make produces the standard project layout",
+      fn() {
+        plan := try scaffold.make("demo", "/tmp/demo")
+        try assert.equal(plan.dirs.len(), 3)
+        try assert.equal(plan.dirs[0], "/tmp/demo")
+        try assert.equal(plan.dirs[1], "/tmp/demo/cmd")
+        try assert.equal(plan.dirs[2], "/tmp/demo/tests")
+        try assert.equal(plan.files.len(), 5)
+        try assert.equal(plan.files[0].path, "/tmp/demo/twinkle.toml")
+        try assert.equal(plan.files[1].path, "/tmp/demo/.gitignore")
+        try assert.equal(plan.files[2].path, "/tmp/demo/demo.tw")
+        try assert.equal(plan.files[3].path, "/tmp/demo/cmd/demo.tw")
+        try assert.equal(plan.files[4].path, "/tmp/demo/tests/main.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "twinkle.toml wires build and test entries",
+      fn() {
+        plan := try scaffold.make("demo", "/tmp/demo")
+        toml := plan.files[0].content
+        try assert.str_contains(toml, "name = \"demo\"")
+        try assert.str_contains(toml, "entries = [\"cmd/demo.tw\"]")
+        try assert.str_contains(toml, "entries = [\"tests/main.tw\"]")
+        .Ok({})
+      },
+    )
+    .test(
+      "generated sources import the root module and testing harness",
+      fn() {
+        plan := try scaffold.make("demo", "/tmp/demo")
+        try assert.str_contains(plan.files[2].content, "pub greeting: String")
+        try assert.str_contains(plan.files[3].content, "use demo")
+        try assert.str_contains(plan.files[3].content, "println(demo.greeting)")
+        try assert.str_contains(plan.files[4].content, "use @std.testing")
+        try assert.str_contains(plan.files[4].content, "use @std.testing.assert")
+        try assert.str_contains(plan.files[4].content, "testing.run_all([suite()])")
+        .Ok({})
+      },
+    )
+}

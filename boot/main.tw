@@ -9,6 +9,7 @@ use commands.lint.{run_lint_command}
 use commands.lsp.{run_lsp_command}
 use commands.parse.{run_parse_command}
 use commands.run.{run_run_command}
+use commands.scaffold.{run_init_command, run_new_command}
 use commands.test.{run_test_command}
 use lib.argparse.app
 use lib.argparse.app.{ParseResult}
@@ -60,6 +61,14 @@ test_cmd := command
   .add_option("filter", "Only run tests whose name contains this substring")
   .add_flag("verbose", "Print per-test output")
 
+new_cmd := command
+  .make("new", "Create a new Twinkle project")
+  .add_required_positional("name", "Project name (snake_case)")
+
+init_cmd := command
+  .make("init", "Create a Twinkle project in the current directory")
+  .add_positional("name", "Project name (defaults to the current directory name)")
+
 lsp_cmd := command.make("lsp", "Start the Language Server Protocol server")
 
 version_cmd := command.make("version", "Print Twinkle compiler version")
@@ -84,6 +93,8 @@ cli := app
     parse_cmd,
     fmt_cmd,
     test_cmd,
+    new_cmd,
+    init_cmd,
     lsp_cmd,
     version_cmd,
     help_cmd,
@@ -189,6 +200,8 @@ fn run_command(parsed: ParseResult) {
     .Some("help") => run_help_command(parsed),
     .Some("fmt") => run_fmt_command(parsed),
     .Some("test") => run_test_command(parsed),
+    .Some("new") => run_new_command(parsed),
+    .Some("init") => run_init_command(parsed),
     .Some("run") => run_run_command(parsed),
     _ => case build_command_plan(parsed) {
       .Ok(plan) => not_implemented(plan.cmd, plan.detail),

@@ -1,0 +1,79 @@
+//! Project scaffolding templates for `twk new` and `twk init`.
+//!
+//! The scaffold follows the project layout documented in docs/plans/tooling.md:
+//! configured executable entries under `cmd/`, project modules at the root, and
+//! executable test entries under `tests/`.
+
+use @std.path
+
+pub type ScaffoldFile = .{ path: String, content: String }
+
+pub type Scaffold = .{
+  name: String,
+  root: String,
+  dirs: Vector<String>,
+  files: Vector<ScaffoldFile>,
+}
+
+gitignore_content: String = "target/\n"
+
+/// Validate the project name used for a scaffold. It doubles as a module name,
+/// so keep it within Twinkle's lowercase identifier syntax.
+pub fn validate_name(name: String) Result<Void, String> {
+  if name == "" {
+    return .Err("project name must not be empty")
+  }
+
+  first := name[0]
+  if !first.is_lower() {
+    return .Err("project name must start with a lowercase ASCII letter")
+  }
+
+  for b in name {
+    valid := b.is_lower() or b.is_digit() or b == 0x5F
+    if !valid {
+      return .Err("project name must use snake_case ASCII letters, digits, and underscores")
+    }
+  }
+
+  if name == "cmd" or name == "tests" or name == "target" {
+    return .Err("project name '${name}' conflicts with a scaffold directory")
+  }
+
+  .Ok({})
+}
+
+/// Build the file/directory plan for a project rooted at `root`.
+pub fn make(name: String, root: String) Result<Scaffold, String> {
+  try validate_name(name)
+
+  dirs := [root, path.join(root, "cmd"), path.join(root, "tests")]
+  files := [
+    ScaffoldFile.{ path: path.join(root, "twinkle.toml"), content: twinkle_toml(name) },
+    ScaffoldFile.{ path: path.join(root, ".gitignore"), content: gitignore_content },
+    ScaffoldFile.{ path: path.join(root, "${name}.tw"), content: library_module(name) },
+    ScaffoldFile.{
+      path: path.join(path.join(root, "cmd"), "${name}.tw"),
+      content: command_entry(name),
+    },
+    ScaffoldFile.{ path: path.join(path.join(root, "tests"), "main.tw"), content: test_entry(name) },
+  ]
+
+  .Ok(Scaffold.{ name, root, dirs, files })
+}
+
+fn twinkle_toml(name: String) String {
+  "[project]\nname = \"${name}\"\nentries = [\"cmd/${name}.tw\"]\n\n[test]\nentries = [\"tests/main.tw\"]\n"
+}
+
+fn library_module(name: String) String {
+  "pub greeting: String = \"Hello from ${name}!\"\n"
+}
+
+fn command_entry(name: String) String {
+  "use ${name}\n\nprintln(${name}.greeting)\n"
+}
+
+fn test_entry(name: String) String {
+  "use @std.testing\nuse @std.testing.assert\n\nuse ${name}\n\nfn suite() testing.Suite {\n  testing\n    .suite(\"${name}\")\n    .test(\n      \"greets\",\n      fn() {\n        try assert.equal(${name}.greeting, \"Hello from ${name}!\")\n        .Ok({})\n      },\n    )\n}\n\ntesting.run_all([suite()])\n"
+}

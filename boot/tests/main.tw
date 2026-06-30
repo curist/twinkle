@@ -90,6 +90,7 @@ use .suites.opt_uniqueness_suite
 use .suites.parser_suite
 use .suites.project_config_suite
 use .suites.project_context_suite
+use .suites.project_scaffold_suite
 use .suites.query_analyze_suite
 use .suites.query_cache_suite
 use .suites.query_diagnostics_suite
@@ -207,6 +208,7 @@ runner.run_all([
   module_loader_suite.suite(),
   project_config_suite.suite(),
   project_context_suite.suite(),
+  project_scaffold_suite.suite(),
   dependency_graph_suite.suite(),
   discovery_suite.suite(),
   query_keys_suite.suite(),

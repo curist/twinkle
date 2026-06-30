@@ -18,6 +18,7 @@ Available today:
 * `twk lsp` with diagnostics, hover, go to definition, completion, unused-import
   code actions, and whole-document formatting.
 * `twk check`, `twk parse`, `twk ir`, `twk build`, and `twk run` in the boot CLI.
+* `twk new <name>` and `twk init [name]` scaffold convention-based projects.
 * Twinkle-native boot test suite under `boot/tests/`.
 
 ---
@@ -33,7 +34,7 @@ Available today:
 | Linter | Medium | Planned | This document |
 | Test runner UX | Medium | In Progress | This document |
 | Documentation generator | Low | Planned | This document |
-| Package/project tooling | Low | Planned | This document |
+| Package/project tooling | Low | In Progress | This document |
 
 ---
 
@@ -363,15 +364,16 @@ symbols.
 
 ## T5 — Package and Project Tooling
 
+> **Shipped (boot):** `twk new <name>` creates a project directory following the
+> standard convention, and `twk init [name]` writes the same scaffold into the
+> current directory for retrofit workflows. Both commands write `twinkle.toml`,
+> `.gitignore`, a root library module, `cmd/<name>.tw`, and `tests/main.tw`.
+
 Project metadata should grow out of the same `twinkle.toml` config path rather
 than introducing a second manifest format.
 
 Potential work:
 
-* `twk new <name>` for creating a new project directory following the standard
-  convention.
-* Defer `twk init` until there is a clear need to retrofit an existing
-  directory.
 * Dependency declaration and lockfile design in `twinkle.toml` plus a separate
   lockfile.
 * Standard library/package documentation integration.
