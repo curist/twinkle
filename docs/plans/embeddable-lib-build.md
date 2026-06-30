@@ -65,7 +65,12 @@ intentionally deferred.
 * Every `pub fn` in the **entry module** whose parameters **and** return type are
   all primitive (`Int`, `Float`, `Bool`, `Void`) is exported under its bare name.
 * Every `pub` value global of primitive type (e.g. `pub pi: Float = 3.14159`) is
-  exported. Its initializer runs as part of `__twinkle_start`.
+  exported **as a synthesized zero-arg getter function** (`__get_pi() f64`). Its
+  initializer still runs as part of `__twinkle_start`; the getter just reads the
+  initialized global. This keeps the whole export surface uniformly functions —
+  one metadata schema, one DCE-root kind, no new wasm global-export IR — and
+  matches the loader's "value getter" shape (the loader calls it once after start
+  and exposes it as a plain property).
 * `pub` members that are **generic**, or that use `String` / records / arrays /
   dicts / function types, are **skipped with a build warning** that names each
   member and the reason (e.g. "`greet`: String parameters are not yet supported
@@ -76,16 +81,56 @@ intentionally deferred.
 
 * Primitive identity mapping: `Bool` = i32, `Int` = i64, `Float` = f64,
   `Void` = no result.
-* The linker emits a **`twinkle.exports` custom section** mirroring the existing
-  `twinkle.externs` metadata: for each export, its param/return primitive types.
-  The host builds typed wrappers from this metadata — no hand-written ABI specs.
+* Codegen emits a **`twinkle.exports` custom section** mirroring the existing
+  `twinkle.externs` metadata: for each export, its bare name and param/return
+  primitive types (value-global getters carry an empty param list). It is built
+  exactly like `twinkle.externs` is — `collect_extern_meta` in `codegen.tw`
+  derives the externs section from `anf.extern_imports`; the exports section is
+  the mirror, derived from the captured pub-export surface (see *Where the
+  export surface is captured*). The host builds typed wrappers from this
+  metadata — no hand-written ABI specs.
 * **`Int` is i64**, which crosses to JavaScript as `BigInt`. The exports metadata
   lets the loader coerce `Number` ↔ `BigInt` at the boundary so hosts pass and
   receive plain numbers.
-* Exported functions are **DCE roots**: they are not reachable from
-  `__twinkle_start`, so the linker must retain them. The existing
-  `retain_final_exports` machinery in `boot/compiler/codegen/linker.tw` is the
-  hook.
+* Exported functions are **DCE roots automatically**: `compute_reachable` in
+  `boot/compiler/codegen/linker_dce.tw` already seeds the worklist from
+  `linked.exports`, and `retain_final_exports("user")` is already `true`, so the
+  flat module keeps them. The only thing needed is to add the eligible pub
+  members as `ExportDef`s on the user module in `emit.tw` — no change to
+  `retain_final_exports`.
+
+### Where the export surface is captured
+
+The selection cannot happen in the linker or codegen: by then all user code is a
+single merged module (`namespace: "user"`), `ExportDef` is only
+`{ wasm_name, func_sym }` with no types, and monomorphization has already dropped
+unused generics and renamed the specialized ones — so a generic `pub fn greet`
+either no longer exists or is several clones, and can't be named in a warning.
+
+Selection therefore happens **post-typecheck, where `pub` flags, source-module
+identity, source names, and pre-mono signatures all still coexist** — the same
+layer where `lower_core.tw` already collects `pub_value_globals` per module. For
+the configured lib entry, walk its module's `pub` members, classify each:
+
+* eligible (all-primitive `fn`, or primitive value global) → record
+  `(bare_name, func_id_or_global_id, param/ret primitive kinds)`;
+* ineligible (generic, or non-primitive type) → emit the warning and skip.
+
+Carry that list down as a new field on `AnfModule` (e.g. `lib_exports`), the
+mirror of `extern_imports`. Codegen then:
+
+* in `emit.tw`, adds an `ExportDef { wasm_name: bare_name, func_sym }` per export
+  (and synthesizes a getter func for each value global), making them DCE roots;
+* in `codegen.tw` / `wasm.tw` / `wat.tw`, emits the `twinkle.exports` section
+  from `lib_exports`, exactly as `collect_extern_meta` →
+  `encode_extern_meta_section_payload` does for externs.
+
+Bare export names are unique because v1 exports a single entry module's surface,
+so no cross-module mangling is needed; the linker-qualified `func_sym` is only
+used internally to point the export at the right function.
+
+A command build leaves `lib_exports` empty, so this whole path is inert unless
+`--lib` is set — the command artifact is byte-for-byte unchanged.
 
 ### Host runtime — compiler-free `loadLib` (Node + web)
 
@@ -180,10 +225,12 @@ These are intentionally **out of v1**. The headline follow-up is the fuller ABI
 |-----------|--------|
 | `boot/lib/project/config.tw` | parse `[lib] entry` |
 | `boot/lib/project/context.tw` | resolve the lib entry as a build target |
-| `boot/commands/build.tw` | `--lib` flag; lib build path → `target/<name>.lib.wasm` |
+| `boot/commands/build.tw` | `--lib` flag; lib build path → `target/<name>.lib.wasm`; thread "this is a lib build of entry module M" into the pipeline |
 | `boot/main.tw` | register the `--lib` flag on `build_cmd` |
-| `boot/compiler/codegen/linker.tw` | export entry `pub` primitives; retain as DCE roots |
-| `boot/compiler/codegen/{wasm,wat}.tw` | emit `twinkle.exports` custom section |
+| `boot/compiler/lower_core.tw` (+ checker/driver) | capture the entry module's eligible `pub` export surface (primitive `fn`s + value globals) with source names & signatures; warn-and-skip ineligible members. Beside the existing `pub_value_globals` capture |
+| `boot/compiler/anf.tw` + `lower_anf.tw` | carry the captured surface as a new `AnfModule.lib_exports` field (mirror of `extern_imports`) |
+| `boot/compiler/codegen/emit.tw` | add an `ExportDef` per eligible member (DCE root, automatic); synthesize a zero-arg getter func per value global |
+| `boot/compiler/codegen/{codegen,wasm,wat}.tw` | emit the `twinkle.exports` custom section from `lib_exports`, mirroring `collect_extern_meta` / `encode_extern_meta_section_payload`. **No change to `linker.tw` / `retain_final_exports`** |
 | `boot/lib/project/scaffold.tw` + `boot/commands/scaffold.tw` | `[lib]` entry, `host.mjs`, `index.html`, `package.json` templates |
 | `tools/npm/index.mjs` | Node `loadLib` |
 | `tools/js_runtime/web.mjs` | web `loadLib` (compiler-free) |
