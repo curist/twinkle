@@ -836,8 +836,9 @@ fn lib_type_native_val_type(t: LibType) ValType {
     .Bool => .I32,
     .Void => .Anyref,
     .Str => .Ref(true, .Named("rt_types__String")),
-    .Fn(_, _) => .Anyref,
-    _ => error("lib_type_native_val_type: compound types are not callback leaves"),
+    // Callback arg/return types are leaves only (guarded in selection), so Fn
+    // and the compound variants are unreachable here.
+    _ => error("lib_type_native_val_type: callback arg/return types must be leaves"),
   }
 }
 
@@ -849,8 +850,7 @@ fn lib_type_native_tag(t: LibType) String {
     .Bool => "i32",
     .Void => "void",
     .Str => "str",
-    .Fn(_, _) => "fn",
-    _ => error("lib_type_native_tag: compound types are not callback leaves"),
+    _ => error("lib_type_native_tag: callback arg/return types must be leaves"),
   }
 }
 
@@ -874,8 +874,7 @@ fn lib_type_to_mono(t: LibType) MonoType {
     .Bool => .Bool,
     .Void => .Void,
     .Str => .String,
-    .Fn(_, _) => .Void,
-    _ => error("lib_type_to_mono: compound types are not callback leaves"),
+    _ => error("lib_type_to_mono: callback arg/return types must be leaves"),
   }
 }
 

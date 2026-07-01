@@ -204,6 +204,12 @@ there is no mutable captured state.)
   type marshalling.
 * `hard error` mode for ineligible members — warn-and-skip remains the policy for
   anything still outside the supported set.
+* **Generic record instantiations** at the boundary (e.g. `Box<Int>`). Only
+  non-generic records are marshalled: `classify_record` reads the record def's
+  fields, whose types carry `Var` placeholders for a generic type, so any field
+  classifies as ineligible and the member is skipped with a warning. Every plan
+  example uses non-generic records; instantiated generics would need type-arg
+  substitution before classification.
 
 ---
 

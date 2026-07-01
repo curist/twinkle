@@ -103,6 +103,13 @@ pub fn mono_to_key(ty: MonoType) String {
   }
 }
 
+/// The wasm struct symbol for a nominal type (record or sum), from its source
+/// name and full `Named` monotype. The single source of truth for this format,
+/// shared by layout emission and lib-export record marshalling.
+pub fn nominal_struct_sym(name: String, ty: MonoType) String {
+  "$${name}_${mono_to_key(ty)}"
+}
+
 // ── layout_of ───────────────────────────────────────────────────────
 pub fn layout_of(ty: MonoType, env: ResolvedEnv) WasmLayout {
   case ty {
@@ -246,7 +253,7 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
         )
       }
 
-      sym := "$${name}_${mono_to_key(.Named(tid, args))}"
+      sym := nominal_struct_sym(name, .Named(tid, args))
       field_layouts := collect f, i in fields {
         // Substitute type params with concrete args
         field_ty := subst_type_params(f.ty, type_params, args)
@@ -294,7 +301,7 @@ fn layout_of_sum_def(
   variants: Vector<ResolvedVariant>,
   env: ResolvedEnv,
 ) WasmLayout {
-  sym := "$${name}_${mono_to_key(.Named(tid, args))}"
+  sym := nominal_struct_sym(name, .Named(tid, args))
 
   // Build variant layouts
   offset := 1 // field 0 is the tag
@@ -505,8 +512,8 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
       }
 
       case def {
-        .Record(name, _, _) => .Ref(true, .Named("$${name}_${mono_to_key(.Named(tid, args))}")),
-        .Sum(name, _, _) => .Ref(true, .Named("$${name}_${mono_to_key(.Named(tid, args))}")),
+        .Record(name, _, _) => .Ref(true, .Named(nominal_struct_sym(name, .Named(tid, args)))),
+        .Sum(name, _, _) => .Ref(true, .Named(nominal_struct_sym(name, .Named(tid, args)))),
         .Alias(_, type_params, target) => val_type_of_mono(
           subst_type_params(target, type_params, args),
           env,

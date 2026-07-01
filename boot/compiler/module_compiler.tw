@@ -16,7 +16,7 @@ use compiler.ast.{Module}
 use compiler.base_env.{builtin_env}
 use compiler.builtins.{make_builtin_registry}
 use compiler.checker.{CheckResult}
-use compiler.codegen.wasm_layout.{mono_to_key}
+use compiler.codegen.wasm_layout.{nominal_struct_sym}
 use compiler.core_ir.{
   CompiledModule, ExternalRef, ExternalValueRef, GlobalId, LibExport, LibField, LibType,
 }
@@ -504,9 +504,7 @@ fn classify_record(ty: MonoType, env: ResolvedEnv) LibType? {
         }
       }
 
-      // Mirror the record struct symbol from wasm_layout.
-      sym := "$${info.name}_${mono_to_key(ty)}"
-      .Some(.Rec(info.name, sym, lib_fields))
+      .Some(.Rec(info.name, nominal_struct_sym(info.name, ty), lib_fields))
     },
     .None => .None,
   }
