@@ -216,17 +216,22 @@ fn collect_extern_meta(anf: AnfModule) Vector<ExternMeta> {
   result
 }
 
-// Marshal tag for the `twinkle.exports` JSON section. Leaves stay bare strings
-// (matching the `twinkle.externs` vocabulary); future compound types nest as
-// JSON objects, which the section format already supports.
-fn export_type_kind(t: LibType) String {
+// A `twinkle.exports` marshal descriptor, as a raw JSON *value* string. Leaves
+// are bare quoted strings (matching the `twinkle.externs` vocabulary); compound
+// types nest as JSON objects — `fn` here, with room for later increments.
+pub fn export_type_json(t: LibType) String {
   case t {
-    .Int => "int",
-    .Float => "float",
-    .Bool => "bool",
-    .Void => "void",
-    .Str => "str",
-    .Fn(_, _) => "fn",
+    .Int => "\"int\"",
+    .Float => "\"float\"",
+    .Bool => "\"bool\"",
+    .Void => "\"void\"",
+    .Str => "\"str\"",
+    .Fn(ps, r) => {
+      arg_parts := collect p in ps {
+        export_type_json(p)
+      }
+      "{\"kind\":\"fn\",\"args\":[${arg_parts.join(",")}],\"ret\":${export_type_json(r)}}"
+    },
   }
 }
 
@@ -241,9 +246,9 @@ fn collect_export_meta(anf: AnfModule) Vector<ExportMeta> {
       wasm_name: exp.wasm_name,
       kind,
       args: collect p in exp.params {
-        export_type_kind(p)
+        export_type_json(p)
       },
-      ret: export_type_kind(exp.ret),
+      ret: export_type_json(exp.ret),
     }
   }
 }

@@ -9,6 +9,7 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use compiler.codegen.codegen
 use compiler.core_ir.{LibExport, LibType}
 use compiler.pipeline
 use compiler.query.analyze
@@ -196,6 +197,22 @@ pub fn suite() runner.Suite {
         artifacts := try pipeline.compile_source_lib(src)
         try assert.equal(find_export(artifacts.anf.lib_exports, "secret").is_some(), false)
         try assert.equal(warning_text(artifacts.warnings).contains("secret"), false)
+        .Ok({})
+      },
+    )
+    .test(
+      "export_type_json nests fn descriptors, leaves stay bare strings",
+      fn() {
+        try assert.equal(codegen.export_type_json(.Str), "\"str\"")
+        try assert.equal(codegen.export_type_json(.Int), "\"int\"")
+        try assert.equal(
+          codegen.export_type_json(.Fn([.Str], .Void)),
+          "{\"kind\":\"fn\",\"args\":[\"str\"],\"ret\":\"void\"}",
+        )
+        try assert.equal(
+          codegen.export_type_json(.Fn([.Int], .Bool)),
+          "{\"kind\":\"fn\",\"args\":[\"int\"],\"ret\":\"bool\"}",
+        )
         .Ok({})
       },
     )

@@ -203,6 +203,8 @@ pub type ExternMeta = .{ module: String, name: String, args: Vector<String>, ret
 
 /// Host-callable lib export metadata emitted into `twinkle.exports`.
 /// `kind` is `fn` or `value`; value exports point at synthesized getter funcs.
+/// `args`/`ret` are raw JSON *value* strings (bare `"str"` for leaf types, a
+/// nested `{"kind":"fn",…}` object for callback params), emitted verbatim.
 pub type ExportMeta = .{
   name: String,
   wasm_name: String,

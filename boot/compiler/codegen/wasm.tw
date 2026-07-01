@@ -1459,10 +1459,12 @@ fn encode_export_meta_section_payload(meta: Vector<ExportMeta>) WasmBuf {
 }
 
 fn export_meta_json(meta: Vector<ExportMeta>) String {
+  // `args`/`ret` already hold raw JSON value strings (bare `"str"` for leaves,
+  // nested objects for `fn`), so they are emitted verbatim, not re-quoted.
   entries := collect em in meta {
     "{\"name\":${json_string(em.name)},\"wasmName\":${json_string(em.wasm_name)},\"kind\":${json_string(
       em.kind,
-    )},\"args\":${json_string_array(em.args)},\"ret\":${json_string(em.ret)}}"
+    )},\"args\":[${em.args.join(",")}],\"ret\":${em.ret}}"
   }
   "[${entries.join(",")}]"
 }
