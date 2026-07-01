@@ -10,6 +10,7 @@ use .list
 use .bounce
 use .storage
 use .nbody
+use .json
 
 harness.run_all([
   Benchmark.{ name: "smoke", warmup: smoke.warmup, iters: smoke.iters, size: smoke.size, expected: smoke.expected, run: smoke.run },
@@ -22,4 +23,5 @@ harness.run_all([
   Benchmark.{ name: "bounce", warmup: bounce.warmup, iters: bounce.iters, size: bounce.size, expected: bounce.expected, run: bounce.run },
   Benchmark.{ name: "storage", warmup: storage.warmup, iters: storage.iters, size: storage.size, expected: storage.expected, run: storage.run },
   Benchmark.{ name: "nbody", warmup: nbody.warmup, iters: nbody.iters, size: nbody.size, expected: nbody.expected, run: nbody.run },
+  Benchmark.{ name: "json", warmup: json.warmup, iters: json.iters, size: json.size, expected: json.expected, run: json.run },
 ])

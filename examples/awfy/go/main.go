@@ -12,6 +12,7 @@ func main() {
 		bounceBench,
 		storageBench,
 		nbodyBench,
+		jsonBench,
 	}
 	for _, b := range benches {
 		RunBench(b)

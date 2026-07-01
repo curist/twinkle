@@ -1,0 +1,162 @@
+type Json = { JNull, JBool(Bool), JNum(Int), JStr(String), JArr(Vector<Json>), JObj(Vector<Entry>) }
+type Entry = .{ key: String, value: Json }
+
+type PResult = .{ value: Json, pos: Int }
+type SResult = .{ str: String, pos: Int }
+type NResult = .{ num: Int, pos: Int }
+type FoldAcc = .{ sum: Int, count: Int }
+
+// Fixed input exercising objects, arrays, strings, integers, bools, null.
+// The identical literal is embedded in all three languages.
+input := "{\"widget\":{\"debug\":\"on\",\"window\":{\"title\":\"Sample\",\"width\":500,\"height\":300},\"items\":[1,2,3,4,5],\"enabled\":true,\"data\":null}}"
+
+fn bat(s: String, i: Int) Int {
+  s.at(i).to_int()
+}
+
+fn skip_ws(s: String, pos: Int) Int {
+  i := pos
+  for i < s.len() and (bat(s, i) == 32 or bat(s, i) == 10 or bat(s, i) == 9 or bat(s, i) == 13) {
+    i = i + 1
+  }
+  i
+}
+
+fn parse_str(s: String, pos: Int) SResult {
+  i := pos + 1
+  start := i
+  for bat(s, i) != 34 {
+    i = i + 1
+  }
+  SResult.{ str: s.substring(start, i), pos: i + 1 }
+}
+
+fn parse_num(s: String, pos: Int) NResult {
+  i := pos
+  neg := false
+  if bat(s, i) == 45 {
+    neg = true
+    i = i + 1
+  }
+  n := 0
+  for i < s.len() and bat(s, i) >= 48 and bat(s, i) <= 57 {
+    n = n * 10 + (bat(s, i) - 48)
+    i = i + 1
+  }
+  val := if neg {
+    0 - n
+  } else {
+    n
+  }
+  NResult.{ num: val, pos: i }
+}
+
+fn parse_arr(s: String, pos: Int) PResult {
+  i := pos + 1
+  items: Vector<Json> = []
+  i = skip_ws(s, i)
+  if bat(s, i) == 93 {
+    return PResult.{ value: .JArr(items), pos: i + 1 }
+  }
+  done := false
+  for !done {
+    r := parse_value(s, i)
+    items = items.append(r.value)
+    i = skip_ws(s, r.pos)
+    if bat(s, i) == 44 {
+      i = i + 1
+    } else {
+      i = i + 1
+      done = true
+    }
+  }
+  PResult.{ value: .JArr(items), pos: i }
+}
+
+fn parse_obj(s: String, pos: Int) PResult {
+  i := pos + 1
+  entries: Vector<Entry> = []
+  i = skip_ws(s, i)
+  if bat(s, i) == 125 {
+    return PResult.{ value: .JObj(entries), pos: i + 1 }
+  }
+  done := false
+  for !done {
+    i = skip_ws(s, i)
+    sr := parse_str(s, i)
+    key := sr.str
+    i = skip_ws(s, sr.pos)
+    i = i + 1
+    r := parse_value(s, i)
+    entries = entries.append(Entry.{ key: key, value: r.value })
+    i = skip_ws(s, r.pos)
+    if bat(s, i) == 44 {
+      i = i + 1
+    } else {
+      i = i + 1
+      done = true
+    }
+  }
+  PResult.{ value: .JObj(entries), pos: i }
+}
+
+fn parse_value(s: String, pos: Int) PResult {
+  p := skip_ws(s, pos)
+  c := bat(s, p)
+  cond {
+    c == 123 => parse_obj(s, p),
+    c == 91 => parse_arr(s, p),
+    c == 34 => {
+      sr := parse_str(s, p)
+      PResult.{ value: .JStr(sr.str), pos: sr.pos }
+    },
+    c == 116 => PResult.{ value: .JBool(true), pos: p + 4 },
+    c == 102 => PResult.{ value: .JBool(false), pos: p + 5 },
+    c == 110 => PResult.{ value: .JNull, pos: p + 4 },
+    _ => {
+      nr := parse_num(s, p)
+      PResult.{ value: .JNum(nr.num), pos: nr.pos }
+    },
+  }
+}
+
+fn fold(j: Json, acc: FoldAcc) FoldAcc {
+  a := FoldAcc.{ sum: acc.sum, count: acc.count + 1 }
+  case j {
+    .JNum(v) => FoldAcc.{ sum: a.sum + v, count: a.count },
+    .JArr(items) => {
+      r := a
+      for x in items {
+        r = fold(x, r)
+      }
+      r
+    },
+    .JObj(entries) => {
+      r := a
+      for e in entries {
+        r = fold(e.value, r)
+      }
+      r
+    },
+    .JNull => a,
+    .JBool(b) => a,
+    .JStr(str) => a,
+  }
+}
+
+pub warmup := 20
+pub iters := 100
+pub size := 1000
+pub expected := 25280
+
+pub fn run(size: Int) Int {
+  checksum := 0
+  r := 0
+  for r < size {
+    tree := parse_value(input, 0)
+    acc := fold(tree.value, FoldAcc.{ sum: 0, count: 0 })
+    checksum = acc.sum * 31 + acc.count
+    r = r + 1
+  }
+  checksum
+}

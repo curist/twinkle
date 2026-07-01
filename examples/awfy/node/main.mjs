@@ -9,6 +9,7 @@ import * as list from "./list.mjs";
 import * as bounce from "./bounce.mjs";
 import * as storage from "./storage.mjs";
 import * as nbody from "./nbody.mjs";
+import * as json from "./json.mjs";
 
 const benches = [
   { name: "smoke", warmup: smoke.warmup, iters: smoke.iters, size: smoke.size, expected: smoke.expected, run: smoke.run },
@@ -21,5 +22,6 @@ const benches = [
   { name: "bounce", warmup: bounce.warmup, iters: bounce.iters, size: bounce.size, expected: bounce.expected, run: bounce.run },
   { name: "storage", warmup: storage.warmup, iters: storage.iters, size: storage.size, expected: storage.expected, run: storage.run },
   { name: "nbody", warmup: nbody.warmup, iters: nbody.iters, size: nbody.size, expected: nbody.expected, run: nbody.run },
+  { name: "json", warmup: json.warmup, iters: json.iters, size: json.size, expected: json.expected, run: json.run },
 ];
 for (const b of benches) runBench(b);
