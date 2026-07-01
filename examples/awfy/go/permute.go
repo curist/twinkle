@@ -28,4 +28,4 @@ func permuteRun(size int) int {
 	return permuteCount
 }
 
-var permuteBench = Bench{Name: "permute", Warmup: 10, Iters: 40, Size: 1000, Expected: 8660, Run: permuteRun}
+var permuteBench = Bench{Name: "permute", Warmup: 10, Iters: 20, Size: 300, Expected: 8660, Run: permuteRun}

@@ -1,4 +1,10 @@
-fn get_row_column(free_rows: Vector<Bool>, free_maxs: Vector<Bool>, free_mins: Vector<Bool>, r: Int, c: Int) Bool {
+fn get_row_column(
+  free_rows: Vector<Bool>,
+  free_maxs: Vector<Bool>,
+  free_mins: Vector<Bool>,
+  r: Int,
+  c: Int,
+) Bool {
   free_rows[r] and free_maxs[c + r] and free_mins[c - r + 7]
 }
 
@@ -33,9 +39,15 @@ pub fn run(size: Int) Int {
   count := 0
   n := 0
   for n < size {
-    free_rows: Vector<Bool> = collect i in range(8) { true }
-    free_maxs: Vector<Bool> = collect i in range(15) { true }
-    free_mins: Vector<Bool> = collect i in range(15) { true }
+    free_rows: Vector<Bool> = collect i in range(8) {
+      true
+    }
+    free_maxs: Vector<Bool> = collect i in range(15) {
+      true
+    }
+    free_mins: Vector<Bool> = collect i in range(15) {
+      true
+    }
     if place(free_rows, free_maxs, free_mins, 0) {
       count = count + 1
     }

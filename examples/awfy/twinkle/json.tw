@@ -1,9 +1,13 @@
 type Json = { JNull, JBool(Bool), JNum(Int), JStr(String), JArr(Vector<Json>), JObj(Vector<Entry>) }
+
 type Entry = .{ key: String, value: Json }
 
 type PResult = .{ value: Json, pos: Int }
+
 type SResult = .{ str: String, pos: Int }
+
 type NResult = .{ num: Int, pos: Int }
+
 type FoldAcc = .{ sum: Int, count: Int }
 
 // Fixed input exercising objects, arrays, strings, integers, bools, null.
@@ -61,7 +65,7 @@ fn parse_arr(s: String, pos: Int) PResult {
   done := false
   for !done {
     r := parse_value(s, i)
-    items = items.append(r.value)
+    items = .append(r.value)
     i = skip_ws(s, r.pos)
     if bat(s, i) == 44 {
       i = i + 1
@@ -88,7 +92,7 @@ fn parse_obj(s: String, pos: Int) PResult {
     i = skip_ws(s, sr.pos)
     i = i + 1
     r := parse_value(s, i)
-    entries = entries.append(Entry.{ key: key, value: r.value })
+    entries = .append(Entry.{ key, value: r.value })
     i = skip_ws(s, r.pos)
     if bat(s, i) == 44 {
       i = i + 1

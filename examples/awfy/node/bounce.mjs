@@ -1,4 +1,4 @@
-export const warmup = 10, iters = 40, size = 1500, expected = 47174;
+export const warmup = 10, iters = 20, size = 400, expected = 47174;
 
 // AWFY LCG, ported exactly.
 function makeRng() {

@@ -38,4 +38,4 @@ func mandelbrotRun(size int) int {
 	return sum
 }
 
-var mandelbrotBench = Bench{Name: "mandelbrot", Warmup: 10, Iters: 30, Size: 500, Expected: 191, Run: mandelbrotRun}
+var mandelbrotBench = Bench{Name: "mandelbrot", Warmup: 10, Iters: 20, Size: 500, Expected: 191, Run: mandelbrotRun}

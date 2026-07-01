@@ -1,14 +1,16 @@
 pub type Rng = .{ seed: Int }
+
 pub type RngStep = .{ value: Int, rng: Rng }
 
 // AWFY's linear-congruential PRNG. Ported exactly so every language produces
 // identical checksums.
 pub fn rng_next(r: Rng) RngStep {
-  s := (r.seed * 1309 + 13849) & 65535
+  s := r.seed * 1309 + 13849 & 65535
   RngStep.{ value: s, rng: Rng.{ seed: s } }
 }
 
 type Ball = .{ x: Int, y: Int, xv: Int, yv: Int }
+
 type BallStep = .{ ball: Ball, rng: Rng }
 
 fn new_ball(r: Rng) BallStep {
@@ -16,12 +18,7 @@ fn new_ball(r: Rng) BallStep {
   s2 := rng_next(s1.rng)
   s3 := rng_next(s2.rng)
   s4 := rng_next(s3.rng)
-  b := Ball.{
-    x: s1.value % 500,
-    y: s2.value % 500,
-    xv: (s3.value % 5) - 2,
-    yv: (s4.value % 5) - 2,
-  }
+  b := Ball.{ x: s1.value % 500, y: s2.value % 500, xv: s3.value % 5 - 2, yv: s4.value % 5 - 2 }
   BallStep.{ ball: b, rng: s4.rng }
 }
 
@@ -55,12 +52,12 @@ fn bounce_step(b: Ball) BounceResult {
     yv = 0 - yv
     bounced = true
   }
-  BounceResult.{ ball: Ball.{ x: nx, y: ny, xv: xv, yv: yv }, bounced: bounced }
+  BounceResult.{ ball: Ball.{ x: nx, y: ny, xv, yv }, bounced }
 }
 
 pub warmup := 10
-pub iters := 40
-pub size := 1500
+pub iters := 20
+pub size := 400
 pub expected := 47174
 
 pub fn run(size: Int) Int {
@@ -73,7 +70,7 @@ pub fn run(size: Int) Int {
     k := 0
     for k < ball_count {
       bs := new_ball(rng)
-      balls = balls.append(bs.ball)
+      balls = .append(bs.ball)
       rng = bs.rng
       k = k + 1
     }
@@ -83,7 +80,7 @@ pub fn run(size: Int) Int {
       j := 0
       for j < ball_count {
         res := bounce_step(balls[j])
-        balls = balls.set_at(j, res.ball)
+        balls = .set_at(j, res.ball)
         if res.bounced {
           bounces = bounces + 1
         }
@@ -91,6 +88,7 @@ pub fn run(size: Int) Int {
       }
       step = step + 1
     }
+
     // Fold final positions into the checksum so it validates the whole
     // simulation state, not just the wall-hit count.
     checksum := bounces

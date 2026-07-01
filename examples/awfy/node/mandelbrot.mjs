@@ -1,4 +1,4 @@
-export const warmup = 10, iters = 30, size = 500, expected = 191;
+export const warmup = 10, iters = 20, size = 500, expected = 191;
 
 export function run(size) {
   let sum = 0, byteAcc = 0, bitNum = 0, y = 0;

@@ -28,4 +28,4 @@ func storageRun(size int) int {
 	return result
 }
 
-var storageBench = Bench{Name: "storage", Warmup: 10, Iters: 30, Size: 1000, Expected: 27881, Run: storageRun}
+var storageBench = Bench{Name: "storage", Warmup: 10, Iters: 20, Size: 120, Expected: 27881, Run: storageRun}

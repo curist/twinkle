@@ -24,16 +24,18 @@ fn permute(s: PState, n: Int) PState {
 }
 
 pub warmup := 10
-pub iters := 40
-pub size := 1000
+pub iters := 20
+pub size := 300
 pub expected := 8660
 
 pub fn run(size: Int) Int {
   count := 0
   rep := 0
   for rep < size {
-    v: Vector<Int> = collect i in range(6) { 0 }
-    result := permute(PState.{ v: v, count: 0 }, 6)
+    v: Vector<Int> = collect i in range(6) {
+      0
+    }
+    result := permute(PState.{ v, count: 0 }, 6)
     count = result.count
     rep = rep + 1
   }

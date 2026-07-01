@@ -1,4 +1,4 @@
-export const warmup = 10, iters = 40, size = 600, expected = 8191;
+export const warmup = 10, iters = 20, size = 200, expected = 8191;
 
 // Pegs are arrays used as stacks (top = last element). moveDisks mutates the
 // three pegs in place and counts moves.

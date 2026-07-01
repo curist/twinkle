@@ -36,8 +36,8 @@ fn move_disks(p: Pegs, n: Int, from: Int, to: Int, via: Int) Pegs {
 }
 
 pub warmup := 10
-pub iters := 40
-pub size := 600
+pub iters := 20
+pub size := 200
 pub expected := 8191
 
 pub fn run(size: Int) Int {
@@ -45,9 +45,11 @@ pub fn run(size: Int) Int {
   rep := 0
   for rep < size {
     // Peg a holds disks 13..1 (largest at the bottom = index 0).
-    a: Vector<Int> = collect i in range(13) { 13 - i }
+    a: Vector<Int> = collect i in range(13) {
+      13 - i
+    }
     empty: Vector<Int> = []
-    start := Pegs.{ a: a, b: empty, c: empty, moves: 0 }
+    start := Pegs.{ a, b: empty, c: empty, moves: 0 }
     result := move_disks(start, 13, 0, 2, 1)
     moves = result.moves
     rep = rep + 1

@@ -1,27 +1,104 @@
-use .harness.{Benchmark}
-use .harness
-use .smoke
-use .mandelbrot
-use .sieve
-use .queens
-use .permute
-use .towers
-use .list
 use .bounce
-use .storage
-use .nbody
+use .harness
+use .harness.{Benchmark}
 use .json
+use .list
+use .mandelbrot
+use .nbody
+use .permute
+use .queens
+use .sieve
+use .smoke
+use .storage
+use .towers
 
 harness.run_all([
-  Benchmark.{ name: "smoke", warmup: smoke.warmup, iters: smoke.iters, size: smoke.size, expected: smoke.expected, run: smoke.run },
-  Benchmark.{ name: "mandelbrot", warmup: mandelbrot.warmup, iters: mandelbrot.iters, size: mandelbrot.size, expected: mandelbrot.expected, run: mandelbrot.run },
-  Benchmark.{ name: "sieve", warmup: sieve.warmup, iters: sieve.iters, size: sieve.size, expected: sieve.expected, run: sieve.run },
-  Benchmark.{ name: "queens", warmup: queens.warmup, iters: queens.iters, size: queens.size, expected: queens.expected, run: queens.run },
-  Benchmark.{ name: "permute", warmup: permute.warmup, iters: permute.iters, size: permute.size, expected: permute.expected, run: permute.run },
-  Benchmark.{ name: "towers", warmup: towers.warmup, iters: towers.iters, size: towers.size, expected: towers.expected, run: towers.run },
-  Benchmark.{ name: "list", warmup: list.warmup, iters: list.iters, size: list.size, expected: list.expected, run: list.run },
-  Benchmark.{ name: "bounce", warmup: bounce.warmup, iters: bounce.iters, size: bounce.size, expected: bounce.expected, run: bounce.run },
-  Benchmark.{ name: "storage", warmup: storage.warmup, iters: storage.iters, size: storage.size, expected: storage.expected, run: storage.run },
-  Benchmark.{ name: "nbody", warmup: nbody.warmup, iters: nbody.iters, size: nbody.size, expected: nbody.expected, run: nbody.run },
-  Benchmark.{ name: "json", warmup: json.warmup, iters: json.iters, size: json.size, expected: json.expected, run: json.run },
+  Benchmark.{
+    name: "smoke",
+    warmup: smoke.warmup,
+    iters: smoke.iters,
+    size: smoke.size,
+    expected: smoke.expected,
+    run: smoke.run,
+  },
+  Benchmark.{
+    name: "mandelbrot",
+    warmup: mandelbrot.warmup,
+    iters: mandelbrot.iters,
+    size: mandelbrot.size,
+    expected: mandelbrot.expected,
+    run: mandelbrot.run,
+  },
+  Benchmark.{
+    name: "sieve",
+    warmup: sieve.warmup,
+    iters: sieve.iters,
+    size: sieve.size,
+    expected: sieve.expected,
+    run: sieve.run,
+  },
+  Benchmark.{
+    name: "queens",
+    warmup: queens.warmup,
+    iters: queens.iters,
+    size: queens.size,
+    expected: queens.expected,
+    run: queens.run,
+  },
+  Benchmark.{
+    name: "permute",
+    warmup: permute.warmup,
+    iters: permute.iters,
+    size: permute.size,
+    expected: permute.expected,
+    run: permute.run,
+  },
+  Benchmark.{
+    name: "towers",
+    warmup: towers.warmup,
+    iters: towers.iters,
+    size: towers.size,
+    expected: towers.expected,
+    run: towers.run,
+  },
+  Benchmark.{
+    name: "list",
+    warmup: list.warmup,
+    iters: list.iters,
+    size: list.size,
+    expected: list.expected,
+    run: list.run,
+  },
+  Benchmark.{
+    name: "bounce",
+    warmup: bounce.warmup,
+    iters: bounce.iters,
+    size: bounce.size,
+    expected: bounce.expected,
+    run: bounce.run,
+  },
+  Benchmark.{
+    name: "storage",
+    warmup: storage.warmup,
+    iters: storage.iters,
+    size: storage.size,
+    expected: storage.expected,
+    run: storage.run,
+  },
+  Benchmark.{
+    name: "nbody",
+    warmup: nbody.warmup,
+    iters: nbody.iters,
+    size: nbody.size,
+    expected: nbody.expected,
+    run: nbody.run,
+  },
+  Benchmark.{
+    name: "json",
+    warmup: json.warmup,
+    iters: json.iters,
+    size: json.size,
+    expected: json.expected,
+    run: json.run,
+  },
 ])

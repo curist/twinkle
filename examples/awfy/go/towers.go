@@ -33,4 +33,4 @@ func towersRun(size int) int {
 	return moves
 }
 
-var towersBench = Bench{Name: "towers", Warmup: 10, Iters: 40, Size: 600, Expected: 8191, Run: towersRun}
+var towersBench = Bench{Name: "towers", Warmup: 10, Iters: 20, Size: 200, Expected: 8191, Run: towersRun}

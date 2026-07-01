@@ -73,4 +73,4 @@ func bounceRun(size int) int {
 	return total
 }
 
-var bounceBench = Bench{Name: "bounce", Warmup: 10, Iters: 40, Size: 1500, Expected: 47174, Run: bounceRun}
+var bounceBench = Bench{Name: "bounce", Warmup: 10, Iters: 20, Size: 400, Expected: 47174, Run: bounceRun}

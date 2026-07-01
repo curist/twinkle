@@ -1,4 +1,4 @@
-export const warmup = 10, iters = 40, size = 1000, expected = 8660;
+export const warmup = 10, iters = 20, size = 300, expected = 8660;
 
 let v;
 let count;

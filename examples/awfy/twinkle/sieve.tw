@@ -5,7 +5,9 @@ pub expected := 669
 
 pub fn run(size: Int) Int {
   // flags[0..=size]; indices 0 and 1 are unused for counting.
-  flags: Vector<Bool> = collect i in range(size + 1) { true }
+  flags: Vector<Bool> = collect i in range(size + 1) {
+    true
+  }
   count := 0
   i := 2
   for i <= size {
@@ -13,7 +15,7 @@ pub fn run(size: Int) Int {
       count = count + 1
       k := i + i
       for k <= size {
-        flags = flags.set_at(k, false)
+        flags = .set_at(k, false)
         k = k + i
       }
     }

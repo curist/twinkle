@@ -1,4 +1,4 @@
-export const warmup = 10, iters = 30, size = 1000, expected = 27881;
+export const warmup = 10, iters = 20, size = 120, expected = 27881;
 
 function makeRng() {
   let seed = 74755;

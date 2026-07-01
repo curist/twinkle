@@ -1,4 +1,4 @@
-.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev fmt bench bench-guard bench-compare clean npm-pack npm-publish npm-test
+.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev fmt bench bench-guard bench-compare awfy clean npm-pack npm-publish npm-test
 
 STAGE1_WASM ?= target/boot-stage1.wasm
 STAGE2_WASM ?= target/boot.wasm
@@ -26,6 +26,7 @@ help:
 	@printf '  make bench             Run the Vector benchmark suite (boot/bench/)\n'
 	@printf '  make bench-guard       Check vector scaling/bulk-copy guards\n'
 	@printf '  make bench-compare     Compare persistent collections with Clojure\n'
+	@printf '  make awfy              Run the AWFY-style cross-language benchmark suite\n'
 	@printf '  make playground        Build playground from latest published packages (no compiler build)\n'
 	@printf '  make playground-dev    Dev server against the in-repo compiler (TWINKLE_LOCAL)\n'
 
@@ -151,6 +152,10 @@ bench-guard: target/twk
 
 bench-compare: target/twk
 	python3 tools/bench_persistent_compare.py
+
+# Run the AWFY-style cross-language benchmark suite. See examples/awfy/README.md.
+awfy: target/twk
+	@examples/awfy/run.sh
 
 # Format the boot project's reachable modules (project mode over the configured
 # entries in twinkle.toml). Note: this excludes the bundled stdlib/prelude
