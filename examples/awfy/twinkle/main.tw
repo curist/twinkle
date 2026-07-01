@@ -6,6 +6,7 @@ use .sieve
 use .queens
 use .permute
 use .towers
+use .list
 
 harness.run_all([
   Benchmark.{ name: "smoke", warmup: smoke.warmup, iters: smoke.iters, size: smoke.size, expected: smoke.expected, run: smoke.run },
@@ -14,4 +15,5 @@ harness.run_all([
   Benchmark.{ name: "queens", warmup: queens.warmup, iters: queens.iters, size: queens.size, expected: queens.expected, run: queens.run },
   Benchmark.{ name: "permute", warmup: permute.warmup, iters: permute.iters, size: permute.size, expected: permute.expected, run: permute.run },
   Benchmark.{ name: "towers", warmup: towers.warmup, iters: towers.iters, size: towers.size, expected: towers.expected, run: towers.run },
+  Benchmark.{ name: "list", warmup: list.warmup, iters: list.iters, size: list.size, expected: list.expected, run: list.run },
 ])

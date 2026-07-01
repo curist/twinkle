@@ -8,6 +8,7 @@ func main() {
 		queensBench,
 		permuteBench,
 		towersBench,
+		listBench,
 	}
 	for _, b := range benches {
 		RunBench(b)

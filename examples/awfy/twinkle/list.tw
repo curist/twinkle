@@ -1,0 +1,28 @@
+type List = { Nil, Cons(Int, List) }
+
+fn build(n: Int) List {
+  acc: List = .Nil
+  i := 0
+  for i < n {
+    acc = .Cons(i, acc)
+    i = i + 1
+  }
+  acc
+}
+
+fn sum_list(xs: List, acc: Int) Int {
+  case xs {
+    .Nil => acc,
+    .Cons(v, rest) => sum_list(rest, acc + v),
+  }
+}
+
+pub warmup := 10
+pub iters := 40
+pub size := 1000
+pub expected := 499500
+
+pub fn run(size: Int) Int {
+  xs := build(size)
+  sum_list(xs, 0)
+}
