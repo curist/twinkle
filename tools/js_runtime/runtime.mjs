@@ -1281,6 +1281,15 @@ function guestToJs(ref, desc, b, instance) {
     }
     return out;
   }
+  if (desc.kind === "rec") {
+    const flat = instance.exports["__lib_read_rec_" + desc.name](ref);
+    const out = {};
+    for (let i = 0; i < desc.fields.length; i++) {
+      const [fname, fdesc] = desc.fields[i];
+      out[fname] = guestElemToJs(b.array_get(flat, i), fdesc, b, instance);
+    }
+    return out;
+  }
   return ref;
 }
 
@@ -1292,6 +1301,14 @@ function jsToGuest(value, desc, b, instance) {
       b.array_set(flat, i, jsElemToGuest(value[i], desc.elem, b, instance));
     }
     return instance.exports.__lib_vec_from_array(flat);
+  }
+  if (desc.kind === "rec") {
+    const flat = b.array_new(desc.fields.length);
+    for (let i = 0; i < desc.fields.length; i++) {
+      const [fname, fdesc] = desc.fields[i];
+      b.array_set(flat, i, jsElemToGuest(value[fname], fdesc, b, instance));
+    }
+    return instance.exports["__lib_make_rec_" + desc.name](flat);
   }
   return value;
 }

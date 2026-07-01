@@ -23,12 +23,13 @@ use compiler.core_linker
 use compiler.imports
 use compiler.lower_anf
 use compiler.lower_core.{LowerResult}
-use compiler.mono_type.{MonoType, TypeId, ty_to_string}
+use compiler.mono_type.{MonoType, ty_to_string}
 use compiler.monomorphize
 use compiler.opt.pipeline.{optimize_module}
 use compiler.query.analyze
 use compiler.query.cache as query_cache
 use compiler.query.stage_runner
+use compiler.codegen.wasm_layout.{mono_to_key}
 use compiler.resolver.{ResolvedEnv, record_info}
 use lib.module.loader
 use lib.source.identity
@@ -469,7 +470,7 @@ fn lib_type(ty: MonoType, env: ResolvedEnv) LibType? {
       }
       .Some(.Dct(lk, lv))
     },
-    .Named(tid, _) => classify_record(tid, env),
+    .Named(_, _) => classify_record(ty, env),
     _ => .None,
   }
 }
@@ -488,7 +489,11 @@ fn is_leaf_lib_type(t: LibType) Bool {
 // A record type (`Named` with a record def) is eligible when every field type
 // is eligible. Enums, aliases, and generic records (whose field types carry
 // unresolved `Var`s) come back `.None`.
-fn classify_record(tid: TypeId, env: ResolvedEnv) LibType? {
+fn classify_record(ty: MonoType, env: ResolvedEnv) LibType? {
+  tid := case ty {
+    .Named(t, _) => t,
+    _ => return .None,
+  }
   case record_info(env, tid) {
     .Some(info) => {
       lib_fields: Vector<LibField> = []
@@ -498,7 +503,9 @@ fn classify_record(tid: TypeId, env: ResolvedEnv) LibType? {
           .None => return .None,
         }
       }
-      .Some(.Rec(info.name, lib_fields))
+      // Mirror the record struct symbol from wasm_layout.
+      sym := "$${info.name}_${mono_to_key(ty)}"
+      .Some(.Rec(info.name, sym, lib_fields))
     },
     .None => .None,
   }

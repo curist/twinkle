@@ -75,8 +75,8 @@ fn lib_type_eq(p: LibType, want: LibType) Bool {
       .Dct(wk, wv) => lib_type_eq(k, wk) and lib_type_eq(v, wv),
       _ => false,
     },
-    .Rec(n, fs) => case want {
-      .Rec(wn, wfs) => if n != wn or fs.len() != wfs.len() {
+    .Rec(n, _, fs) => case want {
+      .Rec(wn, _, wfs) => if n != wn or fs.len() != wfs.len() {
         false
       } else {
         ok := true
@@ -200,7 +200,7 @@ pub fn suite() runner.Suite {
         e := try find_export(artifacts.anf.lib_exports, "f").ok_or("f missing")
         try assert.equal(lib_type_eq(e.params[0], .Vec(.Int)), true)
         try assert.equal(lib_type_eq(e.params[1], .Dct(.Str, .Int)), true)
-        want_pt := LibType.Rec("Pt", [LibField.{ name: "x", ty: .Int }, LibField.{ name: "y", ty: .Int }])
+        want_pt := LibType.Rec("Pt", "", [LibField.{ name: "x", ty: .Int }, LibField.{ name: "y", ty: .Int }])
         try assert.equal(lib_type_eq(e.params[2], want_pt), true)
         try assert.equal(lib_type_eq(e.ret, want_pt), true)
         .Ok({})
@@ -266,7 +266,7 @@ pub fn suite() runner.Suite {
           "{\"kind\":\"dict\",\"key\":\"str\",\"val\":\"int\"}",
         )
         try assert.equal(
-          codegen.export_type_json(.Rec("Pt", [.{ name: "x", ty: .Int }])),
+          codegen.export_type_json(.Rec("Pt", "", [.{ name: "x", ty: .Int }])),
           "{\"kind\":\"rec\",\"name\":\"Pt\",\"fields\":[[\"x\",\"int\"]]}",
         )
         .Ok({})

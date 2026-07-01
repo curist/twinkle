@@ -234,8 +234,9 @@ pub fn export_type_json(t: LibType) String {
     },
     .Vec(e) => "{\"kind\":\"vec\",\"elem\":${export_type_json(e)}}",
     .Dct(k, v) => "{\"kind\":\"dict\",\"key\":${export_type_json(k)},\"val\":${export_type_json(v)}}",
-    .Rec(name, fields) => {
+    .Rec(name, _, fields) => {
       // Record and field names are identifiers, so no JSON escaping is needed.
+      // The wasm struct sym is codegen-internal and stays out of the descriptor.
       parts := collect f in fields {
         "[\"${f.name}\",${export_type_json(f.ty)}]"
       }

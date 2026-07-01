@@ -58,7 +58,7 @@ use compiler.codegen.wasm_ir.{
 }
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key, val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
-use compiler.core_ir.{BinOp, FieldId, FuncId, LibExport, LibType, UnOp, VariantId}
+use compiler.core_ir.{BinOp, FieldId, FuncId, LibExport, LibField, LibType, UnOp, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv}
 use compiler.type_util.{subst_type_params}
@@ -466,14 +466,138 @@ fn emit_lib_exports(
       .append(ExportDef.{ wasm_name: "__lib_vec_from_array", func_sym: "__lib_vec_from_array" })
   }
 
+  // Per distinct record type anywhere in the export surface (incl. nested),
+  // emit read/make helpers. The host drives cross-level recursion, so these are
+  // one-level: read flattens the struct's fields into an array, make rebuilds.
+  records: Dict<String, LibType> = Dict.new()
+
+  for exp in anf.lib_exports {
+    records = collect_records(exp.ret, records)
+
+    for p in exp.params {
+      records = collect_records(p, records)
+    }
+  }
+
+  for name, rec in records {
+    case rec {
+      .Rec(rec_name, sym, fields) => {
+        funcs = funcs
+          .append(emit_record_read(rec_name, sym, fields, env))
+          .append(emit_record_make(rec_name, sym, fields, env))
+        exports = exports
+          .append(ExportDef.{
+            wasm_name: "__lib_read_rec_${rec_name}",
+            func_sym: "__lib_read_rec_${rec_name}",
+          })
+          .append(ExportDef.{
+            wasm_name: "__lib_make_rec_${rec_name}",
+            func_sym: "__lib_make_rec_${rec_name}",
+          })
+      },
+      _ => {},
+    }
+  }
+
   .{ funcs, exports, imports }
+}
+
+// Gather every distinct record type (keyed by name) reachable through a LibType,
+// including nested vector elements, dict key/values, and record fields.
+fn collect_records(t: LibType, acc: Dict<String, LibType>) Dict<String, LibType> {
+  case t {
+    .Vec(e) => collect_records(e, acc),
+    .Dct(k, v) => collect_records(v, collect_records(k, acc)),
+    .Rec(name, _, fields) => {
+      out := acc
+      out[name] = t
+      for f in fields {
+        out = collect_records(f.ty, out)
+      }
+      out
+    },
+    _ => acc,
+  }
+}
+
+// `__lib_read_rec_<name>(s: anyref) -> rt_types__Array`: box each struct field
+// into a flat array (compound/ref fields pass through as anyref for the host to
+// recurse into).
+fn emit_record_read(name: String, sym: String, fields: Vector<LibField>, env: ResolvedEnv) FuncDef {
+  body: Vector<Instr> = []
+  idx := 0
+
+  for f in fields {
+    body = body.append(.LocalGet(0)).append(.RefCast(false, .Named(sym))).append(.StructGet(sym, idx))
+    body = emit_box_lib_field(f.ty, env, body)
+    idx = idx + 1
+  }
+
+  body = body.append(.ArrayNewFixed("rt_types__Array", fields.len()))
+  FuncDef.{
+    name: "__lib_read_rec_${name}",
+    params: [.Anyref],
+    results: [.Ref(false, .Named("rt_types__Array"))],
+    locals: [],
+    body,
+  }
+}
+
+// `__lib_make_rec_<name>(a: rt_types__Array) -> (ref struct)`: unbox each array
+// element to its field type and build the struct.
+fn emit_record_make(name: String, sym: String, fields: Vector<LibField>, env: ResolvedEnv) FuncDef {
+  body: Vector<Instr> = []
+  idx := 0
+
+  for f in fields {
+    body = body
+      .append(.LocalGet(0))
+      .append(.I32Const(idx))
+      .append(.ArrayGet("rt_types__Array"))
+    body = emit_unbox_lib_field(f.ty, env, body)
+    idx = idx + 1
+  }
+
+  body = body.append(.StructNew(sym))
+  FuncDef.{
+    name: "__lib_make_rec_${name}",
+    params: [.Ref(false, .Named("rt_types__Array"))],
+    results: [.Ref(false, .Named(sym))],
+    locals: [],
+    body,
+  }
+}
+
+// Box a struct field value (already on the stack) to anyref: numeric leaves box
+// into BoxedInt/BoxedFloat/i31; ref-typed fields (String/compound) pass through.
+fn emit_box_lib_field(ty: LibType, env: ResolvedEnv, buf: Vector<Instr>) Vector<Instr> {
+  case ty {
+    .Int => emit_box_to_anyref(.Int, env, buf),
+    .Float => emit_box_to_anyref(.Float, env, buf),
+    .Bool => emit_box_to_anyref(.Bool, env, buf),
+    _ => buf,
+  }
+}
+
+// Unbox an anyref array element (on the stack) to a struct field's native type.
+fn emit_unbox_lib_field(ty: LibType, env: ResolvedEnv, buf: Vector<Instr>) Vector<Instr> {
+  case ty {
+    .Int => emit_unbox_from_anyref(.Int, env, buf),
+    .Float => emit_unbox_from_anyref(.Float, env, buf),
+    .Bool => emit_unbox_from_anyref(.Bool, env, buf),
+    .Str => buf.append(.RefCast(false, .Named("rt_types__String"))),
+    .Vec(_) => buf.append(.RefCast(false, .Named("rt_types__PVec"))),
+    .Dct(_, _) => buf.append(.RefCast(false, .Named("rt_types__PDict"))),
+    .Rec(_, csym, _) => buf.append(.RefCast(false, .Named(csym))),
+    _ => error("emit_unbox_lib_field: unexpected field type"),
+  }
 }
 
 fn lib_type_uses_vec(t: LibType) Bool {
   case t {
     .Vec(_) => true,
     .Dct(k, v) => lib_type_uses_vec(k) or lib_type_uses_vec(v),
-    .Rec(_, fields) => fields.any(fn(f) { lib_type_uses_vec(f.ty) }),
+    .Rec(_, _, fields) => fields.any(fn(f) { lib_type_uses_vec(f.ty) }),
     _ => false,
   }
 }

@@ -129,7 +129,9 @@ pub type LibType = {
   Fn(Vector<LibType>, LibType),
   Vec(LibType),
   Dct(LibType, LibType),
-  Rec(String, Vector<LibField>),
+  // Rec carries the source name (for the host descriptor + helper key) and the
+  // wasm struct symbol (for StructGet/StructNew in codegen).
+  Rec(String, String, Vector<LibField>),
 }
 
 pub type LibExportTarget = { Function(FuncId), Value(GlobalId) }

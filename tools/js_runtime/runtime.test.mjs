@@ -148,6 +148,17 @@ test("loadLib round-trips Vector args and returns", async () => {
   assert.deepEqual(lib.shout(["a", "b"]), ["a!", "b!"]);
 });
 
+test("loadLib round-trips a record", async () => {
+  const src = [
+    "pub type Pt = .{ x: Int, y: Int }",
+    "pub fn mk(a: Int, b: Int) Pt { Pt.{ x: a, y: b } }",
+    "pub fn swap(p: Pt) Pt { Pt.{ x: p.y, y: p.x } }",
+  ].join("\n");
+  const lib = await loadLib(await compile({ source: src }, { lib: true }));
+  assert.deepEqual(lib.mk(1n, 2n), { x: 1n, y: 2n });
+  assert.deepEqual(lib.swap({ x: 3n, y: 4n }), { x: 4n, y: 3n });
+});
+
 test("loadLib drives host callbacks (Void and value-returning)", async () => {
   const src = [
     "pub fn each_word(text: String, f: fn(String) Void) Void {",
