@@ -428,6 +428,20 @@ fn lib_type(ty: MonoType) LibType? {
     .Void => .Some(.Void),
     .Never => .Some(.Void),
     .String => .Some(.Str),
+    .Function(params, ret) => {
+      lib_params: Vector<LibType> = []
+      for p in params {
+        case lib_type(p) {
+          .Some(lp) => lib_params = .append(lp),
+          .None => return .None,
+        }
+      }
+      lib_ret := case lib_type(ret) {
+        .Some(lr) => lr,
+        .None => return .None,
+      }
+      .Some(.Fn(lib_params, lib_ret))
+    },
     _ => .None,
   }
 }

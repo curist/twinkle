@@ -52,6 +52,20 @@ fn lib_type_eq(p: LibType, want: LibType) Bool {
       .Str => true,
       _ => false,
     },
+    .Fn(ps, r) => case want {
+      .Fn(wps, wr) => if ps.len() != wps.len() {
+        false
+      } else {
+        ok := lib_type_eq(r, wr)
+        for i in 0..ps.len() {
+          if !lib_type_eq(ps[i], wps[i]) {
+            ok = false
+          }
+        }
+        ok
+      },
+      _ => false,
+    },
   }
 }
 
@@ -130,6 +144,38 @@ pub fn suite() runner.Suite {
         try assert.equal(g.wasm_name, "__get_greeting")
         try assert.equal(g.params.len(), 0)
         try assert.equal(lib_type_eq(g.ret, .Str), true)
+        .Ok({})
+      },
+    )
+    .test(
+      "fn-typed param is selected with a recursive Fn descriptor",
+      fn() {
+        src := "${eligible_src()}\npub fn each(name: String, f: fn(String) Void) Void {\n  f(name)\n}\n"
+        artifacts := try pipeline.compile_source_lib(src)
+        e := try find_export(artifacts.anf.lib_exports, "each").ok_or("each not exported")
+        try assert.equal(e.params.len(), 2)
+        try assert.equal(lib_type_eq(e.params[0], .Str), true)
+        try assert.equal(lib_type_eq(e.params[1], .Fn([.Str], .Void)), true)
+        .Ok({})
+      },
+    )
+    .test(
+      "value-returning fn-typed param is eligible",
+      fn() {
+        src := "${eligible_src()}\npub fn pick(n: Int, p: fn(Int) Bool) Bool {\n  p(n)\n}\n"
+        artifacts := try pipeline.compile_source_lib(src)
+        e := try find_export(artifacts.anf.lib_exports, "pick").ok_or("pick not exported")
+        try assert.equal(lib_type_eq(e.params[1], .Fn([.Int], .Bool)), true)
+        .Ok({})
+      },
+    )
+    .test(
+      "fn with compound arg is skipped with a warning",
+      fn() {
+        src := "${eligible_src()}\npub fn go(f: fn(Vector<Int>) Void) Void {\n  {}\n}\n"
+        artifacts := try pipeline.compile_source_lib(src)
+        try assert.equal(find_export(artifacts.anf.lib_exports, "go").is_some(), false)
+        try assert.str_contains(warning_text(artifacts.warnings), "`go`")
         .Ok({})
       },
     )

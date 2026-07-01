@@ -226,6 +226,7 @@ fn export_type_kind(t: LibType) String {
     .Bool => "bool",
     .Void => "void",
     .Str => "str",
+    .Fn(_, _) => "fn",
   }
 }
 

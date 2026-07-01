@@ -117,7 +117,7 @@ pub type ExternImport = .{
 // The lib-ABI type descriptor: what a `pub` member's params/return marshal as
 // across the JS↔guest boundary. Flat for now; later increments add recursive
 // variants (Vector/Record/Fn) alongside the leaves as they gain tests.
-pub type LibType = { Int, Float, Bool, Void, Str }
+pub type LibType = { Int, Float, Bool, Void, Str, Fn(Vector<LibType>, LibType) }
 
 pub type LibExportTarget = { Function(FuncId), Value(GlobalId) }
 
