@@ -563,7 +563,52 @@ fn emit_lib_exports(
     }
   }
 
+  // A returned closure is invoked by the host through its universal funcref
+  // (field 0), so one generic apply helper (a copy of the universal-call path)
+  // serves them all. Emitted when any export returns a fn (recursively).
+  if any_export_ret_uses_fn(anf.lib_exports) {
+    funcs = .append(
+      FuncDef.{
+        name: "__lib_apply",
+        params: [.Anyref, .Anyref],
+        results: [.Anyref],
+        locals: [],
+        body: [
+          .LocalGet(0),
+          .RefCast(true, .Named("rt_types__Closure")),
+          .StructGet("rt_types__Closure", 1),
+          .LocalGet(1),
+          .LocalGet(0),
+          .RefCast(true, .Named("rt_types__Closure")),
+          .StructGet("rt_types__Closure", 0),
+          .CallRef("rt_types__ClosureFunc"),
+        ],
+      },
+    )
+    exports = .append(ExportDef.{ wasm_name: "__lib_apply", func_sym: "__lib_apply" })
+  }
+
   .{ funcs, exports, imports }
+}
+
+fn lib_type_uses_fn(t: LibType) Bool {
+  case t {
+    .Fn(_, _) => true,
+    .Vec(e) => lib_type_uses_fn(e),
+    .Dct(k, v) => lib_type_uses_fn(k) or lib_type_uses_fn(v),
+    .Rec(_, _, fields) => fields.any(fn(f) { lib_type_uses_fn(f.ty) }),
+    _ => false,
+  }
+}
+
+fn any_export_ret_uses_fn(exports: Vector<LibExport>) Bool {
+  for exp in exports {
+    if lib_type_uses_fn(exp.ret) {
+      return true
+    }
+  }
+
+  false
 }
 
 // Gather every distinct record type (keyed by name) reachable through a LibType,

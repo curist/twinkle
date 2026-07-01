@@ -1304,6 +1304,21 @@ function guestToJs(ref, desc, b, instance) {
     }
     return out;
   }
+  if (desc.kind === "fn") {
+    // A returned guest closure becomes a callable JS function, invoked through
+    // the universal funcref via __lib_apply. Args are boxed into a flat array;
+    // the boxed result is unmarshalled per the return descriptor.
+    const closureRef = ref;
+    const argDescs = desc.args ?? [];
+    return (...jsArgs) => {
+      const argsArr = b.array_new(argDescs.length);
+      for (let i = 0; i < argDescs.length; i++) {
+        b.array_set(argsArr, i, jsElemToGuest(jsArgs[i], argDescs[i], b, instance));
+      }
+      const resultRef = instance.exports.__lib_apply(closureRef, argsArr);
+      return desc.ret === "void" ? undefined : guestElemToJs(resultRef, desc.ret, b, instance);
+    };
+  }
   return ref;
 }
 

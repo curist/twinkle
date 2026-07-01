@@ -191,6 +191,23 @@ test("loadLib round-trips nested compounds", async () => {
   assert.deepEqual(lib.group([1n, 2n, 3n]), { all: [1n, 2n, 3n] });
 });
 
+test("loadLib returns a callable closure", async () => {
+  const src = [
+    "pub fn adder(n: Int) fn(Int) Int {",
+    "  fn(x: Int) { x + n }",
+    "}",
+    "pub fn greeter(prefix: String) fn(String) String {",
+    "  fn(name: String) { \"${prefix}${name}\" }",
+    "}",
+  ].join("\n");
+  const lib = await loadLib(await compile({ source: src }, { lib: true }));
+  const add5 = lib.adder(5n);
+  assert.equal(add5(10n), 15n);
+  assert.equal(add5(1n), 6n);
+  const hi = lib.greeter("hi, ");
+  assert.equal(hi("bob"), "hi, bob");
+});
+
 test("loadLib drives host callbacks (Void and value-returning)", async () => {
   const src = [
     "pub fn each_word(text: String, f: fn(String) Void) Void {",
