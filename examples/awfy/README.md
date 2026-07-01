@@ -13,6 +13,14 @@ closest apples-to-apples answer to "why is my Wasm slower than V8" (Twinkle's
 output runs under a JS host); Go stands in for "what a decent native compiler
 achieves".
 
+**Persistent-structure peers.** Node and Go use native *mutable* arrays, so on
+the array-write-heavy benchmarks they answer a different question than "how good
+is Twinkle's persistent `Vector`". For that, **Clojure** (persistent vectors — a
+32-way trie) and **Racket** (treelists — an immutable RRB tree) run the
+write-heavy subset (Sieve, Bounce, NBody) using the *same broad representation
+family* as Twinkle's `Vector<T>`: indexed persistent collections with functional
+update. They are the fair yardstick for those benchmarks.
+
 ## Running
 
 ```bash
@@ -20,18 +28,24 @@ make awfy                 # or: examples/awfy/run.sh
 ```
 
 `run.sh` runs each language, checks that every benchmark's checksum agrees
-across all three, and **fails the run if any disagree** before printing the
-table. To run a single language directly:
+across all languages that implement it, and **fails the run if any disagree**
+before printing the table. To run a single language directly:
 
 ```bash
 target/twk run examples/awfy/twinkle/main.tw
 node examples/awfy/node/main.mjs
 (cd examples/awfy/go && go run -gcflags=all=-d=fmahash=1111111111111111 .)
+clojure -M examples/awfy/clojure/main.clj      # Sieve, Bounce, NBody only
+racket examples/awfy/racket/main.rkt           # Sieve, Bounce, NBody only
 ```
 
+Clojure and Racket are **optional** — `run.sh` skips them if the `clojure` /
+`racket` commands are not on `PATH`. They cover only the persistent-write
+subset, so the checksum diff compares each benchmark across just the languages
+that emit a row for it.
+
 There is no per-benchmark filter flag yet — to isolate one benchmark, comment
-out the others in the three `main` files (`twinkle/main.tw`, `node/main.mjs`,
-`go/main.go`).
+out the others in the `main` files.
 
 ## What each row means
 
@@ -56,6 +70,14 @@ NBody** (per-step `set_at`) and to a lesser extent Queens/Towers — a large gap
 **expected and is the point of the exercise**. Conversely, the allocation- and
 recursion-heavy benchmarks (**List, Storage, Json**) show Twinkle's GC-struct
 allocation is competitive.
+
+The Clojure and Racket rows put a number on "how much of that gap is Twinkle vs
+how much is persistence itself": on Sieve/Bounce/NBody, Twinkle lands in the
+same order of magnitude as those mature persistent-collection runtimes (and
+beats Clojure on Bounce), while all three sit far behind native mutable arrays.
+So the write-heavy gaps are largely the cost of the persistent representation,
+not a Twinkle-specific defect — the levers are typed/specialized `Vector`
+representations, not micro-optimizing `set_at`.
 
 ## Floating point determinism
 

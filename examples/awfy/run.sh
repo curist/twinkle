@@ -16,6 +16,16 @@ target/twk run examples/awfy/twinkle/main.tw   >> "$raw"
 node examples/awfy/node/main.mjs               >> "$raw"
 (cd examples/awfy/go && go run "$GO_NOFMA" .)  >> "$raw"
 
+# Clojure (persistent vectors) and Racket (treelists) cover only the
+# persistent-array-write subset (Sieve, Bounce, NBody) — a fairer comparison
+# for those than Node/Go's native mutable arrays. Skipped if not installed.
+if command -v clojure >/dev/null 2>&1; then
+  clojure -M examples/awfy/clojure/main.clj 2>/dev/null >> "$raw"
+fi
+if command -v racket >/dev/null 2>&1; then
+  racket examples/awfy/racket/main.rkt         >> "$raw"
+fi
+
 # Checksum agreement: for each bench, all langs must report the same checksum.
 mismatch="$(awk -F '\t' '
   NF >= 5 {
