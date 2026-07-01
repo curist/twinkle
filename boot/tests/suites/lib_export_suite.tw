@@ -9,7 +9,7 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
-use compiler.core_ir.{LibExport, LibPrimitive}
+use compiler.core_ir.{LibExport, LibType}
 use compiler.pipeline
 use compiler.query.analyze
 use lib.source.diagnostics as diag
@@ -30,7 +30,7 @@ fn is_function_target(e: LibExport) Bool {
   }
 }
 
-fn prim_eq(p: LibPrimitive, want: LibPrimitive) Bool {
+fn lib_type_eq(p: LibType, want: LibType) Bool {
   case p {
     .Int => case want {
       .Int => true,
@@ -46,6 +46,10 @@ fn prim_eq(p: LibPrimitive, want: LibPrimitive) Bool {
     },
     .Void => case want {
       .Void => true,
+      _ => false,
+    },
+    .Str => case want {
+      .Str => true,
       _ => false,
     },
   }
@@ -75,9 +79,9 @@ pub fn suite() runner.Suite {
         try assert.equal(is_function_target(add), true)
         try assert.equal(add.wasm_name, "add")
         try assert.equal(add.params.len(), 2)
-        try assert.equal(prim_eq(add.params[0], .Int), true)
-        try assert.equal(prim_eq(add.params[1], .Int), true)
-        try assert.equal(prim_eq(add.ret, .Int), true)
+        try assert.equal(lib_type_eq(add.params[0], .Int), true)
+        try assert.equal(lib_type_eq(add.params[1], .Int), true)
+        try assert.equal(lib_type_eq(add.ret, .Int), true)
         .Ok({})
       },
     )
@@ -86,7 +90,7 @@ pub fn suite() runner.Suite {
       fn() {
         artifacts := try pipeline.compile_source_lib(eligible_src())
         f := try find_export(artifacts.anf.lib_exports, "is_positive").ok_or("missing")
-        try assert.equal(prim_eq(f.ret, .Bool), true)
+        try assert.equal(lib_type_eq(f.ret, .Bool), true)
         .Ok({})
       },
     )
@@ -98,19 +102,34 @@ pub fn suite() runner.Suite {
         try assert.equal(is_function_target(pi), false)
         try assert.equal(pi.wasm_name, "__get_pi")
         try assert.equal(pi.params.len(), 0)
-        try assert.equal(prim_eq(pi.ret, .Float), true)
+        try assert.equal(lib_type_eq(pi.ret, .Float), true)
         .Ok({})
       },
     )
     .test(
-      "String-typed pub fn is skipped with a warning, not exported",
+      "String param and return are exported as Str, not skipped",
       fn() {
         src := "${eligible_src()}\npub fn greet(name: String) String {\n  name\n}\n"
         artifacts := try pipeline.compile_source_lib(src)
-        try assert.equal(find_export(artifacts.anf.lib_exports, "greet").is_some(), false)
-        text := warning_text(artifacts.warnings)
-        try assert.str_contains(text, "`greet`")
-        try assert.str_contains(text, "skipped from lib exports")
+        greet := try find_export(artifacts.anf.lib_exports, "greet").ok_or("greet not exported")
+        try assert.equal(is_function_target(greet), true)
+        try assert.equal(greet.params.len(), 1)
+        try assert.equal(lib_type_eq(greet.params[0], .Str), true)
+        try assert.equal(lib_type_eq(greet.ret, .Str), true)
+        try assert.equal(warning_text(artifacts.warnings).contains("greet"), false)
+        .Ok({})
+      },
+    )
+    .test(
+      "String pub value global is exported as a Str getter",
+      fn() {
+        src := "${eligible_src()}\npub greeting: String = \"hi\"\n"
+        artifacts := try pipeline.compile_source_lib(src)
+        g := try find_export(artifacts.anf.lib_exports, "greeting").ok_or("greeting not exported")
+        try assert.equal(is_function_target(g), false)
+        try assert.equal(g.wasm_name, "__get_greeting")
+        try assert.equal(g.params.len(), 0)
+        try assert.equal(lib_type_eq(g.ret, .Str), true)
         .Ok({})
       },
     )

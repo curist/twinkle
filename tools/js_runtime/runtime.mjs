@@ -1157,22 +1157,26 @@ export function runWasmBytes(wasmBytes, opts = {}) {
 // either a Number or a BigInt as an argument (coercing to BigInt for the call),
 // but return the BigInt unchanged so no precision is lost — the host downcasts
 // to Number itself when it knows the value fits.
-function coerceLibArg(value, kind) {
+// `b` is the embedded bridge, used to marshal String (a guest GC ref) across the
+// boundary — the same path the extern "str" marshalling uses.
+function coerceLibArg(value, kind, b) {
   switch (kind) {
     case "int": return typeof value === "bigint" ? value : BigInt(value);
     case "float": return Number(value);
     case "bool": return value ? 1 : 0;
     case "void": return undefined;
+    case "str": return encodeString(b, String(value));
     default: return value;
   }
 }
 
-function coerceLibReturn(value, kind) {
+function coerceLibReturn(value, kind, b) {
   switch (kind) {
     case "int": return value;
     case "float": return Number(value);
     case "bool": return !!value;
     case "void": return undefined;
+    case "str": return decodeString(b, value);
     default: return value;
   }
 }
@@ -1209,11 +1213,11 @@ export async function loadLibBytes(wasmBytes, opts = {}) {
     const fn = instance.exports[wasmName];
     if (typeof fn !== "function") continue;
     if (meta.kind === "value") {
-      lib[meta.name] = coerceLibReturn(fn(), meta.ret);
+      lib[meta.name] = coerceLibReturn(fn(), meta.ret, b);
     } else {
       lib[meta.name] = (...args) => {
-        const coerced = (meta.args ?? []).map((kind, i) => coerceLibArg(args[i], kind));
-        return coerceLibReturn(fn(...coerced), meta.ret);
+        const coerced = (meta.args ?? []).map((kind, i) => coerceLibArg(args[i], kind, b));
+        return coerceLibReturn(fn(...coerced), meta.ret, b);
       };
     }
   }

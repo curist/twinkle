@@ -34,17 +34,31 @@ types each layer accepts and how `loadLib` converts them.
 Delivered in increments, each independently shippable. Ordered by value and by
 how much new boundary machinery each one needs.
 
-### 1. String args & returns
+### 1. String args & returns — **shipped**
 
-The headline follow-up. `pub fn greet(name: String) String` becomes a real
-export (today it is skipped with a warning, which is what the scaffold template
-demonstrates).
+The headline follow-up. `pub fn greet(name: String) String` (and
+`pub greeting: String`) is now a real export — the scaffold template builds its
+`String` value global cleanly with no skip warning. `LibPrimitive` was renamed to
+`LibType` with a `Str` variant; the classifier accepts `String`, the
+`twinkle.exports` section carries a `str` tag, and `loadLib`'s `coerceLibArg`/
+`coerceLibReturn` marshal JS string ↔ guest `String` via the embedded bridge.
 
 * **Eligibility** — `select_lib_exports` accepts `String` in params, returns,
-  and value globals. The `LibPrimitive` enum grows beyond the four primitives, or
-  a sibling `LibType` is introduced that carries `String` alongside the
-  primitives; the `twinkle.exports` `kind`/`args`/`ret` metadata gains a `str`
-  marshal tag (same vocabulary as `twinkle.externs`).
+  and value globals; the `twinkle.exports` `kind`/`args`/`ret` metadata gains a
+  `str` marshal tag (same vocabulary as `twinkle.externs`).
+* **Descriptor decision (resolved)** — rename `LibPrimitive` → `LibType` and add
+  a flat `Str` variant now. `LibType` is *the* lib-ABI type descriptor going
+  forward, so `LibExport.params: Vector<LibType>` / `ret: LibType` and every call
+  site stay stable across all later increments — 2–4 only add *variants*. The
+  metadata encoder returns a **JSON descriptor** per arg where leaves stay bare
+  strings (`"int"`, `"str"`, matching `twinkle.externs`) and future compounds
+  nest as objects (`{"kind":"vector","elem":"str"}`); `twinkle.exports` is already
+  a JSON payload, so no format rework is needed later. The classifier
+  `lib_type(ty: MonoType) LibType?` and the JS `coerceLib*` switch are written for
+  additive growth (each future type = one more `case`/`switch` arm recursing on
+  element/field types). Deliberately **not** stubbing `Vector`/`Record`/`Fn`
+  variants now — an exhaustive `case` would force dead placeholder arms; those
+  variants land *with* the increment that produces and tests them.
 * **ABI** — a `String` is a GC ref (`rt_types__String`). An exported function
   returning `String` returns that ref; a `String` param takes one. This reuses
   the bridge the runtime already calls for `extern` `str` marshalling.

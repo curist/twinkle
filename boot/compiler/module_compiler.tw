@@ -16,9 +16,7 @@ use compiler.ast.{Module}
 use compiler.base_env.{builtin_env}
 use compiler.builtins.{make_builtin_registry}
 use compiler.checker.{CheckResult}
-use compiler.core_ir.{
-  CompiledModule, ExternalRef, ExternalValueRef, GlobalId, LibExport, LibPrimitive,
-}
+use compiler.core_ir.{CompiledModule, ExternalRef, ExternalValueRef, GlobalId, LibExport, LibType}
 use compiler.core_linker
 use compiler.imports
 use compiler.lower_anf
@@ -303,11 +301,11 @@ pub fn select_lib_exports(
           },
         }
 
-        params: Vector<LibPrimitive> = []
+        params: Vector<LibType> = []
         unsupported := ""
 
         for ty in sig.params {
-          case lib_primitive(ty) {
+          case lib_type(ty) {
             .Some(p) => params = .append(p),
             .None => if unsupported == "" {
               unsupported = "${ty_to_string(ty)} parameters are not yet supported in lib exports"
@@ -319,13 +317,13 @@ pub fn select_lib_exports(
           .Some(t) => t,
           .None => MonoType.Void,
         }
-        ret := case lib_primitive(ret_ty) {
+        ret := case lib_type(ret_ty) {
           .Some(p) => p,
           .None => {
             if unsupported == "" {
               unsupported = "${ty_to_string(ret_ty)} returns are not yet supported in lib exports"
             }
-            LibPrimitive.Void
+            LibType.Void
           },
         }
 
@@ -373,7 +371,7 @@ pub fn select_lib_exports(
               continue
             },
           }
-          prim := case lib_primitive(ty) {
+          prim := case lib_type(ty) {
             .Some(p) => p,
             .None => {
               warnings = .append(
@@ -422,13 +420,14 @@ pub fn select_lib_exports(
   .{ exports, warnings }
 }
 
-fn lib_primitive(ty: MonoType) LibPrimitive? {
+fn lib_type(ty: MonoType) LibType? {
   case ty {
     .Int => .Some(.Int),
     .Float => .Some(.Float),
     .Bool => .Some(.Bool),
     .Void => .Some(.Void),
     .Never => .Some(.Void),
+    .String => .Some(.Str),
     _ => .None,
   }
 }
@@ -448,7 +447,7 @@ fn lib_warning(
         .{
           span,
           message: "`${name}` skipped from lib exports: ${reason}",
-          help_lines: ["v1 lib exports support only Int, Float, Bool, and Void"],
+          help_lines: ["lib exports support Int, Float, Bool, Void, and String"],
         },
       ),
     ),

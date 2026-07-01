@@ -32,7 +32,7 @@ use compiler.codegen.wasm_ir.{ExportMeta, ExternMeta, MemoryExportDef, WasmModul
 use compiler.codegen.wasm_layout.{EqTypeLayouts, collect_eq_type_layouts}
 use compiler.codegen.wasm_plan.{plan_wasm_types}
 use compiler.codegen.wat.{emit_wat}
-use compiler.core_ir.{LibPrimitive}
+use compiler.core_ir.{LibType}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
 
@@ -216,12 +216,16 @@ fn collect_extern_meta(anf: AnfModule) Vector<ExternMeta> {
   result
 }
 
-fn export_primitive_kind(p: LibPrimitive) String {
-  case p {
+// Marshal tag for the `twinkle.exports` JSON section. Leaves stay bare strings
+// (matching the `twinkle.externs` vocabulary); future compound types nest as
+// JSON objects, which the section format already supports.
+fn export_type_kind(t: LibType) String {
+  case t {
     .Int => "int",
     .Float => "float",
     .Bool => "bool",
     .Void => "void",
+    .Str => "str",
   }
 }
 
@@ -236,9 +240,9 @@ fn collect_export_meta(anf: AnfModule) Vector<ExportMeta> {
       wasm_name: exp.wasm_name,
       kind,
       args: collect p in exp.params {
-        export_primitive_kind(p)
+        export_type_kind(p)
       },
-      ret: export_primitive_kind(exp.ret),
+      ret: export_type_kind(exp.ret),
     }
   }
 }

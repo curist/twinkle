@@ -114,7 +114,10 @@ pub type ExternImport = .{
   return_ty: MonoType?,
 }
 
-pub type LibPrimitive = { Int, Float, Bool, Void }
+// The lib-ABI type descriptor: what a `pub` member's params/return marshal as
+// across the JS↔guest boundary. Flat for now; later increments add recursive
+// variants (Vector/Record/Fn) alongside the leaves as they gain tests.
+pub type LibType = { Int, Float, Bool, Void, Str }
 
 pub type LibExportTarget = { Function(FuncId), Value(GlobalId) }
 
@@ -122,8 +125,8 @@ pub type LibExport = .{
   name: String,
   wasm_name: String,
   target: LibExportTarget,
-  params: Vector<LibPrimitive>,
-  ret: LibPrimitive,
+  params: Vector<LibType>,
+  ret: LibType,
 }
 
 pub type CoreModule = .{

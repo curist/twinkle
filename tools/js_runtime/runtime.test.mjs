@@ -83,7 +83,7 @@ test("skips non-function imports", () => {
   assert.equal(found.length, 0);
 });
 
-test("loadLib exposes primitive pub exports and skips ineligible ones", async () => {
+test("loadLib exposes primitive and String pub exports and skips ineligible ones", async () => {
   const src = [
     "pub fn add(a: Int, b: Int) Int {",
     "  a + b",
@@ -95,10 +95,12 @@ test("loadLib exposes primitive pub exports and skips ineligible ones", async ()
     "",
     "pub pi: Float = 3.14159",
     "",
-    // Ineligible: String is not a v1 primitive, so this is skipped (not exported).
+    // String args and returns cross the boundary via the embedded bridge.
     "pub fn greet(name: String) String {",
-    "  name",
+    "  \"hello, ${name}\"",
     "}",
+    "",
+    "pub greeting: String = \"hi\"",
     "",
     // Non-pub functions are never exported.
     "fn secret() Int {",
@@ -116,7 +118,10 @@ test("loadLib exposes primitive pub exports and skips ineligible ones", async ()
   assert.equal(lib.is_positive(-1), false);
   // Value globals are read once after start and exposed as a property.
   assert.ok(Math.abs(lib.pi - 3.14159) < 1e-9);
-  // Ineligible and non-pub members are absent from the surface.
-  assert.equal(lib.greet, undefined);
+  // String args (JS string → guest String) and returns (guest String → JS string).
+  assert.equal(lib.greet("world"), "hello, world");
+  // A String value global reads back as a plain JS string.
+  assert.equal(lib.greeting, "hi");
+  // Non-pub members are absent from the surface.
   assert.equal(lib.secret, undefined);
 });
