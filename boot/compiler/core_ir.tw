@@ -115,9 +115,22 @@ pub type ExternImport = .{
 }
 
 // The lib-ABI type descriptor: what a `pub` member's params/return marshal as
-// across the JS↔guest boundary. Flat for now; later increments add recursive
-// variants (Vector/Record/Fn) alongside the leaves as they gain tests.
-pub type LibType = { Int, Float, Bool, Void, Str, Fn(Vector<LibType>, LibType) }
+// across the JS↔guest boundary. Leaves (Int/Float/Bool/Void/Str), callbacks
+// (Fn), and compound values (Vec/Dct/Rec), the latter carrying their element /
+// key-value / named-field descriptors recursively.
+pub type LibField = .{ name: String, ty: LibType }
+
+pub type LibType = {
+  Int,
+  Float,
+  Bool,
+  Void,
+  Str,
+  Fn(Vector<LibType>, LibType),
+  Vec(LibType),
+  Dct(LibType, LibType),
+  Rec(String, Vector<LibField>),
+}
 
 pub type LibExportTarget = { Function(FuncId), Value(GlobalId) }
 

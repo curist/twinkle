@@ -16,18 +16,20 @@ use compiler.ast.{Module}
 use compiler.base_env.{builtin_env}
 use compiler.builtins.{make_builtin_registry}
 use compiler.checker.{CheckResult}
-use compiler.core_ir.{CompiledModule, ExternalRef, ExternalValueRef, GlobalId, LibExport, LibType}
+use compiler.core_ir.{
+  CompiledModule, ExternalRef, ExternalValueRef, GlobalId, LibExport, LibField, LibType,
+}
 use compiler.core_linker
 use compiler.imports
 use compiler.lower_anf
 use compiler.lower_core.{LowerResult}
-use compiler.mono_type.{MonoType, ty_to_string}
+use compiler.mono_type.{MonoType, TypeId, ty_to_string}
 use compiler.monomorphize
 use compiler.opt.pipeline.{optimize_module}
 use compiler.query.analyze
 use compiler.query.cache as query_cache
 use compiler.query.stage_runner
-use compiler.resolver.{ResolvedEnv}
+use compiler.resolver.{ResolvedEnv, record_info}
 use lib.module.loader
 use lib.source.identity
 use lib.source.overlay
@@ -305,7 +307,7 @@ pub fn select_lib_exports(
         unsupported := ""
 
         for ty in sig.params {
-          case lib_type(ty) {
+          case lib_type(ty, env) {
             .Some(p) => params = .append(p),
             .None => if unsupported == "" {
               unsupported = "${ty_to_string(ty)} parameters are not yet supported in lib exports"
@@ -317,7 +319,7 @@ pub fn select_lib_exports(
           .Some(t) => t,
           .None => MonoType.Void,
         }
-        ret := case lib_type(ret_ty) {
+        ret := case lib_type(ret_ty, env) {
           .Some(p) => p,
           .None => {
             if unsupported == "" {
@@ -371,7 +373,7 @@ pub fn select_lib_exports(
               continue
             },
           }
-          prim := case lib_type(ty) {
+          prim := case lib_type(ty, env) {
             .Some(p) => p,
             .None => {
               warnings = .append(
@@ -420,7 +422,7 @@ pub fn select_lib_exports(
   .{ exports, warnings }
 }
 
-fn lib_type(ty: MonoType) LibType? {
+fn lib_type(ty: MonoType, env: ResolvedEnv) LibType? {
   case ty {
     .Int => .Some(.Int),
     .Float => .Some(.Float),
@@ -429,20 +431,76 @@ fn lib_type(ty: MonoType) LibType? {
     .Never => .Some(.Void),
     .String => .Some(.Str),
     .Function(params, ret) => {
+      // Callback arg/return types are restricted to leaves (Increment 2); a
+      // callback taking or returning a compound is not yet marshalled.
       lib_params: Vector<LibType> = []
       for p in params {
-        case lib_type(p) {
-          .Some(lp) => lib_params = .append(lp),
+        case lib_type(p, env) {
+          .Some(lp) => if is_leaf_lib_type(lp) {
+            lib_params = .append(lp)
+          } else {
+            return .None
+          },
           .None => return .None,
         }
       }
-      lib_ret := case lib_type(ret) {
-        .Some(lr) => lr,
+      lib_ret := case lib_type(ret, env) {
+        .Some(lr) => if is_leaf_lib_type(lr) {
+          lr
+        } else {
+          return .None
+        },
         .None => return .None,
       }
       .Some(.Fn(lib_params, lib_ret))
     },
+    .Vector(elem) => case lib_type(elem, env) {
+      .Some(le) => .Some(.Vec(le)),
+      .None => .None,
+    },
+    .Dict(k, v) => {
+      lk := case lib_type(k, env) {
+        .Some(x) => x,
+        .None => return .None,
+      }
+      lv := case lib_type(v, env) {
+        .Some(x) => x,
+        .None => return .None,
+      }
+      .Some(.Dct(lk, lv))
+    },
+    .Named(tid, _) => classify_record(tid, env),
     _ => .None,
+  }
+}
+
+fn is_leaf_lib_type(t: LibType) Bool {
+  case t {
+    .Int => true,
+    .Float => true,
+    .Bool => true,
+    .Void => true,
+    .Str => true,
+    _ => false,
+  }
+}
+
+// A record type (`Named` with a record def) is eligible when every field type
+// is eligible. Enums, aliases, and generic records (whose field types carry
+// unresolved `Var`s) come back `.None`.
+fn classify_record(tid: TypeId, env: ResolvedEnv) LibType? {
+  case record_info(env, tid) {
+    .Some(info) => {
+      lib_fields: Vector<LibField> = []
+      for f in info.fields {
+        case lib_type(f.ty, env) {
+          .Some(lt) => lib_fields = .append(.{ name: f.name, ty: lt }),
+          .None => return .None,
+        }
+      }
+      .Some(.Rec(info.name, lib_fields))
+    },
+    .None => .None,
   }
 }
 

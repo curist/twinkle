@@ -10,7 +10,7 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use compiler.codegen.codegen
-use compiler.core_ir.{LibExport, LibType}
+use compiler.core_ir.{LibExport, LibField, LibType}
 use compiler.pipeline
 use compiler.query.analyze
 use lib.source.diagnostics as diag
@@ -60,6 +60,28 @@ fn lib_type_eq(p: LibType, want: LibType) Bool {
         ok := lib_type_eq(r, wr)
         for i in 0..ps.len() {
           if !lib_type_eq(ps[i], wps[i]) {
+            ok = false
+          }
+        }
+        ok
+      },
+      _ => false,
+    },
+    .Vec(e) => case want {
+      .Vec(we) => lib_type_eq(e, we),
+      _ => false,
+    },
+    .Dct(k, v) => case want {
+      .Dct(wk, wv) => lib_type_eq(k, wk) and lib_type_eq(v, wv),
+      _ => false,
+    },
+    .Rec(n, fs) => case want {
+      .Rec(wn, wfs) => if n != wn or fs.len() != wfs.len() {
+        false
+      } else {
+        ok := true
+        for i in 0..fs.len() {
+          if fs[i].name != wfs[i].name or !lib_type_eq(fs[i].ty, wfs[i].ty) {
             ok = false
           }
         }
@@ -167,6 +189,20 @@ pub fn suite() runner.Suite {
         artifacts := try pipeline.compile_source_lib(src)
         e := try find_export(artifacts.anf.lib_exports, "pick").ok_or("pick not exported")
         try assert.equal(lib_type_eq(e.params[1], .Fn([.Int], .Bool)), true)
+        .Ok({})
+      },
+    )
+    .test(
+      "Vector/Dict/record params are selected as recursive descriptors",
+      fn() {
+        src := "pub type Pt = .{ x: Int, y: Int }\n\npub fn f(xs: Vector<Int>, m: Dict<String, Int>, p: Pt) Pt {\n  p\n}\n"
+        artifacts := try pipeline.compile_source_lib(src)
+        e := try find_export(artifacts.anf.lib_exports, "f").ok_or("f missing")
+        try assert.equal(lib_type_eq(e.params[0], .Vec(.Int)), true)
+        try assert.equal(lib_type_eq(e.params[1], .Dct(.Str, .Int)), true)
+        want_pt := LibType.Rec("Pt", [LibField.{ name: "x", ty: .Int }, LibField.{ name: "y", ty: .Int }])
+        try assert.equal(lib_type_eq(e.params[2], want_pt), true)
+        try assert.equal(lib_type_eq(e.ret, want_pt), true)
         .Ok({})
       },
     )

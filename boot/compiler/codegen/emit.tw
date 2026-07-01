@@ -531,6 +531,7 @@ fn lib_type_native_val_type(t: LibType) ValType {
     .Void => .Anyref,
     .Str => .Ref(true, .Named("rt_types__String")),
     .Fn(_, _) => .Anyref,
+    _ => error("lib_type_native_val_type: compound types are not callback leaves"),
   }
 }
 
@@ -543,6 +544,7 @@ fn lib_type_native_tag(t: LibType) String {
     .Void => "void",
     .Str => "str",
     .Fn(_, _) => "fn",
+    _ => error("lib_type_native_tag: compound types are not callback leaves"),
   }
 }
 
@@ -567,6 +569,7 @@ fn lib_type_to_mono(t: LibType) MonoType {
     .Void => .Void,
     .Str => .String,
     .Fn(_, _) => .Void,
+    _ => error("lib_type_to_mono: compound types are not callback leaves"),
   }
 }
 

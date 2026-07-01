@@ -276,6 +276,21 @@ fn lookup_type_by_id(env: ResolvedEnv, tid: TypeId) TypeEntry? {
   }
 }
 
+pub type RecordInfo = .{ name: String, fields: Vector<ResolvedField> }
+
+/// The name and ordered fields of a record type, or `.None` if `tid` is not a
+/// record (an enum, alias, or unknown type). Field order is declaration order,
+/// which matches the wasm struct layout.
+pub fn record_info(env: ResolvedEnv, tid: TypeId) RecordInfo? {
+  case env.lookup_type_by_id(tid) {
+    .Some(entry) => case entry.def {
+      .Some(.Record(name, _, fields)) => .Some(.{ name, fields }),
+      _ => .None,
+    },
+    .None => .None,
+  }
+}
+
 pub fn lookup_registered_type(env: ResolvedEnv, name: String) TypeEntry? {
   case env.type_index[name] {
     .Some(i) => .Some(env.types[i]),

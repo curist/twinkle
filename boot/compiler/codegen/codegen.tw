@@ -232,6 +232,10 @@ pub fn export_type_json(t: LibType) String {
       }
       "{\"kind\":\"fn\",\"args\":[${arg_parts.join(",")}],\"ret\":${export_type_json(r)}}"
     },
+    // Stopgap — real recursive vec/dict/rec descriptors land next task.
+    .Vec(_) => "\"vec\"",
+    .Dct(_, _) => "\"dict\"",
+    .Rec(_, _) => "\"rec\"",
   }
 }
 
