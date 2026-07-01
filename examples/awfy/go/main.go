@@ -9,6 +9,7 @@ func main() {
 		permuteBench,
 		towersBench,
 		listBench,
+		bounceBench,
 	}
 	for _, b := range benches {
 		RunBench(b)

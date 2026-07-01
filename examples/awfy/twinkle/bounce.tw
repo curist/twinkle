@@ -1,0 +1,104 @@
+pub type Rng = .{ seed: Int }
+pub type RngStep = .{ value: Int, rng: Rng }
+
+// AWFY's linear-congruential PRNG. Ported exactly so every language produces
+// identical checksums.
+pub fn rng_next(r: Rng) RngStep {
+  s := (r.seed * 1309 + 13849) & 65535
+  RngStep.{ value: s, rng: Rng.{ seed: s } }
+}
+
+type Ball = .{ x: Int, y: Int, xv: Int, yv: Int }
+type BallStep = .{ ball: Ball, rng: Rng }
+
+fn new_ball(r: Rng) BallStep {
+  s1 := rng_next(r)
+  s2 := rng_next(s1.rng)
+  s3 := rng_next(s2.rng)
+  s4 := rng_next(s3.rng)
+  b := Ball.{
+    x: s1.value % 500,
+    y: s2.value % 500,
+    xv: (s3.value % 5) - 2,
+    yv: (s4.value % 5) - 2,
+  }
+  BallStep.{ ball: b, rng: s4.rng }
+}
+
+type BounceResult = .{ ball: Ball, bounced: Bool }
+
+fn bounce_step(b: Ball) BounceResult {
+  x_limit := 500
+  y_limit := 500
+  bounced := false
+  nx := b.x + b.xv
+  ny := b.y + b.yv
+  xv := b.xv
+  yv := b.yv
+  if nx > x_limit {
+    nx = x_limit
+    xv = 0 - xv
+    bounced = true
+  }
+  if nx < 0 {
+    nx = 0
+    xv = 0 - xv
+    bounced = true
+  }
+  if ny > y_limit {
+    ny = y_limit
+    yv = 0 - yv
+    bounced = true
+  }
+  if ny < 0 {
+    ny = 0
+    yv = 0 - yv
+    bounced = true
+  }
+  BounceResult.{ ball: Ball.{ x: nx, y: ny, xv: xv, yv: yv }, bounced: bounced }
+}
+
+pub warmup := 10
+pub iters := 40
+pub size := 1500
+pub expected := 47174
+
+pub fn run(size: Int) Int {
+  ball_count := 100
+  total := 0
+  rep := 0
+  for rep < size {
+    rng := Rng.{ seed: 74755 }
+    balls: Vector<Ball> = []
+    k := 0
+    for k < ball_count {
+      bs := new_ball(rng)
+      balls = balls.append(bs.ball)
+      rng = bs.rng
+      k = k + 1
+    }
+    step := 0
+    bounces := 0
+    for step < 50 {
+      j := 0
+      for j < ball_count {
+        res := bounce_step(balls[j])
+        balls = balls.set_at(j, res.ball)
+        if res.bounced {
+          bounces = bounces + 1
+        }
+        j = j + 1
+      }
+      step = step + 1
+    }
+    // Fold final positions into the checksum so it validates the whole
+    // simulation state, not just the wall-hit count.
+    checksum := bounces
+    for b in balls {
+      checksum = checksum + b.x + b.y
+    }
+    total = checksum
+    rep = rep + 1
+  }
+  total
+}
