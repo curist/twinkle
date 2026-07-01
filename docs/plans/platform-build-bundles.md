@@ -38,8 +38,39 @@ Two problems with the current shape:
 
 The fix is to move the host harness from *scaffold output the user owns* to
 *build output the tool generates* — `target/` is your `dist/`. Generated bundles
-are regenerated each build and not hand-edited; a user who wants to own the host
-copies the bundle out.
+are regenerated each build and not hand-edited.
+
+### Design note: why build-time-into-`target/`
+
+This is deliberately the create-react-app model: a *managed*, regenerated bundle
+you don't hand-edit, plus an escape hatch to take ownership. We considered two
+"cleaner" corners and rejected them for this project's priority (one command →
+runnable):
+
+* **Emit the runtime → static, npm-free bundle.** Dissolves version-skew and the
+  regeneration dance, but `twk build` runs inside the boot compiler, which can't
+  emit large JS without embedding the whole runtime — a real cost — and loses the
+  bundler DX.
+* **Vite as owned source (committed `platforms/`, opt-in scaffold).** Fully
+  customizable, but not "runnable from one build" — it's scaffold-once-then-build.
+
+We keep build-time-into-`target/` with eyes open: the npm/Vite resolution is what
+creates the version-skew (see Runtime version pinning) and regeneration (see
+Regeneration is non-destructive) constraints, and both are accepted and mitigated
+below rather than designed away.
+
+### Owning a generated bundle (escape hatch)
+
+A bundle under `target/` is managed output. To take ownership:
+
+* **Copy it out (v1).** Move the bundle into your source tree; `twk` only manages
+  `target/`, so a copy elsewhere is yours and never regenerated. Zero
+  implementation, always available — this is the documented path.
+* **`twk eject` (future).** A create-react-app-style command that relocates a
+  bundle to a committed path and stops `twk` managing it. Nice affordance;
+  deferred.
+* **Un-gitignoring in place is discouraged** — the directory is still regenerated
+  on the next `twk build`, so a committed-in-place bundle fights the tool.
 
 ---
 
