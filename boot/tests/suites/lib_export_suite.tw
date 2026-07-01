@@ -201,6 +201,17 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "callback lib export emits constructor + host import",
+      fn() {
+        src := "pub fn each(name: String, f: fn(String) Void) Void {\n  f(name)\n}\n"
+        artifacts := try pipeline.compile_source_lib(src)
+        wat := codegen.codegen(artifacts.opt, artifacts.env, artifacts.builtins)
+        try assert.str_contains(wat, "__lib_make_cb_str__void")
+        try assert.str_contains(wat, "cb_str__void")
+        .Ok({})
+      },
+    )
+    .test(
       "export_type_json nests fn descriptors, leaves stay bare strings",
       fn() {
         try assert.equal(codegen.export_type_json(.Str), "\"str\"")

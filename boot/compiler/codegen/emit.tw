@@ -277,10 +277,10 @@ pub fn emit_module(
   } else {
     []
   }
-  lib_result := emit_lib_exports(anf, reg, func_sym_map)
+  lib_result := emit_lib_exports(anf, reg, func_sym_map, env)
   funcs = .concat(lib_result.funcs)
   user_exports := task_exports.concat(lib_result.exports)
-  extern_imports: Vector<ImportDef> = []
+  extern_imports: Vector<ImportDef> = lib_result.imports
 
   for fid, ext in anf.extern_imports {
     params := collect ty in ext.param_tys {
@@ -369,9 +369,18 @@ pub fn emit_module(
   }
 }
 
-type LibEmitResult = .{ funcs: Vector<FuncDef>, exports: Vector<ExportDef> }
+type LibEmitResult = .{
+  funcs: Vector<FuncDef>,
+  exports: Vector<ExportDef>,
+  imports: Vector<ImportDef>,
+}
 
-fn emit_lib_exports(anf: AnfModule, reg: WasmTypeRegistry, func_sym_map: Dict<Int, String>) LibEmitResult {
+fn emit_lib_exports(
+  anf: AnfModule,
+  reg: WasmTypeRegistry,
+  func_sym_map: Dict<Int, String>,
+  env: ResolvedEnv,
+) LibEmitResult {
   funcs: Vector<FuncDef> = []
   exports: Vector<ExportDef> = []
 
@@ -401,7 +410,105 @@ fn emit_lib_exports(anf: AnfModule, reg: WasmTypeRegistry, func_sym_map: Dict<In
     }
   }
 
-  .{ funcs, exports }
+  // A host-supplied callback is always invoked through the closure's universal
+  // funcref (rt_types__ClosureFunc). For each distinct callback signature used
+  // in a lib export param, emit one host import, one universal-typed trampoline
+  // that marshals through it, and one exported constructor that builds the guest
+  // closure (ref.func is legal guest-side).
+  cb_sigs: Dict<String, LibType> = Dict.new()
+
+  for exp in anf.lib_exports {
+    for p in exp.params {
+      case p {
+        .Fn(_, _) => cb_sigs[cb_sig_key(p)] = p,
+        _ => {},
+      }
+    }
+  }
+
+  imports: Vector<ImportDef> = []
+
+  for key, sig in cb_sigs {
+    case sig {
+      .Fn(params, ret) => {
+        art := emit_callback_artifacts(key, params, ret, env)
+        imports = .append(art.import_def)
+        funcs = .append(art.tramp).append(art.ctor)
+        exports = .append(ExportDef.{ wasm_name: art.ctor.name, func_sym: art.ctor.name })
+      },
+      _ => {},
+    }
+  }
+
+  .{ funcs, exports, imports }
+}
+
+type CbArtifacts = .{ import_def: ImportDef, tramp: FuncDef, ctor: FuncDef }
+
+// Build the three wasm artifacts for one callback signature `key`.
+fn emit_callback_artifacts(
+  key: String,
+  params: Vector<LibType>,
+  ret: LibType,
+  env: ResolvedEnv,
+) CbArtifacts {
+  native_params := collect p in params {
+    lib_type_native_val_type(p)
+  }
+  native_results: Vector<ValType> = case ret {
+    .Void => [],
+    _ => [lib_type_native_val_type(ret)],
+  }
+
+  import_sym := "__lib_cb_${key}"
+  import_def := ImportDef.{
+    module: "twinkle.lib",
+    name: "cb_${key}",
+    as_sym: import_sym,
+    params: [ValType.I32].concat(native_params),
+    results: native_results,
+  }
+
+  // Trampoline (rt_types__ClosureFunc): (env: anyref, args: anyref) -> anyref.
+  body: Vector<Instr> = [Instr.LocalGet(0), .RefCast(false, .I31), .I31GetS]
+
+  for i in 0..params.len() {
+    body = body
+      .append(.LocalGet(1))
+      .append(.RefCast(false, .Named("rt_types__Array")))
+      .append(.I32Const(i))
+      .append(.ArrayGet("rt_types__Array"))
+    body = emit_unbox_from_anyref(lib_type_to_mono(params[i]), env, body)
+  }
+
+  body = body.append(.Call(import_sym))
+  body = case ret {
+    .Void => body.append(.I32Const(0)).append(.RefI31),
+    _ => emit_box_to_anyref(lib_type_to_mono(ret), env, body),
+  }
+  tramp := FuncDef.{
+    name: "__lib_cb_tramp_${key}",
+    params: [ValType.Anyref, ValType.Anyref],
+    results: [ValType.Anyref],
+    locals: [],
+    body,
+  }
+
+  // Constructor: build the generic 2-field rt_types__Closure { funcref, env }.
+  ctor := FuncDef.{
+    name: "__lib_make_cb_${key}",
+    params: [ValType.I32],
+    results: [.Ref(false, .Named("rt_types__Closure"))],
+    locals: [],
+    body: [
+      Instr.RefFunc("__lib_cb_tramp_${key}"),
+      .LocalGet(0),
+      .RefI31,
+      .StructNew("rt_types__Closure"),
+    ],
+  }
+
+  .{ import_def, tramp, ctor }
 }
 
 fn lib_primitive_val_type(ty: MonoType) ValType {
@@ -410,6 +517,54 @@ fn lib_primitive_val_type(ty: MonoType) ValType {
     .Float => .F64,
     .Bool => .I32,
     _ => .Anyref,
+  }
+}
+
+// Native boundary ValType for a callback's arg/return LibType.
+fn lib_type_native_val_type(t: LibType) ValType {
+  case t {
+    .Int => .I64,
+    .Float => .F64,
+    .Bool => .I32,
+    .Void => .Anyref,
+    .Str => .Ref(true, .Named("rt_types__String")),
+    .Fn(_, _) => .Anyref,
+  }
+}
+
+// Native ABI tag for a callback leaf type, used to key distinct signatures.
+fn lib_type_native_tag(t: LibType) String {
+  case t {
+    .Int => "i64",
+    .Float => "f64",
+    .Bool => "i32",
+    .Void => "void",
+    .Str => "str",
+    .Fn(_, _) => "fn",
+  }
+}
+
+fn cb_sig_key(t: LibType) String {
+  case t {
+    .Fn(params, ret) => {
+      arg_tags := collect p in params {
+        lib_type_native_tag(p)
+      }
+      "${arg_tags.join("_")}__${lib_type_native_tag(ret)}"
+    },
+    _ => "invalid",
+  }
+}
+
+// Callback leaf types map back to their MonoType for box/unbox helpers.
+fn lib_type_to_mono(t: LibType) MonoType {
+  case t {
+    .Int => .Int,
+    .Float => .Float,
+    .Bool => .Bool,
+    .Void => .Void,
+    .Str => .String,
+    .Fn(_, _) => .Void,
   }
 }
 
