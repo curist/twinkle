@@ -17,6 +17,7 @@ use compiler.artifacts.{CompileError, PipelineArtifacts}
 use compiler.pipeline
 use lib.argparse.app.{ParseResult}
 use lib.module.loader
+use lib.project.bundle
 use lib.project.context
 
 type BuildResult = .{ ok: Bool, seen_diags: Dict<String, Bool> }
@@ -36,7 +37,8 @@ fn default_build_output(file: String) String {
 
 fn default_lib_build_output(file: String) String {
   root := loader.find_project_root(path.dirname(file))
-  path.join(path.join(root, "target"), "${path.stem(file)}.lib.wasm")
+  name := path.stem(file)
+  path.join(context.bundle_dir(root, name), "${name}.lib.wasm")
 }
 
 pub fn resolve_build_output(parsed: ParseResult, file: String) String!String {
@@ -59,10 +61,31 @@ fn validate_output_ext(out: String) String!String {
 }
 
 pub fn run_build_command(parsed: ParseResult) {
-  lib_build := parsed.has_flag("lib")
+  want_node := parsed.has_flag("node")
+  want_web := parsed.has_flag("web")
+
+  // `--node` / `--web` imply a lib build; each additionally emits its bundle.
+  lib_build := parsed.has_flag("lib") or want_node or want_web
+
+  // Bundle flags emit directories, so a single-file `-o` is meaningless there.
+  if (want_node or want_web) and parsed.get_option("output").is_some() {
+    eprintln("error: -o/--output cannot be combined with --node/--web")
+    proc.exit(1)
+  }
 
   if parsed.positional.len() > 0 {
     file := parsed.positional[0]
+
+    if want_node or want_web {
+      root := loader.find_project_root(path.dirname(file))
+      name := path.stem(file)
+      if !build_lib_bundles(file, root, name, want_node, want_web) {
+        proc.exit(1)
+      }
+
+      return
+    }
+
     out := case parsed.get_option("output") {
       .Some(_) => case resolve_build_output(parsed, file) {
         .Ok(path) => path,
@@ -86,21 +109,21 @@ pub fn run_build_command(parsed: ParseResult) {
   }
 
   if lib_build {
-    run_build_lib_project(parsed)
+    run_build_lib_project(parsed, want_node, want_web)
   } else {
     run_build_project(parsed)
   }
 }
 
-// Project mode: build the selected project entries, each to its default
-// `<root>/target/<name>.wasm` (or to `-o` for a single target).
-fn run_build_lib_project(parsed: ParseResult) {
+// Project mode lib build: there is a single `[lib]` entry, so `--target` /
+// `--all` have nothing to select and are rejected for the whole lib family.
+fn run_build_lib_project(parsed: ParseResult, want_node: Bool, want_web: Bool) {
   if parsed.has_flag("all") {
-    eprintln("error: --all cannot be used with --lib")
+    eprintln("error: --all cannot be used with lib builds (--lib/--node/--web)")
     proc.exit(1)
   }
   if parsed.get_option("target").is_some() {
-    eprintln("error: --target cannot be used with --lib")
+    eprintln("error: --target cannot be used with lib builds (--lib/--node/--web)")
     proc.exit(1)
   }
 
@@ -118,6 +141,15 @@ fn run_build_lib_project(parsed: ParseResult) {
       proc.exit(1)
     },
   }
+
+  if want_node or want_web {
+    if !build_lib_bundles(entry.abs_path, ctx.root, entry.name, want_node, want_web) {
+      proc.exit(1)
+    }
+
+    return
+  }
+
   out := case parsed.get_option("output") {
     .Some(o) => case validate_output_ext(o) {
       .Ok(valid) => valid,
@@ -225,6 +257,152 @@ fn build_to(file: String, out: String, seen_diags: Dict<String, Bool>, lib_build
   }
 
   .{ ok, seen_diags }
+}
+
+// The compiler's own package version, used to pin `@twinkle-lang/twinkle` in
+// generated bundles. `dev` when unset (an unpublished build).
+fn compiler_version() String {
+  case proc.env("TWK_VERSION") {
+    .Some(v) => v,
+    .None => "dev",
+  }
+}
+
+// Build the lib entry once and write the requested platform bundles under
+// `<root>/target/<name>/`. Owned files are (re)written in place; the bundle
+// directories are never recreated wholesale, so a user's `npm install`
+// (node_modules/, lockfile) survives a rebuild.
+fn build_lib_bundles(file: String, root: String, name: String, want_node: Bool, want_web: Bool) Bool {
+  artifacts := case pipeline.compile_entry_path_lib(file) {
+    .Ok(result) => result,
+    .Err(err) => {
+      print_compile_error(err, Dict.new())
+      return false
+    },
+  }
+  print_warnings(artifacts.warnings)
+
+  bundle_root := context.bundle_dir(root, name)
+  raw_path := path.join(bundle_root, "${name}.lib.wasm")
+  node_dir := path.join(bundle_root, "node")
+  web_dir := path.join(bundle_root, "web")
+
+  // Emit the wasm once and copy it to the grouped raw path plus each bundle, so
+  // every bundle is movable on its own.
+  wasm_targets := [raw_path]
+  if want_node {
+    wasm_targets = .append(path.join(node_dir, "${name}.lib.wasm"))
+  }
+  if want_web {
+    wasm_targets = .append(path.join(web_dir, "${name}.lib.wasm"))
+  }
+  if !write_wasm_copies(artifacts, wasm_targets) {
+    return false
+  }
+
+  version := compiler_version()
+  pin := bundle.runtime_pin(version)
+
+  if want_node and !write_bundle_files(node_dir, bundle.node_files(name, pin)) {
+    return false
+  }
+  if want_web and !write_bundle_files(web_dir, bundle.web_files(name, pin)) {
+    return false
+  }
+
+  println("WASM output: ${raw_path}")
+  if !bundle.is_released_version(version) {
+    println(
+      "note: pinned @twinkle-lang/twinkle to \"latest\"; this twk build has no matching published runtime and may skew until released",
+    )
+  }
+  if want_node {
+    println("Wrote ${node_dir} →  cd ${node_dir} && npm install && npm start")
+  }
+  if want_web {
+    println("Wrote ${web_dir} →  cd ${web_dir} && npm install && npm run dev")
+  }
+
+  true
+}
+
+// Ensure the parent directory of `out` exists. Returns whether it succeeded.
+fn ensure_parent(out: String) Bool {
+  parent := path.dirname(out)
+
+  if parent != "." and parent != "" {
+    case fs.mkdirp(parent) {
+      .Ok(_) => {},
+      .Err(err) => {
+        eprintln("error: failed to create '${parent}': ${fs_error_message(err)}")
+        return false
+      },
+    }
+  }
+
+  true
+}
+
+// Emit the artifact's wasm once and write it to every path in `targets`.
+fn write_wasm_copies(artifacts: PipelineArtifacts, targets: Vector<String>) Bool {
+  for t in targets {
+    if !ensure_parent(t) {
+      return false
+    }
+  }
+
+  case proc.env("TWINKLE_WRITE_BYTES_FALLBACK") {
+    .Some(_) => {
+      bytes := pipeline.emit_wasm(artifacts)
+
+      for t in targets {
+        case fs.write_bytes(t, bytes) {
+          .Ok(_) => {},
+          .Err(err) => {
+            eprintln("error: failed to write '${t}': ${fs_error_message(err)}")
+            return false
+          },
+        }
+      }
+    },
+    .None => {
+      buf := pipeline.emit_wasm_buffer(artifacts)
+
+      for t in targets {
+        twinkle_runtime.write_buffer_raw(t, buf.ptr, buf.size)
+      }
+
+      buf.free()
+    },
+  }
+
+  true
+}
+
+// Write a bundle's generated text files into `dir`, creating it if needed. Only
+// the owned template files are (over)written; nothing else is touched.
+fn write_bundle_files(dir: String, files: Vector<bundle.BundleFile>) Bool {
+  case fs.mkdirp(dir) {
+    .Ok(_) => {},
+    .Err(err) => {
+      eprintln("error: failed to create '${dir}': ${fs_error_message(err)}")
+      return false
+    },
+  }
+
+  for f in files {
+    p := path.join(dir, f.rel)
+
+    case fs.write_text(p, f.content) {
+      .Ok(_) => {},
+      .Err(err) => {
+        eprintln("error: failed to write '${p}': ${fs_error_message(err)}")
+        return false
+      },
+    }
+  }
+
+  true
 }
 
 fn print_compile_error(err: CompileError, seen_diags: Dict<String, Bool>) Dict<String, Bool> {

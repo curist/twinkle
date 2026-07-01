@@ -1,0 +1,78 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use lib.project.bundle
+
+// The generated content of the bundle file whose relative path is `rel`, or an
+// error naming what was searched.
+fn content_of(files: Vector<bundle.BundleFile>, rel: String) Result<String, String> {
+  for f in files {
+    if f.rel == rel {
+      return .Ok(f.content)
+    }
+  }
+
+  .Err("no bundle file named '${rel}'")
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("platform bundle")
+    .test(
+      "runtime_pin exact-matches a released version and falls back to latest",
+      fn() {
+        try assert.equal(bundle.runtime_pin("0.15.0"), "0.15.0")
+        try assert.equal(bundle.runtime_pin("dev"), "latest")
+        try assert.equal(bundle.runtime_pin(""), "latest")
+        try assert.is_true(bundle.is_released_version("1.2.3"))
+        try assert.is_false(bundle.is_released_version("dev"))
+        .Ok({})
+      },
+    )
+    .test(
+      "node bundle pins the runtime and hosts a movable wasm copy",
+      fn() {
+        files := bundle.node_files("demo", "0.15.0")
+        pkg := try content_of(files, "package.json")
+        try assert.str_contains(pkg, "\"@twinkle-lang/twinkle\": \"0.15.0\"")
+        try assert.str_contains(pkg, "\"start\": \"node main.mjs\"")
+
+        main := try content_of(files, "main.mjs")
+        try assert.str_contains(main, "import { loadLib } from \"@twinkle-lang/twinkle\"")
+        try assert.str_contains(main, "./demo.lib.wasm")
+        .Ok({})
+      },
+    )
+    .test(
+      "generated host discovers exports rather than naming any",
+      fn() {
+        main := try content_of(bundle.node_files("demo", "0.15.0"), "main.mjs")
+        // Library-agnostic: enumerates loadLib's keys, never a scaffold export.
+        try assert.str_contains(main, "Object.keys(lib)")
+        try assert.is_false(main.contains(".add("))
+        try assert.is_false(main.contains("lib.pi"))
+        .Ok({})
+      },
+    )
+    .test(
+      "web bundle is a Vite project targeting the /web runtime entry",
+      fn() {
+        files := bundle.web_files("demo", "0.15.0")
+        pkg := try content_of(files, "package.json")
+        try assert.str_contains(pkg, "\"vite\"")
+        try assert.str_contains(pkg, "\"dev\": \"vite\"")
+        try assert.str_contains(pkg, "\"build\": \"vite build\"")
+
+        main := try content_of(files, "main.mjs")
+        try assert.str_contains(main, "import { loadLib } from \"@twinkle-lang/twinkle/web\"")
+        try assert.str_contains(main, "./demo.lib.wasm")
+
+        html := try content_of(files, "index.html")
+        try assert.str_contains(html, "<title>demo</title>")
+        try assert.str_contains(html, "src=\"./main.mjs\"")
+
+        try assert.is_ok(content_of(files, "vite.config.js"))
+        .Ok({})
+      },
+    )
+}

@@ -183,7 +183,13 @@ pub fn default_output_path(ctx: ProjectContext, entry: EntryTarget) String {
 }
 
 pub fn default_lib_output_path(ctx: ProjectContext, entry: EntryTarget) String {
-  path.join(path.join(ctx.root, "target"), "${entry.name}.lib.wasm")
+  path.join(bundle_dir(ctx.root, entry.name), "${entry.name}.lib.wasm")
+}
+
+/// The grouped output directory for a lib entry: `<root>/target/<name>/`. All
+/// artifacts for the entry (raw wasm and any platform bundles) live under it.
+pub fn bundle_dir(root: String, name: String) String {
+  path.join(path.join(root, "target"), name)
 }
 
 /// Project-local modules reachable from `entries`, via the shared frontend's

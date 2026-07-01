@@ -23,6 +23,7 @@ use .suites.base_env_guardrail_suite
 use .suites.builtin_identity_collision_suite
 use .suites.builtins_canonical_suite
 use .suites.builtins_suite
+use .suites.bundle_suite
 use .suites.byte_suite
 use .suites.channel_suite
 use .suites.char_literal_suite
@@ -192,6 +193,7 @@ runner.run_all([
   opt_uniqueness_suite.suite(),
   opt_defer_elim_suite.suite(),
   builtins_suite.suite(),
+  bundle_suite.suite(),
   builtin_identity_collision_suite.suite(),
   wasm_ir_suite.suite(),
   wasm_layout_suite.suite(),

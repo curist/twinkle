@@ -1,0 +1,166 @@
+//! Platform bundle templates for `twk build --node` / `--web`.
+//!
+//! Each bundle is a small, movable npm/Vite project that carries the built
+//! `.lib.wasm` and resolves the Twinkle runtime via npm (`@twinkle-lang/twinkle`)
+//! rather than vendoring `runtime.mjs`. The generated host (`main.mjs`) is
+//! library-agnostic: it loads the lib and discovers the exported surface at
+//! runtime instead of assuming any particular export exists.
+//!
+//! These generators return file plans (relative path + content); the build
+//! command owns the filesystem writes and copies the wasm in.
+
+pub type BundleFile = .{ rel: String, content: String }
+
+/// Node bundle files (excluding the copied `<name>.lib.wasm`).
+pub fn node_files(name: String, pin: String) Vector<BundleFile> {
+  [
+    BundleFile.{ rel: "package.json", content: node_package_json(pin) },
+    BundleFile.{ rel: "main.mjs", content: node_main_mjs(name) },
+  ]
+}
+
+/// Web (Vite) bundle files (excluding the copied `<name>.lib.wasm`).
+pub fn web_files(name: String, pin: String) Vector<BundleFile> {
+  [
+    BundleFile.{ rel: "package.json", content: web_package_json(pin) },
+    BundleFile.{ rel: "vite.config.js", content: vite_config() },
+    BundleFile.{ rel: "index.html", content: index_html(name) },
+    BundleFile.{ rel: "main.mjs", content: web_main_mjs(name) },
+  ]
+}
+
+/// The runtime version to pin `@twinkle-lang/twinkle` to. A released compiler
+/// (semver, e.g. `0.15.0`) pins exactly so runtime/metadata ABI cannot skew; a
+/// dev/unpublished compiler has no matching published runtime, so pin `latest`.
+pub fn runtime_pin(version: String) String {
+  if is_released_version(version) {
+    version
+  } else {
+    "latest"
+  }
+}
+
+/// Whether `version` names a published release (starts with a digit, e.g.
+/// `0.15.0`). The dev fallback compiler reports `dev`, which is not released.
+pub fn is_released_version(version: String) Bool {
+  if version == "" {
+    return false
+  }
+
+  version[0].is_digit()
+}
+
+fn lines_to_file(lines: Vector<String>) String {
+  "${lines.join("\n")}\n"
+}
+
+fn node_package_json(pin: String) String {
+  lines_to_file([
+    "{",
+    "  \"type\": \"module\",",
+    "  \"dependencies\": {",
+    "    \"@twinkle-lang/twinkle\": \"${pin}\"",
+    "  },",
+    "  \"scripts\": {",
+    "    \"start\": \"node main.mjs\"",
+    "  }",
+    "}",
+  ])
+}
+
+fn web_package_json(pin: String) String {
+  lines_to_file([
+    "{",
+    "  \"type\": \"module\",",
+    "  \"dependencies\": {",
+    "    \"@twinkle-lang/twinkle\": \"${pin}\"",
+    "  },",
+    "  \"devDependencies\": {",
+    "    \"vite\": \"^5.0.0\"",
+    "  },",
+    "  \"scripts\": {",
+    "    \"dev\": \"vite\",",
+    "    \"build\": \"vite build\"",
+    "  }",
+    "}",
+  ])
+}
+
+// Library-agnostic Node host: load the lib and report its discovered exports.
+fn node_main_mjs(name: String) String {
+  lines_to_file([
+    "import { loadLib } from \"@twinkle-lang/twinkle\";",
+    "",
+    "const lib = await loadLib(new URL(\"./${name}.lib.wasm\", import.meta.url));",
+    "",
+    "const keys = Object.keys(lib);",
+    "if (keys.length === 0) {",
+    "  console.log(\"This library exports nothing callable.\");",
+    "} else {",
+    "  console.log(\"Exports:\");",
+    "  for (const name of keys) {",
+    "    const value = lib[name];",
+    "    if (typeof value === \"function\") {",
+    "      console.log(\"  \" + name + \"()  [function]\");",
+    "    } else {",
+    "      console.log(\"  \" + name + \" = \" + value);",
+    "    }",
+    "  }",
+    "  console.log(\"\");",
+    "  console.log(\"Edit main.mjs to call your exports.\");",
+    "}",
+  ])
+}
+
+// Library-agnostic web host: render the discovered exports into the page.
+fn web_main_mjs(name: String) String {
+  lines_to_file([
+    "import { loadLib } from \"@twinkle-lang/twinkle/web\";",
+    "",
+    "const lib = await loadLib(new URL(\"./${name}.lib.wasm\", import.meta.url));",
+    "",
+    "document.getElementById(\"out\").textContent = report(lib);",
+    "",
+    "function report(lib) {",
+    "  const keys = Object.keys(lib);",
+    "  if (keys.length === 0) {",
+    "    return \"This library exports nothing callable.\";",
+    "  }",
+    "  const lines = [\"Exports:\"];",
+    "  for (const name of keys) {",
+    "    const value = lib[name];",
+    "    lines.push(",
+    "      typeof value === \"function\"",
+    "        ? \"  \" + name + \"()  [function]\"",
+    "        : \"  \" + name + \" = \" + value,",
+    "    );",
+    "  }",
+    "  return lines.join(\"\\n\");",
+    "}",
+  ])
+}
+
+fn vite_config() String {
+  lines_to_file([
+    "import { defineConfig } from \"vite\";",
+    "",
+    "// The sibling .lib.wasm is served as an asset via `new URL(...)` in main.mjs.",
+    "export default defineConfig({});",
+  ])
+}
+
+fn index_html(name: String) String {
+  lines_to_file([
+    "<!doctype html>",
+    "<html>",
+    "  <head>",
+    "    <meta charset=\"utf-8\" />",
+    "    <title>${name}</title>",
+    "  </head>",
+    "  <body>",
+    "    <pre id=\"out\">Loading…</pre>",
+    "    <script type=\"module\" src=\"./main.mjs\"></script>",
+    "  </body>",
+    "</html>",
+  ])
+}

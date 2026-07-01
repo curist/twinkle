@@ -56,6 +56,14 @@ build_cmd := command
   .add_option("target", "In project mode, the project entry to build")
   .add_flag("all", "In project mode, build every project entry")
   .add_flag("lib", "Build the configured library entry and export eligible pub members")
+  .add_flag(
+    "node",
+    "Build the library entry and emit a runnable Node bundle under target/<name>/node/",
+  )
+  .add_flag(
+    "web",
+    "Build the library entry and emit a runnable Vite web bundle under target/<name>/web/",
+  )
 
 test_cmd := command
   .make("test", "Run configured project test entries")
