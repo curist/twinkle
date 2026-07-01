@@ -1,0 +1,41 @@
+type PState = .{ v: Vector<Int>, count: Int }
+
+fn swap(v: Vector<Int>, i: Int, j: Int) Vector<Int> {
+  a := v[i]
+  b := v[j]
+  v.set_at(i, b).set_at(j, a)
+}
+
+fn permute(s: PState, n: Int) PState {
+  st := PState.{ v: s.v, count: s.count + 1 }
+  if n == 0 {
+    st
+  } else {
+    st = permute(st, n - 1)
+    i := n - 1
+    for i >= 0 {
+      st = PState.{ v: swap(st.v, n - 1, i), count: st.count }
+      st = permute(st, n - 1)
+      st = PState.{ v: swap(st.v, n - 1, i), count: st.count }
+      i = i - 1
+    }
+    st
+  }
+}
+
+pub warmup := 10
+pub iters := 40
+pub size := 1000
+pub expected := 8660
+
+pub fn run(size: Int) Int {
+  count := 0
+  rep := 0
+  for rep < size {
+    v: Vector<Int> = collect i in range(6) { 0 }
+    result := permute(PState.{ v: v, count: 0 }, 6)
+    count = result.count
+    rep = rep + 1
+  }
+  count
+}
