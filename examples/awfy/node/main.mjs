@@ -7,6 +7,7 @@ import * as permute from "./permute.mjs";
 import * as towers from "./towers.mjs";
 import * as list from "./list.mjs";
 import * as bounce from "./bounce.mjs";
+import * as storage from "./storage.mjs";
 
 const benches = [
   { name: "smoke", warmup: smoke.warmup, iters: smoke.iters, size: smoke.size, expected: smoke.expected, run: smoke.run },
@@ -17,5 +18,6 @@ const benches = [
   { name: "towers", warmup: towers.warmup, iters: towers.iters, size: towers.size, expected: towers.expected, run: towers.run },
   { name: "list", warmup: list.warmup, iters: list.iters, size: list.size, expected: list.expected, run: list.run },
   { name: "bounce", warmup: bounce.warmup, iters: bounce.iters, size: bounce.size, expected: bounce.expected, run: bounce.run },
+  { name: "storage", warmup: storage.warmup, iters: storage.iters, size: storage.size, expected: storage.expected, run: storage.run },
 ];
 for (const b of benches) runBench(b);

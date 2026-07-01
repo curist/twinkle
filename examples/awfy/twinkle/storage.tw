@@ -1,0 +1,48 @@
+use .bounce.{Rng}
+use .bounce
+
+type Tree = { Leaf, Branch(Vector<Tree>) }
+type Built = .{ node: Tree, rng: Rng, count: Int, leaf_elems: Int }
+
+fn build(depth: Int, rng: Rng, count: Int, leaf_elems: Int) Built {
+  c := count + 1
+  if depth == 1 {
+    step := bounce.rng_next(rng)
+    n := (step.value % 10) + 1
+    // Allocate a leaf vector of length n (contents irrelevant) to stress GC.
+    kids: Vector<Tree> = collect i in range(n) { .Leaf }
+    Built.{ node: .Branch(kids), rng: step.rng, count: c, leaf_elems: leaf_elems + n }
+  } else {
+    kids: Vector<Tree> = []
+    r := rng
+    cc := c
+    le := leaf_elems
+    i := 0
+    for i < 4 {
+      b := build(depth - 1, r, cc, le)
+      kids = kids.append(b.node)
+      r = b.rng
+      cc = b.count
+      le = b.leaf_elems
+      i = i + 1
+    }
+    Built.{ node: .Branch(kids), rng: r, count: cc, leaf_elems: le }
+  }
+}
+
+pub warmup := 10
+pub iters := 30
+pub size := 1000
+pub expected := 27881
+
+pub fn run(size: Int) Int {
+  result := 0
+  rep := 0
+  for rep < size {
+    rng := Rng.{ seed: 74755 }
+    b := build(7, rng, 0, 0)
+    result = b.count + b.leaf_elems
+    rep = rep + 1
+  }
+  result
+}
