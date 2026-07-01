@@ -6,9 +6,15 @@ cd "$(dirname "$0")/../.."
 raw="$(mktemp)"
 trap 'rm -f "$raw"' EXIT
 
-target/twk run examples/awfy/twinkle/main.tw >> "$raw"
-node examples/awfy/node/main.mjs             >> "$raw"
-(cd examples/awfy/go && go run .)            >> "$raw"
+# Go: disable FMA fusion so its float math matches V8 and Wasm (which never
+# fuse multiply-add). Without this, kernels like Mandelbrot/NBody diverge by a
+# rounding ULP and the cross-language checksum diff fails. This keeps all three
+# languages on identical strict IEEE-754 arithmetic — a fairer baseline.
+GO_NOFMA="-gcflags=all=-d=fmahash=1111111111111111"
+
+target/twk run examples/awfy/twinkle/main.tw   >> "$raw"
+node examples/awfy/node/main.mjs               >> "$raw"
+(cd examples/awfy/go && go run "$GO_NOFMA" .)  >> "$raw"
 
 # Checksum agreement: for each bench, all langs must report the same checksum.
 mismatch="$(awk -F '\t' '
