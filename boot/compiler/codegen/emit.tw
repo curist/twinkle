@@ -466,6 +466,62 @@ fn emit_lib_exports(
       .append(ExportDef.{ wasm_name: "__lib_vec_from_array", func_sym: "__lib_vec_from_array" })
   }
 
+  // Generic straight-line Dict primitives (keys/get/new/set); the host drives the
+  // insertion-order iteration and per-entry marshalling, so no wasm loop is
+  // emitted. Keys/values are anyref (boxed), so one set serves every dict.
+  if any_export_uses_dict(anf.lib_exports) {
+    funcs = funcs
+      .append(FuncDef.{
+        name: "__lib_dict_keys",
+        params: [.Anyref],
+        results: [.Ref(false, .Named("rt_types__Array"))],
+        locals: [],
+        body: [
+          .LocalGet(0),
+          .RefCast(true, .Named("rt_types__PDict")),
+          .Call("rt_dict__keys"),
+          .Call("rt_arr__to_array"),
+        ],
+      })
+      .append(FuncDef.{
+        name: "__lib_dict_get",
+        params: [.Anyref, .Anyref],
+        results: [.Anyref],
+        locals: [],
+        body: [
+          .LocalGet(0),
+          .RefCast(true, .Named("rt_types__PDict")),
+          .LocalGet(1),
+          .Call("rt_dict__get"),
+        ],
+      })
+      .append(FuncDef.{
+        name: "__lib_dict_new",
+        params: [],
+        results: [.Ref(false, .Named("rt_types__PDict"))],
+        locals: [],
+        body: [.Call("rt_dict__make")],
+      })
+      .append(FuncDef.{
+        name: "__lib_dict_set",
+        params: [.Anyref, .Anyref, .Anyref],
+        results: [.Ref(false, .Named("rt_types__PDict"))],
+        locals: [],
+        body: [
+          .LocalGet(0),
+          .RefCast(true, .Named("rt_types__PDict")),
+          .LocalGet(1),
+          .LocalGet(2),
+          .Call("rt_dict__set"),
+        ],
+      })
+    exports = exports
+      .append(ExportDef.{ wasm_name: "__lib_dict_keys", func_sym: "__lib_dict_keys" })
+      .append(ExportDef.{ wasm_name: "__lib_dict_get", func_sym: "__lib_dict_get" })
+      .append(ExportDef.{ wasm_name: "__lib_dict_new", func_sym: "__lib_dict_new" })
+      .append(ExportDef.{ wasm_name: "__lib_dict_set", func_sym: "__lib_dict_set" })
+  }
+
   // Per distinct record type anywhere in the export surface (incl. nested),
   // emit read/make helpers. The host drives cross-level recursion, so these are
   // one-level: read flattens the struct's fields into an array, make rebuilds.
@@ -610,6 +666,31 @@ fn any_export_uses_vec(exports: Vector<LibExport>) Bool {
 
     for p in exp.params {
       if lib_type_uses_vec(p) {
+        return true
+      }
+    }
+  }
+
+  false
+}
+
+fn lib_type_uses_dict(t: LibType) Bool {
+  case t {
+    .Dct(_, _) => true,
+    .Vec(e) => lib_type_uses_dict(e),
+    .Rec(_, _, fields) => fields.any(fn(f) { lib_type_uses_dict(f.ty) }),
+    _ => false,
+  }
+}
+
+fn any_export_uses_dict(exports: Vector<LibExport>) Bool {
+  for exp in exports {
+    if lib_type_uses_dict(exp.ret) {
+      return true
+    }
+
+    for p in exp.params {
+      if lib_type_uses_dict(p) {
         return true
       }
     }

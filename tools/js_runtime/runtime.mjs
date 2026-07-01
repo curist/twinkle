@@ -1290,6 +1290,20 @@ function guestToJs(ref, desc, b, instance) {
     }
     return out;
   }
+  if (desc.kind === "dict") {
+    const keysArr = instance.exports.__lib_dict_keys(ref);
+    const n = b.array_len(keysArr);
+    const stringKeys = desc.key === "str";
+    const out = stringKeys ? {} : new Map();
+    for (let i = 0; i < n; i++) {
+      const keyRef = b.array_get(keysArr, i);
+      const jsKey = guestElemToJs(keyRef, desc.key, b, instance);
+      const jsVal = guestElemToJs(instance.exports.__lib_dict_get(ref, keyRef), desc.val, b, instance);
+      if (stringKeys) out[jsKey] = jsVal;
+      else out.set(jsKey, jsVal);
+    }
+    return out;
+  }
   return ref;
 }
 
@@ -1309,6 +1323,16 @@ function jsToGuest(value, desc, b, instance) {
       b.array_set(flat, i, jsElemToGuest(value[fname], fdesc, b, instance));
     }
     return instance.exports["__lib_make_rec_" + desc.name](flat);
+  }
+  if (desc.kind === "dict") {
+    let d = instance.exports.__lib_dict_new();
+    const entries = value instanceof Map ? value.entries() : Object.entries(value);
+    for (const [k, v] of entries) {
+      const keyRef = jsElemToGuest(k, desc.key, b, instance);
+      const valRef = jsElemToGuest(v, desc.val, b, instance);
+      d = instance.exports.__lib_dict_set(d, keyRef, valRef);
+    }
+    return d;
   }
   return value;
 }

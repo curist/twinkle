@@ -159,6 +159,38 @@ test("loadLib round-trips a record", async () => {
   assert.deepEqual(lib.swap({ x: 3n, y: 4n }), { x: 4n, y: 3n });
 });
 
+test("loadLib round-trips a Dict", async () => {
+  const src = [
+    "pub fn inc_all(m: Dict<String, Int>) Dict<String, Int> {",
+    "  out := m",
+    "  for k, v in m { out[k] = v + 1 }",
+    "  out",
+    "}",
+  ].join("\n");
+  const lib = await loadLib(await compile({ source: src }, { lib: true }));
+  assert.deepEqual(lib.inc_all({ a: 1n, b: 2n }), { a: 2n, b: 3n });
+});
+
+test("loadLib round-trips nested compounds", async () => {
+  const src = [
+    "pub type Row = .{ id: Int, tags: Vector<String> }",
+    "pub fn rows() Vector<Row> {",
+    "  collect i in range(2) { Row.{ id: i, tags: [\"t${i}\"] } }",
+    "}",
+    "pub fn group(xs: Vector<Int>) Dict<String, Vector<Int>> {",
+    "  out: Dict<String, Vector<Int>> = Dict.new()",
+    "  out[\"all\"] = xs",
+    "  out",
+    "}",
+  ].join("\n");
+  const lib = await loadLib(await compile({ source: src }, { lib: true }));
+  assert.deepEqual(lib.rows(), [
+    { id: 0n, tags: ["t0"] },
+    { id: 1n, tags: ["t1"] },
+  ]);
+  assert.deepEqual(lib.group([1n, 2n, 3n]), { all: [1n, 2n, 3n] });
+});
+
 test("loadLib drives host callbacks (Void and value-returning)", async () => {
   const src = [
     "pub fn each_word(text: String, f: fn(String) Void) Void {",
