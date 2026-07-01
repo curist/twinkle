@@ -4,6 +4,7 @@ import * as mandelbrot from "./mandelbrot.mjs";
 import * as sieve from "./sieve.mjs";
 import * as queens from "./queens.mjs";
 import * as permute from "./permute.mjs";
+import * as towers from "./towers.mjs";
 
 const benches = [
   { name: "smoke", warmup: smoke.warmup, iters: smoke.iters, size: smoke.size, expected: smoke.expected, run: smoke.run },
@@ -11,5 +12,6 @@ const benches = [
   { name: "sieve", warmup: sieve.warmup, iters: sieve.iters, size: sieve.size, expected: sieve.expected, run: sieve.run },
   { name: "queens", warmup: queens.warmup, iters: queens.iters, size: queens.size, expected: queens.expected, run: queens.run },
   { name: "permute", warmup: permute.warmup, iters: permute.iters, size: permute.size, expected: permute.expected, run: permute.run },
+  { name: "towers", warmup: towers.warmup, iters: towers.iters, size: towers.size, expected: towers.expected, run: towers.run },
 ];
 for (const b of benches) runBench(b);

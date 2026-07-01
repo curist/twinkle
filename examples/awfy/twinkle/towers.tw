@@ -1,0 +1,56 @@
+type Pegs = .{ a: Vector<Int>, b: Vector<Int>, c: Vector<Int>, moves: Int }
+
+fn peg(p: Pegs, which: Int) Vector<Int> {
+  cond {
+    which == 0 => p.a,
+    which == 1 => p.b,
+    _ => p.c,
+  }
+}
+
+fn set_peg(p: Pegs, which: Int, v: Vector<Int>) Pegs {
+  cond {
+    which == 0 => Pegs.{ a: v, b: p.b, c: p.c, moves: p.moves },
+    which == 1 => Pegs.{ a: p.a, b: v, c: p.c, moves: p.moves },
+    _ => Pegs.{ a: p.a, b: p.b, c: v, moves: p.moves },
+  }
+}
+
+fn move_top(p: Pegs, from: Int, to: Int) Pegs {
+  src := peg(p, from)
+  disk := src[src.len() - 1]
+  p2 := set_peg(p, from, src.drop_last())
+  dst := peg(p2, to)
+  p3 := set_peg(p2, to, dst.append(disk))
+  Pegs.{ a: p3.a, b: p3.b, c: p3.c, moves: p3.moves + 1 }
+}
+
+fn move_disks(p: Pegs, n: Int, from: Int, to: Int, via: Int) Pegs {
+  if n == 1 {
+    move_top(p, from, to)
+  } else {
+    p1 := move_disks(p, n - 1, from, via, to)
+    p2 := move_top(p1, from, to)
+    move_disks(p2, n - 1, via, to, from)
+  }
+}
+
+pub warmup := 10
+pub iters := 40
+pub size := 600
+pub expected := 8191
+
+pub fn run(size: Int) Int {
+  moves := 0
+  rep := 0
+  for rep < size {
+    // Peg a holds disks 13..1 (largest at the bottom = index 0).
+    a: Vector<Int> = collect i in range(13) { 13 - i }
+    empty: Vector<Int> = []
+    start := Pegs.{ a: a, b: empty, c: empty, moves: 0 }
+    result := move_disks(start, 13, 0, 2, 1)
+    moves = result.moves
+    rep = rep + 1
+  }
+  moves
+}
