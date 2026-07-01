@@ -260,6 +260,15 @@ pub fn suite() runner.Suite {
           codegen.export_type_json(.Fn([.Int], .Bool)),
           "{\"kind\":\"fn\",\"args\":[\"int\"],\"ret\":\"bool\"}",
         )
+        try assert.equal(codegen.export_type_json(.Vec(.Int)), "{\"kind\":\"vec\",\"elem\":\"int\"}")
+        try assert.equal(
+          codegen.export_type_json(.Dct(.Str, .Int)),
+          "{\"kind\":\"dict\",\"key\":\"str\",\"val\":\"int\"}",
+        )
+        try assert.equal(
+          codegen.export_type_json(.Rec("Pt", [.{ name: "x", ty: .Int }])),
+          "{\"kind\":\"rec\",\"name\":\"Pt\",\"fields\":[[\"x\",\"int\"]]}",
+        )
         .Ok({})
       },
     )

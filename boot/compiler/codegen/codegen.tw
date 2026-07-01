@@ -232,10 +232,15 @@ pub fn export_type_json(t: LibType) String {
       }
       "{\"kind\":\"fn\",\"args\":[${arg_parts.join(",")}],\"ret\":${export_type_json(r)}}"
     },
-    // Stopgap — real recursive vec/dict/rec descriptors land next task.
-    .Vec(_) => "\"vec\"",
-    .Dct(_, _) => "\"dict\"",
-    .Rec(_, _) => "\"rec\"",
+    .Vec(e) => "{\"kind\":\"vec\",\"elem\":${export_type_json(e)}}",
+    .Dct(k, v) => "{\"kind\":\"dict\",\"key\":${export_type_json(k)},\"val\":${export_type_json(v)}}",
+    .Rec(name, fields) => {
+      // Record and field names are identifiers, so no JSON escaping is needed.
+      parts := collect f in fields {
+        "[\"${f.name}\",${export_type_json(f.ty)}]"
+      }
+      "{\"kind\":\"rec\",\"name\":\"${name}\",\"fields\":[${parts.join(",")}]}"
+    },
   }
 }
 
