@@ -58,7 +58,7 @@ use compiler.codegen.wasm_ir.{
 }
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key, val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
-use compiler.core_ir.{BinOp, FieldId, FuncId, LibType, UnOp, VariantId}
+use compiler.core_ir.{BinOp, FieldId, FuncId, LibExport, LibType, UnOp, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv}
 use compiler.type_util.{subst_type_params}
@@ -440,7 +440,58 @@ fn emit_lib_exports(
     }
   }
 
+  // A single generic pair of Vector⇄flat-array wrappers serves every
+  // leaf-element vector: `rt_arr__to_array`/`from_array` move anyref refs
+  // between the generic PVec and a flat rt_types__Array element-agnostically, so
+  // the host marshals the (boxed) elements per the descriptor. Emitted once when
+  // any export references a Vector anywhere.
+  if any_export_uses_vec(anf.lib_exports) {
+    funcs = funcs
+      .append(FuncDef.{
+        name: "__lib_vec_to_array",
+        params: [.Anyref],
+        results: [.Ref(false, .Named("rt_types__Array"))],
+        locals: [],
+        body: [.LocalGet(0), .RefCast(true, .Named("rt_types__PVec")), .Call("rt_arr__to_array")],
+      })
+      .append(FuncDef.{
+        name: "__lib_vec_from_array",
+        params: [.Ref(false, .Named("rt_types__Array"))],
+        results: [.Ref(false, .Named("rt_types__PVec"))],
+        locals: [],
+        body: [.LocalGet(0), .Call("rt_arr__from_array")],
+      })
+    exports = exports
+      .append(ExportDef.{ wasm_name: "__lib_vec_to_array", func_sym: "__lib_vec_to_array" })
+      .append(ExportDef.{ wasm_name: "__lib_vec_from_array", func_sym: "__lib_vec_from_array" })
+  }
+
   .{ funcs, exports, imports }
+}
+
+fn lib_type_uses_vec(t: LibType) Bool {
+  case t {
+    .Vec(_) => true,
+    .Dct(k, v) => lib_type_uses_vec(k) or lib_type_uses_vec(v),
+    .Rec(_, fields) => fields.any(fn(f) { lib_type_uses_vec(f.ty) }),
+    _ => false,
+  }
+}
+
+fn any_export_uses_vec(exports: Vector<LibExport>) Bool {
+  for exp in exports {
+    if lib_type_uses_vec(exp.ret) {
+      return true
+    }
+
+    for p in exp.params {
+      if lib_type_uses_vec(p) {
+        return true
+      }
+    }
+  }
+
+  false
 }
 
 type CbArtifacts = .{ import_def: ImportDef, tramp: FuncDef, ctor: FuncDef }

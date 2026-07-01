@@ -134,6 +134,20 @@ test("loadLib exposes primitive and String pub exports and skips ineligible ones
   assert.equal(lib.secret, undefined);
 });
 
+test("loadLib round-trips Vector args and returns", async () => {
+  const src = [
+    "pub fn dbl(xs: Vector<Int>) Vector<Int> {",
+    "  collect x in xs { x * 2 }",
+    "}",
+    "pub fn shout(ws: Vector<String>) Vector<String> {",
+    "  collect w in ws { \"${w}!\" }",
+    "}",
+  ].join("\n");
+  const lib = await loadLib(await compile({ source: src }, { lib: true }));
+  assert.deepEqual(lib.dbl([1n, 2n, 3n]), [2n, 4n, 6n]);
+  assert.deepEqual(lib.shout(["a", "b"]), ["a!", "b!"]);
+});
+
 test("loadLib drives host callbacks (Void and value-returning)", async () => {
   const src = [
     "pub fn each_word(text: String, f: fn(String) Void) Void {",

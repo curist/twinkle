@@ -1201,10 +1201,13 @@ function cbKey(desc) {
 // `registry`, and `ids` are only needed for `fn`-typed (callback) args, where a
 // JS callback is registered and turned into a guest closure guest-side.
 function coerceLibArg(value, kind, b, instance, registry, ids) {
-  if (kind && typeof kind === "object" && kind.kind === "fn") {
-    const cbid = registry.add(value);
-    if (ids) ids.push(cbid);
-    return instance.exports["__lib_make_cb_" + cbKey(kind)](cbid);
+  if (kind && typeof kind === "object") {
+    if (kind.kind === "fn") {
+      const cbid = registry.add(value);
+      if (ids) ids.push(cbid);
+      return instance.exports["__lib_make_cb_" + cbKey(kind)](cbid);
+    }
+    return jsToGuest(value, kind, b, instance); // vec / dict / rec
   }
   switch (kind) {
     case "int": return typeof value === "bigint" ? value : BigInt(value);
@@ -1216,7 +1219,10 @@ function coerceLibArg(value, kind, b, instance, registry, ids) {
   }
 }
 
-function coerceLibReturn(value, kind, b) {
+function coerceLibReturn(value, kind, b, instance) {
+  if (kind && typeof kind === "object") {
+    return guestToJs(value, kind, b, instance); // vec / dict / rec
+  }
   switch (kind) {
     case "int": return value;
     case "float": return Number(value);
@@ -1225,6 +1231,69 @@ function coerceLibReturn(value, kind, b) {
     case "str": return decodeString(b, value);
     default: return value;
   }
+}
+
+// Marshal a scalar leaf that lives *inside* a flat-array tree, where it is a
+// boxed GC ref (BoxedInt / BoxedFloat / i31 / String) rather than a raw wasm
+// value. Compounds recurse back through guestToJs / jsToGuest.
+function boxedGuestToJs(ref, kind, b) {
+  switch (kind) {
+    case "int": return b.boxed_int_get(ref);
+    case "float": return b.boxed_float_get(ref);
+    case "bool": return !!b.i31_get(ref);
+    case "str": return decodeString(b, ref);
+    default: return ref;
+  }
+}
+
+function boxedJsToGuest(value, kind, b) {
+  switch (kind) {
+    case "int": return b.boxed_int_new(typeof value === "bigint" ? value : BigInt(value));
+    case "float": return b.boxed_float_new(Number(value));
+    case "bool": return b.i31_new(value ? 1 : 0);
+    case "str": return encodeString(b, String(value));
+    default: return value;
+  }
+}
+
+function guestElemToJs(ref, desc, b, instance) {
+  return (desc && typeof desc === "object")
+    ? guestToJs(ref, desc, b, instance)
+    : boxedGuestToJs(ref, desc, b);
+}
+
+function jsElemToGuest(value, desc, b, instance) {
+  return (desc && typeof desc === "object")
+    ? jsToGuest(value, desc, b, instance)
+    : boxedJsToGuest(value, desc, b);
+}
+
+// Convert a guest compound (its GC ref) into a plain JS value, walking the
+// recursive descriptor in parallel with the flat-array tree the guest helpers
+// produce. Extended for dict/rec in later tasks.
+function guestToJs(ref, desc, b, instance) {
+  if (desc.kind === "vec") {
+    const flat = instance.exports.__lib_vec_to_array(ref);
+    const n = b.array_len(flat);
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) {
+      out[i] = guestElemToJs(b.array_get(flat, i), desc.elem, b, instance);
+    }
+    return out;
+  }
+  return ref;
+}
+
+// Build a guest compound (its GC ref) from a plain JS value.
+function jsToGuest(value, desc, b, instance) {
+  if (desc.kind === "vec") {
+    const flat = b.array_new(value.length);
+    for (let i = 0; i < value.length; i++) {
+      b.array_set(flat, i, jsElemToGuest(value[i], desc.elem, b, instance));
+    }
+    return instance.exports.__lib_vec_from_array(flat);
+  }
+  return value;
 }
 
 // A monotonic callback registry: JS callbacks are registered under an id passed
@@ -1303,7 +1372,7 @@ export async function loadLibBytes(wasmBytes, opts = {}) {
     const fn = instance.exports[wasmName];
     if (typeof fn !== "function") continue;
     if (meta.kind === "value") {
-      lib[meta.name] = coerceLibReturn(fn(), meta.ret, b);
+      lib[meta.name] = coerceLibReturn(fn(), meta.ret, b, instance);
     } else {
       lib[meta.name] = (...args) => {
         const ids = [];
@@ -1311,7 +1380,7 @@ export async function loadLibBytes(wasmBytes, opts = {}) {
           (kind, i) => coerceLibArg(args[i], kind, b, instance, registry, ids),
         );
         try {
-          return coerceLibReturn(fn(...coerced), meta.ret, b);
+          return coerceLibReturn(fn(...coerced), meta.ret, b, instance);
         } finally {
           for (const id of ids) registry.drop(id);
         }
