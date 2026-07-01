@@ -446,32 +446,34 @@ fn emit_lib_exports(
   // the host marshals the (boxed) elements per the descriptor. Emitted once when
   // any export references a Vector anywhere.
   if any_export_uses_vec(anf.lib_exports) {
-    funcs = funcs
-      .append(FuncDef.{
+    funcs = .append(
+      FuncDef.{
         name: "__lib_vec_to_array",
         params: [.Anyref],
         results: [.Ref(false, .Named("rt_types__Array"))],
         locals: [],
         body: [.LocalGet(0), .RefCast(true, .Named("rt_types__PVec")), .Call("rt_arr__to_array")],
-      })
-      .append(FuncDef.{
+      },
+    ).append(
+      FuncDef.{
         name: "__lib_vec_from_array",
         params: [.Ref(false, .Named("rt_types__Array"))],
         results: [.Ref(false, .Named("rt_types__PVec"))],
         locals: [],
         body: [.LocalGet(0), .Call("rt_arr__from_array")],
-      })
-    exports = exports
-      .append(ExportDef.{ wasm_name: "__lib_vec_to_array", func_sym: "__lib_vec_to_array" })
-      .append(ExportDef.{ wasm_name: "__lib_vec_from_array", func_sym: "__lib_vec_from_array" })
+      },
+    )
+    exports = .append(ExportDef.{ wasm_name: "__lib_vec_to_array", func_sym: "__lib_vec_to_array" }).append(
+      ExportDef.{ wasm_name: "__lib_vec_from_array", func_sym: "__lib_vec_from_array" },
+    )
   }
 
   // Generic straight-line Dict primitives (keys/get/new/set); the host drives the
   // insertion-order iteration and per-entry marshalling, so no wasm loop is
   // emitted. Keys/values are anyref (boxed), so one set serves every dict.
   if any_export_uses_dict(anf.lib_exports) {
-    funcs = funcs
-      .append(FuncDef.{
+    funcs = .append(
+      FuncDef.{
         name: "__lib_dict_keys",
         params: [.Anyref],
         results: [.Ref(false, .Named("rt_types__Array"))],
@@ -482,8 +484,9 @@ fn emit_lib_exports(
           .Call("rt_dict__keys"),
           .Call("rt_arr__to_array"),
         ],
-      })
-      .append(FuncDef.{
+      },
+    ).append(
+      FuncDef.{
         name: "__lib_dict_get",
         params: [.Anyref, .Anyref],
         results: [.Anyref],
@@ -494,15 +497,17 @@ fn emit_lib_exports(
           .LocalGet(1),
           .Call("rt_dict__get"),
         ],
-      })
-      .append(FuncDef.{
+      },
+    ).append(
+      FuncDef.{
         name: "__lib_dict_new",
         params: [],
         results: [.Ref(false, .Named("rt_types__PDict"))],
         locals: [],
         body: [.Call("rt_dict__make")],
-      })
-      .append(FuncDef.{
+      },
+    ).append(
+      FuncDef.{
         name: "__lib_dict_set",
         params: [.Anyref, .Anyref, .Anyref],
         results: [.Ref(false, .Named("rt_types__PDict"))],
@@ -514,12 +519,13 @@ fn emit_lib_exports(
           .LocalGet(2),
           .Call("rt_dict__set"),
         ],
-      })
-    exports = exports
-      .append(ExportDef.{ wasm_name: "__lib_dict_keys", func_sym: "__lib_dict_keys" })
-      .append(ExportDef.{ wasm_name: "__lib_dict_get", func_sym: "__lib_dict_get" })
-      .append(ExportDef.{ wasm_name: "__lib_dict_new", func_sym: "__lib_dict_new" })
-      .append(ExportDef.{ wasm_name: "__lib_dict_set", func_sym: "__lib_dict_set" })
+      },
+    )
+    exports = .append(ExportDef.{ wasm_name: "__lib_dict_keys", func_sym: "__lib_dict_keys" }).append(
+      ExportDef.{ wasm_name: "__lib_dict_get", func_sym: "__lib_dict_get" },
+    ).append(ExportDef.{ wasm_name: "__lib_dict_new", func_sym: "__lib_dict_new" }).append(
+      ExportDef.{ wasm_name: "__lib_dict_set", func_sym: "__lib_dict_set" },
+    )
   }
 
   // Per distinct record type anywhere in the export surface (incl. nested),
@@ -538,18 +544,20 @@ fn emit_lib_exports(
   for name, rec in records {
     case rec {
       .Rec(rec_name, sym, fields) => {
-        funcs = funcs
-          .append(emit_record_read(rec_name, sym, fields, env))
-          .append(emit_record_make(rec_name, sym, fields, env))
-        exports = exports
-          .append(ExportDef.{
+        funcs = .append(emit_record_read(rec_name, sym, fields, env)).append(
+          emit_record_make(rec_name, sym, fields, env),
+        )
+        exports = .append(
+          ExportDef.{
             wasm_name: "__lib_read_rec_${rec_name}",
             func_sym: "__lib_read_rec_${rec_name}",
-          })
-          .append(ExportDef.{
+          },
+        ).append(
+          ExportDef.{
             wasm_name: "__lib_make_rec_${rec_name}",
             func_sym: "__lib_make_rec_${rec_name}",
-          })
+          },
+        )
       },
       _ => {},
     }
@@ -584,12 +592,12 @@ fn emit_record_read(name: String, sym: String, fields: Vector<LibField>, env: Re
   idx := 0
 
   for f in fields {
-    body = body.append(.LocalGet(0)).append(.RefCast(false, .Named(sym))).append(.StructGet(sym, idx))
+    body = .append(.LocalGet(0)).append(.RefCast(false, .Named(sym))).append(.StructGet(sym, idx))
     body = emit_box_lib_field(f.ty, env, body)
     idx = idx + 1
   }
 
-  body = body.append(.ArrayNewFixed("rt_types__Array", fields.len()))
+  body = .append(.ArrayNewFixed("rt_types__Array", fields.len()))
   FuncDef.{
     name: "__lib_read_rec_${name}",
     params: [.Anyref],
@@ -606,15 +614,12 @@ fn emit_record_make(name: String, sym: String, fields: Vector<LibField>, env: Re
   idx := 0
 
   for f in fields {
-    body = body
-      .append(.LocalGet(0))
-      .append(.I32Const(idx))
-      .append(.ArrayGet("rt_types__Array"))
+    body = .append(.LocalGet(0)).append(.I32Const(idx)).append(.ArrayGet("rt_types__Array"))
     body = emit_unbox_lib_field(f.ty, env, body)
     idx = idx + 1
   }
 
-  body = body.append(.StructNew(sym))
+  body = .append(.StructNew(sym))
   FuncDef.{
     name: "__lib_make_rec_${name}",
     params: [.Ref(false, .Named("rt_types__Array"))],

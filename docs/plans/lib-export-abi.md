@@ -132,12 +132,16 @@ Data flow: `guest each_line → CallRef(universal) → trampoline → import
 __lib_cb_S → registry[cbid] → jsFn → marshalled return → trampoline boxes →
 guest`.
 
-### 3. Compound values — `Vector`, `Dict`, records
+### 3. Compound values — `Vector`, `Dict`, records — **shipped**
 
 `Vector`, `Dict`, and records cross the boundary as **plain JS arrays / objects /
 Maps** (JSON-ish copy at the edge), as args and returns, recursively
 (`Vector<Record>`, `Dict<String, Vector<Row>>`, record-with-`Vector`-field).
-Functions inside compounds stay out.
+Functions inside compounds stay out. The bridge gained `boxed_int/boxed_float`
+accessors; codegen emits generic vec/dict primitives (reusing
+`rt_arr__to_array`/`from_array` and the `rt_dict__*` ABI) plus per-record
+read/make helpers; the host walks the recursive descriptor. See
+[lib-export-compound-values.md](archive/lib-export-compound-values.md).
 
 **Why copy, not live handles.** The host gets ordinary JS values, matching
 `loadLib`'s purpose. Live GC-ref handles would need the *same* per-type guest
