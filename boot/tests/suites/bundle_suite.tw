@@ -26,6 +26,12 @@ pub fn suite() runner.Suite {
         try assert.equal(bundle.runtime_pin(""), "latest")
         try assert.is_true(bundle.is_released_version("1.2.3"))
         try assert.is_false(bundle.is_released_version("dev"))
+
+        // Prerelease / build-metadata tags have no guaranteed published exact
+        // match, so they fall back to latest rather than pinning an absent one.
+        try assert.is_false(bundle.is_released_version("0.16.0-dev"))
+        try assert.is_false(bundle.is_released_version("0.16.0+local"))
+        try assert.equal(bundle.runtime_pin("0.16.0-rc.1"), "latest")
         .Ok({})
       },
     )
@@ -47,6 +53,7 @@ pub fn suite() runner.Suite {
       "generated host discovers exports rather than naming any",
       fn() {
         main := try content_of(bundle.node_files("demo", "0.15.0"), "main.mjs")
+
         // Library-agnostic: enumerates loadLib's keys, never a scaffold export.
         try assert.str_contains(main, "Object.keys(lib)")
         try assert.is_false(main.contains(".add("))

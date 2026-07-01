@@ -90,7 +90,9 @@ JS `apply(closureRef, args)` helper in the runtime.
 
 ## Non-goals (for this plan)
 
-* Multiple lib entries per project — still a single `[lib] entry`.
+* ~~Multiple lib entries per project — still a single `[lib] entry`.~~ Shipped
+  later in [platform-build-bundles.md](platform-build-bundles.md); this plan
+  predates it and assumed a single entry.
 * Changing the v1 selection/emission/DCE architecture; this plan only widens
   type marshalling.
 * `hard error` mode for ineligible members — warn-and-skip remains the policy for

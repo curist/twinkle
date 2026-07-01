@@ -53,8 +53,11 @@ build_cmd := command
   .make("build", "Compile to linked WAT or Wasm")
   .add_positional("file", "Path to a .tw source file (omit for project mode)")
   .add_short_option("output", "o", "Output path (.wat or .wasm)")
-  .add_option("target", "In project mode, the project entry to build")
-  .add_flag("all", "In project mode, build every project entry")
+  .add_option(
+    "target",
+    "In project mode, the entry to build; also selects a lib entry with --lib/--node/--web",
+  )
+  .add_flag("all", "In project mode, build every entry; every lib entry with --lib/--node/--web")
   .add_flag("lib", "Build the configured library entry and export eligible pub members")
   .add_flag(
     "node",

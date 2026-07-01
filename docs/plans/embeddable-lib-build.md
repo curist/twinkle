@@ -152,7 +152,7 @@ Shape:
 import { loadLib } from "@twinkle-lang/twinkle";          // Node
 // import { loadLib } from "@twinkle-lang/twinkle/web";   // browser
 
-const lib = await loadLib(new URL("./target/mathx.lib.wasm", import.meta.url), {
+const lib = await loadLib(new URL("./target/mathx/mathx.lib.wasm", import.meta.url), {
   imports: { /* externs the lib declares, if any */ },
 });
 
@@ -202,7 +202,9 @@ it covers (kept here so the direction is on record):
   (`$closure_*`) codegen already emits, plus a JS `apply(closureRef, args)` helper.
 * **Compound values** (records / arrays / dicts) crossing the boundary, e.g. via a
   JSON-ish encode/decode at the edge rather than live GC refs.
-* **Multiple lib entries** per project (v1 supports a single `[lib] entry`).
+* ~~**Multiple lib entries** per project~~ — **shipped** in
+  [platform-build-bundles.md](platform-build-bundles.md): `[lib] entries = [...]`
+  with `--target` / `--all` selection.
 * **`hard error` mode** for ineligible `pub` members, if warn-and-skip proves too
   permissive in practice (v1 warns and skips).
 

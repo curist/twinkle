@@ -40,14 +40,25 @@ pub fn runtime_pin(version: String) String {
   }
 }
 
-/// Whether `version` names a published release (starts with a digit, e.g.
-/// `0.15.0`). The dev fallback compiler reports `dev`, which is not released.
+/// Whether `version` names a plain published release: a dotted numeric semver
+/// like `0.15.0`, with no prerelease or build-metadata suffix. The dev fallback
+/// reports `dev` (rejected), and a suffixed version like `0.16.0-dev` or
+/// `0.16.0+local` has no guaranteed published exact match, so it is treated as
+/// unreleased and pins `latest` with a caution rather than an absent version.
 pub fn is_released_version(version: String) Bool {
-  if version == "" {
+  if version == "" or !version[0].is_digit() {
     return false
   }
 
-  version[0].is_digit()
+  for b in version {
+    // ASCII '.' is 0x2E. Anything outside [0-9.] (notably '-' or '+') means a
+    // prerelease/build-metadata tag, which we do not exact-pin.
+    if !b.is_digit() and b != 0x2E {
+      return false
+    }
+  }
+
+  true
 }
 
 fn lines_to_file(lines: Vector<String>) String {
