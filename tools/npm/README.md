@@ -64,4 +64,7 @@ Compiler failures are returned as non-zero exit codes; host/runtime failures thr
 The existing browser `run(source, opts)` helper is still available and returns an
 exit code.
 
-Requires Node.js ≥ 22 for the Node APIs. Browser APIs require WebAssembly GC.
+Requires Node.js ≥ 26 for the Node APIs — the `twk` binary imports the task ABI
+(the `lsp` command uses Channel/Task), so it needs a runtime with WebAssembly
+JSPI (`WebAssembly.Suspending`/`promising`) enabled by default. Browser APIs
+require WebAssembly GC and JSPI.

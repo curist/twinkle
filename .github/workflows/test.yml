@@ -38,7 +38,11 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          # 26 enables WebAssembly JSPI (Suspending/promising) by default. The
+          # self-hosted `twk` binary imports the task ABI (the `lsp` command uses
+          # Channel/Task), so it needs a JSPI-capable runtime to instantiate at
+          # all — even for `twk build`. Node 24 gates JSPI behind a flag.
+          node-version: 26
 
       - name: Run tests
         run: make test
