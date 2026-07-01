@@ -1,0 +1,45 @@
+fn get_row_column(free_rows: Vector<Bool>, free_maxs: Vector<Bool>, free_mins: Vector<Bool>, r: Int, c: Int) Bool {
+  free_rows[r] and free_maxs[c + r] and free_mins[c - r + 7]
+}
+
+// Returns true if a full solution is found from column `c`.
+fn place(free_rows: Vector<Bool>, free_maxs: Vector<Bool>, free_mins: Vector<Bool>, c: Int) Bool {
+  if c == 8 {
+    true
+  } else {
+    solved := false
+    r := 0
+    for !solved and r < 8 {
+      if get_row_column(free_rows, free_maxs, free_mins, r, c) {
+        fr := free_rows.set_at(r, false)
+        fx := free_maxs.set_at(c + r, false)
+        fm := free_mins.set_at(c - r + 7, false)
+        if place(fr, fx, fm, c + 1) {
+          solved = true
+        }
+      }
+      r = r + 1
+    }
+    solved
+  }
+}
+
+pub warmup := 10
+pub iters := 40
+pub size := 1000
+pub expected := 1000
+
+pub fn run(size: Int) Int {
+  count := 0
+  n := 0
+  for n < size {
+    free_rows: Vector<Bool> = collect i in range(8) { true }
+    free_maxs: Vector<Bool> = collect i in range(15) { true }
+    free_mins: Vector<Bool> = collect i in range(15) { true }
+    if place(free_rows, free_maxs, free_mins, 0) {
+      count = count + 1
+    }
+    n = n + 1
+  }
+  count
+}

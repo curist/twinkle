@@ -3,9 +3,11 @@ use .harness
 use .smoke
 use .mandelbrot
 use .sieve
+use .queens
 
 harness.run_all([
   Benchmark.{ name: "smoke", warmup: smoke.warmup, iters: smoke.iters, size: smoke.size, expected: smoke.expected, run: smoke.run },
   Benchmark.{ name: "mandelbrot", warmup: mandelbrot.warmup, iters: mandelbrot.iters, size: mandelbrot.size, expected: mandelbrot.expected, run: mandelbrot.run },
   Benchmark.{ name: "sieve", warmup: sieve.warmup, iters: sieve.iters, size: sieve.size, expected: sieve.expected, run: sieve.run },
+  Benchmark.{ name: "queens", warmup: queens.warmup, iters: queens.iters, size: queens.size, expected: queens.expected, run: queens.run },
 ])

@@ -5,6 +5,7 @@ func main() {
 		smokeBench,
 		mandelbrotBench,
 		sieveBench,
+		queensBench,
 	}
 	for _, b := range benches {
 		RunBench(b)
