@@ -69,15 +69,59 @@ The headline follow-up. `pub fn greet(name: String) String` (and
 
 ### 2. Function-typed (callback) parameters
 
-`pub fn each_line(text: String, f: fn(String) Void)`, where the host passes a JS
-callback. This is essentially a **dynamic `extern`**: it reuses the runtime's
-host-function wrapping (`resolveExternImports`), bound per call instead of at
-instantiate time.
+`pub fn each_line(text: String, f: fn(String) Void)` — and value-returning
+callbacks like `fn(Int) Bool` / `fn(String) String` — where the host passes a JS
+callback. Together with §1, **String + callback params** form what the v1 design
+called "approach C".
 
-* The exported function takes a guest closure; `loadLib` wraps the JS callback in
-  a guest-callable closure for the duration of the call.
-* Together with §1, **String + callback params** form what the v1 design called
-  "approach C".
+**Scope.** Callbacks are invoked **synchronously** during the export call (no
+JSPI needed). Callback arg and return types are restricted to the §1 set
+(primitives + `String`; `Void` allowed as a return). Callbacks whose own
+parameters are compound (`Vector`/`Dict`/record) or themselves functions are
+skipped with a warning, same as any other ineligible member.
+
+**Why it can't be a plain guest closure handed over from JS.** A Wasm GC
+closure's funcref must point at a *wasm* function, and funcrefs are
+instance-bound — JS cannot fabricate one. So the guest builds the closure; JS
+only supplies a callback id and drives it through an import.
+
+**The uniform-funcref insight.** When the guest calls a closure it can't
+statically type (any host-supplied one), it uses the closure's **universal
+funcref** (field 0), whose type is the single, arity/type-agnostic
+`rt_types__ClosureFunc: (env: anyref, args: anyref-array) → anyref` — args boxed
+and packed into an `rt_types__Array`, result boxed. `ref.test` for the concrete
+typed struct fails on a host-supplied closure, so the universal path is always
+taken. This means one trampoline *type*, not one per signature.
+
+* **`LibType`** gains its first recursive variant,
+  `Fn(params: Vector<LibType>, ret: LibType)`. The classifier `lib_type` recurses:
+  a param typed `fn(A…) R` is eligible iff every `A` and `R` is an eligible
+  `LibType`. The `twinkle.exports` descriptor for such an arg nests —
+  `{"kind":"fn","args":[…],"ret":…}` — leaves staying bare strings, exactly the
+  JSON nesting §1 established.
+* **Codegen** emits, per distinct callback signature `S` that appears in a lib
+  export param (only in a `--lib` build):
+  * a wasm **trampoline** of type `rt_types__ClosureFunc`. Body: unbox `cbid`
+    from `env` (i31), unpack the args array and `emit_unbox_from_anyref` each
+    element to its native type, call the per-signature host import, then
+    `emit_box_to_anyref` the result. All four helpers already exist.
+  * a host **import** `__lib_cb_<S>(cbid: i32, …native args) → native ret` — its
+    params/result are native boundary types (i64/f64/i32/`String` ref), so the
+    JS side reuses §1's `coerceLibArg`/`coerceLibReturn` unchanged.
+  * an exported **constructor** `__lib_make_cb_<S>(cbid: i32) → anyref` building
+    the generic 2-field `rt_types__Closure { funcref: trampoline, env: i31(cbid) }`
+    guest-side, where `ref.func` is legal.
+* **`loadLib`** keeps a per-lib callback **registry** (monotonic id → JS fn, so a
+  callback reentering the lib is safe). For an arg whose descriptor is `fn`:
+  allocate a `cbid`, register the JS callback, call `__lib_make_cb_<S>(cbid)` to
+  get the closure ref, pass it into the export, and unregister after the
+  top-level export returns. The provided `__lib_cb_<S>` import looks up `cbid`,
+  marshals the guest args → JS per the nested descriptor, invokes the callback,
+  and marshals the return JS → guest.
+
+Data flow: `guest each_line → CallRef(universal) → trampoline → import
+__lib_cb_S → registry[cbid] → jsFn → marshalled return → trampoline boxes →
+guest`.
 
 ### 3. Compound values — `Vector`, `Dict`, records
 
