@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { resolveExternImports } from "./runtime.mjs";
+import { resolveExternImports, instantiateBridge } from "./runtime.mjs";
 import { bridgeBytes } from "./bridge_bytes.mjs";
 import { compile, loadLib } from "./index.mjs";
 
@@ -81,6 +81,14 @@ test("skips non-function imports", () => {
   );
   assert.deepEqual(missing, []);
   assert.equal(found.length, 0);
+});
+
+test("bridge round-trips boxed int and float", () => {
+  const b = instantiateBridge();
+  const bi = b.boxed_int_new(9007199254740993n); // > 2^53, must stay exact
+  assert.equal(b.boxed_int_get(bi), 9007199254740993n);
+  const bf = b.boxed_float_new(3.5);
+  assert.equal(b.boxed_float_get(bf), 3.5);
 });
 
 test("loadLib exposes primitive and String pub exports and skips ineligible ones", async () => {

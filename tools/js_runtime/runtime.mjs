@@ -638,7 +638,7 @@ export function createMemoryHost(initialFiles) {
 
 // The bridge is stateless except for its staging memory, which is reset per
 // run; instantiate a fresh one each call so concurrent runs don't share it.
-function instantiateBridge() {
+export function instantiateBridge() {
   const bridgeModule = new WebAssembly.Module(bridgeBytes);
   const bridgeInstance = new WebAssembly.Instance(bridgeModule);
   return bridgeInstance.exports;

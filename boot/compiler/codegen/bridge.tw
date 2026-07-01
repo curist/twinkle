@@ -31,6 +31,22 @@ fn i31_ref() ValType {
   .Ref(false, .I31)
 }
 
+fn boxed_int_null() ValType {
+  .Ref(true, .Named("BoxedInt"))
+}
+
+fn boxed_int_ref() ValType {
+  .Ref(false, .Named("BoxedInt"))
+}
+
+fn boxed_float_null() ValType {
+  .Ref(true, .Named("BoxedFloat"))
+}
+
+fn boxed_float_ref() ValType {
+  .Ref(false, .Named("BoxedFloat"))
+}
+
 fn export(f: FuncDef) ExportDef {
   .{ wasm_name: f.name, func_sym: f.name }
 }
@@ -49,6 +65,8 @@ fn types() Vector<TypeDef> {
       .None,
       true,
     ),
+    .Struct("BoxedInt", [.{ name: .Some("v"), mutable: false, ty: .I64 }], .None, true),
+    .Struct("BoxedFloat", [.{ name: .Some("v"), mutable: false, ty: .F64 }], .None, true),
   ]
 }
 
@@ -130,6 +148,34 @@ fn funcs() Vector<FuncDef> {
       results: [.I32],
       locals: [],
       body: [.LocalGet(0), .I31GetS],
+    },
+    .{
+      name: "boxed_int_new",
+      params: [.I64],
+      results: [boxed_int_ref()],
+      locals: [],
+      body: [.LocalGet(0), .StructNew("BoxedInt")],
+    },
+    .{
+      name: "boxed_int_get",
+      params: [boxed_int_null()],
+      results: [.I64],
+      locals: [],
+      body: [.LocalGet(0), .StructGet("BoxedInt", 0)],
+    },
+    .{
+      name: "boxed_float_new",
+      params: [.F64],
+      results: [boxed_float_ref()],
+      locals: [],
+      body: [.LocalGet(0), .StructNew("BoxedFloat")],
+    },
+    .{
+      name: "boxed_float_get",
+      params: [boxed_float_null()],
+      results: [.F64],
+      locals: [],
+      body: [.LocalGet(0), .StructGet("BoxedFloat", 0)],
     },
   ]
 }
