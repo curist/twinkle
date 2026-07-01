@@ -103,6 +103,8 @@ Related historical context outside this folder:
 
 | Plan | Description |
 |------|-------------|
+| [awfy-benchmark-suite.md](awfy-benchmark-suite.md) | Design for the AWFY-style cross-language benchmark suite (9 micros + Json) comparing Twinkle's Wasm-GC output against Node/V8 and Go for compiler perf gap-finding; shipped at `examples/awfy/` |
+| [awfy-benchmark-suite-impl.md](awfy-benchmark-suite-impl.md) | Task-by-task implementation plan for the AWFY suite; shipped (per-language dirs, shared config, `run.sh` cross-language checksum diff, `make awfy`). Notable finding: Go FMA fusion had to be disabled for strict-IEEE checksum agreement |
 | [channels.md](channels.md) | CSP-style `Channel<T>` on top of the cooperative `Task` scheduler: unbuffered/bounded channels, `send`/`recv`/`close`, iterator support, and LSP migration away from `Cell` queues and poll loops |
 | [channels-impl-handoff.md](channels-impl-handoff.md) | Historical Phase 1 implementation handoff for the channel primitive, including compiler/runtime/stage0 integration notes |
 | [channels-phase2-handoff.md](channels-phase2-handoff.md) | Historical Phase 2 handoff for migrating the LSP queues to channels |
