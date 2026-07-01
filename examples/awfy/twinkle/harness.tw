@@ -1,0 +1,47 @@
+use @std.date
+
+pub type Benchmark = .{
+  name: String,
+  warmup: Int,
+  iters: Int,
+  size: Int,
+  expected: Int,
+  run: fn(Int) Int,
+}
+
+fn print_row(name: String, iters: Int, ms: Float, checksum: Int) {
+  println("twinkle\t${name}\t${iters}\t${ms}\t${checksum}")
+}
+
+fn run_one(b: Benchmark) {
+  // Warmup: results discarded, but guard against DCE.
+  w := 0
+  warm_sink := 0
+  for w < b.warmup {
+    warm_sink = warm_sink ^ b.run(b.size)
+    w = w + 1
+  }
+  if warm_sink == 0x7fffffffffffffff {
+    println("unreachable ${warm_sink}")
+  }
+
+  start := date.now()
+  i := 0
+  checksum := 0
+  for i < b.iters {
+    checksum = b.run(b.size)
+    i = i + 1
+  }
+  elapsed := date.now() - start
+
+  if checksum != b.expected {
+    error("${b.name}: checksum ${checksum} != expected ${b.expected}")
+  }
+  print_row(b.name, b.iters, elapsed, checksum)
+}
+
+pub fn run_all(benches: Vector<Benchmark>) {
+  for b in benches {
+    run_one(b)
+  }
+}

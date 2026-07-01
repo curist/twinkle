@@ -1,0 +1,14 @@
+pub warmup := 1
+pub iters := 1
+pub size := 3
+pub expected := 6
+
+pub fn run(size: Int) Int {
+  sum := 0
+  i := 1
+  for i <= size {
+    sum = sum + i
+    i = i + 1
+  }
+  sum
+}

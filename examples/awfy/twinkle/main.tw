@@ -1,0 +1,7 @@
+use .harness.{Benchmark}
+use .harness
+use .smoke
+
+harness.run_all([
+  Benchmark.{ name: "smoke", warmup: smoke.warmup, iters: smoke.iters, size: smoke.size, expected: smoke.expected, run: smoke.run },
+])
