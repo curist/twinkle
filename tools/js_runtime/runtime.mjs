@@ -1120,9 +1120,28 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
     hostImports.task = scheduler.imports;
   }
 
+  // Provide host-callback imports (twinkle.lib.cb_*) before auto-bridging so
+  // fn-typed lib-export params are recognized as host-provided. Inert unless the
+  // module is a lib build with callback params.
+  const exportMeta = readExportMeta(mainModule);
+  const callbackRegistry = makeCallbackRegistry();
+  provideCallbackImports(hostImports, exportMeta, b, callbackRegistry);
+
   autoBridgeExternImports(mainModule, hostImports, b, jspi, imports, externMeta);
 
-  return { mainModule, hostImports, b, runtime, imports, externMeta, jspi, needsTasks, scheduler };
+  return {
+    mainModule,
+    hostImports,
+    b,
+    runtime,
+    imports,
+    externMeta,
+    exportMeta,
+    callbackRegistry,
+    jspi,
+    needsTasks,
+    scheduler,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1157,9 +1176,36 @@ export function runWasmBytes(wasmBytes, opts = {}) {
 // either a Number or a BigInt as an argument (coercing to BigInt for the call),
 // but return the BigInt unchanged so no precision is lost — the host downcasts
 // to Number itself when it knows the value fits.
+// Native ABI tag for a lib marshal descriptor, mirroring the boot `cb_sig_key`
+// so a callback's guest constructor/import names line up.
+function libNativeTag(kind) {
+  if (kind && typeof kind === "object" && kind.kind === "fn") return "fn";
+  switch (kind) {
+    case "int": return "i64";
+    case "float": return "f64";
+    case "bool": return "i32";
+    case "str": return "str";
+    case "void": return "void";
+    default: return "any";
+  }
+}
+
+// Distinct-signature key for a callback descriptor, matching boot `cb_sig_key`.
+function cbKey(desc) {
+  const args = (desc.args ?? []).map(libNativeTag).join("_");
+  return `${args}__${libNativeTag(desc.ret)}`;
+}
+
 // `b` is the embedded bridge, used to marshal String (a guest GC ref) across the
-// boundary — the same path the extern "str" marshalling uses.
-function coerceLibArg(value, kind, b) {
+// boundary — the same path the extern "str" marshalling uses. `instance`,
+// `registry`, and `ids` are only needed for `fn`-typed (callback) args, where a
+// JS callback is registered and turned into a guest closure guest-side.
+function coerceLibArg(value, kind, b, instance, registry, ids) {
+  if (kind && typeof kind === "object" && kind.kind === "fn") {
+    const cbid = registry.add(value);
+    if (ids) ids.push(cbid);
+    return instance.exports["__lib_make_cb_" + cbKey(kind)](cbid);
+  }
   switch (kind) {
     case "int": return typeof value === "bigint" ? value : BigInt(value);
     case "float": return Number(value);
@@ -1181,14 +1227,58 @@ function coerceLibReturn(value, kind, b) {
   }
 }
 
+// A monotonic callback registry: JS callbacks are registered under an id passed
+// to the guest closure's env; ids are dropped after the top-level export returns
+// (a Map + monotonic counter keeps nested lib re-entry safe).
+function makeCallbackRegistry() {
+  return {
+    next: 1,
+    map: new Map(),
+    add(fn) {
+      const id = this.next++;
+      this.map.set(id, fn);
+      return id;
+    },
+    get(id) {
+      return this.map.get(id);
+    },
+    drop(id) {
+      this.map.delete(id);
+    },
+  };
+}
+
+// Provide a `twinkle.lib.cb_<key>` host import for every distinct callback
+// signature that appears in an export's params. The import looks up the JS
+// callback by cbid, marshals guest args → JS and the return JS → guest.
+function provideCallbackImports(hostImports, exportMeta, b, registry) {
+  const seen = new Set();
+  for (const meta of exportMeta) {
+    for (const desc of meta.args ?? []) {
+      if (!desc || typeof desc !== "object" || desc.kind !== "fn") continue;
+      const key = cbKey(desc);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const argKinds = desc.args ?? [];
+      hostImports["twinkle.lib"] = hostImports["twinkle.lib"] ?? {};
+      hostImports["twinkle.lib"]["cb_" + key] = (cbid, ...nativeArgs) => {
+        const jsFn = registry.get(cbid);
+        const jsArgs = nativeArgs.map((a, i) => coerceLibReturn(a, argKinds[i], b));
+        const result = jsFn(...jsArgs);
+        return desc.ret === "void" ? undefined : coerceLibArg(result, desc.ret, b);
+      };
+    }
+  }
+}
+
 export async function loadLibBytes(wasmBytes, opts = {}) {
-  const { mainModule, hostImports, b, runtime, imports, externMeta, jspi, needsTasks, scheduler } = prepareWasm(wasmBytes, opts, { jspi: hasJspi });
+  const { mainModule, hostImports, b, runtime, imports, externMeta, exportMeta, callbackRegistry, jspi, needsTasks, scheduler } = prepareWasm(wasmBytes, opts, { jspi: hasJspi });
 
   if (needsTasks && !hasJspi) {
     throw new Error("Task concurrency requires a JSPI-capable runtime.");
   }
 
-  const exportMeta = readExportMeta(mainModule);
+  const registry = callbackRegistry;
   const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta);
   runtime.instance = instance;
 
@@ -1216,8 +1306,15 @@ export async function loadLibBytes(wasmBytes, opts = {}) {
       lib[meta.name] = coerceLibReturn(fn(), meta.ret, b);
     } else {
       lib[meta.name] = (...args) => {
-        const coerced = (meta.args ?? []).map((kind, i) => coerceLibArg(args[i], kind, b));
-        return coerceLibReturn(fn(...coerced), meta.ret, b);
+        const ids = [];
+        const coerced = (meta.args ?? []).map(
+          (kind, i) => coerceLibArg(args[i], kind, b, instance, registry, ids),
+        );
+        try {
+          return coerceLibReturn(fn(...coerced), meta.ret, b);
+        } finally {
+          for (const id of ids) registry.drop(id);
+        }
       };
     }
   }

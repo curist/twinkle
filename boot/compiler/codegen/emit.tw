@@ -470,7 +470,15 @@ fn emit_callback_artifacts(
   }
 
   // Trampoline (rt_types__ClosureFunc): (env: anyref, args: anyref) -> anyref.
-  body: Vector<Instr> = [Instr.LocalGet(0), .RefCast(false, .I31), .I31GetS]
+  // The env is a 1-element ClosureEnv array holding the boxed cbid.
+  body: Vector<Instr> = [
+    Instr.LocalGet(0),
+    .RefCast(false, .Named("rt_types__ClosureEnv")),
+    .I32Const(0),
+    .ArrayGet("rt_types__ClosureEnv"),
+    .RefCast(false, .I31),
+    .I31GetS,
+  ]
 
   for i in 0..params.len() {
     body = body
@@ -504,6 +512,7 @@ fn emit_callback_artifacts(
       Instr.RefFunc("__lib_cb_tramp_${key}"),
       .LocalGet(0),
       .RefI31,
+      .ArrayNewFixed("rt_types__ClosureEnv", 1),
       .StructNew("rt_types__Closure"),
     ],
   }

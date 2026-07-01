@@ -125,3 +125,26 @@ test("loadLib exposes primitive and String pub exports and skips ineligible ones
   // Non-pub members are absent from the surface.
   assert.equal(lib.secret, undefined);
 });
+
+test("loadLib drives host callbacks (Void and value-returning)", async () => {
+  const src = [
+    "pub fn each_word(text: String, f: fn(String) Void) Void {",
+    "  for w in text.split(\" \") {",
+    "    f(w)",
+    "  }",
+    "}",
+    "",
+    "pub fn transform(n: Int, f: fn(Int) Int) Int {",
+    "  f(n)",
+    "}",
+  ].join("\n");
+  const wasm = await compile({ source: src }, { lib: true });
+  const lib = await loadLib(wasm);
+
+  const seen = [];
+  lib.each_word("a b c", (w) => seen.push(w));
+  assert.deepEqual(seen, ["a", "b", "c"]);
+
+  // Value-returning callback: JS return marshalled back into the guest.
+  assert.equal(lib.transform(21n, (n) => n * 2n), 42n);
+});
