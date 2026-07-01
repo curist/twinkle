@@ -94,6 +94,7 @@ Related historical context outside this folder:
 | [rebinding-through-path-lint.md](rebinding-through-path-lint.md) | `twk lint` L5 `direct-rebinding`: report-only lint flagging a `tmp := <path>` alias whose only use is rebinding-updates-then-copy-back, where direct field/index-path rebinding expresses the update. Report-only rule shipped (auto-fix deferred); structural AST visitor in `compiler/lint.tw` |
 | [project-subcommands.md](project-subcommands.md) | Project-aware CLI subcommands: no-argument project mode uses `twinkle.toml` entries for `fmt`, `lint`, `check`, `build`, `run`, and `test`, while explicit file mode remains one-off |
 | [js-package-browser-command-api.md](js-package-browser-command-api.md) | Browser `command(args, opts)` API for `@twinkle-lang/twinkle/web`, exposing the shipped compiler payload to embedders for `fmt`, `check`, `ir`, and `build` against an in-memory project |
+| [platform-build-bundles.md](platform-build-bundles.md) | `twk build --node`/`--web` emit runnable npm/Vite bundles under `target/<name>/{node,web}/` (library-agnostic `main.mjs`, version-pinned runtime, non-destructive regen); `--lib` output moved to the grouped `target/<name>/<name>.lib.wasm`; scaffold reverted to Twinkle-only; multiple `[lib] entries` with `--target`/`--all` selection |
 | [tooling.md](tooling.md) | Historical tooling and ecosystem roadmap from before the boot compiler became the primary implementation path |
 
 ---

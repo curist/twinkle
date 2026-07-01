@@ -16,7 +16,7 @@ letting npm/Vite resolve `@twinkle-lang/twinkle` is what keeps `twk` from having
 to emit `runtime.mjs`.
 
 This builds directly on the embeddable lib build
-([embeddable-lib-build.md](embeddable-lib-build.md)): that plan added
+([embeddable-lib-build.md](../embeddable-lib-build.md)): that plan added
 `twk build --lib` (emit `target/<name>.lib.wasm`) and a compiler-free `loadLib`.
 The gap it left is that the raw `.lib.wasm` is not runnable on its own — the user
 still has to assemble a host, and the scaffold dropped `host.mjs` / `index.html`
@@ -268,8 +268,8 @@ feature. Required follow-through:
 
 * Update `default_lib_output_path` (`context.tw`) and `default_lib_build_output`
   (`build.tw`) to the grouped path.
-* Update doc references — [embeddable-lib-build.md](embeddable-lib-build.md) and
-  [lib-export-abi.md](lib-export-abi.md) both cite `target/<name>.lib.wasm`.
+* Update doc references — [embeddable-lib-build.md](../embeddable-lib-build.md) and
+  [lib-export-abi.md](../lib-export-abi.md) both cite `target/<name>.lib.wasm`.
 * Add/adjust tests for the new default path in **both** project mode and the
   explicit-file form (`twk build --lib file.tw`), and confirm `-o` still
   overrides for `--lib` alone.
