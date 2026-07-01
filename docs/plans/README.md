@@ -48,6 +48,7 @@ Self-hosting is complete. Historical design and status docs live in
 | Tooling | Formatter (done), linter, LSP, package manager | In Progress | [tooling.md](tooling.md) |
 | Embeddable lib build | `twk build --lib` exports the entry's `pub` primitive functions/values as named wasm exports; compiler-free `loadLib` + Node/web scaffold harness | Done | [embeddable-lib-build.md](embeddable-lib-build.md) |
 | Full lib-export ABI | Widen lib exports beyond primitives: `String` + callbacks (shipped), `Vector`/`Dict`/record, returned closures, with bridge-backed `loadLib` marshalling | In Progress | [lib-export-abi.md](lib-export-abi.md) |
+| Lib-export compound values | Increment 3: `Vector`/`Dict`/records (recursive, args+returns) as plain JS arrays/objects/Maps via a flat-array-tree codec + bridge boxed accessors | In Progress | [lib-export-compound-values.md](lib-export-compound-values.md) |
 | LSP enhancements | Document symbols, references, rename, signature help, semantic tokens, workspace symbols, highlights, inlay hints, folding, and incremental sync | Planned | [lsp-enhancements.md](lsp-enhancements.md) |
 | LSP code actions | Quick-fix actions: missing case arms, auto-import, function type annotations | Planned | [lsp-code-actions.md](lsp-code-actions.md) |
 | LSP contract hover | Hover information for builtin contract bounds and contract-backed method calls | Done | [archive/lsp-contract-hover.md](archive/lsp-contract-hover.md) |
