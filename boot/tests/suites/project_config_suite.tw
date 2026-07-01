@@ -13,7 +13,7 @@ pub fn suite() runner.Suite {
         try assert.equal(cfg.name, .None)
         try assert.equal(cfg.project_entries.len(), 0)
         try assert.equal(cfg.test_entries.len(), 0)
-        try assert.equal(cfg.lib_entry, .None)
+        try assert.equal(cfg.lib_entries.len(), 0)
         .Ok({})
       },
     )
@@ -48,10 +48,21 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "lib section entry parses",
+      "lib section entry shorthand parses to a one-element list",
       fn() {
         cfg := try config.parse("[lib]\nentry = \"demo.tw\"\n")
-        try assert.equal(cfg.lib_entry, .Some("demo.tw"))
+        try assert.equal(cfg.lib_entries.len(), 1)
+        try assert.equal(cfg.lib_entries[0], "demo.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "lib section entries list parses",
+      fn() {
+        cfg := try config.parse("[lib]\nentries = [\"math.tw\", \"text.tw\"]\n")
+        try assert.equal(cfg.lib_entries.len(), 2)
+        try assert.equal(cfg.lib_entries[0], "math.tw")
+        try assert.equal(cfg.lib_entries[1], "text.tw")
         .Ok({})
       },
     )

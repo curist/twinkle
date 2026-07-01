@@ -115,18 +115,10 @@ pub fn run_build_command(parsed: ParseResult) {
   }
 }
 
-// Project mode lib build: there is a single `[lib]` entry, so `--target` /
-// `--all` have nothing to select and are rejected for the whole lib family.
+// Project mode lib build: select the lib entries with the project-build
+// semantics (`--all` / `--target <name>` / the sole entry) and build each,
+// emitting bundles for `--node` / `--web` or the raw wasm otherwise.
 fn run_build_lib_project(parsed: ParseResult, want_node: Bool, want_web: Bool) {
-  if parsed.has_flag("all") {
-    eprintln("error: --all cannot be used with lib builds (--lib/--node/--web)")
-    proc.exit(1)
-  }
-  if parsed.get_option("target").is_some() {
-    eprintln("error: --target cannot be used with lib builds (--lib/--node/--web)")
-    proc.exit(1)
-  }
-
   ctx := case context.discover() {
     .Ok(c) => c,
     .Err(err) => {
@@ -134,34 +126,54 @@ fn run_build_lib_project(parsed: ParseResult, want_node: Bool, want_web: Bool) {
       proc.exit(1)
     },
   }
-  entry := case ctx.lib_entry {
-    .Some(e) => e,
-    .None => {
-      eprintln("error: no [lib] entry configured in twinkle.toml")
+  targets := case ctx.select_lib_targets(parsed.get_option("target"), parsed.has_flag("all")) {
+    .Ok(t) => t,
+    .Err(msg) => {
+      eprintln("error: ${msg}")
       proc.exit(1)
     },
   }
 
-  if want_node or want_web {
-    if !build_lib_bundles(entry.abs_path, ctx.root, entry.name, want_node, want_web) {
-      proc.exit(1)
+  if targets.len() == 0 {
+    eprintln("error: no [lib] entry configured in twinkle.toml")
+    proc.exit(1)
+  }
+
+  output_opt := parsed.get_option("output")
+
+  // `-o` names one file, so it cannot fan out across multiple lib targets.
+  if targets.len() > 1 and output_opt.is_some() {
+    eprintln(
+      "error: -o cannot be used when building multiple lib targets; pass --target or drop -o",
+    )
+    proc.exit(1)
+  }
+
+  failed := false
+
+  for entry in targets {
+    ok := if want_node or want_web {
+      build_lib_bundles(entry.abs_path, ctx.root, entry.name, want_node, want_web)
+    } else {
+      out := case output_opt {
+        .Some(o) => case validate_output_ext(o) {
+          .Ok(valid) => valid,
+          .Err(msg) => {
+            eprintln(msg)
+            proc.exit(1)
+          },
+        },
+        .None => ctx.default_lib_output_path(entry),
+      }
+      build_to(entry.abs_path, out, Dict.new(), true).ok
     }
 
-    return
+    if !ok {
+      failed = true
+    }
   }
 
-  out := case parsed.get_option("output") {
-    .Some(o) => case validate_output_ext(o) {
-      .Ok(valid) => valid,
-      .Err(msg) => {
-        eprintln(msg)
-        proc.exit(1)
-      },
-    },
-    .None => ctx.default_lib_output_path(entry),
-  }
-
-  if !build_to(entry.abs_path, out, Dict.new(), true).ok {
+  if failed {
     proc.exit(1)
   }
 }

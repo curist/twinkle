@@ -6,11 +6,11 @@ use lib.project.config
 use lib.project.context
 
 fn cfg_with(name: String?, project: Vector<String>, test: Vector<String>) config.Config {
-  config.Config.{ name, project_entries: project, test_entries: test, lib_entry: .None }
+  config.Config.{ name, project_entries: project, test_entries: test, lib_entries: [] }
 }
 
-fn cfg_with_lib(name: String?, project: Vector<String>, test: Vector<String>, lib_entry: String?) config.Config {
-  config.Config.{ name, project_entries: project, test_entries: test, lib_entry }
+fn cfg_with_lib(name: String?, project: Vector<String>, test: Vector<String>, lib: Vector<String>) config.Config {
+  config.Config.{ name, project_entries: project, test_entries: test, lib_entries: lib }
 }
 
 fn fixture_root() String {
@@ -208,24 +208,54 @@ pub fn suite() runner.Suite {
     .test(
       "default_lib_output_path is grouped under <root>/target/<name>/",
       fn() {
-        cfg := cfg_with_lib(.None, ["cmd/server.tw"], [], .Some("demo.tw"))
+        cfg := cfg_with_lib(.None, ["cmd/server.tw"], [], ["demo.tw"])
         ctx := try context.from_root("/proj", cfg)
-        entry := try ctx.lib_entry.ok_or("expected a lib entry")
-        out := ctx.default_lib_output_path(entry)
+        try assert.equal(ctx.lib_entries.len(), 1)
+        out := ctx.default_lib_output_path(ctx.lib_entries[0])
         try assert.equal(out, "/proj/target/demo/demo.lib.wasm")
         try assert.equal(context.bundle_dir("/proj", "demo"), "/proj/target/demo")
         .Ok({})
       },
     )
     .test(
+      "select_lib_targets mirrors project-build selection",
+      fn() {
+        cfg := cfg_with_lib(.None, [], [], ["math.tw", "text.tw"])
+        ctx := try context.from_root("/proj", cfg)
+
+        // Ambiguous without a selector.
+        try assert.is_err(ctx.select_lib_targets(.None, false))
+
+        all := try ctx.select_lib_targets(.None, true)
+        try assert.equal(all.len(), 2)
+
+        one := try ctx.select_lib_targets(.Some("text"), false)
+        try assert.equal(one.len(), 1)
+        try assert.equal(one[0].name, "text")
+
+        try assert.is_err(ctx.select_lib_targets(.Some("nope"), false))
+
+        // A sole lib entry needs no selector.
+        solo := try context.from_root("/proj", cfg_with_lib(.None, [], [], ["only.tw"]))
+        picked := try solo.select_lib_targets(.None, false)
+        try assert.equal(picked.len(), 1)
+        try assert.equal(picked[0].name, "only")
+        .Ok({})
+      },
+    )
+    .test(
+      "duplicate lib entry stems are rejected",
+      fn() {
+        // Same stem via different paths → ambiguous grouped output name.
+        cfg := cfg_with_lib(.None, [], [], ["math.tw", "sub/math.tw"])
+        try assert.is_err(context.from_root("/proj", cfg))
+        .Ok({})
+      },
+    )
+    .test(
       "all_entries is project entries followed by test and lib entries",
       fn() {
-        cfg := cfg_with_lib(
-          .None,
-          ["cmd/app.tw", "cmd/server.tw"],
-          ["tests/main.tw"],
-          .Some("demo.tw"),
-        )
+        cfg := cfg_with_lib(.None, ["cmd/app.tw", "cmd/server.tw"], ["tests/main.tw"], ["demo.tw"])
         ctx := try context.from_root("/proj", cfg)
         all := ctx.all_entries()
         try assert.equal(all.len(), 4)

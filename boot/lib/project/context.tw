@@ -33,7 +33,7 @@ pub type ProjectContext = .{
   config: config.Config,
   project_entries: Vector<EntryTarget>,
   test_entries: Vector<EntryTarget>,
-  lib_entry: EntryTarget?,
+  lib_entries: Vector<EntryTarget>,
 }
 
 /// Derive a target name from an entry's project-relative path. Target names are
@@ -61,14 +61,22 @@ pub fn discover_in(start: String) Result<ProjectContext, String> {
 pub fn from_root(root: String, cfg: config.Config) Result<ProjectContext, String> {
   project := build_entries(root, cfg.project_entries)
   test := build_entries(root, cfg.test_entries)
-  lib_entry: EntryTarget? = case cfg.lib_entry {
-    .Some(rel) => .Some(
-      EntryTarget.{ name: derive_target_name(rel), rel_path: rel, abs_path: path.join(root, rel) },
-    ),
-    .None => .None,
-  }
+  lib := build_entries(root, cfg.lib_entries)
   try reject_conflicts(project)
-  .Ok(ProjectContext.{ root, config: cfg, project_entries: project, test_entries: test, lib_entry })
+
+  // Lib entries key the grouped `target/<name>/` output, so their derived names
+  // must be unique among themselves (a lib entry may still share a stem with a
+  // project entry — the scaffold's `demo.tw` and `cmd/demo.tw` do).
+  try reject_conflicts(lib)
+  .Ok(
+    ProjectContext.{
+      root,
+      config: cfg,
+      project_entries: project,
+      test_entries: test,
+      lib_entries: lib,
+    },
+  )
 }
 
 fn build_entries(root: String, rels: Vector<String>) Vector<EntryTarget> {
@@ -99,12 +107,7 @@ fn reject_conflicts(entries: Vector<EntryTarget>) Result<Void, String> {
 /// All configured entries: project entries followed by test entries. This is
 /// the maintenance-command set (`fmt`, `lint`) per the project model.
 pub fn all_entries(ctx: ProjectContext) Vector<EntryTarget> {
-  out := ctx.project_entries.concat(ctx.test_entries)
-  case ctx.lib_entry {
-    .Some(e) => out = .append(e),
-    .None => {},
-  }
-  out
+  ctx.project_entries.concat(ctx.test_entries).concat(ctx.lib_entries)
 }
 
 /// Select one project entry to act on (`run`, `build --target`): the entry whose
@@ -155,6 +158,48 @@ pub fn select_build_targets(ctx: ProjectContext, target: String?, all: Bool) Res
       }
     },
   }
+}
+
+/// Select the lib entries to build (`build --lib`/`--node`/`--web`): `--all`
+/// builds every lib entry, `--target <name>` the named one, otherwise the sole
+/// lib entry. A zero-entry result is returned as an empty vector so the caller
+/// can emit the "no [lib] entry configured" message; only genuine ambiguity or
+/// an unknown target name errors here.
+pub fn select_lib_targets(ctx: ProjectContext, target: String?, all: Bool) Result<
+  Vector<EntryTarget>,
+  String,
+> {
+  if all {
+    return .Ok(ctx.lib_entries)
+  }
+
+  case target {
+    .Some(name) => {
+      e := try ctx.find_lib_target(name)
+      .Ok([e])
+    },
+    .None => {
+      entries := ctx.lib_entries
+      cond {
+        entries.len() <= 1 => .Ok(entries),
+        _ => .Err(
+          "multiple lib entries; pass --target <name> or --all (available: ${target_names(entries)})",
+        ),
+      }
+    },
+  }
+}
+
+// The lib entry whose derived target name is `name`, or an error listing the
+// available lib target names.
+fn find_lib_target(ctx: ProjectContext, name: String) Result<EntryTarget, String> {
+  for e in ctx.lib_entries {
+    if e.name == name {
+      return .Ok(e)
+    }
+  }
+
+  .Err("no lib entry named '${name}' (available: ${target_names(ctx.lib_entries)})")
 }
 
 // The project entry whose derived target name is `name`, or an error listing the

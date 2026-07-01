@@ -119,11 +119,11 @@ build or `--lib` **alone** (it overrides the wasm path). It is **rejected with
 `--node` / `--web`** (those emit directories) — error:
 `-o/--output cannot be combined with --node/--web`.
 
-**`--target` / `--all`** are **rejected for all lib-family builds in the first
-cut**, exactly as `--lib` already rejects them today — there is only one `[lib]
-entry`, so there is nothing to select. The only override is the explicit-file
-form (`twk build --node path/to/entry.tw`). `--target` / `--all` gain meaning
-only when multiple lib entries land (see Multi-entry, deferred).
+**`--target` / `--all`** select across the lib family exactly as they do for
+project builds: `--all` builds every lib entry, `--target <name>` the named one,
+and with a sole `[lib]` entry neither is required. They only become *necessary*
+once multiple lib entries are configured (see Multi-entry, shipped). The
+explicit-file form (`twk build --node path/to/entry.tw`) bypasses selection.
 
 ### Output layout — grouped, collision-safe
 
@@ -221,11 +221,9 @@ Wrote target/demo/web  →  cd target/demo/web && npm install && npm run dev
 
 ---
 
-## Multi-entry resolution (designed; implementation deferred)
+## Multi-entry resolution (shipped)
 
 The layout is keyed by `<name>`, so multiple lib entries slot in without churn.
-The shape below is decided so the first implementation doesn't paint us into a
-corner; only single-entry ships first.
 
 ### Config — a list, consistent with `[project]` / `[test]`
 
@@ -235,37 +233,30 @@ entries = ["math.tw", "text.tw"]   # canonical (like project/test)
 # entry = "demo.tw"                 # accepted shorthand → normalized to a 1-element list
 ```
 
-Config normalizes both forms to `Vector<String>`. Each entry's target name is its
-file stem (`derive_target_name`, as for project entries), producing
-`target/math/`, `target/text/`. Two lib entries with the same stem are rejected
-by the existing conflict check, extended to cover lib entries — names must be
-unique.
+Config normalizes both forms to `lib_entries: Vector<String>`. Each entry's
+target name is its file stem (`derive_target_name`, as for project entries),
+producing `target/math/`, `target/text/`. Two lib entries with the same stem are
+rejected by the shared `reject_conflicts` check (now run over lib entries too) —
+lib names must be unique among themselves, though a lib entry may still share a
+stem with a project entry (the scaffold's `demo.tw` and `cmd/demo.tw` do, and
+their outputs — `target/demo/` vs `target/demo.wasm` — don't collide).
 
 ### Selection — mirror project-build semantics, across the whole lib family
 
-Once multiple entries exist, `--target` / `--all` / default apply uniformly to
-`--lib`, `--node`, `--web`. **This is the deferred behavior** — in the first cut
-`--target` / `--all` are rejected (see CLI contract):
+`--target` / `--all` / default apply uniformly to `--lib`, `--node`, `--web` via
+`ProjectContext.select_lib_targets` (a lib analog of `select_build_targets`):
 
-| Invocation | Behavior (deferred) |
+| Invocation | Behavior |
 |---|---|
 | `twk build --web` (one lib entry) | builds that entry |
 | `twk build --web` (several) | error: "multiple lib entries; pass --target <name> or --all" |
 | `twk build --web --target math` | builds the `math` entry's web bundle |
 | `twk build --web --all` | builds web bundles for every lib entry |
-| `twk build --web path/to/x.tw` | builds that explicit file (works in the first cut too) |
+| `twk build --web path/to/x.tw` | builds that explicit file (bypasses selection) |
 
 Platform flags still combine (`--web --node --all` → both bundles for all
-entries).
-
-### Phasing
-
-1. **First cut** — single `[lib] entry` (string, as today) + `--node` / `--web`
-   + explicit-file selection + printed recipes + scaffold revert. `--target` /
-   `--all` are **rejected** for lib-family builds.
-2. **Deferred** — `entries` list parsing, `--target` / `--all` selection over lib
-   entries, and the multi-entry conflict check. No layout or CLI redesign needed
-   to add them — config parsing + a selection loop.
+entries). `-o` is rejected when the selection resolves to more than one lib
+target, mirroring project mode.
 
 ---
 
@@ -292,12 +283,12 @@ feature. Required follow-through:
 | Component | Change |
 |-----------|--------|
 | `boot/lib/project/scaffold.tw` + `project_scaffold_suite` | drop `node_host`/`web_host`/`package_json` templates and assertions; scaffold is Twinkle-only |
-| `boot/commands/build.tw` | `--node` / `--web` flags; reject `-o` and `--target`/`--all` with them; grouped `target/<name>/` output (incl. moved `--lib` path); build lib then write bundles non-destructively; print run recipes |
+| `boot/commands/build.tw` | `--node` / `--web` flags; reject `-o` with them; select lib targets via `--target`/`--all`/default and loop; grouped `target/<name>/` output (incl. moved `--lib` path); build lib then write bundles non-destructively; print run recipes |
 | `boot/main.tw` | register `--node` / `--web` on `build_cmd`; help text |
 | Bundle templates (new, in a `boot/lib/project/bundle.tw`) | library-agnostic `main.mjs` (node + web), `index.html`, `vite.config.js`, version-pinned `package.json` generators |
 | version source | read the compiler version (as `twk version` prints) to pin `@twinkle-lang/twinkle` |
-| `boot/lib/project/config.tw` (deferred) | parse `[lib] entries` list; keep `entry` shorthand |
-| `boot/lib/project/context.tw` (deferred) | resolve multiple lib entries; extend conflict rejection |
+| `boot/lib/project/config.tw` | `lib_entries: Vector<String>`; parse `[lib] entries` list + `entry` shorthand |
+| `boot/lib/project/context.tw` | `lib_entries: Vector<EntryTarget>`; `select_lib_targets`; `reject_conflicts` over lib entries |
 
 No stage0 change expected (the bundle emission is boot-only file writing).
 
