@@ -67,7 +67,16 @@ The headline follow-up. `pub fn greet(name: String) String` (and
   `coerceLibArg`/`coerceLibReturn` switch gains a `str` case backed by the
   bridge handle `loadLib` already holds.
 
-### 2. Function-typed (callback) parameters
+### 2. Function-typed (callback) parameters — **shipped**
+
+`pub fn each_word(text: String, f: fn(String) Void)` and value-returning
+callbacks like `fn(Int) Int` now cross the boundary: the host passes a plain JS
+callback, driven synchronously per call. `LibType` grew its first recursive
+variant `Fn(params, ret)`; codegen emits, per callback signature, a universal
+`rt_types__ClosureFunc` trampoline, a native-typed `twinkle.lib.cb_<key>` host
+import, and an exported `__lib_make_cb_<key>` constructor; `loadLib` keeps a
+callback registry and marshals args/returns with the Increment-1 coercers. See
+[lib-export-callback-params.md](archive/lib-export-callback-params.md).
 
 `pub fn each_line(text: String, f: fn(String) Void)` — and value-returning
 callbacks like `fn(Int) Bool` / `fn(String) String` — where the host passes a JS

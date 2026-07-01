@@ -446,12 +446,7 @@ fn emit_lib_exports(
 type CbArtifacts = .{ import_def: ImportDef, tramp: FuncDef, ctor: FuncDef }
 
 // Build the three wasm artifacts for one callback signature `key`.
-fn emit_callback_artifacts(
-  key: String,
-  params: Vector<LibType>,
-  ret: LibType,
-  env: ResolvedEnv,
-) CbArtifacts {
+fn emit_callback_artifacts(key: String, params: Vector<LibType>, ret: LibType, env: ResolvedEnv) CbArtifacts {
   native_params := collect p in params {
     lib_type_native_val_type(p)
   }
@@ -481,15 +476,13 @@ fn emit_callback_artifacts(
   ]
 
   for i in 0..params.len() {
-    body = body
-      .append(.LocalGet(1))
-      .append(.RefCast(false, .Named("rt_types__Array")))
-      .append(.I32Const(i))
-      .append(.ArrayGet("rt_types__Array"))
+    body = .append(.LocalGet(1)).append(.RefCast(false, .Named("rt_types__Array"))).append(
+      .I32Const(i),
+    ).append(.ArrayGet("rt_types__Array"))
     body = emit_unbox_from_anyref(lib_type_to_mono(params[i]), env, body)
   }
 
-  body = body.append(.Call(import_sym))
+  body = .append(.Call(import_sym))
   body = case ret {
     .Void => body.append(.I32Const(0)).append(.RefI31),
     _ => emit_box_to_anyref(lib_type_to_mono(ret), env, body),
