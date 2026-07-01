@@ -181,11 +181,17 @@ Build order (one branch, incremental tasks): bridge boxed accessors → `LibType
 compound variants + recursive classifier → recursive descriptor → Vector helpers
 → record helpers → Dict helpers → recursive JS marshaller → nesting.
 
-### 4. Returned closures
+### 4. Returned closures — **shipped**
 
-Handing JS a callable handle to a guest closure (`pub fn make_counter() fn() Int`),
-leaning on the typed-closure struct (`$closure_*`) codegen already emits, plus a
-JS `apply(closureRef, args)` helper in the runtime.
+A guest closure returned from an export (`pub fn adder(n: Int) fn(Int) Int`)
+becomes a **callable JS function**. The inverse of §2: rather than a per-signature
+constructor, one generic `__lib_apply(closure, args)` helper invokes the closure
+through its universal funcref (field 0, `rt_types__ClosureFunc`) — a copy of the
+compiler's own universal-call path. The host wraps the returned closure ref in a
+JS function that boxes args into a flat array, calls `__lib_apply`, and
+unmarshals the boxed result per the `fn` descriptor. Captured env, arguments, and
+`String`/leaf results round-trip. (Closures capture immutably, per the language —
+there is no mutable captured state.)
 
 ---
 
