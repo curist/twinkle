@@ -134,18 +134,48 @@ guest`.
 
 ### 3. Compound values — `Vector`, `Dict`, records
 
-Let lists, maps, and records cross the boundary. Two candidate strategies, to be
-chosen during design:
+`Vector`, `Dict`, and records cross the boundary as **plain JS arrays / objects /
+Maps** (JSON-ish copy at the edge), as args and returns, recursively
+(`Vector<Record>`, `Dict<String, Vector<Row>>`, record-with-`Vector`-field).
+Functions inside compounds stay out.
 
-* **JSON-ish encode/decode at the edge** — marshal to/from a plain JS
-  value (array / object) by serializing at the boundary rather than exposing live
-  GC refs. Simpler host ergonomics; copying cost at the edge.
-* **Live GC-ref handles** — hand the host an opaque handle plus accessor helpers
-  (`length`, `at`, field reads). No copy; more host API surface.
+**Why copy, not live handles.** The host gets ordinary JS values, matching
+`loadLib`'s purpose. Live GC-ref handles would need the *same* per-type guest
+accessors (the bridge cannot read a PVec/HAMT/struct) for worse ergonomics; a
+guest JSON-string codec needs per-type parsers anyway and loses i64 precision.
 
-Element/field types are themselves drawn from this ABI (primitives, `String`,
-nested compounds), so the marshaller is recursive. Records map to their nominal
-struct; the `twinkle.exports` metadata must describe field names and types.
+**Uniform intermediate — a flat-array tree.** The bridge can only build/read the
+flat `rt_types__Array`, so every compound marshals through a tree of
+`rt_types__Array` whose leaves are bridge-readable boxed scalars. Per distinct
+compound monotype at the boundary, codegen emits two recursive guest-side
+helpers (mirroring Increment 2's per-signature emission):
+
+* `__lib_read_<key>(guest) → rt_types__Array` — flattens a node, recursively
+  calling sub-helpers so the top call yields a complete flat tree;
+* `__lib_make_<key>(rt_types__Array) → guest` — rebuilds the PVec / PDict /
+  struct, recursively.
+
+JS makes one top-level call per direction, then walks the **recursive
+`twinkle.exports` descriptor** (already JSON) in parallel with the flat tree:
+
+* `{"kind":"vec","elem":D}` → JS array;
+* `{"kind":"dict","key":D,"val":D}` → JS object (String keys) / Map (otherwise);
+* `{"kind":"rec","name":N,"fields":[[name,D],…]}` → JS object.
+
+Records: the classifier runs post-typecheck, where field names and declaration
+order are in the `ResolvedEnv`; make/read use `StructNew`/`StructGet` in
+wasm-struct field order (= declaration order).
+
+**Enabler — bridge boxed-scalar accessors.** JS can read i31 and `String`, but a
+`Vector<Int>` leaf is an i64 in a `BoxedInt` struct the bridge cannot open. So the
+embedded bridge (`bridge.tw`) gains `boxed_int_new/get` and `boxed_float_new/get`
+(mirroring `i31_new/get`), rebuilt into `bridge_bytes.mjs` by `make stage2`. Then
+leaves are: int→`BoxedInt`, float→`BoxedFloat`, bool→i31, str→`String` ref — all
+JS-readable.
+
+Build order (one branch, incremental tasks): bridge boxed accessors → `LibType`
+compound variants + recursive classifier → recursive descriptor → Vector helpers
+→ record helpers → Dict helpers → recursive JS marshaller → nesting.
 
 ### 4. Returned closures
 
