@@ -146,22 +146,30 @@ uses**, so the two cannot diverge:
 
 ## Phased plan
 
-- **Phase 1a — fix the soundness bug (independent, lands first).** Alias
+- **Phase 1a — fix the soundness bug (independent, lands first). DONE.** Alias
   invalidation (#1) + slice/concat recognition (#2). Success = **all** corruption
   repros (slice, record, closure capture) return the un-mutated value; existing
   straight-line/simple-loop in-place still fires; self-host + full test suite +
   AWFY checksum green. This is a correctness fix and should arguably ship
   regardless of the perf work.
-- **Phase 1b — sieve (expand coverage).** (i) inline the thin `set_at` wrapper so
-  the method form reaches the user-site COW op; (ii) allow a non-escaping element
-  read of the same unique vector in the loop body without dropping the rewrite.
-  Target: sieve 37 ms → toward its ~0.9 ms `_mut` floor. `Vector<Bool>` boxing is
-  negligible next to the removed allocation.
-- **Phase 2 — bounce (deeper).** In-place `set_at` removes the vector path-copy,
-  but bounce *also* allocates a fresh `Ball` record per step (which `bounce_mut`
-  avoids entirely via a raw-int buffer). Expect in-place alone to recover only a
-  fraction of the ~25×; fully closing needs record-allocation elimination or a
-  struct-of-arrays layout — a separate item.
+- **Phase 1b — sieve (expand coverage). DONE.** Rather than an inliner, (i)
+  recognize the monomorphized thin `set_at` wrapper by body shape
+  (`op_aliasing_source_locals` sibling `is_thin_set_wrapper` in `uniqueness.tw`)
+  and register each as a COW op whose in-place equivalent is `vector$set_in_place`
+  — the existing loop rewrite then swaps the *wrapper call* to in-place at unique
+  sites (no inliner; the wrapper is DCE'd). The swap is a plain callee change:
+  emit's runtime-arg coercion boxes the value against `set_in_place`'s `anyref`
+  ABI, so no argument reshaping is needed (the anticipated boxing hole did not
+  materialize). (ii) allow a non-escaping element read (`base[i]`) of the same
+  unique vector in the loop body (`op_is_index_read`) without dropping the
+  rewrite. Detection tolerates trailing dead scaffolding bindings because it runs
+  before per-function simplification. **Result: sieve 35.5 ms → 4.9 ms (~7×),
+  bounce 1927 ms → 208 ms (~9×), both checksums unchanged.**
+- **Phase 2 — bounce (deeper).** In-place `set_at` removed the vector path-copy
+  and already recovered ~9× on bounce (better than expected). bounce *also*
+  allocates a fresh `Ball` record per step (which `bounce_mut` avoids via a
+  raw-int buffer); it remains ~2.7× off its `_mut` floor. Fully closing needs
+  record-allocation elimination or a struct-of-arrays layout — a separate item.
 - **Lever B (separate track):** extend `route_typed_vec` beyond read-only
   `Vector<Int>` to `set_at` and to `Float`/`Bool`; add `PVecF64`.
 

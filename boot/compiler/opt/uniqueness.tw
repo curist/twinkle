@@ -9,7 +9,7 @@
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom, FieldAtom}
 use compiler.anf_analysis.{set_has}
 use compiler.builder_family.{BuilderConfig}
-use compiler.core_ir.{FieldId, LocalId}
+use compiler.core_ir.{FieldId, FuncId, LocalId}
 use compiler.mono_type.{MonoType}
 use compiler.opt.analysis.{
   base_reusable_after_binding_with_live, collect_tainted_and_live, loop_push_reassign_elem,
@@ -18,7 +18,7 @@ use compiler.opt.analysis.{
 use compiler.opt.liveness.{live_after}
 use compiler.opt.loop_builder.{LoopRewrite, rewrite_loop_region}
 use compiler.opt.semantics.{
-  CowConfig, OptimizerSemantics, call_info, optimizer_semantics_from_cow_config,
+  CallSemantics, CowConfig, OptimizerSemantics, call_info, optimizer_semantics_from_cow_config,
   reusable_update_site,
 }
 
@@ -1125,6 +1125,19 @@ fn op_is_read_only_call(op: AnfOp, semantics: OptimizerSemantics) Bool {
   }
 }
 
+// An element read `base[i]` is a non-escaping borrow: it copies out a slot (a
+// primitive, or a *reference* to an element value). A subsequent in-place set
+// replaces slots in `base`'s leaves — it never mutates the pointed-to element —
+// so holding a read-out element cannot observe the write. Reading is therefore
+// safe to interleave with in-place sets on the same unique vector, and must not
+// drop the loop rewrite the way an aliasing use would.
+fn op_is_index_read(op: AnfOp) Bool {
+  case op {
+    .AIndex(_, _, _, _) => true,
+    _ => false,
+  }
+}
+
 // A swappable in-place COW consume-reassign site on `base`: callee has an
 // in-place equivalent, base is the cow base arg, no other arg references base,
 // and the binding is immediately consume-reassigned back to base.
@@ -1188,8 +1201,10 @@ fn analyze_loop_dict_sites(expr: AnfExpr, base: LocalId, semantics: OptimizerSem
         _ => .None,
       }
     } else {
-      // Any other use of base must be a read-only call; otherwise bail.
-      if op_uses_local_non_recursive(op, base) and !op_is_read_only_call(op, semantics) {
+      // Any other use of base must be a read-only call or a non-escaping element
+      // read (`base[i]`); otherwise bail.
+      if op_uses_local_non_recursive(op, base)
+        and !op_is_read_only_call(op, semantics) and !op_is_index_read(op) {
         .None
       } else {
         case analyze_loop_dict_sites_in_op(op, base, semantics) {
@@ -1516,4 +1531,77 @@ pub fn uniqueness_rewrite_with_semantics_and_consumed_and_fresh(
 
 pub fn uniqueness_rewrite(func: AnfFunctionDef, config: CowConfig) AnfFunctionDef {
   uniqueness_rewrite_with_semantics(func, optimizer_semantics_from_cow_config(config))
+}
+
+// ── Thin vector-set wrapper detection (awfy-c5 Phase 1b) ────────────
+// The prelude `set_at<A>(xs, i, v) { xs[i] = v; xs }` monomorphizes into a
+// per-element wrapper whose whole body is a single `vector$set_unsafe` on
+// param 0, reassigned and returned. In method form (`xs.set_at(i, v)`) the COW
+// op lives *inside* the wrapper where the base is a param, so it never becomes
+// in-place. Recognizing the wrapper as a COW op — with `vector$set_in_place` as
+// its in-place equivalent — lets the existing loop/forward rewrite swap the
+// wrapper CALL to in-place at the call site when the base is proven unique,
+// with no inliner. The swap is a plain callee change: `set_in_place` shares the
+// wrapper's ABI (value arg is `anyref`), and emit's runtime-arg coercion boxes
+// the value against the callee's ABI, so no argument reshaping is needed.
+// The wrapper's tail returns `target` (the base), possibly after trailing dead
+// scaffolding bindings (e.g. a discarded block value) that the optimizer has not
+// yet cleaned up — detection runs before per-function simplification. Trailing
+// ops are allowed only if they don't touch `target`, so the returned value is
+// still the set result.
+fn tail_yields_local(expr: AnfExpr, target: LocalId) Bool {
+  case expr {
+    .Atom(.ALocal(l)) => l.id == target.id,
+    .Return(.Some(.ALocal(l))) => l.id == target.id,
+    .Let(l, op, body) => l.id != target.id
+      and !op_uses_local_non_recursive(op, target) and !op_has_local_in_nested_scope(op, target)
+      and tail_yields_local(body, target),
+    _ => false,
+  }
+}
+
+fn is_thin_set_wrapper(f: AnfFunctionDef, set_unsafe: FuncId) Bool {
+  if f.params.len() != 3 {
+    return false
+  }
+
+  p0 := f.params[0].local
+  p1 := f.params[1].local
+  p2 := f.params[2].local
+
+  case f.body {
+    .Let(
+      r,
+      .ACall(.AGlobalFunc(callee), args),
+      .Let(_, .AAssign(assign_target, .ALocal(assign_value)), tail),
+    ) => callee.id == set_unsafe.id
+      and args.len() == 3 and atom_is_local(args[0], p0) and atom_is_local(args[1], p1)
+      and atom_is_local(args[2], p2) and assign_target.id == p0.id and assign_value.id == r.id
+      and tail_yields_local(tail, p0),
+    _ => false,
+  }
+}
+
+// Register every thin set-wrapper in the module as a COW op keyed by its own
+// FuncId, so callers can be rewritten to in-place. `set_unsafe`/`set_in_place`
+// are the vector builtins (the caller supplies their FuncIds so this module
+// stays free of the builtin registry).
+pub fn augment_semantics_with_set_wrappers(
+  module: AnfModule,
+  semantics: OptimizerSemantics,
+  set_unsafe: FuncId,
+  set_in_place: FuncId,
+) OptimizerSemantics {
+  for f in module.functions {
+    if is_thin_set_wrapper(f, set_unsafe) {
+      semantics.call_semantics[f.func_id.id] = CallSemantics.{
+        effect: .Update,
+        fresh_result: false,
+        cow_base_arg: .Some(0),
+        in_place_equivalent: .Some(set_in_place),
+      }
+    }
+  }
+
+  semantics
 }

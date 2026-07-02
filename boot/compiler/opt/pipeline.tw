@@ -19,7 +19,7 @@ use compiler.opt.semantics.{
   optimizer_semantics_from_cow_config,
 }
 use compiler.opt.uniqueness.{
-  collect_fresh_record_helpers, uniqueness_rewrite,
+  augment_semantics_with_set_wrappers, collect_fresh_record_helpers, uniqueness_rewrite,
   uniqueness_rewrite_with_semantics_and_consumed_and_fresh,
 }
 
@@ -289,6 +289,15 @@ pub fn make_prelude_cow_config(b: BuiltinRegistry) CowConfig {
 pub fn optimize_module(module: AnfModule) AnfModule {
   reg := make_builtin_registry()
   semantics := make_prelude_optimizer_semantics(reg)
+
+  // Recognize monomorphized thin `set_at` wrappers as COW ops so their method-
+  // form calls can be swapped to in-place at unique call sites (awfy-c5 1b).
+  semantics = augment_semantics_with_set_wrappers(
+    module,
+    semantics,
+    reg.id("vector$set_unsafe"),
+    reg.id("vector$set_in_place"),
+  )
   optimize_module_with_semantics(module, .Some(semantics))
 }
 

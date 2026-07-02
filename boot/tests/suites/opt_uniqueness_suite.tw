@@ -1,13 +1,14 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
-use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, FieldAtom}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, FieldAtom, IndexKind}
 use compiler.builder_family.{BuilderConfig}
 use compiler.core_ir.{FieldId, FuncId, LocalId, Param, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.opt.semantics.{CallSemantics, OptimizerSemantics}
 use compiler.opt.uniqueness.{
-  uniqueness_rewrite_with_semantics, uniqueness_rewrite_with_semantics_and_consumed_and_fresh,
+  augment_semantics_with_set_wrappers, uniqueness_rewrite_with_semantics,
+  uniqueness_rewrite_with_semantics_and_consumed_and_fresh,
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -2432,6 +2433,160 @@ fn test_refreshed_alias_dead_source_still_rewrites() Result<Void, String> {
   }
 }
 
+// ── Thin set-wrapper detection + swap (awfy-c5 Phase 1b) ────────────
+// mock_vec_set plays the role of `vector$set_unsafe`, mock_vec_set_in_place
+// that of `vector$set_in_place`.
+fn make_module(funcs: Vector<AnfFunctionDef>) AnfModule {
+  AnfModule.{
+    functions: funcs,
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+    lib_exports: [],
+  }
+}
+
+// `fn(p0, p1, p2) { p0[p1] = p2; p0 }` shape as lowered before simplification:
+// the set + reassign, then a trailing dead binding (the block's discarded value)
+// that detection must tolerate, then return p0.
+fn make_set_wrapper(func_id: FuncId, callee: FuncId) AnfFunctionDef {
+  body: AnfExpr = .Let(
+    lid(11),
+    .ACall(.AGlobalFunc(callee), [.ALocal(lid(7)), .ALocal(lid(8)), .ALocal(lid(9))]),
+    .Let(
+      lid(12),
+      .AAssign(lid(7), .ALocal(lid(11))),
+      .Let(lid(10), .AInit(.ALitVoid), .Atom(.ALocal(lid(7)))),
+    ),
+  )
+  AnfFunctionDef.{
+    func_id,
+    name: "set_at__X",
+    is_init: false,
+    params: [
+      Param.{ local: lid(7), ty: .Void },
+      Param.{ local: lid(8), ty: .Void },
+      Param.{ local: lid(9), ty: .Void },
+    ],
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: .Void,
+  }
+}
+
+fn augmented(module: AnfModule) OptimizerSemantics {
+  augment_semantics_with_set_wrappers(
+    module,
+    mock_semantics(),
+    mock_vec_set(),
+    mock_vec_set_in_place(),
+  )
+}
+
+fn test_set_wrapper_detected_and_registered() Result<Void, String> {
+  module := make_module([make_set_wrapper(fid(300), mock_vec_set())])
+  sem := augmented(module)
+
+  case sem.call_semantics[300] {
+    .Some(info) => case info.in_place_equivalent {
+      .Some(ip) => {
+        try assert.equal(ip.id, mock_vec_set_in_place().id)
+
+        case info.cow_base_arg {
+          .Some(b) => assert.equal(b, 0),
+          .None => .Err("expected cow_base_arg 0"),
+        }
+      },
+      .None => .Err("expected in_place_equivalent"),
+    },
+    .None => .Err("wrapper not registered as COW op"),
+  }
+}
+
+fn test_set_wrapper_wrong_callee_not_registered() Result<Void, String> {
+  // Body sets via dict_set, not the vector set builtin → not a vector set wrapper.
+  module := make_module([make_set_wrapper(fid(300), mock_dict_set())])
+  sem := augmented(module)
+
+  case sem.call_semantics[300] {
+    .Some(_) => .Err("non-vector-set wrapper wrongly registered"),
+    .None => .Ok({}),
+  }
+}
+
+fn test_set_wrapper_tail_reassigns_base_not_registered() Result<Void, String> {
+  // Trailing op reassigns p0 to something else, so the returned value is no
+  // longer the set result → must not be treated as a set wrapper.
+  body: AnfExpr = .Let(
+    lid(11),
+    .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(7)), .ALocal(lid(8)), .ALocal(lid(9))]),
+    .Let(
+      lid(12),
+      .AAssign(lid(7), .ALocal(lid(11))),
+      .Let(lid(10), .AAssign(lid(7), .ALitVoid), .Atom(.ALocal(lid(7)))),
+    ),
+  )
+  wrapper := AnfFunctionDef.{
+    func_id: fid(300),
+    name: "not_a_wrapper",
+    is_init: false,
+    params: [
+      Param.{ local: lid(7), ty: .Void },
+      Param.{ local: lid(8), ty: .Void },
+      Param.{ local: lid(9), ty: .Void },
+    ],
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: .Void,
+  }
+  sem := augmented(make_module([wrapper]))
+
+  case sem.call_semantics[300] {
+    .Some(_) => .Err("tail-reassigning function wrongly registered"),
+    .None => .Ok({}),
+  }
+}
+
+fn test_loop_set_wrapper_swapped_with_elem_read() Result<Void, String> {
+  // let v = vec_make()
+  // let _ = ALoop(
+  //   let e = v[0]                       // element read (lever ii) — must not bail
+  //   let tmp = set_at_wrapper(v, 1, 2)  // wrapper call (lever i) — swappable COW
+  //   let _ = AAssign(v, tmp)
+  //   Continue)
+  // Atom(v)
+  loop_body: AnfExpr = .Let(
+    lid(5),
+    .AIndex(.ALocal(lid(0)), .ALitInt(0), .Array, .Void),
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(fid(300)), [.ALocal(lid(0)), .ALitInt(1), .ALitInt(2)]),
+      .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Continue),
+    ),
+  )
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(lid(3), .ALoop(loop_body), .Atom(.ALocal(lid(0)))),
+  )
+  caller := make_func(caller_body)
+  module := make_module([caller, make_set_wrapper(fid(300), mock_vec_set())])
+  result := uniqueness_rewrite_with_semantics(caller, augmented(module))
+
+  case result.body {
+    .Let(_, _, .Let(_, .ALoop(loop_e), _)) => case loop_e {
+      // First loop op is the element read; the wrapper call after it must be
+      // swapped to the in-place equivalent.
+      .Let(_, .AIndex(_, _, _, _), .Let(_, .ACall(.AGlobalFunc(f), _), _)) => assert.equal(
+        f.id,
+        mock_vec_set_in_place().id,
+      ),
+      _ => .Err("expected element read then swapped in-place call"),
+    },
+    _ => .Err("expected vec_make then loop"),
+  }
+}
+
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   s := runner.suite("Opt: Uniqueness Rewrite")
@@ -2492,6 +2647,15 @@ pub fn suite() runner.Suite {
     "refreshed alias dead source → still rewrites",
     test_refreshed_alias_dead_source_still_rewrites,
   )
+
+  // Thin set-wrapper detection + swap (awfy-c5 Phase 1b)
+  s = .test("set wrapper detected and registered", test_set_wrapper_detected_and_registered)
+  s = .test("set wrapper wrong callee not registered", test_set_wrapper_wrong_callee_not_registered)
+  s = .test(
+    "set wrapper tail-reassigns base not registered",
+    test_set_wrapper_tail_reassigns_base_not_registered,
+  )
+  s = .test("loop set wrapper swapped with elem read", test_loop_set_wrapper_swapped_with_elem_read)
 
   // Correctness: record update consume-reassign
   s = .test("record update consume-reassign chain", test_record_update_consume_reassign)
