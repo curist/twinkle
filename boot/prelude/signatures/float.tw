@@ -22,3 +22,23 @@ pub fn bits(f: Float) Int {
 pub fn sqrt(f: Float) Float {
   0.0
 }
+
+/// Absolute value of f, compiled to the native `f64.abs` instruction.
+pub fn abs(f: Float) Float {
+  0.0
+}
+
+/// Round f toward -∞, compiled to the native `f64.floor` instruction.
+pub fn floor(f: Float) Float {
+  0.0
+}
+
+/// Round f toward +∞, compiled to the native `f64.ceil` instruction.
+pub fn ceil(f: Float) Float {
+  0.0
+}
+
+/// Round f toward zero, compiled to the native `f64.trunc` instruction.
+pub fn trunc(f: Float) Float {
+  0.0
+}

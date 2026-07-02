@@ -36,9 +36,32 @@ compiler never computes sqrt, so no stage0 parity needed).
 - All other benchmarks unchanged; checksums bit-identical (IEEE-754 sqrt is
   correctly rounded in both JS and Wasm). 2950 tests + self-host fixpoint green.
 - The Wasm→JS `Math.sqrt` import is fully DCE'd out of the module.
-- **Follow-up (not done):** give the same native-instruction treatment to
-  `floor`/`ceil`/`trunc`/`fround`(→nearest)/`abs`/`min`/`max`; and consider a
-  Wasm/host policy for the transcendentals.
+
+### Native `Float.abs`/`floor`/`ceil`/`trunc` (DONE — same mechanism)
+
+Extended the intrinsic to the four other `@std.math` float ops whose semantics
+match a Wasm instruction exactly: `abs_float`→`f64.abs`, `floor`→`f64.floor`,
+`ceil`→`f64.ceil`, `trunc`→`f64.trunc` (added the boot-only `F64Trunc` IR
+instruction, opcode `0x9D`; `abs/floor/ceil` reused the IR variants that already
+existed but were unemitted). All exact IEEE `roundToIntegral`/`|x|` matches to
+JS `Math.*`, so checksums are unaffected. No AWFY benchmark exercises these on a
+hot path (AWFY uses only `round`, which cannot convert — see below), so the
+suite is unchanged, but any float-heavy user program now avoids the JS boundary.
+
+**What is NOT convertible (and why), completing the `@std.math` audit:**
+- *No Wasm instruction exists*: `sin cos tan asin acos atan atan2 sinh cosh
+  tanh exp expm1 log log10 log1p log2 pow cbrt hypot random`. WebAssembly has no
+  transcendental ops; these stay host `Math.*` calls.
+- *Semantics differ from any instruction*: `round` (JS rounds half toward +∞;
+  `f64.nearest` is half-to-even, e.g. `round(2.5)=3` vs `nearest(2.5)=2`),
+  `sign` (returns −1/±0/1/NaN — no single instruction).
+- *Doable but deferred*: `fround` = `f64.promote(f32.demote(x))` (exact
+  Math.fround; needs two new IR instrs, rarely used). `Float.min`/`max` →
+  `f64.min`/`max`, `Float.from_bits` → `f64.reinterpret_i64`, and `Int`
+  `popcount`/`clz`/`ctz` → `i64.popcnt`/`clz`/`ctz` are new *native APIs* (not
+  replacing an existing boundary crossing).
+- *Genuinely host-bound*: `@std.{date,io,proc,fs,time}` externs (clock, I/O) —
+  no Wasm equivalent, must stay FFI.
 
 ## Landed on branch `codegen-void-elim` (2026-07-02)
 

@@ -142,9 +142,10 @@ pub fn isqrt(n: Int) Int {
   ans
 }
 
-/// Floating-point absolute value (host `Math.abs`).
+/// Floating-point absolute value, compiled to the native `f64.abs`
+/// instruction (no JS boundary crossing).
 pub fn abs_float(x: Float) Float {
-  Math.abs(x)
+  Float.abs(x)
 }
 
 /// Arc-cosine of x in radians (host `Math.acos`).
@@ -189,7 +190,7 @@ pub fn cbrt(x: Float) Float {
 
 /// Smallest integer value not less than x (host `Math.ceil`).
 pub fn ceil(x: Float) Float {
-  Math.ceil(x)
+  Float.ceil(x)
 }
 
 /// Cosine of x radians (host `Math.cos`).
@@ -212,9 +213,10 @@ pub fn expm1(x: Float) Float {
   Math.expm1(x)
 }
 
-/// Largest integer value not greater than x (host `Math.floor`).
+/// Largest integer value not greater than x, compiled to the native
+/// `f64.floor` instruction (no JS boundary crossing).
 pub fn floor(x: Float) Float {
-  Math.floor(x)
+  Float.floor(x)
 }
 
 /// Round to nearest 32-bit float value, returned as a Float (host `Math.fround`).
@@ -295,5 +297,5 @@ pub fn tanh(x: Float) Float {
 
 /// Integer part of x, removing fractional digits (host `Math.trunc`).
 pub fn trunc(x: Float) Float {
-  Math.trunc(x)
+  Float.trunc(x)
 }

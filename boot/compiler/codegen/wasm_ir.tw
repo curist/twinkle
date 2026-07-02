@@ -81,6 +81,7 @@ pub type Instr = {
   F64Abs,
   F64Ceil,
   F64Floor,
+  F64Trunc,
   F64Sqrt,
   Select,
   I32WrapI64,

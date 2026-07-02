@@ -467,6 +467,7 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
     .F64Abs => ["${pad}f64.abs"],
     .F64Ceil => ["${pad}f64.ceil"],
     .F64Floor => ["${pad}f64.floor"],
+    .F64Trunc => ["${pad}f64.trunc"],
     .F64Sqrt => ["${pad}f64.sqrt"],
     // Misc
     .Select => ["${pad}select"],

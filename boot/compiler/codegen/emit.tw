@@ -2126,6 +2126,10 @@ pub fn build_intrinsic_table(b: BuiltinRegistry) Dict<Int, IntrinsicTag> {
   t[b.method_id("Byte", "to_string").id] = .ByteToString
   t[b.method_id("Float", "bits").id] = .FloatBits
   t[b.method_id("Float", "sqrt").id] = .FloatSqrt
+  t[b.method_id("Float", "abs").id] = .FloatAbs
+  t[b.method_id("Float", "floor").id] = .FloatFloor
+  t[b.method_id("Float", "ceil").id] = .FloatCeil
+  t[b.method_id("Float", "trunc").id] = .FloatTrunc
   t[b.method_id("Task", "spawn").id] = .TaskSpawn
   t[b.method_id("Task", "await").id] = .TaskAwait
   t[b.method_id("Task", "yield").id] = .TaskYield
@@ -2199,6 +2203,22 @@ fn emit_intrinsic_call(
     .FloatSqrt => {
       buf2 := emit_atom(args[0], ctx, buf)
       buf2.append(.F64Sqrt).append(.LocalSet(result_idx))
+    },
+    .FloatAbs => {
+      buf2 := emit_atom(args[0], ctx, buf)
+      buf2.append(.F64Abs).append(.LocalSet(result_idx))
+    },
+    .FloatFloor => {
+      buf2 := emit_atom(args[0], ctx, buf)
+      buf2.append(.F64Floor).append(.LocalSet(result_idx))
+    },
+    .FloatCeil => {
+      buf2 := emit_atom(args[0], ctx, buf)
+      buf2.append(.F64Ceil).append(.LocalSet(result_idx))
+    },
+    .FloatTrunc => {
+      buf2 := emit_atom(args[0], ctx, buf)
+      buf2.append(.F64Trunc).append(.LocalSet(result_idx))
     },
     .ByteFromInt => emit_intrinsic_byte_from_int(args, result_idx, result_mono, ctx, buf),
     .ByteToString => {

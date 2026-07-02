@@ -1153,6 +1153,7 @@ fn encode_instr_cached(
     .F64Neg => .{ buf: buf.emit_u8(0x9A), cache },
     .F64Ceil => .{ buf: buf.emit_u8(0x9B), cache },
     .F64Floor => .{ buf: buf.emit_u8(0x9C), cache },
+    .F64Trunc => .{ buf: buf.emit_u8(0x9D), cache },
     .F64Sqrt => .{ buf: buf.emit_u8(0x9F), cache },
     // Misc
     .Select => .{ buf: buf.emit_u8(0x1B), cache },
