@@ -173,3 +173,13 @@ PRNG (`seed = (seed*1309 + 13849) & 65535`, initial seed 74755), defined once in
 3. Run one language to obtain the checksum, paste it into all three `expected`
    (and the table above).
 4. `make awfy` — it fails if the languages disagree.
+
+## Attribution
+
+The benchmark designs (Mandelbrot, NBody, Bounce, Sieve, Queens, Towers,
+Permute, Storage, List, Json) are adapted from the
+[are-we-fast-yet](https://github.com/smarr/are-we-fast-yet) suite (MIT licensed,
+© Stefan Marr et al.). The implementations here are fresh ports written for this
+comparison, not copies of the upstream sources; the NBody initial conditions are
+the classic 5-body constants from the Computer Language Benchmarks Game. This
+code is covered by the repository's top-level MIT `LICENSE`.
