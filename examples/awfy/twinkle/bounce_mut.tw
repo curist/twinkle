@@ -11,6 +11,9 @@ pub expected := 47174
 pub fn run(size: Int) Int {
   ball_count := 100
   buf := buffer.new(ball_count * 4 * 8)
+  defer {
+    buf.free()
+  }
   total := 0
   rep := 0
   for rep < size {
@@ -81,6 +84,5 @@ pub fn run(size: Int) Int {
     total = checksum
     rep = rep + 1
   }
-  buf.free()
   total
 }

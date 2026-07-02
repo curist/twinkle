@@ -167,13 +167,14 @@ pub expected := -16908926
 
 pub fn run(size: Int) Int {
   buf := buffer.new(5 * 7 * 8)
+  defer {
+    buf.free()
+  }
   init(buf)
   i := 0
   for i < size {
     advance(buf, 0.01)
     i = i + 1
   }
-  result := Float.to_int(math.round(energy(buf) * 100000000.0))
-  buf.free()
-  result
+  Float.to_int(math.round(energy(buf) * 100000000.0))
 }
