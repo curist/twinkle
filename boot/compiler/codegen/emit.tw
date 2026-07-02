@@ -1643,21 +1643,17 @@ fn emit_op(
         }
       }
 
-      // AAssign produces void — set result to void
-      buf2 = .append(.I32Const(0))
-      buf2 = .append(.RefI31)
-      buf2.append(.LocalSet(result_idx))
+      // AAssign produces void; the result slot is never inspected, so skip
+      // materializing the i31(0) sentinel (dead store in every rebinding).
+      buf2
     },
     .AGlobalSet(gid, atom) => case ctx.registry.module_globals[gid.id] {
       .Some(gentry) => {
         vt := val_type_of_mono(gentry.mono, ctx.env)
         buf2 := emit_init_atom(atom, gentry.mono, .Some(vt), ctx, buf)
-        buf2 = .append(.GlobalSet(gentry.sym))
 
-        // AGlobalSet produces void — set result to void
-        buf2 = .append(.I32Const(0))
-        buf2 = .append(.RefI31)
-        buf2.append(.LocalSet(result_idx))
+        // AGlobalSet produces void; no sentinel store (see AAssign above).
+        buf2.append(.GlobalSet(gentry.sym))
       },
       .None => error("emit: unknown module global G${gid.id}"),
     },

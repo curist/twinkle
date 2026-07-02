@@ -157,22 +157,17 @@ pub fn emit_loop_op(
   loop_instr := Instr.Loop(cont_label, .None, body_instrs)
   block_instrs: Vector<Instr> = [loop_instr]
 
-  // Block wraps the loop for break target
-  out := buf.append(.Block(break_label, .None, block_instrs))
-
-  // Loop produces void — set result to void
-  out.append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx))
+  // Block wraps the loop for break target; the loop's void result slot is
+  // never inspected, so skip materializing the dead i31(0) sentinel.
+  buf.append(.Block(break_label, .None, block_instrs))
 }
 
 pub fn append_result_store(body: Vector<Instr>, result_idx: Int, result_mono: MonoType) Vector<
   Instr,
 > {
   case result_mono {
-    .Void => {
-      out := body.append(.I32Const(0))
-      out = .append(.RefI31)
-      out.append(.LocalSet(result_idx))
-    },
+    // Void result slot is never inspected — skip the dead i31(0) sentinel store.
+    .Void => body,
     .Never => body,
     _ => body.append(.LocalSet(result_idx)),
   }

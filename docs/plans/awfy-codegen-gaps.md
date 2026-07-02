@@ -1,8 +1,56 @@
 # AWFY Codegen Gaps Plan
 
-**Status:** investigation recorded; attack vectors proposed, none started.
+**Status:** C1 landed on branch `codegen-void-elim` (off `awfy-benchmark-suite`,
+not merged); C2 was prototyped, measured, and **backed out** (code-size only, no
+runtime benefit, adds compile time — see below). Key empirical finding: **the
+C1/C2 patterns are code-size wins, not steady-state runtime wins** — V8's
+optimizing tier already DCEs the dead Void stores and coalesces the set/get
+churn, so AWFY wall-clock is unchanged (except permute ~3% from C1). The real
+runtime levers are C3–C5; next up is C4/C5.
 **Related:** `examples/awfy/` (the suite), [boot-compiler-perf.md](boot-compiler-perf.md)
 (self-host compile time, a separate concern).
+
+## Landed on branch `codegen-void-elim` (2026-07-02)
+
+Same-session A/B (`target/twk run examples/awfy/twinkle/main.tw`, 3 rounds,
+`ms` column; ±15% noise). Correctness: 2950 boot tests + self-host fixpoint +
+five-language AWFY checksum diff all green for both changes.
+
+### C1 — dead Void materialization eliminated (DONE)
+
+Dropped the `i32.const 0; ref.i31; local.set $dead` sentinel at its four emit
+sites: `AAssign`, `AGlobalSet` (`emit.tw`), and the Void cases of
+`append_result_store` + `emit_loop_op` (`emit/control_flow.tw`). The result slot
+of a Void op is never inspected, so the store was pure dead code.
+
+- mandelbrot `run` WAT: ref.i31 52→18, local.set 152→118.
+- **Runtime:** permute ~1197→~1163 ms (**~3%, consistent**); mandelbrot/nbody/
+  towers/etc **unchanged** — V8 DCEs the dead stores inside hot loops.
+- Code size (AWFY suite wasm): 34167→31648 bytes (−7.4%).
+
+### C2 — peephole coalescing of ANF temporaries (PROTOTYPED, BACKED OUT)
+
+A peephole over each function's emitted `Instr` stream (recursing into
+if/block/loop) with three semantics-preserving rules — `set x; get x` with x
+read once → drop both (stack-thread); read>1 → `local.tee`; `get x; set x` →
+drop both (self-copy no-op) — was implemented and validated (self-host fixpoint,
+2950 tests, checksums all green), then **removed**. Measurements that justify
+the removal:
+
+- mandelbrot `run` WAT: local.set 118→83, local.get 135→100 (~35 set/get pairs
+  removed; only 2 needed a tee → most temps were single-use).
+- Code size: AWFY suite wasm 31648→28499 bytes (−10% more, −16.6% vs baseline);
+  boot.wasm 3214291→3023183 (−6%).
+- **Runtime:** **no measurable change on any AWFY benchmark** — V8 already
+  coalesces set/get copies in the optimizing tier.
+- **Compile time:** the pass adds ~4% to a boot self-compile (5.1→5.3 s), since
+  it runs on every emitted function.
+
+Net: a code-size/baseline-tier cleanup with zero optimizing-tier runtime benefit
+and a compile-time cost. Not worth carrying for a runtime-focused effort; if
+module size / cold-start ever becomes the priority it can be revived (or gated
+behind an opt flag). **The compute-bound benchmarks need C3 (inline
+`rt_arr__get`), C4 (`struct.get` field caching), and C5 (typed Vector).**
 
 ## Goal
 
