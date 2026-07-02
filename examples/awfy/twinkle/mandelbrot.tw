@@ -9,14 +9,14 @@ pub fn run(size: Int) Int {
   bit_num := 0
   y := 0
   for y < size {
-    ci := 2.0 * Int.to_float(y) / Int.to_float(size) - 1.0
+    ci := 2.0 * y.to_float() / size.to_float() - 1.0
     x := 0
     for x < size {
       zr := 0.0
       zrzr := 0.0
       zi := 0.0
       zizi := 0.0
-      cr := 2.0 * Int.to_float(x) / Int.to_float(size) - 1.5
+      cr := 2.0 * x.to_float() / size.to_float() - 1.5
       z := 0
       not_done := true
       escape := 0

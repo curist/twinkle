@@ -1,4 +1,3 @@
-use .bounce
 use .bounce.{Rng}
 
 type Tree = { Leaf, Branch(Vector<Tree>) }
@@ -8,7 +7,7 @@ type Built = .{ node: Tree, rng: Rng, count: Int, leaf_elems: Int }
 fn build(depth: Int, rng: Rng, count: Int, leaf_elems: Int) Built {
   c := count + 1
   if depth == 1 {
-    step := bounce.rng_next(rng)
+    step := rng.rng_next()
     n := step.value % 10 + 1
 
     // Allocate a leaf vector of length n (contents irrelevant) to stress GC.

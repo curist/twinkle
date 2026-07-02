@@ -42,6 +42,6 @@ fn run_one(b: Benchmark) {
 
 pub fn run_all(benches: Vector<Benchmark>) {
   for b in benches {
-    run_one(b)
+    b.run_one()
   }
 }

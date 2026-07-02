@@ -131,14 +131,14 @@ fn fold(j: Json, acc: FoldAcc) FoldAcc {
     .JArr(items) => {
       r := a
       for x in items {
-        r = fold(x, r)
+        r = x.fold(r)
       }
       r
     },
     .JObj(entries) => {
       r := a
       for e in entries {
-        r = fold(e.value, r)
+        r = e.value.fold(r)
       }
       r
     },
@@ -158,7 +158,7 @@ pub fn run(size: Int) Int {
   r := 0
   for r < size {
     tree := parse_value(input, 0)
-    acc := fold(tree.value, FoldAcc.{ sum: 0, count: 0 })
+    acc := tree.value.fold(FoldAcc.{ sum: 0, count: 0 })
     checksum = acc.sum * 31 + acc.count
     r = r + 1
   }

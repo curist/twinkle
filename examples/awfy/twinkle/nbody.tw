@@ -161,5 +161,5 @@ pub fn run(size: Int) Int {
     bodies = advance(bodies, 0.01)
     i = i + 1
   }
-  Float.to_int(math.round(energy(bodies) * 100000000.0))
+  math.round(energy(bodies) * 100000000.0).to_int()
 }

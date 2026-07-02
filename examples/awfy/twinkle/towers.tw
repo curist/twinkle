@@ -17,21 +17,21 @@ fn set_peg(p: Pegs, which: Int, v: Vector<Int>) Pegs {
 }
 
 fn move_top(p: Pegs, from: Int, to: Int) Pegs {
-  src := peg(p, from)
+  src := p.peg(from)
   disk := src[src.len() - 1]
-  p2 := set_peg(p, from, src.drop_last())
-  dst := peg(p2, to)
-  p3 := set_peg(p2, to, dst.append(disk))
+  p2 := p.set_peg(from, src.drop_last())
+  dst := p2.peg(to)
+  p3 := p2.set_peg(to, dst.append(disk))
   Pegs.{ a: p3.a, b: p3.b, c: p3.c, moves: p3.moves + 1 }
 }
 
 fn move_disks(p: Pegs, n: Int, from: Int, to: Int, via: Int) Pegs {
   if n == 1 {
-    move_top(p, from, to)
+    p.move_top(from, to)
   } else {
-    p1 := move_disks(p, n - 1, from, via, to)
-    p2 := move_top(p1, from, to)
-    move_disks(p2, n - 1, via, to, from)
+    p1 := p.move_disks(n - 1, from, via, to)
+    p2 := p1.move_top(from, to)
+    p2.move_disks(n - 1, via, to, from)
   }
 }
 
@@ -50,7 +50,7 @@ pub fn run(size: Int) Int {
     }
     empty: Vector<Int> = []
     start := Pegs.{ a, b: empty, c: empty, moves: 0 }
-    result := move_disks(start, 13, 0, 2, 1)
+    result := start.move_disks(13, 0, 2, 1)
     moves = result.moves
     rep = rep + 1
   }

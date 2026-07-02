@@ -11,9 +11,7 @@ pub expected := 669
 
 pub fn run(size: Int) Int {
   buf := buffer.new(size + 1)
-  defer {
-    buf.free()
-  }
+  defer buf.free()
   i := 0
   for i <= size {
     buf.set_byte(i, 1)

@@ -13,7 +13,7 @@ fn build(n: Int) List {
 fn sum_list(xs: List, acc: Int) Int {
   case xs {
     .Nil => acc,
-    .Cons(v, rest) => sum_list(rest, acc + v),
+    .Cons(v, rest) => rest.sum_list(acc + v),
   }
 }
 
@@ -24,5 +24,5 @@ pub expected := 499500
 
 pub fn run(size: Int) Int {
   xs := build(size)
-  sum_list(xs, 0)
+  xs.sum_list(0)
 }
