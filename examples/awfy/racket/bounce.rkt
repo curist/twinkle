@@ -53,3 +53,54 @@
         total)))
 
 (define bounce-bench (bench "bounce" 10 20 400 47174 bounce-run))
+
+;; Unlocked tier: 100 balls packed into a native mutable vector (4 fields each),
+;; set in place — Racket's escape hatch to the native league. (Fixnums are
+;; immediates, so a plain mutable vector is already unboxed storage here.)
+(provide bounce-mut-bench)
+(define (bounce-mut-run size)
+  (define balls (make-vector 400 0))
+  (let rep-loop ([rep 0] [total 0])
+    (if (< rep size)
+        (let ()
+          (let init-loop ([k 0] [seed 74755])
+            (when (< k 100)
+              (let* ([s1 (bounce-lcg seed)] [s2 (bounce-lcg s1)] [s3 (bounce-lcg s2)] [s4 (bounce-lcg s3)]
+                     [b (* k 4)])
+                (vector-set! balls b (modulo s1 500))
+                (vector-set! balls (+ b 1) (modulo s2 500))
+                (vector-set! balls (+ b 2) (- (modulo s3 5) 2))
+                (vector-set! balls (+ b 3) (- (modulo s4 5) 2))
+                (init-loop (add1 k) s4))))
+          (define bounces
+            (let step-loop ([s 0] [bc 0])
+              (if (< s 50)
+                  (step-loop (add1 s)
+                    (let ball-loop ([j 0] [bc bc])
+                      (if (< j 100)
+                          (let* ([b (* j 4)]
+                                 [x (vector-ref balls b)] [y (vector-ref balls (+ b 1))]
+                                 [xv (vector-ref balls (+ b 2))] [yv (vector-ref balls (+ b 3))]
+                                 [nx (+ x xv)] [ny (+ y yv)]
+                                 [bounced #f])
+                            (define-values (nx2 xv2)
+                              (cond [(> nx 500) (set! bounced #t) (values 500 (- xv))]
+                                    [(< nx 0)   (set! bounced #t) (values 0 (- xv))]
+                                    [else (values nx xv)]))
+                            (define-values (ny2 yv2)
+                              (cond [(> ny 500) (set! bounced #t) (values 500 (- yv))]
+                                    [(< ny 0)   (set! bounced #t) (values 0 (- yv))]
+                                    [else (values ny yv)]))
+                            (vector-set! balls b nx2) (vector-set! balls (+ b 1) ny2)
+                            (vector-set! balls (+ b 2) xv2) (vector-set! balls (+ b 3) yv2)
+                            (ball-loop (add1 j) (if bounced (add1 bc) bc)))
+                          bc)))
+                  bc)))
+          (define checksum
+            (let loop ([j 0] [acc bounces])
+              (if (< j 100)
+                  (loop (add1 j) (+ acc (vector-ref balls (* j 4)) (vector-ref balls (+ (* j 4) 1))))
+                  acc)))
+          (rep-loop (add1 rep) checksum))
+        total)))
+(define bounce-mut-bench (bench "bounce_mut" 10 20 400 47174 bounce-mut-run))

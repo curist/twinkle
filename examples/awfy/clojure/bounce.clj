@@ -49,3 +49,54 @@
 
 (def bounce-bench
   {:name "bounce" :warmup 10 :iters 20 :size 400 :expected 47174 :run bounce-run})
+
+;; Unlocked tier: 100 balls packed into a native long-array (4 fields each),
+;; mutated in place — Clojure's escape hatch to the native league. The hot loop
+;; lives in a helper with a `^longs`-hinted parameter so array reads stay
+;; unboxed (the hint does not survive across nested `loop` closures otherwise);
+;; this is what tuned Clojure array code actually requires.
+(defn ^long bounce-mut-once [^longs balls]
+  (loop [k 0 seed 74755]
+    (when (< k 100)
+      (let [s1 (bounce-lcg seed) s2 (bounce-lcg s1) s3 (bounce-lcg s2) s4 (bounce-lcg s3)
+            b (* k 4)]
+        (aset-long balls b (mod s1 500))
+        (aset-long balls (+ b 1) (mod s2 500))
+        (aset-long balls (+ b 2) (- (mod s3 5) 2))
+        (aset-long balls (+ b 3) (- (mod s4 5) 2))
+        (recur (inc k) s4))))
+  (let [bounces
+        (loop [s 0 bc 0]
+          (if (< s 50)
+            (recur (inc s)
+                   (loop [j 0 bc bc]
+                     (if (< j 100)
+                       (let [b (* j 4)
+                             x (aget balls b) y (aget balls (+ b 1))
+                             xv (aget balls (+ b 2)) yv (aget balls (+ b 3))
+                             nx (+ x xv) ny (+ y yv)
+                             over-x (> nx 500) under-x (< nx 0)
+                             nnx (cond over-x 500 under-x 0 :else nx)
+                             nxv (if (or over-x under-x) (- xv) xv)
+                             over-y (> ny 500) under-y (< ny 0)
+                             nny (cond over-y 500 under-y 0 :else ny)
+                             nyv (if (or over-y under-y) (- yv) yv)]
+                         (aset-long balls b nnx) (aset-long balls (+ b 1) nny)
+                         (aset-long balls (+ b 2) nxv) (aset-long balls (+ b 3) nyv)
+                         (recur (inc j) (if (or over-x under-x over-y under-y) (inc bc) bc)))
+                       bc)))
+            bc))]
+    (loop [j 0 acc bounces]
+      (if (< j 100)
+        (recur (inc j) (+ acc (aget balls (* j 4)) (aget balls (+ (* j 4) 1))))
+        acc))))
+
+(defn bounce-mut-run [size]
+  (let [balls (long-array 400)]
+    (loop [rep 0 total 0]
+      (if (< rep size)
+        (recur (inc rep) (bounce-mut-once balls))
+        total))))
+
+(def bounce-mut-bench
+  {:name "bounce_mut" :warmup 10 :iters 20 :size 400 :expected 47174 :run bounce-mut-run})

@@ -1,5 +1,9 @@
 ;; Timing + checksum harness. Loaded via load-file, so defs land in the
 ;; default namespace alongside the per-benchmark files.
+;;
+;; Unchecked math (applies to the files loaded after this one) so the native
+;; array ports aren't paying overflow checks on every op.
+(set! *unchecked-math* true)
 (defn run-bench [{:keys [name warmup iters size expected run]}]
   (dotimes [_ warmup] (run size))
   (let [start (System/nanoTime)

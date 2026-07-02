@@ -1,0 +1,179 @@
+// Unlocked tier: NBody over @std.buffer with 5 bodies packed as f64s (7 fields
+// each), mutated in place. Escape hatch analogous to a native double array;
+// compare against the persistent `nbody`. Same arithmetic order, so the scaled
+// energy checksum is identical.
+use @std.buffer
+use @std.math
+
+pi := 3.141592653589793
+solar_mass := 4.0 * pi * pi
+days_per_year := 365.24
+
+// Body b, field f (0=x,1=y,2=z,3=vx,4=vy,5=vz,6=mass) -> byte offset.
+fn off(b: Int, f: Int) Int {
+  (b * 7 + f) * 8
+}
+
+fn init(buf: buffer.Buffer) {
+  set_body(buf, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, solar_mass)
+  set_body(
+    buf,
+    1,
+    4.84143144246472090,
+    0.0 - 1.16032004402742839,
+    0.0 - 0.103622044471123109,
+    0.00166007664274403694 * days_per_year,
+    0.00769901118419740425 * days_per_year,
+    (0.0 - 0.0000690460016972063023) * days_per_year,
+    0.000954791938424326609 * solar_mass,
+  )
+  set_body(
+    buf,
+    2,
+    8.34336671824457987,
+    4.12479856412430479,
+    0.0 - 0.403523417114321381,
+    (0.0 - 0.00276742510726862411) * days_per_year,
+    0.00499852801234917238 * days_per_year,
+    0.0000230417297573763929 * days_per_year,
+    0.000285885980666130812 * solar_mass,
+  )
+  set_body(
+    buf,
+    3,
+    12.8943695621391310,
+    0.0 - 15.1111514016986312,
+    0.0 - 0.223307578892655734,
+    0.00296460137564761618 * days_per_year,
+    0.00237847173959480950 * days_per_year,
+    (0.0 - 0.0000296589568540237556) * days_per_year,
+    0.0000436624404335156298 * solar_mass,
+  )
+  set_body(
+    buf,
+    4,
+    15.3796971148509165,
+    0.0 - 25.9193146099879641,
+    0.179258772950371181,
+    0.00268067772490389322 * days_per_year,
+    0.00162824170038242295 * days_per_year,
+    (0.0 - 0.0000951592254519715870) * days_per_year,
+    0.0000515138902046611451 * solar_mass,
+  )
+  px := 0.0
+  py := 0.0
+  pz := 0.0
+  b := 0
+  for b < 5 {
+    m := buf.get_f64(off(b, 6))
+    px = px + buf.get_f64(off(b, 3)) * m
+    py = py + buf.get_f64(off(b, 4)) * m
+    pz = pz + buf.get_f64(off(b, 5)) * m
+    b = b + 1
+  }
+  buf.set_f64(off(0, 3), (0.0 - px) / solar_mass)
+  buf.set_f64(off(0, 4), (0.0 - py) / solar_mass)
+  buf.set_f64(off(0, 5), (0.0 - pz) / solar_mass)
+}
+
+fn set_body(
+  buf: buffer.Buffer,
+  b: Int,
+  x: Float,
+  y: Float,
+  z: Float,
+  vx: Float,
+  vy: Float,
+  vz: Float,
+  mass: Float,
+) {
+  buf.set_f64(off(b, 0), x)
+  buf.set_f64(off(b, 1), y)
+  buf.set_f64(off(b, 2), z)
+  buf.set_f64(off(b, 3), vx)
+  buf.set_f64(off(b, 4), vy)
+  buf.set_f64(off(b, 5), vz)
+  buf.set_f64(off(b, 6), mass)
+}
+
+fn advance(buf: buffer.Buffer, dt: Float) {
+  n := 5
+  i := 0
+  for i < n {
+    bix := buf.get_f64(off(i, 0))
+    biy := buf.get_f64(off(i, 1))
+    biz := buf.get_f64(off(i, 2))
+    bimass := buf.get_f64(off(i, 6))
+    vx := buf.get_f64(off(i, 3))
+    vy := buf.get_f64(off(i, 4))
+    vz := buf.get_f64(off(i, 5))
+    j := i + 1
+    for j < n {
+      dx := bix - buf.get_f64(off(j, 0))
+      dy := biy - buf.get_f64(off(j, 1))
+      dz := biz - buf.get_f64(off(j, 2))
+      d2 := dx * dx + dy * dy + dz * dz
+      mag := dt / (d2 * math.sqrt(d2))
+      jmass := buf.get_f64(off(j, 6))
+      buf.set_f64(off(j, 3), buf.get_f64(off(j, 3)) + dx * bimass * mag)
+      buf.set_f64(off(j, 4), buf.get_f64(off(j, 4)) + dy * bimass * mag)
+      buf.set_f64(off(j, 5), buf.get_f64(off(j, 5)) + dz * bimass * mag)
+      vx = vx - dx * jmass * mag
+      vy = vy - dy * jmass * mag
+      vz = vz - dz * jmass * mag
+      j = j + 1
+    }
+    buf.set_f64(off(i, 3), vx)
+    buf.set_f64(off(i, 4), vy)
+    buf.set_f64(off(i, 5), vz)
+    i = i + 1
+  }
+  k := 0
+  for k < n {
+    buf.set_f64(off(k, 0), buf.get_f64(off(k, 0)) + dt * buf.get_f64(off(k, 3)))
+    buf.set_f64(off(k, 1), buf.get_f64(off(k, 1)) + dt * buf.get_f64(off(k, 4)))
+    buf.set_f64(off(k, 2), buf.get_f64(off(k, 2)) + dt * buf.get_f64(off(k, 5)))
+    k = k + 1
+  }
+}
+
+fn energy(buf: buffer.Buffer) Float {
+  n := 5
+  e := 0.0
+  i := 0
+  for i < n {
+    vx := buf.get_f64(off(i, 3))
+    vy := buf.get_f64(off(i, 4))
+    vz := buf.get_f64(off(i, 5))
+    e = e + 0.5 * buf.get_f64(off(i, 6)) * (vx * vx + vy * vy + vz * vz)
+    j := i + 1
+    for j < n {
+      dx := buf.get_f64(off(i, 0)) - buf.get_f64(off(j, 0))
+      dy := buf.get_f64(off(i, 1)) - buf.get_f64(off(j, 1))
+      dz := buf.get_f64(off(i, 2)) - buf.get_f64(off(j, 2))
+      dist := math.sqrt(dx * dx + dy * dy + dz * dz)
+      e = e - buf.get_f64(off(i, 6)) * buf.get_f64(off(j, 6)) / dist
+      j = j + 1
+    }
+    i = i + 1
+  }
+  e
+}
+
+pub warmup := 5
+pub iters := 20
+pub size := 20000
+pub expected := -16908926
+
+pub fn run(size: Int) Int {
+  buf := buffer.new(5 * 7 * 8)
+  init(buf)
+  i := 0
+  for i < size {
+    advance(buf, 0.01)
+    i = i + 1
+  }
+  result := Float.to_int(math.round(energy(buf) * 100000000.0))
+  buf.free()
+  result
+}

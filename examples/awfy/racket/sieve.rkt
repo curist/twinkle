@@ -19,3 +19,18 @@
       [else (loop (add1 i) flags count)])))
 
 (define sieve-bench (bench "sieve" 10 40 5000 669 sieve-run))
+
+;; Unlocked tier: native mutable vector, set in place — Racket's escape hatch
+;; to the native league.
+(provide sieve-mut-bench)
+(define (sieve-mut-run size)
+  (define flags (make-vector (add1 size) #t))
+  (let loop ([i 2] [count 0])
+    (cond
+      [(> i size) count]
+      [(vector-ref flags i)
+       (let mark ([k (* 2 i)])
+         (when (<= k size) (vector-set! flags k #f) (mark (+ k i))))
+       (loop (add1 i) (add1 count))]
+      [else (loop (add1 i) count)])))
+(define sieve-mut-bench (bench "sieve_mut" 10 40 5000 669 sieve-mut-run))

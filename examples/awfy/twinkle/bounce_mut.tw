@@ -1,0 +1,86 @@
+// Unlocked tier: Bounce over @std.buffer with 100 balls packed as i64s
+// (4 fields each), mutated in place. Escape hatch analogous to a native int
+// array; compare against the persistent `bounce`.
+use @std.buffer
+
+pub warmup := 10
+pub iters := 20
+pub size := 400
+pub expected := 47174
+
+pub fn run(size: Int) Int {
+  ball_count := 100
+  buf := buffer.new(ball_count * 4 * 8)
+  total := 0
+  rep := 0
+  for rep < size {
+    seed := 74755
+    k := 0
+    for k < ball_count {
+      s1 := seed * 1309 + 13849 & 65535
+      s2 := s1 * 1309 + 13849 & 65535
+      s3 := s2 * 1309 + 13849 & 65535
+      s4 := s3 * 1309 + 13849 & 65535
+      base := k * 4 * 8
+      buf.set_i64(base, s1 % 500)
+      buf.set_i64(base + 8, s2 % 500)
+      buf.set_i64(base + 16, s3 % 5 - 2)
+      buf.set_i64(base + 24, s4 % 5 - 2)
+      seed = s4
+      k = k + 1
+    }
+    step := 0
+    bounces := 0
+    for step < 50 {
+      j := 0
+      for j < ball_count {
+        base := j * 4 * 8
+        x := buf.get_i64(base)
+        y := buf.get_i64(base + 8)
+        xv := buf.get_i64(base + 16)
+        yv := buf.get_i64(base + 24)
+        nx := x + xv
+        ny := y + yv
+        bounced := false
+        if nx > 500 {
+          nx = 500
+          xv = 0 - xv
+          bounced = true
+        } else if nx < 0 {
+          nx = 0
+          xv = 0 - xv
+          bounced = true
+        }
+        if ny > 500 {
+          ny = 500
+          yv = 0 - yv
+          bounced = true
+        } else if ny < 0 {
+          ny = 0
+          yv = 0 - yv
+          bounced = true
+        }
+        buf.set_i64(base, nx)
+        buf.set_i64(base + 8, ny)
+        buf.set_i64(base + 16, xv)
+        buf.set_i64(base + 24, yv)
+        if bounced {
+          bounces = bounces + 1
+        }
+        j = j + 1
+      }
+      step = step + 1
+    }
+    checksum := bounces
+    j := 0
+    for j < ball_count {
+      base := j * 4 * 8
+      checksum = checksum + buf.get_i64(base) + buf.get_i64(base + 8)
+      j = j + 1
+    }
+    total = checksum
+    rep = rep + 1
+  }
+  buf.free()
+  total
+}

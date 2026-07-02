@@ -1,13 +1,16 @@
 use .bounce
+use .bounce_mut
 use .harness
 use .harness.{Benchmark}
 use .json
 use .list
 use .mandelbrot
 use .nbody
+use .nbody_mut
 use .permute
 use .queens
 use .sieve
+use .sieve_mut
 use .smoke
 use .storage
 use .towers
@@ -100,5 +103,29 @@ harness.run_all([
     size: json.size,
     expected: json.expected,
     run: json.run,
+  },
+  Benchmark.{
+    name: "sieve_mut",
+    warmup: sieve_mut.warmup,
+    iters: sieve_mut.iters,
+    size: sieve_mut.size,
+    expected: sieve_mut.expected,
+    run: sieve_mut.run,
+  },
+  Benchmark.{
+    name: "bounce_mut",
+    warmup: bounce_mut.warmup,
+    iters: bounce_mut.iters,
+    size: bounce_mut.size,
+    expected: bounce_mut.expected,
+    run: bounce_mut.run,
+  },
+  Benchmark.{
+    name: "nbody_mut",
+    warmup: nbody_mut.warmup,
+    iters: nbody_mut.iters,
+    size: nbody_mut.size,
+    expected: nbody_mut.expected,
+    run: nbody_mut.run,
   },
 ])

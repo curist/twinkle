@@ -7,4 +7,5 @@
 (load-file "examples/awfy/clojure/bounce.clj")
 (load-file "examples/awfy/clojure/nbody.clj")
 
-(run-all [sieve-bench bounce-bench nbody-bench])
+(run-all [sieve-bench bounce-bench nbody-bench
+          sieve-mut-bench bounce-mut-bench nbody-mut-bench])
