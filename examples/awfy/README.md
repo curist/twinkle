@@ -40,9 +40,10 @@ racket examples/awfy/racket/main.rkt           # Sieve, Bounce, NBody only
 ```
 
 Clojure and Racket are **optional** — `run.sh` skips them if the `clojure` /
-`racket` commands are not on `PATH`. They cover only the persistent-write
-subset, so the checksum diff compares each benchmark across just the languages
-that emit a row for it.
+`racket` commands are not on `PATH`. They cover only the write-heavy subset
+(Sieve, Bounce, NBody) in both persistent and unlocked (`*_mut`) forms, so the
+checksum diff compares each benchmark across just the languages that emit a row
+for it.
 
 There is no per-benchmark filter flag yet — to isolate one benchmark, comment
 out the others in the `main` files.
@@ -79,6 +80,44 @@ So the write-heavy gaps are largely the cost of the persistent representation,
 not a Twinkle-specific defect — the levers are typed/specialized `Vector`
 representations, not micro-optimizing `set_at`.
 
+## The unlocked / native tier (`*_mut`)
+
+Every one of those languages has an escape hatch out of persistent structures
+into native mutable storage. The `sieve_mut` / `bounce_mut` / `nbody_mut`
+benchmarks exercise it, so the table shows both tiers side by side (same
+checksums enforced):
+
+| language | escape hatch used |
+|---|---|
+| Twinkle | `@std.buffer` — manually-managed linear memory with u8/i64/f64 views + `free()` |
+| Clojure | Java primitive arrays (`boolean-array` / `long-array` / `double-array`) |
+| Racket | mutable `vector` and unboxed `flvector` |
+
+What the numbers show:
+
+- **Twinkle's `@std.buffer` reaches the native league on write-bound kernels.**
+  `bounce` 2024 ms → `bounce_mut` ~80 ms — matching Node's native array — and
+  `sieve` 36 ms → ~1.8 ms. This is the concrete answer to "can Twinkle escape the
+  persistence tax": yes, when you opt into manual linear memory.
+- **NBody barely moves** (`nbody` 600 ms → `nbody_mut` 570 ms; Racket sees only a
+  modest gain too). NBody is *compute*-bound, not storage-bound — the 5-body
+  vector is tiny, so `set_at` copies were already cheap. Its remaining ~30× gap
+  to Node is float codegen and per-access `get_f64`/`set_f64` call overhead, not
+  persistence. Different lever entirely.
+- **Clojure's idiomatic array ports do *not* beat its persistent vectors**
+  (`bounce_mut` is actually slower). Clojure's persistent vectors are extremely
+  optimized, while naive `long-array`/`double-array` code boxes at every loop
+  boundary; reaching the native league needs aggressive primitive-type discipline
+  (`*unchecked-math*`, `^long`/`^double` everywhere, no boxing across closures)
+  that ordinary array code doesn't get for free. A useful reminder that "drop to
+  arrays" is not automatically fast.
+
+Takeaway for Twinkle: the persistent `Vector` is competitive with peer
+persistent collections, and `@std.buffer` provides a real, native-speed path for
+the write-bound cases that need it. The open compiler lever is typed/specialized
+`Vector` representations (to narrow the default-path gap) and float codegen (for
+the compute-bound cases), not `set_at` itself.
+
 ## Floating point determinism
 
 The cross-language checksum diff requires bit-identical float results. Two
@@ -114,6 +153,13 @@ the amount of timed work.
 | storage | 120 | 10 | 20 | 27881 | GC-throughput nested-vector tree + LCG |
 | nbody | 20000 | 5 | 20 | -16908926 | 5-body `Float` sim over `Vector<Body>` |
 | json | 1000 | 20 | 100 | 25280 | hand-written recursive-descent parser (string/`Byte`) |
+| sieve_mut | 5000 | 10 | 40 | 669 | unlocked tier: native mutable storage (Twinkle `@std.buffer`) |
+| bounce_mut | 400 | 10 | 20 | 47174 | unlocked tier: native mutable storage |
+| nbody_mut | 20000 | 5 | 20 | -16908926 | unlocked tier: native mutable storage |
+
+The `*_mut` variants exist only for the three persistent-write languages
+(Twinkle, Clojure, Racket) — Node/Go are already native, so their base
+`sieve`/`bounce`/`nbody` rows *are* the native-tier reference.
 
 Determinism note: Bounce and Storage share AWFY's exact linear-congruential
 PRNG (`seed = (seed*1309 + 13849) & 65535`, initial seed 74755), defined once in
