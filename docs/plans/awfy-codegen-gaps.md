@@ -68,10 +68,13 @@ Added inherent `Float` methods that lower to Wasm rather than crossing to JS
 - `Float.round` → round half up toward +∞ (`0.5→1`, `1.5→2`, `2.5→3`, `-0.5→-0`),
   matching JS `Math.round`. No single Wasm instruction does this (`f64.nearest`
   is half-to-even, `0.5→0`), so it lowers to `f64.floor` + compare + `select`
-  (comparing the exact fractional part, not `floor(x+0.5)`), all native. Note it
-  differs from `math.round`'s *identity* only at the sub-ULP boundary because
-  the float **literal parser** rounds e.g. `0.49999999999999994` up to `0.5`
-  (a pre-existing parser precision issue, unrelated to `round`).
+  (comparing the exact fractional part, not `floor(x+0.5)`), all native. The only
+  divergence from JS `Math.round` is at the sub-ULP boundary, because the float
+  **literal parser** rounds e.g. `0.49999999999999994` up to `0.5` (a pre-existing
+  parser precision issue, unrelated to `round`). `@std.math.round` now delegates
+  to `Float.round` (previously host `Math.round`), so it too is native and no
+  longer crosses the JS boundary; the AWFY checksum (nbody's `energy()` uses
+  `math.round`) stays green across all five languages.
 
 **Considered and dropped:** `math.fround`/`fmin`/`fmax` wrappers (kept the plain
 `Float.min`/`max` inherent methods instead; `math.fround` left as-is on the host

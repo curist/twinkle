@@ -259,9 +259,10 @@ pub fn random() Float {
   Math.random()
 }
 
-/// Nearest integer to x, ties rounding toward +∞ (host `Math.round`).
+/// Nearest integer to x, ties rounding toward +∞, compiled to native
+/// `f64.floor` + compare + select via `Float.round` (no JS boundary crossing).
 pub fn round(x: Float) Float {
-  Math.round(x)
+  Float.round(x)
 }
 
 /// Floating-point sign: -1.0, 0.0, -0.0, 1.0, or NaN (host `Math.sign`).
