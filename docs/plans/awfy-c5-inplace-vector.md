@@ -165,11 +165,34 @@ uses**, so the two cannot diverge:
   rewrite. Detection tolerates trailing dead scaffolding bindings because it runs
   before per-function simplification. **Result: sieve 35.5 ms → 4.9 ms (~7×),
   bounce 1927 ms → 208 ms (~9×), both checksums unchanged.**
-- **Phase 2 — bounce (deeper).** In-place `set_at` removed the vector path-copy
-  and already recovered ~9× on bounce (better than expected). bounce *also*
-  allocates a fresh `Ball` record per step (which `bounce_mut` avoids via a
-  raw-int buffer); it remains ~2.7× off its `_mut` floor. Fully closing needs
-  record-allocation elimination or a struct-of-arrays layout — a separate item.
+- **Phase 2 — bounce (deeper). SCOPED BY MEASUREMENT, PAUSED (unbuilt).** After
+  1b, bounce's `set_at` is in-place; it remains ~2.3× off its `bounce_mut` floor.
+  We measured where that residue lives instead of guessing (see below). The
+  candidate levers rank very differently from the parent doc's intuition:
+  - **Record-alloc elimination — mostly a non-lever.** V8 already scalar-replaces
+    *non-escaping* GC structs: a tight `r := R.{…}; …r.a…` loop runs at
+    arithmetic-floor speed even though the compiler still emits `struct.new`. So
+    the escaping `Ball` (stored into the vector) costs ~nothing to eliminate:
+    an in-place "Ball-reuse" field mutation measured **~0%** (V8's generational
+    GC handles the short-lived object). Dropped.
+  - **Inliner + transient-record SROA — a real but modest ~15%.** The
+    `BounceResult` is *returned across the `bounce_step` Wasm call*, and V8 does
+    **not** inline across that boundary, so it genuinely escapes and is allocated.
+    Compiler-level inlining of the record-producer + scalar-replacing the
+    destructured result recovers it: **10.1 → 8.6 ms/run (~15%)** on a faithful
+    in-place bounce. Design was brainstormed (targeted record-producer inliner,
+    ANF-level post-mono, conservative escape check) but **not built** — 15% for a
+    sizable, self-host-risky new pass is a deliberate deferral, not a rejection.
+  - **The ~2.3× remainder is representation.** GC-vector per-access (`get` +
+    `set_in_place` trie navigation, ~1.6 ns / ~3.2 ns each above a ~0.27 ns local
+    read) vs `bounce_mut`'s flat i64 buffer. Closing it needs typed/flat element
+    storage (Lever B / `@std.buffer`), a separate large endeavor.
+  - **Measurement caveat (cost us a wrong first read):** benchmark the vector
+    **built inline** in the timed function, not returned from a helper — a
+    helper-returned vector is not deep-owned, so `set_at` stays **COW** (~36 ns,
+    ~10× the in-place path) and swamps every other signal. Our first A/B was
+    COW-contaminated and wrongly showed the inliner at ~2.5%; the faithful
+    in-place rerun showed ~15%.
 - **Lever B (separate track):** extend `route_typed_vec` beyond read-only
   `Vector<Int>` to `set_at` and to `Float`/`Bool`; add `PVecF64`.
 
@@ -184,5 +207,8 @@ uses**, so the two cannot diverge:
 
 ## Recommendation
 
-Do **Phase 1a first as a standalone soundness fix** (it stands on its own merit),
-then **Phase 1b (sieve)**. Bounce and Lever B are follow-ons.
+Phase 1a (soundness) and 1b (sieve + bounce in-place) are **done**. Phase 2 is
+**scoped and paused**: the only contained lever left is the ~15% inliner+SROA,
+which is deferred as not worth a new self-host-risky pass right now; the larger
+remaining bounce gap is a representation change (Lever B), a separate endeavor.
+Resume either lever from the measured breakdown above.
