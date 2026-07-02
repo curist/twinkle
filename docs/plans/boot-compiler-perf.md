@@ -98,6 +98,42 @@ plan_wasm_types: 125308 slot registration calls, 1070 unique types
 verify:          122257 slots; expr_walk ~196 - 201ms dominates slot_checks ~103 - 105ms
 ```
 
+## Update: 2026-07-02 (post awfy-c5 in-place work)
+
+Measured on `codegen-void-elim` after the awfy-c5 in-place `set_at` work landed
+(uniqueness alias-invalidation + method-form `set_at` loop rewrite). Compiling
+`boot/main.tw` (234 modules) with the bundled CLI.
+
+```text
+compile_modules   ~2209ms   (still dominates: ~44% of wall-clock)
+emit_module        ~476ms
+optimize           ~448 - 462ms
+prepare_backend    ~376ms
+verify             ~328ms
+core_link          ~276ms
+emit_wasm_binary   ~270ms
+link               ~214ms
+plan_wasm_types    ~121ms
+lower_anf          ~115ms
+monomorphize        ~73ms
+wasm_dce            ~60ms
+closure_convert     ~22ms
+```
+
+Wall-clock: `real ~5.06s`. Shape is unchanged from the 2026-06-28 baseline —
+`compile_modules` still dominates, then `emit_module`/`optimize`. That frontend
+bucket remains the only lever worth chasing for compile speed.
+
+**The awfy-c5 in-place work is perf-neutral for self-compilation.** Same-session
+A/B on identical input (both compilers building the same `boot/main.tw`):
+current `~5.06s` vs the pre-1a compiler `~5.26s` — a ~1–4% edge within noise, not
+a real speedup and not a regression. The `set_at`→in-place lever that gave
+user programs sieve ~7× / bounce ~9× does not apply here: the compiler's hot
+loops accumulate via `Vector.append` (builder) and `Dict`, and it has only ~9
+`.set_at` sites total, all in the regexp stdlib — off the compile hot path. The
+1a alias-invalidation added per-op optimizer work but `optimize` is unchanged
+(the added work is offset/within noise).
+
 ## Previous baseline: 2026-06-25
 
 Measured compiling `boot/main.tw` (222 modules / 3029 functions), self-hosted

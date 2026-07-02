@@ -1,11 +1,22 @@
 # AWFY Codegen Gaps Plan
 
-**Status:** on branch `codegen-void-elim` (off `awfy-benchmark-suite`, not
-merged). Landed: **C1** (dead-Void elim) and **native `Float.sqrt`** — the
-latter is the session's big result: **nbody 6.6× faster** (~561→~85 ms), because
-the real bottleneck was `math.sqrt` crossing the Wasm→JS boundary, not any of
-C3–C5. Prototyped-and-backed-out: **C2** (peephole; code-size only) and **C4 via
-immutable record fields** (no runtime effect — V8 already load-eliminates).
+**Status: ARCHIVED (2026-07-02).** The actionable findings landed or were
+resolved; what remains is either rejected or spun out to other tracks:
+- **Landed:** **C1** (dead-Void elim) and the session's big result — native
+  `Float.sqrt`/`floor`/`ceil`/`trunc`/`abs`/`min`/`max`/`round` replacing JS FFI
+  Math calls (**nbody 6.6×**, ~561→~85 ms).
+- **C5 (in-place vector `set_at`)** spun out to
+  [awfy-c5-inplace-vector.md](awfy-c5-inplace-vector.md) and **DONE** (sieve ~7×,
+  bounce ~9×).
+- **Rejected as non-issues (V8 already handles them):** **C2** (peephole;
+  code-size only), **C4** (struct.get field caching — V8 load-eliminates), and
+  record-allocation elimination generally (V8 scalar-replaces non-escaping GC
+  structs — measured in the C5 doc's Phase 2).
+- **Deferred to the representation track** ([vector-perf/](../vector-perf/README.md)):
+  un-inlined `rt_arr__get`/`set` per-access overhead and typed/unboxed element
+  storage — the measured wall for read/write-heavy vector benchmarks.
+
+Original session notes follow.
 
 Key empirical findings this session, in order of surprise:
 1. **`@std.math` functions are JS FFI calls** (`import "Math" "sqrt"`), not native
@@ -19,7 +30,7 @@ Key empirical findings this session, in order of surprise:
    repeated `struct.get` even with mutable fields; forcing immutable fields (and
    losing in-place record update) changed no AWFY benchmark.
 
-**Related:** `examples/awfy/` (the suite), [boot-compiler-perf.md](boot-compiler-perf.md)
+**Related:** `examples/awfy/` (the suite), [boot-compiler-perf.md](../boot-compiler-perf.md)
 (self-host compile time, a separate concern).
 
 ### Native `Float.sqrt` intrinsic (DONE — biggest win)

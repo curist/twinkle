@@ -1,8 +1,15 @@
-# AWFY C5 — in-place vector `set_at` (Phase 0 findings)
+# AWFY C5 — in-place vector `set_at`
 
-**Status:** Phase 0 (root-cause + guard design) complete. No code changed yet.
+**Status: ARCHIVED / DONE (2026-07-02).** Phase 1a (soundness) and 1b (sieve +
+bounce in-place) landed on `codegen-void-elim` — **sieve 35.5→4.9 ms (~7×),
+bounce 1927→208 ms (~9×)**, self-hosted, tests + AWFY checksums green. Phase 2
+was scoped by measurement and **deliberately not built**: record-allocation
+elimination is a non-lever (V8 scalar-replaces non-escaping GC structs;
+Ball-reuse ~0%), the inliner+SROA is a real but modest ~15% (deferred as not
+worth a self-host-risky pass), and the larger remaining ~2.3× is a
+representation change (typed/flat storage) — a separate track. See the Phase 2
+section below for the full measured breakdown and the COW-benchmark caveat.
 **Parent:** [awfy-codegen-gaps.md](awfy-codegen-gaps.md) attack vector C5.
-**Branch:** `codegen-void-elim` (investigation only).
 
 ## Reframe: C5 is two independent levers
 
