@@ -2280,6 +2280,158 @@ fn test_vector_append_straight_line_chain_rewrite() Result<Void, String> {
   assert.equal(count_call(result.body, mock_builder_freeze()), 1)
 }
 
+// ── Refreshed-override alias soundness (awfy-c5 Phase 1a) ───────────
+// A fresh value transferred into a local that is *also* tainted lands both
+// tainted AND `refreshed`; the `refreshed` flag then overrides the taint in
+// `ownership_of`. If that local is subsequently aliased into a sink (record
+// field, variant payload, closure capture) and later mutated in place, the
+// mutation corrupts the alias. These reproduce the shipped soundness bug: the
+// COW op must NOT be rewritten to in-place, because the value escaped through
+// the sink. The plain "stored in X taints" tests above don't exercise this —
+// they use a bare fresh producer that is never `refreshed`, so taint alone
+// blocks them.
+fn test_refreshed_record_alias_no_rewrite() Result<Void, String> {
+  // let src = vec_make()               // fresh, deep-owned
+  // let v = AInit(src)                 // transfer; v tainted below → refreshed
+  // let _ = Record(tid, [f0: v])       // sink: v escapes into a record field
+  // let r = vec_set(v, 0, 42)          // must stay COW (v is aliased by record)
+  // Atom(r)
+  body: AnfExpr = .Let(
+    lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(
+      lid(1),
+      .AInit(.ALocal(lid(0))),
+      .Let(
+        lid(2),
+        .ARecord(tid(7), [FieldAtom.{ field: field(0), value: .ALocal(lid(1)) }]),
+        .Let(
+          lid(3),
+          .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(1)), .ALitInt(0), .ALitInt(42)]),
+          .Atom(.ALocal(lid(3))),
+        ),
+      ),
+    ),
+  )
+  func := make_func(body)
+  result := rewrite(func)
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))) => assert.equal(
+      f.id,
+      mock_vec_set().id,
+    ),
+    _ => .Err("expected no rewrite (refreshed value aliased into record)"),
+  }
+}
+
+fn test_refreshed_variant_alias_no_rewrite() Result<Void, String> {
+  // Same shape, but v escapes into a variant payload.
+  body: AnfExpr = .Let(
+    lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(
+      lid(1),
+      .AInit(.ALocal(lid(0))),
+      .Let(
+        lid(2),
+        .AVariant(tid(0), VariantId.{ id: 1 }, [.ALocal(lid(1))]),
+        .Let(
+          lid(3),
+          .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(1)), .ALitInt(0), .ALitInt(42)]),
+          .Atom(.ALocal(lid(3))),
+        ),
+      ),
+    ),
+  )
+  func := make_func(body)
+  result := rewrite(func)
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))) => assert.equal(
+      f.id,
+      mock_vec_set().id,
+    ),
+    _ => .Err("expected no rewrite (refreshed value aliased into variant)"),
+  }
+}
+
+fn test_refreshed_closure_alias_no_rewrite() Result<Void, String> {
+  // Same shape, but v is captured by a closure (the sink the ad-hoc list missed).
+  body: AnfExpr = .Let(
+    lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(
+      lid(1),
+      .AInit(.ALocal(lid(0))),
+      .Let(
+        lid(2),
+        .AMakeClosure(fid(99), [lid(1)]),
+        .Let(
+          lid(3),
+          .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(1)), .ALitInt(0), .ALitInt(42)]),
+          .Atom(.ALocal(lid(3))),
+        ),
+      ),
+    ),
+  )
+  func := make_func(body)
+  result := rewrite(func)
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))) => assert.equal(
+      f.id,
+      mock_vec_set().id,
+    ),
+    _ => .Err("expected no rewrite (refreshed value captured by closure)"),
+  }
+}
+
+// A refreshed value aliased into a sink but then NOT live afterward is a genuine
+// move — the sink is the sole owner and in-place on the *result* stays sound.
+// Here the value dies at the sink, so the later mutation is on an unrelated
+// fresh vector; this guards against the fix over-clearing and killing valid
+// in-place. The vec_set below is on a *different* fresh local and must rewrite.
+fn test_refreshed_alias_dead_source_still_rewrites() Result<Void, String> {
+  // let other = vec_make()             // fresh, deep-owned, never aliased
+  // let src = vec_make()
+  // let v = AInit(src)                 // transfer
+  // let _ = Record(tid, [f0: v])       // v escapes but is dead afterward
+  // let r = vec_set(other, 0, 42)      // unrelated fresh vector → must rewrite
+  // Atom(r)
+  body: AnfExpr = .Let(
+    lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(mock_vec_make()), []),
+      .Let(
+        lid(2),
+        .AInit(.ALocal(lid(1))),
+        .Let(
+          lid(3),
+          .ARecord(tid(7), [FieldAtom.{ field: field(0), value: .ALocal(lid(2)) }]),
+          .Let(
+            lid(4),
+            .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(42)]),
+            .Atom(.ALocal(lid(4))),
+          ),
+        ),
+      ),
+    ),
+  )
+  func := make_func(body)
+  result := rewrite(func)
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))))) => assert.equal(
+      f.id,
+      mock_vec_set_in_place().id,
+    ),
+    _ => .Err("expected rewrite (unrelated fresh vector, sink source dead)"),
+  }
+}
+
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   s := runner.suite("Opt: Uniqueness Rewrite")
@@ -2331,6 +2483,15 @@ pub fn suite() runner.Suite {
 
   // Correctness: init transfer with tainted source
   s = .test("init transfer tainted source", test_init_transfer_tainted_source)
+
+  // Correctness: refreshed-override alias soundness (awfy-c5 Phase 1a)
+  s = .test("refreshed record alias → no rewrite", test_refreshed_record_alias_no_rewrite)
+  s = .test("refreshed variant alias → no rewrite", test_refreshed_variant_alias_no_rewrite)
+  s = .test("refreshed closure alias → no rewrite", test_refreshed_closure_alias_no_rewrite)
+  s = .test(
+    "refreshed alias dead source → still rewrites",
+    test_refreshed_alias_dead_source_still_rewrites,
+  )
 
   // Correctness: record update consume-reassign
   s = .test("record update consume-reassign chain", test_record_update_consume_reassign)
