@@ -564,6 +564,8 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("buf_store_i64", "rt.buf", "buf_store_i64", .None),
     rt("buf_load_f64", "rt.buf", "buf_load_f64", .None),
     rt("buf_store_f64", "rt.buf", "buf_store_f64", .None),
+    // Appended at end to preserve FuncId assignment of earlier builtins.
+    intr("float$sqrt", .Some("Float.sqrt")),
   ]
 }
 

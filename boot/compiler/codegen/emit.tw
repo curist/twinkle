@@ -2125,6 +2125,7 @@ pub fn build_intrinsic_table(b: BuiltinRegistry) Dict<Int, IntrinsicTag> {
   t[b.method_id("Byte", "from_int").id] = .ByteFromInt
   t[b.method_id("Byte", "to_string").id] = .ByteToString
   t[b.method_id("Float", "bits").id] = .FloatBits
+  t[b.method_id("Float", "sqrt").id] = .FloatSqrt
   t[b.method_id("Task", "spawn").id] = .TaskSpawn
   t[b.method_id("Task", "await").id] = .TaskAwait
   t[b.method_id("Task", "yield").id] = .TaskYield
@@ -2194,6 +2195,10 @@ fn emit_intrinsic_call(
     .FloatBits => {
       buf2 := emit_atom(args[0], ctx, buf)
       buf2.append(.I64ReinterpretF64).append(.LocalSet(result_idx))
+    },
+    .FloatSqrt => {
+      buf2 := emit_atom(args[0], ctx, buf)
+      buf2.append(.F64Sqrt).append(.LocalSet(result_idx))
     },
     .ByteFromInt => emit_intrinsic_byte_from_int(args, result_idx, result_mono, ctx, buf),
     .ByteToString => {

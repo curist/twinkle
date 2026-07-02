@@ -277,9 +277,10 @@ pub fn sinh(x: Float) Float {
   Math.sinh(x)
 }
 
-/// Square root of x (host `Math.sqrt`). Requires the JS/Deno runner.
+/// Square root of x, compiled to the native `f64.sqrt` Wasm instruction (no JS
+/// boundary crossing, unlike the other host-`Math` wrappers here).
 pub fn sqrt(x: Float) Float {
-  Math.sqrt(x)
+  Float.sqrt(x)
 }
 
 /// Tangent of x radians (host `Math.tan`).

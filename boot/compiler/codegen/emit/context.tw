@@ -40,6 +40,7 @@ pub type IntrinsicTag = {
   ByteFromInt,
   ByteToString,
   FloatBits,
+  FloatSqrt,
   TaskSpawn,
   TaskAwait,
   TaskYield,

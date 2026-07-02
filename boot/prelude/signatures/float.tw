@@ -17,3 +17,8 @@ pub fn from_string(s: String) Option<Float> {
 pub fn bits(f: Float) Int {
   0
 }
+
+/// Square root of f, compiled to the native `f64.sqrt` instruction.
+pub fn sqrt(f: Float) Float {
+  0.0
+}

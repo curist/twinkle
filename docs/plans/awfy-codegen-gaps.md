@@ -1,14 +1,44 @@
 # AWFY Codegen Gaps Plan
 
-**Status:** C1 landed on branch `codegen-void-elim` (off `awfy-benchmark-suite`,
-not merged); C2 was prototyped, measured, and **backed out** (code-size only, no
-runtime benefit, adds compile time — see below). Key empirical finding: **the
-C1/C2 patterns are code-size wins, not steady-state runtime wins** — V8's
-optimizing tier already DCEs the dead Void stores and coalesces the set/get
-churn, so AWFY wall-clock is unchanged (except permute ~3% from C1). The real
-runtime levers are C3–C5; next up is C4/C5.
+**Status:** on branch `codegen-void-elim` (off `awfy-benchmark-suite`, not
+merged). Landed: **C1** (dead-Void elim) and **native `Float.sqrt`** — the
+latter is the session's big result: **nbody 6.6× faster** (~561→~85 ms), because
+the real bottleneck was `math.sqrt` crossing the Wasm→JS boundary, not any of
+C3–C5. Prototyped-and-backed-out: **C2** (peephole; code-size only) and **C4 via
+immutable record fields** (no runtime effect — V8 already load-eliminates).
+
+Key empirical findings this session, in order of surprise:
+1. **`@std.math` functions are JS FFI calls** (`import "Math" "sqrt"`), not native
+   Wasm instructions. Routing `sqrt` to the `f64.sqrt` instruction won nbody
+   6.6×. Every arithmetic Math fn with a Wasm instruction (floor/ceil/trunc/
+   abs/min/max/sqrt) is a free win of the same kind; transcendentals (sin/cos/
+   exp/log/pow) have no Wasm instruction and must stay host calls.
+2. **C1/C2 are code-size wins, not runtime wins** — V8's optimizing tier already
+   DCEs dead Void stores and coalesces set/get churn in hot loops.
+3. **C4 (struct.get field caching) is a non-issue** — V8 load-eliminates
+   repeated `struct.get` even with mutable fields; forcing immutable fields (and
+   losing in-place record update) changed no AWFY benchmark.
+
 **Related:** `examples/awfy/` (the suite), [boot-compiler-perf.md](boot-compiler-perf.md)
 (self-host compile time, a separate concern).
+
+### Native `Float.sqrt` intrinsic (DONE — biggest win)
+
+`math.sqrt` was `Math.sqrt(x)`, a JS import called twice per nbody inner
+iteration. Added a `Float.sqrt` builtin that lowers to the `f64.sqrt` Wasm
+instruction (mirrors the existing `Float.bits`/`.FloatBits` intrinsic:
+`prelude/signatures/float.tw` stub + `builtins.tw` `intr(...)` appended at end +
+`IntrinsicTag.FloatSqrt` + `build_intrinsic_table` + `emit_intrinsic_call` →
+`F64Sqrt`), and repointed `stdlib/math.tw`'s `sqrt` at it. Boot-only (the
+compiler never computes sqrt, so no stage0 parity needed).
+
+- nbody ~561→~85 ms (**6.6×**, ~34×→~5× Node); nbody_mut ~544→~52 ms (**10.5×**).
+- All other benchmarks unchanged; checksums bit-identical (IEEE-754 sqrt is
+  correctly rounded in both JS and Wasm). 2950 tests + self-host fixpoint green.
+- The Wasm→JS `Math.sqrt` import is fully DCE'd out of the module.
+- **Follow-up (not done):** give the same native-instruction treatment to
+  `floor`/`ceil`/`trunc`/`fround`(→nearest)/`abs`/`min`/`max`; and consider a
+  Wasm/host policy for the transcendentals.
 
 ## Landed on branch `codegen-void-elim` (2026-07-02)
 
