@@ -469,6 +469,8 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
     .F64Floor => ["${pad}f64.floor"],
     .F64Trunc => ["${pad}f64.trunc"],
     .F64Sqrt => ["${pad}f64.sqrt"],
+    .F64Min => ["${pad}f64.min"],
+    .F64Max => ["${pad}f64.max"],
     // Misc
     .Select => ["${pad}select"],
     // Conversions
@@ -479,6 +481,7 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
     .I64TruncF64S => ["${pad}i64.trunc_f64_s"],
     .F64ReinterpretI32 => ["${pad}f64.reinterpret_i32"],
     .I64ReinterpretF64 => ["${pad}i64.reinterpret_f64"],
+    .F64ReinterpretI64 => ["${pad}f64.reinterpret_i64"],
     // References
     .RefNull(ht) => ["${pad}ref.null ${emit_heap_type(ht)}"],
     .RefIsNull => ["${pad}ref.is_null"],

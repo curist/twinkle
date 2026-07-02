@@ -42,3 +42,28 @@ pub fn ceil(f: Float) Float {
 pub fn trunc(f: Float) Float {
   0.0
 }
+
+/// Reinterpret an IEEE 754 bit pattern as a Float (`f64.reinterpret_i64`).
+/// Inverse of `Float.bits`.
+pub fn from_bits(n: Int) Float {
+  0.0
+}
+
+/// Lesser of a and b, compiled to the native `f64.min` instruction
+/// (NaN-propagating, -0 < +0 — matches JS `Math.min`).
+pub fn min(a: Float, b: Float) Float {
+  0.0
+}
+
+/// Greater of a and b, compiled to the native `f64.max` instruction
+/// (NaN-propagating, +0 > -0 — matches JS `Math.max`).
+pub fn max(a: Float, b: Float) Float {
+  0.0
+}
+
+/// Round f to the nearest integer, halves rounding up toward +∞ (0.5→1,
+/// 1.5→2, -0.5→-0), matching JS `Math.round`. Lowered to native f64.floor +
+/// compare + select (no host round-trip).
+pub fn round(f: Float) Float {
+  0.0
+}

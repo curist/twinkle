@@ -55,13 +55,30 @@ suite is unchanged, but any float-heavy user program now avoids the JS boundary.
 - *Semantics differ from any instruction*: `round` (JS rounds half toward +∞;
   `f64.nearest` is half-to-even, e.g. `round(2.5)=3` vs `nearest(2.5)=2`),
   `sign` (returns −1/±0/1/NaN — no single instruction).
-- *Doable but deferred*: `fround` = `f64.promote(f32.demote(x))` (exact
-  Math.fround; needs two new IR instrs, rarely used). `Float.min`/`max` →
-  `f64.min`/`max`, `Float.from_bits` → `f64.reinterpret_i64`, and `Int`
-  `popcount`/`clz`/`ctz` → `i64.popcnt`/`clz`/`ctz` are new *native APIs* (not
-  replacing an existing boundary crossing).
 - *Genuinely host-bound*: `@std.{date,io,proc,fs,time}` externs (clock, I/O) —
   no Wasm equivalent, must stay FFI.
+
+### Native `Float` methods: `min`/`max`/`round`/`from_bits` (DONE — new APIs)
+
+Added inherent `Float` methods that lower to Wasm rather than crossing to JS
+(these are new API surface, not replacing existing boundary crossings):
+- `Float.min`/`Float.max` → `f64.min`/`f64.max` (single instr; NaN/±0 semantics
+  match JS `Math.min`/`max`). Callable as `a.min(b)`.
+- `Float.from_bits(n)` → `f64.reinterpret_i64` — inverse of `Float.bits`.
+- `Float.round` → round half up toward +∞ (`0.5→1`, `1.5→2`, `2.5→3`, `-0.5→-0`),
+  matching JS `Math.round`. No single Wasm instruction does this (`f64.nearest`
+  is half-to-even, `0.5→0`), so it lowers to `f64.floor` + compare + `select`
+  (comparing the exact fractional part, not `floor(x+0.5)`), all native. Note it
+  differs from `math.round`'s *identity* only at the sub-ULP boundary because
+  the float **literal parser** rounds e.g. `0.49999999999999994` up to `0.5`
+  (a pre-existing parser precision issue, unrelated to `round`).
+
+**Considered and dropped:** `math.fround`/`fmin`/`fmax` wrappers (kept the plain
+`Float.min`/`max` inherent methods instead; `math.fround` left as-is on the host
+`Math.fround`); `Int.popcount`/`leading_zeros`/`trailing_zeros` (`i64.popcnt`/
+`clz`/`ctz`) — no consumer in the codebase, so the speculative API and its IR
+were removed. (The HAMT dict has its own internal wasm `popcount` helper that
+could later use `i64.popcnt` natively — a separate, internal change.)
 
 ## Landed on branch `codegen-void-elim` (2026-07-02)
 

@@ -570,6 +570,10 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     intr("float$floor", .Some("Float.floor")),
     intr("float$ceil", .Some("Float.ceil")),
     intr("float$trunc", .Some("Float.trunc")),
+    intr("float$from_bits", .Some("Float.from_bits")),
+    intr("float$min", .Some("Float.min")),
+    intr("float$max", .Some("Float.max")),
+    intr("float$round", .Some("Float.round")),
   ]
 }
 

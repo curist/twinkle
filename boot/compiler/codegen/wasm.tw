@@ -1155,6 +1155,8 @@ fn encode_instr_cached(
     .F64Floor => .{ buf: buf.emit_u8(0x9C), cache },
     .F64Trunc => .{ buf: buf.emit_u8(0x9D), cache },
     .F64Sqrt => .{ buf: buf.emit_u8(0x9F), cache },
+    .F64Min => .{ buf: buf.emit_u8(0xA4), cache },
+    .F64Max => .{ buf: buf.emit_u8(0xA5), cache },
     // Misc
     .Select => .{ buf: buf.emit_u8(0x1B), cache },
     .Drop => .{ buf: buf.emit_u8(0x1A), cache },
@@ -1168,6 +1170,7 @@ fn encode_instr_cached(
       "wasm: F64ReinterpretI32 is not a standard wasm opcode — unsupported",
     ),
     .I64ReinterpretF64 => .{ buf: buf.emit_u8(0xBD), cache },
+    .F64ReinterpretI64 => .{ buf: buf.emit_u8(0xBF), cache },
     // References (single-byte prefix)
     .RefNull(ht) => buf.emit_u8(0xD0).encode_heap_type_into_cached(ht, ctx, cache),
     .RefIsNull => .{ buf: buf.emit_u8(0xD1), cache },
