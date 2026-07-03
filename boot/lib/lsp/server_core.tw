@@ -317,6 +317,13 @@ fn workspace_snapshot_cached(state: State, doc: document_store.Document) semanti
   semantic.snapshot_workspace_from_cache(state.query_cache, state.workspace_input(doc))
 }
 
+// Cache-only snapshot without the occurrence index, for cached features that never
+// read `snap.occurrences` (document symbols, folding ranges, inlay hints). Same
+// laziness as `workspace_snapshot_lite` on the cache-only path.
+fn workspace_snapshot_cached_lite(state: State, doc: document_store.Document) semantic.SemanticSnapshot? {
+  semantic.snapshot_workspace_from_cache_opt(state.query_cache, state.workspace_input(doc), false)
+}
+
 fn editor_snapshot(state: State, doc: document_store.Document) semantic.SemanticSnapshot {
   semantic.snapshot_workspace_for_editor(state.query_cache, state.workspace_input(doc))
 }
@@ -714,7 +721,7 @@ fn handle_document_symbol(state: State, req: protocol.Request) Step {
   if state.full_dirty {
     return state.empty_array_response_step(req)
   }
-  snap := case state.workspace_snapshot_cached(doc) {
+  snap := case state.workspace_snapshot_cached_lite(doc) {
     .Some(s) => s,
     .None => return state.empty_array_response_step(req),
   }
@@ -740,7 +747,7 @@ fn handle_folding_range(state: State, req: protocol.Request) Step {
   if state.full_dirty {
     return state.empty_array_response_step(req)
   }
-  snap := case state.workspace_snapshot_cached(doc) {
+  snap := case state.workspace_snapshot_cached_lite(doc) {
     .Some(s) => s,
     .None => return state.empty_array_response_step(req),
   }
@@ -772,7 +779,7 @@ fn handle_inlay_hint(state: State, req: protocol.Request) Step {
   if state.full_dirty {
     return state.empty_array_response_step(req)
   }
-  snap := case state.workspace_snapshot_cached(doc) {
+  snap := case state.workspace_snapshot_cached_lite(doc) {
     .Some(s) => s,
     .None => return state.empty_array_response_step(req),
   }
@@ -838,7 +845,7 @@ fn handle_workspace_symbol(state: State, req: protocol.Request) Step {
   // Use the first open doc to trigger workspace analysis, which populates
   // the cache with all reachable modules.
   doc := open_docs[0]
-  snap := state.workspace_snapshot(doc)
+  snap := state.workspace_snapshot_lite(doc)
   state.query_cache = snap.cache
 
   symbols := query_workspace_symbols.workspace_symbols(snap.cache, ws_params.query)
