@@ -80,6 +80,10 @@ pub type FrontendTimings = .{
   import_prelude: Float,
   resolve: Float,
   typecheck: Float,
+  check_setup: Float,
+  check_toplevel: Float,
+  check_bodies: Float,
+  check_finalize: Float,
   publish: Float,
   unused_imports: Float,
 }
@@ -98,6 +102,8 @@ pub type FrontendCounts = .{
   import_selective_edges: Int,
   import_prelude_edges: Int,
   import_export_entries: Int,
+  check_subst_size: Int,
+  check_type_map_entries: Int,
 }
 
 pub type AnalysisState = .{
@@ -208,6 +214,10 @@ pub fn empty_timings() FrontendTimings {
     import_prelude: 0.0,
     resolve: 0.0,
     typecheck: 0.0,
+    check_setup: 0.0,
+    check_toplevel: 0.0,
+    check_bodies: 0.0,
+    check_finalize: 0.0,
     publish: 0.0,
     unused_imports: 0.0,
   }
@@ -220,7 +230,28 @@ pub fn empty_counts() FrontendCounts {
     import_selective_edges: 0,
     import_prelude_edges: 0,
     import_export_entries: 0,
+    check_subst_size: 0,
+    check_type_map_entries: 0,
   }
+}
+
+/// Fold a module's per-module typecheck sub-phase timing into the aggregate
+/// frontend buckets. Only cache misses did real work — a cache hit contributes
+/// nothing, since its `CheckTiming` snapshot is stale from when it was first
+/// computed. Called under `state.timed` from the resolve/typecheck tail.
+fn accumulate_check_timing(state: AnalysisState, checked: checker.CheckResult, cache_hit: Bool) AnalysisState {
+  if cache_hit {
+    return state
+  }
+
+  ct := checked.timing
+  state.timings.check_setup = state.timings.check_setup + ct.setup
+  state.timings.check_toplevel = state.timings.check_toplevel + ct.toplevel
+  state.timings.check_bodies = state.timings.check_bodies + ct.bodies
+  state.timings.check_finalize = state.timings.check_finalize + ct.finalize
+  state.counts.check_subst_size = state.counts.check_subst_size + ct.subst_size
+  state.counts.check_type_map_entries = state.counts.check_type_map_entries + ct.type_map_entries
+  state
 }
 
 pub fn new_state(base: ResolvedEnv, store: cache.Store, ov: overlay.Overlay, project_root: String) AnalysisState {
@@ -534,6 +565,7 @@ fn resolve_and_check_local(
 
   if state.timed {
     state.timings.typecheck = state.timings.typecheck + (date.now() - t_check0)
+    state = .accumulate_check_timing(checked_out.value, checked_out.cache_hit)
   }
 
   checked := checked_out.value
@@ -1866,6 +1898,11 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
     resolved_result := ResolveResult.{ env: tc_env, diagnostics: [] }
     typed_out := runner.typecheck(cur.cache, mc.parsed, resolved_result, cur.lint_mode)
     cur.cache = typed_out.store
+
+    if cur.timed {
+      cur = .accumulate_check_timing(typed_out.value, typed_out.cache_hit)
+    }
+
     typed := typed_out.value
 
     if typed.diagnostics.len() > 0 {

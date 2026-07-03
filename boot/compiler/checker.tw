@@ -3,6 +3,8 @@
 //! Consumes ResolvedEnv + Module AST, produces TypeMap + diagnostics.
 //! InferCtx is threaded functionally through every call; updates use COW field mutation.
 
+use @std.date
+
 use lib.source.diagnostics.{DiagKind, MissingVariant, error_with_help}
 use lib.source.rewrite
 use lib.source.rewrite.{Rewrite}
@@ -83,6 +85,22 @@ pub type CheckResult = .{
   iterable_lowering: Dict<Int, IterableLoweringInfo>,
   rewrites: Vector<Rewrite>,
   lints: Vector<LintFinding>,
+  timing: CheckTiming,
+}
+
+/// Per-module typecheck sub-phase timing, populated by `check` and aggregated by
+/// the frontend driver on cache misses. Splits the checker's pass structure so a
+/// grown typecheck bucket can be attributed to top-level inference, function-body
+/// inference, or the whole-`type_map` finalize zonk sweep. `subst_size` and
+/// `type_map_entries` snapshot the substitution table and finalize workload as
+/// cheap proxies for substitution / normalization cost.
+pub type CheckTiming = .{
+  setup: Float,
+  toplevel: Float,
+  bodies: Float,
+  finalize: Float,
+  subst_size: Int,
+  type_map_entries: Int,
 }
 
 // ── Context helpers ─────────────────────────────────────────────────
@@ -5409,6 +5427,10 @@ fn collect_module_aliases(module: Module) Dict<String, Bool> {
 }
 
 pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
+  // Pass-boundary timestamps. Always sampled — six date.now() calls per module is
+  // negligible — and folded into CheckTiming below; the frontend driver only reads
+  // it on cache misses when TWINKLE_TIMINGS is set.
+  t0 := date.now()
   ctx := empty_ctx(env, collect_module_aliases(module), lint_mode)
 
   // Pass 0: give every unannotated function a fresh meta-var return type. Its
@@ -5441,6 +5463,7 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
   }
 
   ctx.env = .with_functions(pass0_fns)
+  t_setup := date.now()
 
   // Diagnostics are accumulated in three independent streams — top-level
   // statements (Pass 1), function bodies (Pass 2/4), and re-checked unannotated
@@ -5475,10 +5498,13 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
     }
   }
 
+  t_pass1 := date.now()
+
   // Pass 2: function bodies.
   pass2 := check_module_functions(module, ctx, [])
   ctx = pass2.ctx
   fn_diags := pass2.diags
+  t_pass2 := date.now()
 
   // Pass 3: re-check unannotated top-level lets.
   // Now that all function return types are inferred, re-synthesize these
@@ -5514,6 +5540,8 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
     }
   }
 
+  t_pass3 := date.now()
+
   // Pass 4: a Pass-3 type correction can leave the Pass-2 function diagnostics
   // stale (they were checked against the pre-correction types), so recompute
   // them. Only fn_diags is replaced — pass1_diags and pass3_diags are untouched.
@@ -5522,6 +5550,7 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
     ctx = pass4.ctx
     fn_diags = pass4.diags
   }
+  t_pass4 := date.now()
 
   cur_diags := pass1_diags.concat(fn_diags).concat(pass3_diags)
 
@@ -5576,6 +5605,8 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
     }
   }
 
+  t_end := date.now()
+
   .{
     type_map: final_map,
     expr_spans: ctx.expr_spans,
@@ -5586,5 +5617,16 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
     iterable_lowering: ctx.iterable_lowering,
     rewrites: ctx.rewrites,
     lints: ctx.lints,
+    timing: .{
+      setup: t_setup - t0,
+      // Pass 1 (initial top-level) + Pass 3 (re-check unannotated lets).
+      toplevel: t_pass1 - t_setup + (t_pass3 - t_pass2),
+      // Pass 2 + conditional Pass 4 re-check — function-body inference.
+      bodies: t_pass2 - t_pass1 + (t_pass4 - t_pass3),
+      // Whole-`type_map` zonk sweep + fn-ret zonk + pub-value zonk.
+      finalize: t_end - t_pass4,
+      subst_size: ctx.subst.len(),
+      type_map_entries: ctx.type_map.len(),
+    },
   }
 }

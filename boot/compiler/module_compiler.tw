@@ -198,6 +198,12 @@ fn compile_entry_with_lib(entry_path: String, lib_build: Bool) Result<
       "[time:frontend] publish=${ft.publish}ms  unused_imports=${ft.unused_imports}ms  lower=${lower_total_ms}ms",
     )
     eprintln(
+      "[time:check] setup=${ft.check_setup}ms  toplevel=${ft.check_toplevel}ms  bodies=${ft.check_bodies}ms  finalize=${ft.check_finalize}ms",
+    )
+    eprintln(
+      "[time:check] subst_entries=${fc.check_subst_size}  type_map_entries=${fc.check_type_map_entries}",
+    )
+    eprintln(
       "[time:imports] extend=${ft.import_extend}ms  lookup=${ft.import_lookup}ms  module=${ft.import_module}ms  selective=${ft.import_selective}ms  prelude=${ft.import_prelude}ms",
     )
     eprintln(

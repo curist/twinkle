@@ -186,8 +186,50 @@ Best next optimization target: **import merge**, specifically the prelude and
 selective sub-buckets. Because no single edge dominates, the lever is a
 representation change (cache/remap an imported interface view per `(dependency,
 alias, kind/items)` within a session, or shrink prelude re-registration), not a
-local edge tweak. `typecheck` is the co-equal runner-up and is the right place for
-the next round of sub-counters (substitution / alias expansion / zonk).
+local edge tweak. `typecheck` is the co-equal runner-up and now has its own
+sub-counters (below).
+
+### Typecheck sub-timings (`[time:check]`)
+
+`checker.check` now stamps a per-module `CheckTiming` onto `CheckResult`
+(pass-boundary `date.now()` samples, always on — the six samples/module are
+negligible). The frontend driver folds these into aggregate buckets on cache
+misses only (a hit did no work), printed as `[time:check]`. Representative run:
+
+```text
+setup      ~52ms    Pass 0: fresh-meta assignment + env.with_functions rebuild
+toplevel   ~1ms     Pass 1 + Pass 3 top-level lets/statements
+bodies     ~260ms   Pass 2 (+ conditional Pass 4): function-body inference
+finalize   ~111ms   whole-type_map zonk sweep + fn-ret zonk + pub-value zonk
+
+subst_entries      ~5855     total |subst| summed across modules
+type_map_entries   ~157120   total entries zonked in the finalize sweep
+```
+
+Interpretation:
+
+- **bodies (~260ms, ~61% of typecheck)** is the irreducible core: bidirectional
+  inference walking every function body. No cheap structural win here — it scales
+  with the amount of code checked.
+- **finalize (~111ms, ~26%)** is the clearest lever. It zonks ~157k `type_map`
+  entries at end of each module, and `zonk_with_meta` fully deconstructs and
+  *rebuilds* every type tree even when nothing resolves. Two candidate cheap wins,
+  both to be measured before committing: (a) an empty-`subst` fast path — with no
+  bindings a `MetaVar` can never resolve, so `zonk` reduces to a meta scan and can
+  skip the rebuild entirely; (b) a no-meta short-circuit that returns the original
+  subtree when a branch contains no `MetaVar` (avoids allocating identical nodes).
+  `subst_entries` is small (~5855 total, ~25/module), so many modules likely have
+  tiny or empty substitutions — the empty-`subst` path should fire often.
+- **setup (~52ms, ~12%)** is Pass 0 rebuilding the whole `env.functions` vector
+  per module (via `with_functions`) just to assign fresh return-meta vars to
+  unannotated own-functions. After import merge `env.functions` includes all
+  imported sigs (already concrete-ret), so most of the rebuilt vector is
+  copy-through. A fast path that skips the rebuild when no function needs a fresh
+  meta, or that scans only the module's own functions, is worth a look.
+
+Recommended order: finalize zonk fast paths first (self-contained, low-risk,
+measurable via `finalize` + `type_map_entries`), then the Pass 0 rebuild, then
+consider import-merge representation work.
 
 ## Previous baseline: 2026-06-25
 
