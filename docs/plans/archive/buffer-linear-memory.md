@@ -276,8 +276,8 @@ imply `v[i]` element sugar.
      **only when the lowered program references a buffer intrinsic** — a pre-link
      reachability check over the user module's calls, not a post-emit DCE pass. Programs
      that never `use @std.buffer` then emit no linear memory at all.
-5. **Remove probe artifacts:** `boot/lib/buf_codec.tw`, `boot/bench/buf_codec_bench.tw`,
-   `boot/bench/md5_linear_bench.tw`, `boot/tests/suites/buf_codec_suite.tw`.
+5. **Remove probe artifacts:** `boot/lib/buf_codec.tw`, `examples/performance/compiler/buf_codec_bench.tw`,
+   `examples/performance/compiler/md5_linear_bench.tw`, `boot/tests/suites/buf_codec_suite.tw`.
 6. **Docs + hygiene:** `docs/spec.md` (`Buffer` as the second mutate-in-place type) and
    `docs/API.md` entries; `twk fmt` + `twk lint` on every edited `.tw`.
 

@@ -4,11 +4,11 @@
 
 **Goal:** Make the dataframe's gather/reorder paths (`take`, `filter`, `join`, `head`, `group_by`) fast and DRY, first with zero-risk pure-Twinkle changes, then (optionally) with a runtime `Vector.gather` primitive — a builder-loop in v1 (constant-factor), with a trie-aware bulk path for monotonic index sets as a possible v2.
 
-**Architecture:** Every dataframe reorder/select reduces to "build an index vector, then gather columns by it" (`examples/dataframe/frame/table.tw` `take` → `column.gather`). Today `column.gather` is a hand-rolled `for … { out = out.append(v[i]) }` loop per `ColData` variant. Phase 1 replaces those with `collect` (builder-backed, O(1)/push) and switches `head` to structural `slice`. Phase 2 adds a `Vector.gather(xs, idx)` runtime builtin (mirrors `Vector.drop_last`). Phase 3 routes `column.gather` through it.
+**Architecture:** Every dataframe reorder/select reduces to "build an index vector, then gather columns by it" (`examples/performance/dataframe/frame/table.tw` `take` → `column.gather`). Today `column.gather` is a hand-rolled `for … { out = out.append(v[i]) }` loop per `ColData` variant. Phase 1 replaces those with `collect` (builder-backed, O(1)/push) and switches `head` to structural `slice`. Phase 2 adds a `Vector.gather(xs, idx)` runtime builtin (mirrors `Vector.drop_last`). Phase 3 routes `column.gather` through it.
 
-**Tech Stack:** Twinkle (`.tw`), the `rt.arr` persistent-vector runtime (`boot/compiler/codegen/runtime/arr.tw`, `src/runtime/arr.rs`), the dataframe stress-test project (`examples/dataframe/`, branch `dataframe-stress-test`).
+**Tech Stack:** Twinkle (`.tw`), the `rt.arr` persistent-vector runtime (`boot/compiler/codegen/runtime/arr.tw`, `src/runtime/arr.rs`), the dataframe stress-test project (`examples/performance/dataframe/`, branch `dataframe-stress-test`).
 
-**Design references:** `docs/plans/dataframe-friction-log.md` (the perf cliff), `docs/plans/dataframe-stress-test.md` (engine design).
+**Design references:** `docs/plans/performance/dataframe/friction-log.md` (the perf cliff), `docs/plans/performance/dataframe/stress-test.md` (engine design).
 
 ---
 
@@ -40,12 +40,12 @@ zero language risk. Measure after Phase 1 before deciding to do Phase 2.**
 ## File structure
 
 ```
-examples/dataframe/frame/column.tw   column.gather (collect), column.gather_or_null (join -1), column.slice (head)
-examples/dataframe/frame/table.tw    head -> slice; take/order_by/filter unchanged (benefit via column.gather)
-examples/dataframe/frame/join.tw     gather_nullable -> column.gather_or_null (drop the Scalar round-trip)
-examples/dataframe/tests/column_suite.tw   gather / gather_or_null / slice tests
-examples/dataframe/tests/table_suite.tw    head tests
-examples/dataframe/bench/main.tw     re-run to record deltas
+examples/performance/dataframe/frame/column.tw   column.gather (collect), column.gather_or_null (join -1), column.slice (head)
+examples/performance/dataframe/frame/table.tw    head -> slice; take/order_by/filter unchanged (benefit via column.gather)
+examples/performance/dataframe/frame/join.tw     gather_nullable -> column.gather_or_null (drop the Scalar round-trip)
+examples/performance/dataframe/tests/column_suite.tw   gather / gather_or_null / slice tests
+examples/performance/dataframe/tests/table_suite.tw    head tests
+examples/performance/dataframe/bench/main.tw     re-run to record deltas
 
 # Phase 2 (language, branch `main`):
 boot/prelude/signatures/vector.tw            gather signature stub
@@ -60,7 +60,7 @@ docs/API.md                                   Vector.gather row
 
 ## Conventions
 
-- Run dataframe tests: `target/twk run examples/dataframe/main.tw`; one suite: `TWK_TEST_FILTER="column" target/twk run examples/dataframe/main.tw`.
+- Run dataframe tests: `target/twk run examples/performance/dataframe/main.tw`; one suite: `TWK_TEST_FILTER="column" target/twk run examples/performance/dataframe/main.tw`.
 - Format after edits: `target/twk fmt <file>` (idempotent).
 - Phase 1 + 3 are on branch `dataframe-stress-test`. Phase 2 is on `main` (language change). If Phase 2 is done, rebase/merge `main` into the branch (or cherry-pick) before Phase 3 so `target/twk` has `Vector.gather`.
 - The scalar type is `Scalar` (not `Cell` — reserved). `Vector` index `v[i]` traps on OOB; `.get(i)` returns `Option`.
@@ -76,12 +76,12 @@ replacing the `for … { out = out.append(…) }` pattern (which rebuilds the ta
 Same behavior, lower constant factor; also collapses the per-variant boilerplate.
 
 **Files:**
-- Modify: `examples/dataframe/frame/column.tw` (`gather`)
-- Modify: `examples/dataframe/tests/column_suite.tw` (gather already has a test; add a duplicate-index case)
+- Modify: `examples/performance/dataframe/frame/column.tw` (`gather`)
+- Modify: `examples/performance/dataframe/tests/column_suite.tw` (gather already has a test; add a duplicate-index case)
 
 - [ ] **Step 1: Add a failing test for gather with duplicate + reordered indices**
 
-Append to the `column` suite chain in `examples/dataframe/tests/column_suite.tw`:
+Append to the `column` suite chain in `examples/performance/dataframe/tests/column_suite.tw`:
 
 ```tw
     .test(
@@ -98,12 +98,12 @@ Append to the `column` suite chain in `examples/dataframe/tests/column_suite.tw`
 
 - [ ] **Step 2: Run to confirm it passes against the CURRENT implementation (baseline)**
 
-Run: `TWK_TEST_FILTER="column" target/twk run examples/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="column" target/twk run examples/performance/dataframe/main.tw`
 Expected: PASS (the current loop already handles this). This locks behavior before refactor.
 
 - [ ] **Step 3: Rewrite `gather` to use `collect`**
 
-Replace the entire `pub fn gather(...)` body in `examples/dataframe/frame/column.tw` with:
+Replace the entire `pub fn gather(...)` body in `examples/performance/dataframe/frame/column.tw` with:
 
 ```tw
 /// Gather rows by index, carrying the null mask along.
@@ -122,15 +122,15 @@ pub fn gather(c: Column, idx: Vector<Int>) Column {
 
 - [ ] **Step 4: Run column + full suite to confirm behavior preserved**
 
-Run: `target/twk run examples/dataframe/main.tw`
+Run: `target/twk run examples/performance/dataframe/main.tw`
 Expected: PASS — all suites green (no behavior change).
 
-Then format: `target/twk fmt examples/dataframe/frame/column.tw`
+Then format: `target/twk fmt examples/performance/dataframe/frame/column.tw`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add examples/dataframe/frame/column.tw examples/dataframe/tests/column_suite.tw
+git add examples/performance/dataframe/frame/column.tw examples/performance/dataframe/tests/column_suite.tw
 git commit -m "dataframe: gather via collect (builder) instead of append loop"
 ```
 
@@ -144,12 +144,12 @@ typed `column.gather_or_null` that builds the result directly per `ColData` vari
 index yields a masked placeholder. This removes the boxing and the all-null dtype-guess.
 
 **Files:**
-- Modify: `examples/dataframe/frame/column.tw` (add `gather_or_null`)
-- Modify: `examples/dataframe/tests/column_suite.tw`
+- Modify: `examples/performance/dataframe/frame/column.tw` (add `gather_or_null`)
+- Modify: `examples/performance/dataframe/tests/column_suite.tw`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to the `column` suite chain in `examples/dataframe/tests/column_suite.tw`:
+Append to the `column` suite chain in `examples/performance/dataframe/tests/column_suite.tw`:
 
 ```tw
     .test(
@@ -167,12 +167,12 @@ Append to the `column` suite chain in `examples/dataframe/tests/column_suite.tw`
 
 - [ ] **Step 2: Run to confirm it fails**
 
-Run: `target/twk run examples/dataframe/main.tw`
+Run: `target/twk run examples/performance/dataframe/main.tw`
 Expected: FAIL — compile error, unknown function `gather_or_null`.
 
 - [ ] **Step 3: Implement `gather_or_null` in `column.tw`**
 
-Add to `examples/dataframe/frame/column.tw`:
+Add to `examples/performance/dataframe/frame/column.tw`:
 
 ```tw
 /// Like gather, but a negative index produces a null cell (type-appropriate
@@ -209,15 +209,15 @@ pub fn gather_or_null(c: Column, idx: Vector<Int>) Column {
 
 - [ ] **Step 4: Run to confirm it passes**
 
-Run: `TWK_TEST_FILTER="column" target/twk run examples/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="column" target/twk run examples/performance/dataframe/main.tw`
 Expected: PASS.
 
-Then format: `target/twk fmt examples/dataframe/frame/column.tw`
+Then format: `target/twk fmt examples/performance/dataframe/frame/column.tw`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add examples/dataframe/frame/column.tw examples/dataframe/tests/column_suite.tw
+git add examples/performance/dataframe/frame/column.tw examples/performance/dataframe/tests/column_suite.tw
 git commit -m "dataframe: add typed column.gather_or_null for join null-fill"
 ```
 
@@ -231,16 +231,16 @@ never see `-1` so they could use plain `gather`, but `gather_or_null` is correct
 keeps one path. Left columns already use `column.gather` via no-op indices (no `-1`).
 
 **Files:**
-- Modify: `examples/dataframe/frame/join.tw` (`build_output`, delete `gather_nullable`)
+- Modify: `examples/performance/dataframe/frame/join.tw` (`build_output`, delete `gather_nullable`)
 
 - [ ] **Step 1: Confirm existing join tests cover both paths**
 
-Run: `TWK_TEST_FILTER="join" target/twk run examples/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="join" target/twk run examples/performance/dataframe/main.tw`
 Expected: PASS (2 tests: inner + left-with-null). These lock behavior before refactor.
 
 - [ ] **Step 2: Replace `gather_nullable` call with `column.gather_or_null`**
 
-In `examples/dataframe/frame/join.tw`, in `build_output`, change the right-column append from:
+In `examples/performance/dataframe/frame/join.tw`, in `build_output`, change the right-column append from:
 
 ```tw
       out_cols = .append(gather_nullable(c, ridx))
@@ -260,15 +260,15 @@ keep `cell` only if `key_string` still uses `cell.to_string`).
 
 - [ ] **Step 4: Run join + full suite**
 
-Run: `target/twk run examples/dataframe/main.tw`
+Run: `target/twk run examples/performance/dataframe/main.tw`
 Expected: PASS — all suites green.
 
-Then format: `target/twk fmt examples/dataframe/frame/join.tw`
+Then format: `target/twk fmt examples/performance/dataframe/frame/join.tw`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add examples/dataframe/frame/join.tw
+git add examples/performance/dataframe/frame/join.tw
 git commit -m "dataframe: join uses column.gather_or_null (drop Scalar round-trip)"
 ```
 
@@ -281,13 +281,13 @@ is exactly `Vector.slice(0, n)`, which is O(log n) and shares the source tree. A
 `column.slice` and make `head` use it.
 
 **Files:**
-- Modify: `examples/dataframe/frame/column.tw` (add `slice`)
-- Modify: `examples/dataframe/frame/table.tw` (`head`)
-- Modify: `examples/dataframe/tests/table_suite.tw`
+- Modify: `examples/performance/dataframe/frame/column.tw` (add `slice`)
+- Modify: `examples/performance/dataframe/frame/table.tw` (`head`)
+- Modify: `examples/performance/dataframe/tests/table_suite.tw`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to the `table` suite chain in `examples/dataframe/tests/table_suite.tw`:
+Append to the `table` suite chain in `examples/performance/dataframe/tests/table_suite.tw`:
 
 ```tw
     .test(
@@ -302,12 +302,12 @@ Append to the `table` suite chain in `examples/dataframe/tests/table_suite.tw`:
 
 - [ ] **Step 2: Run to confirm it passes against current head (baseline behavior)**
 
-Run: `TWK_TEST_FILTER="table" target/twk run examples/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="table" target/twk run examples/performance/dataframe/main.tw`
 Expected: PASS (current head already returns first n). Locks behavior before refactor.
 
 - [ ] **Step 3: Add `column.slice`**
 
-Add to `examples/dataframe/frame/column.tw`:
+Add to `examples/performance/dataframe/frame/column.tw`:
 
 ```tw
 /// Structural subrange [start, end) of a column, sharing the source tree.
@@ -325,7 +325,7 @@ pub fn slice(c: Column, start: Int, end: Int) Column {
 
 - [ ] **Step 4: Rewrite `head` to slice each column**
 
-Replace `pub fn head(...)` in `examples/dataframe/frame/table.tw` with:
+Replace `pub fn head(...)` in `examples/performance/dataframe/frame/table.tw` with:
 
 ```tw
 pub fn head(t: Table, n: Int) Table {
@@ -340,15 +340,15 @@ pub fn head(t: Table, n: Int) Table {
 
 - [ ] **Step 5: Run table + full suite**
 
-Run: `target/twk run examples/dataframe/main.tw`
+Run: `target/twk run examples/performance/dataframe/main.tw`
 Expected: PASS — all suites green (including the new head test).
 
-Then format: `target/twk fmt examples/dataframe/frame/column.tw examples/dataframe/frame/table.tw`
+Then format: `target/twk fmt examples/performance/dataframe/frame/column.tw examples/performance/dataframe/frame/table.tw`
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add examples/dataframe/frame/column.tw examples/dataframe/frame/table.tw examples/dataframe/tests/table_suite.tw
+git add examples/performance/dataframe/frame/column.tw examples/performance/dataframe/frame/table.tw examples/performance/dataframe/tests/table_suite.tw
 git commit -m "dataframe: head via structural column.slice instead of gather"
 ```
 
@@ -357,15 +357,15 @@ git commit -m "dataframe: head via structural column.slice instead of gather"
 ### Task 5: Re-benchmark Phase 1 and record the delta
 
 **Files:**
-- Modify: `docs/plans/dataframe-friction-log.md` (record Phase-1 numbers)
+- Modify: `docs/plans/performance/dataframe/friction-log.md` (record Phase-1 numbers)
 
 - [ ] **Step 1: Capture timings**
 
-Run: `target/twk run examples/dataframe/bench/main.tw | tee /tmp/dataframe-bench-phase1.txt`
+Run: `target/twk run examples/performance/dataframe/bench/main.tw | tee /tmp/dataframe-bench-phase1.txt`
 Expected: prints filter/order_by/group_by/join for N=10000/100000/1000000.
 
 - [ ] **Step 2: Append a "Phase 1 (collect/slice) results" block** to the Performance section
-of `docs/plans/dataframe-friction-log.md`, pasting before/after numbers and noting which ops
+of `docs/plans/performance/dataframe/friction-log.md`, pasting before/after numbers and noting which ops
 moved (expect `filter`/`join`/`group_by` to improve; `order_by` ~flat because it is
 sort-bound, confirming the cost model).
 
@@ -373,7 +373,7 @@ sort-bound, confirming the cost model).
 primitive) may be unnecessary — record the decision in the friction log. Commit:
 
 ```bash
-git add docs/plans/dataframe-friction-log.md
+git add docs/plans/performance/dataframe/friction-log.md
 git commit -m "dataframe: record Phase-1 gather optimization benchmark results"
 ```
 
@@ -551,16 +551,16 @@ Prereq: `main`'s `Vector.gather` is merged/rebased into the branch so `target/tw
 ### Task 9: `column.gather`/`gather_or_null` use `Vector.gather`
 
 **Files:**
-- Modify: `examples/dataframe/frame/column.tw` (`gather`)
+- Modify: `examples/performance/dataframe/frame/column.tw` (`gather`)
 
 - [ ] **Step 1: Confirm column tests pass (lock behavior)**
 
-Run: `TWK_TEST_FILTER="column" target/twk run examples/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="column" target/twk run examples/performance/dataframe/main.tw`
 Expected: PASS.
 
 - [ ] **Step 2: Rewrite `gather` to call `Vector.gather`**
 
-Replace `pub fn gather(...)` in `examples/dataframe/frame/column.tw` with:
+Replace `pub fn gather(...)` in `examples/performance/dataframe/frame/column.tw` with:
 
 ```tw
 /// Gather rows by index, carrying the null mask along.
@@ -581,16 +581,16 @@ plain `Vector.gather` cannot express. Leave it as written in Task 2.)
 
 - [ ] **Step 3: Run full suite**
 
-Run: `target/twk run examples/dataframe/main.tw`
+Run: `target/twk run examples/performance/dataframe/main.tw`
 Expected: PASS — all tests green (behavior unchanged).
 
-Then format: `target/twk fmt examples/dataframe/frame/column.tw`
+Then format: `target/twk fmt examples/performance/dataframe/frame/column.tw`
 
 - [ ] **Step 4: Re-benchmark and record**
 
-Run: `target/twk run examples/dataframe/bench/main.tw | tee /tmp/dataframe-bench-phase3.txt`
+Run: `target/twk run examples/performance/dataframe/bench/main.tw | tee /tmp/dataframe-bench-phase3.txt`
 Compare against `/tmp/dataframe-bench-phase1.txt`; append the delta to the Performance section
-of `docs/plans/dataframe-friction-log.md`. Measure without assuming gains: a v1 builder-loop
+of `docs/plans/performance/dataframe/friction-log.md`. Measure without assuming gains: a v1 builder-loop
 may show little movement over Phase 1 `collect` (same `n` lookups). Only a v2 trie-aware path
 would give `filter`'s monotonic indices a measurable edge — if v1 is flat, that is the
 expected, reportable result, and the v2 work (or dropping Phase 2/3) is the follow-up.
@@ -598,7 +598,7 @@ expected, reportable result, and the v2 work (or dropping Phase 2/3) is the foll
 - [ ] **Step 5: Commit**
 
 ```bash
-git add examples/dataframe/frame/column.tw docs/plans/dataframe-friction-log.md
+git add examples/performance/dataframe/frame/column.tw docs/plans/performance/dataframe/friction-log.md
 git commit -m "dataframe: column.gather uses Vector.gather; record benchmark delta"
 ```
 

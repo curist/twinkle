@@ -5,7 +5,7 @@ Status: **DONE.** A focused follow-on to the shipped linear-memory
 
 ## Goal
 
-Make `@std.crypto` competitive in `examples/crypto-bench/` by hashing data that already
+Make `@std.crypto` competitive in `examples/performance/crypto-bench/` by hashing data that already
 lives in a `Buffer`, attacking **both** dominant costs of the current pure-Twinkle hashes
 — the per-byte `Vector<Byte>` reads **and** the functional schedule-record churn — without
 touching the existing `_bytes` paths or the conditional linear-memory-emission property.
@@ -127,7 +127,7 @@ The scratch `Buffer` is allocated and freed inside each `digest_buf` call; calle
 see it. Across the bench's 501 iterations the free-list reuses the same block, so alloc/
 free is negligible.
 
-### 5. Bench changes (`examples/crypto-bench/twinkle/main.tw`)
+### 5. Bench changes (`examples/performance/crypto-bench/twinkle/main.tw`)
 
 - Build `large_buf := buffer.from_bytes(large)` once (copy amortized over 501 iters).
 - **Warm up** the `_buf` paths after building `large_buf` (one `crypto.*_buf(large_buf)`
@@ -153,7 +153,7 @@ baselines (which hash a native buffer); the `_bytes` cases show Twinkle's naive 
 
 ### 7. Success criterion
 
-Run `examples/crypto-bench/run.sh` (or just the Twinkle bench). `md5_4k_buf` /
+Run `examples/performance/crypto-bench/run.sh` (or just the Twinkle bench). `md5_4k_buf` /
 `sha1_4k_buf` / `sha256_4k_buf` should be **meaningfully faster** than their `_bytes`
 counterparts and narrow the gap to the native baselines. If the 4 KiB win is small
 (per-block setup still dominates even after Lever B), record it and consider adding a larger
@@ -190,5 +190,5 @@ Empty input hides the bug (zero length is endian-agnostic).
 - `boot/stdlib/crypto.tw` — `pub fn md5_buf`/`sha1_buf`/`sha256_buf`.
 - `boot/stdlib/crypto/{md5,sha1,sha256}.tw` — `digest_buf` + `bswap32` (SHA only).
 - `boot/tests/suites/stdlib_buffer_suite.tw`, crypto suite — tests.
-- `examples/crypto-bench/twinkle/main.tw` — `_buf` bench cases.
+- `examples/performance/crypto-bench/twinkle/main.tw` — `_buf` bench cases.
 - `docs/API.md` — `Buffer.get_u32`/`set_u32`, `crypto.*_buf`.

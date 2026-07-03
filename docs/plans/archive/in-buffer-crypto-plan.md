@@ -22,7 +22,7 @@
 - `boot/stdlib/crypto.tw` — umbrella; `md5_bytes` is `.{ bytes: md5_impl.digest_bytes(input) }`. Add `*_buf` siblings.
 - `boot/stdlib/crypto/{md5,sha1,sha256}.tw` — the hash impls. Each has `padded_byte`, `read_le_word`/`read_be_word`, `digest_bytes`, and shared helpers (`u32`, `rotl32`, `not32`, `s`, `k`, `round_f`, `word_index` for md5; the `sigma`s for sha) you will REUSE.
 - `boot/tests/suites/stdlib_buffer_suite.tw` and `boot/tests/suites/stdlib_crypto_suite.tw` — add tests here (both already registered in `boot/tests/main.tw`).
-- `examples/crypto-bench/twinkle/main.tw` — the bench.
+- `examples/performance/crypto-bench/twinkle/main.tw` — the bench.
 
 **Build / verify (the trap — stale CLI uses old codegen/stdlib):**
 ```bash
@@ -691,11 +691,11 @@ sha256_bytes untouched."
 ## Task 5: Bench cases + measurement
 
 **Files:**
-- Modify: `examples/crypto-bench/twinkle/main.tw`
+- Modify: `examples/performance/crypto-bench/twinkle/main.tw`
 
 - [ ] **Step 1: Add the Buffer input + warm-up + bench cases**
 
-In `examples/crypto-bench/twinkle/main.tw`:
+In `examples/performance/crypto-bench/twinkle/main.tw`:
 - At the top, add `use @std.buffer`.
 - After `large := make_bytes(4096)`, add `large_buf := buffer.from_bytes(large)`.
 - In the warm-up block (where `warm_md5`/etc. are computed), add warm-up calls:
@@ -723,14 +723,14 @@ In `examples/crypto-bench/twinkle/main.tw`:
 
 ```bash
 make bundle-cli   # the bench runs through target/twk; it must reflect the new stdlib
-target/twk run examples/crypto-bench/twinkle/main.tw
+target/twk run examples/performance/crypto-bench/twinkle/main.tw
 ```
 Expected: lines for `md5_4k`, `md5_4k_buf`, `sha1_4k`, `sha1_4k_buf`, `sha256_4k`, `sha256_4k_buf`. The `_buf` lines should have a smaller `ms` than their `_bytes` counterparts. Record the numbers in the commit body (the comparison, not a vanity count).
 
 - [ ] **Step 3: Commit**
 ```bash
-target/twk fmt examples/crypto-bench/twinkle/main.tw
-git add examples/crypto-bench/twinkle/main.tw
+target/twk fmt examples/performance/crypto-bench/twinkle/main.tw
+git add examples/performance/crypto-bench/twinkle/main.tw
 git commit -m "crypto-bench: add Buffer-native 4k hash cases
 
 Hash a once-converted Buffer via crypto.*_buf to measure the in-buffer

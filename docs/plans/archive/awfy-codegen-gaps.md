@@ -12,7 +12,7 @@ resolved; what remains is either rejected or spun out to other tracks:
   code-size only), **C4** (struct.get field caching — V8 load-eliminates), and
   record-allocation elimination generally (V8 scalar-replaces non-escaping GC
   structs — measured in the C5 doc's Phase 2).
-- **Deferred to the representation track** ([vector-perf/](../vector-perf/README.md)):
+- **Deferred to the representation track** ([performance/vector/](../performance/vector/README.md)):
   un-inlined `rt_arr__get`/`set` per-access overhead and typed/unboxed element
   storage — the measured wall for read/write-heavy vector benchmarks.
 
@@ -30,7 +30,7 @@ Key empirical findings this session, in order of surprise:
    repeated `struct.get` even with mutable fields; forcing immutable fields (and
    losing in-place record update) changed no AWFY benchmark.
 
-**Related:** `examples/awfy/` (the suite), [boot-compiler-perf.md](../boot-compiler-perf.md)
+**Related:** `examples/performance/awfy/` (the suite), [performance/compiler.md](../performance/compiler.md)
 (self-host compile time, a separate concern).
 
 ### Native `Float.sqrt` intrinsic (DONE — biggest win)
@@ -96,7 +96,7 @@ could later use `i64.popcnt` natively — a separate, internal change.)
 
 ## Landed on branch `codegen-void-elim` (2026-07-02)
 
-Same-session A/B (`target/twk run examples/awfy/twinkle/main.tw`, 3 rounds,
+Same-session A/B (`target/twk run examples/performance/awfy/twinkle/main.tw`, 3 rounds,
 `ms` column; ±15% noise). Correctness: 2950 boot tests + self-host fixpoint +
 five-language AWFY checksum diff all green for both changes.
 
@@ -138,11 +138,11 @@ behind an opt flag). **The compute-bound benchmarks need C3 (inline
 
 ## Goal
 
-The AWFY suite (`examples/awfy/`) exists to surface where Twinkle's Wasm-GC
+The AWFY suite (`examples/performance/awfy/`) exists to surface where Twinkle's Wasm-GC
 codegen and runtime are slow versus fast reference implementations (Node/V8, Go),
 so the gaps guide compiler work. This document records the current gaps, the
 pinpointed root causes (from reading generated WAT), and the ordered attack
-vectors. It is the runtime/codegen counterpart to `boot-compiler-perf.md`, which
+vectors. It is the runtime/codegen counterpart to `performance/compiler.md`, which
 tracks self-host *compile* time.
 
 ## How to measure
@@ -151,7 +151,7 @@ Run the whole suite (fails if any cross-language checksum disagrees, then prints
 the normalized table):
 
 ```bash
-make awfy            # or: examples/awfy/run.sh
+make awfy            # or: examples/performance/awfy/run.sh
 ```
 
 To inspect codegen for one benchmark, build it through a probe entry that forces
@@ -159,9 +159,9 @@ the module's `run` to be retained (building the module alone DCE-strips it), the
 read the WAT:
 
 ```bash
-printf 'use .mandelbrot\nprintln("${mandelbrot.run(500)}")\n' > examples/awfy/twinkle/probe.tw
-target/twk build examples/awfy/twinkle/probe.tw -o /tmp/mand.wat
-rm examples/awfy/twinkle/probe.tw
+printf 'use .mandelbrot\nprintln("${mandelbrot.run(500)}")\n' > examples/performance/awfy/twinkle/probe.tw
+target/twk build examples/performance/awfy/twinkle/probe.tw -o /tmp/mand.wat
+rm examples/performance/awfy/twinkle/probe.tw
 # then grep/sed the WAT (prefer grep over reading whole file)
 ```
 
@@ -330,7 +330,7 @@ The `@std.buffer` `_mut` results prove the ceiling: `sieve` 37→0.86ms, `bounce
 1954→76ms (≈ Node). Bring a slice of that to idiomatic code via typed
 `Vector<Int>`/`Vector<Float>` (e.g. `PVecI64`, unboxed leaves) and/or wider use
 of the uniqueness optimizer to update uniquely-owned vectors in place. See the
-`vector-perf/` endeavor — this benchmark is a concrete driver for it.
+`performance/vector/` endeavor — this benchmark is a concrete driver for it.
 - Target: narrow sieve/bounce without forcing users to `@std.buffer`.
 
 ### 5. Numeric/loop codegen for the compute-bound cases (C4)
@@ -355,6 +355,6 @@ Twinkle and V8/Go on `nbody` (~34×) once storage and Void/temp waste are gone.
 - Re-record the baseline table (with date + environment) when numbers move
   materially; keep the ratios, they are the durable signal.
 - Attribute each landed optimization to the benchmark(s) it moved and by how
-  much (same-session A/B), the way `boot-compiler-perf.md` tracks phase timings.
+  much (same-session A/B), the way `performance/compiler.md` tracks phase timings.
 - The five-language checksum diff in `run.sh` is the correctness guard for any
   codegen change — a mismatch means the optimization broke semantics.

@@ -18,7 +18,7 @@ cross-language rankings matter less than isolating diagnosable hotspots.
 - **Go** — AOT-compiled, GC'd; a stand-in for "what a decent native compiler
   achieves".
 
-Both are already used by `examples/crypto-bench`, so the tooling exists.
+Both are already used by `examples/performance/crypto-bench`, so the tooling exists.
 
 ## Scope
 
@@ -44,7 +44,7 @@ across all languages and drill in — exactly what gap-finding wants) and adds a
 ### Directory layout
 
 ```
-examples/awfy/
+examples/performance/awfy/
   README.md
   run.sh                 # orchestrates all langs, normalizes TSV, diffs checksums
   twinkle.toml           # project root for the .tw files
@@ -123,8 +123,8 @@ validate the ports.
 
 ## Integration
 
-- `make awfy` target (mirroring `make bench`) shelling `examples/awfy/run.sh`.
-- `examples/awfy/README.md` documenting the honest-baseline caveat: Node/Go
+- `make awfy` target (mirroring `make bench`) shelling `examples/performance/awfy/run.sh`.
+- `examples/performance/awfy/README.md` documenting the honest-baseline caveat: Node/Go
   stdlib arrays are native and mutable; Twinkle uses persistent GC structures,
   so gaps on array-write-heavy benchmarks (Sieve, Storage) are expected and are
   the point of the exercise.
@@ -134,7 +134,7 @@ validate the ports.
 
 ## Success criteria
 
-- `examples/awfy/run.sh` runs all 10 benchmarks in all three languages, prints a
+- `examples/performance/awfy/run.sh` runs all 10 benchmarks in all three languages, prints a
   normalized TSV timing table, and fails if any cross-language checksum disagrees.
 - Each benchmark is independently runnable so a single feature can be drilled
   into across languages.

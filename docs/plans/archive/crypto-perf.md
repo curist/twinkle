@@ -24,7 +24,7 @@ SHA-256 stays silicon-bound (~15–20×, no Wasm crypto intrinsics). Archived: t
 shippable software win on this surface has been taken; the rest waits on Route 2/5.
 
 Builds on the shipped, archived in-buffer-crypto work
-([archive/in-buffer-crypto.md](archive/in-buffer-crypto.md)): `*_bytes` digests
+([in-buffer-crypto.md](in-buffer-crypto.md)): `*_bytes` digests
 already route through a transient linear-memory `Buffer` scratch (word loads +
 in-place schedule), and `base64_decode` already dropped its per-char `Option`
 allocation.
@@ -33,7 +33,7 @@ allocation.
 
 ```bash
 make bundle-cli                              # target/twk must reflect stdlib changes
-bash examples/crypto-bench/run.sh            # twinkle + node + python + go, 4 KiB cases
+bash examples/performance/crypto-bench/run.sh            # twinkle + node + python + go, 4 KiB cases
 ```
 
 Per-op µs is `(ms * 1000) / iters`. Compare the Twinkle `_bytes`/`_buf` rows

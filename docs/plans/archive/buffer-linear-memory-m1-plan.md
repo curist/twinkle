@@ -22,7 +22,7 @@
 - **Modify** `boot/compiler/codegen/runtime/arr.tw` — replace the i64 `sort_typed_fn` body with a dense linear-scratch merge sort (`sort_i64_dense_fn`), and swap it into the rt.arr module list.
 - **Test** `boot/tests/suites/wat_suite.tw` — WAT rendering of the new instructions.
 - **Test** `boot/tests/suites/api_vector_suite.tw` — existing sort correctness (the oracle; must stay green).
-- **Bench** `examples/sort-bench/sort_repeat_probe.tw` — the go/no-go perf proof.
+- **Bench** `examples/performance/sort-bench/sort_repeat_probe.tw` — the go/no-go perf proof.
 
 ---
 
@@ -483,7 +483,7 @@ Expected: ends with `Fixed point reached: stage3 == stage4` and `Built Deno Twin
 
 The pre-existing baselines to beat are recorded in the spec: the current recursive merge and the reverted GC-array `Scratch<T>` (which regressed plain `Vector<Int>` sort ~16%). Run the bench on the new build:
 
-Run: `target/twk run examples/sort-bench/sort_repeat_probe.tw`
+Run: `target/twk run examples/performance/sort-bench/sort_repeat_probe.tw`
 Expected output: per-pass timings for `native xs.sort()` on 1,000,000 ints (run twice for V8 tier-up). Record the `native xs.sort()` numbers.
 
 - [ ] **Step 3: Compare against the old path**
@@ -493,7 +493,7 @@ Expected output: per-pass timings for `native xs.sort()` on 1,000,000 ints (run 
 ```bash
 git worktree add /tmp/twk-main main
 cd /tmp/twk-main && make quick-bundle-cli   # if target/boot.wasm is fresh there; else make bundle-cli
-/tmp/twk-main/target/twk run examples/sort-bench/sort_repeat_probe.tw
+/tmp/twk-main/target/twk run examples/performance/sort-bench/sort_repeat_probe.tw
 ```
 
 Compare `native xs.sort()` ms: the dense linear-memory build should be **faster** than the `main` build (and not regress like `Scratch<T>` did).

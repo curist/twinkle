@@ -561,14 +561,14 @@ Goal: measure the real scheduler path after the implementation exists.
 
 Benchmark work:
 
-- [x] Extend `boot/bench/jspi/` or add a companion bench for:
+- [x] Extend `examples/performance/compiler/jspi/` or add a companion bench for:
   - repeated `Task.yield`;
   - await ping-pong;
   - sleep/readiness latency;
   - LSP-shaped reader/dispatcher/debounce smoke.
 - [x] Run Node, Deno, and the bundled `target/twk` path.
 - [x] Record summarized results in the design document's Evidence section.
-- [x] Keep reusable benchmarks under `boot/bench/`; do not turn microbenchmarks
+- [x] Keep reusable benchmarks under `examples/performance/compiler/`; do not turn microbenchmarks
   into compiler correctness tests.
 
 Decision:

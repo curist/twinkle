@@ -466,7 +466,7 @@ numbers, not a single representative run.
 
 ### Harness shape
 
-- Put the temporary harness under `boot/bench/` (the existing bench convention)
+- Put the temporary harness under `examples/performance/compiler/` (the existing bench convention)
   or another throwaway bench directory — not in the compiler test suite.
 - Use the same `tools/js_runtime/runtime.mjs` async path as `twk run`, and fail
   clearly when `hasJspi` is false.
@@ -512,7 +512,7 @@ Tracked separately in
 ### Phase A spike — GO (2026-06-18)
 
 Raw JSPI suspend/resume cost, no scheduler. Harness:
-`boot/bench/jspi/{phase_a.tw,run.mjs}` (throwaway), run through the same
+`examples/performance/compiler/jspi/{phase_a.tw,run.mjs}` (throwaway), run through the same
 `runWasmBytesAsync` async path as `twk run`, providing the `bench` externs so we
 control whether each suspends. `N=100000` per loop, 7 runs (median), 2 warmup.
 Platform: darwin arm64. Commit: `267fd05`.
@@ -552,13 +552,13 @@ Findings:
   2–3 on the real `Task.*` lowering.
 
 Commands:
-`target/twk build boot/bench/jspi/phase_a.tw -o boot/bench/jspi/phase_a.wasm`,
-`node boot/bench/jspi/run.mjs`, `deno run -A boot/bench/jspi/run.mjs`.
+`target/twk build examples/performance/compiler/jspi/phase_a.tw -o examples/performance/compiler/jspi/phase_a.wasm`,
+`node examples/performance/compiler/jspi/run.mjs`, `deno run -A examples/performance/compiler/jspi/run.mjs`.
 
 ### Phase B spike — GO (2026-06-18)
 
 Scheduler overhead on the real `Task.*` lowering, driven by the implemented JS
-scheduler. Harness: `boot/bench/jspi/{phase_b.tw,run_b.mjs}` (throwaway), run
+scheduler. Harness: `examples/performance/compiler/jspi/{phase_b.tw,run_b.mjs}` (throwaway), run
 through the same `runWasmBytesAsync` async path as `twk run`, timing interval
 boundaries on the JS host via a `bench.mark` extern. 5 runs (median), 2 warmup.
 Platform: darwin arm64. Commit: `035a5d7`.
@@ -594,5 +594,5 @@ Findings:
   or fast paths are warranted until a real workload demonstrates otherwise.
 
 Commands:
-`target/twk build boot/bench/jspi/phase_b.tw -o boot/bench/jspi/phase_b.wasm`,
-`node boot/bench/jspi/run_b.mjs`, `deno run -A boot/bench/jspi/run_b.mjs`.
+`target/twk build examples/performance/compiler/jspi/phase_b.tw -o examples/performance/compiler/jspi/phase_b.wasm`,
+`node examples/performance/compiler/jspi/run_b.mjs`, `deno run -A examples/performance/compiler/jspi/run_b.mjs`.

@@ -1,6 +1,6 @@
 # Examples
 
-Two kinds of examples live here.
+Three kinds of examples live here.
 
 ## Single-file demos
 
@@ -25,10 +25,18 @@ not claims that Twinkle is already good at these things.
   inputs, generates the per-year/all-years test aggregators, and drives a
   TDD-style solving loop on the sample then the real input.
 - **`leetcode/`** — API ergonomics on small, self-contained algorithm problems.
-- **`dataframe/`** — a columnar query engine that stresses fluent APIs at
-  application scale; it exposed generic `sort_by` as a bottleneck.
-- **`sort-bench/`** — the performance probes spun out of that finding (sorting,
-  dict, typed vector reads), with cross-language baselines.
-
 See each project's own README for details. They share the `assert.tw` /
-`runner.tw` test harness via symlinks to `boot/tests/`.
+`runner.tw` test harness via symlinks to `boot/tests` when needed.
+
+## Performance suites and probes
+
+Performance work lives under [`performance/`](performance/README.md):
+
+- **`performance/awfy/`** — broad generated-code/runtime benchmark suite.
+- **`performance/compiler/`** — compiler/runtime microbenchmarks formerly under
+  `boot/bench/`.
+- **`performance/crypto-bench/`** — byte/crypto boundary benchmarks.
+- **`performance/dataframe/`** — a columnar query engine that stresses fluent APIs
+  at application scale; it exposed generic `sort_by` as a bottleneck.
+- **`performance/sort-bench/`** — focused probes spun out of the dataframe
+  finding (sorting, dict, typed vector reads), with cross-language baselines.

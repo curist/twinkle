@@ -9,7 +9,7 @@ TWK_CLI     ?= $(DENO_BIN) run --allow-read --allow-write --allow-env tools/js_r
 
 # Source file sets — used for dependency tracking.
 RUST_SRCS := $(shell find src -name '*.rs') Cargo.toml Cargo.lock
-BOOT_SRCS := $(shell find boot -name '*.tw' -not -path 'boot/tests/*' -not -path 'boot/tmp/*' -not -path 'boot/repros/*' -not -path 'boot/bench/*' -not -path 'boot/prelude/*' -not -path 'boot/stdlib/*')
+BOOT_SRCS := $(shell find boot -name '*.tw' -not -path 'boot/tests/*' -not -path 'boot/tmp/*' -not -path 'boot/repros/*' -not -path 'boot/prelude/*' -not -path 'boot/stdlib/*')
 CORE_LIB_SRCS := $(shell find boot/prelude boot/stdlib -name '*.tw')
 
 help:
@@ -23,7 +23,7 @@ help:
 	@printf '  make bundle-cli        Rebuild stage2 payload and build Deno target/twk\n'
 	@printf '  make cli               Alias for bundle-cli\n'
 	@printf '  make fmt               Format boot compiler .tw source files\n'
-	@printf '  make bench             Run the Vector benchmark suite (boot/bench/)\n'
+	@printf '  make bench             Run the Vector benchmark suite (examples/performance/compiler/)\n'
 	@printf '  make bench-guard       Check vector scaling/bulk-copy guards\n'
 	@printf '  make bench-compare     Compare persistent collections with Clojure\n'
 	@printf '  make awfy              Run the AWFY-style cross-language benchmark suite\n'
@@ -138,11 +138,11 @@ playground-dev: $(STAGE2_WASM) tools/js_runtime/bridge_bytes.mjs tools/js_runtim
 	cp $(STAGE2_WASM) tools/js_runtime/boot.wasm
 	cd playground && TWINKLE_LOCAL=1 npx vite
 
-# Run the Vector benchmark suite (RRB Gate B baselines). See boot/bench/README.md.
+# Run the Vector benchmark suite (RRB Gate B baselines). See examples/performance/compiler/README.md.
 # Pass BENCH=<name> to run a single benchmark, e.g. `make bench BENCH=concat_prepend`.
 BENCH ?=
 bench: target/twk
-	@for f in $(if $(BENCH),boot/bench/$(BENCH).tw,$(sort $(wildcard boot/bench/*.tw))); do \
+	@for f in $(if $(BENCH),examples/performance/compiler/$(BENCH).tw,$(sort $(wildcard examples/performance/compiler/*.tw))); do \
 		printf '\n==> %s\n' "$$f"; \
 		target/twk run "$$f" || exit 1; \
 	done
@@ -153,9 +153,9 @@ bench-guard: target/twk
 bench-compare: target/twk
 	python3 tools/bench_persistent_compare.py
 
-# Run the AWFY-style cross-language benchmark suite. See examples/awfy/README.md.
+# Run the AWFY-style cross-language benchmark suite. See examples/performance/awfy/README.md.
 awfy: target/twk
-	@examples/awfy/run.sh
+	@examples/performance/awfy/run.sh
 
 # Format the boot project's reachable modules (project mode over the configured
 # entries in twinkle.toml). Note: this excludes the bundled stdlib/prelude

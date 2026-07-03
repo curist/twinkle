@@ -551,12 +551,12 @@ Wire the analysis into `prepare_backend`, feed the real set to routing and to `e
 
 **Files:**
 - Modify: `boot/compiler/backend/prepare.tw:46-65`
-- Create: `examples/sort-bench/typed_record_field_probe.tw` (positive), `examples/sort-bench/typed_record_field_boxed_probe.tw` (negative)
-- Modify: `docs/plans/vector-perf/README.md` (index the probes)
+- Create: `examples/performance/sort-bench/typed_record_field_probe.tw` (positive), `examples/performance/sort-bench/typed_record_field_boxed_probe.tw` (negative)
+- Modify: `docs/plans/performance/vector/README.md` (index the probes)
 
 - [ ] **Step 1: Write the positive probe**
 
-Create `examples/sort-bench/typed_record_field_probe.tw`: a record holding a `Vector<Int>` column built by `collect` in a constructor function, read+indexed in a separate function, summed in a hot loop so the read is real. Example shape:
+Create `examples/performance/sort-bench/typed_record_field_probe.tw`: a record holding a `Vector<Int>` column built by `collect` in a constructor function, read+indexed in a separate function, summed in a hot loop so the read is real. Example shape:
 
 ```tw
 type Col = .{ data: Vector<Int>, n: Int }
@@ -580,16 +580,16 @@ println(sum_col(c).to_string())
 
 - [ ] **Step 2: Run it to confirm current (boxed) codegen**
 
-Run: `target/twk build examples/sort-bench/typed_record_field_probe.tw -o /tmp/trf.wat && grep -c 'rt_arr__get_i64' /tmp/trf.wat`
+Run: `target/twk build examples/performance/sort-bench/typed_record_field_probe.tw -o /tmp/trf.wat && grep -c 'rt_arr__get_i64' /tmp/trf.wat`
 Expected (before Step 4): `0` — the field read uses the boxed `rt_arr__get`, not `_i64`.
 
 Also confirm it runs correctly:
-Run: `target/twk run examples/sort-bench/typed_record_field_probe.tw`
+Run: `target/twk run examples/performance/sort-bench/typed_record_field_probe.tw`
 Expected: prints the correct sum (for n=1000, `sum of i*3 for i in 0..999` = `3 * 999*1000/2` = `1498500`).
 
 - [ ] **Step 3: Write the negative probe**
 
-Create `examples/sort-bench/typed_record_field_boxed_probe.tw`: same shape but the column is fed from a parameter or via `.append` (a non-routable boxed producer), so the field must stay boxed.
+Create `examples/performance/sort-bench/typed_record_field_boxed_probe.tw`: same shape but the column is fed from a parameter or via `.append` (a non-routable boxed producer), so the field must stay boxed.
 
 ```tw
 type Col = .{ data: Vector<Int>, n: Int }
@@ -630,21 +630,21 @@ Ensure `analyze_typed_fields` is exported (`pub`) and imported in `prepare.tw`'s
 Run: `make stage2 2>&1 | tail -5`
 Expected: self-host fixed point holds (the compiler still compiles itself; `analyze_typed_fields` may type fields inside the compiler too — the fixed-point check guarantees correctness).
 
-Run: `target/twk build examples/sort-bench/typed_record_field_probe.tw -o /tmp/trf.wat`
+Run: `target/twk build examples/performance/sort-bench/typed_record_field_probe.tw -o /tmp/trf.wat`
 Then:
 - `grep -c 'rt_arr__get_i64' /tmp/trf.wat` → Expected: `>= 1` (field read is typed).
 - `grep 'rt_types__PVecI64' /tmp/trf.wat | head` → Expected: the `Col` struct field type references `PVecI64`.
 - `grep -c 'box_i64' /tmp/trf.wat` → Expected: `0` at the field store/load (boxing only appears at genuine S2.1 boundaries, which this probe avoids).
 
-Run: `target/twk run examples/sort-bench/typed_record_field_probe.tw`
+Run: `target/twk run examples/performance/sort-bench/typed_record_field_probe.tw`
 Expected: still prints `1498500` (correctness preserved through the representation change).
 
 - [ ] **Step 6: Verify the negative probe stays boxed**
 
-Run: `target/twk build examples/sort-bench/typed_record_field_boxed_probe.tw -o /tmp/trfb.wat && grep -c 'rt_arr__get_i64' /tmp/trfb.wat`
+Run: `target/twk build examples/performance/sort-bench/typed_record_field_boxed_probe.tw -o /tmp/trfb.wat && grep -c 'rt_arr__get_i64' /tmp/trfb.wat`
 Expected: `0` — the field has a boxed producer, so it stays `PVec`.
 
-Run: `target/twk run examples/sort-bench/typed_record_field_boxed_probe.tw`
+Run: `target/twk run examples/performance/sort-bench/typed_record_field_boxed_probe.tw`
 Expected: prints `15` (1+2+3+4+5).
 
 - [ ] **Step 7: Full suite**
@@ -655,17 +655,17 @@ Expected: `Ran N tests: N passed`, no regressions.
 - [ ] **Step 8: Dataframe guardrail — no regression**
 
 Run the existing dataframe example/benches to confirm `filter`/`join`/`group_by`/`order_by` still produce correct results:
-Run: `target/twk run examples/dataframe/bench/sort_by_costs.tw 2>&1 | tail -20` (and any other dataframe smoke test present)
+Run: `target/twk run examples/performance/dataframe/bench/sort_by_costs.tw 2>&1 | tail -20` (and any other dataframe smoke test present)
 Expected: completes without error; results unchanged from before this branch's activation.
 
 - [ ] **Step 9: Index the probes**
 
-Add the two new probes to `docs/plans/vector-perf/README.md` under the probe index, with one-line descriptions (positive: typed record-field column read; negative: boxed-producer field stays `PVec`).
+Add the two new probes to `docs/plans/performance/vector/README.md` under the probe index, with one-line descriptions (positive: typed record-field column read; negative: boxed-producer field stays `PVec`).
 
 - [ ] **Step 10: Commit**
 
 ```bash
-git add boot/compiler/backend/prepare.tw examples/sort-bench/typed_record_field_probe.tw examples/sort-bench/typed_record_field_boxed_probe.tw docs/plans/vector-perf/README.md
+git add boot/compiler/backend/prepare.tw examples/performance/sort-bench/typed_record_field_probe.tw examples/performance/sort-bench/typed_record_field_boxed_probe.tw docs/plans/performance/vector/README.md
 git commit -m "typed-vector: activate typed record-field routing end-to-end (S2.2)
 
 prepare_backend now runs analyze_typed_fields and feeds the decision to
@@ -687,7 +687,7 @@ Confirm the prepared-IR verifier accepts a typed value stored into a typed field
 
 - [ ] **Step 1: Check whether verification already passes for the positive probe**
 
-Run: `TWINKLE_VERIFY=strict target/twk build examples/sort-bench/typed_record_field_probe.tw -o /tmp/trf.wat 2>&1 | tail -20`
+Run: `TWINKLE_VERIFY=strict target/twk build examples/performance/sort-bench/typed_record_field_probe.tw -o /tmp/trf.wat 2>&1 | tail -20`
 (Use whatever env var/flag selects the strict verify level — check `verify_level_from_env()` in `codegen.tw` for the exact name.)
 Expected: builds cleanly. If it errors with a representation mismatch on the `Col.data` store or read, there is a verifier gap.
 

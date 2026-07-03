@@ -370,7 +370,7 @@ heap, `push` / `pop` / `merge` take no comparator argument; only mix heaps built
 with the same ordering.
 
 Performance is amortized: `push` and `merge` are O(1), `pop` is O(log n).
-The `boot/bench/heap_*` benchmarks confirm both a build-and-drain heapsort and a
+The `examples/performance/compiler/heap_*` benchmarks confirm both a build-and-drain heapsort and a
 mixed push/pop workload scale as n·log n with no quadratic blowup. For a
 *one-shot* sort, `Vector.sort_by` is ~3–5× faster than build-then-drain; reach
 for the heap when priorities arrive incrementally or you only need the top few.
@@ -877,7 +877,7 @@ dense numeric arrays). Correctness — calling `free`, not using after free — 
 **programmer's responsibility, like C**. The only safety floor Wasm provides for
 free is that all access stays within linear memory, so the worst case is corrupting
 another buffer's bytes or trapping, never an escape from the sandbox. See
-[docs/plans/buffer-linear-memory.md](plans/buffer-linear-memory.md) for the
+[docs/plans/archive/buffer-linear-memory.md](plans/archive/buffer-linear-memory.md) for the
 design rationale.
 
 Like `@std.view` and `@std.tuple`, two import lines give the full surface:

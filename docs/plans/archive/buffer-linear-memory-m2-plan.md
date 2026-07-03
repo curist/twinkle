@@ -48,7 +48,7 @@
 Clears throwaway scaffolding so later internalization of `__buf_*` doesn't break probe code that calls them globally.
 
 **Files:**
-- Delete: `boot/lib/buf_codec.tw`, `boot/bench/buf_codec_bench.tw`, `boot/bench/md5_linear_bench.tw`, `boot/tests/suites/buf_codec_suite.tw`
+- Delete: `boot/lib/buf_codec.tw`, `examples/performance/compiler/buf_codec_bench.tw`, `examples/performance/compiler/md5_linear_bench.tw`, `boot/tests/suites/buf_codec_suite.tw`
 - Modify: `boot/tests/main.tw` (remove the `buf_codec_suite` registration)
 
 - [ ] **Step 1: Find the probe suite's registration lines**
@@ -59,8 +59,8 @@ Expected: a `use .suites.buf_codec_suite` line and a `buf_codec_suite.suite()` e
 - [ ] **Step 2: Delete the four probe files**
 
 ```bash
-git rm boot/lib/buf_codec.tw boot/bench/buf_codec_bench.tw \
-       boot/bench/md5_linear_bench.tw boot/tests/suites/buf_codec_suite.tw
+git rm boot/lib/buf_codec.tw examples/performance/compiler/buf_codec_bench.tw \
+       examples/performance/compiler/md5_linear_bench.tw boot/tests/suites/buf_codec_suite.tw
 ```
 
 - [ ] **Step 3: Remove the suite registration from main.tw**

@@ -1,7 +1,7 @@
 # Typed Dict Representation
 
 **Status: ARCHIVED / NOT PURSUED (Phase 0 gate, 2026-06-12).** Phase 0
-microbenchmarks (`boot/bench/dict_*`, `boot/bench/set_*`) measured the actual
+microbenchmarks (`examples/performance/compiler/dict_*`, `examples/performance/compiler/set_*`) measured the actual
 cost split and the premise did not hold:
 
 - **Key boxing is already negligible.** `dict_bigint_build` (every key a heap
@@ -20,7 +20,7 @@ cost split and the premise did not hold:
   worth chasing, tracked separately.
 
 The Phase 0 benchmarks and full baseline table are kept as a permanent
-regression guard in `boot/bench/README.md` ("Dict / Set benchmark suite"). The
+regression guard in `examples/performance/compiler/README.md` ("Dict / Set benchmark suite"). The
 design below is retained for reference only; do not implement without new
 evidence that key representation (not allocation/order-tracking) is the
 bottleneck.
@@ -417,7 +417,7 @@ benchmarks show it matters.
 ### Phase 0 — measurement and baselines
 
 - Keep `tools/bench_persistent_compare.py` as the Clojure comparison harness.
-- Add Twinkle-only dict/set microbenchmarks under `boot/bench/` for:
+- Add Twinkle-only dict/set microbenchmarks under `examples/performance/compiler/` for:
   - `Dict<Int, Bool>` build/has/remove;
   - `Dict<Int, Int>` build/get/set;
   - `Dict<String, Bool>` build/has/remove;

@@ -6,7 +6,7 @@
 self-host green, 2585 boot tests. Follow-ups recorded in the plan doc. Archived
 as a completed design record.
 **Date:** 2026-06-10 (design); landed 2026-06-11
-**Parent plan:** [typed-vector-representation.md](../vector-perf/typed-vector-representation.md) (representation flow target: "record fields containing typed vectors")
+**Parent plan:** [typed-vector-representation.md](../performance/vector/typed-vector-representation.md) (representation flow target: "record fields containing typed vectors")
 **Builds on:** S2.1 boundary boxing for return + direct-call args (commit `e59b873`)
 
 ## Goal
@@ -184,7 +184,7 @@ load.
 
 ## Verification & testing
 
-- **Positive probe** (permanent, `examples/sort-bench/`): a record-held `Int`
+- **Positive probe** (permanent, `examples/performance/sort-bench/`): a record-held `Int`
   column built by `collect` in a constructor function, then read+indexed in a
   separate function. Assert the emitted WAT shows `rt_arr__get_i64` on the field
   read and a `PVecI64` struct field type, and **no** `box_i64` at the field

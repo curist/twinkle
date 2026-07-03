@@ -8,7 +8,7 @@
 
 **Architecture:** Stop rebuilding the insertion-order vector on every remove. Instead, each HAMT entry stores its slot index in the order vector; `remove` tombstones that exact slot (a persistent O(log n) `arr_set` write) and bumps a tombstone counter; a density-triggered `compact` (when dead ≥ live) rebuilds the order vector and refreshes entry indices, amortizing to O(log n) per remove. `keys()` stays O(1) when there are no tombstones and filters them out otherwise. Boot-only (`boot/compiler/codegen/runtime/`); stage0's Rust runtime is left as the existing-behavior reference.
 
-**Tech Stack:** Twinkle runtime emitter (Wasm-GC instruction arrays in `.tw`). Validation via self-host convergence (`make stage2`), `make boot-test`, and the `boot/bench/` dict suite.
+**Tech Stack:** Twinkle runtime emitter (Wasm-GC instruction arrays in `.tw`). Validation via self-host convergence (`make stage2`), `make boot-test`, and the `examples/performance/compiler/` dict suite.
 
 ---
 
@@ -27,7 +27,7 @@ Insertion-order semantics to preserve exactly:
 - `boot/compiler/codegen/runtime/types.tw` — add `HamtEntry.order_index` and `PDict.tombstones` fields.
 - `boot/compiler/codegen/runtime/dict.tw` — field-index constants, two new globals, index-stamping in `node_set`/`collision_set`, index publishing in `node_remove`, rewritten `remove`/`remove_in_place`, new `compact`, tombstone-aware `keys`, `set`/`set_in_place`/`make` updates, drop `order_remove_key`.
 - `boot/tests/suites/api_dict_suite.tw`, `boot/tests/suites/api_set_suite.tw` — correctness tests.
-- `boot/bench/README.md` — refresh the `dict_int_remove` baseline after the fix.
+- `examples/performance/compiler/README.md` — refresh the `dict_int_remove` baseline after the fix.
 
 No stage0/Rust changes. No source-language or public-API changes.
 
@@ -759,19 +759,19 @@ stays O(1) when clean and filters tombstones otherwise. Behavior is unchanged
 ## Task 3: Validate the complexity win and refresh baselines
 
 **Files:**
-- Modify: `boot/bench/README.md`
+- Modify: `examples/performance/compiler/README.md`
 
 - [x] **Step 1: Re-run the remove benchmark and confirm it is now linear**
 
-Run: `target/twk run boot/bench/dict_int_remove.tw`
+Run: `target/twk run examples/performance/compiler/dict_int_remove.tw`
 Expected: per-doubling ratio trends to ~2× (linear bulk) instead of ~4× (quadratic). At 32k it should be a few ms, not ~10 000 ms.
 
 - [x] **Step 2: Confirm no regression on the other dict/set benches**
 
-Run: `for f in dict_int_build dict_int_get dict_int_has dict_str_build dict_str_get dict_str_has set_int_build set_int_contains set_str_build set_str_contains; do echo "== $f =="; target/twk run boot/bench/$f.tw | tail -1; done`
-Expected: build/get/has/contains within noise of the Phase 0 baselines in `boot/bench/README.md` (keys() stays O(1) on the clean path; set/get untouched).
+Run: `for f in dict_int_build dict_int_get dict_int_has dict_str_build dict_str_get dict_str_has set_int_build set_int_contains set_str_build set_str_contains; do echo "== $f =="; target/twk run examples/performance/compiler/$f.tw | tail -1; done`
+Expected: build/get/has/contains within noise of the Phase 0 baselines in `examples/performance/compiler/README.md` (keys() stays O(1) on the clean path; set/get untouched).
 
-- [x] **Step 3: Update the remove baseline in `boot/bench/README.md`**
+- [x] **Step 3: Update the remove baseline in `examples/performance/compiler/README.md`**
 
 In the "Dict / Set benchmark suite" section, update the `remove` line from the quadratic Phase 0 numbers to the new linear measurement, and replace the "remove is O(n) per call → O(n²)" note with a one-line record that tombstoned removal made it amortized O(log n)/call (linear bulk), pointing at this plan.
 
@@ -783,7 +783,7 @@ Expected: self-host converges; full suite PASS.
 - [x] **Step 5: Commit**
 
 ```bash
-git add boot/bench/README.md
+git add examples/performance/compiler/README.md
 git commit -m "bench: record dict remove drop from O(n^2) to amortized O(log n)
 
 dict_int_remove flips from ~4x/doubling (10s@32k) to linear after the

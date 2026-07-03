@@ -59,7 +59,7 @@ After Task 3 registers `buf_codec_suite` in `boot/tests/main.tw`, the **full** s
 - **Create** `boot/lib/buf_codec.tw` — the LEB128 varint codec: linear + `Vector<Byte>` encode/decode/sum (Task 3).
 - **Create** `boot/tests/suites/buf_codec_suite.tw` — round-trip + cross-check correctness (Task 3).
 - **Modify** `boot/tests/main.tw` — register the new suite (Task 3).
-- **Create** `boot/bench/buf_codec_bench.tw` — the A/B decode bench (Task 4).
+- **Create** `examples/performance/compiler/buf_codec_bench.tw` — the A/B decode bench (Task 4).
 - **Modify** `docs/plans/buffer-linear-memory.md` — record the M3 go/no-go result (Task 4).
 
 ---
@@ -504,12 +504,12 @@ git commit -m "probe: LEB128 varint codec over linear memory vs Vector<Byte> + c
 Pre-encode one large varint stream into each representation, then time the decode (`sum`) pass twice (V8 tier-up). The encode is **outside** the timed region and **native to each representation** (no cross-gather). The bench self-checks correctness before timing and traps on mismatch.
 
 **Files:**
-- Create: `boot/bench/buf_codec_bench.tw`
+- Create: `examples/performance/compiler/buf_codec_bench.tw`
 - Modify: `docs/plans/buffer-linear-memory.md` (record the result)
 
 - [ ] **Step 1: Write the bench program**
 
-Create `boot/bench/buf_codec_bench.tw`:
+Create `examples/performance/compiler/buf_codec_bench.tw`:
 
 ```tw
 use @std.date
@@ -582,7 +582,7 @@ Expected: ends with `Fixed point reached: stage3 == stage4` and `Built Deno Twin
 
 - [ ] **Step 3: Run the bench**
 
-Run: `target/twk run boot/bench/buf_codec_bench.tw`
+Run: `target/twk run examples/performance/compiler/buf_codec_bench.tw`
 Expected: four timing lines; the two `sum` values per run match (and equal across both decoders — already gated by Step 1's trap). Record the **warm** (run2) `Vector<Byte>` vs `linear-memory` decode milliseconds.
 
 - [ ] **Step 4: Record the decision**
@@ -597,7 +597,7 @@ Add a short paragraph stating which outcome occurred and the numbers.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add boot/bench/buf_codec_bench.tw docs/plans/buffer-linear-memory.md
+git add examples/performance/compiler/buf_codec_bench.tw docs/plans/buffer-linear-memory.md
 git commit -m "buffer M3: byte-codec go/no-go bench + recorded result"
 ```
 

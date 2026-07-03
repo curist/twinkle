@@ -48,7 +48,7 @@ def parse_rows(output: str) -> list[tuple[int, float]]:
 
 def run_bench(name: str, timeout_s: int) -> list[tuple[int, float]]:
     proc = subprocess.run(
-        [str(TWK), "run", f"boot/bench/{name}.tw"],
+        [str(TWK), "run", f"examples/performance/compiler/{name}.tw"],
         cwd=ROOT,
         text=True,
         stdout=subprocess.PIPE,

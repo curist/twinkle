@@ -18,7 +18,7 @@
   `lang<TAB>bench<TAB>iters<TAB>ms<TAB>checksum`
   (crypto-bench's row with `sink` renamed to `checksum`.) `run.sh` appends the derived `us_per_op` column.
 - **Checksum = sink.** `run(size)` returns an `Int` derived from the final state. The harness XOR/uses it so the optimizer cannot dead-code the work.
-- **Shared config table (canonical).** Every language uses the *same* `(warmup, iters, size)` per benchmark. The canonical values live in this document (and in `examples/awfy/README.md`); each language hard-codes the same literals in its per-benchmark file. `size` and `expected` disagreements are caught automatically by the checksum diff; `warmup`/`iters` are documented and kept in sync by hand.
+- **Shared config table (canonical).** Every language uses the *same* `(warmup, iters, size)` per benchmark. The canonical values live in this document (and in `examples/performance/awfy/README.md`); each language hard-codes the same literals in its per-benchmark file. `size` and `expected` disagreements are caught automatically by the checksum diff; `warmup`/`iters` are documented and kept in sync by hand.
 
 ### Canonical config table
 
@@ -44,7 +44,7 @@
 ## File structure
 
 ```
-examples/awfy/
+examples/performance/awfy/
   README.md                 # honest-baseline caveat + canonical config table + how to run
   run.sh                    # orchestrates all langs, normalizes TSV, diffs checksums
   twinkle/
@@ -66,15 +66,15 @@ examples/awfy/
     main.mjs                # imports each bench, runs
     mandelbrot.mjs ... json.mjs
   go/
-    go.mod                  # module examples/awfy/go, go 1.21
+    go.mod                  # module examples/performance/awfy/go, go 1.21
     harness.go              # Bench struct + RunBench
     main.go                 # builds []Bench, runs
     mandelbrot.go ... json.go   # (same package main)
 ```
 
 Notes:
-- `twinkle.toml` lives in `examples/awfy/twinkle/` so that its parent namespace is that directory and `main.tw` can import siblings as `use .mandelbrot`. (Confirmed pattern: `examples/aoc/*` uses `use .solution`.)
-- Go files all share `package main` in one directory; `go run examples/awfy/go` compiles the whole dir.
+- `twinkle.toml` lives in `examples/performance/awfy/twinkle/` so that its parent namespace is that directory and `main.tw` can import siblings as `use .mandelbrot`. (Confirmed pattern: `examples/aoc/*` uses `use .solution`.)
+- Go files all share `package main` in one directory; `go run examples/performance/awfy/go` compiles the whole dir.
 - Node uses ESM (`"type":"module"` is unnecessary since files are `.mjs`).
 
 ---
@@ -84,29 +84,29 @@ Notes:
 Establish the three harnesses and the orchestrator with a single trivial "smoke" benchmark so the full pipeline (run + normalize + checksum diff) is proven before any real port.
 
 **Files:**
-- Create: `examples/awfy/twinkle/twinkle.toml`
-- Create: `examples/awfy/twinkle/harness.tw`
-- Create: `examples/awfy/twinkle/smoke.tw`
-- Create: `examples/awfy/twinkle/main.tw`
-- Create: `examples/awfy/node/harness.mjs`
-- Create: `examples/awfy/node/smoke.mjs`
-- Create: `examples/awfy/node/main.mjs`
-- Create: `examples/awfy/go/go.mod`
-- Create: `examples/awfy/go/harness.go`
-- Create: `examples/awfy/go/smoke.go`
-- Create: `examples/awfy/go/main.go`
-- Create: `examples/awfy/run.sh`
+- Create: `examples/performance/awfy/twinkle/twinkle.toml`
+- Create: `examples/performance/awfy/twinkle/harness.tw`
+- Create: `examples/performance/awfy/twinkle/smoke.tw`
+- Create: `examples/performance/awfy/twinkle/main.tw`
+- Create: `examples/performance/awfy/node/harness.mjs`
+- Create: `examples/performance/awfy/node/smoke.mjs`
+- Create: `examples/performance/awfy/node/main.mjs`
+- Create: `examples/performance/awfy/go/go.mod`
+- Create: `examples/performance/awfy/go/harness.go`
+- Create: `examples/performance/awfy/go/smoke.go`
+- Create: `examples/performance/awfy/go/main.go`
+- Create: `examples/performance/awfy/run.sh`
 
 - [ ] **Step 1: Twinkle project root**
 
-`examples/awfy/twinkle/twinkle.toml`:
+`examples/performance/awfy/twinkle/twinkle.toml`:
 ```toml
 name = "awfy"
 ```
 
 - [ ] **Step 2: Twinkle harness**
 
-`examples/awfy/twinkle/harness.tw`:
+`examples/performance/awfy/twinkle/harness.tw`:
 ```tw
 use @std.date
 
@@ -159,7 +159,7 @@ pub fn run_all(benches: Vector<Benchmark>) {
 
 - [ ] **Step 3: Twinkle smoke benchmark**
 
-`examples/awfy/twinkle/smoke.tw`:
+`examples/performance/awfy/twinkle/smoke.tw`:
 ```tw
 pub warmup := 1
 pub iters := 1
@@ -179,7 +179,7 @@ pub fn run(size: Int) Int {
 
 - [ ] **Step 4: Twinkle main**
 
-`examples/awfy/twinkle/main.tw`:
+`examples/performance/awfy/twinkle/main.tw`:
 ```tw
 use .harness.{Benchmark}
 use .harness
@@ -192,7 +192,7 @@ harness.run_all([
 
 - [ ] **Step 5: Run the Twinkle smoke and verify a TSV row**
 
-Run: `target/twk run examples/awfy/twinkle/main.tw`
+Run: `target/twk run examples/performance/awfy/twinkle/main.tw`
 Expected output (exactly one row; `ms` is a float that varies):
 ```
 twinkle	smoke	1	<ms>	6
@@ -201,7 +201,7 @@ If you see `checksum ... != expected`, the harness math is wrong — fix before 
 
 - [ ] **Step 6: Node harness**
 
-`examples/awfy/node/harness.mjs`:
+`examples/performance/awfy/node/harness.mjs`:
 ```js
 export function runBench(b) {
   let warmSink = 0;
@@ -222,7 +222,7 @@ export function runBench(b) {
 
 - [ ] **Step 7: Node smoke + main**
 
-`examples/awfy/node/smoke.mjs`:
+`examples/performance/awfy/node/smoke.mjs`:
 ```js
 export const warmup = 1, iters = 1, size = 3, expected = 6;
 export function run(size) {
@@ -232,7 +232,7 @@ export function run(size) {
 }
 ```
 
-`examples/awfy/node/main.mjs`:
+`examples/performance/awfy/node/main.mjs`:
 ```js
 import { runBench } from "./harness.mjs";
 import * as smoke from "./smoke.mjs";
@@ -245,19 +245,19 @@ for (const b of benches) runBench(b);
 
 - [ ] **Step 8: Run the Node smoke**
 
-Run: `node examples/awfy/node/main.mjs`
+Run: `node examples/performance/awfy/node/main.mjs`
 Expected: `node\tsmoke\t1\t<ms>\t6`
 
 - [ ] **Step 9: Go module + harness**
 
-`examples/awfy/go/go.mod`:
+`examples/performance/awfy/go/go.mod`:
 ```
 module awfy
 
 go 1.21
 ```
 
-`examples/awfy/go/harness.go`:
+`examples/performance/awfy/go/harness.go`:
 ```go
 package main
 
@@ -300,7 +300,7 @@ func RunBench(b Bench) {
 
 - [ ] **Step 10: Go smoke + main**
 
-`examples/awfy/go/smoke.go`:
+`examples/performance/awfy/go/smoke.go`:
 ```go
 package main
 
@@ -315,7 +315,7 @@ func smokeRun(size int) int {
 var smokeBench = Bench{Name: "smoke", Warmup: 1, Iters: 1, Size: 3, Expected: 6, Run: smokeRun}
 ```
 
-`examples/awfy/go/main.go`:
+`examples/performance/awfy/go/main.go`:
 ```go
 package main
 
@@ -331,12 +331,12 @@ func main() {
 
 - [ ] **Step 11: Run the Go smoke**
 
-Run: `go run examples/awfy/go`
+Run: `go run examples/performance/awfy/go`
 Expected: `go\tsmoke\t1\t<ms>\t6`
 
 - [ ] **Step 12: run.sh (orchestrate + normalize + checksum diff)**
 
-`examples/awfy/run.sh`:
+`examples/performance/awfy/run.sh`:
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
@@ -346,9 +346,9 @@ cd "$(dirname "$0")/../.."
 raw="$(mktemp)"
 trap 'rm -f "$raw"' EXIT
 
-target/twk run examples/awfy/twinkle/main.tw >> "$raw"
-node examples/awfy/node/main.mjs             >> "$raw"
-go run examples/awfy/go                       >> "$raw"
+target/twk run examples/performance/awfy/twinkle/main.tw >> "$raw"
+node examples/performance/awfy/node/main.mjs             >> "$raw"
+go run examples/performance/awfy/go                       >> "$raw"
 
 # Checksum agreement: for each bench, all langs must report the same checksum.
 mismatch="$(awk -F '\t' '
@@ -380,19 +380,19 @@ awk -F '\t' 'NF >= 5 { printf "%s\t%s\t%s\t%s\t%s\t%.6f\n", $1, $2, $3, $4, $5, 
 
 Run:
 ```bash
-chmod +x examples/awfy/run.sh
-examples/awfy/run.sh
+chmod +x examples/performance/awfy/run.sh
+examples/performance/awfy/run.sh
 ```
 Expected: no CHECKSUM MISMATCH; a header row plus three `smoke` rows (go, node, twinkle) all with checksum `6`.
 
 - [ ] **Step 14: Prove the checksum diff actually fails**
 
-Temporarily change `expected`/`run` in `node/smoke.mjs` so its checksum differs (e.g. `return sum + 1;`), run `examples/awfy/run.sh`, confirm it exits non-zero with `CHECKSUM MISMATCH`. Then revert the change and confirm it passes again. (Do not commit the broken state.)
+Temporarily change `expected`/`run` in `node/smoke.mjs` so its checksum differs (e.g. `return sum + 1;`), run `examples/performance/awfy/run.sh`, confirm it exits non-zero with `CHECKSUM MISMATCH`. Then revert the change and confirm it passes again. (Do not commit the broken state.)
 
 - [ ] **Step 15: Commit**
 
 ```bash
-git add examples/awfy
+git add examples/performance/awfy
 git commit -m "awfy: scaffold benchmark harness + orchestrator with smoke bench
 
 Three per-language harnesses (Twinkle/Node/Go) emitting the crypto-bench TSV
@@ -417,14 +417,14 @@ zizi = zi * zi
 For `size = 500` the checksum is `191`.
 
 **Files:**
-- Create: `examples/awfy/twinkle/mandelbrot.tw`
-- Create: `examples/awfy/node/mandelbrot.mjs`
-- Create: `examples/awfy/go/mandelbrot.go`
-- Modify: `examples/awfy/twinkle/main.tw`, `examples/awfy/node/main.mjs`, `examples/awfy/go/main.go`
+- Create: `examples/performance/awfy/twinkle/mandelbrot.tw`
+- Create: `examples/performance/awfy/node/mandelbrot.mjs`
+- Create: `examples/performance/awfy/go/mandelbrot.go`
+- Modify: `examples/performance/awfy/twinkle/main.tw`, `examples/performance/awfy/node/main.mjs`, `examples/performance/awfy/go/main.go`
 
 - [ ] **Step 1: Twinkle mandelbrot**
 
-`examples/awfy/twinkle/mandelbrot.tw`:
+`examples/performance/awfy/twinkle/mandelbrot.tw`:
 ```tw
 pub warmup := 10
 pub iters := 30
@@ -483,7 +483,7 @@ pub fn run(size: Int) Int {
 
 - [ ] **Step 2: Node mandelbrot**
 
-`examples/awfy/node/mandelbrot.mjs`:
+`examples/performance/awfy/node/mandelbrot.mjs`:
 ```js
 export const warmup = 10, iters = 30, size = 500, expected = 191;
 
@@ -518,7 +518,7 @@ export function run(size) {
 
 - [ ] **Step 3: Go mandelbrot**
 
-`examples/awfy/go/mandelbrot.go`:
+`examples/performance/awfy/go/mandelbrot.go`:
 ```go
 package main
 
@@ -565,35 +565,35 @@ var mandelbrotBench = Bench{Name: "mandelbrot", Warmup: 10, Iters: 30, Size: 500
 
 - [ ] **Step 4: Register in all three mains**
 
-In `examples/awfy/twinkle/main.tw` add `use .mandelbrot` and append to the vector:
+In `examples/performance/awfy/twinkle/main.tw` add `use .mandelbrot` and append to the vector:
 ```tw
 Benchmark.{ name: "mandelbrot", warmup: mandelbrot.warmup, iters: mandelbrot.iters, size: mandelbrot.size, expected: mandelbrot.expected, run: mandelbrot.run },
 ```
-In `examples/awfy/node/main.mjs` add `import * as mandelbrot from "./mandelbrot.mjs";` and append:
+In `examples/performance/awfy/node/main.mjs` add `import * as mandelbrot from "./mandelbrot.mjs";` and append:
 ```js
 { name: "mandelbrot", warmup: mandelbrot.warmup, iters: mandelbrot.iters, size: mandelbrot.size, expected: mandelbrot.expected, run: mandelbrot.run },
 ```
-In `examples/awfy/go/main.go` append `mandelbrotBench,` to the `benches` slice.
+In `examples/performance/awfy/go/main.go` append `mandelbrotBench,` to the `benches` slice.
 
 - [ ] **Step 5: Verify each language independently produces checksum 191**
 
 Run each and confirm the mandelbrot row's checksum column is `191`:
 ```bash
-target/twk run examples/awfy/twinkle/main.tw
-node examples/awfy/node/main.mjs
-go run examples/awfy/go
+target/twk run examples/performance/awfy/twinkle/main.tw
+node examples/performance/awfy/node/main.mjs
+go run examples/performance/awfy/go
 ```
 If Twinkle disagrees, the most likely cause is `<<` on `Int` vs JS 32-bit `<<`; because `byte_acc` never exceeds 8 bits here, 64-bit and 32-bit shifts agree — but confirm. If a language throws the `checksum != expected` error, the port is wrong; debug with systematic-debugging before moving on.
 
 - [ ] **Step 6: Full pipeline + checksum agreement**
 
-Run: `examples/awfy/run.sh`
+Run: `examples/performance/awfy/run.sh`
 Expected: no mismatch; a `mandelbrot` row for each of go/node/twinkle, all checksum `191`, plus the smoke rows.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add examples/awfy
+git add examples/performance/awfy
 git commit -m "awfy: add mandelbrot benchmark across Twinkle/Node/Go
 
 Pure-float escape-time render packing bits into a bytewise XOR checksum;
@@ -610,11 +610,11 @@ checksum 191 at size 500 agrees across all three languages."
 
 **Twinkle port note:** boolean array → `Vector<Bool>`; `flags[i] = false` → `flags = flags.set_at(i, false)` (persistent — this is the *wanted* array-write hotspot signal). Build the initial vector with a `collect` or an append loop.
 
-**Files:** `examples/awfy/{twinkle/sieve.tw, node/sieve.mjs, go/sieve.go}` + register in three mains.
+**Files:** `examples/performance/awfy/{twinkle/sieve.tw, node/sieve.mjs, go/sieve.go}` + register in three mains.
 
 - [ ] **Step 1: Twinkle sieve**
 
-`examples/awfy/twinkle/sieve.tw`:
+`examples/performance/awfy/twinkle/sieve.tw`:
 ```tw
 pub warmup := 10
 pub iters := 40
@@ -647,7 +647,7 @@ pub fn run(size: Int) Int {
 - [ ] **Step 3: Go sieve** — `flags := make([]bool, size+1)` with a fill loop, same logic.
 - [ ] **Step 4: Register in three mains.**
 - [ ] **Step 5: Run each language; paste node's checksum into all three `expected` and the config table.** For length 5000 expect `669` (AWFY-known); if node prints something else, trust node and update.
-- [ ] **Step 6: `examples/awfy/run.sh` — confirm agreement.**
+- [ ] **Step 6: `examples/performance/awfy/run.sh` — confirm agreement.**
 - [ ] **Step 7: Commit** `awfy: add sieve benchmark (persistent Vector<Bool> writes)`.
 
 ---
@@ -658,11 +658,11 @@ pub fn run(size: Int) Int {
 
 **Twinkle port note:** the three guard arrays are `Vector<Bool>`; each placement rebinds them. Because they're threaded through recursion and rebound on backtrack, pass them into a recursive helper and return the updated triple. Simplest faithful port: a recursive `place(row, free_rows, free_maxs, free_mins) Bool` that tries each column, using `set_at` to mark/unmark. Return whether a full solution was found (AWFY stops at the first solution).
 
-**Files:** `examples/awfy/{twinkle/queens.tw, node/queens.mjs, go/queens.go}` + mains.
+**Files:** `examples/performance/awfy/{twinkle/queens.tw, node/queens.mjs, go/queens.go}` + mains.
 
 - [ ] **Step 1: Twinkle queens**
 
-`examples/awfy/twinkle/queens.tw`:
+`examples/performance/awfy/twinkle/queens.tw`:
 ```tw
 fn get_row_column(free_rows: Vector<Bool>, free_maxs: Vector<Bool>, free_mins: Vector<Bool>, r: Int, c: Int) Bool {
   free_rows[r] && free_maxs[c + r] && free_mins[c - r + 7]
@@ -737,11 +737,11 @@ Run over an int array `v` of length 6. `count` for n=6 is `8660`. Repeat `size` 
 
 **Twinkle port note:** `v` is `Vector<Int>`; swaps rebind via `set_at`. Thread `count` as a returned accumulator (avoid `Cell`). The recursion returns the running count and the (possibly reordered) vector: `permute(v, n, count) -> (Vector<Int>, Int)`. Twinkle tuples: return a record or a 2-tuple if supported; **check whether tuples exist** (`grep -rn "tuple\|(.*,.*):" ` or look for `.0`/`.1`). If no tuples, use a small record `.{ v: Vector<Int>, count: Int }`.
 
-**Files:** `examples/awfy/{twinkle/permute.tw, node/permute.mjs, go/permute.go}` + mains.
+**Files:** `examples/performance/awfy/{twinkle/permute.tw, node/permute.mjs, go/permute.go}` + mains.
 
 - [ ] **Step 1: Twinkle permute**
 
-`examples/awfy/twinkle/permute.tw`:
+`examples/performance/awfy/twinkle/permute.tw`:
 ```tw
 type PState = .{ v: Vector<Int>, count: Int }
 
@@ -800,11 +800,11 @@ pub fn run(size: Int) Int {
 
 **Twinkle port note:** three peg stacks as `Vector<Int>` (top = last element). `push` = `.append`, `pop` = read `xs[len-1]` then `xs.drop_last()` (`grep -rn "drop_last" boot/prelude` — it's a runtime builtin per project memory). Thread the three pegs + move count through the recursion via a record `TState`. Since only the move count feeds the checksum and the recursion structure is fixed (`2^13 - 1` moves), you may simplify to just counting moves recursively; **but** to exercise the stack rebinds (the point of Towers), keep the peg vectors and actually move disks.
 
-**Files:** `examples/awfy/{twinkle/towers.tw, node/towers.mjs, go/towers.go}` + mains.
+**Files:** `examples/performance/awfy/{twinkle/towers.tw, node/towers.mjs, go/towers.go}` + mains.
 
 - [ ] **Step 1: Twinkle towers**
 
-`examples/awfy/twinkle/towers.tw`:
+`examples/performance/awfy/twinkle/towers.tw`:
 ```tw
 type Pegs = .{ a: Vector<Int>, b: Vector<Int>, c: Vector<Int>, moves: Int }
 
@@ -878,11 +878,11 @@ pub fn run(size: Int) Int {
 
 **Twinkle port note:** `type List = { Nil, Cons(Int, List) }`; build with a loop prepending, traverse with tail recursion (or a loop) accumulating the sum. This is the enum-allocation + recursion probe.
 
-**Files:** `examples/awfy/{twinkle/list.tw, node/list.mjs, go/list.go}` + mains.
+**Files:** `examples/performance/awfy/{twinkle/list.tw, node/list.mjs, go/list.go}` + mains.
 
 - [ ] **Step 1: Twinkle list**
 
-`examples/awfy/twinkle/list.tw`:
+`examples/performance/awfy/twinkle/list.tw`:
 ```tw
 type List = { Nil, Cons(Int, List) }
 
@@ -930,11 +930,11 @@ pub fn run(size: Int) Int {
 
 **Twinkle port note:** balls as `Vector<Ball>` where `type Ball = .{ x: Int, y: Int, xv: Int, yv: Int }` (AWFY uses ints for position via the PRNG). Thread the PRNG seed as a returned accumulator (record `Rng = .{ seed: Int }` with `fn next(r) -> .{ value, rng }`, or fold into a state record). Each step rebinds the ball vector and accumulates the bounce count. `size` = number of simulation repeats.
 
-**Files:** `examples/awfy/{twinkle/bounce.tw, node/bounce.mjs, go/bounce.go}` + mains.
+**Files:** `examples/performance/awfy/{twinkle/bounce.tw, node/bounce.mjs, go/bounce.go}` + mains.
 
 - [ ] **Step 1: Twinkle bounce**
 
-`examples/awfy/twinkle/bounce.tw`:
+`examples/performance/awfy/twinkle/bounce.tw`:
 ```tw
 type Rng = .{ seed: Int }
 type RngStep = .{ value: Int, rng: Rng }
@@ -1035,11 +1035,11 @@ pub fn run(size: Int) Int {
 
 **Twinkle port note:** the tree is `Vector<Node>` where `type Node = { Leaf, Branch(Vector<Node>) }` or simply return the running allocation count (the *result* is the count, and the allocation is the point). To actually stress GC, build real vectors: `build(depth, rng) -> .{ node: Tree, rng: Rng, count: Int }`. `size` = repeats.
 
-**Files:** `examples/awfy/{twinkle/storage.tw, node/storage.mjs, go/storage.go}` + mains.
+**Files:** `examples/performance/awfy/{twinkle/storage.tw, node/storage.mjs, go/storage.go}` + mains.
 
 - [ ] **Step 1: Twinkle storage**
 
-`examples/awfy/twinkle/storage.tw`:
+`examples/performance/awfy/twinkle/storage.tw`:
 ```tw
 use .bounce.{Rng}   // reuse the exact same LCG
 use .bounce
@@ -1105,12 +1105,12 @@ pub fn run(size: Int) Int {
 
 **Twinkle port note:** bodies as `Vector<Body>` with `type Body = .{ x,y,z,vx,vy,vz,mass: Float }`; each `advance` step rebinds the vector. Uses `@std.math.sqrt`. This is the per-step Vector-copy-cost probe.
 
-**Files:** `examples/awfy/{twinkle/nbody.tw, node/nbody.mjs, go/nbody.go}` + mains.
+**Files:** `examples/performance/awfy/{twinkle/nbody.tw, node/nbody.mjs, go/nbody.go}` + mains.
 
 - [ ] **Step 1: Node nbody first** (reference for constants + checksum). Port AWFY `NBody.js`: `advance(dt)` does pairwise velocity updates then position updates; `energy()` sums kinetic + potential. `run(size)`: init system, `for i in size: advance(0.01)`, return `Math.round(energy() * 1e9)` (or chosen scale). Record the checksum → `expected`.
 - [ ] **Step 2: Twinkle nbody**
 
-`examples/awfy/twinkle/nbody.tw` (structure; fill the exact constants from the node port):
+`examples/performance/awfy/twinkle/nbody.tw` (structure; fill the exact constants from the node port):
 ```tw
 use @std.math
 
@@ -1219,7 +1219,7 @@ type Entry = .{ key: String, value: Json }
 ```
 Thread a parse cursor (`.{ pos: Int }`) through the recursion; the checksum folds `JNum` values and counts nodes. Keep the input string a shared constant (embed the same literal in all three languages).
 
-**Files:** `examples/awfy/{twinkle/json.tw, node/json.mjs, go/json.go}` + mains.
+**Files:** `examples/performance/awfy/{twinkle/json.tw, node/json.mjs, go/json.go}` + mains.
 
 - [ ] **Step 1: Choose a fixed input + define the checksum fold.** Use a compact fixed JSON string (embed the *identical* literal in all three languages). Define `checksum = (sum of all integer numbers) * 31 + (count of all parsed nodes)` — restate this exactly in each language. Start with the node implementation as the oracle.
 
@@ -1240,15 +1240,15 @@ Fold: numbers `500,300,1,2,3,4,5` sum = 815; node count = however many `Json` no
 
 **Files:**
 - Modify: `Makefile`
-- Create: `examples/awfy/README.md`
+- Create: `examples/performance/awfy/README.md`
 
 - [ ] **Step 1: Add the `make awfy` target**
 
 In `Makefile`, add `awfy` to the `.PHONY` line and a target mirroring `bench` (it needs `target/twk`):
 ```make
-# Run the AWFY-style cross-language benchmark suite. See examples/awfy/README.md.
+# Run the AWFY-style cross-language benchmark suite. See examples/performance/awfy/README.md.
 awfy: target/twk
-	@examples/awfy/run.sh
+	@examples/performance/awfy/run.sh
 ```
 Also add a help line near the other bench help prints:
 ```make
@@ -1262,9 +1262,9 @@ Expected: no CHECKSUM MISMATCH; a normalized table with header `lang bench iters
 
 - [ ] **Step 3: README**
 
-`examples/awfy/README.md` covering:
+`examples/performance/awfy/README.md` covering:
 - **Purpose:** compiler perf gap-finding, not absolute cross-language ranking.
-- **How to run:** `make awfy` (or `examples/awfy/run.sh` directly); how to run a single language (`target/twk run examples/awfy/twinkle/main.tw`, `node examples/awfy/node/main.mjs`, `go run examples/awfy/go`); note there is no per-benchmark filter yet — comment out rows in the `main` files to isolate one.
+- **How to run:** `make awfy` (or `examples/performance/awfy/run.sh` directly); how to run a single language (`target/twk run examples/performance/awfy/twinkle/main.tw`, `node examples/performance/awfy/node/main.mjs`, `go run examples/performance/awfy/go`); note there is no per-benchmark filter yet — comment out rows in the `main` files to isolate one.
 - **Honest-baseline caveat:** Node/Go stdlib arrays are native and mutable; Twinkle uses persistent GC structures, so gaps on array-write-heavy benchmarks (**Sieve, Storage, NBody**) are expected and are the diagnostic point.
 - **The canonical config table** (copied from this plan, with the filled-in `expected` values).
 - **Checksum contract:** each `run(size)` returns the checksum; `run.sh` fails if languages disagree; how to add a benchmark (add `<name>.{tw,mjs,go}` exposing the contract, register in the three mains, run to fill `expected`).
@@ -1274,16 +1274,16 @@ Expected: no CHECKSUM MISMATCH; a normalized table with header `lang bench iters
 
 Run:
 ```bash
-target/twk fmt examples/awfy/twinkle/main.tw
-for f in examples/awfy/twinkle/*.tw; do target/twk fmt "$f"; done
-target/twk lint examples/awfy/twinkle/main.tw
+target/twk fmt examples/performance/awfy/twinkle/main.tw
+for f in examples/performance/awfy/twinkle/*.tw; do target/twk fmt "$f"; done
+target/twk lint examples/performance/awfy/twinkle/main.tw
 ```
 Fix any lint findings (expect `direct-rebinding` guidance to already be satisfied since ports use `x = x.set_at(...)`). Re-run `make awfy` to confirm formatting didn't break anything.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Makefile examples/awfy/README.md examples/awfy/twinkle
+git add Makefile examples/performance/awfy/README.md examples/performance/awfy/twinkle
 git commit -m "awfy: add make target + README documenting the honest-baseline caveat"
 ```
 

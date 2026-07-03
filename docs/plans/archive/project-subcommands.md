@@ -400,7 +400,7 @@ it so the manifest is the single source of truth:
 
 * **`make fmt` swap — REJECTED (not behavior-preserving).** The `fmt` target's
   `find boot -name '*.tw'` formats ~125 files that project mode cannot reach:
-  `boot/tests/fixtures/` (86, loaded at runtime, never imported), `boot/bench/`
+  `boot/tests/fixtures/` (86, loaded at runtime, never imported), `examples/performance/compiler/`
   (28), and `boot/repros/` (11). Project-mode `twk fmt` only covers modules
   reachable from the configured entries, so swapping it in would silently stop
   formatting those scratch/fixture sources. Per the behavior-preserving rule
