@@ -2,21 +2,11 @@
 
 ## 1. Overview
 
-Twinkle is a small statically typed language for value-oriented programs that compile to **WebAssembly GC**.
+Twinkle is a statically typed language for value-oriented programs that compile to **WebAssembly GC**. It favors a concise, low-ceremony surface over breadth, and deliberately leaves out several big-ticket features — no traits or typeclasses, no higher-kinded types, and no exceptions.
 
-Design goals:
+Source files end with `.tw`. A source file is a module, and its top-level statements execute directly — there is no `main` function (see §8).
 
-* Concise, low-ceremony syntax for everyday programming.
-* Immutable values with ergonomic rebinding and update syntax.
-* Persistent `Vector` and `Dict` collections with structural sharing.
-* Records, enums, pattern matching, closures, and rank-1 generics as the core language.
-* Bidirectional type checking over a Damas–Milner style type system.
-* Inherent methods via module functions and dot-call syntax.
-* Explicit capability records for passing behavior as ordinary values.
-* Small compiler-recognized contracts for syntax hooks such as interpolation, equality, and ordering.
-* WebAssembly GC output for portable execution on modern Wasm runtimes.
-
-Source files end with `.tw`. Top-level statements execute directly.
+Identifiers follow a strict, **parser-enforced** case rule: types, enum variants, and extern namespaces start with an uppercase letter; functions, variables, fields, and module names start lowercase. Case is not style — it determines how a name parses (see §16).
 
 ### Comments and documentation comments
 
@@ -39,107 +29,102 @@ documents that declaration. Plain `//` comments are never documentation comments
 
 ## 2. Value Model
 
-### Immutability
+### Immutability and value semantics
 
-**All ordinary values in Twinkle are immutable.**
+**All ordinary values in Twinkle are immutable.** Primitives, strings, vectors,
+dicts, sets, records, and functions cannot be mutated in place; there is no
+observable in-place mutation of values in the language model. Updates are
+expressed through **rebinding**: constructing a new value and binding a name to
+it (see §7.4–7.6).
 
-* Primitives, strings, vectors, records, dicts, and functions cannot be mutated in place.
-* There is no observable in-place mutation of values in the language model.
-* Updates are expressed through rebinding: constructing a new value and binding a name to it.
-* Shared mutable state is explicit and only available through two opt-in, mutate-in-place reference types: `Cell<T>` (a typed GC-managed cell; see §17.1) and `@std.buffer`'s `Buffer` (a sandboxed linear-memory region, manually allocated and freed; see [docs/plans/buffer-linear-memory.md](plans/buffer-linear-memory.md)).
+Twinkle has **value semantics**, not reference semantics. Rebinding affects only
+the local name, never any other alias:
+
+```tw
+type Pt = .{ y: Int }
+
+p := Pt.{ y: 0 }
+q := p
+
+p.y = 1      // p = Pt.{ y: 1 }
+q            // still Pt.{ y: 0 }
+```
+
+Shared mutable state is explicit and only available through two opt-in,
+mutate-in-place reference types: `Cell<T>` (a typed GC-managed cell; see §13.6)
+and `@std.buffer`'s `Buffer` (a sandboxed linear-memory region, manually
+allocated and freed; see [docs/design/buffer.md](design/buffer.md)).
 
 ### Primitives (unboxed)
 
 * `Int` → wasm `i64`
 * `Float` → wasm `f64`
-* `Bool` →  wasm `i32`, 0/1
+* `Bool` → wasm `i32`, 0/1
 * `Byte` → wasm `i32`, range `0..255`
-* `Void` → effect-only (no value).
+* `Void` → effect-only; used as a function return type and as the value of a
+  block with no final expression. It has no literal and cannot be stored or bound.
 
 ### References (GC)
 
-* `String` — immutable text.
-* `Vector<T>` — immutable persistent vector; element unboxed/ref depending on `T`.
+* `String` — immutable, always-valid UTF-8 text.
+* `Vector<T>` — immutable persistent vector; elements unboxed or ref depending on `T`.
 * `record` — immutable closed struct shape.
-* `Dict<K,V>` — immutable persistent hash map, implemented with HAMT-style structural sharing.
-* `function` — closure with captured environment (GC).
-* `Cell<T>` — mutable cell reference for explicit shared state.
+* `Dict<K,V>` — immutable persistent hash map (HAMT-style structural sharing).
+* `Set<K>` — immutable persistent set (backed by `Dict<K, Void>`).
+* `function` — closure with captured environment.
+* `Cell<T>` — mutable cell reference for explicit shared state (§13.6).
 * `Buffer` (from `@std.buffer`) — sandboxed linear-memory region; mutate-in-place, manually allocated and freed.
-
-### `Void`
-
-* Used as function return type & block with no final expression.
-* No literal and cannot be stored/bound.
 
 ---
 
 ## 3. Types & Generics
 
-Parametric polymorphism:
+Parametric polymorphism (rank-1, no higher-kinded types):
 
 ```tw
 fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> { ... }
 ```
 
-No higher-kinded types.
-
-Generic parameters may use Twinkle's compiler-recognized contracts (`Stringify`, `Eq`, `Ord`) for syntax-level behavior. Other reusable behavior is passed explicitly through ordinary values, usually records of functions (see Section 10).
-
-Type alias:
+Type alias — does **not** create a new distinct nominal type:
 
 ```tw
 type ID = Int
 ```
 
-Type alias doesn't create new distinct nominal type.
+Generic parameters may require one of Twinkle's compiler-recognized **contracts**
+as a bound (e.g. `<T: Stringify>`, `<C: IndexRead<E>, E>`) for syntax-level
+behavior. All other reusable behavior is passed explicitly as ordinary values,
+usually records of functions. Both mechanisms are described in §10.
 
 ---
 
-## 4. Option & Nullability
+## 4. Records
 
-`Option<T>` defined as:
-
-```tw
-type Option<T> = { None, Some(T) }
-```
-
-Sugar:
-
-```
-T?  ==  Option<T>
-```
-
-No `null`.
-
-Compiler optimizes reference-type options into nullable refs.
-
-Pattern example:
+Named record type (nominal, closed shape):
 
 ```tw
-case x {
-  .None => ...,
-  .Some(v) => ...,
-}
+type Point = .{ x: Int, y: Int }
 ```
 
-**Option → Result bridge:**
+Record literal (two forms):
 
 ```tw
-opt.ok_or("missing")         // Some(v) → Ok(v), None → Err("missing")
-opt.ok_or_else(fn() { ... }) // lazy — closure called only on None
+// Anonymous — requires an expected record type from context
+p: Point = .{ x: 10, y: 20 }
+
+// Named constructor — always produces Point
+p := Point.{ x: 10, y: 20 }
+
+// Field punning shorthand
+p2 := Point.{ x, y }      // == Point.{ x: x, y: y }
+p3: Point = .{ x, y: 99 } // mixed shorthand + explicit value
 ```
 
-`T?` composes with `!E` (see §18):
-
-```
-T?!E  ==  Result<Option<T>, E>
-```
+Field access: `p.x`.
 
 ---
 
 ## 5. Enums & Pattern Matching
-
-Enum example:
 
 ```tw
 type Shape = {
@@ -147,25 +132,18 @@ type Shape = {
   Rect(Float, Float),
   UnitSquare,
 }
-```
 
-Usage:
-
-```tw
 s := Shape.Circle(3.0)
-```
 
-Pattern:
-
-```tw
 case s {
-  .Circle(r) => r*r*3.14159,
-  .Rect(w, h) => w*h,
+  .Circle(r) => r * r * 3.14159,
+  .Rect(w, h) => w * h,
   .UnitSquare => 1.0,
 }
 ```
 
-Match must be exhaustive unless `_ => ...`.
+Variant names are `PascalCase`. A `case` on an enum must be exhaustive unless it
+uses a `_ => ...` catch-all.
 
 ### Integer tags (field-less enums)
 
@@ -198,33 +176,79 @@ the enum's dispatch discriminant, so pattern matching is unaffected. `= N`,
 
 ---
 
-## 6. Records
+## 6. Optionality and Errors
 
-Named record type:
+Twinkle has no `null` and no exceptions. Absence is modeled with `Option<T>` and
+recoverable failure with `Result<T, E>`; both integrate with the `try` operator.
 
-```tw
-type Point = .{ x: Int, y: Int }
-```
-
-Record literal (two forms):
+### Option
 
 ```tw
-// Anonymous (requires expected type from context)
-p: Point = .{ x: 10, y: 20 }
-
-// Named constructor (explicit type)
-p := Point.{ x: 10, y: 20 }
-
-// Field punning shorthand
-p2 := Point.{ x, y }      // equivalent to Point.{ x: x, y: y }
-p3: Point = .{ x, y: 99 } // mixed shorthand + explicit field value
+type Option<T> = { None, Some(T) }
 ```
 
-Field access: `p.x`
+Sugar: `T?` == `Option<T>`. The compiler optimizes reference-type options into
+nullable refs.
+
+```tw
+case x {
+  .None => ...,
+  .Some(v) => ...,
+}
+```
+
+Option → Result bridge:
+
+```tw
+opt.ok_or("missing")         // Some(v) → Ok(v), None → Err("missing")
+opt.ok_or_else(fn() { ... }) // lazy — closure called only on None
+```
+
+### Result
+
+```tw
+type Result<T, E> = { Ok(T), Err(E) }
+```
+
+Type shorthand — the error type is always required:
+
+```
+T!E   ==  Result<T, E>       // full form
+!E    ==  Result<Void, E>    // fallible operation with no return value
+T?!E  ==  Result<Option<T>, E>   // composes with T?
+```
+
+`T!` and bare `!` are **not** valid.
+
+```tw
+fn validate(n: Int) !ParseError { ... }               // Result<Void, ParseError>
+fn parse(s: String) Int!ParseError { ... }            // Result<Int, ParseError>
+fn find(xs: Vector<Int>, k: Int) Int?!String { ... }  // Result<Option<Int>, String>
+```
+
+### `try`
+
+```tw
+try expr
+```
+
+* **On `Result<T,E>`:** returns early with `Err(e)` on error, extracts `Ok(v)` on
+  success. For `Result<Void,E>` the `Ok` branch carries no value; present a `Void`
+  success as `.Ok({})` (since `{}` evaluates to `Void`).
+* **On `Option<T>`:** returns early with `None` on absence, extracts `Some(v)` on
+  success. Only valid in functions returning `Option<U>`. To use `try` on an
+  `Option` inside a `Result`-returning function, bridge first:
+  `x := try opt.ok_or("missing")`.
+* **Not valid on any other type** (compile-time error).
+
+### Traps (unrecoverable)
+
+Unrecoverable errors trap and cannot be caught: out-of-bounds access, division by
+zero, and explicit `error("msg")`.
 
 ---
 
-## **7. Functions, Bindings, and Rebinding**
+## 7. Functions, Bindings, and Rebinding
 
 ### 7.1 Function Declaration
 
@@ -232,17 +256,20 @@ Field access: `p.x`
 fn f(x: Int, y: Int) Int { x + y }
 ```
 
-Functions cannot mutate caller-visible ordinary values via assignment syntax.
-All assignment-like updates create new values and rebind local names. Side effects are explicit (e.g. `print`, `println`, `error`, `Cell.set`, `Cell.update`).
+Function parameters must be explicitly annotated. The return type is written
+after the parameter list (no `->`); it may be omitted when inference suffices, in
+which case the body's value determines it.
 
-Function declaration parameters must be explicitly annotated (`fn f(x: Int) ...`).
-Parameters are ordinary local bindings and may be rebound within the function body (see §7.4).
+For **function expressions** (`fn (...) { ... }`) used as callbacks, parameter and
+return types may be omitted when a contextual function type is available (from a
+parameter type or an annotated binding). Explicit callback annotations, if
+present, must agree with that contextual type.
 
-The return type is written after the parameter list (no `->`). It may be omitted when inference suffices; when omitted, the function body’s value determines the return type.
-
-For **function expressions** (`fn (...) { ... }`) used as callbacks, parameter and return types may be omitted when a contextual function type is available (for example, from a function parameter type or an annotated binding). If explicit callback annotations are present, they must agree with that contextual type.
-
-Functions form **lexical scope boundaries**: names defined outside a function cannot be rebound inside the function.
+Functions cannot mutate caller-visible values via assignment; all assignment-like
+updates create new values and rebind local names. Side effects are explicit
+(`print`, `println`, `error`, `Cell.set`, `Cell.update`). Functions form
+**lexical scope boundaries**: names defined outside a function cannot be rebound
+inside it.
 
 ### 7.2 Extern Declarations
 
@@ -261,75 +288,61 @@ pub extern canvas {
 ```
 
 The module name is a bare identifier that doubles as the Wasm import module name
-and the call-site namespace for functions (`console.log(...)`,
-`canvas.clear(...)`). The function name becomes the Wasm import field name.
-`pub` controls Twinkle module visibility only; every extern function declaration
-emits/reuses a Wasm import.
+and the call-site namespace (`console.log(...)`, `canvas.clear(...)`). The
+function name becomes the Wasm import field name. `pub` controls Twinkle module
+visibility only; every extern function declaration emits/reuses a Wasm import.
 
 Extern types are opaque nominal handles backed by non-null Wasm `(ref extern)`.
-They live in the declaring Twinkle module's type namespace, not in the extern
+They live in the declaring Twinkle module's **type** namespace, not the extern
 function namespace: inside the module above the type is `Context`, not
-`canvas.Context`. When public, other modules import it like any other type from
-the declaring Twinkle module. Extern types have no fields or variants and cannot
-be pattern matched. They do not provide equality, ordering, or hashing by
-default; use explicit host functions for those operations.
+`canvas.Context`. When public, other modules import it like any other type. Extern
+types have no fields or variants, cannot be pattern matched, and provide no
+equality, ordering, or hashing by default — use explicit host functions for those.
 
-Extern parameters must be annotated. An omitted return type means `Void`
-(`extern console fn log(msg: String)` returns `Void`). Phase 1 boundary types are
-`Int`, `Float`, `Bool`, `String`, extern types, and `Void`/`()`. Compound values
-such as records, enums, `Vector`, `Dict`, callbacks, `Option`, and `Result` are
-not valid extern boundary types.
+Extern parameters must be annotated. An omitted return type means `Void`. Boundary
+types are `Int`, `Float`, `Bool`, `String`, extern types, `Option<ExternType>`,
+and `Void`/`()`. Other compound values (records, enums, `Vector`, `Dict`,
+callbacks, and `Option`/`Result` of non-extern types) are not valid extern
+boundary types.
 
-Extern types are non-null. If a host function declared as returning an extern
-type returns `null` or `undefined`, the Wasm runtime traps at the import
-boundary. Nullable extern types (`Option<ExternType>`) are deferred and rejected
-in Phase 1.
-
----
+A non-nullable extern type is non-null: if a host function declared as returning
+one returns `null`/`undefined`, the runtime traps at the import boundary. To
+accept a possibly-absent handle, declare the boundary as `Option<ExternType>`
+(spelled `ExternType?`), which lowers to a nullable `externref` — `null`/`undefined`
+becomes `.None`.
 
 ### 7.3 Bindings
 
-#### Initial binding
-
 ```tw
-x := expr
-x: T = expr
+x := expr      // inferred, monomorphic
+x: T = expr    // annotated
 ```
 
-* Introduces a **new binding** `x` in the **current lexical scope**.
-* If a binding with the same name exists in an outer scope, the new binding **shadows** it.
-* Bindings refer to **immutable values**; the value cannot be changed in place.
+An initial binding introduces a **new binding** in the current lexical scope; if a
+same-named binding exists in an outer scope, it is **shadowed**. Bindings refer to
+immutable values.
 
-Lexical scopes are introduced by:
-
-* function bodies,
-* blocks created with braces,
-* pattern-bound names in `case` arms,
-* loop variables in `for`,
-* top-level module scope.
-
----
+Lexical scopes are introduced by: function bodies, brace blocks, pattern-bound
+names in `case` arms, loop variables in `for`, and top-level module scope.
 
 ### 7.4 Rebinding
-
-Rebinding provides *syntactic convenience* for expressing new values that replace old ones.
 
 ```tw
 x = expr
 ```
 
-#### Rules
+Rebinding is *syntactic convenience* for expressing a new value that replaces the
+old one. Rules:
 
-1. `x = expr` is only legal if `x` refers to an existing binding in an enclosing lexical scope **within the same function**.
-2. It introduces a **fresh binding identity** for `x` — the name now refers to a new immutable value. It does not mutate a stored cell; it changes what future references to the name resolve to.
-3. Rebinding introduces a fresh binding identity for `x` that replaces the previous one for the remainder of the current lexical region; it does not introduce an additional scope layer.
-4. If multiple bindings of `x` exist due to shadowing, the **innermost** one is the target.
-5. It is a compile-time error to use `x = expr` if no such binding exists.
-6. Rebinding cannot cross function boundaries. A function cannot rebind variables defined in its caller or outer functions.
-
-Thus, rebinding is always contained within the function where the corresponding `:=`/typed binding appears.
-
-Example:
+1. Legal only if `x` refers to an existing binding in an enclosing lexical scope
+   **within the same function**.
+2. It introduces a **fresh binding identity** for `x` — the name now refers to a
+   new immutable value. It does not mutate a stored cell; it changes what future
+   references to the name resolve to, for the remainder of the current lexical
+   region. It does not add a scope layer.
+3. If multiple bindings of `x` exist due to shadowing, the **innermost** is the target.
+4. Using `x = expr` with no such binding is a compile-time error.
+5. Rebinding cannot cross function boundaries.
 
 ```tw
 fn bump(n: Int) Int {
@@ -338,13 +351,12 @@ fn bump(n: Int) Int {
 }
 ```
 
----
-
 ### 7.5 Rebinding and Control Flow
 
-Control-flow constructs (`if`, `for`, `case`, blocks `{ ... }`) **do not** introduce new rebinding scopes, except for any names they explicitly define (e.g., loop variables, pattern-bound names).
-
-Inside a `for` loop, rebinding targets the same lexical binding as outside the loop:
+Control-flow constructs (`if`, `for`, `case`, blocks) do **not** introduce new
+rebinding scopes, except for the names they explicitly define (loop variables,
+pattern-bound names). Inside a `for` loop, rebinding targets the same lexical
+binding as outside it:
 
 ```tw
 acc := 0
@@ -354,16 +366,14 @@ for x in xs {
 acc                   // sees the final value
 ```
 
-Nested bindings behave as expected with shadowing:
+Inner initial bindings shadow, and rebinding then targets the innermost:
 
 ```tw
 acc := 0
-
 if x > 0 {
   acc := 10          // new inner binding
   acc = acc + 1      // rebinds inner acc (11)
 }
-
 // outer acc is still 0
 ```
 
@@ -371,436 +381,207 @@ Pattern-bound names follow the same rules:
 
 ```tw
 x := 1
-
 case opt {
   .Some(x) => {      // new binding shadows outer x
     x = x + 1        // rebinds pattern-bound x
     println(x)
   }
 }
-
 // outer x is unchanged (1)
 ```
 
----
-
 ### 7.6 Update Syntax (Desugaring)
 
-Twinkle provides update-like syntax for ergonomics, but all updates are expressed as **rebinding to newly constructed values**.
-
-#### Record field update
-
-```tw
-r.field = expr
-```
-
-Desugars conceptually to the core record-update operation (not Twinkle surface syntax):
+Update-like syntax is ergonomic sugar; every update is **rebinding to a newly
+constructed value**. The grammar allows identifiers, field accesses, and indexed
+expressions on the left of `=`.
 
 ```tw
-r = RecordUpdate(r, field, expr)
+r.field = expr    // r = RecordUpdate(r, field, expr)
+arr[i]  = value   // arr = Vector.set_unsafe(arr, i, value)   (traps OOB)
+m[k]    = v       // m = Dict.set(m, k, v)
 ```
 
-#### Vector index update
-
-```tw
-arr[i] = value
-```
-
-Desugars to:
-
-```tw
-arr = Vector.set_unsafe(arr, i, value)
-```
-
-#### Dict index update
-
-```tw
-m[k] = v
-```
-
-Desugars to:
-
-```tw
-m = Dict.set(m, k, v)
-```
-
-#### Assignment targets
-
-The grammar allows identifiers, field accesses, and indexed expressions on the left of `=`. Field and index forms are still sugar that rebuild the owner value (see record/vector/dict desugarings above); implementations should evaluate the left-hand side once when lowering.
-
-Nested field chains (`a.b.c = x`) are supported and desugar recursively from the inside out:
+Nested field chains desugar recursively from the inside out; the root must be a
+local identifier (`foo().x = 1` is not allowed):
 
 ```tw
 a.b.c = x
-// desugars conceptually to:
-a = RecordUpdate(a, b, RecordUpdate(a.b, c, x))
+// a = RecordUpdate(a, b, RecordUpdate(a.b, c, x))
 ```
 
-The root of the chain must be a local identifier. Chains starting with expressions (e.g., `foo().x = 1`) are not allowed.
+For a receiver whose type is a generic parameter bounded by `IndexWrite<E>` (§10),
+indexed assignment lowers through the contract's `set_at` instead of a concrete
+builtin.
 
 #### Rebinding receiver shorthand
 
-When the right-hand side of a rebinding assignment begins with `.lowercase(`, the assignment target is used as the implicit receiver:
+When the right-hand side of a rebinding begins with `.lowercase(`, the assignment
+target is used as the implicit receiver:
 
 ```tw
-xs = .append(item)
-// desugars to:
-xs = xs.append(item)
-
-state.items = .append(entry)
-// desugars to:
-state.items = state.items.append(entry)
+xs = .append(item)              // xs = xs.append(item)
+state.items = .append(entry)    // state.items = state.items.append(entry)
+items = .filter(f).map(g)       // items = items.filter(f).map(g)  (chain is part of RHS)
 ```
 
-Method chains after the leading method call are part of the expression:
+The shorthand is valid **only** at the head of a rebinding RHS — not in `:=`
+bindings or other expression positions. Disambiguation by leading token:
+`.lowercase(` → receiver shorthand; `.Uppercase` → variant literal; `.{` →
+anonymous record literal.
 
-```tw
-items = .filter(fn(x) { x.active }).map(fn(x) { x.name })
-// desugars to:
-items = items.filter(fn(x) { x.active }).map(fn(x) { x.name })
-```
+### 7.7 Closure Capture
 
-The shorthand is only valid at the head of a rebinding RHS. It does not apply inside nested expressions, in `let` bindings (`x := .method()`), or in other expression positions.
-
-Disambiguation by leading token:
-- `.lowercase(` — receiver shorthand
-- `.Uppercase` — variant literal
-- `.{` — anonymous record literal
-
----
-
-### 7.7 Aliasing and Value Semantics
-
-All values are immutable. Rebinding affects only the local name, not any other aliases:
-
-```tw
-type Pt = .{ y: Int }
-
-p := Pt.{ y: 0 }
-q := p
-
-p.y = 1      // p = Pt.{ y: 1 }
-
-q             // still Pt.{ y: 0 }
-```
-
-Twinkle has **value semantics**, not reference semantics.
-
-### 7.8 Closure Capture
-
-A function expression (`fn (...) { ... }`) may reference names defined in its surrounding lexical scopes.
-When such a function is **defined**, Twinkle captures the **current value** of each free variable.
-Closures capture values. If a captured value is a `Cell<T>`, the closure captures that cell reference value, so cell effects remain shared.
-
-This section formalizes the capture model.
-
----
-
-#### 7.8.1 Capture-by-Value (Definition-Site Semantics)
-
-When a closure is created:
-
-* Each free variable `x` is resolved to the **innermost visible binding**.
-* The **value** of that binding at the point of the closure's definition is captured.
-* This captured value is final and does not change, even if the name is later rebound in the same scope.
-
-Example:
+A function expression may reference names from its surrounding lexical scopes.
+Capture is **by value at definition time**: each free variable resolves to the
+innermost visible binding, and the closure captures that binding's *value* at the
+point of definition. This value is final — later rebinding of the same name
+introduces a new shadowing binding and does not affect closures created earlier.
 
 ```tw
 x := 1
-f := fn() Int { x }
-x = 2
-
-f()    // returns 1
-```
-
-Explanation:
-
-* `f` captures the value `1` (the value of the `x` binding at definition time).
-* `x = 2` introduces a new shadowing binding for later code, but does not affect `f`.
-
----
-
-#### 7.8.2 Shadowing and Captured Variables
-
-Closures always capture the **innermost lexical binding** visible at their definition site.
-
-```tw
-x := 0
+f := fn() Int { x }   // captures the value 1
+x = 2                 // new shadowing binding
+f()                   // 1
 
 fn outer() fn() Int {
-  x := 10                // new shadowing binding
-  fn() Int { x }         // captures the inner x = 10
-}
-
-f := outer()
-x = 99                   // rebinding the outer x
-
-f()                      // returns 10
-```
-
-* Inner `x` shadows outer `x`.
-* The closure sees only the shadowing `x = 10`.
-
----
-
-#### 7.8.3 Rebinding After Closure Creation Does Not Affect Closures
-
-Rebinding (`x = expr`) is sugar for introducing a new shadowing binding.
-Therefore, closures created **before** the rebinding continue to see the old binding.
-
-```tw
-x := 1
-
-f := fn() Int { x }   // captures x = 1
-
-x = 2                 // new binding shadows the old
-
-f()                  // returns 1
-```
-
-This follows directly from capture-by-value semantics.
-
----
-
-#### 7.8.4 Closures Cannot Rebind Captured Variables
-
-Because rebinding always targets local bindings in the current function, closures cannot assign to variables defined outside their own function.
-
-The following is an error:
-
-```tw
-x := 1
-
-fn bad() {
-  x = x + 1   // error: cannot rebind variable defined in outer scope
+  x := 10             // inner binding
+  fn() Int { x }      // captures inner x = 10
 }
 ```
 
-Compile-time rule:
+Consequences:
 
-> A closure may reference captured variables, but may **not** rebind them using `=`.
+* **Loop variables are fresh per iteration**, so a closure created in a loop
+  captures that iteration's value — avoiding the classic loop-capture trap:
 
-If shared mutable state is desired, express it explicitly using `Cell<T>` rather than by rebinding captured variables.
+  ```tw
+  fns := collect i in range(3) { fn() Int { i } }
+  fns[0]()  // 0
+  fns[1]()  // 1
+  fns[2]()  // 2
+  ```
 
----
+* **A closure cannot rebind a captured variable** — `x = ...` targets local
+  bindings in the current function, so assigning to an outer variable is a
+  compile-time error. For shared mutable state, capture a `Cell<T>`: the closure
+  captures the cell reference, so cell effects remain shared.
 
-#### 7.8.5 Loop Variables Produce Fresh Bindings per Iteration
-
-In `for` loops, loop variables are newly bound for each iteration.
-Thus each closure created inside the loop captures the **iteration’s** value, not a shared accumulator.
-
-```tw
-fns := collect i in range(3) {
-  fn() Int { i }
-}
-
-fns[0]()    // 0
-fns[1]()    // 1
-fns[2]()    // 2
-```
-
-Rationale:
-
-* Each iteration introduces a new binding `i`.
-* Closures capture the value of `i` at their own definition point.
-
-This avoids common “loop capture traps” seen in other languages.
-
----
-
-#### 7.8.6 Summary of Closure Capture Rules
-
-| Behavior                  | Rule                                                                                        |
-| ------------------------- | ------------------------------------------------------------------------------------------- |
-| What is captured?         | The **value** of each free variable at closure definition time.                             |
-| Shadowing                 | Closures capture the **innermost visible** binding.                                         |
-| Rebinding afterwards      | Does **not** affect existing closures; it creates a new shadowing binding.                  |
-| Assigning inside closures | Cannot rebind captured variables (compile-time error).                                      |
-| Loops                     | Fresh binding per iteration; closures capture the iteration’s value.                        |
-| Mutation                  | Not supported implicitly; shared mutable state must use explicit `Cell<T>` operations.        |
-
-This model is simple and predictable, while still supporting direct rebinding syntax.
+  ```tw
+  x := 1
+  fn bad() { x = x + 1 }   // error: cannot rebind an outer-scope variable
+  ```
 
 ---
 
 ## 8. Modules & Imports
 
+> **Design rationale:** See [docs/design/module.md](design/module.md).
+
 ### 8.1 Top-Level Items
 
-A Twinkle source file is a module. The following items are allowed at the top level, in any order:
+A Twinkle source file is a module. The following items are allowed at the top
+level, in any order:
 
-* **Type declarations** (`type`) — define nominal record or enum types.
-* **Function declarations** (`fn`) — define named functions.
+* **Type declarations** (`type`) — nominal record or enum types.
+* **Function declarations** (`fn`) — named functions.
 * **Value bindings** (`:=` or `: T =`) — module-level names bound to values.
 * **Expression statements** — side-effecting expressions (must be `Void`).
 
-#### Value bindings
-
 ```tw
-PI: Float = 3.14159
-MAX_RETRIES := 5
-```
+pi: Float = 3.14159
+max_retries := 5
 
-Module-level value bindings are **module globals**:
-
-* Their names are in scope for all functions in the module, regardless of source order.
-* They can be marked `pub` to export them.
-* They are evaluated once at module initialization time, top-to-bottom.
-* Public (`pub`) bindings cannot be rebound — they are part of the module's exported interface and each name may only be bound once.
-* Private bindings may be rebound at module scope, following the same rules as §7.4–7.5.
-
-#### Expression statements
-
-```tw
 println("module loaded")
 ```
 
-Top-level expression statements execute at initialization time and introduce no name. They must have type `Void`. They run in source order, interleaved with value binding evaluation.
+Module-level value bindings are **module globals**: in scope for all functions
+regardless of source order, optionally `pub` for export, evaluated once at
+initialization. `pub` bindings cannot be rebound (each exported name is bound
+once); private bindings may be rebound at module scope following §7.4–7.5.
 
-#### Initialization order
+**Initialization order:** type and function declarations are available everywhere
+(no forward-declaration restriction). Value bindings and top-level expression
+statements execute top-to-bottom in source order, interleaved. Top-level
+expression statements introduce no name and must have type `Void`.
 
-Type and function declarations are available everywhere in the module (no forward-declaration restriction). Value bindings and expression statements execute top-to-bottom in the order they appear.
-
-#### Entry point
-
-The entry point of a program is its top-level initialization sequence. There is no special `main` function — `fn main()` has no distinguished status and is not called automatically.
-
-To run code, place it at the top level:
-
-```tw
-// top-level expressions are the program
-println("hello")
-```
-
-For larger programs, define a function and call it from the top level:
+**Entry point:** the program *is* its top-level initialization sequence; there is
+no special `main`. When compiling to WebAssembly, this sequence lowers into a
+synthetic `__init__` function designated as the Wasm
+[start function](https://webassembly.github.io/spec/core/syntax/modules.html#start-function),
+so it runs automatically on instantiation. To let a host call code by name, export
+it explicitly:
 
 ```tw
-fn run() Void {
-  // ...
-}
-
-run()
-```
-
-A module with no top-level expression statements is a library module; its value and function exports are available to importers.
-
-#### WebAssembly entry point
-
-When compiling to WebAssembly, the top-level initialization sequence is lowered into a synthetic `__init__` function. This function is designated as the Wasm [start function](https://webassembly.github.io/spec/core/syntax/modules.html#start-function), so it runs automatically when the module is instantiated by the host (browser, Wasmtime, etc.).
-
-There is no exported `main` symbol. If a host needs to call a specific function by name (e.g. for embedding), export it explicitly:
-
-```tw
-pub fn run() Void {
-  // ...
-}
-
+pub fn run() Void { ... }
 run()   // also runs at startup via __init__
 ```
 
-The host can then call `run()` again on demand via the Wasm export.
+A module with no top-level expression statements is a library module; its value
+and function exports are available to importers.
 
 ### 8.2 Imports
 
-> **Design rationale:** See [docs/design/module.md](design/module.md).
-
-#### Syntax
-
 ```tw
 use foo.bar           // import foo/bar.tw, bound as "bar"
-use foo.bar as baz    // import foo/bar.tw, bound as "baz"
-use utils             // import utils.tw at project root
-use .helper           // relative import: sibling module in same directory
-use .sub.mod          // relative import: nested path from same directory
-use .helper as h      // relative import with alias
+use foo.bar as baz    // aliased
+use utils             // utils.tw at project root
+use .helper           // relative: sibling module in same directory
+use .sub.mod          // relative: nested path from same directory
 use @std.fs           // stdlib module, bound as "fs"
 use @std.path as path // stdlib module with alias
 ```
 
-#### Filesystem mapping
+**Filesystem mapping.** An absolute dot path `a.b.c` maps to `<root>/a/b/c.tw`;
+the module identifier is the last segment (`c`), or the alias. A relative import
+(leading dot) resolves from the importing file's parent directory.
 
-An absolute dot-separated path `a.b.c` maps to `<root>/a/b/c.tw`. The module
-identifier is the last segment (`c`), or the alias if `as name` is provided.
+**Project root.** Walk up from the entry file's directory until `twinkle.toml` is
+found; otherwise the entry file's directory is the root (single-file scripts).
 
-A relative import (leading dot) resolves from the importing file's parent
-directory. For example, `use .helper` in `<root>/lib/app.tw` resolves to
-`<root>/lib/helper.tw`.
+**Stdlib.** Stdlib modules are prefixed with `@`. The prelude (primitive types,
+`println`, `Vector`, `Dict`, `Set`, `String`, `Range`, etc.) is always implicitly
+in scope — no `use` needed. Richer stdlib modules require an explicit `use @...`.
 
-#### Project root resolution
-
-1. Walk up from the entry file's directory until `twinkle.toml` is found.
-2. If none is found, the entry file's directory is the root (single-file scripts).
-
-#### Stdlib modules
-
-Stdlib modules are prefixed with `@`. The prelude (primitive types, `println`,
-`Vector`, `Dict`, `String`, `Range`, etc.) is always implicitly in scope — no
-`use` needed. Richer stdlib modules require an explicit `use @...`.
-
-#### Aliasing
-
-`use foo.bar as baz` binds the module under `baz`. Aliasing is required when two
-imports share the same last-segment name:
+**Aliasing** is required when two imports share the same last-segment name;
+importing two same-identifier modules without `as` is a compile-time error:
 
 ```tw
 use math.vector as mvec
 use graphics.vector as gvec
 ```
 
-Importing two modules with the same identifier without `as` is a compile-time error.
+**Visibility.** `pub` exports a name; exported names are accessed qualified
+(`math.add`, `math.Point`). Values and types occupy **separate namespaces**, so a
+module may export both a type and a value of the same name without conflict
+(`option.Option<T>`, `option.Some`).
 
-#### Visibility
-
-```tw
-pub fn foo() Int { ... }
-fn bar() Int { ... }      // private
-
-pub PI: Float = 3.14159   // exported constant
-```
-
-Exported names are accessed qualified: `math.add`, `math.Point`.
-
-Separate namespaces exist for values and types — a module may export both a type
-and a value with the same name; they are distinguished by context and never conflict
-(e.g. `option.Option<T>`, `option.Some`, `option.None`).
-
-#### Re-exports
-
-No special re-export syntax. Use explicit `pub` rebinding:
+**Re-exports** have no special syntax — use explicit `pub` rebinding:
 
 ```tw
 use math.vector
 pub translate := vector.translate
 ```
 
-#### Circular imports
-
-Circular imports are allowed when the cycle is through type and function
+**Circular imports** are allowed when the cycle is through type and function
 signatures/bodies only. A cycle that requires top-level value initialization order
-is a compile-time error, because top-level statements execute and no intra-cycle
-initialization order is defined.
+is a compile-time error.
 
-#### Destructuring
-
-Specific names can be brought directly into scope. PascalCase names are imported as types, snake_case names as values — no `type` keyword needed:
+**Destructuring** brings specific names directly into scope — PascalCase as types,
+snake_case as values, no `type` keyword needed. It does **not** import the parent
+module name:
 
 ```tw
 use math.vector.{translate, scale, Vec2}
-use math.vector.{translate as tr, Vec2 as V2}
-```
-
-A destructured import brings only the listed names into scope — the parent module itself is **not** imported. `use foo.{MyType}` does not make `foo` available as a name:
-
-```tw
-use math.vector.{Vec2}
+use math.vector.{Vec2 as V2}
 
 v := Vec2.{ x: 1, y: 2 }
 v.translate(3, 4)          // ok — inherent methods resolve via the type
 vector.scale(v, 2)         // error — "vector" is not in scope
 ```
 
-Importing a type is sufficient to call its inherent methods (see §9). To also use the module as a qualified namespace, import it separately:
+To use the type's inherent methods *and* the module as a qualified namespace,
+import both:
 
 ```tw
 use math.vector
@@ -813,12 +594,9 @@ Wildcard imports (`use foo.*`) will never be supported.
 
 ## 9. Inherent Methods (Module-Based)
 
-Twinkle’s dot syntax only supports:
-
-1. **Record fields**
-2. **Inherent/module methods**
-
-A module may associate functions with a type by making them first-argument style:
+Twinkle's dot syntax resolves exactly two things: **record fields** and
+**inherent/module methods**. A module associates functions with a type by making
+them first-argument style:
 
 ```tw
 // point.tw
@@ -829,342 +607,197 @@ pub fn translate(p: Point, dx: Int, dy: Int) Point {
 }
 ```
 
-Dot sugar:
+Then `p.translate(1, 2)` desugars to a call to `translate` in the module where
+`Point` is declared. **Resolution is based on the receiver's type origin, not on
+imported module names** — the defining module need not be in scope, and a type
+obtained via destructured import (or received transitively) resolves methods the
+same way.
 
-```tw
-p.translate(1,2)
-```
+**Dot resolution rules:**
 
-desugars to a call to the `translate` function defined in the module where `Point` is declared. The defining module does not need to be in scope — method resolution is based on the receiver's type origin, not on imported module names.
-
-Conceptually equivalent to:
-
-```tw
-point.translate(p,1,2)   // "point" is the defining module, resolved internally
-```
+* Check record fields first, then the defining module's inherent methods.
+* A field-vs-inherent name collision makes the dot illegal.
+* No trait/typeclass involvement; contract hooks (§10) are separate compiler rules.
 
 ### Built-in inherent methods
 
 Some built-in types define compiler-known inherent methods.
 
-#### Length
+**Length** — exposed only via `.len()`:
+`Vector<T>.len()`, `String.len()` (UTF-8 byte length), `Dict<K,V>.len()`,
+`Set<K>.len()`.
 
-Length is exposed only via an inherent method:
+**String conversion** — via `.to_string()`:
+`Int`, `Float`, `Bool`, `Byte`, and `String` (identity).
 
-```tw
-value.len()
-```
+**Numeric conversion helpers:**
 
-Defined for:
-
-* `Vector<T>.len() Int` — number of elements
-* `String.len() Int` — length of the string
-* `Dict<K,V>.len() Int` — number of entries
-
-#### Conversion
-
-String conversion is exposed via inherent `.to_string()` methods.
-
-Defined for:
-
-* `Int.to_string() String`
-* `Float.to_string() String`
-* `Bool.to_string() String`
-* `Byte.to_string() String`
-* `String.to_string() String` (identity)
-
-Additional numeric conversion helpers are available via stdlib extension
-and built-in modules:
-
-* `Int.to_float() Float` / `Int.to_float(n) Float`
-* `Float.to_int() Int` / `Float.to_int(f) Int`
-* `Byte.to_int() Int` / `Byte.to_int(b) Int`
+* `Int.to_float() Float`
+* `Float.to_int() Int`
+* `Byte.to_int() Int`
 * `Byte.from_int(n: Int) Option<Byte>`
 
-#### Parsing
+**Parsing** — type-qualified constructors returning `Option<T>`:
 
-Parsing from strings to numeric types uses type-qualified constructors and returns
-`Option<T>`:
-
-* `Int.from_string(s: String) Option<Int>` — parses a decimal integer (optional `+`/`-` prefix)
-* `Float.from_string(s: String) Option<Float>` — parses a floating-point number
-
-The compiler/runtime may implement these through internal parsing intrinsics, but
-the raw intrinsic names are not part of the user-facing language.
+* `Int.from_string(s: String) Option<Int>` — decimal integer (optional `+`/`-`)
+* `Float.from_string(s: String) Option<Float>`
 
 ```tw
 case Int.from_string("42") {
-  .Some(n) => println("${n}"),   // prints 42
+  .Some(n) => println("${n}"),
   .None => println("not a number"),
 }
 ```
 
-#### String ordering
+**String ordering** — the relational operators do byte-level lexicographic (UTF-8)
+comparison: `"abc" < "abcd"` is `true`.
 
-Strings support lexicographic comparison via the standard relational operators:
+**Character utilities:**
 
-```tw
-"a" < "b"    // true
-"abc" < "abcd"  // true (prefix is less)
-"abc" <= "abc"  // true
-```
-
-These comparisons use byte-level lexicographic ordering (UTF-8).
-
-#### Character utilities
-
-* `String.char_code_at(s: String, i: Int) Int` — returns the byte value at byte offset `i` (0-based); compatibility alias for `Byte.to_int(s[i])`
-* `String.from_char_code(n: Int) Option<String>` — converts an ASCII code (0–127) to a single-byte/single-character string; returns `None` for values outside that range
-
-```tw
-String.char_code_at("abc", 0)  // 97 (ASCII 'a')
-
-case String.from_char_code(97) {
-  .Some(s) => println(s),  // prints "a"
-  .None => println("invalid"),
-}
-```
-
-### Dot resolution rules
-
-* Check record fields first.
-* Then check the defining module of the receiver's type for a matching inherent method.
-* Method resolution depends on the type, not on how it was imported. A type obtained via destructured import, or received transitively from another module, resolves methods the same way.
-* No general trait/typeclass involvement. Dot syntax resolves fields and inherent/module methods; contract hooks are separate compiler-recognized rules.
-* If a name collision exists (field vs inherent), dot is illegal.
+* `String.char_code_at(s, i) Int` — byte value at byte offset `i` (alias for `Byte.to_int(s[i])`)
+* `String.from_char_code(n: Int) Option<String>` — ASCII code (0–127) → single-byte string; `None` otherwise
 
 ---
 
-# **10. Capabilities and Contracts**
+## 10. Contracts and Capabilities
 
-Twinkle has two complementary ways to express reusable behavior:
+Twinkle expresses reusable behavior two ways:
 
-* **Capability records** are ordinary record values containing functions. They are explicit, user-defined, and passed like any other argument.
-* **Contracts** are a small compiler-recognized set of named requirements used by syntax hooks and selected generic APIs. The built-in contracts are `Stringify`, `Eq`, and `Ord`.
+* **Contracts** — a small, closed set of compiler-recognized named requirements
+  that back syntax hooks and selected generic APIs. Users cannot declare new
+  contracts (no general trait system).
+* **Capability records** — ordinary record values containing functions, passed
+  explicitly like any other argument. This is the general design pattern.
 
-Capabilities are the general design pattern. Contracts are deliberately narrow and cover language-integrated behavior such as string interpolation, equality, and ordering.
+### 10.1 Built-in Contracts
 
----
+A generic parameter may require a contract as a bound; the compiler then proves
+the argument type satisfies it. Types satisfy contracts through inherent methods,
+builtin witness rules, or compiler-supported derivation where noted in
+[docs/contracts.md](contracts.md) (design rationale:
+[docs/design/contracts.md](design/contracts.md)).
 
-## **10.1 Capability Records**
+**Value contracts** gate operators and stringification:
 
-A capability is a nominal record type that captures a set of operations on some data type `T`.
+| Contract | Method | Backs |
+|---|---|---|
+| `Stringify` | `to_string(self) String` | string interpolation, generic stringification |
+| `Eq` | `eq(self, Self) Bool` | `==`, `!=` |
+| `Ord` | `compare(self, Self) Order` | `<`, `<=`, `>`, `>=`, canonical sorting APIs |
+
+**Access contracts** gate collection syntax; each has a functional dependency
+`Self -> Elem`, so the element type is recovered from the satisfier:
+
+| Contract | Methods | Backs |
+|---|---|---|
+| `IndexRead<E>` | `len(self) Int`, `at(self, Int) E` | `c[i]` read, `for x in c` |
+| `IndexWrite<E>` | `set_at(self, Int, E) Self`, `append(self, E) Self` | `c[i] = v` |
+| `IntoIterator<E>` | `iter(self) Iterator<E>` | `for x in c` (by iteration) |
+| `Sliceable` | `slice(self, Int, Int) Self` | `c[a..b]` |
 
 ```tw
-type Encoder<T> = .{
-  encode: fn(T) String,
+fn describe<T: Stringify>(x: T) String { "value=${x}" }
+
+fn first<C: IndexRead<E>, E>(c: C) E? {
+  if c.len() == 0 { .None } else { .Some(c.at(0)) }
 }
+```
+
+Builtin types satisfy the relevant access contracts: `Vector`, `String`, and
+`View<C>` are `Sliceable`; `Vector`/`String`/`Dict`/`Set`/`Range` iterate via
+`for` (§12); `@std.view`'s `View<C>` satisfies `IndexRead`/`IntoIterator`.
+
+### 10.2 Capability Records
+
+A capability is a nominal record type capturing operations on some data type `T`.
+The compiler never invents, searches for, or implicitly passes a capability — the
+caller supplies it explicitly:
+
+```tw
+type Encoder<T> = .{ encode: fn(T) String }
 
 fn write_all<T>(xs: Vector<T>, enc: Encoder<T>) {
-  for x in xs {
-    println(enc.encode(x))
-  }
+  for x in xs { println(enc.encode(x)) }
 }
-```
 
-A function that needs custom behavior receives the relevant capability record explicitly. The compiler does not invent, search for, or implicitly pass capability values.
-
-```tw
 type User = .{ name: String, age: Int }
-
-fn encode_user(u: User) String {
-  "${u.name}(${u.age})"
-}
+fn encode_user(u: User) String { "${u.name}(${u.age})" }
 
 user_encoder: Encoder<User> = .{ encode: encode_user }
-users: Vector<User> = [...]
-
 write_all(users, user_encoder)
 ```
 
----
+Use a capability record when equality, ordering, rendering, or matching should be
+**caller-selected** rather than canonical language behavior. Instead of a general
+"Iterable" trait, provide small concrete helpers, or let user types participate by
+returning a supported built-in (`Vector<T>`, `Range`) from an explicit conversion
+function.
 
-## **10.2 Built-in Contracts**
+### 10.3 No Implicit Conversions
 
-Contracts are named method requirements recognized by the compiler. Generic parameters can require them:
-
-```tw
-fn describe<T: Stringify>(x: T) String {
-  "value=${x}"
-}
-```
-
-The built-in contracts are:
-
-* `Stringify` — required for string interpolation and generic stringification.
-* `Eq` — required by `==` and `!=` for generic operands.
-* `Ord` — required by `<`, `<=`, `>`, `>=`, and canonical sorting APIs.
-
-User-defined types satisfy contracts through inherent methods, builtin rules, or compiler-supported derivation where noted in [contracts.md](contracts.md). Contracts are not a general trait system: users cannot declare arbitrary new contracts in the MVP.
-
----
-
-## **10.3 No Implicit Conversions**
-
-Twinkle does **not** perform implicit conversions to satisfy capability records.
-This also means ordinary function calls never apply silent argument coercions.
-
-Built-in numeric operators do define explicit typing/promotion rules (for example,
-`Byte` arithmetic yields `Int`), but those rules are part of operator semantics,
-not general implicit conversions.
-
-Given a parameter of type `Encoder<T>`:
+Twinkle performs **no** implicit conversions to satisfy capability records, and
+ordinary calls never apply silent argument coercions. A missing capability
+argument is rejected:
 
 ```tw
 fn debug_value<T>(x: T, enc: Encoder<T>) { ... }
+debug_value(user)              // ❌ missing Encoder<User>
+debug_value(user, user_encoder) // ✅
 ```
 
-the call:
-
-```tw
-debug_value(user)       // ❌ illegal: missing Encoder<User>
-```
-
-is rejected. The caller must explicitly supply a value of type `Encoder<User>`:
-
-```tw
-debug_value(user, user_encoder)  // ✅
-```
-
-This applies uniformly:
-
-* No automatic wrapping of `T` into `Encoder<T>` (or similar),
-* No automatic rewriting of `Vector<T>` into `Vector<Encoder<T>>`,
-* No chained or inferred conversions.
-
-All adapter logic, if any, is explicit in user code.
-
----
-
-## **10.4 Common Capability Patterns**
-
-### Domain-specific behavior
-
-```tw
-type Matches<T> = .{
-  matches: fn(T, T) Bool,
-}
-
-fn contains_matching<T>(xs: Vector<T>, needle: T, m: Matches<T>) Bool {
-  for x in xs {
-    if m.matches(x, needle) {
-      return true
-    }
-  }
-  false
-}
-```
-
-Use a capability record when equality, ordering, rendering, or matching should be caller-selected rather than canonical language behavior.
-
-### Collection-Specific Helpers
-
-Instead of a general "Iterable" trait, provide small, concrete helpers:
-
-```tw
-fn sum_vector(xs: Vector<Int>) Int {
-  acc := 0
-  for x in xs {
-    acc = acc + x
-  }
-  acc
-}
-```
-
-User types that want to participate reuse these helpers by returning supported built-ins (e.g. `Vector<T>` or `Range`) from explicit conversion functions.
+There is no automatic wrapping of `T` into `Encoder<T>`, no rewriting of
+`Vector<T>` into `Vector<Encoder<T>>`, and no chained/inferred conversions. Any
+adapter logic is explicit in user code. Built-in numeric operators do define
+explicit typing/promotion rules (e.g. `Byte` arithmetic yields `Int`; see §14),
+but those are operator semantics, not general implicit conversions.
 
 ---
 
 ## 11. String Literals and Interpolation
 
-### String Literal Escapes
+### Escapes
 
-Twinkle string literals support these escapes:
+Cooked string literals support:
 
-* `\n` newline
-* `\t` tab
-* `\r` carriage return
-* `\"` double quote
-* `\\` backslash
-* `\$` literal `$` (suppresses interpolation start)
-* `\xNN` exactly two hex digits (`N`), ASCII-only (`00..7F`)
-* `\e` escape character (`U+001B`, equivalent to `\x1b`)
-* `\u{...}` Unicode scalar escape with 1 to 6 hex digits
+* `\n` newline, `\t` tab, `\r` carriage return
+* `\"` double quote, `\\` backslash
+* `\$` literal `$` (suppresses interpolation)
+* `\xNN` exactly two hex digits, ASCII-only (`00..7F`)
+* `\e` escape character (`U+001B`, i.e. `\x1b`)
+* `\u{...}` Unicode scalar, 1–6 hex digits
 
-`"\x1b[31mred\x1b[0m"` is valid and can be used for ANSI control sequences.
-`"\u{1F44D}"` is valid and produces `👍`.
+`\u{...}` must decode to a valid Unicode scalar value: surrogate range
+(`D800..DFFF`) and values above `10FFFF` are rejected. `"\x1b[31mred\x1b[0m"` and
+`"\u{1F44D}"` (👍) are valid.
 
-`\u{...}` must decode to a valid Unicode scalar value:
+### Raw string literals
 
-* surrogate range values (`D800..DFFF`) are rejected
-* values above `10FFFF` are rejected
+A raw string `r"…"` performs **no escape processing** — `\` is an ordinary
+character, so a regex is `r"\d+"` rather than `"\\d+"`. The `r` is a raw prefix
+only when immediately followed by `"`; elsewhere it is an ordinary identifier.
+Because `\` is literal there is no `\"` escape, so a raw string cannot contain `"`
+and cannot span a line. Interpolation still fires inside a raw string; only escape
+processing is off: `r"id=${user.id}"`.
 
-Migration note: code that previously built ESC with `String.from_char_code(27)` can
-be simplified to `"\e"` or `"\x1b"` in literals.
+### Multiline string literals
 
-### Raw String Literals
-
-A raw string literal is written `r"…"`. Inside it, `\` is an ordinary
-character — **no escape processing happens** — so a regex like `\d+` is written
-`r"\d+"` instead of `"\\d+"`:
-
-```tw
-r"\d+"        // value: \d+   (backslash, d, plus)
-r"C:\temp"    // value: C:\temp
-```
-
-The `r` is a raw-string prefix **only** when immediately followed by `"`; `r`
-anywhere else (`range`, `red`, a variable named `r`) is an ordinary identifier.
-
-Because `\` is literal, there is no `\"` escape, so **a raw string cannot
-contain `"`** and cannot span a line (a literal newline is an
-`unterminated string literal` error). For those cases, use a cooked `"…"`
-string.
-
-String interpolation still fires inside a raw string; only escape processing is
-turned off:
-
-```tw
-r"id=${user.id}"   // interpolates user.id; the rest is verbatim
-```
-
-### Multiline String Literals
-
-A multiline string is written as one or more consecutive `\\`-prefixed lines,
-Zig-style. Each line's content is everything after its `\\` marker; lines join
-with `\n`:
+A multiline string is one or more consecutive `\\`-prefixed lines (Zig-style).
+Each line's content is everything after its `\\`; lines join with `\n`:
 
 ```tw
 query :=
   \\SELECT *
   \\FROM users
-  \\WHERE active = true
 ```
 
-Value: `SELECT *\nFROM users\nWHERE active = true`.
-
-Rules:
-
-* **No trailing newline.** Lines join with `\n`; there is no newline after the
-  last line. To get one, add a final empty `\\` line:
-  ```tw
-  \\last
-  \\
-  ```
-  → `"last\n"`.
-* **Marker indentation is excluded.** The whitespace before each `\\` is ordinary
-  inter-token whitespace and never enters the value, so the block can be indented
-  to match surrounding code. Whitespace *after* the `\\` is content.
+* **No trailing newline** — add a final empty `\\` line to get one.
+* **Marker indentation is excluded**; whitespace *after* `\\` is content.
 * **The block ends** at the first line whose first non-whitespace characters are
-  not `\\`. There is no closing delimiter, so a typo can never swallow the rest of
-  the file. A bare blank line (no `\\`) ends the block; a blank line *inside* the
-  block is an empty `\\` line.
-* **No escape processing.** `\` is literal; there are no inline escapes (`\t`,
-  etc.) — use a literal tab.
-* **CRLF is normalized** to `\n`, so a repo checked out on Windows produces
-  byte-identical values.
+  not `\\` (including a bare blank line). There is no closing delimiter.
+* **No escape processing** — `\` is literal.
+* **CRLF is normalized** to `\n`.
 
-### Character Literals
+### Character literals
 
 A character literal `'c'` denotes the **integer code point** of a single
 character:
@@ -1172,108 +805,46 @@ character:
 ```tw
 'A'         // 65
 '\n'        // 10
-'\x41'      // 65
 '\u{1F600}' // 128512
 ```
 
-A character literal is an *integer-literal form*: it behaves exactly like the
-equivalent integer literal. It defaults to `Int`, narrows to `Byte` in a
-position that expects `Byte` (when the value is in `0..255`, same rule as a
-decimal integer literal), and may be used as a `case` pattern:
-
-```tw
-op: Byte = '+'                       // narrows to Byte
-code := s.char_code_at(i)
-if code >= '0' and code <= '9' { ... }   // compares against Int code points
-case b { '\n' => ..., _ => ... }     // pattern position
-```
-
-This lets character-oriented code compare against readable literals instead of
-raw ASCII numbers. Supported escapes mirror string escapes, plus `\'`:
+It is an *integer-literal form*: it defaults to `Int`, narrows to `Byte` where a
+`Byte` is expected and the value is in `0..255`, and may be used as a `case`
+pattern. Supported escapes mirror string escapes plus `\'`:
 `\n \t \r \\ \' \" \0 \e \xNN \u{...}`.
 
-### String Interpolation
-
-String interpolation uses:
-
 ```tw
-"hello ${x}"
+op: Byte = '+'
+if code >= '0' and code <= '9' { ... }
+case b { '\n' => ..., _ => ... }
 ```
 
-Interpolation is driven by the built-in `Stringify` contract. A type satisfies
-`Stringify` when the compiler can resolve an appropriate inherent `to_string`
-method or builtin witness.
+### Interpolation
 
-### Supported Conversion Rule
-
-For each `${expr}`, the compiler proves that the expression type satisfies
-`Stringify`, then emits a call to the corresponding `to_string` witness.
-
-Builtin support exists for:
-
-* `String` — identity
-* `Int` — decimal rendering
-* `Float` — float rendering
-* `Bool` — `true` / `false`
-* `Byte` — decimal rendering
-* `Vector<T>` when `T: Stringify`
-
-User-defined named types are interpolable when they define an inherent method:
+Interpolation `"hello ${x}"` is driven by the `Stringify` contract (§10.1): for
+each `${expr}`, the compiler proves the expression type satisfies `Stringify` and
+emits the corresponding `to_string` witness call. Builtin witnesses exist for
+`String` (identity), `Int`, `Float`, `Bool`, `Byte`, and `Vector<T>` when
+`T: Stringify`. User-defined types are interpolable when they define an inherent
+`fn to_string(x: MyType) String`. If no witness is available, interpolation is a
+compile-time error.
 
 ```tw
-fn to_string(x: MyType) String { ... }
-```
-
-If no valid `Stringify` witness is available, interpolation is a compile-time error.
-
-### Example
-
-```tw
-name: String = "Twinkle"
-n: Int = 42
-ok: Bool = true
-
-s := "name=${name}, n=${n}, ok=${ok}"  // ✅ ok
-
 type User = .{ name: String, age: Int }
 fn to_string(u: User) String { "${u.name} (${u.age})" }
 user: User = .{ name: "Ada", age: 30 }
-s2 := "user=${user}"                    // ✅ ok (uses User.to_string())
+"user=${user}"                    // uses User.to_string()
 ```
 
-### Explicit `to_string` Calls
-
-Explicit method calls are valid inside interpolation and outside it:
+Explicit `to_string` calls work inside and outside interpolation. Unary-minus
+literals must be parenthesized before a method call, since `-1.to_string()` parses
+as `-(1.to_string())`:
 
 ```tw
-println("${1.5.to_string()}")   // ✅ explicit call on Float literal
-
-f := 1.5
-println("${f.to_string()}")     // ✅ explicit call on identifier
+println("${(-1).to_string()}")    // ✅
 ```
 
-Unary-minus literals must be parenthesized before method calls:
-
-```tw
-println("${(-1).to_string()}")  // ✅
-// println("${-1.to_string()}") // parsed as -(1.to_string()), so this is invalid
-```
-
-### Desugaring
-
-String literals with interpolation are desugared into string concatenation with `Stringify` witness calls.
-
-For example:
-
-```tw
-"n=${n}"
-```
-
-is conceptually lowered to:
-
-```tw
-"n=".concat(n.to_string())
-```
+Conceptually, `"n=${n}"` lowers to `"n=".concat(n.to_string())`.
 
 ---
 
@@ -1281,177 +852,116 @@ is conceptually lowered to:
 
 ### `if`
 
-Expression:
-
 ```tw
-if x > 0 { a } else { b }
+if x > 0 { a } else { b }     // expression
 ```
 
 ### `case`
 
-On enums: exhaustive or `_ =>`.
-On primitives (`Int`, `Bool`, `String`, `Byte`): must include `_`.
-
-Arm bodies are normally expressions. Terminal control flow may be written
-without an extra block:
+On enums: exhaustive or `_ =>`. On primitives (`Int`, `Bool`, `String`, `Byte`):
+must include `_`. Arm bodies are normally expressions; terminal control flow may
+be written without an extra block:
 
 ```tw
 case opt {
   .Some(v) => v,
   .None => return 0,
 }
-
-for item in items {
-  case classify(item) {
-    .Skip => continue,
-    .Stop => break,
-    .Use(v) => consume(v),
-  }
-}
 ```
 
-Use a block for multi-statement arms or for non-terminal statements.
-
-### Loops
-
-All `for` loops are statements returning `Void`.
-
-Forms:
-
-```tw
-for condition { body }
-
-for x in coll { body }
-
-for x,i in coll { body }
-```
-
-**Supported Collection Types:**
-
-The `for x in coll` syntax supports the following types, each with dedicated type-directed lowering:
-
-* `Vector<T>` — lowered to an indexed loop over the vector length.
-* `String` — lowered to an indexed loop over UTF-8 bytes (`str[i]`).
-* `Range` — lowered to a simple integer loop over the range bounds.
-* `Dict<K, V>` — lowered to iteration over key–value pairs.
-* `Set<K>` — lowered through its `iter()` (insertion order).
-* `Iterator<T>` — lowered to repeated `Iterator.next` calls (see [docs/design/iterator.md](design/iterator.md)).
-
-In addition, a generic type parameter bounded by an access contract iterates
-through that contract — `IndexRead<E>` (by index) or `IntoIterator<E>` (by
-`iter()`).
-
-Any other value used in `for x in coll` is a **compile-time error**. Types that
-are not directly iterable (e.g. `View<C>` and the `@std.buffer` element views)
-still iterate through an explicit `iter()`: `for x in value.iter()`.
-
-**Indexed form:**
-
-* `i: Int` starts from 0 and increments each iteration.
-* Break/continue as usual.
-* The indexed form (`for x, i in coll`) is supported for `Vector<T>`, `String`, `Range`, `Dict<K,V>`, and `Set<K>`. It is not supported for `Iterator<T>`.
-
-**User Extensions:**
-
-To iterate over a custom type, either:
-
-1. Define a helper that returns a supported built-in collection (`Vector<T>`, `Range`), or
-2. Define a helper that returns `Iterator<T>` using `Iterator.unfold` (see [docs/design/iterator.md](design/iterator.md)).
-
-```tw
-// Option 1: convert to Vector
-fn sum_tree(t: Tree<Int>) Int {
-  acc := 0
-  for x in t.to_vector() {
-    acc = acc + x
-  }
-  acc
-}
-
-// Option 2: return Iterator<T>
-fn tree_iter<T>(t: Tree<T>) Iterator<T> {
-  Iterator.unfold(/* ... */)
-}
-
-for x in tree_iter(my_tree) { ... }
-```
+Use a block for multi-statement or non-terminal arms.
 
 ### `cond`
 
-Multi-way conditional expression. Each arm has a boolean condition and a body;
-the first arm whose condition evaluates to `true` is taken. A `_` arm serves as
-the default (like `else`).
+Multi-way conditional; the first arm whose boolean condition is `true` wins, with
+`_` as default. As an **expression** a `_` arm is required for exhaustiveness; in
+statement position it may be omitted (the `cond` evaluates to `Void` if nothing
+matches). `return`/`break`/`continue` are allowed as terminal arm bodies; use a
+block for multi-statement bodies. `cond` nests.
 
 ```tw
 result := cond {
   x < 0 => "negative",
   x == 0 => "zero",
-  x < 10 => "small",
   _ => "big",
 }
 ```
 
-When used as an expression (producing a value), a `_` default arm is required
-to ensure exhaustiveness. In statement position the default may be omitted — if
-no arm matches the whole `cond` evaluates to `Void`.
+### Loops
 
-Arms are evaluated top-to-bottom; the first match wins even if later arms would
-also match. Bodies are normally expressions, and `return`, `break`, or
-`continue` may be written directly as terminal arm bodies. Use block expressions
-for multi-statement bodies:
+All `for` loops are statements returning `Void`:
 
 ```tw
-label := cond {
-  score >= 90 => {
-    bonus = bonus + 1
-    "A"
-  },
-  score >= 80 => "B",
-  _ => "C",
-}
+for condition { body }
+for x in coll { body }
+for x, i in coll { body }
 ```
 
-`cond` expressions can be nested:
+<a id="iterable-collections"></a>**Iterable collections.** `for x in coll` (and
+`collect`, below) support exactly these types, each with dedicated type-directed
+lowering:
+
+* `Vector<T>` — indexed loop over the length.
+* `String` — indexed loop over UTF-8 bytes (`str[i]` yields `Byte`).
+* `Range` — integer loop over the bounds.
+* `Dict<K,V>` — iteration over key–value pairs.
+* `Set<K>` — iteration via `iter()` (insertion order).
+* `Iterator<T>` — repeated `Iterator.next` calls (see [docs/design/iterator.md](design/iterator.md)).
+* `Channel<T>` — drains received values until the channel is closed (§15).
+* A generic type parameter bounded by an **access contract** — `IndexRead<E>` (by
+  index) or `IntoIterator<E>` (by `iter()`).
+
+Any other value in `for x in coll` is a compile-time error. Types that are not
+directly iterable (e.g. `View<C>` and `@std.buffer` element views) iterate through
+an explicit `iter()`: `for x in value.iter()`.
+
+**Indexed form.** `i: Int` starts at 0 and increments each iteration. It is
+supported for `Vector<T>`, `String`, `Range`, `Dict<K,V>`, and `Set<K>` — not for
+`Iterator<T>`.
+
+**User extensions.** To iterate a custom type, either return a supported built-in
+collection (`Vector<T>`, `Range`) from a helper, or return `Iterator<T>` via
+`Iterator.unfold` (see [docs/design/iterator.md](design/iterator.md)).
+
+### `collect` comprehension
 
 ```tw
-cond {
-  y > 5 => cond {
-    x > 3 => "y big, x medium",
-    _ => "y big, x small",
-  },
-  _ => "both small",
-}
+xs := collect x in range(10) { x * x }
+ys := collect x, i in range(10) { x + i }
+zs := collect n < 10 { n }              // conditional (while) form
 ```
+
+* Produces `Vector<T>`; the element type is the body expression's type, and all
+  iterations must unify.
+* Works with the same [iterable collections](#iterable-collections) as `for`, plus
+  a conditional `collect condition { body }` form (`condition: Bool`, evaluated
+  like a `while`).
+* The two-binder form `collect x, i in coll` is supported for `Vector<T>`,
+  `String`, `Range`, `Dict<K,V>`, and `Set<K>` (not `Iterator<T>`). For
+  `Dict<K,V>`, the binders are key `K` and value `V`; for `String`, `x: Byte`.
+* `continue` skips emission; `break` ends early and returns the partial vector.
+* A body of type `Void` is an error (collect expects a value to push).
 
 ### Diverging branches
 
-Some control paths do not complete normally, for example:
-
-* `return expr`
-* `break`
-* `continue`
-* `error("message")`
-* infinite loops (e.g. `for true { ... }`)
-
-`return`, `break`, and `continue` are statements, not general expressions.
-They are also accepted directly as `case`/`cond` arm bodies because those arm
-bodies are branch positions. Elsewhere, use an explicit block when a statement
-is needed in expression position.
-
-When type-checking an expression with multiple branches (e.g. `if` or `case`), branches that do not complete normally do not affect the resulting type. The type of the whole expression is determined only by branches that complete normally.
+Some paths do not complete normally: `return expr`, `break`, `continue`,
+`error("message")`, and infinite loops. `return`/`break`/`continue` are
+statements, accepted directly as `case`/`cond` arm bodies (branch positions);
+elsewhere use a block when a statement is needed in expression position. When
+type-checking a multi-branch expression, branches that do not complete normally do
+not contribute to its type:
 
 ```tw
 x := case opt {
   .Some(v) => v,
-  .None => return {},
+  .None => return {},   // never completes; type comes from .Some
 }
 ```
 
-Here the `.None` branch never returns, so the `case` expression has the type of the `.Some` branch.
-
 ### `defer`
 
-`defer expr` schedules an expression to run when the **enclosing block** exits. It is a statement — it produces no value.
+`defer expr` schedules an expression to run when the **enclosing block** exits. It
+is a statement and produces no value; the deferred result is discarded.
 
 ```tw
 fn write_file(path: String, data: String) !IoError {
@@ -1461,453 +971,145 @@ fn write_file(path: String, data: String) !IoError {
 }
 ```
 
-**Scope:** `defer` is tied to the nearest enclosing `{ ... }` block, not the function. A `defer` inside a loop body runs at the end of **each iteration**:
+* **Scope:** tied to the nearest enclosing `{ ... }`, not the function. A `defer`
+  in a loop body runs at the end of each iteration (and on `break`).
+* **Ordering:** multiple defers in a block run LIFO.
+* **Capture:** variables are captured by value at declaration time (like closures).
+* **Triggers:** normal completion, `return` (unwinds all enclosing blocks),
+  `break`, `continue`, and `try`-propagated `Err`.
+* **Does not trigger on traps** (`error()`, OOB, division by zero) — no cleanup is
+  possible.
 
-```tw
-for x in xs {
-  defer { println("done with ${x}") }   // runs once per iteration, and on break
-}
-```
-
-**Ordering:** multiple defers in the same block execute LIFO (last declared, first run):
-
-```tw
-{
-  defer { println("1") }
-  defer { println("2") }
-  defer { println("3") }
-}
-// prints: 3, 2, 1
-```
-
-**Capture:** variables referenced in a `defer` are captured by value at declaration time, consistent with closure semantics:
-
-```tw
-x := 1
-defer { println("x was ${x}") }   // captures x = 1
-x = 2
-// prints: x was 1
-```
-
-**Triggers:** normal completion, `return` (unwinds all enclosing blocks), `break`, `continue`, and `try`-propagated `Err`.
-
-**Does not trigger on traps** (`error()`, out-of-bounds, division by zero). Traps are unrecoverable — no cleanup is possible.
-
-**Type:** no constraint on the deferred expression; the result is silently discarded.
-
-> **Implementation note:** `defer` is not implemented until Stage 7.6 (after CFG). At the CFG level it desugars completely via edge insertion — zero runtime overhead. See [docs/design/defer.md](design/defer.md).
+> **Implementation note:** `defer` desugars at the CFG level via edge insertion —
+> zero runtime overhead. See [docs/design/defer.md](design/defer.md).
 
 ---
 
-## 13. Collect Comprehension
+## 13. Built-in Collections and Types
+
+This section covers the *language-level* semantics of the built-in types — their
+model, the syntax and desugarings they participate in, and their type
+constraints. The full method surface (signatures, complexities, the derived
+combinators like `map`/`filter`/`fold`) lives in [docs/API.md](API.md).
+
+### 13.1 Vector
+
+Vectors are **immutable** persistent sequences with structural sharing —
+Clojure's `PersistentVector` lineage: a 32-way bit-partitioned trie with a tail
+buffer, giving O(log₃₂ n) indexing and O(1) amortized append.
+
+* `vec[i]` — 0-based indexing, traps on out-of-bounds.
+* `vec[a..b]` — range-slice sugar for `vec.slice(a, b)`, the half-open `[a, b)`
+  subvector. The index must be a literal range; it is backed by the `Sliceable`
+  contract (§10.1), so the same `c[a..b]` form works on `String` and `View<C>`.
+* `vec[i] = value` — unsafe index write (traps OOB); desugars to
+  `vec = Vector.set_unsafe(vec, i, value)`.
+
+Vector literals require the element type to be determinable from context, and all
+elements must share a type:
 
 ```tw
-xs := collect x in range(10) { x * x }
-ys := collect x, i in range(10) { x + i }
-zs := collect n < 10 { n }
+[1, 2, 3]              // Vector<Int>
+xs: Vector<Int> = []   // empty vector requires an annotation
 ```
 
-Rules:
+### 13.2 String
 
-* Produces `Vector<T>`.
-* Works with the same collection types as `for` loops (see Section 12): `Vector<T>`, `String`, `Range`, `Dict<K,V>`, `Set<K>`, and `Iterator<T>`.
-* Also supports conditional form `collect condition { body }`:
-  * `condition` must be `Bool`.
-  * Evaluates like a `while` loop and collects values produced by `body`.
-* Supports indexed/binary form `collect x, i in coll { ... }` for `Vector<T>`, `String`, `Range`, `Dict<K,V>`, and `Set<K>`:
-  * For `Vector<T>`, `String`, and `Range`, `i: Int` is the iteration index.
-  * For `String`, `x: Byte` (byte iteration).
-  * For `Dict<K,V>`, the second binder has type `V` (value), while the first binder is key `K`.
-  * `Iterator<T>` does not support the two-binder form.
-* `continue` skips emission.
-* `break` ends early, returns the partial vector.
-* If the body returns `Void` → error, because collect expects a value to push.
-* The element type is inferred as the type of the body expression; all iterations must unify to same type; otherwise type error.
+Strings are **immutable** and always valid UTF-8. `str.len()` is the UTF-8 byte
+length, and `str[i]` returns a `Byte` at byte offset `i` (0-based, traps OOB).
+`str[a..b]` slices a byte range via the `Sliceable` contract. Prefer string
+interpolation (§11) for assembly. Byte offsets that split a UTF-8 scalar trap.
 
-Example:
+### 13.3 Range
 
-```tw
-squares := collect x in range(1, 10) { x * x }
-// squares: Vector<Int> = [1, 4, 9, 16, 25, 36, 49, 64, 81]
+`range(n)` (`0..n`), `range_from(a, b)` (`[a, b)`), and `range_step(a, b, step)`
+produce `Range` values, consumed by `for` and `collect` (§12).
 
-evens := collect x in range(1, 20) {
-  if x % 2 == 0 { x } else { continue }
-}
-// evens: Vector<Int> = [2, 4, 6, 8, 10, 12, 14, 16, 18]
-```
+### 13.4 Dict
+
+Dicts are **immutable** persistent hash maps with structural sharing — a HAMT
+(hash array mapped trie), the structure behind Clojure's `PersistentHashMap`,
+giving O(log₃₂ n) get/set/has.
+
+* **Key constraint:** `K` must be `Int`, `String`, or `Byte` — a compiler-known
+  closed set. `Bool` keys are excluded (a two-entry dict should be a record).
+* `m[k]` reads a key, returning `V?`; `m[k] = v` desugars to `m = Dict.set(m, k, v)`.
+* **Order:** iteration (via `for`, `collect`, `Dict.keys`) is first-insertion
+  order — updating an existing key keeps its position, removing a key preserves
+  the relative order of the rest, and remove-then-reinsert appends at the end.
+
+### 13.5 Set
+
+Sets are **immutable** persistent collections of unique elements, backed by
+`Dict<K, Void>` — so the same key constraint applies (`K` is `Int`, `String`, or
+`Byte`) and elements iterate in **first-insertion order**. `==`/`!=` compare by
+membership, so insertion order does not affect equality. `Set<K>` participates in
+`for` and `collect` (§12).
+
+### 13.6 Cell (explicit mutable state)
+
+`Cell<T>` is an opaque, mutate-in-place container for explicit shared state (one
+of the two mutable reference types, alongside `@std.buffer`'s `Buffer`; see §2).
+If multiple names refer to the same cell, an update through one is visible through
+all of them. A `Cell` does **not** change update-sugar semantics — `x.y = v`,
+`arr[i] = v`, and `m[k] = v` still rebuild-and-rebind. Its operations
+(`Cell.new`/`get`/`set`/`update`) are in [docs/API.md](API.md).
 
 ---
 
-## 14. Vectors
+## 14. Type System and Checking
 
-Vectors are **immutable** persistent sequences (`Vector<T>`) with structural sharing.
+### Type system
 
-`vec[i]` indexing, 0-based (traps on out-of-bounds).
+Rank-1 polymorphic (Damas–Milner): unification-based, principal types, no
+higher-ranked quantification, and no general trait/typeclass constraints. The
+built-in contracts (§10.1) provide the only named bounds, for syntax-level
+behavior.
 
-`vec[a..b]` range-slice indexing is sugar for `vec.slice(a, b)` — the half-open
-`[a, b)` subvector. The index must be a literal range; it is backed by the
-`Sliceable` contract, so the same `c[a..b]` form works on `String` and `View<C>`
-(see [contracts.md](contracts.md)).
+### Bidirectional checking
 
-Vector operations via method or module syntax:
+Most expressions **synthesize** a type bottom-up (classic HM); certain expressions
+are **checked** against an expected type from context:
 
-* `vec.len() Int` / `Vector.len(vec) Int` — number of elements
-* `vec.append(value) Vector<T>` — returns new vector with value appended; O(log n) amortized
-* `vec.concat(other) Vector<T>` / `Vector.concat(a, b) Vector<T>` — structurally concatenate two vectors; O(log n)
-* `vec.slice(start, end) Vector<T>` / `Vector.slice(vec, start, end) Vector<T>` — structurally shared subset `[start, end)`; O(log n)
-* `vec.get(i) Option<T>` — safe index access; returns `None` if out of bounds; O(log n)
-* `vec.set(i, val) Option<Vector<T>>` — safe functional update; returns `None` if out of bounds; O(log n)
-* `Vector.make(size, fill) Vector<T>` — create a vector of `size` elements all equal to `fill`
+* **Anonymous record literals** (`.{ ... }`) — need an expected record type.
+* **Annotated bindings** (`x: T = e`) — `e` is checked against `T`.
+* **Function arguments** — checked against the declared parameter type.
+* **Integer/character literals in `Byte` context** — a literal is accepted as
+  `Byte` only when a `Byte` is expected and the value is in `0..255`.
 
-Unsafe index write (traps on out-of-bounds):
+### Generalization
 
-```tw
-vec[i] = value
-```
+1. **`fn` declarations are generalized** — signature type variables are
+   universally quantified (`fn id<A>(x: A) A { x }`).
+2. **`:=` bindings are monomorphic** — instantiated to a specific monotype at the
+   binding site, so `f := id` is an error; annotate (`f: fn(Int) Int = id`) or use
+   `fn`.
+3. **Annotated bindings** (`x: T = e`) use the annotation directly, no
+   generalization.
 
-Desugars to:
+Capabilities are ordinary values and participate in normal inference with no
+special rules. String interpolation is checked by proving the interpolated
+expression satisfies `Stringify`.
 
-```tw
-vec = Vector.set_unsafe(vec, i, value)
-```
+### Numeric operators and promotion
 
-Vector literals:
-
-```tw
-[1, 2, 3]  // Vector<Int>
-
-xs: Vector<Int> = []  // empty vector requires type annotation
-```
-
-If context can't determine element type => compiler error.
-
-```tw
-[x, y, z]  // all elements must have the same type
-```
-
----
-
-## 15. Strings
-
-Strings are **immutable** and always valid UTF-8.
-
-`str.len()` returns UTF-8 byte length.
-
-`str[i]` returns a `Byte` at byte offset `i` (0-based). Out-of-bounds access traps.
-
-String interpolation is recommended for string assembly (see Section 11).
-
-String operations via module functions (all return new strings):
-
-* `String.concat(s1, s2) String`
-* `String.slice(s, start, end) String` (byte range `[start, end)`; traps if indices are out of bounds or not UTF-8 scalar boundaries)
-* `String.get(s, i) Byte?` (safe byte index; returns `None` if out-of-bounds)
-* `String.char_code_at(s, i) Int` (compatibility alias for byte-at-offset as `Int`)
-* `String.to_string(s) String` (identity helper; `s.to_string()` is preferred)
-* `s.chars() Iterator<String>` — iterate Unicode scalar values (each yielded as a 1–4 byte `String`)
-* `s.char_len() Int` — number of Unicode scalars (O(n))
-* `s.graphemes() Iterator<String>` — iterate extended grapheme clusters (user-perceived characters); handles combining marks, ZWJ emoji sequences, and regional indicator flags via a simplified UAX #29 implementation
-* etc.
-
----
-
-## 16. Range
-
-`range(10)` → 0..9
-`range_from(a,b)` -> [a, b)
-`range_step(a,b,step)`
-
-Used by `for` and `collect`.
-
----
-
-## 17. Dict
-
-Dicts are **immutable** persistent hash maps with HAMT-style structural sharing.
-
-**Key type constraint:** `K` must be `Int`, `String`, or `Byte`. No other types are
-allowed as dict keys. `Bool` keys are excluded (a two-entry dict should be expressed
-as a plain record). This constraint is enforced as a compiler-known closed set
-rather than a user-definable contract.
-
-Creation:
-
-```tw
-m: Dict<String, Int> = Dict.new()
-```
-
-Type parameters are inferred from the annotation.
-
-Dict operations via module functions (all return new dicts):
-
-* `Dict.set(m, k, v) Dict<K, V>` — returns new dict with key-value pair added/updated
-* `Dict.remove(m, k) Dict<K, V>` — returns new dict with key removed
-* `Dict.get(m, k) V?` — returns Option<V> for safe access
-* `Dict.has(m, k) Bool` — checks if key exists
-* `Dict.keys(m) Vector<K>` — returns keys in dict order
-* `Dict.values(m) Vector<V>` — returns a vector of values (via `@std.dict_ext`)
-* `Dict.len(m) Int` — returns length of keys
-
-Indexing syntax:
-
-* `m[k]` returns `V?` (Option<V>) for safe read access
-* `m[k] = v` desugars to `m = Dict.set(m, k, v)`
-
-**Dict order:** Dict iteration order is observable through `Dict.keys`, `for`, `collect`,
-and helpers built on top of them. Twinkle preserves insertion order of first insertion;
-updating an existing key does not move it, removing a key preserves the relative order
-of the remaining keys, and removing then reinserting a key appends it at the end.
-
-### 17.1 Cell (Explicit Mutable State)
-
-`Cell<T>` is an opaque mutable container type for explicit shared state.
-
-Core API:
-
-* `Cell.new(v: T) Cell<T>` — allocate a new cell
-* `Cell.get(c: Cell<T>) T` — read current value
-* `Cell.set(c: Cell<T>, v: T) Void` — write current value (side effect)
-* `Cell.update(c: Cell<T>, f: fn(T) T) Void` — read/transform/write (side effect)
-
-`Cell` does not change update-sugar semantics:
-
-* `x.y = v` still means record rebuild + rebinding of `x`.
-* `arr[i] = v` still means `arr = Vector.set_unsafe(arr, i, v)`.
-* `m[k] = v` still means `m = Dict.set(m, k, v)`.
-
-If multiple names refer to the same `Cell<T>`, updates through one name are visible through the others.
-
----
-
-## 18. Error Handling
-
-No exceptions.
-
-Unrecoverable = trap:
-
-* OOB
-* division by zero
-* explicit `error("msg")`
-
-Recoverable via `Result<T,E>`:
-
-```tw
-type Result<T, E> = { Ok(T), Err(E) }
-```
-
-**Type shorthand:**
-
-```
-T!E   ==  Result<T, E>       // full form
-!E    ==  Result<Void, E>    // operation that can fail with no return value
-```
-
-`T!` and bare `!` are **not** valid — the error type is always required.
-`T?!E` composes naturally: `Option<T>!E` == `Result<Option<T>, E>`.
-
-Examples:
-
-```tw
-fn validate(n: Int) !ParseError { ... }          // Result<Void, ParseError>
-fn parse(s: String) Int!ParseError { ... }       // Result<Int, ParseError>
-fn find(xs: Vector<Int>, k: Int) Int?!String { ... }  // Result<Option<Int>, String>
-```
-
-`try` sugar:
-
-```tw
-try expr
-```
-
-**On `Result<T,E>`:**
-* Returns early with `Err(e)` on error, extracts `Ok(v)` on success.
-* For `Result<Void,E>` the `Ok` branch carries no value.
-* `.Ok({})` is the way to present `Void` return for `Result`, as `{}` evals to `Void`.
-
-**On `Option<T>`:**
-* Returns early with `None` when the value is absent, extracts `Some(v)` on success.
-* Only valid in functions returning `Option<U>` (compile-time error otherwise).
-* To use `try` on an Option in a Result-returning function, bridge first:
-  `x := try opt.ok_or("missing")`
-
-**Not valid on other types** (compile-time error).
-
----
-
-## 19. Prelude
-
-Implicitly imported.
-
-Includes:
-
-* primitive functions: `print`, `println`, `error`
-* types: `Int`, `Float`, `Byte`, `String`, `Bool`, `Void`, `Vector<T>`, `Dict<K,V>`, `Cell<T>`, `Option<T>`, `Result<T,E>`, `Iterator<T>`, `IterItem<T>`, `UnfoldStep<T,S>`
-* range functions: `range`, `range_from`, `range_step`
-* vector module: `Vector.make`, `Vector.len`, `Vector.concat`, `Vector.slice`, `Vector.get`, `Vector.set`, etc.
-* dict module: `Dict.new`, `Dict.set`, `Dict.get`, etc.
-* cell module: `Cell.new`, `Cell.get`, `Cell.set`, `Cell.update`
-* string module: `String.concat`, `String.slice`, `String.get`, `String.char_code_at`, `String.from_char_code`, `String.to_string`, `s.chars()`, `s.char_len()`, `s.graphemes()`, etc.
-* byte module: `Byte.to_int`, `Byte.from_int`, `Byte.to_string`
-* iterator module: `Iterator.next`, `Iterator.unfold`, `Iterator.to_vector` (see [docs/design/iterator.md](design/iterator.md)). `to_vector` materializes the full iterator into a `Vector<T>` (equivalent to `collect x in it { x }`). Infinite iterators will not terminate; O(n) memory.
-* naming convention: public surface APIs are PascalCase modules/types; internal compiler/runtime intrinsics use snake_case and are **not part of the user-visible language**.
-
----
-
-## 20. Naming Conventions
-
-Twinkle enforces naming conventions **at the parser level** — they are not style
-lint but hard syntax rules. The parser uses the first character of an identifier
-to determine what it can mean.
-
-### Summary
-
-| Thing | Convention | Example |
-|---|---|---|
-| Types | `PascalCase` | `Point`, `Option`, `HttpRequest` |
-| Enum variants | `PascalCase` | `None`, `Ok`, `SomeLongName` |
-| Functions | `snake_case` | `parse_int`, `to_string` |
-| Local variables | `snake_case` | `result`, `my_count` |
-| Record fields | `snake_case` | `x`, `name`, `created_at` |
-| Module identifiers | `snake_case` | `math`, `http_client` |
-
-### Parser enforcement
-
-The distinction between variants (PascalCase) and fields/methods (lowercase) is
-enforced by the parser via the first character of each identifier:
-
-**Prefix position** — beginning of an expression:
-
-* `.Foo` → variant literal; `Foo` must start with an uppercase letter (parse error otherwise).
-* `Foo` → start of a qualified constructor path; further `.Bar` segments (all uppercase) are
-  consumed greedily until a lowercase segment or non-ident token is reached.
-  Examples: `Result.Ok(1)`, `http.Header.ContentType`.
-
-**Postfix position**:
-
-* `expr(args)` and `expr[index]` are postfix only when the `(` or `[` appears on the
-  same line as the preceding expression.
-* `expr.name` remains postfix for lowercase field/method segments even across a newline.
-  This supports multiline chains like:
-
-```tw
-value
-  .trim()
-  .slice(0, 3)
-```
-
-* `.foo` → field access or method call (lowercase required).
-* `.Foo` on the **same line**, not followed by another `.` → **parse error**
-  (`ConstructorInPostfix`). Variant names never appear as the final component of
-  a postfix chain.
-* `.Foo.` on the same line, followed by more segments → allowed as an intermediate
-  qualifier. This makes `pt.Point.{ x: 1, y: 2 }` (named record constructor)
-  work even when the base `pt` is lowercase.
-
-**Newline boundary**:
-
-* `(` or `[` that begins on a **new line** is **never** treated as postfix.
-* `.` on a new line is postfix only for lowercase field/method segments.
-* `.{` and `.Foo` that begin on a new line start a fresh dot-prefix expression instead
-  (record literal, variant literal, or qualified constructor path).
-
-This rule makes the following code unambiguous:
-
-```tw
-fn double_parsed(s: String) Result<Int, String> {
-  n := try parse_int(s)
-  .Ok(n * 2)          // new statement; NOT postfix of the line above
-}
-```
-
-### Rationale
-
-Capitalisation-based disambiguation still handles constructor-vs-field ambiguity.
-The stricter newline rule on calls and indexing prevents accidental statement
-continuation, while lowercase dot chaining stays newline-friendly for readability.
-The main naming rule remains:
-**types and variants are PascalCase; everything else is lowercase**.
-
----
-
-## 21. Type System and Checking
-
-### Type System
-
-Twinkle has a rank-1 polymorphic (Damas–Milner) type system: unification-based, principal types, no higher-ranked quantification, and no general trait/typeclass constraints. Built-in contracts (`Stringify`, `Eq`, `Ord`) provide a small set of named bounds for syntax-level behavior.
-
-### Type Checking
-
-Type checking is bidirectional:
-
-* Most expressions **synthesize** a type bottom-up (classic HM inference).
-* Certain expressions are **checked** against an expected type from context.
-
-Expressions that require contextual type information:
-
-* **Anonymous record literals** (`.{ ... }`) — the expected record type must be known from the surrounding context.
-* **Annotated bindings** (`x: T = e`) — `e` is checked against `T` rather than synthesized.
-* **Function arguments** — the argument is checked against the declared parameter type.
-* **Integer literals in `Byte` contexts** — a literal like `10` is accepted as
-  `Byte` only when an expected `Byte` type is present, and only if the value is
-  in range `0..255`. Character literals (`'a'`) follow the same rule, since they
-  are an integer-literal form.
-
-### Generalization Rules
-
-1. **`fn` declarations are generalized** — type variables in the signature are universally quantified:
-   ```tw
-   fn id<A>(x: A) A { x }   // polymorphic; A is generic
-   ```
-
-2. **`:=` bindings are monomorphic** — the inferred type is instantiated to a specific monotype at the binding site:
-   ```tw
-   f := id     // error: cannot infer monomorphic type for polymorphic binding
-               // help: annotate, e.g.  f: fn(Int) Int = id
-   ```
-
-3. **Type-annotated bindings** (`x: T = e`) use the annotation directly with no generalization.
-
-This avoids value-restriction complexity and keeps local bindings simple. If you need a name for a polymorphic function, define it with `fn`.
-
-Capabilities are ordinary values (records of functions), so they participate in normal type inference without special rules.
-
-String interpolation is type-checked by proving the interpolated expression type satisfies the built-in `Stringify` contract.
-
-### Numeric Operators and Promotion
-
-Arithmetic operators (`+`, `-`, `*`, `/`, `%`) are defined for:
+Arithmetic (`+`, `-`, `*`, `/`, `%`):
 
 * `Int × Int -> Int`
-* `Byte × Byte -> Int`
-* `Int × Byte -> Int`
-* `Byte × Int -> Int`
+* `Byte × Byte -> Int`, `Int × Byte -> Int`, `Byte × Int -> Int`
 * `Float × Float -> Float`
 
-Bitwise operators (`&`, `|`, `^`, `<<`, `>>`, unary `~`) are defined for integer
-types only:
+Bitwise (`&`, `|`, `^`, `<<`, `>>`, unary `~`) accept `Int` and `Byte`; `Byte`
+operands are widened to their non-negative `Int` value (`0..255`) first, and the
+result is always `Int`. Example: for `Byte` `b == 255`, `~b == ~255 == -256`.
+Shifts use 64-bit masked counts — the effective count is the low 6 bits of the
+right operand (`right & 63`), including when negative; `>>` is arithmetic
+(sign-preserving).
 
-* `Int` and `Byte` are accepted as operands.
-* `Byte` operands are widened to their corresponding non-negative `Int` values
-  (`0..255`) before applying the operator.
-* Result type is always `Int`.
-* Example: for a `Byte` value `b` whose numeric value is `255`, `~b` evaluates
-  as `~255`, i.e. `-256`.
-
-Shift semantics:
-
-* `<<` and `>>` use 64-bit masked shift counts.
-* Effective count is the low 6 bits of the right operand (`right & 63`),
-  including when that operand is negative.
-* `>>` is arithmetic right shift (sign-preserving).
-
-No implicit narrowing conversion exists from `Int` to `Byte`; use `Byte.from_int`.
-The only exception is contextual typing of integer literals: when an expected
-type is `Byte`, an integer literal is accepted if and only if it is in range
-`0..255` (for example `b: Byte = 10` and `f(10)` where `f` expects `Byte`).
-This exception does not apply to non-literal `Int` values.
-There is no implicit mixing between `Byte` and `Float`.
-
-Comparison operators require both operands to have the same type; result is `Bool`.
+There is **no** implicit narrowing from `Int` to `Byte` (use `Byte.from_int`); the
+only exception is contextual typing of integer/character literals in a `Byte`
+position (`0..255`). There is no implicit mixing between `Byte`/`Int` and `Float`.
+Comparison operators require both operands to have the same type and yield `Bool`.
 
 Operator precedence (tight to loose):
 
@@ -1924,68 +1126,108 @@ Operator precedence (tight to loose):
 11. logical or (`or`)
 12. assignment (`=`)
 
-This follows common C/JS-family expectations for mixed expressions.
-Because equality binds tighter than bitwise operators, `x & mask == 0` parses
-as `x & (mask == 0)`.
-In practice, bit-test expressions should be written with explicit parentheses:
-`(x & mask) == 0`.
+Because equality binds tighter than the bitwise operators, `x & mask == 0` parses
+as `x & (mask == 0)`; write bit tests with explicit parentheses: `(x & mask) == 0`.
 
 ---
 
-## 22. Compilation to WebAssembly GC
+## 15. Concurrency
 
-* Primitives:
-  * `Int` → unboxed `i64`
-  * `Float` → unboxed `f64`
-  * `Bool` → unboxed `i32`
-  * `Byte` → unboxed `i32` (logical range `0..255`)
-* Records → immutable `struct` (new values created via structural sharing where possible)
-* Vectors → persistent vector structures backed by Wasm GC objects/arrays
-* Dicts → persistent HAMT-style hash map structures backed by Wasm GC objects/arrays
-* Cells → mutable `struct` wrapper storing a `T` payload
-* Functions → closures allocated as small structs
-* Options:
+Twinkle provides **cooperative** concurrency through two compiler-recognized
+prelude types, `Task<T>` and `Channel<T>`. Tasks run on a single program thread
+and are **not** CPU-parallel; they interleave only at explicit task points. Full
+signatures are in [docs/API.md](API.md).
 
-  * ref types → nullable refs
-  * value types → tagged struct
-* String interpolation → compiler inserts `Stringify` witness calls and string concatenation
-* For loops → type-directed lowering to primitive loops based on collection type
+### Tasks
 
----
+`Task<T>` is a handle to a computation that runs cooperatively:
 
-## 23. Error Messages
+* `Task.spawn(f: fn() T) Task<T>` — start `f` as a task and return a handle.
+* `Task.await(t: Task<T>) T` — suspend the current task until `t` completes, then
+  return its result; a task failure propagates as a trap.
+* `Task.yield() Void` — yield control to the scheduler so another runnable task
+  can make progress.
 
-Examples:
+Control switches between tasks only at these **task points** (`await`, `yield`) or
+at task-aware host operations (e.g. `time.sleep`, stdin reads). Between task points
+a task runs without interruption, so ordinary immutable values are never observed
+mid-update by another task.
 
-**Invalid string interpolation**:
+### Channels
 
-```
-error: cannot interpolate value of type SocialPost
-note: type SocialPost has no inherent method `to_string() -> String`
-help: define `fn to_string(x: SocialPost) String { ... }` and use "${post}"
-```
+`Channel<T>` is a typed channel for passing values between tasks:
 
-**No inherent method**:
+* `Channel.new() Channel<T>` — unbuffered rendezvous channel (a send and a receive
+  hand off directly).
+* `Channel.bounded(capacity: Int) Channel<T>` — buffered channel with a fixed
+  positive capacity.
+* `ch.send(value) Bool` — send, suspending under backpressure; returns `false` if
+  the channel is closed.
+* `ch.recv() T?` — receive the next value, or `.None` once the channel is closed
+  and drained.
+* `ch.close() Void` — close the channel (closing an already-closed channel is a
+  no-op).
 
-```
-error: no method 'translate' for type Point
-note: dot syntax only resolves record fields and inherent methods from the defining module
-```
-
-**Invalid for loop collection**:
-
-```
-error: cannot iterate over value of type Tree<Int>
-note: for loops support Vector<T>, String, Range, Dict<K,V>, Set<K>, and Iterator<T>
-help: define a helper that returns one of those, or expose `iter() Iterator<Int>` and write `for x in t.iter()`
-```
-
-**Mutation attempt on non-name**:
-
-```
-error: cannot update expression that is not an assignable lvalue
-note: only identifiers, field accesses, or indexed expressions can appear to the left of '='
-help: bind to a local variable first if you need to reuse a computed value: 'tmp := foo(); tmp.x = 1'
-```
+A channel is iterable: `for value in ch { ... }` receives values until the channel
+is closed and drained (§12).
 
 ---
+
+## 16. Naming Conventions
+
+Twinkle enforces naming conventions **at the parser level** — they are hard syntax
+rules, not style lint. The parser uses the **first character** of an identifier to
+decide what it can mean, so the wrong case changes how code parses (or makes it a
+parse error).
+
+**The rule:** an identifier that starts with an **uppercase** letter is a type, an
+enum variant, or an extern namespace; **everything else starts lowercase**.
+
+| Thing | Convention | Example |
+|---|---|---|
+| Types | `PascalCase` | `Point`, `Option`, `HttpRequest` |
+| Enum variants | `PascalCase` | `None`, `Ok`, `SomeName` |
+| Extern namespaces | `PascalCase` or `snake_case` | `Math`, `console` |
+| Functions | `snake_case` | `parse_int`, `to_string` |
+| Variables & module globals | `snake_case` | `result`, `max_retries` |
+| Record fields | `snake_case` | `x`, `created_at` |
+| Module identifiers | `snake_case` | `math`, `http_client` |
+
+There is **no** `SCREAMING_SNAKE_CASE` for constants: a module global is an ordinary
+value binding, so `max_retries := 5` is legal but `MAX_RETRIES := 5` is a parse
+error — the parser reads `MAX_RETRIES` as a type name. (A host object bound with
+`extern Math { ... }` may be `PascalCase`, but the Twinkle *values* it exports are
+still bound to lowercase names, e.g. `pub pi := 3.14159`.)
+
+### Parser disambiguation
+
+The uppercase/lowercase split lets the parser resolve constructor-vs-field
+ambiguity by first character.
+
+**Prefix position** (start of an expression):
+
+* `.Foo` → variant literal (`Foo` must be uppercase, else a parse error).
+* `Foo` → start of a qualified constructor path; further uppercase `.Bar` segments
+  are consumed greedily until a lowercase segment or a non-identifier token
+  (`Result.Ok(1)`, `http.Header.ContentType`).
+
+**Postfix position** (`expr.name`):
+
+* `.foo` → field access or method call (lowercase); stays postfix even across a
+  newline, so multiline method chains work.
+* `.Foo` on the **same line**, not followed by another `.` → parse error (a variant
+  name never terminates a postfix chain).
+* `.Foo.` on the same line, as an intermediate qualifier → allowed
+  (`pt.Point.{ x: 1 }`).
+
+**Newline boundary:** a `(` or `[` that begins a new line is never postfix, and
+`.Foo`/`.{` beginning a new line starts a fresh prefix expression (variant literal,
+constructor path, or record literal) rather than continuing the previous line. This
+keeps statement boundaries unambiguous:
+
+```tw
+fn double(s: String) Result<Int, String> {
+  n := try parse_int(s)
+  .Ok(n * 2)          // new statement, not postfix of the line above
+}
+```

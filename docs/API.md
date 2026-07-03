@@ -877,8 +877,7 @@ dense numeric arrays). Correctness — calling `free`, not using after free — 
 **programmer's responsibility, like C**. The only safety floor Wasm provides for
 free is that all access stays within linear memory, so the worst case is corrupting
 another buffer's bytes or trapping, never an escape from the sandbox. See
-[docs/plans/archive/buffer-linear-memory.md](plans/archive/buffer-linear-memory.md) for the
-design rationale.
+[docs/design/buffer.md](design/buffer.md) for the design rationale.
 
 Like `@std.view` and `@std.tuple`, two import lines give the full surface:
 

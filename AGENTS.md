@@ -1,11 +1,11 @@
 ## Project Overview
 
-Twinkle is a statically typed programming language targeting WebAssembly GC. It features a rank-1 polymorphic (Damas–Milner) type system with bidirectional type checking (similar to Gleam/Elm), unboxed primitives, GC-managed references, and **no trait system**—capabilities are passed explicitly as records of functions (see `docs/spec.md`).
+Twinkle is a statically typed programming language targeting WebAssembly GC. It features a rank-1 polymorphic (Damas–Milner) type system with bidirectional type checking (similar to Gleam/Elm), unboxed primitives, GC-managed references, and **no general trait system**—reusable behavior is passed explicitly as records of functions (capabilities), with only a small closed set of compiler-recognized contracts backing syntax hooks like interpolation, equality, ordering, and indexing (see `docs/spec.md`).
 
 **Primary documentation:**
 - `docs/spec.md` — canonical language specification
 - `docs/API.md` — built-in and standard-library API reference
-- `docs/contracts.md` — builtin contract reference (`Stringify`, `Eq`, `Ord`)
+- `docs/contracts.md` — builtin contract reference (value contracts `Stringify`/`Eq`/`Ord` and access contracts `IndexRead`/`IndexWrite`/`IntoIterator`/`Sliceable`)
 - `docs/design/contracts.md` — contract-system design rationale and non-goals
 
 **Key Design Principles:**
