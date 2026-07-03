@@ -138,6 +138,57 @@ loops accumulate via `Vector.append` (builder) and `Dict`, and it has only ~9
 1a alias-invalidation added per-op optimizer work but `optimize` is unchanged
 (the added work is offset/within noise).
 
+## Update: 2026-07-03 (SCC frontend sub-timings restored)
+
+The frontend import/env/deps instrumentation lost in the SCC driver swap is back.
+The old recursive analyzer timed import-env construction inside
+`analyze_module_impl`; under the SCC driver that work moved into
+`build_import_env` and `dependency_hashes` (called from `resolve_singleton` /
+`resolve_group`), which were uninstrumented, so `import_merge`, `env_extend`,
+`dep_hashes`, and every `[time:imports]` counter reported zero. `build_import_env`
+now threads `AnalysisState` back out and accumulates the same buckets the old path
+did (env extend, per-kind merge time, edge/export-entry counts, `[time:imports:top]`
+attribution); the two `dependency_hashes` call sites are wrapped for `dep_hashes`.
+Group (cyclic-SCC) sibling merges inside steps B/D are left untimed — that path is
+off the boot compile hot path.
+
+Representative frontend timing (single instrumented run, `boot/main.tw`, 234
+modules):
+
+```text
+import_merge      ~470ms   (module ~93, selective ~157, prelude ~216)
+typecheck         ~434ms
+lower             ~218ms
+plan_deps         ~205ms
+resolve           ~165ms
+load_source       ~122ms
+parse             ~100ms
+publish           ~65ms
+env_extend        ~57ms
+unused_imports    ~17ms
+dep_hashes        ~6ms
+```
+
+```text
+import edges:       3671   (module 410, selective 753, prelude 2508)
+export entries processed while merging: ~157817
+```
+
+Interpretation: the old "import merge dominates the frontend" claim is
+revalidated — `import_merge` (~470ms) is again the single largest frontend bucket,
+now just ahead of `typecheck` (~434ms). Within import merge the cost is cumulative
+across many tiny edges (largest individual edge is single-digit microseconds), and
+the prelude bucket (2508 edges, ~216ms) is the biggest sub-share because the
+prelude surface is imported into nearly every module. Selective imports (~157ms)
+still register the full imported interface before binding only selected names.
+
+Best next optimization target: **import merge**, specifically the prelude and
+selective sub-buckets. Because no single edge dominates, the lever is a
+representation change (cache/remap an imported interface view per `(dependency,
+alias, kind/items)` within a session, or shrink prelude re-registration), not a
+local edge tweak. `typecheck` is the co-equal runner-up and is the right place for
+the next round of sub-counters (substitution / alias expansion / zonk).
+
 ## Previous baseline: 2026-06-25
 
 Measured compiling `boot/main.tw` (222 modules / 3029 functions), self-hosted

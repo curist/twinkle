@@ -186,7 +186,7 @@ type ParseLoad = .{ state: AnalysisState, parsed: cache.ParsedModule }
 
 type DependencyHashes = .{ deps_hash: Int, context_hash: Int }
 
-type ImportEnvResult = .{ env: ResolvedEnv, ok: Bool }
+type ImportEnvResult = .{ env: ResolvedEnv, ok: Bool, state: AnalysisState }
 
 type LocalCheck = .{ state: AnalysisState, checked: checker.CheckResult }
 
@@ -699,18 +699,80 @@ fn extend_env_from_shared(base: ResolvedEnv, state: AnalysisState) ResolvedEnv {
 /// interfaces of its deps in `dep_plan`. Precondition: every dep's interface is already
 /// published in `state.interfaces`. Returns ok=false if a required dep interface is missing.
 /// Used by Phase 2 SCC resolution to construct a member's env from a fully-analyzed state.
-fn build_import_env(base: ResolvedEnv, state: AnalysisState, dep_plan: imports.DependencyPlan) ImportEnvResult {
-  env := extend_env_from_shared(base, state)
+///
+/// Accumulates the frontend import/env sub-timings (`env_extend`, `import_merge`, and the
+/// per-kind module/selective/prelude buckets + edge counts) so the SCC path reports the same
+/// instrumentation the old recursive analyzer did. `importer` tags each edge's `import_timings`
+/// entry with the module doing the importing.
+fn build_import_env(
+  base: ResolvedEnv,
+  state: AnalysisState,
+  dep_plan: imports.DependencyPlan,
+  importer: String,
+) ImportEnvResult {
+  cur := state
+  t_ext0 := date.now()
+  env := extend_env_from_shared(base, cur)
 
-  for dep in dep_plan.dependencies {
-    interface := case state.interfaces[dep.canonical_path] {
-      .Some(i) => i,
-      .None => return ImportEnvResult.{ env, ok: false },
-    }
-    env = merge_import_interface(env, dep, interface)
+  if cur.timed {
+    cur.timings.env_extend = cur.timings.env_extend + (date.now() - t_ext0)
   }
 
-  ImportEnvResult.{ env, ok: true }
+  for dep in dep_plan.dependencies {
+    t_import0 := date.now()
+    t_lookup0 := date.now()
+    interface := case cur.interfaces[dep.canonical_path] {
+      .Some(i) => i,
+      .None => return ImportEnvResult.{ env, ok: false, state: cur },
+    }
+
+    if cur.timed {
+      cur.timings.import_lookup = cur.timings.import_lookup + (date.now() - t_lookup0)
+    }
+
+    export_entries := interface.exports.visible_types.len()
+      + interface.exports.support_types.len() + interface.exports.functions.len()
+      + interface.exports.support_functions.len() + interface.exports.values.len()
+
+    if cur.timed {
+      cur.counts.import_edges = cur.counts.import_edges + 1
+      cur.counts.import_export_entries = cur.counts.import_export_entries + export_entries
+    }
+
+    t_merge_kind0 := date.now()
+    env = merge_import_interface(env, dep, interface)
+
+    if cur.timed {
+      dt := date.now() - t_merge_kind0
+      kind_name := ""
+
+      case dep.kind {
+        .Import => case dep.items {
+          .Some(_) => {
+            cur.timings.import_selective = cur.timings.import_selective + dt
+            cur.counts.import_selective_edges = cur.counts.import_selective_edges + 1
+            kind_name = "selective"
+          },
+          .None => {
+            cur.timings.import_module = cur.timings.import_module + dt
+            cur.counts.import_module_edges = cur.counts.import_module_edges + 1
+            kind_name = "module"
+          },
+        },
+        .Prelude => {
+          cur.timings.import_prelude = cur.timings.import_prelude + dt
+          cur.counts.import_prelude_edges = cur.counts.import_prelude_edges + 1
+          kind_name = "prelude"
+        },
+      }
+      cur.import_timings = .append(
+        .{ ms: dt, kind: kind_name, importer, dependency: dep.canonical_path, export_entries },
+      )
+      cur.timings.import_merge = cur.timings.import_merge + (date.now() - t_import0)
+    }
+  }
+
+  ImportEnvResult.{ env, ok: true, state: cur }
 }
 
 // ── Type accumulation ────────────────────────────────────────────────
@@ -1232,7 +1294,8 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
     },
   }
 
-  ienv := build_import_env(base, cur, dep_plan)
+  ienv := build_import_env(base, cur, dep_plan, canonical)
+  cur = ienv.state
 
   if !ienv.ok {
     // A dependency failed (its interface was never published). Drop any stale
@@ -1257,7 +1320,13 @@ fn resolve_singleton(base: ResolvedEnv, state: AnalysisState, canonical: String)
   }
 
   local_type_start := env.types.len()
+  t_hash0 := date.now()
   hashes := dependency_hashes(cur.cache, dep_plan)
+
+  if cur.timed {
+    cur.timings.dep_hashes = cur.timings.dep_hashes + (date.now() - t_hash0)
+  }
+
   context_hash := keys.mix_word(hashes.context_hash, local_type_start)
   runner := stage_runner.new(
     canonical,
@@ -1657,7 +1726,8 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
 
   for lm in loaded_members {
     ext_plan := external_dep_plan(lm.dep_plan, mset)
-    ext_res := build_import_env(base, cur, ext_plan)
+    ext_res := build_import_env(base, cur, ext_plan, lm.canonical)
+    cur = ext_res.state
 
     if !ext_res.ok {
       return GroupResult.{
@@ -1777,7 +1847,13 @@ fn resolve_group(base: ResolvedEnv, state: AnalysisState, members: Vector<String
       continue
     }
 
+    t_hash0 := date.now()
     hashes := dependency_hashes(cur.cache, mc.dep_plan)
+
+    if cur.timed {
+      cur.timings.dep_hashes = cur.timings.dep_hashes + (date.now() - t_hash0)
+    }
+
     group_deps_hash := fold_group_sibling_hashes(hashes.deps_hash, mc.canonical, loaded_members)
     context_hash := keys.mix_word(hashes.context_hash, mc.idx_start)
     runner := stage_runner.new(
