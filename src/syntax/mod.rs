@@ -34,37 +34,79 @@ pub fn parse_source(source: &str, file_name: &str) -> Result<(SourceFile, FileRe
 fn attach_top_level_doc_comments(source_file: &mut SourceFile, source: &str) {
     let line_starts = compute_line_starts(source);
 
+    // Top-level items are parsed in source order, so their start offsets are
+    // non-decreasing. A forward cursor converts each char offset to a byte
+    // offset in a single amortized linear pass over the file, instead of
+    // rescanning from the start per item (which was O(items * filesize)).
+    let mut cursor = CharByteCursor::new(source);
+
     for item in &mut source_file.items {
-        match item {
-            ast::Item::Function(decl) => {
-                decl.doc = extract_doc_comment(source, &line_starts, decl.span.start);
-            }
-            ast::Item::TypeDecl(decl) => {
-                decl.doc = extract_doc_comment(source, &line_starts, decl.span.start);
-            }
+        let (doc_slot, start_char): (&mut Option<String>, u32) = match item {
+            ast::Item::Function(decl) => (&mut decl.doc, decl.span.start),
+            ast::Item::TypeDecl(decl) => (&mut decl.doc, decl.span.start),
             ast::Item::Stmt(ast::Stmt::Let {
                 is_pub: true,
                 span,
                 doc,
                 ..
-            }) => {
-                *doc = extract_doc_comment(source, &line_starts, span.start);
-            }
-            _ => {}
+            }) => (doc, span.start),
+            _ => continue,
+        };
+        let start_byte = cursor.byte_at(start_char as usize, source);
+        *doc_slot = extract_doc_comment(source, &line_starts, start_byte);
+    }
+}
+
+/// Forward-only converter from character offset to byte offset. Requires the
+/// requested offsets to be non-decreasing; if an offset ever goes backwards it
+/// falls back to a full rescan so correctness never depends on the ordering.
+struct CharByteCursor<'a> {
+    iter: std::str::CharIndices<'a>,
+    /// Index of the next char the iterator will yield.
+    next_index: usize,
+    /// Byte offset of the most recently yielded char.
+    cur_byte: usize,
+}
+
+impl<'a> CharByteCursor<'a> {
+    fn new(source: &'a str) -> Self {
+        Self {
+            iter: source.char_indices(),
+            next_index: 0,
+            cur_byte: 0,
         }
+    }
+
+    fn byte_at(&mut self, char_offset: usize, source: &str) -> usize {
+        if char_offset == 0 {
+            return 0;
+        }
+        // Offset went backwards (should not happen for top-level items): rescan.
+        if char_offset + 1 < self.next_index {
+            return char_offset_to_byte_offset(source, char_offset);
+        }
+        while self.next_index <= char_offset {
+            match self.iter.next() {
+                Some((byte_idx, _)) => {
+                    self.cur_byte = byte_idx;
+                    self.next_index += 1;
+                }
+                None => return source.len(),
+            }
+        }
+        self.cur_byte
     }
 }
 
 fn extract_doc_comment(
     source: &str,
     line_starts: &[usize],
-    start_char_offset: u32,
+    start_byte_offset: usize,
 ) -> Option<String> {
     if line_starts.is_empty() {
         return None;
     }
 
-    let start_byte_offset = char_offset_to_byte_offset(source, start_char_offset as usize);
     let decl_line_idx = match line_starts.binary_search(&start_byte_offset) {
         Ok(idx) => idx,
         Err(idx) => idx.saturating_sub(1),

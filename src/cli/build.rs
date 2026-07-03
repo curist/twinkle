@@ -12,6 +12,11 @@ use crate::wasm::emit::emit_wat;
 use crate::wasm::linker::{LinkError, link_with_extern_modules};
 
 pub fn build_file(file_path: &str, output: Option<&str>, emit_wat_sidecar: bool) -> Result<()> {
+    // A one-shot CLI build compiles each module exactly once, so the query
+    // stage cache never serves a hit — disable its stores to skip cloning every
+    // stage artifact into a table that is never read.
+    crate::query::cache::set_cache_puts_enabled(false);
+
     let linked = build_linked_module(file_path)?;
     let plan = resolve_output_plan(file_path, output, emit_wat_sidecar)?;
 
@@ -26,6 +31,8 @@ pub fn build_file(file_path: &str, output: Option<&str>, emit_wat_sidecar: bool)
         fs::write(out_path, bytes)
             .with_context(|| format!("failed to write Wasm output '{}'", out_path.display()))?;
     }
+
+    crate::timing::dump_accumulated();
 
     println!("Building: {}", file_path);
     if let Some(out_path) = &plan.wasm_out {
@@ -45,7 +52,9 @@ pub fn build_wat(file_path: &str) -> Result<String> {
 
 fn build_linked_module(file_path: &str) -> Result<crate::wasm::linker::LinkedModuleIR> {
     let pipeline = crate::backend_pipeline::compile_backend_opt(file_path)?;
-    build_linked_module_from_optimized(&pipeline.core_module, &pipeline.optimized_anf_module)
+    crate::timing::timed("link-emit-ir", || {
+        build_linked_module_from_optimized(&pipeline.core_module, &pipeline.optimized_anf_module)
+    })
 }
 
 fn build_linked_module_from_optimized(

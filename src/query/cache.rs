@@ -1,11 +1,30 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::module::artifacts::{LoweredModule, ResolvedModule, TypedModule};
 
 use super::api::ParsedModule;
 use super::graph::DependencyGraph;
+
+/// Whether stage results are stored into the global query cache.
+///
+/// The cache only pays off when the same module is compiled more than once in
+/// a process (incremental/LSP scenarios). A one-shot CLI `build` deduplicates
+/// modules itself, so every `get_*` misses and every `put_*` would just deep
+/// clone a stage artifact that is never read again. CLI batch builds disable
+/// puts via [`set_cache_puts_enabled`] to avoid that overhead.
+static CACHE_PUTS_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Enable or disable storing stage results into the global query cache.
+pub fn set_cache_puts_enabled(enabled: bool) {
+    CACHE_PUTS_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+fn cache_puts_enabled() -> bool {
+    CACHE_PUTS_ENABLED.load(Ordering::Relaxed)
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CacheStats {
@@ -88,9 +107,14 @@ impl QueryStageCache {
         None
     }
 
-    pub fn put_parsed(&mut self, module: &Path, key: u64, value: ParsedModule) {
-        self.parse
-            .insert(module.to_path_buf(), CacheEntry { key, value });
+    pub fn put_parsed(&mut self, module: &Path, key: u64, value: &ParsedModule) {
+        if !cache_puts_enabled() {
+            return;
+        }
+        self.parse.insert(
+            module.to_path_buf(),
+            CacheEntry { key, value: value.clone() },
+        );
     }
 
     pub fn get_resolved(&mut self, module: &Path, key: u64) -> Option<ResolvedModule> {
@@ -104,9 +128,14 @@ impl QueryStageCache {
         None
     }
 
-    pub fn put_resolved(&mut self, module: &Path, key: u64, value: ResolvedModule) {
-        self.resolve
-            .insert(module.to_path_buf(), CacheEntry { key, value });
+    pub fn put_resolved(&mut self, module: &Path, key: u64, value: &ResolvedModule) {
+        if !cache_puts_enabled() {
+            return;
+        }
+        self.resolve.insert(
+            module.to_path_buf(),
+            CacheEntry { key, value: value.clone() },
+        );
     }
 
     pub fn get_typed(&mut self, module: &Path, key: u64) -> Option<TypedModule> {
@@ -120,9 +149,14 @@ impl QueryStageCache {
         None
     }
 
-    pub fn put_typed(&mut self, module: &Path, key: u64, value: TypedModule) {
-        self.typecheck
-            .insert(module.to_path_buf(), CacheEntry { key, value });
+    pub fn put_typed(&mut self, module: &Path, key: u64, value: &TypedModule) {
+        if !cache_puts_enabled() {
+            return;
+        }
+        self.typecheck.insert(
+            module.to_path_buf(),
+            CacheEntry { key, value: value.clone() },
+        );
     }
 
     pub fn get_lowered(&mut self, module: &Path, key: u64) -> Option<LoweredModule> {
@@ -136,9 +170,14 @@ impl QueryStageCache {
         None
     }
 
-    pub fn put_lowered(&mut self, module: &Path, key: u64, value: LoweredModule) {
-        self.lower
-            .insert(module.to_path_buf(), CacheEntry { key, value });
+    pub fn put_lowered(&mut self, module: &Path, key: u64, value: &LoweredModule) {
+        if !cache_puts_enabled() {
+            return;
+        }
+        self.lower.insert(
+            module.to_path_buf(),
+            CacheEntry { key, value: value.clone() },
+        );
     }
 }
 
@@ -156,6 +195,10 @@ pub fn with_global_cache<R>(f: impl FnOnce(&mut QueryStageCache) -> R) -> R {
 }
 
 pub fn reset_global_cache() {
+    // Restore the default (puts enabled) alongside clearing entries so that
+    // resetting the cache always returns it to a usable state, regardless of
+    // any earlier `set_cache_puts_enabled(false)` (e.g. from a CLI batch build).
+    set_cache_puts_enabled(true);
     with_global_cache(|cache| cache.clear());
 }
 

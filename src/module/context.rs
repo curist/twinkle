@@ -44,12 +44,20 @@ impl ModuleExports {
 pub struct CompilationContext {
     /// Deduplication cache: canonical path → exports (prevents re-compiling same file)
     pub module_cache: HashMap<PathBuf, ModuleExports>,
+    /// Prelude method-signature exports, computed once (parsing + resolving every
+    /// prelude module) and reused. Every prelude-dependency edge re-registers the
+    /// prelude's inherent-method signatures into a freshly restored env; recomputing
+    /// them from source each time was quadratic in the number of prelude edges, so
+    /// the expensive parse/resolve happens once and later edges only re-register.
+    /// `(internal_alias, exports)` per prelude module.
+    pub prelude_method_exports: Option<Vec<(String, ModuleExports)>>,
 }
 
 impl CompilationContext {
     pub fn new() -> Self {
         Self {
             module_cache: HashMap::new(),
+            prelude_method_exports: None,
         }
     }
 }

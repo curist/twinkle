@@ -70,7 +70,7 @@ impl<'a> ModuleStageRunner<'a> {
         }
 
         let parsed = parse_source_module(source, self.canonical)?;
-        with_global_cache(|cache| cache.put_parsed(self.canonical, parse_key, parsed.clone()));
+        with_global_cache(|cache| cache.put_parsed(self.canonical, parse_key, &parsed));
 
         Ok(StageResult {
             value: parsed,
@@ -110,7 +110,7 @@ impl<'a> ModuleStageRunner<'a> {
             }
         };
         with_global_cache(|cache| {
-            cache.put_resolved(self.canonical, resolve_key, resolved.clone())
+            cache.put_resolved(self.canonical, resolve_key, &resolved)
         });
         Ok(StageResult {
             value: resolved,
@@ -150,7 +150,7 @@ impl<'a> ModuleStageRunner<'a> {
                     return Err(anyhow!("{}", msgs.join("\n")));
                 }
             };
-        with_global_cache(|cache| cache.put_typed(self.canonical, typecheck_key, typed.clone()));
+        with_global_cache(|cache| cache.put_typed(self.canonical, typecheck_key, &typed));
         Ok(StageResult {
             value: typed,
             cache_hit: false,
@@ -191,7 +191,7 @@ impl<'a> ModuleStageRunner<'a> {
                 return Err(anyhow!("Lowering failed:\n{}", msgs.join("\n")));
             }
         };
-        with_global_cache(|cache| cache.put_lowered(self.canonical, lower_key, lowered.clone()));
+        with_global_cache(|cache| cache.put_lowered(self.canonical, lower_key, &lowered));
         Ok(StageResult {
             value: lowered,
             cache_hit: false,

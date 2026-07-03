@@ -9,5 +9,6 @@ pub mod opt;
 pub mod query;
 pub mod runtime;
 pub mod syntax;
+pub mod timing;
 pub mod types;
 pub mod wasm;

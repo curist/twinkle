@@ -20,10 +20,15 @@ pub struct BackendOptPipeline {
 /// Compile through the canonical backend boundary:
 /// parse -> resolve -> typecheck -> lower (Core IR) -> monomorphize -> lower (ANF).
 pub fn compile_backend_anf(file_path: &str) -> Result<BackendAnfPipeline> {
-    let (core_module, _registry) = crate::module::compile_entry(file_path)
-        .with_context(|| format!("compile failed for '{file_path}'"))?;
-    let core_module = crate::ir::monomorphize(core_module);
-    let anf_module = crate::ir::lower_anf::lower_module(&core_module);
+    use crate::timing::timed;
+    let (core_module, _registry) = timed("frontend", || {
+        crate::module::compile_entry(file_path)
+            .with_context(|| format!("compile failed for '{file_path}'"))
+    })?;
+    let core_module = timed("monomorphize", || crate::ir::monomorphize(core_module));
+    let anf_module = timed("lower-anf", || {
+        crate::ir::lower_anf::lower_module(&core_module)
+    });
     verify_module_or_panic(&anf_module, "post-lowering");
 
     Ok(BackendAnfPipeline {
@@ -35,8 +40,10 @@ pub fn compile_backend_anf(file_path: &str) -> Result<BackendAnfPipeline> {
 /// Compile through the canonical backend optimization boundary:
 /// parse -> resolve -> typecheck -> lower (Core IR) -> monomorphize -> lower (ANF) -> optimize.
 pub fn compile_backend_opt(file_path: &str) -> Result<BackendOptPipeline> {
+    use crate::timing::timed;
     let pipeline = compile_backend_anf(file_path)?;
-    let optimized_anf_module = crate::opt::optimize_module(pipeline.anf_module.clone());
+    let optimized_anf_module =
+        timed("optimize", || crate::opt::optimize_module(pipeline.anf_module.clone()));
     verify_module_or_panic(&optimized_anf_module, "post-optimization");
 
     Ok(BackendOptPipeline {

@@ -504,6 +504,7 @@ fn pre_register_prelude_exports_with_internal_methods(
 
 fn ensure_prelude_method_signatures_registered<A: ModuleSourceAdapter>(
     state: &mut CompileState,
+    ctx: &mut CompilationContext,
     adapter: &A,
 ) -> Result<()> {
     if state.prelude_method_signatures_registered {
@@ -511,6 +512,37 @@ fn ensure_prelude_method_signatures_registered<A: ModuleSourceAdapter>(
     }
 
     state.prelude_method_signatures_registered = true;
+
+    // Parsing and resolving every prelude module is expensive and its result —
+    // the prelude's public signatures — depends only on the prelude source and
+    // the builtin base env, never on the module currently being compiled. Do it
+    // once and cache the exports on the (compilation-scoped) context; each
+    // prelude-dependency edge then only re-registers them into its restored env.
+    if ctx.prelude_method_exports.is_none() {
+        ctx.prelude_method_exports = Some(compute_prelude_method_exports(state, adapter)?);
+    }
+
+    // Borrows `ctx` immutably while mutating `state` — distinct objects, so the
+    // re-registration below is a cheap map insertion, not a recompute.
+    let cached = ctx
+        .prelude_method_exports
+        .as_ref()
+        .expect("prelude method exports just populated");
+    for (alias, exports) in cached {
+        pre_register_prelude_exports_with_internal_methods(state, alias, exports);
+    }
+
+    Ok(())
+}
+
+/// Parse + resolve every prelude module and collect its public signatures as
+/// `(internal_alias, exports)`. Pure with respect to `state` (only reads the
+/// base env), so the result can be cached and reused across prelude edges.
+fn compute_prelude_method_exports<A: ModuleSourceAdapter>(
+    state: &CompileState,
+    adapter: &A,
+) -> Result<Vec<(String, ModuleExports)>> {
+    let mut result = Vec::new();
 
     for prelude_path in adapter.list_prelude_modules() {
         let canonical = adapter.canonicalize(&prelude_path);
@@ -569,10 +601,10 @@ fn ensure_prelude_method_signatures_registered<A: ModuleSourceAdapter>(
             }
         }
 
-        pre_register_prelude_exports_with_internal_methods(state, &alias, &exports);
+        result.push((alias, exports));
     }
 
-    Ok(())
+    Ok(result)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -607,7 +639,9 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     let source = adapter.read_source(&canonical)?;
     let source_hash = query_keys::hash_text(&source);
     let parsed_stage_runner = ModuleStageRunner::new(&canonical, source_hash, 0, 0, false);
-    let parsed_result = match parsed_stage_runner.parse(&source) {
+    let parsed_result = match crate::timing::timed_acc("fe:parse", || {
+        parsed_stage_runner.parse(&source)
+    }) {
         Ok(result) => result,
         Err(err) => {
             analysis_collector.record_parse_error(&canonical, &source, &err);
@@ -639,7 +673,7 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     // resets the registration flag (see `compile_planned_dependencies`). The flag
     // makes the call idempotent, so triggering it from both is harmless.
     if importing_stack.is_empty() || is_prelude_module {
-        ensure_prelude_method_signatures_registered(state, adapter)?;
+        ensure_prelude_method_signatures_registered(state, ctx, adapter)?;
     }
 
     // Compile dependencies from an explicit plan:
@@ -706,13 +740,20 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     let mut module_next_func_id = prelude::USER_FUNC_START;
     preassign_module_function_ids(&ast, alias, &mut state.func_table, &mut module_next_func_id);
 
-    // Resolve — pure function; takes accumulated envs, returns updated envs
+    // Resolve — pure function; takes accumulated envs, returns updated envs.
+    // Move the accumulated envs into the resolver rather than cloning: `state`'s
+    // copies are overwritten with the resolver's output on success, and on
+    // failure the whole compile aborts, so the pre-resolve envs are never read
+    // again. (`state.type_env`/`value_env` are left empty until reassigned
+    // below; nothing reads them in between.)
+    let taken_type_env = std::mem::take(&mut state.type_env);
+    let taken_value_env = std::mem::take(&mut state.value_env);
     let mut resolved = if analysis_collector.is_enabled() {
         // Use structured diagnostics path for analysis
         match resolve_stage_with_diagnostics(
             &ast,
-            state.type_env.clone(),
-            state.value_env.clone(),
+            taken_type_env,
+            taken_value_env,
             &file_registry,
             is_internal,
         ) {
@@ -728,12 +769,9 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
             }
         }
     } else {
-        match stage_runner.resolve(
-            &ast,
-            state.type_env.clone(),
-            state.value_env.clone(),
-            &file_registry,
-        ) {
+        match crate::timing::timed_acc("fe:resolve", || {
+            stage_runner.resolve(&ast, taken_type_env, taken_value_env, &file_registry)
+        }) {
             Ok(result) => {
                 record_stage_trace(
                     stage_trace,
@@ -758,14 +796,16 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
         &mut resolved.value_env,
         is_internal,
     );
-    state.type_env = resolved.type_env.clone();
-    state.value_env = resolved.value_env.clone();
 
-    // Typecheck — pure function; takes explicit envs and returns updated envs + TypeMap
+    // Typecheck — pure function; takes explicit envs and returns updated envs +
+    // TypeMap. `resolved` is not used after this point, so move it in rather
+    // than cloning. (`state`'s envs are set from the typechecker's output
+    // below; the resolver's envs would otherwise be cloned into `state` here
+    // only to be overwritten.)
     let typed = if analysis_collector.is_enabled() {
         match typecheck_stage_with_diagnostics(
             &ast,
-            resolved.clone(),
+            resolved,
             state.module_aliases.clone(),
             &file_registry,
         ) {
@@ -781,12 +821,9 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
             }
         }
     } else {
-        match stage_runner.typecheck(
-            &ast,
-            resolved.clone(),
-            state.module_aliases.clone(),
-            &file_registry,
-        ) {
+        match crate::timing::timed_acc("fe:typecheck", || {
+            stage_runner.typecheck(&ast, resolved, state.module_aliases.clone(), &file_registry)
+        }) {
             Ok(result) => {
                 record_stage_trace(
                     stage_trace,
@@ -887,7 +924,7 @@ fn compile_planned_dependencies<A: ModuleSourceAdapter>(
         restore_compile_env(state, compile_snapshot.clone());
         if matches!(dep.kind, PlannedDependencyKind::Prelude) {
             state.prelude_method_signatures_registered = false;
-            ensure_prelude_method_signatures_registered(state, adapter)?;
+            ensure_prelude_method_signatures_registered(state, ctx, adapter)?;
         }
         let result = compile_module_with_adapter(
             &dep.canonical_path,
@@ -1036,7 +1073,9 @@ fn maybe_lower_module(
         next_func_id: module_next_func_id,
         next_global_local_id: state.next_global_local_id,
     };
-    let lowered_result = match stage_runner.lower(ast, type_map, input, alias, file_registry) {
+    let lowered_result = match crate::timing::timed_acc("fe:lower-core", || {
+        stage_runner.lower(ast, type_map, input, alias, file_registry)
+    }) {
         Ok(result) => result,
         Err(err) => {
             importing_stack.pop();
