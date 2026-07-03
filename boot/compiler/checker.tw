@@ -5462,7 +5462,19 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
     pass0_fns = .append(f)
   }
 
-  ctx.env = .with_functions(pass0_fns)
+  // Pass 0 only rewrites function ret types — names, order, func_index, bindings,
+  // and origins are all ret-independent and stay valid. When bindings are already
+  // populated, swap the updated vector in directly and skip with_functions' full
+  // index/binding/origin rebuild over every visible function (imports included).
+  // The empty-bindings case still routes through with_functions so it can seed
+  // identity bindings (its bind_all_when_empty path).
+  if ctx.env.function_bindings.len() > 0 {
+    new_env := ctx.env
+    new_env.functions = pass0_fns
+    ctx.env = new_env
+  } else {
+    ctx.env = .with_functions(pass0_fns)
+  }
   t_setup := date.now()
 
   // Diagnostics are accumulated in three independent streams — top-level

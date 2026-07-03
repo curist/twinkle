@@ -232,16 +232,23 @@ Interpretation:
   (reuse an unchanged child instead of reallocating), which would also help the
   meta-bearing entries the finalize guard still fully zonks — deferred as it needs
   a change-tracking return shape, not a one-line guard.
-- **setup (~52ms, ~12%)** is Pass 0 rebuilding the whole `env.functions` vector
-  per module (via `with_functions`) just to assign fresh return-meta vars to
-  unannotated own-functions. After import merge `env.functions` includes all
-  imported sigs (already concrete-ret), so most of the rebuilt vector is
-  copy-through. A fast path that skips the rebuild when no function needs a fresh
-  meta, or that scans only the module's own functions, is worth a look.
+- **setup (~52ms → ~2ms, was ~12%)** was Pass 0 calling `with_functions` per
+  module, which rebuilds `func_index` and re-filters `function_bindings` /
+  `function_origins` over *every* visible function (thousands, imports included).
+  But Pass 0 only mutates function `ret` types, and none of the index / bindings /
+  origins depend on `ret` — so the rebuild was pure waste. **Landed**: when
+  `function_bindings` is already populated (the common case after resolve), swap
+  the ret-updated vector in directly and skip the rebuild; the empty-bindings case
+  still routes through `with_functions` so its `bind_all_when_empty` seeding is
+  preserved. ~50ms off typecheck (~96% off setup), self-host + all boot tests
+  green.
 
-Recommended order: finalize zonk fast paths first (self-contained, low-risk,
-measurable via `finalize` + `type_map_entries`), then the Pass 0 rebuild, then
-consider import-merge representation work.
+Net effect of the finalize + setup wins: typecheck ~425ms → ~367ms. The remaining
+typecheck cost is now clearly **bodies (~260ms)** — the irreducible inference walk —
+and **finalize (~103ms)**, whose deeper subtree-sharing lever is noted above.
+
+Recommended next: import-merge representation work (the largest single frontend
+bucket), then the subtree-sharing `zonk_with_meta` rewrite if finalize is revisited.
 
 ## Previous baseline: 2026-06-25
 
