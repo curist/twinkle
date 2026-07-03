@@ -125,6 +125,19 @@ pub type SymbolAtPosition = .{ name: String, kind: SymbolKind, span: Span }
 pub type EnclosingSyntax = .{ kind: String, span: Span }
 
 pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.WorkspaceInput) SemanticSnapshot? {
+  snapshot_workspace_from_cache_opt(store, input, true)
+}
+
+/// Cache-backed snapshot with optional occurrence-index construction. Requests
+/// that never read `snap.occurrences` (hover, completion, signature help) pass
+/// `with_occurrences: false` to skip `build_occurrences_cached`, which walks the
+/// whole module AST on a cache miss — and that miss happens on every keystroke
+/// edit, exactly when completion/signature-help fire.
+pub fn snapshot_workspace_from_cache_opt(
+  store: cache.Store,
+  input: diagnostics.WorkspaceInput,
+  with_occurrences: Bool,
+) SemanticSnapshot? {
   id := case identity.from_file_uri(input.entry_uri) {
     .Ok(parsed) => parsed,
     .Err(_) => identity.from_path(input.entry_uri),
@@ -159,14 +172,18 @@ pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.Work
     }
   }
 
-  occ_res := build_occurrences_cached(
-    store,
-    canonical,
-    id.uri,
-    .Some(parsed),
-    .Some(typed),
-    occurrence_key(store, canonical),
-  )
+  occ_res := if with_occurrences {
+    build_occurrences_cached(
+      store,
+      canonical,
+      id.uri,
+      .Some(parsed),
+      .Some(typed),
+      occurrence_key(store, canonical),
+    )
+  } else {
+    OccBuildResult.{ cache: store, occurrences: .None }
+  }
 
   .Some(
     .{
@@ -186,12 +203,14 @@ pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.Work
 }
 
 pub fn snapshot_workspace_for_editor(store: cache.Store, input: diagnostics.WorkspaceInput) SemanticSnapshot {
-  case snapshot_workspace_from_cache(store, input) {
+  // Editor snapshots back only completion and signature help, neither of which
+  // reads occurrences — so skip building the occurrence index.
+  case snapshot_workspace_from_cache_opt(store, input, false) {
     .Some(snap) => return snap,
     .None => {},
   }
 
-  snap := snapshot_workspace(store, input)
+  snap := snapshot_workspace_opt(store, input, false)
 
   case snap.typed {
     .Some(_) => return snap,
@@ -217,6 +236,16 @@ pub fn snapshot_workspace_for_editor(store: cache.Store, input: diagnostics.Work
 }
 
 pub fn snapshot_workspace(store: cache.Store, input: diagnostics.WorkspaceInput) SemanticSnapshot {
+  snapshot_workspace_opt(store, input, true)
+}
+
+/// Full-analysis snapshot with optional occurrence-index construction. See
+/// `snapshot_workspace_from_cache_opt` for why occurrence-free requests skip it.
+pub fn snapshot_workspace_opt(
+  store: cache.Store,
+  input: diagnostics.WorkspaceInput,
+  with_occurrences: Bool,
+) SemanticSnapshot {
   id := case identity.from_file_uri(input.entry_uri) {
     .Ok(parsed) => parsed,
     .Err(_) => identity.from_path(input.entry_uri),
@@ -260,14 +289,18 @@ pub fn snapshot_workspace(store: cache.Store, input: diagnostics.WorkspaceInput)
   parsed := cur_cache.latest_parsed(canonical)
   resolved := cur_cache.latest_resolved(canonical)
   typed := cur_cache.latest_typed(canonical)
-  occ_res := build_occurrences_cached(
-    cur_cache,
-    canonical,
-    id.uri,
-    parsed,
-    typed,
-    occurrence_key(cur_cache, canonical),
-  )
+  occ_res := if with_occurrences {
+    build_occurrences_cached(
+      cur_cache,
+      canonical,
+      id.uri,
+      parsed,
+      typed,
+      occurrence_key(cur_cache, canonical),
+    )
+  } else {
+    OccBuildResult.{ cache: cur_cache, occurrences: .None }
+  }
   .{
     cache: occ_res.cache,
     uri: id.uri,

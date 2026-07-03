@@ -297,6 +297,19 @@ fn workspace_snapshot(state: State, doc: document_store.Document) semantic.Seman
   }
 }
 
+// Snapshot for requests that never read `snap.occurrences` (hover, completion,
+// signature help). Skips building the occurrence index — which walks the whole
+// module AST on a cache miss, i.e. on every keystroke edit — so these
+// high-frequency requests don't pay for an index they never touch.
+fn workspace_snapshot_lite(state: State, doc: document_store.Document) semantic.SemanticSnapshot {
+  input := state.workspace_input(doc)
+
+  case semantic.snapshot_workspace_from_cache_opt(state.query_cache, input, false) {
+    .Some(snap) => snap,
+    .None => semantic.snapshot_workspace_opt(state.query_cache, input, false),
+  }
+}
+
 // Cache-only snapshot: returns the last completed full snapshot when present, and
 // never falls back to inline workspace analysis. Heavy editor features use this so
 // a request can never block the dispatcher on a compiler pass.
@@ -333,7 +346,7 @@ fn handle_hover(state: State, req: protocol.Request) Step {
     .Some(o) => o,
     .None => return state.null_response_step(req),
   }
-  snap := state.workspace_snapshot(doc)
+  snap := state.workspace_snapshot_lite(doc)
   state.query_cache = snap.cache
 
   case query_hover.hover(snap, offset, doc.text) {
