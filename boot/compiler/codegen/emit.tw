@@ -2240,15 +2240,21 @@ fn emit_intrinsic_call(
     },
     .FloatRound => {
       // Round half up toward +∞ (0.5→1, 1.5→2, -0.5→-0), matching JS
-      // Math.round, using native f64.floor: fl = floor(x); pick fl+1 when the
-      // exact fractional part x-fl >= 0.5, else fl. result_idx doubles as the
-      // fl scratch so floor is computed once.
+      // Math.round. First compute fl=floor(x), then pick fl+1 when the exact
+      // fractional part x-fl >= 0.5. If that result is +0 for a negative input,
+      // select -0 so Float.bits observes the JS-compatible signed zero.
       buf2 := emit_atom(args[0], ctx, buf)
       buf2 = .append(.F64Floor).append(.LocalSet(result_idx)) // fl
       buf2 = .append(.LocalGet(result_idx)).append(.F64Const(1.0)).append(.F64Add) // then: fl+1
       buf2 = .append(.LocalGet(result_idx)) // else: fl
       buf2 = emit_atom(args[0], ctx, buf2)
       buf2 = .append(.LocalGet(result_idx)).append(.F64Sub).append(.F64Const(0.5)).append(.F64Ge) // cond
+      buf2 = .append(.Select).append(.LocalSet(result_idx))
+      buf2 = .append(.F64Const(-0.0)) // then: signed -0
+      buf2 = .append(.LocalGet(result_idx)) // else: rounded value
+      buf2 = .append(.LocalGet(result_idx)).append(.F64Const(0.0)).append(.F64Eq)
+      buf2 = emit_atom(args[0], ctx, buf2)
+      buf2 = .append(.F64Const(0.0)).append(.F64Lt).append(.I32And)
       buf2.append(.Select).append(.LocalSet(result_idx))
     },
     .ByteFromInt => emit_intrinsic_byte_from_int(args, result_idx, result_mono, ctx, buf),

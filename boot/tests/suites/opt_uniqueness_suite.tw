@@ -1,7 +1,7 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
-use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, FieldAtom, IndexKind}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, FieldAtom}
 use compiler.builder_family.{BuilderConfig}
 use compiler.core_ir.{FieldId, FuncId, LocalId, Param, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
@@ -2433,6 +2433,46 @@ fn test_refreshed_alias_dead_source_still_rewrites() Result<Void, String> {
   }
 }
 
+fn test_refreshed_record_update_alias_no_rewrite() Result<Void, String> {
+  // let src = vec_make()
+  // let v = AInit(src)                 // transfer; v is refreshed
+  // let rec = Record(tid, [f0: 0])
+  // let _ = RecordUpdate(rec, f0, v)   // sink: v escapes via updated field
+  // let r = vec_set(v, 0, 42)          // must stay COW (v is aliased by record)
+  // Atom(r)
+  body: AnfExpr = .Let(
+    lid(0),
+    .ACall(.AGlobalFunc(mock_vec_make()), []),
+    .Let(
+      lid(1),
+      .AInit(.ALocal(lid(0))),
+      .Let(
+        lid(2),
+        .ARecord(tid(7), [FieldAtom.{ field: field(0), value: .ALitInt(0) }]),
+        .Let(
+          lid(3),
+          .ARecordUpdate(.ALocal(lid(2)), field(0), .ALocal(lid(1)), false, tid(7)),
+          .Let(
+            lid(4),
+            .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(1)), .ALitInt(0), .ALitInt(42)]),
+            .Atom(.ALocal(lid(4))),
+          ),
+        ),
+      ),
+    ),
+  )
+  func := make_func(body)
+  result := rewrite(func)
+
+  case result.body {
+    .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))))) => assert.equal(
+      f.id,
+      mock_vec_set().id,
+    ),
+    _ => .Err("expected no rewrite (refreshed value stored by record update)"),
+  }
+}
+
 // ── Thin set-wrapper detection + swap (awfy-c5 Phase 1b) ────────────
 // mock_vec_set plays the role of `vector$set_unsafe`, mock_vec_set_in_place
 // that of `vector$set_in_place`.
@@ -2547,6 +2587,40 @@ fn test_set_wrapper_tail_reassigns_base_not_registered() Result<Void, String> {
   }
 }
 
+fn test_set_wrapper_trailing_call_not_registered() Result<Void, String> {
+  // A user wrapper may perform side effects after the set and still return the
+  // base. It must not be collapsed to a direct in-place set call, because that
+  // would erase the trailing call.
+  body: AnfExpr = .Let(
+    lid(11),
+    .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(7)), .ALocal(lid(8)), .ALocal(lid(9))]),
+    .Let(
+      lid(12),
+      .AAssign(lid(7), .ALocal(lid(11))),
+      .Let(lid(10), .ACall(.AGlobalFunc(fid(901)), [.ALitInt(1)]), .Atom(.ALocal(lid(7)))),
+    ),
+  )
+  wrapper := AnfFunctionDef.{
+    func_id: fid(300),
+    name: "noisy_set",
+    is_init: false,
+    params: [
+      Param.{ local: lid(7), ty: .Void },
+      Param.{ local: lid(8), ty: .Void },
+      Param.{ local: lid(9), ty: .Void },
+    ],
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: .Void,
+  }
+  sem := augmented(make_module([wrapper]))
+
+  case sem.call_semantics[300] {
+    .Some(_) => .Err("side-effecting set wrapper wrongly registered"),
+    .None => .Ok({}),
+  }
+}
+
 fn test_loop_set_wrapper_swapped_with_elem_read() Result<Void, String> {
   // let v = vec_make()
   // let _ = ALoop(
@@ -2647,6 +2721,10 @@ pub fn suite() runner.Suite {
     "refreshed alias dead source → still rewrites",
     test_refreshed_alias_dead_source_still_rewrites,
   )
+  s = .test(
+    "refreshed record update alias → no rewrite",
+    test_refreshed_record_update_alias_no_rewrite,
+  )
 
   // Thin set-wrapper detection + swap (awfy-c5 Phase 1b)
   s = .test("set wrapper detected and registered", test_set_wrapper_detected_and_registered)
@@ -2654,6 +2732,10 @@ pub fn suite() runner.Suite {
   s = .test(
     "set wrapper tail-reassigns base not registered",
     test_set_wrapper_tail_reassigns_base_not_registered,
+  )
+  s = .test(
+    "set wrapper trailing call not registered",
+    test_set_wrapper_trailing_call_not_registered,
   )
   s = .test("loop set wrapper swapped with elem read", test_loop_set_wrapper_swapped_with_elem_read)
 

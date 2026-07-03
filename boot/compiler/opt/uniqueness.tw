@@ -205,6 +205,9 @@ fn op_aliasing_source_locals(op: AnfOp, semantics: OptimizerSemantics) Vector<Lo
         acc = append_atom_local(acc, f.value)
       }
     },
+    .ARecordUpdate(_, _, value, _, _) => {
+      acc = append_atom_local(acc, value)
+    },
     .AVariant(_, _, args) => {
       for a in args {
         acc = append_atom_local(acc, a)
@@ -1545,17 +1548,15 @@ pub fn uniqueness_rewrite(func: AnfFunctionDef, config: CowConfig) AnfFunctionDe
 // wrapper's ABI (value arg is `anyref`), and emit's runtime-arg coercion boxes
 // the value against the callee's ABI, so no argument reshaping is needed.
 // The wrapper's tail returns `target` (the base), possibly after trailing dead
-// scaffolding bindings (e.g. a discarded block value) that the optimizer has not
-// yet cleaned up — detection runs before per-function simplification. Trailing
-// ops are allowed only if they don't touch `target`, so the returned value is
-// still the set result.
+// `init void` scaffolding (e.g. a discarded block value) that the optimizer has
+// not yet cleaned up — detection runs before per-function simplification. Other
+// trailing ops are rejected so user wrappers with side effects are not collapsed
+// to a direct in-place set call.
 fn tail_yields_local(expr: AnfExpr, target: LocalId) Bool {
   case expr {
     .Atom(.ALocal(l)) => l.id == target.id,
     .Return(.Some(.ALocal(l))) => l.id == target.id,
-    .Let(l, op, body) => l.id != target.id
-      and !op_uses_local_non_recursive(op, target) and !op_has_local_in_nested_scope(op, target)
-      and tail_yields_local(body, target),
+    .Let(l, .AInit(.ALitVoid), body) => l.id != target.id and tail_yields_local(body, target),
     _ => false,
   }
 }

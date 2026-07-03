@@ -57,6 +57,7 @@ pub fn suite() runner.Suite {
         try assert.equal(math.floor(2.7), 2.0)
         try assert.equal(math.ceil(2.3), 3.0)
         try assert.equal(math.round(2.5), 3.0)
+        try assert.equal(math.round(-0.5).bits(), -9223372036854775808)
         try assert.equal(math.trunc(2.7), 2.0)
         try assert.equal(math.abs_float(-2.5), 2.5)
         try assert.equal(math.sign_float(-2.5), -1.0)
