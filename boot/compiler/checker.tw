@@ -5560,7 +5560,16 @@ pub fn check(module: Module, env: ResolvedEnv, lint_mode: Bool) CheckResult {
   reported_spans: Dict<Int, Bool> = Dict.new()
 
   for key, ty in ctx.type_map {
-    zonked := zonk_with_meta(ty, ctx.subst)
+    // A meta-free type is unaffected by the substitution, so zonking would only
+    // rebuild an identical tree. Skip straight to the original with no rebuild;
+    // only entries that actually contain a MetaVar need the full zonk. Most
+    // type_map entries are already-concrete types, so this avoids the bulk of the
+    // finalize-sweep allocation.
+    zonked := if contains_meta(ty) {
+      zonk_with_meta(ty, ctx.subst)
+    } else {
+      ZonkMetaOut.{ ty, has_meta: false }
+    }
     final_map[key] = zonked.ty
 
     if zonked.has_meta {

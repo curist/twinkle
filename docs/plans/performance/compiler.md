@@ -211,15 +211,27 @@ Interpretation:
 - **bodies (~260ms, ~61% of typecheck)** is the irreducible core: bidirectional
   inference walking every function body. No cheap structural win here — it scales
   with the amount of code checked.
-- **finalize (~111ms, ~26%)** is the clearest lever. It zonks ~157k `type_map`
-  entries at end of each module, and `zonk_with_meta` fully deconstructs and
-  *rebuilds* every type tree even when nothing resolves. Two candidate cheap wins,
-  both to be measured before committing: (a) an empty-`subst` fast path — with no
-  bindings a `MetaVar` can never resolve, so `zonk` reduces to a meta scan and can
-  skip the rebuild entirely; (b) a no-meta short-circuit that returns the original
-  subtree when a branch contains no `MetaVar` (avoids allocating identical nodes).
-  `subst_entries` is small (~5855 total, ~25/module), so many modules likely have
-  tiny or empty substitutions — the empty-`subst` path should fire often.
+- **finalize (~114ms → ~101ms, ~26%)** was the clearest lever. It zonks ~157k
+  `type_map` entries at end of each module, and `zonk_with_meta` fully
+  deconstructs and *rebuilds* every type tree even when nothing resolves. Two
+  candidate cheap wins were measured:
+  - **Empty-`subst` fast path inside `zonk_with_meta`** (skip the rebuild when the
+    substitution has no bindings) — **measured-and-rejected**: perf-neutral for
+    self-compilation. `subst_entries` averages ~25/module but finalize cost
+    concentrates in the *meta-bearing* modules (non-empty subst), which the fast
+    path does not accelerate; it only adds a branch to the hottest recursive
+    function for no gain.
+  - **Per-entry no-meta guard at the finalize sweep** (skip `zonk` entirely for a
+    `type_map` entry that contains no `MetaVar`, since a meta-free type is
+    unaffected by any substitution) — **landed**: ~11% off finalize (~114→~101ms).
+    Most final `type_map` entries are already-concrete types, so this avoids the
+    bulk of the rebuild allocation, and it leaves the inference-path `zonk`
+    untouched. Modest in whole-build terms (~0.25%) but correct, localized, and
+    risk-free.
+  A larger remaining lever is subtree sharing inside `zonk_with_meta` itself
+  (reuse an unchanged child instead of reallocating), which would also help the
+  meta-bearing entries the finalize guard still fully zonks — deferred as it needs
+  a change-tracking return shape, not a one-line guard.
 - **setup (~52ms, ~12%)** is Pass 0 rebuilding the whole `env.functions` vector
   per module (via `with_functions`) just to assign fresh return-meta vars to
   unannotated own-functions. After import merge `env.functions` includes all
