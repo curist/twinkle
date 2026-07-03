@@ -921,10 +921,24 @@ fn compile_planned_dependencies<A: ModuleSourceAdapter>(
         //
         // State outside the snapshot (for example global counters and hashes)
         // continues to accumulate across both phases.
-        restore_compile_env(state, compile_snapshot.clone());
-        if matches!(dep.kind, PlannedDependencyKind::Prelude) {
-            state.prelude_method_signatures_registered = false;
-            ensure_prelude_method_signatures_registered(state, ctx, adapter)?;
+        //
+        // When the dependency has already been compiled (the common case — the
+        // prelude and shared modules are imported by nearly every file),
+        // `compile_module_with_adapter` returns the cached exports without
+        // touching the env. Both restores and the prelude re-registration then
+        // only build intermediate states that are immediately overwritten, so we
+        // skip them: `state` already equals `projected_snapshot` on entry
+        // (maintained below), leaving the projection step operating on exactly
+        // the same env it would have after the restores. This avoids deep-cloning
+        // the accumulated function/method signatures for every cached edge.
+        let already_compiled = ctx.module_cache.contains_key(&dep.canonical_path);
+
+        if !already_compiled {
+            restore_compile_env(state, compile_snapshot.clone());
+            if matches!(dep.kind, PlannedDependencyKind::Prelude) {
+                state.prelude_method_signatures_registered = false;
+                ensure_prelude_method_signatures_registered(state, ctx, adapter)?;
+            }
         }
         let result = compile_module_with_adapter(
             &dep.canonical_path,
@@ -937,7 +951,9 @@ fn compile_planned_dependencies<A: ModuleSourceAdapter>(
             stage_trace,
             analysis_collector,
         );
-        restore_compile_env(state, projected_snapshot.clone());
+        if !already_compiled {
+            restore_compile_env(state, projected_snapshot.clone());
+        }
         match result {
             Ok((dep_exports, _)) => {
                 let projection = match dep.kind {
