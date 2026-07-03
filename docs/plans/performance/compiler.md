@@ -99,10 +99,14 @@ index (`build_occurrences_cached`), which walks the whole module AST on a cache
 miss — and that miss happens on every keystroke edit, exactly when completion and
 signature help fire. But hover, completion, and signature help never read
 `snap.occurrences`; only definition, references, document-highlight, rename, and
-semantic-tokens do. Added a `with_occurrences` gate + a `workspace_snapshot_lite`
-path and routed the three occurrence-free requests through it. This is an
-interactive-latency win (not a batch-build metric), so it's not in the phase table
-above; validated by the LSP test suites. Occurrence-needing handlers unchanged.
+semantic-tokens do. Added a `with_occurrences` gate + `workspace_snapshot_lite` /
+`workspace_snapshot_cached_lite` paths and routed every occurrence-free request
+through them: hover, completion, signature-help, document-symbol, folding-range,
+inlay-hint, and workspace-symbol. This is an interactive-latency win (not a
+batch-build metric), so it's not in the phase table above; validated by the LSP
+test suites. The occurrence-consuming handlers (definition, type-definition,
+references, prepare-rename, rename, document-highlight, semantic-tokens) keep the
+full path.
 
 ## Current baseline: 2026-06-28
 
