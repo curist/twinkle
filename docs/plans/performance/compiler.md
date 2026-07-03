@@ -27,6 +27,83 @@ For wall-clock checks, run the same build without timing output:
 Use same-session A/B comparisons for optimization work. Whole-pipeline timings
 are noisy enough that a single sample should not justify a change by itself.
 
+## Current baseline: 2026-07-03 (post frontend + link wins)
+
+After the 2026-07-03 session (frontend import/typecheck wins detailed below, plus
+the linker `ns_prefix` hoist). Compiling `boot/main.tw` (234 modules) with the
+bundled CLI. Representative phase timing (single instrumented run; run-to-run
+noise on `lower`/`emit_module` is ±15%):
+
+```text
+compile_modules   ~1960ms   (frontend; still the largest bucket)
+emit_module        ~465 - 560ms
+optimize           ~460ms
+prepare_backend    ~358ms
+verify             ~330ms
+core_link          ~272ms
+link               ~227ms
+emit_wasm_binary   ~207ms
+plan_wasm_types    ~121ms
+lower_anf          ~110ms
+monomorphize        ~74ms
+wasm_dce            ~60ms
+closure_convert     ~22ms
+```
+
+Frontend sub-timing:
+
+```text
+typecheck   ~358ms   (bodies ~252, finalize ~102, setup ~2)
+import_merge ~225ms   (module ~62, selective ~126, prelude ~35)
+lower       ~215 - 288ms
+plan_deps   ~196ms
+resolve     ~157ms
+load_source ~136ms
+parse       ~112ms
+publish      ~67ms
+env_extend   ~52ms
+```
+
+Wall-clock (timing off): **~4.85s**, down from the ~5.06s pre-session baseline.
+
+What moved this session (all self-host- and 2960-test-validated), each a
+"stop doing unnecessary work / defer until needed" change:
+
+- **import_merge ~485 → ~225ms (~54%)** — lazy origin index + skip identity TypeId
+  remaps (below).
+- **typecheck ~425 → ~358ms** — Pass 0 `with_functions`-skip (~52→2ms) + finalize
+  meta-free zonk skip (below).
+- **link ~320 → ~227ms (~29%)** — hoist the O(len²) `ns_prefix` build out of the
+  per-instruction rewrite path (below).
+
+Backend phases (`emit_module`, `optimize`, `prepare_backend`, `verify`) are now
+the largest remaining tier; they transform IR and are more correctness-sensitive,
+so treat them as measure-first rather than obvious wins.
+
+### Linker: hoist `ns_prefix` (landed)
+
+The wasm linker's Phase 4 rewrites every instruction of every function to qualify
+local symbols. `qualify(ns, sym)` recomputed `ns_prefix(ns)` on every renamed
+`Call` / `GlobalGet` / `RefFunc` / type / artifact — and `ns_prefix` is an
+O(len²) char-by-char string build (`out = "${out}${ch}"` per char), so it rebuilt
+the same per-module prefix hundreds of thousands of times. Compute it once per
+module in each phase loop and thread the prefix through
+`qualify` / `rename_func` / `rewrite_instrs`. Identical output, computed once.
+`link` ~320 → ~227ms.
+
+### LSP interactive latency: skip unused occurrence index (landed)
+
+Same "defer until needed" pattern on the interactive path. Every editor snapshot
+(`workspace_snapshot` / `editor_snapshot`) eagerly built the file's occurrence
+index (`build_occurrences_cached`), which walks the whole module AST on a cache
+miss — and that miss happens on every keystroke edit, exactly when completion and
+signature help fire. But hover, completion, and signature help never read
+`snap.occurrences`; only definition, references, document-highlight, rename, and
+semantic-tokens do. Added a `with_occurrences` gate + a `workspace_snapshot_lite`
+path and routed the three occurrence-free requests through it. This is an
+interactive-latency win (not a batch-build metric), so it's not in the phase table
+above; validated by the LSP test suites. Occurrence-needing handlers unchanged.
+
 ## Current baseline: 2026-06-28
 
 Measured on the `scc-module-groups` branch after the SCC frontend landed, using
