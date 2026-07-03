@@ -12,3 +12,6 @@ playground/node_modules/
 playground/dist/
 playground/public/*
 !playground/public/examples/
+
+# LLM agents artifacts
+/.pi-subagents/
