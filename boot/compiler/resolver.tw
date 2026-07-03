@@ -2307,14 +2307,28 @@ fn build_type_origin_index(env: ResolvedEnv) Dict<String, TypeId> {
 fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports) Dict<Int, TypeId> {
   ids: Dict<Int, TypeId> = Dict.new()
   next_id := -1
-  origin_index := env.build_type_origin_index()
+
+  // The inverted origin→TypeId index over the whole env is only consulted when an
+  // exported type is NOT already registered by name but carries an origin. That is
+  // the minority case (re-merged types resolve by name), so build the index lazily
+  // on the first such miss and reuse it — this skips a full rebuild of the env's
+  // entire type_origins map on the many edges that never need it.
+  origin_index_built := false
+  origin_index: Dict<String, TypeId> = Dict.new()
 
   for exported in exports.all_exported_types() {
     target_name := merged_export_type_name(alias, exported.name, exported.origin)
     existing_id: TypeId? = case env.lookup_registered_type(target_name) {
       .Some(existing) => .Some(existing.id),
       .None => case exported.origin {
-        .Some(origin) => origin_index[origin],
+        .Some(origin) => {
+          if !origin_index_built {
+            origin_index = env.build_type_origin_index()
+            origin_index_built = true
+          }
+
+          origin_index[origin]
+        },
         .None => .None,
       },
     }

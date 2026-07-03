@@ -250,6 +250,40 @@ and **finalize (~103ms)**, whose deeper subtree-sharing lever is noted above.
 Recommended next: import-merge representation work (the largest single frontend
 bucket), then the subtree-sharing `zonk_with_meta` rewrite if finalize is revisited.
 
+### Import merge: lazy origin index (landed)
+
+`plan_export_type_ids` runs once per import edge (all 3671 of them) and rebuilt
+`build_type_origin_index` — a full inverted `origin → TypeId` Dict over the env's
+*entire* `type_origins` map — eagerly every time, even though that index is only
+consulted when an exported type is **not** already registered by name but carries
+an origin. That miss case is the minority: re-merged types (especially the 2508
+prelude edges) resolve by name against shared/already-merged state and never touch
+the index. Building it eagerly was ~700k+ throwaway string-keyed inserts.
+
+**Landed**: build the index lazily on the first name-lookup miss and reuse it
+within the call. Provably identical results (the env is not mutated inside
+`plan_export_type_ids`, so a deferred build has the same contents), zero external
+changes. Import merge dropped **~485ms → ~330ms (~32%)**, concentrated in the
+prelude sub-bucket (**~216ms → ~49ms**) since prelude types resolve by name.
+
+Post-change per-kind shape:
+
+```text
+import_merge  ~330ms   (module ~87, selective ~171, prelude ~49)
+```
+
+`selective` (~171ms, 753 edges) is now the largest import sub-bucket. It still
+registers the *full* imported interface before binding only the selected names
+(`merge_selective_via_registration`), so `use module.{a, b}` pays whole-interface
+registration cost. The next import lever is a selective fast path that registers
+only the selected exports plus their support-entry closure — more involved (the
+closure must stay correct for types/methods reachable from the selected names), so
+it is deferred rather than bundled here. A fully-synced reverse `origin → TypeId`
+index field on the env was considered and set aside: `type_origins` has external
+write sites (e.g. `inject_group_member_types`), so keeping a field in sync is
+correctness-risky in this TypeId-dedup-critical path for no gain over the lazy
+build.
+
 ## Previous baseline: 2026-06-25
 
 Measured compiling `boot/main.tw` (222 modules / 3029 functions), self-hosted
