@@ -101,9 +101,7 @@ fn warning_text(warnings: Vector<analyze.AnalysisDiag>) String {
   parts.join("\n")
 }
 
-fn eligible_src() String {
-  "pub fn add(a: Int, b: Int) Int {\n  a + b\n}\n\npub fn is_positive(n: Int) Bool {\n  n > 0\n}\n\npub pi: Float = 3.14159\n"
-}
+eligible_src: String = "pub fn add(a: Int, b: Int) Int {\n  a + b\n}\n\npub fn is_positive(n: Int) Bool {\n  n > 0\n}\n\npub pi: Float = 3.14159\n"
 
 pub fn suite() runner.Suite {
   runner
@@ -111,7 +109,7 @@ pub fn suite() runner.Suite {
     .test(
       "selects primitive pub fn with its param/return kinds",
       fn() {
-        artifacts := try pipeline.compile_source_lib(eligible_src())
+        artifacts := try pipeline.compile_source_lib(eligible_src)
         add := try find_export(artifacts.anf.lib_exports, "add").ok_or("add not exported")
         try assert.equal(is_function_target(add), true)
         try assert.equal(add.wasm_name, "add")
@@ -125,7 +123,7 @@ pub fn suite() runner.Suite {
     .test(
       "Bool return is carried through",
       fn() {
-        artifacts := try pipeline.compile_source_lib(eligible_src())
+        artifacts := try pipeline.compile_source_lib(eligible_src)
         f := try find_export(artifacts.anf.lib_exports, "is_positive").ok_or("missing")
         try assert.equal(lib_type_eq(f.ret, .Bool), true)
         .Ok({})
@@ -134,7 +132,7 @@ pub fn suite() runner.Suite {
     .test(
       "primitive pub value global is exported as a getter",
       fn() {
-        artifacts := try pipeline.compile_source_lib(eligible_src())
+        artifacts := try pipeline.compile_source_lib(eligible_src)
         pi := try find_export(artifacts.anf.lib_exports, "pi").ok_or("pi not exported")
         try assert.equal(is_function_target(pi), false)
         try assert.equal(pi.wasm_name, "__get_pi")
@@ -146,7 +144,7 @@ pub fn suite() runner.Suite {
     .test(
       "String param and return are exported as Str, not skipped",
       fn() {
-        src := "${eligible_src()}\npub fn greet(name: String) String {\n  name\n}\n"
+        src := "${eligible_src}\npub fn greet(name: String) String {\n  name\n}\n"
         artifacts := try pipeline.compile_source_lib(src)
         greet := try find_export(artifacts.anf.lib_exports, "greet").ok_or("greet not exported")
         try assert.equal(is_function_target(greet), true)
@@ -160,7 +158,7 @@ pub fn suite() runner.Suite {
     .test(
       "String pub value global is exported as a Str getter",
       fn() {
-        src := "${eligible_src()}\npub greeting: String = \"hi\"\n"
+        src := "${eligible_src}\npub greeting: String = \"hi\"\n"
         artifacts := try pipeline.compile_source_lib(src)
         g := try find_export(artifacts.anf.lib_exports, "greeting").ok_or("greeting not exported")
         try assert.equal(is_function_target(g), false)
@@ -173,7 +171,7 @@ pub fn suite() runner.Suite {
     .test(
       "fn-typed param is selected with a recursive Fn descriptor",
       fn() {
-        src := "${eligible_src()}\npub fn each(name: String, f: fn(String) Void) Void {\n  f(name)\n}\n"
+        src := "${eligible_src}\npub fn each(name: String, f: fn(String) Void) Void {\n  f(name)\n}\n"
         artifacts := try pipeline.compile_source_lib(src)
         e := try find_export(artifacts.anf.lib_exports, "each").ok_or("each not exported")
         try assert.equal(e.params.len(), 2)
@@ -185,7 +183,7 @@ pub fn suite() runner.Suite {
     .test(
       "value-returning fn-typed param is eligible",
       fn() {
-        src := "${eligible_src()}\npub fn pick(n: Int, p: fn(Int) Bool) Bool {\n  p(n)\n}\n"
+        src := "${eligible_src}\npub fn pick(n: Int, p: fn(Int) Bool) Bool {\n  p(n)\n}\n"
         artifacts := try pipeline.compile_source_lib(src)
         e := try find_export(artifacts.anf.lib_exports, "pick").ok_or("pick not exported")
         try assert.equal(lib_type_eq(e.params[1], .Fn([.Int], .Bool)), true)
@@ -213,7 +211,7 @@ pub fn suite() runner.Suite {
     .test(
       "fn with compound arg is skipped with a warning",
       fn() {
-        src := "${eligible_src()}\npub fn go(f: fn(Vector<Int>) Void) Void {\n  {}\n}\n"
+        src := "${eligible_src}\npub fn go(f: fn(Vector<Int>) Void) Void {\n  {}\n}\n"
         artifacts := try pipeline.compile_source_lib(src)
         try assert.equal(find_export(artifacts.anf.lib_exports, "go").is_some(), false)
         try assert.str_contains(warning_text(artifacts.warnings), "`go`")
@@ -223,7 +221,7 @@ pub fn suite() runner.Suite {
     .test(
       "generic pub fn is skipped with a warning",
       fn() {
-        src := "${eligible_src()}\npub fn identity<T>(x: T) T {\n  x\n}\n"
+        src := "${eligible_src}\npub fn identity<T>(x: T) T {\n  x\n}\n"
         artifacts := try pipeline.compile_source_lib(src)
         try assert.equal(find_export(artifacts.anf.lib_exports, "identity").is_some(), false)
         try assert.str_contains(warning_text(artifacts.warnings), "`identity`")
@@ -233,7 +231,7 @@ pub fn suite() runner.Suite {
     .test(
       "non-pub functions are neither exported nor warned about",
       fn() {
-        src := "${eligible_src()}\nfn secret() Int {\n  42\n}\n"
+        src := "${eligible_src}\nfn secret() Int {\n  42\n}\n"
         artifacts := try pipeline.compile_source_lib(src)
         try assert.equal(find_export(artifacts.anf.lib_exports, "secret").is_some(), false)
         try assert.equal(warning_text(artifacts.warnings).contains("secret"), false)
@@ -282,7 +280,7 @@ pub fn suite() runner.Suite {
     .test(
       "a non-lib compile selects no exports even with pub members",
       fn() {
-        artifacts := try pipeline.compile_source(eligible_src())
+        artifacts := try pipeline.compile_source(eligible_src)
         try assert.equal(artifacts.anf.lib_exports.len(), 0)
         .Ok({})
       },

@@ -184,13 +184,22 @@ i.clamp(0, xs.len())   // or directly
 | `Int.to_float` | `fn(n: Int) Float` | Convert `Int` to `Float` |
 | `Float.to_int` | `fn(f: Float) Int` | Convert integral `Float` to `Int` (traps if not integral) |
 | `Float.bits` | `fn(f: Float) Int` | Return the IEEE 754 bit pattern of the float as an `Int` |
+| `Float.from_bits` | `fn(n: Int) Float` | Reinterpret an IEEE 754 bit pattern as a `Float` |
+| `Float.sqrt` | `fn(f: Float) Float` | Square root, lowered to native `f64.sqrt` |
+| `Float.abs` | `fn(f: Float) Float` | Absolute value, lowered to native `f64.abs` |
+| `Float.floor` | `fn(f: Float) Float` | Round toward -∞, lowered to native `f64.floor` |
+| `Float.ceil` | `fn(f: Float) Float` | Round toward +∞, lowered to native `f64.ceil` |
+| `Float.trunc` | `fn(f: Float) Float` | Round toward zero, lowered to native `f64.trunc` |
+| `Float.min` | `fn(a: Float, b: Float) Float` | Lesser float, lowered to native `f64.min` |
+| `Float.max` | `fn(a: Float, b: Float) Float` | Greater float, lowered to native `f64.max` |
+| `Float.round` | `fn(f: Float) Float` | Round to nearest integer with halves toward +∞, matching JS `Math.round` |
 | `String.from_char_code` | `fn(n: Int) Option<String>` | Single-char string from integer code (ASCII range) |
 | `String.from_byte` | `fn(b: Byte) Option<String>` | Single-char string from byte value (ASCII range) |
 | `String.from_code_point` | `fn(n: Int) Option<String>` | String from Unicode code point (full range) |
 
 Conversion functions can be used as first-class function references (e.g. `nums.map(Int.to_string)`). The dot-call form `.to_string()` also works on values directly.
 
-`Float.bits` is a low-level operation mainly useful for binary encoding, hashing, and other bit-exact work.
+`Float.bits` and `Float.from_bits` are low-level operations mainly useful for binary encoding, hashing, and other bit-exact work.
 
 ## Byte
 
