@@ -2334,7 +2334,13 @@ fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports)
     }
 
     case existing_id {
-      .Some(eid) => ids[exported.entry.id.id] = eid,
+      // Omit identity mappings: globally-unique TypeIds mean an already-registered
+      // export usually resolves to its own id, and every consumer treats a missing
+      // entry as "keep the original id". Recording only genuine remaps keeps the
+      // map empty in the common case, so remap_* can skip the sig/def tree walk.
+      .Some(eid) => if eid.id != exported.entry.id.id {
+        ids[exported.entry.id.id] = eid
+      },
       .None => {
         if next_id < 0 {
           next_id = env.next_available_type_id()
@@ -2468,6 +2474,16 @@ fn remap_type_entry(entry: TypeEntry, new_name: String, type_ids: Dict<Int, Type
 }
 
 fn remap_type_def(def: ResolvedTypeDef, new_name: String, type_ids: Dict<Int, TypeId>) ResolvedTypeDef {
+  // No genuine TypeId remaps: field/variant/target types are unchanged, only the
+  // def's name differs. Rename without walking and reallocating the field types.
+  if type_ids.len() == 0 {
+    return case def {
+      .Record(_, type_params, fields) => .Record(new_name, type_params, fields),
+      .Sum(_, type_params, variants) => .Sum(new_name, type_params, variants),
+      .Alias(_, type_params, target) => .Alias(new_name, type_params, target),
+    }
+  }
+
   case def {
     .Record(_, type_params, fields) => {
       remapped_fields := collect field in fields {
@@ -2493,6 +2509,14 @@ fn remap_type_def(def: ResolvedTypeDef, new_name: String, type_ids: Dict<Int, Ty
 }
 
 fn remap_function_sig(sig: FunctionSig, new_name: String, type_ids: Dict<Int, TypeId>) FunctionSig {
+  // No genuine TypeId remaps (the common case with globally-unique ids): the
+  // params/ret are unchanged, only the qualified name differs. Skip the sig tree
+  // walk and its allocations entirely.
+  if type_ids.len() == 0 {
+    sig.name = new_name
+    return sig
+  }
+
   params := collect ty in sig.params {
     remap_mono_type(ty, type_ids)
   }

@@ -272,17 +272,41 @@ Post-change per-kind shape:
 import_merge  ~330ms   (module ~87, selective ~171, prelude ~49)
 ```
 
-`selective` (~171ms, 753 edges) is now the largest import sub-bucket. It still
+`selective` (~171ms, 753 edges) was then the largest import sub-bucket. It
 registers the *full* imported interface before binding only the selected names
 (`merge_selective_via_registration`), so `use module.{a, b}` pays whole-interface
-registration cost. The next import lever is a selective fast path that registers
-only the selected exports plus their support-entry closure — more involved (the
-closure must stay correct for types/methods reachable from the selected names), so
-it is deferred rather than bundled here. A fully-synced reverse `origin → TypeId`
-index field on the env was considered and set aside: `type_origins` has external
-write sites (e.g. `inject_group_member_types`), so keeping a field in sync is
-correctness-risky in this TypeId-dedup-critical path for no gain over the lazy
-build.
+registration cost — a probe measured **753 selective edges selecting 1732 items
+but registering ~85k entries (~49×)**, dominated by ~30.8k support functions and
+~48.8k types.
+
+The obvious follow-up — a per-selected-item support closure — turned out **not**
+to be a clean win: the exporter's `support_functions` are, by construction
+(`extract_exports_for_module`'s method fixpoint), exactly the method-functions of
+support types, all genuinely needed for method resolution on inferred values. So a
+selective fast path would have to re-run that fixpoint per edge at import time
+(complex, correctness-critical for method resolution, and self-offsetting in cost).
+Deferred; would be cleaner as an exporter-side per-visible-export closure.
+
+### Import merge: skip identity TypeId remaps (landed)
+
+The probe instead surfaced a safe, broadly-applicable lever. Because TypeIds are
+globally unique across modules, `plan_export_type_ids` almost always maps an
+exported type's id **to itself**, yet `remap_function_sig` / `remap_type_def` still
+walked and reallocated every signature and type definition to apply those no-op
+remaps — on every registered function and type across all three merge kinds.
+
+**Landed** (transparent — every consumer already treats a missing `type_ids` entry
+as "keep the original id"): omit identity mappings in `plan_export_type_ids`, and
+short-circuit `remap_function_sig` / `remap_type_def` when `type_ids` is empty
+(set the name, skip the tree walk). Import merge dropped **~330ms → ~226ms**,
+across all kinds: selective ~171→~126ms, module ~87→~62ms, prelude ~49→~35ms.
+Cumulative with the lazy origin index, import merge fell **~485ms → ~226ms (~53%)**
+over the session.
+
+A fully-synced reverse `origin → TypeId` index field on the env was considered and
+set aside: `type_origins` has external write sites (e.g. `inject_group_member_types`),
+so keeping a field in sync is correctness-risky in this TypeId-dedup-critical path
+for no gain over the lazy build.
 
 ## Previous baseline: 2026-06-25
 
