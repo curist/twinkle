@@ -281,7 +281,7 @@ These should be visible in backend IR/planning, not hidden ad hoc in emitters.
 
 ## Implementation phases
 
-> **Progress (2026-06-11, branch `native-typed-value-sort`).** The `Vector<Int>`
+> **Progress (landed on `main`; last re-measured 2026-07-04).** The `Vector<Int>`
 > track is well underway; per-phase status is tagged on each header below.
 > Landed: typed `PVecI64` family + intra-function routing (S1/S2.0, see
 > [typed-vector-spike.md](typed-vector-spike.md)), boxed-boundary adapters for
@@ -291,6 +291,45 @@ These should be visible in backend IR/planning, not hidden ad hoc in emitters.
 > realizes the Phase-2 dense working set. **Open next:** typed combinators
 > (Phase 5) and variant-payload routing (a Phase-6 boundary) — the latter is the
 > dataframe `order_by` unlock, since columns are `IntCol(Vector<Int>)`.
+
+### Implementation map (where the landed routing lives)
+
+Routing runs **after** boundary insertion + repr assignment
+(`boot/compiler/backend/prepare.tw` calls `route_typed_vectors` last), so the
+pass must reproduce how the boxed builder is already represented — that is where
+the subtlety is (see the "three fixes" gotchas in
+[typed-vector-spike.md](typed-vector-spike.md)).
+
+- `boot/compiler/backend/route_typed_vec.tw` — **the pass.** Per function: find a
+  `collect`-built `Vector<Int>` (`v = builder_freeze(b)`), escape-analyze `v`
+  (only `xs[i]`/`len` allowed), trace the builder lineage backward through
+  `AInit` copies, then swap `builder_new/push/freeze`/`len` → `_i64`, retype
+  `v`'s slot to `PVecI64`, and re-erase the builder-lineage slots to
+  `OpaqueAnyref`/anyref. Also hosts `analyze_typed_fields` (S2.2): whole-program
+  record-field inference — a `Vector<Int>` field is typed only if every producer
+  is typed-routable and every consumer reads it via index/len.
+- `boot/compiler/codegen/runtime/{types,arr}.tw` — the `PVecI64` family (S1) and
+  the `box_i64` boxed-boundary adapter (S2.1); `codegen/emit/coercions.tw` emits
+  the `box_i64` coercion.
+- `boot/compiler/builtins.tw` — the `_i64` builtins (abi + `rt`, `.None`
+  canonical).
+- `boot/compiler/codegen/emit/arrays.tw` — `xs[i]` routes to `get_i64` when the
+  base wasm type is `PVecI64` (`is_pvec_i64`).
+- `boot/compiler/codegen/emit/{runtime_abi,calls}.tw` — the `_i64` builder ops
+  skip mono-driven result adaption and get the `anyref→Array` builder-arg cast;
+  direct-call args coerce to callee param slot types so `PVecI64` boxes to `PVec`
+  at user-function boundaries (S2.1).
+- `boot/compiler/backend/verify_slots.tw` — verifier accepts a `PVecI64` wasm
+  type for a `Vector<Int>` slot (`is_typed_vec_i64`);
+  `backend/verify_expr.tw` rejects a `PVecI64`-value-into-`PVec`-field mismatch
+  (S2.2 `pvec_repr_mismatch`).
+
+**Open design question for the next increment.** The pass runs *after* boundary
+insertion, so it pays an "erasure-mimicry tax" (typed slots must re-reproduce the
+boxed builder's slot erasure). S2.0 chose "after" and made it work; running the
+pass *before* boundary insertion would give cleaner typing but re-does the pass
+on a different IR. This choice is worth resolving before the variant-payload /
+cross-function coercion work, since that is where boundary coercions multiply.
 
 ### Phase 1 — Measure boxed vector read cost directly — ✅ done
 

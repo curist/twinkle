@@ -10,17 +10,21 @@ It is a dedicated subfolder because this is a major, still-open problem. Several
 distinct approaches have been tried and measured; most isolated wins are small,
 and the real lever is structural. Keep new plans, probes, and results here.
 
-> **Picking up / reviewing the typed-vector work?** Start at
-> **[HANDOFF.md](HANDOFF.md)** — current state (S1 + S2.0 + S2.1 + S2.2 landed and
-> working on branch `native-typed-value-sort`), commit trail, verify commands, and
-> what's next.
+> **Picking up the typed-vector work?** S1 + S2.0 + S2.1 + S2.2 are **landed on
+> `main`** and verified working (2026-07-04 re-measure: `typed_vec_read_probe`
+> ~70ms typed vs ~590ms boxed, ~8×; S2.2 record-field routing confirmed via the
+> positive/negative probes). The live plan is
+> **[typed-vector-representation.md](typed-vector-representation.md)** — it holds
+> the per-phase status, the implementation map (where the routing code lives), and
+> the open "route before vs after boundary insertion" design question.
 
-> **Landed since (2026-06-11): S2.2 — typed `Vector<Int>` record fields.** A
-> `Vector<Int>` stored in a record field now keeps `PVecI64` storage under
-> conservative whole-program inference, with a store-side verifier check. Design +
-> implementation plan archived as completed (see **Archived** below). **Next
-> increment:** variant-payload routing — dataframe columns are
-> `IntCol(Vector<Int>)`, so that boundary is the actual `order_by` unlock.
+> **Landed: S2.2 — typed `Vector<Int>` record fields.** A `Vector<Int>` stored in
+> a record field keeps `PVecI64` storage under conservative whole-program
+> inference, with a store-side verifier check. Design + implementation plan
+> archived as completed (see **Archived** below). **Next increment:**
+> variant-payload routing — dataframe columns are `IntCol(Vector<Int>)`, so that
+> boundary is the actual `order_by` unlock (still boxed today: 2026-07-04
+> `order_by` full path ~2327ms at N=1M).
 
 ## Current understanding (2026-06-10)
 
