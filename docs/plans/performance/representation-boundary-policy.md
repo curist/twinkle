@@ -163,9 +163,15 @@ backend facts, verifier catches mismatches").
 
 ## Staging
 
-### Milestone 1 — First-class family + typed aggregate layout (Approach C core)
+Milestone 1 is the structural win (Approach C core), split so the lower-risk
+mechanism lands and is measurable before the closure-env subsystem. Both keep the
+coercion as a principled post-pass.
 
-The structural win, keeping the coercion as a principled post-pass.
+#### Milestone 1a — First-class family + typed variant/record payloads
+
+The general mechanism, without touching closures. Delivers the direct-read parts
+of the workload (column extraction, `gather`, `take`) and de-risks everything
+`1b` depends on.
 
 - **Break the layout/repr cycle first.** Extract `repr_of_mono` /
   `TypedVec`-classification into a shared module below both `repr_assign` and
@@ -178,22 +184,34 @@ The structural win, keeping the coercion as a principled post-pass.
   helpers from the slot repr (`codegen/emit/arrays.tw`, `runtime_abi.tw`,
   `builtins.tw`) — the job `route_typed_vec` used to do by rewriting calls. Without
   this, typed slots feed boxed helpers and produce mismatches or forced
-  erase/retype churn. This is a required M1 task, not a follow-on.
+  erase/retype churn.
 - `wasm_layout` derives record / variant field wasm-types from element repr → those
   payloads physically hold `PVecI64`.
-- **Typed closure-env layouts** keyed by capture reprs, threaded from
-  `closure_convert` (§1) — the largest and highest-risk M1 piece, required for the
-  comparator-capture read path.
 - Replace `route_typed_vec`'s conservative eligibility with a **repr-diff-driven**
   coercion inserter: every `Vector<Int>` is typed by default, and coercions appear
   only where a typed vector meets a universal-ABI position. Needs **both**
   adapters — `box_i64` (`PVecI64 → PVec`) and the new `unbox_i64` (`PVec →
-  PVecI64`) for results returning from universal helpers.
+  PVecI64`) for results returning from universal helpers. Closure captures are
+  *not* yet typed, so a typed vector entering a closure env erases here (one
+  coercion) — a correctness path, not the hot path, until `1b`.
 - Generalize the verifier to the coercion model (reject raw casts across reprs).
-- **Gate:** `order_by` drops toward the ~1500ms ceiling; `typed_variant_column_probe`
-  ratio is realized end-to-end; add a variant-payload *and* a closure-capture
-  positive/negative probe pair (mirroring the record-field probes); self-host
-  reaches fixed point and the boot suite is green.
+- **Gate:** `typed_variant_column_probe` is realized end-to-end (the probe extracts
+  the column and reads it directly, so it does not depend on `1b`); add a
+  variant-payload positive/negative probe pair; the `order_by` `gather`/`take`
+  portions improve while the `sort` portion is unchanged (still gated on `1b`);
+  self-host reaches fixed point and the boot suite is green.
+
+#### Milestone 1b — Typed closure-env layouts
+
+The comparator-capture path, and the largest/highest-risk piece.
+
+- Add per-closure env layouts **keyed by capture reprs** (not by
+  `MonoType.Function`), threaded from `closure_convert` where the free variables
+  and their reprs are known (§1); type each capture read/write site accordingly.
+- Prove it on a standalone closure-capture probe (positive/negative) before wiring
+  through the `sort_by` comparator path.
+- **Gate:** the closure-capture probe is typed; `order_by`'s `sort` drops toward
+  ~540ms and the full path toward the ~1500ms ceiling; self-host + boot suite green.
 
 ### Milestone 2 — Repr-aware boundary insertion; retire the bolt-on (Approach A)
 
@@ -223,13 +241,13 @@ is the gate; no stage0 changes.
 
 ## Risks and open questions
 
-- **Typed closure-env layouts are the riskiest piece.** Keying an env type by
-  capture reprs (not function signature) touches `closure_convert`, the env
-  struct/type generation, and every capture read/write site. It is also on the
-  dataframe critical path, so M1 is not "done" for the headline metric until it
-  lands. Consider proving it on a standalone closure-capture probe before wiring
-  it through the comparator path.
-- **Coercion completeness, both directions.** Milestone 1's post-pass must insert a
+- **Typed closure-env layouts (Milestone 1b) are the riskiest piece.** Keying an
+  env type by capture reprs (not function signature) touches `closure_convert`, the
+  env struct/type generation, and every capture read/write site. It is on the
+  dataframe critical path — the headline `order_by` `sort` win is not delivered
+  until `1b` lands — which is why it is split out behind the lower-risk `1a`
+  mechanism and gated on a standalone closure-capture probe first.
+- **Coercion completeness, both directions.** Milestone 1a's post-pass must insert a
   coercion at *every* typed-vs-erased crossing — including re-typing boxed `PVec`
   results returning from universal helpers via the new `unbox_i64` adapter — or the
   verifier will reject (or, worse, a raw cast traps). The verifier generalization is
