@@ -1,5 +1,21 @@
 # Backend `anyref` Elimination Plan
 
+## Status
+
+Active — this is the architecture-parent doc for the performance track's
+"typed containers / `anyref` elimination" priority (see
+[compiled-programs.md](compiled-programs.md) §1). Its stabilization
+prerequisites have landed and self-hosting is complete, so the plan is now the
+live umbrella rather than a "later" aspiration. **Concrete progress** so far is
+the typed `Vector<Int>` family in
+[vector/typed-vector-representation.md](vector/typed-vector-representation.md)
+(S1–S2.2 landed: typed `PVecI64` storage through non-escaping locals, direct
+return/arg boundaries, and record fields). **The open gate is this plan's own
+Phase 1 — declaring the representation-boundary policy** (erase-at-boundary vs
+specialize-by-representation vs adapter-shim); every landed increment has so far
+sidestepped that decision with conservative per-boundary routing, which is why
+broader boundaries (variant payloads, cross-function typed ABIs) are still open.
+
 ## Goal
 
 Eliminate non-essential `anyref` from the Twinkle Wasm backend.
@@ -7,18 +23,21 @@ Eliminate non-essential `anyref` from the Twinkle Wasm backend.
 ## Plan Role
 
 This is the longer-term architecture plan for reducing and eventually removing
-most erased backend/runtime boundaries.
+most erased backend/runtime boundaries. It owns the repository-level target for
+where `anyref` should remain and where it should be eliminated; the
+performance-track subplans deliver concrete families under it.
 
-It should not be the first response to current self-hosted validation failures.
-For the active cleanup sequence:
+The stabilization work this plan once sequenced behind has landed (both docs now
+archived):
 
-1. [boot-selfhosted-wasm-repr-parity.md](boot-selfhosted-wasm-repr-parity.md)
-   tracks the current self-hosting representation blockers
-2. [boot-backend-physical-typing.md](boot-backend-physical-typing.md)
-   stabilizes the current backend by making erased-boundary adaptation explicit
-   and verifiable
+1. [../archive/boot-selfhosted-wasm-repr-parity.md](../archive/boot-selfhosted-wasm-repr-parity.md)
+   — the self-hosting representation blockers (resolved; self-hosting complete).
+2. [../archive/boot-backend-physical-typing.md](../archive/boot-backend-physical-typing.md)
+   — made erased-boundary adaptation explicit and verifiable (done for its
+   stabilization scope).
 3. this plan then shrinks or removes those erased surfaces by introducing typed
-   helper/container families and a stricter representation policy
+   helper/container families and a stricter representation policy — now the
+   active work, led by the typed `Vector<T>` family.
 
 For concrete monomorphized programs, the backend should prefer concrete Wasm
 layouts, concrete helper families, and concrete container families throughout.
@@ -182,10 +201,16 @@ Boot has the right conceptual split in progress:
 * centralized layout planning
 * a stated goal of eliminating backend-internal erased fallback
 
-But the currently checked-in design still keeps some universal/container-level
-`anyref`:
+The first specialized container family has since landed: `Vector<Int>` routes to
+a typed `PVecI64` layout (direct `i64` element slots, typed builder/get/len) for
+conservatively-recognized non-escaping locals, direct return/arg boundaries, and
+record fields (see
+[vector/typed-vector-representation.md](vector/typed-vector-representation.md)).
+This is a proof of Workstream B, not its completion — most containers are still
+erased:
 
-* shared `Vector` / `Dict` container refs
+* shared `Vector` / `Dict` container refs for every case the typed routing does
+  not yet cover (variant payloads, closures, combinators, cross-function ABIs)
 * `WAnyref` layouts in some places
 * runtime ABI assumptions that still expose `anyref` element/key/value slots
 
@@ -221,8 +246,11 @@ Examples:
 The persistent container plans become subplans of this workstream, not the full
 story by themselves:
 
-* [persistent-vector.md](persistent-vector.md)
-* [persistent-dict.md](persistent-dict.md)
+* [vector/typed-vector-representation.md](vector/typed-vector-representation.md)
+  — the in-flight `Vector<Int>` family (S1–S2.2 landed); the concrete lead for
+  this workstream
+* [../archive/persistent-vector.md](../archive/persistent-vector.md)
+* [../archive/persistent-dict.md](../archive/persistent-dict.md)
 
 ### Workstream C: Typed Helper Families
 
@@ -338,9 +366,13 @@ This plan is successful when all of the following are true:
 
 ## Related Docs
 
-* [archive/self-hosting.md](archive/self-hosting.md)
-* [boot-codegen.md](boot-codegen.md)
-* [persistent-vector.md](persistent-vector.md)
-* [persistent-dict.md](persistent-dict.md)
-* [archive/wasm-type-erasure-reduction.md](archive/wasm-type-erasure-reduction.md)
-* [../internals/monomorphization.md](../internals/monomorphization.md)
+* [compiled-programs.md](compiled-programs.md) — the performance umbrella that
+  owns this plan
+* [vector/typed-vector-representation.md](vector/typed-vector-representation.md)
+  — the concrete typed-`Vector<T>` family in flight
+* [../archive/self-hosting.md](../archive/self-hosting.md)
+* [../archive/boot-codegen.md](../archive/boot-codegen.md)
+* [../archive/persistent-vector.md](../archive/persistent-vector.md)
+* [../archive/persistent-dict.md](../archive/persistent-dict.md)
+* [../archive/wasm-type-erasure-reduction.md](../archive/wasm-type-erasure-reduction.md)
+* [../../internals/monomorphization.md](../../internals/monomorphization.md)

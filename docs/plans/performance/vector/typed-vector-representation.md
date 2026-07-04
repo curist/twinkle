@@ -4,6 +4,8 @@
 
 **Thesis:** The compiler should use monomorphization information to choose more precise physical vector representations for common element types, starting with `Vector<Int>`, while preserving the source-level `Vector<T>` abstraction.
 
+**Architecture parent:** [../backend-anyref-elimination.md](../backend-anyref-elimination.md) — this plan delivers the `Vector<Int>` container family of that broader "make `anyref` exceptional" effort; the representation-boundary policy it defines governs how far this routing can safely extend.
+
 **Related plan:** [wasm-native-sort.md](wasm-native-sort.md) attacks the immediate `order_by` hotspot by sorting over dense runtime working sets. This plan is the broader representation fix: make typed vector access faster everywhere so idiomatic numeric collection code has better baseline performance.
 
 ---

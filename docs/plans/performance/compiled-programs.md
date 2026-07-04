@@ -27,13 +27,18 @@ monomorphized code.
 
 Lead docs:
 
+- [backend-anyref-elimination.md](backend-anyref-elimination.md) — the
+  architecture-parent plan for this priority (typed container/helper families,
+  representation-boundary policy)
 - [vector/typed-vector-representation.md](vector/typed-vector-representation.md)
-- [../backend-anyref-elimination.md](../backend-anyref-elimination.md)
+  — the concrete `Vector<Int>` family delivering the first piece of it
 
 `Vector<Int>` typed storage is the current master lever for numeric/dataframe
 workloads. The immediate runtime unlock is carrying typed vector representation
 through realistic boundaries, especially variant payloads used by dataframe
-columns.
+columns. The broader target — making `anyref` exceptional rather than the
+default backend representation — is owned by the architecture-parent plan above,
+whose Phase 1 (declare the representation-boundary policy) is the current gate.
 
 ### 2. Vector reads, `sort_by`, and dataframe `order_by`
 

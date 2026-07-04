@@ -22,7 +22,10 @@ scattered across `docs/plans/`.
 
 1. **Typed container representation.** Continue moving hot monomorphic containers
    away from erased `anyref` storage and universal helper APIs. The current lead
-   is `Vector<Int>` through the boundaries that real programs use.
+   is `Vector<Int>` through the boundaries that real programs use. The
+   architecture-parent plan is
+   [backend-anyref-elimination.md](backend-anyref-elimination.md); the concrete
+   `Vector<Int>` family lives in [vector/](vector/README.md).
 2. **Vector/read/order-by path.** Dataframe `order_by` and generic key-index
    `sort_by` are still dominated by random boxed vector reads. The vector folder
    tracks the active probes and rejected approaches.
