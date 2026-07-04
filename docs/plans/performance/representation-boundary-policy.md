@@ -173,7 +173,8 @@ backend facts, verifier catches mismatches").
 
 Milestone 1 is the structural win (Approach C core), split so the lower-risk
 mechanism lands and is measurable before the closure-env subsystem. Both keep the
-coercion as a principled post-pass.
+coercion as a principled post-pass. **M1a has a task-level implementation plan:**
+[representation-boundary-m1a-plan.md](representation-boundary-m1a-plan.md).
 
 #### Milestone 1a — First-class family + typed variant/record payloads
 
