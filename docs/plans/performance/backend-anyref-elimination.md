@@ -10,11 +10,14 @@ live umbrella rather than a "later" aspiration. **Concrete progress** so far is
 the typed `Vector<Int>` family in
 [vector/typed-vector-representation.md](vector/typed-vector-representation.md)
 (S1–S2.2 landed: typed `PVecI64` storage through non-escaping locals, direct
-return/arg boundaries, and record fields). **The open gate is this plan's own
-Phase 1 — declaring the representation-boundary policy** (erase-at-boundary vs
-specialize-by-representation vs adapter-shim); every landed increment has so far
-sidestepped that decision with conservative per-boundary routing, which is why
-broader boundaries (variant payloads, cross-function typed ABIs) are still open.
+return/arg boundaries, and record fields). Phase 1 — declaring the
+representation-boundary policy — is now **designed** in
+[representation-boundary-policy.md](representation-boundary-policy.md): after full
+monomorphization representation is a pure function of the concrete type, so it is
+made first-class (typed families in `ReprKind`, aggregate layout derived from
+element repr) and coercions fall only at the irreducible universal-ABI points.
+That design retires the conservative per-boundary bolt-on and unblocks the open
+boundaries (variant payloads, closures, cross-function typed ABIs).
 
 ## Goal
 

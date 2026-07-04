@@ -1,0 +1,65 @@
+use @std.date
+
+// Typed variant-payload ceiling probe (representation-boundary policy brainstorm).
+//
+// Models the dataframe `order_by` read wall: a column is a `Vector<Int>` held
+// inside a variant (`IntCol(Vector<Int>)`), then read in a hot random-index
+// loop the way a key-index sort comparator reads `keys[a]`.
+//
+//   target/twk run examples/performance/sort-bench/typed_variant_column_probe.tw
+//
+// - variant_read: column extracted from the variant, read via xs[idx]. The
+//   vector escaped into a variant payload, so it stays the boxed anyref PVec
+//   (current behaviour — this is why dataframe order_by is still boxed).
+// - typed_read:   the same values as a bare non-escaping local, so
+//   route_typed_vectors stores it as PVecI64 (raw i64 leaves). This is what a
+//   typed variant payload WOULD achieve.
+//
+// The variant_read / typed_read ratio is the ceiling that making variant
+// payloads carry the typed representation would recover on the read path.
+
+type Col = { IntCol(Vector<Int>) }
+
+fn make_col(n: Int) Col {
+  xs := collect i in range(n) {
+    i
+  }
+  .IntCol(xs)
+}
+
+fn variant_read(c: Col, n: Int, m: Int) Int {
+  xs := case c {
+    .IntCol(v) => v
+  }
+  acc := 0
+  for k in range(m) {
+    idx := k * 2654435761 % n
+    acc = acc + xs[idx]
+  }
+  acc
+}
+
+fn typed_read(n: Int, m: Int) Int {
+  xs := collect i in range(n) {
+    i
+  }
+  acc := 0
+  for k in range(m) {
+    idx := k * 2654435761 % n
+    acc = acc + xs[idx]
+  }
+  acc
+}
+
+n := 1000000
+m := 10000000
+col := make_col(n)
+println("match=${variant_read(col, n, m) == typed_read(n, m)}")
+for r in range(3) {
+  t0 := date.now()
+  b := variant_read(col, n, m)
+  println("run${r} variant(boxed) ${date.now() - t0}ms (${b})")
+  t1 := date.now()
+  t := typed_read(n, m)
+  println("run${r} typed         ${date.now() - t1}ms (${t})")
+}

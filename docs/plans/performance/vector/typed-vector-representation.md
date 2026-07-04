@@ -326,12 +326,14 @@ the subtlety is (see the "three fixes" gotchas in
   `backend/verify_expr.tw` rejects a `PVecI64`-value-into-`PVec`-field mismatch
   (S2.2 `pvec_repr_mismatch`).
 
-**Open design question for the next increment.** The pass runs *after* boundary
-insertion, so it pays an "erasure-mimicry tax" (typed slots must re-reproduce the
-boxed builder's slot erasure). S2.0 chose "after" and made it work; running the
-pass *before* boundary insertion would give cleaner typing but re-does the pass
-on a different IR. This choice is worth resolving before the variant-payload /
-cross-function coercion work, since that is where boundary coercions multiply.
+**Design question resolved.** The pass runs *after* boundary insertion, so it
+pays an "erasure-mimicry tax" (typed slots must re-reproduce the boxed builder's
+slot erasure). The route-before-vs-after question is settled in
+[../representation-boundary-policy.md](../representation-boundary-policy.md):
+representation is a pure function of the monomorphized type and is made
+first-class, and Milestone 2 moves the decision into `insert_boundaries` and
+retires this post-pass. Milestone 1 keeps the coercion as a principled
+(repr-diff-driven) post-pass while the family + aggregate-layout work lands.
 
 ### Phase 1 — Measure boxed vector read cost directly — ✅ done
 
