@@ -158,6 +158,7 @@ pub fn module() WasmModule {
     builder_push_i64_fn(),
     family_i64().pvec_builder_freeze_fn(),
     box_i64_fn(),
+    unbox_i64_fn(),
     vec_i64_roundtrip_fn(),
     family_boxed().pvec_builder_new_fn(),
     builder_from_fn(),
@@ -1979,6 +1980,59 @@ fn box_i64_fn() FuncDef {
       ),
       .LocalGet(3),
       .Call("builder_freeze"),
+    ],
+  }
+}
+
+// unbox_i64(vec: PVec?) -> PVecI64
+// Reverse of box_i64: rebuild a typed PVecI64 from a boxed PVec. Reads the boxed
+// vector element-by-element and pushes each BoxedInt straight into the typed
+// builder (builder_push_i64 unboxes it internally), so a boxed Vector<Int>
+// result coming back from a universal helper can re-enter typed code. One-time
+// build cost, not the hot read path.
+fn unbox_i64_fn() FuncDef {
+  // p0=vec (boxed PVec); L1=n, L2=i, L3=typed builder (boxed Array handle)
+  .{
+    name: "unbox_i64",
+    params: [pvec_null()],
+    results: [pvec_i64_null()],
+    locals: [.I32, .I32, arr_null()],
+    body: [
+      .LocalGet(0),
+      .Call("len"),
+      .LocalSet(1),
+      .I32Const(0),
+      .LocalSet(2),
+      .Call("builder_new_i64"),
+      .LocalSet(3),
+      .Block(
+        "brk",
+        .None,
+        [
+          .Loop(
+            "lp",
+            .None,
+            [
+              .LocalGet(2),
+              .LocalGet(1),
+              .I32GeS,
+              .BrIf("brk"),
+              .LocalGet(3),
+              .LocalGet(0),
+              .LocalGet(2),
+              .Call("get"),
+              .Call("builder_push_i64"),
+              .LocalGet(2),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(2),
+              .Br("lp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(3),
+      .Call("builder_freeze_i64"),
     ],
   }
 }
