@@ -116,8 +116,9 @@ full path, generalizing to every primitive vector in real code.
   (`wasm_layout.tw`), so the function signature alone cannot describe a typed env —
   two closures with the same signature can capture different reprs. Typed captures
   therefore require a distinct env layout **keyed by the ordered capture reprs**
-  (or per-closure-site), threaded from `closure_convert` where the free variables
-  and their reprs are known. This is the largest piece of §1 and is on the
+  (or per-closure-site), threaded from `closure_convert` — which records each
+  capture's monotype, from which the repr is derived via the shared `repr_policy`.
+  This is the largest piece of §1 and is on the
   dataframe critical path: the `sort_by` comparator captures the key column, so
   without a typed env its `keys[a]` reads stay boxed even after variant payloads
   are typed.
@@ -169,9 +170,13 @@ coercion as a principled post-pass.
 
 #### Milestone 1a — First-class family + typed variant/record payloads
 
-The general mechanism, without touching closures. Delivers the direct-read parts
-of the workload (column extraction, `gather`, `take`) and de-risks everything
-`1b` depends on.
+The general mechanism, without touching closures. Types direct index reads of
+variant/record-held columns and `collect`+index bodies (e.g. `gather_or_null`),
+and de-risks everything `1b` depends on. It does **not** improve the native
+combinator paths: `v.gather(idx)` / `Vector.sort` are universal runtime helpers
+(no typed family member until Milestone 3), so a typed column is boxed to call
+them and unboxed on return — the `order_by` `gather`/`take` phases will not
+improve here and must not *regress* materially from that round-trip.
 
 - **Break the layout/repr cycle first.** Extract `repr_of_mono` /
   `TypedVec`-classification into a shared module below both `repr_assign` and
@@ -195,19 +200,22 @@ of the workload (column extraction, `gather`, `take`) and de-risks everything
   *not* yet typed, so a typed vector entering a closure env erases here (one
   coercion) — a correctness path, not the hot path, until `1b`.
 - Generalize the verifier to the coercion model (reject raw casts across reprs).
-- **Gate:** `typed_variant_column_probe` is realized end-to-end (the probe extracts
-  the column and reads it directly, so it does not depend on `1b`); add a
-  variant-payload positive/negative probe pair; the `order_by` `gather`/`take`
-  portions improve while the `sort` portion is unchanged (still gated on `1b`);
-  self-host reaches fixed point and the boot suite is green.
+- **Gate (direct reads + no regression, not the `order_by` headline):**
+  `typed_variant_column_probe` is realized end-to-end (it extracts the column and
+  reads it directly in a non-closure loop, so it does not depend on `1b` or on
+  typed `gather`); add a variant-payload positive/negative probe pair; the
+  `order_by` `gather`/`take`/`sort` phases show **no material regression** from the
+  new boundary coercions (they do not improve yet — `gather` needs Milestone 3,
+  `sort` needs `1b`); self-host reaches fixed point and the boot suite is green.
 
 #### Milestone 1b — Typed closure-env layouts
 
 The comparator-capture path, and the largest/highest-risk piece.
 
 - Add per-closure env layouts **keyed by capture reprs** (not by
-  `MonoType.Function`), threaded from `closure_convert` where the free variables
-  and their reprs are known (§1); type each capture read/write site accordingly.
+  `MonoType.Function`), threaded from `closure_convert` — which records each
+  capture's *monotype*; derive its repr via the shared `repr_policy` (§1) — and
+  type each capture read/write site accordingly.
 - Prove it on a standalone closure-capture probe (positive/negative) before wiring
   through the `sort_by` comparator path.
 - **Gate:** the closure-capture probe is typed; `order_by`'s `sort` drops toward
@@ -281,4 +289,7 @@ is the gate; no stage0 changes.
 - **Reuses the metadata-threading *pattern*** — not the container design — from
   stage0's [../archive/vector-backend-repr-inference.md](../archive/vector-backend-repr-inference.md),
   which built repr scaffolding (`ValueRepr`/`SumRepr`) and a sort scratch buffer
-  but never a typed persistent vector container.
+  but never a typed persistent vector container. That doc's "typed container flip"
+  landed-scope line refers to the typed `rt.arr` helper surface, not Level-2 leaf
+  storage; this doc corrects that status per a 2026-07-04 source audit (a
+  correction note is now on the archived doc).

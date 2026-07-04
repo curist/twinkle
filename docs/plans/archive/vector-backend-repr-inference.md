@@ -6,6 +6,16 @@ Last updated: 2026-03-29
 
 Completed on 2026-03-29.
 
+> **Correction (2026-07-04, current-source audit).** The "typed container/ref
+> family" below refers to the typed `rt.arr` *helper/ABI surface*, **not** typed
+> leaf storage. Stage0's persistent `Vector<Int>` is still the universal `anyref`
+> PVec — its leaves are `$Array = (array (mut anyref))`, `ValueRepr` has no
+> typed-vector variant, and the only typed `ArrayI64` is the native value-sort
+> scratch buffer. So stage0 reached Level 1 (dense working set in a kernel), not
+> Level 2 (typed persistent container). See
+> [../performance/representation-boundary-policy.md](../performance/representation-boundary-policy.md),
+> which does the Level-2 work in boot.
+
 Landed scope:
 
 - separate backend vector physical-repr tracking from semantic `MonoType`
