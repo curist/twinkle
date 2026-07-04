@@ -21,9 +21,17 @@ pub fn emit_coerce_stack(
 
   case from {
     .Ref(_, .Named(from_name)) => case to {
-      .Ref(_, .Named(to_name)) => if from_name == "rt_types__PVecI64"
-        and to_name == "rt_types__PVec" and is_vector_int(mono) {
-        return buf.append(.Call("rt_arr__box_i64"))
+      .Ref(_, .Named(to_name)) => {
+        // Typed <-> boxed Vector<Int> representation boundary. box_i64 boxes a
+        // typed PVecI64 to the universal PVec; unbox_i64 rebuilds a typed
+        // PVecI64 from a boxed PVec (e.g. a universal-helper result). A raw cast
+        // either way would trap: the leaf array types differ.
+        if from_name == "rt_types__PVecI64" and to_name == "rt_types__PVec" and is_vector_int(mono) {
+          return buf.append(.Call("rt_arr__box_i64"))
+        }
+        if from_name == "rt_types__PVec" and to_name == "rt_types__PVecI64" and is_vector_int(mono) {
+          return buf.append(.Call("rt_arr__unbox_i64"))
+        }
       },
       _ => {},
     },
@@ -31,7 +39,20 @@ pub fn emit_coerce_stack(
   }
 
   case to {
-    .Anyref => return emit_box_to_anyref(mono, ctx.env, buf),
+    .Anyref => {
+      // A typed PVecI64 must be boxed to PVec before erasing to anyref: a bare
+      // upcast of the distinct PVecI64 struct would trap on the later cast back
+      // to PVec. box_i64 first, then the normal (identity) vector erase.
+      pre := case from {
+        .Ref(_, .Named(fname)) => if fname == "rt_types__PVecI64" and is_vector_int(mono) {
+          buf.append(.Call("rt_arr__box_i64"))
+        } else {
+          buf
+        },
+        _ => buf,
+      }
+      return emit_box_to_anyref(mono, ctx.env, pre)
+    },
     _ => {},
   }
 
