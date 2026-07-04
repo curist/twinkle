@@ -352,6 +352,9 @@ fn wasm_type_of_repr_cached(
     .I32 => .{ val_type: .I32, cache },
     .TypedRef(m) => cached_val_type_of_mono(m, env, cache),
     .TypedSum(m) => cached_val_type_of_mono(m, env, cache),
+    // A typed vector's physical type follows its semantic mono; at activation
+    // val_type_of_mono(Vector<Int>) yields PVecI64. Inert until then.
+    .TypedVec(_) => cached_val_type_of_mono(mono, env, cache),
     // Function values remain heap refs; the correctness path uses the base
     // closure ABI, while future specialization can still refine this later.
     .ClosureRef => cached_val_type_of_mono(mono, env, cache),

@@ -5,6 +5,7 @@
 //! facts instead of rediscovering them.
 
 use compiler.anf.{IndexKind, OpKind}
+use compiler.backend.repr_policy.{ElemRepr}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.core_ir.{BinOp, FieldId, FuncId, GlobalId, LocalId, UnOp, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
@@ -50,6 +51,7 @@ pub type ReprKind = {
   I32,
   TypedRef(MonoType),
   TypedSum(MonoType),
+  TypedVec(ElemRepr),
   ClosureRef,
   ErasedSum,
   OpaqueAnyref,

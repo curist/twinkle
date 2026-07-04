@@ -99,6 +99,10 @@ fn assert_repr(mono: MonoType, expected: ReprKind) Result<Void, String> {
       .TypedSum(_) => true,
       _ => false,
     },
+    .TypedVec(_) => case got {
+      .TypedVec(_) => true,
+      _ => false,
+    },
     .ClosureRef => case got {
       .ClosureRef => true,
       _ => false,
@@ -161,6 +165,10 @@ fn assert_slot_repr(pf: PreparedFunc, lid_id: Int, expected: ReprKind) Result<Vo
         },
         .TypedSum(_) => case info.repr {
           .TypedSum(_) => true,
+          _ => false,
+        },
+        .TypedVec(_) => case info.repr {
+          .TypedVec(_) => true,
           _ => false,
         },
         .ClosureRef => case info.repr {

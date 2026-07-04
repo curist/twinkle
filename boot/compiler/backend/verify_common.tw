@@ -23,6 +23,8 @@ pub fn expected_wasm_type(repr: ReprKind, mono: MonoType, env: ResolvedEnv) ValT
     .I32 => .I32,
     .TypedRef(m) => val_type_of_mono(m, env),
     .TypedSum(m) => val_type_of_mono(m, env),
+    // Typed vector follows its semantic mono (PVecI64 after activation).
+    .TypedVec(_) => val_type_of_mono(mono, env),
     .ClosureRef => val_type_of_mono(mono, env),
     .ErasedSum => .Anyref,
     .OpaqueAnyref => .Anyref,
@@ -72,6 +74,7 @@ pub fn repr_name(repr: ReprKind) String {
     .I32 => "I32",
     .TypedRef(_) => "TypedRef",
     .TypedSum(_) => "TypedSum",
+    .TypedVec(_) => "TypedVec",
     .ClosureRef => "ClosureRef",
     .ErasedSum => "ErasedSum",
     .OpaqueAnyref => "OpaqueAnyref",

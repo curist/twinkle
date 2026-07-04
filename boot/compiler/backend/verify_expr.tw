@@ -1203,6 +1203,10 @@ fn repr_matches_category(actual: ReprKind, expected: ReprKind) Bool {
       .TypedSum(_) => true,
       _ => false,
     },
+    .TypedVec(_) => case actual {
+      .TypedVec(_) => true,
+      _ => false,
+    },
     .I64 => case actual {
       .I64 => true,
       _ => false,

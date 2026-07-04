@@ -30,6 +30,7 @@ pub fn repr_name(repr: ReprKind) String {
     .I32 => "I32",
     .TypedRef(_) => "TypedRef",
     .TypedSum(_) => "TypedSum",
+    .TypedVec(_) => "TypedVec",
     .ClosureRef => "ClosureRef",
     .ErasedSum => "ErasedSum",
     .OpaqueAnyref => "OpaqueAnyref",
