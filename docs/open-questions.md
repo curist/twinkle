@@ -19,15 +19,21 @@ mutation to programmers coming from OO/imperative languages.
 
 **Current direction:** keep the syntax. The language model is value semantics:
 updates rebuild and rebind the local root, and aliases keep seeing the old value.
+`twk lint` now backs this with the `direct-rebinding` and `record-copy-helper`
+rules (rebind the field/index path directly instead of writing `with_*` copy
+helpers), plus `unused-must-use` for ignored `Result`/`Option` values.
 
-**Open tooling question:** which patterns should produce warnings?
+**Remaining tooling question:** whether to add value-flow lints that go beyond the
+current syntactic rules. Candidates that are *not* implemented yet:
 
-Likely lint candidates:
-
-- updating a value and then never reading or returning the updated binding,
+- updating a value and then never reading or returning the updated binding
+  (dead-store detection),
 - field/index update in a statement position whose result is effectively ignored,
 - suspicious aliasing patterns where code appears to expect another name to observe
   the update.
+
+These need dataflow, not just AST shape, so they are deferred until there is
+evidence they catch real mistakes.
 
 ---
 
@@ -55,32 +61,7 @@ record layout.
 
 ---
 
-## 3. Circular modules and recursive type groups
-
-The module system rejects circular imports. This keeps compilation order and
-incremental analysis straightforward, but large programs sometimes have mutually
-recursive domain concepts.
-
-**Open question:** is acyclic module structure enough in practice, or does Twinkle
-need an explicit mechanism for mutually recursive type groups across files?
-
-**Proposed direction:** [plans/recursive-module-groups.md](plans/recursive-module-groups.md)
-— condense the module graph into SCCs and resolve each strongly-connected group
-with the two-phase (signatures-then-bodies) pass already used *within* a module,
-allowing type/function cycles while rejecting top-level value-initialization
-cycles. The restriction is architectural, not semantic; boot compiler cycle
-support has also enabled blanket prelude-into-prelude injection.
-
-Possible directions considered:
-
-- keep cycles rejected and encourage colocating mutually recursive types,
-- allow type-only cycles with restrictions ← the proposed plan's MVP,
-- add explicit forward declarations,
-- add package-level recursive type groups.
-
----
-
-## 4. Resource ownership beyond `defer`
+## 3. Resource ownership beyond `defer`
 
 `defer` is implemented with block-scoped, LIFO semantics and covers ordinary
 manual cleanup well. It fires on normal block exit, `return`, `break`, and
@@ -98,22 +79,26 @@ after close.
 
 ---
 
-## 5. FFI beyond phase-1 externs
+## 4. FFI beyond phase-1 externs
 
 Twinkle supports `extern` declarations for host-provided Wasm imports. Phase-1
 boundary types are intentionally small: `Int`, `Float`, `Bool`, `String`, and
-`Void`/`()`. Compound Twinkle values such as records, enums, `Vector`, `Dict`,
-callbacks, and `Result` are not valid extern boundary types today.
+`Void`/`()`, plus opaque non-null extern handles and their nullable form
+(`ExternType?`). Compound Twinkle values such as records, enums, `Vector`, `Dict`,
+callbacks, and `Result` are still not valid extern boundary types.
 
-This avoids committing too early to a large interop model, but several questions
-remain.
+Linear-memory interop has a first answer: `@std.buffer` exposes a sandboxed,
+manually allocated/freed `Buffer` with `u8`/`i64`/`f64` views (see
+[design/buffer.md](design/buffer.md)), and stdlib codecs/crypto/`fs` already read
+and write bytes through it. That settles the "should there be an explicit
+linear-memory type" question for in-module use.
 
-**Open questions:**
+**Remaining open questions:**
 
-- How should Twinkle interoperate with linear-memory Wasm modules?
-- Should there be explicit `Buffer`, `ByteView`, or linear-memory types?
-- Should any compound values have standardized ABI lowering?
-- How should opaque host handles be represented safely?
+- How should Twinkle interoperate with *external* linear-memory Wasm modules
+  (shared memory, foreign allocators)?
+- Should any compound values gain a standardized ABI lowering across the extern
+  boundary?
 - How much marshalling should the compiler generate automatically versus requiring
   explicit library code?
 
@@ -122,7 +107,7 @@ language-level FFI model should stay explicit and portable.
 
 ---
 
-## 6. Resources plus FFI handles
+## 5. Resources plus FFI handles
 
 External resources often appear as opaque handles returned by host APIs. In a
 value-semantics language, a handle can be copied inside many immutable record

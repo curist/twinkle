@@ -6,7 +6,7 @@ Twinkle is a statically typed language for value-oriented programs that compile 
 
 Source files end with `.tw`. A source file is a module, and its top-level statements execute directly — there is no `main` function (see §8).
 
-Identifiers follow a strict, **parser-enforced** case rule: types, enum variants, and extern namespaces start with an uppercase letter; functions, variables, fields, and module names start lowercase. Case is not style — it determines how a name parses (see §16).
+Identifiers follow a strict, **parser-enforced** case rule: types and enum variants start with an uppercase letter; functions, variables, fields, and module names start lowercase (extern namespaces may use either case). Case is not style — it determines how a name parses (see §16).
 
 ### Comments and documentation comments
 
@@ -1180,8 +1180,9 @@ rules, not style lint. The parser uses the **first character** of an identifier 
 decide what it can mean, so the wrong case changes how code parses (or makes it a
 parse error).
 
-**The rule:** an identifier that starts with an **uppercase** letter is a type, an
-enum variant, or an extern namespace; **everything else starts lowercase**.
+**The rule:** an identifier that starts with an **uppercase** letter is a type or
+an enum variant; **everything else starts lowercase**. Extern namespaces are the
+exception — they may use either case (e.g. `Math` or `console`).
 
 | Thing | Convention | Example |
 |---|---|---|
