@@ -2184,7 +2184,7 @@ fn emit_intrinsic_call(
     .VectorAppend => emit_intrinsic_vector_append(args, result_idx, ctx, buf),
     .VectorGet => emit_intrinsic_vector_get(args, result_idx, result_mono, ctx, buf),
     .VectorSet => emit_intrinsic_vector_set(args, result_idx, result_mono, ctx, buf),
-    .VectorMake => emit_intrinsic_vector_make(args, result_idx, result_mono, ctx, buf),
+    .VectorMake => emit_intrinsic_vector_make(args, result_idx, ctx, buf),
     .DictGet => emit_intrinsic_dict_get(args, result_idx, result_mono, ctx, buf),
     .DictGetUnsafe => emit_intrinsic_dict_get_unsafe(args, result_idx, result_mono, ctx, buf),
     .StringGet => emit_intrinsic_string_get(args, result_idx, result_mono, ctx, buf),
@@ -2307,49 +2307,17 @@ fn emit_erased_container_ingress(arg: PreparedAtom, ctx: EmitCtx, buf: Vector<In
   emit_coerce_stack(atom_val_type(arg, ctx), .Anyref, atom_mono(arg, ctx), ctx, buf2)
 }
 
-// Emit a vector base atom coerced to a non-null boxed PVec. The inline vector
-// intrinsics (get/set/append/make) operate on the boxed PVec structure and
-// runtime ops, so a typed PVecI64 base (Vector<Int>) is boxed here (box_i64);
-// a boxed base reduces to the previous nullable→non-null coercion.
-fn emit_atom_as_boxed_pvec(arg: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  emit_coerce_stack(
-    atom_val_type(arg, ctx),
-    .Ref(false, .Named("rt_types__PVec")),
-    atom_mono(arg, ctx),
-    ctx,
-    emit_atom(arg, ctx, buf),
-  )
-}
-
 fn emit_intrinsic_vector_append(
   args: Vector<PreparedAtom>,
   result_idx: Int,
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
-  // vector_append(vec, elem) → rt_arr__push(vec, elem). rt_arr__push operates on
-  // the boxed PVec, so a typed PVecI64 base (Vector<Int>) is boxed in via
-  // emit_coerce_stack (box_i64) and the boxed result is coerced back to the
-  // vector's representation (unbox_i64). For boxed vectors both coercions reduce
-  // to the original nullable→non-null / no-op behavior.
-  vec_mono := atom_mono(args[0], ctx)
-  buf2 := emit_atom(args[0], ctx, buf)
-  buf3 := emit_coerce_stack(
-    atom_val_type(args[0], ctx),
-    .Ref(false, .Named("rt_types__PVec")),
-    vec_mono,
-    ctx,
-    buf2,
-  )
+  // vector_append(vec, elem) → rt_arr__push(vec, elem)
+  buf2 := emit_atom(args[0], ctx, buf) // vec (PVec, nullable)
+  buf3 := buf2.append(.RefAsNonNull) // push takes non-null PVec
   buf4 := emit_erased_container_ingress(args[1], ctx, buf3)
-  buf5 := buf4.append(.Call("rt_arr__push"))
-  emit_coerce_stack(
-    .Ref(false, .Named("rt_types__PVec")),
-    val_type_of_mono(vec_mono, ctx.env),
-    vec_mono,
-    ctx,
-    buf5,
-  ).append(.LocalSet(result_idx))
+  buf4.append(.Call("rt_arr__push")).append(.LocalSet(result_idx))
 }
 
 // ── vector_get: bounds-checked → Option<T> ─────────────────────────────
@@ -2368,7 +2336,7 @@ fn emit_intrinsic_vector_get(
   // Option<ExternRef> → nullable externref, no struct wrapper
   if variant_emit.is_nullable_extern_option(result_mono) {
     result_vt := ValType.Ref(true, .Extern)
-    then_instrs: Vector<Instr> = emit_atom_as_boxed_pvec(args[0], ctx, [])
+    then_instrs: Vector<Instr> = emit_atom(args[0], ctx, [])
       .concat(emit_checked_i32_narrow(args[1], ctx, []))
       .concat([.Call("rt_arr__get")])
       .concat(emit_erased_container_egress(elem_mono, ctx.env, []))
@@ -2376,9 +2344,10 @@ fn emit_intrinsic_vector_get(
     buf2 := emit_atom(args[1], ctx, buf)
     buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
     buf4 := emit_atom(args[1], ctx, buf3)
-    buf5 := emit_atom_as_boxed_pvec(args[0], ctx, buf4)
+    buf5 := emit_atom(args[0], ctx, buf4)
 
     return buf5
+      .append(.RefAsNonNull)
       .append(.StructGet("rt_types__PVec", 0))
       .append(.I64ExtendI32U)
       .append(.I64LtS)
@@ -2399,7 +2368,7 @@ fn emit_intrinsic_vector_get(
 
   // Nested sub-bodies must use fresh []
   then_instrs: Vector<Instr> = [Instr.I32Const(1)]
-    .concat(emit_atom_as_boxed_pvec(args[0], ctx, []))
+    .concat(emit_atom(args[0], ctx, []))
     .concat(emit_checked_i32_narrow(args[1], ctx, []))
     .concat([.Call("rt_arr__get")])
     .concat(emit_erased_container_egress(elem_mono, ctx.env, []))
@@ -2412,8 +2381,9 @@ fn emit_intrinsic_vector_get(
   buf2 := emit_atom(args[1], ctx, buf)
   buf3 := buf2.append(.I64Const(0)).append(.I64GeS) // index >= 0
   buf4 := emit_atom(args[1], ctx, buf3)
-  buf5 := emit_atom_as_boxed_pvec(args[0], ctx, buf4)
+  buf5 := emit_atom(args[0], ctx, buf4)
   buf5
+    .append(.RefAsNonNull)
     .append(.StructGet("rt_types__PVec", 0))
     .append(.I64ExtendI32U)
     .append(.I64LtS)
@@ -2438,34 +2408,22 @@ fn emit_intrinsic_vector_set(
     []
   }
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
-  vec_mono := atom_mono(args[0], ctx)
 
-  // Nested sub-bodies must use fresh []. rt_arr__set returns a boxed PVec; the
-  // Some payload is the vector's representation (PVecI64 for Vector<Int>), so the
-  // result is coerced (unbox_i64) before it is wrapped.
+  // Nested sub-bodies must use fresh []
   then_instrs: Vector<Instr> = [Instr.I32Const(1)]
-    .concat(emit_atom_as_boxed_pvec(args[0], ctx, []))
+    .concat(emit_atom(args[0], ctx, []))
     .concat(emit_checked_i32_narrow(args[1], ctx, []))
     .concat(emit_erased_container_ingress(args[2], ctx, []))
-    .concat([.Call("rt_arr__set")])
-    .concat(
-      emit_coerce_stack(
-        .Ref(false, .Named("rt_types__PVec")),
-        val_type_of_mono(vec_mono, ctx.env),
-        vec_mono,
-        ctx,
-        [],
-      ),
-    )
-    .concat([.StructNew(sum_layout.sym)])
+    .concat([.Call("rt_arr__set"), .StructNew(sum_layout.sym)])
   else_instrs: Vector<Instr> = [Instr.I32Const(0)]
     .concat(default_payload)
     .concat([.StructNew(sum_layout.sym)])
   buf2 := emit_atom(args[1], ctx, buf) // index (i64)
   buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
   buf4 := emit_atom(args[1], ctx, buf3)
-  buf5 := emit_atom_as_boxed_pvec(args[0], ctx, buf4)
+  buf5 := emit_atom(args[0], ctx, buf4)
   buf5
+    .append(.RefAsNonNull)
     .append(.StructGet("rt_types__PVec", 0))
     .append(.I64ExtendI32U)
     .append(.I64LtS)
@@ -2478,22 +2436,12 @@ fn emit_intrinsic_vector_set(
 fn emit_intrinsic_vector_make(
   args: Vector<PreparedAtom>,
   result_idx: Int,
-  result_mono: MonoType,
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
   buf2 := emit_checked_i32_narrow(args[0], ctx, buf) // size (i32)
   buf3 := emit_erased_container_ingress(args[1], ctx, buf2)
-  buf4 := buf3.append(.Call("rt_arr__make")) // boxed PVec
-
-  // Coerce to the result representation (unbox_i64 for Vector<Int>).
-  emit_coerce_stack(
-    .Ref(false, .Named("rt_types__PVec")),
-    val_type_of_mono(result_mono, ctx.env),
-    result_mono,
-    ctx,
-    buf4,
-  ).append(.LocalSet(result_idx))
+  buf3.append(.Call("rt_arr__make")).append(.LocalSet(result_idx))
 }
 
 // ── dict_get: d.get(k) → Option<V> ────────────────────────────────────

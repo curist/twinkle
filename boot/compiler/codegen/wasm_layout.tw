@@ -520,7 +520,6 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
         ),
       }
     },
-    .Vector(.Int) => .Ref(true, .Named("rt_types__PVecI64")),
     .Vector(_) => .Ref(true, .Named("rt_types__PVec")),
     .Dict(_, _) => .Ref(true, .Named("rt_types__PDict")),
     .Function(_, _) => .Ref(true, .Named("rt_types__Closure")),

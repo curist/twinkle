@@ -15,8 +15,9 @@
 //!            New backend facts belong in PreparedModule or its sub-records.
 
 use compiler.anf.{AnfModule}
-use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc}
+use compiler.backend.prepared_ir.{CaptureParam, PreparedExpr, PreparedFunc, PreparedOp}
 use compiler.backend.repr_assign.{assign_repr_for_module}
+use compiler.backend.route_typed_vec.{analyze_typed_fields, route_typed_vectors}
 use compiler.backend.slot_assign.{assign_slots_for_module}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.insert_boundaries.{insert_boundaries}
@@ -79,10 +80,74 @@ pub fn prepare_backend(
 ) PreparedModule {
   pre := prepare_backend_preroute(anf, env, builtins, closure_captures)
 
-  // route_typed_vectors is retired at M1a activation: repr_of_mono now supplies
-  // TypedVec(I64) repr + PVecI64 wasm type directly for Vector<Int>, and
-  // emit_coerce_stack supplies the boundary coercions (box_i64 / unbox_i64).
-  .{ anf: pre.anf, closure_captures, funcs: pre.funcs, typed_vector_fields: Dict.new() }
+  if prepared_funcs_depth_exceeds(pre.funcs, 512) {
+    return .{ anf: pre.anf, closure_captures, funcs: pre.funcs, typed_vector_fields: Dict.new() }
+  }
+
+  typed_fields := analyze_typed_fields(pre.funcs, builtins)
+  funcs3 := route_typed_vectors(pre.funcs, builtins, typed_fields)
+  .{ anf: pre.anf, closure_captures, funcs: funcs3, typed_vector_fields: typed_fields }
+}
+
+fn prepared_funcs_depth_exceeds(funcs: Vector<PreparedFunc>, limit: Int) Bool {
+  for func in funcs {
+    if prepared_depth_exceeds(func.body, limit) {
+      return true
+    }
+  }
+
+  false
+}
+
+// Recursion is bounded by `limit` (returns as soon as depth exceeds it), so
+// this walks the Let spine iteratively without a worklist and stays stack-safe.
+fn prepared_depth_exceeds(expr: PreparedExpr, limit: Int) Bool {
+  prepared_depth_exceeds_at(expr, 1, limit)
+}
+
+fn prepared_depth_exceeds_at(expr: PreparedExpr, depth: Int, limit: Int) Bool {
+  cur := expr
+  d := depth
+  done := false
+
+  for !done {
+    if d > limit {
+      return true
+    }
+
+    case cur {
+      .Let(_, op, body) => {
+        if op_children_depth_exceeds(op, d + 1, limit) {
+          return true
+        }
+
+        cur = body
+        d = d + 1
+      },
+      _ => done = true,
+    }
+  }
+
+  false
+}
+
+fn op_children_depth_exceeds(op: PreparedOp, depth: Int, limit: Int) Bool {
+  case op {
+    .AIf(_, then_e, else_e) => prepared_depth_exceeds_at(then_e, depth, limit)
+      or prepared_depth_exceeds_at(else_e, depth, limit),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if prepared_depth_exceeds_at(arm.body, depth, limit) {
+          return true
+        }
+      }
+
+      false
+    },
+    .ALoop(inner) => prepared_depth_exceeds_at(inner, depth, limit),
+    .ADefer(inner) => prepared_depth_exceeds_at(inner, depth, limit),
+    _ => false,
+  }
 }
 
 fn empty_registry() WasmTypeRegistry {

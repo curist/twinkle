@@ -41,10 +41,8 @@ pub fn emit_array_literal(
   }
   elem_vt := val_type_of_mono(elem_mono, ctx.env)
 
-  // Build a boxed PVec. Small literals fit entirely in the tail; larger literals
-  // must populate the trie prefix as elements spill past the tail, so they are
-  // built by repeated rt.arr.push calls to keep the correct root/tail shape.
-  built := if n <= 32 {
+  // Small literals fit entirely in the tail.
+  if n <= 32 {
     out := buf
       .append(.I32Const(n))
       .append(.I32Const(0))
@@ -62,41 +60,33 @@ pub fn emit_array_literal(
       out = emit_box_to_anyref(elem_mono, ctx.env, out)
     }
 
-    out.append(.ArrayNewFixed("rt_types__Array", n)).append(.StructNew("rt_types__PVec"))
-  } else {
-    out := buf
-      .append(.I32Const(0))
-      .append(.I32Const(0))
-      .append(.RefNull(.Named("rt_types__VecInternal")))
-      .append(.ArrayNewFixed("rt_types__Array", 0))
-      .append(.StructNew("rt_types__PVec"))
-
-    for item in items {
-      out = fns.emit_atom(item, ctx, out)
-      out = emit_coerce_stack(
-        fns.atom_val_type(item, ctx),
-        elem_vt,
-        fns.atom_mono(item, ctx),
-        ctx,
-        out,
-      )
-      out = emit_box_to_anyref(elem_mono, ctx.env, out)
-      out = .append(.Call("rt_arr__push"))
-    }
-
-    out
+    return out.append(.ArrayNewFixed("rt_types__Array", n)).append(.StructNew("rt_types__PVec"))
   }
 
-  // Coerce the boxed PVec to the result representation. For Vector<Int> the slot
-  // is physically PVecI64, so this appends unbox_i64; for other vectors it is a
-  // no-op (widening a non-null PVec to the nullable PVec slot type).
-  emit_coerce_stack(
-    .Ref(false, .Named("rt_types__PVec")),
-    val_type_of_mono(result_mono, ctx.env),
-    result_mono,
-    ctx,
-    built,
-  )
+  // Larger literals must populate the trie prefix as elements spill past the
+  // tail. Build them by repeated rt.arr.push calls so the runtime maintains the
+  // correct root/tail shape.
+  out := buf
+    .append(.I32Const(0))
+    .append(.I32Const(0))
+    .append(.RefNull(.Named("rt_types__VecInternal")))
+    .append(.ArrayNewFixed("rt_types__Array", 0))
+    .append(.StructNew("rt_types__PVec"))
+
+  for item in items {
+    out = fns.emit_atom(item, ctx, out)
+    out = emit_coerce_stack(
+      fns.atom_val_type(item, ctx),
+      elem_vt,
+      fns.atom_mono(item, ctx),
+      ctx,
+      out,
+    )
+    out = emit_box_to_anyref(elem_mono, ctx.env, out)
+    out = .append(.Call("rt_arr__push"))
+  }
+
+  out
 }
 
 pub fn emit_index_op(

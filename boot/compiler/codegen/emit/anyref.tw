@@ -55,13 +55,7 @@ pub fn emit_box_to_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Instr>) 
     // can compare nested sums structurally inside vectors/dicts/anyref calls.
     .Sum(_) => buf.append(.Call(sum_to_variant_helper_sym(mono))),
     .Closure(_) => buf,
-    // A typed Vector<Int> is physically PVecI64; box it to the universal PVec
-    // before erasing to anyref (a bare upcast would trap on the ingress cast back
-    // to PVec). Other vectors are already boxed PVec — identity.
-    .Vector_(_) => case mono {
-      .Vector(.Int) => buf.append(.Call("rt_arr__box_i64")),
-      _ => buf,
-    },
+    .Vector_(_) => buf,
     .Dict_(_, _) => buf,
     .Iterator_(_) => buf,
     .Cell_(_) => buf,
@@ -117,16 +111,7 @@ pub fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Inst
       .append(.RefCast(true, .Named("rt_types__Variant")))
       .append(.Call(variant_to_sum_helper_sym(mono))),
     .Closure(_) => buf.append(.RefCast(false, .Named("rt_types__Closure"))),
-    .Vector_(_) => {
-      // anyref always holds a boxed PVec for vectors. For a typed Vector<Int>
-      // slot, rebuild the PVecI64 representation after the cast (unbox_i64);
-      // symmetric to the box_i64-before-erase path in emit_coerce_stack.
-      out := buf.append(.RefCast(false, .Named("rt_types__PVec")))
-      case mono {
-        .Vector(.Int) => out.append(.Call("rt_arr__unbox_i64")),
-        _ => out,
-      }
-    },
+    .Vector_(_) => buf.append(.RefCast(false, .Named("rt_types__PVec"))),
     .Dict_(_, _) => buf.append(.RefCast(false, .Named("rt_types__PDict"))),
     .Iterator_(it) => buf.append(.RefCast(false, .Named(it.state_sym))),
     .Cell_(inner) => {
