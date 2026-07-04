@@ -89,11 +89,18 @@ full path, generalizing to every primitive vector in real code.
 
 ### 1. Representation as a first-class, monomorphization-derived fact
 
-- **Extend `ReprKind` with typed container families** — e.g. `TypedVec(ElemRepr)`,
-  starting with `I64`; the shape admits `F64`/`I32`/anyref-elem. `TypedRef(mono)`
-  stays the fallback for reference-payload vectors (`Vector<String>`, records),
-  where boxing is not a cost — consistent with the Clojure calibration that
-  reference payloads do not hit the boxed-primitive cliff.
+- **Extend `ReprKind` with a typed container family, family-shaped from the
+  start.** Add `TypedVec(ElemRepr)` where `ElemRepr = { I64, F64, I32 }` —
+  primitive storage classes only. Verifier/coercion/layout code asks "is typed
+  vec?" once and switches on `ElemRepr` only where it must, so adding `F64`/`I32`
+  (and later `TypedDict(KeyRepr, ValueRepr)`) is not a fresh flat variant + a new
+  predicate each time. **M1a supports exactly one member, `.TypedVec(.I64)`**,
+  while keeping the final shape. `ElemRepr` stays primitive-only for now: reference
+  element families are deliberately out until there is a measured reason, so
+  `TypedVec` means "specialized primitive vector," and `TypedRef(mono)` remains the
+  fallback for reference-payload vectors (`Vector<String>`, records) where boxing
+  is not a cost — consistent with the Clojure calibration that reference payloads
+  do not hit the boxed-primitive cliff.
 - **`repr_of_mono` assigns the family from the element type**, `Vector<Int> →
   TypedVec(I64)`, **unconditionally** — a total function of the concrete type, no
   escape-analysis eligibility gate.
@@ -198,7 +205,13 @@ improve here and must not *regress* materially from that round-trip.
   adapters — `box_i64` (`PVecI64 → PVec`) and the new `unbox_i64` (`PVec →
   PVecI64`) for results returning from universal helpers. Closure captures are
   *not* yet typed, so a typed vector entering a closure env erases here (one
-  coercion) — a correctness path, not the hot path, until `1b`.
+  coercion) — a correctness path, not the hot path, until `1b`. **Trap to avoid:**
+  that erase must be `PVecI64 → PVec` via `box_i64` *then* the anyref upcast, not a
+  bare upcast. `emit_box_to_anyref` currently has `.Vector_(_) => buf` (identity),
+  which for a `PVecI64` would upcast a distinct struct type straight to `anyref`,
+  so the later `ref.cast` back to `PVec` at the read site traps. The coercion
+  inserter (or `emit_box_to_anyref` itself) must `box_i64` a typed vector before it
+  crosses into any `anyref` position.
 - Generalize the verifier to the coercion model (reject raw casts across reprs).
 - **Gate (direct reads + no regression, not the `order_by` headline):**
   `typed_variant_column_probe` is realized end-to-end (it extracts the column and
@@ -270,10 +283,11 @@ is the gate; no stage0 changes.
   does not regress non-dataframe workloads.
 - **Code size.** Typed families multiply runtime/helper surfaces. Add members on
   demand from benchmarks, not speculatively (anyref-elimination's stated risk).
-- **`ReprKind` shape.** `TypedVec(ElemRepr)` vs a flat `PVecI64`/`PVecF64` set is a
-  detail to settle in the implementation plan; the family-parameterized shape is
-  preferred for extensibility but must stay cheap to pattern-match in hot planner
-  code.
+- **`ReprKind` shape (decided).** `TypedVec(ElemRepr)` with `ElemRepr = { I64, F64,
+  I32 }`, one supported member (`.I64`) in M1a. Chosen over a flat
+  `PVecI64`/`PVecF64` set to avoid variant/predicate churn as families grow and to
+  set the `TypedDict(KeyRepr, ValueRepr)` pattern; the family wrapper must stay
+  cheap to pattern-match in hot planner code.
 
 ## Relationship to existing docs
 
