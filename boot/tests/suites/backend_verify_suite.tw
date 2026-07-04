@@ -146,6 +146,7 @@ fn replace_func(prepared: PreparedModule, pf: PreparedFunc) PreparedModule {
     closure_captures: prepared.closure_captures,
     funcs: [pf],
     typed_vector_fields: Dict.new(),
+    typed_vector_payloads: Dict.new(),
   }
 }
 
@@ -406,6 +407,7 @@ pub fn suite() runner.Suite {
           closure_captures: bad_caps,
           funcs: prepared.funcs,
           typed_vector_fields: Dict.new(),
+          typed_vector_payloads: Dict.new(),
         }
         verify_err(broken, "capture 0 uses L0, expected L1")
       },

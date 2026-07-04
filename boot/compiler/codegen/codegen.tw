@@ -84,6 +84,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
 
   env2 := env
   env2.typed_vector_fields = prepared.typed_vector_fields
+  env2.typed_vector_payloads = prepared.typed_vector_payloads
 
   if timed {
     log_time("prepare_backend", t2 - t1)
