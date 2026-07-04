@@ -20,6 +20,7 @@
 //! pass (it would require tracking which anyrefs previously held typed sums).
 
 use compiler.backend.prepared_ir.{PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo}
+use compiler.backend.repr_policy.{elem_repr_of_vector}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_layout.{WasmLayout, layout_of, mono_to_key, val_type_of_mono}
@@ -228,7 +229,10 @@ pub fn repr_of_mono(mono: MonoType, env: ResolvedEnv) ReprKind {
     .Function(_, _) => .ClosureRef,
     .Optional(_) => .TypedSum(mono),
     .Result(_, _) => .TypedSum(mono),
-    .Vector(_) => .TypedRef(mono),
+    .Vector(_) => case elem_repr_of_vector(mono) {
+      .Some(er) => .TypedVec(er),
+      .None => .TypedRef(mono),
+    },
     .Dict(_, _) => .TypedRef(mono),
     .ExternRef(_) => .TypedRef(mono),
     .Named(_, _) => repr_of_named(mono, env),
@@ -257,7 +261,10 @@ fn repr_of_named_cached(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache
     .Sum(_) => .{ repr: .TypedSum(mono), cache: cache2 },
     .Closure(_) => .{ repr: .ClosureRef, cache: cache2 },
     .Cell_(_) => .{ repr: .TypedRef(mono), cache: cache2 },
-    .Vector_(_) => .{ repr: .TypedRef(mono), cache: cache2 },
+    .Vector_(_) => case elem_repr_of_vector(mono) {
+      .Some(er) => .{ repr: .TypedVec(er), cache: cache2 },
+      .None => .{ repr: .TypedRef(mono), cache: cache2 },
+    },
     .Dict_(_, _) => .{ repr: .TypedRef(mono), cache: cache2 },
     .Iterator_(_) => .{ repr: .TypedRef(mono), cache: cache2 },
     // Alias resolves to a scalar-backed type (Int, Float, Bool, Byte, Void,

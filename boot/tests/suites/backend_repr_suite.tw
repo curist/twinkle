@@ -297,9 +297,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "Vector<Int> → TypedRef",
+      "Vector<Int> → TypedVec(I64)",
       fn() {
-        assert_repr(.Vector(.Int), .TypedRef(.Vector(.Int)))
+        assert_repr(.Vector(.Int), .TypedVec(.I64))
       },
     )
     .test(

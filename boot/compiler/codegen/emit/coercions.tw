@@ -39,20 +39,9 @@ pub fn emit_coerce_stack(
   }
 
   case to {
-    .Anyref => {
-      // A typed PVecI64 must be boxed to PVec before erasing to anyref: a bare
-      // upcast of the distinct PVecI64 struct would trap on the later cast back
-      // to PVec. box_i64 first, then the normal (identity) vector erase.
-      pre := case from {
-        .Ref(_, .Named(fname)) => if fname == "rt_types__PVecI64" and is_vector_int(mono) {
-          buf.append(.Call("rt_arr__box_i64"))
-        } else {
-          buf
-        },
-        _ => buf,
-      }
-      return emit_box_to_anyref(mono, ctx.env, pre)
-    },
+    // emit_box_to_anyref boxes a typed Vector<Int> (PVecI64 -> PVec) before the
+    // erase; the matching ingress unbox lives in emit_unbox_from_anyref.
+    .Anyref => return emit_box_to_anyref(mono, ctx.env, buf),
     _ => {},
   }
 

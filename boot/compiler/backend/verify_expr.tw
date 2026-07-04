@@ -309,7 +309,7 @@ fn verify_op(ctx: VerifyCtx, result_info: SlotInfo, op: PreparedOp) Result<Void,
     .AIndex(base, index, _, _) => {
       try ctx.verify_atom_use(base, "index base")
       try ctx.verify_atom_use(index, "index operand")
-      try ctx.require_local_repr_if_local(base, [.TypedRef(.Void)], "index base")
+      try ctx.require_local_repr_if_local(base, [.TypedRef(.Void), .TypedVec(.I64)], "index base")
       .Ok({})
     },
     .AInit(atom) => case result_info.role {
