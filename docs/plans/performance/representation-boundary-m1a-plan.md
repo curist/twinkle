@@ -1,5 +1,14 @@
 # Milestone 1a — Typed variant/record vector representation — Implementation Plan
 
+> **SUPERSEDED (2026-07-04).** This plan executed the uniform-typing activation
+> (`Vector<Int> = PVecI64` everywhere), which was built, measured, and reverted —
+> it makes captured-vector reads O(n) per access (see
+> [vector/m1a-anyref-readback-investigation.md](vector/m1a-anyref-readback-investigation.md)).
+> The corrected direction (typed vectors as a *storage-site* representation) is in
+> [representation-boundary-policy.md](representation-boundary-policy.md). Kept for
+> the record; do not execute as written. T0–T3 (the reusable infrastructure) still
+> stand; only Task 6/7 (the activation) were reverted.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make `Vector<Int>` a first-class typed physical representation (`TypedVec(I64)` → `rt_types__PVecI64`) that stays typed through record fields and variant payloads, with bidirectional coercions at universal-ABI boundaries handled by the existing `emit_coerce_stack` layer, replacing the conservative `route_typed_vec` bolt-on.

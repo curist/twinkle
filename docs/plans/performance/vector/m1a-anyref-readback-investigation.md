@@ -1,9 +1,11 @@
 # M1a activation — anyref read-back pathology (investigation handoff)
 
-**Status:** landed on branch `typed-vector-repr-m1a` (NOT main). Passes all boot
-tests + self-hosts to fixed point, but is **not viable**: captured `Vector<Int>`
-reads are O(n) per access, which hangs realistic workloads (dataframe `order_by`).
-This note is for a fresh session to root-cause and decide the path.
+**Status:** activation **reverted** on branch `typed-vector-repr-m1a` (never
+reached main). It self-hosted and passed all boot tests, but was not viable:
+captured `Vector<Int>` reads are O(n) per access, which hangs `order_by`. Root
+cause confirmed and recorded here; the corrected direction is in
+[../representation-boundary-policy.md](../representation-boundary-policy.md). This
+note is retained as the post-mortem.
 
 ## What landed (branch `typed-vector-repr-m1a`)
 
@@ -62,6 +64,25 @@ Read once → fine. Read in a loop → O(n) per read.
 it is not a stray call that can simply be deleted.** This is the exact pathology
 the original conservative `route_typed_vec` avoided by only typing vectors that
 *never escape*. Uniform typing removed that guard.
+
+## Culprit code (pinpoint — the closure env boundary)
+
+The per-access rebuild is the `ClosureEnv` boundary, not the lambda body (the WAT
+shows the lambda already receives `PVecI64`):
+
+- `boot/compiler/codegen/emit/closures.tw`
+  - `emit_make_closure` — boxes captured `Vector<Int>` into the anyref env
+    (`emit_box_to_anyref` → `rt_arr__box_i64`).
+  - `emit_typed_trampoline` — reads captures from the anyref env and unboxes on
+    *every* closure invocation (`emit_unbox_from_anyref` → `rt_arr__unbox_i64`).
+    (Its "No boxing/unboxing" comment is now false.)
+- `boot/compiler/codegen/runtime/types.tw` — `ClosureEnv` is `Array anyref`, so it
+  cannot store typed capture slots directly (this is what M1b would change).
+- Separate implementation inconsistency (not the cause): `cached_repr_of_mono`
+  in `repr_assign.tw` kept `.Vector(_) => TypedRef` while the public
+  `repr_of_mono` was flipped to `TypedVec` — resolved by the revert (all three
+  Vector arms are `TypedRef` again); the redesign should unify them behind one
+  classifier.
 
 ## Culprit code (activation)
 

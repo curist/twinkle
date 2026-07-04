@@ -1,313 +1,152 @@
 # Representation-Boundary Policy
 
-**Status:** Design approved (2026-07-04), ready for implementation planning.
-This doc resolves Phase 1 ("declare the representation-boundary policy") of
-[backend-anyref-elimination.md](backend-anyref-elimination.md) and supersedes the
-"route before vs after boundary insertion" open question carried in
-[vector/typed-vector-representation.md](vector/typed-vector-representation.md).
+**Status:** Revised 2026-07-04 after the uniform-typing approach was built,
+measured, and **reverted**. This doc previously proposed making
+`Vector<Int>`'s physical representation a pure function of its semantic type
+(`Vector<Int> = PVecI64` everywhere). That premise is unsound-for-performance and
+has been rolled back. The corrected direction — **typed vectors are a
+storage-site representation, not the canonical representation of `Vector<Int>`
+everywhere** — is described below.
 
-## Problem
+Related: [backend-anyref-elimination.md](backend-anyref-elimination.md) (Phase 1
+this partially answers), [vector/typed-vector-representation.md](vector/typed-vector-representation.md),
+and the failure post-mortem
+[vector/m1a-anyref-readback-investigation.md](vector/m1a-anyref-readback-investigation.md).
 
-The boot backend never made physical representation a first-class fact. `ReprKind`
-(`backend/prepared_ir.tw`) is `{ I64, F64, I32, TypedRef(MonoType),
-TypedSum(MonoType), ClosureRef, ErasedSum, OpaqueAnyref, DeadValue }` — there is
-no typed-vector family — and `repr_of_mono` (`backend/repr_assign.tw`) collapses
-*every* `Vector<_>` to a single universal `TypedRef` container. The entire
-`PVecI64` distinction lives in a separate post-pass,
-`backend/route_typed_vec.tw`, that runs *after* boundary insertion and *after*
-repr assignment, retrofitting typed slots at the wasm-type level while `ReprKind`
-still reads `TypedRef`. That "erasure-mimicry tax" is the structural problem: the
-pass fights a pipeline that has already erased everything, and each new boundary
-(record fields → S2.2, next variants, then closures, combinators, cross-fn ABIs)
-becomes another conservative special case.
+## What was tried and why it failed
 
-The pipeline order is the root cause:
+The "M1a activation" (branch `typed-vector-repr-m1a`, commit `f26cd7a3`, now
+reverted) flipped `repr_of_mono`/`val_type_of_mono` so every `Vector<Int>` slot,
+param, result, field, and variant payload became `PVecI64` unconditionally, and
+removed the conservative `route_typed_vectors` pass in favor of uniform typing
+plus `emit_coerce_stack` boundary coercions.
 
+It self-hosted and passed all tests, but was **catastrophically slow** on any
+workload that reads a captured `Vector<Int>` in a loop:
+
+- Closure environments store `anyref` (`ClosureEnv = array anyref`). A captured
+  `Vector<Int>` is boxed to `PVec` on capture, then **must be `unbox_i64`'d (a
+  full O(n) rebuild) on every read-back** to satisfy its `PVecI64` static type.
+- A 200k-iteration loop reading a captured 5000-element vector took **~8100 ms**
+  (should be ~5 ms). `sort_by(fn(a,b){ Int.compare(keys[a], keys[b]) })` captures
+  the key column, so `order_by` at N=1M went from ~2.3 s to a multi-minute hang.
+
+The eager unbox is **required** for type-correctness once the type says
+`PVecI64` — the env genuinely holds a boxed `PVec`. So it is not a bug to patch;
+it is the direct consequence of the uniform-typing premise.
+
+**Lesson:** uniform `Vector<Int> = PVecI64` is unsound-for-performance while any
+durable storage boundary is still universal `anyref`. The original conservative
+`route_typed_vec` was conservative *for a reason* — it only typed vectors that
+never escape, precisely to avoid anyref read-back cost.
+
+## Corrected thesis
+
+`PVec` (boxed, `anyref` leaves) is the **canonical** representation of
+`Vector<T>`. `TypedVec`/`PVecI64` is an **optimization representation** permitted
+only where the storage/call path preserves typed representation, or where escape
+analysis proves read-back through `anyref` is not hot/repeated.
+
+Representation is therefore **storage-site dependent, not globally
+type-dependent**:
+
+```text
+semantic type: Vector<Int>          (always)
+physical repr: PVec  or  PVecI64    (depends on the slot/storage site)
 ```
-closure_convert → insert_boundaries → slot_assign → repr_assign → route_typed_vectors
-```
 
-Boundary insertion decides where to box/unbox *before* representation is known,
-so representation can only be retrofitted, never used to place boundaries.
+`SlotInfo.repr` / `SlotInfo.wasm_type` already exist to carry exactly this
+distinction. The redesign leans into that mechanism instead of bypassing it with
+an unconditional `val_type_of_mono(Vector<Int>) = PVecI64`.
 
-Stage0 pointed at this direction but did **not** finish it, and is not a design
-to copy. `vector-backend-repr-inference.md` (2026-03-29) built repr-metadata
-*scaffolding* — `ValueRepr` (typed closures/cells), `SumRepr` (typed
-`Option`/`Result` payloads), and per-local `LocalBackendInfo` — plus a dense
-typed `ArrayI64` *scratch buffer* used only inside the native sort kernel (the
-Level-1 "dense working set inside a kernel" approach). But stage0's persistent
-`Vector<Int>` is still the universal `anyref` PVec: its leaves are
-`$Array = (array (mut anyref))` and `ValueRepr` has **no** typed-vector variant.
-Boot's `route_typed_vec` (`PVecI64`) is actually further along on the container
-axis. So what stage0 offers is a useful *pattern* for threading repr metadata,
-not a typed-vector-container implementation — this design is boot-first.
+## What is kept (reusable infrastructure, currently inert or conservative)
 
-## The reframe
+The activation revert preserves everything except the unconditional flip:
 
-The "three policies" framing (specialize-by-representation / erase-at-boundary /
-adapter-shim) is a false trichotomy. Two facts collapse it:
+- `PVecI64` runtime type and the `_i64` vector helpers (builder/freeze/len/get).
+- `rt_arr__box_i64` / `rt_arr__unbox_i64` as explicit boundary adapters.
+- `ReprKind.TypedVec(ElemRepr)` and verifier support for typed vector slots.
+- Typed emission paths for literals, `collect`/builders, and indexed reads.
+- `emit_coerce_stack` PVec↔PVecI64 arms as a correctness tool.
+- The conservative `route_typed_vectors` pass, restored as the shippable baseline
+  (types only non-escaping locals + the S2.1/S2.2 boundary-adapter cases).
 
-1. **After full monomorphization, physical representation is a pure function of
-   the concrete type.** A `Vector<Int>` is `PVecI64` *everywhere*. There is no
-   repr-polymorphic boundary between two `Vector<Int>` uses. So
-   "specialize-by-representation" is not a per-boundary choice — it is the
-   **default that falls out of monomorphization**.
-2. **Pure erase-at-boundary cannot unlock the hot paths.** If a column erases to a
-   boxed `PVec` when it enters an `IntCol(Vector<Int>)` variant, reads through it
-   stay boxed. The variant payload *must* physically hold the typed family.
+## Hybrid typed-storage policy (the redesign)
 
-So the policy is: **representation follows the monomorphized type, uniformly;
-erase only at the irreducible universal-ABI / external points.** The design work
-is making that fact first-class and letting layout + boundary insertion be driven
-by it.
+Use the typed `PVecI64` representation **only where the destination/storage is
+itself typed**:
 
-## Measurement
+- local non-escaping vectors (already done — `route_typed_vec` S2.0);
+- typed record fields (already done — S2.2);
+- typed sum payloads *iff the sum layout physically stores `PVecI64`*;
+- direct typed function params/results (S2.1);
+- typed closure environments (later — see M1b).
 
-`examples/performance/sort-bench/typed_variant_column_probe.tw` isolates the
-dataframe read wall — a `Vector<Int>` held in a variant, read in a hot
-random-index loop — against the same values as a bare typed local:
+Force the boxed `PVec` representation when crossing a **durable erased
+boundary**, because typed storage cannot be preserved there and read-back would
+rebuild:
 
-| path | time (N=1M, 10M reads) |
-|------|------|
-| variant-held column (boxed, current) | ~495–515ms |
-| same values, bare typed local (`PVecI64`) | ~74–87ms |
-| **ratio** | **~6.6–6.7×**, `match=true` |
+- universal `anyref`;
+- universal closure env (`ClosureEnv = array anyref`);
+- generic container payloads (`Vector<anyref>`, etc.);
+- erased `Variant`;
+- unknown ABI / export / import paths.
 
-(Absolute times were inflated by background CPU load; the ratio is load-robust —
-both halves run under identical load — and matches the bare-local ~6.8× from
-`typed_vec_read_probe.tw`.) The finding: **a `Vector<Int>` in a variant pays the
-full boxing tax on every read, with no variant-specific overhead beyond it**, so
-typing the payload recovers essentially the entire read-wall speedup.
-
-Ceiling for dataframe `order_by` (N=1M, current full ~2327ms, sort ~1317ms, of
-which ~69% is boxed key reads): typed reads at ~6.7× bring the read portion
-~0.69 → ~0.10, so sort ~1317 → **~540ms** (matching the ~491ms generic-comparator
-floor) and full `order_by` ~2327 → **~1500ms** — ~2.5× on the sort, ~1.5×+ on the
-full path, generalizing to every primitive vector in real code.
-
-## Design
-
-### 1. Representation as a first-class, monomorphization-derived fact
-
-- **Extend `ReprKind` with a typed container family, family-shaped from the
-  start.** Add `TypedVec(ElemRepr)` where `ElemRepr = { I64, F64, I32 }` —
-  primitive storage classes only. Verifier/coercion/layout code asks "is typed
-  vec?" once and switches on `ElemRepr` only where it must, so adding `F64`/`I32`
-  (and later `TypedDict(KeyRepr, ValueRepr)`) is not a fresh flat variant + a new
-  predicate each time. **M1a supports exactly one member, `.TypedVec(.I64)`**,
-  while keeping the final shape. `ElemRepr` stays primitive-only for now: reference
-  element families are deliberately out until there is a measured reason, so
-  `TypedVec` means "specialized primitive vector," and `TypedRef(mono)` remains the
-  fallback for reference-payload vectors (`Vector<String>`, records) where boxing
-  is not a cost — consistent with the Clojure calibration that reference payloads
-  do not hit the boxed-primitive cliff.
-- **`repr_of_mono` assigns the family from the element type**, `Vector<Int> →
-  TypedVec(I64)`, **unconditionally** — a total function of the concrete type, no
-  escape-analysis eligibility gate.
-- **The physical-repr policy must live below both `repr_assign` and `wasm_layout`.**
-  Today `repr_assign` imports `wasm_layout`; if `wasm_layout` needs the element
-  repr to lay out aggregate fields, having it call `repr_of_mono` (in
-  `repr_assign`) creates an import cycle. Extract `repr_of_mono` /
-  `TypedVec`-classification into a lower shared module (`backend/repr_policy.tw`,
-  imported by both), or move it into `wasm_layout` and have `repr_assign` consume
-  it. Settle this direction before writing code — it is the first implementation
-  task.
-- **Aggregate layout derives field wasm-types from element repr.** `wasm_layout`
-  computes record and variant field types from the field's element repr, so a
-  `Vector<Int>` in an `IntCol` variant payload or a record field physically holds
-  `PVecI64`. This is what makes those reads typed *for free* and retires the
-  bespoke per-boundary routing.
-- **Closure environments need per-capture-repr layouts (the harder case).** Today
-  closure layout is keyed by `mono_to_key(.Function(params, ret))` and every
-  closure shares the universal `rt_types__ClosureEnv` anyref array
-  (`wasm_layout.tw`), so the function signature alone cannot describe a typed env —
-  two closures with the same signature can capture different reprs. Typed captures
-  therefore require a distinct env layout **keyed by the ordered capture reprs**
-  (or per-closure-site), threaded from `closure_convert` — which records each
-  capture's monotype, from which the repr is derived via the shared `repr_policy`.
-  This is the largest piece of §1 and is on the
-  dataframe critical path: the `sort_by` comparator captures the key column, so
-  without a typed env its `keys[a]` reads stay boxed even after variant payloads
-  are typed.
-
-### 2. Boundary & coercion model
-
-Because representation is uniform per concrete type, coercions are only needed at
-the irreducible erasure points:
-
-1. **Universal runtime/helper ABIs** — an `rt` op whose signature is `anyref`
-   with no typed family member yet (e.g. an un-specialized `Vector.map`). Coerce
-   at the call; add typed family members over time to remove it.
-2. **Universal closure calling convention** — the box-everything args path. The
-   existing S2.1 typed-funcref fast path already keeps *calls* unboxed where the
-   concrete signature is known.
-3. **External host ABI / imports** — genuinely `anyref`.
-
-**The coercion is O(n) one-time** (box/unbox each element), *not* O(1) per read.
-Cost model: it is paid only when a typed vector is forced through a universal ABI —
-never on the read path. **Both directions are required, and only the forward one
-exists today.** `box_i64` (`codegen/runtime/arr.tw`) converts `PVecI64 → PVec`;
-the reverse — re-typing a boxed `PVec` result coming *back* from a universal helper
-into `PVecI64` — needs a new `unbox_i64` / `from_boxed_i64` adapter that unboxes
-each element (a raw `ref.cast` from `PVec` to `PVecI64` would trap, since the
-leaves are physically different arrays). The design must define where results from
-universal ABIs are re-typed, and the verifier (below) must reject a raw cast in
-place of the adapter.
-
-**Closure environments are aggregates too**, but not a simple field derivation —
-they are the per-capture-repr-keyed layout described in §1. A comparator
-`fn(a,b){ Int.compare(keys[a], keys[b]) }` *captures* `keys`; if the env stores
-that capture as `anyref`, reads inside the comparator go through an erased env slot
-and stay boxed even after variant payloads are typed. Once the env layout carries
-the capture's `PVecI64` repr, the whole hot path — column in a variant, captured
-into a closure env, read via typed index in a typed comparator — stays typed
-end-to-end with **zero coercions**.
-
-**Verifier.** Generalize the existing repr check (`backend/verify_expr.tw`,
-`backend/verify_slots.tw`): a typed-vec slot may only meet an erased-expecting
-position through an explicit coercion node, and every coercion connects two known
-reprs. This keeps the policy auditable (the anyref-elimination plan's "explicit in
-backend facts, verifier catches mismatches").
+The compiler already distinguishes semantic type from physical repr in
+`SlotInfo`; the policy is to compute the physical repr per storage site (typed
+when provably preserved, boxed otherwise) rather than from the mono type alone.
 
 ## Staging
 
-Milestone 1 is the structural win (Approach C core), split so the lower-risk
-mechanism lands and is measurable before the closure-env subsystem. Both keep the
-coercion as a principled post-pass. **M1a has a task-level implementation plan:**
-[representation-boundary-m1a-plan.md](representation-boundary-m1a-plan.md).
+### Short term — conservative baseline (done)
 
-#### Milestone 1a — First-class family + typed variant/record payloads
+`route_typed_vectors` is restored as the shippable baseline: existing typed-local
+and typed-record-field wins, no captured-vector catastrophe, with the typed
+runtime/codegen pieces retained for reuse.
 
-The general mechanism, without touching closures. Types direct index reads of
-variant/record-held columns and `collect`+index bodies (e.g. `gather_or_null`),
-and de-risks everything `1b` depends on. It does **not** improve the native
-combinator paths: `v.gather(idx)` / `Vector.sort` are universal runtime helpers
-(no typed family member until Milestone 3), so a typed column is boxed to call
-them and unboxed on return — the `order_by` `gather`/`take` phases will not
-improve here and must not *regress* materially from that round-trip.
+### Medium term — storage-site typed policy
 
-- **Break the layout/repr cycle first.** Extract `repr_of_mono` /
-  `TypedVec`-classification into a shared module below both `repr_assign` and
-  `wasm_layout` (see §1). Nothing else can be built cleanly until the dependency
-  direction is settled.
-- Add the typed-vec family to `ReprKind` (`backend/prepared_ir.tw`);
-  `repr_of_mono` assigns `Vector<Int> → TypedVec(I64)` unconditionally.
-- **Repr-driven helper/builtin selection.** Because every `Vector<Int>` slot is
-  now `TypedVec(I64)`, emission must select the `_i64` builder/push/freeze/len/get
-  helpers from the slot repr (`codegen/emit/arrays.tw`, `runtime_abi.tw`,
-  `builtins.tw`) — the job `route_typed_vec` used to do by rewriting calls. Without
-  this, typed slots feed boxed helpers and produce mismatches or forced
-  erase/retype churn.
-- `wasm_layout` derives record / variant field wasm-types from element repr → those
-  payloads physically hold `PVecI64`. This is already structural: variant/record
-  payload valtypes flow through `val_type_of_mono(field_ty)`, so making
-  `val_type_of_mono(Vector<Int>) = PVecI64` is the lever. `Vector<Int>` *literals*
-  need explicit handling — `emit_array_literal` always builds a boxed `PVec` and
-  must instead build through the typed builder (or `unbox_i64`).
-- **Coercion lives in the existing `emit_coerce_stack`** (`emit/coercions.tw`),
-  which already has the source/target ValTypes and already emits `box_i64` for
-  `PVecI64 → PVec`. Add the reverse (`PVec → PVecI64` via `unbox_i64`, for boxed
-  results returning from universal helpers) and the anyref-erase case
-  (`PVecI64 → .Anyref` must `box_i64` *first*, then erase — a bare upcast of the
-  distinct `PVecI64` struct to `anyref` would trap on the later `ref.cast` back to
-  `PVec`). Because coercion is emit-time and keyed on the source valtype, the
-  legacy `route_typed_vec` post-pass becomes redundant at activation and is
-  **disabled then** (its escape-based routing is subsumed by `repr_of_mono` +
-  `emit_coerce_stack`).
-- Generalize the verifier to accept `TypedVec(I64) ⇔ PVecI64` slot pairings.
-- **Gate (direct reads + no regression, not the `order_by` headline):**
-  `typed_variant_column_probe` is realized end-to-end (it extracts the column and
-  reads it directly in a non-closure loop, so it does not depend on `1b` or on
-  typed `gather`); add a variant-payload positive/negative probe pair; the
-  `order_by` `gather`/`take`/`sort` phases show **no material regression** from the
-  new boundary coercions (they do not improve yet — `gather` needs Milestone 3,
-  `sort` needs `1b`); self-host reaches fixed point and the boot suite is green.
+Make representation a per-storage-site decision:
 
-#### Milestone 1b — Typed closure-env layouts
+- teach the layout/repr layer to emit `PVecI64` for a `Vector<Int>` slot/field/
+  payload only when that site is a typed container that stores `PVecI64`, and
+  `PVec` otherwise;
+- keep `box_i64`/`unbox_i64` at the *few* real crossings (once per crossing,
+  never per read);
+- **unify the three repr paths** (`repr_of_mono`, `repr_of_named_cached`,
+  `cached_repr_of_mono` in `backend/repr_assign.tw`) behind one classifier so
+  public and cached logic cannot diverge (the activation exposed a divergence
+  where the cached path was not flipped).
 
-The comparator-capture path, and the largest/highest-risk piece.
+### Longer term — typed closure environments (M1b)
 
-- Add per-closure env layouts **keyed by capture reprs** (not by
-  `MonoType.Function`), threaded from `closure_convert` — which records each
-  capture's *monotype*; derive its repr via the shared `repr_policy` (§1) — and
-  type each capture read/write site accordingly.
-- Prove it on a standalone closure-capture probe (positive/negative) before wiring
-  through the `sort_by` comparator path.
-- **Gate:** the closure-capture probe is typed; `order_by`'s `sort` drops toward
-  ~540ms and the full path toward the ~1500ms ceiling; self-host + boot suite green.
+For hot closures, store captured `Vector<Int>` as `PVecI64` in the closure object
+so the typed trampoline reads `PVecI64` directly (no `anyref` round-trip):
 
-### Milestone 2 — Repr-aware boundary insertion; retire the bolt-on (Approach A)
+```text
+closure object stores captured keys as PVecI64
+typed trampoline reads PVecI64 directly → lambda receives PVecI64 → get_i64
+```
 
-- Make `insert_boundaries` (`codegen/insert_boundaries.tw`) consult `repr_of_mono`
-  and place wrap/unwrap coercions itself at repr-crossings, rather than relying on
-  emit-time `emit_coerce_stack` alone.
-- Delete `route_typed_vec.tw` outright (M1a already removed it from the pipeline;
-  this deletes the dead file and any remaining eligibility machinery).
-  Representation is decided once and boundaries follow — the dual-world and the
-  erasure-mimicry tax are gone.
+This fixes `sort_by(fn(a,b){ keys[a] … })`. The universal fallback still stores/
+reads boxed `PVec`. **This does not solve every `anyref` case** (erased sums,
+generic anyref), so it is not the full uniform-typing fix — it is one typed
+boundary among several.
 
-### Milestone 3 — Broaden families and typed helper surfaces
+## Boundary between "optimization" and "canonical"
 
-- `Vector<Float>/<Bool>/<Byte>` families; typed `gather`/`sort`/`map`/`filter`/
-  `concat`/`slice` members so hot combinators stop forcing coercions.
-- Then `Dict<K,V>` families reusing the same policy (anyref-elimination
-  Workstreams B/C).
+> `TypedVec` is an optimization representation. The canonical representation of
+> `Vector<Int>` remains `PVec`. Typed representation is allowed only where the
+> compiler can prove or encode typed storage.
 
-### Stage0 parity
+Everything the compiler cannot prove typed stays boxed `PVec` — which is correct,
+and cheap on read-back, by construction.
 
-Boot-only, and not because stage0 shares the model — it is boot-only because all
-of this is codegen / layout / emit inside boot's *own* Twinkle source. Stage0
-compiles boot as ordinary Twinkle regardless of boot's internal repr choices, so
-the typed-vector representation is something the resulting `boot.wasm` *does*, not
-something stage0 must replicate. (Stage0's persistent vectors are in fact still
-`anyref`.) The semantics of every program are unchanged — box/unbox roundtrips
-preserve values, which the probe's `match=true` validates. Self-host convergence
-is the gate; no stage0 changes.
+## Measurement context (still valid)
 
-## Risks and open questions
-
-- **Typed closure-env layouts (Milestone 1b) are the riskiest piece.** Keying an
-  env type by capture reprs (not function signature) touches `closure_convert`, the
-  env struct/type generation, and every capture read/write site. It is on the
-  dataframe critical path — the headline `order_by` `sort` win is not delivered
-  until `1b` lands — which is why it is split out behind the lower-risk `1a`
-  mechanism and gated on a standalone closure-capture probe first.
-- **Coercion completeness, both directions.** Milestone 1a's post-pass must insert a
-  coercion at *every* typed-vs-erased crossing — including re-typing boxed `PVec`
-  results returning from universal helpers via the new `unbox_i64` adapter — or the
-  verifier will reject (or, worse, a raw cast traps). The verifier generalization is
-  the safety net; land it alongside the inserter and both adapters, not after.
-- **Layout/repr module layering.** The `repr_assign → wasm_layout` import direction
-  means the physical-repr policy must be extracted to a shared lower module before
-  `wasm_layout` can consult element reprs. Getting this wrong surfaces as an import
-  cycle at build time, so it is the first task, not a cleanup.
-- **Helper-family coverage vs coercion churn.** Until typed `gather`/`sort`/`map`
-  land (Milestone 3), programs that route a typed vector through those combinators
-  pay an O(n) coercion per call. Acceptable as a transitional cost; measure that it
-  does not regress non-dataframe workloads.
-- **Code size.** Typed families multiply runtime/helper surfaces. Add members on
-  demand from benchmarks, not speculatively (anyref-elimination's stated risk).
-- **`ReprKind` shape (decided).** `TypedVec(ElemRepr)` with `ElemRepr = { I64, F64,
-  I32 }`, one supported member (`.I64`) in M1a. Chosen over a flat
-  `PVecI64`/`PVecF64` set to avoid variant/predicate churn as families grow and to
-  set the `TypedDict(KeyRepr, ValueRepr)` pattern; the family wrapper must stay
-  cheap to pattern-match in hot planner code.
-
-## Relationship to existing docs
-
-- **Resolves** [backend-anyref-elimination.md](backend-anyref-elimination.md)
-  Phase 1 (declare the policy) and delivers the first slice of its Workstream B
-  (typed container families).
-- **Supersedes** the "route before vs after boundary insertion" open question in
-  [vector/typed-vector-representation.md](vector/typed-vector-representation.md)
-  (answer: representation is decided from `MonoType`; Milestone 2 moves the
-  decision into `insert_boundaries`).
-- **Retires** `backend/route_typed_vec.tw` at Milestone 2; its landed S2.0–S2.2
-  behavior becomes the special case that falls out of the general model.
-- **Reuses the metadata-threading *pattern*** — not the container design — from
-  stage0's [../archive/vector-backend-repr-inference.md](../archive/vector-backend-repr-inference.md),
-  which built repr scaffolding (`ValueRepr`/`SumRepr`) and a sort scratch buffer
-  but never a typed persistent vector container. That doc's "typed container flip"
-  landed-scope line refers to the typed `rt.arr` helper surface, not Level-2 leaf
-  storage; this doc corrects that status per a 2026-07-04 source audit (a
-  correction note is now on the archived doc).
+`examples/performance/sort-bench/typed_variant_column_probe.tw` and
+`typed_vec_read_probe.tw` show the read-wall win is real where storage is typed
+(~7× on non-escaping typed reads). The dataframe `order_by` ceiling analysis
+(sort dominated by boxed key reads) still motivates typed *columns* — but only
+via typed storage sites (typed variant payloads + typed closure envs), not via
+uniform typing. `m1a-anyref-readback-investigation.md` holds the failure repro.
