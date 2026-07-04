@@ -1,0 +1,43 @@
+//! Tests for boot/compiler/backend/repr_policy.tw — the pure vector
+//! element-representation classification shared by repr_assign and wasm_layout.
+//!
+//! M1a supports only Vector<Int> -> .Some(.I64); every other vector (and any
+//! non-vector) classifies as .None and stays boxed.
+
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.backend.repr_policy.{elem_repr_of_vector}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("backend repr policy")
+    .test(
+      "Vector<Int> → Some(I64)",
+      fn() {
+        try assert.is_true(elem_repr_of_vector(.Vector(.Int)) == .Some(.I64))
+        .Ok({})
+      },
+    )
+    .test(
+      "Vector<Float> unsupported in M1a → None",
+      fn() {
+        try assert.is_true(elem_repr_of_vector(.Vector(.Float)) == .None)
+        .Ok({})
+      },
+    )
+    .test(
+      "Vector<String> stays boxed → None",
+      fn() {
+        try assert.is_true(elem_repr_of_vector(.Vector(.String)) == .None)
+        .Ok({})
+      },
+    )
+    .test(
+      "non-vector → None",
+      fn() {
+        try assert.is_true(elem_repr_of_vector(.Int) == .None)
+        .Ok({})
+      },
+    )
+}

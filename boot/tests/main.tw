@@ -19,6 +19,7 @@ use .suites.ast_path_suite
 use .suites.backend_prepare_suite
 use .suites.backend_repr_suite
 use .suites.backend_verify_suite
+use .suites.repr_policy_suite
 use .suites.base_env_guardrail_suite
 use .suites.builtin_identity_collision_suite
 use .suites.builtins_canonical_suite
@@ -203,6 +204,7 @@ runner.run_all([
   backend_prepare_suite.suite(),
   backend_repr_suite.suite(),
   backend_verify_suite.suite(),
+  repr_policy_suite.suite(),
   wat_suite.suite(),
   codegen_emit_suite.suite(),
   codegen_integration_suite.suite(),
