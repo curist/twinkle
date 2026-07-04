@@ -7,7 +7,7 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
-use compiler.backend.repr_policy.{elem_repr_of_vector}
+use compiler.backend.repr_policy.{candidate_typed_vec_family}
 
 pub fn suite() runner.Suite {
   runner
@@ -15,28 +15,28 @@ pub fn suite() runner.Suite {
     .test(
       "Vector<Int> → Some(I64)",
       fn() {
-        try assert.is_true(elem_repr_of_vector(.Vector(.Int)) == .Some(.I64))
+        try assert.is_true(candidate_typed_vec_family(.Vector(.Int)) == .Some(.I64))
         .Ok({})
       },
     )
     .test(
       "Vector<Float> unsupported in M1a → None",
       fn() {
-        try assert.is_true(elem_repr_of_vector(.Vector(.Float)) == .None)
+        try assert.is_true(candidate_typed_vec_family(.Vector(.Float)) == .None)
         .Ok({})
       },
     )
     .test(
       "Vector<String> stays boxed → None",
       fn() {
-        try assert.is_true(elem_repr_of_vector(.Vector(.String)) == .None)
+        try assert.is_true(candidate_typed_vec_family(.Vector(.String)) == .None)
         .Ok({})
       },
     )
     .test(
       "non-vector → None",
       fn() {
-        try assert.is_true(elem_repr_of_vector(.Int) == .None)
+        try assert.is_true(candidate_typed_vec_family(.Int) == .None)
         .Ok({})
       },
     )

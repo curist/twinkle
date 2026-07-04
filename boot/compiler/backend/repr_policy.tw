@@ -12,10 +12,12 @@ use compiler.mono_type.{MonoType}
 /// without churn as more primitive families are added.
 pub type ElemRepr = { I64, F64, I32 }
 
-/// elem_repr_of_vector returns the typed element family for a Vector<T> whose T
-/// is a currently-supported primitive, else .None (the vector stays boxed
-/// TypedRef). M1a: only Vector<Int> -> .Some(.I64).
-pub fn elem_repr_of_vector(mono: MonoType) ElemRepr? {
+/// candidate_typed_vec_family returns the *candidate* typed element family for a
+/// Vector<T> whose T is a currently-supported primitive, else .None. Whether a
+/// given storage site actually uses a typed repr is decided elsewhere (e.g.
+/// route_typed_vec / typed-storage layout) — not by this function.
+/// M1a: only Vector<Int> -> .Some(.I64).
+pub fn candidate_typed_vec_family(mono: MonoType) ElemRepr? {
   case mono {
     .Vector(.Int) => .Some(.I64),
     _ => .None,
