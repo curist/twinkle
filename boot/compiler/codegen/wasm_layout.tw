@@ -306,9 +306,15 @@ fn layout_of_sum_def(
   // Build variant layouts
   offset := 1 // field 0 is the tag
   var_layouts := collect v, i in variants {
-    payload_types := collect f in v.fields {
+    payload_types := collect f, j in v.fields {
       field_ty := subst_type_params(f, type_params, args)
-      val_type_of_mono(field_ty, env)
+      vt: ValType = if env.typed_vector_payloads.has("${tid.id}:${i}:${j}")
+        and is_int_vector_field(field_ty) {
+        .Ref(true, .Named("rt_types__PVecI64"))
+      } else {
+        val_type_of_mono(field_ty, env)
+      }
+      vt
     }
     vl := WasmVariantLayout.{
       variant_id: .{ id: i },

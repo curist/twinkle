@@ -497,6 +497,54 @@ fn test_layout_record_vector_int_field_stays_boxed_when_not_flagged() Result<Voi
   }
 }
 
+// ── layout_of: typed vector payloads ────────────────────────────────
+fn test_layout_sum_vector_int_payload_becomes_pveci64_when_flagged() Result<Void, String> {
+  variants := [ResolvedVariant.{ name: "Wrap", fields: [.Vector(.Int)], tag: 0 }]
+  base := env_with_sum("Wrap", 32, variants)
+  base.typed_vector_payloads["32:0:0"] = true
+  l := layout_of(.Named(TypeId.{ id: 32 }, []), base)
+
+  case l {
+    .Sum(sum) => {
+      vt := sum.variants[0].payload_types[0]
+
+      case vt {
+        .Ref(_, ht) => case ht {
+          .Named(n) => assert.equal(n, "rt_types__PVecI64"),
+          _ => assert.fail("expected Named heap type"),
+        },
+        _ => assert.fail("expected Ref val_type for typed payload"),
+      }
+    },
+    _ => assert.fail("expected Sum layout"),
+  }
+}
+
+fn test_layout_sum_vector_int_payload_stays_boxed_when_not_flagged() Result<Void, String> {
+  variants := [ResolvedVariant.{ name: "Wrap", fields: [.Vector(.Int)], tag: 0 }]
+  base := env_with_sum("Wrap", 33, variants)
+  l := layout_of(.Named(TypeId.{ id: 33 }, []), base)
+
+  case l {
+    .Sum(sum) => {
+      vt := sum.variants[0].payload_types[0]
+
+      case vt {
+        .Ref(nullable, ht) => {
+          try assert.equal(nullable, true)
+
+          case ht {
+            .Named(n) => assert.equal(n, "rt_types__PVec"),
+            _ => assert.fail("expected Named rt_types__PVec"),
+          }
+        },
+        _ => assert.fail("expected Ref val_type"),
+      }
+    },
+    _ => assert.fail("expected Sum layout"),
+  }
+}
+
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   runner
@@ -542,5 +590,13 @@ pub fn suite() runner.Suite {
     .test(
       "layout_of record Vector<Int> field stays boxed when not flagged",
       test_layout_record_vector_int_field_stays_boxed_when_not_flagged,
+    )
+    .test(
+      "layout_of sum Vector<Int> payload becomes PVecI64 when flagged typed",
+      test_layout_sum_vector_int_payload_becomes_pveci64_when_flagged,
+    )
+    .test(
+      "layout_of sum Vector<Int> payload stays boxed when not flagged",
+      test_layout_sum_vector_int_payload_stays_boxed_when_not_flagged,
     )
 }
