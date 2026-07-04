@@ -2,53 +2,71 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `Vector<Int>` a first-class typed physical representation (`TypedVec(I64)` → `rt_types__PVecI64`) that stays typed through record fields and variant payloads, with bidirectional coercions only at universal-ABI boundaries, replacing the conservative `route_typed_vec` bolt-on's eligibility with a repr-driven model.
+**Goal:** Make `Vector<Int>` a first-class typed physical representation (`TypedVec(I64)` → `rt_types__PVecI64`) that stays typed through record fields and variant payloads, with bidirectional coercions at universal-ABI boundaries handled by the existing `emit_coerce_stack` layer, replacing the conservative `route_typed_vec` bolt-on.
 
-**Architecture:** *Build-then-activate.* `repr_of_mono` cannot flip `Vector<Int> → TypedVec(I64)` incrementally and stay self-host-green, because that flip simultaneously requires typed layout, typed helper selection, and boundary coercions. So this plan **builds every component behind unit tests while nothing yet produces `TypedVec`** (self-host stays green throughout), then a single **activation task** flips the classifier + valtype and wires the coercion inserter. This mirrors how S2.0 landed (committed gated-off, then activated).
+**Architecture:** *Build-then-activate.* `repr_of_mono` cannot flip `Vector<Int> → TypedVec(I64)` incrementally and stay self-host-green, because that flip simultaneously requires typed layout, typed helper selection, and boundary coercions. So this plan **builds every component while the legacy `route_typed_vec` pass keeps running unchanged** (self-host + existing S2 typed-vector behavior stay green throughout), then a single **activation task** flips the classifier + valtype, teaches literals, and *disables* the now-redundant legacy pass. This mirrors how S2.0 landed (built, then activated).
 
-**Tech Stack:** Boot compiler (self-hosted Twinkle in `boot/`). Verification loop: `make bundle-cli` (self-host to fixed point), `make boot-test` (boot suite), and `.tw` probes built to `.wat` then grepped. Boot-only — no stage0 changes (`make bundle-cli` compiles the new boot source via stage0 as ordinary Twinkle; the self-host fixed point is the gate).
+**Tech Stack:** Boot compiler (self-hosted Twinkle in `boot/`). Verification loop: `make bundle-cli` (self-host to fixed point), `make boot-test` (boot suite), and `.tw` probes built to `.wat` then grepped. Boot-only — no stage0 changes (`make bundle-cli` compiles the new boot via stage0 as ordinary Twinkle; the self-host fixed point is the gate).
 
 **Spec:** [representation-boundary-policy.md](representation-boundary-policy.md) (Milestone 1a).
 
 ---
 
+## Key facts discovered during planning (do not re-derive)
+
+- **Coercion already lives in `emit_coerce_stack`** (`codegen/emit/coercions.tw`,
+  signature `(from: ValType, to: ValType, mono, ctx, buf)`, 17 call sites across
+  records/variants/calls). It **already** emits `box_i64` for `PVecI64 → PVec`
+  (`is_vector_int(mono)` guarded) and routes `to: .Anyref` through
+  `emit_box_to_anyref`. The reverse (`PVec → PVecI64`) and the
+  `PVecI64 → .Anyref` (box-then-erase) cases are what's missing.
+- **`route_typed_vec` today sets `wasm_type = PVecI64` but leaves `repr` as
+  `TypedRef`** (`with_repr_wasm(info, info.repr, PVecI64)`), so pre-activation the
+  typed-vector marker is the *wasm type*, not the repr. Any pre-activation code
+  must treat "typed vec" as `repr == TypedVec(I64) OR wasm_type == PVecI64`.
+- **`builder_push_i64` is `(Array?, anyref)`** and unboxes `BoxedInt` internally;
+  the builder handle is a boxed `Array?`, not a `PVecI64`. Do not pass raw `i64`.
+- **`emit_array_literal` (`emit/arrays.tw`) always emits `StructNew("rt_types__PVec")`**
+  and ignores the result valtype — `Vector<Int>` literals need explicit handling at
+  activation.
+- **Variant/record payload valtypes already flow through `val_type_of_mono`**
+  (`wasm_layout.tw:311` for sum defs; records similarly), so making
+  `val_type_of_mono(Vector<Int>) = PVecI64` makes typed payloads fall out.
+
 ## Note on granularity
 
-The data-type and runtime-function tasks below carry complete code (they are
-verifiable in isolation). The compiler-transform tasks (helper selection,
-coercion insertion, verifier, activation) are specified as **exact file/function
-targets + a concrete test gate** rather than fabricated line-by-line code: the
-precise code is emergent and interdependent, and the *test* (a probe built to WAT
-and grepped, plus self-host + boot suite) is the real contract. Every such task
-names the function to change and the exact command whose output gates it.
+Data-type/runtime tasks carry complete code. The compiler-transform tasks
+(coercion cases, helper selection, activation) are specified as **exact
+file/function target + concrete test gate** rather than fabricated line-by-line
+code — the code is emergent and interdependent, and the *test* (a probe built to
+WAT and grepped, plus self-host + boot suite) is the real contract.
 
 ## File structure
 
 | File | Responsibility | Task |
 |------|----------------|------|
-| `boot/compiler/backend/repr_policy.tw` (new) | Pure `MonoType → ElemRepr?` / `TypedVec` classification, importable by both `repr_assign` and `wasm_layout` without a cycle | T0 |
+| `boot/compiler/backend/repr_policy.tw` (new) | Pure `MonoType → ElemRepr?` classification, importable by `repr_assign` and `wasm_layout` without a cycle | T0 |
 | `boot/compiler/backend/prepared_ir.tw` | Add `ElemRepr` + `ReprKind::TypedVec(ElemRepr)` | T1 |
-| `boot/compiler/codegen/runtime/arr.tw` | `unbox_i64` runtime fn (mirror of `box_i64`); register it | T2 |
-| `boot/compiler/codegen/emit/anyref.tw` | Fix `emit_box_to_anyref` `.Vector_` identity trap for `PVecI64` | T3 |
-| `boot/compiler/codegen/emit/{arrays,runtime_abi,calls}.tw`, `boot/compiler/builtins.tw` | Repr-driven `_i64` helper selection from slot repr | T4 |
-| `boot/compiler/backend/route_typed_vec.tw` | Replace conservative eligibility with a repr-diff-driven coercion inserter | T5 |
-| `boot/compiler/backend/{verify_slots,verify_expr}.tw` | Generalize the repr/coercion verifier | T6 |
-| `boot/compiler/backend/repr_assign.tw`, `boot/compiler/codegen/wasm_layout.tw` | **Activation:** flip `repr_of_mono` + `val_type_of_mono` + layout for `Vector<Int>` | T7 |
-| `examples/performance/sort-bench/*.tw` | Probes + regression gate | T8 |
+| `boot/compiler/codegen/runtime/arr.tw` | `unbox_i64` runtime fn (`PVec → PVecI64`); register it | T2 |
+| `boot/compiler/codegen/emit/coercions.tw` | Extend `emit_coerce_stack`: reverse `unbox_i64` + `PVecI64 → .Anyref` box-then-erase | T3 |
+| `boot/compiler/codegen/emit/{arrays,runtime_abi,calls}.tw`, `builtins.tw` | Repr/wasm-driven `_i64` helper selection (transitional OR rule) | T4 |
+| `boot/compiler/backend/{verify_slots,verify_expr}.tw` | Accept `TypedVec(I64) ⇔ PVecI64`; require coercions across reprs | T5 |
+| `boot/compiler/backend/repr_assign.tw`, `codegen/wasm_layout.tw`, `codegen/emit/arrays.tw`, `backend/prepare.tw` | **Activation:** flip classifier + valtype, teach literals, disable legacy pass | T6 |
+| `examples/performance/sort-bench/*.tw` | Probes + regression gate | T7 |
 
 ---
 
 ## Task 0: Shared repr-policy module (break the cycle)
 
-**Why first:** `repr_assign.tw` imports `wasm_layout.tw`; the activation needs
+**Why first:** `repr_assign.tw` imports `wasm_layout.tw`; activation needs
 `wasm_layout` to consult element repr. Putting the classifier in `repr_assign`
 would force `wasm_layout → repr_assign → wasm_layout`. The vector element-repr
-classification is a *pure* function of `MonoType` (no `layout_of` needed), so it
-extracts cleanly into a lower module both import.
+classification is a *pure* function of `MonoType` (no `layout_of`), so it extracts
+cleanly into a lower module both import.
 
 **Files:**
 - Create: `boot/compiler/backend/repr_policy.tw`
-- Test: `boot/tests/suites/repr_policy_suite.tw` (new; register in the suite index)
+- Test: `boot/tests/suites/repr_policy_suite.tw` (new; register in the suite index / `boot/tests/main.tw`)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -58,18 +76,19 @@ use compiler.backend.repr_policy.{elem_repr_of_vector}
 use compiler.mono_type.{MonoType}
 
 pub fn test_repr_policy() {
-  // Vector<Int> classifies as the I64 element family.
   assert.eq(elem_repr_of_vector(.Vector(.Int)), .Some(.I64), "vec<int> -> I64")
-  // M1a supports only I64; other primitive vectors are not yet typed.
   assert.eq(elem_repr_of_vector(.Vector(.Float)), .None, "vec<float> unsupported in M1a")
   assert.eq(elem_repr_of_vector(.Vector(.String)), .None, "vec<string> stays boxed")
   assert.eq(elem_repr_of_vector(.Int), .None, "non-vector -> None")
 }
 ```
 
+(Match the boot suite's actual `assert` API when registering; adjust the
+`assert.eq` call shape if the suite uses a different helper.)
+
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `target/twk run boot/tests/main.tw` (after registering the suite)
+Run: `target/twk run boot/tests/main.tw`
 Expected: FAIL — `repr_policy` / `elem_repr_of_vector` undefined.
 
 - [ ] **Step 3: Implement the module**
@@ -99,14 +118,11 @@ pub fn elem_repr_of_vector(mono: MonoType) ElemRepr? {
 }
 ```
 
-> **Note:** `ElemRepr` is defined here (the policy module) and re-exported/used by
-> `prepared_ir.tw` in T1. Keep this the single definition; `prepared_ir` imports
-> it rather than redefining.
+`ElemRepr` is defined here (single definition); `prepared_ir.tw` imports it in T1.
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `target/twk run boot/tests/main.tw`
-Expected: PASS.
+Run: `target/twk run boot/tests/main.tw` → PASS.
 
 - [ ] **Step 5: Self-host + commit**
 
@@ -123,12 +139,10 @@ Expected: `make bundle-cli` prints "Fixed point reached"; boot suite green.
 ## Task 1: Add `TypedVec(ElemRepr)` to `ReprKind`
 
 **Files:**
-- Modify: `boot/compiler/backend/prepared_ir.tw:47` (the `ReprKind` enum)
-- Modify: every exhaustive `case` on `ReprKind` (find them — see Step 2)
+- Modify: `boot/compiler/backend/prepared_ir.tw:47` (the `ReprKind` enum) + import `ElemRepr`
+- Modify: every exhaustive `case` on `ReprKind` (find them — Step 2)
 
 - [ ] **Step 1: Add the variant**
-
-In `prepared_ir.tw`, import `ElemRepr` and extend `ReprKind`:
 
 ```tw
 use compiler.backend.repr_policy.{ElemRepr}
@@ -147,19 +161,16 @@ pub type ReprKind = {
 }
 ```
 
-- [ ] **Step 2: Find every exhaustive match and add a `TypedVec` arm**
+- [ ] **Step 2: Add a `TypedVec` arm to every exhaustive match**
 
-Run: `grep -rn "case .*repr\|ReprKind" boot/compiler/ | grep -v "//"`
-For each exhaustive `case` on a `ReprKind` value, add a `.TypedVec(_) => …` arm.
-Until activation nothing produces `TypedVec`, so the safe placeholder arm is to
-mirror the `TypedRef`/`OpaqueAnyref` behavior at that site (a `TypedVec` is a
-typed ref like `TypedRef`). Where a site already has `_ =>`, no change is needed.
+Run: `grep -rn "ReprKind\|\.TypedRef(\|\.OpaqueAnyref" boot/compiler/ | grep -v "//"`
+For each exhaustive `case` on a `ReprKind`, add `.TypedVec(_) => …` mirroring the
+`TypedRef` arm (a `TypedVec` is a typed ref like `TypedRef`). Sites with `_ =>`
+need no change. Nothing produces `TypedVec` yet, so behavior is unchanged.
 
 - [ ] **Step 3: Self-host to prove exhaustiveness**
 
-Run: `make bundle-cli`
-Expected: compiles and reaches fixed point (no non-exhaustive `case` errors).
-Nothing produces `TypedVec` yet, so behavior is unchanged.
+Run: `make bundle-cli` → reaches fixed point (no non-exhaustive `case` errors).
 
 - [ ] **Step 4: Commit**
 
@@ -173,300 +184,255 @@ git commit -m "backend: add ReprKind.TypedVec(ElemRepr) variant (inert)"
 
 ## Task 2: `unbox_i64` runtime adapter (`PVec → PVecI64`)
 
-**Why:** Coercion needs both directions. `box_i64` (`PVecI64 → PVec`) exists;
-the reverse re-types a boxed `PVec` returning from a universal helper. A raw
-`ref.cast` would trap (different leaf array types), so it must rebuild.
+**Why:** `emit_coerce_stack` already boxes `PVecI64 → PVec`; the reverse re-types a
+boxed `PVec` returning from a universal helper. A raw `ref.cast` traps (different
+leaf array types), so it rebuilds.
 
 **Files:**
-- Modify: `boot/compiler/codegen/runtime/arr.tw` (add `unbox_i64_fn`, register in the fn list near `box_i64_fn()` at line ~160)
+- Modify: `boot/compiler/codegen/runtime/arr.tw` (add `unbox_i64_fn`; register near `box_i64_fn()` at line ~160)
 
-- [ ] **Step 1: Add a runtime roundtrip probe (the test)**
+- [ ] **Step 1: Implement `unbox_i64_fn` (mirror of `box_i64_fn`, inverted)**
 
-Create `examples/performance/sort-bench/unbox_i64_probe.tw`: build a
-`Vector<Int>` via `collect`, force it boxed (append in a dead branch, per
-`typed_vec_read_probe`'s `boxed_sum`), then a helper that will (post-T4) route the
-value through `unbox_i64` and read it typed; assert checksum equals the boxed
-read. *Until T4 wires selection this probe is a placeholder gate; its real
-assertion is the checksum-match after activation (T7).* Keep it minimal now.
-
-- [ ] **Step 2: Implement `unbox_i64_fn` mirroring `box_i64_fn`**
-
-Mirror `box_i64_fn` (`arr.tw:1936`), swapping the builder family and element
-direction: `params: [pvec_ref()]`, `results: [pvec_i64_null()]`; loop
-`0..len`; read each element with the boxed `get` + `BoxedInt` unbox to raw `i64`;
-push into a typed builder via `builder_new_i64` / `builder_push_i64`; finish with
-`builder_freeze_i64`. Register `unbox_i64_fn()` alongside `box_i64_fn()` in the
-runtime fn list.
+Correct shape (verified against `box_i64_fn` and `builder_push_i64`): the builder
+handle is a boxed `Array?` from `builder_new_i64`; push the **boxed** element
+straight in — `builder_push_i64(builder, get(vec, i))` — since `builder_push_i64`
+is `(Array?, anyref)` and unboxes `BoxedInt` itself; finish with
+`builder_freeze_i64(builder)` which yields the `PVecI64`. Read the source with the
+boxed `len`/`get` runtime ops (the ones `box_i64` reads *from* on the typed side,
+here used on the boxed side).
 
 ```tw
-// boot/compiler/codegen/runtime/arr.tw — sketch; mirror box_i64_fn's structure
+// boot/compiler/codegen/runtime/arr.tw
 // unbox_i64(vec: PVec?) -> PVecI64
-// Reverse of box_i64: rebuild a typed PVecI64 from a boxed PVec by unboxing each
-// BoxedInt element. Used when a boxed Vector<Int> result from a universal helper
-// re-enters typed code.
+// Reverse of box_i64: rebuild a typed PVecI64 from a boxed PVec. Reads the boxed
+// vector element-by-element and pushes through the typed builder (which unboxes
+// BoxedInt internally), so a boxed Vector<Int> result from a universal helper can
+// re-enter typed code.
 fn unbox_i64_fn() FuncDef {
   .{
     name: "unbox_i64",
-    params: [pvec_ref()],
-    results: [pvec_i64_null()],
-    locals: [.I32, .I32, pvec_i64_null()],  // n, i, typed_builder
+    params: [pvec_ref()],        // boxed PVec in
+    results: [pvec_i64_null()],  // typed PVecI64 out
+    locals: [.I32, .I32, arr_null()],  // n, i, builder (boxed Array handle)
     body: [
-      // n = len(vec); i = 0; b = builder_new_i64()
-      // loop i<n: push_i64(b, unbox(get(vec, i))); i++
-      // return builder_freeze_i64(b)
-      // (fill from box_i64_fn's loop skeleton, inverted)
+      // n   = <boxed len>(vec)
+      // i   = 0
+      // b   = builder_new_i64()            // returns Array
+      // loop i<n: builder_push_i64(b, <boxed get>(vec, i)); i = i+1
+      // return builder_freeze_i64(b)       // yields PVecI64
+      // (fill from box_i64_fn's loop skeleton, inverted; reuse its len/get calls)
     ],
   }
 }
 ```
 
-- [ ] **Step 3: Self-host (proves the fn assembles / type-checks in emitted WAT)**
+- [ ] **Step 2: Register + self-host**
 
-Run: `make bundle-cli`
-Expected: fixed point; `unbox_i64` present in the runtime. (It is dead until T5
-references it — that is fine.)
+Add `unbox_i64_fn()` to the runtime fn list beside `box_i64_fn()`.
+Run: `make bundle-cli` → fixed point. (`unbox_i64` is dead until T3 references it.)
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add boot/compiler/codegen/runtime/arr.tw examples/performance/sort-bench/unbox_i64_probe.tw
+git add boot/compiler/codegen/runtime/arr.tw
 git commit -m "runtime: add unbox_i64 adapter (PVec -> PVecI64), inert"
 ```
 
 ---
 
-## Task 3: Fix the `emit_box_to_anyref` `PVecI64` identity trap
+## Task 3: Extend `emit_coerce_stack` (reverse + anyref-erase)
 
-**Why:** `emit_box_to_anyref` (`emit/anyref.tw`) has `.Vector_(_) => buf`
-(identity upcast). Once `Vector<Int>` is `PVecI64`, upcasting that distinct struct
-straight to `anyref` and later `ref.cast`-ing back to `PVec` traps. Any typed
-vector crossing into an `anyref` position must be `box_i64`'d first.
+**Why:** `emit_coerce_stack` is the established stack-coercion layer and already
+has the source/target ValTypes — the correct place for both missing cases. This
+replaces the earlier (wrong) idea of inserting coercion ANF nodes in
+`route_typed_vec`, and resolves the "`emit_box_to_anyref` by mono is insufficient"
+trap: the rule keys off the *source valtype*, which `emit_coerce_stack` has.
 
 **Files:**
-- Modify: `boot/compiler/codegen/emit/anyref.tw` (`emit_box_to_anyref`, the `.Vector_` arm)
+- Modify: `boot/compiler/codegen/emit/coercions.tw` (`emit_coerce_stack`)
 
-- [ ] **Step 1: Change the `.Vector_` arm to be repr-aware**
+- [ ] **Step 1: Add the reverse case `PVec → PVecI64`**
 
-For a `Vector<Int>` (the M1a typed family), emit `box_i64` before the identity
-upcast; all other vectors keep the identity upcast. Concretely, replace
-`.Vector_(_) => buf` with a match that, when the vector's element is `Int`,
-appends `.Call("box_i64")` then returns `buf` (the boxed `PVec` is already an
-`anyref`-compatible ref); otherwise returns `buf` unchanged.
+Alongside the existing `from PVecI64 → to PVec ⇒ box_i64` case, add: `from` is
+`rt_types__PVec`, `to` is `rt_types__PVecI64`, `is_vector_int(mono)` ⇒
+`buf.append(.Call("rt_arr__unbox_i64"))`.
 
-- [ ] **Step 2: Self-host (still inert — nothing is PVecI64 yet)**
+- [ ] **Step 2: Add the anyref-erase case `PVecI64 → .Anyref`**
+
+Before the generic `to: .Anyref => emit_box_to_anyref(...)` arm, special-case a
+`from` of `rt_types__PVecI64` going `to: .Anyref`: emit `box_i64` first (yielding a
+`PVec`, which is an `anyref`-compatible ref), *then* the normal erase. This is the
+guard for the identity trap — do **not** upcast a `PVecI64` straight to `anyref`.
+Leave `emit_box_to_anyref` itself untouched (its `.Vector_ => buf` identity is
+correct for an already-boxed `PVec`).
+
+- [ ] **Step 3: Self-host (inert pre-activation)**
 
 Run: `make bundle-cli && make boot-test`
-Expected: fixed point + green. Behavior identical pre-activation (all
-`Vector<Int>` are still `PVec`, so `box_i64` of an already-boxed value must be a
-no-op path — verify the arm only fires for a `PVecI64`-typed value; if
-`emit_box_to_anyref` only sees `MonoType`, gate the `box_i64` on the *source
-wasm type* being `PVecI64`, not on the mono alone).
+Expected: fixed point + green. Pre-activation, legacy-typed vectors are
+non-escaping (they never reach a record/variant/anyref boundary), so these new
+cases don't fire — behavior is unchanged.
 
-> **Landmine:** `emit_box_to_anyref` is keyed on `MonoType`, but the box-vs-noop
-> decision depends on the *source physical repr* (`PVecI64` vs already-`PVec`).
-> Thread the source `ValType` (or a `is_source_pvec_i64` flag) into this call
-> site, or perform the `box_i64` in the coercion inserter (T5) instead and leave
-> `emit_box_to_anyref` untouched. Decide during T5; whichever site owns it, the
-> verifier (T6) must guarantee no raw `PVecI64 → anyref` upcast survives.
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add boot/compiler/codegen/emit/anyref.tw
-git commit -m "emit: box_i64 typed vectors before anyref erase (guard the identity trap)"
+git add boot/compiler/codegen/emit/coercions.tw
+git commit -m "emit: emit_coerce_stack handles PVec<->PVecI64 both ways + anyref erase"
 ```
 
 ---
 
-## Task 4: Repr-driven `_i64` helper selection
+## Task 4: Repr/wasm-driven `_i64` helper selection (transitional OR rule)
 
-**Why:** After activation every `Vector<Int>` slot is `TypedVec(I64)`; emission
-must select `_i64` builder/push/freeze/len/get from the slot repr — the job
-`route_typed_vec` did by rewriting calls. Reads already route via base wasm type
-(`emit/arrays.tw` `is_pvec_i64`); this generalizes selection to builder/len/freeze
-and drives it from repr, not from the bolt-on's rewrite.
+**Why:** After activation, `_i64` builder/push/freeze/len/get selection must key
+off the typed marker. Because the legacy pass marks typed vectors by *wasm type*
+(`PVecI64`) not repr, the transitional rule must accept **either** signal so the
+existing probes keep passing before activation.
 
 **Files:**
-- Modify: `boot/compiler/codegen/emit/arrays.tw` (index/len), `emit/runtime_abi.tw` (builder arg shim), `emit/calls.tw` (result adaption), `boot/compiler/builtins.tw` (the `_i64` builtin ids)
+- Modify: `boot/compiler/codegen/emit/{arrays,runtime_abi,calls}.tw`, `boot/compiler/builtins.tw`
 
-- [ ] **Step 1: Gate = the existing typed probes still pass under the bolt-on**
+- [ ] **Step 1: Gate = existing typed probes still pass**
 
-This task is a refactor of *how* `_i64` selection is decided (repr-driven vs
-rewrite), landing before activation. Its gate is that the current typed-vector
-probes are unaffected while the bolt-on is still active:
-
-Run:
 ```bash
 target/twk build examples/performance/sort-bench/typed_record_field_probe.tw -o /tmp/trf.wat
 grep -c rt_arr__get_i64 /tmp/trf.wat   # expect >= 1
 target/twk run examples/performance/sort-bench/typed_vec_read_probe.tw  # match=true, ~7x gap
 ```
 
-- [ ] **Step 2: Make helper selection consult `SlotInfo.repr == TypedVec(I64)`**
+- [ ] **Step 2: Make selection use `is_typed_vec(slot)` = `repr == TypedVec(I64) OR wasm_type == PVecI64`**
 
-Where emission currently decides the `_i64` builder/push/freeze/len variant
-(today keyed off the bolt-on's slot retyping), key it off `repr == .TypedVec(.I64)`
-(equivalently `wasm_type == PVecI64`). Keep reads as-is (already base-wasm-type
-driven). Do not yet flip `repr_of_mono` — this only changes *how* a slot that is
-already `PVecI64` selects helpers.
+Introduce a small predicate `is_typed_vec_slot(info)` returning true when
+`info.repr` is `.TypedVec(.I64)` **or** `info.wasm_type` is
+`.Ref(_, .Named("rt_types__PVecI64"))`. Route builder/push/freeze/len/get `_i64`
+selection through it. Reads already dispatch on the base wasm type
+(`emit/arrays.tw` `is_pvec_i64`) — leave those, they already satisfy the OR.
 
 - [ ] **Step 3: Self-host + probes**
 
-Run: `make bundle-cli && make boot-test` then Step 1's probe commands.
+Run: `make bundle-cli && make boot-test` then Step 1's commands.
 Expected: fixed point, green, probes unchanged (`match=true`, `get_i64` present).
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add boot/compiler/codegen/emit/*.tw boot/compiler/builtins.tw
-git commit -m "emit: drive _i64 helper selection from slot repr (TypedVec)"
+git commit -m "emit: _i64 helper selection via repr OR PVecI64 wasm type (transitional)"
 ```
 
 ---
 
-## Task 5: Repr-diff coercion inserter (replace conservative eligibility)
-
-**Why:** `route_typed_vec`'s eligibility is "typed only if never escapes." Replace
-that with: every `Vector<Int>` is `PVecI64`, and insert a coercion (`box_i64` /
-`unbox_i64`) exactly where a `PVecI64` value meets a position whose expected wasm
-type is boxed `PVec` (universal helper arg, and re-typing a boxed helper *result*).
+## Task 5: Generalize the verifier
 
 **Files:**
-- Modify: `boot/compiler/backend/route_typed_vec.tw` (becomes the coercion inserter; keep the file, change the pass)
-
-- [ ] **Step 1: Gate = a variant-payload probe goes typed, checksum matches**
-
-The behavioral contract is `typed_variant_column_probe` (already in the repo):
-after this task + activation, the extracted column reads typed and the checksum
-matches the boxed baseline. This task builds the inserter; T7 activates. Author a
-positive/negative variant probe pair now (see T8) to lock the contract.
-
-- [ ] **Step 2: Implement the inserter**
-
-Walk the prepared ANF. For each atom/slot whose repr is `TypedVec(I64)` used at a
-position expecting boxed `PVec` (call arg to a universal helper, store into an
-`anyref`/`ErasedSum` position), insert `box_i64`. For each boxed-`PVec` *result*
-bound into a `TypedVec(I64)` slot (universal helper return), insert `unbox_i64`.
-Where both sides are `TypedVec(I64)` (typed variant/record payload, typed local),
-insert **nothing**. Remove the old "escape disqualifies" analysis.
-
-> This is the largest transform. Reuse the existing lineage/copy-map plumbing in
-> `route_typed_vec.tw`; the change is the *decision rule* (repr diff, not escape
-> eligibility) and adding the `unbox_i64` direction.
-
-- [ ] **Step 3: Gate deferred to activation**
-
-The inserter cannot be exercised until `repr_of_mono` produces `TypedVec` (T7).
-Land it self-host-green (inert: no slot is `TypedVec` yet) and commit.
-
-Run: `make bundle-cli && make boot-test`
-Expected: fixed point + green (inert).
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add boot/compiler/backend/route_typed_vec.tw
-git commit -m "backend: repr-diff coercion inserter (box_i64/unbox_i64), inert until activation"
-```
-
----
-
-## Task 6: Generalize the verifier
-
-**Files:**
-- Modify: `boot/compiler/backend/verify_slots.tw` (`is_typed_vec_i64`, slot checks), `boot/compiler/backend/verify_expr.tw` (`pvec_repr_mismatch`)
+- Modify: `boot/compiler/backend/verify_slots.tw` (`is_typed_vec_i64`), `boot/compiler/backend/verify_expr.tw` (`pvec_repr_mismatch`)
 
 - [ ] **Step 1: Extend the rule**
 
-Accept `TypedVec(I64)` ⇔ `PVecI64` wasm type as a valid slot pairing (generalize
-the existing `is_typed_vec_i64`). Reject any `PVecI64`-typed value meeting a
-boxed-`PVec`/`anyref` position without an intervening coercion node — the safety
-net for T3/T5. Keep the existing `pvec_repr_mismatch` store check.
+Accept `TypedVec(I64)` repr paired with a `PVecI64` wasm type (generalize the
+existing `is_typed_vec_i64`, which today keys off wasm type only). Keep the
+`pvec_repr_mismatch` store check. Coercions are emit-time (T3), so the verifier's
+job here is slot-level consistency (`repr` and `wasm_type` agree), not coercion
+node presence.
 
 - [ ] **Step 2: Self-host (inert)**
 
-Run: `make bundle-cli && make boot-test`
-Expected: fixed point + green.
+Run: `make bundle-cli && make boot-test` → fixed point + green.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add boot/compiler/backend/verify_slots.tw boot/compiler/backend/verify_expr.tw
-git commit -m "verify: accept TypedVec(I64) and require coercions across reprs"
+git commit -m "verify: accept TypedVec(I64) repr paired with PVecI64"
 ```
 
 ---
 
-## Task 7: **Activation** — flip `Vector<Int>` to the typed family
+## Task 6: **Activation** — flip `Vector<Int>` to the typed family
 
-**Why:** Turns everything on at once. This is the integration gate.
+**Why:** Turns everything on at once and disables the now-redundant legacy pass.
+This is the integration gate. (This also *pulls the spec's M2 "delete
+`route_typed_vec`" forward* to a *disable* here, since `repr_of_mono` +
+`emit_coerce_stack` now supply what the legacy pass used to.)
 
 **Files:**
-- Modify: `boot/compiler/backend/repr_assign.tw:231` (`repr_of_mono`), `boot/compiler/codegen/wasm_layout.tw` (`val_type_of_mono:523`, `layout_hint_of:427`, and `layout_of` vector arm)
+- Modify: `boot/compiler/backend/repr_assign.tw:231,260` (`repr_of_mono`, `repr_of_named_cached`)
+- Modify: `boot/compiler/codegen/wasm_layout.tw:523,427` (`val_type_of_mono`, `layout_hint_of`) + the `layout_of` vector arm
+- Modify: `boot/compiler/codegen/emit/arrays.tw` (`emit_array_literal`)
+- Modify: `boot/compiler/backend/prepare.tw:88` (skip the legacy `route_typed_vectors` call)
 
 - [ ] **Step 1: Flip the classifier and valtype**
 
-- `repr_of_mono` (`repr_assign.tw:231`): `.Vector(elem) =>` consult
-  `repr_policy.elem_repr_of_vector`; `.Some(er) => .TypedVec(er)`, else
-  `.TypedRef(mono)`.
-- `repr_of_named_cached` (`repr_assign.tw:260`) `.Vector_` arm: same, for named
-  vector aliases.
-- `val_type_of_mono` (`wasm_layout.tw:523`) and `layout_hint_of`
-  (`wasm_layout.tw:427`): for `Vector<Int>` return
-  `.Ref(true, .Named("rt_types__PVecI64"))` instead of `PVec`. (Variant/record
-  payload types then follow automatically via `layout_of_sum_def`'s
-  `val_type_of_mono(field_ty)` at `wasm_layout.tw:311`.)
+- `repr_of_mono` (`repr_assign.tw:231`) `.Vector(elem)`: consult
+  `repr_policy.elem_repr_of_vector`; `.Some(er) => .TypedVec(er)` else
+  `.TypedRef(mono)`. Same for `repr_of_named_cached`'s `.Vector_` arm (`:260`).
+- `val_type_of_mono` (`wasm_layout.tw:523`) and `layout_hint_of` (`:427`): for
+  `Vector<Int>` return `.Ref(true, .Named("rt_types__PVecI64"))`. Variant/record
+  payloads then follow automatically via `val_type_of_mono(field_ty)`
+  (`wasm_layout.tw:311`).
 
-- [ ] **Step 2: Self-host — the real integration test**
+- [ ] **Step 2: Teach `Vector<Int>` literals (the `AArrayLit` gap)**
+
+`emit_array_literal` always builds a boxed `PVec`. For a `Vector<Int>` result,
+either (a) build through the typed builder (`builder_new_i64` → per-element
+`builder_push_i64` → `builder_freeze_i64`) so the literal is born `PVecI64`, or
+(b) build the boxed `PVec` as today and append `unbox_i64`. Prefer (a). Gate: a
+`[1,2,3]`-into-typed-slot probe validates (Step 4).
+
+- [ ] **Step 3: Disable the legacy pass**
+
+In `prepare.tw`, stop calling `route_typed_vectors` (line ~88). `repr_of_mono` now
+supplies `TypedVec` repr + `PVecI64` wasm type directly, and `emit_coerce_stack`
+supplies boundary coercions, so the escape-based pass is redundant. (Keep the file
+for M2's reference; just remove it from the pipeline.)
+
+- [ ] **Step 4: Self-host — the real integration test**
 
 Run: `make bundle-cli`
-Expected: reaches "Fixed point reached". If it traps or fails to converge, the
-coercion inserter (T5), helper selection (T4), or the anyref trap (T3) has a gap —
+Expected: "Fixed point reached". If it traps or fails to converge, the gap is in
+coercion (T3), helper selection (T4), literals (Step 2), or a missed boundary —
 debug there. **Do not proceed until the fixed point is green.**
 
-- [ ] **Step 3: Full boot suite**
+- [ ] **Step 5: Full boot suite**
 
-Run: `make boot-test`
-Expected: all green (was ~2820+; no regressions).
+Run: `make boot-test` → all green (was ~2820+; no regressions).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add boot/compiler/backend/repr_assign.tw boot/compiler/codegen/wasm_layout.tw
-git commit -m "activate: Vector<Int> uses TypedVec(I64)/PVecI64 through all boundaries"
+git add boot/compiler/backend/repr_assign.tw boot/compiler/codegen/wasm_layout.tw boot/compiler/codegen/emit/arrays.tw boot/compiler/backend/prepare.tw
+git commit -m "activate: Vector<Int> is TypedVec(I64)/PVecI64 everywhere; disable legacy route"
 ```
 
 ---
 
-## Task 8: Probes + regression gate
+## Task 7: Probes + regression gate
 
 **Files:**
 - Use: `examples/performance/sort-bench/typed_variant_column_probe.tw` (exists)
-- Create: `examples/performance/sort-bench/typed_variant_column_boxed_probe.tw` (negative: a `Vector<String>` or combinator-fed variant column stays boxed)
+- Create: `examples/performance/sort-bench/typed_variant_column_boxed_probe.tw` (negative)
 
 - [ ] **Step 1: Variant payload routes typed (positive)**
 
-Run:
 ```bash
 target/twk build examples/performance/sort-bench/typed_variant_column_probe.tw -o /tmp/tvc.wat
 grep -c rt_arr__get_i64 /tmp/tvc.wat     # expect >= 1 (was 0 before activation)
-target/twk run examples/performance/sort-bench/typed_variant_column_probe.tw   # match=true; typed << variant timings converge
+target/twk run examples/performance/sort-bench/typed_variant_column_probe.tw   # match=true
 ```
-Expected: `get_i64` now present; `match=true`.
 
 - [ ] **Step 2: Negative probe stays boxed**
 
 Author `typed_variant_column_boxed_probe.tw` with a variant column that must stay
-boxed (`StrCol(Vector<String>)`, or an `append`-fed producer). Build to WAT;
-assert `grep -c rt_arr__get_i64` on that field's read is `0`.
+boxed (`StrCol(Vector<String>)`). Build to WAT; assert `grep -c rt_arr__get_i64`
+on that field's read is `0`.
 
 - [ ] **Step 3: No `order_by` regression**
 
 Run: `target/twk run examples/performance/dataframe/bench/order_by_breakdown.tw`
-Expected: `gather`/`take`/`sort` phases within noise of the pre-M1a baseline
-(N=1M: sort ~1317ms, gather 3 cols ~412ms, take ~418ms, full ~2327ms). They do
-**not** improve here (sort needs M1b, gather needs M3); the gate is *no material
-regression* from the new boundary coercions.
+Expected: `gather`/`take`/`sort` within noise of the pre-M1a baseline (N=1M: sort
+~1317ms, gather 3 cols ~412ms, take ~418ms, full ~2327ms). They do **not** improve
+here (sort → M1b, gather → M3); the gate is *no material regression* from the new
+boundary coercions.
 
 - [ ] **Step 4: Commit**
 
@@ -483,8 +449,11 @@ git commit -m "probes: variant-payload typed positive/negative + order_by regres
 - `typed_variant_column_probe`: `get_i64` present, `match=true`.
 - Negative probe: boxed field stays `PVec` (no `get_i64`).
 - `order_by_breakdown` shows no material regression.
-- `route_typed_vec` is now a repr-diff coercion inserter (not escape-eligibility);
-  `unbox_i64` exists; verifier accepts `TypedVec(I64)` and requires coercions.
+- Coercion lives in `emit_coerce_stack` (both directions + anyref-erase);
+  `unbox_i64` exists; verifier accepts `TypedVec(I64)`; the legacy
+  `route_typed_vectors` pass is out of the pipeline.
 
 Deferred to **M1b**: typed closure-env layouts (the `sort` win). Deferred to
-**M3**: typed `gather`/`sort`/`map` (the `gather`/`take` win).
+**M3**: typed `gather`/`sort`/`map` (the `gather`/`take` win). **Spec
+reconciliation:** M1a disables `route_typed_vec` (M2's deletion is now just tidy-up
++ making `insert_boundaries` repr-aware).

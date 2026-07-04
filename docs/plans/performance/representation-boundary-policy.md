@@ -199,21 +199,22 @@ improve here and must not *regress* materially from that round-trip.
   this, typed slots feed boxed helpers and produce mismatches or forced
   erase/retype churn.
 - `wasm_layout` derives record / variant field wasm-types from element repr → those
-  payloads physically hold `PVecI64`.
-- Replace `route_typed_vec`'s conservative eligibility with a **repr-diff-driven**
-  coercion inserter: every `Vector<Int>` is typed by default, and coercions appear
-  only where a typed vector meets a universal-ABI position. Needs **both**
-  adapters — `box_i64` (`PVecI64 → PVec`) and the new `unbox_i64` (`PVec →
-  PVecI64`) for results returning from universal helpers. Closure captures are
-  *not* yet typed, so a typed vector entering a closure env erases here (one
-  coercion) — a correctness path, not the hot path, until `1b`. **Trap to avoid:**
-  that erase must be `PVecI64 → PVec` via `box_i64` *then* the anyref upcast, not a
-  bare upcast. `emit_box_to_anyref` currently has `.Vector_(_) => buf` (identity),
-  which for a `PVecI64` would upcast a distinct struct type straight to `anyref`,
-  so the later `ref.cast` back to `PVec` at the read site traps. The coercion
-  inserter (or `emit_box_to_anyref` itself) must `box_i64` a typed vector before it
-  crosses into any `anyref` position.
-- Generalize the verifier to the coercion model (reject raw casts across reprs).
+  payloads physically hold `PVecI64`. This is already structural: variant/record
+  payload valtypes flow through `val_type_of_mono(field_ty)`, so making
+  `val_type_of_mono(Vector<Int>) = PVecI64` is the lever. `Vector<Int>` *literals*
+  need explicit handling — `emit_array_literal` always builds a boxed `PVec` and
+  must instead build through the typed builder (or `unbox_i64`).
+- **Coercion lives in the existing `emit_coerce_stack`** (`emit/coercions.tw`),
+  which already has the source/target ValTypes and already emits `box_i64` for
+  `PVecI64 → PVec`. Add the reverse (`PVec → PVecI64` via `unbox_i64`, for boxed
+  results returning from universal helpers) and the anyref-erase case
+  (`PVecI64 → .Anyref` must `box_i64` *first*, then erase — a bare upcast of the
+  distinct `PVecI64` struct to `anyref` would trap on the later `ref.cast` back to
+  `PVec`). Because coercion is emit-time and keyed on the source valtype, the
+  legacy `route_typed_vec` post-pass becomes redundant at activation and is
+  **disabled then** (its escape-based routing is subsumed by `repr_of_mono` +
+  `emit_coerce_stack`).
+- Generalize the verifier to accept `TypedVec(I64) ⇔ PVecI64` slot pairings.
 - **Gate (direct reads + no regression, not the `order_by` headline):**
   `typed_variant_column_probe` is realized end-to-end (it extracts the column and
   reads it directly in a non-closure loop, so it does not depend on `1b` or on
@@ -238,8 +239,10 @@ The comparator-capture path, and the largest/highest-risk piece.
 ### Milestone 2 — Repr-aware boundary insertion; retire the bolt-on (Approach A)
 
 - Make `insert_boundaries` (`codegen/insert_boundaries.tw`) consult `repr_of_mono`
-  and place wrap/unwrap coercions itself at repr-crossings.
-- Delete `route_typed_vec.tw` and the conservative eligibility machinery.
+  and place wrap/unwrap coercions itself at repr-crossings, rather than relying on
+  emit-time `emit_coerce_stack` alone.
+- Delete `route_typed_vec.tw` outright (M1a already removed it from the pipeline;
+  this deletes the dead file and any remaining eligibility machinery).
   Representation is decided once and boundaries follow — the dual-world and the
   erasure-mimicry tax are gone.
 
