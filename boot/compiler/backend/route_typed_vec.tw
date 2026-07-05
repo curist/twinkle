@@ -14,7 +14,7 @@
 //! elements are already boxed — builder_push_i64 takes the boxed element).
 
 use compiler.backend.prepared_ir.{
-  PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotId, SlotInfo,
+  PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, PreparedPattern, ReprKind, SlotId, SlotInfo,
 }
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
@@ -56,11 +56,12 @@ pub fn route_typed_vectors(
   funcs: Vector<PreparedFunc>,
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
 ) Vector<PreparedFunc> {
   ids := route_ids(builtins)
 
   collect pf in funcs {
-    route_func(pf, ids, builtins, typed_fields)
+    route_func(pf, ids, builtins, typed_fields, typed_payloads)
   }
 }
 
@@ -80,6 +81,7 @@ fn route_func(
   ids: RouteIds,
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
 ) PreparedFunc {
   if prepared_depth_exceeds(pf.body, 512) {
     return pf
@@ -89,8 +91,9 @@ fn route_func(
   cands := collect_candidates(pf.body, pf.slots, ids, [])
 
   field_read_sids := collect_typed_field_reads(pf.body, typed_fields, [])
+  payload_read_sids := collect_typed_payload_reads(pf.body, typed_payloads, pf.slots, [])
 
-  if cands.len() == 0 and field_read_sids.len() == 0 {
+  if cands.len() == 0 and field_read_sids.len() == 0 and payload_read_sids.len() == 0 {
     return pf
   }
 
@@ -140,6 +143,19 @@ fn route_func(
   //     eligible_v slot.
   for sid in field_read_sids {
     eligible_v[sid] = true
+  }
+
+  // 2c. A payload bound from a physically-typed (PVecI64) variant field is a
+  //     typed source too — but only if it doesn't escape. Unlike a typed record
+  //     field (whose escaping consumers demote the field in analyze_typed_fields),
+  //     an escaping payload binding is coerced back to boxed PVec once at
+  //     extraction, so here we keep it boxed (skip retyping) rather than forcing
+  //     it typed. Guard with the same consumer-escape check the field consumer
+  //     scan uses.
+  for sid in payload_read_sids {
+    if result_consumed_typed_only(pf.body, sid, ids.len, builtins) {
+      eligible_v[sid] = true
+    }
   }
 
   if eligible_v.keys().len() == 0 {
@@ -382,6 +398,100 @@ fn collect_typed_field_read_from_op(
       }
     },
     _ => acc,
+  }
+}
+
+// Variant-payload analogue of collect_typed_field_reads. Walk the body for
+// `AMatch` arms whose `Variant(tid, vid, subpats)` pattern binds a payload from
+// a physically-typed site: the payload key "${tid}:${vid}:${idx}" is in
+// `typed_payloads` and the bound slot is a `Vector<Int>`. Record each such bound
+// slot id — reading it directly loads a PVecI64, so the slot is a typed source.
+fn collect_typed_payload_reads(
+  expr: PreparedExpr,
+  typed_payloads: Dict<String, Bool>,
+  slots: Dict<Int, SlotInfo>,
+  acc: Vector<Int>,
+) Vector<Int> {
+  cur := expr
+  cur_acc := acc
+  done := false
+
+  for !done {
+    case cur {
+      .Let(_, op, body) => {
+        cur_acc = collect_typed_payload_reads_op(op, typed_payloads, slots, cur_acc)
+        cur = body
+      },
+      _ => done = true,
+    }
+  }
+
+  cur_acc
+}
+
+fn collect_typed_payload_reads_op(
+  op: PreparedOp,
+  typed_payloads: Dict<String, Bool>,
+  slots: Dict<Int, SlotInfo>,
+  acc: Vector<Int>,
+) Vector<Int> {
+  cur := acc
+
+  case op {
+    .AMatch(_, arms) => {
+      for arm in arms {
+        cur = collect_payload_bindings(arm.pattern, typed_payloads, slots, cur)
+        cur = collect_typed_payload_reads(arm.body, typed_payloads, slots, cur)
+      }
+    },
+    .AIf(_, then_e, else_e) => {
+      cur = collect_typed_payload_reads(then_e, typed_payloads, slots, cur)
+      cur = collect_typed_payload_reads(else_e, typed_payloads, slots, cur)
+    },
+    .ALoop(inner) => cur = collect_typed_payload_reads(inner, typed_payloads, slots, cur),
+    .ADefer(inner) => cur = collect_typed_payload_reads(inner, typed_payloads, slots, cur),
+    _ => {},
+  }
+
+  cur
+}
+
+// Record the bound slot of every `Var` subpattern at a payload index whose site
+// key "${tid}:${vid}:${idx}" is typed and whose bound slot is a `Vector<Int>`.
+// Nested `Variant` subpatterns are recursed into so payloads destructured at any
+// depth are covered.
+fn collect_payload_bindings(
+  pattern: PreparedPattern,
+  typed_payloads: Dict<String, Bool>,
+  slots: Dict<Int, SlotInfo>,
+  acc: Vector<Int>,
+) Vector<Int> {
+  case pattern {
+    .Variant(tid, vid, subpats) => {
+      cur := acc
+
+      for sub, idx in subpats {
+        key := "${tid.id}:${vid.id}:${idx}"
+
+        case sub {
+          .Var(s) => if typed_payloads.has(key) and slot_is_int_vector(s.id, slots) {
+            cur = .append(s.id)
+          },
+          .Variant(_, _, _) => cur = collect_payload_bindings(sub, typed_payloads, slots, cur),
+          _ => {},
+        }
+      }
+
+      cur
+    },
+    _ => acc,
+  }
+}
+
+fn slot_is_int_vector(sid: Int, slots: Dict<Int, SlotInfo>) Bool {
+  case slots[sid] {
+    .Some(info) => is_int_vector(mono_key_of(info)),
+    .None => false,
   }
 }
 

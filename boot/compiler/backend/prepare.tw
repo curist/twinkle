@@ -92,7 +92,11 @@ pub fn prepare_backend(
   }
 
   typed_fields := analyze_typed_fields(pre.funcs, builtins)
-  funcs3 := route_typed_vectors(pre.funcs, builtins, typed_fields)
+
+  // The typed variant-payload set is not populated yet (the analysis that fills
+  // it lands separately); pass an empty dict so payload routing is inert today.
+  typed_payloads: Dict<String, Bool> = Dict.new()
+  funcs3 := route_typed_vectors(pre.funcs, builtins, typed_fields, typed_payloads)
   .{
     anf: pre.anf,
     closure_captures,
