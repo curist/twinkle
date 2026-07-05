@@ -3,9 +3,39 @@ use @std.testing as runner
 
 type Point = .{ x: Int, y: Int }
 
+// A user sum with a Vector<Int> payload; the storage-site analysis types the
+// payload as PVecI64 (built by a clean collect directly into the construction),
+// which must still compare by contents (regression: PVecI64 payloads used to
+// fall through to reference equality in generated sum/record equality).
+type Col = { IntCol(Vector<Int>) }
+
+type Row = .{ c: Col }
+
+fn make_typed_col(n: Int) Col {
+  xs := collect i in range(n) {
+    i + 1
+  }
+  .IntCol(xs)
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("equality repros")
+    .test(
+      "user-sum typed Vector<Int> payload compares by contents",
+      fn() {
+        a := Row.{ c: make_typed_col(3) }
+        b := Row.{ c: make_typed_col(3) }
+        c := Row.{ c: make_typed_col(4) }
+        try assert.is_true(a == b)
+        try assert.is_false(a == c)
+
+        // direct sum equality (not nested in a record) too
+        try assert.is_true(make_typed_col(3) == make_typed_col(3))
+        try assert.is_false(make_typed_col(3) == make_typed_col(4))
+        .Ok({})
+      },
+    )
     .test(
       "vector structural equality repro",
       fn() {

@@ -473,6 +473,15 @@ fn field_eq_instrs(qualified_sym: String, field_idx: Int, vt: ValType) Vector<In
     .Ref(_, .Extern) => true,
     _ => false,
   }
+
+  // A typed PVecI64 field/payload (storage-site typed Vector<Int>) is not
+  // understood by generic `eq`, which compares only boxed PVec structurally and
+  // falls back to reference equality for the distinct PVecI64 struct. Box both
+  // operands to PVec first (rt_arr__box_i64) so `eq` compares by contents.
+  is_pvec_i64 := case vt {
+    .Ref(_, .Named(n)) => n == "rt_types__PVecI64",
+    _ => false,
+  }
   get_both: Vector<Instr> = if is_extern {
     [
       Instr.LocalGet(0),
@@ -481,6 +490,15 @@ fn field_eq_instrs(qualified_sym: String, field_idx: Int, vt: ValType) Vector<In
       Instr.LocalGet(1),
       Instr.StructGet(qualified_sym, field_idx),
       Instr.AnyConvertExtern,
+    ]
+  } else if is_pvec_i64 {
+    [
+      Instr.LocalGet(0),
+      Instr.StructGet(qualified_sym, field_idx),
+      Instr.Call("rt_arr__box_i64"),
+      Instr.LocalGet(1),
+      Instr.StructGet(qualified_sym, field_idx),
+      Instr.Call("rt_arr__box_i64"),
     ]
   } else {
     [
