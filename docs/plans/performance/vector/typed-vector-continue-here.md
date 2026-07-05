@@ -17,8 +17,7 @@ both ways), the `route_typed_vec` whole-program analysis.
   in the variant struct). Complete, self-hosting, capture-safe, reviewed, and one
   critical review bug fixed (equality of typed payloads, `5451d45f`). Docs:
   [storage-site-typed-vectors.md](storage-site-typed-vectors.md),
-  [plan](storage-site-typed-vectors-plan.md),
-  [review note](storage-site-typed-vectors-review-note.md).
+  [plan](storage-site-typed-vectors-plan.md).
 - Also on the branch: a **reverted** "uniform typing" attempt (kept in history as
   the lesson — see the model below).
 
@@ -130,5 +129,4 @@ timeout 15 target/twk run examples/performance/sort-bench/typed_payload_capture_
 - [generic-sort-by-vector-read-perf.md](generic-sort-by-vector-read-perf.md) —
   the read-wall measurement/decomposition (still the reference for `order_by`).
 - Milestone A: [design](storage-site-typed-vectors.md) /
-  [plan](storage-site-typed-vectors-plan.md) /
-  [review note](storage-site-typed-vectors-review-note.md).
+  [plan](storage-site-typed-vectors-plan.md).
