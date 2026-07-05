@@ -3671,6 +3671,22 @@ fn emit_pattern_bindings(
         field_instrs := scrutinee_instrs
         field_instrs = .append(.StructGet(sum_layout.sym, offset))
         field_mono := variant_field_mono(scrutinee_mono, vid, i, ctx.env)
+
+        // When the field binds the whole payload into a slot, coerce from the
+        // struct field's physical type to the bound slot's type. Today this is
+        // a no-op everywhere (payload and slot are both boxed PVec); it becomes
+        // load-bearing once a payload is stored as a typed PVecI64 but the slot
+        // that binds it is boxed (box-once-on-escape). Other pattern shapes
+        // (wildcard, literal, nested variant) do not bind the whole payload
+        // into a single slot, so they extract unchanged.
+        case fp {
+          .Var(sid) => {
+            entry := lookup_slot(ctx, sid)
+            from_ty := variant_layout.payload_types.at(i)
+            field_instrs = emit_coerce_stack(from_ty, entry.val_type, field_mono, ctx, field_instrs)
+          },
+          _ => {},
+        }
         out = .concat(emit_pattern_bindings(fp, field_instrs, field_mono, ctx))
       }
 
