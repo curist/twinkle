@@ -8,6 +8,23 @@
 
 **Tech Stack:** Boot compiler (`boot/`). Verify: `make bundle-cli` (self-host to fixed point), `make boot-test`, and `.tw` probes built to `.wat` then grepped. Boot-only.
 
+> **Execution ordering correction (2026-07-05, build-then-activate).** Populating
+> `typed_vector_payloads` is an *activation*: it turns on T3's typed layout, which
+> immediately requires the extraction/bridge coercions to exist. Verified: variant
+> **construction** already coerces (`emit_variant_literal:69`), but **match
+> extraction** (`emit_pattern_bindings`) does `StructGet → LocalSet` with **no
+> coercion**, and the **erased bridge** (`emit_box_to_anyref` identity for
+> `PVecI64`) is unsound. So the codegen safety + read routing must land **inert
+> first** (no-ops while the dict is empty), and the dict-populating **analysis
+> last** as the integration gate. Revised order:
+> - **T4 (was part of T6): Codegen safety, inert** — `emit_pattern_bindings`
+>   coerces the extracted payload to the bound slot; bridge box/unbox typed payloads.
+> - **T5: Read routing, inert** — route non-escaping match-payload reads to `PVecI64`.
+> - **T6 (was T4): Activation** — extend the analysis to populate the dict; this is
+>   where the `get_i64`/probe/capture-guard gates run.
+> Task bodies below keep their original numbering; apply them in the order T4→T5→T6
+> above (analysis populates the dict **last**).
+
 **Spec:** [storage-site-typed-vectors.md](storage-site-typed-vectors.md).
 
 ---
