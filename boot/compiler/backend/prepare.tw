@@ -17,8 +17,11 @@
 use compiler.anf.{AnfModule}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedExpr, PreparedFunc, PreparedOp}
 use compiler.backend.repr_assign.{assign_repr_for_module}
-use compiler.backend.route_typed_vec.{analyze_typed_fields, route_typed_vectors}
+use compiler.backend.route_typed_vec.{
+  analyze_typed_fields, analyze_typed_payloads, route_typed_vectors,
+}
 use compiler.backend.slot_assign.{assign_slots_for_module}
+use compiler.base_env.{first_user_type_id}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.insert_boundaries.{insert_boundaries}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
@@ -93,16 +96,18 @@ pub fn prepare_backend(
 
   typed_fields := analyze_typed_fields(pre.funcs, builtins)
 
-  // The typed variant-payload set is not populated yet (the analysis that fills
-  // it lands separately); pass an empty dict so payload routing is inert today.
-  typed_payloads: Dict<String, Bool> = Dict.new()
+  // Decide which user variant-payload sites can be stored physically as PVecI64.
+  // Layout (via PreparedModule.typed_vector_payloads -> env) and routing (via the
+  // typed_payloads argument) MUST see the same dict so the struct field type and
+  // the read/producer routing agree.
+  typed_payloads := analyze_typed_payloads(pre.funcs, builtins, first_user_type_id())
   funcs3 := route_typed_vectors(pre.funcs, builtins, typed_fields, typed_payloads)
   .{
     anf: pre.anf,
     closure_captures,
     funcs: funcs3,
     typed_vector_fields: typed_fields,
-    typed_vector_payloads: Dict.new(),
+    typed_vector_payloads: typed_payloads,
   }
 }
 

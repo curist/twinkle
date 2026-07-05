@@ -1,0 +1,46 @@
+// Milestone A tripwire: an EXTRACTED variant payload that is captured into a
+// closure MUST stay boxed (escape -> PVec), so reads are O(1). If the escape
+// guard wrongly types the captured column PVecI64 and unboxes it per read, this
+// blows up ~1000x.
+//
+//   timeout 15 target/twk run examples/performance/sort-bench/typed_payload_capture_guard.tw
+//
+// Must print an elapsed well under 200 ms and exit 0 (NOT time out).
+//
+// Shape mirrors a `sort_by` comparator: 200k reads over a ~5000-element column.
+use @std.date
+
+type Col = { IntCol(Vector<Int>) }
+
+fn make_col(n: Int) Col {
+  xs := collect i in range(n) {
+    i * 2654435761 % 1000000
+  }
+  .IntCol(xs)
+}
+
+fn run(c: Col, n: Int, iters: Int) Int {
+  xs := case c {
+    .IntCol(v) => v,
+  }
+
+  // Capturing xs into a closure escapes it: the extraction must box it back to a
+  // PVec (box-once-on-escape), keeping per-read O(1) instead of unboxing.
+  read := fn(i: Int) Int { xs[i] }
+  acc := 0
+
+  for k in range(iters) {
+    idx := k * 2654435761 % n
+    acc = acc + read(idx)
+  }
+
+  acc
+}
+
+n := 5000
+iters := 200000
+col := make_col(n)
+t0 := date.now()
+r := run(col, n, iters)
+elapsed := date.now() - t0
+println("capture-guard elapsed=${elapsed}ms checksum=${r}")

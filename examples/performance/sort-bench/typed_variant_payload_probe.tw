@@ -1,0 +1,38 @@
+// Positive gate probe for typed Vector<Int> user-variant payloads (Milestone A).
+//
+//   target/twk build examples/performance/sort-bench/typed_variant_payload_probe.tw -o /tmp/p.wat
+//   grep -c rt_arr__get_i64 /tmp/p.wat   # must be >= 1
+//   target/twk run   examples/performance/sort-bench/typed_variant_payload_probe.tw
+//
+// A `Vector<Int>` is built via `collect`, wrapped as a user-variant payload
+// (`.IntCol(xs)`), extracted (`case c { .IntCol(v) => v }`), and read via index
+// in a loop. The extracted payload does NOT escape, so the payload analysis
+// types the site as PVecI64 and the index reads route to `rt_arr__get_i64`.
+//
+// There is deliberately NO bare non-escaping `collect`+read path here, so any
+// `rt_arr__get_i64` in the output comes only from the variant-payload read.
+type Col = { IntCol(Vector<Int>) }
+
+fn make_col(n: Int) Col {
+  xs := collect i in range(n) {
+    i * 3
+  }
+  .IntCol(xs)
+}
+
+fn sum_col(c: Col, n: Int) Int {
+  xs := case c {
+    .IntCol(v) => v,
+  }
+  acc := 0
+
+  for i in range(n) {
+    acc = acc + xs[i]
+  }
+
+  acc
+}
+
+n := 1000
+col := make_col(n)
+println("checksum=${sum_col(col, n)}")

@@ -173,6 +173,16 @@ pub fn reserved_stdlib_types() Vector<ReservedStdlibType> {
   [.{ name: "View", arity: 1, origin: "@std.view::View" }]
 }
 
+/// The first TypeId assigned to a user-defined type. Every id below this is a
+/// compiler builtin (Option, Result, Cell, ... Channel) or a reserved stdlib
+/// forward declaration (View), all seeded at fixed low ids by base_env before
+/// any user module is resolved. Backend passes that must distinguish user types
+/// from builtins (e.g. typed variant-payload routing, which is unsound for the
+/// builtin sums with specialized erased bridge helpers) gate on this threshold.
+pub fn first_user_type_id() Int {
+  builtin_type_entries().len() + reserved_stdlib_types().len()
+}
+
 pub fn reserved_stdlib_type_origin(name: String) String? {
   for rt in reserved_stdlib_types() {
     if rt.name == name {

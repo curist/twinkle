@@ -112,7 +112,14 @@ fn route_func(
     vuse := classify_v_group(pf.body, aliases, ids.len, builtins, pf.slots)
     all_field_keys_typed := vuse.field_keys.len() == 0 or all_in(vuse.field_keys, typed_fields)
 
-    if !vuse.escapes and all_field_keys_typed {
+    // A producer that flows into a variant payload is only routable if every such
+    // site is in the typed-payload set; otherwise construction expects a boxed
+    // PVec and the producer must stay boxed. (Builtin-sum payload sites never
+    // enter typed_payloads, so a producer feeding e.g. `.Some(v)` stays boxed.)
+    all_payload_keys_typed := vuse.payload_keys.len() == 0
+      or all_in(vuse.payload_keys, typed_payloads)
+
+    if !vuse.escapes and all_field_keys_typed and all_payload_keys_typed {
       for sid in aliases.keys() {
         eligible_v[sid] = true
       }
@@ -705,16 +712,27 @@ fn user_direct_call_accepts_boxed_arg(
 
 // ── V-group classifier ───────────────────────────────────────────────
 // Result of classifying how a typed-vector v-group is used.
-// - escapes: true if used by anything other than index/len/return/break and
-//   record-field stores.
+// - escapes: true if used by anything other than index/len/return/break,
+//   record-field stores, and variant-payload stores of the Vector<Int> itself.
 // - field_keys: the "${tid}:${fid}" keys this group is stored into via
 //   ARecord / ARecordUpdate (Vector<Int> fields only). May contain duplicates
 //   (e.g. the same field assigned in both arms of a match); callers that need
 //   a set must de-duplicate.
-type VGroupUse = .{ escapes: Bool, field_keys: Vector<String> }
+// - payload_keys: the "${tid}:${vid}:${idx}" variant-payload sites this group is
+//   stored into via AVariant (Vector<Int> payload slots only). Same duplicate
+//   caveat as field_keys.
+type VGroupUse = .{ escapes: Bool, field_keys: Vector<String>, payload_keys: Vector<String> }
 
 fn merge_use(a: VGroupUse, b: VGroupUse) VGroupUse {
-  .{ escapes: a.escapes or b.escapes, field_keys: a.field_keys.concat(b.field_keys) }
+  .{
+    escapes: a.escapes or b.escapes,
+    field_keys: a.field_keys.concat(b.field_keys),
+    payload_keys: a.payload_keys.concat(b.payload_keys),
+  }
+}
+
+fn use_esc(escapes: Bool) VGroupUse {
+  .{ escapes, field_keys: [], payload_keys: [] }
 }
 
 // Under the current callers, vs only ever contains Vector<Int> slots, so the
@@ -752,16 +770,16 @@ fn classify_expr(
       body_use := classify_expr(body, vs, len_id, builtins, slots)
       op_use.merge_use(body_use)
     },
-    .Atom(a) => .{ escapes: slot_in(a, vs), field_keys: [] },
-    .Return(.Some(_)) => .{ escapes: false, field_keys: [] },
-    .Break(.Some(a)) => .{ escapes: slot_in(a, vs), field_keys: [] },
-    _ => .{ escapes: false, field_keys: [] },
+    .Atom(a) => use_esc(slot_in(a, vs)),
+    .Return(.Some(_)) => use_esc(false),
+    .Break(.Some(a)) => use_esc(slot_in(a, vs)),
+    _ => use_esc(false),
   }
 }
 
-// Mirrors op_group_escapes arm-for-arm; ONLY the ARecord and ARecordUpdate arms
-// intentionally differ (they record field-store keys instead of escaping). Keep
-// the two in sync if op_group_escapes changes.
+// Mirrors op_group_escapes arm-for-arm; ONLY the ARecord, ARecordUpdate, and
+// AVariant arms intentionally differ (they record field-/payload-store keys
+// instead of escaping). Keep the two in sync if op_group_escapes changes.
 fn classify_op(
   op: PreparedOp,
   vs: Dict<Int, Bool>,
@@ -773,29 +791,29 @@ fn classify_op(
     .ACall(callee, args) => case callee {
       // len(v) is the allowed builtin call use.
       .AGlobalFunc(fid) => if fid.id == len_id and args.len() == 1 and slot_in(args[0], vs) {
-        .{ escapes: false, field_keys: [] }
+        use_esc(false)
       } else {
         if user_direct_call_accepts_boxed_arg(fid, args, vs, builtins) {
-          .{ escapes: false, field_keys: [] }
+          use_esc(false)
         } else {
-          .{ escapes: atoms_contain_any(args, vs) or slot_in(callee, vs), field_keys: [] }
+          use_esc(atoms_contain_any(args, vs) or slot_in(callee, vs))
         }
       },
-      _ => .{ escapes: atoms_contain_any(args, vs) or slot_in(callee, vs), field_keys: [] },
+      _ => use_esc(atoms_contain_any(args, vs) or slot_in(callee, vs)),
     },
     // xs[i] Array read: base may be in the vector alias set, index may not.
     .AIndex(base, index, kind, _) => case kind {
-      .Array => .{ escapes: slot_in(index, vs), field_keys: [] },
-      _ => .{ escapes: slot_in(base, vs) or slot_in(index, vs), field_keys: [] },
+      .Array => use_esc(slot_in(index, vs)),
+      _ => use_esc(slot_in(base, vs) or slot_in(index, vs)),
     },
     .AIf(cnd, then_e, else_e) => {
-      cnd_esc: VGroupUse = .{ escapes: slot_in(cnd, vs), field_keys: [] }
+      cnd_esc := use_esc(slot_in(cnd, vs))
       then_use := classify_expr(then_e, vs, len_id, builtins, slots)
       else_use := classify_expr(else_e, vs, len_id, builtins, slots)
       cnd_esc.merge_use(then_use.merge_use(else_use))
     },
     .AMatch(scrut, arms) => {
-      acc: VGroupUse = .{ escapes: slot_in(scrut, vs), field_keys: [] }
+      acc := use_esc(slot_in(scrut, vs))
 
       for arm in arms {
         arm_use := classify_expr(arm.body, vs, len_id, builtins, slots)
@@ -806,8 +824,8 @@ fn classify_op(
     },
     .ALoop(inner) => classify_expr(inner, vs, len_id, builtins, slots),
     .ADefer(inner) => classify_expr(inner, vs, len_id, builtins, slots),
-    .ABinOp(_, l, r, _) => .{ escapes: slot_in(l, vs) or slot_in(r, vs), field_keys: [] },
-    .AUnOp(_, a, _) => .{ escapes: slot_in(a, vs), field_keys: [] },
+    .ABinOp(_, l, r, _) => use_esc(slot_in(l, vs) or slot_in(r, vs)),
+    .AUnOp(_, a, _) => use_esc(slot_in(a, vs)),
     .AMakeClosure(_, free_vars) => {
       esc := false
 
@@ -817,54 +835,72 @@ fn classify_op(
         }
       }
 
-      .{ escapes: esc, field_keys: [] }
+      use_esc(esc)
     },
     .ARecord(tid, fields) => {
       // A Vector<Int> field value is a typed store (record the key); a v-group value
       // in a non-Vector<Int> field is a genuine escape.
-      acc: VGroupUse = .{ escapes: false, field_keys: [] }
+      acc := use_esc(false)
 
       for f in fields {
         if slot_in(f.value, vs) {
           if atom_is_int_vector_slot(f.value, slots) {
             key := "${tid.id}:${f.field.id}"
-            acc = .merge_use(.{ escapes: false, field_keys: [key] })
+            acc = .merge_use(.{ escapes: false, field_keys: [key], payload_keys: [] })
           } else {
-            acc = .merge_use(.{ escapes: true, field_keys: [] })
+            acc = .merge_use(use_esc(true))
           }
         }
       }
 
       acc
     },
-    .ARecordGet(t, _, _) => .{ escapes: slot_in(t, vs), field_keys: [] },
+    .ARecordGet(t, _, _) => use_esc(slot_in(t, vs)),
     .ARecordUpdate(b, fid, val, _, tid) => {
       // If val is a typed-vector value being stored into the field — record it.
       // If base is a typed-vector (shouldn't happen) — genuine escape.
       val_use: VGroupUse = if slot_in(val, vs) {
         if atom_is_int_vector_slot(val, slots) {
           key := "${tid.id}:${fid.id}"
-          .{ escapes: false, field_keys: [key] }
+          .{ escapes: false, field_keys: [key], payload_keys: [] }
         } else {
-          .{ escapes: true, field_keys: [] }
+          use_esc(true)
         }
       } else {
-        .{ escapes: false, field_keys: [] }
+        use_esc(false)
       }
 
-      base_esc: VGroupUse = .{ escapes: slot_in(b, vs), field_keys: [] }
+      base_esc := use_esc(slot_in(b, vs))
       base_esc.merge_use(val_use)
     },
-    .AVariant(_, _, args) => .{ escapes: atoms_contain_any(args, vs), field_keys: [] },
-    .AArrayLit(items) => .{ escapes: atoms_contain_any(items, vs), field_keys: [] },
-    .AInit(_) => .{ escapes: false, field_keys: [] },
+    // A Vector<Int> payload value is a typed variant-payload store (record the
+    // "${tid}:${vid}:${idx}" key); a v-group value in a non-Vector<Int> payload
+    // slot is a genuine escape. Mirrors the ARecord arm.
+    .AVariant(tid, vid, args) => {
+      acc := use_esc(false)
+
+      for a, i in args {
+        if slot_in(a, vs) {
+          if atom_is_int_vector_slot(a, slots) {
+            key := "${tid.id}:${vid.id}:${i}"
+            acc = .merge_use(.{ escapes: false, field_keys: [], payload_keys: [key] })
+          } else {
+            acc = .merge_use(use_esc(true))
+          }
+        }
+      }
+
+      acc
+    },
+    .AArrayLit(items) => use_esc(atoms_contain_any(items, vs)),
+    .AInit(_) => use_esc(false),
     // Reassigning a v-group slot from a value not in the group stores that
     // (boxed) value into a slot the group would retype to PVecI64 — e.g. a loop
     // `acc = acc.take(...)` where take returns the boxed family. Disqualify.
-    .AAssign(dst, a) => .{ escapes: slot_in(a, vs) or vs.has(dst.id), field_keys: [] },
-    .AGlobalSet(_, a) => .{ escapes: slot_in(a, vs), field_keys: [] },
-    .AWrapAnyref(a, _) => .{ escapes: slot_in(a, vs), field_keys: [] },
-    .AUnwrapAnyref(a, _) => .{ escapes: slot_in(a, vs), field_keys: [] },
+    .AAssign(dst, a) => use_esc(slot_in(a, vs) or vs.has(dst.id)),
+    .AGlobalSet(_, a) => use_esc(slot_in(a, vs)),
+    .AWrapAnyref(a, _) => use_esc(slot_in(a, vs)),
+    .AUnwrapAnyref(a, _) => use_esc(slot_in(a, vs)),
   }
 }
 
@@ -940,6 +976,117 @@ pub fn analyze_typed_fields(funcs: Vector<PreparedFunc>, builtins: BuiltinRegist
   }
 
   out
+}
+
+// ── Whole-program typed variant-payload analysis ─────────────────────
+// The variant-payload analogue of analyze_typed_fields. Decide per
+// (TypeId, VariantId, payloadIdx) whether a Vector<Int> variant payload can be
+// stored physically as PVecI64.
+//
+// Unlike record fields, variant construction AND extraction both insert
+// box/unbox coercions (emit_variant_literal / emit_pattern_bindings) and the
+// erased anyref bridge boxes/unboxes payloads generically (bridge_funcs). So a
+// boxed producer, or a consumer that lets the extracted payload escape to
+// anyref/a closure, is a one-time boxed egress — ALLOWED, not a demotion. That
+// is the key relaxation vs. the field analysis, which demotes on any boxed
+// producer / escaping consumer because fields insert no coercions. A payload
+// site is typed iff it has >=1 clean typed producer and no producer that also
+// escapes elsewhere or feeds multiple sites; consumers never demote (every
+// extraction path is representation-safe for user sums).
+//
+// SCOPING — user sums only. Builtin sums (Option, Result, Iterator, ...) route
+// their Vector<Int> payloads through specialized erased helpers
+// (emit_option_from_variant_helper, emit_iterator_next_helper, ...) that do NOT
+// box/unbox PVecI64, so typing them would be unsound. `first_user_tid` is the
+// TypeId threshold below which every type is a builtin or reserved-stdlib seed.
+pub fn analyze_typed_payloads(
+  funcs: Vector<PreparedFunc>,
+  builtins: BuiltinRegistry,
+  first_user_tid: Int,
+) Dict<String, Bool> {
+  ids := route_ids(builtins)
+  stats: Dict<String, FieldStat> = Dict.new()
+
+  for pf in funcs {
+    stats = scan_func_payload_producers(pf, ids, builtins, first_user_tid, stats)
+  }
+
+  out: Dict<String, Bool> = Dict.new()
+
+  for key, s in stats {
+    if s.has_ok_producer and !s.bad_producer and !s.bad_consumer {
+      out[key] = true
+    }
+  }
+
+  out
+}
+
+fn scan_func_payload_producers(
+  pf: PreparedFunc,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+  first_user_tid: Int,
+  stats0: Dict<String, FieldStat>,
+) Dict<String, FieldStat> {
+  copy_map := build_copy_map(pf.body, Dict.new())
+  cands := collect_candidates(pf.body, pf.slots, ids, [])
+  stats := stats0
+
+  for c in cands {
+    aliases := aliases_for(c.v, copy_map)
+    vuse := classify_v_group(pf.body, aliases, ids.len, builtins, pf.slots)
+    keys := distinct_keys(user_payload_keys(vuse.payload_keys, first_user_tid))
+
+    if keys.len() == 0 {
+      // This v-group never flows into a user variant payload — nothing to record.
+      stats = stats
+    } else if !vuse.escapes and keys.len() == 1 and vuse.field_keys.len() == 0 {
+      // Clean single-payload producer: its only escape is the variant store.
+      k := keys[0]
+      st := stat_of(stats, k)
+      st.has_ok_producer = true
+      stats[k] = st
+    } else {
+      // Feeds multiple payload sites, or also escapes / feeds a record field:
+      // no single clean typed producer, so demote every site it touches.
+      for k in keys {
+        st := stat_of(stats, k)
+        st.bad_producer = true
+        stats[k] = st
+      }
+    }
+  }
+
+  stats
+}
+
+// Keep only payload keys whose TypeId is a user-defined type (>= first_user_tid).
+// Builtin-sum payload sites are excluded so they never become typed.
+fn user_payload_keys(keys: Vector<String>, first_user_tid: Int) Vector<String> {
+  out: Vector<String> = []
+
+  for k in keys {
+    if payload_key_tid(k) >= first_user_tid {
+      out = .append(k)
+    }
+  }
+
+  out
+}
+
+// Parse the leading TypeId out of a "${tid}:${vid}:${idx}" payload key.
+fn payload_key_tid(key: String) Int {
+  parts := key.split(":")
+
+  if parts.len() == 0 {
+    return -1
+  }
+
+  case Int.from_string(parts[0]) {
+    .Some(n) => n,
+    .None => -1,
+  }
 }
 
 type ScanResult = .{ stats: Dict<String, FieldStat>, ok: OkAliases }
