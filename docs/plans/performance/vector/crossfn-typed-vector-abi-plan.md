@@ -167,10 +167,12 @@ git commit -m "runtime: add gather_i64 (typed gather over PVecI64)"
 
 ## Task 1.3: Register the `vector$gather_i64` builtin
 
-**Files:**
-- Modify: `boot/compiler/builtins.tw:137` (ABI table) and `:548` (rt registration)
+**FuncId discipline (critical):** `builtins.tw:444` — "Order determines FuncId assignment (0-based, sequential)." The registration order in `builtin_specs()` assigns each builtin's FuncId, and stage0 has FuncId expectations that must not shift. **The `rt(...)` registration MUST be appended at the very end of `builtin_specs()`** — inserting it mid-list renumbers every later builtin and breaks the stage0 bootstrap. The `abi(...)` entry in the match table is keyed by *name*, not position, so it may go wherever it reads best (next to `vector$gather`).
 
-- [ ] **Step 1: Add the ABI entry**
+**Files:**
+- Modify: `boot/compiler/builtins.tw` — ABI match table (near `:137`) and the END of `builtin_specs()`
+
+- [ ] **Step 1: Add the ABI entry (position-independent)**
 
 After line 137 (`"vector$gather" => abi([pvec_n(), pvec_n()], [pvec_()]),`) add:
 
@@ -180,20 +182,20 @@ After line 137 (`"vector$gather" => abi([pvec_n(), pvec_n()], [pvec_()]),`) add:
 
 (Confirm the helper names `pvec_i64_n()` / `pvec_i64_()` exist in this file — they are used by the neighbouring `vector$len_i64` / `vector$get_i64` entries at lines 141-142.)
 
-- [ ] **Step 2: Add the rt registration**
+- [ ] **Step 2: Append the rt registration at the END of `builtin_specs()`**
 
-After line 548 (`rt("vector$gather", "rt.arr", "gather", .Some("Vector.gather")),`) add:
+Find the last `rt(...)`/`intr(...)` entry in `builtin_specs()` (the function whose header comment is "Order determines FuncId assignment") and append AFTER it:
 
 ```
     rt("vector$gather_i64", "rt.arr", "gather_i64", .None),
 ```
 
-`.None` for the surface method: `gather_i64` is never called from source; it is only the routing target. Match the surrounding `rt(...)` call shape exactly (check the arity of the neighbours; if `_i64` runtime ops there use a different registration form, mirror `vector$len_i64`'s registration instead).
+`.None` for the surface method: `gather_i64` is never called from source; it is only the routing target. Match the surrounding `rt(...)` call shape exactly (mirror `vector$len_i64`'s registration form if the arity differs).
 
-- [ ] **Step 3: Build to confirm registration resolves**
+- [ ] **Step 3: Build to confirm registration resolves AND stage0 still bootstraps**
 
 Run: `cargo run --release -- build boot/main.tw -o /tmp/boot-main.wasm 2>&1 | tail -3`
-Expected: `WASM output: ...`, no error.
+Expected: `WASM output: ...`, no error. (Append-at-end means no earlier FuncId moved, so stage0 dispatch is unaffected.)
 
 - [ ] **Step 4: Commit**
 
@@ -204,43 +206,13 @@ git commit -m "builtins: register vector\$gather_i64 (typed gather routing targe
 
 ## Task 1.4: Route `gather` → `gather_i64` when the receiver is typed
 
+**Why the naive one-arm swap does NOT work (verified in code):** the payload read `v` in `.IntCol(v) => ColData.IntCol(v.gather(idx))` only becomes `eligible_v` if `result_consumed_typed_only(v)` holds, i.e. `v` does not escape. But `op_group_escapes` (route_typed_vec.tw:607) whitelists only `len` (line 611); a `gather(v, idx)` call falls through to `atoms_contain_any(args, vs)` (line 617) and counts `v` as **escaping**. So `v` stays boxed, `eligible_v` never contains it, and a `rewrite_op` swap gated on `arg0_in(args, eligible_v)` never fires on the real path. A seeded `rewrite_op` unit test would pass while the real `IntCol(v.gather(idx))` stays boxed. Stage 1 must therefore (a) whitelist `gather` as a non-escaping use of a typed receiver, and (b) mark the `gather` **result** slot `eligible_v` so it retypes to `PVecI64`, stores typed into the payload, and routes to `gather_i64`.
+
 **Files:**
-- Modify: `boot/compiler/backend/route_typed_vec.tw` (`RouteIds`, `route_ids`, `rewrite_op`)
-- Test: `boot/tests/suites/route_typed_vec_suite.tw` (create if absent; otherwise add to `backend_repr_suite.tw`)
+- Modify: `boot/compiler/backend/route_typed_vec.tw` (`RouteIds`, `route_ids`, `op_group_escapes`, result-eligibility collection, `rewrite_op`)
+- Test: `boot/tests/suites/route_typed_vec_suite.tw` (new; end-to-end via `prepare`/routing, not a seeded unit)
 
-- [ ] **Step 1: Write the failing test**
-
-The cleanest testable unit is `rewrite_op`: given an `.ACall(.AGlobalFunc(gather_id), [vec_slot, idx_slot])` whose `vec_slot` is in `eligible_v`, it returns a call to `gather_i64`. Add a test that constructs a minimal `RouteIds` and `PreparedOp` and asserts the swap. Mirror the construction style already used in `backend_repr_suite.tw`. If `rewrite_op` is not `pub`, make it `pub` for the test (it is an internal helper; exporting for test is consistent with the file's other exported helpers).
-
-```
-use compiler.backend.route_typed_vec.{rewrite_op}   // export if needed
-
-pub fn suite() runner.Suite {
-  runner.suite("route typed gather").test(
-    "gather over eligible_v receiver swaps to gather_i64",
-    fn() {
-      ids := .{ /* fill builder_*/len/gather ids with distinct ints, gather=90, gather_i64=91 */ }
-      eligible_v: Dict<Int, Bool> = Dict.new()
-      eligible_v[7] = true   // vec slot id 7 is typed
-      op := .ACall(.AGlobalFunc(.{ id: 90 }), [.ASlot(.{ id: 7 }), .ASlot(.{ id: 8 })])
-      out := rewrite_op(99, op, eligible_v, Dict.new(), ids)
-      case out {
-        .ACall(.AGlobalFunc(fid), _) => { try assert.is_true(fid.id == 91); .Ok({}) },
-        _ => .Err("expected ACall"),
-      }
-    },
-  )
-}
-```
-
-Register the suite in `boot/tests/main.tw` (add a `use .suites.route_typed_vec_suite` and include `route_typed_vec_suite.suite()` in the suite list), following the exact pattern of `repr_policy_suite` there (lines 22, 207).
-
-- [ ] **Step 2: Run it and confirm it fails**
-
-Run: `make bundle-cli >/dev/null 2>&1 && target/twk test 2>&1 | tail -5`
-Expected: FAIL — `rewrite_op` does not yet swap `gather` (either compile error on the added `gather`/`gather_i64` fields, or the assertion fails).
-
-- [ ] **Step 3: Extend `RouteIds` + `route_ids`**
+- [ ] **Step 1: Extend `RouteIds` + `route_ids`**
 
 In `route_typed_vec.tw`, add two fields to `type RouteIds` (after `len_i64`):
 
@@ -256,6 +228,33 @@ and in `route_ids` (after the `len_i64:` line):
     gather_i64: builtins.id("vector$gather_i64").id,
 ```
 
+Because `op_group_escapes`/`rewrite_op` currently only receive `len_id` (not the full `RouteIds`), pass the `gather` id (and `gather_i64`) through to them. Thread `ids: RouteIds` into `v_group_escapes`/`op_group_escapes` (they already take `len_id`; widen to also know `gather`), or pass `gather_id` alongside `len_id`. Keep the change minimal and mechanical.
+
+- [ ] **Step 2: Whitelist `gather` in the escape classifier**
+
+In `op_group_escapes` (line ~607), extend the `.AGlobalFunc(fid)` arm so a `gather` whose receiver (`args[0]`) is the tracked vector is NOT an escape (mirror the `len` whitelist at line 611), while the index arg (`args[1]`) is unrestricted:
+
+```
+      .AGlobalFunc(fid) => if fid.id == len_id and args.len() == 1 and slot_in(args[0], vs) {
+        false
+      } else if fid.id == gather_id and args.len() == 2 and slot_in(args[0], vs) {
+        // gather(v, idx): reading v is a typed-safe use (like len). The RESULT is
+        // a new typed vector handled by result-eligibility below; v itself does
+        // not escape through the call.
+        false
+      } else {
+        if user_direct_call_accepts_boxed_arg(fid, args, vs, builtins) {
+          false
+        } else {
+          atoms_contain_any(args, vs) or slot_in(callee, vs)
+        }
+      },
+```
+
+- [ ] **Step 3: Mark the `gather` result slot eligible**
+
+Add a collection (mirroring `collect_typed_payload_reads` / `collect_candidates`) that, for every `.Let(result_slot, .ACall(gather, [v, idx]), _)` where `v`'s slot is already in `eligible_v`, adds `result_slot` to `eligible_v`. Because a gather result can feed another gather, run this to a fixpoint over the function body (bounded by slot count). Insert it in `route_func` (route_typed_vec.tw:79-199) after the `payload_read_sids` join (line ~162) and before the `eligible_v.keys().len() == 0` early-out (line ~168), so gather results ride the same slot-retyping loop.
+
 - [ ] **Step 4: Add the `rewrite_op` swap arm**
 
 In `rewrite_op`'s `cond` (line ~1362), add before the `_ => .None` arm:
@@ -266,18 +265,20 @@ In `rewrite_op`'s `cond` (line ~1362), add before the `_ => .None` arm:
         ),
 ```
 
-`arg0_in` already checks `args[0]` (the `vec` receiver) is in the set. The result slot is retyped to `PVecI64` by the existing slot-retyping loop provided it is in `eligible_v` — which it is, because the `gather` result flows into the typed `IntCol` payload store (the `payload_read`/`all_payload_keys_typed` path already marks it). No extra eligibility wiring needed.
+- [ ] **Step 5: Write the END-TO-END test (not a seeded unit)**
 
-- [ ] **Step 5: Run the test and confirm it passes**
+The test must drive real routing so it catches the eligibility gap the seeded unit would miss. Build a tiny module through the prepare/route pipeline (or compile a fixture to WAT) and assert the typed gather is chosen. The simplest robust form is a WAT assertion on a fixture — put it in Task 1.5's probe and additionally add a routing-level suite test that constructs a `PreparedFunc` with a typed payload read feeding `gather` feeding a typed payload store, runs `route_func`, and asserts the resulting body calls `gather_i64` and the result slot is retyped to `PVecI64`. Mirror the `PreparedFunc` fixture construction in `backend_repr_suite.tw`. Register the suite in `boot/tests/main.tw` (add `use .suites.route_typed_vec_suite` and include `route_typed_vec_suite.suite()`), following the `repr_policy_suite` pattern (lines 22, 207).
+
+- [ ] **Step 6: Run the suite and confirm it passes**
 
 Run: `make bundle-cli >/dev/null 2>&1 && target/twk test 2>&1 | tail -5`
-Expected: PASS.
+Expected: PASS. (The Task 1.5 WAT probe is the authoritative end-to-end check on the actual `IntCol(v.gather(idx))` shape.)
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add boot/compiler/backend/route_typed_vec.tw boot/tests/suites/route_typed_vec_suite.tw boot/tests/main.tw
-git commit -m "route: swap gather -> gather_i64 for typed receivers"
+git commit -m "route: gather->gather_i64 dataflow (escape whitelist + result eligibility)"
 ```
 
 ## Task 1.5: End-to-end WAT probe + full suite
@@ -347,9 +348,28 @@ Compare `order_by` against the ~2403ms baseline. Expect the gather/take contribu
 
 # STAGE 2 — Cross-call typed ABI (specialize-by-representation)
 
-A whole-program backend pass over `PreparedFunc`s, inserted in `prepare.tw` alongside `analyze_typed_fields` / `analyze_typed_payloads` (lines 97-104). It mirrors those passes' shape: a whole-program analysis produces a fact set, which `route_typed_vectors` consumes.
+**Read first:** `analyze_typed_payloads` / `analyze_typed_fields` (find via `grep -rn 'fn analyze_typed_payloads\|fn analyze_typed_fields' boot/compiler/backend/`) and the emission path (`emit.tw:968` derives the physical return ValType from `prepared.return_mono`; `PreparedModule` at `prepare.tw:36` carries BOTH `.anf.functions`, the emitted bodies, AND `.funcs`, the slot metadata).
 
-**Read first:** `analyze_typed_payloads` and `analyze_typed_fields` (find them via `grep -rn 'fn analyze_typed_payloads\|fn analyze_typed_fields' boot/compiler/backend/`). Stage 2's `analyze_typed_params` is the same kind of whole-program scan; study their structure and reuse their traversal helpers.
+## The single pipeline (do this ordering — #5)
+
+`ParamAbi` is a **pre-route** analysis; routing and emission **consume** it. There is exactly one ordered sequence in `prepare_backend` (`prepare.tw:79-104`). Restructure the 97-104 block to:
+
+```
+1. assign_repr_for_module                              (existing, :68)
+2. typed_fields   := analyze_typed_fields(...)         (existing, :97)
+3. typed_payloads := analyze_typed_payloads(...)       (existing, :103)
+4. param_abi      := analyze_typed_params(funcs, builtins, typed_fields, typed_payloads)   ← NEW, pre-route
+5. funcs3         := route_typed_vectors(funcs, builtins, typed_fields, typed_payloads, param_abi)
+                     — route consumes param_abi for the escape relaxation (Task 2.3)
+                       AND performs variant emission + call-site ABI selection (Task 2.5)
+```
+
+`param_abi` is computed once, before routing, and threaded in. Nothing computes it *after* routing.
+
+## Two facts about emission that shape the design
+
+- **A variant needs a real ANF body, not just a PreparedFunc (#3).** Emission iterates `PreparedModule.anf.functions` for bodies; `.funcs` is only slot metadata. A `PreparedFunc`-only `$i64` clone gets metadata but no emitted, callable function. Every variant must clone BOTH the `AnfModule` function (into `.anf.functions`, with a fresh `FuncId`/symbol) AND its `PreparedFunc` (into `.funcs`).
+- **Typed return needs a physical-return-ABI source of truth (#4).** `emit.tw:968` computes the return ValType from `prepared.return_mono` (semantic `Vector<Int>` → boxed `PVec`) and coerces the body to it. A cloned variant with the same `return_mono` still returns boxed. Task 2.4 adds an explicit physical-return override the emitter consults; Task 2.5's variant sets it.
 
 ## Task 2.1: `param_typeable` / `return_typeable` analysis (local facts, no emission)
 
@@ -373,7 +393,7 @@ pub type ParamAbi = .{
 }
 ```
 
-`param_uses_typed_only(pf, param_slot_id, builtins)` returns `Bool`: walk `pf.body`; the param slot is typed-compatible iff every use is one of: index read (`get`/`get_i64`), `len`, stored into a typed field/payload (reuse the `typed_fields`/`typed_payloads` sets), returned as the function result, or passed as an argument into another function's typeable param slot. Any other use (captured into a `ClosureEnv`, placed in a generic container, passed to an `anyref` param, passed to a non-typeable param) makes it non-typeable. For the FIRST iteration, treat "passed to another function's param" as non-typeable (conservative), so this task needs no cross-function knowledge; Task 2.2 adds the fixpoint.
+`param_uses_typed_only(pf, param_slot_id, typed_fields, typed_payloads, builtins)` returns `Bool` — note it takes `typed_fields`/`typed_payloads` explicitly, because "stored into a typed field/payload" is a typed-compatible use and needs those sets to decide. Walk `pf.body`; the param slot is typed-compatible iff every use is one of: index read (`get`/`get_i64`), `len`, stored into a field/payload present in `typed_fields`/`typed_payloads`, returned as the function result, or passed as an argument into another function's typeable param slot. Any other use (captured into a `ClosureEnv`, placed in a generic container, passed to an `anyref` param, passed to a non-typeable param) makes it non-typeable. For the FIRST iteration, treat "passed to another function's param" as non-typeable (conservative), so this task needs no cross-function knowledge; Task 2.2 adds the fixpoint.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -409,55 +429,89 @@ Construct two small `PreparedFunc`s (mirror the fixtures in `backend_repr_suite.
 
 - [ ] **Step 1: Write the failing test** — a local `Vector<Int>` passed only into a typeable param must classify as non-escaping (so `route_func` retypes it). Today it escapes.
 - [ ] **Step 2: Run it, confirm it fails.**
-- [ ] **Step 3: Thread `ParamAbi` into `route_typed_vectors` → `route_func` → `classify_v_group` / `op_group_escapes`.** In the arg-of-call escape check, when the callee argument position is a typeable param (`ParamAbi.typeable_params[callee_id]` contains the index), do NOT mark the slot as escaping. This is the single relaxation point named in the spec. Every other escape route stays.
+- [ ] **Step 3: Establish the pipeline step + thread `ParamAbi` into routing.** In `prepare.tw` add pipeline step 4 (per the Stage 2 header): after `analyze_typed_payloads` (`:103`), compute `param_abi := analyze_typed_params(pre.funcs, builtins, typed_fields, typed_payloads)`, and widen `route_typed_vectors` to take `param_abi` (5th arg). Thread it through `route_func` → `classify_v_group` / `op_group_escapes`. In the arg-of-call escape check, when the callee arg position is a typeable param (`ParamAbi.typeable_params[callee_id]` contains the index), do NOT mark the slot as escaping. This is the single relaxation point. Every other escape route stays. (Task 2.5 later extends this same `route_typed_vectors` call to also do variant emission — the pipeline is introduced here, not rebuilt there.)
 - [ ] **Step 4: Run the test, confirm it passes.**
-- [ ] **Step 5: Self-host + full suite** — `make bundle-cli` fixed point; `make boot-test` green. This proves the relaxation did not mis-type any boot-compiler value.
+- [ ] **Step 5: Self-host + full suite** — `make bundle-cli` fixed point; `make boot-test` green. This proves the relaxation did not mis-type any boot-compiler value. (At this point `param_abi` only relaxes the guard; no variants exist yet, so a relaxed local that reaches a still-boxed callee ABI must still box at the call — confirm the WAT is correct, i.e. no typed value is passed to a boxed-ABI param. If that intermediate state is unsound, gate the relaxation on "a variant will be emitted" and land Task 2.3 + 2.5 together.)
 - [ ] **Step 6: Commit** — `route: don't treat arg-into-typeable-param as an escape`
 
-## Task 2.4: Emit `f$i64` repr variants and select the ABI at call sites
+## Task 2.4: Physical return-ABI source of truth (#4)
+
+Before a variant can return `PVecI64`, the emitter needs a physical-return signal it consults *instead of* deriving purely from `return_mono`. Add an optional physical-return override to `PreparedFunc` and make `emit.tw` honour it.
+
+**Files:**
+- Modify: `boot/compiler/backend/prepared_ir.tw` (add field to `PreparedFunc`)
+- Modify: `boot/compiler/backend/repr_assign.tw:115` (carry the field through — it already copies `return_mono`)
+- Modify: `boot/compiler/codegen/emit.tw:968` (consult the override for `ret_vt`) and the return-coercion path (`emit.tw:990`, `current_return_mono`)
+- Test: `boot/tests/suites/wasm_layout_suite.tw` (or `codegen_emit_suite.tw`)
+
+- [ ] **Step 1: Add the field**
+
+To `type PreparedFunc` (`prepared_ir.tw:145`) add:
+
+```
+  phys_return: ValType?,   // physical return ABI override; .None => derive from return_mono
+```
+
+Default `.None` at every existing construction site (grep `grep -rn 'PreparedFunc\s*\.{\|\.{ func_id' boot/compiler/backend/` and add `phys_return: .None,` — the compiler will error on any missed site, which is the checklist).
+
+- [ ] **Step 2: Write the failing test** — a `PreparedFunc` with `phys_return: .Some(pvec_i64 ValType)` emits a function whose result type is `PVecI64`, and the body's return position coerces to `PVecI64`. Assert against the emitted signature/WAT. Mirror an existing emit/layout suite test.
+- [ ] **Step 3: Run it, confirm it fails.**
+- [ ] **Step 4: Honour the override in emit** — at `emit.tw:968`, if `prepared.phys_return` is `.Some(vt)`, use `[vt]` as `ret_vt`; the body coercion at `:990` must target the physical type when the override is set (thread the physical return type through `current_return_mono`/the return-emit path so `.Return`/tail atoms coerce to `PVecI64`, not the boxed `return_mono`).
+- [ ] **Step 5: Run the test, confirm it passes.**
+- [ ] **Step 6: Self-host + full suite** — `make bundle-cli` fixed point (override defaults `.None`, so existing funcs are unchanged); `make boot-test` green.
+- [ ] **Step 7: Commit** — `emit: physical return-ABI override on PreparedFunc`
+
+## Task 2.5: Emit `f$i64` repr variants (ANF + PreparedFunc) and select the ABI
 
 **Files:**
 - Modify: `boot/compiler/backend/typed_param_abi.tw` (variant emission)
-- Modify: `boot/compiler/backend/prepare.tw` (drive the pass at line ~104)
+- Modify: `boot/compiler/backend/prepare.tw` (the single pipeline, per the header)
 - Modify: `boot/compiler/backend/route_typed_vec.tw` (rewrite typed calls to the variant)
 - Test: `boot/tests/suites/typed_param_abi_suite.tw`
 
-- [ ] **Step 1: Write the failing test** — given a function with a typeable param and a caller passing a typed vector, after the pass there exist two `PreparedFunc`s (original boxed + `$i64` variant with the param slot retyped to `PVecI64`), and the typed call targets the variant's `func_id`.
+- [ ] **Step 1: Write the failing test** — given a function with a typeable param and a caller passing a typed vector, after the pass there exist BOTH a cloned `AnfModule` function in `.anf.functions` and a cloned `PreparedFunc` in `.funcs` for the `$i64` variant (param slot `PVecI64`; `phys_return` set if the return is typeable), and the typed call targets the variant's `func_id`.
 - [ ] **Step 2: Run it, confirm it fails.**
-- [ ] **Step 3: Implement demand-driven emission.** `emit_repr_variants(funcs, param_abi, ...) -> (funcs2, redirect)`:
+- [ ] **Step 3: Implement demand-driven emission over BOTH representations (#3).** `emit_repr_variants(module, param_abi, ...) -> (module2, redirect)`:
   - For each call site whose actual arg is typed (`eligible_v`) and lands in a typeable param, demand a variant of the callee.
-  - For each demanded `f`, clone its `PreparedFunc` with a fresh `func_id` (derive via the module's id allocator — mirror how monomorphization/closure passes mint new `FuncId`s; find the allocator with `grep -rn 'fresh.*func\|next_func_id\|alloc.*FuncId' boot/compiler/backend/`), retype the typeable param slots (and, if `typeable_return`, the result slot) to `PVecI64`, then run `route_func` on the clone so its body stays typed internally.
-  - Return a `redirect: Dict<String, Int>` from `(caller-site callee id)` to the variant id.
-  - Emission is demand-driven, so functions with no typed caller get no variant. DCE drops any variant that ends up unreferenced.
-- [ ] **Step 4: Rewrite call sites** — in `route_func`, after eligibility is known, rewrite a matching `.ACall(.AGlobalFunc(fid), args)` to the variant `fid` from `redirect`, and drop the return-position `box_i64` when the variant returns `PVecI64` and the caller's result slot is typed.
-- [ ] **Step 5: Drive the pass in `prepare.tw`** — after `route_typed_vectors` (line 104), compute `param_abi := analyze_typed_params(...)`, then thread it back so `route_typed_vectors` sees it. Order: `analyze_typed_params` needs `typed_fields`/`typed_payloads` (already computed at 97/103) and must run before/with the routing that consumes it. Restructure the 97-104 block so the relaxation (Task 2.3) and emission both see `param_abi`; keep it a single well-commented sequence.
+  - For each demanded `f`: mint a fresh `FuncId` (find the module id allocator: `grep -rn 'next_func_id\|fresh.*[Ff]unc\|alloc.*FuncId\|new_func_id' boot/compiler/`), then clone **both**:
+    - the `AnfModule` function for `f` into `module.anf.functions` under the new id (so a body is actually emitted, plus whatever symbol registration the emitter needs — check how `.anf.functions` entries become symbols and replicate it);
+    - the `PreparedFunc` for `f` into `module.funcs` under the new id, retyping the typeable param slots to `PVecI64`, setting `phys_return` (Task 2.4) if `typeable_return`, then running `route_func` on the clone so its body stays typed internally.
+  - Return `redirect: Dict<String, Int>` from `(call-site callee id)` to the variant id.
+  - Demand-driven: functions with no typed caller get no variant. DCE drops any unreferenced variant.
+- [ ] **Step 4: Rewrite call sites + drop return box** — in `route_func`, rewrite a matching `.ACall(.AGlobalFunc(fid), args)` to the variant id from `redirect`; when the variant's `phys_return` is `PVecI64` and the caller's result slot is typed, the result needs no `box_i64` (mark the result slot `eligible_v`); a boxed caller of the same variant coerces the `PVecI64` result via `emit_coerce_stack` (already handles `PVecI64→PVec`).
+- [ ] **Step 5: Wire the single pipeline** — implement the ordering in the Stage 2 header: compute `param_abi` PRE-route (new line after `analyze_typed_payloads`, `prepare.tw:103`), pass it into `route_typed_vectors`, and run `emit_repr_variants` as part of that routing step. One well-commented sequence; nothing computes `param_abi` after routing.
 - [ ] **Step 6: Run the test, confirm it passes.**
 - [ ] **Step 7: Self-host + full suite** — `make bundle-cli` fixed point; `make boot-test` green.
-- [ ] **Step 8: Commit** — `feat: emit PVecI64-ABI function variants + select at typed call sites`
+- [ ] **Step 8: Commit** — `feat: emit PVecI64-ABI variants (anf+prepared) + typed call selection`
 
-## Task 2.5: Guard test + build-path WAT probe + bench
+## Task 2.6: Guard test + build-path WAT probe + bench
 
 **Files:**
 - Create: `examples/performance/sort-bench/typed_param_abi_probe.tw`
 - Create: `examples/performance/sort-bench/typed_param_capture_guard.tw`
 
-- [ ] **Step 1: Build-path probe** — a program that builds a `Vector<Int>` in a loop and passes it into a function that stores it into a typed payload (the `gen.table → int_col` shape). Build to WAT; assert the builder-loop local is `PVecI64` (no `box_i64` before the call) and the callee has a `$i64` variant:
+- [ ] **Step 1: Build-path probe** — a program that builds a `Vector<Int>` in a loop and passes it into a function that stores it into a typed payload (the `gen.table → int_col` shape). Build to WAT; assert the callee has a `$i64` variant and the build stays typed:
 
 ```bash
 target/twk build examples/performance/sort-bench/typed_param_abi_probe.tw -o /tmp/p.wat
-grep -c 'gather_i64\|builder_freeze_i64' /tmp/p.wat   # typed build present
-grep -c box_i64 /tmp/p.wat                             # fewer than the boxed baseline
+grep -c 'builder_freeze_i64' /tmp/p.wat   # typed build present (>=1)
+grep -c box_i64 /tmp/p.wat                 # record; must be < the pre-Stage-2 count for this fixture
 ```
+Record the pre-Stage-2 `box_i64` count for the same fixture first (build it at Checkpoint A) so "fewer" is a concrete number, not a vibe.
 
-- [ ] **Step 2: Escape-guard regression probe** — mirror `typed_payload_capture_guard.tw`: pass a typed vector into a function that captures it into a closure and reads it in a loop. It MUST stay boxed (not typed). Assert runtime is ~ms, not seconds:
+- [ ] **Step 2: Escape-guard regression probe (WAT assertion, not just timing).** Mirror `typed_payload_capture_guard.tw`: pass a typed vector into a function that captures it into a closure and reads it in a loop. It MUST stay boxed. Assert BOTH:
 
 ```bash
-timeout 15 target/twk run examples/performance/sort-bench/typed_param_capture_guard.tw
+target/twk build examples/performance/sort-bench/typed_param_capture_guard.tw -o /tmp/cg.wat
+# The captured column's comparator/closure trampoline reads via boxed get, NOT get_i64:
+#   inspect the closure trampoline body — it must call $rt_arr__get, not $rt_arr__get_i64.
+# And no $i64 variant is emitted for the capturing function.
+timeout 15 target/twk run examples/performance/sort-bench/typed_param_capture_guard.tw   # ~ms, not seconds
 ```
-Expected: a few ms (the reverted-bug guard — the captured param must not be typed).
+Expected: the trampoline uses boxed `get` (WAT assertion), and runtime is a few ms (timing). The WAT check is authoritative; timing is the coarse backstop.
 
 - [ ] **Step 3: Bench** — `target/twk run examples/performance/dataframe/bench/main.tw`; record `order_by` and `filter`/`group_by`/`join`. Expect the build path to move; expect `order_by` umbrella to move materially only after step 2 (typed closure env). Record deltas in [typed-vector-representation.md](typed-vector-representation.md).
-- [ ] **Step 4: Commit** — `test: Stage 2 build-path probe + capture guard + bench notes`
+- [ ] **Step 4: Commit** — `test: Stage 2 build-path probe + capture guard (WAT+timing) + bench`
 
 ## Checkpoint B — wrap up
 
