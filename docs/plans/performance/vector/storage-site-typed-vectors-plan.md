@@ -1,5 +1,18 @@
 # Milestone A — Storage-Site Typed Vectors — Implementation Plan
 
+> **✅ COMPLETED (2026-07-05) on branch `typed-vector-repr-m1a`** (not merged to
+> main). All tasks landed via subagent-driven execution (build-then-activate
+> reorder): classifier unification `4a5bc161`, payload plumbing `605a710d`, layout
+> `d432f8f1`, extraction coercion `c78bf6ae`, bridge box/unbox `d2cc1cb8`, read
+> routing `57f603cf`, activation + probes `0168753a`. Self-host fixed point + 2966
+> boot tests green; positive probe reads typed (`get_i64`); capture tripwire 5.34ms
+> (M1a pathology structurally prevented). **Outcome caveat:** the mechanism is
+> correct and safe, but the *conservative* producer eligibility ("clean typed
+> `collect`-built vector placed directly into a variant construction") does **not**
+> match how the real dataframe builds `IntCol` columns, so `order_by` is unchanged
+> (~2403ms). The app-level win needs broader producer eligibility — see the
+> umbrella [typed-vector-representation.md](typed-vector-representation.md) "next".
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Extend the conservative typed-vector storage policy to typed sum/variant payloads (`IntCol(Vector<Int>)` → `PVecI64` in the variant struct) so variant-held columns get typed *direct* reads — without reintroducing the M1a per-read pathology.

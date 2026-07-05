@@ -290,9 +290,28 @@ These should be visible in backend IR/planning, not hidden ad hoc in emitters.
 > return + direct-call args (S2.1), and typed **record fields** (S2.2, see
 > [../../archive/typed-record-fields.md](../../archive/typed-record-fields.md)). The
 > native value-sort kernel ([native-typed-value-sort.md](native-typed-value-sort.md))
-> realizes the Phase-2 dense working set. **Open next:** typed combinators
-> (Phase 5) and variant-payload routing (a Phase-6 boundary) — the latter is the
-> dataframe `order_by` unlock, since columns are `IntCol(Vector<Int>)`.
+> realizes the Phase-2 dense working set.
+>
+> **Update (2026-07-05).** Two things happened since. (1) A **uniform-typing**
+> attempt (make `Vector<Int>` physically `PVecI64` *everywhere*) was built and
+> **reverted** — it made captured-vector reads O(n) per access via the `anyref`
+> closure env (post-mortem: [m1a-anyref-readback-investigation.md](m1a-anyref-readback-investigation.md)).
+> The corrected model is **storage-site typing**: `TypedVec`/`PVecI64` is a
+> per-site optimization, never a global property
+> ([../representation-boundary-policy.md](../representation-boundary-policy.md)).
+> (2) **Typed variant payloads landed** (Milestone A, branch `typed-vector-repr-m1a`,
+> [storage-site-typed-vectors.md](storage-site-typed-vectors.md)) — capture-safe,
+> no pathology. **But `order_by` is still unchanged**: the conservative producer
+> eligibility doesn't type the *real* dataframe `IntCol` columns.
+>
+> **Open next, in priority order:**
+> 1. **Broaden producer eligibility** so real dataframe columns (built cross-fn /
+>    via combinators / passed as params) get typed — this is what actually moves
+>    `order_by`'s gather/take/direct-read phases.
+> 2. **M1b — typed closure environments** (per-capture-repr env layout) so the
+>    `sort_by` comparator reads its captured key column typed — the other half of
+>    `order_by`.
+> Typed combinators (Phase 5) remain useful but secondary.
 
 ### Implementation map (where the landed routing lives)
 

@@ -1,8 +1,14 @@
 # Storage-Site Typed Vectors — Milestone A design
 
-**Status:** Design approved (2026-07-04). Concrete design for the redesign called
-for in [../representation-boundary-policy.md](../representation-boundary-policy.md)
-after the uniform-typing activation was reverted
+**Status:** ✅ IMPLEMENTED (2026-07-05) on branch `typed-vector-repr-m1a` (not
+merged to main) — see the completion note in
+[storage-site-typed-vectors-plan.md](storage-site-typed-vectors-plan.md). The
+mechanism landed safely (typed variant payloads, capture-safe, no M1a pathology);
+the conservative eligibility does not yet type real dataframe columns, so the app
+speedup is deferred to broader eligibility. Design approved 2026-07-04, for the
+redesign called for in
+[../representation-boundary-policy.md](../representation-boundary-policy.md) after
+the uniform-typing activation was reverted
 ([m1a-anyref-readback-investigation.md](m1a-anyref-readback-investigation.md)).
 
 **Scope:** Milestone A = *foundation + typed variant/sum payloads*. Typed closure
