@@ -3387,6 +3387,7 @@ fn try_emit_if_spine(
   then_e: PreparedExpr,
   else_e: PreparedExpr,
   result_idx: Int,
+  result_vt: ValType?,
   result_mono: MonoType,
   ctx: EmitCtx,
   buf: Vector<Instr>,
@@ -3403,14 +3404,19 @@ fn try_emit_if_spine(
   for frame in spine.frames {
     cond_instrs := emit_if_prefix(frame.prefix, ctx, [])
     cond_instrs = emit_atom(frame.condition, ctx, cond_instrs)
-    then_body := emit_expr(frame.then_expr, expected(result_mono, ctx.env), ctx, [])
+    then_body := emit_expr(
+      frame.then_expr,
+      control_emit.arm_expected(result_vt, result_mono, ctx.env),
+      ctx,
+      [],
+    )
     then_body = control_emit.append_result_store(then_body, result_idx, result_mono)
     then_body = .append(.Br(done_label))
 
     body = .concat(cond_instrs).append(.If(.None, then_body, []))
   }
 
-  tail_body := emit_expr(spine.tail, expected(result_mono, ctx.env), ctx, [])
+  tail_body := emit_expr(spine.tail, control_emit.arm_expected(result_vt, result_mono, ctx.env), ctx, [])
   tail_body = control_emit.append_result_store(tail_body, result_idx, result_mono)
 
   body = .concat(tail_body)
@@ -3427,7 +3433,7 @@ fn emit_if_op(
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
-  case try_emit_if_spine(cond_e, then_e, else_e, result_idx, result_mono, ctx, buf) {
+  case try_emit_if_spine(cond_e, then_e, else_e, result_idx, result_vt, result_mono, ctx, buf) {
     .Some(out) => out,
     .None => control_emit.emit_if_op(
       cond_e,
