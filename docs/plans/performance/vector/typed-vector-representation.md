@@ -313,6 +313,25 @@ These should be visible in backend IR/planning, not hidden ad hoc in emitters.
 >    `order_by`.
 > Typed combinators (Phase 5) remain useful but secondary.
 
+> **M1b typed closure captures — local-capture increment landed (2026-07-06,
+> branch `typed-vector-crossfn-abi`).** A `Vector<Int>` captured into a closure
+> and read via index/len only now flows typed through the (trampoline-private)
+> anyref env: the trampoline downcasts it `anyref→PVecI64` (O(1), no rebuild —
+> the m1a pathology was uniform-typing's `unbox_i64`, avoided here), so a sort
+> comparator reads the captured key column via `get_i64`. Gated on a two-part
+> soundness check (`analyze_typed_captures`): the capture is read typed-only in
+> the lambda AND at every construction site the enclosing free var is a typed
+> LOCAL producer (`free_var_typed_local`) — a boxed free var (function return /
+> param / combinator result) must not type the capture or the downcast traps.
+> Reuses the param-ABI machinery (a capture is a param across the `AMakeClosure`
+> edge) plus a `relaxed` escape-guard threaded through the classifiers.
+> **Win:** a typed-local key sort @ N=1M ~1276→**748ms** (~41%). Self-host fixed
+> point; 2973 tests. **Not yet the dataframe order_by:** its `keys :=
+> column.as_ints(amount_col)` is a boxed function return, so the capture stays
+> boxed (correctly). Closing that needs the **typed-return bridge** (`as_ints`
+> returns `PVecI64`) — the next increment — after which the column reaches the
+> comparator typed and the ~1343ms dataframe sort drops.
+
 > **Cross-fn typed-vector ABI — Stage 2 joint fixpoint landed (2026-07-06,
 > branch `typed-vector-crossfn-abi`).** The plan's Stage 2 as written could not
 > type the real dataframe `ColData.IntCol` (payload typing and param typing are
