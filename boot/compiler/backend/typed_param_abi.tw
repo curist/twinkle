@@ -24,8 +24,8 @@
 
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotId}
 use compiler.backend.route_typed_vec.{
-  aliases_for, analyze_typed_fields, analyze_typed_payloads, build_copy_map, free_var_typed_local,
-  route_ids, v_group_typeable,
+  RouteIds, aliases_for, analyze_typed_fields, analyze_typed_payloads, build_copy_map, route_ids,
+  slot_typed_after_route, v_group_typeable,
 }
 use compiler.builtins.{BuiltinRegistry}
 use compiler.mono_type.{MonoType}
@@ -99,18 +99,17 @@ pub fn analyze_typed_params(
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
 ) ParamAbi {
+  ids := route_ids(builtins)
   typeable: Dict<String, Vector<Int>> = Dict.new()
   ret: Dict<String, Bool> = Dict.new()
 
   for pf in funcs {
     key := "${pf.func_id.id}"
     idxs: Vector<Int> = []
-    typed_param_slots: Dict<Int, Bool> = Dict.new()
 
     for p, i in pf.params {
       if param_uses_typed_only(pf, p.id, builtins, typed_fields, typed_payloads) {
         idxs = .append(i)
-        typed_param_slots[p.id] = true
       }
     }
 
@@ -118,7 +117,7 @@ pub fn analyze_typed_params(
       typeable[key] = idxs
     }
 
-    if return_is_typed(pf, typed_param_slots) {
+    if return_is_typed(pf, ids, builtins, typed_fields, typed_payloads) {
       ret[key] = true
     }
   }
@@ -177,6 +176,7 @@ pub fn analyze_typed_captures(
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
+  typeable_return: Dict<String, Bool>,
 ) Dict<String, Vector<Int>> {
   ids := route_ids(builtins)
 
@@ -213,13 +213,14 @@ pub fn analyze_typed_captures(
           for i in m.keys() {
             supported := i >= 0
               and i < site.free_vars.len()
-              and free_var_typed_local(
+              and slot_typed_after_route(
                 pf,
                 site.free_vars[i].id,
                 ids,
                 builtins,
                 typed_fields,
                 typed_payloads,
+                typeable_return,
               )
 
             if !supported {
@@ -267,10 +268,19 @@ pub fn analyze_typed_captures(
 }
 
 // A function returns a typed PVecI64 iff its return type is Vector<Int> and every
-// returned atom is a typeable-param slot (a returned typeable param can carry a
-// PVecI64 physical-return ABI). Conservative: locals produced typed internally
-// are not yet counted here (refined when variant emission needs them).
-fn return_is_typed(pf: PreparedFunc, typed_param_slots: Dict<Int, Bool>) Bool {
+// returned atom is a slot route_func makes PVecI64 — a typed payload/field read
+// or a typed builder-candidate local. Params are excluded: a returned param is
+// only physically PVecI64 once variant emission types it (not yet done), so
+// returning it typed would be unsound. The empty typeable_return conservatively
+// breaks the return-chain circularity (a function returning another
+// typed-return call result is not itself counted).
+fn return_is_typed(
+  pf: PreparedFunc,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+) Bool {
   if !is_vector_int(pf.return_mono) {
     return false
   }
@@ -282,7 +292,7 @@ fn return_is_typed(pf: PreparedFunc, typed_param_slots: Dict<Int, Bool>) Bool {
   }
 
   for s in slots {
-    if !typed_param_slots.has(s) {
+    if !slot_typed_after_route(pf, s, ids, builtins, typed_fields, typed_payloads, Dict.new()) {
       return false
     }
   }
@@ -423,8 +433,9 @@ pub fn analyze_typed_repr(
     }
   }
 
-  // Capture typeability uses the converged typed sets. Computed once here (it
-  // does not feed the payload/param fixpoint for the local-capture case).
-  capture_abi := analyze_typed_captures(funcs, builtins, tf, tpay)
+  // Capture typeability uses the converged typed sets + the return ABI (so a
+  // capture of a typed-return call result — e.g. `keys := as_ints(col)` — is
+  // supported). Computed once here (not part of the payload/param fixpoint).
+  capture_abi := analyze_typed_captures(funcs, builtins, tf, tpay, abi.typeable_return)
   .{ typed_fields: tf, typed_payloads: tpay, param_abi: abi, capture_abi }
 }

@@ -270,14 +270,21 @@ pub fn suite() runner.Suite {
         // Empty set: stores into the field escape and no field reads are typed,
         // so nothing retypes — proves the empty-set path preserves old behavior.
         empty: Dict<String, Bool> = Dict.new()
-        routed_empty := route_typed_vectors(p.funcs, p.builtins, empty, Dict.new(), Dict.new())
+        routed_empty := route_typed_vectors(
+          p.funcs,
+          p.builtins,
+          empty,
+          Dict.new(),
+          Dict.new(),
+          Dict.new(),
+        )
         try assert.equal(pvec_i64_slot_count(routed_empty), 0)
 
         // Real set: the producer (collect/builder_freeze result) AND the
         // field-read (b.xs) result slot retype to PVecI64. Both the freeze result
         // and its plain-copy aliases plus the read result get retyped, so expect
         // at least two typed slots and strictly more than the empty-set run.
-        routed := route_typed_vectors(p.funcs, p.builtins, tf, Dict.new(), Dict.new())
+        routed := route_typed_vectors(p.funcs, p.builtins, tf, Dict.new(), Dict.new(), Dict.new())
         n := pvec_i64_slot_count(routed)
         try assert.ok(n >= 2, "expected producer + field-read slots typed")
         try assert.ok(
@@ -296,7 +303,7 @@ pub fn suite() runner.Suite {
         tf := analyze_typed_fields(p.funcs, p.builtins)
         try assert.equal(typed_count(tf), 0)
 
-        routed := route_typed_vectors(p.funcs, p.builtins, tf, Dict.new(), Dict.new())
+        routed := route_typed_vectors(p.funcs, p.builtins, tf, Dict.new(), Dict.new(), Dict.new())
         try assert.equal(pvec_i64_slot_count(routed), 0)
         .Ok({})
       },
@@ -310,7 +317,7 @@ pub fn suite() runner.Suite {
         // field set (empty here) just like the live pipeline does.
         p := try prepare_src(variant_payload_src())
         tf := analyze_typed_fields(p.funcs, p.builtins)
-        routed := route_typed_vectors(p.funcs, p.builtins, tf, Dict.new(), Dict.new())
+        routed := route_typed_vectors(p.funcs, p.builtins, tf, Dict.new(), Dict.new(), Dict.new())
         try assert.equal(pvec_i64_slot_count(routed), 0)
         .Ok({})
       },
@@ -328,7 +335,7 @@ pub fn suite() runner.Suite {
         p := try prepare_src(record_update_src())
         tf := analyze_typed_fields(p.funcs, p.builtins)
         try assert.equal(typed_count(tf), 1)
-        routed := route_typed_vectors(p.funcs, p.builtins, tf, Dict.new(), Dict.new())
+        routed := route_typed_vectors(p.funcs, p.builtins, tf, Dict.new(), Dict.new(), Dict.new())
         try assert.ok(
           pvec_i64_slot_count(routed) > 0,
           "expected PVecI64 slots for the updated field",

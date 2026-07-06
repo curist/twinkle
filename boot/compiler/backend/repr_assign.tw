@@ -113,6 +113,7 @@ fn assign_repr_for_func(
       slots: new_slots,
       body: pf.body,
       return_mono: pf.return_mono,
+      phys_return: pf.phys_return,
     },
     cache: cache2,
   }

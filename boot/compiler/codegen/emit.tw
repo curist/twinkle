@@ -964,11 +964,16 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
   extra_locals = .append(.Anyref)
   idx = idx + 1
 
-  // Return type
-  ret_vt: Vector<ValType> = case prepared.return_mono {
-    .Void => [],
-    .Never => [],
-    _ => [val_type_of_mono(func.return_ty, base_ctx.env)],
+  // Return type. A physical-return override (typed-return bridge) wins over the
+  // mono-derived (boxed) type, so a function returning a typed Vector<Int> can
+  // expose a PVecI64 result ABI.
+  ret_vt: Vector<ValType> = case prepared.phys_return {
+    .Some(vt) => [vt],
+    .None => case prepared.return_mono {
+      .Void => [],
+      .Never => [],
+      _ => [val_type_of_mono(func.return_ty, base_ctx.env)],
+    },
   }
   ctx := EmitCtx.{
     registry: base_ctx.registry,
@@ -987,7 +992,14 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     scratch_anyref_local,
     intrinsic_table: base_ctx.intrinsic_table,
   }
-  body_instrs := emit_expr(prepared.body, prepared.return_mono, ctx, [])
+
+  // A phys_return function emits its body in tail context so every return point
+  // routes through emit_tail_expr (which coerces to the physical return type).
+  // Ordinary functions keep the implicit-stack-return path unchanged.
+  body_instrs := case prepared.phys_return {
+    .Some(_) => emit_tail_expr(prepared.body, prepared.return_mono, ctx, []),
+    .None => emit_expr(prepared.body, prepared.return_mono, ctx, []),
+  }
 
   sym := lookup_func_sym(base_ctx.func_sym_map, func.func_id)
   fd := FuncDef.{
@@ -1155,7 +1167,7 @@ fn emit_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vecto
       _ => emit_atom_for_expected(atom, expected_ty, ctx, buf),
     },
     .Return(.Some(atom)) => {
-      buf2 := emit_atom_for_expected(atom, current_return_mono(ctx, expected_ty), ctx, buf)
+      buf2 := emit_return_coerce(atom, expected_ty, ctx, buf)
       buf2.append(.Return)
     },
     .Return(.None) => buf.append(.Return),
@@ -1194,6 +1206,28 @@ fn current_return_mono(ctx: EmitCtx, fallback: MonoType) MonoType {
   }
 }
 
+// Coerce a returned atom to the function's physical return type. With a
+// phys_return override (typed-return bridge) the target is that ValType (e.g.
+// PVecI64) — the returned value is already PVecI64, so this is a no-op instead of
+// the boxing coercion emit_atom_for_expected would apply to the boxed return_mono.
+fn emit_return_coerce(atom: PreparedAtom, expected_ty: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<
+  Instr,
+> {
+  ret_mono := current_return_mono(ctx, expected_ty)
+  phys := case current_prepared_func(ctx) {
+    .Some(pf) => pf.phys_return,
+    .None => .None,
+  }
+
+  case phys {
+    .Some(vt) => {
+      buf2 := emit_atom(atom, ctx, buf)
+      emit_coerce_stack(atom_val_type(atom, ctx), vt, ret_mono, ctx, buf2)
+    },
+    .None => emit_atom_for_expected(atom, ret_mono, ctx, buf),
+  }
+}
+
 fn emit_atom_for_expected(
   atom: PreparedAtom,
   expected_ty: MonoType,
@@ -1225,11 +1259,11 @@ fn emit_tail_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: 
   case expr {
     .Let(local, op, body) => emit_tail_let(local, op, body, expected_ty, ctx, buf),
     .Atom(atom) => {
-      buf2 := emit_atom_for_expected(atom, expected_ty, ctx, buf)
+      buf2 := emit_return_coerce(atom, expected_ty, ctx, buf)
       buf2.append(.Return)
     },
     .Return(.Some(atom)) => {
-      buf2 := emit_atom_for_expected(atom, current_return_mono(ctx, expected_ty), ctx, buf)
+      buf2 := emit_return_coerce(atom, expected_ty, ctx, buf)
       buf2.append(.Return)
     },
     .Return(.None) => buf.append(.Return),

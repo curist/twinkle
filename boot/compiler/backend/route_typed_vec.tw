@@ -62,11 +62,51 @@ pub fn route_typed_vectors(
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
   capture_abi: Dict<String, Vector<Int>>,
+  typeable_return: Dict<String, Bool>,
 ) Vector<PreparedFunc> {
   ids := route_ids(builtins)
 
   collect pf in funcs {
-    route_func(pf, ids, builtins, typed_fields, typed_payloads, capture_abi)
+    route_func(pf, ids, builtins, typed_fields, typed_payloads, capture_abi, typeable_return)
+  }
+}
+
+// Slot ids bound directly from a call to a typed-return function (its physical
+// result is PVecI64). These are typed sources iff also consumed typed-only.
+fn collect_typed_return_call_results(
+  body: PreparedExpr,
+  typeable_return: Dict<String, Bool>,
+  acc: Vector<Int>,
+) Vector<Int> {
+  case body {
+    .Let(s, op, rest) => {
+      acc2 := case op {
+        .ACall(.AGlobalFunc(fid), _) => if typeable_return.has("${fid.id}") {
+          acc.append(s.id)
+        } else {
+          acc
+        },
+        .AIf(_, then_e, else_e) => {
+          a := collect_typed_return_call_results(then_e, typeable_return, acc)
+          collect_typed_return_call_results(else_e, typeable_return, a)
+        },
+        .AMatch(_, arms) => {
+          cur := acc
+
+          for arm in arms {
+            cur = collect_typed_return_call_results(arm.body, typeable_return, cur)
+          }
+
+          cur
+        },
+        .ALoop(inner) => collect_typed_return_call_results(inner, typeable_return, acc),
+        .ADefer(inner) => collect_typed_return_call_results(inner, typeable_return, acc),
+        _ => acc,
+      }
+
+      collect_typed_return_call_results(rest, typeable_return, acc2)
+    },
+    _ => acc,
   }
 }
 
@@ -163,6 +203,7 @@ fn route_func(
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
   capture_abi: Dict<String, Vector<Int>>,
+  typeable_return: Dict<String, Bool>,
 ) PreparedFunc {
   if prepared_depth_exceeds(pf.body, 512) {
     return pf
@@ -174,6 +215,10 @@ fn route_func(
   field_read_sids := collect_typed_field_reads(pf.body, typed_fields, [])
   payload_read_sids := collect_typed_payload_reads(pf.body, typed_payloads, pf.slots, [])
 
+  // Slots bound from a typed-return call (its physical result is PVecI64), e.g.
+  // `keys := column.as_ints(col)`. A typed source when consumed typed-only.
+  call_result_sids := collect_typed_return_call_results(pf.body, typeable_return, [])
+
   // M1b: this function's own typeable capture params (retyped to PVecI64 below),
   // and the free-var slots whose capture into another typeable closure is not an
   // escape (relaxed). A capture-only closure (e.g. a sort comparator reading a
@@ -182,8 +227,14 @@ fn route_func(
   cap_slots := typeable_capture_slots(pf, capture_abi)
   relaxed := collect_relaxed_captures(pf.body, capture_abi, Dict.new())
 
+  // A function whose return is typed gets a physical PVecI64 return ABI (the
+  // typed-return bridge); its returned slot is retyped below like any other typed
+  // source, so the return coercion becomes a no-op instead of a box.
+  has_phys_return := typeable_return.has("${pf.func_id.id}")
+
   if cands.len() == 0
-    and field_read_sids.len() == 0 and payload_read_sids.len() == 0 and cap_slots.len() == 0 {
+    and field_read_sids.len() == 0 and payload_read_sids.len() == 0 and call_result_sids.len() == 0
+    and cap_slots.len() == 0 and !has_phys_return {
     return pf
   }
 
@@ -255,6 +306,15 @@ fn route_func(
     }
   }
 
+  // 2c''. Typed-return call results (typed-return bridge): a slot bound from a
+  //       call to a typed-return function is physically PVecI64 when consumed
+  //       typed-only, so it retypes like a payload read.
+  for sid in call_result_sids {
+    if result_consumed_typed_only(pf.body, sid, relaxed, ids, builtins) {
+      eligible_v[sid] = true
+    }
+  }
+
   // 2c'. Typeable capture params (M1b): the closure body reads them via typed
   //      index/len only, so retype to PVecI64. The trampoline downcasts the
   //      anyref env slot to PVecI64 (no rebuild), and the enclosing free var is
@@ -316,6 +376,13 @@ fn route_func(
 
   pf.slots = new_slots
   pf.body = new_body
+
+  // Typed-return bridge: expose a physical PVecI64 result ABI. The returned slot
+  // is now PVecI64 (retyped above), so emit's return coercion is a no-op.
+  if has_phys_return {
+    pf.phys_return = .Some(.Ref(true, .Named("rt_types__PVecI64")))
+  }
+
   pf
 }
 
@@ -1048,6 +1115,82 @@ pub fn free_var_typed_local(
   }
 
   false
+}
+
+// True if `slot` is bound directly from a call to a function whose typeable_return
+// holds — i.e. a typed-return call result (its physical result is PVecI64).
+fn call_result_of_typed_return(body: PreparedExpr, slot: Int, typeable_return: Dict<String, Bool>) Bool {
+  case body {
+    .Let(s, op, rest) => {
+      here := if s.id == slot {
+        case op {
+          .ACall(.AGlobalFunc(fid), _) => typeable_return.has("${fid.id}"),
+          _ => false,
+        }
+      } else {
+        false
+      }
+
+      here
+        or call_result_typed_return_branches(op, slot, typeable_return)
+        or call_result_of_typed_return(rest, slot, typeable_return)
+    },
+    _ => false,
+  }
+}
+
+fn call_result_typed_return_branches(op: PreparedOp, slot: Int, typeable_return: Dict<String, Bool>) Bool {
+  case op {
+    .AIf(_, then_e, else_e) => call_result_of_typed_return(then_e, slot, typeable_return)
+      or call_result_of_typed_return(else_e, slot, typeable_return),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if call_result_of_typed_return(arm.body, slot, typeable_return) {
+          return true
+        }
+      }
+
+      false
+    },
+    .ALoop(inner) => call_result_of_typed_return(inner, slot, typeable_return),
+    .ADefer(inner) => call_result_of_typed_return(inner, slot, typeable_return),
+    _ => false,
+  }
+}
+
+// Unified predicate: will `slot` physically be a PVecI64 after route_func runs?
+// True for a typed payload read (consumed typed-only), a typed field read, a
+// typed-return call result (consumed typed-only), or a typed builder-candidate
+// local. Used for capture support (M1b) and typed-return call-result eligibility.
+// Pass an empty `typeable_return` to exclude the call-result case (e.g. when
+// computing typeable_return itself, to avoid a return-chain circularity).
+pub fn slot_typed_after_route(
+  pf: PreparedFunc,
+  slot: Int,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+  typeable_return: Dict<String, Bool>,
+) Bool {
+  for sid in collect_typed_payload_reads(pf.body, typed_payloads, pf.slots, []) {
+    if sid == slot and result_consumed_typed_only(pf.body, slot, Dict.new(), ids, builtins) {
+      return true
+    }
+  }
+
+  for sid in collect_typed_field_reads(pf.body, typed_fields, []) {
+    if sid == slot {
+      return true
+    }
+  }
+
+  if call_result_of_typed_return(pf.body, slot, typeable_return)
+    and result_consumed_typed_only(pf.body, slot, Dict.new(), ids, builtins) {
+    return true
+  }
+
+  free_var_typed_local(pf, slot, ids, builtins, typed_fields, typed_payloads)
 }
 
 fn classify_expr(
