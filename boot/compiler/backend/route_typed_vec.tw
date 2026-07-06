@@ -28,7 +28,7 @@ fn with_repr_wasm(info: SlotInfo, repr: ReprKind, wasm_type: ValType) SlotInfo {
 
 type Cand = .{ v: Int, b: Int }
 
-type RouteIds = .{
+pub type RouteIds = .{
   builder_new: Int,
   builder_push: Int,
   builder_freeze: Int,
@@ -113,17 +113,8 @@ fn route_func(
 
   for c in cands {
     aliases := aliases_for(c.v, copy_map)
-    vuse := classify_v_group(pf.body, aliases, ids.len, builtins, pf.slots)
-    all_field_keys_typed := vuse.field_keys.len() == 0 or all_in(vuse.field_keys, typed_fields)
 
-    // A producer that flows into a variant payload is only routable if every such
-    // site is in the typed-payload set; otherwise construction expects a boxed
-    // PVec and the producer must stay boxed. (Builtin-sum payload sites never
-    // enter typed_payloads, so a producer feeding e.g. `.Some(v)` stays boxed.)
-    all_payload_keys_typed := vuse.payload_keys.len() == 0
-      or all_in(vuse.payload_keys, typed_payloads)
-
-    if !vuse.escapes and all_field_keys_typed and all_payload_keys_typed {
+    if v_group_typeable(pf.body, aliases, ids, builtins, pf.slots, typed_fields, typed_payloads) {
       for sid in aliases.keys() {
         eligible_v[sid] = true
       }
@@ -605,7 +596,7 @@ fn slot_is_int_vector(sid: Int, slots: Dict<Int, SlotInfo>) Bool {
 // Map each slot defined by a plain copy `Let(dst, AInit(ASlot(src)), _)` to its
 // source, so the builder lineage (builder_new result -> ... -> freeze arg) can
 // be traced across the copies introduced by lowering/slot assignment.
-fn build_copy_map(expr: PreparedExpr, acc: Dict<Int, Int>) Dict<Int, Int> {
+pub fn build_copy_map(expr: PreparedExpr, acc: Dict<Int, Int>) Dict<Int, Int> {
   case expr {
     .Let(slot, op, body) => {
       acc2 := case op {
@@ -659,7 +650,7 @@ fn mono_key_of(info: SlotInfo) String {
   }
 }
 
-fn aliases_for(root: Int, copy_map: Dict<Int, Int>) Dict<Int, Bool> {
+pub fn aliases_for(root: Int, copy_map: Dict<Int, Int>) Dict<Int, Bool> {
   out: Dict<Int, Bool> = Dict.new()
   out[root] = true
 
@@ -865,6 +856,34 @@ fn classify_v_group(
   slots: Dict<Int, SlotInfo>,
 ) VGroupUse {
   classify_expr(expr, vs, len_id, builtins, slots)
+}
+
+// Shared eligibility predicate: a typed-vector slot group `aliases` is typeable
+// (safe to store physically as PVecI64) iff it never escapes except by
+// index/len/return/break and any record-field / variant-payload stores it makes
+// go into fields/payloads the whole-program analysis already decided are typed.
+// Used for both local producer candidates (route_func) and function params
+// (typed_param_abi's cross-call analysis).
+pub fn v_group_typeable(
+  body: PreparedExpr,
+  aliases: Dict<Int, Bool>,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+  slots: Dict<Int, SlotInfo>,
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+) Bool {
+  vuse := classify_v_group(body, aliases, ids.len, builtins, slots)
+  all_field_keys_typed := vuse.field_keys.len() == 0 or all_in(vuse.field_keys, typed_fields)
+
+  // A producer that flows into a variant payload is only routable if every such
+  // site is in the typed-payload set; otherwise construction expects a boxed
+  // PVec and the producer must stay boxed. (Builtin-sum payload sites never enter
+  // typed_payloads, so a producer feeding e.g. `.Some(v)` stays boxed.)
+  all_payload_keys_typed := vuse.payload_keys.len() == 0
+    or all_in(vuse.payload_keys, typed_payloads)
+
+  !vuse.escapes and all_field_keys_typed and all_payload_keys_typed
 }
 
 fn classify_expr(

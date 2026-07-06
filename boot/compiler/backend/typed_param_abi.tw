@@ -1,0 +1,57 @@
+//! Cross-call typed-vector ABI analysis (Stage 2). Pure over PreparedFunc; no
+//! IR mutation here — emission and call rewriting live in the router.
+//!
+//! Answers, per function: which `Vector<Int>` params are used only in
+//! typed-compatible ways (so they can take a physical `PVecI64` ABI), and whether
+//! the function's return value is a typed `PVecI64` slot. A param is typeable iff
+//! its slot-group never escapes except by index/len/gather-read, return, or a
+//! store into a field/payload the whole-program analysis already typed — the SAME
+//! predicate route_func computes for a local producer, applied to a param slot
+//! (reused via `v_group_typeable`). Passing a typed param on to another function
+//! is not an escape: the direct-call boundary boxes it (S2.1 adapter) when the
+//! callee's ABI is still boxed, and Task 2.5 selects a typed variant when it is
+//! not.
+
+use compiler.backend.prepared_ir.{PreparedFunc}
+use compiler.backend.route_typed_vec.{aliases_for, build_copy_map, route_ids, v_group_typeable}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.mono_type.{MonoType}
+
+pub type ParamAbi = .{
+  // func_id.id (as String) -> set of param indices that may take PVecI64
+  typeable_params: Dict<String, Vector<Int>>,
+  // func_id.id (as String) -> return is a typed PVecI64 slot
+  typeable_return: Dict<String, Bool>,
+}
+
+// True if a mono type is Vector<Int> (the only representation-typed vector).
+fn is_vector_int(mono: MonoType) Bool {
+  case mono {
+    .Vector(.Int) => true,
+    _ => false,
+  }
+}
+
+// True if the given param slot is a Vector<Int> whose every use is
+// typed-compatible (index/len/gather-read, typed field/payload store, return),
+// so the function could take it as a physical PVecI64. Non-Vector<Int> params
+// are never typeable.
+pub fn param_uses_typed_only(
+  pf: PreparedFunc,
+  param_slot_id: Int,
+  builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+) Bool {
+  case pf.slots[param_slot_id] {
+    .Some(info) => if !is_vector_int(info.mono) {
+      false
+    } else {
+      ids := route_ids(builtins)
+      copy_map := build_copy_map(pf.body, Dict.new())
+      aliases := aliases_for(param_slot_id, copy_map)
+      v_group_typeable(pf.body, aliases, ids, builtins, pf.slots, typed_fields, typed_payloads)
+    },
+    .None => false,
+  }
+}

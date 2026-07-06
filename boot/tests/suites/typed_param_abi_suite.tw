@@ -1,0 +1,105 @@
+//! Tests for the cross-call typed-vector param ABI analysis (Stage 2) in
+//! boot/compiler/backend/typed_param_abi.tw.
+//!
+//! End-to-end fixtures: each test compiles a tiny .tw source through the real
+//! pipeline (compile_source -> closure_convert -> prepare_backend_preroute), then
+//! runs the param-typeability classifier on the prepared funcs.
+
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.backend.closure_convert.{convert_closures}
+use compiler.backend.prepare.{prepare_backend_preroute}
+use compiler.backend.prepared_ir.{PreparedFunc}
+use compiler.backend.typed_param_abi.{param_uses_typed_only}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.mono_type.{MonoType}
+use compiler.pipeline
+
+type PrepInputs = .{ funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry }
+
+fn prepare_src(src: String) Result<PrepInputs, String> {
+  artifacts := try pipeline.compile_source(src)
+  cc := convert_closures(artifacts.opt, artifacts.env)
+  prepared := prepare_backend_preroute(cc.anf, artifacts.env, artifacts.builtins, cc.captures)
+  .Ok(.{ funcs: prepared.funcs, builtins: artifacts.builtins })
+}
+
+fn is_vector_int(mono: MonoType) Bool {
+  case mono {
+    .Vector(.Int) => true,
+    _ => false,
+  }
+}
+
+type VecParam = .{ func_index: Int, slot: Int }
+
+// Find the first regular param (not a capture) whose type is Vector<Int>,
+// returning which function it belongs to and its slot id.
+fn find_vec_param(funcs: Vector<PreparedFunc>) Result<VecParam, String> {
+  for pf, fi in funcs {
+    for p in pf.params {
+      case pf.slots[p.id] {
+        .Some(info) => if is_vector_int(info.mono) {
+          return .Ok(.{ func_index: fi, slot: p.id })
+        },
+        .None => {},
+      }
+    }
+  }
+
+  .Err("no Vector<Int> param found")
+}
+
+// A Vector<Int> param used only via index + len -> typeable.
+fn indexed_src() String {
+  "fn use_indexed(xs: Vector<Int>, n: Int) Int {\n"
+    .concat("  t := 0\n")
+    .concat("  for k in range(n) { t = t + xs[k] }\n")
+    .concat("  t + xs.len()\n")
+    .concat("}\n")
+    .concat("use_indexed([1, 2, 3], 3)\n")
+}
+
+// A Vector<Int> param captured into a closure -> not typeable (the anyref env
+// would make typed reads unsound; the group escapes through AMakeClosure).
+fn captured_src() String {
+  "fn make_reader(xs: Vector<Int>) fn() Int {\n"
+    .concat("  fn() { xs.len() }\n")
+    .concat("}\n")
+    .concat("f := make_reader([1, 2, 3])\n")
+    .concat("f()\n")
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("typed param abi")
+    .test(
+      "param used only via index + len is typeable",
+      fn() {
+        p := try prepare_src(indexed_src())
+        vp := try find_vec_param(p.funcs)
+        pf := p.funcs[vp.func_index]
+
+        try assert.ok(
+          param_uses_typed_only(pf, vp.slot, p.builtins, Dict.new(), Dict.new()),
+          "index+len param should be typeable",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "param captured into a closure is not typeable",
+      fn() {
+        p := try prepare_src(captured_src())
+        vp := try find_vec_param(p.funcs)
+        pf := p.funcs[vp.func_index]
+
+        try assert.ok(
+          !param_uses_typed_only(pf, vp.slot, p.builtins, Dict.new(), Dict.new()),
+          "captured param must not be typeable",
+        )
+        .Ok({})
+      },
+    )
+}

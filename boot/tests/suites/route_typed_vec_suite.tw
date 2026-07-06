@@ -16,7 +16,7 @@ use @std.testing as runner
 
 use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{prepare_backend_preroute}
-use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotInfo}
+use compiler.backend.prepared_ir.{PreparedExpr, PreparedFunc, PreparedOp, SlotInfo}
 use compiler.backend.route_typed_vec.{
   analyze_typed_fields, analyze_typed_payloads, route_typed_vectors,
 }
