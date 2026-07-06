@@ -5,10 +5,22 @@ use compiler.codegen.emit.context.{EmitCtx, Expected, LabelPair, expected}
 use compiler.codegen.emit.helpers.{expr_always_diverges}
 use compiler.codegen.wasm_ir.{Instr, ValType}
 use compiler.mono_type.{MonoType}
+use compiler.resolver.{ResolvedEnv}
 
 pub type ControlEmitFns = .{
   emit_atom: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
   emit_expr: fn(PreparedExpr, Expected, EmitCtx, Vector<Instr>) Vector<Instr>,
+}
+
+// Prefer the routed physical result vt for a control-flow arm; fall back to the
+// mono-derived vt. When result_vt is Some (the result slot was retyped, e.g.
+// PVecI64), a typed arm coerces to it (a no-op) instead of being boxed to the
+// mono-derived PVec.
+pub fn arm_expected(result_vt: ValType?, result_mono: MonoType, env: ResolvedEnv) Expected {
+  case result_vt {
+    .Some(vt) => .{ vt: .Some(vt), mono: result_mono },
+    .None => expected(result_mono, env),
+  }
 }
 
 type IfSpineFrame = .{ condition: PreparedAtom, then_expr: PreparedExpr }
@@ -27,14 +39,23 @@ pub fn emit_if_op(
   spine := collect_if_else_spine(cond_e, then_e, else_e)
 
   if spine.frames.len() > 512 {
-    return emit_if_else_spine(spine.frames, spine.tail, result_idx, result_mono, ctx, buf, fns)
+    return emit_if_else_spine(
+      spine.frames,
+      spine.tail,
+      result_idx,
+      result_vt,
+      result_mono,
+      ctx,
+      buf,
+      fns,
+    )
   }
 
   out := fns.emit_atom(cond_e, ctx, buf)
 
   // Nested sub-bodies must use fresh []
-  then_instrs := fns.emit_expr(then_e, expected(result_mono, ctx.env), ctx, [])
-  else_instrs := fns.emit_expr(else_e, expected(result_mono, ctx.env), ctx, [])
+  then_instrs := fns.emit_expr(then_e, arm_expected(result_vt, result_mono, ctx.env), ctx, [])
+  else_instrs := fns.emit_expr(else_e, arm_expected(result_vt, result_mono, ctx.env), ctx, [])
   then_div := expr_always_diverges(then_e)
   else_div := expr_always_diverges(else_e)
 
@@ -96,18 +117,19 @@ fn emit_if_else_spine(
   frames: Vector<IfSpineFrame>,
   tail: PreparedExpr,
   result_idx: Int,
+  result_vt: ValType?,
   result_mono: MonoType,
   ctx: EmitCtx,
   buf: Vector<Instr>,
   fns: ControlEmitFns,
 ) Vector<Instr> {
-  nested := fns.emit_expr(tail, expected(result_mono, ctx.env), ctx, [])
+  nested := fns.emit_expr(tail, arm_expected(result_vt, result_mono, ctx.env), ctx, [])
   nested = append_result_store(nested, result_idx, result_mono)
   i := frames.len() - 1
 
   for i >= 0 {
     frame := frames[i]
-    then_body := fns.emit_expr(frame.then_expr, expected(result_mono, ctx.env), ctx, [])
+    then_body := fns.emit_expr(frame.then_expr, arm_expected(result_vt, result_mono, ctx.env), ctx, [])
     then_body = append_result_store(then_body, result_idx, result_mono)
     cond_instrs := fns.emit_atom(frame.condition, ctx, [])
     nested = cond_instrs.append(.If(.None, then_body, nested))
