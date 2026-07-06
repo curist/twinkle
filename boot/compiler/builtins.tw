@@ -135,6 +135,7 @@ fn builtin_abi(name: String) AbiContract {
     "vector$slice" => abi([pvec_n(), .I32, .I32], [pvec_()]),
     "vector$drop_last" => abi([pvec_n()], [pvec_()]),
     "vector$gather" => abi([pvec_n(), pvec_n()], [pvec_()]),
+    "vector$gather_i64" => abi([pvec_i64_n(), pvec_n()], [pvec_i64_()]),
     "vector$sort_i64" => abi([pvec_n()], [pvec_()]),
     "vector$sort_f64" => abi([pvec_n()], [pvec_()]),
     "vector$vec_i64_roundtrip" => abi([pvec_n()], [pvec_()]),
@@ -574,6 +575,8 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     intr("float$min", .Some("Float.min")),
     intr("float$max", .Some("Float.max")),
     intr("float$round", .Some("Float.round")),
+    // Appended at end to preserve FuncId assignment of earlier builtins.
+    rt("vector$gather_i64", "rt.arr", "gather_i64", .None),
   ]
 }
 
