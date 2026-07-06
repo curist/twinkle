@@ -1219,14 +1219,11 @@ fn emit_return_coerce(atom: PreparedAtom, exp: Expected, ctx: EmitCtx, buf: Vect
     .Some(pf) => pf.phys_return,
     .None => .None,
   }
-
-  case phys {
-    .Some(vt) => {
-      buf2 := emit_atom(atom, ctx, buf)
-      emit_coerce_stack(atom_val_type(atom, ctx), vt, ret_mono, ctx, buf2)
-    },
-    .None => emit_atom_for_expected(atom, expected(ret_mono, ctx.env), ctx, buf),
+  ret_exp := case phys {
+    .Some(vt) => .{ vt: .Some(vt), mono: ret_mono },
+    .None => expected(ret_mono, ctx.env),
   }
+  emit_atom_for_expected(atom, ret_exp, ctx, buf)
 }
 
 fn emit_atom_for_expected(
@@ -1693,7 +1690,7 @@ fn emit_op(
       buf2 := emit_unop(uop, operand, kind, ctx, buf)
       buf2.append(.LocalSet(result_idx))
     },
-    .ACall(callee, args) => emit_call(callee, args, result_idx, result_mono, ctx, buf),
+    .ACall(callee, args) => emit_call(callee, args, result_idx, result_vt, result_mono, ctx, buf),
     .AIf(cond_e, then_e, else_e) => emit_if_op(
       cond_e,
       then_e,
@@ -2107,6 +2104,7 @@ fn emit_call(
   callee: PreparedAtom,
   args: Vector<PreparedAtom>,
   result_idx: Int,
+  result_vt: ValType?,
   result_mono: MonoType,
   ctx: EmitCtx,
   buf: Vector<Instr>,
@@ -2115,6 +2113,7 @@ fn emit_call(
     callee,
     args,
     result_idx,
+    result_vt,
     result_mono,
     ctx,
     buf,

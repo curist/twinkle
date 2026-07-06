@@ -103,7 +103,14 @@ fn is_vector_int(mono: MonoType) Bool {
   }
 }
 
-pub fn adapt_runtime_result(fid: FuncId, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+// Coerce a runtime call's ABI result to the destination slot's physical type
+// (dest_vt), not the mono-derived type. When the destination slot is typed
+// (e.g. PVecI64) and the runtime call already returns that physical type (a
+// typed-vec result like gather_i64), this is a no-op — replacing the former
+// name-based is_typed_vec_result box-skip.
+pub fn adapt_runtime_result(fid: FuncId, dest_vt: ValType, result_mono: MonoType, ctx: EmitCtx) Vector<
+  Instr,
+> {
   abi_opt: AbiContract? = case ctx.builtins.by_id[fid.id] {
     .Some(entry) => .Some(entry.abi),
     .None => .None,
@@ -111,13 +118,7 @@ pub fn adapt_runtime_result(fid: FuncId, result_mono: MonoType, ctx: EmitCtx) Ve
 
   case abi_opt {
     .Some(abi) => if abi.result_types.len() == 1 {
-      emit_coerce_stack(
-        abi.result_types[0],
-        val_type_of_mono(result_mono, ctx.env),
-        result_mono,
-        ctx,
-        [],
-      )
+      emit_coerce_stack(abi.result_types[0], dest_vt, result_mono, ctx, [])
     } else {
       []
     },

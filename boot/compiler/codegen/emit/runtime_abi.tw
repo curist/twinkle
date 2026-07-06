@@ -52,14 +52,6 @@ pub fn is_builder_seed(name: String) Bool {
     or name == "string$builder_from"
 }
 
-// Runtime ops that return a PVecI64 stored directly into a typed-vector slot
-// (route_typed_vectors retyped the result slot) — skip the mono-driven adaption
-// to PVec, which would box the typed result and mismatch the typed local. Only
-// emitted when the router has already made the result slot PVecI64.
-pub fn is_typed_vec_result(name: String) Bool {
-  name == "vector$builder_freeze_i64" or name == "vector$gather_i64"
-}
-
 // ABI shim: builder regions keep transient builders as erased anyref locals;
 // cast back to the concrete builder type before the push/extend/freeze call.
 pub fn emit_builder_arg_shim(entry_name: String, index: Int, buf: Vector<Instr>) Vector<Instr> {
