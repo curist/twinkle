@@ -313,6 +313,22 @@ These should be visible in backend IR/planning, not hidden ad hoc in emitters.
 >    `order_by`.
 > Typed combinators (Phase 5) remain useful but secondary.
 
+> **Typed-return ABI bridge landed (2026-07-06, branch `typed-vector-crossfn-abi`).**
+> `PreparedFunc.phys_return: ValType?` lets a function returning a typed slot
+> expose a physical `PVecI64` result ABI (no boundary box); emit routes such a
+> function's body through `emit_tail_expr` so returns coerce to the physical type
+> (a no-op). `typeable_return` is computed via the unified `slot_typed_after_route`
+> predicate (payload/field read, builder candidate, or typed-return call result);
+> route_func sets `phys_return`, types typed-return call results (`keys :=
+> as_ints(col) → PVecI64`), and `analyze_typed_captures` supports capturing them.
+> Self-host fixed point; 2973 tests. **Sound but currently inert on the dataframe:
+> `as_ints` returns a `case`-result slot, not the payload binding, and route_func
+> does not yet type match/if results.** The remaining piece to activate the
+> ~1343ms dataframe sort is **control-flow-result typing**: type a match/if result
+> whose arms all return typed slots (linking the arm-result and result slots),
+> after which `as_ints` returns typed, `keys` is typed, and M1b's already-landed
+> capture routing fires on the comparator.
+
 > **M1b typed closure captures — local-capture increment landed (2026-07-06,
 > branch `typed-vector-crossfn-abi`).** A `Vector<Int>` captured into a closure
 > and read via index/len only now flows typed through the (trampoline-private)
