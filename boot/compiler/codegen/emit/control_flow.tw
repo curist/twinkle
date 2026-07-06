@@ -1,14 +1,14 @@
 //! Control-flow emission helpers for Wasm emission.
 
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr}
-use compiler.codegen.emit.context.{EmitCtx, LabelPair}
+use compiler.codegen.emit.context.{EmitCtx, Expected, LabelPair, expected}
 use compiler.codegen.emit.helpers.{expr_always_diverges}
 use compiler.codegen.wasm_ir.{Instr, ValType}
 use compiler.mono_type.{MonoType}
 
 pub type ControlEmitFns = .{
   emit_atom: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
-  emit_expr: fn(PreparedExpr, MonoType, EmitCtx, Vector<Instr>) Vector<Instr>,
+  emit_expr: fn(PreparedExpr, Expected, EmitCtx, Vector<Instr>) Vector<Instr>,
 }
 
 type IfSpineFrame = .{ condition: PreparedAtom, then_expr: PreparedExpr }
@@ -33,8 +33,8 @@ pub fn emit_if_op(
   out := fns.emit_atom(cond_e, ctx, buf)
 
   // Nested sub-bodies must use fresh []
-  then_instrs := fns.emit_expr(then_e, result_mono, ctx, [])
-  else_instrs := fns.emit_expr(else_e, result_mono, ctx, [])
+  then_instrs := fns.emit_expr(then_e, expected(result_mono, ctx.env), ctx, [])
+  else_instrs := fns.emit_expr(else_e, expected(result_mono, ctx.env), ctx, [])
   then_div := expr_always_diverges(then_e)
   else_div := expr_always_diverges(else_e)
 
@@ -101,13 +101,13 @@ fn emit_if_else_spine(
   buf: Vector<Instr>,
   fns: ControlEmitFns,
 ) Vector<Instr> {
-  nested := fns.emit_expr(tail, result_mono, ctx, [])
+  nested := fns.emit_expr(tail, expected(result_mono, ctx.env), ctx, [])
   nested = append_result_store(nested, result_idx, result_mono)
   i := frames.len() - 1
 
   for i >= 0 {
     frame := frames[i]
-    then_body := fns.emit_expr(frame.then_expr, result_mono, ctx, [])
+    then_body := fns.emit_expr(frame.then_expr, expected(result_mono, ctx.env), ctx, [])
     then_body = append_result_store(then_body, result_idx, result_mono)
     cond_instrs := fns.emit_atom(frame.condition, ctx, [])
     nested = cond_instrs.append(.If(.None, then_body, nested))
@@ -150,7 +150,7 @@ pub fn emit_loop_op(
   }
 
   // Loop body is a nested sub-body — use fresh []
-  body_instrs := fns.emit_expr(body, .Void, loop_ctx, [])
+  body_instrs := fns.emit_expr(body, expected(.Void, loop_ctx.env), loop_ctx, [])
 
   // Implicit continue at end of loop body
   body_instrs = .append(.Br(cont_label))

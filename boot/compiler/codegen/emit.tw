@@ -30,7 +30,8 @@ use compiler.codegen.emit.calls as call_emit
 use compiler.codegen.emit.closures as closure_emit
 use compiler.codegen.emit.coercions.{emit_coerce_stack}
 use compiler.codegen.emit.context.{
-  EmitCtx, IntrinsicTag, LocalEntry, current_prepared_func, lookup_func_sym, lookup_slot,
+  EmitCtx, Expected, IntrinsicTag, LocalEntry, current_prepared_func, expected, lookup_func_sym,
+  lookup_slot,
 }
 use compiler.codegen.emit.control_flow as control_emit
 use compiler.codegen.emit.defaults.{emit_default_value}
@@ -997,8 +998,8 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
   // routes through emit_tail_expr (which coerces to the physical return type).
   // Ordinary functions keep the implicit-stack-return path unchanged.
   body_instrs := case prepared.phys_return {
-    .Some(_) => emit_tail_expr(prepared.body, prepared.return_mono, ctx, []),
-    .None => emit_expr(prepared.body, prepared.return_mono, ctx, []),
+    .Some(_) => emit_tail_expr(prepared.body, expected(prepared.return_mono, ctx.env), ctx, []),
+    .None => emit_expr(prepared.body, expected(prepared.return_mono, ctx.env), ctx, []),
   }
 
   sym := lookup_func_sym(base_ctx.func_sym_map, func.func_id)
@@ -1140,12 +1141,12 @@ fn collect_vector_builder_slots_op(
 }
 
 // ── Expression emission ────────────────────────────────────────────────
-fn emit_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<
+fn emit_expr(expr: PreparedExpr, exp: Expected, ctx: EmitCtx, buf: Vector<Instr>) Vector<
   Instr,
 > {
   case expr {
-    .Let(local, op, body) => emit_let(local, op, body, expected_ty, ctx, buf),
-    .Atom(atom) => case expected_ty {
+    .Let(local, op, body) => emit_let(local, op, body, exp, ctx, buf),
+    .Atom(atom) => case exp.mono {
       .Void => {
         // In ANF, side effects happen in the enclosing Let op; a trailing
         // Void atom is just the pure sentinel value for that statement.
@@ -1164,10 +1165,10 @@ fn emit_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vecto
         buf2 := emit_atom(atom, ctx, buf)
         buf2.append(.Unreachable)
       },
-      _ => emit_atom_for_expected(atom, expected_ty, ctx, buf),
+      _ => emit_atom_for_expected(atom, exp, ctx, buf),
     },
     .Return(.Some(atom)) => {
-      buf2 := emit_return_coerce(atom, expected_ty, ctx, buf)
+      buf2 := emit_return_coerce(atom, exp, ctx, buf)
       buf2.append(.Return)
     },
     .Return(.None) => buf.append(.Return),
@@ -1210,10 +1211,10 @@ fn current_return_mono(ctx: EmitCtx, fallback: MonoType) MonoType {
 // phys_return override (typed-return bridge) the target is that ValType (e.g.
 // PVecI64) — the returned value is already PVecI64, so this is a no-op instead of
 // the boxing coercion emit_atom_for_expected would apply to the boxed return_mono.
-fn emit_return_coerce(atom: PreparedAtom, expected_ty: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<
+fn emit_return_coerce(atom: PreparedAtom, exp: Expected, ctx: EmitCtx, buf: Vector<Instr>) Vector<
   Instr,
 > {
-  ret_mono := current_return_mono(ctx, expected_ty)
+  ret_mono := current_return_mono(ctx, exp.mono)
   phys := case current_prepared_func(ctx) {
     .Some(pf) => pf.phys_return,
     .None => .None,
@@ -1224,28 +1225,21 @@ fn emit_return_coerce(atom: PreparedAtom, expected_ty: MonoType, ctx: EmitCtx, b
       buf2 := emit_atom(atom, ctx, buf)
       emit_coerce_stack(atom_val_type(atom, ctx), vt, ret_mono, ctx, buf2)
     },
-    .None => emit_atom_for_expected(atom, ret_mono, ctx, buf),
+    .None => emit_atom_for_expected(atom, expected(ret_mono, ctx.env), ctx, buf),
   }
 }
 
 fn emit_atom_for_expected(
   atom: PreparedAtom,
-  expected_ty: MonoType,
+  exp: Expected,
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
   buf2 := emit_atom(atom, ctx, buf)
 
-  case expected_ty {
-    .Void => buf2,
-    .Never => buf2,
-    _ => emit_coerce_stack(
-      atom_val_type(atom, ctx),
-      val_type_of_mono(expected_ty, ctx.env),
-      expected_ty,
-      ctx,
-      buf2,
-    ),
+  case exp.vt {
+    .None => buf2,
+    .Some(vt) => emit_coerce_stack(atom_val_type(atom, ctx), vt, exp.mono, ctx, buf2),
   }
 }
 
@@ -1253,21 +1247,21 @@ fn emit_atom_for_expected(
 // emit_tail_expr emits an expression in return-tail context: the result
 // of the expression will be returned from the enclosing function.
 // This enables tail-call detection for calls inside if/case branches.
-fn emit_tail_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<
+fn emit_tail_expr(expr: PreparedExpr, exp: Expected, ctx: EmitCtx, buf: Vector<Instr>) Vector<
   Instr,
 > {
   case expr {
-    .Let(local, op, body) => emit_tail_let(local, op, body, expected_ty, ctx, buf),
+    .Let(local, op, body) => emit_tail_let(local, op, body, exp, ctx, buf),
     .Atom(atom) => {
-      buf2 := emit_return_coerce(atom, expected_ty, ctx, buf)
+      buf2 := emit_return_coerce(atom, exp, ctx, buf)
       buf2.append(.Return)
     },
     .Return(.Some(atom)) => {
-      buf2 := emit_return_coerce(atom, expected_ty, ctx, buf)
+      buf2 := emit_return_coerce(atom, exp, ctx, buf)
       buf2.append(.Return)
     },
     .Return(.None) => buf.append(.Return),
-    _ => emit_expr(expr, expected_ty, ctx, buf),
+    _ => emit_expr(expr, exp, ctx, buf),
   }
 }
 
@@ -1277,7 +1271,7 @@ fn emit_tail_let(
   local: SlotId,
   op: PreparedOp,
   body: PreparedExpr,
-  expected_ty: MonoType,
+  exp: Expected,
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
@@ -1303,7 +1297,7 @@ fn emit_tail_let(
             cur_op = next_op
             cur_body = next_body
           },
-          _ => return emit_tail_expr(cur_body, expected_ty, ctx, buf),
+          _ => return emit_tail_expr(cur_body, exp, ctx, buf),
         }
       },
       _ => {
@@ -1323,7 +1317,7 @@ fn emit_tail_let(
             cur_op = next_op
             cur_body = next_body
           },
-          _ => return emit_tail_expr(cur_body, expected_ty, ctx, buf),
+          _ => return emit_tail_expr(cur_body, exp, ctx, buf),
         }
       },
     }
@@ -1439,11 +1433,11 @@ fn try_emit_tail_if_spine(
   for frame in spine.frames {
     cond_instrs := emit_if_prefix(frame.prefix, ctx, [])
     cond_instrs = emit_atom(frame.condition, ctx, cond_instrs)
-    then_instrs := emit_tail_expr(frame.then_expr, result_mono, ctx, [])
+    then_instrs := emit_tail_expr(frame.then_expr, expected(result_mono, ctx.env), ctx, [])
     out = .concat(cond_instrs).append(.If(.None, then_instrs, []))
   }
 
-  out = .concat(emit_tail_expr(spine.tail, result_mono, ctx, []))
+  out = .concat(emit_tail_expr(spine.tail, expected(result_mono, ctx.env), ctx, []))
   .Some(out)
 }
 
@@ -1555,8 +1549,8 @@ fn try_emit_tail_op(
       .None => {
         // Emit condition, then each branch in tail context
         out := emit_atom(cond_e, ctx, buf)
-        then_instrs := emit_tail_expr(then_e, result_mono, ctx, [])
-        else_instrs := emit_tail_expr(else_e, result_mono, ctx, [])
+        then_instrs := emit_tail_expr(then_e, expected(result_mono, ctx.env), ctx, [])
+        else_instrs := emit_tail_expr(else_e, expected(result_mono, ctx.env), ctx, [])
         .Some(out.append(.If(.None, then_instrs, else_instrs)))
       },
     },
@@ -1591,7 +1585,7 @@ fn emit_let(
   local: SlotId,
   op: PreparedOp,
   body: PreparedExpr,
-  expected_ty: MonoType,
+  exp: Expected,
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
@@ -1619,7 +1613,7 @@ fn emit_let(
             cur_op = next_op
             cur_body = next_body
           },
-          _ => return emit_expr(cur_body, expected_ty, ctx, buf),
+          _ => return emit_expr(cur_body, exp, ctx, buf),
         }
       },
       _ => {
@@ -1639,7 +1633,7 @@ fn emit_let(
             cur_op = next_op
             cur_body = next_body
           },
-          _ => return emit_expr(cur_body, expected_ty, ctx, buf),
+          _ => return emit_expr(cur_body, exp, ctx, buf),
         }
       },
     }
@@ -3409,14 +3403,14 @@ fn try_emit_if_spine(
   for frame in spine.frames {
     cond_instrs := emit_if_prefix(frame.prefix, ctx, [])
     cond_instrs = emit_atom(frame.condition, ctx, cond_instrs)
-    then_body := emit_expr(frame.then_expr, result_mono, ctx, [])
+    then_body := emit_expr(frame.then_expr, expected(result_mono, ctx.env), ctx, [])
     then_body = control_emit.append_result_store(then_body, result_idx, result_mono)
     then_body = .append(.Br(done_label))
 
     body = .concat(cond_instrs).append(.If(.None, then_body, []))
   }
 
-  tail_body := emit_expr(spine.tail, result_mono, ctx, [])
+  tail_body := emit_expr(spine.tail, expected(result_mono, ctx.env), ctx, [])
   tail_body = control_emit.append_result_store(tail_body, result_idx, result_mono)
 
   body = .concat(tail_body)
