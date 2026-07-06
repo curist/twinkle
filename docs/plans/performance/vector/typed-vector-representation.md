@@ -313,6 +313,34 @@ These should be visible in backend IR/planning, not hidden ad hoc in emitters.
 >    `order_by`.
 > Typed combinators (Phase 5) remain useful but secondary.
 
+> **Cross-fn typed-vector ABI — Stage 1 landed + Checkpoint A (2026-07-06,
+> branch `typed-vector-crossfn-abi`).** Stage 1 of
+> [crossfn-typed-vector-abi-plan.md](crossfn-typed-vector-abi-plan.md) added a
+> typed `gather_i64` runtime op (+ `builder_push_i64_raw`) and routes
+> `gather(v, idx)` → `gather_i64` when the receiver `v` is already a typed
+> `PVecI64` (escape whitelist + gather-result eligibility fixpoint + an emit fix
+> so the typed result is not re-boxed). **Proven end-to-end** by
+> `examples/performance/sort-bench/typed_gather_probe.tw` (a `collect`→`.IntCol`
+> payload gathered → `rt_arr__gather_i64`, no boxed gather, correct result) and a
+> routing suite (`boot/tests/suites/route_typed_vec_suite.tw`); 2968 boot tests +
+> self-host green.
+>
+> **Checkpoint A measurement: the dataframe gather did NOT move — as predicted by
+> the note above.** Building `examples/performance/dataframe/bench/gather_compare.tw`
+> to WAT shows **0 `rt_arr__gather_i64`, 7 boxed `rt_arr__gather`**. Root cause
+> (verified in code): the real `ColData.IntCol` payload is never typed, because
+> every column is built via `column.int_col(values: Vector<Int>)` (`frame/column.tw:25`)
+> — a **boxed param** producer — and `gen.table` feeds it `column.int_col(amounts)`
+> (`frame/gen.tw:31`). `analyze_typed_payloads` only marks a payload typed from a
+> clean `builder_freeze`→`.IntCol` producer; there is none, so `column.gather`'s
+> `v` is not `eligible_v` and the swap never fires. **Stage 1's dataframe win is
+> therefore gated on Stage 2** (typed param/return ABI): once `int_col`'s `values`
+> param can be a typed `PVecI64` clean producer, the payload types and Stage 1's
+> gather routing fires. Stage 1 is correct, self-contained, and a necessary
+> prerequisite (`gather_i64` must exist for Stage 2 to route to), but yields no
+> standalone dataframe delta. gather_compare @ N=1M (unchanged, boxed): native
+> gather amount ~78ms, native gather 3 columns ~468ms, native table.take ~471ms.
+
 ### Implementation map (where the landed routing lives)
 
 Routing runs **after** boundary insertion + repr assignment
