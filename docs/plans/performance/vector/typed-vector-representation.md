@@ -328,6 +328,25 @@ These should be visible in backend IR/planning, not hidden ad hoc in emitters.
 > whose arms all return typed slots (linking the arm-result and result slots),
 > after which `as_ints` returns typed, `keys` is typed, and M1b's already-landed
 > capture routing fires on the comparator.
+>
+> **Control-flow-result-typing attempt (2026-07-06) — routing works, blocked on an
+> emit coercion; reverted to keep the branch green.** A full routing pass was
+> written and self-host-clean: `slot_typed_after_route` recognises a match/if
+> result whose arms yield typed sources (so `return_is_typed(as_ints)` fires);
+> `route_func` retypes the result slot AND the typed arm atoms to `PVecI64`; the
+> escape check relaxes result-position atoms. It correctly types `as_ints`'s `v`
+> (payload read) and its `case`-result slot. **But it produces invalid wasm:** the
+> match/if *arm* store coerces the arm value to the result **mono** (`Vector<Int>`
+> → boxed `PVec`) via `emit_expr(arm, result_mono)`, boxing the already-`PVecI64`
+> arm value and storing it into the now-`PVecI64` result local (a type mismatch;
+> the dataframe run traps). This is the **4th** emit site (after function return,
+> gather result, and match arm) that coerces to a mono-derived physical type
+> instead of the retyped slot's `wasm_type`. The fix is an **`expected_vt`
+> physical-override on the emit tail-coercion path** (`emit_if_op`/`emit_match_op`
+> already receive `result_vt`; thread it into the arm's tail
+> `emit_atom_for_expected` so a `PVecI64` arm coerces to `PVecI64` — a no-op —
+> instead of boxing). Once that lands, re-apply the control-flow-result routing and
+> the dataframe sort should drop (as_ints→typed, keys→typed, M1b capture fires).
 
 > **M1b typed closure captures — local-capture increment landed (2026-07-06,
 > branch `typed-vector-crossfn-abi`).** A `Vector<Int>` captured into a closure
