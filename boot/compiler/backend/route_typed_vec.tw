@@ -37,6 +37,8 @@ type RouteIds = .{
   builder_push_i64: Int,
   builder_freeze_i64: Int,
   len_i64: Int,
+  gather: Int,
+  gather_i64: Int,
 }
 
 pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
@@ -49,6 +51,8 @@ pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
     builder_push_i64: builtins.id("vector$builder_push_i64").id,
     builder_freeze_i64: builtins.id("vector$builder_freeze_i64").id,
     len_i64: builtins.id("vector$len_i64").id,
+    gather: builtins.id("vector$gather").id,
+    gather_i64: builtins.id("vector$gather_i64").id,
   }
 }
 
@@ -160,9 +164,32 @@ fn route_func(
   //     it typed. Guard with the same consumer-escape check the field consumer
   //     scan uses.
   for sid in payload_read_sids {
-    if result_consumed_typed_only(pf.body, sid, ids.len, builtins) {
+    if result_consumed_typed_only(pf.body, sid, ids, builtins) {
       eligible_v[sid] = true
     }
+  }
+
+  // 2d. Typed-gather results. `gather(v, idx)` produces a NEW typed vector when
+  //     its receiver v is already typed (eligible_v). Marking the result slot
+  //     eligible_v retypes it to PVecI64, so the call routes to gather_i64 and
+  //     stores/reads typed. A gather result can itself feed another gather, so
+  //     iterate to a fixpoint (bounded by slot count). Reaching an erased
+  //     boundary from here is coerced (boxed) by emit, preserving the invariant.
+  gather_changed := true
+  gather_steps := 0
+
+  for gather_changed and gather_steps < 512 {
+    gather_changed = false
+    new_results := collect_gather_results(pf.body, eligible_v, ids.gather, [])
+
+    for sid in new_results {
+      if !eligible_v.has(sid) {
+        eligible_v[sid] = true
+        gather_changed = true
+      }
+    }
+
+    gather_steps = gather_steps + 1
   }
 
   if eligible_v.keys().len() == 0 {
@@ -336,6 +363,79 @@ fn collect_candidate_from_op(
     },
     _ => acc,
   }
+}
+
+// Collect the result sids of `gather(v, idx)` calls whose receiver v (args[0])
+// is already a typed slot in `eligible_v`. Each such result is a new PVecI64.
+// The op-branch walker recurses into control flow so nested gathers are found;
+// route_func iterates this to a fixpoint so a gather feeding another gather
+// propagates typedness.
+fn collect_gather_results(
+  expr: PreparedExpr,
+  eligible_v: Dict<Int, Bool>,
+  gather_id: Int,
+  acc: Vector<Int>,
+) Vector<Int> {
+  cur := expr
+  cur_acc := acc
+  done := false
+
+  for !done {
+    case cur {
+      .Let(slot, op, body) => {
+        cur_acc = collect_gather_result_from_op(slot, op, eligible_v, gather_id, cur_acc)
+        cur_acc = collect_gather_results_op_branches(op, eligible_v, gather_id, cur_acc)
+        cur = body
+      },
+      _ => done = true,
+    }
+  }
+
+  cur_acc
+}
+
+fn collect_gather_result_from_op(
+  slot: SlotId,
+  op: PreparedOp,
+  eligible_v: Dict<Int, Bool>,
+  gather_id: Int,
+  acc: Vector<Int>,
+) Vector<Int> {
+  case op {
+    .ACall(.AGlobalFunc(fid), args) => if fid.id == gather_id
+      and args.len() == 2 and slot_in(args[0], eligible_v) {
+      acc.append(slot.id)
+    } else {
+      acc
+    },
+    _ => acc,
+  }
+}
+
+fn collect_gather_results_op_branches(
+  op: PreparedOp,
+  eligible_v: Dict<Int, Bool>,
+  gather_id: Int,
+  acc: Vector<Int>,
+) Vector<Int> {
+  cur := acc
+
+  case op {
+    .AIf(_, then_e, else_e) => {
+      cur = collect_gather_results(then_e, eligible_v, gather_id, cur)
+      cur = collect_gather_results(else_e, eligible_v, gather_id, cur)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        cur = collect_gather_results(arm.body, eligible_v, gather_id, cur)
+      }
+    },
+    .ALoop(inner) => cur = collect_gather_results(inner, eligible_v, gather_id, cur),
+    .ADefer(inner) => cur = collect_gather_results(inner, eligible_v, gather_id, cur),
+    _ => {},
+  }
+
+  cur
 }
 
 // Collect the result sids of `ARecordGet(_, fid, tid)` reads whose field key
@@ -593,10 +693,15 @@ fn aliases_for(root: Int, copy_map: Dict<Int, Int>) Dict<Int, Bool> {
 // the argument of `len(v)`, or direct function return. Return is a real
 // representation boundary, but it is handled by the emitter's PVecI64 -> PVec
 // adapter; all other boundaries remain conservative opt-outs.
-fn v_group_escapes(expr: PreparedExpr, vs: Dict<Int, Bool>, len_id: Int, builtins: BuiltinRegistry) Bool {
+fn v_group_escapes(
+  expr: PreparedExpr,
+  vs: Dict<Int, Bool>,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+) Bool {
   case expr {
-    .Let(_, op, body) => op_group_escapes(op, vs, len_id, builtins)
-      or v_group_escapes(body, vs, len_id, builtins),
+    .Let(_, op, body) => op_group_escapes(op, vs, ids, builtins)
+      or v_group_escapes(body, vs, ids, builtins),
     .Atom(a) => slot_in(a, vs),
     .Return(.Some(_)) => false,
     .Break(.Some(a)) => slot_in(a, vs),
@@ -604,11 +709,16 @@ fn v_group_escapes(expr: PreparedExpr, vs: Dict<Int, Bool>, len_id: Int, builtin
   }
 }
 
-fn op_group_escapes(op: PreparedOp, vs: Dict<Int, Bool>, len_id: Int, builtins: BuiltinRegistry) Bool {
+fn op_group_escapes(op: PreparedOp, vs: Dict<Int, Bool>, ids: RouteIds, builtins: BuiltinRegistry) Bool {
   case op {
     .ACall(callee, args) => case callee {
       // len(v) is the allowed builtin call use.
-      .AGlobalFunc(fid) => if fid.id == len_id and args.len() == 1 and slot_in(args[0], vs) {
+      .AGlobalFunc(fid) => if fid.id == ids.len and args.len() == 1 and slot_in(args[0], vs) {
+        false
+      } else if fid.id == ids.gather and args.len() == 2 and slot_in(args[0], vs) {
+        // gather(v, idx): reading v is a typed-safe use (like len). The RESULT is
+        // a new typed vector handled by result-eligibility below; v itself does
+        // not escape through the call.
         false
       } else {
         if user_direct_call_accepts_boxed_arg(fid, args, vs, builtins) {
@@ -625,23 +735,23 @@ fn op_group_escapes(op: PreparedOp, vs: Dict<Int, Bool>, len_id: Int, builtins: 
       _ => slot_in(base, vs) or slot_in(index, vs),
     },
     .AIf(cnd, then_e, else_e) => slot_in(cnd, vs)
-      or v_group_escapes(then_e, vs, len_id, builtins)
-      or v_group_escapes(else_e, vs, len_id, builtins),
+      or v_group_escapes(then_e, vs, ids, builtins)
+      or v_group_escapes(else_e, vs, ids, builtins),
     .AMatch(scrut, arms) => {
       if slot_in(scrut, vs) {
         return true
       }
 
       for arm in arms {
-        if v_group_escapes(arm.body, vs, len_id, builtins) {
+        if v_group_escapes(arm.body, vs, ids, builtins) {
           return true
         }
       }
 
       false
     },
-    .ALoop(inner) => v_group_escapes(inner, vs, len_id, builtins),
-    .ADefer(inner) => v_group_escapes(inner, vs, len_id, builtins),
+    .ALoop(inner) => v_group_escapes(inner, vs, ids, builtins),
+    .ADefer(inner) => v_group_escapes(inner, vs, ids, builtins),
     .ABinOp(_, l, r, _) => slot_in(l, vs) or slot_in(r, vs),
     .AUnOp(_, a, _) => slot_in(a, vs),
     .AMakeClosure(_, free_vars) => {
@@ -780,6 +890,11 @@ fn classify_expr(
 // Mirrors op_group_escapes arm-for-arm; ONLY the ARecord, ARecordUpdate, and
 // AVariant arms intentionally differ (they record field-/payload-store keys
 // instead of escaping). Keep the two in sync if op_group_escapes changes.
+// One deliberate exception: op_group_escapes whitelists `gather(v, idx)` as a
+// typed-safe read of v (Stage 1 typed-gather routing), but this producer-side
+// classifier does NOT — a builder producer that feeds `gather` stays boxed
+// (conservative). The gather RESULT eligibility is handled separately in
+// route_func's gather-result fixpoint.
 fn classify_op(
   op: PreparedOp,
   vs: Dict<Int, Bool>,
@@ -1168,7 +1283,7 @@ fn scan_consumers(
           if is_vec {
             key := "${tid.id}:${fid.id}"
 
-            if result_consumed_typed_only(pf.body, slot.id, ids.len, builtins) {
+            if result_consumed_typed_only(pf.body, slot.id, ids, builtins) {
               stats0
             } else {
               st := stat_of(stats0, key)
@@ -1268,12 +1383,12 @@ fn distinct_keys(keys: Vector<String>) Vector<String> {
 fn result_consumed_typed_only(
   expr: PreparedExpr,
   result_sid: Int,
-  len_id: Int,
+  ids: RouteIds,
   builtins: BuiltinRegistry,
 ) Bool {
   singleton: Dict<Int, Bool> = Dict.new()
   singleton[result_sid] = true
-  !v_group_escapes(expr, singleton, len_id, builtins)
+  !v_group_escapes(expr, singleton, ids, builtins)
 }
 
 type FieldStoreSite = .{ key: String, value: PreparedAtom }
@@ -1368,6 +1483,9 @@ fn rewrite_op(
           ids.builder_freeze_i64,
         ),
         fid.id == ids.len and args.len() == 1 and arg0_in(args, eligible_v) => .Some(ids.len_i64),
+        fid.id == ids.gather and args.len() == 2 and arg0_in(args, eligible_v) => .Some(
+          ids.gather_i64,
+        ),
         _ => .None,
       }
 

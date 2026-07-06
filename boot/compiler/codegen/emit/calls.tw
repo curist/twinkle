@@ -8,7 +8,7 @@ use compiler.codegen.emit.defaults.{emit_default_value}
 use compiler.codegen.emit.runtime_abi.{
   emit_builder_arg_shim, emit_host_arg_shim, emit_host_result_shim, host_read_file_result_helper_sym,
   is_builder_buffer_arg, is_builder_seed, is_builder_void_push, is_host_vector_arg,
-  is_typed_vec_freeze,
+  is_typed_vec_result,
 }
 use compiler.codegen.wasm_ir.{AbiContract, Instr, ValType}
 use compiler.codegen.wasm_layout.{val_type_of_mono}
@@ -354,7 +354,7 @@ fn emit_runtime_call(
       if is_builder_void_push(entry_name) {
         out = emit_default_value(val_type_of_mono(result_mono, ctx.env), out)
       } else {
-        if !is_builder_seed(entry_name) and !is_typed_vec_freeze(entry_name) {
+        if !is_builder_seed(entry_name) and !is_typed_vec_result(entry_name) {
           out = .concat(adapt_runtime_result(fid, result_mono, ctx))
         }
       }

@@ -1,0 +1,179 @@
+//! End-to-end tests for typed-gather routing (Stage 1) in
+//! boot/compiler/backend/route_typed_vec.tw.
+//!
+//! `gather(v, idx)` over a receiver `v` that is already a typed PVecI64 (e.g. a
+//! payload bound from a typed variant field) must route to the typed
+//! `vector$gather_i64`: `v` stays a typed-safe read (like `len`), and the gather
+//! RESULT is retyped to PVecI64 so the call selects the typed op and the typed
+//! result stores back into the typed payload with no re-box.
+//!
+//! These fixtures compile a tiny .tw source through the real pipeline, run the
+//! whole-program typed-payload analysis, then exercise route_typed_vectors and
+//! inspect the routed slots + call targets.
+
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.backend.closure_convert.{convert_closures}
+use compiler.backend.prepare.{prepare_backend_preroute}
+use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotInfo}
+use compiler.backend.route_typed_vec.{
+  analyze_typed_fields, analyze_typed_payloads, route_typed_vectors,
+}
+use compiler.base_env.{first_user_type_id}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.pipeline
+
+type RouteInputs = .{ funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry }
+
+fn prepare_src(src: String) Result<RouteInputs, String> {
+  artifacts := try pipeline.compile_source(src)
+  cc := convert_closures(artifacts.opt, artifacts.env)
+  prepared := prepare_backend_preroute(cc.anf, artifacts.env, artifacts.builtins, cc.captures)
+  .Ok(.{ funcs: prepared.funcs, builtins: artifacts.builtins })
+}
+
+fn is_pvec_i64(info: SlotInfo) Bool {
+  case info.wasm_type {
+    .Ref(_, ht) => case ht {
+      .Named(n) => n == "rt_types__PVecI64",
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn pvec_i64_slot_count(funcs: Vector<PreparedFunc>) Int {
+  n := 0
+
+  for pf in funcs {
+    for sid in pf.slots.keys() {
+      case pf.slots[sid] {
+        .Some(info) => if is_pvec_i64(info) {
+          n = n + 1
+        },
+        .None => {},
+      }
+    }
+  }
+
+  n
+}
+
+fn typed_count(d: Dict<String, Bool>) Int {
+  n := 0
+
+  for k in d.keys() {
+    case d[k] {
+      .Some(v) => if v {
+        n = n + 1
+      },
+      .None => {},
+    }
+  }
+
+  n
+}
+
+// True if any function body calls the builtin whose FuncId is `fid_id`.
+fn funcs_call_fid(funcs: Vector<PreparedFunc>, fid_id: Int) Bool {
+  for pf in funcs {
+    if expr_calls_fid(pf.body, fid_id) {
+      return true
+    }
+  }
+
+  false
+}
+
+fn expr_calls_fid(expr: PreparedExpr, fid_id: Int) Bool {
+  case expr {
+    .Let(_, op, body) => op_calls_fid(op, fid_id) or expr_calls_fid(body, fid_id),
+    _ => false,
+  }
+}
+
+fn op_calls_fid(op: PreparedOp, fid_id: Int) Bool {
+  case op {
+    .ACall(callee, _) => case callee {
+      .AGlobalFunc(fid) => fid.id == fid_id,
+      _ => false,
+    },
+    .AIf(_, then_e, else_e) => expr_calls_fid(then_e, fid_id) or expr_calls_fid(else_e, fid_id),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if expr_calls_fid(arm.body, fid_id) {
+          return true
+        }
+      }
+
+      false
+    },
+    .ALoop(inner) => expr_calls_fid(inner, fid_id),
+    .ADefer(inner) => expr_calls_fid(inner, fid_id),
+    _ => false,
+  }
+}
+
+// A Vector<Int> in a typed variant payload (IntCol), gathered inside a function
+// and stored back into the same typed payload. data is a clean collect producer
+// so analyze_typed_payloads types the IntCol payload.
+fn gather_src() String {
+  "type Col = { IntCol(Vector<Int>) }\n"
+    .concat("fn make_col(n: Int) Col {\n")
+    .concat("  xs := collect i in range(n) { i * 2 }\n")
+    .concat("  .IntCol(xs)\n")
+    .concat("}\n")
+    .concat("fn gather_col(c: Col, idx: Vector<Int>) Col {\n")
+    .concat("  case c {\n")
+    .concat("    .IntCol(v) => .IntCol(v.gather(idx)),\n")
+    .concat("  }\n")
+    .concat("}\n")
+    .concat("fn first(c: Col) Int {\n")
+    .concat("  case c {\n")
+    .concat("    .IntCol(v) => v[0],\n")
+    .concat("  }\n")
+    .concat("}\n")
+    .concat("n := 8\n")
+    .concat("col := make_col(n)\n")
+    .concat("idx := collect i in range(n) { n - 1 - i }\n")
+    .concat("out := gather_col(col, idx)\n")
+    .concat("first(out)\n")
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("typed gather routing")
+    .test(
+      "typed payload gather routes to gather_i64 and retypes the receiver+result",
+      fn() {
+        p := try prepare_src(gather_src())
+        tf := analyze_typed_fields(p.funcs, p.builtins)
+        tp := analyze_typed_payloads(p.funcs, p.builtins, first_user_type_id())
+
+        // Sanity: the IntCol payload was decided typed.
+        try assert.ok(typed_count(tp) >= 1, "expected the IntCol payload to be typed")
+
+        gid := p.builtins.id("vector$gather_i64").id
+
+        // Empty payload set: the payload binding stays boxed, so the gather
+        // receiver is not typed, the swap must not fire, and no slot retypes.
+        empty: Dict<String, Bool> = Dict.new()
+        routed_empty := route_typed_vectors(p.funcs, p.builtins, empty, empty)
+        try assert.ok(
+          !funcs_call_fid(routed_empty, gid),
+          "gather_i64 must not fire without the typed payload set",
+        )
+
+        // Real set: the payload read `v` and the gather RESULT retype to PVecI64,
+        // and the gather call routes to gather_i64.
+        routed := route_typed_vectors(p.funcs, p.builtins, tf, tp)
+        try assert.ok(funcs_call_fid(routed, gid), "expected gather to route to gather_i64")
+        try assert.ok(
+          pvec_i64_slot_count(routed) > pvec_i64_slot_count(routed_empty),
+          "typed payload set must retype the gather receiver + result slots",
+        )
+        .Ok({})
+      },
+    )
+}
