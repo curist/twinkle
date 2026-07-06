@@ -11,7 +11,9 @@ use @std.testing as runner
 use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{prepare_backend_preroute}
 use compiler.backend.prepared_ir.{PreparedFunc}
-use compiler.backend.typed_param_abi.{param_uses_typed_only}
+use compiler.backend.route_typed_vec.{analyze_typed_payloads}
+use compiler.backend.typed_param_abi.{analyze_typed_repr, param_uses_typed_only}
+use compiler.base_env.{first_user_type_id}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.mono_type.{MonoType}
 use compiler.pipeline
@@ -71,6 +73,41 @@ fn captured_src() String {
     .concat("f()\n")
 }
 
+fn typed_count(d: Dict<String, Bool>) Int {
+  n := 0
+
+  for k in d.keys() {
+    case d[k] {
+      .Some(v) => if v {
+        n = n + 1
+      },
+      .None => {},
+    }
+  }
+
+  n
+}
+
+// The dataframe shape: a payload whose ONLY producer is a helper's param
+// (`int_col(values)` -> `.IntCol(values)`), with no direct collect->payload
+// producer. Builder-only payload analysis can't type it; the joint fixpoint can,
+// because `values` is a typeable param and thus a clean typed producer.
+fn int_col_src() String {
+  "type Col = { IntCol(Vector<Int>) }\n"
+    .concat("fn int_col(values: Vector<Int>) Col {\n")
+    .concat("  .IntCol(values)\n")
+    .concat("}\n")
+    .concat("fn firstv(c: Col) Int {\n")
+    .concat("  case c {\n")
+    .concat("    .IntCol(v) => v[0],\n")
+    .concat("  }\n")
+    .concat("}\n")
+    .concat("fn build(n: Int) Col {\n")
+    .concat("  int_col(collect i in range(n) { i })\n")
+    .concat("}\n")
+    .concat("firstv(build(8))\n")
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("typed param abi")
@@ -98,6 +135,30 @@ pub fn suite() runner.Suite {
         try assert.ok(
           !param_uses_typed_only(pf, vp.slot, p.builtins, Dict.new(), Dict.new()),
           "captured param must not be typeable",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "joint fixpoint types a payload whose only producer is a typeable param",
+      fn() {
+        p := try prepare_src(int_col_src())
+
+        // Builder-only payload analysis: no direct collect->.IntCol producer, so
+        // ColData.IntCol stays untyped.
+        tp0 := analyze_typed_payloads(p.funcs, p.builtins, first_user_type_id(), Dict.new())
+        try assert.equal(typed_count(tp0), 0)
+
+        // Joint fixpoint: `int_col`'s `values` param is typeable and thus a clean
+        // typed producer, so the payload types.
+        repr := analyze_typed_repr(p.funcs, p.builtins, first_user_type_id())
+        try assert.ok(
+          typed_count(repr.typed_payloads) >= 1,
+          "joint fixpoint should type the param-fed payload",
+        )
+        try assert.ok(
+          repr.param_abi.typeable_params.keys().len() >= 1,
+          "int_col's values param should be typeable",
         )
         .Ok({})
       },

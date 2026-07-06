@@ -149,7 +149,7 @@ pub fn suite() runner.Suite {
       fn() {
         p := try prepare_src(gather_src())
         tf := analyze_typed_fields(p.funcs, p.builtins)
-        tp := analyze_typed_payloads(p.funcs, p.builtins, first_user_type_id())
+        tp := analyze_typed_payloads(p.funcs, p.builtins, first_user_type_id(), Dict.new())
 
         // Sanity: the IntCol payload was decided typed.
         try assert.ok(typed_count(tp) >= 1, "expected the IntCol payload to be typed")

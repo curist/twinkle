@@ -11,9 +11,22 @@
 //! is not an escape: the direct-call boundary boxes it (S2.1 adapter) when the
 //! callee's ABI is still boxed, and Task 2.5 selects a typed variant when it is
 //! not.
+//!
+//! Payload/field typing and param typing are mutually recursive: a param stored
+//! into a payload is typeable only if that payload is typed, and a payload whose
+//! only producer is that param is typed only if the param is typeable. This is
+//! resolved co-inductively by `analyze_typed_repr`: start optimistically with all
+//! `Vector<Int>` params typeable, derive the typed field/payload sets (which now
+//! recognise typeable-param producers), recompute param typeability, and iterate
+//! — monotonically shrinking to a fixpoint. Sound because a typed payload always
+//! coerces at construction/extraction, and a param that escapes (e.g. into a
+//! closure env) is removed in the first round and its payload re-evaluated.
 
-use compiler.backend.prepared_ir.{PreparedFunc}
-use compiler.backend.route_typed_vec.{aliases_for, build_copy_map, route_ids, v_group_typeable}
+use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp}
+use compiler.backend.route_typed_vec.{
+  aliases_for, analyze_typed_fields, analyze_typed_payloads, build_copy_map, route_ids,
+  v_group_typeable,
+}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.mono_type.{MonoType}
 
@@ -22,6 +35,12 @@ pub type ParamAbi = .{
   typeable_params: Dict<String, Vector<Int>>,
   // func_id.id (as String) -> return is a typed PVecI64 slot
   typeable_return: Dict<String, Bool>,
+}
+
+pub type ReprAnalysis = .{
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+  param_abi: ParamAbi,
 }
 
 // True if a mono type is Vector<Int> (the only representation-typed vector).
@@ -54,4 +73,199 @@ pub fn param_uses_typed_only(
     },
     .None => false,
   }
+}
+
+// Per-function typeable-param indices + return typeability, given the current
+// typed field/payload sets. One pass, no fixpoint (the driver iterates this).
+pub fn analyze_typed_params(
+  funcs: Vector<PreparedFunc>,
+  builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+) ParamAbi {
+  typeable: Dict<String, Vector<Int>> = Dict.new()
+  ret: Dict<String, Bool> = Dict.new()
+
+  for pf in funcs {
+    key := "${pf.func_id.id}"
+    idxs: Vector<Int> = []
+    typed_param_slots: Dict<Int, Bool> = Dict.new()
+
+    for p, i in pf.params {
+      if param_uses_typed_only(pf, p.id, builtins, typed_fields, typed_payloads) {
+        idxs = .append(i)
+        typed_param_slots[p.id] = true
+      }
+    }
+
+    if idxs.len() > 0 {
+      typeable[key] = idxs
+    }
+
+    if return_is_typed(pf, typed_param_slots) {
+      ret[key] = true
+    }
+  }
+
+  .{ typeable_params: typeable, typeable_return: ret }
+}
+
+// A function returns a typed PVecI64 iff its return type is Vector<Int> and every
+// returned atom is a typeable-param slot (a returned typeable param can carry a
+// PVecI64 physical-return ABI). Conservative: locals produced typed internally
+// are not yet counted here (refined when variant emission needs them).
+fn return_is_typed(pf: PreparedFunc, typed_param_slots: Dict<Int, Bool>) Bool {
+  if !is_vector_int(pf.return_mono) {
+    return false
+  }
+
+  slots := return_atom_slots(pf.body, [])
+
+  if slots.len() == 0 {
+    return false
+  }
+
+  for s in slots {
+    if !typed_param_slots.has(s) {
+      return false
+    }
+  }
+
+  true
+}
+
+// Collect the slot ids of every returned atom: tail `.Atom(ASlot)` and
+// `.Return(.Some(ASlot))`. A non-slot return atom (literal, global) yields no
+// slot and makes the caller treat the return as not-typed (empty => false).
+fn return_atom_slots(expr: PreparedExpr, acc: Vector<Int>) Vector<Int> {
+  case expr {
+    .Let(_, op, body) => {
+      acc2 := return_atom_slots_op(op, acc)
+      return_atom_slots(body, acc2)
+    },
+    .Atom(a) => append_slot(a, acc),
+    .Return(.Some(a)) => append_slot(a, acc),
+    _ => acc,
+  }
+}
+
+fn return_atom_slots_op(op: PreparedOp, acc: Vector<Int>) Vector<Int> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      acc2 := return_atom_slots(then_e, acc)
+      return_atom_slots(else_e, acc2)
+    },
+    .AMatch(_, arms) => {
+      cur := acc
+
+      for arm in arms {
+        cur = return_atom_slots(arm.body, cur)
+      }
+
+      cur
+    },
+    .ALoop(inner) => return_atom_slots(inner, acc),
+    .ADefer(inner) => return_atom_slots(inner, acc),
+    _ => acc,
+  }
+}
+
+fn append_slot(a: PreparedAtom, acc: Vector<Int>) Vector<Int> {
+  case a {
+    .ASlot(s) => acc.append(s.id),
+    _ => acc,
+  }
+}
+
+// Optimistic seed: every Vector<Int> param of every function, keyed by func id.
+fn all_vec_int_param_indices(funcs: Vector<PreparedFunc>) Dict<String, Vector<Int>> {
+  out: Dict<String, Vector<Int>> = Dict.new()
+
+  for pf in funcs {
+    idxs: Vector<Int> = []
+
+    for p, i in pf.params {
+      case pf.slots[p.id] {
+        .Some(info) => if is_vector_int(info.mono) {
+          idxs = .append(i)
+        },
+        .None => {},
+      }
+    }
+
+    if idxs.len() > 0 {
+      out["${pf.func_id.id}"] = idxs
+    }
+  }
+
+  out
+}
+
+fn param_maps_equal(a: Dict<String, Vector<Int>>, b: Dict<String, Vector<Int>>) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+
+  for k in a.keys() {
+    case b[k] {
+      .Some(bv) => case a[k] {
+        .Some(av) => if !int_vecs_equal(av, bv) {
+          return false
+        },
+        .None => return false,
+      },
+      .None => return false,
+    }
+  }
+
+  true
+}
+
+fn int_vecs_equal(a: Vector<Int>, b: Vector<Int>) Bool {
+  if a.len() != b.len() {
+    return false
+  }
+
+  for x, i in a {
+    if x != b[i] {
+      return false
+    }
+  }
+
+  true
+}
+
+// Joint greatest-fixpoint over (typed_fields, typed_payloads, typeable_params).
+// Starts with all Vector<Int> params optimistically typeable and shrinks the
+// param set until stable; the field/payload sets are a monotone function of it.
+pub fn analyze_typed_repr(
+  funcs: Vector<PreparedFunc>,
+  builtins: BuiltinRegistry,
+  first_user_tid: Int,
+) ReprAnalysis {
+  // Fields are typed builder-only (no coercion at a field store), independent of
+  // param typeability — compute once. Only payload typing participates in the
+  // fixpoint (variant construction coerces, so a payload fed by a typeable param
+  // is sound).
+  tf := analyze_typed_fields(funcs, builtins)
+  tp_params := all_vec_int_param_indices(funcs)
+  cap := funcs.len() + 4
+  round := 0
+  done := false
+  tpay: Dict<String, Bool> = Dict.new()
+  abi: ParamAbi = .{ typeable_params: Dict.new(), typeable_return: Dict.new() }
+
+  for !done {
+    tpay = analyze_typed_payloads(funcs, builtins, first_user_tid, tp_params)
+    abi = analyze_typed_params(funcs, builtins, tf, tpay)
+
+    if param_maps_equal(abi.typeable_params, tp_params) or round >= cap {
+      done = true
+    } else {
+      tp_params = abi.typeable_params
+      round = round + 1
+    }
+  }
+
+  .{ typed_fields: tf, typed_payloads: tpay, param_abi: abi }
 }

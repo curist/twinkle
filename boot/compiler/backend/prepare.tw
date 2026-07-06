@@ -17,10 +17,9 @@
 use compiler.anf.{AnfModule}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedExpr, PreparedFunc, PreparedOp}
 use compiler.backend.repr_assign.{assign_repr_for_module}
-use compiler.backend.route_typed_vec.{
-  analyze_typed_fields, analyze_typed_payloads, route_typed_vectors,
-}
+use compiler.backend.route_typed_vec.{route_typed_vectors}
 use compiler.backend.slot_assign.{assign_slots_for_module}
+use compiler.backend.typed_param_abi.{analyze_typed_repr}
 use compiler.base_env.{first_user_type_id}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.insert_boundaries.{insert_boundaries}
@@ -94,13 +93,15 @@ pub fn prepare_backend(
     }
   }
 
-  typed_fields := analyze_typed_fields(pre.funcs, builtins)
-
-  // Decide which user variant-payload sites can be stored physically as PVecI64.
-  // Layout (via PreparedModule.typed_vector_payloads -> env) and routing (via the
-  // typed_payloads argument) MUST see the same dict so the struct field type and
-  // the read/producer routing agree.
-  typed_payloads := analyze_typed_payloads(pre.funcs, builtins, first_user_type_id())
+  // Joint greatest-fixpoint over typed fields, typed payloads, and cross-call
+  // param typeability. A typeable param stored into a payload/field is a clean
+  // typed producer, so real dataframe columns built via helpers like
+  // `int_col(values: Vector<Int>)` can type even without a direct `collect`
+  // producer. Layout (via PreparedModule.typed_vector_* -> env) and routing MUST
+  // see the same dicts so struct field types and read/producer routing agree.
+  repr := analyze_typed_repr(pre.funcs, builtins, first_user_type_id())
+  typed_fields := repr.typed_fields
+  typed_payloads := repr.typed_payloads
   funcs3 := route_typed_vectors(pre.funcs, builtins, typed_fields, typed_payloads)
   .{
     anf: pre.anf,

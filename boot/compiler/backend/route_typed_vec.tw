@@ -1076,6 +1076,11 @@ fn stat_of(stats: Dict<String, FieldStat>, key: String) FieldStat {
   }
 }
 
+// Fields insert NO representation coercion (unlike variant payloads), so a field
+// is typed only from clean builder_freeze producers — a boxed value stored into a
+// typed field slot is invalid wasm. Typeable-param producers are therefore NOT
+// admitted here (they may arrive boxed pre-variant); only the payload analysis is
+// broadened by the cross-call fixpoint.
 pub fn analyze_typed_fields(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Dict<
   String,
   Bool,
@@ -1133,16 +1138,23 @@ pub fn analyze_typed_fields(funcs: Vector<PreparedFunc>, builtins: BuiltinRegist
 // (emit_option_from_variant_helper, emit_iterator_next_helper, ...) that do NOT
 // box/unbox PVecI64, so typing them would be unsound. `first_user_tid` is the
 // TypeId threshold below which every type is a builtin or reserved-stdlib seed.
+// `typeable_params` maps func_id.id (as String) -> the Vector<Int> param indices
+// that may take a physical PVecI64 (from the cross-call param-ABI fixpoint). A
+// typeable param stored into a payload is a *clean typed producer* too, so
+// payloads whose only producer is such a param (e.g. `int_col(values)` feeding
+// `.IntCol(values)`) can be typed. Pass an empty dict for the builder-only
+// (pre-fixpoint) behaviour.
 pub fn analyze_typed_payloads(
   funcs: Vector<PreparedFunc>,
   builtins: BuiltinRegistry,
   first_user_tid: Int,
+  typeable_params: Dict<String, Vector<Int>>,
 ) Dict<String, Bool> {
   ids := route_ids(builtins)
   stats: Dict<String, FieldStat> = Dict.new()
 
   for pf in funcs {
-    stats = scan_func_payload_producers(pf, ids, builtins, first_user_tid, stats)
+    stats = scan_func_payload_producers(pf, ids, builtins, first_user_tid, typeable_params, stats)
   }
 
   out: Dict<String, Bool> = Dict.new()
@@ -1156,19 +1168,47 @@ pub fn analyze_typed_payloads(
   out
 }
 
+// The producer-source slot ids for a function: every builder_freeze result
+// (`cands`) plus every typeable-param slot. Both are classified identically —
+// a source cleanly feeding exactly one payload/field is a clean typed producer.
+fn producer_source_slots(
+  pf: PreparedFunc,
+  cands: Vector<Cand>,
+  typeable_params: Dict<String, Vector<Int>>,
+) Vector<Int> {
+  out: Vector<Int> = collect c in cands {
+    c.v
+  }
+
+  case typeable_params["${pf.func_id.id}"] {
+    .Some(indices) => {
+      for i in indices {
+        if i >= 0 and i < pf.params.len() {
+          out = .append(pf.params[i].id)
+        }
+      }
+    },
+    .None => {},
+  }
+
+  out
+}
+
 fn scan_func_payload_producers(
   pf: PreparedFunc,
   ids: RouteIds,
   builtins: BuiltinRegistry,
   first_user_tid: Int,
+  typeable_params: Dict<String, Vector<Int>>,
   stats0: Dict<String, FieldStat>,
 ) Dict<String, FieldStat> {
   copy_map := build_copy_map(pf.body, Dict.new())
   cands := collect_candidates(pf.body, pf.slots, ids, [])
+  sources := producer_source_slots(pf, cands, typeable_params)
   stats := stats0
 
-  for c in cands {
-    aliases := aliases_for(c.v, copy_map)
+  for v_slot in sources {
+    aliases := aliases_for(v_slot, copy_map)
     vuse := classify_v_group(pf.body, aliases, ids.len, builtins, pf.slots)
     keys := distinct_keys(user_payload_keys(vuse.payload_keys, first_user_tid))
 
@@ -1236,7 +1276,9 @@ fn scan_func_producers_consumers(
   stats := stats0
   ok_map: Dict<String, Dict<Int, Bool>> = Dict.new()
 
-  // Producers: classify each typed v-group candidate.
+  // Producers: classify each typed v-group candidate (builder_freeze result). A
+  // candidate cleanly feeding one field is a clean typed producer; its alias
+  // slots are recorded as OK so pass 2 won't re-flag the store as boxed.
   for c in cands {
     aliases := aliases_for(c.v, copy_map)
     vuse := classify_v_group(pf.body, aliases, ids.len, builtins, pf.slots)
