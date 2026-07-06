@@ -181,7 +181,25 @@ fn emit_direct_call(
           out.append(.LocalSet(result_idx))
         },
         .Never => out,
-        _ => out.append(.LocalSet(result_idx)),
+        _ => {
+          // Coerce the callee's physical return vt to the destination slot vt.
+          // Consistent routing keeps these equal (no-op on the hot path); the
+          // coercion exists so a mismatched call boundary emits valid Wasm (a
+          // residual box/unbox) rather than a Wasm type mismatch.
+          callee_ret_vt := case expected_func {
+            .Some(pf) => case pf.phys_return {
+              .Some(vt) => vt,
+              .None => val_type_of_mono(result_mono, ctx.env),
+            },
+            .None => val_type_of_mono(result_mono, ctx.env),
+          }
+          dest_vt := case result_vt {
+            .Some(vt) => vt,
+            .None => val_type_of_mono(result_mono, ctx.env),
+          }
+          out = emit_coerce_stack(callee_ret_vt, dest_vt, result_mono, ctx, out)
+          out.append(.LocalSet(result_idx))
+        },
       }
     },
   }
