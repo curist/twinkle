@@ -22,6 +22,7 @@ This is one root cause with four instances:
 | Runtime-call result (gather) | the call's result vt | name-exemption `is_typed_vec_result` in `calls.tw` (works, ad-hoc) |
 | `if` arm store | `result_vt` param of `emit_if_op` | **dropped** — threads `result_mono` instead |
 | `match` arm store | `result_vt` param of `emit_match_op` | **dropped** — `MatchCtx` built without it |
+| Direct user-call result store | callee `phys_return` vs destination slot vt | **no coercion** — `emit_op` drops `result_vt` before `emit_call`; bare `LocalSet` |
 
 In every case the destination's physical `ValType` is **already available one
 frame up** at the store/return/call site; the terminal coercion re-derives it
@@ -59,13 +60,33 @@ destination type *at the arm's terminal emit*, not afterward.
 Replace the bare `expected_ty: MonoType` on the emit coercion path with:
 
 ```tw
-type Expected = .{ vt: ValType, mono: MonoType }
+type Expected = .{ vt: ValType?, mono: MonoType }
 ```
 
-`vt` is the **true destination physical type**. `mono` is demoted to a hint used
-only for (a) the `Void`/`Never` short-circuits and (b) `emit_coerce_stack`
-instruction selection. Terminal coercion targets `exp.vt`, never
-`val_type_of_mono(mono)`.
+`vt` is the **true destination physical type**, or `.None` for a no-result
+position (`Void`/`Never`). `mono` is demoted to a hint used only for (a) the
+`Void`/`Never` short-circuits and (b) `emit_coerce_stack` instruction selection.
+When `vt` is `.Some`, terminal coercion targets it, never
+`val_type_of_mono(mono)`; when `.None`, no terminal coercion is emitted.
+
+`vt` is `ValType?` rather than `ValType` specifically because
+`val_type_of_mono(.Never)` hard-errors (`wasm_layout.tw:459`). The constructor
+must therefore not eagerly compute `vt` for `Void`/`Never`:
+
+```tw
+fn expected(mono: MonoType, env: ResolvedEnv) Expected {
+  case mono {
+    .Void => .{ vt: .None, mono },
+    .Never => .{ vt: .None, mono },
+    _ => .{ vt: .Some(val_type_of_mono(mono, env)), mono },
+  }
+}
+```
+
+The existing `case expected_ty { .Void => …, .Never => …, _ => coerce }` gates in
+`emit_atom_for_expected`/`emit_expr` are kept (matching on `exp.mono`), so
+`exp.vt` is only read in the `_` arm where `mono` is a real type — behavior
+identical to today.
 
 This makes the physical destination type a first-class threaded value instead of
 something re-derived at leaves. It **unifies all three existing overrides**
@@ -108,19 +129,42 @@ mechanical churn before any semantics move.
 
 ### Stage 2 — inject the real physical targets
 
-- Thread `result_vt` into `MatchCtx` (it is dropped at `match.tw:74` today; the
-  `emit_match_op` wrapper already receives it).
-- At the arm/spine store sites build `Expected{ vt: result_vt, mono }` so a typed
-  arm coerces to `PVecI64` (a no-op).
-- Fold `phys_return` and the gather exemption into the same general path: the
-  return coercion targets `Expected{ vt: phys_return, mono }`, and
-  `adapt_runtime_result` targets the call's real result vt — **delete** the
-  `is_typed_vec_result` box-skip.
-- Re-apply the reverted `route_func` result-slot typing pass (result slot + typed
-  arm-atom slots retyped to `PVecI64`; result-position bare `Atom(a)` in a
-  `relaxed` set is not an escape).
-- `append_result_store` stays a pure `LocalSet` — the arm already produced
-  `exp.vt`, so there is no store-time coercion and no box→unbox rebuild.
+Every store/return/call site that today re-derives the target from mono must
+instead build `Expected` from the destination's physical vt. Concretely:
+
+- **`if`/`match` arm stores.** Thread `result_vt` into `MatchCtx` (it is dropped
+  at `match.tw:74` today; the `emit_match_op` wrapper already receives it) and
+  into the `emit_if_op` arm emission. Build `Expected{ vt: result_vt, mono }` so a
+  typed arm coerces to `PVecI64` (a no-op). `append_result_store` stays a pure
+  `LocalSet` — the arm already produced `exp.vt`, so no store-time coercion and no
+  box→unbox rebuild.
+- **Wide-if fast path.** `try_emit_if_spine`/`emit_if_spine`
+  (`emit.tw:~3396-3448`) currently emit arms with `result_mono` and store before
+  delegating. Migrate this path to `Expected` as well, or gate it off for a typed
+  result slot until it does. Do not leave it emitting mono-derived stores into a
+  typed slot.
+- **Function return.** Fold the existing `phys_return` special branch in
+  `emit_return_coerce` into the general path: return coercion targets
+  `Expected{ vt: phys_return_or_mono_vt, mono }`.
+- **Runtime-call result (gather).** `adapt_runtime_result` recomputes
+  `val_type_of_mono(result_mono)` today (`coercions.tw:106-120`) and
+  `emit_runtime_call` only receives `result_mono` (`calls.tw:315`). Thread the
+  destination vt through `emit_call → emit_runtime_call → adapt_runtime_result`
+  first; only *then* **delete** the `is_typed_vec_result` box-skip
+  (`calls.tw:357`). Deleting it before the vt is threaded is unsound.
+- **Direct user-call result.** `emit_op` drops `result_vt` before `emit_call`
+  (`emit.tw:1702`) and the direct-call store is a bare `LocalSet` with no
+  coercion (`calls.tw:181`). A typed-return callee (`pf.phys_return = PVecI64`,
+  set at `route_typed_vec.tw:382`) stored into a boxed caller slot — or the
+  reverse — is a Wasm mismatch. Thread `result_vt` into `emit_call` and coerce the
+  callee's return vt to the destination vt before the store. This coercion exists
+  for **soundness** (a call boundary must never emit invalid Wasm); routing's
+  cross-fn call-result typing keeps caller slot and callee return vt consistent so
+  it is a **no-op** on the hot path. A residual box/unbox at a call boundary is a
+  correctness-preserving fallback, never the intended steady state.
+- **Router.** Re-apply the reverted `route_func` result-slot typing pass (result
+  slot + typed arm-atom slots retyped to `PVecI64`; result-position bare
+  `Atom(a)` in a `relaxed` set is not an escape).
 
 ### Soundness argument (closes the box→unbox tension)
 
@@ -141,6 +185,16 @@ before.
   must not trap and should drop `sort idx by amount` (~1342ms). Inspect
   `as_ints` WAT (`target/twk build … -o /tmp/x.wat`) to confirm the `IntCol` arm
   no longer emits `box_i64` before the store.
+- **Stage 2 focused router regressions** (the soundness argument rests on the
+  re-applied routing invariant, which has no `arm_verdict` symbol in current
+  source — add tests as it lands):
+  - all-typed non-diverging arms → result slot typed, no `box_i64` before store;
+  - mixed typed/boxed arms → result slot **rejected** (stays boxed `PVec`);
+  - diverging arm (`error(...)`) alongside typed arms → still typed (Never skipped);
+  - boxed caller of a typed-return function, and typed caller of a boxed-return
+    function → valid Wasm (call-boundary coercion / routing consistency);
+  - WAT/run coverage asserting no `box_i64` immediately before any typed
+    control-flow-result or call-result store.
 
 ## Pointers
 
