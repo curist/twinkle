@@ -396,7 +396,7 @@ Delete the `!is_typed_vec_result(entry_name)` condition — with `dest_vt` corre
 - [ ] **Step 5: Self-host + suite**
 
 Run: `make bundle-cli 2>&1 | tail -5 && make boot-test 2>&1 | tail -8`
-Expected: fixed point + all tests pass. Still pre-routing, so `dest_vt`/`phys_return` equal the mono vt — no codegen change.
+Expected: fixed point + all tests pass. Do **not** require byte-identical WAT here: `phys_return` and the gather `is_typed_vec_result` exemption already exist today, so folding them into the general `dest_vt` path can legitimately reshuffle call-boundary instructions even pre-routing (the net effect must be equivalent — same box/no-box decisions — but the exact instruction stream may differ). Self-host fixed point + suite green is the gate.
 
 - [ ] **Step 6: Commit**
 
@@ -438,16 +438,65 @@ case result_mono {
 
 `dest_vt` is threaded in from Task 6 Step 4. This coercion is a **no-op** when routing keeps caller slot and callee return vt consistent (the hot path); it exists so a mismatched boundary emits valid Wasm (a residual box/unbox) rather than a trap. Add `emit_coerce_stack` / `val_type_of_mono` imports to `calls.tw` if not present.
 
-- [ ] **Step 2: Self-host + suite**
+- [ ] **Step 2: Gate the direct TAIL call on matching physical return ABI**
+
+A `return_call` requires the callee's physical return type to equal the *current* function's physical return type; `emit_direct_tail_call` (calls.tw:190) emits `ReturnCall` with **no** result adaptation (its doc even says "Caller must verify … matching result type"). Post-routing a typed-return callee (`phys_return = PVecI64`) tail-called from a boxed-return function is invalid Wasm. Gate it in `try_emit_tail_op` (`emit.tw:1494`, the `.ACall(.AGlobalFunc(fid), args)` → `bi.entry … .None` branch that calls `emit_direct_tail_call`).
+
+Add a helper near `try_emit_tail_op`:
+
+```tw
+// phys_return ABIs are equal when both absent, or both the same ValType.
+// Today the only typed-return ABI is PVecI64, so a structural Ref-name compare
+// is sufficient; fall back to conservative inequality for anything else.
+fn phys_abi_eq(a: ValType?, b: ValType?) Bool {
+  case a {
+    .None => case b { .None => true, .Some(_) => false },
+    .Some(av) => case b {
+      .None => false,
+      .Some(bv) => case av {
+        .Ref(_, .Named(an)) => case bv {
+          .Ref(_, .Named(bn)) => an == bn,
+          _ => false,
+        },
+        _ => false,
+      },
+    },
+  }
+}
+```
+
+In the `.None => if is_extern_with_conv { .None } else { … emit_direct_tail_call … }` branch, compute both ABIs and only take the tail-call path when they match; otherwise return `.None` so the caller falls back to a normal `emit_op` call (which now coerces to `dest_vt` and returns via `emit_return_coerce`):
+
+```tw
+.None => {
+  callee_phys := case ctx.prepared_funcs[fid.id] {
+    .Some(pf) => pf.phys_return,
+    .None => .None,
+  }
+  self_phys := case current_prepared_func(ctx) {
+    .Some(pf) => pf.phys_return,
+    .None => .None,
+  }
+  if is_extern_with_conv or !phys_abi_eq(callee_phys, self_phys) {
+    .None
+  } else {
+    .Some(call_emit.emit_direct_tail_call(fid, args, ctx, buf, call_emit.CallEmitFns.{ /* unchanged */ }))
+  }
+},
+```
+
+(Preserve the existing `CallEmitFns.{...}` literal exactly.) Patterns 2/3 of `try_emit_tail_op` — tail `AIf`/`AMatch` — route arms through `emit_tail_expr → emit_return_coerce`, which already coerces each arm to `phys_return`, so they need no change; only the direct-`ACall` ReturnCall path is unguarded.
+
+- [ ] **Step 3: Self-host + suite**
 
 Run: `make bundle-cli 2>&1 | tail -5 && make boot-test 2>&1 | tail -8`
-Expected: fixed point + all tests pass. `callee_ret_vt == dest_vt` everywhere pre-routing → coercion is a no-op → no codegen change.
+Expected: fixed point + all tests pass. Pre-routing all `phys_return` are `.None` so `phys_abi_eq` is always true → every current tail call is still emitted → no codegen change.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add boot/compiler/codegen/emit/calls.tw
-git commit -m "codegen: direct-call result store coerces callee return vt to destination vt"
+git add boot/compiler/codegen/emit/calls.tw boot/compiler/codegen/emit.tw
+git commit -m "codegen: direct-call result coerces to destination vt; gate direct tail call on matching phys-return ABI"
 ```
 
 ### Task 8: Re-apply the `route_func` result-slot typing pass
@@ -462,12 +511,54 @@ Re-author the reverted routing so a slot bound from an `AMatch`/`AIf` is typed `
 Run: `sed -n '199,330p' boot/compiler/backend/route_typed_vec.tw` and `sed -n '855,930p' boot/compiler/backend/route_typed_vec.tw`
 Study `route_func`, `result_consumed_typed_only`, `v_group_escapes`/`op_group_escapes`, and how a slot's `wasm_type` is currently retyped to `PVecI64` (the payload/field/builder-candidate cases). The new code mirrors those patterns.
 
-- [ ] **Step 2: Add `arm_verdict` + `arm_result_atom` helpers**
+- [ ] **Step 2 (PREREQUISITE — highest-risk step): tail-context escape relaxation**
 
-Add to `route_typed_vec.tw`. `arm_verdict`: 0 = diverging/Never (skip), 1 = typed `Vector<Int>`-slot source, 2 = non-typeable (disqualify). `arm_result_atom` extracts an arm body's tail atom. Import `expr_always_diverges` from `compiler.codegen.emit.helpers` (add to the `use` list) — the same predicate emit uses. The typed-source predicate is the file's existing `atom_is_int_vector_slot(atom, slots)` (route_typed_vec.tw:1022), which takes `slots: Dict<Int, SlotInfo>`:
+`v_group_escapes` treats a terminal `.Atom(a)` as an escape (`slot_in(a, vs)`, route_typed_vec.tw:871) while `.Return(.Some(_)) => false`. This asymmetry is a *false positive*: when a function's tail result is a bare `Atom(a)` (rather than `Return(Some(a))`), the walker flags `a` as escaping even though emit coerces it at the physical-return boundary. This same false positive blocks payload/control-result slots from `eligible_v`, so it must be fixed first.
+
+**Do NOT make a blanket `.Atom(a) => false`** — that is unsound. An arm atom that yields into an *intermediate* result slot (which may itself be boxed) genuinely escapes; only the atom consumed as the **function's physical return** may be relaxed. Thread a `tail: Bool` context:
 
 ```tw
-// The tail atom of an arm body, if it ends in a bare `Atom(a)` (post-let chain).
+// tail = true only at the function-body / tail-position terminal, where the
+// atom becomes the physical return (coerced by emit_return_coerce). It stays
+// true through peeled `.Let` bodies in tail position, but is set FALSE when
+// descending into an op's sub-expressions (arm bodies, loop bodies), because
+// those atoms flow into an intermediate slot, not the function return.
+fn v_group_escapes_t(
+  expr: PreparedExpr, vs: Dict<Int, Bool>, relaxed: Dict<Int, Bool>,
+  ids: RouteIds, builtins: BuiltinRegistry, tail: Bool,
+) Bool {
+  case expr {
+    .Let(_, op, body) => op_group_escapes(op, vs, relaxed, ids, builtins)
+      or v_group_escapes_t(body, vs, relaxed, ids, builtins, tail),
+    .Atom(a) => if tail { false } else { slot_in(a, vs) },
+    .Return(.Some(_)) => false,
+    .Break(.Some(a)) => slot_in(a, vs),
+    _ => false,
+  }
+}
+```
+
+Keep the existing `v_group_escapes` as the `tail: false` entry point (`op_group_escapes` recurses into arm/loop bodies via `v_group_escapes`, i.e. `tail: false` — unchanged, sound). Add a tail-aware entry used by result-consumption checks:
+
+```tw
+fn result_consumed_typed_only_tail(
+  expr: PreparedExpr, result_sid: Int, relaxed: Dict<Int, Bool>,
+  ids: RouteIds, builtins: BuiltinRegistry,
+) Bool {
+  singleton: Dict<Int, Bool> = Dict.new()
+  singleton[result_sid] = true
+  !v_group_escapes_t(expr, singleton, relaxed, ids, builtins, true)
+}
+```
+
+Switch the payload (2c) and control-result eligibility checks to `result_consumed_typed_only_tail`. **Verify no regression**: `make bundle-cli && make boot-test`. If a test regresses, the tail context leaked into a non-tail position — tighten where `tail: true` is passed.
+
+- [ ] **Step 3: Add `arm_verdict` + `arm_result_atom`, consulting `eligible_v`**
+
+`arm_verdict` must consult **physical** typedness (`eligible_v`, the "will be `PVecI64`" set built in `route_func`), NOT the mono-level `atom_is_int_vector_slot` — a `Vector<Int>` *param* is mono-`Vector<Int>` but physically boxed `PVec`, so a mono check would type a boxed arm and reintroduce the exact box-into-typed store. Import `expr_always_diverges` from `compiler.codegen.emit.helpers`.
+
+```tw
+// The tail atom of an arm body, if it ends in a bare Atom/Return (post-let chain).
 fn arm_result_atom(body: PreparedExpr) PreparedAtom? {
   case body {
     .Atom(a) => .Some(a),
@@ -477,26 +568,24 @@ fn arm_result_atom(body: PreparedExpr) PreparedAtom? {
   }
 }
 
-// 0 = diverging (skip), 1 = typed Vector<Int>-slot source, 2 = disqualify.
-fn arm_verdict(body: PreparedExpr, slots: Dict<Int, SlotInfo>) Int {
-  if expr_always_diverges(body) {
-    return 0
-  }
+// 0 = diverging (skip), 1 = physically-typed slot source, 2 = disqualify.
+fn arm_verdict(body: PreparedExpr, eligible_v: Dict<Int, Bool>) Int {
+  if expr_always_diverges(body) { return 0 }
   case arm_result_atom(body) {
-    .Some(a) => if atom_is_int_vector_slot(a, slots) { 1 } else { 2 },
-    .None => 2,
+    .Some(.ASlot(s)) => if eligible_v.has(s.id) { 1 } else { 2 },
+    _ => 2,
   }
 }
 ```
 
-Rationale: `atom_is_int_vector_slot` is a mono-level check (the atom is a `Vector<Int>` slot), so it identifies the arm atoms that are candidates to be retyped `PVecI64`. An arm whose tail is a non-slot `Vector<Int>` (e.g. an inline literal) or a different type is verdict 2 → the result slot stays boxed. That is the conservative, sound direction.
+Because `eligible_v` gates on physical typedness, a result slot fed by a **closure/global-closure call** (never added to `eligible_v`; closures.tw stores mono-derived results with no dest_vt plumbing) is automatically verdict 2 → left boxed. That is the intended invariant for this milestone: control-result typing covers payload/typed-return-call arm sources only, not closure-call sources. Task 9 adds a negative test asserting a closure-call-fed `case` result stays correct (boxed).
 
-- [ ] **Step 3: Add the control-flow case to slot-typing**
+- [ ] **Step 4: Add the control-flow-result eligibility pass (after `eligible_v` is populated)**
 
-Extend the slot-typing decision (`result_consumed_typed_only` / `slot_typed_after_route` region, ~300-320) so a slot bound from `AMatch`/`AIf` is typed iff every arm's `arm_verdict` is 1 (typed) or 0 (diverging), and at least one arm is 1:
+`arm_verdict` reads `eligible_v`, so this pass must run **after** the payload (2c), typed-return-call (2c''), capture (2c'), and gather-fixpoint (2d) sections populate it. Add it as a new section (call it 2e) right after the gather fixpoint, and iterate to a fixpoint too (a typed control-result slot can feed another control-result or gather):
 
 ```tw
-fn control_result_typed(binding_op: PreparedOp, slots: Dict<Int, SlotInfo>) Bool {
+fn control_result_typed(binding_op: PreparedOp, eligible_v: Dict<Int, Bool>) Bool {
   arms_bodies := case binding_op {
     .AMatch(_, arms) => arms.map(fn(arm) { arm.body }),
     .AIf(_, then_e, else_e) => [then_e, else_e],
@@ -504,7 +593,7 @@ fn control_result_typed(binding_op: PreparedOp, slots: Dict<Int, SlotInfo>) Bool
   }
   saw_typed := false
   for body in arms_bodies {
-    v := arm_verdict(body, slots)
+    v := arm_verdict(body, eligible_v)
     if v == 2 { return false }
     if v == 1 { saw_typed = true }
   }
@@ -512,16 +601,12 @@ fn control_result_typed(binding_op: PreparedOp, slots: Dict<Int, SlotInfo>) Bool
 }
 ```
 
-Wire `control_result_typed` into the place that decides a slot's post-route type (alongside the existing typed-vector cases — the same region that calls `result_consumed_typed_only`, ~300-320). When it is true — and `result_consumed_typed_only` confirms the result slot does not otherwise escape — retype the result slot AND the typed arm-atom slots (via `arm_result_atom` → `.ASlot`) to `PVecI64` in `route_func`, using the same retyping the existing typed cases use. `binding_op` is the op that binds the result slot; recover it via the existing `find_binding_op`-style walk over `pf.body` (grep for how the current cases locate a slot's binding op), or extend the existing slot-decision loop which already visits each binding.
-
-- [ ] **Step 4: Extend the escape check for result-position atoms**
-
-In `v_group_escapes`/`op_group_escapes` (~861-925), a result-position bare `Atom(a)` where `a`'s slot is in the `relaxed`/typed group must NOT count as an escape (it is consumed as the typed result, not boxed out). Add that case so the retyped arm-atom slots survive the escape filter. Mirror the existing `relaxed` handling.
+For each slot `sid` bound from an `AMatch`/`AIf` op whose `control_result_typed` is true AND `result_consumed_typed_only_tail(pf.body, sid, …)` holds, set `eligible_v[sid] = true`. Recover the binding op via the existing slot→binding-op walk used by the other sections (grep how 2c locates `payload_read_sids`' binding op; reuse that traversal to collect `(sid, AMatch/AIf op)` pairs). The subsequent existing retype step (which turns every `eligible_v` slot's `wasm_type` into `PVecI64`) then retypes these result slots uniformly — no separate retyping code needed. The typed arm-atom slots are already in `eligible_v` (that is why the arm passed verdict 1), so they are retyped by the same step.
 
 - [ ] **Step 5: Self-host + suite**
 
 Run: `make bundle-cli 2>&1 | tail -5 && make boot-test 2>&1 | tail -12`
-Expected: fixed point + all tests pass. The boot compiler's own `case` accessors have no typed payloads, so the pass is inert on boot source — the suite stays green. If any test regresses, a slot was typed whose arm is actually boxed → tighten `arm_verdict`.
+Expected: fixed point + all tests pass. The boot compiler's own `case` accessors have no `eligible_v` payload arms, so the pass is inert on boot source. If a test regresses, a slot was typed whose arm is not actually in `eligible_v` → check the fixpoint ordering and `arm_verdict`.
 
 - [ ] **Step 6: Commit**
 
@@ -542,13 +627,13 @@ Expected: runs without trap; `sort idx by amount` time drops well below the ~134
 
 - [ ] **Step 2: WAT assertion — no `box_i64` before the typed arm store**
 
-Run:
+Run (`as_ints` is defined at `examples/performance/dataframe/frame/column.tw:74`; build the entry that uses it):
 ```bash
-target/twk build examples/performance/dataframe/<file-defining-as_ints>.tw -o /tmp/df.wat
-# locate as_ints in the WAT and inspect the IntCol arm:
-grep -n "box_i64\|unbox_i64" /tmp/df.wat | head
+target/twk build examples/performance/dataframe/frame/column.tw -o /tmp/df.wat
+# locate as_ints in the WAT (grep the function's name comment) and inspect the IntCol arm:
+grep -n "box_i64\|unbox_i64\|as_ints" /tmp/df.wat | head
 ```
-Expected: the `as_ints` `IntCol` arm has no `call $rt_arr__box_i64` before its `local.set` of the result slot. (Find the function via a runtime index / name comment as per the WAT-tracing workflow.)
+Expected: the `as_ints` `IntCol` arm has no `call $rt_arr__box_i64` before its `local.set` of the result slot. (Find the function via its name comment / runtime index as per the WAT-tracing workflow.)
 
 - [ ] **Step 3: Write focused router regression programs**
 
@@ -572,6 +657,15 @@ fn sum(xs: Vector<Int>) Int {
   total
 }
 
+// Negative: a case whose typed arm is fed by a CLOSURE call must stay correct
+// (result slot left boxed — closure calls are excluded from control-result
+// typing this milestone). Value correctness is the assertion; this guards that
+// the exclusion holds rather than producing a boxed-into-typed store.
+fn via_closure(tag: Int, v: Vector<Int>) Vector<Int> {
+  f := fn(w: Vector<Int>) Vector<Int> { w }
+  case tag { 0 => f(v), _ => v }
+}
+
 // exercise them
 xs: Vector<Int> = collect i in range(5) { i }
 ys: Vector<Int> = collect i in range(5) { i * 2 }
@@ -579,6 +673,8 @@ ys: Vector<Int> = collect i in range(5) { i * 2 }
 // assert pick(1, xs, ys)[2] == 4
 // assert as_ints_or_die(0, xs)[3] == 3
 // assert sum(pick(1, xs, ys)) == 20
+// assert via_closure(0, xs)[3] == 3   // closure-fed arm, boxed result, still correct
+// assert via_closure(1, xs)[3] == 3
 ```
 
 Replace the `// assert` comments with the real assertion helper. The mixed typed/boxed rejection case is covered implicitly: a `case` returning a `Vector<Int>` in one arm and a boxed source in another must still produce correct values (the router leaves it boxed). Add such a case too.
