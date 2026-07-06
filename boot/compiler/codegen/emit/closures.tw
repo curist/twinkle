@@ -2,7 +2,7 @@
 
 use compiler.backend.callable_targets as callable_targets
 use compiler.backend.facts as facts
-use compiler.backend.prepared_ir.{PreparedAtom, PreparedFunc, SlotId}
+use compiler.backend.prepared_ir.{PreparedAtom, PreparedFunc, SlotId, SlotInfo}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinEntry, RuntimeInfo}
 use compiler.codegen.emit.anyref.{
@@ -616,6 +616,26 @@ fn emit_builtin_trampoline_target(
   }
 }
 
+// Read one capture out of the anyref env into its physical slot type. A typed
+// Vector<Int> capture (route retyped its slot to PVecI64) is a plain O(1)
+// downcast — NOT box_i64/unbox_i64 — because the env array is trampoline-private:
+// the PVecI64 struct was stored as-is (a subtype of anyref) and only this
+// trampoline reads it back. Untyped captures go through the generic anyref
+// egress (a boxed PVec cast, for vectors).
+fn emit_capture_extract(cap: SlotInfo, ctx: EmitCtx, body: Vector<Instr>) Vector<Instr> {
+  case cap.wasm_type {
+    .Ref(_, ht) => case ht {
+      .Named(n) => if n == "rt_types__PVecI64" {
+        body.append(.RefCast(false, .Named("rt_types__PVecI64")))
+      } else {
+        emit_unbox_from_anyref(cap.mono, ctx.env, body)
+      },
+      _ => emit_unbox_from_anyref(cap.mono, ctx.env, body),
+    },
+    _ => emit_unbox_from_anyref(cap.mono, ctx.env, body),
+  }
+}
+
 fn emit_universal_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
   // Universal trampoline: (env: anyref, args: anyref) → anyref
   tramp_sym := "$tramp_${func.func_id.id}"
@@ -630,7 +650,7 @@ fn emit_universal_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx
     body = .append(.RefCast(true, .Named("rt_types__ClosureEnv")))
     body = .append(.I32Const(i))
     body = .append(.ArrayGet("rt_types__ClosureEnv"))
-    body = emit_unbox_from_anyref(cap.mono, ctx.env, body)
+    body = emit_capture_extract(cap, ctx, body)
   }
 
   // Extract args from args array (param 1)
@@ -675,7 +695,7 @@ fn emit_typed_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx) Fu
     body = .append(.RefCast(true, .Named("rt_types__ClosureEnv")))
     body = .append(.I32Const(i))
     body = .append(.ArrayGet("rt_types__ClosureEnv"))
-    body = emit_unbox_from_anyref(cap.mono, ctx.env, body)
+    body = emit_capture_extract(cap, ctx, body)
   }
 
   // Forward concrete args (params 1, 2, ...)
