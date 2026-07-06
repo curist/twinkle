@@ -149,6 +149,7 @@ pub fn module() WasmModule {
     pop_tail_fn(),
     drop_last_fn(),
     gather_fn(),
+    gather_i64_fn(),
     elem_i64().sort_typed_fn(),
     elem_f64().sort_typed_fn(),
     family_i64().pvec_len_fn(),
@@ -3705,6 +3706,64 @@ fn gather_fn() FuncDef {
       ),
       .LocalGet(3),
       .Call("builder_freeze"),
+    ],
+  }
+}
+
+// gather_i64(vec: PVecI64?, idx: PVec?) -> PVecI64
+// Like gather, but reads vec via get_i64 (raw i64 leaf, no BoxedInt chase) and
+// builds a typed result via builder_push_i64_raw. idx stays boxed (the
+// permutation vector; read once per output element and truncated to i32).
+fn gather_i64_fn() FuncDef {
+  // p0=vec (PVecI64), p1=idx (PVec); L2=n, L3=builder, L4=i, L5=k
+  .{
+    name: "gather_i64",
+    params: [pvec_i64_null(), pvec_null()],
+    results: [pvec_i64_ref()],
+    locals: [.I32, arr_null(), .I32, .I32],
+    body: [
+      .LocalGet(1),
+      .Call("len"),
+      .LocalSet(2),
+      .Call("builder_new_i64"),
+      .LocalSet(3),
+      .I32Const(0),
+      .LocalSet(4),
+      .Block(
+        "brk",
+        .None,
+        [
+          .Loop(
+            "lp",
+            .None,
+            [
+              .LocalGet(4),
+              .LocalGet(2),
+              .I32GeS,
+              .BrIf("brk"),
+              .LocalGet(1),
+              .LocalGet(4),
+              .Call("get"),
+              .RefCast(false, .Named(t_BOXED_INT)),
+              .StructGet(t_BOXED_INT, 0),
+              .I32WrapI64,
+              .LocalSet(5),
+              .LocalGet(3),
+              .LocalGet(0),
+              .LocalGet(5),
+              .Call("get_i64"),
+              .Call("builder_push_i64_raw"),
+              .LocalGet(4),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(4),
+              .Br("lp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(3),
+      .Call("builder_freeze_i64"),
     ],
   }
 }
