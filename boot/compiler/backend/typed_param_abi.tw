@@ -22,10 +22,10 @@
 //! coerces at construction/extraction, and a param that escapes (e.g. into a
 //! closure env) is removed in the first round and its payload re-evaluated.
 
-use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp}
+use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotId}
 use compiler.backend.route_typed_vec.{
-  aliases_for, analyze_typed_fields, analyze_typed_payloads, build_copy_map, route_ids,
-  v_group_typeable,
+  aliases_for, analyze_typed_fields, analyze_typed_payloads, build_copy_map, free_var_typed_local,
+  route_ids, v_group_typeable,
 }
 use compiler.builtins.{BuiltinRegistry}
 use compiler.mono_type.{MonoType}
@@ -41,6 +41,10 @@ pub type ReprAnalysis = .{
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
   param_abi: ParamAbi,
+  // func_id.id (as String) -> capture indices that may take PVecI64 (M1b). A
+  // captured Vector<Int> read typed-only inside the closure body; the trampoline
+  // downcasts the anyref env slot to PVecI64.
+  capture_abi: Dict<String, Vector<Int>>,
 }
 
 // True if a mono type is Vector<Int> (the only representation-typed vector).
@@ -69,7 +73,19 @@ pub fn param_uses_typed_only(
       ids := route_ids(builtins)
       copy_map := build_copy_map(pf.body, Dict.new())
       aliases := aliases_for(param_slot_id, copy_map)
-      v_group_typeable(pf.body, aliases, ids, builtins, pf.slots, typed_fields, typed_payloads)
+
+      // Empty `relaxed`: this analysis does not relax nested-capture escapes (a
+      // param/capture re-captured into another closure stays conservative).
+      v_group_typeable(
+        pf.body,
+        aliases,
+        Dict.new(),
+        ids,
+        builtins,
+        pf.slots,
+        typed_fields,
+        typed_payloads,
+      )
     },
     .None => false,
   }
@@ -108,6 +124,146 @@ pub fn analyze_typed_params(
   }
 
   .{ typeable_params: typeable, typeable_return: ret }
+}
+
+type MakeClosureSite = .{ lambda_id: Int, free_vars: Vector<SlotId> }
+
+// Collect every AMakeClosure site in a function body: the target lambda id and
+// the enclosing free-var slots feeding its captures (positional).
+fn collect_make_closure_sites(body: PreparedExpr, acc: Vector<MakeClosureSite>) Vector<
+  MakeClosureSite,
+> {
+  case body {
+    .Let(_, op, rest) => {
+      acc2 := make_closure_sites_op(op, acc)
+      collect_make_closure_sites(rest, acc2)
+    },
+    _ => acc,
+  }
+}
+
+fn make_closure_sites_op(op: PreparedOp, acc: Vector<MakeClosureSite>) Vector<MakeClosureSite> {
+  case op {
+    .AMakeClosure(fid, free_vars) => acc.append(.{ lambda_id: fid.id, free_vars }),
+    .AIf(_, then_e, else_e) => {
+      acc2 := collect_make_closure_sites(then_e, acc)
+      collect_make_closure_sites(else_e, acc2)
+    },
+    .AMatch(_, arms) => {
+      cur := acc
+
+      for arm in arms {
+        cur = collect_make_closure_sites(arm.body, cur)
+      }
+
+      cur
+    },
+    .ALoop(inner) => collect_make_closure_sites(inner, acc),
+    .ADefer(inner) => collect_make_closure_sites(inner, acc),
+    _ => acc,
+  }
+}
+
+// Per-lambda typeable capture indices (M1b). A capture index is typed iff BOTH:
+//   (1) the capture param is read typed-only inside the closure body (same
+//       predicate as a param — a capture is a prepended param), AND
+//   (2) at EVERY AMakeClosure site constructing that lambda, the enclosing free
+//       var feeding the capture is a typed LOCAL producer (free_var_typed_local).
+// Condition (2) is the load-bearing soundness gate: without it, a capture would
+// be typed while the stored free var is a boxed PVec (a function return, a param,
+// a combinator result), and the trampoline downcast to PVecI64 would trap.
+pub fn analyze_typed_captures(
+  funcs: Vector<PreparedFunc>,
+  builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+) Dict<String, Vector<Int>> {
+  ids := route_ids(builtins)
+
+  // Condition 1: capture indices read typed-only inside each lambda.
+  cand: Dict<String, Dict<Int, Bool>> = Dict.new()
+
+  for pf in funcs {
+    m: Dict<Int, Bool> = Dict.new()
+
+    for cap, i in pf.captures {
+      if param_uses_typed_only(pf, cap.id, builtins, typed_fields, typed_payloads) {
+        m[i] = true
+      }
+    }
+
+    if m.keys().len() > 0 {
+      cand["${pf.func_id.id}"] = m
+    }
+  }
+
+  // Condition 2: every construction site's free var must be a typed local.
+  unsupported: Dict<String, Dict<Int, Bool>> = Dict.new()
+  seen: Dict<String, Bool> = Dict.new()
+
+  for pf in funcs {
+    sites := collect_make_closure_sites(pf.body, [])
+
+    for site in sites {
+      lkey := "${site.lambda_id}"
+      seen[lkey] = true
+
+      case cand[lkey] {
+        .Some(m) => {
+          for i in m.keys() {
+            supported := i >= 0
+              and i < site.free_vars.len()
+              and free_var_typed_local(
+                pf,
+                site.free_vars[i].id,
+                ids,
+                builtins,
+                typed_fields,
+                typed_payloads,
+              )
+
+            if !supported {
+              u := case unsupported[lkey] {
+                .Some(existing) => existing,
+                .None => Dict.new(),
+              }
+              u[i] = true
+              unsupported[lkey] = u
+            }
+          }
+        },
+        .None => {},
+      }
+    }
+  }
+
+  out: Dict<String, Vector<Int>> = Dict.new()
+
+  for lkey, m in cand {
+    // A lambda with no observed construction site cannot be verified — drop it.
+    if !seen.has(lkey) {
+      continue
+    }
+
+    idxs: Vector<Int> = []
+
+    for i in m.keys() {
+      unsup := case unsupported[lkey] {
+        .Some(u) => u.has(i),
+        .None => false,
+      }
+
+      if !unsup {
+        idxs = .append(i)
+      }
+    }
+
+    if idxs.len() > 0 {
+      out[lkey] = idxs
+    }
+  }
+
+  out
 }
 
 // A function returns a typed PVecI64 iff its return type is Vector<Int> and every
@@ -267,5 +423,8 @@ pub fn analyze_typed_repr(
     }
   }
 
-  .{ typed_fields: tf, typed_payloads: tpay, param_abi: abi }
+  // Capture typeability uses the converged typed sets. Computed once here (it
+  // does not feed the payload/param fixpoint for the local-capture case).
+  capture_abi := analyze_typed_captures(funcs, builtins, tf, tpay)
+  .{ typed_fields: tf, typed_payloads: tpay, param_abi: abi, capture_abi }
 }

@@ -159,7 +159,7 @@ pub fn suite() runner.Suite {
         // Empty payload set: the payload binding stays boxed, so the gather
         // receiver is not typed, the swap must not fire, and no slot retypes.
         empty: Dict<String, Bool> = Dict.new()
-        routed_empty := route_typed_vectors(p.funcs, p.builtins, empty, empty)
+        routed_empty := route_typed_vectors(p.funcs, p.builtins, empty, empty, Dict.new())
         try assert.ok(
           !funcs_call_fid(routed_empty, gid),
           "gather_i64 must not fire without the typed payload set",
@@ -167,7 +167,7 @@ pub fn suite() runner.Suite {
 
         // Real set: the payload read `v` and the gather RESULT retype to PVecI64,
         // and the gather call routes to gather_i64.
-        routed := route_typed_vectors(p.funcs, p.builtins, tf, tp)
+        routed := route_typed_vectors(p.funcs, p.builtins, tf, tp, Dict.new())
         try assert.ok(funcs_call_fid(routed, gid), "expected gather to route to gather_i64")
         try assert.ok(
           pvec_i64_slot_count(routed) > pvec_i64_slot_count(routed_empty),

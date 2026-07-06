@@ -108,6 +108,35 @@ fn int_col_src() String {
     .concat("firstv(build(8))\n")
 }
 
+// A local `collect` captured into a sort comparator and read via index: the
+// capture is typeable (its free var is a typed local producer).
+fn typed_capture_src() String {
+  "fn run(n: Int) Int {\n"
+    .concat("  keys := collect i in range(n) { i * 2 }\n")
+    .concat("  idx := collect i in range(n) { i }\n")
+    .concat("  sorted := idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })\n")
+    .concat("  sorted[0]\n")
+    .concat("}\n")
+    .concat("run(8)\n")
+}
+
+// The same shape but `keys` comes from a function return (a boxed PVec): the
+// capture MUST NOT be typed (the trampoline downcast to PVecI64 would trap).
+fn boxed_capture_src() String {
+  "fn mkkeys(n: Int) Vector<Int> {\n"
+    .concat("  out: Vector<Int> = []\n")
+    .concat("  for i in range(n) { out = out.append(i * 2) }\n")
+    .concat("  out\n")
+    .concat("}\n")
+    .concat("fn run(n: Int) Int {\n")
+    .concat("  keys := mkkeys(n)\n")
+    .concat("  idx := collect i in range(n) { i }\n")
+    .concat("  sorted := idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })\n")
+    .concat("  sorted[0]\n")
+    .concat("}\n")
+    .concat("run(8)\n")
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("typed param abi")
@@ -160,6 +189,27 @@ pub fn suite() runner.Suite {
           repr.param_abi.typeable_params.keys().len() >= 1,
           "int_col's values param should be typeable",
         )
+        .Ok({})
+      },
+    )
+    .test(
+      "a captured typed-local vector is a typeable capture (M1b)",
+      fn() {
+        p := try prepare_src(typed_capture_src())
+        repr := analyze_typed_repr(p.funcs, p.builtins, first_user_type_id())
+        try assert.ok(
+          repr.capture_abi.keys().len() >= 1,
+          "comparator capturing a local collect should be a typeable capture",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "a captured boxed-return vector is NOT a typeable capture (support gate)",
+      fn() {
+        p := try prepare_src(boxed_capture_src())
+        repr := analyze_typed_repr(p.funcs, p.builtins, first_user_type_id())
+        try assert.equal(repr.capture_abi.keys().len(), 0)
         .Ok({})
       },
     )

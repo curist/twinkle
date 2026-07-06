@@ -61,12 +61,88 @@ pub fn route_typed_vectors(
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
+  capture_abi: Dict<String, Vector<Int>>,
 ) Vector<PreparedFunc> {
   ids := route_ids(builtins)
 
   collect pf in funcs {
-    route_func(pf, ids, builtins, typed_fields, typed_payloads)
+    route_func(pf, ids, builtins, typed_fields, typed_payloads, capture_abi)
   }
+}
+
+// Free-var slot ids in `body` whose closure capture lands in a typeable PVecI64
+// capture slot (per capture_abi keyed by the target lambda's func id). Capturing
+// such a slot is not an escape (M1b): the trampoline downcasts it to PVecI64.
+fn collect_relaxed_captures(
+  body: PreparedExpr,
+  capture_abi: Dict<String, Vector<Int>>,
+  acc: Dict<Int, Bool>,
+) Dict<Int, Bool> {
+  case body {
+    .Let(_, op, rest) => {
+      acc2 := relaxed_captures_op(op, capture_abi, acc)
+      collect_relaxed_captures(rest, capture_abi, acc2)
+    },
+    _ => acc,
+  }
+}
+
+fn relaxed_captures_op(op: PreparedOp, capture_abi: Dict<String, Vector<Int>>, acc: Dict<Int, Bool>) Dict<
+  Int,
+  Bool,
+> {
+  case op {
+    .AMakeClosure(fid, free_vars) => {
+      case capture_abi["${fid.id}"] {
+        .Some(indices) => {
+          for i in indices {
+            if i >= 0 and i < free_vars.len() {
+              acc[free_vars[i].id] = true
+            }
+          }
+        },
+        .None => {},
+      }
+
+      acc
+    },
+    .AIf(_, then_e, else_e) => {
+      acc2 := collect_relaxed_captures(then_e, capture_abi, acc)
+      collect_relaxed_captures(else_e, capture_abi, acc2)
+    },
+    .AMatch(_, arms) => {
+      cur := acc
+
+      for arm in arms {
+        cur = collect_relaxed_captures(arm.body, capture_abi, cur)
+      }
+
+      cur
+    },
+    .ALoop(inner) => collect_relaxed_captures(inner, capture_abi, acc),
+    .ADefer(inner) => collect_relaxed_captures(inner, capture_abi, acc),
+    _ => acc,
+  }
+}
+
+// The slot ids of this function's own capture params that are typeable (PVecI64)
+// per capture_abi — these get retyped so the trampoline downcast + typed index
+// reads (get_i64) apply inside the closure body.
+fn typeable_capture_slots(pf: PreparedFunc, capture_abi: Dict<String, Vector<Int>>) Vector<Int> {
+  out: Vector<Int> = []
+
+  case capture_abi["${pf.func_id.id}"] {
+    .Some(indices) => {
+      for i in indices {
+        if i >= 0 and i < pf.captures.len() {
+          out = .append(pf.captures[i].id)
+        }
+      }
+    },
+    .None => {},
+  }
+
+  out
 }
 
 // Every key present in `set`. An empty key list vacuously satisfies this.
@@ -86,6 +162,7 @@ fn route_func(
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
+  capture_abi: Dict<String, Vector<Int>>,
 ) PreparedFunc {
   if prepared_depth_exceeds(pf.body, 512) {
     return pf
@@ -97,7 +174,16 @@ fn route_func(
   field_read_sids := collect_typed_field_reads(pf.body, typed_fields, [])
   payload_read_sids := collect_typed_payload_reads(pf.body, typed_payloads, pf.slots, [])
 
-  if cands.len() == 0 and field_read_sids.len() == 0 and payload_read_sids.len() == 0 {
+  // M1b: this function's own typeable capture params (retyped to PVecI64 below),
+  // and the free-var slots whose capture into another typeable closure is not an
+  // escape (relaxed). A capture-only closure (e.g. a sort comparator reading a
+  // captured key column) has no candidates/field/payload reads, so include the
+  // capture set in the "anything to do" check.
+  cap_slots := typeable_capture_slots(pf, capture_abi)
+  relaxed := collect_relaxed_captures(pf.body, capture_abi, Dict.new())
+
+  if cands.len() == 0
+    and field_read_sids.len() == 0 and payload_read_sids.len() == 0 and cap_slots.len() == 0 {
     return pf
   }
 
@@ -114,7 +200,16 @@ fn route_func(
   for c in cands {
     aliases := aliases_for(c.v, copy_map)
 
-    if v_group_typeable(pf.body, aliases, ids, builtins, pf.slots, typed_fields, typed_payloads) {
+    if v_group_typeable(
+      pf.body,
+      aliases,
+      relaxed,
+      ids,
+      builtins,
+      pf.slots,
+      typed_fields,
+      typed_payloads,
+    ) {
       for sid in aliases.keys() {
         eligible_v[sid] = true
       }
@@ -155,9 +250,17 @@ fn route_func(
   //     it typed. Guard with the same consumer-escape check the field consumer
   //     scan uses.
   for sid in payload_read_sids {
-    if result_consumed_typed_only(pf.body, sid, ids, builtins) {
+    if result_consumed_typed_only(pf.body, sid, relaxed, ids, builtins) {
       eligible_v[sid] = true
     }
+  }
+
+  // 2c'. Typeable capture params (M1b): the closure body reads them via typed
+  //      index/len only, so retype to PVecI64. The trampoline downcasts the
+  //      anyref env slot to PVecI64 (no rebuild), and the enclosing free var is
+  //      typed because its capture was relaxed (not an escape) in that function.
+  for sid in cap_slots {
+    eligible_v[sid] = true
   }
 
   // 2d. Typed-gather results. `gather(v, idx)` produces a NEW typed vector when
@@ -684,15 +787,20 @@ pub fn aliases_for(root: Int, copy_map: Dict<Int, Int>) Dict<Int, Bool> {
 // the argument of `len(v)`, or direct function return. Return is a real
 // representation boundary, but it is handled by the emitter's PVecI64 -> PVec
 // adapter; all other boundaries remain conservative opt-outs.
+// `relaxed` is the set of free-var slot ids whose capture into a closure is NOT
+// an escape, because the captured slot lands in a typeable PVecI64 capture slot
+// (M1b): the trampoline downcasts it to PVecI64, so the value stays typed. Every
+// other AMakeClosure capture is still an escape.
 fn v_group_escapes(
   expr: PreparedExpr,
   vs: Dict<Int, Bool>,
+  relaxed: Dict<Int, Bool>,
   ids: RouteIds,
   builtins: BuiltinRegistry,
 ) Bool {
   case expr {
-    .Let(_, op, body) => op_group_escapes(op, vs, ids, builtins)
-      or v_group_escapes(body, vs, ids, builtins),
+    .Let(_, op, body) => op_group_escapes(op, vs, relaxed, ids, builtins)
+      or v_group_escapes(body, vs, relaxed, ids, builtins),
     .Atom(a) => slot_in(a, vs),
     .Return(.Some(_)) => false,
     .Break(.Some(a)) => slot_in(a, vs),
@@ -700,7 +808,13 @@ fn v_group_escapes(
   }
 }
 
-fn op_group_escapes(op: PreparedOp, vs: Dict<Int, Bool>, ids: RouteIds, builtins: BuiltinRegistry) Bool {
+fn op_group_escapes(
+  op: PreparedOp,
+  vs: Dict<Int, Bool>,
+  relaxed: Dict<Int, Bool>,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+) Bool {
   case op {
     .ACall(callee, args) => case callee {
       // len(v) is the allowed builtin call use.
@@ -726,28 +840,28 @@ fn op_group_escapes(op: PreparedOp, vs: Dict<Int, Bool>, ids: RouteIds, builtins
       _ => slot_in(base, vs) or slot_in(index, vs),
     },
     .AIf(cnd, then_e, else_e) => slot_in(cnd, vs)
-      or v_group_escapes(then_e, vs, ids, builtins)
-      or v_group_escapes(else_e, vs, ids, builtins),
+      or v_group_escapes(then_e, vs, relaxed, ids, builtins)
+      or v_group_escapes(else_e, vs, relaxed, ids, builtins),
     .AMatch(scrut, arms) => {
       if slot_in(scrut, vs) {
         return true
       }
 
       for arm in arms {
-        if v_group_escapes(arm.body, vs, ids, builtins) {
+        if v_group_escapes(arm.body, vs, relaxed, ids, builtins) {
           return true
         }
       }
 
       false
     },
-    .ALoop(inner) => v_group_escapes(inner, vs, ids, builtins),
-    .ADefer(inner) => v_group_escapes(inner, vs, ids, builtins),
+    .ALoop(inner) => v_group_escapes(inner, vs, relaxed, ids, builtins),
+    .ADefer(inner) => v_group_escapes(inner, vs, relaxed, ids, builtins),
     .ABinOp(_, l, r, _) => slot_in(l, vs) or slot_in(r, vs),
     .AUnOp(_, a, _) => slot_in(a, vs),
     .AMakeClosure(_, free_vars) => {
       for fv in free_vars {
-        if vs.has(fv.id) {
+        if vs.has(fv.id) and !relaxed.has(fv.id) {
           return true
         }
       }
@@ -851,11 +965,12 @@ fn atom_is_int_vector_slot(atom: PreparedAtom, slots: Dict<Int, SlotInfo>) Bool 
 fn classify_v_group(
   expr: PreparedExpr,
   vs: Dict<Int, Bool>,
+  relaxed: Dict<Int, Bool>,
   len_id: Int,
   builtins: BuiltinRegistry,
   slots: Dict<Int, SlotInfo>,
 ) VGroupUse {
-  classify_expr(expr, vs, len_id, builtins, slots)
+  classify_expr(expr, vs, relaxed, len_id, builtins, slots)
 }
 
 // Shared eligibility predicate: a typed-vector slot group `aliases` is typeable
@@ -867,13 +982,14 @@ fn classify_v_group(
 pub fn v_group_typeable(
   body: PreparedExpr,
   aliases: Dict<Int, Bool>,
+  relaxed: Dict<Int, Bool>,
   ids: RouteIds,
   builtins: BuiltinRegistry,
   slots: Dict<Int, SlotInfo>,
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
 ) Bool {
-  vuse := classify_v_group(body, aliases, ids.len, builtins, slots)
+  vuse := classify_v_group(body, aliases, relaxed, ids.len, builtins, slots)
   all_field_keys_typed := vuse.field_keys.len() == 0 or all_in(vuse.field_keys, typed_fields)
 
   // A producer that flows into a variant payload is only routable if every such
@@ -886,17 +1002,66 @@ pub fn v_group_typeable(
   !vuse.escapes and all_field_keys_typed and all_payload_keys_typed
 }
 
+// M1b support check: is `fv_slot` in `pf` a typed LOCAL producer — i.e. a
+// builder_freeze candidate (its value physically becomes PVecI64) whose only
+// escape is the capture (its own aliases are relaxed)? A capture may only be
+// typed if the free var it stores is genuinely PVecI64 in the enclosing function;
+// a boxed source (a function return, a param, a combinator result) is NOT, so the
+// captured slot must stay boxed or the trampoline downcast would trap.
+pub fn free_var_typed_local(
+  pf: PreparedFunc,
+  fv_slot: Int,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+) Bool {
+  is_vec := case pf.slots[fv_slot] {
+    .Some(info) => is_int_vector(mono_key_of(info)),
+    .None => false,
+  }
+
+  if !is_vec {
+    return false
+  }
+
+  copy_map := build_copy_map(pf.body, Dict.new())
+  cands := collect_candidates(pf.body, pf.slots, ids, [])
+
+  for c in cands {
+    aliases := aliases_for(c.v, copy_map)
+
+    if aliases.has(fv_slot) {
+      // Relax this producer's own captures so they don't count as escapes when
+      // deciding whether it is otherwise typed-only.
+      return v_group_typeable(
+        pf.body,
+        aliases,
+        aliases,
+        ids,
+        builtins,
+        pf.slots,
+        typed_fields,
+        typed_payloads,
+      )
+    }
+  }
+
+  false
+}
+
 fn classify_expr(
   expr: PreparedExpr,
   vs: Dict<Int, Bool>,
+  relaxed: Dict<Int, Bool>,
   len_id: Int,
   builtins: BuiltinRegistry,
   slots: Dict<Int, SlotInfo>,
 ) VGroupUse {
   case expr {
     .Let(_, op, body) => {
-      op_use := classify_op(op, vs, len_id, builtins, slots)
-      body_use := classify_expr(body, vs, len_id, builtins, slots)
+      op_use := classify_op(op, vs, relaxed, len_id, builtins, slots)
+      body_use := classify_expr(body, vs, relaxed, len_id, builtins, slots)
       op_use.merge_use(body_use)
     },
     .Atom(a) => use_esc(slot_in(a, vs)),
@@ -917,6 +1082,7 @@ fn classify_expr(
 fn classify_op(
   op: PreparedOp,
   vs: Dict<Int, Bool>,
+  relaxed: Dict<Int, Bool>,
   len_id: Int,
   builtins: BuiltinRegistry,
   slots: Dict<Int, SlotInfo>,
@@ -942,29 +1108,29 @@ fn classify_op(
     },
     .AIf(cnd, then_e, else_e) => {
       cnd_esc := use_esc(slot_in(cnd, vs))
-      then_use := classify_expr(then_e, vs, len_id, builtins, slots)
-      else_use := classify_expr(else_e, vs, len_id, builtins, slots)
+      then_use := classify_expr(then_e, vs, relaxed, len_id, builtins, slots)
+      else_use := classify_expr(else_e, vs, relaxed, len_id, builtins, slots)
       cnd_esc.merge_use(then_use.merge_use(else_use))
     },
     .AMatch(scrut, arms) => {
       acc := use_esc(slot_in(scrut, vs))
 
       for arm in arms {
-        arm_use := classify_expr(arm.body, vs, len_id, builtins, slots)
+        arm_use := classify_expr(arm.body, vs, relaxed, len_id, builtins, slots)
         acc = .merge_use(arm_use)
       }
 
       acc
     },
-    .ALoop(inner) => classify_expr(inner, vs, len_id, builtins, slots),
-    .ADefer(inner) => classify_expr(inner, vs, len_id, builtins, slots),
+    .ALoop(inner) => classify_expr(inner, vs, relaxed, len_id, builtins, slots),
+    .ADefer(inner) => classify_expr(inner, vs, relaxed, len_id, builtins, slots),
     .ABinOp(_, l, r, _) => use_esc(slot_in(l, vs) or slot_in(r, vs)),
     .AUnOp(_, a, _) => use_esc(slot_in(a, vs)),
     .AMakeClosure(_, free_vars) => {
       esc := false
 
       for fv in free_vars {
-        if vs.has(fv.id) {
+        if vs.has(fv.id) and !relaxed.has(fv.id) {
           esc = true
         }
       }
@@ -1209,7 +1375,7 @@ fn scan_func_payload_producers(
 
   for v_slot in sources {
     aliases := aliases_for(v_slot, copy_map)
-    vuse := classify_v_group(pf.body, aliases, ids.len, builtins, pf.slots)
+    vuse := classify_v_group(pf.body, aliases, Dict.new(), ids.len, builtins, pf.slots)
     keys := distinct_keys(user_payload_keys(vuse.payload_keys, first_user_tid))
 
     if keys.len() == 0 {
@@ -1281,7 +1447,7 @@ fn scan_func_producers_consumers(
   // slots are recorded as OK so pass 2 won't re-flag the store as boxed.
   for c in cands {
     aliases := aliases_for(c.v, copy_map)
-    vuse := classify_v_group(pf.body, aliases, ids.len, builtins, pf.slots)
+    vuse := classify_v_group(pf.body, aliases, Dict.new(), ids.len, builtins, pf.slots)
     keys := distinct_keys(vuse.field_keys)
 
     if !vuse.escapes and keys.len() == 1 {
@@ -1344,7 +1510,7 @@ fn scan_consumers(
           if is_vec {
             key := "${tid.id}:${fid.id}"
 
-            if result_consumed_typed_only(pf.body, slot.id, ids, builtins) {
+            if result_consumed_typed_only(pf.body, slot.id, Dict.new(), ids, builtins) {
               stats0
             } else {
               st := stat_of(stats0, key)
@@ -1444,12 +1610,13 @@ fn distinct_keys(keys: Vector<String>) Vector<String> {
 fn result_consumed_typed_only(
   expr: PreparedExpr,
   result_sid: Int,
+  relaxed: Dict<Int, Bool>,
   ids: RouteIds,
   builtins: BuiltinRegistry,
 ) Bool {
   singleton: Dict<Int, Bool> = Dict.new()
   singleton[result_sid] = true
-  !v_group_escapes(expr, singleton, ids, builtins)
+  !v_group_escapes(expr, singleton, relaxed, ids, builtins)
 }
 
 type FieldStoreSite = .{ key: String, value: PreparedAtom }

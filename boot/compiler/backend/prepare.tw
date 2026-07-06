@@ -102,7 +102,7 @@ pub fn prepare_backend(
   repr := analyze_typed_repr(pre.funcs, builtins, first_user_type_id())
   typed_fields := repr.typed_fields
   typed_payloads := repr.typed_payloads
-  funcs3 := route_typed_vectors(pre.funcs, builtins, typed_fields, typed_payloads)
+  funcs3 := route_typed_vectors(pre.funcs, builtins, typed_fields, typed_payloads, repr.capture_abi)
   .{
     anf: pre.anf,
     closure_captures,
