@@ -313,6 +313,25 @@ These should be visible in backend IR/planning, not hidden ad hoc in emitters.
 >    `order_by`.
 > Typed combinators (Phase 5) remain useful but secondary.
 
+> **Cross-fn typed-vector ABI — Stage 2 joint fixpoint landed (2026-07-06,
+> branch `typed-vector-crossfn-abi`).** The plan's Stage 2 as written could not
+> type the real dataframe `ColData.IntCol` (payload typing and param typing are
+> mutually circular). Resolved with a co-inductive **greatest fixpoint**
+> (`analyze_typed_repr` in typed_param_abi.tw): a typeable param stored into a
+> payload is a clean typed producer, so `int_col(values)` → `.IntCol(values)`
+> types the payload even with no direct `collect` producer. Fields stay
+> builder-only (a field store inserts no coercion; only variant payloads coerce).
+> Self-host green, 2971 tests.
+>
+> **Effect:** the dataframe Int column now gathers typed (`rt_arr__gather_i64`).
+> gather_compare @ N=1M: native gather 3 columns ~467→391ms, table.take
+> ~471→418ms. order_by breakdown @ N=1M: full order_by ~2403→2304ms; `table.take`
+> ~471→418ms. **The sort (1343ms) dominates order_by and is unchanged** — it needs
+> the typed closure env (M1b), unblocked by this work but a separate effort. One
+> residual cost: `int_col` still `unbox_i64`s its boxed param into the typed
+> payload once per column build (build path, not the order_by metric); the pending
+> `f$i64` variant emission (plan Tasks 2.3–2.5) removes it by passing typed args.
+
 > **Cross-fn typed-vector ABI — Stage 1 landed + Checkpoint A (2026-07-06,
 > branch `typed-vector-crossfn-abi`).** Stage 1 of
 > [crossfn-typed-vector-abi-plan.md](crossfn-typed-vector-abi-plan.md) added a
