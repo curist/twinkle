@@ -1182,53 +1182,32 @@ pub fn free_var_typed_local(
   false
 }
 
-// True if `slot` is bound directly from a call to a function whose typeable_return
-// holds — i.e. a typed-return call result (its physical result is PVecI64).
-fn call_result_of_typed_return(body: PreparedExpr, slot: Int, typeable_return: Dict<String, Bool>) Bool {
-  case body {
-    .Let(s, op, rest) => {
-      here := if s.id == slot {
-        case op {
-          .ACall(.AGlobalFunc(fid), _) => typeable_return.has("${fid.id}"),
-          _ => false,
-        }
-      } else {
-        false
-      }
-
-      here
-        or call_result_typed_return_branches(op, slot, typeable_return)
-        or call_result_of_typed_return(rest, slot, typeable_return)
-    },
-    _ => false,
-  }
-}
-
-fn call_result_typed_return_branches(op: PreparedOp, slot: Int, typeable_return: Dict<String, Bool>) Bool {
-  case op {
-    .AIf(_, then_e, else_e) => call_result_of_typed_return(then_e, slot, typeable_return)
-      or call_result_of_typed_return(else_e, slot, typeable_return),
-    .AMatch(_, arms) => {
-      for arm in arms {
-        if call_result_of_typed_return(arm.body, slot, typeable_return) {
-          return true
-        }
-      }
-
-      false
-    },
-    .ALoop(inner) => call_result_of_typed_return(inner, slot, typeable_return),
-    .ADefer(inner) => call_result_of_typed_return(inner, slot, typeable_return),
-    _ => false,
-  }
-}
-
-// Unified predicate: will `slot` physically be a PVecI64 after route_func runs?
-// True for a typed payload read (consumed typed-only), a typed field read, a
-// typed-return call result (consumed typed-only), or a typed builder-candidate
-// local. Used for capture support (M1b) and typed-return call-result eligibility.
-// Pass an empty `typeable_return` to exclude the call-result case (e.g. when
-// computing typeable_return itself, to avoid a return-chain circularity).
+// Will `slot` physically be a PVecI64 after route_func runs? This is now largely
+// a projection of the GROUND-TRUTH eligibility: it delegates to compute_eligible_v
+// (the same function route_func uses) and asks whether `slot` lands in eligible_v.
+// Previously this re-derived a single-slot approximation of that decision, which
+// drifted from route_func on multi-use alias groups, gather results, and copy
+// chains (the C2/B5 mismatch class). Delegating removes the drift for every
+// category compute_eligible_v covers: builder candidates, typed field/payload
+// reads, typed-return call results, and typed gather results.
+//
+// Deliberate differences from route_func's own call, both sound:
+//   - Empty `capture_abi`: this query cannot see the capture ABI (it is computed
+//     from these very queries), so relaxed captures / cap_slots are excluded.
+//     route_func uses the real capture_abi, so route_func.eligible_v is a SUPERSET
+//     of the delegated result — a query-true slot is always routed typed, keeping
+//     the capture-support and return checks conservative.
+//   - `typeable_return`: threaded from the caller. Pass an empty map to exclude
+//     the typed-return call-result category (return_is_typed does this to break
+//     the return-chain circularity).
+//
+// The one category compute_eligible_v(empty capture_abi) cannot answer is a
+// builder candidate whose ONLY escape is the capture under support-analysis: that
+// needs the free var's own capture relaxed (free_var_typed_local passes
+// `relaxed = aliases`), the provisional-capture bootstrapping the design folds
+// into the fixpoint in a later step. Until then it stays an explicit OR so the
+// M1b support check does not regress. Adding it keeps this a superset of the old
+// oracle, so no previously-typed slot is dropped.
 pub fn slot_typed_after_route(
   pf: PreparedFunc,
   slot: Int,
@@ -1238,24 +1217,17 @@ pub fn slot_typed_after_route(
   typed_payloads: Dict<String, Bool>,
   typeable_return: Dict<String, Bool>,
 ) Bool {
-  for sid in collect_typed_payload_reads(pf.body, typed_payloads, pf.slots, []) {
-    if sid == slot and result_consumed_typed_only(pf.body, slot, Dict.new(), ids, builtins) {
-      return true
-    }
-  }
-
-  for sid in collect_typed_field_reads(pf.body, typed_fields, []) {
-    if sid == slot {
-      return true
-    }
-  }
-
-  if call_result_of_typed_return(pf.body, slot, typeable_return)
-    and result_consumed_typed_only(pf.body, slot, Dict.new(), ids, builtins) {
-    return true
-  }
-
-  free_var_typed_local(pf, slot, ids, builtins, typed_fields, typed_payloads)
+  sets := compute_eligible_v(
+    pf,
+    ids,
+    builtins,
+    typed_fields,
+    typed_payloads,
+    Dict.new(),
+    typeable_return,
+  )
+  sets.eligible_v.has(slot)
+    or free_var_typed_local(pf, slot, ids, builtins, typed_fields, typed_payloads)
 }
 
 fn classify_expr(
