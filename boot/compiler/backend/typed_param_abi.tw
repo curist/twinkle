@@ -24,8 +24,8 @@
 
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotId}
 use compiler.backend.route_typed_vec.{
-  RouteIds, aliases_for, analyze_typed_fields, analyze_typed_payloads, build_copy_map, route_ids,
-  slot_typed_after_route, v_group_typeable,
+  RouteIds, aliases_for, analyze_typed_fields, analyze_typed_payloads, build_copy_map,
+  materialize_slot_repr, route_ids, slot_typed_after_route, v_group_typeable,
 }
 use compiler.backend.tailify.{prep_op_diverges}
 use compiler.builtins.{BuiltinRegistry}
@@ -164,40 +164,54 @@ fn make_closure_sites_op(op: PreparedOp, acc: Vector<MakeClosureSite>) Vector<Ma
   }
 }
 
-// Per-lambda typeable capture indices (M1b). A capture index is typed iff BOTH:
-//   (1) the capture param is read typed-only inside the closure body (same
-//       predicate as a param — a capture is a prepended param), AND
-//   (2) at EVERY AMakeClosure site constructing that lambda, the enclosing free
-//       var feeding the capture is a typed LOCAL producer (free_var_typed_local).
-// Condition (2) is the load-bearing soundness gate: without it, a capture would
-// be typed while the stored free var is a boxed PVec (a function return, a param,
-// a combinator result), and the trampoline downcast to PVecI64 would trap.
-pub fn analyze_typed_captures(
+// Condition 1 (M1b): per-lambda capture indices read typed-only inside the
+// closure body — the same predicate as a param, since a capture is a prepended
+// param. This set is independent of the capture ABI, so it is computed once and
+// reused as both the provisional fixpoint seed and the ceiling the support check
+// filters down from.
+pub fn condition1_capture_candidates(
   funcs: Vector<PreparedFunc>,
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
-  typeable_return: Dict<String, Bool>,
 ) Dict<String, Vector<Int>> {
-  ids := route_ids(builtins)
-
-  // Condition 1: capture indices read typed-only inside each lambda.
-  cand: Dict<String, Dict<Int, Bool>> = Dict.new()
+  out: Dict<String, Vector<Int>> = Dict.new()
 
   for pf in funcs {
-    m: Dict<Int, Bool> = Dict.new()
+    idxs: Vector<Int> = []
 
     for cap, i in pf.captures {
       if param_uses_typed_only(pf, cap.id, builtins, typed_fields, typed_payloads) {
-        m[i] = true
+        idxs = .append(i)
       }
     }
 
-    if m.keys().len() > 0 {
-      cand["${pf.func_id.id}"] = m
+    if idxs.len() > 0 {
+      out["${pf.func_id.id}"] = idxs
     }
   }
 
+  out
+}
+
+// Per-lambda typeable capture indices (M1b). A capture index is typed iff BOTH:
+//   (1) it is a Condition-1 candidate (passed in as `cand`), AND
+//   (2) at EVERY AMakeClosure site constructing that lambda, the enclosing free
+//       var feeding the capture is physically PVecI64 in the enclosing function,
+//       looked up in the materialized `slot_repr` (`"${func_id}:${slot_id}"`).
+// Condition (2) is the load-bearing soundness gate: without it, a capture would
+// be typed while the stored free var is a boxed PVec (a function return, a param,
+// a combinator result), and the trampoline downcast to PVecI64 would trap.
+//
+// `slot_repr` is materialized (route_typed_vec.materialize_slot_repr) from the
+// PREVIOUS round's capture_abi, so the support check sees relaxed captures — a
+// captured column typed only because its own capture is not an escape (C2)
+// resolves through the enclosing fixpoint instead of being rejected outright.
+pub fn analyze_typed_captures(
+  funcs: Vector<PreparedFunc>,
+  cand: Dict<String, Vector<Int>>,
+  slot_repr: Dict<String, Bool>,
+) Dict<String, Vector<Int>> {
   // Condition 2: every construction site's free var must be a typed local.
   unsupported: Dict<String, Dict<Int, Bool>> = Dict.new()
   seen: Dict<String, Bool> = Dict.new()
@@ -210,19 +224,11 @@ pub fn analyze_typed_captures(
       seen[lkey] = true
 
       case cand[lkey] {
-        .Some(m) => {
-          for i in m.keys() {
+        .Some(idxs) => {
+          for i in idxs {
             supported := i >= 0
               and i < site.free_vars.len()
-              and slot_typed_after_route(
-                pf,
-                site.free_vars[i].id,
-                ids,
-                builtins,
-                typed_fields,
-                typed_payloads,
-                typeable_return,
-              )
+              and slot_repr.has("${pf.func_id.id}:${site.free_vars[i].id}")
 
             if !supported {
               u := case unsupported[lkey] {
@@ -241,27 +247,27 @@ pub fn analyze_typed_captures(
 
   out: Dict<String, Vector<Int>> = Dict.new()
 
-  for lkey, m in cand {
+  for lkey, idxs in cand {
     // A lambda with no observed construction site cannot be verified — drop it.
     if !seen.has(lkey) {
       continue
     }
 
-    idxs: Vector<Int> = []
+    keep: Vector<Int> = []
 
-    for i in m.keys() {
+    for i in idxs {
       unsup := case unsupported[lkey] {
         .Some(u) => u.has(i),
         .None => false,
       }
 
       if !unsup {
-        idxs = .append(i)
+        keep = .append(i)
       }
     }
 
-    if idxs.len() > 0 {
-      out[lkey] = idxs
+    if keep.len() > 0 {
+      out[lkey] = keep
     }
   }
 
@@ -444,9 +450,56 @@ pub fn analyze_typed_repr(
     }
   }
 
-  // Capture typeability uses the converged typed sets + the return ABI (so a
-  // capture of a typed-return call result — e.g. `keys := as_ints(col)` — is
-  // supported). Computed once here (not part of the payload/param fixpoint).
-  capture_abi := analyze_typed_captures(funcs, builtins, tf, tpay, abi.typeable_return)
+  // Capture typeability is a pure downstream product of the converged typed sets
+  // + return ABI: nothing in the param/payload/return fixpoint above reads
+  // capture_abi, so resolving it as an inner greatest-fixpoint here is equivalent
+  // to folding it into one loop (its inputs are already stable).
+  //
+  // The support check needs to see RELAXED captures — a captured column is typed
+  // only because its own capture into the closure is not an escape (C2). So this
+  // iterates: materialize slot_repr from the current capture_abi, filter the
+  // Condition-1 ceiling by it, and repeat. Seeded with the full Condition-1 set
+  // (provisional-optimistic) and monotonically shrinking, because materialize is
+  // monotone in capture_abi (more relaxed captures -> more eligible_v), so
+  // `cand ∩ Cond2(materialize(·))` only loses entries once a support check fails.
+  // Only closure-constructing funcs are materialized (the only slot_repr keys the
+  // support check queries), keeping the per-round cost proportional to the
+  // closure surface.
+  ids := route_ids(builtins)
+  cand := condition1_capture_candidates(funcs, builtins, tf, tpay)
+
+  closure_funcs: Vector<PreparedFunc> = []
+
+  for pf in funcs {
+    if collect_make_closure_sites(pf.body, []).len() > 0 {
+      closure_funcs = .append(pf)
+    }
+  }
+
+  capture_abi := cand
+  cap_round := 0
+  cap_done := false
+
+  for !cap_done {
+    slot_repr := materialize_slot_repr(
+      closure_funcs,
+      ids,
+      builtins,
+      tf,
+      tpay,
+      capture_abi,
+      abi.typeable_return,
+    )
+    new_cap := analyze_typed_captures(funcs, cand, slot_repr)
+
+    if param_maps_equal(new_cap, capture_abi) or cap_round >= cap {
+      capture_abi = new_cap
+      cap_done = true
+    } else {
+      capture_abi = new_cap
+      cap_round = cap_round + 1
+    }
+  }
+
   .{ typed_fields: tf, typed_payloads: tpay, param_abi: abi, capture_abi }
 }

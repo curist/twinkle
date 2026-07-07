@@ -369,6 +369,13 @@ fn compute_eligible_v(
   //     stores/reads typed. A gather result can itself feed another gather, so
   //     iterate to a fixpoint (bounded by slot count). Reaching an erased
   //     boundary from here is coerced (boxed) by emit, preserving the invariant.
+  //
+  //     Group-aware: `gather_i64`'s result is physically PVecI64, so a plain copy
+  //     of it (`ga := amounts.gather(sorted)` binds the call result into a temp
+  //     then copies it into the named local) must retype too, else the copy is an
+  //     un-coerced PVecI64 -> PVec store. Like the field-read case (2b) this is
+  //     unconditional — the produced value is already PVecI64, and any real
+  //     (non-copy) boundary in the group is a declared emit coercion site.
   gather_changed := true
   gather_steps := 0
 
@@ -377,9 +384,11 @@ fn compute_eligible_v(
     new_results := collect_gather_results(pf.body, eligible_v, ids.gather, [])
 
     for sid in new_results {
-      if !eligible_v.has(sid) {
-        eligible_v[sid] = true
-        gather_changed = true
+      for a in aliases_for(sid, copy_map).keys() {
+        if !eligible_v.has(a) {
+          eligible_v[a] = true
+          gather_changed = true
+        }
       }
     }
 
@@ -449,6 +458,46 @@ fn route_func(
   }
 
   pf
+}
+
+// Whole-program slot_repr projection: for every function in `funcs`, run the
+// GROUND-TRUTH compute_eligible_v under the given ABI facts and record each
+// eligible_v slot as `"${func_id}:${slot_id}"`. This is the materialized plan the
+// capture-support fixpoint queries — compute_eligible_v runs once per func per
+// round here, not once per support query, and both the query and route_func see
+// the SAME eligibility (same function, same capture_abi) by construction.
+//
+// Callers pass only the funcs whose eligibility they need to query (the
+// closure-constructing functions), so this stays proportional to the closure
+// surface, not the whole module.
+pub fn materialize_slot_repr(
+  funcs: Vector<PreparedFunc>,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+  capture_abi: Dict<String, Vector<Int>>,
+  typeable_return: Dict<String, Bool>,
+) Dict<String, Bool> {
+  out: Dict<String, Bool> = Dict.new()
+
+  for pf in funcs {
+    sets := compute_eligible_v(
+      pf,
+      ids,
+      builtins,
+      typed_fields,
+      typed_payloads,
+      capture_abi,
+      typeable_return,
+    )
+
+    for sid in sets.eligible_v.keys() {
+      out["${pf.func_id.id}:${sid}"] = true
+    }
+  }
+
+  out
 }
 
 // ── Candidate collection ────────────────────────────────────────────
