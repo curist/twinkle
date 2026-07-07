@@ -196,7 +196,20 @@ fn all_in(keys: Vector<String>, set: Dict<String, Bool>) Bool {
   true
 }
 
-fn route_func(
+// The physical-typedness decision for one function: which slots become PVecI64
+// (eligible_v) and which hold the erased anyref builder handle (eligible_b),
+// plus whether the function exposes a physical PVecI64 return ABI. This is the
+// GROUND TRUTH eligibility computation, extracted pure from route_func so the
+// same decision can be materialized into the whole-program plan and queried by
+// the analyses (replacing the drifting slot_typed_after_route oracle). It reads
+// only its inputs and the func body — no mutation of pf.
+type EligibleSets = .{
+  eligible_v: Dict<Int, Bool>,
+  eligible_b: Dict<Int, Bool>,
+  has_phys_return: Bool,
+}
+
+fn compute_eligible_v(
   pf: PreparedFunc,
   ids: RouteIds,
   builtins: BuiltinRegistry,
@@ -204,9 +217,11 @@ fn route_func(
   typed_payloads: Dict<String, Bool>,
   capture_abi: Dict<String, Vector<Int>>,
   typeable_return: Dict<String, Bool>,
-) PreparedFunc {
+) EligibleSets {
+  empty: EligibleSets = .{ eligible_v: Dict.new(), eligible_b: Dict.new(), has_phys_return: false }
+
   if prepared_depth_exceeds(pf.body, 512) {
-    return pf
+    return empty
   }
 
   // 1. Collect (v, b) candidates: v = builder_freeze(b) where v: Vector<Int>.
@@ -235,7 +250,7 @@ fn route_func(
   if cands.len() == 0
     and field_read_sids.len() == 0 and payload_read_sids.len() == 0 and call_result_sids.len() == 0
     and cap_slots.len() == 0 and !has_phys_return {
-    return pf
+    return empty
   }
 
   // 2. Keep only candidates whose v never escapes except by direct return
@@ -370,6 +385,31 @@ fn route_func(
 
     gather_steps = gather_steps + 1
   }
+
+  .{ eligible_v, eligible_b, has_phys_return }
+}
+
+fn route_func(
+  pf: PreparedFunc,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+  capture_abi: Dict<String, Vector<Int>>,
+  typeable_return: Dict<String, Bool>,
+) PreparedFunc {
+  sets := compute_eligible_v(
+    pf,
+    ids,
+    builtins,
+    typed_fields,
+    typed_payloads,
+    capture_abi,
+    typeable_return,
+  )
+  eligible_v := sets.eligible_v
+  eligible_b := sets.eligible_b
+  has_phys_return := sets.has_phys_return
 
   if eligible_v.keys().len() == 0 {
     return pf
