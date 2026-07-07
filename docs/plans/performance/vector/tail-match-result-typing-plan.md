@@ -4,6 +4,8 @@
 
 **Goal:** Make `return_is_typed(as_ints)` fire for tail-position match/if accessors so the function carries a physical `PVecI64` return ABI end-to-end, dropping the dataframe `order_by` sort (~1343ms).
 
+> **STATUS 2026-07-07 — DONE except the sort win.** Tasks 1, 1.5, 2, 3 landed (commits ac30af11, fb5dd236, 7cc6556a); accessor returns type, 2979 tests pass, self-host fixed point. The dataframe sort did **not** drop: the comparator captures the accessor result into a closure, and comparator-capture typing does not type a captured call-result/payload source (capture circularity). See the design doc's *Outcome* section. Dropping the sort is a follow-on feature (type captured call-result/payload sources); brainstorm pending.
+
 **Architecture:** Three cooperating boot-backend pieces (no stage0 parity — semantics-preserving optimization): (1) `is_noreturn` builtin metadata + a noreturn-aware `PreparedExpr` divergence predicate `prep_diverges`; (2) make `return_atom_slots` skip the dead body after an all-diverging op, so the `error` arm's atom and the dead trailing result atom stop poisoning the return-atom set; (3) a gated `tailify` canonicalization that rewrites a tail control-flow result's value-producing arms to `Return`, so the payload read flows through `.Return => false` (consumed-typed-only) with **no** escape relaxation.
 
 **Tech Stack:** Twinkle boot compiler. Verify: `make bundle-cli` (self-host fixed point) + `make boot-test` (~2973) + dataframe repro.
@@ -213,6 +215,22 @@ git commit -m "backend: noreturn-aware divergence + dead-body skip in return_ato
 
 ---
 
+## Task 1.5: alias-group-aware call-result/payload eligibility (discovered during T1 spike)
+
+The T1 spike (`tv_mkfn.tw` — accessor + `mk()` producer) validated that `as_ints`
+retypes correctly in isolation, but the **caller** `keys := as_ints(mk())` produced
+invalid Wasm: `route_func` typed the call-result slot but left its copy (`keys`)
+boxed, so the copy store was an un-coerced `PVecI64 -> PVec` mismatch. Root cause:
+sections 2c (payload) and 2c'' (call-result) in `route_func` marked only the single
+source slot `eligible_v`, unlike section 2 (builder candidates) which propagates
+across the `aliases_for` copy group. Fixed by making 2c/2c'' group-aware —
+`aliases_for(sid, copy_map)` + a whole-group `!v_group_escapes` gate, retyping every
+alias. This both restores validity and types the copy (caller reads route to
+`get_i64`/`len_i64` — the actual win). Committed with T1. (Note: the plan's original
+`/tmp/asints_ret.tw` spike stays boxed due to its top-level-global producer — the
+documented producer-cleanliness contingency; use the `mk()`-function form to observe
+retyping.)
+
 ## Task 2: `tailify` canonicalization (store-form accessors)
 
 Now handle the idiomatic `=> v` (store) form by rewriting a tail control-flow result's value-producing arms to `Return`, so the payload read flows through `.Return => false`.
@@ -369,14 +387,23 @@ fn with_default(c: Col, d: Vector<Int>) Vector<Int> {
   case c { .IntCol(v) => v, _ => d }
 }
 
-// let-spine in arm + error in non-tail position within a diverging arm
+// let-spine in arm + diverging arm
 fn first_or_die(c: Col) Vector<Int> {
   case c {
     .IntCol(v) => { w := v; w },
-    _ => { error("no"); Other; [] },
+    _ => error("no"),
   }
 }
 ```
+
+**Typedness expectations (assert values, not typing):** `as_ints` and `first_or_die`
+are the shapes that *do* get a `PVecI64` return. `pick` (returns params) and
+`with_default` (mixed arm: typed payload + param `d`) **stay boxed** — a returned
+param fails `slot_typed_after_route`, so `return_is_typed` is false. They verify the
+conservative path stays *correct*, not that they type. (Aside: in `with_default`,
+`route_func` still types the `IntCol` payload `v` independently, then the landed
+return-coercion gate re-boxes it at the boxed return — correct, a tiny O(n) box; a
+good exercise of the emit foundation.)
 
 Assert (fill in the real helper): `as_ints(.IntCol(collect i in range(4){i}))[2] == 2`; `pick(1, xs, ys)[0] == ys[0]`; `with_default(.Other, xs)[1] == xs[1]`; `first_or_die(.IntCol(xs))[3] == xs[3]`. Run: `target/twk run boot/tests/tail_match_result_typing_test.tw`.
 

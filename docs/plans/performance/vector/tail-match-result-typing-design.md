@@ -1,6 +1,7 @@
 # Tail-match result typing for typed vectors
 
-**Status:** design (approved 2026-07-07, review folded in), not yet implemented
+**Status:** IMPLEMENTED 2026-07-07 (returns typed + tested); dataframe sort win
+blocked by a separate capture-typing gap — see *Outcome*.
 **Branch:** `typed-vector-crossfn-abi`
 **Depends on:** the landed `Expected{vt, mono}` emit-coercion foundation
 (`expected-vt-coercion-design.md`, commits 7b91f250..c51ce496)
@@ -193,6 +194,45 @@ op all-diverges, so validity never depends on the polymorphic-stack rule.
   works). Correct long-term, but touches shared frontend lowering, exhaustiveness,
   DCE, and emit (stage0 parity) — a much larger blast radius than this feature
   warrants. `is_noreturn` metadata is the pragmatic interim.
+
+## Outcome (2026-07-07, implemented)
+
+Landed on `typed-vector-crossfn-abi` (commits ac30af11, fb5dd236, 7cc6556a),
+self-host fixed point, 2979 boot tests pass:
+
+- **Typed accessor returns work.** `as_ints` (store form and explicit-return form)
+  and the real dataframe `column.as_ints` return physical `PVecI64` (verified in
+  WAT). Three cooperating pieces landed as designed, plus a **fall-through guard**
+  discovered during implementation: tailify only rewrites arms when at least one arm
+  still structurally falls through (stores the result slot), so an all-arms-return
+  tail can't orphan the trailing atom into a `DeadValue` placeholder the backend
+  verifier rejects. (Separately, `_ => return error(...)` — an explicit `return` of a
+  `Never` value as a match arm in a ref-returning function — is a **pre-existing**
+  verifier limitation, unrelated to this work; use the idiomatic `_ => error(...)`.)
+- **Discovered + fixed: group-aware caller routing.** The spike showed `route_func`
+  typed a call-result slot but not its copy, producing invalid Wasm. Fixed by making
+  the payload (2c) and call-result (2c'') eligibility alias-group-aware
+  (`aliases_for` + whole-group `!v_group_escapes`), mirroring section 2. Documented
+  in the plan as Task 1.5.
+
+**The dataframe `order_by` sort did NOT drop (~1318ms, ≈ baseline ~1343ms).** Typing
+the accessor return is *necessary but not sufficient*. The sort comparator
+`fn(a,b){ Int.compare(amounts[a], amounts[b]) }` **captures** `amounts` (the accessor
+result) into a closure, and comparator-capture typing does not type a captured
+call-result or payload source — only a captured typed *field* read — because of a
+capture-typing circularity: a free var is `slot_typed_after_route` (consumed
+typed-only) iff its capture is not an escape iff the capture is in `relaxed` iff
+`capture_abi` includes it iff the free var is `slot_typed_after_route`. With an empty
+`relaxed`, `op_group_escapes` (route_typed_vec.tw:942) treats the capture as an
+escape, so the free var is boxed and the call result is `box_i64`'d at the call site.
+Confirmed the capture stays boxed even for a **direct payload** source (no call), so
+this is the known "typed-storage read wall / escaping dataframe columns" frontier,
+not a regression.
+
+**Next lever (separate feature, brainstorm pending):** type captured
+call-result/payload sources like captured field reads — resolve the
+`slot_typed_after_route` / `capture_abi` capture circularity (e.g. a capture fixpoint
+in `analyze_typed_repr`). This is the actual mechanism that drops the sort.
 
 ## Verify loop
 
