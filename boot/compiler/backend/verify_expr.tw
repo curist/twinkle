@@ -277,9 +277,10 @@ fn verify_op(ctx: VerifyCtx, result_info: SlotInfo, op: PreparedOp) Result<Void,
       try ctx.verify_record_field_payloads(result_info, fields, "record field")
       .Ok({})
     },
-    .ARecordGet(target, _, _) => {
+    .ARecordGet(target, fid, _) => {
       try ctx.verify_atom_use(target, "record get target")
-      ctx.require_local_repr_if_local(target, [.TypedRef(.Void)], "record get target")
+      try ctx.require_local_repr_if_local(target, [.TypedRef(.Void)], "record get target")
+      ctx.verify_record_get_result_repr(result_info, target, fid)
     },
     .ARecordUpdate(base, fid, value, _, _) => {
       try ctx.verify_atom_use(base, "record update base")
@@ -762,19 +763,59 @@ fn pvec_named(vt: ValType) String? {
   }
 }
 
-fn pvec_repr_mismatch(ctx: VerifyCtx, atom: PreparedAtom, expected_vt: ValType) Bool {
-  expected_name := case pvec_named(expected_vt) {
-    .Some(n) => n,
-    .None => return false,
-  }
-  actual_name := case ctx.infer_atom_val_type(atom) {
-    .Some(vt) => case pvec_named(vt) {
-      .Some(n) => n,
-      .None => return false,
+// True iff both val_types are typed-vector refs (PVec/PVecI64) that name
+// different physical reprs — the exact PVecI64<->PVec mismatch that is invalid
+// Wasm across a non-coercing edge. Non-pvec types (or one side non-pvec) yield
+// false: those are handled by the generic repr checks.
+fn pvec_vt_mismatch(actual_vt: ValType, expected_vt: ValType) Bool {
+  case pvec_named(expected_vt) {
+    .Some(expected_name) => case pvec_named(actual_vt) {
+      .Some(actual_name) => expected_name != actual_name,
+      .None => false,
     },
-    .None => return false,
+    .None => false,
   }
-  expected_name != actual_name
+}
+
+fn pvec_repr_mismatch(ctx: VerifyCtx, atom: PreparedAtom, expected_vt: ValType) Bool {
+  case ctx.infer_atom_val_type(atom) {
+    .Some(vt) => pvec_vt_mismatch(vt, expected_vt),
+    .None => false,
+  }
+}
+
+// Non-coercing record-get result edge: `struct.get` yields the field's physical
+// type and the caller stores it into the result slot with no coercion (see
+// emit_record_get). So the result slot's physical repr must equal the field's.
+// A PVecI64 field read into a boxed PVec result slot (the pre-B5-fix shape) is
+// invalid Wasm; layout_of consults env.typed_vector_fields (set from the routed
+// module before verify), so the field val_type here reflects routing.
+fn verify_record_get_result_repr(
+  ctx: VerifyCtx,
+  result_info: SlotInfo,
+  target: PreparedAtom,
+  fid: FieldId,
+) Result<Void, String> {
+  record_mono := case ctx.infer_atom_mono(target) {
+    .Some(m) => m,
+    .None => return .Ok({}),
+  }
+  field_vt := case record_field_val_type(record_mono, fid.id, ctx.env) {
+    .Some(vt) => vt,
+    .None => return .Ok({}),
+  }
+
+  if pvec_vt_mismatch(result_info.wasm_type, field_vt) {
+    return fail_slot(
+      ctx.pf,
+      result_info,
+      "record get result typed-vector representation mismatch: field yields ${val_type_name(
+        field_vt,
+      )} but result slot is ${val_type_name(result_info.wasm_type)}",
+    )
+  }
+
+  .Ok({})
 }
 
 fn verify_record_field_payloads(
