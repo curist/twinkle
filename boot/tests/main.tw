@@ -129,6 +129,7 @@ use .suites.stdlib_testing_suite
 use .suites.stdlib_tuple_suite
 use .suites.string_edge_cases_suite
 use .suites.string_literal_suite
+use .suites.tail_match_result_typing_suite
 use .suites.task_suite
 use .suites.type_registry_suite
 use .suites.typed_param_abi_suite
@@ -208,6 +209,7 @@ runner.run_all([
   backend_verify_suite.suite(),
   repr_policy_suite.suite(),
   route_typed_vec_suite.suite(),
+  tail_match_result_typing_suite.suite(),
   typed_param_abi_suite.suite(),
   wat_suite.suite(),
   codegen_emit_suite.suite(),
