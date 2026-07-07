@@ -27,6 +27,7 @@ use compiler.backend.route_typed_vec.{
   RouteIds, aliases_for, analyze_typed_fields, analyze_typed_payloads, build_copy_map, route_ids,
   slot_typed_after_route, v_group_typeable,
 }
+use compiler.backend.tailify.{prep_op_diverges}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.mono_type.{MonoType}
 
@@ -285,7 +286,7 @@ fn return_is_typed(
     return false
   }
 
-  slots := return_atom_slots(pf.body, [])
+  slots := return_atom_slots(pf.body, [], builtins)
 
   if slots.len() == 0 {
     return false
@@ -303,11 +304,21 @@ fn return_is_typed(
 // Collect the slot ids of every returned atom: tail `.Atom(ASlot)` and
 // `.Return(.Some(ASlot))`. A non-slot return atom (literal, global) yields no
 // slot and makes the caller treat the return as not-typed (empty => false).
-fn return_atom_slots(expr: PreparedExpr, acc: Vector<Int>) Vector<Int> {
+fn return_atom_slots(expr: PreparedExpr, acc: Vector<Int>, reg: BuiltinRegistry) Vector<Int> {
   case expr {
     .Let(_, op, body) => {
-      acc2 := return_atom_slots_op(op, acc)
-      return_atom_slots(body, acc2)
+      acc2 := return_atom_slots_op(op, acc, reg)
+
+      // If the op never falls through (all arms diverge, or a noreturn call), the
+      // body is dead code — do not collect its atoms. This drops both the dead
+      // trailing `Atom(r)` after an all-diverging match and a diverging arm's own
+      // `Let(t, error(...), Atom(t))` tail. A value-producing arm still reaches
+      // its `Return(Some(v))` (collected below) because that arm does not diverge.
+      if prep_op_diverges(op, reg) {
+        acc2
+      } else {
+        return_atom_slots(body, acc2, reg)
+      }
     },
     .Atom(a) => append_slot(a, acc),
     .Return(.Some(a)) => append_slot(a, acc),
@@ -315,23 +326,23 @@ fn return_atom_slots(expr: PreparedExpr, acc: Vector<Int>) Vector<Int> {
   }
 }
 
-fn return_atom_slots_op(op: PreparedOp, acc: Vector<Int>) Vector<Int> {
+fn return_atom_slots_op(op: PreparedOp, acc: Vector<Int>, reg: BuiltinRegistry) Vector<Int> {
   case op {
     .AIf(_, then_e, else_e) => {
-      acc2 := return_atom_slots(then_e, acc)
-      return_atom_slots(else_e, acc2)
+      acc2 := return_atom_slots(then_e, acc, reg)
+      return_atom_slots(else_e, acc2, reg)
     },
     .AMatch(_, arms) => {
       cur := acc
 
       for arm in arms {
-        cur = return_atom_slots(arm.body, cur)
+        cur = return_atom_slots(arm.body, cur, reg)
       }
 
       cur
     },
-    .ALoop(inner) => return_atom_slots(inner, acc),
-    .ADefer(inner) => return_atom_slots(inner, acc),
+    .ALoop(inner) => return_atom_slots(inner, acc, reg),
+    .ADefer(inner) => return_atom_slots(inner, acc, reg),
     _ => acc,
   }
 }

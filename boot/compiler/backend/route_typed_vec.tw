@@ -301,17 +301,30 @@ fn route_func(
   //     it typed. Guard with the same consumer-escape check the field consumer
   //     scan uses.
   for sid in payload_read_sids {
-    if result_consumed_typed_only(pf.body, sid, relaxed, ids, builtins) {
-      eligible_v[sid] = true
+    aliases := aliases_for(sid, copy_map)
+
+    // Group-aware: a typed source copied into another local (`x := payload`)
+    // must retype the copy too, else the copy store is an un-coerced
+    // PVecI64 -> PVec mismatch. Only retype when the whole alias group is
+    // consumed typed-only (mirrors the builder-candidate handling above).
+    if !v_group_escapes(pf.body, aliases, relaxed, ids, builtins) {
+      for a in aliases.keys() {
+        eligible_v[a] = true
+      }
     }
   }
 
   // 2c''. Typed-return call results (typed-return bridge): a slot bound from a
   //       call to a typed-return function is physically PVecI64 when consumed
-  //       typed-only, so it retypes like a payload read.
+  //       typed-only, so it retypes like a payload read. Group-aware for the
+  //       same reason: `keys := as_ints(col)` copies the call result into `keys`.
   for sid in call_result_sids {
-    if result_consumed_typed_only(pf.body, sid, relaxed, ids, builtins) {
-      eligible_v[sid] = true
+    aliases := aliases_for(sid, copy_map)
+
+    if !v_group_escapes(pf.body, aliases, relaxed, ids, builtins) {
+      for a in aliases.keys() {
+        eligible_v[a] = true
+      }
     }
   }
 

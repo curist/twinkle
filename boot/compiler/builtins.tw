@@ -354,6 +354,15 @@ pub fn entry(reg: BuiltinRegistry, func_id: FuncId) BuiltinEntry? {
   reg.by_id[func_id.id]
 }
 
+// True if the builtin never returns (its call diverges). Today only `error`
+// (canonical rt.core `trap`). Used by the noreturn-aware divergence predicate.
+pub fn is_noreturn(reg: BuiltinRegistry, fid: FuncId) Bool {
+  case reg.by_id[fid.id] {
+    .Some(e) => e.name == "error",
+    .None => false,
+  }
+}
+
 pub fn with_canonical(reg: BuiltinRegistry, canonical: String, internal: String) BuiltinRegistry {
   entry := case reg.by_name[internal] {
     .Some(e) => e,
