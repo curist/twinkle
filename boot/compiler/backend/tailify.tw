@@ -67,17 +67,61 @@ fn tailify_func(pf: PreparedFunc, reg: BuiltinRegistry) PreparedFunc {
 // and rewrite that op's arms. Other tail shapes are left unchanged. The structural
 // shape (r's sole use is the immediately-following trailing atom) guarantees r is
 // used exactly once, so per-arm Return is semantics-preserving.
+//
+// Guard: only commit the rewrite if at least one arm still structurally falls
+// through (stores r), so the dead trailing `Atom(ASlot r)` still references an
+// assigned slot. If rewriting every arm to Return would leave r unassigned (all
+// value arms, or an explicit-return diverging arm), revert to the store form —
+// which keeps r assigned and stays correct (just boxed). The dataframe accessors
+// keep their `error(...)` value arm as a fall-through store, so they still type.
 fn tailify_spine(expr: PreparedExpr, reg: BuiltinRegistry) PreparedExpr {
   case expr {
     .Let(s, op, rest) => case rest {
       .Atom(.ASlot(s2)) => if s2.id == s.id {
-        .Let(s, tailify_result_op(op, reg), rest)
+        rewritten := tailify_result_op(op, reg)
+
+        if op_has_fallthrough_arm(rewritten) {
+          .Let(s, rewritten, rest)
+        } else {
+          .Let(s, op, rest)
+        }
       } else {
         .Let(s, op, tailify_spine(rest, reg))
       },
       _ => .Let(s, op, tailify_spine(rest, reg)),
     },
     _ => expr,
+  }
+}
+
+// True if the expression's tail structurally falls through (ends in an Atom that
+// stores the enclosing result slot) rather than a structural terminal
+// (Return/Break/Continue). A value-producing noreturn call like `error(...)` still
+// falls through structurally (its tail is an Atom), so it keeps the result slot
+// assigned even though it traps at runtime.
+fn expr_falls_through(expr: PreparedExpr) Bool {
+  case expr {
+    .Atom(_) => true,
+    .Return(_) => false,
+    .Break(_) => false,
+    .Continue => false,
+    .Let(_, _, body) => expr_falls_through(body),
+  }
+}
+
+fn op_has_fallthrough_arm(op: PreparedOp) Bool {
+  case op {
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if expr_falls_through(arm.body) {
+          return true
+        }
+      }
+
+      false
+    },
+    .AIf(_, then_e, else_e) => expr_falls_through(then_e) or expr_falls_through(else_e),
+    _ => true,
   }
 }
 
