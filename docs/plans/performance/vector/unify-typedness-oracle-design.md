@@ -1,159 +1,196 @@
-# Unify the two typed-vector typedness oracles
+# Physical representation planning + post-route verification for typed vectors
 
-**Status:** design (approved 2026-07-07), not yet implemented
+**Status:** design (approved 2026-07-07, expanded to full soundness), not implemented
 **Branch:** `typed-vector-crossfn-abi`
-**Depends on:** the landed cross-fn ABI work (accessor returns B2, group-aware
-copy propagation B3/B4, tailify) — commits ac30af11..c117dd73.
-**Unblocks:** C2 (captured payload/call-result columns) → the dataframe `order_by`
-sort win. See [boundary-tracklist.md](boundary-tracklist.md).
-
-## Problem
-
-Two functions answer the same question — "will slot S be physically `PVecI64`
-after routing?" — with two different implementations:
-
-- **`route_func`'s `eligible_v`** (route_typed_vec.tw ~250–360): the *ground truth*
-  that drives actual slot retyping. Uses `build_copy_map` + `aliases_for` for
-  builder candidates and the group-aware call-result/payload sections (2c/2c''), a
-  `relaxed` set derived from `collect_relaxed_captures(capture_abi)`, and a gather
-  fixpoint.
-- **`slot_typed_after_route`** (route_typed_vec.tw ~1180): the *query* used by
-  `return_is_typed` and `analyze_typed_captures`. Single-slot checks with an
-  **empty** `relaxed` set and a `free_var_typed_local` proxy for the builder logic.
-
-They agree on simple code but **diverge on complex multi-use groups**. The C2 spike
-(2026-07-07) proved the failure: making the analysis more aggressive typed a
-captured call-result column, but `route_func` and `slot_typed_after_route`
-disagreed on the dataframe's key column (captured into two comparators + gathered +
-copied) — `route_func` dropped the `box_i64` while the destination slot stayed
-`PVec` → **invalid Wasm** (`PVecI64`→`PVec` store mismatch). Root cause recorded in
-[boundary-tracklist.md](boundary-tracklist.md) ("Spike finding").
-
-An additional ordering gap feeds the divergence: `capture_abi` is computed **once at
-the end** of `analyze_typed_repr`'s fixpoint, so `route_func` (which runs after,
-with the final `capture_abi`) can see inputs the analyses never iterated on.
+**Depends on:** landed cross-fn ABI work (accessor returns B2, group-aware copy
+propagation B3/B4, tailify) — commits ac30af11..c117dd73.
+**Unblocks:** C2 (captured columns) → the dataframe `order_by` sort win. See
+[boundary-tracklist.md](boundary-tracklist.md).
 
 ## Goal
 
-One definition of typedness. `route_func` produces it; every other consumer queries
-the same computation, so the two views can never disagree and the store-mismatch
-class of invalid Wasm becomes structurally impossible.
+> Compute one whole-program physical representation plan for `Vector<Int>` storage
+> sites. Routing, ABI decisions, slot retyping, and typedness queries all consume
+> that plan. A post-route verifier rejects any producer/destination physical
+> mismatch not mediated by an explicit coercion.
+
+This is stronger than "unify the two oracles": it makes the `PVecI64`→`PVec` (and
+inverse) store-mismatch class **structurally unrepresentable** — not merely absent
+in the cases we tested.
+
+## Problem
+
+"Will slot S be physically `PVecI64` after routing?" is answered by two drifting
+implementations — `route_func`'s `eligible_v` (the ground truth that retypes slots)
+and `slot_typed_after_route` (the analyses' query, empty `relaxed`, single-slot).
+They diverge on complex multi-use groups. The C2 spike (2026-07-07) proved it:
+typing a captured call-result column, the two disagreed on the dataframe key column
+(captured into two comparators + gathered + copied) — `route_func` dropped the
+`box_i64` while the slot stayed `PVec` → **invalid Wasm**. Root cause in
+[boundary-tracklist.md](boundary-tracklist.md) ("Spike finding").
+
+Contributing gaps:
+- **Ordering.** `capture_abi` is computed once at the end of the
+  `analyze_typed_repr` fixpoint, so `route_func` sees inputs the analyses never
+  iterated on.
+- **Incomplete category coverage.** Only builder candidates and (post-fix)
+  call-result/payload aliases are group-aware. Field-read copies (B5) are a known,
+  still-open mismatch source. A soundness claim cannot carve any category out.
+- **No structural backstop.** Emit trusts the analysis. A conservative or buggy
+  analysis silently produces invalid Wasm rather than failing loudly.
 
 ## Design
 
-### 1. Extract `compute_eligible_v` (pure)
+### The physical representation plan
 
-Lift `route_func`'s eligibility prefix into a pure function:
+One whole-program value, computed once (at the fixpoint), consumed everywhere:
 
-```
-compute_eligible_v(
-  pf: PreparedFunc,
-  ids: RouteIds,
-  builtins: BuiltinRegistry,
-  typed_fields: Dict<String, Bool>,
-  typed_payloads: Dict<String, Bool>,
-  capture_abi: Dict<String, Vector<Int>>,
-  typeable_return: Dict<String, Bool>,
-) EligibleSets   // .{ eligible_v: Dict<Int, Bool>, eligible_b: Dict<Int, Bool> }
-```
+```tw
+type PhysRepr = { Boxed, TypedI64 }   // rt_types__PVec | rt_types__PVecI64
 
-It contains everything from `copy_map := build_copy_map(...)` through the gather
-fixpoint (the block that currently ends right before `if eligible_v.keys().len() == 0`).
-`route_func` becomes: call `compute_eligible_v` → `rewrite` → retype slots (its tail
-is unchanged). This step is **behavior-preserving for `route_func`**.
-
-### 2. `slot_typed_after_route` becomes a thin query
-
-```
-pub fn slot_typed_after_route(pf, slot, ids, builtins, typed_fields,
-                              typed_payloads, typeable_return, capture_abi) Bool {
-  compute_eligible_v(pf, ids, builtins, typed_fields, typed_payloads,
-                     capture_abi, typeable_return).eligible_v.has(slot)
+type PhysPlan = .{
+  slot_repr: Dict<String, PhysRepr>,     // "${func_id}:${slot_id}" -> repr
+  field_repr: Dict<String, PhysRepr>,    // "${tid}:${fid}"
+  payload_repr: Dict<String, PhysRepr>,  // "${tid}:${vid}:${idx}"
+  param_repr: Dict<String, PhysRepr>,    // "${func_id}:${param_idx}"
+  return_repr: Dict<String, PhysRepr>,   // "${func_id}"
+  capture_repr: Dict<String, PhysRepr>,  // "${func_id}:${capture_idx}"
 }
 ```
 
-The body drops the payload/field/call-result/`free_var_typed_local` cases entirely —
-they are subsumed by `compute_eligible_v`. Signature gains `capture_abi`. Callers
-(`return_is_typed`, `analyze_typed_captures`) thread it through. The second
-implementation is deleted, so drift is impossible by construction.
+The existing `typed_fields` / `typed_payloads` / `typeable_return` / `capture_abi`
+`Bool` maps are the current *partial* form of this — `PhysPlan` unifies and
+materializes them and adds per-`(func, slot)` `slot_repr`. `Boxed` is the default
+for anything absent.
 
-### 3. Fold `typeable_return` + `capture_abi` into the fixpoint
+### 1. `compute_eligible_v` extracted (pure) and materialized
 
-`analyze_typed_repr` currently iterates `typed_payloads`/`typeable_params` and
-computes `capture_abi` once at the end. Make both ABI products participate. Each
-round:
+Lift `route_func`'s eligibility prefix (copy_map → candidates → all source-category
+sections → gather fixpoint) into a pure
 
 ```
-tpay        = analyze_typed_payloads(funcs, builtins, first_user_tid, tp_params)
-abi         = analyze_typed_params(funcs, builtins, tf, tpay, capture_abi_prev)
-capture_abi = analyze_typed_captures(funcs, builtins, tf, tpay,
-                                     abi.typeable_return, capture_abi_prev)
-done when typeable_params AND typeable_return AND capture_abi are all stable
+compute_eligible_v(pf, ids, builtins, plan) -> EligibleSets  // .{ eligible_v, eligible_b }
 ```
 
-- `analyze_typed_params` (hence `return_is_typed`) and `analyze_typed_captures`
-  gain a `capture_abi` input, which they pass into `slot_typed_after_route`.
-- Round N uses round N−1's `capture_abi` — the standard fixpoint break.
-- Bounded by the existing round cap (`funcs.len() + 4`).
+The fixpoint's final action runs it for **every** function and writes the results
+into `plan.slot_repr`. `route_func` then just **looks up** its slots in the plan to
+rewrite + retype — it never recomputes eligibility. `slot_typed_after_route`
+collapses to `plan.slot_repr["${func}:${slot}"] == TypedI64`. The second
+implementation is deleted.
 
-### Why this is sound
+### 2. All source categories are group-aware — no carve-outs
 
-At a fixpoint, one more application of the oracle changes nothing. So when
-`route_func` runs afterward with the **final** `capture_abi`/`typeable_return`,
-`compute_eligible_v` reproduces exactly the eligibility the analyses used to derive
-those sets. **`route_func`'s view ≡ the analyses' view.** Emit never drops a box
-that the slot's physical type contradicts. The `PVecI64`→`PVec` store mismatch is
-structurally impossible.
+Every category that can produce a typed vector gets the same `aliases_for` +
+whole-group `!v_group_escapes` decision, so a *copy* of a typed source is typed iff
+its source is (the fix already applied to call-result/payload, generalized):
 
-### Expected side effect: C2 falls out
+- builder candidates (already);
+- typed field reads (**B5** — currently single-slot, the known invalid-Wasm gap);
+- typed payload reads;
+- typed-return call-results;
+- `gather`/`take`/helper results;
+- capture params / free vars;
+- direct params / returns.
 
-Because `slot_typed_after_route` now uses the full eligibility logic (proper
-`relaxed` from the fixpoint's `capture_abi`, alias groups), a captured typed-return
-call-result column becomes typeable *and* `route_func` agrees. So the dataframe key
-column should type into the comparator, and — at minimum — the `order_by` bench must
-now **validate**. Whether the sort number fully drops is the acceptance measurement,
-not a guaranteed target.
+### 3. Fold every ABI product into one fixpoint (fail-closed)
+
+`analyze_typed_repr` computes the whole `PhysPlan` as a greatest fixpoint. Each
+round derives, from the current plan: `slot_repr` (via `compute_eligible_v` per
+func), then `field/payload/param/return/capture_repr` (the ABI analyses, now plan
+consumers/producers). Round N uses round N−1's plan — the standard break.
+
+**Cap exhaustion fails closed.** If the plan has not stabilized within the round cap
+(`funcs.len() + 4`), do **not** ship the unstable plan (it may be inconsistent).
+Instead drop every not-yet-stable typed decision to `Boxed` and re-derive once, so
+the shipped plan is a proven-consistent all-conservative-where-unsure state. (A
+debug assertion can additionally flag cap exhaustion so it is noticed, not silent.)
+
+### 4. Emission is a mechanical consequence of the plan
+
+Emit inserts a coercion purely from *source `PhysRepr` vs destination `PhysRepr`*:
+`TypedI64 → Boxed` ⇒ `box_i64`; `Boxed → TypedI64` ⇒ `unbox_i64`; equal ⇒ none. No
+emit-site re-derives typedness. (This is what the landed `Expected{vt,mono}`
+coercion path already does; it now keys off the plan uniformly.)
+
+### 5. Post-route verifier — the structural backstop (build FIRST)
+
+Extend the existing backend verifier (`verify_expr.tw`, which already runs in the
+compile path and does repr-compat checks) to reject any routed IR where a producer's
+physical repr and its destination's physical repr differ without an explicit
+coercion op:
+
+- slot store vs slot physical type;
+- call arg vs callee param ABI;
+- return value vs function return ABI;
+- field / payload / capture store vs that site's physical repr;
+- no `PVecI64` into `Boxed` storage without `box_i64`; no `Boxed` into `TypedI64`
+  storage without `unbox_i64` (or a proven typed producer).
+
+Failure is an internal compiler error with a **Twinkle-level location** (func +
+slot/site), not a Wasm byte offset. This is the guarantee: even if the plan is
+conservative or a category is missed, emit cannot *silently* produce invalid Wasm —
+the build fails loudly instead.
+
+## Why this is sound
+
+1. **One definition.** Typedness has a single materialized source (`PhysPlan`);
+   there is no second implementation to drift.
+2. **Fixpoint stability.** `route_func` and the analyses consume the same converged
+   plan, so their views are identical by construction.
+3. **Fail-closed.** Non-convergence yields a conservative, consistent plan, never an
+   inconsistent one.
+4. **Verified.** The post-route verifier rejects any residual mismatch, so the
+   soundness claim does not rest on the analysis being complete — only on the
+   verifier being correct.
+
+## Staged implementation (one architecture, incremental + guarded)
+
+The verifier makes the later stages safe to land one at a time.
+
+- **Stage 1 — Post-route verifier.** Extend `verify_expr.tw` for the typed-vector
+  storage sites. Must pass on current code + all tests (no false positives). This is
+  the safety net; nothing after it can regress silently.
+- **Stage 2 — Materialize `PhysPlan` + fold the fixpoint.** Extract
+  `compute_eligible_v`; produce `slot_repr` + the ABI repr maps in one fixpoint;
+  `slot_typed_after_route` → lookup; fail-closed on cap. Behavior-preserving where
+  the two oracles already agreed; the verifier catches any place they didn't.
+- **Stage 3 — Close all category carve-outs (incl. B5).** Make every source
+  category group-aware. Verifier + self-host confirm each.
+- **Stage 4 — Enable C2 + measure.** Captured columns type; dataframe `order_by`
+  must **validate**; record the `sort idx by amount` number; guard bench stays fast.
 
 ## Risks
 
-- **Convergence (mixed monotonicity).** `typeable_params` shrinks from an optimistic
-  seed; `capture_abi`/`typeable_return` grow from empty. The existing round cap
-  guarantees termination at a conservative state (worst case: some vectors stay
-  boxed — always *safe*, never invalid). Verify empirically: self-host fixed point,
-  and confirm no oscillation (stabilizes within the cap on boot + the dataframe).
-- **Performance.** `compute_eligible_v` recomputed per-func per-round is heavier than
-  today's single end-pass (each call does `build_copy_map` + escape walks + the
-  gather fixpoint). Correctness first; measure boot compile time with
-  `TWINKLE_TIMINGS=1`. If it regresses materially, cache `compute_eligible_v` results
-  per round (keyed by func id) — the inputs are constant within a round.
+- **Convergence (mixed monotonicity).** Params shrink from optimistic;
+  capture/return grow from empty. Bounded by the round cap; fail-closed handles
+  non-convergence soundly. Verify: self-host fixed point, no oscillation on boot +
+  dataframe.
+- **Performance.** Materializing the plan replaces per-query recompute with one
+  compute-per-func-per-round; net likely neutral-to-better than recomputing in
+  `slot_typed_after_route`. Measure boot compile time (`TWINKLE_TIMINGS=1`).
+- **Verifier false positives** on valid current code (Stage 1 gate catches these
+  before it becomes a trusted net).
 
 ## Acceptance / testing
 
-- **Self-host fixed point** — boot compiles itself under the unified oracle (the
-  strongest whole-program consistency check).
-- **2979+ boot tests pass.**
-- **The dataframe `order_by` bench validates** (no invalid Wasm) — the direct proof
-  the two views agree. Record the `sort idx by amount` number.
-- **Guard bench** (`typed_payload_capture_guard.tw`) stays fast (no per-read-unbox
-  miscompile).
-- **New regression:** a `Vector<Int>` column captured into two comparators and
-  gathered compiles validly and returns correct values (the exact shape that broke
-  in the spike).
+- Self-host fixed point + 2979+ boot tests.
+- **Post-route verifier green on all of boot + the dataframe.**
+- **Dataframe `order_by` validates** (record the sort number); guard bench fast.
+- New regression: a `Vector<Int>` column captured into two comparators + gathered
+  compiles validly and returns correct values (the exact spike shape).
+- A field-read-copy regression (the B5 shape) compiles validly.
 
 ## Verify loop
 
 ```
-cargo run --release -- build boot/main.tw -o /tmp/x.wasm   # stage0 builds boot
-make bundle-cli                                            # self-host fixed point
-make boot-test                                             # suite
+cargo run --release -- build boot/main.tw -o /tmp/x.wasm
+make bundle-cli && make boot-test
 target/twk run examples/performance/dataframe/bench/order_by_breakdown.tw
 target/twk run examples/performance/sort-bench/typed_payload_capture_guard.tw
 ```
 
-## Out of scope (deferred)
+## Out of scope (still deferred, not soundness-relevant)
 
-- **B5 / C3** — the field-read copy invalid-Wasm (make section 2b group-aware). The
-  unified oracle may or may not subsume it; if a field-read copy still boxes
-  inconsistently after unification, fix 2b's alias handling as a follow-up.
-- **B8** — typed `take`/helper ABI, for the *full* `order_by` number.
-- Performance tuning of the fixpoint beyond the caching fallback above.
+- **B8** — typed `take`/helper ABI for the *full* `order_by` number (a performance
+  boundary, not a mismatch source; `take` results already box safely).
+- Fixpoint performance tuning beyond measuring + the obvious per-round structure.
