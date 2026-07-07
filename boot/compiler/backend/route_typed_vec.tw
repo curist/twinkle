@@ -289,8 +289,20 @@ fn route_func(
   //     lineage (the field is already physically typed), so these only join
   //     eligible_v — index/len over the result route to _i64 like any other
   //     eligible_v slot.
+  //
+  //     Group-aware (B5): a plain copy of the read result (`zs := b.xs`) lands in
+  //     its own slot that stays boxed unless retyped too, producing an un-coerced
+  //     PVecI64 -> PVec store at the copy. Mark the whole forward alias group.
+  //     Unlike payload reads (2c), this is NOT gated on v_group_escapes: a typed
+  //     field's struct.get result is physically PVecI64, so the result slot must
+  //     stay typed regardless. That is sound because analyze_typed_fields only
+  //     types a field when no consumer — including copy-chain consumers — escapes
+  //     (bad_consumer_src `zs := b.xs; zs.append(0)` demotes the field to boxed),
+  //     so a typed field read never has an escaping copy in its group.
   for sid in field_read_sids {
-    eligible_v[sid] = true
+    for a in aliases_for(sid, copy_map).keys() {
+      eligible_v[a] = true
+    }
   }
 
   // 2c. A payload bound from a physically-typed (PVecI64) variant field is a

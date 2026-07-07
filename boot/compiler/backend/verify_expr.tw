@@ -1026,6 +1026,23 @@ fn verify_value_for_slot(ctx: VerifyCtx, target: SlotInfo, atom: PreparedAtom, c
     _ => {},
   }
 
+  // Non-coercing local store: AInit/AAssign copy the value into the target slot
+  // with no coercion, so a PVecI64 source into a boxed PVec slot (or vice versa)
+  // is invalid Wasm. This is the B5 field-read-copy shape (`y := x` where `x` is
+  // a typed field-read result). Mono equality alone does not catch it — both
+  // sides are `Vector<Int>` — so compare the physical val_type directly.
+  if ctx.pvec_repr_mismatch(atom, target.wasm_type) {
+    actual_vt := ctx.infer_atom_val_type(atom).unwrap()
+
+    return fail_slot(
+      ctx.pf,
+      target,
+      "${context} typed-vector representation mismatch: value ${val_type_name(actual_vt)} stored into slot ${val_type_name(
+        target.wasm_type,
+      )}",
+    )
+  }
+
   case ctx.infer_atom_mono(atom) {
     .Some(actual) => if mono_eq(actual, target.mono) {
       .Ok({})

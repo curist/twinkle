@@ -119,6 +119,23 @@ fn positive_src() String {
     .concat("make(5)\n")
 }
 
+// B5 regression: a typed field read copied through an extra local before use.
+// `zs := b.xs` (field read) then `ws := zs` (plain copy) — the field-read result
+// is physically PVecI64, so every copy in the alias group must retype too or the
+// copy store is an un-coerced PVecI64 -> PVec mismatch (invalid wasm). Field-read
+// routing was single-slot before the group-aware fix, leaving copies boxed.
+fn field_read_copy_src() String {
+  "type Box = .{ xs: Vector<Int> }\n"
+    .concat("fn make(n: Int) Int {\n")
+    .concat("  ys := collect i in range(n) { i * 2 }\n")
+    .concat("  b := Box.{ xs: ys }\n")
+    .concat("  zs := b.xs\n")
+    .concat("  ws := zs\n")
+    .concat("  ws[0] + ws.len()\n")
+    .concat("}\n")
+    .concat("make(5)\n")
+}
+
 fn boxed_src() String {
   "type Box = .{ xs: Vector<Int> }\n"
     .concat("fn wrap(ys: Vector<Int>) Int {\n")
@@ -367,6 +384,24 @@ pub fn suite() runner.Suite {
         case verify_prepared_module_with_level(vi.prepared, env2, vi.builtins, .Full) {
           .Ok(_) => .Ok({}),
           .Err(msg) => .Err("expected verify to accept matching env, got: ${msg}"),
+        }
+      },
+    )
+    .test(
+      "field-read copy group verifies under the strict local-store check (B5 regression)",
+      fn() {
+        // Before the group-aware field-read fix, `zs := b.xs; ws := zs` left the
+        // copy slots boxed while the struct.get result was PVecI64, so the copy
+        // store was an un-coerced PVecI64 -> PVec mismatch (invalid wasm, caught
+        // only by V8). Routing must now type the whole alias group, and the strict
+        // non-coercing local-store check in the verifier must accept the result.
+        vi := try verify_inputs(field_read_copy_src())
+        env2 := vi.env
+        env2.typed_vector_fields = vi.prepared.typed_vector_fields
+
+        case verify_prepared_module_with_level(vi.prepared, env2, vi.builtins, .Full) {
+          .Ok(_) => .Ok({}),
+          .Err(msg) => .Err("B5 field-read copy must verify, got: ${msg}"),
         }
       },
     )

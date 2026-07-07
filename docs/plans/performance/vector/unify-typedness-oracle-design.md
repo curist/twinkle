@@ -285,19 +285,26 @@ requiring an `ACoerce` op that does not exist.
 - **Stage 1 — Verifier physical-edge model.** Extend `verify_expr.tw` with strict
   `PVec`/`PVecI64` producer-vs-destination checks for current metadata/layout:
   local stores, record-get result slots, record fields, variant payloads, returns,
-  direct-call args/results, and closure captures. It must pass current code and
-  tests before later routing changes rely on it.
-  **B5 sequencing check (do this first).** The doc calls field-read copies (B5) a
-  "known, still-open invalid-Wasm gap." Stage 1 being green on current code requires
-  that gap to be *latent* — reachable in principle (`x := rec.field; y := x` makes
-  `x` `eligible_v` single-slot at route_typed_vec.tw:292 while the copy `y` stays
-  boxed) but not exercised by any boot source path or existing test. Confirm this
-  before starting: build boot + run the suite with the strict verifier and check no
-  current path trips B5. If some compiled path *does* hit it, Stage 1 is not
-  independently landable — it must land together with the B5 fix (Stage 3's field-read
-  group-awareness), and the staging collapses those two. The acceptance list's
-  field-read-copy regression is a *new* test precisely because no current one covers
-  the shape.
+  direct-call args/results, and closure captures. Each edge must pass current code
+  and tests before later routing changes rely on it.
+  **B5 was LIVE, not latent — landed together with its fix (2026-07-07).** The
+  non-coercing local-store edge went in first (`verify_value_for_slot` compares the
+  physical `val_type`, not just mono). It immediately caught `zs := b.xs; zs[0]`
+  (typed field read copied into a plain local): the `struct.get` result is PVecI64
+  but the copy slot stayed boxed PVec, an un-coerced store. Softening the check to a
+  warning confirmed V8 rejects the module (`local.set expected (ref null 8), found
+  (ref null 9)`), so this was a live invalid-Wasm bug on ordinary code, not a latent
+  one. Per the sequencing rule the two therefore landed together: `route_func`'s
+  field-read handling (2b) is now group-aware (types the whole `aliases_for` group,
+  unconditional — a typed field's `struct.get` result must stay PVecI64, and
+  `analyze_typed_fields` already demotes any field with an escaping copy-chain
+  consumer, so no escaping copy survives in a typed group). Verified: 2980 boot
+  tests, self-host fixed point, dataframe `order_by` + sort-bench checksums, plus a
+  multi-hop field-read-copy regression in `typed_record_fields_suite`.
+  **Remaining Stage 1 edges** (record-get result slots, direct-call args/results,
+  returns, variant payloads, closure captures) are additive backstops, not known
+  live bugs; they use the callee's prepared param slots / `phys_return` per the model
+  above and can land incrementally.
 - **Stage 2 — Materialize `PhysPlan` + fold the fixpoint.** Extract
   `compute_eligible_v`; produce `slot_repr` plus ABI repr maps in one fixpoint;
   make `slot_typed_after_route` a lookup; materialize param/capture slot metadata
