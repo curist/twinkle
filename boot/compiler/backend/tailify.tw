@@ -1,7 +1,7 @@
 //! Tail-match result typing: a noreturn-aware divergence predicate and (Task 2)
 //! the tailify canonicalization.
 
-use compiler.backend.prepared_ir.{PreparedExpr, PreparedOp}
+use compiler.backend.prepared_ir.{PreparedExpr, PreparedFunc, PreparedMatchArm, PreparedOp}
 use compiler.builtins.{BuiltinRegistry, is_noreturn}
 
 // PreparedExpr mirror of expr_always_diverges, but noreturn-aware: a call to an
@@ -36,5 +36,77 @@ pub fn prep_op_diverges(op: PreparedOp, reg: BuiltinRegistry) Bool {
       true
     },
     _ => false,
+  }
+}
+
+// Rewrite a tail-position control-flow result's value-producing arms to Return, so
+// the returned payload flows through the escape analysis's `.Return => false` rule
+// (consumed-typed-only) with no store-escape relaxation. Gated to Vector<Int>
+// returns to keep the IR-shape change confined to accessor-shaped functions.
+pub fn tailify_funcs(funcs: Vector<PreparedFunc>, reg: BuiltinRegistry) Vector<PreparedFunc> {
+  collect pf in funcs {
+    tailify_func(pf, reg)
+  }
+}
+
+fn tailify_func(pf: PreparedFunc, reg: BuiltinRegistry) PreparedFunc {
+  is_vec_int := case pf.return_mono {
+    .Vector(.Int) => true,
+    _ => false,
+  }
+
+  if !is_vec_int {
+    return pf
+  }
+
+  pf.body = tailify_spine(pf.body, reg)
+  pf
+}
+
+// Walk the top-level Let-spine to the terminal `Let(r, AMatch|AIf, Atom(ASlot r))`
+// and rewrite that op's arms. Other tail shapes are left unchanged. The structural
+// shape (r's sole use is the immediately-following trailing atom) guarantees r is
+// used exactly once, so per-arm Return is semantics-preserving.
+fn tailify_spine(expr: PreparedExpr, reg: BuiltinRegistry) PreparedExpr {
+  case expr {
+    .Let(s, op, rest) => case rest {
+      .Atom(.ASlot(s2)) => if s2.id == s.id {
+        .Let(s, tailify_result_op(op, reg), rest)
+      } else {
+        .Let(s, op, tailify_spine(rest, reg))
+      },
+      _ => .Let(s, op, tailify_spine(rest, reg)),
+    },
+    _ => expr,
+  }
+}
+
+fn tailify_result_op(op: PreparedOp, reg: BuiltinRegistry) PreparedOp {
+  case op {
+    .AMatch(scrut, arms) => .AMatch(scrut, tailify_arms(arms, reg)),
+    .AIf(c, t, e) => .AIf(c, tailify_arm(t, reg), tailify_arm(e, reg)),
+    _ => op,
+  }
+}
+
+fn tailify_arms(arms: Vector<PreparedMatchArm>, reg: BuiltinRegistry) Vector<PreparedMatchArm> {
+  collect arm in arms {
+    PreparedMatchArm.{ pattern: arm.pattern, body: tailify_arm(arm.body, reg) }
+  }
+}
+
+// A non-diverging arm's tail value becomes a Return; diverging arms (Return / error
+// spine) are left untouched (prep_diverges already treats a Return-terminated arm as
+// diverging, so this is idempotent). Nested control-flow in the arm tail is returned
+// as-is (conservative: its result may be boxed — correct, just not typed).
+fn tailify_arm(body: PreparedExpr, reg: BuiltinRegistry) PreparedExpr {
+  if prep_diverges(body, reg) {
+    return body
+  }
+
+  case body {
+    .Atom(a) => .Return(.Some(a)),
+    .Let(s, op, rest) => .Let(s, op, tailify_arm(rest, reg)),
+    _ => body,
   }
 }
