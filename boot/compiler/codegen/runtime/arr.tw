@@ -188,8 +188,12 @@ pub fn module() WasmModule {
     family_bool().pvec_get_fn(),
     promote_full_tail_bool_fn(),
     family_bool().pvec_builder_new_fn(),
+    builder_push_bool_fn(),
     builder_push_bool_raw_fn(),
     family_bool().pvec_builder_freeze_fn(),
+    box_bool_fn(),
+    unbox_bool_fn(),
+    vec_bool_roundtrip_fn(),
     gather_bool_fn(),
     family_boxed().pvec_builder_new_fn(),
     builder_from_fn(),
@@ -4034,6 +4038,208 @@ fn builder_push_bool_raw_fn() FuncDef {
   }
 }
 
+// builder_push_bool(builder: Array?, elem: Bool anyref) -> void
+// Same as builder_push_i64 but the boxed element is a ref.i31 (Bool fits an
+// i31), so it is decoded with RefCast(.I31)+I31GetU to a raw i32 instead of
+// unwrapping a BoxedInt struct. Leaves are ArrayBool (i32) and the prefix is a
+// PVecBool. Boxed element in so the typed-vector router can swap
+// builder_push -> builder_push_bool without rewriting the push argument.
+fn builder_push_bool_fn() FuncDef {
+  ta := t_ARRAY
+  tab := t_ARRAY_BOOL
+
+  // p0=builder, p1=elem (i31 anyref); L2=tail_buf, L3=tail_len,
+  // L4=pvec_so_far, L5=elem decoded to i32.
+  .{
+    name: "builder_push_bool",
+    params: [arr_null(), .Anyref],
+    results: [],
+    locals: [arr_bool_null(), .I32, pvec_bool_null(), .I32],
+    body: [
+      .LocalGet(1),
+      .RefCast(false, .I31),
+      .I31GetU,
+      .LocalSet(5),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .I32Const(2),
+      .ArrayGet(ta),
+      .RefCast(true, .Named(tab)),
+      .LocalSet(2),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .I32Const(1),
+      .ArrayGet(ta),
+      .RefCast(false, .I31),
+      .I31GetU,
+      .LocalSet(3),
+      .LocalGet(3),
+      .I32Const(rt_BF),
+      .I32LtS,
+      .If(
+        .None,
+        [
+          .LocalGet(2),
+          .RefAsNonNull,
+          .LocalGet(3),
+          .LocalGet(5),
+          .ArraySet(tab),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(1),
+          .LocalGet(3),
+          .I32Const(1),
+          .I32Add,
+          .RefI31,
+          .ArraySet(ta),
+        ],
+        [
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(0),
+          .ArrayGet(ta),
+          .RefCast(true, .Named(t_PVEC_BOOL)),
+          .LocalSet(4),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(4),
+          .RefAsNonNull,
+          .LocalGet(2),
+          .RefAsNonNull,
+          .Call("promote_full_tail_bool"),
+          .ArraySet(ta),
+          .I32Const(0),
+          .I32Const(rt_BF),
+          .ArrayNew(tab),
+          .LocalSet(2),
+          .LocalGet(2),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(5),
+          .ArraySet(tab),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(2),
+          .LocalGet(2),
+          .ArraySet(ta),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(1),
+          .I32Const(1),
+          .RefI31,
+          .ArraySet(ta),
+        ],
+      ),
+    ],
+  }
+}
+
+// box_bool(vec: PVecBool?) -> PVec
+// Reverse of unbox_bool: rebuild a boxed PVec from a typed PVecBool. Reads each
+// raw i32 leaf via get_bool and wraps it into a ref.i31 (Bool fits an i31)
+// before pushing into the universal boxed builder.
+fn box_bool_fn() FuncDef {
+  // p0=vec; L1=n, L2=i, L3=boxed_builder
+  .{
+    name: "box_bool",
+    params: [pvec_bool_null()],
+    results: [pvec_ref()],
+    locals: [.I32, .I32, arr_null()],
+    body: [
+      .LocalGet(0),
+      .Call("len_bool"),
+      .LocalSet(1),
+      .I32Const(0),
+      .LocalSet(2),
+      .Call("builder_new"),
+      .LocalSet(3),
+      .Block(
+        "brk",
+        .None,
+        [
+          .Loop(
+            "lp",
+            .None,
+            [
+              .LocalGet(2),
+              .LocalGet(1),
+              .I32GeS,
+              .BrIf("brk"),
+              .LocalGet(3),
+              .LocalGet(0),
+              .LocalGet(2),
+              .Call("get_bool"),
+              .RefI31,
+              .Call("builder_push"),
+              .LocalGet(2),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(2),
+              .Br("lp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(3),
+      .Call("builder_freeze"),
+    ],
+  }
+}
+
+// unbox_bool(vec: PVec?) -> PVecBool
+// Reverse of box_bool: rebuild a typed PVecBool from a boxed PVec. Each boxed
+// element is a ref.i31 (Bool fits an i31), decoded with RefCast(.I31)+I31GetU
+// to a raw i32 and pushed straight into the typed builder (builder_push_bool_raw).
+fn unbox_bool_fn() FuncDef {
+  // p0=vec (boxed PVec); L1=n, L2=i, L3=typed builder (boxed Array handle)
+  .{
+    name: "unbox_bool",
+    params: [pvec_null()],
+    results: [pvec_bool_null()],
+    locals: [.I32, .I32, arr_null()],
+    body: [
+      .LocalGet(0),
+      .Call("len"),
+      .LocalSet(1),
+      .I32Const(0),
+      .LocalSet(2),
+      .Call("builder_new_bool"),
+      .LocalSet(3),
+      .Block(
+        "brk",
+        .None,
+        [
+          .Loop(
+            "lp",
+            .None,
+            [
+              .LocalGet(2),
+              .LocalGet(1),
+              .I32GeS,
+              .BrIf("brk"),
+              .LocalGet(3),
+              .LocalGet(0),
+              .LocalGet(2),
+              .Call("get"),
+              .RefCast(false, .I31),
+              .I31GetU,
+              .Call("builder_push_bool_raw"),
+              .LocalGet(2),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(2),
+              .Br("lp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(3),
+      .Call("builder_freeze_bool"),
+    ],
+  }
+}
+
 // gather_bool(vec: PVecBool?, idx: PVec?) -> PVecBool
 // Like gather_i64, but reads vec via get_bool (raw i32 leaf, no BoxedInt) and
 // builds a typed result via builder_push_bool_raw. idx stays boxed (the
@@ -4762,6 +4968,95 @@ fn vec_i64_roundtrip_fn() FuncDef {
               .LocalGet(3),
               .Call("get_i64"),
               .StructNew(tbi),
+              .Call("builder_push"),
+              .LocalGet(3),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(3),
+              .Br("rlp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(5),
+      .Call("builder_freeze"),
+    ],
+  }
+}
+
+// vec_bool_roundtrip(xs: PVec?) -> PVec
+// Bool mirror of vec_i64_roundtrip: build a PVecBool from a boxed Vector<Bool>,
+// then read every element back via len_bool/get_bool into a fresh boxed vector.
+// Boxed elements are ref.i31 (Bool fits an i31): the first loop feeds them into
+// builder_push_bool (which i31-decodes internally); the second loop wraps each
+// raw i32 leaf via RefI31 before pushing into the boxed builder.
+fn vec_bool_roundtrip_fn() FuncDef {
+  // p0=xs; L1=n, L2=bi (bool builder), L3=i, L4=pvb, L5=bo (boxed builder)
+  .{
+    name: "vec_bool_roundtrip",
+    params: [pvec_null()],
+    results: [pvec_ref()],
+    locals: [.I32, arr_null(), .I32, pvec_bool_null(), arr_null()],
+    body: [
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_PVEC, pv_LEN),
+      .LocalSet(1),
+      .Call("builder_new_bool"),
+      .LocalSet(2),
+      .I32Const(0),
+      .LocalSet(3),
+      .Block(
+        "bbrk",
+        .None,
+        [
+          .Loop(
+            "blp",
+            .None,
+            [
+              .LocalGet(3),
+              .LocalGet(1),
+              .I32GeS,
+              .BrIf("bbrk"),
+              .LocalGet(2),
+              .LocalGet(0),
+              .LocalGet(3),
+              .Call("get"),
+              .Call("builder_push_bool"),
+              .LocalGet(3),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(3),
+              .Br("blp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(2),
+      .Call("builder_freeze_bool"),
+      .LocalSet(4),
+      .Call("builder_new"),
+      .LocalSet(5),
+      .I32Const(0),
+      .LocalSet(3),
+      .Block(
+        "rbrk",
+        .None,
+        [
+          .Loop(
+            "rlp",
+            .None,
+            [
+              .LocalGet(3),
+              .LocalGet(4),
+              .Call("len_bool"),
+              .I32GeS,
+              .BrIf("rbrk"),
+              .LocalGet(5),
+              .LocalGet(4),
+              .LocalGet(3),
+              .Call("get_bool"),
+              .RefI31,
               .Call("builder_push"),
               .LocalGet(3),
               .I32Const(1),
