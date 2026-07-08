@@ -802,31 +802,30 @@ git add examples/performance/sort-bench/typed_bool_field_payload_probe.tw
 git commit -m "test: typed Bool field/payload layout, bridge, equality, gather"
 ```
 
-### Task 14: End-to-end — dataframe null-aware sort win
+### Task 14: Wrap-up — record what landed and what is deferred
 
-**Files:** none (measurement + final gate)
+**Scope decision (2026-07-09):** accept `PVecBool` as the deliverable; the *dataframe null-mask* `order_by` win is deferred (see "Deferred work" below). The boxed Bool read is cheap (`ref.i31` decode, no pointer-chase), so its ROI is far lower than the Int case that motivated the original goal.
 
-- [ ] **Step 1: Confirm the dataframe `nulls` column now types.** Inspect the null-aware sort path in the dataframe bench.
+**What landed (verified):**
+- `PVecBool` family: built, bit-faithful (`vec_bool_roundtrip` → `same=true`), no regression (2980 tests, dataframe checksums intact, self-host fixpoint).
+- Bool typing on the **core read path**: a `collect`-produced `Vector<Bool>` read by index/len types to `PVecBool`/`get_bool` (`typed_bool_read_probe` → `get_bool≥1`; a minimal collect-produced Bool record field also types). The boundary policy holds (combinator-built Bool through a param stays boxed; `typed_bool_boxed_probe`).
+- The whole-program field/payload/capture analyses are now family-aware (Task 11B).
 
-Run: `target/twk wat examples/performance/dataframe/bench/order_by_breakdown.tw --func <null_aware_sort_fn> --calls | grep -c get_bool`
-Expected: `>= 1` (the mask read is typed). (Discover the fn name with `--list`.)
+- [ ] **Step 1: Update folder docs to the landed state.** In `README.md`, note the `PVecBool` family landed (typed Bool read path) with the dataframe null-mask deferred; in `boundary-tracklist.md`, record the Bool-family status. Do NOT claim the null-aware sort dropped (it did not — see below).
 
-- [ ] **Step 2: Run the breakdown bench.** Confirm checksums intact and the null-aware `sort idx + nulls` phase dropped from ~1344ms toward the boxing-free ~732ms floor.
+- [ ] **Step 2: Final verification loop.** `make bundle-cli` → `Fixed point reached`; `make boot-test` → 2980/0; the Bool probes green; dataframe checksums `1000000`/`3000000`.
 
-Run: `target/twk run examples/performance/dataframe/bench/order_by_breakdown.tw`
-Expected: checksums `1000000` / `3000000`; the `sort idx + nulls` line materially lower than the recorded ~1344ms baseline; `full order_by` improved.
-
-- [ ] **Step 3: Full verification loop + capture guard.**
-
-Run: *[VL]* then `target/twk run examples/performance/sort-bench/typed_payload_capture_guard.tw`
-Expected: `Fixed point reached`; `Ran 2980 tests` / `0 Failed`; guard runs fast without a per-read-unbox miscompile.
-
-- [ ] **Step 4: Update the tracklist + folder docs.** In `boundary-tracklist.md`, mark B8's Bool portion done and note `PVecBool` landed; in this folder's `README.md`, flip the plan row status from `design` to reflect the landed state; add a `project_typed_vector_repr` MEMORY note update for the Bool family. Commit.
-
+- [ ] **Step 3: Commit the docs.**
 ```bash
-git add docs/plans/performance/vector/boundary-tracklist.md docs/plans/performance/vector/README.md docs/plans/performance/vector/typed-vector-elem-families-plan.md
-git commit -m "docs: PVecBool family landed — null-aware sort typed"
+git add docs/plans/performance/vector/README.md docs/plans/performance/vector/boundary-tracklist.md
+git commit -m "docs: PVecBool family landed (typed Bool read path); dataframe null-mask deferred"
 ```
+
+## Deferred work (follow-ups this branch did NOT do)
+
+1. **Typed `Vector.make` variant.** `Vector.make(n, v)` maps to a single boxed builtin (`VectorMake`) with no family-typed `make_i64`/`make_bool` result, so a field/column produced by `Vector.make` (e.g. the dataframe `Column.nulls` = `Vector.make(n, false)`) can never be typed — `analyze_typed_fields` correctly demotes a field with a boxed producer, for **Int too**. Typing such columns needs a family-typed `make` (or recognizing a `make` result as a typed call-result producer) — new work in `emit.tw`/builtins/return-ABI. This is the specific blocker for the dataframe null-mask win. Low ROI while boxed Bool reads are cheap i31.
+
+2. **Bool field/payload/gather parity gap (residual Int-hardcoding).** Observed during Task 13 verification: a multi-use `collect`-produced **`Vector<Int>` record field** (field-read + record `==` + `.gather`) types (`PVecI64` layout, `get_i64`, `gather_i64`), but the **`Vector<Bool>` analogue stays boxed** (`get_bool`/`gather_bool` = 0). So the family generalization is complete for the simple read path but NOT for the multi-use field/payload/field-gather path — some Int-specific spots remain (candidate sites: `analyze_typed_payloads` interplay, the field-consumer scan, or Bool payload emit/verify edges). Needs isolation + a follow-up pass to reach full Int/Bool parity for fields/payloads. (Capture-into-`sort_by`-comparator is a *separate*, pre-existing, family-agnostic limitation — boxed for Int and Bool alike — not part of this gap.)
 
 ---
 

@@ -1,0 +1,56 @@
+// Exercises a collect-produced Vector<Bool> across multiple storage sites in one
+// column: a record field read, structural record ==, a variant payload +
+// extraction (erased bridge), and gather. Results are correct (n=25 eq=true m=25
+// glen=50). KNOWN GAP (2026-07-09): this multi-use Bool column currently stays
+// BOXED (no get_bool/gather_bool), whereas the Vector<Int> analogue types
+// (get_i64/gather_i64) — residual Int-hardcoding beyond the simple read path (see
+// the plan's "Deferred work" #2). This probe will flip to typed once that gap is
+// closed; today it guards correctness of the boxed path.
+type Col = .{ nulls: Vector<Bool> }
+
+type Tagged = { Present(Vector<Bool>), Absent }
+
+fn mk() Col {
+  .{
+    nulls: collect i in range(100) {
+      i % 4 == 0
+    },
+  }
+}
+
+c := mk()
+c2 := mk()
+
+// field read (typed PVecBool field)
+n := 0
+
+for i in range(c.nulls.len()) {
+  if c.nulls[i] {
+    n = n + 1
+  }
+}
+
+// structural equality over records holding a typed Bool vector
+eq := c == c2
+
+// variant payload + erased bridge round-trip
+t: Tagged = .Present(c.nulls)
+extracted := case t {
+  .Present(v) => v,
+  .Absent => [],
+}
+m := 0
+
+for i in range(extracted.len()) {
+  if extracted[i] {
+    m = m + 1
+  }
+}
+
+// gather over a typed Bool vector
+idx := collect i in range(50) {
+  i * 2
+}
+g := c.nulls.gather(idx)
+
+println("n=${n} eq=${eq} m=${m} glen=${g.len()}")

@@ -340,3 +340,19 @@ stage0 only proves boot source bootstraps).
 - The coercing verifier edges (call args/returns/variant payloads) and full
   `PhysPlan` materialization — deferred, non-blocking (see
   [unify-typedness-oracle-design.md](unify-typedness-oracle-design.md) §3/§6).
+
+## Deferred after implementation (discovered during Bool bring-up, 2026-07-09)
+
+The `PVecBool` family landed and types the **core read path** (a `collect`-produced
+`Vector<Bool>` read by index/len). Two follow-ups remain before the dataframe
+null-mask `order_by` win — see the plan's "Deferred work" section for detail:
+
+1. **Typed `Vector.make`.** `Vector.make` has no family-typed variant, so any
+   column produced by it (the dataframe `Column.nulls = Vector.make(n, false)`)
+   stays boxed (a boxed producer demotes the field — for Int too). This is the
+   specific blocker for the null-mask win; low ROI while boxed Bool reads are cheap
+   `ref.i31` (no pointer-chase).
+2. **Bool field/payload/field-gather parity gap.** A multi-use `Vector<Int>` field
+   (read + record `==` + `.gather`) types, but the `Vector<Bool>` analogue stays
+   boxed — residual Int-hardcoding beyond the read path that Stage 1 + the
+   family-aware analyses did not fully cover. Needs isolation + a follow-up pass.
