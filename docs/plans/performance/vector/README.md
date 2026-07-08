@@ -82,6 +82,7 @@ allocation) in one change. Everything else is secondary.
 |-----|------|--------|
 | [boundary-tracklist.md](boundary-tracklist.md) | **"Where are we" map.** Every boundary a typed vector must cross (A/B/C), with per-item ✅/🟡/⬜ status and the `order_by` critical path | living status |
 | [unify-typedness-oracle-design.md](unify-typedness-oracle-design.md) | One ground-truth typedness oracle + post-route verifier; the structural unlock for C2 (captured columns) | 🟡 core landed 2026-07-08, refinements deferred |
+| [typed-vector-elem-families.md](typed-vector-elem-families.md) | Generalize the Int-hardcoded routing into an element-family layer, then land `PVecBool` (the `nulls` mask) — biggest remaining `order_by` lever | design |
 | [generic-sort-by-vector-read-perf.md](generic-sort-by-vector-read-perf.md) | **Active lead.** Make generic callback `sort_by` + indexed reads fast; holds the current measured decomposition and reprioritized tracks | active |
 | [typed-vector-representation.md](typed-vector-representation.md) | Give `Vector<Int>` (then other primitives) typed physical storage instead of boxed `anyref` leaves — now identified as the master lever | the long-term answer |
 | [wasm-native-sort.md](wasm-native-sort.md) | Earlier consolidated `order_by`/native-sort track; broader context and the dense working-set framing | superseded as lead, still useful context |
