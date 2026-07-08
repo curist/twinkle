@@ -1,0 +1,46 @@
+use compiler.codegen.wasm_ir.{ValType}
+use compiler.mono_type.{MonoType}
+
+// Physically-typed vector element family. Pure: no BuiltinRegistry. `*_call` are
+// runtime function symbols the emitter calls directly (index fast path, box/unbox
+// coercions, bridge, equality). Builtin ids for the router live in FamilyIds
+// (route_typed_vec.tw), which the emitter does not need.
+pub type ElemFamily = .{
+  mono_key: String, // "vec_i64" / "vec_bool" — FamilyTag
+  pvec_type: String, // "rt_types__PVecI64"
+  elem_wasm: ValType, // .I64 / .I32
+  get_call: String, // "rt_arr__get_i64"
+  box_call: String, // "rt_arr__box_i64"
+  unbox_call: String, // "rt_arr__unbox_i64"
+}
+
+pub fn all_families() Vector<ElemFamily> {
+  [family_i64()]
+}
+
+fn family_i64() ElemFamily {
+  .{
+    mono_key: "vec_i64",
+    pvec_type: "rt_types__PVecI64",
+    elem_wasm: .I64,
+    get_call: "rt_arr__get_i64",
+    box_call: "rt_arr__box_i64",
+    unbox_call: "rt_arr__unbox_i64",
+  }
+}
+
+// The single family selector. Replaces the scattered is_int_vector / mono_key_of.
+pub fn elem_family_of(mono: MonoType) ElemFamily? {
+  key := case mono {
+    .Vector(.Int) => "vec_i64",
+    _ => "other",
+  }
+
+  for f in all_families() {
+    if f.mono_key == key {
+      return .Some(f)
+    }
+  }
+
+  .None
+}

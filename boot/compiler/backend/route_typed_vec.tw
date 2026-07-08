@@ -19,6 +19,7 @@ use compiler.backend.prepared_ir.{
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.core_ir.{FuncId}
+use compiler.elem_family.{ElemFamily, all_families, elem_family_of}
 
 fn with_repr_wasm(info: SlotInfo, repr: ReprKind, wasm_type: ValType) SlotInfo {
   info.repr = repr
@@ -53,6 +54,35 @@ pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
     len_i64: builtins.id("vector$len_i64").id,
     gather: builtins.id("vector$gather").id,
     gather_i64: builtins.id("vector$gather_i64").id,
+  }
+}
+
+type FamilyIds = .{
+  fam: ElemFamily,
+  builder_new: Int,
+  builder_push: Int,
+  builder_freeze: Int,
+  len: Int,
+  get: Int,
+  gather: Int,
+}
+
+fn families_ids(builtins: BuiltinRegistry) Vector<FamilyIds> {
+  collect f in all_families() {
+    suffix := if f.mono_key == "vec_i64" {
+      "_i64"
+    } else {
+      "_bool"
+    }
+    .{
+      fam: f,
+      builder_new: builtins.id("vector$builder_new${suffix}").id,
+      builder_push: builtins.id("vector$builder_push${suffix}").id,
+      builder_freeze: builtins.id("vector$builder_freeze${suffix}").id,
+      len: builtins.id("vector$len${suffix}").id,
+      get: builtins.id("vector$get${suffix}").id,
+      gather: builtins.id("vector$gather${suffix}").id,
+    }
   }
 }
 
