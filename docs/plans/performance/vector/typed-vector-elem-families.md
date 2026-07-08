@@ -28,23 +28,29 @@ This does **not** change the representation-boundary policy
 of `Vector<Bool>`/`Vector<Float>`. A typed vector that reaches a durable erased
 boundary is still boxed.
 
-## Key observation — the logic is already element-agnostic
+## Key observation — the routing logic is already element-agnostic
 
-The analysis core (escape analysis, alias groups, capture fixpoint, gather
-fixpoint in `route_typed_vec.tw`; the param/return/capture ABI analysis in
+The **routing analysis core** (escape analysis, alias groups, capture fixpoint,
+gather fixpoint in `route_typed_vec.tw`; the param/return/capture ABI analysis in
 `typed_param_abi.tw`) operates on **slot-id sets** and is completely
-element-agnostic. Only three thin layers are `Int`-bound:
+element-agnostic. Within that core, only three thin layers are `Int`-bound:
 
 1. **Tags** — `is_int_vector` / `mono_key_of` → `"vec_i64"`.
 2. **Builtin-id tables** — `RouteIds`' `_i64` fields.
 3. **Type names** — the literal `"rt_types__PVecI64"` retype target.
 
-And the runtime is already half-generalized: `PVecFamily` (`family_i64()`,
+The runtime is already half-generalized: `PVecFamily` (`family_i64()`,
 `family_boxed()`) parameterizes the leaf-agnostic trie ops; only thin per-element
 wrappers are `_i64`-specific.
 
-So generalization is **threading one family descriptor through those three
-layers**, not rewriting logic.
+So the routing *logic* is not rewritten — it is threaded with one family
+descriptor. **But** the full typed-vector surface is wider than the router: the
+cross-function ABI-fact maps carry no family tag, and several storage/bridge sites
+are separately Int-specific — `wasm_layout.tw` (field/payload layout),
+`repr_policy.tw` (candidate policy), `emit/bridge_funcs.tw` (erased variant
+bridge), `runtime/core.tw` (structural equality), and `builder_push`/`box`
+(element boxing). Each is enumerated below; underestimating them turns into late
+verifier/runtime traps.
 
 ## Architecture
 
@@ -88,6 +94,35 @@ capture/gather fixpoints + `materialize_slot_repr` running once per family, but
 families are few and each pass early-returns instantly when a function has no
 vectors of that family.
 
+### Family metadata flow (cross-function ABI facts must be family-keyed)
+
+The escape/alias/gather logic is element-agnostic and untouched. But the
+**cross-function ABI-fact maps are not** — today they record *whether* a
+param/return/capture is typeable, not *which* family:
+
+- `typeable_params: Dict<String, Vector<Int>>` (param indices)
+- `typeable_return: Dict<String, Bool>`
+- `capture_abi: Dict<String, Vector<Int>>` (capture indices)
+
+Under a per-family `route_func` loop these are ambiguous: the Bool pass would read
+an I64 function's `typeable_return`/`capture_abi` as a Bool typed return/capture (or
+vice versa) and emit a `PVecBool`↔`PVecI64` mismatch. **The ABI facts must carry
+the family.** Because a single function can mix an `Int` and a `Bool` typed vector
+(a comparator capturing both an amount column and a nulls mask), the family is
+**per-index for params/captures** and **per-function for the return**:
+
+- `typeable_params: Dict<String, Dict<Int, FamilyTag>>`
+- `typeable_return: Dict<String, FamilyTag>`   (absent = not typed)
+- `capture_abi: Dict<String, Dict<Int, FamilyTag>>`
+- typed-return **call-result** facts (`collect_typed_return_call_results`) likewise
+  carry the callee's return family.
+
+Each per-family pass filters these maps to entries matching the active `fam`. This
+is the one place the generalization touches the *fact-lookup* layer (not the
+analysis logic): `compute_eligible_v`'s `cap_slots` / `relaxed` / `call_result_sids`
+gain a family filter. `FamilyTag` is a small index/enum into the `families()`
+registry.
+
 ## Runtime storage (the Bool family)
 
 - **Types (`runtime/types.tw`):** add `ArrayBool` (mutable `.I32` elements) and the
@@ -98,21 +133,45 @@ vectors of that family.
   `empty_leaf_bool` / `empty_pvec_bool` globals. The four `PVecFamily`-generic
   funcs (`pvec_len_fn`, `pvec_get_fn`, `pvec_builder_new_fn`,
   `pvec_builder_freeze_fn`) instantiate for free.
-- **Non-generic wrappers to add**, mechanical clones of the `_i64` siblings with
-  `.I64`→`.I32` and the Bool type names: `promote_full_tail_bool`,
-  `builder_push_bool` (+ `_raw`), `gather_bool`, `vec_bool_roundtrip`. Where a
-  wrapper is structurally identical modulo valtype/typename, fold it onto a
-  `PVecFamily` parameter (extending the existing pattern) rather than copy-paste.
+- **Non-generic wrappers to add.** Some are mechanical clones of the `_i64`
+  siblings with `.I64`→`.I32` and the Bool type names: `promote_full_tail_bool`,
+  `gather_bool`, `vec_bool_roundtrip`, `builder_push_bool_raw` (accepts a raw
+  `.I32` element). Where a wrapper is structurally identical modulo
+  valtype/typename, fold it onto a `PVecFamily` parameter (extending the existing
+  pattern) rather than copy-paste.
 
-### The one place Bool genuinely differs — `box_bool` / `unbox_bool`
+### `builder_push_bool` is NOT a mechanical clone
+
+`builder_push_i64` takes its element as `.Anyref` and unboxes it with
+`RefCast(BoxedInt); StructGet(0)` — the typed-vector router swaps generic
+`builder_push` → `builder_push_i64` **without** rewriting the already-boxed push
+argument, and an `Int` element is boxed as a `BoxedInt` struct. A `Bool` element is
+boxed as `ref.i31` (`emit/anyref.tw`: Bool/Byte use i31ref), so `builder_push_bool`
+must decode an **i31** anyref (`RefCast(.I31); I31GetU`) into its `.I32` leaf, not a
+`BoxedInt` struct. `builder_push_bool_raw` takes the raw `.I32` directly.
+
+### `box_bool` / `unbox_bool` — the boxed encoding
 
 These convert typed `PVecBool` (i32 leaves) ↔ the **existing** boxed `PVec` whose
-elements are however the compiler boxes an `i32` Bool into an anyref vector element
-**today** (likely `ref.i31`, since Bool fits i31 — unlike `Int`, which needs a
-`BoxedInt` struct). `box_bool` must emit exactly that encoding so a boxed
-round-trip is bit-identical. This is the single correctness-sensitive spot: read
-the current Bool-element boxing in `emit` and match it. The post-route verifier + a
-round-trip bench will catch a mismatch.
+`Bool` elements are `ref.i31` (confirmed: Bool fits i31 — unlike `Int`, which needs
+a `BoxedInt` struct). `box_bool` must emit exactly the `ref.i31` encoding so a boxed
+round-trip is bit-identical. This and `builder_push_bool` are the two spots where
+Bool genuinely diverges from an i64 mirror. The post-route verifier + a round-trip
+bench catch a mismatch.
+
+### Registration wiring
+
+- **`builtins.tw`:** register ABI + runtime bindings for every Bool helper —
+  `vector$len_bool`, `get_bool`, `builder_new_bool`, `builder_push_bool` (+ `_raw`),
+  `builder_freeze_bool`, `gather_bool`, `box_bool`, `unbox_bool`,
+  `vec_bool_roundtrip` — mirroring the `_i64` block (ABI valtypes use `.I32` /
+  `PVecBool` / `ArrayBool`).
+- **Runtime module list (`runtime/arr.tw` funcs vector + `runtime/types.tw`):**
+  add the `*_bool` `FuncDef`s and the `PVecBool` / `ArrayBool` type + empty globals
+  to the emitted set so they exist in the module.
+- **Prelude signature hook (`prelude/signatures/vector.tw`):** only if
+  `vec_bool_roundtrip` (or any Bool helper) is surfaced as a callable correctness
+  probe; otherwise the family is compiler-internal and needs no prelude signature.
 
 ## Compiler routing generalization
 
@@ -126,6 +185,20 @@ round-trip bench will catch a mismatch.
   becomes `elem_family_of`-any, so a `fn(mask: Vector<Bool>)` can carry a physical
   `PVecBool` ABI and a comparator can capture a typed `nulls` column.
 
+## Storage-site layout & policy
+
+The routing decides which *slots* are typed, but the physical **field/payload
+layout** and the **candidate policy** are separately Int-specific and must
+generalize or typed Bool fields/payloads won't become `PVecBool` consistently:
+
+- **`wasm_layout.tw`:** `is_int_vector_field` + the literal `"rt_types__PVecI64"`
+  drive both the record-field layout and the variant-payload layout. Generalize the
+  predicate to `elem_family_of` and pick `fam.pvec_type` for the field/payload
+  physical type.
+- **`repr_policy.tw`:** the candidate-repr policy (which `Vector<T>` slots are
+  eligible for a typed physical repr) is Int-only; extend it to the registered
+  families.
+
 ## Verifier and emit
 
 - **Verifier (`verify_expr.tw`, `verify_slots.tw`):** the "typed-vec ref"
@@ -134,12 +207,26 @@ round-trip bench will catch a mismatch.
   typed-family ref vs boxed `PVec`, or two different typed-family refs" — the same
   backstop, now covering Bool on all four already-covered non-coercing edges (local
   stores, record-get result, record fields, closure-capture stores).
-- **Emit:** `coercions.tw` dispatches `box_i64`/`unbox_i64` by PVec name → per-family
-  `box_X`/`unbox_X`; the anyref-erase (box-before-erase) path generalizes the same
-  way. `arrays.tw`'s `is_pvec_i64` index fast-path generalizes to any typed family
-  — `StructGet(fam.pvec_type, 0)` + `get_X`, then coerce the result (`.I64`/`.I32`)
-  to the slot type. `closures.tw`'s trampoline downcast (`RefCast` to `PVecI64`)
-  generalizes to the capture param's actual `pvec_type`.
+- **Emit — index/coercion/closure:** `coercions.tw` dispatches `box_i64`/`unbox_i64`
+  by PVec name → per-family `box_X`/`unbox_X`; the anyref-erase (box-before-erase)
+  path generalizes the same way. `arrays.tw`'s `is_pvec_i64` index fast-path
+  generalizes to any typed family — `StructGet(fam.pvec_type, 0)` + `get_X`, then
+  coerce the result (`.I64`/`.I32`) to the slot type. `closures.tw`'s trampoline
+  downcast (`RefCast` to `PVecI64`) generalizes to the capture param's actual
+  `pvec_type`.
+- **Emit — erased bridge & equality (do NOT omit):** typed Bool fields/payloads
+  reach two more sites that today only handle `PVecI64`:
+  - **`emit/bridge_funcs.tw`** — the sum↔variant bridge helpers box/unbox only
+    `PVecI64` (`box_i64`/`unbox_i64`). A typed Bool payload crossing an erased
+    variant bridge needs per-family box/unbox here, or it is mishandled.
+  - **`runtime/core.tw`** — structural equality boxes a typed `PVecI64`
+    field/payload to `PVec` (via `rt_arr__box_i64`) before comparing by contents.
+    Records/variants holding a typed Bool vector need the per-family box (`box_bool`)
+    or equality falls back to reference identity on the distinct `PVecBool` struct.
+- **Emit — typed-builder seeding:** `emit/runtime_abi.tw` special-cases the typed
+  builder builtins **by name** (`builder_new_i64` / `builder_push_i64` /
+  `builder_freeze_i64`) for builder-seed / element handling; the Bool builtin names
+  must be added to those lists.
 
 ## Sequencing
 
@@ -161,6 +248,19 @@ steps means a regression is attributable to one or the other.
 - Negative probe: the same `Bool` field fed by a combinator-built producer through
   a parameter stays boxed `PVec` (no `get_bool`).
 - Round-trip: `box_bool`/`unbox_bool` bit-identity over a mixed `Vector<Bool>`.
+- **Typed Bool record field** layout → `PVecBool`, read via index/len (covers
+  `wasm_layout.tw` + `repr_policy.tw`).
+- **Typed Bool variant payload** layout → `PVecBool`, plus an **erased variant
+  bridge round-trip** (construct → sum-bridge → extract, contents preserved;
+  covers `bridge_funcs.tw`).
+- **Structural equality** of records/variants holding a typed Bool vector compares
+  by contents, not `PVecBool` reference identity (covers `runtime/core.tw`).
+- **`gather_bool` routing** — a typed Bool receiver gathers to a typed `PVecBool`
+  result (result-eligibility + fixpoint).
+- **Typed Bool capture/param** — a comparator capturing a typed `nulls` column and
+  a `fn(mask: Vector<Bool>)` param carry the physical `PVecBool` ABI (matches the
+  real null-aware sort path), and mixed Int+Bool captures in one closure keep their
+  distinct families (exercises the family-keyed capture ABI).
 
 ### Verification loop (after each increment)
 
