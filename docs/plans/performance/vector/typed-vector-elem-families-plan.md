@@ -647,6 +647,33 @@ git add boot/compiler/backend/route_typed_vec.tw boot/compiler/codegen/emit/runt
 git commit -m "backend: activate PVecBool family + typed Bool read probes"
 ```
 
+### Task 11B: Make the whole-program field/payload/capture analyses family-aware
+
+**Discovered during Task 12 verification.** Task 11 activated Bool only for the intra-function route (local `collect` + index read types via `get_bool`). But Bool typing does NOT propagate to record fields, variant payloads, or closure captures, because the whole-program analyses that decide *which* fields/payloads/captured-free-vars are typed are still pinned to `i64_family()` (a Stage-1/Task-2 deferral). Evidence: the real dataframe `order_by` shows `get_bool`=0 (Bool `nulls` columns stay boxed) while `get_i64`=11 (Int columns type). This task closes that gap — it is the actual lever for the dataframe Bool `order_by` win.
+
+**Files:**
+- Modify: `boot/compiler/backend/route_typed_vec.tw` — the 5 `i64_family()` pin sites, inside: `v_group_typeable` (~1267), `free_var_typed_local` (~1295), `scan_func_payload_producers` (~1707), `scan_func_producers_consumers` (~1778), `scan_func_field_stores` (~1908). (Confirm the exact set with `grep -n "i64_family()" boot/compiler/backend/route_typed_vec.tw`.)
+
+- [ ] **Step 1: For each `i64_family()` pin, derive the family from the entity being analyzed instead of hardcoding i64.** Each pin sits in a function processing a specific typed-vector entity — a v-group, a record field, a variant payload, or a captured free var — which has an element `mono`; the correct family is `elem_family_of(mono)` (unwrap `.Some(fam)`; if `.None`, the entity is not a registered typed-vector and the analysis behaves as before — not typeable). Int entities still resolve to the i64 family (unchanged); Bool entities resolve to the Bool family (newly enabled).
+  - `v_group_typeable` already takes a `fam` param (Task 2) — fix its CALLERS (the pins) to pass the family derived from the v-group's representative slot mono, not `i64_family()`.
+  - `free_var_typed_local`: derive from the free var slot's mono (`pf.slots[fv_slot].mono`).
+  - `scan_func_payload_producers` / `scan_func_producers_consumers` / `scan_func_field_stores`: derive the family PER field/payload from its element type as each is visited (a function may have both Int and Bool fields — do not assume one family for the whole function).
+
+- [ ] **Step 2: Keep `typed_fields`/`typed_payloads` as untagged site sets.** The per-family routing pass (Task 2 Step 3b) already family-filters field/payload READS by the read slot's own family, so a site in `typed_fields` just means "typeable for its element's family". A site key maps to one element type, so it can't be family-ambiguous — no tag needed.
+
+- [ ] **Step 3: Verify — Int unchanged, Bool now propagates, no miscompile.**
+  1. `target/twk fmt boot/compiler/backend/route_typed_vec.tw`
+  2. `cargo run --release -- build boot/main.tw -o /tmp/x.wasm` (stage0 bootstraps)
+  3. `make bundle-cli 2>&1 | tail -1` → `Fixed point reached` (the post-route verifier FAILS the build on a PVecBool↔PVec mismatch, so reaching fixpoint is also a soundness signal).
+  4. `make boot-test 2>&1 | grep -iE "Ran [0-9]+ tests|Failed"` → `Ran 2980 tests` / `0 Failed` (no Int regression).
+  5. **The win begins:** `target/twk build examples/performance/dataframe/bench/order_by_breakdown.tw -o /tmp/df.wat && grep -c rt_arr__get_bool /tmp/df.wat` → `>= 1` (was 0). And `target/twk run examples/performance/dataframe/bench/order_by_breakdown.tw` → checksums `1000000`/`3000000` (correctness held).
+
+- [ ] **Step 4: Commit.**
+```bash
+git add boot/compiler/backend/route_typed_vec.tw
+git commit -m "backend: make typed-field/payload/capture analyses family-aware"
+```
+
 ### Task 12: Verify typed Bool captures/params (the nulls-comparator path)
 
 **Files:**
