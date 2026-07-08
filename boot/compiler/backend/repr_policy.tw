@@ -5,6 +5,7 @@
 //! cycle. Named/aggregate repr still lives in repr_assign (it needs layout_of);
 //! only the primitive vector element-family classification lives here.
 
+use compiler.elem_family.{elem_family_of}
 use compiler.mono_type.{MonoType}
 
 /// The primitive storage class of a typed vector's elements. M1a implements only
@@ -16,10 +17,11 @@ pub type ElemRepr = { I64, F64, I32 }
 /// Vector<T> whose T is a currently-supported primitive, else .None. Whether a
 /// given storage site actually uses a typed repr is decided elsewhere (e.g.
 /// route_typed_vec / typed-storage layout) — not by this function.
-/// M1a: only Vector<Int> -> .Some(.I64).
+/// Eligibility is defined by the elem_family registry: any element type with a
+/// registered family is a candidate.
 pub fn candidate_typed_vec_family(mono: MonoType) ElemRepr? {
-  case mono {
-    .Vector(.Int) => .Some(.I64),
-    _ => .None,
+  case elem_family_of(mono) {
+    .Some(_) => .Some(.I64),
+    .None => .None,
   }
 }
