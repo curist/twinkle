@@ -241,6 +241,7 @@ type EligibleSets = .{
 
 fn compute_eligible_v(
   pf: PreparedFunc,
+  fi: FamilyIds,
   ids: RouteIds,
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
@@ -254,11 +255,11 @@ fn compute_eligible_v(
     return empty
   }
 
-  // 1. Collect (v, b) candidates: v = builder_freeze(b) where v: Vector<Int>.
-  cands := collect_candidates(pf.body, pf.slots, ids, [])
+  // 1. Collect (v, b) candidates: v = builder_freeze(b) where v is in fi.fam.
+  cands := collect_candidates(pf.body, pf.slots, ids, fi.fam, [])
 
-  field_read_sids := collect_typed_field_reads(pf.body, typed_fields, [])
-  payload_read_sids := collect_typed_payload_reads(pf.body, typed_payloads, pf.slots, [])
+  field_read_sids := collect_typed_field_reads(pf.body, typed_fields, pf.slots, fi.fam, [])
+  payload_read_sids := collect_typed_payload_reads(pf.body, typed_payloads, pf.slots, fi.fam, [])
 
   // Slots bound from a typed-return call (its physical result is PVecI64), e.g.
   // `keys := column.as_ints(col)`. A typed source when consumed typed-only.
@@ -428,6 +429,11 @@ fn compute_eligible_v(
   .{ eligible_v, eligible_b, has_phys_return }
 }
 
+// Route one function through every element family in turn. Each pass threads the
+// active family's typed builtin ids and PVec type; families are independent
+// (their eligible slots are disjoint by MonoType), so folding pass-by-pass over
+// the running `pf` is order-independent. With only the i64 family today this runs
+// exactly once, identical to the pre-family single-shot pass.
 fn route_func(
   pf: PreparedFunc,
   ids: RouteIds,
@@ -437,8 +443,37 @@ fn route_func(
   capture_abi: Dict<String, Vector<Int>>,
   typeable_return: Dict<String, Bool>,
 ) PreparedFunc {
+  cur := pf
+
+  for fi in families_ids(builtins) {
+    cur = route_func_family(
+      cur,
+      fi,
+      ids,
+      builtins,
+      typed_fields,
+      typed_payloads,
+      capture_abi,
+      typeable_return,
+    )
+  }
+
+  cur
+}
+
+fn route_func_family(
+  pf: PreparedFunc,
+  fi: FamilyIds,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+  capture_abi: Dict<String, Vector<Int>>,
+  typeable_return: Dict<String, Bool>,
+) PreparedFunc {
   sets := compute_eligible_v(
     pf,
+    fi,
     ids,
     builtins,
     typed_fields,
@@ -454,19 +489,19 @@ fn route_func(
     return pf
   }
 
-  // 3. Swap builder/len calls to _i64 variants and retype the slots.
-  //    - Result slots (eligible_v) become PVecI64 (typed reads).
+  // 3. Swap builder/len calls to the family's typed variants and retype the slots.
+  //    - Result slots (eligible_v) become the family PVec (typed reads).
   //    - Builder-lineage slots (eligible_b) hold the erased anyref builder
-  //      handle: builder_new_i64 returns Array (like the boxed builder), and the
+  //      handle: builder_new returns Array (like the boxed builder), and the
   //      builder-arg shim casts anyref -> Array at each push/freeze, so the slot
   //      must be OpaqueAnyref/anyref (matching how the boxed builder is erased).
-  new_body := rewrite(pf.body, eligible_v, eligible_b, ids)
+  new_body := rewrite(pf.body, eligible_v, eligible_b, ids, fi)
   new_slots: Dict<Int, SlotInfo> = pf.slots
 
   for sid_int, info in pf.slots {
     retyped: SlotInfo? = cond {
       eligible_v.has(info.slot.id) => .Some(
-        with_repr_wasm(info, info.repr, .Ref(true, .Named("rt_types__PVecI64"))),
+        with_repr_wasm(info, info.repr, .Ref(true, .Named(fi.fam.pvec_type))),
       ),
       eligible_b.has(info.slot.id) => .Some(with_repr_wasm(info, .OpaqueAnyref, .Anyref)),
       _ => .None,
@@ -481,10 +516,10 @@ fn route_func(
   pf.slots = new_slots
   pf.body = new_body
 
-  // Typed-return bridge: expose a physical PVecI64 result ABI. The returned slot
-  // is now PVecI64 (retyped above), so emit's return coercion is a no-op.
+  // Typed-return bridge: expose a physical typed result ABI. The returned slot is
+  // now the family PVec (retyped above), so emit's return coercion is a no-op.
   if has_phys_return {
-    pf.phys_return = .Some(.Ref(true, .Named("rt_types__PVecI64")))
+    pf.phys_return = .Some(.Ref(true, .Named(fi.fam.pvec_type)))
   }
 
   pf
@@ -512,18 +547,21 @@ pub fn materialize_slot_repr(
   out: Dict<String, Bool> = Dict.new()
 
   for pf in funcs {
-    sets := compute_eligible_v(
-      pf,
-      ids,
-      builtins,
-      typed_fields,
-      typed_payloads,
-      capture_abi,
-      typeable_return,
-    )
+    for fi in families_ids(builtins) {
+      sets := compute_eligible_v(
+        pf,
+        fi,
+        ids,
+        builtins,
+        typed_fields,
+        typed_payloads,
+        capture_abi,
+        typeable_return,
+      )
 
-    for sid in sets.eligible_v.keys() {
-      out["${pf.func_id.id}:${sid}"] = true
+      for sid in sets.eligible_v.keys() {
+        out["${pf.func_id.id}:${sid}"] = true
+      }
     }
   }
 
@@ -582,8 +620,32 @@ fn op_children_depth_exceeds(op: PreparedOp, depth: Int, limit: Int) Bool {
   }
 }
 
-fn is_int_vector(mono_key: String) Bool {
-  mono_key == "vec_i64"
+// A slot holds a vector of the given element family iff its MonoType maps to the
+// same family. Replaces the Int-hardcoded is_int_vector/mono_key_of pair.
+fn slot_in_family(info: SlotInfo, fam: ElemFamily) Bool {
+  case elem_family_of(info.mono) {
+    .Some(f) => f.mono_key == fam.mono_key,
+    .None => false,
+  }
+}
+
+fn slot_in_family_id(sid: Int, slots: Dict<Int, SlotInfo>, fam: ElemFamily) Bool {
+  case slots[sid] {
+    .Some(info) => slot_in_family(info, fam),
+    .None => false,
+  }
+}
+
+// The i64 family, for the whole-program field/payload analyses and single-family
+// queries that do not yet loop over families (their inputs are Vector<Int> today).
+fn i64_family() ElemFamily {
+  for f in all_families() {
+    if f.mono_key == "vec_i64" {
+      return f
+    }
+  }
+
+  error("route_typed_vec: vec_i64 family missing")
 }
 
 fn slot_is(atom: PreparedAtom, sid: Int) Bool {
@@ -597,6 +659,7 @@ fn collect_candidates(
   expr: PreparedExpr,
   slots: Dict<Int, SlotInfo>,
   ids: RouteIds,
+  fam: ElemFamily,
   acc: Vector<Cand>,
 ) Vector<Cand> {
   cur := expr
@@ -606,8 +669,8 @@ fn collect_candidates(
   for !done {
     case cur {
       .Let(slot, op, body) => {
-        cur_acc = collect_candidate_from_op(slot, op, slots, ids, cur_acc)
-        cur_acc = collect_candidates_op_branches(op, slots, ids, cur_acc)
+        cur_acc = collect_candidate_from_op(slot, op, slots, ids, fam, cur_acc)
+        cur_acc = collect_candidates_op_branches(op, slots, ids, fam, cur_acc)
         cur = body
       },
       _ => done = true,
@@ -621,22 +684,23 @@ fn collect_candidates_op_branches(
   op: PreparedOp,
   slots: Dict<Int, SlotInfo>,
   ids: RouteIds,
+  fam: ElemFamily,
   acc: Vector<Cand>,
 ) Vector<Cand> {
   cur := acc
 
   case op {
     .AIf(_, then_e, else_e) => {
-      cur = collect_candidates(then_e, slots, ids, cur)
-      cur = collect_candidates(else_e, slots, ids, cur)
+      cur = collect_candidates(then_e, slots, ids, fam, cur)
+      cur = collect_candidates(else_e, slots, ids, fam, cur)
     },
     .AMatch(_, arms) => {
       for arm in arms {
-        cur = collect_candidates(arm.body, slots, ids, cur)
+        cur = collect_candidates(arm.body, slots, ids, fam, cur)
       }
     },
-    .ALoop(inner) => cur = collect_candidates(inner, slots, ids, cur),
-    .ADefer(inner) => cur = collect_candidates(inner, slots, ids, cur),
+    .ALoop(inner) => cur = collect_candidates(inner, slots, ids, fam, cur),
+    .ADefer(inner) => cur = collect_candidates(inner, slots, ids, fam, cur),
     _ => {},
   }
 
@@ -648,13 +712,14 @@ fn collect_candidate_from_op(
   op: PreparedOp,
   slots: Dict<Int, SlotInfo>,
   ids: RouteIds,
+  fam: ElemFamily,
   acc: Vector<Cand>,
 ) Vector<Cand> {
   case op {
     .ACall(.AGlobalFunc(fid), args) => if fid.id == ids.builder_freeze and args.len() == 1 {
       case args[0] {
         .ASlot(b) => case slots[slot.id] {
-          .Some(info) => if is_int_vector(mono_key_of(info)) {
+          .Some(info) => if slot_in_family(info, fam) {
             acc.append(.{ v: slot.id, b: b.id })
           } else {
             acc
@@ -747,9 +812,13 @@ fn collect_gather_results_op_branches(
 // "${tid}:${fid}" is in `typed_fields` — these read from a physically-typed
 // field, so the loaded Vector<Int> is already PVecI64 and the result slot is a
 // typed source.
-fn collect_typed_field_reads(expr: PreparedExpr, typed_fields: Dict<String, Bool>, acc: Vector<Int>) Vector<
-  Int,
-> {
+fn collect_typed_field_reads(
+  expr: PreparedExpr,
+  typed_fields: Dict<String, Bool>,
+  slots: Dict<Int, SlotInfo>,
+  fam: ElemFamily,
+  acc: Vector<Int>,
+) Vector<Int> {
   cur := expr
   cur_acc := acc
   done := false
@@ -757,8 +826,8 @@ fn collect_typed_field_reads(expr: PreparedExpr, typed_fields: Dict<String, Bool
   for !done {
     case cur {
       .Let(slot, op, body) => {
-        cur_acc = collect_typed_field_read_from_op(slot, op, typed_fields, cur_acc)
-        cur_acc = collect_typed_field_reads_op_branches(op, typed_fields, cur_acc)
+        cur_acc = collect_typed_field_read_from_op(slot, op, typed_fields, slots, fam, cur_acc)
+        cur_acc = collect_typed_field_reads_op_branches(op, typed_fields, slots, fam, cur_acc)
         cur = body
       },
       _ => done = true,
@@ -771,22 +840,24 @@ fn collect_typed_field_reads(expr: PreparedExpr, typed_fields: Dict<String, Bool
 fn collect_typed_field_reads_op_branches(
   op: PreparedOp,
   typed_fields: Dict<String, Bool>,
+  slots: Dict<Int, SlotInfo>,
+  fam: ElemFamily,
   acc: Vector<Int>,
 ) Vector<Int> {
   cur := acc
 
   case op {
     .AIf(_, then_e, else_e) => {
-      cur = collect_typed_field_reads(then_e, typed_fields, cur)
-      cur = collect_typed_field_reads(else_e, typed_fields, cur)
+      cur = collect_typed_field_reads(then_e, typed_fields, slots, fam, cur)
+      cur = collect_typed_field_reads(else_e, typed_fields, slots, fam, cur)
     },
     .AMatch(_, arms) => {
       for arm in arms {
-        cur = collect_typed_field_reads(arm.body, typed_fields, cur)
+        cur = collect_typed_field_reads(arm.body, typed_fields, slots, fam, cur)
       }
     },
-    .ALoop(inner) => cur = collect_typed_field_reads(inner, typed_fields, cur),
-    .ADefer(inner) => cur = collect_typed_field_reads(inner, typed_fields, cur),
+    .ALoop(inner) => cur = collect_typed_field_reads(inner, typed_fields, slots, fam, cur),
+    .ADefer(inner) => cur = collect_typed_field_reads(inner, typed_fields, slots, fam, cur),
     _ => {},
   }
 
@@ -797,13 +868,17 @@ fn collect_typed_field_read_from_op(
   slot: SlotId,
   op: PreparedOp,
   typed_fields: Dict<String, Bool>,
+  slots: Dict<Int, SlotInfo>,
+  fam: ElemFamily,
   acc: Vector<Int>,
 ) Vector<Int> {
   case op {
     .ARecordGet(_, fid, tid) => {
       key := "${tid.id}:${fid.id}"
 
-      if typed_fields.has(key) {
+      // typed_fields is an untagged site set; only retype the read whose own
+      // result slot belongs to the active element family.
+      if typed_fields.has(key) and slot_in_family_id(slot.id, slots, fam) {
         acc.append(slot.id)
       } else {
         acc
@@ -822,6 +897,7 @@ fn collect_typed_payload_reads(
   expr: PreparedExpr,
   typed_payloads: Dict<String, Bool>,
   slots: Dict<Int, SlotInfo>,
+  fam: ElemFamily,
   acc: Vector<Int>,
 ) Vector<Int> {
   cur := expr
@@ -831,7 +907,7 @@ fn collect_typed_payload_reads(
   for !done {
     case cur {
       .Let(_, op, body) => {
-        cur_acc = collect_typed_payload_reads_op(op, typed_payloads, slots, cur_acc)
+        cur_acc = collect_typed_payload_reads_op(op, typed_payloads, slots, fam, cur_acc)
         cur = body
       },
       _ => done = true,
@@ -845,6 +921,7 @@ fn collect_typed_payload_reads_op(
   op: PreparedOp,
   typed_payloads: Dict<String, Bool>,
   slots: Dict<Int, SlotInfo>,
+  fam: ElemFamily,
   acc: Vector<Int>,
 ) Vector<Int> {
   cur := acc
@@ -852,16 +929,16 @@ fn collect_typed_payload_reads_op(
   case op {
     .AMatch(_, arms) => {
       for arm in arms {
-        cur = collect_payload_bindings(arm.pattern, typed_payloads, slots, cur)
-        cur = collect_typed_payload_reads(arm.body, typed_payloads, slots, cur)
+        cur = collect_payload_bindings(arm.pattern, typed_payloads, slots, fam, cur)
+        cur = collect_typed_payload_reads(arm.body, typed_payloads, slots, fam, cur)
       }
     },
     .AIf(_, then_e, else_e) => {
-      cur = collect_typed_payload_reads(then_e, typed_payloads, slots, cur)
-      cur = collect_typed_payload_reads(else_e, typed_payloads, slots, cur)
+      cur = collect_typed_payload_reads(then_e, typed_payloads, slots, fam, cur)
+      cur = collect_typed_payload_reads(else_e, typed_payloads, slots, fam, cur)
     },
-    .ALoop(inner) => cur = collect_typed_payload_reads(inner, typed_payloads, slots, cur),
-    .ADefer(inner) => cur = collect_typed_payload_reads(inner, typed_payloads, slots, cur),
+    .ALoop(inner) => cur = collect_typed_payload_reads(inner, typed_payloads, slots, fam, cur),
+    .ADefer(inner) => cur = collect_typed_payload_reads(inner, typed_payloads, slots, fam, cur),
     _ => {},
   }
 
@@ -876,6 +953,7 @@ fn collect_payload_bindings(
   pattern: PreparedPattern,
   typed_payloads: Dict<String, Bool>,
   slots: Dict<Int, SlotInfo>,
+  fam: ElemFamily,
   acc: Vector<Int>,
 ) Vector<Int> {
   case pattern {
@@ -886,10 +964,10 @@ fn collect_payload_bindings(
         key := "${tid.id}:${vid.id}:${idx}"
 
         case sub {
-          .Var(s) => if typed_payloads.has(key) and slot_is_int_vector(s.id, slots) {
+          .Var(s) => if typed_payloads.has(key) and slot_in_family_id(s.id, slots, fam) {
             cur = .append(s.id)
           },
-          .Variant(_, _, _) => cur = collect_payload_bindings(sub, typed_payloads, slots, cur),
+          .Variant(_, _, _) => cur = collect_payload_bindings(sub, typed_payloads, slots, fam, cur),
           _ => {},
         }
       }
@@ -897,13 +975,6 @@ fn collect_payload_bindings(
       cur
     },
     _ => acc,
-  }
-}
-
-fn slot_is_int_vector(sid: Int, slots: Dict<Int, SlotInfo>) Bool {
-  case slots[sid] {
-    .Some(info) => is_int_vector(mono_key_of(info)),
-    .None => false,
   }
 }
 
@@ -952,15 +1023,6 @@ fn copy_map_op(op: PreparedOp, acc: Dict<Int, Int>) Dict<Int, Int> {
     .ALoop(inner) => build_copy_map(inner, acc),
     .ADefer(inner) => build_copy_map(inner, acc),
     _ => acc,
-  }
-}
-
-fn mono_key_of(info: SlotInfo) String {
-  // SlotInfo carries the semantic MonoType; reuse mono_to_key indirectly by
-  // matching the layout key. Vector<Int> keys to "vec_i64".
-  case info.mono {
-    .Vector(.Int) => "vec_i64",
-    _ => "other",
   }
 }
 
@@ -1161,14 +1223,11 @@ fn use_esc(escapes: Bool) VGroupUse {
   .{ escapes, field_keys: [], payload_keys: [] }
 }
 
-// Under the current callers, vs only ever contains Vector<Int> slots, so the
-// non-Vector<Int> branches that depend on this are defensive.
-fn atom_is_int_vector_slot(atom: PreparedAtom, slots: Dict<Int, SlotInfo>) Bool {
+// Under the current callers, vs only ever contains slots of the active family, so
+// the other-family branches that depend on this are defensive.
+fn atom_in_family(atom: PreparedAtom, slots: Dict<Int, SlotInfo>, fam: ElemFamily) Bool {
   case atom {
-    .ASlot(s) => case slots[s.id] {
-      .Some(info) => is_int_vector(mono_key_of(info)),
-      .None => false,
-    },
+    .ASlot(s) => slot_in_family_id(s.id, slots, fam),
     _ => false,
   }
 }
@@ -1180,8 +1239,9 @@ fn classify_v_group(
   len_id: Int,
   builtins: BuiltinRegistry,
   slots: Dict<Int, SlotInfo>,
+  fam: ElemFamily,
 ) VGroupUse {
-  classify_expr(expr, vs, relaxed, len_id, builtins, slots)
+  classify_expr(expr, vs, relaxed, len_id, builtins, slots, fam)
 }
 
 // Shared eligibility predicate: a typed-vector slot group `aliases` is typeable
@@ -1200,7 +1260,10 @@ pub fn v_group_typeable(
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
 ) Bool {
-  vuse := classify_v_group(body, aliases, relaxed, ids.len, builtins, slots)
+  // This pub entry keeps its Int-era signature (external callers pass no family),
+  // so it classifies against the i64 family. Only i64 exists today; a second
+  // family would thread the active family in here.
+  vuse := classify_v_group(body, aliases, relaxed, ids.len, builtins, slots, i64_family())
   all_field_keys_typed := vuse.field_keys.len() == 0 or all_in(vuse.field_keys, typed_fields)
 
   // A producer that flows into a variant payload is only routable if every such
@@ -1227,17 +1290,16 @@ pub fn free_var_typed_local(
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
 ) Bool {
-  is_vec := case pf.slots[fv_slot] {
-    .Some(info) => is_int_vector(mono_key_of(info)),
-    .None => false,
-  }
+  // M1b support check is single-family today (its free var is a Vector<Int>).
+  fam := i64_family()
+  is_vec := slot_in_family_id(fv_slot, pf.slots, fam)
 
   if !is_vec {
     return false
   }
 
   copy_map := build_copy_map(pf.body, Dict.new())
-  cands := collect_candidates(pf.body, pf.slots, ids, [])
+  cands := collect_candidates(pf.body, pf.slots, ids, fam, [])
 
   for c in cands {
     aliases := aliases_for(c.v, copy_map)
@@ -1296,17 +1358,26 @@ pub fn slot_typed_after_route(
   typed_payloads: Dict<String, Bool>,
   typeable_return: Dict<String, Bool>,
 ) Bool {
-  sets := compute_eligible_v(
-    pf,
-    ids,
-    builtins,
-    typed_fields,
-    typed_payloads,
-    Dict.new(),
-    typeable_return,
-  )
-  sets.eligible_v.has(slot)
-    or free_var_typed_local(pf, slot, ids, builtins, typed_fields, typed_payloads)
+  hit := false
+
+  for fi in families_ids(builtins) {
+    sets := compute_eligible_v(
+      pf,
+      fi,
+      ids,
+      builtins,
+      typed_fields,
+      typed_payloads,
+      Dict.new(),
+      typeable_return,
+    )
+
+    if sets.eligible_v.has(slot) {
+      hit = true
+    }
+  }
+
+  hit or free_var_typed_local(pf, slot, ids, builtins, typed_fields, typed_payloads)
 }
 
 fn classify_expr(
@@ -1316,11 +1387,12 @@ fn classify_expr(
   len_id: Int,
   builtins: BuiltinRegistry,
   slots: Dict<Int, SlotInfo>,
+  fam: ElemFamily,
 ) VGroupUse {
   case expr {
     .Let(_, op, body) => {
-      op_use := classify_op(op, vs, relaxed, len_id, builtins, slots)
-      body_use := classify_expr(body, vs, relaxed, len_id, builtins, slots)
+      op_use := classify_op(op, vs, relaxed, len_id, builtins, slots, fam)
+      body_use := classify_expr(body, vs, relaxed, len_id, builtins, slots, fam)
       op_use.merge_use(body_use)
     },
     .Atom(a) => use_esc(slot_in(a, vs)),
@@ -1345,6 +1417,7 @@ fn classify_op(
   len_id: Int,
   builtins: BuiltinRegistry,
   slots: Dict<Int, SlotInfo>,
+  fam: ElemFamily,
 ) VGroupUse {
   case op {
     .ACall(callee, args) => case callee {
@@ -1367,22 +1440,22 @@ fn classify_op(
     },
     .AIf(cnd, then_e, else_e) => {
       cnd_esc := use_esc(slot_in(cnd, vs))
-      then_use := classify_expr(then_e, vs, relaxed, len_id, builtins, slots)
-      else_use := classify_expr(else_e, vs, relaxed, len_id, builtins, slots)
+      then_use := classify_expr(then_e, vs, relaxed, len_id, builtins, slots, fam)
+      else_use := classify_expr(else_e, vs, relaxed, len_id, builtins, slots, fam)
       cnd_esc.merge_use(then_use.merge_use(else_use))
     },
     .AMatch(scrut, arms) => {
       acc := use_esc(slot_in(scrut, vs))
 
       for arm in arms {
-        arm_use := classify_expr(arm.body, vs, relaxed, len_id, builtins, slots)
+        arm_use := classify_expr(arm.body, vs, relaxed, len_id, builtins, slots, fam)
         acc = .merge_use(arm_use)
       }
 
       acc
     },
-    .ALoop(inner) => classify_expr(inner, vs, relaxed, len_id, builtins, slots),
-    .ADefer(inner) => classify_expr(inner, vs, relaxed, len_id, builtins, slots),
+    .ALoop(inner) => classify_expr(inner, vs, relaxed, len_id, builtins, slots, fam),
+    .ADefer(inner) => classify_expr(inner, vs, relaxed, len_id, builtins, slots, fam),
     .ABinOp(_, l, r, _) => use_esc(slot_in(l, vs) or slot_in(r, vs)),
     .AUnOp(_, a, _) => use_esc(slot_in(a, vs)),
     .AMakeClosure(_, free_vars) => {
@@ -1403,7 +1476,7 @@ fn classify_op(
 
       for f in fields {
         if slot_in(f.value, vs) {
-          if atom_is_int_vector_slot(f.value, slots) {
+          if atom_in_family(f.value, slots, fam) {
             key := "${tid.id}:${f.field.id}"
             acc = .merge_use(.{ escapes: false, field_keys: [key], payload_keys: [] })
           } else {
@@ -1419,7 +1492,7 @@ fn classify_op(
       // If val is a typed-vector value being stored into the field — record it.
       // If base is a typed-vector (shouldn't happen) — genuine escape.
       val_use: VGroupUse = if slot_in(val, vs) {
-        if atom_is_int_vector_slot(val, slots) {
+        if atom_in_family(val, slots, fam) {
           key := "${tid.id}:${fid.id}"
           .{ escapes: false, field_keys: [key], payload_keys: [] }
         } else {
@@ -1440,7 +1513,7 @@ fn classify_op(
 
       for a, i in args {
         if slot_in(a, vs) {
-          if atom_is_int_vector_slot(a, slots) {
+          if atom_in_family(a, slots, fam) {
             key := "${tid.id}:${vid.id}:${i}"
             acc = .merge_use(.{ escapes: false, field_keys: [], payload_keys: [key] })
           } else {
@@ -1627,14 +1700,16 @@ fn scan_func_payload_producers(
   typeable_params: Dict<String, Vector<Int>>,
   stats0: Dict<String, FieldStat>,
 ) Dict<String, FieldStat> {
+  // Whole-program typed-payload analysis is single-family today (Vector<Int>).
+  fam := i64_family()
   copy_map := build_copy_map(pf.body, Dict.new())
-  cands := collect_candidates(pf.body, pf.slots, ids, [])
+  cands := collect_candidates(pf.body, pf.slots, ids, fam, [])
   sources := producer_source_slots(pf, cands, typeable_params)
   stats := stats0
 
   for v_slot in sources {
     aliases := aliases_for(v_slot, copy_map)
-    vuse := classify_v_group(pf.body, aliases, Dict.new(), ids.len, builtins, pf.slots)
+    vuse := classify_v_group(pf.body, aliases, Dict.new(), ids.len, builtins, pf.slots, fam)
     keys := distinct_keys(user_payload_keys(vuse.payload_keys, first_user_tid))
 
     if keys.len() == 0 {
@@ -1696,8 +1771,10 @@ fn scan_func_producers_consumers(
   builtins: BuiltinRegistry,
   stats0: Dict<String, FieldStat>,
 ) ScanResult {
+  // Whole-program typed-field analysis is single-family today (Vector<Int> fields).
+  fam := i64_family()
   copy_map := build_copy_map(pf.body, Dict.new())
-  cands := collect_candidates(pf.body, pf.slots, ids, [])
+  cands := collect_candidates(pf.body, pf.slots, ids, fam, [])
   stats := stats0
   ok_map: Dict<String, Dict<Int, Bool>> = Dict.new()
 
@@ -1706,7 +1783,7 @@ fn scan_func_producers_consumers(
   // slots are recorded as OK so pass 2 won't re-flag the store as boxed.
   for c in cands {
     aliases := aliases_for(c.v, copy_map)
-    vuse := classify_v_group(pf.body, aliases, Dict.new(), ids.len, builtins, pf.slots)
+    vuse := classify_v_group(pf.body, aliases, Dict.new(), ids.len, builtins, pf.slots, fam)
     keys := distinct_keys(vuse.field_keys)
 
     if !vuse.escapes and keys.len() == 1 {
@@ -1741,8 +1818,8 @@ fn scan_func_producers_consumers(
     }
   }
 
-  // Consumers: every ARecordGet whose result slot is Vector<Int>.
-  stats = scan_consumers(pf.body, pf, ids, builtins, stats)
+  // Consumers: every ARecordGet whose result slot is in the family.
+  stats = scan_consumers(pf.body, pf, ids, builtins, fam, stats)
   .{ stats, ok: .{ map: ok_map } }
 }
 
@@ -1754,17 +1831,15 @@ fn scan_consumers(
   pf: PreparedFunc,
   ids: RouteIds,
   builtins: BuiltinRegistry,
+  fam: ElemFamily,
   stats0: Dict<String, FieldStat>,
 ) Dict<String, FieldStat> {
   case expr {
     .Let(slot, op, body) => {
       stats := case op {
         .ARecordGet(_, fid, tid) => {
-          // Is the result slot a Vector<Int>?
-          is_vec := case pf.slots[slot.id] {
-            .Some(info) => is_int_vector(mono_key_of(info)),
-            .None => false,
-          }
+          // Is the result slot in the active family?
+          is_vec := slot_in_family_id(slot.id, pf.slots, fam)
 
           if is_vec {
             key := "${tid.id}:${fid.id}"
@@ -1784,8 +1859,8 @@ fn scan_consumers(
         _ => stats0,
       }
 
-      stats2 := scan_consumers_op(op, pf, ids, builtins, stats)
-      scan_consumers(body, pf, ids, builtins, stats2)
+      stats2 := scan_consumers_op(op, pf, ids, builtins, fam, stats)
+      scan_consumers(body, pf, ids, builtins, fam, stats2)
     },
     _ => stats0,
   }
@@ -1796,24 +1871,25 @@ fn scan_consumers_op(
   pf: PreparedFunc,
   ids: RouteIds,
   builtins: BuiltinRegistry,
+  fam: ElemFamily,
   stats0: Dict<String, FieldStat>,
 ) Dict<String, FieldStat> {
   case op {
     .AIf(_, then_e, else_e) => {
-      s := scan_consumers(then_e, pf, ids, builtins, stats0)
-      scan_consumers(else_e, pf, ids, builtins, s)
+      s := scan_consumers(then_e, pf, ids, builtins, fam, stats0)
+      scan_consumers(else_e, pf, ids, builtins, fam, s)
     },
     .AMatch(_, arms) => {
       cur := stats0
 
       for arm in arms {
-        cur = scan_consumers(arm.body, pf, ids, builtins, cur)
+        cur = scan_consumers(arm.body, pf, ids, builtins, fam, cur)
       }
 
       cur
     },
-    .ALoop(inner) => scan_consumers(inner, pf, ids, builtins, stats0),
-    .ADefer(inner) => scan_consumers(inner, pf, ids, builtins, stats0),
+    .ALoop(inner) => scan_consumers(inner, pf, ids, builtins, fam, stats0),
+    .ADefer(inner) => scan_consumers(inner, pf, ids, builtins, fam, stats0),
     _ => stats0,
   }
 }
@@ -1826,7 +1902,8 @@ fn scan_func_field_stores(
   ok: OkAliases,
   stats0: Dict<String, FieldStat>,
 ) Dict<String, FieldStat> {
-  sites := field_store_sites(pf.body, pf.slots, [])
+  fam := i64_family()
+  sites := field_store_sites(pf.body, pf.slots, fam, [])
   stats := stats0
 
   for site in sites {
@@ -1882,27 +1959,33 @@ type FieldStoreSite = .{ key: String, value: PreparedAtom }
 
 // Collect all Vector<Int> field-store sites: ARecord field atoms whose field is
 // a Vector<Int> slot, and ARecordUpdate setting a Vector<Int> value.
-fn field_store_sites(expr: PreparedExpr, slots: Dict<Int, SlotInfo>, acc: Vector<FieldStoreSite>) Vector<
-  FieldStoreSite,
-> {
+fn field_store_sites(
+  expr: PreparedExpr,
+  slots: Dict<Int, SlotInfo>,
+  fam: ElemFamily,
+  acc: Vector<FieldStoreSite>,
+) Vector<FieldStoreSite> {
   case expr {
     .Let(_, op, body) => {
-      acc2 := field_store_sites_op(op, slots, acc)
-      field_store_sites(body, slots, acc2)
+      acc2 := field_store_sites_op(op, slots, fam, acc)
+      field_store_sites(body, slots, fam, acc2)
     },
     _ => acc,
   }
 }
 
-fn field_store_sites_op(op: PreparedOp, slots: Dict<Int, SlotInfo>, acc: Vector<FieldStoreSite>) Vector<
-  FieldStoreSite,
-> {
+fn field_store_sites_op(
+  op: PreparedOp,
+  slots: Dict<Int, SlotInfo>,
+  fam: ElemFamily,
+  acc: Vector<FieldStoreSite>,
+) Vector<FieldStoreSite> {
   case op {
     .ARecord(tid, fields) => {
       cur := acc
 
       for f in fields {
-        if atom_is_int_vector_slot(f.value, slots) {
+        if atom_in_family(f.value, slots, fam) {
           key := "${tid.id}:${f.field.id}"
           cur = .append(.{ key, value: f.value })
         }
@@ -1910,27 +1993,27 @@ fn field_store_sites_op(op: PreparedOp, slots: Dict<Int, SlotInfo>, acc: Vector<
 
       cur
     },
-    .ARecordUpdate(_, fid, val, _, tid) => if atom_is_int_vector_slot(val, slots) {
+    .ARecordUpdate(_, fid, val, _, tid) => if atom_in_family(val, slots, fam) {
       key := "${tid.id}:${fid.id}"
       acc.append(.{ key, value: val })
     } else {
       acc
     },
     .AIf(_, then_e, else_e) => {
-      acc2 := field_store_sites(then_e, slots, acc)
-      field_store_sites(else_e, slots, acc2)
+      acc2 := field_store_sites(then_e, slots, fam, acc)
+      field_store_sites(else_e, slots, fam, acc2)
     },
     .AMatch(_, arms) => {
       cur := acc
 
       for arm in arms {
-        cur = field_store_sites(arm.body, slots, cur)
+        cur = field_store_sites(arm.body, slots, fam, cur)
       }
 
       cur
     },
-    .ALoop(inner) => field_store_sites(inner, slots, acc),
-    .ADefer(inner) => field_store_sites(inner, slots, acc),
+    .ALoop(inner) => field_store_sites(inner, slots, fam, acc),
+    .ADefer(inner) => field_store_sites(inner, slots, fam, acc),
     _ => acc,
   }
 }
@@ -1941,38 +2024,40 @@ fn rewrite(
   eligible_v: Dict<Int, Bool>,
   eligible_b: Dict<Int, Bool>,
   ids: RouteIds,
+  fi: FamilyIds,
 ) PreparedExpr {
   case expr {
     .Let(slot, op, body) => .Let(
       slot,
-      rewrite_op(slot.id, op, eligible_v, eligible_b, ids),
-      rewrite(body, eligible_v, eligible_b, ids),
+      rewrite_op(slot.id, op, eligible_v, eligible_b, ids, fi),
+      rewrite(body, eligible_v, eligible_b, ids, fi),
     ),
     _ => expr,
   }
 }
 
+// The `cond` match keys are the BOXED builtin ids (`ids.*`) — the calls as they
+// stand before routing — and the swap targets are the active family's typed ids.
 fn rewrite_op(
   result_sid: Int,
   op: PreparedOp,
   eligible_v: Dict<Int, Bool>,
   eligible_b: Dict<Int, Bool>,
   ids: RouteIds,
+  fi: FamilyIds,
 ) PreparedOp {
   case op {
     .ACall(.AGlobalFunc(fid), args) => {
       swapped: Int? = cond {
-        fid.id == ids.builder_new and eligible_b.has(result_sid) => .Some(ids.builder_new_i64),
+        fid.id == ids.builder_new and eligible_b.has(result_sid) => .Some(fi.builder_new),
         fid.id == ids.builder_push and args.len() >= 1 and arg0_in(args, eligible_b) => .Some(
-          ids.builder_push_i64,
+          fi.builder_push,
         ),
         fid.id == ids.builder_freeze and args.len() == 1 and arg0_in(args, eligible_b) => .Some(
-          ids.builder_freeze_i64,
+          fi.builder_freeze,
         ),
-        fid.id == ids.len and args.len() == 1 and arg0_in(args, eligible_v) => .Some(ids.len_i64),
-        fid.id == ids.gather and args.len() == 2 and arg0_in(args, eligible_v) => .Some(
-          ids.gather_i64,
-        ),
+        fid.id == ids.len and args.len() == 1 and arg0_in(args, eligible_v) => .Some(fi.len),
+        fid.id == ids.gather and args.len() == 2 and arg0_in(args, eligible_v) => .Some(fi.gather),
         _ => .None,
       }
 
@@ -1983,17 +2068,17 @@ fn rewrite_op(
     },
     .AIf(cnd, then_e, else_e) => .AIf(
       cnd,
-      rewrite(then_e, eligible_v, eligible_b, ids),
-      rewrite(else_e, eligible_v, eligible_b, ids),
+      rewrite(then_e, eligible_v, eligible_b, ids, fi),
+      rewrite(else_e, eligible_v, eligible_b, ids, fi),
     ),
     .AMatch(scrut, arms) => .AMatch(
       scrut,
       collect arm in arms {
-        .{ pattern: arm.pattern, body: rewrite(arm.body, eligible_v, eligible_b, ids) }
+        .{ pattern: arm.pattern, body: rewrite(arm.body, eligible_v, eligible_b, ids, fi) }
       },
     ),
-    .ALoop(inner) => .ALoop(rewrite(inner, eligible_v, eligible_b, ids)),
-    .ADefer(inner) => .ADefer(rewrite(inner, eligible_v, eligible_b, ids)),
+    .ALoop(inner) => .ALoop(rewrite(inner, eligible_v, eligible_b, ids, fi)),
+    .ADefer(inner) => .ADefer(rewrite(inner, eligible_v, eligible_b, ids, fi)),
     _ => op,
   }
 }
