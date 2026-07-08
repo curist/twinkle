@@ -184,6 +184,13 @@ pub fn module() WasmModule {
     box_i64_fn(),
     unbox_i64_fn(),
     vec_i64_roundtrip_fn(),
+    family_bool().pvec_len_fn(),
+    family_bool().pvec_get_fn(),
+    promote_full_tail_bool_fn(),
+    family_bool().pvec_builder_new_fn(),
+    builder_push_bool_raw_fn(),
+    family_bool().pvec_builder_freeze_fn(),
+    gather_bool_fn(),
     family_boxed().pvec_builder_new_fn(),
     builder_from_fn(),
     builder_push_fn(),
@@ -1391,6 +1398,23 @@ fn family_i64() PVecFamily {
     elem_ty: .I64,
     empty_pvec_global: "empty_pvec_i64",
     zero_value: .I64Const(0),
+  }
+}
+
+fn family_bool() PVecFamily {
+  .{
+    len_name: "len_bool",
+    get_name: "get_bool",
+    builder_new_name: "builder_new_bool",
+    builder_freeze_name: "builder_freeze_bool",
+    pvec_ty: t_PVEC_BOOL,
+    pvec_null: pvec_bool_null(),
+    pvec_ref: pvec_bool_ref(),
+    arr_ty: t_ARRAY_BOOL,
+    arr_null: arr_bool_null(),
+    elem_ty: .I32,
+    empty_pvec_global: "empty_pvec_bool",
+    zero_value: .I32Const(0),
   }
 }
 
@@ -3804,6 +3828,266 @@ fn gather_i64_fn() FuncDef {
       ),
       .LocalGet(3),
       .Call("builder_freeze_i64"),
+    ],
+  }
+}
+
+// promote_full_tail_bool(prefix: PVecBool, full_tail: ArrayBool) -> PVecBool
+// Radix append of one full i32 leaf. Mirrors promote_full_tail_i64 with Bool
+// types (ArrayBool leaves, PVecBool struct). new_path/push_tail treat leaves as
+// opaque `ref eq`, so ArrayBool leaves work unchanged.
+fn promote_full_tail_bool_fn() FuncDef {
+  p_prefix := 0
+  p_full_tail := 1
+  l_cnt := 2
+  l_shift := 3
+  l_new_shift := 4
+  l_new_root := 5
+  l_nc := 6
+
+  .{
+    name: "promote_full_tail_bool",
+    params: [pvec_bool_ref(), arr_bool_ref()],
+    results: [pvec_bool_ref()],
+    locals: [.I32, .I32, .I32, ref_eq_null(), vec_children_null()],
+    body: [
+      .LocalGet(p_prefix),
+      .StructGet(t_PVEC_BOOL, pv_LEN),
+      .LocalSet(l_cnt),
+      .LocalGet(p_prefix),
+      .StructGet(t_PVEC_BOOL, pv_SHIFT),
+      .LocalSet(l_shift),
+      .LocalGet(p_prefix),
+      .StructGet(t_PVEC_BOOL, pv_ROOT),
+      .RefIsNull,
+      .If(
+        .None,
+        [
+          .I32Const(rt_BITS),
+          .LocalSet(l_new_shift),
+          .I32Const(rt_BITS),
+          .LocalGet(p_full_tail),
+          .RefCast(false, .Eq),
+          .Call("new_path"),
+          .LocalSet(l_new_root),
+        ],
+        [
+          .LocalGet(l_cnt),
+          .I32Const(rt_BITS),
+          .I32ShrU,
+          .I32Const(1),
+          .LocalGet(l_shift),
+          .I32Shl,
+          .I32GeU,
+          .If(
+            .None,
+            [
+              .LocalGet(l_shift),
+              .I32Const(rt_BITS),
+              .I32Add,
+              .LocalSet(l_new_shift),
+              .RefNull(.Eq),
+              .I32Const(rt_BF),
+              .ArrayNew(t_VEC_CHILDREN),
+              .LocalSet(l_nc),
+              .LocalGet(l_nc),
+              .RefAsNonNull,
+              .I32Const(0),
+              .LocalGet(p_prefix),
+              .StructGet(t_PVEC_BOOL, pv_ROOT),
+              .RefAsNonNull,
+              .RefCast(false, .Eq),
+              .ArraySet(t_VEC_CHILDREN),
+              .LocalGet(l_nc),
+              .RefAsNonNull,
+              .I32Const(1),
+              .LocalGet(l_shift),
+              .LocalGet(p_full_tail),
+              .RefCast(false, .Eq),
+              .Call("new_path"),
+              .ArraySet(t_VEC_CHILDREN),
+              .LocalGet(l_nc),
+              .RefAsNonNull,
+              .RefNull(.Named(t_I32_ARRAY)),
+              .StructNew(t_VEC_INTERNAL),
+              .RefCast(false, .Eq),
+              .LocalSet(l_new_root),
+            ],
+            [
+              .LocalGet(l_shift),
+              .LocalSet(l_new_shift),
+              .LocalGet(l_cnt),
+              .I32Const(rt_BF),
+              .I32Add,
+              .LocalGet(l_shift),
+              .LocalGet(p_prefix),
+              .StructGet(t_PVEC_BOOL, pv_ROOT),
+              .LocalGet(p_full_tail),
+              .RefCast(false, .Eq),
+              .Call("push_tail"),
+              .LocalSet(l_new_root),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(l_cnt),
+      .I32Const(rt_BF),
+      .I32Add,
+      .LocalGet(l_new_shift),
+      .LocalGet(l_new_root),
+      .RefCast(true, .Named(t_VEC_INTERNAL)),
+      .GlobalGet("empty_leaf_bool"),
+      .StructNew(t_PVEC_BOOL),
+    ],
+  }
+}
+
+// builder_push_bool_raw(builder: Array?, elem: i32) -> void
+// Same as builder_push_i64_raw but with i32 elements (ArrayBool leaves) and
+// PVecBool struct. No boxing — the typed reader (get_bool) feeds raw i32.
+fn builder_push_bool_raw_fn() FuncDef {
+  ta := t_ARRAY
+  tab := t_ARRAY_BOOL
+
+  // p0=builder, p1=elem (raw i32); L2=tail_buf, L3=tail_len, L4=pvec_so_far,
+  // L5=elem.
+  .{
+    name: "builder_push_bool_raw",
+    params: [arr_null(), .I32],
+    results: [],
+    locals: [arr_bool_null(), .I32, pvec_bool_null(), .I32],
+    body: [
+      .LocalGet(1),
+      .LocalSet(5),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .I32Const(2),
+      .ArrayGet(ta),
+      .RefCast(true, .Named(tab)),
+      .LocalSet(2),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .I32Const(1),
+      .ArrayGet(ta),
+      .RefCast(false, .I31),
+      .I31GetU,
+      .LocalSet(3),
+      .LocalGet(3),
+      .I32Const(rt_BF),
+      .I32LtS,
+      .If(
+        .None,
+        [
+          .LocalGet(2),
+          .RefAsNonNull,
+          .LocalGet(3),
+          .LocalGet(5),
+          .ArraySet(tab),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(1),
+          .LocalGet(3),
+          .I32Const(1),
+          .I32Add,
+          .RefI31,
+          .ArraySet(ta),
+        ],
+        [
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(0),
+          .ArrayGet(ta),
+          .RefCast(true, .Named(t_PVEC_BOOL)),
+          .LocalSet(4),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(4),
+          .RefAsNonNull,
+          .LocalGet(2),
+          .RefAsNonNull,
+          .Call("promote_full_tail_bool"),
+          .ArraySet(ta),
+          .I32Const(0),
+          .I32Const(rt_BF),
+          .ArrayNew(tab),
+          .LocalSet(2),
+          .LocalGet(2),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(5),
+          .ArraySet(tab),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(2),
+          .LocalGet(2),
+          .ArraySet(ta),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(1),
+          .I32Const(1),
+          .RefI31,
+          .ArraySet(ta),
+        ],
+      ),
+    ],
+  }
+}
+
+// gather_bool(vec: PVecBool?, idx: PVec?) -> PVecBool
+// Like gather_i64, but reads vec via get_bool (raw i32 leaf, no BoxedInt) and
+// builds a typed result via builder_push_bool_raw. idx stays boxed (the
+// permutation vector; read once per output element and truncated to i32).
+fn gather_bool_fn() FuncDef {
+  // p0=vec (PVecBool), p1=idx (PVec); L2=n, L3=builder, L4=i, L5=k
+  .{
+    name: "gather_bool",
+    params: [pvec_bool_null(), pvec_null()],
+    results: [pvec_bool_ref()],
+    locals: [.I32, arr_null(), .I32, .I32],
+    body: [
+      .LocalGet(1),
+      .Call("len"),
+      .LocalSet(2),
+      .Call("builder_new_bool"),
+      .LocalSet(3),
+      .I32Const(0),
+      .LocalSet(4),
+      .Block(
+        "brk",
+        .None,
+        [
+          .Loop(
+            "lp",
+            .None,
+            [
+              .LocalGet(4),
+              .LocalGet(2),
+              .I32GeS,
+              .BrIf("brk"),
+              .LocalGet(1),
+              .LocalGet(4),
+              .Call("get"),
+              .RefCast(false, .Named(t_BOXED_INT)),
+              .StructGet(t_BOXED_INT, 0),
+              .I32WrapI64,
+              .LocalSet(5),
+              .LocalGet(3),
+              .LocalGet(0),
+              .LocalGet(5),
+              .Call("get_bool"),
+              .Call("builder_push_bool_raw"),
+              .LocalGet(4),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(4),
+              .Br("lp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(3),
+      .Call("builder_freeze_bool"),
     ],
   }
 }
