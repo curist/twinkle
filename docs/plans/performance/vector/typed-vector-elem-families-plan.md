@@ -418,11 +418,12 @@ fn family_bool() PVecFamily {
 
 - [ ] **Step 2: Register the generic PVecFamily funcs for Bool.** In the emitted func list (`arr.tw` ~lines 152-164, where `family_i64().pvec_len_fn()` etc. appear), add `family_bool().pvec_len_fn()`, `.pvec_get_fn()`, `.pvec_builder_new_fn()`, `.pvec_builder_freeze_fn()`. These reuse the leaf-agnostic trie unchanged.
 
-- [ ] **Step 3: Clone the non-generic wrappers** into the same list, each a copy of its `_i64` sibling with `t_ARRAY_I64→t_ARRAY_BOOL`, `t_PVEC_I64→t_PVEC_BOOL`, `.I64→.I32`, `.I64Const→.I32Const`, and the `_i64`→`_bool` name/callee. Source references:
+- [ ] **Step 3: Clone the non-generic wrappers** into the same list, each a copy of its `_i64` sibling with `t_ARRAY_I64→t_ARRAY_BOOL`, `t_PVEC_I64→t_PVEC_BOOL`, `.I64→.I32`, `.I64Const→.I32Const`, and the `_i64`→`_bool` name/callee. Source references (dependency-checked: each of these calls only functions defined by the end of THIS task):
   - `promote_full_tail_i64_fn` (line 1733) → `promote_full_tail_bool_fn`
-  - `gather_i64_fn` (line 3717) → `gather_bool_fn` (its internal `get`/`push`/leaf ops become the `_bool` variants)
-  - `vec_i64_roundtrip_fn` (line 4372) → `vec_bool_roundtrip_fn`
   - `builder_push_i64_raw_fn` (line 1936) → `builder_push_bool_raw_fn` (param `.I64`→`.I32`, `ArraySet(t_ARRAY_I64)`→`ArraySet(t_ARRAY_BOOL)`)
+  - `gather_i64_fn` (line 3717) → `gather_bool_fn` (verified: it calls `builder_new_i64`/`builder_freeze_i64`/`get_i64` [generic, Step 2] and `builder_push_i64_raw` [above] — NOT the boxed `builder_push_i64`; so swap those to `_bool` and it compiles here).
+
+  **NOT here:** `vec_bool_roundtrip` is deferred to Task 9 — `vec_i64_roundtrip_fn` calls the BOXED-element `builder_push_i64` (whose `_bool` sibling `builder_push_bool` is defined in Task 9), so cloning it in Task 8 would not compile.
 
 - [ ] **Step 4: Verify it compiles + still no-op.** Nothing routes to these yet. *[VL]* green.
 
@@ -455,9 +456,11 @@ git commit -m "runtime: PVecBool family descriptor + mechanical _bool clones"
   - `box_bool`: where `box_i64` reads an `.I64` leaf and wraps it in a `BoxedInt` struct (`StructNew(t_BOXED_INT)`), instead read the `.I32` leaf and wrap with `.RefI31`.
   - `unbox_bool`: where `unbox_i64` casts an element to `BoxedInt` and `StructGet`s the `.I64`, instead `.RefCast(false, .I31)` + `.I31GetU` to an `.I32` leaf.
 
-- [ ] **Step 3: Register both** in the emitted func list next to the Task 8 clones.
+- [ ] **Step 3: Clone `vec_bool_roundtrip_fn`** from `vec_i64_roundtrip_fn` (line 4372) — deferred here from Task 8 because it calls the boxed-element `builder_push_i64` → `builder_push_bool` (Step 1). Apply the standard `_i64`→`_bool` / `.I64`→`.I32` deltas; it converts a boxed `PVec` → typed `PVecBool` (via `builder_push_bool` + `builder_freeze_bool`) → boxed `PVec` (via the boxed builder), reading with `get_bool`/`get`. (This does NOT use `box_bool`/`unbox_bool`.)
 
-- [ ] **Step 4: Verify compile only.** `box_bool`/`unbox_bool` are emit-internal and not yet reachable from source (the `Vector.vec_bool_roundtrip` method that calls them is exposed in Task 10; routing that emits box/unbox is activated in Task 11). This task's check is that the funcs compile and boot-test stays green. The executable round-trip test lives in Task 10 Step 4.
+- [ ] **Step 4: Register `builder_push_bool`, `box_bool`, `unbox_bool`, `vec_bool_roundtrip`** in the emitted func list next to the Task 8 clones.
+
+- [ ] **Step 5: Verify compile only.** `box_bool`/`unbox_bool` are emit-internal and not yet reachable from source (the `Vector.vec_bool_roundtrip` method that exposes routing is Task 10; routing that emits box/unbox is Task 11). `vec_bool_roundtrip` is now defined but not yet exposed as a method (Task 10 adds the builtin/prelude wiring). This task's check is that the funcs compile and boot-test stays green. The executable round-trip test lives in Task 10 Step 4.
 
 Run: *[VL]*
 Expected: `Ran 2980 tests` / `0 Failed`.
