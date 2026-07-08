@@ -479,6 +479,7 @@ pub fn analyze_typed_repr(
   capture_abi := cand
   cap_round := 0
   cap_done := false
+  converged := false
 
   for !cap_done {
     slot_repr := materialize_slot_repr(
@@ -492,13 +493,36 @@ pub fn analyze_typed_repr(
     )
     new_cap := analyze_typed_captures(funcs, cand, slot_repr)
 
-    if param_maps_equal(new_cap, capture_abi) or cap_round >= cap {
-      capture_abi = new_cap
-      cap_done = true
-    } else {
-      capture_abi = new_cap
-      cap_round = cap_round + 1
+    cond {
+      // Converged: new_cap == capture_abi means the slot_repr that produced it was
+      // materialized from capture_abi itself, so route_func's own compute_eligible_v
+      // under this capture_abi agrees with what the support check validated. Ship it.
+      param_maps_equal(new_cap, capture_abi) => {
+        converged = true
+        cap_done = true
+      },
+      cap_round >= cap => cap_done = true,
+      _ => {
+        capture_abi = new_cap
+        cap_round = cap_round + 1
+      },
     }
+  }
+
+  // Fail closed (design §4). The fixpoint is provably monotone-decreasing, so this
+  // is a should-never-happen net: if the round cap is hit before stability, the
+  // last materialized slot_repr does NOT validate the final new_cap, so shipping it
+  // risks route_func typing a capture the support check never confirmed → invalid
+  // Wasm. Drop to the conservative boxed-capture ABI (no typed captures): route_func
+  // then types only local non-escaping producers + gather results whose lineage
+  // stays local, which is self-consistent under an empty capture ABI (the
+  // pre-capture-fixpoint plan). Emit a stderr diagnostic so non-convergence is
+  // noticed rather than silently costing the capture win.
+  if !converged {
+    eprintln(
+      "[typed-vector] capture typing did not converge within ${cap} rounds; falling back to boxed captures",
+    )
+    capture_abi = Dict.new()
   }
 
   .{ typed_fields: tf, typed_payloads: tpay, param_abi: abi, capture_abi }
