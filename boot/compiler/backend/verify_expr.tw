@@ -16,7 +16,7 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_layout.{layout_of, val_type_of_mono}
 use compiler.codegen.wasm_type_util.{heap_type_eq, val_type_eq}
-use compiler.core_ir.{FieldId, LocalId, VariantId}
+use compiler.core_ir.{FieldId, FuncId, LocalId, VariantId}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv, lookup_type_def, resolved_type_param_names}
 
@@ -260,6 +260,17 @@ fn verify_op(ctx: VerifyCtx, result_info: SlotInfo, op: PreparedOp) Result<Void,
                 )}, expected ${mono_name(cap.ty)}",
               )
             }
+
+            // Non-coercing capture store (through the anyref env): emit stores the
+            // free var upcast to anyref (emit_box_to_anyref does no PVec<->PVecI64
+            // conversion) and the trampoline downcasts the env slot to the capture
+            // param's physical type. So the free var's physical repr must EQUAL the
+            // lambda's capture param repr — a PVecI64 free var into a boxed PVec
+            // capture (or vice versa) traps on the trampoline ref.cast. This guards
+            // the C2 captured-column path: route_func types a capture only when the
+            // enclosing free var is also typed, and this confirms they stayed in
+            // agreement. callee slots are read from ctx.funcs_by_id (post-route).
+            try ctx.verify_capture_store_repr(result_info, fid, i, info)
 
             try ctx.reject_dead_use(info, "closure capture")
           }
@@ -812,6 +823,47 @@ fn verify_record_get_result_repr(
       "record get result typed-vector representation mismatch: field yields ${val_type_name(
         field_vt,
       )} but result slot is ${val_type_name(result_info.wasm_type)}",
+    )
+  }
+
+  .Ok({})
+}
+
+// Non-coercing capture store edge (see the call site in AMakeClosure): the free
+// var slot `info` in the enclosing function must have the same typed-vector
+// physical repr as the target lambda's capture-param slot, or the trampoline
+// downcast traps. Looks the lambda up in ctx.funcs_by_id (whole prepared set) and
+// reads its i-th capture slot's routed wasm_type. Absent callee/slot (e.g. a
+// builtin closure target) is a no-op — those are rejected earlier as
+// non-materializable, and only Vector<Int> slots can pvec-mismatch.
+fn verify_capture_store_repr(
+  ctx: VerifyCtx,
+  result_info: SlotInfo,
+  fid: FuncId,
+  i: Int,
+  info: SlotInfo,
+) Result<Void, String> {
+  callee := case ctx.funcs_by_id[fid.id] {
+    .Some(c) => c,
+    .None => return .Ok({}),
+  }
+
+  if i < 0 or i >= callee.captures.len() {
+    return .Ok({})
+  }
+
+  cap_slot := case callee.slots[callee.captures[i].id] {
+    .Some(s) => s,
+    .None => return .Ok({}),
+  }
+
+  if pvec_vt_mismatch(info.wasm_type, cap_slot.wasm_type) {
+    return fail_slot(
+      ctx.pf,
+      result_info,
+      "AMakeClosure capture ${i} for L${info.source_local.id} typed-vector representation mismatch: free var is ${val_type_name(
+        info.wasm_type,
+      )} but capture param slot is ${val_type_name(cap_slot.wasm_type)}",
     )
   }
 
