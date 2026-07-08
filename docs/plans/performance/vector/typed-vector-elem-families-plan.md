@@ -576,6 +576,7 @@ pub fn all_families() Vector<ElemFamily> {
 fn family_bool() ElemFamily {
   .{
     mono_key: "vec_bool",
+    suffix: "_bool",
     pvec_type: "rt_types__PVecBool",
     elem_wasm: .I32,
     get_call: "rt_arr__get_bool",
@@ -584,7 +585,9 @@ fn family_bool() ElemFamily {
   }
 }
 ```
-  (`families_ids()` in `route_typed_vec.tw` already derives the `_bool` builtin ids via its `suffix` conditional — no change needed there.)
+  (`ElemFamily` carries a `suffix` field — Stage 1 added it — so `families_ids()` in `route_typed_vec.tw` derives the `_bool` builtin ids via `f.suffix` with no change needed there. The `_bool` builtins MUST already be registered (Task 10) before this step, or `families_ids` will fail its `builtins.id("vector$..._bool")` lookup.)
+
+- [ ] **Step 3b: Fix `repr_policy.tw`'s hardcoded `ElemRepr` (Stage-1 carry-forward — REQUIRED before this activation).** `candidate_typed_vec_family` currently returns `.Some(.I64)` for any family-eligible mono (a Stage-1 no-op only because i64 was the sole family). Once `family_bool()` is registered, `.Vector(.Bool)` would wrongly map to `.I64`. Derive the `ElemRepr` from the matched family instead — map `fam.elem_wasm` (`.I64`→the I64 repr, `.I32`→the Bool/I32 repr), or add an `ElemRepr`-typed field to `ElemFamily` and return `fam`'s. Verify `Vector<Bool>` fields/payloads pick the `PVecBool` layout and `Vector<Int>` is unchanged.
 
 - [ ] **Step 4: Map `.Vector(.Bool)` in `elem_family_of`** (same file):
 
