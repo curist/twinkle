@@ -10,7 +10,7 @@ use compiler.codegen.emit.layout_helpers.{get_sum_layout_ctx}
 use compiler.codegen.emit.variants.{is_nullable_extern_option}
 use compiler.codegen.wasm_ir.{Instr, ValType}
 use compiler.codegen.wasm_layout.{mono_to_key, val_type_of_mono}
-use compiler.elem_family.{ElemFamily, pvec_family_of}
+use compiler.elem_family.{pvec_family_of}
 use compiler.mono_type.{MonoType}
 
 pub type ArrayEmitFns = .{

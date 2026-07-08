@@ -15,7 +15,7 @@ use compiler.codegen.wasm_ir.{FuncDef, Instr, ValType}
 use compiler.codegen.wasm_layout.{layout_of, val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{FuncSigEntry}
 use compiler.core_ir.{FuncId}
-use compiler.elem_family.{ElemFamily, family_by_pvec_name}
+use compiler.elem_family.{family_by_pvec_name}
 use compiler.mono_type.{MonoType}
 
 pub type ClosureEmitFns = .{

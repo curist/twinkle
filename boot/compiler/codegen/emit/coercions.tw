@@ -3,10 +3,9 @@
 use compiler.codegen.emit.anyref.{emit_box_to_anyref, emit_unbox_from_anyref}
 use compiler.codegen.emit.context.{EmitCtx}
 use compiler.codegen.wasm_ir.{AbiContract, Instr, ValType}
-use compiler.codegen.wasm_layout.{val_type_of_mono}
 use compiler.codegen.wasm_type_util.{heap_type_eq, val_type_eq}
 use compiler.core_ir.{FuncId}
-use compiler.elem_family.{ElemFamily, family_by_pvec_name}
+use compiler.elem_family.{elem_family_of}
 use compiler.mono_type.{MonoType}
 
 pub fn emit_coerce_stack(
@@ -23,21 +22,20 @@ pub fn emit_coerce_stack(
   case from {
     .Ref(_, .Named(from_name)) => case to {
       .Ref(_, .Named(to_name)) => {
-        // Typed <-> boxed Vector<Int> representation boundary. box_i64 boxes a
-        // typed PVecI64 to the universal PVec; unbox_i64 rebuilds a typed
-        // PVecI64 from a boxed PVec (e.g. a universal-helper result). A raw cast
-        // either way would trap: the leaf array types differ.
-        if to_name == "rt_types__PVec" and is_vector_int(mono) {
-          case family_by_pvec_name(from_name) {
-            .Some(fam) => return buf.append(.Call(fam.box_call)),
-            .None => {},
-          }
-        }
-        if from_name == "rt_types__PVec" and is_vector_int(mono) {
-          case family_by_pvec_name(to_name) {
-            .Some(fam) => return buf.append(.Call(fam.unbox_call)),
-            .None => {},
-          }
+        // Typed <-> boxed Vector<T> representation boundary for every activated
+        // primitive-element family. The typed PVec wrapper must be rebuilt as the
+        // universal PVec (or vice versa); a raw ref.cast would trap because the
+        // leaf array types differ.
+        case elem_family_of(mono) {
+          .Some(fam) => {
+            if to_name == "rt_types__PVec" and from_name == fam.pvec_type {
+              return buf.append(.Call(fam.box_call))
+            }
+            if from_name == "rt_types__PVec" and to_name == fam.pvec_type {
+              return buf.append(.Call(fam.unbox_call))
+            }
+          },
+          .None => {},
         }
       },
       _ => {},
@@ -47,17 +45,17 @@ pub fn emit_coerce_stack(
 
   case to {
     .Anyref => {
-      // A typed PVecI64 must be boxed to PVec before erasing to anyref: a bare
-      // upcast of the distinct PVecI64 struct would trap on the later cast back
-      // to PVec. box_i64 first, then the normal (identity) vector erase.
+      // A typed PVec family value must be boxed to PVec before erasing to
+      // anyref: a bare upcast of the distinct typed struct would trap on the
+      // later cast back to PVec. Box first, then use the normal vector erase.
       pre := case from {
-        .Ref(_, .Named(fname)) => if is_vector_int(mono) {
-          case family_by_pvec_name(fname) {
-            .Some(fam) => buf.append(.Call(fam.box_call)),
-            .None => buf,
-          }
-        } else {
-          buf
+        .Ref(_, .Named(fname)) => case elem_family_of(mono) {
+          .Some(fam) => if fname == fam.pvec_type {
+            buf.append(.Call(fam.box_call))
+          } else {
+            buf
+          },
+          .None => buf,
         },
         _ => buf,
       }
@@ -104,13 +102,6 @@ pub fn emit_coerce_stack(
   }
 
   buf
-}
-
-fn is_vector_int(mono: MonoType) Bool {
-  case mono {
-    .Vector(.Int) => true,
-    _ => false,
-  }
 }
 
 // Coerce a runtime call's ABI result to the destination slot's physical type

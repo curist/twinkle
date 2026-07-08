@@ -1141,9 +1141,7 @@ fn collect_vector_builder_slots_op(
 }
 
 // ── Expression emission ────────────────────────────────────────────────
-fn emit_expr(expr: PreparedExpr, exp: Expected, ctx: EmitCtx, buf: Vector<Instr>) Vector<
-  Instr,
-> {
+fn emit_expr(expr: PreparedExpr, exp: Expected, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
   case expr {
     .Let(local, op, body) => emit_let(local, op, body, exp, ctx, buf),
     .Atom(atom) => case exp.mono {
@@ -1226,12 +1224,9 @@ fn emit_return_coerce(atom: PreparedAtom, exp: Expected, ctx: EmitCtx, buf: Vect
   emit_atom_for_expected(atom, ret_exp, ctx, buf)
 }
 
-fn emit_atom_for_expected(
-  atom: PreparedAtom,
-  exp: Expected,
-  ctx: EmitCtx,
-  buf: Vector<Instr>,
-) Vector<Instr> {
+fn emit_atom_for_expected(atom: PreparedAtom, exp: Expected, ctx: EmitCtx, buf: Vector<Instr>) Vector<
+  Instr,
+> {
   buf2 := emit_atom(atom, ctx, buf)
 
   case exp.vt {
@@ -1244,9 +1239,7 @@ fn emit_atom_for_expected(
 // emit_tail_expr emits an expression in return-tail context: the result
 // of the expression will be returned from the enclosing function.
 // This enables tail-call detection for calls inside if/case branches.
-fn emit_tail_expr(expr: PreparedExpr, exp: Expected, ctx: EmitCtx, buf: Vector<Instr>) Vector<
-  Instr,
-> {
+fn emit_tail_expr(expr: PreparedExpr, exp: Expected, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
   case expr {
     .Let(local, op, body) => emit_tail_let(local, op, body, exp, ctx, buf),
     .Atom(atom) => {
@@ -3451,7 +3444,12 @@ fn try_emit_if_spine(
     body = .concat(cond_instrs).append(.If(.None, then_body, []))
   }
 
-  tail_body := emit_expr(spine.tail, control_emit.arm_expected(result_vt, result_mono, ctx.env), ctx, [])
+  tail_body := emit_expr(
+    spine.tail,
+    control_emit.arm_expected(result_vt, result_mono, ctx.env),
+    ctx,
+    [],
+  )
   tail_body = control_emit.append_result_store(tail_body, result_idx, result_mono)
 
   body = .concat(tail_body)

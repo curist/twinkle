@@ -4,7 +4,7 @@
 
 use compiler.codegen.wasm_ir.{ExportDef, FuncDef, HeapType, ImportDef, Instr, ValType, WasmModule}
 use compiler.codegen.wasm_layout.{EqTypeLayouts, WasmRecordLayout, WasmSumLayout}
-use compiler.elem_family.{ElemFamily, pvec_family_of}
+use compiler.elem_family.{pvec_family_of}
 
 fn str_null() ValType {
   ValType.Ref(true, HeapType.Named("rt_types__String"))

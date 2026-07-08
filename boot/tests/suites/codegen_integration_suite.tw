@@ -353,6 +353,15 @@ fn test_large_vector_literal_uses_runtime_push() Result<Void, String> {
   .Ok({})
 }
 
+fn test_bool_typed_vector_call_arg_boxes_to_param_abi() Result<Void, String> {
+  wat := try assert_codegen_src_compiles(
+    "fn any_true(flags: Vector<Bool>) Bool {\n  for f in flags { if f { return true } }\n  false\n}\nfn go(elems: Vector<Int>) Bool {\n  ml := collect e in elems { e > 0 }\n  any_true(ml)\n}\nprintln(go([1, 2, 3]).to_string())\n",
+    "Bool typed vector direct-call arg boxes to Vector ABI",
+  )
+  try assert.str_contains(wat, "call $rt_arr__box_bool")
+  .Ok({})
+}
+
 // ── Closure representation tests ────────────────────────────────────
 fn test_closure_first_class_function_arg() Result<Void, String> {
   // Passing a named function as an argument should wrap it as a closure.
@@ -929,6 +938,10 @@ pub fn suite() runner.Suite {
     .test(
       "large vector literals build through rt.arr.push",
       test_large_vector_literal_uses_runtime_push,
+    )
+    .test(
+      "Bool typed vector call arg boxes to Vector param ABI",
+      test_bool_typed_vector_call_arg_boxes_to_param_abi,
     )
     .test("first-class function arg wraps as closure", test_closure_first_class_function_arg)
     .test("closure type is subtype of base", test_closure_struct_is_subtype_of_base)
