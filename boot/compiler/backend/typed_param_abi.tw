@@ -29,66 +29,73 @@ use compiler.backend.route_typed_vec.{
 }
 use compiler.backend.tailify.{prep_op_diverges}
 use compiler.builtins.{BuiltinRegistry}
+use compiler.elem_family.{elem_family_of}
 use compiler.mono_type.{MonoType}
 
 pub type ParamAbi = .{
-  // func_id.id (as String) -> set of param indices that may take PVecI64
-  typeable_params: Dict<String, Vector<Int>>,
-  // func_id.id (as String) -> return is a typed PVecI64 slot
-  typeable_return: Dict<String, Bool>,
+  // func_id.id (as String) -> map of typeable param index -> family mono_key
+  typeable_params: Dict<String, Dict<Int, String>>,
+  // func_id.id (as String) -> the return family mono_key (absent = not typed)
+  typeable_return: Dict<String, String>,
 }
 
 pub type ReprAnalysis = .{
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
   param_abi: ParamAbi,
-  // func_id.id (as String) -> capture indices that may take PVecI64 (M1b). A
-  // captured Vector<Int> read typed-only inside the closure body; the trampoline
-  // downcasts the anyref env slot to PVecI64.
-  capture_abi: Dict<String, Vector<Int>>,
+  // func_id.id (as String) -> map of typeable capture index -> family mono_key
+  // (M1b). A captured typed vector read typed-only inside the closure body; the
+  // trampoline downcasts the anyref env slot to the family PVec.
+  capture_abi: Dict<String, Dict<Int, String>>,
 }
 
-// True if a mono type is Vector<Int> (the only representation-typed vector).
-fn is_vector_int(mono: MonoType) Bool {
-  case mono {
-    .Vector(.Int) => true,
-    _ => false,
+// The family mono_key of a mono type that has a typed-vector representation, or
+// .None. Generalizes the old is_vector_int predicate over elem_family_of.
+fn family_key_of(mono: MonoType) String? {
+  case elem_family_of(mono) {
+    .Some(f) => .Some(f.mono_key),
+    .None => .None,
   }
 }
 
-// True if the given param slot is a Vector<Int> whose every use is
-// typed-compatible (index/len/gather-read, typed field/payload store, return),
-// so the function could take it as a physical PVecI64. Non-Vector<Int> params
-// are never typeable.
+// The family mono_key if the given param slot has a typed-vector representation
+// AND its every use is typed-compatible (index/len/gather-read, typed
+// field/payload store, return), so the function could take it as a physical
+// family PVec. Params with no family, or with an escaping use, are .None.
 pub fn param_uses_typed_only(
   pf: PreparedFunc,
   param_slot_id: Int,
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
-) Bool {
+) String? {
   case pf.slots[param_slot_id] {
-    .Some(info) => if !is_vector_int(info.mono) {
-      false
-    } else {
-      ids := route_ids(builtins)
-      copy_map := build_copy_map(pf.body, Dict.new())
-      aliases := aliases_for(param_slot_id, copy_map)
+    .Some(info) => case family_key_of(info.mono) {
+      .Some(fam_key) => {
+        ids := route_ids(builtins)
+        copy_map := build_copy_map(pf.body, Dict.new())
+        aliases := aliases_for(param_slot_id, copy_map)
 
-      // Empty `relaxed`: this analysis does not relax nested-capture escapes (a
-      // param/capture re-captured into another closure stays conservative).
-      v_group_typeable(
-        pf.body,
-        aliases,
-        Dict.new(),
-        ids,
-        builtins,
-        pf.slots,
-        typed_fields,
-        typed_payloads,
-      )
+        // Empty `relaxed`: this analysis does not relax nested-capture escapes (a
+        // param/capture re-captured into another closure stays conservative).
+        if v_group_typeable(
+          pf.body,
+          aliases,
+          Dict.new(),
+          ids,
+          builtins,
+          pf.slots,
+          typed_fields,
+          typed_payloads,
+        ) {
+          .Some(fam_key)
+        } else {
+          .None
+        }
+      },
+      .None => .None,
     },
-    .None => false,
+    .None => .None,
   }
 }
 
@@ -101,25 +108,27 @@ pub fn analyze_typed_params(
   typed_payloads: Dict<String, Bool>,
 ) ParamAbi {
   ids := route_ids(builtins)
-  typeable: Dict<String, Vector<Int>> = Dict.new()
-  ret: Dict<String, Bool> = Dict.new()
+  typeable: Dict<String, Dict<Int, String>> = Dict.new()
+  ret: Dict<String, String> = Dict.new()
 
   for pf in funcs {
     key := "${pf.func_id.id}"
-    idxs: Vector<Int> = []
+    idxs: Dict<Int, String> = Dict.new()
 
     for p, i in pf.params {
-      if param_uses_typed_only(pf, p.id, builtins, typed_fields, typed_payloads) {
-        idxs = .append(i)
+      case param_uses_typed_only(pf, p.id, builtins, typed_fields, typed_payloads) {
+        .Some(fam_key) => idxs[i] = fam_key,
+        .None => {},
       }
     }
 
-    if idxs.len() > 0 {
+    if idxs.keys().len() > 0 {
       typeable[key] = idxs
     }
 
-    if return_is_typed(pf, ids, builtins, typed_fields, typed_payloads) {
-      ret[key] = true
+    case return_family(pf, ids, builtins, typed_fields, typed_payloads) {
+      .Some(fam_key) => ret[key] = fam_key,
+      .None => {},
     }
   }
 
@@ -174,19 +183,20 @@ pub fn condition1_capture_candidates(
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
-) Dict<String, Vector<Int>> {
-  out: Dict<String, Vector<Int>> = Dict.new()
+) Dict<String, Dict<Int, String>> {
+  out: Dict<String, Dict<Int, String>> = Dict.new()
 
   for pf in funcs {
-    idxs: Vector<Int> = []
+    idxs: Dict<Int, String> = Dict.new()
 
     for cap, i in pf.captures {
-      if param_uses_typed_only(pf, cap.id, builtins, typed_fields, typed_payloads) {
-        idxs = .append(i)
+      case param_uses_typed_only(pf, cap.id, builtins, typed_fields, typed_payloads) {
+        .Some(fam_key) => idxs[i] = fam_key,
+        .None => {},
       }
     }
 
-    if idxs.len() > 0 {
+    if idxs.keys().len() > 0 {
       out["${pf.func_id.id}"] = idxs
     }
   }
@@ -209,9 +219,9 @@ pub fn condition1_capture_candidates(
 // resolves through the enclosing fixpoint instead of being rejected outright.
 pub fn analyze_typed_captures(
   funcs: Vector<PreparedFunc>,
-  cand: Dict<String, Vector<Int>>,
+  cand: Dict<String, Dict<Int, String>>,
   slot_repr: Dict<String, Bool>,
-) Dict<String, Vector<Int>> {
+) Dict<String, Dict<Int, String>> {
   // Condition 2: every construction site's free var must be a typed local.
   unsupported: Dict<String, Dict<Int, Bool>> = Dict.new()
   seen: Dict<String, Bool> = Dict.new()
@@ -225,7 +235,7 @@ pub fn analyze_typed_captures(
 
       case cand[lkey] {
         .Some(idxs) => {
-          for i in idxs {
+          for i in idxs.keys() {
             supported := i >= 0
               and i < site.free_vars.len()
               and slot_repr.has("${pf.func_id.id}:${site.free_vars[i].id}")
@@ -245,7 +255,7 @@ pub fn analyze_typed_captures(
     }
   }
 
-  out: Dict<String, Vector<Int>> = Dict.new()
+  out: Dict<String, Dict<Int, String>> = Dict.new()
 
   for lkey, idxs in cand {
     // A lambda with no observed construction site cannot be verified — drop it.
@@ -253,20 +263,20 @@ pub fn analyze_typed_captures(
       continue
     }
 
-    keep: Vector<Int> = []
+    keep: Dict<Int, String> = Dict.new()
 
-    for i in idxs {
+    for i, fam_key in idxs {
       unsup := case unsupported[lkey] {
         .Some(u) => u.has(i),
         .None => false,
       }
 
       if !unsup {
-        keep = .append(i)
+        keep[i] = fam_key
       }
     }
 
-    if keep.len() > 0 {
+    if keep.keys().len() > 0 {
       out[lkey] = keep
     }
   }
@@ -274,37 +284,35 @@ pub fn analyze_typed_captures(
   out
 }
 
-// A function returns a typed PVecI64 iff its return type is Vector<Int> and every
-// returned atom is a slot route_func makes PVecI64 — a typed payload/field read
-// or a typed builder-candidate local. Params are excluded: a returned param is
-// only physically PVecI64 once variant emission types it (not yet done), so
-// returning it typed would be unsound. The empty typeable_return conservatively
-// breaks the return-chain circularity (a function returning another
-// typed-return call result is not itself counted).
-fn return_is_typed(
+// The return family mono_key iff the return type has a typed-vector family and
+// every returned atom is a slot route_func makes that family PVec — a typed
+// payload/field read or a typed builder-candidate local. Params are excluded: a
+// returned param is only physically typed once variant emission types it (not yet
+// done), so returning it typed would be unsound. Passing an empty typeable_return
+// to slot_typed_after_route conservatively breaks the return-chain circularity (a
+// function returning another typed-return call result is not itself counted).
+fn return_family(
   pf: PreparedFunc,
   ids: RouteIds,
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
-) Bool {
-  if !is_vector_int(pf.return_mono) {
-    return false
-  }
+) String? {
+  fam_key := try family_key_of(pf.return_mono)
 
   slots := return_atom_slots(pf.body, [], builtins)
 
   if slots.len() == 0 {
-    return false
+    return .None
   }
 
   for s in slots {
     if !slot_typed_after_route(pf, s, ids, builtins, typed_fields, typed_payloads, Dict.new()) {
-      return false
+      return .None
     }
   }
 
-  true
+  .Some(fam_key)
 }
 
 // Collect the slot ids of every returned atom: tail `.Atom(ASlot)` and
@@ -360,23 +368,25 @@ fn append_slot(a: PreparedAtom, acc: Vector<Int>) Vector<Int> {
   }
 }
 
-// Optimistic seed: every Vector<Int> param of every function, keyed by func id.
-fn all_vec_int_param_indices(funcs: Vector<PreparedFunc>) Dict<String, Vector<Int>> {
-  out: Dict<String, Vector<Int>> = Dict.new()
+// Optimistic seed: every typed-vector-family param of every function, keyed by
+// func id, mapping the param index to its family mono_key.
+fn all_vec_int_param_indices(funcs: Vector<PreparedFunc>) Dict<String, Dict<Int, String>> {
+  out: Dict<String, Dict<Int, String>> = Dict.new()
 
   for pf in funcs {
-    idxs: Vector<Int> = []
+    idxs: Dict<Int, String> = Dict.new()
 
     for p, i in pf.params {
       case pf.slots[p.id] {
-        .Some(info) => if is_vector_int(info.mono) {
-          idxs = .append(i)
+        .Some(info) => case family_key_of(info.mono) {
+          .Some(fam_key) => idxs[i] = fam_key,
+          .None => {},
         },
         .None => {},
       }
     }
 
-    if idxs.len() > 0 {
+    if idxs.keys().len() > 0 {
       out["${pf.func_id.id}"] = idxs
     }
   }
@@ -384,7 +394,7 @@ fn all_vec_int_param_indices(funcs: Vector<PreparedFunc>) Dict<String, Vector<In
   out
 }
 
-fn param_maps_equal(a: Dict<String, Vector<Int>>, b: Dict<String, Vector<Int>>) Bool {
+fn param_maps_equal(a: Dict<String, Dict<Int, String>>, b: Dict<String, Dict<Int, String>>) Bool {
   if a.keys().len() != b.keys().len() {
     return false
   }
@@ -392,7 +402,7 @@ fn param_maps_equal(a: Dict<String, Vector<Int>>, b: Dict<String, Vector<Int>>) 
   for k in a.keys() {
     case b[k] {
       .Some(bv) => case a[k] {
-        .Some(av) => if !int_vecs_equal(av, bv) {
+        .Some(av) => if !fam_maps_equal(av, bv) {
           return false
         },
         .None => return false,
@@ -404,14 +414,19 @@ fn param_maps_equal(a: Dict<String, Vector<Int>>, b: Dict<String, Vector<Int>>) 
   true
 }
 
-fn int_vecs_equal(a: Vector<Int>, b: Vector<Int>) Bool {
-  if a.len() != b.len() {
+// Two index -> family_key maps are equal iff they have the same index set and
+// each index maps to the same family mono_key.
+fn fam_maps_equal(a: Dict<Int, String>, b: Dict<Int, String>) Bool {
+  if a.keys().len() != b.keys().len() {
     return false
   }
 
-  for x, i in a {
-    if x != b[i] {
-      return false
+  for k, av in a {
+    case b[k] {
+      .Some(bv) => if av != bv {
+        return false
+      },
+      .None => return false,
     }
   }
 

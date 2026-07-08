@@ -147,10 +147,12 @@ pub fn suite() runner.Suite {
         vp := try find_vec_param(p.funcs)
         pf := p.funcs[vp.func_index]
 
-        try assert.ok(
-          param_uses_typed_only(pf, vp.slot, p.builtins, Dict.new(), Dict.new()),
-          "index+len param should be typeable",
-        )
+        typeable := case param_uses_typed_only(pf, vp.slot, p.builtins, Dict.new(), Dict.new()) {
+          .Some(_) => true,
+          .None => false,
+        }
+
+        try assert.ok(typeable, "index+len param should be typeable")
         .Ok({})
       },
     )
@@ -161,10 +163,12 @@ pub fn suite() runner.Suite {
         vp := try find_vec_param(p.funcs)
         pf := p.funcs[vp.func_index]
 
-        try assert.ok(
-          !param_uses_typed_only(pf, vp.slot, p.builtins, Dict.new(), Dict.new()),
-          "captured param must not be typeable",
-        )
+        typeable := case param_uses_typed_only(pf, vp.slot, p.builtins, Dict.new(), Dict.new()) {
+          .Some(_) => true,
+          .None => false,
+        }
+
+        try assert.ok(!typeable, "captured param must not be typeable")
         .Ok({})
       },
     )
