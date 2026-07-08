@@ -25,6 +25,8 @@ t_I32_ARRAY := "rt_types__I32Array"
 
 t_ARRAY_I64 := "rt_types__ArrayI64"
 
+t_ARRAY_BOOL := "rt_types__ArrayBool"
+
 t_ARRAY_F64 := "rt_types__ArrayF64"
 
 t_BOXED_INT := "rt_types__BoxedInt"
@@ -98,6 +100,26 @@ fn pvec_i64_ref() ValType {
 
 fn arr_i64_ref() ValType {
   .Ref(false, .Named(t_ARRAY_I64))
+}
+
+// Typed bool persistent vector helpers (rt.arr_bool family). Mirrors the i64
+// family with i32 leaves (ArrayBool) — one i32 per Bool element.
+t_PVEC_BOOL := "rt_types__PVecBool"
+
+fn pvec_bool_null() ValType {
+  .Ref(true, .Named(t_PVEC_BOOL))
+}
+
+fn pvec_bool_ref() ValType {
+  .Ref(false, .Named(t_PVEC_BOOL))
+}
+
+fn arr_bool_null() ValType {
+  .Ref(true, .Named(t_ARRAY_BOOL))
+}
+
+fn arr_bool_ref() ValType {
+  .Ref(false, .Named(t_ARRAY_BOOL))
 }
 
 // PVec field indices
@@ -212,6 +234,24 @@ pub fn module() WasmModule {
           .RefNull(.Named(t_VEC_INTERNAL)),
           .GlobalGet("empty_leaf_i64"),
           .StructNew(t_PVEC_I64),
+        ],
+      },
+      .{
+        name: "empty_leaf_bool",
+        mutable: false,
+        ty: arr_bool_ref(),
+        init: [.ArrayNewFixed(t_ARRAY_BOOL, 0)],
+      },
+      .{
+        name: "empty_pvec_bool",
+        mutable: false,
+        ty: pvec_bool_ref(),
+        init: [
+          .I32Const(0),
+          .I32Const(0),
+          .RefNull(.Named(t_VEC_INTERNAL)),
+          .GlobalGet("empty_leaf_bool"),
+          .StructNew(t_PVEC_BOOL),
         ],
       },
     ],

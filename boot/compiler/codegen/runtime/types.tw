@@ -24,6 +24,7 @@ pub fn module() WasmModule {
       .Array("VecChildren", .{ name: .None, mutable: true, ty: .Ref(true, .Eq) }),
       .Array("I32Array", .{ name: .None, mutable: true, ty: .I32 }),
       .Array("ArrayI64", .{ name: .None, mutable: true, ty: .I64 }),
+      .Array("ArrayBool", .{ name: .None, mutable: true, ty: .I32 }),
       .Array("ArrayF64", .{ name: .None, mutable: true, ty: .F64 }),
       .Struct(
         "VecInternal",
@@ -52,6 +53,17 @@ pub fn module() WasmModule {
           .{ name: .Some("shift"), mutable: false, ty: .I32 },
           .{ name: .Some("root"), mutable: false, ty: .Ref(true, .Named("VecInternal")) },
           .{ name: .Some("tail"), mutable: false, ty: .Ref(false, .Named("ArrayI64")) },
+        ],
+        .None,
+        true,
+      ),
+      .Struct(
+        "PVecBool",
+        [
+          .{ name: .Some("len"), mutable: false, ty: .I32 },
+          .{ name: .Some("shift"), mutable: false, ty: .I32 },
+          .{ name: .Some("root"), mutable: false, ty: .Ref(true, .Named("VecInternal")) },
+          .{ name: .Some("tail"), mutable: false, ty: .Ref(false, .Named("ArrayBool")) },
         ],
         .None,
         true,
