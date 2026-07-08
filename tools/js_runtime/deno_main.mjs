@@ -13,10 +13,26 @@ import { nodeHost } from "./node_host.mjs";
 const textEncoder = new TextEncoder();
 const rootDir = resolve(import.meta.dirname, "../..");
 
+function isBrokenPipe(e) {
+  return (Deno.errors && Deno.errors.BrokenPipe && e instanceof Deno.errors.BrokenPipe)
+    || (e && (e.code === "EPIPE"
+      || (typeof e.message === "string" && e.message.includes("Broken pipe"))));
+}
+
 function writeAllSync(stream, bytes) {
   let offset = 0;
   while (offset < bytes.byteLength) {
-    const written = stream.writeSync(bytes.subarray(offset));
+    let written;
+    try {
+      written = stream.writeSync(bytes.subarray(offset));
+    } catch (e) {
+      // Downstream closed the pipe (e.g. `twk wat … | head`). Terminate quietly
+      // like a SIGPIPE'd Unix tool instead of dumping a stack trace.
+      if (isBrokenPipe(e)) {
+        Deno.exit(0);
+      }
+      throw e;
+    }
     if (written <= 0) {
       throw new Error("stdout write made no progress");
     }
