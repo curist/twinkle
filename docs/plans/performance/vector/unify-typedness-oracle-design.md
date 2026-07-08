@@ -1,11 +1,52 @@
 # Physical representation planning + post-route verification for typed vectors
 
-**Status:** design (approved 2026-07-07, expanded to full soundness), not implemented
+**Status:** 🟡 core IMPLEMENTED 2026-07-08 (C2 landed); refinements deferred.
 **Branch:** `typed-vector-crossfn-abi`
 **Depends on:** landed cross-fn ABI work (accessor returns B2, group-aware copy
 propagation B3/B4, tailify) — commits ac30af11..c117dd73.
-**Unblocks:** C2 (captured columns) → the dataframe `order_by` sort win. See
-[boundary-tracklist.md](boundary-tracklist.md).
+**Unblocks:** C2 (captured columns) → the dataframe `order_by` sort win — **done**
+(`sort idx by amount` ~1400→~775ms). See [boundary-tracklist.md](boundary-tracklist.md).
+
+## What shipped (2026-07-08)
+
+Implemented in five commits on this branch; self-host fixed point + 2980 boot
+tests + the capture guard + `order_by` checksums green throughout:
+
+- **`fd3da98f`** — extract `compute_eligible_v` (pure ground-truth eligibility)
+  from `route_func`.
+- **`3dac920a`** — `slot_typed_after_route` (the analyses' query) now delegates to
+  `compute_eligible_v`, deleting the divergent single-slot re-derivations (the
+  drift that caused the spike bug). `free_var_typed_local` kept as one explicit OR
+  for the self-relaxed-capture case.
+- **`37ee63ff`** — capture typing as a greatest fixpoint over a materialized
+  `slot_repr` (`materialize_slot_repr`, closure-constructing funcs only), seeded
+  with the provisional Condition-1 set; the support check is now a `slot_repr`
+  lookup so it sees relaxed captures. **This closes C2.** Also fixed a gather-copy
+  group-awareness gap the verifier caught (2d now marks the result's alias group).
+- **`7a50ec8b`** — §4 fail-closed: on cap-exhaustion (should-never-happen; the
+  fixpoint is monotone-decreasing) drop to boxed captures + stderr diagnostic.
+  Fallback verified by temporarily forcing it.
+- **`5776e82b`** — §6 verifier edge for the non-coercing closure-capture store
+  (`verify_capture_store_repr`); confirmed it fires on a forced mismatch and is a
+  no-op on valid code.
+
+**Deferred (not blocking the C2 win):**
+- The *scope-narrowing* vs the full design below: only `slot_repr` +
+  `capture_repr` are materialized. `field_repr`/`payload_repr`/`param_repr`/
+  `return_repr` keep their existing (correct) computation rather than being folded
+  into one `PhysPlan` fixpoint (§3). No back-edge from those to capture typing, so
+  this is sound; unifying them is a cleanup, not a correctness need.
+- The **dirty-tracking cost lever** (§1) — not needed at the measured +~5–11%
+  `prepare_backend` cost.
+- The **coercing verifier edges** (direct-call args, returns, variant payloads,
+  §6) — they need the full `PhysPlan` to assert "this is a declared coercion site"
+  rather than false-positive on legitimately-coerced reprs (the verifier sees
+  prepared-IR reprs, not emitted Wasm). All *non-coercing* edges that can actually
+  be invalid Wasm (local stores, record-get result, record fields, capture stores)
+  are covered.
+
+The rest of this document is the original full design, retained as the reference
+for the deferred `PhysPlan` work.
 
 ## Goal
 

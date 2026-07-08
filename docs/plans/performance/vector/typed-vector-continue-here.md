@@ -1,5 +1,14 @@
 # Typed vectors — continue here (next-session handoff)
 
+> ⚠️ **SUPERSEDED (2026-07-08).** This is a point-in-time handoff from 2026-07-05,
+> before the cross-fn ABI + C2 work. For current status start with
+> **[boundary-tracklist.md](boundary-tracklist.md)** (the living per-boundary map)
+> and the [README](README.md). Since this was written: work moved to branch
+> `typed-vector-crossfn-abi`; B2 (accessor returns), B3/B4 (copy propagation), B5
+> (field-read copies), and **C2 (captured columns → the `order_by` sort win)** all
+> landed. The "where things stand" and "first decision" below are stale; the
+> **design model** section further down is still the valid reference.
+
 **Start here to continue the typed-`Vector<T>` work.** Written 2026-07-05. Assumes
 no prior session context.
 

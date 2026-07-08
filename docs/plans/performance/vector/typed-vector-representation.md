@@ -304,13 +304,20 @@ These should be visible in backend IR/planning, not hidden ad hoc in emitters.
 > no pathology. **But `order_by` is still unchanged**: the conservative producer
 > eligibility doesn't type the *real* dataframe `IntCol` columns.
 >
-> **Open next, in priority order:**
-> 1. **Broaden producer eligibility** so real dataframe columns (built cross-fn /
->    via combinators / passed as params) get typed — this is what actually moves
->    `order_by`'s gather/take/direct-read phases.
-> 2. **M1b — typed closure environments** (per-capture-repr env layout) so the
->    `sort_by` comparator reads its captured key column typed — the other half of
->    `order_by`.
+> **⚡ UPDATE (2026-07-08): both of the below LANDED; the `order_by` sort win is
+> in.** On branch `typed-vector-crossfn-abi`: cross-fn ABI (B2 accessor returns,
+> B3/B4 copy propagation) broadened producer eligibility, and the two typedness
+> oracles were unified so captured columns type without invalid Wasm (C2 — the
+> [unify-typedness-oracle-design.md](unify-typedness-oracle-design.md) work,
+> `fd3da98f`…`5776e82b`). `sort idx by amount` ~1400→~775ms, full `order_by`
+> ~2.3s→~1.84s @ 1M. **The current per-boundary status of record is now
+> [boundary-tracklist.md](boundary-tracklist.md)** — the per-phase notes below this
+> line are pre-C2 history. Remaining headline lever: **B8** (typed `take`).
+>
+> **Open next, in priority order (pre-2026-07-08 — items 1 & 2 now done):**
+> 1. ~~**Broaden producer eligibility**~~ ✅ (cross-fn ABI).
+> 2. ~~**M1b — typed closure environments**~~ ✅ (local capture C1 + captured
+>    columns C2).
 > Typed combinators (Phase 5) remain useful but secondary.
 
 > **Typed-return ABI bridge landed (2026-07-06, branch `typed-vector-crossfn-abi`).**

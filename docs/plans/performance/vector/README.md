@@ -21,16 +21,17 @@ and the real lever is structural. Keep new plans, probes, and results here.
 > **[typed-vector-representation.md](typed-vector-representation.md)** is the live
 > umbrella (per-phase status + "open next").
 
-> **Landed on branch `typed-vector-repr-m1a` (not merged): typed `Vector<Int>`
-> variant payloads** (Milestone A —
-> [storage-site-typed-vectors.md](storage-site-typed-vectors.md) +
-> [plan](storage-site-typed-vectors-plan.md)). Capture-safe, no M1a pathology
-> (capture tripwire 5.34ms). **But `order_by` is unchanged** — the conservative
-> producer eligibility doesn't type the *real* dataframe `IntCol` columns. So the
-> variant-payload boundary is done, yet not the `order_by` unlock. **Next:**
-> (1) broaden producer eligibility to catch real columns; (2) M1b typed closure
-> envs for the captured comparator. The Milestone A docs are complete and archive
-> at merge time.
+> **Latest (2026-07-08, branch `typed-vector-crossfn-abi`, not merged): the
+> dataframe `order_by` sort win landed (C2).** The captured key column now stays
+> typed into the comparator, so `sort idx by amount` dropped ~1400→**~775ms** and
+> full `order_by` ~2.3s→**~1.84s** @ 1M. This came from unifying the two typedness
+> oracles into one ground truth + a post-route verifier
+> ([unify-typedness-oracle-design.md](unify-typedness-oracle-design.md), five
+> commits `fd3da98f`…`5776e82b`). The per-boundary state lives in
+> [boundary-tracklist.md](boundary-tracklist.md) — A1–A3, B1–B5, B7, C1–C2 are ✅.
+> **Remaining headline lever: B8** (typed `take`/helper ABI) for the *full*
+> `order_by` number. Deferred cleanups: full `PhysPlan` + dirty-tracking + the
+> coercing verifier edges (see the design doc's "What shipped").
 
 ## Current understanding (2026-06-10)
 
@@ -79,6 +80,8 @@ allocation) in one change. Everything else is secondary.
 
 | Doc | Role | Status |
 |-----|------|--------|
+| [boundary-tracklist.md](boundary-tracklist.md) | **"Where are we" map.** Every boundary a typed vector must cross (A/B/C), with per-item ✅/🟡/⬜ status and the `order_by` critical path | living status |
+| [unify-typedness-oracle-design.md](unify-typedness-oracle-design.md) | One ground-truth typedness oracle + post-route verifier; the structural unlock for C2 (captured columns) | 🟡 core landed 2026-07-08, refinements deferred |
 | [generic-sort-by-vector-read-perf.md](generic-sort-by-vector-read-perf.md) | **Active lead.** Make generic callback `sort_by` + indexed reads fast; holds the current measured decomposition and reprioritized tracks | active |
 | [typed-vector-representation.md](typed-vector-representation.md) | Give `Vector<Int>` (then other primitives) typed physical storage instead of boxed `anyref` leaves — now identified as the master lever | the long-term answer |
 | [wasm-native-sort.md](wasm-native-sort.md) | Earlier consolidated `order_by`/native-sort track; broader context and the dense working-set framing | superseded as lead, still useful context |
