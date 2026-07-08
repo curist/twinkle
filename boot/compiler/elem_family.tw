@@ -16,7 +16,7 @@ pub type ElemFamily = .{
 }
 
 pub fn all_families() Vector<ElemFamily> {
-  [family_i64()]
+  [family_i64(), family_bool()]
 }
 
 fn family_i64() ElemFamily {
@@ -28,6 +28,18 @@ fn family_i64() ElemFamily {
     get_call: "rt_arr__get_i64",
     box_call: "rt_arr__box_i64",
     unbox_call: "rt_arr__unbox_i64",
+  }
+}
+
+fn family_bool() ElemFamily {
+  .{
+    mono_key: "vec_bool",
+    suffix: "_bool",
+    pvec_type: "rt_types__PVecBool",
+    elem_wasm: .I32,
+    get_call: "rt_arr__get_bool",
+    box_call: "rt_arr__box_bool",
+    unbox_call: "rt_arr__unbox_bool",
   }
 }
 
@@ -52,6 +64,7 @@ pub fn pvec_family_of(vt: ValType) ElemFamily? {
 pub fn elem_family_of(mono: MonoType) ElemFamily? {
   key := case mono {
     .Vector(.Int) => "vec_i64",
+    .Vector(.Bool) => "vec_bool",
     _ => "other",
   }
 

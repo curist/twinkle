@@ -30,6 +30,8 @@ pub fn is_builder_buffer_arg(name: String, index: Int) Bool {
       or name == "vector$builder_freeze"
       or name == "vector$builder_push_i64"
       or name == "vector$builder_freeze_i64"
+      or name == "vector$builder_push_bool"
+      or name == "vector$builder_freeze_bool"
       or name == "string$builder_extend"
       or name == "string$builder_freeze")
 }
@@ -40,6 +42,7 @@ pub fn is_builder_buffer_arg(name: String, index: Int) Bool {
 pub fn is_builder_void_push(name: String) Bool {
   name == "vector$builder_push"
     or name == "vector$builder_push_i64"
+    or name == "vector$builder_push_bool"
     or name == "string$builder_extend"
 }
 
@@ -48,6 +51,7 @@ pub fn is_builder_void_push(name: String) Bool {
 pub fn is_builder_seed(name: String) Bool {
   name == "vector$builder_new"
     or name == "vector$builder_new_i64"
+    or name == "vector$builder_new_bool"
     or name == "vector$builder_from"
     or name == "string$builder_from"
 }

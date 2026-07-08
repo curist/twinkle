@@ -5,6 +5,7 @@
 //! cycle. Named/aggregate repr still lives in repr_assign (it needs layout_of);
 //! only the primitive vector element-family classification lives here.
 
+use compiler.codegen.wasm_ir.{ValType}
 use compiler.elem_family.{elem_family_of}
 use compiler.mono_type.{MonoType}
 
@@ -21,7 +22,19 @@ pub type ElemRepr = { I64, F64, I32 }
 /// registered family is a candidate.
 pub fn candidate_typed_vec_family(mono: MonoType) ElemRepr? {
   case elem_family_of(mono) {
-    .Some(_) => .Some(.I64),
+    .Some(fam) => .Some(elem_repr_of(fam.elem_wasm)),
     .None => .None,
+  }
+}
+
+/// Map a family's physical element ValType onto the ElemRepr repr-kind tag. The
+/// tag is only a classification (physical layout is driven by fam.pvec_type via
+/// val_type_of_mono), but keeping it accurate avoids labelling an i32 family as
+/// I64.
+fn elem_repr_of(vt: ValType) ElemRepr {
+  case vt {
+    .I64 => .I64,
+    .F64 => .F64,
+    _ => .I32,
   }
 }

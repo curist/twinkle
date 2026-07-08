@@ -1,0 +1,21 @@
+fn build(n: Int) Vector<Bool> {
+  acc: Vector<Bool> = []
+
+  for i in range(n) {
+    acc = .append(i % 3 == 0)
+  }
+
+  acc
+}
+
+fn count_true(xs: Vector<Bool>) Int {
+  c := 0
+  for i in range(xs.len()) {
+    if xs[i] {
+      c = c + 1
+    }
+  }
+  c
+}
+
+println("bool_count=${count_true(build(1000))}")

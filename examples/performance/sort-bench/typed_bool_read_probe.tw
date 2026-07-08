@@ -1,0 +1,16 @@
+fn count_multiples() Int {
+  mask := collect i in range(1000) {
+    i % 3 == 0
+  }
+  count := 0
+
+  for i in range(mask.len()) {
+    if mask[i] {
+      count = count + 1
+    }
+  }
+
+  count
+}
+
+println("bool_count=${count_multiples()}")
