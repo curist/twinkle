@@ -22,9 +22,9 @@
   make boot-test 2>&1 | grep -iE "Ran [0-9]+ tests|Failed"     # expect 2980 passed, 0 Failed
   ```
 - **Bench guard** *[BG]*: `target/twk run examples/performance/dataframe/bench/order_by_breakdown.tw` — checksums must stay `1000000` / `3000000`.
-- Stage 1 tasks are behavior-preserving. Their pass condition is *[VL]* green **and** *[BG]* checksums + timings materially unchanged (the emitted module should be byte-identical; a timing shift signals an accidental behavior change).
+- Stage 1 tasks are behavior-preserving. Pass condition: *[VL]* green **and** *[BG]* checksums + timings materially unchanged **and** the **differential-compile no-op check** (below) is byte-identical.
 - Commit after every task. Match repo commit style (imperative subject, what/why body). Follow the project's commit-trailer guidance: add a `Co-Authored-By` trailer **only when it is actually correct** for the session/tooling doing the commit — do not add it unconditionally.
-- **Byte-identity baseline (Stage 1):** capture the pre-Stage-1 baseline **before** editing (Task 0), because `git stash` cannot recover a baseline once each task has committed. The Stage 1 gate compares against that saved artifact.
+- **No-op proof for Stage 1 (IMPORTANT — this is a self-hosted compiler):** `cmp target/boot.wasm <baseline>` is **NOT** a valid no-op check. Editing `boot/` source necessarily changes `boot.wasm` (the new source compiles *into* it), so the binary always differs after a source edit — even for a true no-op. The behavior-preservation invariant is about the compiler's **output for a fixed input**, not its own binary. Prove it three ways: (1) `make stage2` reaches **`Fixed point reached`** (self-host converges — the compiler is self-consistent); (2) `make boot-test` stays at 2980/0 (behavior unchanged); (3) **differential compile** — the pre-Stage-1 compiler and the new compiler each compile the *same* input, and their *outputs* are byte-identical (see the Stage 1 gate for the command). Task 0 saves the pre-Stage-1 compiler so (3) is possible.
 
 ## File map
 
@@ -47,14 +47,16 @@
 
 # Stage 1 — Generalize the routing (no behavior change)
 
-### Task 0: Capture the Stage 1 byte-identity baseline
+### Task 0: Capture the pre-Stage-1 reference compiler
 
-**Files:** none (records a baseline artifact).
+**Files:** none (records a reference artifact).
 
-- [ ] **Step 1: Build the current `boot.wasm` from a clean tree and save it.** This is the reference the Stage 1 gate diffs against. Do this on the tip commit *before* any Stage 1 edit.
+**Why:** `cmp target/boot.wasm <baseline>` is NOT a valid no-op check (see the Conventions "No-op proof" note — a self-hosted compiler's binary always changes when its own source is edited). The robust Stage 1 gate is `make stage2` reaching `Fixed point reached` + `make boot-test` at 2980/0. The *optional* rigorous check is a differential compile, which needs a **runnable pre-Stage-1 compiler** to compile the *current* source alongside the new compiler.
 
-Run: `make stage2 2>&1 | tail -1 && cp target/boot.wasm /tmp/elemfam-base.wasm && shasum /tmp/elemfam-base.wasm`
-Expected: `Fixed point reached`; a sha printed (record it in the PR/notes).
+- [ ] **Step 1: Build a fresh compiler and save the runnable binary.** `target/twk` is a standalone executable, so it can be copied and later run to compile any source (including the grown Stage-1 source).
+
+Run: `make bundle-cli 2>&1 | tail -1 && cp target/twk /tmp/elemfam-twk-base && cp target/boot.wasm /tmp/elemfam-base.wasm && shasum /tmp/elemfam-twk-base`
+Expected: `Fixed point reached`; a sha printed (record it in notes).
 
 - [ ] **Step 2: No commit** (nothing changed). Proceed to Task 1.
 
@@ -343,12 +345,17 @@ git add boot/compiler/codegen/wasm_layout.tw boot/compiler/backend/repr_policy.t
 git commit -m "codegen: field/payload layout + candidate policy per family"
 ```
 
-**Stage 1 gate:** the module emitted for `boot/main.tw` should be byte-identical to the Task 0 baseline (`/tmp/elemfam-base.wasm`), because the registry content is unchanged (`[i64]` only). Confirm against the **pre-saved** baseline (do NOT `git stash` — the Stage 1 tasks are already committed):
-```
-make stage2 2>&1 | tail -1
-cmp target/boot.wasm /tmp/elemfam-base.wasm && echo "BYTE-IDENTICAL"
-```
-Expected: `BYTE-IDENTICAL`. (If not identical, a Stage 1 change altered behavior — bisect with `git bisect` over the Stage 1 commits, rebuilding + `cmp` at each step.)
+**Stage 1 gate (behavior-preserving):** the registry content is unchanged (`[i64]` only), so the compiler's codegen must be unchanged. Prove it:
+
+- **Primary (always run):** `make stage2` → `Fixed point reached`; `make boot-test` → `Ran 2980 tests` / `0 Failed`; *[BG]* checksums intact. These two together are a strong no-op proof (self-host convergence + full behavior suite).
+- **Rigorous (optional) — differential compile.** Compile the SAME current source with BOTH the pre-Stage-1 compiler (Task 0's `/tmp/elemfam-twk-base`) and the current compiler; identical *output* proves identical codegen decisions (only the compiler differs, the input is held fixed):
+  ```
+  make bundle-cli 2>&1 | tail -1                                  # current compiler
+  /tmp/elemfam-twk-base build boot/main.tw -o /tmp/out_old.wasm   # OLD compiler, CURRENT source
+  target/twk        build boot/main.tw -o /tmp/out_new.wasm       # NEW compiler, CURRENT source
+  cmp /tmp/out_old.wasm /tmp/out_new.wasm && echo "IDENTICAL CODEGEN"
+  ```
+  Expected: `IDENTICAL CODEGEN`. (This is the correct differential form — do NOT `cmp` `boot.wasm` against a fixed baseline, which only measures that the source grew.) If it differs, a Stage 1 change altered codegen — bisect the Stage 1 commits, running this differential check at each.
 
 ---
 
