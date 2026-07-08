@@ -6,7 +6,18 @@ use compiler.codegen.wasm_ir.{AbiContract, Instr, ValType}
 use compiler.codegen.wasm_layout.{val_type_of_mono}
 use compiler.codegen.wasm_type_util.{heap_type_eq, val_type_eq}
 use compiler.core_ir.{FuncId}
+use compiler.elem_family.{ElemFamily, all_families}
 use compiler.mono_type.{MonoType}
+
+// Look up the element family whose typed pvec struct is named `name`.
+fn family_by_pvec_name(name: String) ElemFamily? {
+  for f in all_families() {
+    if name == f.pvec_type {
+      return .Some(f)
+    }
+  }
+  .None
+}
 
 pub fn emit_coerce_stack(
   from: ValType,
@@ -26,11 +37,17 @@ pub fn emit_coerce_stack(
         // typed PVecI64 to the universal PVec; unbox_i64 rebuilds a typed
         // PVecI64 from a boxed PVec (e.g. a universal-helper result). A raw cast
         // either way would trap: the leaf array types differ.
-        if from_name == "rt_types__PVecI64" and to_name == "rt_types__PVec" and is_vector_int(mono) {
-          return buf.append(.Call("rt_arr__box_i64"))
+        if to_name == "rt_types__PVec" and is_vector_int(mono) {
+          case family_by_pvec_name(from_name) {
+            .Some(fam) => return buf.append(.Call(fam.box_call)),
+            .None => {},
+          }
         }
-        if from_name == "rt_types__PVec" and to_name == "rt_types__PVecI64" and is_vector_int(mono) {
-          return buf.append(.Call("rt_arr__unbox_i64"))
+        if from_name == "rt_types__PVec" and is_vector_int(mono) {
+          case family_by_pvec_name(to_name) {
+            .Some(fam) => return buf.append(.Call(fam.unbox_call)),
+            .None => {},
+          }
         }
       },
       _ => {},
@@ -44,8 +61,11 @@ pub fn emit_coerce_stack(
       // upcast of the distinct PVecI64 struct would trap on the later cast back
       // to PVec. box_i64 first, then the normal (identity) vector erase.
       pre := case from {
-        .Ref(_, .Named(fname)) => if fname == "rt_types__PVecI64" and is_vector_int(mono) {
-          buf.append(.Call("rt_arr__box_i64"))
+        .Ref(_, .Named(fname)) => if is_vector_int(mono) {
+          case family_by_pvec_name(fname) {
+            .Some(fam) => buf.append(.Call(fam.box_call)),
+            .None => buf,
+          }
         } else {
           buf
         },

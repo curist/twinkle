@@ -4,6 +4,22 @@
 
 use compiler.codegen.wasm_ir.{ExportDef, FuncDef, HeapType, ImportDef, Instr, ValType, WasmModule}
 use compiler.codegen.wasm_layout.{EqTypeLayouts, WasmRecordLayout, WasmSumLayout}
+use compiler.elem_family.{ElemFamily, all_families}
+
+// The element family whose typed pvec struct is this wasm ref type, if any.
+fn pvec_family_of(vt: ValType) ElemFamily? {
+  case vt {
+    .Ref(_, .Named(name)) => {
+      for f in all_families() {
+        if name == f.pvec_type {
+          return .Some(f)
+        }
+      }
+      .None
+    },
+    _ => .None,
+  }
+}
 
 fn str_null() ValType {
   ValType.Ref(true, HeapType.Named("rt_types__String"))
@@ -478,10 +494,7 @@ fn field_eq_instrs(qualified_sym: String, field_idx: Int, vt: ValType) Vector<In
   // understood by generic `eq`, which compares only boxed PVec structurally and
   // falls back to reference equality for the distinct PVecI64 struct. Box both
   // operands to PVec first (rt_arr__box_i64) so `eq` compares by contents.
-  is_pvec_i64 := case vt {
-    .Ref(_, .Named(n)) => n == "rt_types__PVecI64",
-    _ => false,
-  }
+  pvec_fam := pvec_family_of(vt)
   get_both: Vector<Instr> = if is_extern {
     [
       Instr.LocalGet(0),
@@ -491,14 +504,21 @@ fn field_eq_instrs(qualified_sym: String, field_idx: Int, vt: ValType) Vector<In
       Instr.StructGet(qualified_sym, field_idx),
       Instr.AnyConvertExtern,
     ]
-  } else if is_pvec_i64 {
+  } else if case pvec_fam {
+    .Some(_) => true,
+    .None => false,
+  } {
+    box_call := case pvec_fam {
+      .Some(fam) => fam.box_call,
+      .None => error("field_eq_instrs: pvec family disappeared"),
+    }
     [
       Instr.LocalGet(0),
       Instr.StructGet(qualified_sym, field_idx),
-      Instr.Call("rt_arr__box_i64"),
+      Instr.Call(box_call),
       Instr.LocalGet(1),
       Instr.StructGet(qualified_sym, field_idx),
-      Instr.Call("rt_arr__box_i64"),
+      Instr.Call(box_call),
     ]
   } else {
     [
