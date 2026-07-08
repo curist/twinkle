@@ -54,26 +54,47 @@ verifier/runtime traps.
 
 ## Architecture
 
-### `ElemFamily` descriptor (compiler side)
+### `ElemFamily` descriptor — split by layer, in a leaf module
 
-Mirrors the runtime `PVecFamily`, threaded through the tag/id/typename layers:
+Two concerns must not be conflated, and the descriptor must live low enough that
+`emit/*`, the verifier, and `wasm_layout.tw` can import it without a cycle
+(`route_typed_vec.tw` is a backend module imported only by other backend modules
+today; making emit depend on it would be a layering violation).
+
+**Pure classification** — `compiler.elem_family` (new leaf module, imports only
+`compiler.mono_type.{MonoType}` and `compiler.codegen.wasm_ir.{ValType}`):
 
 ```
-type ElemFamily = .{
-  mono_elem:   MonoType,   // .Int / .Bool  — matches .Vector(elem)
-  mono_key:    String,     // "vec_i64" / "vec_bool"
-  pvec_type:   String,     // "rt_types__PVecI64" / "rt_types__PVecBool"
-  elem_wasm:   ValType,    // .I64 / .I32
-  builder_new_t, builder_push_t, builder_freeze_t, len_t, get_t, gather_t: Int,
-  box_id, unbox_id: Int,
+pub type ElemFamily = .{
+  mono_key:   String,   // "vec_i64" / "vec_bool" — FamilyTag
+  pvec_type:  String,   // "rt_types__PVecI64" / "rt_types__PVecBool"
+  elem_wasm:  ValType,  // .I64 / .I32
+  get_call:   String,   // emit fast-path runtime symbol: "rt_arr__get_i64"
+  box_call:   String,   // "rt_arr__box_i64"
+  unbox_call: String,   // "rt_arr__unbox_i64"
 }
+pub fn elem_family_of(mono: MonoType) ElemFamily?   // .Vector(.Int)->i64, .Vector(.Bool)->bool
+```
+
+`emit/*`, `verify_*`, `wasm_layout.tw`, `runtime/core.tw`, and `repr_policy.tw`
+depend on **only** this leaf module (runtime symbols + type names, no
+`BuiltinRegistry`).
+
+**Builtin-ID enrichment** — stays in the routing layer (`route_typed_vec.tw`),
+built from `BuiltinRegistry`, because only routing needs the swap-target builtin
+ids:
+
+```
+type FamilyIds = .{
+  fam: ElemFamily,
+  builder_new, builder_push, builder_freeze, len, gather: Int,  // typed builtin ids
+}
+fn families_ids(builtins) Vector<FamilyIds>   // routing loop iterates this
 ```
 
 The **shared boxed ids** (`vector$len`, `builder_*`, `gather` — element-agnostic)
-stay top-level in `RouteIds`; only the typed `_i64`/`_bool` ids and the type name
-live in the per-family descriptor. A `families()` registry returns
-`[family_i64_desc(builtins), family_bool_desc(builtins)]`; adding Float later is
-one more entry.
+stay in `RouteIds`. Adding Float later = one `elem_family_of` arm + one
+`FamilyIds` entry.
 
 ### Per-family pass model (the key structural decision)
 
@@ -176,14 +197,32 @@ bench catch a mismatch.
 ## Compiler routing generalization
 
 - **`route_typed_vec.tw`:** replace `is_int_vector` / `mono_key_of` with
-  `elem_family_of(mono) : ElemFamily?`. `route_func` / `materialize_slot_repr` gain
-  the `for fam in families` loop; `compute_eligible_v`, `rewrite`, and every
+  `elem_family_of`. `route_func` / `materialize_slot_repr` gain the
+  `for fam in families` loop; `compute_eligible_v`, `rewrite`, and every
   `collect_*` / `classify_*` / `v_group_*` helper take the active `fam` and use
-  `fam.pvec_type` / `fam.*_t` ids instead of literals. Retype target becomes
-  `.Ref(true, .Named(fam.pvec_type))`. Logic bodies unchanged.
+  `fam.pvec_type` / the family's builtin ids instead of literals. Retype target
+  becomes `.Ref(true, .Named(fam.pvec_type))`. Logic bodies unchanged.
+- **Field/payload reads must be family-filtered (untagged site sets).**
+  `typed_fields` / `typed_payloads` are `Dict<String, Bool>` — they record *that* a
+  `(TypeId, FieldId)` / payload site is typed, not *which* family. Today the retype
+  is guarded by `is_int_vector` on the read/bound slot (`collect_typed_field_reads`
+  has no slot check at all; `collect_typed_payload_reads` uses `slot_is_int_vector`).
+  Under a per-family pass this MUST become: only retype a typed field/payload read
+  when the **read result slot's own mono family == `fam`**. Otherwise the Bool pass
+  would retype an `Int` typed-field read to `PVecBool`. The site-set analyzers
+  (`analyze_typed_fields` / the payload analysis) are likewise `is_int_vector`-bound
+  and must consider each registered family when deciding a site is typed.
 - **`typed_param_abi.tw`:** same treatment — the `Vector<Int>`-only predicate
-  becomes `elem_family_of`-any, so a `fn(mask: Vector<Bool>)` can carry a physical
-  `PVecBool` ABI and a comparator can capture a typed `nulls` column.
+  becomes `elem_family_of`-any, so a comparator can **capture** a typed `nulls`
+  column (C2, physically typed) and a typed-`Vector<Bool>` **return** carries a
+  physical `PVecBool` ABI (B2).
+  **Scope note (no typed normal-param ABI):** `PreparedFunc` has `phys_return` but
+  **no `phys_params`** — `typeable_params` only feeds the payload-producer escape
+  analysis (a producer flowing into such a param is not an escape); it does **not**
+  create a physical `PVecI64`/`PVecBool` parameter. So a `fn(mask: Vector<Bool>)`
+  argument is still passed **boxed** (adapter), same as `Vector<Int>` today (B6 is
+  🟡 for both). This work does not add typed normal-param ABI; it only keeps
+  `typeable_params` family-keyed so the escape analysis is correct per family.
 
 ## Storage-site layout & policy
 
@@ -207,11 +246,12 @@ generalize or typed Bool fields/payloads won't become `PVecBool` consistently:
   typed-family ref vs boxed `PVec`, or two different typed-family refs" — the same
   backstop, now covering Bool on all four already-covered non-coercing edges (local
   stores, record-get result, record fields, closure-capture stores).
-- **Emit — index/coercion/closure:** `coercions.tw` dispatches `box_i64`/`unbox_i64`
-  by PVec name → per-family `box_X`/`unbox_X`; the anyref-erase (box-before-erase)
-  path generalizes the same way. `arrays.tw`'s `is_pvec_i64` index fast-path
-  generalizes to any typed family — `StructGet(fam.pvec_type, 0)` + `get_X`, then
-  coerce the result (`.I64`/`.I32`) to the slot type. `closures.tw`'s trampoline
+- **Emit — index/coercion/closure (uses the leaf `ElemFamily` runtime symbols, not
+  builtin ids):** `coercions.tw` dispatches the box/unbox calls by PVec name →
+  `fam.box_call` / `fam.unbox_call`; the anyref-erase (box-before-erase) path
+  generalizes the same way. `arrays.tw`'s `is_pvec_i64` index fast-path generalizes
+  to any typed family — `StructGet(fam.pvec_type, 0)` + `.Call(fam.get_call)`, then
+  coerce the result (`fam.elem_wasm`) to the slot type. `closures.tw`'s trampoline
   downcast (`RefCast` to `PVecI64`) generalizes to the capture param's actual
   `pvec_type`.
 - **Emit — erased bridge & equality (do NOT omit):** typed Bool fields/payloads
@@ -247,7 +287,13 @@ steps means a regression is attributable to one or the other.
   `typed_record_field_probe.tw`).
 - Negative probe: the same `Bool` field fed by a combinator-built producer through
   a parameter stays boxed `PVec` (no `get_bool`).
-- Round-trip: `box_bool`/`unbox_bool` bit-identity over a mixed `Vector<Bool>`.
+- Round-trip: `box_bool`/`unbox_bool` are emit-internal (not callable from Twinkle
+  source). To exercise them, expose `Vector.vec_bool_roundtrip` as a callable
+  builtin (ABI + runtime binding + prelude signature, mirroring the existing
+  `Vector.vec_i64_roundtrip`) and assert it preserves contents over a mixed
+  `Vector<Bool>`. (Alternatively, drive box/unbox through a real escape path — a
+  typed Bool vector boxed at a durable boundary then read back — but the exposed
+  roundtrip builtin is the direct check the i64 family already uses.)
 - **Typed Bool record field** layout → `PVecBool`, read via index/len (covers
   `wasm_layout.tw` + `repr_policy.tw`).
 - **Typed Bool variant payload** layout → `PVecBool`, plus an **erased variant

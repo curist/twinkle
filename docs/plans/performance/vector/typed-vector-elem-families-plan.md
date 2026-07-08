@@ -23,7 +23,8 @@
   ```
 - **Bench guard** *[BG]*: `target/twk run examples/performance/dataframe/bench/order_by_breakdown.tw` — checksums must stay `1000000` / `3000000`.
 - Stage 1 tasks are behavior-preserving. Their pass condition is *[VL]* green **and** *[BG]* checksums + timings materially unchanged (the emitted module should be byte-identical; a timing shift signals an accidental behavior change).
-- Commit after every task. Match repo commit style (imperative subject, what/why body). Add `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+- Commit after every task. Match repo commit style (imperative subject, what/why body). Follow the project's commit-trailer guidance: add a `Co-Authored-By` trailer **only when it is actually correct** for the session/tooling doing the commit — do not add it unconditionally.
+- **Byte-identity baseline (Stage 1):** capture the pre-Stage-1 baseline **before** editing (Task 0), because `git stash` cannot recover a baseline once each task has committed. The Stage 1 gate compares against that saved artifact.
 
 ## File map
 
@@ -46,59 +47,68 @@
 
 # Stage 1 — Generalize the routing (no behavior change)
 
-### Task 1: `ElemFamily` descriptor + `families()` registry + `elem_family_of`
+### Task 0: Capture the Stage 1 byte-identity baseline
+
+**Files:** none (records a baseline artifact).
+
+- [ ] **Step 1: Build the current `boot.wasm` from a clean tree and save it.** This is the reference the Stage 1 gate diffs against. Do this on the tip commit *before* any Stage 1 edit.
+
+Run: `make stage2 2>&1 | tail -1 && cp target/boot.wasm /tmp/elemfam-base.wasm && shasum /tmp/elemfam-base.wasm`
+Expected: `Fixed point reached`; a sha printed (record it in the PR/notes).
+
+- [ ] **Step 2: No commit** (nothing changed). Proceed to Task 1.
+
+### Task 1: `ElemFamily` leaf module + `FamilyIds` enrichment
+
+**Why a leaf module:** `emit/*`, the verifier, `wasm_layout.tw`, `runtime/core.tw`, and `repr_policy.tw` all need family classification. `route_typed_vec.tw` is a backend module imported only by other backend modules; making emit/codegen depend on it is a layering violation and cycle risk. So **pure classification** (needs only `MonoType`/`ValType`) goes in a new leaf module, and the **builtin-ID enrichment** (needs `BuiltinRegistry`) stays in routing.
 
 **Files:**
-- Modify: `boot/compiler/backend/route_typed_vec.tw` (near `RouteIds`, ~lines 29-57)
+- Create: `boot/compiler/elem_family.tw`
+- Modify: `boot/compiler/backend/route_typed_vec.tw` (add `FamilyIds` enrichment near `RouteIds`, ~lines 29-57)
 
-- [ ] **Step 1: Add the `ElemFamily` type and registry.** Insert after the `RouteIds` definition. `RouteIds` keeps the shared *boxed* ids (`builder_new`, `builder_push`, `builder_freeze`, `len`, `gather`); the typed ids + names move into `ElemFamily`.
+- [ ] **Step 1: Create the leaf module.** Pure classification + emit runtime symbols; imports only `mono_type` and `wasm_ir`.
 
 ```
+// boot/compiler/elem_family.tw
+use compiler.mono_type.{MonoType}
+use compiler.codegen.wasm_ir.{ValType}
+
+// Physically-typed vector element family. Pure: no BuiltinRegistry. `*_call` are
+// runtime function symbols the emitter calls directly (index fast path, box/unbox
+// coercions, bridge, equality). Builtin ids for the router live in FamilyIds
+// (route_typed_vec.tw), which the emitter does not need.
 pub type ElemFamily = .{
-  mono_key: String,          // "vec_i64" — FamilyTag
-  pvec_type: String,         // "rt_types__PVecI64"
-  elem_wasm: ValType,        // .I64
-  builder_new: Int,
-  builder_push: Int,
-  builder_freeze: Int,
-  len: Int,
-  get: Int,
-  gather: Int,
-  box_call: String,          // runtime fn name: "rt_arr__box_i64"
-  unbox_call: String,        // "rt_arr__unbox_i64"
+  mono_key:   String,   // "vec_i64" / "vec_bool" — FamilyTag
+  pvec_type:  String,   // "rt_types__PVecI64"
+  elem_wasm:  ValType,  // .I64 / .I32
+  get_call:   String,   // "rt_arr__get_i64"
+  box_call:   String,   // "rt_arr__box_i64"
+  unbox_call: String,   // "rt_arr__unbox_i64"
 }
 
-pub fn families(builtins: BuiltinRegistry) Vector<ElemFamily> {
-  [family_i64_desc(builtins)]
+pub fn all_families() Vector<ElemFamily> {
+  [family_i64()]
 }
 
-fn family_i64_desc(builtins: BuiltinRegistry) ElemFamily {
+fn family_i64() ElemFamily {
   .{
     mono_key: "vec_i64",
     pvec_type: "rt_types__PVecI64",
     elem_wasm: .I64,
-    builder_new: builtins.id("vector$builder_new_i64").id,
-    builder_push: builtins.id("vector$builder_push_i64").id,
-    builder_freeze: builtins.id("vector$builder_freeze_i64").id,
-    len: builtins.id("vector$len_i64").id,
-    get: builtins.id("vector$get_i64").id,
-    gather: builtins.id("vector$gather_i64").id,
+    get_call: "rt_arr__get_i64",
     box_call: "rt_arr__box_i64",
     unbox_call: "rt_arr__unbox_i64",
   }
 }
-```
 
-- [ ] **Step 2: Add `elem_family_of`.** This replaces `mono_key_of` + `is_int_vector` as the family selector. Insert near `mono_key_of` (~line 928).
-
-```
-fn elem_family_of(mono: MonoType, fams: Vector<ElemFamily>) ElemFamily? {
+// The single family selector. Replaces the scattered is_int_vector / mono_key_of.
+pub fn elem_family_of(mono: MonoType) ElemFamily? {
   key := case mono {
     .Vector(.Int) => "vec_i64",
     _ => "other",
   }
 
-  for f in fams {
+  for f in all_families() {
     if f.mono_key == key {
       return .Some(f)
     }
@@ -108,16 +118,49 @@ fn elem_family_of(mono: MonoType, fams: Vector<ElemFamily>) ElemFamily? {
 }
 ```
 
-- [ ] **Step 3: Verify it compiles unused.** Nothing calls the new code yet; `make stage2 2>&1 | tail -3` must reach "Fixed point reached" (a compile check that the new declarations parse/typecheck).
+- [ ] **Step 2: Add `FamilyIds` enrichment in the routing layer.** In `route_typed_vec.tw`, add the builtin-id record + registry (routing-only). `RouteIds` keeps the shared *boxed* ids; the typed ids join `FamilyIds`.
+
+```
+use compiler.elem_family.{ElemFamily, elem_family_of, all_families}
+
+type FamilyIds = .{
+  fam: ElemFamily,
+  builder_new: Int,
+  builder_push: Int,
+  builder_freeze: Int,
+  len: Int,
+  get: Int,
+  gather: Int,
+}
+
+fn families_ids(builtins: BuiltinRegistry) Vector<FamilyIds> {
+  collect f in all_families() {
+    suffix := if f.mono_key == "vec_i64" { "_i64" } else { "_bool" }
+    .{
+      fam: f,
+      builder_new: builtins.id("vector$builder_new${suffix}").id,
+      builder_push: builtins.id("vector$builder_push${suffix}").id,
+      builder_freeze: builtins.id("vector$builder_freeze${suffix}").id,
+      len: builtins.id("vector$len${suffix}").id,
+      get: builtins.id("vector$get${suffix}").id,
+      gather: builtins.id("vector$gather${suffix}").id,
+    }
+  }
+}
+```
+
+- [ ] **Step 3: Register the new module** wherever the module list / import graph is declared (grep for how sibling modules like `compiler.mono_type` are registered in the build; add `compiler.elem_family` alongside).
+
+- [ ] **Step 4: Verify it compiles unused.** Nothing calls the new code yet.
 
 Run: `make stage2 2>&1 | tail -3`
 Expected: `Fixed point reached`
 
-- [ ] **Step 4: Commit.**
+- [ ] **Step 5: Commit.**
 
 ```bash
-git add boot/compiler/backend/route_typed_vec.tw
-git commit -m "backend: add ElemFamily descriptor + families() registry (i64 only)"
+git add boot/compiler/elem_family.tw boot/compiler/backend/route_typed_vec.tw
+git commit -m "compiler: add ElemFamily leaf module + FamilyIds enrichment (i64 only)"
 ```
 
 ### Task 2: Thread `ElemFamily` through the routing pass
@@ -139,27 +182,32 @@ fn route_func(
 ) PreparedFunc {
   cur := pf
 
-  for fam in families(builtins) {
-    cur = route_func_family(cur, fam, ids, builtins, typed_fields, typed_payloads, capture_abi, typeable_return)
+  for fi in families_ids(builtins) {
+    cur = route_func_family(cur, fi, ids, builtins, typed_fields, typed_payloads, capture_abi, typeable_return)
   }
 
   cur
 }
 ```
 
-  Rename the existing `route_func` body to `route_func_family(pf, fam, ...)` taking `fam: ElemFamily` as the second parameter. (Note the ABI-fact map types changed — `capture_abi: Dict<String, Dict<Int, String>>`, `typeable_return: Dict<String, String>`; these are wired in Task 3. Until then, keep them as the current types and revisit — OR implement Task 3's map-type change first if the compiler rejects the mismatch. Recommended: land Tasks 2+3 as one commit if the type change forces it.)
+  Rename the existing `route_func` body to `route_func_family(pf, fi, ...)` taking `fi: FamilyIds` as the second parameter; inside, `fi.fam` is the `ElemFamily` (type name), `fi.builder_new`/`len`/`gather`/… are the typed builtin ids. (The ABI-fact map types changed — `capture_abi: Dict<String, Dict<Int, String>>`, `typeable_return: Dict<String, String>` — wired in Task 3. If the compiler rejects the intermediate type mismatch, land Tasks 2+3 as one commit; Task 2 Step 6 notes this.)
 
-- [ ] **Step 2: In `route_func_family` + `compute_eligible_v`, replace every Int-literal with `fam`.** Concretely:
-  - `is_int_vector(mono_key_of(info))` → `case elem_family_of(info.mono, [fam]) { .Some(_) => true, .None => false }` (single-family check for the active pass). Do this in `collect_candidate_from_op`, `slot_is_int_vector`, `atom_is_int_vector_slot`, `free_var_typed_local`.
-  - `.Ref(true, .Named("rt_types__PVecI64"))` (the retype target in `route_func_family`, ~line 439) → `.Ref(true, .Named(fam.pvec_type))`.
-  - `pf.phys_return = .Some(.Ref(true, .Named("rt_types__PVecI64")))` (~line 457) → `fam.pvec_type`.
-  - `ids.gather` / `ids.gather_i64` usage in `collect_gather_results` / `op_group_escapes`: the *boxed* gather id (`ids.gather`) is the source op that gets swapped; the typed target is `fam.gather`. Keep `ids.gather` as the match key (that is the pre-swap builtin), and route to `fam.gather` in `rewrite`.
+- [ ] **Step 2: In `route_func_family` + `compute_eligible_v`, replace every Int-literal.** Concretely:
+  - `is_int_vector(mono_key_of(info))` → `slot_in_family(info, fi.fam)` where `fn slot_in_family(info, fam) Bool { case elem_family_of(info.mono) { .Some(f) => f.mono_key == fam.mono_key, .None => false } }` (single-family membership for the active pass). Apply in `collect_candidate_from_op`, `slot_is_int_vector`, `atom_is_int_vector_slot`, `free_var_typed_local`.
+  - `.Ref(true, .Named("rt_types__PVecI64"))` (retype target, ~line 439) → `.Ref(true, .Named(fi.fam.pvec_type))`.
+  - `pf.phys_return = .Some(.Ref(true, .Named("rt_types__PVecI64")))` (~line 457) → `fi.fam.pvec_type`.
+  - `ids.gather` in `collect_gather_results` / `op_group_escapes`: keep the *boxed* gather id (`ids.gather`) as the pre-swap match key; route to `fi.gather` in `rewrite`.
 
-- [ ] **Step 3: Thread `fam` into the collect/classify/v_group helpers.** Add a `fam: ElemFamily` parameter to `collect_candidates`*, `collect_gather_results`*, `classify_expr`/`classify_op`, `v_group_escapes`/`op_group_escapes`, `v_group_typeable`, and pass it down. Replace their internal `is_int_vector`/`ids.*_i64` references with `fam.*`. The escape/alias logic is otherwise unchanged.
+- [ ] **Step 3: Thread `fi` (or `fi.fam` + the needed ids) into the collect/classify/v_group helpers.** Add the parameter to `collect_candidates`*, `collect_gather_results`*, `classify_expr`/`classify_op`, `v_group_escapes`/`op_group_escapes`, `v_group_typeable`, and pass it down. Replace their internal `is_int_vector`/`ids.*_i64` references. The escape/alias logic is otherwise unchanged.
 
-- [ ] **Step 4: Update `rewrite`** (the builder/len/gather call-swapper) to swap the boxed builtin id → the active `fam`'s typed id (`fam.builder_new`/`builder_push`/`builder_freeze`/`len`/`gather`) for slots retyped in this pass. (Find `rewrite` in the second half of the file, lines 1499+.)
+- [ ] **Step 3b: Family-filter typed field/payload reads (correctness — not a no-op-only concern).** `typed_fields`/`typed_payloads` are untagged site sets, so a per-family pass must only retype a read whose **result/bound slot's own family == `fi.fam`**:
+  - `collect_typed_field_reads` currently has NO slot check (relies on the field key). Add: only append the result slot when `slot_in_family(slots[slot.id], fi.fam)`.
+  - `collect_typed_payload_reads` / `collect_payload_bindings` use `slot_is_int_vector` — generalize that to `slot_in_family(_, fi.fam)`.
+  Without this, the Bool pass would retype an `Int` typed-field/payload read to `PVecBool`. (With registry `[i64]`, `fi.fam` is always i64, so this remains a no-op through Stage 1 — but it is required before Task 11 activates Bool.)
 
-- [ ] **Step 5: Update `materialize_slot_repr`** to loop families the same way, keying output `"${func_id}:${slot}"` unchanged (a slot belongs to exactly one family).
+- [ ] **Step 4: Update `rewrite`** (the builder/len/gather call-swapper) to swap the boxed builtin id → the active `fi`'s typed id (`fi.builder_new`/`builder_push`/`builder_freeze`/`len`/`gather`) for slots retyped in this pass. (Find `rewrite` in the second half of the file, lines 1499+.)
+
+- [ ] **Step 5: Update `materialize_slot_repr`** to loop `families_ids(builtins)` the same way, keying output `"${func_id}:${slot}"` unchanged (a slot belongs to exactly one family).
 
 - [ ] **Step 6: Verify no-op.** *[VL]* green (2980 tests), *[BG]* checksums intact.
 
@@ -185,12 +233,14 @@ git commit -m "backend: route typed vectors per ElemFamily (i64 pass unchanged)"
   - `typeable_return: Dict<String, Bool>` → `Dict<String, String>` (func id → return family mono_key; absent = not typed).
   - `capture_abi: Dict<String, Vector<Int>>` → `Dict<String, Dict<Int, String>>` (capture index → family mono_key).
 
-- [ ] **Step 2: In `typed_param_abi.tw`, record the family** when a param/return/capture is judged typeable. Where it currently establishes `Vector<Int>`-ness via `is_int_vector`, call `elem_family_of(mono, families(builtins))` and store the resulting `fam.mono_key` at that index. A param whose element has no family is simply not recorded (unchanged behavior). Generalize the receiver predicate from `Vector<Int>`-only to `elem_family_of`-any.
+> **Scope (no typed normal-param ABI):** `PreparedFunc` has `phys_return` but **no `phys_params`**. `typeable_params` is consumed only by the payload-producer escape analysis (`scan_func_payload_producers` / `producer_source_slots`) — a producer flowing into such a param is not an escape. It does **not** create a physical `PVecI64`/`PVecBool` parameter; typed-vector args are still passed boxed (B6 is 🟡). This task keeps `typeable_params` family-keyed so that escape analysis is correct per family — it does **not** add typed-param ABI. (Captures via `capture_abi` and returns via `typeable_return`/`phys_return` DO carry physical typed ABI — those are the C2/B2 paths this plan exercises.)
 
-- [ ] **Step 3: In the `route_typed_vec.tw` consumers, filter by the active `fam`.**
-  - `collect_typed_return_call_results`: the callee's return family (`typeable_return["${fid.id}"]`) must equal `fam.mono_key` for the call result to be a source in this pass.
-  - `typeable_capture_slots` + `collect_relaxed_captures`: only indices whose recorded family == `fam.mono_key` participate in this pass.
-  Signatures gain `fam: ElemFamily`.
+- [ ] **Step 2: In `typed_param_abi.tw`, record the family** when a param/return/capture is judged typeable. Where it currently establishes `Vector<Int>`-ness via `is_int_vector`, call `elem_family_of(mono)` and store the resulting `fam.mono_key` at that index. A param whose element has no family is simply not recorded (unchanged behavior). Generalize the receiver predicate from `Vector<Int>`-only to `elem_family_of`-any.
+
+- [ ] **Step 3: In the `route_typed_vec.tw` consumers, filter by the active `fi.fam`.**
+  - `collect_typed_return_call_results`: the callee's return family (`typeable_return["${fid.id}"]`) must equal `fi.fam.mono_key` for the call result to be a source in this pass.
+  - `typeable_capture_slots` + `collect_relaxed_captures`: only indices whose recorded family == `fi.fam.mono_key` participate in this pass.
+  Signatures gain `fam: ElemFamily` (pass `fi.fam`).
 
 - [ ] **Step 4: Update `slot_typed_after_route` / `free_var_typed_local`** and any other callers to pass the new map types (empty `Dict.new()` where they passed empty before still type-checks).
 
@@ -212,38 +262,28 @@ git commit -m "backend: family-key cross-function typed-vector ABI facts"
 - Modify: `boot/compiler/backend/verify_slots.tw` (`is_typed_vec_i64`, ~lines 190-199)
 - Modify: `boot/compiler/backend/verify_expr.tw` (`named_typed_vec_ref` + the mismatch check, ~lines 758-778, 1123)
 
-- [ ] **Step 1: Generalize `is_typed_vec_i64`** (rename to `is_typed_vec` and take the family set). It currently checks `name == "rt_types__PVecI64"` and `mono` is `Vector<Int>`. Replace with: `name` matches **any** `fam.pvec_type` and `mono` matches that family via `elem_family_of`.
+- [ ] **Step 1: Generalize `is_typed_vec_i64`** (rename to `is_typed_vec`). It currently checks `name == "rt_types__PVecI64"` and `mono` is `Vector<Int>`. Replace with: `mono` classifies to a family whose `pvec_type` names `wasm_type`. No family-set parameter — `elem_family_of` reads the global registry.
 
 ```
-fn is_typed_vec(wasm_type: ValType, mono: MonoType, fams: Vector<ElemFamily>) Bool {
-  named := case wasm_type {
-    .Ref(_, .Named(name)) => name,
-    _ => "",
+fn is_typed_vec(wasm_type: ValType, mono: MonoType) Bool {
+  case elem_family_of(mono) {
+    .Some(f) => case wasm_type {
+      .Ref(_, .Named(name)) => name == f.pvec_type,
+      _ => false,
+    },
+    .None => false,
   }
-
-  for f in fams {
-    if named == f.pvec_type {
-      case elem_family_of(mono, [f]) {
-        .Some(_) => return true,
-        .None => {},
-      }
-    }
-  }
-
-  false
 }
 ```
 
-- [ ] **Step 2: Generalize `named_typed_vec_ref`** in `verify_expr.tw` to accept any registered `pvec_type` (loop `families`), and the mismatch predicate (~line 777) to "two typed refs naming different `pvec_type`s, OR a typed ref vs boxed `rt_types__PVec`". The four covered non-coercing edges (local store, record-get result, record field, closure-capture store) are unchanged in structure — only the recognizer broadens.
+- [ ] **Step 2: Generalize `named_typed_vec_ref`** in `verify_expr.tw` to accept any registered `pvec_type` (loop `all_families()` comparing `name == f.pvec_type`), and the mismatch predicate (~line 777) to "two typed refs naming different `pvec_type`s, OR a typed ref vs boxed `rt_types__PVec`". The four covered non-coercing edges (local store, record-get result, record field, closure-capture store) are unchanged in structure — only the recognizer broadens. No `builtins` threading needed (`elem_family_of` / `all_families()` are registry-global).
 
-- [ ] **Step 3: Thread `families(builtins)`** to these functions (the verifier already has `builtins` in scope at its entry; pass the family vector down, or recompute once at the verify entry and thread it).
-
-- [ ] **Step 4: Verify no-op.** Only `PVecI64` is registered, so the recognizer set is identical. *[VL]* green.
+- [ ] **Step 3: Verify no-op.** Only `PVecI64` is registered, so the recognizer set is identical. *[VL]* green.
 
 Run: *[VL]*
 Expected: `Ran 2980 tests` / `0 Failed`.
 
-- [ ] **Step 5: Commit.**
+- [ ] **Step 4: Commit.**
 
 ```bash
 git add boot/compiler/backend/verify_slots.tw boot/compiler/backend/verify_expr.tw
@@ -261,7 +301,7 @@ git commit -m "backend: verifier recognizes any registered typed-vector repr"
 
 - [ ] **Step 1: Coercions.** Replace the two hardcoded pairs (`box_i64`/`unbox_i64` at PVecI64↔PVec) with a family-dispatched form: given `from_name`/`to_name`, look up the family whose `pvec_type` participates and emit `fam.box_call` / `fam.unbox_call`. The anyref-erase box-before-erase branch (~line 47) generalizes the same way (`fname == fam.pvec_type` → `.Call(fam.box_call)`).
 
-- [ ] **Step 2: Index fast path (`arrays.tw`).** Generalize `is_pvec_i64` to `pvec_family_of(vt, fams) ElemFamily?` (returns the family whose `pvec_type` names `vt`). In the fast path, use `StructGet(fam.pvec_type, 0)` and `.Call(fam.get)`'s runtime name, then coerce the result from `fam.elem_wasm` to the slot type (identity for i64→Int; i32→Bool is the Bool case handled by the existing scalar coercion).
+- [ ] **Step 2: Index fast path (`arrays.tw`).** Generalize `is_pvec_i64` to `pvec_family_of(vt) ElemFamily?` (loops `all_families()`, returns the family whose `pvec_type` names `vt`). In the fast path, use `StructGet(fam.pvec_type, 0)` and `.Call(fam.get_call)` (the leaf `ElemFamily` runtime symbol — `rt_arr__get_i64`/`rt_arr__get_bool`), then coerce the result from `fam.elem_wasm` to the slot type (identity for i64→Int; i32→Bool via the existing scalar coercion).
 
 - [ ] **Step 3: Closure trampoline downcast (`closures.tw`).** The `RefCast(false, .Named("rt_types__PVecI64"))` (~line 629) generalizes: when the capture param's physical type names a family `pvec_type`, cast to that. Loop families to match the param's `pvec_type`.
 
@@ -287,7 +327,7 @@ git commit -m "codegen: dispatch typed-vector box/unbox/index/equality per famil
 - Modify: `boot/compiler/codegen/wasm_layout.tw` (`is_int_vector_field` + literals, ~lines 59-69, 265-266, 312-313)
 - Modify: `boot/compiler/backend/repr_policy.tw` (~lines 174, 364)
 
-- [ ] **Step 1: `wasm_layout.tw`.** Replace `is_int_vector_field(field_ty)` guarding the field layout (line 265) and the variant-payload layout (line 312) with `elem_family_of(field_ty, families(builtins))`, and use the returned `fam.pvec_type` for the physical `.Ref(true, .Named(...))` type instead of the literal `"rt_types__PVecI64"`. (Thread `builtins`/`families` to these layout functions if not already present.)
+- [ ] **Step 1: `wasm_layout.tw`.** Replace `is_int_vector_field(field_ty)` guarding the field layout (line 265) and the variant-payload layout (line 312) with `elem_family_of(field_ty)`, and use the returned `fam.pvec_type` for the physical `.Ref(true, .Named(...))` type instead of the literal `"rt_types__PVecI64"`. No `builtins` threading (registry-global).
 
 - [ ] **Step 2: `repr_policy.tw`.** Extend the candidate-repr policy that currently admits only `Vector<Int>` to admit any element with a registered family (`elem_family_of` non-`None`). Keep the "inert until `val_type_of_mono` yields the typed repr" gating (line 364 comment) intact.
 
@@ -303,12 +343,12 @@ git add boot/compiler/codegen/wasm_layout.tw boot/compiler/backend/repr_policy.t
 git commit -m "codegen: field/payload layout + candidate policy per family"
 ```
 
-**Stage 1 gate:** the module emitted for `boot/main.tw` and every bench should be byte-identical to the pre-Stage-1 build (registry unchanged in content). Confirm with:
+**Stage 1 gate:** the module emitted for `boot/main.tw` should be byte-identical to the Task 0 baseline (`/tmp/elemfam-base.wasm`), because the registry content is unchanged (`[i64]` only). Confirm against the **pre-saved** baseline (do NOT `git stash` — the Stage 1 tasks are already committed):
 ```
-git stash; make stage2 2>&1 | tail -1; cp target/boot.wasm /tmp/base.wasm; git stash pop
-make stage2 2>&1 | tail -1; cmp target/boot.wasm /tmp/base.wasm && echo "BYTE-IDENTICAL"
+make stage2 2>&1 | tail -1
+cmp target/boot.wasm /tmp/elemfam-base.wasm && echo "BYTE-IDENTICAL"
 ```
-Expected: `BYTE-IDENTICAL`. (If not identical, a Stage 1 change altered behavior — bisect the tasks.)
+Expected: `BYTE-IDENTICAL`. (If not identical, a Stage 1 change altered behavior — bisect with `git bisect` over the Stage 1 commits, rebuilding + `cmp` at each step.)
 
 ---
 
@@ -410,7 +450,7 @@ git commit -m "runtime: PVecBool family descriptor + mechanical _bool clones"
 
 - [ ] **Step 3: Register both** in the emitted func list next to the Task 8 clones.
 
-- [ ] **Step 4: Round-trip probe (TDD).** Create `examples/performance/sort-bench/bool_family_roundtrip_probe.tw` that builds a mixed `Vector<Bool>`, and (once Task 11 wires `families()`) asserts `unbox_bool(box_bool(v))` preserves contents. For now this task's check is that the funcs compile and boot-test stays green.
+- [ ] **Step 4: Verify compile only.** `box_bool`/`unbox_bool` are emit-internal and not yet reachable from source (the `Vector.vec_bool_roundtrip` method that calls them is exposed in Task 10; routing that emits box/unbox is activated in Task 11). This task's check is that the funcs compile and boot-test stays green. The executable round-trip test lives in Task 10 Step 4.
 
 Run: *[VL]*
 Expected: `Ran 2980 tests` / `0 Failed`.
@@ -418,7 +458,7 @@ Expected: `Ran 2980 tests` / `0 Failed`.
 - [ ] **Step 5: Commit.**
 
 ```bash
-git add boot/compiler/codegen/runtime/arr.tw examples/performance/sort-bench/bool_family_roundtrip_probe.tw
+git add boot/compiler/codegen/runtime/arr.tw
 git commit -m "runtime: builder_push_bool (i31 decode) + box_bool/unbox_bool"
 ```
 
@@ -426,8 +466,10 @@ git commit -m "runtime: builder_push_bool (i31 decode) + box_bool/unbox_bool"
 
 **Files:**
 - Modify: `boot/compiler/builtins.tw` (ABI block ~lines 137-146; runtime-binding block ~lines 558-588)
+- Modify: `boot/prelude/signatures/vector.tw` (add `vec_bool_roundtrip` signature next to `vec_i64_roundtrip`, ~line 57)
+- Create: `examples/performance/sort-bench/bool_family_roundtrip_probe.tw`
 
-- [ ] **Step 1: Add ABI entries** mirroring the `_i64` block (lines 138-146). Add helpers `pvec_bool_n()` / `pvec_bool_()` (clone `pvec_i64_n`/`pvec_i64_` at lines 81-86, naming `t_PVEC_BOOL`). Then:
+- [ ] **Step 1: Add ABI entries** mirroring the `_i64` block (lines 138-146). Add helpers `pvec_bool_n()` / `pvec_bool_()` (clone `pvec_i64_n`/`pvec_i64_` at lines 81-86, naming `t_PVEC_BOOL`). The roundtrip takes/returns the **boxed** `PVec` (box→typed→box), same shape as `vec_i64_roundtrip`. Then:
 
 ```
 "vector$len_bool" => abi([pvec_bool_n()], [.I32]),
@@ -436,9 +478,10 @@ git commit -m "runtime: builder_push_bool (i31 decode) + box_bool/unbox_bool"
 "vector$builder_push_bool" => abi([arr_n(), .Anyref], []),
 "vector$builder_freeze_bool" => abi([arr_n()], [pvec_bool_()]),
 "vector$gather_bool" => abi([pvec_bool_n(), pvec_n()], [pvec_bool_()]),
+"vector$vec_bool_roundtrip" => abi([pvec_n()], [pvec_()]),
 ```
 
-- [ ] **Step 2: Add runtime bindings** mirroring lines 562-588:
+- [ ] **Step 2: Add runtime bindings** mirroring lines 561-588. `vec_bool_roundtrip` is the one exposed as a method (so it is source-callable to exercise `box_bool`/`unbox_bool`); the rest are `.None`:
 
 ```
 rt("vector$len_bool", "rt.arr", "len_bool", .None),
@@ -447,25 +490,50 @@ rt("vector$builder_new_bool", "rt.arr", "builder_new_bool", .None),
 rt("vector$builder_push_bool", "rt.arr", "builder_push_bool", .None),
 rt("vector$builder_freeze_bool", "rt.arr", "builder_freeze_bool", .None),
 rt("vector$gather_bool", "rt.arr", "gather_bool", .None),
+rt("vector$vec_bool_roundtrip", "rt.arr", "vec_bool_roundtrip", .Some("Vector.vec_bool_roundtrip")),
 ```
   (`builder_new_bool` reuses the generic `pvec_builder_new_fn` output named `builder_new_bool` from Task 8 Step 2.)
 
-- [ ] **Step 3: Verify.** Builtins resolve; nothing routes to them yet (families still returns `[i64]`). *[VL]* green.
+- [ ] **Step 3: Add the prelude signature** in `boot/prelude/signatures/vector.tw` next to `vec_i64_roundtrip` (line 57):
+
+```
+pub fn vec_bool_roundtrip(xs: Vector<Bool>) Vector<Bool> {
+  __builtin("vector$vec_bool_roundtrip")
+}
+```
+  (Match the exact body form the existing `vec_i64_roundtrip` signature uses on line 57 — copy its shape.)
+
+- [ ] **Step 4: Executable round-trip test.** `vec_bool_roundtrip` calls `box_bool`/`unbox_bool` **internally** (it is the runtime fn body), so it exercises them regardless of routing activation. Create `bool_family_roundtrip_probe.tw`:
+
+```
+// bool_family_roundtrip_probe.tw
+v: Vector<Bool> = [true, false, false, true, true, false]
+r := v.vec_bool_roundtrip()
+ok := r.len() == v.len()
+same := true
+for i in range(v.len()) { if r[i] != v[i] { same = false } }
+println("len_ok=${ok} same=${same}")
+```
+
+Run: `make bundle-cli 2>&1 | tail -1 && target/twk run examples/performance/sort-bench/bool_family_roundtrip_probe.tw`
+Expected: `Fixed point reached`; `len_ok=true same=true` (box_bool/unbox_bool are bit-faithful).
+
+- [ ] **Step 5: Full suite.** *[VL]* green.
 
 Run: *[VL]*
 Expected: `Ran 2980 tests` / `0 Failed`.
 
-- [ ] **Step 4: Commit.**
+- [ ] **Step 6: Commit.**
 
 ```bash
-git add boot/compiler/builtins.tw
-git commit -m "builtins: register Bool typed-vector helper ABI + bindings"
+git add boot/compiler/builtins.tw boot/prelude/signatures/vector.tw examples/performance/sort-bench/bool_family_roundtrip_probe.tw
+git commit -m "builtins: register Bool typed-vector helpers + callable vec_bool_roundtrip"
 ```
 
 ### Task 11: Activate the Bool family (registry + `elem_family_of` + runtime_abi + read probes)
 
 **Files:**
-- Modify: `boot/compiler/backend/route_typed_vec.tw` (`families()`, `elem_family_of`)
+- Modify: `boot/compiler/elem_family.tw` (`all_families()` + `family_bool()` + `elem_family_of`)
 - Modify: `boot/compiler/codegen/emit/runtime_abi.tw` (typed-builder name lists, ~lines 29-50)
 - Create: `examples/performance/sort-bench/typed_bool_read_probe.tw`
 - Create: `examples/performance/sort-bench/typed_bool_boxed_probe.tw`
@@ -491,16 +559,27 @@ println("bool_count=${count}")
 Run: `target/twk wat examples/performance/sort-bench/typed_bool_read_probe.tw --func '$main' --calls | grep -c get_bool`
 Expected: `0` (routing not active).
 
-- [ ] **Step 3: Add the Bool family to the registry.**
+- [ ] **Step 3: Add the Bool family to the leaf registry** in `elem_family.tw`. Add `family_bool()` and include it in `all_families()`:
 
 ```
-pub fn families(builtins: BuiltinRegistry) Vector<ElemFamily> {
-  [family_i64_desc(builtins), family_bool_desc(builtins)]
+pub fn all_families() Vector<ElemFamily> {
+  [family_i64(), family_bool()]
+}
+
+fn family_bool() ElemFamily {
+  .{
+    mono_key: "vec_bool",
+    pvec_type: "rt_types__PVecBool",
+    elem_wasm: .I32,
+    get_call: "rt_arr__get_bool",
+    box_call: "rt_arr__box_bool",
+    unbox_call: "rt_arr__unbox_bool",
+  }
 }
 ```
-  Add `family_bool_desc(builtins)` cloning `family_i64_desc` with `mono_key: "vec_bool"`, `pvec_type: "rt_types__PVecBool"`, `elem_wasm: .I32`, the `*_bool` builtin ids, `box_call: "rt_arr__box_bool"`, `unbox_call: "rt_arr__unbox_bool"`.
+  (`families_ids()` in `route_typed_vec.tw` already derives the `_bool` builtin ids via its `suffix` conditional — no change needed there.)
 
-- [ ] **Step 4: Map `.Vector(.Bool)` in `elem_family_of`.**
+- [ ] **Step 4: Map `.Vector(.Bool)` in `elem_family_of`** (same file):
 
 ```
 key := case mono {
@@ -713,7 +792,7 @@ git commit -m "docs: PVecBool family landed — null-aware sort typed"
 
 ## Self-review checklist (run before execution)
 
-- **Spec coverage:** Family metadata flow → Task 3; `builder_push_bool`/`box_bool` i31 → Task 9; storage-site layout → Task 6; bridge/equality → Task 5; registration wiring → Tasks 7-10; per-family pass → Tasks 1-2; all six test gaps → Tasks 11-13. ✔
-- **Byte-identity gate** after Stage 1 catches any accidental behavior change from the refactor.
+- **Spec coverage:** leaf-module split + ID/symbol separation → Task 1; per-family pass → Task 2; field/payload family-filter → Task 2 Step 3b; family-keyed ABI facts (no typed-param ABI) → Task 3; verifier → Task 4; emit box/unbox/index/bridge/equality per family → Task 5; storage-site layout + policy → Task 6; runtime Bool family → Tasks 7-9; `builder_push_bool`/`box_bool` i31 → Task 9; registration + callable `vec_bool_roundtrip` → Task 10; activation + read probes → Task 11; capture/mixed-capture → Task 12; field/payload/bridge/equality/gather probes → Task 13; end-to-end → Task 14. ✔
+- **Review-driven fixes applied:** (1) family classification lives in the leaf `compiler.elem_family` module, not `route_typed_vec.tw` (no cycle); (2) no typed normal-param ABI claimed — `typeable_params` stays escape-analysis-only (Task 3 scope note); (3) typed field/payload reads are family-filtered before retyping (Task 2 Step 3b); (4) builtin ids (`FamilyIds`, routing) separated from emit runtime symbols (`ElemFamily.get_call`/`box_call`/`unbox_call`); (5) `vec_bool_roundtrip` exposed callable so `box_bool`/`unbox_bool` are executably tested (Task 10 Step 4); (6) byte-identity baseline captured in Task 0 before edits (no post-commit `git stash`); (7) commit-trailer guidance is conditional, not unconditional.
 - **Ordering:** the ABI-fact map-type change (Task 3) may force Tasks 2+3 into one commit if the compiler rejects the intermediate type mismatch — Task 2 Step 1 flags this. Land them together if so.
-- **`box`/`unbox` are runtime fn names** (`rt_arr__box_bool`), not builtin ids — reflected in `ElemFamily.box_call`/`unbox_call` (Task 1) and used by coercions/bridge/equality (Task 5).
+- **Layering:** `emit/*`, `verify_*`, `wasm_layout.tw`, `runtime/core.tw`, `repr_policy.tw` import only the leaf `compiler.elem_family` (types + runtime symbols); only `route_typed_vec.tw`/`typed_param_abi.tw` add `FamilyIds` (builtin ids).
