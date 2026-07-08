@@ -637,16 +637,22 @@ fn slot_in_family_id(sid: Int, slots: Dict<Int, SlotInfo>, fam: ElemFamily) Bool
   }
 }
 
-// The i64 family, for the whole-program field/payload analyses and single-family
-// queries that do not yet loop over families (their inputs are Vector<Int> today).
-fn i64_family() ElemFamily {
-  for f in all_families() {
-    if f.mono_key == "vec_i64" {
-      return f
+// The element family of a slot-group `aliases`, derived from any member slot's
+// MonoType. A typed-vector group is homogeneous (all aliases share the same
+// vector element type), so any registered member determines the family. Returns
+// .None when no member maps to a registered family (not a typed-vector group).
+fn group_family(aliases: Dict<Int, Bool>, slots: Dict<Int, SlotInfo>) ElemFamily? {
+  for sid in aliases.keys() {
+    case slots[sid] {
+      .Some(info) => case elem_family_of(info.mono) {
+        .Some(f) => return .Some(f),
+        .None => {},
+      },
+      .None => {},
     }
   }
 
-  error("route_typed_vec: vec_i64 family missing")
+  .None
 }
 
 fn slot_is(atom: PreparedAtom, sid: Int) Bool {
@@ -1261,10 +1267,13 @@ pub fn v_group_typeable(
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
 ) Bool {
-  // This pub entry keeps its Int-era signature (external callers pass no family),
-  // so it classifies against the i64 family. Only i64 exists today; a second
-  // family would thread the active family in here.
-  vuse := classify_v_group(body, aliases, relaxed, ids.len, builtins, slots, i64_family())
+  // Derive the family from the group's own slots. A group whose members map to no
+  // registered family is not a typed-vector group, so it is not typeable.
+  fam := case group_family(aliases, slots) {
+    .Some(f) => f,
+    .None => return false,
+  }
+  vuse := classify_v_group(body, aliases, relaxed, ids.len, builtins, slots, fam)
   all_field_keys_typed := vuse.field_keys.len() == 0 or all_in(vuse.field_keys, typed_fields)
 
   // A producer that flows into a variant payload is only routable if every such
@@ -1291,12 +1300,14 @@ pub fn free_var_typed_local(
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
 ) Bool {
-  // M1b support check is single-family today (its free var is a Vector<Int>).
-  fam := i64_family()
-  is_vec := slot_in_family_id(fv_slot, pf.slots, fam)
-
-  if !is_vec {
-    return false
+  // The captured free var determines the family: its own MonoType must map to a
+  // registered typed-vector family, or the capture stays boxed.
+  fam := case pf.slots[fv_slot] {
+    .Some(info) => case elem_family_of(info.mono) {
+      .Some(f) => f,
+      .None => return false,
+    },
+    .None => return false,
   }
 
   copy_map := build_copy_map(pf.body, Dict.new())
@@ -1703,34 +1714,38 @@ fn scan_func_payload_producers(
   typeable_params: Dict<String, Dict<Int, String>>,
   stats0: Dict<String, FieldStat>,
 ) Dict<String, FieldStat> {
-  // Whole-program typed-payload analysis is single-family today (Vector<Int>).
-  fam := i64_family()
+  // Per-family: a function may hold both Int and Bool payload producers, so
+  // classify each family's producers against that family (family-filtered by
+  // collect_candidates / classify_v_group). Int-only functions no-op on bool.
   copy_map := build_copy_map(pf.body, Dict.new())
-  cands := collect_candidates(pf.body, pf.slots, ids, fam, [])
-  sources := producer_source_slots(pf, cands, typeable_params, fam)
   stats := stats0
 
-  for v_slot in sources {
-    aliases := aliases_for(v_slot, copy_map)
-    vuse := classify_v_group(pf.body, aliases, Dict.new(), ids.len, builtins, pf.slots, fam)
-    keys := distinct_keys(user_payload_keys(vuse.payload_keys, first_user_tid))
+  for fam in all_families() {
+    cands := collect_candidates(pf.body, pf.slots, ids, fam, [])
+    sources := producer_source_slots(pf, cands, typeable_params, fam)
 
-    if keys.len() == 0 {
-      // This v-group never flows into a user variant payload — nothing to record.
-      stats = stats
-    } else if !vuse.escapes and keys.len() == 1 and vuse.field_keys.len() == 0 {
-      // Clean single-payload producer: its only escape is the variant store.
-      k := keys[0]
-      st := stat_of(stats, k)
-      st.has_ok_producer = true
-      stats[k] = st
-    } else {
-      // Feeds multiple payload sites, or also escapes / feeds a record field:
-      // no single clean typed producer, so demote every site it touches.
-      for k in keys {
+    for v_slot in sources {
+      aliases := aliases_for(v_slot, copy_map)
+      vuse := classify_v_group(pf.body, aliases, Dict.new(), ids.len, builtins, pf.slots, fam)
+      keys := distinct_keys(user_payload_keys(vuse.payload_keys, first_user_tid))
+
+      if keys.len() == 0 {
+        // This v-group never flows into a user variant payload — nothing to record.
+        stats = stats
+      } else if !vuse.escapes and keys.len() == 1 and vuse.field_keys.len() == 0 {
+        // Clean single-payload producer: its only escape is the variant store.
+        k := keys[0]
         st := stat_of(stats, k)
-        st.bad_producer = true
+        st.has_ok_producer = true
         stats[k] = st
+      } else {
+        // Feeds multiple payload sites, or also escapes / feeds a record field:
+        // no single clean typed producer, so demote every site it touches.
+        for k in keys {
+          st := stat_of(stats, k)
+          st.bad_producer = true
+          stats[k] = st
+        }
       }
     }
   }
@@ -1774,55 +1789,61 @@ fn scan_func_producers_consumers(
   builtins: BuiltinRegistry,
   stats0: Dict<String, FieldStat>,
 ) ScanResult {
-  // Whole-program typed-field analysis is single-family today (Vector<Int> fields).
-  fam := i64_family()
+  // Per-family: a function may hold both Int and Bool typed fields, so classify
+  // each family's producers/consumers against that family (family-filtered by
+  // collect_candidates / classify_v_group / slot_in_family). Int-only functions
+  // no-op on bool.
   copy_map := build_copy_map(pf.body, Dict.new())
-  cands := collect_candidates(pf.body, pf.slots, ids, fam, [])
   stats := stats0
   ok_map: Dict<String, Dict<Int, Bool>> = Dict.new()
 
-  // Producers: classify each typed v-group candidate (builder_freeze result). A
-  // candidate cleanly feeding one field is a clean typed producer; its alias
-  // slots are recorded as OK so pass 2 won't re-flag the store as boxed.
-  for c in cands {
-    aliases := aliases_for(c.v, copy_map)
-    vuse := classify_v_group(pf.body, aliases, Dict.new(), ids.len, builtins, pf.slots, fam)
-    keys := distinct_keys(vuse.field_keys)
+  for fam in all_families() {
+    cands := collect_candidates(pf.body, pf.slots, ids, fam, [])
 
-    if !vuse.escapes and keys.len() == 1 {
-      // Single typed-field producer that doesn't otherwise escape: OK for key k.
-      k := keys[0]
-      st := stat_of(stats, k)
-      st.has_ok_producer = true
-      stats[k] = st
+    // Producers: classify each typed v-group candidate (builder_freeze result). A
+    // candidate cleanly feeding one field is a clean typed producer; its alias
+    // slots are recorded as OK so pass 2 won't re-flag the store as boxed.
+    for c in cands {
+      aliases := aliases_for(c.v, copy_map)
+      vuse := classify_v_group(pf.body, aliases, Dict.new(), ids.len, builtins, pf.slots, fam)
+      keys := distinct_keys(vuse.field_keys)
 
-      // Remember this candidate's alias slots as OK for k, so pass 2 won't
-      // re-flag the same store as a boxed producer.
-      existing := case ok_map[k] {
-        .Some(m) => m,
-        .None => Dict.new(),
-      }
+      if !vuse.escapes and keys.len() == 1 {
+        // Single typed-field producer that doesn't otherwise escape: OK for key k.
+        k := keys[0]
+        st := stat_of(stats, k)
+        st.has_ok_producer = true
+        stats[k] = st
 
-      for sid in aliases.keys() {
-        existing[sid] = true
-      }
+        // Remember this candidate's alias slots as OK for k, so pass 2 won't
+        // re-flag the same store as a boxed producer.
+        existing := case ok_map[k] {
+          .Some(m) => m,
+          .None => Dict.new(),
+        }
 
-      ok_map[k] = existing
-    } else {
-      // Either feeds multiple distinct fields, or escapes while also feeding a
-      // field: every distinct field key it touches is demoted.
-      if keys.len() >= 1 {
-        for k in keys {
-          st := stat_of(stats, k)
-          st.bad_producer = true
-          stats[k] = st
+        for sid in aliases.keys() {
+          existing[sid] = true
+        }
+
+        ok_map[k] = existing
+      } else {
+        // Either feeds multiple distinct fields, or escapes while also feeding a
+        // field: every distinct field key it touches is demoted.
+        if keys.len() >= 1 {
+          for k in keys {
+            st := stat_of(stats, k)
+            st.bad_producer = true
+            stats[k] = st
+          }
         }
       }
     }
+
+    // Consumers: every ARecordGet whose result slot is in the family.
+    stats = scan_consumers(pf.body, pf, ids, builtins, fam, stats)
   }
 
-  // Consumers: every ARecordGet whose result slot is in the family.
-  stats = scan_consumers(pf.body, pf, ids, builtins, fam, stats)
   .{ stats, ok: .{ map: ok_map } }
 }
 
@@ -1905,23 +1926,27 @@ fn scan_func_field_stores(
   ok: OkAliases,
   stats0: Dict<String, FieldStat>,
 ) Dict<String, FieldStat> {
-  fam := i64_family()
-  sites := field_store_sites(pf.body, pf.slots, fam, [])
+  // Per-family: collect field-store sites in each family (family-filtered by
+  // field_store_sites). Int-only functions no-op on bool.
   stats := stats0
 
-  for site in sites {
-    is_ok := case site.value {
-      .ASlot(s) => case ok.map[site.key] {
-        .Some(slotset) => slotset.has(s.id),
-        .None => false,
-      },
-      _ => false,
-    }
+  for fam in all_families() {
+    sites := field_store_sites(pf.body, pf.slots, fam, [])
 
-    if !is_ok {
-      st := stat_of(stats, site.key)
-      st.bad_producer = true
-      stats[site.key] = st
+    for site in sites {
+      is_ok := case site.value {
+        .ASlot(s) => case ok.map[site.key] {
+          .Some(slotset) => slotset.has(s.id),
+          .None => false,
+        },
+        _ => false,
+      }
+
+      if !is_ok {
+        st := stat_of(stats, site.key)
+        st.bad_producer = true
+        stats[site.key] = st
+      }
     }
   }
 
