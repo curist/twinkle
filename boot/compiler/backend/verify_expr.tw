@@ -17,6 +17,7 @@ use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_layout.{layout_of, val_type_of_mono}
 use compiler.codegen.wasm_type_util.{heap_type_eq, val_type_eq}
 use compiler.core_ir.{FieldId, FuncId, LocalId, VariantId}
+use compiler.elem_family.{all_families}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv, lookup_type_def, resolved_type_param_names}
 
@@ -755,29 +756,35 @@ fn record_field_val_type(result_mono: MonoType, fid: Int, env: ResolvedEnv) ValT
 }
 
 // The typed-vector representations a record-field store can carry: the boxed
-// `rt_types__PVec` ref or the unboxed `rt_types__PVecI64` ref. A typed (TypeId,
-// FieldId) field's physical slot is PVecI64; an untyped one is the boxed PVec.
-// These two refs are NOT interchangeable in Wasm (PVecI64 stored into a PVec
-// slot is invalid), but the generic Ref->Ref coercibility rule in
-// `can_emit_coerce_stack` treats them as compatible. This helper catches the
-// exact PVecI64<->PVec field-representation mismatch that an over-eager typed
-// routing pass would produce, so it fails at compile time rather than only in
-// the Wasm validator.
+// `rt_types__PVec` ref or any registered family's typed repr (e.g.
+// `rt_types__PVecI64`). A typed (TypeId, FieldId) field's physical slot is the
+// family repr; an untyped one is the boxed PVec. These refs are NOT
+// interchangeable in Wasm (a typed repr stored into a PVec slot is invalid),
+// but the generic Ref->Ref coercibility rule in `can_emit_coerce_stack` treats
+// them as compatible. This helper catches any cross-repr mismatch that an
+// over-eager typed routing pass would produce, so it fails at compile time
+// rather than only in the Wasm validator.
 fn pvec_named(vt: ValType) String? {
   case vt {
-    .Ref(_, .Named(name)) => if name == "rt_types__PVec" or name == "rt_types__PVecI64" {
-      .Some(name)
-    } else {
+    .Ref(_, .Named(name)) => {
+      if name == "rt_types__PVec" {
+        return .Some(name)
+      }
+      for f in all_families() {
+        if name == f.pvec_type {
+          return .Some(name)
+        }
+      }
       .None
     },
     _ => .None,
   }
 }
 
-// True iff both val_types are typed-vector refs (PVec/PVecI64) that name
-// different physical reprs — the exact PVecI64<->PVec mismatch that is invalid
-// Wasm across a non-coercing edge. Non-pvec types (or one side non-pvec) yield
-// false: those are handled by the generic repr checks.
+// True iff both val_types are typed-vector refs (boxed PVec or any family repr)
+// that name different physical reprs — a mismatch that is invalid Wasm across a
+// non-coercing edge. Non-pvec types (or one side non-pvec) yield false: those
+// are handled by the generic repr checks.
 fn pvec_vt_mismatch(actual_vt: ValType, expected_vt: ValType) Bool {
   case pvec_named(expected_vt) {
     .Some(expected_name) => case pvec_named(actual_vt) {
