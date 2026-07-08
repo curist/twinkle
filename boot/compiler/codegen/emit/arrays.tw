@@ -10,7 +10,7 @@ use compiler.codegen.emit.layout_helpers.{get_sum_layout_ctx}
 use compiler.codegen.emit.variants.{is_nullable_extern_option}
 use compiler.codegen.wasm_ir.{Instr, ValType}
 use compiler.codegen.wasm_layout.{mono_to_key, val_type_of_mono}
-use compiler.elem_family.{ElemFamily, all_families}
+use compiler.elem_family.{ElemFamily, pvec_family_of}
 use compiler.mono_type.{MonoType}
 
 pub type ArrayEmitFns = .{
@@ -19,21 +19,6 @@ pub type ArrayEmitFns = .{
   atom_mono: fn(PreparedAtom, EmitCtx) MonoType,
   emit_checked_i32_narrow: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
   emit_erased_container_ingress: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
-}
-
-// The element family whose typed pvec struct is this wasm ref type, if any.
-fn pvec_family_of(vt: ValType) ElemFamily? {
-  case vt {
-    .Ref(_, .Named(name)) => {
-      for f in all_families() {
-        if name == f.pvec_type {
-          return .Some(f)
-        }
-      }
-      .None
-    },
-    _ => .None,
-  }
 }
 
 pub fn emit_array_literal(

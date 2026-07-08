@@ -31,6 +31,23 @@ fn family_i64() ElemFamily {
   }
 }
 
+pub fn family_by_pvec_name(name: String) ElemFamily? {
+  for f in all_families() {
+    if f.pvec_type == name {
+      return .Some(f)
+    }
+  }
+
+  .None
+}
+
+pub fn pvec_family_of(vt: ValType) ElemFamily? {
+  case vt {
+    .Ref(_, .Named(name)) => family_by_pvec_name(name),
+    _ => .None,
+  }
+}
+
 // The single family selector. Replaces the scattered is_int_vector / mono_key_of.
 pub fn elem_family_of(mono: MonoType) ElemFamily? {
   key := case mono {

@@ -15,18 +15,8 @@ use compiler.codegen.wasm_ir.{FuncDef, Instr, ValType}
 use compiler.codegen.wasm_layout.{layout_of, val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{FuncSigEntry}
 use compiler.core_ir.{FuncId}
-use compiler.elem_family.{ElemFamily, all_families}
+use compiler.elem_family.{ElemFamily, family_by_pvec_name}
 use compiler.mono_type.{MonoType}
-
-// Look up the element family whose typed pvec struct is named `name`.
-fn family_by_pvec_name(name: String) ElemFamily? {
-  for f in all_families() {
-    if name == f.pvec_type {
-      return .Some(f)
-    }
-  }
-  .None
-}
 
 pub type ClosureEmitFns = .{
   emit_atom: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,

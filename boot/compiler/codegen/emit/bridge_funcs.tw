@@ -9,27 +9,12 @@ use compiler.codegen.emit.helpers.{get_sum_layout, variant_field_mono}
 use compiler.codegen.emit.runtime_abi.{host_read_file_result_helper_sym}
 use compiler.codegen.wasm_ir.{FuncDef, Instr, ValType}
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key, val_type_of_mono}
-use compiler.elem_family.{ElemFamily, all_families}
+use compiler.elem_family.{ElemFamily, pvec_family_of}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
 
 pub fn iterator_next_helper_sym(result_mono: MonoType) String {
   "iterator_next_helper_${mono_to_key(result_mono)}"
-}
-
-// The element family whose typed pvec struct is this wasm ref type, if any.
-fn pvec_family_of(vt: ValType) ElemFamily? {
-  case vt {
-    .Ref(_, .Named(name)) => {
-      for f in all_families() {
-        if name == f.pvec_type {
-          return .Some(f)
-        }
-      }
-      .None
-    },
-    _ => .None,
-  }
 }
 
 pub fn emit_sum_to_variant_helper(sum_mono: MonoType, env: ResolvedEnv) FuncDef {
