@@ -7,6 +7,7 @@ use compiler.mono_type.{MonoType}
 // (route_typed_vec.tw), which the emitter does not need.
 pub type ElemFamily = .{
   mono_key: String, // "vec_i64" / "vec_bool" — FamilyTag
+  suffix: String, // builtin-name suffix, e.g. "_i64"
   pvec_type: String, // "rt_types__PVecI64"
   elem_wasm: ValType, // .I64 / .I32
   get_call: String, // "rt_arr__get_i64"
@@ -21,6 +22,7 @@ pub fn all_families() Vector<ElemFamily> {
 fn family_i64() ElemFamily {
   .{
     mono_key: "vec_i64",
+    suffix: "_i64",
     pvec_type: "rt_types__PVecI64",
     elem_wasm: .I64,
     get_call: "rt_arr__get_i64",

@@ -1,17 +1,17 @@
 //! Typed Vector<Int> routing (typed-vector representation, S2.0).
 //!
-//! Conservative, intra-function rewrite: when a `Vector<Int>` produced by a
+//! Conservative, intra-function rewrite: when a typed vector produced by a
 //! `collect`/builder is used ONLY by indexed reads (`xs[i]`) and `xs.len()`, it
-//! never crosses a representation boundary, so we can store it physically as a
-//! typed `PVecI64` (raw i64 leaves, no BoxedInt pointer-chase per read). We swap
-//! the builder/len builtin calls to their `_i64` variants and retype the result
-//! slot to PVecI64; the index reads are routed in emit by the base wasm type.
-//! Return-position escape is allowed: emission inserts the `PVecI64 -> PVec`
+//! never crosses a representation boundary, so we can store it physically as the
+//! element family's typed PVec (raw unboxed leaves, no pointer-chase per read).
+//! We swap the builder/len builtin calls to their typed per-family variants and
+//! retype the result slot; the index reads are routed in emit by the base wasm type.
+//! Return-position escape is allowed: emission inserts the typed-PVec -> PVec
 //! boxing adapter at the function boundary. Other boundary uses remain
 //! disallowed.
 //!
 //! Runs after assign_repr_for_module (so wasm_type overrides stick and push
-//! elements are already boxed — builder_push_i64 takes the boxed element).
+//! elements are already boxed — the typed builder_push takes the boxed element).
 
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, PreparedPattern, ReprKind, SlotId, SlotInfo,
@@ -34,12 +34,7 @@ pub type RouteIds = .{
   builder_push: Int,
   builder_freeze: Int,
   len: Int,
-  builder_new_i64: Int,
-  builder_push_i64: Int,
-  builder_freeze_i64: Int,
-  len_i64: Int,
   gather: Int,
-  gather_i64: Int,
 }
 
 pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
@@ -48,12 +43,7 @@ pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
     builder_push: builtins.id("vector$builder_push").id,
     builder_freeze: builtins.id("vector$builder_freeze").id,
     len: builtins.id("vector$len").id,
-    builder_new_i64: builtins.id("vector$builder_new_i64").id,
-    builder_push_i64: builtins.id("vector$builder_push_i64").id,
-    builder_freeze_i64: builtins.id("vector$builder_freeze_i64").id,
-    len_i64: builtins.id("vector$len_i64").id,
     gather: builtins.id("vector$gather").id,
-    gather_i64: builtins.id("vector$gather_i64").id,
   }
 }
 
@@ -69,19 +59,14 @@ type FamilyIds = .{
 
 fn families_ids(builtins: BuiltinRegistry) Vector<FamilyIds> {
   collect f in all_families() {
-    suffix := if f.mono_key == "vec_i64" {
-      "_i64"
-    } else {
-      "_bool"
-    }
     .{
       fam: f,
-      builder_new: builtins.id("vector$builder_new${suffix}").id,
-      builder_push: builtins.id("vector$builder_push${suffix}").id,
-      builder_freeze: builtins.id("vector$builder_freeze${suffix}").id,
-      len: builtins.id("vector$len${suffix}").id,
-      get: builtins.id("vector$get${suffix}").id,
-      gather: builtins.id("vector$gather${suffix}").id,
+      builder_new: builtins.id("vector$builder_new${f.suffix}").id,
+      builder_push: builtins.id("vector$builder_push${f.suffix}").id,
+      builder_freeze: builtins.id("vector$builder_freeze${f.suffix}").id,
+      len: builtins.id("vector$len${f.suffix}").id,
+      get: builtins.id("vector$get${f.suffix}").id,
+      gather: builtins.id("vector$gather${f.suffix}").id,
     }
   }
 }
