@@ -1,0 +1,36 @@
+// Dataframe-shaped null-mask microprobe: the real Column.nulls path built by
+// Vector.make (Track A), stored into a typed record field, read by index, and
+// gathered. When every use is typed-friendly the mask stays physically PVecBool
+// end to end — WAT must contain rt_arr__make_bool, rt_arr__get_bool, and
+// rt_arr__gather_bool, and the record layout must include PVecBool. The Int column
+// alongside is the parity baseline (make_i64 / get_i64 / gather_i64 / PVecI64).
+//
+//   target/twk build .../typed_bool_null_mask_probe.tw -o /tmp/nm.wat
+//   grep -c rt_arr__make_bool   /tmp/nm.wat   # >= 1
+//   grep -c rt_arr__gather_bool /tmp/nm.wat   # >= 1
+//
+// Routing runs per-function, so the column lives in a function (as it does in the
+// dataframe). Expected output: bool=false int=14
+type BoolColumn = .{ nulls: Vector<Bool> }
+
+type IntColumn = .{ vals: Vector<Int> }
+
+fn bool_mask(n: Int, idx: Vector<Int>) Bool {
+  col := BoolColumn.{ nulls: Vector.make(n, false) }
+  read := col.nulls[0]
+  taken := col.nulls.gather(idx)
+  read or taken[0]
+}
+
+fn int_mask(n: Int, idx: Vector<Int>) Int {
+  col := IntColumn.{ vals: Vector.make(n, 7) }
+  read := col.vals[0]
+  taken := col.vals.gather(idx)
+  read + taken[0]
+}
+
+idx := collect i in range(4) {
+  i
+}
+
+println("bool=${bool_mask(8, idx)} int=${int_mask(8, idx)}")

@@ -2,7 +2,39 @@
 
 **Date:** 2026-07-09
 **Branch context:** `typed-vector-crossfn-abi`
-**Status:** draft for review
+**Status:** implemented — see Outcome
+
+## Outcome (2026-07-09)
+
+**Track A — landed** (commit `eebcc061`). `Vector.make` is now a family-aware
+producer: `collect_candidates` yields a tagged producer source (builder vs make),
+so every field/payload/capture analysis sees make sources for free while only the
+`eligible_b` builder-lineage walk checks the tag. Emit branches on the physical
+destination valtype (`ElemFamily.make_call`), coercing the ABI-erased fill back to
+the raw scalar; the boxed `rt_arr__make` path is untouched otherwise. Runtime
+gained `make_i64` / `make_bool`. Probes: `typed_int_make_read_probe`,
+`typed_bool_make_read_probe`, `typed_bool_make_boxed_probe`.
+
+**Track B — no divergence to fix.** The premise ("collect-produced `Vector<Bool>`
+stays boxed while the `Vector<Int>` analogue types") did not reproduce once the
+comparison was made apples-to-apples. Root cause of the original observation: the
+old `typed_bool_field_payload_probe.tw` was written with **top-level statements**,
+and typed-vector routing runs **per function** (`route_typed_vectors` operates on
+`pre.funcs`) — so the *Int* analogue also stays boxed at top level. Moved into
+functions, Bool reaches full parity with Int at every storage site: record field
+read, variant payload read, structural equality, gather on an already-typed
+receiver, and (Track A) `Vector.make`. Verified with side-by-side probes where
+every Bool family call count equals its Int counterpart, including the
+dataframe-shaped null mask (`Vector.make` → typed field → field read → gather):
+`make_bool`/`get_bool`/`gather_bool` match `make_i64`/`get_i64`/`gather_i64`, and
+the record layout carries `PVecBool` alongside `PVecI64`.
+
+Track B therefore delivered corrected, function-scoped parity probes rather than a
+code fix: `typed_bool_field_payload_probe.tw` (rewritten side-by-side) and
+`typed_bool_null_mask_probe.tw` (new). The genuine remaining gap is that top-level
+producers are not routed — a separate, family-neutral concern, out of scope here.
+
+The original design follows unchanged below for reference.
 
 ## Goal
 
