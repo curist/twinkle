@@ -235,6 +235,25 @@ fn bool_call_result_field_src() String {
     .concat("read(mk(8), 8)\n")
 }
 
+// A typed field read can feed a typed gather result, which can then be stored
+// back into the same typed field. This is the dataframe `Column.nulls` shape:
+// `Column.{ nulls: c.nulls.gather(idx) }`.
+fn bool_field_gather_result_src() String {
+  "type BoolCol = .{ mask: Vector<Bool> }\n"
+    .concat("fn no_nulls(n: Int) Vector<Bool> { Vector.make(n, false) }\n")
+    .concat("fn mk(n: Int) BoolCol { BoolCol.{ mask: no_nulls(n) } }\n")
+    .concat("fn gather_col(c: BoolCol, idx: Vector<Int>) BoolCol {\n")
+    .concat("  BoolCol.{ mask: c.mask.gather(idx) }\n")
+    .concat("}\n")
+    .concat("fn read(c: BoolCol, n: Int) Int {\n")
+    .concat("  s := 0\n")
+    .concat("  for i in range(n) { if c.mask[i] { s = s + 1 } }\n")
+    .concat("  s\n")
+    .concat("}\n")
+    .concat("idx := collect i in range(8) { i }\n")
+    .concat("read(gather_col(mk(8), idx), 8)\n")
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("typed record fields")
@@ -397,6 +416,21 @@ pub fn suite() runner.Suite {
         case verify_prepared_module_with_level(vi.prepared, env2, vi.builtins, .Full) {
           .Ok(_) => .Ok({}),
           .Err(msg) => .Err("typed-return Bool field store must verify, got: ${msg}"),
+        }
+      },
+    )
+    .test(
+      "typed field gather result stored back into the Bool field verifies",
+      fn() {
+        vi := try verify_inputs(bool_field_gather_result_src())
+        try assert.equal(typed_count(vi.prepared.typed_vector_fields), 1)
+
+        env2 := vi.env
+        env2.typed_vector_fields = vi.prepared.typed_vector_fields
+
+        case verify_prepared_module_with_level(vi.prepared, env2, vi.builtins, .Full) {
+          .Ok(_) => .Ok({}),
+          .Err(msg) => .Err("typed field gather result must verify, got: ${msg}"),
         }
       },
     )

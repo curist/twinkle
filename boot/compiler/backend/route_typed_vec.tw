@@ -1871,6 +1871,50 @@ fn producer_source_slots(
   out
 }
 
+fn collect_typed_field_derived_producers(
+  body: PreparedExpr,
+  typed_fields: Dict<String, Bool>,
+  slots: Dict<Int, SlotInfo>,
+  ids: RouteIds,
+  fam: ElemFamily,
+  copy_map: Dict<Int, Int>,
+) Vector<Int> {
+  eligible: Dict<Int, Bool> = Dict.new()
+  out: Vector<Int> = []
+  seen: Dict<Int, Bool> = Dict.new()
+
+  for sid in collect_typed_field_reads(body, typed_fields, slots, fam, []) {
+    for a in aliases_for(sid, copy_map).keys() {
+      eligible[a] = true
+    }
+  }
+
+  changed := true
+  steps := 0
+
+  for changed and steps < 512 {
+    changed = false
+
+    for sid in collect_gather_results(body, eligible, ids.gather, []) {
+      if !seen.has(sid) {
+        seen[sid] = true
+        out = .append(sid)
+      }
+
+      for a in aliases_for(sid, copy_map).keys() {
+        if !eligible.has(a) {
+          eligible[a] = true
+          changed = true
+        }
+      }
+    }
+
+    steps = steps + 1
+  }
+
+  out
+}
+
 fn scan_func_payload_producers(
   pf: PreparedFunc,
   ids: RouteIds,
@@ -1978,6 +2022,17 @@ fn scan_func_producers_consumers(
     }
 
     for s in collect_typed_return_call_results(pf.body, typeable_return, fam, []) {
+      producer_vs = .append(s)
+    }
+
+    for s in collect_typed_field_derived_producers(
+      pf.body,
+      typed_fields,
+      pf.slots,
+      ids,
+      fam,
+      copy_map,
+    ) {
       producer_vs = .append(s)
     }
 
