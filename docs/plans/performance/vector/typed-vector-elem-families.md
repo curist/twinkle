@@ -1,6 +1,6 @@
 # Typed-vector element families — generalize the routing, land `PVecBool`
 
-**Date:** 2026-07-08 · **Branch:** `typed-vector-crossfn-abi` · **Status:** design
+**Date:** 2026-07-08 · **Branch:** `typed-vector-crossfn-abi` · **Status:** core read path landed; follow-ups deferred
 
 ## Problem
 
@@ -287,13 +287,13 @@ steps means a regression is attributable to one or the other.
   `typed_record_field_probe.tw`).
 - Negative probe: the same `Bool` field fed by a combinator-built producer through
   a parameter stays boxed `PVec` (no `get_bool`).
-- Round-trip: `box_bool`/`unbox_bool` are emit-internal (not callable from Twinkle
-  source). To exercise them, expose `Vector.vec_bool_roundtrip` as a callable
-  builtin (ABI + runtime binding + prelude signature, mirroring the existing
+- Round-trip: expose `Vector.vec_bool_roundtrip` as a callable builtin (ABI +
+  runtime binding + prelude signature, mirroring the existing
   `Vector.vec_i64_roundtrip`) and assert it preserves contents over a mixed
-  `Vector<Bool>`. (Alternatively, drive box/unbox through a real escape path — a
-  typed Bool vector boxed at a durable boundary then read back — but the exposed
-  roundtrip builtin is the direct check the i64 family already uses.)
+  `Vector<Bool>`. This directly checks the Bool builder/get path and the existing
+  boxed `ref.i31` encoding. `box_bool`/`unbox_bool` are emit-internal, so exercise
+  them through a real erase/coercion path (for example, a typed Bool vector passed
+  to a normal `Vector<Bool>` parameter or boxed at another durable boundary).
 - **Typed Bool record field** layout → `PVecBool`, read via index/len (covers
   `wasm_layout.tw` + `repr_policy.tw`).
 - **Typed Bool variant payload** layout → `PVecBool`, plus an **erased variant
@@ -303,10 +303,11 @@ steps means a regression is attributable to one or the other.
   by contents, not `PVecBool` reference identity (covers `runtime/core.tw`).
 - **`gather_bool` routing** — a typed Bool receiver gathers to a typed `PVecBool`
   result (result-eligibility + fixpoint).
-- **Typed Bool capture/param** — a comparator capturing a typed `nulls` column and
-  a `fn(mask: Vector<Bool>)` param carry the physical `PVecBool` ABI (matches the
-  real null-aware sort path), and mixed Int+Bool captures in one closure keep their
-  distinct families (exercises the family-keyed capture ABI).
+- **Typed Bool capture/param boundary** — a comparator capturing a typed `nulls`
+  column carries the physical `PVecBool` capture ABI, while a normal
+  `fn(mask: Vector<Bool>)` parameter stays boxed and boxes a typed argument at the
+  call boundary. Mixed Int+Bool captures in one closure keep their distinct
+  families (exercises the family-keyed capture ABI).
 
 ### Verification loop (after each increment)
 
@@ -314,7 +315,7 @@ steps means a regression is attributable to one or the other.
 target/twk fmt <edited files>
 cargo run --release -- build boot/main.tw -o /tmp/x.wasm     # stage0 still bootstraps
 make bundle-cli 2>&1 | tail -3                               # must reach "Fixed point reached"
-make boot-test 2>&1 | grep -iE "Ran [0-9]+ tests|Failed"     # expect 2980 passed
+make boot-test 2>&1 | grep -iE "Ran [0-9]+ tests|Failed"     # expect pass summary, no failures
 target/twk run examples/performance/dataframe/bench/order_by_breakdown.tw   # checksums 1000000/3000000
 target/twk run examples/performance/sort-bench/typed_payload_capture_guard.tw
 ```
@@ -326,8 +327,8 @@ stage0 only proves boot source bootstraps).
 
 - The generalize refactor lands green with the registry at `[i64]` (no behavior
   change; benches/tests identical).
-- `PVecBool` lands: the `typed_bool_read_probe` stays boxing-free, boot-test at
-  2980, `order_by_breakdown` checksums intact.
+- `PVecBool` lands: the `typed_bool_read_probe` stays boxing-free, boot tests pass,
+  and `order_by_breakdown` checksums stay intact.
 - The null-aware `sort idx + nulls` path drops from ~1344ms toward the boxing-free
   ~732ms floor, and `Bool` columns stop boxing in `gather`/`take`.
 
@@ -345,7 +346,7 @@ stage0 only proves boot source bootstraps).
 
 The `PVecBool` family landed and types the **core read path** (a `collect`-produced
 `Vector<Bool>` read by index/len). Two follow-ups remain before the dataframe
-null-mask `order_by` win — see the plan's "Deferred work" section for detail:
+null-mask `order_by` win — see the follow-up notes below for detail:
 
 1. **Typed `Vector.make`.** `Vector.make` has no family-typed variant, so any
    column produced by it (the dataframe `Column.nulls = Vector.make(n, false)`)
