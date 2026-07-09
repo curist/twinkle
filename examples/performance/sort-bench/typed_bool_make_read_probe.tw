@@ -1,0 +1,18 @@
+// Track A: `Vector.make(n, false)` should physically produce PVecBool when the
+// result slot is only read by index/len. Inspect WAT for `rt_arr__make_bool` and
+// `rt_arr__get_bool`. Intentionally avoids `set_at` — typed set is not in scope.
+//
+// Typed-vector routing runs per-function (top-level statements are not routed), so
+// the producers live in functions — the same shape the dataframe path uses.
+fn first_of_make(fill: Bool) Bool {
+  xs := Vector.make(8, fill)
+  xs[0]
+}
+
+fn last_of_make(fill: Bool) Bool {
+  xs := Vector.make(8, fill)
+  xs[7]
+}
+
+println(first_of_make(false).to_string())
+println(last_of_make(true).to_string())

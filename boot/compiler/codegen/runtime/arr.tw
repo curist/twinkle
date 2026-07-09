@@ -181,6 +181,7 @@ pub fn module() WasmModule {
     builder_push_i64_fn(),
     builder_push_i64_raw_fn(),
     family_i64().pvec_builder_freeze_fn(),
+    family_i64().pvec_make_fn(),
     box_i64_fn(),
     unbox_i64_fn(),
     vec_i64_roundtrip_fn(),
@@ -191,6 +192,7 @@ pub fn module() WasmModule {
     builder_push_bool_fn(),
     builder_push_bool_raw_fn(),
     family_bool().pvec_builder_freeze_fn(),
+    family_bool().pvec_make_fn(),
     box_bool_fn(),
     unbox_bool_fn(),
     vec_bool_roundtrip_fn(),
@@ -1359,7 +1361,9 @@ fn make_fn() FuncDef {
 type PVecFamily = .{
   len_name: String,
   get_name: String,
+  make_name: String,
   builder_new_name: String,
+  builder_push_raw_name: String,
   builder_freeze_name: String,
   pvec_ty: String,
   pvec_null: ValType,
@@ -1375,7 +1379,9 @@ fn family_boxed() PVecFamily {
   .{
     len_name: "len",
     get_name: "get",
+    make_name: "make",
     builder_new_name: "builder_new",
+    builder_push_raw_name: "",
     builder_freeze_name: "builder_freeze",
     pvec_ty: t_PVEC,
     pvec_null: pvec_null(),
@@ -1392,7 +1398,9 @@ fn family_i64() PVecFamily {
   .{
     len_name: "len_i64",
     get_name: "get_i64",
+    make_name: "make_i64",
     builder_new_name: "builder_new_i64",
+    builder_push_raw_name: "builder_push_i64_raw",
     builder_freeze_name: "builder_freeze_i64",
     pvec_ty: t_PVEC_I64,
     pvec_null: pvec_i64_null(),
@@ -1409,7 +1417,9 @@ fn family_bool() PVecFamily {
   .{
     len_name: "len_bool",
     get_name: "get_bool",
+    make_name: "make_bool",
     builder_new_name: "builder_new_bool",
+    builder_push_raw_name: "builder_push_bool_raw",
     builder_freeze_name: "builder_freeze_bool",
     pvec_ty: t_PVEC_BOOL,
     pvec_null: pvec_bool_null(),
@@ -1663,6 +1673,52 @@ fn pvec_builder_freeze_fn(f: PVecFamily) FuncDef {
           .StructNew(f.pvec_ty),
         ],
       ),
+    ],
+  }
+}
+
+// make_i64/make_bool(size: i32, fill: elem) -> PVec
+// Typed analogue of `make`: fills a physically-typed persistent vector via the
+// typed builder (raw push, no transient boxing) so the result stays PVecI64 /
+// PVecBool. size==0 freezes an empty builder back to the shared empty typed pvec.
+fn pvec_make_fn(f: PVecFamily) FuncDef {
+  // p0=size, p1=fill; L2=builder, L3=i
+  .{
+    name: f.make_name,
+    params: [.I32, f.elem_ty],
+    results: [f.pvec_ref],
+    locals: [arr_null(), .I32],
+    body: [
+      .Call(f.builder_new_name),
+      .LocalSet(2),
+      .I32Const(0),
+      .LocalSet(3),
+      .Block(
+        "brk",
+        .None,
+        [
+          .Loop(
+            "lp",
+            .None,
+            [
+              .LocalGet(3),
+              .LocalGet(0),
+              .I32GeS,
+              .BrIf("brk"),
+              .LocalGet(2),
+              .LocalGet(1),
+              .Call(f.builder_push_raw_name),
+              .LocalGet(3),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(3),
+              .Br("lp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(2),
+      .Call(f.builder_freeze_name),
     ],
   }
 }

@@ -11,6 +11,7 @@ pub type ElemFamily = .{
   pvec_type: String, // "rt_types__PVecI64"
   elem_wasm: ValType, // .I64 / .I32
   get_call: String, // "rt_arr__get_i64"
+  make_call: String, // "rt_arr__make_i64"
   box_call: String, // "rt_arr__box_i64"
   unbox_call: String, // "rt_arr__unbox_i64"
 }
@@ -26,6 +27,7 @@ fn family_i64() ElemFamily {
     pvec_type: "rt_types__PVecI64",
     elem_wasm: .I64,
     get_call: "rt_arr__get_i64",
+    make_call: "rt_arr__make_i64",
     box_call: "rt_arr__box_i64",
     unbox_call: "rt_arr__unbox_i64",
   }
@@ -38,6 +40,7 @@ fn family_bool() ElemFamily {
     pvec_type: "rt_types__PVecBool",
     elem_wasm: .I32,
     get_call: "rt_arr__get_bool",
+    make_call: "rt_arr__make_bool",
     box_call: "rt_arr__box_bool",
     unbox_call: "rt_arr__unbox_bool",
   }

@@ -1,0 +1,12 @@
+// Track A parity baseline: `Vector.make(n, v)` for Int should physically produce
+// PVecI64 when the result slot is only read by index/len, mirroring the Bool read
+// probe. Inspect WAT for `rt_arr__make_i64` and `rt_arr__get_i64`.
+//
+// Typed-vector routing runs per-function (top-level statements are not routed), so
+// the producer lives in a function — the same shape the dataframe path uses.
+fn read_int_make() Int {
+  xs := Vector.make(8, 7)
+  xs[0] + xs[7]
+}
+
+println(read_int_make().to_string())

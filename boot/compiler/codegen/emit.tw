@@ -60,6 +60,7 @@ use compiler.codegen.wasm_ir.{
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key, val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.core_ir.{BinOp, FieldId, FuncId, LibExport, LibField, LibType, UnOp, VariantId}
+use compiler.elem_family.{ElemFamily, elem_family_of, pvec_family_of}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv}
 use compiler.type_util.{subst_type_params}
@@ -2217,6 +2218,7 @@ fn emit_intrinsic_call(
   fid: FuncId,
   args: Vector<PreparedAtom>,
   result_idx: Int,
+  result_vt: ValType?,
   result_mono: MonoType,
   ctx: EmitCtx,
   buf: Vector<Instr>,
@@ -2240,7 +2242,7 @@ fn emit_intrinsic_call(
     .VectorAppend => emit_intrinsic_vector_append(args, result_idx, ctx, buf),
     .VectorGet => emit_intrinsic_vector_get(args, result_idx, result_mono, ctx, buf),
     .VectorSet => emit_intrinsic_vector_set(args, result_idx, result_mono, ctx, buf),
-    .VectorMake => emit_intrinsic_vector_make(args, result_idx, ctx, buf),
+    .VectorMake => emit_intrinsic_vector_make(args, result_idx, result_vt, result_mono, ctx, buf),
     .DictGet => emit_intrinsic_dict_get(args, result_idx, result_mono, ctx, buf),
     .DictGetUnsafe => emit_intrinsic_dict_get_unsafe(args, result_idx, result_mono, ctx, buf),
     .StringGet => emit_intrinsic_string_get(args, result_idx, result_mono, ctx, buf),
@@ -2492,12 +2494,52 @@ fn emit_intrinsic_vector_set(
 fn emit_intrinsic_vector_make(
   args: Vector<PreparedAtom>,
   result_idx: Int,
+  result_vt: ValType?,
+  result_mono: MonoType,
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
-  buf2 := emit_checked_i32_narrow(args[0], ctx, buf) // size (i32)
-  buf3 := emit_erased_container_ingress(args[1], ctx, buf2)
-  buf3.append(.Call("rt_arr__make")).append(.LocalSet(result_idx))
+  // The router retypes a make-produced slot to a typed PVec family only when that
+  // slot's uses are typed-safe. When it did, emit the typed make (raw fill, no
+  // boxing); otherwise keep the boxed `rt_arr__make` path.
+  fam: ElemFamily? = case result_vt {
+    .Some(vt) => pvec_family_of(vt),
+    .None => .None,
+  }
+
+  case fam {
+    .Some(f) => {
+      // Guard against routing/layout drift: a typed PVec destination must agree
+      // with the source-level element family.
+      case elem_family_of(result_mono) {
+        .Some(mf) => if mf.pvec_type != f.pvec_type {
+          error(
+            "emit_intrinsic_vector_make: typed destination ${f.pvec_type} disagrees with mono family ${mf.pvec_type}",
+          )
+        },
+        .None => error(
+          "emit_intrinsic_vector_make: typed destination ${f.pvec_type} but mono is not a typed vector family",
+        ),
+      }
+
+      // Fill: the `Vector.make` ABI erases the element to anyref, so the prepared
+      // atom may be a boxed anyref. Coerce it back to the family's raw scalar
+      // (unbox to i64/i32) that the typed make helper expects.
+      elem_mono := case result_mono {
+        .Vector(e) => e,
+        _ => error("emit_intrinsic_vector_make: typed make result mono is not a Vector"),
+      }
+      buf2 := emit_checked_i32_narrow(args[0], ctx, buf) // size (i32)
+      buf3 := emit_atom(args[1], ctx, buf2) // fill
+      buf4 := emit_coerce_stack(atom_val_type(args[1], ctx), f.elem_wasm, elem_mono, ctx, buf3)
+      buf4.append(.Call(f.make_call)).append(.LocalSet(result_idx))
+    },
+    .None => {
+      buf2 := emit_checked_i32_narrow(args[0], ctx, buf) // size (i32)
+      buf3 := emit_erased_container_ingress(args[1], ctx, buf2)
+      buf3.append(.Call("rt_arr__make")).append(.LocalSet(result_idx))
+    },
+  }
 }
 
 // ── dict_get: d.get(k) → Option<V> ────────────────────────────────────
