@@ -32,7 +32,7 @@ fn analyze_src(src: String) Result<Dict<String, Bool>, String> {
   // Analyze the pre-routing prepared funcs: routing retypes producer slots to
   // PVecI64, which would hide them from this analysis pass.
   prepared := prepare_backend_preroute(cc.anf, artifacts.env, artifacts.builtins, cc.captures)
-  .Ok(analyze_typed_fields(prepared.funcs, artifacts.builtins))
+  .Ok(analyze_typed_fields(prepared.funcs, artifacts.builtins, Dict.new()))
 }
 
 type RouteInputs = .{ funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry }
@@ -220,6 +220,21 @@ fn two_typed_fields_src() String {
     .concat("use_pair(mk(5))\n")
 }
 
+// A field fed by a typed-return call result must retype the call-result slot to
+// the same physical field family. Otherwise the field analysis can decide the
+// field is PVecBool while routing stores the boxed PVec call slot into it.
+fn bool_call_result_field_src() String {
+  "type BoolCol = .{ mask: Vector<Bool> }\n"
+    .concat("fn no_nulls(n: Int) Vector<Bool> { Vector.make(n, false) }\n")
+    .concat("fn mk(n: Int) BoolCol { BoolCol.{ mask: no_nulls(n) } }\n")
+    .concat("fn read(c: BoolCol, n: Int) Int {\n")
+    .concat("  s := 0\n")
+    .concat("  for i in range(n) { if c.mask[i] { s = s + 1 } }\n")
+    .concat("  s\n")
+    .concat("}\n")
+    .concat("read(mk(8), 8)\n")
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("typed record fields")
@@ -279,7 +294,7 @@ pub fn suite() runner.Suite {
       "routing with the typed-field set retypes producer + field-read slots to PVecI64",
       fn() {
         p := try prepare_src(positive_src())
-        tf := analyze_typed_fields(p.funcs, p.builtins)
+        tf := analyze_typed_fields(p.funcs, p.builtins, Dict.new())
 
         // Sanity: the analysis flagged the column field as typed.
         try assert.equal(typed_count(tf), 1)
@@ -317,7 +332,7 @@ pub fn suite() runner.Suite {
         // The boxed source has no typed-routable producer, so analyze yields an
         // empty set and routing must leave everything boxed regardless.
         p := try prepare_src(boxed_src())
-        tf := analyze_typed_fields(p.funcs, p.builtins)
+        tf := analyze_typed_fields(p.funcs, p.builtins, Dict.new())
         try assert.equal(typed_count(tf), 0)
 
         routed := route_typed_vectors(p.funcs, p.builtins, tf, Dict.new(), Dict.new(), Dict.new())
@@ -333,7 +348,7 @@ pub fn suite() runner.Suite {
         // PVecI64 stored straight into the PVec payload slot). Pass the analyzed
         // field set (empty here) just like the live pipeline does.
         p := try prepare_src(variant_payload_src())
-        tf := analyze_typed_fields(p.funcs, p.builtins)
+        tf := analyze_typed_fields(p.funcs, p.builtins, Dict.new())
         routed := route_typed_vectors(p.funcs, p.builtins, tf, Dict.new(), Dict.new(), Dict.new())
         try assert.equal(pvec_i64_slot_count(routed), 0)
         .Ok({})
@@ -350,7 +365,7 @@ pub fn suite() runner.Suite {
         try assert.equal(typed_count(d), 1)
 
         p := try prepare_src(record_update_src())
-        tf := analyze_typed_fields(p.funcs, p.builtins)
+        tf := analyze_typed_fields(p.funcs, p.builtins, Dict.new())
         try assert.equal(typed_count(tf), 1)
         routed := route_typed_vectors(p.funcs, p.builtins, tf, Dict.new(), Dict.new(), Dict.new())
         try assert.ok(
@@ -368,6 +383,21 @@ pub fn suite() runner.Suite {
         d := try analyze_src(two_typed_fields_src())
         try assert.equal(typed_count(d), 2)
         .Ok({})
+      },
+    )
+    .test(
+      "typed-return call result stored into a typed Bool field verifies",
+      fn() {
+        vi := try verify_inputs(bool_call_result_field_src())
+        try assert.equal(typed_count(vi.prepared.typed_vector_fields), 1)
+
+        env2 := vi.env
+        env2.typed_vector_fields = vi.prepared.typed_vector_fields
+
+        case verify_prepared_module_with_level(vi.prepared, env2, vi.builtins, .Full) {
+          .Ok(_) => .Ok({}),
+          .Err(msg) => .Err("typed-return Bool field store must verify, got: ${msg}"),
+        }
       },
     )
     .test(

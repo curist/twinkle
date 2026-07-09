@@ -148,7 +148,7 @@ pub fn suite() runner.Suite {
       "typed payload gather routes to gather_i64 and retypes the receiver+result",
       fn() {
         p := try prepare_src(gather_src())
-        tf := analyze_typed_fields(p.funcs, p.builtins)
+        tf := analyze_typed_fields(p.funcs, p.builtins, Dict.new())
         tp := analyze_typed_payloads(p.funcs, p.builtins, first_user_type_id(), Dict.new())
 
         // Sanity: the IntCol payload was decided typed.

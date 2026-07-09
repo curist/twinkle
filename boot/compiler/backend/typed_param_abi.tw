@@ -24,8 +24,8 @@
 
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotId}
 use compiler.backend.route_typed_vec.{
-  RouteIds, aliases_for, analyze_typed_fields, analyze_typed_payloads, build_copy_map,
-  materialize_slot_repr, route_ids, slot_typed_after_route, v_group_typeable,
+  RouteIds, aliases_for, analyze_typed_fields, analyze_typed_payloads, bool_key_maps_equal,
+  build_copy_map, materialize_slot_repr, route_ids, slot_typed_after_route, v_group_typeable,
 }
 use compiler.backend.tailify.{prep_op_diverges}
 use compiler.builtins.{BuiltinRegistry}
@@ -441,11 +441,15 @@ pub fn analyze_typed_repr(
   builtins: BuiltinRegistry,
   first_user_tid: Int,
 ) ReprAnalysis {
-  // Fields are typed builder-only (no coercion at a field store), independent of
-  // param typeability — compute once. Only payload typing participates in the
-  // fixpoint (variant construction coerces, so a payload fed by a typeable param
-  // is sound).
-  tf := analyze_typed_fields(funcs, builtins)
+  // A record-field store is non-coercing, so a field producer must already be
+  // physically the field's type. Two producer kinds qualify: a local builder/make
+  // candidate (always typed), and a typed-return call result (physically the family
+  // PVec via route_func's typed-return bridge) — e.g. the dataframe
+  // `Column.{ nulls: no_nulls(n) }` where `no_nulls` returns Vector.make. The
+  // latter makes typed_fields depend on typeable_return, which itself depends on
+  // typed_fields (a function returning a typed field read), so field typing joins
+  // the fixpoint. Seed with builder-only fields (empty typeable_return).
+  tf := analyze_typed_fields(funcs, builtins, Dict.new())
   tp_params := all_vec_int_param_indices(funcs)
   cap := funcs.len() + 4
   round := 0
@@ -456,11 +460,16 @@ pub fn analyze_typed_repr(
   for !done {
     tpay = analyze_typed_payloads(funcs, builtins, first_user_tid, tp_params)
     abi = analyze_typed_params(funcs, builtins, tf, tpay)
+    new_tf := analyze_typed_fields(funcs, builtins, abi.typeable_return)
 
-    if param_maps_equal(abi.typeable_params, tp_params) or round >= cap {
+    stable := param_maps_equal(abi.typeable_params, tp_params) and bool_key_maps_equal(new_tf, tf)
+
+    if stable or round >= cap {
+      tf = new_tf
       done = true
     } else {
       tp_params = abi.typeable_params
+      tf = new_tf
       round = round + 1
     }
   }

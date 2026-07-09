@@ -379,7 +379,17 @@ fn compute_eligible_v(
     // must retype the copy too, else the copy store is an un-coerced
     // PVecI64 -> PVec mismatch. Only retype when the whole alias group is
     // consumed typed-only (mirrors the builder-candidate handling above).
-    if !v_group_escapes(pf.body, aliases, relaxed, ids, builtins, true) {
+    if !v_group_escapes(
+      pf.body,
+      aliases,
+      relaxed,
+      ids,
+      builtins,
+      typed_fields,
+      pf.slots,
+      fi.fam,
+      true,
+    ) {
       for a in aliases.keys() {
         eligible_v[a] = true
       }
@@ -393,7 +403,17 @@ fn compute_eligible_v(
   for sid in call_result_sids {
     aliases := aliases_for(sid, copy_map)
 
-    if !v_group_escapes(pf.body, aliases, relaxed, ids, builtins, true) {
+    if !v_group_escapes(
+      pf.body,
+      aliases,
+      relaxed,
+      ids,
+      builtins,
+      typed_fields,
+      pf.slots,
+      fi.fam,
+      true,
+    ) {
       for a in aliases.keys() {
         eligible_v[a] = true
       }
@@ -1099,11 +1119,14 @@ fn v_group_escapes(
   relaxed: Dict<Int, Bool>,
   ids: RouteIds,
   builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+  slots: Dict<Int, SlotInfo>,
+  fam: ElemFamily,
   in_tail: Bool,
 ) Bool {
   case expr {
-    .Let(_, op, body) => op_group_escapes(op, vs, relaxed, ids, builtins)
-      or v_group_escapes(body, vs, relaxed, ids, builtins, in_tail),
+    .Let(_, op, body) => op_group_escapes(op, vs, relaxed, ids, builtins, typed_fields, slots, fam)
+      or v_group_escapes(body, vs, relaxed, ids, builtins, typed_fields, slots, fam, in_tail),
     // Mirror classify_expr: a trailing `.Atom` in tail position is a function
     // return (typed-return bridge), not an escape; a non-tail arm value stays
     // conservative.
@@ -1124,6 +1147,9 @@ fn op_group_escapes(
   relaxed: Dict<Int, Bool>,
   ids: RouteIds,
   builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+  slots: Dict<Int, SlotInfo>,
+  fam: ElemFamily,
 ) Bool {
   case op {
     .ACall(callee, args) => case callee {
@@ -1150,23 +1176,43 @@ fn op_group_escapes(
       _ => slot_in(base, vs) or slot_in(index, vs),
     },
     .AIf(cnd, then_e, else_e) => slot_in(cnd, vs)
-      or v_group_escapes(then_e, vs, relaxed, ids, builtins, false)
-      or v_group_escapes(else_e, vs, relaxed, ids, builtins, false),
+      or v_group_escapes(then_e, vs, relaxed, ids, builtins, typed_fields, slots, fam, false)
+      or v_group_escapes(else_e, vs, relaxed, ids, builtins, typed_fields, slots, fam, false),
     .AMatch(scrut, arms) => {
       if slot_in(scrut, vs) {
         return true
       }
 
       for arm in arms {
-        if v_group_escapes(arm.body, vs, relaxed, ids, builtins, false) {
+        if v_group_escapes(arm.body, vs, relaxed, ids, builtins, typed_fields, slots, fam, false) {
           return true
         }
       }
 
       false
     },
-    .ALoop(inner) => v_group_escapes(inner, vs, relaxed, ids, builtins, false),
-    .ADefer(inner) => v_group_escapes(inner, vs, relaxed, ids, builtins, false),
+    .ALoop(inner) => v_group_escapes(
+      inner,
+      vs,
+      relaxed,
+      ids,
+      builtins,
+      typed_fields,
+      slots,
+      fam,
+      false,
+    ),
+    .ADefer(inner) => v_group_escapes(
+      inner,
+      vs,
+      relaxed,
+      ids,
+      builtins,
+      typed_fields,
+      slots,
+      fam,
+      false,
+    ),
     .ABinOp(_, l, r, _) => slot_in(l, vs) or slot_in(r, vs),
     .AUnOp(_, a, _) => slot_in(a, vs),
     .AMakeClosure(_, free_vars) => {
@@ -1178,17 +1224,31 @@ fn op_group_escapes(
 
       false
     },
-    .ARecord(_, fields) => {
+    .ARecord(tid, fields) => {
       for f in fields {
         if slot_in(f.value, vs) {
-          return true
+          key := "${tid.id}:${f.field.id}"
+          if !atom_in_family(f.value, slots, fam) or !typed_fields.has(key) {
+            return true
+          }
         }
       }
 
       false
     },
     .ARecordGet(t, _, _) => slot_in(t, vs),
-    .ARecordUpdate(b, _, val, _, _) => slot_in(b, vs) or slot_in(val, vs),
+    .ARecordUpdate(b, fid, val, _, tid) => {
+      if slot_in(b, vs) {
+        return true
+      }
+
+      if slot_in(val, vs) {
+        key := "${tid.id}:${fid.id}"
+        return !atom_in_family(val, slots, fam) or !typed_fields.has(key)
+      }
+
+      false
+    },
     .AVariant(_, _, args) => atoms_contain_any(args, vs),
     .AArrayLit(items) => atoms_contain_any(items, vs),
     .AInit(a) => false,
@@ -1635,11 +1695,49 @@ fn stat_of(stats: Dict<String, FieldStat>, key: String) FieldStat {
 // typed field slot is invalid wasm. Typeable-param producers are therefore NOT
 // admitted here (they may arrive boxed pre-variant); only the payload analysis is
 // broadened by the cross-call fixpoint.
-pub fn analyze_typed_fields(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Dict<
-  String,
-  Bool,
-> {
+pub fn analyze_typed_fields(
+  funcs: Vector<PreparedFunc>,
+  builtins: BuiltinRegistry,
+  typeable_return: Dict<String, String>,
+) Dict<String, Bool> {
   ids := route_ids(builtins)
+
+  // Seed with fields that have direct clean producers before the final all-store
+  // demotion pass. This lets a field with `no_nulls()` remain a candidate while a
+  // later round proves a derived producer like `c.nulls.gather(idx)` is also
+  // physically typed when `c.nulls` is typed.
+  seed_round := scan_typed_field_round(funcs, ids, builtins, typeable_return, Dict.new(), false)
+  tf := fields_from_stats(seed_round.stats)
+  cap := funcs.len() + 4
+  round := 0
+  done := false
+
+  for !done {
+    res := scan_typed_field_round(funcs, ids, builtins, typeable_return, tf, true)
+    next := fields_from_stats(res.stats)
+
+    if bool_key_maps_equal(next, tf) or round >= cap {
+      tf = next
+      done = true
+    } else {
+      tf = next
+      round = round + 1
+    }
+  }
+
+  tf
+}
+
+type FieldRoundResult = .{ stats: Dict<String, FieldStat> }
+
+fn scan_typed_field_round(
+  funcs: Vector<PreparedFunc>,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+  typeable_return: Dict<String, String>,
+  typed_fields: Dict<String, Bool>,
+  include_store_demotions: Bool,
+) FieldRoundResult {
   stats: Dict<String, FieldStat> = Dict.new()
 
   // ok_aliases[func_index] -> OkAliases for that function (slot ids are
@@ -1648,18 +1746,24 @@ pub fn analyze_typed_fields(funcs: Vector<PreparedFunc>, builtins: BuiltinRegist
 
   // Pass 1: producers (typed v-groups) + consumers.
   for pf in funcs {
-    res := scan_func_producers_consumers(pf, ids, builtins, stats)
+    res := scan_func_producers_consumers(pf, ids, builtins, typeable_return, typed_fields, stats)
     stats = res.stats
     ok_per_func = .append(res.ok)
   }
 
-  // Pass 2: every Vector<Int> field-store site; a store not traceable to an OK
-  // producer alias is a boxed producer.
-  for pf, i in funcs {
-    ok := ok_per_func[i]
-    stats = scan_func_field_stores(pf, ids, ok, stats)
+  if include_store_demotions {
+    // Pass 2: every Vector<Int> field-store site; a store not traceable to an OK
+    // producer alias is a boxed producer.
+    for pf, i in funcs {
+      ok := ok_per_func[i]
+      stats = scan_func_field_stores(pf, ids, ok, stats)
+    }
   }
 
+  .{ stats }
+}
+
+fn fields_from_stats(stats: Dict<String, FieldStat>) Dict<String, Bool> {
   out: Dict<String, Bool> = Dict.new()
 
   for key, s in stats {
@@ -1669,6 +1773,23 @@ pub fn analyze_typed_fields(funcs: Vector<PreparedFunc>, builtins: BuiltinRegist
   }
 
   out
+}
+
+// Two typed-site sets (key -> true) are equal iff they have the same key set.
+// Shared by the field-typing inner fixpoint here and the joint repr fixpoint in
+// typed_param_abi.
+pub fn bool_key_maps_equal(a: Dict<String, Bool>, b: Dict<String, Bool>) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+
+  for k in a.keys() {
+    if !b.has(k) {
+      return false
+    }
+  }
+
+  true
 }
 
 // ── Whole-program typed variant-payload analysis ─────────────────────
@@ -1831,6 +1952,8 @@ fn scan_func_producers_consumers(
   pf: PreparedFunc,
   ids: RouteIds,
   builtins: BuiltinRegistry,
+  typeable_return: Dict<String, String>,
+  typed_fields: Dict<String, Bool>,
   stats0: Dict<String, FieldStat>,
 ) ScanResult {
   // Per-family: a function may hold both Int and Bool typed fields, so classify
@@ -1844,11 +1967,25 @@ fn scan_func_producers_consumers(
   for fam in all_families() {
     cands := collect_candidates(pf.body, pf.slots, ids, fam, [])
 
-    // Producers: classify each typed v-group candidate (builder_freeze result). A
-    // candidate cleanly feeding one field is a clean typed producer; its alias
-    // slots are recorded as OK so pass 2 won't re-flag the store as boxed.
-    for c in cands {
-      aliases := aliases_for(c.v, copy_map)
+    // Producer v-slots: builder_freeze/make candidates PLUS slots bound from a
+    // typed-return call. A typed-return call result is physically the family PVec
+    // (route_func retypes it in compute_eligible_v's 2c'' step), so a record field
+    // fed directly by such a call — e.g. `Column.{ nulls: no_nulls(n) }` where
+    // `no_nulls` returns Vector.make — has a clean typed producer and its store is
+    // non-coercing. Requires the mutual typed_fields/typeable_return fixpoint.
+    producer_vs: Vector<Int> = collect c in cands {
+      c.v
+    }
+
+    for s in collect_typed_return_call_results(pf.body, typeable_return, fam, []) {
+      producer_vs = .append(s)
+    }
+
+    // Producers: classify each producer v-group. A group cleanly feeding one field
+    // is a clean typed producer; its alias slots are recorded as OK so pass 2
+    // won't re-flag the store as boxed.
+    for v in producer_vs {
+      aliases := aliases_for(v, copy_map)
       vuse := classify_v_group(pf.body, aliases, Dict.new(), ids.len, builtins, pf.slots, fam)
       keys := distinct_keys(vuse.field_keys)
 
@@ -1912,7 +2049,15 @@ fn scan_consumers(
           if is_vec {
             key := "${tid.id}:${fid.id}"
 
-            if result_consumed_typed_only(pf.body, slot.id, Dict.new(), ids, builtins) {
+            if result_consumed_typed_only(
+              pf.body,
+              slot.id,
+              Dict.new(),
+              ids,
+              builtins,
+              pf.slots,
+              fam,
+            ) {
               stats0
             } else {
               st := stat_of(stats0, key)
@@ -2021,10 +2166,12 @@ fn result_consumed_typed_only(
   relaxed: Dict<Int, Bool>,
   ids: RouteIds,
   builtins: BuiltinRegistry,
+  slots: Dict<Int, SlotInfo>,
+  fam: ElemFamily,
 ) Bool {
   singleton: Dict<Int, Bool> = Dict.new()
   singleton[result_sid] = true
-  !v_group_escapes(expr, singleton, relaxed, ids, builtins, true)
+  !v_group_escapes(expr, singleton, relaxed, ids, builtins, Dict.new(), slots, fam, true)
 }
 
 type FieldStoreSite = .{ key: String, value: PreparedAtom }
