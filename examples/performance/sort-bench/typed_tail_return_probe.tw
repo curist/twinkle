@@ -1,0 +1,46 @@
+// A function that returns a typed vector via its IMPLICIT tail expression must get
+// a typed-return ABI, exactly like an explicit `return`. This is the foundation of
+// the dataframe null-mask path: `no_nulls(n)` returns `Vector.make(n, false)` by
+// tail expression, and its result is stored into a typed record field.
+//
+// mk_* return a typed producer by tail expression; the caller reads the result by
+// index. WAT must contain make_i64/get_i64 and make_bool/get_bool. (Before the
+// tail-return fix these were boxed — a function-tail `.Atom` was classified as an
+// escape while an explicit `.Return` was not.)
+//
+// Expected output: int=56 bool=4
+fn mk_ints(n: Int) Vector<Int> {
+  Vector.make(n, 7)
+}
+
+fn mk_bools(n: Int) Vector<Bool> {
+  collect i in range(n) {
+    i % 2 == 0
+  }
+}
+
+fn sum_ints(n: Int) Int {
+  xs := mk_ints(n)
+  s := 0
+
+  for i in range(n) {
+    s = s + xs[i]
+  }
+
+  s
+}
+
+fn count_bools(n: Int) Int {
+  bs := mk_bools(n)
+  s := 0
+
+  for i in range(n) {
+    if bs[i] {
+      s = s + 1
+    }
+  }
+
+  s
+}
+
+println("int=${sum_ints(8)} bool=${count_bools(8)}")

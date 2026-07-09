@@ -379,7 +379,7 @@ fn compute_eligible_v(
     // must retype the copy too, else the copy store is an un-coerced
     // PVecI64 -> PVec mismatch. Only retype when the whole alias group is
     // consumed typed-only (mirrors the builder-candidate handling above).
-    if !v_group_escapes(pf.body, aliases, relaxed, ids, builtins) {
+    if !v_group_escapes(pf.body, aliases, relaxed, ids, builtins, true) {
       for a in aliases.keys() {
         eligible_v[a] = true
       }
@@ -393,7 +393,7 @@ fn compute_eligible_v(
   for sid in call_result_sids {
     aliases := aliases_for(sid, copy_map)
 
-    if !v_group_escapes(pf.body, aliases, relaxed, ids, builtins) {
+    if !v_group_escapes(pf.body, aliases, relaxed, ids, builtins, true) {
       for a in aliases.keys() {
         eligible_v[a] = true
       }
@@ -1099,11 +1099,19 @@ fn v_group_escapes(
   relaxed: Dict<Int, Bool>,
   ids: RouteIds,
   builtins: BuiltinRegistry,
+  in_tail: Bool,
 ) Bool {
   case expr {
     .Let(_, op, body) => op_group_escapes(op, vs, relaxed, ids, builtins)
-      or v_group_escapes(body, vs, relaxed, ids, builtins),
-    .Atom(a) => slot_in(a, vs),
+      or v_group_escapes(body, vs, relaxed, ids, builtins, in_tail),
+    // Mirror classify_expr: a trailing `.Atom` in tail position is a function
+    // return (typed-return bridge), not an escape; a non-tail arm value stays
+    // conservative.
+    .Atom(a) => if in_tail {
+      false
+    } else {
+      slot_in(a, vs)
+    },
     .Return(.Some(_)) => false,
     .Break(.Some(a)) => slot_in(a, vs),
     _ => false,
@@ -1142,23 +1150,23 @@ fn op_group_escapes(
       _ => slot_in(base, vs) or slot_in(index, vs),
     },
     .AIf(cnd, then_e, else_e) => slot_in(cnd, vs)
-      or v_group_escapes(then_e, vs, relaxed, ids, builtins)
-      or v_group_escapes(else_e, vs, relaxed, ids, builtins),
+      or v_group_escapes(then_e, vs, relaxed, ids, builtins, false)
+      or v_group_escapes(else_e, vs, relaxed, ids, builtins, false),
     .AMatch(scrut, arms) => {
       if slot_in(scrut, vs) {
         return true
       }
 
       for arm in arms {
-        if v_group_escapes(arm.body, vs, relaxed, ids, builtins) {
+        if v_group_escapes(arm.body, vs, relaxed, ids, builtins, false) {
           return true
         }
       }
 
       false
     },
-    .ALoop(inner) => v_group_escapes(inner, vs, relaxed, ids, builtins),
-    .ADefer(inner) => v_group_escapes(inner, vs, relaxed, ids, builtins),
+    .ALoop(inner) => v_group_escapes(inner, vs, relaxed, ids, builtins, false),
+    .ADefer(inner) => v_group_escapes(inner, vs, relaxed, ids, builtins, false),
     .ABinOp(_, l, r, _) => slot_in(l, vs) or slot_in(r, vs),
     .AUnOp(_, a, _) => slot_in(a, vs),
     .AMakeClosure(_, free_vars) => {
@@ -1270,7 +1278,9 @@ fn classify_v_group(
   slots: Dict<Int, SlotInfo>,
   fam: ElemFamily,
 ) VGroupUse {
-  classify_expr(expr, vs, relaxed, len_id, builtins, slots, fam)
+  // The whole function body starts in tail position: its trailing `.Atom` is a
+  // function return (a typed-return boundary, not an escape).
+  classify_expr(expr, vs, relaxed, len_id, builtins, slots, fam, true)
 }
 
 // Shared eligibility predicate: a typed-vector slot group `aliases` is typeable
@@ -1422,14 +1432,26 @@ fn classify_expr(
   builtins: BuiltinRegistry,
   slots: Dict<Int, SlotInfo>,
   fam: ElemFamily,
+  in_tail: Bool,
 ) VGroupUse {
   case expr {
     .Let(_, op, body) => {
+      // An op binds a slot, so its sub-expressions (arm/loop/defer bodies) are
+      // never a function return — classify_op passes them in_tail=false. The Let
+      // body inherits this expression's tail position.
       op_use := classify_op(op, vs, relaxed, len_id, builtins, slots, fam)
-      body_use := classify_expr(body, vs, relaxed, len_id, builtins, slots, fam)
+      body_use := classify_expr(body, vs, relaxed, len_id, builtins, slots, fam, in_tail)
       op_use.merge_use(body_use)
     },
-    .Atom(a) => use_esc(slot_in(a, vs)),
+    // A trailing `.Atom` in tail position is a function return (handled by the
+    // typed-return bridge), not an escape — matching `.Return`. In non-tail
+    // position (an if/match arm value binding the enclosing slot) it still flows
+    // out of the group, so stay conservative.
+    .Atom(a) => use_esc(if in_tail {
+      false
+    } else {
+      slot_in(a, vs)
+    }),
     .Return(.Some(_)) => use_esc(false),
     .Break(.Some(a)) => use_esc(slot_in(a, vs)),
     _ => use_esc(false),
@@ -1474,22 +1496,22 @@ fn classify_op(
     },
     .AIf(cnd, then_e, else_e) => {
       cnd_esc := use_esc(slot_in(cnd, vs))
-      then_use := classify_expr(then_e, vs, relaxed, len_id, builtins, slots, fam)
-      else_use := classify_expr(else_e, vs, relaxed, len_id, builtins, slots, fam)
+      then_use := classify_expr(then_e, vs, relaxed, len_id, builtins, slots, fam, false)
+      else_use := classify_expr(else_e, vs, relaxed, len_id, builtins, slots, fam, false)
       cnd_esc.merge_use(then_use.merge_use(else_use))
     },
     .AMatch(scrut, arms) => {
       acc := use_esc(slot_in(scrut, vs))
 
       for arm in arms {
-        arm_use := classify_expr(arm.body, vs, relaxed, len_id, builtins, slots, fam)
+        arm_use := classify_expr(arm.body, vs, relaxed, len_id, builtins, slots, fam, false)
         acc = .merge_use(arm_use)
       }
 
       acc
     },
-    .ALoop(inner) => classify_expr(inner, vs, relaxed, len_id, builtins, slots, fam),
-    .ADefer(inner) => classify_expr(inner, vs, relaxed, len_id, builtins, slots, fam),
+    .ALoop(inner) => classify_expr(inner, vs, relaxed, len_id, builtins, slots, fam, false),
+    .ADefer(inner) => classify_expr(inner, vs, relaxed, len_id, builtins, slots, fam, false),
     .ABinOp(_, l, r, _) => use_esc(slot_in(l, vs) or slot_in(r, vs)),
     .AUnOp(_, a, _) => use_esc(slot_in(a, vs)),
     .AMakeClosure(_, free_vars) => {
@@ -2002,7 +2024,7 @@ fn result_consumed_typed_only(
 ) Bool {
   singleton: Dict<Int, Bool> = Dict.new()
   singleton[result_sid] = true
-  !v_group_escapes(expr, singleton, relaxed, ids, builtins)
+  !v_group_escapes(expr, singleton, relaxed, ids, builtins, true)
 }
 
 type FieldStoreSite = .{ key: String, value: PreparedAtom }
