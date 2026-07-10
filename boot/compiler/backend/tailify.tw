@@ -3,6 +3,7 @@
 
 use compiler.backend.prepared_ir.{PreparedExpr, PreparedFunc, PreparedMatchArm, PreparedOp}
 use compiler.builtins.{BuiltinRegistry, is_noreturn}
+use compiler.elem_family.{elem_family_of}
 
 // PreparedExpr mirror of expr_always_diverges, but noreturn-aware: a call to an
 // is_noreturn builtin diverges, and (unlike emit/helpers.tw's version) it recurses
@@ -41,8 +42,9 @@ pub fn prep_op_diverges(op: PreparedOp, reg: BuiltinRegistry) Bool {
 
 // Rewrite a tail-position control-flow result's value-producing arms to Return, so
 // the returned payload flows through the escape analysis's `.Return => false` rule
-// (consumed-typed-only) with no store-escape relaxation. Gated to Vector<Int>
-// returns to keep the IR-shape change confined to accessor-shaped functions.
+// (consumed-typed-only) with no store-escape relaxation. Gated to typed-vector
+// families (Vector<Int>/Vector<Bool>, see elem_family_of) to keep the IR-shape
+// change confined to accessor-shaped functions.
 pub fn tailify_funcs(funcs: Vector<PreparedFunc>, reg: BuiltinRegistry) Vector<PreparedFunc> {
   collect pf in funcs {
     tailify_func(pf, reg)
@@ -50,12 +52,12 @@ pub fn tailify_funcs(funcs: Vector<PreparedFunc>, reg: BuiltinRegistry) Vector<P
 }
 
 fn tailify_func(pf: PreparedFunc, reg: BuiltinRegistry) PreparedFunc {
-  is_vec_int := case pf.return_mono {
-    .Vector(.Int) => true,
-    _ => false,
+  is_typed_vec := case elem_family_of(pf.return_mono) {
+    .Some(_) => true,
+    .None => false,
   }
 
-  if !is_vec_int {
+  if !is_typed_vec {
     return pf
   }
 

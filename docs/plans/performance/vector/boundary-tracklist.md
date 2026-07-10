@@ -55,7 +55,7 @@ Status: ✅ done · 🟡 partial · ⬜ open · 🚫 must-stay-boxed (by design)
 | B3 | Typed call-result **copy/alias** propagation (`keys := as_ints(...)`) | ✅ | this session (group-aware 2c/2c'') |
 | B4 | Typed **payload** copy/alias propagation | ✅ | this session (group-aware 2c) |
 | B5 | Typed **field-read** copy propagation | ✅ | `1d815c37` (2b now group-aware; fixed a live `zs := b.xs` invalid-Wasm miscompile + verifier edge) |
-| B6 | Direct-call typed **argument** ABI (`fn(xs: PVecI64)`) | 🟡 | boxing adapters exist; verify true typed-arg pass-through |
+| B6 | Direct-call typed **argument** ABI (`fn(xs: PVecI64)`) | ⬜ | analysis-only — the typed-repr analysis computes a `typeable_params` set, but emission still passes every param boxed; no physical typed-arg pass-through yet (the "Extend" project) |
 | B7 | Generic runtime-helper ABI — typed `gather` | ✅ | `gather_i64` routing (Stage 1) |
 | B8 | Generic runtime-helper ABI — `take` / other helpers | 🟡 | `gather` done; `take` and friends box → unbox (~830ms in full order_by) |
 

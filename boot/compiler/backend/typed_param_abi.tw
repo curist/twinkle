@@ -454,6 +454,7 @@ pub fn analyze_typed_repr(
   cap := funcs.len() + 4
   round := 0
   done := false
+  primary_converged := false
   tpay: Dict<String, Bool> = Dict.new()
   abi: ParamAbi = .{ typeable_params: Dict.new(), typeable_return: Dict.new() }
 
@@ -464,14 +465,38 @@ pub fn analyze_typed_repr(
 
     stable := param_maps_equal(abi.typeable_params, tp_params) and bool_key_maps_equal(new_tf, tf)
 
-    if stable or round >= cap {
-      tf = new_tf
-      done = true
-    } else {
-      tp_params = abi.typeable_params
-      tf = new_tf
-      round = round + 1
+    cond {
+      stable => {
+        tf = new_tf
+        primary_converged = true
+        done = true
+      },
+      round >= cap => done = true,
+      _ => {
+        tp_params = abi.typeable_params
+        tf = new_tf
+        round = round + 1
+      },
     }
+  }
+
+  // Fail closed (design §4), mirroring the capture fixpoint below. The primary
+  // field/payload/param/return fixpoint is provably monotone-decreasing over a
+  // finite domain, so the round cap is a should-never-happen net. If it is hit
+  // before stability, the last tpay/abi were computed from a tp_params that the
+  // final new_tf no longer agrees with — shipping that mutually-inconsistent
+  // tuple risks route_func typing a field/param the analysis never confirmed →
+  // invalid Wasm. Drop to the fully-boxed conservative tuple (no typed fields,
+  // payloads, params, or returns); route_func then types only local
+  // non-escaping producers + local-lineage gathers, which is self-consistent
+  // under empty sets. Emit a stderr diagnostic so non-convergence is noticed.
+  if !primary_converged {
+    eprintln(
+      "[typed-vector] typed-repr analysis did not converge within ${cap} rounds; falling back to boxed representation",
+    )
+    tf = Dict.new()
+    tpay = Dict.new()
+    abi = .{ typeable_params: Dict.new(), typeable_return: Dict.new() }
   }
 
   // Capture typeability is a pure downstream product of the converged typed sets

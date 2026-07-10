@@ -108,4 +108,3 @@ target/twk run examples/performance/dataframe/bench/order_by_breakdown.tw
 - **Measure before prioritizing.** Confident structural guesses (allocation cost,
   flat-buffer merge value, "the floor is mechanics", "linear memory loses on
   sorts") were repeatedly falsified by probes here.
-```

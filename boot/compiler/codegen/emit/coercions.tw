@@ -5,7 +5,7 @@ use compiler.codegen.emit.context.{EmitCtx}
 use compiler.codegen.wasm_ir.{AbiContract, Instr, ValType}
 use compiler.codegen.wasm_type_util.{heap_type_eq, val_type_eq}
 use compiler.core_ir.{FuncId}
-use compiler.elem_family.{elem_family_of}
+use compiler.elem_family.{ElemFamily, elem_family_of}
 use compiler.mono_type.{MonoType}
 
 pub fn emit_coerce_stack(
@@ -65,7 +65,33 @@ pub fn emit_coerce_stack(
   }
 
   case from {
-    .Anyref => return emit_unbox_from_anyref(mono, ctx.env, buf),
+    .Anyref => {
+      // Mirror of the typed-family egress above. When the destination is a
+      // physically typed family PVec, unbox anyref to the boxed universal PVec
+      // first, then rebuild the typed wrapper via fam.unbox_call — a bare
+      // emit_unbox_from_anyref leaves a boxed rt_types__PVec where a
+      // PVecI64/PVecBool is required, which would trap on the later use. The
+      // guard (to_name == fam.pvec_type) leaves every non-typed destination on
+      // the generic path unchanged.
+      typed_dest: ElemFamily? = case to {
+        .Ref(_, .Named(to_name)) => case elem_family_of(mono) {
+          .Some(fam) => if to_name == fam.pvec_type {
+            .Some(fam)
+          } else {
+            .None
+          },
+          .None => .None,
+        },
+        _ => .None,
+      }
+
+      case typed_dest {
+        .Some(fam) => return emit_unbox_from_anyref(mono, ctx.env, buf).append(
+          .Call(fam.unbox_call),
+        ),
+        .None => return emit_unbox_from_anyref(mono, ctx.env, buf),
+      }
+    },
     _ => {},
   }
 

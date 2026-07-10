@@ -1,11 +1,33 @@
-keys := collect i in range(1000) { (i * 7) % 1000 }
-mask := collect i in range(1000) { i % 2 == 0 }
-idx := collect i in range(1000) { i }
-sorted := idx.sort_by(fn(a, b) {
-  if mask[a] != mask[b] {
-    if mask[a] { .Lt } else { .Gt }
-  } else {
-    Int.compare(keys[a], keys[b])
+// Mixed typed-capture routing probe (C2): a `sort_by` comparator that CAPTURES
+// both a Vector<Bool> mask and a Vector<Int> keys must route each read to its
+// own typed getter (get_bool for the mask, get_i64 for the keys). Routing is
+// per-function, so the captured producers must live inside a function.
+//
+// Verify (comparator lambda must call both get_bool and get_i64, no boxed get):
+//   target/twk wat examples/performance/sort-bench/typed_mixed_capture_probe.tw \
+//     --func lambda --calls | grep -E 'get_bool|get_i64|rt_arr__get'
+fn run() {
+  keys := collect i in range(1000) {
+    i * 7 % 1000
   }
-})
-println("first=${sorted[0]}")
+  mask := collect i in range(1000) {
+    i % 2 == 0
+  }
+  idx := collect i in range(1000) {
+    i
+  }
+  sorted := idx.sort_by(fn(a, b) {
+    if mask[a] != mask[b] {
+      if mask[a] {
+        .Lt
+      } else {
+        .Gt
+      }
+    } else {
+      Int.compare(keys[a], keys[b])
+    }
+  })
+  println("first=${sorted[0]}")
+}
+
+run()
