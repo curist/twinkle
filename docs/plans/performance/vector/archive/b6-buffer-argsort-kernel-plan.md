@@ -5,7 +5,7 @@
 > special-casing a named stdlib function into the compiler (monomorphize + linker),
 > which is a point solution, not the principled direction. Kept as a record. The
 > reusable *findings* (read-wall decomposition; typed-parameter ABI for named
-> functions doesn't exist) live in [boundary-tracklist.md](boundary-tracklist.md)
+> functions doesn't exist) live in [boundary-tracklist.md](../boundary-tracklist.md)
 > and drive the typed-representation "Extend" path instead. Do not re-execute.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

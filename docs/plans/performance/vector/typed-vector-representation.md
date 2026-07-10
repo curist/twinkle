@@ -6,7 +6,7 @@
 
 **Architecture parent:** [../backend-anyref-elimination.md](../backend-anyref-elimination.md) — this plan delivers the `Vector<Int>` container family of that broader "make `anyref` exceptional" effort; the representation-boundary policy it defines governs how far this routing can safely extend.
 
-**Related plan:** [wasm-native-sort.md](wasm-native-sort.md) attacks the immediate `order_by` hotspot by sorting over dense runtime working sets. This plan is the broader representation fix: make typed vector access faster everywhere so idiomatic numeric collection code has better baseline performance.
+**Related plan:** [wasm-native-sort.md](archive/wasm-native-sort.md) attacks the immediate `order_by` hotspot by sorting over dense runtime working sets. This plan is the broader representation fix: make typed vector access faster everywhere so idiomatic numeric collection code has better baseline performance.
 
 ---
 
@@ -41,7 +41,7 @@ The same issue affects:
 
 ## Baseline metrics and symptoms
 
-From [wasm-native-sort.md](wasm-native-sort.md):
+From [wasm-native-sort.md](archive/wasm-native-sort.md):
 
 ```text
 N = 1000000
@@ -144,7 +144,7 @@ Cons:
 - Still pays one boxed read per input element during materialization.
 - Does not improve arbitrary user indexing outside the kernel.
 
-This is the near-term bridge used by [wasm-native-sort.md](wasm-native-sort.md).
+This is the near-term bridge used by [wasm-native-sort.md](archive/wasm-native-sort.md).
 
 ### Level 2 — True typed PVec representation
 
@@ -286,21 +286,21 @@ These should be visible in backend IR/planning, not hidden ad hoc in emitters.
 > **Progress (landed on `main`; last re-measured 2026-07-04).** The `Vector<Int>`
 > track is well underway; per-phase status is tagged on each header below.
 > Landed: typed `PVecI64` family + intra-function routing (S1/S2.0, see
-> [typed-vector-spike.md](typed-vector-spike.md)), boxed-boundary adapters for
+> [typed-vector-spike.md](archive/typed-vector-spike.md)), boxed-boundary adapters for
 > return + direct-call args (S2.1), and typed **record fields** (S2.2, see
 > [../../archive/typed-record-fields.md](../../archive/typed-record-fields.md)). The
-> native value-sort kernel ([native-typed-value-sort.md](native-typed-value-sort.md))
+> native value-sort kernel ([native-typed-value-sort.md](archive/native-typed-value-sort.md))
 > realizes the Phase-2 dense working set.
 >
 > **Update (2026-07-05).** Two things happened since. (1) A **uniform-typing**
 > attempt (make `Vector<Int>` physically `PVecI64` *everywhere*) was built and
 > **reverted** — it made captured-vector reads O(n) per access via the `anyref`
-> closure env (post-mortem: [m1a-anyref-readback-investigation.md](m1a-anyref-readback-investigation.md)).
+> closure env (post-mortem: [m1a-anyref-readback-investigation.md](archive/m1a-anyref-readback-investigation.md)).
 > The corrected model is **storage-site typing**: `TypedVec`/`PVecI64` is a
 > per-site optimization, never a global property
 > ([../representation-boundary-policy.md](../representation-boundary-policy.md)).
 > (2) **Typed variant payloads landed** (Milestone A, branch `typed-vector-repr-m1a`,
-> [storage-site-typed-vectors.md](storage-site-typed-vectors.md)) — capture-safe,
+> [storage-site-typed-vectors.md](archive/storage-site-typed-vectors.md)) — capture-safe,
 > no pathology. **But `order_by` is still unchanged**: the conservative producer
 > eligibility doesn't type the *real* dataframe `IntCol` columns.
 >
@@ -308,7 +308,7 @@ These should be visible in backend IR/planning, not hidden ad hoc in emitters.
 > in.** On branch `typed-vector-crossfn-abi`: cross-fn ABI (B2 accessor returns,
 > B3/B4 copy propagation) broadened producer eligibility, and the two typedness
 > oracles were unified so captured columns type without invalid Wasm (C2 — the
-> [unify-typedness-oracle-design.md](unify-typedness-oracle-design.md) work,
+> [unify-typedness-oracle-design.md](archive/unify-typedness-oracle-design.md) work,
 > `fd3da98f`…`5776e82b`). `sort idx by amount` ~1400→~775ms, full `order_by`
 > ~2.3s→~1.84s @ 1M. **The current per-boundary status of record is now
 > [boundary-tracklist.md](boundary-tracklist.md)** — the per-phase notes below this
@@ -395,7 +395,7 @@ These should be visible in backend IR/planning, not hidden ad hoc in emitters.
 
 > **Cross-fn typed-vector ABI — Stage 1 landed + Checkpoint A (2026-07-06,
 > branch `typed-vector-crossfn-abi`).** Stage 1 of
-> [crossfn-typed-vector-abi-plan.md](crossfn-typed-vector-abi-plan.md) added a
+> [crossfn-typed-vector-abi-plan.md](archive/crossfn-typed-vector-abi-plan.md) added a
 > typed `gather_i64` runtime op (+ `builder_push_i64_raw`) and routes
 > `gather(v, idx)` → `gather_i64` when the receiver `v` is already a typed
 > `PVecI64` (escape whitelist + gather-result eligibility fixpoint + an emit fix
@@ -427,7 +427,7 @@ Routing runs **after** boundary insertion + repr assignment
 (`boot/compiler/backend/prepare.tw` calls `route_typed_vectors` last), so the
 pass must reproduce how the boxed builder is already represented — that is where
 the subtlety is (see the "three fixes" gotchas in
-[typed-vector-spike.md](typed-vector-spike.md)).
+[typed-vector-spike.md](archive/typed-vector-spike.md)).
 
 - `boot/compiler/backend/route_typed_vec.tw` — **the pass.** Per function: find a
   `collect`-built `Vector<Int>` (`v = builder_freeze(b)`), escape-analyze `v`
@@ -475,7 +475,7 @@ Record numbers in this plan and `docs/plans/performance/dataframe/friction-log.m
 
 ### Phase 2 — Dense i64 working-set helper for sort kernels — ✅ done (native value-sort kernel)
 
-As part of [wasm-native-sort.md](wasm-native-sort.md), implement helpers that materialize `Vector<Int>` into a dense i64 working array inside the runtime sort. This gives immediate value and validates unboxing/fill loops.
+As part of [wasm-native-sort.md](archive/wasm-native-sort.md), implement helpers that materialize `Vector<Int>` into a dense i64 working array inside the runtime sort. This gives immediate value and validates unboxing/fill loops.
 
 ### Phase 3 — Backend representation enum for typed vectors — ✅ done (S2.0 repr tags + S2.2 verifier check)
 

@@ -3,7 +3,7 @@
 > **SUPERSEDED (2026-07-04).** This plan executed the uniform-typing activation
 > (`Vector<Int> = PVecI64` everywhere), which was built, measured, and reverted —
 > it makes captured-vector reads O(n) per access (see
-> [vector/m1a-anyref-readback-investigation.md](vector/m1a-anyref-readback-investigation.md)).
+> [vector/m1a-anyref-readback-investigation.md](vector/archive/m1a-anyref-readback-investigation.md)).
 > The corrected direction (typed vectors as a *storage-site* representation) is in
 > [representation-boundary-policy.md](representation-boundary-policy.md). Kept for
 > the record; do not execute as written. T0–T3 (the reusable infrastructure) still

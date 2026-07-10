@@ -11,7 +11,7 @@
 > `collect`-built vector placed directly into a variant construction") does **not**
 > match how the real dataframe builds `IntCol` columns, so `order_by` is unchanged
 > (~2403ms). The app-level win needs broader producer eligibility — see the
-> umbrella [typed-vector-representation.md](typed-vector-representation.md) "next".
+> umbrella [typed-vector-representation.md](../typed-vector-representation.md) "next".
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

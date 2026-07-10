@@ -1,6 +1,6 @@
 # Order-by and native sort performance — consolidated plan
 
-**Status:** superseded as the active lead — retained for context and the native-sort post-mortems (Approaches A/C, the value-sort kernel, the dense working-set framing). The live leads are now [generic-sort-by-vector-read-perf.md](generic-sort-by-vector-read-perf.md) (read-path + merge mechanics) and [typed-vector-representation.md](typed-vector-representation.md) (the master representation lever). The principle here still holds: keep user-facing dataframe/collection code idiomatic, but lower hot sort/order-by shapes to dense runtime work where needed.
+**Status:** superseded as the active lead — retained for context and the native-sort post-mortems (Approaches A/C, the value-sort kernel, the dense working-set framing). The live leads are now [generic-sort-by-vector-read-perf.md](../generic-sort-by-vector-read-perf.md) (read-path + merge mechanics) and [typed-vector-representation.md](../typed-vector-representation.md) (the master representation lever). The principle here still holds: keep user-facing dataframe/collection code idiomatic, but lower hot sort/order-by shapes to dense runtime work where needed.
 
 ## Goal
 
@@ -60,7 +60,7 @@ Tried replacing prelude merge sort with an in-place quicksort-style algorithm ov
 
 Result: rejected. The expected in-place writes did not materialize across helper/recursive call boundaries; the generated code fell back to persistent copy-on-write writes. That made `order_by` dramatically slower instead of faster. This is not worth digging further unless the uniqueness model changes substantially.
 
-See: [native-sort-by-inplace.md](../../archive/native-sort-by-inplace.md) (archived).
+See: [native-sort-by-inplace.md](../../../archive/native-sort-by-inplace.md) (archived).
 
 ### Approach C: dense scratch-buffer stable merge sort
 
@@ -70,7 +70,7 @@ Result: **measured neutral-to-negative; did not pass the gate.** In a controlled
 
 The reusable part is the `Scratch<T>` dense-buffer infrastructure (an opaque mutable Wasm-GC array with `scratch_new`/`get`/`set` in both compilers), which is a building block for the dense key-index argsort kernel below — not the `sort_by` rewrite itself.
 
-See: [native-sort-dense-merge.md](../../archive/native-sort-dense-merge.md) (archived).
+See: [native-sort-dense-merge.md](../../../archive/native-sort-dense-merge.md) (archived).
 
 ### Native typed value-sort kernel — first dense kernel that won
 
@@ -174,9 +174,9 @@ Typed vector representation remains the grand-picture fix:
 - dense working-set sort kernels are a near-term proof point;
 - typed vectors help far beyond sorting: map/filter/fold, dataframe columns, group-by, joins, and numeric workloads.
 
-The immediate implementation plan is [generic-sort-by-vector-read-perf.md](generic-sort-by-vector-read-perf.md): improve generic `sort_by` callback execution and indexed vector reads first, so idiomatic callbacks remain competitive even when they have observable side effects. [native-key-index-argsort.md](native-key-index-argsort.md) remains an optional transparent fast path for recognized pure key-index comparators, not the baseline performance story.
+The immediate implementation plan is [generic-sort-by-vector-read-perf.md](../generic-sort-by-vector-read-perf.md): improve generic `sort_by` callback execution and indexed vector reads first, so idiomatic callbacks remain competitive even when they have observable side effects. [native-key-index-argsort.md](native-key-index-argsort.md) remains an optional transparent fast path for recognized pure key-index comparators, not the baseline performance story.
 
-See also: [typed-vector-representation.md](typed-vector-representation.md).
+See also: [typed-vector-representation.md](../typed-vector-representation.md).
 
 ## Bench commands
 

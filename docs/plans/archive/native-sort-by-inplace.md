@@ -1,6 +1,6 @@
 # Native in-place `Vector.sort_by` — Approach A result
 
-**Status:** rejected (archived). See the consolidated performance plan: [wasm-native-sort.md](../performance/vector/wasm-native-sort.md).
+**Status:** rejected (archived). See the consolidated performance plan: [wasm-native-sort.md](../performance/vector/archive/wasm-native-sort.md).
 
 ## What was tried
 

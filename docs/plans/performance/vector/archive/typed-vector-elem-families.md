@@ -23,7 +23,7 @@ first family through it. `Float` becomes a cheap follow-on (one runtime descript
 + one registry entry).
 
 This does **not** change the representation-boundary policy
-([../representation-boundary-policy.md](../representation-boundary-policy.md)):
+([../representation-boundary-policy.md](../../representation-boundary-policy.md)):
 `PVecBool`/`PVecF64` are per-storage-site optimizations, never global properties
 of `Vector<Bool>`/`Vector<Float>`. A typed vector that reaches a durable erased
 boundary is still boxed.

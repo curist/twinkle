@@ -4,7 +4,7 @@
 > a compiler-special-cased point solution. This design doc's *validation findings*
 > (below) are the durable result and motivate the typed-representation "Extend"
 > path; the kernel itself is not the chosen direction. See
-> [boundary-tracklist.md](boundary-tracklist.md) "Findings".
+> [boundary-tracklist.md](../boundary-tracklist.md) "Findings".
 
 **Status:** design (2026-07-10), kernel reverted. The validation that typed
 *parameter* ABI for named functions does not exist (only returns/captures) is the
@@ -12,8 +12,8 @@ key durable finding; "Extend" (general typed-parameter ABI) is the real path.
 
 **Where this sits:** the headline lever for the dataframe `order_by` sort, re-scoped
 from the tracklist's stale "B8 typed take." See
-[boundary-tracklist.md](boundary-tracklist.md) (B6) and
-[generic-sort-by-vector-read-perf.md](generic-sort-by-vector-read-perf.md).
+[boundary-tracklist.md](../boundary-tracklist.md) (B6) and
+[generic-sort-by-vector-read-perf.md](../generic-sort-by-vector-read-perf.md).
 
 ## Goal
 

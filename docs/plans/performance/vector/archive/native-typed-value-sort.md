@@ -6,7 +6,7 @@
 > around `48a594a`/`60232f4`/`a66cbe2`). The per-step checkboxes below were not
 > ticked during execution — this banner is the completion record. This is the
 > first dense typed kernel that won, and the seed of the broader
-> [typed-vector-representation.md](typed-vector-representation.md) track. Remaining
+> [typed-vector-representation.md](../typed-vector-representation.md) track. Remaining
 > open work is Bool/Byte families (Milestone 3 only covered Float).
 >
 > **For agentic workers (historical):** executed task-by-task; steps use checkbox
@@ -34,7 +34,7 @@ Our generic sort is ~4× off the persistent-vector reference. Two prior attempts
 - **Approach A** (in-place quicksort over a uniquely-owned PVec): writes fell to copy-on-write across call boundaries.
 - **Approach C** (stable merge over an opaque `anyref` `Scratch<T>` buffer): per-element access was an *un-inlined runtime call* doing `ref.cast anyref→Array` + bounds-checked `array.get/set`, plus two extra full copies. It *regressed* the pure `Vector<Int>` sort ~16%.
 
-The lesson: a dense buffer only wins when its element access is **inlined, typed** (`i64.array.get/set`, no cast, no call) and the hot loop lives **inside one runtime function** (no exposed per-element ops). That is exactly what this plan builds. See [wasm-native-sort.md](wasm-native-sort.md) and [native-sort-dense-merge.md](../../archive/native-sort-dense-merge.md) (archived) for the full post-mortems.
+The lesson: a dense buffer only wins when its element access is **inlined, typed** (`i64.array.get/set`, no cast, no call) and the hot loop lives **inside one runtime function** (no exposed per-element ops). That is exactly what this plan builds. See [wasm-native-sort.md](wasm-native-sort.md) and [native-sort-dense-merge.md](../../../archive/native-sort-dense-merge.md) (archived) for the full post-mortems.
 
 ## Scope
 

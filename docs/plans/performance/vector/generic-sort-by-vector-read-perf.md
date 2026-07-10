@@ -361,7 +361,7 @@ Possible follow-on (not pursued): hoist the per-comparison `ref.test` out of the
 
 ## Relationship to transparent argsort recognition
 
-[native-key-index-argsort.md](native-key-index-argsort.md) remains useful as an optional fast path, but should not be the only way to get good `order_by` performance. Comparator-shape recognition is necessarily conservative and must reject side effects like:
+[native-key-index-argsort.md](archive/native-key-index-argsort.md) remains useful as an optional fast path, but should not be the only way to get good `order_by` performance. Comparator-shape recognition is necessarily conservative and must reject side effects like:
 
 ```tw
 times := Cell.new(0)

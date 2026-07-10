@@ -5,7 +5,7 @@
 **Depends on:** landed cross-fn ABI work (accessor returns B2, group-aware copy
 propagation B3/B4, tailify) — commits ac30af11..c117dd73.
 **Unblocks:** C2 (captured columns) → the dataframe `order_by` sort win — **done**
-(`sort idx by amount` ~1400→~775ms). See [boundary-tracklist.md](boundary-tracklist.md).
+(`sort idx by amount` ~1400→~775ms). See [boundary-tracklist.md](../boundary-tracklist.md).
 
 ## What shipped (2026-07-08)
 
@@ -70,7 +70,7 @@ They diverge on complex multi-use groups. The C2 spike (2026-07-07) proved it:
 typing a captured call-result column, the two disagreed on the dataframe key column
 (captured into two comparators + gathered + copied) — `route_func` dropped the
 `box_i64` while the slot stayed `PVec` → **invalid Wasm**. Root cause in
-[boundary-tracklist.md](boundary-tracklist.md) ("Spike finding").
+[boundary-tracklist.md](../boundary-tracklist.md) ("Spike finding").
 
 Contributing gaps:
 - **Ordering.** `capture_abi` is computed once at the end of the

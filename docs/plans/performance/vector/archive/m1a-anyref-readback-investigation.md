@@ -4,7 +4,7 @@
 reached main). It self-hosted and passed all boot tests, but was not viable:
 captured `Vector<Int>` reads are O(n) per access, which hangs `order_by`. Root
 cause confirmed and recorded here; the corrected direction is in
-[../representation-boundary-policy.md](../representation-boundary-policy.md). This
+[../representation-boundary-policy.md](../../representation-boundary-policy.md). This
 note is retained as the post-mortem.
 
 ## What landed (branch `typed-vector-repr-m1a`)

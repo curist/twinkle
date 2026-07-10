@@ -2,7 +2,7 @@
 
 **Status:** design approved 2026-07-06, not yet built
 **Branch:** `typed-vector-crossfn-abi`
-**Related:** [typed-vector-representation.md](./typed-vector-representation.md) (see "Control-flow-result-typing attempt" and "typed-return bridge")
+**Related:** [typed-vector-representation.md](../typed-vector-representation.md) (see "Control-flow-result-typing attempt" and "typed-return bridge")
 
 ## Problem
 

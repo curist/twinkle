@@ -342,7 +342,7 @@ git commit -m "test: end-to-end typed gather probe"
 target/twk run examples/performance/dataframe/bench/main.tw 2>&1 | tee /tmp/bench-stage1.txt
 ```
 
-Compare `order_by` against the ~2403ms baseline. Expect the gather/take contribution (~830ms) to shrink. **Record the actual delta in the umbrella doc** ([typed-vector-representation.md](typed-vector-representation.md)). If gather did not move, inspect the WAT: confirm `gather_i64` is actually reached in the dataframe `column.gather` (the payload read must be `eligible_v`); a common cause is the `gather` result not being marked typed because the payload store site was not in `typed_payloads`. Do NOT start Stage 2 until Stage 1's win is confirmed and recorded.
+Compare `order_by` against the ~2403ms baseline. Expect the gather/take contribution (~830ms) to shrink. **Record the actual delta in the umbrella doc** ([typed-vector-representation.md](../typed-vector-representation.md)). If gather did not move, inspect the WAT: confirm `gather_i64` is actually reached in the dataframe `column.gather` (the payload read must be `eligible_v`); a common cause is the `gather` result not being marked typed because the payload store site was not in `typed_payloads`. Do NOT start Stage 2 until Stage 1's win is confirmed and recorded.
 
 ---
 
@@ -510,12 +510,12 @@ timeout 15 target/twk run examples/performance/sort-bench/typed_param_capture_gu
 ```
 Expected: the trampoline uses boxed `get` (WAT assertion), and runtime is a few ms (timing). The WAT check is authoritative; timing is the coarse backstop.
 
-- [ ] **Step 3: Bench** — `target/twk run examples/performance/dataframe/bench/main.tw`; record `order_by` and `filter`/`group_by`/`join`. Expect the build path to move; expect `order_by` umbrella to move materially only after step 2 (typed closure env). Record deltas in [typed-vector-representation.md](typed-vector-representation.md).
+- [ ] **Step 3: Bench** — `target/twk run examples/performance/dataframe/bench/main.tw`; record `order_by` and `filter`/`group_by`/`join`. Expect the build path to move; expect `order_by` umbrella to move materially only after step 2 (typed closure env). Record deltas in [typed-vector-representation.md](../typed-vector-representation.md).
 - [ ] **Step 4: Commit** — `test: Stage 2 build-path probe + capture guard (WAT+timing) + bench`
 
 ## Checkpoint B — wrap up
 
-- [ ] Update [typed-vector-representation.md](typed-vector-representation.md) status and [typed-vector-continue-here.md](typed-vector-continue-here.md): mark Stage 1/2 done, note that step 2 (typed closure env / comparator, ~1317ms) is now unblocked because the key column can reach `sort_indices` typed.
+- [ ] Update [typed-vector-representation.md](../typed-vector-representation.md) status and [typed-vector-continue-here.md](typed-vector-continue-here.md): mark Stage 1/2 done, note that step 2 (typed closure env / comparator, ~1317ms) is now unblocked because the key column can reach `sort_indices` typed.
 - [ ] Final `make bundle-cli` fixed point + `make boot-test` green + `cargo test --release` (targeted) as a last guard.
 
 ---

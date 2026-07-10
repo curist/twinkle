@@ -2,8 +2,8 @@
 
 > ⚠️ **SUPERSEDED (2026-07-08).** This is a point-in-time handoff from 2026-07-05,
 > before the cross-fn ABI + C2 work. For current status start with
-> **[boundary-tracklist.md](boundary-tracklist.md)** (the living per-boundary map)
-> and the [README](README.md). Since this was written: work moved to branch
+> **[boundary-tracklist.md](../boundary-tracklist.md)** (the living per-boundary map)
+> and the [README](../README.md). Since this was written: work moved to branch
 > `typed-vector-crossfn-abi`; B2 (accessor returns), B3/B4 (copy propagation), B5
 > (field-read copies), and **C2 (captured columns → the `order_by` sort win)** all
 > landed. The "where things stand" and "first decision" below are stale; the
@@ -38,7 +38,7 @@ uniform activation → Milestone A → eq fix); consider a clean merge/squash.
 
 `PVecI64` is a **per-storage-site optimization**, never a global property of
 `Vector<Int>`. Full statement + rationale:
-[../representation-boundary-policy.md](../representation-boundary-policy.md).
+[../representation-boundary-policy.md](../../representation-boundary-policy.md).
 
 **The invariant that prevents catastrophe:** a `Vector<Int>` that escapes to a
 durable erased boundary — `anyref`, the universal `ClosureEnv`, a generic
@@ -80,7 +80,7 @@ crossing into the query functions first).
 - **The design fork** (brainstorm this): *specialize-by-representation*
   (monomorphization emits a `PVecI64`-ABI instance) vs *adapt-at-call* (box/unbox
   at mismatched call sites). The umbrella's "Representation-boundary policy"
-  section frames it: [typed-vector-representation.md](typed-vector-representation.md).
+  section frames it: [typed-vector-representation.md](../typed-vector-representation.md).
 - **Lower risk than step 2** (extends monomorphization + repr, no new subsystem).
   Already wins the direct-read paths (`gather`/`take`, ~830ms of `order_by`).
 
@@ -131,11 +131,11 @@ timeout 15 target/twk run examples/performance/sort-bench/typed_payload_capture_
 ## Doc map
 
 - **This file** — actionable next steps.
-- [typed-vector-representation.md](typed-vector-representation.md) — the live
+- [typed-vector-representation.md](../typed-vector-representation.md) — the live
   umbrella (per-phase status + open next).
-- [../representation-boundary-policy.md](../representation-boundary-policy.md) —
+- [../representation-boundary-policy.md](../../representation-boundary-policy.md) —
   the storage-site model + the reverted uniform-typing lesson.
-- [generic-sort-by-vector-read-perf.md](generic-sort-by-vector-read-perf.md) —
+- [generic-sort-by-vector-read-perf.md](../generic-sort-by-vector-read-perf.md) —
   the read-wall measurement/decomposition (still the reference for `order_by`).
 - Milestone A: [design](storage-site-typed-vectors.md) /
   [plan](storage-site-typed-vectors-plan.md).

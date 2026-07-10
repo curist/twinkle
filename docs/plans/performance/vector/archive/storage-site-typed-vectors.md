@@ -7,7 +7,7 @@ mechanism landed safely (typed variant payloads, capture-safe, no M1a pathology)
 the conservative eligibility does not yet type real dataframe columns, so the app
 speedup is deferred to broader eligibility. Design approved 2026-07-04, for the
 redesign called for in
-[../representation-boundary-policy.md](../representation-boundary-policy.md) after
+[../representation-boundary-policy.md](../../representation-boundary-policy.md) after
 the uniform-typing activation was reverted
 ([m1a-anyref-readback-investigation.md](m1a-anyref-readback-investigation.md)).
 

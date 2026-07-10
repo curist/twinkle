@@ -200,5 +200,5 @@ meaningfully only once step 2 lands on top of Stage 2.
   evidence this design is grounded in.
 - [typed-vector-continue-here.md](typed-vector-continue-here.md) — the handoff
   that prioritized this as step 1.
-- [../representation-boundary-policy.md](../representation-boundary-policy.md) —
+- [../representation-boundary-policy.md](../../representation-boundary-policy.md) —
   the storage-site model + the reverted-uniform-typing lesson.
