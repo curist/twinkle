@@ -59,6 +59,7 @@ use compiler.codegen.wasm_ir.{
 }
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key, val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
+use compiler.codegen.wasm_type_util.{val_type_eq}
 use compiler.core_ir.{BinOp, FieldId, FuncId, LibExport, LibField, LibType, UnOp, VariantId}
 use compiler.elem_family.{ElemFamily, elem_family_of, pvec_family_of}
 use compiler.mono_type.{MonoType, TypeId}
@@ -279,7 +280,7 @@ pub fn emit_module(
   } else {
     []
   }
-  lib_result := emit_lib_exports(anf, reg, func_sym_map, env, base_ctx)
+  lib_result := emit_lib_exports(anf, reg, func_sym_map, base_ctx)
   funcs = .concat(lib_result.funcs)
   user_exports := task_exports.concat(lib_result.exports)
   extern_imports: Vector<ImportDef> = lib_result.imports
@@ -381,7 +382,6 @@ fn emit_lib_exports(
   anf: AnfModule,
   reg: WasmTypeRegistry,
   func_sym_map: Dict<Int, String>,
-  env: ResolvedEnv,
   base_ctx: EmitCtx,
 ) LibEmitResult {
   funcs: Vector<FuncDef> = []
@@ -395,9 +395,27 @@ fn emit_lib_exports(
           .Some(pf) => pf,
           .None => error("emit_lib_exports: missing prepared func ${fid.id}"),
         }
-        wrapper := emit_lib_function_wrapper(exp, fid, sym, prepared, base_ctx)
-        funcs = .append(wrapper)
-        exports = .append(ExportDef.{ wasm_name: exp.wasm_name, func_sym: wrapper.name })
+        if exp.params.len() != prepared.params.len() {
+          error("emit_lib_exports: param count mismatch for ${exp.name}")
+        }
+
+        // Exports are top-level functions, so their physical param list is just
+        // the declared params — no leading capture slots the wrapper would have
+        // to forward.
+        if prepared.captures.len() != 0 {
+          error("emit_lib_exports: exported function ${exp.name} has captures")
+        }
+        builder_slots := collect_vector_builder_slots(prepared.body, base_ctx.builtins)
+        if lib_export_is_identity_abi(exp, prepared, builder_slots, base_ctx.env) {
+          // Internal representation already matches the public ABI, so the
+          // callee can be exported directly; the wrapper would be pure
+          // forwarding.
+          exports = .append(ExportDef.{ wasm_name: exp.wasm_name, func_sym: sym })
+        } else {
+          wrapper := emit_lib_function_wrapper(exp, fid, sym, prepared, builder_slots, base_ctx)
+          funcs = .append(wrapper)
+          exports = .append(ExportDef.{ wasm_name: exp.wasm_name, func_sym: wrapper.name })
+        }
       },
       .Value(gid) => case reg.module_globals[gid.id] {
         .Some(gentry) => {
@@ -440,7 +458,7 @@ fn emit_lib_exports(
   for key, sig in cb_sigs {
     case sig {
       .Fn(params, ret) => {
-        art := emit_callback_artifacts(key, params, ret, env)
+        art := emit_callback_artifacts(key, params, ret, base_ctx.env)
         imports = .append(art.import_def)
         funcs = .append(art.tramp).append(art.ctor)
         exports = .append(ExportDef.{ wasm_name: art.ctor.name, func_sym: art.ctor.name })
@@ -553,8 +571,8 @@ fn emit_lib_exports(
   for name, rec in records {
     case rec {
       .Rec(rec_name, sym, fields) => {
-        funcs = .append(emit_record_read(rec_name, sym, fields, env)).append(
-          emit_record_make(rec_name, sym, fields, env),
+        funcs = .append(emit_record_read(rec_name, sym, fields, base_ctx.env)).append(
+          emit_record_make(rec_name, sym, fields, base_ctx.env),
         )
         exports = .append(
           ExportDef.{
@@ -605,6 +623,7 @@ fn emit_lib_function_wrapper(
   fid: FuncId,
   internal_sym: String,
   prepared: PreparedFunc,
+  builder_slots: Dict<Int, Bool>,
   ctx: EmitCtx,
 ) FuncDef {
   params := collect p in exp.params {
@@ -615,15 +634,11 @@ fn emit_lib_function_wrapper(
     _ => [lib_boundary_val_type(exp.ret)],
   }
 
-  if params.len() != prepared.params.len() {
-    error("emit_lib_function_wrapper: param count mismatch for ${exp.name}")
-  }
-
   body: Vector<Instr> = []
 
   for p, i in exp.params {
     from_vt := params[i]
-    to_vt := prepared_param_vt(prepared, i)
+    to_vt := prepared_param_vt(prepared, builder_slots, i)
     body = .append(.LocalGet(i))
     body = emit_coerce_stack(from_vt, to_vt, lib_type_to_mono(p), ctx, body)
   }
@@ -648,9 +663,8 @@ fn emit_lib_function_wrapper(
   }
 }
 
-fn prepared_param_vt(prepared: PreparedFunc, index: Int) ValType {
-  sid := prepared.params[index]
-  facts.slot_info(prepared, sid).wasm_type
+fn prepared_param_vt(prepared: PreparedFunc, builder_slots: Dict<Int, Bool>, index: Int) ValType {
+  slot_phys_vt(prepared, prepared.params[index], builder_slots)
 }
 
 fn prepared_return_vt(prepared: PreparedFunc, env: ResolvedEnv) ValType {
@@ -658,6 +672,36 @@ fn prepared_return_vt(prepared: PreparedFunc, env: ResolvedEnv) ValType {
     .Some(vt) => vt,
     .None => val_type_of_mono(prepared.return_mono, env),
   }
+}
+
+// True when the callee's physical param/return types already equal the public
+// lib ABI, so every boundary coercion would be a no-op and the wrapper degrades
+// to pure forwarding. Callers export the internal function directly in that
+// case. Assumes params.len() matches (guarded before this is reached).
+fn lib_export_is_identity_abi(
+  exp: LibExport,
+  prepared: PreparedFunc,
+  builder_slots: Dict<Int, Bool>,
+  env: ResolvedEnv,
+) Bool {
+  identity := true
+
+  for p, i in exp.params {
+    from_vt := lib_boundary_val_type(p)
+    to_vt := prepared_param_vt(prepared, builder_slots, i)
+    if !val_type_eq(from_vt, to_vt) {
+      identity = false
+    }
+  }
+
+  case exp.ret {
+    .Void => {},
+    _ => if !val_type_eq(prepared_return_vt(prepared, env), lib_boundary_val_type(exp.ret)) {
+      identity = false
+    },
+  }
+
+  identity
 }
 
 fn lib_boundary_val_type(t: LibType) ValType {
@@ -837,11 +881,11 @@ type CbArtifacts = .{ import_def: ImportDef, tramp: FuncDef, ctor: FuncDef }
 // Build the three wasm artifacts for one callback signature `key`.
 fn emit_callback_artifacts(key: String, params: Vector<LibType>, ret: LibType, env: ResolvedEnv) CbArtifacts {
   native_params := collect p in params {
-    lib_type_native_val_type(p)
+    lib_boundary_val_type(p)
   }
   native_results: Vector<ValType> = case ret {
     .Void => [],
-    _ => [lib_type_native_val_type(ret)],
+    _ => [lib_boundary_val_type(ret)],
   }
 
   import_sym := "__lib_cb_${key}"
@@ -911,20 +955,6 @@ fn lib_primitive_val_type(ty: MonoType) ValType {
   }
 }
 
-// Native boundary ValType for a callback's arg/return LibType.
-fn lib_type_native_val_type(t: LibType) ValType {
-  case t {
-    .Int => .I64,
-    .Float => .F64,
-    .Bool => .I32,
-    .Void => .Anyref,
-    .Str => .Ref(true, .Named("rt_types__String")),
-    // Callback arg/return types are leaves only (guarded in selection), so Fn
-    // and the compound variants are unreachable here.
-    _ => error("lib_type_native_val_type: callback arg/return types must be leaves"),
-  }
-}
-
 // Native ABI tag for a callback leaf type, used to key distinct signatures.
 fn lib_type_native_tag(t: LibType) String {
   case t {
@@ -979,11 +1009,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
 
   for sid in prepared.captures {
     info := facts.slot_info(prepared, sid)
-    vt := if builder_slots.has(sid.id) {
-      ValType.Anyref
-    } else {
-      info.wasm_type
-    }
+    vt := slot_phys_vt(prepared, sid, builder_slots)
     repr := if builder_slots.has(sid.id) {
       ReprKind.OpaqueAnyref
     } else {
@@ -1002,11 +1028,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
 
   for sid in prepared.params {
     info := facts.slot_info(prepared, sid)
-    vt := if builder_slots.has(sid.id) {
-      ValType.Anyref
-    } else {
-      info.wasm_type
-    }
+    vt := slot_phys_vt(prepared, sid, builder_slots)
     repr := if builder_slots.has(sid.id) {
       ReprKind.OpaqueAnyref
     } else {
@@ -1025,11 +1047,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
 
   for sid in prepared.locals {
     info := facts.slot_info(prepared, sid)
-    vt := if builder_slots.has(sid.id) {
-      ValType.Anyref
-    } else {
-      info.wasm_type
-    }
+    vt := slot_phys_vt(prepared, sid, builder_slots)
     repr := if builder_slots.has(sid.id) {
       ReprKind.OpaqueAnyref
     } else {
@@ -1060,7 +1078,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     .None => case prepared.return_mono {
       .Void => [],
       .Never => [],
-      _ => [val_type_of_mono(func.return_ty, base_ctx.env)],
+      _ => [prepared_return_vt(prepared, base_ctx.env)],
     },
   }
   ctx := EmitCtx.{
@@ -1126,6 +1144,19 @@ fn builder_slot_ids(builtins: BuiltinRegistry) BuilderSlotIds {
 
 fn collect_vector_builder_slots(expr: PreparedExpr, builtins: BuiltinRegistry) Dict<Int, Bool> {
   collect_vector_builder_slots_expr(expr, builder_slot_ids(builtins), Dict.new())
+}
+
+// The authoritative physical Wasm type of a slot. A slot rewritten to a
+// transient vector/string builder is held as an opaque anyref; everything else
+// uses its assigned wasm_type. Both `emit_func` (declaring the function's ABI)
+// and the lib-export boundary wrapper derive param types through here so the
+// two never disagree.
+fn slot_phys_vt(prepared: PreparedFunc, sid: SlotId, builder_slots: Dict<Int, Bool>) ValType {
+  if builder_slots.has(sid.id) {
+    .Anyref
+  } else {
+    facts.slot_info(prepared, sid).wasm_type
+  }
 }
 
 fn collect_vector_builder_slots_expr(
