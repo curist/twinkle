@@ -1,0 +1,191 @@
+// Side-by-side Int/Bool parity across every typed-vector storage site: record
+// field layout + read, variant payload layout + read, structural equality over
+// records holding the vector, and gather on an already-typed (payload-extracted)
+// receiver. Each Bool site must route to the same family calls as its Int analogue
+// (get_bool/gather_bool/builder_freeze_bool mirroring get_i64/gather_i64/
+// builder_freeze_i64; record layout includes PVecBool alongside PVecI64).
+//
+//   target/twk build .../typed_bool_field_payload_probe.tw -o /tmp/p.wat
+//   grep -c rt_arr__get_bool    /tmp/p.wat   # == get_i64 count
+//   grep -c rt_arr__gather_bool /tmp/p.wat   # == gather_i64 count
+//
+// HISTORY: an earlier version of this probe was written with top-level statements
+// and reported that the Bool column "stays boxed" while Int types, attributing it
+// to residual Int-hardcoding. That was a misdiagnosis: typed-vector routing runs
+// per-function, so the Int analogue stays boxed at top level too. Moved into
+// functions, Bool reaches full parity with Int. Expected output:
+//   field=2016/32 eq=true/true payload=2016/32 gather=62/true
+type IntRec = .{ xs: Vector<Int> }
+
+type BoolRec = .{ bs: Vector<Bool> }
+
+type IntTag = { IPresent(Vector<Int>), IAbsent }
+
+type BoolTag = { BPresent(Vector<Bool>), BAbsent }
+
+// ── record field layout + field read ──
+fn int_field_read() Int {
+  c := IntRec.{
+    xs: collect i in range(64) {
+      i
+    },
+  }
+  s := 0
+
+  for i in range(c.xs.len()) {
+    s = s + c.xs[i]
+  }
+
+  s
+}
+
+fn bool_field_read() Int {
+  c := BoolRec.{
+    bs: collect i in range(64) {
+      i % 2 == 0
+    },
+  }
+  s := 0
+
+  for i in range(c.bs.len()) {
+    if c.bs[i] {
+      s = s + 1
+    }
+  }
+
+  s
+}
+
+// ── structural equality over records holding the vector ──
+fn int_eq() Bool {
+  a := IntRec.{
+    xs: collect i in range(64) {
+      i
+    },
+  }
+  b := IntRec.{
+    xs: collect i in range(64) {
+      i
+    },
+  }
+  a == b
+}
+
+fn bool_eq() Bool {
+  a := BoolRec.{
+    bs: collect i in range(64) {
+      i % 2 == 0
+    },
+  }
+  b := BoolRec.{
+    bs: collect i in range(64) {
+      i % 2 == 0
+    },
+  }
+  a == b
+}
+
+// ── variant payload layout + read ──
+fn int_payload_read() Int {
+  t: IntTag = .IPresent(
+    collect i in range(64) {
+      i
+    },
+  )
+  v := case t {
+    .IPresent(xs) => xs,
+    .IAbsent => [],
+  }
+  s := 0
+
+  for i in range(v.len()) {
+    s = s + v[i]
+  }
+
+  s
+}
+
+fn bool_payload_read() Int {
+  t: BoolTag = .BPresent(
+    collect i in range(64) {
+      i % 2 == 0
+    },
+  )
+  v := case t {
+    .BPresent(bs) => bs,
+    .BAbsent => [],
+  }
+  s := 0
+
+  for i in range(v.len()) {
+    if v[i] {
+      s = s + 1
+    }
+  }
+
+  s
+}
+
+// ── gather on an already-typed receiver ──
+// Gather routes to the typed variant only when its receiver is already typed
+// (result-propagation rule, NOT a fresh-producer whitelist): the column is built
+// by a param-driven collect into a typed payload, extracted, gathered, and stored
+// back into a typed payload. Both families must reach gather_i64 / gather_bool.
+fn int_make_col(n: Int) IntTag {
+  .IPresent(
+    collect i in range(n) {
+      i
+    },
+  )
+}
+
+fn int_gather_col(t: IntTag, idx: Vector<Int>) IntTag {
+  case t {
+    .IPresent(v) => .IPresent(v.gather(idx)),
+    .IAbsent => .IAbsent,
+  }
+}
+
+fn int_col_head(t: IntTag) Int {
+  v := case t {
+    .IPresent(xs) => xs,
+    .IAbsent => [],
+  }
+  v[0] + v[31]
+}
+
+fn bool_make_col(n: Int) BoolTag {
+  .BPresent(
+    collect i in range(n) {
+      i % 2 == 0
+    },
+  )
+}
+
+fn bool_gather_col(t: BoolTag, idx: Vector<Int>) BoolTag {
+  case t {
+    .BPresent(v) => .BPresent(v.gather(idx)),
+    .BAbsent => .BAbsent,
+  }
+}
+
+fn bool_col_head(t: BoolTag) Bool {
+  v := case t {
+    .BPresent(bs) => bs,
+    .BAbsent => [],
+  }
+  v[0]
+}
+
+gidx := collect i in range(32) {
+  i * 2
+}
+
+println("field=${int_field_read()}/${bool_field_read()}")
+println("eq=${int_eq()}/${bool_eq()}")
+println("payload=${int_payload_read()}/${bool_payload_read()}")
+println(
+  "gather=${int_col_head(int_gather_col(int_make_col(64), gidx))}/${bool_col_head(
+    bool_gather_col(bool_make_col(64), gidx),
+  )}",
+)

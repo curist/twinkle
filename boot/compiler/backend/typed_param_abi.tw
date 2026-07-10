@@ -1,0 +1,553 @@
+//! Cross-call typed-vector ABI analysis (Stage 2). Pure over PreparedFunc; no
+//! IR mutation here — emission and call rewriting live in the router.
+//!
+//! Answers, per function: which `Vector<Int>` params are used only in
+//! typed-compatible ways (so they can take a physical `PVecI64` ABI), and whether
+//! the function's return value is a typed `PVecI64` slot. A param is typeable iff
+//! its slot-group never escapes except by index/len/gather-read, return, or a
+//! store into a field/payload the whole-program analysis already typed — the SAME
+//! predicate route_func computes for a local producer, applied to a param slot
+//! (reused via `v_group_typeable`). Passing a typed param on to another function
+//! is not an escape: the direct-call boundary boxes it (S2.1 adapter) when the
+//! callee's ABI is still boxed, and Task 2.5 selects a typed variant when it is
+//! not.
+//!
+//! Payload/field typing and param typing are mutually recursive: a param stored
+//! into a payload is typeable only if that payload is typed, and a payload whose
+//! only producer is that param is typed only if the param is typeable. This is
+//! resolved co-inductively by `analyze_typed_repr`: start optimistically with all
+//! `Vector<Int>` params typeable, derive the typed field/payload sets (which now
+//! recognise typeable-param producers), recompute param typeability, and iterate
+//! — monotonically shrinking to a fixpoint. Sound because a typed payload always
+//! coerces at construction/extraction, and a param that escapes (e.g. into a
+//! closure env) is removed in the first round and its payload re-evaluated.
+
+use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotId}
+use compiler.backend.route_typed_vec.{
+  RouteIds, aliases_for, analyze_typed_fields, analyze_typed_payloads, bool_key_maps_equal,
+  build_copy_map, materialize_slot_repr, route_ids, slot_typed_after_route, v_group_typeable,
+}
+use compiler.backend.tailify.{prep_op_diverges}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.elem_family.{elem_family_of}
+use compiler.mono_type.{MonoType}
+
+pub type ParamAbi = .{
+  // func_id.id (as String) -> map of typeable param index -> family mono_key
+  typeable_params: Dict<String, Dict<Int, String>>,
+  // func_id.id (as String) -> the return family mono_key (absent = not typed)
+  typeable_return: Dict<String, String>,
+}
+
+pub type ReprAnalysis = .{
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+  param_abi: ParamAbi,
+  // func_id.id (as String) -> map of typeable capture index -> family mono_key
+  // (M1b). A captured typed vector read typed-only inside the closure body; the
+  // trampoline downcasts the anyref env slot to the family PVec.
+  capture_abi: Dict<String, Dict<Int, String>>,
+}
+
+// The family mono_key of a mono type that has a typed-vector representation, or
+// .None. Generalizes the old is_vector_int predicate over elem_family_of.
+fn family_key_of(mono: MonoType) String? {
+  case elem_family_of(mono) {
+    .Some(f) => .Some(f.mono_key),
+    .None => .None,
+  }
+}
+
+// The family mono_key if the given param slot has a typed-vector representation
+// AND its every use is typed-compatible (index/len/gather-read, typed
+// field/payload store, return), so the function could take it as a physical
+// family PVec. Params with no family, or with an escaping use, are .None.
+pub fn param_uses_typed_only(
+  pf: PreparedFunc,
+  param_slot_id: Int,
+  builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+) String? {
+  case pf.slots[param_slot_id] {
+    .Some(info) => case family_key_of(info.mono) {
+      .Some(fam_key) => {
+        ids := route_ids(builtins)
+        copy_map := build_copy_map(pf.body, Dict.new())
+        aliases := aliases_for(param_slot_id, copy_map)
+
+        // Empty `relaxed`: this analysis does not relax nested-capture escapes (a
+        // param/capture re-captured into another closure stays conservative).
+        if v_group_typeable(
+          pf.body,
+          aliases,
+          Dict.new(),
+          ids,
+          builtins,
+          pf.slots,
+          typed_fields,
+          typed_payloads,
+        ) {
+          .Some(fam_key)
+        } else {
+          .None
+        }
+      },
+      .None => .None,
+    },
+    .None => .None,
+  }
+}
+
+// Per-function typeable-param indices + return typeability, given the current
+// typed field/payload sets. One pass, no fixpoint (the driver iterates this).
+pub fn analyze_typed_params(
+  funcs: Vector<PreparedFunc>,
+  builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+) ParamAbi {
+  ids := route_ids(builtins)
+  typeable: Dict<String, Dict<Int, String>> = Dict.new()
+  ret: Dict<String, String> = Dict.new()
+
+  for pf in funcs {
+    key := "${pf.func_id.id}"
+    idxs: Dict<Int, String> = Dict.new()
+
+    for p, i in pf.params {
+      case param_uses_typed_only(pf, p.id, builtins, typed_fields, typed_payloads) {
+        .Some(fam_key) => idxs[i] = fam_key,
+        .None => {},
+      }
+    }
+
+    if idxs.keys().len() > 0 {
+      typeable[key] = idxs
+    }
+
+    case return_family(pf, ids, builtins, typed_fields, typed_payloads) {
+      .Some(fam_key) => ret[key] = fam_key,
+      .None => {},
+    }
+  }
+
+  .{ typeable_params: typeable, typeable_return: ret }
+}
+
+type MakeClosureSite = .{ lambda_id: Int, free_vars: Vector<SlotId> }
+
+// Collect every AMakeClosure site in a function body: the target lambda id and
+// the enclosing free-var slots feeding its captures (positional).
+fn collect_make_closure_sites(body: PreparedExpr, acc: Vector<MakeClosureSite>) Vector<
+  MakeClosureSite,
+> {
+  case body {
+    .Let(_, op, rest) => {
+      acc2 := make_closure_sites_op(op, acc)
+      collect_make_closure_sites(rest, acc2)
+    },
+    _ => acc,
+  }
+}
+
+fn make_closure_sites_op(op: PreparedOp, acc: Vector<MakeClosureSite>) Vector<MakeClosureSite> {
+  case op {
+    .AMakeClosure(fid, free_vars) => acc.append(.{ lambda_id: fid.id, free_vars }),
+    .AIf(_, then_e, else_e) => {
+      acc2 := collect_make_closure_sites(then_e, acc)
+      collect_make_closure_sites(else_e, acc2)
+    },
+    .AMatch(_, arms) => {
+      cur := acc
+
+      for arm in arms {
+        cur = collect_make_closure_sites(arm.body, cur)
+      }
+
+      cur
+    },
+    .ALoop(inner) => collect_make_closure_sites(inner, acc),
+    .ADefer(inner) => collect_make_closure_sites(inner, acc),
+    _ => acc,
+  }
+}
+
+// Condition 1 (M1b): per-lambda capture indices read typed-only inside the
+// closure body — the same predicate as a param, since a capture is a prepended
+// param. This set is independent of the capture ABI, so it is computed once and
+// reused as both the provisional fixpoint seed and the ceiling the support check
+// filters down from.
+pub fn condition1_capture_candidates(
+  funcs: Vector<PreparedFunc>,
+  builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+) Dict<String, Dict<Int, String>> {
+  out: Dict<String, Dict<Int, String>> = Dict.new()
+
+  for pf in funcs {
+    idxs: Dict<Int, String> = Dict.new()
+
+    for cap, i in pf.captures {
+      case param_uses_typed_only(pf, cap.id, builtins, typed_fields, typed_payloads) {
+        .Some(fam_key) => idxs[i] = fam_key,
+        .None => {},
+      }
+    }
+
+    if idxs.keys().len() > 0 {
+      out["${pf.func_id.id}"] = idxs
+    }
+  }
+
+  out
+}
+
+// Per-lambda typeable capture indices (M1b). A capture index is typed iff BOTH:
+//   (1) it is a Condition-1 candidate (passed in as `cand`), AND
+//   (2) at EVERY AMakeClosure site constructing that lambda, the enclosing free
+//       var feeding the capture is physically PVecI64 in the enclosing function,
+//       looked up in the materialized `slot_repr` (`"${func_id}:${slot_id}"`).
+// Condition (2) is the load-bearing soundness gate: without it, a capture would
+// be typed while the stored free var is a boxed PVec (a function return, a param,
+// a combinator result), and the trampoline downcast to PVecI64 would trap.
+//
+// `slot_repr` is materialized (route_typed_vec.materialize_slot_repr) from the
+// PREVIOUS round's capture_abi, so the support check sees relaxed captures — a
+// captured column typed only because its own capture is not an escape (C2)
+// resolves through the enclosing fixpoint instead of being rejected outright.
+pub fn analyze_typed_captures(
+  funcs: Vector<PreparedFunc>,
+  cand: Dict<String, Dict<Int, String>>,
+  slot_repr: Dict<String, Bool>,
+) Dict<String, Dict<Int, String>> {
+  // Condition 2: every construction site's free var must be a typed local.
+  unsupported: Dict<String, Dict<Int, Bool>> = Dict.new()
+  seen: Dict<String, Bool> = Dict.new()
+
+  for pf in funcs {
+    sites := collect_make_closure_sites(pf.body, [])
+
+    for site in sites {
+      lkey := "${site.lambda_id}"
+      seen[lkey] = true
+
+      case cand[lkey] {
+        .Some(idxs) => {
+          for i in idxs.keys() {
+            supported := i >= 0
+              and i < site.free_vars.len()
+              and slot_repr.has("${pf.func_id.id}:${site.free_vars[i].id}")
+
+            if !supported {
+              u := case unsupported[lkey] {
+                .Some(existing) => existing,
+                .None => Dict.new(),
+              }
+              u[i] = true
+              unsupported[lkey] = u
+            }
+          }
+        },
+        .None => {},
+      }
+    }
+  }
+
+  out: Dict<String, Dict<Int, String>> = Dict.new()
+
+  for lkey, idxs in cand {
+    // A lambda with no observed construction site cannot be verified — drop it.
+    if !seen.has(lkey) {
+      continue
+    }
+
+    keep: Dict<Int, String> = Dict.new()
+
+    for i, fam_key in idxs {
+      unsup := case unsupported[lkey] {
+        .Some(u) => u.has(i),
+        .None => false,
+      }
+
+      if !unsup {
+        keep[i] = fam_key
+      }
+    }
+
+    if keep.keys().len() > 0 {
+      out[lkey] = keep
+    }
+  }
+
+  out
+}
+
+// The return family mono_key iff the return type has a typed-vector family and
+// every returned atom is a slot route_func makes that family PVec — a typed
+// payload/field read or a typed builder-candidate local. Params are excluded: a
+// returned param is only physically typed once variant emission types it (not yet
+// done), so returning it typed would be unsound. Passing an empty typeable_return
+// to slot_typed_after_route conservatively breaks the return-chain circularity (a
+// function returning another typed-return call result is not itself counted).
+fn return_family(
+  pf: PreparedFunc,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+  typed_payloads: Dict<String, Bool>,
+) String? {
+  fam_key := try family_key_of(pf.return_mono)
+
+  slots := return_atom_slots(pf.body, [], builtins)
+
+  if slots.len() == 0 {
+    return .None
+  }
+
+  for s in slots {
+    if !slot_typed_after_route(pf, s, ids, builtins, typed_fields, typed_payloads, Dict.new()) {
+      return .None
+    }
+  }
+
+  .Some(fam_key)
+}
+
+// Collect the slot ids of every returned atom: tail `.Atom(ASlot)` and
+// `.Return(.Some(ASlot))`. A non-slot return atom (literal, global) yields no
+// slot and makes the caller treat the return as not-typed (empty => false).
+fn return_atom_slots(expr: PreparedExpr, acc: Vector<Int>, reg: BuiltinRegistry) Vector<Int> {
+  case expr {
+    .Let(_, op, body) => {
+      acc2 := return_atom_slots_op(op, acc, reg)
+
+      // If the op never falls through (all arms diverge, or a noreturn call), the
+      // body is dead code — do not collect its atoms. This drops both the dead
+      // trailing `Atom(r)` after an all-diverging match and a diverging arm's own
+      // `Let(t, error(...), Atom(t))` tail. A value-producing arm still reaches
+      // its `Return(Some(v))` (collected below) because that arm does not diverge.
+      if prep_op_diverges(op, reg) {
+        acc2
+      } else {
+        return_atom_slots(body, acc2, reg)
+      }
+    },
+    .Atom(a) => append_slot(a, acc),
+    .Return(.Some(a)) => append_slot(a, acc),
+    _ => acc,
+  }
+}
+
+fn return_atom_slots_op(op: PreparedOp, acc: Vector<Int>, reg: BuiltinRegistry) Vector<Int> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      acc2 := return_atom_slots(then_e, acc, reg)
+      return_atom_slots(else_e, acc2, reg)
+    },
+    .AMatch(_, arms) => {
+      cur := acc
+
+      for arm in arms {
+        cur = return_atom_slots(arm.body, cur, reg)
+      }
+
+      cur
+    },
+    .ALoop(inner) => return_atom_slots(inner, acc, reg),
+    .ADefer(inner) => return_atom_slots(inner, acc, reg),
+    _ => acc,
+  }
+}
+
+fn append_slot(a: PreparedAtom, acc: Vector<Int>) Vector<Int> {
+  case a {
+    .ASlot(s) => acc.append(s.id),
+    _ => acc,
+  }
+}
+
+// Optimistic seed: every typed-vector-family param of every function, keyed by
+// func id, mapping the param index to its family mono_key.
+fn all_vec_int_param_indices(funcs: Vector<PreparedFunc>) Dict<String, Dict<Int, String>> {
+  out: Dict<String, Dict<Int, String>> = Dict.new()
+
+  for pf in funcs {
+    idxs: Dict<Int, String> = Dict.new()
+
+    for p, i in pf.params {
+      case pf.slots[p.id] {
+        .Some(info) => case family_key_of(info.mono) {
+          .Some(fam_key) => idxs[i] = fam_key,
+          .None => {},
+        },
+        .None => {},
+      }
+    }
+
+    if idxs.keys().len() > 0 {
+      out["${pf.func_id.id}"] = idxs
+    }
+  }
+
+  out
+}
+
+fn param_maps_equal(a: Dict<String, Dict<Int, String>>, b: Dict<String, Dict<Int, String>>) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+
+  for k in a.keys() {
+    case b[k] {
+      .Some(bv) => case a[k] {
+        .Some(av) => if !fam_maps_equal(av, bv) {
+          return false
+        },
+        .None => return false,
+      },
+      .None => return false,
+    }
+  }
+
+  true
+}
+
+// Two index -> family_key maps are equal iff they have the same index set and
+// each index maps to the same family mono_key.
+fn fam_maps_equal(a: Dict<Int, String>, b: Dict<Int, String>) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+
+  for k, av in a {
+    case b[k] {
+      .Some(bv) => if av != bv {
+        return false
+      },
+      .None => return false,
+    }
+  }
+
+  true
+}
+
+// Joint greatest-fixpoint over (typed_fields, typed_payloads, typeable_params).
+// Starts with all Vector<Int> params optimistically typeable and shrinks the
+// param set until stable; the field/payload sets are a monotone function of it.
+pub fn analyze_typed_repr(
+  funcs: Vector<PreparedFunc>,
+  builtins: BuiltinRegistry,
+  first_user_tid: Int,
+) ReprAnalysis {
+  // A record-field store is non-coercing, so a field producer must already be
+  // physically the field's type. Two producer kinds qualify: a local builder/make
+  // candidate (always typed), and a typed-return call result (physically the family
+  // PVec via route_func's typed-return bridge) — e.g. the dataframe
+  // `Column.{ nulls: no_nulls(n) }` where `no_nulls` returns Vector.make. The
+  // latter makes typed_fields depend on typeable_return, which itself depends on
+  // typed_fields (a function returning a typed field read), so field typing joins
+  // the fixpoint. Seed with builder-only fields (empty typeable_return).
+  tf := analyze_typed_fields(funcs, builtins, Dict.new())
+  tp_params := all_vec_int_param_indices(funcs)
+  cap := funcs.len() + 4
+  round := 0
+  done := false
+  tpay: Dict<String, Bool> = Dict.new()
+  abi: ParamAbi = .{ typeable_params: Dict.new(), typeable_return: Dict.new() }
+
+  for !done {
+    tpay = analyze_typed_payloads(funcs, builtins, first_user_tid, tp_params)
+    abi = analyze_typed_params(funcs, builtins, tf, tpay)
+    new_tf := analyze_typed_fields(funcs, builtins, abi.typeable_return)
+
+    stable := param_maps_equal(abi.typeable_params, tp_params) and bool_key_maps_equal(new_tf, tf)
+
+    if stable or round >= cap {
+      tf = new_tf
+      done = true
+    } else {
+      tp_params = abi.typeable_params
+      tf = new_tf
+      round = round + 1
+    }
+  }
+
+  // Capture typeability is a pure downstream product of the converged typed sets
+  // + return ABI: nothing in the param/payload/return fixpoint above reads
+  // capture_abi, so resolving it as an inner greatest-fixpoint here is equivalent
+  // to folding it into one loop (its inputs are already stable).
+  //
+  // The support check needs to see RELAXED captures — a captured column is typed
+  // only because its own capture into the closure is not an escape (C2). So this
+  // iterates: materialize slot_repr from the current capture_abi, filter the
+  // Condition-1 ceiling by it, and repeat. Seeded with the full Condition-1 set
+  // (provisional-optimistic) and monotonically shrinking, because materialize is
+  // monotone in capture_abi (more relaxed captures -> more eligible_v), so
+  // `cand ∩ Cond2(materialize(·))` only loses entries once a support check fails.
+  // Only closure-constructing funcs are materialized (the only slot_repr keys the
+  // support check queries), keeping the per-round cost proportional to the
+  // closure surface.
+  ids := route_ids(builtins)
+  cand := condition1_capture_candidates(funcs, builtins, tf, tpay)
+
+  closure_funcs: Vector<PreparedFunc> = []
+
+  for pf in funcs {
+    if collect_make_closure_sites(pf.body, []).len() > 0 {
+      closure_funcs = .append(pf)
+    }
+  }
+
+  capture_abi := cand
+  cap_round := 0
+  cap_done := false
+  converged := false
+
+  for !cap_done {
+    slot_repr := materialize_slot_repr(
+      closure_funcs,
+      ids,
+      builtins,
+      tf,
+      tpay,
+      capture_abi,
+      abi.typeable_return,
+    )
+    new_cap := analyze_typed_captures(funcs, cand, slot_repr)
+
+    cond {
+      // Converged: new_cap == capture_abi means the slot_repr that produced it was
+      // materialized from capture_abi itself, so route_func's own compute_eligible_v
+      // under this capture_abi agrees with what the support check validated. Ship it.
+      param_maps_equal(new_cap, capture_abi) => {
+        converged = true
+        cap_done = true
+      },
+      cap_round >= cap => cap_done = true,
+      _ => {
+        capture_abi = new_cap
+        cap_round = cap_round + 1
+      },
+    }
+  }
+
+  // Fail closed (design §4). The fixpoint is provably monotone-decreasing, so this
+  // is a should-never-happen net: if the round cap is hit before stability, the
+  // last materialized slot_repr does NOT validate the final new_cap, so shipping it
+  // risks route_func typing a capture the support check never confirmed → invalid
+  // Wasm. Drop to the conservative boxed-capture ABI (no typed captures): route_func
+  // then types only local non-escaping producers + gather results whose lineage
+  // stays local, which is self-consistent under an empty capture ABI (the
+  // pre-capture-fixpoint plan). Emit a stderr diagnostic so non-convergence is
+  // noticed rather than silently costing the capture win.
+  if !converged {
+    eprintln(
+      "[typed-vector] capture typing did not converge within ${cap} rounds; falling back to boxed captures",
+    )
+    capture_abi = Dict.new()
+  }
+
+  .{ typed_fields: tf, typed_payloads: tpay, param_abi: abi, capture_abi }
+}

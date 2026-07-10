@@ -6,7 +6,7 @@
 
 **Architecture parent:** [../backend-anyref-elimination.md](../backend-anyref-elimination.md) — this plan delivers the `Vector<Int>` container family of that broader "make `anyref` exceptional" effort; the representation-boundary policy it defines governs how far this routing can safely extend.
 
-**Related plan:** [wasm-native-sort.md](wasm-native-sort.md) attacks the immediate `order_by` hotspot by sorting over dense runtime working sets. This plan is the broader representation fix: make typed vector access faster everywhere so idiomatic numeric collection code has better baseline performance.
+**Related plan:** [wasm-native-sort.md](archive/wasm-native-sort.md) attacks the immediate `order_by` hotspot by sorting over dense runtime working sets. This plan is the broader representation fix: make typed vector access faster everywhere so idiomatic numeric collection code has better baseline performance.
 
 ---
 
@@ -41,7 +41,7 @@ The same issue affects:
 
 ## Baseline metrics and symptoms
 
-From [wasm-native-sort.md](wasm-native-sort.md):
+From [wasm-native-sort.md](archive/wasm-native-sort.md):
 
 ```text
 N = 1000000
@@ -144,7 +144,7 @@ Cons:
 - Still pays one boxed read per input element during materialization.
 - Does not improve arbitrary user indexing outside the kernel.
 
-This is the near-term bridge used by [wasm-native-sort.md](wasm-native-sort.md).
+This is the near-term bridge used by [wasm-native-sort.md](archive/wasm-native-sort.md).
 
 ### Level 2 — True typed PVec representation
 
@@ -286,32 +286,140 @@ These should be visible in backend IR/planning, not hidden ad hoc in emitters.
 > **Progress (landed on `main`; last re-measured 2026-07-04).** The `Vector<Int>`
 > track is well underway; per-phase status is tagged on each header below.
 > Landed: typed `PVecI64` family + intra-function routing (S1/S2.0, see
-> [typed-vector-spike.md](typed-vector-spike.md)), boxed-boundary adapters for
+> [typed-vector-spike.md](archive/typed-vector-spike.md)), boxed-boundary adapters for
 > return + direct-call args (S2.1), and typed **record fields** (S2.2, see
 > [../../archive/typed-record-fields.md](../../archive/typed-record-fields.md)). The
-> native value-sort kernel ([native-typed-value-sort.md](native-typed-value-sort.md))
+> native value-sort kernel ([native-typed-value-sort.md](archive/native-typed-value-sort.md))
 > realizes the Phase-2 dense working set.
 >
 > **Update (2026-07-05).** Two things happened since. (1) A **uniform-typing**
 > attempt (make `Vector<Int>` physically `PVecI64` *everywhere*) was built and
 > **reverted** — it made captured-vector reads O(n) per access via the `anyref`
-> closure env (post-mortem: [m1a-anyref-readback-investigation.md](m1a-anyref-readback-investigation.md)).
+> closure env (post-mortem: [m1a-anyref-readback-investigation.md](archive/m1a-anyref-readback-investigation.md)).
 > The corrected model is **storage-site typing**: `TypedVec`/`PVecI64` is a
 > per-site optimization, never a global property
 > ([../representation-boundary-policy.md](../representation-boundary-policy.md)).
 > (2) **Typed variant payloads landed** (Milestone A, branch `typed-vector-repr-m1a`,
-> [storage-site-typed-vectors.md](storage-site-typed-vectors.md)) — capture-safe,
+> [storage-site-typed-vectors.md](archive/storage-site-typed-vectors.md)) — capture-safe,
 > no pathology. **But `order_by` is still unchanged**: the conservative producer
 > eligibility doesn't type the *real* dataframe `IntCol` columns.
 >
-> **Open next, in priority order:**
-> 1. **Broaden producer eligibility** so real dataframe columns (built cross-fn /
->    via combinators / passed as params) get typed — this is what actually moves
->    `order_by`'s gather/take/direct-read phases.
-> 2. **M1b — typed closure environments** (per-capture-repr env layout) so the
->    `sort_by` comparator reads its captured key column typed — the other half of
->    `order_by`.
+> **⚡ UPDATE (2026-07-08): both of the below LANDED; the `order_by` sort win is
+> in.** On branch `typed-vector-crossfn-abi`: cross-fn ABI (B2 accessor returns,
+> B3/B4 copy propagation) broadened producer eligibility, and the two typedness
+> oracles were unified so captured columns type without invalid Wasm (C2 — the
+> [unify-typedness-oracle-design.md](archive/unify-typedness-oracle-design.md) work,
+> `fd3da98f`…`5776e82b`). `sort idx by amount` ~1400→~775ms, full `order_by`
+> ~2.3s→~1.84s @ 1M. **The current per-boundary status of record is now
+> [boundary-tracklist.md](boundary-tracklist.md)** — the per-phase notes below this
+> line are pre-C2 history. Remaining headline lever: **B8** (typed `take`).
+>
+> **Open next, in priority order (pre-2026-07-08 — items 1 & 2 now done):**
+> 1. ~~**Broaden producer eligibility**~~ ✅ (cross-fn ABI).
+> 2. ~~**M1b — typed closure environments**~~ ✅ (local capture C1 + captured
+>    columns C2).
 > Typed combinators (Phase 5) remain useful but secondary.
+
+> **Typed-return ABI bridge landed (2026-07-06, branch `typed-vector-crossfn-abi`).**
+> `PreparedFunc.phys_return: ValType?` lets a function returning a typed slot
+> expose a physical `PVecI64` result ABI (no boundary box); emit routes such a
+> function's body through `emit_tail_expr` so returns coerce to the physical type
+> (a no-op). `typeable_return` is computed via the unified `slot_typed_after_route`
+> predicate (payload/field read, builder candidate, or typed-return call result);
+> route_func sets `phys_return`, types typed-return call results (`keys :=
+> as_ints(col) → PVecI64`), and `analyze_typed_captures` supports capturing them.
+> Self-host fixed point; 2973 tests. **Sound but currently inert on the dataframe:
+> `as_ints` returns a `case`-result slot, not the payload binding, and route_func
+> does not yet type match/if results.** The remaining piece to activate the
+> ~1343ms dataframe sort is **control-flow-result typing**: type a match/if result
+> whose arms all return typed slots (linking the arm-result and result slots),
+> after which `as_ints` returns typed, `keys` is typed, and M1b's already-landed
+> capture routing fires on the comparator.
+>
+> **Control-flow-result-typing attempt (2026-07-06) — routing works, blocked on an
+> emit coercion; reverted to keep the branch green.** A full routing pass was
+> written and self-host-clean: `slot_typed_after_route` recognises a match/if
+> result whose arms yield typed sources (so `return_is_typed(as_ints)` fires);
+> `route_func` retypes the result slot AND the typed arm atoms to `PVecI64`; the
+> escape check relaxes result-position atoms. It correctly types `as_ints`'s `v`
+> (payload read) and its `case`-result slot. **But it produces invalid wasm:** the
+> match/if *arm* store coerces the arm value to the result **mono** (`Vector<Int>`
+> → boxed `PVec`) via `emit_expr(arm, result_mono)`, boxing the already-`PVecI64`
+> arm value and storing it into the now-`PVecI64` result local (a type mismatch;
+> the dataframe run traps). This is the **4th** emit site (after function return,
+> gather result, and match arm) that coerces to a mono-derived physical type
+> instead of the retyped slot's `wasm_type`. The fix is an **`expected_vt`
+> physical-override on the emit tail-coercion path** (`emit_if_op`/`emit_match_op`
+> already receive `result_vt`; thread it into the arm's tail
+> `emit_atom_for_expected` so a `PVecI64` arm coerces to `PVecI64` — a no-op —
+> instead of boxing). Once that lands, re-apply the control-flow-result routing and
+> the dataframe sort should drop (as_ints→typed, keys→typed, M1b capture fires).
+
+> **M1b typed closure captures — local-capture increment landed (2026-07-06,
+> branch `typed-vector-crossfn-abi`).** A `Vector<Int>` captured into a closure
+> and read via index/len only now flows typed through the (trampoline-private)
+> anyref env: the trampoline downcasts it `anyref→PVecI64` (O(1), no rebuild —
+> the m1a pathology was uniform-typing's `unbox_i64`, avoided here), so a sort
+> comparator reads the captured key column via `get_i64`. Gated on a two-part
+> soundness check (`analyze_typed_captures`): the capture is read typed-only in
+> the lambda AND at every construction site the enclosing free var is a typed
+> LOCAL producer (`free_var_typed_local`) — a boxed free var (function return /
+> param / combinator result) must not type the capture or the downcast traps.
+> Reuses the param-ABI machinery (a capture is a param across the `AMakeClosure`
+> edge) plus a `relaxed` escape-guard threaded through the classifiers.
+> **Win:** a typed-local key sort @ N=1M ~1276→**748ms** (~41%). Self-host fixed
+> point; 2973 tests. **Not yet the dataframe order_by:** its `keys :=
+> column.as_ints(amount_col)` is a boxed function return, so the capture stays
+> boxed (correctly). Closing that needs the **typed-return bridge** (`as_ints`
+> returns `PVecI64`) — the next increment — after which the column reaches the
+> comparator typed and the ~1343ms dataframe sort drops.
+
+> **Cross-fn typed-vector ABI — Stage 2 joint fixpoint landed (2026-07-06,
+> branch `typed-vector-crossfn-abi`).** The plan's Stage 2 as written could not
+> type the real dataframe `ColData.IntCol` (payload typing and param typing are
+> mutually circular). Resolved with a co-inductive **greatest fixpoint**
+> (`analyze_typed_repr` in typed_param_abi.tw): a typeable param stored into a
+> payload is a clean typed producer, so `int_col(values)` → `.IntCol(values)`
+> types the payload even with no direct `collect` producer. Fields stay
+> builder-only (a field store inserts no coercion; only variant payloads coerce).
+> Self-host green, 2971 tests.
+>
+> **Effect:** the dataframe Int column now gathers typed (`rt_arr__gather_i64`).
+> gather_compare @ N=1M: native gather 3 columns ~467→391ms, table.take
+> ~471→418ms. order_by breakdown @ N=1M: full order_by ~2403→2304ms; `table.take`
+> ~471→418ms. **The sort (1343ms) dominates order_by and is unchanged** — it needs
+> the typed closure env (M1b), unblocked by this work but a separate effort. One
+> residual cost: `int_col` still `unbox_i64`s its boxed param into the typed
+> payload once per column build (build path, not the order_by metric); the pending
+> `f$i64` variant emission (plan Tasks 2.3–2.5) removes it by passing typed args.
+
+> **Cross-fn typed-vector ABI — Stage 1 landed + Checkpoint A (2026-07-06,
+> branch `typed-vector-crossfn-abi`).** Stage 1 of
+> [crossfn-typed-vector-abi-plan.md](archive/crossfn-typed-vector-abi-plan.md) added a
+> typed `gather_i64` runtime op (+ `builder_push_i64_raw`) and routes
+> `gather(v, idx)` → `gather_i64` when the receiver `v` is already a typed
+> `PVecI64` (escape whitelist + gather-result eligibility fixpoint + an emit fix
+> so the typed result is not re-boxed). **Proven end-to-end** by
+> `examples/performance/sort-bench/typed_gather_probe.tw` (a `collect`→`.IntCol`
+> payload gathered → `rt_arr__gather_i64`, no boxed gather, correct result) and a
+> routing suite (`boot/tests/suites/route_typed_vec_suite.tw`); 2968 boot tests +
+> self-host green.
+>
+> **Checkpoint A measurement: the dataframe gather did NOT move — as predicted by
+> the note above.** Building `examples/performance/dataframe/bench/gather_compare.tw`
+> to WAT shows **0 `rt_arr__gather_i64`, 7 boxed `rt_arr__gather`**. Root cause
+> (verified in code): the real `ColData.IntCol` payload is never typed, because
+> every column is built via `column.int_col(values: Vector<Int>)` (`frame/column.tw:25`)
+> — a **boxed param** producer — and `gen.table` feeds it `column.int_col(amounts)`
+> (`frame/gen.tw:31`). `analyze_typed_payloads` only marks a payload typed from a
+> clean `builder_freeze`→`.IntCol` producer; there is none, so `column.gather`'s
+> `v` is not `eligible_v` and the swap never fires. **Stage 1's dataframe win is
+> therefore gated on Stage 2** (typed param/return ABI): once `int_col`'s `values`
+> param can be a typed `PVecI64` clean producer, the payload types and Stage 1's
+> gather routing fires. Stage 1 is correct, self-contained, and a necessary
+> prerequisite (`gather_i64` must exist for Stage 2 to route to), but yields no
+> standalone dataframe delta. gather_compare @ N=1M (unchanged, boxed): native
+> gather amount ~78ms, native gather 3 columns ~468ms, native table.take ~471ms.
 
 ### Implementation map (where the landed routing lives)
 
@@ -319,7 +427,7 @@ Routing runs **after** boundary insertion + repr assignment
 (`boot/compiler/backend/prepare.tw` calls `route_typed_vectors` last), so the
 pass must reproduce how the boxed builder is already represented — that is where
 the subtlety is (see the "three fixes" gotchas in
-[typed-vector-spike.md](typed-vector-spike.md)).
+[typed-vector-spike.md](archive/typed-vector-spike.md)).
 
 - `boot/compiler/backend/route_typed_vec.tw` — **the pass.** Per function: find a
   `collect`-built `Vector<Int>` (`v = builder_freeze(b)`), escape-analyze `v`
@@ -367,7 +475,7 @@ Record numbers in this plan and `docs/plans/performance/dataframe/friction-log.m
 
 ### Phase 2 — Dense i64 working-set helper for sort kernels — ✅ done (native value-sort kernel)
 
-As part of [wasm-native-sort.md](wasm-native-sort.md), implement helpers that materialize `Vector<Int>` into a dense i64 working array inside the runtime sort. This gives immediate value and validates unboxing/fill loops.
+As part of [wasm-native-sort.md](archive/wasm-native-sort.md), implement helpers that materialize `Vector<Int>` into a dense i64 working array inside the runtime sort. This gives immediate value and validates unboxing/fill loops.
 
 ### Phase 3 — Backend representation enum for typed vectors — ✅ done (S2.0 repr tags + S2.2 verifier check)
 

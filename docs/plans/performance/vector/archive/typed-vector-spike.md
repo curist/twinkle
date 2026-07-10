@@ -2,7 +2,7 @@
 
 **Status:** ✅ complete / landed (S1 + S2.0; the premise held — ~6.8× faster
 random reads). This was the first concrete step of the
-[typed-vector-representation.md](typed-vector-representation.md) master track,
+[typed-vector-representation.md](../typed-vector-representation.md) master track,
 chosen over a full upfront plan to *measure the premise before committing
 multi-week effort*. Ongoing typed-vector work now lives under that master plan
 (S2.1 boundary adapters, S2.2 record fields landed since). Retained as the

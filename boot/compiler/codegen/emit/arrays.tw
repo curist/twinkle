@@ -10,6 +10,7 @@ use compiler.codegen.emit.layout_helpers.{get_sum_layout_ctx}
 use compiler.codegen.emit.variants.{is_nullable_extern_option}
 use compiler.codegen.wasm_ir.{Instr, ValType}
 use compiler.codegen.wasm_layout.{mono_to_key, val_type_of_mono}
+use compiler.elem_family.{pvec_family_of}
 use compiler.mono_type.{MonoType}
 
 pub type ArrayEmitFns = .{
@@ -18,13 +19,6 @@ pub type ArrayEmitFns = .{
   atom_mono: fn(PreparedAtom, EmitCtx) MonoType,
   emit_checked_i32_narrow: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
   emit_erased_container_ingress: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
-}
-
-fn is_pvec_i64(vt: ValType) Bool {
-  case vt {
-    .Ref(_, .Named(name)) => name == "rt_types__PVecI64",
-    _ => false,
-  }
 }
 
 pub fn emit_array_literal(
@@ -106,23 +100,27 @@ pub fn emit_index_op(
       // get_i64 — no anyref egress, no BoxedInt pointer-chase.
       base_vt := fns.atom_val_type(base, ctx)
 
-      if is_pvec_i64(base_vt) {
-        out := fns.emit_atom(index, ctx, buf).append(.I64Const(0)).append(.I64GeS)
-        out = fns.emit_atom(index, ctx, out)
-        out = fns.emit_atom(base, ctx, out)
-        out = .append(.RefAsNonNull).append(.StructGet("rt_types__PVecI64", 0)).append(
-          .I64ExtendI32U,
-        ).append(.I64LtS).append(.I32And).append(.I32Eqz).append(.If(.None, [.Unreachable], []))
-        out = fns.emit_atom(base, ctx, out)
-        out = fns.emit_checked_i32_narrow(index, ctx, out)
-        out = .append(.Call("rt_arr__get_i64"))
+      case pvec_family_of(base_vt) {
+        .Some(fam) => {
+          out := fns.emit_atom(index, ctx, buf).append(.I64Const(0)).append(.I64GeS)
+          out = fns.emit_atom(index, ctx, out)
+          out = fns.emit_atom(base, ctx, out)
+          out = .append(.RefAsNonNull).append(.StructGet(fam.pvec_type, 0)).append(.I64ExtendI32U).append(
+            .I64LtS,
+          ).append(.I32And).append(.I32Eqz).append(.If(.None, [.Unreachable], []))
+          out = fns.emit_atom(base, ctx, out)
+          out = fns.emit_checked_i32_narrow(index, ctx, out)
+          out = .append(.Call(fam.get_call))
 
-        // get_i64 yields i64; coerce to the expected slot type (identity when
-        // the result stays i64 — the win; boxes only if the slot was erased).
-        return case result_vt {
-          .Some(expected_vt) => emit_coerce_stack(.I64, expected_vt, result_ty, ctx, out),
-          .None => out,
-        }
+          // get_call yields the family's element wasm type; coerce to the
+          // expected slot type (identity when the result stays that type — the
+          // win; boxes only if the slot was erased).
+          return case result_vt {
+            .Some(expected_vt) => emit_coerce_stack(fam.elem_wasm, expected_vt, result_ty, ctx, out),
+            .None => out,
+          }
+        },
+        .None => {},
       }
 
       // Vector indexing returns erased anyref from rt_arr__get. Cast/unbox here

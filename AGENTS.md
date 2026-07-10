@@ -32,6 +32,16 @@ target/twk build some/file.tw -o /tmp/debug.wat    # any entry file
 This is useful for inspecting generated code, tracing Wasm function indices
 from runtime stack traces, and verifying codegen correctness.
 
+To inspect one function without grepping a multi-thousand-line dump, use
+`twk wat` (names in the WAT are mangled, so `--func` matches a substring):
+```bash
+target/twk wat some/file.tw --func sort_by          # full WAT of matching functions
+target/twk wat some/file.tw --func sort_by --list   # just the matching header lines (find the mangled name)
+target/twk wat some/file.tw --func sort_by --calls  # just the call targets inside them (which ops it uses)
+```
+Prefix with `TWINKLE_VERIFY_LEVEL=basic` to dump codegen even when the backend
+verifier rejects the module.
+
 ### Bootstrap the boot compiler
 ```bash
 cargo run --release -- build boot/main.tw -o target/boot-main.wasm

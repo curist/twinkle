@@ -1,0 +1,24 @@
+// Track A boxed-boundary probe: a typed `Vector.make`-produced PVecBool that is
+// both read by index (stays typed) and passed to a normal `Vector<Bool>` parameter
+// must box at that call boundary. Inspect WAT for both `rt_arr__make_bool` /
+// `rt_arr__get_bool` (typed producer + read) and `rt_arr__box_bool` (boundary box);
+// no PVecBool is passed directly as a normal Vector<Bool> parameter.
+//
+// Typed-vector routing runs per-function (top-level statements are not routed), so
+// the producer lives in a function.
+fn any_true(flags: Vector<Bool>) Bool {
+  for f in flags {
+    if f {
+      return true
+    }
+  }
+  false
+}
+
+fn make_read_and_pass() Bool {
+  xs := Vector.make(8, false)
+  head := xs[0]
+  head or any_true(xs)
+}
+
+println(make_read_and_pass().to_string())

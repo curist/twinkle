@@ -86,6 +86,14 @@ fn pvec_i64_() ValType {
   ref_nn("rt_types__PVecI64")
 }
 
+fn pvec_bool_n() ValType {
+  ref_null("rt_types__PVecBool")
+}
+
+fn pvec_bool_() ValType {
+  ref_nn("rt_types__PVecBool")
+}
+
 fn dict_n() ValType {
   ref_null("rt_types__PDict")
 }
@@ -135,6 +143,7 @@ fn builtin_abi(name: String) AbiContract {
     "vector$slice" => abi([pvec_n(), .I32, .I32], [pvec_()]),
     "vector$drop_last" => abi([pvec_n()], [pvec_()]),
     "vector$gather" => abi([pvec_n(), pvec_n()], [pvec_()]),
+    "vector$gather_i64" => abi([pvec_i64_n(), pvec_n()], [pvec_i64_()]),
     "vector$sort_i64" => abi([pvec_n()], [pvec_()]),
     "vector$sort_f64" => abi([pvec_n()], [pvec_()]),
     "vector$vec_i64_roundtrip" => abi([pvec_n()], [pvec_()]),
@@ -143,6 +152,13 @@ fn builtin_abi(name: String) AbiContract {
     "vector$builder_new_i64" => abi([], [arr_()]),
     "vector$builder_push_i64" => abi([arr_n(), .Anyref], []),
     "vector$builder_freeze_i64" => abi([arr_n()], [pvec_i64_()]),
+    "vector$len_bool" => abi([pvec_bool_n()], [.I32]),
+    "vector$get_bool" => abi([pvec_bool_n(), .I32], [.I32]),
+    "vector$builder_new_bool" => abi([], [arr_()]),
+    "vector$builder_push_bool" => abi([arr_n(), .Anyref], []),
+    "vector$builder_freeze_bool" => abi([arr_n()], [pvec_bool_()]),
+    "vector$gather_bool" => abi([pvec_bool_n(), pvec_n()], [pvec_bool_()]),
+    "vector$vec_bool_roundtrip" => abi([pvec_n()], [pvec_()]),
     "vector$builder_new" => abi([], [arr_()]),
     "vector$builder_push" => abi([arr_n(), .Anyref], []),
     "vector$builder_freeze" => abi([arr_n()], [pvec_()]),
@@ -351,6 +367,15 @@ pub fn id(reg: BuiltinRegistry, name: String) FuncId {
 
 pub fn entry(reg: BuiltinRegistry, func_id: FuncId) BuiltinEntry? {
   reg.by_id[func_id.id]
+}
+
+// True if the builtin never returns (its call diverges). Today only `error`
+// (canonical rt.core `trap`). Used by the noreturn-aware divergence predicate.
+pub fn is_noreturn(reg: BuiltinRegistry, fid: FuncId) Bool {
+  case reg.by_id[fid.id] {
+    .Some(e) => e.name == "error",
+    .None => false,
+  }
 }
 
 pub fn with_canonical(reg: BuiltinRegistry, canonical: String, internal: String) BuiltinRegistry {
@@ -574,6 +599,20 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     intr("float$min", .Some("Float.min")),
     intr("float$max", .Some("Float.max")),
     intr("float$round", .Some("Float.round")),
+    // Appended at end to preserve FuncId assignment of earlier builtins.
+    rt("vector$gather_i64", "rt.arr", "gather_i64", .None),
+    rt("vector$len_bool", "rt.arr", "len_bool", .None),
+    rt("vector$get_bool", "rt.arr", "get_bool", .None),
+    rt("vector$builder_new_bool", "rt.arr", "builder_new_bool", .None),
+    rt("vector$builder_push_bool", "rt.arr", "builder_push_bool", .None),
+    rt("vector$builder_freeze_bool", "rt.arr", "builder_freeze_bool", .None),
+    rt("vector$gather_bool", "rt.arr", "gather_bool", .None),
+    rt(
+      "vector$vec_bool_roundtrip",
+      "rt.arr",
+      "vec_bool_roundtrip",
+      .Some("Vector.vec_bool_roundtrip"),
+    ),
   ]
 }
 

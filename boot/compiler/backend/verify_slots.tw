@@ -8,6 +8,7 @@ use compiler.backend.verify_common.{
 }
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_type_util.{val_type_eq}
+use compiler.elem_family.{elem_family_of}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
 
@@ -171,7 +172,7 @@ fn verify_slot_metadata(pf: PreparedFunc, info: SlotInfo, env: ResolvedEnv) Void
   if !val_type_eq(info.wasm_type, expected) {
     // Typed-vector representation: route_typed_vectors may physically store a
     // Vector<Int> slot as PVecI64, which expected_wasm_type derives as PVec.
-    if is_typed_vec_i64(info.wasm_type, info.mono) {
+    if is_typed_vec(info.wasm_type, info.mono) {
       return .Ok({})
     }
 
@@ -187,14 +188,12 @@ fn verify_slot_metadata(pf: PreparedFunc, info: SlotInfo, env: ResolvedEnv) Void
   .Ok({})
 }
 
-fn is_typed_vec_i64(wasm_type: ValType, mono: MonoType) Bool {
-  is_pvec_i64 := case wasm_type {
-    .Ref(_, .Named(name)) => name == "rt_types__PVecI64",
-    _ => false,
+fn is_typed_vec(wasm_type: ValType, mono: MonoType) Bool {
+  case elem_family_of(mono) {
+    .Some(f) => case wasm_type {
+      .Ref(_, .Named(name)) => name == f.pvec_type,
+      _ => false,
+    },
+    .None => false,
   }
-  is_int_vec := case mono {
-    .Vector(.Int) => true,
-    _ => false,
-  }
-  is_pvec_i64 and is_int_vec
 }

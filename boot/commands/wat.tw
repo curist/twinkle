@@ -1,0 +1,145 @@
+//! WAT command: compile and print the linked WAT, optionally filtered to the
+//! functions whose (mangled) name contains a substring — the everyday "show me
+//! the codegen for foo" view without hand-rolling awk over a multi-thousand-line
+//! dump. Names in the WAT are mangled (`$user__$f361_sort_by__Int`,
+//! `$rt_arr__gather_i64`), so the match is a plain substring over the emitted
+//! name: `twk wat foo.tw --func sort_by` finds it.
+//!
+//! To dump codegen for a module that fails the backend verifier, run with
+//! `TWINKLE_VERIFY_LEVEL=basic` (the same escape hatch used elsewhere).
+
+use @std.proc
+
+use commands.common.{exit_usage_error, format_compile_error, get_positional, print_warnings}
+use compiler.pipeline
+use lib.argparse.app.{ParseResult}
+
+// Net parenthesis depth change on a WAT line, skipping parens inside "..."
+// string literals so function extraction by paren balance stays correct even if
+// a body ever carries a string.
+fn net_parens(line: String) Int {
+  depth := 0
+  in_string := false
+  i := 0
+  n := line.len()
+
+  for i < n {
+    c := line[i]
+
+    if in_string {
+      if c == 92 {
+        // backslash: skip the escaped byte
+        i = i + 1
+      } else if c == 34 {
+        in_string = false
+      }
+    } else if c == 34 {
+      in_string = true
+    } else if c == 40 {
+      depth = depth + 1
+    } else if c == 41 {
+      depth = depth - 1
+    }
+
+    i = i + 1
+  }
+
+  depth
+}
+
+// WAT emits every top-level function definition at a fixed two-space indent.
+fn is_func_header(line: String) Bool {
+  line.starts_with("  (func ")
+}
+
+fn emit_func(body: Vector<String>, list_only: Bool, calls_only: Bool) {
+  if list_only {
+    // Header line only — the quickest way to discover the mangled name.
+    println(body[0])
+    return
+  }
+
+  if calls_only {
+    println(body[0])
+
+    for line in body {
+      trimmed := line.trim()
+
+      if trimmed.starts_with("call ") or trimmed.starts_with("call_indirect") {
+        println("  ${trimmed}")
+      }
+    }
+
+    println("")
+    return
+  }
+
+  for line in body {
+    println(line)
+  }
+
+  println("")
+}
+
+pub fn run_wat_command(parsed: ParseResult) {
+  file := case get_positional(parsed, 0, "file") {
+    .Ok(path) => path,
+    .Err(msg) => exit_usage_error(msg),
+  }
+  artifacts := case pipeline.compile_entry_path(file) {
+    .Ok(result) => result,
+    .Err(err) => {
+      eprintln(format_compile_error(err))
+      proc.exit(1)
+    },
+  }
+  print_warnings(artifacts.warnings)
+
+  wat := pipeline.emit_wat(artifacts)
+  needle := case parsed.get_option("func") {
+    .Some(n) => n,
+    .None => "",
+  }
+
+  // No --func filter: behave like `ir --wat` and print the whole module.
+  if needle == "" {
+    print(wat)
+    return
+  }
+
+  lines := wat.lines()
+  list_only := parsed.has_flag("list")
+  calls_only := parsed.has_flag("calls")
+  matched := 0
+  i := 0
+  n := lines.len()
+
+  for i < n {
+    line := lines[i]
+
+    if is_func_header(line) and line.contains(needle) {
+      matched = matched + 1
+
+      // Capture the whole `(func ...)` block by paren balance.
+      body: Vector<String> = [line]
+      depth := net_parens(line)
+      j := i + 1
+
+      for j < n and depth > 0 {
+        body = .append(lines[j])
+        depth = depth + net_parens(lines[j])
+        j = j + 1
+      }
+
+      emit_func(body, list_only, calls_only)
+      i = j
+    } else {
+      i = i + 1
+    }
+  }
+
+  if matched == 0 {
+    eprintln("wat: no function whose mangled name contains '${needle}'")
+    proc.exit(1)
+  }
+}

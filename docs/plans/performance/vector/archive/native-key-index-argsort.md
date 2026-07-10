@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** optional transparent fast path, not the primary `order_by` performance plan. The main plan is [generic-sort-by-vector-read-perf.md](generic-sort-by-vector-read-perf.md), which targets generic callback sorting and indexed vector reads so idiomatic side-effecting comparators remain competitive. This plan applies the native dense typed working-set model only to conservatively recognized pure key-index `sort_by` shapes.
+**Status:** optional transparent fast path, not the primary `order_by` performance plan. The main plan is [generic-sort-by-vector-read-perf.md](../generic-sort-by-vector-read-perf.md), which targets generic callback sorting and indexed vector reads so idiomatic side-effecting comparators remain competitive. This plan applies the native dense typed working-set model only to conservatively recognized pure key-index `sort_by` shapes.
 
 **Goal:** Make idiomatic Twinkle dataframe code fast without asking users or dataframe authors to call a performance-specialized `argsort` API. The source should remain normal comparator-based code:
 

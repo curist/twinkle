@@ -152,4 +152,9 @@ pub type PreparedFunc = .{
   slots: Dict<Int, SlotInfo>,
   body: PreparedExpr,
   return_mono: MonoType,
+  // Physical return-ABI override (Task 2.4 / typed-return bridge). When .Some(vt)
+  // the function's wasm result type is `vt` (e.g. PVecI64) instead of the boxed
+  // representation derived from `return_mono`, and the return coercion targets it.
+  // .None => derive from return_mono (the default for every function).
+  phys_return: ValType?,
 }

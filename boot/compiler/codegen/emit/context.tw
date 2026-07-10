@@ -3,6 +3,7 @@
 use compiler.backend.prepared_ir.{PreparedFunc, ReprKind, SlotId}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
+use compiler.codegen.wasm_layout.{val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.core_ir.{ExternImport, FuncId, LocalId}
 use compiler.mono_type.{MonoType}
@@ -17,6 +18,22 @@ pub type LocalEntry = .{
 }
 
 pub type LabelPair = .{ break_label: String, continue_label: String }
+
+// The expected shape of a value at an emit destination: its physical Wasm type
+// (`.None` for a no-result position — Void/Never — where no coercion is emitted)
+// and its mono, kept only as a hint for emit_coerce_stack instruction selection.
+pub type Expected = .{ vt: ValType?, mono: MonoType }
+
+// Build the mono-derived Expected. Never/Void carry no vt because
+// val_type_of_mono(.Never) hard-errors; those positions are gated upstream by
+// the existing .Void/.Never match arms in emit_expr/emit_atom_for_expected.
+pub fn expected(mono: MonoType, env: ResolvedEnv) Expected {
+  case mono {
+    .Void => .{ vt: .None, mono },
+    .Never => .{ vt: .None, mono },
+    _ => .{ vt: .Some(val_type_of_mono(mono, env)), mono },
+  }
+}
 
 // Typed tag for intrinsic dispatch — avoids string matching in emit_intrinsic_call.
 pub type IntrinsicTag = {

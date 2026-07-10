@@ -2,8 +2,8 @@
 
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedMatchArm, PreparedPattern}
 use compiler.codegen.dense_table_plan.{dense_table_plan}
-use compiler.codegen.emit.context.{EmitCtx}
-use compiler.codegen.emit.control_flow.{append_result_store}
+use compiler.codegen.emit.context.{EmitCtx, Expected, expected}
+use compiler.codegen.emit.control_flow.{append_result_store, arm_expected}
 use compiler.codegen.emit.helpers.{all_arms_diverge, expr_always_diverges, pattern_is_trivial}
 use compiler.codegen.emit.layout_helpers.{cached_layout_of, get_sum_layout_ctx}
 use compiler.codegen.wasm_ir.{Instr, ValType}
@@ -11,7 +11,7 @@ use compiler.mono_type.{MonoType}
 
 pub type MatchEmitFns = .{
   emit_atom: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
-  emit_expr: fn(PreparedExpr, MonoType, EmitCtx, Vector<Instr>) Vector<Instr>,
+  emit_expr: fn(PreparedExpr, Expected, EmitCtx, Vector<Instr>) Vector<Instr>,
   match_scrutinee_mono: fn(PreparedAtom, EmitCtx) MonoType,
   emit_pattern_condition: fn(PreparedPattern, Vector<Instr>, MonoType, EmitCtx, Vector<Instr>) Vector<
     Instr,
@@ -28,6 +28,7 @@ type MatchCtx = .{
   scrutinee_instrs: Vector<Instr>,
   scrutinee_mono: MonoType,
   result_idx: Int,
+  result_vt: ValType?,
   result_mono: MonoType,
   ctx: EmitCtx,
   fns: MatchEmitFns,
@@ -71,7 +72,7 @@ pub fn emit_match_op(
 
   // scrutinee_instrs is used as sub-body content, so keep as fresh []
   scrutinee_instrs := fns.emit_atom(scrutinee, ctx, [])
-  mc := MatchCtx.{ scrutinee_instrs, scrutinee_mono, result_idx, result_mono, ctx, fns }
+  mc := MatchCtx.{ scrutinee_instrs, scrutinee_mono, result_idx, result_vt, result_mono, ctx, fns }
 
   if is_br_table_eligible(arms, scrutinee_mono, ctx) {
     mc.emit_br_table_match(arms, buf)
@@ -193,7 +194,12 @@ fn emit_arm_chain(mc: MatchCtx, arms: Vector<PreparedMatchArm>, buf: Vector<Inst
       mc.scrutinee_mono,
       mc.ctx,
     )
-    body_instrs := mc.fns.emit_expr(arm.body, mc.result_mono, mc.ctx, [])
+    body_instrs := mc.fns.emit_expr(
+      arm.body,
+      arm_expected(mc.result_vt, mc.result_mono, mc.ctx.env),
+      mc.ctx,
+      [],
+    )
     then_body := bindings.concat(body_instrs)
 
     if !expr_always_diverges(arm.body) {
@@ -388,7 +394,12 @@ fn emit_match_arm_body(mc: MatchCtx, arm: PreparedMatchArm) Vector<Instr> {
     mc.scrutinee_mono,
     mc.ctx,
   )
-  body_instrs := mc.fns.emit_expr(arm.body, mc.result_mono, mc.ctx, [])
+  body_instrs := mc.fns.emit_expr(
+    arm.body,
+    arm_expected(mc.result_vt, mc.result_mono, mc.ctx.env),
+    mc.ctx,
+    [],
+  )
   out := bindings.concat(body_instrs)
 
   if !expr_always_diverges(arm.body) {
@@ -469,7 +480,7 @@ fn emit_tail_arm_chain(tc: TailMatchCtx, arms: Vector<PreparedMatchArm>, buf: Ve
       tc.scrutinee_mono,
       tc.ctx,
     )
-    body_instrs := tc.fns.emit_expr(arm.body, tc.result_mono, tc.ctx, [])
+    body_instrs := tc.fns.emit_expr(arm.body, expected(tc.result_mono, tc.ctx.env), tc.ctx, [])
     then_body := bindings.concat(body_instrs)
     out = .concat(cond_instrs).append(.If(.None, then_body, []))
   }
@@ -547,7 +558,7 @@ fn emit_tail_match_arm_body(tc: TailMatchCtx, arm: PreparedMatchArm) Vector<Inst
     tc.scrutinee_mono,
     tc.ctx,
   )
-  body_instrs := tc.fns.emit_expr(arm.body, tc.result_mono, tc.ctx, [])
+  body_instrs := tc.fns.emit_expr(arm.body, expected(tc.result_mono, tc.ctx.env), tc.ctx, [])
   bindings.concat(body_instrs)
 }
 

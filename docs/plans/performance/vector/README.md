@@ -1,111 +1,87 @@
 # Vector / sort / order-by performance — endeavor index
 
 This folder is the vector-focused subtrack of the broader
-[compiled-program performance plan](../compiled-programs.md). It gathers the
-plans, rejected approaches, and measurements for one long-running effort: making
-**idiomatic `Vector<T>` code — indexed reads, `sort_by`, dataframe `order_by` —
-fast**, without asking users to reach for specialized APIs.
+[compiled-program performance plan](../compiled-programs.md): making **idiomatic
+`Vector<T>` code — indexed reads, `sort_by`, dataframe `order_by` — fast** without
+asking users to reach for specialized APIs.
 
-It is a dedicated subfolder because this is a major, still-open problem. Several
-distinct approaches have been tried and measured; most isolated wins are small,
-and the real lever is structural. Keep new plans, probes, and results here.
+Most of the effort has landed or been measured-and-parked; this README is the map.
+For live per-boundary status start with **[boundary-tracklist.md](boundary-tracklist.md)**;
+for the per-phase representation story see the umbrella
+**[typed-vector-representation.md](typed-vector-representation.md)**.
 
-> **Picking up the typed-vector work?** S1 + S2.0 + S2.1 + S2.2 are **landed on
-> `main`** (typed `PVecI64` for non-escaping locals + typed record fields;
-> `typed_vec_read_probe` ~70ms typed vs ~590ms boxed, ~8×). The design model is
-> now **storage-site typing** — `PVecI64` is a per-site optimization, never a
-> global property of `Vector<Int>`
-> ([../representation-boundary-policy.md](../representation-boundary-policy.md));
-> a uniform-typing attempt was built and reverted
-> ([m1a-anyref-readback-investigation.md](m1a-anyref-readback-investigation.md)).
-> **[typed-vector-representation.md](typed-vector-representation.md)** is the live
-> umbrella (per-phase status + "open next").
+## Current status (2026-07-10)
 
-> **Landed on branch `typed-vector-repr-m1a` (not merged): typed `Vector<Int>`
-> variant payloads** (Milestone A —
-> [storage-site-typed-vectors.md](storage-site-typed-vectors.md) +
-> [plan](storage-site-typed-vectors-plan.md)). Capture-safe, no M1a pathology
-> (capture tripwire 5.34ms). **But `order_by` is unchanged** — the conservative
-> producer eligibility doesn't type the *real* dataframe `IntCol` columns. So the
-> variant-payload boundary is done, yet not the `order_by` unlock. **Next:**
-> (1) broaden producer eligibility to catch real columns; (2) M1b typed closure
-> envs for the captured comparator. The Milestone A docs are complete and archive
-> at merge time.
+- **Landed (`main`):** typed `PVecI64` storage (unboxed i64 leaves, ~8× faster
+  reads than boxed) at conservative closed sites — non-escaping locals (S2.0) and
+  typed record fields (S2.2). Model: `PVecI64` is a **per-storage-site**
+  optimization, never a global property of `Vector<Int>`
+  ([../representation-boundary-policy.md](../representation-boundary-policy.md)); a
+  uniform-typing attempt was built and reverted (archived
+  `m1a-anyref-readback-investigation.md`).
+- **Landed (this branch `typed-vector-crossfn-abi`, merging to `main`):** typed
+  variant payloads (A3), cross-function return/copy ABI (B1–B5, B7), typed
+  `gather`, closure-capture typing incl. the dataframe key column (C1–C2, via the
+  oracle unification), element-family generalization + `PVecBool`, typed
+  `Vector.make`, and typed-field call-result retyping. Net dataframe effect: the
+  captured key column stays typed into the comparator.
+- **B6 (the sort read-wall) — investigated, not shipped.** Re-measuring corrected a
+  stale figure (full `order_by` is ~1.2s, not ~1.84s) and showed the merge floor is
+  ~490ms of *boxed idx reads* out of a ~510ms floor (mechanics are ~17ms). A
+  buffer-backed sort kernel worked (~35%) but was **reverted** as a
+  compiler-special-cased point solution. The real blocker: a typed **parameter**
+  ABI for named functions **does not exist** (only typed returns/captures do), so
+  the merge's parameter reads can't stay typed via the analysis.
 
-## Current understanding (2026-06-10)
+## The forward lever
 
-The realistic dataframe path — `idx.sort_by(fn(a,b){ Int.compare(keys[a], keys[b]) })`
-— is **~7× slower than Clojure's persistent-vector sort** (~2.27 s vs ~0.34 s at
-N = 1M). Measurement (see [generic-sort-by-vector-read-perf.md](generic-sort-by-vector-read-perf.md),
-"Measured decomposition" and the 2026-06-10 re-measure) attributes the gap:
+The general unlock is **typed cross-function parameter ABI** ("Extend"):
+specialize a function by representation + coerce at call sites, so typed vectors
+flow through `map`/`filter`/`gather`/`sort`/user helpers uniformly. Everything B6
+needed is downstream of it. Secondary: **B8** (typed `take`/gather for the non-Int
+dataframe columns).
 
-- **The gap is structural, not warm-up.** In-process repeats and forced TurboFan
-  (`--no-liftoff,--no-wasm-lazy-compilation`) leave the generic (~704–746 ms) and
-  key-index (~2240–2280 ms) numbers unchanged. Only the native value-sort kernel
-  tier-warms: ~102 ms cold first run → **~58–63 ms** warm (the recorded ~106–115 ms
-  figures are cold; warmed-vs-warmed it beats Clojure's ~192 ms by ~3×).
-- **Random key reads dominate the key-index path.** ~69% is `keys[…]` reads
-  (~1.6 s of random PVec lookups in the cache-hostile ~16 ns/read regime).
-- **The merge's own reads were ~half of the mechanics half, now largely removed.**
-  The prelude `merge_sorted` caches cursor values and hoists lens (landed 2026-06-10),
-  cutting ~3 reads + 2 `len` calls per step to ~1 read: mechanics ~739 → ~647 ms
-  (~12%). Merge-context reads cost only ~4–5 ns (small sub-vectors hit the tail
-  fast path); the remaining ~650 ms floor is closure calls, `Order` allocation,
-  recursion, and append mechanics.
-- **Allocation is a minor lever.** Singleton `[xs[lo]]` vectors are negligible
-  (~10 ms); append + output-vector allocation is ~150 ms (~6.5% of the path). A
-  flat-buffer merge over *persistent* storage is therefore not worth shipping alone.
-- **Comparator micro-opts are small vs the key-index gap but a large share of
-  the mechanics half.** Closure boundary (~122 ms) + enum/`Order` allocation
-  (~68 ms) ≈ ~6% of the 7× gap, but ~30% of the post-cache mechanics floor.
-  Both halves are now **landed** (2026-06-10). Enum allocation: payload-free
-  variant literals hoisted to shared immutable globals (`Order.Lt`, `.None`
-  become one `global.get`, not a per-use `struct.new`); generic `sort_by`
-  ~645 → ~610 ms. Closure boundary (T3.2): non-tail closure calls now use the
-  typed funcref (unboxed args, no args array, direct result) via a runtime
-  `ref.test`, instead of the universal box-everything path; generic `sort_by`
-  ~610 → ~495 ms. Together with the merge-cursor cache, generic `sort_by`
-  mechanics dropped ~743 → ~495 ms (~33%) on this branch. Comparator mechanics
-  are now essentially exhausted — the remaining gap is the read wall.
-- **Clojure does not cache keys either** — it re-invokes the key fn per comparison
-  and sorts a flat array. So the gap is constant-factor/structural, and transparent
-  argsort recognition is *not* required to close it.
+> **Scope note:** typed-vector representation pays off for **numeric/columnar**
+> workloads (dataframe, big `Vector<Int>` reads/sorts). It does **not** help the
+> boot compiler itself, whose hot vectors are *references* (`Vector<Instr>`,
+> `MonoType`, `CoreExpr`, `String`) and whose costs are construction + Dict/HAMT.
+> Pick the lever to match the workload.
 
-**Master lever:** typed flat `Vector<Int>` storage. It makes random key reads cheap
-*and* enables a native-buffer merge (cheap sequential reads + no per-level
-allocation) in one change. Everything else is secondary.
+## Living docs
 
-## Plans in this folder
+| Doc | Role |
+|-----|------|
+| [boundary-tracklist.md](boundary-tracklist.md) | "Where are we" map — every boundary a typed vector must cross (A/B/C), per-item ✅/🟡/⬜, and the `order_by` critical path |
+| [typed-vector-representation.md](typed-vector-representation.md) | The umbrella: per-phase status + the long-term representation answer |
+| [generic-sort-by-vector-read-perf.md](generic-sort-by-vector-read-perf.md) | The read-wall measurement / decomposition — the reference for `order_by` cost |
 
-| Doc | Role | Status |
-|-----|------|--------|
-| [generic-sort-by-vector-read-perf.md](generic-sort-by-vector-read-perf.md) | **Active lead.** Make generic callback `sort_by` + indexed reads fast; holds the current measured decomposition and reprioritized tracks | active |
-| [typed-vector-representation.md](typed-vector-representation.md) | Give `Vector<Int>` (then other primitives) typed physical storage instead of boxed `anyref` leaves — now identified as the master lever | the long-term answer |
-| [wasm-native-sort.md](wasm-native-sort.md) | Earlier consolidated `order_by`/native-sort track; broader context and the dense working-set framing | superseded as lead, still useful context |
-| [native-typed-value-sort.md](native-typed-value-sort.md) | Lower `xs.sort()` on `Vector<Int>`/`Vector<Float>` to a native typed kernel (unbox once, raw merge, box once); the seed of typed storage | partial/landed value-sort path |
-| [native-key-index-argsort.md](native-key-index-argsort.md) | Optional transparent fast path for conservatively-recognized pure key-index comparators | optional, not the baseline |
-| [typed-vector-spike.md](typed-vector-spike.md) | The S1 + S2.0 de-risking spike (typed `PVecI64` family + intra-function routing) | landed; record of the spike |
+## Archived / record (`archive/`)
 
-## Archived (landed or rejected — in `docs/plans/archive/`)
+Landed sub-work (design + plan pairs), a reverted approach, and superseded
+spikes/handoffs. Kept for the record, not active.
 
-| Doc | Role | Status |
-|-----|------|--------|
-| [typed-record-fields.md](../../archive/typed-record-fields.md) | S2.2 design: typed `Vector<Int>` record fields | **landed** (2026-06-11) |
-| [typed-record-fields-plan.md](../../archive/typed-record-fields-plan.md) | S2.2 implementation plan (7 tasks, subagent-driven) | **landed** (2026-06-11) |
-| [native-sort-by-inplace.md](../../archive/native-sort-by-inplace.md) | Approach A: in-place quicksort over a uniquely-owned buffer | **rejected** |
-| [native-sort-dense-merge.md](../../archive/native-sort-dense-merge.md) | Approach C: dense `anyref` scratch merge sort; lost to opaque per-element scratch calls + casts | **rejected** |
+- **Landed:** `storage-site-typed-vectors*` (A3 payloads), `expected-vt-coercion*`
+  (B1), `tail-match-result-typing*` (B2), `crossfn-typed-vector-abi*`,
+  `unify-typedness-oracle-design` (C2), `typed-vector-elem-families*` (+`PVecBool`),
+  `typed-vector-make-and-bool-parity-design`,
+  `2026-07-09-typed-field-call-result-retyping`, `native-typed-value-sort`
+  (`sort_i64`, the no-comparator kernel on `main`).
+- **Reverted:** `b6-representation-preserving-sort-design`,
+  `b6-buffer-argsort-kernel-plan` (buffer sort kernel — compiler-special-cased
+  point solution; findings folded into the tracklist).
+- **Superseded / spikes / scoping:** `typed-vector-spike`,
+  `typed-vector-continue-here`, `crossfn-abi-instrumentation`,
+  `top-level-typed-vector-routing-scope`, `m1a-anyref-readback-investigation`
+  (the reverted uniform-typing lesson), `native-key-index-argsort`,
+  `wasm-native-sort`.
 
-## Probes (in `examples/`)
+## Probes (in `examples/performance/`)
 
-- `examples/performance/sort-bench/sort_by_component_probe.tw` — clean component breakdown (sort, closure, reads, append).
-- `examples/performance/sort-bench/enum_alloc_probe.tw` — isolates enum/`Order` allocation (direct vs closure boundary; enums in general).
-- `examples/performance/sort-bench/merge_attribution_probe.tw` — ablates the merge (reads vs singleton vs append/alloc); validated against real `sort_by`.
-- `examples/performance/sort-bench/sort_repeat_probe.tw` — runs native sort / generic `sort_by` / key-index three times in-process to expose V8 tier-up (Liftoff → TurboFan) effects.
-- `examples/performance/sort-bench/typed_record_field_probe.tw` — positive: a `Vector<Int>` column built by `collect` and stored in a record field, read only via index/len, keeps `PVecI64` storage (`rt_arr__get_i64`, no field-boundary boxing).
-- `examples/performance/sort-bench/typed_record_field_boxed_probe.tw` — negative: the same field fed by a combinator-built producer (`append`) passed through a parameter stays boxed `PVec` (no `rt_arr__get_i64`).
-- `examples/performance/sort-bench/ref_vector_read_clojure.clj` — Clojure read calibration for dense `long[]`, boxed persistent `Vector<Long>`, and reference payload vectors (`String`, row objects, map rows); summarized in [typed-vector-representation.md](typed-vector-representation.md).
-- `examples/performance/sort-bench/long_array_sort_clojure.clj` — Clojure sort calibration for `long[]` clone + `Arrays/sort` vs persistent-vector `sort`; summarized in [typed-vector-representation.md](typed-vector-representation.md).
-- `examples/performance/dataframe/bench/` — end-to-end `order_by` plus Clojure/Go/Rust references.
+- `sort-bench/sort_by_component_probe.tw` — component breakdown (sort, closure, reads, append).
+- `sort-bench/merge_attribution_probe.tw` — ablates the merge (reads vs singleton vs append/alloc).
+- `sort-bench/typed_vec_read_probe.tw` — typed vs boxed `PVecI64` read routing (~6.8×).
+- `sort-bench/typed_{record_field,variant_payload,gather,bool_*}_probe.tw` — per-boundary routing guards.
+- `dataframe/bench/` — end-to-end `order_by` plus Clojure/Go/Rust references.
 
 ## Benchmark gate
 
@@ -113,19 +89,23 @@ allocation) in one change. Everything else is secondary.
 target/twk run examples/performance/sort-bench/sort_by_component_probe.tw
 target/twk run examples/performance/sort-bench/merge_attribution_probe.tw
 target/twk run examples/performance/dataframe/bench/order_by_breakdown.tw
-clojure examples/performance/dataframe/bench/order_by_clojure_persistent.clj
 ```
 
 ## Lessons banked
 
-- Don't re-try opaque dense scratch (Approach C): per-element runtime calls + `anyref`
-  casts outweigh the merge savings. Any dense/flat buffer must use **inlined** array ops.
-- Don't chase comparator micro-opts for parity; they cap at ~6% of the key-index gap
-  combined (though they are ~30% of the post-cache mechanics floor).
-- Don't ship a persistent-only flat-buffer merge; the allocation-only saving is ~6.5%.
-- Do measure before prioritizing — three confident structural guesses (singleton
-  allocation cost, flat-buffer merge value, "the merge floor is mostly reads") were
-  falsified or halved by probes here.
-- Do control for V8 tiering and background load: repeat phases in-process
-  (`sort_repeat_probe.tw`) and check system load — a background game invalidated one
-  whole benchmarking session, and the native kernel is ~1.7× faster warm than cold.
+- **`PVecI64` is per-site, never global.** A typed vector reaching a durable erased
+  boundary (anyref, universal `ClosureEnv`, generic container, untyped variant)
+  must be boxed — the danger is a coercion *per read* (the reverted uniform-typing
+  bug), not a coercion at a crossing.
+- **The merge floor is reads, not mechanics** (~490ms boxed reads of a ~510ms
+  floor). Comparator micro-opts and allocation savings cap at a few percent.
+- **Typed *parameter* ABI for named functions doesn't exist** — the real blocker
+  for keeping vectors typed across calls; building it is the "Extend" project.
+- **Don't special-case sorts.** A buffer/typed kernel that the compiler recognizes
+  by name banks a number but is a point solution; the honest general form of the
+  index-sort win is an explicit `argsort` primitive, and the principled read-wall
+  fix is typed representation, not a bespoke sort.
+- **Measure before prioritizing.** Confident structural guesses (allocation cost,
+  flat-buffer merge value, "the floor is mechanics", "linear memory loses on
+  sorts") were repeatedly falsified by probes here.
+```

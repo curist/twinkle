@@ -1,0 +1,45 @@
+// End-to-end probe for typed-gather routing (Stage 1). A Vector<Int> lives in a
+// typed variant payload (IntCol); gathering it must route to rt_arr__gather_i64
+// (raw i64 read, typed result), not the boxed struct.get -> box_i64 -> gather.
+//
+//   target/twk build examples/performance/sort-bench/typed_gather_probe.tw -o /tmp/g.wat
+//   grep -c rt_arr__gather_i64 /tmp/g.wat   # must be >= 1
+//   target/twk run   examples/performance/sort-bench/typed_gather_probe.tw
+//
+// The column is built via make_col(n) (param-driven collect, so it stays a
+// builder_freeze producer and the payload analysis types the IntCol site).
+type Col = { IntCol(Vector<Int>) }
+
+fn make_col(n: Int) Col {
+  xs := collect i in range(n) {
+    i * 2
+  }
+  .IntCol(xs)
+}
+
+fn gather_col(c: Col, idx: Vector<Int>) Col {
+  case c {
+    .IntCol(v) => .IntCol(v.gather(idx)),
+  }
+}
+
+fn sum_col(c: Col, n: Int) Int {
+  xs := case c {
+    .IntCol(v) => v,
+  }
+  acc := 0
+
+  for i in range(n) {
+    acc = acc + xs[i]
+  }
+
+  acc
+}
+
+n := 1000
+col := make_col(n)
+idx := collect i in range(n) {
+  n - 1 - i
+}
+out := gather_col(col, idx)
+println("sum=${sum_col(out, n)}")

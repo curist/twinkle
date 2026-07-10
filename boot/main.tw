@@ -11,6 +11,7 @@ use commands.parse.{run_parse_command}
 use commands.run.{run_run_command}
 use commands.scaffold.{run_init_command, run_new_command}
 use commands.test.{run_test_command}
+use commands.wat.{run_wat_command}
 use lib.argparse.app
 use lib.argparse.app.{ParseResult}
 use lib.argparse.argv.{normalize_argv}
@@ -94,6 +95,11 @@ fmt_cmd := command
   .add_positional("file", "Path to a .tw source file (repeatable; omit for project mode)")
   .add_flag("check", "Check whether source is formatted")
 
+wat_cmd := file_command("wat", "Print linked WAT, optionally filtered to one function")
+  .add_option("func", "Only print functions whose (mangled) name contains this substring")
+  .add_flag("list", "With --func, print only matching function header lines")
+  .add_flag("calls", "With --func, print only the call targets inside matching functions")
+
 cli := app
   .make("twk", "Twinkle compiler")
   .add_commands([
@@ -106,6 +112,7 @@ cli := app
     ir_cmd,
     parse_cmd,
     fmt_cmd,
+    wat_cmd,
     test_cmd,
     lsp_cmd,
     version_cmd,
@@ -211,6 +218,7 @@ fn run_command(parsed: ParseResult) {
     .Some("version") => run_version_command(),
     .Some("help") => run_help_command(parsed),
     .Some("fmt") => run_fmt_command(parsed),
+    .Some("wat") => run_wat_command(parsed),
     .Some("test") => run_test_command(parsed),
     .Some("new") => run_new_command(parsed),
     .Some("init") => run_init_command(parsed),

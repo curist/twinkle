@@ -1,6 +1,6 @@
 # Native dense-buffer stable merge sort — Approach C
 
-**Status:** rejected (archived) — implemented and measured; the dense path did **not** beat the old recursive merge sort and regresses the pure-`Vector<Int>` sort case. It is correct and stable, but is not a performance win on its own. The real lever remains a typed dense key-index argsort (see [wasm-native-sort.md](../performance/vector/wasm-native-sort.md), "Main vector to attack"). See the [benchmark gate](#benchmark-gate-results) below for the keep/revert evaluation.
+**Status:** rejected (archived) — implemented and measured; the dense path did **not** beat the old recursive merge sort and regresses the pure-`Vector<Int>` sort case. It is correct and stable, but is not a performance win on its own. The real lever remains a typed dense key-index argsort (see [wasm-native-sort.md](../performance/vector/archive/wasm-native-sort.md), "Main vector to attack"). See the [benchmark gate](#benchmark-gate-results) below for the keep/revert evaluation.
 
 ## Goal
 

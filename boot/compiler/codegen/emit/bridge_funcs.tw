@@ -9,18 +9,12 @@ use compiler.codegen.emit.helpers.{get_sum_layout, variant_field_mono}
 use compiler.codegen.emit.runtime_abi.{host_read_file_result_helper_sym}
 use compiler.codegen.wasm_ir.{FuncDef, Instr, ValType}
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key, val_type_of_mono}
+use compiler.elem_family.{pvec_family_of}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
 
 pub fn iterator_next_helper_sym(result_mono: MonoType) String {
   "iterator_next_helper_${mono_to_key(result_mono)}"
-}
-
-fn is_pvec_i64(vt: ValType) Bool {
-  case vt {
-    .Ref(_, .Named(name)) => name == "rt_types__PVecI64",
-    _ => false,
-  }
 }
 
 pub fn emit_sum_to_variant_helper(sum_mono: MonoType, env: ResolvedEnv) FuncDef {
@@ -37,8 +31,9 @@ pub fn emit_sum_to_variant_helper(sum_mono: MonoType, env: ResolvedEnv) FuncDef 
       then_body = .concat(
         [.LocalGet(0), .StructGet(sum_layout.sym, variant.struct_field_offset + i)],
       )
-      if is_pvec_i64(variant.payload_types[i]) {
-        then_body = .append(.Call("rt_arr__box_i64"))
+      case pvec_family_of(variant.payload_types[i]) {
+        .Some(fam) => then_body = .append(.Call(fam.box_call)),
+        .None => {},
       }
       then_body = emit_box_to_anyref(field_mono, env, then_body)
     }
@@ -78,8 +73,9 @@ pub fn emit_variant_to_sum_helper(sum_mono: MonoType, env: ResolvedEnv) FuncDef 
           field_mono := variant_field_mono(sum_mono, sum_variant.variant_id, i, env)
           then_body = .concat([.LocalGet(2), .I32Const(i), .ArrayGet("rt_types__Array")])
           then_body = emit_erased_container_egress(field_mono, env, then_body)
-          if is_pvec_i64(sum_variant.payload_types[i]) {
-            then_body = .append(.Call("rt_arr__unbox_i64"))
+          case pvec_family_of(sum_variant.payload_types[i]) {
+            .Some(fam) => then_body = .append(.Call(fam.unbox_call)),
+            .None => {},
           }
         }
       } else {

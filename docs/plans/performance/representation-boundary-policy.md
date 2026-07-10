@@ -11,7 +11,7 @@ everywhere** — is described below.
 Related: [backend-anyref-elimination.md](backend-anyref-elimination.md) (Phase 1
 this partially answers), [vector/typed-vector-representation.md](vector/typed-vector-representation.md),
 and the failure post-mortem
-[vector/m1a-anyref-readback-investigation.md](vector/m1a-anyref-readback-investigation.md).
+[vector/m1a-anyref-readback-investigation.md](vector/archive/m1a-anyref-readback-investigation.md).
 
 ## What was tried and why it failed
 
