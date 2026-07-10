@@ -66,6 +66,61 @@ env_extend   ~52ms
 
 Wall-clock (timing off): **~4.85s**, down from the ~5.06s pre-session baseline.
 
+## Update: 2026-07-09 (post typed-vector family work)
+
+Measured sequentially with the bundled CLI after the typed-vector element-family
+work and Bool family follow-ups. Do not run the wall-clock build concurrently
+with an instrumented build; doing so inflates the wall number through contention.
+
+Wall-clock checks without timing output:
+
+```text
+real 5.06s
+real 5.08s
+real 5.10s
+```
+
+Representative phase timing:
+
+```text
+compile_modules   ~1984ms
+prepare_backend    ~566ms
+emit_module        ~521ms
+optimize           ~476ms
+verify             ~408ms
+core_link          ~279ms
+link               ~212ms
+emit_wasm_binary   ~209ms
+plan_wasm_types    ~125ms
+lower_anf          ~115ms
+monomorphize        ~75ms
+wasm_dce            ~57ms
+closure_convert     ~23ms
+```
+
+Frontend sub-timing:
+
+```text
+typecheck    ~374ms   (bodies ~262, finalize ~107, setup ~2)
+lower        ~273ms
+import_merge ~242ms   (module ~69, selective ~135, prelude ~36)
+plan_deps    ~196ms
+resolve      ~164ms
+load_source  ~138ms
+parse        ~110ms
+publish       ~65ms
+env_extend    ~53ms
+```
+
+Shape check against the 2026-07-03 baseline: the frontend story still mostly
+lines up (`compile_modules` remains the dominant bucket, and import/typecheck are
+still the important sub-buckets), but the backend tier is heavier now.
+`prepare_backend` and `verify` are the clearest drift: both grew after the typed
+vector ABI/family work expanded the prepared IR, slot metadata, and verifier
+surface. `emit_module` and `optimize` remain in the previous range or close to it.
+The current wall-clock is therefore back near the pre-session ~5.06s baseline,
+not the post-frontend/link-win ~4.85s low-water mark.
+
 What moved this session (all self-host- and 2960-test-validated), each a
 "stop doing unnecessary work / defer until needed" change:
 
