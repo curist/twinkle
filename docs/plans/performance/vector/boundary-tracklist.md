@@ -4,11 +4,28 @@
 cross to stay fast, so "how many more rabbit holes?" has an answer. The end goal is
 the dataframe `order_by` win (drop the ~7× gap vs Clojure ~0.34s @ 1M).
 
-**Where we are (2026-07-08, branch `typed-vector-crossfn-abi`):** the capture path
-(C2) landed via the oracle unification, so `sort idx by amount` is ~1400→**~775ms**
-and full `order_by` ~2.3s→**~1.84s**. The remaining headline lever is **B8** (typed
-`take`). All the storage/ABI/capture boundaries needed for the sort itself are now
-✅; the verifier backstops the physical edges.
+**Where we are (2026-07-10, branch `typed-vector-crossfn-abi`):** C2 (oracle
+unification) typed the captured key column into the comparator. A separate B6
+attempt — a buffer-backed sort kernel (`@std.sort.ints_by`) — was built, measured
+(~35% on `order_by`), then **REVERTED** (`bec1bd5c`) as a compiler-special-cased
+point solution. Its findings stand and reset the priorities:
+
+> **Findings (2026-07-10, survive the revert):**
+> - Full `order_by` is ~1.2s, **not** the ~1.84s previously recorded here.
+> - The merge floor is ~490ms of *boxed idx reads* out of a ~510ms floor; mechanics
+>   (closures/Order/recursion) are ~17ms. The old "floor is mechanics" framing is
+>   **stale**.
+> - Typed *return* and typed *capture* ABIs exist for named functions/closures, but
+>   a typed **parameter** ABI does **not** exist anywhere — every named function
+>   takes boxed `PVec` params. The merge reads through params, so B6 the principled
+>   way needs general typed-parameter ABI emission (the "Extend" project), not a
+>   kernel.
+> - Secondary: `route_typed_vec` types `collect` builders but not manual `.append`
+>   accumulators (they seed via `builder_from`, unknown to the router).
+
+**B6 remains open** (pursue via typed representation / typed-param ABI, not a
+special-cased kernel). The other remaining lever is **B8** (typed `take`/gather for
+non-Int columns); all storage/ABI/capture boundaries for the sort itself are ✅.
 
 **The model (do not violate):** `PVecI64` is a *per-storage-site* optimization,
 never a global property of `Vector<Int>`. A typed vector that reaches a *durable

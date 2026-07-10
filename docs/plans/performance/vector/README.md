@@ -21,7 +21,25 @@ and the real lever is structural. Keep new plans, probes, and results here.
 > **[typed-vector-representation.md](typed-vector-representation.md)** is the live
 > umbrella (per-phase status + "open next").
 
-> **Latest (2026-07-08, branch `typed-vector-crossfn-abi`, not merged): the
+> **Latest (2026-07-10, branch `typed-vector-crossfn-abi`): a buffer-backed sort
+> kernel was built, measured, and then REVERTED (`bec1bd5c`).** It worked — a stable
+> merge sort over an `@std.buffer` i64 buffer (`@std.sort.ints_by`) was ~2.2×
+> standalone and cut dataframe full `order_by` ~1.2s→~788ms (~35%) — but it banked
+> that by special-casing a named stdlib function into the compiler (monomorphize +
+> linker hardcoding `"ints_by"`). That is a point solution, not the principled
+> direction, so it was reverted. **The findings stand and are the map for the
+> principled path:** (1) re-measuring corrected the stale numbers — full `order_by`
+> is ~1.2s, not ~1.84s; (2) the merge floor is ~490ms of *boxed idx reads* out of a
+> ~510ms floor (mechanics are ~17ms — the "floor is closures/Order/recursion" claim
+> is stale); (3) a validation spike found a typed *parameter* ABI for named
+> functions **does not exist** (only typed returns/captures do) — the merge reads
+> through params, so this is the real blocker. **B6 remains open, to be pursued via
+> typed representation / the general typed-parameter ABI ("Extend"), not a kernel.**
+> Design + plan kept as a reverted record:
+> [b6-representation-preserving-sort-design.md](b6-representation-preserving-sort-design.md),
+> [b6-buffer-argsort-kernel-plan.md](b6-buffer-argsort-kernel-plan.md). Prior C2 note below.
+
+> **Prior (2026-07-08, branch `typed-vector-crossfn-abi`, not merged): the
 > dataframe `order_by` sort win landed (C2).** The captured key column now stays
 > typed into the comparator, so `sort idx by amount` dropped ~1400→**~775ms** and
 > full `order_by` ~2.3s→**~1.84s** @ 1M. This came from unifying the two typedness
