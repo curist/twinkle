@@ -21,7 +21,14 @@ test("twk CLI runs a Twinkle program", () => {
 // stderr } without throwing so rejection paths (nonzero exit) can be asserted.
 function twk(cwd, args) {
   try {
-    const stdout = execFileSync("node", [entry, ...args], { cwd, encoding: "utf8" });
+    // Pipe stderr (rather than the default inherit) so the negative-path tests
+    // below can assert on it without the child's diagnostics leaking into the
+    // test runner's own output.
+    const stdout = execFileSync("node", [entry, ...args], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     return { status: 0, stdout, stderr: "" };
   } catch (e) {
     return { status: e.status ?? 1, stdout: e.stdout?.toString() ?? "", stderr: e.stderr?.toString() ?? "" };
