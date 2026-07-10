@@ -1113,6 +1113,15 @@ pub fn aliases_for(root: Int, copy_map: Dict<Int, Int>) Dict<Int, Bool> {
 // an escape, because the captured slot lands in a typeable PVecI64 capture slot
 // (M1b): the trampoline downcasts it to PVecI64, so the value stays typed. Every
 // other AMakeClosure capture is still an escape.
+// A typed-vector v-group escapes (must stay boxed) iff, viewed as a consumed
+// SOURCE, it flows anywhere but an index/len/gather read or return/break, or into
+// a record field the whole-program analysis has NOT decided is typed, or into any
+// variant payload (this source view keeps payloads boxed — a typed payload is
+// validated on the producer side, not here). Expressed as a projection of
+// classify_v_group's use summary (with gather-reads whitelisted), so the two
+// escape views share one traversal and cannot drift. The projection distributes
+// over merge_use, so a per-op OR of projections equals the projection of the
+// merged whole-body summary.
 fn v_group_escapes(
   expr: PreparedExpr,
   vs: Dict<Int, Bool>,
@@ -1124,142 +1133,8 @@ fn v_group_escapes(
   fam: ElemFamily,
   in_tail: Bool,
 ) Bool {
-  case expr {
-    .Let(_, op, body) => op_group_escapes(op, vs, relaxed, ids, builtins, typed_fields, slots, fam)
-      or v_group_escapes(body, vs, relaxed, ids, builtins, typed_fields, slots, fam, in_tail),
-    // Mirror classify_expr: a trailing `.Atom` in tail position is a function
-    // return (typed-return bridge), not an escape; a non-tail arm value stays
-    // conservative.
-    .Atom(a) => if in_tail {
-      false
-    } else {
-      slot_in(a, vs)
-    },
-    .Return(.Some(_)) => false,
-    .Break(.Some(a)) => slot_in(a, vs),
-    _ => false,
-  }
-}
-
-fn op_group_escapes(
-  op: PreparedOp,
-  vs: Dict<Int, Bool>,
-  relaxed: Dict<Int, Bool>,
-  ids: RouteIds,
-  builtins: BuiltinRegistry,
-  typed_fields: Dict<String, Bool>,
-  slots: Dict<Int, SlotInfo>,
-  fam: ElemFamily,
-) Bool {
-  case op {
-    .ACall(callee, args) => case callee {
-      // len(v) is the allowed builtin call use.
-      .AGlobalFunc(fid) => if fid.id == ids.len and args.len() == 1 and slot_in(args[0], vs) {
-        false
-      } else if fid.id == ids.gather and args.len() == 2 and slot_in(args[0], vs) {
-        // gather(v, idx): reading v is a typed-safe use (like len). The RESULT is
-        // a new typed vector handled by result-eligibility below; v itself does
-        // not escape through the call.
-        false
-      } else {
-        if user_direct_call_accepts_boxed_arg(fid, args, vs, builtins) {
-          false
-        } else {
-          atoms_contain_any(args, vs) or slot_in(callee, vs)
-        }
-      },
-      _ => atoms_contain_any(args, vs) or slot_in(callee, vs),
-    },
-    // xs[i] Array read: base may be in the vector alias set, index may not.
-    .AIndex(base, index, kind, _) => case kind {
-      .Array => slot_in(index, vs),
-      _ => slot_in(base, vs) or slot_in(index, vs),
-    },
-    .AIf(cnd, then_e, else_e) => slot_in(cnd, vs)
-      or v_group_escapes(then_e, vs, relaxed, ids, builtins, typed_fields, slots, fam, false)
-      or v_group_escapes(else_e, vs, relaxed, ids, builtins, typed_fields, slots, fam, false),
-    .AMatch(scrut, arms) => {
-      if slot_in(scrut, vs) {
-        return true
-      }
-
-      for arm in arms {
-        if v_group_escapes(arm.body, vs, relaxed, ids, builtins, typed_fields, slots, fam, false) {
-          return true
-        }
-      }
-
-      false
-    },
-    .ALoop(inner) => v_group_escapes(
-      inner,
-      vs,
-      relaxed,
-      ids,
-      builtins,
-      typed_fields,
-      slots,
-      fam,
-      false,
-    ),
-    .ADefer(inner) => v_group_escapes(
-      inner,
-      vs,
-      relaxed,
-      ids,
-      builtins,
-      typed_fields,
-      slots,
-      fam,
-      false,
-    ),
-    .ABinOp(_, l, r, _) => slot_in(l, vs) or slot_in(r, vs),
-    .AUnOp(_, a, _) => slot_in(a, vs),
-    .AMakeClosure(_, free_vars) => {
-      for fv in free_vars {
-        if vs.has(fv.id) and !relaxed.has(fv.id) {
-          return true
-        }
-      }
-
-      false
-    },
-    .ARecord(tid, fields) => {
-      for f in fields {
-        if slot_in(f.value, vs) {
-          key := "${tid.id}:${f.field.id}"
-          if !atom_in_family(f.value, slots, fam) or !typed_fields.has(key) {
-            return true
-          }
-        }
-      }
-
-      false
-    },
-    .ARecordGet(t, _, _) => slot_in(t, vs),
-    .ARecordUpdate(b, fid, val, _, tid) => {
-      if slot_in(b, vs) {
-        return true
-      }
-
-      if slot_in(val, vs) {
-        key := "${tid.id}:${fid.id}"
-        return !atom_in_family(val, slots, fam) or !typed_fields.has(key)
-      }
-
-      false
-    },
-    .AVariant(_, _, args) => atoms_contain_any(args, vs),
-    .AArrayLit(items) => atoms_contain_any(items, vs),
-    .AInit(a) => false,
-    // Reassigning a v-group slot from a value not in the group stores that
-    // (boxed) value into a slot the group would retype to PVecI64 — e.g. a loop
-    // `acc = acc.take(...)` where take returns the boxed family. Disqualify.
-    .AAssign(dst, a) => slot_in(a, vs) or vs.has(dst.id),
-    .AGlobalSet(_, a) => slot_in(a, vs),
-    .AWrapAnyref(a, _) => slot_in(a, vs),
-    .AUnwrapAnyref(a, _) => slot_in(a, vs),
-  }
+  vuse := classify_expr(expr, vs, relaxed, ids, builtins, slots, fam, in_tail, true)
+  vuse.escapes or !all_in(vuse.field_keys, typed_fields) or vuse.payload_keys.len() > 0
 }
 
 fn slot_in(atom: PreparedAtom, vs: Dict<Int, Bool>) Bool {
@@ -1333,14 +1208,15 @@ fn classify_v_group(
   expr: PreparedExpr,
   vs: Dict<Int, Bool>,
   relaxed: Dict<Int, Bool>,
-  len_id: Int,
+  ids: RouteIds,
   builtins: BuiltinRegistry,
   slots: Dict<Int, SlotInfo>,
   fam: ElemFamily,
 ) VGroupUse {
   // The whole function body starts in tail position: its trailing `.Atom` is a
-  // function return (a typed-return boundary, not an escape).
-  classify_expr(expr, vs, relaxed, len_id, builtins, slots, fam, true)
+  // function return (a typed-return boundary, not an escape). gather_read_ok is
+  // false: this is the PRODUCER view, where a candidate feeding gather stays boxed.
+  classify_expr(expr, vs, relaxed, ids, builtins, slots, fam, true, false)
 }
 
 // Shared eligibility predicate: a typed-vector slot group `aliases` is typeable
@@ -1365,7 +1241,7 @@ pub fn v_group_typeable(
     .Some(f) => f,
     .None => return false,
   }
-  vuse := classify_v_group(body, aliases, relaxed, ids.len, builtins, slots, fam)
+  vuse := classify_v_group(body, aliases, relaxed, ids, builtins, slots, fam)
   all_field_keys_typed := vuse.field_keys.len() == 0 or all_in(vuse.field_keys, typed_fields)
 
   // A producer that flows into a variant payload is only routable if every such
@@ -1488,19 +1364,30 @@ fn classify_expr(
   expr: PreparedExpr,
   vs: Dict<Int, Bool>,
   relaxed: Dict<Int, Bool>,
-  len_id: Int,
+  ids: RouteIds,
   builtins: BuiltinRegistry,
   slots: Dict<Int, SlotInfo>,
   fam: ElemFamily,
   in_tail: Bool,
+  gather_read_ok: Bool,
 ) VGroupUse {
   case expr {
     .Let(_, op, body) => {
       // An op binds a slot, so its sub-expressions (arm/loop/defer bodies) are
       // never a function return — classify_op passes them in_tail=false. The Let
       // body inherits this expression's tail position.
-      op_use := classify_op(op, vs, relaxed, len_id, builtins, slots, fam)
-      body_use := classify_expr(body, vs, relaxed, len_id, builtins, slots, fam, in_tail)
+      op_use := classify_op(op, vs, relaxed, ids, builtins, slots, fam, gather_read_ok)
+      body_use := classify_expr(
+        body,
+        vs,
+        relaxed,
+        ids,
+        builtins,
+        slots,
+        fam,
+        in_tail,
+        gather_read_ok,
+      )
       op_use.merge_use(body_use)
     },
     // A trailing `.Atom` in tail position is a function return (handled by the
@@ -1518,34 +1405,38 @@ fn classify_expr(
   }
 }
 
-// Mirrors op_group_escapes arm-for-arm; ONLY the ARecord, ARecordUpdate, and
-// AVariant arms intentionally differ (they record field-/payload-store keys
-// instead of escaping). Keep the two in sync if op_group_escapes changes.
-// One deliberate exception: op_group_escapes whitelists `gather(v, idx)` as a
-// typed-safe read of v (Stage 1 typed-gather routing), but this producer-side
-// classifier does NOT — a builder producer that feeds `gather` stays boxed
-// (conservative). The gather RESULT eligibility is handled separately in
+// The single per-op use classifier. Both escape views share it: the producer
+// view (classify_v_group / v_group_typeable) records field-/payload-store keys to
+// check against the whole-program typed sets, and the consumed-source view
+// (v_group_escapes) projects the same summary. `gather_read_ok` toggles the one
+// policy that differs between them: with it set, `gather(v, idx)` reading v is a
+// typed-safe use (the source view); unset, a builder producer feeding `gather`
+// stays boxed (conservative), and the gather RESULT eligibility is decided by
 // route_func's gather-result fixpoint.
 fn classify_op(
   op: PreparedOp,
   vs: Dict<Int, Bool>,
   relaxed: Dict<Int, Bool>,
-  len_id: Int,
+  ids: RouteIds,
   builtins: BuiltinRegistry,
   slots: Dict<Int, SlotInfo>,
   fam: ElemFamily,
+  gather_read_ok: Bool,
 ) VGroupUse {
   case op {
     .ACall(callee, args) => case callee {
-      // len(v) is the allowed builtin call use.
-      .AGlobalFunc(fid) => if fid.id == len_id and args.len() == 1 and slot_in(args[0], vs) {
+      // len(v) is the allowed builtin call use. gather(v, idx) reading v is also a
+      // typed-safe use, but only when gather_read_ok (the consumed-SOURCE view):
+      // a producer candidate feeding gather stays boxed — the gather RESULT
+      // eligibility is decided separately by route_func's gather-result fixpoint.
+      .AGlobalFunc(fid) => if fid.id == ids.len and args.len() == 1 and slot_in(args[0], vs) {
+        use_esc(false)
+      } else if gather_read_ok and fid.id == ids.gather and args.len() == 2 and slot_in(args[0], vs) {
+        use_esc(false)
+      } else if user_direct_call_accepts_boxed_arg(fid, args, vs, builtins) {
         use_esc(false)
       } else {
-        if user_direct_call_accepts_boxed_arg(fid, args, vs, builtins) {
-          use_esc(false)
-        } else {
-          use_esc(atoms_contain_any(args, vs) or slot_in(callee, vs))
-        }
+        use_esc(atoms_contain_any(args, vs) or slot_in(callee, vs))
       },
       _ => use_esc(atoms_contain_any(args, vs) or slot_in(callee, vs)),
     },
@@ -1556,22 +1447,72 @@ fn classify_op(
     },
     .AIf(cnd, then_e, else_e) => {
       cnd_esc := use_esc(slot_in(cnd, vs))
-      then_use := classify_expr(then_e, vs, relaxed, len_id, builtins, slots, fam, false)
-      else_use := classify_expr(else_e, vs, relaxed, len_id, builtins, slots, fam, false)
+      then_use := classify_expr(
+        then_e,
+        vs,
+        relaxed,
+        ids,
+        builtins,
+        slots,
+        fam,
+        false,
+        gather_read_ok,
+      )
+      else_use := classify_expr(
+        else_e,
+        vs,
+        relaxed,
+        ids,
+        builtins,
+        slots,
+        fam,
+        false,
+        gather_read_ok,
+      )
       cnd_esc.merge_use(then_use.merge_use(else_use))
     },
     .AMatch(scrut, arms) => {
       acc := use_esc(slot_in(scrut, vs))
 
       for arm in arms {
-        arm_use := classify_expr(arm.body, vs, relaxed, len_id, builtins, slots, fam, false)
+        arm_use := classify_expr(
+          arm.body,
+          vs,
+          relaxed,
+          ids,
+          builtins,
+          slots,
+          fam,
+          false,
+          gather_read_ok,
+        )
         acc = .merge_use(arm_use)
       }
 
       acc
     },
-    .ALoop(inner) => classify_expr(inner, vs, relaxed, len_id, builtins, slots, fam, false),
-    .ADefer(inner) => classify_expr(inner, vs, relaxed, len_id, builtins, slots, fam, false),
+    .ALoop(inner) => classify_expr(
+      inner,
+      vs,
+      relaxed,
+      ids,
+      builtins,
+      slots,
+      fam,
+      false,
+      gather_read_ok,
+    ),
+    .ADefer(inner) => classify_expr(
+      inner,
+      vs,
+      relaxed,
+      ids,
+      builtins,
+      slots,
+      fam,
+      false,
+      gather_read_ok,
+    ),
     .ABinOp(_, l, r, _) => use_esc(slot_in(l, vs) or slot_in(r, vs)),
     .AUnOp(_, a, _) => use_esc(slot_in(a, vs)),
     .AMakeClosure(_, free_vars) => {
@@ -1935,7 +1876,7 @@ fn scan_func_payload_producers(
 
     for v_slot in sources {
       aliases := aliases_for(v_slot, copy_map)
-      vuse := classify_v_group(pf.body, aliases, Dict.new(), ids.len, builtins, pf.slots, fam)
+      vuse := classify_v_group(pf.body, aliases, Dict.new(), ids, builtins, pf.slots, fam)
       keys := distinct_keys(user_payload_keys(vuse.payload_keys, first_user_tid))
 
       if keys.len() == 0 {
@@ -2041,7 +1982,7 @@ fn scan_func_producers_consumers(
     // won't re-flag the store as boxed.
     for v in producer_vs {
       aliases := aliases_for(v, copy_map)
-      vuse := classify_v_group(pf.body, aliases, Dict.new(), ids.len, builtins, pf.slots, fam)
+      vuse := classify_v_group(pf.body, aliases, Dict.new(), ids, builtins, pf.slots, fam)
       keys := distinct_keys(vuse.field_keys)
 
       if !vuse.escapes and keys.len() == 1 {
