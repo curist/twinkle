@@ -184,7 +184,6 @@ pub fn module() WasmModule {
     family_i64().pvec_make_fn(),
     box_i64_fn(),
     unbox_i64_fn(),
-    vec_i64_roundtrip_fn(),
     family_bool().pvec_len_fn(),
     family_bool().pvec_get_fn(),
     promote_full_tail_bool_fn(),
@@ -195,7 +194,6 @@ pub fn module() WasmModule {
     family_bool().pvec_make_fn(),
     box_bool_fn(),
     unbox_bool_fn(),
-    vec_bool_roundtrip_fn(),
     gather_bool_fn(),
     family_boxed().pvec_builder_new_fn(),
     builder_from_fn(),
@@ -4944,187 +4942,6 @@ fn promote_full_tail_fn() FuncDef {
       .RefCast(true, .Named(t_VEC_INTERNAL)),
       .GlobalGet("empty_leaf"),
       .StructNew(t_PVEC),
-    ],
-  }
-}
-
-// vec_i64_roundtrip(xs: PVec?) -> PVec
-// Internal correctness hook for the typed PVecI64 family: build a PVecI64 from
-// a boxed Vector<Int>, then read every element back via len_i64/get_i64 into a
-// fresh boxed vector. A test asserts `vec_i64_roundtrip(xs) == xs` across many
-// sizes, exercising the typed builder + get over all trie shapes. (Dormant
-// until S2 routes idiomatic code to the typed family; remove or fold into a
-// unit test then.)
-fn vec_i64_roundtrip_fn() FuncDef {
-  tbi := t_BOXED_INT
-
-  // p0=xs; L1=n, L2=bi (i64 builder), L3=i, L4=pv64, L5=bo (boxed builder)
-  .{
-    name: "vec_i64_roundtrip",
-    params: [pvec_null()],
-    results: [pvec_ref()],
-    locals: [.I32, arr_null(), .I32, pvec_i64_null(), arr_null()],
-    body: [
-      .LocalGet(0),
-      .RefAsNonNull,
-      .StructGet(t_PVEC, pv_LEN),
-      .LocalSet(1),
-      .Call("builder_new_i64"),
-      .LocalSet(2),
-      .I32Const(0),
-      .LocalSet(3),
-      .Block(
-        "bbrk",
-        .None,
-        [
-          .Loop(
-            "blp",
-            .None,
-            [
-              .LocalGet(3),
-              .LocalGet(1),
-              .I32GeS,
-              .BrIf("bbrk"),
-              .LocalGet(2),
-              .LocalGet(0),
-              .LocalGet(3),
-              .Call("get"),
-              .Call("builder_push_i64"),
-              .LocalGet(3),
-              .I32Const(1),
-              .I32Add,
-              .LocalSet(3),
-              .Br("blp"),
-            ],
-          ),
-        ],
-      ),
-      .LocalGet(2),
-      .Call("builder_freeze_i64"),
-      .LocalSet(4),
-      .Call("builder_new"),
-      .LocalSet(5),
-      .I32Const(0),
-      .LocalSet(3),
-      .Block(
-        "rbrk",
-        .None,
-        [
-          .Loop(
-            "rlp",
-            .None,
-            [
-              .LocalGet(3),
-              .LocalGet(4),
-              .Call("len_i64"),
-              .I32GeS,
-              .BrIf("rbrk"),
-              .LocalGet(5),
-              .LocalGet(4),
-              .LocalGet(3),
-              .Call("get_i64"),
-              .StructNew(tbi),
-              .Call("builder_push"),
-              .LocalGet(3),
-              .I32Const(1),
-              .I32Add,
-              .LocalSet(3),
-              .Br("rlp"),
-            ],
-          ),
-        ],
-      ),
-      .LocalGet(5),
-      .Call("builder_freeze"),
-    ],
-  }
-}
-
-// vec_bool_roundtrip(xs: PVec?) -> PVec
-// Bool mirror of vec_i64_roundtrip: build a PVecBool from a boxed Vector<Bool>,
-// then read every element back via len_bool/get_bool into a fresh boxed vector.
-// Boxed elements are ref.i31 (Bool fits an i31): the first loop feeds them into
-// builder_push_bool (which i31-decodes internally); the second loop wraps each
-// raw i32 leaf via RefI31 before pushing into the boxed builder.
-fn vec_bool_roundtrip_fn() FuncDef {
-  // p0=xs; L1=n, L2=bi (bool builder), L3=i, L4=pvb, L5=bo (boxed builder)
-  .{
-    name: "vec_bool_roundtrip",
-    params: [pvec_null()],
-    results: [pvec_ref()],
-    locals: [.I32, arr_null(), .I32, pvec_bool_null(), arr_null()],
-    body: [
-      .LocalGet(0),
-      .RefAsNonNull,
-      .StructGet(t_PVEC, pv_LEN),
-      .LocalSet(1),
-      .Call("builder_new_bool"),
-      .LocalSet(2),
-      .I32Const(0),
-      .LocalSet(3),
-      .Block(
-        "bbrk",
-        .None,
-        [
-          .Loop(
-            "blp",
-            .None,
-            [
-              .LocalGet(3),
-              .LocalGet(1),
-              .I32GeS,
-              .BrIf("bbrk"),
-              .LocalGet(2),
-              .LocalGet(0),
-              .LocalGet(3),
-              .Call("get"),
-              .Call("builder_push_bool"),
-              .LocalGet(3),
-              .I32Const(1),
-              .I32Add,
-              .LocalSet(3),
-              .Br("blp"),
-            ],
-          ),
-        ],
-      ),
-      .LocalGet(2),
-      .Call("builder_freeze_bool"),
-      .LocalSet(4),
-      .Call("builder_new"),
-      .LocalSet(5),
-      .I32Const(0),
-      .LocalSet(3),
-      .Block(
-        "rbrk",
-        .None,
-        [
-          .Loop(
-            "rlp",
-            .None,
-            [
-              .LocalGet(3),
-              .LocalGet(4),
-              .Call("len_bool"),
-              .I32GeS,
-              .BrIf("rbrk"),
-              .LocalGet(5),
-              .LocalGet(4),
-              .LocalGet(3),
-              .Call("get_bool"),
-              .RefI31,
-              .Call("builder_push"),
-              .LocalGet(3),
-              .I32Const(1),
-              .I32Add,
-              .LocalSet(3),
-              .Br("rlp"),
-            ],
-          ),
-        ],
-      ),
-      .LocalGet(5),
-      .Call("builder_freeze"),
     ],
   }
 }

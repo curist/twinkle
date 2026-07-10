@@ -146,7 +146,6 @@ fn builtin_abi(name: String) AbiContract {
     "vector$gather_i64" => abi([pvec_i64_n(), pvec_n()], [pvec_i64_()]),
     "vector$sort_i64" => abi([pvec_n()], [pvec_()]),
     "vector$sort_f64" => abi([pvec_n()], [pvec_()]),
-    "vector$vec_i64_roundtrip" => abi([pvec_n()], [pvec_()]),
     "vector$len_i64" => abi([pvec_i64_n()], [.I32]),
     "vector$get_i64" => abi([pvec_i64_n(), .I32], [.I64]),
     "vector$builder_new_i64" => abi([], [arr_()]),
@@ -158,7 +157,6 @@ fn builtin_abi(name: String) AbiContract {
     "vector$builder_push_bool" => abi([arr_n(), .Anyref], []),
     "vector$builder_freeze_bool" => abi([arr_n()], [pvec_bool_()]),
     "vector$gather_bool" => abi([pvec_bool_n(), pvec_n()], [pvec_bool_()]),
-    "vector$vec_bool_roundtrip" => abi([pvec_n()], [pvec_()]),
     "vector$builder_new" => abi([], [arr_()]),
     "vector$builder_push" => abi([arr_n(), .Anyref], []),
     "vector$builder_freeze" => abi([arr_n()], [pvec_()]),
@@ -573,7 +571,6 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("vector$gather", "rt.arr", "gather", .Some("Vector.gather")),
     rt("vector$sort_i64", "rt.arr", "sort_i64", .None),
     rt("vector$sort_f64", "rt.arr", "sort_f64", .None),
-    rt("vector$vec_i64_roundtrip", "rt.arr", "vec_i64_roundtrip", .Some("Vector.vec_i64_roundtrip")),
     rt("vector$len_i64", "rt.arr", "len_i64", .None),
     rt("vector$get_i64", "rt.arr", "get_i64", .None),
     rt("vector$builder_new_i64", "rt.arr", "builder_new_i64", .None),
@@ -607,12 +604,6 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("vector$builder_push_bool", "rt.arr", "builder_push_bool", .None),
     rt("vector$builder_freeze_bool", "rt.arr", "builder_freeze_bool", .None),
     rt("vector$gather_bool", "rt.arr", "gather_bool", .None),
-    rt(
-      "vector$vec_bool_roundtrip",
-      "rt.arr",
-      "vec_bool_roundtrip",
-      .Some("Vector.vec_bool_roundtrip"),
-    ),
   ]
 }
 
