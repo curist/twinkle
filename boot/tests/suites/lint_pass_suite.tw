@@ -397,4 +397,25 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "inline-record-copy: does not flag when the source stays live after the binding",
+      fn() {
+        fs := findings(
+          "fn f(lhs: Expr) Expr {\n  receiver := Expr.{ id: gen(), kind: lhs.kind, span: lhs.span }\n  use(receiver)\n  lhs\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "inline-record-copy: flags a self-rebind even though the name is used after",
+      fn() {
+        fs := findings(
+          "fn f(st: RwState) RwState {\n  st = RwState.{ a: st.a, b: st.b, c: fresh() }\n  st\n}\n",
+        )
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "inline-record-copy")
+        .Ok({})
+      },
+    )
 }

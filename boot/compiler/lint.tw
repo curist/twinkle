@@ -147,7 +147,7 @@ fn lint_block(block: Block, types: Dict<String, String>) Vector<LintFinding> {
   diverged := false
   reported := false
 
-  for stmt in block.stmts {
+  for stmt, i in block.stmts {
     if diverged {
       // Flag the first statement after a diverging one; the rest of the block
       // is equally unreachable, so one finding per block is enough.
@@ -160,7 +160,7 @@ fn lint_block(block: Block, types: Dict<String, String>) Vector<LintFinding> {
     } else {
       case stmt {
         .Let(ls) => {
-          case inline_copy_finding_for_let(ls, cur) {
+          case inline_copy_finding_for_let(block, i, ls, cur) {
             .Some(f) => out = .append(f),
             .None => {},
           }
@@ -690,35 +690,12 @@ fn param_types(decl: FunctionDecl) Dict<String, String> {
   out
 }
 
-/// Inline-record-copy check for a single `let`: fires only on a *named* literal
-/// `T.{ ... }` (anonymous `.{ ... }` has no explicit type to match the source
-/// against).
-fn inline_copy_finding_for_let(ls: LetStmt, types: Dict<String, String>) LintFinding? {
-  case ls.value.kind {
-    .NamedRecord(tname, entries) => inline_copy_finding(ls.name, ls.span, tname, entries, types),
-    _ => .None,
-  }
-}
+type CopyDominance = .{ src: String, majority: Bool }
 
-/// Flag a binding `name := T.{ ... }` whose literal rebuilds a single source by
-/// copying a strict majority of its fields verbatim — it should be a rebind of
-/// that source instead of a fresh copy. Requires the source to be declared with
-/// the same nominal type `tname` as the literal, so cross-type field forwarding
-/// (e.g. lowering a Core node into an ANF node that shares field names) is not
-/// mistaken for a copy.
-fn inline_copy_finding(
-  name: String,
-  span: Span,
-  tname: String,
-  entries: Vector<RecordEntry>,
-  types: Dict<String, String>,
-) LintFinding? {
+/// The source identifier copied by a strict majority of `entries` (each a
+/// verbatim `field: src.field`), and whether such a majority exists.
+fn dominant_copy_source(entries: Vector<RecordEntry>) CopyDominance {
   total := entries.len()
-
-  if total < 2 {
-    return .None
-  }
-
   counts: Dict<String, Int> = Dict.new()
 
   for en in entries {
@@ -738,23 +715,108 @@ fn inline_copy_finding(
     }
   }
 
-  // A strict majority copied verbatim from one source, and that source is
-  // declared with the literal's own nominal type.
-  same_type := case types[best_src] {
-    .Some(tn) => tn == tname,
-    .None => false,
+  .{ src: best_src, majority: total >= 2 and best * 2 > total }
+}
+
+/// Does `name` appear anywhere in `block`'s statements or tail after index `i`?
+/// Used as a conservative liveness check: it leans on `expr_uses_name` (which
+/// fails closed on compound expressions), so an unclear use reads as live and
+/// suppresses the finding.
+fn source_used_after(block: Block, i: Int, name: String) Bool {
+  j := i + 1
+
+  for j < block.stmts.len() {
+    if stmt_mentions_name(block.stmts[j], name) {
+      return true
+    }
+
+    j = j + 1
   }
 
-  if best * 2 > total and same_type {
-    .Some(
-      .{
-        span,
-        message: "`${name}` rebuilds `${best_src}` by copying its fields; rebind `${best_src}` directly (`${best_src}.field = v`) instead of constructing a copy",
-        rule: "inline-record-copy",
-      },
-    )
-  } else {
-    .None
+  case block.tail {
+    .Some(e) => expr_uses_name(e, name),
+    .None => false,
+  }
+}
+
+fn stmt_mentions_name(stmt: Stmt, name: String) Bool {
+  case stmt {
+    // A rebinding of `name` counts as a mention (conservative).
+    .Let(s) => s.name == name or expr_uses_name(s.value, name),
+    .For(s) => {
+      iter_u := case s.iter {
+        .Some(e) => expr_uses_name(e, name),
+        .None => false,
+      }
+      cond_u := case s.condition {
+        .Some(e) => expr_uses_name(e, name),
+        .None => false,
+      }
+      iter_u
+        or cond_u
+        or opt_str_eq(s.pattern, name)
+        or opt_str_eq(s.index, name)
+        or block_mentions_name(s.body, name)
+    },
+    .Return(s) => case s.value {
+      .Some(e) => expr_uses_name(e, name),
+      .None => false,
+    },
+    .Break(s) => case s.value {
+      .Some(e) => expr_uses_name(e, name),
+      .None => false,
+    },
+    .Continue(_) => false,
+    .Defer(s) => expr_uses_name(s.expr, name),
+    .Expr(s) => expr_uses_name(s.expr, name),
+    .ErrorStmt(_) => false,
+  }
+}
+
+fn block_mentions_name(block: Block, name: String) Bool {
+  for stmt in block.stmts {
+    if stmt_mentions_name(stmt, name) {
+      return true
+    }
+  }
+
+  case block.tail {
+    .Some(e) => expr_uses_name(e, name),
+    .None => false,
+  }
+}
+
+/// Inline-record-copy check for the `let` at statement index `i`: fires only on a
+/// *named* literal `T.{ ... }` that copies a strict majority of its fields from
+/// one source of the same declared nominal type, and only when rebinding that
+/// source is sound — a self-rebind (`st = St.{…st…}`), or a source whose old
+/// value is dead after the binding. Anonymous `.{ ... }` literals are excluded
+/// (no explicit type to match the source against).
+fn inline_copy_finding_for_let(block: Block, i: Int, ls: LetStmt, types: Dict<String, String>) LintFinding? {
+  case ls.value.kind {
+    .NamedRecord(tname, entries) => {
+      dom := dominant_copy_source(entries)
+
+      type_ok := case types[dom.src] {
+        .Some(tn) => tn == tname,
+        .None => false,
+      }
+      self_rebind := ls.is_rebind and ls.name == dom.src
+      sound := self_rebind or !source_used_after(block, i, dom.src)
+
+      if dom.majority and type_ok and sound {
+        .Some(
+          .{
+            span: ls.span,
+            message: "`${ls.name}` rebuilds `${dom.src}` by copying its fields; rebind `${dom.src}` directly (`${dom.src}.field = v`) instead of constructing a copy",
+            rule: "inline-record-copy",
+          },
+        )
+      } else {
+        .None
+      }
+    },
+    _ => .None,
   }
 }
 

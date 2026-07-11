@@ -83,6 +83,31 @@ annotations already in the AST.
 Dogfood result: 11 raw hits → 7 after the type check, all genuine same-type
 copy-rebuilds; the 4 dropped were cross-type forwarding and inferred-local cases.
 
+## Liveness guard (added after further dogfooding)
+
+The type check is necessary but not sufficient: the rule's suggestion ("rebind
+the source") is only *valid* when the source's old value is dead after the
+binding. A copy where the source stays live is deliberate — you need a second
+value — and rebinding it would corrupt the original:
+
+```
+// parser.tw — receiver is lhs cloned with a new id; lhs is used afterward
+receiver := Expr.{ id: gen(), kind: lhs.kind, span: lhs.span }
+```
+
+So the rule flags only when rebinding is sound:
+
+- a **self-rebind** (`st = St.{…st…}`, `ls.is_rebind and ls.name == src`) always
+  is — the reconstruction replaces the binding in place; or
+- the **source is not read after** the binding statement (a conservative scan of
+  the remaining block statements and tail via `expr_uses_name`, which fails
+  closed on compound expressions).
+
+This closes the residual false-positive class and makes every finding a provably
+safe rebind — a candidate for a future `twk fix` auto-rewrite. Dogfood: 7 → 4
+provably-safe hits (2 self-rebinds, 2 dead-after), all fixed in the codebase; the
+3 dropped were genuine live-source copies the rule correctly no longer claims.
+
 ## Message
 
 ```
