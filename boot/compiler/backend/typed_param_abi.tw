@@ -49,6 +49,25 @@ pub type ReprAnalysis = .{
   capture_abi: Dict<String, Dict<Int, String>>,
 }
 
+// A function is relevant to typed-vector analysis only if some slot carries a
+// typed-vector-family mono type (Vector<Int> / Vector<Bool>). Every producer,
+// consumer, field-store, param, return, payload, and capture the analysis can
+// classify is backed by such a slot (elem_family_of over MonoType, not repr), so
+// a function without one contributes nothing to any of the fixpoint dicts.
+// Filtering these out up front lets the per-pass whole-body walks (build_copy_map,
+// collect_candidates, scan_consumers, ...) run only over the small vector-relevant
+// subset instead of every function in the program.
+fn func_has_family_slot(pf: PreparedFunc) Bool {
+  for sid, info in pf.slots {
+    case elem_family_of(info.mono) {
+      .Some(_) => return true,
+      .None => {},
+    }
+  }
+
+  false
+}
+
 // The family mono_key of a mono type that has a typed-vector representation, or
 // .None. Generalizes the old is_vector_int predicate over elem_family_of.
 fn family_key_of(mono: MonoType) String? {
@@ -449,9 +468,21 @@ pub fn analyze_typed_repr(
   // latter makes typed_fields depend on typeable_return, which itself depends on
   // typed_fields (a function returning a typed field read), so field typing joins
   // the fixpoint. Seed with builder-only fields (empty typeable_return).
-  tf := analyze_typed_fields(funcs, builtins, Dict.new())
-  tp_params := all_vec_int_param_indices(funcs)
-  cap := funcs.len() + 4
+  // Restrict every internal pass to functions that actually carry a typed-vector
+  // slot. Skipped functions contribute no producers/consumers/params/returns/
+  // payloads/captures, so the resulting dicts are identical to running over the
+  // full set — but the per-function whole-body walks now run over a small subset.
+  rfuncs: Vector<PreparedFunc> = []
+
+  for pf in funcs {
+    if func_has_family_slot(pf) {
+      rfuncs = .append(pf)
+    }
+  }
+
+  tf := analyze_typed_fields(rfuncs, builtins, Dict.new())
+  tp_params := all_vec_int_param_indices(rfuncs)
+  cap := rfuncs.len() + 4
   round := 0
   done := false
   primary_converged := false
@@ -459,9 +490,9 @@ pub fn analyze_typed_repr(
   abi: ParamAbi = .{ typeable_params: Dict.new(), typeable_return: Dict.new() }
 
   for !done {
-    tpay = analyze_typed_payloads(funcs, builtins, first_user_tid, tp_params)
-    abi = analyze_typed_params(funcs, builtins, tf, tpay)
-    new_tf := analyze_typed_fields(funcs, builtins, abi.typeable_return)
+    tpay = analyze_typed_payloads(rfuncs, builtins, first_user_tid, tp_params)
+    abi = analyze_typed_params(rfuncs, builtins, tf, tpay)
+    new_tf := analyze_typed_fields(rfuncs, builtins, abi.typeable_return)
 
     stable := param_maps_equal(abi.typeable_params, tp_params) and bool_key_maps_equal(new_tf, tf)
 
@@ -515,11 +546,11 @@ pub fn analyze_typed_repr(
   // support check queries), keeping the per-round cost proportional to the
   // closure surface.
   ids := route_ids(builtins)
-  cand := condition1_capture_candidates(funcs, builtins, tf, tpay)
+  cand := condition1_capture_candidates(rfuncs, builtins, tf, tpay)
 
   closure_funcs: Vector<PreparedFunc> = []
 
-  for pf in funcs {
+  for pf in rfuncs {
     if collect_make_closure_sites(pf.body, []).len() > 0 {
       closure_funcs = .append(pf)
     }
@@ -540,7 +571,7 @@ pub fn analyze_typed_repr(
       capture_abi,
       abi.typeable_return,
     )
-    new_cap := analyze_typed_captures(funcs, cand, slot_repr)
+    new_cap := analyze_typed_captures(rfuncs, cand, slot_repr)
 
     cond {
       // Converged: new_cap == capture_abi means the slot_repr that produced it was

@@ -163,6 +163,54 @@ test suites. The occurrence-consuming handlers (definition, type-definition,
 references, prepare-rename, rename, document-highlight, semantic-tokens) keep the
 full path.
 
+## Update: 2026-07-11 (prepare_backend: typed-vector analysis scope filter)
+
+`prepare_backend` had grown to the second-largest backend phase (~565–589ms) after
+the typed-vector family work, with no sub-timing. Added a `[time:prepare]`
+breakdown (kept, alongside `[time:check]` / `[time:imports]`) over its six stages:
+
+```text
+insert_boundaries   ~98ms
+assign_slots       ~133ms
+assign_repr         ~74ms
+tailify             ~1ms
+analyze_typed_repr ~226ms   (~40% of prepare_backend)
+route_typed_vectors ~26ms
+```
+
+`analyze_typed_repr` (the joint typed-field/payload/param/return/capture fixpoint
+in `backend/typed_param_abi.tw`) was the clear hotspot. Instrumentation showed it
+converges in **1 primary round + 0 capture rounds** — cost is per-pass, not
+iteration count. Each pass runs `analyze_typed_payloads` + `analyze_typed_params`
++ `analyze_typed_fields` over **all 3339 functions**, and the field scan does
+~4 whole-body walks *per element family* per function (`build_copy_map`,
+`collect_candidates`, the producer collectors, `scan_consumers`). `analyze_typed_fields`
+alone was ~109ms.
+
+### Scope filter (landed)
+
+Every producer, consumer, field-store, param, return, payload, and capture the
+analysis can classify is backed by a slot whose **MonoType** is `Vector<Int>` /
+`Vector<Bool>` (`elem_family_of` over mono, not repr): `collect_candidates`,
+`field_store_sites` (`atom_in_family`), `scan_consumers` (result slot in family),
+and the param/return/capture predicates all gate on a family slot. So a function
+with **no** family-typed slot contributes nothing to any of the fixpoint dicts.
+
+**Landed**: filter `funcs` to the vector-relevant subset once at the top of
+`analyze_typed_repr` (`func_has_family_slot`) and run every internal pass over that
+subset. In the boot build only **155 of 3340** functions are vector-relevant
+(~4.6%), so the per-function whole-body walks now run over the small subset instead
+of the whole program. Output dicts are identical (skipped funcs contribute nothing),
+proven by the self-host byte-identical fixed point plus all 2982 boot tests and the
+dataframe typed-vector suite (42 tests) green.
+
+Result: **analyze_typed_repr ~226 → ~39ms**; **prepare_backend ~565 → ~403ms**.
+Wall-clock moved from the ~5.09–5.35s session-start range to a steadier ~5.01–5.08s
+(the ~180ms phase win is a few percent of a noisy whole-build number, but the phase
+drop is repeatable). Remaining `prepare_backend` cost is now `assign_slots` (~133ms)
+and `insert_boundaries` (~98ms) / `assign_repr` (~74ms) — the genuine per-function
+slot/boundary work, measure-first before touching.
+
 ## Current baseline: 2026-06-28
 
 Measured on the `scc-module-groups` branch after the SCC frontend landed, using
