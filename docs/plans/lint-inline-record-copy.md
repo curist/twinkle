@@ -51,14 +51,37 @@ copies(S*) * 2 > total_entries
 This ignores small literals that merely reuse one field of `src` while genuinely
 building something new, and multi-source merges (no single dominant source).
 
-## Why no type check
+## Source-type check (revised after dogfooding)
 
-The copies are same-name (`f: src.f`). For the literal to typecheck, `src.f` must
-have the type of `T`'s field `f`; holding across a majority of fields already
-implies `src` has `T`'s shape. A different type coincidentally sharing every
-copied field name and type is essentially never real code, and the lint is
-report-only — a rare miss is a harmless spurious hint, never a bad rewrite. So the
-rule needs no `ResolvedEnv` and no local-type tracking.
+The initial design skipped a type check, arguing same-name copies across a
+majority of fields already imply same-type. **Dogfooding on the compiler proved
+this wrong.** IR-lowering passes routinely forward *metadata fields* that share
+names (`func_id`, `name`, `params`, `ty`, `span`) from a source node into a
+**different** target type:
+
+```
+// lower_anf.tw — fdef is an AnfFunctionDef, but func is a *Core* function
+fdef := AnfFunctionDef.{ func_id: func.func_id, name: func.name, params: func.params, … }
+```
+
+`func` is not an `AnfFunctionDef`; "rebind `func`" is wrong. Restricting to named
+literals removed the *anonymous* cross-type cases but not these. So the rule now
+**confirms the copy source is declared with the same nominal type as the
+literal**:
+
+- Thread a `types: Dict<String, String>` (local name → declared nominal type name)
+  through the lint visitor, seeded from the enclosing function's parameters and
+  extended by annotated `let`s in statement order.
+- Flag only when `types[S*] == T` (the literal's nominal type).
+
+This drops the cross-type lowering copies (the source has a different or no
+declared type) and, as a bonus, most live-source cases (their source is an
+inferred local with no tracked type). Sources with inferred types are skipped —
+a safe false-negative. This needs no `ResolvedEnv`, only the syntactic param/let
+annotations already in the AST.
+
+Dogfood result: 11 raw hits → 7 after the type check, all genuine same-type
+copy-rebuilds; the 4 dropped were cross-type forwarding and inferred-local cases.
 
 ## Message
 

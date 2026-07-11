@@ -188,6 +188,7 @@ pub fn suite() runner.Suite {
         ids := [
           "direct-rebinding",
           "record-copy-helper",
+          "inline-record-copy",
           "unreachable-code",
           "unused-must-use",
           "unused-imports",

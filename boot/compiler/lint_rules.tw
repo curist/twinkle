@@ -42,6 +42,24 @@ pub fn describe(rule: String) RuleInfo? {
         ,
       },
     ),
+    "inline-record-copy" => .Some(
+      .{
+        brief: "an inline binding rebuilds a value by copying most of its fields; rebind the source",
+        detailed:
+          \\A local binding whose record literal copies a majority of its fields
+          \\verbatim from one source is just that source with a few fields changed.
+          \\Reconstructing it by hand is a hazard: every future field of the type
+          \\must be threaded through, and a forgotten one is a silent bug. Records
+          \\are immutable and assignment is rebinding, so rebind the source instead:
+          \\
+          \\    // Avoid
+          \\    loop_ctx := Ctx.{ a: ctx.a, b: ctx.b, depth: ctx.depth + 1 }
+          \\
+          \\    // Prefer
+          \\    ctx.depth = ctx.depth + 1
+        ,
+      },
+    ),
     "unreachable-code" => .Some(
       .{
         brief: "code after a diverging statement never runs",
