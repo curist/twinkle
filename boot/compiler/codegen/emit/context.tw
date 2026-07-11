@@ -96,6 +96,11 @@ pub type EmitCtx = .{
   wasm_locals: Vector<ValType>,
   label_stack: Vector<LabelPair>,
   current_func_id: FuncId?,
+  // The PreparedFunc currently being emitted, cached so per-atom type queries
+  // (atom_mono/atom_repr/atom_val_type) don't re-fetch it from the whole-program
+  // `prepared_funcs` HAMT on every call. Set once per function in emit_func and
+  // threaded unchanged; `current_func_id` stays the authoritative identity.
+  current_pf: PreparedFunc?,
   func_sym_map: Dict<Int, String>,
   prepared_funcs: Dict<Int, PreparedFunc>,
   extern_imports: Dict<Int, ExternImport>,
@@ -106,10 +111,7 @@ pub type EmitCtx = .{
 }
 
 pub fn current_prepared_func(ctx: EmitCtx) PreparedFunc? {
-  case ctx.current_func_id {
-    .Some(fid) => ctx.prepared_funcs[fid.id],
-    .None => .None,
-  }
+  ctx.current_pf
 }
 
 pub fn lookup_slot(ctx: EmitCtx, sid: SlotId) LocalEntry {

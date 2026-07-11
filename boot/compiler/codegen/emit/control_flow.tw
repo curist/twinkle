@@ -167,6 +167,7 @@ pub fn emit_loop_op(
     wasm_locals: ctx.wasm_locals,
     label_stack: new_labels,
     current_func_id: ctx.current_func_id,
+    current_pf: ctx.current_pf,
     func_sym_map: ctx.func_sym_map,
     prepared_funcs: ctx.prepared_funcs,
     extern_imports: ctx.extern_imports,
