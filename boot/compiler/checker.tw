@@ -1944,7 +1944,7 @@ fn maybe_unused_value(ctx: InferCtx, span: Span, ty: MonoType) InferCtx {
       return ctx
     }
   }
-  ctx.lints = .append(.{ span, message, rule: "unused-must-use" })
+  ctx.lints = .append(.{ span, message, rule: "unused-must-use", edits: [] })
   ctx
 }
 

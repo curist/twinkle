@@ -159,7 +159,8 @@ fn gather_lint(file: String, sink: query_progress.ProgressSink?) LintResult {
     )
   }
 
-  // Report-only structural lints (L3, L4): no edits.
+  // Structural lints (L3, L4, …). Most are report-only; inline-record-copy
+  // carries machine-applicable rebind edits for its self-rebind findings.
   for h in a_result.lints {
     findings = .append(
       .{
@@ -167,7 +168,7 @@ fn gather_lint(file: String, sink: query_progress.ProgressSink?) LintResult {
         start: h.finding.span.start,
         message: h.finding.message,
         rule: h.finding.rule,
-        edits: [],
+        edits: h.finding.edits,
       },
     )
   }
@@ -451,15 +452,18 @@ fn report_lint_result(result: LintResult, explain: Bool, color: Bool) {
 
 /// Edits for the selected rules, grouped by file path (skips report-only and
 /// rules not requested).
-fn select_edits(findings: Vector<Finding>, fix_unused: Bool, fix_inherent: Bool) Dict<
-  String,
-  Vector<FixEdit>,
-> {
+fn select_edits(
+  findings: Vector<Finding>,
+  fix_unused: Bool,
+  fix_inherent: Bool,
+  fix_inline_copy: Bool,
+) Dict<String, Vector<FixEdit>> {
   edits_by_file: Dict<String, Vector<FixEdit>> = Dict.new()
 
   for f in findings {
     selected := f.rule == "unused-imports" and fix_unused
       or f.rule == "inherent-calls" and fix_inherent
+      or f.rule == "inline-record-copy" and fix_inline_copy
 
     if selected and f.edits.len() > 0 {
       case edits_by_file[f.path] {
@@ -483,9 +487,10 @@ pub fn run_lint_command(parsed: ParseResult) {
   fix_all := parsed.has_flag("fix")
   fix_unused := fix_all or parsed.has_flag("fix-unused-imports")
   fix_inherent := fix_all or parsed.has_flag("fix-inherent-calls")
+  fix_inline_copy := fix_all or parsed.has_flag("fix-inline-record-copy")
   explain := parsed.has_flag("explain")
   color := default_config().color
-  any_apply := fix_unused or fix_inherent
+  any_apply := fix_unused or fix_inherent or fix_inline_copy
 
   if !any_apply {
     result := gather_lint_multi(targets)
@@ -520,7 +525,7 @@ pub fn run_lint_command(parsed: ParseResult) {
       proc.exit(1)
     }
 
-    edits := select_edits(current.findings, fix_unused, fix_inherent)
+    edits := select_edits(current.findings, fix_unused, fix_inherent, fix_inline_copy)
 
     if edits.len() == 0 {
       break

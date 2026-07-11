@@ -57,6 +57,9 @@ pub fn describe(rule: String) RuleInfo? {
           \\
           \\    // Prefer
           \\    ctx.depth = ctx.depth + 1
+          \\
+          \\Self-rebinds (`st = St.{…st…}`) are auto-fixable with
+          \\`twk lint --fix-inline-record-copy`.
         ,
       },
     ),

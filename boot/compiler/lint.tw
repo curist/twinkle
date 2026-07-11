@@ -9,10 +9,23 @@
 
 use compiler.ast.{Block, Expr, ForStmt, FunctionDecl, LetStmt, Module, RecordEntry, Stmt, TypeExpr}
 use compiler.resolver.{ResolvedEnv}
+use lib.source.report.{FixEdit}
 use lib.source.span.{Span}
 
-/// A report-only lint finding (no machine-applicable edits).
-pub type LintFinding = .{ span: Span, message: String, rule: String }
+/// A lint finding. `edits` carries machine-applicable rewrites for auto-fixable
+/// rules (empty for report-only lints).
+pub type LintFinding = .{ span: Span, message: String, rule: String, edits: Vector<FixEdit> }
+
+/// A report-only finding: no machine-applicable edits.
+fn report_finding(span: Span, message: String, rule: String) LintFinding {
+  .{ span, message, rule, edits: [] }
+}
+
+// Threaded through the block/statement/expression walk. `types` maps in-scope
+// local names to their declared nominal type name (params + annotated lets),
+// accumulated in statement order; `source` is the module text, used to slice
+// changed-field values when synthesizing an inline-record-copy auto-fix.
+type LintCtx = .{ types: Dict<String, String>, source: String }
 
 /// Lint a whole module. `env` is used by type-dependent structural lints (L3);
 /// `source` renders span-sliced suggestions (constant-fn).
@@ -24,9 +37,9 @@ pub fn lint_module(module: Module, env: ResolvedEnv, source: String) Vector<Lint
       .Function(decl) => {
         out = .concat(lint_record_copy(decl, env))
         out = .concat(lint_constant_fn(decl, source))
-        out = .concat(lint_block(decl.body, param_types(decl)))
+        out = .concat(lint_block(decl.body, .{ types: param_types(decl), source }))
       },
-      .Stmt(stmt) => out = .concat(lint_stmt(stmt, Dict.new())),
+      .Stmt(stmt) => out = .concat(lint_stmt(stmt, .{ types: Dict.new(), source })),
       _ => {},
     }
   }
@@ -93,11 +106,11 @@ fn lint_constant_fn(decl: FunctionDecl, source: String) Vector<LintFinding> {
     .None => "${vis}${decl.name} := ${literal_text}",
   }
   [
-    .{
-      span: decl.name_span,
-      message: "`${decl.name}` returns only a constant; declare a module constant instead: `${suggestion}` (call sites drop `()`)",
-      rule: "constant-fn",
-    },
+    report_finding(
+      decl.name_span,
+      "`${decl.name}` returns only a constant; declare a module constant instead: `${suggestion}` (call sites drop `()`)",
+      "constant-fn",
+    ),
   ]
 }
 
@@ -141,9 +154,9 @@ fn is_error_call(expr: Expr) Bool {
 // enclosing params and annotated `let`s), used by inline-record-copy to confirm
 // the copy source is the same type as the literal it reconstructs. It accumulates
 // this block's annotated bindings in statement order as we descend.
-fn lint_block(block: Block, types: Dict<String, String>) Vector<LintFinding> {
+fn lint_block(block: Block, ctx: LintCtx) Vector<LintFinding> {
   out: Vector<LintFinding> = lint_direct_rebinding(block)
-  cur := types
+  cur := ctx
   diverged := false
   reported := false
 
@@ -152,9 +165,7 @@ fn lint_block(block: Block, types: Dict<String, String>) Vector<LintFinding> {
       // Flag the first statement after a diverging one; the rest of the block
       // is equally unreachable, so one finding per block is enough.
       if !reported {
-        out = .append(
-          .{ span: stmt_span(stmt), message: "unreachable code", rule: "unreachable-code" },
-        )
+        out = .append(report_finding(stmt_span(stmt), "unreachable code", "unreachable-code"))
         reported = true
       }
     } else {
@@ -168,7 +179,7 @@ fn lint_block(block: Block, types: Dict<String, String>) Vector<LintFinding> {
           // An annotated binding contributes its declared type to later statements.
           case ls.ty {
             .Some(t) => case type_name(t) {
-              .Some(n) => cur[ls.name] = n,
+              .Some(n) => cur.types[ls.name] = n,
               .None => {},
             },
             .None => {},
@@ -187,7 +198,7 @@ fn lint_block(block: Block, types: Dict<String, String>) Vector<LintFinding> {
   case block.tail {
     .Some(e) => if diverged {
       if !reported {
-        out = .append(.{ span: e.span, message: "unreachable code", rule: "unreachable-code" })
+        out = .append(report_finding(e.span, "unreachable code", "unreachable-code"))
         reported = true
       }
     } else {
@@ -199,57 +210,57 @@ fn lint_block(block: Block, types: Dict<String, String>) Vector<LintFinding> {
   out
 }
 
-fn lint_stmt(stmt: Stmt, types: Dict<String, String>) Vector<LintFinding> {
+fn lint_stmt(stmt: Stmt, ctx: LintCtx) Vector<LintFinding> {
   case stmt {
-    .Let(s) => lint_expr(s.value, types),
+    .Let(s) => lint_expr(s.value, ctx),
     .For(s) => {
       out: Vector<LintFinding> = []
 
       case s.iter {
-        .Some(e) => out = .concat(lint_expr(e, types)),
+        .Some(e) => out = .concat(lint_expr(e, ctx)),
         .None => {},
       }
 
       case s.condition {
-        .Some(e) => out = .concat(lint_expr(e, types)),
+        .Some(e) => out = .concat(lint_expr(e, ctx)),
         .None => {},
       }
-      out = .concat(lint_block(s.body, types))
+      out = .concat(lint_block(s.body, ctx))
       out
     },
     .Return(s) => case s.value {
-      .Some(e) => lint_expr(e, types),
+      .Some(e) => lint_expr(e, ctx),
       .None => [],
     },
     .Break(s) => case s.value {
-      .Some(e) => lint_expr(e, types),
+      .Some(e) => lint_expr(e, ctx),
       .None => [],
     },
     .Continue(_) => [],
-    .Defer(s) => lint_expr(s.expr, types),
-    .Expr(s) => lint_expr(s.expr, types),
+    .Defer(s) => lint_expr(s.expr, ctx),
+    .Expr(s) => lint_expr(s.expr, ctx),
     .ErrorStmt(_) => [],
   }
 }
 
-fn lint_expr(expr: Expr, types: Dict<String, String>) Vector<LintFinding> {
+fn lint_expr(expr: Expr, ctx: LintCtx) Vector<LintFinding> {
   case expr.kind {
-    .BlockExpr(b) => lint_block(b, types),
+    .BlockExpr(b) => lint_block(b, ctx),
     .If(c, then_b, else_e) => {
-      out := lint_expr(c, types)
-      out = .concat(lint_block(then_b, types))
+      out := lint_expr(c, ctx)
+      out = .concat(lint_block(then_b, ctx))
 
       case else_e {
-        .Some(e) => out = .concat(lint_expr(e, types)),
+        .Some(e) => out = .concat(lint_expr(e, ctx)),
         .None => {},
       }
       out
     },
     .Case(scrut, arms) => {
-      out := lint_expr(scrut, types)
+      out := lint_expr(scrut, ctx)
 
       for arm in arms {
-        out = .concat(lint_expr(arm.expr, types))
+        out = .concat(lint_expr(arm.expr, ctx))
       }
       out
     },
@@ -258,56 +269,56 @@ fn lint_expr(expr: Expr, types: Dict<String, String>) Vector<LintFinding> {
 
       for arm in arms {
         case arm.condition {
-          .Some(c) => out = .concat(lint_expr(c, types)),
+          .Some(c) => out = .concat(lint_expr(c, ctx)),
           .None => {},
         }
-        out = .concat(lint_expr(arm.body, types))
+        out = .concat(lint_expr(arm.body, ctx))
       }
       out
     },
-    .Closure(_, _, body) => lint_block(body, types),
+    .Closure(_, _, body) => lint_block(body, ctx),
     .Collect(c) => {
       out: Vector<LintFinding> = []
 
       case c.iter {
-        .Some(e) => out = .concat(lint_expr(e, types)),
+        .Some(e) => out = .concat(lint_expr(e, ctx)),
         .None => {},
       }
 
       case c.condition {
-        .Some(e) => out = .concat(lint_expr(e, types)),
+        .Some(e) => out = .concat(lint_expr(e, ctx)),
         .None => {},
       }
-      out = .concat(lint_block(c.body, types))
+      out = .concat(lint_block(c.body, ctx))
       out
     },
     .Call(callee, args) => {
-      out := lint_expr(callee, types)
+      out := lint_expr(callee, ctx)
 
       for a in args {
-        out = .concat(lint_expr(a, types))
+        out = .concat(lint_expr(a, ctx))
       }
       out
     },
-    .Binary(_, l, r) => lint_expr(l, types).concat(lint_expr(r, types)),
-    .Unary(_, e) => lint_expr(e, types),
-    .Field(base, _) => lint_expr(base, types),
-    .Index(base, idx) => lint_expr(base, types).concat(lint_expr(idx, types)),
+    .Binary(_, l, r) => lint_expr(l, ctx).concat(lint_expr(r, ctx)),
+    .Unary(_, e) => lint_expr(e, ctx),
+    .Field(base, _) => lint_expr(base, ctx),
+    .Index(base, idx) => lint_expr(base, ctx).concat(lint_expr(idx, ctx)),
     .Array(elems) => {
       out: Vector<LintFinding> = []
 
       for e in elems {
-        out = .concat(lint_expr(e, types))
+        out = .concat(lint_expr(e, ctx))
       }
       out
     },
-    .Record(entries) => lint_record_entries(entries, types),
-    .NamedRecord(_, entries) => lint_record_entries(entries, types),
+    .Record(entries) => lint_record_entries(entries, ctx),
+    .NamedRecord(_, entries) => lint_record_entries(entries, ctx),
     .Variant(_, args) => {
       out: Vector<LintFinding> = []
 
       for a in args {
-        out = .concat(lint_expr(a, types))
+        out = .concat(lint_expr(a, ctx))
       }
       out
     },
@@ -316,7 +327,7 @@ fn lint_expr(expr: Expr, types: Dict<String, String>) Vector<LintFinding> {
 
       for p in parts {
         case p {
-          .Interpolation(e) => out = .concat(lint_expr(e, types)),
+          .Interpolation(e) => out = .concat(lint_expr(e, ctx)),
           .Literal(_) => {},
         }
       }
@@ -326,14 +337,12 @@ fn lint_expr(expr: Expr, types: Dict<String, String>) Vector<LintFinding> {
   }
 }
 
-fn lint_record_entries(entries: Vector<RecordEntry>, types: Dict<String, String>) Vector<
-  LintFinding,
-> {
+fn lint_record_entries(entries: Vector<RecordEntry>, ctx: LintCtx) Vector<LintFinding> {
   out: Vector<LintFinding> = []
 
   for en in entries {
     case en.value {
-      .Some(e) => out = .concat(lint_expr(e, types)),
+      .Some(e) => out = .concat(lint_expr(e, ctx)),
       .None => {},
     }
   }
@@ -399,11 +408,11 @@ fn path_string(e: Expr) String {
 
 fn rebinding_finding(span: Span, tmp: String, src: Expr) LintFinding {
   rendered := path_string(src)
-  .{
+  report_finding(
     span,
-    message: "`${tmp}` is only an alias for `${rendered}`; rebind `${rendered}` directly",
-    rule: "direct-rebinding",
-  }
+    "`${tmp}` is only an alias for `${rendered}`; rebind `${rendered}` directly",
+    "direct-rebinding",
+  )
 }
 
 fn is_bare_ident(e: Expr) Bool {
@@ -792,12 +801,83 @@ fn block_mentions_name(block: Block, name: String) Bool {
 /// source is sound — a self-rebind (`st = St.{…st…}`), or a source whose old
 /// value is dead after the binding. Anonymous `.{ ... }` literals are excluded
 /// (no explicit type to match the source against).
-fn inline_copy_finding_for_let(block: Block, i: Int, ls: LetStmt, types: Dict<String, String>) LintFinding? {
+/// The leading whitespace of the line containing byte offset `start` — the indent
+/// a statement sits at, reused for the rebind lines a fix synthesizes.
+fn line_indent(source: String, start: Int) String {
+  i := start
+
+  for i > 0 and source.slice(i - 1, i) != "\n" {
+    i = i - 1
+  }
+
+  source.slice(i, start)
+}
+
+fn join_with(lines: Vector<String>, sep: String) String {
+  out := ""
+  first := true
+
+  for l in lines {
+    if first {
+      out = l
+      first = false
+    } else {
+      out = "${out}${sep}${l}"
+    }
+  }
+
+  out
+}
+
+// Machine-applicable rewrite for an inline-record-copy finding. v1 auto-fixes
+// only the self-rebind shape (`st = St.{…st…}`): replace the reconstruction with
+// one `src.field = value` rebind per changed field (a value not copied verbatim
+// from `src`). Fresh bindings stay report-only.
+fn inline_copy_edits(
+  ls: LetStmt,
+  src: String,
+  entries: Vector<RecordEntry>,
+  self_rebind: Bool,
+  source: String,
+) Vector<FixEdit> {
+  if !self_rebind {
+    return []
+  }
+
+  indent := line_indent(source, ls.span.start)
+  lines: Vector<String> = []
+
+  for en in entries {
+    is_copy := case entry_copy_source(en) {
+      .Some(s) => s == src,
+      .None => false,
+    }
+
+    if !is_copy {
+      value_text := case en.value {
+        // Shorthand `{ f }` rebinds `src.f` from the same-named local.
+        .None => en.name,
+        .Some(e) => source.slice(e.span.start, e.span.end),
+      }
+      lines = .append("${src}.${en.name} = ${value_text}")
+    }
+  }
+
+  // A pure self-copy (nothing changed) is a no-op; leave it report-only rather
+  // than emit an empty deletion.
+  if lines.len() == 0 {
+    return []
+  }
+
+  [.{ start: ls.span.start, end: ls.span.end, replacement: join_with(lines, "\n${indent}") }]
+}
+
+fn inline_copy_finding_for_let(block: Block, i: Int, ls: LetStmt, ctx: LintCtx) LintFinding? {
   case ls.value.kind {
     .NamedRecord(tname, entries) => {
       dom := dominant_copy_source(entries)
 
-      type_ok := case types[dom.src] {
+      type_ok := case ctx.types[dom.src] {
         .Some(tn) => tn == tname,
         .None => false,
       }
@@ -810,6 +890,7 @@ fn inline_copy_finding_for_let(block: Block, i: Int, ls: LetStmt, types: Dict<St
             span: ls.span,
             message: "`${ls.name}` rebuilds `${dom.src}` by copying its fields; rebind `${dom.src}` directly (`${dom.src}.field = v`) instead of constructing a copy",
             rule: "inline-record-copy",
+            edits: inline_copy_edits(ls, dom.src, entries, self_rebind, ctx.source),
           },
         )
       } else {
@@ -883,11 +964,11 @@ fn is_copy_rebuild(pname: String, entries: Vector<RecordEntry>) Bool {
 
 fn copy_finding(decl: FunctionDecl, rec_type: String) Vector<LintFinding> {
   [
-    .{
-      span: decl.name_span,
-      message: "`${decl.name}` rebuilds `${rec_type}` by copying fields; rebind directly (`p.field = v`) instead",
-      rule: "record-copy-helper",
-    },
+    report_finding(
+      decl.name_span,
+      "`${decl.name}` rebuilds `${rec_type}` by copying fields; rebind directly (`p.field = v`) instead",
+      "record-copy-helper",
+    ),
   ]
 }
 

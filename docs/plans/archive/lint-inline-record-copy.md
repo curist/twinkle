@@ -142,3 +142,20 @@ Negatives:
 - cross-field shuffle (`{ f: s.g }`).
 - all-computed / no verbatim copies.
 - single-entry record.
+
+## Auto-fix (v1: self-rebind only)
+
+Because the rule is sound (every finding is a provably safe rebind), it carries a
+machine-applicable rewrite through the `twk lint --fix` channel. v1 fixes only the
+**self-rebind** shape (`st = St.{…st…}`): the whole statement is replaced by one
+`st.<field> = <value>` line per *changed* field (a value not copied verbatim from
+the source), values sliced from source text, indented to match. Fresh bindings
+(`x := T.{…src…}`, x≠src) and zero-changed-field self-copies stay report-only —
+the former needs sound `x`→`src` use-rewriting, deferred.
+
+Wiring: `LintFinding` gained an `edits` field; `inline_copy_edits` builds the
+`FixEdit` in `lint.tw` (which already receives the module source, threaded via a
+`LintCtx { types, source }` record). The lint command forwards `finding.edits`,
+`select_edits` routes `inline-record-copy` under `--fix`/`--fix-inline-record-copy`,
+and the flag is registered in `main.tw`. Verified: `st = St.{ a: st.a, b: st.b,
+c: st.c + 1 }` → `st.c = st.c + 1`, compiles/runs, idempotent, fmt-clean.

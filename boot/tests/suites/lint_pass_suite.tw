@@ -418,4 +418,39 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "inline-record-copy: self-rebind carries a rebind auto-fix edit",
+      fn() {
+        src := "fn f(st: RwState) RwState {\n  st = RwState.{ a: st.a, b: st.b, c: fresh() }\n  st\n}\n"
+        fs := findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 1)
+        edit := fs[0].edits[0]
+        try assert.equal(
+          src.slice(edit.start, edit.end),
+          "st = RwState.{ a: st.a, b: st.b, c: fresh() }",
+        )
+        try assert.equal(edit.replacement, "st.c = fresh()")
+        .Ok({})
+      },
+    )
+    .test(
+      "inline-record-copy: self-rebind edit covers every changed field",
+      fn() {
+        src := "fn f(st: RwState) RwState {\n  st = RwState.{ a: st.a, b: st.b, c: st.c, d: next(), e: fresh() }\n  st\n}\n"
+        fs := findings(src)
+        try assert.equal(fs[0].edits.len(), 1)
+        try assert.equal(fs[0].edits[0].replacement, "st.d = next()\n  st.e = fresh()")
+        .Ok({})
+      },
+    )
+    .test(
+      "inline-record-copy: fresh binding stays report-only (no edit)",
+      fn() {
+        fs := findings("fn f(c: Ctx) Ctx {\n  x := Ctx.{ a: c.a, b: c.b, d: c.c + 1 }\n  x\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
 }
