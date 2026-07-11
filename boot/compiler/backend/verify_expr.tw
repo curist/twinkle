@@ -55,85 +55,53 @@ fn canonical_capture_source_local(ctx: VerifyCtx, info: SlotInfo) LocalId {
 }
 
 pub fn verify_prepared_func_expr(ctx: VerifyCtx) Result<Void, String> {
-  if prepared_depth_exceeds(ctx.pf.body, 512) {
+  ctx.verify_expr_at(ctx.pf.body, 1)
+}
+
+// Verify a prepared expression tree. The linear Let spine is walked iteratively
+// so arbitrarily long spines are stack-safe; native recursion only follows
+// control-flow branch bodies (if/match/loop/defer), whose nesting is tracked by
+// `depth`. Past the depth limit we stop descending (return Ok) to bound host
+// stack use on pathologically deep branch nesting — the same safety valve the old
+// two-pass `prepared_depth_exceeds` guard gave, now fused into the single verify
+// walk instead of a separate structural pre-pass. Long Let spines (which the old
+// guard counted toward depth and could skip wholesale) are now always verified.
+fn verify_expr_at(ctx: VerifyCtx, expr: PreparedExpr, depth: Int) Result<Void, String> {
+  if depth > 512 {
     return .Ok({})
   }
 
-  ctx.verify_expr(ctx.pf.body)
-}
+  cur := expr
+  result: Result<Void, String> = .Ok({})
+  done := false
 
-type DepthWork = .{ expr: PreparedExpr, depth: Int }
-
-fn prepared_depth_exceeds(expr: PreparedExpr, limit: Int) Bool {
-  stack: Vector<DepthWork> = [.{ expr, depth: 1 }]
-
-  for stack.len() > 0 {
-    item := stack[stack.len() - 1]
-    stack = .drop_last()
-    cur_depth := item.depth
-    cur_expr := item.expr
-    done := false
-
-    for !done {
-      if cur_depth > limit {
-        return true
-      }
-
-      child_depth := cur_depth + 1
-
-      case cur_expr {
-        .Let(_, op, body) => {
-          stack = push_prepared_op_children(op, child_depth, stack)
-          cur_expr = body
-          cur_depth = child_depth
-        },
-        _ => done = true,
-      }
+  for !done {
+    case cur {
+      .Let(slot, op, body) => {
+        result_info := try facts.slot_info_result(ctx.pf, slot, "let result")
+        try ctx.verify_op(result_info, op, depth)
+        cur = body
+      },
+      .Atom(atom) => {
+        result = ctx.verify_atom_mapped(atom, "atom")
+        done = true
+      },
+      .Return(atom) => {
+        result = ctx.verify_return_expr(atom)
+        done = true
+      },
+      .Break(atom) => {
+        result = ctx.verify_break_expr(atom)
+        done = true
+      },
+      .Continue => done = true,
     }
   }
 
-  false
+  result
 }
 
-fn push_prepared_op_children(op: PreparedOp, depth: Int, stack: Vector<DepthWork>) Vector<DepthWork> {
-  cur_stack := stack
-
-  case op {
-    .AIf(_, then_e, else_e) => {
-      cur_stack = .append(.{ expr: else_e, depth })
-      cur_stack = .append(.{ expr: then_e, depth })
-    },
-    .AMatch(_, arms) => {
-      i := arms.len() - 1
-
-      for i >= 0 {
-        cur_stack = .append(.{ expr: arms[i].body, depth })
-        i = i - 1
-      }
-    },
-    .ALoop(inner) => cur_stack = .append(.{ expr: inner, depth }),
-    .ADefer(inner) => cur_stack = .append(.{ expr: inner, depth }),
-    _ => {},
-  }
-
-  cur_stack
-}
-
-fn verify_expr(ctx: VerifyCtx, expr: PreparedExpr) Result<Void, String> {
-  case expr {
-    .Let(slot, op, body) => {
-      result_info := try facts.slot_info_result(ctx.pf, slot, "let result")
-      try ctx.verify_op(result_info, op)
-      ctx.verify_expr(body)
-    },
-    .Atom(atom) => ctx.verify_atom_mapped(atom, "atom"),
-    .Return(atom) => ctx.verify_return_expr(atom),
-    .Break(atom) => ctx.verify_break_expr(atom),
-    .Continue => .Ok({}),
-  }
-}
-
-fn verify_op(ctx: VerifyCtx, result_info: SlotInfo, op: PreparedOp) Result<Void, String> {
+fn verify_op(ctx: VerifyCtx, result_info: SlotInfo, op: PreparedOp, depth: Int) Result<Void, String> {
   case op {
     .ACall(callee, args) => {
       try ctx.verify_call_callee(callee)
@@ -148,8 +116,8 @@ fn verify_op(ctx: VerifyCtx, result_info: SlotInfo, op: PreparedOp) Result<Void,
     .AIf(cond_e, then_e, else_e) => {
       try ctx.verify_atom_use(cond_e, "if condition")
       try ctx.verify_condition_atom(cond_e)
-      try ctx.verify_expr(then_e)
-      ctx.verify_expr(else_e)
+      try ctx.verify_expr_at(then_e, depth + 1)
+      ctx.verify_expr_at(else_e, depth + 1)
     },
     .AMatch(scrutinee, arms) => {
       try ctx.verify_atom_use(scrutinee, "match scrutinee")
@@ -160,12 +128,12 @@ fn verify_op(ctx: VerifyCtx, result_info: SlotInfo, op: PreparedOp) Result<Void,
 
       for arm in arms {
         try ctx.verify_pattern_bindings(arm.pattern)
-        try ctx.verify_expr(arm.body)
+        try ctx.verify_expr_at(arm.body, depth + 1)
       }
 
       .Ok({})
     },
-    .ALoop(body) => ctx.verify_expr(body),
+    .ALoop(body) => ctx.verify_expr_at(body, depth + 1),
     .ABinOp(_, lhs, rhs, kind) => {
       try ctx.verify_atom_use(lhs, "binary lhs")
       try ctx.verify_atom_use(rhs, "binary rhs")
@@ -341,7 +309,7 @@ fn verify_op(ctx: VerifyCtx, result_info: SlotInfo, op: PreparedOp) Result<Void,
     // The expected-type check against the linked-global oracle is wired in a
     // later step; for now verify the stored value atom is well-formed.
     .AGlobalSet(_, atom) => ctx.verify_atom_use(atom, "global set value"),
-    .ADefer(body) => ctx.verify_expr(body),
+    .ADefer(body) => ctx.verify_expr_at(body, depth + 1),
     .AWrapAnyref(atom, _) => {
       try ctx.verify_atom_use(atom, "wrap operand")
       try ctx.require_result_repr(result_info, [.OpaqueAnyref], "wrap result")
