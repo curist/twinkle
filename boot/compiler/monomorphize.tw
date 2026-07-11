@@ -1554,12 +1554,8 @@ fn rewrite_calls_kind(
         new_args = .append(rewrite_calls(a, spec_map, ctx, local_types))
       }
 
-      lowered := CoreExpr.{
-        kind: lower_resolved_contract_call(parent, method_name, new_receiver, new_args, ctx),
-        ty: parent.ty,
-        span: parent.span,
-      }
-      rewrite_calls_kind(lowered, spec_map, ctx, local_types)
+      parent.kind = lower_resolved_contract_call(parent, method_name, new_receiver, new_args, ctx)
+      rewrite_calls_kind(parent, spec_map, ctx, local_types)
     },
     .GlobalFunc(fid) => {
       if ctx.generic_ids.has(fid.id) {

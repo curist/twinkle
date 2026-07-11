@@ -736,17 +736,8 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
 
           case result {
             .Some(rewritten) => {
-              st = RwState.{
-                tainted: st.tainted,
-                ownership: st.ownership,
-                refreshed: st.refreshed,
-                fresh_records: st.fresh_records,
-                live_after_by_binding: st.live_after_by_binding,
-                config: st.config,
-                fresh_helper_ids: st.fresh_helper_ids,
-                next_local: rewritten.next_local,
-                monos: merge_mono_maps(st.monos, rewritten.mono_updates),
-              }
+              st.next_local = rewritten.next_local
+              st.monos = merge_mono_maps(st.monos, rewritten.mono_updates)
 
               return rewrite_expr(rewritten.expr, st, consumed_params)
             },
@@ -836,17 +827,7 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
           } else if set_has(st.fresh_records, source.id)
             and can_move_fresh_record_field(source, field_id, body) {
             st = .with_local_ownership(local, .Deep)
-            st = RwState.{
-              tainted: st.tainted,
-              ownership: st.ownership,
-              refreshed: st.refreshed,
-              fresh_records: st.fresh_records.remove(source.id),
-              live_after_by_binding: st.live_after_by_binding,
-              config: st.config,
-              fresh_helper_ids: st.fresh_helper_ids,
-              next_local: st.next_local,
-              monos: st.monos,
-            }
+            st.fresh_records = .remove(source.id)
           } else if st.local_is_deep_owned(source)
             and is_field_borrow_and_update(local, body, st.config) {
             st = .with_local_ownership(local, .Deep)

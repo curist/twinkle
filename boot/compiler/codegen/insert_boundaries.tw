@@ -45,18 +45,8 @@ type MaterializeAtomsResult = .{ atoms: Vector<Atom>, closure_lets: Vector<Closu
 
 fn alloc_local(ctx: BCtx) AllocResult {
   id := LocalId.{ id: ctx.next_local }
-  new_ctx := BCtx.{
-    registry: ctx.registry,
-    builtins: ctx.builtins,
-    env: ctx.env,
-    local_types: ctx.local_types,
-    next_local: ctx.next_local + 1,
-    current_return_mono: ctx.current_return_mono,
-    func_param_types: ctx.func_param_types,
-    func_monos: ctx.func_monos,
-    global_monos: ctx.global_monos,
-  }
-  AllocResult.{ local: id, ctx: new_ctx }
+  ctx.next_local = ctx.next_local + 1
+  AllocResult.{ local: id, ctx }
 }
 
 // ── Atom type inference ─────────────────────────────────────────────
