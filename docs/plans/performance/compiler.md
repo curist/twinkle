@@ -204,12 +204,52 @@ of the whole program. Output dicts are identical (skipped funcs contribute nothi
 proven by the self-host byte-identical fixed point plus all 2982 boot tests and the
 dataframe typed-vector suite (42 tests) green.
 
-Result: **analyze_typed_repr ~226 → ~39ms**; **prepare_backend ~565 → ~403ms**.
-Wall-clock moved from the ~5.09–5.35s session-start range to a steadier ~5.01–5.08s
+Result: **analyze_typed_repr ~226 → ~39ms**; **prepare_backend ~565 → ~384ms**.
+Wall-clock moved from the ~5.09–5.35s session-start range to a steadier ~4.95–5.08s
 (the ~180ms phase win is a few percent of a noisy whole-build number, but the phase
 drop is repeatable). Remaining `prepare_backend` cost is now `assign_slots` (~133ms)
 and `insert_boundaries` (~98ms) / `assign_repr` (~74ms) — the genuine per-function
 slot/boundary work, measure-first before touching.
+
+Post-session phase table (239 modules, single instrumented run):
+
+```text
+compile_modules   ~1950ms
+emit_module        ~519ms
+optimize           ~474ms
+verify             ~400ms
+prepare_backend    ~384ms
+core_link          ~280ms
+link               ~216ms
+emit_wasm_binary   ~209ms
+plan_wasm_types    ~123ms
+lower_anf          ~115ms
+monomorphize        ~76ms
+wasm_dce            ~57ms
+closure_convert     ~23ms
+```
+
+### Backend phases probed and set aside this session
+
+- **verify (~400ms)** — `verify_prepared_func_expr` walked every body twice: a
+  worklist-based `prepared_depth_exceeds` guard (boxing each child into a GC
+  `Vector`) then the native-recursive `verify_expr`. Fused into a single stack-safe
+  walk (`verify_expr_at`: iterate the Let spine, recurse only into branch bodies
+  with a depth counter that bails past 512). **Perf-neutral** — `expr_walk` is
+  dominated by per-node type checks, not the pre-walk — but a correctness/cleanup
+  win: removes a listed not-yet-converted worklist residual and now verifies
+  long-spine functions the old guard skipped wholesale. Byte-identical fixed point.
+- **emit_module (~519ms)** — coarse timing shows **~407ms is the per-function
+  `emit_func` loop** (~0.12ms/func over 3337 funcs); the helper/global/export tail
+  is ~135ms. The per-function codegen walk is the irreducible core, not a broad
+  local win.
+- **optimize (~474ms)** — the fixed-point loop (avg ~2.1 rounds/func) runs
+  dead_let + copy_prop + const_fold + branch_simp each round, each a full body
+  walk. `dead_let` alone does three walks per call (`count_uses` +
+  `collect_assigned_locals` + rewrite). A `count_uses`/`collect_assigned_locals`
+  fusion is the cleanest identified lever but modest (~25ms) in the hot,
+  COW-correctness-sensitive optimizer — deferred as measure-first if optimize is
+  revisited.
 
 ## Current baseline: 2026-06-28
 
