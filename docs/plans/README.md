@@ -51,7 +51,6 @@ throughput.
 | Full lib-export ABI | Widen lib exports beyond primitives: `String`, callbacks, compounds (`Vector`/`Dict`/records), and returned closures, with bridge-backed `loadLib` marshalling | Done | [lib-export-abi.md](lib-export-abi.md) |
 | LSP enhancements | Document symbols, references, rename, signature help, semantic tokens, workspace symbols, highlights, inlay hints, folding, and incremental sync | Planned | [lsp-enhancements.md](lsp-enhancements.md) |
 | LSP code actions | Quick-fix actions: missing case arms, auto-import, function type annotations | Planned | [lsp-code-actions.md](lsp-code-actions.md) |
-| Lint: inline-record-copy | Flag an inline binding `x := T.{…}` that rebuilds a single source by copying a majority of its fields verbatim; suggest rebinding the source directly | Planned | [lint-inline-record-copy.md](lint-inline-record-copy.md) |
 | LSP contract hover | Hover information for builtin contract bounds and contract-backed method calls | Done | [archive/lsp-contract-hover.md](archive/lsp-contract-hover.md) |
 
 ### Active cross-cutting plans
