@@ -801,32 +801,66 @@ fn block_mentions_name(block: Block, name: String) Bool {
 /// source is sound — a self-rebind (`st = St.{…st…}`), or a source whose old
 /// value is dead after the binding. Anonymous `.{ ... }` literals are excluded
 /// (no explicit type to match the source against).
-/// The leading whitespace of the line containing byte offset `start` — the indent
-/// a statement sits at, reused for the rebind lines a fix synthesizes.
-fn line_indent(source: String, start: Int) String {
+/// The indentation of the statement at byte offset `start`: the run from the
+/// line start up to `start`, but only when that run is all whitespace (the
+/// statement begins its line). `.None` means the statement shares its line with
+/// other code (e.g. a single-line block), where synthesizing indented rebind
+/// lines would be malformed — the caller then declines the auto-fix.
+fn line_indent(source: String, start: Int) String? {
   i := start
 
   for i > 0 and source.slice(i - 1, i) != "\n" {
     i = i - 1
   }
 
-  source.slice(i, start)
+  run := source.slice(i, start)
+
+  if run.trim() == "" {
+    .Some(run)
+  } else {
+    .None
+  }
 }
 
-fn join_with(lines: Vector<String>, sep: String) String {
-  out := ""
-  first := true
+// The entries not copied verbatim from `src` — the fields a rebind must set.
+fn changed_entries(entries: Vector<RecordEntry>, src: String) Vector<RecordEntry> {
+  out: Vector<RecordEntry> = []
 
-  for l in lines {
-    if first {
-      out = l
-      first = false
-    } else {
-      out = "${out}${sep}${l}"
+  for en in entries {
+    is_copy := case entry_copy_source(en) {
+      .Some(s) => s == src,
+      .None => false,
+    }
+
+    if !is_copy {
+      out = .append(en)
     }
   }
 
   out
+}
+
+// The rebinds are applied as sequential statements that mutate `src` in place, so
+// a changed field whose value reads `src` could observe an already-rebound
+// sibling rather than the original the literal saw. Safe when there is a single
+// changed field (its own rebind reads the still-original `src`), or when no
+// changed value reads `src` at all. `expr_uses_name` fails closed on compound
+// expressions, so an unclear value reads as a dependency and declines the fix.
+fn changed_rebinds_order_safe(changed: Vector<RecordEntry>, src: String) Bool {
+  if changed.len() <= 1 {
+    return true
+  }
+
+  for en in changed {
+    case en.value {
+      .Some(e) => if expr_uses_name(e, src) {
+        return false
+      },
+      .None => {},
+    }
+  }
+
+  true
 }
 
 // Machine-applicable rewrite for an inline-record-copy finding. v1 auto-fixes
@@ -844,32 +878,29 @@ fn inline_copy_edits(
     return []
   }
 
-  indent := line_indent(source, ls.span.start)
-  lines: Vector<String> = []
-
-  for en in entries {
-    is_copy := case entry_copy_source(en) {
-      .Some(s) => s == src,
-      .None => false,
-    }
-
-    if !is_copy {
-      value_text := case en.value {
-        // Shorthand `{ f }` rebinds `src.f` from the same-named local.
-        .None => en.name,
-        .Some(e) => source.slice(e.span.start, e.span.end),
-      }
-      lines = .append("${src}.${en.name} = ${value_text}")
-    }
+  // Only rewrite a statement that begins its own line — otherwise the
+  // multi-line rebind we'd synthesize can't be indented correctly.
+  indent := case line_indent(source, ls.span.start) {
+    .Some(w) => w,
+    .None => return [],
   }
+  changed := changed_entries(entries, src)
 
-  // A pure self-copy (nothing changed) is a no-op; leave it report-only rather
-  // than emit an empty deletion.
-  if lines.len() == 0 {
+  // A pure self-copy (nothing changed) is a no-op; the multi-field sequential
+  // rebind is only safe when a changed value can't observe a rebound sibling.
+  if changed.len() == 0 or !changed_rebinds_order_safe(changed, src) {
     return []
   }
 
-  [.{ start: ls.span.start, end: ls.span.end, replacement: join_with(lines, "\n${indent}") }]
+  lines := collect en in changed {
+    value_text := case en.value {
+      // Shorthand `{ f }` rebinds `src.f` from the same-named local.
+      .None => en.name,
+      .Some(e) => source.slice(e.span.start, e.span.end),
+    }
+    "${src}.${en.name} = ${value_text}"
+  }
+  [.{ start: ls.span.start, end: ls.span.end, replacement: lines.join("\n${indent}") }]
 }
 
 fn inline_copy_finding_for_let(block: Block, i: Int, ls: LetStmt, ctx: LintCtx) LintFinding? {

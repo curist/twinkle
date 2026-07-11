@@ -453,4 +453,28 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "inline-record-copy: no edit when the statement shares its line",
+      fn() {
+        fs := findings(
+          "fn f(st: St) St {\n  if c { st = St.{ a: st.a, b: st.b, d: v } }\n  st\n}\n",
+        )
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "inline-record-copy")
+        try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "inline-record-copy: no edit when a changed field reads the source (rebind-order hazard)",
+      fn() {
+        fs := findings(
+          "fn f(st: St) St {\n  st = St.{ a: st.a, b: st.b, c: st.c, y: g(), x: h(st.y) }\n  st\n}\n",
+        )
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "inline-record-copy")
+        try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
 }
