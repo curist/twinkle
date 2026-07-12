@@ -25,13 +25,11 @@ reference demotes it to shared.**
 ## Lattice elements (per local)
 
 ```
-        Unowned  (⊤ — conservative, no mutation)
-       /    |    \
- Shared  Moved   (both are non-owning terminal facts)
-       \    |    /
-   OwnedPersistent(shape)     ← uniquely owns a persistent value; may thaw in place
-   OwnedMutable(shape)        ← uniquely owns a live mutable-region handle
-        (most informative)
+              Unowned  (⊤ — conservative, no mutation)
+             /       \
+        Shared        Moved      non-owning; siblings under ⊤, incomparable to
+          │                      each other — and Moved is incomparable to Owned
+      Owned(shape)               uniquely owns the value (most informative)
 ```
 
 - **Unowned** — no proof. Default for parameters (unless specialized), results of
@@ -40,16 +38,27 @@ reference demotes it to shared.**
   captured, stored, published). Persistent-only.
 - **Moved** — the value was transferred out of this local (consumed by an op or
   reassigned elsewhere). The local must not be read as owned until rebound.
-- **OwnedPersistent(shape)** — uniquely owns a persistent value; a mutable region
-  may *begin without copying*.
-- **OwnedMutable(shape)** — uniquely owns a live mutable-region handle, between
-  `begin`/`thaw` and `freeze`.
+- **Owned(shape)** — uniquely owns the value; a mutable region may *begin without
+  copying*. This is the **single owned element the dataflow join operates on**.
+  Region formation (still inside the analysis, once the `begin`/`freeze` points are
+  chosen) refines an owned local into two labels used for printing and codegen —
+  **`OwnedPersistent(shape)`** (a persistent value, not yet in a region; thaw to
+  begin) and **`OwnedMutable(shape)`** (a live region handle, between `begin`/`thaw`
+  and `freeze`). Those labels decorate a region; they are **never two distinct
+  inputs the merge has to reconcile** — both are `Owned` for join purposes. This
+  resolves the "does `OwnedMutable` live in the Phase-1 domain?" question: the join
+  domain is single-`Owned`, and the persistent/mutable labels appear only in printed
+  facts and codegen decisions once regions are formed.
 
-`Shared` and `Moved` both sit below `Unowned` but are **not interchangeable**:
-`Moved` means the value left this local and a later rebind can restore a fact,
-whereas `Shared` means the value is permanently aliased/persistent. That is why
-the join treats them differently (`Owned ⊔ Moved = Unowned` but
-`Owned ⊔ Shared = Shared`, below).
+`Shared` and `Moved` are both non-owning and sit under `Unowned`, but they relate
+to `Owned` **differently**. `Shared` is a sound over-approximation of `Owned`
+(`Owned ≤ Shared`): calling an owned value aliased merely forbids mutation, so
+`Owned ⊔ Shared = Shared`. `Moved` is **incomparable to `Owned`** — it means the
+value left this local (a later rebind can restore a fact), which is neither more
+nor less owned than a live owner — so their only common upper bound is the top:
+`Owned ⊔ Moved = Unowned`. That asymmetry is the point of the merge: one branch
+moving a handle while another still owns it must fall to `Unowned`, but one branch
+aliasing it settles at `Shared`.
 
 **Publication is an event, not a lattice element.** When an owned value reaches a
 publication point (return, value-carrying `break`, `try` exit, storage in an
@@ -96,12 +105,12 @@ live after this point," which the CFG view supplies.
 
 | Op | Effect on facts |
 |---|---|
-| `ACall(constructor)` — `Dict.new`, `Vector.make`, builder freeze | `L ← OwnedPersistent` with a fresh, deeply-owned shape |
-| `ARecord(fields)` | `L ← OwnedPersistent(Record{shell:owned, fields})`; each field arg **moved in** (its fact becomes the field fact; local → `Moved`) |
-| `AArrayLit` / `AVariant(args)` | `L ← OwnedPersistent` with a fresh shape; args moved in; if an arg cannot be moved (shared), the container’s element fact is `Shared` |
+| `ACall(constructor)` — `Dict.new`, `Vector.make`, builder freeze | `L ← Owned` with a fresh, deeply-owned shape |
+| `ARecord(fields)` | `L ← Owned(Record{shell:owned, fields})`; each field arg follows the `AInit` move/alias hinge — **moved in** if dead afterward (field fact takes the arg's fact, arg local → `Moved`), else **aliased** (arg stays live, so arg and field fact both become `Shared`) |
+| `AArrayLit` / `AVariant(args)` | `L ← Owned` with a fresh shape; each arg follows the same move/alias hinge — **moved in** if dead afterward, else an arg that stays live (shared) makes the container's element fact `Shared` |
 | `ARecordGet(base, f)` | `L ← borrow` of field `f`. Base ownership **preserved** (read is not a consume). If `L` later flows only to reads → transient borrow; if `L` is stored/returned/captured → publishes field `f` and demotes base’s field fact |
 | `AIndex(base, i)` | `L ← borrow` (element read). Same borrow-vs-publish rule as `ARecordGet` |
-| `ACall(consuming)` — `dict.set`, `vector.append`, `Vector.set`, summarized wrapper: *consumes p0, returns owned* | `L ← OwnedPersistent(result)`; arg p0 → `Moved`. **In-place begin licensed iff p0 was `Owned` at the call**; otherwise the result is still owned but `begin` copies (persistent path) |
+| `ACall(consuming)` — `dict.set`, `vector.append`, `Vector.set`, summarized wrapper: *consumes p0, returns owned* | `L ← Owned(result)`; arg p0 → `Moved`. **In-place begin licensed iff p0 was `Owned` at the call**; otherwise the result is still owned but `begin` copies (persistent path) |
 | `ARecordUpdate(base, f, v, in_place, _)` | `L ← base.record-fact with field f ← v.fact`. **`in_place` licensed iff base was `Owned`**; if in-place, base → `Moved` |
 | `AAssign(local, A)` | `local ← A.fact` (ownership transfer; the loop-carried rebind) |
 | `AInit(A)` | move/alias hinge above |
@@ -111,7 +120,7 @@ live after this point," which the CFG view supplies.
 | `ACall(Cell.new / Cell.set / Cell.update)` — store into a `Cell` | **publish** the stored value → `Shared` (a `Cell` is a mutable box, aliasable and readable at arbitrary times); the returned `Cell` handle is owned but its contents are `Shared`. `Cell.update` reads-then-writes, so — like `Cell.get` — the value handed to the update function is `Unowned` |
 | `ACall(Cell.get)` | `L ← Unowned` (contents stay aliased through the live cell). `Cell` is not an optimization target — already mutable by design; these rows only keep the analysis sound around it |
 | `Return(A)` / `Break(A)` / match-arm body ending in `Return` (`try`) | publish `A` → `A` becomes `Shared`; insert `freeze` on this edge if `A` was `OwnedMutable` |
-| `ACall(extern/host import)` — closed boundary allow-list (`Int/Float/Bool/String/Void`, `ExternRef`/`ExternRef?`, `Vector<Byte>`, `Vector<String>`, `Result<Vector<Byte>,String>`) | **Not a publication sink.** The auto-bridge marshals every GC-typed argument into a host-owned *copy* synchronously and retains no Twinkle reference, so a `Vector<Byte>`/`Vector<String>` arg is a read-only **borrow** (arg fact preserved, *not* `Shared`), and a GC-typed *result* is host-constructed fresh → `L ← OwnedPersistent` (fresh, deeply-owned). Scalars are ownership-neutral; `ExternRef` handles are host-owned (neutral). This is stronger than the generic row below and rests on the copying-marshalling contract — see [concurrency-publication.md](concurrency-publication.md) |
+| `ACall(extern/host import)` — closed boundary allow-list (`Int/Float/Bool/String/Void`, `ExternRef`/`ExternRef?`, `Vector<Byte>`, `Vector<String>`, `Result<Vector<Byte>,String>`) | **Not a publication sink.** The auto-bridge marshals every GC-typed argument into a host-owned *copy* synchronously and retains no Twinkle reference, so a `Vector<Byte>`/`Vector<String>` arg is a read-only **borrow** (arg fact preserved, *not* `Shared`), and a GC-typed *result* is host-constructed fresh → `L ← Owned` (fresh, deeply-owned). Scalars are ownership-neutral; `ExternRef` handles are host-owned (neutral). This is stronger than the generic row below and rests on the copying-marshalling contract — see [concurrency-publication.md](concurrency-publication.md) |
 | `ACall(unknown/unsummarized)` — a *Twinkle* callee with no summary (not extern) | every reference arg → `Shared`; `L ← Unowned` |
 | `ABinOp`/`AUnOp`/scalar ops | no reference-ownership effect |
 
@@ -230,8 +239,6 @@ variant at `build_env`’s owned call sites and the persistent variant at
   enough for `visit`.
 - How much liveness precision does the `AInit` hinge need (per-local last-use vs
   full liveness), and can the CFG view supply it cheaply?
-- Does `OwnedMutable` need to appear in the fact domain during Phase 1 analysis,
-  or only at codegen once regions are formed?
 
 ## Non-goals
 

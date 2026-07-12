@@ -85,7 +85,7 @@ Consequences for the analysis (see the extern row in
 
 - a `Vector<Byte>`/`Vector<String>` **argument is a read-only borrow**, not a
   publication — the caller's value stays owned and mutable after the call;
-- a GC-typed **return is `OwnedPersistent`** (fresh, deeply-owned, unaliased),
+- a GC-typed **return is `Owned`** (fresh, deeply-owned, unaliased),
   fully mutable-eligible downstream;
 - scalars are ownership-neutral; `ExternRef` handles are host-owned and never
   alias a Twinkle collection.

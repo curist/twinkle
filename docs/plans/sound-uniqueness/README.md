@@ -28,6 +28,11 @@ decisions → emit → scale → cleanup) of the milestone plan in
 notes the architecture milestone(s) it corresponds to so the two can be
 cross-read.
 
+**[architecture.md](architecture.md) is the canonical scope/design source; this
+list is the derived tracking checklist.** On any divergence architecture wins, and
+a re-scope should change architecture.md first, then re-derive the affected phases
+here — so the two orderings are kept from drifting apart by hand.
+
 **Standing invariants** (hold across every phase — not one-time tasks):
 
 - **Performance is an end-of-track gate.** During the refactor, judge progress by

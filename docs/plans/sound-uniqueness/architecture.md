@@ -182,13 +182,21 @@ verify the specialization story manually.
 
 ### Ownership facts
 
-Introduce a small, explicit fact model for ANF locals. The exact representation
-can evolve, but the model should distinguish at least:
+Introduce a small, explicit fact model for ANF locals. The dataflow/join domain
+distinguishes at least:
 
 - no ownership proof;
-- owned persistent collection backing, safe to consume for mutation;
-- owned mutable-region handle, safe for repeated internal updates;
-- published/persistent value, no longer mutable through the private handle.
+- an owned value, safe to consume for mutation (the single `Owned` fact the join
+  operates on);
+- non-owning facts for a value that is aliased/published or has been moved out of
+  the local.
+
+The persistent-vs-mutable distinction — owned persistent backing that can begin a
+region without copying, vs a live owned mutable-region handle safe for repeated
+internal updates — is **not a second join input**; it is a region/codegen *label*
+applied once `begin`/`freeze` points are chosen. See
+[fact-lattice.md](fact-lattice.md) for the precise lattice; the single-`Owned`
+join domain is authoritative there.
 
 Ownership facts should be linear. Transferring ownership to a new local consumes
 or invalidates the old local's ownership fact unless the old value is no longer

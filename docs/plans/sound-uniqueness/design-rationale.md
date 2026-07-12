@@ -108,8 +108,9 @@ localization of the hazard, not its elimination — but a localized, identifiabl
 hazard is still a decisive edge over pervasive mutation.
 Immutability is precisely why the fact lattice is small — roughly
 owned / shared / moved rather than a heavyweight points-to graph (the precise
-five-element lattice, incl. the `Unowned` top and the
-`OwnedPersistent`/`OwnedMutable` split, is in [fact-lattice.md](fact-lattice.md)). (This is the classic uniqueness-typing
+lattice — the `Unowned` top, the `Shared`/`Moved` non-owning facts, and a single
+`Owned` join element that region formation later refines into
+`OwnedPersistent`/`OwnedMutable` labels — is in [fact-lattice.md](fact-lattice.md)). (This is the classic uniqueness-typing
 insight: purity is the precondition that makes "unique ⇒ safe to destroy" *true*.)
 
 Two honest boundaries on that advantage:

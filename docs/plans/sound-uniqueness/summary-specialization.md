@@ -157,7 +157,7 @@ type VariantId = .{ func: FuncId, owned: OwnedKey }
 ```
 
 A variant is the callee re-analyzed with the keyed `(param, path)` slots entering
-as `OwnedPersistent` instead of `Unowned`. Re-running the transfer function under
+as `Owned` instead of `Unowned`. Re-running the transfer function under
 that assumption is what turns the body's `record_update [in_place=false]` /
 consuming calls into in-place operations at those paths and yields a specialized
 summary (`OwnedFromParam(k)` becomes an owned mutable hand-off). This is ownership
