@@ -147,6 +147,14 @@ be a machinery pass. Codegen should not re-prove uniqueness, rediscover field
 ownership, or repeat escape analysis. It should consume explicit, checked
 decisions from the analysis.
 
+This section defines the decision-record *schema* (which fields a decision
+carries). The *soundness* half — the invariants that let codegen consume a
+decision without re-checking it, and the fail-safe rule that absence/ambiguity/
+staleness of a decision falls back to the persistent op — lives in
+[mutable-intrinsics.md](mutable-intrinsics.md) "Analysis → codegen handoff
+contract". The two are a pair: this doc says *what* is handed over, that doc says
+*what it guarantees*.
+
 For each accepted mutable region or update, the side table/annotation should
 identify:
 
