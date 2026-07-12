@@ -41,7 +41,8 @@ analysis cares about. It is the skeleton of the per-op transfer function.
 | `Return(atom?)` | **publish** at exit |
 | `Break(atom?)` (value-carrying) | **publish** at loop exit |
 | `AMatch` arm body ending in `Return`/`Break` (e.g. `try` error arm) | **publish** at early exit |
-| `ACall` to `cell$new`/`cell$set`/`cell$update` (store into a `Cell`) | **publish** the stored value (mutable box, aliasable/readable anytime) |
+| `ACall` to `cell$new`/`cell$set` (store into a `Cell`) | **publish** the stored value (mutable box, aliasable/readable anytime) |
+| `ACall` to `cell$update` (read-modify-write) | closure param is **Unowned** (old contents, like `get`); result is **published** (like `set`) |
 | `ACall` to `cell$get` | result is **Unowned** (contents stay aliased through the live cell) |
 | `ACall` to an unknown/non-summarized target | **publish** (conservative) |
 | `ALoop` + `Continue` | back-edge; loop-carried facts must reconverge |
@@ -207,6 +208,44 @@ publication point** (structurally like value-carrying `break`), derived from the
 match arm structure — no new node. An owned handle spanning a `try` gains an
 extra publication/exit edge on the error arm; the fallthrough (`Ok`) arm keeps
 the region alive.
+
+## Case Cell — `mark`: mutable collection through a `Cell` (the un-optimizable corner)
+
+`unused_imports.mark` accumulates used names into a `Cell<Dict>` threaded (by
+reference) through the entire recursive walk; `defer_elim.register_snapshot_types`
+has the identical shape over `Cell<Dict<Int, MonoType>>`. Source is
+`u := used.get(); u[name] = true; used.set(u)` — the real lowered ANF
+(`Fn55` = `cell$get`, `Fn56` = `cell$set`, `Fn39` = `dict.set`):
+
+```
+let L99 = call Fn55(L95)             cell$get → UNOWNED (contents of the live cell)
+let L97 = init L99                   name the borrowed contents
+let L100 = call Fn39(L97,L96,true)   dict.set on an UNOWNED dict ⇒ forced COW
+assign L97 = L100                    rebind
+let L102 = call Fn56(L95, L97)       cell$set → PUBLISH (store back into the cell)
+```
+
+- **Verdict: persistent, and correctly so.** `cell$get` yields Unowned because the
+  Cell is a live alias of that same dict at `cell$set` time; mutating it in place
+  could corrupt any other live `get` of the same Cell. This `dict.set` can **never**
+  join the census's 267 dict-in-place sites.
+- **This is the tightest sound rule, not timidity.** Beating it needs either a
+  runtime refcount (the RC-clan `refcount==1` trick — off the menu on Wasm GC) or a
+  static escape/liveness proof over the Cell's contents (full alias analysis — the
+  exact hazard the `Cell` quarantine buys us out of; immutability gives no leverage
+  here, because the Cell *is* the one mutable location). Both are foreclosed by
+  prior design choices, so store-publishes / read-yields-Unowned is the *minimal*
+  sound treatment. `Cell` is not an optimization target by design.
+- **The cost is ~2 self-inflicted sites, already discouraged.** Only `used` and
+  `snap_types` route a mutable *collection* through a Cell; every other boot Cell
+  holds an unboxed scalar (nothing to optimize) or a wholesale-rebuilt record (no
+  prior version reused). The idiomatic alternative — thread the Dict through return
+  values (Case B/V) — *is* fully optimizable, which is exactly what the "avoid Cell,
+  thread state through returns" guidance steers toward. This case is that guidance's
+  cost, made concrete.
+- **Containment:** publication hits the Cell *contents* only. A Cell-typed record
+  field (`FileRegistry.data: Cell<RegistryData>`) does not lose shell reuse of the
+  enclosing record — Cell-ness does not leak outward to the aggregate holding it.
 
 ## Census baseline (stage0 over `boot/main.tw`)
 
