@@ -767,6 +767,7 @@ from-scratch sound mutable-lowering design.
 Sibling subplans:
 
 - `docs/plans/sound-uniqueness/cfg-ownership-ir.md`
+- `docs/plans/sound-uniqueness/sound-analysis.md`
 - `docs/plans/sound-uniqueness/closure-capture.md`
 - `docs/plans/sound-uniqueness/concurrency-publication.md`
 - `docs/plans/sound-uniqueness/buffer-cleanup.md`
