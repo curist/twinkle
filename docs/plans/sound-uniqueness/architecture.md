@@ -788,6 +788,8 @@ Sibling subplans:
 - `docs/plans/sound-uniqueness/sound-analysis.md`
 - `docs/plans/sound-uniqueness/closure-capture.md`
 - `docs/plans/sound-uniqueness/concurrency-publication.md`
+- `docs/plans/sound-uniqueness/records-fields.md`
+- `docs/plans/sound-uniqueness/mutable-intrinsics.md`
 - `docs/plans/sound-uniqueness/buffer-cleanup.md`
 
 Relevant references:
