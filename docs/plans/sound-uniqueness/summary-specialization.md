@@ -91,7 +91,10 @@ from the start, so no migration is needed.
 - **`Published`** — the value escapes inside the callee (stored in an escaping
   aggregate, captured by a closure/task, sent on a channel, passed to an unknown
   call, written to a global). The caller's argument → `Shared` after the call
-  regardless of variant.
+  regardless of variant. (An *indirect* call whose funcref target set is resolved
+  by control-flow analysis borrows the meet of the possible targets' summaries
+  instead of the blanket unknown-call publication — see
+  [closure-capture.md](closure-capture.md).)
 
 **`in_place_paths`** is populated only for a `Consumed` parameter that also
 `flows_to_return` (the region is handed back out). A `Published` parameter has
