@@ -238,7 +238,7 @@ function importListFromExternMeta(externMeta) {
   return list;
 }
 
-function bridgeExternImports(importList, hostImports, b, jspi = false, imports = {}, externMeta = {}) {
+function bridgeExternImports(importList, hostImports, b, jspi = false, imports = {}, externMeta = {}, scheduler = null) {
   const { found, missing } = resolveExternImports(importList, hostImports, imports);
 
   if (missing.length > 0) {
@@ -253,15 +253,16 @@ function bridgeExternImports(importList, hostImports, b, jspi = false, imports =
   // Per-import arg marshaling honors a per-position kind spec. Two vocabularies
   // are accepted and treated identically: the compiler-emitted twinkle.externs
   // kinds ("str" | "ref" | "i64" | "f64" | "i32") and the manual override's
-  // ("raw" | "string"). Numbers pass through (handled before the spec). "ref" /
-  // "raw" pass the value untouched — essential for externref args (e.g. a canvas
-  // 2D context), since decodeString on an opaque host object recurses until a
-  // stack overflow in some engines (notably Safari). Anything else (incl. no
-  // entry) is assumed to be a Wasm GC string and decoded.
+  // ("raw" | "string"). Numeric values pass through, except i32/bool-like
+  // BigInts are downcast when explicitly requested. "ref" / "raw" pass the
+  // value untouched — essential for externref args (e.g. a canvas 2D context),
+  // since decodeString on an opaque host object recurses until a stack overflow
+  // in some engines (notably Safari). Anything else (incl. no entry) is assumed
+  // to be a Wasm GC string and decoded.
   const makeMarshalArgs = (spec) => (args) => args.map((arg, i) => {
-    if (typeof arg === "bigint") return Number(arg);
-    if (typeof arg === "number") return arg;
     const k = spec?.[i];
+    if (typeof arg === "bigint") return k === "i32" ? Number(arg) : arg;
+    if (typeof arg === "number") return arg;
     if (k === "ref" || k === "raw") return arg;
     if (k === "bytes") return decodeByteArray(b, arg);
     if (k === "strvec") return decodeStringArray(b, arg);
@@ -296,10 +297,14 @@ function bridgeExternImports(importList, hostImports, b, jspi = false, imports =
     let bridgedFn;
     if (jspi) {
       // JSPI mode: async wrapper so Promise-returning JS functions suspend
-      // Wasm. Non-Promise returns pass through without suspension.
+      // Wasm. In task-enabled programs, route the suspension through the
+      // cooperative scheduler so other runnable tasks can make progress while
+      // this host Promise is pending.
       const asyncWrapper = async (...args) =>
         marshalReturn(await fn.apply(recv, marshalArgs(args)), ret);
-      bridgedFn = new WebAssembly.Suspending(asyncWrapper);
+      bridgedFn = scheduler
+        ? scheduler.wrapHostSuspending(asyncWrapper)
+        : new WebAssembly.Suspending(asyncWrapper);
     } else {
       // Sync mode: detect and reject Promise returns
       bridgedFn = (...args) => {
@@ -318,7 +323,7 @@ function bridgeExternImports(importList, hostImports, b, jspi = false, imports =
   }
 }
 
-function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, imports = {}, externMeta = {}) {
+function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, imports = {}, externMeta = {}, scheduler = null) {
   let importList;
   try {
     importList = WebAssembly.Module.imports(wasmModule);
@@ -329,7 +334,7 @@ function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, impor
     // extern modules absent from the import object.
     importList = importListFromExternMeta(externMeta);
   }
-  bridgeExternImports(importList, hostImports, b, jspi, imports, externMeta);
+  bridgeExternImports(importList, hostImports, b, jspi, imports, externMeta, scheduler);
 }
 
 function missingImportFromError(e) {
@@ -343,7 +348,7 @@ function missingImportFromError(e) {
   return null;
 }
 
-function instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta) {
+function instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta, scheduler = null) {
   // Last-ditch Safari fallback: if both Module.imports() and customSections()
   // are unavailable for a GC module, instantiate once, read the missing import
   // from the LinkError text, bridge it, and retry. This preserves globalThis
@@ -357,7 +362,7 @@ function instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, e
       if (imp.name === null) {
         hostImports[imp.module] = {};
       } else {
-        bridgeExternImports([imp], hostImports, b, jspi, imports, externMeta);
+        bridgeExternImports([imp], hostImports, b, jspi, imports, externMeta, scheduler);
       }
     }
   }
@@ -412,8 +417,10 @@ function makeHostImports(b, runtime) {
       return isNaN(n) ? 0n : BigInt(n);
     },
     parse_float: (sRef) => {
-      const s = decodeString(b, sRef);
-      const f = parseFloat(s);
+      const s = decodeString(b, sRef).trim();
+      const fullFloat = /^[+-]?(?:Infinity|(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?)$/;
+      if (!fullFloat.test(s)) return [0.0, 0];
+      const f = Number(s);
       return isNaN(f) ? [0.0, 0] : [f, 1];
     },
 
@@ -1127,7 +1134,7 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
   const callbackRegistry = makeCallbackRegistry();
   provideCallbackImports(hostImports, exportMeta, b, callbackRegistry);
 
-  autoBridgeExternImports(mainModule, hostImports, b, jspi, imports, externMeta);
+  autoBridgeExternImports(mainModule, hostImports, b, jspi, imports, externMeta, scheduler);
 
   return {
     mainModule,
@@ -1149,9 +1156,9 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
 // ---------------------------------------------------------------------------
 
 export function runWasmBytes(wasmBytes, opts = {}) {
-  const { mainModule, hostImports, b, runtime, imports, externMeta, jspi } = prepareWasm(wasmBytes, opts);
+  const { mainModule, hostImports, b, runtime, imports, externMeta, jspi, scheduler } = prepareWasm(wasmBytes, opts);
   try {
-    const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta);
+    const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta, scheduler);
     runtime.instance = instance;
     // Boot-compiled modules export __twinkle_start instead of using a Wasm
     // start section. Stage0-compiled modules still use the start section and
@@ -1197,9 +1204,10 @@ function cbKey(desc) {
 }
 
 // `b` is the embedded bridge, used to marshal String (a guest GC ref) across the
-// boundary — the same path the extern "str" marshalling uses. `instance`,
-// `registry`, and `ids` are only needed for `fn`-typed (callback) args, where a
-// JS callback is registered and turned into a guest closure guest-side.
+// boundary — the same path the extern "str" marshalling uses. `instance` and
+// `registry` are only needed for `fn`-typed (callback) args, where a JS callback
+// is registered and turned into a guest closure guest-side. `ids` is retained as
+// an optional collector for callers that want explicit lifetime management.
 function coerceLibArg(value, kind, b, instance, registry, ids) {
   if (kind && typeof kind === "object") {
     if (kind.kind === "fn") {
@@ -1353,8 +1361,8 @@ function jsToGuest(value, desc, b, instance) {
 }
 
 // A monotonic callback registry: JS callbacks are registered under an id passed
-// to the guest closure's env; ids are dropped after the top-level export returns
-// (a Map + monotonic counter keeps nested lib re-entry safe).
+// to the guest closure's env. Registered callbacks live for the loaded library's
+// lifetime so guest closures returned from an export can safely capture them.
 function makeCallbackRegistry() {
   return {
     next: 1,
@@ -1404,7 +1412,7 @@ export async function loadLibBytes(wasmBytes, opts = {}) {
   }
 
   const registry = callbackRegistry;
-  const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta);
+  const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta, scheduler);
   runtime.instance = instance;
 
   if (instance.exports.__twinkle_start) {
@@ -1431,15 +1439,10 @@ export async function loadLibBytes(wasmBytes, opts = {}) {
       lib[meta.name] = coerceLibReturn(fn(), meta.ret, b, instance);
     } else {
       lib[meta.name] = (...args) => {
-        const ids = [];
         const coerced = (meta.args ?? []).map(
-          (kind, i) => coerceLibArg(args[i], kind, b, instance, registry, ids),
+          (kind, i) => coerceLibArg(args[i], kind, b, instance, registry),
         );
-        try {
-          return coerceLibReturn(fn(...coerced), meta.ret, b, instance);
-        } finally {
-          for (const id of ids) registry.drop(id);
-        }
+        return coerceLibReturn(fn(...coerced), meta.ret, b, instance);
       };
     }
   }
@@ -1512,7 +1515,7 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
   }
 
   try {
-    const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta);
+    const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta, scheduler);
     runtime.instance = instance;
     if (instance.exports.__twinkle_start) {
       if (needsTasks) {

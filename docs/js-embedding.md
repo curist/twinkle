@@ -126,6 +126,6 @@ Provide them via the run() "imports" option (e.g. { imports: { canvas: { draw_re
 ## Boundary types
 
 Extern parameter/return types are limited to `Int`, `Float`, `Bool`, `String`,
-extern handle types, and `Void`. `Int` arrives in JS as a `number` (converted
-from i64), `Float` as a `number`, `Bool` as `0`/`1`, `String` as a JS string.
-See `docs/spec.md` §7.2 for the full extern rules.
+extern handle types, and `Void`. `Int` arrives in JS as a `bigint` (preserving
+its full i64 range), `Float` as a `number`, `Bool` as `0`/`1`, `String` as a JS
+string. See `docs/spec.md` §7.2 for the full extern rules.

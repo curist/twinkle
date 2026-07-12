@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { resolveExternImports, instantiateBridge } from "./runtime.mjs";
 import { bridgeBytes } from "./bridge_bytes.mjs";
-import { compile, loadLib } from "./index.mjs";
+import { compile, loadLib, run } from "./index.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -229,4 +229,83 @@ test("loadLib drives host callbacks (Void and value-returning)", async () => {
 
   // Value-returning callback: JS return marshalled back into the guest.
   assert.equal(lib.transform(21n, (n) => n * 2n), 42n);
+});
+
+test("loadLib returned closures can call escaped host callbacks", async () => {
+  const src = [
+    "pub fn keep(f: fn(Int) Int) fn(Int) Int {",
+    "  f",
+    "}",
+  ].join("\n");
+  const lib = await loadLib(await compile({ source: src }, { lib: true }));
+
+  const kept = lib.keep((n) => n + 1n);
+
+  assert.equal(kept(41n), 42n);
+});
+
+test("task scheduler runs other tasks while a Promise-returning extern is pending", async () => {
+  const src = [
+    "extern host {",
+    "  fn delay(ms: Int) Void",
+    "}",
+    "Task.spawn(fn() {",
+    "  println(\"a\")",
+    "  host.delay(20)",
+    "  println(\"b\")",
+    "})",
+    "Task.spawn(fn() {",
+    "  println(\"c\")",
+    "})",
+  ].join("\n");
+  const wasm = await compile({ source: src });
+  let stdout = "";
+
+  await run(wasm, {
+    stdout: { write(chunk) { stdout += chunk; return true; } },
+    imports: {
+      host: {
+        delay: (ms) => new Promise((resolve) => setTimeout(resolve, Number(ms))),
+      },
+    },
+  });
+
+  assert.equal(stdout, "a\nc\nb\n");
+});
+
+test("auto-bridged extern Int arguments arrive as precise BigInts", async () => {
+  const src = [
+    "extern host {",
+    "  fn take(n: Int) Void",
+    "}",
+    "host.take(9007199254740993)",
+  ].join("\n");
+  const wasm = await compile({ source: src });
+  let seen;
+
+  await run(wasm, {
+    imports: {
+      host: { take: (n) => { seen = n; } },
+    },
+  });
+
+  assert.equal(typeof seen, "bigint");
+  assert.equal(seen, 9007199254740993n);
+});
+
+test("Float.from_string rejects strings with trailing junk", async () => {
+  const src = [
+    "case Float.from_string(\"1x\") {",
+    "  .Some(_) => println(\"some\"),",
+    "  .None => println(\"none\"),",
+    "}",
+  ].join("\n");
+  const wasm = await compile({ source: src });
+  let stdout = "";
+
+  await run(wasm, {
+    stdout: { write(chunk) { stdout += chunk; return true; } },
+  });
+
+  assert.equal(stdout, "none\n");
 });

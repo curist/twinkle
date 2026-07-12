@@ -9,7 +9,7 @@
 //   0
 //   3
 //   none
-
+//   none
 // Int.from_string — basic
 case Int.from_string("42") {
   .Some(n) => println("${n}"),
@@ -60,6 +60,11 @@ case Float.from_string("3.14") {
 }
 
 case Float.from_string("not_a_number") {
+  .Some(f) => println("${f}"),
+  .None => println("none"),
+}
+
+case Float.from_string("1x") {
   .Some(f) => println("${f}"),
   .None => println("none"),
 }
