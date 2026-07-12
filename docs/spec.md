@@ -300,10 +300,14 @@ types have no fields or variants, cannot be pattern matched, and provide no
 equality, ordering, or hashing by default — use explicit host functions for those.
 
 Extern parameters must be annotated. An omitted return type means `Void`. Boundary
-types are `Int`, `Float`, `Bool`, `String`, extern types, `Option<ExternType>`,
-and `Void`/`()`. Other compound values (records, enums, `Vector`, `Dict`,
-callbacks, and `Option`/`Result` of non-extern types) are not valid extern
-boundary types.
+types are the scalars `Int`, `Float`, `Bool`, and `Void`/`()`; `String`; extern
+types and `Option<ExternType>`; and a fixed set of byte/string vector shapes for
+host I/O — `Vector<Byte>`, `Vector<String>`, and `Result<Vector<Byte>, String>`.
+The host bridge marshals these vector shapes by copying (each argument is decoded
+into a host-owned copy; each result is host-constructed fresh), so the host never
+retains a Twinkle GC reference across the call. All other compound values
+(records, enums, general `Vector<T>`/`Dict`, callbacks, and other `Option`/`Result`
+shapes) are not valid extern boundary types.
 
 A non-nullable extern type is non-null: if a host function declared as returning
 one returns `null`/`undefined`, the runtime traps at the import boundary. To
