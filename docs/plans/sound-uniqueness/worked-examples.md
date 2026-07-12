@@ -41,6 +41,8 @@ analysis cares about. It is the skeleton of the per-op transfer function.
 | `Return(atom?)` | **publish** at exit |
 | `Break(atom?)` (value-carrying) | **publish** at loop exit |
 | `AMatch` arm body ending in `Return`/`Break` (e.g. `try` error arm) | **publish** at early exit |
+| `ACall` to `cell$new`/`cell$set`/`cell$update` (store into a `Cell`) | **publish** the stored value (mutable box, aliasable/readable anytime) |
+| `ACall` to `cell$get` | result is **Unowned** (contents stay aliased through the live cell) |
 | `ACall` to an unknown/non-summarized target | **publish** (conservative) |
 | `ALoop` + `Continue` | back-edge; loop-carried facts must reconverge |
 

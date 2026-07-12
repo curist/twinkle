@@ -108,6 +108,8 @@ live after this point," which the CFG view supplies.
 | `AMakeClosure(_, captured)` | each captured local → `Shared` (published), unless the closure is proven non-escaping (future; see closure-capture.md) |
 | store into an **escaping** aggregate | stored local → `Shared` |
 | `AGlobalSet(_, A)` | `A → Shared` |
+| `ACall(Cell.new / Cell.set / Cell.update)` — store into a `Cell` | **publish** the stored value → `Shared` (a `Cell` is a mutable box, aliasable and readable at arbitrary times); the returned `Cell` handle is owned but its contents are `Shared`. `Cell.update` reads-then-writes, so — like `Cell.get` — the value handed to the update function is `Unowned` |
+| `ACall(Cell.get)` | `L ← Unowned` (contents stay aliased through the live cell). `Cell` is not an optimization target — already mutable by design; these rows only keep the analysis sound around it |
 | `Return(A)` / `Break(A)` / match-arm body ending in `Return` (`try`) | publish `A` → `A` becomes `Shared`; insert `freeze` on this edge if `A` was `OwnedMutable` |
 | `ACall(unknown/unsummarized)` | every reference arg → `Shared`; `L ← Unowned` |
 | `ABinOp`/`AUnOp`/scalar ops | no reference-ownership effect |

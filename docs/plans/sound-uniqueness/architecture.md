@@ -102,9 +102,16 @@ proof obligation from vector/dict backing mutation.
 
 Mutable internal values become ordinary persistent values only at explicit
 publication points: return, value-carrying `break`, `try`/early-return exits,
-storage in an escaping aggregate, closure capture, module/global publication,
-unknown call boundaries, task/fiber spawn captures, channel sends, or other
-places where the value may be observed outside the proven region.
+storage in an escaping aggregate, storage into a `Cell<T>` (the explicit mutable
+escape hatch), closure capture, module/global publication, unknown call
+boundaries, task/fiber spawn captures, channel sends, or other places where the
+value may be observed outside the proven region.
+
+`Cell<T>` is Twinkle's one genuine mutable box (`Cell.set` overwrites in place), so
+storing a value into a Cell publishes it and a value read via `Cell.get` is not
+owned. Cell is never itself a mutable-lowering target — it is already mutable; the
+analysis only models its effects so the immutable-value reasoning stays sound
+around it.
 
 Return, value-carrying `break`, and `try` are all multi-exit publication edges
 derived structurally from ANF: `break value` terminates a loop, and `try`
@@ -773,6 +780,7 @@ from-scratch sound mutable-lowering design.
 
 Sibling subplans:
 
+- `docs/plans/sound-uniqueness/design-rationale.md`
 - `docs/plans/sound-uniqueness/worked-examples.md`
 - `docs/plans/sound-uniqueness/fact-lattice.md`
 - `docs/plans/sound-uniqueness/summary-specialization.md`

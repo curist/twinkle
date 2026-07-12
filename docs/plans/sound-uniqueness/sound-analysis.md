@@ -66,7 +66,7 @@ Required negative patterns:
 
 - old vector alias remains observable after update;
 - vector shared through `slice`, `concat`, view/window, or other sharing op;
-- vector stored in record/variant/vector/dict/global before update;
+- vector stored in record/variant/vector/dict/global/`Cell` before update;
 - vector captured by escaping closure/task/fiber;
 - vector sent through `Channel<T>`;
 - vector passed to unknown or publishing callee;
@@ -86,7 +86,7 @@ Initial positive patterns:
 Required negative patterns:
 
 - old dict alias remains observable after update;
-- dict stored in record/variant/vector/dict/global before update;
+- dict stored in record/variant/vector/dict/global/`Cell` before update;
 - dict captured by escaping closure/task/fiber;
 - dict sent through `Channel<T>`;
 - dict passed to unknown or publishing callee;
@@ -115,7 +115,7 @@ Required negative patterns:
 - field projected from shared or unknown record;
 - record captured by escaping closure/task/fiber;
 - record sent through `Channel<T>`;
-- record stored in escaping aggregate/global before mutation.
+- record stored in escaping aggregate/global/`Cell` before mutation.
 
 ## Nested collection patterns
 
@@ -167,6 +167,10 @@ At minimum:
 
 - return or value-carrying `break` that publishes outside the mutable region;
 - storage in record/variant/vector/dict/global;
+- storage into a `Cell<T>` (the explicit mutable escape hatch) via
+  `Cell.new`/`set`/`update` — the value escapes into a mutable, arbitrarily-
+  aliasable, arbitrarily-timed-read box; correspondingly, `Cell.get` yields a
+  non-owned value;
 - closure capture;
 - task/fiber capture;
 - `Channel<T>` send;
@@ -198,3 +202,12 @@ The algorithm that satisfies this coverage is specified in
 merges) and [summary-specialization.md](summary-specialization.md) (summaries,
 SCC fixpoint, call-site specialization), validated against
 [worked-examples.md](worked-examples.md).
+
+The **coverage patterns below are Twinkle-specific** — they come from the census
+of real boot code, not from the literature. But the *techniques* for the
+sub-problems (escape analysis, region/uniqueness inference, borrow-style
+loop-carried lifetimes) are proven prior art; see the **Prior art and further
+reading** section of [design-rationale.md](design-rationale.md) for the reading
+list. The takeaway matches the gradient framing: no single paper is a blueprint,
+but each piece we assemble has a canonical algorithm worth borrowing rather than
+reinventing.

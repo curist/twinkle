@@ -147,6 +147,7 @@ ownership specialization (the two-variant `add_type` case).
 | Doc | Purpose |
 |---|---|
 | [architecture.md](architecture.md) | Umbrella architecture, phases, mutable intrinsics, specialization, testing policy. |
+| [design-rationale.md](design-rationale.md) | Why static + annotation-free + no-runtime-RC: the Wasm-GC-vs-refcount reason we can't copy Koka/Roc/Lean, the annotation-free/zero-overhead/coverage tradeoff triangle, and what immutable value semantics buys (may-alias-and-write → ownership+liveness). |
 | [worked-examples.md](worked-examples.md) | Real boot ANF dumps (Cases A/B/C/V/T), the op→ownership-event table, and the stage0 census baseline. The design anchor every rule is validated against. |
 | [fact-lattice.md](fact-lattice.md) | Semantic core: the ownership lattice, per-`AnfOp` transfer function, the `AInit` move/alias hinge, and control-flow merges. |
 | [summary-specialization.md](summary-specialization.md) | Interprocedural layer: function-summary schema, SCC-ordered computation, and field-path-granular call-site variant selection. |
