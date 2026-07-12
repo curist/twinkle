@@ -4,7 +4,7 @@
 
 This extends two existing plans:
 
-- `static-uniqueness-plan.md` Phase R4 ("broader helper summaries") — currently
+- `static-uniqueness-plan.md` Phase R4 (historical, archived here; "broader helper summaries") — currently
   scoped to tiny local wrappers; this plan proposes going cross-function-boundary
 - `boot-uniqueness-deep-ownership.md` — establishes the Shallow/Deep ownership
   distinction; this plan works within that model and is specifically about

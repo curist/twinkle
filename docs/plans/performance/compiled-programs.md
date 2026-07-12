@@ -59,7 +59,8 @@ Reference docs:
 
 - [../archive/pvec-performance-enhancements.md](../archive/pvec-performance-enhancements.md)
 - [../archive/dict-performance-enhancements.md](../archive/dict-performance-enhancements.md)
-- [../static-uniqueness-plan.md](../static-uniqueness-plan.md)
+- [../sound-uniqueness/](../sound-uniqueness/)
+- [../archive/static-uniqueness-plan.md](../archive/static-uniqueness-plan.md) — historical notes from the older optimizer line
 
 Useful incremental work includes cheaper PVec builders and bulk conversions,
 HAMT `popcnt`, avoiding double dict traversals, and carefully gated in-place

@@ -27,7 +27,7 @@ This plan is **compatible with** but does not depend on:
 - `backend-anyref-elimination.md` — typed families can replace `anyref` storage
   later without changing the trie algorithm
 - `deferred-persistence.md` — uniqueness optimization composes unchanged
-- `static-uniqueness-plan.md` — future precision improvements still apply
+- `static-uniqueness-plan.md` — historical precision-improvement notes still apply
 
 ## Current State
 
