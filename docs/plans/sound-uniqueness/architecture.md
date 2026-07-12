@@ -101,10 +101,17 @@ proof obligation from vector/dict backing mutation.
 ### Explicit publication boundaries
 
 Mutable internal values become ordinary persistent values only at explicit
-publication points: return, storage in an escaping aggregate, closure capture,
-module/global publication, unknown call boundaries, task/fiber spawn captures,
-channel sends, or other places where the value may be observed outside the
-proven region.
+publication points: return, value-carrying `break`, `try`/early-return exits,
+storage in an escaping aggregate, closure capture, module/global publication,
+unknown call boundaries, task/fiber spawn captures, channel sends, or other
+places where the value may be observed outside the proven region.
+
+Return, value-carrying `break`, and `try` are all multi-exit publication edges
+derived structurally from ANF: `break value` terminates a loop, and `try`
+lowers to an `AMatch` whose error arm ends in `Return`. An owned handle that is
+live across such an exit publishes the value on that edge; the fallthrough path
+keeps the region alive. See [worked-examples.md](worked-examples.md) (Case T) for
+the lowered shape.
 
 Concurrency sinks must be explicit in the analysis. Spawning a `Task` or fiber
 that captures an owned collection or record is a cross-fiber alias. Sending a
@@ -766,6 +773,9 @@ from-scratch sound mutable-lowering design.
 
 Sibling subplans:
 
+- `docs/plans/sound-uniqueness/worked-examples.md`
+- `docs/plans/sound-uniqueness/fact-lattice.md`
+- `docs/plans/sound-uniqueness/summary-specialization.md`
 - `docs/plans/sound-uniqueness/cfg-ownership-ir.md`
 - `docs/plans/sound-uniqueness/sound-analysis.md`
 - `docs/plans/sound-uniqueness/closure-capture.md`

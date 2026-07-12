@@ -1,17 +1,25 @@
-# Sound Ownership Analysis
+# Sound Ownership Analysis — Required Coverage
 
-**Status:** Placeholder / algorithm design needed
+**Status:** Coverage matrix (the algorithm lives in
+[fact-lattice.md](fact-lattice.md) + [summary-specialization.md](summary-specialization.md))
 
 ## Purpose
 
-Define the scope and required coverage for the sound ownership analysis that will
-license private mutable lowering.
+Define the **required coverage** for the sound ownership analysis: the positive
+patterns it should eventually optimize and the negative patterns it must reject.
+This is the checklist the algorithm is measured against.
 
-This document intentionally does **not** choose the final algorithm yet. The
-algorithm may be a dataflow analysis over the CFG ownership view, a whole-program
-summary/fixpoint, a staged local-then-interprocedural analysis, or another design
-that satisfies the proof requirements. This placeholder records what the analysis
-must be able to prove or reject.
+The algorithm itself is now designed elsewhere:
+
+- [fact-lattice.md](fact-lattice.md) — the affine ownership lattice, the
+  per-`AnfOp` transfer function, the `AInit` move/alias hinge, and control-flow
+  merges (branch/match joins, loop back-edges, multi-exit publication).
+- [summary-specialization.md](summary-specialization.md) — function summaries,
+  SCC-ordered computation, and field-path-granular call-site variant selection.
+- [worked-examples.md](worked-examples.md) — the real ANF cases both are validated
+  against.
+
+This document stays focused on *what must be covered*, not *how*.
 
 ## Relationship to the CFG ownership view
 
@@ -183,15 +191,10 @@ For every candidate, `twk ir` ownership output should show:
 - accept/reject verdict;
 - proof/debug id used later by codegen.
 
-## Algorithm design questions
+## Design references
 
-- What ownership lattice is sufficient for vectors, dicts, records, fields, and
-  nested projections?
-- Is the analysis one whole-program fixpoint, or staged local summaries followed
-  by interprocedural specialization?
-- How are recursive and mutually recursive functions summarized?
-- How are field-sensitive facts represented compactly and deterministically?
-- How much nested ownership should be modeled in the first implementation?
-- How are facts invalidated/recomputed when ANF changes and the CFG view is
-  rebuilt?
-- Which facts become codegen decisions, and which remain debug-only?
+The algorithm that satisfies this coverage is specified in
+[fact-lattice.md](fact-lattice.md) (lattice, transfer function, control-flow
+merges) and [summary-specialization.md](summary-specialization.md) (summaries,
+SCC fixpoint, call-site specialization), validated against
+[worked-examples.md](worked-examples.md).

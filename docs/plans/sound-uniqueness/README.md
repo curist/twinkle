@@ -7,6 +7,13 @@ analysis and compiler-private mutable lowering.
 
 Start with [architecture.md](architecture.md) for the full design. This README is
 the trackable action order; focused docs hold details for the larger risk areas.
+[worked-examples.md](worked-examples.md) grounds the design in real boot-compiler
+ANF shapes (the op→event mapping, annotated cases, and the census baseline).
+[fact-lattice.md](fact-lattice.md) is the semantic core: the ownership lattice,
+per-op transfer rules, and control-flow merges — validated against those examples.
+[summary-specialization.md](summary-specialization.md) is the interprocedural
+layer: the function-summary schema, SCC-ordered computation, and call-site
+ownership specialization (the two-variant `add_type` case).
 
 ## Trackable action order
 
@@ -22,6 +29,15 @@ the trackable action order; focused docs hold details for the larger risk areas.
 - [ ] **Keep performance as an end-of-track gate.** During the refactor, use
   correctness and IR/codegen inspection rather than timing claims. Details:
   [architecture.md](architecture.md).
+- [x] **Reconcile the COW census ceiling.** Done 2026-07-12: re-baselined
+  `tests/cow_analysis.rs` 1696 → 2000 (boot source growth, not a regression).
+  Surfaced that the total is non-deterministic (stage0 optimizer jitter ~1962–1970)
+  and that it measures **stage0**, not the new boot analysis — so it's a reference
+  distribution, not this project's regression gate. Details:
+  [worked-examples.md](worked-examples.md).
+- [ ] **Add a boot-side ownership census.** The new boot analysis needs its own
+  deterministic in-place/COW count in the boot pipeline to serve as the actual
+  Precondition baseline gate.
 
 ### Phase 1 — CFG ownership view, no codegen changes
 
@@ -40,8 +56,10 @@ the trackable action order; focused docs hold details for the larger risk areas.
 
 ### Phase 2 — Sound analysis facts, still no codegen changes
 
-- [ ] **Design the sound ownership analysis.** Choose the algorithm for local,
-  interprocedural, and whole-program ownership facts. Details:
+- [x] **Design the sound ownership analysis.** Affine lattice + per-`AnfOp`
+  transfer function + SCC-ordered summaries. Design in
+  [fact-lattice.md](fact-lattice.md) and
+  [summary-specialization.md](summary-specialization.md); required coverage in
   [sound-analysis.md](sound-analysis.md).
 - [ ] **Implement local ownership/borrow/publication facts.** Track owned,
   mutable-region, borrowed, published, unknown, and persistent states. Details:
@@ -129,8 +147,11 @@ the trackable action order; focused docs hold details for the larger risk areas.
 | Doc | Purpose |
 |---|---|
 | [architecture.md](architecture.md) | Umbrella architecture, phases, mutable intrinsics, specialization, testing policy. |
+| [worked-examples.md](worked-examples.md) | Real boot ANF dumps (Cases A/B/C/V/T), the op→ownership-event table, and the stage0 census baseline. The design anchor every rule is validated against. |
+| [fact-lattice.md](fact-lattice.md) | Semantic core: the ownership lattice, per-`AnfOp` transfer function, the `AInit` move/alias hinge, and control-flow merges. |
+| [summary-specialization.md](summary-specialization.md) | Interprocedural layer: function-summary schema, SCC-ordered computation, and field-path-granular call-site variant selection. |
 | [cfg-ownership-ir.md](cfg-ownership-ir.md) | CFG ownership view over ANF with SSA-style block parameters for carried values; optimizer analysis consumes this shared control-flow view. |
-| [sound-analysis.md](sound-analysis.md) | Placeholder for the ownership-analysis algorithm and required coverage patterns across vectors, dicts, records, callers, and whole-program summaries. |
+| [sound-analysis.md](sound-analysis.md) | Required-coverage matrix (positive/negative patterns per vector/dict/record/nested/caller-shape). The algorithm lives in fact-lattice.md + summary-specialization.md. |
 | [closure-capture.md](closure-capture.md) | Closure capture as a publication sink, plus future recoverable non-escaping/inlined/summarized cases. |
 | [concurrency-publication.md](concurrency-publication.md) | Task/fiber capture, `Channel<T>` sends, and cross-worker copy-vs-share distinctions. |
 | [buffer-cleanup.md](buffer-cleanup.md) | Follow-up policy for retiring Buffer workaround usage after ordinary immutable code reaches private mutable lowering. |
