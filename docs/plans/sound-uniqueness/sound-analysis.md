@@ -174,13 +174,22 @@ At minimum:
 - closure capture;
 - task/fiber capture;
 - `Channel<T>` send;
-- unknown callee or host call;
+- unknown *Twinkle* callee (no summary);
 - module/global publication;
 - cross-worker shared transfer;
 - old-version alias that remains observable.
 
 Cross-worker serialized copy should be modeled separately from shared transfer
 when the runtime contract guarantees copying.
+
+**Synchronous extern/host calls are *not* in this list.** Unlike an unknown
+Twinkle callee, the extern boundary is a closed allow-list marshalled by a copying
+bridge (`Vector<Byte>`/`Vector<String>` args copied out, results host-constructed
+fresh, no retained GC reference), so a GC-typed extern argument is a **borrow** and
+an extern result is **owned-fresh** — not a publication. See the extern row in
+[fact-lattice.md](fact-lattice.md) and the resolution in
+[concurrency-publication.md](concurrency-publication.md). Only an extern that
+retains a GC argument past the call falls back to publication.
 
 ## Debug output requirements
 

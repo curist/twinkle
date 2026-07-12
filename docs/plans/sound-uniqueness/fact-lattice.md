@@ -111,7 +111,8 @@ live after this point," which the CFG view supplies.
 | `ACall(Cell.new / Cell.set / Cell.update)` — store into a `Cell` | **publish** the stored value → `Shared` (a `Cell` is a mutable box, aliasable and readable at arbitrary times); the returned `Cell` handle is owned but its contents are `Shared`. `Cell.update` reads-then-writes, so — like `Cell.get` — the value handed to the update function is `Unowned` |
 | `ACall(Cell.get)` | `L ← Unowned` (contents stay aliased through the live cell). `Cell` is not an optimization target — already mutable by design; these rows only keep the analysis sound around it |
 | `Return(A)` / `Break(A)` / match-arm body ending in `Return` (`try`) | publish `A` → `A` becomes `Shared`; insert `freeze` on this edge if `A` was `OwnedMutable` |
-| `ACall(unknown/unsummarized)` | every reference arg → `Shared`; `L ← Unowned` |
+| `ACall(extern/host import)` — closed boundary allow-list (`Int/Float/Bool/String/Void`, `ExternRef`/`ExternRef?`, `Vector<Byte>`, `Vector<String>`, `Result<Vector<Byte>,String>`) | **Not a publication sink.** The auto-bridge marshals every GC-typed argument into a host-owned *copy* synchronously and retains no Twinkle reference, so a `Vector<Byte>`/`Vector<String>` arg is a read-only **borrow** (arg fact preserved, *not* `Shared`), and a GC-typed *result* is host-constructed fresh → `L ← OwnedPersistent` (fresh, deeply-owned). Scalars are ownership-neutral; `ExternRef` handles are host-owned (neutral). This is stronger than the generic row below and rests on the copying-marshalling contract — see [concurrency-publication.md](concurrency-publication.md) |
+| `ACall(unknown/unsummarized)` — a *Twinkle* callee with no summary (not extern) | every reference arg → `Shared`; `L ← Unowned` |
 | `ABinOp`/`AUnOp`/scalar ops | no reference-ownership effect |
 
 Two consequences worth stating explicitly:
