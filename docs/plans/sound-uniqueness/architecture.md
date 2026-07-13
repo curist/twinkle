@@ -356,6 +356,21 @@ must use the persistent variant because `before` keeps the old environment
 observable. This is why caller-dependent variants are not theoretical; they are
 required for both performance and soundness.
 
+The boot compiler also has a more common transport-wrapper form: helpers return
+`.{ ..., ctx/state/env }` records (`SynthOut`, `CheckOut`, `ExprOut`, `LocalOut`,
+`FuncIdOut`, ANF lowering state/accum results, resolver env results,
+boundary-rewrite results, query-analysis state results, etc.), then the caller
+immediately continues with `ctx = out.ctx`, `state = out.state`, or `env = out.env`
+while reading sibling result fields. Covering the actual source therefore
+requires **return-path ownership summaries** such as `returns[.ctx]` or
+`returns[.state]` being `OwnedFromParam(0)`, plus a field-projection move when
+that path is not observed through the wrapper afterward. Query analysis
+also wraps these records in `Result`, so return paths need variant/payload
+segments such as `Ok[0].state` and `Err[0].state`. Treating `.{ ctx, ... }`,
+`.{ state, ... }`, or locally handled `Result` payloads as ordinary aggregate
+publication would be sound but would miss dominant checker/lowering/resolver/query
+threading idioms.
+
 #### Controlling specialization explosion
 
 Naive ownership specialization can generate too many variants. A function with
@@ -589,10 +604,12 @@ AWFY performance, preserved checksums, and avoided known aliasing corruptions.
   can be a flag such as `twk ir --cfg`, `twk ir --ownership`, or both, but the
   output must be designed for manual debugging.
 - Print facts at the level where decisions are made: local ownership state,
-  record shell/field ownership, borrow/read observations, publication/escape
-  events, branch joins, loop-carried/back-edge ownership facts, function
-  summaries, call-site specialization choices, codegen-ready mutable decisions,
-  and candidate update-site verdicts.
+  record shell/field ownership, return-path ownership for `.{ ..., ctx/state }`
+  and `Result` transport wrappers, field/variant-projection move/borrow
+  decisions, borrow/read observations, publication/escape events, branch joins,
+  loop-carried/back-edge ownership facts, function summaries, call-site
+  specialization choices, codegen-ready mutable decisions, and candidate
+  update-site verdicts.
 - For every rejected mutable candidate, print the reason in terms of the proof
   model, such as old value observable, unknown call boundary, captured by
   closure, stored in aggregate, branch fact mismatch, or insufficient deep

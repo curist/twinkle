@@ -192,6 +192,82 @@ assign L7 = L45                                    rebind cur (L7 → L7)
 match-join, loop-carried ownership, recursion/self-summary, and dict/vector
 field updates — the real shape the analysis must handle, not a toy.
 
+## Case W — transport-wrapper threading: the source-wide helper idiom
+
+Beyond direct `cur`/`ctx` returns, boot threads contexts and state through small
+product records: checker helpers return `SynthOut`/`CheckOut`/`UnifyOut`, lowering
+helpers return `ExprOut`/`LocalOut`/`FuncIdOut`, ANF lowering returns
+`FreshResult`/`ExprAccumResult` with `state` and `accum`, boundary insertion
+returns `RewriteResult`/materialization results, resolver helpers return `env`,
+and query analysis returns `state` in `SourceLoad`/`Discovery`/`SingletonResult`.
+The source shape is:
+
+```tw
+out := helper(ctx_or_state, ...)
+ctx_or_state = out.ctx       // or out.state / out.env / out.b / out.accum
+// use out.ty / out.expr / out.local / out.diags / ... as sibling results
+```
+
+The ownership handoff is not the whole returned record; it is one or more
+returned fields. The callee summary must be able to say:
+
+```text
+helper: consumes p0(ctx), returns owned fresh shell with [.ctx] = OwnedFromParam(0)
+```
+
+or, for multi-accumulator helpers:
+
+```text
+lower_expr: returns [.state] = OwnedFromParam(0), [.accum] = OwnedFromParam(1)
+```
+
+The caller then needs a **field-projection move**: `out.ctx`/`out.state`
+transfers the field's ownership if that path is dead through `out` afterward.
+Reading sibling scalar/result fields is fine; publishing `out`, returning `out`,
+storing `out`, or reading the same transported field again is not. This is the
+path-sensitive analogue of `AInit`'s move-vs-alias hinge.
+
+- **Verdict: required positive.** Without return-path summaries and projection
+  moves, every `.{ ctx, ... }` / `.{ state, ... }` helper looks like aggregate
+  publication and the analysis drops back to persistent behavior across much of
+  checker/lowering/resolver/query analysis.
+- **Implementation requirement:** summaries and facts must be keyed by return
+  paths as well as parameter paths; liveness must answer whether a returned field
+  path, not just the wrapper local, remains observable.
+
+## Case R — `Result`-wrapped state transport: handled error is not publication
+
+`query/analyze` has helpers such as `load_source` and `parse_cached` that return
+`SourceLoad!AnalysisError` / `ParseLoad!AnalysisError`. Both success and failure
+payloads carry the updated `AnalysisState`:
+
+```tw
+loaded := case acc.state.load_source(...) {
+  .Ok(v) => v,
+  .Err(err) => return acc.record_failure(canonical, err),
+}
+acc.state = loaded.state
+```
+
+and `record_failure` itself continues the state thread:
+
+```tw
+acc.state = err.state
+```
+
+This needs return paths through variant payloads, e.g.
+`Ok[0].state = OwnedFromParam(0)` and `Err[0].state = OwnedFromParam(0)`. A
+locally handled `.Err` arm is a normal match arm with a transported state; it is
+not automatically the same as `try`'s early-return publication. If an arm really
+returns from the enclosing function, then Case T's publication rule applies on
+that exit edge.
+
+- **Verdict: required positive.** Variant payload paths let query-analysis state
+  remain owned across handled `Result` errors.
+- **Implementation requirement:** return paths need variant/payload segments, and
+  match joins must merge transported payload facts just like ordinary record-field
+  facts.
+
 ## Case T — `try`/`chain`: early-return publication
 
 ```
@@ -294,12 +370,18 @@ compiler, giving the *achievable* in-place distribution:
    The 171 record + 267 dict in-place census sites are these quartets.
 5. **Branch/match-join of an owned record is pervasive** (census: 2898 `case`
    sites) — the join merge (mutated-on-one-arm vs untouched) is table stakes.
-6. **Thin-wrapper and recursive summaries are on the critical path.** Sieve
-   (`set_at`), record threading (`add_type`), and `visit` (self-recursive) all
-   update through calls. Minimal summary = per-parameter consumed/borrowed/
-   returned + return ownership; recursion needs an SCC fixpoint on summaries.
-7. **Multi-exit publication** unifies `Return`, value-carrying `Break`, and `try`
-   error arms — all are exit edges derived structurally, all publish the exiting
+6. **Thin-wrapper, transport-wrapper, variant-wrapper, and recursive summaries
+   are on the critical path.** Sieve (`set_at`), record threading (`add_type`),
+   `.{ ..., ctx/state }` helper returns, locally handled `Result` state returns,
+   and `visit` (self-recursive) all update through calls. Minimal summary =
+   per-parameter consumed/borrowed/published paths + return-path ownership;
+   recursion needs an SCC fixpoint on summaries.
+7. **Transport-wrapper recovery needs path liveness.** `ctx = out.ctx` /
+   `state = out.state` is a move only when that path is dead through `out`;
+   sibling result reads do not block it, but publishing the wrapper does.
+8. **Handled variant arms join; early exits publish.** A locally handled
+   `Result` arm can transport ownership through payload paths, while `try` /
+   `return` / value-carrying `break` are exit edges that publish the exiting
    value.
 
 ## Reprioritization for the plan

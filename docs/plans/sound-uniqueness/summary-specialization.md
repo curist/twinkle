@@ -38,6 +38,15 @@ type ReturnOwn =
 // allowed but depth-capped and rare. Collections have only the [] path.
 type AccessPath = Vector<FieldId>
 
+// Return ownership is also path-sensitive. `ret_path=[]` describes the whole
+// returned value; `[.ctx]` / `[.state]` describes a field inside a returned
+// record; `Ok[0].state` / `Err[0].state` describes a field inside a variant
+// payload record. Parameter in-place paths remain field-only `AccessPath`s;
+// return paths additionally need variant/payload segments.
+type ReturnPath = Vector<ReturnPathSegment>
+type ReturnPathSegment = { Field(FieldId), Variant(VariantId), Payload(Int) }
+type ReturnPathOwn = .{ ret_path: ReturnPath, own: ReturnOwn }
+
 type ParamSummary = .{
   base_role: ParamRole,             // whole-value escape status (Borrowed/Consumed/Published)
   in_place_paths: Vector<AccessPath>,  // paths whose ownership unlocks an in-place op inside the callee
@@ -47,7 +56,7 @@ type ParamSummary = .{
 type FunctionSummary = .{
   func: FuncId,
   params: Vector<ParamSummary>,
-  ret: ReturnOwn,
+  returns: Vector<ReturnPathOwn>,
 }
 ```
 
@@ -80,6 +89,69 @@ Implementation may begin by emitting only the whole-value path `[]` (≈
 whole-parameter) and refine to named field paths later; the schema is path-based
 from the start, so no migration is needed.
 
+### Transport-wrapper returns are first-class
+
+The actual boot compiler does not only return threaded state directly. A large
+fraction of helper calls return a small product record whose one or more fields
+are updated accumulators: `ctx` (`SynthOut`, `CheckOut`, `ExprOut`, `LocalOut`,
+`FuncIdOut`, `RewriteResult`), `state` (`FreshResult`, `ExprAccumResult`,
+`SourceLoad`, `Discovery`, `SingletonResult`), `env` (`ResolveResult`,
+`ImportEnvResult`), or pairs such as `Walk.{ b, env }` and ANF lowering's
+`.{ state, accum }`. The caller shape is usually:
+
+```tw
+out := helper(ctx_or_state, ...)
+ctx_or_state = out.ctx       // or out.state / out.env / out.b / out.accum
+// read out.ty / out.expr / out.local / out.diags / other siblings as needed
+```
+
+A whole-return summary cannot express this. The callee's return is a fresh record
+shell, but the ownership handoff is at a returned field path:
+
+```text
+helper: p0 Consumed paths{...} -> returns { []: OwnedFresh,
+                                           [.ctx]: OwnedFromParam(0) }
+```
+
+Multiple returned fields may independently carry ownership, e.g. ANF lowering can
+thread both `state` and `accum` through `.{ state, accum, expr }` wrappers. The
+caller must then use the field-projection hinge from
+[fact-lattice.md](fact-lattice.md): `out.ctx`/`out.state` transfers that field's
+ownership when that path is not read or published through `out` afterward.
+Sibling reads such as `out.ty` or `out.diags` do not by themselves block the
+handoff. Publishing `out`, returning `out`, storing it in another aggregate, or
+reading the same transported field again after the move does block it.
+
+This is required coverage for the boot compiler, not a refinement for later:
+without return-path ownership and path-sensitive projection, the analysis treats
+`.{ ctx, ... }` / `.{ state, ... }` as escaping aggregates and fails to recover the
+dominant threaded-context and threaded-state patterns used by checker, lowering,
+resolver, query analysis, and boundary-rewrite helpers.
+
+### Variant-wrapped transport returns
+
+Query analysis commonly wraps transport records in `Result`: `load_source`
+returns `SourceLoad!AnalysisError`, `parse_cached` returns `ParseLoad!AnalysisError`,
+and callers handle both `.Ok(v)` and `.Err(err)` while continuing with
+`v.state`/`err.state`. This is not the same as `try` early-return publication when
+the error is handled locally; the state ownership flows through a variant payload
+and then through a record field.
+
+Return paths therefore need variant/payload segments, not only record fields:
+
+```text
+load_source: p0(state) Consumed -> returns {
+  Ok[0].state:  OwnedFromParam(0),
+  Err[0].state: OwnedFromParam(0),
+}
+```
+
+At the caller, each `case` arm projects the state from the variant payload. The
+ordinary branch/match join then merges the transported state facts: if every arm
+continues with an owned state, the joined state remains owned; if an arm publishes
+or aliases it, the join demotes it. `try` remains a publication edge only for the
+arm that actually returns from the enclosing function.
+
 **Parameter roles** (the callee's observable treatment of the argument value):
 
 - **`Borrowed`** — only read; never consumed, never escapes, not returned.
@@ -105,9 +177,11 @@ leaks it — so it never participates in specialization.
 
 | Callee | Param summary | Return |
 |---|---|---|
-| `set_at` wrapper | `p0: Consumed, paths {[]}`; `p1,p2: Borrowed` | `OwnedFromParam(0)` |
-| `add_type` | `p0: Consumed, paths {[], [.types]}`; `p1,p2: Borrowed` | `OwnedFromParam(0)` |
-| `visit` | `p0(State): Consumed, paths {[], [.indices], [.lowlinks], [.stack], [.on_stack], [.components]}`; `p1,p2: Borrowed` | `OwnedFromParam(0)` |
+| `set_at` wrapper | `p0: Consumed, paths {[]}`; `p1,p2: Borrowed` | `[]: OwnedFromParam(0)` |
+| `add_type` | `p0: Consumed, paths {[], [.types]}`; `p1,p2: Borrowed` | `[]: OwnedFromParam(0)` |
+| `visit` | `p0(State): Consumed, paths {[], [.indices], [.lowlinks], [.stack], [.on_stack], [.components]}`; `p1,p2: Borrowed` | `[]: OwnedFromParam(0)` |
+| `fresh_meta` / `alloc_local`-style helper | `p0(ctx/state): Consumed, paths {[] plus any updated reference fields}`; other params borrowed | `[]: OwnedFresh record`; `[.ctx]`/`[.state]: OwnedFromParam(0)` |
+| `load_source` / `parse_cached`-style Result helper | `p0(state): Consumed, paths {[] plus updated fields}`; other params borrowed | `Ok[0].state: OwnedFromParam(0)`, `Err[0].state: OwnedFromParam(0)` |
 
 `add_type` names `[.types]` but **not** `[.values]`, so a caller with a shared
 `.values` still specializes the `.types` update. `set_at`'s vector carries only
@@ -127,7 +201,10 @@ and the return:
    `in_place_paths` from the specific field paths (or `[]` for the whole value)
    the body mutates in place under the owned-entry assumption.
 3. Classify the return by tracing the returned atom's fact back to a parameter or
-   a fresh allocation.
+   a fresh allocation. For returned records, classify both the whole return
+   (`[]`) and owned reference-typed fields such as `[.ctx]`/`[.state]`; for
+   returned variants, classify payload paths such as `Ok[0].state` and
+   `Err[0].state`, so transport-wrapper helpers preserve the state handoff.
 
 **Order: bottom-up over call-graph SCCs.** The compiler already computes Tarjan
 SCCs; process SCCs in reverse-topological order so a callee's summary exists
@@ -187,10 +264,12 @@ argument's per-field fact directly from the lattice `Record{shell, fields}` shap
   otherwise select the generic variant. A partially-satisfied key (shell owned,
   one field shared) is fine — it yields the shell-reuse-only variant.
 - **Post-call fact updates:** if any `(k, ·) ∈ key`, `a_k → Moved`; the result `L`
-  takes the specialized return (`OwnedFromParam(k)` ⇒ `L` is owned, the region
-  handed out). For the generic variant, `Borrowed` args are unchanged, `Consumed`
-  args stay as they were (persistent update does not touch them), and `L` follows
-  the generic `ReturnOwn`.
+  takes the specialized return facts path-by-path. A `[]` return path with
+  `OwnedFromParam(k)` means `L` is owned as a whole; a `[.ctx]` or `Ok[0].state`
+  return path with `OwnedFromParam(k)` means that projected path owns the
+  handed-off region until projected or published. For the generic variant,
+  `Borrowed` args are unchanged, `Consumed` args stay as they were (persistent
+  update does not touch them), and `L` follows the generic return-path facts.
 
 ### Cases B ∩ C, concretely
 
@@ -231,8 +310,10 @@ Ownership output should print, per function, the summary; and per call site, the
 selected variant and why:
 
 ```
-summary add_type: p0=Consumed paths{[],[.types]}  p1=Borrowed  p2=Borrowed  -> OwnedFromParam(0)
+summary add_type: p0=Consumed paths{[],[.types]}  p1=Borrowed  p2=Borrowed  -> []=OwnedFromParam(0)
+summary fresh_meta: p0=Consumed paths{[]} -> []=OwnedFresh, [.ctx]=OwnedFromParam(0)
 call build_env#L10 -> add_type[owned:0,.types]  (a0=L4 Owned incl .types, last_use)
+call checker#L42 -> fresh_meta[owned:0]          (result.ctx moves to cur_ctx; sibling ty read)
 call branch_env#L10 -> add_type[generic]        (a0=L7 Shared: aliased by L8, read later)
 ```
 
@@ -242,9 +323,9 @@ consistent with the Phase-1 "print facts before rewriting" discipline.
 ## Open questions
 
 - Should a parameter distinguish `Consumed`-and-`Returned` from `Consumed`-and-
-  `freeze-published` (returned indirectly, e.g. stored into an owned aggregate
-  that is itself returned)? Both could be in-place-capable but with different
-  post-call result facts.
+  `freeze-published` when the value is returned through a non-record container?
+  Record transport wrappers are resolved by return-path ownership such as
+  `[.ctx] = OwnedFromParam(k)`.
 - Path depth: nested field paths (`[.a, .b]`) are permitted but depth-capped —
   what cap, and does any real boot code need depth > 1? (Resolved that
   consumption is per-path, not whole-parameter; see "Consumption is per access

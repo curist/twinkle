@@ -50,6 +50,35 @@ sound `.types` in-place update).
 > downward-closed `(param, path)` key relationship (owning `[.f]` presupposes
 > owning `[]`).
 
+## Transport-wrapper records (`.{ ..., ctx/state/env }`)
+
+Boot's dominant context-threading helper shape is a small result record whose one
+or more fields are updated accumulators: `ctx` (`SynthOut`, `CheckOut`,
+`ExprOut`, `LocalOut`, `FuncIdOut`, `RewriteResult`), `state` (`FreshResult`,
+`ExprAccumResult`, `SourceLoad`, `Discovery`, `SingletonResult`), `env`
+(`ResolveResult`, `ImportEnvResult`), and pairs such as occurrence building's
+`Walk.{ b, env }`. These are not optimization-neutral wrappers: the caller
+expects to continue the ownership chain through those fields.
+
+Required model:
+
+- the callee summary records return-path ownership (`[.ctx] = OwnedFromParam(k)`,
+  `[.state] = OwnedFromParam(k)`, etc.), not only whole-return ownership;
+- `ARecordGet(out, .ctx/.state/.env/...)` can move the field ownership out when
+  that path is dead through `out` afterward;
+- sibling field reads (`out.ty`, `out.local`, `out.diags`, etc.) do not block the
+  transported-field move;
+- multiple transported fields in the same wrapper can move independently;
+- publishing the wrapper record, storing it, returning it, or reading a moved
+  field again demotes the relevant field and forces persistent behavior.
+
+This is the same shell-vs-field principle as ordinary record updates, but applied
+to returned records. It is required for checker/lowering/resolver/query-analysis
+coverage before record and dict codegen wins will show up in real boot workloads.
+Variant-wrapped records such as `Result<SourceLoad, AnalysisError>` add variant
+segments before the payload field path; see
+[summary-specialization.md](summary-specialization.md).
+
 ## Wrapper records (`Set<K>`)
 
 The builtin `Set<K>` is a thin record wrapper around `Dict<K, Void>` (field

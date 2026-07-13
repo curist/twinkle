@@ -59,6 +59,10 @@ re-derive them. Every emitted decision must satisfy:
 - **No use-after-freeze / no double-begin** within a region.
 - **Field-path keys are downward-closed** ⟹ a decision owning `[.f]` presupposes
   the shell `[]` is owned (see [records-fields.md](records-fields.md)).
+- **Return-path handoffs are explicit** ⟹ if a specialized callee returns ownership
+  through `out.ctx`, `out.state`, or a variant payload path such as `Ok[0].state`,
+  the decision names that return path and the caller-side projection that moves
+  it; codegen does not infer this from record/variant shape.
 - **Variant selection is total** ⟹ every specialized call site resolves to exactly
   one variant, and a generic/persistent fallback variant always exists (so the
   fail-safe default is always reachable).

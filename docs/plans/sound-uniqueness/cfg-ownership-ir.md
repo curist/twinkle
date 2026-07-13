@@ -118,6 +118,11 @@ The CFG view should model:
 - ownership facts at block entry and exit;
 - record shell ownership facts;
 - field-sensitive ownership facts for record fields, including projected fields;
+- return-path ownership facts for records and variants returned by
+  transport-wrapper helpers (`.{ ..., ctx/state }`, `Ok[0].state`,
+  `Err[0].state`);
+- path-sensitive liveness for field/payload projections, so `out.ctx` or
+  `out.state` can be classified as a move even when sibling fields are still read;
 - nested collection ownership facts for element/value projections when modeled;
 - per-instruction borrow/publication/update facts;
 - candidate mutable update verdicts;
@@ -240,6 +245,8 @@ The exact flag names can change, but the output should show:
 - block parameters as carried values;
 - ownership facts at entry/exit as separate maps;
 - record shell and field ownership facts;
+- return-path ownership and field/payload-projection move/borrow facts for
+  transport wrappers;
 - loop-carried facts;
 - value-carrying break edges and their publication/freeze effect;
 - publication sinks;

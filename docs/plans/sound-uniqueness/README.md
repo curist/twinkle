@@ -98,9 +98,11 @@ here — so the two orderings are kept from drifting apart by hand.
 - [ ] **Handle loop-carried ownership.** Prove owned handles can cross back-edges
   only when every path preserves the invariant and reads are non-escaping borrows.
   Details: [sound-analysis.md](sound-analysis.md).
-- [ ] **Handle record shell and field ownership.** Separate record-shell reuse
-  from deep ownership of fields; support field projections and wrapper records.
-  Details: [records-fields.md](records-fields.md), [sound-analysis.md](sound-analysis.md).
+- [ ] **Handle record shell, field ownership, and transport wrappers.** Separate
+  record-shell reuse from deep ownership of fields; support field projections,
+  `.{ ..., ctx/state/env }` return-path ownership, locally handled Result payload
+  paths, and wrapper records. Details: [records-fields.md](records-fields.md),
+  [sound-analysis.md](sound-analysis.md).
 - [ ] **Handle nested collection ownership conservatively.** Distinguish owned
   outer collections from unknown/shared inner collections. Details:
   [records-fields.md](records-fields.md), [sound-analysis.md](sound-analysis.md).
@@ -124,7 +126,8 @@ policy; variant emission and call-site selection are Phase 5/6.
   on ownership/control-flow facts; the rest move onto CFG facts. Details:
   [architecture.md](architecture.md).
 - [ ] **Compute function summaries.** Summarize parameter ownership requirements,
-  consumed/borrowed/published params, return ownership, and call-site
+  consumed/borrowed/published params, return-path ownership (including `out.ctx`,
+  `out.state`, and `Ok[0].state` transport wrappers), and call-site
   compatibility, SCC-ordered. Details: [summary-specialization.md](summary-specialization.md).
 - [ ] **Define the specialization key and cap policy.** Deterministic,
   order-independent `(param, field-path)` keys and per-`(mono-instance, func)`
@@ -142,8 +145,9 @@ policy; variant emission and call-site selection are Phase 5/6.
   record operation family, begin/thaw, reads, writes, freeze/publish, fallback,
   and proof/debug id. Details: [cfg-ownership-ir.md](cfg-ownership-ir.md).
 - [ ] **Represent record/field codegen decisions.** Decide record shell reuse,
-  field projection transfer/borrow, shared-field fallback, and `Set<K>` wrapper
-  projection. Details: [records-fields.md](records-fields.md), [cfg-ownership-ir.md](cfg-ownership-ir.md).
+  field projection transfer/borrow, transport-wrapper `.ctx`/`.state` and
+  `Ok[0].state` moves, shared-field fallback, and `Set<K>` wrapper projection.
+  Details: [records-fields.md](records-fields.md), [cfg-ownership-ir.md](cfg-ownership-ir.md).
 
 ### Phase 5 — First mutable lowering wins *(architecture: 2A + 2B + 2C)*
 

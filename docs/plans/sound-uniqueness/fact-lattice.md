@@ -99,6 +99,26 @@ This single rule decides the worked negatives:
 `AInit` therefore requires **liveness**: the analysis needs "is the source local
 live after this point," which the CFG view supplies.
 
+## The field-projection hinge: transport wrappers
+
+Boot code often returns updated context/state records inside small result
+records: `SynthOut`, `CheckOut`, `ExprOut`, `LocalOut`, `FuncIdOut`,
+`RewriteResult`, ANF lowering's `FreshResult`/`ExprAccumResult`, query analysis's
+`SourceLoad`/`Discovery`/`SingletonResult`, resolver `ResolveResult`, and similar
+shapes. The caller then writes `ctx = out.ctx`, `state = out.state`,
+`env = out.env`, or projects multiple accumulator fields, while reading sibling
+result fields such as `ty`, `expr`, `local`, or `diags`.
+
+That pattern needs path-sensitive liveness, not only whole-record liveness. A
+field projection from an owned result record can transfer ownership of that field
+when the projected path is dead through the wrapper afterward, even if sibling
+fields are still read. The wrapper shell may remain usable for scalar/read-only
+siblings, but publishing the wrapper or reading the same transported field again
+would make the projection a borrow/publication instead of a move. Without this
+projection hinge, every helper returning `.{ ..., ctx }` / `.{ ..., state }` looks
+like it published the threaded value into an aggregate, and the analysis loses the
+dominant boot threading path.
+
 ## Transfer function (per `AnfOp`)
 
 `AnfOp` is closed, so the table is exhaustive. `let L = op`:
@@ -108,8 +128,8 @@ live after this point," which the CFG view supplies.
 | `ACall(constructor)` — `Dict.new`, `Vector.make`, builder freeze | `L ← Owned` with a fresh, deeply-owned shape |
 | `ARecord(fields)` | `L ← Owned(Record{shell:owned, fields})`; each field arg follows the `AInit` move/alias hinge — **moved in** if dead afterward (field fact takes the arg's fact, arg local → `Moved`), else **aliased** (arg stays live, so arg and field fact both become `Shared`) |
 | `AArrayLit` / `AVariant(args)` | `L ← Owned` with a fresh shape; each arg follows the same move/alias hinge — **moved in** if dead afterward, else an arg that stays live (shared) makes the container's element fact `Shared` |
-| `ARecordGet(base, f)` | `L ← borrow` of field `f`. Base ownership **preserved** (read is not a consume). If `L` later flows only to reads → transient borrow; if `L` is stored/returned/captured → publishes field `f` and demotes base’s field fact |
-| `AIndex(base, i)` | `L ← borrow` (element read). Same borrow-vs-publish rule as `ARecordGet` |
+| `ARecordGet(base, f)` | **projection hinge** for field `f`. If the field path is dead through `base` after this point, `L` may take the field fact and `base.f → Moved` while the shell/sibling facts remain available. Otherwise `L ← borrow` and base ownership is preserved. If the projected value is stored/returned/captured, publish field `f` and demote base’s field fact |
+| `AIndex(base, i)` | `L ← borrow` (element read). Indexed collection reads do not transfer element ownership in the first cut; if the result is stored/returned/captured, publish/demote the relevant element/value fact when modeled |
 | `ACall(consuming)` — `dict.set`, `vector.append`, `Vector.set`, summarized wrapper: *consumes p0, returns owned* | `L ← Owned(result)`; arg p0 → `Moved`. **In-place begin licensed iff p0 was `Owned` at the call**; otherwise the result is still owned but `begin` copies (persistent path) |
 | `ARecordUpdate(base, f, v, in_place, _)` | `L ← base.record-fact with field f ← v.fact`. **`in_place` licensed iff base was `Owned`**; if in-place, base → `Moved` |
 | `AAssign(local, A)` | `local ← A.fact` (ownership transfer; the loop-carried rebind) |
@@ -150,8 +170,9 @@ Two consequences worth stating explicitly:
   Monotone over the finite lattice ⇒ terminates.
 - **Multi-exit publication.** `Return`, value-carrying `Break`, and `try` error
   arms are all exit edges (worked-examples Case T); each publishes the exiting
-  value and forces a `freeze` if it was `OwnedMutable`. The fallthrough path keeps
-  the region alive.
+  value and forces a `freeze` if it was `OwnedMutable`. A locally handled
+  `Result`/variant `case` is different: ownership can flow through payload paths
+  inside each arm and then join normally.
 
 ## Function summaries
 
@@ -162,25 +183,34 @@ Two consequences worth stating explicitly:
 
 Interprocedural facts, computed per function (schema authoritative in
 [summary-specialization.md](summary-specialization.md); `ParamRole` has **three**
-values, with "returned" factored out into `flows_to_return` + `ReturnOwn`):
+values, with "returned" factored out into `flows_to_return` + path-keyed
+`ReturnOwn` facts):
 
 - **per parameter `base_role`** ∈ { `Borrowed` (read-only, ownership-neutral),
   `Consumed` (mutated/moved; caller’s value dead after if in-place taken),
   `Published` (escapes inside the callee) };
 - **`flows_to_return`** — whether the parameter’s value flows into the return;
-- **return ownership** (`ReturnOwn`) ∈ `OwnedFresh` | `OwnedFromParam(k)` |
-  `Shared`;
+- **return ownership by path** (`[]`, `[.ctx]`, `Ok[0].state`, etc.) with each
+  path's `ReturnOwn` ∈ `OwnedFresh` | `OwnedFromParam(k)` | `Shared`; variants
+  and payload records need path segments for locally handled `Result` transport;
 - **`in_place_paths`** — the field paths a `Consumed`+`flows_to_return` parameter
   mutates in place if the caller proves them owned (`[]` = shell/whole value).
 
 Worked summaries:
 
 - `set_at` wrapper — `p0: Consumed`, `flows_to_return`, `in_place_paths {[]}`;
-  return `OwnedFromParam(0)`.
+  return `[]: OwnedFromParam(0)`.
 - `add_type` — `p0: Consumed`, `flows_to_return`, `in_place_paths {[], [.types]}`,
-  `p1,p2: Borrowed`; return `OwnedFromParam(0)`.
-- `visit` — `p0(State): Consumed`, `flows_to_return`; return `OwnedFromParam(0)`;
-  **recursive**, so its summary depends on itself.
+  `p1,p2: Borrowed`; return `[]: OwnedFromParam(0)`.
+- `visit` — `p0(State): Consumed`, `flows_to_return`; return
+  `[]: OwnedFromParam(0)`; **recursive**, so its summary depends on itself.
+- `fresh_meta`/`alloc_local`-style transport helper — `p0(ctx/state): Consumed`,
+  `flows_to_return`, `in_place_paths {[] plus any updated reference fields}`;
+  return `[]: OwnedFresh record` and `[.ctx]`/`[.state]: OwnedFromParam(0)`.
+- `load_source`/`parse_cached`-style `Result` helper — `p0(state): Consumed`,
+  `flows_to_return`; return `Ok[0].state: OwnedFromParam(0)` and
+  `Err[0].state: OwnedFromParam(0)` when both locally handled arms carry the
+  state forward.
 
 Summaries are computed **bottom-up over call-graph SCCs** (the compiler already
 has Tarjan SCC). Within a recursive SCC, iterate summaries to fixpoint. The
@@ -227,6 +257,15 @@ variant at `build_env`’s owned call sites and the persistent variant at
   callers owned ⇒ single owned variant); nested `components` write moves an owned
   `Vector` into the field. **Verdict: owned-mutable, both in-place decisions per
   quartet.** ✓
+- **Case W transport wrappers:** helper returns `[]: OwnedFresh` plus transported
+  field paths such as `[.ctx]: OwnedFromParam(0)` or `[.state]:
+  OwnedFromParam(0)`; caller projection moves the field when that path is dead
+  through `out`; sibling reads do not publish it. **Verdict: owned handoff through
+  returned field.** ✓
+- **Case R Result-wrapped transport:** helper returns payload paths such as
+  `Ok[0].state: OwnedFromParam(0)` and `Err[0].state: OwnedFromParam(0)`; locally
+  handled match arms project and rejoin state ownership. **Verdict: owned handoff
+  through variant payload field.** ✓
 
 ## Open questions
 

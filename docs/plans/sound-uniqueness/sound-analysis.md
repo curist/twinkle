@@ -103,6 +103,11 @@ Initial positive patterns:
 - fresh record shell updated in place when the old shell is unobservable;
 - owned record with owned collection fields projected for mutation;
 - record field rebinding that updates a deeply owned field;
+- transport-wrapper records (`.{ ..., ctx/state/env }`) whose returned fields
+  carry ownership from consumed input accumulators and are projected by the
+  caller;
+- variant-wrapped transport records (`Result<SourceLoad, AnalysisError>`-style)
+  whose locally handled payload fields carry state ownership through match arms;
 - wrapper records such as `Set<K>` projecting to owned `Dict<K, Void>`;
 - owned record passed to a callee that has an owned-specialized variant.
 
@@ -140,6 +145,12 @@ Required caller distinctions:
 - caller passes a function parameter whose ownership is unknown;
 - caller passes an owned record but only one field is relevant;
 - caller passes owned value to a callee that consumes it and returns owned result;
+- caller receives ownership through a returned record field (`out.ctx`,
+  `out.state`, `out.env`, etc.) while reading sibling fields from the same
+  wrapper;
+- caller receives ownership through a locally handled variant payload field
+  (`Ok[0].state`, `Err[0].state`), with branch joins preserving ownership only
+  when every continuing arm carries it;
 - caller passes value to a callee that may publish it;
 - multiple call sites need both generic persistent and owned-specialized variants.
 
@@ -201,6 +212,8 @@ For every candidate, `twk ir` ownership output should show:
 - loop-carried facts if inside a loop;
 - field/inner projection facts if relevant;
 - call-site summary or specialization decision;
+- return-path ownership facts for record and variant transport wrappers and the
+  field/payload projection move/borrow verdict;
 - accept/reject verdict;
 - proof/debug id used later by codegen.
 
