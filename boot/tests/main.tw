@@ -135,6 +135,7 @@ use .suites.value_semantics_suite
 use .suites.wasm_ir_suite
 use .suites.wasm_layout_suite
 use .suites.wasm_plan_suite
+use .suites.uniqueness_census_suite
 use .suites.wat_suite
 
 runner.run_all([
@@ -274,4 +275,5 @@ runner.run_all([
   string_edge_cases_suite.suite(),
   scripting_string_suite.suite(),
   scripting_vector_suite.suite(),
+  uniqueness_census_suite.suite(),
 ])

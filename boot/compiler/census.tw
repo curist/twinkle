@@ -1,0 +1,247 @@
+//! Candidate-op census over optimized ANF.
+//!
+//! Counts COW-candidate update sites and how many are lowered in-place. Candidate
+//! detection RIDES the optimizer semantics (`OptimizerSemantics`): a call is a
+//! candidate iff its `CallSemantics.effect` is `.Update`, and an in-place call is
+//! one whose id is a registered `in_place_equivalent`. Record updates are counted
+//! via `ARecordUpdate` (the `in_place` bit). A thin family-label table — built
+//! symbolically from the registry, mirroring `opt/semantics.tw`'s own
+//! registrations — only *names* the reporting families; it never decides
+//! candidate-ness, and any `.Update` candidate it does not name falls into
+//! `other`, so the census stays honest as boot grows. Contains NO ownership
+//! analysis. Shared by `twk ir --census` and the census gate suite.
+
+use compiler.anf.{AnfExpr, AnfModule, AnfOp}
+use compiler.builder_family.{vector_builder_config}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.core_ir.{FuncId}
+use compiler.opt.semantics.{OptimizerSemantics, call_info, make_prelude_optimizer_semantics}
+
+pub type CensusSite = .{ func: String, family: String, in_place: Bool }
+
+pub type FamilyCount = .{ name: String, candidates: Int, in_place: Int }
+
+pub type CensusTally = .{
+  record_update: FamilyCount,
+  dict_set: FamilyCount,
+  dict_remove: FamilyCount,
+  vector_set: FamilyCount,
+  vector_append: FamilyCount,
+  vector_builder: FamilyCount,
+  other: FamilyCount,
+}
+
+// Family labels, keyed by raw FuncId int. `family_of` names each persistent-form
+// candidate op; `ip_family_of` names each in-place variant (derived by reversing
+// the semantics' `in_place_equivalent` map). These tables only bucket sites into
+// reporting families — detection rides the semantics, not this list. Building the
+// reverse map iterates a Dict, but the result is order-independent (each in-place
+// id maps to exactly one family), so the census stays deterministic.
+type Labels = .{ family_of: Dict<Int, String>, ip_family_of: Dict<Int, String> }
+
+fn build_labels(b: BuiltinRegistry, sem: OptimizerSemantics) Labels {
+  builder := vector_builder_config(b)
+  fam: Dict<Int, String> = Dict.new()
+  fam[b.method_id("Dict", "set").id] = "dict_set"
+  fam[b.method_id("Dict", "remove").id] = "dict_remove"
+  fam[b.id("vector$set_unsafe").id] = "vector_set"
+  fam[builder.push_id.id] = "vector_append"
+  fam[builder.builder_new_id.id] = "vector_builder"
+  fam[builder.builder_from_id.id] = "vector_builder"
+  fam[builder.builder_push_id.id] = "vector_builder"
+  fam[builder.builder_freeze_id.id] = "vector_builder"
+
+  ip: Dict<Int, String> = Dict.new()
+  for base_id, cs in sem.call_semantics {
+    ip = case cs.in_place_equivalent {
+      .Some(ip_id) => case fam.get(base_id) {
+        .Some(name) => ip.set(ip_id.id, name),
+        .None => ip,
+      },
+      .None => ip,
+    }
+  }
+  Labels.{ family_of: fam, ip_family_of: ip }
+}
+
+type FamIp = .{ family: String, in_place: Bool }
+
+// Classify a called FuncId: in-place variant first, then a named persistent
+// candidate, then the semantics backstop (any other `.Update` call → `other`).
+fn classify_call(fid: FuncId, sem: OptimizerSemantics, labels: Labels) FamIp? {
+  case labels.ip_family_of.get(fid.id) {
+    .Some(name) => .Some(FamIp.{ family: name, in_place: true }),
+    .None => case labels.family_of.get(fid.id) {
+      .Some(name) => .Some(FamIp.{ family: name, in_place: false }),
+      .None => case call_info(sem, fid) {
+        .Some(cs) => case cs.effect {
+          .Update => .Some(FamIp.{ family: "other", in_place: false }),
+          _ => .None,
+        },
+        .None => .None,
+      },
+    },
+  }
+}
+
+/// Every candidate site in the module, in deterministic traversal order.
+pub fn census_sites(m: AnfModule, b: BuiltinRegistry) Vector<CensusSite> {
+  sem := make_prelude_optimizer_semantics(b)
+  labels := build_labels(b, sem)
+  sites: Vector<CensusSite> = []
+  for f in m.functions {
+    sites = walk_expr(f.body, f.name, sites, sem, labels)
+  }
+  sites
+}
+
+fn walk_expr(
+  expr: AnfExpr,
+  func: String,
+  sites: Vector<CensusSite>,
+  sem: OptimizerSemantics,
+  labels: Labels,
+) Vector<CensusSite> {
+  case expr {
+    .Let(_, op, body) => {
+      after := walk_op(op, func, sites, sem, labels)
+      walk_expr(body, func, after, sem, labels)
+    },
+    _ => sites,
+  }
+}
+
+fn walk_op(
+  op: AnfOp,
+  func: String,
+  sites: Vector<CensusSite>,
+  sem: OptimizerSemantics,
+  labels: Labels,
+) Vector<CensusSite> {
+  case op {
+    .ARecordUpdate(_, _, _, in_place, _) => sites.append(CensusSite.{
+      func,
+      family: "record_update",
+      in_place,
+    }),
+    .ACall(callee, _) => case callee {
+      .AGlobalFunc(fid) => case classify_call(fid, sem, labels) {
+        .Some(fi) => sites.append(CensusSite.{ func, family: fi.family, in_place: fi.in_place }),
+        .None => sites,
+      },
+      _ => sites,
+    },
+    .AIf(_, then_e, else_e) => {
+      after_then := walk_expr(then_e, func, sites, sem, labels)
+      walk_expr(else_e, func, after_then, sem, labels)
+    },
+    .AMatch(_, arms) => {
+      acc := sites
+      for arm in arms {
+        acc = walk_expr(arm.body, func, acc, sem, labels)
+      }
+      acc
+    },
+    .ALoop(body) => walk_expr(body, func, sites, sem, labels),
+    .ADefer(body) => walk_expr(body, func, sites, sem, labels),
+    _ => sites,
+  }
+}
+
+fn empty_family(name: String) FamilyCount {
+  FamilyCount.{ name, candidates: 0, in_place: 0 }
+}
+
+fn empty_tally() CensusTally {
+  CensusTally.{
+    record_update: empty_family("record_update"),
+    dict_set: empty_family("dict_set"),
+    dict_remove: empty_family("dict_remove"),
+    vector_set: empty_family("vector_set"),
+    vector_append: empty_family("vector_append"),
+    vector_builder: empty_family("vector_builder"),
+    other: empty_family("other"),
+  }
+}
+
+fn inc(fc: FamilyCount, in_place: Bool) FamilyCount {
+  FamilyCount.{
+    name: fc.name,
+    candidates: fc.candidates + 1,
+    in_place: fc.in_place
+      + if in_place {
+        1
+      } else {
+        0
+      },
+  }
+}
+
+/// Reduce sites into per-family totals.
+pub fn tally_from_sites(sites: Vector<CensusSite>) CensusTally {
+  t := empty_tally()
+  for s in sites {
+    t = cond {
+      s.family == "record_update" => {
+        t.record_update = inc(t.record_update, s.in_place)
+        t
+      },
+      s.family == "dict_set" => {
+        t.dict_set = inc(t.dict_set, s.in_place)
+        t
+      },
+      s.family == "dict_remove" => {
+        t.dict_remove = inc(t.dict_remove, s.in_place)
+        t
+      },
+      s.family == "vector_set" => {
+        t.vector_set = inc(t.vector_set, s.in_place)
+        t
+      },
+      s.family == "vector_append" => {
+        t.vector_append = inc(t.vector_append, s.in_place)
+        t
+      },
+      s.family == "vector_builder" => {
+        t.vector_builder = inc(t.vector_builder, s.in_place)
+        t
+      },
+      _ => {
+        t.other = inc(t.other, s.in_place)
+        t
+      },
+    }
+  }
+  t
+}
+
+fn render_row(fc: FamilyCount) String {
+  "${fc.name}\t${fc.candidates}\t${fc.in_place}\n"
+}
+
+/// Tab-separated population table.
+pub fn render_census(t: CensusTally) String {
+  rows := [
+    t.record_update,
+    t.dict_set,
+    t.dict_remove,
+    t.vector_set,
+    t.vector_append,
+    t.vector_builder,
+    t.other,
+  ]
+  out := "family\tcandidates\tin_place\n"
+  for fc in rows {
+    out = .concat(render_row(fc))
+  }
+  out
+}
+
+/// Per-site listing (for `--sites`).
+pub fn render_sites(sites: Vector<CensusSite>) String {
+  out := "func\tfamily\tin_place\n"
+  for s in sites {
+    out = .concat("${s.func}\t${s.family}\t${s.in_place}\n")
+  }
+  out
+}
