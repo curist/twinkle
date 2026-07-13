@@ -82,6 +82,16 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "descends into a match arm body",
+      fn() {
+        t := try tally(
+          "fn match_set(o: Int?, xs: Vector<Int>) Vector<Int> {\n  case o {\n    .Some(i) => {\n      xs[0] = i\n      xs\n    },\n    .None => xs,\n  }\n}\n",
+        )
+        try assert.equal(t.vector_set.candidates, 1)
+        .Ok({})
+      },
+    )
+    .test(
       "worked-example shapes stay on the all-COW floor",
       fn() {
         // Case B (add_type threading) + Case V (record quartet): candidates > 0,
