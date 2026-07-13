@@ -4,7 +4,7 @@
 
 **Goal:** Build the two latent Phase 0 safety rails — a negative-aliasing guard suite and a candidate-op census (behind `twk ir --census`) with an asserted regression gate — so later phases have a corruption net and an in-place-conversion signal.
 
-**Architecture:** A reusable boot function walks the codegen-bound optimized ANF (`artifacts.opt`), emitting one `CensusSite` per COW-candidate op (record update, `Dict.set`/`remove`, vector index-set, vector builder); a tally is a reduction over sites. Candidate/in-place FuncIds are resolved symbolically from the `BuiltinRegistry` (mirroring `compiler/opt/semantics.tw`), never hardcoded. The `--census` flag and the gate test both call this function. The guard suite asserts existing persistent semantics on aliasing patterns; each test flips red only if a future in-place lowering is unsound.
+**Architecture:** A reusable boot function walks the codegen-bound optimized ANF (`artifacts.opt`), emitting one `CensusSite` per COW-candidate op; a tally is a reduction over sites. Candidate/in-place detection **rides `OptimizerSemantics`** (`compiler/opt/semantics.tw`): a call is a candidate iff its `CallSemantics.effect` is `.Update`, an in-place call is one whose id is a registered `in_place_equivalent`, and every `ARecordUpdate` counts (its `in_place` bit read directly). A thin registry-built family map only *labels* families (`record_update`, `dict_set`/`remove`, `vector_set`, `vector_append`, `vector_builder`), with an `other` bucket for any `.Update` candidate it does not name — so the census cannot silently drop a candidate as boot grows. The `--census` flag and the gate test both call this function. The guard suite asserts existing persistent semantics on aliasing/publication patterns; each test flips red only if a future in-place lowering is unsound.
 
 **Tech Stack:** Twinkle (`.tw`), boot self-hosted compiler, `@std.testing` runner, `pipeline.compile_source` for in-process lowering.
 
@@ -23,7 +23,8 @@
 
 ## Conventions (read once)
 
-- Build the CLI after touching `boot/` compiler/command code: `make quick-bundle-cli` (rebuilds `target/twk` from the current `target/boot.wasm`); use `make bundle-cli` if the change must be self-hosted through a fresh `target/boot.wasm`. For iterating on boot **tests**, `target/twk run boot/tests/main.tw` executes the suite through the already-built CLI.
+- **CLI-flag / compiler-source changes need a self-hosted rebuild.** After editing `boot/` compiler or command code that the CLI itself runs (the new `--census` flag handler, or the `compiler.census` module reached through `twk ir`), rebuild with `make bundle-cli` — it runs `make stage2` to fold the change into `target/boot.wasm`, then rebuilds `target/twk`. `make quick-bundle-cli` only re-wraps an already-fresh `target/boot.wasm` and will **not** contain new boot source, so it is the wrong command after editing boot code. (`make stage2 && make quick-bundle-cli` is the same thing, split.)
+- **Boot-test iteration needs no rebuild.** `target/twk run boot/tests/main.tw` compiles the suite — and any imported `compiler.*` module, including `compiler.census` — from source through the existing CLI. So the census gate/guard suites (Tasks 1, 3, 4) run without a bundle; only the `twk ir --census` flag verification (Task 2) requires `make bundle-cli`.
 - Format after editing: `target/twk fmt <file>`. Lint: `target/twk lint <entry>`.
 - Test one suite quickly by running the whole boot suite and grepping its output: `target/twk run boot/tests/main.tw 2>&1 | grep -iE 'census|uniqueness|FAIL'`.
 
@@ -71,28 +72,52 @@ pub fn suite() runner.Suite {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 2: Register the suite (so the red run actually compiles it)**
+
+An unregistered suite file is never imported, so it is never compiled — the missing `compiler.census` module would raise no error and the run would go green without ever executing the new test. Register it *first* so the red run is genuine.
+
+In `boot/tests/main.tw`, add the import alongside the other `use .suites.*` lines:
+
+```tw
+use .suites.uniqueness_census_suite
+```
+
+and add to the suite array (near the end of the list, before the closing `])`):
+
+```tw
+  uniqueness_census_suite.suite(),
+```
+
+- [ ] **Step 3: Run the test to verify it fails**
 
 Run: `target/twk run boot/tests/main.tw 2>&1 | grep -iE 'census|uniqueness|error'`
-Expected: a compile error — `uniqueness_census_suite` is not registered and `compiler.census` does not exist yet. (Registration happens in Step 6; the module error confirms the test cannot pass.)
+Expected: a compile error — `compiler.census` does not exist yet, so the `use compiler.census` in the now-registered suite fails to resolve. This confirms the suite is wired and the test cannot pass until the module exists.
 
-- [ ] **Step 3: Write the census module**
+- [ ] **Step 4: Write the census module**
 
 Create `boot/compiler/census.tw`:
 
 ```tw
 //! Candidate-op census over optimized ANF.
 //!
-//! Counts COW-candidate update sites and how many are lowered in-place, reading
-//! only what ANF already carries: the `ARecordUpdate` in-place bit and calls to
-//! the in-place op variants. Contains NO ownership analysis. Candidate/in-place
-//! FuncIds are resolved symbolically from the BuiltinRegistry (mirroring
-//! compiler/opt/semantics.tw), so no numeric FuncIds are hardcoded. Shared by
-//! `twk ir --census` and the census gate suite.
+//! Counts COW-candidate update sites and how many are lowered in-place. Candidate
+//! detection RIDES the optimizer semantics (`OptimizerSemantics`): a call is a
+//! candidate iff its `CallSemantics.effect` is `.Update`, and an in-place call is
+//! one whose id is a registered `in_place_equivalent`. Record updates are counted
+//! via `ARecordUpdate` (the `in_place` bit). A thin family-label table — built
+//! symbolically from the registry, mirroring `opt/semantics.tw`'s own
+//! registrations — only *names* the reporting families; it never decides
+//! candidate-ness, and any `.Update` candidate it does not name falls into
+//! `other`, so the census stays honest as boot grows. Contains NO ownership
+//! analysis. Shared by `twk ir --census` and the census gate suite.
 
 use compiler.anf.{AnfExpr, AnfModule, AnfOp, Atom}
 use compiler.builder_family.{vector_builder_config}
 use compiler.builtins.{BuiltinRegistry}
+use compiler.core_ir.{FuncId}
+use compiler.opt.semantics.{
+  OptimizerSemantics, call_info, make_prelude_optimizer_semantics,
+}
 
 pub type CensusSite = .{ func: String, family: String, in_place: Bool }
 
@@ -103,63 +128,74 @@ pub type CensusTally = .{
   dict_set: FamilyCount,
   dict_remove: FamilyCount,
   vector_set: FamilyCount,
+  vector_append: FamilyCount,
   vector_builder: FamilyCount,
+  other: FamilyCount,
 }
 
-// Candidate + in-place FuncIds (as raw Ints) resolved once from the registry.
-type OpIds = .{
-  dict_set: Int,
-  dict_set_ip: Int,
-  dict_remove: Int,
-  dict_remove_ip: Int,
-  vector_set: Int,
-  vector_set_ip: Int,
-  builder_new: Int,
-  builder_from: Int,
-  builder_push: Int,
-  builder_freeze: Int,
+// Family labels, keyed by raw FuncId int. `family_of` names each persistent-form
+// candidate op; `ip_family_of` names each in-place variant (derived by reversing
+// the semantics' `in_place_equivalent` map). These tables only bucket sites into
+// reporting families — detection rides the semantics, not this list. Building the
+// reverse map iterates a Dict, but the result is order-independent (each in-place
+// id maps to exactly one family), so the census stays deterministic.
+type Labels = .{
+  family_of: Dict<Int, String>,
+  ip_family_of: Dict<Int, String>,
 }
 
-fn resolve_ids(b: BuiltinRegistry) OpIds {
-  bc := vector_builder_config(b)
-  OpIds.{
-    dict_set: b.method_id("Dict", "set").id,
-    dict_set_ip: b.id("dict$set_in_place").id,
-    dict_remove: b.method_id("Dict", "remove").id,
-    dict_remove_ip: b.id("dict$remove_in_place").id,
-    vector_set: b.id("vector$set_unsafe").id,
-    vector_set_ip: b.id("vector$set_in_place").id,
-    builder_new: bc.builder_new_id.id,
-    builder_from: bc.builder_from_id.id,
-    builder_push: bc.builder_push_id.id,
-    builder_freeze: bc.builder_freeze_id.id,
+fn build_labels(b: BuiltinRegistry, sem: OptimizerSemantics) Labels {
+  builder := vector_builder_config(b)
+  fam: Dict<Int, String> = Dict.new()
+  fam[b.method_id("Dict", "set").id] = "dict_set"
+  fam[b.method_id("Dict", "remove").id] = "dict_remove"
+  fam[b.id("vector$set_unsafe").id] = "vector_set"
+  fam[builder.push_id.id] = "vector_append"
+  fam[builder.builder_new_id.id] = "vector_builder"
+  fam[builder.builder_from_id.id] = "vector_builder"
+  fam[builder.builder_push_id.id] = "vector_builder"
+  fam[builder.builder_freeze_id.id] = "vector_builder"
+
+  ip: Dict<Int, String> = Dict.new()
+  for base_id, cs in sem.call_semantics {
+    ip = case cs.in_place_equivalent {
+      .Some(ip_id) => case fam.get(base_id) {
+        .Some(name) => ip.set(ip_id.id, name),
+        .None => ip,
+      },
+      .None => ip,
+    }
   }
+  Labels.{ family_of: fam, ip_family_of: ip }
 }
 
 type FamIp = .{ family: String, in_place: Bool }
 
-fn family_of(fid: Int, ids: OpIds) FamIp? {
-  cond {
-    fid == ids.dict_set => .Some(FamIp.{ family: "dict_set", in_place: false }),
-    fid == ids.dict_set_ip => .Some(FamIp.{ family: "dict_set", in_place: true }),
-    fid == ids.dict_remove => .Some(FamIp.{ family: "dict_remove", in_place: false }),
-    fid == ids.dict_remove_ip => .Some(FamIp.{ family: "dict_remove", in_place: true }),
-    fid == ids.vector_set => .Some(FamIp.{ family: "vector_set", in_place: false }),
-    fid == ids.vector_set_ip => .Some(FamIp.{ family: "vector_set", in_place: true }),
-    fid == ids.builder_new => .Some(FamIp.{ family: "vector_builder", in_place: false }),
-    fid == ids.builder_from => .Some(FamIp.{ family: "vector_builder", in_place: false }),
-    fid == ids.builder_push => .Some(FamIp.{ family: "vector_builder", in_place: false }),
-    fid == ids.builder_freeze => .Some(FamIp.{ family: "vector_builder", in_place: false }),
-    _ => .None,
+// Classify a called FuncId: in-place variant first, then a named persistent
+// candidate, then the semantics backstop (any other `.Update` call → `other`).
+fn classify_call(fid: FuncId, sem: OptimizerSemantics, labels: Labels) FamIp? {
+  case labels.ip_family_of.get(fid.id) {
+    .Some(name) => .Some(FamIp.{ family: name, in_place: true }),
+    .None => case labels.family_of.get(fid.id) {
+      .Some(name) => .Some(FamIp.{ family: name, in_place: false }),
+      .None => case call_info(sem, fid) {
+        .Some(cs) => case cs.effect {
+          .Update => .Some(FamIp.{ family: "other", in_place: false }),
+          _ => .None,
+        },
+        .None => .None,
+      },
+    },
   }
 }
 
 /// Every candidate site in the module, in deterministic traversal order.
 pub fn census_sites(m: AnfModule, b: BuiltinRegistry) Vector<CensusSite> {
-  ids := resolve_ids(b)
+  sem := make_prelude_optimizer_semantics(b)
+  labels := build_labels(b, sem)
   sites: Vector<CensusSite> = []
   for f in m.functions {
-    sites = walk_expr(f.body, f.name, sites, ids)
+    sites = walk_expr(f.body, f.name, sites, sem, labels)
   }
   sites
 }
@@ -168,12 +204,13 @@ fn walk_expr(
   expr: AnfExpr,
   func: String,
   sites: Vector<CensusSite>,
-  ids: OpIds,
+  sem: OptimizerSemantics,
+  labels: Labels,
 ) Vector<CensusSite> {
   case expr {
     .Let(_, op, body) => {
-      after := walk_op(op, func, sites, ids)
-      walk_expr(body, func, after, ids)
+      after := walk_op(op, func, sites, sem, labels)
+      walk_expr(body, func, after, sem, labels)
     },
     _ => sites,
   }
@@ -183,13 +220,14 @@ fn walk_op(
   op: AnfOp,
   func: String,
   sites: Vector<CensusSite>,
-  ids: OpIds,
+  sem: OptimizerSemantics,
+  labels: Labels,
 ) Vector<CensusSite> {
   case op {
     .ARecordUpdate(_, _, _, in_place, _) =>
       sites.append(CensusSite.{ func: func, family: "record_update", in_place: in_place }),
     .ACall(callee, _) => case callee {
-      .AGlobalFunc(fid) => case family_of(fid.id, ids) {
+      .AGlobalFunc(fid) => case classify_call(fid, sem, labels) {
         .Some(fi) =>
           sites.append(CensusSite.{ func: func, family: fi.family, in_place: fi.in_place }),
         .None => sites,
@@ -197,18 +235,18 @@ fn walk_op(
       _ => sites,
     },
     .AIf(_, then_e, else_e) => {
-      after_then := walk_expr(then_e, func, sites, ids)
-      walk_expr(else_e, func, after_then, ids)
+      after_then := walk_expr(then_e, func, sites, sem, labels)
+      walk_expr(else_e, func, after_then, sem, labels)
     },
     .AMatch(_, arms) => {
       acc := sites
       for arm in arms {
-        acc = walk_expr(arm.body, func, acc, ids)
+        acc = walk_expr(arm.body, func, acc, sem, labels)
       }
       acc
     },
-    .ALoop(body) => walk_expr(body, func, sites, ids),
-    .ADefer(body) => walk_expr(body, func, sites, ids),
+    .ALoop(body) => walk_expr(body, func, sites, sem, labels),
+    .ADefer(body) => walk_expr(body, func, sites, sem, labels),
     _ => sites,
   }
 }
@@ -223,7 +261,9 @@ fn empty_tally() CensusTally {
     dict_set: empty_family("dict_set"),
     dict_remove: empty_family("dict_remove"),
     vector_set: empty_family("vector_set"),
+    vector_append: empty_family("vector_append"),
     vector_builder: empty_family("vector_builder"),
+    other: empty_family("other"),
   }
 }
 
@@ -256,11 +296,18 @@ pub fn tally_from_sites(sites: Vector<CensusSite>) CensusTally {
         t.vector_set = inc(t.vector_set, s.in_place)
         t
       },
+      s.family == "vector_append" => {
+        t.vector_append = inc(t.vector_append, s.in_place)
+        t
+      },
       s.family == "vector_builder" => {
         t.vector_builder = inc(t.vector_builder, s.in_place)
         t
       },
-      _ => t,
+      _ => {
+        t.other = inc(t.other, s.in_place)
+        t
+      },
     }
   }
   t
@@ -272,7 +319,15 @@ fn render_row(fc: FamilyCount) String {
 
 /// Tab-separated population table.
 pub fn render_census(t: CensusTally) String {
-  rows := [t.record_update, t.dict_set, t.dict_remove, t.vector_set, t.vector_builder]
+  rows := [
+    t.record_update,
+    t.dict_set,
+    t.dict_remove,
+    t.vector_set,
+    t.vector_append,
+    t.vector_builder,
+    t.other,
+  ]
   out := "family\tcandidates\tin_place\n"
   for fc in rows {
     out = out.concat(render_row(fc))
@@ -290,26 +345,11 @@ pub fn render_sites(sites: Vector<CensusSite>) String {
 }
 ```
 
-- [ ] **Step 4: Register the suite** (so the Step 1 test runs)
+- [ ] **Step 5: Format and run the test**
 
-In `boot/tests/main.tw`, add the import alongside the other `use .suites.*` lines (keep alphabetical grouping loose — match neighbors):
-
-```tw
-use .suites.uniqueness_census_suite
-```
-
-and add to the suite array (near the end of the list, before the closing `])`):
-
-```tw
-  uniqueness_census_suite.suite(),
-```
-
-- [ ] **Step 5: Format, rebuild, run the test**
-
-Run:
+Run (no CLI rebuild — `target/twk run` compiles `compiler.census` from source):
 ```bash
 target/twk fmt boot/compiler/census.tw boot/tests/suites/uniqueness_census_suite.tw
-make quick-bundle-cli
 target/twk run boot/tests/main.tw 2>&1 | grep -iE 'uniqueness census|FAIL'
 ```
 Expected: the "uniqueness census" suite passes (`counts two dict.set candidates, none in-place`), no FAIL.
@@ -372,11 +412,11 @@ Then, inside `pub fn run_ir_command(parsed)`, immediately after the `print_warni
 
 - [ ] **Step 3: Rebuild and verify the flag end-to-end**
 
-Write a fixture and run the flag:
+Write a fixture and run the flag. The flag handler lives in the compiler itself, so `target/boot.wasm` must be rebuilt (`make bundle-cli`, which runs `make stage2`); `make quick-bundle-cli` would leave the CLI without the new flag:
 ```bash
 printf 'fn f(d: Dict<String, Int>) Int {\n  d["a"] = 1\n  d.len()\n}\n' > /tmp/census_probe.tw
 target/twk fmt boot/main.tw boot/commands/ir.tw
-make quick-bundle-cli
+make bundle-cli
 target/twk ir /tmp/census_probe.tw --census
 ```
 Expected output (tab-separated; `dict_set` candidates 1, everything else 0, all `in_place` 0):
@@ -386,7 +426,9 @@ record_update	0	0
 dict_set	1	0
 dict_remove	0	0
 vector_set	0	0
+vector_append	0	0
 vector_builder	0	0
+other	0	0
 ```
 Then verify `--sites`:
 ```bash
@@ -444,6 +486,19 @@ In `boot/tests/suites/uniqueness_census_suite.tw`, add these `.test(...)` blocks
       },
     )
     .test(
+      "counts two vector appends as vector_append candidates",
+      fn() {
+        // `Vector.append` is an `.Update` candidate via `builder.push_id`; this
+        // pins the family the semantics-based detector must not drop.
+        t := try tally(
+          "fn push_two(xs: Vector<Int>) Vector<Int> {\n  xs = xs.append(1)\n  xs = xs.append(2)\n  xs\n}\n",
+        )
+        try assert.equal(t.vector_append.candidates, 2)
+        try assert.equal(t.vector_append.in_place, 0)
+        .Ok({})
+      },
+    )
+    .test(
       "descends into both branches of an if",
       fn() {
         t := try tally(
@@ -475,7 +530,9 @@ In `boot/tests/suites/uniqueness_census_suite.tw`, add these `.test(...)` blocks
         try assert.equal(t.dict_set.in_place, 0)
         try assert.equal(t.record_update.in_place, 0)
         try assert.equal(t.vector_set.in_place, 0)
+        try assert.equal(t.vector_append.in_place, 0)
         try assert.equal(t.vector_builder.in_place, 0)
+        try assert.equal(t.other.in_place, 0)
         .Ok({})
       },
     )
@@ -515,9 +572,16 @@ Create `boot/tests/suites/uniqueness_guard_suite.tw`. Each test asserts existing
 use @std.testing.assert as assert
 use @std.testing as runner
 
-// Helper for the "passed to a callee that reads it" guard (Task 4, unknown-call).
-fn double_first(v: Vector<Int>) Int {
-  v[0] * 2
+// Module-global publication sink. Twinkle's only mutable global is a `Cell`, so a
+// value stored here has escaped into a module-global, arbitrarily-read box.
+gpub: Cell<Vector<Int>> = Cell.new([0])
+
+// Helper for the call-boundary publication guard: the callee RETAINS the vector
+// (returns it inside an aggregate), so a later rebind of the caller's binding must
+// not corrupt what the callee kept. A read-only callee returning an Int would be
+// vacuous — the Int is computed before the rebind and could never go red.
+fn keep_in_box(v: Vector<Int>) Box {
+  Box.{ items: v }
 }
 
 // Helper for the closure-capture guard.
@@ -600,7 +664,38 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
-    // Case Cell — store publishes; get yields the (unowned) stored value.
+    // Stored in a variant payload before update (sound-analysis: variant storage).
+    .test(
+      "value stored in a variant keeps its pre-update version",
+      fn() {
+        xs: Vector<Int> = [7, 7]
+        boxed: Vector<Int>? = .Some(xs)
+        xs[0] = 9
+        case boxed {
+          .Some(v) => try assert.equal(v[0], 7),
+          .None => try assert.is_true(false),
+        }
+        try assert.equal(xs[0], 9)
+        .Ok({})
+      },
+    )
+    // Stored as a dict value before update (sound-analysis: dict storage).
+    .test(
+      "value stored as a dict value keeps its pre-update version",
+      fn() {
+        xs: Vector<Int> = [7, 7]
+        d: Dict<String, Vector<Int>> = Dict.new()
+        d["k"] = xs
+        xs[0] = 9
+        case d.get("k") {
+          .Some(v) => try assert.equal(v[0], 7),
+          .None => try assert.is_true(false),
+        }
+        try assert.equal(xs[0], 9)
+        .Ok({})
+      },
+    )
+    // Case Cell — store publishes; get yields the (unknown) stored value.
     .test(
       "case Cell: cell retains the value stored before a later rebind",
       fn() {
@@ -609,6 +704,20 @@ pub fn suite() runner.Suite {
         xs[0] = 9
         got := c.get()
         try assert.equal(got[0], 1)
+        try assert.equal(xs[0], 9)
+        .Ok({})
+      },
+    )
+    // Module-global publication: a value published into a module-global Cell keeps
+    // its pre-rebind version (sound-analysis: module/global publication sink).
+    .test(
+      "module-global publication keeps the pre-rebind version",
+      fn() {
+        xs: Vector<Int> = [7, 7]
+        gpub.set(xs)
+        xs[0] = 9
+        got := gpub.get()
+        try assert.equal(got[0], 7)
         try assert.equal(xs[0], 9)
         .Ok({})
       },
@@ -654,14 +763,15 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
-    // Passed to a callee that reads it: the read result is stable across a later rebind.
+    // Call-boundary publication: the callee retains the vector, so a later rebind
+    // must not corrupt the retained alias (sound-analysis: unknown/publishing callee).
     .test(
-      "value passed to a callee is unaffected by a later rebind",
+      "vector retained by a callee survives a later rebind of the caller",
       fn() {
         xs: Vector<Int> = [5, 5]
-        r := double_first(xs)
+        held := keep_in_box(xs)
         xs[0] = 100
-        try assert.equal(r, 10)
+        try assert.equal(held.items[0], 5)
         try assert.equal(xs[0], 100)
         .Ok({})
       },
@@ -738,7 +848,7 @@ target/twk run boot/tests/main.tw 2>&1 | grep -iE 'uniqueness guards|FAIL'
 ```
 Expected: all "uniqueness guards" tests pass, no FAIL. (These assert current persistent behavior, so they are green today; the value is that they will catch an unsound Phase 5 in-place rewrite.)
 
-If a test errors on an API mismatch (e.g. `Channel.bounded`, `.recv()` shape), reconcile with the live API in `boot/tests/suites/channel_suite.tw` / `task_suite.tw` / `api_set_suite.tw` — mirror their exact calls.
+If a test errors on an API mismatch (e.g. `Channel.bounded`, `.recv()` shape), reconcile with the live API in `boot/tests/suites/channel_suite.tw` / `task_suite.tw` / `api_set_suite.tw` — mirror their exact calls. `Cell.set` is a mutating (void) statement, mirrored from `api_cell_suite.tw`. If the top-level `gpub: Cell<Vector<Int>>` module-global is rejected in a suite module (module-global init), move that single guard into a tiny dedicated module rather than dropping it — the module/global publication sink is a required Phase 0 negative.
 
 - [ ] **Step 4: Commit**
 
@@ -761,15 +871,15 @@ In `docs/plans/sound-uniqueness/README.md`, under `### Phase 0`, change the thre
 
 - [ ] **Step 2: Resolve the doc's open questions**
 
-In `docs/plans/sound-uniqueness/phase0-baseline.md`, replace the "Open questions" list with the resolutions reached in implementation:
+Component 3 of `phase0-baseline.md` already states the corpus is inline worked-example snippets (aligned during the plan revision, so no AWFY contradiction remains). Replace the remaining "Open questions" list with the resolutions reached in implementation:
 
 ```markdown
 ## Resolved during implementation
 
-- The asserted gate pins exact counts on **inline worked-example snippets** (Case
-  B/V, record/dict/vector shapes) rather than the AWFY programs, keeping it
-  filesystem-independent and hand-verifiable; AWFY joins `boot/main.tw` as a
-  **wide manual reference** via `twk ir --census`.
+- The asserted gate pins the exact per-family counts the current lowering produces
+  for each inline fixture (record/dict/vector shapes + Cases B/V); those counts
+  live in `uniqueness_census_suite.tw` and are reconciled against
+  `twk ir <fixture> --anf` whenever the lowering shifts them.
 - The wide `boot/main.tw` census stays **informational** (no CI assertion) — the
   inline gate carries the deterministic regression signal.
 ```
@@ -791,15 +901,15 @@ git commit -m "docs/sound-uniqueness: mark Phase 0 rails delivered"
 
 ## Self-review
 
-**Spec coverage** (against `phase0-baseline.md`):
-- Component 1 (guard suite) → Task 4, all required negatives + Case B/V positives. ✓
-- Component 2 (`--census` reusable fn, optimized ANF, semantics-based ids, default table + `--sites`) → Tasks 1–2. ✓
-- Component 3 (asserted fixture gate + wide reference) → Task 3 (gate) + Task 2 Step 4 / Task 5 (wide). ✓ (refinement: gate uses inline snippets not AWFY — recorded in Task 5 Step 2.)
+**Spec coverage** (against `phase0-baseline.md` + `sound-analysis.md`):
+- Component 1 (guard suite) → Task 4: the required negatives — alias-old-version, slice/concat sharing, storage in record/variant/dict, Cell, module-global publication, closure/task/channel capture, retaining callee (call-boundary publication), nested collection, `try` — plus Case B/V positives. Each publication sink from `sound-analysis.md` has a red-able guard (the callee guard retains the alias; the global guard publishes into a module-global Cell). ✓
+- Component 2 (`--census` reusable fn, optimized ANF, **detection rides `OptimizerSemantics` — `CallSemantics.effect == .Update` + `ARecordUpdate` + `in_place_equivalent`**, family labels + `other` backstop, default table + `--sites`) → Tasks 1–2. `Vector.append` (via `builder.push_id`) is its own `vector_append` family. ✓
+- Component 3 (asserted fixture gate + wide reference) → Task 3 (gate) + Task 2 Step 4 / Task 5 (wide). ✓ (gate uses inline snippets; `phase0-baseline.md` Component 3 is aligned to match, so no AWFY contradiction remains.)
 - Verified enablers (`compile_source`→`artifacts.opt`/`.builtins`, `anf_lower_suite` idiom, Task/Channel suites) → used directly in Tasks 1, 3, 4. ✓
 
 **Placeholder scan:** No TBD/TODO. Every code step shows complete code; every run step shows the exact command and expected output. The one "discover the number" risk (exact candidate counts) is handled by pinning hand-verifiable snippets and giving an ANF-dump reconciliation step, not a placeholder.
 
-**Type consistency:** `census_sites(AnfModule, BuiltinRegistry) → Vector<CensusSite>`, `tally_from_sites(Vector<CensusSite>) → CensusTally`, `render_census(CensusTally)`, `render_sites(Vector<CensusSite>)` are used identically in the census module (Task 1), the flag handler (Task 2), and the gate test's `tally` helper (Task 1/3). `CensusTally` field names (`record_update`, `dict_set`, `dict_remove`, `vector_set`, `vector_builder`) and `FamilyCount` fields (`candidates`, `in_place`) match across the module and every assertion.
+**Type consistency:** `census_sites(AnfModule, BuiltinRegistry) → Vector<CensusSite>`, `tally_from_sites(Vector<CensusSite>) → CensusTally`, `render_census(CensusTally)`, `render_sites(Vector<CensusSite>)` are used identically in the census module (Task 1), the flag handler (Task 2), and the gate test's `tally` helper (Task 1/3). `CensusTally` field names (`record_update`, `dict_set`, `dict_remove`, `vector_set`, `vector_append`, `vector_builder`, `other`) and `FamilyCount` fields (`candidates`, `in_place`) match across the module, `empty_tally`, `tally_from_sites`, `render_census`, and every gate assertion. `classify_call` returns only these family strings, so the `tally_from_sites` `cond` (with `_ => other`) is total.
 
 **Known residual risks (validated by the plan's own run steps, not assumed):**
 - Exact candidate counts depend on lowering; Task 1 Step 5 and Task 3 Step 2 include ANF-dump reconciliation.

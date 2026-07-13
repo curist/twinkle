@@ -33,13 +33,17 @@ Coverage (one test per required negative in [sound-analysis.md](sound-analysis.m
 
 - `case_c_alias_old_version_observable` — Case C, the `AInit` alias hinge
 - `slice_concat_view_sharing` — shared backing via `slice`/`concat`/`View`
-- `stored_in_aggregate_before_update` — record/variant/vector/dict field
+- `stored_in_record_before_update` / `stored_in_variant_before_update` /
+  `stored_in_dict_before_update` — one guard per aggregate storage kind
 - `case_cell_publish_and_get_unknown` — Case Cell (`cell$set` publishes,
   `cell$get` yields `Unknown`)
+- `module_global_publishes` — value published into a module-global `Cell`
+  (Twinkle's only mutable global), the module/global publication sink
 - `closure_capture_publishes`
 - `task_capture_publishes` / `channel_send_publishes` (Task and Channel both exist
   on this branch, so concurrency sinks are expressible now — nothing stubbed)
-- `unknown_call_boundary_publishes`
+- `unknown_call_boundary_publishes` — the callee **retains** the value (a read-only
+  callee returning a scalar would be a vacuous guard)
 - `nested_collection_inner_shared` — `Vector<Vector<T>>`, `Dict<K, Vector<V>>`
 - `case_t_try_early_return_publishes` — Case T
 
@@ -87,14 +91,16 @@ flag and the gate test call the same code, not two parallel implementations.
 - **Asserted gate (tight):** `boot/tests/suites/uniqueness_census_suite.tw`
   compiles a small fixture corpus in-process via `pipeline.compile_source` and
   asserts the exact per-family counts through the Component 2 census function.
-  Corpus = AWFY `sieve` / `bounce` / `nbody` + the worked-example shapes
-  (Cases A/B/C/V/T). Stable — hand-picked, each count traceable to a documented
+  Corpus = **inline worked-example snippets** (the record / dict / vector shapes
+  and Cases B/V), each a self-contained source string in the suite — filesystem-
+  independent and hand-verifiable. Stable — each count traces to a documented
   case, and it will not false-alarm on unrelated boot-source growth.
-- **Wide reference (loose):** `twk ir boot/main.tw --census` as a **documented
-  manual command**, not a CI assertion — the "how much of the real compiler is
-  covered" signal. This mirrors how the stage0 `tests/cow_analysis.rs` census is an
-  `--ignored` reference distribution rather than an exact gate, and it absorbs the
-  absolute-count drift that tracking `boot/main.tw` as a hard gate would cause.
+- **Wide reference (loose):** `twk ir boot/main.tw --census` (and, run by hand, the
+  AWFY programs `sieve` / `bounce` / `nbody`) as **documented manual commands**,
+  not CI assertions — the "how much of the real compiler is covered" signal. This
+  mirrors how the stage0 `tests/cow_analysis.rs` census is an `--ignored` reference
+  distribution rather than an exact gate, and it absorbs the absolute-count drift
+  that tracking `boot/main.tw` as a hard gate would cause.
 
 ## Verified enablers (main technical risk retired)
 
