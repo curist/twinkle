@@ -621,13 +621,11 @@ for graph correctness and determinism before any lattice transfer is layered on.
 **1A-view — structural CFG view (README Phase 1):**
 
 - Add the deterministic CFG ownership view with SSA-style block parameters for
-  carried values only, identified from ANF syntax (loop `AAssign` targets,
-  `AIf`/`AMatch`/`ALoop` result bindings, `Break` payloads) — see
-  [cfg-ownership-ir.md](cfg-ownership-ir.md).
+  carried values only, identified from ANF syntax: every `AAssign` target (loop
+  and branch-arm rebinds), `AIf`/`AMatch`/`ALoop` result bindings, and `Break`
+  payloads — see [cfg-ownership-ir.md](cfg-ownership-ir.md).
 - Build the CFG view from the defer-free `artifacts.opt` and preserve mappings
   back to source ANF lets/ops.
-- Model operation effects through optimizer semantics rather than hardcoded
-  source names where possible.
 - Extend `twk ir` with a way to print the structural CFG (e.g. `twk ir --cfg`):
   block graph, carried block parameters, terminators (including value-carrying
   break edges), and per-block ANF mapping, with the entry/exit fact maps shown
@@ -638,6 +636,9 @@ for graph correctness and determinism before any lattice transfer is layered on.
 
 - Keep the first executable ownership facts simple (`Unique`/`Shared`/`Unknown`),
   while leaving room in the view for later record shell and field-sensitive facts.
+- Model operation effects through optimizer semantics rather than hardcoded source
+  names where possible (candidate detection reuses the Phase 0 census's
+  `OptimizerSemantics` approach).
 - Rebuild local ownership, binding-validity, liveness, and escape facts on the CFG
   view without emitting any mutable rewrites.
 - Print facts at the level where decisions are made: local ownership state,

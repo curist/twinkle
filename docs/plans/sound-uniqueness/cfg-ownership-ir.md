@@ -80,11 +80,18 @@ Initial shape:
 ```text
 monomorphized Core
   -> ANF lowering
-  -> build CFG ownership view from ANF
+  -> optimize (defer elimination first, then peephole passes) => artifacts.opt
+  -> build CFG ownership view from the optimized, defer-free ANF (artifacts.opt)
   -> run analysis on CFG view
   -> attach decisions/facts to ANF nodes or side tables keyed by ANF ids
   -> existing ANF/prepared-IR/codegen path consumes those decisions mechanically
 ```
+
+The view is built from `artifacts.opt`, not the freshly lowered ANF, so it reads
+the same defer-free, codegen-bound form the census and backend consume (see "The
+CFG input is defer-free"). A later optimizer-migration step (architecture §1B) may
+revisit where the view is constructed; the structural slice builds on
+`artifacts.opt`.
 
 There is no CFG-to-ANF round trip in the initial design. The CFG view is derived,
 queried, printed, and can be recomputed after ANF-changing passes. Rewrites and
@@ -121,17 +128,34 @@ Do **not** encode ownership facts themselves as block parameters.
 **Only carried values get block parameters — not every ANF local.** Full value
 SSA is a non-goal; the view names exactly the values that cross a boundary, and
 those are identifiable from ANF *syntax* alone (no liveness pass, so this stays in
-the structural slice):
+the structural slice). The key syntactic fact is that **every `AAssign` target is
+a pre-existing local being rebound** (a fresh binding lowers to `Let`, only a
+rebind lowers to `AAssign`), so an `AAssign` inside a branch arm or loop body is,
+by construction, a value whose post-boundary version depends on control flow — a
+merged/carried value:
 
-- **loop back-edge carried values** — the locals reassigned inside a loop, i.e.
-  the `AAssign` targets in an `ALoop` body (accumulators *and* compiler-introduced
-  iterator state);
+- **loop back-edge carried values** — the `AAssign` targets in an `ALoop` body
+  (accumulators *and* compiler-introduced iterator state), carried across the
+  back-edge;
+- **branch-merged values** — the `AAssign` targets inside `AIf` / `AMatch` **arms**,
+  merged at the branch join. These are distinct from the branch *result* below: in
+  `if c { x = 10 } else { x = 20 }; x`, the `AIf` result binds `Void`, but `x` is
+  rebound in both arms and merges at the join, so `x` — not the result — is the
+  carried value;
 - **branch/loop result values** — the `Let`-bound result local of an `AIf` /
-  `AMatch` / `ALoop` op (the join value);
+  `AMatch` / `ALoop` op (the value of the `if`/`case`/`loop` *expression* itself,
+  e.g. `m := if c { a } else { b }`);
 - **value-carrying break** — the `Break(Atom?)` payload leaving a loop.
 
-A local that is defined and consumed within a single block stays an ordinary
-straight-line `Let`; it is never lifted to a block parameter.
+An `AAssign` target gets a block parameter at each enclosing join/back-edge it sits
+under (an arm rebind nested in a loop merges at the branch join, then carries the
+back-edge). A local that is defined and consumed within a single block stays an
+ordinary straight-line `Let`; it is never lifted to a block parameter.
+
+This rule is deliberately conservative: it includes an `AAssign` target even if
+that value happens to be dead after the join (a harmless extra parameter). Pruning
+such dead merges is an optional refinement for the Phase 2 liveness facts, not the
+structural slice — keeping the structural rule purely syntactic.
 
 Examples:
 
@@ -153,16 +177,22 @@ visible.
 
 ## Required data model
 
-The CFG view should model:
+**Phase 1 — structural data (the structural slice builds all of this):**
 
 - function id/name and original ANF mapping;
 - deterministic block ids;
-- block parameters for carried/merged values;
+- block parameters for carried/merged values (loop and branch-arm `AAssign`
+  targets, branch/loop result bindings, break payloads);
 - instructions mapped back to ANF lets/ops where possible;
 - terminators: branch, conditional branch, switch/match, loop back-edge, return,
   value-carrying break, void break, and continue-equivalent edges if still
   present;
 - predecessor/successor lists in deterministic order;
+- **empty** entry/exit fact maps, keyed by block parameter, reserved for Phase 2.
+
+**Phase 2+ — reserved facts and decisions (populated by later slices, not the
+structural view):**
+
 - ownership facts at block entry and exit (`Unique`/`Shared`/`Unknown` first);
 - binding-validity and last-use facts separate from ownership;
 - per-instruction borrow/publication/update facts;
@@ -323,9 +353,11 @@ Full output (across slices) should show:
 
 ## Resolved
 
-- **Block-parameter scope:** only *carried* values (loop-`AAssign` targets,
-  `AIf`/`AMatch`/`ALoop` result bindings, `Break` payloads), identified from ANF
-  syntax — not every local. See "SSA-style block parameters" above.
+- **Block-parameter scope:** only *carried* values, identified from ANF syntax —
+  not every local. Carried = every `AAssign` target (loop-body rebinds *and*
+  branch-arm rebinds, since a rebind implies a pre-existing local whose merged
+  value depends on control flow), plus `AIf`/`AMatch`/`ALoop` result bindings and
+  `Break` payloads. See "SSA-style block parameters" above.
 - **`defer`:** does not survive to CFG construction; the view builds on the
   defer-free `artifacts.opt` and asserts it. See "The CFG input is defer-free".
 - **Phase boundary:** the first slice is the structural view only; populated
