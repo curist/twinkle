@@ -57,7 +57,7 @@ pub fn run_ir_command(parsed: ParseResult) {
 
   if parsed.has_flag("census") {
     sites := census.census_sites(artifacts.opt, artifacts.builtins)
-    print(census.render_census(census.tally_from_sites(sites)))
+    print(census.tally_from_sites(sites).render_census())
 
     if parsed.has_flag("sites") {
       print(census.render_sites(sites))

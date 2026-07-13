@@ -183,31 +183,31 @@ pub fn tally_from_sites(sites: Vector<CensusSite>) CensusTally {
   for s in sites {
     t = cond {
       s.family == "record_update" => {
-        t.record_update = inc(t.record_update, s.in_place)
+        t.record_update = .inc(s.in_place)
         t
       },
       s.family == "dict_set" => {
-        t.dict_set = inc(t.dict_set, s.in_place)
+        t.dict_set = .inc(s.in_place)
         t
       },
       s.family == "dict_remove" => {
-        t.dict_remove = inc(t.dict_remove, s.in_place)
+        t.dict_remove = .inc(s.in_place)
         t
       },
       s.family == "vector_set" => {
-        t.vector_set = inc(t.vector_set, s.in_place)
+        t.vector_set = .inc(s.in_place)
         t
       },
       s.family == "vector_append" => {
-        t.vector_append = inc(t.vector_append, s.in_place)
+        t.vector_append = .inc(s.in_place)
         t
       },
       s.family == "vector_builder" => {
-        t.vector_builder = inc(t.vector_builder, s.in_place)
+        t.vector_builder = .inc(s.in_place)
         t
       },
       _ => {
-        t.other = inc(t.other, s.in_place)
+        t.other = .inc(s.in_place)
         t
       },
     }
@@ -232,7 +232,7 @@ pub fn render_census(t: CensusTally) String {
   ]
   out := "family\tcandidates\tin_place\n"
   for fc in rows {
-    out = .concat(render_row(fc))
+    out = .concat(fc.render_row())
   }
   out
 }

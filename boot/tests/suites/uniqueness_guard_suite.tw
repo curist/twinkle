@@ -215,8 +215,8 @@ pub fn suite() runner.Suite {
       "case B: owned env threading builds the expected dict",
       fn() {
         e := Env.{ types: Dict.new() }
-        e = add_type(e, "a", 1)
-        e = add_type(e, "b", 2)
+        e = .add_type("a", 1)
+        e = .add_type("b", 2)
         try assert.equal(e.types.get("a"), .Some(1))
         try assert.equal(e.types.get("b"), .Some(2))
         .Ok({})
@@ -226,8 +226,8 @@ pub fn suite() runner.Suite {
       "case V: record quartet threads seen-dict and counter",
       fn() {
         s := St.{ seen: Dict.new(), count: 0 }
-        s = visit(s, "a")
-        s = visit(s, "b")
+        s = .visit("a")
+        s = .visit("b")
         try assert.equal(s.seen.get("a"), .Some(0))
         try assert.equal(s.seen.get("b"), .Some(1))
         try assert.equal(s.count, 2)
