@@ -625,7 +625,8 @@ for graph correctness and determinism before any lattice transfer is layered on.
   and branch-arm rebinds), `AIf`/`AMatch`/`ALoop` result bindings, and `Break`
   payloads — see [cfg-ownership-ir.md](cfg-ownership-ir.md).
 - Build the CFG view from the defer-free `artifacts.opt` and preserve mappings
-  back to source ANF lets/ops.
+  back to the optimized-ANF lets/ops (keyed by `artifacts.opt` `LocalId`), not
+  pre-optimization source ANF.
 - Extend `twk ir` with a way to print the structural CFG (e.g. `twk ir --cfg`):
   block graph, carried block parameters, terminators (including value-carrying
   break edges), and per-block ANF mapping, with the entry/exit fact maps shown

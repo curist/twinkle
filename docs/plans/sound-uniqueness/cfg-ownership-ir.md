@@ -118,6 +118,17 @@ during CFG construction would silently misrepresent defer's exit-path duplicatio
 semantics; failing loud instead catches any future pipeline change that stops
 eliminating defer before this stage.
 
+## ANF mapping identity
+
+Because the view is built from `artifacts.opt`, every "ANF" reference in this
+document — the instruction→ANF mapping, block-parameter locals, and any ANF-keyed
+side table — means **optimized-ANF identity**: the `artifacts.opt` let-result
+`LocalId` (and, for terminators, the enclosing op's position), *not* a
+pre-optimization or source-level ANF id. This matters because optimizer passes
+rename/drop locals, so a decision attached "to an ANF node" must key on the same
+optimized nodes the backend consumes. If a later step ever builds the view before
+optimization (architecture §1B), it must re-key against that ANF and recompute.
+
 ## SSA-style block parameters
 
 Use block parameters for values that merge at control-flow boundaries. Ownership
@@ -157,6 +168,24 @@ that value happens to be dead after the join (a harmless extra parameter). Pruni
 such dead merges is an optional refinement for the Phase 2 liveness facts, not the
 structural slice — keeping the structural rule purely syntactic.
 
+### Join-argument construction (partial rebinds)
+
+A branch may rebind a target in only some arms. In `if c { x = 10 } else { }`
+followed by a use of `x`, the `then` arm has `assign L_x = 10` and the `else` arm
+has none, yet `x` is live at the join (verified in ANF). The join block therefore
+needs a parameter for `x` with a well-defined argument on *every* incoming edge:
+
+- the **block parameter set** at a join is the *union* of `AAssign` targets across
+  all arms, ordered deterministically (by target `LocalId`), so the parameter list
+  is stable regardless of which arm touched which target;
+- on each predecessor edge, the argument for a join parameter is that arm's rebound
+  value if the arm rebinds the target, otherwise the **value flowing into the
+  branch** (the pre-branch version of that local).
+
+This is ordinary SSA φ-argument construction: an arm that does not rebind a merged
+target forwards the incoming value unchanged. The same rule covers loop back-edges
+(a target not reassigned on an iteration forwards its current value).
+
 Examples:
 
 ```text
@@ -179,11 +208,11 @@ visible.
 
 **Phase 1 — structural data (the structural slice builds all of this):**
 
-- function id/name and original ANF mapping;
+- function id/name and a mapping back to the **optimized ANF** it was built from;
 - deterministic block ids;
 - block parameters for carried/merged values (loop and branch-arm `AAssign`
   targets, branch/loop result bindings, break payloads);
-- instructions mapped back to ANF lets/ops where possible;
+- instructions mapped back to optimized-ANF lets/ops where possible;
 - terminators: branch, conditional branch, switch/match, loop back-edge, return,
   value-carrying break, void break, and continue-equivalent edges if still
   present;
@@ -300,27 +329,28 @@ would risk changing program structure.
 
 CFG construction must be deterministic:
 
-- block ids assigned by source/ANF order, not hash-map order;
+- block ids assigned by optimized-ANF traversal order, not hash-map order;
 - successor/predecessor lists sorted by construction order;
-- block parameters printed and emitted in stable order;
-- side-table keys assigned in ANF/source order;
+- block parameters printed and emitted in stable order (by target `LocalId`);
+- side-table keys assigned in optimized-ANF traversal order;
 - specialization decisions derived from deterministic worklists.
 
 This is required for self-host fixed-point stability.
 
 ## `twk ir` output
 
-Add an IR/debug mode that can print the CFG ownership view, for example:
+Add an IR/debug mode that prints the CFG ownership view:
 
 ```bash
-target/twk ir file.tw --cfg
-target/twk ir file.tw --ownership
+target/twk ir file.tw --cfg        # Phase 1: structural view (canonical)
 ```
 
-The exact flag names can change. The **structural slice's `--cfg`** prints only
-the structural rows (block graph, carried block parameters, terminators including
-value-carrying break edges, per-block ANF mapping) with the fact maps shown empty;
-the fact/candidate/decision rows below are populated by the Phase 2+ slices.
+**`twk ir --cfg` is the canonical Phase 1 flag.** Acceptance for the structural
+slice is defined by its *output shape*, not the flag spelling: block graph, carried
+block parameters, terminators (including value-carrying break edges), and per-block
+optimized-ANF mapping, with the entry/exit fact maps shown empty. The Phase 2 fact
+layer either extends `--cfg` or adds a sibling flag (e.g. `--ownership`); that
+spelling is deferred to Phase 2 and does not affect the Phase 1 contract.
 
 Full output (across slices) should show:
 
