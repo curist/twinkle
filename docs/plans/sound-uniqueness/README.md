@@ -75,18 +75,22 @@ here — so the two orderings are kept from drifting apart by hand.
 
 ### Phase 1 — CFG ownership view, no codegen changes *(architecture: 1A)*
 
-- [ ] **Build CFG ownership view over ANF.** ANF remains authoritative; the CFG is
-  a derived analysis view with deterministic block ids, successors, and mappings
-  back to ANF lets/ops. Details: [cfg-ownership-ir.md](cfg-ownership-ir.md).
-- [ ] **Add SSA-style block parameters for carried values.** Use block parameters
-  for values crossing joins/back-edges; keep ownership facts as separate maps.
+- [x] **Build CFG ownership view over ANF.** Done: 2026-07-13. ANF remains
+  authoritative; `compiler/cfg.tw` derives the view from `artifacts.opt` with
+  deterministic block ids, successors, and instruction mappings back to optimized
+  ANF let-result locals. Details: [cfg-ownership-ir.md](cfg-ownership-ir.md).
+- [x] **Add SSA-style block parameters for carried values.** Done: 2026-07-13.
+  Branch/match/loop joins carry `LocalId`-sorted params (union of arm `AAssign`
+  targets plus the result binding); ownership facts stay as separate, empty maps.
   Details: [cfg-ownership-ir.md](cfg-ownership-ir.md).
-- [ ] **Represent value-carrying breaks.** Treat `break value` as both a control
-  edge and a possible publication/region-exit edge; explicit freeze handling is a
-  later mutable-region concern. Details:
-  [cfg-ownership-ir.md](cfg-ownership-ir.md).
-- [ ] **Print the structural CFG.** `twk ir --cfg` shows blocks, carried block
-  parameters, terminators (including value-carrying break edges), and per-block
+- [x] **Represent breaks and loop exits.** Done: 2026-07-13. `break`/`continue`
+  are terminators wired by a post-pass: breaks edge to the loop exit, continues
+  and run-to-completion paths take the header back-edge. Note: break-with-value
+  is rejected by the front end, so the `ValueBreak` terminator is reserved
+  defensive scaffolding for a future region-exit/publication edge rather than a
+  live source construct. Details: [cfg-ownership-ir.md](cfg-ownership-ir.md).
+- [x] **Print the structural CFG.** Done: 2026-07-13. `twk ir --cfg` shows blocks,
+  carried block parameters, terminators, predecessor/successor edges, and per-block
   ANF mapping, with the entry/exit fact maps shown empty. Populated ownership
   facts, candidates, accepted/rejected reasons, and proof ids arrive with Phase 2.
   Details: [cfg-ownership-ir.md](cfg-ownership-ir.md).
