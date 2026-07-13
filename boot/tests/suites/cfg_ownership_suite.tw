@@ -1,0 +1,43 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.cfg
+use compiler.pipeline
+
+fn view(src: String) Result<cfg.CfgView, String> {
+  artifacts := try pipeline.compile_source(src)
+  .Ok(cfg.build_view(artifacts.opt, artifacts.builtins))
+}
+
+fn rendered(src: String) Result<String, String> {
+  v := try view(src)
+  .Ok(cfg.render_view(v))
+}
+
+fn function(src: String, name: String) Result<cfg.CfgFunction, String> {
+  v := try view(src)
+  case cfg.function_named(v, name) {
+    .Some(f) => .Ok(f),
+    .None => .Err("missing CFG function ${name}"),
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("cfg ownership view")
+    .test(
+      "straight-line function has entry block, return terminator, and empty facts",
+      fn() {
+        f := try function("fn id(x: Int) Int {\n  y := x + 1\n  y\n}\n", "id")
+        try assert.equal(cfg.count_blocks(f), 1)
+        try assert.equal(cfg.count_terminator(f, "return"), 1)
+        try assert.equal(cfg.empty_fact_blocks(f), cfg.count_blocks(f))
+        try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+        out := try rendered("fn id(x: Int) Int {\n  y := x + 1\n  y\n}\n")
+        try assert.is_true(out.contains("// CFG ownership view"))
+        try assert.is_true(out.contains("facts.in={} facts.out={}"))
+        try assert.is_true(out.contains("terminator: return"))
+        .Ok({})
+      },
+    )
+}

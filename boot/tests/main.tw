@@ -25,6 +25,7 @@ use .suites.builtins_canonical_suite
 use .suites.builtins_suite
 use .suites.bundle_suite
 use .suites.byte_suite
+use .suites.cfg_ownership_suite
 use .suites.channel_suite
 use .suites.char_literal_suite
 use .suites.checker_coverage_suite
@@ -129,14 +130,14 @@ use .suites.task_suite
 use .suites.type_registry_suite
 use .suites.typed_param_abi_suite
 use .suites.typed_record_fields_suite
+use .suites.uniqueness_census_suite
+use .suites.uniqueness_guard_suite
 use .suites.unused_imports_suite
 use .suites.utf16_suite
 use .suites.value_semantics_suite
 use .suites.wasm_ir_suite
 use .suites.wasm_layout_suite
 use .suites.wasm_plan_suite
-use .suites.uniqueness_census_suite
-use .suites.uniqueness_guard_suite
 use .suites.wat_suite
 
 runner.run_all([
@@ -276,6 +277,7 @@ runner.run_all([
   string_edge_cases_suite.suite(),
   scripting_string_suite.suite(),
   scripting_vector_suite.suite(),
+  cfg_ownership_suite.suite(),
   uniqueness_census_suite.suite(),
   uniqueness_guard_suite.suite(),
 ])

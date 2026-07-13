@@ -1,0 +1,440 @@
+//! Structural CFG ownership view over optimized ANF.
+//!
+//! Phase 1 builds a deterministic view only: blocks, carried block parameters,
+//! terminators, predecessor/successor lists, and optimized-ANF instruction
+//! mappings. Ownership facts are Phase 2; `entry_facts` and `exit_facts` stay
+//! empty in this module. ANF remains authoritative and codegen does not consume
+//! this view.
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.core_ir.{LocalId}
+
+pub type BlockId = .{ id: Int }
+
+pub type CfgInstruction = .{ anf_local: LocalId, text: String }
+
+pub type CfgEdge = .{ target: BlockId, args: Vector<LocalId> }
+
+pub type Terminator = {
+  Branch(BlockId, Vector<LocalId>),
+  CondBranch(Atom, BlockId, Vector<LocalId>, BlockId, Vector<LocalId>),
+  Match(Atom, Vector<CfgEdge>),
+  LoopBackEdge(BlockId, Vector<LocalId>),
+  Return(Atom?),
+  ValueBreak(Atom),
+  VoidBreak,
+  ContinueIfPresent,
+}
+
+pub type CfgBlock = .{
+  id: BlockId,
+  name: String,
+  params: Vector<LocalId>,
+  instructions: Vector<CfgInstruction>,
+  terminator: Terminator?,
+  preds: Vector<CfgEdge>,
+  succs: Vector<CfgEdge>,
+  entry_facts: Dict<Int, String>,
+  exit_facts: Dict<Int, String>,
+}
+
+pub type CfgFunction = .{ func_id: Int, name: String, blocks: Vector<CfgBlock> }
+
+pub type CfgView = .{ functions: Vector<CfgFunction> }
+
+type BuildCtx = .{ next_block_id: Int, blocks: Vector<CfgBlock> }
+
+type NewBlockOut = .{ ctx: BuildCtx, id: BlockId }
+
+type BuildExprOut = .{ ctx: BuildCtx, current: BlockId }
+
+fn bid(id: Int) BlockId {
+  BlockId.{ id }
+}
+
+fn atom_text(atom: Atom) String {
+  case atom {
+    .ALocal(local) => "L${local.id}",
+    .AGlobalLocal(gid) => "G${gid.id}",
+    .AGlobalFunc(fid) => "Fn${fid.id}",
+    .ALitInt(n) => n.to_string(),
+    .ALitFloat(f) => f.to_string(),
+    .ALitBool(v) => if v {
+      "true"
+    } else {
+      "false"
+    },
+    .ALitStr(s) => "\"${s}\"",
+    .ALitVoid => "void",
+  }
+}
+
+fn local_text(local: LocalId) String {
+  "L${local.id}"
+}
+
+fn local_list_text(locals: Vector<LocalId>) String {
+  parts := collect local in locals {
+    local_text(local)
+  }
+  parts.join(", ")
+}
+
+fn edge_text(edge: CfgEdge) String {
+  "B${edge.target.id}(${local_list_text(edge.args)})"
+}
+
+fn sorted_insert_local(locals: Vector<LocalId>, local: LocalId) Vector<LocalId> {
+  out: Vector<LocalId> = []
+  inserted := false
+  for existing in locals {
+    if existing.id == local.id {
+      return locals
+    }
+
+    if !inserted and local.id < existing.id {
+      out = .append(local)
+      inserted = true
+    }
+
+    out = .append(existing)
+  }
+
+  if !inserted {
+    out = .append(local)
+  }
+
+  out
+}
+
+fn sorted_union(a: Vector<LocalId>, b: Vector<LocalId>) Vector<LocalId> {
+  out := a
+  for local in b {
+    out = sorted_insert_local(out, local)
+  }
+  out
+}
+
+fn empty_block(id: BlockId, name: String, params: Vector<LocalId>) CfgBlock {
+  CfgBlock.{
+    id,
+    name,
+    params,
+    instructions: [],
+    terminator: .None,
+    preds: [],
+    succs: [],
+    entry_facts: Dict.new(),
+    exit_facts: Dict.new(),
+  }
+}
+
+fn new_ctx() BuildCtx {
+  BuildCtx.{ next_block_id: 0, blocks: [] }
+}
+
+fn new_block(ctx: BuildCtx, name: String, params: Vector<LocalId>) NewBlockOut {
+  id := bid(ctx.next_block_id)
+  ctx.next_block_id = ctx.next_block_id + 1
+  ctx.blocks = .append(empty_block(id, name, params))
+  NewBlockOut.{ ctx, id }
+}
+
+fn replace_block(ctx: BuildCtx, block: CfgBlock) BuildCtx {
+  for existing, i in ctx.blocks {
+    if existing.id.id == block.id.id {
+      ctx.blocks[i] = block
+      return ctx
+    }
+  }
+
+  error("cfg: unknown block B${block.id.id}")
+}
+
+fn get_block(ctx: BuildCtx, id: BlockId) CfgBlock {
+  for block in ctx.blocks {
+    if block.id.id == id.id {
+      return block
+    }
+  }
+
+  error("cfg: unknown block B${id.id}")
+}
+
+fn push_instruction(ctx: BuildCtx, id: BlockId, inst: CfgInstruction) BuildCtx {
+  block := get_block(ctx, id)
+  block.instructions = .append(inst)
+  replace_block(ctx, block)
+}
+
+fn add_pred(ctx: BuildCtx, target: BlockId, from: BlockId, args: Vector<LocalId>) BuildCtx {
+  // In `preds`, a CfgEdge.target holds the predecessor block id (the edge
+  // source), mirroring the forward edge stored in that predecessor's `succs`.
+  block := get_block(ctx, target)
+  block.preds = .append(CfgEdge.{ target: from, args })
+  replace_block(ctx, block)
+}
+
+fn finish_block(ctx: BuildCtx, id: BlockId, term: Terminator, succs: Vector<CfgEdge>) BuildCtx {
+  block := get_block(ctx, id)
+  block.terminator = .Some(term)
+  block.succs = succs
+  ctx = replace_block(ctx, block)
+  for edge in succs {
+    ctx = add_pred(ctx, edge.target, id, edge.args)
+  }
+  ctx
+}
+
+fn op_text(op: AnfOp) String {
+  case op {
+    .ACall(callee, args) => {
+      rendered := collect arg in args {
+        atom_text(arg)
+      }
+      "call ${atom_text(callee)}(${rendered.join(", ")})"
+    },
+    .AIf(test_atom, _, _) => "if ${atom_text(test_atom)}",
+    .AMatch(scrutinee, _) => "match ${atom_text(scrutinee)}",
+    .ALoop(_) => "loop",
+    .ABinOp(_, left, right, _) => "binop ${atom_text(left)}, ${atom_text(right)}",
+    .AUnOp(_, atom, _) => "unop ${atom_text(atom)}",
+    .AMakeClosure(fid, free_vars) => {
+      captures := collect local in free_vars {
+        local_text(local)
+      }
+      "make_closure Fn${fid.id} [${captures.join(", ")}]"
+    },
+    .ARecord(_, fields) => {
+      values := collect field in fields {
+        atom_text(field.value)
+      }
+      "record { ${values.join(", ")} }"
+    },
+    .ARecordGet(atom, field, _) => "record_get ${atom_text(atom)} .${field.id}",
+    .ARecordUpdate(atom, field, value, in_place, _) => "record_update ${atom_text(atom)} .${field.id} = ${atom_text(
+      value,
+    )} [in_place=${if in_place {
+      "true"
+    } else {
+      "false"
+    }}]",
+    .AVariant(_, vid, args) => {
+      rendered := collect arg in args {
+        atom_text(arg)
+      }
+      "variant #${vid.id}(${rendered.join(", ")})"
+    },
+    .AArrayLit(elements) => {
+      rendered := collect elem in elements {
+        atom_text(elem)
+      }
+      "[${rendered.join(", ")}]"
+    },
+    .AIndex(base, index, _, _) => "index ${atom_text(base)}, ${atom_text(index)}",
+    .AInit(atom) => "init ${atom_text(atom)}",
+    .AAssign(local, atom) => "assign ${local_text(local)} = ${atom_text(atom)}",
+    .AGlobalSet(gid, atom) => "global_set G${gid.id} = ${atom_text(atom)}",
+    .ADefer(_) => error("cfg: ADefer reached CFG builder; expected optimized defer-free ANF"),
+    .AWrapAnyref(atom, _) => "wrap_anyref ${atom_text(atom)}",
+    .AUnwrapAnyref(atom, _) => "unwrap_anyref ${atom_text(atom)}",
+  }
+}
+
+fn build_expr(ctx: BuildCtx, current: BlockId, expr: AnfExpr) BuildExprOut {
+  case expr {
+    .Let(local, op, body) => {
+      ctx = push_instruction(ctx, current, CfgInstruction.{ anf_local: local, text: op_text(op) })
+      build_expr(ctx, current, body)
+    },
+    .Atom(atom) => {
+      ctx = finish_block(ctx, current, .Return(.Some(atom)), [])
+      BuildExprOut.{ ctx, current }
+    },
+    .Return(atom_opt) => {
+      ctx = finish_block(ctx, current, .Return(atom_opt), [])
+      BuildExprOut.{ ctx, current }
+    },
+    .Break(.Some(atom)) => {
+      ctx = finish_block(ctx, current, .ValueBreak(atom), [])
+      BuildExprOut.{ ctx, current }
+    },
+    .Break(.None) => {
+      ctx = finish_block(ctx, current, .VoidBreak, [])
+      BuildExprOut.{ ctx, current }
+    },
+    .Continue => {
+      ctx = finish_block(ctx, current, .ContinueIfPresent, [])
+      BuildExprOut.{ ctx, current }
+    },
+  }
+}
+
+fn build_function(func: AnfFunctionDef) CfgFunction {
+  nb := new_block(new_ctx(), "entry", [])
+  built := build_expr(nb.ctx, nb.id, func.body)
+  CfgFunction.{ func_id: func.func_id.id, name: func.name, blocks: built.ctx.blocks }
+}
+
+pub fn build_view(m: AnfModule, _builtins: BuiltinRegistry) CfgView {
+  // Structural Phase 1 does not inspect builtins. Keep the parameter so Phase 2
+  // ownership facts can share the same call surface as the census-style CLI/test
+  // wiring without changing every caller.
+  functions := collect f in m.functions {
+    build_function(f)
+  }
+  CfgView.{ functions }
+}
+
+pub fn function_named(view: CfgView, name: String) CfgFunction? {
+  for func in view.functions {
+    if func.name == name {
+      return .Some(func)
+    }
+  }
+
+  .None
+}
+
+pub fn count_blocks(func: CfgFunction) Int {
+  func.blocks.len()
+}
+
+pub fn count_terminator(func: CfgFunction, name: String) Int {
+  n := 0
+  for block in func.blocks {
+    case block.terminator {
+      .Some(term) => if terminator_name(term) == name {
+        n = n + 1
+      },
+      .None => {},
+    }
+  }
+  n
+}
+
+pub fn max_param_count(func: CfgFunction) Int {
+  n := 0
+  for block in func.blocks {
+    if block.params.len() > n {
+      n = block.params.len()
+    }
+  }
+  n
+}
+
+pub fn empty_fact_blocks(func: CfgFunction) Int {
+  n := 0
+  for block in func.blocks {
+    if block.entry_facts.keys().len() == 0 and block.exit_facts.keys().len() == 0 {
+      n = n + 1
+    }
+  }
+  n
+}
+
+fn target_param_count(func: CfgFunction, id: BlockId) Int {
+  for block in func.blocks {
+    if block.id.id == id.id {
+      return block.params.len()
+    }
+  }
+
+  -1
+}
+
+fn edge_arity_mismatch(func: CfgFunction, target: BlockId, args: Vector<LocalId>) Bool {
+  args.len() != target_param_count(func, target)
+}
+
+pub fn count_edge_arity_mismatches(func: CfgFunction) Int {
+  // `succs` is the authoritative per-block edge list; every terminator that
+  // carries edges (Branch/CondBranch/Match/LoopBackEdge) records them here via
+  // `finish_block`, so scanning `succs` alone counts each edge exactly once.
+  n := 0
+  for block in func.blocks {
+    for edge in block.succs {
+      if edge_arity_mismatch(func, edge.target, edge.args) {
+        n = n + 1
+      }
+    }
+  }
+  n
+}
+
+fn terminator_name(term: Terminator) String {
+  case term {
+    .Branch(_, _) => "branch",
+    .CondBranch(_, _, _, _, _) => "condbranch",
+    .Match(_, _) => "match",
+    .LoopBackEdge(_, _) => "loop-back-edge",
+    .Return(_) => "return",
+    .ValueBreak(_) => "value-break",
+    .VoidBreak => "void-break",
+    .ContinueIfPresent => "continue-if-present",
+  }
+}
+
+fn terminator_text(term: Terminator) String {
+  case term {
+    .Branch(target, args) => "branch B${target.id}(${local_list_text(args)})",
+    .CondBranch(test_atom, then_target, then_args, else_target, else_args) => "condbranch ${atom_text(
+      test_atom,
+    )} then B${then_target.id}(${local_list_text(then_args)}) else B${else_target.id}(${local_list_text(
+      else_args,
+    )})",
+    .Match(scrutinee, edges) => {
+      rendered := collect edge in edges {
+        edge_text(edge)
+      }
+      "match ${atom_text(scrutinee)} ${rendered.join(", ")}"
+    },
+    .LoopBackEdge(target, args) => "loop-back-edge B${target.id}(${local_list_text(args)})",
+    .Return(.Some(atom)) => "return ${atom_text(atom)}",
+    .Return(.None) => "return",
+    .ValueBreak(atom) => "value-break ${atom_text(atom)}",
+    .VoidBreak => "void-break",
+    .ContinueIfPresent => "continue-if-present",
+  }
+}
+
+fn render_block(lines: Vector<String>, block: CfgBlock) Vector<String> {
+  lines = .append("  block B${block.id.id} ${block.name}(${local_list_text(block.params)})")
+  pred_text := collect edge in block.preds {
+    edge_text(edge)
+  }
+  succ_text := collect edge in block.succs {
+    edge_text(edge)
+  }
+  lines = .append("    preds=[${pred_text.join(", ")}] succs=[${succ_text.join(", ")}]")
+  lines = .append("    facts.in={} facts.out={}")
+  for inst in block.instructions {
+    lines = .append("    anf L${inst.anf_local.id}: ${inst.text}")
+  }
+  case block.terminator {
+    .Some(term) => lines = .append("    terminator: ${terminator_text(term)}"),
+    .None => lines = .append("    terminator: <missing>"),
+  }
+  lines
+}
+
+fn join_lines(lines: Vector<String>) String {
+  if lines.len() == 0 {
+    ""
+  } else {
+    "${lines.join("\n")}\n"
+  }
+}
+
+pub fn render_view(view: CfgView) String {
+  lines: Vector<String> = ["// CFG ownership view", "// ${view.functions.len()} function(s)", ""]
+  for func in view.functions {
+    lines = .append("fn ${func.name} [FuncId(${func.func_id})]")
+    for block in func.blocks {
+      lines = render_block(lines, block)
+    }
+    lines = .append("")
+  }
+  join_lines(lines)
+}
