@@ -34,8 +34,8 @@ Coverage (one test per required negative in [sound-analysis.md](sound-analysis.m
 - `case_c_alias_old_version_observable` — Case C, the `AInit` alias hinge
 - `slice_concat_view_sharing` — shared backing via `slice`/`concat`/`View`
 - `stored_in_aggregate_before_update` — record/variant/vector/dict field
-- `case_cell_publish_and_get_unowned` — Case Cell (`cell$set` publishes,
-  `cell$get` yields `Unowned`)
+- `case_cell_publish_and_get_unknown` — Case Cell (`cell$set` publishes,
+  `cell$get` yields `Unknown`)
 - `closure_capture_publishes`
 - `task_capture_publishes` / `channel_send_publishes` (Task and Channel both exist
   on this branch, so concurrency sinks are expressible now — nothing stubbed)

@@ -98,7 +98,7 @@ decidable, cheap dataflow — not a may-alias-and-write one.
 `Cell` is handled conservatively so the hazard stays quarantined: **storing into a
 Cell publishes the value** (`Cell.new`/`set`/`update` → the stored value becomes
 `Shared`, since a Cell is aliasable and readable at arbitrary times), and **reading
-from a Cell yields a non-owned value** (`Cell.get` → `Unowned`, the contents stay
+from a Cell yields a non-owned value** (`Cell.get` → `Unknown`, the contents stay
 aliased through the live cell). Because no Cell-content value can enter the
 owned-mutable path without going through those two rules, Cell's time-varying
 contents never contaminate the immutable ownership reasoning. Cell is *not* an
@@ -106,12 +106,11 @@ optimization target — it is already mutable by design; the analysis only model
 effects to stay sound around it. The advantage immutability buys is therefore
 localization of the hazard, not its elimination — but a localized, identifiable
 hazard is still a decisive edge over pervasive mutation.
-Immutability is precisely why the fact lattice is small — roughly
-owned / shared / moved rather than a heavyweight points-to graph (the precise
-lattice — the `Unowned` top, the `Shared`/`Moved` non-owning facts, and a single
-`Owned` join element that region formation later refines into
-`OwnedPersistent`/`OwnedMutable` labels — is in [fact-lattice.md](fact-lattice.md)). (This is the classic uniqueness-typing
-insight: purity is the precondition that makes "unique ⇒ safe to destroy" *true*.)
+Immutability is precisely why the first fact domain is small — `Unique` /
+`Shared` / `Unknown`, with binding validity and last-use tracked separately rather
+than as ownership states (see [fact-lattice.md](fact-lattice.md)). This is the
+classic uniqueness-typing insight: purity is the precondition that makes
+"unique ⇒ safe to destroy" *true*.
 
 Two honest boundaries on that advantage:
 

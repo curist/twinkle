@@ -48,9 +48,9 @@ During the refactor, timing numbers are expected to be noisy and often
 misleading: the work may add analysis passes, change codegen shape, and emit more
 runtime support before the optimized artifacts recover that cost. Intermediate
 milestones should be judged by correctness, sound printed facts, and emitted
-mutable-intrinsic shape, not by compiler-throughput or AWFY timing claims. Run
-full performance comparisons only when the end-to-end path is in place and the
-branch is close to merging.
+helper/builder shape, not by compiler-throughput or AWFY timing claims. Run full
+performance comparisons only when the end-to-end path is in place and the branch
+is close to merging.
 
 Existing implementation pieces still matter as historical scaffolding:
 
@@ -141,25 +141,27 @@ for the focused subplan.
 
 ### Transient APIs are transition scaffolding
 
-Current vector builder and dict/vector in-place APIs may be useful as temporary
-codegen targets, but the intended abstraction is an optimizer-owned mutable
-region model. Long term, source-level or prelude-level transient APIs should not
-be required for performance.
+Current vector builder and dict/vector in-place APIs are the **first** codegen
+targets. The first implementation should only decide between existing lowering
+strategies: persistent operation, existing in-place helper, or existing builder
+lowering. That keeps the ownership engine separate from runtime representation
+work and lets us validate facts against today's backend hooks.
 
-Existing ad hoc transient APIs should migrate behind the shared internal mutable
-collection abstraction. The migration path is not to keep adding special cases to
-`vector$builder_*`, `*_set_in_place`, or Buffer-like escape hatches, but to make
-those hooks implementation details of the common intrinsic family until they can
-be simplified, hidden, or removed.
+Long term, source-level or prelude-level transient APIs should not be required for
+performance. Existing ad hoc transient APIs can later migrate behind a shared
+internal mutable collection abstraction. That migration path is not part of the
+first ownership-analysis milestone.
 
-### Mutable collections are compiler intrinsics
+### Mutable collections are compiler intrinsics — later
 
-The end shape should include a small, general compiler-private intrinsic family
-for mutable collection operations. These intrinsics are not prelude APIs and not
-user-callable escape hatches; they are the optimizer/codegen contract for proven
-mutable regions. Vector, Dict, and record shell updates should use the same
-conceptual intrinsic model instead of separate ad hoc rewrites to whatever helper
-happens to exist today.
+The end shape may include a small, general compiler-private intrinsic family for
+mutable collection operations. These intrinsics are not prelude APIs and not
+user-callable escape hatches; they are the long-term optimizer/codegen contract
+for proven mutable regions.
+
+Do **not** make this the first implementation. The initial ownership engine should
+feed the existing in-place and builder hooks. A separate later milestone can
+replace those hooks with a cleaner intrinsic family once the facts are trusted.
 
 ## Proposed architecture
 
@@ -175,43 +177,49 @@ Split the work into two main phases:
    decide whether mutation should be legal, and verify that the compiler's facts
    match that reasoning.
 2. **Codegen second.** Once the printed facts are trustworthy, teach the
-   optimizer/backend to use them to select the mutable-collection intrinsic path
-   where appropriate. Codegen should consume the analysis results rather than
-   rediscover ownership with separate recognizers.
+   optimizer/backend to use them to select between existing persistent,
+   in-place, and builder lowering paths. Later milestones may replace those
+   backend hooks with a shared mutable-intrinsic family. Codegen should consume
+   the analysis results rather than rediscover ownership with separate
+   recognizers.
 
 This split is important for debugging. We should be able to look at ordinary
 AWFY `sieve`, `bounce`, `nbody`, and compiler dict/vector/record-heavy workloads
 in `twk ir` and see why a value is considered owned, borrowed, published,
 rejected, or ready for a mutable region before any rewrite is emitted.
 
-The same split applies interprocedurally. Before generating specialized mutable
-function variants, the compiler should first print the inferred ownership
-preconditions, postconditions, and call-site compatibility decisions so we can
-verify the specialization story manually.
+The same split applies interprocedurally, but interprocedural precision should be
+staged. The first implementation can use minimal summaries and no ownership
+specialization. Before generating specialized mutable function variants, the
+compiler should first print the inferred ownership preconditions, postconditions,
+and call-site compatibility decisions so we can verify the specialization story
+manually.
 
-### Ownership facts
+### Ownership facts are the primitive
 
-Introduce a small, explicit fact model for ANF locals. The dataflow/join domain
-distinguishes at least:
+The ownership engine should infer facts only. In-place record updates, dict/vector
+updates, builder lowering, transport-wrapper recovery, and future mutable-region
+intrinsics are consumers of those facts; they must not embed independent ownership
+logic.
 
-- no ownership proof;
-- an owned value, safe to consume for mutation (the single `Owned` fact the join
-  operates on);
-- non-owning facts for a value that is aliased/published or has been moved out of
-  the local.
+The first ownership domain should be deliberately small:
 
-The persistent-vs-mutable distinction — owned persistent backing that can begin a
-region without copying, vs a live owned mutable-region handle safe for repeated
-internal updates — is **not a second join input**; it is a region/codegen *label*
-applied once `begin`/`freeze` points are chosen. See
-[fact-lattice.md](fact-lattice.md) for the precise lattice; the single-`Owned`
-join domain is authoritative there.
+- **`Unique`** — the value has a static uniqueness proof at this program point;
+- **`Shared`** — the value is known observable through another live reference or
+  publication boundary;
+- **`Unknown`** — no proof either way, so consumers must choose the persistent
+  path.
 
-Ownership facts should be linear. Transferring ownership to a new local consumes
-or invalidates the old local's ownership fact unless the old value is no longer
-observable. Ordinary aliasing, closure capture, aggregate storage, task/channel
-publication, unknown calls, branch joins, and loop-carried back-edge merges must
-preserve soundness by dropping facts that cannot be proven on all paths.
+Binding validity is separate from ownership. A binding may become unavailable
+because its value was moved/consumed, but `Moved` is not an ownership fact about
+the value. Liveness, last-use, and binding-validity data are separate CFG facts
+that ownership consumers consult alongside `Unique`/`Shared`/`Unknown`.
+
+Recursive ownership shapes, field-path facts, publication labels, and
+persistent-vs-mutable region labels are later precision layers. They are useful
+for the full record/threading story, but the first implementation should not need
+them to replace the old uniqueness/liveness pass and drive the existing local
+rewrites.
 
 ### Borrow/read facts
 
@@ -261,10 +269,11 @@ blockers, and the IR should distinguish "blocked by escaping capture" from
 "temporary non-escaping closure borrow" if the latter is introduced. See
 [closure-capture.md](closure-capture.md) for the focused subplan.
 
-### Interprocedural uniqueness specialization
+### Interprocedural uniqueness specialization — later
 
-Some profitable cases require caller-dependent code generation. The same source
-function may need both:
+Some profitable cases require caller-dependent code generation, but this should
+come after the core CFG ownership engine and minimal summaries are stable. The
+same source function may eventually need both:
 
 - a normal immutable/persistent variant for callers that pass shared or unknown
   values;
@@ -311,9 +320,11 @@ fn shared_case(n: Int, i: Int) Bool {
 }
 ```
 
-`owned_case` can call a mutable-specialized `clear_at` because `flags` is freshly
-created and the old version is not observed after the call. That variant can
-begin a mutable vector region, write the slot, and freeze/publish the result.
+`owned_case` can eventually call a mutable-specialized `clear_at` because `flags`
+is freshly created and the old version is not observed after the call. That
+variant can use the existing in-place helper first; a later mutable-region model
+could begin a mutable vector region, write the slot, and freeze/publish the
+result.
 
 `shared_case` must call the ordinary persistent variant because `old` observes
 the pre-update value. If it reused the mutable variant, `old[i]` would see the
@@ -432,18 +443,22 @@ derived from it, rather than each pass rediscovering liveness and joins by
 walking the ANF tree independently.
 
 The first version does not need full machine-oriented SSA for every value, but it
-should provide:
+should provide the minimal facts needed to replace the old local uniqueness view:
 
 - explicit basic blocks or equivalent join points;
 - block parameters for carried/merged values;
-- ownership facts as separate maps at block entry and exit;
-- record shell and field-sensitive ownership facts;
+- `Unique`/`Shared`/`Unknown` ownership facts as separate maps at block entry and
+  exit;
+- binding-validity, liveness, and last-use facts separate from ownership;
 - loop-carried back-edge facts;
 - value-carrying `break` edges and their ownership/publication effect;
-- call-site specialization records;
-- ANF-keyed mutable-region annotations or side-table decisions;
-- codegen-ready mutable-region decisions with proof/debug ids;
+- candidate update verdicts for existing persistent/in-place/builder hooks;
+- ANF-keyed side-table decisions for accepted first-cut hook lowerings;
 - printable analysis facts for each block and candidate update site.
+
+Later versions add record shell and field-sensitive ownership facts, transport
+return paths, call-site specialization records, mutable-region annotations, and
+richer codegen-ready decisions with proof/debug ids.
 
 Codegen should consume explicit ANF-keyed decisions from this view and stay
 mechanical: it should not re-prove uniqueness, rediscover record-field ownership,
@@ -451,12 +466,13 @@ or repeat escape analysis. The plan does not aim to remove ANF, build a CFG-to-A
 de-SSA/tree-reconstruction pass, or add a relooper for Wasm structured control
 flow. See [cfg-ownership-ir.md](cfg-ownership-ir.md) for the focused subplan.
 
-### Mutable collection intrinsic family
+### Mutable collection intrinsic family — later
 
 Define a backend-independent, compiler-private intrinsic family for mutable
-collection regions. The optimizer should target this family first; lowering can
-then map it to Wasm-GC runtime helpers, direct Wasm operations, or future backend
-representations.
+collection regions after the first ownership engine is stable. The optimizer
+should initially target existing runtime/codegen hooks; later lowering can map a
+clean intrinsic family to Wasm-GC runtime helpers, direct Wasm operations, or
+future backend representations.
 
 The shared shape should include:
 
@@ -473,10 +489,9 @@ These intrinsics should carry enough type information for `Vector<T>`,
 
 ### Mutable vector lowering
 
-Add or formalize a compiler-private mutable vector target using the shared
-mutable-collection intrinsic family. Initially this may lower to existing
-builder and `set_in_place` hooks, but the conceptual target should be an
-internal mutable vector representation with operations such as:
+First, drive the existing builder and `set_in_place` hooks from ownership facts.
+Later, add or formalize a compiler-private mutable vector target using the shared
+mutable-collection intrinsic family, with operations such as:
 
 - create from a fresh vector or known-empty vector;
 - read element;
@@ -494,9 +509,10 @@ The first high-value patterns are:
 
 ### Mutable dict lowering
 
-Add or formalize a compiler-private mutable HAMT target for `Dict<K,V>` using
-the same mutable-collection intrinsic family. The mutable dict path must preserve
-the language-level behavior, including lookup semantics and insertion-order
+First, drive the existing dict in-place helpers from ownership facts. Later, add
+or formalize a compiler-private mutable HAMT target for `Dict<K,V>` using the
+same mutable-collection intrinsic family. The mutable dict path must preserve the
+language-level behavior, including lookup semantics and insertion-order
 iteration.
 
 High-value patterns include threaded env, registry, seen-name, and map-building
@@ -556,25 +572,29 @@ mutation. The important requirement is that the IR/debug output names the reason
 outer owned but inner unknown/shared, projected inner ownership proven, or nested
 publication detected.
 
-### Promotion/freeze model
+### Promotion/freeze model — later
 
-The compiler should insert freeze/publish operations only when a mutable region
-must produce an ordinary persistent value. A freeze is required before observable
+A future mutable-region representation may need explicit freeze/publish operations
+when a mutable region must produce an ordinary persistent value. That model should
+not be part of the first implementation, which reuses existing in-place and
+builder helpers.
+
+When this later model is introduced, a freeze is required before observable
 publication, but should not be inserted between internal updates in the same
-proven region.
-
-If a persistent value is provably owned, mutation can begin without copying. If a
-persistent value is not proven owned, the optimizer must leave the operation on
-the persistent path unless a future explicit clone-to-owned operation is proven
-semantically necessary and profitable.
+proven region. If a persistent value is provably owned, mutation can begin without
+copying. If a persistent value is not proven owned, the optimizer must leave the
+operation on the persistent path unless a future explicit clone-to-owned operation
+is proven semantically necessary and profitable.
 
 ## Milestone plan
 
 The future work has two main phases: first build the CFG ownership view, migrate
-analysis/passes to consume it, and print the analysis facts; then consume those
-ANF-keyed facts/decisions for mutable-intrinsic lowering. Baseline work is a
-precondition, and later cleanup/Buffer retirement are milestones within or after
-the codegen phase rather than separate analysis efforts.
+analysis/passes to consume it, and print minimal `Unique`/`Shared`/`Unknown`
+ownership facts; then consume those ANF-keyed facts/decisions through existing
+persistent/in-place/builder lowering hooks. Baseline work is a precondition, and
+later path precision, specialization, mutable intrinsics, cleanup, and Buffer
+retirement are follow-on milestones rather than prerequisites for the first
+working ownership engine.
 
 ### Precondition — Baseline and guardrails
 
@@ -595,21 +615,21 @@ AWFY performance, preserved checksums, and avoided known aliasing corruptions.
 - Add the deterministic CFG ownership view with SSA-style block parameters for
   carried values.
 - Build the CFG view from ANF and preserve mappings back to source ANF lets/ops.
-- Include record shell and field-sensitive ownership facts in the view design.
-- Rebuild local ownership/liveness/escape facts on the CFG view without emitting
-  any mutable rewrites.
+- Keep the first executable ownership facts simple (`Unique`/`Shared`/`Unknown`),
+  while leaving room in the view for later record shell and field-sensitive facts.
+- Rebuild local ownership, binding-validity, liveness, and escape facts on the CFG
+  view without emitting any mutable rewrites.
 - Model operation effects through optimizer semantics rather than hardcoded
   source names where possible.
 - Extend `twk ir` with a way to print the CFG and analysis facts. The exact UI
   can be a flag such as `twk ir --cfg`, `twk ir --ownership`, or both, but the
   output must be designed for manual debugging.
 - Print facts at the level where decisions are made: local ownership state,
-  record shell/field ownership, return-path ownership for `.{ ..., ctx/state }`
-  and `Result` transport wrappers, field/variant-projection move/borrow
-  decisions, borrow/read observations, publication/escape events, branch joins,
-  loop-carried/back-edge ownership facts, function summaries, call-site
-  specialization choices, codegen-ready mutable decisions, and candidate
-  update-site verdicts.
+  binding validity, last-use/liveness, borrow/read observations,
+  publication/escape events, branch joins, loop-carried/back-edge ownership facts,
+  and candidate update-site verdicts. Later debug modes should add record
+  shell/field ownership, return-path ownership, transport-wrapper projections,
+  summaries, specialization choices, and richer codegen decisions.
 - For every rejected mutable candidate, print the reason in terms of the proof
   model, such as old value observable, unknown call boundary, captured by
   closure, stored in aggregate, branch fact mismatch, or insufficient deep
@@ -621,7 +641,8 @@ AWFY performance, preserved checksums, and avoided known aliasing corruptions.
 Exit criteria: candidate sites and call sites can be classified and explained in
 CFG/ownership output, but generated code is unchanged. We can manually analyze
 AWFY and compiler workloads, then verify that the printed facts match the
-expected ownership and specialization story.
+expected first-domain ownership story; later debug modes can add the
+specialization story.
 
 ### Phase 1B — Migrate existing optimizer decisions to CFG facts
 
@@ -636,39 +657,34 @@ Exit criteria: the optimizer has one shared derived view for liveness, joins,
 loop back-edges, and ownership facts, while ANF remains authoritative and
 generated code remains unchanged.
 
-### Phase 2A — First codegen from ownership facts via mutable intrinsics
+### Phase 2A — First codegen from ownership facts via existing hooks
 
 - Teach the optimizer/backend to consume Phase 1 facts rather than rediscovering
   ownership with separate recognizers.
-- Emit specialized function variants when Phase 1 proves that a caller can use a
-  mutable/owned version of a callee, while retaining the ordinary immutable
-  variant for other callers.
-- Enable mutation lowering for fresh/proven-owned vector indexed updates through
-  the mutable-collection intrinsic family.
-- Support interleaved non-escaping element reads inside the same local region.
-- Recognize thin method wrappers such as `Vector.set_at` without requiring users
-  to write bracket syntax.
+- Enable mutation lowering only through existing persistent/in-place/builder
+  strategies: no new mutable runtime representation, `begin_mutable`, or `freeze`
+  model in the first implementation.
+- Support fresh/proven-unique vector and dict updates where the simple domain and
+  last-use facts are sufficient.
 - Keep all publication and aliasing sinks as hard blockers.
-- Preserve the Phase 1 IR/debug output so a generated mutable intrinsic or
-  specialized callee can be traced back to the proof/debug id that licensed it.
-- Keep codegen mechanical: consume accepted mutable-region decisions from
-  ANF-keyed CFG analysis annotations/side tables, and do not add a second
-  uniqueness/escape proof in backend code.
+- Preserve the Phase 1 IR/debug output so each generated in-place helper or
+  builder lowering can be traced back to the proof/debug id that licensed it.
+- Keep codegen mechanical: consume accepted decisions from ANF-keyed CFG analysis
+  annotations/side tables, and do not add a second uniqueness/escape proof in
+  backend code.
 
-Exit criteria: ordinary `sieve` and the storage-update portion of `bounce` move
-toward their `*_mut` ceilings while negative aliasing cases remain persistent and
-correct, and every emitted mutable intrinsic or mutable-specialized function
-variant has an inspectable ownership proof.
+Exit criteria: existing in-place/builder hooks are selected from CFG ownership
+facts, negative aliasing cases remain persistent and correct, and every emitted
+optimized helper has an inspectable ownership proof.
 
-### Phase 2B — Vector builders and append/extend regions
+### Phase 2B — Existing vector builders and append/extend regions
 
-- Generalize from indexed updates to append/build loops.
-- Replace source-visible transient-builder thinking with an internal mutable
-  region abstraction.
+- Generalize from indexed updates to append/build loops using the existing builder
+  hooks.
 - Preserve existing `collect` behavior while allowing the optimizer to choose the
-  same private mutable representation for hand-written accumulator loops.
+  existing builder path for hand-written accumulator loops when facts justify it.
 
-Exit criteria: vector build/update patterns share one internal region model
+Exit criteria: vector build/update patterns consume the shared ownership facts
 instead of separate recognizers for builders and in-place `set_at`.
 
 ### Phase 2C — Mutable HAMT dict regions and record-backed wrappers
@@ -686,23 +702,24 @@ instead of separate recognizers for builders and in-place `set_at`.
   be read, the update must remain persistent.
 
 Exit criteria: dict-heavy compiler code gets in-place HAMT updates only when the
-analysis proves the old version is unobservable, and dict-backed record wrappers
-benefit when their field ownership proof is available.
+analysis proves the old version is unobservable. Dict-backed record wrappers
+benefit later, when field-path precision is added.
 
-### Phase 2D — Migrate ad hoc transient hooks behind shared internals
+### Phase 2D — Later mutable-intrinsic cleanup
 
-- Introduce explicit optimizer IR nodes or annotations for mutable-region
-  intrinsics if the builder/in-place helper surface becomes too implicit.
+- After the fact engine and existing-hook lowering are stable, introduce explicit
+  optimizer IR nodes or annotations for mutable-region intrinsics if the
+  builder/in-place helper surface becomes too implicit.
 - Move codegen toward intrinsic region operations: begin, read, write, append,
   remove, freeze.
-- Route existing vector builder hooks and vector/dict in-place helpers through
-  the shared mutable-collection intrinsic model.
+- Route existing vector builder hooks and vector/dict in-place helpers through the
+  shared mutable-collection intrinsic model.
 - Keep runtime helper names private and backend-specific.
 - Stop treating prelude-visible transient forms as optimization targets.
 
 Exit criteria: the optimizer targets a stable mutable-region concept rather than
-ad hoc helper-call rewrites, and existing transient hooks are either hidden
-behind that concept or identified as removable compatibility scaffolding.
+ad hoc helper-call rewrites, and existing transient hooks are either hidden behind
+that concept or identified as removable compatibility scaffolding.
 
 ### Follow-up — Buffer retirement path
 

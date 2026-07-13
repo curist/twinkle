@@ -40,9 +40,10 @@ structure and codegen.
 
 ## Goal
 
-Make ownership, liveness, publication, and specialization analysis consume a
+Make ownership, binding validity, liveness, and publication analysis consume a
 shared CFG view instead of each pass rediscovering control-flow facts by walking
-the ANF tree independently.
+the ANF tree independently. Ownership is the first consumer; later escape,
+borrow, effects, and specialization analyses should reuse the same view.
 
 The first version does not need full machine-style SSA for every temporary, but
 it must make the hard ownership cases explicit:
@@ -50,12 +51,14 @@ it must make the hard ownership cases explicit:
 - branch joins;
 - loop back-edges;
 - value-carrying `break` exits;
-- loop-carried owned handles;
-- block-entry and block-exit ownership facts;
-- record shell and field ownership facts;
-- call-site specialization facts;
-- mutable-region candidates and rejection reasons;
-- codegen-ready mutable-region decisions attached back to ANF nodes.
+- loop-carried unique handles;
+- block-entry and block-exit `Unique`/`Shared`/`Unknown` facts;
+- binding-validity and last-use facts separate from ownership;
+- mutable candidates and rejection reasons for existing lowering hooks;
+- codegen-ready decisions attached back to ANF nodes.
+
+Later versions add record shell/field ownership, return-path transport facts,
+call-site specialization facts, and richer mutable-region decisions.
 
 ## Position in the pipeline
 
@@ -90,12 +93,13 @@ Examples:
 
 ```text
 block loop_header(flags_value):
-  facts.in[flags_value] = OwnedMutable(Vector<Bool>)
+  facts.in[flags_value] = Unique
+  binding.valid[flags_value] = true
   ...
   br loop_header(flags_after_update)
 
 block join(env_value):
-  facts.in[env_value] = ShallowRecordOwned(...)
+  facts.in[env_value] = Unique
   ...
 ```
 
@@ -115,32 +119,30 @@ The CFG view should model:
   value-carrying break, void break, and continue-equivalent edges if still
   present;
 - predecessor/successor lists in deterministic order;
-- ownership facts at block entry and exit;
-- record shell ownership facts;
-- field-sensitive ownership facts for record fields, including projected fields;
-- return-path ownership facts for records and variants returned by
-  transport-wrapper helpers (`.{ ..., ctx/state }`, `Ok[0].state`,
-  `Err[0].state`);
-- path-sensitive liveness for field/payload projections, so `out.ctx` or
-  `out.state` can be classified as a move even when sibling fields are still read;
-- nested collection ownership facts for element/value projections when modeled;
+- ownership facts at block entry and exit (`Unique`/`Shared`/`Unknown` first);
+- binding-validity and last-use facts separate from ownership;
 - per-instruction borrow/publication/update facts;
 - candidate mutable update verdicts;
-- selected mutable-region operations for codegen, attached to ANF nodes or an
-  ANF-keyed side table.
+- selected existing-hook decisions for codegen, attached to ANF nodes or an
+  ANF-keyed side table;
+- later: record shell/field-sensitive ownership facts, return-path ownership facts
+  for transport wrappers, nested collection ownership facts, and mutable-region
+  intrinsic decisions.
 
 ## Value-carrying break
 
 `break` can carry a value out of a loop. For ownership analysis, that is not only
 a terminator; it can be a publication/region-exit edge.
 
-If a loop-carried owned handle exits through `break value`, the analysis must
+If a loop-carried unique handle exits through `break value`, the analysis must
 classify what happens to that value:
 
 - returned/published persistent value;
-- frozen mutable-region result;
-- rejected because an old version remains observable;
-- rejected because the break publishes a still-mutable handle.
+- demoted to `Shared` on the exit edge;
+- rejected because an old version remains observable.
+
+Future mutable-region lowering may add explicit freeze/handle states, but the
+first ownership view should not require them.
 
 The printed CFG ownership view should show value-carrying break edges and their
 ownership effect explicitly.
@@ -160,18 +162,18 @@ staleness of a decision falls back to the persistent op — lives in
 contract". The two are a pair: this doc says *what* is handed over, that doc says
 *what it guarantees*.
 
-For each accepted mutable region or update, the side table/annotation should
-identify:
+For each accepted first-cut update, the side table/annotation should identify:
 
-- the source persistent value or owned mutable handle;
-- the operation family: vector, dict, record shell, or nested projection;
-- begin/thaw point if needed;
-- reads/borrows that remain inside the region;
-- writes/updates/removes/appends;
-- freeze/publish point;
-- fallback persistent operation if the region is rejected or a specialization cap
-  routes the caller to the generic variant;
+- the source value;
+- the operation family: vector, dict, builder, or record shell;
+- the required `Unique` fact and last-use/binding-validity proof;
+- reads/borrows that remain non-escaping;
+- the existing in-place or builder lowering to use;
+- fallback persistent operation if the decision is absent or rejected;
 - proof/debug id linking the codegen decision to the printed analysis facts.
+
+Later mutable-region decisions can add begin/thaw, freeze/publish, nested
+projection, and specialization-cap fields.
 
 For records, codegen-relevant facts must distinguish:
 
@@ -183,9 +185,10 @@ For records, codegen-relevant facts must distinguish:
 - wrapper records such as `Set<K>` projecting to owned `Dict<K, Void>` when
   proven sound.
 
-This keeps the backend simple: emit the mutable intrinsic sequence selected by
-the analysis, or emit the ordinary persistent operation. It should not make new
-soundness decisions.
+This keeps the backend simple: emit the existing helper/builder path selected by
+the analysis, or emit the ordinary persistent operation. Later, the selected path
+may be a mutable intrinsic sequence. Codegen should not make new soundness
+decisions.
 
 ## Optimizer pass migration
 
@@ -201,7 +204,8 @@ Early migration order:
 4. Move or wrap existing dead-let/copy-prop/const-fold/branch-simp decisions so
    they use CFG-derived use/liveness/control-flow facts where relevant.
 5. Emit the same ANF as before until the analysis is trusted.
-6. Enable mutable-intrinsic lowering from ANF-keyed decisions.
+6. Enable existing in-place/builder lowering from ANF-keyed decisions; migrate to
+   mutable-intrinsic lowering later if needed.
 
 Not every peephole pass must be rewritten on day one. Pure local simplifications
 can remain ANF-based temporarily, but the source of truth for ownership,
@@ -248,7 +252,8 @@ The exact flag names can change, but the output should show:
 - return-path ownership and field/payload-projection move/borrow facts for
   transport wrappers;
 - loop-carried facts;
-- value-carrying break edges and their publication/freeze effect;
+- value-carrying break edges and their publication effect (freeze is a later
+  mutable-region detail);
 - publication sinks;
 - candidate mutable updates;
 - accepted codegen decisions and their proof/debug ids;

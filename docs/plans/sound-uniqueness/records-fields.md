@@ -37,7 +37,7 @@ For the dominant record quartet (`record_get .f` → consuming call →
 Cases B/V), there are two orthogonal in-place questions:
 
 1. **Shell reuse** — can the record shell itself be updated in place? (needs the
-   shell `Owned`.)
+   shell to be `Unique` and at last use.)
 2. **Field-backing mutation** — can the collection stored in / projected from
    field `.f` be treated as deeply owned and mutated? (needs `.f` deeply owned +
    no alias on the old `.f`.)

@@ -29,9 +29,9 @@ analysis cares about. It is the skeleton of the per-op transfer function.
 
 | ANF op | Ownership event |
 |---|---|
-| `ACall` to a known constructor (`Dict.new`, `Vector.make`, builder freeze), `ARecord`, `AArrayLit`, `AVariant` | **introduce** owned |
+| `ACall` to a known constructor (`Dict.new`, `Vector.make`, builder freeze), `ARecord`, `AArrayLit`, `AVariant` | **introduce** `Unique` outer value |
 | `AIndex`, `ARecordGet` | **borrow** (non-escaping read; does not kill ownership) |
-| `ACall` to a consuming op/wrapper (`dict.set`, `vector.append`, `Vector.set`, thin wrappers) | **consume** arg, **produce** owned result |
+| `ACall` to a consuming op/wrapper (`dict.set`, `vector.append`, `Vector.set`, thin wrappers) | **consume** arg for accepted in-place/helper decisions; persistent fallback produces `Unknown` unless fresh backing is proven |
 | `ARecordUpdate(_, f, v, in_place, _)` | shell update; `in_place` is the ready decision slot |
 | `AAssign(local, atom)` (rebind) | **transfer** ownership atom → local |
 | `AInit(atom)` | **move** if source dead afterward, else **alias** (linearity hinge) |
@@ -42,8 +42,8 @@ analysis cares about. It is the skeleton of the per-op transfer function.
 | `Break(atom?)` (value-carrying) | **publish** at loop exit |
 | `AMatch` arm body ending in `Return`/`Break` (e.g. `try` error arm) | **publish** at early exit |
 | `ACall` to `cell$new`/`cell$set` (store into a `Cell`) | **publish** the stored value (mutable box, aliasable/readable anytime) |
-| `ACall` to `cell$update` (read-modify-write) | closure param is **Unowned** (old contents, like `get`); result is **published** (like `set`) |
-| `ACall` to `cell$get` | result is **Unowned** (contents stay aliased through the live cell) |
+| `ACall` to `cell$update` (read-modify-write) | closure param is **Unknown** (old contents, like `get`); result is **published** (like `set`) |
+| `ACall` to `cell$get` | result is **Unknown** (contents stay aliased through the live cell) |
 | `ACall` to an unknown/non-summarized target | **publish** (conservative) |
 | `ALoop` + `Continue` | back-edge; loop-carried facts must reconverge |
 
@@ -53,22 +53,24 @@ analysis cares about. It is the skeleton of the per-op transfer function.
 nested `ALoop`s.
 
 ```
-let L55 = call Fn33(L5)            introduce owned (freeze collect-builder)
+let L55 = call Fn33(L5)            introduce Unique (freeze collect-builder)
 let L13 = init L55                 move L55 → L13
 loop                              outer loop; carries L13, i, count
   let L58 = index[array] L13, L15  BORROW L13 (read flags[i]); ownership survives
   loop                            inner loop; carries L13, k
-    let L64 = call Fn297(L13,L16,false)  CONSUME L13 → owned L64  (needs Fn297 summary)
+    let L64 = call Fn297(L13,L16,false)  CONSUME L13 → unique L64 when in-place is accepted (needs Fn297 summary)
     assign L13 = L64                     TRANSFER back across back-edge
     continue
 L14                               return count; L13 never published
 ```
 
 Wrapper `set_at__Bool` (`Fn297`): `call Fn25(v,i,x); assign v; return v` →
-**summary: consumes param0, returns owned = set(param0,…)**.
+**summary: consumes param0, returns the handed-forward value when the call is
+specialized; generic persistent fallback returns `Unknown` unless fresh backing is
+proven**.
 
-- **Verdict: owned-mutable.** Borrow-only reads + consume-produce updates + no
-  publication.
+- **Verdict: unique/in-place on the accepted specialized path.** Borrow-only reads
+  + consume-produce updates + no publication.
 - **Finding:** even "intraprocedural" sieve updates *through a call*. Thin-wrapper
   summaries are on the critical path, not an interprocedural afterthought.
 
@@ -77,22 +79,24 @@ Wrapper `set_at__Bool` (`Fn297`): `call Fn25(v,i,x); assign v; return v` →
 ```
 add_type(env):
   record_get env .types            project field (borrow)
-  call Fn39(.., name, id)           consume field → owned (dict.set)
-  record_update env .types = .. [in_place=false]   shell write (flippable if env owned)
-  assign env; return env            summary: consumes param0, returns owned
+  call Fn39(.., name, id)           consume field → unique result only if specialized/in-place; persistent fallback is Unknown
+  record_update env .types = .. [in_place=false]   shell write (flippable if env unique)
+  assign env; return env            summary: consumes param0, returns handed-forward env when specialized
 
 build_env:
-  L7 = call Fn38(); L8 = call Fn38()   introduce owned dicts
-  L9 = record Env{types=L7,…}          introduce owned shell (L7,L8 moved in)
+  L7 = call Fn38(); L8 = call Fn38()   introduce unique dicts
+  L9 = record Env{types=L7,…}          introduce unique shell (L7,L8 moved in)
   L4 = init L9                          move
   L10 = call Fn295(L4,…); assign L4     consume-produce (add_type)
   L12 = call Fn295(L4,…); assign L4     consume-produce
   L4                                    publish at return (freeze once)
 ```
 
-- **Verdict: owned throughout; publish only at return.** No prior version read.
-  `add_type`'s `record_update` flips to in-place because `build_env` supplies the
-  ownership proof — the interprocedural specialization case, made concrete.
+- **Verdict: unique throughout on the specialized path; publish only at return.**
+  No prior version is read. `add_type`'s `record_update` flips to in-place because
+  `build_env` supplies the ownership proof — the interprocedural specialization
+  case, made concrete. The generic persistent path is used for shared callers and
+  does not claim a unique result.
 
 ## Case C — `branch_env`: negative, old version stays observable
 
@@ -115,7 +119,7 @@ ownership, so it is the concrete realization of the specialization scenario:
 
 | Call site | Argument fact | Required variant |
 |---|---|---|
-| `build_env`: `call Fn295(L4,…)` (×2) | `L4` owned, reassigned, old never read | **mutable-specialized** (shell + `.types` in-place) |
+| `build_env`: `call Fn295(L4,…)` (×2) | `L4` `Unique`, reassigned, old never read | **mutable-specialized** (shell + `.types` in-place) |
 | `branch_env`: `call Fn295(L7,…)` | `L7` aliased by `L8`, `L8.types` read later | **persistent** |
 
 `add_type` therefore needs two codegen variants, and the choice is made
@@ -125,8 +129,8 @@ example in [architecture.md](architecture.md), but observed in real lowered ANF:
 three call sites, two required variants.
 
 Contrast `visit` (Case V): recursive plus called from `strongly_connected`, but
-**every caller passes an owned `State`**, so it collapses to a single
-owned-specialized variant with no persistent variant — and the recursion makes its
+**every caller passes a unique `State`**, so it collapses to a single
+unique-specialized variant with no persistent variant — and the recursion makes its
 summary a fixpoint over itself. The specialization key is driven entirely by the
 set of caller argument facts, which the census confirms is usually uniform (few
 functions will actually need both variants).
@@ -138,26 +142,26 @@ functions will actually need both variants).
 ```
 record_get c .pos                  read Int field (unboxed; no ownership concern)
 int.add ..
-record_update c .pos = .. [in_place=false]   SHELL update (flippable if c owned)
+record_update c .pos = .. [in_place=false]   SHELL update (flippable if c unique)
 assign c; c                        publish at return
 ```
 
 Only the *shell* is in question; sibling field `tokens` is untouched and safely
 shared.
 
-`push_scope` (field is an owned collection — nested):
+`push_scope` (field is a unique collection once field precision proves it — nested):
 
 ```
-record_get ctx .locals             PROJECT owned-collection field (borrow)
-call Fn38()                         introduce owned Dict
-call Fn24(locals, dict)             CONSUME field → owned (vector.append)
-record_update ctx .locals = .. [in_place=false]   SHELL write of owned field
+record_get ctx .locals             PROJECT unique-collection field when field precision proves it (borrow)
+call Fn38()                         introduce unique Dict
+call Fn24(locals, dict)             CONSUME field → unique result only if specialized/in-place; persistent fallback is Unknown
+record_update ctx .locals = .. [in_place=false]   SHELL write of handed-forward field
 assign ctx; ctx                    publish
 ```
 
-**Two independent decisions on one statement:** shell reuse (needs `ctx` owned)
-and field-backing in-place (needs `.locals` deeply owned + no alias on the old
-`.locals`). Sibling fields (`depth`, `tokens`) need not be owned — field
+**Two independent decisions on one statement:** shell reuse (needs `ctx` unique)
+and field-backing in-place (needs `.locals` deeply unique + no alias on the old
+`.locals`). Sibling fields (`depth`, `tokens`) need not be unique — field
 sensitivity matters. The inner `Dict`s already in `.locals` stay shared (we only
 append) — nested shell-vs-deep in miniature.
 
@@ -168,7 +172,7 @@ quartet** repeats per field:
 
 ```
 record_get L7 .indices                            project field (borrow)
-call Fn39(L43, L5, L8)                             consume → owned (dict.set)
+call Fn39(L43, L5, L8)                             consume → unique only if specialized/in-place; persistent fallback is Unknown
 record_update L7 .indices = L44 [in_place=false]   shell write
 assign L7 = L45                                    rebind cur (L7 → L7)
 ```
@@ -179,10 +183,10 @@ assign L7 = L45                                    rebind cur (L7 → L7)
   with a `dict.set` — not a separate case.
 - **Recursion** (`cur = .visit(dep,edges)` → `call Fn296(L7); assign L7`) ⇒
   visit's summary is **self-referential**; summaries need an SCC-level fixpoint.
-- **Branch/match-join of an owned record**: `if … { record_update .lowlinks;
+- **Branch/match-join of a unique record**: `if … { record_update .lowlinks;
   assign L7 } else { }` — one arm mutates `L7`, the other doesn't; the join must
-  merge *mutated* and *untouched* to *still owned*. This is the dominant join.
-- **Loop-carried owned record** across `continue` back-edges (the `for dep` and
+  merge *mutated* and *untouched* to *still `Unique`*. This is the dominant join.
+- **Loop-carried unique record** across `continue` back-edges (the `for dep` and
   `for !done` loops).
 - **Nested collection field**: `cur.components = .append(component)` writes a
   locally-built `Vector<String>` into a `Vector<Vector>` field.
@@ -212,7 +216,7 @@ The ownership handoff is not the whole returned record; it is one or more
 returned fields. The callee summary must be able to say:
 
 ```text
-helper: consumes p0(ctx), returns owned fresh shell with [.ctx] = OwnedFromParam(0)
+helper: consumes p0(ctx), returns unique fresh shell with [.ctx] = OwnedFromParam(0)
 ```
 
 or, for multi-accumulator helpers:
@@ -263,7 +267,7 @@ returns from the enclosing function, then Case T's publication rule applies on
 that exit edge.
 
 - **Verdict: required positive.** Variant payload paths let query-analysis state
-  remain owned across handled `Result` errors.
+  remain unique across handled `Result` errors.
 - **Implementation requirement:** return paths need variant/payload segments, and
   match joins must merge transported payload facts just like ordinary record-field
   facts.
@@ -281,7 +285,7 @@ L4 = init L10
 
 `try` is an `AMatch` whose error arm ends in `Return`. It is a **multi-exit
 publication point** (structurally like value-carrying `break`), derived from the
-match arm structure — no new node. An owned handle spanning a `try` gains an
+match arm structure — no new node. A unique handle spanning a `try` gains an
 extra publication/exit edge on the error arm; the fallthrough (`Ok`) arm keeps
 the region alive.
 
@@ -294,14 +298,14 @@ has the identical shape over `Cell<Dict<Int, MonoType>>`. Source is
 (`Fn55` = `cell$get`, `Fn56` = `cell$set`, `Fn39` = `dict.set`):
 
 ```
-let L99 = call Fn55(L95)             cell$get → UNOWNED (contents of the live cell)
+let L99 = call Fn55(L95)             cell$get → UNKNOWN (contents of the live cell)
 let L97 = init L99                   name the borrowed contents
-let L100 = call Fn39(L97,L96,true)   dict.set on an UNOWNED dict ⇒ forced COW
+let L100 = call Fn39(L97,L96,true)   dict.set on an UNKNOWN dict ⇒ forced COW
 assign L97 = L100                    rebind
 let L102 = call Fn56(L95, L97)       cell$set → PUBLISH (store back into the cell)
 ```
 
-- **Verdict: persistent, and correctly so.** `cell$get` yields Unowned because the
+- **Verdict: persistent, and correctly so.** `cell$get` yields Unknown because the
   Cell is a live alias of that same dict at `cell$set` time; mutating it in place
   could corrupt any other live `get` of the same Cell. This `dict.set` can **never**
   join the census's 267 dict-in-place sites.
@@ -310,7 +314,7 @@ let L102 = call Fn56(L95, L97)       cell$set → PUBLISH (store back into the c
   static escape/liveness proof over the Cell's contents (full alias analysis — the
   exact hazard the `Cell` quarantine buys us out of; immutability gives no leverage
   here, because the Cell *is* the one mutable location). Both are foreclosed by
-  prior design choices, so store-publishes / read-yields-Unowned is the *minimal*
+  prior design choices, so store-publishes / read-yields-Unknown is the *minimal*
   sound treatment. `Cell` is not an optimization target by design.
 - **The cost is ~2 self-inflicted sites, already discouraged.** Only `used` and
   `snap_types` route a mutable *collection* through a Cell; every other boot Cell
@@ -368,14 +372,15 @@ compiler, giving the *achievable* in-place distribution:
    `assign`) is the dominant compiler idiom and carries **two independent
    in-place decisions** (field backing on the call, shell on the `record_update`).
    The 171 record + 267 dict in-place census sites are these quartets.
-5. **Branch/match-join of an owned record is pervasive** (census: 2898 `case`
+5. **Branch/match-join of a unique record is pervasive** (census: 2898 `case`
    sites) — the join merge (mutated-on-one-arm vs untouched) is table stakes.
 6. **Thin-wrapper, transport-wrapper, variant-wrapper, and recursive summaries
-   are on the critical path.** Sieve (`set_at`), record threading (`add_type`),
-   `.{ ..., ctx/state }` helper returns, locally handled `Result` state returns,
-   and `visit` (self-recursive) all update through calls. Minimal summary =
-   per-parameter consumed/borrowed/published paths + return-path ownership;
-   recursion needs an SCC fixpoint on summaries.
+   are on the critical path, but staged.** The first summary subset only needs to
+   distinguish consumes, retains/publishes, fresh return, and alias return so
+   known helpers do not all look like unknown publication boundaries. The later
+   precision target adds per-path requirements, transport-wrapper return paths,
+   locally handled `Result` state returns, and recursive SCC specialization for
+   cases such as sieve (`set_at`), record threading (`add_type`), and `visit`.
 7. **Transport-wrapper recovery needs path liveness.** `ctx = out.ctx` /
    `state = out.state` is a move only when that path is dead through `out`;
    sibling result reads do not block it, but publishing the wrapper does.
@@ -384,13 +389,22 @@ compiler, giving the *achievable* in-place distribution:
    `return` / value-carrying `break` are exit edges that publish the exiting
    value.
 
-## Reprioritization for the plan
+## Planning implications
 
-- **Record-threading first, not raw dict.** Source census: 246 record rebinds vs
-  43 dict updates; stage0 census: 171 record + 267 dict in-place. The compiler
-  win is owned record shells whose fields are dicts/vectors (Case B/V), reached
-  through the quartet. Phase 2C's "dict-heavy" framing should read
-  "record-threading-heavy with dict/vector-valued fields."
+These examples are not a shortcut around the staged plan. The optimizer should
+still be built step by step: local facts, loops/joins, summaries, vectors,
+builders, dicts, records, wrappers, and codegen handoff. The point of the real
+boot shapes is to keep each step compatible with the eventual integration case,
+not to rush toward whichever site currently looks most profitable.
+
+- **Record threading is the integration stress case, not a replacement for raw
+  dict/vector work.** Source census: 246 record rebinds vs 43 dict updates;
+  stage0 census: 171 record + 267 dict in-place. The compiler's characteristic
+  shape is unique record shells whose fields are dicts/vectors (Case B/V/W/R),
+  reached through record-get/update/rebind and helper-return transport. Raw
+  vector and dict regions are still necessary foundations; the lesson is that the
+  dict/vector implementation should expose facts and decisions that compose
+  cleanly when those collections live behind threaded records.
 - **Match-arm joins are first-class**, not an edge case — the CFG view's join
   merge must be right early.
 - **`try`/early-return is a publication sink** and should be listed alongside

@@ -9,15 +9,15 @@ Start with [architecture.md](architecture.md) for the full design. This README i
 the trackable action order; focused docs hold details for the larger risk areas.
 [worked-examples.md](worked-examples.md) grounds the design in real boot-compiler
 ANF shapes (the op→event mapping, annotated cases, and the census baseline).
-[fact-lattice.md](fact-lattice.md) is the semantic core: the ownership lattice,
-per-op transfer rules, and control-flow merges — validated against those examples.
-[summary-specialization.md](summary-specialization.md) is the interprocedural
-layer: the function-summary schema, SCC-ordered computation, and call-site
-ownership specialization (the two-variant `add_type` case). The codegen half —
-the compiler-private mutable-intrinsic contract and record/field lowering — is
-sketched in [mutable-intrinsics.md](mutable-intrinsics.md) and
-[records-fields.md](records-fields.md) (skeletons, filled in before lowering
-begins).
+[fact-lattice.md](fact-lattice.md) is the semantic core: the first
+`Unique`/`Shared`/`Unknown` ownership domain, per-op transfer rules, and
+control-flow merges — validated against those examples, with later precision
+layers noted separately. [summary-specialization.md](summary-specialization.md) is
+the interprocedural layer: minimal first summaries, then the later path-sensitive
+summary/specialization target. The codegen half first consumes facts through
+existing persistent/in-place/builder hooks; the later compiler-private
+mutable-intrinsic contract and record/field lowering are sketched in
+[mutable-intrinsics.md](mutable-intrinsics.md) and [records-fields.md](records-fields.md).
 
 ## Trackable action order
 
@@ -79,44 +79,43 @@ here — so the two orderings are kept from drifting apart by hand.
   for values crossing joins/back-edges; keep ownership facts as separate maps.
   Details: [cfg-ownership-ir.md](cfg-ownership-ir.md).
 - [ ] **Represent value-carrying breaks.** Treat `break value` as both a control
-  edge and a possible publication/freeze/region-exit edge. Details:
+  edge and a possible publication/region-exit edge; explicit freeze handling is a
+  later mutable-region concern. Details:
   [cfg-ownership-ir.md](cfg-ownership-ir.md).
 - [ ] **Print CFG and ownership facts.** `twk ir` should show blocks, carried
   values, entry/exit facts, candidates, accepted/rejected reasons, and proof ids.
   Details: [cfg-ownership-ir.md](cfg-ownership-ir.md).
 
-### Phase 2 — Sound analysis facts, still no codegen changes *(architecture: 1A facts)*
+### Phase 2 — Minimal ownership facts, still no codegen changes *(architecture: 1A facts)*
 
-- [x] **Design the sound ownership analysis.** Affine lattice + per-`AnfOp`
-  transfer function + SCC-ordered summaries. Design in
-  [fact-lattice.md](fact-lattice.md) and
-  [summary-specialization.md](summary-specialization.md); required coverage in
+- [x] **Design the sound ownership analysis direction.** The full design covers
+  affine ownership, transport wrappers, path-sensitive summaries, and later
+  specialization. The first implementation is intentionally smaller. Details:
+  [fact-lattice.md](fact-lattice.md), [summary-specialization.md](summary-specialization.md),
   [sound-analysis.md](sound-analysis.md).
-- [ ] **Implement local ownership/borrow/publication facts.** Track owned,
-  mutable-region, borrowed, published, unknown, and persistent states. Details:
-  [sound-analysis.md](sound-analysis.md).
-- [ ] **Handle loop-carried ownership.** Prove owned handles can cross back-edges
-  only when every path preserves the invariant and reads are non-escaping borrows.
-  Details: [sound-analysis.md](sound-analysis.md).
-- [ ] **Handle record shell, field ownership, and transport wrappers.** Separate
-  record-shell reuse from deep ownership of fields; support field projections,
-  `.{ ..., ctx/state/env }` return-path ownership, locally handled Result payload
-  paths, and wrapper records. Details: [records-fields.md](records-fields.md),
-  [sound-analysis.md](sound-analysis.md).
-- [ ] **Handle nested collection ownership conservatively.** Distinguish owned
-  outer collections from unknown/shared inner collections. Details:
-  [records-fields.md](records-fields.md), [sound-analysis.md](sound-analysis.md).
-- [ ] **Handle closure capture conservatively.** Treat escaping/unknown captures
-  as publication; leave non-escaping recovery for later. Details:
-  [closure-capture.md](closure-capture.md).
-- [ ] **Handle concurrency publication.** Treat Task/fiber captures and
-  `Channel<T>` sends as publication sinks; model cross-worker copy/share
-  separately. Details: [concurrency-publication.md](concurrency-publication.md).
+- [ ] **Implement the first ownership domain.** Track only `Unique`, `Shared`, and
+  `Unknown` as ownership facts. Keep binding validity, last-use, and liveness as
+  separate CFG facts; do not model `Moved` as an ownership lattice element.
+  Details: [fact-lattice.md](fact-lattice.md), [cfg-ownership-ir.md](cfg-ownership-ir.md).
+- [ ] **Model conservative publication and aliasing.** Known aliases and
+  publication sinks demote to `Shared`; missing proof stays `Unknown`. Keep
+  record shapes, deep field ownership, and transport-wrapper paths out of the
+  first executable domain. Details: [sound-analysis.md](sound-analysis.md).
+- [ ] **Handle loop-carried ownership in the simple domain.** Prove `Unique` can
+  cross back-edges only when every continuing path preserves the invariant and
+  reads are non-escaping. Details: [sound-analysis.md](sound-analysis.md).
+- [ ] **Catalog later precision needs without implementing them yet.** Record
+  shell/field ownership, transport wrappers (`out.ctx`, `out.state`,
+  `Ok[0].state`), nested collections, closure recovery, and concurrency sinks stay
+  in the coverage docs until the core engine is stable. Details:
+  [records-fields.md](records-fields.md), [summary-specialization.md](summary-specialization.md),
+  [concurrency-publication.md](concurrency-publication.md).
 
-### Phase 3 — Shared optimizer facts and summaries *(architecture: 1B + 2A summary analysis)*
+### Phase 3 — Shared optimizer facts and minimal summaries *(architecture: 1B + first summaries)*
 
-Analysis side only — this phase *computes* summaries and the specialization
-policy; variant emission and call-site selection are Phase 5/6.
+Analysis side only. This phase makes ownership a shared primitive that existing
+optimizer decisions can consume; it does not introduce ownership-specialized
+variants yet.
 
 - [ ] **Move ownership-relevant pass queries to CFG facts.** Liveness, joins,
   back-edges, publication, and candidate verdicts should have one shared source
@@ -125,63 +124,54 @@ policy; variant emission and call-site selection are Phase 5/6.
   const-fold/branch simplification may remain ANF-local while they do not depend
   on ownership/control-flow facts; the rest move onto CFG facts. Details:
   [architecture.md](architecture.md).
-- [ ] **Compute function summaries.** Summarize parameter ownership requirements,
-  consumed/borrowed/published params, return-path ownership (including `out.ctx`,
-  `out.state`, and `Ok[0].state` transport wrappers), and call-site
-  compatibility, SCC-ordered. Details: [summary-specialization.md](summary-specialization.md).
-- [ ] **Define the specialization key and cap policy.** Deterministic,
-  order-independent `(param, field-path)` keys and per-`(mono-instance, func)`
-  variant caps, accounting for type-monomorph clones × ownership-shape variants.
-  This fixes the *policy*; emission is Phase 5/6. Details:
-  [summary-specialization.md](summary-specialization.md).
+- [ ] **Compute minimal function summaries.** Start with only: consumes parameter,
+  retains parameter, returns fresh value, returns alias. Use these to avoid
+  treating every known helper as an unknown publication boundary. Delay
+  access-path summaries, return-path transport wrappers, and ownership
+  specialization. Details: [summary-specialization.md](summary-specialization.md).
 
-### Phase 4 — Codegen-ready decisions, no backend proof *(architecture: 2A prep)*
+### Phase 4 — Existing lowering decisions, no backend proof *(architecture: 2A prep)*
 
-- [ ] **Define the mutable-collection intrinsic family.** The emitted codegen
-  contract: begin/thaw, read, write, append/extend, remove, freeze/publish —
-  one shape shared by vector, dict, and record-shell lowering; not a prelude/
-  `@std` API. Details: [mutable-intrinsics.md](mutable-intrinsics.md).
-- [ ] **Define mutable intrinsic decision records.** For each accepted region,
-  record operation family, begin/thaw, reads, writes, freeze/publish, fallback,
-  and proof/debug id. Details: [cfg-ownership-ir.md](cfg-ownership-ir.md).
-- [ ] **Represent record/field codegen decisions.** Decide record shell reuse,
-  field projection transfer/borrow, transport-wrapper `.ctx`/`.state` and
-  `Ok[0].state` moves, shared-field fallback, and `Set<K>` wrapper projection.
-  Details: [records-fields.md](records-fields.md), [cfg-ownership-ir.md](cfg-ownership-ir.md).
-
-### Phase 5 — First mutable lowering wins *(architecture: 2A + 2B + 2C)*
-
-The first wins are **interprocedural by construction**, not intraprocedural:
-sieve updates through the `set_at` wrapper and `build_env` through `add_type`
-(worked-examples Cases A/B). So a *minimal* two-variant call-site specialization
-is on this phase's critical path — Phase 6 only *scales* it. Emission consumes the
-summaries computed in Phase 3.
-
-- [ ] **Emit minimal owned/generic call-site specialization.** From Phase 3
-  summaries, materialize two variants of a consuming callee (owned-specialized +
-  persistent) and select statically at the call site — enough for thin wrappers
-  (`set_at`) and single-field records (`add_type`). No runtime uniqueness test.
-  Details: [summary-specialization.md](summary-specialization.md).
-- [ ] **Lower owned vector `set_at`.** Target ordinary AWFY `sieve` and the vector
-  update part of `bounce`; support interleaved non-escaping reads. Details:
+- [ ] **Feed existing runtime/codegen hooks.** Convert ownership facts into
+  decisions among today's persistent operation, existing in-place helper, and
+  existing builder lowering. Do not introduce `begin_mutable`/`freeze` or a new
+  runtime representation in this phase. Details: [mutable-intrinsics.md](mutable-intrinsics.md).
+- [ ] **Define decision records for current hooks.** For each accepted candidate,
+  record operation family, source value, required `Unique` fact, last-use proof,
+  fallback persistent operation, and proof/debug id. Details:
+  [cfg-ownership-ir.md](cfg-ownership-ir.md).
+- [ ] **Keep codegen mechanical.** Backend code consumes decisions; absence or
+  stale/ambiguous decisions fall back to the persistent path. Details:
   [mutable-intrinsics.md](mutable-intrinsics.md).
-- [ ] **Lower vector append/build regions.** Unify hand-written accumulators and
-  existing builder-like shapes behind internal mutable-region decisions. Details:
+
+### Phase 5 — First mutable lowering through existing hooks *(architecture: 2A + 2B + 2C)*
+
+Emission consumes the CFG ownership facts and decision records from Phases 2–4.
+The goal is correctness and inspectability first, using existing runtime
+primitives.
+
+- [ ] **Lower local owned vector `set_at` and dict updates where the simple domain
+  proves `Unique`.** Support interleaved non-escaping reads only when the facts are
+  explicit; otherwise fall back to persistent operations. Details:
   [mutable-intrinsics.md](mutable-intrinsics.md).
-- [ ] **Lower owned dict regions.** Target `Dict.set`/`Dict.remove` with old-value
-  observability as the main blocker. Details: [mutable-intrinsics.md](mutable-intrinsics.md).
-- [ ] **Lower record shell/field cases.** Reuse record shells and project owned
-  fields only when the CFG facts explicitly permit it. Details:
-  [records-fields.md](records-fields.md), [mutable-intrinsics.md](mutable-intrinsics.md).
+- [ ] **Lower existing vector builder regions from facts.** Reuse the current
+  builder hooks; do not redesign builder/runtime representation yet. Details:
+  [mutable-intrinsics.md](mutable-intrinsics.md).
+- [ ] **Lower simple record shell updates from facts.** Reuse record shells only
+  when the CFG facts explicitly permit it. Field-sensitive/deep record ownership
+  remains a later precision step. Details: [records-fields.md](records-fields.md).
 
-### Phase 6 — Scale and cap interprocedural specialization *(architecture: 2A scaling)*
+### Phase 6 — Add path precision and bounded specialization *(architecture: 2A scaling)*
 
-Builds on Phase 5's minimal owned/generic split; here it grows to multi-variant,
-field-path granularity, and stays bounded.
+Builds on the stable core engine. This is where the plan grows toward the full
+record-threading and helper-transport story.
 
-- [ ] **Extend to field-path-granular variants.** Multiple `(param, field-path)`
-  owned reqs per callee (e.g. shell-only vs shell+`.types`), beyond the single
-  owned/generic split. Details: [summary-specialization.md](summary-specialization.md).
+- [ ] **Add field-path and return-path summaries.** Support transported fields
+  (`out.ctx`, `out.state`, `Ok[0].state`) and field-sensitive record ownership.
+  Details: [summary-specialization.md](summary-specialization.md), [records-fields.md](records-fields.md).
+- [ ] **Add bounded ownership specialization.** Multiple `(param, field-path)`
+  owned reqs per callee (e.g. shell-only vs shell+`.types`), with deterministic
+  caps and persistent fallback. Details: [summary-specialization.md](summary-specialization.md).
 - [ ] **Enforce variant caps and fallback.** Bound variants per
   `(mono-instance, func)`; overflow falls back to the generic persistent variant.
   Details: [summary-specialization.md](summary-specialization.md).
@@ -189,17 +179,68 @@ field-path granularity, and stays bounded.
   in-progress variants; a variant's re-analysis must not destabilize a summary a
   sibling variant depends on. Details: [summary-specialization.md](summary-specialization.md).
 
-### Phase 7 — Cleanup and end-of-track verification *(architecture: 2D + Follow-up)*
+### Phase 7 — Mutable-intrinsic migration and hook cleanup *(architecture: 2D)*
 
-- [ ] **Migrate ad hoc transient hooks behind shared internals.** Route existing
-  builder/in-place helpers through the common mutable-region model where useful.
-  Details: [architecture.md](architecture.md).
+This phase handles the cleanup explicitly deferred by the first implementation's
+"reuse existing hooks" rule. It should happen only after Phases 4–6 have proven
+that ownership facts can drive today's persistent/in-place/builder choices
+correctly.
+
+- [ ] **Define the compiler-private intrinsic family.** Finalize the internal
+  operations (`begin`/`read`/`write`/`append`/`remove`/`freeze`), operand encoding,
+  ANF annotation vs side-table representation, and proof/debug ids. Details:
+  [mutable-intrinsics.md](mutable-intrinsics.md), [cfg-ownership-ir.md](cfg-ownership-ir.md).
+- [ ] **Migrate existing hooks behind the intrinsic layer.** Route
+  `vector$builder_*`, vector set helpers, dict in-place helpers, and
+  `ARecordUpdate.in_place` through the shared decision/intrinsic interface while
+  preserving their current runtime implementations where possible. Details:
+  [mutable-intrinsics.md](mutable-intrinsics.md).
+- [ ] **Remove split-brain mutability decisions.** Delete or disable any ad hoc
+  recognizer/legality path that can independently decide mutation. After this
+  phase, ownership facts are the only legality source; hooks are implementation
+  targets only. Details: [architecture.md](architecture.md).
+- [ ] **Preserve non-optimizer builder uses.** `collect` and any semantic builder
+  lowering that is required independent of optimization must keep working; the
+  cleanup targets builder use as an optimizer rewrite target, not the runtime
+  mechanism itself. Details: [mutable-intrinsics.md](mutable-intrinsics.md).
+- [ ] **Update inspection output.** `twk ir` / census output should show both the
+  ownership proof and the final intrinsic-or-hook lowering chosen, so migrations
+  remain auditable. Details: [cfg-ownership-ir.md](cfg-ownership-ir.md).
+
+### Phase 8 — Optional precision recovery and end-of-track verification *(architecture: Follow-up)*
+
+This phase handles anticipated work that is intentionally not on the critical path
+for the first correct ownership engine.
+
+- [ ] **Evaluate non-escaping closure recovery.** Keep escaping/unknown captures as
+  publication sinks by default; add non-escaping/inlined closure recovery only if
+  real workloads justify it. Details: [closure-capture.md](closure-capture.md).
+- [ ] **Evaluate advanced concurrency distinctions.** Keep Task/fiber capture and
+  Channel sends conservative; refine serialized-copy vs shared-transfer cases only
+  when the runtime contract is explicit. Details:
+  [concurrency-publication.md](concurrency-publication.md).
 - [ ] **Run end-of-track performance gates.** Compare ordinary AWFY variants to
   current `*_mut` workaround ceilings from the same machine/session. Details:
   [architecture.md](architecture.md).
 - [ ] **Retire Buffer workaround usage when justified.** Only after ordinary code
   reaches the target class and `Vector<Byte>` covers crypto needs. Details:
   [buffer-cleanup.md](buffer-cleanup.md).
+
+## Future-work ledger
+
+Any design text that says "later", "future", or "cleanup" should map to one of
+these phases:
+
+| Deferred work | Phase |
+|---|---|
+| Record/field ownership, return-path transport wrappers, and locally handled Result payload paths | Phase 6 |
+| Bounded ownership-specialized variants and SCC/variant interaction | Phase 6 |
+| Compiler-private mutable intrinsic family | Phase 7 |
+| Migration of existing builder/in-place hooks behind shared internals | Phase 7 |
+| Removal of ad hoc mutability legality paths | Phase 7 |
+| Non-escaping closure recovery | Phase 8, optional based on workload evidence |
+| Advanced concurrency copy/share refinement | Phase 8, optional based on runtime contract |
+| Buffer retirement | Phase 8, after performance parity is demonstrated |
 
 ## Focused docs
 
@@ -209,14 +250,14 @@ field-path granularity, and stays bounded.
 | [phase0-baseline.md](phase0-baseline.md) | Phase 0 safety rails: the negative-aliasing guard suite, the reusable census + `twk ir --census` flag, and the fixture gate vs wide reference. Both rails are latent now and gain signal at Phase 5. |
 | [design-rationale.md](design-rationale.md) | Why static + annotation-free + no-runtime-RC: the Wasm-GC-vs-refcount reason we can't copy Koka/Roc/Lean, the annotation-free/zero-overhead/coverage tradeoff triangle, and what immutable value semantics buys (may-alias-and-write → ownership+liveness). |
 | [worked-examples.md](worked-examples.md) | Real boot ANF dumps (Cases A/B/C/V/T), the op→ownership-event table, and the stage0 census baseline. The design anchor every rule is validated against. |
-| [fact-lattice.md](fact-lattice.md) | Semantic core: the ownership lattice, per-`AnfOp` transfer function, the `AInit` move/alias hinge, and control-flow merges. |
-| [summary-specialization.md](summary-specialization.md) | Interprocedural layer: function-summary schema, SCC-ordered computation, and field-path-granular call-site variant selection. |
+| [fact-lattice.md](fact-lattice.md) | Semantic core: the first `Unique`/`Shared`/`Unknown` domain, per-`AnfOp` transfer function, `AInit` move/alias hinge, binding-validity split, and later precision layers. |
+| [summary-specialization.md](summary-specialization.md) | Interprocedural layer: minimal first summaries, then SCC-ordered path-sensitive summaries and field-path-granular call-site variant selection. |
 | [cfg-ownership-ir.md](cfg-ownership-ir.md) | CFG ownership view over ANF with SSA-style block parameters for carried values; optimizer analysis consumes this shared control-flow view. |
 | [sound-analysis.md](sound-analysis.md) | Required-coverage matrix (positive/negative patterns per vector/dict/record/nested/caller-shape). The algorithm lives in fact-lattice.md + summary-specialization.md. |
 | [closure-capture.md](closure-capture.md) | Closure capture as a publication sink, plus future recoverable non-escaping/inlined/summarized cases. |
 | [concurrency-publication.md](concurrency-publication.md) | Task/fiber capture, `Channel<T>` sends, synchronous extern/FFI (copying boundary), and cross-worker copy-vs-share distinctions. |
 | [records-fields.md](records-fields.md) | Skeleton: record shell-vs-deep field ownership, the two-decisions-per-quartet split, `Set<K>` wrapper projection, and nested collection ownership. |
-| [mutable-intrinsics.md](mutable-intrinsics.md) | Skeleton: the compiler-private mutable-collection intrinsic family (begin/read/write/append/remove/freeze) and vector/dict/freeze lowering — the codegen contract. |
+| [mutable-intrinsics.md](mutable-intrinsics.md) | Codegen handoff: first select existing persistent/in-place/builder hooks from ownership facts; later migrate toward compiler-private mutable-collection intrinsics. |
 | [buffer-cleanup.md](buffer-cleanup.md) | Follow-up policy for retiring Buffer workaround usage after ordinary immutable code reaches private mutable lowering. |
 
 ## Historical references

@@ -5,17 +5,20 @@
 
 ## Purpose
 
-Define the **required coverage** for the sound ownership analysis: the positive
-patterns it should eventually optimize and the negative patterns it must reject.
-This is the checklist the algorithm is measured against.
+Define the **eventual required coverage** for the sound ownership analysis: the
+positive patterns it should eventually optimize and the negative patterns it must
+reject. The first implementation is intentionally smaller (`Unique`/`Shared`/
+`Unknown`, binding validity/liveness separate, existing codegen hooks only); this
+matrix prevents that small start from losing sight of later required cases.
 
 The algorithm itself is now designed elsewhere:
 
-- [fact-lattice.md](fact-lattice.md) — the affine ownership lattice, the
-  per-`AnfOp` transfer function, the `AInit` move/alias hinge, and control-flow
-  merges (branch/match joins, loop back-edges, multi-exit publication).
-- [summary-specialization.md](summary-specialization.md) — function summaries,
-  SCC-ordered computation, and field-path-granular call-site variant selection.
+- [fact-lattice.md](fact-lattice.md) — the first ownership domain, the
+  per-`AnfOp` transfer function, the `AInit` move/alias hinge, binding-validity
+  split, and control-flow merges (branch/match joins, loop back-edges, multi-exit
+  publication).
+- [summary-specialization.md](summary-specialization.md) — minimal first summaries
+  plus the later SCC-ordered, field-path-granular summary/specialization target.
 - [worked-examples.md](worked-examples.md) — the real ANF cases both are validated
   against.
 
@@ -140,11 +143,12 @@ The same function may need different outcomes depending on caller facts.
 
 Required caller distinctions:
 
-- caller passes fresh owned value and never observes old version;
+- caller passes a fresh unique value and never observes old version;
 - caller passes a value that is aliased locally before the call;
 - caller passes a function parameter whose ownership is unknown;
-- caller passes an owned record but only one field is relevant;
-- caller passes owned value to a callee that consumes it and returns owned result;
+- caller passes a unique record but only one field is relevant;
+- caller passes a unique value to a callee that consumes it and hands ownership
+  back through the result;
 - caller receives ownership through a returned record field (`out.ctx`,
   `out.state`, `out.env`, etc.) while reading sibling fields from the same
   wrapper;

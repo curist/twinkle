@@ -5,17 +5,19 @@ lowering begins)
 
 ## Purpose
 
-The codegen-side counterpart to the analysis docs. Once the ownership analysis
-([fact-lattice.md](fact-lattice.md), [summary-specialization.md](summary-specialization.md))
-has proven a region owned and produced ANF-keyed decision records, this doc
-defines **what codegen emits**: a small, backend-independent, compiler-private
-intrinsic family for mutable collection regions, and how vector, dict, and the
-freeze/publish boundary lower onto it.
+The codegen-side counterpart to the analysis docs. The **first** implementation
+should not introduce a new mutable runtime representation. Once the ownership
+analysis ([fact-lattice.md](fact-lattice.md), [summary-specialization.md](summary-specialization.md))
+has proven a candidate `Unique` and produced ANF-keyed decision records, codegen
+should initially choose among today's existing paths: persistent operation,
+existing in-place helper, or existing builder lowering.
 
-These intrinsics are **not** prelude or `@std` APIs and **not** user-callable
-escape hatches — they are the optimizer/codegen contract for proven mutable
-regions. Codegen consumes accepted decisions and stays mechanical; it must not
-re-prove uniqueness, field ownership, or escape (that all happened in analysis).
+The compiler-private intrinsic family described below is the later cleanup target,
+not the first milestone. These intrinsics are **not** prelude or `@std` APIs and
+**not** user-callable escape hatches — they are a future optimizer/codegen
+contract for proven mutable regions after the ownership engine is already trusted.
+Codegen consumes accepted decisions and stays mechanical; it must not re-prove
+uniqueness, field ownership, or escape (that all happened in analysis).
 
 Expands the `Mutable collection intrinsic family`, `Mutable vector lowering`,
 `Mutable dict lowering`, and `Promotion/freeze model` sections of
@@ -49,16 +51,15 @@ must be positively licensed by a live decision.
 Codegen is licensed to assume these because the analysis proved them; it must not
 re-derive them. Every emitted decision must satisfy:
 
-- **`begin`-in-place** ⟹ the source value is `Owned` **and** last-use at that
-  point (no live alias, no later read) — the `Owned ∧ last_use` pair from
-  [summary-specialization.md](summary-specialization.md). `Owned` alone is never
-  sufficient.
-- **Freeze totality** ⟹ every mutable region has a `freeze`/publish on *every*
-  exit path reachable from its `begin`. No path lets a still-mutable handle escape
-  a publication sink unfrozen; no path double-freezes.
-- **No use-after-freeze / no double-begin** within a region.
+- **Existing in-place/helper decision** ⟹ the source value is `Unique` **and**
+  last-use holds at that point (no live alias, no later read). `Unique` alone is
+  never sufficient.
+- **Future `begin`/`freeze` region decisions** ⟹ every mutable region has a
+  `freeze`/publish on *every* exit path reachable from its `begin`. No path lets a
+  still-mutable handle escape a publication sink unfrozen; no path double-freezes.
+- **No use-after-freeze / no double-begin** within a future region.
 - **Field-path keys are downward-closed** ⟹ a decision owning `[.f]` presupposes
-  the shell `[]` is owned (see [records-fields.md](records-fields.md)).
+  the shell `[]` is `Unique` (see [records-fields.md](records-fields.md)).
 - **Return-path handoffs are explicit** ⟹ if a specialized callee returns ownership
   through `out.ctx`, `out.state`, or a variant payload path such as `Ok[0].state`,
   the decision names that return path and the caller-side projection that moves
@@ -69,21 +70,22 @@ re-derive them. Every emitted decision must satisfy:
 
 ### Codegen assumptions (the positive dual of "don't re-prove")
 
-Given a live, well-formed decision, codegen **may**: thaw the source without
-copying (ownership+last-use certified); read/write/append/remove through the
-handle without alias checks; and freeze exactly at the decision's publish point.
-Codegen **must not**: re-run uniqueness/field-ownership/escape analysis; insert a
-freeze between internal updates of the same region; or promote a site to mutation
-on its own initiative.
+Given a live, well-formed first-cut decision, codegen **may** select the existing
+in-place helper or builder lowering without alias checks (ownership+last-use
+certified). Given a future region decision, codegen may thaw/read/write/freeze
+exactly as the decision states. Codegen **must not**: re-run
+uniqueness/field-ownership/escape analysis or promote a site to mutation on its
+own initiative.
 
 > A decision is a *capability*, not a hint: present ⟹ the proof holds and codegen
 > acts on it; absent ⟹ persistent. There is no third state.
 
-## The intrinsic family (shared shape)
+## Later intrinsic family (shared shape)
 
-One conceptual op-set spans vectors, dicts, and record shells, with
-collection-specific operation metadata layered on top — not three ad hoc
-rewrites to whatever helper exists today:
+After existing hooks are driven by the ownership facts, one conceptual op-set can
+span vectors, dicts, and record shells, with collection-specific operation
+metadata layered on top — not three ad hoc rewrites to whatever helper exists
+today:
 
 - `begin`/`thaw` — enter a mutable region from a proven-owned persistent value
   or a known-empty collection;
@@ -101,10 +103,10 @@ shells without becoming public signatures.
 
 ## Mutable vector lowering
 
-Compiler-private mutable vector target over the intrinsic family. May initially
-lower to existing builder / `set_in_place` hooks; the conceptual target is an
-internal mutable vector representation (create-from-fresh/empty, read, write,
-append/extend, freeze).
+First lowering target: existing builder / `set_in_place` hooks selected from
+ownership decision records. Later cleanup target: a compiler-private mutable
+vector abstraction over the intrinsic family (create-from-fresh/empty, read,
+write, append/extend, freeze).
 
 First high-value patterns: `flags = flags.set_at(k, false)` and
 `balls = balls.set_at(j, …)` in loops; vector accumulator append/build loops;
@@ -115,7 +117,9 @@ thin method-wrapper forms (`xs.set_at(i, v)`).
 
 ## Mutable dict lowering
 
-Compiler-private mutable HAMT target over the same family. Must preserve
+First lowering target: existing dict in-place helper when `Unique` + last-use is
+proven, otherwise persistent HAMT update. Later cleanup target: a compiler-private
+mutable HAMT abstraction over the same intrinsic family. It must preserve
 language-level behavior: lookup semantics **and insertion-order iteration**.
 Shares the ownership/escape/publication/join/loop-carried framework with vectors
 — collection-specific metadata only. `Dict.set`/`Dict.remove`, with old-value
@@ -135,9 +139,11 @@ this doc only owns the *emitted intrinsic shape* for the field-backing case.
 > smaller record-specific intrinsic/annotation like today's `ARecordUpdate`
 > in-place bit?
 
-## Promotion / freeze model
+## Promotion / freeze model (later)
 
-Insert `freeze`/`publish` **only** when a mutable region must produce an ordinary
+The first implementation should not introduce explicit `begin`/`freeze` nodes; it
+reuses existing helpers. When a later mutable-region abstraction exists, insert
+`freeze`/`publish` **only** when a mutable region must produce an ordinary
 persistent value (the publication sinks in [fact-lattice.md](fact-lattice.md) /
 [concurrency-publication.md](concurrency-publication.md)). Never insert a freeze
 *between* internal updates of the same proven region. A proven-owned persistent
@@ -176,16 +182,17 @@ passes, so the two layers are already in different states:
   of truth for "this region is mutable." A *second* decision path is exactly the
   split-brain the branch deleted to avoid, and the seam where soundness would
   leak — so this layer is owned, not shared.
-- **Reuse the mechanisms as the initial lowering backend.** The intrinsic family's
-  first lowering emits the existing hooks (`builder_*`, `set_unsafe`, `rt.arr`/
-  `rt.dict` in-place, the `in_place` slot) — reuse, not rewrite. Wins come from
-  re-filling the dormant decision slots, not from replacing working runtime code.
-- **Then hide/absorb (transient-hook cleanup phase).** Once the intrinsic family
-  is the only thing driving them, the hooks become implementation details *behind*
-  this family rather than separately special-cased. The migration path is not to
-  keep adding special cases to `vector$builder_*`/`set_unsafe`. Note this targets
-  their use as an *optimizer rewrite target*; `collect` still lowers to a builder
-  independent of optimization, so the builder mechanism itself is not removed.
+- **Reuse the mechanisms as the initial lowering backend.** The first lowering
+  emits the existing hooks (`builder_*`, `set_unsafe`, `rt.arr`/`rt.dict`
+  in-place, the `in_place` slot) — reuse, not rewrite. Wins come from re-filling
+  the dormant decision slots, not from replacing working runtime code.
+- **Then hide/absorb (transient-hook cleanup phase).** Once the ownership decision
+  layer is stable, a future intrinsic family can make the hooks implementation
+  details rather than separately special-cased targets. The migration path is not
+  to keep adding special cases to `vector$builder_*`/`set_unsafe`. Note this
+  targets their use as an *optimizer rewrite target*; `collect` still lowers to a
+  builder independent of optimization, so the builder mechanism itself is not
+  removed.
 
 ### Buffer is separate
 

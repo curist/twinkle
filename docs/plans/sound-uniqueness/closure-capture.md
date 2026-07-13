@@ -59,7 +59,7 @@ There are **two distinct edges**, and only one is covered by the baseline rule:
 - **The indirect call itself** — `let g = pick(); let L = call g(xs)`. The
   *callee* is a runtime funcref, so with no target information the argument `xs`
   hits the generic `ACall(unknown/unsummarized)` rule
-  ([fact-lattice.md](fact-lattice.md)) → every arg `Shared`, `L ← Unowned`. This
+  ([fact-lattice.md](fact-lattice.md)) → every arg `Shared`, `L ← Unknown`. This
   is the edge the baseline over-approximates, and the one CFA recovers.
 
 **The recovery step:** a control-flow / defunctionalization pass computes, for each
