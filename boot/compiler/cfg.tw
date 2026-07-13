@@ -47,12 +47,43 @@ type BuildCtx = .{ next_block_id: Int, blocks: Vector<CfgBlock> }
 
 type NewBlockOut = .{ ctx: BuildCtx, id: BlockId }
 
-// `tail_atom` is `.Some(v)` when `current` falls through to its enclosing
-// context with tail value `v` and is left UNTERMINATED — the caller decides
-// whether that fall-through becomes a function `Return` (top level) or a
-// `Branch` into a join block (inside a branch/match/loop arm). It is `.None`
-// when `current` was already terminated by an explicit Return/Break/Continue.
-type BuildExprOut = .{ ctx: BuildCtx, current: BlockId, tail_atom: Atom? }
+// A fall-through: the (unterminated) block where control reaches the tail of an
+// expression, carrying its tail value. The enclosing context decides whether it
+// becomes a function `Return`, a `Branch` into a join, or a loop back-edge.
+type FallThrough = .{ block: BlockId, tail: Atom }
+
+// The structural exits of a built sub-expression:
+//  - `fallthrough` is `.Some(ft)` when control can reach the tail; `.None` when
+//    every path diverged (return/break/continue).
+//  - `breaks` / `continues` are blocks that escaped to the *nearest enclosing
+//    loop* and await wiring by it (`breaks` → the loop exit, `continues` → the
+//    loop header back-edge). A loop consumes its own body's breaks/continues, so
+//    they never leak past the loop that owns them — this replaces any block-id
+//    range heuristic for loop ownership.
+type BuildExprOut = .{
+  ctx: BuildCtx,
+  fallthrough: FallThrough?,
+  breaks: Vector<BlockId>,
+  continues: Vector<BlockId>,
+}
+
+fn diverged(ctx: BuildCtx) BuildExprOut {
+  BuildExprOut.{ ctx, fallthrough: .None, breaks: [], continues: [] }
+}
+
+fn append_all(a: Vector<BlockId>, b: Vector<BlockId>) Vector<BlockId> {
+  for x in b {
+    a = .append(x)
+  }
+  a
+}
+
+fn has_fallthrough(out: BuildExprOut) Bool {
+  case out.fallthrough {
+    .Some(_) => true,
+    .None => false,
+  }
+}
 
 fn bid(id: Int) BlockId {
   BlockId.{ id }
@@ -144,7 +175,10 @@ fn collect_assign_targets(expr: AnfExpr) Vector<LocalId> {
           }
           acc
         },
-        .ALoop(loop_body) => collect_assign_targets(loop_body),
+        // Stop at a nested loop boundary: an inner loop carries its own rebinds
+        // through its own header/exit, so its assign targets are not carried
+        // params of the enclosing loop or branch join.
+        .ALoop(_) => [],
         .ADefer(_) => error("cfg: ADefer reached CFG builder; expected optimized defer-free ANF"),
         _ => [],
       }
@@ -277,7 +311,27 @@ fn add_pred(ctx: BuildCtx, target: BlockId, from: BlockId, args: Vector<LocalId>
   ctx.replace_block(block)
 }
 
+fn remove_pred(ctx: BuildCtx, target: BlockId, from: BlockId) BuildCtx {
+  block := ctx.get_block(target)
+  kept: Vector<CfgEdge> = []
+  for e in block.preds {
+    if e.target.id != from.id {
+      kept = .append(e)
+    }
+  }
+  block.preds = kept
+  ctx.replace_block(block)
+}
+
 fn finish_block(ctx: BuildCtx, id: BlockId, term: Terminator, succs: Vector<CfgEdge>) BuildCtx {
+  // Re-finalizing a block (e.g. wiring a break/continue block to its loop
+  // exit/header) must not leave a predecessor without a matching successor:
+  // drop the reciprocal preds for any successors this block had before.
+  existing := ctx.get_block(id)
+  for old in existing.succs {
+    ctx = .remove_pred(old.target, id)
+  }
+
   block := ctx.get_block(id)
   block.terminator = .Some(term)
   block.succs = succs
@@ -343,17 +397,30 @@ fn op_text(op: AnfOp) String {
   }
 }
 
-// Wire an arm's exit into a join block. A fall-through arm (`tail_atom` set)
-// branches into the join with placeholder edge args; an arm already terminated
-// by Return/Break/Continue keeps its terminator and is left untouched.
-fn branch_to_join(ctx: BuildCtx, arm: BuildExprOut, join: BlockId, params: Vector<LocalId>) BuildCtx {
-  case arm.tail_atom {
-    .Some(_) => ctx.finish_block(
-      arm.current,
-      .Branch(join, edge_args_for(params)),
-      [CfgEdge.{ target: join, args: edge_args_for(params) }],
-    ),
-    .None => ctx,
+// Branch a fall-through arm into a join block with placeholder edge args.
+fn wire_fallthrough_to_join(ctx: BuildCtx, block: BlockId, join: BlockId, params: Vector<LocalId>) BuildCtx {
+  ctx.finish_block(
+    block,
+    .Branch(join, edge_args_for(params)),
+    [CfgEdge.{ target: join, args: edge_args_for(params) }],
+  )
+}
+
+// Continue building the shared continuation `body` from a join block, folding
+// the arms' escapes (breaks/continues) together with the continuation's.
+fn build_join_continuation(
+  ctx: BuildCtx,
+  join: BlockId,
+  body: AnfExpr,
+  arm_breaks: Vector<BlockId>,
+  arm_continues: Vector<BlockId>,
+) BuildExprOut {
+  cont := ctx.build_expr(join, body)
+  BuildExprOut.{
+    ctx: cont.ctx,
+    fallthrough: cont.fallthrough,
+    breaks: append_all(arm_breaks, cont.breaks),
+    continues: append_all(arm_continues, cont.continues),
   }
 }
 
@@ -376,16 +443,34 @@ fn build_match(
     edge_list = .append(CfgEdge.{ target: nb.id, args: [] })
   }
 
-  join_nb := ctx.new_block("match.join", params)
-  ctx = join_nb.ctx
   ctx = .finish_block(current, .Match(scrutinee, edge_list), edge_list)
 
+  arm_breaks: Vector<BlockId> = []
+  arm_continues: Vector<BlockId> = []
+  falling: Vector<BlockId> = []
   for arm, i in arms {
     arm_out := ctx.build_expr(arm_ids[i], arm.body)
-    ctx = arm_out.ctx.branch_to_join(arm_out, join_nb.id, params)
+    ctx = arm_out.ctx
+    arm_breaks = append_all(arm_breaks, arm_out.breaks)
+    arm_continues = append_all(arm_continues, arm_out.continues)
+    case arm_out.fallthrough {
+      .Some(ft) => falling = .append(ft.block),
+      .None => {},
+    }
   }
 
-  ctx.build_expr(join_nb.id, body)
+  // Every arm diverged (return/break/continue): there is no join to reach, so the
+  // syntactic continuation is unreachable and is not built. Escapes propagate.
+  if falling.len() == 0 {
+    return BuildExprOut.{ ctx, fallthrough: .None, breaks: arm_breaks, continues: arm_continues }
+  }
+
+  join_nb := ctx.new_block("match.join", params)
+  ctx = join_nb.ctx
+  for block in falling {
+    ctx = .wire_fallthrough_to_join(block, join_nb.id, params)
+  }
+  ctx.build_join_continuation(join_nb.id, body, arm_breaks, arm_continues)
 }
 
 fn build_if(
@@ -402,8 +487,6 @@ fn build_if(
   ctx = then_nb.ctx
   else_nb := ctx.new_block("if.else", [])
   ctx = else_nb.ctx
-  join_nb := ctx.new_block("if.join", params)
-  ctx = join_nb.ctx
 
   ctx = .finish_block(
     current,
@@ -412,62 +495,53 @@ fn build_if(
   )
 
   then_out := ctx.build_expr(then_nb.id, then_e)
-  ctx = then_out.ctx.branch_to_join(then_out, join_nb.id, params)
+  else_out := then_out.ctx.build_expr(else_nb.id, else_e)
+  ctx = else_out.ctx
 
-  else_out := ctx.build_expr(else_nb.id, else_e)
-  ctx = else_out.ctx.branch_to_join(else_out, join_nb.id, params)
+  arm_breaks := append_all(then_out.breaks, else_out.breaks)
+  arm_continues := append_all(then_out.continues, else_out.continues)
 
-  ctx.build_expr(join_nb.id, body)
+  // Both arms diverged: no join, so the continuation `body` is unreachable and is
+  // not built (avoids a predecessor-less continuation join). Escapes propagate.
+  if !then_out.has_fallthrough() and !else_out.has_fallthrough() {
+    return BuildExprOut.{ ctx, fallthrough: .None, breaks: arm_breaks, continues: arm_continues }
+  }
+
+  join_nb := ctx.new_block("if.join", params)
+  ctx = join_nb.ctx
+  case then_out.fallthrough {
+    .Some(ft) => ctx = .wire_fallthrough_to_join(ft.block, join_nb.id, params),
+    .None => {},
+  }
+  case else_out.fallthrough {
+    .Some(ft) => ctx = .wire_fallthrough_to_join(ft.block, join_nb.id, params),
+    .None => {},
+  }
+  ctx.build_join_continuation(join_nb.id, body, arm_breaks, arm_continues)
 }
 
-// Wire the exits of a just-built loop body. Every block created during the body
-// (id >= `body_start`) is re-terminated by control disposition: a `break` exits
-// to `exit`; a `continue` or a run-to-completion fall-through (still
-// unterminated) takes the back-edge to `header`. Blocks that already branch
-// (e.g. into an inner join) or return are left untouched. Ids are snapshotted
-// first because `finish_block` mutates `ctx.blocks`.
-fn wire_loop_body(
-  ctx: BuildCtx,
-  body_start: Int,
-  header: BlockId,
-  exit: BlockId,
-  params: Vector<LocalId>,
-) BuildCtx {
-  targets: Vector<BlockId> = []
-  for block in ctx.blocks {
-    if block.id.id >= body_start {
-      targets = .append(block.id)
-    }
+// A run-to-completion body fall-through loops back to the header.
+fn wire_backedge(ctx: BuildCtx, ft: FallThrough?, header: BlockId, back_args: Vector<LocalId>) BuildCtx {
+  case ft {
+    .Some(f) => ctx.finish_block(
+      f.block,
+      .LoopBackEdge(header, back_args),
+      [CfgEdge.{ target: header, args: back_args }],
+    ),
+    .None => ctx,
   }
+}
 
-  back_args := edge_args_for(params)
-  for id in targets {
-    block := ctx.get_block(id)
-    case block.terminator {
-      .Some(.VoidBreak) => ctx = .finish_block(
-        id,
-        .VoidBreak,
-        [CfgEdge.{ target: exit, args: back_args }],
-      ),
-      .Some(.ValueBreak(a)) => ctx = .finish_block(
-        id,
-        .ValueBreak(a),
-        [CfgEdge.{ target: exit, args: back_args }],
-      ),
-      .Some(.ContinueIfPresent) => ctx = .finish_block(
-        id,
-        .LoopBackEdge(header, back_args),
-        [CfgEdge.{ target: header, args: back_args }],
-      ),
-      .None => ctx = .finish_block(
-        id,
-        .LoopBackEdge(header, back_args),
-        [CfgEdge.{ target: header, args: back_args }],
-      ),
-      _ => {},
-    }
+// A break block exits the loop: give it an edge to the loop exit while preserving
+// its break terminator so the printed graph still records why control left.
+fn wire_break_exit(ctx: BuildCtx, block: BlockId, exit: BlockId, back_args: Vector<LocalId>) BuildCtx {
+  b := ctx.get_block(block)
+  edges := [CfgEdge.{ target: exit, args: back_args }]
+  case b.terminator {
+    .Some(.VoidBreak) => ctx.finish_block(block, .VoidBreak, edges),
+    .Some(.ValueBreak(a)) => ctx.finish_block(block, .ValueBreak(a), edges),
+    _ => ctx,
   }
-  ctx
 }
 
 fn build_loop(
@@ -485,11 +559,11 @@ fn build_loop(
   body_nb := ctx.new_block("loop.body", [])
   ctx = body_nb.ctx
 
-  entry_args := edge_args_for(params)
+  back_args := edge_args_for(params)
   ctx = .finish_block(
     current,
-    .Branch(header_nb.id, entry_args),
-    [CfgEdge.{ target: header_nb.id, args: entry_args }],
+    .Branch(header_nb.id, back_args),
+    [CfgEdge.{ target: header_nb.id, args: back_args }],
   )
   ctx = .finish_block(
     header_nb.id,
@@ -498,8 +572,25 @@ fn build_loop(
   )
 
   body_out := ctx.build_expr(body_nb.id, loop_body)
-  ctx = body_out.ctx.wire_loop_body(body_nb.id.id, header_nb.id, exit_nb.id, params)
+  ctx = body_out.ctx
 
+  // Wire only THIS loop body's own escapes; an inner loop already consumed its
+  // own breaks/continues, so they never reach here (no block-id range guessing).
+  ctx = .wire_backedge(body_out.fallthrough, header_nb.id, back_args)
+  for cb in body_out.continues {
+    ctx = .finish_block(
+      cb,
+      .LoopBackEdge(header_nb.id, back_args),
+      [CfgEdge.{ target: header_nb.id, args: back_args }],
+    )
+  }
+  for bb in body_out.breaks {
+    ctx = .wire_break_exit(bb, exit_nb.id, back_args)
+  }
+
+  // The loop as a whole falls through to its exit continuation; the loop's own
+  // breaks/continues are consumed above, so only the continuation's escapes
+  // propagate to the enclosing context.
   ctx.build_expr(exit_nb.id, body)
 }
 
@@ -527,24 +618,30 @@ fn build_expr(ctx: BuildCtx, current: BlockId, expr: AnfExpr) BuildExprOut {
     },
     .Atom(atom) => {
       // Tail value: leave the block unterminated and report the fall-through so
-      // the caller decides whether it becomes a function Return or a join branch.
-      BuildExprOut.{ ctx, current, tail_atom: .Some(atom) }
+      // the caller decides whether it becomes a function Return, a join branch,
+      // or a loop back-edge.
+      BuildExprOut.{
+        ctx,
+        fallthrough: .Some(FallThrough.{ block: current, tail: atom }),
+        breaks: [],
+        continues: [],
+      }
     },
     .Return(atom_opt) => {
       ctx = .finish_block(current, .Return(atom_opt), [])
-      BuildExprOut.{ ctx, current, tail_atom: .None }
+      ctx.diverged()
     },
     .Break(.Some(atom)) => {
       ctx = .finish_block(current, .ValueBreak(atom), [])
-      BuildExprOut.{ ctx, current, tail_atom: .None }
+      BuildExprOut.{ ctx, fallthrough: .None, breaks: [current], continues: [] }
     },
     .Break(.None) => {
       ctx = .finish_block(current, .VoidBreak, [])
-      BuildExprOut.{ ctx, current, tail_atom: .None }
+      BuildExprOut.{ ctx, fallthrough: .None, breaks: [current], continues: [] }
     },
     .Continue => {
       ctx = .finish_block(current, .ContinueIfPresent, [])
-      BuildExprOut.{ ctx, current, tail_atom: .None }
+      BuildExprOut.{ ctx, fallthrough: .None, breaks: [], continues: [current] }
     },
   }
 }
@@ -554,8 +651,10 @@ fn build_function(func: AnfFunctionDef) CfgFunction {
   built := nb.ctx.build_expr(nb.id, func.body)
 
   // A fall-through tail at the top level is the function's implicit return.
-  ctx := case built.tail_atom {
-    .Some(atom) => built.ctx.finish_block(built.current, .Return(.Some(atom)), []),
+  // Breaks/continues cannot escape a function body (they are always inside a
+  // loop), so only the fall-through needs finalizing here.
+  ctx := case built.fallthrough {
+    .Some(ft) => built.ctx.finish_block(ft.block, .Return(.Some(ft.tail)), []),
     .None => built.ctx,
   }
   CfgFunction.{ func_id: func.func_id.id, name: func.name, blocks: ctx.blocks }

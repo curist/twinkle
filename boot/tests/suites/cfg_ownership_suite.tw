@@ -1,7 +1,11 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
+use compiler.builtins
 use compiler.cfg
+use compiler.core_ir.{FuncId, LocalId}
+use compiler.mono_type.{MonoType}
 use compiler.pipeline
 
 fn view(src: String) Result<cfg.CfgView, String> {
@@ -20,6 +24,119 @@ fn function(src: String, name: String) Result<cfg.CfgFunction, String> {
     .Some(f) => .Ok(f),
     .None => .Err("missing CFG function ${name}"),
   }
+}
+
+fn local(id: Int) LocalId {
+  LocalId.{ id }
+}
+
+fn func_id(id: Int) FuncId {
+  FuncId.{ id }
+}
+
+fn direct_value_break_module() AnfModule {
+  payload := local(0)
+  loop_result := local(1)
+  body: AnfExpr = .Let(
+    loop_result,
+    .ALoop(.Break(.Some(.ALocal(payload)))),
+    .Atom(.ALocal(loop_result)),
+  )
+  func: AnfFunctionDef = AnfFunctionDef.{
+    func_id: func_id(1),
+    name: "value_break_direct",
+    is_init: false,
+    params: [],
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: MonoType.Int,
+  }
+  AnfModule.{
+    functions: [func],
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+    lib_exports: [],
+  }
+}
+
+fn same_args(left: Vector<LocalId>, right: Vector<LocalId>) Bool {
+  if left.len() != right.len() {
+    return false
+  }
+
+  for local, i in left {
+    if local.id != right[i].id {
+      return false
+    }
+  }
+
+  true
+}
+
+fn block_by_id(func: cfg.CfgFunction, id: cfg.BlockId) cfg.CfgBlock? {
+  for block in func.blocks {
+    if block.id.id == id.id {
+      return .Some(block)
+    }
+  }
+
+  .None
+}
+
+fn has_pred_from(block: cfg.CfgBlock, from: cfg.BlockId, args: Vector<LocalId>) Bool {
+  for edge in block.preds {
+    if edge.target.id == from.id and same_args(edge.args, args) {
+      return true
+    }
+  }
+
+  false
+}
+
+fn has_succ_to(block: cfg.CfgBlock, target: cfg.BlockId, args: Vector<LocalId>) Bool {
+  for edge in block.succs {
+    if edge.target.id == target.id and same_args(edge.args, args) {
+      return true
+    }
+  }
+
+  false
+}
+
+fn reciprocal_edge_mismatches(func: cfg.CfgFunction) Int {
+  n := 0
+  for block in func.blocks {
+    for succ in block.succs {
+      case block_by_id(func, succ.target) {
+        .Some(target_block) => if !has_pred_from(target_block, block.id, succ.args) {
+          n = n + 1
+        },
+        .None => n = n + 1,
+      }
+    }
+
+    for pred in block.preds {
+      case block_by_id(func, pred.target) {
+        .Some(pred_block) => if !has_succ_to(pred_block, block.id, pred.args) {
+          n = n + 1
+        },
+        .None => n = n + 1,
+      }
+    }
+  }
+
+  n
+}
+
+fn predless_non_entry_blocks(func: cfg.CfgFunction) Int {
+  n := 0
+  for block in func.blocks {
+    if block.id.id != 0 and block.preds.len() == 0 {
+      n = n + 1
+    }
+  }
+  n
 }
 
 pub fn suite() runner.Suite {
@@ -114,6 +231,37 @@ pub fn suite() runner.Suite {
         try assert.is_true(cfg.max_param_count(f) >= 1)
         try assert.equal(cfg.empty_fact_blocks(f), cfg.count_blocks(f))
         try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "nested loop inner break preserves reciprocal predecessor successor edges",
+      fn() {
+        f := try function(
+          "fn nested(n: Int, m: Int) Int {\n  acc := 0\n  for i in range(n) {\n    for j in range(m) {\n      if j == 1 {\n        break\n      }\n      acc = acc + j\n    }\n    acc = acc + i\n  }\n  acc\n}\n",
+          "nested",
+        )
+        try assert.equal(reciprocal_edge_mismatches(f), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "all terminating branch arms do not emit a predless continuation join",
+      fn() {
+        f := try function(
+          "fn both_return(b: Bool) Int {\n  if b {\n    return 1\n  } else {\n    return 2\n  }\n  3\n}\n",
+          "both_return",
+        )
+        try assert.equal(predless_non_entry_blocks(f), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "direct ANF value break is rendered as a value-break terminator",
+      fn() {
+        v := cfg.build_view(direct_value_break_module(), builtins.make_builtin_registry())
+        out := cfg.render_view(v)
+        try assert.is_true(out.contains("terminator: value-break L0"))
         .Ok({})
       },
     )
