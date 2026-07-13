@@ -99,4 +99,34 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "loop carries assign targets, breaks to exit, and loops back",
+      fn() {
+        f := try function(
+          "fn sum_to(n: Int) Int {\n  acc := 0\n  for i in range(n) {\n    acc = acc + i\n  }\n  acc\n}\n",
+          "sum_to",
+        )
+
+        // The run-to-completion path (and any continue) takes a back-edge to
+        // the header; the range guard's break exits the loop.
+        try assert.is_true(cfg.count_terminator(f, "loop-back-edge") >= 1)
+        try assert.is_true(cfg.count_terminator(f, "void-break") >= 1)
+        try assert.is_true(cfg.max_param_count(f) >= 1)
+        try assert.equal(cfg.empty_fact_blocks(f), cfg.count_blocks(f))
+        try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "optimized defer-free input means cfg output never contains ADefer",
+      fn() {
+        out := try rendered(
+          "fn cleanup_scope() Int {\n  x := 1\n  defer {\n    y := x + 1\n  }\n  x\n}\n",
+        )
+        try assert.is_true(!out.contains("ADefer"))
+        try assert.is_true(!out.contains("defer"))
+        try assert.is_true(out.contains("// CFG ownership view"))
+        .Ok({})
+      },
+    )
 }

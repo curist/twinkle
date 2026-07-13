@@ -169,7 +169,9 @@ fn collect_break_payloads(expr: AnfExpr) Vector<LocalId> {
           }
           acc
         },
-        .ALoop(loop_body) => collect_break_payloads(loop_body),
+        // Stop at a nested loop boundary: a break inside an inner loop targets
+        // that inner loop, so its payload is not carried by the enclosing one.
+        .ALoop(_) => [],
         .ADefer(_) => error("cfg: ADefer reached CFG builder; expected optimized defer-free ANF"),
         _ => [],
       }
@@ -200,6 +202,11 @@ fn match_join_params(result_local: LocalId, arms: Vector<AnfMatchArm>) Vector<Lo
     params = sorted_union(params, expr_rebound_targets(arm.body))
   }
   params
+}
+
+fn loop_params(result_local: LocalId, body: AnfExpr) Vector<LocalId> {
+  params := sorted_insert_local(expr_rebound_targets(body), result_local)
+  sorted_union(params, collect_break_payloads(body))
 }
 
 fn edge_args_for(params: Vector<LocalId>) Vector<LocalId> {
@@ -415,6 +422,95 @@ fn build_if(
   build_expr(ctx, join_nb.id, body)
 }
 
+// Wire the exits of a just-built loop body. Every block created during the body
+// (id >= `body_start`) is re-terminated by control disposition: a `break` exits
+// to `exit`; a `continue` or a run-to-completion fall-through (still
+// unterminated) takes the back-edge to `header`. Blocks that already branch
+// (e.g. into an inner join) or return are left untouched. Ids are snapshotted
+// first because `finish_block` mutates `ctx.blocks`.
+fn wire_loop_body(
+  ctx: BuildCtx,
+  body_start: Int,
+  header: BlockId,
+  exit: BlockId,
+  params: Vector<LocalId>,
+) BuildCtx {
+  targets: Vector<BlockId> = []
+  for block in ctx.blocks {
+    if block.id.id >= body_start {
+      targets = .append(block.id)
+    }
+  }
+
+  back_args := edge_args_for(params)
+  for id in targets {
+    block := get_block(ctx, id)
+    case block.terminator {
+      .Some(.VoidBreak) => ctx = finish_block(
+        ctx,
+        id,
+        .VoidBreak,
+        [CfgEdge.{ target: exit, args: back_args }],
+      ),
+      .Some(.ValueBreak(a)) => ctx = finish_block(
+        ctx,
+        id,
+        .ValueBreak(a),
+        [CfgEdge.{ target: exit, args: back_args }],
+      ),
+      .Some(.ContinueIfPresent) => ctx = finish_block(
+        ctx,
+        id,
+        .LoopBackEdge(header, back_args),
+        [CfgEdge.{ target: header, args: back_args }],
+      ),
+      .None => ctx = finish_block(
+        ctx,
+        id,
+        .LoopBackEdge(header, back_args),
+        [CfgEdge.{ target: header, args: back_args }],
+      ),
+      _ => {},
+    }
+  }
+  ctx
+}
+
+fn build_loop(
+  ctx: BuildCtx,
+  current: BlockId,
+  result_local: LocalId,
+  loop_body: AnfExpr,
+  body: AnfExpr,
+) BuildExprOut {
+  params := loop_params(result_local, loop_body)
+  header_nb := new_block(ctx, "loop.header", params)
+  ctx = header_nb.ctx
+  exit_nb := new_block(ctx, "loop.exit", params)
+  ctx = exit_nb.ctx
+  body_nb := new_block(ctx, "loop.body", [])
+  ctx = body_nb.ctx
+
+  entry_args := edge_args_for(params)
+  ctx = finish_block(
+    ctx,
+    current,
+    .Branch(header_nb.id, entry_args),
+    [CfgEdge.{ target: header_nb.id, args: entry_args }],
+  )
+  ctx = finish_block(
+    ctx,
+    header_nb.id,
+    .Branch(body_nb.id, []),
+    [CfgEdge.{ target: body_nb.id, args: [] }],
+  )
+
+  body_out := build_expr(ctx, body_nb.id, loop_body)
+  ctx = wire_loop_body(body_out.ctx, body_nb.id.id, header_nb.id, exit_nb.id, params)
+
+  build_expr(ctx, exit_nb.id, body)
+}
+
 fn build_expr(ctx: BuildCtx, current: BlockId, expr: AnfExpr) BuildExprOut {
   case expr {
     .Let(local, .AIf(cond_atom, then_e, else_e), body) => build_if(
@@ -434,6 +530,7 @@ fn build_expr(ctx: BuildCtx, current: BlockId, expr: AnfExpr) BuildExprOut {
       arms,
       body,
     ),
+    .Let(local, .ALoop(loop_body), body) => build_loop(ctx, current, local, loop_body, body),
     .Let(local, op, body) => {
       ctx = push_instruction(ctx, current, CfgInstruction.{ anf_local: local, text: op_text(op) })
       build_expr(ctx, current, body)
