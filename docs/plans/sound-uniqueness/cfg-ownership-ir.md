@@ -46,12 +46,25 @@ the ANF tree independently. Ownership is the first consumer; later escape,
 borrow, effects, and specialization analyses should reuse the same view.
 
 The first version does not need full machine-style SSA for every temporary, but
-it must make the hard ownership cases explicit:
+it must make the hard control-flow cases structurally explicit:
 
 - branch joins;
 - loop back-edges;
 - value-carrying `break` exits;
-- loop-carried unique handles;
+- loop-carried handles.
+
+### First slice is structural only
+
+The first committable slice is the **structural CFG view**: the control-flow
+scaffolding above, block parameters for carried values, deterministic block ids
+and pred/succ lists, terminators, per-block instruction→ANF mapping, the `--cfg`
+printer, and **empty entry/exit fact maps** reserved for the next slice. It runs
+no ownership analysis and changes no generated code — it is verifiable purely on
+its own terms (graph shape + determinism), the way Phase 0's rails were.
+
+The **populated** facts ride on top in the following slice
+([Phase 2](README.md) / architecture §1A-facts):
+
 - block-entry and block-exit `Unique`/`Shared`/`Unknown` facts;
 - binding-validity and last-use facts separate from ownership;
 - mutable candidates and rejection reasons for existing lowering hooks;
@@ -82,12 +95,43 @@ stackification pass for Wasm's structured control flow. Because Twinkle source a
 Wasm targets are structured, keeping ANF authoritative is an asset, not legacy
 baggage.
 
+## The CFG input is defer-free
+
+The view is built from the **codegen-bound optimized ANF** (`artifacts.opt`).
+`eliminate_defers` is the first optimizer pass (`opt/pipeline.tw`), so `ADefer`
+never survives into `artifacts.opt`: a `defer { … }` body is already inlined onto
+every scope-exit path (fall-through, `break`, `return`, `try` early-return) as
+ordinary lets/ops. That flattened form is exactly the faithful shape for ownership
+analysis — a read in the cleanup body appears as a real use on each exit edge — so
+the CFG needs **no** special `ADefer` modeling.
+
+The builder therefore treats defer-free as a **contract**: encountering an
+`ADefer` node is a hard error, not something to inline on the fly. Inlining it
+during CFG construction would silently misrepresent defer's exit-path duplication
+semantics; failing loud instead catches any future pipeline change that stops
+eliminating defer before this stage.
+
 ## SSA-style block parameters
 
 Use block parameters for values that merge at control-flow boundaries. Ownership
 facts are separate lattice maps keyed by those values at block entry/exit.
 
 Do **not** encode ownership facts themselves as block parameters.
+
+**Only carried values get block parameters — not every ANF local.** Full value
+SSA is a non-goal; the view names exactly the values that cross a boundary, and
+those are identifiable from ANF *syntax* alone (no liveness pass, so this stays in
+the structural slice):
+
+- **loop back-edge carried values** — the locals reassigned inside a loop, i.e.
+  the `AAssign` targets in an `ALoop` body (accumulators *and* compiler-introduced
+  iterator state);
+- **branch/loop result values** — the `Let`-bound result local of an `AIf` /
+  `AMatch` / `ALoop` op (the join value);
+- **value-carrying break** — the `Break(Atom?)` payload leaving a loop.
+
+A local that is defined and consumed within a single block stays an ordinary
+straight-line `Let`; it is never lifted to a block parameter.
 
 Examples:
 
@@ -243,7 +287,12 @@ target/twk ir file.tw --cfg
 target/twk ir file.tw --ownership
 ```
 
-The exact flag names can change, but the output should show:
+The exact flag names can change. The **structural slice's `--cfg`** prints only
+the structural rows (block graph, carried block parameters, terminators including
+value-carrying break edges, per-block ANF mapping) with the fact maps shown empty;
+the fact/candidate/decision rows below are populated by the Phase 2+ slices.
+
+Full output (across slices) should show:
 
 - block graph;
 - block parameters as carried values;
@@ -272,15 +321,25 @@ The exact flag names can change, but the output should show:
 - No codegen rewrite in the first step.
 - No runtime uniqueness checks.
 
-## Open questions
+## Resolved
 
-- Should all ANF locals become block-parameter-capable values, or only locals
-  whose ownership facts cross block boundaries?
+- **Block-parameter scope:** only *carried* values (loop-`AAssign` targets,
+  `AIf`/`AMatch`/`ALoop` result bindings, `Break` payloads), identified from ANF
+  syntax — not every local. See "SSA-style block parameters" above.
+- **`defer`:** does not survive to CFG construction; the view builds on the
+  defer-free `artifacts.opt` and asserts it. See "The CFG input is defer-free".
+- **Phase boundary:** the first slice is the structural view only; populated
+  `Unique`/`Shared`/`Unknown` facts are the following slice. See "First slice is
+  structural only".
+
+## Open questions (later slices)
+
 - What is the exact representation for field-sensitive record ownership facts?
+  (Phase 2+ facts.)
 - Should accepted mutable codegen decisions be represented as annotations on
   original ANF instructions, a side table keyed by proof/debug id, or both?
-- Which existing peephole passes should migrate first?
-- How should `defer` be represented if it survives to CFG view construction?
+  (Phase 5 codegen handoff.)
+- Which existing peephole passes should migrate first? (Optimizer migration.)
 
 ## Relationship to main architecture
 

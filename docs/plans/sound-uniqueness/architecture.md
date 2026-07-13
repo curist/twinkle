@@ -612,18 +612,34 @@ AWFY performance, preserved checksums, and avoided known aliasing corruptions.
 
 ### Phase 1A — CFG ownership view and printable facts, no rewrites
 
+This phase lands in two slices, matching the README's Phase 1 / Phase 2 split:
+**1A-view** builds the structural CFG view first — verifiable on its own terms,
+running no analysis — and **1A-facts** populates the minimal ownership facts on
+top of it. Keeping them separate lets the greenfield CFG infrastructure be tested
+for graph correctness and determinism before any lattice transfer is layered on.
+
+**1A-view — structural CFG view (README Phase 1):**
+
 - Add the deterministic CFG ownership view with SSA-style block parameters for
-  carried values.
-- Build the CFG view from ANF and preserve mappings back to source ANF lets/ops.
+  carried values only, identified from ANF syntax (loop `AAssign` targets,
+  `AIf`/`AMatch`/`ALoop` result bindings, `Break` payloads) — see
+  [cfg-ownership-ir.md](cfg-ownership-ir.md).
+- Build the CFG view from the defer-free `artifacts.opt` and preserve mappings
+  back to source ANF lets/ops.
+- Model operation effects through optimizer semantics rather than hardcoded
+  source names where possible.
+- Extend `twk ir` with a way to print the structural CFG (e.g. `twk ir --cfg`):
+  block graph, carried block parameters, terminators (including value-carrying
+  break edges), and per-block ANF mapping, with the entry/exit fact maps shown
+  empty. Output must be designed for manual debugging.
+- Keep generated code unchanged.
+
+**1A-facts — minimal ownership facts (README Phase 2):**
+
 - Keep the first executable ownership facts simple (`Unique`/`Shared`/`Unknown`),
   while leaving room in the view for later record shell and field-sensitive facts.
 - Rebuild local ownership, binding-validity, liveness, and escape facts on the CFG
   view without emitting any mutable rewrites.
-- Model operation effects through optimizer semantics rather than hardcoded
-  source names where possible.
-- Extend `twk ir` with a way to print the CFG and analysis facts. The exact UI
-  can be a flag such as `twk ir --cfg`, `twk ir --ownership`, or both, but the
-  output must be designed for manual debugging.
 - Print facts at the level where decisions are made: local ownership state,
   binding validity, last-use/liveness, borrow/read observations,
   publication/escape events, branch joins, loop-carried/back-edge ownership facts,

@@ -85,8 +85,10 @@ here — so the two orderings are kept from drifting apart by hand.
   edge and a possible publication/region-exit edge; explicit freeze handling is a
   later mutable-region concern. Details:
   [cfg-ownership-ir.md](cfg-ownership-ir.md).
-- [ ] **Print CFG and ownership facts.** `twk ir` should show blocks, carried
-  values, entry/exit facts, candidates, accepted/rejected reasons, and proof ids.
+- [ ] **Print the structural CFG.** `twk ir --cfg` shows blocks, carried block
+  parameters, terminators (including value-carrying break edges), and per-block
+  ANF mapping, with the entry/exit fact maps shown empty. Populated ownership
+  facts, candidates, accepted/rejected reasons, and proof ids arrive with Phase 2.
   Details: [cfg-ownership-ir.md](cfg-ownership-ir.md).
 
 ### Phase 2 — Minimal ownership facts, still no codegen changes *(architecture: 1A facts)*
@@ -97,8 +99,10 @@ here — so the two orderings are kept from drifting apart by hand.
   [fact-lattice.md](fact-lattice.md), [summary-specialization.md](summary-specialization.md),
   [sound-analysis.md](sound-analysis.md).
 - [ ] **Implement the first ownership domain.** Track only `Unique`, `Shared`, and
-  `Unknown` as ownership facts. Keep binding validity, last-use, and liveness as
-  separate CFG facts; do not model `Moved` as an ownership lattice element.
+  `Unknown` as ownership facts, populating the entry/exit fact maps the Phase 1
+  structural view reserved and surfacing them in the `twk ir` CFG output. Keep
+  binding validity, last-use, and liveness as separate CFG facts; do not model
+  `Moved` as an ownership lattice element.
   Details: [fact-lattice.md](fact-lattice.md), [cfg-ownership-ir.md](cfg-ownership-ir.md).
 - [ ] **Model conservative publication and aliasing.** Known aliases and
   publication sinks demote to `Shared`; missing proof stays `Unknown`. Keep
