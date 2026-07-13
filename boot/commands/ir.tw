@@ -4,6 +4,7 @@ use @std.proc
 
 use commands.common.{exit_usage_error, format_compile_error, get_positional, print_warnings}
 use compiler.census
+use compiler.cfg
 use compiler.ir_print
 use compiler.pipeline
 use lib.argparse.app.{ParseResult}
@@ -63,6 +64,12 @@ pub fn run_ir_command(parsed: ParseResult) {
       print(census.render_sites(sites))
     }
 
+    return
+  }
+
+  if parsed.has_flag("cfg") {
+    view := cfg.build_view(artifacts.opt, artifacts.builtins)
+    print(view.render_view())
     return
   }
 

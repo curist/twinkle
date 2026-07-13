@@ -129,4 +129,16 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "rendering is byte-identical across two builds",
+      fn() {
+        src := "fn choose(b: Bool, n: Int) Int {\n  acc := 0\n  for i in range(n) {\n    if b {\n      acc = acc + i\n    } else {\n      acc = acc + 1\n    }\n  }\n  acc\n}\n"
+        first := try rendered(src)
+        second := try rendered(src)
+        try assert.equal(first, second)
+        try assert.is_true(first.contains("terminator: condbranch"))
+        try assert.is_true(first.contains("terminator: loop-back-edge"))
+        .Ok({})
+      },
+    )
 }
