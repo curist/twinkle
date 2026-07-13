@@ -43,13 +43,17 @@ here — so the two orderings are kept from drifting apart by hand.
 
 ### Phase 0 — Baseline and safety rails *(architecture: Precondition)*
 
-- [ ] **Define correctness guard programs.** Add/collect negative aliasing cases
-  for slice/concat sharing, record fields, variants, array literals, nested
-  collections, closure capture, task/fiber capture, channel send, globals, and
-  unknown calls. Details: [architecture.md](architecture.md).
-- [ ] **Define inspection workflow.** Decide the initial `twk ir` debug surface
-  for ownership facts and CFG view output. The exact flag names can change.
-  Details: [cfg-ownership-ir.md](cfg-ownership-ir.md).
+- [ ] **Define correctness guard programs.** A behavioral negative-aliasing suite
+  (`uniqueness_guard_suite.tw`): one test per required negative (slice/concat/view
+  sharing, record fields, variants, nested collections, closure capture,
+  task/channel publication, globals, unknown calls, Cell, `try`), each asserting the
+  observable persistent result and cross-referenced to its worked-example case +
+  fact-lattice rule, plus the Case B/V positive anchors. Details:
+  [phase0-baseline.md](phase0-baseline.md).
+- [ ] **Define inspection workflow.** The first debug surface is a `twk ir
+  --census` flag (population table of candidate op-families + in-place counts,
+  `--sites` for per-site detail); the ownership-facts / CFG view is Phase 1. Details:
+  [phase0-baseline.md](phase0-baseline.md), [cfg-ownership-ir.md](cfg-ownership-ir.md).
 - [x] **Reconcile the COW census ceiling.** Done 2026-07-12: re-baselined
   `tests/cow_analysis.rs` 1696 → 2000 (boot source growth, not a regression).
   Surfaced that the total is non-deterministic (stage0 optimizer jitter ~1962–1970)
@@ -57,11 +61,14 @@ here — so the two orderings are kept from drifting apart by hand.
   distribution, not this project's regression gate. Details:
   [worked-examples.md](worked-examples.md).
 - [ ] **Stand up a boot-side ownership census harness.** A deterministic
-  in-place/COW counter in the boot pipeline. Buildable now: on this branch it
-  reads the current **all-COW floor** (the old passes were removed), which *is*
-  the zero baseline. It becomes the discriminating regression gate as Phase 5
-  codegen starts converting sites — at which point the count climbs and the gate
-  has signal. Distinct from `tests/cow_analysis.rs`, which measures stage0.
+  in-place/COW counter over the boot pipeline's optimized ANF (`artifacts.opt`),
+  shared as a reusable `census.tw` function behind the `twk ir --census` flag and
+  an asserted fixture gate (`uniqueness_census_suite.tw`), with `boot/main.tw` as a
+  loose wide reference. Buildable now: on this branch it reads the current
+  **all-COW floor** (the old passes were removed), which *is* the zero baseline. It
+  becomes the discriminating regression gate as Phase 5 codegen starts converting
+  sites. Distinct from `tests/cow_analysis.rs`, which measures stage0. Details:
+  [phase0-baseline.md](phase0-baseline.md).
 
 ### Phase 1 — CFG ownership view, no codegen changes *(architecture: 1A)*
 
@@ -195,6 +202,7 @@ field-path granularity, and stays bounded.
 | Doc | Purpose |
 |---|---|
 | [architecture.md](architecture.md) | Umbrella architecture, phases, mutable intrinsics, specialization, testing policy. |
+| [phase0-baseline.md](phase0-baseline.md) | Phase 0 safety rails: the negative-aliasing guard suite, the reusable census + `twk ir --census` flag, and the fixture gate vs wide reference. Both rails are latent now and gain signal at Phase 5. |
 | [design-rationale.md](design-rationale.md) | Why static + annotation-free + no-runtime-RC: the Wasm-GC-vs-refcount reason we can't copy Koka/Roc/Lean, the annotation-free/zero-overhead/coverage tradeoff triangle, and what immutable value semantics buys (may-alias-and-write → ownership+liveness). |
 | [worked-examples.md](worked-examples.md) | Real boot ANF dumps (Cases A/B/C/V/T), the op→ownership-event table, and the stage0 census baseline. The design anchor every rule is validated against. |
 | [fact-lattice.md](fact-lattice.md) | Semantic core: the ownership lattice, per-`AnfOp` transfer function, the `AInit` move/alias hinge, and control-flow merges. |
