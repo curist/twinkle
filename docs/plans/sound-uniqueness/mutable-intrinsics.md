@@ -146,7 +146,11 @@ value may `begin` without copying; an unproven value stays on the persistent pat
 ## Relationship to existing boot mutable/in-place work
 
 The stance is **own the decisions, reuse the mechanisms** — a layered split, not
-coexistence-as-peers and not a migration rewrite.
+coexistence-as-peers and not a migration rewrite. Existing hooks are not
+competitors as lowering mechanisms; they become competitors only if they retain or
+regain an independent legality decision path. The plan forbids that split-brain
+shape: all mutability decisions come from the new ownership/CFG proof layer, and
+the old hooks remain implementation targets for decisions already proven sound.
 
 ### Current-branch state (why this is the right split)
 

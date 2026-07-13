@@ -62,6 +62,15 @@ Existing implementation pieces still matter as historical scaffolding:
 The new work should not revive the old recognizer-heavy pass wholesale. It
 should preserve what was learned, but rebuild the proof model first.
 
+Concretely, this project is complementary to ANF, Wasm codegen, runtime helpers,
+persistent PVec/HAMT representations, existing builder primitives, and
+`ARecordUpdate.in_place` as a codegen slot. It intentionally replaces any
+independent in-place decision path: old uniqueness/liveness/escape/builder-region
+passes, recognizer-heavy rewrites, or future ad hoc passes must not independently
+decide mutability. The risk to avoid is split-brain mutability decisions;
+ownership legality should come from the new CFG/proof layer, while existing hooks
+remain lowering mechanisms.
+
 ## Design principles
 
 ### Immutable surface, private mutation
