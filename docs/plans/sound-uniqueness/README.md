@@ -43,16 +43,18 @@ here — so the two orderings are kept from drifting apart by hand.
 
 ### Phase 0 — Baseline and safety rails *(architecture: Precondition)*
 
-- [ ] **Define correctness guard programs.** A behavioral negative-aliasing suite
-  (`uniqueness_guard_suite.tw`): one test per required negative (slice/concat/view
-  sharing, record fields, variants, nested collections, closure capture,
-  task/channel publication, globals, unknown calls, Cell, `try`), each asserting the
-  observable persistent result and cross-referenced to its worked-example case +
-  fact-lattice rule, plus the Case B/V positive anchors. Details:
+- [x] **Define correctness guard programs.** Done 2026-07-13: a behavioral
+  negative-aliasing suite (`uniqueness_guard_suite.tw`): one test per required
+  negative (slice/concat/view sharing, record fields, variants, dict values,
+  nested collections, closure capture, task/channel publication, module-global
+  publication, retaining callee, Cell, `try`), each asserting the observable
+  persistent result and cross-referenced to its worked-example case + fact-lattice
+  rule, plus the Case B/V positive anchors. Details:
   [phase0-baseline.md](phase0-baseline.md).
-- [ ] **Define inspection workflow.** The first debug surface is a `twk ir
-  --census` flag (population table of candidate op-families + in-place counts,
-  `--sites` for per-site detail); the ownership-facts / CFG view is Phase 1. Details:
+- [x] **Define inspection workflow.** Done 2026-07-13: the first debug surface is a
+  `twk ir --census` flag (population table of candidate op-families + in-place
+  counts, `--sites` for per-site detail); the ownership-facts / CFG view is Phase 1.
+  Details:
   [phase0-baseline.md](phase0-baseline.md), [cfg-ownership-ir.md](cfg-ownership-ir.md).
 - [x] **Reconcile the COW census ceiling.** Done 2026-07-12: re-baselined
   `tests/cow_analysis.rs` 1696 → 2000 (boot source growth, not a regression).
@@ -60,14 +62,15 @@ here — so the two orderings are kept from drifting apart by hand.
   and that it measures **stage0**, not the new boot analysis — so it's a reference
   distribution, not this project's regression gate. Details:
   [worked-examples.md](worked-examples.md).
-- [ ] **Stand up a boot-side ownership census harness.** A deterministic
-  in-place/COW counter over the boot pipeline's optimized ANF (`artifacts.opt`),
-  shared as a reusable `census.tw` function behind the `twk ir --census` flag and
-  an asserted fixture gate (`uniqueness_census_suite.tw`), with `boot/main.tw` as a
-  loose wide reference. Buildable now: on this branch it reads the current
-  **all-COW floor** (the old passes were removed), which *is* the zero baseline. It
-  becomes the discriminating regression gate as Phase 5 codegen starts converting
-  sites. Distinct from `tests/cow_analysis.rs`, which measures stage0. Details:
+- [x] **Stand up a boot-side ownership census harness.** Done 2026-07-13: a
+  deterministic candidate-op/in-place counter over the boot pipeline's optimized
+  ANF (`artifacts.opt`), shared as a reusable `census.tw` function (detection rides
+  `OptimizerSemantics`) behind the `twk ir --census` flag and an asserted fixture
+  gate (`uniqueness_census_suite.tw`), with `boot/main.tw` as a loose wide
+  reference. On this branch it reads the current **all-COW floor** (the old passes
+  were removed), which *is* the zero baseline. It becomes the discriminating
+  regression gate as Phase 5 codegen starts converting sites. Distinct from
+  `tests/cow_analysis.rs`, which measures stage0. Details:
   [phase0-baseline.md](phase0-baseline.md).
 
 ### Phase 1 — CFG ownership view, no codegen changes *(architecture: 1A)*

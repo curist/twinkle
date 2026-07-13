@@ -148,9 +148,12 @@ regression gate this project judges itself against.
 - No golden ANF snapshots — the worked-examples doc already notes FnIDs drift, so
   snapshots would churn without adding soundness signal.
 
-## Open questions
+## Resolved during implementation
 
-- The exact asserted per-family counts for the fixture corpus are fixed once the
-  census function is built and run against those fixtures.
-- Whether the wide `boot/main.tw` census should carry a coarse floor assertion
-  (regression-catching without exact matching) or stay purely informational.
+- The asserted gate pins the exact per-family counts the current lowering produces
+  for each inline fixture (record/dict/vector shapes + Cases B/V); those counts
+  live in `uniqueness_census_suite.tw` and are reconciled against
+  `twk ir <fixture> --anf` whenever the lowering shifts them.
+- The wide `boot/main.tw` census stays **informational** (no CI assertion) — the
+  inline gate carries the deterministic regression signal. (The current wide read
+  is all-COW: candidates across every family, zero in-place.)
