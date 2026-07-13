@@ -99,10 +99,18 @@ here — so the two orderings are kept from drifting apart by hand.
   [fact-lattice.md](fact-lattice.md), [summary-specialization.md](summary-specialization.md),
   [sound-analysis.md](sound-analysis.md).
 - [ ] **Implement the first ownership domain.** Track only `Unique`, `Shared`, and
-  `Unknown` as ownership facts, populating the entry/exit fact maps the Phase 1
-  structural view reserved and surfacing them in the `twk ir` CFG output. Keep
-  binding validity, last-use, and liveness as separate CFG facts; do not model
-  `Moved` as an ownership lattice element.
+  `Unknown` as ownership facts, populating the empty entry/exit fact maps the
+  Phase 1 structural view reserved and surfacing them in the `twk ir` CFG output.
+  Keep ownership facts separate from block parameters, keep binding validity,
+  last-use, and liveness as separate CFG facts, and do not model `Moved` as an
+  ownership lattice element.
+  Details: [fact-lattice.md](fact-lattice.md), [cfg-ownership-ir.md](cfg-ownership-ir.md).
+- [ ] **Populate per-predecessor join and back-edge fact transfers.** Interpret
+  the Phase 1 structural join params and predecessor edges: for partial branch
+  rebinds, distinguish arms that rebound a carried `LocalId` from arms that
+  forward the incoming value; for loop back-edges, distinguish preserved carried
+  locals from updated carried locals. Phase 1 edge args are only arity
+  placeholders — Phase 2 is where forwarding/rebinding semantics become facts.
   Details: [fact-lattice.md](fact-lattice.md), [cfg-ownership-ir.md](cfg-ownership-ir.md).
 - [ ] **Model conservative publication and aliasing.** Known aliases and
   publication sinks demote to `Shared`; missing proof stays `Unknown`. Keep

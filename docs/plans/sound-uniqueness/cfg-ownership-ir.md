@@ -168,23 +168,26 @@ that value happens to be dead after the join (a harmless extra parameter). Pruni
 such dead merges is an optional refinement for the Phase 2 liveness facts, not the
 structural slice — keeping the structural rule purely syntactic.
 
-### Join-argument construction (partial rebinds)
+### Join shape and partial rebinds
 
 A branch may rebind a target in only some arms. In `if c { x = 10 } else { }`
 followed by a use of `x`, the `then` arm has `assign L_x = 10` and the `else` arm
-has none, yet `x` is live at the join (verified in ANF). The join block therefore
-needs a parameter for `x` with a well-defined argument on *every* incoming edge:
+has none, yet `x` is live at the join (verified in ANF). The structural view
+therefore gives the join block a parameter for `x`:
 
 - the **block parameter set** at a join is the *union* of `AAssign` targets across
   all arms, ordered deterministically (by target `LocalId`), so the parameter list
   is stable regardless of which arm touched which target;
-- on each predecessor edge, the argument for a join parameter is that arm's rebound
-  value if the arm rebinds the target, otherwise the **value flowing into the
-  branch** (the pre-branch version of that local).
+- the predecessor edges are preserved in deterministic order, so Phase 2 facts can
+  attach a per-predecessor fact transfer for each join parameter.
 
-This is ordinary SSA φ-argument construction: an arm that does not rebind a merged
-target forwards the incoming value unchanged. The same rule covers loop back-edges
-(a target not reassigned on an iteration forwards its current value).
+Phase 1 does **not** perform full SSA renaming. Optimized ANF represents rebinding
+as `AAssign` to the same `LocalId`, so a rebinding arm and a forwarding arm both
+name the same local in the structural view. The forward-vs-rebound distinction is
+therefore a Phase 2 fact-transfer concern, not a distinct Phase 1 value id. If the
+printer includes edge arguments in Phase 1, they are only target-parameter arity
+placeholders and must satisfy `edge.args.len() == target.params.len()`; they do
+not yet encode different SSA versions.
 
 Examples:
 
@@ -192,17 +195,17 @@ Examples:
 block loop_header(flags_value):
   facts.in[flags_value] = Unique
   binding.valid[flags_value] = true
-  ...
-  br loop_header(flags_after_update)
+  body transfers update per-edge facts
+  br loop_header(flags_value)       // Phase 1 placeholder; Phase 2 facts say what changed
 
 block join(env_value):
   facts.in[env_value] = Unique
-  ...
+  join transfers merge predecessor facts
 ```
 
 The block parameter names the carried value. The fact map records what ownership
 state is known for that value at the block boundary. Printed IR should make both
-visible.
+visible once Phase 2 populates facts.
 
 ## Required data model
 
@@ -388,6 +391,11 @@ Full output (across slices) should show:
   branch-arm rebinds, since a rebind implies a pre-existing local whose merged
   value depends on control flow), plus `AIf`/`AMatch`/`ALoop` result bindings and
   `Break` payloads. See "SSA-style block parameters" above.
+- **Join arguments in Phase 1:** the structural view preserves join params and
+  predecessor edges, but it does not distinguish rebound-vs-forwarded versions of
+  a non-SSA `LocalId`. Any printed edge args are arity placeholders only;
+  per-predecessor forwarding/rebinding semantics are Phase 2 fact transfers. See
+  "Join shape and partial rebinds" above.
 - **`defer`:** does not survive to CFG construction; the view builds on the
   defer-free `artifacts.opt` and asserts it. See "The CFG input is defer-free".
 - **Phase boundary:** the first slice is the structural view only; populated
