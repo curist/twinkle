@@ -47,7 +47,12 @@ type BuildCtx = .{ next_block_id: Int, blocks: Vector<CfgBlock> }
 
 type NewBlockOut = .{ ctx: BuildCtx, id: BlockId }
 
-type BuildExprOut = .{ ctx: BuildCtx, current: BlockId }
+// `tail_atom` is `.Some(v)` when `current` falls through to its enclosing
+// context with tail value `v` and is left UNTERMINATED — the caller decides
+// whether that fall-through becomes a function `Return` (top level) or a
+// `Branch` into a join block (inside a branch/match/loop arm). It is `.None`
+// when `current` was already terminated by an explicit Return/Break/Continue.
+type BuildExprOut = .{ ctx: BuildCtx, current: BlockId, tail_atom: Atom? }
 
 fn bid(id: Int) BlockId {
   BlockId.{ id }
@@ -114,6 +119,87 @@ fn sorted_union(a: Vector<LocalId>, b: Vector<LocalId>) Vector<LocalId> {
     out = sorted_insert_local(out, local)
   }
   out
+}
+
+fn atom_local(atom: Atom) LocalId? {
+  case atom {
+    .ALocal(local) => .Some(local),
+    _ => .None,
+  }
+}
+
+fn collect_assign_targets(expr: AnfExpr) Vector<LocalId> {
+  case expr {
+    .Let(_, op, body) => {
+      found: Vector<LocalId> = case op {
+        .AAssign(local, _) => [local],
+        .AIf(_, then_e, else_e) => sorted_union(
+          collect_assign_targets(then_e),
+          collect_assign_targets(else_e),
+        ),
+        .AMatch(_, arms) => {
+          acc: Vector<LocalId> = []
+          for arm in arms {
+            acc = sorted_union(acc, collect_assign_targets(arm.body))
+          }
+          acc
+        },
+        .ALoop(loop_body) => collect_assign_targets(loop_body),
+        .ADefer(_) => error("cfg: ADefer reached CFG builder; expected optimized defer-free ANF"),
+        _ => [],
+      }
+      sorted_union(found, collect_assign_targets(body))
+    },
+    _ => [],
+  }
+}
+
+fn collect_break_payloads(expr: AnfExpr) Vector<LocalId> {
+  case expr {
+    .Let(_, op, body) => {
+      found: Vector<LocalId> = case op {
+        .AIf(_, then_e, else_e) => sorted_union(
+          collect_break_payloads(then_e),
+          collect_break_payloads(else_e),
+        ),
+        .AMatch(_, arms) => {
+          acc: Vector<LocalId> = []
+          for arm in arms {
+            acc = sorted_union(acc, collect_break_payloads(arm.body))
+          }
+          acc
+        },
+        .ALoop(loop_body) => collect_break_payloads(loop_body),
+        .ADefer(_) => error("cfg: ADefer reached CFG builder; expected optimized defer-free ANF"),
+        _ => [],
+      }
+      sorted_union(found, collect_break_payloads(body))
+    },
+    .Break(.Some(atom)) => case atom_local(atom) {
+      .Some(local) => [local],
+      .None => [],
+    },
+    _ => [],
+  }
+}
+
+fn expr_rebound_targets(expr: AnfExpr) Vector<LocalId> {
+  collect_assign_targets(expr)
+}
+
+fn branch_join_params(result_local: LocalId, left: AnfExpr, right: AnfExpr) Vector<LocalId> {
+  sorted_insert_local(
+    sorted_union(expr_rebound_targets(left), expr_rebound_targets(right)),
+    result_local,
+  )
+}
+
+fn edge_args_for(params: Vector<LocalId>) Vector<LocalId> {
+  // Phase 1 does not rename values into full SSA. Edge args are target-param
+  // placeholders so the printed graph has the same arity shape as later fact
+  // maps. The forward-vs-rebound distinction for partial rebinds is represented
+  // by Phase 2 facts, not by distinct Phase 1 local ids.
+  params
 }
 
 fn empty_block(id: BlockId, name: String, params: Vector<LocalId>) CfgBlock {
@@ -242,31 +328,89 @@ fn op_text(op: AnfOp) String {
   }
 }
 
+// Wire an arm's exit into a join block. A fall-through arm (`tail_atom` set)
+// branches into the join with placeholder edge args; an arm already terminated
+// by Return/Break/Continue keeps its terminator and is left untouched.
+fn branch_to_join(ctx: BuildCtx, arm: BuildExprOut, join: BlockId, params: Vector<LocalId>) BuildCtx {
+  case arm.tail_atom {
+    .Some(_) => finish_block(
+      ctx,
+      arm.current,
+      .Branch(join, edge_args_for(params)),
+      [CfgEdge.{ target: join, args: edge_args_for(params) }],
+    ),
+    .None => ctx,
+  }
+}
+
+fn build_if(
+  ctx: BuildCtx,
+  current: BlockId,
+  result_local: LocalId,
+  cond_atom: Atom,
+  then_e: AnfExpr,
+  else_e: AnfExpr,
+  body: AnfExpr,
+) BuildExprOut {
+  params := branch_join_params(result_local, then_e, else_e)
+  then_nb := new_block(ctx, "if.then", [])
+  ctx = then_nb.ctx
+  else_nb := new_block(ctx, "if.else", [])
+  ctx = else_nb.ctx
+  join_nb := new_block(ctx, "if.join", params)
+  ctx = join_nb.ctx
+
+  ctx = finish_block(
+    ctx,
+    current,
+    .CondBranch(cond_atom, then_nb.id, [], else_nb.id, []),
+    [CfgEdge.{ target: then_nb.id, args: [] }, CfgEdge.{ target: else_nb.id, args: [] }],
+  )
+
+  then_out := build_expr(ctx, then_nb.id, then_e)
+  ctx = branch_to_join(then_out.ctx, then_out, join_nb.id, params)
+
+  else_out := build_expr(ctx, else_nb.id, else_e)
+  ctx = branch_to_join(else_out.ctx, else_out, join_nb.id, params)
+
+  build_expr(ctx, join_nb.id, body)
+}
+
 fn build_expr(ctx: BuildCtx, current: BlockId, expr: AnfExpr) BuildExprOut {
   case expr {
+    .Let(local, .AIf(cond_atom, then_e, else_e), body) => build_if(
+      ctx,
+      current,
+      local,
+      cond_atom,
+      then_e,
+      else_e,
+      body,
+    ),
     .Let(local, op, body) => {
       ctx = push_instruction(ctx, current, CfgInstruction.{ anf_local: local, text: op_text(op) })
       build_expr(ctx, current, body)
     },
     .Atom(atom) => {
-      ctx = finish_block(ctx, current, .Return(.Some(atom)), [])
-      BuildExprOut.{ ctx, current }
+      // Tail value: leave the block unterminated and report the fall-through so
+      // the caller decides whether it becomes a function Return or a join branch.
+      BuildExprOut.{ ctx, current, tail_atom: .Some(atom) }
     },
     .Return(atom_opt) => {
       ctx = finish_block(ctx, current, .Return(atom_opt), [])
-      BuildExprOut.{ ctx, current }
+      BuildExprOut.{ ctx, current, tail_atom: .None }
     },
     .Break(.Some(atom)) => {
       ctx = finish_block(ctx, current, .ValueBreak(atom), [])
-      BuildExprOut.{ ctx, current }
+      BuildExprOut.{ ctx, current, tail_atom: .None }
     },
     .Break(.None) => {
       ctx = finish_block(ctx, current, .VoidBreak, [])
-      BuildExprOut.{ ctx, current }
+      BuildExprOut.{ ctx, current, tail_atom: .None }
     },
     .Continue => {
       ctx = finish_block(ctx, current, .ContinueIfPresent, [])
-      BuildExprOut.{ ctx, current }
+      BuildExprOut.{ ctx, current, tail_atom: .None }
     },
   }
 }
@@ -274,7 +418,13 @@ fn build_expr(ctx: BuildCtx, current: BlockId, expr: AnfExpr) BuildExprOut {
 fn build_function(func: AnfFunctionDef) CfgFunction {
   nb := new_block(new_ctx(), "entry", [])
   built := build_expr(nb.ctx, nb.id, func.body)
-  CfgFunction.{ func_id: func.func_id.id, name: func.name, blocks: built.ctx.blocks }
+
+  // A fall-through tail at the top level is the function's implicit return.
+  ctx := case built.tail_atom {
+    .Some(atom) => finish_block(built.ctx, built.current, .Return(.Some(atom)), []),
+    .None => built.ctx,
+  }
+  CfgFunction.{ func_id: func.func_id.id, name: func.name, blocks: ctx.blocks }
 }
 
 pub fn build_view(m: AnfModule, _builtins: BuiltinRegistry) CfgView {

@@ -40,4 +40,45 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "if expression creates then else and join blocks",
+      fn() {
+        f := try function(
+          "fn choose(b: Bool, a: Int, c: Int) Int {\n  x := 0\n  if b {\n    x = a\n  } else {\n    x = c\n  }\n  x\n}\n",
+          "choose",
+        )
+        try assert.equal(cfg.count_terminator(f, "condbranch"), 1)
+
+        // Both arms must fall through and branch into the join (not return),
+        // otherwise the join block is orphaned.
+        try assert.equal(cfg.count_terminator(f, "branch"), 2)
+        try assert.is_true(cfg.max_param_count(f) >= 1)
+        try assert.equal(cfg.empty_fact_blocks(f), cfg.count_blocks(f))
+        try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "partial branch rebind has join params and valid edge arity",
+      fn() {
+        out := try rendered(
+          "fn partial(b: Bool) Int {\n  x := 0\n  if b {\n    x = 1\n  } else {\n  }\n  x\n}\n",
+        )
+        try assert.is_true(out.contains("terminator: condbranch"))
+        try assert.is_true(out.contains("join"))
+        try assert.is_true(out.contains("succs=[B"))
+        try assert.is_true(out.contains("preds=[B"))
+        try assert.is_true(out.contains("facts.in={} facts.out={}"))
+        f := try function(
+          "fn partial(b: Bool) Int {\n  x := 0\n  if b {\n    x = 1\n  } else {\n  }\n  x\n}\n",
+          "partial",
+        )
+        try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+
+        // The empty else arm still falls through to the join, so both arms
+        // branch into it and the join is reachable.
+        try assert.equal(cfg.count_terminator(f, "branch"), 2)
+        .Ok({})
+      },
+    )
 }
