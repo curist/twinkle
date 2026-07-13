@@ -81,4 +81,22 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "match creates arm blocks and a join with carried params",
+      fn() {
+        f := try function(
+          "fn pick(o: Int?, seed: Int) Int {\n  acc := seed\n  case o {\n    .Some(v) => {\n      acc = v\n    },\n    .None => {\n      acc = seed + 1\n    },\n  }\n  acc\n}\n",
+          "pick",
+        )
+        try assert.equal(cfg.count_terminator(f, "match"), 1)
+
+        // Both arms must fall through and branch into the join (not return),
+        // otherwise the join block is orphaned.
+        try assert.equal(cfg.count_terminator(f, "branch"), 2)
+        try assert.is_true(cfg.max_param_count(f) >= 1)
+        try assert.equal(cfg.empty_fact_blocks(f), cfg.count_blocks(f))
+        try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+        .Ok({})
+      },
+    )
 }
