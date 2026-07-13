@@ -238,7 +238,7 @@ fn new_ctx() BuildCtx {
 fn new_block(ctx: BuildCtx, name: String, params: Vector<LocalId>) NewBlockOut {
   id := bid(ctx.next_block_id)
   ctx.next_block_id = ctx.next_block_id + 1
-  ctx.blocks = .append(empty_block(id, name, params))
+  ctx.blocks = .append(id.empty_block(name, params))
   NewBlockOut.{ ctx, id }
 }
 
@@ -264,26 +264,26 @@ fn get_block(ctx: BuildCtx, id: BlockId) CfgBlock {
 }
 
 fn push_instruction(ctx: BuildCtx, id: BlockId, inst: CfgInstruction) BuildCtx {
-  block := get_block(ctx, id)
+  block := ctx.get_block(id)
   block.instructions = .append(inst)
-  replace_block(ctx, block)
+  ctx.replace_block(block)
 }
 
 fn add_pred(ctx: BuildCtx, target: BlockId, from: BlockId, args: Vector<LocalId>) BuildCtx {
   // In `preds`, a CfgEdge.target holds the predecessor block id (the edge
   // source), mirroring the forward edge stored in that predecessor's `succs`.
-  block := get_block(ctx, target)
+  block := ctx.get_block(target)
   block.preds = .append(CfgEdge.{ target: from, args })
-  replace_block(ctx, block)
+  ctx.replace_block(block)
 }
 
 fn finish_block(ctx: BuildCtx, id: BlockId, term: Terminator, succs: Vector<CfgEdge>) BuildCtx {
-  block := get_block(ctx, id)
+  block := ctx.get_block(id)
   block.terminator = .Some(term)
   block.succs = succs
-  ctx = replace_block(ctx, block)
+  ctx = .replace_block(block)
   for edge in succs {
-    ctx = add_pred(ctx, edge.target, id, edge.args)
+    ctx = .add_pred(edge.target, id, edge.args)
   }
   ctx
 }
@@ -348,8 +348,7 @@ fn op_text(op: AnfOp) String {
 // by Return/Break/Continue keeps its terminator and is left untouched.
 fn branch_to_join(ctx: BuildCtx, arm: BuildExprOut, join: BlockId, params: Vector<LocalId>) BuildCtx {
   case arm.tail_atom {
-    .Some(_) => finish_block(
-      ctx,
+    .Some(_) => ctx.finish_block(
       arm.current,
       .Branch(join, edge_args_for(params)),
       [CfgEdge.{ target: join, args: edge_args_for(params) }],
@@ -371,22 +370,22 @@ fn build_match(
   edge_list: Vector<CfgEdge> = []
 
   for _, i in arms {
-    nb := new_block(ctx, "match.arm.${i}", [])
+    nb := ctx.new_block("match.arm.${i}", [])
     ctx = nb.ctx
     arm_ids = .append(nb.id)
     edge_list = .append(CfgEdge.{ target: nb.id, args: [] })
   }
 
-  join_nb := new_block(ctx, "match.join", params)
+  join_nb := ctx.new_block("match.join", params)
   ctx = join_nb.ctx
-  ctx = finish_block(ctx, current, .Match(scrutinee, edge_list), edge_list)
+  ctx = .finish_block(current, .Match(scrutinee, edge_list), edge_list)
 
   for arm, i in arms {
-    arm_out := build_expr(ctx, arm_ids[i], arm.body)
-    ctx = branch_to_join(arm_out.ctx, arm_out, join_nb.id, params)
+    arm_out := ctx.build_expr(arm_ids[i], arm.body)
+    ctx = arm_out.ctx.branch_to_join(arm_out, join_nb.id, params)
   }
 
-  build_expr(ctx, join_nb.id, body)
+  ctx.build_expr(join_nb.id, body)
 }
 
 fn build_if(
@@ -399,27 +398,26 @@ fn build_if(
   body: AnfExpr,
 ) BuildExprOut {
   params := branch_join_params(result_local, then_e, else_e)
-  then_nb := new_block(ctx, "if.then", [])
+  then_nb := ctx.new_block("if.then", [])
   ctx = then_nb.ctx
-  else_nb := new_block(ctx, "if.else", [])
+  else_nb := ctx.new_block("if.else", [])
   ctx = else_nb.ctx
-  join_nb := new_block(ctx, "if.join", params)
+  join_nb := ctx.new_block("if.join", params)
   ctx = join_nb.ctx
 
-  ctx = finish_block(
-    ctx,
+  ctx = .finish_block(
     current,
     .CondBranch(cond_atom, then_nb.id, [], else_nb.id, []),
     [CfgEdge.{ target: then_nb.id, args: [] }, CfgEdge.{ target: else_nb.id, args: [] }],
   )
 
-  then_out := build_expr(ctx, then_nb.id, then_e)
-  ctx = branch_to_join(then_out.ctx, then_out, join_nb.id, params)
+  then_out := ctx.build_expr(then_nb.id, then_e)
+  ctx = then_out.ctx.branch_to_join(then_out, join_nb.id, params)
 
-  else_out := build_expr(ctx, else_nb.id, else_e)
-  ctx = branch_to_join(else_out.ctx, else_out, join_nb.id, params)
+  else_out := ctx.build_expr(else_nb.id, else_e)
+  ctx = else_out.ctx.branch_to_join(else_out, join_nb.id, params)
 
-  build_expr(ctx, join_nb.id, body)
+  ctx.build_expr(join_nb.id, body)
 }
 
 // Wire the exits of a just-built loop body. Every block created during the body
@@ -444,28 +442,24 @@ fn wire_loop_body(
 
   back_args := edge_args_for(params)
   for id in targets {
-    block := get_block(ctx, id)
+    block := ctx.get_block(id)
     case block.terminator {
-      .Some(.VoidBreak) => ctx = finish_block(
-        ctx,
+      .Some(.VoidBreak) => ctx = .finish_block(
         id,
         .VoidBreak,
         [CfgEdge.{ target: exit, args: back_args }],
       ),
-      .Some(.ValueBreak(a)) => ctx = finish_block(
-        ctx,
+      .Some(.ValueBreak(a)) => ctx = .finish_block(
         id,
         .ValueBreak(a),
         [CfgEdge.{ target: exit, args: back_args }],
       ),
-      .Some(.ContinueIfPresent) => ctx = finish_block(
-        ctx,
+      .Some(.ContinueIfPresent) => ctx = .finish_block(
         id,
         .LoopBackEdge(header, back_args),
         [CfgEdge.{ target: header, args: back_args }],
       ),
-      .None => ctx = finish_block(
-        ctx,
+      .None => ctx = .finish_block(
         id,
         .LoopBackEdge(header, back_args),
         [CfgEdge.{ target: header, args: back_args }],
@@ -484,37 +478,34 @@ fn build_loop(
   body: AnfExpr,
 ) BuildExprOut {
   params := loop_params(result_local, loop_body)
-  header_nb := new_block(ctx, "loop.header", params)
+  header_nb := ctx.new_block("loop.header", params)
   ctx = header_nb.ctx
-  exit_nb := new_block(ctx, "loop.exit", params)
+  exit_nb := ctx.new_block("loop.exit", params)
   ctx = exit_nb.ctx
-  body_nb := new_block(ctx, "loop.body", [])
+  body_nb := ctx.new_block("loop.body", [])
   ctx = body_nb.ctx
 
   entry_args := edge_args_for(params)
-  ctx = finish_block(
-    ctx,
+  ctx = .finish_block(
     current,
     .Branch(header_nb.id, entry_args),
     [CfgEdge.{ target: header_nb.id, args: entry_args }],
   )
-  ctx = finish_block(
-    ctx,
+  ctx = .finish_block(
     header_nb.id,
     .Branch(body_nb.id, []),
     [CfgEdge.{ target: body_nb.id, args: [] }],
   )
 
-  body_out := build_expr(ctx, body_nb.id, loop_body)
-  ctx = wire_loop_body(body_out.ctx, body_nb.id.id, header_nb.id, exit_nb.id, params)
+  body_out := ctx.build_expr(body_nb.id, loop_body)
+  ctx = body_out.ctx.wire_loop_body(body_nb.id.id, header_nb.id, exit_nb.id, params)
 
-  build_expr(ctx, exit_nb.id, body)
+  ctx.build_expr(exit_nb.id, body)
 }
 
 fn build_expr(ctx: BuildCtx, current: BlockId, expr: AnfExpr) BuildExprOut {
   case expr {
-    .Let(local, .AIf(cond_atom, then_e, else_e), body) => build_if(
-      ctx,
+    .Let(local, .AIf(cond_atom, then_e, else_e), body) => ctx.build_if(
       current,
       local,
       cond_atom,
@@ -522,18 +513,17 @@ fn build_expr(ctx: BuildCtx, current: BlockId, expr: AnfExpr) BuildExprOut {
       else_e,
       body,
     ),
-    .Let(local, .AMatch(scrutinee, arms), body) => build_match(
-      ctx,
+    .Let(local, .AMatch(scrutinee, arms), body) => ctx.build_match(
       current,
       local,
       scrutinee,
       arms,
       body,
     ),
-    .Let(local, .ALoop(loop_body), body) => build_loop(ctx, current, local, loop_body, body),
+    .Let(local, .ALoop(loop_body), body) => ctx.build_loop(current, local, loop_body, body),
     .Let(local, op, body) => {
-      ctx = push_instruction(ctx, current, CfgInstruction.{ anf_local: local, text: op_text(op) })
-      build_expr(ctx, current, body)
+      ctx = .push_instruction(current, CfgInstruction.{ anf_local: local, text: op_text(op) })
+      ctx.build_expr(current, body)
     },
     .Atom(atom) => {
       // Tail value: leave the block unterminated and report the fall-through so
@@ -541,31 +531,31 @@ fn build_expr(ctx: BuildCtx, current: BlockId, expr: AnfExpr) BuildExprOut {
       BuildExprOut.{ ctx, current, tail_atom: .Some(atom) }
     },
     .Return(atom_opt) => {
-      ctx = finish_block(ctx, current, .Return(atom_opt), [])
+      ctx = .finish_block(current, .Return(atom_opt), [])
       BuildExprOut.{ ctx, current, tail_atom: .None }
     },
     .Break(.Some(atom)) => {
-      ctx = finish_block(ctx, current, .ValueBreak(atom), [])
+      ctx = .finish_block(current, .ValueBreak(atom), [])
       BuildExprOut.{ ctx, current, tail_atom: .None }
     },
     .Break(.None) => {
-      ctx = finish_block(ctx, current, .VoidBreak, [])
+      ctx = .finish_block(current, .VoidBreak, [])
       BuildExprOut.{ ctx, current, tail_atom: .None }
     },
     .Continue => {
-      ctx = finish_block(ctx, current, .ContinueIfPresent, [])
+      ctx = .finish_block(current, .ContinueIfPresent, [])
       BuildExprOut.{ ctx, current, tail_atom: .None }
     },
   }
 }
 
 fn build_function(func: AnfFunctionDef) CfgFunction {
-  nb := new_block(new_ctx(), "entry", [])
-  built := build_expr(nb.ctx, nb.id, func.body)
+  nb := new_ctx().new_block("entry", [])
+  built := nb.ctx.build_expr(nb.id, func.body)
 
   // A fall-through tail at the top level is the function's implicit return.
   ctx := case built.tail_atom {
-    .Some(atom) => finish_block(built.ctx, built.current, .Return(.Some(atom)), []),
+    .Some(atom) => built.ctx.finish_block(built.current, .Return(.Some(atom)), []),
     .None => built.ctx,
   }
   CfgFunction.{ func_id: func.func_id.id, name: func.name, blocks: ctx.blocks }
@@ -599,7 +589,7 @@ pub fn count_terminator(func: CfgFunction, name: String) Int {
   n := 0
   for block in func.blocks {
     case block.terminator {
-      .Some(term) => if terminator_name(term) == name {
+      .Some(term) => if term.terminator_name() == name {
         n = n + 1
       },
       .None => {},
@@ -639,7 +629,7 @@ fn target_param_count(func: CfgFunction, id: BlockId) Int {
 }
 
 fn edge_arity_mismatch(func: CfgFunction, target: BlockId, args: Vector<LocalId>) Bool {
-  args.len() != target_param_count(func, target)
+  args.len() != func.target_param_count(target)
 }
 
 pub fn count_edge_arity_mismatches(func: CfgFunction) Int {
@@ -649,7 +639,7 @@ pub fn count_edge_arity_mismatches(func: CfgFunction) Int {
   n := 0
   for block in func.blocks {
     for edge in block.succs {
-      if edge_arity_mismatch(func, edge.target, edge.args) {
+      if func.edge_arity_mismatch(edge.target, edge.args) {
         n = n + 1
       }
     }
@@ -680,7 +670,7 @@ fn terminator_text(term: Terminator) String {
     )})",
     .Match(scrutinee, edges) => {
       rendered := collect edge in edges {
-        edge_text(edge)
+        edge.edge_text()
       }
       "match ${atom_text(scrutinee)} ${rendered.join(", ")}"
     },
@@ -696,10 +686,10 @@ fn terminator_text(term: Terminator) String {
 fn render_block(lines: Vector<String>, block: CfgBlock) Vector<String> {
   lines = .append("  block B${block.id.id} ${block.name}(${local_list_text(block.params)})")
   pred_text := collect edge in block.preds {
-    edge_text(edge)
+    edge.edge_text()
   }
   succ_text := collect edge in block.succs {
-    edge_text(edge)
+    edge.edge_text()
   }
   lines = .append("    preds=[${pred_text.join(", ")}] succs=[${succ_text.join(", ")}]")
   lines = .append("    facts.in={} facts.out={}")
@@ -707,7 +697,7 @@ fn render_block(lines: Vector<String>, block: CfgBlock) Vector<String> {
     lines = .append("    anf L${inst.anf_local.id}: ${inst.text}")
   }
   case block.terminator {
-    .Some(term) => lines = .append("    terminator: ${terminator_text(term)}"),
+    .Some(term) => lines = .append("    terminator: ${term.terminator_text()}"),
     .None => lines = .append("    terminator: <missing>"),
   }
   lines
