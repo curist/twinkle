@@ -8,7 +8,8 @@
 use compiler.anf.{AnfOp, Atom}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.cfg.{CfgBlock, CfgFunction, CfgView, Terminator}
-use compiler.opt.semantics.{OptimizerSemantics}
+use compiler.core_ir.{FuncId}
+use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info}
 
 pub type Ownership = { Unique, Shared, Unknown }
 
@@ -303,6 +304,269 @@ fn compute_liveness(blocks: Vector<CfgBlock>) Dict<Int, BlockLive> {
   live
 }
 
+// ── Forward ownership transfer ──────────────────────────────────────
+pub fn join_own(a: Ownership, b: Ownership) Ownership {
+  case a {
+    .Unknown => .Unknown,
+    .Shared => case b {
+      .Unknown => .Unknown,
+      _ => .Shared,
+    },
+    .Unique => b,
+  }
+}
+
+// ownership of an atom against a working map: locals resolve; non-locals Unknown.
+fn fact_of(own: Dict<Int, Int>, a: Atom) Ownership {
+  case atom_local_id(a) {
+    .Some(id) => case own.get(id) {
+      .Some(tag) => own_of_tag(tag),
+      .None => .Unknown,
+    },
+    .None => .Unknown,
+  }
+}
+
+fn set_own(own: Dict<Int, Int>, id: Int, o: Ownership) Dict<Int, Int> {
+  own[id] = own_tag(o)
+  own
+}
+
+// FuncId of a direct callee atom; .None for indirect (closure) callees.
+fn callee_func_id(a: Atom) FuncId? {
+  case a {
+    .AGlobalFunc(fid) => .Some(fid),
+    _ => .None,
+  }
+}
+
+// The locals used at instruction i whose value is dead immediately after i.
+fn last_use_at(op: AnfOp, live_after_i: Vector<Int>) Vector<Int> {
+  out: Vector<Int> = []
+  for id in op_uses(op) {
+    if !live_contains_int(live_after_i, id) {
+      out = insert_sorted(out, id)
+    }
+  }
+  out
+}
+
+fn is_last_use(last: Vector<Int>, id: Int) Bool {
+  live_contains_int(last, id)
+}
+
+type ForwardState = .{ own: Dict<Int, Int>, valid: Dict<Int, Bool> }
+
+fn set_own_st(st: ForwardState, id: Int, o: Ownership) ForwardState {
+  st.own = set_own(st.own, id, o)
+  st
+}
+
+fn set_result(st: ForwardState, id: Int, o: Ownership) ForwardState {
+  set_own_st(st, id, o)
+}
+
+fn set_valid(st: ForwardState, id: Int, v: Bool) ForwardState {
+  st.valid[id] = v
+  st
+}
+
+fn publish_local(st: ForwardState, id: Int) ForwardState {
+  set_own_st(st, id, .Shared)
+}
+
+fn publish_atom(st: ForwardState, a: Atom) ForwardState {
+  case atom_local_id(a) {
+    .Some(id) => publish_local(st, id),
+    .None => st,
+  }
+}
+
+// AInit / wrap / unwrap move-vs-alias hinge.
+fn init_hinge(st: ForwardState, result: Int, a: Atom, last: Vector<Int>) ForwardState {
+  case atom_local_id(a) {
+    .Some(src) => if is_last_use(last, src) {
+      // move: result takes source ownership; source binding invalid
+      o := fact_of(st.own, a)
+      st = set_own_st(st, result, o)
+      set_valid(st, src, false)
+    } else {
+      // alias: both Shared
+      st = publish_local(st, src)
+      set_own_st(st, result, .Shared)
+    },
+    .None => set_own_st(st, result, .Unknown),
+  }
+}
+
+// Field-store hinge: same two outcomes as AInit but the stored value goes into a
+// fresh shell (no tracked field ownership in Phase 2), so on move we only
+// invalidate the source; on alias we demote it.
+fn field_store(st: ForwardState, a: Atom, last: Vector<Int>) ForwardState {
+  case atom_local_id(a) {
+    .Some(src) => if is_last_use(last, src) {
+      set_valid(st, src, false)
+    } else {
+      publish_local(st, src)
+    },
+    .None => st,
+  }
+}
+
+// Consuming-op hinge on a named base (ARecordUpdate: base is the shell).
+fn consume_base(st: ForwardState, result: Int, base: Atom, last: Vector<Int>) ForwardState {
+  case atom_local_id(base) {
+    .Some(bid) => {
+      base_own := fact_of(st.own, base)
+      case base_own {
+        .Unique => if is_last_use(last, bid) {
+          st = set_own_st(st, result, .Unique)
+          set_valid(st, bid, false)
+        } else {
+          set_own_st(st, result, .Unknown)
+        },
+        _ => set_own_st(st, result, .Unknown),
+      }
+    },
+    .None => set_own_st(st, result, .Unknown),
+  }
+}
+
+fn consume_call_base(
+  st: ForwardState,
+  result: Int,
+  cs: CallSemantics,
+  args: Vector<Atom>,
+  last: Vector<Int>,
+) ForwardState {
+  case cs.cow_base_arg {
+    .Some(k) => if k < args.len() {
+      consume_base(st, result, args[k], last)
+    } else {
+      set_own_st(st, result, .Unknown)
+    },
+    .None => set_own_st(st, result, .Unknown),
+  }
+}
+
+fn transfer_call(
+  st: ForwardState,
+  result: Int,
+  callee: Atom,
+  args: Vector<Atom>,
+  last: Vector<Int>,
+  sem: OptimizerSemantics,
+) ForwardState {
+  info := case callee_func_id(callee) {
+    .Some(fid) => call_info(sem, fid),
+    .None => .None, // indirect/closure callee: no summary
+  }
+  case info {
+    .Some(cs) => case cs.effect {
+      .Allocate => set_own_st(st, result, .Unique),
+      .Update => consume_call_base(st, result, cs, args, last),
+      .ReadOnly => set_own_st(st, result, .Unknown), // borrow: result not owned
+      .Pure => set_own_st(st, result, .Unknown),
+      .Control => set_own_st(st, result, .Unknown),
+    },
+    .None => {
+      // unknown Twinkle call, extern, or Cell op: publish every ref arg
+      for a in args {
+        st = publish_atom(st, a)
+      }
+      set_own_st(st, result, .Unknown)
+    },
+  }
+}
+
+// Apply one instruction. `last` is last_use_at(op, live_after[i]).
+fn transfer_op(
+  st: ForwardState,
+  result: Int,
+  op: AnfOp,
+  last: Vector<Int>,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) ForwardState {
+  case op {
+    .ACall(callee, args) => transfer_call(st, result, callee, args, last, sem),
+    .ARecord(_, fields) => {
+      st = set_result(st, result, .Unique)
+      for fa in fields {
+        st = field_store(st, fa.value, last)
+      }
+      st
+    },
+    .AVariant(_, _, args) => {
+      st = set_result(st, result, .Unique)
+      for a in args {
+        st = field_store(st, a, last)
+      }
+      st
+    },
+    .AArrayLit(elems) => {
+      st = set_result(st, result, .Unique)
+      for a in elems {
+        st = field_store(st, a, last)
+      }
+      st
+    },
+    .ARecordGet(_, _, _) => set_result(st, result, .Unknown), // borrow: result not owned
+    .AIndex(_, _, _, _) => set_result(st, result, .Unknown), // borrow
+    .ARecordUpdate(base, _, v, _, _) => {
+      st = consume_base(st, result, base, last)
+      field_store(st, v, last)
+    },
+    .AInit(a) => init_hinge(st, result, a, last),
+    .AAssign(local, a) => {
+      // rebind: result local's fact = fact(a); binding becomes valid again
+      o := fact_of(st.own, a)
+      st = set_own_st(st, local.id, o)
+      set_valid(st, local.id, true)
+    },
+    .AMakeClosure(_, caps) => {
+      st = set_result(st, result, .Unknown) // closure ref itself: not an optimization target
+      for c in caps {
+        st = publish_local(st, c.id)
+      }
+      st
+    },
+    .AGlobalSet(_, a) => {
+      st = publish_atom(st, a)
+      set_result(st, result, .Unknown)
+    },
+    .AWrapAnyref(a, _) => init_hinge(st, result, a, last), // representationally transparent
+    .AUnwrapAnyref(a, _) => init_hinge(st, result, a, last),
+    .ABinOp(_, _, _, _) => set_result(st, result, .Unknown), // scalar, neutral
+    .AUnOp(_, _, _) => set_result(st, result, .Unknown),
+    .AIf(_, _, _) => error("ownership: AIf reached transfer; structural op is block-lowered"),
+    .AMatch(_, _) => error("ownership: AMatch reached transfer; structural op is block-lowered"),
+    .ALoop(_) => error("ownership: ALoop reached transfer; structural op is block-lowered"),
+    .ADefer(_) => error("ownership: ADefer reached transfer; expected defer-free ANF"),
+  }
+}
+
+// Drive the transfer over a block from its entry state, then apply terminator
+// publication for the value leaving on this block's exit edge.
+fn forward_block(blk: CfgBlock, entry: ForwardState, b: BuiltinRegistry, sem: OptimizerSemantics) ForwardState {
+  scan := scan_block_backward(blk, blk.exit.live) // exit.live was filled by the liveness stage
+  st := entry
+  for inst, i in blk.instructions {
+    last := last_use_at(inst.op, scan.live_after[i])
+    st = transfer_op(st, inst.anf_local.id, inst.op, last, b, sem)
+  }
+  case blk.terminator {
+    .Some(.Return(.Some(a))) => {
+      st = publish_atom(st, a)
+    },
+    .Some(.ValueBreak(a)) => {
+      st = publish_atom(st, a)
+    },
+    _ => {},
+  }
+  st
+}
+
 // ── Driver ──────────────────────────────────────────────────────────
 pub fn analyze(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) CfgView {
   functions := collect f in view.functions {
@@ -311,6 +575,7 @@ pub fn analyze(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) CfgVi
   CfgView.{ functions }
 }
 
+// FROZEN at Task 5 (guardrail G1): later tasks change only ownership_stage's body.
 fn analyze_function(f: CfgFunction, b: BuiltinRegistry, sem: OptimizerSemantics) CfgFunction {
   live := compute_liveness(f.blocks)
   blocks := collect blk in f.blocks {
@@ -319,5 +584,20 @@ fn analyze_function(f: CfgFunction, b: BuiltinRegistry, sem: OptimizerSemantics)
     blk.exit.live = bl.live_out
     blk
   }
+  blocks = ownership_stage(blocks, b, sem)
   CfgFunction.{ func_id: f.func_id, name: f.name, params: f.params, blocks }
+}
+
+// Task 5: single forward pass, seeding each block's entry empty. Tasks 6-7
+// replace this body with the join+fixpoint (analyze_function stays frozen).
+fn ownership_stage(blocks: Vector<CfgBlock>, b: BuiltinRegistry, sem: OptimizerSemantics) Vector<
+  CfgBlock,
+> {
+  collect blk in blocks {
+    entry_state := ForwardState.{ own: Dict.new(), valid: Dict.new() }
+    exit_state := forward_block(blk, entry_state, b, sem)
+    blk.exit.ownership = exit_state.own
+    blk.exit.binding_valid = exit_state.valid
+    blk
+  }
 }

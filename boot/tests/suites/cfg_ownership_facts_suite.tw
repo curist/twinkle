@@ -4,7 +4,7 @@ use @std.testing as runner
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
 use compiler.builtins
 use compiler.cfg
-use compiler.core_ir.{FuncId, LocalId}
+use compiler.core_ir.{FuncId, GlobalId, LocalId}
 use compiler.mono_type.{MonoType}
 use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
@@ -74,6 +74,18 @@ fn live_contains(live: Vector<Int>, id: Int) Bool {
   false
 }
 
+fn own_at_exit(f: cfg.CfgFunction, block_idx: Int, local_id: Int) ownership.Ownership {
+  blk := f.blocks[block_idx]
+  case blk.exit.ownership.get(local_id) {
+    .Some(tag) => ownership.own_of_tag(tag),
+    .None => .Unknown,
+  }
+}
+
+fn assert_own(actual: ownership.Ownership, expected: ownership.Ownership) Result<Void, String> {
+  assert.equal(ownership.own_tag(actual), ownership.own_tag(expected))
+}
+
 // The suite is one exported builder. Task 4 creates it with the first test;
 // Tasks 5-9 append more `.test(...)` clauses. Helper `fn`s go above `suite()`.
 pub fn suite() runner.Suite {
@@ -97,6 +109,68 @@ pub fn suite() runner.Suite {
 
         // L1 is the returned value, tracked to the terminator use.
         try assert.is_true(live_contains(blk.exit.live, 1) or blk.succs.len() == 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t5 introduce: Dict.new() is Unique",
+      fn() {
+        // L0 = Dict.new(); return 0   (L0 not returned, so not published)
+        b := b_reg()
+        body: AnfExpr = .Let(lid(0), dict_new_call(b), .Atom(.ALitInt(0)))
+        f := analyzed_func(module_of("f", body))
+        try assert_own(own_at_exit(f, 0, 0), .Unique)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t5 move: init of a dead source keeps Unique (Case B)",
+      fn() {
+        // L0 = Dict.new(); L1 = init L0; return 0   (L0 dead after the init; L1 not published)
+        b := b_reg()
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), .AInit(.ALocal(lid(0))), .Atom(.ALitInt(0))),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert_own(own_at_exit(f, 0, 1), .Unique)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t5 alias: init with a still-live source demotes both (Case C)",
+      fn() {
+        // L0 = Dict.new(); L1 = init L0; L2 = Dict.set(L0,..); return L1
+        // L0 is read at L2 after the init -> alias -> both Shared.
+        b := b_reg()
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .AInit(.ALocal(lid(0))),
+            .Let(lid(2), dict_set_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert_own(own_at_exit(f, 0, 0), .Shared)
+        try assert_own(own_at_exit(f, 0, 1), .Shared)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t5 publish: global_set demotes to Shared",
+      fn() {
+        // L0 = Dict.new(); global_set G0 = L0; return L0
+        b := b_reg()
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))), .Atom(.ALocal(lid(0)))),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert_own(own_at_exit(f, 0, 0), .Shared)
         .Ok({})
       },
     )
