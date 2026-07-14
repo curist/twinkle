@@ -173,23 +173,38 @@ pub fn suite() runner.Suite {
   runner
     .suite("cfg ownership facts")
     .test(
-      "phase2 t4: a local used after its def is live; a dead one is not",
+      "phase2 t4: a live-through local is live across boundaries; a def is not live-in",
       fn() {
-        // L0 = Dict.new(); L1 = Dict.set(L0,..); return L1  (L0 dead after its use at L1)
+        // L0 = Dict.new(); r := if c { 1 } else { 2 }; L3 = Dict.set(L0,..); return 0
+        // L0 is defined in entry and used after the join, so it is live THROUGH the
+        // arms and live-in at the join — but not live-in at the entry block. This
+        // fails if boundary liveness is empty, unlike a single return block (whose
+        // exit.live is trivially empty because it has no successors).
         b := b_reg()
+        then_e: AnfExpr = .Atom(.ALitInt(1))
+        else_e: AnfExpr = .Atom(.ALitInt(2))
+        after: AnfExpr = .Let(lid(3), dict_set_call(b, lid(0)), .Atom(.ALitInt(0)))
         body: AnfExpr = .Let(
           lid(0),
           dict_new_call(b),
-          .Let(lid(1), dict_set_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
+          .Let(lid(1), .AIf(.ALitBool(true), then_e, else_e), after),
         )
         f := analyzed_func(module_of("f", body))
-        blk := block0(f)
 
-        // Neither local is live at entry (both are defined inside the block).
-        try assert.is_false(live_contains(blk.entry.live, 0))
+        // L0 is defined in the entry block, so it is not live-in there.
+        try assert.is_false(live_contains(block0(f).entry.live, 0))
+        then_blk := case block_named(f, "if.then") {
+          .Some(tb) => tb,
+          .None => return assert.fail("no if.then block"),
+        }
+        join_blk := case block_named(f, "if.join") {
+          .Some(jb) => jb,
+          .None => return assert.fail("no if.join block"),
+        }
 
-        // L1 is the returned value, tracked to the terminator use.
-        try assert.is_true(live_contains(blk.exit.live, 1) or blk.succs.len() == 0)
+        // Live-through the arm and live-in at the join (used at L3 after it).
+        try assert.is_true(live_contains(then_blk.entry.live, 0))
+        try assert.is_true(live_contains(join_blk.entry.live, 0))
         .Ok({})
       },
     )

@@ -278,6 +278,30 @@ pub fn suite() runner.Suite {
         v := cfg.build_view(direct_value_break_module(), builtins.make_builtin_registry())
         out := cfg.render_view(v)
         try assert.is_true(out.contains("terminator: value-break L0"))
+
+        // The value-break exit edge feeds the loop-result param the break payload:
+        // carried params are [L0, L1] with result L1, so the exit edge args are
+        // [ALocal(L0), ALocal(L0)] (the carried L0 forwards itself; the result L1
+        // takes the payload L0). Assert those exact atoms, not just the rendered text.
+        vf := case cfg.function_named(v, "value_break_direct") {
+          .Some(f) => f,
+          .None => return assert.fail("no value_break_direct function"),
+        }
+        vb_edge_ok := false
+        for block in vf.blocks {
+          case block.terminator {
+            .Some(.ValueBreak(_)) => {
+              for e in block.succs {
+                if e.args.len() == 2
+                  and cfg.atom_text_pub(e.args[0]) == "L0" and cfg.atom_text_pub(e.args[1]) == "L0" {
+                  vb_edge_ok = true
+                }
+              }
+            },
+            _ => {},
+          }
+        }
+        try assert.is_true(vb_edge_ok)
         .Ok({})
       },
     )
@@ -317,24 +341,39 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "phase2 t2: branch join edge args carry the arm tail atom",
+      "phase2 t2: branch join edge args carry each arm's tail atom positionally",
       fn() {
         f := try function("fn f(c: Bool) Int {\n  r := if c { 1 } else { 2 }\n  r\n}\n", "f")
         jb := case block_named(f, "if.join") {
           .Some(b) => b,
           .None => return assert.fail("no if.join block"),
         }
+        then_blk := case block_named(f, "if.then") {
+          .Some(b) => b,
+          .None => return assert.fail("no if.then block"),
+        }
+        else_blk := case block_named(f, "if.else") {
+          .Some(b) => b,
+          .None => return assert.fail("no if.else block"),
+        }
+
+        // The join carries exactly one param (the result local r); each predecessor
+        // feeds it, positionally at [0], the atom from its own arm — then feeds the
+        // literal 1, else feeds the literal 2. (A pred edge's `target` holds the
+        // predecessor block id; see cfg.add_pred.)
         try assert.equal(jb.params.len(), 1)
-        fed_literal := false
+        then_fed := ""
+        else_fed := ""
         for pe in jb.preds {
-          for a in pe.args {
-            case a {
-              .ALitInt(_) => fed_literal = true,
-              _ => {},
-            }
+          if pe.target.id == then_blk.id.id {
+            then_fed = cfg.atom_text_pub(pe.args[0])
+          }
+          if pe.target.id == else_blk.id.id {
+            else_fed = cfg.atom_text_pub(pe.args[0])
           }
         }
-        try assert.is_true(fed_literal)
+        try assert.equal(then_fed, "1")
+        try assert.equal(else_fed, "2")
         .Ok({})
       },
     )
