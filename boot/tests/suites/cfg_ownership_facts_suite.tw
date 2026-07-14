@@ -468,4 +468,76 @@ pub fn suite() runner.Suite {
         }
       },
     )
+    .test(
+      "phase3 prune: position-selection keeps the live carried param and realigns preds",
+      fn() {
+        // acc := Dict.new()
+        // r := if c { acc = Dict.set(acc,..); 1 } else { acc = Dict.set(acc,..); 2 }
+        // L9 := Dict.set(r,..); return 0
+        //
+        // The if.join carries TWO params: the result L1 (LIVE — read at L9 after
+        // the join) and the rebound outer accumulator L0 (DEAD — never read after
+        // the join). Pruning must drop exactly the DEAD position, leaving one param
+        // whose id is the live result. This is the position-SELECTION path a 1->0
+        // drop can't exercise. And because every edge into if.join carries two
+        // aligned args, the surviving preds edges must be realigned to one arg too:
+        // count_edge_arity_mismatches only scans succs, so we assert the preds arg
+        // count directly to close that gap.
+        b := b_reg()
+        then_e: AnfExpr = .Let(
+          lid(2),
+          dict_set_call(b, lid(0)),
+          .Let(lid(3), .AAssign(lid(0), .ALocal(lid(2))), .Atom(.ALitInt(1))),
+        )
+        else_e: AnfExpr = .Let(
+          lid(4),
+          dict_set_call(b, lid(0)),
+          .Let(lid(5), .AAssign(lid(0), .ALocal(lid(4))), .Atom(.ALitInt(2))),
+        )
+        after: AnfExpr = .Let(lid(9), dict_set_call(b, lid(1)), .Atom(.ALitInt(0)))
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), .AIf(.ALitBool(true), then_e, else_e), after),
+        )
+        v := cfg.build_view(module_of("f", body), b_reg())
+
+        // Sanity: before pruning the join carries both L1 (live) and L0 (dead).
+        pre := case cfg.function_named(v, "f") {
+          .Some(f) => f,
+          .None => return assert.fail("no f pre-prune"),
+        }
+        pre_jb := case block_named(pre, "if.join") {
+          .Some(x) => x,
+          .None => return assert.fail("no if.join pre-prune"),
+        }
+        try assert.equal(pre_jb.params.len(), 2)
+
+        pruned := ownership.prune_dead_merge(v)
+        f := case cfg.function_named(pruned, "f") {
+          .Some(x) => x,
+          .None => return assert.fail("no f"),
+        }
+        jb := case block_named(f, "if.join") {
+          .Some(x) => x,
+          .None => return assert.fail("no if.join"),
+        }
+
+        // Exactly one param survives, and it is the LIVE result L1 (not the dead
+        // accumulator L0). This fails if the wrong position were selected.
+        try assert.equal(jb.params.len(), 1)
+        try assert.equal(jb.params[0].id, 1)
+
+        // Every pred edge feeding if.join must have been realigned to match the
+        // one surviving param. count_edge_arity_mismatches never checks preds, so
+        // this is the load-bearing guard for the preds-realignment path.
+        for pe in jb.preds {
+          try assert.equal(pe.args.len(), jb.params.len())
+        }
+
+        // succs/terminator side stays consistent too.
+        try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+        .Ok({})
+      },
+    )
 }
