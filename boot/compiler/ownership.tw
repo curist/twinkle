@@ -567,6 +567,132 @@ fn forward_block(blk: CfgBlock, entry: ForwardState, b: BuiltinRegistry, sem: Op
   st
 }
 
+// ── Positional predecessor join + fixpoint ──────────────────────────
+fn param_index(blk: CfgBlock, lid: Int) Int? {
+  for p, i in blk.params {
+    if p.id == lid {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+fn fact_of_local(own: Dict<Int, Int>, id: Int) Ownership {
+  case own.get(id) {
+    .Some(tag) => own_of_tag(tag),
+    .None => .Unknown,
+  }
+}
+
+fn is_processed(processed: Dict<Int, Bool>, id: Int) Bool {
+  case processed.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn own_map_get(exits: Dict<Int, Dict<Int, Int>>, id: Int) Dict<Int, Int> {
+  case exits.get(id) {
+    .Some(m) => m,
+    .None => Dict.new(),
+  }
+}
+
+// entry.ownership for every local live-in at blk:
+//  - a block param: positional join of fact(pred_exit, pred_edge.args[i]);
+//  - a live-through non-param local: same-id join of pred_exit.ownership[lid].
+// Only processed predecessors contribute (unprocessed back-edges are skipped so an
+// uninitialized back-edge does not poison a loop header: Unique ⊔ Unknown = Unknown).
+fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, Dict<Int, Int>>, processed: Dict<Int, Bool>) Dict<
+  Int,
+  Int,
+> {
+  entry: Dict<Int, Int> = Dict.new()
+  for lid in blk.entry.live {
+    pidx := param_index(blk, lid)
+    acc: Ownership? = .None
+    for pe in blk.preds {
+      // pe.target holds the predecessor block id (see cfg.add_pred comment).
+      if is_processed(processed, pe.target.id) {
+        pred_exit := own_map_get(exits, pe.target.id)
+        contributed := case pidx {
+          .Some(i) => if i < pe.args.len() {
+            fact_of(pred_exit, pe.args[i])
+          } else {
+            .Unknown
+          },
+          .None => fact_of_local(pred_exit, lid),
+        }
+        acc = case acc {
+          .None => .Some(contributed),
+          .Some(prev) => .Some(join_own(prev, contributed)),
+        }
+      }
+    }
+    case acc {
+      .Some(o) => entry[lid] = own_tag(o),
+      .None => {},
+    }
+  }
+  entry
+}
+
+fn same_own_map(a: Dict<Int, Int>, b: Dict<Int, Int>) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+  for k in a.keys() {
+    case a.get(k) {
+      .Some(av) => case b.get(k) {
+        .Some(bv) => if av != bv {
+          return false
+        },
+        .None => return false,
+      },
+      .None => {},
+    }
+  }
+  true
+}
+
+// After the fixpoint every reachable block is processed, so materialize/join
+// with an all-true processed map.
+fn all_processed(blocks: Vector<CfgBlock>) Dict<Int, Bool> {
+  done: Dict<Int, Bool> = Dict.new()
+  for blk in blocks {
+    done[blk.id.id] = true
+  }
+  done
+}
+
+fn fixpoint_ownership(blocks: Vector<CfgBlock>, b: BuiltinRegistry, sem: OptimizerSemantics) Dict<
+  Int,
+  Dict<Int, Int>,
+> {
+  exits: Dict<Int, Dict<Int, Int>> = Dict.new()
+  processed: Dict<Int, Bool> = Dict.new()
+  for blk in blocks {
+    exits[blk.id.id] = Dict.new()
+    processed[blk.id.id] = false
+  }
+  changed := true
+  for changed {
+    changed = false
+    for blk in blocks {
+      entry_own := join_entry_ownership(blk, exits, processed)
+      st := ForwardState.{ own: entry_own, valid: Dict.new() }
+      st = forward_block(blk, st, b, sem)
+      already := is_processed(processed, blk.id.id)
+      if !already or !same_own_map(own_map_get(exits, blk.id.id), st.own) {
+        changed = true
+        exits[blk.id.id] = st.own
+      }
+      processed[blk.id.id] = true
+    }
+  }
+  exits
+}
+
 // ── Driver ──────────────────────────────────────────────────────────
 pub fn analyze(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) CfgView {
   functions := collect f in view.functions {
@@ -588,16 +714,18 @@ fn analyze_function(f: CfgFunction, b: BuiltinRegistry, sem: OptimizerSemantics)
   CfgFunction.{ func_id: f.func_id, name: f.name, params: f.params, blocks }
 }
 
-// Task 5: single forward pass, seeding each block's entry empty. Tasks 6-7
-// replace this body with the join+fixpoint (analyze_function stays frozen).
+// Task 6: ownership fixpoint + materialize (analyze_function stays frozen, G1).
 fn ownership_stage(blocks: Vector<CfgBlock>, b: BuiltinRegistry, sem: OptimizerSemantics) Vector<
   CfgBlock,
 > {
+  exits := fixpoint_ownership(blocks, b, sem)
+  done := all_processed(blocks)
   collect blk in blocks {
-    entry_state := ForwardState.{ own: Dict.new(), valid: Dict.new() }
-    exit_state := forward_block(blk, entry_state, b, sem)
-    blk.exit.ownership = exit_state.own
-    blk.exit.binding_valid = exit_state.valid
+    entry_own := join_entry_ownership(blk, exits, done)
+    st := ForwardState.{ own: entry_own, valid: Dict.new() }
+    st = forward_block(blk, st, b, sem)
+    blk.entry.ownership = entry_own
+    blk.exit.ownership = st.own
     blk
   }
 }

@@ -1,11 +1,11 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
-use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp}
 use compiler.builtins
 use compiler.cfg
-use compiler.core_ir.{FuncId, GlobalId, LocalId}
-use compiler.mono_type.{MonoType}
+use compiler.core_ir.{FuncId, GlobalId, LocalId, VariantId}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.ownership
@@ -84,6 +84,39 @@ fn own_at_exit(f: cfg.CfgFunction, block_idx: Int, local_id: Int) ownership.Owne
 
 fn assert_own(actual: ownership.Ownership, expected: ownership.Ownership) Result<Void, String> {
   assert.equal(ownership.own_tag(actual), ownership.own_tag(expected))
+}
+
+fn own_entry_named(f: cfg.CfgFunction, name: String, local_id: Int) ownership.Ownership {
+  for blk in f.blocks {
+    if blk.name == name {
+      case blk.entry.ownership.get(local_id) {
+        .Some(tag) => return ownership.own_of_tag(tag),
+        .None => return .Unknown,
+      }
+    }
+  }
+  .Unknown
+}
+
+fn result_param_of(f: cfg.CfgFunction, name: String) Int {
+  for blk in f.blocks {
+    if blk.name == name {
+      return blk.params[0].id
+    }
+  }
+  error("no block ${name}")
+}
+
+fn own_exit_named(f: cfg.CfgFunction, name: String, local_id: Int) ownership.Ownership {
+  for blk in f.blocks {
+    if blk.name == name {
+      case blk.exit.ownership.get(local_id) {
+        .Some(tag) => return ownership.own_of_tag(tag),
+        .None => return .Unknown,
+      }
+    }
+  }
+  .Unknown
 }
 
 // The suite is one exported builder. Task 4 creates it with the first test;
@@ -171,6 +204,86 @@ pub fn suite() runner.Suite {
         )
         f := analyzed_func(module_of("f", body))
         try assert_own(own_at_exit(f, 0, 0), .Shared)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t6 branch join: both arms allocate => Unique (Case V join)",
+      fn() {
+        // r := if c { Dict.new() } else { Dict.new() }; return r
+        b := b_reg()
+        then_e: AnfExpr = .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1))))
+        else_e: AnfExpr = .Let(lid(2), dict_new_call(b), .Atom(.ALocal(lid(2))))
+        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
+        f := analyzed_func(module_of("f", body))
+        rp := result_param_of(f, "if.join")
+        try assert_own(own_entry_named(f, "if.join", rp), .Unique)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t6 branch join: one arm publishes => Shared",
+      fn() {
+        // r := if c { d := Dict.new(); global_set G0 = d; d } else { Dict.new() }; r
+        b := b_reg()
+        then_e: AnfExpr = .Let(
+          lid(1),
+          dict_new_call(b),
+          .Let(lid(3), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))), .Atom(.ALocal(lid(1)))),
+        )
+        else_e: AnfExpr = .Let(lid(2), dict_new_call(b), .Atom(.ALocal(lid(2))))
+        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
+        f := analyzed_func(module_of("f", body))
+        rp := result_param_of(f, "if.join")
+        try assert_own(own_entry_named(f, "if.join", rp), .Shared)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t6 loop-carried: consume-then-reassign stays Unique (Case A)",
+      fn() {
+        // acc := Dict.new(); loop { acc = Dict.set(acc,..); continue }  (simplified)
+        b := b_reg()
+        loop_body: AnfExpr = .Let(
+          lid(2),
+          dict_set_call(b, lid(1)),
+          .Let(lid(3), .AAssign(lid(1), .ALocal(lid(2))), .Continue),
+        )
+        body: AnfExpr = .Let(
+          lid(1),
+          dict_new_call(b),
+          .Let(lid(0), .ALoop(loop_body), .Atom(.ALocal(lid(1)))),
+        )
+        f := analyzed_func(module_of("f", body))
+
+        // At the loop header entry, the carried accumulator L1 remains Unique. This is
+        // the load-bearing check for the live-through join (L1 is a paramless-body
+        // live-through local) and the skip-unprocessed back-edge (G4).
+        try assert_own(own_entry_named(f, "loop.header", 1), .Unique)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t6 match binding: pattern-bound local is never Unique, no trap (G3)",
+      fn() {
+        // case (a fresh dict) { .Variant(L5) => { L6 = init L5; 0 } }
+        // L5 is bound by the pattern (invisible to the analysis), used in the arm.
+        b := b_reg()
+        arm: AnfMatchArm = AnfMatchArm.{
+          pattern: .Variant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.Var(lid(5))]),
+          body: .Let(lid(6), .AInit(.ALocal(lid(5))), .Atom(.ALitInt(0))),
+        }
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(7), .AMatch(.ALocal(lid(0)), [arm]), .Atom(.ALitInt(0))),
+        )
+        f := analyzed_func(module_of("f", body))
+
+        // Sound-but-imprecise (G3): reaching here is the no-trap assertion, and the
+        // pattern-bound local is never minted Unique (Shared or Unknown).
+        o := own_exit_named(f, "match.arm.0", 5)
+        try assert.is_true(ownership.own_tag(o) != 0)
         .Ok({})
       },
     )
