@@ -112,19 +112,21 @@ indirect, or in-progress-recursive callee keeps the conservative default (params
   consumption** in `transfer_call`. Types live here (mirroring `cfg` owning
   `BlockFacts`) so `summary.tw → ownership.tw` is acyclic. `analyze` gains a
   `SummaryTable` input; an empty table degrades to today's conservative behavior.
-  - **Threading + guardrail G1.** `analyze_function` carries the Phase 2 freeze
-    comment ("later tasks change only `ownership_stage`'s body"). Phase 3 needs the
-    read-only table at `transfer_call`, at the far end of the
-    `analyze → analyze_function → ownership_stage → run_fixpoint → forward_block →
-    transfer_op → transfer_call` chain. Rather than add a bare param to every hop,
-    **fold the table into the already-threaded `sem` value** (or a thin analysis-
-    context record carrying `sem` + table), so no existing signature changes shape
-    and G1's *algorithm* freeze is preserved — the change is a payload extension,
-    not a structural edit. Note the two-phase construction: `summarize_function`
-    runs against a **table-free** `sem` (it consumes only builtin `CallSemantics`
-    and the in-progress SCC summaries it threads itself), then `analyze` runs
-    against `sem` + the *final* table. Update the G1 comment to record that Phase 3
-    extends the threaded payload (not the frozen structure).
+  - **Threading + guardrail G1.** Phase 3 needs the read-only table at
+    `transfer_call`, at the far end of the `analyze → analyze_function →
+    ownership_stage → run_fixpoint → forward_block → transfer_op → transfer_call`
+    chain. Keep the **public** `analyze(view, b, sem)` unchanged (it has ~20 call
+    sites) by making it an empty-table wrapper that delegates to
+    `analyze_with_summaries(view, b, sem, table)`; thread an explicit `table:
+    SummaryTable` through the internal chain. `sem` stays builtins-only — the table
+    is a *separate* threaded value, not folded into `OptimizerSemantics`, so
+    builtin call semantics and interprocedural summaries stay decoupled. During the
+    SCC fixpoint `summarize_function` receives the *in-progress* table so a member's
+    calls to already-summarized callees are consumed; the seed table (params
+    `Retained`, return `Shared`) keeps the first pass sound. This extends the frozen
+    `analyze_function` with a threaded param but does not restructure its algorithm;
+    update the Phase 2 "FROZEN … guardrail G1" comment on `analyze_function` to
+    record the added `table` param.
 - **`summary.tw`** (new) — the **interprocedural driver**: extract the
   whole-program call graph, order via `graph_scc.tw`, run the bottom-up fixpoint
   (calling an `ownership.summarize_function`-style entry), return the final
