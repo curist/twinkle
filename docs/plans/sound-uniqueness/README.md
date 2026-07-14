@@ -131,12 +131,16 @@ here — so the two orderings are kept from drifting apart by hand.
   reads are non-escaping. Details: [sound-analysis.md](sound-analysis.md).
   **Done** — consume-then-reassign stays `Unique` through the paramless loop body
   (live-through same-id join + back-edge skip), guarded by the loop-carried test.
-- [ ] **Catalog later precision needs without implementing them yet.** Record
+- [x] **Catalog later precision needs without implementing them yet.** Record
   shell/field ownership, transport wrappers (`out.ctx`, `out.state`,
   `Ok[0].state`), nested collections, closure recovery, and concurrency sinks stay
   in the coverage docs until the core engine is stable. Details:
   [records-fields.md](records-fields.md), [summary-specialization.md](summary-specialization.md),
   [concurrency-publication.md](concurrency-publication.md).
+  **Done** — cataloged in the coverage docs above; the concrete Phase 2 deferrals
+  (extern copying-borrow → Phase 8, dead-merge pruning + match-arm pattern-binding
+  precision → Phase 3) are recorded in those phase sections and the Future-work
+  ledger below.
 
 ### Phase 3 — Shared optimizer facts and minimal summaries *(architecture: 1B + first summaries)*
 
