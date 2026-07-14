@@ -920,14 +920,26 @@ fn own_shared() Int {
       try assert.equal(caller_own(f, 1), own_unique())
       .Ok({})
     })
-    .test("t4 capability recorded, not acted on: consumed arg stays valid", fn() {
+    .test("t4 capability recorded (consumed), not acted on: caller arg stays valid", fn() {
       b := b_reg()
-      // g(y) { z := <consume y via Dict.set>; z }  (y last-used, moved) -> capability Consumed, escape Borrowed
+      // g(y) { w := <move y>; Dict.set(w,1,2); 0 }  -> escape Borrowed, capability Consumed.
+      // The move (AInit at last-use) sets valid=false regardless of ownership, so the
+      // param classifies Consumed. (A bare Dict.set(y,..) would NOT: params enter
+      // Unknown, and consume_base only invalidates a Unique last-use base -> NoCap.)
       g_body: AnfExpr = .Let(
         lid(1),
-        .ACall(.AGlobalFunc(b.method_id("Dict", "set")), [.ALocal(lid(0)), .ALitInt(1), .ALitInt(2)]),
-        .Atom(.ALitInt(0)),
+        .AInit(.ALocal(lid(0))),
+        .Let(
+          lid(2),
+          .ACall(.AGlobalFunc(b.method_id("Dict", "set")), [.ALocal(lid(1)), .ALitInt(1), .ALitInt(2)]),
+          .Atom(.ALitInt(0)),
+        ),
       )
+      // Summary records Consumed while escape stays Borrowed (blocker 4 / Acceptance 3).
+      gs := summ1("g", 1, g_body)
+      try assert.equal(cap_tag(gs.params[0].capability), cap_tag(.Consumed))
+      try assert.equal(p_escape(gs, 0), escape_tag(.Borrowed))
+      // At the caller, the arg binding stays VALID (Consumed is never acted on in Phase 3).
       g := fdef(2, "g", 1, g_body)
       f_body: AnfExpr = .Let(
         lid(0),
@@ -935,7 +947,6 @@ fn own_shared() Int {
         .Let(lid(1), .ACall(.AGlobalFunc(FuncId.{ id: 2 }), [.ALocal(lid(0))]), .Atom(.ALocal(lid(0)))),
       )
       f := analyzed_caller([fdef(1, "f", 0, f_body), g], "f")
-      // a's binding stays valid at the caller (Consumed is not acted on in Phase 3).
       case f.blocks[0].exit.binding_valid.get(0) {
         .Some(v) => try assert.is_true(v),
         .None => {}, // absent => valid
@@ -1053,14 +1064,25 @@ indirect keep the conservative publish bucket."
 - [ ] **Step 1: Write the failing test**
 
 ```tw
-    .test("t5 render: --cfg header shows the summary + determinism", fn() {
+    .test("t5 render: --cfg header shows the summary (incl consumed) + determinism", fn() {
       b := b_reg()
-      g := fdef(2, "g", 1, .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1)))))
+      // g consumes its param via a move, so its header exercises the `(consumed)` tag.
+      g_body: AnfExpr = .Let(
+        lid(1),
+        .AInit(.ALocal(lid(0))),
+        .Let(
+          lid(2),
+          .ACall(.AGlobalFunc(b.method_id("Dict", "set")), [.ALocal(lid(1)), .ALitInt(1), .ALitInt(2)]),
+          .Atom(.ALitInt(0)),
+        ),
+      )
+      g := fdef(2, "g", 1, g_body)
       v := cfg.build_view(module_of([fdef(1, "f", 0, .Atom(.ALitInt(0))), g]), b)
       t := summary.compute(v, b, sem())
       out1 := summary.render_cfg(v, t)
       out2 := summary.render_cfg(v, t)
       try assert.is_true(out1.contains("summary:"))
+      try assert.is_true(out1.contains("consumed"))
       try assert.is_true(out1 == out2)
       .Ok({})
     })
@@ -1123,7 +1145,7 @@ In `boot/commands/ir.tw` `--cfg` branch:
   if parsed.has_flag("cfg") {
     b := artifacts.builtins
     view := cfg.build_view(artifacts.opt, b)
-    view = ownership.prune_dead_merge(view)   // enabled in Task 6; until then omit this line
+    // view = ownership.prune_dead_merge(view)   // Task 6 uncomments this (prune before analysis)
     s := semantics.make_prelude_optimizer_semantics(b)
     table := summary.compute(view, b, s)
     analyzed := ownership.analyze_with_summaries(view, b, s, table)
@@ -1132,7 +1154,7 @@ In `boot/commands/ir.tw` `--cfg` branch:
   }
 ```
 
-Add `use compiler.summary`. Leave the `prune_dead_merge` line omitted until Task 6.
+Add `use compiler.summary`. The `prune_dead_merge` line stays commented out until Task 6 uncomments it.
 
 - [ ] **Step 6: Boot tests, rebuild CLI, smoke + determinism**
 
