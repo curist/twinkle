@@ -2,7 +2,7 @@
 
 **Status:** Draft subplan (design)
 
-The Phase 0 preconditions from the [README](README.md): the two safety rails that
+The Phase 0 preconditions from the [analysis README](README.md): the two safety rails that
 gate every later phase. Both are **latent today** — with the previous optimizer
 passes removed on this branch nothing lowers to in-place, so the guard tests all
 pass on the persistent path and the census reads an all-COW floor. Their value is

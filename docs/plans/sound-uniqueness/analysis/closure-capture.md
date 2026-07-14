@@ -102,6 +102,6 @@ Printed IR should distinguish the resolution outcome:
 
 ## Relationship to main architecture
 
-This doc expands the closure-capture section in [architecture.md](architecture.md).
+This doc expands the closure-capture section in [architecture.md](../architecture.md).
 The default implementation should be conservative; recoverable closure coverage is
 optional and should only follow after the printed facts are trusted.

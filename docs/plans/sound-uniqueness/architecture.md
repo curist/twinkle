@@ -126,7 +126,7 @@ Return, value-carrying `break`, and `try` are all multi-exit publication edges
 derived structurally from ANF: `break value` terminates a loop, and `try`
 lowers to an `AMatch` whose error arm ends in `Return`. An owned handle that is
 live across such an exit publishes the value on that edge; the fallthrough path
-keeps the region alive. See [worked-examples.md](worked-examples.md) (Case T) for
+keeps the region alive. See [worked-examples.md](analysis/worked-examples.md) (Case T) for
 the lowered shape.
 
 Concurrency sinks must be explicit in the analysis. Spawning a `Task` or fiber
@@ -136,7 +136,7 @@ context. Those cases must end the mutable region unless a future analysis proves
 the value is copied or otherwise unobservable by the sender. Cross-worker sends
 are different when they serialize/copy values rather than sharing Wasm-GC
 references; the analysis should model that as copy/publication semantics rather
-than as shared mutable aliasing. See [concurrency-publication.md](concurrency-publication.md)
+than as shared mutable aliasing. See [concurrency-publication.md](analysis/concurrency-publication.md)
 for the focused subplan.
 
 ### Transient APIs are transition scaffolding
@@ -267,7 +267,7 @@ closure summaries may eventually recover ownership precision. The first sound
 analysis should still treat unknown or escaping closure captures as hard
 blockers, and the IR should distinguish "blocked by escaping capture" from
 "temporary non-escaping closure borrow" if the latter is introduced. See
-[closure-capture.md](closure-capture.md) for the focused subplan.
+[closure-capture.md](analysis/closure-capture.md) for the focused subplan.
 
 ### Interprocedural uniqueness specialization — later
 
@@ -464,7 +464,7 @@ Codegen should consume explicit ANF-keyed decisions from this view and stay
 mechanical: it should not re-prove uniqueness, rediscover record-field ownership,
 or repeat escape analysis. The plan does not aim to remove ANF, build a CFG-to-ANF
 de-SSA/tree-reconstruction pass, or add a relooper for Wasm structured control
-flow. See [cfg-ownership-ir.md](cfg-ownership-ir.md) for the focused subplan.
+flow. See [cfg-ownership-ir.md](analysis/cfg-ownership-ir.md) for the focused subplan.
 
 ### Mutable collection intrinsic family — later
 
@@ -588,13 +588,17 @@ is proven semantically necessary and profitable.
 
 ## Milestone plan
 
-The future work has two main phases: first build the CFG ownership view, migrate
-analysis/passes to consume it, and print minimal `Unique`/`Shared`/`Unknown`
-ownership facts; then consume those ANF-keyed facts/decisions through existing
-persistent/in-place/builder lowering hooks. Baseline work is a precondition, and
-later path precision, specialization, mutable intrinsics, cleanup, and Buffer
-retirement are follow-on milestones rather than prerequisites for the first
-working ownership engine.
+The future work is organized into three owned tracks: first build the CFG
+ownership view, migrate analysis/passes to consume it, and print minimal
+`Unique`/`Shared`/`Unknown` ownership facts; then consume those ANF-keyed
+facts/decisions through existing persistent/in-place/builder lowering hooks; then
+clean up the successful hook-based lowering behind compiler-private intrinsics.
+Baseline work is a precondition, and later path precision, specialization,
+mutable intrinsics, cleanup, and Buffer retirement are follow-on milestones rather
+than prerequisites for the first working ownership engine. The detailed track
+checklists live in [analysis/README.md](analysis/README.md),
+[codegen/README.md](codegen/README.md), and
+[migration/README.md](migration/README.md).
 
 ### Precondition — Baseline and guardrails
 
@@ -612,7 +616,7 @@ AWFY performance, preserved checksums, and avoided known aliasing corruptions.
 
 ### Phase 1A — CFG ownership view and printable facts, no rewrites
 
-This phase lands in two slices, matching the README's Phase 1 / Phase 2 split:
+This phase lands in two slices, matching the analysis README's Phase 1 / Phase 2 split:
 **1A-view** builds the structural CFG view first — verifiable on its own terms,
 running no analysis — and **1A-facts** populates the minimal ownership facts on
 top of it. Keeping them separate lets the greenfield CFG infrastructure be tested
@@ -623,7 +627,7 @@ for graph correctness and determinism before any lattice transfer is layered on.
 - Add the deterministic CFG ownership view with SSA-style block parameters for
   carried values only, identified from ANF syntax: every `AAssign` target (loop
   and branch-arm rebinds), `AIf`/`AMatch`/`ALoop` result bindings, and `Break`
-  payloads — see [cfg-ownership-ir.md](cfg-ownership-ir.md).
+  payloads — see [cfg-ownership-ir.md](analysis/cfg-ownership-ir.md).
 - Build the CFG view from the defer-free `artifacts.opt` and preserve mappings
   back to the optimized-ANF lets/ops (keyed by `artifacts.opt` `LocalId`), not
   pre-optimization source ANF.
@@ -676,6 +680,10 @@ loop back-edges, and ownership facts, while ANF remains authoritative and
 generated code remains unchanged.
 
 ### Phase 2A — First codegen from ownership facts via existing hooks
+
+This architecture milestone corresponds to the finer codegen-track slices in
+[codegen/README.md](codegen/README.md): operation catalog, decision handoff,
+backend lookup/fallback, then narrow emitted lowering families.
 
 - Teach the optimizer/backend to consume Phase 1 facts rather than rediscovering
   ownership with separate recognizers.
@@ -750,7 +758,7 @@ that concept or identified as removable compatibility scaffolding.
 after ordinary code has a proven replacement path.
 
 Exit criteria: `Buffer` is no longer needed to express high-performance local
-collection updates in user code. See [buffer-cleanup.md](buffer-cleanup.md) for
+collection updates in user code. See [buffer-cleanup.md](migration/buffer-cleanup.md) for
 the focused cleanup policy.
 
 ## Testing and verification
@@ -849,17 +857,20 @@ from-scratch sound mutable-lowering design.
 
 Sibling subplans:
 
-- `docs/plans/sound-uniqueness/design-rationale.md`
-- `docs/plans/sound-uniqueness/worked-examples.md`
-- `docs/plans/sound-uniqueness/fact-lattice.md`
-- `docs/plans/sound-uniqueness/summary-specialization.md`
-- `docs/plans/sound-uniqueness/cfg-ownership-ir.md`
-- `docs/plans/sound-uniqueness/sound-analysis.md`
-- `docs/plans/sound-uniqueness/closure-capture.md`
-- `docs/plans/sound-uniqueness/concurrency-publication.md`
-- `docs/plans/sound-uniqueness/records-fields.md`
-- `docs/plans/sound-uniqueness/mutable-intrinsics.md`
-- `docs/plans/sound-uniqueness/buffer-cleanup.md`
+- `docs/plans/sound-uniqueness/analysis/design-rationale.md`
+- `docs/plans/sound-uniqueness/analysis/worked-examples.md`
+- `docs/plans/sound-uniqueness/analysis/fact-lattice.md`
+- `docs/plans/sound-uniqueness/analysis/summary-specialization.md`
+- `docs/plans/sound-uniqueness/analysis/cfg-ownership-ir.md`
+- `docs/plans/sound-uniqueness/analysis/sound-analysis.md`
+- `docs/plans/sound-uniqueness/analysis/closure-capture.md`
+- `docs/plans/sound-uniqueness/analysis/concurrency-publication.md`
+- `docs/plans/sound-uniqueness/analysis/records-fields.md`
+- `docs/plans/sound-uniqueness/codegen/handoff-contract.md`
+- `docs/plans/sound-uniqueness/codegen/operation-catalog.md`
+- `docs/plans/sound-uniqueness/codegen/existing-hooks.md`
+- `docs/plans/sound-uniqueness/migration/mutable-intrinsics.md`
+- `docs/plans/sound-uniqueness/migration/buffer-cleanup.md`
 
 Relevant references:
 

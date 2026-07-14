@@ -7,7 +7,7 @@ lowering begins)
 
 The codegen-side counterpart to the analysis docs. The **first** implementation
 should not introduce a new mutable runtime representation. Once the ownership
-analysis ([fact-lattice.md](fact-lattice.md), [summary-specialization.md](summary-specialization.md))
+analysis ([fact-lattice.md](../analysis/fact-lattice.md), [summary-specialization.md](../analysis/summary-specialization.md))
 has proven a candidate `Unique` and produced ANF-keyed decision records, codegen
 should initially choose among today's existing paths: persistent operation,
 existing in-place helper, or existing builder lowering.
@@ -21,12 +21,12 @@ uniqueness, field ownership, or escape (that all happened in analysis).
 
 Expands the `Mutable collection intrinsic family`, `Mutable vector lowering`,
 `Mutable dict lowering`, and `Promotion/freeze model` sections of
-[architecture.md](architecture.md).
+[architecture.md](../architecture.md).
 
 ## Analysis → codegen handoff contract
 
 The decision-record *schema* (which fields a decision carries) lives in
-[cfg-ownership-ir.md](cfg-ownership-ir.md) "Codegen contract". This section is the
+[cfg-ownership-ir.md](../analysis/cfg-ownership-ir.md) "Codegen contract". This section is the
 *soundness* half: the invariants that let codegen consume a decision **without
 re-checking it**, so "codegen stays mechanical" is safe rather than merely
 asserted. The seam between analysis and codegen is exactly where cross-pass
@@ -59,7 +59,7 @@ re-derive them. Every emitted decision must satisfy:
   still-mutable handle escape a publication sink unfrozen; no path double-freezes.
 - **No use-after-freeze / no double-begin** within a future region.
 - **Field-path keys are downward-closed** ⟹ a decision owning `[.f]` presupposes
-  the shell `[]` is `Unique` (see [records-fields.md](records-fields.md)).
+  the shell `[]` is `Unique` (see [records-fields.md](../analysis/records-fields.md)).
 - **Return-path handoffs are explicit** ⟹ if a specialized callee returns ownership
   through `out.ctx`, `out.state`, or a variant payload path such as `Ok[0].state`,
   the decision names that return path and the caller-side projection that moves
@@ -132,7 +132,7 @@ observability as the main blocker.
 
 Record shell reuse and field-backing mutation route through the same intrinsic
 model where they touch collection storage. The shell-vs-deep-field split and
-`Set<K>` wrapper projection are specified in [records-fields.md](records-fields.md);
+`Set<K>` wrapper projection are specified in [records-fields.md](../analysis/records-fields.md);
 this doc only owns the *emitted intrinsic shape* for the field-backing case.
 
 > Open Question (architecture.md): does record shell reuse use this family, or a
@@ -144,8 +144,8 @@ this doc only owns the *emitted intrinsic shape* for the field-backing case.
 The first implementation should not introduce explicit `begin`/`freeze` nodes; it
 reuses existing helpers. When a later mutable-region abstraction exists, insert
 `freeze`/`publish` **only** when a mutable region must produce an ordinary
-persistent value (the publication sinks in [fact-lattice.md](fact-lattice.md) /
-[concurrency-publication.md](concurrency-publication.md)). Never insert a freeze
+persistent value (the publication sinks in [fact-lattice.md](../analysis/fact-lattice.md) /
+[concurrency-publication.md](../analysis/concurrency-publication.md)). Never insert a freeze
 *between* internal updates of the same proven region. A proven-owned persistent
 value may `begin` without copying; an unproven value stays on the persistent path
 (no speculative clone-to-owned unless proven necessary and profitable).
@@ -204,5 +204,5 @@ internal `builder_*`/`set_unsafe` scaffolding above.
 
 ## Relationship to main architecture
 
-This doc expands the codegen sections of [architecture.md](architecture.md).
+This doc expands the codegen sections of [architecture.md](../architecture.md).
 Nothing here decides ownership — it consumes proven decisions and emits code.

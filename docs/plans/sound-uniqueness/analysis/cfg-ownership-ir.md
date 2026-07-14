@@ -264,8 +264,7 @@ This section defines the decision-record *schema* (which fields a decision
 carries). The *soundness* half — the invariants that let codegen consume a
 decision without re-checking it, and the fail-safe rule that absence/ambiguity/
 staleness of a decision falls back to the persistent op — lives in
-[mutable-intrinsics.md](mutable-intrinsics.md) "Analysis → codegen handoff
-contract". The two are a pair: this doc says *what* is handed over, that doc says
+[handoff-contract.md](../codegen/handoff-contract.md). The two are a pair: this doc says *what* is handed over, that doc says
 *what it guarantees*.
 
 For each accepted first-cut update, the side table/annotation should identify:
@@ -413,7 +412,7 @@ Full output (across slices) should show:
 
 ## Relationship to main architecture
 
-[architecture.md](architecture.md) leaves open whether the ownership optimizer
+[architecture.md](../architecture.md) leaves open whether the ownership optimizer
 needs a CFG/SSA-like IR before codegen. This subplan answers that question: the
 optimizer gets explicit control-flow structure as a **derived view over ANF**,
 not as a competing source of truth. ANF stays authoritative, decisions are

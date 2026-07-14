@@ -456,25 +456,17 @@ to the optimized-ANF shape, not the source syntax.
 
 ## Deferrals and tracking
 
-Every "later" in this design maps to an explicit home in
-[README.md](README.md). **These README/ledger edits are not yet made** — the
-current README has no such rows (Phase 8 starts at `README.md:229`; the
-future-work ledger is `README.md:248-262`). They are an explicit task for the
-Phase 2 *execution plan* (which this design feeds); this table is the checklist
-that task works from, not a claim about README's present state:
+Every "later" in this design maps to an explicit home in the reorganized track
+READMEs. This table records where the Phase 2 deferrals now live after the
+three-track split:
 
-| Deferred | Target README home (execution-plan TODO) |
+| Deferred | Tracking home |
 |---|---|
-| **Extern copying-borrow precision** (args preserved, GC result `Unique`, per the copying-marshalling contract) — Phase 2 treats externs as conservative publication (sanctioned deviation) | New **Phase 8** bullet + Future-work ledger row, stated bluntly. Phase 2 task also adds a one-line forward-pointer to [fact-lattice.md](fact-lattice.md)'s extern row so the canonical doc and this conservative staging visibly agree |
-| **Dead-merge block-param pruning** using the new liveness facts | Added to **Phase 3** ("move ownership-relevant pass queries to CFG facts") |
-| Per-instruction candidate verdicts / codegen decision records | Already **Phase 4** — Phase 2 renders block-boundary ownership only |
-| Binding-validity / liveness render surface in `--cfg` | Future-work ledger nicety |
-| Record/field ownership, transport wrappers, summaries, specialization | Already **Phase 3 / 6 / 7** + Future-work ledger (unchanged) |
-
-The five existing Phase 2 README bullets already match this design; the
-execution plan will mark them delivered and add the new tracking rows above (and
-the `README.md` Phase 8 bullet + ledger row). Until then, treat the README as
-un-amended.
+| **Extern copying-borrow precision** (args preserved, GC result `Unique`, per the copying-marshalling contract) — Phase 2 treats externs as conservative publication (sanctioned deviation) | [../migration/README.md](../migration/README.md) Phase 8, plus the staging note in [fact-lattice.md](fact-lattice.md)'s extern row |
+| **Dead-merge block-param pruning** using the new liveness facts | [README.md](README.md) Phase 3 |
+| Per-instruction candidate verdicts / codegen decision records | [../codegen/README.md](../codegen/README.md) Phase 4 — Phase 2 renders block-boundary ownership only |
+| Binding-validity / liveness render surface in `--cfg` | Analysis-track nicety; facts are computed, but not rendered by default |
+| Record/field ownership, transport wrappers, summaries, specialization | Later analysis precision; see [records-fields.md](records-fields.md) and [summary-specialization.md](summary-specialization.md) |
 
 ## Determinism-sensitive spots (decided; the plan must lock with tests)
 

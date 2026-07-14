@@ -125,7 +125,7 @@ ownership, so it is the concrete realization of the specialization scenario:
 `add_type` therefore needs two codegen variants, and the choice is made
 **per call site from the caller's ownership fact on the argument atom** — not from
 anything inside `add_type`. This mirrors the `clear_at`/`owned_case`/`shared_case`
-example in [architecture.md](architecture.md), but observed in real lowered ANF:
+example in [architecture.md](../architecture.md), but observed in real lowered ANF:
 three call sites, two required variants.
 
 Contrast `visit` (Case V): recursive plus called from `strongly_connected`, but

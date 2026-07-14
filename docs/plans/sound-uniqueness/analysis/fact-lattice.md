@@ -6,7 +6,7 @@ This is the semantic core of the sound-uniqueness analysis: the ownership fact
 lattice, the per-op transfer function, the control-flow merge rules, and the
 function-summary/specialization model. It is designed against the real ANF shapes
 in [worked-examples.md](worked-examples.md) and realizes the analysis the
-[architecture.md](architecture.md) umbrella and [cfg-ownership-ir.md](cfg-ownership-ir.md)
+[architecture.md](../architecture.md) umbrella and [cfg-ownership-ir.md](cfg-ownership-ir.md)
 view describe.
 
 Guiding rule throughout: **soundness before coverage.** Every default is the
@@ -140,7 +140,7 @@ Two consequences worth stating explicitly:
 
 - **A consuming persistent op does not automatically produce a unique result.**
   Persistent vectors and dicts may share unchanged backing with their inputs (see
-  [persistent-runtime.md](../../internals/persistent-runtime.md)). On a shared or unknown input, the
+  [persistent-runtime.md](../../../internals/persistent-runtime.md)). On a shared or unknown input, the
   result stays `Unknown` unless the operation guarantees fresh unshared backing
   for the relevant mutation scope, or a later path/node-sensitive proof shows the
   next mutated backing is unshared. Do not conflate "semantic new value" with

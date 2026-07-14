@@ -12,7 +12,7 @@ scattered across [fact-lattice.md](fact-lattice.md) (the record quartet, the
 **shell-vs-deep split** is reasoned about end to end.
 
 Expands the `Record shell reuse and field ownership` and `Nested collection
-ownership` sections of [architecture.md](architecture.md).
+ownership` sections of [architecture.md](../architecture.md).
 
 ## The core principle: fresh shell ≠ deep ownership
 
@@ -101,14 +101,14 @@ proven`, or `nested publication detected` — never a silent bail.
 
 ## Codegen-ready decisions
 
-Accepted record/field decisions feed [mutable-intrinsics.md](mutable-intrinsics.md):
+Accepted record/field decisions first feed the codegen track ([record-lowering.md](../codegen/record-lowering.md)); later migration can route them through [mutable-intrinsics.md](../migration/mutable-intrinsics.md):
 codegen should see whether to reuse a shell, project an owned field, freeze a
 field, or emit the persistent fallback — without making new soundness decisions.
 
 ## Relationship to main architecture
 
 Expands the record/nested-ownership sections of
-[architecture.md](architecture.md). The lattice mechanics live in
+[architecture.md](../architecture.md). The lattice mechanics live in
 [fact-lattice.md](fact-lattice.md); the interprocedural field-path key lives in
 [summary-specialization.md](summary-specialization.md); the coverage checklist in
 [sound-analysis.md](sound-analysis.md). This doc is the connective narrative.

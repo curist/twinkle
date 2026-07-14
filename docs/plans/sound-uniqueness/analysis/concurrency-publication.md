@@ -121,6 +121,6 @@ copy by construction.
 ## Relationship to main architecture
 
 This doc expands the publication-boundary section in
-[architecture.md](architecture.md). The first implementation should be
+[architecture.md](../architecture.md). The first implementation should be
 conservative for Task/fiber and Channel paths; cross-worker serialized-copy
 precision can be added when the runtime contract is explicit enough.

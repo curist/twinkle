@@ -40,12 +40,12 @@ Established before designing, because it reframes the phase:
   `CallSemantics` (effect + `cow_base_arg` + `in_place_equivalent`) are consumed by
   `transfer_call`; **user-function summaries do not exist.**
 
-**Reframing of README bullet 1** ("move ownership-relevant pass queries to CFG
-facts … one shared source of truth"): the old ownership-consuming passes were
+**Reframing of analysis README bullet 1** ("move ownership-relevant pass queries
+to CFG facts … one shared source of truth"): the old ownership-consuming passes were
 deleted in the rebuild, so there is **nothing to migrate** — the CFG facts are
 already the single source. Phase 3 does **not** silently narrow the 1B intent: it
-keeps candidate verdicts / decision records where the README already puts them
-(**Phase 4**), and it *proves* the "single source" claim with an explicit
+keeps candidate verdicts / decision records where the codegen track puts them
+(**Codegen Phase 4**), and it *proves* the "single source" claim with an explicit
 optimizer audit (see Acceptance). The substantive Phase 3 work is summaries + the
 two precision items + doc/audit hygiene.
 
@@ -430,8 +430,8 @@ Concrete gates for the execution plan (all via the boot suite unless noted):
 | Field-path / return-path / specialization | Phase 6 |
 | Extern copying-borrow precision | Phase 8 |
 
-The Phase 3 execution plan marks the delivered README bullets and records the
-vacuous-bullet reframing.
+The Phase 3 execution plan marks the delivered analysis README bullets and records
+the vacuous-bullet reframing.
 
 ## Determinism-sensitive spots (lock with tests)
 
