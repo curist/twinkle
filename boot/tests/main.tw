@@ -25,6 +25,7 @@ use .suites.builtins_canonical_suite
 use .suites.builtins_suite
 use .suites.bundle_suite
 use .suites.byte_suite
+use .suites.cfg_ownership_facts_suite
 use .suites.cfg_ownership_suite
 use .suites.channel_suite
 use .suites.char_literal_suite
@@ -278,6 +279,7 @@ runner.run_all([
   scripting_string_suite.suite(),
   scripting_vector_suite.suite(),
   cfg_ownership_suite.suite(),
+  cfg_ownership_facts_suite.suite(),
   uniqueness_census_suite.suite(),
   uniqueness_guard_suite.suite(),
 ])

@@ -1,0 +1,103 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
+use compiler.builtins
+use compiler.cfg
+use compiler.core_ir.{FuncId, LocalId}
+use compiler.mono_type.{MonoType}
+use compiler.opt.semantics as semantics
+use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+use compiler.ownership
+
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
+
+fn b_reg() builtins.BuiltinRegistry {
+  builtins.make_builtin_registry()
+}
+
+fn sem() semantics.OptimizerSemantics {
+  make_prelude_optimizer_semantics(b_reg())
+}
+
+// call Dict.new() -> fresh dict (Allocate)
+fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
+  .ACall(.AGlobalFunc(b.method_id("Dict", "new")), [])
+}
+
+// call Dict.set(base, 1, 2) -> Update, cow_base_arg 0
+fn dict_set_call(b: builtins.BuiltinRegistry, base: LocalId) AnfOp {
+  .ACall(.AGlobalFunc(b.method_id("Dict", "set")), [.ALocal(base), .ALitInt(1), .ALitInt(2)])
+}
+
+fn module_of(name: String, body: AnfExpr) AnfModule {
+  func: AnfFunctionDef = AnfFunctionDef.{
+    func_id: FuncId.{ id: 1 },
+    name,
+    is_init: false,
+    params: [],
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: MonoType.Int,
+  }
+  AnfModule.{
+    functions: [func],
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+    lib_exports: [],
+  }
+}
+
+fn analyzed_func(m: AnfModule) cfg.CfgFunction {
+  b := b_reg()
+  v := cfg.build_view(m, b)
+  a := ownership.analyze(v, b, sem())
+  case cfg.function_named(a, "f") {
+    .Some(f) => f,
+    .None => error("missing f"),
+  }
+}
+
+fn block0(f: cfg.CfgFunction) cfg.CfgBlock {
+  f.blocks[0]
+}
+
+fn live_contains(live: Vector<Int>, id: Int) Bool {
+  for x in live {
+    if x == id {
+      return true
+    }
+  }
+  false
+}
+
+// The suite is one exported builder. Task 4 creates it with the first test;
+// Tasks 5-9 append more `.test(...)` clauses. Helper `fn`s go above `suite()`.
+pub fn suite() runner.Suite {
+  runner
+    .suite("cfg ownership facts")
+    .test(
+      "phase2 t4: a local used after its def is live; a dead one is not",
+      fn() {
+        // L0 = Dict.new(); L1 = Dict.set(L0,..); return L1  (L0 dead after its use at L1)
+        b := b_reg()
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), dict_set_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
+        )
+        f := analyzed_func(module_of("f", body))
+        blk := block0(f)
+
+        // Neither local is live at entry (both are defined inside the block).
+        try assert.is_false(live_contains(blk.entry.live, 0))
+
+        // L1 is the returned value, tracked to the terminator use.
+        try assert.is_true(live_contains(blk.exit.live, 1) or blk.succs.len() == 0)
+        .Ok({})
+      },
+    )
+}

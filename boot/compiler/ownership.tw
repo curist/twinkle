@@ -5,8 +5,9 @@
 //! binding-validity. Consumes the CFG view (raw ops, params, real edge args);
 //! ANF stays authoritative and codegen does not read this.
 
+use compiler.anf.{AnfOp, Atom}
 use compiler.builtins.{BuiltinRegistry}
-use compiler.cfg.{CfgView}
+use compiler.cfg.{CfgBlock, CfgFunction, CfgView, Terminator}
 use compiler.opt.semantics.{OptimizerSemantics}
 
 pub type Ownership = { Unique, Shared, Unknown }
@@ -28,7 +29,295 @@ pub fn own_of_tag(t: Int) Ownership {
   }
 }
 
+// ── Uses / defs extraction ──────────────────────────────────────────
+fn atom_local_id(a: Atom) Int? {
+  case a {
+    .ALocal(l) => .Some(l.id),
+    _ => .None,
+  }
+}
+
+fn push_uid(acc: Vector<Int>, a: Atom) Vector<Int> {
+  case atom_local_id(a) {
+    .Some(id) => acc.append(id),
+    .None => acc,
+  }
+}
+
+// Locals READ by an op (its ref/scalar operands).
+fn op_uses(op: AnfOp) Vector<Int> {
+  case op {
+    .ACall(callee, args) => {
+      acc := push_uid([], callee)
+      for a in args {
+        acc = push_uid(acc, a)
+      }
+      acc
+    },
+    .ABinOp(_, l, r, _) => push_uid(push_uid([], l), r),
+    .AUnOp(_, a, _) => push_uid([], a),
+    .AMakeClosure(_, caps) => collect c in caps {
+      c.id
+    },
+    .ARecord(_, fields) => {
+      acc: Vector<Int> = []
+      for fa in fields {
+        acc = push_uid(acc, fa.value)
+      }
+      acc
+    },
+    .ARecordGet(a, _, _) => push_uid([], a),
+    .ARecordUpdate(base, _, v, _, _) => push_uid(push_uid([], base), v),
+    .AVariant(_, _, args) => {
+      acc: Vector<Int> = []
+      for a in args {
+        acc = push_uid(acc, a)
+      }
+      acc
+    },
+    .AArrayLit(elems) => {
+      acc: Vector<Int> = []
+      for a in elems {
+        acc = push_uid(acc, a)
+      }
+      acc
+    },
+    .AIndex(base, idx, _, _) => push_uid(push_uid([], base), idx),
+    .AInit(a) => push_uid([], a),
+    .AAssign(_, a) => push_uid([], a),
+    .AGlobalSet(_, a) => push_uid([], a),
+    .AWrapAnyref(a, _) => push_uid([], a),
+    .AUnwrapAnyref(a, _) => push_uid([], a),
+    .AIf(_, _, _) => error("ownership: AIf reached op_uses; structural op is block-lowered"),
+    .AMatch(_, _) => error("ownership: AMatch reached op_uses; structural op is block-lowered"),
+    .ALoop(_) => error("ownership: ALoop reached op_uses; structural op is block-lowered"),
+    .ADefer(_) => error("ownership: ADefer reached op_uses; expected defer-free ANF"),
+  }
+}
+
+// Locals READ by a terminator (scrutinee/cond/return/break atoms), excluding
+// edge args (those are handled by the edge translation).
+fn term_uses(term: Terminator) Vector<Int> {
+  case term {
+    .CondBranch(test, _, _, _, _) => push_uid([], test),
+    .Match(scrut, _) => push_uid([], scrut),
+    .Return(.Some(a)) => push_uid([], a),
+    .Return(.None) => [],
+    .ValueBreak(a) => push_uid([], a),
+    _ => [],
+  }
+}
+
+// Locals a straight-line op DEFINES. AAssign defines both its let-result and
+// its rebind target; every other op defines only its let-result. This matters:
+// a def must be killed before its own block's uses so a def-before-use does NOT
+// leak the local into live_in (the bug the naive gather-all formula had).
+fn op_defs(inst_result: Int, op: AnfOp) Vector<Int> {
+  case op {
+    .AAssign(target, _) => insert_sorted(insert_sorted([], inst_result), target.id),
+    _ => insert_sorted([], inst_result),
+  }
+}
+
+// ── Sorted-Int set helpers (deterministic; Int twins of cfg's LocalId ones) ──
+fn live_contains_int(v: Vector<Int>, id: Int) Bool {
+  for x in v {
+    if x == id {
+      return true
+    }
+  }
+  false
+}
+
+fn insert_sorted(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    if x == id {
+      return v
+    }
+    if !inserted and id < x {
+      out = .append(id)
+      inserted = true
+    }
+    out = .append(x)
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  out
+}
+
+fn union_sorted(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
+  out := a
+  for x in b {
+    out = insert_sorted(out, x)
+  }
+  out
+}
+
+fn diff_sorted(a: Vector<Int>, remove: Vector<Int>) Vector<Int> {
+  out: Vector<Int> = []
+  for x in a {
+    if !live_contains_int(remove, x) {
+      out = .append(x)
+    }
+  }
+  out
+}
+
+fn same_live(a: Vector<Int>, b: Vector<Int>) Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  for x, i in a {
+    if x != b[i] {
+      return false
+    }
+  }
+  true
+}
+
+// ── Backward liveness ───────────────────────────────────────────────
+type BlockLive = .{ live_in: Vector<Int>, live_out: Vector<Int> }
+
+fn live_get(live: Dict<Int, BlockLive>, id: Int) BlockLive {
+  case live.get(id) {
+    .Some(v) => v,
+    .None => error("ownership: no liveness for block ${id}"),
+  }
+}
+
+fn block_by_id(blocks: Vector<CfgBlock>, id: Int) CfgBlock {
+  for b in blocks {
+    if b.id.id == id {
+      return b
+    }
+  }
+  error("ownership: unknown block ${id}")
+}
+
+// live_out contribution of edge (pred -> succ):
+//   (succ.live_in - succ.params) ∪ { locals(edge.args[i]) | succ.params[i] ∈ succ.live_in }
+fn edge_live_contribution(succ: CfgBlock, succ_live_in: Vector<Int>, edge_args: Vector<Atom>) Vector<
+  Int,
+> {
+  param_ids := collect p in succ.params {
+    p.id
+  }
+
+  // values live past the join, named directly (not a param)
+  acc: Vector<Int> = []
+  for id in succ_live_in {
+    if !live_contains_int(param_ids, id) {
+      acc = insert_sorted(acc, id)
+    }
+  }
+
+  // params translated to the atom this edge feeds
+  for p, i in succ.params {
+    if live_contains_int(succ_live_in, p.id) {
+      case atom_local_id(edge_args[i]) {
+        .Some(src) => acc = insert_sorted(acc, src),
+        .None => {},
+      }
+    }
+  }
+  acc
+}
+
+// Backward per-instruction scan of one block. Returns live_in AND, for each
+// instruction index i, the set of locals live *immediately after* i
+// (`live_after[i]`). live_after is what Task 5 uses for last-use: a use of L at
+// i is a last-use iff L ∉ live_after[i] — which correctly handles a later
+// AAssign that redefines L (loop consume-then-reassign) and a block-live-out L.
+type BlockScan = .{ live_in: Vector<Int>, live_after: Vector<Vector<Int>> }
+
+fn scan_block_backward(blk: CfgBlock, live_out: Vector<Int>) BlockScan {
+  // Seed with live_out plus the terminator's direct uses (scrutinee/cond/
+  // return/break). Terminator EDGE args are handled by the edge translation in
+  // edge_live_contribution, not here.
+  cur := live_out
+  case blk.terminator {
+    .Some(t) => {
+      for u in term_uses(t) {
+        cur = insert_sorted(cur, u)
+      }
+    },
+    .None => {},
+  }
+  n := blk.instructions.len()
+  after_rev: Vector<Vector<Int>> = []
+  i := n - 1
+  for i >= 0 {
+    after_rev = .append(cur) // live AFTER instruction i
+    inst := blk.instructions[i]
+    cur = diff_sorted(cur, op_defs(inst.anf_local.id, inst.op)) // kill defs first
+    for u in op_uses(inst.op) {
+      // then add uses
+      cur = insert_sorted(cur, u)
+    }
+    i = i - 1
+  }
+
+  // after_rev is high->low; reverse so live_after[i] indexes by instruction i.
+  live_after: Vector<Vector<Int>> = []
+  j := after_rev.len() - 1
+  for j >= 0 {
+    live_after = .append(after_rev[j])
+    j = j - 1
+  }
+  BlockScan.{ live_in: cur, live_after }
+}
+
+fn compute_liveness(blocks: Vector<CfgBlock>) Dict<Int, BlockLive> {
+  live: Dict<Int, BlockLive> = Dict.new()
+  for b in blocks {
+    live[b.id.id] = BlockLive.{ live_in: [], live_out: [] }
+  }
+  changed := true
+  for changed {
+    changed = false
+
+    // iterate in reverse block-id order (blocks are appended in ~RPO)
+    idx := blocks.len() - 1
+    for idx >= 0 {
+      blk := blocks[idx]
+
+      // live_out = ∪ over succ edges of edge_live_contribution
+      lo: Vector<Int> = []
+      for e in blk.succs {
+        succ := block_by_id(blocks, e.target.id)
+        succ_in := live_get(live, succ.id.id).live_in
+        lo = union_sorted(lo, edge_live_contribution(succ, succ_in, e.args))
+      }
+      li := scan_block_backward(blk, lo).live_in
+      prev := live_get(live, blk.id.id)
+      if !same_live(prev.live_in, li) or !same_live(prev.live_out, lo) {
+        changed = true
+        live[blk.id.id] = BlockLive.{ live_in: li, live_out: lo }
+      }
+      idx = idx - 1
+    }
+  }
+  live
+}
+
+// ── Driver ──────────────────────────────────────────────────────────
 pub fn analyze(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) CfgView {
-  // Identity for now; real pipeline arrives in Tasks 4-7.
-  view
+  functions := collect f in view.functions {
+    analyze_function(f, b, sem)
+  }
+  CfgView.{ functions }
+}
+
+fn analyze_function(f: CfgFunction, b: BuiltinRegistry, sem: OptimizerSemantics) CfgFunction {
+  live := compute_liveness(f.blocks)
+  blocks := collect blk in f.blocks {
+    bl := live_get(live, blk.id.id)
+    blk.entry.live = bl.live_in
+    blk.exit.live = bl.live_out
+    blk
+  }
+  CfgFunction.{ func_id: f.func_id, name: f.name, params: f.params, blocks }
 }
