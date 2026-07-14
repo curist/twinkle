@@ -284,6 +284,48 @@ fn run_scc(
   table
 }
 
+// ── Rendering ───────────────────────────────────────────────────────
+// One-line, human-readable form of a Summary for the `twk ir --cfg` header.
+pub fn render_summary(s: Summary) String {
+  parts: Vector<String> = []
+  for ps, i in s.params {
+    esc := case ps.escape {
+      .Borrowed => "borrow",
+      .Retained => "retain",
+    }
+    tag := case ps.capability {
+      .Consumed => "${esc}(consumed)",
+      .NoCap => esc,
+    }
+    parts = .append("p${i}=${tag}")
+  }
+  ret := case s.ret {
+    .OwnedFresh => "fresh",
+    .Shared => "shared",
+    .MayAliasParams(idxs) => {
+      ps := collect k in idxs {
+        "p${k}"
+      }
+      "alias(${ps.join(",")})"
+    },
+  }
+  "summary: ${parts.join(" ")} ret=${ret}"
+}
+
+// Render the `--cfg` view with each function's summary as a header line. The
+// header Dict is built here (func_id → rendered summary) and handed to cfg,
+// keeping cfg free of ownership/summary imports.
+pub fn render_cfg(view: CfgView, table: SummaryTable) String {
+  headers: Dict<Int, String> = Dict.new()
+  for f in view.functions {
+    case summary_get(table, f.func_id) {
+      .Some(s) => headers[f.func_id] = render_summary(s),
+      .None => {},
+    }
+  }
+  view.render_view_with_headers(headers)
+}
+
 // ── Driver ──────────────────────────────────────────────────────────
 pub fn compute(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) SummaryTable {
   // Seed every function conservatively so the first pass is sound before callees

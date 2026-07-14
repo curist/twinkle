@@ -9,6 +9,7 @@ use compiler.ir_print
 use compiler.opt.semantics as semantics
 use compiler.ownership
 use compiler.pipeline
+use compiler.summary
 use lib.argparse.app.{ParseResult}
 
 fn has_any_ir_flag(parsed: ParseResult) Bool {
@@ -72,8 +73,12 @@ pub fn run_ir_command(parsed: ParseResult) {
   if parsed.has_flag("cfg") {
     b := artifacts.builtins
     view := cfg.build_view(artifacts.opt, b)
-    analyzed := ownership.analyze(view, b, semantics.make_prelude_optimizer_semantics(b))
-    print(analyzed.render_view())
+
+    // view = ownership.prune_dead_merge(view)   // Task 6 uncomments this (prune before analysis)
+    s := semantics.make_prelude_optimizer_semantics(b)
+    table := summary.compute(view, b, s)
+    analyzed := ownership.analyze_with_summaries(view, b, s, table)
+    print(summary.render_cfg(analyzed, table))
     return
   }
 

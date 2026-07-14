@@ -920,3 +920,25 @@ pub fn render_view(view: CfgView) String {
   }
   join_lines(lines)
 }
+
+// Like render_view, but each function header line is followed by an indented
+// summary line when `headers` has one for that func_id. The summary text is
+// built elsewhere (summary.tw) and passed in as a plain Dict; cfg stays free of
+// ownership/summary imports.
+pub fn render_view_with_headers(view: CfgView, headers: Dict<Int, String>) String {
+  lines: Vector<String> = ["// CFG ownership view", "// ${view.functions.len()} function(s)", ""]
+  for func in view.functions {
+    lines = .append("fn ${func.name} [FuncId(${func.func_id})]")
+    case headers.get(func.func_id) {
+      .Some(h) => {
+        lines = .append("  ${h}")
+      },
+      .None => {},
+    }
+    for block in func.blocks {
+      lines = render_block(lines, block)
+    }
+    lines = .append("")
+  }
+  join_lines(lines)
+}
