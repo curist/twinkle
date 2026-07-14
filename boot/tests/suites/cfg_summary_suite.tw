@@ -26,6 +26,10 @@ fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
   .ACall(.AGlobalFunc(b.method_id("Dict", "new")), [])
 }
 
+fn vector_make_call(b: builtins.BuiltinRegistry) AnfOp {
+  .ACall(.AGlobalFunc(b.method_id("Vector", "make")), [])
+}
+
 fn wrapper_record(field_val: LocalId) AnfOp {
   // TypeId/FieldId are structural placeholders; build_view/summary do not need a
   // real type table. FieldAtom.{ field, value }.
@@ -150,6 +154,71 @@ pub fn suite() runner.Suite {
           lid(1),
           set_call,
           .Let(lid(2), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))), .Atom(.ALitInt(0))),
+        )
+        s := summ1("f", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
+      "t1 cow value-escape: fn f(v){ d:=Dict.new(); d2:=Dict.set(d,0,v); global_set G=d2 } -> p0 retain",
+      fn() {
+        // v is inserted as a Dict.set VALUE arg (non-base). The dict escapes
+        // globally, so v is retained into the escaping container: p0 Retained.
+        b := b_reg()
+        set_call: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(1)), .ALitInt(0), .ALocal(lid(0))],
+        )
+        body: AnfExpr = .Let(
+          lid(1),
+          dict_new_call(b),
+          .Let(
+            lid(2),
+            set_call,
+            .Let(lid(3), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(2))), .Atom(.ALitInt(0))),
+          ),
+        )
+        s := summ1("f", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
+      "t1 allocate value-escape: fn f(v){ c := Cell.new(v); global_set G=c } -> p0 retain",
+      fn() {
+        // v is the sole VALUE arg of an Allocate builtin (Cell.new). The cell
+        // escapes globally, so v is retained: p0 Retained.
+        b := b_reg()
+        new_call: AnfOp = .ACall(.AGlobalFunc(b.method_id("Cell", "new")), [.ALocal(lid(0))])
+        body: AnfExpr = .Let(
+          lid(1),
+          new_call,
+          .Let(lid(2), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))), .Atom(.ALitInt(0))),
+        )
+        s := summ1("f", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
+      "t1 append value-escape: fn f(v){ xs:=Vector.make(); ys:=Vector.append(xs,v); global_set G=ys } -> p0 retain",
+      fn() {
+        // v is inserted as a Vector.append VALUE arg (non-base). The vector
+        // escapes globally, so v is retained: p0 Retained.
+        b := b_reg()
+        append_call: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Vector", "append")),
+          [.ALocal(lid(1)), .ALocal(lid(0))],
+        )
+        body: AnfExpr = .Let(
+          lid(1),
+          vector_make_call(b),
+          .Let(
+            lid(2),
+            append_call,
+            .Let(lid(3), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(2))), .Atom(.ALitInt(0))),
+          ),
         )
         s := summ1("f", 1, body)
         try assert.equal(p_escape(s, 0), escape_tag(.Retained))

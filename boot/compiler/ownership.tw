@@ -512,6 +512,31 @@ fn carry_base_prov(st: ForwardState, result: Int, cs: CallSemantics, args: Vecto
   }
 }
 
+// Absorb value args into `result` like aggregate fields: field_store each
+// (skipping the base index `skip`, use -1 to absorb all) and union its prov into
+// result's prov. Keeps result's existing prov (e.g. base prov already set) so a
+// COW result carries both its base's and its inserted values' origins.
+fn absorb_call_args(st: ForwardState, result: Int, args: Vector<Atom>, skip: Int, last: Vector<Int>) ForwardState {
+  origins := case st.prov.get(result) {
+    .Some(v) => v,
+    .None => [],
+  }
+  for a, i in args {
+    if i != skip {
+      origins = union_sorted(origins, prov_of(st.prov, a))
+      st = .field_store(a, last)
+    }
+  }
+  st.set_prov_st(result, origins)
+}
+
+fn cow_skip_index(cs: CallSemantics) Int {
+  case cs.cow_base_arg {
+    .Some(k) => k,
+    .None => -1,
+  }
+}
+
 fn transfer_call(
   st: ForwardState,
   result: Int,
@@ -527,8 +552,11 @@ fn transfer_call(
   }
   case info {
     .Some(cs) => case cs.effect {
-      .Allocate => st.set_own_st(result, .Unique),
-      .Update => st.consume_call_base(result, cs, args, last).carry_base_prov(result, cs, args),
+      .Allocate => st.set_own_st(result, .Unique).absorb_call_args(result, args, -1, last),
+      .Update => st
+        .consume_call_base(result, cs, args, last)
+        .carry_base_prov(result, cs, args)
+        .absorb_call_args(result, args, cow_skip_index(cs), last),
       // borrow: result not owned, but carries the cow_base_arg's provenance.
       .ReadOnly => st.set_own_st(result, .Unknown).carry_base_prov(result, cs, args),
       .Pure => st.set_own_st(result, .Unknown),
