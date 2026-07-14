@@ -446,4 +446,26 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "phase3 prune: a dead carried join param is pruned; arity stays consistent",
+      fn() {
+        then_e: AnfExpr = .Atom(.ALitInt(1))
+        else_e: AnfExpr = .Atom(.ALitInt(2))
+        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALitInt(0)))
+        v := cfg.build_view(module_of("f", body), b_reg())
+        pruned := ownership.prune_dead_merge(v)
+        case cfg.function_named(pruned, "f") {
+          .Some(f) => {
+            jb := case block_named(f, "if.join") {
+              .Some(x) => x,
+              .None => return assert.fail("no if.join"),
+            }
+            try assert.equal(jb.params.len(), 0)
+            try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+            .Ok({})
+          },
+          .None => assert.fail("no f"),
+        }
+      },
+    )
 }

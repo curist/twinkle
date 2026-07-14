@@ -7,7 +7,7 @@
 
 use compiler.anf.{AnfOp, Atom}
 use compiler.builtins.{BuiltinRegistry}
-use compiler.cfg.{CfgBlock, CfgFunction, CfgView, Terminator}
+use compiler.cfg.{CfgBlock, CfgEdge, CfgFunction, CfgView, Terminator}
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info}
 
@@ -1062,6 +1062,142 @@ pub fn analyze_with_summaries(
     analyze_function(f, table, b, sem)
   }
   CfgView.{ functions }
+}
+
+// ── Pre-analysis dead-merge param pruning (G5) ──────────────────────
+// A minimal PURE view transform run BEFORE any ownership/summary analysis: it
+// drops join/loop carried block-params that are dead across the boundary (their
+// param local is not in the block's live_in), realigning the positionally-
+// aligned edge args (preds + predecessor succs) and terminator payloads. Only
+// join/loop blocks carry params; entry/straight-line blocks have empty params
+// and are untouched. Removing a *dead* param cannot change any other local's
+// liveness, so the pruned view is self-consistent and the full analysis then
+// runs fresh on it (no stale facts). Returns a NEW view; never mutate an
+// analyzed CFG.
+pub fn prune_dead_merge(view: CfgView) CfgView {
+  functions := collect f in view.functions {
+    prune_function(f)
+  }
+  CfgView.{ functions }
+}
+
+fn prune_function(f: CfgFunction) CfgFunction {
+  live := compute_liveness(f.blocks)
+
+  // block-id -> ascending positions to drop from that block's params.
+  drop_by_block: Dict<Int, Vector<Int>> = Dict.new()
+  for blk in f.blocks {
+    li := live_get(live, blk.id.id).live_in
+    positions: Vector<Int> = []
+    for p, i in blk.params {
+      if !live_contains_int(li, p.id) {
+        positions = .append(i)
+      }
+    }
+    if positions.len() > 0 {
+      drop_by_block[blk.id.id] = positions
+    }
+  }
+
+  blocks := collect blk in f.blocks {
+    prune_block(blk, drop_by_block)
+  }
+  f.blocks = blocks
+  f
+}
+
+fn drop_positions_for(drop_by_block: Dict<Int, Vector<Int>>, block_id: Int) Vector<Int> {
+  case drop_by_block.get(block_id) {
+    .Some(v) => v,
+    .None => [],
+  }
+}
+
+fn prune_block(blk: CfgBlock, drop_by_block: Dict<Int, Vector<Int>>) CfgBlock {
+  own := drop_positions_for(drop_by_block, blk.id.id)
+  blk.params = drop_positions_local(blk.params, own)
+
+  // preds: every edge into this block feeds this block's params, so drop this
+  // block's own positions from each pred edge's args.
+  blk.preds = collect e in blk.preds {
+    CfgEdge.{ target: e.target, args: drop_positions_atom(e.args, own) }
+  }
+
+  // succs: each forward edge feeds ITS target's params, so drop the target's
+  // positions from that edge's args.
+  blk.succs = collect e in blk.succs {
+    CfgEdge.{
+      target: e.target,
+      args: drop_positions_atom(e.args, drop_positions_for(drop_by_block, e.target.id)),
+    }
+  }
+
+  case blk.terminator {
+    .Some(term) => blk.terminator = .Some(prune_terminator(term, drop_by_block)),
+    .None => {},
+  }
+  blk
+}
+
+// Rebuild a block's params dropping the flagged (ascending) positions.
+fn drop_positions_local(params: Vector<LocalId>, positions: Vector<Int>) Vector<LocalId> {
+  if positions.len() == 0 {
+    return params
+  }
+  out: Vector<LocalId> = []
+  for p, i in params {
+    if !live_contains_int(positions, i) {
+      out = .append(p)
+    }
+  }
+  out
+}
+
+// Rebuild an edge's args dropping the same (ascending) positions.
+fn drop_positions_atom(args: Vector<Atom>, positions: Vector<Int>) Vector<Atom> {
+  if positions.len() == 0 {
+    return args
+  }
+  out: Vector<Atom> = []
+  for a, i in args {
+    if !live_contains_int(positions, i) {
+      out = .append(a)
+    }
+  }
+  out
+}
+
+// Drop aligned atoms from terminator payloads that feed a pruned block's params.
+// Each edge-carrying terminator variant names the target block(s) whose params
+// its payload aligns to; keep targets/identity unchanged.
+fn prune_terminator(term: Terminator, drop_by_block: Dict<Int, Vector<Int>>) Terminator {
+  case term {
+    .Branch(target, args) => .Branch(
+      target,
+      drop_positions_atom(args, drop_positions_for(drop_by_block, target.id)),
+    ),
+    .CondBranch(test, then_t, then_args, else_t, else_args) => .CondBranch(
+      test,
+      then_t,
+      drop_positions_atom(then_args, drop_positions_for(drop_by_block, then_t.id)),
+      else_t,
+      drop_positions_atom(else_args, drop_positions_for(drop_by_block, else_t.id)),
+    ),
+    .Match(scrut, edges) => {
+      pruned := collect e in edges {
+        CfgEdge.{
+          target: e.target,
+          args: drop_positions_atom(e.args, drop_positions_for(drop_by_block, e.target.id)),
+        }
+      }
+      .Match(scrut, pruned)
+    },
+    .LoopBackEdge(target, args) => .LoopBackEdge(
+      target,
+      drop_positions_atom(args, drop_positions_for(drop_by_block, target.id)),
+    ),
+    _ => term,
+  }
 }
 
 // Phase 3 threads a read-only `table` of callee summaries through the analysis
