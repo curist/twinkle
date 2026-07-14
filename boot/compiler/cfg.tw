@@ -855,6 +855,28 @@ fn terminator_text(term: Terminator) String {
   }
 }
 
+fn own_tag_text(tag: Int) String {
+  cond {
+    tag == 0 => "Unique",
+    tag == 1 => "Shared",
+    _ => "Unknown",
+  }
+}
+
+// Facts keyed by each block's carried params (already sorted by LocalId). The
+// internal ownership map may hold more (all locals live across the boundary); the
+// printed surface is the block-param subset, matching the Phase 1 reserved shape.
+fn render_facts(facts: BlockFacts, params: Vector<LocalId>) String {
+  parts := collect p in params {
+    tag := case facts.ownership.get(p.id) {
+      .Some(t) => t,
+      .None => 2,
+    }
+    "L${p.id}: ${own_tag_text(tag)}"
+  }
+  "{${parts.join(", ")}}"
+}
+
 fn render_block(lines: Vector<String>, block: CfgBlock) Vector<String> {
   lines = .append("  block B${block.id.id} ${block.name}(${local_list_text(block.params)})")
   pred_text := collect edge in block.preds {
@@ -864,7 +886,11 @@ fn render_block(lines: Vector<String>, block: CfgBlock) Vector<String> {
     edge.edge_text()
   }
   lines = .append("    preds=[${pred_text.join(", ")}] succs=[${succ_text.join(", ")}]")
-  lines = .append("    facts.in={} facts.out={}")
+  lines = .append(
+    "    facts.in=${block.entry.render_facts(block.params)} facts.out=${block.exit.render_facts(
+      block.params,
+    )}",
+  )
   for inst in block.instructions {
     lines = .append("    anf L${inst.anf_local.id}: ${inst.text}")
   }

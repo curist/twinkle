@@ -344,4 +344,35 @@ pub fn suite() runner.Suite {
         }
       },
     )
+    .test(
+      "phase2 t8: render shows populated facts for carried params",
+      fn() {
+        b := b_reg()
+        then_e: AnfExpr = .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1))))
+        else_e: AnfExpr = .Let(lid(2), dict_new_call(b), .Atom(.ALocal(lid(2))))
+        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
+        v := cfg.build_view(module_of("f", body), b)
+        a := ownership.analyze(v, b, sem())
+        out := cfg.render_view(a)
+        try assert.is_true(out.contains("Unique"))
+        try assert.is_true(out.contains("facts.in={") and out.contains("facts.out={"))
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t8: facts are byte-identical across two analyses",
+      fn() {
+        b := b_reg()
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), dict_set_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
+        )
+        m := module_of("f", body)
+        a1 := cfg.render_view(ownership.analyze(cfg.build_view(m, b), b, sem()))
+        a2 := cfg.render_view(ownership.analyze(cfg.build_view(m, b), b, sem()))
+        try assert.is_true(a1 == a2)
+        .Ok({})
+      },
+    )
 }

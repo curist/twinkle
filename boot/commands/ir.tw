@@ -6,6 +6,8 @@ use commands.common.{exit_usage_error, format_compile_error, get_positional, pri
 use compiler.census
 use compiler.cfg
 use compiler.ir_print
+use compiler.opt.semantics as semantics
+use compiler.ownership
 use compiler.pipeline
 use lib.argparse.app.{ParseResult}
 
@@ -68,8 +70,10 @@ pub fn run_ir_command(parsed: ParseResult) {
   }
 
   if parsed.has_flag("cfg") {
-    view := cfg.build_view(artifacts.opt, artifacts.builtins)
-    print(view.render_view())
+    b := artifacts.builtins
+    view := cfg.build_view(artifacts.opt, b)
+    analyzed := ownership.analyze(view, b, semantics.make_prelude_optimizer_semantics(b))
+    print(analyzed.render_view())
     return
   }
 

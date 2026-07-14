@@ -328,7 +328,7 @@ fn fact_of(own: Dict<Int, Int>, a: Atom) Ownership {
 }
 
 fn set_own(own: Dict<Int, Int>, id: Int, o: Ownership) Dict<Int, Int> {
-  own[id] = own_tag(o)
+  own[id] = o.own_tag()
   own
 }
 
@@ -363,7 +363,7 @@ fn set_own_st(st: ForwardState, id: Int, o: Ownership) ForwardState {
 }
 
 fn set_result(st: ForwardState, id: Int, o: Ownership) ForwardState {
-  set_own_st(st, id, o)
+  st.set_own_st(id, o)
 }
 
 fn set_valid(st: ForwardState, id: Int, v: Bool) ForwardState {
@@ -372,12 +372,12 @@ fn set_valid(st: ForwardState, id: Int, v: Bool) ForwardState {
 }
 
 fn publish_local(st: ForwardState, id: Int) ForwardState {
-  set_own_st(st, id, .Shared)
+  st.set_own_st(id, .Shared)
 }
 
 fn publish_atom(st: ForwardState, a: Atom) ForwardState {
   case atom_local_id(a) {
-    .Some(id) => publish_local(st, id),
+    .Some(id) => st.publish_local(id),
     .None => st,
   }
 }
@@ -388,14 +388,14 @@ fn init_hinge(st: ForwardState, result: Int, a: Atom, last: Vector<Int>) Forward
     .Some(src) => if is_last_use(last, src) {
       // move: result takes source ownership; source binding invalid
       o := fact_of(st.own, a)
-      st = set_own_st(st, result, o)
-      set_valid(st, src, false)
+      st = .set_own_st(result, o)
+      st.set_valid(src, false)
     } else {
       // alias: both Shared
-      st = publish_local(st, src)
-      set_own_st(st, result, .Shared)
+      st = .publish_local(src)
+      st.set_own_st(result, .Shared)
     },
-    .None => set_own_st(st, result, .Unknown),
+    .None => st.set_own_st(result, .Unknown),
   }
 }
 
@@ -405,9 +405,9 @@ fn init_hinge(st: ForwardState, result: Int, a: Atom, last: Vector<Int>) Forward
 fn field_store(st: ForwardState, a: Atom, last: Vector<Int>) ForwardState {
   case atom_local_id(a) {
     .Some(src) => if is_last_use(last, src) {
-      set_valid(st, src, false)
+      st.set_valid(src, false)
     } else {
-      publish_local(st, src)
+      st.publish_local(src)
     },
     .None => st,
   }
@@ -420,15 +420,15 @@ fn consume_base(st: ForwardState, result: Int, base: Atom, last: Vector<Int>) Fo
       base_own := fact_of(st.own, base)
       case base_own {
         .Unique => if is_last_use(last, bid) {
-          st = set_own_st(st, result, .Unique)
-          set_valid(st, bid, false)
+          st = .set_own_st(result, .Unique)
+          st.set_valid(bid, false)
         } else {
-          set_own_st(st, result, .Unknown)
+          st.set_own_st(result, .Unknown)
         },
-        _ => set_own_st(st, result, .Unknown),
+        _ => st.set_own_st(result, .Unknown),
       }
     },
-    .None => set_own_st(st, result, .Unknown),
+    .None => st.set_own_st(result, .Unknown),
   }
 }
 
@@ -441,11 +441,11 @@ fn consume_call_base(
 ) ForwardState {
   case cs.cow_base_arg {
     .Some(k) => if k < args.len() {
-      consume_base(st, result, args[k], last)
+      st.consume_base(result, args[k], last)
     } else {
-      set_own_st(st, result, .Unknown)
+      st.set_own_st(result, .Unknown)
     },
-    .None => set_own_st(st, result, .Unknown),
+    .None => st.set_own_st(result, .Unknown),
   }
 }
 
@@ -463,18 +463,18 @@ fn transfer_call(
   }
   case info {
     .Some(cs) => case cs.effect {
-      .Allocate => set_own_st(st, result, .Unique),
-      .Update => consume_call_base(st, result, cs, args, last),
-      .ReadOnly => set_own_st(st, result, .Unknown), // borrow: result not owned
-      .Pure => set_own_st(st, result, .Unknown),
-      .Control => set_own_st(st, result, .Unknown),
+      .Allocate => st.set_own_st(result, .Unique),
+      .Update => st.consume_call_base(result, cs, args, last),
+      .ReadOnly => st.set_own_st(result, .Unknown), // borrow: result not owned
+      .Pure => st.set_own_st(result, .Unknown),
+      .Control => st.set_own_st(result, .Unknown),
     },
     .None => {
       // unknown Twinkle call, extern, or Cell op: publish every ref arg
       for a in args {
-        st = publish_atom(st, a)
+        st = .publish_atom(a)
       }
-      set_own_st(st, result, .Unknown)
+      st.set_own_st(result, .Unknown)
     },
   }
 }
@@ -489,56 +489,56 @@ fn transfer_op(
   sem: OptimizerSemantics,
 ) ForwardState {
   case op {
-    .ACall(callee, args) => transfer_call(st, result, callee, args, last, sem),
+    .ACall(callee, args) => st.transfer_call(result, callee, args, last, sem),
     .ARecord(_, fields) => {
-      st = set_result(st, result, .Unique)
+      st = .set_result(result, .Unique)
       for fa in fields {
-        st = field_store(st, fa.value, last)
+        st = .field_store(fa.value, last)
       }
       st
     },
     .AVariant(_, _, args) => {
-      st = set_result(st, result, .Unique)
+      st = .set_result(result, .Unique)
       for a in args {
-        st = field_store(st, a, last)
+        st = .field_store(a, last)
       }
       st
     },
     .AArrayLit(elems) => {
-      st = set_result(st, result, .Unique)
+      st = .set_result(result, .Unique)
       for a in elems {
-        st = field_store(st, a, last)
+        st = .field_store(a, last)
       }
       st
     },
-    .ARecordGet(_, _, _) => set_result(st, result, .Unknown), // borrow: result not owned
-    .AIndex(_, _, _, _) => set_result(st, result, .Unknown), // borrow
+    .ARecordGet(_, _, _) => st.set_result(result, .Unknown), // borrow: result not owned
+    .AIndex(_, _, _, _) => st.set_result(result, .Unknown), // borrow
     .ARecordUpdate(base, _, v, _, _) => {
-      st = consume_base(st, result, base, last)
-      field_store(st, v, last)
+      st = .consume_base(result, base, last)
+      st.field_store(v, last)
     },
-    .AInit(a) => init_hinge(st, result, a, last),
+    .AInit(a) => st.init_hinge(result, a, last),
     .AAssign(local, a) => {
       // rebind: result local's fact = fact(a); binding becomes valid again
       o := fact_of(st.own, a)
-      st = set_own_st(st, local.id, o)
-      set_valid(st, local.id, true)
+      st = .set_own_st(local.id, o)
+      st.set_valid(local.id, true)
     },
     .AMakeClosure(_, caps) => {
-      st = set_result(st, result, .Unknown) // closure ref itself: not an optimization target
+      st = .set_result(result, .Unknown) // closure ref itself: not an optimization target
       for c in caps {
-        st = publish_local(st, c.id)
+        st = .publish_local(c.id)
       }
       st
     },
     .AGlobalSet(_, a) => {
-      st = publish_atom(st, a)
-      set_result(st, result, .Unknown)
+      st = .publish_atom(a)
+      st.set_result(result, .Unknown)
     },
-    .AWrapAnyref(a, _) => init_hinge(st, result, a, last), // representationally transparent
-    .AUnwrapAnyref(a, _) => init_hinge(st, result, a, last),
-    .ABinOp(_, _, _, _) => set_result(st, result, .Unknown), // scalar, neutral
-    .AUnOp(_, _, _) => set_result(st, result, .Unknown),
+    .AWrapAnyref(a, _) => st.init_hinge(result, a, last), // representationally transparent
+    .AUnwrapAnyref(a, _) => st.init_hinge(result, a, last),
+    .ABinOp(_, _, _, _) => st.set_result(result, .Unknown), // scalar, neutral
+    .AUnOp(_, _, _) => st.set_result(result, .Unknown),
     .AIf(_, _, _) => error("ownership: AIf reached transfer; structural op is block-lowered"),
     .AMatch(_, _) => error("ownership: AMatch reached transfer; structural op is block-lowered"),
     .ALoop(_) => error("ownership: ALoop reached transfer; structural op is block-lowered"),
@@ -553,14 +553,14 @@ fn forward_block(blk: CfgBlock, entry: ForwardState, b: BuiltinRegistry, sem: Op
   st := entry
   for inst, i in blk.instructions {
     last := last_use_at(inst.op, scan.live_after[i])
-    st = transfer_op(st, inst.anf_local.id, inst.op, last, b, sem)
+    st = .transfer_op(inst.anf_local.id, inst.op, last, b, sem)
   }
   case blk.terminator {
     .Some(.Return(.Some(a))) => {
-      st = publish_atom(st, a)
+      st = .publish_atom(a)
     },
     .Some(.ValueBreak(a)) => {
-      st = publish_atom(st, a)
+      st = .publish_atom(a)
     },
     _ => {},
   }
@@ -625,12 +625,12 @@ fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, Dict<Int, Int>>, process
         }
         acc = case acc {
           .None => .Some(contributed),
-          .Some(prev) => .Some(join_own(prev, contributed)),
+          .Some(prev) => .Some(prev.join_own(contributed)),
         }
       }
     }
     case acc {
-      .Some(o) => entry[lid] = own_tag(o),
+      .Some(o) => entry[lid] = o.own_tag(),
       .None => {},
     }
   }
@@ -787,7 +787,8 @@ fn analyze_function(f: CfgFunction, b: BuiltinRegistry, sem: OptimizerSemantics)
     blk
   }
   blocks = ownership_stage(blocks, b, sem)
-  CfgFunction.{ func_id: f.func_id, name: f.name, params: f.params, blocks }
+  f.blocks = blocks
+  f
 }
 
 // Task 7: combined ownership+validity fixpoint + materialize both maps
