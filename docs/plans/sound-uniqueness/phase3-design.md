@@ -144,8 +144,13 @@ pub type SummaryTable = .{ by_func: Dict<Int, Summary> }
 
 ```tw
 type ForwardState = .{ own: Dict<Int, Int>, valid: Dict<Int, Bool>, prov: Dict<Int, Vector<Int>> }
-//                                                                   ^^^^ local id -> sorted origin param indices
+//                                                                   ^^^^ local id -> sorted origin PARAM-LOCAL ids
 ```
+
+`prov` maps a local to the set of **parameter locals** it may be derived from or
+reachable through. Storing param *locals* (not indices) keeps publication uniform
+(local→local); the boundary classifier converts to positional indices via
+`f.params` when building `MayAliasParams`.
 
 ## Analysis pipeline
 
@@ -173,23 +178,36 @@ effects at the boundary.
 
 ### Provenance semantics
 
-- **Seed.** Each parameter's local starts `prov = { its positional index }`; all
-  other locals start `∅`. Scalar params are included by position (keeps
-  `arg[k] ↔ param k`) but never acquire ownership, so they classify `Borrowed`.
+- **Seed.** Each parameter's local starts `prov = { its own local id }`; all other
+  locals start `∅`. Scalar params are included by position (keeps `arg[k] ↔ param
+  k`) but never acquire ownership, so they classify `Borrowed`.
 - **Propagate.** `AInit`/`AWrapAnyref`/`AUnwrapAnyref`/`AAssign` copy the source's
-  `prov`. Fresh allocations and aggregates (`ARecord`/`AVariant`/`AArrayLit`)
-  produce `∅` (nested-field provenance is Phase 6). A call result's `prov` follows
-  the callee's return effect: `MayAliasParams(S) → ∪ prov(arg_k) for k in S`;
-  `OwnedFresh`/`Shared → ∅`.
+  `prov`. **Aggregates (`ARecord`/`AVariant`/`AArrayLit`) carry the union of their
+  ref field/element `prov`** — a shell embedding a param origin is *not*
+  independent (field-path precision that would recover shell-uniqueness is Phase
+  6). A fresh allocation with no param-origin fields is `∅`. A call result's `prov`
+  follows the callee's return effect: `MayAliasParams(S) → ∪ prov(arg_k) for k in
+  S`; `OwnedFresh`/`Shared → ∅`.
 - **Join.** Positional union of predecessor `prov`, mirroring the ownership join.
-- **Classify each param `k`** from its exit facts (two independent axes):
-  - *escape:* `Retained` if param k's local is published (`own == Shared` at the
-    exit meet); else `Borrowed`. (Being moved-but-not-published is **not** escape.)
+- **Publish is transitive over provenance.** `publish_local(L)` sets `own[L] =
+  Shared` **and** `own[o] = Shared` for every `o ∈ prov(L)`. This is the general
+  soundness rule: whenever a value escapes — `AGlobalSet`, closure capture,
+  field-store into a published shell, an unknown-call arg, or the terminator
+  publish of a returned value — the parameter locals reachable through it are
+  published too. It closes the aggregate hole (`Wrapper.{ xs }` publishes `xs`
+  when the wrapper escapes) and the plain move-then-publish hole (`y := move x;
+  global_set G = y` publishes `x`).
+- **Classify each param `k`** (local `Lk`) from its exit facts (two axes):
+  - *escape:* `Retained` if `own[Lk] == Shared` at the exit meet (published, incl.
+    transitively via an escaping shell); else `Borrowed`. (Moved-but-not-published
+    is **not** escape.)
   - *capability:* `Consumed` if the pass moved/invalidated it (`valid == false` at
     exit, or a consuming op on it); else `NoCap`. Recorded, never acted on now.
-- **Classify the return:** `MayAliasParams(prov(return_atom))` if that provenance
-  is non-empty (the full set, sorted); else `OwnedFresh` if `own == Unique`; else
-  `Shared`.
+- **Classify the return:** `MayAliasParams(idx(prov(return_atom)))` if that
+  provenance is non-empty (converted to sorted positional indices); else
+  `OwnedFresh` **only when the return is a genuinely independent fresh `Unique`
+  value** (`own == Unique` and empty `prov`); else `Shared`. An aggregate that
+  embeds a param origin therefore classifies `MayAliasParams`, never `OwnedFresh`.
 
 ### Consumption in `transfer_call` (Phase 3)
 
@@ -249,7 +267,10 @@ block facts (borrowed-helper call sites now `Unique`) are the real signal.
 - No caller-binding invalidation / real consumption (Phase 6).
 - No candidate verdicts or decision records (Phase 4).
 - No field-path / return-path summaries, transport wrappers, field-sensitive
-  record ownership, or specialization (Phase 6).
+  record ownership, or specialization (Phase 6). Consequently a helper that wraps
+  a param into a returned/escaping aggregate is treated **conservatively**
+  (`param Retained`, `return MayAliasParams`), not optimistically as `OwnedFresh`;
+  recovering shell-uniqueness for such transport wrappers is Phase 6.
 - No codegen or in-place emission (Phase 4/5).
 - No extern copying-borrow precision (Phase 8).
 - No change to the surviving ANF-local peepholes beyond the doc decision.
@@ -263,27 +284,32 @@ Concrete gates for the execution plan (all via the boot suite unless noted):
    `Unique`; publishes param ⇒ caller arg `Shared`; returns-alias-of-param ⇒
    result `Shared` **and the origin arg** `Shared`; multi-origin return ⇒ **all**
    origin args `Shared`.
-2. **Capability is recorded, not acted on** — a callee that moves-but-does-not-
-   publish a param leaves the caller arg **valid** (not invalidated), while the
-   summary header shows `(consumed)`.
-3. **Conservatism** — unknown/extern/indirect/`Cell` callees still publish all
+2. **Aggregate-escape soundness** — a wrapper helper `wrap(xs) = Wrapper.{ xs }`
+   (plus a variant `.Some(xs)` and an array `[xs]` variant) classifies
+   `p0=retain, ret=alias(p0)`; at the caller the arg is demoted to `Shared` and the
+   result is **not** `Unique`. Also the plain move-then-publish case
+   (`y := <move x>; global_set G = y`) demotes `x` to `Retained`.
+3. **Capability is recorded, not acted on** — a callee that moves-but-does-not-
+   publish a param (no escape) leaves the caller arg **valid** (not invalidated),
+   while the summary header shows `(consumed)`.
+4. **Conservatism** — unknown/extern/indirect/`Cell` callees still publish all
    ref args and return `Unknown`.
-4. **Recursion** — a mutually-recursive SCC: the fixpoint is stable, terminates
+5. **Recursion** — a mutually-recursive SCC: the fixpoint is stable, terminates
    (within the cap), and yields a sound (conservative-where-needed) summary.
-5. **Determinism** — `twk ir --cfg` (headers + facts) byte-identical across two
+6. **Determinism** — `twk ir --cfg` (headers + facts) byte-identical across two
    builds.
-6. **Pruning consistency** — after `prune_dead_merge`,
+7. **Pruning consistency** — after `prune_dead_merge`,
    `count_edge_arity_mismatches == 0` and reciprocal pred/succ edges hold; a
    provably-dead carried param is gone; ownership/live/valid maps are consistent
    (analysis ran on the pruned view).
-7. **Pattern-binding precision** — the G3 fixture: the bound local is killed at
+8. **Pattern-binding precision** — the G3 fixture: the bound local is killed at
    arm entry (not leaked live-in), still never `Unique`, no trap.
-8. **No regression to in-place** — `twk ir --census` still shows **0 in-place**
+9. **No regression to in-place** — `twk ir --census` still shows **0 in-place**
    (Phase 3 changes no codegen).
-9. **Optimizer audit** — a documented grep/reasoning check that no `opt/` pass has
-   an independent liveness/ownership/legality path; `opt/README.md` updated and
-   consistent with the current pass set.
-10. **Full verification** — `make boot-test` green and `make stage2` reaches the
+10. **Optimizer audit** — a documented grep/reasoning check that no `opt/` pass has
+    an independent liveness/ownership/legality path; `opt/README.md` updated and
+    consistent with the current pass set.
+11. **Full verification** — `make boot-test` green and `make stage2` reaches the
     self-host fixed point (Phase 3 is boot-only and adds no stage0-parity
     construct).
 
@@ -291,7 +317,7 @@ Concrete gates for the execution plan (all via the boot suite unless noted):
 
 | Item | Home |
 |---|---|
-| "Move ownership-relevant pass queries to CFG facts" | Satisfied (old consumers deleted; CFG facts already single) — evidenced by the optimizer audit (Acceptance 9), not new migration code |
+| "Move ownership-relevant pass queries to CFG facts" | Satisfied (old consumers deleted; CFG facts already single) — evidenced by the optimizer audit (Acceptance 10), not new migration code |
 | Caller-binding invalidation / real consumption | Phase 6 |
 | Candidate verdicts / decision records | Phase 4 |
 | Field-path / return-path / specialization | Phase 6 |
