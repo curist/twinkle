@@ -14,13 +14,13 @@ pub type BlockId = .{ id: Int }
 
 pub type CfgInstruction = .{ anf_local: LocalId, op: AnfOp, text: String }
 
-pub type CfgEdge = .{ target: BlockId, args: Vector<LocalId> }
+pub type CfgEdge = .{ target: BlockId, args: Vector<Atom> }
 
 pub type Terminator = {
-  Branch(BlockId, Vector<LocalId>),
-  CondBranch(Atom, BlockId, Vector<LocalId>, BlockId, Vector<LocalId>),
+  Branch(BlockId, Vector<Atom>),
+  CondBranch(Atom, BlockId, Vector<Atom>, BlockId, Vector<Atom>),
   Match(Atom, Vector<CfgEdge>),
-  LoopBackEdge(BlockId, Vector<LocalId>),
+  LoopBackEdge(BlockId, Vector<Atom>),
   Return(Atom?),
   ValueBreak(Atom),
   VoidBreak,
@@ -122,8 +122,20 @@ fn local_list_text(locals: Vector<LocalId>) String {
   parts.join(", ")
 }
 
+fn atom_list_text(atoms: Vector<Atom>) String {
+  parts := collect a in atoms {
+    atom_text(a)
+  }
+  parts.join(", ")
+}
+
+// Exposed so tests can compare edge args (Vector<Atom>) structurally by text.
+pub fn atom_text_pub(a: Atom) String {
+  atom_text(a)
+}
+
 fn edge_text(edge: CfgEdge) String {
-  "B${edge.target.id}(${local_list_text(edge.args)})"
+  "B${edge.target.id}(${atom_list_text(edge.args)})"
 }
 
 fn sorted_insert_local(locals: Vector<LocalId>, local: LocalId) Vector<LocalId> {
@@ -248,12 +260,27 @@ fn loop_params(result_local: LocalId, body: AnfExpr) Vector<LocalId> {
   sorted_union(params, collect_break_payloads(body))
 }
 
-fn edge_args_for(params: Vector<LocalId>) Vector<LocalId> {
-  // Phase 1 does not rename values into full SSA. Edge args are target-param
-  // placeholders so the printed graph has the same arity shape as later fact
-  // maps. The forward-vs-rebound distinction for partial rebinds is represented
-  // by Phase 2 facts, not by distinct Phase 1 local ids.
-  params
+// Map each target param to the atom this path supplies:
+//  - the result local gets `result_atom` (the arm/break tail),
+//  - every other carried local gets ALocal(itself) (rebound or forwarded — same id).
+fn edge_args_with_result(params: Vector<LocalId>, result_local: LocalId, result_atom: Atom) Vector<
+  Atom,
+> {
+  collect p in params {
+    if p.id == result_local.id {
+      result_atom
+    } else {
+      .ALocal(p)
+    }
+  }
+}
+
+// No distinguished result value on this edge (e.g. a loop back-edge): every
+// carried param forwards its own current binding.
+fn edge_args_forward(params: Vector<LocalId>) Vector<Atom> {
+  collect p in params {
+    .ALocal(p)
+  }
 }
 
 fn empty_block(id: BlockId, name: String, params: Vector<LocalId>) CfgBlock {
@@ -308,7 +335,7 @@ fn push_instruction(ctx: BuildCtx, id: BlockId, inst: CfgInstruction) BuildCtx {
   ctx.replace_block(block)
 }
 
-fn add_pred(ctx: BuildCtx, target: BlockId, from: BlockId, args: Vector<LocalId>) BuildCtx {
+fn add_pred(ctx: BuildCtx, target: BlockId, from: BlockId, args: Vector<Atom>) BuildCtx {
   // In `preds`, a CfgEdge.target holds the predecessor block id (the edge
   // source), mirroring the forward edge stored in that predecessor's `succs`.
   block := ctx.get_block(target)
@@ -403,12 +430,15 @@ fn op_text(op: AnfOp) String {
 }
 
 // Branch a fall-through arm into a join block with placeholder edge args.
-fn wire_fallthrough_to_join(ctx: BuildCtx, block: BlockId, join: BlockId, params: Vector<LocalId>) BuildCtx {
-  ctx.finish_block(
-    block,
-    .Branch(join, edge_args_for(params)),
-    [CfgEdge.{ target: join, args: edge_args_for(params) }],
-  )
+fn wire_fallthrough_to_join(
+  ctx: BuildCtx,
+  ft: FallThrough,
+  join: BlockId,
+  params: Vector<LocalId>,
+  result_local: LocalId,
+) BuildCtx {
+  args := edge_args_with_result(params, result_local, ft.tail)
+  ctx.finish_block(ft.block, .Branch(join, args), [CfgEdge.{ target: join, args }])
 }
 
 // Continue building the shared continuation `body` from a join block, folding
@@ -452,14 +482,14 @@ fn build_match(
 
   arm_breaks: Vector<BlockId> = []
   arm_continues: Vector<BlockId> = []
-  falling: Vector<BlockId> = []
+  falling: Vector<FallThrough> = []
   for arm, i in arms {
     arm_out := ctx.build_expr(arm_ids[i], arm.body)
     ctx = arm_out.ctx
     arm_breaks = append_all(arm_breaks, arm_out.breaks)
     arm_continues = append_all(arm_continues, arm_out.continues)
     case arm_out.fallthrough {
-      .Some(ft) => falling = .append(ft.block),
+      .Some(ft) => falling = .append(ft),
       .None => {},
     }
   }
@@ -472,8 +502,8 @@ fn build_match(
 
   join_nb := ctx.new_block("match.join", params)
   ctx = join_nb.ctx
-  for block in falling {
-    ctx = .wire_fallthrough_to_join(block, join_nb.id, params)
+  for ft in falling {
+    ctx = .wire_fallthrough_to_join(ft, join_nb.id, params, result_local)
   }
   ctx.build_join_continuation(join_nb.id, body, arm_breaks, arm_continues)
 }
@@ -515,36 +545,52 @@ fn build_if(
   join_nb := ctx.new_block("if.join", params)
   ctx = join_nb.ctx
   case then_out.fallthrough {
-    .Some(ft) => ctx = .wire_fallthrough_to_join(ft.block, join_nb.id, params),
+    .Some(ft) => ctx = .wire_fallthrough_to_join(ft, join_nb.id, params, result_local),
     .None => {},
   }
   case else_out.fallthrough {
-    .Some(ft) => ctx = .wire_fallthrough_to_join(ft.block, join_nb.id, params),
+    .Some(ft) => ctx = .wire_fallthrough_to_join(ft, join_nb.id, params, result_local),
     .None => {},
   }
   ctx.build_join_continuation(join_nb.id, body, arm_breaks, arm_continues)
 }
 
-// A run-to-completion body fall-through loops back to the header.
-fn wire_backedge(ctx: BuildCtx, ft: FallThrough?, header: BlockId, back_args: Vector<LocalId>) BuildCtx {
+// A run-to-completion body fall-through loops back to the header, forwarding every
+// carried param's current binding.
+fn wire_backedge(ctx: BuildCtx, ft: FallThrough?, header: BlockId, params: Vector<LocalId>) BuildCtx {
   case ft {
-    .Some(f) => ctx.finish_block(
-      f.block,
-      .LoopBackEdge(header, back_args),
-      [CfgEdge.{ target: header, args: back_args }],
-    ),
+    .Some(f) => {
+      back_args := edge_args_forward(params)
+      ctx.finish_block(
+        f.block,
+        .LoopBackEdge(header, back_args),
+        [CfgEdge.{ target: header, args: back_args }],
+      )
+    },
     .None => ctx,
   }
 }
 
 // A break block exits the loop: give it an edge to the loop exit while preserving
-// its break terminator so the printed graph still records why control left.
-fn wire_break_exit(ctx: BuildCtx, block: BlockId, exit: BlockId, back_args: Vector<LocalId>) BuildCtx {
+// its break terminator so the printed graph still records why control left. A
+// value break feeds the loop-result param its payload; a void break forwards.
+fn wire_break_exit(
+  ctx: BuildCtx,
+  block: BlockId,
+  exit: BlockId,
+  params: Vector<LocalId>,
+  result_local: LocalId,
+) BuildCtx {
   b := ctx.get_block(block)
-  edges := [CfgEdge.{ target: exit, args: back_args }]
   case b.terminator {
-    .Some(.VoidBreak) => ctx.finish_block(block, .VoidBreak, edges),
-    .Some(.ValueBreak(a)) => ctx.finish_block(block, .ValueBreak(a), edges),
+    .Some(.VoidBreak) => {
+      args := edge_args_forward(params)
+      ctx.finish_block(block, .VoidBreak, [CfgEdge.{ target: exit, args }])
+    },
+    .Some(.ValueBreak(a)) => {
+      args := edge_args_with_result(params, result_local, a)
+      ctx.finish_block(block, .ValueBreak(a), [CfgEdge.{ target: exit, args }])
+    },
     _ => ctx,
   }
 }
@@ -564,7 +610,7 @@ fn build_loop(
   body_nb := ctx.new_block("loop.body", [])
   ctx = body_nb.ctx
 
-  back_args := edge_args_for(params)
+  back_args := edge_args_forward(params)
   ctx = .finish_block(
     current,
     .Branch(header_nb.id, back_args),
@@ -581,16 +627,17 @@ fn build_loop(
 
   // Wire only THIS loop body's own escapes; an inner loop already consumed its
   // own breaks/continues, so they never reach here (no block-id range guessing).
-  ctx = .wire_backedge(body_out.fallthrough, header_nb.id, back_args)
+  ctx = .wire_backedge(body_out.fallthrough, header_nb.id, params)
   for cb in body_out.continues {
+    cont_args := edge_args_forward(params)
     ctx = .finish_block(
       cb,
-      .LoopBackEdge(header_nb.id, back_args),
-      [CfgEdge.{ target: header_nb.id, args: back_args }],
+      .LoopBackEdge(header_nb.id, cont_args),
+      [CfgEdge.{ target: header_nb.id, args: cont_args }],
     )
   }
   for bb in body_out.breaks {
-    ctx = .wire_break_exit(bb, exit_nb.id, back_args)
+    ctx = .wire_break_exit(bb, exit_nb.id, params, result_local)
   }
 
   // The loop as a whole falls through to its exit continuation; the loop's own
@@ -735,7 +782,7 @@ fn target_param_count(func: CfgFunction, id: BlockId) Int {
   -1
 }
 
-fn edge_arity_mismatch(func: CfgFunction, target: BlockId, args: Vector<LocalId>) Bool {
+fn edge_arity_mismatch(func: CfgFunction, target: BlockId, args: Vector<Atom>) Bool {
   args.len() != func.target_param_count(target)
 }
 
@@ -769,10 +816,10 @@ fn terminator_name(term: Terminator) String {
 
 fn terminator_text(term: Terminator) String {
   case term {
-    .Branch(target, args) => "branch B${target.id}(${local_list_text(args)})",
+    .Branch(target, args) => "branch B${target.id}(${atom_list_text(args)})",
     .CondBranch(test_atom, then_target, then_args, else_target, else_args) => "condbranch ${atom_text(
       test_atom,
-    )} then B${then_target.id}(${local_list_text(then_args)}) else B${else_target.id}(${local_list_text(
+    )} then B${then_target.id}(${atom_list_text(then_args)}) else B${else_target.id}(${atom_list_text(
       else_args,
     )})",
     .Match(scrutinee, edges) => {
@@ -781,7 +828,7 @@ fn terminator_text(term: Terminator) String {
       }
       "match ${atom_text(scrutinee)} ${rendered.join(", ")}"
     },
-    .LoopBackEdge(target, args) => "loop-back-edge B${target.id}(${local_list_text(args)})",
+    .LoopBackEdge(target, args) => "loop-back-edge B${target.id}(${atom_list_text(args)})",
     .Return(.Some(atom)) => "return ${atom_text(atom)}",
     .Return(.None) => "return",
     .ValueBreak(atom) => "value-break ${atom_text(atom)}",

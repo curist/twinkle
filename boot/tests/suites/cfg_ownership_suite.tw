@@ -1,7 +1,7 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
-use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, Atom}
 use compiler.builtins
 use compiler.cfg
 use compiler.core_ir.{FuncId, LocalId}
@@ -60,13 +60,13 @@ fn direct_value_break_module() AnfModule {
   }
 }
 
-fn same_args(left: Vector<LocalId>, right: Vector<LocalId>) Bool {
+fn same_args(left: Vector<Atom>, right: Vector<Atom>) Bool {
   if left.len() != right.len() {
     return false
   }
 
-  for local, i in left {
-    if local.id != right[i].id {
+  for a, i in left {
+    if cfg.atom_text_pub(a) != cfg.atom_text_pub(right[i]) {
       return false
     }
   }
@@ -84,7 +84,7 @@ fn block_by_id(func: cfg.CfgFunction, id: cfg.BlockId) cfg.CfgBlock? {
   .None
 }
 
-fn has_pred_from(block: cfg.CfgBlock, from: cfg.BlockId, args: Vector<LocalId>) Bool {
+fn has_pred_from(block: cfg.CfgBlock, from: cfg.BlockId, args: Vector<Atom>) Bool {
   for edge in block.preds {
     if edge.target.id == from.id and same_args(edge.args, args) {
       return true
@@ -94,7 +94,7 @@ fn has_pred_from(block: cfg.CfgBlock, from: cfg.BlockId, args: Vector<LocalId>) 
   false
 }
 
-fn has_succ_to(block: cfg.CfgBlock, target: cfg.BlockId, args: Vector<LocalId>) Bool {
+fn has_succ_to(block: cfg.CfgBlock, target: cfg.BlockId, args: Vector<Atom>) Bool {
   for edge in block.succs {
     if edge.target.id == target.id and same_args(edge.args, args) {
       return true
@@ -137,6 +137,15 @@ fn predless_non_entry_blocks(func: cfg.CfgFunction) Int {
     }
   }
   n
+}
+
+fn block_named(func: cfg.CfgFunction, name: String) cfg.CfgBlock? {
+  for block in func.blocks {
+    if block.name == name {
+      return .Some(block)
+    }
+  }
+  .None
 }
 
 pub fn suite() runner.Suite {
@@ -286,6 +295,28 @@ pub fn suite() runner.Suite {
         try assert.equal(first, second)
         try assert.is_true(first.contains("terminator: condbranch"))
         try assert.is_true(first.contains("terminator: loop-back-edge"))
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t2: branch join edge args carry the arm tail atom",
+      fn() {
+        f := try function("fn f(c: Bool) Int {\n  r := if c { 1 } else { 2 }\n  r\n}\n", "f")
+        jb := case block_named(f, "if.join") {
+          .Some(b) => b,
+          .None => return assert.fail("no if.join block"),
+        }
+        try assert.equal(jb.params.len(), 1)
+        fed_literal := false
+        for pe in jb.preds {
+          for a in pe.args {
+            case a {
+              .ALitInt(_) => fed_literal = true,
+              _ => {},
+            }
+          }
+        }
+        try assert.is_true(fed_literal)
         .Ok({})
       },
     )
