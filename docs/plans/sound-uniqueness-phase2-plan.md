@@ -43,6 +43,112 @@
 
 ---
 
+## Execution guardrails (read before Task 1)
+
+These four rules pin down the highest-churn and most-surprising spots so they can't
+be gotten subtly wrong. They are **authoritative**: where a task's inline snippet
+differs in *structure* (not logic) from a rule here, follow the rule.
+
+### G1 — Freeze `analyze_function` at Task 5; evolve only `ownership_stage`
+
+Tasks 4–7 all touch the per-function driver. Rewriting the same function four times
+is how a stray half gets left behind. Split it once so the churny tasks touch a
+single helper body:
+
+- **Task 4** writes `analyze_function` with the liveness half only (the
+  `compute_liveness` + `collect` that fills `entry.live`/`exit.live`).
+- **Task 5** introduces `fn ownership_stage(blocks: Vector<CfgBlock>, b: BuiltinRegistry, sem: OptimizerSemantics) Vector<CfgBlock>` and adds exactly **one** line to `analyze_function` — `blocks = ownership_stage(blocks, b, sem)` after the liveness `collect`. From here on `analyze_function` is **frozen**:
+
+  ```tw
+  fn analyze_function(f: CfgFunction, b: BuiltinRegistry, sem: OptimizerSemantics) CfgFunction {
+    live := compute_liveness(f.blocks)
+    blocks := collect blk in f.blocks {
+      bl := live[blk.id.id]
+      blk.entry.live = bl.live_in
+      blk.exit.live = bl.live_out
+      blk
+    }
+    blocks = ownership_stage(blocks, b, sem)   // Task 5+ only; Task 4 omits this line
+    CfgFunction.{ func_id: f.func_id, name: f.name, params: f.params, blocks }
+  }
+  ```
+
+- **Task 6 / Task 7** replace **`ownership_stage`'s body only** (Task 6: ownership
+  fixpoint; Task 7: combined ownership+validity fixpoint). Do not touch
+  `analyze_function`.
+
+Whenever a task says "replace the ownership stage of `analyze_function`", it means
+replace `ownership_stage`'s body. After Task 7, grep the module: there must be
+exactly one `analyze_function` and one live fixpoint driver — no orphaned
+`fixpoint_ownership` left beside `run_fixpoint`.
+
+### G2 — Task 2 edit checklist (every edge-arg site, not just the three helpers)
+
+`edge_args_for` feeds args at more sites than the `wire_*` helpers; miss one and the
+graph desyncs silently while still typechecking. Retype/replace **all** of these
+(function names are the stable anchors; the line refs are pre-edit and drift a few
+lines after Task 1):
+
+- `wire_fallthrough_to_join` (def `~:401`) → sig `(ctx, ft: FallThrough, join, params, result_local)`. Callers: `build_match` (`~:471`), `build_if` (`~:513`, `~:517`) — pass **`ft`** (not `ft.block`) and `result_local`.
+- `build_match`: retype `falling: Vector<BlockId>` → `Vector<FallThrough>` (`.append(ft.block)` → `.append(ft)`, `for block in falling` → `for ft in falling`). `build_match` already has `result_local` in scope — thread it.
+- `wire_backedge` (def `~:524`) → sig `(ctx, ft, header, params)`; compute `edge_args_forward(params)` inside. Caller `~:579`: pass `params`.
+- `wire_break_exit` (def `~:537`) → sig `(ctx, block, exit, params, result_local)`. Caller `~:588`: pass `params, result_local`.
+- **Inline (non-helper) edge builders in `build_loop`** — easy to miss: the initial `back_args := edge_args_for(params)` (`~:568`) → `edge_args_forward(params)`, and the `for cb in body_out.continues` back-edge (`~:581-587`) → build its edge args with `edge_args_forward(params)`.
+- **Delete `edge_args_for`** once nothing calls it — the linter flags the unused fn otherwise.
+
+After Task 2, run the **structural** suite (`cfg_ownership_suite`) *before* any analysis
+task. A Phase 1 shape regression here is always a Task 2 wiring bug — the analysis
+never mutates structure, so don't compensate for it downstream.
+
+### G3 — Match-arm pattern bindings are invisible defs (sound, imprecise, and locked by a fixture)
+
+A `case` arm binds its payload locals through the **pattern**
+(`CorePattern.Var(LocalId)`, extracted by `anf_analysis.collect_pattern_bindings`),
+**not** through any `AnfOp` and **not** as a block param — `build_match` builds arm
+blocks with `[]` params (`cfg.tw:440`). So `op_defs` never lists them: a
+pattern-bound local used in an arm is, to this analysis, *undefined*, and backward
+liveness leaks it as live-in up to function entry.
+
+This is **sound and cannot trap**: over-approximating liveness only biases the
+`AInit` hinge toward *alias* (`Shared`) instead of *move* — it never mints a bogus
+`Unique`; match→arm edges carry `args: []` into `[]`-param arm blocks so no
+positional index can go out of bounds; and `fact_of` on an absent local is
+`Unknown`. It costs only `--cfg` precision, which no codegen consumes in Phase 2.
+**Phase 2 accepts this and does not special-case patterns.** Two guards keep it a
+*known* property rather than a latent surprise:
+
+- Add a facts-suite fixture (with the Task 6 control-flow tests) that hand-builds an
+  `AMatch` with a `.Variant(_, _, [.Var(lid(k))])` arm whose body reads `lid(k)`,
+  then asserts `analyze` does **not** trap and the bound local's arm-exit ownership
+  is `Shared` **or** `Unknown` — never `Unique` (the alias bias yields `Shared`, an
+  absent fact yields `Unknown`; the invariant is only that it is never `Unique`).
+- Record the precision upgrade in the **Phase 3** README row (Task 9): carry each
+  arm's `collect_pattern_bindings(arm.pattern)` onto the arm block (a `bound` set
+  killed at block entry in `scan_block_backward`, seeded `Unknown` forward). Do
+  **not** build it in Phase 2.
+
+### G4 — Tasks 6–7 convergence debug ladder
+
+The generalized live-in join + skip-unprocessed fixpoint is the one place a wrong
+answer is subtle. If the loop-carried test (Task 6 Step 7) reports `Unknown` where
+`Unique` is expected, check in order:
+
+1. `join_entry_ownership` iterates `blk.entry.live` (**not** `blk.params`) — a
+   paramless loop body must join the carried local by same id (the
+   `param_index → .None` branch). If it only handles params, the live-through local
+   is dropped to `Unknown`.
+2. The fixpoint `continue`s on `!is_processed(pred)` — a first-pass back-edge must
+   contribute *nothing*, not `Unknown`. A `Unique ⊔ Unknown` at the header means the
+   skip is missing.
+3. `blk.entry.live` was materialized by the liveness stage **before**
+   `ownership_stage` runs (G1 ordering). Empty `entry.live` inside the join means the
+   stages are out of order.
+
+Never advance past Task 6 or Task 7 with these tests deferred — they are the only
+end-to-end check for the live-through join and the back-edge skip.
+
+---
+
 ## Task 1: Carry the raw op and function params (additive, keeps everything green)
 
 Phase 1 dropped the raw `AnfOp` after `op_text(op)` and never recorded a function's own parameters. Add both fields; the transfer and liveness need them. This task is purely additive — `op_text` still renders the same strings, so the Phase 1 structural suite stays green.
@@ -142,6 +248,8 @@ renders identically so the structural view is unchanged."
 ---
 
 ## Task 2: Real per-edge transferred atoms (phi arguments)
+
+> **Follow [G2](#g2--task-2-edit-checklist-every-edge-arg-site-not-just-the-three-helpers) as you go** — it lists every edge-arg site (including the two inline `build_loop` spots and the now-dead `edge_args_for`), and mandates running the structural suite before moving on. The steps below give the code; G2 is the completeness checklist.
 
 Phase 1 wired placeholder edge args (`edge_args_for(params)` returns the params verbatim) and dropped each arm's `FallThrough.tail`. The ownership join needs the *actual atom* each predecessor feeds into each target param — a join's result local is not a value any arm computes. Make `CfgEdge.args` and the terminator payloads `Vector<Atom>`, and build the real mapping: **result param ← arm tail atom**, **loop-result param ← break payload**, **carried local ← `ALocal(that local)`**.
 
@@ -1016,6 +1124,8 @@ by the move-vs-alias and last-use hinges."
 
 ---
 
+> **Apply [G1](#g1--freeze-analyze_function-at-task-5-evolve-only-ownership_stage) here:** introduce `ownership_stage` and add its single call to `analyze_function`, then freeze `analyze_function`. Tasks 6–7 rewrite only `ownership_stage`'s body. The Step 5 "temporary single-pass wiring" below is `ownership_stage`'s first body — put it there, not inline in `analyze_function`.
+
 ## Task 5: Forward ownership transfer (per-op, hinges, `cow_base_arg`)
 
 Implement the per-`AnfOp` transfer producing `exit.ownership` from `entry.ownership` within a block, using `call_info`/`cow_base_arg`, the three hinges, and last-use derived from `exit.live` + a backward in-block scan. Tests here use single-block fixtures (introduce/move/alias/publish).
@@ -1382,21 +1492,27 @@ fn forward_block(blk: CfgBlock, entry: ForwardState, b: BuiltinRegistry, sem: Op
 }
 ```
 
-`scan_block_backward` needs `blk.exit.live`, so the liveness stage must run and be materialized into the blocks **before** the ownership stage (Task 4's `collect` runs first, then this one).
+`scan_block_backward` needs `blk.exit.live`, so the liveness stage must run and be materialized into the blocks **before** the ownership stage (`ownership_stage` receives the liveness-filled blocks; Task 4's `collect` in `analyze_function` runs first).
 
-In `analyze_function`, after liveness, run a single forward pass per block (Task 6 turns this into a fixpoint with real entry facts). Temporary single-pass wiring so Task 5 tests pass:
+Per [G1](#g1--freeze-analyze_function-at-task-5-evolve-only-ownership_stage), introduce `ownership_stage` now and wire it in with the single frozen line, then never edit `analyze_function` again — Tasks 6–7 change only this helper's body. Its Task 5 body is a single forward pass per block (Task 6 turns it into a fixpoint with real entry facts). Temporary single-pass wiring so Task 5 tests pass:
 
 ```tw
-  blocks := collect blk in blocks {
+fn ownership_stage(blocks: Vector<CfgBlock>, b: BuiltinRegistry, sem: OptimizerSemantics) Vector<CfgBlock> {
+  collect blk in blocks {
     entry_state := ForwardState.{ own: Dict.new(), valid: Dict.new() }
     exit_state := forward_block(blk, entry_state, b, sem)
     blk.exit.ownership = exit_state.own
     blk.exit.binding_valid = exit_state.valid
     blk
   }
+}
 ```
 
-(Keep the liveness `collect` from Task 4 first, then this `collect` over its result.)
+Then add the one call to `analyze_function` (after the liveness `collect`, exactly as the frozen form in G1 shows):
+
+```tw
+  blocks = ownership_stage(blocks, b, sem)
+```
 
 - [ ] **Step 6: Run tests to verify they pass**
 
@@ -1419,6 +1535,8 @@ control-flow join + fixpoint is the next task."
 ```
 
 ---
+
+> **Two guardrails apply here:** [G1](#g1--freeze-analyze_function-at-task-5-evolve-only-ownership_stage) (replace `ownership_stage`'s body only — leave `analyze_function` alone), and [G4](#g4--tasks-67-convergence-debug-ladder) (the debug ladder for the loop-carried test). Also add the [G3](#g3--match-arm-pattern-bindings-are-invisible-defs-sound-imprecise-and-locked-by-a-fixture) match-binding fixture alongside these control-flow tests.
 
 ## Task 6: Positional predecessor join + fixpoint (branches and loops)
 
@@ -1575,7 +1693,7 @@ needed.
 
 - [ ] **Step 4: Implement the fixpoint driver**
 
-Replace the temporary single-pass in `analyze_function` with a fixpoint over the exit ownership maps, tracking which blocks have been processed so the join can skip unprocessed back-edges. Iterate blocks in id order (≈RPO), so forward-edge predecessors are processed before their targets and back-edges converge over subsequent rounds. Binding-validity is threaded into this same loop in Task 7:
+Add the fixpoint driver `fixpoint_ownership` (`analyze_function` stays frozen — per [G1](#g1--freeze-analyze_function-at-task-5-evolve-only-ownership_stage) you replace only `ownership_stage`'s body, in Step 5). The driver iterates over the exit ownership maps, tracking which blocks have been processed so the join can skip unprocessed back-edges. Iterate blocks in id order (≈RPO), so forward-edge predecessors are processed before their targets and back-edges converge over subsequent rounds. Binding-validity is threaded into this same loop in Task 7:
 
 ```tw
 fn fixpoint_ownership(blocks: Vector<CfgBlock>, b: BuiltinRegistry, sem: OptimizerSemantics) Dict<Int, Dict<Int, Int>> {
@@ -1636,12 +1754,13 @@ fn same_own_map(a: Dict<Int, Int>, b: Dict<Int, Int>) Bool {
 
 - [ ] **Step 5: Materialize entry/exit ownership into the blocks**
 
-Rewrite the ownership stage of `analyze_function` to compute the fixpoint, then fill `entry.ownership`/`exit.ownership`:
+Replace `ownership_stage`'s body (the Task 5 single-pass `collect`) with the fixpoint + materialize — `analyze_function` is untouched (per [G1](#g1--freeze-analyze_function-at-task-5-evolve-only-ownership_stage)):
 
 ```tw
+fn ownership_stage(blocks: Vector<CfgBlock>, b: BuiltinRegistry, sem: OptimizerSemantics) Vector<CfgBlock> {
   exits := fixpoint_ownership(blocks, b, sem)
   done := all_processed(blocks)
-  blocks := collect blk in blocks {
+  collect blk in blocks {
     entry_own := join_entry_ownership(blk, exits, done)
     st := ForwardState.{ own: entry_own, valid: Dict.new() }
     st = forward_block(blk, st, b, sem)
@@ -1649,6 +1768,7 @@ Rewrite the ownership stage of `analyze_function` to compute the fixpoint, then 
     blk.exit.ownership = st.own
     blk
   }
+}
 ```
 
 - [ ] **Step 6: Run tests to verify they pass**
@@ -1859,9 +1979,11 @@ fn same_valid_map(a: Dict<Int, Bool>, b: Dict<Int, Bool>) Bool {
 
 Now generalize the Task 6 `fixpoint_ownership` into a **combined** fixpoint that
 co-iterates ownership and validity to a joint fixed point (they share
-`ForwardState` and `forward_block`), and update `analyze_function`'s materialize
-to fill both maps. This replaces the ownership-only `fixpoint_ownership` and its
-materialize block from Task 6:
+`ForwardState` and `forward_block`), and update `ownership_stage`'s body to fill
+both maps. This **replaces** the ownership-only `fixpoint_ownership` (delete it —
+per [G1](#g1--freeze-analyze_function-at-task-5-evolve-only-ownership_stage) there
+must be exactly one live driver) and `ownership_stage`'s Task 6 body;
+`analyze_function` stays frozen:
 
 ```tw
 type FixResult = .{ exits: Dict<Int, Dict<Int, Int>>, exit_valid: Dict<Int, Dict<Int, Bool>> }
@@ -1898,12 +2020,13 @@ fn run_fixpoint(blocks: Vector<CfgBlock>, b: BuiltinRegistry, sem: OptimizerSema
 }
 ```
 
-The materialize in `analyze_function` (replacing the Task 6 ownership-only block):
+`ownership_stage`'s final body (replacing its Task 6 body; `analyze_function` unchanged):
 
 ```tw
+fn ownership_stage(blocks: Vector<CfgBlock>, b: BuiltinRegistry, sem: OptimizerSemantics) Vector<CfgBlock> {
   fx := run_fixpoint(blocks, b, sem)
   done := all_processed(blocks)
-  blocks := collect blk in blocks {
+  collect blk in blocks {
     entry_own := join_entry_ownership(blk, fx.exits, done)
     entry_valid := join_entry_valid(blk, fx.exit_valid, done)
     st := ForwardState.{ own: entry_own, valid: entry_valid }
@@ -1914,6 +2037,7 @@ The materialize in `analyze_function` (replacing the Task 6 ownership-only block
     blk.exit.binding_valid = st.valid
     blk
   }
+}
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -2152,7 +2276,7 @@ In `docs/plans/sound-uniqueness/README.md`:
 
 1. Mark the four implemented Phase 2 bullets `[x]` with a one-line "Done" note pointing at `phase2-design.md` and the new files (`compiler/ownership.tw`, `cfg_ownership_facts_suite.tw`). Leave "Catalog later precision needs" as the coverage-doc bullet.
 2. Add a **Phase 8** bullet: "Extern copying-borrow precision — treat host imports as borrow (args preserved) with `Unique` GC results per the copying-marshalling contract; Phase 2 conservatively over-publishes them." Cross-reference `concurrency-publication.md` and `fact-lattice.md`'s extern row.
-3. Add to **Phase 3** ("Move ownership-relevant pass queries to CFG facts"): "Dead-merge block-param pruning using the Phase 2 liveness facts."
+3. Add to **Phase 3** ("Move ownership-relevant pass queries to CFG facts"): "Dead-merge block-param pruning using the Phase 2 liveness facts." Also add: "Match-arm pattern-binding precision — carry `collect_pattern_bindings(arm.pattern)` onto arm blocks so pattern-bound locals are killed at block entry (Phase 2 soundly over-approximates them as live-in; see plan guardrail G3)."
 4. Add two **Future-work ledger** rows: "Extern copying-borrow precision → Phase 8" and "Binding-validity / liveness render surface in `--cfg` → ledger nicety".
 
 - [ ] **Step 5: Format, lint, commit**
