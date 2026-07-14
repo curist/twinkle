@@ -7,8 +7,9 @@ use compiler.cfg
 use compiler.core_ir.{FuncId, GlobalId, LocalId, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.opt.semantics as semantics
-use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+use compiler.opt.semantics.{EffectKind, make_prelude_optimizer_semantics}
 use compiler.ownership
+use compiler.pipeline
 
 fn lid(id: Int) LocalId {
   LocalId.{ id }
@@ -134,6 +135,36 @@ fn block_named(f: cfg.CfgFunction, name: String) cfg.CfgBlock? {
     }
   }
   .None
+}
+
+fn effect_is_update(e: EffectKind) Bool {
+  case e {
+    .Update => true,
+    _ => false,
+  }
+}
+
+// Assert a builtin FuncId classifies as Update with a cow_base_arg.
+fn assert_update_with_base(s: semantics.OptimizerSemantics, fid: FuncId, label: String) Result<
+  Void,
+  String,
+> {
+  case semantics.call_info(s, fid) {
+    .Some(cs) => {
+      try assert.is_true(effect_is_update(cs.effect))
+      case cs.cow_base_arg {
+        .Some(_) => .Ok({}),
+        .None => assert.fail("${label} missing cow_base_arg"),
+      }
+    },
+    .None => assert.fail("${label} has no CallSemantics"),
+  }
+}
+
+fn analyze_source(src: String) Result<cfg.CfgView, String> {
+  b := b_reg()
+  artifacts := try pipeline.compile_source(src)
+  .Ok(ownership.analyze(cfg.build_view(artifacts.opt, b), b, sem()))
 }
 
 // The suite is one exported builder. Task 4 creates it with the first test;
@@ -372,6 +403,31 @@ pub fn suite() runner.Suite {
         a1 := cfg.render_view(ownership.analyze(cfg.build_view(m, b), b, sem()))
         a2 := cfg.render_view(ownership.analyze(cfg.build_view(m, b), b, sem()))
         try assert.is_true(a1 == a2)
+        .Ok({})
+      },
+    )
+    .test(
+      "t9 soundness guard: classifications match the transfer's assumptions",
+      fn() {
+        b := b_reg()
+        s := sem()
+        try assert_update_with_base(s, b.method_id("Dict", "set"), "Dict.set")
+        try assert_update_with_base(s, b.method_id("Vector", "append"), "Vector.append")
+        try assert_update_with_base(s, b.id("vector$set_unsafe"), "vector$set_unsafe")
+
+        // A Cell op must resolve to .None (publish bucket) or at least never Update.
+        case semantics.call_info(s, b.method_id("Cell", "set")) {
+          .None => .Ok({}),
+          .Some(cs) => assert.is_false(effect_is_update(cs.effect)),
+        }
+      },
+    )
+    .test(
+      "t9 smoke: analyze a real optimized program without trapping",
+      fn() {
+        src := "fn build() Dict<Int, Int> {\n  d := Dict.new()\n  d[1] = 2\n  d[3] = 4\n  d\n}\n"
+        v := try analyze_source(src)
+        try assert.is_true(v.functions.len() >= 1)
         .Ok({})
       },
     )

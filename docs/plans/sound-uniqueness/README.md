@@ -102,27 +102,35 @@ here — so the two orderings are kept from drifting apart by hand.
   specialization. The first implementation is intentionally smaller. Details:
   [fact-lattice.md](fact-lattice.md), [summary-specialization.md](summary-specialization.md),
   [sound-analysis.md](sound-analysis.md).
-- [ ] **Implement the first ownership domain.** Track only `Unique`, `Shared`, and
+- [x] **Implement the first ownership domain.** Track only `Unique`, `Shared`, and
   `Unknown` as ownership facts, populating the empty entry/exit fact maps the
   Phase 1 structural view reserved and surfacing them in the `twk ir` CFG output.
   Keep ownership facts separate from block parameters, keep binding validity,
   last-use, and liveness as separate CFG facts, and do not model `Moved` as an
   ownership lattice element.
   Details: [fact-lattice.md](fact-lattice.md), [cfg-ownership-ir.md](cfg-ownership-ir.md).
-- [ ] **Populate per-predecessor join and back-edge fact transfers.** Interpret
+  **Done** — `compiler/ownership.tw` (`analyze`, `BlockFacts`), tests in
+  `boot/tests/suites/cfg_ownership_facts_suite.tw`; see [phase2-design.md](phase2-design.md).
+- [x] **Populate per-predecessor join and back-edge fact transfers.** Interpret
   the Phase 1 structural join params and predecessor edges: for partial branch
   rebinds, distinguish arms that rebound a carried `LocalId` from arms that
   forward the incoming value; for loop back-edges, distinguish preserved carried
   locals from updated carried locals. Phase 1 edge args are only arity
   placeholders — Phase 2 is where forwarding/rebinding semantics become facts.
   Details: [fact-lattice.md](fact-lattice.md), [cfg-ownership-ir.md](cfg-ownership-ir.md).
-- [ ] **Model conservative publication and aliasing.** Known aliases and
+  **Done** — real per-edge phi atoms (`cfg.tw`) + positional join over live-in
+  locals, skip-unprocessed-predecessor fixpoint (`ownership.tw`).
+- [x] **Model conservative publication and aliasing.** Known aliases and
   publication sinks demote to `Shared`; missing proof stays `Unknown`. Keep
   record shapes, deep field ownership, and transport-wrapper paths out of the
   first executable domain. Details: [sound-analysis.md](sound-analysis.md).
-- [ ] **Handle loop-carried ownership in the simple domain.** Prove `Unique` can
+  **Done** — AInit/field-store/consuming-op hinges + the `.None`-call publish
+  bucket (unknown Twinkle calls, externs, `Cell` ops) demote to `Shared`.
+- [x] **Handle loop-carried ownership in the simple domain.** Prove `Unique` can
   cross back-edges only when every continuing path preserves the invariant and
   reads are non-escaping. Details: [sound-analysis.md](sound-analysis.md).
+  **Done** — consume-then-reassign stays `Unique` through the paramless loop body
+  (live-through same-id join + back-edge skip), guarded by the loop-carried test.
 - [ ] **Catalog later precision needs without implementing them yet.** Record
   shell/field ownership, transport wrappers (`out.ctx`, `out.state`,
   `Ok[0].state`), nested collections, closure recovery, and concurrency sinks stay
@@ -139,6 +147,13 @@ variants yet.
 - [ ] **Move ownership-relevant pass queries to CFG facts.** Liveness, joins,
   back-edges, publication, and candidate verdicts should have one shared source
   of truth. Details: [cfg-ownership-ir.md](cfg-ownership-ir.md).
+- [ ] **Dead-merge block-param pruning using the Phase 2 liveness facts.** Drop
+  join/loop carried params that are dead across the boundary, using
+  `BlockFacts.live`.
+- [ ] **Match-arm pattern-binding precision.** Carry
+  `collect_pattern_bindings(arm.pattern)` onto arm blocks so pattern-bound locals
+  are killed at block entry. Phase 2 soundly over-approximates them as live-in
+  (never `Unique`, no trap); see the plan guardrail G3.
 - [ ] **Decide which local peepholes stay ANF-local.** Dead-let/copy-prop/
   const-fold/branch simplification may remain ANF-local while they do not depend
   on ownership/control-flow facts; the rest move onto CFG facts. Details:
@@ -231,6 +246,11 @@ correctly.
 This phase handles anticipated work that is intentionally not on the critical path
 for the first correct ownership engine.
 
+- [ ] **Extern copying-borrow precision.** Treat host imports as borrow (args
+  preserved) with `Unique` GC results per the copying-marshalling contract; Phase 2
+  conservatively over-publishes them (sanctioned deviation). Details:
+  [concurrency-publication.md](concurrency-publication.md),
+  [fact-lattice.md](fact-lattice.md) (extern row).
 - [ ] **Evaluate non-escaping closure recovery.** Keep escaping/unknown captures as
   publication sinks by default; add non-escaping/inlined closure recovery only if
   real workloads justify it. Details: [closure-capture.md](closure-capture.md).
@@ -257,6 +277,8 @@ these phases:
 | Compiler-private mutable intrinsic family | Phase 7 |
 | Migration of existing builder/in-place hooks behind shared internals | Phase 7 |
 | Removal of ad hoc mutability legality paths | Phase 7 |
+| Extern copying-borrow precision (Phase 2 over-publishes externs) | Phase 8 |
+| Binding-validity / liveness render surface in `--cfg` | Ledger nicety (computed in Phase 2, off the default print) |
 | Non-escaping closure recovery | Phase 8, optional based on workload evidence |
 | Advanced concurrency copy/share refinement | Phase 8, optional based on runtime contract |
 | Buffer retirement | Phase 8, after performance parity is demonstrated |
