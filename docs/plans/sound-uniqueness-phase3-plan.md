@@ -15,7 +15,7 @@
 ## File structure
 
 - **Modify** `boot/compiler/ownership.tw` — summary *types*; `ForwardState.prov`; provenance propagation in `transfer_op`; transitive `publish_local`; body-only forward (`forward_block_body`); `prov` threaded through `run_fixpoint`/joins (`FixResult.exit_prov`, `join_entry_prov`); per-function classification (`summarize_function`); call-site consumption in `transfer_call`; an `analyze_with_summaries` entry (keep the 3-arg `analyze` as an empty-table wrapper).
-- **Create** `boot/compiler/summary.tw` — table constructor, call-graph extraction, SCC-ordered fixpoint (`compute`), and the per-function `--cfg` header renderer.
+- **Create** `boot/compiler/summary.tw` (in Task 3) — call-graph extraction, SCC-ordered fixpoint (`compute`), and the per-function `--cfg` header renderer. (Summary types + `empty_summary_table` live in `ownership.tw`, so `ownership.tw` never imports `summary.tw` — the graph stays acyclic.)
 - **Modify** `boot/compiler/cfg.tw` — `render_view_with_headers`; `CfgBlock.bound`; `prune_dead_merge` support.
 - **Modify** `boot/commands/ir.tw` — `--cfg` runs `prune_dead_merge → summary.compute → analyze_with_summaries → summary.render_cfg`.
 - **Create** `boot/tests/suites/cfg_summary_suite.tw` — TDD gate over hand-built multi-function fixtures; register in `boot/tests/main.tw`.
@@ -43,12 +43,12 @@
 
 ## Guardrails (read before Task 1)
 
-- **G1 — `analyze` stays the empty-table wrapper.** Phase 2's `pub fn analyze(view,b,sem)` has ~20 call sites. Do **not** change its signature. Add `pub fn analyze_with_summaries(view,b,sem,table)`; make `analyze` call it with `empty_table()`. Existing facts tests stay unchanged.
+- **G1 — `analyze` stays the empty-table wrapper.** Phase 2's `pub fn analyze(view,b,sem)` has ~20 call sites. Do **not** change its signature. Add `pub fn analyze_with_summaries(view,b,sem,table)`; make `analyze` call it with `empty_summary_table()` (defined in `ownership.tw`). Existing facts tests stay unchanged.
 - **G2 — Phase 2 fixtures stay green throughout.** Every Phase 2 fixture uses `params: []`, so provenance is empty and transitive publish is a no-op. A Phase 2 regression means a threading bug.
 - **G3 — Escape over post-publish exits; return over body-only.** (See Conventions.) If summaries come out all-`Shared`, the return classifier is reading post-publish state; if a returned wrapper's param shows `borrow`, the escape classifier is reading only the return block instead of all blocks.
 - **G4 — Consumption in one place.** `transfer_call` is used by both `analyze` and `summarize_function` (via the forward pass). Implement consumption once; both benefit.
 - **G5 — Dead-merge is pre-analysis.** `prune_dead_merge` runs before `compute`/`analyze` and returns a new view; the analysis runs fresh on it. Never mutate an analyzed CFG.
-- **G6 — Module cycle is fine.** A `summary.tw ↔ ownership.tw` import relationship is acceptable in Twinkle (verified). Types nonetheless live in `ownership.tw`; `summary.tw` imports them. `cfg.tw` must **not** import `ownership`/`summary` — headers are passed in as a `Dict<Int,String>`.
+- **G6 — Module graph is acyclic (keep it that way).** Layering: `summary.tw → ownership.tw → cfg.tw` (plus `summary.tw → cfg.tw`), no back-edges. The summary *types* and `empty_summary_table()` live in `ownership.tw`, so `ownership.tw` never imports `summary.tw` (the G1 wrapper builds the empty table locally). `cfg.tw` must **not** import `ownership`/`summary` — the `--cfg` summary header is passed in as a `Dict<Int,String>`. (A `summary ↔ ownership` cycle was spiked and Twinkle accepts it, but we don't need or want one — this matches the design's acyclic layout.)
 
 ---
 
@@ -57,9 +57,8 @@
 Add the summary types, fold `prov` into the forward analysis, make publication transitive, and classify the **escape/capability** axes (return effect is a stub `Shared` here; Task 2 makes it real). This proves the provenance plumbing and closes the two aggregate/dead-branch escape holes.
 
 **Files:**
-- Modify: `boot/compiler/ownership.tw`.
-- Create: `boot/compiler/summary.tw` (table constructor only).
-- Create + register: `boot/tests/suites/cfg_summary_suite.tw`; `boot/tests/main.tw`.
+- Modify: `boot/compiler/ownership.tw` (types + `empty_summary_table` + provenance + escape/capability).
+- Create + register: `boot/tests/suites/cfg_summary_suite.tw`; `boot/tests/main.tw`. (`summary.tw` is created in Task 3.)
 
 - [ ] **Step 1: Write the failing test (single-function, escape axis)**
 
@@ -72,12 +71,11 @@ use @std.testing as runner
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
 use compiler.builtins
 use compiler.cfg
-use compiler.core_ir.{FuncId, GlobalId, LocalId, Param}
+use compiler.core_ir.{FieldId, FuncId, GlobalId, LocalId, Param}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.ownership
-use compiler.summary
 
 fn lid(id: Int) LocalId {
   LocalId.{ id }
@@ -131,7 +129,7 @@ fn summ1(name: String, nparams: Int, body: AnfExpr) ownership.Summary {
   m := module_of([fdef(1, name, nparams, body)])
   v := cfg.build_view(m, b)
   case cfg.function_named(v, name) {
-    .Some(f) => ownership.summarize_function(f, summary.empty_table(), b, sem()),
+    .Some(f) => ownership.summarize_function(f, ownership.empty_summary_table(), b, sem()),
     .None => error("missing ${name}"),
   }
 }
@@ -190,16 +188,18 @@ pub fn suite() runner.Suite {
 
 Register in `boot/tests/main.tw` (`use .suites.cfg_summary_suite` + `cfg_summary_suite.suite()`).
 
-> Note: confirm `FieldId` is importable (`use compiler.core_ir.{…, FieldId}`) — grep `pub type FieldId`. Add it to the imports.
+(`FieldId`/`FuncId`/`Param` are in `compiler.core_ir`; `TypeId` in `compiler.mono_type` — both imported above. If a grep shows `FieldId` lives elsewhere, adjust the import.)
 
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `target/twk run boot/tests/main.tw`
-Expected: FAIL — no `compiler.summary` / no `ownership.summarize_function` / no summary types.
+Expected: FAIL — no `ownership.summarize_function` / no summary types.
 
-- [ ] **Step 3: Add summary types + `summary.tw` constructor**
+- [ ] **Step 3: Add summary types + constructor to `ownership.tw`**
 
-In `ownership.tw`, after the `Ownership` enum:
+The summary *types and the empty-table constructor* live in `ownership.tw` (it owns them). This keeps the module graph **acyclic** (see G6): `summary.tw → ownership.tw`, never the reverse — the G1 `analyze` wrapper builds an empty table via `empty_summary_table()` here, not via `summary.tw`. `summary.tw` is created in Task 3 (the driver).
+
+After the `Ownership` enum:
 
 ```tw
 pub type EscapeEffect = { Borrowed, Retained }
@@ -209,20 +209,12 @@ pub type ReturnEffect = { OwnedFresh, MayAliasParams(Vector<Int>), Shared }
 pub type Summary = .{ params: Vector<ParamSummary>, ret: ReturnEffect }
 pub type SummaryTable = .{ by_func: Dict<Int, Summary> }
 
+pub fn empty_summary_table() SummaryTable {
+  SummaryTable.{ by_func: Dict.new() }
+}
+
 pub fn summary_get(t: SummaryTable, func_id: Int) Summary? {
   t.by_func.get(func_id)
-}
-```
-
-Create `boot/compiler/summary.tw`:
-
-```tw
-//! Phase 3 interprocedural summary driver. Task 1: table constructor only;
-//! Task 3 adds the call-graph SCC fixpoint; Task 5 adds the --cfg header.
-use compiler.ownership.{SummaryTable}
-
-pub fn empty_table() SummaryTable {
-  SummaryTable.{ by_func: Dict.new() }
 }
 ```
 
@@ -433,7 +425,7 @@ fn seed_param_prov(entry: Dict<Int, Vector<Int>>, params: Vector<LocalId>) Dict<
       }
 ```
 
-`FixResult = .{ exits, exit_valid, exit_prov }`. `run_fixpoint`, `forward_block`, `ownership_stage`, `analyze_function`, `transfer_op`, `transfer_call` all gain the `table: SummaryTable` param (threaded; `transfer_call` ignores it until Task 4). `analyze_function`'s materialize `collect` seeds block 0's entry prov before the final `forward_block`. Keep `analyze(view,b,sem)` as the wrapper (G1) calling `analyze_with_summaries(view,b,sem, summary.empty_table())`.
+`FixResult = .{ exits, exit_valid, exit_prov }`. `run_fixpoint`, `forward_block`, `ownership_stage`, `analyze_function`, `transfer_op`, `transfer_call` all gain the `table: SummaryTable` param (threaded; `transfer_call` ignores it until Task 4). `analyze_function`'s materialize `collect` seeds block 0's entry prov before the final `forward_block`. Keep `analyze(view,b,sem)` as the wrapper (G1) calling `analyze_with_summaries(view,b,sem, empty_summary_table())`.
 
 - [ ] **Step 8: `forward_block_body` (no terminator publish)**
 
@@ -515,9 +507,9 @@ Expected: PASS — borrow/retain/aggregate/dead-branch escape tests **and** all 
 - [ ] **Step 11: Format, lint, commit**
 
 ```bash
-target/twk fmt boot/compiler/ownership.tw boot/compiler/summary.tw boot/tests/suites/cfg_summary_suite.tw
+target/twk fmt boot/compiler/ownership.tw boot/tests/suites/cfg_summary_suite.tw
 target/twk lint boot/main.tw
-git add boot/compiler/ownership.tw boot/compiler/summary.tw boot/tests/suites/cfg_summary_suite.tw boot/tests/main.tw
+git add boot/compiler/ownership.tw boot/tests/suites/cfg_summary_suite.tw boot/tests/main.tw
 git commit -m "ownership: param provenance + escape/capability classification
 
 Fold a param-origin provenance map into ForwardState (threaded through the
@@ -713,8 +705,8 @@ OwnedFresh for a genuinely fresh Unique, else Shared; joined across return block
 Compute the whole-program `SummaryTable` bottom-up over call-graph SCCs.
 
 **Files:**
-- Modify: `boot/compiler/summary.tw`.
-- Test: `boot/tests/suites/cfg_summary_suite.tw`.
+- Create: `boot/compiler/summary.tw`.
+- Test: `boot/tests/suites/cfg_summary_suite.tw` (add `use compiler.summary`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -742,7 +734,7 @@ fn summ_of(t: ownership.SummaryTable, func_id: Int) ownership.Summary {
       try assert.is_true(same_ints(ret_alias_set(summ_of(t, 2).ret), [0]))
       .Ok({})
     })
-    .test("t3 recursion terminates: fn f(x){ f(x) }", fn() {
+    .test("t3 self-recursion terminates (minimal gate): fn f(x){ f(x) }", fn() {
       call_self: AnfExpr = .Let(
         lid(1),
         .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
@@ -752,15 +744,38 @@ fn summ_of(t: ownership.SummaryTable, func_id: Int) ownership.Summary {
       try assert.equal(t.by_func.keys().len(), 1)
       .Ok({})
     })
+    .test("t3 mutual recursion: SCC fixpoint is stable + sound", fn() {
+      // f(x){ g(x) } ; g(y){ f(y) } — a 2-member call-graph SCC. The pessimistic
+      // seed (params Retained, ret Shared) is a stable fixed point: each member
+      // passes its param into the other (Retained callee) and returns its Shared
+      // result. Assert both summaries exist and are the sound conservative fixpoint.
+      f_body: AnfExpr = .Let(
+        lid(1),
+        .ACall(.AGlobalFunc(FuncId.{ id: 2 }), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(1))),
+      )
+      g_body: AnfExpr = .Let(
+        lid(1),
+        .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(1))),
+      )
+      t := compute_of([fdef(1, "f", 1, f_body), fdef(2, "g", 1, g_body)])
+      try assert.equal(t.by_func.keys().len(), 2)
+      try assert.equal(escape_tag(summ_of(t, 1).params[0].escape), escape_tag(.Retained))
+      try assert.equal(ret_tag(summ_of(t, 1).ret), ret_tag(.Shared))
+      try assert.equal(escape_tag(summ_of(t, 2).params[0].escape), escape_tag(.Retained))
+      try assert.equal(ret_tag(summ_of(t, 2).ret), ret_tag(.Shared))
+      .Ok({})
+    })
 ```
 
 - [ ] **Step 2: Run to verify it fails**
 
 Expected: FAIL — no `summary.compute`.
 
-- [ ] **Step 3: Implement the driver**
+- [ ] **Step 3: Create `summary.tw` and implement the driver**
 
-First inspect the SCC API: `grep -n "pub fn\|pub type" boot/compiler/graph_scc.tw`. Then in `summary.tw` implement `compute` per the design: build user-id set, seed each function's summary conservatively (`params Retained`, `ret Shared`), order by call-graph SCCs (callee-first), and for each SCC iterate `ownership.summarize_function` until stable or a `members*4+1` cap, replacing changed summaries. Provide `conservative_summary`, `same_summary` (compare escape/cap tags + return tag + alias-set), `callee_ids` (scan `ACall(AGlobalFunc(fid))` for user ids), `func_by_id`, and `order_sccs` (adjacency `fid → callee_ids`, Tarjan via `graph_scc.tw`, callee-first order). Full code as in the design's Task-2 sketch; adapt `order_sccs` to the real `graph_scc` API.
+First inspect the SCC API: `grep -n "pub fn\|pub type" boot/compiler/graph_scc.tw`. Then **create `boot/compiler/summary.tw`** importing `compiler.ownership` (types + `summarize_function`), `compiler.cfg` (`CfgView`/`CfgFunction`), `compiler.anf`, `compiler.core_ir.{FuncId}`, `compiler.builtins`, `compiler.opt.semantics`, and `compiler.graph_scc`. Implement `pub fn compute(view, b, sem) SummaryTable` per the design: build the user-id set, seed each function's summary conservatively (`params Retained`, `ret Shared`), order by call-graph SCCs (callee-first), and for each SCC iterate `ownership.summarize_function` until stable or a `members*4+1` cap, replacing changed summaries. Provide `conservative_summary`, `same_summary` (compare escape/cap tags + return tag + alias-set), `callee_ids` (scan `ACall(AGlobalFunc(fid))` for user ids), `func_by_id`, and `order_sccs` (adjacency `fid → callee_ids`, Tarjan via `graph_scc.tw`, callee-first order). Full code as in the design's driver sketch; adapt `order_sccs` to the real `graph_scc` API. (`empty_summary_table` already lives in `ownership.tw` — do not redefine it here; `summary.tw` never needs to be imported by `ownership.tw`, keeping the graph acyclic per G6.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
