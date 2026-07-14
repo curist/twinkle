@@ -498,6 +498,20 @@ fn consume_call_base(
   }
 }
 
+// Set result prov from the cow_base_arg (if any) so provenance follows COW
+// aliasing: a COW builtin's result structurally shares the base arg's backing,
+// so it must carry that base's param origins (mirrors AIndex/ARecordUpdate).
+fn carry_base_prov(st: ForwardState, result: Int, cs: CallSemantics, args: Vector<Atom>) ForwardState {
+  case cs.cow_base_arg {
+    .Some(k) => if k < args.len() {
+      st.set_prov_st(result, prov_of(st.prov, args[k]))
+    } else {
+      st
+    },
+    .None => st,
+  }
+}
+
 fn transfer_call(
   st: ForwardState,
   result: Int,
@@ -514,8 +528,9 @@ fn transfer_call(
   case info {
     .Some(cs) => case cs.effect {
       .Allocate => st.set_own_st(result, .Unique),
-      .Update => st.consume_call_base(result, cs, args, last),
-      .ReadOnly => st.set_own_st(result, .Unknown), // borrow: result not owned
+      .Update => st.consume_call_base(result, cs, args, last).carry_base_prov(result, cs, args),
+      // borrow: result not owned, but carries the cow_base_arg's provenance.
+      .ReadOnly => st.set_own_st(result, .Unknown).carry_base_prov(result, cs, args),
       .Pure => st.set_own_st(result, .Unknown),
       .Control => st.set_own_st(result, .Unknown),
     },
@@ -857,16 +872,6 @@ fn same_prov_map(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Bool {
   true
 }
 
-fn prov_of_in(pv: Dict<Int, Vector<Int>>, a: Atom) Vector<Int> {
-  case atom_local_id(a) {
-    .Some(id) => case pv.get(id) {
-      .Some(v) => v,
-      .None => [],
-    },
-    .None => [],
-  }
-}
-
 // entry.prov for every live-in local (mirroring the ownership join): a block
 // param unions the origins its positional edge arg carries; a live-through
 // non-param local unions the same id's origins. Absent => empty.
@@ -884,7 +889,7 @@ fn join_entry_prov(
         pv := prov_map_get(exit_prov, pe.target.id)
         src := case pidx {
           .Some(i) => if i < pe.args.len() {
-            prov_of_in(pv, pe.args[i])
+            prov_of(pv, pe.args[i])
           } else {
             []
           },

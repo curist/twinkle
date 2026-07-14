@@ -136,4 +136,45 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "t1 cow-escape: fn f(x){ ys := Dict.set(x,0,1); global_set G=ys } -> p0 retain",
+      fn() {
+        // ys structurally shares x's HAMT and escapes globally; provenance must
+        // follow COW aliasing so x is Retained, not Borrowed.
+        b := b_reg()
+        set_call: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(0)), .ALitInt(0), .ALitInt(1)],
+        )
+        body: AnfExpr = .Let(
+          lid(1),
+          set_call,
+          .Let(lid(2), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))), .Atom(.ALitInt(0))),
+        )
+        s := summ1("f", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
+      "t4 capability: fn g(x){ w := <move x>; Dict.set(w,1,2); 0 } -> p0 consumed, borrow",
+      fn() {
+        // x moved into w on last use (AInit), then w threaded through Dict.set but
+        // never published: capability Consumed, escape still Borrowed.
+        b := b_reg()
+        set_call: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)],
+        )
+        body: AnfExpr = .Let(
+          lid(2),
+          .AInit(.ALocal(lid(0))),
+          .Let(lid(3), set_call, .Atom(.ALitInt(0))),
+        )
+        s := summ1("g", 1, body)
+        try assert.equal(cap_tag(s.params[0].capability), cap_tag(.Consumed))
+        try assert.equal(p_escape(s, 0), escape_tag(.Borrowed))
+        .Ok({})
+      },
+    )
 }
