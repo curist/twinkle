@@ -6,7 +6,14 @@ use compiler.builtins
 use compiler.cfg
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.mono_type.{MonoType}
+use compiler.opt.semantics as semantics
+use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+use compiler.ownership
 use compiler.pipeline
+
+fn sem_for() semantics.OptimizerSemantics {
+  make_prelude_optimizer_semantics(builtins.make_builtin_registry())
+}
 
 fn view(src: String) Result<cfg.CfgView, String> {
   artifacts := try pipeline.compile_source(src)
@@ -296,6 +303,17 @@ pub fn suite() runner.Suite {
         try assert.is_true(first.contains("terminator: condbranch"))
         try assert.is_true(first.contains("terminator: loop-back-edge"))
         .Ok({})
+      },
+    )
+    .test(
+      "phase2 t3: analyze returns a view; empty-facts query still works",
+      fn() {
+        v := try view("fn f(x: Int) Int {\n  x\n}\n")
+        analyzed := ownership.analyze(v, builtins.make_builtin_registry(), sem_for())
+        case cfg.function_named(analyzed, "f") {
+          .Some(func) => assert.is_true(func.blocks.len() >= 1),
+          .None => assert.fail("f missing after analyze"),
+        }
       },
     )
     .test(

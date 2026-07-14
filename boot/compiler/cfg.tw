@@ -2,9 +2,9 @@
 //!
 //! Phase 1 builds a deterministic view only: blocks, carried block parameters,
 //! terminators, predecessor/successor lists, and optimized-ANF instruction
-//! mappings. Ownership facts are Phase 2; `entry_facts` and `exit_facts` stay
-//! empty in this module. ANF remains authoritative and codegen does not consume
-//! this view.
+//! mappings. Ownership facts are Phase 2; the `entry`/`exit` BlockFacts stay
+//! empty in this module (populated by compiler.ownership.analyze). ANF remains
+//! authoritative and codegen does not consume this view.
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom}
 use compiler.builtins.{BuiltinRegistry}
@@ -27,6 +27,21 @@ pub type Terminator = {
   ContinueIfPresent,
 }
 
+// Per-boundary ownership facts. Empty on an un-analyzed view (Phase 1); filled by
+// compiler.ownership.analyze (Phase 2). `ownership` stores the Ownership tag as an
+// Int (0=Unique, 1=Shared, 2=Unknown) to keep cfg.tw free of an ownership.tw
+// dependency (ownership.tw uses cfg.tw); ownership.tw owns the tag<->enum mapping.
+// Absent ownership key => Unknown; absent binding_valid key => valid (true).
+pub type BlockFacts = .{
+  ownership: Dict<Int, Int>,
+  binding_valid: Dict<Int, Bool>,
+  live: Vector<Int>,
+}
+
+fn empty_block_facts() BlockFacts {
+  BlockFacts.{ ownership: Dict.new(), binding_valid: Dict.new(), live: [] }
+}
+
 pub type CfgBlock = .{
   id: BlockId,
   name: String,
@@ -35,8 +50,8 @@ pub type CfgBlock = .{
   terminator: Terminator?,
   preds: Vector<CfgEdge>,
   succs: Vector<CfgEdge>,
-  entry_facts: Dict<Int, String>,
-  exit_facts: Dict<Int, String>,
+  entry: BlockFacts,
+  exit: BlockFacts,
 }
 
 pub type CfgFunction = .{
@@ -292,8 +307,8 @@ fn empty_block(id: BlockId, name: String, params: Vector<LocalId>) CfgBlock {
     terminator: .None,
     preds: [],
     succs: [],
-    entry_facts: Dict.new(),
-    exit_facts: Dict.new(),
+    entry: empty_block_facts(),
+    exit: empty_block_facts(),
   }
 }
 
@@ -765,7 +780,10 @@ pub fn max_param_count(func: CfgFunction) Int {
 pub fn empty_fact_blocks(func: CfgFunction) Int {
   n := 0
   for block in func.blocks {
-    if block.entry_facts.keys().len() == 0 and block.exit_facts.keys().len() == 0 {
+    if block.entry.ownership.keys().len() == 0
+      and block.exit.ownership.keys().len() == 0 and block.entry.binding_valid.keys().len() == 0
+      and block.exit.binding_valid.keys().len() == 0 and block.entry.live.len() == 0
+      and block.exit.live.len() == 0 {
       n = n + 1
     }
   }

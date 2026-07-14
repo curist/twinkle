@@ -1,0 +1,34 @@
+//! Phase 2 ownership analysis over the structural CFG view.
+//!
+//! Populates each block's entry/exit BlockFacts with a sound
+//! Unique/Shared/Unknown ownership fact, plus edge-arg-aware liveness and
+//! binding-validity. Consumes the CFG view (raw ops, params, real edge args);
+//! ANF stays authoritative and codegen does not read this.
+
+use compiler.builtins.{BuiltinRegistry}
+use compiler.cfg.{CfgView}
+use compiler.opt.semantics.{OptimizerSemantics}
+
+pub type Ownership = { Unique, Shared, Unknown }
+
+// Tag encoding shared with cfg.BlockFacts.ownership (stored as Int there).
+pub fn own_tag(o: Ownership) Int {
+  case o {
+    .Unique => 0,
+    .Shared => 1,
+    .Unknown => 2,
+  }
+}
+
+pub fn own_of_tag(t: Int) Ownership {
+  cond {
+    t == 0 => .Unique,
+    t == 1 => .Shared,
+    _ => .Unknown,
+  }
+}
+
+pub fn analyze(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) CfgView {
+  // Identity for now; real pipeline arrives in Tasks 4-7.
+  view
+}
