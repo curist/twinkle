@@ -1071,12 +1071,54 @@ fn own_is_shared(own: Dict<Int, Int>, id: Int) Bool {
   }
 }
 
+fn return_atom(blk: CfgBlock) Atom? {
+  case blk.terminator {
+    .Some(.Return(.Some(a))) => .Some(a),
+    _ => .None,
+  }
+}
+
+fn param_pos(params: Vector<LocalId>, local_id: Int) Int {
+  for p, i in params {
+    if p.id == local_id {
+      return i
+    }
+  }
+  -1
+}
+
+fn prov_to_indices(params: Vector<LocalId>, origins: Vector<Int>) Vector<Int> {
+  out: Vector<Int> = []
+  for o in origins {
+    idx := param_pos(params, o)
+    if idx >= 0 {
+      out = insert_sorted(out, idx)
+    }
+  }
+  out
+}
+
+fn join_return(a: ReturnEffect, b: ReturnEffect) ReturnEffect {
+  case a {
+    .Shared => .Shared,
+    .OwnedFresh => b,
+    .MayAliasParams(sa) => case b {
+      .Shared => .Shared,
+      .OwnedFresh => .MayAliasParams(sa),
+      .MayAliasParams(sb) => .MayAliasParams(union_sorted(sa, sb)),
+    },
+  }
+}
+
 // Classify each parameter's escape/capability by scanning EVERY block's
 // post-publish exit (fx.exits / fx.exit_valid): a param that ends Shared on any
 // block exit escapes (Retained) — even on a dead branch or via a returned
 // aggregate, since publication is transitive over provenance. A param whose
-// binding is ever invalidated is Consumed. Return effect is stubbed Shared here
-// (Task 2 makes it real).
+// binding is ever invalidated is Consumed. The return effect is classified from
+// each return block's BODY-ONLY state (before the terminator publish, so the
+// returned value isn't spuriously Shared), joined across all return blocks:
+// MayAliasParams(indices) when the return atom carries param provenance,
+// OwnedFresh for a genuinely fresh Unique, else Shared.
 pub fn summarize_function(
   f: CfgFunction,
   table: SummaryTable,
@@ -1109,5 +1151,39 @@ pub fn summarize_function(
     ParamSummary.{ escape: esc, capability: cap }
   }
 
-  Summary.{ params, ret: .Shared }
+  done := all_processed(blocks)
+  ret: ReturnEffect = .OwnedFresh
+  seen := false
+  for blk in blocks {
+    case return_atom(blk) {
+      .Some(a) => {
+        entry_own := join_entry_ownership(blk, fx.exits, done)
+        entry_valid := join_entry_valid(blk, fx.exit_valid, done)
+        entry_prov := join_entry_prov(blk, fx.exit_prov, done)
+        if blk.id.id == 0 {
+          entry_prov = seed_param_prov(entry_prov, f.params)
+        }
+        st := ForwardState.{ own: entry_own, valid: entry_valid, prov: entry_prov }
+        body := forward_block_body(blk, st, table, b, sem)
+        idxs := prov_to_indices(f.params, prov_of(body.prov, a))
+        r: ReturnEffect = if idxs.len() > 0 {
+          .MayAliasParams(idxs)
+        } else {
+          case fact_of(body.own, a) {
+            .Unique => .OwnedFresh,
+            _ => .Shared,
+          }
+        }
+        ret = if seen {
+          ret.join_return(r)
+        } else {
+          r
+        }
+        seen = true
+      },
+      .None => {},
+    }
+  }
+
+  Summary.{ params, ret }
 }

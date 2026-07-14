@@ -89,6 +89,34 @@ fn p_escape(s: ownership.Summary, i: Int) Int {
   escape_tag(s.params[i].escape)
 }
 
+fn ret_tag(r: ownership.ReturnEffect) Int {
+  case r {
+    .OwnedFresh => 0,
+    .MayAliasParams(_) => 1,
+    .Shared => 2,
+  }
+}
+
+// Exact alias set, or [] for non-alias returns.
+fn ret_alias_set(r: ownership.ReturnEffect) Vector<Int> {
+  case r {
+    .MayAliasParams(s) => s,
+    _ => [],
+  }
+}
+
+fn same_ints(a: Vector<Int>, b: Vector<Int>) Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  for x, i in a {
+    if x != b[i] {
+      return false
+    }
+  }
+  true
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("cfg summary")
@@ -243,6 +271,45 @@ pub fn suite() runner.Suite {
         s := summ1("g", 1, body)
         try assert.equal(cap_tag(s.params[0].capability), cap_tag(.Consumed))
         try assert.equal(p_escape(s, 0), escape_tag(.Borrowed))
+        .Ok({})
+      },
+    )
+    .test(
+      "t2 fresh: fn f(x) { Dict.new() } -> ret fresh",
+      fn() {
+        b := b_reg()
+        s := summ1("f", 1, .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1)))))
+        try assert.equal(ret_tag(s.ret), ret_tag(.OwnedFresh))
+        .Ok({})
+      },
+    )
+    .test(
+      "t2 alias payload: fn f(x) { x } -> ret alias([0])",
+      fn() {
+        s := summ1("f", 1, .Atom(.ALocal(lid(0))))
+        try assert.equal(ret_tag(s.ret), ret_tag(.MayAliasParams([])))
+        try assert.is_true(same_ints(ret_alias_set(s.ret), [0]))
+        .Ok({})
+      },
+    )
+    .test(
+      "t2 multi-origin: fn f(x,y) { if c { x } else { y } } -> ret alias([0,1])",
+      fn() {
+        then_e: AnfExpr = .Atom(.ALocal(lid(0)))
+        else_e: AnfExpr = .Atom(.ALocal(lid(1)))
+        body: AnfExpr = .Let(lid(2), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(2))))
+        s := summ1("f", 2, body)
+        try assert.is_true(same_ints(ret_alias_set(s.ret), [0, 1]))
+        .Ok({})
+      },
+    )
+    .test(
+      "t2 wrap return: fn f(x) { Wrapper.{x} } -> ret alias([0])",
+      fn() {
+        b := b_reg()
+        body: AnfExpr = .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1))))
+        s := summ1("f", 1, body)
+        try assert.is_true(same_ints(ret_alias_set(s.ret), [0]))
         .Ok({})
       },
     )
