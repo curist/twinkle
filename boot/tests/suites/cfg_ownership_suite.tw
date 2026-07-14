@@ -289,4 +289,22 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "phase2 t1: instructions carry raw op and functions carry params",
+      fn() {
+        f := try function("fn f(x: Int) Int {\n  y := x + 1\n  y\n}\n", "f")
+        try assert.is_true(f.params.len() >= 1)
+        has_binop := false
+        for block in f.blocks {
+          for inst in block.instructions {
+            case inst.op {
+              .ABinOp(_, _, _, _) => has_binop = true,
+              _ => {},
+            }
+          }
+        }
+        try assert.is_true(has_binop)
+        .Ok({})
+      },
+    )
 }

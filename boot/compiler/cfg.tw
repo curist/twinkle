@@ -12,7 +12,7 @@ use compiler.core_ir.{LocalId}
 
 pub type BlockId = .{ id: Int }
 
-pub type CfgInstruction = .{ anf_local: LocalId, text: String }
+pub type CfgInstruction = .{ anf_local: LocalId, op: AnfOp, text: String }
 
 pub type CfgEdge = .{ target: BlockId, args: Vector<LocalId> }
 
@@ -39,7 +39,12 @@ pub type CfgBlock = .{
   exit_facts: Dict<Int, String>,
 }
 
-pub type CfgFunction = .{ func_id: Int, name: String, blocks: Vector<CfgBlock> }
+pub type CfgFunction = .{
+  func_id: Int,
+  name: String,
+  params: Vector<LocalId>,
+  blocks: Vector<CfgBlock>,
+}
 
 pub type CfgView = .{ functions: Vector<CfgFunction> }
 
@@ -613,7 +618,7 @@ fn build_expr(ctx: BuildCtx, current: BlockId, expr: AnfExpr) BuildExprOut {
     ),
     .Let(local, .ALoop(loop_body), body) => ctx.build_loop(current, local, loop_body, body),
     .Let(local, op, body) => {
-      ctx = .push_instruction(current, CfgInstruction.{ anf_local: local, text: op_text(op) })
+      ctx = .push_instruction(current, CfgInstruction.{ anf_local: local, op, text: op_text(op) })
       ctx.build_expr(current, body)
     },
     .Atom(atom) => {
@@ -657,7 +662,10 @@ fn build_function(func: AnfFunctionDef) CfgFunction {
     .Some(ft) => built.ctx.finish_block(ft.block, .Return(.Some(ft.tail)), []),
     .None => built.ctx,
   }
-  CfgFunction.{ func_id: func.func_id.id, name: func.name, blocks: ctx.blocks }
+  params := collect p in func.params {
+    p.local
+  }
+  CfgFunction.{ func_id: func.func_id.id, name: func.name, params, blocks: ctx.blocks }
 }
 
 pub fn build_view(m: AnfModule, _builtins: BuiltinRegistry) CfgView {
