@@ -8,7 +8,7 @@
 
 **Tech Stack:** Twinkle (`.tw`), boot self-hosted compiler, `@std.testing` runner, hand-built multi-function `AnfModule` fixtures (stable `LocalId`/`FuncId`, no optimizer), `compiler.opt.semantics` (`call_info`), `compiler.graph_scc` (Tarjan), `make bundle-cli` for the CLI.
 
-**Design spec (read before starting):** `docs/plans/sound-uniqueness/phase3-design.md` — the canonical design this plan implements. Supporting: `docs/plans/sound-uniqueness/summary-specialization.md`, `docs/plans/sound-uniqueness/README.md`.
+**Design spec (read before starting):** `docs/plans/sound-uniqueness/analysis/phase3-design.md` — the canonical design this plan implements. Supporting: `docs/plans/sound-uniqueness/analysis/summary-specialization.md`, `docs/plans/sound-uniqueness/analysis/README.md`.
 
 ---
 
@@ -20,7 +20,7 @@
 - **Modify** `boot/commands/ir.tw` — `--cfg` runs `prune_dead_merge → summary.compute → analyze_with_summaries → summary.render_cfg`.
 - **Create** `boot/tests/suites/cfg_summary_suite.tw` — TDD gate over hand-built multi-function fixtures; register in `boot/tests/main.tw`.
 - **Modify** `boot/tests/suites/cfg_ownership_facts_suite.tw` — pattern-binding + dead-merge fixtures.
-- **Modify** `boot/compiler/opt/README.md`, `docs/plans/sound-uniqueness/README.md`.
+- **Modify** `boot/compiler/opt/README.md`, `docs/plans/sound-uniqueness/analysis/README.md`.
 
 ## Conventions (read once)
 
@@ -999,10 +999,27 @@ fn publish_call(st: ForwardState, result: Int, args: Vector<Atom>) ForwardState 
 fn transfer_builtin_call(st: ForwardState, result: Int, cs: CallSemantics, args: Vector<Atom>, last: Vector<Int>) ForwardState {
   case cs.effect {
     .Allocate => set_own_st(st, result, .Unique),
-    .Update => consume_call_base(st, result, cs, args, last),
-    .ReadOnly => set_own_st(st, result, .Unknown),
+    // Update/ReadOnly results structurally share the cow_base_arg's backing, so
+    // they must carry that arg's provenance (mirrors the AIndex/ARecordUpdate
+    // op-forms). Omitting this misclassifies a param that escapes through
+    // Dict.set/Vector.set as Borrowed — an unsound gap builtins don't otherwise
+    // close (Task 1 fix; keep it here).
+    .Update => carry_base_prov(consume_call_base(st, result, cs, args, last), result, cs, args),
+    .ReadOnly => carry_base_prov(set_own_st(st, result, .Unknown), result, cs, args),
     .Pure => set_own_st(st, result, .Unknown),
     .Control => set_own_st(st, result, .Unknown),
+  }
+}
+
+// Set result prov from the cow_base_arg (if any) so provenance follows COW aliasing.
+fn carry_base_prov(st: ForwardState, result: Int, cs: CallSemantics, args: Vector<Atom>) ForwardState {
+  case cs.cow_base_arg {
+    .Some(k) => if k < args.len() {
+      set_prov_st(st, result, prov_of(st.prov, args[k]))
+    } else {
+      st
+    },
+    .None => st,
   }
 }
 
@@ -1308,7 +1325,7 @@ git commit -m "cfg/ownership: match-arm pattern-binding precision (retire Phase 
 ## Task 8: Doc + audit hygiene, tracking, full verification
 
 **Files:**
-- Modify: `boot/compiler/opt/README.md`, `docs/plans/sound-uniqueness/README.md`.
+- Modify: `boot/compiler/opt/README.md`, `docs/plans/sound-uniqueness/analysis/README.md`.
 
 - [ ] **Step 1: Optimizer audit**
 
@@ -1333,7 +1350,7 @@ Expected: `dict_set` candidates ≥ 1, **in_place = 0**.
 
 - [ ] **Step 4: Mark the README bullets**
 
-In `docs/plans/sound-uniqueness/README.md` Phase 3 section, mark delivered: summaries, the two precision bullets, and the "move queries"/peephole bullet (reframed — add "Done — CFG facts already the single source; optimizer audited"). Leave genuinely-deferred items unchecked.
+In `docs/plans/sound-uniqueness/analysis/README.md` Phase 3 section (the `- [ ]` checkbox bullets), mark delivered: summaries, the two precision bullets, and the "move queries"/peephole bullet (reframed — add "Done — CFG facts already the single source; optimizer audited"). Leave genuinely-deferred items unchecked.
 
 - [ ] **Step 5: Full verification**
 
@@ -1348,7 +1365,7 @@ Expected: boot suites green; `make stage2` reaches `stage3 == stage4`.
 
 ```bash
 target/twk lint boot/main.tw
-git add boot/compiler/opt/README.md docs/plans/sound-uniqueness/README.md
+git add boot/compiler/opt/README.md docs/plans/sound-uniqueness/analysis/README.md
 git commit -m "opt/docs: rewrite stale opt/README, optimizer audit, track Phase 3"
 ```
 
