@@ -197,17 +197,28 @@ effects at the boundary.
   published too. It closes the aggregate hole (`Wrapper.{ xs }` publishes `xs`
   when the wrapper escapes) and the plain move-then-publish hole (`y := move x;
   global_set G = y` publishes `x`).
-- **Classify each param `k`** (local `Lk`) from its exit facts (two axes):
-  - *escape:* `Retained` if `own[Lk] == Shared` at the exit meet (published, incl.
-    transitively via an escaping shell); else `Borrowed`. (Moved-but-not-published
-    is **not** escape.)
-  - *capability:* `Consumed` if the pass moved/invalidated it (`valid == false` at
-    exit, or a consuming op on it); else `NoCap`. Recorded, never acted on now.
-- **Classify the return:** `MayAliasParams(idx(prov(return_atom)))` if that
-  provenance is non-empty (converted to sorted positional indices); else
-  `OwnedFresh` **only when the return is a genuinely independent fresh `Unique`
-  value** (`own == Unique` and empty `prov`); else `Shared`. An aggregate that
-  embeds a param origin therefore classifies `MayAliasParams`, never `OwnedFresh`.
+- **Classify each param `k`** (local `Lk`) over **every block's post-publish exit
+  facts** (not just the return block — a param can be published on a branch and be
+  dead by the return, and an aggregate-wrapped param is published by the return
+  block's *terminator* publish). Two axes:
+  - *escape:* `Retained` if `own[Lk] == Shared` in **any** block's exit (published
+    anywhere — directly, transitively via an escaping shell, or by the terminator
+    publish of a returned value that embeds it); else `Borrowed`.
+    (Moved-but-not-published is **not** escape.)
+  - *capability:* `Consumed` if the param was moved/invalidated (`valid == false`)
+    in any block's exit; else `NoCap`. Recorded, never acted on now.
+  Because escape reads the post-publish exit (which includes the terminator
+  publish), the branch-published-then-dead case and the returned-wrapper case both
+  classify `Retained`.
+- **Classify the return** from the **body-only** state at each return block (the
+  state *before* the terminator publish — otherwise the returned value always
+  looks `Shared`): `MayAliasParams(idx(prov(return_atom)))` if that provenance is
+  non-empty (converted to sorted positional indices); else `OwnedFresh` **only when
+  the return is a genuinely independent fresh `Unique` value** (`own == Unique` and
+  empty `prov`); else `Shared`. Multiple return blocks join by the return lattice.
+  An aggregate that embeds a param origin therefore classifies `MayAliasParams`,
+  never `OwnedFresh`. (Escape, above, reads the *post-publish* exit; the return
+  reads *body-only* — the two axes intentionally read different states.)
 
 ### Consumption in `transfer_call` (Phase 3)
 
