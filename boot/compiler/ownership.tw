@@ -546,28 +546,77 @@ fn transfer_call(
   table: SummaryTable,
   sem: OptimizerSemantics,
 ) ForwardState {
-  info := case callee_func_id(callee) {
-    .Some(fid) => call_info(sem, fid),
-    .None => .None, // indirect/closure callee: no summary
-  }
-  case info {
-    .Some(cs) => case cs.effect {
-      .Allocate => st.set_own_st(result, .Unique).absorb_call_args(result, args, -1, last),
-      .Update => st
-        .consume_call_base(result, cs, args, last)
-        .carry_base_prov(result, cs, args)
-        .absorb_call_args(result, args, cow_skip_index(cs), last),
-      // borrow: result not owned, but carries the cow_base_arg's provenance.
-      .ReadOnly => st.set_own_st(result, .Unknown).carry_base_prov(result, cs, args),
-      .Pure => st.set_own_st(result, .Unknown),
-      .Control => st.set_own_st(result, .Unknown),
+  // Two-level lookup: builtins resolve via CallSemantics; a direct user callee
+  // WITHOUT builtin semantics consults its interprocedural summary; everything
+  // else (unknown/extern/indirect/closure) falls to the conservative publish
+  // bucket.
+  case callee_func_id(callee) {
+    .Some(fid) => case call_info(sem, fid) {
+      .Some(cs) => st.transfer_builtin_call(result, cs, args, last),
+      .None => case table.summary_get(fid.id) {
+        .Some(s) => st.transfer_summarized_call(result, s, args),
+        .None => st.publish_call(result, args),
+      },
     },
-    .None => {
-      // unknown Twinkle call, extern, or Cell op: publish every ref arg
-      for a in args {
-        st = .publish_atom(a)
+    .None => st.publish_call(result, args), // indirect/closure callee
+  }
+}
+
+// Conservative bucket: publish every ref arg, result Unknown.
+fn publish_call(st: ForwardState, result: Int, args: Vector<Atom>) ForwardState {
+  for a in args {
+    st = .publish_atom(a)
+  }
+  st.set_own_st(result, .Unknown)
+}
+
+fn transfer_builtin_call(
+  st: ForwardState,
+  result: Int,
+  cs: CallSemantics,
+  args: Vector<Atom>,
+  last: Vector<Int>,
+) ForwardState {
+  case cs.effect {
+    .Allocate => st.set_own_st(result, .Unique).absorb_call_args(result, args, -1, last),
+    .Update => st
+      .consume_call_base(result, cs, args, last)
+      .carry_base_prov(result, cs, args)
+      .absorb_call_args(result, args, cow_skip_index(cs), last),
+    // borrow: result not owned, but carries the cow_base_arg's provenance.
+    .ReadOnly => st.set_own_st(result, .Unknown).carry_base_prov(result, cs, args),
+    .Pure => st.set_own_st(result, .Unknown),
+    .Control => st.set_own_st(result, .Unknown),
+  }
+}
+
+// Consume a callee summary at a direct user call. Acts ONLY on escape + return:
+// Retained args publish (demote to Shared), Borrowed args are untouched;
+// OwnedFresh result is Unique, MayAliasParams publishes every origin and shares
+// the result, Shared result is Unknown. Capability (Consumed) is recorded-only
+// and never read here — it must never invalidate a caller binding (Phase 6).
+fn transfer_summarized_call(st: ForwardState, result: Int, s: Summary, args: Vector<Atom>) ForwardState {
+  for ps, i in s.params {
+    if i < args.len() {
+      case ps.escape {
+        .Retained => st = .publish_atom(args[i]),
+        .Borrowed => {},
       }
-      st.set_own_st(result, .Unknown)
+    }
+  }
+  case s.ret {
+    .OwnedFresh => st.set_own_st(result, .Unique),
+    .Shared => st.set_own_st(result, .Unknown),
+    .MayAliasParams(idxs) => {
+      origins: Vector<Int> = []
+      for k in idxs {
+        if k < args.len() {
+          st = .publish_atom(args[k])
+          origins = union_sorted(origins, prov_of(st.prov, args[k]))
+        }
+      }
+      st = .set_own_st(result, .Shared)
+      st.set_prov_st(result, origins)
     },
   }
 }

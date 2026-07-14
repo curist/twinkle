@@ -131,6 +131,33 @@ fn summ_of(t: ownership.SummaryTable, func_id: Int) ownership.Summary {
   }
 }
 
+fn analyzed_caller(funcs: Vector<AnfFunctionDef>, caller: String) cfg.CfgFunction {
+  b := b_reg()
+  v := cfg.build_view(module_of(funcs), b)
+  t := summary.compute(v, b, sem())
+  a := ownership.analyze_with_summaries(v, b, sem(), t)
+  case cfg.function_named(a, caller) {
+    .Some(f) => f,
+    .None => error("no ${caller}"),
+  }
+}
+
+// exit ownership of a local in the caller's entry block (block 0).
+fn caller_own(f: cfg.CfgFunction, local_id: Int) Int {
+  case f.blocks[0].exit.ownership.get(local_id) {
+    .Some(tag) => tag,
+    .None => 2,
+  }
+}
+
+fn own_unique() Int {
+  ownership.own_tag(.Unique)
+}
+
+fn own_shared() Int {
+  ownership.own_tag(.Shared)
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("cfg summary")
@@ -372,6 +399,192 @@ pub fn suite() runner.Suite {
         try assert.equal(ret_tag(summ_of(t, 1).ret), ret_tag(.Shared))
         try assert.equal(escape_tag(summ_of(t, 2).params[0].escape), escape_tag(.Retained))
         try assert.equal(ret_tag(summ_of(t, 2).ret), ret_tag(.Shared))
+        .Ok({})
+      },
+    )
+    .test(
+      "t4 borrow: borrowing callee leaves caller arg Unique",
+      fn() {
+        b := b_reg()
+        g := fdef(2, "g", 1, .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1)))))
+        f_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 2 }), [.ALocal(lid(0))]),
+            .Atom(.ALitInt(0)),
+          ),
+        )
+        f := analyzed_caller([fdef(1, "f", 0, f_body), g], "f")
+        try assert.equal(caller_own(f, 0), own_unique())
+        .Ok({})
+      },
+    )
+    .test(
+      "t4 retain: retaining callee demotes caller arg to Shared",
+      fn() {
+        b := b_reg()
+        g := fdef(
+          2,
+          "g",
+          1,
+          .Let(lid(1), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))), .Atom(.ALitInt(0))),
+        )
+        f_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 2 }), [.ALocal(lid(0))]),
+            .Atom(.ALitInt(0)),
+          ),
+        )
+        f := analyzed_caller([fdef(1, "f", 0, f_body), g], "f")
+        try assert.equal(caller_own(f, 0), own_shared())
+        .Ok({})
+      },
+    )
+    .test(
+      "t4 return-alias: aliasing callee demotes the origin arg",
+      fn() {
+        b := b_reg()
+        g := fdef(2, "g", 1, .Atom(.ALocal(lid(0))))
+        f_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 2 }), [.ALocal(lid(0))]),
+            .Atom(.ALitInt(0)),
+          ),
+        )
+        f := analyzed_caller([fdef(1, "f", 0, f_body), g], "f")
+        try assert.equal(caller_own(f, 0), own_shared())
+        .Ok({})
+      },
+    )
+    .test(
+      "t4 aggregate wrapper: wrap(xs) demotes the arg",
+      fn() {
+        b := b_reg()
+        g := fdef(2, "g", 1, .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1)))))
+        f_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 2 }), [.ALocal(lid(0))]),
+            .Atom(.ALitInt(0)),
+          ),
+        )
+        f := analyzed_caller([fdef(1, "f", 0, f_body), g], "f")
+        try assert.equal(caller_own(f, 0), own_shared())
+        .Ok({})
+      },
+    )
+    .test(
+      "t4 multi-origin: both origin args demoted",
+      fn() {
+        b := b_reg()
+        then_e: AnfExpr = .Atom(.ALocal(lid(0)))
+        else_e: AnfExpr = .Atom(.ALocal(lid(1)))
+        g := fdef(
+          2,
+          "g",
+          2,
+          .Let(lid(2), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(2)))),
+        )
+        f_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            dict_new_call(b),
+            .Let(
+              lid(2),
+              .ACall(.AGlobalFunc(FuncId.{ id: 2 }), [.ALocal(lid(0)), .ALocal(lid(1))]),
+              .Atom(.ALitInt(0)),
+            ),
+          ),
+        )
+        f := analyzed_caller([fdef(1, "f", 0, f_body), g], "f")
+        try assert.equal(caller_own(f, 0), own_shared())
+        try assert.equal(caller_own(f, 1), own_shared())
+        .Ok({})
+      },
+    )
+    .test(
+      "t4 fresh result is Unique at the call",
+      fn() {
+        b := b_reg()
+        g := fdef(2, "g", 1, .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1)))))
+        f_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 2 }), [.ALocal(lid(0))]),
+            .Atom(.ALitInt(0)),
+          ),
+        )
+        f := analyzed_caller([fdef(1, "f", 0, f_body), g], "f")
+        try assert.equal(caller_own(f, 1), own_unique())
+        .Ok({})
+      },
+    )
+    .test(
+      "t4 conservative: unknown callee publishes the arg",
+      fn() {
+        b := b_reg()
+        f_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 99 }), [.ALocal(lid(0))]),
+            .Atom(.ALitInt(0)),
+          ),
+        )
+        f := analyzed_caller([fdef(1, "f", 0, f_body)], "f")
+        try assert.equal(caller_own(f, 0), own_shared())
+        .Ok({})
+      },
+    )
+    .test(
+      "t4 capability recorded (consumed), not acted on: caller arg stays valid",
+      fn() {
+        b := b_reg()
+        g_body: AnfExpr = .Let(
+          lid(1),
+          .AInit(.ALocal(lid(0))),
+          .Let(
+            lid(2),
+            .ACall(
+              .AGlobalFunc(b.method_id("Dict", "set")),
+              [.ALocal(lid(1)), .ALitInt(1), .ALitInt(2)],
+            ),
+            .Atom(.ALitInt(0)),
+          ),
+        )
+        gs := summ1("g", 1, g_body)
+        try assert.equal(cap_tag(gs.params[0].capability), cap_tag(.Consumed))
+        try assert.equal(p_escape(gs, 0), escape_tag(.Borrowed))
+        g := fdef(2, "g", 1, g_body)
+        f_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 2 }), [.ALocal(lid(0))]),
+            .Atom(.ALocal(lid(0))),
+          ),
+        )
+        f := analyzed_caller([fdef(1, "f", 0, f_body), g], "f")
+        case f.blocks[0].exit.binding_valid.get(0) {
+          .Some(v) => try assert.is_true(v),
+          .None => {}, // absent => valid
+        }
         .Ok({})
       },
     )
