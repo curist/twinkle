@@ -9,6 +9,7 @@ use compiler.mono_type.{MonoType, TypeId}
 use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.ownership
+use compiler.summary
 
 fn lid(id: Int) LocalId {
   LocalId.{ id }
@@ -115,6 +116,19 @@ fn same_ints(a: Vector<Int>, b: Vector<Int>) Bool {
     }
   }
   true
+}
+
+fn compute_of(funcs: Vector<AnfFunctionDef>) ownership.SummaryTable {
+  b := b_reg()
+  v := cfg.build_view(module_of(funcs), b)
+  summary.compute(v, b, sem())
+}
+
+fn summ_of(t: ownership.SummaryTable, func_id: Int) ownership.Summary {
+  case ownership.summary_get(t, func_id) {
+    .Some(s) => s,
+    .None => error("no summary ${func_id}"),
+  }
 }
 
 pub fn suite() runner.Suite {
@@ -310,6 +324,54 @@ pub fn suite() runner.Suite {
         body: AnfExpr = .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1))))
         s := summ1("f", 1, body)
         try assert.is_true(same_ints(ret_alias_set(s.ret), [0]))
+        .Ok({})
+      },
+    )
+    .test(
+      "t3 leaf summaries computed for every function",
+      fn() {
+        b := b_reg()
+        f := fdef(1, "f", 1, .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1)))))
+        g := fdef(2, "g", 1, .Atom(.ALocal(lid(0))))
+        t := compute_of([f, g])
+        try assert.equal(escape_tag(summ_of(t, 1).params[0].escape), escape_tag(.Borrowed))
+        try assert.equal(ret_tag(summ_of(t, 1).ret), ret_tag(.OwnedFresh))
+        try assert.is_true(same_ints(ret_alias_set(summ_of(t, 2).ret), [0]))
+        .Ok({})
+      },
+    )
+    .test(
+      "t3 self-recursion terminates (minimal gate): fn f(x){ f(x) }",
+      fn() {
+        call_self: AnfExpr = .Let(
+          lid(1),
+          .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+          .Atom(.ALocal(lid(1))),
+        )
+        t := compute_of([fdef(1, "f", 1, call_self)])
+        try assert.equal(t.by_func.keys().len(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "t3 mutual recursion: SCC fixpoint is stable + sound",
+      fn() {
+        f_body: AnfExpr = .Let(
+          lid(1),
+          .ACall(.AGlobalFunc(FuncId.{ id: 2 }), [.ALocal(lid(0))]),
+          .Atom(.ALocal(lid(1))),
+        )
+        g_body: AnfExpr = .Let(
+          lid(1),
+          .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+          .Atom(.ALocal(lid(1))),
+        )
+        t := compute_of([fdef(1, "f", 1, f_body), fdef(2, "g", 1, g_body)])
+        try assert.equal(t.by_func.keys().len(), 2)
+        try assert.equal(escape_tag(summ_of(t, 1).params[0].escape), escape_tag(.Retained))
+        try assert.equal(ret_tag(summ_of(t, 1).ret), ret_tag(.Shared))
+        try assert.equal(escape_tag(summ_of(t, 2).params[0].escape), escape_tag(.Retained))
+        try assert.equal(ret_tag(summ_of(t, 2).ret), ret_tag(.Shared))
         .Ok({})
       },
     )

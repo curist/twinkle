@@ -1,0 +1,300 @@
+//! Whole-program interprocedural summary driver.
+//!
+//! Computes a `SummaryTable` bottom-up over call-graph SCCs, using the
+//! per-function `ownership.summarize_function` transfer. Edges run from a
+//! function to the user functions it directly calls (its dependencies), so
+//! `graph_scc.strongly_connected` (dependency-before-dependent order) yields the
+//! components in callee-first order: a callee's SCC is fixed before its callers'
+//! SCC, making callee summaries available when callers are analyzed.
+//!
+//! Module graph stays acyclic: summary.tw depends on ownership.tw/cfg.tw, never
+//! the reverse.
+
+use compiler.anf.{AnfOp}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.cfg.{CfgFunction, CfgView}
+use compiler.graph_scc
+use compiler.opt.semantics.{OptimizerSemantics}
+use compiler.ownership.{
+  EscapeEffect, ParamCapability, ParamSummary, ReturnEffect, Summary, SummaryTable,
+  empty_summary_table, summarize_function, summary_get,
+}
+
+// ── Determinism helpers ─────────────────────────────────────────────
+fn contains_int(v: Vector<Int>, id: Int) Bool {
+  for x in v {
+    if x == id {
+      return true
+    }
+  }
+  false
+}
+
+fn insert_sorted(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    if x == id {
+      return v
+    }
+    if !inserted and id < x {
+      out = .append(id)
+      inserted = true
+    }
+    out = .append(x)
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  out
+}
+
+fn same_ints(a: Vector<Int>, b: Vector<Int>) Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  for x, i in a {
+    if x != b[i] {
+      return false
+    }
+  }
+  true
+}
+
+// ── Conservative seed ───────────────────────────────────────────────
+// Sound starting point before any callee is known: every param Retained/NoCap,
+// return Shared. Monotone transfer only moves these down the lattice.
+pub fn conservative_summary(f: CfgFunction) Summary {
+  params: Vector<ParamSummary> = collect _p in f.params {
+    ParamSummary.{ escape: .Retained, capability: .NoCap }
+  }
+  Summary.{ params, ret: .Shared }
+}
+
+// ── Summary equality (fixpoint stop condition) ──────────────────────
+fn escape_eq(a: EscapeEffect, b: EscapeEffect) Bool {
+  case a {
+    .Borrowed => case b {
+      .Borrowed => true,
+      _ => false,
+    },
+    .Retained => case b {
+      .Retained => true,
+      _ => false,
+    },
+  }
+}
+
+fn capability_eq(a: ParamCapability, b: ParamCapability) Bool {
+  case a {
+    .NoCap => case b {
+      .NoCap => true,
+      _ => false,
+    },
+    .Consumed => case b {
+      .Consumed => true,
+      _ => false,
+    },
+  }
+}
+
+fn param_summary_eq(a: ParamSummary, b: ParamSummary) Bool {
+  escape_eq(a.escape, b.escape) and capability_eq(a.capability, b.capability)
+}
+
+fn return_eq(a: ReturnEffect, b: ReturnEffect) Bool {
+  case a {
+    .OwnedFresh => case b {
+      .OwnedFresh => true,
+      _ => false,
+    },
+    .Shared => case b {
+      .Shared => true,
+      _ => false,
+    },
+    .MayAliasParams(sa) => case b {
+      .MayAliasParams(sb) => same_ints(sa, sb),
+      _ => false,
+    },
+  }
+}
+
+pub fn same_summary(a: Summary, b: Summary) Bool {
+  if a.params.len() != b.params.len() {
+    return false
+  }
+  for pa, i in a.params {
+    if !param_summary_eq(pa, b.params[i]) {
+      return false
+    }
+  }
+  return_eq(a.ret, b.ret)
+}
+
+// ── Call graph ──────────────────────────────────────────────────────
+fn user_id_set(view: CfgView) Dict<Int, Bool> {
+  set: Dict<Int, Bool> = Dict.new()
+  for f in view.functions {
+    set[f.func_id] = true
+  }
+  set
+}
+
+fn is_user(user_ids: Dict<Int, Bool>, id: Int) Bool {
+  case user_ids.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+// Direct-call user callees named in an op (dedup+sorted via insert_sorted).
+fn collect_op_callees(acc: Vector<Int>, op: AnfOp, user_ids: Dict<Int, Bool>) Vector<Int> {
+  case op {
+    .ACall(callee, _) => case callee {
+      .AGlobalFunc(fid) => if is_user(user_ids, fid.id) {
+        insert_sorted(acc, fid.id)
+      } else {
+        acc
+      },
+      _ => acc,
+    },
+    _ => acc,
+  }
+}
+
+// Every direct user-callee of `f`, deduped and sorted for a byte-stable graph.
+pub fn callee_ids(f: CfgFunction, user_ids: Dict<Int, Bool>) Vector<Int> {
+  acc: Vector<Int> = []
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      acc = collect_op_callees(acc, inst.op, user_ids)
+    }
+  }
+  acc
+}
+
+pub fn func_by_id(view: CfgView, id: Int) CfgFunction? {
+  for f in view.functions {
+    if f.func_id == id {
+      return .Some(f)
+    }
+  }
+  .None
+}
+
+// ── SCC ordering ────────────────────────────────────────────────────
+// Nodes are enumerated in ascending func_id order and edges point from each
+// function to its (sorted) callees, marshalled through decimal String labels.
+// strongly_connected returns dependency-before-dependent components, i.e. in
+// callee-first order. Decode each component's labels back to ints.
+pub fn order_sccs(view: CfgView) Vector<Vector<Int>> {
+  user_ids := user_id_set(view)
+
+  // ascending func_id order for byte-stable enumeration
+  ids: Vector<Int> = []
+  for f in view.functions {
+    ids = insert_sorted(ids, f.func_id)
+  }
+
+  nodes: Vector<String> = collect id in ids {
+    id.to_string()
+  }
+  edges: Dict<String, Vector<String>> = Dict.new()
+  for id in ids {
+    callees := case func_by_id(view, id) {
+      .Some(f) => callee_ids(f, user_ids),
+      .None => [],
+    }
+    labels: Vector<String> = collect c in callees {
+      c.to_string()
+    }
+    edges[id.to_string()] = labels
+  }
+
+  comps := graph_scc.strongly_connected(nodes, edges)
+  collect comp in comps {
+    collect label in comp {
+      case Int.from_string(label) {
+        .Some(n) => n,
+        .None => error("summary: bad scc label '${label}'"),
+      }
+    }
+  }
+}
+
+// ── Per-SCC fixpoint ────────────────────────────────────────────────
+fn table_put(t: SummaryTable, id: Int, s: Summary) SummaryTable {
+  t.by_func[id] = s
+  t
+}
+
+fn table_get(t: SummaryTable, id: Int) Summary {
+  case summary_get(t, id) {
+    .Some(s) => s,
+    .None => error("summary: no seeded summary for ${id}"),
+  }
+}
+
+// One pass over an SCC: recompute each member from the current table and replace
+// it. Returns the updated table and whether any member's summary changed.
+type PassOut = .{ table: SummaryTable, changed: Bool }
+
+fn fixpoint_pass(
+  view: CfgView,
+  scc: Vector<Int>,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) PassOut {
+  changed := false
+  for id in scc {
+    f := case func_by_id(view, id) {
+      .Some(fn0) => fn0,
+      .None => error("summary: scc id ${id} not in view"),
+    }
+    next := summarize_function(f, table, b, sem)
+    if !same_summary(table_get(table, id), next) {
+      changed = true
+    }
+    table = table_put(table, id, next)
+  }
+  PassOut.{ table, changed }
+}
+
+fn run_scc(
+  view: CfgView,
+  scc: Vector<Int>,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) SummaryTable {
+  // Singleton non-recursive SCCs converge in one pass; the cap bounds recursive
+  // SCCs (monotone transfer over a finite lattice terminates well within it).
+  cap := scc.len() * 4 + 1
+  iters := 0
+  done := false
+  for !done and iters < cap {
+    pass := fixpoint_pass(view, scc, table, b, sem)
+    table = pass.table
+    iters = iters + 1
+    if !pass.changed {
+      done = true
+    }
+  }
+  table
+}
+
+// ── Driver ──────────────────────────────────────────────────────────
+pub fn compute(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) SummaryTable {
+  // Seed every function conservatively so the first pass is sound before callees
+  // are known.
+  table := empty_summary_table()
+  for f in view.functions {
+    table = table_put(table, f.func_id, conservative_summary(f))
+  }
+
+  for scc in order_sccs(view) {
+    table = run_scc(view, scc, table, b, sem)
+  }
+  table
+}
