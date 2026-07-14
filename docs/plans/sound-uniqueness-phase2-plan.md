@@ -2197,4 +2197,15 @@ Expected: boot suites green; `make stage2` succeeds (the new `ownership.tw` and 
 
 **3. Type consistency:** `Ownership` (enum) lives in `ownership.tw`; `BlockFacts.ownership` stores the **`Int` tag** (Task 3 note) to avoid a `cfg.tw → ownership.tw` import cycle; `own_tag`/`own_of_tag` bridge them and are used consistently in tests (`assert_own`, `own_at_exit`) and rendering (`own_tag_text`). `CfgEdge.args: Vector<Atom>` is introduced in Task 2 and read positionally by `join_entry_ownership`/`join_entry_valid` (Tasks 6–7) and `edge_live_contribution` (Task 4) — all agree it is `Vector<Atom>`. `ForwardState` (own+valid) is shared by `transfer_op`/`forward_block`/the fixpoint. `analyze(view, b, sem)` signature is stable across the CLI (Task 8) and tests.
 
-**Open risk to watch during execution:** Task 2 touches the most Phase 1 code (every wiring site). Run the *structural* suite after Task 2 before moving on — if any Phase 1 shape test regresses, fix it there rather than compensating in the analysis. The analysis (Tasks 4–7) never mutates structure, so a structural regression is always a Task 2 bug.
+**Open risks to watch during execution:**
+
+- **Task 2** touches the most Phase 1 code (every wiring site). Run the
+  *structural* suite after Task 2 before moving on — if any Phase 1 shape test
+  regresses, fix it there rather than compensating in the analysis. The analysis
+  (Tasks 4–7) never mutates structure, so a structural regression is always a
+  Task 2 bug.
+- **Tasks 6 and 7** are the intricate dataflow (generalized live-in join,
+  skip-unprocessed fixpoint, combined ownership/validity). Do **not** defer their
+  tests — run the branch-join and loop-carried tests the moment each task's code
+  lands. The loop-carried test in particular is the load-bearing check for the
+  live-through join *and* the back-edge skip; if it passes, both are working.
