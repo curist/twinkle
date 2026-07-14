@@ -119,6 +119,23 @@ fn own_exit_named(f: cfg.CfgFunction, name: String, local_id: Int) ownership.Own
   .Unknown
 }
 
+fn valid_at_exit(f: cfg.CfgFunction, block_idx: Int, local_id: Int) Bool {
+  blk := f.blocks[block_idx]
+  case blk.exit.binding_valid.get(local_id) {
+    .Some(v) => v,
+    .None => true, // absent => valid
+  }
+}
+
+fn block_named(f: cfg.CfgFunction, name: String) cfg.CfgBlock? {
+  for blk in f.blocks {
+    if blk.name == name {
+      return .Some(blk)
+    }
+  }
+  .None
+}
+
 // The suite is one exported builder. Task 4 creates it with the first test;
 // Tasks 5-9 append more `.test(...)` clauses. Helper `fn`s go above `suite()`.
 pub fn suite() runner.Suite {
@@ -285,6 +302,46 @@ pub fn suite() runner.Suite {
         o := own_exit_named(f, "match.arm.0", 5)
         try assert.is_true(ownership.own_tag(o) != 0)
         .Ok({})
+      },
+    )
+    .test(
+      "phase2 t7: a moved source is invalid at block exit",
+      fn() {
+        // L0 = Dict.new(); L1 = init L0; return L1  (L0 moved => invalid at exit)
+        b := b_reg()
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(1)))),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert.is_false(valid_at_exit(f, 0, 0))
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t7: a valid live-through non-param local stays valid across a boundary",
+      fn() {
+        // L0 = Dict.new(); r := if c { 1 } else { 2 }; L2 = Dict.set(L0,..); return 0
+        // L0 is live-through the if blocks WITHOUT being a join param; never moved.
+        b := b_reg()
+        then_e: AnfExpr = .Atom(.ALitInt(1))
+        else_e: AnfExpr = .Atom(.ALitInt(2))
+        after: AnfExpr = .Let(lid(2), dict_set_call(b, lid(0)), .Atom(.ALitInt(0)))
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), .AIf(.ALitBool(true), then_e, else_e), after),
+        )
+        f := analyzed_func(module_of("f", body))
+        blk := case block_named(f, "if.join") {
+          .Some(jb) => jb,
+          .None => return assert.fail("no if.join block"),
+        }
+        case blk.entry.binding_valid.get(0) {
+          .Some(v) => assert.is_true(v),
+          .None => .Ok({}), // absent => valid (also acceptable)
+        }
       },
     )
 }
