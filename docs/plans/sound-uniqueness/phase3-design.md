@@ -111,7 +111,20 @@ indirect, or in-progress-recursive callee keeps the conservative default (params
   `ForwardState`, per-function effect **classification**, and **call-site
   consumption** in `transfer_call`. Types live here (mirroring `cfg` owning
   `BlockFacts`) so `summary.tw → ownership.tw` is acyclic. `analyze` gains a
-  `SummaryTable` param; an empty table degrades to today's conservative behavior.
+  `SummaryTable` input; an empty table degrades to today's conservative behavior.
+  - **Threading + guardrail G1.** `analyze_function` carries the Phase 2 freeze
+    comment ("later tasks change only `ownership_stage`'s body"). Phase 3 needs the
+    read-only table at `transfer_call`, at the far end of the
+    `analyze → analyze_function → ownership_stage → run_fixpoint → forward_block →
+    transfer_op → transfer_call` chain. Rather than add a bare param to every hop,
+    **fold the table into the already-threaded `sem` value** (or a thin analysis-
+    context record carrying `sem` + table), so no existing signature changes shape
+    and G1's *algorithm* freeze is preserved — the change is a payload extension,
+    not a structural edit. Note the two-phase construction: `summarize_function`
+    runs against a **table-free** `sem` (it consumes only builtin `CallSemantics`
+    and the in-progress SCC summaries it threads itself), then `analyze` runs
+    against `sem` + the *final* table. Update the G1 comment to record that Phase 3
+    extends the threaded payload (not the frozen structure).
 - **`summary.tw`** (new) — the **interprocedural driver**: extract the
   whole-program call graph, order via `graph_scc.tw`, run the bottom-up fixpoint
   (calling an `ownership.summarize_function`-style entry), return the final
@@ -159,7 +172,13 @@ reachable through. Storing param *locals* (not indices) keeps publication unifor
 1. **Call graph.** Edges are `ACall(AGlobalFunc(fid), …)` whose `fid` is a user
    function in the linked module. (Builtins go through `CallSemantics`.)
 2. **SCC order.** Tarjan SCCs (`graph_scc.tw`), reverse-topological, so a
-   callee's summary exists before its callers.
+   callee's summary exists before its callers. **`graph_scc.strongly_connected`
+   is String-keyed** (`Vector<String>` nodes, `Dict<String, Vector<String>>`
+   edges), so the driver marshals `FuncId.id ↔ String` in both directions. Use a
+   fixed, zero-padding-free decimal encoding of `FuncId.id` so node identity is
+   canonical, and enumerate `nodes` in ascending `FuncId.id` order so the SCC
+   result — and therefore the summary fixpoint order — is byte-stable across
+   builds.
 3. **Per-SCC fixpoint.** Seed each member conservatively (params `Retained`,
    return `Shared`; capability `NoCap`), so the first pass is sound before callees
    are known. Recompute each member's summary from its body using the current
@@ -183,11 +202,22 @@ effects at the boundary.
   k`) but never acquire ownership, so they classify `Borrowed`.
 - **Propagate.** `AInit`/`AWrapAnyref`/`AUnwrapAnyref`/`AAssign` copy the source's
   `prov`. **Aggregates (`ARecord`/`AVariant`/`AArrayLit`) carry the union of their
-  ref field/element `prov`** — a shell embedding a param origin is *not*
-  independent (field-path precision that would recover shell-uniqueness is Phase
-  6). A fresh allocation with no param-origin fields is `∅`. A call result's `prov`
-  follows the callee's return effect: `MayAliasParams(S) → ∪ prov(arg_k) for k in
-  S`; `OwnedFresh`/`Shared → ∅`.
+  field/element `prov`** — a shell embedding a param origin is *not* independent
+  (field-path precision that would recover shell-uniqueness is Phase 6). A fresh
+  allocation with no param-origin fields is `∅`. A call result's `prov` follows the
+  callee's return effect: `MayAliasParams(S) → ∪ prov(arg_k) for k in S`;
+  `OwnedFresh`/`Shared → ∅`.
+  - **Operand type info (implementation note).** Restricting the union to
+    *ref-typed* fields would be more precise, but `ownership.tw` is deliberately
+    type-agnostic today — `Atom` carries no type, and the pass consults no type
+    map (only `AnfFunctionDef.op_result_mono`, which is not threaded in). Phase 3
+    therefore **unions the `prov` of all operands** (the sound over-approximation),
+    not just ref-typed ones. This is harmless: a scalar param's origin flowing into
+    an aggregate can only add scalar param indices to a `MayAliasParams` set (whose
+    only effect is publishing an unboxed scalar arg — a no-op) and, per decision 8,
+    scalar params are **pinned to `Borrowed`/`NoCap` at classification regardless**
+    of whether transitive publish touched them. Plumbing `op_result_mono` in to
+    recover ref-only precision is a later refinement, not required for soundness.
 - **Join.** Positional union of predecessor `prov`, mirroring the ownership join.
 - **Publish is transitive over provenance.** `publish_local(L)` sets `own[L] =
   Shared` **and** `own[o] = Shared` for every `o ∈ prov(L)`. This is the general
@@ -237,6 +267,40 @@ Builtins still resolve via `CallSemantics`. **Unknown Twinkle call without a
 summary, extern, indirect/closure callee, or `Cell` op → keep the conservative
 publish-all-ref-args bucket.**
 
+### Optimization reach — what Phase 3 does and does *not* recover
+
+Stated explicitly because the `MayAliasParams → publish every arg` demotion looks,
+in isolation, like it gives back nothing. Verified against
+[worked-examples.md](worked-examples.md):
+
+- **The census-dominant wins are *not* recovered in Phase 3, by design.** The
+  consume-produce helpers — `set_at` (Case A), `add_type` (Case B), `visit`
+  (Case V), i.e. the **171 record + 267 dict in-place sites** — all *return their
+  threaded param* (`… ; assign env; return env`). Phase 3 classifies each as
+  `p0=retain, ret=alias(p0)` (the return-block terminator publishes the returned
+  atom, and its `prov` traces to the param), so the caller arg **and** result are
+  demoted to `Shared`. This is the same conservative verdict as today's blanket
+  publish boundary — **no regression, but no win either** for these sites.
+- **That is sound and intended, not a dead end.** Phase 3 is analysis-only and
+  emits zero in-place (Acceptance 9), so no realized optimization is lost. The
+  unique consume-produce handoff (`OwnedFromParam(k)`, which keeps the value
+  `Unique`) is deliberately absent from the Phase 3 return lattice: recovering it
+  needs **ownership specialization** — re-analyzing the callee under a `Unique`-
+  entry assumption — which is **Phase 6**
+  ([summary-specialization.md](summary-specialization.md), computing-summaries
+  steps 1 & 3). Phase 3 computes exactly the conservative "params enter `Unknown`"
+  generic summary that Phase 6 specialization takes as input; it does not throw
+  away information Phase 6 needs, because Phase 6 re-analyzes rather than reading a
+  richer generic summary, and its call-site selection reads the **incoming** arg
+  fact (which Phase 3 preserves at the call boundary — the generic demote only
+  affects the generic variant's downstream, and these sites rebind the arg
+  immediately).
+- **Phase 3's actual precision win is narrow but real:** read-only (`Borrowed`)
+  args stay `Unique` instead of being published, and `OwnedFresh` results are
+  `Unique`. The observable is more precise `--cfg` facts at read-only-helper and
+  allocator call sites — the foundation the later phases consume, not the headline
+  in-place sites themselves.
+
 ## Precision items
 
 - **Dead-merge param pruning (minimal, pre-analysis).** `prune_dead_merge(view)`
@@ -260,6 +324,36 @@ publish-all-ref-args bucket.**
   because they do not consult ownership/CF facts. Audit (grep + reasoning) that no
   optimizer pass retains independent ownership/liveness/legality logic — the
   evidence backing the "single source of truth" claim.
+
+## Implementation risks / assumptions to validate
+
+Surfaced while grounding this design against the branch; each is a soundness-safe
+default with a cheap validation step for the execution plan.
+
+- **`collect_pattern_bindings` returns `Dict<Int, Bool>`, not `Vector<Int>`.** The
+  match-arm item must convert its keys to a sorted `Vector<Int>` for
+  `CfgBlock.bound`. Also, `build_match` creates each arm block with **empty
+  params** *before* `build_expr` populates it, so `bound` is set on the arm entry
+  block (`arm_ids[i]`) after creation, not derived from params. Both are
+  mechanical; the fixture (Acceptance 8) covers correctness.
+- **Positional `arg[k] ↔ param[k]` (decision 8) assumes no ABI-prepended param.**
+  Direct `AGlobalFunc` callees are top-level monomorphized functions whose
+  `CfgFunction.params` are declaration-order, so the identity should hold — but
+  validate against a call site with a receiver/inherent-method desugaring and a
+  captured-env case to confirm no implicit slot shifts the index. Indirect/closure
+  callees already take the conservative path, so only direct calls matter.
+- **Header rendering interleaves with `cfg.render_view`.** `render_view` renders
+  the whole view and knows nothing about summaries, while the header line is
+  per-function. Either give `render_view` an optional `SummaryTable` (rendered
+  before each function's blocks) or have `commands/ir.tw` render function-by-
+  function, prefixing `summary.render_header(table, f)`. Keep the summary→cfg
+  dependency direction acyclic (summary.tw already depends on ownership/cfg).
+- **Summaries are whole-program even for a single `--cfg` render.** A consumed
+  callee summary can live anywhere, so `summary.compute` analyzes every function
+  (a full liveness + forward fixpoint per function) *in addition to* the final
+  `analyze` pass — roughly doubling `--cfg`'s per-function work. Acceptable for a
+  debug command; note it so it is not mistaken for a regression, and so it is not
+  copied onto a hot path in Phase 4 without caching.
 
 ## Rendering
 
@@ -341,10 +435,12 @@ vacuous-bullet reframing.
 
 - **`prov` sets** — sorted `Vector<Int>`, same discipline as `live`; no hash-set
   iteration in an order-sensitive path.
-- **Summary fixpoint** — SCC order from Tarjan over a call graph whose edges are
-  enumerated in deterministic ANF traversal order; the per-function transfer and
-  the lattice joins are commutative/idempotent, so iteration order does not affect
-  the result; the iteration cap is deterministic (`members × 4`).
+- **Summary fixpoint** — SCC order from Tarjan over a call graph whose nodes are
+  enumerated in ascending `FuncId.id` order (via the canonical decimal string
+  encoding) and whose edges are enumerated in deterministic ANF traversal order;
+  the per-function transfer and the lattice joins are commutative/idempotent, so
+  iteration order does not affect the result; the iteration cap is deterministic
+  (`members × 4`).
 - **`--cfg` header + facts** — params in index order; `SummaryTable` keyed by
   `FuncId.id`, rendered per function in id order. Byte-identical across builds
   (gated by Acceptance 5).
