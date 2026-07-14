@@ -38,7 +38,8 @@
 - **Determinism.** Iterate blocks by `id` order; never let a `Dict` iteration decide output/compare order. The `--cfg` output must be byte-identical across two builds.
 - **After editing `.tw`.** Run `target/twk fmt <files>` then `target/twk lint boot/main.tw`.
 - **Test the boot suite with:** `target/twk run boot/tests/main.tw`. The CLI flag needs `make bundle-cli`.
-- **Commits.** Short imperative subject; body for non-trivial changes. End with the `Co-Authored-By` trailer.
+- **Test API (real shape — every snippet below uses it).** A suite file exports one `pub fn suite() runner.Suite`, built fluently: `runner.suite("name").test("case", fn() { ...; .Ok({}) }).test(...)`. Each `.test` callback returns `Result<Void, String>` and ends in `.Ok({})`. Assertions return `Result<Void, String>` and are `try`'d: `try assert.equal(a, b)` (needs `Eq + Stringify`; compare ownership by its `Int` tag), `try assert.is_true(cond)`, `try assert.is_false(cond)`; `assert.fail(msg)` / `assert.ok(cond, msg)` return an `Err`/`Result` (use as `return assert.fail(msg)` or the tail). There is **no** `assert.true`/`assert.eq_int`/top-level `runner.test(...)`. Helpers that yield `Result` (e.g. `function(src, name)`) are `try`'d inside the callback. Register a new suite in `boot/tests/main.tw` exactly like the existing `cfg_ownership_suite` (a `use .suites.<name>` line plus its `<name>.suite()` in the run list).
+- **Commits.** Short imperative subject; body for non-trivial changes. Add a `Co-Authored-By` trailer **only when it is actually correct for your session/tooling** (AGENTS.md:116) — do not add it unconditionally. The commit-message bodies below omit the trailer for that reason; add it yourself if appropriate.
 
 ---
 
@@ -52,18 +53,14 @@ Phase 1 dropped the raw `AnfOp` after `op_text(op)` and never recorded a functio
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `boot/tests/suites/cfg_ownership_suite.tw` (uses the existing `function`/`view` helpers):
+Add this `.test(...)` clause to the existing `pub fn suite()` in `boot/tests/suites/cfg_ownership_suite.tw` (it uses the file's `function` helper, which returns `Result`):
 
 ```tw
-runner.test("phase2 t1: instructions carry raw op and functions carry params", fn () {
-  src := "fn f(x: Int) Int {\n  y := x + 1\n  y\n}\n"
-  case function(src, "f") {
-    .Ok(func) => {
-      // The function records its own parameter local(s).
-      assert.true(func.params.len() >= 1, "expected f to record its params")
-      // Every instruction carries a raw op, not just text.
+    .test("phase2 t1: instructions carry raw op and functions carry params", fn() {
+      f := try function("fn f(x: Int) Int {\n  y := x + 1\n  y\n}\n", "f")
+      try assert.is_true(f.params.len() >= 1)
       has_binop := false
-      for block in func.blocks {
+      for block in f.blocks {
         for inst in block.instructions {
           case inst.op {
             .ABinOp(_, _, _, _) => has_binop = true,
@@ -71,11 +68,9 @@ runner.test("phase2 t1: instructions carry raw op and functions carry params", f
           }
         }
       }
-      assert.true(has_binop, "expected the y := x + 1 instruction to carry an ABinOp")
-    },
-    .Err(e) => assert.fail(e),
-  }
-})
+      try assert.is_true(has_binop)
+      .Ok({})
+    })
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -141,9 +136,7 @@ git commit -m "cfg: carry raw AnfOp per instruction and function params for Phas
 The Phase 2 ownership transfer and liveness read the raw op and its operand
 atoms; Phase 1 kept only rendered text and dropped the op. Add op to
 CfgInstruction and params to CfgFunction. Purely additive; op_text still
-renders identically so the structural view is unchanged.
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+renders identically so the structural view is unchanged."
 ```
 
 ---
@@ -161,36 +154,29 @@ Phase 1 wired placeholder edge args (`edge_args_for(params)` returns the params 
 Add to `cfg_ownership_suite.tw`:
 
 ```tw
-runner.test("phase2 t2: branch join edge args carry the arm tail atom", fn () {
-  // Two arms each produce a fresh value; the join param is fed the arm's tail.
-  src := "fn f(c: Bool) Int {\n  r := if c { 1 } else { 2 }\n  r\n}\n"
-  case function(src, "f") {
-    .Ok(func) => {
-      join := block_named(func, "if.join")
-      case join {
-        .Some(jb) => {
-          // The join carries exactly one param (the result local r).
-          assert.eq_int(jb.params.len(), 1, "join should carry the result local")
-          rp := jb.params[0]
-          // Each predecessor edge supplies a concrete atom for that param,
-          // and it is NOT the placeholder ALocal(r): the then-arm feeds 1.
-          fed_literal := false
-          for pe in jb.preds {
-            for a in pe.args {
-              case a {
-                .ALitInt(_) => fed_literal = true,
-                _ => {},
-              }
-            }
-          }
-          assert.true(fed_literal, "expected a literal arm tail (1/2) in the join edge args")
-        },
-        .None => assert.fail("no if.join block"),
+    .test("phase2 t2: branch join edge args carry the arm tail atom", fn() {
+      // Two arms each produce a fresh value; the join param is fed the arm's tail.
+      f := try function("fn f(c: Bool) Int {\n  r := if c { 1 } else { 2 }\n  r\n}\n", "f")
+      jb := case block_named(f, "if.join") {
+        .Some(b) => b,
+        .None => return assert.fail("no if.join block"),
       }
-    },
-    .Err(e) => assert.fail(e),
-  }
-})
+      // The join carries exactly one param (the result local r).
+      try assert.equal(jb.params.len(), 1)
+      // Each predecessor edge supplies a concrete atom for that param, and it is
+      // NOT the placeholder ALocal(r): the then-arm feeds the literal 1.
+      fed_literal := false
+      for pe in jb.preds {
+        for a in pe.args {
+          case a {
+            .ALitInt(_) => fed_literal = true,
+            _ => {},
+          }
+        }
+      }
+      try assert.is_true(fed_literal)
+      .Ok({})
+    })
 ```
 
 Add the `block_named` helper near the other helpers at the top of the suite:
@@ -414,9 +400,7 @@ supplies the concrete atom it feeds into each target param — result param gets
 the arm tail / break payload, carried params forward ALocal(self). This is
 what the Phase 2 ownership join reads positionally; the placeholder-param
 edge args could not express a join result's ownership. succs stays the
-authoritative edge list; terminator payloads are render-only and identical.
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+authoritative edge list; terminator payloads are render-only and identical."
 ```
 
 ---
@@ -435,19 +419,14 @@ Replace the Phase 1 string fact maps with grouped `BlockFacts`, and stand up `ow
 Add to `cfg_ownership_suite.tw` (imports `use compiler.ownership` at top):
 
 ```tw
-runner.test("phase2 t3: analyze returns a view; empty-facts query still works", fn () {
-  src := "fn f(x: Int) Int {\n  x\n}\n"
-  case view(src) {
-    .Ok(v) => {
+    .test("phase2 t3: analyze returns a view; empty-facts query still works", fn() {
+      v := try view("fn f(x: Int) Int {\n  x\n}\n")
       analyzed := ownership.analyze(v, builtins.make_builtin_registry(), sem_for())
       case cfg.function_named(analyzed, "f") {
-        .Some(func) => assert.true(func.blocks.len() >= 1, "f has blocks after analyze"),
+        .Some(func) => assert.is_true(func.blocks.len() >= 1),
         .None => assert.fail("f missing after analyze"),
       }
-    },
-    .Err(e) => assert.fail(e),
-  }
-})
+    })
 ```
 
 Add a `sem_for()` helper near the top of the suite:
@@ -585,9 +564,7 @@ git commit -m "ownership: grouped BlockFacts + analyze skeleton (identity)
 Replace the Phase 1 string fact maps with a BlockFacts record (ownership tag
 map, binding_valid map, sorted live vector) and add compiler/ownership.tw with
 an identity analyze. cfg.tw stores the ownership tag as Int to avoid importing
-ownership.tw (cycle). No real facts yet; keeps the view green.
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+ownership.tw (cycle). No real facts yet; keeps the view green."
 ```
 
 Register the new suite in `boot/tests/main.tw` now if not already (add the `cfg_ownership_facts_suite` in Task 4 when it first exists; the structural suite is already registered).
@@ -610,11 +587,12 @@ Create `boot/tests/suites/cfg_ownership_facts_suite.tw`:
 use @std.testing.assert as assert
 use @std.testing as runner
 
-use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom, AnfMatchArm, FieldAtom}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom}
 use compiler.builtins
 use compiler.cfg
-use compiler.core_ir.{FuncId, LocalId, GlobalId, TypeId}
+use compiler.core_ir.{FuncId, LocalId, GlobalId}
 use compiler.mono_type.{MonoType}
+use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.ownership
 
@@ -626,7 +604,7 @@ fn b_reg() builtins.BuiltinRegistry {
   builtins.make_builtin_registry()
 }
 
-fn sem() ownership.OptimizerSemantics {
+fn sem() semantics.OptimizerSemantics {
   make_prelude_optimizer_semantics(b_reg())
 }
 
@@ -682,25 +660,31 @@ fn live_contains(live: Vector<Int>, id: Int) Bool {
   false
 }
 
-runner.test("phase2 t4: a local used after its def is live; a dead one is not", fn () {
-  // L0 = Dict.new(); L1 = Dict.set(L0,..); return L1   (L0 dead after its use at L1)
-  b := b_reg()
-  body: AnfExpr = .Let(
-    lid(0),
-    dict_new_call(b),
-    .Let(lid(1), dict_set_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
-  )
-  f := analyzed_func(module_of("f", body))
-  blk := block0(f)
-  // Entry live-in of a param-free function that defines both locals: neither is
-  // live at entry (both defined inside).
-  assert.true(!live_contains(blk.entry.live, 0), "L0 not live at entry")
-  // At block exit, L1 is the returned value -> live out until the terminator use.
-  assert.true(live_contains(blk.exit.live, 1) or blk.succs.len() == 0, "L1 tracked to the return")
-})
+// The suite is one exported builder. Task 4 creates it with the first test;
+// Tasks 5-9 append more `.test(...)` clauses. Helper `fn`s go above `suite()`.
+pub fn suite() runner.Suite {
+  runner
+    .suite("cfg ownership facts")
+    .test("phase2 t4: a local used after its def is live; a dead one is not", fn() {
+      // L0 = Dict.new(); L1 = Dict.set(L0,..); return L1  (L0 dead after its use at L1)
+      b := b_reg()
+      body: AnfExpr = .Let(
+        lid(0),
+        dict_new_call(b),
+        .Let(lid(1), dict_set_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
+      )
+      f := analyzed_func(module_of("f", body))
+      blk := block0(f)
+      // Neither local is live at entry (both are defined inside the block).
+      try assert.is_false(live_contains(blk.entry.live, 0))
+      // L1 is the returned value, tracked to the terminator use.
+      try assert.is_true(live_contains(blk.exit.live, 1) or blk.succs.len() == 0)
+      .Ok({})
+    })
+}
 ```
 
-Register the suite in `boot/tests/main.tw` (mirror the existing `cfg_ownership_suite` registration line).
+Register the suite in `boot/tests/main.tw`: add `use .suites.cfg_ownership_facts_suite` and include `cfg_ownership_facts_suite.suite()` in the run list, exactly like `cfg_ownership_suite`.
 
 - [ ] **Step 2: Run it to verify it fails**
 
@@ -893,25 +877,55 @@ fn same_live(a: Vector<Int>, b: Vector<Int>) Bool {
   true
 }
 
-// live_in(b) = uses(b) ∪ (live_out(b) − defs(b))
-fn block_live_in(blk: CfgBlock, live_out: Vector<Int>) Vector<Int> {
-  // uses/defs walking instructions forward, but liveness is order-insensitive
-  // at block granularity: gather all uses and all defs, then apply the formula.
-  uses: Vector<Int> = []
-  defs: Vector<Int> = []
-  for inst in blk.instructions {
-    for u in op_uses(inst.op) {
-      uses = insert_sorted(uses, u)
-    }
-    defs = insert_sorted(defs, inst.anf_local.id)
+// Locals a straight-line op DEFINES. AAssign defines both its let-result and
+// its rebind target; every other op defines only its let-result. This matters:
+// a def must be killed before its own block's uses so a def-before-use does NOT
+// leak the local into live_in (the bug the naive gather-all formula had).
+fn op_defs(inst_result: Int, op: AnfOp) Vector<Int> {
+  case op {
+    .AAssign(target, _) => insert_sorted(insert_sorted([], inst_result), target.id),
+    _ => insert_sorted([], inst_result),
   }
+}
+
+// Backward per-instruction scan of one block. Returns live_in AND, for each
+// instruction index i, the set of locals live *immediately after* i
+// (`live_after[i]`). live_after is what Task 5 uses for last-use: a use of L at
+// i is a last-use iff L ∉ live_after[i] — which correctly handles a later
+// AAssign that redefines L (loop consume-then-reassign) and a block-live-out L.
+type BlockScan = .{ live_in: Vector<Int>, live_after: Vector<Vector<Int>> }
+
+fn scan_block_backward(blk: CfgBlock, live_out: Vector<Int>) BlockScan {
+  // Seed with live_out plus the terminator's direct uses (scrutinee/cond/
+  // return/break). Terminator EDGE args are handled by the edge translation in
+  // edge_live_contribution, not here.
+  cur := live_out
   case blk.terminator {
     .Some(t) => for u in term_uses(t) {
-      uses = insert_sorted(uses, u)
+      cur = insert_sorted(cur, u)
     },
     .None => {},
   }
-  union_sorted(uses, diff_sorted(live_out, defs))
+  n := blk.instructions.len()
+  after_rev: Vector<Vector<Int>> = []
+  i := n - 1
+  for i >= 0 {
+    after_rev = .append(cur)                                     // live AFTER instruction i
+    inst := blk.instructions[i]
+    cur = diff_sorted(cur, op_defs(inst.anf_local.id, inst.op))  // kill defs first
+    for u in op_uses(inst.op) {                                  // then add uses
+      cur = insert_sorted(cur, u)
+    }
+    i = i - 1
+  }
+  // after_rev is high->low; reverse so live_after[i] indexes by instruction i.
+  live_after: Vector<Vector<Int>> = []
+  j := after_rev.len() - 1
+  for j >= 0 {
+    live_after = .append(after_rev[j])
+    j = j - 1
+  }
+  BlockScan.{ live_in: cur, live_after }
 }
 
 fn compute_liveness(blocks: Vector<CfgBlock>) Dict<Int, BlockLive> {
@@ -933,7 +947,7 @@ fn compute_liveness(blocks: Vector<CfgBlock>) Dict<Int, BlockLive> {
         succ_in := live[succ.id.id].live_in
         lo = union_sorted(lo, edge_live_contribution(succ, succ_in, e.args))
       }
-      li := block_live_in(blk, lo)
+      li := scan_block_backward(blk, lo).live_in
       prev := live[blk.id.id]
       if !same_live(prev.live_in, li) or !same_live(prev.live_out, lo) {
         changed = true
@@ -997,9 +1011,7 @@ git commit -m "ownership: edge-arg-aware backward liveness
 Compute live_in/live_out to fixpoint, translating successor block params back
 through the feeding edge atom so a join result's liveness is attributed to the
 arm-tail local, not the param. Stored into BlockFacts.live (sorted). Consumed
-by the move-vs-alias and last-use hinges.
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+by the move-vs-alias and last-use hinges."
 ```
 
 ---
@@ -1025,62 +1037,63 @@ fn own_at_exit(f: cfg.CfgFunction, block_idx: Int, local_id: Int) ownership.Owne
   }
 }
 
-fn assert_own(actual: ownership.Ownership, expected: ownership.Ownership, msg: String) {
-  assert.eq_int(ownership.own_tag(actual), ownership.own_tag(expected), msg)
+fn assert_own(actual: ownership.Ownership, expected: ownership.Ownership) Result<Void, String> {
+  assert.equal(ownership.own_tag(actual), ownership.own_tag(expected))
 }
 ```
 
-Tests (each cross-references worked-examples):
+Tests, appended as `.test(...)` clauses to the facts `suite()` (each cross-references worked-examples):
 
 ```tw
-runner.test("phase2 t5 introduce: Dict.new() is Unique", fn () {
-  b := b_reg()
-  body: AnfExpr = .Let(lid(0), dict_new_call(b), .Atom(.ALocal(lid(0))))
-  f := analyzed_func(module_of("f", body))
-  assert_own(own_at_exit(f, 0, 0), .Unique, "fresh dict is Unique")
-})
-
-runner.test("phase2 t5 move: init of a dead source keeps Unique (Case B)", fn () {
-  // L0 = Dict.new(); L1 = init L0; return L1  (L0 dead after the init)
-  b := b_reg()
-  body: AnfExpr = .Let(
-    lid(0),
-    dict_new_call(b),
-    .Let(lid(1), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(1)))),
-  )
-  f := analyzed_func(module_of("f", body))
-  assert_own(own_at_exit(f, 0, 1), .Unique, "moved value stays Unique")
-})
-
-runner.test("phase2 t5 alias: init with a still-live source demotes both (Case C)", fn () {
-  // L0 = Dict.new(); L1 = init L0; L2 = Dict.set(L0,..); return L1
-  // L0 is read at L2 after the init -> alias -> both Shared.
-  b := b_reg()
-  body: AnfExpr = .Let(
-    lid(0),
-    dict_new_call(b),
-    .Let(
-      lid(1),
-      .AInit(.ALocal(lid(0))),
-      .Let(lid(2), dict_set_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
-    ),
-  )
-  f := analyzed_func(module_of("f", body))
-  assert_own(own_at_exit(f, 0, 0), .Shared, "aliased source is Shared")
-  assert_own(own_at_exit(f, 0, 1), .Shared, "alias result is Shared")
-})
-
-runner.test("phase2 t5 publish: global_set demotes to Shared", fn () {
-  // L0 = Dict.new(); global_set G0 = L0; return L0
-  b := b_reg()
-  body: AnfExpr = .Let(
-    lid(0),
-    dict_new_call(b),
-    .Let(lid(1), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))), .Atom(.ALocal(lid(0)))),
-  )
-  f := analyzed_func(module_of("f", body))
-  assert_own(own_at_exit(f, 0, 0), .Shared, "published value is Shared")
-})
+    .test("phase2 t5 introduce: Dict.new() is Unique", fn() {
+      b := b_reg()
+      body: AnfExpr = .Let(lid(0), dict_new_call(b), .Atom(.ALocal(lid(0))))
+      f := analyzed_func(module_of("f", body))
+      try assert_own(own_at_exit(f, 0, 0), .Unique)
+      .Ok({})
+    })
+    .test("phase2 t5 move: init of a dead source keeps Unique (Case B)", fn() {
+      // L0 = Dict.new(); L1 = init L0; return L1  (L0 dead after the init)
+      b := b_reg()
+      body: AnfExpr = .Let(
+        lid(0),
+        dict_new_call(b),
+        .Let(lid(1), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(1)))),
+      )
+      f := analyzed_func(module_of("f", body))
+      try assert_own(own_at_exit(f, 0, 1), .Unique)
+      .Ok({})
+    })
+    .test("phase2 t5 alias: init with a still-live source demotes both (Case C)", fn() {
+      // L0 = Dict.new(); L1 = init L0; L2 = Dict.set(L0,..); return L1
+      // L0 is read at L2 after the init -> alias -> both Shared.
+      b := b_reg()
+      body: AnfExpr = .Let(
+        lid(0),
+        dict_new_call(b),
+        .Let(
+          lid(1),
+          .AInit(.ALocal(lid(0))),
+          .Let(lid(2), dict_set_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
+        ),
+      )
+      f := analyzed_func(module_of("f", body))
+      try assert_own(own_at_exit(f, 0, 0), .Shared)
+      try assert_own(own_at_exit(f, 0, 1), .Shared)
+      .Ok({})
+    })
+    .test("phase2 t5 publish: global_set demotes to Shared", fn() {
+      // L0 = Dict.new(); global_set G0 = L0; return L0
+      b := b_reg()
+      body: AnfExpr = .Let(
+        lid(0),
+        dict_new_call(b),
+        .Let(lid(1), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))), .Atom(.ALocal(lid(0)))),
+      )
+      f := analyzed_func(module_of("f", body))
+      try assert_own(own_at_exit(f, 0, 0), .Shared)
+      .Ok({})
+    })
 ```
 
 - [ ] **Step 2: Run to verify they fail**
@@ -1132,36 +1145,18 @@ fn callee_func_id(a: Atom) FuncId? {
 }
 ```
 
-Last-use within a block: a local's last use is at index `k` if it is used at `k` and not used at any later instruction and not in `exit.live`. Implement as a per-block precomputation:
+Last-use is derived from the per-instruction `live_after` sets produced by
+`scan_block_backward` (Task 4), which correctly account for a later `AAssign`
+redefining the local (loop consume-then-reassign) and for block-live-out: a use
+of `L` at instruction `i` is a **last-use** iff `L ∉ live_after[i]`. The forward
+pass precomputes `live_after` once per block and consults it by index:
 
 ```tw
-// For instruction index i, the set of local ids whose LAST use in this block is
-// at i AND which are not live out of the block (so the use here is the final one).
-fn last_use_at(blk: CfgBlock, i: Int) Vector<Int> {
-  target := blk.instructions[i]
-  used_here := op_uses(target.op)
+// The locals used at instruction i whose value is dead immediately after i.
+fn last_use_at(op: AnfOp, live_after_i: Vector<Int>) Vector<Int> {
   out: Vector<Int> = []
-  for id in used_here {
-    if live_contains_int(blk.exit.live, id) {
-      continue
-    }
-    // used later in this block?
-    later := false
-    j := i + 1
-    for j < blk.instructions.len() {
-      if live_contains_int(op_uses(blk.instructions[j].op), id) {
-        later = true
-      }
-      j = j + 1
-    }
-    // used by the terminator?
-    case blk.terminator {
-      .Some(t) => if live_contains_int(term_uses(t), id) {
-        later = true
-      },
-      .None => {},
-    }
-    if !later {
+  for id in op_uses(op) {
+    if !live_contains_int(live_after_i, id) {
       out = insert_sorted(out, id)
     }
   }
@@ -1358,18 +1353,27 @@ fn consume_call_base(st: ForwardState, result: Int, cs: CallSemantics, args: Vec
 
 - [ ] **Step 5: Drive the transfer over a block and store `exit.ownership`**
 
-Add a per-block forward that seeds from `entry` facts (Task 6 wires the real entry; for now seed empty, which single-block fixtures need) and writes `exit`:
+Add a per-block forward that seeds from `entry` facts (Task 6 wires the real entry; for now seed empty, which single-block fixtures need), applies the per-instruction transfer using the block's `live_after` sets, and **then applies terminator publication** for `Return(A)` / value-carrying `ValueBreak(A)` (the exit-edge publication the design requires — without it a returned/broken value is not demoted on its exit edge):
 
 ```tw
 fn forward_block(blk: CfgBlock, entry: ForwardState, b: BuiltinRegistry, sem: OptimizerSemantics) ForwardState {
+  scan := scan_block_backward(blk, blk.exit.live)   // exit.live was filled by the liveness stage
   st := entry
   for inst, i in blk.instructions {
-    last := last_use_at(blk, i)
+    last := last_use_at(inst.op, scan.live_after[i])
     st = transfer_op(st, inst.anf_local.id, inst.op, last, b, sem)
+  }
+  // Terminator publication: publish the value leaving on this block's exit edge.
+  case blk.terminator {
+    .Some(.Return(.Some(a))) => st = publish_atom(st, a),
+    .Some(.ValueBreak(a)) => st = publish_atom(st, a),
+    _ => {},
   }
   st
 }
 ```
+
+`scan_block_backward` needs `blk.exit.live`, so the liveness stage must run and be materialized into the blocks **before** the ownership stage (Task 4's `collect` runs first, then this one).
 
 In `analyze_function`, after liveness, run a single forward pass per block (Task 6 turns this into a fixpoint with real entry facts). Temporary single-pass wiring so Task 5 tests pass:
 
@@ -1402,9 +1406,7 @@ Per-AnfOp transfer producing exit.ownership: Allocate->Unique, Update consumes
 cow_base_arg, ReadOnly/borrow neutral, unknown/extern/Cell publish ref args.
 AInit move-vs-alias, the field-store hinge, and the consuming-op hinge all read
 block last-use. Single-block fixtures (introduce/move/alias/publish) pass;
-control-flow join + fixpoint is the next task.
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+control-flow join + fixpoint is the next task."
 ```
 
 ---
@@ -1447,31 +1449,32 @@ fn result_param_of(f: cfg.CfgFunction, name: String) Int {
 Tests:
 
 ```tw
-runner.test("phase2 t6 branch join: both arms allocate => Unique (Case V join)", fn () {
-  // r := if c { Dict.new() } else { Dict.new() }; return r
-  b := b_reg()
-  then_e: AnfExpr = .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1))))
-  else_e: AnfExpr = .Let(lid(2), dict_new_call(b), .Atom(.ALocal(lid(2))))
-  body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
-  f := analyzed_func(module_of("f", body))
-  rp := result_param_of(f, "if.join")
-  assert_own(own_entry_named(f, "if.join", rp), .Unique, "both arms Unique -> join Unique")
-})
-
-runner.test("phase2 t6 branch join: one arm publishes => Shared", fn () {
-  // r := if c { d := Dict.new(); global_set G0 = d; d } else { Dict.new() }; r
-  b := b_reg()
-  then_e: AnfExpr = .Let(
-    lid(1),
-    dict_new_call(b),
-    .Let(lid(3), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))), .Atom(.ALocal(lid(1)))),
-  )
-  else_e: AnfExpr = .Let(lid(2), dict_new_call(b), .Atom(.ALocal(lid(2))))
-  body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
-  f := analyzed_func(module_of("f", body))
-  rp := result_param_of(f, "if.join")
-  assert_own(own_entry_named(f, "if.join", rp), .Shared, "one arm published -> join Shared")
-})
+    .test("phase2 t6 branch join: both arms allocate => Unique (Case V join)", fn() {
+      // r := if c { Dict.new() } else { Dict.new() }; return r
+      b := b_reg()
+      then_e: AnfExpr = .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1))))
+      else_e: AnfExpr = .Let(lid(2), dict_new_call(b), .Atom(.ALocal(lid(2))))
+      body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
+      f := analyzed_func(module_of("f", body))
+      rp := result_param_of(f, "if.join")
+      try assert_own(own_entry_named(f, "if.join", rp), .Unique)
+      .Ok({})
+    })
+    .test("phase2 t6 branch join: one arm publishes => Shared", fn() {
+      // r := if c { d := Dict.new(); global_set G0 = d; d } else { Dict.new() }; r
+      b := b_reg()
+      then_e: AnfExpr = .Let(
+        lid(1),
+        dict_new_call(b),
+        .Let(lid(3), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))), .Atom(.ALocal(lid(1)))),
+      )
+      else_e: AnfExpr = .Let(lid(2), dict_new_call(b), .Atom(.ALocal(lid(2))))
+      body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
+      f := analyzed_func(module_of("f", body))
+      rp := result_param_of(f, "if.join")
+      try assert_own(own_entry_named(f, "if.join", rp), .Shared)
+      .Ok({})
+    })
 ```
 
 - [ ] **Step 2: Run to verify they fail**
@@ -1552,11 +1555,14 @@ fn same_own_map(a: Dict<Int, Int>, b: Dict<Int, Int>) Bool {
     return false
   }
   for k in a.keys() {
-    case b.get(k) {
-      .Some(v) => if a.get_unsafe(k) != v {
-        return false
+    case a.get(k) {
+      .Some(av) => case b.get(k) {
+        .Some(bv) => if av != bv {
+          return false
+        },
+        .None => return false,
       },
-      .None => return false,
+      .None => {},
     }
   }
   true
@@ -1589,23 +1595,24 @@ Expected: PASS — both-arms-Unique join and one-arm-published join, plus a loop
 - [ ] **Step 7: Add a loop-carried test, then commit**
 
 ```tw
-runner.test("phase2 t6 loop-carried: consume-then-reassign stays Unique (Case A)", fn () {
-  // acc := Dict.new(); loop { acc = Dict.set(acc,..); continue }  (simplified)
-  b := b_reg()
-  loop_body: AnfExpr = .Let(
-    lid(2),
-    dict_set_call(b, lid(1)),
-    .Let(lid(3), .AAssign(lid(1), .ALocal(lid(2))), .Continue),
-  )
-  body: AnfExpr = .Let(
-    lid(1),
-    dict_new_call(b),
-    .Let(lid(0), .ALoop(loop_body), .Atom(.ALocal(lid(1)))),
-  )
-  f := analyzed_func(module_of("f", body))
-  // At the loop header entry, the carried accumulator L1 remains Unique.
-  assert_own(own_entry_named(f, "loop.header", 1), .Unique, "loop-carried acc stays Unique")
-})
+    .test("phase2 t6 loop-carried: consume-then-reassign stays Unique (Case A)", fn() {
+      // acc := Dict.new(); loop { acc = Dict.set(acc,..); continue }  (simplified)
+      b := b_reg()
+      loop_body: AnfExpr = .Let(
+        lid(2),
+        dict_set_call(b, lid(1)),
+        .Let(lid(3), .AAssign(lid(1), .ALocal(lid(2))), .Continue),
+      )
+      body: AnfExpr = .Let(
+        lid(1),
+        dict_new_call(b),
+        .Let(lid(0), .ALoop(loop_body), .Atom(.ALocal(lid(1)))),
+      )
+      f := analyzed_func(module_of("f", body))
+      // At the loop header entry, the carried accumulator L1 remains Unique.
+      try assert_own(own_entry_named(f, "loop.header", 1), .Unique)
+      .Ok({})
+    })
 ```
 
 If this fails because the header's carried param set does not include `L1`, confirm Phase 1 `loop_params` carries the `AAssign` target — it does (`collect_assign_targets`). Adjust the assertion to the actual carried local if the fixture's ids differ.
@@ -1619,9 +1626,7 @@ git commit -m "ownership: positional predecessor join + fixpoint
 entry.ownership is the positional join over preds of fact(pred_exit,
 edge.args[i]) per param; iterate to fixpoint over the three-element lattice.
 Delivers branch-join (both arms Unique => Unique; one publishes => Shared) and
-loop-carried ownership (consume-then-reassign stays Unique).
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+loop-carried ownership (consume-then-reassign stays Unique)."
 ```
 
 ---
@@ -1645,17 +1650,18 @@ fn valid_at_exit(f: cfg.CfgFunction, block_idx: Int, local_id: Int) Bool {
   }
 }
 
-runner.test("phase2 t7: a moved source is invalid; a rebind revalidates", fn () {
-  // L0 = Dict.new(); L1 = init L0; return L1  (L0 moved => invalid at exit)
-  b := b_reg()
-  body: AnfExpr = .Let(
-    lid(0),
-    dict_new_call(b),
-    .Let(lid(1), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(1)))),
-  )
-  f := analyzed_func(module_of("f", body))
-  assert.true(!valid_at_exit(f, 0, 0), "moved L0 is invalid at block exit")
-})
+    .test("phase2 t7: a moved source is invalid at block exit", fn() {
+      // L0 = Dict.new(); L1 = init L0; return L1  (L0 moved => invalid at exit)
+      b := b_reg()
+      body: AnfExpr = .Let(
+        lid(0),
+        dict_new_call(b),
+        .Let(lid(1), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(1)))),
+      )
+      f := analyzed_func(module_of("f", body))
+      try assert.is_false(valid_at_exit(f, 0, 0))
+      .Ok({})
+    })
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -1708,11 +1714,14 @@ fn same_valid_map(a: Dict<Int, Bool>, b: Dict<Int, Bool>) Bool {
     return false
   }
   for k in a.keys() {
-    case b.get(k) {
-      .Some(v) => if a.get_unsafe(k) != v {
-        return false
+    case a.get(k) {
+      .Some(av) => case b.get(k) {
+        .Some(bv) => if av != bv {
+          return false
+        },
+        .None => return false,
       },
-      .None => return false,
+      .None => {},
     }
   }
   true
@@ -1744,9 +1753,7 @@ git commit -m "ownership: binding-validity (default, transfer, positional meet)
 Thread binding_valid through the forward pass (moves invalidate, AAssign
 revalidates) and join it by the positional meet over edge args, co-iterated to
 a joint fixpoint with ownership. A value moved on one arm and forwarded on
-another is 'not usable' at the merge.
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+another is 'not usable' at the merge."
 ```
 
 ---
@@ -1762,17 +1769,18 @@ Print the ownership facts keyed by each block's carried params (sorted), and mak
 - [ ] **Step 1: Write the failing render test**
 
 ```tw
-runner.test("phase2 t8: render shows populated facts for carried params", fn () {
-  b := b_reg()
-  then_e: AnfExpr = .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1))))
-  else_e: AnfExpr = .Let(lid(2), dict_new_call(b), .Atom(.ALocal(lid(2))))
-  body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
-  v := cfg.build_view(module_of("f", body), b)
-  a := ownership.analyze(v, b, sem())
-  out := cfg.render_view(a)
-  assert.true(out.contains("Unique"), "render should show a Unique fact")
-  assert.true(out.contains("facts.in={") and out.contains("facts.out={"), "fact lines present")
-})
+    .test("phase2 t8: render shows populated facts for carried params", fn() {
+      b := b_reg()
+      then_e: AnfExpr = .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1))))
+      else_e: AnfExpr = .Let(lid(2), dict_new_call(b), .Atom(.ALocal(lid(2))))
+      body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
+      v := cfg.build_view(module_of("f", body), b)
+      a := ownership.analyze(v, b, sem())
+      out := cfg.render_view(a)
+      try assert.is_true(out.contains("Unique"))
+      try assert.is_true(out.contains("facts.in={") and out.contains("facts.out={"))
+      .Ok({})
+    })
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -1830,18 +1838,19 @@ Add imports at the top of `ir.tw`: `use compiler.ownership` and `use compiler.op
 - [ ] **Step 5: Add a determinism test**
 
 ```tw
-runner.test("phase2 t8: facts are byte-identical across two analyses", fn () {
-  b := b_reg()
-  body: AnfExpr = .Let(
-    lid(0),
-    dict_new_call(b),
-    .Let(lid(1), dict_set_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
-  )
-  m := module_of("f", body)
-  a1 := cfg.render_view(ownership.analyze(cfg.build_view(m, b), b, sem()))
-  a2 := cfg.render_view(ownership.analyze(cfg.build_view(m, b), b, sem()))
-  assert.true(a1 == a2, "analysis output is deterministic")
-})
+    .test("phase2 t8: facts are byte-identical across two analyses", fn() {
+      b := b_reg()
+      body: AnfExpr = .Let(
+        lid(0),
+        dict_new_call(b),
+        .Let(lid(1), dict_set_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
+      )
+      m := module_of("f", body)
+      a1 := cfg.render_view(ownership.analyze(cfg.build_view(m, b), b, sem()))
+      a2 := cfg.render_view(ownership.analyze(cfg.build_view(m, b), b, sem()))
+      try assert.is_true(a1 == a2)
+      .Ok({})
+    })
 ```
 
 - [ ] **Step 6: Run boot tests, then rebuild CLI and smoke-check**
@@ -1869,9 +1878,7 @@ git commit -m "cfg/ir: render populated ownership facts and run analyze in twk i
 render_view fills facts.in/out keyed by each block's carried params (sorted);
 twk ir --cfg becomes build_view -> ownership.analyze -> render_view. Liveness
 and binding-validity stay off the default print. Output is byte-identical
-across runs.
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+across runs."
 ```
 
 ---
@@ -1886,85 +1893,72 @@ Add the two-direction soundness guard, a wide real-program smoke over `boot/main
 
 - [ ] **Step 1: Write the soundness-guard test (both directions)**
 
-```tw
-runner.test("phase2 t9 soundness guard: classifications are as the transfer assumes", fn () {
-  b := b_reg()
-  s := sem()
-  // dict.set / vector.append / Vector.set must be Update with a base arg.
-  for name_pair in [["Dict", "set"], ["Vector", "append"], ["Vector", "set"]] {
-    fid := b.method_id(name_pair[0], name_pair[1])
-    case semantics.call_info(s, fid) {
-      .Some(cs) => {
-        assert.eq_int(effect_tag(cs.effect), effect_tag_update(), "${name_pair[0]}.${name_pair[1]} is Update")
-        case cs.cow_base_arg {
-          .Some(_) => {},
-          .None => assert.fail("${name_pair[0]}.${name_pair[1]} missing cow_base_arg"),
-        }
-      },
-      .None => assert.fail("${name_pair[0]}.${name_pair[1]} has no CallSemantics"),
-    }
-  }
-  // A Cell op must resolve to .None (publish bucket), never Update.
-  case semantics.call_info(s, b.method_id("Cell", "set")) {
-    .None => {},
-    .Some(cs) => assert.true(effect_tag(cs.effect) != effect_tag_update(), "Cell.set must not be Update"),
-  }
-})
-```
-
-Add small tag helpers (import `semantics` and `EffectKind`):
+First add the tag helper and the effect-name imports at the top of the suite (`EffectKind` lives in `compiler.opt.semantics`):
 
 ```tw
-use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{EffectKind}
+use compiler.pipeline
 
-fn effect_tag(e: EffectKind) Int {
+fn effect_is_update(e: EffectKind) Bool {
   case e {
-    .Pure => 0,
-    .ReadOnly => 1,
-    .Update => 2,
-    .Allocate => 3,
-    .Control => 4,
+    .Update => true,
+    _ => false,
   }
 }
 
-fn effect_tag_update() Int {
-  2
+// Assert a builtin FuncId classifies as Update with a cow_base_arg.
+fn assert_update_with_base(s: semantics.OptimizerSemantics, fid: FuncId, label: String) Result<Void, String> {
+  case semantics.call_info(s, fid) {
+    .Some(cs) => {
+      try assert.is_true(effect_is_update(cs.effect))
+      case cs.cow_base_arg {
+        .Some(_) => .Ok({}),
+        .None => assert.fail("${label} missing cow_base_arg"),
+      }
+    },
+    .None => assert.fail("${label} has no CallSemantics"),
+  }
 }
 ```
 
-> If `Cell.set` is registered under a different builtin name, adjust `method_id` accordingly (grep `boot/compiler/opt/semantics.tw` for the Cell rows). The guard's intent — Cell never `Update` — is what matters.
+The guard `.test` clause. Note the three Update builtins use **mixed accessors**: `Dict.set`/`Vector.append` are `method_id`, but the vector index-set update path is registered as `vector$set_unsafe` via `b.id(...)` — **not** `method_id("Vector", "set")`:
+
+```tw
+    .test("t9 soundness guard: classifications match the transfer's assumptions", fn() {
+      b := b_reg()
+      s := sem()
+      try assert_update_with_base(s, b.method_id("Dict", "set"), "Dict.set")
+      try assert_update_with_base(s, b.method_id("Vector", "append"), "Vector.append")
+      try assert_update_with_base(s, b.id("vector$set_unsafe"), "vector$set_unsafe")
+      // A Cell op must resolve to .None (publish bucket) or at least never Update.
+      case semantics.call_info(s, b.method_id("Cell", "set")) {
+        .None => .Ok({}),
+        .Some(cs) => assert.is_false(effect_is_update(cs.effect)),
+      }
+    })
+```
+
+> If `Cell.set` is registered under a different builtin name, grep `boot/compiler/opt/semantics.tw` for the Cell rows and adjust. The guard's intent — Cell never `Update` — is what matters.
 
 - [ ] **Step 2: Write a wide real-program smoke**
 
-```tw
-runner.test("phase2 t9 smoke: analyze runs over a real program without trapping", fn () {
-  src := "fn build() Dict<Int, Int> {\n  d := Dict.new()\n  d[1] = 2\n  d[3] = 4\n  d\n}\n"
-  case view(src_wrap(src)) {  // reuse the compile-source `view` helper via a thin wrapper
-    .Ok(_) => {},
-    .Err(e) => assert.fail(e),
-  }
-})
-```
-
-If the facts suite has no compile-source `view` helper (it uses hand-built modules), add one mirroring the structural suite:
+Add a compile-source helper (the facts suite otherwise uses hand-built modules) and a smoke `.test`:
 
 ```tw
-use compiler.pipeline
-
 fn analyze_source(src: String) Result<cfg.CfgView, String> {
   b := b_reg()
   artifacts := try pipeline.compile_source(src)
   .Ok(ownership.analyze(cfg.build_view(artifacts.opt, b), b, sem()))
 }
+```
 
-runner.test("phase2 t9 smoke: analyze a real optimized program", fn () {
-  src := "fn build() Dict<Int, Int> {\n  d := Dict.new()\n  d[1] = 2\n  d[3] = 4\n  d\n}\n"
-  case analyze_source(src) {
-    .Ok(v) => assert.true(v.functions.len() >= 1, "analyzed at least one function"),
-    .Err(e) => assert.fail(e),
-  }
-})
+```tw
+    .test("t9 smoke: analyze a real optimized program without trapping", fn() {
+      src := "fn build() Dict<Int, Int> {\n  d := Dict.new()\n  d[1] = 2\n  d[3] = 4\n  d\n}\n"
+      v := try analyze_source(src)
+      try assert.is_true(v.functions.len() >= 1)
+      .Ok({})
+    })
 ```
 
 - [ ] **Step 3: Run boot tests**
@@ -1992,9 +1986,7 @@ git commit -m "ownership: soundness guard + real-program smoke; track Phase 2 in
 Guard both misclassification directions (dict.set/vector.append/Vector.set are
 Update with cow_base_arg; Cell ops never Update) and smoke-analyze a real
 optimized program. Mark the delivered Phase 2 README bullets and add the
-Phase 8 extern + Phase 3 dead-merge tracking rows the design deferred.
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+Phase 8 extern + Phase 3 dead-merge tracking rows the design deferred."
 ```
 
 - [ ] **Step 6: Full verification and self-host check**
