@@ -1042,23 +1042,32 @@ fn assert_own(actual: ownership.Ownership, expected: ownership.Ownership) Result
 }
 ```
 
-Tests, appended as `.test(...)` clauses to the facts `suite()` (each cross-references worked-examples):
+Tests, appended as `.test(...)` clauses to the facts `suite()` (each cross-references worked-examples).
+
+> **Fixture rule for positive (`Unique`) cases.** `forward_block` publishes the
+> terminator value (`Return(A)`), so a fixture that *returns the value under
+> test* would see it demoted to `Shared` at `exit.ownership` — correctly, because
+> returning it publishes it. To observe the pre-publication `Unique` fact at the
+> block boundary, the positive fixtures end in a **literal tail** (`.ALitInt(0)`)
+> so the tracked local is not the returned value. The negative fixtures (alias,
+> publish) already end `Shared`, so they can return the value.
 
 ```tw
     .test("phase2 t5 introduce: Dict.new() is Unique", fn() {
+      // L0 = Dict.new(); return 0   (L0 not returned, so not published)
       b := b_reg()
-      body: AnfExpr = .Let(lid(0), dict_new_call(b), .Atom(.ALocal(lid(0))))
+      body: AnfExpr = .Let(lid(0), dict_new_call(b), .Atom(.ALitInt(0)))
       f := analyzed_func(module_of("f", body))
       try assert_own(own_at_exit(f, 0, 0), .Unique)
       .Ok({})
     })
     .test("phase2 t5 move: init of a dead source keeps Unique (Case B)", fn() {
-      // L0 = Dict.new(); L1 = init L0; return L1  (L0 dead after the init)
+      // L0 = Dict.new(); L1 = init L0; return 0   (L0 dead after the init; L1 not published)
       b := b_reg()
       body: AnfExpr = .Let(
         lid(0),
         dict_new_call(b),
-        .Let(lid(1), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(1)))),
+        .Let(lid(1), .AInit(.ALocal(lid(0))), .Atom(.ALitInt(0))),
       )
       f := analyzed_func(module_of("f", body))
       try assert_own(own_at_exit(f, 0, 1), .Unique)
@@ -1413,7 +1422,7 @@ control-flow join + fixpoint is the next task."
 
 ## Task 6: Positional predecessor join + fixpoint (branches and loops)
 
-Turn the single forward pass into a fixpoint: each block's `entry.ownership` is the positional join over predecessors of `fact(pred_exit, pred_edge.args[i])` for each param `params[i]`; reprocess to fixpoint. This delivers branch-join and loop-carried ownership.
+Turn the single forward pass into a fixpoint: each block's `entry.ownership` joins predecessors over **every live-in local** — block params via positional `fact(pred_exit, pred_edge.args[i])`, live-through non-param locals by same id — skipping not-yet-processed predecessors so back-edges do not poison loop headers; reprocess to fixpoint. This delivers branch-join and loop-carried ownership.
 
 **Files:**
 - Modify: `boot/compiler/ownership.tw`.
@@ -1484,25 +1493,66 @@ Expected: FAIL — join entry ownership is empty (single-pass seeds every entry 
 
 - [ ] **Step 3: Implement the positional join**
 
+The join must cover **every local live at the block boundary**, not just block
+params. A local can flow through a block without being a param (Phase 1 is not
+full SSA): a loop-body block has *no* params, yet the loop-carried collection is
+live-through it. For such a local the join is by **same id** across predecessor
+exits; only genuine block params use the positional edge-arg translation. And to
+avoid a not-yet-processed back-edge poisoning a loop header
+(`Unique ⊔ Unknown = Unknown`), the join **skips predecessors that have not been
+processed yet** — an unprocessed predecessor contributes nothing (the `⊔`
+identity). At fixpoint every reachable predecessor is processed, so the result is
+the true join.
+
 ```tw
-// entry.ownership for a block = positional join over preds of fact(pred_exit, arg[i]).
-fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, Dict<Int, Int>>) Dict<Int, Int> {
-  entry: Dict<Int, Int> = Dict.new()
-  // For a block with no preds (entry block), params carry no join fact; leave empty.
+fn param_index(blk: CfgBlock, lid: Int) Int? {
   for p, i in blk.params {
+    if p.id == lid {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+fn fact_of_local(own: Dict<Int, Int>, id: Int) Ownership {
+  case own.get(id) {
+    .Some(tag) => own_of_tag(tag),
+    .None => .Unknown,
+  }
+}
+
+fn is_processed(processed: Dict<Int, Bool>, id: Int) Bool {
+  case processed.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+// entry.ownership for every local live-in at blk:
+//  - a block param: positional join of fact(pred_exit, pred_edge.args[i]);
+//  - a live-through non-param local: same-id join of pred_exit.ownership[lid].
+// Only processed predecessors contribute (unprocessed back-edges are skipped).
+fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, Dict<Int, Int>>, processed: Dict<Int, Bool>) Dict<Int, Int> {
+  entry: Dict<Int, Int> = Dict.new()
+  for lid in blk.entry.live {
+    pidx := param_index(blk, lid)
     acc: Ownership? = .None
     for pe in blk.preds {
       // pe.target holds the predecessor block id (see cfg.add_pred comment).
+      if !is_processed(processed, pe.target.id) {
+        continue
+      }
       pred_exit := case exits.get(pe.target.id) {
         .Some(m) => m,
         .None => Dict.new(),
       }
-      // find this predecessor's succ edge to blk to read the positional arg;
-      // preds mirror succs, so pe.args[i] is the atom fed to params[i].
-      contributed := if i < pe.args.len() {
-        fact_of(pred_exit, pe.args[i])
-      } else {
-        .Unknown
+      contributed := case pidx {
+        .Some(i) => if i < pe.args.len() {
+          fact_of(pred_exit, pe.args[i])
+        } else {
+          .Unknown
+        },
+        .None => fact_of_local(pred_exit, lid),
       }
       acc = case acc {
         .None => .Some(contributed),
@@ -1510,7 +1560,7 @@ fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, Dict<Int, Int>>) Dict<In
       }
     }
     case acc {
-      .Some(o) => entry[p.id] = own_tag(o),
+      .Some(o) => entry[lid] = own_tag(o),
       .None => {},
     }
   }
@@ -1518,36 +1568,49 @@ fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, Dict<Int, Int>>) Dict<In
 }
 ```
 
+The function entry block (block 0) has no predecessors, so its live-in
+function-parameter locals get no join fact → absent → read as `Unknown` (the
+correct default for an un-summarized parameter). No explicit param seeding is
+needed.
+
 - [ ] **Step 4: Implement the fixpoint driver**
 
-Replace the temporary single-pass in `analyze_function` with a fixpoint over `entry`/`exit` ownership maps (binding-validity is threaded in Task 7; here keep the `valid` map computed per block from the forward pass but not yet joined):
+Replace the temporary single-pass in `analyze_function` with a fixpoint over the exit ownership maps, tracking which blocks have been processed so the join can skip unprocessed back-edges. Iterate blocks in id order (≈RPO), so forward-edge predecessors are processed before their targets and back-edges converge over subsequent rounds. Binding-validity is threaded into this same loop in Task 7:
 
 ```tw
 fn fixpoint_ownership(blocks: Vector<CfgBlock>, b: BuiltinRegistry, sem: OptimizerSemantics) Dict<Int, Dict<Int, Int>> {
-  // exit ownership map per block id
   exits: Dict<Int, Dict<Int, Int>> = Dict.new()
-  entries: Dict<Int, Dict<Int, Int>> = Dict.new()
+  processed: Dict<Int, Bool> = Dict.new()
   for blk in blocks {
     exits[blk.id.id] = Dict.new()
-    entries[blk.id.id] = Dict.new()
+    processed[blk.id.id] = false
   }
   changed := true
   for changed {
     changed = false
     for blk in blocks {
-      entry_own := join_entry_ownership(blk, exits)
+      entry_own := join_entry_ownership(blk, exits, processed)
       st := ForwardState.{ own: entry_own, valid: Dict.new() }
       st = forward_block(blk, st, b, sem)
-      prev := exits[blk.id.id]
-      if !same_own_map(prev, st.own) {
+      already := is_processed(processed, blk.id.id)
+      if !already or !same_own_map(exits[blk.id.id], st.own) {
         changed = true
         exits[blk.id.id] = st.own
       }
-      entries[blk.id.id] = entry_own
+      processed[blk.id.id] = true
     }
   }
-  // stash entries under a sentinel? Simpler: recompute entries in materialize.
   exits
+}
+
+// After the fixpoint every reachable block is processed, so materialize/join
+// with an all-true processed map.
+fn all_processed(blocks: Vector<CfgBlock>) Dict<Int, Bool> {
+  done: Dict<Int, Bool> = Dict.new()
+  for blk in blocks {
+    done[blk.id.id] = true
+  }
+  done
 }
 
 fn same_own_map(a: Dict<Int, Int>, b: Dict<Int, Int>) Bool {
@@ -1577,8 +1640,9 @@ Rewrite the ownership stage of `analyze_function` to compute the fixpoint, then 
 
 ```tw
   exits := fixpoint_ownership(blocks, b, sem)
+  done := all_processed(blocks)
   blocks := collect blk in blocks {
-    entry_own := join_entry_ownership(blk, exits)
+    entry_own := join_entry_ownership(blk, exits, done)
     st := ForwardState.{ own: entry_own, valid: Dict.new() }
     st = forward_block(blk, st, b, sem)
     blk.entry.ownership = entry_own
@@ -1615,18 +1679,29 @@ Expected: PASS — both-arms-Unique join and one-arm-published join, plus a loop
     })
 ```
 
-If this fails because the header's carried param set does not include `L1`, confirm Phase 1 `loop_params` carries the `AAssign` target — it does (`collect_assign_targets`). Adjust the assertion to the actual carried local if the fixture's ids differ.
+This test is the end-to-end check for the **live-through join** and the
+**skip-unprocessed fixpoint**: `loop.body` has *no* params, so `L1` is a
+live-through non-param local inside it — the consuming `Dict.set(L1)` only proves
+`Unique` if `join_entry_ownership` propagates `L1`'s fact by same id (blocker 2),
+and the loop header only stays `Unique` if the not-yet-processed back-edge does
+not poison it to `Unknown` on the first pass (blocker 3). If it fails as
+`Unknown`, those two are the cause. (If it fails because the header's carried
+param set does not include `L1`, confirm Phase 1 `loop_params` carries the
+`AAssign` target — it does, via `collect_assign_targets`; adjust the asserted id
+if the fixture's ids differ.)
 
 ```bash
 target/twk fmt boot/compiler/ownership.tw boot/tests/suites/cfg_ownership_facts_suite.tw
 target/twk lint boot/main.tw
 git add boot/compiler/ownership.tw boot/tests/suites/cfg_ownership_facts_suite.tw
-git commit -m "ownership: positional predecessor join + fixpoint
+git commit -m "ownership: predecessor join + fixpoint over live-in locals
 
-entry.ownership is the positional join over preds of fact(pred_exit,
-edge.args[i]) per param; iterate to fixpoint over the three-element lattice.
-Delivers branch-join (both arms Unique => Unique; one publishes => Shared) and
-loop-carried ownership (consume-then-reassign stays Unique)."
+entry.ownership joins every live-in local across processed predecessors: block
+params via positional edge args, live-through non-param locals by same id. The
+fixpoint skips not-yet-processed predecessors so an uninitialized back-edge does
+not poison a loop header (Unique join Unknown = Unknown). Delivers branch-join
+(both arms Unique => Unique; one publishes => Shared) and loop-carried ownership
+(consume-then-reassign stays Unique through the paramless loop body)."
 ```
 
 ---
@@ -1650,6 +1725,16 @@ fn valid_at_exit(f: cfg.CfgFunction, block_idx: Int, local_id: Int) Bool {
   }
 }
 
+// (facts suite copy of the structural suite's helper — add if not already present)
+fn block_named(f: cfg.CfgFunction, name: String) cfg.CfgBlock? {
+  for blk in f.blocks {
+    if blk.name == name {
+      return .Some(blk)
+    }
+  }
+  .None
+}
+
     .test("phase2 t7: a moved source is invalid at block exit", fn() {
       // L0 = Dict.new(); L1 = init L0; return L1  (L0 moved => invalid at exit)
       b := b_reg()
@@ -1662,7 +1747,43 @@ fn valid_at_exit(f: cfg.CfgFunction, block_idx: Int, local_id: Int) Bool {
       try assert.is_false(valid_at_exit(f, 0, 0))
       .Ok({})
     })
+    .test("phase2 t7: a valid live-through non-param local stays valid across a boundary", fn() {
+      // L0 = Dict.new(); r := if c { 1 } else { 2 }; L2 = Dict.set(L0,..); return 0
+      // L0 is live-through the if blocks WITHOUT being a join param; it is never
+      // moved, so the generalized validity merge must keep it valid where read.
+      b := b_reg()
+      then_e: AnfExpr = .Atom(.ALitInt(1))
+      else_e: AnfExpr = .Atom(.ALitInt(2))
+      after: AnfExpr = .Let(lid(2), dict_set_call(b, lid(0)), .Atom(.ALitInt(0)))
+      body: AnfExpr = .Let(
+        lid(0),
+        dict_new_call(b),
+        .Let(lid(1), .AIf(.ALitBool(true), then_e, else_e), after),
+      )
+      f := analyzed_func(module_of("f", body))
+      // Find the continuation block that reads L0 and assert L0 valid at its entry.
+      blk := case block_named(f, "if.join") {
+        .Some(jb) => jb,
+        .None => return assert.fail("no if.join block"),
+      }
+      case blk.entry.binding_valid.get(0) {
+        .Some(v) => assert.is_true(v),
+        .None => .Ok({}),   // absent => valid (also acceptable)
+      }
+    })
 ```
+
+> **On the requested "invalid live-through, non-param" test.** Under the Phase 2
+> hinges, *every* invalidation is gated on last-use (`AInit` move, consuming-op
+> move, field-store move all require the source to be dead here). "Moved" therefore
+> implies "dead", and a dead local is not live across any out-edge — so an
+> **invalid live-through** local is unreachable in this domain, and a test asserting
+> it cannot be constructed with real ops. The generalized merge above is still the
+> correct, sound design (it mirrors ownership and is defensive against future
+> rules that could invalidate a still-live local), and the live-through *valid*
+> case above guards that the merge does not spuriously flip a live-through local to
+> invalid. If a later phase adds an invalidate-while-live rule, add the negative
+> test then.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -1671,44 +1792,52 @@ Expected: FAIL — `binding_valid` is currently seeded empty each pass and not m
 
 - [ ] **Step 3: Join binding-validity positionally and thread it**
 
-Add the meet join and thread `valid` through the fixpoint. First the entry meet:
+The validity meet covers **every live-in local**, mirroring the generalized
+ownership join (blocker parity): block params meet through the positional edge
+arg's source-local validity; live-through non-param locals meet the same id's
+validity across processed predecessor exits. Absent pred validity means valid.
 
 ```tw
-// entry.binding_valid[params[i]] = AND over preds of ( edge.args[i] non-local
-// OR its source local valid at pred exit ).
-fn join_entry_valid(blk: CfgBlock, exit_valid: Dict<Int, Dict<Int, Bool>>) Dict<Int, Bool> {
+fn valid_of_local(pv: Dict<Int, Bool>, id: Int) Bool {
+  case pv.get(id) {
+    .Some(v) => v,
+    .None => true,   // absent => valid
+  }
+}
+
+fn join_entry_valid(blk: CfgBlock, exit_valid: Dict<Int, Dict<Int, Bool>>, processed: Dict<Int, Bool>) Dict<Int, Bool> {
   entry: Dict<Int, Bool> = Dict.new()
-  for p, i in blk.params {
+  for lid in blk.entry.live {
+    pidx := param_index(blk, lid)
     ok := true
     for pe in blk.preds {
+      if !is_processed(processed, pe.target.id) {
+        continue
+      }
       pv := case exit_valid.get(pe.target.id) {
         .Some(m) => m,
         .None => Dict.new(),
       }
-      contributed := if i < pe.args.len() {
-        case atom_local_id(pe.args[i]) {
-          .Some(src) => case pv.get(src) {
-            .Some(v) => v,
-            .None => true,
-          },
-          .None => true,   // non-local feed is always "valid"
-        }
-      } else {
-        true
+      contributed := case pidx {
+        .Some(i) => if i < pe.args.len() {
+          case atom_local_id(pe.args[i]) {
+            .Some(src) => valid_of_local(pv, src),
+            .None => true,   // non-local feed is always valid
+          }
+        } else {
+          true
+        },
+        .None => valid_of_local(pv, lid),
       }
       if !contributed {
         ok = false
       }
     }
-    entry[p.id] = ok
+    entry[lid] = ok
   }
   entry
 }
-```
 
-Extend the fixpoint to co-iterate `exit_valid` alongside `exits`. Change `fixpoint_ownership` to also track `exit_valid: Dict<Int, Dict<Int, Bool>>`, seed each block's entry valid via `join_entry_valid`, run `forward_block` (which already writes `st.valid`), and compare with `same_valid_map`. Materialize `entry.binding_valid`/`exit.binding_valid` in the same `collect` as ownership:
-
-```tw
 fn same_valid_map(a: Dict<Int, Bool>, b: Dict<Int, Bool>) Bool {
   if a.keys().len() != b.keys().len() {
     return false
@@ -1728,14 +1857,64 @@ fn same_valid_map(a: Dict<Int, Bool>, b: Dict<Int, Bool>) Bool {
 }
 ```
 
-In the materialize `collect`, seed `st.valid` from `join_entry_valid(blk, exit_valids)` before `forward_block`, then:
+Now generalize the Task 6 `fixpoint_ownership` into a **combined** fixpoint that
+co-iterates ownership and validity to a joint fixed point (they share
+`ForwardState` and `forward_block`), and update `analyze_function`'s materialize
+to fill both maps. This replaces the ownership-only `fixpoint_ownership` and its
+materialize block from Task 6:
 
 ```tw
-    blk.entry.binding_valid = entry_valid
-    blk.exit.binding_valid = st.valid
+type FixResult = .{ exits: Dict<Int, Dict<Int, Int>>, exit_valid: Dict<Int, Dict<Int, Bool>> }
+
+fn run_fixpoint(blocks: Vector<CfgBlock>, b: BuiltinRegistry, sem: OptimizerSemantics) FixResult {
+  exits: Dict<Int, Dict<Int, Int>> = Dict.new()
+  exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
+  processed: Dict<Int, Bool> = Dict.new()
+  for blk in blocks {
+    exits[blk.id.id] = Dict.new()
+    exit_valid[blk.id.id] = Dict.new()
+    processed[blk.id.id] = false
+  }
+  changed := true
+  for changed {
+    changed = false
+    for blk in blocks {
+      entry_own := join_entry_ownership(blk, exits, processed)
+      entry_valid := join_entry_valid(blk, exit_valid, processed)
+      st := ForwardState.{ own: entry_own, valid: entry_valid }
+      st = forward_block(blk, st, b, sem)
+      already := is_processed(processed, blk.id.id)
+      if !already
+        or !same_own_map(exits[blk.id.id], st.own)
+        or !same_valid_map(exit_valid[blk.id.id], st.valid) {
+        changed = true
+        exits[blk.id.id] = st.own
+        exit_valid[blk.id.id] = st.valid
+      }
+      processed[blk.id.id] = true
+    }
+  }
+  FixResult.{ exits, exit_valid }
+}
 ```
 
-> Because ownership and validity share `ForwardState` and the same `forward_block`, run **one** combined fixpoint that reaches a joint fixed point on both maps (loop until neither `exits` nor `exit_valid` changes).
+The materialize in `analyze_function` (replacing the Task 6 ownership-only block):
+
+```tw
+  fx := run_fixpoint(blocks, b, sem)
+  done := all_processed(blocks)
+  blocks := collect blk in blocks {
+    entry_own := join_entry_ownership(blk, fx.exits, done)
+    entry_valid := join_entry_valid(blk, fx.exit_valid, done)
+    st := ForwardState.{ own: entry_own, valid: entry_valid }
+    st = forward_block(blk, st, b, sem)
+    blk.entry.ownership = entry_own
+    blk.exit.ownership = st.own
+    blk.entry.binding_valid = entry_valid
+    blk.exit.binding_valid = st.valid
+    blk
+  }
+```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1748,12 +1927,13 @@ Expected: PASS — moved-source-invalid, plus all prior tests.
 target/twk fmt boot/compiler/ownership.tw boot/tests/suites/cfg_ownership_facts_suite.tw
 target/twk lint boot/main.tw
 git add boot/compiler/ownership.tw boot/tests/suites/cfg_ownership_facts_suite.tw
-git commit -m "ownership: binding-validity (default, transfer, positional meet)
+git commit -m "ownership: binding-validity (default, transfer, generalized meet)
 
 Thread binding_valid through the forward pass (moves invalidate, AAssign
-revalidates) and join it by the positional meet over edge args, co-iterated to
-a joint fixpoint with ownership. A value moved on one arm and forwarded on
-another is 'not usable' at the merge."
+revalidates) and join it by the meet over live-in locals — params via edge args,
+live-through non-param locals by same id — co-iterated to a joint fixpoint with
+ownership. A value moved on one arm and forwarded on another is 'not usable' at
+the merge."
 ```
 
 ---
@@ -2007,8 +2187,8 @@ Expected: boot suites green; `make stage2` succeeds (the new `ownership.tw` and 
 - `BlockFacts` shape, `empty_fact_blocks` update, module split (`ownership.tw`) → Task 3. ✓
 - Edge-arg-aware liveness → Task 4. ✓
 - Transfer table (ACall via `call_info`, Allocate/Update/ReadOnly/Pure/Control/`.None`; `cow_base_arg`; ARecord/AVariant/AArrayLit; ARecordGet/AIndex borrow; ARecordUpdate; AInit; AAssign; AMakeClosure; AGlobalSet; wrap/unwrap; binop/unop; structural-op hard errors) → Task 5. Three hinges (AInit, consuming-op on `cow_base_arg`, field-store) → Task 5. ✓
-- Positional join + fixpoint (branch join, loop-carried) → Task 6. ✓
-- Binding-validity default/transfer/positional-meet → Task 7. ✓
+- Join + fixpoint over **all live-in locals** (params via edge args, live-through non-param locals by same id), skipping unprocessed back-edges (branch join, loop-carried) → Task 6. ✓
+- Binding-validity default/transfer/generalized meet (same live-in coverage) → Task 7. ✓
 - Rendering (sorted params) + `--cfg` wiring + determinism → Task 8. ✓
 - Two-direction soundness guard + tracking-doc edits → Task 9. ✓
 - Conservative ref rule (no type table) → encoded in `publish_atom`/`field_store` acting on every `ALocal` (Conventions + Task 5). ✓
