@@ -540,4 +540,26 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "phase3 patbind: pattern-bound local is killed at arm entry (not live-in)",
+      fn() {
+        b := b_reg()
+        arm: AnfMatchArm = AnfMatchArm.{
+          pattern: .Variant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.Var(lid(5))]),
+          body: .Let(lid(6), .AInit(.ALocal(lid(5))), .Atom(.ALitInt(0))),
+        }
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(7), .AMatch(.ALocal(lid(0)), [arm]), .Atom(.ALitInt(0))),
+        )
+        f := analyzed_func(module_of("f", body))
+        blk := case block_named(f, "match.arm.0") {
+          .Some(x) => x,
+          .None => return assert.fail("no match.arm.0"),
+        }
+        try assert.is_false(live_contains(blk.entry.live, 5))
+        .Ok({})
+      },
+    )
 }

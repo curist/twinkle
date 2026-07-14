@@ -289,6 +289,13 @@ fn scan_block_backward(blk: CfgBlock, live_out: Vector<Int>) BlockScan {
     live_after = .append(after_rev[j])
     j = j - 1
   }
+
+  // Kill this block's incoming pattern-bound locals at entry: a destructured
+  // payload is a borrow from the scrutinee, not a value flowing in from a
+  // predecessor, so it must never appear live-in (retires the Phase 2 G3
+  // over-approximation). The forward pass seeds absent locals Unknown, so no
+  // forward-seed change is needed.
+  cur = diff_sorted(cur, blk.bound)
   BlockScan.{ live_in: cur, live_after }
 }
 

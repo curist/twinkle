@@ -7,8 +7,9 @@
 //! authoritative and codegen does not consume this view.
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom}
+use compiler.anf_analysis
 use compiler.builtins.{BuiltinRegistry}
-use compiler.core_ir.{LocalId}
+use compiler.core_ir.{CorePattern, LocalId}
 
 pub type BlockId = .{ id: Int }
 
@@ -46,6 +47,10 @@ pub type CfgBlock = .{
   id: BlockId,
   name: String,
   params: Vector<LocalId>,
+  // Locals bound by this block's incoming pattern (match arms). These are
+  // borrows from the scrutinee, not values flowing in from a predecessor, so
+  // backward liveness KILLS them at block entry (they never appear live-in).
+  bound: Vector<Int>,
   instructions: Vector<CfgInstruction>,
   terminator: Terminator?,
   preds: Vector<CfgEdge>,
@@ -303,6 +308,7 @@ fn empty_block(id: BlockId, name: String, params: Vector<LocalId>) CfgBlock {
     id,
     name,
     params,
+    bound: [],
     instructions: [],
     terminator: .None,
     preds: [],
@@ -474,6 +480,45 @@ fn build_join_continuation(
   }
 }
 
+// Sorted-Int insert (Int twin of sorted_insert_local); keeps `bound` a
+// deterministic sorted Vector<Int>.
+fn insert_sorted_int(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    if x == id {
+      return v
+    }
+    if !inserted and id < x {
+      out = .append(id)
+      inserted = true
+    }
+    out = .append(x)
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  out
+}
+
+// The locals an arm pattern binds, as a sorted Vector<Int>. A destructured
+// payload is a borrow from the scrutinee (not a value flowing in from a
+// predecessor), so the liveness scan kills these at arm-block entry.
+fn pattern_binding_ids(pattern: CorePattern) Vector<Int> {
+  bound := anf_analysis.collect_pattern_bindings(pattern, Dict.new())
+  out: Vector<Int> = []
+  for k in bound.keys() {
+    out = insert_sorted_int(out, k)
+  }
+  out
+}
+
+fn set_block_bound(ctx: BuildCtx, id: BlockId, bound: Vector<Int>) BuildCtx {
+  block := ctx.get_block(id)
+  block.bound = bound
+  ctx.replace_block(block)
+}
+
 fn build_match(
   ctx: BuildCtx,
   current: BlockId,
@@ -486,9 +531,10 @@ fn build_match(
   arm_ids: Vector<BlockId> = []
   edge_list: Vector<CfgEdge> = []
 
-  for _, i in arms {
+  for arm, i in arms {
     nb := ctx.new_block("match.arm.${i}", [])
     ctx = nb.ctx
+    ctx = .set_block_bound(nb.id, pattern_binding_ids(arm.pattern))
     arm_ids = .append(nb.id)
     edge_list = .append(CfgEdge.{ target: nb.id, args: [] })
   }
