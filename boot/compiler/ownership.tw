@@ -8,7 +8,7 @@
 use compiler.anf.{AnfOp, Atom}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.cfg.{CfgBlock, CfgFunction, CfgView, Terminator}
-use compiler.core_ir.{FuncId}
+use compiler.core_ir.{FuncId, LocalId}
 use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info}
 
 pub type Ownership = { Unique, Shared, Unknown }
@@ -28,6 +28,27 @@ pub fn own_of_tag(t: Int) Ownership {
     t == 1 => .Shared,
     _ => .Unknown,
   }
+}
+
+// ── Interprocedural summaries ────────────────────────────────────────
+pub type EscapeEffect = { Borrowed, Retained }
+
+pub type ParamCapability = { NoCap, Consumed }
+
+pub type ParamSummary = .{ escape: EscapeEffect, capability: ParamCapability }
+
+pub type ReturnEffect = { OwnedFresh, MayAliasParams(Vector<Int>), Shared }
+
+pub type Summary = .{ params: Vector<ParamSummary>, ret: ReturnEffect }
+
+pub type SummaryTable = .{ by_func: Dict<Int, Summary> }
+
+pub fn empty_summary_table() SummaryTable {
+  SummaryTable.{ by_func: Dict.new() }
+}
+
+pub fn summary_get(t: SummaryTable, func_id: Int) Summary? {
+  t.by_func.get(func_id)
 }
 
 // ── Uses / defs extraction ──────────────────────────────────────────
@@ -355,10 +376,26 @@ fn is_last_use(last: Vector<Int>, id: Int) Bool {
   live_contains_int(last, id)
 }
 
-type ForwardState = .{ own: Dict<Int, Int>, valid: Dict<Int, Bool> }
+type ForwardState = .{ own: Dict<Int, Int>, valid: Dict<Int, Bool>, prov: Dict<Int, Vector<Int>> }
 
 fn set_own_st(st: ForwardState, id: Int, o: Ownership) ForwardState {
   st.own = set_own(st.own, id, o)
+  st
+}
+
+// Provenance (param-origin) of an atom against a working prov map.
+fn prov_of(prov: Dict<Int, Vector<Int>>, a: Atom) Vector<Int> {
+  case atom_local_id(a) {
+    .Some(id) => case prov.get(id) {
+      .Some(v) => v,
+      .None => [],
+    },
+    .None => [],
+  }
+}
+
+fn set_prov_st(st: ForwardState, id: Int, origins: Vector<Int>) ForwardState {
+  st.prov[id] = origins
   st
 }
 
@@ -371,8 +408,20 @@ fn set_valid(st: ForwardState, id: Int, v: Bool) ForwardState {
   st
 }
 
+// Publish a local Shared and, transitively, every param origin it carries. A
+// value derived from a param (wrapped into an aggregate, aliased, etc.) that
+// escapes forces its origin params to Shared too — the aggregate/escape hole.
 fn publish_local(st: ForwardState, id: Int) ForwardState {
-  st.set_own_st(id, .Shared)
+  st = .set_own_st(id, .Shared)
+  case st.prov.get(id) {
+    .Some(origins) => {
+      for o in origins {
+        st = .set_own_st(o, .Shared)
+      }
+      st
+    },
+    .None => st,
+  }
 }
 
 fn publish_atom(st: ForwardState, a: Atom) ForwardState {
@@ -455,6 +504,7 @@ fn transfer_call(
   callee: Atom,
   args: Vector<Atom>,
   last: Vector<Int>,
+  table: SummaryTable,
   sem: OptimizerSemantics,
 ) ForwardState {
   info := case callee_func_id(callee) {
@@ -485,43 +535,64 @@ fn transfer_op(
   result: Int,
   op: AnfOp,
   last: Vector<Int>,
+  table: SummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
 ) ForwardState {
   case op {
-    .ACall(callee, args) => st.transfer_call(result, callee, args, last, sem),
+    .ACall(callee, args) => st.transfer_call(result, callee, args, last, table, sem),
     .ARecord(_, fields) => {
-      st = .set_result(result, .Unique)
+      origins: Vector<Int> = []
       for fa in fields {
+        origins = union_sorted(origins, prov_of(st.prov, fa.value))
         st = .field_store(fa.value, last)
       }
-      st
+      st = .set_result(result, .Unique)
+      st.set_prov_st(result, origins)
     },
     .AVariant(_, _, args) => {
-      st = .set_result(result, .Unique)
+      origins: Vector<Int> = []
       for a in args {
+        origins = union_sorted(origins, prov_of(st.prov, a))
         st = .field_store(a, last)
       }
-      st
+      st = .set_result(result, .Unique)
+      st.set_prov_st(result, origins)
     },
     .AArrayLit(elems) => {
-      st = .set_result(result, .Unique)
+      origins: Vector<Int> = []
       for a in elems {
+        origins = union_sorted(origins, prov_of(st.prov, a))
         st = .field_store(a, last)
       }
-      st
+      st = .set_result(result, .Unique)
+      st.set_prov_st(result, origins)
     },
-    .ARecordGet(_, _, _) => st.set_result(result, .Unknown), // borrow: result not owned
-    .AIndex(_, _, _, _) => st.set_result(result, .Unknown), // borrow
+    .ARecordGet(base, _, _) => {
+      // borrow: result not owned, but carries the base's provenance.
+      st = .set_result(result, .Unknown)
+      st.set_prov_st(result, prov_of(st.prov, base))
+    },
+    .AIndex(base, _, _, _) => {
+      // borrow
+      st = .set_result(result, .Unknown)
+      st.set_prov_st(result, prov_of(st.prov, base))
+    },
     .ARecordUpdate(base, _, v, _, _) => {
+      origins := union_sorted(prov_of(st.prov, base), prov_of(st.prov, v))
       st = .consume_base(result, base, last)
-      st.field_store(v, last)
+      st = .field_store(v, last)
+      st.set_prov_st(result, origins)
     },
-    .AInit(a) => st.init_hinge(result, a, last),
+    .AInit(a) => {
+      st = .init_hinge(result, a, last)
+      st.set_prov_st(result, prov_of(st.prov, a))
+    },
     .AAssign(local, a) => {
       // rebind: result local's fact = fact(a); binding becomes valid again
       o := fact_of(st.own, a)
       st = .set_own_st(local.id, o)
+      st = .set_prov_st(local.id, prov_of(st.prov, a))
       st.set_valid(local.id, true)
     },
     .AMakeClosure(_, caps) => {
@@ -535,8 +606,15 @@ fn transfer_op(
       st = .publish_atom(a)
       st.set_result(result, .Unknown)
     },
-    .AWrapAnyref(a, _) => st.init_hinge(result, a, last), // representationally transparent
-    .AUnwrapAnyref(a, _) => st.init_hinge(result, a, last),
+    .AWrapAnyref(a, _) => {
+      // representationally transparent
+      st = .init_hinge(result, a, last)
+      st.set_prov_st(result, prov_of(st.prov, a))
+    },
+    .AUnwrapAnyref(a, _) => {
+      st = .init_hinge(result, a, last)
+      st.set_prov_st(result, prov_of(st.prov, a))
+    },
     .ABinOp(_, _, _, _) => st.set_result(result, .Unknown), // scalar, neutral
     .AUnOp(_, _, _) => st.set_result(result, .Unknown),
     .AIf(_, _, _) => error("ownership: AIf reached transfer; structural op is block-lowered"),
@@ -546,15 +624,34 @@ fn transfer_op(
   }
 }
 
-// Drive the transfer over a block from its entry state, then apply terminator
-// publication for the value leaving on this block's exit edge.
-fn forward_block(blk: CfgBlock, entry: ForwardState, b: BuiltinRegistry, sem: OptimizerSemantics) ForwardState {
+// Drive the transfer over a block's straight-line instructions from its entry
+// state (no terminator publication yet).
+fn forward_block_body(
+  blk: CfgBlock,
+  entry: ForwardState,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) ForwardState {
   scan := scan_block_backward(blk, blk.exit.live) // exit.live was filled by the liveness stage
   st := entry
   for inst, i in blk.instructions {
     last := last_use_at(inst.op, scan.live_after[i])
-    st = .transfer_op(inst.anf_local.id, inst.op, last, b, sem)
+    st = .transfer_op(inst.anf_local.id, inst.op, last, table, b, sem)
   }
+  st
+}
+
+// Drive the transfer over a block, then apply terminator publication for the
+// value leaving on this block's exit edge.
+fn forward_block(
+  blk: CfgBlock,
+  entry: ForwardState,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) ForwardState {
+  st := forward_block_body(blk, entry, table, b, sem)
   case blk.terminator {
     .Some(.Return(.Some(a))) => {
       st = .publish_atom(a)
@@ -734,17 +831,110 @@ fn same_valid_map(a: Dict<Int, Bool>, b: Dict<Int, Bool>) Bool {
   true
 }
 
-// Combined ownership+validity fixpoint co-iterated to a joint fixed point (they
-// share ForwardState and forward_block). The single live driver (guardrail G1).
-type FixResult = .{ exits: Dict<Int, Dict<Int, Int>>, exit_valid: Dict<Int, Dict<Int, Bool>> }
+// ── Provenance join (param-origin sets) ─────────────────────────────
+fn prov_map_get(m: Dict<Int, Dict<Int, Vector<Int>>>, id: Int) Dict<Int, Vector<Int>> {
+  case m.get(id) {
+    .Some(v) => v,
+    .None => Dict.new(),
+  }
+}
 
-fn run_fixpoint(blocks: Vector<CfgBlock>, b: BuiltinRegistry, sem: OptimizerSemantics) FixResult {
+fn same_prov_map(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+  for k in a.keys() {
+    case a.get(k) {
+      .Some(av) => case b.get(k) {
+        .Some(bv) => if !same_live(av, bv) {
+          return false
+        },
+        .None => return false,
+      },
+      .None => {},
+    }
+  }
+  true
+}
+
+fn prov_of_in(pv: Dict<Int, Vector<Int>>, a: Atom) Vector<Int> {
+  case atom_local_id(a) {
+    .Some(id) => case pv.get(id) {
+      .Some(v) => v,
+      .None => [],
+    },
+    .None => [],
+  }
+}
+
+// entry.prov for every live-in local (mirroring the ownership join): a block
+// param unions the origins its positional edge arg carries; a live-through
+// non-param local unions the same id's origins. Absent => empty.
+fn join_entry_prov(
+  blk: CfgBlock,
+  exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
+  processed: Dict<Int, Bool>,
+) Dict<Int, Vector<Int>> {
+  entry: Dict<Int, Vector<Int>> = Dict.new()
+  for lid in blk.entry.live {
+    pidx := param_index(blk, lid)
+    acc: Vector<Int> = []
+    for pe in blk.preds {
+      if is_processed(processed, pe.target.id) {
+        pv := prov_map_get(exit_prov, pe.target.id)
+        src := case pidx {
+          .Some(i) => if i < pe.args.len() {
+            prov_of_in(pv, pe.args[i])
+          } else {
+            []
+          },
+          .None => case pv.get(lid) {
+            .Some(v) => v,
+            .None => [],
+          },
+        }
+        acc = union_sorted(acc, src)
+      }
+    }
+    if acc.len() > 0 {
+      entry[lid] = acc
+    }
+  }
+  entry
+}
+
+// Seed block 0's entry: each param's provenance is its own id (a param origin).
+fn seed_param_prov(entry: Dict<Int, Vector<Int>>, params: Vector<LocalId>) Dict<Int, Vector<Int>> {
+  for p in params {
+    entry[p.id] = [p.id]
+  }
+  entry
+}
+
+// Combined ownership+validity+provenance fixpoint co-iterated to a joint fixed
+// point (they share ForwardState and forward_block). The single live driver
+// (guardrail G1).
+type FixResult = .{
+  exits: Dict<Int, Dict<Int, Int>>,
+  exit_valid: Dict<Int, Dict<Int, Bool>>,
+  exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
+}
+
+fn run_fixpoint(
+  blocks: Vector<CfgBlock>,
+  params: Vector<LocalId>,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) FixResult {
   exits: Dict<Int, Dict<Int, Int>> = Dict.new()
   exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
+  exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
   processed: Dict<Int, Bool> = Dict.new()
   for blk in blocks {
     exits[blk.id.id] = Dict.new()
     exit_valid[blk.id.id] = Dict.new()
+    exit_prov[blk.id.id] = Dict.new()
     processed[blk.id.id] = false
   }
   changed := true
@@ -753,32 +943,54 @@ fn run_fixpoint(blocks: Vector<CfgBlock>, b: BuiltinRegistry, sem: OptimizerSema
     for blk in blocks {
       entry_own := join_entry_ownership(blk, exits, processed)
       entry_valid := join_entry_valid(blk, exit_valid, processed)
-      st := ForwardState.{ own: entry_own, valid: entry_valid }
-      st = forward_block(blk, st, b, sem)
+      entry_prov := join_entry_prov(blk, exit_prov, processed)
+      if blk.id.id == 0 {
+        entry_prov = seed_param_prov(entry_prov, params)
+      }
+      st := ForwardState.{ own: entry_own, valid: entry_valid, prov: entry_prov }
+      st = forward_block(blk, st, table, b, sem)
       already := is_processed(processed, blk.id.id)
       if !already
         or !same_own_map(own_map_get(exits, blk.id.id), st.own)
-        or !same_valid_map(valid_map_get(exit_valid, blk.id.id), st.valid) {
+        or !same_valid_map(valid_map_get(exit_valid, blk.id.id), st.valid)
+        or !same_prov_map(prov_map_get(exit_prov, blk.id.id), st.prov) {
         changed = true
         exits[blk.id.id] = st.own
         exit_valid[blk.id.id] = st.valid
+        exit_prov[blk.id.id] = st.prov
       }
       processed[blk.id.id] = true
     }
   }
-  FixResult.{ exits, exit_valid }
+  FixResult.{ exits, exit_valid, exit_prov }
 }
 
 // ── Driver ──────────────────────────────────────────────────────────
 pub fn analyze(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) CfgView {
+  analyze_with_summaries(view, b, sem, empty_summary_table())
+}
+
+pub fn analyze_with_summaries(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+) CfgView {
   functions := collect f in view.functions {
-    analyze_function(f, b, sem)
+    analyze_function(f, table, b, sem)
   }
   CfgView.{ functions }
 }
 
-// FROZEN at Task 5 (guardrail G1): later tasks change only ownership_stage's body.
-fn analyze_function(f: CfgFunction, b: BuiltinRegistry, sem: OptimizerSemantics) CfgFunction {
+// Phase 3 threads a read-only `table` of callee summaries through the analysis
+// without restructuring the algorithm; the summary is consulted in transfer_call
+// (Task 4). The combined ownership/validity/provenance fixpoint still runs here.
+fn analyze_function(
+  f: CfgFunction,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) CfgFunction {
   live := compute_liveness(f.blocks)
   blocks := collect blk in f.blocks {
     bl := live_get(live, blk.id.id)
@@ -786,27 +998,83 @@ fn analyze_function(f: CfgFunction, b: BuiltinRegistry, sem: OptimizerSemantics)
     blk.exit.live = bl.live_out
     blk
   }
-  blocks = ownership_stage(blocks, b, sem)
+  blocks = ownership_stage(blocks, f.params, table, b, sem)
   f.blocks = blocks
   f
 }
 
-// Task 7: combined ownership+validity fixpoint + materialize both maps
-// (analyze_function stays frozen, G1).
-fn ownership_stage(blocks: Vector<CfgBlock>, b: BuiltinRegistry, sem: OptimizerSemantics) Vector<
-  CfgBlock,
-> {
-  fx := run_fixpoint(blocks, b, sem)
+// Combined ownership+validity+provenance fixpoint + materialize the facts maps.
+fn ownership_stage(
+  blocks: Vector<CfgBlock>,
+  params: Vector<LocalId>,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) Vector<CfgBlock> {
+  fx := run_fixpoint(blocks, params, table, b, sem)
   done := all_processed(blocks)
   collect blk in blocks {
     entry_own := join_entry_ownership(blk, fx.exits, done)
     entry_valid := join_entry_valid(blk, fx.exit_valid, done)
-    st := ForwardState.{ own: entry_own, valid: entry_valid }
-    st = forward_block(blk, st, b, sem)
+    entry_prov := join_entry_prov(blk, fx.exit_prov, done)
+    if blk.id.id == 0 {
+      entry_prov = seed_param_prov(entry_prov, params)
+    }
+    st := ForwardState.{ own: entry_own, valid: entry_valid, prov: entry_prov }
+    st = forward_block(blk, st, table, b, sem)
     blk.entry.ownership = entry_own
     blk.exit.ownership = st.own
     blk.entry.binding_valid = entry_valid
     blk.exit.binding_valid = st.valid
     blk
   }
+}
+
+// ── Interprocedural summary derivation ──────────────────────────────
+fn own_is_shared(own: Dict<Int, Int>, id: Int) Bool {
+  case own.get(id) {
+    .Some(tag) => tag == own_tag(.Shared),
+    .None => false,
+  }
+}
+
+// Classify each parameter's escape/capability by scanning EVERY block's
+// post-publish exit (fx.exits / fx.exit_valid): a param that ends Shared on any
+// block exit escapes (Retained) — even on a dead branch or via a returned
+// aggregate, since publication is transitive over provenance. A param whose
+// binding is ever invalidated is Consumed. Return effect is stubbed Shared here
+// (Task 2 makes it real).
+pub fn summarize_function(
+  f: CfgFunction,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) Summary {
+  live := compute_liveness(f.blocks)
+  blocks := collect blk in f.blocks {
+    bl := live_get(live, blk.id.id)
+    blk.entry.live = bl.live_in
+    blk.exit.live = bl.live_out
+    blk
+  }
+  fx := run_fixpoint(blocks, f.params, table, b, sem)
+
+  params: Vector<ParamSummary> = collect p in f.params {
+    esc: EscapeEffect = .Borrowed
+    cap: ParamCapability = .NoCap
+    for blk in blocks {
+      if own_is_shared(own_map_get(fx.exits, blk.id.id), p.id) {
+        esc = .Retained
+      }
+      case valid_map_get(fx.exit_valid, blk.id.id).get(p.id) {
+        .Some(v) => if !v {
+          cap = .Consumed
+        },
+        .None => {},
+      }
+    }
+    ParamSummary.{ escape: esc, capability: cap }
+  }
+
+  Summary.{ params, ret: .Shared }
 }

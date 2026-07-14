@@ -1,0 +1,139 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
+use compiler.builtins
+use compiler.cfg
+use compiler.core_ir.{FieldId, FuncId, GlobalId, LocalId, Param}
+use compiler.mono_type.{MonoType, TypeId}
+use compiler.opt.semantics as semantics
+use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+use compiler.ownership
+
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
+
+fn b_reg() builtins.BuiltinRegistry {
+  builtins.make_builtin_registry()
+}
+
+fn sem() semantics.OptimizerSemantics {
+  make_prelude_optimizer_semantics(b_reg())
+}
+
+fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
+  .ACall(.AGlobalFunc(b.method_id("Dict", "new")), [])
+}
+
+fn wrapper_record(field_val: LocalId) AnfOp {
+  // TypeId/FieldId are structural placeholders; build_view/summary do not need a
+  // real type table. FieldAtom.{ field, value }.
+  .ARecord(TypeId.{ id: 0 }, [.{ field: FieldId.{ id: 0 }, value: .ALocal(field_val) }])
+}
+
+fn fdef(id: Int, name: String, nparams: Int, body: AnfExpr) AnfFunctionDef {
+  params: Vector<Param> = collect i in range(nparams) {
+    Param.{ local: lid(i), ty: MonoType.Int }
+  }
+  AnfFunctionDef.{
+    func_id: FuncId.{ id },
+    name,
+    is_init: false,
+    params,
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: MonoType.Int,
+  }
+}
+
+fn module_of(funcs: Vector<AnfFunctionDef>) AnfModule {
+  AnfModule.{
+    functions: funcs,
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+    lib_exports: [],
+  }
+}
+
+fn summ1(name: String, nparams: Int, body: AnfExpr) ownership.Summary {
+  b := b_reg()
+  m := module_of([fdef(1, name, nparams, body)])
+  v := cfg.build_view(m, b)
+  case cfg.function_named(v, name) {
+    .Some(f) => ownership.summarize_function(f, ownership.empty_summary_table(), b, sem()),
+    .None => error("missing ${name}"),
+  }
+}
+
+fn escape_tag(e: ownership.EscapeEffect) Int {
+  case e {
+    .Borrowed => 0,
+    .Retained => 1,
+  }
+}
+
+fn cap_tag(c: ownership.ParamCapability) Int {
+  case c {
+    .NoCap => 0,
+    .Consumed => 1,
+  }
+}
+
+fn p_escape(s: ownership.Summary, i: Int) Int {
+  escape_tag(s.params[i].escape)
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("cfg summary")
+    .test(
+      "t1 borrow: fn f(x) { Dict.new() } -> p0 borrow",
+      fn() {
+        b := b_reg()
+        s := summ1("f", 1, .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1)))))
+        try assert.equal(p_escape(s, 0), escape_tag(.Borrowed))
+        .Ok({})
+      },
+    )
+    .test(
+      "t1 retain: fn f(x) { global_set G0 = x; 0 } -> p0 retain",
+      fn() {
+        body: AnfExpr = .Let(
+          lid(1),
+          .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))),
+          .Atom(.ALitInt(0)),
+        )
+        s := summ1("f", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
+      "t1 aggregate-escape: fn f(x) { Wrapper.{x} } -> p0 retain (blocker 1)",
+      fn() {
+        b := b_reg()
+        body: AnfExpr = .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1))))
+        s := summ1("f", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
+      "t1 dead-branch publish: fn f(x){ if c { global_set G=x }; 0 } -> p0 retain (blocker 2)",
+      fn() {
+        // then-arm publishes x; x is dead at the return. Escape must still be Retained.
+        then_e: AnfExpr = .Let(
+          lid(2),
+          .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))),
+          .Atom(.ALitInt(0)),
+        )
+        else_e: AnfExpr = .Atom(.ALitInt(0))
+        body: AnfExpr = .Let(lid(1), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALitInt(0)))
+        s := summ1("f", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+}

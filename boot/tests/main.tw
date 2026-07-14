@@ -27,6 +27,7 @@ use .suites.bundle_suite
 use .suites.byte_suite
 use .suites.cfg_ownership_facts_suite
 use .suites.cfg_ownership_suite
+use .suites.cfg_summary_suite
 use .suites.channel_suite
 use .suites.char_literal_suite
 use .suites.checker_coverage_suite
@@ -280,6 +281,7 @@ runner.run_all([
   scripting_vector_suite.suite(),
   cfg_ownership_suite.suite(),
   cfg_ownership_facts_suite.suite(),
+  cfg_summary_suite.suite(),
   uniqueness_census_suite.suite(),
   uniqueness_guard_suite.suite(),
 ])
