@@ -28,7 +28,7 @@
 - **PathKey is reversible (no side table).** Phase 4 path shapes are bounded (depth ≤ 2): `[Elem]`, `[Val]`, `[Field(f)]`, `[Field(f), Elem]`, `[Field(f), Val]`. `path_key`/`path_of_key` are pure arithmetic inverses, so renderers reconstruct the `AccessPath` from the key alone. This realizes Decision 3's "canonical Int PathKey encoding"; the "side table" collapses to pure decode. Deeper paths (Phase 5 variant payloads) extend the scheme.
 - **Where each rule lands** (verified against `ownership.tw`):
   - `ARecord` / `AArrayLit` / `ARecordUpdate` / `ARecordGet` / `AVariant` are true `AnfOp`s in `transfer_op` — field rules attach there.
-  - `Vector.make` / `dict.set` / `vector.append` / `Vector.set` are **`ACall`s** routed through `transfer_builtin_call` (`.Allocate`/`.Update`), distinguished only by `method_id`. The `[Elem]`-vs-`[Val]` segment choice needs a **vector-vs-dict signal** derived by comparing the callee `FuncId` to `b.method_id("Vector"|"Dict", …)` (the `container_seg` helper) — `CallSemantics` carries no container kind.
+  - The consuming collection builtins are **`ACall`s** routed through `transfer_builtin_call` (`.Allocate`/`.Update`). **Their ids are not `method_id`s.** Verified in `boot/compiler/opt/semantics.tw`: `Dict.set` is `b.method_id("Dict","set")` (retained `[1,2]` = key+value), but vector element-store is `b.id("vector$set_unsafe")` (retained `[2]` = value) and vector append is `vector_builder_config(b).push_id` (retained `[1]`); there is **no** `Vector.append`/`Vector.set` `method_id`. So the `[Elem]`-vs-`[Val]` segment choice **cannot** be a `method_id` comparison in `ownership.tw`. It is carried as a **container-kind signal on the optimizer semantics**, populated at the registration site where those ids are already in scope (Task 4): a `container_kind(sem, fid) → { NotCollection, VectorLike, DictLike }` accessor. `NotCollection` (unknown/ other `.Update` ops like `Dict.remove`, builder pushes) **drops** nested facts — never guesses a segment.
   - `AVariant`'s current transfer (`field_store` each payload, result `Unique`) *is already* the Phase 4 shell-only behavior — **leave it unchanged** (variant payload paths are Phase 5).
 - **Determinism.** Iterate blocks/params by id/index order; PathKeys are canonical ints; every rendered/compared line is keyed by a sorted `(LocalId, PathKey)` list, never raw `Dict` iteration order.
 - **Boot gotchas (from Phase 2/3):**
@@ -304,7 +304,12 @@ pub fn path_of_key(k: Int) AccessPath {
 
 // ── Map operations over one local's field map (PathKey -> tag) ───────
 pub fn set_path(fields: Dict<Int, Int>, p: AccessPath, tag: Int) Dict<Int, Int> {
-  fields[path_key(p)] = tag
+  k := path_key(p)
+  if k == 0 {
+    // shell facts live in ownership.own, never in a field map.
+    error("field_facts: refusing to store the shell path ([]) in field_own")
+  }
+  fields[k] = tag
   fields
 }
 
@@ -527,7 +532,7 @@ In `cfg.tw`, extend `BlockFacts` and `empty_block_facts`:
 pub type BlockFacts = .{
   ownership: Dict<Int, Int>,
   binding_valid: Dict<Int, Bool>,
-  live: Vector<LocalId>,
+  live: Vector<Int>,                    // UNCHANGED — keep Vector<Int> (CFG/joins key on Int ids)
   field_own: Dict<Int, Dict<Int, Int>>, // NEW: local -> (PathKey -> tag); non-shell paths only
   verdicts: Dict<Int, String>,          // NEW: result local -> two-verdict string (Task 7)
 }
@@ -536,6 +541,8 @@ fn empty_block_facts() BlockFacts {
   BlockFacts.{ ownership: Dict.new(), binding_valid: Dict.new(), live: [], field_own: Dict.new(), verdicts: Dict.new() }
 }
 ```
+
+**Do not change `live`'s type** — only append `field_own`/`verdicts`. Every `BlockFacts.{ … }` construction elsewhere (grep `BlockFacts.{`) must add the two new empty fields.
 
 Extend the "un-analyzed" guard (`cfg.tw:829`-ish) to also require `field_own`/`verdicts` empty before treating a block as un-analyzed. (`cfg.tw` gains `use compiler.field_facts as ff` in Task 7, not here.)
 
@@ -812,7 +819,7 @@ fn field_atom(fid: Int, v: LocalId) anf.FieldAtom {
       // f() { t := Dict.new(); v := Dict.new(); r := Ctx.{ types: t, values: v };
       //       t2 := Dict.new(); r2 := (r.types = t2) }  -> r2 has [.types] and [.values].
       mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0)), field_atom(1, lid(1))])
-      upd: AnfOp = .ARecordUpdate(.ALocal(lid(2)), FieldId.{ id: 0 }, .ALocal(lid(3)), TypeId.{ id: 0 }, MonoType.Int)
+      upd: AnfOp = .ARecordUpdate(.ALocal(lid(2)), FieldId.{ id: 0 }, .ALocal(lid(3)), false, TypeId.{ id: 0 })
       body: AnfExpr = .Let(
         lid(0),
         dict_new_call(b),
@@ -840,7 +847,7 @@ fn has_field_path(f: cfg.CfgFunction, local_id: Int, p: ff.AccessPath) Bool {
 }
 ```
 
-(Confirm the `ARecordUpdate` arity/field order against `transfer_op`'s existing `.ARecordUpdate(base, _, v, _, _)` — five positions: base, field, value, type, mono.)
+(`ARecordUpdate(Atom, FieldId, Atom, Bool, TypeId)` — five positions: **base, field, value, `Bool`, `TypeId`** (`anf.tw:50`). The 4th is a `Bool` (pass `false`), the 5th is a `TypeId` (not `MonoType`). `ARecordGet(Atom, FieldId, TypeId)` — three positions, 3rd is a `TypeId` (`anf.tw:49`). `FieldId` comes from `compiler.core_ir`, `TypeId` from `compiler.mono_type` (`anf.tw:7-11`); import both in the suite.)
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -909,8 +916,10 @@ Extend the `ARecord`/`AArrayLit`/`ARecordUpdate` arms (keep the existing own/pro
       }
       st = .set_result(result, .Unique)
       st = .set_prov_st(result, origins)
-      // [Elem]:Unique only when EVERY distinct element is single-retention.
-      all_owned := elems.len() > 0
+      // [Elem]:Unique when EVERY element is single-retention. An EMPTY literal is
+      // [Elem]:Unique vacuously (no shared inner) — this bootstraps build-from-empty
+      // vectors so the Task 4 consuming rule has an all-owned base to preserve.
+      all_owned := true
       for a in elems {
         if !single_retention(st, a, last, elems) {
           all_owned = false
@@ -930,7 +939,7 @@ Extend the `ARecord`/`AArrayLit`/`ARecordUpdate` arms (keep the existing own/pro
       st = .field_store(v, last)
       st = .set_prov_st(result, origins)
       // Only build field facts when the result shell is Unique (else choke point cleared it).
-      st = if own_tag(fact_of(st.own, .ALocal(LocalId.{ id: result })).some_or_unknown()) == 0 {
+      st = if own_is_unique(st.own, result) {
         // remove the whole [.f]* subtree first, then graft the (single-retention) replacement.
         rf := ff.remove_prefix(base_fields, .Field(f.id))
         rf = if single_retention(st, v, last, [v]) {
@@ -946,7 +955,18 @@ Extend the `ARecord`/`AArrayLit`/`ARecordUpdate` arms (keep the existing own/pro
     },
 ```
 
-Replace the `own_tag(...).some_or_unknown()` sketch with the real "is result Unique" read used elsewhere (e.g. `fact_of_local(st.own, result) == .Unique` or `own_is_unique(st.own, result)`); grep for the existing accessor and use it. The intent: **build field facts only when `own[result] == Unique`.**
+`own_is_unique(own, id)` wraps the existing `fact_of_local(st.own, id) == .Unique` (`fact_of_local` is at `ownership.tw:805`); add it once and reuse it here and in Task 4:
+
+```tw
+fn own_is_unique(own: Dict<Int, Int>, id: Int) Bool {
+  case fact_of_local(own, id) {
+    .Unique => true,
+    _ => false,
+  }
+}
+```
+
+(Here `v` is the *replacement value* — a single operand — so `single_retention(st, v, last, [v])` is correct: there is no sibling operand to alias against in an `ARecordUpdate`. Contrast Task 4, where a `Dict.set` retains **two** operands and the list must include both.)
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -970,50 +990,59 @@ the single-retention replacement, carrying sibling field facts unchanged."
 
 ## Task 4: Collection-builtin nested facts (`transfer_builtin_call`)
 
-Handle the consuming collection builtins: `Vector.make` never claims `[Elem]`; `dict.set`/`vector.append`/`Vector.set` keep `[Elem]`/`[Val]:Unique` only when the stored element is itself single-retention (Decision 5). This is Case V's inner-append shape.
+Handle the consuming collection builtins: `Vector.make` never claims `[Elem]`; the element-store ops keep `[Elem]`/`[Val]:Unique` only when the stored element is itself single-retention (Decision 5). This is Case V's inner-append shape.
+
+**Verified ids (`boot/compiler/opt/semantics.tw:84-160`)** — the element-store builtins are **not** `method_id`s:
+- Vector element store: `b.id("vector$set_unsafe")` — `.Update`, `cow_base_arg .Some(0)`, `retained_args .Some([2])` (value).
+- Vector append/push: `vector_builder_config(b).push_id` — `.Update`, `cow_base_arg .Some(0)`, `retained_args .Some([1])` (value).
+- Dict set: `b.method_id("Dict","set")` — `.Update`, `retained_args .Some([1, 2])` (**key and value**).
+- `Vector.make`: `b.method_id("Vector","make")` — `.Allocate`, `retained_args .Some([1])` (fill).
+
+So the container signal lives on the **optimizer semantics** (populated where those ids are in scope), not a `method_id` compare in `ownership.tw`.
+
+**Scope note (empty-collection bootstrap):** this rule *preserves/keeps* `[Elem]`/`[Val]` on an already-all-owned base and *drops* it on a shared insert — it does **not mint** a nested fact on an empty base. A base therefore gets `[Elem]` only from an all-owned array literal (Task 3), so build-by-insertion dicts (`Dict.new` + `set`, Case B) never accumulate `[Val]` under these strict rules. Whether empty collections should mint a **vacuous** `[Elem]`/`[Val]:Unique` (sound: an empty collection has no shared inner) to bootstrap the inductive case is an **open refinement** — confirm against `records-fields.md` Case B before adding it; leaving it out is a sound under-claim. The Task 4 fixtures use the array-literal bootstrap (vectors) so they are constructible without it.
 
 **Files:**
-- Modify: `boot/compiler/ownership.tw` (`transfer_builtin_call` + `transfer_call` threads the callee `FuncId`; `container_seg`).
+- Modify: `boot/compiler/opt/semantics.tw` (`ContainerKind` enum + `container_kinds` map on `OptimizerSemantics` + `container_kind` accessor).
+- Modify: `boot/compiler/ownership.tw` (`transfer_call`/`transfer_builtin_call` thread the callee `FuncId` + `sem`; `container_seg`; the `.Update` nested rule).
 - Test: `boot/tests/suites/cfg_field_facts_suite.tw`.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```tw
-fn vec_append_call(b: builtins.BuiltinRegistry, base: LocalId, v: LocalId) AnfOp {
-  .ACall(.AGlobalFunc(b.method_id("Vector", "append")), [.ALocal(base), .ALocal(v)])
+// Vector element store: vector$set_unsafe(base, idx, v) -> Update, retained [2].
+fn vec_set_call(b: builtins.BuiltinRegistry, base: LocalId, idx: Int, v: LocalId) AnfOp {
+  .ACall(.AGlobalFunc(b.id("vector$set_unsafe")), [.ALocal(base), .ALitInt(idx), .ALocal(v)])
 }
 
-fn vec_make_call(b: builtins.BuiltinRegistry, n: LocalId, fill: LocalId) AnfOp {
-  .ACall(.AGlobalFunc(b.method_id("Vector", "make")), [.ALocal(n), .ALocal(fill)])
+// Vector.make(3, fill) -> Allocate, retained [1]. Size is an inline literal atom.
+fn vec_make_call(b: builtins.BuiltinRegistry, fill: LocalId) AnfOp {
+  .ACall(.AGlobalFunc(b.method_id("Vector", "make")), [.ALitInt(3), .ALocal(fill)])
 }
 ```
 
 ```tw
-    .test("consume keep: append an owned inner onto an all-owned vector keeps [Elem]", fn() {
+    .test("consume keep: storing an owned inner into an all-owned vector keeps [Elem]", fn() {
       b := b_reg()
-      // f() { a := [] (owned-elem vector via array-lit of owned); x := Dict.new();
-      //       r := a.append(x) }  -> r keeps [Elem]:Unique (base all-owned + owned x).
-      // Build `a` as an array literal of one owned dict so a has [Elem]:Unique.
-      inner := dict_new_call(b)
+      // f() { d := Dict.new(); a := [d] (all-owned literal -> [Elem]);
+      //       x := Dict.new(); r := vector$set_unsafe(a, 0, x) }  -> r keeps [Elem].
       arr: AnfOp = .AArrayLit([.ALocal(lid(0))])
-      x := dict_new_call(b)
       body: AnfExpr = .Let(
         lid(0),
-        inner,
-        .Let(lid(1), arr, .Let(lid(2), x, .Let(lid(3), vec_append_call(b, lid(1), lid(2)), .Atom(.ALocal(lid(3)))))),
+        dict_new_call(b),
+        .Let(lid(1), arr, .Let(lid(2), dict_new_call(b), .Let(lid(3), vec_set_call(b, lid(1), 0, lid(2)), .Atom(.ALocal(lid(3)))))),
       )
       f := analyzed_func(module_of("f", body))
       try assert.is_true(has_field_path(f, 3, ff.elem_path()))
       .Ok({})
     })
-    .test("consume drop: append a SHARED inner drops [Elem]", fn() {
+    .test("consume drop: storing a SHARED inner drops [Elem]", fn() {
       b := b_reg()
-      // x is aliased (kept live), so appending it is not single-retention -> drop [Elem].
-      inner := dict_new_call(b)
+      // x is aliased (kept live at the return), so storing it is not single-retention.
       arr: AnfOp = .AArrayLit([.ALocal(lid(0))])
       body: AnfExpr = .Let(
         lid(0),
-        inner,
+        dict_new_call(b),
         .Let(
           lid(1),
           arr,
@@ -1022,8 +1051,8 @@ fn vec_make_call(b: builtins.BuiltinRegistry, n: LocalId, fill: LocalId) AnfOp {
             dict_new_call(b),
             .Let(
               lid(3),
-              .AInit(.ALocal(lid(2))),               // alias of x
-              .Let(lid(4), vec_append_call(b, lid(1), lid(2)), .Atom(.ALocal(lid(3)))),
+              .AInit(.ALocal(lid(2))),           // alias of x (keeps x live)
+              .Let(lid(4), vec_set_call(b, lid(1), 0, lid(2)), .Atom(.ALocal(lid(3)))),
             ),
           ),
         ),
@@ -1034,93 +1063,92 @@ fn vec_make_call(b: builtins.BuiltinRegistry, n: LocalId, fill: LocalId) AnfOp {
     })
     .test("Vector.make never claims [Elem] (replicated reference)", fn() {
       b := b_reg()
-      // f() { n := 3; x := Dict.new(); r := Vector.make(n, x) } -> NO [Elem].
+      // f() { x := Dict.new(); r := Vector.make(3, x) } -> NO [Elem].
       body: AnfExpr = .Let(
         lid(0),
-        .Atom2Op(.ALitInt(3)),                        // see note: use a literal-carrying op or reuse a lit local
-        .Let(lid(1), dict_new_call(b), .Let(lid(2), vec_make_call(b, lid(0), lid(1)), .Atom(.ALocal(lid(2))))),
+        dict_new_call(b),
+        .Let(lid(1), vec_make_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
       )
       f := analyzed_func(module_of("f", body))
-      try assert.is_false(has_field_path(f, 2, ff.elem_path()))
+      try assert.is_false(has_field_path(f, 1, ff.elem_path()))
       .Ok({})
     })
 ```
 
-(`.Atom2Op` is a placeholder — bind `n` via whatever op the suite already uses to introduce an `Int` local, e.g. reuse a `dict_new_call`-style literal binding or pass `.ALitInt(3)` directly as the `Vector.make` size arg without a separate local. Prefer inlining `.ALitInt(3)` as the size atom so no extra local is needed: `vec_make_call` takes an `Atom` size.)
+(`b.id("vector$set_unsafe")` returns the raw prelude `FuncId`; confirm the exact name against `semantics.tw:91`. If the boot `BuiltinRegistry` exposes `id` under a different name, grep `pub fn id(` in `boot/compiler/builtins.tw`.)
 
 - [ ] **Step 2: Run to verify they fail**
 
-Expected: FAIL — the keep case has no `[Elem]` (no consume rule yet); the drop/make negatives already pass (no rule adds anything) — that's fine, they lock the sound default.
+Expected: FAIL — the keep case has no `[Elem]` (no consume rule yet); the drop/`make` negatives already pass (no rule adds anything) — fine, they lock the sound default.
 
-- [ ] **Step 3: `container_seg` + consume rule**
+- [ ] **Step 3: `ContainerKind` on optimizer semantics**
 
-Thread the callee `FuncId` into `transfer_builtin_call` (it currently receives only `cs`). In `transfer_call`, the `.Some(cs)` branch already has `fid`; pass it:
+In `boot/compiler/opt/semantics.tw`, add the enum, a `container_kinds` map on `OptimizerSemantics`, populate it in `make_prelude_optimizer_semantics` (where `b` and `builder := vector_builder_config(b)` are already in scope), and a total accessor:
 
 ```tw
-      .Some(cs) => st.transfer_builtin_call(result, fid, cs, args, last),
+pub type ContainerKind = { NotCollection, VectorLike, DictLike }
 ```
 
+Add `container_kinds: Dict<Int, Int>` to the `OptimizerSemantics` record (tag: `1` vector, `2` dict; absent => `NotCollection`). In `make_prelude_optimizer_semantics`, alongside the `calls[...]` assignments:
+
 ```tw
-// Vector-like collections use [Elem]; dict-like use [Val]. Derived from the
-// callee identity (CallSemantics carries no container kind). None => not a
-// nested-collection-bearing builtin.
-fn container_seg(b: BuiltinRegistry, fid: FuncId) PathSeg? {
-  cond {
-    fid.id == b.method_id("Vector", "append").id => .Some(.Elem),
-    fid.id == b.method_id("Vector", "set").id => .Some(.Elem),
-    fid.id == b.method_id("Dict", "set").id => .Some(.Val),
-    _ => .None,
+  container_kinds: Dict<Int, Int> = Dict.new()
+  container_kinds[b.id("vector$set_unsafe").id] = 1
+  container_kinds[builder.push_id.id] = 1          // vector append/push
+  container_kinds[b.method_id("Dict", "set").id] = 2
+```
+
+Add `container_kinds` to the returned `OptimizerSemantics.{ … }`. (Confirm `builder.push_id` is the vector-append id; grep `vector_builder_config` in `boot/compiler/builder_family.tw`. If append is exposed elsewhere, key that id instead. Do **not** key `Dict.remove`/builder-internal pushes — leaving them `NotCollection` drops nested facts, which is sound.) Then:
+
+```tw
+pub fn container_kind(sem: OptimizerSemantics, fid: FuncId) ContainerKind {
+  case sem.container_kinds.get(fid.id) {
+    .Some(1) => .VectorLike,
+    .Some(2) => .DictLike,
+    _ => .NotCollection,
   }
 }
 ```
 
-`transfer_builtin_call` gains `b: BuiltinRegistry` and `fid` params (thread `b` from `transfer_op` → `transfer_call`; it is already in scope there). Extend only the `.Update` branch (keep `.Allocate`/`.ReadOnly`/`.Pure`/`.Control` — `Vector.make` is `.Allocate` and adds **no** field claim, giving the sound never-`[Elem]` behavior for free):
+- [ ] **Step 4: Thread `fid`/`sem` + the consume rule in `ownership.tw`**
+
+`transfer_call` already has `fid` (in the `.Some(fid)` arm) and `sem`; pass both to `transfer_builtin_call`:
 
 ```tw
-    .Update => {
-      // capture base facts BEFORE consume (consume doesn't touch base.field_own,
-      // but read defensively).
-      base_fields := case cs.cow_base_arg {
-        .Some(k) => if k < args.len() {
-          atom_field_own(st, args[k])
-        } else {
-          Dict.new()
-        },
-        .None => Dict.new(),
-      }
-      st = st
-        .consume_call_base(result, cs, args, last)
-        .carry_base_prov(result, cs, args)
-        .absorb_retained_call_args(result, args, retained_arg_indices(cs, args), last)
-      // Only when the result shell is Unique may nested facts survive.
-      st = if own_is_unique(st.own, result) {
-        rf := base_fields // structural preservation of untouched elements
-        rf = case container_seg(b, fid) {
-          .Some(seg) => {
-            stored := stored_element_atom(cs, args)
-            keep := case stored {
-              .Some(x) => single_retention(st, x, last, [x]),
-              .None => false,
-            }
-            if keep {
-              rf // base's [seg]* carried; the new element is owned
-            } else {
-              ff.remove_prefix(rf, seg) // shared/aliased element -> drop [seg]*
-            }
-          },
-          .None => rf,
-        }
-        st.set_field_own(result, rf)
-      } else {
-        st
-      }
-      st
-    },
+      .Some(cs) => st.transfer_builtin_call(result, fid, cs, args, last, sem),
 ```
 
-with helpers (`own_is_unique` = grep the existing "own tag == 0" reader; the stored element is the **last** retained arg — the value slot for append/set/dict.set):
+`transfer_builtin_call` gains `fid: FuncId` and `sem: OptimizerSemantics` params. Map the container kind to a segment:
 
 ```tw
+// `ff.PathSeg` is qualified: ownership.tw has `use compiler.field_facts as ff`,
+// which binds the module alias but not the type unqualified. Either annotate
+// `ff.PathSeg?` (shown) or add `use compiler.field_facts.{PathSeg}`. The `.Elem`/
+// `.Val` variant literals resolve contextually from the `ff.PathSeg?` return type.
+fn container_seg(sem: OptimizerSemantics, fid: FuncId) ff.PathSeg? {
+  case semantics.container_kind(sem, fid) {
+    .VectorLike => .Some(.Elem),
+    .DictLike => .Some(.Val),
+    .NotCollection => .None,
+  }
+}
+```
+
+The single-retention check for the stored element must count the candidate across **all retained operands** (Dict.set retains key+value — a value reused as the key aliases itself):
+
+```tw
+fn retained_atoms(cs: CallSemantics, args: Vector<Atom>) Vector<Atom> {
+  out: Vector<Atom> = []
+  for i in retained_arg_indices(cs, args) {
+    if i < args.len() {
+      out = .append(args[i])
+    }
+  }
+  out
+}
+
+// The stored VALUE is the last retained operand (append [1] -> arg1;
+// vector$set_unsafe [2] -> arg2; Dict.set [1,2] -> arg2).
 fn stored_element_atom(cs: CallSemantics, args: Vector<Atom>) Atom? {
   ri := retained_arg_indices(cs, args)
   if ri.len() == 0 {
@@ -1135,22 +1163,70 @@ fn stored_element_atom(cs: CallSemantics, args: Vector<Atom>) Atom? {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+Extend only the `.Update` branch (`.Allocate` is untouched — `Vector.make` adds no field claim, giving never-`[Elem]` for free):
 
-Expected: PASS — owned append keeps `[Elem]`; shared append and `Vector.make` claim nothing. Phase 2/3 green.
+```tw
+    .Update => {
+      // Capture base facts BEFORE consume (consume leaves base.field_own intact).
+      base_fields := case cs.cow_base_arg {
+        .Some(k) => if k < args.len() {
+          atom_field_own(st, args[k])
+        } else {
+          Dict.new()
+        },
+        .None => Dict.new(),
+      }
+      st = st
+        .consume_call_base(result, cs, args, last)
+        .carry_base_prov(result, cs, args)
+        .absorb_retained_call_args(result, args, retained_arg_indices(cs, args), last)
+      // Nested facts survive only when the result shell is Unique.
+      st = if own_is_unique(st.own, result) {
+        rf := case container_seg(sem, fid) {
+          .Some(seg) => {
+            // A known collection op: untouched elements are structurally
+            // preserved (carry base's [seg]*), then keep or drop the touched seg.
+            carried := base_fields
+            keep := case stored_element_atom(cs, args) {
+              .Some(x) => single_retention(st, x, last, retained_atoms(cs, args)),
+              .None => false,
+            }
+            if keep {
+              carried
+            } else {
+              ff.remove_prefix(carried, seg)
+            }
+          },
+          // Unknown Update op: we do NOT know it preserves inner structure -> drop
+          // every nested fact (sound). Shell stays whatever consume_call_base set.
+          .None => Dict.new(),
+        }
+        st.set_field_own(result, rf)
+      } else {
+        st
+      }
+      st
+    },
+```
 
-- [ ] **Step 5: Format, lint, commit**
+- [ ] **Step 5: Run tests to verify they pass**
+
+Expected: PASS — owned store keeps `[Elem]`; shared store and `Vector.make` claim nothing. Phase 2/3 green.
+
+- [ ] **Step 6: Format, lint, commit**
 
 ```bash
-target/twk fmt boot/compiler/ownership.tw boot/tests/suites/cfg_field_facts_suite.tw
+target/twk fmt boot/compiler/opt/semantics.tw boot/compiler/ownership.tw boot/tests/suites/cfg_field_facts_suite.tw
 target/twk lint boot/main.tw
-git add boot/compiler/ownership.tw boot/tests/suites/cfg_field_facts_suite.tw
+git add boot/compiler/opt/semantics.tw boot/compiler/ownership.tw boot/tests/suites/cfg_field_facts_suite.tw
 git commit -m "ownership: nested-collection facts for consuming builtins
 
-dict.set/vector.append/Vector.set keep [Elem]/[Val]:Unique only when the stored
-element is single-retention; a shared element drops the nested path. Vector.make
-never claims [Elem] (Allocate adds no field claim). Container seg (Elem vs Val)
-derived from the callee method_id."
+vector$set_unsafe/vector append/Dict.set keep [Elem]/[Val]:Unique only when the
+stored element is single-retention across all retained operands (so Dict.set(d,x,x)
+does not mint [Val]); a shared or aliased element drops the nested path. Unknown
+Update ops drop nested facts. Vector.make never claims [Elem]. Container kind
+(Vector/Dict) is carried on the optimizer semantics, keyed by the real builtin
+ids (vector\$set_unsafe / builder push / Dict.set), not method_id compares."
 ```
 
 ---
@@ -1167,7 +1243,7 @@ Make `ARecordGet(base, f)` move the field's facts to R (rebase `[.f]* → []*`) 
 
 ```tw
 fn record_get(base: LocalId, fid: Int) AnfOp {
-  .ARecordGet(.ALocal(base), FieldId.{ id: fid }, MonoType.Int)
+  .ARecordGet(.ALocal(base), FieldId.{ id: fid }, TypeId.{ id: 0 })
 }
 
 fn is_shell_unique(f: cfg.CfgFunction, local_id: Int) Bool {
@@ -1274,7 +1350,7 @@ cleared (both demote). Field-not-owned projections stay a plain borrow."
 
 ## Task 6: Quartet shell-writeback recognizer + move
 
-Recognize the `get→consume→update→rebind` quartet as a **block-local linear-ANF pre-pass**, annotate the `ARecordGet`, and let projection move the field even when `base` is not whole-record-dead (G5).
+Recognize the `get→consume→update` quartet as a **block-local linear-ANF pre-pass**, annotate the `ARecordGet`, and let projection move the field even when `base` is not whole-record-dead (G5). **The write-back binds a fresh local** (`env2 := env.types = t2`), not an `AAssign` of `env` — the essential proof is that `base`'s *only* remaining use is the matching `ARecordUpdate` and `base` is **dead after the block** (not live-out), so `R` mutating the field backing in place cannot corrupt a surviving view of `base`.
 
 **Files:**
 - Modify: `boot/compiler/ownership.tw` (recognizer + a per-op `quartet_move` set, consulted in `.ARecordGet`).
@@ -1283,18 +1359,18 @@ Recognize the `get→consume→update→rebind` quartet as a **block-local linea
 - [ ] **Step 1: Write the failing test (the push_scope idiom)**
 
 ```tw
-    .test("quartet move: get -> Dict.set -> update -> rebind licenses field in-place", fn() {
+    .test("quartet move: get -> Dict.set -> update licenses field in-place", fn() {
       b := b_reg()
       // f() {
       //   d := Dict.new(); env := Ctx.{ types: d };
       //   t := env.types;                 // projection (env still live -> update below)
       //   t2 := Dict.set(t, 1, 2);        // consume/produce
-      //   env2 := (env.types = t2);       // record_update base=env, field types
-      //   env2
+      //   env2 := (env.types = t2);       // record_update base=env, field types (env dead after)
+      //   env2                            // returns the fresh binding; env NOT live-out
       // }
       mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
       set2: AnfOp = .ACall(.AGlobalFunc(b.method_id("Dict", "set")), [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)])
-      upd: AnfOp = .ARecordUpdate(.ALocal(lid(1)), FieldId.{ id: 0 }, .ALocal(lid(3)), TypeId.{ id: 0 }, MonoType.Int)
+      upd: AnfOp = .ARecordUpdate(.ALocal(lid(1)), FieldId.{ id: 0 }, .ALocal(lid(3)), false, TypeId.{ id: 0 })
       body: AnfExpr = .Let(
         lid(0),
         dict_new_call(b),
@@ -1337,10 +1413,7 @@ fn recognize_quartet_moves(blk: CfgBlock) Dict<Int, Bool> {
       .ARecordGet(base, f, _) => case atom_local_id(base) {
         .Some(bid) => {
           rget := inst.anf_local.id
-          // Scan forward for the matching `record_update base.f = _` then
-          // `assign base = <that update>` (or the update rebinding base), with
-          // `base` used for NOTHING else and `base.f` never read again between.
-          if quartet_ok(insts, i, bid, f.id, rget) {
+          if quartet_ok(blk, i, bid, f.id, rget) {
             moves[rget] = true
           }
         },
@@ -1352,70 +1425,58 @@ fn recognize_quartet_moves(blk: CfgBlock) Dict<Int, Bool> {
   moves
 }
 
-// True iff, strictly after index `i` in this block:
-//  - there is an ARecordUpdate(base=bid, field=fid, v=_) whose result is then the
-//    new binding of `bid` (assign bid = that result, OR the update's result flows
-//    only into `assign bid`);
-//  - `bid` appears in NO other op between `i` and that update (not published,
-//    passed to a call, stored, returned, aliased, or read for another field);
+// True iff, strictly after the projection at index `i` in this block:
+//  - there is EXACTLY ONE ARecordUpdate(base=bid, field=fid, v=_) (the write-back),
+//    and its replacement `v` is not `bid` itself;
+//  - `bid` is mentioned by NO other instruction (not published, passed to a call,
+//    stored, aliased, or read for another field);
 //  - `bid.fid` is not read again (no second ARecordGet(bid, fid));
-//  - the old `bid` shell is dead after the rebind.
-// Any violation -> false (fall back to borrow). Conservative: unknown op shapes
-// touching `bid` fail the proof.
-fn quartet_ok(insts: Vector<CfgInstruction>, i: Int, bid: Int, fid: Int, rget: Int) Bool {
-  // Walk j = i+1 .. end. Track whether we have seen the matching update.
-  update_result: Int? = .None
+//  - `bid` does NOT escape the block: it is not in the terminator payload or any
+//    outgoing edge arg (so `bid` is dead after the block — R's in-place mutation of
+//    the field backing cannot corrupt a surviving view of `bid`).
+// The write-back's result binds a fresh local (the idiom `env2 := env.f = v`); no
+// AAssign of `bid` is required. Any violation -> false (fall back to borrow).
+fn quartet_ok(blk: CfgBlock, i: Int, bid: Int, fid: Int, rget: Int) Bool {
+  insts := blk.instructions
+  matched := false
   for j in range(i + 1, insts.len()) {
     op := insts[j].op
-    // (a) the matching update?
-    case op {
-      .ARecordUpdate(base2, f2, _v, _, _) => case atom_local_id(base2) {
-        .Some(b2) => if b2 == bid and f2.id == fid and update_result == .None {
-          update_result = .Some(insts[j].anf_local.id)
-        } else if op_mentions_local(op, bid) {
-          // another update/use of bid before/around the match -> fail
+    is_match := case op {
+      .ARecordUpdate(base2, f2, _v, _, _) => atom_is_local(base2, bid) and f2.id == fid,
+      _ => false,
+    }
+    if is_match {
+      if matched {
+        return false // a second matching update -> ambiguous, fail
+      }
+      matched = true
+      // the write-back legitimately uses bid as base; reject if it ALSO uses bid
+      // as the replacement value (self-insert).
+      case op {
+        .ARecordUpdate(_, _, v, _, _) => if atom_is_local(v, bid) {
           return false
         },
-        .None => {},
-      },
-      _ => {
-        // (b) any other op that mentions bid fails the proof, EXCEPT the final
-        // `assign bid = update_result`.
-        case op {
-          .AAssign(l, a) => if l.id == bid {
-            // rebind of bid: OK iff it rebinds to the matching update result and
-            // that update was already seen.
-            case update_result {
-              .Some(ur) => if atom_is_local(a, ur) {
-                return true // quartet complete and clean
-              } else {
-                return false
-              },
-              .None => return false,
-            }
-          } else if op_mentions_local(op, bid) {
-            return false
-          },
-          _ => if op_mentions_local(op, bid) {
-            return false
-          },
-        }
-      },
-    }
-    // a second read of bid.fid between projection and update fails the proof
-    if is_record_get_of(op, bid, fid) and insts[j].anf_local.id != rget {
-      return false
+        _ => {},
+      }
+    } else {
+      // a second read of bid.fid, or ANY other mention of bid, fails the proof.
+      if is_record_get_of(op, bid, fid) {
+        return false
+      }
+      if op_mentions_local(op, bid) {
+        return false
+      }
     }
   }
-  false // no clean rebind found in this block -> not a quartet
+  matched and !exit_mentions_local(blk, bid)
 }
 ```
 
-Provide the small predicates by reusing the existing use/def extraction (`ownership.tw:59`+ has `atom_local_id`; there is already a per-op uses helper around `ownership.tw:95` — reuse it):
+Provide the small predicates by **reusing** the existing use extraction — the code around `ownership.tw:95` already builds a per-op use list via `push_uid` (it covers `ARecordGet`/`ARecordUpdate` bases). Expose it as `op_uses(op) Vector<Int>` and reuse it; do **not** hand-roll a second use list, or the proof can miss a hidden use of `bid` and unsoundly move (execution risk below).
 
 ```tw
 fn op_mentions_local(op: AnfOp, id: Int) Bool {
-  for u in op_uses(op) { // op_uses = the existing push_uid-based use list
+  for u in op_uses(op) {
     if u == id {
       return true
     }
@@ -1436,9 +1497,31 @@ fn is_record_get_of(op: AnfOp, bid: Int, fid: Int) Bool {
     _ => false,
   }
 }
+
+// bid must be dead after the block: not returned/broken and not fed on any
+// outgoing edge. Grep the real Terminator variants (ownership.tw uses
+// .Return(.Some(a)) / .ValueBreak(a)) and the CfgEdge arg accessor; adjust names.
+fn exit_mentions_local(blk: CfgBlock, id: Int) Bool {
+  term := case blk.terminator {
+    .Some(.Return(.Some(a))) => atom_is_local(a, id),
+    .Some(.ValueBreak(a)) => atom_is_local(a, id),
+    _ => false,
+  }
+  if term {
+    return true
+  }
+  for e in blk.succs {
+    for a in e.args {
+      if atom_is_local(a, id) {
+        return true
+      }
+    }
+  }
+  false
+}
 ```
 
-(Grep for the existing per-op uses function — the code around `ownership.tw:95` builds a use list via `push_uid`; expose/reuse it as `op_uses(op) Vector<Int>` rather than writing a new one.)
+(`blk.succs`/`CfgEdge.args` are the outgoing edges used by `join_entry_ownership`; confirm the field names in `cfg.tw`. If the CFG stores successor edge args differently, use whatever `join_entry_ownership` reads for positional edge args — the invariant is "`bid` is not fed to any successor param".)
 
 - [ ] **Step 4: Consult the quartet set in `.ARecordGet`**
 
@@ -1500,7 +1583,7 @@ Render the field facts and the per-`ARecordUpdate`/quartet two-verdict line in `
       // The push_scope quartet from Task 6.
       mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
       set2: AnfOp = .ACall(.AGlobalFunc(b.method_id("Dict", "set")), [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)])
-      upd: AnfOp = .ARecordUpdate(.ALocal(lid(1)), FieldId.{ id: 0 }, .ALocal(lid(3)), TypeId.{ id: 0 }, MonoType.Int)
+      upd: AnfOp = .ARecordUpdate(.ALocal(lid(1)), FieldId.{ id: 0 }, .ALocal(lid(3)), false, TypeId.{ id: 0 })
       body: AnfExpr = .Let(
         lid(0),
         dict_new_call(b),
@@ -1628,7 +1711,7 @@ git commit -m "docs/sound-uniqueness: track Phase 4 field-ownership delivery"
 **1. Spec coverage** (against `phase4-design.md`):
 - Additive `field_own` side map (Decision 1), `AccessPath`/`PathSeg` (Decision 2), reversible PathKey (Decision 3) → Tasks 1–2. ✓
 - Single-retention introduction, `ARecord`/`AArrayLit`/`ARecordUpdate` subtree-remove-then-graft (Decisions 4/6, intro table) → Task 3. ✓
-- Collection-builtin nested facts, `Vector.make` never-`[Elem]`, container seg (Decision 5, "where each rule lands") → Task 4. ✓
+- Collection-builtin nested facts, `Vector.make` never-`[Elem]`, container kind on the optimizer semantics (Decision 5, "where each rule lands") → Task 4. ✓ (empty-collection vacuous minting flagged as an open refinement, not silently assumed)
 - Projection move/borrow, rebase, demote-both (Decision 4, projection section) → Task 5. ✓
 - Quartet shell-writeback as block-local pre-pass (Decision 4, the tightening) → Task 6. ✓
 - Two-verdict output + field-fact rendering, no silent bail (Output/Rendering) → Task 7. ✓
@@ -1636,7 +1719,9 @@ git commit -m "docs/sound-uniqueness: track Phase 4 field-ownership delivery"
 - Join/fixpoint/determinism (same param/live-through + skip-unprocessed, per-path meet) → Task 2. ✓
 - Acceptance 1–10 mapped: field-backing (T3), field-sensitivity (T3 sibling), nested inner (T4), move/borrow (T5/T6), demotion cascade (T2/T5 clears), downward-closed sweep (T8), alias-creation guards (T3/T4 negatives), determinism (T1 codec + T7 render), census-0 (T8), full verify (T8). ✓
 
-**2. Placeholder scan:** Task 6's `quartet_ok` and Task 7's verdict/render steps describe the linear-scan proof and the render format by contract, but the novel algorithmic code (codec, map ops, single-retention, introduction arms, projection, container seg) is shown in full. The two explicit sketch markers (`own_tag(...).some_or_unknown()` in T3 Step 4 and `.Atom2Op` in T4 Step 1) are flagged inline with the exact substitution to make ("use the existing `own_is_unique`/Unique reader"; "inline `.ALitInt(3)` as the size atom") — resolve them during execution, they are not left blank.
+**2. Placeholder scan:** Task 7's verdict/render steps describe the render format by contract; all novel algorithmic code (codec, map ops, single-retention, introduction arms, projection, container kind, the `quartet_ok` recognizer) is shown in full. No `TBD`/blank markers remain. The only inline verify-during-execution notes are *name confirmations against the live code* (the exact `vector$set_unsafe`/`builder.push_id` ids, the `Terminator`/`CfgEdge.args` field names, the `op_uses` helper name) — each says exactly what to grep and substitute.
+
+**Review pass (post-subagent-review fixes applied):** ANF constructor arities corrected (`ARecordGet(Atom, FieldId, TypeId)`; `ARecordUpdate(Atom, FieldId, Atom, Bool, TypeId)` — 4th is `false`, 5th `TypeId`); `BlockFacts.live` kept `Vector<Int>`; the container signal moved off nonexistent `Vector.append`/`Vector.set` method-ids onto a `ContainerKind` carried on the optimizer semantics keyed by the real `vector$set_unsafe`/`builder.push_id`/`Dict.set` ids, with `NotCollection` dropping nested facts; single-retention now counts the candidate across **all** retained operands (so `Dict.set(d, x, x)` mints no `[Val]`); the quartet recognizer no longer requires an `AAssign` and adds a mandatory block-exit escape check; the plan/design PathKey conflict reconciled (design Decision 3 updated to the reversible codec); `set_path` rejects the shell key; `ff.PathSeg` qualification noted.
 
 **3. Type consistency:** `field_own: Dict<Int, Dict<Int, Int>>` used identically in `ForwardState`, `BlockFacts`, `FixResult.exit_field_own`, and every helper (`field_own_get`/`set_field_own`/`field_of`/`join_entry_field_own`). `ff.graft`/`project`/`remove_prefix`/`merge`/`is_unique`/`path_key`/`path_of_key` signatures match between Task 1's module and Tasks 3–7's call sites. `single_retention`/`container_seg`/`stored_element_atom`/`recognize_quartet_moves`/`quartet_has` defined once and reused. `Projection.{ shell, fields }` consistent between Task 1 and Task 5.
 
@@ -1648,3 +1733,4 @@ git commit -m "docs/sound-uniqueness: track Phase 4 field-ownership delivery"
 - **`--opt` shape survival:** fixtures are hand-built ANF (stable ids), but the CLI smoke uses real `.tw` through `--opt`; the optimizer may inline/reshape the quartet. If the CLI verdict line doesn't appear, inspect `twk ir /tmp/pf.tw --opt` and adjust the fixture to the shape that survives (design Testing note: each fixture is checked against `--opt`).
 - **Determinism:** PathKeys are canonical ints; every rendered field-fact / verdict line is sorted by `(LocalId, PathKey)` / result local. The Task 7 determinism assertion + the Task 1 codec collision test gate it. Never let `Dict.keys()` iteration order reach output.
 - **Cost:** the quartet recognizer is an extra O(n²)-worst per block linear scan (each `record_get` scans to block end). Blocks are short; fine for analysis, but do not lift this onto a hot codegen path in later phases without bounding it.
+- **Nested dict coverage is literal-bootstrapped only (deferred refinement):** with empty-array `[Elem]` minting but **no** `Dict.new` `[Val]` minting, vectors accumulate `[Elem]` from a literal base but dicts built by `Dict.new`+`set` (Case B, the census-dominant idiom) get **no** `[Val]` in this plan. The retained-operand single-retention dedup (so `Dict.set(d, x, x)` mints no `[Val]`) is therefore correct-but-latent — it only becomes observable once `Dict.new` mints a vacuous `[Val]`. Before committing to that (a small `.Allocate`-branch signal for empty-collection constructors), confirm against `records-fields.md` Case B; when added, also add the `Dict.set(d, x, x)` negative the reviewer asked for. Phase 4 stays sound without it (under-claim).

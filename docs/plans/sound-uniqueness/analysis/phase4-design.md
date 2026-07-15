@@ -94,7 +94,7 @@ today's behavior).
 |---|---|---|
 | 1 | Representation | **Additive side map** (Approach C): `own` is untouched and *is* the `[]` shell fact; a new `field_own: Dict<Int, Dict<Int, Int>>` (local → PathKey → ownership tag) holds only non-shell paths |
 | 2 | `AccessPath` | `Vector<PathSeg>` with `PathSeg = { Field(Int), Elem, Val }`; `[]` = shell/whole value; downward-closed (a `[.f]*` fact presupposes `[]` is `Unique`) |
-| 3 | Path keying | Canonical `Int` `PathKey` encoding + a `PathKey → AccessPath` side table for rendering; inner-map iteration and all output sorted by `(LocalId, PathKey)` |
+| 3 | Path keying | Canonical `Int` `PathKey` encoding, **reversible** for the Phase 4 path shapes (depth ≤ 2), so `path_of_key` reconstructs the `AccessPath` by pure arithmetic and **no interned `PathKey → AccessPath` side table is needed** (the "side table" collapses to pure decode; a real interning table returns only when deeper Phase 5 paths exceed the reversible scheme); inner-map iteration and all output sorted by `(LocalId, PathKey)` |
 | 4 | Projection precision | A projection moves when either `base` is at **whole-record** last-use or the site satisfies the Phase 4 **quartet shell-writeback** proof: `base` remains live only to perform the matching `ARecordUpdate(base, same f, replacement)` and old `base.[.f]` is unobservable before that write-back. Otherwise projection is a borrow and demotes **both** sides — `own[R] ← Shared` *and* `base`'s `[.f]*` cleared. General path-granular liveness remains Phase 5 |
 | 5 | Consuming-op field-backing | The existing `consume_base` hinge licenses the **outer** shell in-place once projection supplies `[]:Unique` (no new rule there). **Nested** facts need a real rule: `dict.set`/`vector.append`/`Vector.set` keep `[Elem]`/`[Val]` only when the stored value is itself `[]:Unique`+last-use+single-store; a shared/aliased stored value **drops** `[Elem]`/`[Val]` and descendants |
 | 6 | Alias-creation discipline | Deep facts are claimed only under **single-retention**: a value stored once, at last-use, into exactly one slot. Duplicate operands (`.{ a: x, b: x }`, repeated array elements) and replicated stores (`Vector.make(n, v)`) create intra-shell aliases → no deep fact |
@@ -104,8 +104,9 @@ today's behavior).
 ## Module layout
 
 - **`field_facts.tw`** (new) — the cohesive, independently-testable path unit:
-  - `PathSeg` / `AccessPath` types; `PathKey` encode/decode; the `PathKey →
-    AccessPath` side table.
+  - `PathSeg` / `AccessPath` types; `PathKey` encode/decode as **reversible
+    arithmetic inverses** for the Phase 4 shapes (so rendering decodes a key
+    directly — no interned side table to thread through the analysis).
   - Map operations over a local's `Dict<Int, Int>` (PathKey → tag): `graft(dst,
     path, src_shell, src_fields)` (copy a value's facts under a path prefix),
     `rebase(fields, prefix)` (the projection inverse, `[.f]* → []*`),
