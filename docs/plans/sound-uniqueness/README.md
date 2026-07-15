@@ -20,11 +20,21 @@ track README(s). The focused track docs own the detailed checklists.
 
 ## Current focus
 
-The analysis track's first proof-producing milestone is complete: Phases 0-3 now
-produce auditable CFG ownership facts, liveness, and minimal summaries without
-changing generated code. The next implementation focus is the **codegen track**:
-ANF-keyed decision handoff/fallback plumbing, then narrow emitted slices for the
-existing mutable hooks.
+**The analysis track is not finished — its foundation is.** Phases 0-3 produce
+auditable CFG ownership facts, liveness, and *minimal* summaries without changing
+generated code. But those phases deliberately cover only the first executable
+subset: the census-dominant compiler idioms (unique record shells over dict/vector
+fields, transport-wrapper and `Result`-payload state threading, and the
+specialization those require) are **not yet analyzed** — Phases 4-6 below.
+
+The governing rule is **all analysis precision lands before any codegen.** So the
+current focus stays on the analysis track: record shell/field and
+nested-collection ownership (Phase 4), transport-wrapper / `Result`-payload
+return-path summaries (Phase 5), and ownership-specialization decision facts
+(Phase 6). Only once the full ownership-fact story is trustworthy does the
+**codegen track** begin — ANF-keyed
+decision handoff/fallback plumbing, then narrow emitted slices for the existing
+mutable hooks.
 
 ## Standing invariants
 
@@ -42,19 +52,28 @@ existing mutable hooks.
 
 Detailed checklist: [analysis/README.md](analysis/README.md)
 
+Foundation (done) — architecture Phases 1A/1B:
+
 - Phase 0: baseline and safety rails — done.
 - Phase 1: structural CFG ownership view — done.
 - Phase 2: minimal ownership facts — done.
 - Phase 3: shared optimizer facts and minimal summaries — done.
 
+Remaining analysis precision (all before any codegen) — Phases 4-6 (architecture 1C-1E):
+
+- Phase 4: record shell/field and nested-collection ownership (1C) — not started.
+- Phase 5: transport-wrapper and `Result`-payload return-path summaries (1D) — not started.
+- Phase 6: ownership-specialization decision facts (1E) — not started.
+
 ### 2. Codegen track
 
 Detailed checklist: [codegen/README.md](codegen/README.md)
 
-This track starts after the analysis facts are trustworthy enough to drive
-candidate decisions. It is intentionally split more finely than the old Phase 4/5:
-first operation catalogs and dry-run decisions, then backend lookup/fallback
-plumbing, then narrow emitted slices for vectors, builders, dicts, and records.
+This track starts only after the **full** analysis track — through the Phase 6
+(1E) specialization decisions — is complete and its facts are trustworthy. It is
+intentionally split more finely than a single codegen milestone: first operation
+catalogs and dry-run decisions (Phase 7), then narrow emitted slices for vectors,
+builders, dicts, and records (Phase 8).
 
 ### 3. Migration track
 

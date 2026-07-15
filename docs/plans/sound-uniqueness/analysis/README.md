@@ -1,6 +1,10 @@
 # Analysis Track
 
-**Status:** Phase 0-3 done. Remaining analysis precision items are in the deferrals table.
+**Status:** Foundation (Phases 0-3) done. Phases 4-6 — the remaining
+ownership-fact precision that the census-dominant compiler idioms need — are
+**not started**. They land *before* any codegen, per
+[../architecture.md](../architecture.md)'s governing rule that all analysis
+precision precedes codegen.
 
 This track owns the proof-producing half of sound uniqueness: CFG structure,
 ownership facts, liveness/last-use, summaries, candidate-classification inputs,
@@ -9,6 +13,16 @@ facts into ANF-keyed lowering decisions.
 
 [../architecture.md](../architecture.md) is the canonical scope/design source.
 This README is the analysis worklist derived from it.
+
+> **Phase numbering.** The whole plan uses one monotonic integer scheme where the
+> number encodes execution order: **Phases 0-6 = analysis** (0-3 foundation, 4-6
+> the precision below), **Phases 7-8 = codegen** (decisions/handoff, then
+> emission — see [../codegen/README.md](../codegen/README.md)), and **Phases 9-10 =
+> migration** (mutable intrinsics, then follow-up precision + Buffer retirement —
+> see [../migration/README.md](../migration/README.md)). The tag on each heading
+> (e.g. *architecture: 1C*) maps the integer to architecture.md's letter scheme,
+> where **Phase 1 = all analysis (1A-1E)** and **Phase 2 = all codegen (2A+)**. All
+> analysis (0-6) precedes all codegen (7-8).
 
 ## Track invariants
 
@@ -99,15 +113,94 @@ variants, decision records, or codegen changes.
   [summary-specialization.md](summary-specialization.md),
   [phase3-design.md](phase3-design.md).
 
+## Phase 4 — Record shell/field and nested-collection ownership *(architecture: 1C)*
+
+The minimal domain (Phases 1-2) treats a fresh record/variant/array shell as
+`Unique` and makes no claim about its contents, so the compiler's characteristic
+idiom — unique record shells over dict/vector fields — still classifies as blanket
+publication. This phase adds the field-sensitive layer. Still no codegen changes.
+Canonical semantics: [records-fields.md](records-fields.md).
+
+- [ ] **Separate shell reuse from field-backing ownership.** A record update
+  carries two independent questions: shell reuse (needs the shell `Unique`) and
+  field-backing in-place (needs the field's collection deeply `Unique` with no
+  live alias on the old field value). A fresh shell around shared fields is not
+  deep ownership.
+- [ ] **Model nested-collection ownership** (`Vector<Vector<T>>`,
+  `Dict<K, Vector<V>>`) with the same shell-vs-deep split: an owned outer backing
+  does not imply owned inner backing.
+- [ ] **Print the field verdicts.** Per record-update / field-projection /
+  nested-write site: shell-owned, deeply-owned field, projected owned field, or
+  the rejection reason (outer owned but inner shared, nested publication,
+  insufficient deep ownership).
+
+Exit: the `advance`/`push_scope` record cases and Case V's `Vector<Vector>` /
+dict-valued field updates in [worked-examples.md](worked-examples.md) classify
+with correct shell-vs-deep verdicts; generated code unchanged.
+
+## Phase 5 — Transport-wrapper and `Result`-payload return-path summaries *(architecture: 1D)*
+
+Boot threads context/state through small product records
+(`SynthOut`/`CheckOut`/`ExprOut`/`FreshResult`/…) and their `Result`-wrapped
+forms. Without return-path precision these look like aggregate publication and the
+analysis drops to persistent across checker/lowering/resolver/query analysis. This
+phase adds return-path summaries. Still no codegen changes. Canonical semantics:
+[summary-specialization.md](summary-specialization.md).
+
+- [ ] **Return-path summaries keyed by field and variant-payload paths.**
+  `returns[.ctx]`/`[.state]`/`[.env] = OwnedFromParam(k)`, plus variant paths such
+  as `Ok[0].state` / `Err[0].state`.
+- [ ] **Field-projection move.** `ctx = out.ctx` / `state = out.state` transfers
+  the field's ownership when that path is dead through `out` afterward; reading
+  sibling result fields does not block it, but publishing / returning / storing /
+  re-reading the transported path does.
+- [ ] **Path-aware liveness.** Answer whether a returned field/payload path — not
+  just the wrapper local — remains observable.
+- [ ] **Handled-`Result` arm joins.** Merge transported payload facts like ordinary
+  record-field facts; `try` / `return` / value-carrying `break` stay publishing
+  exit edges (Case T).
+
+Exit: Cases W and R in [worked-examples.md](worked-examples.md) classify as
+ownership-preserving handoffs instead of aggregate publication; generated code
+unchanged.
+
+## Phase 6 — Ownership-specialization decision facts *(architecture: 1E)*
+
+The final analysis phase produces the specialization **decisions**, not the
+variants. Generating cloned variants is codegen (architecture Phase 2A); this
+phase only proves and prints what those variants must be, so the specialization
+story is verifiable before any code is emitted. Canonical semantics:
+[summary-specialization.md](summary-specialization.md).
+
+- [ ] **Per-function preconditions/postconditions + per-call-site variant
+  compatibility.** Which callers pass proven-owned args (may use an owned callee),
+  which must stay generic; whether each param is consumed / borrowed / published /
+  returned; whether the return is owned / persistent / published.
+- [ ] **SCC-granularity summary fixpoint** so recursive/mutually-recursive
+  functions (Case V's self-referential `visit`) converge; the specialization key
+  is driven by the set of caller argument facts.
+- [ ] **Demand-driven + capped.** Only call-site shapes that occur and only when
+  the fact changes codegen; read-only ref params stay out of the key; per-function
+  variant cap with a persistent fallback.
+- [ ] **Print the specialization story** (preconditions, postconditions,
+  per-call-site variant choice). Decisions only — no cloned variants emitted.
+
+Exit: Cases A/B/V and the B∩C "one callee, two caller shapes" example print a
+verifiable specialization decision (owned-specialized vs generic per call site,
+with the licensing proof); generated code unchanged.
+
 ## Analysis deferrals
+
+These are **not** analysis-track work that gates codegen. Codegen-owned items live
+in the codegen track; the follow-ups are conservative-by-default (sound without
+them) and are refined *after* the first codegen, per architecture.md.
 
 | Deferred work | Home |
 |---|---|
 | Candidate verdicts and ANF-keyed codegen decisions | [../codegen/README.md](../codegen/README.md) |
 | Existing-hook codegen lowering | [../codegen/README.md](../codegen/README.md) |
-| Record/field ownership, return-path transport wrappers, and locally handled Result payload paths | Later analysis precision; see [records-fields.md](records-fields.md) and [summary-specialization.md](summary-specialization.md) |
-| Bounded ownership-specialized variants and SCC/variant interaction | Later analysis precision; see [summary-specialization.md](summary-specialization.md) |
+| Ownership-specialized variant *generation* (the 1E decisions are analysis; cloning is codegen) | [../codegen/README.md](../codegen/README.md) |
 | Compiler-private mutable intrinsic family | [../migration/README.md](../migration/README.md) |
-| Extern copying-borrow precision | Follow-up; see [concurrency-publication.md](concurrency-publication.md) |
-| Non-escaping closure recovery | Follow-up; see [closure-capture.md](closure-capture.md) |
-| Advanced concurrency copy/share refinement | Follow-up; see [concurrency-publication.md](concurrency-publication.md) |
+| Extern copying-borrow precision | Post-codegen follow-up; see [concurrency-publication.md](concurrency-publication.md) |
+| Non-escaping closure recovery | Post-codegen follow-up; see [closure-capture.md](closure-capture.md) |
+| Advanced concurrency copy/share refinement | Post-codegen follow-up; see [concurrency-publication.md](concurrency-publication.md) |

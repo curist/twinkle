@@ -1,7 +1,12 @@
 # Codegen Track
 
-**Status:** Planned; starts after analysis can produce auditable candidate
-verdicts/decisions.
+**Status:** Planned; starts only after the **full** analysis track is complete —
+through record/field ownership (analysis Phase 4), transport-wrapper /
+`Result`-payload return-path summaries (Phase 5), and ownership-specialization
+decision facts (Phase 6) — so codegen consumes a trustworthy, complete fact set
+rather than rediscovering ownership. (These "Codegen Phase 7A/…" labels are the
+codegen track's own local numbering; see the phase-numbering note in
+[../analysis/README.md](../analysis/README.md).)
 
 This track owns the practical bridge from proof facts to emitted code. It should
 first reuse today's persistent/in-place/builder mechanisms, not introduce the
@@ -23,7 +28,7 @@ belongs to [../migration/README.md](../migration/README.md).
 - Existing runtime/compiler hooks are implementation targets, not independent
   legality sources.
 
-## Codegen Phase 4A — Operation catalog and dry-run targets
+## Codegen Phase 7A — Operation catalog and dry-run targets
 
 No emitted-code change. This phase answers: “if this candidate is accepted, what
 exact existing target would codegen use?”
@@ -42,7 +47,7 @@ exact existing target would codegen use?”
   families, but unsupported or unmapped sites must keep the ordinary immutable
   path.
 
-## Codegen Phase 4B — Decision records and handoff contract
+## Codegen Phase 7B — Decision records and handoff contract
 
 No optimized emission yet. This phase makes the analysis→backend seam explicit
 and fail-safe.
@@ -59,7 +64,7 @@ and fail-safe.
 - [ ] **Render decisions before using them.** `twk ir`/census output should show
   decisions and proof ids so the first emitted slice is auditable.
 
-## Codegen Phase 4C — Backend lookup and persistent fallback plumbing
+## Codegen Phase 7C — Backend lookup and persistent fallback plumbing
 
 Still no optimized emission. This phase wires the backend to consume the side
 table while deliberately returning the persistent target for every site.
@@ -71,7 +76,7 @@ table while deliberately returning the persistent target for every site.
 - [ ] **Add inspection for consumed vs ignored decisions.** Backend debug output
   should distinguish “decision found but dry-run” from “decision absent/stale.”
 
-## Codegen Phase 5A — First vector indexed-update emission
+## Codegen Phase 8A — First vector indexed-update emission
 
 First emitted-code change. Keep the slice intentionally narrow.
 
@@ -84,7 +89,7 @@ First emitted-code change. Keep the slice intentionally narrow.
   show the mutable helper; negative aliasing cases should still call the
   persistent path.
 
-## Codegen Phase 5B — Loop-carried vector updates
+## Codegen Phase 8B — Loop-carried vector updates
 
 - [ ] **Extend vector indexed-update lowering to loop-carried accumulators.**
   Target shapes like `flags = flags.set_at(k, false)` and
@@ -92,7 +97,7 @@ First emitted-code change. Keep the slice intentionally narrow.
 - [ ] **Render loop proof ids near emitted decisions.** Debug output should name
   the carried local, update site, borrow sites, and accepted/rejected reason.
 
-## Codegen Phase 5C — Existing vector builder lowering
+## Codegen Phase 8C — Existing vector builder lowering
 
 Builder lowering has a different region shape from indexed update and should not
 be bundled with it.
@@ -103,7 +108,7 @@ be bundled with it.
   required independent of optimization must keep working without an ownership
   decision.
 
-## Codegen Phase 5D — Dict update emission
+## Codegen Phase 8D — Dict update emission
 
 - [ ] **Lower proven-owned `Dict.set` through existing in-place helpers.** Preserve
   key lookup semantics and old-version observability.
@@ -112,7 +117,7 @@ be bundled with it.
 - [ ] **Keep nested value ownership conservative.** Ownership of a dict backing is
   not ownership of reference-typed values stored inside it.
 
-## Codegen Phase 5E — Record shell update emission
+## Codegen Phase 8E — Record shell update emission
 
 - [ ] **Lower simple record shell updates from facts.** Reuse record shells only
   when CFG facts explicitly permit shell reuse.
@@ -123,7 +128,7 @@ be bundled with it.
   `out.ctx`/`out.state` style wins wait for the analysis precision that proves
   them.
 
-## Codegen Phase 5F — Codegen-track verification gate
+## Codegen Phase 8F — Codegen-track verification gate
 
 - [ ] **Run correctness and aliasing guards.** The negative-aliasing suite must
   remain persistent/correct; positive anchors should lower only where proved.

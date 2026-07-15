@@ -269,11 +269,14 @@ blockers, and the IR should distinguish "blocked by escaping capture" from
 "temporary non-escaping closure borrow" if the latter is introduced. See
 [closure-capture.md](analysis/closure-capture.md) for the focused subplan.
 
-### Interprocedural uniqueness specialization — later
+### Interprocedural uniqueness specialization
 
-Some profitable cases require caller-dependent code generation, but this should
-come after the core CFG ownership engine and minimal summaries are stable. The
-same source function may eventually need both:
+Some profitable cases require caller-dependent code generation. This comes after
+the core CFG ownership engine and minimal summaries are stable, and it splits
+across the analysis/codegen boundary: the **decision facts** — preconditions,
+postconditions, and per-call-site variant compatibility — are the final analysis
+phase (1E) and land before any codegen, while **generating** the cloned variants
+is codegen (2A). The same source function may eventually need both:
 
 - a normal immutable/persistent variant for callers that pass shared or unknown
   values;
@@ -588,15 +591,26 @@ is proven semantically necessary and profitable.
 
 ## Milestone plan
 
-The future work is organized into three owned tracks: first build the CFG
-ownership view, migrate analysis/passes to consume it, and print minimal
-`Unique`/`Shared`/`Unknown` ownership facts; then consume those ANF-keyed
-facts/decisions through existing persistent/in-place/builder lowering hooks; then
-clean up the successful hook-based lowering behind compiler-private intrinsics.
-Baseline work is a precondition, and later path precision, specialization,
-mutable intrinsics, cleanup, and Buffer retirement are follow-on milestones rather
-than prerequisites for the first working ownership engine. The detailed track
-checklists live in [analysis/README.md](analysis/README.md),
+The future work is organized into three owned tracks, and the governing rule is
+**all analysis precision lands before any codegen**. Phase 1 (analysis) builds the
+CFG ownership view, migrates analysis/passes to consume it, and then completes the
+*full* ownership-fact story — minimal `Unique`/`Shared`/`Unknown` facts first
+(1A/1B), then record shell/field and nested-collection ownership (1C),
+transport-wrapper and `Result`-payload return-path summaries (1D), and
+ownership-specialization **decision facts** — printed preconditions,
+postconditions, and per-call-site variant compatibility (1E). Only once those
+facts are trustworthy does Phase 2 (codegen) consume the ANF-keyed decisions
+through existing persistent/in-place/builder hooks and generate the
+ownership-specialized variants those decisions call for; a later Phase 2D cleans
+the successful hook lowering up behind compiler-private intrinsics.
+
+Baseline work is a precondition. The split between analysis and codegen for
+specialization is deliberate: deciding *which* call sites need an owned variant
+(and printing the proof) is the final analysis phase (1E); *generating* the cloned
+variants is codegen (2A). Extern copying-borrow precision, non-escaping closure
+recovery, and concurrency copy/share refinement are conservative-by-default and
+remain post-codegen follow-ups rather than gates on the first codegen. The
+detailed track checklists live in [analysis/README.md](analysis/README.md),
 [codegen/README.md](codegen/README.md), and
 [migration/README.md](migration/README.md).
 
@@ -679,6 +693,83 @@ Exit criteria: the optimizer has one shared derived view for liveness, joins,
 loop back-edges, and ownership facts, while ANF remains authoritative and
 generated code remains unchanged.
 
+### Phase 1C — Record shell/field and nested-collection ownership facts
+
+The minimal domain (1A/1B) treats a fresh `ARecord`/`AVariant`/`AArrayLit` shell
+as `Unique` and makes no claim about its contents. That is sound but leaves the
+compiler's characteristic idiom — unique record shells whose fields are dicts and
+vectors — classified as blanket publication. This phase adds the field-sensitive
+layer, still with no codegen changes.
+
+- Separate the two independent questions on a record update: shell reuse
+  (needs the shell `Unique`) and field-backing ownership (needs the field's
+  collection deeply `Unique` with no live alias on the old field value). A fresh
+  shell around shared fields is not deep ownership.
+- Model nested-collection ownership (`Vector<Vector<T>>`, `Dict<K, Vector<V>>`)
+  with the same shell-vs-deep split: an owned outer backing does not imply owned
+  inner backing.
+- Print, per record-update / field-projection / nested-write site: shell-owned,
+  deeply-owned field, projected owned field, or the rejection reason (outer owned
+  but inner shared, nested publication, insufficient deep ownership).
+
+Exit criteria: the record quartet and nested-field cases from
+[worked-examples.md](analysis/worked-examples.md) (the `advance`/`push_scope`
+record cases and Case V's `Vector<Vector>` / dict-valued field updates) are
+classified and explained with correct shell-vs-deep verdicts; generated code
+unchanged.
+
+### Phase 1D — Transport-wrapper and `Result`-payload return-path summaries
+
+Boot threads context and state through small product records
+(`SynthOut`/`CheckOut`/`ExprOut`/`FreshResult`/…) and their `Result`-wrapped
+forms. Without return-path precision these all look like aggregate publication and
+the analysis drops to persistent across much of checker/lowering/resolver/query
+analysis. This phase adds return-path summaries, still with no codegen changes.
+
+- Extend summaries with return-path facts keyed by field and variant-payload
+  paths: `returns[.ctx]`/`[.state]`/`[.env] = OwnedFromParam(k)` and variant paths
+  such as `Ok[0].state` / `Err[0].state`.
+- Add the field-projection move: `ctx = out.ctx` / `state = out.state` transfers
+  the field's ownership when that path is dead through `out` afterward; reading
+  sibling result fields does not block it, but publishing, returning, storing, or
+  re-reading the transported path does.
+- Make liveness path-aware enough to answer whether a returned field/payload path
+  — not just the wrapper local — remains observable.
+- Join handled `Result` arms by merging transported payload facts like ordinary
+  record-field facts; `try` / `return` / value-carrying `break` stay publishing
+  exit edges (Case T).
+
+Exit criteria: the transport-wrapper and handled-`Result` threading idioms
+([worked-examples.md](analysis/worked-examples.md) Cases W and R) classify as
+ownership-preserving handoffs instead of aggregate publication; generated code
+unchanged.
+
+### Phase 1E — Ownership-specialization decision facts
+
+The final analysis phase produces the specialization *decisions* — not the
+variants. Generating cloned variants is codegen (Phase 2A); this phase only proves
+and prints what those variants must be, so the specialization story can be
+verified before any code is emitted.
+
+- Produce, per function, ownership preconditions and postconditions and a
+  per-call-site variant-compatibility decision: which callers pass proven-owned
+  args and may use an owned-specialized callee, which must stay on the generic
+  persistent callee, whether each parameter is consumed / borrowed / published /
+  returned, and whether the return is owned / persistent / published.
+- Run the summary fixpoint at SCC granularity so recursive and mutually-recursive
+  functions (Case V's self-referential `visit`) converge; the specialization key
+  is driven entirely by the set of caller argument facts.
+- Keep specialization demand-driven and capped: only call-site shapes that
+  actually occur and only when the ownership fact changes codegen; read-only
+  reference parameters stay out of the key; each function has a variant cap with a
+  persistent fallback (per "Controlling specialization explosion").
+- Print the specialization story (preconditions, postconditions, per-call-site
+  variant choice). Decisions only — no cloned variants are emitted in Phase 1.
+
+Exit criteria: Cases A/B/V and the B∩C "one callee, two caller shapes" example
+print a verifiable specialization decision (which call sites are owned-specialized
+vs generic, with the licensing proof) while generated code stays unchanged.
+
 ### Phase 2A — First codegen from ownership facts via existing hooks
 
 This architecture milestone corresponds to the finer codegen-track slices in
@@ -692,6 +783,10 @@ backend lookup/fallback, then narrow emitted lowering families.
   model in the first implementation.
 - Support fresh/proven-unique vector and dict updates where the simple domain and
   last-use facts are sufficient.
+- Generate the ownership-specialized function variants that Phase 1E's decisions
+  call for, keyed by the printed specialization key; callers without an
+  owned-args proof route to the generic persistent variant. The *decision* is
+  analysis (1E); only the variant generation and call-site routing are codegen.
 - Keep all publication and aliasing sinks as hard blockers.
 - Preserve the Phase 1 IR/debug output so each generated in-place helper or
   builder lowering can be traced back to the proof/debug id that licensed it.

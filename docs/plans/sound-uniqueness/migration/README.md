@@ -16,7 +16,7 @@ facts can safely drive today's existing hooks.
 - `collect` and other semantic builder uses must keep working independent of
   optimization.
 
-## Phase 7 — Mutable-intrinsic migration and hook cleanup *(architecture: 2D)*
+## Phase 9 — Mutable-intrinsic migration and hook cleanup *(architecture: 2D)*
 
 - [ ] **Define the compiler-private intrinsic family.** Finalize internal
   operations such as `begin`/`read`/`write`/`append`/`remove`/`freeze`, operand
@@ -34,7 +34,7 @@ facts can safely drive today's existing hooks.
 - [ ] **Update inspection output.** `twk ir` and census output should show both
   ownership proof and final intrinsic-or-hook lowering.
 
-## Phase 8 — Optional precision recovery and end-of-track verification *(architecture: Follow-up)*
+## Phase 10 — Optional precision recovery and end-of-track verification *(architecture: Follow-up)*
 
 - [ ] **Extern copying-borrow precision.** Treat host imports as borrow with owned
   GC results only when the copying-marshalling contract is explicit.
@@ -52,10 +52,10 @@ facts can safely drive today's existing hooks.
 
 | Deferred work | Phase |
 |---|---|
-| Compiler-private mutable intrinsic family | Phase 7 |
-| Migration of existing builder/in-place hooks behind shared internals | Phase 7 |
-| Removal of ad hoc mutability legality paths | Phase 7 |
-| Extern copying-borrow precision | Phase 8 |
-| Non-escaping closure recovery | Phase 8, optional based on workload evidence |
-| Advanced concurrency copy/share refinement | Phase 8, optional based on runtime contract |
-| Buffer retirement | Phase 8, after performance parity is demonstrated |
+| Compiler-private mutable intrinsic family | Phase 9 |
+| Migration of existing builder/in-place hooks behind shared internals | Phase 9 |
+| Removal of ad hoc mutability legality paths | Phase 9 |
+| Extern copying-borrow precision | Phase 10 |
+| Non-escaping closure recovery | Phase 10, optional based on workload evidence |
+| Advanced concurrency copy/share refinement | Phase 10, optional based on runtime contract |
+| Buffer retirement | Phase 10, after performance parity is demonstrated |

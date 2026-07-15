@@ -407,7 +407,7 @@ Full output (across slices) should show:
   (Phase 2+ facts.)
 - Should accepted mutable codegen decisions be represented as annotations on
   original ANF instructions, a side table keyed by proof/debug id, or both?
-  (Phase 5 codegen handoff.)
+  (Phase 7 codegen handoff.)
 - Which existing peephole passes should migrate first? (Optimizer migration.)
 
 ## Relationship to main architecture

@@ -45,7 +45,7 @@ to CFG facts … one shared source of truth"): the old ownership-consuming passe
 deleted in the rebuild, so there is **nothing to migrate** — the CFG facts are
 already the single source. Phase 3 does **not** silently narrow the 1B intent: it
 keeps candidate verdicts / decision records where the codegen track puts them
-(**Codegen Phase 4**), and it *proves* the "single source" claim with an explicit
+(**Codegen Phase 7**), and it *proves* the "single source" claim with an explicit
 optimizer audit (see Acceptance). The substantive Phase 3 work is summaries + the
 two precision items + doc/audit hygiene.
 
@@ -78,14 +78,16 @@ two precision items + doc/audit hygiene.
 
 - **Caller-binding invalidation / real consumption of args.** Only a later
   specialized mutable variant selected with an ownership key + last-use proof may
-  invalidate a caller binding → **Phase 6** ([summary-specialization.md](summary-specialization.md)).
+  invalidate a caller binding → **codegen, realizing the Phase 6 specialization
+  decision** ([summary-specialization.md](summary-specialization.md)).
   Phase 3 records `Consumed` as a capability but never invalidates a caller arg.
-- **Candidate verdicts and decision records** → **Phase 4** (README as written).
+- **Candidate verdicts and decision records** → **Phase 7** (codegen track).
 - **Field-path / return-path summaries** (`out.ctx`, `Ok[0].state`),
   field-sensitive record ownership, and bounded ownership specialization →
-  **Phase 6**.
-- **Any codegen or in-place lowering** → **Phase 4/5**.
-- **Extern copying-borrow precision** → **Phase 8** (externs stay conservative).
+  **Phases 4-6** (record/field Phase 4, return-path Phase 5, specialization
+  Phase 6).
+- **Any codegen or in-place lowering** → **Phases 7-8**.
+- **Extern copying-borrow precision** → **Phase 10** (externs stay conservative).
 
 Guiding rule (unchanged): **soundness before coverage.** A summary is consumed to
 be *less* conservative than "publish everything", so any unknown, extern,
@@ -98,7 +100,7 @@ indirect, or in-progress-recursive callee keeps the conservative default (params
 |---|---|---|
 | 1 | How summaries are computed | Provenance-augmented forward pass — fold a per-local origin-param map into `ForwardState`; reuse the Phase 2 engine |
 | 2 | Summary schema | **Two axes**: caller-visible escape (`Borrowed`/`Retained`) that `transfer_call` acts on, and recorded capability (`Consumed`) that it does not; return provenance is a **param set** |
-| 3 | Caller consumption | `transfer_call` acts on escape + return only; **never invalidates a caller binding** (that needs specialization, Phase 6) |
+| 3 | Caller consumption | `transfer_call` acts on escape + return only; **never invalidates a caller binding** (needs the Phase 6 specialization decision + codegen realization) |
 | 4 | Interprocedural order | Whole-program call graph; Tarjan SCCs bottom-up; conservative seed; iterate to a fixpoint or a cap |
 | 5 | Inspection surface | Folded into `--cfg` header line; **no** new command |
 | 6 | Module layout | Summary *types* + provenance + classification + consumption in `ownership.tw` (acyclic); interprocedural driver + header rendering in new `summary.tw` |
@@ -141,7 +143,8 @@ indirect, or in-progress-recursive callee keeps the conservative default (params
 // Borrowed ⊑ Retained, with Retained the conservative top.
 pub type EscapeEffect = { Borrowed, Retained }
 
-// Future in-place capability — recorded for Phases 4-6; NOT acted on in Phase 3.
+// Future in-place capability — recorded for Phases 6-8 (specialization decision +
+// codegen realization); NOT acted on in Phase 3.
 // Conservative default NoCap (never claim consumption we cannot prove).
 pub type ParamCapability = { NoCap, Consumed }
 
@@ -205,7 +208,7 @@ effects at the boundary.
 - **Propagate.** `AInit`/`AWrapAnyref`/`AUnwrapAnyref`/`AAssign` copy the source's
   `prov`. **Aggregates (`ARecord`/`AVariant`/`AArrayLit`) carry the union of their
   field/element `prov`** — a shell embedding a param origin is *not* independent
-  (field-path precision that would recover shell-uniqueness is Phase 6). A fresh
+  (field-path precision that would recover shell-uniqueness is Phase 4). A fresh
   allocation with no param-origin fields is `∅`. A call result's `prov` follows the
   callee's return effect: `MayAliasParams(S) → ∪ prov(arg_k) for k in S`;
   `OwnedFresh`/`Shared → ∅`.
@@ -263,7 +266,7 @@ For a **direct callee with a known summary** (replaces the blanket publish bucke
 | return `Shared` | result `← Unknown` |
 | param escape `Borrowed` | arg unchanged (**the win — borrowed args stay `Unique`**) |
 | param escape `Retained` | publish arg `→ Shared` |
-| param capability `Consumed` | **no caller-binding effect in Phase 3** (recorded only; consumption/invalidation is Phase 6) |
+| param capability `Consumed` | **no caller-binding effect in Phase 3** (recorded only; consumption/invalidation is realized in codegen, per the Phase 6 decision) |
 
 Builtins still resolve via `CallSemantics`. **Unknown Twinkle call without a
 summary, extern, indirect/closure callee, or `Cell` op → keep the conservative
@@ -355,7 +358,7 @@ default with a cheap validation step for the execution plan.
   (a full liveness + forward fixpoint per function) *in addition to* the final
   `analyze` pass — roughly doubling `--cfg`'s per-function work. Acceptable for a
   debug command; note it so it is not mistaken for a regression, and so it is not
-  copied onto a hot path in Phase 4 without caching.
+  copied onto a hot path in codegen (Phases 7-8) without caching.
 
 ## Rendering
 
@@ -371,15 +374,17 @@ block facts (borrowed-helper call sites now `Unique`) are the real signal.
 
 ## Non-goals
 
-- No caller-binding invalidation / real consumption (Phase 6).
-- No candidate verdicts or decision records (Phase 4).
+- No caller-binding invalidation / real consumption (realized in codegen, per the
+  Phase 6 decision).
+- No candidate verdicts or decision records (Phase 7).
 - No field-path / return-path summaries, transport wrappers, field-sensitive
-  record ownership, or specialization (Phase 6). Consequently a helper that wraps
+  record ownership, or specialization (Phases 4-6: record/field Phase 4,
+  return-path Phase 5, specialization Phase 6). Consequently a helper that wraps
   a param into a returned/escaping aggregate is treated **conservatively**
   (`param Retained`, `return MayAliasParams`), not optimistically as `OwnedFresh`;
-  recovering shell-uniqueness for such transport wrappers is Phase 6.
-- No codegen or in-place emission (Phase 4/5).
-- No extern copying-borrow precision (Phase 8).
+  recovering shell-uniqueness for such transport wrappers is Phase 5.
+- No codegen or in-place emission (Phases 7-8).
+- No extern copying-borrow precision (Phase 10).
 - No change to the surviving ANF-local peepholes beyond the doc decision.
 
 ## Acceptance criteria
@@ -425,10 +430,10 @@ Concrete gates for the execution plan (all via the boot suite unless noted):
 | Item | Home |
 |---|---|
 | "Move ownership-relevant pass queries to CFG facts" | Satisfied (old consumers deleted; CFG facts already single) — evidenced by the optimizer audit (Acceptance 10), not new migration code |
-| Caller-binding invalidation / real consumption | Phase 6 |
-| Candidate verdicts / decision records | Phase 4 |
-| Field-path / return-path / specialization | Phase 6 |
-| Extern copying-borrow precision | Phase 8 |
+| Caller-binding invalidation / real consumption | Codegen (per the Phase 6 decision) |
+| Candidate verdicts / decision records | Phase 7 |
+| Field-path / return-path / specialization | Phases 4-6 |
+| Extern copying-borrow precision | Phase 10 |
 
 The Phase 3 execution plan marks the delivered analysis README bullets and records
 the vacuous-bullet reframing.

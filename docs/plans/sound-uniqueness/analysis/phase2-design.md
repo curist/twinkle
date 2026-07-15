@@ -45,15 +45,16 @@ two docs agree.
   specialization is Phase 6.
 - **No record shell/field ownership, no transport wrappers, no variant-payload
   paths.** A fresh `ARecord`/`AVariant`/`AArrayLit` shell is `Unique`; nested
-  field/element ownership is Phase 6.
+  field/element ownership is Phase 4; transport wrappers and variant-payload paths
+  are Phase 5.
 - **No codegen decisions or candidate verdicts.** Phase 2 produces *facts*;
-  decision records for existing hooks are Phase 4.
+  decision records for existing hooks are Phase 7.
 - **No extern copying-borrow precision.** Externs are treated as conservative
   publication in Phase 2 (**sanctioned deviation**, see above): sound because
   over-publishing only loses optimization, never correctness. The canonical
   borrow/`Unique`-result precision from [fact-lattice.md](fact-lattice.md):135,
   [sound-analysis.md](sound-analysis.md):200, and
-  [concurrency-publication.md](concurrency-publication.md):64-100 is the Phase 8
+  [concurrency-publication.md](concurrency-publication.md):64-100 is the Phase 10
   target, and fact-lattice's extern row carries a forward-pointer noting Phase 2
   over-approximates it.
 
@@ -188,7 +189,7 @@ args off a terminator.
 extern-import or global type tables: an extern (host import) callee is not in
 `OptimizerSemantics.call_semantics`, so `call_info` returns `.None` and the op
 falls into the publish bucket automatically — the same path as any unsummarized
-Twinkle call. The Phase 8 extern-borrow precision (out of scope here) is what
+Twinkle call. The Phase 10 extern-borrow precision (out of scope here) is what
 would need the import allow-list and result-type metadata.
 
 **No type table either — the conservative ref rule.** The publication and
@@ -274,9 +275,9 @@ per-instruction rule.
 | `AnfOp` | Rule |
 |---|---|
 | `ACall(callee, args)` | extract the `FuncId` from `callee` (`AGlobalFunc(fid)`) and classify `call_info(sem, fid)`: `Allocate` (constructor / builder freeze) → `L ← Unique`; `Update` (consuming: `dict.set`, `vector.append`, `Vector.set`) → consuming-op hinge on the **base arg named by `CallSemantics.cow_base_arg`** (not hardcoded arg 0); `ReadOnly` → borrow (no change); `Pure`/`Control` (trap-like) → neutral; **`.None` (unknown Twinkle call, extern, `Cell` op) → publish every ref arg → `Shared`, `L ← Unknown`**. An **indirect callee** (`callee = ALocal(_)`, a closure/funcref call) has no `FuncId` and thus no summary → it takes the `.None` publish bucket |
-| `ARecord` / `AVariant` / `AArrayLit` | `L ← Unique` (fresh shell); each ref field arg follows the **field-store hinge** (nested field/element ownership is Phase 6) |
+| `ARecord` / `AVariant` / `AArrayLit` | `L ← Unique` (fresh shell); each ref field arg follows the **field-store hinge** (nested field/element ownership is Phase 4) |
 | `ARecordGet` / `AIndex` | borrow — no ownership change |
-| `ARecordUpdate(base, f, v, …)` | consuming-op hinge on the shell `base` (`Unique` + last-use → `L ← Unique`, `base` invalid; else `L ← Unknown`); `v` follows the field-store hinge. Field-sensitive backing is Phase 6 |
+| `ARecordUpdate(base, f, v, …)` | consuming-op hinge on the shell `base` (`Unique` + last-use → `L ← Unique`, `base` invalid; else `L ← Unknown`); `v` follows the field-store hinge. Field-sensitive backing is Phase 4 |
 | `AInit(A)` | move-vs-alias hinge (below) |
 | `AAssign(local, A)` | `ownership[local] ← fact(A)` (the loop-carried / branch-arm rebind transfer) |
 | `AMakeClosure(_, captured)` | publish each captured local → `Shared` |
@@ -318,7 +319,7 @@ classification is checked, not assumed:
     "new value" with "unique storage").
 - **Field-store hinge** — a local `A` stored into a fresh/updated aggregate (an
   `ARecord`/`AVariant`/`AArrayLit` field, or the value slot `v` of an
-  `ARecordUpdate`). Phase 2 does not track nested field ownership (Phase 6), so
+  `ARecordUpdate`). Phase 2 does not track nested field ownership (Phase 4), so
   the store is treated exactly like the `AInit` operand rule applied to `A`,
   never as ownership entering a tracked field:
   - `A = ALocal(S)` and `last_use(S here)` → **move**: `binding_valid[S] ←
@@ -329,7 +330,7 @@ classification is checked, not assumed:
 
   This is the conservative first cut: the shell itself is `Unique` (fresh), but
   the analysis makes no `Unique` claim about the stored field's contents until
-  field precision arrives (Phase 6).
+  field precision arrives (Phase 4).
 
 ### Binding-validity semantics
 
@@ -448,11 +449,11 @@ to the optimized-ANF shape, not the source syntax.
 
 - No function summaries, no interprocedural facts (Phase 3).
 - No record shell/field ownership, transport wrappers, or variant-payload paths
-  (Phase 6).
-- No codegen decisions, candidate verdicts, or in-place emission (Phase 4/5).
-- No extern copying-borrow precision (Phase 8).
+  (Phases 4-5).
+- No codegen decisions, candidate verdicts, or in-place emission (Phases 7-8).
+- No extern copying-borrow precision (Phase 10).
 - No `Moved` lattice element; no runtime uniqueness flags/refcounts/COW checks.
-- No new mutable-region intrinsics (Phase 7).
+- No new mutable-region intrinsics (Phase 9).
 
 ## Deferrals and tracking
 
@@ -462,9 +463,9 @@ three-track split:
 
 | Deferred | Tracking home |
 |---|---|
-| **Extern copying-borrow precision** (args preserved, GC result `Unique`, per the copying-marshalling contract) — Phase 2 treats externs as conservative publication (sanctioned deviation) | [../migration/README.md](../migration/README.md) Phase 8, plus the staging note in [fact-lattice.md](fact-lattice.md)'s extern row |
+| **Extern copying-borrow precision** (args preserved, GC result `Unique`, per the copying-marshalling contract) — Phase 2 treats externs as conservative publication (sanctioned deviation) | [../migration/README.md](../migration/README.md) Phase 10, plus the staging note in [fact-lattice.md](fact-lattice.md)'s extern row |
 | **Dead-merge block-param pruning** using the new liveness facts | [README.md](README.md) Phase 3 |
-| Per-instruction candidate verdicts / codegen decision records | [../codegen/README.md](../codegen/README.md) Phase 4 — Phase 2 renders block-boundary ownership only |
+| Per-instruction candidate verdicts / codegen decision records | [../codegen/README.md](../codegen/README.md) Phase 7 — Phase 2 renders block-boundary ownership only |
 | Binding-validity / liveness render surface in `--cfg` | Analysis-track nicety; facts are computed, but not rendered by default |
 | Record/field ownership, transport wrappers, summaries, specialization | Later analysis precision; see [records-fields.md](records-fields.md) and [summary-specialization.md](summary-specialization.md) |
 

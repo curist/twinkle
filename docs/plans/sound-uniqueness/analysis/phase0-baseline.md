@@ -6,7 +6,7 @@ The Phase 0 preconditions from the [analysis README](README.md): the two safety 
 gate every later phase. Both are **latent today** — with the previous optimizer
 passes removed on this branch nothing lowers to in-place, so the guard tests all
 pass on the persistent path and the census reads an all-COW floor. Their value is
-the signal they carry once Phase 5 codegen starts converting sites: a guard test
+the signal they carry once Phase 8 codegen starts converting sites: a guard test
 flips red on an unsound in-place rewrite, and the census in-place column climbs
 from zero. Building them now lays the tracks before the trains run.
 
@@ -22,7 +22,7 @@ rejection reasons are Phase 1+, explicitly out of scope here.
 Each test runs one aliasing/publication pattern and asserts the **observable
 persistent result** — the value that would be corrupted if a future in-place
 rewrite mutated a still-live alias. Green today (everything persistent); a test
-flips red exactly when a Phase 5+ in-place lowering is unsound for that pattern.
+flips red exactly when a Phase 8+ in-place lowering is unsound for that pattern.
 
 Each test is **named for and commented with the worked-example case and the
 fact-lattice rule it guards**, so the suite doubles as an executable index of the
@@ -81,7 +81,7 @@ flag and the gate test call the same code, not two parallel implementations.
 - **Default:** a population table (total candidates + in-place count per family),
   matching the stage0 census table in [worked-examples.md](worked-examples.md).
 - **`--sites` modifier:** adds a per-site listing (function + op) for debugging
-  *which* sites did or did not convert once Phase 5 lands.
+  *which* sites did or did not convert once Phase 8 lands.
 - Deterministic: a pure structural walk in ANF/source order (no hash-map
   iteration). The count inherits the optimized ANF's determinism, which the plan
   already mandates for the optimizer — the census adds no nondeterminism of its own.
