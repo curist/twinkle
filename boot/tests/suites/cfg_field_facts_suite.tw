@@ -1,7 +1,68 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
+use compiler.builtins
+use compiler.cfg
+use compiler.core_ir.{FuncId, LocalId}
 use compiler.field_facts as ff
+use compiler.mono_type.{MonoType}
+use compiler.opt.semantics as semantics
+use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+use compiler.ownership
+
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
+
+fn b_reg() builtins.BuiltinRegistry {
+  builtins.make_builtin_registry()
+}
+
+fn sem() semantics.OptimizerSemantics {
+  make_prelude_optimizer_semantics(b_reg())
+}
+
+fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
+  .ACall(.AGlobalFunc(b.method_id("Dict", "new")), [])
+}
+
+fn module_of(name: String, body: AnfExpr) AnfModule {
+  func: AnfFunctionDef = AnfFunctionDef.{
+    func_id: FuncId.{ id: 1 },
+    name,
+    is_init: false,
+    params: [],
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: MonoType.Int,
+  }
+  AnfModule.{
+    functions: [func],
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+    lib_exports: [],
+  }
+}
+
+fn analyzed_func(m: AnfModule) cfg.CfgFunction {
+  b := b_reg()
+  v := cfg.build_view(m, b)
+  a := ownership.analyze(v, b, sem())
+  case cfg.function_named(a, "f") {
+    .Some(f) => f,
+    .None => error("no f"),
+  }
+}
+
+// exit field-fact count for a local in block 0.
+fn field_count(f: cfg.CfgFunction, local_id: Int) Int {
+  case f.blocks[0].exit.field_own.get(local_id) {
+    .Some(m) => m.sorted_keys().len(),
+    .None => 0,
+  }
+}
 
 fn tag_u() Int {
   0
@@ -136,6 +197,18 @@ pub fn suite() runner.Suite {
         try assert.is_false(one(ff.field_path(1)).same(one(ff.field_path(2))))
         try assert.is_true(ff.empty().is_empty())
         try assert.is_false(one(ff.field_path(1)).is_empty())
+        .Ok({})
+      },
+    )
+    .test(
+      "plumbing: a plain fresh dict has no field facts (empty degrades to today)",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); d }  -> d is Unique shell, NO field paths yet.
+        body: AnfExpr = .Let(lid(0), dict_new_call(b), .Atom(.ALocal(lid(0))))
+        f := analyzed_func(module_of("f", body))
+        try assert.equal(field_count(f, 0), 0)
         .Ok({})
       },
     )

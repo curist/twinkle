@@ -68,7 +68,7 @@ pub fn path_eq(a: AccessPath, b: AccessPath) Bool {
     return false
   }
   for s, i in a.segs {
-    if !seg_eq(s, b.segs[i]) {
+    if !s.seg_eq(b.segs[i]) {
       return false
     }
   }
@@ -125,7 +125,7 @@ pub fn path_of_key(k: Int) AccessPath {
 
 // ── FieldMap inherent methods (fm is the first param) ───────────────
 pub fn set_path(fm: FieldMap, p: AccessPath, tag: Int) FieldMap {
-  k := path_key(p)
+  k := p.path_key()
   if k == 0 {
     // shell facts live in ownership.own, never in a FieldMap.
     error("field_facts: refusing to store the shell path ([]) in a FieldMap")
@@ -137,7 +137,7 @@ pub fn set_path(fm: FieldMap, p: AccessPath, tag: Int) FieldMap {
 // Shell path ([]) always returns false — shell ownership lives in ownership.own,
 // not here; a FieldMap only answers about non-shell paths.
 pub fn is_unique(fm: FieldMap, p: AccessPath) Bool {
-  case fm.paths.get(path_key(p)) {
+  case fm.paths.get(p.path_key()) {
     .Some(t) => t == 0,
     .None => false,
   }
@@ -182,7 +182,7 @@ pub fn project(fm: FieldMap, prefix: PathSeg) Projection {
   inner := empty()
   for k in fm.paths.keys() {
     p := path_of_key(k)
-    if p.segs.len() >= 1 and seg_eq(p.segs[0], prefix) {
+    if p.segs.len() >= 1 and p.segs[0].seg_eq(prefix) {
       case fm.paths.get(k) {
         .Some(t) => if p.segs.len() == 1 {
           shell = .Some(t)
@@ -201,7 +201,7 @@ pub fn remove_prefix(fm: FieldMap, prefix: PathSeg) FieldMap {
   out := empty()
   for k in fm.paths.keys() {
     p := path_of_key(k)
-    drop := p.segs.len() >= 1 and seg_eq(p.segs[0], prefix)
+    drop := p.segs.len() >= 1 and p.segs[0].seg_eq(prefix)
     if !drop {
       case fm.paths.get(k) {
         .Some(t) => out.paths[k] = t,

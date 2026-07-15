@@ -9,6 +9,7 @@ use compiler.anf.{AnfOp, Atom}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.cfg.{CfgBlock, CfgEdge, CfgFunction, CfgView, Terminator}
 use compiler.core_ir.{FuncId, LocalId}
+use compiler.field_facts as ff
 use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info}
 
 pub type Ownership = { Unique, Shared, Unknown }
@@ -387,10 +388,39 @@ fn is_last_use(last: Vector<Int>, id: Int) Bool {
   live_contains_int(last, id)
 }
 
-type ForwardState = .{ own: Dict<Int, Int>, valid: Dict<Int, Bool>, prov: Dict<Int, Vector<Int>> }
+type ForwardState = .{
+  own: Dict<Int, Int>,
+  valid: Dict<Int, Bool>,
+  prov: Dict<Int, Vector<Int>>,
+  field_own: Dict<Int, ff.FieldMap>,
+}
+
+fn field_own_get(st: ForwardState, id: Int) ff.FieldMap {
+  case st.field_own.get(id) {
+    .Some(m) => m,
+    .None => ff.empty(),
+  }
+}
+
+fn set_field_own(st: ForwardState, id: Int, m: ff.FieldMap) ForwardState {
+  st.field_own[id] = m
+  st
+}
+
+fn clear_field_own(st: ForwardState, id: Int) ForwardState {
+  st.field_own[id] = ff.empty()
+  st
+}
 
 fn set_own_st(st: ForwardState, id: Int, o: Ownership) ForwardState {
   st.own = set_own(st.own, id, o)
+
+  // Downward-closed invariant: a non-Unique shell can carry no field facts.
+  st = if o.own_tag() != 0 {
+    st.clear_field_own(id)
+  } else {
+    st
+  }
   st
 }
 
@@ -402,6 +432,13 @@ fn prov_of(prov: Dict<Int, Vector<Int>>, a: Atom) Vector<Int> {
       .None => [],
     },
     .None => [],
+  }
+}
+
+fn atom_field_own(st: ForwardState, a: Atom) ff.FieldMap {
+  case atom_local_id(a) {
+    .Some(id) => st.field_own_get(id),
+    .None => ff.empty(),
   }
 }
 
@@ -721,6 +758,11 @@ fn transfer_op(
       o := fact_of(st.own, a)
       st = .set_own_st(local.id, o)
       st = .set_prov_st(local.id, prov_of(st.prov, a))
+      st = if o.own_tag() == 0 {
+        st.set_field_own(local.id, st.atom_field_own(a))
+      } else {
+        st
+      }
       st.set_valid(local.id, true)
     },
     .AMakeClosure(_, caps) => {
@@ -1137,6 +1179,120 @@ fn seed_param_prov(entry: Dict<Int, Vector<Int>>, params: Vector<LocalId>) Dict<
   entry
 }
 
+// ── Field-ownership join + change-detection ─────────────────────────
+fn field_own_map_get(m: Dict<Int, Dict<Int, ff.FieldMap>>, id: Int) Dict<Int, ff.FieldMap> {
+  case m.get(id) {
+    .Some(v) => v,
+    .None => Dict.new(),
+  }
+}
+
+fn field_of(fo: Dict<Int, ff.FieldMap>, id: Int) ff.FieldMap {
+  case fo.get(id) {
+    .Some(m) => m,
+    .None => ff.empty(),
+  }
+}
+
+fn field_of_atom(fo: Dict<Int, ff.FieldMap>, a: Atom) ff.FieldMap {
+  case atom_local_id(a) {
+    .Some(id) => field_of(fo, id),
+    .None => ff.empty(),
+  }
+}
+
+// entry.field_own per live-in local at blk: block param -> meet over positional
+// edge args; live-through local -> meet over same-id. Only processed preds
+// contribute. A path survives only if Unique on EVERY contributing pred. Cleared
+// when the joined shell (entry_own) is non-Unique.
+fn join_entry_field_own(
+  blk: CfgBlock,
+  exit_field: Dict<Int, Dict<Int, ff.FieldMap>>,
+  entry_own: Dict<Int, Int>,
+  processed: Dict<Int, Bool>,
+) Dict<Int, ff.FieldMap> {
+  entry: Dict<Int, ff.FieldMap> = Dict.new()
+  for lid in blk.entry.live {
+    pidx := param_index(blk, lid)
+    acc: ff.FieldMap? = .None
+    for pe in blk.preds {
+      if is_processed(processed, pe.target.id) {
+        fo := field_own_map_get(exit_field, pe.target.id)
+        src := case pidx {
+          .Some(i) => if i < pe.args.len() {
+            field_of_atom(fo, pe.args[i])
+          } else {
+            ff.empty()
+          },
+          .None => field_of(fo, lid),
+        }
+        acc = case acc {
+          .Some(cur) => .Some(cur.merge(src)),
+          .None => .Some(src),
+        }
+      }
+    }
+    case acc {
+      .Some(m) => {
+        // downward-closed: only keep when the joined shell is Unique.
+        shell_unique := case entry_own.get(lid) {
+          .Some(t) => t == 0,
+          .None => false,
+        }
+        if shell_unique and !m.is_empty() {
+          entry[lid] = m
+        }
+      },
+      .None => {},
+    }
+  }
+  entry
+}
+
+// Block field_own maps are equal iff same locals and each local's FieldMap has
+// the same path-key set (FieldMap.same).
+fn same_field_own_map(a: Dict<Int, ff.FieldMap>, b: Dict<Int, ff.FieldMap>) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+  for k in a.keys() {
+    case a.get(k) {
+      .Some(av) => case b.get(k) {
+        .Some(bv) => if !av.same(bv) {
+          return false
+        },
+        .None => return false,
+      },
+      .None => {},
+    }
+  }
+  true
+}
+
+// Conservative widening for field_own: keep only locals present in both old and
+// next, and meet each local's FieldMap (keys intersection).
+fn merge_field_own_exit(old: Dict<Int, ff.FieldMap>, next: Dict<Int, ff.FieldMap>) Dict<
+  Int,
+  ff.FieldMap,
+> {
+  result: Dict<Int, ff.FieldMap> = Dict.new()
+  for k in old.keys() {
+    case old.get(k) {
+      .Some(old_fm) => case next.get(k) {
+        .Some(next_fm) => {
+          merged := old_fm.merge(next_fm)
+          if !merged.is_empty() {
+            result[k] = merged
+          }
+        },
+        .None => {},
+      },
+      .None => {},
+    }
+  }
+  result
+}
+
 // Combined ownership+validity+provenance fixpoint co-iterated to a joint fixed
 // point (they share ForwardState and forward_block). The single live driver
 // (guardrail G1).
@@ -1144,6 +1300,7 @@ type FixResult = .{
   exits: Dict<Int, Dict<Int, Int>>,
   exit_valid: Dict<Int, Dict<Int, Bool>>,
   exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
+  exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>>,
 }
 
 fn prev_seen_get(seen: Dict<Int, Bool>, id: Int) Bool {
@@ -1170,9 +1327,11 @@ fn run_fixpoint(
   exits: Dict<Int, Dict<Int, Int>> = Dict.new()
   exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
   exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
+  exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>> = Dict.new()
   prev_exits: Dict<Int, Dict<Int, Int>> = Dict.new()
   prev_exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
   prev_exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
+  prev_exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>> = Dict.new()
   locked_own: Dict<Int, Vector<Int>> = Dict.new()
   locked_valid: Dict<Int, Vector<Int>> = Dict.new()
   locked_prov: Dict<Int, Vector<Int>> = Dict.new()
@@ -1183,9 +1342,11 @@ fn run_fixpoint(
     exits[blk.id.id] = Dict.new()
     exit_valid[blk.id.id] = Dict.new()
     exit_prov[blk.id.id] = Dict.new()
+    exit_field_own[blk.id.id] = Dict.new()
     prev_exits[blk.id.id] = Dict.new()
     prev_exit_valid[blk.id.id] = Dict.new()
     prev_exit_prov[blk.id.id] = Dict.new()
+    prev_exit_field_own[blk.id.id] = Dict.new()
     locked_own[blk.id.id] = []
     locked_valid[blk.id.id] = []
     locked_prov[blk.id.id] = []
@@ -1203,15 +1364,23 @@ fn run_fixpoint(
       if blk.id.id == 0 {
         entry_prov = seed_param_prov(entry_prov, params)
       }
-      st := ForwardState.{ own: entry_own, valid: entry_valid, prov: entry_prov }
+      entry_field := join_entry_field_own(blk, exit_field_own, entry_own, processed)
+      st := ForwardState.{
+        own: entry_own,
+        valid: entry_valid,
+        prov: entry_prov,
+        field_own: entry_field,
+      }
       st = forward_block(blk, st, table, b, sem)
       already := is_processed(processed, blk.id.id)
       old_own := own_map_get(exits, blk.id.id)
       old_valid := valid_map_get(exit_valid, blk.id.id)
       old_prov := prov_map_get(exit_prov, blk.id.id)
+      old_field := field_own_map_get(exit_field_own, blk.id.id)
       next_own := st.own
       next_valid := st.valid
       next_prov := st.prov
+      next_field := st.field_own
       if already {
         has_prev := prev_seen_get(prev_seen, blk.id.id)
         force_lock_changed := change_count_get(changed_visits, blk.id.id) >= fixpoint_widen_cap
@@ -1245,27 +1414,33 @@ fn run_fixpoint(
         locked_own[blk.id.id] = own_merge.locked
         locked_valid[blk.id.id] = valid_merge.locked
         locked_prov[blk.id.id] = prov_merge.locked
+
+        // field_own widening: conservative meet (key-intersection + per-path meet)
+        next_field = merge_field_own_exit(old_field, st.field_own)
       }
       if !already
         or !same_own_map(old_own, next_own)
         or !same_valid_map(old_valid, next_valid)
-        or !same_prov_map(old_prov, next_prov) {
+        or !same_prov_map(old_prov, next_prov)
+        or !same_field_own_map(old_field, next_field) {
         changed = true
         if already {
           prev_exits[blk.id.id] = old_own
           prev_exit_valid[blk.id.id] = old_valid
           prev_exit_prov[blk.id.id] = old_prov
+          prev_exit_field_own[blk.id.id] = old_field
           prev_seen[blk.id.id] = true
           changed_visits[blk.id.id] = change_count_get(changed_visits, blk.id.id) + 1
         }
         exits[blk.id.id] = next_own
         exit_valid[blk.id.id] = next_valid
         exit_prov[blk.id.id] = next_prov
+        exit_field_own[blk.id.id] = next_field
       }
       processed[blk.id.id] = true
     }
   }
-  FixResult.{ exits, exit_valid, exit_prov }
+  FixResult.{ exits, exit_valid, exit_prov, exit_field_own }
 }
 
 // ── Driver ──────────────────────────────────────────────────────────
@@ -1459,12 +1634,20 @@ fn ownership_stage(
     if blk.id.id == 0 {
       entry_prov = seed_param_prov(entry_prov, params)
     }
-    st := ForwardState.{ own: entry_own, valid: entry_valid, prov: entry_prov }
+    entry_field := join_entry_field_own(blk, fx.exit_field_own, entry_own, done)
+    st := ForwardState.{
+      own: entry_own,
+      valid: entry_valid,
+      prov: entry_prov,
+      field_own: entry_field,
+    }
     st = forward_block(blk, st, table, b, sem)
     blk.entry.ownership = entry_own
     blk.exit.ownership = st.own
     blk.entry.binding_valid = entry_valid
     blk.exit.binding_valid = st.valid
+    blk.entry.field_own = entry_field
+    blk.exit.field_own = st.field_own
     blk
   }
 }
@@ -1569,7 +1752,13 @@ pub fn summarize_function(
         if blk.id.id == 0 {
           entry_prov = seed_param_prov(entry_prov, f.params)
         }
-        st := ForwardState.{ own: entry_own, valid: entry_valid, prov: entry_prov }
+        entry_field := join_entry_field_own(blk, fx.exit_field_own, entry_own, done)
+        st := ForwardState.{
+          own: entry_own,
+          valid: entry_valid,
+          prov: entry_prov,
+          field_own: entry_field,
+        }
         body := forward_block_body(blk, st, table, b, sem)
         idxs := prov_to_indices(f.params, prov_of(body.prov, a))
         r: ReturnEffect = if idxs.len() > 0 {

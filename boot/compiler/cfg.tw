@@ -10,6 +10,7 @@ use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom}
 use compiler.anf_analysis
 use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{CorePattern, LocalId}
+use compiler.field_facts as ff
 
 pub type BlockId = .{ id: Int }
 
@@ -37,10 +38,18 @@ pub type BlockFacts = .{
   ownership: Dict<Int, Int>,
   binding_valid: Dict<Int, Bool>,
   live: Vector<Int>,
+  field_own: Dict<Int, ff.FieldMap>,
+  verdicts: Dict<Int, String>,
 }
 
 fn empty_block_facts() BlockFacts {
-  BlockFacts.{ ownership: Dict.new(), binding_valid: Dict.new(), live: [] }
+  BlockFacts.{
+    ownership: Dict.new(),
+    binding_valid: Dict.new(),
+    live: [],
+    field_own: Dict.new(),
+    verdicts: Dict.new(),
+  }
 }
 
 pub type CfgBlock = .{
@@ -829,7 +838,9 @@ pub fn empty_fact_blocks(func: CfgFunction) Int {
     if block.entry.ownership.keys().len() == 0
       and block.exit.ownership.keys().len() == 0 and block.entry.binding_valid.keys().len() == 0
       and block.exit.binding_valid.keys().len() == 0 and block.entry.live.len() == 0
-      and block.exit.live.len() == 0 {
+      and block.exit.live.len() == 0 and block.entry.field_own.keys().len() == 0
+      and block.exit.field_own.keys().len() == 0 and block.entry.verdicts.keys().len() == 0
+      and block.exit.verdicts.keys().len() == 0 {
       n = n + 1
     }
   }
