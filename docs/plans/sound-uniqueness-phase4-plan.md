@@ -4,7 +4,7 @@
 
 **Goal:** Give the Phase 2/3 flat, per-`LocalId` ownership analysis a **path-sensitive field-ownership layer** so the compiler's characteristic idiom — a unique record shell whose fields are dicts/vectors — stops classifying as blanket publication, tracking ownership at `(local, AccessPath)` granularity for non-shell paths. Analysis-only; **no codegen** (`twk ir --census` stays 0 in-place).
 
-**Architecture:** An **additive side map** (Approach C): the existing `own: Dict<Int,Int>` is untouched and *is* the `[]` shell fact; a new `field_own: Dict<Int, Dict<Int,Int>>` (local → PathKey → Ownership tag) holds only non-shell paths, threaded through the same join+fixpoint as `own`/`valid`/`prov`. A new leaf module `field_facts.tw` owns the `PathSeg`/`AccessPath`/`PathKey` types, a **reversible** PathKey codec (so no interned side table is needed — decode is pure arithmetic), and the map operations (`graft`/`project`/`remove_prefix`/`merge`/`clear_all`/`is_unique`). Field facts are **introduced** by construction under a single-retention proof, **preserved** through projection (`ARecordGet`) via move-or-borrow, carried through consuming builtins conservatively, and **demoted** at a single choke point (`set_own_st` clears `field_own[id]` whenever the shell leaves `Unique`).
+**Architecture:** An **additive side map** (Approach C): the existing `own: Dict<Int,Int>` is untouched and *is* the `[]` shell fact; a new `field_own: Dict<Int, ff.FieldMap>` (local → non-shell PathKey → Ownership tag) holds only non-shell paths, threaded through the same join+fixpoint as `own`/`valid`/`prov`. A new leaf module `field_facts.tw` owns the `PathSeg`/`AccessPath`/`PathKey` types, a **reversible** PathKey codec (so no interned side table is needed — decode is pure arithmetic), and the `FieldMap` record wrapping the per-local map with **inherent-method** operations (`fm.graft`/`project`/`remove_prefix`/`merge`/`is_unique`/`set_path`/`same`). Field facts are **introduced** by construction under a single-retention proof, **preserved** through projection (`ARecordGet`) via move-or-borrow, carried through consuming builtins conservatively, and **demoted** at a single choke point (`set_own_st` clears `field_own[id]` whenever the shell leaves `Unique`).
 
 **Tech Stack:** Twinkle (`.tw`), boot self-hosted compiler, `@std.testing` runner, hand-built single-function `AnfModule` fixtures (stable `LocalId`/`FuncId`, no optimizer) plus `twk ir <fixture> --opt` shape checks, `compiler.opt.semantics` (`call_info`/`EffectKind`), `make bundle-cli` for the CLI.
 
@@ -15,8 +15,8 @@
 ## File structure
 
 - **Create** `boot/compiler/field_facts.tw` (Task 1) — the cohesive, independently-testable path unit: `PathSeg`/`AccessPath` types, the reversible `path_key`/`path_of_key` codec, and the pure map operations over a local's `Dict<Int,Int>` (`graft`, `project`, `remove_prefix`, `merge`, `clear_all`, `set_path`, `is_unique`). A **leaf**: it imports only `compiler.core_ir` (for `FieldId` — actually just `Int` ids), and is imported *by* `ownership.tw` and `cfg.tw`; it imports neither, so the module graph stays acyclic.
-- **Modify** `boot/compiler/ownership.tw` — `ForwardState` gains `field_own: Dict<Int, Dict<Int,Int>>`; the `set_own_st` choke point clears it on shell demotion; `AAssign` carries it on rebind; introduction rules (`ARecord`/`AArrayLit`/`ARecordUpdate`); the collection-builtin nested rule in `transfer_builtin_call` (`.Update`) plus the `container_seg` helper; the projection rule (`ARecordGet`) with the block-local **quartet recognizer**; `join_entry_field_own`; `FixResult.exit_field_own` threaded through `run_fixpoint`; the two-verdict accumulator surfaced by `analyze`.
-- **Modify** `boot/compiler/cfg.tw` — `BlockFacts` gains `field_own: Dict<Int, Dict<Int,Int>>` and `verdicts: Dict<Int,String>`; `empty_block_facts` seeds them; the `keys().len() == 0` un-analyzed guard covers them; `render_facts` prints field facts (decoding PathKeys via `field_facts`) and the per-update verdict.
+- **Modify** `boot/compiler/ownership.tw` — `ForwardState` gains `field_own: Dict<Int, ff.FieldMap>`; the `set_own_st` choke point clears it on shell demotion; `AAssign` carries it on rebind; introduction rules (`ARecord`/`AArrayLit`/`ARecordUpdate`); the collection-builtin nested rule in `transfer_builtin_call` (`.Update`) plus the `container_seg` helper; the projection rule (`ARecordGet`) with the block-local **quartet recognizer**; `join_entry_field_own`; `FixResult.exit_field_own` threaded through `run_fixpoint`; the two-verdict accumulator surfaced by `analyze`.
+- **Modify** `boot/compiler/cfg.tw` — `BlockFacts` gains `field_own: Dict<Int, ff.FieldMap>` and `verdicts: Dict<Int,String>` (`cfg.tw` gains `use compiler.field_facts as ff` — a leaf import, no cycle); `empty_block_facts` seeds them; the `keys().len() == 0` un-analyzed guard covers them; `render_facts` prints field facts (decoding PathKeys via `field_facts`) and the per-update verdict.
 - **Modify** `boot/commands/ir.tw` — nothing structural; the `--cfg` path already renders `BlockFacts` (Phase 3 wiring). Confirm field facts + verdicts appear.
 - **Create + register** `boot/tests/suites/cfg_field_facts_suite.tw` — TDD gate; register in `boot/tests/main.tw`.
 
@@ -77,9 +77,9 @@ fn tag_u() Int {
   0
 }
 
-// A local's field map with a single Unique path.
-fn one(p: ff.AccessPath) Dict<Int, Int> {
-  ff.set_path(Dict.new(), p, tag_u())
+// A FieldMap with a single Unique path.
+fn one(p: ff.AccessPath) ff.FieldMap {
+  ff.empty().set_path(p, tag_u())
 }
 
 pub fn suite() runner.Suite {
@@ -120,57 +120,64 @@ pub fn suite() runner.Suite {
     })
     .test("is_unique: present -> true, absent -> false", fn() {
       m := one(ff.field_path(2))
-      try assert.is_true(ff.is_unique(m, ff.field_path(2)))
-      try assert.is_false(ff.is_unique(m, ff.field_path(3)))
-      try assert.is_false(ff.is_unique(Dict.new(), ff.elem_path()))
+      try assert.is_true(m.is_unique(ff.field_path(2)))
+      try assert.is_false(m.is_unique(ff.field_path(3)))
+      try assert.is_false(ff.empty().is_unique(ff.elem_path()))
       .Ok({})
     })
-    .test("graft: copies shell tag to [.f] and rebases inner [Elem] -> [.f, Elem]", fn() {
+    .test("graft: copies shell to [.f] and rebases inner [Elem] -> [.f, Elem]", fn() {
       // v has shell Unique and its own [Elem]:Unique (an all-owned vector).
-      v_fields := one(ff.elem_path())
-      dst := ff.graft(Dict.new(), .Field(1), tag_u(), v_fields)
-      try assert.is_true(ff.is_unique(dst, ff.field_path(1)))
-      try assert.is_true(ff.is_unique(dst, ff.field_elem(1)))
+      v := one(ff.elem_path())
+      dst := ff.empty().graft(.Field(1), v)
+      try assert.is_true(dst.is_unique(ff.field_path(1)))
+      try assert.is_true(dst.is_unique(ff.field_elem(1)))
+      .Ok({})
+    })
+    .test("graft under Elem/Val prefix grafts only the shell (no deeper nesting)", fn() {
+      v := one(ff.elem_path())
+      dst := ff.empty().graft(.Elem, v)
+      try assert.is_true(dst.is_unique(ff.elem_path()))
+      try assert.equal(dst.sorted_keys().len(), 1) // src's inner [Elem] is NOT rebased under a non-Field prefix
       .Ok({})
     })
     .test("remove_prefix: drops [.f]* subtree, preserves siblings", fn() {
-      m := Dict.new()
-      m = ff.set_path(m, ff.field_path(1), tag_u())
-      m = ff.set_path(m, ff.field_elem(1), tag_u())
-      m = ff.set_path(m, ff.field_path(2), tag_u())
-      out := ff.remove_prefix(m, .Field(1))
-      try assert.is_false(ff.is_unique(out, ff.field_path(1)))
-      try assert.is_false(ff.is_unique(out, ff.field_elem(1)))
-      try assert.is_true(ff.is_unique(out, ff.field_path(2)))
+      m := ff.empty()
+        .set_path(ff.field_path(1), tag_u())
+        .set_path(ff.field_elem(1), tag_u())
+        .set_path(ff.field_path(2), tag_u())
+      out := m.remove_prefix(.Field(1))
+      try assert.is_false(out.is_unique(ff.field_path(1)))
+      try assert.is_false(out.is_unique(ff.field_elem(1)))
+      try assert.is_true(out.is_unique(ff.field_path(2)))
       .Ok({})
     })
     .test("project: [.f] -> shell, [.f, Elem] -> [Elem]", fn() {
-      m := Dict.new()
-      m = ff.set_path(m, ff.field_path(1), tag_u())
-      m = ff.set_path(m, ff.field_elem(1), tag_u())
-      m = ff.set_path(m, ff.field_path(2), tag_u()) // sibling, must not leak
-      pr := ff.project(m, .Field(1))
+      m := ff.empty()
+        .set_path(ff.field_path(1), tag_u())
+        .set_path(ff.field_elem(1), tag_u())
+        .set_path(ff.field_path(2), tag_u()) // sibling, must not leak
+      pr := m.project(.Field(1))
       try assert.is_true(case pr.shell {
         .Some(t) => t == tag_u(),
         .None => false,
       })
-      try assert.is_true(ff.is_unique(pr.fields, ff.elem_path()))
-      try assert.is_false(ff.is_unique(pr.fields, ff.field_path(2)))
+      try assert.is_true(pr.fields.is_unique(ff.elem_path()))
+      try assert.is_false(pr.fields.is_unique(ff.field_path(2)))
       .Ok({})
     })
     .test("merge: per-path meet keeps only paths Unique in both", fn() {
-      a := Dict.new()
-      a = ff.set_path(a, ff.field_path(1), tag_u())
-      a = ff.set_path(a, ff.field_path(2), tag_u())
+      a := ff.empty().set_path(ff.field_path(1), tag_u()).set_path(ff.field_path(2), tag_u())
       b := one(ff.field_path(1))
-      out := ff.merge(a, b)
-      try assert.is_true(ff.is_unique(out, ff.field_path(1)))
-      try assert.is_false(ff.is_unique(out, ff.field_path(2)))
+      out := a.merge(b)
+      try assert.is_true(out.is_unique(ff.field_path(1)))
+      try assert.is_false(out.is_unique(ff.field_path(2)))
       .Ok({})
     })
-    .test("clear_all: whole-local demotion drops every path", fn() {
-      m := one(ff.field_path(1))
-      try assert.equal(ff.clear_all(m).keys().len(), 0)
+    .test("same/is_empty: structural equality by path-key set", fn() {
+      try assert.is_true(one(ff.field_path(1)).same(one(ff.field_path(1))))
+      try assert.is_false(one(ff.field_path(1)).same(one(ff.field_path(2))))
+      try assert.is_true(ff.empty().is_empty())
+      try assert.is_false(one(ff.field_path(1)).is_empty())
       .Ok({})
     })
 }
@@ -190,17 +197,26 @@ Expected: FAIL — no `compiler.field_facts` module.
 //!
 //! Pure and value-returning (Twinkle immutability), mirroring cfg.tw/summary.tw.
 //! A LEAF module: it imports neither ownership.tw nor cfg.tw, so it can be
-//! imported by both without a cycle. Only Unique paths are ever stored; absence
-//! of a key means "no claim". A local's field map is `Dict<Int, Int>` keyed by
-//! PathKey (canonical, reversible) with an Ownership tag value (always 0/Unique
-//! in Phase 4, kept Int for symmetry with ownership.own).
+//! imported by both without a cycle. A local's non-shell field-ownership facts
+//! are the `FieldMap` record wrapping `paths: Dict<Int, Int>` (PathKey -> tag);
+//! the map operations are inherent methods on `FieldMap` so callers read as
+//! `fm.is_unique(p)` / `fm.graft(seg, src)` / `fm.merge(other)`. Only Unique paths
+//! are ever stored; absence of a key means "no claim" (tag is Int for symmetry
+//! with ownership.own, always 0/Unique in Phase 4).
 
 pub type PathSeg = { Field(Int), Elem, Val }
 
-// segs == [] is the shell (the [] fact); it is NEVER stored in a field map.
+// segs == [] is the shell (the [] fact); it is NEVER stored in a FieldMap.
 pub type AccessPath = .{ segs: Vector<PathSeg> }
 
-// ── Constructors ────────────────────────────────────────────────────
+// A local's non-shell field-ownership map.
+pub type FieldMap = .{ paths: Dict<Int, Int> }
+
+pub fn empty() FieldMap {
+  FieldMap.{ paths: Dict.new() }
+}
+
+// ── AccessPath constructors ─────────────────────────────────────────
 pub fn shell() AccessPath {
   AccessPath.{ segs: [] }
 }
@@ -302,68 +318,71 @@ pub fn path_of_key(k: Int) AccessPath {
   }
 }
 
-// ── Map operations over one local's field map (PathKey -> tag) ───────
-pub fn set_path(fields: Dict<Int, Int>, p: AccessPath, tag: Int) Dict<Int, Int> {
+// ── FieldMap inherent methods (fm is the first param) ───────────────
+pub fn set_path(fm: FieldMap, p: AccessPath, tag: Int) FieldMap {
   k := path_key(p)
   if k == 0 {
-    // shell facts live in ownership.own, never in a field map.
-    error("field_facts: refusing to store the shell path ([]) in field_own")
+    // shell facts live in ownership.own, never in a FieldMap.
+    error("field_facts: refusing to store the shell path ([]) in a FieldMap")
   }
-  fields[k] = tag
-  fields
+  fm.paths[k] = tag
+  fm
 }
 
-pub fn is_unique(fields: Dict<Int, Int>, p: AccessPath) Bool {
-  case fields.get(path_key(p)) {
+// Shell path ([]) always returns false — shell ownership lives in ownership.own,
+// not here; a FieldMap only answers about non-shell paths.
+pub fn is_unique(fm: FieldMap, p: AccessPath) Bool {
+  case fm.paths.get(path_key(p)) {
     .Some(t) => t == 0,
     .None => false,
   }
 }
 
-pub fn clear_all(_fields: Dict<Int, Int>) Dict<Int, Int> {
-  Dict.new()
+pub fn is_empty(fm: FieldMap) Bool {
+  fm.paths.keys().len() == 0
 }
 
-// Copy value v's facts (its shell tag + its own field paths) under `prefix`.
-// Phase 4 prefixes are a single Field(f)/Elem/Val; v's own paths are at most a
-// depth-1 collection sub-path ([Elem]/[Val]), so the grafted result is depth <= 2.
-// Anything deeper is dropped (sound under-claim). Under an Elem/Val prefix no
-// deeper nesting is representable in Phase 4, so only the shell tag is grafted.
-pub fn graft(dst: Dict<Int, Int>, prefix: PathSeg, v_shell_tag: Int, v_fields: Dict<Int, Int>) Dict<Int, Int> {
-  dst[path_key(AccessPath.{ segs: [prefix] })] = v_shell_tag
+// Copy a value's facts under `prefix`. Callers graft only a value already proven
+// []:Unique, so the shell tag at [prefix] is Unique (0). `src` is the value's OWN
+// FieldMap (its inner paths). Phase 4 prefixes are a single Field(f)/Elem/Val;
+// src's own paths are at most depth-1 ([Elem]/[Val]), so the grafted result is
+// depth <= 2 (deeper is dropped, sound under-claim). Under an Elem/Val prefix no
+// deeper nesting is representable, so only the shell tag lands.
+pub fn graft(fm: FieldMap, prefix: PathSeg, src: FieldMap) FieldMap {
+  fm.paths[path_key(AccessPath.{ segs: [prefix] })] = 0
   case prefix {
     .Field(_) => {
-      for k in v_fields.keys() {
+      for k in src.paths.keys() {
         inner := path_of_key(k)
         if inner.segs.len() == 1 {
-          case v_fields.get(k) {
-            .Some(t) => dst[path_key(AccessPath.{ segs: [prefix, inner.segs[0]] })] = t,
+          case src.paths.get(k) {
+            .Some(t) => fm.paths[path_key(AccessPath.{ segs: [prefix, inner.segs[0]] })] = t,
             .None => {},
           }
         }
       }
-      dst
+      fm
     },
-    _ => dst,
+    _ => fm,
   }
 }
 
 // Projection inverse: gather every path under `prefix`, stripped of it. The
 // [prefix] fact (if present) becomes the projected value's shell; each strict
 // descendant [prefix, X] becomes an inner [X]. Siblings are ignored.
-pub type Projection = .{ shell: Int?, fields: Dict<Int, Int> }
+pub type Projection = .{ shell: Int?, fields: FieldMap }
 
-pub fn project(src: Dict<Int, Int>, prefix: PathSeg) Projection {
+pub fn project(fm: FieldMap, prefix: PathSeg) Projection {
   shell: Int? = .None
-  inner: Dict<Int, Int> = Dict.new()
-  for k in src.keys() {
+  inner := empty()
+  for k in fm.paths.keys() {
     p := path_of_key(k)
     if p.segs.len() >= 1 and seg_eq(p.segs[0], prefix) {
-      case src.get(k) {
+      case fm.paths.get(k) {
         .Some(t) => if p.segs.len() == 1 {
           shell = .Some(t)
         } else {
-          inner[path_key(AccessPath.{ segs: [p.segs[1]] })] = t
+          inner.paths[path_key(AccessPath.{ segs: [p.segs[1]] })] = t
         },
         .None => {},
       }
@@ -373,14 +392,14 @@ pub fn project(src: Dict<Int, Int>, prefix: PathSeg) Projection {
 }
 
 // Drop the entire [prefix]* subtree (including [prefix] itself); keep siblings.
-pub fn remove_prefix(fields: Dict<Int, Int>, prefix: PathSeg) Dict<Int, Int> {
-  out: Dict<Int, Int> = Dict.new()
-  for k in fields.keys() {
+pub fn remove_prefix(fm: FieldMap, prefix: PathSeg) FieldMap {
+  out := empty()
+  for k in fm.paths.keys() {
     p := path_of_key(k)
     drop := p.segs.len() >= 1 and seg_eq(p.segs[0], prefix)
     if !drop {
-      case fields.get(k) {
-        .Some(t) => out[k] = t,
+      case fm.paths.get(k) {
+        .Some(t) => out.paths[k] = t,
         .None => {},
       }
     }
@@ -390,12 +409,12 @@ pub fn remove_prefix(fields: Dict<Int, Int>, prefix: PathSeg) Dict<Int, Int> {
 
 // Per-path meet for joins: only Unique paths are stored, so a path survives iff
 // present in both -> key intersection.
-pub fn merge(a: Dict<Int, Int>, b: Dict<Int, Int>) Dict<Int, Int> {
-  out: Dict<Int, Int> = Dict.new()
-  for k in a.keys() {
-    if b.has(k) {
-      case a.get(k) {
-        .Some(t) => out[k] = t,
+pub fn merge(fm: FieldMap, other: FieldMap) FieldMap {
+  out := empty()
+  for k in fm.paths.keys() {
+    if other.paths.has(k) {
+      case fm.paths.get(k) {
+        .Some(t) => out.paths[k] = t,
         .None => {},
       }
     }
@@ -403,14 +422,26 @@ pub fn merge(a: Dict<Int, Int>, b: Dict<Int, Int>) Dict<Int, Int> {
   out
 }
 
+// Structural equality (same set of Unique path keys) for fixpoint change-detection.
+pub fn same(fm: FieldMap, other: FieldMap) Bool {
+  if fm.paths.keys().len() != other.paths.keys().len() {
+    return false
+  }
+  for k in fm.paths.keys() {
+    if !other.paths.has(k) {
+      return false
+    }
+  }
+  true
+}
+
 // Deterministic sorted key list for rendering / comparison.
-pub fn sorted_keys(fields: Dict<Int, Int>) Vector<Int> {
-  ks := fields.keys()
-  ks.sort()
+pub fn sorted_keys(fm: FieldMap) Vector<Int> {
+  fm.paths.keys().sort()
 }
 ```
 
-(If `Dict.has`/`Vector.sort` names differ in this tree, grep `boot/prelude/*.tw` and adjust — `d.keys()` and a numeric sort are both available; `sort()` may be `sorted()`.)
+(If `Dict.has`/`Vector.sort` names differ in this tree, grep `boot/prelude/*.tw` and adjust — `d.keys()` and a numeric sort are both available; `sort()` may be `sorted()`. Whole-local demotion is just `ff.empty()`, so there is no `clear_all` method.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -423,12 +454,13 @@ Expected: PASS — codec round-trip/collision, `is_unique`, `graft`, `remove_pre
 target/twk fmt boot/compiler/field_facts.tw boot/tests/suites/cfg_field_facts_suite.tw
 target/twk lint boot/main.tw
 git add boot/compiler/field_facts.tw boot/tests/suites/cfg_field_facts_suite.tw boot/tests/main.tw
-git commit -m "field_facts: path types + reversible PathKey codec + map ops
+git commit -m "field_facts: FieldMap + reversible PathKey codec + inherent ops
 
 New leaf module for Phase 4 path-sensitive ownership: PathSeg/AccessPath, a
 reversible arithmetic PathKey codec (no interned side table needed for the
-Phase 4 path shapes), and pure map operations (graft/project/remove_prefix/
-merge/clear_all/is_unique). Only Unique paths are stored; absence means no claim."
+Phase 4 path shapes), and a FieldMap record wrapping the per-local PathKey->tag
+map with inherent-method ops (set_path/is_unique/graft/project/remove_prefix/
+merge/same/sorted_keys). Only Unique paths are stored; absence means no claim."
 ```
 
 ---
@@ -522,19 +554,21 @@ fn field_count(f: cfg.CfgFunction, local_id: Int) Int {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Expected: FAIL — `cfg.CfgFunction` / `BlockFacts` has no `field_own`, and `ForwardState` has no `field_own`. (This step also forces the Task 7 `BlockFacts.field_own` slot to exist; add the minimal `field_own: Dict<Int, Dict<Int,Int>>` field to `BlockFacts` and `empty_block_facts` now — its rendering is Task 7.)
+Expected: FAIL — `cfg.CfgFunction` / `BlockFacts` has no `field_own`, and `ForwardState` has no `field_own`. (This step also forces the Task 7 `BlockFacts.field_own` slot to exist; add the minimal `field_own: Dict<Int, ff.FieldMap>` field to `BlockFacts` and `empty_block_facts` now — its rendering is Task 7.)
 
 - [ ] **Step 3: Add `field_own` to `BlockFacts` and `ForwardState`**
 
 In `cfg.tw`, extend `BlockFacts` and `empty_block_facts`:
 
+`cfg.tw` gains `use compiler.field_facts as ff` (a leaf import — no cycle) since `BlockFacts` now references `ff.FieldMap`:
+
 ```tw
 pub type BlockFacts = .{
   ownership: Dict<Int, Int>,
   binding_valid: Dict<Int, Bool>,
-  live: Vector<Int>,                    // UNCHANGED — keep Vector<Int> (CFG/joins key on Int ids)
-  field_own: Dict<Int, Dict<Int, Int>>, // NEW: local -> (PathKey -> tag); non-shell paths only
-  verdicts: Dict<Int, String>,          // NEW: result local -> two-verdict string (Task 7)
+  live: Vector<Int>,                 // UNCHANGED — keep Vector<Int> (CFG/joins key on Int ids)
+  field_own: Dict<Int, ff.FieldMap>, // NEW: local -> FieldMap (non-shell paths only)
+  verdicts: Dict<Int, String>,       // NEW: result local -> two-verdict string (Task 7)
 }
 
 fn empty_block_facts() BlockFacts {
@@ -544,36 +578,36 @@ fn empty_block_facts() BlockFacts {
 
 **Do not change `live`'s type** — only append `field_own`/`verdicts`. Every `BlockFacts.{ … }` construction elsewhere (grep `BlockFacts.{`) must add the two new empty fields.
 
-Extend the "un-analyzed" guard (`cfg.tw:829`-ish) to also require `field_own`/`verdicts` empty before treating a block as un-analyzed. (`cfg.tw` gains `use compiler.field_facts as ff` in Task 7, not here.)
+Extend the "un-analyzed" guard (`cfg.tw:829`-ish) to also require `field_own`/`verdicts` empty before treating a block as un-analyzed.
 
-In `ownership.tw`:
+In `ownership.tw` (which already has `use compiler.field_facts as ff` — added below):
 
 ```tw
 type ForwardState = .{
   own: Dict<Int, Int>,
   valid: Dict<Int, Bool>,
   prov: Dict<Int, Vector<Int>>,
-  field_own: Dict<Int, Dict<Int, Int>>,
+  field_own: Dict<Int, ff.FieldMap>,
 }
 ```
 
 Grep every `ForwardState.{` construction and add `field_own: Dict.new()`. Add helpers:
 
 ```tw
-fn field_own_get(st: ForwardState, id: Int) Dict<Int, Int> {
+fn field_own_get(st: ForwardState, id: Int) ff.FieldMap {
   case st.field_own.get(id) {
     .Some(m) => m,
-    .None => Dict.new(),
+    .None => ff.empty(),
   }
 }
 
-fn set_field_own(st: ForwardState, id: Int, m: Dict<Int, Int>) ForwardState {
+fn set_field_own(st: ForwardState, id: Int, m: ff.FieldMap) ForwardState {
   st.field_own[id] = m
   st
 }
 
 fn clear_field_own(st: ForwardState, id: Int) ForwardState {
-  st.field_own[id] = Dict.new()
+  st.field_own[id] = ff.empty()
   st
 }
 ```
@@ -614,10 +648,10 @@ In `transfer_op`'s `.AAssign(local, a)` arm, after setting own/prov, carry the s
 with:
 
 ```tw
-fn atom_field_own(st: ForwardState, a: Atom) Dict<Int, Int> {
+fn atom_field_own(st: ForwardState, a: Atom) ff.FieldMap {
   case atom_local_id(a) {
     .Some(id) => field_own_get(st, id),
-    .None => Dict.new(),
+    .None => ff.empty(),
   }
 }
 ```
@@ -631,24 +665,24 @@ use compiler.field_facts as ff
 ```
 
 ```tw
-fn field_own_map_get(m: Dict<Int, Dict<Int, Dict<Int, Int>>>, id: Int) Dict<Int, Dict<Int, Int>> {
+fn field_own_map_get(m: Dict<Int, Dict<Int, ff.FieldMap>>, id: Int) Dict<Int, ff.FieldMap> {
   case m.get(id) {
     .Some(v) => v,
     .None => Dict.new(),
   }
 }
 
-fn field_of(fo: Dict<Int, Dict<Int, Int>>, id: Int) Dict<Int, Int> {
+fn field_of(fo: Dict<Int, ff.FieldMap>, id: Int) ff.FieldMap {
   case fo.get(id) {
     .Some(m) => m,
-    .None => Dict.new(),
+    .None => ff.empty(),
   }
 }
 
-fn field_of_atom(fo: Dict<Int, Dict<Int, Int>>, a: Atom) Dict<Int, Int> {
+fn field_of_atom(fo: Dict<Int, ff.FieldMap>, a: Atom) ff.FieldMap {
   case atom_local_id(a) {
     .Some(id) => field_of(fo, id),
-    .None => Dict.new(),
+    .None => ff.empty(),
   }
 }
 
@@ -658,14 +692,14 @@ fn field_of_atom(fo: Dict<Int, Dict<Int, Int>>, a: Atom) Dict<Int, Int> {
 // when the joined shell (entry_own) is non-Unique.
 fn join_entry_field_own(
   blk: CfgBlock,
-  exit_field: Dict<Int, Dict<Int, Dict<Int, Int>>>,
+  exit_field: Dict<Int, Dict<Int, ff.FieldMap>>,
   entry_own: Dict<Int, Int>,
   processed: Dict<Int, Bool>,
-) Dict<Int, Dict<Int, Int>> {
-  entry: Dict<Int, Dict<Int, Int>> = Dict.new()
+) Dict<Int, ff.FieldMap> {
+  entry: Dict<Int, ff.FieldMap> = Dict.new()
   for lid in blk.entry.live {
     pidx := param_index(blk, lid)
-    acc: Dict<Int, Int>? = .None
+    acc: ff.FieldMap? = .None
     for pe in blk.preds {
       if is_processed(processed, pe.target.id) {
         fo := field_own_map_get(exit_field, pe.target.id)
@@ -673,12 +707,12 @@ fn join_entry_field_own(
           .Some(i) => if i < pe.args.len() {
             field_of_atom(fo, pe.args[i])
           } else {
-            Dict.new()
+            ff.empty()
           },
           .None => field_of(fo, lid),
         }
         acc = case acc {
-          .Some(cur) => .Some(ff.merge(cur, src)),
+          .Some(cur) => .Some(cur.merge(src)),
           .None => .Some(src),
         }
       }
@@ -690,7 +724,7 @@ fn join_entry_field_own(
           .Some(t) => t == 0,
           .None => false,
         }
-        if shell_unique and m.keys().len() > 0 {
+        if shell_unique and !m.is_empty() {
           entry[lid] = m
         }
       },
@@ -701,29 +735,19 @@ fn join_entry_field_own(
 }
 ```
 
-Thread `exit_field_own` through the fixpoint exactly as Phase 3 threaded `exit_prov` (`ownership.tw` `run_fixpoint`/`FixResult`): extend `FixResult` with `exit_field_own: Dict<Int, Dict<Int, Dict<Int, Int>>>`; in each per-block step build `entry_field := join_entry_field_own(blk, exit_field, entry_own, processed)`, put it in the `ForwardState.{ … , field_own: entry_field }`; on change-detection compare with `same_field_own_map` (below) alongside own/valid/prov; store `next` (or the target-widened value — for `field_own` the conservative merge under G7 is `ff.merge(old, next)`, since meet is the sound widening). Add:
+Thread `exit_field_own` through the fixpoint exactly as Phase 3 threaded `exit_prov` (`ownership.tw` `run_fixpoint`/`FixResult`): extend `FixResult` with `exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>>`; in each per-block step build `entry_field := join_entry_field_own(blk, exit_field, entry_own, processed)`, put it in the `ForwardState.{ … , field_own: entry_field }`; on change-detection compare with `same_field_own_map` (below) alongside own/valid/prov; store `next` (or the target-widened value — for `field_own` the conservative G7 widening meets each local's FieldMap via `old_fm.merge(next_fm)` and keeps only locals present in both maps, since meet is the sound widening). Add:
 
 ```tw
-fn same_field_map(a: Dict<Int, Int>, b: Dict<Int, Int>) Bool {
-  if a.keys().len() != b.keys().len() {
-    return false
-  }
-  for k in a.keys() {
-    if !b.has(k) {
-      return false
-    }
-  }
-  true
-}
-
-fn same_field_own_map(a: Dict<Int, Dict<Int, Int>>, b: Dict<Int, Dict<Int, Int>>) Bool {
+// Block field_own maps are equal iff same locals and each local's FieldMap has
+// the same path-key set (FieldMap.same).
+fn same_field_own_map(a: Dict<Int, ff.FieldMap>, b: Dict<Int, ff.FieldMap>) Bool {
   if a.keys().len() != b.keys().len() {
     return false
   }
   for k in a.keys() {
     case a.get(k) {
       .Some(av) => case b.get(k) {
-        .Some(bv) => if !same_field_map(av, bv) {
+        .Some(bv) => if !av.same(bv) {
           return false
         },
         .None => return false,
@@ -841,7 +865,7 @@ with the helper:
 ```tw
 fn has_field_path(f: cfg.CfgFunction, local_id: Int, p: ff.AccessPath) Bool {
   case f.blocks[0].exit.field_own.get(local_id) {
-    .Some(m) => ff.is_unique(m, p),
+    .Some(m) => m.is_unique(p),
     .None => false,
   }
 }
@@ -900,10 +924,10 @@ Extend the `ARecord`/`AArrayLit`/`ARecordUpdate` arms (keep the existing own/pro
       st = .set_result(result, .Unique) // sets shell Unique; choke point leaves field_own[result] intact (empty)
       st = .set_prov_st(result, origins)
       // Graft each single-retention field value's facts under [.f].
-      rf: Dict<Int, Int> = Dict.new()
+      rf := ff.empty()
       for fa in fields {
         if single_retention(st, fa.value, last, operands) {
-          rf = ff.graft(rf, .Field(fa.field.id), 0, atom_field_own(st, fa.value))
+          rf = rf.graft(.Field(fa.field.id), atom_field_own(st, fa.value))
         }
       }
       st.set_field_own(result, rf)
@@ -926,7 +950,7 @@ Extend the `ARecord`/`AArrayLit`/`ARecordUpdate` arms (keep the existing own/pro
         }
       }
       st = if all_owned {
-        st.set_field_own(result, ff.set_path(Dict.new(), ff.elem_path(), 0))
+        st.set_field_own(result, ff.empty().set_path(ff.elem_path(), 0))
       } else {
         st
       }
@@ -941,9 +965,9 @@ Extend the `ARecord`/`AArrayLit`/`ARecordUpdate` arms (keep the existing own/pro
       // Only build field facts when the result shell is Unique (else choke point cleared it).
       st = if own_is_unique(st.own, result) {
         // remove the whole [.f]* subtree first, then graft the (single-retention) replacement.
-        rf := ff.remove_prefix(base_fields, .Field(f.id))
+        rf := base_fields.remove_prefix(.Field(f.id))
         rf = if single_retention(st, v, last, [base, v]) {
-          ff.graft(rf, .Field(f.id), 0, atom_field_own(st, v))
+          rf.graft(.Field(f.id), atom_field_own(st, v))
         } else {
           rf
         }
@@ -1172,9 +1196,9 @@ Extend only the `.Update` branch (`.Allocate` is untouched — `Vector.make` add
         .Some(k) => if k < args.len() {
           atom_field_own(st, args[k])
         } else {
-          Dict.new()
+          ff.empty()
         },
-        .None => Dict.new(),
+        .None => ff.empty(),
       }
       st = st
         .consume_call_base(result, cs, args, last)
@@ -1194,12 +1218,12 @@ Extend only the `.Update` branch (`.Allocate` is untouched — `Vector.make` add
             if keep {
               carried
             } else {
-              ff.remove_prefix(carried, seg)
+              carried.remove_prefix(seg)
             }
           },
           // Unknown Update op: we do NOT know it preserves inner structure -> drop
           // every nested fact (sound). Shell stays whatever consume_call_base set.
-          .None => Dict.new(),
+          .None => ff.empty(),
         }
         st.set_field_own(result, rf)
       } else {
@@ -1295,7 +1319,7 @@ Replace the `.ARecordGet(base, _, _)` arm (note it must now read `f`):
 
 ```tw
     .ARecordGet(base, f, _) => {
-      pr := ff.project(atom_field_own(st, base), .Field(f.id))
+      pr := atom_field_own(st, base).project(.Field(f.id))
       moved := case atom_local_id(base) {
         .Some(bid) => is_last_use(last, bid), // whole-record last-use (quartet: Task 6)
         .None => false,
@@ -1308,7 +1332,7 @@ Replace the `.ARecordGet(base, _, _)` arm (note it must now read `f`):
             st = .set_own_st(result, own_of_tag(t))
             st = .set_field_own(result, pr.fields)
             case atom_local_id(base) {
-              .Some(bid) => st.set_field_own(bid, ff.remove_prefix(field_own_get(st, bid), .Field(f.id))),
+              .Some(bid) => st.set_field_own(bid, field_own_get(st, bid).remove_prefix(.Field(f.id))),
               .None => st,
             }
           },
@@ -1318,7 +1342,7 @@ Replace the `.ARecordGet(base, _, _)` arm (note it must now read `f`):
         // borrow: aliasing both sides -> R Shared, base's [.f]* cleared.
         st = .set_own_st(result, .Shared)
         case atom_local_id(base) {
-          .Some(bid) => st.set_field_own(bid, ff.remove_prefix(field_own_get(st, bid), .Field(f.id))),
+          .Some(bid) => st.set_field_own(bid, field_own_get(st, bid).remove_prefix(.Field(f.id))),
           .None => st,
         }
       }
@@ -1623,13 +1647,13 @@ Store as e.g. `L4 = record_update L1.f0  shell=reuse(unique) field=in-place([.f0
 
 - [ ] **Step 4: Render field facts + verdicts in `cfg.tw`**
 
-Add `use compiler.field_facts as ff` to `cfg.tw` (leaf import, G6). In `render_facts`, after the ownership line, append (only when non-empty), sorted by `(LocalId, PathKey)`:
+`cfg.tw` already imports `field_facts as ff` (added in Task 2). In `render_facts`, after the ownership line, append (only when non-empty), sorted by `(LocalId, PathKey)` — iterate the local's `FieldMap` keys via `fm.sorted_keys()`:
 
 ```tw
 // field_facts={L7:[.types]=U,[.types,Elem]=U; L9:[Elem]=U}
 ```
 
-Render a path from its key via `ff.path_of_key` → segments (`.Field(f)` → `.f${f}`... use the *field id* as printed; `Elem`/`Val` → `Elem`/`Val`). Append each block's `verdicts` (sorted by result local) as their own lines. Guard: emit nothing when both maps are empty so un-analyzed / field-free functions render exactly as today.
+Render a path from its key via `ff.path_of_key` → segments (`.Field(f)` → `.f${f}`... use the *field id* as printed; `Elem`/`Val` → `Elem`/`Val`). Iterate each `fm` (a `ff.FieldMap`) with `fm.sorted_keys()` and decode each key. Append each block's `verdicts` (sorted by result local) as their own lines. Guard: emit nothing when a block has no field facts (`fm.is_empty()` for all locals) and no verdicts, so un-analyzed / field-free functions render exactly as today.
 
 - [ ] **Step 5: Boot tests, rebuild CLI, smoke + determinism**
 
@@ -1732,7 +1756,9 @@ git commit -m "docs/sound-uniqueness: track Phase 4 field-ownership delivery"
 
 **Review pass 1 (fixes applied):** ANF constructor arities corrected (`ARecordGet(Atom, FieldId, TypeId)`; `ARecordUpdate(Atom, FieldId, Atom, Bool, TypeId)` — 4th is `false`, 5th `TypeId`); `BlockFacts.live` kept `Vector<Int>`; the container signal moved off nonexistent `Vector.append`/`Vector.set` method-ids onto a `ContainerKind` carried on the optimizer semantics keyed by the real `vector$set_unsafe`/`builder.push_id`/`Dict.set` ids, with `NotCollection` dropping nested facts; single-retention now counts the candidate across **all** retained operands (so `Dict.set(d, x, x)` mints no `[Val]`); the quartet recognizer no longer requires an `AAssign` and adds a mandatory block-exit escape check; the plan/design PathKey conflict reconciled (design Decision 3 updated to the reversible codec); `set_path` rejects the shell key; `ff.PathSeg` qualification noted.
 
-**3. Type consistency:** `field_own: Dict<Int, Dict<Int, Int>>` used identically in `ForwardState`, `BlockFacts`, `FixResult.exit_field_own`, and every helper (`field_own_get`/`set_field_own`/`field_of`/`join_entry_field_own`). `ff.graft`/`project`/`remove_prefix`/`merge`/`is_unique`/`path_key`/`path_of_key` signatures match between Task 1's module and Tasks 3–7's call sites. `single_retention`/`container_seg`/`stored_element_atom`/`recognize_quartet_moves`/`quartet_has` defined once and reused. `Projection.{ shell, fields }` consistent between Task 1 and Task 5.
+**3. Type consistency:** `field_own: Dict<Int, ff.FieldMap>` used identically in `ForwardState`, `BlockFacts`, `FixResult.exit_field_own` (`Dict<Int, Dict<Int, ff.FieldMap>>` at block level), and every helper (`field_own_get`/`set_field_own`/`atom_field_own`/`field_of`/`join_entry_field_own` all return/take `ff.FieldMap`). The `FieldMap` inherent methods (`fm.graft(seg, src)`/`project(seg)`/`remove_prefix(seg)`/`merge(other)`/`is_unique(p)`/`set_path(p, tag)`/`same(other)`/`is_empty()`/`sorted_keys()`) are called in method form throughout Tasks 3–7, matching Task 1's definitions; construction is `ff.empty()`; free functions are only `path_key`/`path_of_key`/`shell`/`field_path`/…/`seg_eq`/`path_eq`. `graft` takes no shell-tag arg (always writes Unique). `single_retention`/`container_seg`/`stored_element_atom`/`recognize_quartet_moves`/`quartet_has` defined once and reused. `Projection.{ shell: Int?, fields: FieldMap }` consistent between Task 1 and Task 5.
+
+**FieldMap refactor (user-requested, applied to the whole plan):** the per-local field map is the `FieldMap` record (`field_facts.tw`), and all map operations are inherent methods so call sites read `fm.op(...)`. `field_own` values are `FieldMap` (build empty via `ff.empty()`, not `Dict.new()`) through `ownership.tw` + `BlockFacts` + `cfg.tw`. Whole-local demotion is `ff.empty()` (no `clear_all`). `cfg.tw` gains `use compiler.field_facts as ff` in **Task 2** (BlockFacts references `ff.FieldMap`), not Task 7.
 
 **Open risks to watch during execution:**
 - **Task 2 threads `field_own` + a new join through the fixpoint** (`run_fixpoint`/`FixResult`/`analyze_function` materialize) exactly where Phase 3 threaded `prov`. Mirror the `exit_prov` plumbing precisely; a missing `field_own: Dict.new()` on any `ForwardState.{ … }` construction breaks compilation, and a missed materialize site leaves `blk.exit.field_own` empty (silent under-claim, caught by the Task 3 positive tests).
