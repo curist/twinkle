@@ -49,6 +49,7 @@
 - **G4 — Consumption in one place.** `transfer_call` is used by both `analyze` and `summarize_function` (via the forward pass). Implement consumption once; both benefit.
 - **G5 — Dead-merge is pre-analysis.** `prune_dead_merge` runs before `compute`/`analyze` and returns a new view; the analysis runs fresh on it. Never mutate an analyzed CFG.
 - **G6 — Module graph is acyclic (keep it that way).** Layering: `summary.tw → ownership.tw → cfg.tw` (plus `summary.tw → cfg.tw`), no back-edges. The summary *types* and `empty_summary_table()` live in `ownership.tw`, so `ownership.tw` never imports `summary.tw` (the G1 wrapper builds the empty table locally). `cfg.tw` must **not** import `ownership`/`summary` — the `--cfg` summary header is passed in as a `Dict<Int,String>`. (A `summary ↔ ownership` cycle was spiked and Twinkle accepts it, but we don't need or want one — this matches the design's acyclic layout.)
+- **G7 — Intraprocedural fixpoint updates are monotone.** After a block has been processed once, never replace its exit facts with a newly computed transfer result directly. Widen/merge old and new exits before change detection: ownership via `join_own`, binding-validity via meet/`and`, provenance via sorted union. Direct replacement can oscillate on loop CFGs (`Unknown ↔ Shared`) even when the interprocedural SCC driver is correct.
 
 ---
 
@@ -330,7 +331,7 @@ Update the arms below (keep existing own/valid logic; add the `prov` side):
 
 - [ ] **Step 7: Thread `prov` through the fixpoint + seed params**
 
-Add the prov twins (`prov_map_get`, `same_prov_map` — reuse `same_live` for the inner vector compare, `join_entry_prov`, `prov_of_in`, `seed_param_prov`) exactly as in the design; extend `FixResult` with `exit_prov` and `run_fixpoint` to (a) take the function `params`, (b) seed block 0's entry prov via `seed_param_prov`, (c) join entry prov via `join_entry_prov`, (d) compare prov in change-detection, (e) store `exit_prov[blk] = st.prov`.
+Add the prov twins (`prov_map_get`, `same_prov_map` — reuse `same_live` for the inner vector compare, `join_entry_prov`, `prov_of_in`, `seed_param_prov`) exactly as in the design; extend `FixResult` with `exit_prov` and `run_fixpoint` to (a) take the function `params`, (b) seed block 0's entry prov via `seed_param_prov`, (c) join entry prov via `join_entry_prov`, (d) widen already-processed exits before change-detection (G7), (e) compare prov in change-detection, (f) store the widened `exit_prov[blk]`.
 
 ```tw
 fn prov_map_get(m: Dict<Int, Dict<Int, Vector<Int>>>, id: Int) Dict<Int, Vector<Int>> {
@@ -405,7 +406,70 @@ fn seed_param_prov(entry: Dict<Int, Vector<Int>>, params: Vector<LocalId>) Dict<
 }
 ```
 
-`run_fixpoint(blocks, params, table, b, sem)` per-block step (mirrors the own/valid handling):
+Add the monotone exit merge helpers before wiring the loop body:
+
+```tw
+fn merge_own_exit(old: Dict<Int, Int>, next: Dict<Int, Int>) Dict<Int, Int> {
+  out: Dict<Int, Int> = Dict.new()
+  for k in old.keys() {
+    out[k] = fact_of_local(old, k).join_own(fact_of_local(next, k)).own_tag()
+  }
+  for k in next.keys() {
+    case old.get(k) {
+      .Some(_) => {},
+      .None => case next.get(k) {
+        .Some(v) => out[k] = v,
+        .None => {},
+      },
+    }
+  }
+  out
+}
+
+fn merge_valid_exit(old: Dict<Int, Bool>, next: Dict<Int, Bool>) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+  for k in old.keys() {
+    out[k] = valid_of_local(old, k) and valid_of_local(next, k)
+  }
+  for k in next.keys() {
+    case old.get(k) {
+      .Some(_) => {},
+      .None => case next.get(k) {
+        .Some(v) => out[k] = v,
+        .None => {},
+      },
+    }
+  }
+  out
+}
+
+fn merge_prov_exit(old: Dict<Int, Vector<Int>>, next: Dict<Int, Vector<Int>>) Dict<Int, Vector<Int>> {
+  out: Dict<Int, Vector<Int>> = Dict.new()
+  for k in old.keys() {
+    prev := case old.get(k) {
+      .Some(v) => v,
+      .None => [],
+    }
+    cur := case next.get(k) {
+      .Some(v) => v,
+      .None => [],
+    }
+    out[k] = union_sorted(prev, cur)
+  }
+  for k in next.keys() {
+    case old.get(k) {
+      .Some(_) => {},
+      .None => case next.get(k) {
+        .Some(v) => out[k] = v,
+        .None => {},
+      },
+    }
+  }
+  out
+}
+```
+
+`run_fixpoint(blocks, params, table, b, sem)` per-block step (mirrors the own/valid handling, with G7 widening):
 
 ```tw
       entry_prov := join_entry_prov(blk, exit_prov, processed)
@@ -414,14 +478,21 @@ fn seed_param_prov(entry: Dict<Int, Vector<Int>>, params: Vector<LocalId>) Dict<
       }
       st := ForwardState.{ own: entry_own, valid: entry_valid, prov: entry_prov }
       st = forward_block(blk, st, table, b, sem)
+      already := is_processed(processed, blk.id.id)
+      old_own := own_map_get(exits, blk.id.id)
+      old_valid := valid_map_get(exit_valid, blk.id.id)
+      old_prov := prov_map_get(exit_prov, blk.id.id)
+      next_own := if already { merge_own_exit(old_own, st.own) } else { st.own }
+      next_valid := if already { merge_valid_exit(old_valid, st.valid) } else { st.valid }
+      next_prov := if already { merge_prov_exit(old_prov, st.prov) } else { st.prov }
       if !already
-        or !same_own_map(own_map_get(exits, blk.id.id), st.own)
-        or !same_valid_map(valid_map_get(exit_valid, blk.id.id), st.valid)
-        or !same_prov_map(prov_map_get(exit_prov, blk.id.id), st.prov) {
+        or !same_own_map(old_own, next_own)
+        or !same_valid_map(old_valid, next_valid)
+        or !same_prov_map(old_prov, next_prov) {
         changed = true
-        exits[blk.id.id] = st.own
-        exit_valid[blk.id.id] = st.valid
-        exit_prov[blk.id.id] = st.prov
+        exits[blk.id.id] = next_own
+        exit_valid[blk.id.id] = next_valid
+        exit_prov[blk.id.id] = next_prov
       }
 ```
 
@@ -503,6 +574,8 @@ pub fn summarize_function(f: CfgFunction, table: SummaryTable, b: BuiltinRegistr
 
 Run: `target/twk run boot/tests/main.tw`
 Expected: PASS — borrow/retain/aggregate/dead-branch escape tests **and** all Phase 2 facts tests (G2).
+
+Also add and verify a convergence regression in `boot/tests/suites/cfg_ownership_facts_suite.tw`: compile `boot/compiler/resolver.tw`, build/prune the CFG, run `summary.compute`, run `ownership.analyze_with_summaries`, and assert `remap_type_def` is present. This real loop-heavy CFG caught the non-monotone exit replacement bug where ownership alternated `Unknown ↔ Shared` forever. The test is intentionally a convergence smoke test: if the inner ownership fixpoint does not converge, it hangs/fails before the assertion.
 
 - [ ] **Step 11: Format, lint, commit**
 
@@ -1393,4 +1466,5 @@ git commit -m "opt/docs: rewrite stale opt/README, optimizer audit, track Phase 
 - **G6:** never import `ownership`/`summary` into `cfg.tw`; pass headers as a `Dict`.
 - **Positional `arg[k] ↔ param[k]` (decision 8):** Task 4 indexes `s.params[i]` against `args[i]`. Holds for direct `AGlobalFunc` callees (declaration-order params), but sanity-check a receiver/inherent-method-desugared call and a captured-env case for any implicit slot shift while writing the Task 4 fixtures. Indirect/closure callees already take the conservative path.
 - **Whole-program cost of `summary.compute`:** it runs a full liveness + forward fixpoint per function *in addition to* the final `analyze` pass, so `--cfg` per-function work roughly doubles. Fine for a debug command; do not copy this onto a hot path in Phase 4 without caching.
+- **Inner fixpoint convergence:** the original plan review checked the interprocedural SCC fixpoint, but missed that the intraprocedural ownership fixpoint was not monotone because it replaced already-processed block exits with the latest transfer result. Reviewers must check the update operator itself: first visits may store exact exits; later visits must widen/merge via G7. Add a real loop-heavy regression (`resolver.remap_type_def`) whenever this driver changes.
 - **Determinism:** `prov` sorted `Vector<Int>`; SCC nodes enumerated in ascending `FuncId.id` order via the canonical decimal string encoding, Tarjan over deterministically-enumerated edges; `--cfg` gated by the Task 5 determinism test.
