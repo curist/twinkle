@@ -28,7 +28,7 @@
 - **PathKey is reversible (no side table).** Phase 4 path shapes are bounded (depth ≤ 2): `[Elem]`, `[Val]`, `[Field(f)]`, `[Field(f), Elem]`, `[Field(f), Val]`. `path_key`/`path_of_key` are pure arithmetic inverses, so renderers reconstruct the `AccessPath` from the key alone. This realizes Decision 3's "canonical Int PathKey encoding"; the "side table" collapses to pure decode. Deeper paths (Phase 5 variant payloads) extend the scheme.
 - **Where each rule lands** (verified against `ownership.tw`):
   - `ARecord` / `AArrayLit` / `ARecordUpdate` / `ARecordGet` / `AVariant` are true `AnfOp`s in `transfer_op` — field rules attach there.
-  - The consuming collection builtins are **`ACall`s** routed through `transfer_builtin_call` (`.Allocate`/`.Update`). **Their ids are not `method_id`s.** Verified in `boot/compiler/opt/semantics.tw`: `Dict.set` is `b.method_id("Dict","set")` (retained `[1,2]` = key+value), but vector element-store is `b.id("vector$set_unsafe")` (retained `[2]` = value) and vector append is `vector_builder_config(b).push_id` (retained `[1]`); there is **no** `Vector.append`/`Vector.set` `method_id`. So the `[Elem]`-vs-`[Val]` segment choice **cannot** be a `method_id` comparison in `ownership.tw`. It is carried as a **container-kind signal on the optimizer semantics**, populated at the registration site where those ids are already in scope (Task 4): a `container_kind(sem, fid) → { NotCollection, VectorLike, DictLike }` accessor. `NotCollection` (unknown/ other `.Update` ops like `Dict.remove`, builder pushes) **drops** nested facts — never guesses a segment.
+  - The consuming collection builtins are **`ACall`s** routed through `transfer_builtin_call` (`.Allocate`/`.Update`). **Their ids are a mix of `method_id` and raw `b.id`, so a uniform `method_id` compare in `ownership.tw` is wrong.** Verified in `boot/compiler/opt/semantics.tw` + `boot/compiler/builder_family.tw`: `Dict.set` is `b.method_id("Dict","set")` (retained `[1,2]` = key+value); vector append is `vector_builder_config(b).push_id`, which *is* `b.method_id("Vector","append")` (retained `[1]`); but vector element-store is `b.id("vector$set_unsafe")` (retained `[2]`), a **raw prelude id with no `method_id`**, and there is no `Vector.set` `method_id`. So the `[Elem]`-vs-`[Val]` segment choice is carried as a **container-kind signal on the optimizer semantics**, populated at the registration site where all these ids (`b.id(...)`, `builder.push_id`, `b.method_id(...)`) are already in scope (Task 4): a `container_kind(sem, fid) → { NotCollection, VectorLike, DictLike }` accessor. `NotCollection` (unknown / other `.Update` ops like `Dict.remove`, builder-internal pushes) **drops** nested facts — never guesses a segment.
   - `AVariant`'s current transfer (`field_store` each payload, result `Unique`) *is already* the Phase 4 shell-only behavior — **leave it unchanged** (variant payload paths are Phase 5).
 - **Determinism.** Iterate blocks/params by id/index order; PathKeys are canonical ints; every rendered/compared line is keyed by a sorted `(LocalId, PathKey)` list, never raw `Dict` iteration order.
 - **Boot gotchas (from Phase 2/3):**
@@ -942,7 +942,7 @@ Extend the `ARecord`/`AArrayLit`/`ARecordUpdate` arms (keep the existing own/pro
       st = if own_is_unique(st.own, result) {
         // remove the whole [.f]* subtree first, then graft the (single-retention) replacement.
         rf := ff.remove_prefix(base_fields, .Field(f.id))
-        rf = if single_retention(st, v, last, [v]) {
+        rf = if single_retention(st, v, last, [base, v]) {
           ff.graft(rf, .Field(f.id), 0, atom_field_own(st, v))
         } else {
           rf
@@ -966,7 +966,7 @@ fn own_is_unique(own: Dict<Int, Int>, id: Int) Bool {
 }
 ```
 
-(Here `v` is the *replacement value* — a single operand — so `single_retention(st, v, last, [v])` is correct: there is no sibling operand to alias against in an `ARecordUpdate`. Contrast Task 4, where a `Dict.set` retains **two** operands and the list must include both.)
+(The operand list is `[base, v]`, not `[v]`: if the replacement `v` is the same local as `base` — a self-insert — `store_count` sees it twice and rejects the graft. `base` is the source of the carried sibling fields, so a `v` that aliases `base` is an intra-result alias, exactly the case single-retention must block. Contrast Task 4, where a `Dict.set` retains key+value and the list is all retained operands.)
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -992,13 +992,13 @@ the single-retention replacement, carrying sibling field facts unchanged."
 
 Handle the consuming collection builtins: `Vector.make` never claims `[Elem]`; the element-store ops keep `[Elem]`/`[Val]:Unique` only when the stored element is itself single-retention (Decision 5). This is Case V's inner-append shape.
 
-**Verified ids (`boot/compiler/opt/semantics.tw:84-160`)** — the element-store builtins are **not** `method_id`s:
-- Vector element store: `b.id("vector$set_unsafe")` — `.Update`, `cow_base_arg .Some(0)`, `retained_args .Some([2])` (value).
-- Vector append/push: `vector_builder_config(b).push_id` — `.Update`, `cow_base_arg .Some(0)`, `retained_args .Some([1])` (value).
+**Verified ids (`boot/compiler/opt/semantics.tw:84-160`, `boot/compiler/builder_family.tw:25-31`)** — a mix of `method_id` and raw `b.id`, so no single `method_id` compare suffices:
+- Vector element store: `b.id("vector$set_unsafe")` — raw prelude id (**no `method_id`**); `.Update`, `cow_base_arg .Some(0)`, `retained_args .Some([2])` (value).
+- Vector append/push: `vector_builder_config(b).push_id`, which is defined as `b.method_id("Vector","append")` — `.Update`, `cow_base_arg .Some(0)`, `retained_args .Some([1])` (value).
 - Dict set: `b.method_id("Dict","set")` — `.Update`, `retained_args .Some([1, 2])` (**key and value**).
 - `Vector.make`: `b.method_id("Vector","make")` — `.Allocate`, `retained_args .Some([1])` (fill).
 
-So the container signal lives on the **optimizer semantics** (populated where those ids are in scope), not a `method_id` compare in `ownership.tw`.
+So the container signal lives on the **optimizer semantics** (populated where all these ids are in scope), not a `method_id` compare in `ownership.tw`.
 
 **Scope note (empty-collection bootstrap):** this rule *preserves/keeps* `[Elem]`/`[Val]` on an already-all-owned base and *drops* it on a shared insert — it does **not mint** a nested fact on an empty base. A base therefore gets `[Elem]` only from an all-owned array literal (Task 3), so build-by-insertion dicts (`Dict.new` + `set`, Case B) never accumulate `[Val]` under these strict rules. Whether empty collections should mint a **vacuous** `[Elem]`/`[Val]:Unique` (sound: an empty collection has no shared inner) to bootstrap the inductive case is an **open refinement** — confirm against `records-fields.md` Case B before adding it; leaving it out is a sound under-claim. The Task 4 fixtures use the array-literal bootstrap (vectors) so they are constructible without it.
 
@@ -1439,7 +1439,7 @@ fn recognize_quartet_moves(blk: CfgBlock) Dict<Int, Bool> {
 fn quartet_ok(blk: CfgBlock, i: Int, bid: Int, fid: Int, rget: Int) Bool {
   insts := blk.instructions
   matched := false
-  for j in range(i + 1, insts.len()) {
+  for j in range_from(i + 1, insts.len()) {
     op := insts[j].op
     is_match := case op {
       .ARecordUpdate(base2, f2, _v, _, _) => atom_is_local(base2, bid) and f2.id == fid,
@@ -1498,18 +1498,23 @@ fn is_record_get_of(op: AnfOp, bid: Int, fid: Int) Bool {
   }
 }
 
-// bid must be dead after the block: not returned/broken and not fed on any
-// outgoing edge. Grep the real Terminator variants (ownership.tw uses
-// .Return(.Some(a)) / .ValueBreak(a)) and the CfgEdge arg accessor; adjust names.
+// bid must be dead after the block: not read by the terminator (Return/ValueBreak
+// payload AND CondBranch test / Match scrutinee) and not fed on any outgoing edge.
+// REUSE the existing `term_uses(term) Vector<Int>` (ownership.tw:126) — it already
+// covers all four Terminator variants incl. CondBranch(test,…) and Match(scrut,…);
+// a hand-rolled Return/ValueBreak-only check would MISS a branch/match read of bid.
 fn exit_mentions_local(blk: CfgBlock, id: Int) Bool {
-  term := case blk.terminator {
-    .Some(.Return(.Some(a))) => atom_is_local(a, id),
-    .Some(.ValueBreak(a)) => atom_is_local(a, id),
-    _ => false,
+  case blk.terminator {
+    .Some(term) => {
+      for u in term_uses(term) {
+        if u == id {
+          return true
+        }
+      }
+    },
+    .None => {},
   }
-  if term {
-    return true
-  }
+  // outgoing edge args (positional feeds to successor block params)
   for e in blk.succs {
     for a in e.args {
       if atom_is_local(a, id) {
@@ -1521,7 +1526,7 @@ fn exit_mentions_local(blk: CfgBlock, id: Int) Bool {
 }
 ```
 
-(`blk.succs`/`CfgEdge.args` are the outgoing edges used by `join_entry_ownership`; confirm the field names in `cfg.tw`. If the CFG stores successor edge args differently, use whatever `join_entry_ownership` reads for positional edge args — the invariant is "`bid` is not fed to any successor param".)
+(`term_uses` is already in `ownership.tw`; do not reimplement it. `blk.succs`/`CfgEdge.args` are the outgoing edges `join_entry_ownership` reads — confirm the field names in `cfg.tw`; the invariant is "`bid` is not fed to any successor param nor read by the terminator".)
 
 - [ ] **Step 4: Consult the quartet set in `.ARecordGet`**
 
@@ -1721,7 +1726,9 @@ git commit -m "docs/sound-uniqueness: track Phase 4 field-ownership delivery"
 
 **2. Placeholder scan:** Task 7's verdict/render steps describe the render format by contract; all novel algorithmic code (codec, map ops, single-retention, introduction arms, projection, container kind, the `quartet_ok` recognizer) is shown in full. No `TBD`/blank markers remain. The only inline verify-during-execution notes are *name confirmations against the live code* (the exact `vector$set_unsafe`/`builder.push_id` ids, the `Terminator`/`CfgEdge.args` field names, the `op_uses` helper name) — each says exactly what to grep and substitute.
 
-**Review pass (post-subagent-review fixes applied):** ANF constructor arities corrected (`ARecordGet(Atom, FieldId, TypeId)`; `ARecordUpdate(Atom, FieldId, Atom, Bool, TypeId)` — 4th is `false`, 5th `TypeId`); `BlockFacts.live` kept `Vector<Int>`; the container signal moved off nonexistent `Vector.append`/`Vector.set` method-ids onto a `ContainerKind` carried on the optimizer semantics keyed by the real `vector$set_unsafe`/`builder.push_id`/`Dict.set` ids, with `NotCollection` dropping nested facts; single-retention now counts the candidate across **all** retained operands (so `Dict.set(d, x, x)` mints no `[Val]`); the quartet recognizer no longer requires an `AAssign` and adds a mandatory block-exit escape check; the plan/design PathKey conflict reconciled (design Decision 3 updated to the reversible codec); `set_path` rejects the shell key; `ff.PathSeg` qualification noted.
+**Review pass 2 (fixes applied):** `exit_mentions_local` now reuses the existing `term_uses(term)` so the quartet escape check covers `CondBranch` tests and `Match` scrutinees (not just `Return`/`ValueBreak`); `ARecordUpdate` single-retention counts `[base, v]` so a self-insert (`v == base`) mints no field fact; two-arg iteration uses `range_from(i + 1, insts.len())` (the `[.I64, .I64]` builtin), not `range`; corrected the prose — `Vector.append` *is* reachable as `b.method_id("Vector","append")` (= `builder.push_id`), while `vector$set_unsafe` is a raw `b.id` with no method_id (the container-kind-on-semantics keying is unaffected).
+
+**Review pass 1 (fixes applied):** ANF constructor arities corrected (`ARecordGet(Atom, FieldId, TypeId)`; `ARecordUpdate(Atom, FieldId, Atom, Bool, TypeId)` — 4th is `false`, 5th `TypeId`); `BlockFacts.live` kept `Vector<Int>`; the container signal moved off nonexistent `Vector.append`/`Vector.set` method-ids onto a `ContainerKind` carried on the optimizer semantics keyed by the real `vector$set_unsafe`/`builder.push_id`/`Dict.set` ids, with `NotCollection` dropping nested facts; single-retention now counts the candidate across **all** retained operands (so `Dict.set(d, x, x)` mints no `[Val]`); the quartet recognizer no longer requires an `AAssign` and adds a mandatory block-exit escape check; the plan/design PathKey conflict reconciled (design Decision 3 updated to the reversible codec); `set_path` rejects the shell key; `ff.PathSeg` qualification noted.
 
 **3. Type consistency:** `field_own: Dict<Int, Dict<Int, Int>>` used identically in `ForwardState`, `BlockFacts`, `FixResult.exit_field_own`, and every helper (`field_own_get`/`set_field_own`/`field_of`/`join_entry_field_own`). `ff.graft`/`project`/`remove_prefix`/`merge`/`is_unique`/`path_key`/`path_of_key` signatures match between Task 1's module and Tasks 3–7's call sites. `single_retention`/`container_seg`/`stored_element_atom`/`recognize_quartet_moves`/`quartet_has` defined once and reused. `Projection.{ shell, fields }` consistent between Task 1 and Task 5.
 
