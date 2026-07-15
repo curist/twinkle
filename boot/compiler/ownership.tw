@@ -13,6 +13,10 @@ use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info}
 
 pub type Ownership = { Unique, Shared, Unknown }
 
+// Conservative fallback for longer-period fixpoint cycles; two-step oscillations
+// usually lock earlier through targeted previous-value detection.
+fixpoint_widen_cap := 8
+
 // Tag encoding shared with cfg.BlockFacts.ownership (stored as Int there).
 pub fn own_tag(o: Ownership) Int {
   case o {
@@ -1210,7 +1214,7 @@ fn run_fixpoint(
       next_prov := st.prov
       if already {
         has_prev := prev_seen_get(prev_seen, blk.id.id)
-        force_lock_changed := change_count_get(changed_visits, blk.id.id) >= 8
+        force_lock_changed := change_count_get(changed_visits, blk.id.id) >= fixpoint_widen_cap
         own_merge := merge_own_exit_targeted(
           old_own,
           st.own,
