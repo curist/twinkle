@@ -21,15 +21,6 @@ use compiler.ownership.{
 }
 
 // ── Determinism helpers ─────────────────────────────────────────────
-fn contains_int(v: Vector<Int>, id: Int) Bool {
-  for x in v {
-    if x == id {
-      return true
-    }
-  }
-  false
-}
-
 fn insert_sorted(v: Vector<Int>, id: Int) Vector<Int> {
   out: Vector<Int> = []
   inserted := false
@@ -173,13 +164,32 @@ pub fn callee_ids(f: CfgFunction, user_ids: Dict<Int, Bool>) Vector<Int> {
   acc
 }
 
-pub fn func_by_id(view: CfgView, id: Int) CfgFunction? {
+// O(1) function lookup by id, built once per compute(). The whole-program driver
+// looks functions up O(functions) times (once per SCC edge + once per worklist
+// recompute), so a per-call linear scan of view.functions made the driver
+// O(functions^2) -- the blowup that made `twk ir --cfg` on a whole program
+// intractable.
+fn build_func_index(view: CfgView) Dict<Int, CfgFunction> {
+  idx: Dict<Int, CfgFunction> = Dict.new()
   for f in view.functions {
-    if f.func_id == id {
-      return .Some(f)
-    }
+    idx[f.func_id] = f
   }
-  .None
+  idx
+}
+
+fn int_set(v: Vector<Int>) Dict<Int, Bool> {
+  s: Dict<Int, Bool> = Dict.new()
+  for x in v {
+    s[x] = true
+  }
+  s
+}
+
+fn in_set(s: Dict<Int, Bool>, id: Int) Bool {
+  case s.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
 }
 
 // ── SCC ordering ────────────────────────────────────────────────────
@@ -187,21 +197,20 @@ pub fn func_by_id(view: CfgView, id: Int) CfgFunction? {
 // function to its (sorted) callees, marshalled through decimal String labels.
 // strongly_connected returns dependency-before-dependent components, i.e. in
 // callee-first order. Decode each component's labels back to ints.
-pub fn order_sccs(view: CfgView) Vector<Vector<Int>> {
-  user_ids := user_id_set(view)
-
-  // ascending func_id order for byte-stable enumeration
-  ids: Vector<Int> = []
-  for f in view.functions {
-    ids = insert_sorted(ids, f.func_id)
+pub fn order_sccs(view: CfgView, index: Dict<Int, CfgFunction>, user_ids: Dict<Int, Bool>) Vector<
+  Vector<Int>,
+> {
+  ids: Vector<Int> = collect f in view.functions {
+    f.func_id
   }
+  ids = .sort() // ascending func_id order for a byte-stable graph
 
   nodes: Vector<String> = collect id in ids {
     id.to_string()
   }
   edges: Dict<String, Vector<String>> = Dict.new()
   for id in ids {
-    callees := case func_by_id(view, id) {
+    callees := case index.get(id) {
       .Some(f) => callee_ids(f, user_ids),
       .None => [],
     }
@@ -235,51 +244,85 @@ fn table_get(t: SummaryTable, id: Int) Summary {
   }
 }
 
-// One pass over an SCC: recompute each member from the current table and replace
-// it. Returns the updated table and whether any member's summary changed.
-type PassOut = .{ table: SummaryTable, changed: Bool }
-
-fn fixpoint_pass(
-  view: CfgView,
-  scc: Vector<Int>,
-  table: SummaryTable,
-  b: BuiltinRegistry,
-  sem: OptimizerSemantics,
-) PassOut {
-  changed := false
-  for id in scc {
-    f := case func_by_id(view, id) {
-      .Some(fn0) => fn0,
-      .None => error("summary: scc id ${id} not in view"),
+// callee-in-SCC -> its in-SCC callers. Lets the worklist re-summarize a member
+// only when a dependency changed. Restricted to the SCC: callees in earlier SCCs
+// are already final (callee-first order), and non-recursive members have no
+// in-SCC callee, so they are computed exactly once.
+fn scc_callers(
+  members: Vector<Int>,
+  scc_set: Dict<Int, Bool>,
+  index: Dict<Int, CfgFunction>,
+  user_ids: Dict<Int, Bool>,
+) Dict<Int, Vector<Int>> {
+  callers: Dict<Int, Vector<Int>> = Dict.new()
+  for m in members {
+    case index.get(m) {
+      .Some(f) => {
+        for c in callee_ids(f, user_ids) {
+          if in_set(scc_set, c) {
+            prev := case callers.get(c) {
+              .Some(v) => v,
+              .None => [],
+            }
+            callers[c] = insert_sorted(prev, m)
+          }
+        }
+      },
+      .None => {},
     }
-    next := summarize_function(f, table, b, sem)
-    if !same_summary(table_get(table, id), next) {
-      changed = true
-    }
-    table = table_put(table, id, next)
   }
-  PassOut.{ table, changed }
+  callers
 }
 
+// Monotone dataflow worklist over one SCC. Round 1 summarizes every member once
+// from the conservative seed; thereafter only members whose in-SCC callees
+// changed are recomputed. The escape/return/capability lattices only move down
+// (Retained->Borrowed, Shared->alias->fresh, plus the alias set only grows), so
+// this reaches the exact same least fixed point as recomputing every member every
+// pass -- but in O(edges * lattice-height) analyses instead of O(members^2).
+// Hitting the safety cap leaves each member at its current (still-sound, only
+// more conservative) summary. Determinism: members and each round's dirty set are
+// processed in ascending id order.
 fn run_scc(
-  view: CfgView,
   scc: Vector<Int>,
+  index: Dict<Int, CfgFunction>,
+  user_ids: Dict<Int, Bool>,
   table: SummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
 ) SummaryTable {
-  // Singleton non-recursive SCCs converge in one pass; the cap bounds recursive
-  // SCCs (monotone transfer over a finite lattice terminates well within it).
-  cap := scc.len() * 4 + 1
-  iters := 0
-  done := false
-  for !done and iters < cap {
-    pass := fixpoint_pass(view, scc, table, b, sem)
-    table = pass.table
-    iters = iters + 1
-    if !pass.changed {
-      done = true
+  members := scc.sort()
+  scc_set := int_set(members)
+  callers := scc_callers(members, scc_set, index, user_ids)
+
+  worklist := members // round 1: compute every member once
+  cap := members.len() * 4 + 8 // safety net; the monotone fixpoint converges well within
+  rounds := 0
+  for worklist.len() > 0 and rounds < cap {
+    next_dirty: Dict<Int, Bool> = Dict.new()
+    for id in worklist {
+      f := case index.get(id) {
+        .Some(fn0) => fn0,
+        .None => error("summary: scc id ${id} not in index"),
+      }
+      next := summarize_function(f, table, b, sem)
+      if !same_summary(table_get(table, id), next) {
+        table = table_put(table, id, next)
+        case callers.get(id) {
+          .Some(cs) => {
+            for c in cs {
+              next_dirty[c] = true
+            }
+          },
+          .None => {},
+        }
+      }
     }
+    nd: Vector<Int> = collect k in next_dirty.keys() {
+      k
+    }
+    worklist = nd.sort()
+    rounds = rounds + 1
   }
   table
 }
@@ -328,6 +371,9 @@ pub fn render_cfg(view: CfgView, table: SummaryTable) String {
 
 // ── Driver ──────────────────────────────────────────────────────────
 pub fn compute(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) SummaryTable {
+  index := build_func_index(view)
+  user_ids := user_id_set(view)
+
   // Seed every function conservatively so the first pass is sound before callees
   // are known.
   table := empty_summary_table()
@@ -335,8 +381,8 @@ pub fn compute(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) Summa
     table = table_put(table, f.func_id, conservative_summary(f))
   }
 
-  for scc in order_sccs(view) {
-    table = run_scc(view, scc, table, b, sem)
+  for scc in order_sccs(view, index, user_ids) {
+    table = run_scc(scc, index, user_ids, table, b, sem)
   }
   table
 }
