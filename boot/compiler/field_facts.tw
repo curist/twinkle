@@ -2,17 +2,26 @@
 //!
 //! Pure and value-returning (Twinkle immutability), mirroring cfg.tw/summary.tw.
 //! A LEAF module: it imports neither ownership.tw nor cfg.tw, so it can be
-//! imported by both without a cycle. Only Unique paths are ever stored; absence
-//! of a key means "no claim". A local's field map is `Dict<Int, Int>` keyed by
-//! PathKey (canonical, reversible) with an Ownership tag value (always 0/Unique
-//! in Phase 4, kept Int for symmetry with ownership.own).
+//! imported by both without a cycle. A local's non-shell field-ownership facts
+//! are the `FieldMap` record wrapping `paths: Dict<Int, Int>` (PathKey -> tag);
+//! the map operations are inherent methods on `FieldMap` so callers read as
+//! `fm.is_unique(p)` / `fm.graft(seg, src)` / `fm.merge(other)`. Only Unique paths
+//! are ever stored; absence of a key means "no claim" (tag is Int for symmetry
+//! with ownership.own, always 0/Unique in Phase 4).
 
 pub type PathSeg = { Field(Int), Elem, Val }
 
-// segs == [] is the shell (the [] fact); it is NEVER stored in a field map.
+// segs == [] is the shell (the [] fact); it is NEVER stored in a FieldMap.
 pub type AccessPath = .{ segs: Vector<PathSeg> }
 
-// ── Constructors ────────────────────────────────────────────────────
+// A local's non-shell field-ownership map.
+pub type FieldMap = .{ paths: Dict<Int, Int> }
+
+pub fn empty() FieldMap {
+  FieldMap.{ paths: Dict.new() }
+}
+
+// ── AccessPath constructors ─────────────────────────────────────────
 pub fn shell() AccessPath {
   AccessPath.{ segs: [] }
 }
@@ -114,71 +123,71 @@ pub fn path_of_key(k: Int) AccessPath {
   }
 }
 
-// ── Map operations over one local's field map (PathKey -> tag) ───────
-pub fn set_path(fields: Dict<Int, Int>, p: AccessPath, tag: Int) Dict<Int, Int> {
+// ── FieldMap inherent methods (fm is the first param) ───────────────
+pub fn set_path(fm: FieldMap, p: AccessPath, tag: Int) FieldMap {
   k := path_key(p)
   if k == 0 {
-    // shell facts live in ownership.own, never in a field map.
-    error("field_facts: refusing to store the shell path ([]) in field_own")
+    // shell facts live in ownership.own, never in a FieldMap.
+    error("field_facts: refusing to store the shell path ([]) in a FieldMap")
   }
-  fields[k] = tag
-  fields
+  fm.paths[k] = tag
+  fm
 }
 
-pub fn is_unique(fields: Dict<Int, Int>, p: AccessPath) Bool {
-  case fields.get(path_key(p)) {
+// Shell path ([]) always returns false — shell ownership lives in ownership.own,
+// not here; a FieldMap only answers about non-shell paths.
+pub fn is_unique(fm: FieldMap, p: AccessPath) Bool {
+  case fm.paths.get(path_key(p)) {
     .Some(t) => t == 0,
     .None => false,
   }
 }
 
-pub fn clear_all(_fields: Dict<Int, Int>) Dict<Int, Int> {
-  Dict.new()
+pub fn is_empty(fm: FieldMap) Bool {
+  fm.paths.keys().len() == 0
 }
 
-// Copy value v's facts (its shell tag + its own field paths) under `prefix`.
-// Phase 4 prefixes are a single Field(f)/Elem/Val; v's own paths are at most a
-// depth-1 collection sub-path ([Elem]/[Val]), so the grafted result is depth <= 2.
-// Anything deeper is dropped (sound under-claim). Under an Elem/Val prefix no
-// deeper nesting is representable in Phase 4, so only the shell tag is grafted.
-pub fn graft(dst: Dict<Int, Int>, prefix: PathSeg, v_shell_tag: Int, v_fields: Dict<Int, Int>) Dict<
-  Int,
-  Int,
-> {
-  dst[path_key(AccessPath.{ segs: [prefix] })] = v_shell_tag
+// Copy a value's facts under `prefix`. Callers graft only a value already proven
+// []:Unique, so the shell tag at [prefix] is Unique (0). `src` is the value's OWN
+// FieldMap (its inner paths). Phase 4 prefixes are a single Field(f)/Elem/Val;
+// src's own paths are at most depth-1 ([Elem]/[Val]), so the grafted result is
+// depth <= 2 (deeper is dropped, sound under-claim). Under an Elem/Val prefix no
+// deeper nesting is representable, so only the shell tag lands.
+pub fn graft(fm: FieldMap, prefix: PathSeg, src: FieldMap) FieldMap {
+  fm.paths[path_key(AccessPath.{ segs: [prefix] })] = 0
   case prefix {
     .Field(_) => {
-      for k in v_fields.keys() {
+      for k in src.paths.keys() {
         inner := path_of_key(k)
         if inner.segs.len() == 1 {
-          case v_fields.get(k) {
-            .Some(t) => dst[path_key(AccessPath.{ segs: [prefix, inner.segs[0]] })] = t,
+          case src.paths.get(k) {
+            .Some(t) => fm.paths[path_key(AccessPath.{ segs: [prefix, inner.segs[0]] })] = t,
             .None => {},
           }
         }
       }
-      dst
+      fm
     },
-    _ => dst,
+    _ => fm,
   }
 }
 
 // Projection inverse: gather every path under `prefix`, stripped of it. The
 // [prefix] fact (if present) becomes the projected value's shell; each strict
 // descendant [prefix, X] becomes an inner [X]. Siblings are ignored.
-pub type Projection = .{ shell: Int?, fields: Dict<Int, Int> }
+pub type Projection = .{ shell: Int?, fields: FieldMap }
 
-pub fn project(src: Dict<Int, Int>, prefix: PathSeg) Projection {
+pub fn project(fm: FieldMap, prefix: PathSeg) Projection {
   shell: Int? = .None
-  inner: Dict<Int, Int> = Dict.new()
-  for k in src.keys() {
+  inner := empty()
+  for k in fm.paths.keys() {
     p := path_of_key(k)
     if p.segs.len() >= 1 and seg_eq(p.segs[0], prefix) {
-      case src.get(k) {
+      case fm.paths.get(k) {
         .Some(t) => if p.segs.len() == 1 {
           shell = .Some(t)
         } else {
-          inner[path_key(AccessPath.{ segs: [p.segs[1]] })] = t
+          inner.paths[path_key(AccessPath.{ segs: [p.segs[1]] })] = t
         },
         .None => {},
       }
@@ -188,14 +197,14 @@ pub fn project(src: Dict<Int, Int>, prefix: PathSeg) Projection {
 }
 
 // Drop the entire [prefix]* subtree (including [prefix] itself); keep siblings.
-pub fn remove_prefix(fields: Dict<Int, Int>, prefix: PathSeg) Dict<Int, Int> {
-  out: Dict<Int, Int> = Dict.new()
-  for k in fields.keys() {
+pub fn remove_prefix(fm: FieldMap, prefix: PathSeg) FieldMap {
+  out := empty()
+  for k in fm.paths.keys() {
     p := path_of_key(k)
     drop := p.segs.len() >= 1 and seg_eq(p.segs[0], prefix)
     if !drop {
-      case fields.get(k) {
-        .Some(t) => out[k] = t,
+      case fm.paths.get(k) {
+        .Some(t) => out.paths[k] = t,
         .None => {},
       }
     }
@@ -205,12 +214,12 @@ pub fn remove_prefix(fields: Dict<Int, Int>, prefix: PathSeg) Dict<Int, Int> {
 
 // Per-path meet for joins: only Unique paths are stored, so a path survives iff
 // present in both -> key intersection.
-pub fn merge(a: Dict<Int, Int>, b: Dict<Int, Int>) Dict<Int, Int> {
-  out: Dict<Int, Int> = Dict.new()
-  for k in a.keys() {
-    if b.has(k) {
-      case a.get(k) {
-        .Some(t) => out[k] = t,
+pub fn merge(fm: FieldMap, other: FieldMap) FieldMap {
+  out := empty()
+  for k in fm.paths.keys() {
+    if other.paths.has(k) {
+      case fm.paths.get(k) {
+        .Some(t) => out.paths[k] = t,
         .None => {},
       }
     }
@@ -218,8 +227,20 @@ pub fn merge(a: Dict<Int, Int>, b: Dict<Int, Int>) Dict<Int, Int> {
   out
 }
 
+// Structural equality (same set of Unique path keys) for fixpoint change-detection.
+pub fn same(fm: FieldMap, other: FieldMap) Bool {
+  if fm.paths.keys().len() != other.paths.keys().len() {
+    return false
+  }
+  for k in fm.paths.keys() {
+    if !other.paths.has(k) {
+      return false
+    }
+  }
+  true
+}
+
 // Deterministic sorted key list for rendering / comparison.
-pub fn sorted_keys(fields: Dict<Int, Int>) Vector<Int> {
-  ks := fields.keys()
-  ks.sort()
+pub fn sorted_keys(fm: FieldMap) Vector<Int> {
+  fm.paths.keys().sort()
 }

@@ -7,9 +7,9 @@ fn tag_u() Int {
   0
 }
 
-// A local's field map with a single Unique path.
-fn one(p: ff.AccessPath) Dict<Int, Int> {
-  ff.set_path(Dict.new(), p, tag_u())
+// A FieldMap with a single Unique path.
+fn one(p: ff.AccessPath) ff.FieldMap {
+  ff.empty().set_path(p, tag_u())
 }
 
 pub fn suite() runner.Suite {
@@ -58,72 +58,84 @@ pub fn suite() runner.Suite {
       "is_unique: present -> true, absent -> false",
       fn() {
         m := one(ff.field_path(2))
-        try assert.is_true(ff.is_unique(m, ff.field_path(2)))
-        try assert.is_false(ff.is_unique(m, ff.field_path(3)))
-        try assert.is_false(ff.is_unique(Dict.new(), ff.elem_path()))
+        try assert.is_true(m.is_unique(ff.field_path(2)))
+        try assert.is_false(m.is_unique(ff.field_path(3)))
+        try assert.is_false(ff.empty().is_unique(ff.elem_path()))
         .Ok({})
       },
     )
     .test(
-      "graft: copies shell tag to [.f] and rebases inner [Elem] -> [.f, Elem]",
+      "graft: copies shell to [.f] and rebases inner [Elem] -> [.f, Elem]",
       fn() {
         // v has shell Unique and its own [Elem]:Unique (an all-owned vector).
-        v_fields := one(ff.elem_path())
-        dst := ff.graft(Dict.new(), .Field(1), tag_u(), v_fields)
-        try assert.is_true(ff.is_unique(dst, ff.field_path(1)))
-        try assert.is_true(ff.is_unique(dst, ff.field_elem(1)))
+        v := one(ff.elem_path())
+        dst := ff.empty().graft(.Field(1), v)
+        try assert.is_true(dst.is_unique(ff.field_path(1)))
+        try assert.is_true(dst.is_unique(ff.field_elem(1)))
+        .Ok({})
+      },
+    )
+    .test(
+      "graft under Elem/Val prefix grafts only the shell (no deeper nesting)",
+      fn() {
+        v := one(ff.elem_path())
+        dst := ff.empty().graft(.Elem, v)
+        try assert.is_true(dst.is_unique(ff.elem_path()))
+        try assert.equal(dst.sorted_keys().len(), 1) // src's inner [Elem] is NOT rebased under a non-Field prefix
         .Ok({})
       },
     )
     .test(
       "remove_prefix: drops [.f]* subtree, preserves siblings",
       fn() {
-        m := Dict.new()
-        m = ff.set_path(m, ff.field_path(1), tag_u())
-        m = ff.set_path(m, ff.field_elem(1), tag_u())
-        m = ff.set_path(m, ff.field_path(2), tag_u())
-        out := ff.remove_prefix(m, .Field(1))
-        try assert.is_false(ff.is_unique(out, ff.field_path(1)))
-        try assert.is_false(ff.is_unique(out, ff.field_elem(1)))
-        try assert.is_true(ff.is_unique(out, ff.field_path(2)))
+        m := ff
+          .empty()
+          .set_path(ff.field_path(1), tag_u())
+          .set_path(ff.field_elem(1), tag_u())
+          .set_path(ff.field_path(2), tag_u())
+        out := m.remove_prefix(.Field(1))
+        try assert.is_false(out.is_unique(ff.field_path(1)))
+        try assert.is_false(out.is_unique(ff.field_elem(1)))
+        try assert.is_true(out.is_unique(ff.field_path(2)))
         .Ok({})
       },
     )
     .test(
       "project: [.f] -> shell, [.f, Elem] -> [Elem]",
       fn() {
-        m := Dict.new()
-        m = ff.set_path(m, ff.field_path(1), tag_u())
-        m = ff.set_path(m, ff.field_elem(1), tag_u())
-        m = ff.set_path(m, ff.field_path(2), tag_u()) // sibling, must not leak
-        pr := ff.project(m, .Field(1))
+        m := ff
+          .empty()
+          .set_path(ff.field_path(1), tag_u())
+          .set_path(ff.field_elem(1), tag_u())
+          .set_path(ff.field_path(2), tag_u()) // sibling, must not leak
+        pr := m.project(.Field(1))
         try assert.is_true(case pr.shell {
           .Some(t) => t == tag_u(),
           .None => false,
         })
-        try assert.is_true(ff.is_unique(pr.fields, ff.elem_path()))
-        try assert.is_false(ff.is_unique(pr.fields, ff.field_path(2)))
+        try assert.is_true(pr.fields.is_unique(ff.elem_path()))
+        try assert.is_false(pr.fields.is_unique(ff.field_path(2)))
         .Ok({})
       },
     )
     .test(
       "merge: per-path meet keeps only paths Unique in both",
       fn() {
-        a := Dict.new()
-        a = ff.set_path(a, ff.field_path(1), tag_u())
-        a = ff.set_path(a, ff.field_path(2), tag_u())
+        a := ff.empty().set_path(ff.field_path(1), tag_u()).set_path(ff.field_path(2), tag_u())
         b := one(ff.field_path(1))
-        out := ff.merge(a, b)
-        try assert.is_true(ff.is_unique(out, ff.field_path(1)))
-        try assert.is_false(ff.is_unique(out, ff.field_path(2)))
+        out := a.merge(b)
+        try assert.is_true(out.is_unique(ff.field_path(1)))
+        try assert.is_false(out.is_unique(ff.field_path(2)))
         .Ok({})
       },
     )
     .test(
-      "clear_all: whole-local demotion drops every path",
+      "same/is_empty: structural equality by path-key set",
       fn() {
-        m := one(ff.field_path(1))
-        try assert.equal(ff.clear_all(m).keys().len(), 0)
+        try assert.is_true(one(ff.field_path(1)).same(one(ff.field_path(1))))
+        try assert.is_false(one(ff.field_path(1)).same(one(ff.field_path(2))))
+        try assert.is_true(ff.empty().is_empty())
+        try assert.is_false(one(ff.field_path(1)).is_empty())
         .Ok({})
       },
     )
