@@ -1,6 +1,9 @@
 # Record Shell Reuse, Field Ownership, and Nested Collections
 
-**Status:** Draft skeleton (to be expanded before record/dict codegen lowering)
+**Status:** Expanded for Phase 4 (analysis facts). The intraprocedural
+shell/field/nested model is specified in
+[phase4-design.md](phase4-design.md); the interprocedural return-path and
+`in_place_paths` summary lift is Phase 5, and codegen lowering is Phases 7–8.
 
 ## Purpose
 
@@ -46,9 +49,28 @@ They must stay separate. Sibling fields untouched by the update need not be
 owned — field sensitivity is the point (a shared `.values` must not block a
 sound `.types` in-place update).
 
-> TODO: enumerate the field-fact lattice interaction with the shell fact; the
-> downward-closed `(param, path)` key relationship (owning `[.f]` presupposes
-> owning `[]`).
+**The shell/field lattice interaction (intraprocedural).** The shell fact `[]`
+lives in the flat `own` domain (`Unique`/`Shared`/`Unknown`); the deeper paths
+live in a separate additive `field_own` map where a **present** path means
+`Unique` and an **absent** path means "no claim" (never assume ownership of a
+missing path). The relationship is **downward-closed**:
+
+- a `[.f]` fact is meaningful only while `[]` is `Unique`; a `[.f, Elem]` fact
+  presupposes `[.f]`;
+- so whenever the shell `[]` leaves `Unique` (publish, alias, or a join that
+  lowers it), **every** `[.f]*` fact for that local is cleared (the demotion
+  cascade).
+
+Field-sensitivity is the payoff: sibling paths are independent, so `[.types]`
+can be `Unique` while `[.values]` carries no claim — a shared sibling never
+blocks a sound in-place on another field. Full transfer/join rules:
+[phase4-design.md](phase4-design.md).
+
+The **interprocedural** `(param, path)` key — a summary's `in_place_paths` and the
+`UniqueReq` specialization key in [summary-specialization.md](summary-specialization.md)
+— is the Phase 5/6 lift of exactly this downward-closed invariant: a `(k, [.f])`
+requirement implies `(k, [])`. Phase 4 establishes the intraprocedural facts that
+the later summary/specialization layers project outward.
 
 ## Transport-wrapper records (`.{ ..., ctx/state/env }`)
 
@@ -86,18 +108,31 @@ The builtin `Set<K>` is a thin record wrapper around `Dict<K, Void>` (field
 projection — **not** a bespoke Set-only optimizer. A proven-owned `Set` shell
 whose `entries` field is deeply owned projects to an owned `Dict<K, Void>` region.
 
-> TODO: worked `Set` projection example; confirm the field name and lowering.
+**Worked example.** `Set<K>` is a record with a single field `entries: Dict<K,
+Void>`. On a proven-owned `Set` shell, the field-backing rule proves
+`[.entries]:Unique`, and `ARecordGet(set, .entries)` projects it to an owned
+`Dict<K, Void>` local (the projection hinge, `[.entries]* → []*`). `Set.insert` /
+`Set.remove` desugar to `Dict.set` / `Dict.remove` on that projected local, which
+the ordinary `consume_base` hinge then licenses in place — the **same** path as a
+`.types` dict field. No Set-specific analysis or optimizer is needed; the win
+falls out of field-sensitive projection.
 
 ## Nested collection conservatism (first cut)
 
-The first implementation may **reject most inner mutation** and only optimize the
-outer backing. The hard requirement is that the IR/debug output *names the
-reason*: `outer owned but inner unknown/shared`, `projected inner ownership
-proven`, or `nested publication detected` — never a silent bail.
+Phase 4 goes past pure rejection: it **represents and proves inner ownership**
+where it can, via grafted paths `[.f, Elem]` / `[.f, Val]` (and `[Elem]` / `[Val]`
+on bare collections). Inner facts are introduced by construction
+(`ARecord`/`AArrayLit`/`Vector.make` graft each stored value's facts under the
+element/field path), preserved through projection (`rebase`), and carried through a
+consuming op as structural share. The conservative fallback still governs whenever
+a path can't be proven — a **shared** element yields no `[Elem]` claim — and the
+IR/debug output *names the reason* (`outer owned but inner shared`, `projected
+inner ownership proven`, `nested publication detected`), never a silent bail.
 
-> TODO: which nested cases (if any) the first analysis pass models beyond
-> conservative rejection of projected-element/value inner mutation (Open Question
-> in architecture.md).
+What Phase 4 does **not** model: per-index element facts (`[Elem]` summarizes
+*all* elements, not `[0]`/`[1]` individually) and path-granular liveness on inner
+paths (both remain later precision; the projection move uses whole-record
+last-use — see [phase4-design.md](phase4-design.md)).
 
 ## Codegen-ready decisions
 

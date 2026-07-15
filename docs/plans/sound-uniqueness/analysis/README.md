@@ -119,7 +119,8 @@ The minimal domain (Phases 1-2) treats a fresh record/variant/array shell as
 `Unique` and makes no claim about its contents, so the compiler's characteristic
 idiom — unique record shells over dict/vector fields — still classifies as blanket
 publication. This phase adds the field-sensitive layer. Still no codegen changes.
-Canonical semantics: [records-fields.md](records-fields.md).
+Canonical semantics: [records-fields.md](records-fields.md); implementation
+design: [phase4-design.md](phase4-design.md).
 
 - [ ] **Separate shell reuse from field-backing ownership.** A record update
   carries two independent questions: shell reuse (needs the shell `Unique`) and
