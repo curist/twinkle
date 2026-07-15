@@ -1,7 +1,9 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use commands.ir.{render_cfg_for_entry}
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
+use compiler.builder_family.{empty_builder_config}
 use compiler.builtins
 use compiler.cfg
 use compiler.core_ir.{FieldId, FuncId, GlobalId, LocalId, Param}
@@ -10,6 +12,7 @@ use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.ownership
 use compiler.summary
+use lib.module.loader
 
 fn lid(id: Int) LocalId {
   LocalId.{ id }
@@ -21,6 +24,11 @@ fn b_reg() builtins.BuiltinRegistry {
 
 fn sem() semantics.OptimizerSemantics {
   make_prelude_optimizer_semantics(b_reg())
+}
+
+fn fixtures_dir() String {
+  root := loader.find_project_root("boot")
+  "${root}/tests/fixtures/cfg"
 }
 
 fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
@@ -614,6 +622,132 @@ pub fn suite() runner.Suite {
         try assert.is_true(out1.contains("summary:"))
         try assert.is_true(out1.contains("consumed"))
         try assert.is_true(out1 == out2)
+        .Ok({})
+      },
+    )
+    .test(
+      "review: Dict.remove retains base but borrows removed key",
+      fn() {
+        b := b_reg()
+        body: AnfExpr = .Let(
+          lid(2),
+          .ACall(.AGlobalFunc(b.method_id("Dict", "remove")), [.ALocal(lid(0)), .ALocal(lid(1))]),
+          .Let(lid(3), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(2))), .Atom(.ALitInt(0))),
+        )
+        s := summ1("f", 2, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        try assert.equal(p_escape(s, 1), escape_tag(.Borrowed))
+        .Ok({})
+      },
+    )
+    .test(
+      "review: Vector.make retains the stored fill but borrows the size",
+      fn() {
+        b := b_reg()
+
+        // Vector.make(size, fill): the fill (arg 1) is stored in every slot, so a
+        // param passed as the fill escapes when the vector escapes. size (arg 0)
+        // is a scalar count and stays borrowed.
+        body: AnfExpr = .Let(
+          lid(2),
+          .ACall(.AGlobalFunc(b.method_id("Vector", "make")), [.ALocal(lid(0)), .ALocal(lid(1))]),
+          .Let(lid(3), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(2))), .Atom(.ALitInt(0))),
+        )
+        s := summ1("f", 2, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Borrowed))
+        try assert.equal(p_escape(s, 1), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
+      "review: vector set retains value but borrows index",
+      fn() {
+        b := b_reg()
+        body: AnfExpr = .Let(
+          lid(3),
+          .ACall(
+            .AGlobalFunc(b.id("vector$set_unsafe")),
+            [.ALocal(lid(0)), .ALocal(lid(1)), .ALocal(lid(2))],
+          ),
+          .Let(lid(4), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(3))), .Atom(.ALitInt(0))),
+        )
+        s := summ1("f", 3, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        try assert.equal(p_escape(s, 1), escape_tag(.Borrowed))
+        try assert.equal(p_escape(s, 2), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
+      "review: indirect callee conservatively publishes the arg",
+      fn() {
+        b := b_reg()
+        f_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), .ACall(.ALocal(lid(99)), [.ALocal(lid(0))]), .Atom(.ALitInt(0))),
+        )
+        f := analyzed_caller([fdef(1, "f", 0, f_body)], "f")
+        try assert.equal(caller_own(f, 0), own_shared())
+        .Ok({})
+      },
+    )
+    .test(
+      "review: CowConfig fresh producer fallback retains args conservatively",
+      fn() {
+        fid := FuncId.{ id: 7777 }
+        fresh: Dict<Int, Bool> = Dict.new()
+        fresh[fid.id] = true
+        legacy := semantics.optimizer_semantics_from_cow_config(semantics.CowConfig.{
+          cow_ops: Dict.new(),
+          fresh_producer_ids: fresh,
+          read_only_ids: Dict.new(),
+          builder: empty_builder_config(),
+          string_builder: empty_builder_config(),
+        })
+        body: AnfExpr = .Let(
+          lid(1),
+          .ACall(.AGlobalFunc(fid), [.ALocal(lid(0))]),
+          .Let(lid(2), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))), .Atom(.ALitInt(0))),
+        )
+        b := b_reg()
+        v := cfg.build_view(module_of([fdef(1, "f", 1, body)]), b)
+        f := case cfg.function_named(v, "f") {
+          .Some(found) => found,
+          .None => error("missing f"),
+        }
+        s := ownership.summarize_function(f, ownership.empty_summary_table(), b, legacy)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
+      "review: render_summary public format is exact",
+      fn() {
+        consumed := ownership.Summary.{
+          params: [
+            ownership.ParamSummary.{ escape: .Borrowed, capability: .NoCap },
+            ownership.ParamSummary.{ escape: .Retained, capability: .Consumed },
+          ],
+          ret: .MayAliasParams([0, 1]),
+        }
+        fresh := ownership.Summary.{ params: [], ret: .OwnedFresh }
+        try assert.equal(
+          summary.render_summary(consumed),
+          "summary: p0=borrow p1=retain(consumed) ret=alias(p0,p1)",
+        )
+        try assert.equal(summary.render_summary(fresh), "summary:  ret=fresh")
+        .Ok({})
+      },
+    )
+    .test(
+      "review: ir command cfg helper renders pruned analyzed summaries",
+      fn() {
+        file := "${fixtures_dir()}/ir_cfg_summary.tw"
+        out: String = render_cfg_for_entry(file)
+        try assert.str_contains(out, "summary:")
+        try assert.str_contains(out, "facts.in=")
+        try assert.is_true(out == render_cfg_for_entry(file))
         .Ok({})
       },
     )

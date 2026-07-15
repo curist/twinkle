@@ -1,0 +1,8 @@
+fn helper(xs: Vector<Int>) Int {
+  xs.len()
+}
+
+fn top() Int {
+  a := [1, 2, 3]
+  helper(a)
+}
