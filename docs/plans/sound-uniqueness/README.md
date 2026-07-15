@@ -20,10 +20,11 @@ track README(s). The focused track docs own the detailed checklists.
 
 ## Current focus
 
-The current implementation focus is the **analysis track**. Phases 0-2 are done;
-Phase 3 is the next analysis-only step. Codegen should not start emitting mutable
-paths until the analysis track has produced auditable facts/classification inputs
-and the codegen track's ANF-keyed decision handoff/fallback plumbing is in place.
+The analysis track's first proof-producing milestone is complete: Phases 0-3 now
+produce auditable CFG ownership facts, liveness, and minimal summaries without
+changing generated code. The next implementation focus is the **codegen track**:
+ANF-keyed decision handoff/fallback plumbing, then narrow emitted slices for the
+existing mutable hooks.
 
 ## Standing invariants
 
@@ -44,7 +45,7 @@ Detailed checklist: [analysis/README.md](analysis/README.md)
 - Phase 0: baseline and safety rails — done.
 - Phase 1: structural CFG ownership view — done.
 - Phase 2: minimal ownership facts — done.
-- Phase 3: shared optimizer facts and minimal summaries — next/current.
+- Phase 3: shared optimizer facts and minimal summaries — done.
 
 ### 2. Codegen track
 
