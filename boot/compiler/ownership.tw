@@ -876,6 +876,28 @@ fn same_own_map(a: Dict<Int, Int>, b: Dict<Int, Int>) Bool {
   true
 }
 
+// Widen an already-processed block exit so the fixpoint is monotone even when
+// the transfer can locally improve a fact (for example Unknown -> Shared) on one
+// pass and lose it on the next through a loop join. First visits still store the
+// exact transfer result; later visits only move facts toward the conservative
+// join/meet/union, preventing ownership oscillation while preserving soundness.
+fn merge_own_exit(old: Dict<Int, Int>, next: Dict<Int, Int>) Dict<Int, Int> {
+  out: Dict<Int, Int> = Dict.new()
+  for k in old.keys() {
+    out[k] = fact_of_local(old, k).join_own(fact_of_local(next, k)).own_tag()
+  }
+  for k in next.keys() {
+    case old.get(k) {
+      .Some(_) => {},
+      .None => case next.get(k) {
+        .Some(v) => out[k] = v,
+        .None => {},
+      },
+    }
+  }
+  out
+}
+
 // After the fixpoint every reachable block is processed, so materialize/join
 // with an all-true processed map.
 fn all_processed(blocks: Vector<CfgBlock>) Dict<Int, Bool> {
@@ -955,6 +977,23 @@ fn same_valid_map(a: Dict<Int, Bool>, b: Dict<Int, Bool>) Bool {
   true
 }
 
+fn merge_valid_exit(old: Dict<Int, Bool>, next: Dict<Int, Bool>) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+  for k in old.keys() {
+    out[k] = valid_of_local(old, k) and valid_of_local(next, k)
+  }
+  for k in next.keys() {
+    case old.get(k) {
+      .Some(_) => {},
+      .None => case next.get(k) {
+        .Some(v) => out[k] = v,
+        .None => {},
+      },
+    }
+  }
+  out
+}
+
 // ── Provenance join (param-origin sets) ─────────────────────────────
 fn prov_map_get(m: Dict<Int, Dict<Int, Vector<Int>>>, id: Int) Dict<Int, Vector<Int>> {
   case m.get(id) {
@@ -979,6 +1018,31 @@ fn same_prov_map(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Bool {
     }
   }
   true
+}
+
+fn merge_prov_exit(old: Dict<Int, Vector<Int>>, next: Dict<Int, Vector<Int>>) Dict<Int, Vector<Int>> {
+  out: Dict<Int, Vector<Int>> = Dict.new()
+  for k in old.keys() {
+    prev := case old.get(k) {
+      .Some(v) => v,
+      .None => [],
+    }
+    cur := case next.get(k) {
+      .Some(v) => v,
+      .None => [],
+    }
+    out[k] = union_sorted(prev, cur)
+  }
+  for k in next.keys() {
+    case old.get(k) {
+      .Some(_) => {},
+      .None => case next.get(k) {
+        .Some(v) => out[k] = v,
+        .None => {},
+      },
+    }
+  }
+  out
 }
 
 // entry.prov for every live-in local (mirroring the ownership join): a block
@@ -1064,14 +1128,32 @@ fn run_fixpoint(
       st := ForwardState.{ own: entry_own, valid: entry_valid, prov: entry_prov }
       st = forward_block(blk, st, table, b, sem)
       already := is_processed(processed, blk.id.id)
+      old_own := own_map_get(exits, blk.id.id)
+      old_valid := valid_map_get(exit_valid, blk.id.id)
+      old_prov := prov_map_get(exit_prov, blk.id.id)
+      next_own := if already {
+        merge_own_exit(old_own, st.own)
+      } else {
+        st.own
+      }
+      next_valid := if already {
+        merge_valid_exit(old_valid, st.valid)
+      } else {
+        st.valid
+      }
+      next_prov := if already {
+        merge_prov_exit(old_prov, st.prov)
+      } else {
+        st.prov
+      }
       if !already
-        or !same_own_map(own_map_get(exits, blk.id.id), st.own)
-        or !same_valid_map(valid_map_get(exit_valid, blk.id.id), st.valid)
-        or !same_prov_map(prov_map_get(exit_prov, blk.id.id), st.prov) {
+        or !same_own_map(old_own, next_own)
+        or !same_valid_map(old_valid, next_valid)
+        or !same_prov_map(old_prov, next_prov) {
         changed = true
-        exits[blk.id.id] = st.own
-        exit_valid[blk.id.id] = st.valid
-        exit_prov[blk.id.id] = st.prov
+        exits[blk.id.id] = next_own
+        exit_valid[blk.id.id] = next_valid
+        exit_prov[blk.id.id] = next_prov
       }
       processed[blk.id.id] = true
     }

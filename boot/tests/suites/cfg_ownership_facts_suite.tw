@@ -10,6 +10,7 @@ use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{EffectKind, make_prelude_optimizer_semantics}
 use compiler.ownership
 use compiler.pipeline
+use compiler.summary
 
 fn lid(id: Int) LocalId {
   LocalId.{ id }
@@ -560,6 +561,25 @@ pub fn suite() runner.Suite {
         }
         try assert.is_false(live_contains(blk.entry.live, 5))
         .Ok({})
+      },
+    )
+    .test(
+      "phase3 fixpoint: resolver CFG summaries converge",
+      fn() {
+        artifacts := case pipeline.compile_entry_path("boot/compiler/resolver.tw") {
+          .Ok(result) => result,
+          .Err(_) => return assert.fail("compile resolver"),
+        }
+        b := artifacts.builtins
+        view := cfg.build_view(artifacts.opt, b)
+        view = ownership.prune_dead_merge(view)
+        s := semantics.make_prelude_optimizer_semantics(b)
+        table := summary.compute(view, b, s)
+        analyzed := ownership.analyze_with_summaries(view, b, s, table)
+        case analyzed.function_named("remap_type_def") {
+          .Some(_) => .Ok({}),
+          .None => assert.fail("no remap_type_def"),
+        }
       },
     )
 }
