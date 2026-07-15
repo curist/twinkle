@@ -876,26 +876,51 @@ fn same_own_map(a: Dict<Int, Int>, b: Dict<Int, Int>) Bool {
   true
 }
 
-// Widen an already-processed block exit so the fixpoint is monotone even when
-// the transfer can locally improve a fact (for example Unknown -> Shared) on one
-// pass and lose it on the next through a loop join. First visits still store the
-// exact transfer result; later visits only move facts toward the conservative
-// join/meet/union, preventing ownership oscillation while preserving soundness.
-fn merge_own_exit(old: Dict<Int, Int>, next: Dict<Int, Int>) Dict<Int, Int> {
-  out: Dict<Int, Int> = Dict.new()
-  for k in old.keys() {
-    out[k] = fact_of_local(old, k).join_own(fact_of_local(next, k)).own_tag()
-  }
-  for k in next.keys() {
-    case old.get(k) {
-      .Some(_) => {},
-      .None => case next.get(k) {
-        .Some(v) => out[k] = v,
-        .None => {},
-      },
-    }
+fn int_keys_union(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
+  out := a
+  for k in b {
+    out = insert_sorted(out, k)
   }
   out
+}
+
+fn locked_get(locks: Dict<Int, Vector<Int>>, block_id: Int) Vector<Int> {
+  case locks.get(block_id) {
+    .Some(v) => v,
+    .None => [],
+  }
+}
+
+// Keep exact exit replacement as long as a block/local fact is converging. If a
+// fact flips back to the value it had before the current stored value, lock only
+// that local to the conservative merge on later visits. A per-block changed-visit
+// cap forces any still-changing locals to lock too, so longer cycles also fall
+// back to sound widening without blanket-widening every loop-carried fact.
+type MergeOwnOut = .{ map: Dict<Int, Int>, locked: Vector<Int> }
+
+fn merge_own_exit_targeted(
+  old: Dict<Int, Int>,
+  next: Dict<Int, Int>,
+  prev: Dict<Int, Int>,
+  locked: Vector<Int>,
+  has_prev: Bool,
+  force_lock_changed: Bool,
+) MergeOwnOut {
+  out := next
+  next_locked := locked
+  keys := int_keys_union(old.keys(), next.keys())
+  for k in keys {
+    old_fact := fact_of_local(old, k)
+    next_fact := fact_of_local(next, k)
+    prev_fact := fact_of_local(prev, k)
+    changed := old_fact.own_tag() != next_fact.own_tag()
+    oscillates := has_prev and changed and next_fact.own_tag() == prev_fact.own_tag()
+    if live_contains_int(next_locked, k) or oscillates or force_lock_changed and changed {
+      next_locked = insert_sorted(next_locked, k)
+      out[k] = old_fact.join_own(next_fact).own_tag()
+    }
+  }
+  MergeOwnOut.{ map: out, locked: next_locked }
 }
 
 // After the fixpoint every reachable block is processed, so materialize/join
@@ -977,21 +1002,31 @@ fn same_valid_map(a: Dict<Int, Bool>, b: Dict<Int, Bool>) Bool {
   true
 }
 
-fn merge_valid_exit(old: Dict<Int, Bool>, next: Dict<Int, Bool>) Dict<Int, Bool> {
-  out: Dict<Int, Bool> = Dict.new()
-  for k in old.keys() {
-    out[k] = valid_of_local(old, k) and valid_of_local(next, k)
-  }
-  for k in next.keys() {
-    case old.get(k) {
-      .Some(_) => {},
-      .None => case next.get(k) {
-        .Some(v) => out[k] = v,
-        .None => {},
-      },
+type MergeValidOut = .{ map: Dict<Int, Bool>, locked: Vector<Int> }
+
+fn merge_valid_exit_targeted(
+  old: Dict<Int, Bool>,
+  next: Dict<Int, Bool>,
+  prev: Dict<Int, Bool>,
+  locked: Vector<Int>,
+  has_prev: Bool,
+  force_lock_changed: Bool,
+) MergeValidOut {
+  out := next
+  next_locked := locked
+  keys := int_keys_union(old.keys(), next.keys())
+  for k in keys {
+    old_valid := valid_of_local(old, k)
+    next_valid := valid_of_local(next, k)
+    prev_valid := valid_of_local(prev, k)
+    changed := old_valid != next_valid
+    oscillates := has_prev and changed and next_valid == prev_valid
+    if live_contains_int(next_locked, k) or oscillates or force_lock_changed and changed {
+      next_locked = insert_sorted(next_locked, k)
+      out[k] = old_valid and next_valid
     }
   }
-  out
+  MergeValidOut.{ map: out, locked: next_locked }
 }
 
 // ── Provenance join (param-origin sets) ─────────────────────────────
@@ -1020,29 +1055,38 @@ fn same_prov_map(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Bool {
   true
 }
 
-fn merge_prov_exit(old: Dict<Int, Vector<Int>>, next: Dict<Int, Vector<Int>>) Dict<Int, Vector<Int>> {
-  out: Dict<Int, Vector<Int>> = Dict.new()
-  for k in old.keys() {
-    prev := case old.get(k) {
-      .Some(v) => v,
-      .None => [],
-    }
-    cur := case next.get(k) {
-      .Some(v) => v,
-      .None => [],
-    }
-    out[k] = union_sorted(prev, cur)
+fn prov_local(m: Dict<Int, Vector<Int>>, id: Int) Vector<Int> {
+  case m.get(id) {
+    .Some(v) => v,
+    .None => [],
   }
-  for k in next.keys() {
-    case old.get(k) {
-      .Some(_) => {},
-      .None => case next.get(k) {
-        .Some(v) => out[k] = v,
-        .None => {},
-      },
+}
+
+type MergeProvOut = .{ map: Dict<Int, Vector<Int>>, locked: Vector<Int> }
+
+fn merge_prov_exit_targeted(
+  old: Dict<Int, Vector<Int>>,
+  next: Dict<Int, Vector<Int>>,
+  prev: Dict<Int, Vector<Int>>,
+  locked: Vector<Int>,
+  has_prev: Bool,
+  force_lock_changed: Bool,
+) MergeProvOut {
+  out := next
+  next_locked := locked
+  keys := int_keys_union(old.keys(), next.keys())
+  for k in keys {
+    old_prov := prov_local(old, k)
+    next_prov := prov_local(next, k)
+    prev_prov := prov_local(prev, k)
+    changed := !same_live(old_prov, next_prov)
+    oscillates := has_prev and changed and same_live(next_prov, prev_prov)
+    if live_contains_int(next_locked, k) or oscillates or force_lock_changed and changed {
+      next_locked = insert_sorted(next_locked, k)
+      out[k] = union_sorted(old_prov, next_prov)
     }
   }
-  out
+  MergeProvOut.{ map: out, locked: next_locked }
 }
 
 // entry.prov for every live-in local (mirroring the ownership join): a block
@@ -1098,6 +1142,20 @@ type FixResult = .{
   exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
 }
 
+fn prev_seen_get(seen: Dict<Int, Bool>, id: Int) Bool {
+  case seen.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn change_count_get(counts: Dict<Int, Int>, id: Int) Int {
+  case counts.get(id) {
+    .Some(v) => v,
+    .None => 0,
+  }
+}
+
 fn run_fixpoint(
   blocks: Vector<CfgBlock>,
   params: Vector<LocalId>,
@@ -1108,11 +1166,27 @@ fn run_fixpoint(
   exits: Dict<Int, Dict<Int, Int>> = Dict.new()
   exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
   exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
+  prev_exits: Dict<Int, Dict<Int, Int>> = Dict.new()
+  prev_exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
+  prev_exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
+  locked_own: Dict<Int, Vector<Int>> = Dict.new()
+  locked_valid: Dict<Int, Vector<Int>> = Dict.new()
+  locked_prov: Dict<Int, Vector<Int>> = Dict.new()
+  prev_seen: Dict<Int, Bool> = Dict.new()
+  changed_visits: Dict<Int, Int> = Dict.new()
   processed: Dict<Int, Bool> = Dict.new()
   for blk in blocks {
     exits[blk.id.id] = Dict.new()
     exit_valid[blk.id.id] = Dict.new()
     exit_prov[blk.id.id] = Dict.new()
+    prev_exits[blk.id.id] = Dict.new()
+    prev_exit_valid[blk.id.id] = Dict.new()
+    prev_exit_prov[blk.id.id] = Dict.new()
+    locked_own[blk.id.id] = []
+    locked_valid[blk.id.id] = []
+    locked_prov[blk.id.id] = []
+    prev_seen[blk.id.id] = false
+    changed_visits[blk.id.id] = 0
     processed[blk.id.id] = false
   }
   changed := true
@@ -1131,26 +1205,55 @@ fn run_fixpoint(
       old_own := own_map_get(exits, blk.id.id)
       old_valid := valid_map_get(exit_valid, blk.id.id)
       old_prov := prov_map_get(exit_prov, blk.id.id)
-      next_own := if already {
-        merge_own_exit(old_own, st.own)
-      } else {
-        st.own
-      }
-      next_valid := if already {
-        merge_valid_exit(old_valid, st.valid)
-      } else {
-        st.valid
-      }
-      next_prov := if already {
-        merge_prov_exit(old_prov, st.prov)
-      } else {
-        st.prov
+      next_own := st.own
+      next_valid := st.valid
+      next_prov := st.prov
+      if already {
+        has_prev := prev_seen_get(prev_seen, blk.id.id)
+        force_lock_changed := change_count_get(changed_visits, blk.id.id) >= 8
+        own_merge := merge_own_exit_targeted(
+          old_own,
+          st.own,
+          own_map_get(prev_exits, blk.id.id),
+          locked_get(locked_own, blk.id.id),
+          has_prev,
+          force_lock_changed,
+        )
+        valid_merge := merge_valid_exit_targeted(
+          old_valid,
+          st.valid,
+          valid_map_get(prev_exit_valid, blk.id.id),
+          locked_get(locked_valid, blk.id.id),
+          has_prev,
+          force_lock_changed,
+        )
+        prov_merge := merge_prov_exit_targeted(
+          old_prov,
+          st.prov,
+          prov_map_get(prev_exit_prov, blk.id.id),
+          locked_get(locked_prov, blk.id.id),
+          has_prev,
+          force_lock_changed,
+        )
+        next_own = own_merge.map
+        next_valid = valid_merge.map
+        next_prov = prov_merge.map
+        locked_own[blk.id.id] = own_merge.locked
+        locked_valid[blk.id.id] = valid_merge.locked
+        locked_prov[blk.id.id] = prov_merge.locked
       }
       if !already
         or !same_own_map(old_own, next_own)
         or !same_valid_map(old_valid, next_valid)
         or !same_prov_map(old_prov, next_prov) {
         changed = true
+        if already {
+          prev_exits[blk.id.id] = old_own
+          prev_exit_valid[blk.id.id] = old_valid
+          prev_exit_prov[blk.id.id] = old_prov
+          prev_seen[blk.id.id] = true
+          changed_visits[blk.id.id] = change_count_get(changed_visits, blk.id.id) + 1
+        }
         exits[blk.id.id] = next_own
         exit_valid[blk.id.id] = next_valid
         exit_prov[blk.id.id] = next_prov
