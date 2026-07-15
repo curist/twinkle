@@ -121,18 +121,23 @@ falls out of field-sensitive projection.
 
 Phase 4 goes past pure rejection: it **represents and proves inner ownership**
 where it can, via grafted paths `[.f, Elem]` / `[.f, Val]` (and `[Elem]` / `[Val]`
-on bare collections). Inner facts are introduced by construction
-(`ARecord`/`AArrayLit`/`Vector.make` graft each stored value's facts under the
-element/field path), preserved through projection (`rebase`), and carried through a
-consuming op as structural share. The conservative fallback still governs whenever
-a path can't be proven — a **shared** element yields no `[Elem]` claim — and the
-IR/debug output *names the reason* (`outer owned but inner shared`, `projected
-inner ownership proven`, `nested publication detected`), never a silent bail.
+on bare collections). Inner facts are introduced by construction only under a
+single-retention proof: `ARecord`/`AArrayLit` graft a stored value's facts under the
+element/field path only when that value is owned, last-use, and stored exactly once.
+`Vector.make` does **not** introduce `[Elem]` for reference values because it
+replicates one value into many slots. Projection preserves facts by `rebase`, and
+consuming ops preserve `[Elem]`/`[Val]` only when newly stored inner values are also
+owned single-retention values; storing a shared inner value drops the nested path.
+The conservative fallback still governs whenever a path can't be proven — a
+**shared** element yields no `[Elem]` claim — and the IR/debug output *names the
+reason* (`outer owned but inner shared`, `projected inner ownership proven`,
+`nested publication detected`), never a silent bail.
 
 What Phase 4 does **not** model: per-index element facts (`[Elem]` summarizes
-*all* elements, not `[0]`/`[1]` individually) and path-granular liveness on inner
-paths (both remain later precision; the projection move uses whole-record
-last-use — see [phase4-design.md](phase4-design.md)).
+*all* elements, not `[0]`/`[1]` individually) and general path-granular liveness on
+inner paths (both remain later precision; projection moves use whole-record
+last-use or the narrow quartet shell-writeback proof — see
+[phase4-design.md](phase4-design.md)).
 
 ## Codegen-ready decisions
 

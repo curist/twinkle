@@ -135,9 +135,10 @@ design: [phase4-design.md](phase4-design.md).
   the rejection reason (outer owned but inner shared, nested publication,
   insufficient deep ownership).
 
-Exit: the `advance`/`push_scope` record cases and Case V's `Vector<Vector>` /
-dict-valued field updates in [worked-examples.md](worked-examples.md) classify
-with correct shell-vs-deep verdicts; generated code unchanged.
+Exit: intraprocedural `advance`/`push_scope`-shaped fixtures and inlined
+Case-V-shaped `Vector<Vector>` / dict-valued field updates classify with correct
+shell-vs-deep verdicts; the real cross-function/recursive worked examples remain
+Phase 5-6 coverage; generated code unchanged.
 
 ## Phase 5 — Transport-wrapper and `Result`-payload return-path summaries *(architecture: 1D)*
 
