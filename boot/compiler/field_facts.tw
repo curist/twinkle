@@ -1,0 +1,225 @@
+//! Path-sensitive field-ownership facts for the Phase 4 ownership analysis.
+//!
+//! Pure and value-returning (Twinkle immutability), mirroring cfg.tw/summary.tw.
+//! A LEAF module: it imports neither ownership.tw nor cfg.tw, so it can be
+//! imported by both without a cycle. Only Unique paths are ever stored; absence
+//! of a key means "no claim". A local's field map is `Dict<Int, Int>` keyed by
+//! PathKey (canonical, reversible) with an Ownership tag value (always 0/Unique
+//! in Phase 4, kept Int for symmetry with ownership.own).
+
+pub type PathSeg = { Field(Int), Elem, Val }
+
+// segs == [] is the shell (the [] fact); it is NEVER stored in a field map.
+pub type AccessPath = .{ segs: Vector<PathSeg> }
+
+// ── Constructors ────────────────────────────────────────────────────
+pub fn shell() AccessPath {
+  AccessPath.{ segs: [] }
+}
+
+pub fn field_path(f: Int) AccessPath {
+  AccessPath.{ segs: [.Field(f)] }
+}
+
+pub fn elem_path() AccessPath {
+  AccessPath.{ segs: [.Elem] }
+}
+
+pub fn val_path() AccessPath {
+  AccessPath.{ segs: [.Val] }
+}
+
+pub fn field_elem(f: Int) AccessPath {
+  AccessPath.{ segs: [.Field(f), .Elem] }
+}
+
+pub fn field_val(f: Int) AccessPath {
+  AccessPath.{ segs: [.Field(f), .Val] }
+}
+
+pub fn seg_eq(a: PathSeg, b: PathSeg) Bool {
+  case a {
+    .Elem => case b {
+      .Elem => true,
+      _ => false,
+    },
+    .Val => case b {
+      .Val => true,
+      _ => false,
+    },
+    .Field(fa) => case b {
+      .Field(fb) => fa == fb,
+      _ => false,
+    },
+  }
+}
+
+pub fn path_eq(a: AccessPath, b: AccessPath) Bool {
+  if a.segs.len() != b.segs.len() {
+    return false
+  }
+  for s, i in a.segs {
+    if !seg_eq(s, b.segs[i]) {
+      return false
+    }
+  }
+  true
+}
+
+// ── Reversible PathKey codec (Phase 4 shapes, depth <= 2) ────────────
+//   [Elem]            -> 1
+//   [Val]             -> 2
+//   [Field(f)]        -> 8 + f*4 + 0
+//   [Field(f), Elem]  -> 8 + f*4 + 1
+//   [Field(f), Val]   -> 8 + f*4 + 2
+// Field ids are non-negative; the low 2 bits above 8 encode the optional
+// trailing collection seg. Pure inverses -> no interned side table.
+pub fn path_key(p: AccessPath) Int {
+  segs := p.segs
+  cond {
+    segs.len() == 0 => 0, // shell; callers must never store this
+    segs.len() == 1 => case segs[0] {
+      .Elem => 1,
+      .Val => 2,
+      .Field(f) => 8 + f * 4,
+    },
+    segs.len() == 2 => case segs[0] {
+      .Field(f) => case segs[1] {
+        .Elem => 8 + f * 4 + 1,
+        .Val => 8 + f * 4 + 2,
+        _ => error("field_facts: nested seg must be Elem/Val"),
+      },
+      _ => error("field_facts: nested path must start at a field in Phase 4"),
+    },
+    _ => error("field_facts: path deeper than Phase 4 supports"),
+  }
+}
+
+pub fn path_of_key(k: Int) AccessPath {
+  cond {
+    k == 1 => elem_path(),
+    k == 2 => val_path(),
+    k >= 8 => {
+      base := k - 8
+      f := base / 4
+      sub := base % 4
+      cond {
+        sub == 0 => field_path(f),
+        sub == 1 => field_elem(f),
+        sub == 2 => field_val(f),
+        _ => error("field_facts: bad path key ${k}"),
+      }
+    },
+    _ => error("field_facts: bad path key ${k}"),
+  }
+}
+
+// ── Map operations over one local's field map (PathKey -> tag) ───────
+pub fn set_path(fields: Dict<Int, Int>, p: AccessPath, tag: Int) Dict<Int, Int> {
+  k := path_key(p)
+  if k == 0 {
+    // shell facts live in ownership.own, never in a field map.
+    error("field_facts: refusing to store the shell path ([]) in field_own")
+  }
+  fields[k] = tag
+  fields
+}
+
+pub fn is_unique(fields: Dict<Int, Int>, p: AccessPath) Bool {
+  case fields.get(path_key(p)) {
+    .Some(t) => t == 0,
+    .None => false,
+  }
+}
+
+pub fn clear_all(_fields: Dict<Int, Int>) Dict<Int, Int> {
+  Dict.new()
+}
+
+// Copy value v's facts (its shell tag + its own field paths) under `prefix`.
+// Phase 4 prefixes are a single Field(f)/Elem/Val; v's own paths are at most a
+// depth-1 collection sub-path ([Elem]/[Val]), so the grafted result is depth <= 2.
+// Anything deeper is dropped (sound under-claim). Under an Elem/Val prefix no
+// deeper nesting is representable in Phase 4, so only the shell tag is grafted.
+pub fn graft(dst: Dict<Int, Int>, prefix: PathSeg, v_shell_tag: Int, v_fields: Dict<Int, Int>) Dict<
+  Int,
+  Int,
+> {
+  dst[path_key(AccessPath.{ segs: [prefix] })] = v_shell_tag
+  case prefix {
+    .Field(_) => {
+      for k in v_fields.keys() {
+        inner := path_of_key(k)
+        if inner.segs.len() == 1 {
+          case v_fields.get(k) {
+            .Some(t) => dst[path_key(AccessPath.{ segs: [prefix, inner.segs[0]] })] = t,
+            .None => {},
+          }
+        }
+      }
+      dst
+    },
+    _ => dst,
+  }
+}
+
+// Projection inverse: gather every path under `prefix`, stripped of it. The
+// [prefix] fact (if present) becomes the projected value's shell; each strict
+// descendant [prefix, X] becomes an inner [X]. Siblings are ignored.
+pub type Projection = .{ shell: Int?, fields: Dict<Int, Int> }
+
+pub fn project(src: Dict<Int, Int>, prefix: PathSeg) Projection {
+  shell: Int? = .None
+  inner: Dict<Int, Int> = Dict.new()
+  for k in src.keys() {
+    p := path_of_key(k)
+    if p.segs.len() >= 1 and seg_eq(p.segs[0], prefix) {
+      case src.get(k) {
+        .Some(t) => if p.segs.len() == 1 {
+          shell = .Some(t)
+        } else {
+          inner[path_key(AccessPath.{ segs: [p.segs[1]] })] = t
+        },
+        .None => {},
+      }
+    }
+  }
+  Projection.{ shell, fields: inner }
+}
+
+// Drop the entire [prefix]* subtree (including [prefix] itself); keep siblings.
+pub fn remove_prefix(fields: Dict<Int, Int>, prefix: PathSeg) Dict<Int, Int> {
+  out: Dict<Int, Int> = Dict.new()
+  for k in fields.keys() {
+    p := path_of_key(k)
+    drop := p.segs.len() >= 1 and seg_eq(p.segs[0], prefix)
+    if !drop {
+      case fields.get(k) {
+        .Some(t) => out[k] = t,
+        .None => {},
+      }
+    }
+  }
+  out
+}
+
+// Per-path meet for joins: only Unique paths are stored, so a path survives iff
+// present in both -> key intersection.
+pub fn merge(a: Dict<Int, Int>, b: Dict<Int, Int>) Dict<Int, Int> {
+  out: Dict<Int, Int> = Dict.new()
+  for k in a.keys() {
+    if b.has(k) {
+      case a.get(k) {
+        .Some(t) => out[k] = t,
+        .None => {},
+      }
+    }
+  }
+  out
+}
+
+// Deterministic sorted key list for rendering / comparison.
+pub fn sorted_keys(fields: Dict<Int, Int>) Vector<Int> {
+  ks := fields.keys()
+  ks.sort()
+}
