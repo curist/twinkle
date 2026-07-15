@@ -1,6 +1,6 @@
 # Analysis Track
 
-**Status:** Phase 0-2 done; Phase 3 next/current.
+**Status:** Phase 0-3 done. Remaining analysis precision items are in the deferrals table.
 
 This track owns the proof-producing half of sound uniqueness: CFG structure,
 ownership facts, liveness/last-use, summaries, candidate-classification inputs,
@@ -78,19 +78,22 @@ Analysis side only. This phase makes ownership a shared primitive that existing
 optimizer decisions can later consume; it does not introduce ownership-specialized
 variants, decision records, or codegen changes.
 
-- [ ] **Move ownership-relevant pass queries to CFG facts.** Liveness, joins,
+- [x] **Move ownership-relevant pass queries to CFG facts.** Liveness, joins,
   back-edges, and publication should have one shared source of truth. Phase 3's
   design notes that the old ownership-consuming passes were removed, so this is
   primarily an audit and documentation step; candidate verdicts and decision
-  records remain in the codegen track. Details: [phase3-design.md](phase3-design.md).
-- [ ] **Dead-merge block-param pruning using Phase 2 liveness facts.** Drop
+  records remain in the codegen track. Done — CFG facts already the single source
+  (old consumers deleted in the rebuild); optimizer audited (Task 8). Details:
+  [phase3-design.md](phase3-design.md).
+- [x] **Dead-merge block-param pruning using Phase 2 liveness facts.** Drop
   join/loop carried params that are dead across the boundary.
-- [ ] **Match-arm pattern-binding precision.** Carry pattern-bound locals onto arm
+- [x] **Match-arm pattern-binding precision.** Carry pattern-bound locals onto arm
   blocks so they are killed at block entry.
-- [ ] **Decide which local peepholes stay ANF-local.** Dead-let/copy-prop/
+- [x] **Decide which local peepholes stay ANF-local.** Dead-let/copy-prop/
   const-fold/branch simplification may remain ANF-local while they do not depend
-  on ownership/control-flow facts.
-- [ ] **Compute minimal function summaries.** Start with consumes parameter,
+  on ownership/control-flow facts. Done — the peephole decision is recorded in
+  [boot/compiler/opt/README.md](../../../../boot/compiler/opt/README.md).
+- [x] **Compute minimal function summaries.** Start with consumes parameter,
   retains parameter, returns fresh value, and returns alias; use these to avoid
   treating every known helper as an unknown publication boundary. Details:
   [summary-specialization.md](summary-specialization.md),

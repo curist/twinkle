@@ -1,29 +1,40 @@
 # ANF Optimization Pipeline
 
-The boot compiler's optimization pipeline transforms ANF IR (Administrative Normal Form)
-to reduce redundant computation, eliminate dead code, and convert copy-on-write operations
-to in-place mutations where safe. All passes operate directly on the structured ANF tree
--- no CFG is constructed.
+The boot compiler's optimizer transforms ANF IR (Administrative Normal Form) to
+remove dead bindings, propagate copies, fold constants, simplify constant-condition
+branches, and eliminate `defer` nodes. All passes operate directly on the structured
+ANF tree.
+
+There is **no** uniqueness/COW-to-in-place rewrite here anymore, and no builder-region
+rewrite. Those passes (and the standalone liveness/ownership analyses that fed them)
+were removed in the sound-uniqueness rebuild. The optimizer emits no in-place mutation
+today; every collection op stays copy-on-write through codegen. Ownership facts now
+live outside `opt/` (see "CFG ownership facts" below) and are analysis-only — they
+drive no codegen yet.
 
 ## Pipeline Overview
 
-`pipeline.tw` orchestrates two phases:
+`pipeline.tw` orchestrates, per function:
 
-1. **Fixed-point loop** (max 10 rounds): dead let elimination, copy propagation,
-   constant folding, branch simplification -- repeated until no pass reports a change.
-2. **Post-loop passes** (single shot each): uniqueness/COW rewrite,
-   defer elimination.
+1. **`eliminate_defers` first** — runs before the peephole loop so that
+   `branch_simplify` cannot hoist `ADefer` nodes out of constant-condition branches
+   and break block-scoped defer semantics.
+2. **Fixed-point peephole loop** (max 10 rounds): dead let elimination, copy
+   propagation, constant folding, branch simplification — repeated until no pass
+   reports a change (or the round cap is hit).
 
 ```
 AnfModule
   -> per function:
+       eliminate_defers          (runs first; see note above)
        loop {
          dead_let_elim -> copy_propagate -> constant_fold -> branch_simplify
        } until stable (or 10 rounds)
-       -> uniqueness_rewrite  (ownership/COW elimination)
-       -> eliminate_defers    (must be last)
   -> optimized AnfModule
 ```
+
+Functions whose ANF nesting exceeds `max_stack_safe_opt_depth` (512) skip the
+peephole loop (only `eliminate_defers` runs) to avoid deep recursion.
 
 ### Pinned locals
 
@@ -33,22 +44,20 @@ that dead let elimination and copy propagation never remove or inline them.
 
 ## Passes
 
-### use_count.tw -- Use Counting
+### use_count.tw — Use Counting
 
-Foundation for dead let elimination and copy propagation. Walks the ANF tree and counts
-how many times each `LocalId` appears in operand/atom position.
+Foundation for dead let elimination and copy propagation. Walks the ANF tree and
+counts how many times each `LocalId` appears in operand/atom position.
 
-- `count_uses(expr)` -- counts all references including `AMakeClosure.free_vars`
-- `count_uses_excluding_free_vars(expr)` -- excludes closure free var positions
+- `count_uses(expr)` — counts all references including `AMakeClosure.free_vars`
+- `count_uses_excluding_free_vars(expr)` — excludes closure free var positions
   (used by copy propagation, since inlining a literal into a free var slot is invalid)
-- `is_pure(op)` -- pure-op predicate: true for `AInit`, `ABinOp` (except int div/mod),
-  `AUnOp`, `ARecord`, `ARecordGet`, `ARecordUpdate`, `AVariant`, `AArrayLit`,
-  `AMakeClosure`, and structurally pure `AIf`/`AMatch`. False for `ACall`, `AAssign`,
-  `ALoop`, `ADefer`.
+- purity is decided via `is_pure_with_semantics` (from `semantics.tw`), so calls stay
+  non-eliminable
 
 Let binders and `AAssign` targets are not counted as uses.
 
-### dead_let.tw -- Dead Let Elimination
+### dead_let.tw — Dead Let Elimination
 
 ```
 Let(t, pure_op, body)  where  uses[t] == 0  and  t not assigned  ->  body
@@ -57,11 +66,13 @@ Let(t, pure_op, body)  where  uses[t] == 0  and  t not assigned  ->  body
 Removes let-bindings whose bound local is never referenced and whose right-hand side
 is pure (no side effects). Locals that appear as `AAssign` targets are preserved even
 at zero use count, since the assignment itself may be meaningful. Pinned locals are
-merged into the assigned set so they are never eliminated.
+merged into the assigned set so they are never eliminated. `dead_let_elim_with_pinned_and_semantics`
+consults the optimizer semantics for the purity decision; `dead_let_elim_with_pinned`
+is the semantics-free fallback.
 
 Recurses into `AIf`, `AMatch`, `ALoop`, and `ADefer` sub-expressions.
 
-### copy_prop.tw -- Copy Propagation
+### copy_prop.tw — Copy Propagation
 
 ```
 Let(t, AInit(atom), body)  where  can_propagate(atom, uses[t])  ->  body[t := atom]
@@ -76,13 +87,14 @@ Propagation rules:
   neither `t` nor `u` is reassigned (`AAssign` target), to avoid observing stale values.
 
 Uses `count_uses_excluding_free_vars` so that closure free var positions (which cannot
-accept arbitrary atoms) don't inflate the use count.
+accept arbitrary atoms) don't inflate the use count. `ARecordUpdate.can_reuse` is a
+structural field carried through unchanged — copy propagation does not compute or set it.
 
 Provides `subst_atom(expr, target, replacement)` as a general-purpose atom substitution
 utility, with a shadow-stop guard: if a nested `Let` rebinds the target, substitution
 stops in that scope.
 
-### const_fold.tw -- Constant Folding
+### const_fold.tw — Constant Folding
 
 Evaluates `ABinOp` and `AUnOp` with literal operands at compile time, rewriting the
 result to `AInit(literal)`.
@@ -99,7 +111,7 @@ behavior).
 
 After folding to `AInit`, the next copy propagation round eliminates the wrapper.
 
-### branch_simp.tw -- Branch Simplification
+### branch_simp.tw — Branch Simplification
 
 ```
 Let(t, AIf(ALitBool(true),  then_e, _), body)  ->  splice(then_e, t, body)
@@ -113,113 +125,16 @@ into the continuation. Splicing walks the branch's let-chain:
 - If it ends in a terminal (`Return`/`Break`/`Continue`), drops the unreachable
   continuation.
 
-### liveness.tw -- Liveness Analysis & Standalone Record Update Annotation Helper
-
-**Liveness**: backward dataflow walk computing `live_after(expr)` -- the set of locals
-that may be read at or after each program point.
-
-- `Let(t, op, body)`: start from `live(body)`, kill `t`, add locals read by `op`
-- `AIf`/`AMatch`: conservative union of all branch live sets
-- `ALoop`: conservative -- all locals read anywhere in the loop body are live
-- `AAssign(target, value)`: kills `target`, adds locals in `value`
-
-**annotate_in_place**: walks `ARecordUpdate` nodes and sets `can_reuse_in_place = true`
-when the base local is dead in the continuation and is not a function parameter.
-This helper remains useful for focused tests and local reasoning about liveness,
-but the main optimization pipeline now relies on `uniqueness.tw` as the single
-owner of in-place reuse decisions.
-
-### semantics.tw -- Shared Optimizer Semantics
-
-Central optimizer-facing metadata for builtin calls and structured ANF ops.
-The current stage exposes:
-
-- effect classification (`Pure`, `ReadOnly`, `Update`, `Allocate`, `Control`)
-- fresh-result metadata
-- COW/in-place rewrite metadata
-- builder-family metadata
-
-Builder-family ids now come from the shared
-`compiler/builder_family.tw` helper so optimizer code and front-end
-lowering derive the same builder family from `BuiltinRegistry`.
-
-`pipeline.tw` now builds prelude optimizer semantics from `BuiltinRegistry`,
-and `uniqueness.tw` consumes those semantics directly. `CowConfig` remains as a
-compatibility wrapper for older call sites/tests.
-
-### uniqueness.tw -- Uniqueness Rewrite (COW Elimination)
-
-Proves single-ownership of collection values to rewrite copy-on-write operations to
-in-place mutations. The active path now consumes shared optimizer semantics
-rather than hardcoded builtin tables. It now relies on shared analysis helpers
-in `analysis.tw`, and delegates loop-region builder construction to
-`loop_builder.tw`.
-
-**Phase 1 -- Pre-scan**: builds a `tainted` set of locals that can never be unique:
-- Function parameters (come from outside)
-- Locals captured by closures (`AMakeClosure` free vars)
-- Locals stored in containers (array literals, record fields, variant args)
-- Locals passed to non-COW, non-read-only calls
-- Alias copies (`let y = x` or `y = x`) where the source is still live after
-
-**Phase 2 -- Forward rewrite**: tracks ownership classes for locals rather than a
-single `unique` bit. Forward walk through the let-chain:
-- Deep producers (`vector_make`, `dict_new`, array literals, fresh collection results)
-  make their result deeply owned
-- Fresh wrapper aggregates such as records, record updates, and variants are tracked
-  as shallowly owned unless stronger proof exists
-- `AInit(ALocal(src))` and `AAssign(target, ALocal(src))` transfer the current
-  ownership class from source to target
-- COW ops (`vector_set_unsafe`, `dict_set`, `dict_remove`) require a deeply owned,
-  non-tainted base plus a consume-reassign or dead-base pattern before rewriting to
-  their in-place counterparts (`vector_set_in_place`, `dict_set_in_place`,
-  `dict_remove_in_place`)
-- `ARecordUpdate` shell reuse is decided in the same ownership-driven pass rather
-  than by a separate pipeline stage
-- Branches/loops are conservative: ownership facts are not propagated out
-
-**Phase 3 -- Loop region rewrite**: transforms the accumulator pattern
-`v = []; for ... { v = v.push(x) }` into the builder pattern
-`b = builder_new(); for ... { builder_push(b, x) }; v = builder_freeze(b)`.
-
-Loop legality analysis lives in `analysis.tw`; the builder-region rewrite itself
-lives in `loop_builder.tw`, which now emits an optimizer-facing `BuilderRegion`
-and lowers that canonical region shape through `builder_region.tw`. Analysis
-validates that the base local is only used in push+reassign patterns within the
-loop body. Rewriting introduces three fresh locals (builder, freeze result,
-assign) and replaces `vector_push` calls with `builder_push`. A safety check
-verifies the rewritten site count matches the analysis.
-
-Also handles `builder_from` for non-empty initial vectors vs `builder_new` for
-initially-empty ones (tracked via `known_empty` set).
-
-### loop_builder.tw -- Loop Builder Region Rewrite
-
-Owns loop-accumulator candidate rewriting once legality has already been
-established. It rewrites push sites inside the loop body, chooses the builder
-region seed (`builder_new` vs `builder_from`), and constructs a canonical
-`BuilderRegion` for lowering.
-
-### builder_region.tw -- Canonical Builder Region Lowering
-
-Defines a small optimizer-facing transient builder region abstraction and lowers
-it to the current runtime builder call family. This is the Stage 4 bridge:
-passes can target a stable builder-region concept without directly assembling the
-final nested ANF `Let` shape around `vector_builder_*` calls.
-
-This is the current intended stop point. The optimizer does not yet introduce
-explicit transient IR nodes; Stage 5 IR refinement is deferred unless the shared
-builder-family boundary stops being sufficient.
-
-### defer_elim.tw -- Defer Elimination
+### defer_elim.tw — Defer Elimination
 
 Removes all `ADefer` nodes by rewriting exit points to execute deferred expressions
-in LIFO order before transferring control.
+in LIFO order before transferring control. Runs **first** in the per-function order
+(see Pipeline Overview) so the peephole passes never see `ADefer`.
 
 Threads two defer lists through the walk:
-- `fn_defers` -- active between current point and function boundary; fired on `Return`
+- `fn_defers` — active between current point and function boundary; fired on `Return`
   and normal function exit
-- `loop_defers` -- active within current loop iteration; fired on `Break`, `Continue`,
+- `loop_defers` — active within current loop iteration; fired on `Break`, `Continue`,
   and end-of-iteration
 
 Rewrite rules:
@@ -233,16 +148,55 @@ Rewrite rules:
 **Capture-by-value**: at registration time, free locals in the deferred expression are
 snapshot-bound to fresh locals (`let snap = init(src)`). The deferred body is remapped
 to use the snapshots, ensuring it observes values at declaration time, not execution
-time.
+time. Fresh locals come from `analysis.tw`'s `next_local_id`.
 
-Must run last in the pipeline -- after all peephole passes, since it changes control
-flow structure in ways the peephole passes aren't designed to handle.
+## Support modules
 
-## Configuration
+### analysis.tw — Fresh local minting
 
-`make_prelude_optimizer_semantics` in `semantics.tw` builds optimizer semantics
-for Twinkle's prelude from `BuiltinRegistry`.
+The uniqueness/liveness analysis that once lived here was removed in the rebuild. The
+only survivor the optimizer still needs is `next_local_id(func)`, which `defer_elim`
+uses to mint fresh locals for snapshot captures.
 
-`optimize_module_with_semantics` in `pipeline.tw` is the semantics-first entry
-point. `optimize_module_with_config` remains available as a compatibility layer
-and internally converts `CowConfig` to optimizer semantics.
+### semantics.tw — Shared Optimizer Semantics
+
+Central optimizer-facing metadata for builtin calls. Exposes per-builtin
+`CallSemantics` (effect classification `Pure`/`ReadOnly`/`Update`/`Allocate`/`Control`,
+`fresh_result`, and COW metadata such as `cow_base_arg`/`in_place_equivalent`/
+`retained_args`), plus builder-family config derived from
+`compiler/builder_family.tw` and `BuiltinRegistry`.
+
+This is **metadata only** — a static table describing builtins, not an analysis pass.
+The `in_place_equivalent` / `cow_base_arg` fields exist so that the census (and, later,
+the codegen track) can classify candidate COW ops; the optimizer itself does not emit
+any in-place rewrite. `is_pure_with_semantics` here backs the purity check used by
+dead-let and copy-prop. `CowConfig` remains a compatibility wrapper for older call
+sites/tests, with converters in both directions.
+
+`make_prelude_optimizer_semantics(reg)` builds the prelude semantics from
+`BuiltinRegistry`; `optimize_module_with_semantics` is the semantics-first entry point.
+
+## CFG ownership facts (outside opt/)
+
+The sound-uniqueness Phase 1–3 analysis lives in `compiler/`, not `compiler/opt/`:
+
+- `compiler/cfg.tw` — structural CFG view over optimized ANF (blocks, carried block
+  params, terminators, predecessor/successor edges, ANF instruction mappings).
+- `compiler/ownership.tw` — Phase 2 ownership facts (`Unique`/`Shared`/`Unknown`),
+  edge-arg-aware liveness, binding validity, and per-function summaries.
+- `compiler/summary.tw` — bottom-up interprocedural summary driver over call-graph
+  SCCs.
+
+This analysis is **the single source of truth** for ownership/liveness/publication
+facts; the old ownership-consuming optimizer passes were deleted in the rebuild, so
+there is no competing legality pass in `opt/`. It is **analysis-only**: it emits no
+codegen. Inspect it with `twk ir --cfg`, `twk ir --census`, and `twk ir --sites`.
+
+### Peephole decision: why these stay ANF-local
+
+`dead_let`, `copy_prop`, `const_fold`, and `branch_simp` remain plain ANF-local
+peepholes because none of them consult ownership or control-flow facts. Dead-let and
+copy-prop reason only about local use counts and syntactic purity; const-fold reasons
+only about literal operands; branch-simp reasons only about literal conditions. None
+needs the CFG/ownership facts, so there is no reason to route them through the CFG or
+to hold them back for the codegen track.
