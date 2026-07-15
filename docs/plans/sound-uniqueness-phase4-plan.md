@@ -1118,15 +1118,15 @@ pub fn container_kind(sem: OptimizerSemantics, fid: FuncId) ContainerKind {
       .Some(cs) => st.transfer_builtin_call(result, fid, cs, args, last, sem),
 ```
 
-`transfer_builtin_call` gains `fid: FuncId` and `sem: OptimizerSemantics` params. Map the container kind to a segment:
+`transfer_builtin_call` gains `fid: FuncId` and `sem: OptimizerSemantics` params. Map the container kind to a segment. **Import discipline (`ownership.tw:12`):** the existing line is `use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info}` (destructured, no `as semantics` alias — `call_info` is called unqualified). So **add `ContainerKind, container_kind` to that destructure** and call `container_kind` unqualified — do **not** write `semantics.container_kind`.
 
 ```tw
 // `ff.PathSeg` is qualified: ownership.tw has `use compiler.field_facts as ff`,
-// which binds the module alias but not the type unqualified. Either annotate
-// `ff.PathSeg?` (shown) or add `use compiler.field_facts.{PathSeg}`. The `.Elem`/
-// `.Val` variant literals resolve contextually from the `ff.PathSeg?` return type.
+// which binds the module alias but not the type unqualified. Annotate `ff.PathSeg?`
+// (shown) or add `use compiler.field_facts.{PathSeg}`. The `.Elem`/`.Val` and the
+// `.VectorLike`/`.DictLike`/`.NotCollection` variant literals resolve contextually.
 fn container_seg(sem: OptimizerSemantics, fid: FuncId) ff.PathSeg? {
-  case semantics.container_kind(sem, fid) {
+  case container_kind(sem, fid) {
     .VectorLike => .Some(.Elem),
     .DictLike => .Some(.Val),
     .NotCollection => .None,
@@ -1725,6 +1725,8 @@ git commit -m "docs/sound-uniqueness: track Phase 4 field-ownership delivery"
 - Acceptance 1–10 mapped: field-backing (T3), field-sensitivity (T3 sibling), nested inner (T4), move/borrow (T5/T6), demotion cascade (T2/T5 clears), downward-closed sweep (T8), alias-creation guards (T3/T4 negatives), determinism (T1 codec + T7 render), census-0 (T8), full verify (T8). ✓
 
 **2. Placeholder scan:** Task 7's verdict/render steps describe the render format by contract; all novel algorithmic code (codec, map ops, single-retention, introduction arms, projection, container kind, the `quartet_ok` recognizer) is shown in full. No `TBD`/blank markers remain. The only inline verify-during-execution notes are *name confirmations against the live code* (the exact `vector$set_unsafe`/`builder.push_id` ids, the `Terminator`/`CfgEdge.args` field names, the `op_uses` helper name) — each says exactly what to grep and substitute.
+
+**Review pass 3 (fixes applied):** `container_kind` is called **unqualified** (added to the `use compiler.opt.semantics.{…}` destructure at `ownership.tw:12`, matching the existing unqualified `call_info`) — not `semantics.container_kind` (there is no `as semantics` alias). Reconciled the design doc: `phase4-design.md`'s quartet no longer mandates `assign base = …` — the write-back binds a fresh result local in optimized ANF, and the proof is form-agnostic (base's sole remaining use is the matching update + dead-after-block).
 
 **Review pass 2 (fixes applied):** `exit_mentions_local` now reuses the existing `term_uses(term)` so the quartet escape check covers `CondBranch` tests and `Match` scrutinees (not just `Return`/`ValueBreak`); `ARecordUpdate` single-retention counts `[base, v]` so a self-insert (`v == base`) mints no field fact; two-arg iteration uses `range_from(i + 1, insts.len())` (the `[.I64, .I64]` builtin), not `range`; corrected the prose — `Vector.append` *is* reachable as `b.method_id("Vector","append")` (= `builder.push_id`), while `vector$set_unsafe` is a raw `b.id` with no method_id (the container-kind-on-semantics keying is unaffected).
 

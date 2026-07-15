@@ -209,20 +209,25 @@ Phase 4 has two move proofs:
    only remaining live use of `base` is the matching shell write-back:
 
    ```text
-   R  = record_get base.f
-   R2 = consuming_builtin_or_move_chain(R, ...)
-   B2 = record_update base.f = R2
-   assign base = B2
+   R   = record_get base.f
+   R2  = consuming_builtin_or_move_chain(R, ...)
+   env2 = record_update base.f = R2     // binds a FRESH local (the ANF shape);
+                                        // `assign base = …` is an equivalent
+                                        // source form, not a required element
    ```
 
-   The proof must establish, on every continuing path from the projection to the
-   matching update, that `base` is not published, passed to an unknown/user call,
-   stored, returned, aliased, or used for another field read/update; `base.[.f]`
-   is not read again; the update targets the same field `f`; and the old `base`
-   shell is dead after the write-back/rebind. The replacement must come from the
-   projected field's consume/produce chain or from another independently-owned
-   value. This is a narrow Phase 4 substitute for general path-liveness, not a
-   general permission to move fields out of live records.
+   The `assign base = …` write-back is only one surface form: in optimized ANF the
+   record-field-update rebind typically binds a **fresh** result local (`env2`), so
+   the proof must **not** require an `AAssign` of `base`. The essential, form-agnostic
+   conditions are: on every continuing path from the projection, `base` is used for
+   **nothing but** the single matching `ARecordUpdate(base, f, replacement)` — not
+   published, passed to an unknown/user call, stored, returned, aliased, read by the
+   terminator (branch test / match scrutinee) or fed to a successor param, nor used
+   for another field read/update; `base.[.f]` is not read again; and `base` is **dead
+   after the block** (so no surviving view of the old shell can observe R's in-place
+   mutation). The replacement must come from the projected field's consume/produce
+   chain or another independently-owned value. This is a narrow Phase 4 substitute for
+   general path-liveness, not a general permission to move fields out of live records.
 
 For either move proof, transfer `own[R]` from the exact `[.f]` fact, populate R's
 strict descendants, and remove `base`'s `[.f]*` subtree with `remove_prefix`. R's
@@ -239,11 +244,12 @@ it cannot decide the move locally. Phase 4 recognizes the quartet with a **block
 linear-ANF pattern scan** run alongside liveness, producing a per-op annotation
 (`quartet_move: Bool`) the transfer consults at the `ARecordGet`. Scope the recognizer
 to a **single block's** straight-line op sequence — projection, the consume/produce
-chain, the matching `ARecordUpdate(base, f, …)`, and the `assign base = …`, with `base`
-not otherwise used between them. A projection whose write-back lands in another block
-(base live across a block boundary) is **out of scope for the move** and falls to the
-borrow rule — a sound scoping that keeps the proof a pure intra-block peephole and
-matches the intraprocedural fixture set.
+chain, and the matching `ARecordUpdate(base, f, …)` (whose result binds a fresh local;
+no trailing `AAssign` of `base` is required), with `base` not otherwise used and dead
+after the block. A projection whose write-back lands in another block (base live across
+a block boundary) is **out of scope for the move** and falls to the borrow rule — a
+sound scoping that keeps the proof a pure intra-block peephole and matches the
+intraprocedural fixture set.
 
 - **Borrow** (no move proof): the backing at `base.[.f]` is now aliased by R, so
   **both** sides demote — `own[R] ← Shared` (and thus, by downward-closure, no
