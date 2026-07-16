@@ -694,6 +694,41 @@ fn transfer_summarized_call(st: ForwardState, result: Int, s: Summary, args: Vec
   }
 }
 
+fn own_is_unique(own: Dict<Int, Int>, id: Int) Bool {
+  case fact_of_local(own, id) {
+    .Unique => true,
+    _ => false,
+  }
+}
+
+// Count the number of times local `id` appears among the atoms in `operands`.
+fn store_count(operands: Vector<Atom>, id: Int) Int {
+  n := 0
+  for a in operands {
+    case atom_local_id(a) {
+      .Some(oid) => if oid == id {
+        n = n + 1
+      },
+      .None => {},
+    }
+  }
+  n
+}
+
+// A value operand is single-retention at this op iff it is a local that is
+// []:Unique, at last-use, and appears exactly once among `operands`.
+fn single_retention(st: ForwardState, v: Atom, last: Vector<Int>, operands: Vector<Atom>) Bool {
+  case atom_local_id(v) {
+    .Some(id) => fact_of(st.own, v).own_tag2() == 0
+      and is_last_use(last, id) and store_count(operands, id) == 1,
+    .None => false,
+  }
+}
+
+fn own_tag2(o: Ownership) Int {
+  o.own_tag()
+}
+
 // Apply one instruction. `last` is last_use_at(op, live_after[i]).
 fn transfer_op(
   st: ForwardState,
@@ -708,12 +743,24 @@ fn transfer_op(
     .ACall(callee, args) => st.transfer_call(result, callee, args, last, table, sem),
     .ARecord(_, fields) => {
       origins: Vector<Int> = []
+      operands: Vector<Atom> = collect fa in fields {
+        fa.value
+      }
       for fa in fields {
         origins = union_sorted(origins, prov_of(st.prov, fa.value))
         st = .field_store(fa.value, last)
       }
-      st = .set_result(result, .Unique)
-      st.set_prov_st(result, origins)
+      st = .set_result(result, .Unique) // sets shell Unique; choke point leaves field_own[result] intact (empty)
+      st = .set_prov_st(result, origins)
+
+      // Graft each single-retention field value's facts under [.f].
+      rf := ff.empty()
+      for fa in fields {
+        if st.single_retention(fa.value, last, operands) {
+          rf = .graft(.Field(fa.field.id), st.atom_field_own(fa.value))
+        }
+      }
+      st.set_field_own(result, rf)
     },
     .AVariant(_, _, args) => {
       origins: Vector<Int> = []
@@ -731,7 +778,23 @@ fn transfer_op(
         st = .field_store(a, last)
       }
       st = .set_result(result, .Unique)
-      st.set_prov_st(result, origins)
+      st = .set_prov_st(result, origins)
+
+      // [Elem]:Unique when EVERY element is single-retention. An EMPTY literal is
+      // [Elem]:Unique vacuously (no shared inner) — this bootstraps build-from-empty
+      // vectors so the Task 4 consuming rule has an all-owned base to preserve.
+      all_owned := true
+      for a in elems {
+        if !st.single_retention(a, last, elems) {
+          all_owned = false
+        }
+      }
+      st = if all_owned {
+        st.set_field_own(result, ff.empty().set_path(ff.elem_path(), 0))
+      } else {
+        st
+      }
+      st
     },
     .ARecordGet(base, _, _) => {
       // borrow: result not owned, but carries the base's provenance.
@@ -743,11 +806,27 @@ fn transfer_op(
       st = .set_result(result, .Unknown)
       st.set_prov_st(result, prov_of(st.prov, base))
     },
-    .ARecordUpdate(base, _, v, _, _) => {
+    .ARecordUpdate(base, f, v, _, _) => {
       origins := union_sorted(prov_of(st.prov, base), prov_of(st.prov, v))
-      st = .consume_base(result, base, last)
+      base_fields := st.atom_field_own(base)
+      st = .consume_base(result, base, last) // sets result shell Unique (if base Unique+last-use) else Unknown
       st = .field_store(v, last)
-      st.set_prov_st(result, origins)
+      st = .set_prov_st(result, origins)
+
+      // Only build field facts when the result shell is Unique (else choke point cleared it).
+      st = if own_is_unique(st.own, result) {
+        // remove the whole [.f]* subtree first, then graft the (single-retention) replacement.
+        rf := base_fields.remove_prefix(.Field(f.id))
+        rf = if st.single_retention(v, last, [base, v]) {
+          rf.graft(.Field(f.id), st.atom_field_own(v))
+        } else {
+          rf
+        }
+        st.set_field_own(result, rf)
+      } else {
+        st
+      }
+      st
     },
     .AInit(a) => {
       st = .init_hinge(result, a, last)

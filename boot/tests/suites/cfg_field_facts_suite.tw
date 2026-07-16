@@ -2,11 +2,12 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
+use compiler.anf.{FieldAtom}
 use compiler.builtins
 use compiler.cfg
-use compiler.core_ir.{FuncId, LocalId}
+use compiler.core_ir.{FieldId, FuncId, LocalId}
 use compiler.field_facts as ff
-use compiler.mono_type.{MonoType}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.ownership
@@ -71,6 +72,17 @@ fn tag_u() Int {
 // A FieldMap with a single Unique path.
 fn one(p: ff.AccessPath) ff.FieldMap {
   ff.empty().set_path(p, tag_u())
+}
+
+fn field_atom(fid: Int, v: LocalId) FieldAtom {
+  FieldAtom.{ field: FieldId.{ id: fid }, value: .ALocal(v) }
+}
+
+fn has_field_path(f: cfg.CfgFunction, local_id: Int, p: ff.AccessPath) Bool {
+  case f.blocks[0].exit.field_own.get(local_id) {
+    .Some(m) => m.is_unique(p),
+    .None => false,
+  }
 }
 
 pub fn suite() runner.Suite {
@@ -209,6 +221,83 @@ pub fn suite() runner.Suite {
         body: AnfExpr = .Let(lid(0), dict_new_call(b), .Atom(.ALocal(lid(0))))
         f := analyzed_func(module_of("f", body))
         try assert.equal(field_count(f, 0), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "intro record: fresh dict field -> shell has [.f]:Unique",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); r := Wrapper.{ f0: d }; 0 }  -> r has [.f0]:Unique.
+        // Return 0 (not r) so publication doesn't clear r's field facts.
+        rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        body: AnfExpr = .Let(lid(0), dict_new_call(b), .Let(lid(1), rec, .Atom(.ALitInt(0))))
+        f := analyzed_func(module_of("f", body))
+        try assert.is_true(has_field_path(f, 1, ff.field_path(0)))
+        .Ok({})
+      },
+    )
+    .test(
+      "intro record negative: same value in two fields -> no deep claim",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); r := Two.{ a: d, b: d }; 0 }  -> neither field claimed.
+        // Return 0 so field facts are not cleared by publication.
+        rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0)), field_atom(1, lid(0))])
+        body: AnfExpr = .Let(lid(0), dict_new_call(b), .Let(lid(1), rec, .Atom(.ALitInt(0))))
+        f := analyzed_func(module_of("f", body))
+        try assert.is_false(has_field_path(f, 1, ff.field_path(0)))
+        try assert.is_false(has_field_path(f, 1, ff.field_path(1)))
+        .Ok({})
+      },
+    )
+    .test(
+      "intro record negative: shared field value -> no [.f] claim",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); keep := d (alias); r := Wrapper.{ f0: d } }
+        // d is aliased by keep, so it is NOT single-retention -> no claim.
+        inner: AnfExpr = .Let(
+          lid(2),
+          .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))]),
+          .Atom(.ALocal(lid(1))), // return keep so d has a live alias at the record
+        )
+        body: AnfExpr = .Let(lid(0), dict_new_call(b), .Let(lid(1), .AInit(.ALocal(lid(0))), inner))
+        f := analyzed_func(module_of("f", body))
+        try assert.is_false(has_field_path(f, 2, ff.field_path(0)))
+        .Ok({})
+      },
+    )
+    .test(
+      "intro update: refresh .types keeps sibling .values facts",
+      fn() {
+        b := b_reg()
+
+        // f() { t := Dict.new(); v := Dict.new(); r := Ctx.{ types: t, values: v };
+        //       t2 := Dict.new(); r2 := (r.types = t2) }  -> r2 has [.types] and [.values].
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0)), field_atom(1, lid(1))])
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(2)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            dict_new_call(b),
+            .Let(lid(2), mk, .Let(lid(3), dict_new_call(b), .Let(lid(4), upd, .Atom(.ALitInt(0))))),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert.is_true(has_field_path(f, 4, ff.field_path(0))) // refreshed .types
+        try assert.is_true(has_field_path(f, 4, ff.field_path(1))) // carried .values
         .Ok({})
       },
     )
