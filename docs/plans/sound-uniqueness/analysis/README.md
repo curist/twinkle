@@ -122,15 +122,15 @@ publication. This phase adds the field-sensitive layer. Still no codegen changes
 Canonical semantics: [records-fields.md](records-fields.md); implementation
 design: [phase4-design.md](phase4-design.md).
 
-- [ ] **Separate shell reuse from field-backing ownership.** A record update
+- [x] **Separate shell reuse from field-backing ownership.** A record update
   carries two independent questions: shell reuse (needs the shell `Unique`) and
   field-backing in-place (needs the field's collection deeply `Unique` with no
   live alias on the old field value). A fresh shell around shared fields is not
   deep ownership.
-- [ ] **Model nested-collection ownership** (`Vector<Vector<T>>`,
+- [x] **Model nested-collection ownership** (`Vector<Vector<T>>`,
   `Dict<K, Vector<V>>`) with the same shell-vs-deep split: an owned outer backing
   does not imply owned inner backing.
-- [ ] **Print the field verdicts.** Per record-update / field-projection /
+- [x] **Print the field verdicts.** Per record-update / field-projection /
   nested-write site: shell-owned, deeply-owned field, projected owned field, or
   the rejection reason (outer owned but inner shared, nested publication,
   insufficient deep ownership).
