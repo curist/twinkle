@@ -152,9 +152,55 @@ fn atom_is_local(a: Atom, id: Int) Bool {
   }
 }
 
+fn atom_is_one_of(a: Atom, ids: Vector<Int>) Bool {
+  case atom_local_id(a) {
+    .Some(x) => live_contains_int(ids, x),
+    .None => false,
+  }
+}
+
+fn op_mentions_one_of(op: AnfOp, ids: Vector<Int>) Bool {
+  for id in ids {
+    if op_mentions_local(op, id) {
+      return true
+    }
+  }
+  false
+}
+
+fn op_moves_one_of(op: AnfOp, ids: Vector<Int>, live_after: Vector<Int>, sem: OptimizerSemantics) Bool {
+  case op {
+    .ACall(callee, args) => case callee_func_id(callee) {
+      .Some(fid) => case call_info(sem, fid) {
+        .Some(cs) => case cs.effect {
+          .Update => case cs.cow_base_arg {
+            .Some(k) => case atom_local_id(args[k]) {
+              .Some(base_id) => live_contains_int(ids, base_id)
+                and !live_contains_int(live_after, base_id),
+              .None => false,
+            },
+            .None => false,
+          },
+          _ => false,
+        },
+        .None => false,
+      },
+      .None => false,
+    },
+    _ => false,
+  }
+}
+
 fn is_record_get_of(op: AnfOp, bid: Int, fid: Int) Bool {
   case op {
     .ARecordGet(base, f, _) => atom_is_local(base, bid) and f.id == fid,
+    _ => false,
+  }
+}
+
+fn is_rebind_of_update(op: AnfOp, bid: Int, update_result: Int) Bool {
+  case op {
+    .AAssign(local, a) => local.id == bid and atom_is_local(a, update_result),
     _ => false,
   }
 }
@@ -184,15 +230,36 @@ fn exit_mentions_local(blk: CfgBlock, id: Int) Bool {
 
 // True iff, strictly after the projection at index `i` in this block:
 //  - there is EXACTLY ONE ARecordUpdate(base=bid, field=fid, v=_) (the write-back),
-//    and its replacement `v` is not `bid` itself;
-//  - `bid` is mentioned by NO other instruction;
-//  - `bid.fid` is not read again;
-//  - `bid` does NOT escape the block (not in terminator or any outgoing edge arg).
-fn quartet_ok(blk: CfgBlock, i: Int, bid: Int, fid: Int) Bool {
+//    and its replacement `v` is the projected field or a value derived from it;
+//  - the replacement `v` is not `bid` itself and is last-use at the write-back;
+//  - before a source-level `bid = update_result` rebind, `bid` is mentioned by
+//    NO other instruction;
+//  - `bid.fid` is not read again before that rebind;
+//  - projected/derived locals only flow through known COW updates that actually
+//    consume their base according to the block liveness scan;
+//  - if there is no rebind, `bid` does NOT escape the block (not in terminator
+//    or any outgoing edge arg).
+fn quartet_ok(
+  blk: CfgBlock,
+  scan: BlockScan,
+  i: Int,
+  projected: Int,
+  bid: Int,
+  fid: Int,
+  sem: OptimizerSemantics,
+) Bool {
   insts := blk.instructions
   matched := false
+  update_result := -1
+  rebound := false
+  derived := [projected]
   for j in range_from(i + 1, insts.len()) {
     op := insts[j].op
+    if rebound {
+      // After `bid = update_result`, the local id denotes the updated record, not
+      // the old shell whose field was projected.
+      continue
+    }
     is_match := case op {
       .ARecordUpdate(base2, f2, _v, _, _) => atom_is_local(base2, bid) and f2.id == fid,
       _ => false,
@@ -202,14 +269,26 @@ fn quartet_ok(blk: CfgBlock, i: Int, bid: Int, fid: Int) Bool {
         return false
       }
       matched = true
+      update_result = insts[j].anf_local.id
 
-      // reject self-insert: v == bid would not truly consume the field backing
       case op {
-        .ARecordUpdate(_, _, v, _, _) => if atom_is_local(v, bid) {
-          return false
+        .ARecordUpdate(_, _, v, _, _) => {
+          // reject self-insert: v == bid would not truly consume the field backing
+          if atom_is_local(v, bid) {
+            return false
+          }
+          case atom_local_id(v) {
+            .Some(vid) => if !live_contains_int(derived, vid)
+              or live_contains_int(scan.live_after[j], vid) {
+              return false
+            },
+            .None => return false,
+          }
         },
         _ => {},
       }
+    } else if matched and is_rebind_of_update(op, bid, update_result) {
+      rebound = true
     } else {
       // a second read of bid.fid, or ANY other mention of bid, fails the proof
       if is_record_get_of(op, bid, fid) {
@@ -218,15 +297,21 @@ fn quartet_ok(blk: CfgBlock, i: Int, bid: Int, fid: Int) Bool {
       if op_mentions_local(op, bid) {
         return false
       }
+      if op_mentions_one_of(op, derived) {
+        if !op_moves_one_of(op, derived, scan.live_after[j], sem) {
+          return false
+        }
+        derived = insert_sorted(derived, insts[j].anf_local.id)
+      }
     }
   }
-  matched and !exit_mentions_local(blk, bid)
+  matched and (rebound or !exit_mentions_local(blk, bid))
 }
 
 // Pre-scan a block's instruction list, returning the set of ARecordGet
 // result-locals whose projection is licensed to MOVE by the quartet proof,
 // even though the base record is not whole-record-dead at the get.
-fn recognize_quartet_moves(blk: CfgBlock) Dict<Int, Bool> {
+fn recognize_quartet_moves(blk: CfgBlock, scan: BlockScan, sem: OptimizerSemantics) Dict<Int, Bool> {
   moves: Dict<Int, Bool> = Dict.new()
   insts := blk.instructions
   for inst, i in insts {
@@ -234,7 +319,7 @@ fn recognize_quartet_moves(blk: CfgBlock) Dict<Int, Bool> {
       .ARecordGet(base, f, _) => case atom_local_id(base) {
         .Some(bid) => {
           rget := inst.anf_local.id
-          if quartet_ok(blk, i, bid, f.id) {
+          if quartet_ok(blk, scan, i, rget, bid, f.id, sem) {
             moves[rget] = true
           }
         },
@@ -603,7 +688,13 @@ fn init_hinge(st: ForwardState, result: Int, a: Atom, last: Vector<Int>) Forward
     .Some(src) => if is_last_use(last, src) {
       // move: result takes source ownership; source binding invalid
       o := fact_of(st.own, a)
+      fields := st.field_own_get(src)
       st = .set_own_st(result, o)
+      st = if o.own_tag() == 0 {
+        st.set_field_own(result, fields)
+      } else {
+        st
+      }
       st.set_valid(src, false)
     } else {
       // alias: both Shared
@@ -1113,14 +1204,12 @@ fn shell_verdict(st: ForwardState, base: Atom, last: Vector<Int>) String {
 
 fn update_field_verdict(
   pre: ForwardState,
-  post: ForwardState,
-  result: Int,
   base: Atom,
   f: Int,
   shell: String,
+  field_backing_moved: Bool,
 ) String {
-  path := ff.field_path(f)
-  if post.field_own_get(result).is_unique(path) {
+  if field_backing_moved {
     return "in-place([.f${f}] unique)"
   }
 
@@ -1128,7 +1217,7 @@ fn update_field_verdict(
     return "persistent(borrow-projection: base still live)"
   }
 
-  if !pre.atom_field_own(base).is_unique(path) {
+  if !pre.atom_field_own(base).is_unique(ff.field_path(f)) {
     return "persistent(insufficient deep ownership)"
   }
 
@@ -1137,15 +1226,61 @@ fn update_field_verdict(
 
 fn record_update_verdict(
   pre: ForwardState,
-  post: ForwardState,
   result: Int,
   base: Atom,
   f: Int,
   last: Vector<Int>,
+  field_backing_moved: Bool,
 ) String {
   shell := pre.shell_verdict(base, last)
-  field := pre.update_field_verdict(post, result, base, f, shell)
+  field := pre.update_field_verdict(base, f, shell, field_backing_moved)
   "L${result} = record_update ${atom_brief(base)}.f${f} shell=${shell} field=${field}"
+}
+
+fn mark_field_backing(moved: Dict<Int, Vector<Int>>, bid: Int, fid: Int) Dict<Int, Vector<Int>> {
+  fields := case moved.get(bid) {
+    .Some(v) => v,
+    .None => [],
+  }
+  moved[bid] = insert_sorted(fields, fid)
+  moved
+}
+
+fn has_moved_field_backing(moved: Dict<Int, Vector<Int>>, bid: Int, fid: Int) Bool {
+  case moved.get(bid) {
+    .Some(fields) => live_contains_int(fields, fid),
+    .None => false,
+  }
+}
+
+fn clear_moved_backing(moved: Dict<Int, Vector<Int>>, bid: Int) Dict<Int, Vector<Int>> {
+  case moved.get(bid) {
+    .Some(_) => moved.remove(bid),
+    .None => moved,
+  }
+}
+
+fn consume_moved_field_backing(moved: Dict<Int, Vector<Int>>, bid: Int, fid: Int) Dict<
+  Int,
+  Vector<Int>,
+> {
+  case moved.get(bid) {
+    .Some(fields) => {
+      kept: Vector<Int> = []
+      for f in fields {
+        if f != fid {
+          kept = insert_sorted(kept, f)
+        }
+      }
+      if kept.len() == 0 {
+        moved.remove(bid)
+      } else {
+        moved[bid] = kept
+        moved
+      }
+    },
+    .None => moved,
+  }
 }
 
 fn block_verdicts(
@@ -1156,21 +1291,45 @@ fn block_verdicts(
   sem: OptimizerSemantics,
 ) Dict<Int, String> {
   scan := scan_block_backward(blk, blk.exit.live) // exit.live was filled by the liveness stage
-  moves := recognize_quartet_moves(blk)
+  moves := recognize_quartet_moves(blk, scan, sem)
   verdicts: Dict<Int, String> = Dict.new()
+  moved_backing: Dict<Int, Vector<Int>> = Dict.new()
   st := entry
   for inst, i in blk.instructions {
     last := last_use_at(inst.op, scan.live_after[i])
     pre := st
+    case inst.op {
+      .ARecordGet(base, f, _) => case atom_local_id(base) {
+        .Some(bid) => if is_last_use(last, bid) or quartet_has(moves, inst.anf_local.id) {
+          case pre.atom_field_own(base).project(.Field(f.id)).shell {
+            .Some(_) => moved_backing = mark_field_backing(moved_backing, bid, f.id),
+            .None => {},
+          }
+        },
+        .None => {},
+      },
+      _ => {},
+    }
     st = .transfer_op(inst.anf_local.id, inst.op, last, moves, table, b, sem)
     case inst.op {
-      .ARecordUpdate(base, f, _, _, _) => verdicts[inst.anf_local.id] = pre.record_update_verdict(
-        st,
-        inst.anf_local.id,
-        base,
-        f.id,
-        last,
-      ),
+      .ARecordUpdate(base, f, _, _, _) => {
+        field_backing_moved := case atom_local_id(base) {
+          .Some(bid) => has_moved_field_backing(moved_backing, bid, f.id),
+          .None => false,
+        }
+        verdicts[inst.anf_local.id] = pre.record_update_verdict(
+          inst.anf_local.id,
+          base,
+          f.id,
+          last,
+          field_backing_moved,
+        )
+        moved_backing = case atom_local_id(base) {
+          .Some(bid) => consume_moved_field_backing(moved_backing, bid, f.id),
+          .None => moved_backing,
+        }
+      },
+      .AAssign(local, _) => moved_backing = clear_moved_backing(moved_backing, local.id),
       _ => {},
     }
   }
@@ -1187,7 +1346,7 @@ fn forward_block_body(
   sem: OptimizerSemantics,
 ) ForwardState {
   scan := scan_block_backward(blk, blk.exit.live) // exit.live was filled by the liveness stage
-  moves := recognize_quartet_moves(blk)
+  moves := recognize_quartet_moves(blk, scan, sem)
   st := entry
   for inst, i in blk.instructions {
     last := last_use_at(inst.op, scan.live_after[i])

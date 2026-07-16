@@ -635,8 +635,313 @@ pub fn suite() runner.Suite {
         out1 := cfg.render_view(a1)
         out2 := cfg.render_view(a2)
         try assert.is_true(out1.contains("field_facts="))
-        try assert.is_true(out1.contains("field=in-place"))
+        try assert.is_true(
+          out1.contains(
+            "verdict L4 = record_update L1.f0 shell=reuse(unique) field=in-place([.f0] unique)",
+          ),
+        )
         try assert.is_true(out1 == out2)
+        .Ok({})
+      },
+    )
+    .test(
+      "render: replacing an unowned field with a fresh value is not field-in-place",
+      fn() {
+        b := b_reg()
+
+        // The original .f0 backing is not deeply owned: the same dict is stored in
+        // two fields. Refreshing .f0 with a fresh dict may make the RESULT own .f0,
+        // but the verdict must describe the pre-op backing, not the post-op graft.
+        rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0)), field_atom(1, lid(0))])
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(2)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            rec,
+            .Let(lid(2), dict_new_call(b), .Let(lid(3), upd, .Atom(.ALocal(lid(3))))),
+          ),
+        )
+        m := module_of("f", body)
+        v := cfg.build_view(m, b)
+        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        try assert.is_true(
+          out.contains(
+            "verdict L3 = record_update L1.f0 shell=reuse(unique) field=persistent(insufficient deep ownership)",
+          ),
+        )
+        try assert.is_false(
+          out.contains("verdict L3 = record_update L1.f0 shell=reuse(unique) field=in-place"),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "projecting a field does not make an unrelated fresh replacement field-in-place",
+      fn() {
+        b := b_reg()
+
+        // The projection proves only that L2 can move the old .f0 backing. If the
+        // write-back replaces .f0 with an unrelated fresh dict, that moved backing
+        // is discarded rather than updated in-place.
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              record_get(lid(1), 0),
+              .Let(lid(3), dict_new_call(b), .Let(lid(4), upd, .Atom(.ALocal(lid(4))))),
+            ),
+          ),
+        )
+        m := module_of("f", body)
+        v := cfg.build_view(m, b)
+        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        try assert.is_true(
+          out.contains(
+            "verdict L4 = record_update L1.f0 shell=reuse(unique) field=persistent(insufficient deep ownership)",
+          ),
+        )
+        try assert.is_false(
+          out.contains("verdict L4 = record_update L1.f0 shell=reuse(unique) field=in-place"),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "read-only use of a projected field does not make the replacement field-in-place",
+      fn() {
+        b := b_reg()
+
+        // This call mentions the projected field local, but it is not a known COW
+        // update that preserves/consumes that backing. Syntactic use alone must
+        // not license an in-place field verdict.
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        stringify: AnfOp = .ACall(.AGlobalFunc(b.method_id("Int", "to_string")), [.ALocal(lid(2))])
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              record_get(lid(1), 0),
+              .Let(lid(3), stringify, .Let(lid(4), upd, .Atom(.ALocal(lid(4))))),
+            ),
+          ),
+        )
+        m := module_of("f", body)
+        v := cfg.build_view(m, b)
+        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        try assert.is_true(
+          out.contains(
+            "verdict L4 = record_update L1.f0 shell=reuse(unique) field=persistent(insufficient deep ownership)",
+          ),
+        )
+        try assert.is_false(
+          out.contains("verdict L4 = record_update L1.f0 shell=reuse(unique) field=in-place"),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "COW update of projected field is not in-place if old backing is still used",
+      fn() {
+        b := b_reg()
+
+        // Dict.set is a known COW update, but it can only consume/update the
+        // projected field backing in-place if that backing is not used again.
+        // Returning L2 after the write-back keeps the old backing live, so the
+        // field verdict must remain persistent.
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)],
+        )
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              record_get(lid(1), 0),
+              .Let(lid(3), set2, .Let(lid(4), upd, .Atom(.ALocal(lid(2))))),
+            ),
+          ),
+        )
+        m := module_of("f", body)
+        v := cfg.build_view(m, b)
+        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        try assert.is_true(
+          out.contains(
+            "verdict L4 = record_update L1.f0 shell=reuse(unique) field=persistent(insufficient deep ownership)",
+          ),
+        )
+        try assert.is_false(
+          out.contains("verdict L4 = record_update L1.f0 shell=reuse(unique) field=in-place"),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "init move carries field facts so source-shaped record rebinds render field-in-place",
+      fn() {
+        b := b_reg()
+
+        // Source lowering for `c := Ctx.{ ... }` introduces an AInit over the
+        // freshly-built record. The move must carry field facts, or the CLI smoke
+        // shape loses [.f0] before the projection/update quartet.
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        init: AnfOp = .AInit(.ALocal(lid(1)))
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(3)), .ALitInt(1), .ALitInt(2)],
+        )
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(2)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(4)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              init,
+              .Let(
+                lid(3),
+                record_get(lid(2), 0),
+                .Let(
+                  lid(4),
+                  set2,
+                  .Let(
+                    lid(5),
+                    upd,
+                    .Let(lid(6), .AAssign(lid(2), .ALocal(lid(5))), .Atom(.ALocal(lid(2)))),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        )
+        m := module_of("f", body)
+        v := cfg.build_view(m, b)
+        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        try assert.is_true(
+          out.contains(
+            "verdict L5 = record_update L2.f0 shell=reuse(unique) field=in-place([.f0] unique)",
+          ),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "field move evidence is cleared when a source local is rebound",
+      fn() {
+        b := b_reg()
+
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        init: AnfOp = .AInit(.ALocal(lid(1)))
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(3)), .ALitInt(1), .ALitInt(2)],
+        )
+        upd1: AnfOp = .ARecordUpdate(
+          .ALocal(lid(2)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(4)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        upd2: AnfOp = .ARecordUpdate(
+          .ALocal(lid(2)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(7)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              init,
+              .Let(
+                lid(3),
+                record_get(lid(2), 0),
+                .Let(
+                  lid(4),
+                  set2,
+                  .Let(
+                    lid(5),
+                    upd1,
+                    .Let(
+                      lid(6),
+                      .AAssign(lid(2), .ALocal(lid(5))),
+                      .Let(lid(7), dict_new_call(b), .Let(lid(8), upd2, .Atom(.ALocal(lid(8))))),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        )
+        m := module_of("f", body)
+        v := cfg.build_view(m, b)
+        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        try assert.is_true(
+          out.contains(
+            "verdict L5 = record_update L2.f0 shell=reuse(unique) field=in-place([.f0] unique)",
+          ),
+        )
+        try assert.is_true(
+          out.contains(
+            "verdict L8 = record_update L2.f0 shell=reuse(unique) field=persistent(outer owned but inner shared)",
+          ),
+        )
         .Ok({})
       },
     )
