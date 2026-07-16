@@ -469,4 +469,84 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "quartet move: get -> Dict.set -> update licenses field in-place",
+      fn() {
+        b := b_reg()
+
+        // f() {
+        //   d := Dict.new(); env := Ctx.{ types: d };
+        //   t := env.types;                 // projection (env still live -> update below)
+        //   t2 := Dict.set(t, 1, 2);        // consume/produce
+        //   env2 := (env.types = t2);       // record_update base=env, field types (env dead after)
+        //   env2                            // returns the fresh binding; env NOT live-out
+        // }
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)],
+        )
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              record_get(lid(1), 0),
+              // Return ALitInt(0) so L4 is NOT published; then has_field_path(f, 4, ...) is observable.
+              .Let(lid(3), set2, .Let(lid(4), upd, .Atom(.ALitInt(0)))),
+            ),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+
+        // The projected t (L2) is moved Unique so the Dict.set can (later) go in place,
+        // and env2 retains [.types]:Unique.
+        try assert.is_true(is_shell_unique(f, 2))
+        try assert.is_true(has_field_path(f, 4, ff.field_path(0)))
+        .Ok({})
+      },
+    )
+    .test(
+      "quartet negative: base published (returned) -> recognizer rejects -> R not Unique",
+      fn() {
+        b := b_reg()
+
+        // f() {
+        //   d := Dict.new(); env := Ctx.{ types: d };
+        //   t := env.types;          // projection
+        //   t2 := Dict.set(t, 1, 2); // consume/produce
+        //   env                      // base is RETURNED -> escapes block -> NOT a quartet
+        // }
+        // env is returned, so it escapes: exit_mentions_local returns true -> quartet_ok fails.
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)],
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(lid(2), record_get(lid(1), 0), .Let(lid(3), set2, .Atom(.ALocal(lid(1))))),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+
+        // env (lid 1) is live-out (returned), so no quartet is recognized -> borrow -> R (lid 2) not Unique.
+        try assert.is_false(is_shell_unique(f, 2))
+        .Ok({})
+      },
+    )
 }

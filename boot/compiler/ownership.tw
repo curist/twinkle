@@ -135,6 +135,124 @@ fn term_uses(term: Terminator) Vector<Int> {
   }
 }
 
+// ── Quartet shell-writeback recognizer (G5: block-local peephole) ────
+fn op_mentions_local(op: AnfOp, id: Int) Bool {
+  for u in op_uses(op) {
+    if u == id {
+      return true
+    }
+  }
+  false
+}
+
+fn atom_is_local(a: Atom, id: Int) Bool {
+  case atom_local_id(a) {
+    .Some(x) => x == id,
+    .None => false,
+  }
+}
+
+fn is_record_get_of(op: AnfOp, bid: Int, fid: Int) Bool {
+  case op {
+    .ARecordGet(base, f, _) => atom_is_local(base, bid) and f.id == fid,
+    _ => false,
+  }
+}
+
+// bid must be dead after the block: not read by the terminator and not fed on
+// any outgoing edge. Reuses term_uses (covers CondBranch/Match/Return/ValueBreak).
+fn exit_mentions_local(blk: CfgBlock, id: Int) Bool {
+  case blk.terminator {
+    .Some(term) => {
+      for u in term_uses(term) {
+        if u == id {
+          return true
+        }
+      }
+    },
+    .None => {},
+  }
+  for e in blk.succs {
+    for a in e.args {
+      if atom_is_local(a, id) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+// True iff, strictly after the projection at index `i` in this block:
+//  - there is EXACTLY ONE ARecordUpdate(base=bid, field=fid, v=_) (the write-back),
+//    and its replacement `v` is not `bid` itself;
+//  - `bid` is mentioned by NO other instruction;
+//  - `bid.fid` is not read again;
+//  - `bid` does NOT escape the block (not in terminator or any outgoing edge arg).
+fn quartet_ok(blk: CfgBlock, i: Int, bid: Int, fid: Int, rget: Int) Bool {
+  insts := blk.instructions
+  matched := false
+  for j in range_from(i + 1, insts.len()) {
+    op := insts[j].op
+    is_match := case op {
+      .ARecordUpdate(base2, f2, _v, _, _) => atom_is_local(base2, bid) and f2.id == fid,
+      _ => false,
+    }
+    if is_match {
+      if matched {
+        return false
+      }
+      matched = true
+
+      // reject self-insert: v == bid would not truly consume the field backing
+      case op {
+        .ARecordUpdate(_, _, v, _, _) => if atom_is_local(v, bid) {
+          return false
+        },
+        _ => {},
+      }
+    } else {
+      // a second read of bid.fid, or ANY other mention of bid, fails the proof
+      if is_record_get_of(op, bid, fid) {
+        return false
+      }
+      if op_mentions_local(op, bid) {
+        return false
+      }
+    }
+  }
+  matched and !exit_mentions_local(blk, bid)
+}
+
+// Pre-scan a block's instruction list, returning the set of ARecordGet
+// result-locals whose projection is licensed to MOVE by the quartet proof,
+// even though the base record is not whole-record-dead at the get.
+fn recognize_quartet_moves(blk: CfgBlock) Dict<Int, Bool> {
+  moves: Dict<Int, Bool> = Dict.new()
+  insts := blk.instructions
+  for inst, i in insts {
+    case inst.op {
+      .ARecordGet(base, f, _) => case atom_local_id(base) {
+        .Some(bid) => {
+          rget := inst.anf_local.id
+          if quartet_ok(blk, i, bid, f.id, rget) {
+            moves[rget] = true
+          }
+        },
+        .None => {},
+      },
+      _ => {},
+    }
+  }
+  moves
+}
+
+fn quartet_has(q: Dict<Int, Bool>, id: Int) Bool {
+  case q.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
 // Locals a straight-line op DEFINES. AAssign defines both its let-result and
 // its rebind target; every other op defines only its let-result. This matters:
 // a def must be killed before its own block's uses so a def-before-use does NOT
@@ -798,11 +916,14 @@ fn single_retention(st: ForwardState, v: Atom, last: Vector<Int>, operands: Vect
 }
 
 // Apply one instruction. `last` is last_use_at(op, live_after[i]).
+// `quartet` is the pre-scanned set of ARecordGet result-locals licensed to move
+// by the block-local quartet proof (empty for callers outside a block body).
 fn transfer_op(
   st: ForwardState,
   result: Int,
   op: AnfOp,
   last: Vector<Int>,
+  quartet: Dict<Int, Bool>,
   table: SummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
@@ -871,8 +992,8 @@ fn transfer_op(
     .ARecordGet(base, f, _) => {
       pr := st.atom_field_own(base).project(.Field(f.id))
       st = case atom_local_id(base) {
-        .Some(bid) => if is_last_use(last, bid) {
-          // whole-record last-use MOVE (quartet extension: Task 6)
+        .Some(bid) => if is_last_use(last, bid) or quartet_has(quartet, result) {
+          // whole-record last-use MOVE, or quartet-licensed move (Task 6)
           case pr.shell {
             .Some(t) => {
               st = .set_own_st(result, own_of_tag(t))
@@ -979,10 +1100,11 @@ fn forward_block_body(
   sem: OptimizerSemantics,
 ) ForwardState {
   scan := scan_block_backward(blk, blk.exit.live) // exit.live was filled by the liveness stage
+  moves := recognize_quartet_moves(blk)
   st := entry
   for inst, i in blk.instructions {
     last := last_use_at(inst.op, scan.live_after[i])
-    st = .transfer_op(inst.anf_local.id, inst.op, last, table, b, sem)
+    st = .transfer_op(inst.anf_local.id, inst.op, last, moves, table, b, sem)
   }
   st
 }
