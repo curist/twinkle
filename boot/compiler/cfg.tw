@@ -920,6 +920,47 @@ fn own_tag_text(tag: Int) String {
   }
 }
 
+fn path_seg_text(seg: ff.PathSeg) String {
+  case seg {
+    .Field(f) => ".f${f}",
+    .Elem => "Elem",
+    .Val => "Val",
+  }
+}
+
+fn path_text(p: ff.AccessPath) String {
+  parts: Vector<String> = []
+  for seg in p.segs {
+    parts = .append(path_seg_text(seg))
+  }
+  "[${parts.join(",")}]"
+}
+
+fn field_fact_text(local_id: Int, fm: ff.FieldMap) String {
+  parts: Vector<String> = []
+  for k in fm.sorted_keys() {
+    parts = .append("${path_text(ff.path_of_key(k))}=U")
+  }
+  "L${local_id}:${parts.join(",")}"
+}
+
+fn render_field_facts(facts: BlockFacts) String {
+  parts: Vector<String> = []
+  for local_id in facts.field_own.keys().sort() {
+    case facts.field_own.get(local_id) {
+      .Some(fm) => if !fm.is_empty() {
+        parts = .append(field_fact_text(local_id, fm))
+      },
+      .None => {},
+    }
+  }
+  if parts.len() == 0 {
+    ""
+  } else {
+    " field_facts={${parts.join("; ")}}"
+  }
+}
+
 // Facts keyed by each block's carried params (already sorted by LocalId). The
 // internal ownership map may hold more (all locals live across the boundary); the
 // printed surface is the block-param subset, matching the Phase 1 reserved shape.
@@ -931,7 +972,7 @@ fn render_facts(facts: BlockFacts, params: Vector<LocalId>) String {
     }
     "L${p.id}: ${own_tag_text(tag)}"
   }
-  "{${parts.join(", ")}}"
+  "{${parts.join(", ")}}${facts.render_field_facts()}"
 }
 
 fn render_block(lines: Vector<String>, block: CfgBlock) Vector<String> {
@@ -948,6 +989,12 @@ fn render_block(lines: Vector<String>, block: CfgBlock) Vector<String> {
       block.params,
     )}",
   )
+  for verdict_id in block.exit.verdicts.keys().sort() {
+    case block.exit.verdicts.get(verdict_id) {
+      .Some(v) => lines = .append("    verdict ${v}"),
+      .None => {},
+    }
+  }
   for inst in block.instructions {
     lines = .append("    anf L${inst.anf_local.id}: ${inst.text}")
   }

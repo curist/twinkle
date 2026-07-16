@@ -1090,6 +1090,93 @@ fn transfer_op(
   }
 }
 
+fn atom_brief(a: Atom) String {
+  case atom_local_id(a) {
+    .Some(id) => "L${id}",
+    .None => "atom",
+  }
+}
+
+fn shell_verdict(st: ForwardState, base: Atom, last: Vector<Int>) String {
+  case atom_local_id(base) {
+    .Some(bid) => case fact_of(st.own, base) {
+      .Unique => if is_last_use(last, bid) {
+        "reuse(unique)"
+      } else {
+        "persistent(base still live)"
+      },
+      _ => "persistent(aliased shell)",
+    },
+    .None => "persistent(aliased shell)",
+  }
+}
+
+fn update_field_verdict(
+  pre: ForwardState,
+  post: ForwardState,
+  result: Int,
+  base: Atom,
+  f: Int,
+  shell: String,
+) String {
+  path := ff.field_path(f)
+  if post.field_own_get(result).is_unique(path) {
+    return "in-place([.f${f}] unique)"
+  }
+
+  if shell.contains("base still live") {
+    return "persistent(borrow-projection: base still live)"
+  }
+
+  if !pre.atom_field_own(base).is_unique(path) {
+    return "persistent(insufficient deep ownership)"
+  }
+
+  "persistent(outer owned but inner shared)"
+}
+
+fn record_update_verdict(
+  pre: ForwardState,
+  post: ForwardState,
+  result: Int,
+  base: Atom,
+  f: Int,
+  last: Vector<Int>,
+) String {
+  shell := pre.shell_verdict(base, last)
+  field := pre.update_field_verdict(post, result, base, f, shell)
+  "L${result} = record_update ${atom_brief(base)}.f${f} shell=${shell} field=${field}"
+}
+
+fn block_verdicts(
+  blk: CfgBlock,
+  entry: ForwardState,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) Dict<Int, String> {
+  scan := scan_block_backward(blk, blk.exit.live) // exit.live was filled by the liveness stage
+  moves := recognize_quartet_moves(blk)
+  verdicts: Dict<Int, String> = Dict.new()
+  st := entry
+  for inst, i in blk.instructions {
+    last := last_use_at(inst.op, scan.live_after[i])
+    pre := st
+    st = .transfer_op(inst.anf_local.id, inst.op, last, moves, table, b, sem)
+    case inst.op {
+      .ARecordUpdate(base, f, _, _, _) => verdicts[inst.anf_local.id] = pre.record_update_verdict(
+        st,
+        inst.anf_local.id,
+        base,
+        f.id,
+        last,
+      ),
+      _ => {},
+    }
+  }
+  verdicts
+}
+
 // Drive the transfer over a block's straight-line instructions from its entry
 // state (no terminator publication yet).
 fn forward_block_body(
@@ -1935,6 +2022,7 @@ fn ownership_stage(
       prov: entry_prov,
       field_own: entry_field,
     }
+    verdicts := block_verdicts(blk, st, table, b, sem)
     st = forward_block(blk, st, table, b, sem)
     blk.entry.ownership = entry_own
     blk.exit.ownership = st.own
@@ -1942,6 +2030,7 @@ fn ownership_stage(
     blk.exit.binding_valid = st.valid
     blk.entry.field_own = entry_field
     blk.exit.field_own = st.field_own
+    blk.exit.verdicts = verdicts
     blk
   }
 }

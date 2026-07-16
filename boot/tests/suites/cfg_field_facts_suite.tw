@@ -596,4 +596,48 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "render: field facts + two-verdict line appear and are deterministic",
+      fn() {
+        b := b_reg()
+
+        // The push_scope quartet: fresh dict -> wrapped in record -> get field -> Dict.set -> record_update
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)],
+        )
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              record_get(lid(1), 0),
+              .Let(lid(3), set2, .Let(lid(4), upd, .Atom(.ALitInt(0)))),
+            ),
+          ),
+        )
+        m := module_of("f", body)
+        bb := b_reg()
+        v := cfg.build_view(m, bb)
+        a1 := ownership.analyze(v, bb, sem())
+        a2 := ownership.analyze(v, bb, sem())
+        out1 := cfg.render_view(a1)
+        out2 := cfg.render_view(a2)
+        try assert.is_true(out1.contains("field_facts="))
+        try assert.is_true(out1.contains("field=in-place"))
+        try assert.is_true(out1 == out2)
+        .Ok({})
+      },
+    )
 }
