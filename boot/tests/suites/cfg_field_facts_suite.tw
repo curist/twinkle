@@ -104,6 +104,32 @@ fn is_shell_unique(f: cfg.CfgFunction, local_id: Int) Bool {
   }
 }
 
+// Acceptance 6: field_own is downward-closed — a local may carry non-empty field
+// facts only while its shell (ownership) is Unique. Every fact must flow through
+// the set_own_st choke point, so a violation means the choke point was bypassed.
+fn facts_downward_closed(facts: cfg.BlockFacts) Result<Void, String> {
+  for lid, fm in facts.field_own {
+    if !fm.is_empty() {
+      shell_unique := case facts.ownership.get(lid) {
+        .Some(t) => t == 0,
+        .None => false,
+      }
+      if !shell_unique {
+        return .Err("L${lid} carries field facts while its shell is non-Unique")
+      }
+    }
+  }
+  .Ok({})
+}
+
+fn assert_downward_closed(f: cfg.CfgFunction) Result<Void, String> {
+  for blk in f.blocks {
+    try facts_downward_closed(blk.entry)
+    try facts_downward_closed(blk.exit)
+  }
+  .Ok({})
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("cfg field facts")
@@ -942,6 +968,71 @@ pub fn suite() runner.Suite {
             "verdict L8 = record_update L2.f0 shell=reuse(unique) field=persistent(outer owned but inner shared)",
           ),
         )
+        .Ok({})
+      },
+    )
+    .test(
+      "downward-closed: field facts never outlive a Unique shell (Acceptance 6)",
+      fn() {
+        b := b_reg()
+        rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+
+        // Task 3: record intro with a fresh dict field.
+        intro: AnfExpr = .Let(lid(0), dict_new_call(b), .Let(lid(1), rec, .Atom(.ALocal(lid(1)))))
+        try assert_downward_closed(analyzed_func(module_of("f", intro)))
+
+        // Task 4: store an owned inner into an all-owned vector.
+        arr: AnfOp = .AArrayLit([.ALocal(lid(0))])
+        consume: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            arr,
+            .Let(
+              lid(2),
+              dict_new_call(b),
+              .Let(lid(3), vec_set_call(b, lid(1), 0, lid(2)), .Atom(.ALocal(lid(3)))),
+            ),
+          ),
+        )
+        try assert_downward_closed(analyzed_func(module_of("f", consume)))
+
+        // Task 5: projection move (base dead after the get).
+        proj: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), rec, .Let(lid(2), record_get(lid(1), 0), .Atom(.ALocal(lid(2))))),
+        )
+        try assert_downward_closed(analyzed_func(module_of("f", proj)))
+
+        // Task 6: the push_scope quartet (intro + projection + update + rebind).
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)],
+        )
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        quartet: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            rec,
+            .Let(
+              lid(2),
+              record_get(lid(1), 0),
+              .Let(lid(3), set2, .Let(lid(4), upd, .Atom(.ALocal(lid(4))))),
+            ),
+          ),
+        )
+        try assert_downward_closed(analyzed_func(module_of("f", quartet)))
+
         .Ok({})
       },
     )
