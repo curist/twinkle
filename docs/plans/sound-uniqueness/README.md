@@ -20,17 +20,17 @@ track README(s). The focused track docs own the detailed checklists.
 
 ## Current focus
 
-**The analysis track is not finished — its foundation is.** Phases 0-3 produce
-auditable CFG ownership facts, liveness, and *minimal* summaries without changing
-generated code. But those phases deliberately cover only the first executable
-subset: the census-dominant compiler idioms (unique record shells over dict/vector
-fields, transport-wrapper and `Result`-payload state threading, and the
-specialization those require) are **not yet analyzed** — Phases 4-6 below.
+**The analysis track is not finished.** Phases 0-4 produce auditable CFG
+ownership facts, liveness, *minimal* summaries, and now record shell/field and
+nested-collection ownership — all without changing generated code. Phase 4 lands
+the first census-dominant idiom (unique record shells over dict/vector fields);
+the remaining census-dominant idioms — transport-wrapper and `Result`-payload
+state threading, and the specialization those require — are **not yet analyzed**
+(Phases 5-6 below).
 
 The governing rule is **all analysis precision lands before any codegen.** So the
-current focus stays on the analysis track: record shell/field and
-nested-collection ownership (Phase 4), transport-wrapper / `Result`-payload
-return-path summaries (Phase 5), and ownership-specialization decision facts
+current focus stays on the analysis track: transport-wrapper / `Result`-payload
+return-path summaries (Phase 5) and ownership-specialization decision facts
 (Phase 6). Only once the full ownership-fact story is trustworthy does the
 **codegen track** begin — ANF-keyed
 decision handoff/fallback plumbing, then narrow emitted slices for the existing
@@ -52,16 +52,13 @@ mutable hooks.
 
 Detailed checklist: [analysis/README.md](analysis/README.md)
 
-Foundation (done) — architecture Phases 1A/1B:
+Analysis phases (architecture 1A-1E; all analysis precision lands before any codegen):
 
 - Phase 0: baseline and safety rails — done.
 - Phase 1: structural CFG ownership view — done.
 - Phase 2: minimal ownership facts — done.
 - Phase 3: shared optimizer facts and minimal summaries — done.
-
-Remaining analysis precision (all before any codegen) — Phases 4-6 (architecture 1C-1E):
-
-- Phase 4: record shell/field and nested-collection ownership (1C) — not started.
+- Phase 4: record shell/field and nested-collection ownership (1C) — done.
 - Phase 5: transport-wrapper and `Result`-payload return-path summaries (1D) — not started.
 - Phase 6: ownership-specialization decision facts (1E) — not started.
 
