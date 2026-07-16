@@ -147,7 +147,8 @@ Boot threads context/state through small product records
 forms. Without return-path precision these look like aggregate publication and the
 analysis drops to persistent across checker/lowering/resolver/query analysis. This
 phase adds return-path summaries. Still no codegen changes. Canonical semantics:
-[summary-specialization.md](summary-specialization.md).
+[summary-specialization.md](summary-specialization.md); implementation design:
+[phase5-design.md](phase5-design.md).
 
 - [ ] **Return-path summaries keyed by field and variant-payload paths.**
   `returns[.ctx]`/`[.state]`/`[.env] = OwnedFromParam(k)`, plus variant paths such
@@ -206,3 +207,5 @@ them) and are refined *after* the first codegen, per architecture.md.
 | Extern copying-borrow precision | Post-codegen follow-up; see [concurrency-publication.md](concurrency-publication.md) |
 | Non-escaping closure recovery | Post-codegen follow-up; see [closure-capture.md](closure-capture.md) |
 | Advanced concurrency copy/share refinement | Post-codegen follow-up; see [concurrency-publication.md](concurrency-publication.md) |
+| General per-path liveness beyond the Phase 5 transport-wrapper shape | Post-codegen follow-up (conservative-by-default; sound without it); see [phase5-design.md](phase5-design.md) |
+| Return paths deeper than one field under a record / variant payload | Post-codegen follow-up (sound under-claim without it, bounded by a deeper `PathKey` codec); see [phase5-design.md](phase5-design.md) |
