@@ -1331,7 +1331,6 @@ fn run_fixpoint(
   prev_exits: Dict<Int, Dict<Int, Int>> = Dict.new()
   prev_exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
   prev_exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
-  prev_exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>> = Dict.new()
   locked_own: Dict<Int, Vector<Int>> = Dict.new()
   locked_valid: Dict<Int, Vector<Int>> = Dict.new()
   locked_prov: Dict<Int, Vector<Int>> = Dict.new()
@@ -1346,7 +1345,6 @@ fn run_fixpoint(
     prev_exits[blk.id.id] = Dict.new()
     prev_exit_valid[blk.id.id] = Dict.new()
     prev_exit_prov[blk.id.id] = Dict.new()
-    prev_exit_field_own[blk.id.id] = Dict.new()
     locked_own[blk.id.id] = []
     locked_valid[blk.id.id] = []
     locked_prov[blk.id.id] = []
@@ -1428,7 +1426,6 @@ fn run_fixpoint(
           prev_exits[blk.id.id] = old_own
           prev_exit_valid[blk.id.id] = old_valid
           prev_exit_prov[blk.id.id] = old_prov
-          prev_exit_field_own[blk.id.id] = old_field
           prev_seen[blk.id.id] = true
           changed_visits[blk.id.id] = change_count_get(changed_visits, blk.id.id) + 1
         }
