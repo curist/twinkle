@@ -12,7 +12,6 @@ use compiler.core_ir.{FuncId, LocalId}
 use compiler.field_facts as ff
 use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info, container_kind}
 
-
 pub type Ownership = { Unique, Shared, Unknown }
 
 // Conservative fallback for longer-period fixpoint cycles; two-step oscillations
@@ -707,17 +706,17 @@ fn transfer_builtin_call(
       st = if own_is_unique(st.own, result) {
         rf := case container_seg(sem, fid) {
           .Some(seg) => {
-            // A known collection op: untouched elements are structurally
-            // preserved (carry base's [seg]*), then keep or drop the touched seg.
-            carried := base_fields
+            // A known collection op: untouched elements are structurally preserved,
+            // so carry all of base's field facts (which for a Vector/Dict base is
+            // [seg]* only), then keep or drop the touched seg by single-retention.
             keep := case stored_element_atom(cs, args) {
               .Some(x) => st.single_retention(x, last, retained_atoms(cs, args)),
               .None => false,
             }
             if keep {
-              carried
+              base_fields
             } else {
-              carried.remove_prefix(seg)
+              base_fields.remove_prefix(seg)
             }
           },
           // Unknown Update op: do NOT know it preserves inner structure -> drop.
