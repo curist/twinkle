@@ -255,11 +255,6 @@ fn quartet_ok(
   derived := [projected]
   for j in range_from(i + 1, insts.len()) {
     op := insts[j].op
-    if rebound {
-      // After `bid = update_result`, the local id denotes the updated record, not
-      // the old shell whose field was projected.
-      continue
-    }
     is_match := case op {
       .ARecordUpdate(base2, f2, _v, _, _) => atom_is_local(base2, bid) and f2.id == fid,
       _ => false,
@@ -288,7 +283,10 @@ fn quartet_ok(
         _ => {},
       }
     } else if matched and is_rebind_of_update(op, bid, update_result) {
+      // After `bid = update_result`, the id denotes the updated record, not the
+      // projected shell — nothing further can invalidate the proof.
       rebound = true
+      break
     } else {
       // a second read of bid.fid, or ANY other mention of bid, fails the proof
       if is_record_get_of(op, bid, fid) {
@@ -505,6 +503,32 @@ fn scan_block_backward(blk: CfgBlock, live_out: Vector<Int>) BlockScan {
   // forward-seed change is needed.
   cur = diff_sorted(cur, blk.bound)
   BlockScan.{ live_in: cur, live_after }
+}
+
+// Per-block analysis inputs that depend ONLY on block structure + the fixed
+// liveness scan (never on the dataflow state). Computing these once — rather than
+// per fixpoint visit — keeps the O(n^2) quartet recognizer off the iteration path.
+type BlockPrep = .{ scan: BlockScan, moves: Dict<Int, Bool> }
+
+fn block_prep(blk: CfgBlock, sem: OptimizerSemantics) BlockPrep {
+  scan := scan_block_backward(blk, blk.exit.live) // exit.live filled by the liveness stage
+  BlockPrep.{ scan, moves: recognize_quartet_moves(blk, scan, sem) }
+}
+
+// Precompute every block's prep once, keyed by block id, for the fixpoint loop.
+fn prep_blocks(blocks: Vector<CfgBlock>, sem: OptimizerSemantics) Dict<Int, BlockPrep> {
+  preps: Dict<Int, BlockPrep> = Dict.new()
+  for blk in blocks {
+    preps[blk.id.id] = block_prep(blk, sem)
+  }
+  preps
+}
+
+fn prep_get(preps: Dict<Int, BlockPrep>, blk: CfgBlock, sem: OptimizerSemantics) BlockPrep {
+  case preps.get(blk.id.id) {
+    .Some(p) => p,
+    .None => block_prep(blk, sem),
+  }
 }
 
 fn compute_liveness(blocks: Vector<CfgBlock>) Dict<Int, BlockLive> {
@@ -858,9 +882,9 @@ fn container_seg(sem: OptimizerSemantics, fid: FuncId) ff.PathSeg? {
   }
 }
 
-fn retained_atoms(cs: CallSemantics, args: Vector<Atom>) Vector<Atom> {
+fn retained_atoms(ri: Vector<Int>, args: Vector<Atom>) Vector<Atom> {
   out: Vector<Atom> = []
-  for i in retained_arg_indices(cs, args) {
+  for i in ri {
     if i < args.len() {
       out = .append(args[i])
     }
@@ -868,8 +892,9 @@ fn retained_atoms(cs: CallSemantics, args: Vector<Atom>) Vector<Atom> {
   out
 }
 
-fn stored_element_atom(cs: CallSemantics, args: Vector<Atom>) Atom? {
-  ri := retained_arg_indices(cs, args)
+// The stored VALUE is the last retained operand (append [1] -> arg1;
+// vector$set_unsafe [2] -> arg2; Dict.set [1,2] -> arg2).
+fn stored_element_atom(ri: Vector<Int>, args: Vector<Atom>) Atom? {
   if ri.len() == 0 {
     return .None
   }
@@ -890,10 +915,9 @@ fn transfer_builtin_call(
   last: Vector<Int>,
   sem: OptimizerSemantics,
 ) ForwardState {
+  ri := retained_arg_indices(cs, args)
   case cs.effect {
-    .Allocate => st
-      .set_own_st(result, .Unique)
-      .absorb_retained_call_args(result, args, retained_arg_indices(cs, args), last),
+    .Allocate => st.set_own_st(result, .Unique).absorb_retained_call_args(result, args, ri, last),
     .Update => {
       // Capture base facts BEFORE consume (consume leaves base.field_own intact).
       base_fields := case cs.cow_base_arg {
@@ -907,7 +931,7 @@ fn transfer_builtin_call(
       st = .consume_call_base(result, cs, args, last).carry_base_prov(result, cs, args).absorb_retained_call_args(
         result,
         args,
-        retained_arg_indices(cs, args),
+        ri,
         last,
       )
 
@@ -918,8 +942,8 @@ fn transfer_builtin_call(
             // A known collection op: untouched elements are structurally preserved,
             // so carry all of base's field facts (which for a Vector/Dict base is
             // [seg]* only), then keep or drop the touched seg by single-retention.
-            keep := case stored_element_atom(cs, args) {
-              .Some(x) => st.single_retention(x, last, retained_atoms(cs, args)),
+            keep := case stored_element_atom(ri, args) {
+              .Some(x) => st.single_retention(x, last, retained_atoms(ri, args)),
               .None => false,
             }
             if keep {
@@ -1286,12 +1310,13 @@ fn consume_moved_field_backing(moved: Dict<Int, Vector<Int>>, bid: Int, fid: Int
 fn block_verdicts(
   blk: CfgBlock,
   entry: ForwardState,
+  prep: BlockPrep,
   table: SummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
 ) Dict<Int, String> {
-  scan := scan_block_backward(blk, blk.exit.live) // exit.live was filled by the liveness stage
-  moves := recognize_quartet_moves(blk, scan, sem)
+  scan := prep.scan
+  moves := prep.moves
   verdicts: Dict<Int, String> = Dict.new()
   moved_backing: Dict<Int, Vector<Int>> = Dict.new()
   st := entry
@@ -1341,16 +1366,15 @@ fn block_verdicts(
 fn forward_block_body(
   blk: CfgBlock,
   entry: ForwardState,
+  prep: BlockPrep,
   table: SummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
 ) ForwardState {
-  scan := scan_block_backward(blk, blk.exit.live) // exit.live was filled by the liveness stage
-  moves := recognize_quartet_moves(blk, scan, sem)
   st := entry
   for inst, i in blk.instructions {
-    last := last_use_at(inst.op, scan.live_after[i])
-    st = .transfer_op(inst.anf_local.id, inst.op, last, moves, table, b, sem)
+    last := last_use_at(inst.op, prep.scan.live_after[i])
+    st = .transfer_op(inst.anf_local.id, inst.op, last, prep.moves, table, b, sem)
   }
   st
 }
@@ -1360,11 +1384,12 @@ fn forward_block_body(
 fn forward_block(
   blk: CfgBlock,
   entry: ForwardState,
+  prep: BlockPrep,
   table: SummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
 ) ForwardState {
-  st := forward_block_body(blk, entry, table, b, sem)
+  st := forward_block_body(blk, entry, prep, table, b, sem)
   case blk.terminator {
     .Some(.Return(.Some(a))) => {
       st = .publish_atom(a)
@@ -1895,6 +1920,10 @@ fn run_fixpoint(
     changed_visits[blk.id.id] = 0
     processed[blk.id.id] = false
   }
+
+  // Quartet moves + liveness scan are dataflow-invariant: compute once, not per
+  // fixpoint visit (keeps the O(n^2) quartet recognizer off the iteration path).
+  preps := prep_blocks(blocks, sem)
   changed := true
   for changed {
     changed = false
@@ -1912,7 +1941,7 @@ fn run_fixpoint(
         prov: entry_prov,
         field_own: entry_field,
       }
-      st = forward_block(blk, st, table, b, sem)
+      st = forward_block(blk, st, prep_get(preps, blk, sem), table, b, sem)
       already := is_processed(processed, blk.id.id)
       old_own := own_map_get(exits, blk.id.id)
       old_valid := valid_map_get(exit_valid, blk.id.id)
@@ -2181,8 +2210,9 @@ fn ownership_stage(
       prov: entry_prov,
       field_own: entry_field,
     }
-    verdicts := block_verdicts(blk, st, table, b, sem)
-    st = forward_block(blk, st, table, b, sem)
+    prep := block_prep(blk, sem)
+    verdicts := block_verdicts(blk, st, prep, table, b, sem)
+    st = forward_block(blk, st, prep, table, b, sem)
     blk.entry.ownership = entry_own
     blk.exit.ownership = st.own
     blk.entry.binding_valid = entry_valid
@@ -2301,7 +2331,7 @@ pub fn summarize_function(
           prov: entry_prov,
           field_own: entry_field,
         }
-        body := forward_block_body(blk, st, table, b, sem)
+        body := forward_block_body(blk, st, block_prep(blk, sem), table, b, sem)
         idxs := prov_to_indices(f.params, prov_of(body.prov, a))
         r: ReturnEffect = if idxs.len() > 0 {
           .MayAliasParams(idxs)
