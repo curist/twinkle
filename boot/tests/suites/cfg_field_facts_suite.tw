@@ -517,7 +517,7 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "quartet negative: base published (returned) -> recognizer rejects -> R not Unique",
+      "quartet negative: no matching write-back -> matched stays false -> R not Unique",
       fn() {
         b := b_reg()
 
@@ -525,9 +525,10 @@ pub fn suite() runner.Suite {
         //   d := Dict.new(); env := Ctx.{ types: d };
         //   t := env.types;          // projection
         //   t2 := Dict.set(t, 1, 2); // consume/produce
-        //   env                      // base is RETURNED -> escapes block -> NOT a quartet
+        //   env                      // NO ARecordUpdate -> matched stays false -> not a quartet
         // }
-        // env is returned, so it escapes: exit_mentions_local returns true -> quartet_ok fails.
+        // There is no matching ARecordUpdate writing back into env.types, so quartet_ok
+        // returns false because `matched` stays false, not because of the escape guard.
         mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
         set2: AnfOp = .ACall(
           .AGlobalFunc(b.method_id("Dict", "set")),
@@ -544,7 +545,53 @@ pub fn suite() runner.Suite {
         )
         f := analyzed_func(module_of("f", body))
 
-        // env (lid 1) is live-out (returned), so no quartet is recognized -> borrow -> R (lid 2) not Unique.
+        // No write-back -> matched=false -> borrow -> R (lid 2) not Unique.
+        try assert.is_false(is_shell_unique(f, 2))
+        .Ok({})
+      },
+    )
+    .test(
+      "quartet negative: escape guard fires -> matched=true but base escapes -> R not Unique",
+      fn() {
+        b := b_reg()
+
+        // f() {
+        //   lid0 = Dict.new()
+        //   lid1 = Ctx.{ types: lid0 }         (env)
+        //   lid2 = env.types                   (projection t)
+        //   lid3 = Dict.set(lid2, 1, 2)
+        //   lid4 = (env.types = lid3)           (record_update: full quartet shape)
+        //   return env (lid1)                  <- base escapes via terminator
+        // }
+        // matched=true (write-back present), but exit_mentions_local(env) fires -> NOT a quartet.
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)],
+        )
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              record_get(lid(1), 0),
+              .Let(lid(3), set2, .Let(lid(4), upd, .Atom(.ALocal(lid(1))))),
+            ),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+
+        // Base env (lid1) escapes via return -> escape guard fires -> t (lid2) is a borrow, not Unique.
         try assert.is_false(is_shell_unique(f, 2))
         .Ok({})
       },

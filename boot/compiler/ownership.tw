@@ -188,7 +188,7 @@ fn exit_mentions_local(blk: CfgBlock, id: Int) Bool {
 //  - `bid` is mentioned by NO other instruction;
 //  - `bid.fid` is not read again;
 //  - `bid` does NOT escape the block (not in terminator or any outgoing edge arg).
-fn quartet_ok(blk: CfgBlock, i: Int, bid: Int, fid: Int, rget: Int) Bool {
+fn quartet_ok(blk: CfgBlock, i: Int, bid: Int, fid: Int) Bool {
   insts := blk.instructions
   matched := false
   for j in range_from(i + 1, insts.len()) {
@@ -234,7 +234,7 @@ fn recognize_quartet_moves(blk: CfgBlock) Dict<Int, Bool> {
       .ARecordGet(base, f, _) => case atom_local_id(base) {
         .Some(bid) => {
           rget := inst.anf_local.id
-          if quartet_ok(blk, i, bid, f.id, rget) {
+          if quartet_ok(blk, i, bid, f.id) {
             moves[rget] = true
           }
         },
