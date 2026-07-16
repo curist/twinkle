@@ -159,6 +159,17 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "graft Field-prefix: inner [.f] path is silently dropped (depth-3 under-claim)",
+      fn() {
+        // src has a [.f9] path (as if from a nested record's field fact).
+        src := ff.empty().set_path(ff.field_path(9), tag_u())
+        dst := ff.empty().graft(.Field(1), src)
+        try assert.is_true(dst.is_unique(ff.field_path(1))) // [.f1] shell grafted
+        try assert.equal(dst.sorted_keys().len(), 1) // [.f1, .f9] NOT emitted
+        .Ok({})
+      },
+    )
+    .test(
       "remove_prefix: drops [.f]* subtree, preserves siblings",
       fn() {
         m := ff

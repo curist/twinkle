@@ -719,14 +719,10 @@ fn store_count(operands: Vector<Atom>, id: Int) Int {
 // []:Unique, at last-use, and appears exactly once among `operands`.
 fn single_retention(st: ForwardState, v: Atom, last: Vector<Int>, operands: Vector<Atom>) Bool {
   case atom_local_id(v) {
-    .Some(id) => fact_of(st.own, v).own_tag2() == 0
+    .Some(id) => fact_of(st.own, v).own_tag() == 0
       and is_last_use(last, id) and store_count(operands, id) == 1,
     .None => false,
   }
-}
-
-fn own_tag2(o: Ownership) Int {
-  o.own_tag()
 }
 
 // Apply one instruction. `last` is last_use_at(op, live_after[i]).
@@ -760,7 +756,11 @@ fn transfer_op(
           rf = .graft(.Field(fa.field.id), st.atom_field_own(fa.value))
         }
       }
-      st.set_field_own(result, rf)
+      if rf.is_empty() {
+        st
+      } else {
+        st.set_field_own(result, rf)
+      }
     },
     .AVariant(_, _, args) => {
       origins: Vector<Int> = []
