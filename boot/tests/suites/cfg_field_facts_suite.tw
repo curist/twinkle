@@ -409,9 +409,8 @@ pub fn suite() runner.Suite {
         b := b_reg()
 
         // f() { d := Dict.new(); r := Wrapper.{ f0: d }; g := r.f0 }  (r dead after get)
-        // Return g (lid(2)) BUT to observe R's facts without publication we return ALitInt(0).
-        // However lid(2) is the last use of lid(1), so we return lid(2) directly.
-        // Wait: returning lid(2) would publish it. Return ALitInt(0) instead.
+        // Return ALitInt(0), not R: returning R would publish it (mark Shared) and
+        // clear its field facts, hiding the Unique shell we want to observe.
         rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
         body: AnfExpr = .Let(
           lid(0),
@@ -439,6 +438,34 @@ pub fn suite() runner.Suite {
         f := analyzed_func(module_of("f", body))
         try assert.is_false(is_shell_unique(f, 2))
         try assert.is_false(has_field_path(f, 1, ff.field_path(0)))
+        .Ok({})
+      },
+    )
+    .test(
+      "projection move, field not deeply owned: last-use base but no [.f] fact -> R not Unique",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); alias := d (alias makes d Shared, no [.f0] claim);
+        //       r := Wrapper.{ f0: d }; g := r.f0 }  (r dead after get, alias returned)
+        // Because d is aliased (not single-retention), r has no [.f0] field fact.
+        // At record_get: moved=true (r is last-use), pr.shell=.None -> R is NOT Unique.
+        // Return alias so r is truly dead at record_get, and also to keep the
+        // alias live through the record construction (forcing d Shared at the store).
+        rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .AInit(.ALocal(lid(0))),
+            .Let(lid(2), rec, .Let(lid(3), record_get(lid(2), 0), .Atom(.ALocal(lid(1))))),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+
+        // R (lid(3)) must NOT be Unique: the field had no deep ownership claim.
+        try assert.is_false(is_shell_unique(f, 3))
         .Ok({})
       },
     )
