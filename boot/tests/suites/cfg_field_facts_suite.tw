@@ -93,6 +93,17 @@ fn has_field_path(f: cfg.CfgFunction, local_id: Int, p: ff.AccessPath) Bool {
   }
 }
 
+fn record_get(base: LocalId, fid: Int) AnfOp {
+  .ARecordGet(.ALocal(base), FieldId.{ id: fid }, TypeId.{ id: 0 })
+}
+
+fn is_shell_unique(f: cfg.CfgFunction, local_id: Int) Bool {
+  case f.blocks[0].exit.ownership.get(local_id) {
+    .Some(t) => t == 0,
+    .None => false,
+  }
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("cfg field facts")
@@ -389,6 +400,45 @@ pub fn suite() runner.Suite {
         )
         f := analyzed_func(module_of("f", body))
         try assert.is_false(has_field_path(f, 1, ff.elem_path()))
+        .Ok({})
+      },
+    )
+    .test(
+      "projection move: last-use base, deeply-owned field -> R Unique + base [.f] removed",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); r := Wrapper.{ f0: d }; g := r.f0 }  (r dead after get)
+        // Return g (lid(2)) BUT to observe R's facts without publication we return ALitInt(0).
+        // However lid(2) is the last use of lid(1), so we return lid(2) directly.
+        // Wait: returning lid(2) would publish it. Return ALitInt(0) instead.
+        rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), rec, .Let(lid(2), record_get(lid(1), 0), .Atom(.ALitInt(0)))),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert.is_true(is_shell_unique(f, 2))
+        try assert.is_false(has_field_path(f, 1, ff.field_path(0)))
+        .Ok({})
+      },
+    )
+    .test(
+      "projection borrow: base still live -> R Shared and base [.f] cleared",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); r := Wrapper.{ f0: d }; g := r.f0; r }  (r live at return)
+        rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), rec, .Let(lid(2), record_get(lid(1), 0), .Atom(.ALocal(lid(1))))),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert.is_false(is_shell_unique(f, 2))
+        try assert.is_false(has_field_path(f, 1, ff.field_path(0)))
         .Ok({})
       },
     )

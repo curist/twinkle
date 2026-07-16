@@ -868,9 +868,36 @@ fn transfer_op(
       }
       st
     },
-    .ARecordGet(base, _, _) => {
-      // borrow: result not owned, but carries the base's provenance.
-      st = .set_result(result, .Unknown)
+    .ARecordGet(base, f, _) => {
+      pr := st.atom_field_own(base).project(.Field(f.id))
+      moved := case atom_local_id(base) {
+        .Some(bid) => is_last_use(last, bid), // whole-record last-use (quartet: Task 6)
+        .None => false,
+      }
+      st = if moved {
+        case pr.shell {
+          .Some(t) => {
+            // move: R takes the projected shell + strict-descendant facts;
+            // remove base's [.f]* subtree.
+            st = .set_own_st(result, own_of_tag(t))
+            st = .set_field_own(result, pr.fields)
+            case atom_local_id(base) {
+              .Some(bid) => st.set_field_own(bid, st.field_own_get(bid).remove_prefix(.Field(f.id))),
+              .None => st,
+            }
+          },
+          .None => st.set_result(result, .Unknown), // field not deeply owned -> plain borrow, no claim
+        }
+      } else {
+        // borrow: aliasing both sides -> R Shared, base's [.f]* cleared.
+        st = .set_own_st(result, .Shared)
+        case atom_local_id(base) {
+          .Some(bid) => st.set_field_own(bid, st.field_own_get(bid).remove_prefix(.Field(f.id))),
+          .None => st,
+        }
+      }
+
+      // R's prov still follows base's origins (unchanged from Phase 2/3).
       st.set_prov_st(result, prov_of(st.prov, base))
     },
     .AIndex(base, _, _, _) => {
