@@ -28,6 +28,14 @@ fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
   .ACall(.AGlobalFunc(b.method_id("Dict", "new")), [])
 }
 
+fn vec_set_call(b: builtins.BuiltinRegistry, base: LocalId, idx: Int, v: LocalId) AnfOp {
+  .ACall(.AGlobalFunc(b.id("vector$set_unsafe")), [.ALocal(base), .ALitInt(idx), .ALocal(v)])
+}
+
+fn vec_make_call(b: builtins.BuiltinRegistry, fill: LocalId) AnfOp {
+  .ACall(.AGlobalFunc(b.method_id("Vector", "make")), [.ALitInt(3), .ALocal(fill)])
+}
+
 fn module_of(name: String, body: AnfExpr) AnfModule {
   func: AnfFunctionDef = AnfFunctionDef.{
     func_id: FuncId.{ id: 1 },
@@ -309,6 +317,78 @@ pub fn suite() runner.Suite {
         f := analyzed_func(module_of("f", body))
         try assert.is_true(has_field_path(f, 4, ff.field_path(0))) // refreshed .types
         try assert.is_true(has_field_path(f, 4, ff.field_path(1))) // carried .values
+        .Ok({})
+      },
+    )
+    .test(
+      "consume keep: storing an owned inner into an all-owned vector keeps [Elem]",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); a := [d] (all-owned literal -> [Elem]);
+        //       x := Dict.new(); r := vector$set_unsafe(a, 0, x) }  -> r keeps [Elem].
+        arr: AnfOp = .AArrayLit([.ALocal(lid(0))])
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          // return a literal (not r) so r's exit field facts are observable (not published)
+          .Let(
+            lid(1),
+            arr,
+            .Let(
+              lid(2),
+              dict_new_call(b),
+              .Let(lid(3), vec_set_call(b, lid(1), 0, lid(2)), .Atom(.ALitInt(0))),
+            ),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert.is_true(has_field_path(f, 3, ff.elem_path()))
+        .Ok({})
+      },
+    )
+    .test(
+      "consume drop: storing a SHARED inner drops [Elem]",
+      fn() {
+        b := b_reg()
+
+        // x is aliased (kept live at the return), so storing it is not single-retention.
+        arr: AnfOp = .AArrayLit([.ALocal(lid(0))])
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            arr,
+            .Let(
+              lid(2),
+              dict_new_call(b),
+              .Let(
+                lid(3),
+                .AInit(.ALocal(lid(2))),
+                .Let(lid(4), vec_set_call(b, lid(1), 0, lid(2)), .Atom(.ALocal(lid(3)))),
+              ),
+            ),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert.is_false(has_field_path(f, 4, ff.elem_path()))
+        .Ok({})
+      },
+    )
+    .test(
+      "Vector.make never claims [Elem] (replicated reference)",
+      fn() {
+        b := b_reg()
+
+        // f() { x := Dict.new(); r := Vector.make(3, x) } -> NO [Elem].
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), vec_make_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert.is_false(has_field_path(f, 1, ff.elem_path()))
         .Ok({})
       },
     )

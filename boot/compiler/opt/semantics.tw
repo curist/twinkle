@@ -43,10 +43,13 @@ pub type ReusableUpdateSite = .{
   in_place_equivalent: FuncId?,
 }
 
+pub type ContainerKind = { NotCollection, VectorLike, DictLike }
+
 pub type OptimizerSemantics = .{
   call_semantics: Dict<Int, CallSemantics>,
   builder: BuilderConfig,
   string_builder: BuilderConfig,
+  container_kinds: Dict<Int, Int>,
 }
 
 fn control_call() CallSemantics {
@@ -74,11 +77,13 @@ pub fn empty_optimizer_semantics() OptimizerSemantics {
     call_semantics: Dict.new(),
     builder: empty_builder_config(),
     string_builder: empty_builder_config(),
+    container_kinds: Dict.new(),
   }
 }
 
 pub fn make_prelude_optimizer_semantics(b: BuiltinRegistry) OptimizerSemantics {
   calls: Dict<Int, CallSemantics> = Dict.new()
+  container_kinds: Dict<Int, Int> = Dict.new()
   builder := vector_builder_config(b)
   string_builder := string_builder_config(b)
   calls[b.method_id("Vector", "len").id] = CallSemantics.{
@@ -198,7 +203,18 @@ pub fn make_prelude_optimizer_semantics(b: BuiltinRegistry) OptimizerSemantics {
     in_place_equivalent: .None,
     retained_args: .Some([0]),
   }
-  OptimizerSemantics.{ call_semantics: calls, builder, string_builder }
+  container_kinds[b.id("vector$set_unsafe").id] = 1
+  container_kinds[builder.push_id.id] = 1
+  container_kinds[b.method_id("Dict", "set").id] = 2
+  OptimizerSemantics.{ call_semantics: calls, builder, string_builder, container_kinds }
+}
+
+pub fn container_kind(sem: OptimizerSemantics, fid: FuncId) ContainerKind {
+  case sem.container_kinds.get(fid.id) {
+    .Some(1) => .VectorLike,
+    .Some(2) => .DictLike,
+    _ => .NotCollection,
+  }
 }
 
 pub fn call_info(semantics: OptimizerSemantics, func_id: FuncId) CallSemantics? {
@@ -284,6 +300,7 @@ pub fn optimizer_semantics_from_cow_config(config: CowConfig) OptimizerSemantics
     call_semantics: calls,
     builder: config.builder,
     string_builder: config.string_builder,
+    container_kinds: Dict.new(),
   }
 }
 

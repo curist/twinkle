@@ -10,7 +10,8 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.cfg.{CfgBlock, CfgEdge, CfgFunction, CfgView, Terminator}
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.field_facts as ff
-use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info}
+use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info, container_kind}
+
 
 pub type Ownership = { Unique, Shared, Unknown }
 
@@ -623,7 +624,7 @@ fn transfer_call(
   // bucket.
   case callee_func_id(callee) {
     .Some(fid) => case call_info(sem, fid) {
-      .Some(cs) => st.transfer_builtin_call(result, cs, args, last),
+      .Some(cs) => st.transfer_builtin_call(result, fid, cs, args, last, sem),
       .None => case table.summary_get(fid.id) {
         .Some(s) => st.transfer_summarized_call(result, s, args),
         .None => st.publish_call(result, args),
@@ -641,21 +642,93 @@ fn publish_call(st: ForwardState, result: Int, args: Vector<Atom>) ForwardState 
   st.set_own_st(result, .Unknown)
 }
 
+fn container_seg(sem: OptimizerSemantics, fid: FuncId) ff.PathSeg? {
+  case container_kind(sem, fid) {
+    .VectorLike => .Some(.Elem),
+    .DictLike => .Some(.Val),
+    .NotCollection => .None,
+  }
+}
+
+fn retained_atoms(cs: CallSemantics, args: Vector<Atom>) Vector<Atom> {
+  out: Vector<Atom> = []
+  for i in retained_arg_indices(cs, args) {
+    if i < args.len() {
+      out = .append(args[i])
+    }
+  }
+  out
+}
+
+fn stored_element_atom(cs: CallSemantics, args: Vector<Atom>) Atom? {
+  ri := retained_arg_indices(cs, args)
+  if ri.len() == 0 {
+    return .None
+  }
+  k := ri[ri.len() - 1]
+  if k < args.len() {
+    .Some(args[k])
+  } else {
+    .None
+  }
+}
+
 fn transfer_builtin_call(
   st: ForwardState,
   result: Int,
+  fid: FuncId,
   cs: CallSemantics,
   args: Vector<Atom>,
   last: Vector<Int>,
+  sem: OptimizerSemantics,
 ) ForwardState {
   case cs.effect {
     .Allocate => st
       .set_own_st(result, .Unique)
       .absorb_retained_call_args(result, args, retained_arg_indices(cs, args), last),
-    .Update => st
-      .consume_call_base(result, cs, args, last)
-      .carry_base_prov(result, cs, args)
-      .absorb_retained_call_args(result, args, retained_arg_indices(cs, args), last),
+    .Update => {
+      // Capture base facts BEFORE consume (consume leaves base.field_own intact).
+      base_fields := case cs.cow_base_arg {
+        .Some(k) => if k < args.len() {
+          st.atom_field_own(args[k])
+        } else {
+          ff.empty()
+        },
+        .None => ff.empty(),
+      }
+      st = .consume_call_base(result, cs, args, last).carry_base_prov(result, cs, args).absorb_retained_call_args(
+        result,
+        args,
+        retained_arg_indices(cs, args),
+        last,
+      )
+
+      // Nested facts survive only when the result shell is Unique.
+      st = if own_is_unique(st.own, result) {
+        rf := case container_seg(sem, fid) {
+          .Some(seg) => {
+            // A known collection op: untouched elements are structurally
+            // preserved (carry base's [seg]*), then keep or drop the touched seg.
+            carried := base_fields
+            keep := case stored_element_atom(cs, args) {
+              .Some(x) => st.single_retention(x, last, retained_atoms(cs, args)),
+              .None => false,
+            }
+            if keep {
+              carried
+            } else {
+              carried.remove_prefix(seg)
+            }
+          },
+          // Unknown Update op: do NOT know it preserves inner structure -> drop.
+          .None => ff.empty(),
+        }
+        st.set_field_own(result, rf)
+      } else {
+        st
+      }
+      st
+    },
     // borrow: result not owned, but carries the cow_base_arg's provenance.
     .ReadOnly => st.set_own_st(result, .Unknown).carry_base_prov(result, cs, args),
     .Pure => st.set_own_st(result, .Unknown),
