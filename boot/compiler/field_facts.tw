@@ -22,10 +22,6 @@ pub fn empty() FieldMap {
 }
 
 // ── AccessPath constructors ─────────────────────────────────────────
-pub fn shell() AccessPath {
-  AccessPath.{ segs: [] }
-}
-
 pub fn field_path(f: Int) AccessPath {
   AccessPath.{ segs: [.Field(f)] }
 }
@@ -144,7 +140,7 @@ pub fn is_unique(fm: FieldMap, p: AccessPath) Bool {
 }
 
 pub fn is_empty(fm: FieldMap) Bool {
-  fm.paths.keys().len() == 0
+  fm.paths.is_empty()
 }
 
 // Copy a value's facts under `prefix`. Callers graft only a value already proven
@@ -157,7 +153,7 @@ pub fn graft(fm: FieldMap, prefix: PathSeg, src: FieldMap) FieldMap {
   fm.paths[path_key(AccessPath.{ segs: [prefix] })] = 0
   case prefix {
     .Field(_) => {
-      for k in src.paths.keys() {
+      for k, v in src.paths {
         inner := path_of_key(k)
 
         // Only [Elem]/[Val] inner paths can be represented as [Field(f), Elem/Val]
@@ -166,10 +162,7 @@ pub fn graft(fm: FieldMap, prefix: PathSeg, src: FieldMap) FieldMap {
         if inner.segs.len() == 1 {
           case inner.segs[0] {
             .Field(_) => {},
-            _ => case src.paths.get(k) {
-              .Some(t) => fm.paths[path_key(AccessPath.{ segs: [prefix, inner.segs[0]] })] = t,
-              .None => {},
-            },
+            seg => fm.paths[path_key(AccessPath.{ segs: [prefix, seg] })] = v,
           }
         }
       }
@@ -187,16 +180,13 @@ pub type Projection = .{ shell: Int?, fields: FieldMap }
 pub fn project(fm: FieldMap, prefix: PathSeg) Projection {
   shell: Int? = .None
   inner := empty()
-  for k in fm.paths.keys() {
+  for k, v in fm.paths {
     p := path_of_key(k)
     if p.segs.len() >= 1 and p.segs[0].seg_eq(prefix) {
-      case fm.paths.get(k) {
-        .Some(t) => if p.segs.len() == 1 {
-          shell = .Some(t)
-        } else {
-          inner.paths[path_key(AccessPath.{ segs: [p.segs[1]] })] = t
-        },
-        .None => {},
+      if p.segs.len() == 1 {
+        shell = .Some(v)
+      } else {
+        inner.paths[path_key(AccessPath.{ segs: [p.segs[1]] })] = v
       }
     }
   }
@@ -206,14 +196,11 @@ pub fn project(fm: FieldMap, prefix: PathSeg) Projection {
 // Drop the entire [prefix]* subtree (including [prefix] itself); keep siblings.
 pub fn remove_prefix(fm: FieldMap, prefix: PathSeg) FieldMap {
   out := empty()
-  for k in fm.paths.keys() {
+  for k, v in fm.paths {
     p := path_of_key(k)
     drop := p.segs.len() >= 1 and p.segs[0].seg_eq(prefix)
     if !drop {
-      case fm.paths.get(k) {
-        .Some(t) => out.paths[k] = t,
-        .None => {},
-      }
+      out.paths[k] = v
     }
   }
   out
@@ -223,12 +210,9 @@ pub fn remove_prefix(fm: FieldMap, prefix: PathSeg) FieldMap {
 // present in both -> key intersection.
 pub fn merge(fm: FieldMap, other: FieldMap) FieldMap {
   out := empty()
-  for k in fm.paths.keys() {
+  for k, v in fm.paths {
     if other.paths.has(k) {
-      case fm.paths.get(k) {
-        .Some(t) => out.paths[k] = t,
-        .None => {},
-      }
+      out.paths[k] = v
     }
   }
   out
@@ -236,7 +220,7 @@ pub fn merge(fm: FieldMap, other: FieldMap) FieldMap {
 
 // Structural equality (same set of Unique path keys) for fixpoint change-detection.
 pub fn same(fm: FieldMap, other: FieldMap) Bool {
-  if fm.paths.keys().len() != other.paths.keys().len() {
+  if fm.paths.len() != other.paths.len() {
     return false
   }
   for k in fm.paths.keys() {
