@@ -286,7 +286,7 @@ as today — the existing suite must stay **green**.
 > 3–4 and the re-baseline for 5.
 
 **Files:**
-- Modify: `boot/compiler/ownership.tw` (`ARecord` transfer `:1048`, `AArrayLit` `:1082`, `ARecordUpdate` `:1141`, `publish_local` `:689`)
+- Modify: `boot/compiler/ownership.tw` — builders `ARecord` `:1048`, `AArrayLit` `:1082`, `ARecordUpdate` `:1141`; rebind/projection `AAssign` `:1167`, `init_hinge` `:710`, `ARecordGet` `:1107`; `publish_local` `:689`
 - Test: none new in Task 3 (regression only; the split's observable tests are Task 5)
 
 - [ ] **Step 1: (no new test) Confirm the current suite is green as a baseline**
@@ -377,7 +377,37 @@ st = st.set_path_prov(result, epp)
 
 For `ARecordUpdate` (`:1141`): shell prov should follow the base's shell prov (a rebuilt shell of a param-aliased record still aliases that param at the shell level only via base) — keep `origins := prov_of(st.prov, base)` for the shell (drop the `v` union), and set `path_prov[result]` = base's path_prov with `[.f]*` removed then `graft_path_prov([.f], v)` when single-retention.
 
-- [ ] **Step 3: Publish `path_prov` origins in `publish_local`**
+- [ ] **Step 3: Thread `path_prov` through rebinding and projection**
+
+`path_prov` must ride the same copy/project/remove flows as `field_own`, or a
+unique rebind loses/stales its provenance and the projection returns wrong origins.
+Wherever Phase 4 copies/projects/removes `field_own`, add the parallel `path_prov`:
+
+- **`AAssign(local, a)`** (`:1167`): today it copies `field_own` when the atom is
+  Unique. Also copy `path_prov`: `st = st.set_path_prov(local.id, st.path_prov_get(aid))`
+  for the atom's local `aid` (same Unique guard).
+- **`AInit` / `init_hinge` move branch** (`:710`): today the move copies the
+  source's `field_own`. Also copy the source's `path_prov` to `result` on the move
+  branch; the alias branch leaves `path_prov[result]` empty (result is Shared).
+- **`ARecordGet(base, f)`** (`:1107`): on **move** (last-use / quartet / transport),
+  the result takes the projected subtree — so also
+  `st.set_path_prov(result, project_path_prov(base.path_prov, .Field(f)))` and strip
+  `base`'s subtree with `remove_prefix_pp(base.path_prov, .Field(f))` (mirrors the
+  `field_own` `remove_prefix`). **Result shell prov (Blocker):** set it from the
+  **projected field's** provenance, not base's shell prov — i.e. `base.path_prov[.f]`'s
+  shell entry when present, else fall back to `prov_of(base)` (opaque base, e.g. a
+  param, has no `path_prov`, so this preserves today's behavior). On **borrow**,
+  result is Shared (no prov claim) and `base`'s `[.f]*` subtree is stripped from both
+  `field_own` and `path_prov`.
+
+Add `project_path_prov(pp, seg)` and `remove_prefix_pp(pp, seg)` here (reused later
+by Task 13); they mirror `ff.project` / `ff.remove_prefix` over the `Dict<Int,
+Vector<Int>>` map. This step is still **inert for existing tests**: opaque param
+bases carry no `path_prov`, so the projected-field fallback keeps result prov
+unchanged; the refinement only bites once builders populate `path_prov` and a caller
+recovers a real record (Tasks 7–13).
+
+- [ ] **Step 4: Publish `path_prov` origins in `publish_local`**
 
 In `publish_local` (`:689`), also publish path_prov origins. `set_own_st(id, .Shared)` clears `path_prov[id]` via the choke point, so **capture the map before** clearing:
 
@@ -394,12 +424,12 @@ fn publish_local(st: ForwardState, id: Int) ForwardState {
 }
 ```
 
-- [ ] **Step 4: Run — expect GREEN (behavior-preserving refactor)**
+- [ ] **Step 5: Run — expect GREEN (behavior-preserving refactor)**
 
 Run: `make quick-bundle-cli && target/twk run boot/tests/main.tw`
-Expected: the **whole suite stays green**. With the return still publishing, `publish_local` now cascades `path_prov`, so a returned wrapper's param remains `Retained` exactly as before — no regression. The observable flip is Task 5. If any test regresses (other than an intended Task-5 re-baseline, which is not touched yet), stop and investigate.
+Expected: the **whole suite stays green**. With the return still publishing, `publish_local` now cascades `path_prov`, so a returned wrapper's param remains `Retained` exactly as before — no regression. Opaque param bases carry no `path_prov`, so the Step-3 projection refinement is inert for existing tests. The observable flip is Task 5. If any test regresses (other than an intended Task-5 re-baseline, which is not touched yet), stop and investigate.
 
-- [ ] **Step 5: fmt + lint + commit**
+- [ ] **Step 6: fmt + lint + commit**
 
 ```bash
 target/twk fmt boot/compiler/ownership.tw
@@ -773,8 +803,9 @@ case atom_local_id(a) {
 Add `classify_path_own` (three-way path_prov, Decision 2):
 
 ```tw
+// params is CfgFunction.params : Vector<LocalId> (NOT Vector<Param>).
 // .None => drop; Some([]) => OwnedFresh; Some([k]) => OwnedFromParam(k); Some([multi]) => drop.
-fn classify_path_own(pp: Dict<Int, Vector<Int>>, k: Int, params: Vector<Param>) ReturnOwn? {
+fn classify_path_own(pp: Dict<Int, Vector<Int>>, k: Int, params: Vector<LocalId>) ReturnOwn? {
   case pp.get(k) {
     .None => .None,
     .Some(os) => cond {
@@ -787,9 +818,17 @@ fn classify_path_own(pp: Dict<Int, Vector<Int>>, k: Int, params: Vector<Param>) 
     },
   }
 }
+
+// Position of the param whose LocalId.id == local_id, or .None.
+fn param_index_of(params: Vector<LocalId>, local_id: Int) Int? {
+  for p, i in params {
+    if p.id == local_id { return .Some(i) }
+  }
+  .None
+}
 ```
 
-`param_index_of(params, local_id)` returns the parameter position whose `local.id == local_id` (params are locals 0..n-1 in these fixtures; use the real `f.params` mapping). Reuse/extend the existing `prov_to_indices` logic which already maps origin local-ids to param indices — factor a single-id variant.
+This mirrors what `prov_to_indices` already does for a whole origin vector (it maps origin local-ids to param indices over `f.params: Vector<LocalId>`); `param_index_of` is just the single-id variant. `f.params` at the call sites is the `CfgFunction`'s `Vector<LocalId>` — do **not** introduce a `Vector<Param>` binding or shadow `f.params`.
 
 Join `rp_here` across return sites with a per-`(via,field)` meet (a path survives only if present & `own`-compatible on every return block). Maintain an accumulator mirroring the existing `ret`/`seen` join:
 
@@ -847,26 +886,33 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Write the failing test — variant payload path**
 
+The payload is a fresh record `{f0:x}`, so the returned variant's `field_own` has
+**two** paths: `[Payload(7,0)]` (the payload shell — fresh, `path_prov []`) and
+`[Payload(7,0), .f0]` (from `p0`). The classifier emits **both** as distinct
+`ret_paths` — `V7[0]=fresh` (`field: None`) and `V7[0].f0=from(p0)`
+(`field: Some(0)`). Do **not** expect a single collapsed entry.
+
 ```tw
 .test(
-  "fn f(x){ Variant#7(Record{f0:x}) } -> ret_paths V7[0].f0=from(p0)",
+  "fn f(x){ Variant#7(Record{f0:x}) } -> ret_paths V7[0]=fresh AND V7[0].f0=from(p0)",
   fn() {
     inner := AnfOp.ARecord(TypeId.{ id: 0 }, [.{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) }])
     vop := AnfOp.AVariant(TypeId.{ id: 0 }, VariantId.{ id: 7 }, [.ALocal(lid(1))])
     body: AnfExpr = .Let(lid(1), inner, .Let(lid(2), vop, .Atom(.ALocal(lid(2)))))
     s := summ1("f", 1, body)
-    // one ret_path: via Variant(7,0), field f0, from p0
-    try assert.equal(s.ret_paths.len(), 1)
-    r := s.ret_paths[0]
-    try assert.equal(via_is(r.via, 7, 0), true)
-    try assert.equal(field_is(r.field, 0), true)
-    try assert.equal(own_is_from(r.own, 0), true)
+    try assert.equal(s.ret_paths.len(), 2)
+    // the payload shell is fresh (field: None):
+    try assert.equal(has_variant_shell_fresh(s.ret_paths, 7, 0), true)
+    // the payload field is from p0 (field: Some(0)):
+    try assert.equal(has_variant_field_from(s.ret_paths, 7, 0, 0, 0), true)
     .Ok({})
   },
 )
 ```
 
-Add small predicates `via_is`, `field_is`, `own_is_from` to the suite.
+Add predicates `has_variant_shell_fresh(rps, tag, idx)` (some ret_path with
+`via=Variant(tag,idx)`, `field=None`, `own=OwnedFresh`) and
+`has_variant_field_from(rps, tag, idx, field, param)` to the suite.
 
 - [ ] **Step 2: Run — expect RED**
 
@@ -938,28 +984,46 @@ wrong speculative path, so also assert the **specific** sound value: a self-thre
 recovered only through the recursive edge must be **under-approximated to empty**,
 while a field owned directly (not via the recursive call) is still classified.
 
+The fixture has **two return sites** so the meet exposes the hazard cleanly:
+
+```text
+fn g(x, y) {
+  if y {                      // recursive return site
+    r := g(x, y)              // r's ret_paths are SUPPRESSED in-SCC
+    return Record{ f0: r.f0,  // f0 sourced from the recursive result's field ->
+                   f1: fresh } //   NOT owned under suppression (r.f0 is a borrow)
+  }
+  Record{ f0: x, f1: fresh }  // base return site: f0 IS from p0 here
+}
+```
+
+`f0` is `from(p0)` only on the base return; on the recursive return it comes from
+`r.f0`, which suppression leaves unrecovered. The per-`(via,field)` meet across
+return sites therefore **drops `[.f0]`** (absent on the recursive site). `f1` is
+locally fresh on **both** sites, so it survives as `OwnedFresh`. This proves
+suppression blanks only the recursive read, not all classification.
+
 ```tw
 .test(
   "recursive helper: self-thread ret_paths are under-approximated (no speculative path)",
   fn() {
-    // fn g(x, y) { if cond { g(x, y) } ; Record{f0:x, f1: <fresh>} }
-    // f0's ownership would only be recoverable THROUGH the recursive g(x,..) result;
-    // under in-SCC suppression it must NOT appear as a ret_path (empty for f0).
-    // f1 is a locally-fresh field and IS classified (OwnedFresh) — proves suppression
-    // only blanks the recursive read, not all classification.
-    funcs := recursive_transport_fixture()
+    funcs := recursive_transport_fixture()   // builds g above; g is func_id 1
     t := compute_of(funcs)
-    s := summ_of(t, 1)   // g is func_id 1 in the fixture
-    // no OwnedFromParam path attributed via the recursive edge:
-    try assert.equal(has_from_param_path(s.ret_paths, 0), false)  // no [.f0]=from(p0)
-    // deterministic across recomputation:
-    try assert.equal(same_summary_pub(s, summ_of(compute_of(funcs), 1)), true)
+    s := summ_of(t, 1)
+    try assert.equal(has_from_param_path(s.ret_paths, 0), false)  // [.f0] dropped by the meet
+    try assert.equal(has_direct_field_fresh(s.ret_paths, 1), true) // [.f1]=fresh survives
+    try assert.equal(same_summary_pub(s, summ_of(compute_of(funcs), 1)), true) // deterministic
     .Ok({})
   },
 )
 ```
 
-Add `recursive_transport_fixture()` (a self-recursive `g` whose only path to `[.f0]=from(p0)` is through the recursive call result, plus a locally-fresh `f1`), `has_from_param_path(rps, k)` (true iff some ret_path is `OwnedFromParam(k)`), and a `same_summary_pub` wrapper calling `summary.same_summary` (or make `same_summary` `pub`).
+Add `recursive_transport_fixture()` (the two-return-site `g` above, where the
+recursive site sources `f0` from the recursive result's field so it is only
+recoverable if in-SCC `ret_paths` were visible), `has_from_param_path(rps, k)` (true
+iff some ret_path is `OwnedFromParam(k)`), `has_direct_field_fresh(rps, f)` (true iff
+some `Direct`/`field=Some(f)` ret_path is `OwnedFresh`), and a `same_summary_pub`
+wrapper calling `summary.same_summary` (or make `same_summary` `pub`).
 
 - [ ] **Step 2: Run — expect RED (speculative path or nondeterminism)**
 
@@ -1107,7 +1171,13 @@ st = if result_ok and !result_fields.is_empty() {
 } else { st }
 ```
 
-Because Twinkle is immutable, `record_ret_path(fields, pp, rp, origins)` returns `.{ fields, pp }`: for `via == Direct`, `field == Some(f)` → set `[.f]`; for `via == Variant(tag,i)` → set `[Payload(tag,i)]` (+ `[Payload(tag,i), .f]` when `field == Some(f)`), writing the matching `path_key` into both `fields` (tag Unique = 0) and `pp` (`origins`). Add `is_last_use`-over-atom via `atom_local_id`. Note publish-on-fail and `MayAliasParams` publication **compose** — both may publish `args[k]`, which is idempotent.
+Because Twinkle is immutable, `record_ret_path(fields, pp, rp, origins)` returns `.{ fields, pp }` and writes **exactly one** key — the one this ret_path names — into both `fields` (tag Unique = 0) and `pp` (`origins`). **Never synthesize or overwrite a sibling key:**
+
+- `via == Direct`, `field == Some(f)` → `[.f]`
+- `via == Variant(tag,i)`, `field == None` → `[Payload(tag,i)]` (the payload **shell**)
+- `via == Variant(tag,i)`, `field == Some(f)` → `[Payload(tag,i), .f]` (the payload **field**)
+
+A `Variant` payload shell is recovered **only** from a `field: None` ret_path (which the classifier emits as `OwnedFresh` when the payload record is fresh); a `field: Some(f)` ret_path must **not** touch `[Payload(tag,i)]`, or a fresh payload shell would be mislabeled `from(pk)` (review Blocker 2). Since a payload's field key `[Payload(tag,i), .f]` presupposes its shell key `[Payload(tag,i)]` (downward-closed), the shell's own `field: None` ret_path supplies the shell entry independently. Add `is_last_use`-over-atom via `atom_local_id`. Note publish-on-fail and `MayAliasParams` publication **compose** — both may publish `args[k]`, which is idempotent.
 
 - [ ] **Step 4: Run — expect PASS (Case W caller)**
 
@@ -1573,6 +1643,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - **Spec coverage:** Task 1 (tagged payload segment + codec) ↔ Decision 4; Tasks 2–4 (path_prov + shell/field split + AVariant) ↔ Decision 2; Task 5 (Return leaf) ↔ Decision 3; Tasks 6–8 (ret_paths schema + Direct/Variant classification + shell ret) ↔ Decisions 1, 7, 8; Task 9 (fixpoint hide/strip + path_prov join) ↔ Decisions 10 + review pt 4; Task 10 (caller gate + publish-on-fail) ↔ Decision 5 + review pt 1; Task 11 (transport recognizer) ↔ Decision 9 / Fork 2A; Tasks 12–13 (cfg metadata + payload seeding) ↔ Fork 3-i + Blocker 1; Task 14 (render) ↔ design "Rendering"; Task 15 ↔ acceptance 10–12. Acceptance 1–9 map to tests across Tasks 5, 7, 8, 10, 11, 13, 1.
 - **No parameter `in_place_paths` / specialization** appears in any task (correctly Phase 6).
 - **Type consistency:** `PathSeg.Payload(Int,Int)`, `ReturnPathOwn.{via,field,own}`, `RetVia.Variant(Int,Int)`, `PayloadSrc.{scrutinee,variant_tag,payload_index,binding}` are used identically across tasks. `path_prov` is `Dict<Int, Dict<Int, Vector<Int>>>` throughout.
-- **Review-round corrections (all applied):** (1) `path_prov` mirrors `field_own` at every path — `graft_path_prov` is prefix-dependent (Field⇒rebase Elem/Val; Payload⇒rebase Field) and `AArrayLit` records `[Elem]` provenance (Task 3). (2) Match-arm seeding has an explicit **borrow-demote else branch** for a live scrutinee + a live-scrutinee negative test (Task 13). (3) SCC uses an **in-SCC suppression set** (order-independent), not a strip-and-final-pass; the recursive test asserts the specific under-approximation, not just determinism (Task 9). (4) `ret_paths` comparator returns `Order` via chained `Int.compare` on a canonical tuple, no packed keys (Task 6). (5) Caller gate **snapshots pre-call facts** before `params`/`ret` mutate `st` (Task 10). (6) Payload seeding is a **shared helper** applied at all entry-state sites (Task 13). (7) Co-Authored-By trailer is **conditional** per `AGENTS.md` (header).
+- **Review-round-2 corrections (applied):** (1) `path_prov` mirrors `field_own` at every path — `graft_path_prov` is prefix-dependent (Field⇒rebase Elem/Val; Payload⇒rebase Field) and `AArrayLit` records `[Elem]` provenance (Task 3). (2) Match-arm seeding has an explicit **borrow-demote else branch** for a live scrutinee + a live-scrutinee negative test (Task 13). (3) SCC uses an **in-SCC suppression set** (order-independent), not a strip-and-final-pass; the recursive test asserts the specific under-approximation, not just determinism (Task 9). (4) `ret_paths` comparator returns `Order` via chained `Int.compare` on a canonical tuple, no packed keys (Task 6). (5) Caller gate **snapshots pre-call facts** before `params`/`ret` mutate `st` (Task 10). (6) Payload seeding is a **shared helper** applied at all entry-state sites (Task 13). (7) Co-Authored-By trailer is **conditional** per `AGENTS.md` (header).
+- **Review-round-3 corrections (applied):** (1) `path_prov` threads through **projection & rebinding** — `AAssign`/`init_hinge` copy it with `field_own`, and `ARecordGet` projects/removes it and sets the result **shell prov from the projected field's provenance** (fallback to base prov for opaque param bases, keeping Task 3 inert); Task 13 payload move sets binding shell prov from the projected payload shell prov (Task 3, Task 13). (2) Variant payload **shell vs field ret-paths stay distinct** — the classifier emits both `V7[0]=fresh` and `V7[0].f0=from(p0)`; `record_ret_path` writes **exactly one key** per ret_path and never synthesizes a shell from a field path (Task 8, Task 10). (3) `classify_path_own` uses `Vector<LocalId>` (`CfgFunction.params`), not `Vector<Param>`, with a `param_index_of` over LocalIds (Task 7). (4) Design's SCC wording updated to the suppression-set mechanism (`phase5-design.md`). (5) Recursive fixture is a **two-return-site** `g` (recursive site sources `f0` from the recursive result; base site from `p0`) so the meet drops `[.f0]` while `[.f1]=fresh` survives (Task 9).
 - **No test committed RED:** Tasks 3–5 are one execution unit; Tasks 3–4 are behavior-preserving (suite stays green), and the shell/deep observable tests live in Task 5 where they go green after the Return-publish removal.
 - **Fixture helpers** (`case_w_fixture`, `case_r_fixture`, `case_r_live_scrutinee_fixture`, `recursive_transport_fixture`, etc.) are named per task; implement each in the suite when first referenced, mirroring `cfg_summary_suite.tw`'s ANF-builder style. Because they are prose-specified rather than fully coded, the executor builds them from that harness — the one deliberate concession to plan length.

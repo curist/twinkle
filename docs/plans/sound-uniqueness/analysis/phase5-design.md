@@ -516,15 +516,22 @@ from scrutinee `S`:
   when proven across all relevant return sites) and may be *retracted* on a later
   iteration. Because a retractable path is speculative until convergence, the
   discipline is stricter than "expose fewer paths":
-  - **Hide in-progress paths.** During SCC iteration, a within-SCC recursive call
-    reads the callee's `ret_paths` as **empty** (only escape/`params`/`ret` — the
-    monotone facts — flow through the recursive edge). So no speculative return path
-    can influence the fixpoint; the recursive transport case merely
-    *under*-approximates. `ret_paths` are then read out per member from the
-    **converged** escape/return state in a final pass. (Full recursive-transport
+  - **Hide in-progress paths via an in-SCC suppression set.** During SCC iteration,
+    a within-SCC recursive call reads the callee's `ret_paths` as **empty** — the
+    call transfer blanks `ret_paths` for any callee in the current SCC's member set
+    (only escape/`params`/`ret` — the monotone facts — flow through the recursive
+    edge). Keying suppression on **membership, not table contents**, makes the
+    readout **order-independent**: no matter the member processing order, an in-SCC
+    read never observes another member's freshly-classified `ret_paths`. So no
+    speculative return path can influence the fixpoint; the recursive transport case
+    merely *under*-approximates. (This replaces an earlier "strip during the
+    worklist, restore in a separate final pass" sketch, which was order-dependent
+    because members restore into the shared table one at a time. No separate final
+    pass is needed — each member's `ret_paths` are computed under suppression as the
+    worklist runs, and `same_summary` drives termination.) Full recursive-transport
     precision — a self-threading `visit`-shaped wrapper recovering its *own* return
     paths — is deferred to Phase 6's SCC-granularity specialization; Phase 5
-    under-approximates it, which is sound.)
+    under-approximates it, which is sound.
   - **Strip on non-convergence.** If `run_scc` hits its cap without converging,
     **clear `ret_paths` for every SCC member** before returning (expose empty =
     fully conservative aggregate publication). Never expose a cap-time snapshot,
