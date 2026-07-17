@@ -192,12 +192,11 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "t1 aggregate-escape: fn f(x) { Wrapper.{x} } -> p0 retain (blocker 1)",
+      "returned wrapper param is Borrowed (return is a hand-off, not retention)",
       fn() {
-        b := b_reg()
         body: AnfExpr = .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1))))
         s := summ1("f", 1, body)
-        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        try assert.equal(p_escape(s, 0), escape_tag(.Borrowed))
         .Ok({})
       },
     )
@@ -476,12 +475,34 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "t2 wrap return: fn f(x) { Wrapper.{x} } -> ret alias([0])",
+      "t2 wrap return: fn f(x) { Wrapper.{x} } -> ret OwnedFresh (shell handoff)",
       fn() {
-        b := b_reg()
-        body: AnfExpr = .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1))))
-        s := summ1("f", 1, body)
-        try assert.is_true(same_ints(ret_alias_set(s.ret), [0]))
+        s := summ1("f", 1, .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1)))))
+        try assert.equal(ret_tag(s.ret), ret_tag(.OwnedFresh))
+        .Ok({})
+      },
+    )
+    .test(
+      "fresh two-field record: ret = OwnedFresh (shell), not MayAliasParams",
+      fn() {
+        two := AnfOp.ARecord(
+          TypeId.{ id: 0 },
+          [
+            .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) },
+            .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(1)) },
+          ],
+        )
+        s := summ1("f", 2, .Let(lid(2), two, .Atom(.ALocal(lid(2)))))
+        try assert.equal(ret_tag(s.ret), 0) // OwnedFresh shell
+        .Ok({})
+      },
+    )
+    .test(
+      "returned variant with single-retention payload: ret = OwnedFresh shell",
+      fn() {
+        vop := AnfOp.AVariant(TypeId.{ id: 0 }, VariantId.{ id: 5 }, [.ALocal(lid(0))])
+        s := summ1("f", 1, .Let(lid(1), vop, .Atom(.ALocal(lid(1)))))
+        try assert.equal(ret_tag(s.ret), 0)
         .Ok({})
       },
     )
@@ -596,8 +617,12 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "t4 aggregate wrapper: wrap(xs) demotes the arg",
+      "t4 aggregate wrapper: wrap(xs) does NOT demote the arg (return is a hand-off)",
       fn() {
+        // g(xs){ Wrapper.{xs} } wraps its arg and returns it. Under Decision 3 the
+        // return hands the wrapper to the caller: g's param is Borrowed and its ret
+        // is OwnedFresh (shell), so passing a fresh xs into g(xs) leaves xs Unique --
+        // there is no callee-retention forcing it to Shared.
         b := b_reg()
         g := fdef(2, "g", 1, .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1)))))
         f_body: AnfExpr = .Let(
@@ -610,7 +635,7 @@ pub fn suite() runner.Suite {
           ),
         )
         f := analyzed_caller([fdef(1, "f", 0, f_body), g], "f")
-        try assert.equal(caller_own(f, 0), own_shared())
+        try assert.equal(caller_own(f, 0), own_unique())
         .Ok({})
       },
     )

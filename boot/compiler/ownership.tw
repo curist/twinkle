@@ -1580,9 +1580,10 @@ fn forward_block(
 ) ForwardState {
   st := forward_block_body(blk, entry, prep, table, b, sem)
   case blk.terminator {
-    .Some(.Return(.Some(a))) => {
-      st = .publish_atom(a)
-    },
+    // Return hands the value to the CALLER; it is not a callee leak. The caller's
+    // ret / ret_paths handling accounts for it. Return blocks are CFG leaves, so
+    // this does not affect intra-function joins (Case T). ValueBreak still targets
+    // a real post-loop successor, so it still publishes.
     .Some(.ValueBreak(a)) => {
       st = .publish_atom(a)
     },
@@ -2680,18 +2681,11 @@ pub fn summarize_function(
         }
         body := forward_block_body(blk, st, block_prep(blk, sem), table, b, sem)
 
-        // Aliasing origins now split across the return atom's SHELL prov and its
-        // per-path path_prov (a fresh wrapper aliases params only through fields).
-        ret_origins := prov_of(body.prov, a)
-        case atom_local_id(a) {
-          .Some(aid) => {
-            for k, os in body.path_prov_get(aid) {
-              ret_origins = union_sorted(ret_origins, os)
-            }
-          },
-          .None => {},
-        }
-        idxs := prov_to_indices(f.params, ret_origins)
+        // ret reflects SHELL ownership only: a fresh wrapper .{ctx:p0} has empty
+        // shell prov -> OwnedFresh; only a directly-returned param (return x, shell
+        // prov non-empty) aliases a param. Deep/field origins are the caller's
+        // concern via the return hand-off, not the shell alias set.
+        idxs := prov_to_indices(f.params, prov_of(body.prov, a))
         r: ReturnEffect = if idxs.len() > 0 {
           .MayAliasParams(idxs)
         } else {
