@@ -263,6 +263,84 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "t1 nested record-in-record escape: fn f(p){ r:={f0:p}; w:={f0:r}; global_set G=w } -> p0 retain",
+      fn() {
+        // DEPTH soundness: p is two levels deep (w.f0.f0). The depth-2 path_prov
+        // can't represent [Field,Field], so graft_path_prov folds the dropped inner
+        // origins up into [f0]; publishing w then still leaks p (Retained).
+        body: AnfExpr = .Let(
+          lid(1),
+          wrapper_record(lid(0)),
+          .Let(
+            lid(2),
+            wrapper_record(lid(1)),
+            .Let(lid(3), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(2))), .Atom(.ALitInt(0))),
+          ),
+        )
+        s := summ1("f", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
+      "t1 nested variant-in-record escape: fn f(p){ v:=Some(p); w:={f0:v}; global_set G=w } -> p0 retain",
+      fn() {
+        // [Field, Payload] is not representable; origins fold up into [f0].
+        v_op: AnfOp = .AVariant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.ALocal(lid(0))])
+        body: AnfExpr = .Let(
+          lid(1),
+          v_op,
+          .Let(
+            lid(2),
+            wrapper_record(lid(1)),
+            .Let(lid(3), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(2))), .Atom(.ALitInt(0))),
+          ),
+        )
+        s := summ1("f", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
+      "t1 nested variant-in-variant escape: fn f(p){ v:=Some(p); w:=Some(v); global_set G=w } -> p0 retain",
+      fn() {
+        // [Payload, Payload] is not representable; origins fold up into [Payload].
+        inner_v: AnfOp = .AVariant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.ALocal(lid(0))])
+        outer_v: AnfOp = .AVariant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.ALocal(lid(1))])
+        body: AnfExpr = .Let(
+          lid(1),
+          inner_v,
+          .Let(
+            lid(2),
+            outer_v,
+            .Let(lid(3), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(2))), .Atom(.ALitInt(0))),
+          ),
+        )
+        s := summ1("f", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
+      "t1 nested record-in-array escape: fn f(p){ r:={f0:p}; xs:=[r]; global_set G=xs } -> p0 retain",
+      fn() {
+        // [Elem, Field] is not representable; the AArrayLit fold routes the record's
+        // field origins onto [Elem] so publishing xs leaks p.
+        body: AnfExpr = .Let(
+          lid(1),
+          wrapper_record(lid(0)),
+          .Let(
+            lid(2),
+            .AArrayLit([.ALocal(lid(1))]),
+            .Let(lid(3), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(2))), .Atom(.ALitInt(0))),
+          ),
+        )
+        s := summ1("f", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
       "t1 cow-escape: fn f(x){ ys := Dict.set(x,0,1); global_set G=ys } -> p0 retain",
       fn() {
         // ys structurally shares x's HAMT and escapes globally; provenance must

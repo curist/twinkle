@@ -1063,13 +1063,21 @@ fn graft_path_prov(pp: Dict<Int, Vector<Int>>, prefix: ff.PathSeg, st: ForwardSt
   Int,
   Vector<Int>,
 > {
-  pp[ff.path_key(ff.AccessPath.{ segs: [prefix] })] = prov_of(st.prov, a) // [] = fresh
+  // shell_origins starts at the value's own shell prov and accumulates the origins
+  // of every inner path that CANNOT be representably rebased under `prefix` at the
+  // depth-2 cap (e.g. [Field,Field], [Field,Payload], [Payload,Payload], or any
+  // depth-2 inner that would become depth-3). Folding those origins up into the
+  // representable ancestor [prefix] keeps publication SOUND — publish_local leaks
+  // [prefix]'s origins, so a param nested arbitrarily deep still escapes. The cost
+  // is only precision: a field that transitively holds a param becomes multi-origin
+  // at [prefix], which classify_path_own then drops (sound under-claim).
+  shell_origins := prov_of(st.prov, a) // [] = fresh
   case atom_local_id(a) {
     .Some(sid) => {
       for k, v in st.path_prov_get(sid) {
         inner := ff.path_of_key(k)
-        if inner.segs.len() == 1 {
-          keep := case prefix {
+        keep := if inner.segs.len() == 1 {
+          case prefix {
             .Field(_) => case inner.segs[0] {
               .Elem => true,
               .Val => true,
@@ -1081,14 +1089,19 @@ fn graft_path_prov(pp: Dict<Int, Vector<Int>>, prefix: ff.PathSeg, st: ForwardSt
             },
             _ => false,
           }
-          if keep {
-            pp[ff.path_key(ff.AccessPath.{ segs: [prefix, inner.segs[0]] })] = v
-          }
+        } else {
+          false // a depth-2 inner would rebase to depth-3 — never representable
+        }
+        if keep {
+          pp[ff.path_key(ff.AccessPath.{ segs: [prefix, inner.segs[0]] })] = v
+        } else {
+          shell_origins = union_sorted(shell_origins, v)
         }
       }
     },
     .None => {},
   }
+  pp[ff.path_key(ff.AccessPath.{ segs: [prefix] })] = shell_origins
   pp
 }
 
@@ -1214,10 +1227,21 @@ fn transfer_op(
 
       // Route the elements' origins into path_prov[Elem] so whole-value
       // publication still leaks them (publish_local cascades path_prov). Empty
-      // origins => proven fresh.
+      // origins => proven fresh. Fold in each element's OWN path_prov origins too,
+      // so a param nested inside an element (a record/variant in an array) still
+      // escapes — [Elem, ...] deeper paths are not representable, so their origins
+      // must land on [Elem].
       elem_origins: Vector<Int> = []
       for e in elems {
         elem_origins = union_sorted(elem_origins, prov_of(st.prov, e))
+        case atom_local_id(e) {
+          .Some(eid) => {
+            for k, v in st.path_prov_get(eid) {
+              elem_origins = union_sorted(elem_origins, v)
+            }
+          },
+          .None => {},
+        }
       }
       epp: Dict<Int, Vector<Int>> = Dict.new()
       epp[ff.path_key(ff.elem_path())] = elem_origins
