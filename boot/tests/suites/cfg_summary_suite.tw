@@ -1190,4 +1190,39 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "two-tag Result: tag-aware meet keeps both arms (Ok[0].f0=from(p0), not erased)",
+      fn() {
+        // load(s): if c { return .Ok(Record{f0:s}) }  return .Err(Record{f0:fresh}).
+        // The Ok and Err returns carry DIFFERENT variant tags; a plain-intersection
+        // meet drops both (empty ret_paths). The tag-aware meet meets each tag's
+        // paths only across sites that can return that tag, so both arms survive.
+        b := b_reg()
+        ok_rec := AnfOp.ARecord(
+          TypeId.{ id: 0 },
+          [.{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) }],
+        )
+        ok_var := AnfOp.AVariant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.ALocal(lid(1))])
+        then_b: AnfExpr = .Let(
+          lid(1),
+          ok_rec,
+          .Let(lid(2), ok_var, .Return(.Some(.ALocal(lid(2))))),
+        )
+        err_rec := AnfOp.ARecord(
+          TypeId.{ id: 0 },
+          [.{ field: FieldId.{ id: 0 }, value: .ALocal(lid(3)) }],
+        )
+        err_var := AnfOp.AVariant(TypeId.{ id: 0 }, VariantId.{ id: 1 }, [.ALocal(lid(4))])
+        else_b: AnfExpr = .Let(
+          lid(3),
+          dict_new_call(b),
+          .Let(lid(4), err_rec, .Let(lid(5), err_var, .Return(.Some(.ALocal(lid(5)))))),
+        )
+        body: AnfExpr = .Let(lid(6), .AIf(.ALitBool(true), then_b, else_b), .Return(.None))
+        s := summ1("load", 1, body)
+        try assert.equal(has_variant_field_from(s.ret_paths, 0, 0, 0, 0), true) // Ok[0].f0=from(p0) survives
+        try assert.equal(s.ret_paths.len(), 4) // V(Ok)[0]=fresh, V(Ok)[0].f0=from(p0), V(Err)[0]=fresh, V(Err)[0].f0=fresh
+        .Ok({})
+      },
+    )
 }

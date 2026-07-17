@@ -3128,12 +3128,115 @@ fn drop_aliased_param_paths(rps: Vector<ReturnPathOwn>) Vector<ReturnPathOwn> {
 
 // A path survives the meet only if present in BOTH lists under the same
 // (via, field) key AND with a matching own. Any mismatch drops the path.
-fn meet_ret_paths(a: Vector<ReturnPathOwn>, b: Vector<ReturnPathOwn>) Vector<ReturnPathOwn> {
+// What a return site definitely hands back, for a TAG-AWARE meet: a variant with a
+// known tag, a record (Direct), or Unknown (could be any shape). An `Ok`-payload
+// claim must be met only across sites that can return `Ok`; an `Err` site is
+// irrelevant to it, and a site that returns `Ok` but with a shared/unknown payload
+// (or an Unknown-witness site) still drops the claim.
+type RetWitness = { WDirect, WVariant(Int), WUnknown }
+
+type RetSite = .{ witness: RetWitness, paths: Vector<ReturnPathOwn> }
+
+fn witness_could_produce(w: RetWitness, via: RetVia) Bool {
+  case via {
+    .Direct => case w {
+      .WDirect => true,
+      .WVariant(_) => false,
+      .WUnknown => true,
+    },
+    .Variant(tag, _) => case w {
+      .WVariant(t) => t == tag,
+      .WDirect => false,
+      .WUnknown => true,
+    },
+  }
+}
+
+// Determine a return site's witness. (1) Owned payload facts pin a variant tag;
+// (2) owned field facts pin Direct; (3) else scan the return block for the returned
+// atom's constructor op (catches shared-payload variants that own no facts);
+// (4) else Unknown (conservative — such a site drops every claim it could produce).
+fn ret_witness(blk: CfgBlock, a: Atom, fm: ff.FieldMap) RetWitness {
+  for k in fm.sorted_keys() {
+    w := case ff.path_of_key(k).segs[0] {
+      .Payload(tag, _) => RetWitness.WVariant(tag),
+      .Field(_) => .WDirect,
+      _ => .WUnknown,
+    }
+    case w {
+      .WUnknown => {},
+      _ => return w,
+    }
+  }
+  case atom_local_id(a) {
+    .Some(aid) => {
+      for inst in blk.instructions {
+        if inst.anf_local.id == aid {
+          return case inst.op {
+            .AVariant(_, vid, _) => .WVariant(vid.id),
+            .ARecord(_, _) => .WDirect,
+            _ => .WUnknown,
+          }
+        }
+      }
+    },
+    .None => {},
+  }
+  .WUnknown
+}
+
+fn find_ret_own(paths: Vector<ReturnPathOwn>, cand: ReturnPathOwn) ReturnOwn? {
+  for p in paths {
+    if p.ret_via_field_eq(cand) {
+      return .Some(p.own)
+    }
+  }
+  .None
+}
+
+fn contains_via_field(seen: Vector<ReturnPathOwn>, cand: ReturnPathOwn) Bool {
+  for e in seen {
+    if e.ret_via_field_eq(cand) {
+      return true
+    }
+  }
+  false
+}
+
+// Tag-aware meet across return sites. A path (via, field) survives with own `o` iff
+// EVERY site that could produce `via` has exactly that (via, field, o); a
+// could-produce site that lacks it, or disagrees on own, drops it. Sites of a
+// different definite tag are irrelevant. So `Ok`-payload paths meet only across
+// `Ok`-returning (or Unknown) sites, and a real two-tag Result keeps both arms'
+// paths instead of erasing them.
+fn meet_ret_paths_tagged(sites: Vector<RetSite>) Vector<ReturnPathOwn> {
   out: Vector<ReturnPathOwn> = []
-  for ea in a {
-    for eb in b {
-      if ea.ret_via_field_eq(eb) and ea.own.ret_own_eq(eb.own) {
-        out = .append(ea)
+  seen: Vector<ReturnPathOwn> = []
+  for site in sites {
+    for cand in site.paths {
+      if !contains_via_field(seen, cand) {
+        seen = .append(cand)
+        survives := true
+        agreed: ReturnOwn? = .None
+        for s2 in sites {
+          if s2.witness.witness_could_produce(cand.via) {
+            case find_ret_own(s2.paths, cand) {
+              .Some(own) => case agreed {
+                .None => agreed = .Some(own),
+                .Some(o) => if !o.ret_own_eq(own) {
+                  survives = false
+                },
+              },
+              .None => survives = false,
+            }
+          }
+        }
+        case agreed {
+          .Some(o) => if survives {
+            out = .append(ReturnPathOwn.{ via: cand.via, field: cand.field, own: o })
+          },
+          .None => {},
+        }
       }
     }
   }
@@ -3185,7 +3288,7 @@ pub fn summarize_function(
   done := all_processed(blocks)
   fn_params := f.params // Vector<LocalId>; capture before .Field(f) shadow
   ret: ReturnEffect = .OwnedFresh
-  ret_paths_acc: Vector<ReturnPathOwn> = []
+  ret_sites: Vector<RetSite> = []
   seen := false
   for blk in blocks {
     case return_atom(blk) {
@@ -3293,16 +3396,16 @@ pub fn summarize_function(
           },
           .None => {},
         }
-        ret_paths_acc = if seen {
-          meet_ret_paths(ret_paths_acc, rp_here)
-        } else {
-          rp_here
+        wit := case atom_local_id(a) {
+          .Some(aid) => ret_witness(blk, a, body.field_own_get(aid)),
+          .None => .WUnknown,
         }
+        ret_sites = .append(RetSite.{ witness: wit, paths: rp_here })
         seen = true
       },
       .None => {},
     }
   }
 
-  Summary.{ params, ret, ret_paths: ret_paths_acc }
+  Summary.{ params, ret, ret_paths: meet_ret_paths_tagged(ret_sites) }
 }

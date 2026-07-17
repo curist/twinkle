@@ -175,6 +175,25 @@ fn case_w_fixture() Vector<AnfFunctionDef> {
   [helper, fdef(2, "caller", 0, caller_body)]
 }
 
+// Like case_w_fixture but caller threads its own PARAM `ctx` (lid0) instead of a
+// fresh local. Params enter the generic analysis as Unknown (only prov is seeded,
+// not ownership), so the recovery gate rejects them and publish-on-fail publishes
+// ctx. Documents the Phase 5 boundary: param-threaded state needs Phase 6
+// parameter ownership. Do NOT "fix" this by making params implicitly unique.
+fn case_w_param_fixture() Vector<AnfFunctionDef> {
+  helper := fdef(1, "helper", 1, .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1)))))
+  caller_body: AnfExpr = .Let(
+    lid(1),
+    .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := helper(ctx-PARAM)
+    .Let(
+      lid(2),
+      .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }), // g := out.f0
+      .Atom(.ALocal(lid(2))),
+    ),
+  )
+  [helper, fdef(2, "caller", 1, caller_body)] // caller has 1 PARAM: ctx = lid0
+}
+
 // Same as case_w_fixture but reads ctx (lid0) AFTER the call, so ctx is not a
 // last-use at the call -> the recovery gate fails on last-use and publishes ctx.
 fn case_w_gatefail_fixture() Vector<AnfFunctionDef> {
@@ -541,6 +560,19 @@ pub fn suite() runner.Suite {
         funcs := case_w_gatefail_fixture()
         f := analyzed_caller(funcs, "caller")
         try assert.equal(caller_own(f, 0), own_shared()) // ctx (lid0) published by gate-fail
+        .Ok({})
+      },
+    )
+    .test(
+      "param-threaded state is NOT recovered: caller passing its param publishes it (Phase 6 gap)",
+      fn() {
+        // GUARD for TODO 1: a param is Unknown at entry, so the OwnedFromParam gate
+        // rejects it and publish-on-fail publishes it -- param-threaded transport is
+        // not recovered until Phase 6 parameter-ownership. Loosening the gate would be
+        // UNSOUND (a param may be shared at some caller). Do not "fix" this test.
+        funcs := case_w_param_fixture()
+        f := analyzed_caller(funcs, "caller")
+        try assert.equal(caller_own(f, 0), own_shared()) // ctx (param) published, not recovered
         .Ok({})
       },
     )
