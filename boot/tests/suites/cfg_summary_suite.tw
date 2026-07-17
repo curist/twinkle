@@ -190,6 +190,53 @@ fn ret_path_pairs(rps: Vector<ownership.ReturnPathOwn>) Vector<Int> {
   pairs
 }
 
+fn has_variant_shell_fresh(rps: Vector<ownership.ReturnPathOwn>, tag: Int, idx: Int) Bool {
+  for r in rps {
+    match := case r.via {
+      .Variant(t, i) => t == tag and i == idx,
+      .Direct => false,
+    }
+    is_shell_fresh := case r.field {
+      .None => case r.own {
+        .OwnedFresh => true,
+        .OwnedFromParam(_) => false,
+      },
+      .Some(_) => false,
+    }
+    if match and is_shell_fresh {
+      return true
+    }
+  }
+  false
+}
+
+fn has_variant_field_from(
+  rps: Vector<ownership.ReturnPathOwn>,
+  tag: Int,
+  idx: Int,
+  field: Int,
+  param: Int,
+) Bool {
+  for r in rps {
+    via_ok := case r.via {
+      .Variant(t, i) => t == tag and i == idx,
+      .Direct => false,
+    }
+    fld_ok := case r.field {
+      .Some(f) => f == field,
+      .None => false,
+    }
+    own_ok := case r.own {
+      .OwnedFromParam(k) => k == param,
+      .OwnedFresh => false,
+    }
+    if via_ok and fld_ok and own_ok {
+      return true
+    }
+  }
+  false
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("cfg summary")
@@ -1010,6 +1057,22 @@ pub fn suite() runner.Suite {
         body: AnfExpr = .Let(lid(1), inner, .Let(lid(2), o, .Atom(.ALocal(lid(2)))))
         s := summ1("f", 1, body)
         try assert.equal(s.ret_paths.len(), 0) // no false OwnedFresh for interior-aliasing fields
+        .Ok({})
+      },
+    )
+    .test(
+      "fn f(x){ Variant#7(Record{f0:x}) } -> ret_paths V7[0]=fresh AND V7[0].f0=from(p0)",
+      fn() {
+        inner := AnfOp.ARecord(
+          TypeId.{ id: 0 },
+          [.{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) }],
+        )
+        vop := AnfOp.AVariant(TypeId.{ id: 0 }, VariantId.{ id: 7 }, [.ALocal(lid(1))])
+        body: AnfExpr = .Let(lid(1), inner, .Let(lid(2), vop, .Atom(.ALocal(lid(2)))))
+        s := summ1("f", 1, body)
+        try assert.equal(s.ret_paths.len(), 2)
+        try assert.equal(has_variant_shell_fresh(s.ret_paths, 7, 0), true)
+        try assert.equal(has_variant_field_from(s.ret_paths, 7, 0, 0, 0), true)
         .Ok({})
       },
     )

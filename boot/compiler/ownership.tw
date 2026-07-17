@@ -2857,16 +2857,35 @@ pub fn summarize_function(
             rp_all: Vector<ReturnPathOwn> = []
             for k in sorted_dict_keys(pp) {
               p := ff.path_of_key(k)
-              if p.segs.len() == 1 {
-                case p.segs[0] {
-                  .Field(fid) => case classify_path_own(pp, k, fn_params, fm) {
+              case p.segs[0] {
+                // Direct field: single-segment .Field paths only.
+                .Field(fid) => if p.segs.len() == 1 {
+                  case classify_path_own(pp, k, fn_params, fm) {
                     .Some(own) => rp_all = .append(
                       ReturnPathOwn.{ via: .Direct, field: .Some(fid), own },
                     ),
                     .None => {},
-                  },
-                  _ => {},
-                }
+                  }
+                },
+                // Variant payload: [Payload(tag,i)] is the payload shell (field=None),
+                // [Payload(tag,i), .Field(f)] is a payload record field (field=Some(f)).
+                .Payload(tag, i) => {
+                  fld: Int? = if p.segs.len() == 2 {
+                    case p.segs[1] {
+                      .Field(fid) => .Some(fid),
+                      _ => .None,
+                    }
+                  } else {
+                    .None
+                  }
+                  case classify_path_own(pp, k, fn_params, fm) {
+                    .Some(own) => rp_all = .append(
+                      ReturnPathOwn.{ via: .Variant(tag, i), field: fld, own },
+                    ),
+                    .None => {},
+                  }
+                },
+                _ => {}, // Elem/Val are not ret_path candidates
               }
             }
             rp_here = drop_aliased_param_paths(rp_all)
