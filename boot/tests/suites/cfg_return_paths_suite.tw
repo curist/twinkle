@@ -94,6 +94,10 @@ fn own_shared() Int {
   ownership.own_tag(.Shared)
 }
 
+fn own_unknown() Int {
+  ownership.own_tag(.Unknown)
+}
+
 fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
   .ACall(.AGlobalFunc(b.method_id("Dict", "new")), [])
 }
@@ -299,6 +303,178 @@ fn block_named(f: cfg.CfgFunction, name: String) cfg.CfgBlock {
   error("no block ${name}")
 }
 
+// block id of the .Ok arm (first arm) in a case-lowered function.
+fn ok_arm_block_id(f: cfg.CfgFunction) Int {
+  block_named(f, "match.arm.0").id.id
+}
+
+// block id of the .Err arm (second arm).
+fn err_arm_block_id(f: cfg.CfgFunction) Int {
+  block_named(f, "match.arm.1").id.id
+}
+
+// The projected `state := record_get v.f0` local in the .Ok arm.
+fn ok_arm_state_local() Int {
+  20
+}
+
+// The payload binding `v` in the .Ok arm.
+fn ok_arm_payload_local() Int {
+  10
+}
+
+// The payload binding `e` in the .Err arm.
+fn err_arm_payload_local() Int {
+  11
+}
+
+// load(s) returns .Ok(Record{f0: s}). Body:
+//   inner := Record{f0: s};  v := Variant(Result, Ok, [inner]);  return v
+// Summary ret_paths: V(Ok)[0]=fresh shell, V(Ok)[0].f0 = from(p0).
+fn ok_load_helper() AnfFunctionDef {
+  fdef(
+    1,
+    "load",
+    1,
+    .Let(
+      lid(1),
+      .ARecord(TypeId.{ id: 5 }, [.{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) }]), // inner := Record{f0: s}
+      .Let(
+        lid(2),
+        .AVariant(TypeId.{ id: 1 }, VariantId.{ id: 0 }, [.ALocal(lid(1))]), // v := .Ok(inner)
+        .Atom(.ALocal(lid(2))),
+      ),
+    ),
+  )
+}
+
+// The two-arm case body shared by the Case R callers. `ok_body` runs in the .Ok
+// arm (payload bound to L10); the .Err arm binds L11 and returns it.
+fn case_r_match(ok_body: AnfExpr) AnfOp {
+  ok_arm: AnfMatchArm = AnfMatchArm.{
+    pattern: .Variant(TypeId.{ id: 1 }, VariantId.{ id: 0 }, [.Var(lid(10))]),
+    body: ok_body,
+  }
+  err_arm: AnfMatchArm = AnfMatchArm.{
+    pattern: .Variant(TypeId.{ id: 1 }, VariantId.{ id: 1 }, [.Var(lid(11))]),
+    body: .Return(.Some(.ALocal(lid(11)))),
+  }
+  .AMatch(.ALocal(lid(1)), [ok_arm, err_arm])
+}
+
+// caller(): acc := Dict.new() (FRESH unique); out := load(acc);
+//   case out { .Ok(v) => state := record_get v.f0; return state, .Err(e) => return e }
+// acc is dead after the match (only load reads it) -> out's [Payload(Ok,0)].f0
+// carries acc; the .Ok arm seeds v from out's payload, and v is dead after the
+// projection inside the arm -> state recovers Unique.
+fn case_r_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  ok_body: AnfExpr = .Let(
+    lid(20),
+    .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 5 }), // state := v.f0
+    .Return(.Some(.ALocal(lid(20)))),
+  )
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // acc := Dict.new() (fresh Unique)
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := load(acc)
+      .Let(lid(2), case_r_match(ok_body), .Return(.Some(.ALitInt(0)))),
+    ),
+  )
+  [ok_load_helper(), fdef(2, "caller", 0, caller_body)]
+}
+
+// Case R BORROW #1 (out live-out): after the case, read out in a LATER block
+// (an if-then reads out.f0), so out is live-out of the match block -> the arm
+// seed borrow-demotes v to Shared.
+fn case_r_live_scrutinee_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  ok_body: AnfExpr = .Let(
+    lid(20),
+    .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 5 }), // state := v.f0
+    .Atom(.ALitInt(0)),
+  )
+  then_branch: AnfExpr = .Let(
+    lid(30),
+    .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 5 }), // reads out in a successor
+    .Atom(.ALitInt(0)),
+  )
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // acc := Dict.new()
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := load(acc)
+      .Let(
+        lid(2),
+        case_r_match(ok_body),
+        .Let(
+          lid(3),
+          .AIf(.ALitBool(true), then_branch, .Atom(.ALitInt(0))),
+          .Return(.Some(.ALitInt(0))),
+        ),
+      ),
+    ),
+  )
+  [ok_load_helper(), fdef(2, "caller", 0, caller_body)]
+}
+
+// Case R BORROW #2 (out read INSIDE the arm): inside the .Ok arm, after binding
+// v, read out again -> out is live-in at the arm -> the move gate must not fire
+// -> v Shared.
+fn case_r_inarm_read_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  ok_body: AnfExpr = .Let(
+    lid(20),
+    .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 5 }), // state := v.f0
+    .Let(
+      lid(21),
+      .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 5 }), // re-read out inside the arm
+      .Return(.Some(.ALitInt(0))),
+    ),
+  )
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // acc := Dict.new()
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := load(acc)
+      .Let(lid(2), case_r_match(ok_body), .Return(.Some(.ALitInt(0)))),
+    ),
+  )
+  [ok_load_helper(), fdef(2, "caller", 0, caller_body)]
+}
+
+// caller(): acc := Dict.new(); out := load(acc);
+//   case out { .Ok(v) => 0, .Err(e) => return e }
+// `load` returns ONLY .Ok(Record{f0: acc}), so out carries ONLY the [Payload(Ok,0)]
+// fact. The .Err arm projects [Payload(Err,0)] — a DIFFERENT tag — which is absent,
+// so `e` recovers no owned fact and stays Unknown while the Ok arm's `v` is Unique.
+// Confirms the tag keeps arms disjoint: an Err arm cannot recover an Ok-only fact.
+fn case_r_tag_isolation_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  ok_arm: AnfMatchArm = AnfMatchArm.{
+    pattern: .Variant(TypeId.{ id: 1 }, VariantId.{ id: 0 }, [.Var(lid(10))]),
+    body: .Atom(.ALitInt(0)),
+  }
+  err_arm: AnfMatchArm = AnfMatchArm.{
+    pattern: .Variant(TypeId.{ id: 1 }, VariantId.{ id: 1 }, [.Var(lid(11))]),
+    body: .Return(.Some(.ALocal(lid(11)))),
+  }
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // acc := Dict.new()
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := load(acc)
+      .Let(lid(2), .AMatch(.ALocal(lid(1)), [ok_arm, err_arm]), .Return(.Some(.ALitInt(0)))),
+    ),
+  )
+  [ok_load_helper(), fdef(2, "caller", 0, caller_body)]
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("cfg return paths")
@@ -390,6 +566,51 @@ pub fn suite() runner.Suite {
         funcs := case_w_out_liveout_fixture()
         f := analyzed_caller(funcs, "caller")
         try assert.equal(caller_own(f, gsib_local()), own_shared())
+        .Ok({})
+      },
+    )
+    .test(
+      "Case R: acc := fresh; out := load(acc); case out {.Ok(v)=>..} keeps v.state Unique",
+      fn() {
+        funcs := case_r_fixture()
+        f := analyzed_caller(funcs, "caller")
+        ok_blk := ok_arm_block_id(f)
+        try assert.equal(own_in_block(f, ok_blk, ok_arm_state_local()), own_unique())
+        .Ok({})
+      },
+    )
+    .test(
+      "Case R borrow: out live-out of the match block -> arm binding v Shared",
+      fn() {
+        funcs := case_r_live_scrutinee_fixture()
+        f := analyzed_caller(funcs, "caller")
+        ok_blk := ok_arm_block_id(f)
+        try assert.equal(own_in_block(f, ok_blk, ok_arm_payload_local()), own_shared())
+        .Ok({})
+      },
+    )
+    .test(
+      "Case R borrow: out re-read inside the arm (live-in) -> arm binding v Shared",
+      fn() {
+        funcs := case_r_inarm_read_fixture()
+        f := analyzed_caller(funcs, "caller")
+        ok_blk := ok_arm_block_id(f)
+        try assert.equal(own_in_block(f, ok_blk, ok_arm_payload_local()), own_shared())
+        .Ok({})
+      },
+    )
+    .test(
+      "Case R tag isolation: Err arm (different tag) does not recover the Ok-only fact",
+      fn() {
+        // load returns ONLY .Ok(Record{f0: acc}); the Err arm projects a DIFFERENT
+        // tag [Payload(Err,0)] which is absent -> e recovers nothing (stays Unknown,
+        // not Unique) while the sibling Ok arm's v is Unique.
+        funcs := case_r_tag_isolation_fixture()
+        f := analyzed_caller(funcs, "caller")
+        ok_blk := ok_arm_block_id(f)
+        err_blk := err_arm_block_id(f)
+        try assert.equal(own_in_block(f, ok_blk, ok_arm_payload_local()), own_unique()) // Ok arm recovers
+        try assert.equal(own_in_block(f, err_blk, err_arm_payload_local()), own_unknown()) // Err arm does NOT
         .Ok({})
       },
     )

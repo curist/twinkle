@@ -1315,6 +1315,69 @@ fn remove_prefix_pp(pp: Dict<Int, Vector<Int>>, seg: ff.PathSeg) Dict<Int, Vecto
   out
 }
 
+// Per-local field_own lookup against a pred's exit map, empty default.
+fn field_map_of(m: Dict<Int, ff.FieldMap>, id: Int) ff.FieldMap {
+  case m.get(id) {
+    .Some(fm) => fm,
+    .None => ff.empty(),
+  }
+}
+
+// Seed a match-arm payload-bound local from its match predecessor's exit facts.
+// Applied at every per-block entry-state construction, AFTER the base entry facts.
+// `pred_*` are the match block's (this arm's single predecessor's) EXIT facts.
+//
+// A top-level Variant(tag, [Var(binding)]) arm projects the scrutinee's
+// [Payload(tag, i)]* facts onto `binding`: when the scrutinee is dead after the
+// match (live-in gate) the payload MOVES (binding takes the shell own + prov +
+// inner facts); otherwise it BORROWS (binding Shared, scrutinee's payload subtree
+// stripped). A .None-payload_src block (non-arm) is a no-op. The tag keeps arms
+// disjoint: an .Err arm projecting [Payload(Err,i)] recovers no [Payload(Ok,i)]
+// fact, so a foreign/borrowed payload leaves the binding Shared.
+fn seed_payload_binding(
+  st: ForwardState,
+  blk: CfgBlock,
+  pred_field: Dict<Int, ff.FieldMap>,
+  pred_pp: Dict<Int, Dict<Int, Vector<Int>>>,
+  pred_prov: Dict<Int, Vector<Int>>,
+) ForwardState {
+  case blk.payload_src {
+    .None => st,
+    .Some(ps) => {
+      seg := ff.PathSeg.Payload(ps.variant_tag, ps.payload_index)
+      src_fields := field_map_of(pred_field, ps.scrutinee)
+      src_pp := pp_of(pred_pp, ps.scrutinee)
+      proj := src_fields.project(seg) // {shell, fields}
+      proj_pp := project_path_prov(src_pp, seg) // {shell, inner}
+      case proj.shell {
+        .None => st, // no owned payload fact -> leave binding Unknown
+        .Some(t) => if !live_contains_int(blk.entry.live, ps.scrutinee) {
+          // MOVE: scrutinee dead-after -> binding takes shell own + shell prov + inner facts.
+          // set_own_st(binding, Unique) MUST precede set_field_own: the choke point
+          // clears field facts if the shell is not Unique.
+          st = .set_own_st(ps.binding, own_of_tag(t))
+          shell_origins := case proj_pp.shell {
+            .Some(o) => o,
+            .None => case pred_prov.get(ps.scrutinee) {
+              .Some(o) => o,
+              .None => [],
+            },
+          }
+          st = .set_prov_st(ps.binding, shell_origins)
+          st = .set_field_own(ps.binding, proj.fields)
+          st.set_path_prov(ps.binding, proj_pp.inner)
+        } else {
+          // BORROW: scrutinee live-in -> binding Shared; strip scrutinee's payload subtree.
+          st = .set_own_st(ps.binding, .Shared)
+          live_fields := st.field_own_get(ps.scrutinee)
+          st = .set_field_own(ps.scrutinee, live_fields.remove_prefix(seg))
+          st.set_path_prov(ps.scrutinee, remove_prefix_pp(st.path_prov_get(ps.scrutinee), seg))
+        },
+      }
+    },
+  }
+}
+
 // Apply one instruction. `last` is last_use_at(op, live_after[i]).
 // `quartet` is the pre-scanned set of ARecordGet result-locals licensed to move
 // by the block-local quartet proof (empty for callers outside a block body).
@@ -2486,6 +2549,22 @@ fn run_fixpoint(
         field_own: entry_field,
         path_prov: entry_pp,
       }
+
+      // seed a payload-bound local from its match predecessor's exit facts
+      pred_id := case blk.preds.len() == 1 {
+        true => blk.preds[0].target.id, // in a `preds` edge, CfgEdge.target holds the PREDECESSOR id
+        false => 0 - 1,
+      }
+      st = if pred_id >= 0 {
+        st.seed_payload_binding(
+          blk,
+          field_own_map_get(exit_field_own, pred_id),
+          path_prov_map_get(exit_path_prov, pred_id),
+          prov_map_get(exit_prov, pred_id),
+        )
+      } else {
+        st
+      }
       st = forward_block(blk, st, prep_get(preps, blk, sem), table, b, sem, suppress)
       already := is_processed(processed, blk.id.id)
       old_own := own_map_get(exits, blk.id.id)
@@ -2765,6 +2844,22 @@ fn ownership_stage(
       field_own: entry_field,
       path_prov: entry_pp,
     }
+
+    // seed a payload-bound local from its match predecessor's exit facts
+    pred_id := case blk.preds.len() == 1 {
+      true => blk.preds[0].target.id, // in a `preds` edge, CfgEdge.target holds the PREDECESSOR id
+      false => 0 - 1,
+    }
+    st = if pred_id >= 0 {
+      st.seed_payload_binding(
+        blk,
+        field_own_map_get(fx.exit_field_own, pred_id),
+        path_prov_map_get(fx.exit_path_prov, pred_id),
+        prov_map_get(fx.exit_prov, pred_id),
+      )
+    } else {
+      st
+    }
     prep := block_prep(blk, sem)
     verdicts := block_verdicts(blk, st, prep, table, b, sem, no_suppress)
     st = forward_block(blk, st, prep, table, b, sem, no_suppress)
@@ -3019,6 +3114,22 @@ pub fn summarize_function(
           prov: entry_prov,
           field_own: entry_field,
           path_prov: entry_pp,
+        }
+
+        // seed a payload-bound local from its match predecessor's exit facts
+        pred_id := case blk.preds.len() == 1 {
+          true => blk.preds[0].target.id, // in a `preds` edge, CfgEdge.target holds the PREDECESSOR id
+          false => 0 - 1,
+        }
+        st = if pred_id >= 0 {
+          st.seed_payload_binding(
+            blk,
+            field_own_map_get(fx.exit_field_own, pred_id),
+            path_prov_map_get(fx.exit_path_prov, pred_id),
+            prov_map_get(fx.exit_prov, pred_id),
+          )
+        } else {
+          st
         }
         body := forward_block_body(blk, st, block_prep(blk, sem), table, b, sem, suppress)
 
