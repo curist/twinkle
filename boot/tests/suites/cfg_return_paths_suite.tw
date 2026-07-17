@@ -4,7 +4,7 @@ use @std.testing as runner
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
 use compiler.builtins
 use compiler.cfg
-use compiler.core_ir.{FieldId, FuncId, LocalId, Param}
+use compiler.core_ir.{FieldId, FuncId, GlobalId, LocalId, Param}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
@@ -102,6 +102,38 @@ fn wrapper_record(field_val: LocalId) AnfOp {
   .ARecord(TypeId.{ id: 0 }, [.{ field: FieldId.{ id: 0 }, value: .ALocal(field_val) }])
 }
 
+// Record{f0: field_val, f1: fresh}: two fields so the caller has a SIBLING to
+// read. Summary ret=OwnedFresh, ret_paths [.f0]=from(p0), [.f1]=fresh.
+fn wrapper_record2(field_val: LocalId, fresh_val: LocalId) AnfOp {
+  .ARecord(
+    TypeId.{ id: 0 },
+    [
+      .{ field: FieldId.{ id: 0 }, value: .ALocal(field_val) },
+      .{ field: FieldId.{ id: 1 }, value: .ALocal(fresh_val) },
+    ],
+  )
+}
+
+// helper(x) returns Record{f0:x, f1:<fresh Dict.new()>}. Body:
+//   f1v := Dict.new(); rec := Record{f0:x, f1:f1v}; return rec
+fn wrapper2_helper(b: builtins.BuiltinRegistry) AnfFunctionDef {
+  fdef(
+    1,
+    "helper",
+    1,
+    .Let(
+      lid(1),
+      dict_new_call(b), // f1v := Dict.new() (fresh)
+      .Let(lid(2), wrapper_record2(lid(0), lid(1)), .Atom(.ALocal(lid(2)))),
+    ),
+  )
+}
+
+// g's local id in the sibling-read caller (the projected `g := out.f0`).
+fn gsib_local() Int {
+  2
+}
+
 // g's local id in the caller (the projected `g := out.f0`).
 fn grec_local() Int {
   2
@@ -153,6 +185,93 @@ fn case_w_gatefail_fixture() Vector<AnfFunctionDef> {
   [helper, fdef(2, "caller", 0, caller_body)]
 }
 
+// caller(): ctx := Dict.new(); out := helper(ctx);
+//   g := record_get out.f0; ty := record_get out.f1; return g
+// out stays live for the sibling read out.f1, but out.f0 is dead-through-out ->
+// the transport recognizer licenses the move -> g Unique.
+fn case_w_sibling_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  helper := wrapper2_helper(b)
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // ctx := Dict.new() (fresh Unique)
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := helper(ctx)
+      .Let(
+        lid(2),
+        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }), // g := out.f0
+        .Let(
+          lid(3),
+          .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 1 }, TypeId.{ id: 0 }), // ty := out.f1 (sibling)
+          .Atom(.ALocal(lid(2))), // return g
+        ),
+      ),
+    ),
+  )
+  [helper, fdef(2, "caller", 0, caller_body)]
+}
+
+// caller(): ctx := Dict.new(); out := helper(ctx); g := record_get out.f0;
+//   global_set G0 = out; return g
+// out is PUBLISHED -> transport_ok fails on the non-sibling mention -> borrow.
+fn case_w_published_out_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  helper := wrapper2_helper(b)
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // ctx := Dict.new()
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := helper(ctx)
+      .Let(
+        lid(2),
+        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }), // g := out.f0
+        .Let(
+          lid(3),
+          .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))), // publish out
+          .Atom(.ALocal(lid(2))), // return g
+        ),
+      ),
+    ),
+  )
+  [helper, fdef(2, "caller", 0, caller_body)]
+}
+
+// caller(): ctx := Dict.new(); out := helper(ctx); g := record_get out.f0;
+//   if cond { ty := record_get out.f1 }; return g
+// out is read in a SUCCESSOR block (the if-then), so it is LIVE-OUT of the
+// projection block. exit_mentions_local alone would miss this; the live-out
+// check catches it -> borrow.
+fn case_w_out_liveout_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  helper := wrapper2_helper(b)
+  then_branch: AnfExpr = .Let(
+    lid(4),
+    .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 1 }, TypeId.{ id: 0 }), // ty := out.f1 (in successor)
+    .Atom(.ALitInt(0)),
+  )
+  else_branch: AnfExpr = .Atom(.ALitInt(0))
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // ctx := Dict.new()
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := helper(ctx)
+      .Let(
+        lid(2),
+        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }), // g := out.f0
+        .Let(
+          lid(3),
+          .AIf(.ALitBool(true), then_branch, else_branch), // out live into then-branch
+          .Atom(.ALocal(lid(2))), // return g
+        ),
+      ),
+    ),
+  )
+  [helper, fdef(2, "caller", 0, caller_body)]
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("cfg return paths")
@@ -177,6 +296,42 @@ pub fn suite() runner.Suite {
         funcs := case_w_gatefail_fixture()
         f := analyzed_caller(funcs, "caller")
         try assert.equal(caller_own(f, 0), own_shared()) // ctx (lid0) published by gate-fail
+        .Ok({})
+      },
+    )
+    .test(
+      "transport move: out.f0 moves even though out.f1 is read after",
+      fn() {
+        // caller(): ctx := Dict.new(); out := helper(ctx);  // helper -> Record{f0:x, f1:fresh}
+        //   g := record_get out.f0; ty := record_get out.f1; return g   (ty read keeps out live)
+        // out is live for out.f1, but out.f0 is dead-through-out -> transport move licensed -> g Unique.
+        funcs := case_w_sibling_fixture()
+        f := analyzed_caller(funcs, "caller")
+        try assert.equal(caller_own(f, gsib_local()), own_unique()) // g is Unique
+        .Ok({})
+      },
+    )
+    .test(
+      "transport borrow: publishing out forces borrow (g not cleanly Unique)",
+      fn() {
+        // caller(): ctx := Dict.new(); out := helper(ctx); g := record_get out.f0;
+        //   global_set G0 = out; return g
+        // out is published -> transport_ok fails (non-sibling mention) -> borrow.
+        funcs := case_w_published_out_fixture()
+        f := analyzed_caller(funcs, "caller")
+        try assert.equal(caller_own(f, gsib_local()), own_shared())
+        .Ok({})
+      },
+    )
+    .test(
+      "transport borrow: out live into a later block forces borrow (live-out check)",
+      fn() {
+        // caller(): ctx := Dict.new(); out := helper(ctx); g := record_get out.f0;
+        //   if cond { ty := record_get out.f1 }   // out is LIVE-OUT of the projection block
+        // exit_mentions_local alone would miss this; blk.exit.live catches it -> borrow.
+        funcs := case_w_out_liveout_fixture()
+        f := analyzed_caller(funcs, "caller")
+        try assert.equal(caller_own(f, gsib_local()), own_shared())
         .Ok({})
       },
     )
