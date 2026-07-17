@@ -1,10 +1,10 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
-use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp}
 use compiler.builtins
 use compiler.cfg
-use compiler.core_ir.{FieldId, FuncId, GlobalId, LocalId, Param}
+use compiler.core_ir.{FieldId, FuncId, GlobalId, LocalId, Param, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
@@ -272,9 +272,67 @@ fn case_w_out_liveout_fixture() Vector<AnfFunctionDef> {
   [helper, fdef(2, "caller", 0, caller_body)]
 }
 
+// f(): s := Dict.new();
+//   r := case s { .Variant(tag=0, [Var(L5)]) => 0, .Wildcard => 0 }; return 0
+// The single-Var arm records payload_src; the wildcard arm stays .None.
+fn payload_src_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  ok_arm: AnfMatchArm = AnfMatchArm.{
+    pattern: .Variant(TypeId.{ id: 1 }, VariantId.{ id: 0 }, [.Var(lid(5))]),
+    body: .Atom(.ALitInt(0)),
+  }
+  wild_arm: AnfMatchArm = AnfMatchArm.{ pattern: .Wildcard, body: .Atom(.ALitInt(0)) }
+  body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // s := Dict.new()
+    .Let(lid(7), .AMatch(.ALocal(lid(0)), [ok_arm, wild_arm]), .Atom(.ALitInt(0))),
+  )
+  [fdef(1, "f", 0, body)]
+}
+
+fn block_named(f: cfg.CfgFunction, name: String) cfg.CfgBlock {
+  for blk in f.blocks {
+    if blk.name == name {
+      return blk
+    }
+  }
+  error("no block ${name}")
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("cfg return paths")
+    .test(
+      "payload_src: single-Var variant arm records (scrutinee, tag, index, binding)",
+      fn() {
+        b := b_reg()
+        funcs := payload_src_fixture()
+        v := cfg.build_view(module_of(funcs), b)
+        f := case cfg.function_named(v, "f") {
+          .Some(fn0) => fn0,
+          .None => error("no f"),
+        }
+        ok_blk := block_named(f, "match.arm.0")
+        try case ok_blk.payload_src {
+          .Some(ps) => {
+            try assert.equal(ps.scrutinee, 0) // L0 is the scrutinee
+            try assert.equal(ps.variant_tag, 0) // VariantId 0
+            try assert.equal(ps.payload_index, 0)
+            try assert.equal(ps.binding, 5) // L5 is the bound payload
+            .Ok({})
+          },
+          .None => .Err("expected payload_src on the single-Var arm"),
+        }
+
+        // The wildcard arm binds nothing: no payload_src.
+        wild_blk := block_named(f, "match.arm.1")
+        try case wild_blk.payload_src {
+          .Some(_) => .Err("wildcard arm should not have payload_src"),
+          .None => .Ok({}),
+        }
+        .Ok({})
+      },
+    )
     .test(
       "Case W: ctx := fresh; out := helper(ctx); g := out.f0 recovers g Unique",
       fn() {

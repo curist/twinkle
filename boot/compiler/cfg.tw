@@ -52,6 +52,10 @@ fn empty_block_facts() BlockFacts {
   }
 }
 
+// Set only for a match-arm block whose incoming pattern is a top-level
+// Variant(tag, [Var(v)]) single-payload binding; drives Phase 5 payload seeding.
+pub type PayloadSrc = .{ scrutinee: Int, variant_tag: Int, payload_index: Int, binding: Int }
+
 pub type CfgBlock = .{
   id: BlockId,
   name: String,
@@ -60,6 +64,9 @@ pub type CfgBlock = .{
   // borrows from the scrutinee, not values flowing in from a predecessor, so
   // backward liveness KILLS them at block entry (they never appear live-in).
   bound: Vector<Int>,
+  // Set only when this arm block's incoming pattern is a top-level single-Var
+  // variant payload binding; drives Phase 5 payload seeding.
+  payload_src: PayloadSrc?,
   instructions: Vector<CfgInstruction>,
   terminator: Terminator?,
   preds: Vector<CfgEdge>,
@@ -318,6 +325,7 @@ fn empty_block(id: BlockId, name: String, params: Vector<LocalId>) CfgBlock {
     name,
     params,
     bound: [],
+    payload_src: .None,
     instructions: [],
     terminator: .None,
     preds: [],
@@ -528,6 +536,32 @@ fn set_block_bound(ctx: BuildCtx, id: BlockId, bound: Vector<Int>) BuildCtx {
   ctx.replace_block(block)
 }
 
+fn set_block_payload_src(ctx: BuildCtx, id: BlockId, ps: PayloadSrc?) BuildCtx {
+  block := ctx.get_block(id)
+  block.payload_src = ps
+  ctx.replace_block(block)
+}
+
+// Only Variant(_, vid, [Var(v)]) with a single Var payload; else .None (under-claim).
+fn arm_payload_src(scrutinee: Atom, pattern: CorePattern) PayloadSrc? {
+  case atom_local(scrutinee) {
+    .Some(sid) => case pattern {
+      .Variant(_, vid, subs) => if subs.len() == 1 {
+        case subs[0] {
+          .Var(v) => .Some(
+            PayloadSrc.{ scrutinee: sid.id, variant_tag: vid.id, payload_index: 0, binding: v.id },
+          ),
+          _ => .None,
+        }
+      } else {
+        .None
+      },
+      _ => .None,
+    },
+    .None => .None,
+  }
+}
+
 fn build_match(
   ctx: BuildCtx,
   current: BlockId,
@@ -544,6 +578,7 @@ fn build_match(
     nb := ctx.new_block("match.arm.${i}", [])
     ctx = nb.ctx
     ctx = .set_block_bound(nb.id, pattern_binding_ids(arm.pattern))
+    ctx = .set_block_payload_src(nb.id, arm_payload_src(scrutinee, arm.pattern))
     arm_ids = .append(nb.id)
     edge_list = .append(CfgEdge.{ target: nb.id, args: [] })
   }
