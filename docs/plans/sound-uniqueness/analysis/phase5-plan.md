@@ -390,22 +390,38 @@ Wherever Phase 4 copies/projects/removes `field_own`, add the parallel `path_pro
   source's `field_own`. Also copy the source's `path_prov` to `result` on the move
   branch; the alias branch leaves `path_prov[result]` empty (result is Shared).
 - **`ARecordGet(base, f)`** (`:1107`): on **move** (last-use / quartet / transport),
-  the result takes the projected subtree — so also
-  `st.set_path_prov(result, project_path_prov(base.path_prov, .Field(f)))` and strip
-  `base`'s subtree with `remove_prefix_pp(base.path_prov, .Field(f))` (mirrors the
-  `field_own` `remove_prefix`). **Result shell prov (Blocker):** set it from the
-  **projected field's** provenance, not base's shell prov — i.e. `base.path_prov[.f]`'s
-  shell entry when present, else fall back to `prov_of(base)` (opaque base, e.g. a
-  param, has no `path_prov`, so this preserves today's behavior). On **borrow**,
-  result is Shared (no prov claim) and `base`'s `[.f]*` subtree is stripped from both
-  `field_own` and `path_prov`.
+  the result takes the projected subtree. Compute `proj_pp := project_path_prov(base.path_prov, .Field(f))`
+  (the `.{ shell, inner }` shape) and use **both** halves — `inner` for the result's
+  `path_prov`, `shell` for the result's shell prov:
 
-Add `project_path_prov(pp, seg)` and `remove_prefix_pp(pp, seg)` here (reused later
-by Task 13); they mirror `ff.project` / `ff.remove_prefix` over the `Dict<Int,
-Vector<Int>>` map. This step is still **inert for existing tests**: opaque param
-bases carry no `path_prov`, so the projected-field fallback keeps result prov
-unchanged; the refinement only bites once builders populate `path_prov` and a caller
-recovers a real record (Tasks 7–13).
+  ```tw
+  proj_pp := project_path_prov(st.path_prov_get(bid), ff.PathSeg.Field(f.id))
+  st = st.set_path_prov(result, proj_pp.inner)
+  // Result shell prov from the PROJECTED FIELD's provenance (not base's shell prov):
+  st = st.set_prov_st(result, case proj_pp.shell {
+    .Some(o) => o,
+    .None => prov_of(st.prov, base),   // opaque base (e.g. a param) -> today's behavior
+  })
+  st = st.set_path_prov(bid, remove_prefix_pp(st.path_prov_get(bid), ff.PathSeg.Field(f.id)))
+  ```
+
+  On **borrow**, result is Shared (no prov claim) and `base`'s `[.f]*` subtree is
+  stripped from both `field_own` and `path_prov`.
+
+Add here (reused by Task 13) the two shared helpers with a **single, standardized**
+shape:
+
+- `project_path_prov(pp, seg) .{ shell: Vector<Int>?, inner: Dict<Int, Vector<Int>> }`
+  — mirror `ff.project`: the `[seg]` entry becomes `shell`, each strict descendant
+  `[seg, X]` becomes `inner[X]`.
+- `remove_prefix_pp(pp, seg) Dict<Int, Vector<Int>>` — mirror `ff.remove_prefix`.
+
+Both consumers (this `ARecordGet` step and Task 13's `seed_payload_binding`) use the
+`.{ shell, inner }` return (`.inner` for the sub-map, `.shell` for shell prov). This
+step is still **inert for existing tests**: opaque param bases carry no `path_prov`,
+so the projected-field fallback keeps result prov unchanged; the refinement only
+bites once builders populate `path_prov` and a caller recovers a real record
+(Tasks 7–13).
 
 - [ ] **Step 4: Publish `path_prov` origins in `publish_local`**
 
@@ -1509,7 +1525,10 @@ fn seed_payload_binding(
       proj_pp := project_path_prov(src_pp, seg)                      // {shell: Vector<Int>?, inner}
       case proj.shell {
         .None => st,   // no owned payload fact -> leave binding as seeded (Unknown)
-        .Some(t) => if scrutinee_dead_after(blk, ps.scrutinee) {
+        // MOVE only when the scrutinee is NOT live-in at the arm: liveness live-in
+        // subsumes both a later read INSIDE this arm block and any live-out to a
+        // successor. If the scrutinee is live-in it is read somewhere -> borrow.
+        .Some(t) => if !live_contains_int(blk.entry.live, ps.scrutinee) {
           // MOVE: binding takes shell own + shell prov + inner field/prov facts.
           st = .set_own_st(ps.binding, own_of_tag(t))               // Unique first (choke order)
           shell_origins := case proj_pp.shell {
@@ -1534,22 +1553,37 @@ fn seed_payload_binding(
 }
 ```
 
-Add: `project_path_prov(pp, seg)` returning `.{ shell: Vector<Int>?, inner: Dict<Int, Vector<Int>> }` (mirror `ff.project`: `[seg]` → `shell`, strict descendants `[seg, X]` → `inner[X]`); `remove_prefix_pp(pp, seg)` (mirror `ff.remove_prefix`); and `field_map_of`/`pp_of` (map lookups with empty defaults). `scrutinee_dead_after(blk, id)` — see Task 11's strengthened dead-after check (terminator/edges **and** `blk.exit.live`). At each entry-state construction site, call `seed_payload_binding` with the arm's single predecessor's exit maps (`blk.preds[0].source` looked up in `fx.exits`/`fx.exit_field_own`/`fx.exit_path_prov`/`fx.exit_prov`). The `.Err`→`return` arm is a leaf and contributes nothing to any join.
+Add: `project_path_prov(pp, seg)` returning `.{ shell: Vector<Int>?, inner: Dict<Int, Vector<Int>> }` (mirror `ff.project`: `[seg]` → `shell`, strict descendants `[seg, X]` → `inner[X]`); `remove_prefix_pp(pp, seg)` (mirror `ff.remove_prefix`); and `field_map_of`/`pp_of` (map lookups with empty defaults). The move gate uses **liveness live-in** (`blk.entry.live`, filled by the liveness stage before the forward pass), which is the correct choice for an entry-point seed: it catches a later read of the scrutinee *inside* the arm as well as any live-out — unlike Task 11's transport recognizer, which scans mid-block and so uses live-**out**. At each entry-state construction site, look up the arm's **single predecessor** (a match arm has exactly one; assert `blk.preds.len() == 1`) and read its exit maps: the predecessor block id is `blk.preds[0].target.id` (in a `preds` edge, `CfgEdge.target` holds the *predecessor* id — `cfg.tw:368-372`), indexed into `fx.exits`/`fx.exit_field_own`/`fx.exit_path_prov`/`fx.exit_prov`. The `.Err`→`return` arm is a leaf and contributes nothing to any join.
 
 - [ ] **Step 4: Run — expect PASS (Case R move)**
 
 Run: `make quick-bundle-cli && target/twk run boot/tests/main.tw`
 Expected: the Ok-arm payload `v` recovers `.state` Unique (scrutinee `out` dead after the match ⇒ move); the Err/return arm does not corrupt the join.
 
-- [ ] **Step 5: Add the live-scrutinee borrow-demote negative test**
+- [ ] **Step 5: Add the live-scrutinee borrow-demote negative tests**
+
+Two shapes must borrow — the scrutinee read in a **later block**, and the scrutinee
+read **inside the arm** after the payload binding. The live-in gate must catch both
+(the in-arm read is the one a live-out-only check would miss).
 
 ```tw
 .test(
-  "live scrutinee: payload binding borrow-demotes (no double unique alias)",
+  "live scrutinee (later block): payload binding borrow-demotes",
   fn() {
-    // caller(acc): out=load(acc); case out {.Ok(v)=> use v ...}; ALSO read out after the match.
-    // out stays live past the match -> v must NOT be unique; both demoted.
+    // caller(acc): out=load(acc); case out {.Ok(v)=> use v ...}; then read out.f in a later block.
+    // out is live-out of the arm's predecessor -> live-in-ish -> v must NOT be unique.
     funcs := case_r_live_scrutinee_fixture()
+    f := analyzed_caller(funcs, "caller")
+    try assert.equal(caller_own(f, ok_arm_payload_local()), own_shared())
+    .Ok({})
+  },
+)
+.test(
+  "live scrutinee (in-arm read): reading out inside the Ok arm after binding borrows",
+  fn() {
+    // Ok arm body: v bound; then `record_get out.f1` INSIDE the same arm block.
+    // out is live-in at the arm -> move must not fire; v Shared.
+    funcs := case_r_inarm_read_fixture()
     f := analyzed_caller(funcs, "caller")
     try assert.equal(caller_own(f, ok_arm_payload_local()), own_shared())
     .Ok({})
@@ -1557,7 +1591,7 @@ Expected: the Ok-arm payload `v` recovers `.state` Unique (scrutinee `out` dead 
 )
 ```
 
-Run — expect PASS (borrow branch fires because `out` is live after the match).
+Run — expect PASS (both borrow; the second only passes because the gate is `blk.entry.live` live-in, not just live-out).
 
 - [ ] **Step 6: Add the tag-isolation negative**
 
@@ -1698,6 +1732,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - **No parameter `in_place_paths` / specialization** appears in any task (correctly Phase 6).
 - **Type consistency:** `PathSeg.Payload(Int,Int)`, `ReturnPathOwn.{via,field,own}`, `RetVia.Variant(Int,Int)`, `PayloadSrc.{scrutinee,variant_tag,payload_index,binding}` are used identically across tasks. `path_prov` is `Dict<Int, Dict<Int, Vector<Int>>>` throughout.
 - **Review-round-2 corrections (applied):** (1) `path_prov` mirrors `field_own` at every path — `graft_path_prov` is prefix-dependent (Field⇒rebase Elem/Val; Payload⇒rebase Field) and `AArrayLit` records `[Elem]` provenance (Task 3). (2) Match-arm seeding has an explicit **borrow-demote else branch** for a live scrutinee + a live-scrutinee negative test (Task 13). (3) SCC uses an **in-SCC suppression set** (order-independent), not a strip-and-final-pass; the recursive test asserts the specific under-approximation, not just determinism (Task 9). (4) `ret_paths` comparator returns `Order` via chained `Int.compare` on a canonical tuple, no packed keys (Task 6). (5) Caller gate **snapshots pre-call facts** before `params`/`ret` mutate `st` (Task 10). (6) Payload seeding is a **shared helper** applied at all entry-state sites (Task 13). (7) Co-Authored-By trailer is **conditional** per `AGENTS.md` (header).
+- **Review-round-5 corrections (applied):** (1) Payload-move gate uses liveness **live-in** (`blk.entry.live`), which catches a scrutinee read *inside* the arm (after the binding) as well as any live-out — with an in-arm-read negative test (Task 13). (2) Predecessor block id is `blk.preds[0].target.id` (in a `preds` edge `CfgEdge.target` holds the predecessor id, `cfg.tw:368-372`); asserts single-predecessor arm shape (Task 13). (3) `project_path_prov` has one standardized `.{ shell, inner }` return used by both `ARecordGet` (Task 3) and `seed_payload_binding` (Task 13).
 - **Review-round-4 corrections (applied):** (1) `.Field(f)`/`.Field(fid)` no longer shadows the CfgFunction `f` — `fn_params := f.params` is captured before the classification loop and passed to `classify_path_own` in both the Direct and Variant branches (Task 7/8). (2) Payload-move seeding sets the binding's **shell prov** from the projected payload shell provenance (Task 13). (3) Payload seeding reads the scrutinee's facts from the **predecessor (match-block) exit** maps (`fx.exit_path_prov`/`exit_field_own`/…), not the live-filtered arm entry, since a dead scrutinee isn't live-in; `FixResult` gains `exit_path_prov` (Task 9/13). (4) Transport `dead-after` requires **both** `!exit_mentions_local` and `!live_contains_int(blk.exit.live, out)` (live-out), with an `out`-read-in-a-later-block negative test (Task 11).
 - **Review-round-3 corrections (applied):** (1) `path_prov` threads through **projection & rebinding** — `AAssign`/`init_hinge` copy it with `field_own`, and `ARecordGet` projects/removes it and sets the result **shell prov from the projected field's provenance** (fallback to base prov for opaque param bases, keeping Task 3 inert); Task 13 payload move sets binding shell prov from the projected payload shell prov (Task 3, Task 13). (2) Variant payload **shell vs field ret-paths stay distinct** — the classifier emits both `V7[0]=fresh` and `V7[0].f0=from(p0)`; `record_ret_path` writes **exactly one key** per ret_path and never synthesizes a shell from a field path (Task 8, Task 10). (3) `classify_path_own` uses `Vector<LocalId>` (`CfgFunction.params`), not `Vector<Param>`, with a `param_index_of` over LocalIds (Task 7). (4) Design's SCC wording updated to the suppression-set mechanism (`phase5-design.md`). (5) Recursive fixture is a **two-return-site** `g` (recursive site sources `f0` from the recursive result; base site from `p0`) so the meet drops `[.f0]` while `[.f1]=fresh` survives (Task 9).
 - **No test committed RED:** Tasks 3–5 are one execution unit; Tasks 3–4 are behavior-preserving (suite stays green), and the shell/deep observable tests live in Task 5 where they go green after the Return-publish removal.
