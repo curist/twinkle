@@ -376,6 +376,33 @@ fn transport_ok(blk: CfgBlock, scan: BlockScan, i: Int, out_id: Int, fid: Int) B
   !exit_mentions_local(blk, out_id) and !live_contains_int(blk.exit.live, out_id)
 }
 
+// Debug-render companion to transport_ok: the concrete reason a transport
+// projection was NOT licensed (empty String = licensed). Mirrors transport_ok's
+// checks in the same order so the rendered verdict matches the analysis.
+fn transport_reason(blk: CfgBlock, scan: BlockScan, i: Int, out_id: Int, fid: Int) String {
+  insts := blk.instructions
+  for j in range_from(i + 1, insts.len()) {
+    op := insts[j].op
+    if is_record_get_of(op, out_id, fid) {
+      return "L${out_id}.f${fid} read twice"
+    }
+    is_sibling := case op {
+      .ARecordGet(base, f2, _) => atom_is_local(base, out_id) and f2.id != fid,
+      _ => false,
+    }
+    if is_sibling {} else if op_mentions_local(op, out_id) {
+      return "L${out_id} published"
+    }
+  }
+  if exit_mentions_local(blk, out_id) {
+    return "L${out_id} escapes on exit edge"
+  }
+  if live_contains_int(blk.exit.live, out_id) {
+    return "L${out_id} live-out"
+  }
+  ""
+}
+
 // Pre-scan a block's instruction list, returning the set of ARecordGet
 // result-locals whose projection is licensed to MOVE by the transport proof,
 // even though the base record stays live for SIBLING field reads.
@@ -1682,6 +1709,58 @@ fn update_field_verdict(
   "persistent(outer owned but inner shared)"
 }
 
+// Render the projected field's param-origin as `from pK` (K = the param's
+// local id, since seed_param_prov seeds prov[p] = [p]). Multi-origin joins
+// list all; a fresh/no-param projection renders `from(fresh)`.
+fn transport_origin_text(origins: Vector<Int>) String {
+  if origins.len() == 0 {
+    "from(fresh)"
+  } else {
+    parts := collect o in origins {
+      "p${o}"
+    }
+    "from ${parts.join(",")}"
+  }
+}
+
+// Transport verdict for an ARecordGet projection site: `move([.fK] from pJ)`
+// when the transport recognizer licensed the move, else `borrow(reason)` with a
+// concrete rejection reason. Debug-render only; mirrors transport_ok/transfer_op.
+fn transport_verdict(
+  pre: ForwardState,
+  blk: CfgBlock,
+  scan: BlockScan,
+  i: Int,
+  result: Int,
+  base: Atom,
+  f: Int,
+  transport: Dict<Int, Bool>,
+) String {
+  if transport_has(transport, result) {
+    origins := case atom_local_id(base) {
+      .Some(bid) => case project_path_prov(pre.path_prov_get(bid), ff.PathSeg.Field(f)).shell {
+        .Some(o) => o,
+        .None => prov_of(pre.prov, base),
+      },
+      .None => prov_of(pre.prov, base),
+    }
+    "L${result} = record_get ${atom_brief(base)}.f${f} transport=move([.f${f}] ${transport_origin_text(
+      origins,
+    )})"
+  } else {
+    reason := case atom_local_id(base) {
+      .Some(bid) => transport_reason(blk, scan, i, bid, f),
+      .None => "base not a local",
+    }
+    r := if reason == "" {
+      "not a transport site"
+    } else {
+      reason
+    }
+    "L${result} = record_get ${atom_brief(base)}.f${f} transport=borrow(${r})"
+  }
+}
+
 fn record_update_verdict(
   pre: ForwardState,
   result: Int,
@@ -1759,16 +1838,27 @@ fn block_verdicts(
     last := last_use_at(inst.op, scan.live_after[i])
     pre := st
     case inst.op {
-      .ARecordGet(base, f, _) => case atom_local_id(base) {
-        .Some(bid) => if is_last_use(last, bid)
-          or quartet_has(moves, inst.anf_local.id)
-          or transport_has(prep.transport, inst.anf_local.id) {
-          case pre.atom_field_own(base).project(.Field(f.id)).shell {
-            .Some(_) => moved_backing = mark_field_backing(moved_backing, bid, f.id),
-            .None => {},
-          }
-        },
-        .None => {},
+      .ARecordGet(base, f, _) => {
+        verdicts[inst.anf_local.id] = pre.transport_verdict(
+          blk,
+          scan,
+          i,
+          inst.anf_local.id,
+          base,
+          f.id,
+          prep.transport,
+        )
+        case atom_local_id(base) {
+          .Some(bid) => if is_last_use(last, bid)
+            or quartet_has(moves, inst.anf_local.id)
+            or transport_has(prep.transport, inst.anf_local.id) {
+            case pre.atom_field_own(base).project(.Field(f.id)).shell {
+              .Some(_) => moved_backing = mark_field_backing(moved_backing, bid, f.id),
+              .None => {},
+            }
+          },
+          .None => {},
+        }
       },
       _ => {},
     }
