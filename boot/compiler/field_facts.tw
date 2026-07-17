@@ -197,12 +197,13 @@ pub fn graft(fm: FieldMap, prefix: PathSeg, src: FieldMap) FieldMap {
         inner := path_of_key(k)
 
         // Only [Elem]/[Val] inner paths can be represented as [Field(f), Elem/Val]
-        // at Phase 4's depth-2 limit. A [Field(g)] path from a nested record cannot
-        // be represented and is silently dropped — sound under-claim.
+        // at Phase 4/5's depth-2 limit. [Field, Field] and [Field, Payload] are not
+        // representable and are silently dropped — sound under-claim.
         if inner.segs.len() == 1 {
           case inner.segs[0] {
-            .Field(_) => {},
-            seg => fm.paths[path_key(AccessPath.{ segs: [prefix, seg] })] = v,
+            .Elem => fm.paths[path_key(AccessPath.{ segs: [prefix, .Elem] })] = v,
+            .Val => fm.paths[path_key(AccessPath.{ segs: [prefix, .Val] })] = v,
+            _ => {}, // Field and Payload inners not representable under Field prefix
           }
         }
       }

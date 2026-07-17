@@ -6,7 +6,7 @@ use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
 use compiler.builder_family.{empty_builder_config}
 use compiler.builtins
 use compiler.cfg
-use compiler.core_ir.{FieldId, FuncId, GlobalId, LocalId, Param}
+use compiler.core_ir.{FieldId, FuncId, GlobalId, LocalId, Param, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
@@ -231,6 +231,30 @@ pub fn suite() runner.Suite {
         body: AnfExpr = .Let(
           lid(1),
           wrapper_record(lid(0)),
+          .Let(lid(2), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALitInt(0))),
+        )
+        s := summ1("f", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
+      "t1 cross-block variant-escape: fn f(x){ v:=Some(x); if c { global_set G=v }; 0 } -> p0 retain",
+      fn() {
+        // v (an AVariant wrapping x) is built in the entry block and published in a
+        // LATER block. Payload origins must survive the CFG edge (path_prov join)
+        // so x stays Retained. Guards adaptation-1: emptying shell prov + recording
+        // path_prov[Payload(tag,i)] for every payload, not only single-retention ones.
+        then_e: AnfExpr = .Let(
+          lid(3),
+          .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))),
+          .Atom(.ALitInt(0)),
+        )
+        else_e: AnfExpr = .Atom(.ALitInt(0))
+        variant_op: AnfOp = .AVariant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.ALocal(lid(0))])
+        body: AnfExpr = .Let(
+          lid(1),
+          variant_op,
           .Let(lid(2), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALitInt(0))),
         )
         s := summ1("f", 1, body)

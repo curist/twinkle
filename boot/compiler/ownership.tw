@@ -1071,12 +1071,13 @@ fn graft_path_prov(pp: Dict<Int, Vector<Int>>, prefix: ff.PathSeg, st: ForwardSt
         if inner.segs.len() == 1 {
           keep := case prefix {
             .Field(_) => case inner.segs[0] {
-              .Field(_) => false,
-              _ => true,
+              .Elem => true,
+              .Val => true,
+              _ => false, // [Field, Field] and [Field, Payload] are not representable
             },
             .Payload(_, _) => case inner.segs[0] {
               .Field(_) => true,
-              _ => false,
+              _ => false, // [Payload, Elem] and [Payload, Payload] are not representable
             },
             _ => false,
           }
@@ -1173,14 +1174,36 @@ fn transfer_op(
       }
       st.set_path_prov(result, pp)
     },
-    .AVariant(_, _, args) => {
-      origins: Vector<Int> = []
+    .AVariant(_, vid, args) => {
       for a in args {
-        origins = union_sorted(origins, prov_of(st.prov, a))
         st = .field_store(a, last)
       }
       st = .set_result(result, .Unique)
-      st.set_prov_st(result, origins)
+      st = .set_prov_st(result, []) // SHELL prov: fresh shell aliases no param
+
+      // Route each payload's origins into path_prov under [Payload(tag,i)] so
+      // whole-value publication still leaks the payload (publish_local cascades
+      // path_prov). Single-retention payloads ALSO graft their inner facts into
+      // field_own, in lockstep with graft_path_prov's [Payload(tag,i), inner] entries.
+      rf := ff.empty()
+      pp: Dict<Int, Vector<Int>> = Dict.new()
+      for a, i in args {
+        seg := ff.PathSeg.Payload(vid.id, i)
+        if st.single_retention(a, last, args) {
+          rf = .graft(seg, st.atom_field_own(a))
+          pp = graft_path_prov(pp, seg, st, a)
+        } else {
+          // shell-only origin of a non-owned payload: recorded for publication only
+          // (no field_own[Payload] entry; extra path_prov key is a sound over-publish).
+          pp[ff.path_key(ff.AccessPath.{ segs: [seg] })] = prov_of(st.prov, a)
+        }
+      }
+      st = if rf.is_empty() {
+        st
+      } else {
+        st.set_field_own(result, rf)
+      }
+      st.set_path_prov(result, pp)
     },
     .AArrayLit(elems) => {
       for a in elems {
