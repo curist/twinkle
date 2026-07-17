@@ -777,6 +777,9 @@ In `summarize_function`, the return loop (`:2318`–`:2352`) currently computes 
 
 ```tw
 // after computing `body`:
+// CAPTURE the CfgFunction's params BEFORE the loop — inside the loop `.Field(f)`
+// binds `f` to the FIELD id and would shadow the outer CfgFunction `f`.
+fn_params := f.params            // Vector<LocalId>
 rp_here: Vector<ReturnPathOwn> = []
 case atom_local_id(a) {
   .Some(aid) => {
@@ -787,8 +790,8 @@ case atom_local_id(a) {
       // Direct record field: single Field seg.
       if p.segs.len() == 1 {
         case p.segs[0] {
-          .Field(f) => case classify_path_own(pp, k, f.params) {
-            .Some(own) => rp_here = .append(ReturnPathOwn.{ via: .Direct, field: .Some(f), own }),
+          .Field(fid) => case classify_path_own(pp, k, fn_params) {
+            .Some(own) => rp_here = .append(ReturnPathOwn.{ via: .Direct, field: .Some(fid), own }),
             .None => {},
           },
           _ => {},
@@ -924,13 +927,15 @@ Expected: `ret_paths.len()` is 0 (variant paths not classified yet).
 In the same `for k in fm.sorted_keys()` loop, handle payload-prefixed paths (`Payload(tag,i)` shell and `Payload(tag,i), Field(f)`):
 
 ```tw
+// `fn_params` is captured once before the loop (Task 7); do NOT use `f.params`
+// here — `.Field(fid)` below binds the field id, and the outer `f` is the CfgFunction.
 if p.segs.len() >= 1 {
   case p.segs[0] {
     .Payload(tag, i) => {
       fld: Int? = if p.segs.len() == 2 {
-        case p.segs[1] { .Field(f) => .Some(f), _ => .None }
+        case p.segs[1] { .Field(fid) => .Some(fid), _ => .None }
       } else { .None }
-      case classify_path_own(pp, k, f.params) {
+      case classify_path_own(pp, k, fn_params) {
         .Some(own) => rp_here = .append(ReturnPathOwn.{ via: .Variant(tag, i), field: fld, own }),
         .None => {},
       }
@@ -1059,9 +1064,16 @@ if rounds >= cap {
 
 No separate "final settle pass" is needed: the worklist already computes each member's `ret_paths` under suppression, and `same_summary` (comparing `ret_paths` too) drives termination. Recursive-transport precision (a helper recovering its **own** return paths through the recursive edge) is intentionally under-approximated here and deferred to Phase 6.
 
-- [ ] **Step 4: Join `path_prov` alongside `field_own`**
+- [ ] **Step 4: Carry `path_prov` through the fixpoint exits + join it**
 
-`join_entry_field_own` (`:1776`) meets `field_own` per path. Add a sibling `join_entry_path_prov` that meets `path_prov` for the same locals (a path survives only if present on every processed pred; on conflict of origins, keep the **union** — conservative — but since a joined path must be `field_own`-Unique on all preds, and origins should match for a stable OwnedFromParam, take intersection-of-presence with union-of-origins so a divergent origin makes the path multi-origin ⇒ later dropped by `classify_path_own`). Wire it into the `ForwardState.{ … }` entry builder next to `entry_field`.
+First, make per-block `path_prov` exits available (parallel to `exit_field_own`).
+Add an `exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>` map to
+`FixResult` (`:1867`) and populate it in `run_fixpoint` from each block's exit
+`ForwardState.path_prov`, exactly as `exit_field_own` is populated. This is what
+`summarize_function`'s return classification and `seed_payload_binding` (Task 13)
+read as `fx.exit_path_prov`.
+
+Then join it: `join_entry_field_own` (`:1776`) meets `field_own` per path; add a sibling `join_entry_path_prov` that meets `path_prov` for the same locals — a path survives only if present on every processed pred; on origin **conflict** across preds keep the **union** (so a divergent origin makes the path multi-origin ⇒ later dropped by `classify_path_own`, sound). Wire it into the `ForwardState.{ … }` entry builder next to `entry_field`, then call `seed_payload_binding` (Task 13) right after so payload bindings are seeded from the predecessor exits on every entry construction.
 
 - [ ] **Step 5: Run — expect PASS + determinism**
 
@@ -1251,7 +1263,10 @@ Expected: `c` not Unique — Phase 4 whole-record last-use fails because `out` i
 
 - [ ] **Step 3: Add `recognize_transport_moves`**
 
-Add a block-local recognizer mirroring `recognize_quartet_moves` (which returns `Dict<Int,Bool>` of licensed `ARecordGet` result-locals). A projection `R = record_get out.f` is transport-move-licensed when, strictly after it in the block: `out.f` is not read again; `out` is not published/returned/stored/passed-to-call/aliased/used-by-terminator-or-successor-arg **except** for other `record_get out.g` sibling reads; and `out` is dead after the block (reuse `exit_mentions_local` `:210`). Model it on `quartet_ok` (`:242`) — scan forward, allow sibling `ARecordGet(out, g)` (g != f) and their pure downstream reads, reject any other mention of `out` or a second `record_get out.f`.
+Add a block-local recognizer mirroring `recognize_quartet_moves` (which returns `Dict<Int,Bool>` of licensed `ARecordGet` result-locals). A projection `R = record_get out.f` is transport-move-licensed when, strictly after it in the block: `out.f` is not read again; `out` is not published/returned/stored/passed-to-call/aliased/used-by-terminator-or-successor-arg **except** for other `record_get out.g` sibling reads; and `out` is **dead after the block**. Model it on `quartet_ok` (`:242`) — scan forward, allow sibling `ARecordGet(out, g)` (g != f) and their pure downstream reads, reject any other mention of `out` or a second `record_get out.f`.
+
+**Dead-after must check live-out, not only the terminator (Blocker).**
+`exit_mentions_local` (`:210`) only checks the terminator's direct uses and successor edge args — it does **not** catch `out` being read in a *later block* (live-through). If `out` is live-out of this block, a successor can observe R's in-place mutation, so the move is unsound. Require **both**: not mentioned at exit **and** not in `blk.exit.live` (the liveness live-out filled by the liveness stage):
 
 ```tw
 fn transport_ok(blk: CfgBlock, scan: BlockScan, i: Int, projected: Int, out_id: Int, fid: Int) Bool {
@@ -1269,7 +1284,9 @@ fn transport_ok(blk: CfgBlock, scan: BlockScan, i: Int, projected: Int, out_id: 
       return false   // any other mention of out fails
     }
   }
-  !exit_mentions_local(blk, out_id)
+  // dead after the block: not used by the terminator/edges AND not live-out
+  // (so no later block can read `out` and observe R's mutation).
+  !exit_mentions_local(blk, out_id) and !live_contains_int(blk.exit.live, out_id)
 }
 fn recognize_transport_moves(blk: CfgBlock, scan: BlockScan) Dict<Int, Bool> {
   out: Dict<Int, Bool> = Dict.new()
@@ -1305,7 +1322,7 @@ Add `transport_has` (twin of `quartet_has`). The move mechanics (transfer `[.f]*
 Run: `make quick-bundle-cli && target/twk run boot/tests/main.tw`
 Expected: sibling-read test passes; the earlier Case W tests still pass.
 
-- [ ] **Step 6: Add a borrow negative (published `out`)**
+- [ ] **Step 6: Add borrow negatives (published `out`, and `out` read in a later block)**
 
 ```tw
 .test(
@@ -1318,9 +1335,21 @@ Expected: sibling-read test passes; the earlier Case W tests still pass.
     .Ok({})
   },
 )
+.test(
+  "transport borrow: out live into a later block forces borrow (live-out check)",
+  fn() {
+    // caller(c): out=helper(c); g=record_get out.f0; assign c=g;
+    //   if cond { ... read out.f1 ... }   // out is LIVE-OUT of the projection block
+    // exit_mentions_local alone would miss this; the blk.exit.live check catches it.
+    funcs := case_w_out_liveout_fixture()
+    f := analyzed_caller(funcs, "caller")
+    try assert.equal(caller_own(f, 0), own_shared())   // move must NOT fire
+    .Ok({})
+  },
+)
 ```
 
-Run — expect PASS.
+Run — expect PASS (both borrow; the second only passes because of the `blk.exit.live` check).
 
 - [ ] **Step 7: fmt + lint + commit**
 
@@ -1447,32 +1476,57 @@ Expected: the payload-bound `v` is seeded Unknown (current behavior), so `.state
 
 - [ ] **Step 3: Add the shared `seed_payload_binding` helper (move **or** borrow-demote)**
 
-Mirror `ARecordGet`'s move-vs-borrow exactly (`ownership.tw:1107-1134`): the payload projection is a **move** only when the scrutinee is dead after the match; **otherwise it is a borrow that demotes both sides** — the binding becomes `Shared` (choke point clears its field facts) and the scrutinee's payload subtree is cleared. Seeding an owned binding while the scrutinee stays live would create two unique aliases of the same region — the Blocker.
+Mirror `ARecordGet`'s move-vs-borrow exactly (`ownership.tw:1107-1134`): the payload projection is a **move** only when the scrutinee is dead after the match; **otherwise it is a borrow that demotes both sides** — the binding becomes `Shared` (choke point clears its field facts) and the scrutinee's payload subtree is cleared. Seeding an owned binding while the scrutinee stays live would create two unique aliases of the same region.
+
+**Scrutinee facts come from the predecessor exit, not the arm entry (Blocker).** An
+arm block has exactly one predecessor — the match block — and empty edge args. The
+scrutinee is typically *dead after the match* (moved into the payload), so it is
+**not** live-in at the arm and its `field_own`/`path_prov`/`own`/`prov` are dropped
+from the live-filtered arm entry state. The seed must therefore read the scrutinee's
+facts from the **predecessor (match) block's exit facts**, which have them
+regardless of liveness. So the helper takes those exit maps.
+
+**Binding shell prov (Blocker).** On a move the binding also inherits the projected
+payload's **shell provenance** (the `[Payload(tag,i)]` `path_prov` entry), analogous
+to the Task 3 `ARecordGet` projected-shell rule; otherwise `return v` / publishing
+`v` after the match loses the shell-origin.
 
 ```tw
 // Applied at every per-block entry-state construction, after the base entry facts.
-fn seed_payload_binding(st: ForwardState, blk: CfgBlock, last: Vector<Int>) ForwardState {
+// pred_* are the match block's EXIT facts (arm's single predecessor).
+fn seed_payload_binding(
+  st: ForwardState, blk: CfgBlock, last: Vector<Int>,
+  pred_own: Dict<Int, Int>, pred_field: Dict<Int, ff.FieldMap>,
+  pred_pp: Dict<Int, Dict<Int, Vector<Int>>>, pred_prov: Dict<Int, Vector<Int>>,
+) ForwardState {
   case blk.payload_src {
     .None => st,
     .Some(ps) => {
       seg := ff.PathSeg.Payload(ps.variant_tag, ps.payload_index)
-      src_fields := st.field_own_get(ps.scrutinee)
-      proj := src_fields.project(seg)
+      src_fields := field_map_of(pred_field, ps.scrutinee)          // pred exit facts
+      src_pp := pp_of(pred_pp, ps.scrutinee)
+      proj := src_fields.project(seg)                                // {shell, fields}
+      proj_pp := project_path_prov(src_pp, seg)                      // {shell: Vector<Int>?, inner}
       case proj.shell {
         .None => st,   // no owned payload fact -> leave binding as seeded (Unknown)
         .Some(t) => if scrutinee_dead_after(blk, ps.scrutinee) {
-          // MOVE: binding takes the payload facts; remove the subtree from the scrutinee.
-          st = .set_own_st(ps.binding, own_of_tag(t))
+          // MOVE: binding takes shell own + shell prov + inner field/prov facts.
+          st = .set_own_st(ps.binding, own_of_tag(t))               // Unique first (choke order)
+          shell_origins := case proj_pp.shell {
+            .Some(o) => o,
+            .None => case pred_prov.get(ps.scrutinee) { .Some(o) => o, .None => [] },
+          }
+          st = .set_prov_st(ps.binding, shell_origins)              // BINDING SHELL PROV
           st = .set_field_own(ps.binding, proj.fields)
-          st = .set_path_prov(ps.binding, project_path_prov(st.path_prov_get(ps.scrutinee), seg))
-          st.set_field_own(ps.scrutinee, src_fields.remove_prefix(seg))
-             .set_path_prov(ps.scrutinee, remove_prefix_pp(st.path_prov_get(ps.scrutinee), seg))
+          st.set_path_prov(ps.binding, proj_pp.inner)
+          // scrutinee is dead-after -> nothing to demote (not read anywhere).
         } else {
-          // BORROW: aliasing both sides -> binding Shared (choke clears its facts),
-          // and clear the scrutinee's payload subtree too. Same as ARecordGet borrow.
+          // BORROW: scrutinee is live-in, so its facts are in `st` (via the join).
+          // Binding Shared; strip the scrutinee's payload subtree in the arm entry.
           st = .set_own_st(ps.binding, .Shared)
-          st.set_field_own(ps.scrutinee, src_fields.remove_prefix(seg))
-             .set_path_prov(ps.scrutinee, remove_prefix_pp(st.path_prov_get(ps.scrutinee), seg))
+          live_fields := st.field_own_get(ps.scrutinee)
+          st = .set_field_own(ps.scrutinee, live_fields.remove_prefix(seg))
+          st.set_path_prov(ps.scrutinee, remove_prefix_pp(st.path_prov_get(ps.scrutinee), seg))
         },
       }
     },
@@ -1480,7 +1534,7 @@ fn seed_payload_binding(st: ForwardState, blk: CfgBlock, last: Vector<Int>) Forw
 }
 ```
 
-Add `project_path_prov(pp, seg)` (mirror `ff.project`: the `[seg]` entry becomes the projected shell prov, strict descendants `[seg, X]` rebase to `[X]`) and `remove_prefix_pp(pp, seg)` (mirror `ff.remove_prefix`). `scrutinee_dead_after(blk, id)` reuses `exit_mentions_local` (`:210`) + the block's forward liveness (the scrutinee is dead after the match when it is not read by the terminator/edges and not live-out). Call `seed_payload_binding` at each entry-state site (Step-`Files` list). The `.Err`→`return` arm is a leaf and contributes nothing to any join.
+Add: `project_path_prov(pp, seg)` returning `.{ shell: Vector<Int>?, inner: Dict<Int, Vector<Int>> }` (mirror `ff.project`: `[seg]` → `shell`, strict descendants `[seg, X]` → `inner[X]`); `remove_prefix_pp(pp, seg)` (mirror `ff.remove_prefix`); and `field_map_of`/`pp_of` (map lookups with empty defaults). `scrutinee_dead_after(blk, id)` — see Task 11's strengthened dead-after check (terminator/edges **and** `blk.exit.live`). At each entry-state construction site, call `seed_payload_binding` with the arm's single predecessor's exit maps (`blk.preds[0].source` looked up in `fx.exits`/`fx.exit_field_own`/`fx.exit_path_prov`/`fx.exit_prov`). The `.Err`→`return` arm is a leaf and contributes nothing to any join.
 
 - [ ] **Step 4: Run — expect PASS (Case R move)**
 
@@ -1644,6 +1698,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - **No parameter `in_place_paths` / specialization** appears in any task (correctly Phase 6).
 - **Type consistency:** `PathSeg.Payload(Int,Int)`, `ReturnPathOwn.{via,field,own}`, `RetVia.Variant(Int,Int)`, `PayloadSrc.{scrutinee,variant_tag,payload_index,binding}` are used identically across tasks. `path_prov` is `Dict<Int, Dict<Int, Vector<Int>>>` throughout.
 - **Review-round-2 corrections (applied):** (1) `path_prov` mirrors `field_own` at every path — `graft_path_prov` is prefix-dependent (Field⇒rebase Elem/Val; Payload⇒rebase Field) and `AArrayLit` records `[Elem]` provenance (Task 3). (2) Match-arm seeding has an explicit **borrow-demote else branch** for a live scrutinee + a live-scrutinee negative test (Task 13). (3) SCC uses an **in-SCC suppression set** (order-independent), not a strip-and-final-pass; the recursive test asserts the specific under-approximation, not just determinism (Task 9). (4) `ret_paths` comparator returns `Order` via chained `Int.compare` on a canonical tuple, no packed keys (Task 6). (5) Caller gate **snapshots pre-call facts** before `params`/`ret` mutate `st` (Task 10). (6) Payload seeding is a **shared helper** applied at all entry-state sites (Task 13). (7) Co-Authored-By trailer is **conditional** per `AGENTS.md` (header).
+- **Review-round-4 corrections (applied):** (1) `.Field(f)`/`.Field(fid)` no longer shadows the CfgFunction `f` — `fn_params := f.params` is captured before the classification loop and passed to `classify_path_own` in both the Direct and Variant branches (Task 7/8). (2) Payload-move seeding sets the binding's **shell prov** from the projected payload shell provenance (Task 13). (3) Payload seeding reads the scrutinee's facts from the **predecessor (match-block) exit** maps (`fx.exit_path_prov`/`exit_field_own`/…), not the live-filtered arm entry, since a dead scrutinee isn't live-in; `FixResult` gains `exit_path_prov` (Task 9/13). (4) Transport `dead-after` requires **both** `!exit_mentions_local` and `!live_contains_int(blk.exit.live, out)` (live-out), with an `out`-read-in-a-later-block negative test (Task 11).
 - **Review-round-3 corrections (applied):** (1) `path_prov` threads through **projection & rebinding** — `AAssign`/`init_hinge` copy it with `field_own`, and `ARecordGet` projects/removes it and sets the result **shell prov from the projected field's provenance** (fallback to base prov for opaque param bases, keeping Task 3 inert); Task 13 payload move sets binding shell prov from the projected payload shell prov (Task 3, Task 13). (2) Variant payload **shell vs field ret-paths stay distinct** — the classifier emits both `V7[0]=fresh` and `V7[0].f0=from(p0)`; `record_ret_path` writes **exactly one key** per ret_path and never synthesizes a shell from a field path (Task 8, Task 10). (3) `classify_path_own` uses `Vector<LocalId>` (`CfgFunction.params`), not `Vector<Param>`, with a `param_index_of` over LocalIds (Task 7). (4) Design's SCC wording updated to the suppression-set mechanism (`phase5-design.md`). (5) Recursive fixture is a **two-return-site** `g` (recursive site sources `f0` from the recursive result; base site from `p0`) so the meet drops `[.f0]` while `[.f1]=fresh` survives (Task 9).
 - **No test committed RED:** Tasks 3–5 are one execution unit; Tasks 3–4 are behavior-preserving (suite stays green), and the shell/deep observable tests live in Task 5 where they go green after the Return-publish removal.
 - **Fixture helpers** (`case_w_fixture`, `case_r_fixture`, `case_r_live_scrutinee_fixture`, `recursive_transport_fixture`, etc.) are named per task; implement each in the suite when first referenced, mirroring `cfg_summary_suite.tw`'s ANF-builder style. Because they are prose-specified rather than fully coded, the executor builds them from that harness — the one deliberate concession to plan length.
