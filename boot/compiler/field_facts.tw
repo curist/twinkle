@@ -9,7 +9,7 @@
 //! are ever stored; absence of a key means "no claim" (tag is Int for symmetry
 //! with ownership.own, always 0/Unique in Phase 4).
 
-pub type PathSeg = { Field(Int), Elem, Val }
+pub type PathSeg = { Field(Int), Elem, Val, Payload(Int, Int) }
 
 // segs == [] is the shell (the [] fact); it is NEVER stored in a FieldMap.
 pub type AccessPath = .{ segs: Vector<PathSeg> }
@@ -56,6 +56,10 @@ pub fn seg_eq(a: PathSeg, b: PathSeg) Bool {
       .Field(fb) => fa == fb,
       _ => false,
     },
+    .Payload(ta, ia) => case b {
+      .Payload(tb, ib) => ta == tb and ia == ib,
+      _ => false,
+    },
   }
 }
 
@@ -79,6 +83,26 @@ pub fn path_eq(a: AccessPath, b: AccessPath) Bool {
 //   [Field(f), Val]   -> 8 + f*4 + 2
 // Field ids are non-negative; the low 2 bits above 8 encode the optional
 // trailing collection seg. Pure inverses -> no interned side table.
+//
+// Phase 5 payload paths use a disjoint NEGATIVE range via O(1) fixed-width
+// bit-packing. Each component is 20 bits (2^20 = 1048576, 2^40 = 1099511627776);
+// 20 bits is ample because tag/index are small per-type indices (VariantId.id and
+// a positional payload index), so packing never overflows i64 and needs no search.
+// fieldslot = 0 means no trailing Field (the payload shell); 1+f means Field(f).
+// Packed nonneg -> disjoint NEGATIVE key (offset by 1 so 0/positive keys are free).
+fn payload_key(tag: Int, index: Int, fieldslot: Int) Int {
+  if tag < 0
+    or tag >= 1048576
+    or index < 0
+    or index >= 1048576
+    or fieldslot < 0
+    or fieldslot >= 1048576 {
+    error("field_facts: payload key component out of 20-bit range")
+  }
+  packed := tag * 1099511627776 + index * 1048576 + fieldslot
+  0 - (packed + 1)
+}
+
 pub fn path_key(p: AccessPath) Int {
   segs := p.segs
   cond {
@@ -87,12 +111,17 @@ pub fn path_key(p: AccessPath) Int {
       .Elem => 1,
       .Val => 2,
       .Field(f) => 8 + f * 4,
+      .Payload(tag, i) => payload_key(tag, i, 0),
     },
     segs.len() == 2 => case segs[0] {
       .Field(f) => case segs[1] {
         .Elem => 8 + f * 4 + 1,
         .Val => 8 + f * 4 + 2,
         _ => error("field_facts: nested seg must be Elem/Val"),
+      },
+      .Payload(tag, i) => case segs[1] {
+        .Field(f) => payload_key(tag, i, 1 + f),
+        _ => error("field_facts: payload nested seg must be Field in Phase 5"),
       },
       _ => error("field_facts: nested path must start at a field in Phase 4"),
     },
@@ -113,6 +142,17 @@ pub fn path_of_key(k: Int) AccessPath {
         sub == 1 => field_elem(f),
         sub == 2 => field_val(f),
         _ => error("field_facts: bad path key ${k}"),
+      }
+    },
+    k < 0 => {
+      packed := 0 - k - 1
+      fieldslot := packed % 1048576
+      index := packed / 1048576 % 1048576
+      tag := packed / 1099511627776
+      if fieldslot == 0 {
+        AccessPath.{ segs: [.Payload(tag, index)] }
+      } else {
+        AccessPath.{ segs: [.Payload(tag, index), .Field(fieldslot - 1)] }
       }
     },
     _ => error("field_facts: bad path key ${k}"),
@@ -168,6 +208,18 @@ pub fn graft(fm: FieldMap, prefix: PathSeg, src: FieldMap) FieldMap {
       }
       fm
     },
+    .Payload(_, _) => {
+      for k, v in src.paths {
+        inner := path_of_key(k)
+        if inner.segs.len() == 1 {
+          case inner.segs[0] {
+            .Field(_) => fm.paths[path_key(AccessPath.{ segs: [prefix, inner.segs[0]] })] = v,
+            _ => {}, // Elem/Val/Payload inners not representable at depth 2 — sound under-claim
+          }
+        }
+      }
+      fm
+    },
     _ => fm,
   }
 }
@@ -175,6 +227,7 @@ pub fn graft(fm: FieldMap, prefix: PathSeg, src: FieldMap) FieldMap {
 // Projection inverse: gather every path under `prefix`, stripped of it. The
 // [prefix] fact (if present) becomes the projected value's shell; each strict
 // descendant [prefix, X] becomes an inner [X]. Siblings are ignored.
+// Payload prefixes are supported: seg_eq handles Payload structurally.
 pub type Projection = .{ shell: Int?, fields: FieldMap }
 
 pub fn project(fm: FieldMap, prefix: PathSeg) Projection {
@@ -194,6 +247,7 @@ pub fn project(fm: FieldMap, prefix: PathSeg) Projection {
 }
 
 // Drop the entire [prefix]* subtree (including [prefix] itself); keep siblings.
+// Payload prefixes are supported: seg_eq handles Payload structurally.
 pub fn remove_prefix(fm: FieldMap, prefix: PathSeg) FieldMap {
   out := empty()
   for k, v in fm.paths {

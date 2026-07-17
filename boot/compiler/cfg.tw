@@ -925,6 +925,7 @@ fn path_seg_text(seg: ff.PathSeg) String {
     .Field(f) => ".f${f}",
     .Elem => "Elem",
     .Val => "Val",
+    .Payload(tag, i) => "Payload(${tag},${i})",
   }
 }
 

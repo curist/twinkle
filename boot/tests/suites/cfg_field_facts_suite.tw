@@ -972,6 +972,33 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "payload path_key round-trips and stays disjoint from field keys",
+      fn() {
+        // [Payload(tag,i)] and [Payload(tag,i), Field(f)] over a spread.
+        for tag in range(3) {
+          for i in range(2) {
+            p0 := ff.AccessPath.{ segs: [.Payload(tag, i)] }
+            k0 := ff.path_key(p0)
+            try assert.equal(k0 < 0, true) // payload keys are negative
+            try assert.equal(ff.path_eq(ff.path_of_key(k0), p0), true)
+            for f in range(3) {
+              p1 := ff.AccessPath.{ segs: [.Payload(tag, i), .Field(f)] }
+              k1 := ff.path_key(p1)
+              try assert.equal(ff.path_eq(ff.path_of_key(k1), p1), true)
+
+              // disjoint from a positive field key with the same f
+              fk := ff.path_key(ff.field_path(f))
+              try assert.equal(k1 == fk, false)
+
+              // the payload shell key and its field-child key are distinct
+              try assert.equal(k0 == k1, false)
+            }
+          }
+        }
+        .Ok({})
+      },
+    )
+    .test(
       "downward-closed: field facts never outlive a Unique shell (Acceptance 6)",
       fn() {
         b := b_reg()
