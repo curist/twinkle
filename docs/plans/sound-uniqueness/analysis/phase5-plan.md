@@ -8,7 +8,7 @@
 
 **Tech Stack:** Twinkle (`.tw`) boot compiler. Build: `make bundle-cli` (→ `target/twk`) or `cargo run --release -- …` for stage0. Boot tests: `target/twk run boot/tests/main.tw`. Ownership modules: `boot/compiler/{field_facts,ownership,summary,cfg}.tw`. Unit suites: `boot/tests/suites/cfg_*_suite.tw`.
 
-**Conventions for every task:** after editing a `.tw` file run `target/twk fmt <file>` then `target/twk lint <entry>`. Run the boot suite with `target/twk run boot/tests/main.tw`. Commit messages: imperative subject, what/why body, no metrics; add the `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` trailer. Heavy verification (`make stage2`, `make bundle-cli`, full suite) runs **sequentially, never backgrounded**.
+**Conventions for every task:** after editing a `.tw` file run `target/twk fmt <file>` then `target/twk lint <entry>`. Run the boot suite with `target/twk run boot/tests/main.tw`. Commit messages: imperative subject, what/why body, no metrics. **Co-Authored-By trailer:** per `AGENTS.md`, add `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` **only when the commit is actually authored through Claude tooling in the executing session** — the example commits below include it because this plan is expected to be executed that way; drop it if that is not accurate for your session. Heavy verification (`make stage2`, `make bundle-cli`, full suite) runs **sequentially, never backgrounded**.
 
 **Build note:** the ownership modules are embedded into the self-hosted compiler, so a source change is only exercised after rebuilding `target/twk`. During TDD, rebuild the CLI once per task before running the suite: `make quick-bundle-cli` if `target/boot.wasm` is fresh, else `make bundle-cli`. Where a task says "run the suite," it means: rebuild the CLI, then `target/twk run boot/tests/main.tw`.
 
@@ -272,46 +272,29 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ### Task 3: Split shell vs field provenance in aggregate builders
 
-This flips a returned wrapper param from `Retained` to `Borrowed` (the Blocker 3 groundwork combined with Task 5), and makes multi-accumulator attribution possible.
+This is the Blocker 3 groundwork; the observable `Retained`→`Borrowed` flip and the
+`ret=OwnedFresh` classification only land once Task 5 removes the return-publish, so
+**the shell/deep observable tests live in Task 5, not here.** Task 3 is a
+behavior-preserving refactor: with the return still publishing, `publish_local` now
+cascades `path_prov` origins, so a returned wrapper's param stays `Retained` exactly
+as today — the existing suite must stay **green**.
+
+> **Execution unit:** Tasks 3, 4, and 5 form one unit. Implement 3 → 4 → 5, running
+> the suite after each (Tasks 3–4 keep it green; Task 5 re-baselines and adds the
+> shell/deep tests). If your workflow demands a failing test per commit, treat 3–5
+> as a single commit; otherwise commit each with the "green, no regression" gate for
+> 3–4 and the re-baseline for 5.
 
 **Files:**
 - Modify: `boot/compiler/ownership.tw` (`ARecord` transfer `:1048`, `AArrayLit` `:1082`, `ARecordUpdate` `:1141`, `publish_local` `:689`)
-- Test: `boot/tests/suites/cfg_summary_suite.tw`
+- Test: none new in Task 3 (regression only; the split's observable tests are Task 5)
 
-- [ ] **Step 1: Write the failing per-path-prov test**
-
-Add a helper to `cfg_summary_suite.tw` that reads a summary's field-level classification is out of scope here; instead assert the intraprocedural split via a returned record's future `ret_paths` — but `ret_paths` doesn't exist yet. So test the *observable* consequence now: a fresh two-field record's shell `prov` no longer conflates origins. Expose a tiny test hook. Add to `cfg_summary_suite.tw`:
-
-```tw
-.test(
-  "fresh record shell prov is empty (not unioned field origins)",
-  fn() {
-    // fn f(x, y) { let r = Record{f0:x, f1:y}; r }  => r's SHELL aliases no param.
-    b := b_reg()
-    two_field := AnfOp.ARecord(TypeId.{ id: 0 }, [
-      .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) },
-      .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(1)) },
-    ])
-    body: AnfExpr = .Let(lid(2), two_field, .Atom(.ALocal(lid(2))))
-    s := summ1("f", 2, body)
-    // With shell/field prov split + Task 5, a returned fresh wrapper does NOT
-    // alias params at the shell level: ret is OwnedFresh (tag 0), not MayAliasParams.
-    try assert.equal(ret_tag(s.ret), 0)
-    .Ok({})
-  },
-)
-```
-
-Note this test also depends on Task 5 (return no longer publishes) to fully pass; mark it `// depends: Task 3 + Task 5` and expect it RED until Task 5. If you prefer strict per-task green, gate the assertion behind Task 5 by first asserting only the field-prov map here via a dedicated internal accessor. Simplest path: keep the assertion, let it go green at Task 5, and in Task 3 assert the weaker invariant below.
-
-Weaker Task-3-local assertion (add as its own test, must go green in Task 3): after building the record, the record local's `prov` is empty. Add an internal test entry point `pub fn debug_shell_prov(...)` is overkill — instead assert via `MayAliasParams` disappearing is deferred to Task 5. **For Task 3, write only the code and rely on Task 5's test**; add the test above now and expect RED until Task 5.
-
-- [ ] **Step 2: Run — expect RED (still MayAliasParams)**
+- [ ] **Step 1: (no new test) Confirm the current suite is green as a baseline**
 
 Run: `make quick-bundle-cli && target/twk run boot/tests/main.tw`
-Expected: the new test fails (`ret_tag` is 1 = MayAliasParams) because the return still publishes and shell prov still conflates.
+Expected: green. Task 3 must preserve this (the flip is Task 5).
 
-- [ ] **Step 3: Route field origins to `path_prov`, empty the shell prov**
+- [ ] **Step 2: Route field origins to `path_prov`, empty the shell prov**
 
 In `ARecord` (`:1048`) replace the `set_prov_st(result, origins)` (which unions field origins) with shell-empty + per-field path_prov. Current code computes `origins` and grafts `field_own`; add path_prov grafting in the same loop and set shell prov empty:
 
@@ -341,22 +324,32 @@ In `ARecord` (`:1048`) replace the `set_prov_st(result, origins)` (which unions 
 
 Add the `graft_path_prov` helper (near the aggregate builders) that mirrors `ff.graft` for provenance — it writes the value's shell prov at `[seg]` (as `Some([...])`, possibly `[]` for fresh) and rebases the value's inner `path_prov` under `seg`:
 
+`graft_path_prov` must mirror `ff.graft` **exactly**, prefix-dependently, so
+`path_prov` never has a path `field_own` lacks or vice-versa (design invariant,
+`phase5-design.md`): under a `Field` prefix, rebase the value's `Elem`/`Val` inner
+paths and drop unrepresentable nested `Field`; under a `Payload` prefix, rebase the
+value's `Field` inner path and drop `Elem`/`Val`. The `[prefix]` entry is always
+the value's shell prov (empty vector = proven fresh):
+
 ```tw
-// Copy `src`'s provenance under `prefix` into `pp`: the [prefix] entry is the
-// value's SHELL prov (empty vector = proven fresh); inner Field paths rebase.
+// Copy `src`'s provenance under `prefix` into `pp`, mirroring ff.graft's
+// representable-inner rules so pp and field_own stay in lockstep.
 fn graft_path_prov(pp: Dict<Int, Vector<Int>>, prefix: ff.PathSeg, st: ForwardState, a: Atom) Dict<
   Int, Vector<Int>,
 > {
-  shell_origins := prov_of(st.prov, a)   // [] when the value is fresh
-  pp[ff.path_key(ff.AccessPath.{ segs: [prefix] })] = shell_origins
+  pp[ff.path_key(ff.AccessPath.{ segs: [prefix] })] = prov_of(st.prov, a) // [] = fresh
   case atom_local_id(a) {
     .Some(sid) => {
       for k, v in st.path_prov_get(sid) {
         inner := ff.path_of_key(k)
         if inner.segs.len() == 1 {
-          case inner.segs[0] {
-            .Field(_) => pp[ff.path_key(ff.AccessPath.{ segs: [prefix, inner.segs[0]] })] = v,
-            _ => {},
+          keep := case prefix {
+            .Field(_) => case inner.segs[0] { .Field(_) => false, _ => true },   // rebase Elem/Val
+            .Payload(_, _) => case inner.segs[0] { .Field(_) => true, _ => false }, // rebase Field
+            _ => false,
+          }
+          if keep {
+            pp[ff.path_key(ff.AccessPath.{ segs: [prefix, inner.segs[0]] })] = v
           }
         }
       }
@@ -367,29 +360,26 @@ fn graft_path_prov(pp: Dict<Int, Vector<Int>>, prefix: ff.PathSeg, st: ForwardSt
 }
 ```
 
-Apply the same shell-empty + `graft_path_prov` treatment to `AArrayLit` (`:1082` — shell prov `[]`; only `[Elem]` when all-owned, so path_prov gets `[Elem]` = union of elem origins if you choose to track it, else leave empty for Elem and rely on field_own only — Elem paths are not `ret_paths` candidates in Phase 5, so **leave AArrayLit path_prov empty**, just set shell prov `[]`).
+For `AArrayLit` (`:1082`): set shell prov `[]`, and **when the all-owned rule sets
+`[Elem]:Unique`, record `path_prov[Elem]` too** — the union of the element atoms'
+origins (empty ⇒ proven-fresh elements). This preserves the invariant "every unique
+`field_own` path has a `path_prov` entry," so publishing the array leaks any param
+held in an element even though `[Elem]` is not a `ret_paths` candidate:
+
+```tw
+// inside the all_owned branch, alongside set_field_own(result, [Elem]:Unique):
+elem_origins: Vector<Int> = []
+for e in elems { elem_origins = union_sorted(elem_origins, prov_of(st.prov, e)) }
+epp: Dict<Int, Vector<Int>> = Dict.new()
+epp[ff.path_key(ff.elem_path())] = elem_origins
+st = st.set_path_prov(result, epp)
+```
 
 For `ARecordUpdate` (`:1141`): shell prov should follow the base's shell prov (a rebuilt shell of a param-aliased record still aliases that param at the shell level only via base) — keep `origins := prov_of(st.prov, base)` for the shell (drop the `v` union), and set `path_prov[result]` = base's path_prov with `[.f]*` removed then `graft_path_prov([.f], v)` when single-retention.
 
-- [ ] **Step 4: Publish `path_prov` origins in `publish_local`**
+- [ ] **Step 3: Publish `path_prov` origins in `publish_local`**
 
-In `publish_local` (`:689`), after publishing `prov` origins, also publish path_prov origins:
-
-```tw
-fn publish_local(st: ForwardState, id: Int) ForwardState {
-  st = .set_own_st(id, .Shared)
-  case st.prov.get(id) {
-    .Some(origins) => for o in origins { st = .set_own_st(o, .Shared) },
-    .None => {},
-  }
-  for k, os in st.path_prov_get(id) {
-    for o in os { st = .set_own_st(o, .Shared) }
-  }
-  st
-}
-```
-
-Note `set_own_st(id, .Shared)` clears `path_prov[id]` via the choke point — capture the origins **before** clearing. Reorder so the path_prov publish reads a local copy captured at entry:
+In `publish_local` (`:689`), also publish path_prov origins. `set_own_st(id, .Shared)` clears `path_prov[id]` via the choke point, so **capture the map before** clearing:
 
 ```tw
 fn publish_local(st: ForwardState, id: Int) ForwardState {
@@ -404,17 +394,17 @@ fn publish_local(st: ForwardState, id: Int) ForwardState {
 }
 ```
 
-- [ ] **Step 5: Run — the Task-3 code compiles; the split test stays RED until Task 5**
+- [ ] **Step 4: Run — expect GREEN (behavior-preserving refactor)**
 
 Run: `make quick-bundle-cli && target/twk run boot/tests/main.tw`
-Expected: everything green **except** the `ret is OwnedFresh` test (still RED — return publish remains). All previously-green tests stay green (shell-prov emptying alone doesn't change escape while the return still publishes, because publish now cascades path_prov). Confirm no *other* regression.
+Expected: the **whole suite stays green**. With the return still publishing, `publish_local` now cascades `path_prov`, so a returned wrapper's param remains `Retained` exactly as before — no regression. The observable flip is Task 5. If any test regresses (other than an intended Task-5 re-baseline, which is not touched yet), stop and investigate.
 
-- [ ] **Step 6: fmt + lint + commit**
+- [ ] **Step 5: fmt + lint + commit**
 
 ```bash
-target/twk fmt boot/compiler/ownership.tw boot/tests/suites/cfg_summary_suite.tw
+target/twk fmt boot/compiler/ownership.tw
 target/twk lint boot/main.tw
-git add boot/compiler/ownership.tw boot/tests/suites/cfg_summary_suite.tw
+git add boot/compiler/ownership.tw
 git commit -m "ownership: split shell vs field provenance in aggregate builders
 
 A freshly-constructed record/variant/array now carries an empty shell prov and
@@ -428,34 +418,20 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ### Task 4: `AVariant` grafts payload facts + path_prov
 
+Part of the Tasks 3–5 execution unit. The observable variant-payload fact is
+verified by Task 8's `ret_paths` test (which needs Task 5's return semantics + the
+classifier); Task 4 is the transfer change plus a green regression check.
+
 **Files:**
 - Modify: `boot/compiler/ownership.tw` (`AVariant` transfer `:1073`)
-- Test: `boot/tests/suites/cfg_field_facts_suite.tw` or `cfg_summary_suite.tw`
+- Test: none new in Task 4 (regression only; the variant `ret_paths` test is Task 8)
 
-- [ ] **Step 1: Write the failing test — a variant over an owned payload carries `[Payload(tag,0)]`**
-
-Build `fn f(x) { let r = Variant#tag0(x); r }` and assert (via a new internal helper that reads the returned local's field_own — reuse the summary path once Task 7 exists). For Task 4, assert the *intraprocedural* fact by extending `analyzed_caller`-style access is heavy; instead assert through the eventual `ret_paths` in Task 8. **For Task 4, write the code and add a focused field_facts-level test** that the `AVariant` transfer produces `[Payload(tag,i)]` by unit-testing a tiny driver. Simplest: defer the assertion to Task 8's variant `ret_paths` test and here assert only that building a variant does not crash and the shell stays Unique:
-
-```tw
-.test(
-  "variant with single-retention payload keeps shell Unique",
-  fn() {
-    b := b_reg()
-    vop := AnfOp.AVariant(TypeId.{ id: 0 }, VariantId.{ id: 5 }, [.ALocal(lid(0))])
-    body: AnfExpr = .Let(lid(1), vop, .Atom(.ALocal(lid(1))))
-    s := summ1("f", 1, body)
-    try assert.equal(ret_tag(s.ret), 0) // OwnedFresh shell (depends on Task 5 for publish)
-    .Ok({})
-  },
-)
-```
-
-- [ ] **Step 2: Run — expect RED (until Task 5) or compile-checked now**
+- [ ] **Step 1: (no new test) Baseline is green**
 
 Run: `make quick-bundle-cli && target/twk run boot/tests/main.tw`
-Expected: RED on the `ret_tag == 0` assertion until Task 5; no crash.
+Expected: green (carried from Task 3).
 
-- [ ] **Step 3: Graft payload facts in `AVariant`**
+- [ ] **Step 2: Graft payload facts in `AVariant`**
 
 Replace the `AVariant` transfer (`:1073`) — keep shell Unique, empty shell prov, and graft each single-retention payload under `[Payload(vid.id, i)]`:
 
@@ -479,17 +455,17 @@ Replace the `AVariant` transfer (`:1073`) — keep shell Unique, empty shell pro
 }
 ```
 
-- [ ] **Step 4: Run — code compiles; assertion still gated on Task 5**
+- [ ] **Step 3: Run — expect GREEN (behavior-preserving)**
 
 Run: `make quick-bundle-cli && target/twk run boot/tests/main.tw`
-Expected: no crash; the `ret_tag == 0` test stays RED until Task 5.
+Expected: green (return still publishes, so a returned variant still cascades its payload origins). No regression.
 
-- [ ] **Step 5: fmt + lint + commit**
+- [ ] **Step 4: fmt + lint + commit**
 
 ```bash
-target/twk fmt boot/compiler/ownership.tw boot/tests/suites/cfg_field_facts_suite.tw
+target/twk fmt boot/compiler/ownership.tw
 target/twk lint boot/main.tw
-git add boot/compiler/ownership.tw boot/tests/suites/cfg_field_facts_suite.tw
+git add boot/compiler/ownership.tw
 git commit -m "ownership: AVariant carries tagged payload facts + path_prov
 
 An AVariant(tag, [payload...]) result now grafts single-retention payload
@@ -528,10 +504,36 @@ The existing test `t1 aggregate-escape: fn f(x) { Wrapper.{x} } -> p0 retain (bl
 
 Audit the rest of `cfg_summary_suite.tw` for any test asserting `Retained`/`MayAliasParams` that depended on the return-publish (e.g. `fn id(x){x}` retain expectations). A genuine leak (`global_set G0 = x`) must STAY `Retained` — do not change those. Update only return-hand-off cases.
 
+Also add the shell/deep observable tests that the Task 3–4 changes enable once the return-publish is gone (these were deliberately deferred out of Tasks 3/4 so no test is committed RED):
+
+```tw
+.test(
+  "fresh two-field record: ret = OwnedFresh (shell), not MayAliasParams",
+  fn() {
+    two := AnfOp.ARecord(TypeId.{ id: 0 }, [
+      .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) },
+      .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(1)) },
+    ])
+    s := summ1("f", 2, .Let(lid(2), two, .Atom(.ALocal(lid(2)))))
+    try assert.equal(ret_tag(s.ret), 0)       // OwnedFresh shell
+    .Ok({})
+  },
+)
+.test(
+  "returned variant with single-retention payload: ret = OwnedFresh shell",
+  fn() {
+    vop := AnfOp.AVariant(TypeId.{ id: 0 }, VariantId.{ id: 5 }, [.ALocal(lid(0))])
+    s := summ1("f", 1, .Let(lid(1), vop, .Atom(.ALocal(lid(1)))))
+    try assert.equal(ret_tag(s.ret), 0)
+    .Ok({})
+  },
+)
+```
+
 - [ ] **Step 2: Run — expect RED (return still publishes)**
 
 Run: `make quick-bundle-cli && target/twk run boot/tests/main.tw`
-Expected: the re-baselined tests and the Task-3/Task-4 `ret_tag == 0` tests fail.
+Expected: the re-baselined escape test and the two new `ret == OwnedFresh` tests fail (`ret` is still `MayAliasParams`/param still `Retained` while the return publishes).
 
 - [ ] **Step 3: Remove the Return publish**
 
@@ -608,13 +610,28 @@ fn ret_own_eq(a: ownership.ReturnOwn, b: ownership.ReturnOwn) Bool {
     .OwnedFromParam(ka) => case b { .OwnedFromParam(kb) => ka == kb, _ => false },
   }
 }
-fn via_rank(v: ownership.RetVia) Int {
-  case v { .Direct => -1, .Variant(t, i) => t * 4096 + i }
+// Canonical tuple ordering (no lossy numeric packing): (via-kind, tag, index,
+// field, own). Each component uses Int.compare, which returns Order.
+fn via_kind(v: ownership.RetVia) Int { case v { .Direct => 0, .Variant(_, _) => 1 } }
+fn via_tag(v: ownership.RetVia) Int { case v { .Direct => 0 - 1, .Variant(t, _) => t } }
+fn via_idx(v: ownership.RetVia) Int { case v { .Direct => 0 - 1, .Variant(_, i) => i } }
+fn field_key(f: Int?) Int { case f { .Some(x) => x, .None => 0 - 1 } }
+fn own_key(o: ownership.ReturnOwn) Int { case o { .OwnedFresh => 0 - 1, .OwnedFromParam(k) => k } }
+
+// Comparator returning Order, as Vector.sort_by requires (boot/prelude/vector.tw).
+fn cmp_ret_path(a: ownership.ReturnPathOwn, b: ownership.ReturnPathOwn) Order {
+  c1 := Int.compare(via_kind(a.via), via_kind(b.via))
+  case c1 { .Eq => {}, _ => return c1 }
+  c2 := Int.compare(via_tag(a.via), via_tag(b.via))
+  case c2 { .Eq => {}, _ => return c2 }
+  c3 := Int.compare(via_idx(a.via), via_idx(b.via))
+  case c3 { .Eq => {}, _ => return c3 }
+  c4 := Int.compare(field_key(a.field), field_key(b.field))
+  case c4 { .Eq => {}, _ => return c4 }
+  Int.compare(own_key(a.own), own_key(b.own))
 }
-fn field_rank(f: Int?) Int { case f { .Some(x) => x, .None => -1 } }
-fn rpo_key(r: ownership.ReturnPathOwn) Int { via_rank(r.via) * 100000 + (field_rank(r.field) + 1) }
 fn sort_ret_paths(v: Vector<ownership.ReturnPathOwn>) Vector<ownership.ReturnPathOwn> {
-  v.sort_by(fn(a, b) { rpo_key(a) - rpo_key(b) })
+  v.sort_by(cmp_ret_path)
 }
 fn ret_paths_eq(a: Vector<ownership.ReturnPathOwn>, b: Vector<ownership.ReturnPathOwn>) Bool {
   if a.len() != b.len() { return false }
@@ -622,14 +639,16 @@ fn ret_paths_eq(a: Vector<ownership.ReturnPathOwn>, b: Vector<ownership.ReturnPa
   sb := sort_ret_paths(b)
   for r, i in sa {
     o := sb[i]
-    if via_rank(r.via) != via_rank(o.via) or field_rank(r.field) != field_rank(o.field)
-      or !ret_own_eq(r.own, o.own) { return false }
+    same := via_kind(r.via) == via_kind(o.via) and via_tag(r.via) == via_tag(o.via)
+      and via_idx(r.via) == via_idx(o.via) and field_key(r.field) == field_key(o.field)
+      and ret_own_eq(r.own, o.own)
+    if !same { return false }
   }
   true
 }
 ```
 
-(Confirm `Vector.sort_by` exists — memory references `sort_by`; if the comparator signature differs, use the project's sort helper; otherwise sort via `insert_sorted`-style over `rpo_key`.) In `same_summary`, `return return_eq(a.ret, b.ret) and ret_paths_eq(a.ret_paths, b.ret_paths)`.
+`Vector.sort_by(xs, cmp: fn(T,T) Order)` is confirmed at `boot/prelude/vector.tw:343`; `Order = { Lt, Eq, Gt }` and `Int.compare(a,b) Order` at `boot/prelude/int.tw:3`. In `same_summary`, `return return_eq(a.ret, b.ret) and ret_paths_eq(a.ret_paths, b.ret_paths)`.
 
 `render_summary` (`:332`): append a `ret_paths=…` clause. Add a renderer:
 
@@ -901,57 +920,72 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ## Stage E — Fixpoint discipline
 
-### Task 9: Hide in-progress `ret_paths` in-SCC + strip on cap; join `path_prov`
+### Task 9: Suppress in-SCC `ret_paths` (order-independent) + strip on cap; join `path_prov`
 
 **Files:**
-- Modify: `boot/compiler/summary.tw` (`run_scc` `:286`), `boot/compiler/ownership.tw` (`transfer_summarized_call` consulting the summary; `join_entry_field_own` sibling for path_prov)
+- Modify: `boot/compiler/summary.tw` (`run_scc` `:286` — pass `scc_set` as `suppress`, strip on cap), `boot/compiler/ownership.tw` (thread `suppress: Dict<Int,Bool>` through `summarize_function` → `run_fixpoint` → `forward_*` → `transfer_op`/`transfer_call` → `transfer_summarized_call`; add `join_entry_path_prov` sibling to `join_entry_field_own`)
 - Test: `boot/tests/suites/cfg_summary_suite.tw`
+
+> **Note:** threading a new `suppress` parameter through the transfer stack touches
+> several signatures. Add it with a `Dict.new()` default at the non-SCC call sites
+> (`summ1` in the suite, `analyze`/`analyze_with_summaries` if they call
+> `summarize_function`) so only `run_scc` passes a non-empty set.
 
 - [ ] **Step 1: Write the failing recursive test**
 
+Two assertions are needed. Determinism alone would not catch a *consistently*
+wrong speculative path, so also assert the **specific** sound value: a self-thread
+recovered only through the recursive edge must be **under-approximated to empty**,
+while a field owned directly (not via the recursive call) is still classified.
+
 ```tw
 .test(
-  "recursive transport helper exposes no speculative ret_paths mid-fixpoint; converges empty-or-proven",
+  "recursive helper: self-thread ret_paths are under-approximated (no speculative path)",
   fn() {
-    // fn g(x) { case cond { _ => g(x) }; Record{f0:x} }  (self-recursive)
-    // Build a minimal self-call + record-return; assert the CONVERGED summary is
-    // sound: either the proven [.f0]=from(p0) after convergence, or empty — never
-    // a mid-iteration artifact. Concretely assert determinism across two computes.
-    funcs := recursive_transport_fixture()  // helper builds the AnfFunctionDef
-    t1 := compute_of(funcs)
-    t2 := compute_of(funcs)
-    s1 := summ_of(t1, 1)
-    s2 := summ_of(t2, 1)
-    try assert.equal(same_summary_pub(s1, s2), true)  // deterministic + converged
+    // fn g(x, y) { if cond { g(x, y) } ; Record{f0:x, f1: <fresh>} }
+    // f0's ownership would only be recoverable THROUGH the recursive g(x,..) result;
+    // under in-SCC suppression it must NOT appear as a ret_path (empty for f0).
+    // f1 is a locally-fresh field and IS classified (OwnedFresh) — proves suppression
+    // only blanks the recursive read, not all classification.
+    funcs := recursive_transport_fixture()
+    t := compute_of(funcs)
+    s := summ_of(t, 1)   // g is func_id 1 in the fixture
+    // no OwnedFromParam path attributed via the recursive edge:
+    try assert.equal(has_from_param_path(s.ret_paths, 0), false)  // no [.f0]=from(p0)
+    // deterministic across recomputation:
+    try assert.equal(same_summary_pub(s, summ_of(compute_of(funcs), 1)), true)
     .Ok({})
   },
 )
 ```
 
-Add `recursive_transport_fixture()` building a self-recursive function, and expose `same_summary` as `pub` (or add `same_summary_pub` wrapper in the suite calling `summary.same_summary`).
+Add `recursive_transport_fixture()` (a self-recursive `g` whose only path to `[.f0]=from(p0)` is through the recursive call result, plus a locally-fresh `f1`), `has_from_param_path(rps, k)` (true iff some ret_path is `OwnedFromParam(k)`), and a `same_summary_pub` wrapper calling `summary.same_summary` (or make `same_summary` `pub`).
 
-- [ ] **Step 2: Run — expect RED or nondeterministic**
+- [ ] **Step 2: Run — expect RED (speculative path or nondeterminism)**
 
 Run: `make quick-bundle-cli && target/twk run boot/tests/main.tw`
-Expected: either a mismatch or a speculative path surfaces (recursive read currently uses the in-progress ret_paths).
+Expected: without suppression, the recursive read exposes a speculative `[.f0]=from(p0)` (assertion fails) and/or the two computes disagree.
 
-- [ ] **Step 3: Hide in-progress `ret_paths` during SCC iteration**
+- [ ] **Step 3: Suppress in-SCC `ret_paths` reads (order-independent)**
 
-In `transfer_summarized_call`, the summary consulted for a callee that is a **member of the SCC currently being iterated** must have `ret_paths` treated as empty. Simplest sound implementation: `run_scc` passes a `scc_set` down and `summarize_function` is told to read callee summaries with `ret_paths` blanked for in-SCC callees. Thread a `Dict<Int, Bool>` "suppress_ret_paths" set into `summarize_function` → `transfer_*` and, in `transfer_summarized_call`, when `in_set(suppress, callee_id)` is true, skip the ret_paths consumption (treat as empty). Escape/`ret`/`params` still flow.
+The order-dependent hazard is: if `run_scc` restores member summaries into the shared `table` one at a time (it updates in sorted member order — `summary.tw:294-310`), a later member's classification could observe an earlier member's just-restored `ret_paths`, while the earlier member saw them empty. That is speculative, order-dependent exposure.
 
-Practical wiring: add an optional parameter carried on `SummaryTable` reads is invasive; instead have `run_scc` set a transient flag by **stripping ret_paths from in-SCC members' summaries in the `table` copy used during iteration**, and doing the real `ret_paths` classification only in a final settle pass after the escape/param/ret fixpoint converges:
+Fix with an **explicit suppression set**, not a strip-and-final-pass. Thread the SCC member set (`scc_set`, already built at `summary.tw:296`) down to the call transfer, and blank `ret_paths` for any callee that is in the set. This makes in-SCC reads see empty `ret_paths` **regardless of table order**, during every round and any settle pass:
+
+1. Add a `suppress: Dict<Int, Bool>` parameter to `summarize_function` (default `Dict.new()` at its other call sites — `cfg_summary_suite.tw`'s `summ1` passes `Dict.new()`), threaded into `run_fixpoint` → `forward_*` → `transfer_op` → `transfer_call` → `transfer_summarized_call`.
+2. In `transfer_summarized_call`, before consuming `s.ret_paths`, check the callee id:
 
 ```tw
-// after the worklist loop converges (or hits cap):
-if rounds < cap {
-  // FINAL pass: recompute each member once more with full summaries visible,
-  // capturing ret_paths now that escape/params/ret are fixed.
-  for id in members {
-    f := index.get(id)...
-    table = table_put(table, id, summarize_function(f, table, b, sem))
-  }
-} else {
-  // cap hit: strip ret_paths for every member (expose empty = conservative).
+// callee_id is the resolved AGlobalFunc id at this call
+eff_ret_paths := if in_set(suppress, callee_id) { [] } else { s.ret_paths }
+for rp in eff_ret_paths { /* gate + recover (Task 10) */ }
+```
+
+3. In `run_scc` (`:286`), pass `scc_set` as `suppress` to every `summarize_function` call in the worklist loop. Because suppression is keyed on membership (not table contents), the classification each member produces is a pure function of its own body + earlier-SCC (final) summaries + the converged in-SCC escape/param/ret facts — **independent of member processing order**.
+4. The combined fixpoint converges when the monotone escape/param/ret facts do (`ret_paths` are a deterministic readout of them once suppression fixes the recursive reads). On **cap-hit** (`rounds >= cap`, non-convergence), strip `ret_paths` for every member as a final safety net:
+
+```tw
+if rounds >= cap {
   for id in members {
     s := table_get(table, id)
     table = table_put(table, id, Summary.{ params: s.params, ret: s.ret, ret_paths: [] })
@@ -959,14 +993,7 @@ if rounds < cap {
 }
 ```
 
-During the worklist loop itself, strip ret_paths before storing so in-SCC recursive reads never see them:
-
-```tw
-next := summarize_function(f, table, b, sem)
-next = Summary.{ params: next.params, ret: next.ret, ret_paths: [] }  // hide mid-fixpoint
-```
-
-(The final pass restores ret_paths from the converged escape/param/ret state.) Confirm `same_summary` in the worklist compares the stripped form so termination is by the monotone facts only.
+No separate "final settle pass" is needed: the worklist already computes each member's `ret_paths` under suppression, and `same_summary` (comparing `ret_paths` too) drives termination. Recursive-transport precision (a helper recovering its **own** return paths through the recursive edge) is intentionally under-approximated here and deferred to Phase 6.
 
 - [ ] **Step 4: Join `path_prov` alongside `field_own`**
 
@@ -975,7 +1002,7 @@ next = Summary.{ params: next.params, ret: next.ret, ret_paths: [] }  // hide mi
 - [ ] **Step 5: Run — expect PASS + determinism**
 
 Run: `make quick-bundle-cli && target/twk run boot/tests/main.tw` (twice; outputs stable).
-Expected: recursive fixture converges deterministically; no speculative path; non-recursive `ret_paths` (Tasks 7–8) still classified in the final pass.
+Expected: recursive fixture converges deterministically; the self-thread `[.f0]` is under-approximated to absent (suppression) while the locally-fresh `[.f1]` is still classified; non-recursive `ret_paths` (Tasks 7–8) unchanged.
 
 - [ ] **Step 6: fmt + lint + commit**
 
@@ -983,12 +1010,13 @@ Expected: recursive fixture converges deterministically; no speculative path; no
 target/twk fmt boot/compiler/summary.tw boot/compiler/ownership.tw boot/tests/suites/cfg_summary_suite.tw
 target/twk lint boot/main.tw
 git add boot/compiler/summary.tw boot/compiler/ownership.tw boot/tests/suites/cfg_summary_suite.tw
-git commit -m "summary: hide in-progress ret_paths in-SCC, strip on cap; join path_prov
+git commit -m "summary: suppress in-SCC ret_paths reads (order-independent), strip on cap
 
-ret_paths are non-monotone, so within-SCC recursive reads see them empty and a
-final settle pass captures them from the converged escape/param/ret facts; a
-cap-hit strips them entirely (conservative). path_prov joins in lockstep with
-field_own so cross-arm origin divergence degrades to a dropped path.
+ret_paths are non-monotone, so an in-SCC suppression set blanks ret_paths for
+in-SCC callees regardless of member processing order — within-SCC recursive
+reads always see them empty, and a cap-hit strips them entirely (conservative).
+path_prov joins in lockstep with field_own so cross-arm origin divergence
+degrades to a dropped path.
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
@@ -1029,34 +1057,57 @@ Add `case_w_fixture()` building the two functions with the exact ANF (helper ret
 Run: `make quick-bundle-cli && target/twk run boot/tests/main.tw`
 Expected: `c` is not Unique — the call result carries no field_own and the gate isn't applied yet.
 
-- [ ] **Step 3: Thread `last` and apply the gate**
+- [ ] **Step 3: Thread `last`, snapshot pre-call facts, apply the gate**
 
-Change `transfer_summarized_call` (`:976`) signature to accept `last: Vector<Int>` and the `args`' pre-call facts. Its caller `transfer_call` (`:844`) already has `last`; pass it through. After the existing `params`/`ret` handling, add:
+Change `transfer_summarized_call` (`:976`) to accept `last: Vector<Int>` and the `suppress` set (Task 9). Its caller `transfer_call` (`:844`) already has `last`; pass both through.
+
+**Critical ordering (review note):** the existing `params`/`ret` handling *mutates* `st` — it publishes `Retained` args and `MayAliasParams` origins in place (`ownership.tw:976-999`). The gate must read the argument's ownership **as it was before the call**, so **snapshot the pre-call facts first**, then apply `params`/`ret`, then recover using the snapshot:
 
 ```tw
-// Return-path recovery. OwnedFromParam(k) refers to args[k].
-result_fields := ff.empty()
-result_pp: Dict<Int, Vector<Int>> = Dict.new()
-for rp in s.ret_paths {
-  own_here := case rp.own {
-    .OwnedFresh => true,
-    .OwnedFromParam(k) => if k < args.len() {
-      unique := own_is_unique(st.own, atom_local_id_or(args[k], -1)) and is_atom_last_use(last, args[k])
-      if !unique {
-        st = .publish_atom(args[k])   // publish-on-fail: may alias args[k]'s region
-      }
-      unique
-    } else { false },
-  }
-  if own_here {
-    // record the recovered path on the result; provenance follows args[k]
-    origins := case rp.own { .OwnedFromParam(k) => prov_of(st.prov, args[k]), .OwnedFresh => [] }
-    st = record_ret_path(st, result, rp, origins, result_fields_ref)  // see helper
+// 0. SNAPSHOT pre-call arg ownership (before any summary effect mutates st).
+pre_own := st.own          // Dict copy; Twinkle Dicts are persistent, so this is a cheap alias
+pre_prov := st.prov
+arg_unique: Vector<Bool> = collect a in args {
+  case atom_local_id(a) {
+    .Some(id) => own_is_unique(pre_own, id) and is_last_use(last, id),
+    .None => false,
   }
 }
+// 1. existing params (publish Retained) + ret (OwnedFresh/Shared/MayAliasParams) handling …
+
+// 2. Return-path recovery, gated on the SNAPSHOT (not the mutated st).
+eff_ret_paths := if in_set(suppress, callee_id) { [] } else { s.ret_paths }
+result_fields := ff.empty()
+result_pp: Dict<Int, Vector<Int>> = Dict.new()
+result_ok := case s.ret { .OwnedFresh => true, _ => false }  // only a fresh result shell carries recovered paths
+for rp in eff_ret_paths {
+  own_here := case rp.own {
+    .OwnedFresh => true,
+    .OwnedFromParam(k) => if k < args.len() and arg_unique[k] {
+      true
+    } else {
+      // publish-on-fail: the result may alias args[k]'s region.
+      if k < args.len() { st = .publish_atom(args[k]) }
+      false
+    },
+  }
+  if own_here and result_ok {
+    origins := case rp.own {
+      .OwnedFromParam(k) => prov_of(pre_prov, args[k]),   // provenance follows args[k]
+      .OwnedFresh => [],
+    }
+    // build result_fields / result_pp for this path (helper below)
+    r := record_ret_path(result_fields, result_pp, rp, origins)
+    result_fields = r.fields
+    result_pp = r.pp
+  }
+}
+st = if result_ok and !result_fields.is_empty() {
+  st.set_field_own(result, result_fields).set_path_prov(result, result_pp)
+} else { st }
 ```
 
-Because Twinkle is immutable, structure this as building `result_fields`/`result_pp` then a single `set_field_own(result, result_fields).set_path_prov(result, result_pp)` at the end (only when the result shell is Unique, i.e. `ret` was OwnedFresh). Implement `record_ret_path` inline: for `via == Direct`, `field == Some(f)` → set `[.f]` in `result_fields`/`result_pp`; for `via == Variant(tag,i)` → set `[Payload(tag,i)]` (+ `[Payload(tag,i), .f]` when `field == Some(f)`). Add helpers `atom_local_id_or`, `is_atom_last_use` (wrap `is_last_use` over `atom_local_id`).
+Because Twinkle is immutable, `record_ret_path(fields, pp, rp, origins)` returns `.{ fields, pp }`: for `via == Direct`, `field == Some(f)` → set `[.f]`; for `via == Variant(tag,i)` → set `[Payload(tag,i)]` (+ `[Payload(tag,i), .f]` when `field == Some(f)`), writing the matching `path_key` into both `fields` (tag Unique = 0) and `pp` (`origins`). Add `is_last_use`-over-atom via `atom_local_id`. Note publish-on-fail and `MayAliasParams` publication **compose** — both may publish `args[k]`, which is idempotent.
 
 - [ ] **Step 4: Run — expect PASS (Case W caller)**
 
@@ -1297,7 +1348,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 13: Seed the payload-bound local; Case R end-to-end
 
 **Files:**
-- Modify: `boot/compiler/ownership.tw` (block-entry seeding in `forward_block_body`/the per-block entry state builder near `:2328`, using `blk.payload_src`)
+- Modify: `boot/compiler/ownership.tw` — add a shared `seed_payload_binding(st, blk, last)` helper and call it at **every** per-block entry-`ForwardState` construction, so summaries, the materialization/verdict pass, and the return replay all agree. Search `ForwardState.{` / the entry builders in `run_fixpoint`, in the materialization/verdict pass, and in `summarize_function`'s return replay (near `:2328`); each must invoke the helper after building the entry state.
 - Test: `boot/tests/suites/cfg_return_paths_suite.tw`
 
 - [ ] **Step 1: Write the failing Case R test**
@@ -1324,41 +1375,67 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 Run: `make quick-bundle-cli && target/twk run boot/tests/main.tw`
 Expected: the payload-bound `v` is seeded Unknown (current behavior), so `.state` is not Unique.
 
-- [ ] **Step 3: Seed the payload-bound local at block entry**
+- [ ] **Step 3: Add the shared `seed_payload_binding` helper (move **or** borrow-demote)**
 
-Where per-block entry `ForwardState` is built for the forward pass (the entry builder that today seeds params/joins — near `:2328` and in `run_fixpoint`), when `blk.payload_src` is `.Some(ps)`, project the scrutinee's `[Payload(tag,i)]*` facts into the bound local:
+Mirror `ARecordGet`'s move-vs-borrow exactly (`ownership.tw:1107-1134`): the payload projection is a **move** only when the scrutinee is dead after the match; **otherwise it is a borrow that demotes both sides** — the binding becomes `Shared` (choke point clears its field facts) and the scrutinee's payload subtree is cleared. Seeding an owned binding while the scrutinee stays live would create two unique aliases of the same region — the Blocker.
 
 ```tw
-case blk.payload_src {
-  .Some(ps) => {
-    src_fields := st.field_own_get(ps.scrutinee)
-    src_pp := st.path_prov_get(ps.scrutinee)
-    proj := src_fields.project(.Payload(ps.variant_tag, ps.payload_index))
-    case proj.shell {
-      .Some(t) => {
-        st = .set_own_st(ps.binding, ff_tag_to_own(t))
-        st = .set_field_own(ps.binding, proj.fields)
-        st = .set_path_prov(ps.binding, project_path_prov(src_pp, .Payload(ps.variant_tag, ps.payload_index)))
-        // move: remove the payload subtree from the scrutinee when it is dead after the match
-        if scrutinee_dead_after(blk, ps.scrutinee) {
-          st = .set_field_own(ps.scrutinee, src_fields.remove_prefix(.Payload(ps.variant_tag, ps.payload_index)))
-        }
-      },
-      .None => {},   // no owned payload fact -> leave bound local Unknown (seed as today)
-    }
-  },
-  .None => {},
+// Applied at every per-block entry-state construction, after the base entry facts.
+fn seed_payload_binding(st: ForwardState, blk: CfgBlock, last: Vector<Int>) ForwardState {
+  case blk.payload_src {
+    .None => st,
+    .Some(ps) => {
+      seg := ff.PathSeg.Payload(ps.variant_tag, ps.payload_index)
+      src_fields := st.field_own_get(ps.scrutinee)
+      proj := src_fields.project(seg)
+      case proj.shell {
+        .None => st,   // no owned payload fact -> leave binding as seeded (Unknown)
+        .Some(t) => if scrutinee_dead_after(blk, ps.scrutinee) {
+          // MOVE: binding takes the payload facts; remove the subtree from the scrutinee.
+          st = .set_own_st(ps.binding, own_of_tag(t))
+          st = .set_field_own(ps.binding, proj.fields)
+          st = .set_path_prov(ps.binding, project_path_prov(st.path_prov_get(ps.scrutinee), seg))
+          st.set_field_own(ps.scrutinee, src_fields.remove_prefix(seg))
+             .set_path_prov(ps.scrutinee, remove_prefix_pp(st.path_prov_get(ps.scrutinee), seg))
+        } else {
+          // BORROW: aliasing both sides -> binding Shared (choke clears its facts),
+          // and clear the scrutinee's payload subtree too. Same as ARecordGet borrow.
+          st = .set_own_st(ps.binding, .Shared)
+          st.set_field_own(ps.scrutinee, src_fields.remove_prefix(seg))
+             .set_path_prov(ps.scrutinee, remove_prefix_pp(st.path_prov_get(ps.scrutinee), seg))
+        },
+      }
+    },
+  }
 }
 ```
 
-Add `project_path_prov` (mirror `ff.project` for the parallel `path_prov` map) and `ff_tag_to_own`. `scrutinee_dead_after` reuses `exit_mentions_local` + block liveness. The `.Err` arm returns (leaf), so it contributes nothing to any join — no special handling needed.
+Add `project_path_prov(pp, seg)` (mirror `ff.project`: the `[seg]` entry becomes the projected shell prov, strict descendants `[seg, X]` rebase to `[X]`) and `remove_prefix_pp(pp, seg)` (mirror `ff.remove_prefix`). `scrutinee_dead_after(blk, id)` reuses `exit_mentions_local` (`:210`) + the block's forward liveness (the scrutinee is dead after the match when it is not read by the terminator/edges and not live-out). Call `seed_payload_binding` at each entry-state site (Step-`Files` list). The `.Err`→`return` arm is a leaf and contributes nothing to any join.
 
-- [ ] **Step 4: Run — expect PASS**
+- [ ] **Step 4: Run — expect PASS (Case R move)**
 
 Run: `make quick-bundle-cli && target/twk run boot/tests/main.tw`
-Expected: the Ok-arm payload `v` recovers `.state` Unique; the Err/return arm does not corrupt the join.
+Expected: the Ok-arm payload `v` recovers `.state` Unique (scrutinee `out` dead after the match ⇒ move); the Err/return arm does not corrupt the join.
 
-- [ ] **Step 5: Add the tag-isolation negative**
+- [ ] **Step 5: Add the live-scrutinee borrow-demote negative test**
+
+```tw
+.test(
+  "live scrutinee: payload binding borrow-demotes (no double unique alias)",
+  fn() {
+    // caller(acc): out=load(acc); case out {.Ok(v)=> use v ...}; ALSO read out after the match.
+    // out stays live past the match -> v must NOT be unique; both demoted.
+    funcs := case_r_live_scrutinee_fixture()
+    f := analyzed_caller(funcs, "caller")
+    try assert.equal(caller_own(f, ok_arm_payload_local()), own_shared())
+    .Ok({})
+  },
+)
+```
+
+Run — expect PASS (borrow branch fires because `out` is live after the match).
+
+- [ ] **Step 6: Add the tag-isolation negative**
 
 ```tw
 .test(
@@ -1375,7 +1452,7 @@ Expected: the Ok-arm payload `v` recovers `.state` Unique; the Err/return arm do
 
 Run — expect PASS (the `[Payload(Err,0)]` projection finds no owned fact).
 
-- [ ] **Step 6: fmt + lint + commit**
+- [ ] **Step 7: fmt + lint + commit**
 
 ```bash
 target/twk fmt boot/compiler/ownership.tw boot/tests/suites/cfg_return_paths_suite.tw
@@ -1496,5 +1573,6 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - **Spec coverage:** Task 1 (tagged payload segment + codec) ↔ Decision 4; Tasks 2–4 (path_prov + shell/field split + AVariant) ↔ Decision 2; Task 5 (Return leaf) ↔ Decision 3; Tasks 6–8 (ret_paths schema + Direct/Variant classification + shell ret) ↔ Decisions 1, 7, 8; Task 9 (fixpoint hide/strip + path_prov join) ↔ Decisions 10 + review pt 4; Task 10 (caller gate + publish-on-fail) ↔ Decision 5 + review pt 1; Task 11 (transport recognizer) ↔ Decision 9 / Fork 2A; Tasks 12–13 (cfg metadata + payload seeding) ↔ Fork 3-i + Blocker 1; Task 14 (render) ↔ design "Rendering"; Task 15 ↔ acceptance 10–12. Acceptance 1–9 map to tests across Tasks 5, 7, 8, 10, 11, 13, 1.
 - **No parameter `in_place_paths` / specialization** appears in any task (correctly Phase 6).
 - **Type consistency:** `PathSeg.Payload(Int,Int)`, `ReturnPathOwn.{via,field,own}`, `RetVia.Variant(Int,Int)`, `PayloadSrc.{scrutinee,variant_tag,payload_index,binding}` are used identically across tasks. `path_prov` is `Dict<Int, Dict<Int, Vector<Int>>>` throughout.
-- **Known cross-task dependency:** the Task 3/4 `ret_tag == 0` tests only go green at Task 5 (labeled). Execute Tasks 3→4→5 as a unit if strict per-task green is required; otherwise accept the labeled RED until Task 5.
-- **Fixture helpers** (`case_w_fixture`, `case_r_fixture`, etc.) are named per task; implement each in the suite when first referenced, mirroring `cfg_summary_suite.tw`'s ANF-builder style.
+- **Review-round corrections (all applied):** (1) `path_prov` mirrors `field_own` at every path — `graft_path_prov` is prefix-dependent (Field⇒rebase Elem/Val; Payload⇒rebase Field) and `AArrayLit` records `[Elem]` provenance (Task 3). (2) Match-arm seeding has an explicit **borrow-demote else branch** for a live scrutinee + a live-scrutinee negative test (Task 13). (3) SCC uses an **in-SCC suppression set** (order-independent), not a strip-and-final-pass; the recursive test asserts the specific under-approximation, not just determinism (Task 9). (4) `ret_paths` comparator returns `Order` via chained `Int.compare` on a canonical tuple, no packed keys (Task 6). (5) Caller gate **snapshots pre-call facts** before `params`/`ret` mutate `st` (Task 10). (6) Payload seeding is a **shared helper** applied at all entry-state sites (Task 13). (7) Co-Authored-By trailer is **conditional** per `AGENTS.md` (header).
+- **No test committed RED:** Tasks 3–5 are one execution unit; Tasks 3–4 are behavior-preserving (suite stays green), and the shell/deep observable tests live in Task 5 where they go green after the Return-publish removal.
+- **Fixture helpers** (`case_w_fixture`, `case_r_fixture`, `case_r_live_scrutinee_fixture`, `recursive_transport_fixture`, etc.) are named per task; implement each in the suite when first referenced, mirroring `cfg_summary_suite.tw`'s ANF-builder style. Because they are prose-specified rather than fully coded, the executor builds them from that harness — the one deliberate concession to plan length.
