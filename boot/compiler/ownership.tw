@@ -2627,6 +2627,135 @@ fn join_return(a: ReturnEffect, b: ReturnEffect) ReturnEffect {
   }
 }
 
+fn param_index_of(params: Vector<LocalId>, local_id: Int) Int? {
+  for p, i in params {
+    if p.id == local_id {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+// Ascending path-key iteration order (field key 8=.f0 < 12=.f1 < ...), so
+// Direct ret_paths come out sorted by field.
+fn sorted_dict_keys(d: Dict<Int, Vector<Int>>) Vector<Int> {
+  out: Vector<Int> = []
+  for k in d.keys() {
+    out = insert_sorted(out, k)
+  }
+  out
+}
+
+// .None => drop; Some([]) => OwnedFresh; Some([k]) => OwnedFromParam(param-index-of-k);
+// Some([multi]) => drop (multi-origin path can't claim single-param ownership).
+// `fm` is the returned atom's field_own. A path_prov entry of `[]` means only that
+// the field's SHELL aliases no param directly — NOT that the field is fresh-owned:
+// a non-single-retention nested value records `path_prov[.f] = []` while its interior
+// still aliases a param (the interior is not folded on the non-retention branch). So
+// OwnedFresh is emitted ONLY when field_own PROVES the field is a Unique subtree;
+// a path_prov-only `[]` drops (sound under-claim). OwnedFromParam(k) is safe from
+// path_prov alone: it carries the param origin and the caller gates on it.
+fn classify_path_own(pp: Dict<Int, Vector<Int>>, k: Int, params: Vector<LocalId>, fm: ff.FieldMap) ReturnOwn? {
+  case pp.get(k) {
+    .None => .None,
+    .Some(os) => cond {
+      os.len() == 0 => if fm.is_unique(ff.path_of_key(k)) {
+        .Some(.OwnedFresh)
+      } else {
+        .None
+      },
+      os.len() == 1 => case param_index_of(params, os[0]) {
+        .Some(pi) => .Some(.OwnedFromParam(pi)),
+        .None => .None,
+      },
+      _ => .None,
+    },
+  }
+}
+
+fn ret_own_eq(a: ReturnOwn, b: ReturnOwn) Bool {
+  case a {
+    .OwnedFresh => case b {
+      .OwnedFresh => true,
+      .OwnedFromParam(_) => false,
+    },
+    .OwnedFromParam(ka) => case b {
+      .OwnedFresh => false,
+      .OwnedFromParam(kb) => ka == kb,
+    },
+  }
+}
+
+fn ret_via_field_eq(a: ReturnPathOwn, b: ReturnPathOwn) Bool {
+  fields_eq := case a.field {
+    .Some(fa) => case b.field {
+      .Some(fb) => fa == fb,
+      .None => false,
+    },
+    .None => case b.field {
+      .Some(_) => false,
+      .None => true,
+    },
+  }
+  if !fields_eq {
+    return false
+  }
+  case a.via {
+    .Direct => case b.via {
+      .Direct => true,
+      .Variant(_, _) => false,
+    },
+    .Variant(ta, ia) => case b.via {
+      .Direct => false,
+      .Variant(tb, ib) => ta == tb and ia == ib,
+    },
+  }
+}
+
+// Drop any OwnedFromParam(k) path whose param k backs more than one field: the
+// param is aliased across those fields and cannot be uniquely owned by either.
+// OwnedFresh paths carry no origin and always survive.
+fn drop_aliased_param_paths(rps: Vector<ReturnPathOwn>) Vector<ReturnPathOwn> {
+  counts: Dict<Int, Int> = Dict.new()
+  for r in rps {
+    case r.own {
+      .OwnedFromParam(k) => counts[k] = case counts.get(k) {
+        .Some(c) => c + 1,
+        .None => 1,
+      },
+      .OwnedFresh => {},
+    }
+  }
+  out: Vector<ReturnPathOwn> = []
+  for r in rps {
+    keep := case r.own {
+      .OwnedFromParam(k) => case counts.get(k) {
+        .Some(c) => c == 1,
+        .None => true,
+      },
+      .OwnedFresh => true,
+    }
+    if keep {
+      out = .append(r)
+    }
+  }
+  out
+}
+
+// A path survives the meet only if present in BOTH lists under the same
+// (via, field) key AND with a matching own. Any mismatch drops the path.
+fn meet_ret_paths(a: Vector<ReturnPathOwn>, b: Vector<ReturnPathOwn>) Vector<ReturnPathOwn> {
+  out: Vector<ReturnPathOwn> = []
+  for ea in a {
+    for eb in b {
+      if ea.ret_via_field_eq(eb) and ea.own.ret_own_eq(eb.own) {
+        out = .append(ea)
+      }
+    }
+  }
+  out
+}
+
 // Classify each parameter's escape/capability by scanning EVERY block's
 // post-publish exit (fx.exits / fx.exit_valid): a param that ends Shared on any
 // block exit escapes (Retained) — even on a dead branch or via a returned
@@ -2669,7 +2798,9 @@ pub fn summarize_function(
   }
 
   done := all_processed(blocks)
+  fn_params := f.params // Vector<LocalId>; capture before .Field(f) shadow
   ret: ReturnEffect = .OwnedFresh
+  ret_paths_acc: Vector<ReturnPathOwn> = []
   seen := false
   for blk in blocks {
     case return_atom(blk) {
@@ -2709,11 +2840,49 @@ pub fn summarize_function(
         } else {
           r
         }
+
+        // Per-field return-path ownership: for each single-segment .Field path in
+        // the returned atom's field_own, classify its path_prov (absent=drop,
+        // empty=OwnedFresh, single=OwnedFromParam, multi=drop) and meet across
+        // return sites so a path survives only if owned at every return.
+        rp_here: Vector<ReturnPathOwn> = []
+        case atom_local_id(a) {
+          .Some(aid) => {
+            pp := body.path_prov_get(aid)
+            fm := body.field_own_get(aid)
+
+            // Classify every single-segment .Field path, then drop any param claimed
+            // by more than one field: two fields backed by the SAME param alias it,
+            // so neither can own it (OwnedFresh fields carry no origin and survive).
+            rp_all: Vector<ReturnPathOwn> = []
+            for k in sorted_dict_keys(pp) {
+              p := ff.path_of_key(k)
+              if p.segs.len() == 1 {
+                case p.segs[0] {
+                  .Field(fid) => case classify_path_own(pp, k, fn_params, fm) {
+                    .Some(own) => rp_all = .append(
+                      ReturnPathOwn.{ via: .Direct, field: .Some(fid), own },
+                    ),
+                    .None => {},
+                  },
+                  _ => {},
+                }
+              }
+            }
+            rp_here = drop_aliased_param_paths(rp_all)
+          },
+          .None => {},
+        }
+        ret_paths_acc = if seen {
+          meet_ret_paths(ret_paths_acc, rp_here)
+        } else {
+          rp_here
+        }
         seen = true
       },
       .None => {},
     }
   }
 
-  Summary.{ params, ret, ret_paths: [] }
+  Summary.{ params, ret, ret_paths: ret_paths_acc }
 }

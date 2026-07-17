@@ -166,6 +166,30 @@ fn own_shared() Int {
   ownership.own_tag(.Shared)
 }
 
+// Flatten Direct ret_paths to [field, param, field, param, ...] sorted by field.
+fn ret_path_pairs(rps: Vector<ownership.ReturnPathOwn>) Vector<Int> {
+  pairs: Vector<Int> = []
+  for r in rps {
+    case r.via {
+      .Direct => case r.field {
+        .Some(f) => case r.own {
+          .OwnedFromParam(k) => {
+            pairs = .append(f)
+            pairs = .append(k)
+          },
+          .OwnedFresh => {
+            pairs = .append(f)
+            pairs = .append(0 - 1)
+          },
+        },
+        .None => {},
+      },
+      .Variant(_, _) => {},
+    }
+  }
+  pairs
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("cfg summary")
@@ -897,6 +921,95 @@ pub fn suite() runner.Suite {
         try assert.str_contains(out, "summary:")
         try assert.str_contains(out, "facts.in=")
         try assert.is_true(out == render_cfg_for_entry(file))
+        .Ok({})
+      },
+    )
+    .test(
+      "fn f(x,y){ Record{f0:x, f1:y} } -> ret_paths [.f0]=from(p0) [.f1]=from(p1)",
+      fn() {
+        two := AnfOp.ARecord(
+          TypeId.{ id: 0 },
+          [
+            .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) },
+            .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(1)) },
+          ],
+        )
+        s := summ1("f", 2, .Let(lid(2), two, .Atom(.ALocal(lid(2)))))
+        try assert.equal(ret_tag(s.ret), 0) // OwnedFresh shell
+        try assert.equal(s.ret_paths.len(), 2)
+        got := ret_path_pairs(s.ret_paths)
+        try assert.equal(same_ints(got, [0, 0, 1, 1]), true) // [f0->p0, f1->p1] flattened
+        .Ok({})
+      },
+    )
+    .test(
+      "fn f(x){ Record{f0:x, f1:x} } -> no ret_paths (same origin twice = alias)",
+      fn() {
+        two := AnfOp.ARecord(
+          TypeId.{ id: 0 },
+          [
+            .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) },
+            .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(0)) },
+          ],
+        )
+        s := summ1("f", 1, .Let(lid(1), two, .Atom(.ALocal(lid(1)))))
+        try assert.equal(s.ret_paths.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "fn f(x,y){ r := Rec{f0:x,f1:y}; r.f1 = fresh; r } -> [.f0]=from(p0) [.f1]=fresh (overwrite drops p1)",
+      fn() {
+        rec := AnfOp.ARecord(
+          TypeId.{ id: 0 },
+          [
+            .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) },
+            .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(1)) },
+          ],
+        )
+        fresh := AnfOp.ARecord(TypeId.{ id: 1 }, [])
+
+        // ARecordUpdate(base, field, value, in_place: Bool, tid: TypeId)
+        upd := AnfOp.ARecordUpdate(
+          .ALocal(lid(2)),
+          FieldId.{ id: 1 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(2),
+          rec,
+          .Let(lid(3), fresh, .Let(lid(4), upd, .Atom(.ALocal(lid(4))))),
+        )
+        s := summ1("f", 2, body)
+        try assert.equal(ret_tag(s.ret), 0)
+        got := ret_path_pairs(s.ret_paths)
+        try assert.equal(same_ints(got, [0, 0, 1, 0 - 1]), true) // f0->p0, f1->fresh(-1); p1 dropped
+        .Ok({})
+      },
+    )
+    .test(
+      "interior-aliasing field is NOT OwnedFresh: fn f(x){ inner:={g:x}; o:={f0:inner,f1:inner}; o }",
+      fn() {
+        // inner holds x; it goes into TWO fields of o, so inner is not single-
+        // retention -> path_prov[.f0]=[.f1]=[] (shell-only; interior [.g]=x not
+        // folded on the non-retention branch). A path_prov-only [] must NOT classify
+        // OwnedFresh (both fields alias x through inner) -> field_own gate drops them.
+        inner := AnfOp.ARecord(
+          TypeId.{ id: 1 },
+          [.{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) }],
+        )
+        o := AnfOp.ARecord(
+          TypeId.{ id: 0 },
+          [
+            .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(1)) },
+            .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(1)) },
+          ],
+        )
+        body: AnfExpr = .Let(lid(1), inner, .Let(lid(2), o, .Atom(.ALocal(lid(2)))))
+        s := summ1("f", 1, body)
+        try assert.equal(s.ret_paths.len(), 0) // no false OwnedFresh for interior-aliasing fields
         .Ok({})
       },
     )
