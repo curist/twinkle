@@ -1225,4 +1225,32 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "Option transport: Some[0].f0=from(p0) survives a payload-less None return",
+      fn() {
+        // maybe_load(s): if c { return .Some(Record{f0:s}) }  return .None.
+        // .None is a PAYLOAD-LESS variant (different tag, no payload paths). A plain
+        // intersection would treat "absent on None" as contradiction and drop the
+        // Some payload path. The tag-aware meet gives the None site a WVariant(None)
+        // witness (via the constructor op-scan), so it can't produce Some paths and is
+        // irrelevant to them -> Some[0].f0 survives.
+        some_rec := AnfOp.ARecord(
+          TypeId.{ id: 0 },
+          [.{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) }],
+        )
+        some_var := AnfOp.AVariant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.ALocal(lid(1))])
+        then_b: AnfExpr = .Let(
+          lid(1),
+          some_rec,
+          .Let(lid(2), some_var, .Return(.Some(.ALocal(lid(2))))),
+        )
+        none_var := AnfOp.AVariant(TypeId.{ id: 0 }, VariantId.{ id: 1 }, []) // payload-less .None
+        else_b: AnfExpr = .Let(lid(3), none_var, .Return(.Some(.ALocal(lid(3)))))
+        body: AnfExpr = .Let(lid(4), .AIf(.ALitBool(true), then_b, else_b), .Return(.None))
+        s := summ1("maybe_load", 1, body)
+        try assert.equal(has_variant_field_from(s.ret_paths, 0, 0, 0, 0), true) // Some[0].f0=from(p0) survives
+        try assert.equal(s.ret_paths.len(), 2) // V(Some)[0]=fresh, V(Some)[0].f0=from(p0); None contributes nothing
+        .Ok({})
+      },
+    )
 }
