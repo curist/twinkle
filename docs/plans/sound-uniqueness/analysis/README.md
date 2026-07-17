@@ -1,10 +1,12 @@
 # Analysis Track
 
-**Status:** Foundation (Phases 0-3) done. Phases 4-6 — the remaining
-ownership-fact precision that the census-dominant compiler idioms need — are
-**not started**. They land *before* any codegen, per
-[../architecture.md](../architecture.md)'s governing rule that all analysis
-precision precedes codegen.
+**Status:** Phases 0-5 done (return-path summaries complete; generated code
+unchanged, census 0 in-place). **Phase 6** — ownership-specialization decision
+facts — is next, and folds in the two Phase 5 precision gaps (parameter-side
+ownership so param-threaded state is recovered; tag-aware return-site meet so real
+two-tag `Result` transport is summarized). All analysis precision lands *before*
+any codegen, per [../architecture.md](../architecture.md)'s governing rule that all
+analysis precision precedes codegen.
 
 This track owns the proof-producing half of sound uniqueness: CFG structure,
 ownership facts, liveness/last-use, summaries, candidate-classification inputs,
@@ -150,22 +152,31 @@ phase adds return-path summaries. Still no codegen changes. Canonical semantics:
 [summary-specialization.md](summary-specialization.md); implementation design:
 [phase5-design.md](phase5-design.md).
 
-- [ ] **Return-path summaries keyed by field and variant-payload paths.**
+- [x] **Return-path summaries keyed by field and variant-payload paths.**
   `returns[.ctx]`/`[.state]`/`[.env] = OwnedFromParam(k)`, plus variant paths such
-  as `Ok[0].state` / `Err[0].state`.
-- [ ] **Field-projection move.** `ctx = out.ctx` / `state = out.state` transfers
+  as `Ok[0].state` / `Err[0].state`. (`Summary.ret_paths`; `RetVia.Direct|Variant`;
+  three-way `classify_path_own` with a `field_own` `OwnedFresh` gate.)
+- [x] **Field-projection move.** `ctx = out.ctx` / `state = out.state` transfers
   the field's ownership when that path is dead through `out` afterward; reading
   sibling result fields does not block it, but publishing / returning / storing /
-  re-reading the transported path does.
-- [ ] **Path-aware liveness.** Answer whether a returned field/payload path — not
-  just the wrapper local — remains observable.
-- [ ] **Handled-`Result` arm joins.** Merge transported payload facts like ordinary
+  re-reading the transported path does. (Bounded transport recognizer, Task 11.)
+- [x] **Path-aware liveness.** Answer whether a returned field/payload path — not
+  just the wrapper local — remains observable. (Sibling-read licensing + live-out
+  gate in the transport recognizer.)
+- [x] **Handled-`Result` arm joins.** Merge transported payload facts like ordinary
   record-field facts; `try` / `return` / value-carrying `break` stay publishing
-  exit edges (Case T).
+  exit edges (Case T). (Match-arm `seed_payload_binding`, Task 13.)
 
-Exit: Cases W and R in [worked-examples.md](worked-examples.md) classify as
-ownership-preserving handoffs instead of aggregate publication; generated code
-unchanged.
+Exit: Case W (fresh-local record transport) classifies as an ownership-preserving
+handoff instead of aggregate publication; generated code unchanged (census 0
+in-place). **Two documented precision gaps remain (sound under-approximations,
+deferred to the Phase 6 design pass — see the TODOs in [phase5-plan.md](phase5-plan.md)):**
+(1) the caller-recovery gate fires only for **fresh unique locals, not params**, so
+param-threaded state (the common idiom) is not yet recovered; (2) the return-site
+meet is a plain intersection, not tag-aware, so a real two-tag `Result` function
+gets **empty `ret_paths`** — Case R fires only for a single-return-`Ok` shape. Both
+gate Case R's real-world reach and fold into Phase 6 (parameter-ownership +
+tag-aware meet / per-site return-tag tracking).
 
 ## Phase 6 — Ownership-specialization decision facts *(architecture: 1E)*
 
