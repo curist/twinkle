@@ -170,7 +170,9 @@ phase adds return-path summaries. Still no codegen changes. Canonical semantics:
 Exit: Case W (fresh-local record transport) classifies as an ownership-preserving
 handoff instead of aggregate publication; generated code unchanged (census 0
 in-place). The tag-aware return-site meet was hardened in-phase (commit `2d23394c`),
-so a real two-tag `Result` now keeps both arms' `ret_paths`. **One documented
+so any sum-typed transport keeps its payload paths — a real two-tag `Result` keeps
+both arms, and `Option` keeps `Some[0].*` across a payload-less `.None` return.
+**One documented
 precision gap remains (sound under-approximation, deferred to the Phase 6 design
 pass — see the TODO in [phase5-plan.md](phase5-plan.md)):** the caller-recovery gate
 fires only for **fresh unique locals, not params**, so param-threaded state (the

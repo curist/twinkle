@@ -74,20 +74,41 @@ whole stage is in.
 >    or (b) pull a slice of Phase 6 parameter-ownership forward so param-threaded state
 >    also benefits. Feeds the Phase 6 design review.
 
-> ## ~~TODO~~ RESOLVED (commit `2d23394c`): return-site meet is now tag-aware
+> ## ~~TODO~~ RESOLVED (commit `2d23394c`): variant-return meet is now tag-aware (covers Result, Option, any sum)
+>
+> **Scope of the bug (broadened).** The original `meet_ret_paths` was a plain
+> intersection across return sites, so it was variant-agnostic in the bad way: it
+> treated "path absent because this return site is a *different tag*" as a
+> contradiction and dropped the payload path. This affected **every sum-typed return
+> with payload-bearing and payload-less (or differently-tagged) alternatives** — not
+> just two-tag `Result` (`.Ok`-owned / `.Err`-foreign) but also `Option`
+> (`.Some(payload)` / `.None`), where any `.None` return site — including `try`
+> early-returning `.None` — would erase the `.Some[0].*` paths.
 >
 > **Fixed as a Phase 5 hardening follow-up.** `meet_ret_paths` was replaced by
 > `meet_ret_paths_tagged`: each return site gets a witness (`Direct` /
 > `Variant(tag)` / `Unknown`, from owned facts or the return block's constructor op),
-> and a `Variant(tag)` path is met only across sites that could return that tag (a
-> could-produce site that lacks it — `.Ok(shared)` or an `Unknown` witness — still
-> drops it; different-tag sites are irrelevant). A real two-tag `Result` now keeps
-> both arms' `ret_paths` (verified: the `Ok[0].f0=from(p0)` claim survives). Sound —
-> behaviourally identical for single-witness / all-`Direct` functions (the recursive
-> two-`Direct` meet still drops `[.f0]`); only the cross-tag erasure is fixed. **Note:**
-> Case R end-to-end still needs a *fresh* scrutinee arg because of the param-gate TODO
-> above — the two gaps were independent, and only this one is closed. The historical
-> analysis is kept below for context.
+> and a `Variant(tag)` path is met only across sites that could return that tag. A
+> could-produce site that lacks the path (`.Ok(shared)` / a `Some`-with-shared-payload
+> site, or an `Unknown` witness) still drops it; **different-tag sites — including a
+> payload-less `.None`/`.Err` — are irrelevant to a `.Some`/`.Ok` payload path (they
+> carry no payload to recover), so they no longer contradict it.** Verified: two-tag
+> `Result` keeps both arms (`Ok[0].f0=from(p0)`), and `Option` keeps `Some[0].f0=from(p0)`
+> across a payload-less `.None` return. Sound — behaviourally identical for
+> single-witness / all-`Direct` functions (the recursive two-`Direct` meet still drops
+> `[.f0]`); only the cross-tag erasure is fixed.
+>
+> **One residual (sound, minor) caveat:** the witness comes from the returned atom's
+> owned facts or a scan of the *return block* for its constructor op. A variant that is
+> *passed through* or constructed in an *earlier* block (so neither owned facts nor a
+> same-block constructor pin its tag) falls to `Unknown` → conservative drop of the
+> affected claims. Common shapes (fresh `.Some`/`.Ok`/`.None`/`.Err` at the return, and
+> `try`'s fresh `.None`) are covered; the fallback is sound. Widening to cross-block
+> variant-tag tracking is optional future precision, not a soundness need.
+>
+> **Note:** Case R end-to-end still needs a *fresh* scrutinee arg because of the
+> param-gate TODO above — the two gaps were independent, and only this one is closed.
+> The historical analysis is kept below for context.
 >
 > **Finding (empirically confirmed during Task 13).** `meet_ret_paths` joins `ret_paths`
 > across a function's multiple return sites by **plain intersection** on `(via, field)`.
