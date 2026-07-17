@@ -74,6 +74,42 @@ whole stage is in.
 >    or (b) pull a slice of Phase 6 parameter-ownership forward so param-threaded state
 >    also benefits. Feeds the Phase 6 design review.
 
+> ## TODO (revisit after all Phase 5 tasks land): return-site meet is not tag-aware → real two-tag `Result` gets empty `ret_paths`
+>
+> **Finding (empirically confirmed during Task 13).** `meet_ret_paths` joins `ret_paths`
+> across a function's multiple return sites by **plain intersection** on `(via, field)`.
+> A real two-arm `Result` function returns different **tags** on different paths:
+> ```
+> fn load(s) { if c { return .Ok(Record{state: s}) }  return .Err(Record{msg: fresh}) }
+> ```
+> The Ok site produces `Variant(Ok,0)*` paths, the Err site produces `Variant(Err,0)*`
+> paths. Plain intersection drops both (each is absent on the other site), so **`load`'s
+> `ret_paths` is EMPTY** (verified: `ret_paths.len() == 0` for exactly this shape). So
+> **Case R only fires for a contrived single-return-Ok `load`, never for a real
+> `Result`-returning function.**
+>
+> **Why it's not a bug:** empty `ret_paths` = fully conservative (no recovery) = today's
+> aggregate-publication behavior. Sound, just imprecise — it defeats the primary
+> Result-payload transport goal (design acceptance criterion 4) in practice.
+>
+> **Root cause vs design:** the canonical design specifies a **tag-aware** meet (a path
+> survives if present on every return block "that returns the same via"); the
+> implementation (`meet_ret_paths`) simplified it to a plain intersection and lost the
+> tag-awareness. A correct fix needs **per-return-site returned-tag tracking** (so an
+> `Ok` path is met only across sites that return `Ok`, and a site that returns `.Ok(shared)`
+> — which carries no owned payload path — still contradicts an owned-`Ok` claim). That is
+> real plumbing (the returned atom's variant tag per site), not a small meet tweak.
+>
+> **Also correct a stale expectation:** Task 13's tag-isolation test was specified to
+> assert the Err-arm binding is `own_shared()`. That is unreachable — `field_own` only
+> stores `Unique`, and an *unrecovered* payload binding stays **Unknown** (the seed's
+> `.None` branch). The shipped test correctly asserts `own_unknown()`; treat the plan's
+> `own_shared()` as superseded.
+>
+> **Action (revisit with the param-threaded TODO above):** both gaps gate Case R's real
+> usefulness, so fold the tag-aware meet (+ per-site tag tracking) into the same Phase 6
+> design pass as parameter-ownership.
+
 ---
 
 ## Fixture construction discipline (read before writing any cross-function test)
