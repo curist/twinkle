@@ -620,6 +620,7 @@ type ForwardState = .{
   valid: Dict<Int, Bool>,
   prov: Dict<Int, Vector<Int>>,
   field_own: Dict<Int, ff.FieldMap>,
+  path_prov: Dict<Int, Dict<Int, Vector<Int>>>,
 }
 
 fn field_own_get(st: ForwardState, id: Int) ff.FieldMap {
@@ -639,12 +640,29 @@ fn clear_field_own(st: ForwardState, id: Int) ForwardState {
   st
 }
 
+fn path_prov_get(st: ForwardState, id: Int) Dict<Int, Vector<Int>> {
+  case st.path_prov.get(id) {
+    .Some(m) => m,
+    .None => Dict.new(),
+  }
+}
+
+fn set_path_prov(st: ForwardState, id: Int, m: Dict<Int, Vector<Int>>) ForwardState {
+  st.path_prov[id] = m
+  st
+}
+
+fn clear_path_prov(st: ForwardState, id: Int) ForwardState {
+  st.path_prov[id] = Dict.new()
+  st
+}
+
 fn set_own_st(st: ForwardState, id: Int, o: Ownership) ForwardState {
   st.own = set_own(st.own, id, o)
 
   // Downward-closed invariant: a non-Unique shell can carry no field facts.
   st = if o.own_tag() != 0 {
-    st.clear_field_own(id)
+    st.clear_field_own(id).clear_path_prov(id)
   } else {
     st
   }
@@ -1940,6 +1958,7 @@ fn run_fixpoint(
         valid: entry_valid,
         prov: entry_prov,
         field_own: entry_field,
+        path_prov: Dict.new(),
       }
       st = forward_block(blk, st, prep_get(preps, blk, sem), table, b, sem)
       already := is_processed(processed, blk.id.id)
@@ -2209,6 +2228,7 @@ fn ownership_stage(
       valid: entry_valid,
       prov: entry_prov,
       field_own: entry_field,
+      path_prov: Dict.new(),
     }
     prep := block_prep(blk, sem)
     verdicts := block_verdicts(blk, st, prep, table, b, sem)
@@ -2330,6 +2350,7 @@ pub fn summarize_function(
           valid: entry_valid,
           prov: entry_prov,
           field_own: entry_field,
+          path_prov: Dict.new(),
         }
         body := forward_block_body(blk, st, block_prep(blk, sem), table, b, sem)
         idxs := prov_to_indices(f.params, prov_of(body.prov, a))
