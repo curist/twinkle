@@ -28,6 +28,55 @@
 
 Task order is strictly dependency-first: Stage A (codec) → B (provenance) → C (return semantics) → D (summary schema) → E (fixpoint) → F (caller) → G (transport move) → H (match/Case R) → I (rendering + verification).
 
+**Soundness boundary — do not ship a partial Phase 5.** Every task keeps the suite
+green, but the *analysis* is only whole again at Task 13. Between Task 5 (Return no
+longer publishes) and Task 10/13 (caller recovery + gate + payload seeding), a caller
+of a wrapper-returning function sees `ret=OwnedFresh` and makes no publish/gate
+decision for the handed-back region — a transient under-publication. This is
+**harmless here because Phase 5 is analysis-only and nothing consumes these facts yet**
+(census stays 0 in-place; Phase 6+ is the first consumer), so the incremental commits
+are safe to land. But it means **no commit before Task 13 is a valid soundness
+checkpoint** — do not wire any codegen/decision consumer against `ret_paths` until the
+whole stage is in.
+
+---
+
+## Fixture construction discipline (read before writing any cross-function test)
+
+The cross-function fixtures (`case_w_fixture`, `case_r_*`, `recursive_transport_fixture`,
+`case_w_sibling_fixture`, …) are prose-specified, and **a fixture with the wrong
+liveness/last-use shape makes its test pass for the wrong reason** — e.g. a "move"
+test where the scrutinee/`out` isn't actually dead-after would pass via a fallback,
+and a borrow-negative could pass trivially. That silently defeats the gate. So:
+
+1. **Prefer building from real frontend output.** Where practical, write the fixture
+   as a small `.tw` snippet and obtain its ANF/CFG through the real pipeline
+   (`cfg.build_view` on compiled ANF) rather than hand-encoding local ids and block
+   structure. Hand-built ANF is acceptable for the tiny single-block summary
+   fixtures (Tasks 5/7/8) but error-prone for the multi-block caller fixtures
+   (Tasks 10/11/13).
+2. **Every move/borrow claim needs its inverse.** For each fixture asserting a move
+   (Unique recovered), the plan already pairs a borrow negative — when authoring,
+   confirm the *only* difference between the pair is the liveness fact under test
+   (published `out`, later-block read, in-arm read), so the gate is provably live.
+   If flipping that one fact does **not** flip the verdict, the fixture is wrong, not
+   the analysis.
+3. **Eyeball the CFG once per new fixture.** Run `twk ir <snippet> --cfg` (or dump
+   the built view) and confirm block preds, `entry.live`/`exit.live`, and the
+   dead-after shape match the case name before trusting a green result.
+4. **`caller_own` is block-0-only — add a block-aware variant for multi-block
+   fixtures.** The copied `caller_own(f, local)` reads `f.blocks[0].exit.ownership`
+   and returns `Shared` (tag 2) for any local it doesn't find there
+   (`cfg_summary_suite.tw:154`). For single-block Case W that's correct, but Case R
+   (Task 13, payload bound in an **arm** block) and the live-out negatives (Task 11)
+   observe locals that don't exist in block 0. Reading them via `caller_own` makes a
+   **move** assertion fail spuriously and — the dangerous direction — makes a
+   **borrow-negative pass trivially** via the `.None → Shared` default, proving
+   nothing. Add `own_in_block(f, block_id, local) Int` (same body, indexed at the
+   block that actually defines/observes the local) and assert against that block. A
+   borrow-negative **must** target a block where the local genuinely exists, so
+   `Shared` is a real verdict, not an absence.
+
 ---
 
 ## Stage A — Tagged payload segment + codec
@@ -90,29 +139,29 @@ Add the `Payload` case to `seg_eq` (`:45`):
 },
 ```
 
-- [ ] **Step 4: Extend the codec (negative disjoint range)**
+- [ ] **Step 4: Extend the codec (negative disjoint range, fixed-width bit-packing)**
 
-Positive keys stay as-is. Payload keys use a reversible pairing into the negatives. Add a helper and the `Payload` cases. In `field_facts.tw`, above `path_key`:
+Positive keys stay as-is. Payload keys pack `(tag, index, fieldslot)` into a
+disjoint NEGATIVE range by **fixed-width bit-packing**, not a search-based pairing:
+`tag`/`index`/`field` are small per-type indices (`VariantId.id` is a per-type
+variant index; see `lower_core/records.tw`), so 20 bits each is ample, and packing
+is **O(1) to encode and decode**. This matters because `path_of_key` is called
+inside `graft`/`project`/`remove_prefix` loops within the fixpoint — a √z search
+loop per decode (Cantor) would be a real compile-time cost on wide enums. Use
+multiplication (not `<<`/`|`) to sidestep the boot bitwise-precedence + fmt-strips-
+parens gotcha. Add above `path_key`:
 
 ```tw
-// Reversible pairing of a nonneg pair -> nonneg (Cantor).
-fn pair2(a: Int, b: Int) Int {
-  s := a + b
-  s * (s + 1) / 2 + b
-}
-fn unpair2(z: Int) .{ a: Int, b: Int } {
-  w := 0
-  for (w + 1) * (w + 2) / 2 <= z {
-    w = w + 1
-  }
-  t := w * (w + 1) / 2
-  b := z - t
-  .{ a: w - b, b }
-}
-// Payload paths encode (tag, index, fieldslot) where fieldslot = 0 (no field)
-// or 1+f. Nested pairing -> a single nonneg, mapped to a disjoint NEGATIVE key.
+// 20-bit fields: 2^20 = 1048576, 2^40 = 1099511627776.
+// fieldslot = 0 (no field, i.e. the payload shell) or 1+f.
+// Packed nonneg -> disjoint NEGATIVE key (offset by 1 so 0/positive keys are free).
 fn payload_key(tag: Int, index: Int, fieldslot: Int) Int {
-  0 - (pair2(pair2(tag, index), fieldslot) + 1)
+  if tag < 0 or tag >= 1048576 or index < 0 or index >= 1048576
+    or fieldslot < 0 or fieldslot >= 1048576 {
+    error("field_facts: payload key component out of 20-bit range")
+  }
+  packed := tag * 1099511627776 + index * 1048576 + fieldslot
+  0 - (packed + 1)
 }
 ```
 
@@ -132,14 +181,14 @@ Add to `path_of_key` (`:103`) a branch for `k < 0`:
 
 ```tw
 k < 0 => {
-  z := (0 - k) - 1
-  outer := unpair2(z)          // outer.a = pair2(tag,index), outer.b = fieldslot
-  ti := unpair2(outer.a)       // ti.a = tag, ti.b = index
-  fieldslot := outer.b
+  packed := (0 - k) - 1
+  fieldslot := packed % 1048576
+  index := packed / 1048576 % 1048576
+  tag := packed / 1099511627776
   if fieldslot == 0 {
-    AccessPath.{ segs: [.Payload(ti.a, ti.b)] }
+    AccessPath.{ segs: [.Payload(tag, index)] }
   } else {
-    AccessPath.{ segs: [.Payload(ti.a, ti.b), .Field(fieldslot - 1)] }
+    AccessPath.{ segs: [.Payload(tag, index), .Field(fieldslot - 1)] }
   }
 },
 ```
@@ -185,8 +234,8 @@ git commit -m "field_facts: add tagged Payload path segment and negative-range c
 
 Phase 5 needs variant-payload ownership keyed by (variant_tag, payload_index)
 so an .Err arm can never recover an .Ok payload fact. Encode payload paths in a
-disjoint negative PathKey range via a reversible pairing, keeping positive field
-keys intact, and extend graft to carry a Field inner under a payload prefix.
+disjoint negative PathKey range via O(1) fixed-width bit-packing, keeping positive
+field keys intact, and extend graft to carry a Field inner under a payload prefix.
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
@@ -375,7 +424,67 @@ epp[ff.path_key(ff.elem_path())] = elem_origins
 st = st.set_path_prov(result, epp)
 ```
 
-For `ARecordUpdate` (`:1141`): shell prov should follow the base's shell prov (a rebuilt shell of a param-aliased record still aliases that param at the shell level only via base) — keep `origins := prov_of(st.prov, base)` for the shell (drop the `v` union), and set `path_prov[result]` = base's path_prov with `[.f]*` removed then `graft_path_prov([.f], v)` when single-retention.
+For `ARecordUpdate` (`:1141`): shell prov should follow the base's shell prov (a
+rebuilt shell of a param-aliased record still aliases that param at the shell level
+only via base) — keep `origins := prov_of(st.prov, base)` for the shell (drop the
+`v` union). **Capture base's `path_prov` up front**, in the same place the current
+code captures `base_fields := st.atom_field_own(base)` and **before `consume_base`**
+(which invalidates base and — if a later edit routes base through the `set_own_st`
+choke point — would clear it). Then build `path_prov[result]` as base's captured
+`path_prov` with `[.f]*` removed, grafting the replacement under `[.f]` only when
+single-retention, mirroring the `field_own` block directly above it:
+
+```tw
+.ARecordUpdate(base, f, v, _, _) => {
+  origins := prov_of(st.prov, base)          // shell-only: drop the old union with v
+  base_fields := st.atom_field_own(base)
+  base_pp := case atom_local_id(base) {       // capture BEFORE consume_base
+    .Some(bid) => st.path_prov_get(bid),
+    .None => Dict.new(),
+  }
+  st = .consume_base(result, base, last)
+  st = .field_store(v, last)
+  st = .set_prov_st(result, origins)
+  st = if own_is_unique(st.own, result) {
+    rf := base_fields.remove_prefix(.Field(f.id))
+    pp := remove_prefix_pp(base_pp, ff.PathSeg.Field(f.id))
+    if st.single_retention(v, last, [base, v]) {
+      rf = .graft(.Field(f.id), st.atom_field_own(v))
+      pp = graft_path_prov(pp, ff.PathSeg.Field(f.id), st, v)
+    }
+    st.set_field_own(result, rf).set_path_prov(result, pp)
+  } else {
+    st
+  }
+  st
+}
+```
+
+This is behavior-preserving under the Return-publish (Task 3): the field origin that
+moved out of the shell union now lives in `path_prov[[.f]]`, and `publish_local`
+(Step 4) publishes `path_prov` origins, so publishing the updated record still leaks
+`v`. The overwrite-drops-the-stale-origin behavior is locked by a dedicated test in
+Task 7 (which is also the lockstep-invariant regression guard — see the invariant
+note below).
+
+**Lockstep invariant — which directions are self-guarding (read before you "fix" a
+mismatch).** The `field_own ⇄ path_prov` key-set invariant is maintained by hand
+across the builders/projections. It is worth knowing that a *key-set* drift degrades
+to soundness, not unsoundness, so you don't over-correct:
+
+- **`classify_path_own` iterates `field_own` keys**, then reads `path_prov.get(k)`
+  three-way. An *extra* `path_prov` key (no matching `field_own` path) is never read;
+  a *missing* one reads `.None` ⇒ drop. Both safe.
+- **`publish_local` iterates `path_prov`** and publishes every origin. A *stale*
+  `path_prov` key merely over-publishes ⇒ conservative, safe.
+
+The genuinely dangerous failure is not a key-set drift but a **wrong origin** grafted
+for a *real* `field_own` path (e.g. `graft_path_prov` rebasing the wrong inner seg,
+or an overwrite leaving a stale origin under a reused key). That is a logic bug, and
+it is what the Task 7 tests target directly: multi-accumulator attribution
+(`[.state]=p0`, `[.accum]=p1`), same-origin-twice ⇒ drop, and the ARecordUpdate
+overwrite ⇒ stale origin dropped. Keep those green rather than adding a heavyweight
+runtime invariant checker.
 
 - [ ] **Step 3: Thread `path_prov` through rebinding and projection**
 
@@ -879,6 +988,40 @@ Expected: the multi-accumulator test passes; `[.f0]=from(p0)`, `[.f1]=from(p1)`,
 )
 ```
 
+Also add the **ARecordUpdate overwrite** test — the only task that exercises
+`ARecordUpdate`'s `path_prov` carry + reattribution, and the lockstep-invariant
+regression guard for the stale-origin direction. The base is a **fresh** record
+(so `ret=OwnedFresh`, not a param-aliased shell), `f0` is sourced from `p0` and is
+last-used at the build, and `f1` is overwritten with a **fresh** value bound in an
+intervening `Let` (so no reuse perturbs `f0`'s liveness). The overwrite must (a)
+carry `[.f0]=from(p0)` through unchanged, (b) **drop** the stale `[.f1]=from(p1)`,
+and (c) attribute `[.f1]` to the fresh replacement:
+
+```tw
+.test(
+  "fn f(x,y){ r := Rec{f0:x,f1:y}; r.f1 = fresh; r } -> [.f0]=from(p0) [.f1]=fresh (overwrite drops p1)",
+  fn() {
+    rec := AnfOp.ARecord(TypeId.{ id: 0 }, [
+      .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) },
+      .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(1)) },
+    ])
+    fresh := AnfOp.ARecord(TypeId.{ id: 1 }, [])   // fresh empty record for the new f1
+    // ARecordUpdate(base, field, value, in_place: Bool, tid: TypeId)
+    upd := AnfOp.ARecordUpdate(.ALocal(lid(2)), FieldId.{ id: 1 }, .ALocal(lid(3)), false, TypeId.{ id: 0 })
+    body: AnfExpr = .Let(lid(2), rec, .Let(lid(3), fresh, .Let(lid(4), upd, .Atom(.ALocal(lid(4))))))
+    s := summ1("f", 2, body)
+    try assert.equal(ret_tag(s.ret), 0)                        // OwnedFresh shell (base is fresh)
+    got := ret_path_pairs(s.ret_paths)
+    try assert.equal(same_ints(got, [0, 0, 1, 0 - 1]), true)   // f0->p0, f1->fresh(-1); p1 dropped
+    .Ok({})
+  },
+)
+```
+
+If this instead yields `[0, 0, 1, 1]`, `remove_prefix_pp` failed to drop the stale
+`[.f1]=from(p1)` — that is the lockstep bug the test exists to catch, not a flaky
+fixture.
+
 Run again — expect PASS.
 
 - [ ] **Step 6: fmt + lint + commit**
@@ -1058,10 +1201,16 @@ The order-dependent hazard is: if `run_scc` restores member summaries into the s
 Fix with an **explicit suppression set**, not a strip-and-final-pass. Thread the SCC member set (`scc_set`, already built at `summary.tw:296`) down to the call transfer, and blank `ret_paths` for any callee that is in the set. This makes in-SCC reads see empty `ret_paths` **regardless of table order**, during every round and any settle pass:
 
 1. Add a `suppress: Dict<Int, Bool>` parameter to `summarize_function` (default `Dict.new()` at its other call sites — `cfg_summary_suite.tw`'s `summ1` passes `Dict.new()`), threaded into `run_fixpoint` → `forward_*` → `transfer_op` → `transfer_call` → `transfer_summarized_call`.
+   **Also add a `callee_id: Int` parameter to `transfer_summarized_call`** — it does
+   *not* currently receive the callee id (its signature is `(st, result, s, args)`),
+   and the suppression check below needs it. The id is in scope at the one call site
+   inside `transfer_call` (`:844`), where the summary is resolved as
+   `case table.summary_get(fid.id)` (`:861`): pass that `fid.id` down. (Task 10 adds
+   `last` to the same signature, so both new params land together.)
 2. In `transfer_summarized_call`, before consuming `s.ret_paths`, check the callee id:
 
 ```tw
-// callee_id is the resolved AGlobalFunc id at this call
+// callee_id is the fid.id passed from transfer_call's summary_get(fid.id) resolution.
 eff_ret_paths := if in_set(suppress, callee_id) { [] } else { s.ret_paths }
 for rp in eff_ret_paths { /* gate + recover (Task 10) */ }
 ```
@@ -1089,7 +1238,13 @@ Add an `exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>` map to
 `summarize_function`'s return classification and `seed_payload_binding` (Task 13)
 read as `fx.exit_path_prov`.
 
-Then join it: `join_entry_field_own` (`:1776`) meets `field_own` per path; add a sibling `join_entry_path_prov` that meets `path_prov` for the same locals — a path survives only if present on every processed pred; on origin **conflict** across preds keep the **union** (so a divergent origin makes the path multi-origin ⇒ later dropped by `classify_path_own`, sound). Wire it into the `ForwardState.{ … }` entry builder next to `entry_field`, then call `seed_payload_binding` (Task 13) right after so payload bindings are seeded from the predecessor exits on every entry construction.
+Then join it: `join_entry_field_own` (`:1776`) meets `field_own` per path; add a sibling `join_entry_path_prov` that meets `path_prov` for the same locals — a path survives only if present on every processed pred; on origin **conflict** across preds keep the **union** (so a divergent origin makes the path multi-origin ⇒ later dropped by `classify_path_own`, sound). Wire it into the `ForwardState.{ … }` entry builder next to `entry_field`.
+
+> **Do NOT call `seed_payload_binding` here.** That helper is defined in Task 13,
+> which adds the call at these same entry-builder sites once it exists. Task 9 stops
+> at (a) making `exit_path_prov` available on `FixResult` and (b) joining `path_prov`
+> in lockstep with `field_own`. Adding the call now would reference an undefined
+> function and break the green-per-task discipline. Task 13 Step 3 owns the wiring.
 
 - [ ] **Step 5: Run — expect PASS + determinism**
 
@@ -1125,7 +1280,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Create the new suite skeleton + Case W caller test**
 
-Create `boot/tests/suites/cfg_return_paths_suite.tw` mirroring `cfg_summary_suite.tw`'s imports/helpers (copy `lid`, `b_reg`, `sem`, `fdef`, `module_of`, `compute_of`, `analyzed_caller`, `caller_own`, `own_unique`, `own_shared`). Register it in `boot/tests/main.tw` (add to the suite list next to the other cfg suites). First test — a caller recovering `out.ctx`:
+Create `boot/tests/suites/cfg_return_paths_suite.tw` mirroring `cfg_summary_suite.tw`'s imports/helpers (copy `lid`, `b_reg`, `sem`, `fdef`, `module_of`, `compute_of`, `analyzed_caller`, `caller_own`, `own_unique`, `own_shared`). **Also add the block-aware `own_in_block(f, block_id, local) Int`** (same body as `caller_own` but indexed at the given block, not hardcoded block 0) — the multi-block fixtures in Tasks 11 and 13 observe locals bound outside block 0, and `caller_own`'s `.None → Shared` default would otherwise make a borrow-negative pass trivially (see the "Fixture construction discipline" section, point 4). Register the suite in `boot/tests/main.tw` (add to the suite list next to the other cfg suites). First test — a caller recovering `out.ctx` (single-block, so `caller_own` is fine here):
 
 ```tw
 .test(
@@ -1151,7 +1306,12 @@ Expected: `c` is not Unique — the call result carries no field_own and the gat
 
 - [ ] **Step 3: Thread `last`, snapshot pre-call facts, apply the gate**
 
-Change `transfer_summarized_call` (`:976`) to accept `last: Vector<Int>` and the `suppress` set (Task 9). Its caller `transfer_call` (`:844`) already has `last`; pass both through.
+Change `transfer_summarized_call` (`:976`) to accept `last: Vector<Int>`, the
+`suppress` set, and `callee_id: Int` (all three land on this signature; `suppress`
+and `callee_id` are introduced in Task 9). Its caller `transfer_call` (`:844`)
+already has `last` and resolves the callee as `fid.id` in
+`case table.summary_get(fid.id)` (`:861`) — pass `last`, `suppress`, and that
+`fid.id` through at the call site `st.transfer_summarized_call(result, s, args)`.
 
 **Critical ordering (review note):** the existing `params`/`ret` handling *mutates* `st` — it publishes `Retained` args and `MayAliasParams` origins in place (`ownership.tw:976-999`). The gate must read the argument's ownership **as it was before the call**, so **snapshot the pre-call facts first**, then apply `params`/`ret`, then recover using the snapshot:
 
@@ -1435,6 +1595,14 @@ ctx = .set_block_payload_src(nb.id, arm_payload_src(scrutinee, arm.pattern))
 
 Add `set_block_payload_src` mirroring `set_block_bound` (`:525`).
 
+> **Known asymmetry (sound under-claim, not a bug):** the *summary* side (Task 8's
+> `AVariant` classification) records **every** payload index `Payload(tag, i)`, but
+> this *seeding* side recognizes only a single-`Var` payload and hardcodes
+> `payload_index: 0`. A multi-payload arm (`.Rect(a, b)`) yields `.None` and its
+> bound locals are not seeded. That is an under-claim (those bindings stay Unknown,
+> never wrongly Unique), so it is sound; widening to multi-payload seeding is a
+> Phase 6 concern. Do not "fix" it by guessing indices here.
+
 - [ ] **Step 3: Write a structural test**
 
 Assert that for a `case scrutinee { .Ok(v) => v, ... }` module, the arm block has `payload_src` set with the right tag/binding. Build via `cfg.build_view` and inspect `f.blocks`. Add the test to the new suite.
@@ -1467,6 +1635,16 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Test: `boot/tests/suites/cfg_return_paths_suite.tw`
 
 - [ ] **Step 1: Write the failing Case R test**
+
+> **Assert with `own_in_block` at the arm block, not `caller_own`.** `v` (and the
+> `ok_arm_*`/`err_arm_*` locals) are bound in a match-**arm** block, absent from
+> block 0. Using `caller_own` here reads block 0's exit and returns the `.None →
+> Shared` default — the move assertion below would fail spuriously and the
+> borrow-negatives (Steps 5–6) would pass without proving anything. Resolve the arm
+> block id from the built view (the `.Ok` arm's block) and assert
+> `own_in_block(f, ok_arm_block_id, <local>)`. The `ok_arm_state_local()` /
+> `ok_arm_payload_local()` / `err_arm_payload_local()` helpers return the local ids;
+> pair each with its arm block.
 
 ```tw
 .test(
@@ -1687,6 +1865,17 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 **Files:** none (verification only), plus doc bookkeeping.
 
+> **What "done" means for Phase 5.** This phase is analysis-only: no codegen decision
+> consumes `ret_paths` yet (verified — `summarize_function`/`SummaryTable` are read
+> only within `{ownership,summary,cfg,field_facts}.tw` + tests; `census.tw` contains
+> no ownership analysis). So there is **no observable runtime/codegen change by
+> design** — the recovered ownership only pays off once Phase 6 wires it to a
+> specialization decision. Phase 5's validation is therefore exactly: (a) unit +
+> cross-function suites green, (b) `ret_paths`/transport verdicts visible in a real
+> `twk ir --cfg` dump (Task 14), (c) self-host fixed point, (d) census still 0
+> in-place, (e) no compile-time regression (Step 3b). If you expected a functional
+> win here, that expectation belongs to Phase 6, not this plan.
+
 - [ ] **Step 1: Census still zero in-place**
 
 Run: `target/twk ir boot/main.tw --census 2>&1 | tail -20`
@@ -1701,6 +1890,20 @@ Expected: all suites green, including the re-baselined `cfg_summary_suite` and t
 
 Run: `make stage2`
 Expected: reaches the self-host fixed point (boot compiles boot to a stable `target/boot.wasm`). Phase 5 is boot-only and adds no stage0-parity construct, so stage0 needs no change; if `make stage2` fails in stage0, a Phase 5 construct leaked into boot *source* usage — revert that usage (analysis code must not require new stage0 support).
+
+- [ ] **Step 3b: Compile-time regression check**
+
+Phase 5 adds a per-block `path_prov` (`Dict<Int, Dict<Int, Vector<Int>>>`) joined at
+every block entry across the whole self-host, plus the payload codec. Confirm this
+did not silently regress compile time:
+
+Run: `TWINKLE_TIMINGS=1 target/twk build boot/main.tw -o /tmp/stage2.wasm 2>&1 | grep '^\[time'`
+Compare the total (and the `[time:check]` sub-counter, which covers the ownership
+pass) against the pre-Phase-5 baseline captured from `main` (re-run the same command
+on a clean checkout if no baseline was recorded). A single-digit-percent increase is
+expected and acceptable; a large jump points at the codec (should be O(1) after the
+bit-packing fix) or an unbounded `path_prov` join — investigate before landing, do
+not just accept it.
 
 - [ ] **Step 4: Rust reference sanity (targeted)**
 
@@ -1732,8 +1935,10 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - **No parameter `in_place_paths` / specialization** appears in any task (correctly Phase 6).
 - **Type consistency:** `PathSeg.Payload(Int,Int)`, `ReturnPathOwn.{via,field,own}`, `RetVia.Variant(Int,Int)`, `PayloadSrc.{scrutinee,variant_tag,payload_index,binding}` are used identically across tasks. `path_prov` is `Dict<Int, Dict<Int, Vector<Int>>>` throughout.
 - **Review-round-2 corrections (applied):** (1) `path_prov` mirrors `field_own` at every path — `graft_path_prov` is prefix-dependent (Field⇒rebase Elem/Val; Payload⇒rebase Field) and `AArrayLit` records `[Elem]` provenance (Task 3). (2) Match-arm seeding has an explicit **borrow-demote else branch** for a live scrutinee + a live-scrutinee negative test (Task 13). (3) SCC uses an **in-SCC suppression set** (order-independent), not a strip-and-final-pass; the recursive test asserts the specific under-approximation, not just determinism (Task 9). (4) `ret_paths` comparator returns `Order` via chained `Int.compare` on a canonical tuple, no packed keys (Task 6). (5) Caller gate **snapshots pre-call facts** before `params`/`ret` mutate `st` (Task 10). (6) Payload seeding is a **shared helper** applied at all entry-state sites (Task 13). (7) Co-Authored-By trailer is **conditional** per `AGENTS.md` (header).
+- **Review-round-7 corrections (applied):** (1) `transfer_summarized_call` gains an explicit **`callee_id: Int`** parameter (it did not previously receive the callee id, which the SCC suppression check needs) — passed from `transfer_call`'s `summary_get(fid.id)` resolution, landing alongside `last`/`suppress` (Task 9 Step 3, Task 10 Step 3). (2) **`ARecordUpdate` is now concrete code**, not prose: captures `base_pp` before `consume_base`, shell prov is base-only, and `path_prov` mirrors the `field_own` remove-then-graft (Task 3 Step 2). (3) Added the **`ARecordUpdate` overwrite test** — the only coverage of `ARecordUpdate` path_prov carry/reattribution, doubling as the lockstep-invariant stale-origin guard (fresh base, `f0` from `p0`, `f1` overwritten with a fresh value ⇒ `[.f0]=from(p0) [.f1]=fresh`, `p1` dropped) (Task 7 Step 5). (4) Documented **which lockstep-invariant directions are self-guarding** (classify iterates field_own keys; publish over-publishes) so a key-set drift is not mistaken for unsoundness — the real risk is a wrong grafted origin, covered by the Task 7 attribution/drop tests; no heavyweight runtime checker added (Task 3 Step 2 note). (5) Added a **soundness-boundary note**: Tasks 5–12 are transiently under-publishing but harmless (analysis-only, unconsumed); no commit before Task 13 is a soundness checkpoint (header).
+- **Review-round-6 corrections (applied):** (1) Payload codec is **O(1) fixed-width bit-packing** of `(tag, index, fieldslot)` into the negative range (20 bits each, multiply-not-shift to dodge the bitwise-precedence/fmt gotcha), replacing the √z-search Cantor pairing — `path_of_key` runs in `graft`/`project`/`remove_prefix` fixpoint loops, so decode must be constant-time (Task 1; design Decision 4 aligned). (2) **Task 9 no longer calls `seed_payload_binding`** (defined in Task 13) — Task 9 stops at `exit_path_prov` + the `path_prov` join; Task 13 owns the entry-site wiring, restoring green-per-task (Task 9/13). (3) Added a **"Fixture construction discipline"** section: build multi-block caller fixtures from real frontend output, confirm each move/borrow pair differs only in the liveness fact under test, eyeball the CFG once. (4) Task 15 gains a **compile-time regression check** (Step 3b, `TWINKLE_TIMINGS=1`) since `path_prov` is joined per block across the self-host. (5) Documented the **summary/seeding index asymmetry** (Task 8 records all payload indices; Task 13 seeds only single-`Var` index 0 — sound under-claim) and framed Phase 5 as **analysis-only with no observable win** (validation = suites + verdict dump + self-host + census 0 + no perf regression; win deferred to Phase 6). (6) Flagged that the copied **`caller_own` is block-0-only** and its `.None → Shared` default would make multi-block borrow-negatives (Tasks 11, 13) pass trivially — added a block-aware `own_in_block` helper and instructed the arm-bound Case R assertions to use it (Task 10 helper list, Task 13 Step 1, discipline point 4). All named helpers otherwise verified present in `cfg_summary_suite.tw`.
 - **Review-round-5 corrections (applied):** (1) Payload-move gate uses liveness **live-in** (`blk.entry.live`), which catches a scrutinee read *inside* the arm (after the binding) as well as any live-out — with an in-arm-read negative test (Task 13). (2) Predecessor block id is `blk.preds[0].target.id` (in a `preds` edge `CfgEdge.target` holds the predecessor id, `cfg.tw:368-372`); asserts single-predecessor arm shape (Task 13). (3) `project_path_prov` has one standardized `.{ shell, inner }` return used by both `ARecordGet` (Task 3) and `seed_payload_binding` (Task 13).
 - **Review-round-4 corrections (applied):** (1) `.Field(f)`/`.Field(fid)` no longer shadows the CfgFunction `f` — `fn_params := f.params` is captured before the classification loop and passed to `classify_path_own` in both the Direct and Variant branches (Task 7/8). (2) Payload-move seeding sets the binding's **shell prov** from the projected payload shell provenance (Task 13). (3) Payload seeding reads the scrutinee's facts from the **predecessor (match-block) exit** maps (`fx.exit_path_prov`/`exit_field_own`/…), not the live-filtered arm entry, since a dead scrutinee isn't live-in; `FixResult` gains `exit_path_prov` (Task 9/13). (4) Transport `dead-after` requires **both** `!exit_mentions_local` and `!live_contains_int(blk.exit.live, out)` (live-out), with an `out`-read-in-a-later-block negative test (Task 11).
 - **Review-round-3 corrections (applied):** (1) `path_prov` threads through **projection & rebinding** — `AAssign`/`init_hinge` copy it with `field_own`, and `ARecordGet` projects/removes it and sets the result **shell prov from the projected field's provenance** (fallback to base prov for opaque param bases, keeping Task 3 inert); Task 13 payload move sets binding shell prov from the projected payload shell prov (Task 3, Task 13). (2) Variant payload **shell vs field ret-paths stay distinct** — the classifier emits both `V7[0]=fresh` and `V7[0].f0=from(p0)`; `record_ret_path` writes **exactly one key** per ret_path and never synthesizes a shell from a field path (Task 8, Task 10). (3) `classify_path_own` uses `Vector<LocalId>` (`CfgFunction.params`), not `Vector<Param>`, with a `param_index_of` over LocalIds (Task 7). (4) Design's SCC wording updated to the suppression-set mechanism (`phase5-design.md`). (5) Recursive fixture is a **two-return-site** `g` (recursive site sources `f0` from the recursive result; base site from `p0`) so the meet drops `[.f0]` while `[.f1]=fresh` survives (Task 9).
 - **No test committed RED:** Tasks 3–5 are one execution unit; Tasks 3–4 are behavior-preserving (suite stays green), and the shell/deep observable tests live in Task 5 where they go green after the Return-publish removal.
-- **Fixture helpers** (`case_w_fixture`, `case_r_fixture`, `case_r_live_scrutinee_fixture`, `recursive_transport_fixture`, etc.) are named per task; implement each in the suite when first referenced, mirroring `cfg_summary_suite.tw`'s ANF-builder style. Because they are prose-specified rather than fully coded, the executor builds them from that harness — the one deliberate concession to plan length.
+- **Fixture helpers** (`case_w_fixture`, `case_r_fixture`, `case_r_live_scrutinee_fixture`, `recursive_transport_fixture`, etc.) are named per task; implement each in the suite when first referenced, mirroring `cfg_summary_suite.tw`'s ANF-builder style. Because they are prose-specified rather than fully coded, the executor builds them from that harness — the one deliberate concession to plan length. **Follow the "Fixture construction discipline" section** above: build multi-block caller fixtures from real frontend output where practical, confirm each move/borrow pair differs only in the liveness fact under test, and eyeball the CFG once before trusting a green run.

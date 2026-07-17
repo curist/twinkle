@@ -168,7 +168,7 @@ open choices are in **Open decision forks** below (for the end-of-doc review).
 | 1 | `ret` = shell ownership; `ret_paths` = deep ownership | `Summary` gains `ret_paths: Vector<ReturnPathOwn>`, but `ret` is **revised to mean shell-level ownership of the returned value** (Blocker 3): `OwnedFresh` = fresh shell (no *shell*-level param alias), `MayAliasParams(ks)` = the returned *shell itself* aliases params `ks` (e.g. `return x`), `Shared` = unknown. Deep field/payload ownership and aliasing move into `ret_paths`. A fresh wrapper `.{ ctx: p0 }` is `ret=OwnedFresh` **+** `ret_paths=[.ctx]=OwnedFromParam(0)`, not `MayAliasParams([0])`. Not purely additive — the shell/deep split is the point |
 | 2 | Path-attributed provenance with a **three-way** reading (Blocker 2, +review pt 3) | Add `path_prov: Dict<Int, Dict<Int, Vector<Int>>>` (local → PathKey → origins) mirroring `field_own`; grafting a field/payload copies **that value's** origins to the path, and the **shell `prov` of a freshly-constructed aggregate becomes shell-level only** (no longer unions field origins). **Read via `Dict.get`, three-way:** `.None` (absent) = provenance **unknown** → conservative drop; `.Some([])` = proven **fresh** → `OwnedFresh`; `.Some([k])` = single origin → `OwnedFromParam(k)`; `.Some([multi])` = conservative (drop path + treat as aliasing). **Invariant:** every `Unique` `field_own` path has a `path_prov` entry (at least `Some([])`), so "absent" genuinely means unknown, never proven-fresh. `publish_local` publishes `path_prov` origins, so whole-value publication still leaks fields |
 | 3 | Return is not callee retention, but still a leaf exit (Blocker 3, +review pt 2) | **Precise split.** (a) *For caller-visible escape:* remove `Return`'s terminator publication in `forward_block` (keep `ValueBreak`'s) — returning hands the value to the caller, whose `ret`/`ret_paths`+gate account for it, so a param handed forward stays `Borrowed` rather than falsely `Retained`. (b) *For intra-function joins / Case T:* a `Return` block is a CFG **leaf** (no successors), so its value never merges into a continuing-arm join — the `.Ok`/fallthrough arm is unaffected **structurally**, without any publish. This is why `ValueBreak` differs: its value flows to a **real successor** (post-loop join), so it still publishes. Genuine leaks (globals, closures, channels, unknown calls, escaping aggregates, aliasing) still mark `Retained` independently. **Deliberate change to Phase 3 escape behavior; re-baseline affected summary tests** |
-| 4 | Tagged variant-payload segment (Fork 1a amended) | `PathSeg` gains `Payload(Int, Int)` = `(variant_tag, payload_index)` — **tagged**, so an `.Err` arm can never recover an `.Ok` payload fact (Blocker 1). Payload keys occupy a **disjoint negative `PathKey` range** via a reversible pairing (the positive range is unbounded field keys), locked by a round-trip test |
+| 4 | Tagged variant-payload segment (Fork 1a amended) | `PathSeg` gains `Payload(Int, Int)` = `(variant_tag, payload_index)` — **tagged**, so an `.Err` arm can never recover an `.Ok` payload fact (Blocker 1). Payload keys occupy a **disjoint negative `PathKey` range** via reversible fixed-width bit-packing of `(tag, index, fieldslot)` — O(1) encode/decode, no search loop (the positive range is unbounded field keys), locked by a round-trip test |
 | 5 | `OwnedFromParam(k)` caller gate needs pre-call facts + `last`, and **publishes on failure** (Blocker 4, +review pt 1) | At the caller `OwnedFromParam(k)` refers to the argument atom `args[k]`. It yields a `Unique` result path **only when** `args[k]` is `Unique`+last-use at the call. **On failure it does not silently drop — it publishes `args[k]`** (the conservative `MayAliasParams`-equivalent): the returned value may carry a reference into `args[k]`'s region, so leaving `args[k]` `Unique` would be an unpublished alias. Publishing an already-`Shared` arg is idempotent, so the single rule covers both "unique-but-read-later" and "already-shared" failures. `OwnedFresh` is unconditional (no arg). `transfer_summarized_call` gains a `last` parameter; the gate reads **pre-call** arg facts before any escape/return handling. On success, the recovered path's `path_prov` at the caller is `prov_of(args[k])`, so a later publish of the result still leaks `args[k]`'s origins |
 | 6 | No binding invalidation | Phase 5 does **not** flip `valid[arg_k]` for `OwnedFromParam` handoffs; Decision 5's last-use gate already makes the recovered path sound. Binding invalidation stays Phase 6 |
 | 7 | Return-path depth cap | One field under the returned record (`[.f]`) or one field under a variant payload (`Variant[tag,i]`, `Variant[tag,i].f`). Deeper is dropped (sound under-claim) |
@@ -205,9 +205,10 @@ is *implicit in the local* (an `AVariant(Ok, …)` result is an `Ok`).
     matches the Phase 4 deferral note ("needs a payload `PathSeg`"); tag keeps arms
     disjoint.
   - *Cons:* the codec must grow a **disjoint negative range** for payload keys (the
-    positive range holds unbounded field keys `8 + f*4`), via a reversible pairing
-    over `(tag, index, optional field)` — a real codec extension, not a slot in the
-    existing range.
+    positive range holds unbounded field keys `8 + f*4`), via reversible fixed-width
+    bit-packing of `(tag, index, fieldslot)` — a real codec extension, not a slot in
+    the existing range (but O(1), since variant tags/field ids are small per-type
+    indices).
 - **Option 1a-ii — a separate *tagged* per-local payload channel** on
   `ForwardState`, leaving `field_facts.tw` payload-free.
   - *Pros:* keeps the field-fact codec untouched.
@@ -288,8 +289,8 @@ are seeded Unknown today (`ownership.tw:499`). Two ways to route the facts:
 
 - **`field_facts.tw`** (extend, Fork 1a-i) — add `Payload(Int, Int)` to `PathSeg`;
   extend the reversible `PathKey` codec with a **disjoint negative range** encoding
-  `[Payload(tag,i)]` and `[Payload(tag,i), Field(f)]` via a reversible pairing over
-  `(tag, i, optional f)`; `graft`/`project`/`remove_prefix` gain the `Payload`
+  `[Payload(tag,i)]` and `[Payload(tag,i), Field(f)]` via reversible fixed-width
+  bit-packing of `(tag, i, fieldslot)`; `graft`/`project`/`remove_prefix` gain the `Payload`
   prefix case. Still a LEAF module (no `ownership`/`cfg` import).
 - **`ownership.tw`** (extend):
   - `Summary` gains `ret_paths` (Decision 1); `RetVia`/`ReturnOwn`/`ReturnPathOwn`
@@ -672,8 +673,8 @@ All via the boot suite unless noted:
 ## Determinism-sensitive spots (lock with tests)
 
 - **Extended `PathKey` codec** — payload keys occupy a disjoint, canonical,
-  collision-free **negative** range via a reversible pairing over `(tag, index,
-  optional field)`; round-trip `path_key`/`path_of_key` covers `[Payload(tag,i)]`
+  collision-free **negative** range via reversible fixed-width bit-packing of
+  `(tag, index, fieldslot)`; round-trip `path_key`/`path_of_key` covers `[Payload(tag,i)]`
   and `[Payload(tag,i), .f]`.
 - **`ret_paths` ordering** — canonical-sorted `(variant tag, payload index, field
   id)`; `same_summary` compares the sorted form so the fixpoint is order-stable.
