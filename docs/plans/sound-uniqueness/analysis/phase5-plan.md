@@ -39,6 +39,41 @@ are safe to land. But it means **no commit before Task 13 is a valid soundness
 checkpoint** — do not wire any codegen/decision consumer against `ret_paths` until the
 whole stage is in.
 
+> ## TODO (revisit after all Phase 5 tasks land): caller-recovery gate rejects param-threaded state
+>
+> **Finding (surfaced during Task 9/10 execution).** The caller-side return-path
+> recovery gate (Task 10) fires only when the recovered argument is a **fresh unique
+> local** — it can *never* fire for a **parameter**. Params are seeded `Unknown`
+> (borrowed) at function entry (`join_entry_ownership` seeds no ownership for block 0;
+> only `seed_param_prov` runs), and the gate requires `Unique`+last-use. Concretely:
+> - `fn f() { ctx := Dict.new(); out := helper(ctx); ctx = out.ctx }` → **recovers**
+>   (fresh-local transport; this is Case W). ✅
+> - `fn f(ctx) { out := helper(ctx); ctx = out.ctx }` → **does not recover** (`ctx` is
+>   a param → `Unknown` → gate fails → `ctx` published/Shared). ❌
+>
+> **Why it's not a bug:** under-approximation is sound (worst case = today's aggregate
+> publication), and parameter-side ownership is explicitly a **Phase 6** concern
+> (`in_place_paths` / per-param `Consumed`). The same root cause makes recursive
+> self-threading transport under-approximate (a recursive/param-arg call fails the
+> gate; a fresh-arg recursive call yields `OwnedFresh` that the meet drops), which is
+> why the Task 9 suppression mechanism is correct-but-rarely-triggered insurance.
+>
+> **Why it matters:** the census-dominant transport idiom (LSP `AnalysisState`,
+> dataframe query state, the compiler's own threaded ctx records) typically receives
+> the threaded state **as a parameter** and passes it down — exactly the shape the
+> gate rejects. So **Phase 5 standalone optimizes only fresh-local transport; the
+> common param-threaded case waits for Phase 6.** Phase 5 remains the necessary
+> foundation (it builds the `ret_paths` summaries Phase 6 parameter-ownership will
+> consume), but its measured impact alone will be narrow.
+>
+> **Action (do NOT do mid-Phase-5; revisit once Tasks 11–15 are done):**
+> 1. Grep the real transport/threading sites the design cites and classify each as
+>    fresh-local vs incoming-param, to quantify how much of the idiom Phase 5 alone
+>    reaches.
+> 2. Based on that, decide whether to (a) confirm the Phase 5 → Phase 6 ordering as-is,
+>    or (b) pull a slice of Phase 6 parameter-ownership forward so param-threaded state
+>    also benefits. Feeds the Phase 6 design review.
+
 ---
 
 ## Fixture construction discipline (read before writing any cross-function test)
