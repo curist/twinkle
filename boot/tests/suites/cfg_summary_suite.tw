@@ -218,6 +218,27 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "t1 cross-block aggregate-escape: fn f(x){ w:=Wrapper.{x}; if c { global_set G=w }; 0 } -> p0 retain",
+      fn() {
+        // w is built in the entry block and published in a LATER block. Its field
+        // origins must survive the CFG edge (path_prov join) so x stays Retained.
+        then_e: AnfExpr = .Let(
+          lid(3),
+          .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))),
+          .Atom(.ALitInt(0)),
+        )
+        else_e: AnfExpr = .Atom(.ALitInt(0))
+        body: AnfExpr = .Let(
+          lid(1),
+          wrapper_record(lid(0)),
+          .Let(lid(2), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALitInt(0))),
+        )
+        s := summ1("f", 1, body)
+        try assert.equal(p_escape(s, 0), escape_tag(.Retained))
+        .Ok({})
+      },
+    )
+    .test(
       "t1 cow-escape: fn f(x){ ys := Dict.set(x,0,1); global_set G=ys } -> p0 retain",
       fn() {
         // ys structurally shares x's HAMT and escapes globally; provenance must

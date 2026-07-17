@@ -705,16 +705,22 @@ fn set_valid(st: ForwardState, id: Int, v: Bool) ForwardState {
 // value derived from a param (wrapped into an aggregate, aliased, etc.) that
 // escapes forces its origin params to Shared too — the aggregate/escape hole.
 fn publish_local(st: ForwardState, id: Int) ForwardState {
+  pp := st.path_prov_get(id) // capture before the choke point clears it
   st = .set_own_st(id, .Shared)
   case st.prov.get(id) {
     .Some(origins) => {
       for o in origins {
         st = .set_own_st(o, .Shared)
       }
-      st
     },
-    .None => st,
+    .None => {},
   }
+  for k, os in pp {
+    for o in os {
+      st = .set_own_st(o, .Shared)
+    }
+  }
+  st
 }
 
 fn publish_atom(st: ForwardState, a: Atom) ForwardState {
@@ -731,9 +737,11 @@ fn init_hinge(st: ForwardState, result: Int, a: Atom, last: Vector<Int>) Forward
       // move: result takes source ownership; source binding invalid
       o := fact_of(st.own, a)
       fields := st.field_own_get(src)
+      pp := st.path_prov_get(src)
       st = .set_own_st(result, o)
       st = if o.own_tag() == 0 {
-        st.set_field_own(result, fields)
+        // move: copy source's field_own AND path_prov in lockstep
+        st.set_field_own(result, fields).set_path_prov(result, pp)
       } else {
         st
       }
@@ -1048,6 +1056,74 @@ fn single_retention(st: ForwardState, v: Atom, last: Vector<Int>, operands: Vect
   }
 }
 
+// Copy `src`'s provenance under `prefix` into `pp`, mirroring ff.graft's
+// representable-inner rules so pp and field_own stay in lockstep. The [prefix]
+// entry is always the value's shell prov (empty vector = proven fresh).
+fn graft_path_prov(pp: Dict<Int, Vector<Int>>, prefix: ff.PathSeg, st: ForwardState, a: Atom) Dict<
+  Int,
+  Vector<Int>,
+> {
+  pp[ff.path_key(ff.AccessPath.{ segs: [prefix] })] = prov_of(st.prov, a) // [] = fresh
+  case atom_local_id(a) {
+    .Some(sid) => {
+      for k, v in st.path_prov_get(sid) {
+        inner := ff.path_of_key(k)
+        if inner.segs.len() == 1 {
+          keep := case prefix {
+            .Field(_) => case inner.segs[0] {
+              .Field(_) => false,
+              _ => true,
+            },
+            .Payload(_, _) => case inner.segs[0] {
+              .Field(_) => true,
+              _ => false,
+            },
+            _ => false,
+          }
+          if keep {
+            pp[ff.path_key(ff.AccessPath.{ segs: [prefix, inner.segs[0]] })] = v
+          }
+        }
+      }
+    },
+    .None => {},
+  }
+  pp
+}
+
+// Projection inverse for path_prov, mirroring ff.project: the [seg] entry
+// becomes `shell`; each strict descendant [seg, X] becomes inner[X].
+type PathProvProjection = .{ shell: Vector<Int>?, inner: Dict<Int, Vector<Int>> }
+
+fn project_path_prov(pp: Dict<Int, Vector<Int>>, seg: ff.PathSeg) PathProvProjection {
+  shell: Vector<Int>? = .None
+  inner: Dict<Int, Vector<Int>> = Dict.new()
+  for k, v in pp {
+    p := ff.path_of_key(k)
+    if p.segs.len() >= 1 and p.segs[0].seg_eq(seg) {
+      if p.segs.len() == 1 {
+        shell = .Some(v)
+      } else {
+        inner[ff.path_key(ff.AccessPath.{ segs: [p.segs[1]] })] = v
+      }
+    }
+  }
+  PathProvProjection.{ shell, inner }
+}
+
+// Drop the entire [seg]* subtree from a path_prov map, mirroring ff.remove_prefix.
+fn remove_prefix_pp(pp: Dict<Int, Vector<Int>>, seg: ff.PathSeg) Dict<Int, Vector<Int>> {
+  out: Dict<Int, Vector<Int>> = Dict.new()
+  for k, v in pp {
+    p := ff.path_of_key(k)
+    drop := p.segs.len() >= 1 and p.segs[0].seg_eq(seg)
+    if !drop {
+      out[k] = v
+    }
+  }
+  out
+}
+
 // Apply one instruction. `last` is last_use_at(op, live_after[i]).
 // `quartet` is the pre-scanned set of ARecordGet result-locals licensed to move
 // by the block-local quartet proof (empty for callers outside a block body).
@@ -1064,29 +1140,38 @@ fn transfer_op(
   case op {
     .ACall(callee, args) => st.transfer_call(result, callee, args, last, table, sem),
     .ARecord(_, fields) => {
-      origins: Vector<Int> = []
       operands: Vector<Atom> = collect fa in fields {
         fa.value
       }
       for fa in fields {
-        origins = union_sorted(origins, prov_of(st.prov, fa.value))
         st = .field_store(fa.value, last)
       }
       st = .set_result(result, .Unique) // sets shell Unique; choke point leaves field_own[result] intact (empty)
-      st = .set_prov_st(result, origins)
+      st = .set_prov_st(result, []) // SHELL prov: fresh shell aliases no param
 
-      // Graft each single-retention field value's facts under [.f].
+      // Route each field's origins into path_prov under [.f] so whole-value
+      // publication still leaks the field (publish_local cascades path_prov). The
+      // single-retention fields ALSO graft their inner facts into field_own, in
+      // lockstep with graft_path_prov's [.f, inner] entries.
       rf := ff.empty()
+      pp: Dict<Int, Vector<Int>> = Dict.new()
       for fa in fields {
+        seg := ff.PathSeg.Field(fa.field.id)
         if st.single_retention(fa.value, last, operands) {
-          rf = .graft(.Field(fa.field.id), st.atom_field_own(fa.value))
+          rf = .graft(seg, st.atom_field_own(fa.value))
+          pp = graft_path_prov(pp, seg, st, fa.value)
+        } else {
+          // shell-only origin of a non-owned field: recorded for publication only
+          // (no field_own[.f] entry; extra path_prov key is a sound over-publish).
+          pp[ff.path_key(ff.AccessPath.{ segs: [seg] })] = prov_of(st.prov, fa.value)
         }
       }
-      if rf.is_empty() {
+      st = if rf.is_empty() {
         st
       } else {
         st.set_field_own(result, rf)
       }
+      st.set_path_prov(result, pp)
     },
     .AVariant(_, _, args) => {
       origins: Vector<Int> = []
@@ -1098,13 +1183,22 @@ fn transfer_op(
       st.set_prov_st(result, origins)
     },
     .AArrayLit(elems) => {
-      origins: Vector<Int> = []
       for a in elems {
-        origins = union_sorted(origins, prov_of(st.prov, a))
         st = .field_store(a, last)
       }
       st = .set_result(result, .Unique)
-      st = .set_prov_st(result, origins)
+      st = .set_prov_st(result, []) // SHELL prov: fresh shell aliases no param
+
+      // Route the elements' origins into path_prov[Elem] so whole-value
+      // publication still leaks them (publish_local cascades path_prov). Empty
+      // origins => proven fresh.
+      elem_origins: Vector<Int> = []
+      for e in elems {
+        elem_origins = union_sorted(elem_origins, prov_of(st.prov, e))
+      }
+      epp: Dict<Int, Vector<Int>> = Dict.new()
+      epp[ff.path_key(ff.elem_path())] = elem_origins
+      st = .set_path_prov(result, epp)
 
       // [Elem]:Unique when EVERY element is single-retention. An EMPTY literal is
       // [Elem]:Unique vacuously (no shared inner) — this bootstraps build-from-empty
@@ -1124,32 +1218,50 @@ fn transfer_op(
     },
     .ARecordGet(base, f, _) => {
       pr := st.atom_field_own(base).project(.Field(f.id))
-      st = case atom_local_id(base) {
+      case atom_local_id(base) {
         .Some(bid) => if is_last_use(last, bid) or quartet_has(quartet, result) {
           // whole-record last-use MOVE, or quartet-licensed move (Task 6)
           case pr.shell {
             .Some(t) => {
+              proj_pp := project_path_prov(st.path_prov_get(bid), ff.PathSeg.Field(f.id))
               st = .set_own_st(result, own_of_tag(t))
               st = .set_field_own(result, pr.fields)
+              st = .set_path_prov(result, proj_pp.inner)
 
-              // R takes base.[.f]*; remove that subtree from base.
-              st.set_field_own(bid, st.field_own_get(bid).remove_prefix(.Field(f.id)))
+              // Result shell prov from the PROJECTED FIELD's provenance (not
+              // base's shell prov); opaque base falls back to base's origins.
+              st = .set_prov_st(
+                result,
+                case proj_pp.shell {
+                  .Some(o) => o,
+                  .None => prov_of(st.prov, base),
+                },
+              )
+
+              // R takes base.[.f]*; remove that subtree from base (both maps).
+              st = .set_field_own(bid, st.field_own_get(bid).remove_prefix(.Field(f.id)))
+              st.set_path_prov(bid, remove_prefix_pp(st.path_prov_get(bid), ff.PathSeg.Field(f.id)))
             },
             // field not deeply owned -> plain borrow, no claim
-            .None => st.set_result(result, .Unknown),
+            .None => {
+              st = .set_result(result, .Unknown)
+              st.set_prov_st(result, prov_of(st.prov, base))
+            },
           }
         } else {
           // BORROW: aliasing both sides -> R Shared (choke point clears R's facts),
-          // and clear base's [.f]* subtree too.
+          // and clear base's [.f]* subtree too (both maps).
           st = .set_own_st(result, .Shared)
-          st.set_field_own(bid, st.field_own_get(bid).remove_prefix(.Field(f.id)))
+          st = .set_field_own(bid, st.field_own_get(bid).remove_prefix(.Field(f.id)))
+          st = .set_path_prov(bid, remove_prefix_pp(st.path_prov_get(bid), ff.PathSeg.Field(f.id)))
+          st.set_prov_st(result, prov_of(st.prov, base))
         },
         // non-local base (global/literal): plain borrow
-        .None => st.set_result(result, .Unknown),
+        .None => {
+          st = .set_result(result, .Unknown)
+          st.set_prov_st(result, prov_of(st.prov, base))
+        },
       }
-
-      // R's prov still follows base's origins (unchanged from Phase 2/3).
-      st.set_prov_st(result, prov_of(st.prov, base))
     },
     .AIndex(base, _, _, _) => {
       // borrow
@@ -1157,22 +1269,28 @@ fn transfer_op(
       st.set_prov_st(result, prov_of(st.prov, base))
     },
     .ARecordUpdate(base, f, v, _, _) => {
-      origins := union_sorted(prov_of(st.prov, base), prov_of(st.prov, v))
+      origins := prov_of(st.prov, base) // shell-only: drop the old union with v
       base_fields := st.atom_field_own(base)
+      base_pp := case atom_local_id(base) {
+        // capture BEFORE consume_base clears base's path_prov on invalidate
+        .Some(bid) => st.path_prov_get(bid),
+        .None => Dict.new(),
+      }
       st = .consume_base(result, base, last) // sets result shell Unique (if base Unique+last-use) else Unknown
       st = .field_store(v, last)
       st = .set_prov_st(result, origins)
 
       // Only build field facts when the result shell is Unique (else choke point cleared it).
       st = if own_is_unique(st.own, result) {
-        // remove the whole [.f]* subtree first, then graft the (single-retention) replacement.
+        // remove the whole [.f]* subtree first, then graft the (single-retention)
+        // replacement, in lockstep across field_own and path_prov.
         rf := base_fields.remove_prefix(.Field(f.id))
-        rf = if st.single_retention(v, last, [base, v]) {
-          rf.graft(.Field(f.id), st.atom_field_own(v))
-        } else {
-          rf
+        pp := remove_prefix_pp(base_pp, ff.PathSeg.Field(f.id))
+        if st.single_retention(v, last, [base, v]) {
+          rf = .graft(.Field(f.id), st.atom_field_own(v))
+          pp = graft_path_prov(pp, ff.PathSeg.Field(f.id), st, v)
         }
-        st.set_field_own(result, rf)
+        st.set_field_own(result, rf).set_path_prov(result, pp)
       } else {
         st
       }
@@ -1188,7 +1306,13 @@ fn transfer_op(
       st = .set_own_st(local.id, o)
       st = .set_prov_st(local.id, prov_of(st.prov, a))
       st = if o.own_tag() == 0 {
-        st.set_field_own(local.id, st.atom_field_own(a))
+        st = .set_field_own(local.id, st.atom_field_own(a))
+
+        // copy path_prov in lockstep with field_own
+        case atom_local_id(a) {
+          .Some(aid) => st.set_path_prov(local.id, st.path_prov_get(aid)),
+          .None => st,
+        }
       } else {
         st
       }
@@ -1835,6 +1959,85 @@ fn join_entry_field_own(
   entry
 }
 
+fn path_prov_map_get(m: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>, id: Int) Dict<
+  Int,
+  Dict<Int, Vector<Int>>,
+> {
+  case m.get(id) {
+    .Some(v) => v,
+    .None => Dict.new(),
+  }
+}
+
+fn pp_of(pp: Dict<Int, Dict<Int, Vector<Int>>>, id: Int) Dict<Int, Vector<Int>> {
+  case pp.get(id) {
+    .Some(m) => m,
+    .None => Dict.new(),
+  }
+}
+
+fn pp_of_atom(pp: Dict<Int, Dict<Int, Vector<Int>>>, a: Atom) Dict<Int, Vector<Int>> {
+  case atom_local_id(a) {
+    .Some(id) => pp_of(pp, id),
+    .None => Dict.new(),
+  }
+}
+
+// entry.path_prov per live-in local at blk, mirroring join_entry_field_own: block
+// param -> meet over positional edge args; live-through local -> meet over same-id.
+// Only processed preds contribute. A (local, PathKey) survives only if present on
+// EVERY contributing pred; on origin conflict across preds, keep the UNION of the
+// origin vectors (a divergent origin makes the path multi-origin, which a later
+// classifier drops — sound).
+fn join_entry_path_prov(
+  blk: CfgBlock,
+  exit_pp: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>,
+  processed: Dict<Int, Bool>,
+) Dict<Int, Dict<Int, Vector<Int>>> {
+  entry: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
+  for lid in blk.entry.live {
+    pidx := param_index(blk, lid)
+    acc: Dict<Int, Vector<Int>>? = .None
+    for pe in blk.preds {
+      if is_processed(processed, pe.target.id) {
+        pp := path_prov_map_get(exit_pp, pe.target.id)
+        src := case pidx {
+          .Some(i) => if i < pe.args.len() {
+            pp_of_atom(pp, pe.args[i])
+          } else {
+            Dict.new()
+          },
+          .None => pp_of(pp, lid),
+        }
+        acc = case acc {
+          .Some(cur) => .Some(meet_path_prov(cur, src)),
+          .None => .Some(src),
+        }
+      }
+    }
+    case acc {
+      .Some(m) => if m.keys().len() > 0 {
+        entry[lid] = m
+      },
+      .None => {},
+    }
+  }
+  entry
+}
+
+// Meet two per-local path_prov maps: a PathKey survives only if present in BOTH;
+// origins are unioned.
+fn meet_path_prov(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Dict<Int, Vector<Int>> {
+  out: Dict<Int, Vector<Int>> = Dict.new()
+  for k, av in a {
+    case b.get(k) {
+      .Some(bv) => out[k] = union_sorted(av, bv),
+      .None => {},
+    }
+  }
+  out
+}
+
 // Block field_own maps are equal iff same locals and each local's FieldMap has
 // the same path-key set (FieldMap.same).
 fn same_field_own_map(a: Dict<Int, ff.FieldMap>, b: Dict<Int, ff.FieldMap>) Bool {
@@ -1879,6 +2082,69 @@ fn merge_field_own_exit(old: Dict<Int, ff.FieldMap>, next: Dict<Int, ff.FieldMap
   result
 }
 
+// Block path_prov maps are equal iff same locals and each local's per-PathKey map
+// has the same key set and equal origin vectors.
+fn same_path_prov_map(a: Dict<Int, Dict<Int, Vector<Int>>>, b: Dict<Int, Dict<Int, Vector<Int>>>) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+  for k in a.keys() {
+    case a.get(k) {
+      .Some(av) => case b.get(k) {
+        .Some(bv) => if !same_pp_local(av, bv) {
+          return false
+        },
+        .None => return false,
+      },
+      .None => {},
+    }
+  }
+  true
+}
+
+fn same_pp_local(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+  for k in a.keys() {
+    case a.get(k) {
+      .Some(av) => case b.get(k) {
+        .Some(bv) => if !same_live(av, bv) {
+          return false
+        },
+        .None => return false,
+      },
+      .None => {},
+    }
+  }
+  true
+}
+
+// Conservative widening for path_prov, mirroring merge_field_own_exit: keep only
+// locals present in both old and next, and meet each local's per-PathKey map
+// (key-intersection + origin union).
+fn merge_path_prov_exit(
+  old: Dict<Int, Dict<Int, Vector<Int>>>,
+  next: Dict<Int, Dict<Int, Vector<Int>>>,
+) Dict<Int, Dict<Int, Vector<Int>>> {
+  result: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
+  for k in old.keys() {
+    case old.get(k) {
+      .Some(old_pp) => case next.get(k) {
+        .Some(next_pp) => {
+          merged := meet_path_prov(old_pp, next_pp)
+          if merged.keys().len() > 0 {
+            result[k] = merged
+          }
+        },
+        .None => {},
+      },
+      .None => {},
+    }
+  }
+  result
+}
+
 // Combined ownership+validity+provenance fixpoint co-iterated to a joint fixed
 // point (they share ForwardState and forward_block). The single live driver
 // (guardrail G1).
@@ -1887,6 +2153,7 @@ type FixResult = .{
   exit_valid: Dict<Int, Dict<Int, Bool>>,
   exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
   exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>>,
+  exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>,
 }
 
 fn prev_seen_get(seen: Dict<Int, Bool>, id: Int) Bool {
@@ -1914,6 +2181,7 @@ fn run_fixpoint(
   exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
   exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
   exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>> = Dict.new()
+  exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>> = Dict.new()
   prev_exits: Dict<Int, Dict<Int, Int>> = Dict.new()
   prev_exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
   prev_exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
@@ -1928,6 +2196,7 @@ fn run_fixpoint(
     exit_valid[blk.id.id] = Dict.new()
     exit_prov[blk.id.id] = Dict.new()
     exit_field_own[blk.id.id] = Dict.new()
+    exit_path_prov[blk.id.id] = Dict.new()
     prev_exits[blk.id.id] = Dict.new()
     prev_exit_valid[blk.id.id] = Dict.new()
     prev_exit_prov[blk.id.id] = Dict.new()
@@ -1953,12 +2222,13 @@ fn run_fixpoint(
         entry_prov = seed_param_prov(entry_prov, params)
       }
       entry_field := join_entry_field_own(blk, exit_field_own, entry_own, processed)
+      entry_pp := join_entry_path_prov(blk, exit_path_prov, processed)
       st := ForwardState.{
         own: entry_own,
         valid: entry_valid,
         prov: entry_prov,
         field_own: entry_field,
-        path_prov: Dict.new(),
+        path_prov: entry_pp,
       }
       st = forward_block(blk, st, prep_get(preps, blk, sem), table, b, sem)
       already := is_processed(processed, blk.id.id)
@@ -1966,10 +2236,12 @@ fn run_fixpoint(
       old_valid := valid_map_get(exit_valid, blk.id.id)
       old_prov := prov_map_get(exit_prov, blk.id.id)
       old_field := field_own_map_get(exit_field_own, blk.id.id)
+      old_pp := path_prov_map_get(exit_path_prov, blk.id.id)
       next_own := st.own
       next_valid := st.valid
       next_prov := st.prov
       next_field := st.field_own
+      next_pp := st.path_prov
       if already {
         has_prev := prev_seen_get(prev_seen, blk.id.id)
         force_lock_changed := change_count_get(changed_visits, blk.id.id) >= fixpoint_widen_cap
@@ -2006,12 +2278,16 @@ fn run_fixpoint(
 
         // field_own widening: conservative meet (key-intersection + per-path meet)
         next_field = merge_field_own_exit(old_field, st.field_own)
+
+        // path_prov widening in lockstep: same conservative meet shape.
+        next_pp = merge_path_prov_exit(old_pp, st.path_prov)
       }
       if !already
         or !same_own_map(old_own, next_own)
         or !same_valid_map(old_valid, next_valid)
         or !same_prov_map(old_prov, next_prov)
-        or !same_field_own_map(old_field, next_field) {
+        or !same_field_own_map(old_field, next_field)
+        or !same_path_prov_map(old_pp, next_pp) {
         changed = true
         if already {
           prev_exits[blk.id.id] = old_own
@@ -2024,11 +2300,12 @@ fn run_fixpoint(
         exit_valid[blk.id.id] = next_valid
         exit_prov[blk.id.id] = next_prov
         exit_field_own[blk.id.id] = next_field
+        exit_path_prov[blk.id.id] = next_pp
       }
       processed[blk.id.id] = true
     }
   }
-  FixResult.{ exits, exit_valid, exit_prov, exit_field_own }
+  FixResult.{ exits, exit_valid, exit_prov, exit_field_own, exit_path_prov }
 }
 
 // ── Driver ──────────────────────────────────────────────────────────
@@ -2223,12 +2500,13 @@ fn ownership_stage(
       entry_prov = seed_param_prov(entry_prov, params)
     }
     entry_field := join_entry_field_own(blk, fx.exit_field_own, entry_own, done)
+    entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
     st := ForwardState.{
       own: entry_own,
       valid: entry_valid,
       prov: entry_prov,
       field_own: entry_field,
-      path_prov: Dict.new(),
+      path_prov: entry_pp,
     }
     prep := block_prep(blk, sem)
     verdicts := block_verdicts(blk, st, prep, table, b, sem)
@@ -2345,15 +2623,28 @@ pub fn summarize_function(
           entry_prov = seed_param_prov(entry_prov, f.params)
         }
         entry_field := join_entry_field_own(blk, fx.exit_field_own, entry_own, done)
+        entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
         st := ForwardState.{
           own: entry_own,
           valid: entry_valid,
           prov: entry_prov,
           field_own: entry_field,
-          path_prov: Dict.new(),
+          path_prov: entry_pp,
         }
         body := forward_block_body(blk, st, block_prep(blk, sem), table, b, sem)
-        idxs := prov_to_indices(f.params, prov_of(body.prov, a))
+
+        // Aliasing origins now split across the return atom's SHELL prov and its
+        // per-path path_prov (a fresh wrapper aliases params only through fields).
+        ret_origins := prov_of(body.prov, a)
+        case atom_local_id(a) {
+          .Some(aid) => {
+            for k, os in body.path_prov_get(aid) {
+              ret_origins = union_sorted(ret_origins, os)
+            }
+          },
+          .None => {},
+        }
+        idxs := prov_to_indices(f.params, ret_origins)
         r: ReturnEffect = if idxs.len() > 0 {
           .MayAliasParams(idxs)
         } else {
