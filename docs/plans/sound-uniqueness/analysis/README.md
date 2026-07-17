@@ -169,14 +169,13 @@ phase adds return-path summaries. Still no codegen changes. Canonical semantics:
 
 Exit: Case W (fresh-local record transport) classifies as an ownership-preserving
 handoff instead of aggregate publication; generated code unchanged (census 0
-in-place). **Two documented precision gaps remain (sound under-approximations,
-deferred to the Phase 6 design pass — see the TODOs in [phase5-plan.md](phase5-plan.md)):**
-(1) the caller-recovery gate fires only for **fresh unique locals, not params**, so
-param-threaded state (the common idiom) is not yet recovered; (2) the return-site
-meet is a plain intersection, not tag-aware, so a real two-tag `Result` function
-gets **empty `ret_paths`** — Case R fires only for a single-return-`Ok` shape. Both
-gate Case R's real-world reach and fold into Phase 6 (parameter-ownership +
-tag-aware meet / per-site return-tag tracking).
+in-place). The tag-aware return-site meet was hardened in-phase (commit `2d23394c`),
+so a real two-tag `Result` now keeps both arms' `ret_paths`. **One documented
+precision gap remains (sound under-approximation, deferred to the Phase 6 design
+pass — see the TODO in [phase5-plan.md](phase5-plan.md)):** the caller-recovery gate
+fires only for **fresh unique locals, not params**, so param-threaded state (the
+common idiom) — and Case R with a param scrutinee — is not yet recovered. It folds
+into Phase 6 parameter-ownership; loosening the gate earlier would be unsound.
 
 ## Phase 6 — Ownership-specialization decision facts *(architecture: 1E)*
 

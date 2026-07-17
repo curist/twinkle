@@ -74,7 +74,20 @@ whole stage is in.
 >    or (b) pull a slice of Phase 6 parameter-ownership forward so param-threaded state
 >    also benefits. Feeds the Phase 6 design review.
 
-> ## TODO (revisit after all Phase 5 tasks land): return-site meet is not tag-aware → real two-tag `Result` gets empty `ret_paths`
+> ## ~~TODO~~ RESOLVED (commit `2d23394c`): return-site meet is now tag-aware
+>
+> **Fixed as a Phase 5 hardening follow-up.** `meet_ret_paths` was replaced by
+> `meet_ret_paths_tagged`: each return site gets a witness (`Direct` /
+> `Variant(tag)` / `Unknown`, from owned facts or the return block's constructor op),
+> and a `Variant(tag)` path is met only across sites that could return that tag (a
+> could-produce site that lacks it — `.Ok(shared)` or an `Unknown` witness — still
+> drops it; different-tag sites are irrelevant). A real two-tag `Result` now keeps
+> both arms' `ret_paths` (verified: the `Ok[0].f0=from(p0)` claim survives). Sound —
+> behaviourally identical for single-witness / all-`Direct` functions (the recursive
+> two-`Direct` meet still drops `[.f0]`); only the cross-tag erasure is fixed. **Note:**
+> Case R end-to-end still needs a *fresh* scrutinee arg because of the param-gate TODO
+> above — the two gaps were independent, and only this one is closed. The historical
+> analysis is kept below for context.
 >
 > **Finding (empirically confirmed during Task 13).** `meet_ret_paths` joins `ret_paths`
 > across a function's multiple return sites by **plain intersection** on `(via, field)`.
