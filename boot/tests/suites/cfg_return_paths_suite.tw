@@ -1,0 +1,183 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
+use compiler.builtins
+use compiler.cfg
+use compiler.core_ir.{FieldId, FuncId, LocalId, Param}
+use compiler.mono_type.{MonoType, TypeId}
+use compiler.opt.semantics as semantics
+use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+use compiler.ownership
+use compiler.summary
+
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
+
+fn b_reg() builtins.BuiltinRegistry {
+  builtins.make_builtin_registry()
+}
+
+fn sem() semantics.OptimizerSemantics {
+  make_prelude_optimizer_semantics(b_reg())
+}
+
+fn fdef(id: Int, name: String, nparams: Int, body: AnfExpr) AnfFunctionDef {
+  params: Vector<Param> = collect i in range(nparams) {
+    Param.{ local: lid(i), ty: MonoType.Int }
+  }
+  AnfFunctionDef.{
+    func_id: FuncId.{ id },
+    name,
+    is_init: false,
+    params,
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: MonoType.Int,
+  }
+}
+
+fn module_of(funcs: Vector<AnfFunctionDef>) AnfModule {
+  AnfModule.{
+    functions: funcs,
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+    lib_exports: [],
+  }
+}
+
+fn compute_of(funcs: Vector<AnfFunctionDef>) ownership.SummaryTable {
+  b := b_reg()
+  v := cfg.build_view(module_of(funcs), b)
+  summary.compute(v, b, sem())
+}
+
+fn analyzed_caller(funcs: Vector<AnfFunctionDef>, caller: String) cfg.CfgFunction {
+  b := b_reg()
+  v := cfg.build_view(module_of(funcs), b)
+  t := summary.compute(v, b, sem())
+  a := ownership.analyze_with_summaries(v, b, sem(), t)
+  case cfg.function_named(a, caller) {
+    .Some(f) => f,
+    .None => error("no ${caller}"),
+  }
+}
+
+// exit ownership of a local in the caller's entry block (block 0).
+fn caller_own(f: cfg.CfgFunction, local_id: Int) Int {
+  case f.blocks[0].exit.ownership.get(local_id) {
+    .Some(tag) => tag,
+    .None => 2,
+  }
+}
+
+// exit ownership of a local in a GIVEN block (caller_own hardcodes block 0).
+fn own_in_block(f: cfg.CfgFunction, block_id: Int, local_id: Int) Int {
+  for blk in f.blocks {
+    if blk.id.id == block_id {
+      return case blk.exit.ownership.get(local_id) {
+        .Some(tag) => tag,
+        .None => 2,
+      }
+    }
+  }
+  2
+}
+
+fn own_unique() Int {
+  ownership.own_tag(.Unique)
+}
+
+fn own_shared() Int {
+  ownership.own_tag(.Shared)
+}
+
+fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
+  .ACall(.AGlobalFunc(b.method_id("Dict", "new")), [])
+}
+
+fn wrapper_record(field_val: LocalId) AnfOp {
+  .ARecord(TypeId.{ id: 0 }, [.{ field: FieldId.{ id: 0 }, value: .ALocal(field_val) }])
+}
+
+// g's local id in the caller (the projected `g := out.f0`).
+fn grec_local() Int {
+  2
+}
+
+// helper(x) returns Record{f0:x}: summary ret=OwnedFresh with a Direct .f0
+// ret_path owned-from-param(0). caller() threads a fresh unique ctx through it.
+fn case_w_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  helper := fdef(1, "helper", 1, .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1)))))
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // ctx := Dict.new() (fresh Unique)
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := helper(ctx)
+      .Let(
+        lid(2),
+        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }), // g := out.f0
+        .Atom(.ALocal(lid(2))),
+      ),
+    ),
+  )
+  [helper, fdef(2, "caller", 0, caller_body)]
+}
+
+// Same as case_w_fixture but reads ctx (lid0) AFTER the call, so ctx is not a
+// last-use at the call -> the recovery gate fails on last-use and publishes ctx.
+fn case_w_gatefail_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  helper := fdef(1, "helper", 1, .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1)))))
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // ctx := Dict.new() (fresh Unique)
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := helper(ctx)
+      .Let(
+        lid(2),
+        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }), // g := out.f0
+        .Let(
+          lid(3),
+          .AInit(.ALocal(lid(0))), // keep := ctx (reads ctx AFTER the call)
+          .Atom(.ALocal(lid(2))),
+        ),
+      ),
+    ),
+  )
+  [helper, fdef(2, "caller", 0, caller_body)]
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("cfg return paths")
+    .test(
+      "Case W: ctx := fresh; out := helper(ctx); g := out.f0 recovers g Unique",
+      fn() {
+        // helper(x) returns Record{f0:x}  => summary ret=OwnedFresh, ret_paths [.f0]=from(p0).
+        // caller(): ctx := Dict.new() (fresh Unique); out := helper(ctx);
+        //           g := record_get out.f0; return g
+        funcs := case_w_fixture()
+        f := analyzed_caller(funcs, "caller")
+        try assert.equal(caller_own(f, grec_local()), own_unique()) // g is Unique after the projection move
+        .Ok({})
+      },
+    )
+    .test(
+      "gate fail: fresh ctx used after the call is published (gate fails on last-use)",
+      fn() {
+        // caller(): ctx := Dict.new(); out := helper(ctx); g := out.f0;
+        //           keep := ctx (reads ctx AFTER the call -> ctx not last-use at call);
+        //           return g.  Gate fails -> ctx published -> Shared.
+        funcs := case_w_gatefail_fixture()
+        f := analyzed_caller(funcs, "caller")
+        try assert.equal(caller_own(f, 0), own_shared()) // ctx (lid0) published by gate-fail
+        .Ok({})
+      },
+    )
+}

@@ -894,7 +894,7 @@ fn transfer_call(
     .Some(fid) => case call_info(sem, fid) {
       .Some(cs) => st.transfer_builtin_call(result, fid, cs, args, last, sem),
       .None => case table.summary_get(fid.id) {
-        .Some(s) => st.transfer_summarized_call(result, s, args),
+        .Some(s) => st.transfer_summarized_call(result, s, args, last),
         .None => st.publish_call(result, args),
       },
     },
@@ -1009,7 +1009,26 @@ fn transfer_builtin_call(
 // OwnedFresh result is Unique, MayAliasParams publishes every origin and shares
 // the result, Shared result is Unknown. Capability (Consumed) is recorded-only
 // and never read here — it must never invalidate a caller binding (Phase 6).
-fn transfer_summarized_call(st: ForwardState, result: Int, s: Summary, args: Vector<Atom>) ForwardState {
+fn transfer_summarized_call(
+  st: ForwardState,
+  result: Int,
+  s: Summary,
+  args: Vector<Atom>,
+  last: Vector<Int>,
+) ForwardState {
+  // 0. SNAPSHOT pre-call arg facts (before any summary effect mutates st). The
+  // recovery gate must read arg ownership/provenance as it was BEFORE the call.
+  pre_own := st.own
+  pre_prov := st.prov
+  arg_unique: Vector<Bool> = collect a in args {
+    case atom_local_id(a) {
+      .Some(id) => own_is_unique(pre_own, id) and is_last_use(last, id),
+      .None => false,
+    }
+  }
+
+  // 1. Escape + return handling (mutates st: publishes Retained args, sets the
+  // result shell, publishes MayAliasParams origins).
   for ps, i in s.params {
     if i < args.len() {
       case ps.escape {
@@ -1019,8 +1038,8 @@ fn transfer_summarized_call(st: ForwardState, result: Int, s: Summary, args: Vec
     }
   }
   case s.ret {
-    .OwnedFresh => st.set_own_st(result, .Unique),
-    .Shared => st.set_own_st(result, .Unknown),
+    .OwnedFresh => st = .set_own_st(result, .Unique),
+    .Shared => st = .set_own_st(result, .Unknown),
     .MayAliasParams(idxs) => {
       origins: Vector<Int> = []
       for k in idxs {
@@ -1030,9 +1049,77 @@ fn transfer_summarized_call(st: ForwardState, result: Int, s: Summary, args: Vec
         }
       }
       st = .set_own_st(result, .Shared)
-      st.set_prov_st(result, origins)
+      st = .set_prov_st(result, origins)
     },
   }
+
+  // 2. Return-path recovery, gated on the SNAPSHOT. Only a fresh result shell
+  // (OwnedFresh) can carry recovered field/payload facts.
+  result_ok := case s.ret {
+    .OwnedFresh => true,
+    _ => false,
+  }
+  result_fields := ff.empty()
+  result_pp: Dict<Int, Vector<Int>> = Dict.new()
+  for rp in s.ret_paths {
+    own_here := case rp.own {
+      .OwnedFresh => true,
+      .OwnedFromParam(k) => if k < args.len() and arg_unique[k] {
+        true
+      } else {
+        // publish-on-fail: the result may alias args[k], so publish it rather
+        // than leaving an unpublished alias.
+        if k < args.len() {
+          st = .publish_atom(args[k])
+        }
+        false
+      },
+    }
+    if own_here and result_ok {
+      origins := case rp.own {
+        .OwnedFromParam(k) => prov_of(pre_prov, args[k]),
+        .OwnedFresh => [],
+      }
+      r := record_ret_path(result_fields, result_pp, rp, origins)
+      result_fields = r.fields
+      result_pp = r.pp
+    }
+  }
+  if result_ok and !result_fields.is_empty() {
+    st.set_field_own(result, result_fields).set_path_prov(result, result_pp)
+  } else {
+    st
+  }
+}
+
+type RetPathRecord = .{ fields: ff.FieldMap, pp: Dict<Int, Vector<Int>> }
+
+// Write EXACTLY ONE key (the one this ret_path names) into both `fields` (tag
+// Unique=0) and `pp` (origins). The key is built from the ret_path's via/field:
+//   Direct + Some(f)          -> [.Field(f)]
+//   Variant(tag,i) + None     -> [.Payload(tag,i)]        (payload shell)
+//   Variant(tag,i) + Some(f)  -> [.Payload(tag,i), .Field(f)]
+// Never synthesize a sibling key.
+fn record_ret_path(
+  fields: ff.FieldMap,
+  pp: Dict<Int, Vector<Int>>,
+  rp: ReturnPathOwn,
+  origins: Vector<Int>,
+) RetPathRecord {
+  ap := case rp.via {
+    .Direct => case rp.field {
+      .Some(f) => ff.field_path(f),
+      .None => ff.AccessPath.{ segs: [] },
+    },
+    .Variant(tag, i) => case rp.field {
+      .None => ff.AccessPath.{ segs: [.Payload(tag, i)] },
+      .Some(f) => ff.AccessPath.{ segs: [.Payload(tag, i), .Field(f)] },
+    },
+  }
+  k := ff.path_key(ap)
+  fields2 := fields.set_path(ap, 0)
+  pp[k] = origins
+  .{ fields: fields2, pp }
 }
 
 fn own_is_unique(own: Dict<Int, Int>, id: Int) Bool {
