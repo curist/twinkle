@@ -75,7 +75,13 @@ fn summ1(name: String, nparams: Int, body: AnfExpr) ownership.Summary {
   m := module_of([fdef(1, name, nparams, body)])
   v := cfg.build_view(m, b)
   case cfg.function_named(v, name) {
-    .Some(f) => ownership.summarize_function(f, ownership.empty_summary_table(), b, sem()),
+    .Some(f) => ownership.summarize_function(
+      f,
+      ownership.empty_summary_table(),
+      b,
+      sem(),
+      Dict.new(),
+    ),
     .None => error("missing ${name}"),
   }
 }
@@ -235,6 +241,96 @@ fn has_variant_field_from(
     }
   }
   false
+}
+
+// Some ret_path is a Direct .field=k backed by OwnedFromParam(k).
+fn has_from_param_path(rps: Vector<ownership.ReturnPathOwn>, k: Int) Bool {
+  for r in rps {
+    via_ok := case r.via {
+      .Direct => true,
+      .Variant(_, _) => false,
+    }
+    fld_ok := case r.field {
+      .Some(f) => f == k,
+      .None => false,
+    }
+    own_ok := case r.own {
+      .OwnedFromParam(p) => p == k,
+      .OwnedFresh => false,
+    }
+    if via_ok and fld_ok and own_ok {
+      return true
+    }
+  }
+  false
+}
+
+// Some Direct .field=f ret_path is OwnedFresh.
+fn has_direct_field_fresh(rps: Vector<ownership.ReturnPathOwn>, f: Int) Bool {
+  for r in rps {
+    via_ok := case r.via {
+      .Direct => true,
+      .Variant(_, _) => false,
+    }
+    fld_ok := case r.field {
+      .Some(x) => x == f,
+      .None => false,
+    }
+    own_ok := case r.own {
+      .OwnedFresh => true,
+      .OwnedFromParam(_) => false,
+    }
+    if via_ok and fld_ok and own_ok {
+      return true
+    }
+  }
+  false
+}
+
+fn same_summary_pub(a: ownership.Summary, b: ownership.Summary) Bool {
+  summary.same_summary(a, b)
+}
+
+// fn g(x, y) {
+//   if y {
+//     r := g(x, y)                          // recursive return site
+//     return Record{ f0: r.f0, f1: <fresh> }
+//   }
+//   Record{ f0: x, f1: <fresh> }            // base site: f0 from p0
+// }
+// g is func_id 1; x=lid(0), y=lid(1).
+fn recursive_transport_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  rec_record := AnfOp.ARecord(
+    TypeId.{ id: 0 },
+    [
+      .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(3)) },
+      .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(4)) },
+    ],
+  )
+  then_branch: AnfExpr = .Let(
+    lid(2),
+    .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0)), .ALocal(lid(1))]),
+    .Let(
+      lid(3),
+      .ARecordGet(.ALocal(lid(2)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+      .Let(lid(4), dict_new_call(b), .Let(lid(5), rec_record, .Return(.Some(.ALocal(lid(5)))))),
+    ),
+  )
+  base_record := AnfOp.ARecord(
+    TypeId.{ id: 0 },
+    [
+      .{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) },
+      .{ field: FieldId.{ id: 1 }, value: .ALocal(lid(6)) },
+    ],
+  )
+  else_branch: AnfExpr = .Let(
+    lid(6),
+    dict_new_call(b),
+    .Let(lid(7), base_record, .Return(.Some(.ALocal(lid(7))))),
+  )
+  body: AnfExpr = .Let(lid(8), .AIf(.ALocal(lid(1)), then_branch, else_branch), .Return(.None))
+  [fdef(1, "g", 2, body)]
 }
 
 pub fn suite() runner.Suite {
@@ -626,6 +722,24 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "recursive helper: ret_paths deterministic + self-thread under-approximated",
+      fn() {
+        funcs := recursive_transport_fixture()
+        t := compute_of(funcs)
+        s := summ_of(t, 1)
+
+        // [.f0] is dropped by the meet (base=from(p0), recursive site doesn't recover
+        // it); [.f1]=fresh survives on both sites.
+        try assert.equal(has_from_param_path(s.ret_paths, 0), false)
+        try assert.equal(has_direct_field_fresh(s.ret_paths, 1), true)
+
+        // determinism: recompute and compare
+        t2 := compute_of(funcs)
+        try assert.equal(same_summary_pub(s, summ_of(t2, 1)), true)
+        .Ok({})
+      },
+    )
+    .test(
       "t4 borrow: borrowing callee leaves caller arg Unique",
       fn() {
         b := b_reg()
@@ -935,7 +1049,7 @@ pub fn suite() runner.Suite {
           .Some(found) => found,
           .None => error("missing f"),
         }
-        s := ownership.summarize_function(f, ownership.empty_summary_table(), b, legacy)
+        s := ownership.summarize_function(f, ownership.empty_summary_table(), b, legacy, Dict.new())
         try assert.equal(p_escape(s, 0), escape_tag(.Retained))
         .Ok({})
       },

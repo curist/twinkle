@@ -885,6 +885,7 @@ fn transfer_call(
   last: Vector<Int>,
   table: SummaryTable,
   sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
 ) ForwardState {
   // Two-level lookup: builtins resolve via CallSemantics; a direct user callee
   // WITHOUT builtin semantics consults its interprocedural summary; everything
@@ -894,7 +895,7 @@ fn transfer_call(
     .Some(fid) => case call_info(sem, fid) {
       .Some(cs) => st.transfer_builtin_call(result, fid, cs, args, last, sem),
       .None => case table.summary_get(fid.id) {
-        .Some(s) => st.transfer_summarized_call(result, s, args, last),
+        .Some(s) => st.transfer_summarized_call(result, s, args, last, suppress, fid.id),
         .None => st.publish_call(result, args),
       },
     },
@@ -1004,17 +1005,31 @@ fn transfer_builtin_call(
   }
 }
 
+fn in_set(d: Dict<Int, Bool>, k: Int) Bool {
+  case d.get(k) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
 // Consume a callee summary at a direct user call. Acts ONLY on escape + return:
 // Retained args publish (demote to Shared), Borrowed args are untouched;
 // OwnedFresh result is Unique, MayAliasParams publishes every origin and shares
 // the result, Shared result is Unknown. Capability (Consumed) is recorded-only
 // and never read here — it must never invalidate a caller binding (Phase 6).
+//
+// `suppress`/`callee_id`: during an in-SCC summary fixpoint, an in-SCC callee's
+// `ret_paths` are read as EMPTY (speculative recovery blanked) so the SCC's least
+// fixed point is order-independent — `ret_paths` are non-monotone, so an in-SCC
+// snapshot must never leak into a co-member's transfer.
 fn transfer_summarized_call(
   st: ForwardState,
   result: Int,
   s: Summary,
   args: Vector<Atom>,
   last: Vector<Int>,
+  suppress: Dict<Int, Bool>,
+  callee_id: Int,
 ) ForwardState {
   // 0. SNAPSHOT pre-call arg facts (before any summary effect mutates st). The
   // recovery gate must read arg ownership/provenance as it was BEFORE the call.
@@ -1061,7 +1076,12 @@ fn transfer_summarized_call(
   }
   result_fields := ff.empty()
   result_pp: Dict<Int, Vector<Int>> = Dict.new()
-  for rp in s.ret_paths {
+  eff_ret_paths := if in_set(suppress, callee_id) {
+    []
+  } else {
+    s.ret_paths
+  }
+  for rp in eff_ret_paths {
     own_here := case rp.own {
       .OwnedFresh => true,
       .OwnedFromParam(k) => if k < args.len() and arg_unique[k] {
@@ -1247,9 +1267,10 @@ fn transfer_op(
   table: SummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
 ) ForwardState {
   case op {
-    .ACall(callee, args) => st.transfer_call(result, callee, args, last, table, sem),
+    .ACall(callee, args) => st.transfer_call(result, callee, args, last, table, sem, suppress),
     .ARecord(_, fields) => {
       operands: Vector<Atom> = collect fa in fields {
         fa.value
@@ -1600,6 +1621,7 @@ fn block_verdicts(
   table: SummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
 ) Dict<Int, String> {
   scan := prep.scan
   moves := prep.moves
@@ -1621,7 +1643,7 @@ fn block_verdicts(
       },
       _ => {},
     }
-    st = .transfer_op(inst.anf_local.id, inst.op, last, moves, table, b, sem)
+    st = .transfer_op(inst.anf_local.id, inst.op, last, moves, table, b, sem, suppress)
     case inst.op {
       .ARecordUpdate(base, f, _, _, _) => {
         field_backing_moved := case atom_local_id(base) {
@@ -1656,11 +1678,12 @@ fn forward_block_body(
   table: SummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
 ) ForwardState {
   st := entry
   for inst, i in blk.instructions {
     last := last_use_at(inst.op, prep.scan.live_after[i])
-    st = .transfer_op(inst.anf_local.id, inst.op, last, prep.moves, table, b, sem)
+    st = .transfer_op(inst.anf_local.id, inst.op, last, prep.moves, table, b, sem, suppress)
   }
   st
 }
@@ -1674,8 +1697,9 @@ fn forward_block(
   table: SummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
 ) ForwardState {
-  st := forward_block_body(blk, entry, prep, table, b, sem)
+  st := forward_block_body(blk, entry, prep, table, b, sem, suppress)
   case blk.terminator {
     // Return hands the value to the CALLER; it is not a callee leak. The caller's
     // ret / ret_paths handling accounts for it. Return blocks are CFG leaves, so
@@ -2321,6 +2345,7 @@ fn run_fixpoint(
   table: SummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
 ) FixResult {
   exits: Dict<Int, Dict<Int, Int>> = Dict.new()
   exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
@@ -2375,7 +2400,7 @@ fn run_fixpoint(
         field_own: entry_field,
         path_prov: entry_pp,
       }
-      st = forward_block(blk, st, prep_get(preps, blk, sem), table, b, sem)
+      st = forward_block(blk, st, prep_get(preps, blk, sem), table, b, sem, suppress)
       already := is_processed(processed, blk.id.id)
       old_own := own_map_get(exits, blk.id.id)
       old_valid := valid_map_get(exit_valid, blk.id.id)
@@ -2635,7 +2660,8 @@ fn ownership_stage(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
 ) Vector<CfgBlock> {
-  fx := run_fixpoint(blocks, params, table, b, sem)
+  no_suppress: Dict<Int, Bool> = Dict.new()
+  fx := run_fixpoint(blocks, params, table, b, sem, no_suppress)
   done := all_processed(blocks)
   collect blk in blocks {
     entry_own := join_entry_ownership(blk, fx.exits, done)
@@ -2654,8 +2680,8 @@ fn ownership_stage(
       path_prov: entry_pp,
     }
     prep := block_prep(blk, sem)
-    verdicts := block_verdicts(blk, st, prep, table, b, sem)
-    st = forward_block(blk, st, prep, table, b, sem)
+    verdicts := block_verdicts(blk, st, prep, table, b, sem, no_suppress)
+    st = forward_block(blk, st, prep, table, b, sem, no_suppress)
     blk.entry.ownership = entry_own
     blk.exit.ownership = st.own
     blk.entry.binding_valid = entry_valid
@@ -2857,6 +2883,7 @@ pub fn summarize_function(
   table: SummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
 ) Summary {
   live := compute_liveness(f.blocks)
   blocks := collect blk in f.blocks {
@@ -2865,7 +2892,7 @@ pub fn summarize_function(
     blk.exit.live = bl.live_out
     blk
   }
-  fx := run_fixpoint(blocks, f.params, table, b, sem)
+  fx := run_fixpoint(blocks, f.params, table, b, sem, suppress)
 
   params: Vector<ParamSummary> = collect p in f.params {
     esc: EscapeEffect = .Borrowed
@@ -2907,7 +2934,7 @@ pub fn summarize_function(
           field_own: entry_field,
           path_prov: entry_pp,
         }
-        body := forward_block_body(blk, st, block_prep(blk, sem), table, b, sem)
+        body := forward_block_body(blk, st, block_prep(blk, sem), table, b, sem, suppress)
 
         // ret reflects SHELL ownership only: a fresh wrapper .{ctx:p0} has empty
         // shell prov -> OwnedFresh; only a directly-returned param (return x, shell

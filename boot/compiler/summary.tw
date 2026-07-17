@@ -399,7 +399,7 @@ fn run_scc(
         .Some(fn0) => fn0,
         .None => error("summary: scc id ${id} not in index"),
       }
-      next := summarize_function(f, table, b, sem)
+      next := summarize_function(f, table, b, sem, scc_set)
       if !same_summary(table_get(table, id), next) {
         table = table_put(table, id, next)
         case callers.get(id) {
@@ -417,6 +417,23 @@ fn run_scc(
     }
     worklist = nd.sort()
     rounds = rounds + 1
+  }
+
+  // Non-convergence: the worklist still holds dirty members at the cap. ret_paths
+  // are non-monotone, so a cap-time snapshot may be an over-claim; expose empty
+  // ret_paths for every member (fully conservative). params/ret stay monotone and
+  // remain sound at their current value.
+  if worklist.len() > 0 {
+    for id in members {
+      case summary_get(table, id) {
+        .Some(s) => table = table_put(
+          table,
+          id,
+          Summary.{ params: s.params, ret: s.ret, ret_paths: [] },
+        ),
+        .None => {},
+      }
+    }
   }
   table
 }
