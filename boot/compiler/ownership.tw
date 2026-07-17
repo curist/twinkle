@@ -44,7 +44,17 @@ pub type ParamSummary = .{ escape: EscapeEffect, capability: ParamCapability }
 
 pub type ReturnEffect = { OwnedFresh, MayAliasParams(Vector<Int>), Shared }
 
-pub type Summary = .{ params: Vector<ParamSummary>, ret: ReturnEffect }
+pub type ReturnOwn = { OwnedFresh, OwnedFromParam(Int) }
+
+pub type RetVia = { Direct, Variant(Int, Int) }
+
+pub type ReturnPathOwn = .{ via: RetVia, field: Int?, own: ReturnOwn }
+
+pub type Summary = .{
+  params: Vector<ParamSummary>,
+  ret: ReturnEffect,
+  ret_paths: Vector<ReturnPathOwn>,
+}
 
 pub type SummaryTable = .{ by_func: Dict<Int, Summary> }
 
@@ -2705,5 +2715,5 @@ pub fn summarize_function(
     }
   }
 
-  Summary.{ params, ret }
+  Summary.{ params, ret, ret_paths: [] }
 }

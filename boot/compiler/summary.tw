@@ -16,8 +16,8 @@ use compiler.cfg.{CfgFunction, CfgView}
 use compiler.graph_scc
 use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership.{
-  EscapeEffect, ParamCapability, ParamSummary, ReturnEffect, Summary, SummaryTable,
-  empty_summary_table, summarize_function, summary_get,
+  EscapeEffect, ParamCapability, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn,
+  Summary, SummaryTable, empty_summary_table, summarize_function, summary_get,
 }
 
 // ── Determinism helpers ─────────────────────────────────────────────
@@ -59,7 +59,7 @@ pub fn conservative_summary(f: CfgFunction) Summary {
   params: Vector<ParamSummary> = collect _p in f.params {
     ParamSummary.{ escape: .Retained, capability: .NoCap }
   }
-  Summary.{ params, ret: .Shared }
+  Summary.{ params, ret: .Shared, ret_paths: [] }
 }
 
 // ── Summary equality (fixpoint stop condition) ──────────────────────
@@ -110,6 +110,100 @@ fn return_eq(a: ReturnEffect, b: ReturnEffect) Bool {
   }
 }
 
+fn ret_own_eq(a: ReturnOwn, b: ReturnOwn) Bool {
+  case a {
+    .OwnedFresh => case b {
+      .OwnedFresh => true,
+      _ => false,
+    },
+    .OwnedFromParam(ka) => case b {
+      .OwnedFromParam(kb) => ka == kb,
+      _ => false,
+    },
+  }
+}
+
+fn via_kind(v: RetVia) Int {
+  case v {
+    .Direct => 0,
+    .Variant(_, _) => 1,
+  }
+}
+
+fn via_tag(v: RetVia) Int {
+  case v {
+    .Direct => 0 - 1,
+    .Variant(t, _) => t,
+  }
+}
+
+fn via_idx(v: RetVia) Int {
+  case v {
+    .Direct => 0 - 1,
+    .Variant(_, i) => i,
+  }
+}
+
+fn field_key(f: Int?) Int {
+  case f {
+    .Some(x) => x,
+    .None => 0 - 1,
+  }
+}
+
+fn own_key(o: ReturnOwn) Int {
+  case o {
+    .OwnedFresh => 0 - 1,
+    .OwnedFromParam(k) => k,
+  }
+}
+
+fn cmp_ret_path(a: ReturnPathOwn, b: ReturnPathOwn) Order {
+  c1 := via_kind(a.via).compare(via_kind(b.via))
+  case c1 {
+    .Eq => {},
+    _ => return c1,
+  }
+  c2 := via_tag(a.via).compare(via_tag(b.via))
+  case c2 {
+    .Eq => {},
+    _ => return c2,
+  }
+  c3 := via_idx(a.via).compare(via_idx(b.via))
+  case c3 {
+    .Eq => {},
+    _ => return c3,
+  }
+  c4 := field_key(a.field).compare(field_key(b.field))
+  case c4 {
+    .Eq => {},
+    _ => return c4,
+  }
+  own_key(a.own).compare(own_key(b.own))
+}
+
+fn sort_ret_paths(v: Vector<ReturnPathOwn>) Vector<ReturnPathOwn> {
+  v.sort_by(cmp_ret_path)
+}
+
+fn ret_paths_eq(a: Vector<ReturnPathOwn>, b: Vector<ReturnPathOwn>) Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  sa := sort_ret_paths(a)
+  sb := sort_ret_paths(b)
+  for r, i in sa {
+    o := sb[i]
+    same := via_kind(r.via) == via_kind(o.via)
+      and via_tag(r.via) == via_tag(o.via) and via_idx(r.via) == via_idx(o.via)
+      and field_key(r.field) == field_key(o.field) and ret_own_eq(r.own, o.own)
+    if !same {
+      return false
+    }
+  }
+  true
+}
+
 pub fn same_summary(a: Summary, b: Summary) Bool {
   if a.params.len() != b.params.len() {
     return false
@@ -119,7 +213,7 @@ pub fn same_summary(a: Summary, b: Summary) Bool {
       return false
     }
   }
-  return_eq(a.ret, b.ret)
+  return_eq(a.ret, b.ret) and ret_paths_eq(a.ret_paths, b.ret_paths)
 }
 
 // ── Call graph ──────────────────────────────────────────────────────
@@ -329,6 +423,30 @@ fn run_scc(
 
 // ── Rendering ───────────────────────────────────────────────────────
 // One-line, human-readable form of a Summary for the `twk ir --cfg` header.
+fn render_ret_paths(rps: Vector<ReturnPathOwn>) String {
+  parts: Vector<String> = []
+  for r in sort_ret_paths(rps) {
+    via := case r.via {
+      .Direct => "",
+      .Variant(t, i) => "V${t}[${i}]",
+    }
+    fld := case r.field {
+      .Some(f) => ".f${f}",
+      .None => "",
+    }
+    own := case r.own {
+      .OwnedFresh => "fresh",
+      .OwnedFromParam(k) => "from(p${k})",
+    }
+    parts = .append("${via}${fld}=${own}")
+  }
+  if parts.len() == 0 {
+    ""
+  } else {
+    "  ret_paths=${parts.join(" ")}"
+  }
+}
+
 pub fn render_summary(s: Summary) String {
   parts: Vector<String> = []
   for ps, i in s.params {
@@ -352,7 +470,7 @@ pub fn render_summary(s: Summary) String {
       "alias(${ps.join(",")})"
     },
   }
-  "summary: ${parts.join(" ")} ret=${ret}"
+  "summary: ${parts.join(" ")} ret=${ret}${render_ret_paths(s.ret_paths)}"
 }
 
 // Render the `--cfg` view with each function's summary as a header line. The

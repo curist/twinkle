@@ -878,8 +878,9 @@ pub fn suite() runner.Suite {
             ownership.ParamSummary.{ escape: .Retained, capability: .Consumed },
           ],
           ret: .MayAliasParams([0, 1]),
+          ret_paths: [],
         }
-        fresh := ownership.Summary.{ params: [], ret: .OwnedFresh }
+        fresh := ownership.Summary.{ params: [], ret: .OwnedFresh, ret_paths: [] }
         try assert.equal(
           summary.render_summary(consumed),
           "summary: p0=borrow p1=retain(consumed) ret=alias(p0,p1)",
