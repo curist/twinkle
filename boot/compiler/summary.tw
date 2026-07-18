@@ -53,8 +53,8 @@ fn same_ints(a: Vector<Int>, b: Vector<Int>) Bool {
 }
 
 // ── Conservative seed ───────────────────────────────────────────────
-// Sound starting point before any callee is known: every param Retained/NoCap,
-// return Shared. Monotone transfer only moves these down the lattice.
+// Sound starting point before any callee is known: every param Published (the
+// role lattice top), return Shared. Monotone transfer only moves these down.
 pub fn conservative_summary(f: CfgFunction) Summary {
   params: Vector<ParamSummary> = collect _p in f.params {
     ParamSummary.{ base_role: .Published, in_place_paths: [], flows_to_return: false }
@@ -375,8 +375,8 @@ fn scc_callers(
 
 // Monotone dataflow worklist over one SCC. Round 1 summarizes every member once
 // from the conservative seed; thereafter only members whose in-SCC callees
-// changed are recomputed. The escape/return/capability lattices only move down
-// (Retained->Borrowed, Shared->alias->fresh, plus the alias set only grows), so
+// changed are recomputed. The role/return lattices only move down
+// (Published->Consumed->Borrowed, Shared->alias->fresh, plus the alias set only grows), so
 // this reaches the exact same least fixed point as recomputing every member every
 // pass -- but in O(edges * lattice-height) analyses instead of O(members^2).
 // Hitting the safety cap leaves each member at its current (still-sound, only
