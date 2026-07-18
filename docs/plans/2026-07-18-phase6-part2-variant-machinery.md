@@ -37,7 +37,7 @@ Part 1 (landed, commits `fba33602`/`e1492fcb`) reconciled `ParamSummary` to `{ b
 
 **Design decisions realized here:**
 - **D3 (downward-closed under the shell):** a `(k, [f])` requirement implies `(k, [])`; canonicalization enforces it.
-- **D14 (determinism):** `UniqueKey` is canonical-sorted `(param, path)`, equal keys dedup. For **display/render numbering only**, `VariantId`s get a dense **creation-order** id from the interner (deterministic under D14's worklist order).
+- **D14 (determinism):** `UniqueKey` is canonical-sorted `(param, path)`, equal keys dedup. For **display/render numbering only**, `VariantId`s get a dense id from the interner — assigned during the deterministic Stage-5 traversal (creation order under D14's worklist). **Guardrail:** this couples render numbering to demand/worklist order; if it ever drifts, assign display ids by **sorting the canonical variant strings** first (a pure function of the variants present), decoupling numbering from traversal.
 - **D8 (representation-neutral):** the identity is an abstract `VariantId`; nothing here commits to clone-vs-annotation.
 - **Memo key = the pure canonical string.** `variant_canonical_string(canonicalize_variant(v))` is the pure memo key (a pure function of canonical inputs — no allocation/visit-order input, as the design requires). The `VariantInterner`'s dense `Int` is **display/render numbering only**, never the memo key. `site_key(func, local)` is a separate reversible pairing for the `CallDecision` table.
 
@@ -497,7 +497,7 @@ These stages are **scoped, not coded** here — their exact TDD steps depend on 
   update whose result is not returned collects nothing). Its join **mirrors
   `join_entry_prov`** (SSA block-params via edge args, dominance carry, processed
   fixpoint over real liveness), so branches/merges/loops are correct. Paths are kept
-  **canonical-sorted/deduped** via `variant_id.path_cmp` (see Medium note below), and
+  **canonical-sorted/deduped** via `variant_id.path_cmp`, and
   `build_in_place_paths` emits `[[]] ++ sorted [f]` so `same_param_paths`'s positional
   compare is stable. Worked example: a `register_type_entry`-shaped mutator →
   `p0=Consumed paths{[],[.f…]}`. **Acceptance:** the record-update part of #1. **NOT
@@ -537,7 +537,7 @@ These stages are **scoped, not coded** here — their exact TDD steps depend on 
 **Entry points:**
 - `transfer_summarized_call` (`ownership.tw:1112`) already snapshots pre-call arg facts (`arg_unique`, `:1125`) and has the recovery gate (`:1174`). Add the key-selection + `CallDecision` emission alongside it, reading `ConsumedPaths` for the D6 liveness rules and the alias-completeness predicate before accepting any selected path. Emit `CallDecision` keyed by `site_key` (Stage 1). The generic path stays exactly today's behavior.
 - **Caller-func-id plumbing (required):** `transfer_summarized_call`'s current signature is `(st, result, s, args, last, suppress, callee_id)` — it has the callee id and the result local but **not the caller's func id**, which `site_key(site_func, site_local)` needs. Thread the caller `FuncId` down through `forward_block`/`forward_block_body`/`transfer_op`/`transfer_call` into `transfer_summarized_call`, **or** emit `CallDecision`s in a layer that already holds it (e.g. collect `(result, decision)` locally and stamp `site_func` in `summarize_function`/the SCC driver where `f.func_id` is in scope). Prefer the latter if the threading churn is large.
-- Fallback reasons are part of the decision: not unique, consumed path observed later, whole carrier used later, alias set incomplete, over cap, or no non-empty key after downward closure.
+- Fallback reasons are part of the decision: not unique, consumed path observed later, whole carrier used later, alias set incomplete, over cap, or no non-empty key after downward closure. (The **over-cap** reason only becomes active once **Stage 5** owns the variant-count cap; until then Stage 4's decision never routes to generic for cap. The Stage 4 detailed plan should say so.)
 
 **Acceptance:** #2 (Cases B∩C), #3 (one VariantId two sites vs generic), #5, #7, #8. **Depends on:** Stages 1–3.
 
