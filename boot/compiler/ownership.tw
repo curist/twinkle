@@ -40,8 +40,22 @@ pub type EscapeEffect = { Borrowed, Retained }
 
 pub type ParamCapability = { NoCap, Consumed }
 
-pub type ParamSummary = .{ escape: EscapeEffect, capability: ParamCapability }
+// Phase 6 (D9): the reconciled three-way role, folding escape × capability.
+pub type ParamRole = { Borrowed, Consumed, Published }
 
+// A parameter in-place path: [] = the shell / whole collection; [f, …] = a record
+// field chain. FIELD-ONLY (design Blocker 1). Part 1 only ever emits [] (shell);
+// field chains arrive in Phase 6 Part 2.
+pub type ParamPath = Vector<Int>
+
+pub type ParamSummary = .{
+  base_role: ParamRole,
+  in_place_paths: Vector<ParamPath>,
+  flows_to_return: Bool,
+}
+
+// Invariant (D9 precedence): base_role == Published  =>  in_place_paths == []
+//                            in_place_paths != []     =>  base_role == Consumed && flows_to_return
 pub type ReturnEffect = { OwnedFresh, MayAliasParams(Vector<Int>), Shared }
 
 pub type ReturnOwn = { OwnedFresh, OwnedFromParam(Int) }
@@ -1133,9 +1147,10 @@ fn transfer_summarized_call(
   // result shell, publishes MayAliasParams origins).
   for ps, i in s.params {
     if i < args.len() {
-      case ps.escape {
-        .Retained => st = .publish_atom(args[i]),
+      case ps.base_role {
+        .Published => st = .publish_atom(args[i]),
         .Borrowed => {},
+        .Consumed => {},
       }
     }
   }
@@ -3243,6 +3258,59 @@ fn meet_ret_paths_tagged(sites: Vector<RetSite>) Vector<ReturnPathOwn> {
   out
 }
 
+// Intermediate for the two-phase param finalization (D9): the forward fixpoint
+// yields esc/cap, and the role is assigned only after ret/ret_paths are known.
+// A NAMED nominal record — Twinkle has no anonymous structural record element type,
+// so `Vector<.{…}>` is not writable; `Vector<RawParam>` is.
+type RawParam = .{ esc: EscapeEffect, cap: ParamCapability }
+
+// D9 precedence: a leaked (Retained) param is always Published, regardless of a
+// consumed capability — a value the callee leaks cannot be handed back uniquely.
+// Otherwise a Consumed-and-return-flowing param is Consumed; else Borrowed.
+fn reconcile_role(esc: EscapeEffect, cap: ParamCapability, flows_to_return: Bool) ParamRole {
+  case esc {
+    .Retained => .Published,
+    .Borrowed => case cap {
+      .Consumed => if flows_to_return {
+        .Consumed
+      } else {
+        .Borrowed
+      },
+      .NoCap => .Borrowed,
+    },
+  }
+}
+
+fn param_in_indices(k: Int, idxs: Vector<Int>) Bool {
+  for x in idxs {
+    if x == k {
+      return true
+    }
+  }
+  false
+}
+
+// flows_to_return (design "Requirement collection"): param k's region reaches the
+// return iff the whole-return classification names it (MayAliasParams) or a
+// ret_path hands it back (OwnedFromParam(k)). A projection of Phase 5 facts.
+fn param_flows_to_return(k: Int, ret: ReturnEffect, ret_paths: Vector<ReturnPathOwn>) Bool {
+  case ret {
+    .MayAliasParams(idxs) => if param_in_indices(k, idxs) {
+      return true
+    },
+    _ => {},
+  }
+  for rp in ret_paths {
+    case rp.own {
+      .OwnedFromParam(j) => if j == k {
+        return true
+      },
+      _ => {},
+    }
+  }
+  false
+}
+
 // Classify each parameter's escape/capability by scanning EVERY block's
 // post-publish exit (fx.exits / fx.exit_valid): a param that ends Shared on any
 // block exit escapes (Retained) — even on a dead branch or via a returned
@@ -3268,7 +3336,7 @@ pub fn summarize_function(
   }
   fx := run_fixpoint(blocks, f.params, table, b, sem, suppress)
 
-  params: Vector<ParamSummary> = collect p in f.params {
+  raw_params: Vector<RawParam> = collect p in f.params {
     esc: EscapeEffect = .Borrowed
     cap: ParamCapability = .NoCap
     for blk in blocks {
@@ -3282,7 +3350,7 @@ pub fn summarize_function(
         .None => {},
       }
     }
-    ParamSummary.{ escape: esc, capability: cap }
+    RawParam.{ esc, cap }
   }
 
   done := all_processed(blocks)
@@ -3407,5 +3475,11 @@ pub fn summarize_function(
     }
   }
 
-  Summary.{ params, ret, ret_paths: meet_ret_paths_tagged(ret_sites) }
+  ret_paths_final := meet_ret_paths_tagged(ret_sites)
+  params: Vector<ParamSummary> = collect rp, i in raw_params {
+    flows := param_flows_to_return(i, ret, ret_paths_final)
+    role := rp.esc.reconcile_role(rp.cap, flows)
+    ParamSummary.{ base_role: role, in_place_paths: [], flows_to_return: flows }
+  }
+  Summary.{ params, ret, ret_paths: ret_paths_final }
 }

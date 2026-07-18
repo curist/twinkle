@@ -16,8 +16,8 @@ use compiler.cfg.{CfgFunction, CfgView}
 use compiler.graph_scc
 use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership.{
-  EscapeEffect, ParamCapability, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn,
-  Summary, SummaryTable, empty_summary_table, summarize_function, summary_get,
+  ParamPath, ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary,
+  SummaryTable, empty_summary_table, summarize_function, summary_get,
 }
 
 // ── Determinism helpers ─────────────────────────────────────────────
@@ -57,40 +57,45 @@ fn same_ints(a: Vector<Int>, b: Vector<Int>) Bool {
 // return Shared. Monotone transfer only moves these down the lattice.
 pub fn conservative_summary(f: CfgFunction) Summary {
   params: Vector<ParamSummary> = collect _p in f.params {
-    ParamSummary.{ escape: .Retained, capability: .NoCap }
+    ParamSummary.{ base_role: .Published, in_place_paths: [], flows_to_return: false }
   }
   Summary.{ params, ret: .Shared, ret_paths: [] }
 }
 
 // ── Summary equality (fixpoint stop condition) ──────────────────────
-fn escape_eq(a: EscapeEffect, b: EscapeEffect) Bool {
+fn role_eq(a: ParamRole, b: ParamRole) Bool {
   case a {
     .Borrowed => case b {
       .Borrowed => true,
-      _ => false,
-    },
-    .Retained => case b {
-      .Retained => true,
-      _ => false,
-    },
-  }
-}
-
-fn capability_eq(a: ParamCapability, b: ParamCapability) Bool {
-  case a {
-    .NoCap => case b {
-      .NoCap => true,
       _ => false,
     },
     .Consumed => case b {
       .Consumed => true,
       _ => false,
     },
+    .Published => case b {
+      .Published => true,
+      _ => false,
+    },
   }
 }
 
+fn same_param_paths(a: Vector<ParamPath>, b: Vector<ParamPath>) Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  for pa, i in a {
+    if !same_ints(pa, b[i]) {
+      return false
+    }
+  }
+  true
+}
+
 fn param_summary_eq(a: ParamSummary, b: ParamSummary) Bool {
-  escape_eq(a.escape, b.escape) and capability_eq(a.capability, b.capability)
+  role_eq(a.base_role, b.base_role)
+    and a.flows_to_return == b.flows_to_return
+    and same_param_paths(a.in_place_paths, b.in_place_paths)
 }
 
 fn return_eq(a: ReturnEffect, b: ReturnEffect) Bool {
@@ -464,18 +469,40 @@ fn render_ret_paths(rps: Vector<ReturnPathOwn>) String {
   }
 }
 
+// Renders a parameter in-place path: [] (shell) or [.f0,.f1] (field chain). The
+// field-chain arm is only reached once Phase 6 Part 2 populates in_place_paths;
+// in Part 1 every path is the shell [].
+fn render_param_path(p: ParamPath) String {
+  if p.len() == 0 {
+    "[]"
+  } else {
+    segs: Vector<String> = collect s in p {
+      ".f${s}"
+    }
+    "[${segs.join(",")}]"
+  }
+}
+
+fn render_role(r: ParamRole) String {
+  case r {
+    .Borrowed => "Borrowed",
+    .Consumed => "Consumed",
+    .Published => "Published",
+  }
+}
+
 pub fn render_summary(s: Summary) String {
   parts: Vector<String> = []
   for ps, i in s.params {
-    esc := case ps.escape {
-      .Borrowed => "borrow",
-      .Retained => "retain",
+    paths := if ps.in_place_paths.len() > 0 {
+      rendered: Vector<String> = collect p in ps.in_place_paths {
+        render_param_path(p)
+      }
+      " paths{${rendered.join(",")}}"
+    } else {
+      ""
     }
-    tag := case ps.capability {
-      .Consumed => "${esc}(consumed)",
-      .NoCap => esc,
-    }
-    parts = .append("p${i}=${tag}")
+    parts = .append("p${i}=${render_role(ps.base_role)}${paths}")
   }
   ret := case s.ret {
     .OwnedFresh => "fresh",

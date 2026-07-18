@@ -93,15 +93,24 @@ fn escape_tag(e: ownership.EscapeEffect) Int {
   }
 }
 
-fn cap_tag(c: ownership.ParamCapability) Int {
-  case c {
-    .NoCap => 0,
-    .Consumed => 1,
+fn p_escape(s: ownership.Summary, i: Int) Int {
+  // compat: old escape tag is 1 (Retained) iff the reconciled role is Published.
+  case s.params[i].base_role {
+    .Published => 1,
+    _ => 0,
   }
 }
 
-fn p_escape(s: ownership.Summary, i: Int) Int {
-  escape_tag(s.params[i].escape)
+fn role_tag(r: ownership.ParamRole) Int {
+  case r {
+    .Borrowed => 0,
+    .Consumed => 1,
+    .Published => 2,
+  }
+}
+
+fn p_role(s: ownership.Summary, i: Int) Int {
+  role_tag(s.params[i].base_role)
 }
 
 fn ret_tag(r: ownership.ReturnEffect) Int {
@@ -592,10 +601,10 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "t4 capability: fn g(x){ w := <move x>; Dict.set(w,1,2); 0 } -> p0 consumed, borrow",
+      "t4 consumed-but-not-flowing -> Borrowed, no in_place_paths",
       fn() {
         // x moved into w on last use (AInit), then w threaded through Dict.set but
-        // never published: capability Consumed, escape still Borrowed.
+        // never published: consumed but NOT returned/leaked -> flows_to_return=false -> Borrowed.
         b := b_reg()
         set_call: AnfOp = .ACall(
           .AGlobalFunc(b.method_id("Dict", "set")),
@@ -607,7 +616,10 @@ pub fn suite() runner.Suite {
           .Let(lid(3), set_call, .Atom(.ALitInt(0))),
         )
         s := summ1("g", 1, body)
-        try assert.equal(cap_tag(s.params[0].capability), cap_tag(.Consumed))
+
+        // the param is consumed but NOT returned/leaked -> flows_to_return=false -> Borrowed
+        try assert.equal(p_role(s, 0), role_tag(.Borrowed))
+        try assert.equal(s.params[0].in_place_paths.len(), 0)
         try assert.equal(p_escape(s, 0), escape_tag(.Borrowed))
         .Ok({})
       },
@@ -680,7 +692,7 @@ pub fn suite() runner.Suite {
         f := fdef(1, "f", 1, .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1)))))
         g := fdef(2, "g", 1, .Atom(.ALocal(lid(0))))
         t := compute_of([f, g])
-        try assert.equal(escape_tag(summ_of(t, 1).params[0].escape), escape_tag(.Borrowed))
+        try assert.equal(p_escape(summ_of(t, 1), 0), escape_tag(.Borrowed))
         try assert.equal(ret_tag(summ_of(t, 1).ret), ret_tag(.OwnedFresh))
         try assert.is_true(same_ints(ret_alias_set(summ_of(t, 2).ret), [0]))
         .Ok({})
@@ -714,9 +726,9 @@ pub fn suite() runner.Suite {
         )
         t := compute_of([fdef(1, "f", 1, f_body), fdef(2, "g", 1, g_body)])
         try assert.equal(t.by_func.keys().len(), 2)
-        try assert.equal(escape_tag(summ_of(t, 1).params[0].escape), escape_tag(.Retained))
+        try assert.equal(p_escape(summ_of(t, 1), 0), escape_tag(.Retained))
         try assert.equal(ret_tag(summ_of(t, 1).ret), ret_tag(.Shared))
-        try assert.equal(escape_tag(summ_of(t, 2).params[0].escape), escape_tag(.Retained))
+        try assert.equal(p_escape(summ_of(t, 2), 0), escape_tag(.Retained))
         try assert.equal(ret_tag(summ_of(t, 2).ret), ret_tag(.Shared))
         .Ok({})
       },
@@ -893,7 +905,7 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "t4 capability recorded (consumed), not acted on: caller arg stays valid",
+      "t4 consumed-but-not-flowing: caller arg stays valid (Borrowed role)",
       fn() {
         b := b_reg()
         g_body: AnfExpr = .Let(
@@ -909,7 +921,10 @@ pub fn suite() runner.Suite {
           ),
         )
         gs := summ1("g", 1, g_body)
-        try assert.equal(cap_tag(gs.params[0].capability), cap_tag(.Consumed))
+
+        // the param is consumed but NOT returned/leaked -> flows_to_return=false -> Borrowed
+        try assert.equal(p_role(gs, 0), role_tag(.Borrowed))
+        try assert.equal(gs.params[0].in_place_paths.len(), 0)
         try assert.equal(p_escape(gs, 0), escape_tag(.Borrowed))
         g := fdef(2, "g", 1, g_body)
         f_body: AnfExpr = .Let(
@@ -930,11 +945,12 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "t5 render: --cfg header shows the summary (incl consumed) + determinism",
+      "t5 render: --cfg header shows the summary (role) + determinism",
       fn() {
         b := b_reg()
 
-        // g consumes its param via a move, so its header exercises the `(consumed)` tag.
+        // g consumes its param via a move but does not return it: role is Borrowed
+        // (consumed-but-not-flowing -> no specialization value).
         g_body: AnfExpr = .Let(
           lid(1),
           .AInit(.ALocal(lid(0))),
@@ -953,7 +969,7 @@ pub fn suite() runner.Suite {
         out1 := summary.render_cfg(v, t)
         out2 := summary.render_cfg(v, t)
         try assert.is_true(out1.contains("summary:"))
-        try assert.is_true(out1.contains("consumed"))
+        try assert.is_true(out1.contains("Borrowed"))
         try assert.is_true(out1 == out2)
         .Ok({})
       },
@@ -1059,8 +1075,16 @@ pub fn suite() runner.Suite {
       fn() {
         consumed := ownership.Summary.{
           params: [
-            ownership.ParamSummary.{ escape: .Borrowed, capability: .NoCap },
-            ownership.ParamSummary.{ escape: .Retained, capability: .Consumed },
+            ownership.ParamSummary.{
+              base_role: .Borrowed,
+              in_place_paths: [],
+              flows_to_return: false,
+            },
+            ownership.ParamSummary.{
+              base_role: .Published,
+              in_place_paths: [],
+              flows_to_return: false,
+            },
           ],
           ret: .MayAliasParams([0, 1]),
           ret_paths: [],
@@ -1068,7 +1092,7 @@ pub fn suite() runner.Suite {
         fresh := ownership.Summary.{ params: [], ret: .OwnedFresh, ret_paths: [] }
         try assert.equal(
           summary.render_summary(consumed),
-          "summary: p0=borrow p1=retain(consumed) ret=alias(p0,p1)",
+          "summary: p0=Borrowed p1=Published ret=alias(p0,p1)",
         )
         try assert.equal(summary.render_summary(fresh), "summary:  ret=fresh")
         .Ok({})
