@@ -12,6 +12,7 @@ use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.ownership
 use compiler.summary
+use compiler.variant_id
 use lib.module.loader
 
 fn lid(id: Int) LocalId {
@@ -1340,6 +1341,17 @@ pub fn suite() runner.Suite {
           ret_paths: [],
         }
         try assert.equal(summary.render_summary(s), "summary: p0=Consumed paths{[]} ret=fresh")
+        .Ok({})
+      },
+    )
+    .test(
+      "variant_id: VariantId and UniqueReq construct",
+      fn() {
+        v := variant_id.VariantId.{ func: 7, unique: [variant_id.UniqueReq.{ param: 0, path: [] }] }
+        try assert.equal(v.func, 7)
+        try assert.equal(v.unique.len(), 1)
+        try assert.equal(v.unique[0].param, 0)
+        try assert.equal(v.unique[0].path.len(), 0)
         .Ok({})
       },
     )

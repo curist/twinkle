@@ -16,9 +16,10 @@ use compiler.cfg.{CfgFunction, CfgView}
 use compiler.graph_scc
 use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership.{
-  ParamPath, ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary,
-  SummaryTable, empty_summary_table, summarize_function, summary_get,
+  ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary, SummaryTable,
+  empty_summary_table, summarize_function, summary_get,
 }
+use compiler.variant_id.{ParamPath}
 
 // ── Determinism helpers ─────────────────────────────────────────────
 fn insert_sorted(v: Vector<Int>, id: Int) Vector<Int> {

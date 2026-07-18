@@ -11,6 +11,7 @@ use compiler.cfg.{CfgBlock, CfgEdge, CfgFunction, CfgView, Terminator}
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.field_facts as ff
 use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info, container_kind}
+use compiler.variant_id.{ParamPath}
 
 pub type Ownership = { Unique, Shared, Unknown }
 
@@ -42,11 +43,6 @@ pub type ParamCapability = { NoCap, Consumed }
 
 // Phase 6 (D9): the reconciled three-way role, folding escape × capability.
 pub type ParamRole = { Borrowed, Consumed, Published }
-
-// A parameter in-place path: [] = the shell / whole collection; [f, …] = a record
-// field chain. FIELD-ONLY (design Blocker 1). Part 1 only ever emits [] (shell);
-// field chains arrive in Phase 6 Part 2.
-pub type ParamPath = Vector<Int>
 
 pub type ParamSummary = .{
   base_role: ParamRole,

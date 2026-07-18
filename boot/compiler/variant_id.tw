@@ -1,0 +1,17 @@
+//! Variant identity for Phase 6 ownership specialization (analysis-only).
+//!
+//! A `VariantId` names an ownership-specialized instance of a function: the
+//! function plus the set of `(param, field-only path)` requirements that must be
+//! proven Unique at a call site to select it. This module is a LEAF (no compiler
+//! imports) so `ownership.tw`/`summary.tw` may depend on it without a cycle.
+// A parameter in-place path. [] = the shell / whole collection; [f, …] = a record
+// field chain. FIELD-ONLY: payload / Elem / Val segments are return-path/read facts,
+// never a UniqueReq path (design Blocker 1). Part 1 only ever emits the shell []; Part
+// 2 adds field-granular paths ([f, …]).
+pub type ParamPath = Vector<Int>
+
+pub type UniqueReq = .{ param: Int, path: ParamPath }
+
+pub type UniqueKey = Vector<UniqueReq> // canonical-sorted; [] => generic variant
+
+pub type VariantId = .{ func: Int, unique: UniqueKey }
