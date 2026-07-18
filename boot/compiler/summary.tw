@@ -19,7 +19,7 @@ use compiler.ownership.{
   ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary, SummaryTable,
   empty_summary_table, summarize_function, summary_get,
 }
-use compiler.variant_id.{ParamPath}
+use compiler.variant_id as vid
 
 // ── Determinism helpers ─────────────────────────────────────────────
 fn insert_sorted(v: Vector<Int>, id: Int) Vector<Int> {
@@ -58,7 +58,7 @@ fn same_ints(a: Vector<Int>, b: Vector<Int>) Bool {
 // role lattice top), return Shared. Monotone transfer only moves these down.
 pub fn conservative_summary(f: CfgFunction) Summary {
   params: Vector<ParamSummary> = collect _p in f.params {
-    ParamSummary.{ base_role: .Published, in_place_paths: [], flows_to_return: false }
+    ParamSummary.{ base_role: .Published, in_place_paths: vid.empty_set(), flows_to_return: false }
   }
   Summary.{ params, ret: .Shared, ret_paths: [] }
 }
@@ -81,22 +81,9 @@ fn role_eq(a: ParamRole, b: ParamRole) Bool {
   }
 }
 
-fn same_param_paths(a: Vector<ParamPath>, b: Vector<ParamPath>) Bool {
-  if a.len() != b.len() {
-    return false
-  }
-  for pa, i in a {
-    if !same_ints(pa, b[i]) {
-      return false
-    }
-  }
-  true
-}
-
 fn param_summary_eq(a: ParamSummary, b: ParamSummary) Bool {
   role_eq(a.base_role, b.base_role)
-    and a.flows_to_return == b.flows_to_return
-    and same_param_paths(a.in_place_paths, b.in_place_paths)
+    and a.flows_to_return == b.flows_to_return and a.in_place_paths.same(b.in_place_paths)
 }
 
 fn return_eq(a: ReturnEffect, b: ReturnEffect) Bool {
@@ -473,11 +460,11 @@ fn render_ret_paths(rps: Vector<ReturnPathOwn>) String {
 // Renders a parameter in-place path: [] (shell) or [.f0,.f1] (field chain). The
 // field-chain arm is only reached once Phase 6 Part 2 populates in_place_paths;
 // in Part 1 every path is the shell [].
-fn render_param_path(p: ParamPath) String {
-  if p.len() == 0 {
+fn render_param_path(p: vid.ParamPath) String {
+  if p.is_shell() {
     "[]"
   } else {
-    segs: Vector<String> = collect s in p {
+    segs: Vector<String> = collect s in p.segs {
       ".f${s}"
     }
     "[${segs.join(",")}]"
@@ -495,8 +482,8 @@ fn render_role(r: ParamRole) String {
 pub fn render_summary(s: Summary) String {
   parts: Vector<String> = []
   for ps, i in s.params {
-    paths := if ps.in_place_paths.len() > 0 {
-      rendered: Vector<String> = collect p in ps.in_place_paths {
+    paths := if !ps.in_place_paths.is_empty() {
+      rendered: Vector<String> = collect p in ps.in_place_paths.paths {
         render_param_path(p)
       }
       " paths{${rendered.join(",")}}"

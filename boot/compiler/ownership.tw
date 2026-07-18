@@ -11,7 +11,7 @@ use compiler.cfg.{CfgBlock, CfgEdge, CfgFunction, CfgView, Terminator}
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.field_facts as ff
 use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info, container_kind}
-use compiler.variant_id.{ParamPath}
+use compiler.variant_id as vid
 
 pub type Ownership = { Unique, Shared, Unknown }
 
@@ -46,12 +46,12 @@ pub type ParamRole = { Borrowed, Consumed, Published }
 
 pub type ParamSummary = .{
   base_role: ParamRole,
-  in_place_paths: Vector<ParamPath>,
+  in_place_paths: vid.PathSet,
   flows_to_return: Bool,
 }
 
-// Invariant (D9 precedence): base_role == Published  =>  in_place_paths == []
-//                            in_place_paths != []     =>  base_role == Consumed && flows_to_return
+// Invariant (D9 precedence): base_role == Published  =>  in_place_paths.is_empty()
+//                            !in_place_paths.is_empty() =>  base_role == Consumed && flows_to_return
 pub type ReturnEffect = { OwnedFresh, MayAliasParams(Vector<Int>), Shared }
 
 pub type ReturnOwn = { OwnedFresh, OwnedFromParam(Int) }
@@ -3475,11 +3475,11 @@ pub fn summarize_function(
   params: Vector<ParamSummary> = collect rp, i in raw_params {
     flows := param_flows_to_return(i, ret, ret_paths_final)
     role := rp.esc.reconcile_role(rp.cap, flows)
-    ipp: Vector<ParamPath> = case role {
+    ipp: vid.PathSet = case role {
       // shell / whole-collection candidate; Phase 6 Part 2 refines a record param
       // to add its consumed field paths ([.f]). Downward-closed under [].
-      .Consumed => [[]],
-      _ => [],
+      .Consumed => vid.shell_set(),
+      _ => vid.empty_set(),
     }
     ParamSummary.{ base_role: role, in_place_paths: ipp, flows_to_return: flows }
   }

@@ -5,12 +5,71 @@
 //! proven Unique at a call site to select it. This module is a LEAF (no compiler
 //! imports) so `ownership.tw`/`summary.tw` may depend on it without a cycle.
 // A parameter in-place path. [] = the shell / whole collection; [f] = a direct
-// record field in executable Phase 6. The Vector shape reserves future field chains,
-// but Phase 6 key construction does not create requirements for unsupported deeper
-// mutations. FIELD-ONLY: payload / Elem / Val segments are return-path/read facts, never a UniqueReq path
-// (design Blocker 1). Part 1 only ever emits the shell []; Part 2 adds field-granular
-// direct paths ([f]).
-pub type ParamPath = Vector<Int>
+// record field in executable Phase 6. The `segs` vector reserves future field
+// chains, but Phase 6 key construction does not create requirements for unsupported
+// deeper mutations. FIELD-ONLY: payload / Elem / Val segments are return-path/read
+// facts, never a UniqueReq path (design Blocker 1). Part 1 only ever emits the shell
+// []; Part 2 adds field-granular direct paths ([f]). Nominal wrapper (not a bare
+// Vector<Int>) so path operations resolve as inherent methods.
+pub type ParamPath = .{ segs: Vector<Int> }
+
+// Constructors: shell (the whole value) and a single direct record field.
+pub fn shell() ParamPath {
+  ParamPath.{ segs: [] }
+}
+
+pub fn field(f: Int) ParamPath {
+  ParamPath.{ segs: [f] }
+}
+
+pub fn is_shell(self: ParamPath) Bool {
+  self.segs.len() == 0
+}
+
+// Lexicographic order on field-only paths: a prefix is smaller, so the shell []
+// sorts before [f]. Delegates to the prelude's tested Vector.compare<T: Ord>.
+pub fn cmp(self: ParamPath, other: ParamPath) Order {
+  self.segs.compare(other.segs)
+}
+
+pub fn eq(self: ParamPath, other: ParamPath) Bool {
+  case self.cmp(other) {
+    .Eq => true,
+    _ => false,
+  }
+}
+
+// A canonical set of parameter in-place paths (sorted by `cmp`, deduped). Nominal
+// wrapper so set operations resolve as inherent methods, mirroring FieldMap in
+// field_facts.tw.
+pub type PathSet = .{ paths: Vector<ParamPath> }
+
+pub fn empty_set() PathSet {
+  PathSet.{ paths: [] }
+}
+
+// The shell-only set { [] } — a Consumed param's coarse Part-1 requirement.
+pub fn shell_set() PathSet {
+  PathSet.{ paths: [shell()] }
+}
+
+pub fn is_empty(self: PathSet) Bool {
+  self.paths.len() == 0
+}
+
+// Elementwise equality on canonical-ordered sets (both sides are kept sorted, so a
+// positional compare is sound).
+pub fn same(self: PathSet, other: PathSet) Bool {
+  if self.paths.len() != other.paths.len() {
+    return false
+  }
+  for p, i in self.paths {
+    if !p.eq(other.paths[i]) {
+      return false
+    }
+  }
+  true
+}
 
 pub type UniqueReq = .{ param: Int, path: ParamPath }
 
@@ -18,16 +77,10 @@ pub type UniqueKey = Vector<UniqueReq> // canonical-sorted; [] => generic varian
 
 pub type VariantId = .{ func: Int, unique: UniqueKey }
 
-// Lexicographic order on field-only paths: a prefix is smaller, so the shell []
-// sorts before [f]. Delegates to the prelude's tested Vector.compare<T: Ord>.
-pub fn path_cmp(a: ParamPath, b: ParamPath) Order {
-  a.compare(b)
-}
-
 pub fn req_cmp(a: UniqueReq, b: UniqueReq) Order {
   c := a.param.compare(b.param)
   case c {
-    .Eq => path_cmp(a.path, b.path),
+    .Eq => a.path.cmp(b.path),
     _ => c,
   }
 }
@@ -65,16 +118,16 @@ pub fn downward_close(reqs: UniqueKey) UniqueKey {
   augmented := reqs
   seen_shell: Dict<Int, Bool> = Dict.new()
   for r in reqs {
-    if r.path.len() == 0 {
+    if r.path.is_shell() {
       seen_shell[r.param] = true
     }
   }
   for r in reqs {
-    if r.path.len() > 0 {
+    if !r.path.is_shell() {
       case seen_shell.get(r.param) {
         .Some(_) => {},
         .None => {
-          augmented = .append(UniqueReq.{ param: r.param, path: [] })
+          augmented = .append(UniqueReq.{ param: r.param, path: shell() })
           seen_shell[r.param] = true
         },
       }
@@ -91,7 +144,7 @@ pub fn downward_close(reqs: UniqueKey) UniqueKey {
 pub fn variant_canonical_string(v: VariantId) String {
   parts: Vector<String> = []
   for r in v.unique {
-    segs: Vector<String> = collect s in r.path {
+    segs: Vector<String> = collect s in r.path.segs {
       "${s}"
     }
     parts = .append("${r.param}:${segs.join(".")}")

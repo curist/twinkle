@@ -620,7 +620,7 @@ pub fn suite() runner.Suite {
 
         // the param is consumed but NOT returned/leaked -> flows_to_return=false -> Borrowed
         try assert.equal(p_role(s, 0), role_tag(.Borrowed))
-        try assert.equal(s.params[0].in_place_paths.len(), 0)
+        try assert.equal(s.params[0].in_place_paths.paths.len(), 0)
         try assert.equal(p_escape(s, 0), escape_tag(.Borrowed))
         .Ok({})
       },
@@ -925,7 +925,7 @@ pub fn suite() runner.Suite {
 
         // the param is consumed but NOT returned/leaked -> flows_to_return=false -> Borrowed
         try assert.equal(p_role(gs, 0), role_tag(.Borrowed))
-        try assert.equal(gs.params[0].in_place_paths.len(), 0)
+        try assert.equal(gs.params[0].in_place_paths.paths.len(), 0)
         try assert.equal(p_escape(gs, 0), escape_tag(.Borrowed))
         g := fdef(2, "g", 1, g_body)
         f_body: AnfExpr = .Let(
@@ -1078,12 +1078,12 @@ pub fn suite() runner.Suite {
           params: [
             ownership.ParamSummary.{
               base_role: .Borrowed,
-              in_place_paths: [],
+              in_place_paths: variant_id.empty_set(),
               flows_to_return: false,
             },
             ownership.ParamSummary.{
               base_role: .Published,
-              in_place_paths: [],
+              in_place_paths: variant_id.empty_set(),
               flows_to_return: false,
             },
           ],
@@ -1296,8 +1296,8 @@ pub fn suite() runner.Suite {
         s := summ1("g", 1, body)
         try assert.equal(p_role(s, 0), role_tag(.Consumed))
         try assert.is_true(s.params[0].flows_to_return)
-        try assert.equal(s.params[0].in_place_paths.len(), 1)
-        try assert.equal(s.params[0].in_place_paths[0].len(), 0) // the shell path []
+        try assert.equal(s.params[0].in_place_paths.paths.len(), 1)
+        try assert.equal(s.params[0].in_place_paths.paths[0].segs.len(), 0) // the shell path []
         .Ok({})
       },
     )
@@ -1312,7 +1312,7 @@ pub fn suite() runner.Suite {
         )
         s := summ1("g", 1, body)
         try assert.equal(p_role(s, 0), role_tag(.Published))
-        try assert.equal(s.params[0].in_place_paths.len(), 0)
+        try assert.equal(s.params[0].in_place_paths.paths.len(), 0)
         .Ok({})
       },
     )
@@ -1322,7 +1322,7 @@ pub fn suite() runner.Suite {
         b := b_reg()
         s := summ1("f", 1, .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1)))))
         try assert.equal(p_role(s, 0), role_tag(.Borrowed))
-        try assert.equal(s.params[0].in_place_paths.len(), 0)
+        try assert.equal(s.params[0].in_place_paths.paths.len(), 0)
         .Ok({})
       },
     )
@@ -1333,7 +1333,7 @@ pub fn suite() runner.Suite {
           params: [
             ownership.ParamSummary.{
               base_role: .Consumed,
-              in_place_paths: [[]],
+              in_place_paths: variant_id.shell_set(),
               flows_to_return: true,
             },
           ],
@@ -1347,11 +1347,14 @@ pub fn suite() runner.Suite {
     .test(
       "variant_id: VariantId and UniqueReq construct",
       fn() {
-        v := variant_id.VariantId.{ func: 7, unique: [variant_id.UniqueReq.{ param: 0, path: [] }] }
+        v := variant_id.VariantId.{
+          func: 7,
+          unique: [variant_id.UniqueReq.{ param: 0, path: variant_id.shell() }],
+        }
         try assert.equal(v.func, 7)
         try assert.equal(v.unique.len(), 1)
         try assert.equal(v.unique[0].param, 0)
-        try assert.equal(v.unique[0].path.len(), 0)
+        try assert.equal(v.unique[0].path.segs.len(), 0)
         .Ok({})
       },
     )
@@ -1360,19 +1363,19 @@ pub fn suite() runner.Suite {
       fn() {
         // unsorted + duplicate reqs
         raw: variant_id.UniqueKey = [
-          variant_id.UniqueReq.{ param: 1, path: [] },
-          variant_id.UniqueReq.{ param: 0, path: [3] },
-          variant_id.UniqueReq.{ param: 0, path: [] },
-          variant_id.UniqueReq.{ param: 0, path: [3] }, // dup
+          variant_id.UniqueReq.{ param: 1, path: variant_id.shell() },
+          variant_id.UniqueReq.{ param: 0, path: variant_id.field(3) },
+          variant_id.UniqueReq.{ param: 0, path: variant_id.shell() },
+          variant_id.UniqueReq.{ param: 0, path: variant_id.field(3) }, // dup
         ]
         got := variant_id.canonicalize_key(raw)
 
         // expected order: (0,[]), (0,[3]), (1,[])   — dup collapsed
         try assert.equal(got.len(), 3)
         try assert.equal(got[0].param, 0)
-        try assert.equal(got[0].path.len(), 0)
+        try assert.equal(got[0].path.segs.len(), 0)
         try assert.equal(got[1].param, 0)
-        try assert.equal(got[1].path[0], 3)
+        try assert.equal(got[1].path.segs[0], 3)
         try assert.equal(got[2].param, 1)
         .Ok({})
       },
@@ -1381,13 +1384,13 @@ pub fn suite() runner.Suite {
       "variant_id: downward_close adds the shell for every field req (D3)",
       fn() {
         // (0,[3]) with no (0,[]) present must gain (0,[])
-        raw: variant_id.UniqueKey = [variant_id.UniqueReq.{ param: 0, path: [3] }]
+        raw: variant_id.UniqueKey = [variant_id.UniqueReq.{ param: 0, path: variant_id.field(3) }]
         got := variant_id.downward_close(raw)
         try assert.equal(got.len(), 2)
         try assert.equal(got[0].param, 0)
-        try assert.equal(got[0].path.len(), 0) // shell added, sorts first
+        try assert.equal(got[0].path.segs.len(), 0) // shell added, sorts first
         try assert.equal(got[1].param, 0)
-        try assert.equal(got[1].path[0], 3)
+        try assert.equal(got[1].path.segs[0], 3)
         .Ok({})
       },
     )
@@ -1397,11 +1400,11 @@ pub fn suite() runner.Suite {
         vi := variant_id.new_interner()
         va := variant_id.VariantId.{
           func: 7,
-          unique: [variant_id.UniqueReq.{ param: 0, path: [] }],
+          unique: [variant_id.UniqueReq.{ param: 0, path: variant_id.shell() }],
         }
         vb := variant_id.VariantId.{
           func: 7,
-          unique: [variant_id.UniqueReq.{ param: 1, path: [] }],
+          unique: [variant_id.UniqueReq.{ param: 1, path: variant_id.shell() }],
         }
 
         // va2: va's key written with a redundant DUPLICATE shell req; canonicalize_key
@@ -1409,8 +1412,8 @@ pub fn suite() runner.Suite {
         va2 := variant_id.VariantId.{
           func: 7,
           unique: [
-            variant_id.UniqueReq.{ param: 0, path: [] },
-            variant_id.UniqueReq.{ param: 0, path: [] },
+            variant_id.UniqueReq.{ param: 0, path: variant_id.shell() },
+            variant_id.UniqueReq.{ param: 0, path: variant_id.shell() },
           ],
         }
 
@@ -1431,12 +1434,12 @@ pub fn suite() runner.Suite {
 
         // same key, reqs supplied in two different orders
         k1: variant_id.UniqueKey = [
-          variant_id.UniqueReq.{ param: 0, path: [3] },
-          variant_id.UniqueReq.{ param: 0, path: [] },
+          variant_id.UniqueReq.{ param: 0, path: variant_id.field(3) },
+          variant_id.UniqueReq.{ param: 0, path: variant_id.shell() },
         ]
         k2: variant_id.UniqueKey = [
-          variant_id.UniqueReq.{ param: 0, path: [] },
-          variant_id.UniqueReq.{ param: 0, path: [3] },
+          variant_id.UniqueReq.{ param: 0, path: variant_id.shell() },
+          variant_id.UniqueReq.{ param: 0, path: variant_id.field(3) },
         ]
         r1 := variant_id.intern(vi, variant_id.VariantId.{ func: 9, unique: k1 })
         r2 := variant_id.intern(r1.interner, variant_id.VariantId.{ func: 9, unique: k2 })
@@ -1447,7 +1450,7 @@ pub fn suite() runner.Suite {
           .Some(v) => {
             try assert.equal(v.func, 9)
             try assert.equal(v.unique.len(), 2)
-            try assert.equal(v.unique[0].path.len(), 0) // canonical: shell first
+            try assert.equal(v.unique[0].path.segs.len(), 0) // canonical: shell first
           },
           .None => return .Err("expected a variant for id"),
         }
@@ -1460,15 +1463,15 @@ pub fn suite() runner.Suite {
         va := variant_id.VariantId.{
           func: 7,
           unique: [
-            variant_id.UniqueReq.{ param: 0, path: [] },
-            variant_id.UniqueReq.{ param: 0, path: [3] },
+            variant_id.UniqueReq.{ param: 0, path: variant_id.shell() },
+            variant_id.UniqueReq.{ param: 0, path: variant_id.field(3) },
           ],
         }
         vb := variant_id.VariantId.{
           func: 7,
           unique: [
-            variant_id.UniqueReq.{ param: 0, path: [] },
-            variant_id.UniqueReq.{ param: 0, path: [4] },
+            variant_id.UniqueReq.{ param: 0, path: variant_id.shell() },
+            variant_id.UniqueReq.{ param: 0, path: variant_id.field(4) },
           ],
         }
         sa := variant_id.variant_canonical_string(variant_id.canonicalize_variant(va))
