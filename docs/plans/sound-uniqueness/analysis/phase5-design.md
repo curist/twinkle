@@ -59,7 +59,8 @@ must not disturb:
   noting it "needs a payload `PathSeg`".
 - **Match arm pattern-bound locals are killed at entry and seeded Unknown**
   (`ownership.tw:499`): a destructured payload is treated as a borrow from the
-  scrutinee with no facts flowing in. This is exactly the seam Case R must open.
+  scrutinee with no facts flowing in. This was the seam Phase 5 opened for
+  fresh-local payload transport; the param-threaded form remains Phase 6 work.
 - **Field facts join by per-path meet** (`join_entry_field_own`
   `ownership.tw:1776`, over `FieldMap.merge` `field_facts.tw:211`), skipping
   unprocessed back-edges; `set_own_st` (`ownership.tw:642`) is the single choke
@@ -74,7 +75,7 @@ must not disturb:
   `ownership.tw:1394` calls `publish_atom(a)`), which — because the shell `prov`
   conflates field origins — transitively marks a returned wrapper's field-origin
   params `Shared` ⇒ `Retained`. For a transport wrapper this is exactly the
-  aggregate-publication behavior Phase 5 must remove: the caller would then publish
+  aggregate-publication behavior Phase 5 was required to remove: the caller would then publish
   the very argument the return path wants to hand back (Blocker 3). Return
   classification itself (`ret`) is prov-based (`prov_to_indices`, `ownership.tw:2335`)
   and runs on the **body-only** state (before this publish), so it is unaffected by
@@ -101,7 +102,8 @@ must not disturb:
 - **Variant-payload projection at match arms + handled-`Result` joins**: a
   pattern-bound payload local receives the scrutinee's `Variant[i]` return-path
   facts; ordinary arm joins merge transported payload facts like record-field
-  facts; `try` / `return` / value-carrying `break` stay **publishing** exit edges
+  facts; `return` / `try` early-return arms are leaf function-exit transfers, while
+  value-carrying `break` stays a publication/region-exit edge to its loop successor
   (Case T unchanged).
 - **Rendering**: the return-path summary in the `twk ir --cfg` header, and the
   projection-move verdict at transport sites.

@@ -2,8 +2,9 @@
 
 **Status:** Expanded for Phase 4 (analysis facts). The intraprocedural
 shell/field/nested model is specified in
-[phase4-design.md](phase4-design.md); the interprocedural return-path and
-`in_place_paths` summary lift is Phase 5, and codegen lowering is Phases 7–8.
+[phase4-design.md](phase4-design.md); return-path summaries are Phase 5,
+parameter-side `in_place_paths` / ownership specialization are Phase 6, and codegen
+lowering is Phases 7–8.
 
 ## Purpose
 

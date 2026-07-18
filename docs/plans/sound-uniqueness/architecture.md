@@ -736,13 +736,15 @@ analysis. This phase adds return-path summaries, still with no codegen changes.
 - Make liveness path-aware enough to answer whether a returned field/payload path
   — not just the wrapper local — remains observable.
 - Join handled `Result` arms by merging transported payload facts like ordinary
-  record-field facts; `try` / `return` / value-carrying `break` stay publishing
-  exit edges (Case T).
+  record-field facts. `return` / `try` early-return arms are function-exit transfers
+  that feed return summaries and do not merge into continuing arms; value-carrying
+  `break` remains a publication/region-exit edge to its loop successor (Case T).
 
-Exit criteria: the transport-wrapper and handled-`Result` threading idioms
+Exit criteria: fresh-local transport-wrapper and handled-`Result` threading idioms
 ([worked-examples.md](analysis/worked-examples.md) Cases W and R) classify as
 ownership-preserving handoffs instead of aggregate publication; generated code
-unchanged.
+unchanged. Param-threaded transport remains a sound under-claim until Phase 1E's
+owned-parameter preconditions let a caller select an owned-specialized callee.
 
 ### Phase 1E — Ownership-specialization decision facts
 
@@ -755,7 +757,9 @@ verified before any code is emitted.
   per-call-site variant-compatibility decision: which callers pass proven-owned
   args and may use an owned-specialized callee, which must stay on the generic
   persistent callee, whether each parameter is consumed / borrowed / published /
-  returned, and whether the return is owned / persistent / published.
+  returned, and whether the return is owned / persistent / published. This closes
+  the Phase 1D param-threaded transport deferral by proving owned-parameter
+  preconditions instead of treating parameters as implicitly unique.
 - Run the summary fixpoint at SCC granularity so recursive and mutually-recursive
   functions (Case V's self-referential `visit`) converge; the specialization key
   is driven entirely by the set of caller argument facts.

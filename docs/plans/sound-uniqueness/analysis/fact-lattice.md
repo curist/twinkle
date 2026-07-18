@@ -22,6 +22,12 @@ property of a **value**, which may be referenced by more than one local (Case C:
 `L7` and `L8` name the same value), so the model is affine: **a value has at most
 one live owner; creating a second live reference demotes it to shared.**
 
+The semantic theorem consumers must satisfy is about **logical versions**, not just
+handles: a destructive update is licensed only when the pre-update logical version
+has no observable continuation except producing the post-update value. `Unique` is
+the single-owner proof, while liveness/last-use/`consume_dead` prove that the old
+version is unobservable.
+
 ## First implementation domain
 
 The executable first cut should use a deliberately small ownership domain:
@@ -48,11 +54,18 @@ whose value has been transferred must not be used as a live binding until it is
 rebound. The CFG view should provide binding validity, liveness, and last-use
 facts alongside ownership, rather than folding them into the ownership lattice.
 
-**Publication is an event, not a lattice element.** When a unique value reaches a
-publication point (return, value-carrying `break`, `try` exit, storage in an
-escaping aggregate, closure/task capture, channel send, global, unknown call), the
-continued local fact becomes **`Shared`**. A locally handled branch or match can
-still continue with `Unique` only if every continuing path preserves uniqueness.
+**Publication is an event, not a lattice element.** The broad term means "this
+local region can no longer assume it is the only observer." Internally the analysis
+keeps transfer kinds distinct: return/transport can hand ownership to the caller,
+value-carrying `break` and `try` exits publish along a specific edge, fresh
+non-escaping aggregates may move ownership into a path, `Cell`/globals/escaping
+aggregates retain aliases, closure/task/channel capture can cross execution
+contexts, unknown Twinkle callees are conservative sinks, and extern/cross-worker
+copy boundaries may be borrow/copy rather than shared aliasing when their contract
+proves it. When a unique value reaches a genuine retaining or unknown publication
+point, the continued local fact becomes **`Shared`**. A locally handled branch or
+match can still continue with `Unique` only if every continuing path preserves
+uniqueness.
 
 The **join** (control-flow merge) is conservative: `Unique ⊔ Unique = Unique`,
 `Unique ⊔ Shared = Shared`, and anything joined with `Unknown` is `Unknown`. A
@@ -131,7 +144,9 @@ dominant boot threading path.
 | `AGlobalSet(_, A)` | `A → Shared` |
 | `ACall(Cell.new / Cell.set / Cell.update)` — store into a `Cell` | **publish** the stored value → `Shared` (a `Cell` is a mutable box, aliasable and readable at arbitrary times). `Cell.update` reads-then-writes, so — like `Cell.get` — the value handed to the update function is `Unknown` |
 | `ACall(Cell.get)` | `L ← Unknown` (contents stay aliased through the live cell). `Cell` is not an optimization target — already mutable by design; these rows only keep the analysis sound around it |
-| `Return(A)` / `Break(A)` / match-arm body ending in `Return` (`try`) | publish `A` → continuing facts for that value become `Shared` on the exit edge |
+| `Return(A)` | function exit transfer: classify `A` into the function's `ret` / `ret_paths`; do **not** mark the parameter as retained inside the callee. The return block is a CFG leaf, so its facts do not merge into continuing arms |
+| `Break(A)` / value-carrying loop exit | publication/region-exit edge to the loop successor; continuing facts for that value become `Shared` on that edge |
+| match arm ending in `Return` (`try` early return) | same as `Return`: a leaf function-exit transfer, not a continuing-arm merge. The fallthrough arm keeps its local region alive; the returned value is accounted for by the enclosing function's return summary |
 | `ACall(extern/host import)` — closed boundary allow-list (`Int/Float/Bool/String/Void`, `ExternRef`/`ExternRef?`, `Vector<Byte>`, `Vector<String>`, `Result<Vector<Byte>,String>`) | **Not a publication sink.** The auto-bridge marshals every GC-typed argument into a host-owned *copy* synchronously and retains no Twinkle reference, so a `Vector<Byte>`/`Vector<String>` arg is a read-only **borrow** (arg fact preserved, *not* `Shared`), and a GC-typed *result* is host-constructed fresh → `L ← Unique`. Scalars are ownership-neutral; `ExternRef` handles are host-owned (neutral). This is stronger than the generic row below and rests on the copying-marshalling contract — see [concurrency-publication.md](concurrency-publication.md). **Staging note:** this borrow/`Unique`-result precision is the *eventual* rule; the first executable analysis ([phase2-design.md](phase2-design.md)) conservatively over-approximates externs as publication (sound, less precise) and delivers this row in **Phase 10** |
 | `ACall(unknown/unsummarized)` — a *Twinkle* callee with no summary (not extern) | every reference arg → `Shared`; `L ← Unknown` |
 | `ABinOp`/`AUnOp`/scalar ops | no reference-ownership effect |
@@ -164,11 +179,13 @@ Two consequences worth stating explicitly:
   `Unique` across the loop iff every body path ends with it `Unique` (borrow-only
   reads, or consume-then-reassign) and no path publishes/aliases it. Monotone over
   the finite lattice ⇒ terminates.
-- **Multi-exit publication.** `Return`, value-carrying `Break`, and `try` error
-  arms are all exit edges (worked-examples Case T); each publishes the exiting
-  value. A locally handled `Result`/variant `case` is different: ownership can
-  flow through payload paths inside each arm and then join normally once that
-  later precision layer exists.
+- **Multi-exit transfers.** `Return` and `try` error arms that return from the
+  enclosing function are CFG leaf exits: they classify the returned value for the
+  function summary and do not merge into continuing arms (worked-examples Case T).
+  A value-carrying `Break` is different because it flows to a real loop successor,
+  so it remains a publication/region-exit edge. A locally handled `Result`/variant
+  `case` is different again: ownership can flow through payload paths inside each
+  arm and then join normally once that precision layer exists.
 
 ## Function summaries
 

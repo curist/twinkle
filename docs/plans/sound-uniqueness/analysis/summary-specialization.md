@@ -72,7 +72,7 @@ type AccessPath = Vector<FieldId>
 // payload record. Parameter in-place paths remain field-only `AccessPath`s;
 // return paths additionally need variant/payload segments.
 type ReturnPath = Vector<ReturnPathSegment>
-type ReturnPathSegment = { Field(FieldId), Variant(VariantId), Payload(Int) }
+type ReturnPathSegment = { Field(FieldId), VariantTag(Int), Payload(Int) }
 type ReturnPathOwn = .{ ret_path: ReturnPath, own: ReturnOwn }
 
 type ParamSummary = .{
@@ -113,9 +113,13 @@ This also yields **graceful degradation** at the call site: owning the shell onl
 → shell reuse with persistent field ops; owning shell + field → full in-place;
 owning neither → generic.
 
-Implementation may begin by emitting only the whole-value path `[]` (≈
-whole-parameter) and refine to named field paths later; the schema is path-based
-from the start, so no migration is needed.
+Phase 6 Part 1 temporarily emitted only the whole-value path `[]`; Phase 6 Part 2
+must populate direct field paths such as `[.types]` for the worked examples. The
+executable Phase 6 cap is `[]` plus direct record fields `[f]`. The `AccessPath` /
+`ParamPath` shape leaves room for future deeper field chains, but unsupported deeper
+parameter paths and `Elem`/`Val`/payload segments do not create `UniqueReq`
+requirements; a direct ancestor appears only when that ancestor is itself an
+independently supported mutation site.
 
 ### Transport-wrapper returns are first-class
 
@@ -200,7 +204,11 @@ arm that actually returns from the enclosing function.
 **`in_place_paths`** is populated only for a `Consumed` parameter that also
 `flows_to_return` (the region is handed back out). A `Published` parameter has
 **empty** `in_place_paths` — passing a unique value cannot help if the callee
-leaks it — so it never participates in specialization.
+leaks it — so it never participates in specialization. Returning or transporting a
+parameter is not itself retention: it is represented by `flows_to_return` and
+path-keyed return ownership. True publication means the callee creates an escaping
+or retained observation, such as a global/escaping aggregate/`Cell`, escaping
+closure/task/channel, or unknown Twinkle callee.
 
 **Worked summaries** (from the anchors; `in_place_paths` after the role):
 
@@ -285,7 +293,10 @@ paths are hierarchical under the shell, a `UniqueKey` is downward-closed: a
 At `let L = call f(a0, a1, …)`, for each `(param k, path p)` in `f`'s
 `in_place_paths`:
 
-Selection is a **key-level fixed point**, not an independent per-path test:
+Selection is a **key-level fixed point**, not an independent per-path test. It is
+also a logical-version observability proof: the pre-update source value may be
+physically reused only when that old logical version has no observable continuation
+except producing the post-update value.
 
 ```
 candidate_key = downward_close({ (k, p) ∈ in_place_paths : fact(a_k) at p is Unique })
@@ -318,6 +329,12 @@ Whole-binding last-use is only the collection-`[]` / whole-record-use case. The
 per-path uniqueness check reads the argument's per-field fact directly from the later
 `Record{shell, fields}` shape.
 
+For collection `[]` and collection-valued fields, `consume_dead` also requires alias
+completeness: every live alias to the selected backing must be represented by the
+existing provenance/path facts and checked for later observation. Missing,
+multi-origin, or unknown alias facts force generic fallback. This is deliberately a
+conservative gate over `prov`/`path_prov`/`field_own`, not a new points-to analysis.
+
 - `key = sort(selected_key)` from the fixed point above: the greatest
   downward-closed subset of the `Unique` candidate paths for which the key-level
   `consume_dead` holds (drop a field req whose `(k, [])` is unmet; drop a
@@ -328,7 +345,8 @@ per-path uniqueness check reads the argument's per-field fact directly from the 
 - **Post-call fact updates:** if any `(k, ·) ∈ key`, only `a_k`'s **consumed** paths
   are invalidated (partial invalidation per `consume_dead`) — disjoint untouched
   sibling paths of `a_k` stay readable; the result `L` takes the specialized return
-  facts path-by-path. A `[]`
+  facts path-by-path. Consumed-path facts join by union at branches/back-edges and are
+  cleared by normal all-edge rebinding to a fresh post-call value. A `[]`
   return path with `OwnedFromParam(k)` means `L` is unique as a whole; a `[.ctx]` or
   `Ok[0].state` return path with `OwnedFromParam(k)` means that projected path
   owns the handed-off region until projected or published. For the generic
@@ -407,9 +425,10 @@ consistent with the Phase-1 "print facts before rewriting" discipline.
   **ascending iterated cell** — it starts at the generic (empty-capability) bottom and
   a within-SCC recursive call reads the **previous iteration's approximant**, growing
   the in-place capability only when every recursive path supports it. The cell is
-  dirty-queued and re-run until `same_summary` stabilizes (or stripped to generic on
-  cap-hit), so a dependent's change re-dirties it and Case V converges upward. (Unlike
-  Phase 5's retract-able `ret_paths`, the capability lattice only ascends, so the
+  dirty-queued and re-run until `same_summary` stabilizes; if a **new** demanded key
+  would exceed the variant cap, that call site routes to generic and no cell is
+  created. Existing converging cells are never stripped on cap hit. (Unlike Phase 5's
+  retract-able `ret_paths`, the capability lattice only ascends, so the
   previous-approximant schedule never exposes a fact a later round revokes.)
 
 ## Non-goals

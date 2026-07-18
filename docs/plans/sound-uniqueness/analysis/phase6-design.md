@@ -106,14 +106,25 @@ must not disturb:
 - **No in-place emission / decision records consumed by the backend** → Phases 7–8.
 - **No specialization keyed on `Borrowed` or `Published` parameters** (D5).
 - **No runtime uniqueness test / dynamic dispatch** — the caller selects statically.
-- **No return/param paths deeper than the Phase 5 depth cap** (one field under a
-  record / one field under a variant payload).
+- **No deeper parameter requirements in Phase 6:** `UniqueReq.path` accepts only
+  `[]` and direct record fields `[f]`. The `Vector<Int>` representation leaves room
+  for future field chains, but Phase 6 key building does **not** create a requirement
+  for an unsupported deeper mutation. It may only record a direct ancestor when that
+  ancestor is itself an independently supported mutation site. Return paths keep the
+  Phase 5 depth cap: one record field or one field under a variant payload.
 - **No representation commitment (clone vs annotation)** — Phase 6 stays
   representation-neutral (D8).
 
 Guiding rule (unchanged): **soundness before coverage.** A call site takes an owned
 variant only with a static proof (`Unique`@path **and** the path-aware consume
 condition); any doubt selects the generic persistent callee — always sound.
+
+**Destructive-update theorem.** Phase 6's call-site decision is not proving that a
+source variable is merely "used once." It proves the semantic condition needed for
+compiler-private mutation: the **pre-update logical version** of the consumed region
+has no observable continuation except producing the post-update value. `Unique` names
+the single-handle proof; `consume_dead` is the old-version-observability check; a
+failed proof selects the generic persistent callee.
 
 Coverage rule (this phase's design bias): **prefer complete
 [worked-examples.md](worked-examples.md) coverage over implementation simplicity,
@@ -209,9 +220,12 @@ no Phase 6 Blocker 4.
 pub type ParamRole = { Borrowed, Consumed, Published }
 
 // A parameter in-place path is FIELD-ONLY (canonical: "Parameter in-place paths
-// remain field-only AccessPaths"): the shell [] or a record field chain. Payload /
-// Elem / Val segments are return-path / read-fact only and are REJECTED here.
-pub type ParamPath = Vector<Int>               // [] = shell/whole collection; [f, …] = record field chain
+// remain field-only AccessPaths"): the shell [] or a direct record field [f] in
+// executable Phase 6. The Vector shape reserves future field chains, but Stage-2 key
+// building does not create a requirement for unsupported deeper mutations; it may
+// only record a direct ancestor for an independently supported mutation site.
+// Payload / Elem / Val segments are return-path / read-fact only and are REJECTED here.
+pub type ParamPath = Vector<Int>               // [] = shell/whole collection; [f] = direct record field
 pub type ParamSummary = .{
   base_role: ParamRole,                        // was escape × capability (canonical name)
   in_place_paths: Vector<ParamPath>,           // NEW: paths the callee MUTATES if the arg is owned
@@ -258,8 +272,9 @@ pub type SpecializationFacts = .{
 
 Invariants:
 
-1. `in_place_paths` are downward-closed under the shell (D3), **field-only** (D9/
-   Blocker 1); a `Published` param has **empty** `in_place_paths` (D5/D9).
+1. `in_place_paths` are downward-closed under the shell (D3), **field-only** and
+   Phase-6-depth-limited to `[]` / direct `[f]` (D9/Blocker 1); a `Published` param
+   has **empty** `in_place_paths` (D5/D9).
 2. A `selected_key` is the greatest downward-closed subset of the `Unique` candidate
    paths for which the **key-level** `consume_dead(a_k, selected_key)` holds (D4/D6);
    dropping an unmet `(k, [])` drops every `(k, [.f])` under it, and dropping a
@@ -392,16 +407,51 @@ Aliases are the ones the lattice already tracks (`prov`/`field_own`); an unknown
 alias forces rule 1. This set is analysis-only debug/decision state (printed in the
 verdict); it is **not** consumed by codegen in Phase 6.
 
+**Alias-completeness gate.** Phase 6 does not add a new points-to analysis. It asks
+whether the existing facts are complete enough for the selected region:
+
+- shell/whole ownership must be `Unique` in `own` and have provenance precise enough
+  to name a single fresh/param origin, not absent or multi-origin unknown;
+- a field path `[f]` must be `Unique` in `field_own` and have matching `path_prov`
+  for `[f]` (absence is unknown, never fresh);
+- any pre-call alias that remains live must already be represented by the same
+  `prov`/`path_prov` origin and checked by `consume_dead`; if an alias may exist but
+  is not represented in those facts, the selected key is dropped and the call falls
+  back to generic.
+
+For collection `[]` and collection-valued `[f]`, this gate is load-bearing: a
+pre-captured alias would observe in-place backing mutation. For record-shell `[]`,
+pre-captured aliases only observe old field-pointer slots; they still block
+whole-record use/publish and updated-field reads, while disjoint sibling projections
+remain legal under D6.
+
+**ConsumedPaths transfer and merge rules.** `ConsumedPaths` is part of the forward
+analysis state, not the public CFG facts:
+
+- selecting an owned variant adds the selected consumed paths for the argument local;
+- rebinding a local to a fresh post-call result clears that local's old consumed set;
+- moving/initing a partially-consumed carrier is legal only when the move itself is a
+  permitted disjoint-carrier use; otherwise the earlier call must select generic;
+- branch joins and loop back-edges merge consumed-path sets by **union** for each
+  carried local, because a path consumed on any predecessor is unsafe to read after
+  the join;
+- assigning a carried block parameter from a fully-rebound value uses the incoming
+  value's consumed set, so normal rebind flow clears old consumed paths when every
+  incoming edge supplies the new value.
+
 ### Requirement collection (generic pass)
 
 During the existing generic `summarize_function` pass, additionally record, per
 reference param, the paths that *would* become in-place ops under `Unique` entry —
 **mutation sites only** (Blocker 2): consuming collection updates on the param (or a
-param-derived local at a known path), record-update candidates on a param
-shell/field, and the **transitive** case (passing a param path to a summarized callee
-whose summary consumes it). This is a **syntactic/effect** requirements set — it does
+param-derived local at a known path), record-update candidates on a param shell/direct
+field, and the **transitive** case (passing a param path to a summarized callee whose
+summary consumes it). This is a **syntactic/effect** requirements set — it does
 **not** assert the generic call is in-place-capable (the generic call is not). It is
-the candidate set the owned-entry pass validates.
+the candidate set the owned-entry pass validates. In executable Phase 6, parameter
+requirements are restricted to `[]` and direct `[f]`; deeper field chains,
+`Elem`/`Val`, and payload segments do not create an `in_place_path` requirement
+unless a supported direct ancestor is also independently mutated.
 
 `flows_to_return` is **derived, not independently computed** (nit): it is set iff
 param `k` appears in the whole-return classification (`MayAliasParams(k)`) or in a

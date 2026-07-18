@@ -14,20 +14,22 @@
 
 Part 1 (landed, commits `fba33602`/`e1492fcb`) reconciled `ParamSummary` to `{ base_role: ParamRole, in_place_paths: Vector<ParamPath>, flows_to_return: Bool }` and populates `in_place_paths` at **shell `[]` granularity only**. Part 2 supplies the rest of the design's Phase 6: field-granular paths, the per-call-site variant decision, the owned-entry re-analysis that proves it, and the SCC variant fixpoint — all still **analysis-only** (no cloned variants emitted; that is codegen Phase 2A).
 
-**Stage map (this plan = Stage 1; Stages 2–6 are the roadmap at the end):**
+**Stage map (Stage 1 is the concrete execution plan; Stages 2–6 are the roadmap at the end):**
 
 | Stage | Subsystem | Design refs | Acceptance criteria |
 |---|---|---|---|
 | **1** | **Variant identity & encoding** (this plan) | D3, D8, D14; "Data model"; Int-key encoding | #14 (determinism substrate) |
 | 2 | Field-granular `in_place_paths` + `ConsumedPaths` | Blocker 1/2/3, D6 | #1 (full), #5, #7, #8 |
 | 3 | Owned-entry re-analysis (`summarize_variant`) | D10, D11, D13 | #4, #6 (variant side) |
-| 4 | Call-site decision + `consume_dead` | D4, D6, D7 | #2, #3, #5, #7 |
+| 4 | Call-site decision + `consume_dead` | D4, D6, D7 | #2, #3, #5, #7, #8 |
 | 5 | SCC variant fixpoint + cap | D7, D12 | #11, #12, #13 |
 | 6 | Rendering (cfg decisions) | "Rendering"; D14 | #14 (rendered), #3 verdicts |
 
 ---
 
 ## Stage 1: Variant identity & encoding infrastructure
+
+**Current progress:** Tasks 1–2 are landed (`variant_id` identity types plus canonicalization/downward-closure). Task 3 (deterministic interner + `site_key`) and Task 4 (Stage 1 verification) remain Phase 6 work.
 
 **What it delivers:** a self-contained leaf module owning the variant-identity types and their canonicalization + deterministic interning. No consumer wires it yet (Stages 3–5 do), but it is fully testable in isolation and it resolves the **load-bearing determinism/encoding question** the design flags (`variant_key`/`site_key` must be pure functions of canonical inputs, `VariantId` numbering stable across builds — acceptance #14). Every later stage keys its memo and decision tables on this module.
 
@@ -49,7 +51,7 @@ Part 1 (landed, commits `fba33602`/`e1492fcb`) reconciled `ParamSummary` to `{ b
 - Create: `boot/compiler/variant_id.tw`
 - Modify: `boot/compiler/ownership.tw` (remove `ParamPath` def ~line 44, add import)
 
-- [ ] **Step 1: Write a failing test that imports the new module**
+- [x] **Step 1: Write a failing test that imports the new module**
 
 In `boot/tests/suites/cfg_summary_suite.tw`, add `use compiler.variant_id` to the imports at the top, and add this test to `suite()`:
 
@@ -67,12 +69,12 @@ In `boot/tests/suites/cfg_summary_suite.tw`, add `use compiler.variant_id` to th
     )
 ```
 
-- [ ] **Step 2: Run to verify it fails (module does not exist)**
+- [x] **Step 2: Run to verify it fails (module does not exist)**
 
 Run: `target/twk run boot/tests/main.tw 2>&1 | tail -20`
 Expected: an unresolved-import / unknown-module error for `compiler.variant_id`.
 
-- [ ] **Step 3: Create `boot/compiler/variant_id.tw` with the identity types**
+- [x] **Step 3: Create `boot/compiler/variant_id.tw` with the identity types**
 
 ```tw
 //! Variant identity for Phase 6 ownership specialization (analysis-only).
@@ -82,9 +84,11 @@ Expected: an unresolved-import / unknown-module error for `compiler.variant_id`.
 //! proven Unique at a call site to select it. This module is a LEAF (no compiler
 //! imports) so `ownership.tw`/`summary.tw` may depend on it without a cycle.
 
-// [] = the shell / whole collection; [f, …] = a record field chain. FIELD-ONLY:
-// payload / Elem / Val segments are return-path/read facts, never a UniqueReq path
-// (design Blocker 1). Relocated here from ownership.tw so this module stays a leaf.
+// [] = the shell / whole collection; [f] = a direct record field in executable
+// Phase 6. The Vector shape reserves future field chains, but Stage 2 does not
+// create requirements for unsupported deeper mutations. FIELD-ONLY: payload / Elem /
+// Val segments are return-path/read facts, never a UniqueReq path (design Blocker 1). Relocated here from
+// ownership.tw so this module stays a leaf.
 pub type ParamPath = Vector<Int>
 
 pub type UniqueReq = .{ param: Int, path: ParamPath }
@@ -92,7 +96,7 @@ pub type UniqueKey = Vector<UniqueReq>            // canonical-sorted; [] => gen
 pub type VariantId = .{ func: Int, unique: UniqueKey }
 ```
 
-- [ ] **Step 4: Import `ParamPath` into `ownership.tw` and remove its local definition**
+- [x] **Step 4: Import `ParamPath` into `ownership.tw` and remove its local definition**
 
 In `boot/compiler/ownership.tw`, delete the Part-1 `ParamPath` definition (the `pub type ParamPath = Vector<Int>` line and its comment, near line 44) and add an import near the other `use` lines at the top of the file:
 
@@ -102,12 +106,12 @@ use compiler.variant_id.{ParamPath}
 
 Everything in `ownership.tw` that referenced `ParamPath` (the `ParamSummary.in_place_paths` field, the `ipp` case) now resolves to the imported type — no other change.
 
-- [ ] **Step 5: Run the boot suite to verify green**
+- [x] **Step 5: Run the boot suite to verify green**
 
 Run: `make boot-test 2>&1 | grep -E 'Ran [0-9]+ tests|error|Error|FAIL' | tail -5`
 Expected: `Ran N tests: N passed` (the new import-smoke test passes; Part 1 tests still pass — the `ParamPath` relocation is behavior-preserving).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 target/twk fmt boot/compiler/variant_id.tw boot/compiler/ownership.tw
@@ -125,7 +129,7 @@ can depend on it without a cycle. Types only; canonicalization + interner follow
 - Modify: `boot/compiler/variant_id.tw`
 - Test: `boot/tests/suites/cfg_summary_suite.tw`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `suite()`:
 
@@ -166,28 +170,20 @@ Add to `suite()`:
     )
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `target/twk run boot/tests/main.tw 2>&1 | grep -iE 'canonicalize_key|downward_close|error' | tail -5`
 Expected: unresolved-name errors for `canonicalize_key` / `downward_close`.
 
-- [ ] **Step 3: Implement the comparators, canonicalization, and downward-closure**
+- [x] **Step 3: Implement the comparators, canonicalization, and downward-closure**
 
 Add to `boot/compiler/variant_id.tw`:
 
 ```tw
-// Lexicographic order on field-only paths: compare element-wise; a prefix is
-// smaller, so the shell [] sorts before [f]. Returns .Lt/.Eq/.Gt.
+// Lexicographic order on field-only paths: a prefix is smaller, so the shell []
+// sorts before [f]. Delegates to the prelude's tested Vector.compare<T: Ord>.
 pub fn path_cmp(a: ParamPath, b: ParamPath) Order {
-  n := if a.len() < b.len() { a.len() } else { b.len() }
-  for i in range(n) {
-    c := a[i].compare(b[i])
-    case c {
-      .Eq => {},
-      _ => return c,
-    }
-  }
-  a.len().compare(b.len())
+  a.compare(b)
 }
 
 pub fn req_cmp(a: UniqueReq, b: UniqueReq) Order {
@@ -217,7 +213,7 @@ pub fn canonicalize_key(reqs: UniqueKey) UniqueKey {
       !req_eq(out[out.len() - 1], r)
     }
     if keep {
-      out = out.append(r)
+      out = .append(r)
     }
   }
   out
@@ -239,7 +235,7 @@ pub fn downward_close(reqs: UniqueKey) UniqueKey {
       case seen_shell.get(r.param) {
         .Some(_) => {},
         .None => {
-          augmented = augmented.append(UniqueReq.{ param: r.param, path: [] })
+          augmented = .append(UniqueReq.{ param: r.param, path: [] })
           seen_shell[r.param] = true
         },
       }
@@ -251,12 +247,12 @@ pub fn downward_close(reqs: UniqueKey) UniqueKey {
 
 > **API confirmed:** `Vector.sort_by<T>(xs, cmp: fn(T,T) Order)` exists (`boot/prelude/vector.tw:344`) and `Int.compare(a,b) Order` exists (`boot/prelude/int.tw:3`); the inherent-method call `reqs.sort_by(req_cmp)` and `a[i].compare(b[i])` are exactly the in-repo idiom (`summary.tw:191` sorts `ret_paths` the same way). No adaptation needed.
 
-- [ ] **Step 4: Run to verify the two tests pass**
+- [x] **Step 4: Run to verify the two tests pass**
 
 Run: `make boot-test 2>&1 | grep -E 'Ran [0-9]+ tests|FAIL' | tail -3`
 Expected: `Ran N tests: N passed`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 target/twk fmt boot/compiler/variant_id.tw
@@ -483,11 +479,22 @@ These stages are **scoped, not coded** here — their exact TDD steps depend on 
 
 ### Stage 2 — Field-granular `in_place_paths` + `ConsumedPaths` (Blocker 1/2/3, D6)
 
-**Scope:** extend Part 1's shell-only `in_place_paths` to real field paths (`add_type` → `paths{[],[.types]}`), and add per-local read-validity tracking so a consumed `.types` can coexist with a live `.values` read.
+**Scope:** extend Part 1's shell-only `in_place_paths` to direct field paths
+(`add_type` → `paths{[],[.types]}`), add per-local read-validity tracking so a
+consumed `.types` can coexist with a live `.values` read, and make alias
+completeness an explicit precondition for any collection-backing consume.
+
+**Executable path cap:** Phase 6 parameter requirements are only `[]` and direct
+record fields `[f]`. `ParamPath = Vector<Int>` leaves room for future field chains,
+but Stage 2 does not create a requirement for an unsupported deeper mutation. It may
+only record a direct ancestor when that ancestor is itself an independently supported
+mutation site. `Elem`/`Val`/`Payload` never enter `UniqueReq` keys.
 
 **Entry points:**
-- Requirement collection: at each `ARecordUpdate(base, f, v, …)` (`ownership.tw:1605`) and each consuming call (`consume_call_base`, `ownership.tw:902`; `cow_base_arg`, `:895`), map `prov_of(st.prov, base)` → a single param `k`; when it resolves, add field path `[f.id]` (downward-closed to include `[]`) to param `k`'s candidate set. This replaces Part 1's coarse `role == Consumed => [[]]` with a per-op-collected set. Convert `ff.AccessPath` → field-only `ParamPath` here, **rejecting** `Elem`/`Val`/`Payload` segments (Blocker 1) via a guard that falls back to the shell.
+- Requirement collection: at each `ARecordUpdate(base, f, v, …)` (`ownership.tw:1605`) and each consuming call (`consume_call_base`, `ownership.tw:902`; `cow_base_arg`, `:895`), map `prov_of(st.prov, base)` → a single param `k`; when it resolves, add field path `[f.id]` (downward-closed to include `[]`) to param `k`'s candidate set. This replaces Part 1's coarse `role == Consumed => [[]]` with a per-op-collected set. Convert `ff.AccessPath` → direct-field `ParamPath` here, **rejecting** `Elem`/`Val`/`Payload` segments and rejecting unsupported deeper paths unless a supported direct ancestor is independently mutated.
 - `ConsumedPaths`: add a 6th field to `ForwardState` (`ownership.tw:729`), `ConsumedPaths = Dict<Int, Vector<ParamPath>>` (design "Data model for partial validity"), with the three D6 read rules (whole-value use illegal; consumed-path read illegal; disjoint sibling read legal).
+- `ConsumedPaths` transfer/merge: selecting an owned variant adds consumed paths for the argument local; rebinding that local to the post-call result clears the old consumed set; legal carrier moves preserve the consumed set, while illegal whole/carried uses force the call site back to generic; joins and loop back-edges merge by **union** per carried local; all-edge rebinding follows the incoming value's consumed set so normal rebind flow clears stale consumed paths.
+- Alias-completeness gate: reuse `own`/`prov`/`field_own`/`path_prov` rather than adding a new points-to analysis. A selected shell/collection path needs `Unique` plus precise provenance; a selected field path needs both `field_own` and matching `path_prov`. Missing, multi-origin, or untracked alias facts drop the selected path. Collection `[]` and collection-valued `[f]` require this because pre-captured aliases observe backing mutation; record-shell `[]` keeps D6's disjoint-sibling allowance.
 - Requirement collection participates in the SCC fixpoint (a member's candidate set grows when an in-SCC callee gains an `in_place_path`); compare via the Part-1 `same_param_paths` already in `same_summary`.
 
 **Acceptance:** #1 (full, `paths{[],[.types]}`), #5 (mixed-ownership record), #7 (path-aware gate), #8 (collection alias completeness). **Depends on:** Stage 1 (`ParamPath` home).
@@ -503,12 +510,13 @@ These stages are **scoped, not coded** here — their exact TDD steps depend on 
 
 ### Stage 4 — Call-site decision + `consume_dead` (D4, D6, D7)
 
-**Scope:** at each user call, form `candidate_key` from pre-call per-path facts, reduce to `selected_key` by the key-level `consume_dead` fixed point (drop violating paths, re-close downward, repeat), select `VariantId` (or generic if empty/over-cap), apply the specialized return-path facts, and partially-invalidate the consumed paths of the arg.
+**Scope:** at each user call, form `candidate_key` from pre-call per-path facts, reduce to `selected_key` by the key-level `consume_dead` fixed point (drop violating paths, re-close downward, repeat), select `VariantId` (or generic if empty/over-cap), apply the specialized return-path facts, and partially-invalidate the consumed paths of the arg. This is the executable check for the Phase 6 theorem: the pre-update logical version must have no observable continuation except producing the post-update value.
 
 **Entry points:**
-- `transfer_summarized_call` (`ownership.tw:1112`) already snapshots pre-call arg facts (`arg_unique`, `:1125`) and has the recovery gate (`:1174`). Add the key-selection + `CallDecision` emission alongside it, reading `ConsumedPaths` (Stage 2) for the D6 liveness rules. Emit `CallDecision` keyed by `site_key` (Stage 1). The generic path stays exactly today's behavior.
+- `transfer_summarized_call` (`ownership.tw:1112`) already snapshots pre-call arg facts (`arg_unique`, `:1125`) and has the recovery gate (`:1174`). Add the key-selection + `CallDecision` emission alongside it, reading `ConsumedPaths` (Stage 2) for the D6 liveness rules and the Stage-2 alias-completeness predicate before accepting any selected path. Emit `CallDecision` keyed by `site_key` (Stage 1). The generic path stays exactly today's behavior.
+- Fallback reasons are part of the decision: not unique, consumed path observed later, whole carrier used later, alias set incomplete, over cap, or no non-empty key after downward closure.
 
-**Acceptance:** #2 (Cases B∩C), #3 (one VariantId two sites vs generic), #5, #7. **Depends on:** Stages 1–3.
+**Acceptance:** #2 (Cases B∩C), #3 (one VariantId two sites vs generic), #5, #7, #8. **Depends on:** Stages 1–3.
 
 ### Stage 5 — SCC variant fixpoint + cap (D7, D12)
 
@@ -532,7 +540,7 @@ These stages are **scoped, not coded** here — their exact TDD steps depend on 
 
 ## Self-Review (Stage 1)
 
-- **Spec coverage (Stage 1 scope):** the identity types (D8), canonicalization + downward-closure (D3), determinism via canonical-string interner with creation-order ids (D14), and `site_key` encoding are each implemented by a task. Stages 2–6 map the remaining acceptance criteria (#1–#13) to scoped roadmap entries with entry-point anchors — no design bullet is unassigned.
+- **Spec coverage (Stage 1 scope):** the identity types (D8), canonicalization + downward-closure (D3), determinism via canonical-string interner with creation-order ids (D14), and `site_key` encoding are each covered by a task. Tasks 1–2 are already checked off; Tasks 3–4 remain. Stages 2–6 map the remaining acceptance criteria (#1–#13, plus rendered #14) to scoped roadmap entries with entry-point anchors — no design bullet is unassigned.
 - **Placeholder scan:** every Stage-1 step shows exact code or an exact command + expected output. The two `> Note` callouts flag real API-shape checks (the `Vector` sort signature; the `InternResult` threading idiom) rather than deferring content — the surrounding code is complete.
 - **Type consistency:** `ParamPath`, `UniqueReq`, `UniqueKey`, `VariantId`, `VariantInterner`, `InternResult`, and the functions `path_cmp`/`req_cmp`/`canonicalize_key`/`downward_close`/`variant_canonical_string`/`canonicalize_variant`/`new_interner`/`intern`/`variant_of_id`/`site_key` are used with identical signatures across Tasks 1–3 and referenced consistently by the Stage 2–6 roadmap.
 - **API shapes verified:** `Vector.sort_by<T>(xs, cmp: fn(T,T) Order)` (`vector.tw:344`), `Int.compare → Order` (`int.tw:3`), and `Vector.join`/`String` interpolation (used in Part 1) all exist and are used per the in-repo idiom (`summary.tw:191`). `intern` returns a named `InternResult` because Twinkle has no anonymous multi-value return; callers thread `vi = r.interner`.

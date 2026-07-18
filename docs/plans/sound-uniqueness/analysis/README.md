@@ -166,8 +166,9 @@ phase adds return-path summaries. Still no codegen changes. Canonical semantics:
   just the wrapper local — remains observable. (Sibling-read licensing + live-out
   gate in the transport recognizer.)
 - [x] **Handled-`Result` arm joins.** Merge transported payload facts like ordinary
-  record-field facts; `try` / `return` / value-carrying `break` stay publishing
-  exit edges (Case T). (Match-arm `seed_payload_binding`, Task 13.)
+  record-field facts; `return` / `try` early-return arms are leaf function-exit
+  transfers, while value-carrying `break` stays a publication/region-exit edge to
+  its loop successor (Case T). (Match-arm `seed_payload_binding`, Task 13.)
 
 Exit: Case W (fresh-local record transport) classifies as an ownership-preserving
 handoff instead of aggregate publication; generated code unchanged (census 0

@@ -361,18 +361,20 @@ print (see Rendering).
 
 ### Terminator publication
 
-Beyond the per-op publications in the table (`AGlobalSet`, `AMakeClosure`, the
-field-store hinge, and the `.None` call bucket), the block **terminators**
-publish on their exit edges:
+Historical Phase 2 rule, later refined by Phase 5: beyond the per-op publications in
+the table (`AGlobalSet`, `AMakeClosure`, the field-store hinge, and the `.None` call
+bucket), the first executable analysis treated block **terminators** conservatively
+as publishing on exit edges:
 
-- `Return(A)` / value-carrying `Break(A)` publish `A`. This only demotes a value
-  still observable elsewhere (an alias), which the `AInit` rule already caught,
-  but it is the exit-edge fact that a downstream join/loop merge reads.
-- `try` (an `AMatch` whose error arm ends in `Return`, per worked-examples
-  Case T) is a multi-exit publication: the error arm publishes on its exit edge
-  while the `Ok` arm keeps the value alive. Phase 1 already represents this as a
-  diverging match arm, so no new structure is needed — Phase 2 just attaches the
-  publish fact to that exit edge.
+- `Return(A)` / value-carrying `Break(A)` published `A` in Phase 2. Phase 5 changed
+  `Return(A)` to a function-exit transfer that feeds `ret` / `ret_paths` and does not
+  mark a returned parameter retained inside the callee; value-carrying `Break(A)`
+  still publishes to its loop successor.
+- `try` (an `AMatch` whose error arm ends in `Return`, per worked-examples Case T)
+  was initially described as multi-exit publication. After Phase 5, a returning arm
+  is a leaf function-exit transfer, while the `Ok`/fallthrough arm keeps the value
+  alive. Phase 1 already represents this as a diverging match arm, so no new
+  structure is needed.
 
 ### Control flow falls out of block transfer + join
 

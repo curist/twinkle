@@ -75,9 +75,10 @@ must not disturb:
   wrappers, `out.ctx` while `out.ty` is read) is **Phase 5**
   ([summary-specialization.md](summary-specialization.md),
   [records-fields.md](records-fields.md)).
-- **No interprocedural field-path summaries.** `in_place_paths` and
-  `OwnedFromParam` return paths (the summary-side of the record story) are
-  **Phase 5**; Phase 4's summaries stay the whole-parameter Phase 3 shape.
+- **No interprocedural field-path summaries.** `OwnedFromParam` return paths (the
+  return-side of the record story) are **Phase 5**; parameter-side `in_place_paths`
+  and ownership-specialization decisions are **Phase 6**. Phase 4's summaries stay
+  the whole-parameter Phase 3 shape.
 - **No ownership specialization** (Phase 6).
 - **No intraprocedural variant-payload ownership.** `PathSeg` = `Field/Elem/Val`
   has no payload segment, so `AVariant` is shell-only; variant payload paths
@@ -190,7 +191,7 @@ graft nothing.
 | `ARecord{…, f: v, …}` | shell `[]:Unique` (Phase 2). For each field `f`: `graft([.f], v)` only when `v` is `[]:Unique`, at last-use, **and appears exactly once** among the shell's stored operands (a value in two fields — `.{ a: x, b: x }` — aliases itself, so neither is claimed). Otherwise no `[.f]` claim (`field_store` demotion applies) |
 | `AArrayLit([v…])` | outer `[]:Unique`; `[Elem]:Unique` only when **every distinct** element is `[]:Unique`+last-use **and no element value is stored twice** (a duplicate element is an intra-array alias → drop `[Elem]`) |
 | `Vector.make(n, v)` | outer `[]:Unique`; **never** `[Elem]:Unique` — it replicates the single reference `v` into `n` slots (`n` dynamic), so the elements alias each other |
-| `AVariant(f, [v…])` | outer `[]:Unique` **shell only**. Intraprocedural payload ownership is **deferred to Phase 5** — `PathSeg` has no payload segment — so payload operands just follow the `field_store` move/alias demotion, with no deep claim |
+| `AVariant(f, [v…])` | outer `[]:Unique` **shell only**. Intraprocedural payload ownership was handled later by Phase 5's payload-path work — `PathSeg` had no payload segment in Phase 4 — so payload operands just follow the `field_store` move/alias demotion here, with no deep claim |
 | `ARecordUpdate(base, f, v, …)` | shell `[]` from existing `consume_base(base)`. Result `field_own` = base's field facts with the **entire `[.f]*` subtree removed first**, then `graft([.f], v)` (only when `v` is `[]:Unique`+last-use+single-store). Removing the whole subtree matters: a shared replacement must not leave stale `[.f, Elem]` descendants. Sibling fields carry over unchanged — the quartet write-back that keeps `.values` while refreshing `.types` |
 
 ### Projection — the field-projection hinge (`ARecordGet(base, f) → R`)
@@ -415,7 +416,8 @@ Concrete gates for the execution plan (all via the boot suite unless noted):
 | Item | Home |
 |---|---|
 | Path-granular liveness (transport-wrapper `out.ctx` while `out.ty` read) | Phase 5 ([summary-specialization.md](summary-specialization.md)) |
-| Interprocedural field-path summaries / `in_place_paths` / `OwnedFromParam` return paths | Phase 5 |
+| `OwnedFromParam` return paths | Phase 5 |
+| Parameter-side field-path summaries / `in_place_paths` | Phase 6 |
 | Intraprocedural variant-payload ownership (`AVariant` deep facts) | Phase 5 (needs a payload `PathSeg`) |
 | Ownership specialization over field-path keys | Phase 6 |
 | Candidate verdicts → decision records → in-place emission | Phases 7–8 ([../codegen/README.md](../codegen/README.md)) |
