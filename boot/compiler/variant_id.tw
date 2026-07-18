@@ -39,8 +39,9 @@ fn req_eq(a: UniqueReq, b: UniqueReq) Bool {
   }
 }
 
-// Sort by (param, path) then drop adjacent duplicates. Deterministic: the sort is
-// total (req_cmp never returns .Eq for distinct reqs) so ordering is build-stable.
+// Sort by (param, path) then drop adjacent duplicates. Deterministic: req_cmp is a
+// total preorder on (param, path), so distinct reqs get a stable relative order and
+// dedup collapses equal ones — the result is canonical regardless of input order.
 pub fn canonicalize_key(reqs: UniqueKey) UniqueKey {
   sorted := reqs.sort_by(req_cmp)
   out: UniqueKey = []
@@ -80,4 +81,74 @@ pub fn downward_close(reqs: UniqueKey) UniqueKey {
     }
   }
   canonicalize_key(augmented)
+}
+
+// Injective canonical serialization of a VariantId. Call `canonicalize_variant`
+// first: this requires the key already canonicalized (sorted, deduped,
+// downward-closed). Delimiters ':' ';' '|' '.' are
+// safe because every component is a non-negative Int. Two VariantIds serialize
+// equal iff they are the same variant — the basis for dedup + build-stable ids.
+pub fn variant_canonical_string(v: VariantId) String {
+  parts: Vector<String> = []
+  for r in v.unique {
+    segs: Vector<String> = collect s in r.path {
+      "${s}"
+    }
+    parts = .append("${r.param}:${segs.join(".")}")
+  }
+  "f${v.func}|${parts.join(";")}"
+}
+
+// A VariantId with its key canonicalized + downward-closed (D3).
+pub fn canonicalize_variant(v: VariantId) VariantId {
+  VariantId.{ func: v.func, unique: downward_close(v.unique) }
+}
+
+pub type VariantInterner = .{
+  ids: Dict<String, Int>, // canonical string -> dense creation-order id
+  by_id: Vector<VariantId>, // id -> canonicalized VariantId (creation order)
+}
+
+pub type InternResult = .{ interner: VariantInterner, id: Int }
+
+pub fn new_interner() VariantInterner {
+  VariantInterner.{ ids: Dict.new(), by_id: [] }
+}
+
+// Intern a VariantId: canonicalize it, then return its dense id — reusing the
+// existing id for an equal canonical key, or assigning the next creation-order id.
+// The returned interner carries any newly-assigned id (threaded, not mutated).
+pub fn intern(vi: VariantInterner, v: VariantId) InternResult {
+  cv := canonicalize_variant(v)
+  s := variant_canonical_string(cv)
+  case vi.ids.get(s) {
+    .Some(id) => InternResult.{ interner: vi, id },
+    .None => {
+      id := vi.by_id.len()
+      vi.ids[s] = id
+      vi.by_id = .append(cv)
+      InternResult.{ interner: vi, id }
+    },
+  }
+}
+
+pub fn variant_of_id(vi: VariantInterner, id: Int) VariantId? {
+  if id >= 0 and id < vi.by_id.len() {
+    .Some(vi.by_id[id])
+  } else {
+    .None
+  }
+}
+
+// Injective pairing of a (func_id, local_id) pair into one Int for the
+// CallDecision table key (both ids are dense, non-negative, per-mono-instance
+// stable). Szudzik-style. The CallDecision record also stores site_func/site_local
+// as fields (design "Data model"), so this is a lookup key only — no un-pairing is
+// needed in Part 2; add one only if a future consumer must recover (func, local).
+pub fn site_key(func_id: Int, local_id: Int) Int {
+  if func_id >= local_id {
+    func_id * func_id + func_id + local_id
+  } else {
+    local_id * local_id + func_id
+  }
 }

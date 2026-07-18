@@ -1391,4 +1391,110 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "variant_id: intern gives one id per canonical key, in creation order",
+      fn() {
+        vi := variant_id.new_interner()
+        va := variant_id.VariantId.{
+          func: 7,
+          unique: [variant_id.UniqueReq.{ param: 0, path: [] }],
+        }
+        vb := variant_id.VariantId.{
+          func: 7,
+          unique: [variant_id.UniqueReq.{ param: 1, path: [] }],
+        }
+
+        // va2: va's key written with a redundant DUPLICATE shell req; canonicalize_key
+        // collapses it to va's canonical key, so it must intern to va's id (dedup path).
+        va2 := variant_id.VariantId.{
+          func: 7,
+          unique: [
+            variant_id.UniqueReq.{ param: 0, path: [] },
+            variant_id.UniqueReq.{ param: 0, path: [] },
+          ],
+        }
+
+        r1 := variant_id.intern(vi, va)
+        r2 := variant_id.intern(r1.interner, vb)
+        r3 := variant_id.intern(r2.interner, va2) // canonically equal to va
+
+        try assert.equal(r1.id, 0) // creation order
+        try assert.equal(r2.id, 1)
+        try assert.equal(r3.id, 0) // deduped back to va's id
+        .Ok({})
+      },
+    )
+    .test(
+      "variant_id: intern is order-insensitive within a key and round-trips by id",
+      fn() {
+        vi := variant_id.new_interner()
+
+        // same key, reqs supplied in two different orders
+        k1: variant_id.UniqueKey = [
+          variant_id.UniqueReq.{ param: 0, path: [3] },
+          variant_id.UniqueReq.{ param: 0, path: [] },
+        ]
+        k2: variant_id.UniqueKey = [
+          variant_id.UniqueReq.{ param: 0, path: [] },
+          variant_id.UniqueReq.{ param: 0, path: [3] },
+        ]
+        r1 := variant_id.intern(vi, variant_id.VariantId.{ func: 9, unique: k1 })
+        r2 := variant_id.intern(r1.interner, variant_id.VariantId.{ func: 9, unique: k2 })
+        try assert.equal(r1.id, r2.id) // canonicalization makes them one variant
+
+        got := variant_id.variant_of_id(r2.interner, r1.id)
+        case got {
+          .Some(v) => {
+            try assert.equal(v.func, 9)
+            try assert.equal(v.unique.len(), 2)
+            try assert.equal(v.unique[0].path.len(), 0) // canonical: shell first
+          },
+          .None => return .Err("expected a variant for id"),
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "variant_id: canonical string is stable and injective for distinct keys",
+      fn() {
+        va := variant_id.VariantId.{
+          func: 7,
+          unique: [
+            variant_id.UniqueReq.{ param: 0, path: [] },
+            variant_id.UniqueReq.{ param: 0, path: [3] },
+          ],
+        }
+        vb := variant_id.VariantId.{
+          func: 7,
+          unique: [
+            variant_id.UniqueReq.{ param: 0, path: [] },
+            variant_id.UniqueReq.{ param: 0, path: [4] },
+          ],
+        }
+        sa := variant_id.variant_canonical_string(variant_id.canonicalize_variant(va))
+        sb := variant_id.variant_canonical_string(variant_id.canonicalize_variant(vb))
+        try assert.equal(sa, "f7|0:;0:3") // exact, human-checkable form
+        try assert.is_true(sa != sb) // distinct keys => distinct strings
+
+        // the generic (empty-key) variant — the most common case — serializes to "f{n}|"
+        generic := variant_id.VariantId.{ func: 7, unique: [] }
+        sg := variant_id.variant_canonical_string(variant_id.canonicalize_variant(generic))
+        try assert.equal(sg, "f7|")
+        .Ok({})
+      },
+    )
+    .test(
+      "variant_id: site_key is injective across both Szudzik branches",
+      fn() {
+        // ordered pair, so (func,local) and (local,func) must not collide, and
+        // varying either component must change the key.
+        try assert.is_true(variant_id.site_key(3, 5) != variant_id.site_key(5, 3))
+        try assert.is_true(variant_id.site_key(3, 5) != variant_id.site_key(3, 6))
+        try assert.is_true(variant_id.site_key(3, 5) != variant_id.site_key(4, 5))
+
+        // a repeated key is stable
+        try assert.equal(variant_id.site_key(3, 5), variant_id.site_key(3, 5))
+        .Ok({})
+      },
+    )
 }
