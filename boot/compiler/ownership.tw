@@ -3263,18 +3263,30 @@ type RawParam = .{ esc: EscapeEffect, cap: ParamCapability }
 // D9 precedence: a leaked (Retained) param is always Published, regardless of a
 // consumed capability — a value the callee leaks cannot be handed back uniquely.
 // Otherwise a Consumed-and-return-flowing param is Consumed; else Borrowed.
-fn reconcile_role(esc: EscapeEffect, cap: ParamCapability, flows_to_return: Bool) ParamRole {
+// Canonical would-mutate model: a param with a dirty (in-place-updated) path that
+// flows to the return is Consumed; else the escape/move classification stands.
+fn reconcile_role(esc: EscapeEffect, cap: ParamCapability, has_mut: Bool, flows_to_return: Bool) ParamRole {
   case esc {
     .Retained => .Published,
-    .Borrowed => case cap {
-      .Consumed => if flows_to_return {
+    .Borrowed => {
+      consumes := has_mut
+        or case cap {
+          .Consumed => true,
+          .NoCap => false,
+        }
+      if consumes and flows_to_return {
         .Consumed
       } else {
         .Borrowed
-      },
-      .NoCap => .Borrowed,
+      }
     },
   }
+}
+
+// Shell [] (downward-closed under []) plus the collected dirty field paths, which
+// are already canonical-sorted/deduped in the PathSet.
+fn build_in_place_paths(dirty: vid.PathSet) vid.PathSet {
+  vid.shell_set().union(dirty)
 }
 
 fn param_in_indices(k: Int, idxs: Vector<Int>) Bool {
@@ -3305,6 +3317,193 @@ fn param_flows_to_return(k: Int, ret: ReturnEffect, ret_paths: Vector<ReturnPath
     }
   }
   false
+}
+
+// ── Requirement-flow (dirty-path) dataflow ──────────────────────────
+// Self-contained forward analysis (independent of the ownership fixpoint): per
+// value, which single parameter its RECORD IDENTITY derives from (origin; -1 =
+// none/ambiguous) and the field paths dirtied by in-place record updates reaching
+// it. Reading the RETURNED atom's dirty set yields each param's in-place field
+// requirements — correctly ignoring an update whose result never reaches the return.
+type FlowFact = .{ origin: Int, dirty: vid.PathSet }
+
+fn ff_none() FlowFact {
+  FlowFact.{ origin: 0 - 1, dirty: vid.empty_set() }
+}
+
+fn flow_get(st: Dict<Int, FlowFact>, a: Atom) FlowFact {
+  case atom_local_id(a) {
+    .Some(id) => case st.get(id) {
+      .Some(ff) => ff,
+      .None => ff_none(),
+    },
+    .None => ff_none(),
+  }
+}
+
+// Per-op transfer: only ARecordUpdate (record->record, add [f]) and AAssign
+// (rebind) carry a fact forward; every other result defaults to none — the chain
+// breaks (ARecordGet is a field value; a call result is Stage 2b).
+fn transfer_flow(st: Dict<Int, FlowFact>, op: AnfOp, result: Int) Dict<Int, FlowFact> {
+  case op {
+    .ARecordUpdate(base, fld, _, _, _) => {
+      bf := flow_get(st, base)
+      st[result] = if bf.origin >= 0 {
+        FlowFact.{ origin: bf.origin, dirty: bf.dirty.add(vid.field(fld.id)) }
+      } else {
+        ff_none()
+      }
+      st
+    },
+    .AAssign(local, a) => {
+      st[local.id] = flow_get(st, a)
+      st
+    },
+    _ => st,
+  }
+}
+
+fn join_fact(a: FlowFact, b: FlowFact) FlowFact {
+  org := if a.origin == b.origin {
+    a.origin
+  } else {
+    0 - 1
+  }
+  FlowFact.{ origin: org, dirty: a.dirty.union(b.dirty) }
+}
+
+// Join predecessors' exit facts at a block entry. Mirrors join_entry_prov EXACTLY:
+// a block PARAMETER (SSA merge target) is sourced from each pred edge's arg
+// `pe.args[i]`; a non-parameter live local carries over from the pred's exit by the
+// same id (dominance). Only PROCESSED preds contribute (fixpoint correctness for
+// back-edges), so branches/merges/loops union their dirty sets under the same proven
+// logic as the ownership fixpoint.
+fn flow_join_entry(blk: CfgBlock, exits: Dict<Int, Dict<Int, FlowFact>>, processed: Dict<Int, Bool>) Dict<
+  Int,
+  FlowFact,
+> {
+  entry: Dict<Int, FlowFact> = Dict.new()
+  for lid in blk.entry.live {
+    pidx := param_index(blk, lid)
+    acc := ff_none()
+    seen := false
+    for pe in blk.preds {
+      if is_processed(processed, pe.target.id) {
+        pex := case exits.get(pe.target.id) {
+          .Some(m) => m,
+          .None => Dict.new(),
+        }
+        src := case pidx {
+          .Some(i) => if i < pe.args.len() {
+            flow_get(pex, pe.args[i])
+          } else {
+            ff_none()
+          },
+          .None => case pex.get(lid) {
+            .Some(x) => x,
+            .None => ff_none(),
+          },
+        }
+        acc = if seen {
+          acc.join_fact(src)
+        } else {
+          src
+        }
+        seen = true
+      }
+    }
+    if seen {
+      entry[lid] = acc
+    }
+  }
+  entry
+}
+
+fn flow_map_eq(a: Dict<Int, FlowFact>, b: Dict<Int, FlowFact>) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+  for k in a.keys() {
+    af := case a.get(k) {
+      .Some(x) => x,
+      .None => ff_none(),
+    }
+    bf := case b.get(k) {
+      .Some(x) => x,
+      .None => return false,
+    }
+    if af.origin != bf.origin or !af.dirty.same(bf.dirty) {
+      return false
+    }
+  }
+  true
+}
+
+// Forward dataflow to a fixed point (dirty grows, origin only degrades ->
+// terminates), modeled on run_fixpoint's `for changed { for blk }` shape with the
+// same processed guard. Computes its own liveness so it is self-contained
+// (unit-testable on a raw CfgFunction). Returns, per parameter index, the union of
+// dirty [.f] paths carried by the value returned at any return block.
+pub fn collect_field_reqs(f: CfgFunction) Dict<Int, vid.PathSet> {
+  live := compute_liveness(f.blocks)
+  blocks := collect blk in f.blocks {
+    bl := live_get(live, blk.id.id)
+    blk.entry.live = bl.live_in
+    blk.exit.live = bl.live_out
+    blk
+  }
+  exits: Dict<Int, Dict<Int, FlowFact>> = Dict.new()
+  processed: Dict<Int, Bool> = Dict.new()
+  for blk in blocks {
+    exits[blk.id.id] = Dict.new()
+    processed[blk.id.id] = false
+  }
+  changed := true
+  for changed {
+    changed = false
+    for blk in blocks {
+      entry := flow_join_entry(blk, exits, processed)
+      if blk.id.id == 0 {
+        for p, i in f.params {
+          entry[p.id] = FlowFact.{ origin: i, dirty: vid.empty_set() }
+        }
+      }
+      st := entry
+      for inst in blk.instructions {
+        st = transfer_flow(st, inst.op, inst.anf_local.id)
+      }
+      prev := case exits.get(blk.id.id) {
+        .Some(m) => m,
+        .None => Dict.new(),
+      }
+      if !flow_map_eq(prev, st) {
+        exits[blk.id.id] = st
+        changed = true
+      }
+      processed[blk.id.id] = true
+    }
+  }
+  reqs: Dict<Int, vid.PathSet> = Dict.new()
+  for blk in blocks {
+    case return_atom(blk) {
+      .Some(a) => {
+        fexit := case exits.get(blk.id.id) {
+          .Some(m) => m,
+          .None => Dict.new(),
+        }
+        rf := flow_get(fexit, a)
+        if rf.origin >= 0 and !rf.dirty.is_empty() {
+          prev := case reqs.get(rf.origin) {
+            .Some(v) => v,
+            .None => vid.empty_set(),
+          }
+          reqs[rf.origin] = prev.union(rf.dirty)
+        }
+      },
+      .None => {},
+    }
+  }
+  reqs
 }
 
 // Classify each parameter's escape/capability by scanning EVERY block's
@@ -3472,13 +3671,20 @@ pub fn summarize_function(
   }
 
   ret_paths_final := meet_ret_paths_tagged(ret_sites)
+  field_reqs := collect_field_reqs(f)
   params: Vector<ParamSummary> = collect rp, i in raw_params {
     flows := param_flows_to_return(i, ret, ret_paths_final)
-    role := rp.esc.reconcile_role(rp.cap, flows)
+    dirty := case field_reqs.get(i) {
+      .Some(v) => v,
+      .None => vid.empty_set(),
+    }
+    has_mut := !dirty.is_empty()
+    role := rp.esc.reconcile_role(rp.cap, has_mut, flows)
+
+    // A Consumed param carries the shell [] plus its dirtied field paths ([.f]);
+    // move-consumed params (empty dirty) keep just the shell. Downward-closed under [].
     ipp: vid.PathSet = case role {
-      // shell / whole-collection candidate; Phase 6 Part 2 refines a record param
-      // to add its consumed field paths ([.f]). Downward-closed under [].
-      .Consumed => vid.shell_set(),
+      .Consumed => build_in_place_paths(dirty),
       _ => vid.empty_set(),
     }
     ParamSummary.{ base_role: role, in_place_paths: ipp, flows_to_return: flows }

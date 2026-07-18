@@ -87,6 +87,34 @@ fn summ1(name: String, nparams: Int, body: AnfExpr) ownership.Summary {
   }
 }
 
+// Build a CfgFunction from a body (mirrors summ1 but returns the CFG function so
+// the dirty-path dataflow can be unit-tested directly).
+fn cfg_func_of(name: String, nparams: Int, body: AnfExpr) cfg.CfgFunction {
+  b := b_reg()
+  v := cfg.build_view(module_of([fdef(1, name, nparams, body)]), b)
+  case cfg.function_named(v, name) {
+    .Some(f) => f,
+    .None => error("missing ${name}"),
+  }
+}
+
+// Param `k`'s dirty [.f] paths as sorted field ids. collect_field_reqs does NOT add
+// the shell — that is build_in_place_paths — so every path here is a single field.
+fn dirty_fields(reqs: Dict<Int, variant_id.PathSet>, k: Int) Vector<Int> {
+  case reqs.get(k) {
+    .Some(ps) => {
+      out: Vector<Int> = []
+      for p in ps.paths {
+        if p.segs.len() == 1 {
+          out = .append(p.segs[0])
+        }
+      }
+      out
+    },
+    .None => [],
+  }
+}
+
 fn escape_tag(e: ownership.EscapeEffect) Int {
   case e {
     .Borrowed => 0,
@@ -1341,6 +1369,172 @@ pub fn suite() runner.Suite {
           ret_paths: [],
         }
         try assert.equal(summary.render_summary(s), "summary: p0=Consumed paths{[]} ret=fresh")
+        .Ok({})
+      },
+    )
+    .test(
+      "collect_field_reqs: SSA update chain returns full dirty set",
+      fn() {
+        b := b_reg()
+
+        // fn f(env) { r1 := (env.f0 = d0); r2 := (r1.f1 = d1); r2 }  -- REAL lowering:
+        // the second update's base is r1 (the prior fresh result), NOT env.
+        u0: AnfOp = .ARecordUpdate(
+          .ALocal(lid(0)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(1)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        u1: AnfOp = .ARecordUpdate(
+          .ALocal(lid(2)),
+          FieldId.{ id: 1 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(1),
+          dict_new_call(b),
+          .Let(lid(2), u0, .Let(lid(3), dict_new_call(b), .Let(lid(4), u1, .Atom(.ALocal(lid(4)))))),
+        )
+        reqs := ownership.collect_field_reqs(cfg_func_of("f", 1, body))
+        try assert.is_true(same_ints(dirty_fields(reqs, 0), [0, 1])) // both fields, param 0
+        .Ok({})
+      },
+    )
+    .test(
+      "collect_field_reqs: discarded update, original param returned -> no dirty",
+      fn() {
+        b := b_reg()
+
+        // fn f(env) { tmp := (env.f0 = d); env }  -- update result discarded, return original
+        u0: AnfOp = .ARecordUpdate(
+          .ALocal(lid(0)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(1)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(lid(1), dict_new_call(b), .Let(lid(2), u0, .Atom(.ALocal(lid(0)))))
+        reqs := ownership.collect_field_reqs(cfg_func_of("f", 1, body))
+        try assert.equal(dirty_fields(reqs, 0).len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "collect_field_reqs: field updates across a branch join both reach return",
+      fn() {
+        b := b_reg()
+
+        // fn f(env, c) { if c { env.f0 = d ; ret } else { env.f1 = d ; ret } }
+        // each arm updates a different field on env and returns it; the merge unions.
+        d0: AnfOp = dict_new_call(b)
+        thenb: AnfExpr = .Let(
+          lid(3),
+          .ARecordUpdate(
+            .ALocal(lid(0)),
+            FieldId.{ id: 0 },
+            .ALocal(lid(2)),
+            false,
+            TypeId.{ id: 0 },
+          ),
+          .Atom(.ALocal(lid(3))),
+        )
+        elseb: AnfExpr = .Let(
+          lid(4),
+          .ARecordUpdate(
+            .ALocal(lid(0)),
+            FieldId.{ id: 1 },
+            .ALocal(lid(2)),
+            false,
+            TypeId.{ id: 0 },
+          ),
+          .Atom(.ALocal(lid(4))),
+        )
+        body: AnfExpr = .Let(
+          lid(2),
+          d0,
+          .Let(lid(5), .AIf(.ALocal(lid(1)), thenb, elseb), .Atom(.ALocal(lid(5)))),
+        )
+        reqs := ownership.collect_field_reqs(cfg_func_of("f", 2, body))
+        try assert.is_true(same_ints(dirty_fields(reqs, 0), [0, 1]))
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage2a: param threaded through update chain -> Consumed with field paths",
+      fn() {
+        b := b_reg()
+        u0: AnfOp = .ARecordUpdate(
+          .ALocal(lid(0)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(1)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        u1: AnfOp = .ARecordUpdate(
+          .ALocal(lid(2)),
+          FieldId.{ id: 1 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(1),
+          dict_new_call(b),
+          .Let(lid(2), u0, .Let(lid(3), dict_new_call(b), .Let(lid(4), u1, .Atom(.ALocal(lid(4)))))),
+        )
+        s := summ1("f", 1, body)
+        try assert.equal(p_role(s, 0), role_tag(.Consumed))
+        try assert.is_true(s.params[0].flows_to_return)
+
+        // in_place_paths == { [], [.f0], [.f1] }  (shell + both fields)
+        try assert.equal(s.params[0].in_place_paths.paths.len(), 3)
+        try assert.is_true(s.params[0].in_place_paths.paths[0].is_shell())
+        try assert.equal(s.params[0].in_place_paths.paths[1].segs[0], 0)
+        try assert.equal(s.params[0].in_place_paths.paths[2].segs[0], 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage2a: discarded update, original returned -> Borrowed, no paths",
+      fn() {
+        b := b_reg()
+        u0: AnfOp = .ARecordUpdate(
+          .ALocal(lid(0)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(1)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(lid(1), dict_new_call(b), .Let(lid(2), u0, .Atom(.ALocal(lid(0)))))
+        s := summ1("f", 1, body)
+        try assert.equal(p_role(s, 0), role_tag(.Borrowed))
+        try assert.equal(s.params[0].in_place_paths.paths.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage2a: render shows field paths",
+      fn() {
+        s := ownership.Summary.{
+          params: [
+            ownership.ParamSummary.{
+              base_role: .Consumed,
+              in_place_paths: variant_id.PathSet.{
+                paths: [variant_id.shell(), variant_id.field(0), variant_id.field(1)],
+              },
+              flows_to_return: true,
+            },
+          ],
+          ret: .OwnedFresh,
+          ret_paths: [],
+        }
+        try assert.equal(
+          summary.render_summary(s),
+          "summary: p0=Consumed paths{[],[.f0],[.f1]} ret=fresh",
+        )
         .Ok({})
       },
     )

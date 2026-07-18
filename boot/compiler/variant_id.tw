@@ -71,6 +71,36 @@ pub fn same(self: PathSet, other: PathSet) Bool {
   true
 }
 
+// Insert `p`, keeping the set canonical-sorted (by ParamPath.cmp) and deduped.
+pub fn add(self: PathSet, p: ParamPath) PathSet {
+  out: Vector<ParamPath> = []
+  inserted := false
+  for q in self.paths {
+    if !inserted {
+      case p.cmp(q) {
+        .Eq => return self, // already present
+        .Lt => {
+          out = .append(p)
+          inserted = true
+        },
+        .Gt => {},
+      }
+    }
+    out = .append(q)
+  }
+  if !inserted {
+    out = .append(p)
+  }
+  PathSet.{ paths: out }
+}
+
+pub fn union(self: PathSet, other: PathSet) PathSet {
+  for p in other.paths {
+    self = .add(p)
+  }
+  self
+}
+
 pub type UniqueReq = .{ param: Int, path: ParamPath }
 
 pub type UniqueKey = Vector<UniqueReq> // canonical-sorted; [] => generic variant
