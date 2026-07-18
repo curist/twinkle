@@ -1277,4 +1277,70 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "phase6 p1: consumed+flowing param carries in_place_paths {[]}",
+      fn() {
+        b := b_reg()
+        set_call: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)],
+        )
+
+        // w := <move x>; w2 := Dict.set(w,1,2); return w2  -> x consumed AND flows out
+        body: AnfExpr = .Let(
+          lid(2),
+          .AInit(.ALocal(lid(0))),
+          .Let(lid(3), set_call, .Atom(.ALocal(lid(3)))),
+        )
+        s := summ1("g", 1, body)
+        try assert.equal(p_role(s, 0), role_tag(.Consumed))
+        try assert.is_true(s.params[0].flows_to_return)
+        try assert.equal(s.params[0].in_place_paths.len(), 1)
+        try assert.equal(s.params[0].in_place_paths[0].len(), 0) // the shell path []
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 p1: leaked+mutated param is Published with empty in_place_paths (#10)",
+      fn() {
+        // w := <move x>; global_set G0 = w  -> x consumed AND leaked -> Published, no paths
+        body: AnfExpr = .Let(
+          lid(1),
+          .AInit(.ALocal(lid(0))),
+          .Let(lid(2), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))), .Atom(.ALitInt(0))),
+        )
+        s := summ1("g", 1, body)
+        try assert.equal(p_role(s, 0), role_tag(.Published))
+        try assert.equal(s.params[0].in_place_paths.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 p1: read-only param is Borrowed with empty in_place_paths (#9)",
+      fn() {
+        b := b_reg()
+        s := summ1("f", 1, .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1)))))
+        try assert.equal(p_role(s, 0), role_tag(.Borrowed))
+        try assert.equal(s.params[0].in_place_paths.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 p1: render shows paths{[]} for a Consumed param",
+      fn() {
+        s := ownership.Summary.{
+          params: [
+            ownership.ParamSummary.{
+              base_role: .Consumed,
+              in_place_paths: [[]],
+              flows_to_return: true,
+            },
+          ],
+          ret: .OwnedFresh,
+          ret_paths: [],
+        }
+        try assert.equal(summary.render_summary(s), "summary: p0=Consumed paths{[]} ret=fresh")
+        .Ok({})
+      },
+    )
 }

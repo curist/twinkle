@@ -3479,7 +3479,13 @@ pub fn summarize_function(
   params: Vector<ParamSummary> = collect rp, i in raw_params {
     flows := param_flows_to_return(i, ret, ret_paths_final)
     role := rp.esc.reconcile_role(rp.cap, flows)
-    ParamSummary.{ base_role: role, in_place_paths: [], flows_to_return: flows }
+    ipp: Vector<ParamPath> = case role {
+      // shell / whole-collection candidate; Phase 6 Part 2 refines a record param
+      // to add its consumed field paths ([.f]). Downward-closed under [].
+      .Consumed => [[]],
+      _ => [],
+    }
+    ParamSummary.{ base_role: role, in_place_paths: ipp, flows_to_return: flows }
   }
   Summary.{ params, ret, ret_paths: ret_paths_final }
 }
