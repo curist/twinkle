@@ -191,6 +191,19 @@ alternatives, the rejected option is named with the reason — not left open.
 
 ### Data model
 
+**Phase 6 Blocker labels.** The `(Blocker N)` tags below name Phase 6's own
+implementation obstacles and are **distinct from the Phase 5 `Blocker 1–5` set**
+in [phase5-design.md](phase5-design.md) (same numbers, different meanings — do not
+cross-reference): **Blocker 1** = parameter in-place paths are *field-only*
+(`[]`/`[.f]` chains), never payload/`Elem`/`Val` segments; **Blocker 2** =
+`in_place_paths` are collected from *mutation sites only* (a pure transport param
+that never mutates stays empty); **Blocker 3** = *partial path-validity* — a
+consumed arg needs a per-path consumed-set that whole-binding `binding_valid`
+(cfg.tw) cannot express; **Blocker 5** = the *per-call-site decision* record
+(`SpecializationFacts`) plus its module ownership (`ownership.tw` produces each
+decision, `summary.tw` assembles the facts, `cfg.tw`/CLI only read them). There is
+no Phase 6 Blocker 4.
+
 ```tw
 // ownership.tw — D9 reconciliation (field names match canonical base_role/…)
 pub type ParamRole = { Borrowed, Consumed, Published }
@@ -224,11 +237,23 @@ pub type CallDecision = .{
   proof: String,                               // rendered licensing reason
 }
 pub type SpecializationFacts = .{
-  variants: Dict<Int, Summary>,                // VariantId-key -> specialized (iterated-cell) Summary
-  decisions: Dict<Int, CallDecision>,          // (site_func, site_local)-key -> decision
+  variants: Dict<Int, Summary>,                // variant_key(VariantId) -> specialized (iterated-cell) Summary
+  decisions: Dict<Int, CallDecision>,          // site_key(site_func, site_local) -> decision
 }
 // The specialized Summary is re-derived under Unique entry (D10); memoized as an
 // ITERATED cell in the SCC driver (D12); representation-neutral (D8).
+//
+// Int-key encoding (load-bearing for determinism, acceptance #14). Both Dicts are
+// keyed by an Int, so a `VariantId` and a `(site_func, site_local)` pair each
+// collapse to a canonical Int:
+//   - site_key(site_func, site_local) = a reversible pairing of two FuncId/LocalId
+//     ints (both are already dense, non-negative, per-mono-instance stable).
+//   - variant_key(VariantId) = hash/serialize the func id + the CANONICAL-SORTED
+//     UniqueKey (D14) so equal keys map to one Int and byte-identical across builds;
+//     the empty UniqueKey ([] ⇒ generic) is never stored (the generic path reuses
+//     today's SummaryTable). The exact codec is an execution-plan detail, but it
+//     MUST be a pure function of the sorted key — no allocation-order or visit-order
+//     input — or `VariantId` numbering (D14) drifts between builds.
 ```
 
 Invariants:
@@ -624,7 +649,11 @@ All via the boot suite unless noted:
 ## Determinism-sensitive spots (lock with tests)
 
 - **`UniqueKey` canonicalization** — sorted `(param, path)`, downward-closed; equal
-  keys dedup; round-trip stable across builds.
+  keys dedup; round-trip stable across builds. `variant_key(VariantId)` and
+  `site_key(site_func, site_local)` (the `SpecializationFacts` Dict keys) must each
+  be a **pure function of their canonical inputs** — the sorted `UniqueKey` + func
+  id, and the two ids respectively — with no allocation/visit-order input, so the
+  memo and the rendered `VariantId` numbering are byte-identical across builds.
 - **`VariantId` numbering** — creation-order via a deterministic worklist; recursive
   matches reuse the in-progress id (no numbering drift under reordering).
 - **Ascending variant fixpoint** — a within-SCC recursive read returns the **previous
