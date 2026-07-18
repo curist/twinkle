@@ -15,3 +15,67 @@ pub type UniqueReq = .{ param: Int, path: ParamPath }
 pub type UniqueKey = Vector<UniqueReq> // canonical-sorted; [] => generic variant
 
 pub type VariantId = .{ func: Int, unique: UniqueKey }
+
+// Lexicographic order on field-only paths: a prefix is smaller, so the shell []
+// sorts before [f]. Delegates to the prelude's tested Vector.compare<T: Ord>.
+pub fn path_cmp(a: ParamPath, b: ParamPath) Order {
+  a.compare(b)
+}
+
+pub fn req_cmp(a: UniqueReq, b: UniqueReq) Order {
+  c := a.param.compare(b.param)
+  case c {
+    .Eq => path_cmp(a.path, b.path),
+    _ => c,
+  }
+}
+
+fn req_eq(a: UniqueReq, b: UniqueReq) Bool {
+  case req_cmp(a, b) {
+    .Eq => true,
+    _ => false,
+  }
+}
+
+// Sort by (param, path) then drop adjacent duplicates. Deterministic: the sort is
+// total (req_cmp never returns .Eq for distinct reqs) so ordering is build-stable.
+pub fn canonicalize_key(reqs: UniqueKey) UniqueKey {
+  sorted := reqs.sort_by(req_cmp)
+  out: UniqueKey = []
+  for r in sorted {
+    keep := if out.len() == 0 {
+      true
+    } else {
+      !req_eq(out[out.len() - 1], r)
+    }
+    if keep {
+      out = .append(r)
+    }
+  }
+  out
+}
+
+// D3: a (k,[f]) requirement implies (k,[]). Ensure every param that appears also
+// has its shell req, then canonicalize. (Part cap keeps paths at depth <= 1, so the
+// only prefix to add is the shell.)
+pub fn downward_close(reqs: UniqueKey) UniqueKey {
+  augmented := reqs
+  seen_shell: Dict<Int, Bool> = Dict.new()
+  for r in reqs {
+    if r.path.len() == 0 {
+      seen_shell[r.param] = true
+    }
+  }
+  for r in reqs {
+    if r.path.len() > 0 {
+      case seen_shell.get(r.param) {
+        .Some(_) => {},
+        .None => {
+          augmented = .append(UniqueReq.{ param: r.param, path: [] })
+          seen_shell[r.param] = true
+        },
+      }
+    }
+  }
+  canonicalize_key(augmented)
+}

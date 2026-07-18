@@ -1355,4 +1355,40 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "variant_id: canonicalize sorts by (param, path) and dedups",
+      fn() {
+        // unsorted + duplicate reqs
+        raw: variant_id.UniqueKey = [
+          variant_id.UniqueReq.{ param: 1, path: [] },
+          variant_id.UniqueReq.{ param: 0, path: [3] },
+          variant_id.UniqueReq.{ param: 0, path: [] },
+          variant_id.UniqueReq.{ param: 0, path: [3] }, // dup
+        ]
+        got := variant_id.canonicalize_key(raw)
+
+        // expected order: (0,[]), (0,[3]), (1,[])   — dup collapsed
+        try assert.equal(got.len(), 3)
+        try assert.equal(got[0].param, 0)
+        try assert.equal(got[0].path.len(), 0)
+        try assert.equal(got[1].param, 0)
+        try assert.equal(got[1].path[0], 3)
+        try assert.equal(got[2].param, 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "variant_id: downward_close adds the shell for every field req (D3)",
+      fn() {
+        // (0,[3]) with no (0,[]) present must gain (0,[])
+        raw: variant_id.UniqueKey = [variant_id.UniqueReq.{ param: 0, path: [3] }]
+        got := variant_id.downward_close(raw)
+        try assert.equal(got.len(), 2)
+        try assert.equal(got[0].param, 0)
+        try assert.equal(got[0].path.len(), 0) // shell added, sorts first
+        try assert.equal(got[1].param, 0)
+        try assert.equal(got[1].path[0], 3)
+        .Ok({})
+      },
+    )
 }
