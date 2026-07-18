@@ -176,12 +176,12 @@ so any sum-typed transport keeps its payload paths — a real two-tag `Result` k
 both arms, and `Option` keeps `Some[0].*` across a payload-less `.None` return.
 **One documented
 precision gap remains (sound under-approximation, deferred to the Phase 6 design
-pass — see the archived plan [archive/phase5-plan.md](archive/phase5-plan.md) and
+pass — see the archived plan [archive/phase5-plan.md](../../archive/sound-uniqueness-phase5-plan.md) and
 the Phase 6 section below):** the caller-recovery gate fires only for **fresh unique
 locals, not params**, so param-threaded state (the common idiom) — and Case R with a
 param scrutinee — is not yet recovered. It folds into Phase 6 parameter-ownership;
 loosening the gate earlier would be unsound. The full implementation record for
-Phase 5 is [archive/phase5-plan.md](archive/phase5-plan.md).
+Phase 5 is [archive/phase5-plan.md](../../archive/sound-uniqueness-phase5-plan.md).
 
 ## Phase 6 — Ownership-specialization decision facts *(architecture: 1E)*
 
