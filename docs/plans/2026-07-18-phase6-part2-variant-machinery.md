@@ -29,7 +29,7 @@ Part 1 (landed, commits `fba33602`/`e1492fcb`) reconciled `ParamSummary` to `{ b
 
 ## Stage 1: Variant identity & encoding infrastructure
 
-**Current progress:** Tasks 1–2 are landed (`variant_id` identity types plus canonicalization/downward-closure). Task 3 (deterministic interner + `site_key`) and Task 4 (Stage 1 verification) remain Phase 6 work.
+**Current progress:** Stage 1 is COMPLETE (commits `54c727cd` types, `5e8396f1` canonicalization, `dd12fbae` interner + `site_key`). Verified: 3050 boot tests green, self-host fixed point reached, `--census` 0 in-place, two builds byte-identical. Next Phase 6 work is Stage 2 (field-granular `in_place_paths` + `ConsumedPaths`), which needs its own detailed plan per the roadmap below.
 
 **What it delivers:** a self-contained leaf module owning the variant-identity types and their canonicalization + deterministic interning. No consumer wires it yet (Stages 3–5 do), but it is fully testable in isolation and it resolves the **load-bearing determinism/encoding question** the design flags (`variant_key`/`site_key` must be pure functions of canonical inputs, `VariantId` numbering stable across builds — acceptance #14). Every later stage keys its memo and decision tables on this module.
 
@@ -269,7 +269,7 @@ shell so (k,[f]) implies (k,[]). Deterministic total order for build-stable keys
 - Modify: `boot/compiler/variant_id.tw`
 - Test: `boot/tests/suites/cfg_summary_suite.tw`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `suite()`:
 
@@ -328,12 +328,12 @@ Add to `suite()`:
     )
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `target/twk run boot/tests/main.tw 2>&1 | grep -iE 'new_interner|intern|variant_of_id|error' | tail -5`
 Expected: unresolved-name errors.
 
-- [ ] **Step 3: Implement the canonical-string codec and the interner**
+- [x] **Step 3: Implement the canonical-string codec and the interner**
 
 Add to `boot/compiler/variant_id.tw`:
 
@@ -410,12 +410,12 @@ pub fn site_key(func_id: Int, local_id: Int) Int {
 
 > **Note:** `intern` returns an `InternResult` record (Twinkle has no anonymous multi-value return) so callers thread the interner: `r := intern(vi, v); vi = r.interner; use r.id`. This threading is exactly how Stages 4–5 accumulate variants during the SCC walk.
 
-- [ ] **Step 4: Run to verify the interner tests pass**
+- [x] **Step 4: Run to verify the interner tests pass**
 
 Run: `make boot-test 2>&1 | grep -E 'Ran [0-9]+ tests|FAIL' | tail -3`
 Expected: `Ran N tests: N passed`.
 
-- [ ] **Step 5: Add a determinism guard test (build-stability of the string codec)**
+- [x] **Step 5: Add a determinism guard test (build-stability of the string codec)**
 
 ```tw
     .test(
@@ -438,7 +438,7 @@ Expected: `Ran N tests: N passed`.
     )
 ```
 
-- [ ] **Step 6: Run + commit**
+- [x] **Step 6: Run + commit**
 
 Run: `make boot-test 2>&1 | grep -E 'Ran [0-9]+ tests|FAIL' | tail -3`  → `Ran N tests: N passed`.
 
@@ -456,17 +456,17 @@ the CallDecision table. Resolves the Int-key encoding the design flagged."
 
 **Files:** none (verification only)
 
-- [ ] **Step 1: Census unchanged (analysis-only invariant holds)**
+- [x] **Step 1: Census unchanged (analysis-only invariant holds)**
 
 Run: `target/twk ir boot/main.tw --census 2>&1 | awk 'NR>1 && NF>=3 {s+=$NF} END{print "total in_place:", s+0}'`
 Expected: `total in_place: 0`.
 
-- [ ] **Step 2: Full boot suite + self-host fixed point**
+- [x] **Step 2: Full boot suite + self-host fixed point**
 
 Run: `make boot-test 2>&1 | grep -E 'Ran [0-9]+ tests|Fixed point|FAIL' | tail -4`
 Expected: `Fixed point reached: stage3 == stage4` and `Ran N tests: N passed`. (Run alone; no parallel heavy `twk`.)
 
-- [ ] **Step 3: Determinism smoke — the module compiles into two identical builds**
+- [x] **Step 3: Determinism smoke — the module compiles into two identical builds**
 
 Run: `target/twk build boot/main.tw -o /tmp/p6s1a.wasm && target/twk build boot/main.tw -o /tmp/p6s1b.wasm && cmp /tmp/p6s1a.wasm /tmp/p6s1b.wasm && echo IDENTICAL`
 Expected: `IDENTICAL` (byte-identical builds — the new module introduces no build nondeterminism).
