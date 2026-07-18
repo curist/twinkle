@@ -1,10 +1,38 @@
-# Phase 5 Return-path Summaries — Implementation Plan
+# Phase 5 Return-path Summaries — Implementation Plan  ✅ COMPLETE (archived record)
+
+> **STATUS: DONE — historical implementation record, do NOT re-execute.** All 15
+> tasks landed (analysis-only; census still 0 in-place; self-host at fixed point).
+> This document is the *original* plan; the implementation **evolved during
+> execution**, so several inline task snippets below are **stale**. The source of
+> truth is the code + tests, not these snippets:
+> - **Code:** `boot/compiler/{field_facts,ownership,summary,cfg}.tw`.
+> - **Tests:** `boot/tests/suites/{cfg_field_facts,cfg_summary,cfg_return_paths}_suite.tw`.
+>
+> **Known snippet drift (read before trusting any Task 7/8/10/13 code block):**
+> - **Task 7/8 classification** iterates the returned atom's **`path_prov`** (not
+>   `field_own` — params are `Unknown` at entry, so `field_own` is empty for
+>   param-valued fields), and `classify_path_own(pp, k, params, fm)` takes an extra
+>   `fm` arg that gates `OwnedFresh` on `field_own` membership (a `path_prov`-only
+>   `[]` can hide an interior alias). An explicit `drop_aliased_param_paths` replaces
+>   the `single_retention` aliasing gate.
+> - **Return-site meet is tag-aware.** The plan's plain `meet_ret_paths` /
+>   `ret_paths_acc` was replaced by `RetSite`/`RetWitness` + `meet_ret_paths_tagged`,
+>   so a real two-tag `Result` and `Option`/any sum keep their payload paths
+>   (see the "RESOLVED" note below).
+> - **Task 10/11/13 fixtures** thread a **fresh unique local**, never a param (the
+>   recovery gate rejects params — see the param-threaded TODO below), and multi-block
+>   / arm-bound assertions use **`own_in_block`**, not `caller_own`. The tag-isolation
+>   test asserts **`own_unknown()`**, not `own_shared()`.
+>
+> **The only Phase-5 deferral carried to Phase 6** is the param-threaded recovery gate
+> (see the TODO below and `README.md`'s Phase 6 section). The tag-aware-meet TODO is
+> **resolved** — do not carry it forward.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Give the boot ownership analysis *return-path ownership* — the region handed back through a returned record field (`out.ctx`) or variant payload (`Ok[0].state`) — and the caller-side recovery that keeps transport-wrapper / `Result`-payload state threading from classifying as aggregate publication. Analysis-only: no codegen changes.
 
-**Architecture:** Extend the intraprocedural field-fact layer (`field_facts.tw`) with a tagged variant-payload path segment; add path-attributed provenance (`path_prov`) so a returned record's fields attribute to individual params; revise `Return` to be a non-retaining CFG leaf and `ret` to mean shell ownership; classify per-return-path ownership into a new `Summary.ret_paths`; recover it at the caller under a `last`-gated publish-on-fail rule, a bounded transport-wrapper projection recognizer, and match-arm payload seeding. Canonical design: [phase5-design.md](phase5-design.md).
+**Architecture:** Extend the intraprocedural field-fact layer (`field_facts.tw`) with a tagged variant-payload path segment; add path-attributed provenance (`path_prov`) so a returned record's fields attribute to individual params; revise `Return` to be a non-retaining CFG leaf and `ret` to mean shell ownership; classify per-return-path ownership into a new `Summary.ret_paths`; recover it at the caller under a `last`-gated publish-on-fail rule, a bounded transport-wrapper projection recognizer, and match-arm payload seeding. Canonical design: [phase5-design.md](../phase5-design.md).
 
 **Tech Stack:** Twinkle (`.tw`) boot compiler. Build: `make bundle-cli` (→ `target/twk`) or `cargo run --release -- …` for stage0. Boot tests: `target/twk run boot/tests/main.tw`. Ownership modules: `boot/compiler/{field_facts,ownership,summary,cfg}.tw`. Unit suites: `boot/tests/suites/cfg_*_suite.tw`.
 
@@ -140,9 +168,12 @@ whole stage is in.
 > `.None` branch). The shipped test correctly asserts `own_unknown()`; treat the plan's
 > `own_shared()` as superseded.
 >
-> **Action (revisit with the param-threaded TODO above):** both gaps gate Case R's real
-> usefulness, so fold the tag-aware meet (+ per-site tag tracking) into the same Phase 6
-> design pass as parameter-ownership.
+> **~~Action~~ SUPERSEDED — this section is historical.** The tag-aware meet was
+> **implemented in Phase 5** (commit `2d23394c`; `RetSite`/`RetWitness` +
+> `meet_ret_paths_tagged`), so it is **not** Phase 6 work — see the RESOLVED note at
+> the top of this TODO. The only gap that folds into Phase 6 is the param-threaded
+> recovery gate (the separate TODO above). The analysis below is retained only as the
+> original problem statement.
 
 ---
 

@@ -2,11 +2,13 @@
 
 **Status:** Phases 0-5 done (return-path summaries complete; generated code
 unchanged, census 0 in-place). **Phase 6** — ownership-specialization decision
-facts — is next, and folds in the two Phase 5 precision gaps (parameter-side
-ownership so param-threaded state is recovered; tag-aware return-site meet so real
-two-tag `Result` transport is summarized). All analysis precision lands *before*
-any codegen, per [../architecture.md](../architecture.md)'s governing rule that all
-analysis precision precedes codegen.
+facts — is next, and folds in the **one** remaining Phase 5 precision deferral:
+parameter-side ownership, so param-threaded state (a param passed through a
+transport helper) can be recovered. (The tag-aware return-site meet was *not*
+deferred — it was hardened within Phase 5; see the Phase 5 section.) All analysis
+precision lands *before* any codegen, per
+[../architecture.md](../architecture.md)'s governing rule that all analysis
+precision precedes codegen.
 
 This track owns the proof-producing half of sound uniqueness: CFG structure,
 ownership facts, liveness/last-use, summaries, candidate-classification inputs,
@@ -174,10 +176,12 @@ so any sum-typed transport keeps its payload paths — a real two-tag `Result` k
 both arms, and `Option` keeps `Some[0].*` across a payload-less `.None` return.
 **One documented
 precision gap remains (sound under-approximation, deferred to the Phase 6 design
-pass — see the TODO in [phase5-plan.md](phase5-plan.md)):** the caller-recovery gate
-fires only for **fresh unique locals, not params**, so param-threaded state (the
-common idiom) — and Case R with a param scrutinee — is not yet recovered. It folds
-into Phase 6 parameter-ownership; loosening the gate earlier would be unsound.
+pass — see the archived plan [archive/phase5-plan.md](archive/phase5-plan.md) and
+the Phase 6 section below):** the caller-recovery gate fires only for **fresh unique
+locals, not params**, so param-threaded state (the common idiom) — and Case R with a
+param scrutinee — is not yet recovered. It folds into Phase 6 parameter-ownership;
+loosening the gate earlier would be unsound. The full implementation record for
+Phase 5 is [archive/phase5-plan.md](archive/phase5-plan.md).
 
 ## Phase 6 — Ownership-specialization decision facts *(architecture: 1E)*
 
@@ -186,6 +190,18 @@ variants. Generating cloned variants is codegen (architecture Phase 2A); this
 phase only proves and prints what those variants must be, so the specialization
 story is verifiable before any code is emitted. Canonical semantics:
 [summary-specialization.md](summary-specialization.md).
+
+> **Inherits the one Phase 5 deferral — param-threaded transport recovery.** Phase 5's
+> caller-recovery gate accepts an `OwnedFromParam(k)` return path only when the
+> argument is a *fresh unique local*; a **parameter** argument enters the generic
+> analysis as `Unknown` (a param may be shared at some caller), so the gate rejects it
+> and publish-on-fail publishes it. This is the sound behavior for a phase with no
+> per-call-site specialization. The owned-parameter preconditions in the first bullet
+> below are exactly what lifts it: once a call site is proven to pass an owned argument
+> (and an owned-specialized callee variant is selected), param-threaded state — and
+> Case R with a param scrutinee — can be recovered under that precondition. Guarded by
+> the `param-threaded state is NOT recovered` test in `cfg_return_paths_suite.tw`; do
+> not loosen the Phase 5 gate without the precondition.
 
 - [ ] **Per-function preconditions/postconditions + per-call-site variant
   compatibility.** Which callers pass proven-owned args (may use an owned callee),
