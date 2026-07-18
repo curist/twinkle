@@ -194,6 +194,32 @@ fn case_w_param_fixture() Vector<AnfFunctionDef> {
   [helper, fdef(2, "caller", 1, caller_body)] // caller has 1 PARAM: ctx = lid0
 }
 
+// caller(): ctx := Dict.new(); global_set G0 = ctx (publishes ctx -> Shared);
+// out := helper(ctx). ctx is ALREADY Shared at the call, so the gate fails and
+// publish-on-fail publishes it again -- idempotently (no crash, stays Shared).
+fn case_w_shared_arg_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  helper := fdef(1, "helper", 1, .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1)))))
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b),
+    .Let(
+      lid(1),
+      .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))), // publish ctx -> Shared BEFORE the call
+      .Let(
+        lid(2),
+        .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := helper(ctx), ctx already Shared
+        .Let(
+          lid(3),
+          .ARecordGet(.ALocal(lid(2)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+          .Atom(.ALocal(lid(3))),
+        ),
+      ),
+    ),
+  )
+  [helper, fdef(2, "caller", 0, caller_body)]
+}
+
 // Same as case_w_fixture but reads ctx (lid0) AFTER the call, so ctx is not a
 // last-use at the call -> the recovery gate fails on last-use and publishes ctx.
 fn case_w_gatefail_fixture() Vector<AnfFunctionDef> {
@@ -573,6 +599,18 @@ pub fn suite() runner.Suite {
         funcs := case_w_param_fixture()
         f := analyzed_caller(funcs, "caller")
         try assert.equal(caller_own(f, 0), own_shared()) // ctx (param) published, not recovered
+        .Ok({})
+      },
+    )
+    .test(
+      "gate fail: already-Shared arg is dropped idempotently (no double-publish)",
+      fn() {
+        // ctx is published (global_set) BEFORE the call, so it is already Shared at the
+        // call. The OwnedFromParam gate fails (not Unique), and publish-on-fail publishes
+        // it again idempotently -- the analysis completes and ctx stays Shared.
+        funcs := case_w_shared_arg_fixture()
+        f := analyzed_caller(funcs, "caller")
+        try assert.equal(caller_own(f, 0), own_shared()) // ctx stays Shared; no crash/double-publish
         .Ok({})
       },
     )
