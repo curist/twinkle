@@ -14,16 +14,18 @@
 
 Part 1 (landed, commits `fba33602`/`e1492fcb`) reconciled `ParamSummary` to `{ base_role: ParamRole, in_place_paths: Vector<ParamPath>, flows_to_return: Bool }` and populates `in_place_paths` at **shell `[]` granularity only**. Part 2 supplies the rest of the design's Phase 6: field-granular paths, the per-call-site variant decision, the owned-entry re-analysis that proves it, and the SCC variant fixpoint — all still **analysis-only** (no cloned variants emitted; that is codegen Phase 2A).
 
-**Stage map (Stage 1 is the concrete execution plan; Stages 2–6 are the roadmap at the end):**
+**Stage map** (Stage 1 **DONE**; Stage 2 **split into 2a/2b/2c**; each stage gets its own plan):
 
-| Stage | Subsystem | Design refs | Acceptance criteria |
-|---|---|---|---|
-| **1** | **Variant identity & encoding** (this plan) | D3, D8, D14; "Data model"; Int-key encoding | #14 (determinism substrate) |
-| 2 | Field-granular `in_place_paths` + `ConsumedPaths` | Blocker 1/2/3, D6 | #1 (full), #5, #7, #8 |
-| 3 | Owned-entry re-analysis (`summarize_variant`) | D10, D11, D13 | #4, #6 (variant side) |
-| 4 | Call-site decision + `consume_dead` | D4, D6, D7 | #2, #3, #5, #7, #8 |
-| 5 | SCC variant fixpoint + cap | D7, D12 | #11, #12, #13 |
-| 6 | Rendering (cfg decisions) | "Rendering"; D14 | #14 (rendered), #3 verdicts |
+| Stage | Subsystem | Design refs | Acceptance criteria | Status / plan |
+|---|---|---|---|---|
+| **1** | Variant identity & encoding | D3, D8, D14; "Data model" | #14 (determinism substrate) | **DONE** (`dd12fbae`) |
+| **2a** | Dirty-path record-update requirements | Blocker 1/2 | #1 (record-update part) | plan: `…stage2a-dirty-path-requirements.md` |
+| **2b** | Helper-call summary propagation | Blocker 2 | #1 (full, incl. `add_type`) | plan TBD after 2a |
+| **2c** | Reference-field filter + `ConsumedPaths` | Blocker 3, D6 | (feeds #5/#7/#8) | plan TBD; `ConsumedPaths` may fold into Stage 4 |
+| 3 | Owned-entry re-analysis (`summarize_variant`) | D10, D11, D13 | #4, #6 (variant side) | roadmap below |
+| 4 | Call-site decision + `consume_dead` | D4, D6, D7 | #2, #3, #5, #7, #8 | roadmap below |
+| 5 | SCC variant fixpoint + cap | D7, D12 | #11, #12, #13 | roadmap below |
+| 6 | Rendering (cfg decisions) | "Rendering"; D14 | #14 (rendered), #3 verdicts | roadmap below |
 
 ---
 
@@ -477,27 +479,47 @@ Expected: `IDENTICAL` (byte-identical builds — the new module introduces no bu
 
 These stages are **scoped, not coded** here — their exact TDD steps depend on forward-analysis internals and Stage 1's APIs, and must be written with those in hand (fabricating them now would violate the no-placeholders rule). Each is independently shippable, gated behind the previous, and keeps `twk ir --census` at 0 in-place. When you reach a stage, write its plan via the writing-plans skill using the entry points below.
 
-### Stage 2 — Field-granular `in_place_paths` + `ConsumedPaths` (Blocker 1/2/3, D6)
+### Stage 2 — Field-granular `in_place_paths` + `ConsumedPaths` — **SPLIT into 2a/2b/2c**
 
-**Scope:** extend Part 1's shell-only `in_place_paths` to direct field paths
-(`add_type` → `paths{[],[.types]}`), add per-local read-validity tracking so a
-consumed `.types` can coexist with a live `.values` read, and make alias
-completeness an explicit precondition for any collection-backing consume.
+> **Superseded framing (do not implement as one stage).** The original single-stage,
+> direct-`ARecordUpdate(base=param)` syntactic scan was found unsound against real
+> lowering: `RecordUpdate` lowers to a **fresh SSA local** (`lower_anf.tw:785`), so in
+> an update chain only the first update has `base = param`; real `add_type` is
+> **helper calls** (`resolver.tw:491`), not a direct update; and whole-param flow (vs
+> update-*result* flow) admits a discarded-update false positive. Replaced by the
+> flow-aware split below. Each has its own detailed plan.
 
-**Executable path cap:** Phase 6 parameter requirements are only `[]` and direct
-record fields `[f]`. `ParamPath = Vector<Int>` leaves room for future field chains,
-but Stage 2 does not create a requirement for an unsupported deeper mutation. It may
-only record a direct ancestor when that ancestor is itself an independently supported
-mutation site. `Elem`/`Val`/`Payload` never enter `UniqueReq` keys.
+- **Stage 2a — dirty-path record-update requirements** (**plan:**
+  `docs/plans/2026-07-18-phase6-stage2a-dirty-path-requirements.md`).
+  A self-contained forward dataflow tracking per value `{origin param, dirtied field
+  paths}`; `ARecordUpdate` copies base dirty + adds `[f]`, `AAssign` copies; the
+  **returned atom's** dirty set yields each param's requirements (so a discarded
+  update whose result is not returned collects nothing). Its join **mirrors
+  `join_entry_prov`** (SSA block-params via edge args, dominance carry, processed
+  fixpoint over real liveness), so branches/merges/loops are correct. Paths are kept
+  **canonical-sorted/deduped** via `variant_id.path_cmp` (see Medium note below), and
+  `build_in_place_paths` emits `[[]] ++ sorted [f]` so `same_param_paths`'s positional
+  compare is stable. Worked example: a `register_type_entry`-shaped mutator →
+  `p0=Consumed paths{[],[.f…]}`. **Acceptance:** the record-update part of #1. **NOT
+  `add_type`** (helper-call chain → nothing in 2a).
+- **Stage 2b — helper-call summary propagation.** When a callee summary marks param
+  `i` `Consumed paths{…}` + `flows_to_return`, and the caller passes an arg originating
+  from caller param `k`, propagate those paths onto the call result's dirty set. This
+  makes requirement collection **participate in the SCC fixpoint** (a member's set
+  grows when an in-SCC callee gains an `in_place_path`). **This is the increment that
+  claims `add_type`.** Own plan after 2a lands.
+- **Stage 2c — reference-field filter + `ConsumedPaths`.** (i) Filter scalar-field
+  updates from `in_place_paths` — needs per-field **type metadata** `CfgFunction`
+  does not currently carry (only the record `TypeId` and op-result `MonoType`), so add
+  that metadata explicitly rather than fake the filter; until then paths are
+  **candidates**. (ii) Add `ConsumedPaths` (6th `ForwardState` field,
+  `Dict<Int, Vector<ParamPath>>`) with the three D6 read rules + the alias-completeness
+  gate. **Note:** `ConsumedPaths`/`consume_dead` are consumed by the **call-site
+  decision** — they may instead land in Stage 4 rather than 2c; decide when 2b lands.
 
-**Entry points:**
-- Requirement collection: at each `ARecordUpdate(base, f, v, …)` (`ownership.tw:1605`) and each consuming call (`consume_call_base`, `ownership.tw:902`; `cow_base_arg`, `:895`), map `prov_of(st.prov, base)` → a single param `k`; when it resolves, add field path `[f.id]` (downward-closed to include `[]`) to param `k`'s candidate set. This replaces Part 1's coarse `role == Consumed => [[]]` with a per-op-collected set. Convert `ff.AccessPath` → direct-field `ParamPath` here, **rejecting** `Elem`/`Val`/`Payload` segments and rejecting unsupported deeper paths unless a supported direct ancestor is independently mutated.
-- `ConsumedPaths`: add a 6th field to `ForwardState` (`ownership.tw:729`), `ConsumedPaths = Dict<Int, Vector<ParamPath>>` (design "Data model for partial validity"), with the three D6 read rules (whole-value use illegal; consumed-path read illegal; disjoint sibling read legal).
-- `ConsumedPaths` transfer/merge: selecting an owned variant adds consumed paths for the argument local; rebinding that local to the post-call result clears the old consumed set; legal carrier moves preserve the consumed set, while illegal whole/carried uses force the call site back to generic; joins and loop back-edges merge by **union** per carried local; all-edge rebinding follows the incoming value's consumed set so normal rebind flow clears stale consumed paths.
-- Alias-completeness gate: reuse `own`/`prov`/`field_own`/`path_prov` rather than adding a new points-to analysis. A selected shell/collection path needs `Unique` plus precise provenance; a selected field path needs both `field_own` and matching `path_prov`. Missing, multi-origin, or untracked alias facts drop the selected path. Collection `[]` and collection-valued `[f]` require this because pre-captured aliases observe backing mutation; record-shell `[]` keeps D6's disjoint-sibling allowance.
-- Requirement collection participates in the SCC fixpoint (a member's candidate set grows when an in-SCC callee gains an `in_place_path`); compare via the Part-1 `same_param_paths` already in `same_summary`.
-
-**Acceptance:** #1 (full, `paths{[],[.types]}`), #5 (mixed-ownership record), #7 (path-aware gate), #8 (collection alias completeness). **Depends on:** Stage 1 (`ParamPath` home).
+**Acceptance across 2a–2c + Stage 4:** #1 (full, once 2b adds helper propagation), #5
+(mixed-ownership record), #7 (path-aware gate), #8 (collection alias completeness).
+**Depends on:** Stage 1 (`ParamPath` home).
 
 ### Stage 3 — Owned-entry re-analysis `summarize_variant` (D10, D11, D13)
 
@@ -513,7 +535,8 @@ mutation site. `Elem`/`Val`/`Payload` never enter `UniqueReq` keys.
 **Scope:** at each user call, form `candidate_key` from pre-call per-path facts, reduce to `selected_key` by the key-level `consume_dead` fixed point (drop violating paths, re-close downward, repeat), select `VariantId` (or generic if empty/over-cap), apply the specialized return-path facts, and partially-invalidate the consumed paths of the arg. This is the executable check for the Phase 6 theorem: the pre-update logical version must have no observable continuation except producing the post-update value.
 
 **Entry points:**
-- `transfer_summarized_call` (`ownership.tw:1112`) already snapshots pre-call arg facts (`arg_unique`, `:1125`) and has the recovery gate (`:1174`). Add the key-selection + `CallDecision` emission alongside it, reading `ConsumedPaths` (Stage 2) for the D6 liveness rules and the Stage-2 alias-completeness predicate before accepting any selected path. Emit `CallDecision` keyed by `site_key` (Stage 1). The generic path stays exactly today's behavior.
+- `transfer_summarized_call` (`ownership.tw:1112`) already snapshots pre-call arg facts (`arg_unique`, `:1125`) and has the recovery gate (`:1174`). Add the key-selection + `CallDecision` emission alongside it, reading `ConsumedPaths` for the D6 liveness rules and the alias-completeness predicate before accepting any selected path. Emit `CallDecision` keyed by `site_key` (Stage 1). The generic path stays exactly today's behavior.
+- **Caller-func-id plumbing (required):** `transfer_summarized_call`'s current signature is `(st, result, s, args, last, suppress, callee_id)` — it has the callee id and the result local but **not the caller's func id**, which `site_key(site_func, site_local)` needs. Thread the caller `FuncId` down through `forward_block`/`forward_block_body`/`transfer_op`/`transfer_call` into `transfer_summarized_call`, **or** emit `CallDecision`s in a layer that already holds it (e.g. collect `(result, decision)` locally and stamp `site_func` in `summarize_function`/the SCC driver where `f.func_id` is in scope). Prefer the latter if the threading churn is large.
 - Fallback reasons are part of the decision: not unique, consumed path observed later, whole carrier used later, alias set incomplete, over cap, or no non-empty key after downward closure.
 
 **Acceptance:** #2 (Cases B∩C), #3 (one VariantId two sites vs generic), #5, #7, #8. **Depends on:** Stages 1–3.
@@ -523,7 +546,9 @@ mutation site. `Elem`/`Val`/`Payload` never enter `UniqueReq` keys.
 **Scope:** demand-driven variants processed in the existing callee-first SCC order, with the variant memo iterated to a fixpoint. Two disciplines: in-place capability **ascends** (bottom = generic; a within-SCC recursive call reads the previous iteration's approximant), `ret_paths` ride the existing Phase 5 `suppress` (read empty in-SCC, published at the fixed point). Per-`(mono-instance, func)` variant-count cap (default 4); over-budget new keys route that call site to generic (no cell stripping).
 
 **Entry points:**
-- `run_scc` (`summary.tw:380`) and `compute` (`summary.tw:508`): thread a `VariantInterner` + `Dict<Int, Summary>` variant memo through the driver; return `SpecializationFacts` (`{ variants, decisions }`) instead of only `SummaryTable`. Reuse the existing worklist/`same_summary` machinery (D2) — add a variant axis, not a new driver. Termination by finite lattice height (the cap is a separate count limit, review #2).
+- `run_scc` (`summary.tw:380`) and `compute` (`summary.tw:508`): thread a `VariantInterner` + variant memo through the driver; return `SpecializationFacts` (`{ variants, decisions }`) instead of only `SummaryTable`. Reuse the existing worklist/`same_summary` machinery (D2) — add a variant axis, not a new driver. Termination by finite lattice height (the cap is a separate count limit, review #2).
+- **Memo key = the pure canonical string, not the interner's dense id (High-review fix).** The design requires `variant_key` be a **pure function of canonical inputs** (no allocation/visit-order input, design "Int-key encoding"). The Stage-1 interner's dense id is **creation-order** — deterministic under D14, but *derived from demand order*, so keying the memo on it couples memoization to traversal order. **Memoize by `variant_canonical_string(canonicalize_variant(v))`** (a `Dict<String, Summary>`), which is pure; use the interner's dense `Int` id **only** for D14 display/render numbering. `variant_id.tw` already exposes both (`variant_canonical_string` + `intern`), so this is a usage choice — no Stage-1 code change.
+- **`compute` return-type blast radius (Medium-review):** changing `summary.compute` from `SummaryTable` to `SpecializationFacts` breaks its callers — `boot/commands/ir.tw:55`, and the test helpers in `cfg_summary_suite.tw` (`:148`,`:161`,`:969`), `cfg_return_paths_suite.tw` (`:54`,`:60`,`:74`), `cfg_ownership_facts_suite.tw:577`. Either keep `compute` returning `SummaryTable` and add a sibling `compute_specialized` returning `SpecializationFacts` (smaller blast radius), or update every caller + `render_cfg`. Call this out in the Stage-5 plan.
 
 **Acceptance:** #11 (recursive convergence, Case V), #12 (late cross-member demand), #13 (cap + fallback). **Depends on:** Stages 1–4.
 
@@ -538,9 +563,11 @@ mutation site. `Elem`/`Val`/`Payload` never enter `UniqueReq` keys.
 
 ---
 
-## Self-Review (Stage 1)
+## Self-Review (Stage 1) — historical
 
-- **Spec coverage (Stage 1 scope):** the identity types (D8), canonicalization + downward-closure (D3), determinism via canonical-string interner with creation-order ids (D14), and `site_key` encoding are each covered by a task. Tasks 1–2 are already checked off; Tasks 3–4 remain. Stages 2–6 map the remaining acceptance criteria (#1–#13, plus rendered #14) to scoped roadmap entries with entry-point anchors — no design bullet is unassigned.
+> Stage 1 is **complete** (commits `54c727cd`/`5e8396f1`/`dd12fbae`; 3050 tests green, byte-identical builds). This section is the original Stage-1 self-review, kept for the record. Line anchors elsewhere in this doc predate Part-1/Stage-1 edits and may have drifted — locate constructs by content, and prefer the per-stage plans (2a etc.) as the authoritative handoff.
+
+- **Spec coverage (Stage 1 scope):** the identity types (D8), canonicalization + downward-closure (D3), the canonical-string codec + interner, and `site_key` encoding are each covered by a task. **Memoization keys on the pure canonical string (D14); the interner's dense id is display/render numbering only** (see Stage 5 reconciliation — the earlier "creation-order id as memo key" framing was corrected). Stages 2a–6 map the remaining acceptance criteria (#1–#13, plus rendered #14) to scoped roadmap entries with entry-point anchors — no design bullet is unassigned.
 - **Placeholder scan:** every Stage-1 step shows exact code or an exact command + expected output. The two `> Note` callouts flag real API-shape checks (the `Vector` sort signature; the `InternResult` threading idiom) rather than deferring content — the surrounding code is complete.
 - **Type consistency:** `ParamPath`, `UniqueReq`, `UniqueKey`, `VariantId`, `VariantInterner`, `InternResult`, and the functions `path_cmp`/`req_cmp`/`canonicalize_key`/`downward_close`/`variant_canonical_string`/`canonicalize_variant`/`new_interner`/`intern`/`variant_of_id`/`site_key` are used with identical signatures across Tasks 1–3 and referenced consistently by the Stage 2–6 roadmap.
 - **API shapes verified:** `Vector.sort_by<T>(xs, cmp: fn(T,T) Order)` (`vector.tw:344`), `Int.compare → Order` (`int.tw:3`), and `Vector.join`/`String` interpolation (used in Part 1) all exist and are used per the in-repo idiom (`summary.tw:191`). `intern` returns a named `InternResult` because Twinkle has no anonymous multi-value return; callers thread `vi = r.interner`.
