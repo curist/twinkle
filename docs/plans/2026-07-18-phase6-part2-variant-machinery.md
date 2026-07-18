@@ -4,7 +4,7 @@
 
 **Goal:** Turn the parameter-side ownership facts from Part 1 into per-call-site ownership-specialization *decisions* — the analysis-only `VariantId`/`SpecializationFacts` the design's Phase 6 produces — starting with the variant-identity & encoding substrate every later stage builds on.
 
-**Architecture:** Part 2 is the deep, multi-subsystem core of Phase 6 (design: `docs/plans/sound-uniqueness/analysis/phase6-design.md`). It decomposes into six stages (identity → field-granular paths → owned-entry re-analysis → call-site decision → SCC variant fixpoint → rendering), each independently shippable and gated behind the previous. This plan makes **Stage 1 (variant identity & encoding)** fully concrete and executable, and scopes **Stages 2–6** as a roadmap — each becomes its own detailed plan when reached, because their exact TDD code depends on forward-analysis internals (`ForwardState` threading, `Unique`-entry seeding, `run_fixpoint`/`run_scc` surgery) and Stage 1's finalized APIs. This mirrors Part 1's "concrete-first, scope-the-rest" split.
+**Architecture:** Part 2 is the deep, multi-subsystem core of Phase 6 (design: `docs/plans/sound-uniqueness/analysis/phase6-design.md`). It decomposes into stages: identity (Stage 1) → dirty-path record-update requirements (2a) → helper-call propagation (2b) → reference-field filter + `ConsumedPaths` (2c) → owned-entry re-analysis (3) → call-site decision (4) → SCC variant fixpoint (5) → rendering (6), each independently shippable and gated behind the previous. **Stage 1 is done** (concrete + executed); the rest are scoped as a roadmap and each becomes its own detailed plan when reached (their exact TDD code depends on forward-analysis internals — `ForwardState` threading, `Unique`-entry seeding, `run_fixpoint`/`run_scc` surgery — and Stage 1's finalized APIs). Mirrors Part 1's "concrete-first, scope-the-rest" split.
 
 **Tech Stack:** Twinkle (`.tw`), boot compiler only. Tests via the boot suite. Analysis-only: `twk ir --census` must stay **0 in-place** through all of Part 2. Build/verify with `make boot-test`.
 
@@ -31,15 +31,15 @@ Part 1 (landed, commits `fba33602`/`e1492fcb`) reconciled `ParamSummary` to `{ b
 
 ## Stage 1: Variant identity & encoding infrastructure
 
-**Current progress:** Stage 1 is COMPLETE (commits `54c727cd` types, `5e8396f1` canonicalization, `dd12fbae` interner + `site_key`). Verified: 3050 boot tests green, self-host fixed point reached, `--census` 0 in-place, two builds byte-identical. Next Phase 6 work is Stage 2 (field-granular `in_place_paths` + `ConsumedPaths`), which needs its own detailed plan per the roadmap below.
+**Current progress:** Stage 1 is COMPLETE (commits `54c727cd` types, `5e8396f1` canonicalization, `dd12fbae` interner + `site_key`). Verified: 3050 boot tests green, self-host fixed point reached, `--census` 0 in-place, two builds byte-identical. Next Phase 6 work is **Stage 2a — dirty-path record-update requirements** (plan: `docs/plans/2026-07-18-phase6-stage2a-dirty-path-requirements.md`); Stage 2 was split into 2a/2b/2c (see the stage map).
 
 **What it delivers:** a self-contained leaf module owning the variant-identity types and their canonicalization + deterministic interning. No consumer wires it yet (Stages 3–5 do), but it is fully testable in isolation and it resolves the **load-bearing determinism/encoding question** the design flags (`variant_key`/`site_key` must be pure functions of canonical inputs, `VariantId` numbering stable across builds — acceptance #14). Every later stage keys its memo and decision tables on this module.
 
 **Design decisions realized here:**
 - **D3 (downward-closed under the shell):** a `(k, [f])` requirement implies `(k, [])`; canonicalization enforces it.
-- **D14 (determinism):** `UniqueKey` is canonical-sorted `(param, path)`, equal keys dedup, `VariantId`s are numbered in **creation order** via a deterministic interner.
+- **D14 (determinism):** `UniqueKey` is canonical-sorted `(param, path)`, equal keys dedup. For **display/render numbering only**, `VariantId`s get a dense **creation-order** id from the interner (deterministic under D14's worklist order).
 - **D8 (representation-neutral):** the identity is an abstract `VariantId`; nothing here commits to clone-vs-annotation.
-- **Int-key encoding (design "Data model" patch):** rather than a collision-prone hashed Int, a **canonical-string interner** maps each canonicalized `VariantId` to a dense creation-order Int — giving both the `Dict<Int, …>` memo key and D14's stable numbering in one structure. `site_key(func, local)` is a separate reversible pairing.
+- **Memo key = the pure canonical string.** `variant_canonical_string(canonicalize_variant(v))` is the pure memo key (a pure function of canonical inputs — no allocation/visit-order input, as the design requires). The `VariantInterner`'s dense `Int` is **display/render numbering only**, never the memo key. `site_key(func, local)` is a separate reversible pairing for the `CallDecision` table.
 
 ### File structure
 
@@ -449,9 +449,9 @@ target/twk fmt boot/compiler/variant_id.tw
 git add boot/compiler/variant_id.tw boot/tests/suites/cfg_summary_suite.tw
 git commit -m "phase6: deterministic VariantId interner + site_key encoding (D14)
 
-Canonical-string codec + a creation-order interner give a build-stable Int memo
-key per VariantId (dedup on canonical key), and site_key pairs (func,local) for
-the CallDecision table. Resolves the Int-key encoding the design flagged."
+Canonical-string codec is the pure memo key (dedup on canonical key); the
+interner assigns a build-stable dense creation-order id for display/render
+numbering only. site_key pairs (func,local) for the CallDecision table."
 ```
 
 ### Task 4: Stage 1 verification
@@ -526,7 +526,7 @@ These stages are **scoped, not coded** here — their exact TDD steps depend on 
 **Scope:** re-run the forward transfer over a callee body with keyed `(param, path)` slots seeded `Unique` at entry (instead of `Unknown`), producing the specialized `Summary` for a `VariantId`. This is what turns candidate `in_place_paths` into accepted in-place facts and turns `OwnedFromParam(k)` into a real unique hand-off — closing the Phase 5 param-threaded gate **without changing the gate** (`ownership.tw:1174` fires unchanged because the param now enters `Unique`).
 
 **Entry points:**
-- `summarize_function` (`ownership.tw:3255`) seeds entry `own`/`path_prov` — currently every reference param enters via `join_entry_*` as `Unknown`. Add a `summarize_variant(f, key, …)` that seeds the keyed slots `Unique` + `path_prov` naming param `k` (mirror `seed_param_prov`, `ownership.tw:2308`), reusing the SAME transfer (D13 — no second proof engine). Memoize per `VariantId` (interned id from Stage 1).
+- `summarize_function` (`ownership.tw:3255`) seeds entry `own`/`path_prov` — currently every reference param enters via `join_entry_*` as `Unknown`. Add a `summarize_variant(f, key, …)` that seeds the keyed slots `Unique` + `path_prov` naming param `k` (mirror `seed_param_prov`, `ownership.tw:2308`), reusing the SAME transfer (D13 — no second proof engine). Memoize keyed by the **pure canonical string** `variant_canonical_string(canonicalize_variant(v))` (Stage 1); the interner's dense id is render-only, never the memo key.
 
 **Acceptance:** #4 (Result-payload param scrutinee), #6 (param-threaded transport, per-variant). **Depends on:** Stages 1–2.
 
@@ -546,9 +546,18 @@ These stages are **scoped, not coded** here — their exact TDD steps depend on 
 **Scope:** demand-driven variants processed in the existing callee-first SCC order, with the variant memo iterated to a fixpoint. Two disciplines: in-place capability **ascends** (bottom = generic; a within-SCC recursive call reads the previous iteration's approximant), `ret_paths` ride the existing Phase 5 `suppress` (read empty in-SCC, published at the fixed point). Per-`(mono-instance, func)` variant-count cap (default 4); over-budget new keys route that call site to generic (no cell stripping).
 
 **Entry points:**
-- `run_scc` (`summary.tw:380`) and `compute` (`summary.tw:508`): thread a `VariantInterner` + variant memo through the driver; return `SpecializationFacts` (`{ variants, decisions }`) instead of only `SummaryTable`. Reuse the existing worklist/`same_summary` machinery (D2) — add a variant axis, not a new driver. Termination by finite lattice height (the cap is a separate count limit, review #2).
-- **Memo key = the pure canonical string, not the interner's dense id (High-review fix).** The design requires `variant_key` be a **pure function of canonical inputs** (no allocation/visit-order input, design "Int-key encoding"). The Stage-1 interner's dense id is **creation-order** — deterministic under D14, but *derived from demand order*, so keying the memo on it couples memoization to traversal order. **Memoize by `variant_canonical_string(canonicalize_variant(v))`** (a `Dict<String, Summary>`), which is pure; use the interner's dense `Int` id **only** for D14 display/render numbering. `variant_id.tw` already exposes both (`variant_canonical_string` + `intern`), so this is a usage choice — no Stage-1 code change.
-- **`compute` return-type blast radius (Medium-review):** changing `summary.compute` from `SummaryTable` to `SpecializationFacts` breaks its callers — `boot/commands/ir.tw:55`, and the test helpers in `cfg_summary_suite.tw` (`:148`,`:161`,`:969`), `cfg_return_paths_suite.tw` (`:54`,`:60`,`:74`), `cfg_ownership_facts_suite.tw:577`. Either keep `compute` returning `SummaryTable` and add a sibling `compute_specialized` returning `SpecializationFacts` (smaller blast radius), or update every caller + `render_cfg`. Call this out in the Stage-5 plan.
+- `run_scc` (`summary.tw:380`) and the driver: thread a `VariantInterner` + a variant memo, reusing the existing worklist/`same_summary` machinery (D2) — add a variant axis, not a new driver. Termination by finite lattice height (the cap is a separate count limit, review #2).
+- **`compute` API (decided default):** **keep `summary.compute` returning `SummaryTable` unchanged** (its callers — `boot/commands/ir.tw:55`, plus test helpers `cfg_summary_suite.tw` `:148`/`:161`/`:969`, `cfg_return_paths_suite.tw` `:54`/`:60`/`:74`, `cfg_ownership_facts_suite.tw:577` — stay working), and **add a sibling `summary.compute_specialized(view, b, sem) SpecializationFacts`** for Phase 6 variant facts. Smallest blast radius; the CLI/render opt into the specialized path only where needed.
+- **`SpecializationFacts` schema (defined):**
+  ```tw
+  pub type SpecializationFacts = .{
+    summaries: SummaryTable,           // the generic per-func summaries (as today)
+    variants: Dict<String, Summary>,   // PURE memo key: variant_canonical_string(canonicalize_variant(v))
+    display_ids: VariantInterner,      // render-only dense creation-order numbering (D14)
+    decisions: Dict<Int, CallDecision>,// keyed by site_key(site_func, site_local)
+  }
+  ```
+  The memo is keyed by the **pure canonical string** (a pure function of canonical inputs, as the design requires); the interner (`display_ids`) supplies dense creation-order ids for **rendering only** — never as the memo key. `variant_id.tw` already exposes both `variant_canonical_string` and `intern`, so this is a usage choice, no Stage-1 code change. (Reconciles the design "Data model" `variants: Dict<Int, Summary>` to the pure-string key; update that design line when Stage 5 lands.)
 
 **Acceptance:** #11 (recursive convergence, Case V), #12 (late cross-member demand), #13 (cap + fallback). **Depends on:** Stages 1–4.
 
