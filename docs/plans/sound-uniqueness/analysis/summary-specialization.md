@@ -285,25 +285,50 @@ paths are hierarchical under the shell, a `UniqueKey` is downward-closed: a
 At `let L = call f(a0, a1, …)`, for each `(param k, path p)` in `f`'s
 `in_place_paths`:
 
+Selection is a **key-level fixed point**, not an independent per-path test:
+
 ```
-unique_here(k, p) = fact(a_k) at path p is Unique  // no live alias reaches that path (lattice)
-                  && last_use(a_k) at this site     // a_k dead after the call (a true move)
+candidate_key = downward_close({ (k, p) ∈ in_place_paths : fact(a_k) at p is Unique })
+selected_key  = greatest subset of candidate_key with consume_dead(a_k, selected_key) true
+                (drop any path whose region is observed later, re-close downward,
+                 repeat until stable; else generic if no non-empty key survives)
 ```
 
-Both conditions are required. **`Unique` alone is not sufficient** — a unique
-value that is still read after the call must not be mutated in place, or the
-later read sees the write. `last_use` is the linear "consume" condition, supplied
-by the same liveness the `AInit` hinge needs. The per-path uniqueness check reads
-the argument's per-field fact directly from the later `Record{shell, fields}`
-shape.
+**`Unique` alone is not sufficient** — a region still observable after the call must
+not be mutated in place, or the later read sees the write. `consume_dead(a, key)` is
+**key-level** (obligations interact) and `[]` denotes **different storage** on a
+record vs a collection:
 
-- `key = sort({ (k, p) : (k, p) ∈ in_place_paths and unique_here(k, p) })`,
-  downward-closed under the shell (drop a field req whose `(k, [])` is unmet).
+- **consumed record shell `[]`** = the record's **shell storage** (its field-pointer
+  slots), **not** the whole logical binding: no future **whole-record** use or
+  publish of `a` or any alias to that shell, and no future read/publish of the fields
+  this variant updates; **disjoint sibling projections are allowed** (`a.values` after
+  a `.types`-only update reads the correct untouched pointer).
+- **consumed collection `[]`** = the whole backing region: no future use or publish
+  of that collection through `a` or any alias.
+- **consumed field path `[.f]`** = field `f`'s region: no future read or publish of
+  it through `a` or aliases.
+
+A partially-invalidated record binding may afterwards serve **only** as a carrier for
+statically-proven disjoint sibling projections; any whole-value use drops it. This
+`[]` split is what lets `add_type[unique:0,.types]` (downward-closed to `{[],
+[.types]}`) coexist with a later `.values` read — treating record `[]` as the whole
+binding would forbid it and leave the mixed-ownership target contradictory.
+Whole-binding last-use is only the collection-`[]` / whole-record-use case. The
+per-path uniqueness check reads the argument's per-field fact directly from the later
+`Record{shell, fields}` shape.
+
+- `key = sort(selected_key)` from the fixed point above: the greatest
+  downward-closed subset of the `Unique` candidate paths for which the key-level
+  `consume_dead` holds (drop a field req whose `(k, [])` is unmet; drop a
+  later-observed path and re-close until stable).
 - If `key` is non-empty and within the cap, select/emit `VariantId{f, key}`;
   otherwise select the generic variant. A partially-satisfied key (shell unique,
   one field shared) is fine — it yields the shell-reuse-only variant.
-- **Post-call fact updates:** if any `(k, ·) ∈ key`, `a_k` becomes invalid as a
-  binding; the result `L` takes the specialized return facts path-by-path. A `[]`
+- **Post-call fact updates:** if any `(k, ·) ∈ key`, only `a_k`'s **consumed** paths
+  are invalidated (partial invalidation per `consume_dead`) — disjoint untouched
+  sibling paths of `a_k` stay readable; the result `L` takes the specialized return
+  facts path-by-path. A `[]`
   return path with `OwnedFromParam(k)` means `L` is unique as a whole; a `[.ctx]` or
   `Ok[0].state` return path with `OwnedFromParam(k)` means that projected path
   owns the handed-off region until projected or published. For the generic
@@ -377,12 +402,21 @@ consistent with the Phase-1 "print facts before rewriting" discipline.
   same function plus an entry-ownership annotation consumed by codegen (mirrors
   the annotation-vs-clone question in cfg-ownership-ir.md)?
 - Interaction with the SCC summary fixpoint when a variant's re-analysis changes
-  a summary that another SCC member's variant depended on.
+  a summary that another SCC member's variant depended on. **Resolved** in
+  [phase6-design.md](phase6-design.md) D12: the `VariantId → Summary` memo is an
+  **ascending iterated cell** — it starts at the generic (empty-capability) bottom and
+  a within-SCC recursive call reads the **previous iteration's approximant**, growing
+  the in-place capability only when every recursive path supports it. The cell is
+  dirty-queued and re-run until `same_summary` stabilizes (or stripped to generic on
+  cap-hit), so a dependent's change re-dirties it and Case V converges upward. (Unlike
+  Phase 5's retract-able `ret_paths`, the capability lattice only ascends, so the
+  previous-approximant schedule never exposes a fact a later round revokes.)
 
 ## Non-goals
 
 - No runtime variant dispatch or uniqueness test; the caller selects statically.
 - No unbounded ownership monomorphization; the cap and conservative fallback are
   mandatory.
-- No in-place licensing from `Unique` alone — `last_use` is required.
+- No in-place licensing from `Unique` alone — the path-aware `consume_dead`
+  condition is required (whole-binding `last_use` is only its shell-consuming case).
 - No specialization keyed on `Borrowed` or `Published` parameters.
