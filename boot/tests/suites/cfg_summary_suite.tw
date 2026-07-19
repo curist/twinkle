@@ -170,6 +170,26 @@ fn same_ints(a: Vector<Int>, b: Vector<Int>) Bool {
   true
 }
 
+// A one-param callee summary with the given role + in_place_paths, for select_variant tests.
+fn one_param_summary(role: ownership.ParamRole, ipp: variant_id.PathSet) ownership.Summary {
+  ownership.Summary.{
+    params: [ownership.ParamSummary.{ base_role: role, in_place_paths: ipp, flows_to_return: true }],
+    ret: .MayAliasParams([0]),
+    ret_paths: [],
+  }
+}
+
+// The field ids of a VariantId's [.f] reqs on param k, sorted (shell reqs excluded).
+fn variant_fields(v: variant_id.VariantId, k: Int) Vector<Int> {
+  out: Vector<Int> = []
+  for r in v.unique {
+    if r.param == k and r.path.segs.len() == 1 {
+      out = .append(r.path.segs[0])
+    }
+  }
+  out
+}
+
 fn compute_of(funcs: Vector<AnfFunctionDef>) ownership.SummaryTable {
   b := b_reg()
   v := cfg.build_view(module_of(funcs), b)
@@ -1620,6 +1640,84 @@ pub fn suite() runner.Suite {
         owned := ownership.summarize_variant(g_cfg, key, t, b, sem(), Dict.new())
         try assert.equal(p_role(owned, 0), role_tag(.Consumed))
         try assert.is_true(!owned.params[0].in_place_paths.is_empty()) // carries field paths
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage4c: a consumed param with a unique arg selects the owned key (Case B)",
+      fn() {
+        // add_type-shape callee: p0 Consumed paths{[],[.f0]}.
+        ipp := variant_id.PathSet.{ paths: [variant_id.shell(), variant_id.field(0)] }
+        s := one_param_summary(.Consumed, ipp)
+        v := ownership.select_variant(7, s, [true]) // arg0 Unique + last-use
+        try assert.equal(v.func, 7)
+
+        // owned key: downward-closed {(0,[]),(0,[.f0])} -> shell + one field req.
+        try assert.equal(v.unique.len(), 2)
+        try assert.is_true(same_ints(variant_fields(v, 0), [0]))
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage4c: a consumed param with a NON-unique arg selects generic (Case C)",
+      fn() {
+        ipp := variant_id.PathSet.{ paths: [variant_id.shell(), variant_id.field(0)] }
+        s := one_param_summary(.Consumed, ipp)
+        v := ownership.select_variant(7, s, [false]) // arg0 not unique
+        try assert.equal(v.unique.len(), 0) // empty key => generic
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage4c: a transport/read-only param never keys (Borrowed/empty -> generic)",
+      fn() {
+        s := one_param_summary(.Borrowed, variant_id.empty_set())
+        v := ownership.select_variant(7, s, [true]) // unique arg, but nothing to consume
+        try assert.equal(v.unique.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage4c: only the consuming+unique param contributes to the key",
+      fn() {
+        // p0 Consumed {[],[.f0]} + unique; p1 Borrowed + unique -> key from p0 only.
+        ipp0 := variant_id.PathSet.{ paths: [variant_id.shell(), variant_id.field(0)] }
+        s := ownership.Summary.{
+          params: [
+            ownership.ParamSummary.{
+              base_role: .Consumed,
+              in_place_paths: ipp0,
+              flows_to_return: true,
+            },
+            ownership.ParamSummary.{
+              base_role: .Borrowed,
+              in_place_paths: variant_id.empty_set(),
+              flows_to_return: false,
+            },
+          ],
+          ret: .MayAliasParams([0]),
+          ret_paths: [],
+        }
+        v := ownership.select_variant(7, s, [true, true])
+        try assert.equal(v.unique.len(), 2) // (0,[]) + (0,[.f0]); p1 contributes nothing
+        try assert.is_true(same_ints(variant_fields(v, 1), [])) // no reqs on p1
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage4c: the selected key is canonical (order-independent, deduped)",
+      fn() {
+        a := variant_id.PathSet.{
+          paths: [variant_id.shell(), variant_id.field(0), variant_id.field(3)],
+        }
+        sa := one_param_summary(.Consumed, a)
+        va := ownership.select_variant(9, sa, [true])
+        vb := ownership.select_variant(9, sa, [true])
+        try assert.equal(
+          variant_id.variant_canonical_string(va),
+          variant_id.variant_canonical_string(vb),
+        )
+        try assert.equal(va.unique.len(), 3) // shell + two fields, deduped/sorted
         .Ok({})
       },
     )

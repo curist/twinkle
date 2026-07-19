@@ -3625,6 +3625,27 @@ pub fn summarize_variant(
   summarize_seeded(f, table, b, sem, suppress, unique_seed)
 }
 
+// Call-site variant selection (Stage 4c, D4 shell-level): the VariantId a caller
+// selects for callee `func_id` given the callee's summary and, per argument
+// position, whether that argument is proven Unique + last-use at the call
+// (arg_unique -- the whole-value consume_dead condition). Each parameter the callee
+// CONSUMES (non-empty in_place_paths; a Borrowed/Published param never has any) whose
+// argument is arg_unique contributes its in_place_paths to the owned key. The result
+// is canonicalized + downward-closed (Stage 1); an empty key means the generic
+// variant. This is a pure decision -- it records nothing and demands no summary
+// (the recording pass + ConsumedPaths + variant memo are later 4c / Stage 5).
+pub fn select_variant(func_id: Int, s: Summary, arg_unique: Vector<Bool>) vid.VariantId {
+  reqs: vid.UniqueKey = []
+  for ps, i in s.params {
+    if i < arg_unique.len() and arg_unique[i] and !ps.in_place_paths.is_empty() {
+      for p in ps.in_place_paths.paths {
+        reqs = .append(vid.UniqueReq.{ param: i, path: p })
+      }
+    }
+  }
+  vid.canonicalize_variant(vid.VariantId.{ func: func_id, unique: reqs })
+}
+
 // Classify each parameter's escape/capability by scanning EVERY block's
 // post-publish exit (fx.exits / fx.exit_valid): a param that ends Shared on any
 // block exit escapes (Retained) — even on a dead branch or via a returned
