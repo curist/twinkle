@@ -92,6 +92,13 @@ fn is_published(s: ownership.Summary, i: Int) Bool {
   }
 }
 
+fn is_borrowed(s: ownership.Summary, i: Int) Bool {
+  case s.params[i].base_role {
+    .Borrowed => true,
+    _ => false,
+  }
+}
+
 // exit ownership of a local in a GIVEN block (caller_own hardcodes block 0).
 fn own_in_block(f: cfg.CfgFunction, block_id: Int, local_id: Int) Int {
   for blk in f.blocks {
@@ -636,7 +643,10 @@ pub fn suite() runner.Suite {
         }
         key: variant_id.UniqueKey = [variant_id.UniqueReq.{ param: 0, path: variant_id.shell() }]
         owned := ownership.summarize_variant(caller, key, t, b, sem(), Dict.new())
-        try assert.is_true(!is_published(owned, 0)) // recovered, not leaked
+
+        // Recovered as a Borrowed transport (NOT Consumed -- the param is threaded, not
+        // mutated) that flows to the return, vs the generic Published/leaked classification.
+        try assert.is_true(is_borrowed(owned, 0))
         try assert.is_true(owned.params[0].flows_to_return) // ctx's region reaches the return
         .Ok({})
       },
