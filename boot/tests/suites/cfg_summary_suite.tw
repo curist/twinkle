@@ -1538,6 +1538,46 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "phase6 stage2b: param-threaded caller stays Published in the generic pass (Stage 3 boundary)",
+      fn() {
+        // fn h(env) { env.f0 = 0 ; env2 }  -- 2a gives h: p0 Consumed {[],[.f0]}, ret alias(p0).
+        h_body: AnfExpr = .Let(
+          lid(1),
+          .ARecordUpdate(.ALocal(lid(0)), FieldId.{ id: 0 }, .ALitInt(0), false, TypeId.{ id: 0 }),
+          .Atom(.ALocal(lid(1))),
+        )
+
+        // fn g(env) { env = h(env); env = h(env); env }  -- thread env through h twice.
+        g_body: AnfExpr = .Let(
+          lid(1),
+          .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+          .Let(
+            lid(2),
+            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(1))]),
+            .Atom(.ALocal(lid(2))),
+          ),
+        )
+        t := compute_of([fdef(1, "h", 1, h_body), fdef(2, "g", 1, g_body)])
+        h := summ_of(t, 1)
+        g := summ_of(t, 2)
+
+        // h itself (Stage 2a direct update): Consumed with shell + field.
+        try assert.equal(p_role(h, 0), role_tag(.Consumed))
+        try assert.equal(h.params[0].in_place_paths.paths.len(), 2)
+
+        // g threads env through h, which returns alias(p0), so the call PUBLISHES env in
+        // the generic pass (the Phase-5 param-threaded deferral). collect_field_reqs still
+        // computes the candidate {[.f0]} (see the collect_field_reqs propagation unit test),
+        // but reconcile_role's Published precedence discards it here. Stage 3's owned-entry
+        // re-analysis (env enters Unique -> recovery gate fires -> not published) is what
+        // reclassifies g Consumed. This guard pins the boundary: Stage 2b must NOT surface
+        // Consumed on a published param.
+        try assert.equal(p_role(g, 0), role_tag(.Published))
+        try assert.equal(g.params[0].in_place_paths.paths.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
       "phase6 stage2a: param threaded through update chain -> Consumed with field paths",
       fn() {
         b := b_reg()
