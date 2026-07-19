@@ -1565,13 +1565,14 @@ pub fn suite() runner.Suite {
         try assert.equal(p_role(h, 0), role_tag(.Consumed))
         try assert.equal(h.params[0].in_place_paths.paths.len(), 2)
 
-        // g threads env through h, which returns alias(p0), so the call PUBLISHES env in
-        // the generic pass (the Phase-5 param-threaded deferral). collect_field_reqs still
-        // computes the candidate {[.f0]} (see the collect_field_reqs propagation unit test),
-        // but reconcile_role's Published precedence discards it here. Stage 3's owned-entry
-        // re-analysis (env enters Unique -> recovery gate fires -> not published) is what
-        // reclassifies g Consumed. This guard pins the boundary: Stage 2b must NOT surface
-        // Consumed on a published param.
+        // g threads env through h, which returns alias(p0) (whole-value MayAliasParams), so
+        // the call PUBLISHES env in the generic pass (the Phase-5 param-threaded deferral).
+        // collect_field_reqs still computes the candidate {[.f0]} (see the collect_field_reqs
+        // propagation unit test), but reconcile_role's Published precedence discards it here.
+        // Because MayAliasParams publishes UNCONDITIONALLY (regardless of ownership), seeding
+        // the param Unique (Stage 3) does NOT recover this whole-value shape -- reclassifying
+        // g Consumed is STAGE 4 (owned-variant selection + a whole-return move representation).
+        // This guard pins the boundary: Stage 2b must NOT surface Consumed on a published param.
         try assert.equal(p_role(g, 0), role_tag(.Published))
         try assert.equal(g.params[0].in_place_paths.paths.len(), 0)
         .Ok({})
