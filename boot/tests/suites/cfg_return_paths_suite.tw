@@ -701,6 +701,64 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "phase6 stage4a: fresh-unique local moves through a whole-value (MayAliasParams) helper",
+      fn() {
+        b := b_reg()
+
+        // h(x) = x  -- returns its whole param, so ret = MayAliasParams([0]).
+        idhelper := fdef(1, "h", 1, .Atom(.ALocal(lid(0))))
+
+        // caller() { ctx := Dict.new(); out := h(ctx); out }
+        caller_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+            .Atom(.ALocal(lid(1))),
+          ),
+        )
+        funcs := [idhelper, fdef(2, "caller", 0, caller_body)]
+        f := analyzed_caller(funcs, "caller")
+
+        // ctx (lid0) is fresh Unique + last-use at the call, so the whole-return moves:
+        // out (lid1) is Unique, not Shared (which is what the unconditional publish gave).
+        try assert.equal(caller_own(f, 1), own_unique())
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage4a: a leaked-and-returned param is NOT moved (retaining callee)",
+      fn() {
+        b := b_reg()
+
+        // h(x) { global_set G0 = x; x }  -- leaks x (Published) AND returns it (MayAliasParams).
+        h := fdef(
+          1,
+          "h",
+          1,
+          .Let(lid(1), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))), .Atom(.ALocal(lid(0)))),
+        )
+
+        // caller() { x := Dict.new(); out := h(x); out }
+        caller_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+            .Atom(.ALocal(lid(1))),
+          ),
+        )
+        f := analyzed_caller([h, fdef(2, "caller", 0, caller_body)], "caller")
+
+        // The publish-loop demotes x to Shared before the MayAliasParams branch, so
+        // consume_base sees a non-Unique base and DECLINES the move: out is not Unique.
+        try assert.is_true(caller_own(f, 1) != own_unique())
+        .Ok({})
+      },
+    )
+    .test(
       "gate fail: already-Shared arg is dropped idempotently (no double-publish)",
       fn() {
         // ctx is published (global_set) BEFORE the call, so it is already Shared at the

@@ -824,7 +824,7 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "t4 return-alias: aliasing callee demotes the origin arg",
+      "t4 return-alias: a unique last-use arg is MOVED into the aliasing callee (Stage 4a)",
       fn() {
         b := b_reg()
         g := fdef(2, "g", 1, .Atom(.ALocal(lid(0))))
@@ -838,7 +838,10 @@ pub fn suite() runner.Suite {
           ),
         )
         f := analyzed_caller([fdef(1, "f", 0, f_body), g], "f")
-        try assert.equal(caller_own(f, 0), own_shared())
+
+        // ctx (lid0) is fresh Unique + last-use; g returns an alias of it and the result is
+        // discarded, so Stage 4a MOVES ctx (consumed) rather than demoting it to Shared.
+        try assert.equal(caller_own(f, 0), own_unique())
         .Ok({})
       },
     )
@@ -1575,6 +1578,48 @@ pub fn suite() runner.Suite {
         // This guard pins the boundary: Stage 2b must NOT surface Consumed on a published param.
         try assert.equal(p_role(g, 0), role_tag(.Published))
         try assert.equal(g.params[0].in_place_paths.paths.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage4a: add_type-caller owned variant recovers Consumed (whole-return move)",
+      fn() {
+        // fn h(env) { env.f0 = 0 ; env2 }  -- h: p0 Consumed {[],[.f0]}, ret alias(p0).
+        h_body: AnfExpr = .Let(
+          lid(1),
+          .ARecordUpdate(.ALocal(lid(0)), FieldId.{ id: 0 }, .ALitInt(0), false, TypeId.{ id: 0 }),
+          .Atom(.ALocal(lid(1))),
+        )
+
+        // fn g(env) { env = h(env); env = h(env); env }  -- thread env through h twice.
+        g_body: AnfExpr = .Let(
+          lid(1),
+          .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+          .Let(
+            lid(2),
+            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(1))]),
+            .Atom(.ALocal(lid(2))),
+          ),
+        )
+        b := b_reg()
+        v := cfg.build_view(module_of([fdef(1, "h", 1, h_body), fdef(2, "g", 1, g_body)]), b)
+        t := summary.compute(v, b, sem())
+
+        // Generic g still publishes its param (Unknown at entry) -- the Stage 2b guard.
+        gen := summ_of(t, 2)
+        try assert.equal(p_role(gen, 0), role_tag(.Published))
+
+        // Owned variant: seed env Unique -> each h(env) whole-return MOVES env (arg_unique)
+        // instead of publishing -> env recovered + consumed, and the Stage 2b dirty
+        // candidate survives -> Consumed with field paths.
+        g_cfg := case cfg.function_named(v, "g") {
+          .Some(fn_) => fn_,
+          .None => error("no g"),
+        }
+        key: variant_id.UniqueKey = [variant_id.UniqueReq.{ param: 0, path: variant_id.shell() }]
+        owned := ownership.summarize_variant(g_cfg, key, t, b, sem(), Dict.new())
+        try assert.equal(p_role(owned, 0), role_tag(.Consumed))
+        try assert.is_true(!owned.params[0].in_place_paths.is_empty()) // carries field paths
         .Ok({})
       },
     )

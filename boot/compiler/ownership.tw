@@ -1140,7 +1140,8 @@ fn transfer_summarized_call(
   }
 
   // 1. Escape + return handling (mutates st: publishes Retained args, sets the
-  // result shell, publishes MayAliasParams origins).
+  // result shell, and for MayAliasParams either MOVES a single proven-unique origin
+  // (Stage 4a) or publishes the origins).
   for ps, i in s.params {
     if i < args.len() {
       case ps.base_role {
@@ -1154,15 +1155,29 @@ fn transfer_summarized_call(
     .OwnedFresh => st = .set_own_st(result, .Unique),
     .Shared => st = .set_own_st(result, .Unknown),
     .MayAliasParams(idxs) => {
-      origins: Vector<Int> = []
-      for k in idxs {
-        if k < args.len() {
-          st = .publish_atom(args[k])
-          origins = union_sorted(origins, prov_of(st.prov, args[k]))
+      // Whole-return move (Stage 4a): if the return aliases EXACTLY ONE param and that
+      // argument is proven Unique + last-use here (arg_unique -- the destructive-update
+      // condition), MOVE it: the result takes the argument's unique SHELL and the argument
+      // is consumed (consume_base), instead of publishing. Shell-only -- field_own/path_prov
+      // are NOT transferred (Stage 4b). Multi-param aliasing or a non-unique/non-last-use
+      // argument keeps the conservative publish, so a param argument in the generic pass
+      // (Unknown) still publishes; a leaked+returned arg is published by section 1 first,
+      // so consume_base sees a non-Unique base and declines the move.
+      if idxs.len() == 1 and idxs[0] < args.len() and arg_unique[idxs[0]] {
+        k := idxs[0]
+        st = .consume_base(result, args[k], last)
+        st = .set_prov_st(result, prov_of(pre_prov, args[k]))
+      } else {
+        origins: Vector<Int> = []
+        for k in idxs {
+          if k < args.len() {
+            st = .publish_atom(args[k])
+            origins = union_sorted(origins, prov_of(st.prov, args[k]))
+          }
         }
+        st = .set_own_st(result, .Shared)
+        st = .set_prov_st(result, origins)
       }
-      st = .set_own_st(result, .Shared)
-      st = .set_prov_st(result, origins)
     },
   }
 
