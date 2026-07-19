@@ -1398,7 +1398,10 @@ pub fn suite() runner.Suite {
           dict_new_call(b),
           .Let(lid(2), u0, .Let(lid(3), dict_new_call(b), .Let(lid(4), u1, .Atom(.ALocal(lid(4)))))),
         )
-        reqs := ownership.collect_field_reqs(cfg_func_of("f", 1, body))
+        reqs := ownership.collect_field_reqs(
+          cfg_func_of("f", 1, body),
+          ownership.empty_summary_table(),
+        )
         try assert.is_true(same_ints(dirty_fields(reqs, 0), [0, 1])) // both fields, param 0
         .Ok({})
       },
@@ -1417,7 +1420,10 @@ pub fn suite() runner.Suite {
           TypeId.{ id: 0 },
         )
         body: AnfExpr = .Let(lid(1), dict_new_call(b), .Let(lid(2), u0, .Atom(.ALocal(lid(0)))))
-        reqs := ownership.collect_field_reqs(cfg_func_of("f", 1, body))
+        reqs := ownership.collect_field_reqs(
+          cfg_func_of("f", 1, body),
+          ownership.empty_summary_table(),
+        )
         try assert.equal(dirty_fields(reqs, 0).len(), 0)
         .Ok({})
       },
@@ -1457,8 +1463,77 @@ pub fn suite() runner.Suite {
           d0,
           .Let(lid(5), .AIf(.ALocal(lid(1)), thenb, elseb), .Atom(.ALocal(lid(5)))),
         )
-        reqs := ownership.collect_field_reqs(cfg_func_of("f", 2, body))
+        reqs := ownership.collect_field_reqs(
+          cfg_func_of("f", 2, body),
+          ownership.empty_summary_table(),
+        )
         try assert.is_true(same_ints(dirty_fields(reqs, 0), [0, 1]))
+        .Ok({})
+      },
+    )
+    .test(
+      "collect_field_reqs: param threaded through a consuming helper propagates its fields",
+      fn() {
+        // helper (func 7): p0 Consumed paths{[],[.f0]}, returns p0 (flows).
+        helper := ownership.Summary.{
+          params: [
+            ownership.ParamSummary.{
+              base_role: .Consumed,
+              in_place_paths: variant_id.PathSet.{
+                paths: [variant_id.shell(), variant_id.field(0)],
+              },
+              flows_to_return: true,
+            },
+          ],
+          ret: .MayAliasParams([0]),
+          ret_paths: [],
+        }
+        tbl: Dict<Int, ownership.Summary> = Dict.new()
+        tbl[7] = helper
+        table := ownership.SummaryTable.{ by_func: tbl }
+
+        // fn g(env) { r1 := helper(env); r2 := helper(r1); r2 }  -- thread env through twice.
+        body: AnfExpr = .Let(
+          lid(1),
+          .ACall(.AGlobalFunc(FuncId.{ id: 7 }), [.ALocal(lid(0))]),
+          .Let(
+            lid(2),
+            .ACall(.AGlobalFunc(FuncId.{ id: 7 }), [.ALocal(lid(1))]),
+            .Atom(.ALocal(lid(2))),
+          ),
+        )
+        reqs := ownership.collect_field_reqs(cfg_func_of("g", 1, body), table)
+        try assert.is_true(same_ints(dirty_fields(reqs, 0), [0])) // env's .f0 propagated
+        .Ok({})
+      },
+    )
+    .test(
+      "collect_field_reqs: a fresh-returning helper breaks the chain",
+      fn() {
+        // helper (func 7): returns a FRESH value (no param flows) -> no propagation.
+        helper := ownership.Summary.{
+          params: [
+            ownership.ParamSummary.{
+              base_role: .Borrowed,
+              in_place_paths: variant_id.empty_set(),
+              flows_to_return: false,
+            },
+          ],
+          ret: .OwnedFresh,
+          ret_paths: [],
+        }
+        tbl: Dict<Int, ownership.Summary> = Dict.new()
+        tbl[7] = helper
+        table := ownership.SummaryTable.{ by_func: tbl }
+
+        // fn g(env) { r1 := helper(env); r1 }  -- r1 is fresh, origin none.
+        body: AnfExpr = .Let(
+          lid(1),
+          .ACall(.AGlobalFunc(FuncId.{ id: 7 }), [.ALocal(lid(0))]),
+          .Atom(.ALocal(lid(1))),
+        )
+        reqs := ownership.collect_field_reqs(cfg_func_of("g", 1, body), table)
+        try assert.equal(dirty_fields(reqs, 0).len(), 0)
         .Ok({})
       },
     )
