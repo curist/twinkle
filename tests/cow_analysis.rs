@@ -262,7 +262,16 @@ fn analyze_checker_cow() {
     // Re-baselined 2026-07-12: 1696 (2026-06-03) -> 2000. The rise over 1696 was
     // boot source growth (in-place/builder counts healthy, not an optimizer
     // regression); the headroom over the ~1970 max absorbs the run-to-run jitter.
-    const COW_CEILING: usize = 2000;
+    //
+    // Re-baselined 2026-07-19: 2000 -> 2200. This #[ignore] guard is not run by the
+    // normal suites, so it drifted unnoticed: main itself measured 2014 (already over
+    // 2000) and the uniqueness-rewrite branch measured ~2113. The rise is legitimate
+    // boot source growth (the Phase 6 sound-uniqueness compiler stack) — comparing
+    // main->branch, the in-place/builder counts grew MORE than COW remaining
+    // (+257 in-place/builder vs +99 COW), the healthy-growth signature, not an
+    // optimizer collapse. Headroom over ~2113 absorbs jitter; owned-move work in
+    // progress should push this down, not up.
+    const COW_CEILING: usize = 2200;
     assert!(
         total_cow_remaining <= COW_CEILING,
         "COW remaining {total_cow_remaining} exceeded ceiling {COW_CEILING}: check the per-op breakdown — collapsed IN_PLACE/BUILDER counts mean an optimizer regression; otherwise re-baseline for boot source growth"
