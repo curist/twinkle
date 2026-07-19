@@ -58,6 +58,7 @@ throughput.
 | Plan | Description |
 |------|-------------|
 | [sound-uniqueness/](sound-uniqueness/) | Rebuild boot compiler uniqueness analysis and mutable lowering from scratch, with printable ownership facts before codegen |
+| [sound-uniqueness-nested-loop-ownership.md](sound-uniqueness-nested-loop-ownership.md) | Fix the remaining nested-loop ownership fixpoint gap where real `sieve` carries a vector through an outer loop and mutates it in an inner loop |
 | [compiler-stack-safety.md](compiler-stack-safety.md) | Make the compiler's recursive IR tree-walks stack-safe so deeply-nested IR (wide `cond`, long side-effecting statement sequences, deep `if/else`) doesn't overflow the V8 Wasm stack. Wide `case` already fixed (flat instruction vector); runtime stack-size mitigation verified non-viable. Phased: depth-guard stopgap → iterative lowering/opt → anf/prepare/emit → serializers |
 
 ### Archived reference docs

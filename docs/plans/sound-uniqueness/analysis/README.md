@@ -85,7 +85,9 @@ This README is the analysis worklist derived from it.
 - [x] **Model conservative publication and aliasing.** Known aliases and
   publication sinks demote to `Shared`; missing proof stays `Unknown`.
 - [x] **Handle loop-carried ownership in the simple domain.** Unique values can
-  cross back-edges only when continuing paths preserve the invariant.
+  cross single-loop back-edges when continuing paths preserve the invariant. Nested
+  loop-carried values that are mutated in an inner loop remain a documented
+  follow-up; see the analysis deferrals below.
 - [x] **Catalog later precision needs without implementing them yet.** Shell/field
   ownership, transport wrappers, nested collections, closure recovery, and
   concurrency precision remain in focused docs.
@@ -251,3 +253,4 @@ them) and are refined *after* the first codegen, per architecture.md.
 | Advanced concurrency copy/share refinement | Post-codegen follow-up; see [concurrency-publication.md](concurrency-publication.md) |
 | General per-path liveness beyond the Phase 5 transport-wrapper shape | Post-codegen follow-up (conservative-by-default; sound without it); see [phase5-design.md](phase5-design.md) |
 | Return paths deeper than one field under a record / variant payload | Post-codegen follow-up (sound under-claim without it, bounded by a deeper `PathKey` codec); see [phase5-design.md](phase5-design.md) |
+| Nested loop-carried ownership seeding | Active follow-up: single loops converge, but a vector carried by an outer loop and mutated in an inner loop can enter the inner header as `Unknown`, widen to `Shared` on the inner back-edge, and feed that pessimistic fact into the outer back-edge. Fix with conservative optimistic loop-header seeding; see [sound-uniqueness-nested-loop-ownership.md](../../sound-uniqueness-nested-loop-ownership.md). |

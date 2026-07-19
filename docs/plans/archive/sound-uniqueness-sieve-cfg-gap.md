@@ -6,15 +6,16 @@
 
 **Architecture:** The record-field-update path already works end to end (`env_main` renders `verdict -> f295[unique:p0,p0.f0]`). The vector path is the missing analog and fails at two precise, independently-testable points: (Gap B) the requirement-flow analysis (`collect_field_reqs`) never marks a vector base as dirtied, because `xs[i]=v` lowers to the `VECTOR_SET` **builtin** and builtins break the flow chain — so `set_at`'s `p0` never becomes `Consumed` with a non-empty `in_place_paths`, so `select_variant` can never key on it; (Gap A) the forward ownership transfer for a COW update **merges the stored element's provenance into the result's shell provenance** (`absorb_retained_call_args`), so `set_at`'s return is `MayAliasParams([0,2])` (two params) which blocks the Stage 4a whole-return move — so the loop-carried vector publishes to `Shared` instead of moving and staying `Unique`. Fix Gap B first (render-only, census-neutral), then Gap A (changes ownership facts → codegen → census, so it is soundness-gated), then verify real `sieve` renders the verdict.
 
-**Tech Stack:** Twinkle boot compiler (`boot/compiler/ownership.tw`, `boot/compiler/variant_id.tw`), `target/twk ir <file>.tw --cfg`, boot test suites under `boot/tests/suites/`, fixtures under `boot/tests/fixtures/cfg/sound_uniqueness/`, the COW census guard (`cargo test --release cow_analysis`), and the self-host loop (`make stage2`).
+**Tech Stack:** Twinkle boot compiler (`boot/compiler/ownership.tw`, `boot/compiler/variant_id.tw`), `target/twk ir <file>.tw --cfg`, boot test suites under `boot/tests/suites/`, fixtures under `boot/tests/fixtures/cfg/sound_uniqueness/`, the opt-in COW census guard (`cargo test --release -p twinkle --test cow_analysis -- --ignored --nocapture`), and the self-host loop (`make stage2`).
 
 ---
 
 ## STATUS: implemented (2026-07-19) — Gaps B and A landed; loop-nesting residual remains
 
-All six tasks executed on branch `uniqueness-rewrite-from-scratch`. Boot suite 3082 green,
-COW census passing (2110 ≤ re-baselined 2200), self-host reaches a fixed point
-(stage3 == stage4), lint clean of changed files.
+All six tasks executed on branch `uniqueness-rewrite-from-scratch`. Boot suite green,
+COW census passing (2110 ≤ re-baselined 2200), and self-host reaches a fixed point
+(stage3 == stage4). Final lint still reports inherent-call rewrites in
+`boot/compiler/variant_id.tw`; that cleanup is separate from this archived gap plan.
 
 **Done (both gaps landed exactly on target):**
 - **Gap B** (`transfer_flow` / `cow_update_result_fact`, commit `d10a24be`): a COW `.Update`
@@ -52,10 +53,11 @@ COW census passing (2110 ≤ re-baselined 2200), self-host reaches a fixed point
 **Remaining gap (out of scope here; follow-up plans):**
 - **Real sieve does NOT yet render the in-loop verdict.** The residual cause is isolated to
   **loop nesting** (not the interleaved read): a vector carried by an OUTER loop and mutated in
-  an INNER loop degrades to `Shared` — the inner-loop write flows `Shared` out through the outer
-  back-edge, so the pessimistic fixpoint (headers start from the join of PROCESSED preds only)
-  never bootstraps the nested headers to `Unique`. Needs optimistic loop-header seeding (assume
-  Unique at headers, verify, retract on refutation). A single loop already works. See
+  an INNER loop enters the nested header as `Unknown`; the inner-loop write flows `Shared` through
+  the inner join/back-edge and then out through the outer back-edge, so the pessimistic fixpoint
+  (headers start from the join of PROCESSED preds only) never bootstraps nested headers to `Unique`.
+  Needs optimistic loop-header seeding (assume Unique at headers, verify, retract on refutation).
+  A single loop already works. See
   `docs/plans/sound-uniqueness/analysis/sieve-cfg-gap-notes.md` (## residual loop-carried merge gap).
 - **`graph_scc.visit` stays fully conservative** (`p0/p1/p2=Published`, every `record_update`
   persistent / `[in_place=false]`, no owned verdict). It is a SEPARATE recursive/SCC-summary
@@ -218,7 +220,7 @@ Run:
 
 ```bash
 git status --short
-git add docs/plans/sound-uniqueness/analysis/sieve-cfg-gap-notes.md docs/plans/sound-uniqueness-sieve-cfg-gap.md
+git add docs/plans/sound-uniqueness/analysis/sieve-cfg-gap-notes.md docs/plans/archive/sound-uniqueness-sieve-cfg-gap.md
 git commit -m "docs: record verified sieve vector in-place ownership gaps"
 ```
 
@@ -440,7 +442,7 @@ Expected: both new tests pass; no other suite regresses. If `make quick-bundle-c
 Run:
 
 ```bash
-cargo test --release cow_analysis 2>&1 | tail -20
+cargo test --release -p twinkle --test cow_analysis -- --ignored --nocapture 2>&1 | tail -20
 ```
 
 Expected: the census total is unchanged from its committed baseline. Gap B only affects `select_variant`/render, so any census delta means an unintended consumer of `in_place_paths`/`base_role` was hit — stop and investigate before committing.
@@ -720,7 +722,7 @@ Expected: the three new tests pass. Existing tests may need re-baselining if a s
 Run these one at a time (never concurrently):
 
 ```bash
-cargo test --release cow_analysis 2>&1 | tail -20
+cargo test --release -p twinkle --test cow_analysis -- --ignored --nocapture 2>&1 | tail -20
 make stage2
 ```
 
@@ -951,7 +953,7 @@ Run each separately (never concurrently):
 
 ```bash
 target/twk run boot/tests/main.tw
-cargo test --release cow_analysis
+cargo test --release -p twinkle --test cow_analysis -- --ignored --nocapture
 make stage2
 target/twk lint boot/main.tw
 ```
