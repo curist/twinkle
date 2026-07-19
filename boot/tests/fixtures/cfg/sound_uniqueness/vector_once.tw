@@ -1,0 +1,7 @@
+pub fn once() Bool {
+  flags: Vector<Bool> = collect _ in range(10) {
+    true
+  }
+  flags = .set_at(0, false)
+  flags[1]
+}

@@ -89,6 +89,34 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "vector index-write wrapper summarizes the base as in-place consumed",
+      fn() {
+        out := try render_entry("vector_replace")
+        replace := try section_from(out, "fn replace")
+
+        // p0 (the vector) is now an in-place consumed param...
+        try assert.str_contains(replace, "p0=Consumed paths{[]}")
+
+        // ...and at the Gap-B stage p2 (the stored value) is escape-tracked by
+        // STAYING in ret=alias. NOTE: Task 3 (Gap A) deliberately replaces this
+        // assertion — after Gap A the return is ret=alias(p0) and p2 escapes via
+        // p2=Published instead. This `ret=alias(p0,p2)` line is updated in Task 3
+        // Step 5; it is the correct intermediate shape, not the final one.
+        try assert.str_contains(replace, "ret=alias(p0,p2)")
+        .Ok({})
+      },
+    )
+    .test(
+      "unique straight-line vector set_at renders an owned in-place verdict",
+      fn() {
+        out := try render_entry("vector_once")
+        once := try section_between(out, "fn once", "fn set_at__Bool")
+        try assert.str_contains(once, "verdict ->")
+        try assert.str_contains(once, "[unique:p0]")
+        .Ok({})
+      },
+    )
+    .test(
       "Cell-backed dict update stays conservative",
       fn() {
         out := try render_entry("cell_main")

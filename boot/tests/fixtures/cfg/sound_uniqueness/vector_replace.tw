@@ -1,0 +1,4 @@
+pub fn replace(xs: Vector<Bool>, i: Int, value: Bool) Vector<Bool> {
+  xs[i] = value
+  xs
+}
