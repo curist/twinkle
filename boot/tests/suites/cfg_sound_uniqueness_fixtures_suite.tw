@@ -1,0 +1,125 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use commands.common.{format_compile_error}
+use compiler.cfg
+use compiler.opt.semantics as semantics
+use compiler.ownership
+use compiler.pipeline
+use compiler.summary
+use lib.module.loader
+
+fn fixtures_dir() String {
+  root := loader.find_project_root("boot")
+  "${root}/tests/fixtures/cfg/sound_uniqueness"
+}
+
+fn render_entry(name: String) Result<String, String> {
+  artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(result) => result,
+    .Err(err) => return .Err(format_compile_error(err)),
+  }
+  b := artifacts.builtins
+  view := cfg.build_view(artifacts.opt, b)
+  view = ownership.prune_dead_merge(view)
+  sem := semantics.make_prelude_optimizer_semantics(b)
+  table := summary.compute(view, b, sem)
+  analyzed := ownership.analyze_with_summaries(view, b, sem, table)
+  .Ok(summary.render_cfg(analyzed, table))
+}
+
+fn assert_has_all(out: String, parts: Vector<String>) Result<Void, String> {
+  for p in parts {
+    try assert.str_contains(out, p)
+  }
+  .Ok({})
+}
+
+fn section_between(out: String, start_marker: String, end_marker: String) Result<String, String> {
+  start := try out.index_of(start_marker).ok_or("missing section marker ${start_marker}")
+  tail := out.substring(start, out.len())
+  end := case tail.index_of(end_marker) {
+    .Some(i) => i,
+    .None => tail.len(),
+  }
+  .Ok(tail.substring(0, end))
+}
+
+fn section_from(out: String, start_marker: String) Result<String, String> {
+  start := try out.index_of(start_marker).ok_or("missing section marker ${start_marker}")
+  .Ok(out.substring(start, out.len()))
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("cfg sound uniqueness fixture coverage")
+    .test(
+      "multi-module env callers render owned and generic decisions",
+      fn() {
+        out := try render_entry("env_main")
+        build := try section_between(out, "fn build_owned", "fn branch_shared")
+        branch := try section_from(out, "fn branch_shared")
+
+        try assert_has_all(build, ["verdict ->", "unique:p0,p0.f0", "unique:p0,p0.f1"])
+        try assert_has_all(
+          branch,
+          ["summary: p0=Borrowed ret=shared", "transport=move([.f0] from(fresh))"],
+        )
+        try assert.is_false(branch.contains("verdict ->"))
+        .Ok({})
+      },
+    )
+    .test(
+      "multi-module Result state transport keeps handled payload paths visible",
+      fn() {
+        out := try render_entry("result_main")
+        try assert_has_all(
+          out,
+          [
+            "fn load_source",
+            "Payload(0,0)",
+            "Payload(1,0)",
+            "fn run_ok",
+            "terminator: match",
+            "transport=move([.f0] from(fresh))",
+            "transport=move([.f1] from(fresh))",
+          ],
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "Cell-backed dict update stays conservative",
+      fn() {
+        out := try render_entry("cell_main")
+        mark := try section_between(out, "fn mark", "fn run_marks")
+        try assert_has_all(
+          mark,
+          [
+            "summary: p0=Consumed paths{[],[.f1]} p1=Published ret=alias(p0)",
+            "transport=borrow",
+            "record_update",
+          ],
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "visit-like threaded state exercises loops branches and field decisions",
+      fn() {
+        out := try render_entry("visit_main")
+        try assert_has_all(
+          out,
+          [
+            "fn visit",
+            "summary: p0=Published p1=Published p2=Published ret=alias(p0)",
+            "terminator: loop-back-edge",
+            "match.join",
+            "record_update",
+            "fn run_visit",
+          ],
+        )
+        .Ok({})
+      },
+    )
+}

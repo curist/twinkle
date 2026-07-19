@@ -1,0 +1,20 @@
+pub type State = .{ cache: Dict<String, Int>, failures: Dict<String, String> }
+
+pub type Load = .{ state: State, value: Int }
+
+pub type LoadErr = .{ state: State, message: String }
+
+pub fn load_source(state: State, key: String, ok: Bool) Result<Load, LoadErr> {
+  if ok {
+    state.cache = .set(key, 1)
+    .Ok(Load.{ state, value: 1 })
+  } else {
+    state.failures = .set(key, "missing")
+    .Err(LoadErr.{ state, message: "missing" })
+  }
+}
+
+pub fn record_failure(state: State, key: String, message: String) State {
+  state.failures = .set(key, message)
+  state
+}

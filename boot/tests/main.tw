@@ -29,6 +29,7 @@ use .suites.cfg_field_facts_suite
 use .suites.cfg_ownership_facts_suite
 use .suites.cfg_ownership_suite
 use .suites.cfg_return_paths_suite
+use .suites.cfg_sound_uniqueness_fixtures_suite
 use .suites.cfg_summary_suite
 use .suites.channel_suite
 use .suites.char_literal_suite
@@ -285,6 +286,7 @@ runner.run_all([
   cfg_ownership_suite.suite(),
   cfg_ownership_facts_suite.suite(),
   cfg_return_paths_suite.suite(),
+  cfg_sound_uniqueness_fixtures_suite.suite(),
   cfg_summary_suite.suite(),
   uniqueness_census_suite.suite(),
   uniqueness_guard_suite.suite(),

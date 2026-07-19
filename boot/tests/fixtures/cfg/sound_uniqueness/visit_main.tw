@@ -1,0 +1,14 @@
+use .visit_lib.{State, visit}
+
+pub fn run_visit() State {
+  state := State.{
+    indices: Dict.new(),
+    lowlinks: Dict.new(),
+    stack: [],
+    components: [],
+    next_index: 0,
+  }
+  state = visit(state, "root", ["left", "right"])
+  state = visit(state, "again", ["root"])
+  state
+}

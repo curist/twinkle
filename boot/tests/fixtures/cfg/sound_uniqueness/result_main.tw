@@ -1,0 +1,14 @@
+use .result_lib.{State, load_source, record_failure}
+
+pub fn run_ok(ok: Bool) State {
+  state := State.{ cache: Dict.new(), failures: Dict.new() }
+  out := case load_source(state, "input", ok) {
+    .Ok(v) => {
+      next := v.state
+      next.cache = .set("after", v.value)
+      next
+    },
+    .Err(err) => record_failure(err.state, "input", err.message),
+  }
+  out
+}

@@ -1,0 +1,32 @@
+pub type State = .{
+  indices: Dict<String, Int>,
+  lowlinks: Dict<String, Int>,
+  stack: Vector<String>,
+  components: Vector<Vector<String>>,
+  next_index: Int,
+}
+
+pub fn visit(st: State, node: String, deps: Vector<String>) State {
+  cur := st
+  cur.indices = .set(node, cur.next_index)
+  cur.lowlinks = .set(node, cur.next_index)
+  cur.stack = .append(node)
+  cur.next_index = cur.next_index + 1
+
+  for dep in deps {
+    case cur.indices.get(dep) {
+      .Some(idx) => if idx < cur.next_index {
+        cur.lowlinks = .set(node, idx)
+      } else {},
+      .None => {
+        empty: Vector<String> = []
+        cur = .visit(dep, empty)
+      },
+    }
+  }
+
+  component: Vector<String> = []
+  component = .append(node)
+  cur.components = .append(component)
+  cur
+}
