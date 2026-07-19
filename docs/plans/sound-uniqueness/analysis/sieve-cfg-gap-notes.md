@@ -31,3 +31,48 @@ changes across the two fixes:
 
 The previously-planned "p0=Consumed p1=Borrowed p2=Borrowed ret=alias(p0)" target was
 unsound (it dropped the escape entirely) and is rejected.
+
+## post-fix status (both gaps landed)
+
+After Gap B + Gap A, `set_at__Bool` summarizes exactly the sound target:
+`p0=Consumed paths{[]} p1=Borrowed p2=Published ret=alias(p0)`. Self-host reaches a
+fixed point (stage3 == stage4), so the whole-value move is not a miscompilation.
+
+Verified behavior by shape:
+- Straight-line unique vector `set_at` renders `verdict -> fN[unique:p0]`.
+- A unique vector reused across two sequential `set_at`s stays unique (the first
+  MOVES, so the second still sees it unique).
+- A SINGLE loop carrying the vector converges: the Stage 4a move keeps it Unique on
+  the back-edge, so the loop-header join stays Unique and the in-loop `set_at` renders
+  the verdict. This holds even with an interleaved read (`if flags[i] { ... }`) in the
+  same loop body — a borrow does not degrade the carried vector.
+
+### Gap A publish is gated on `!single_retention` (refinement of the plan)
+
+The plan mandated an UNCONDITIONAL `publish_atom` on the stored operand. That
+over-published: it clobbered a clean unique move's ownership and spuriously dropped the
+result's `[Elem]` field fact (broke the pre-existing "storing an owned inner into an
+all-owned vector keeps [Elem]" fact — a pessimization, more COW). The shipped
+`escape_retained_call_args` publishes only when the operand is NOT `single_retention`
+(own==Unique && last-use && single-store) — the same predicate the `.Update` field-fact
+block reads to keep/drop `[Elem]`. Invariant: the result keeps `[Elem]` iff the operand
+was not published. This still publishes every wrapper param (params are not Unique in
+the generic pass, nor seeded Unique for a variant unless keyed), so the escape soundness
+the plan required is preserved; it only exempts provably-fresh unique moves.
+
+## residual loop-carried merge gap (NESTED loops) — follow-up
+
+The real `examples/performance/awfy/twinkle/sieve.tw` still does NOT render the in-loop
+verdict: the carried vector `flags` shows `: Shared` at the outer loop header and the
+`if.join`. The cause is isolated to **loop nesting**, not the read:
+- single loop + interleaved read of the vector: CONVERGES (verdict renders, stays Unique).
+- nested loops (vector carried by an OUTER loop, mutated by an INNER loop, as in sieve):
+  does NOT converge. The inner loop header enters `Unknown`, the inner back-edge produces
+  `Shared`, and that Shared flows out through the OUTER back-edge, so the outer header
+  can never prove Unique — the pessimistic fixpoint (headers start from the join of
+  PROCESSED preds only) never bootstraps the nested headers to Unique.
+
+This is a separate loop-merge/optimistic-seeding gap (assume Unique at loop headers,
+verify, retract if the back-edge refutes), independent of the summary/move fixes in this
+plan. Track as a follow-up. The `sieve_loop_set` fixture pins the single-loop case that
+DOES work; a nested-loop fixture and the optimistic-seeding merge are the next plan.

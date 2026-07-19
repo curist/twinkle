@@ -156,6 +156,24 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "loop-carried vector set_at renders an owned in-place verdict",
+      fn() {
+        out := try render_entry("sieve_loop_set")
+        loop_set := try section_between(out, "fn loop_set_count", "fn set_at__Bool")
+        try assert.str_contains(loop_set, "terminator: loop-back-edge")
+        try assert.str_contains(loop_set, "verdict ->")
+        try assert.str_contains(loop_set, "[unique:p0]")
+
+        // The carried vector must not degrade to Shared on any fact line.
+        for line in loop_set.lines() {
+          if line.contains("facts.in=") or line.contains("facts.out=") {
+            try assert.is_false(line.contains(": Shared"))
+          }
+        }
+        .Ok({})
+      },
+    )
+    .test(
       "Cell-backed dict update stays conservative",
       fn() {
         out := try render_entry("cell_main")
