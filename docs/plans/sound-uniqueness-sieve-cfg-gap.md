@@ -8,6 +8,67 @@
 
 **Tech Stack:** Twinkle boot compiler (`boot/compiler/ownership.tw`, `boot/compiler/variant_id.tw`), `target/twk ir <file>.tw --cfg`, boot test suites under `boot/tests/suites/`, fixtures under `boot/tests/fixtures/cfg/sound_uniqueness/`, the COW census guard (`cargo test --release cow_analysis`), and the self-host loop (`make stage2`).
 
+---
+
+## STATUS: implemented (2026-07-19) — Gaps B and A landed; loop-nesting residual remains
+
+All six tasks executed on branch `uniqueness-rewrite-from-scratch`. Boot suite 3082 green,
+COW census passing (2110 ≤ re-baselined 2200), self-host reaches a fixed point
+(stage3 == stage4), lint clean of changed files.
+
+**Done (both gaps landed exactly on target):**
+- **Gap B** (`transfer_flow` / `cow_update_result_fact`, commit `d10a24be`): a COW `.Update`
+  builtin now dirties its `cow_base_arg` at the shell, so `xs[i]=v` wrappers become in-place
+  `Consumed`. Generalizes to `Dict.set`/`Dict.remove`/builder-push, not just vectors.
+- **Gap A** (`escape_retained_call_args`, commit `ef55a010`): scoped to the `.Update` call
+  site only (the shared `absorb_retained_call_args` and the `.Allocate` path are byte-identical).
+  `set_at__Bool` now summarizes `p0=Consumed paths{[]} p1=Borrowed p2=Published ret=alias(p0)`,
+  the Stage 4a whole-return move fires, and a unique+last-use vector stays `Unique`.
+- **Verified behavior:** straight-line `set_at`, two sequential `set_at`s on a reused unique
+  vector, AND a **single loop** carrying the vector all render `verdict -> fN[unique:p0]` and
+  keep the vector non-`Shared`. The single-loop case converges even with an interleaved read
+  (`if flags[i] { ... }`). Fixtures: `vector_replace`, `vector_once`, `vector_twice`,
+  `vector_escape`, `sieve_loop_set`.
+
+**Two deviations from this plan as originally written (both intended, both verified):**
+1. **Gap A publish is gated on `!single_retention`, NOT unconditional.** The plan mandated an
+   unconditional `publish_atom` on the stored operand. That over-published: it clobbered a clean
+   unique move's ownership and spuriously dropped the result's `[Elem]` field fact, breaking the
+   pre-existing "storing an owned inner into an all-owned vector keeps [Elem]" test — a
+   pessimization (more COW), the opposite of this work's goal. The shipped code publishes only
+   when the operand is NOT `single_retention` (own==Unique && last-use && single-store), the same
+   predicate the `.Update` field-fact block reads to keep/drop `[Elem]`. Invariant: the result
+   keeps `[Elem]` iff the operand was not published. This still publishes every wrapper param
+   (params are not Unique in the generic pass, nor seeded Unique for a variant unless keyed), so
+   the escape soundness the plan required is preserved; it only exempts provably-fresh unique
+   moves. Task 3 Step 4's code and the `vector_escape` guard reflect the shipped form.
+2. **COW census ceiling re-baselined 2000 → 2200** (commit `a088c504`). The `#[ignore]` census
+   guard had drifted unnoticed: `main` itself measured 2014 (already over 2000), the branch ~2113.
+   Investigation (per the Task 2/3 "stop and investigate" instruction) confirmed healthy Phase 6
+   boot-source growth — comparing main→branch, in-place/builder counts grew MORE than COW
+   remaining (+257 vs +99), the healthy-growth signature, not an optimizer collapse. My Gap B
+   change is census-neutral (2112→2107). Re-baselined in its own commit.
+
+**Remaining gap (out of scope here; follow-up plans):**
+- **Real sieve does NOT yet render the in-loop verdict.** The residual cause is isolated to
+  **loop nesting** (not the interleaved read): a vector carried by an OUTER loop and mutated in
+  an INNER loop degrades to `Shared` — the inner-loop write flows `Shared` out through the outer
+  back-edge, so the pessimistic fixpoint (headers start from the join of PROCESSED preds only)
+  never bootstraps the nested headers to `Unique`. Needs optimistic loop-header seeding (assume
+  Unique at headers, verify, retract on refutation). A single loop already works. See
+  `docs/plans/sound-uniqueness/analysis/sieve-cfg-gap-notes.md` (## residual loop-carried merge gap).
+- **`graph_scc.visit` stays fully conservative** (`p0/p1/p2=Published`, every `record_update`
+  persistent / `[in_place=false]`, no owned verdict). It is a SEPARATE recursive/SCC-summary
+  specialization gap: the threaded record flows into the self-recursive `visit` call, so the
+  generic SCC summary publishes it. Needs variant seeding across the SCC — not the non-recursive
+  `.Update` wrapper mechanism fixed here. See the same notes file (## graph_scc.visit classification).
+
+The task-by-task sections below are the AS-EXECUTED plan and remain accurate EXCEPT where noted
+above (Task 3's unconditional-publish framing is superseded by the `!single_retention` gate;
+the census gate ceiling is 2200).
+
+---
+
 ## Background: the verified mechanism (read before starting)
 
 This replaces the previous plan, whose Task 2 diagnosis ("`p2=Consumed` is a misattribution; rewrite the summary to `p0=Consumed p1=Borrowed p2=Borrowed ret=alias(p0)`") was wrong. That change is **unsound**: dropping `p2` from `ret=alias` erases the fact that the stored element escapes into the returned vector, which for reference-typed elements (`set_at<Vector<Int>>`) would let a later in-place mutation corrupt an alias now living inside the returned vector.
@@ -449,12 +510,21 @@ site (`transfer_summarized_call` ≈1149). That would leave a stored reference e
 **unpublished at the caller**: the caller keeps it unique and can mutate it in place,
 corrupting the copy now living inside the collection. **Unsound.**
 
-Therefore the Step 4 fix **MUST** add an explicit `publish_atom(args[i])` for each retained
-(stored) operand. That forces `esc=Retained → base_role=Published`
-(ownership.tw:3719-3721, 3327), which is the *only* mechanism that publishes the stored
-argument at callers after `p2` leaves the shell alias set. There is **no "drop the publish"
-branch** — field_store's last-use invalidation is exactly the case `set_at` hits. The
-`vector_escape` fixture (Step 2) is the regression guard for precisely this property.
+Therefore the Step 4 fix **MUST** publish each retained (stored) operand **that actually
+escapes**. Publishing forces `esc=Retained → base_role=Published`
+(ownership.tw:3719-3721, 3327), the *only* mechanism that publishes the stored argument at
+callers after `p2` leaves the shell alias set. For the wrapper-param case (`set_at`/`stash`)
+this is unconditional in effect, because a param is not Unique in the generic pass.
+
+> **AS SHIPPED:** publish is gated on `!single_retention` (see Step 4). This is not a "drop
+> the publish" escape hatch for the escaping case — a wrapper param is never `single_retention`
+> in the generic pass, so it still publishes. The gate only exempts a provably-fresh unique
+> single-use move (own==Unique && last-use && single-store), which has no surviving caller
+> alias to protect and whose `[Elem]` fact must be preserved. Without the gate, unconditional
+> publish drops `[Elem]` on every fresh-owned element store (a pessimization) and broke the
+> pre-existing "storing an owned inner into an all-owned vector keeps [Elem]" test. The
+> `vector_escape` fixture (Step 2) guards the escaping (param) case; the `[Elem]` test in
+> `cfg_field_facts_suite` guards the exempted move case.
 
 - [ ] **Step 2: Add the two fixtures**
 
@@ -493,36 +563,62 @@ Expected (pre-fix, i.e. Gap B landed but Gap A not yet): `set_at__Bool` still sh
 
 Do **not** edit `absorb_retained_call_args` — it is shared with the `.Allocate` branch (`Vector.make`/`builder_from`/`builder_freeze`), which must keep absorbing its retained args into the fresh container's shell prov. Instead, add a new `.Update`-only function and route only the `.Update` call site to it.
 
-First add `escape_retained_call_args` next to `absorb_retained_call_args` in `boot/compiler/ownership.tw` (the `publish_atom` line is **mandatory** — see Step 1):
+First add `escape_retained_call_args` next to `absorb_retained_call_args` in `boot/compiler/ownership.tw`.
+
+> **AS SHIPPED (supersedes the original unconditional-publish design):** the publish is gated on
+> `!single_retention`, not unconditional. Unconditional publish clobbered a clean unique move's
+> ownership and dropped the result's `[Elem]` fact (pessimization; broke the pre-existing
+> "storing an owned inner into an all-owned vector keeps [Elem]" test). Gating on
+> `single_retention` (own==Unique && last-use && single-store — the SAME predicate the `.Update`
+> field-fact block reads to keep/drop `[Elem]`) publishes exactly the escaping operands and
+> exempts provably-fresh unique moves. Invariant: the result keeps `[Elem]` iff the operand was
+> NOT published. This still publishes every wrapper param (params are not Unique in the generic
+> pass, nor seeded Unique for a variant unless keyed), so the escape soundness below is preserved.
 
 ```tw
 // COW `.Update` ONLY (see transfer_builtin_call's .Update branch). The stored
-// operands escape into the collection as DEEP elements. They must be PUBLISHED so
-// the caller cannot keep treating them as uniquely owned and later mutate them in
-// place (which would corrupt the copy now living inside the collection). They must
-// NOT join the result's SHELL provenance: carry_base_prov (run immediately before
-// this in the .Update chain) already set the result's shell prov to the COW base's
-// origins only, so a single-param whole-return move can fire. This is a SEPARATE
-// function from absorb_retained_call_args on purpose: the .Allocate path still
-// absorbs its retained args into the fresh container's shell and must stay unchanged.
+// operands escape into the collection as DEEP elements. They must NOT join the
+// result's SHELL provenance: carry_base_prov (run immediately before this in the
+// .Update chain) already set the result's shell prov to the COW base's origins only,
+// so a single-param whole-return move can fire. This is a SEPARATE function from
+// absorb_retained_call_args on purpose: the .Allocate path still absorbs its retained
+// args into the fresh container's shell and must stay unchanged.
 //
-// publish_atom is REQUIRED, not redundant with field_store: field_store publishes
-// only a NON-last-use operand; on a LAST-use store it invalidates instead
-// (set_valid=false -> cap=Consumed, esc stays Borrowed). set_at stores `value` at
-// its last use, so without this publish `value` classifies Borrowed once it leaves
-// the shell alias set (it no longer flows_to_return: an element is at .Elem, not a
-// ret_path) and is NEVER published at the caller -- an unsound escape. The publish
-// forces esc=Retained -> base_role=Published, which publishes the arg at callers.
+// publish_atom is REQUIRED for an ESCAPING operand, not redundant with field_store:
+// field_store publishes only a NON-last-use operand; on a LAST-use store it
+// invalidates instead (set_valid=false -> cap=Consumed, esc stays Borrowed). set_at
+// stores its `value` PARAM at its last use, so without this publish `value` classifies
+// Borrowed once it leaves the shell alias set (it no longer flows_to_return: an element
+// is at .Elem, not a ret_path) and is NEVER published at the caller -- an unsound escape.
+// The publish forces esc=Retained -> base_role=Published.
+//
+// But publish ONLY when the operand actually escapes. The publish and the result's
+// [Elem] field fact are two faces of one decision: keep [Elem] <=> the operand is a
+// clean unique move into the container <=> it must NOT be published. `single_retention`
+// (own==Unique && last-use && single-store) is exactly that predicate, and it is what
+// the .Update field-fact block reads to keep/drop [Elem]. A single-retained unique
+// operand (e.g. a fresh local stored at last use) is genuinely consumed into the
+// result -- no surviving caller alias to protect -- so publishing it would only clobber
+// its ownership and spuriously drop [Elem] (a pessimization, more COW). A param or
+// aliased operand is NOT single-retained (params are not Unique in the generic pass,
+// nor seeded Unique for a variant unless keyed), so it still publishes and escapes
+// soundly. Invariant: result keeps [Elem] iff the operand was not published here.
 fn escape_retained_call_args(
   st: ForwardState,
   args: Vector<Atom>,
   retained: Vector<Int>,
   last: Vector<Int>,
 ) ForwardState {
+  operands := retained_atoms(retained, args)
   for i in retained {
     if i < args.len() {
+      moved := st.single_retention(args[i], last, operands)
       st = .field_store(args[i], last)
-      st = .publish_atom(args[i])
+      st = if moved {
+        st
+      } else {
+        st.publish_atom(args[i])
+      }
     }
   }
   st
@@ -873,22 +969,31 @@ ls /tmp/twinkle-cfg-gap 2>/dev/null
 
 Expected: only intentional source/test/doc files modified; all `--cfg` dumps live under `/tmp/twinkle-cfg-gap` (outside the repo).
 
-- [ ] **Step 4: Report the outcome**
+- [x] **Step 4: Report the outcome**
 
-Report exactly which applies for `sieve`:
+**ACTUAL RESULT — Outcome B (with the single-loop case working):**
 
 ```text
-A. Fixed end to end: real sieve renders `verdict -> fN[unique:p0]` at the loop call
-   site, the carried vector stays non-Shared, census re-baselined and justified,
-   self-host green.
 B. Straight-line + move fixed, loop-carried residual: Gaps B and A landed; the
    loop-carried merge is documented as a separate follow-up.
-C. Gap B only: in-place summary + straight-line verdict landed; Gap A/loop deferred.
 ```
 
-And for `graph_scc.visit`:
+Refinement of B: the STRAIGHT-LINE, sequential-reuse, and SINGLE-LOOP carried cases all
+render `verdict -> fN[unique:p0]` and keep the vector non-`Shared` (pinned by `vector_once`,
+`vector_twice`, `sieve_loop_set`). `set_at__Bool` summarizes the sound target
+`p0=Consumed paths{[]} p1=Borrowed p2=Published ret=alias(p0)`; self-host reaches a fixed
+point; census passing at re-baselined 2200. The REAL sieve does not yet render the in-loop
+verdict — the residual is isolated to **loop NESTING** (not the interleaved read): an
+inner-loop write flows `Shared` through the outer back-edge, so the pessimistic fixpoint
+never bootstraps the nested headers to `Unique`. Follow-up = optimistic loop-header seeding.
+
+For `graph_scc.visit`:
 
 ```text
-- same ownership-propagation class (improved with the sieve fix), or
 - separate recursive/SCC-summary specialization gap (documented follow-up).
 ```
+
+`visit` stays fully conservative (`p0/p1/p2=Published`, every `record_update` persistent /
+`[in_place=false]`, no owned verdict): its threaded record flows into the self-recursive
+`visit` call, so the generic SCC summary publishes it. Needs variant seeding across the SCC,
+not the non-recursive `.Update` wrapper mechanism fixed here.
