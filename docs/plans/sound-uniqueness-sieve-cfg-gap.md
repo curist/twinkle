@@ -28,11 +28,11 @@ Why (traced in `boot/compiler/ownership.tw`):
 - `select_variant` (≈3658) keys an owned variant only for a param with **non-empty `in_place_paths`** whose argument is `arg_unique` at the call. It reads only `s.params[i].in_place_paths`; it never reads `s.ret`.
 - `in_place_paths` is non-empty only when `reconcile_role` (≈3325) returns `.Consumed`, which for a `Borrowed`+`flows_to_return` param requires `has_mut = !dirty.is_empty()`.
 - `dirty` comes from `collect_field_reqs` (≈3549). Its per-op transfer `transfer_flow` (≈3442) grows `dirty` for `.ARecordUpdate` (adds `[.f]`) but routes every `.ACall` through `call_result_fact`, which **returns `ff_none()` for builtins** (comment ≈3411: *"Builtins and unknown callees break the chain"*). `xs[i]=v` is an `.ACall` to the `VECTOR_SET` builtin, so `set_at`'s `p0` is never dirtied → `has_mut=false` → `p0=Borrowed` → empty `in_place_paths` → no verdict. **This is Gap B.**
-- Separately, at the call site `transfer_summarized_call` (≈1122) handles `ret=MayAliasParams(idxs)`: the Stage 4a whole-return move (result takes the arg's unique shell) fires **only when `idxs.len() == 1`**. `set_at`'s return is `MayAliasParams([0,2])` because `absorb_retained_call_args` (≈957, line ≈970) unions the stored element's prov into the result's **shell** prov. With two params it can't move, so it publishes both origins and the result is `Shared` → the loop-carried `flags` degrades. **This is Gap A.**
+- Separately, at the call site `transfer_summarized_call` (≈1122) handles `ret=MayAliasParams(idxs)`: the Stage 4a whole-return move (result takes the arg's unique shell) fires **only when `idxs.len() == 1`**. `set_at`'s return is `MayAliasParams([0,2])` because `absorb_retained_call_args` (≈957, line ≈970) unions the stored element's prov into the result's **shell** prov. With two params it can't move, so it publishes both origins and the result is `Shared` → the loop-carried `flags` degrades. **This is Gap A.** ⚠️ `absorb_retained_call_args` is **shared** with the `.Allocate` branch of `transfer_builtin_call` (≈1054), and Allocate-effect builtins carry retained args too (`Vector.make` fill `[1]`, `builder_from` `[0]`, `builder_freeze` `[0]`). Rewriting it in place would silently publish those accumulators and drop them from the fresh container's shell prov — an unaudited behavior change that muddies the census gate. The Gap A fix is therefore **scoped to `.Update` only** via a dedicated `escape_retained_call_args` function; `absorb_retained_call_args` and the `.Allocate` path stay byte-identical (Task 3).
 
 The sound targets:
 - After Gap B: `set_at__Bool` summary becomes `p0=Consumed paths{[]} p1=Borrowed p2=Consumed paths{[]} ret=alias(p0,p2)`. **At this stage escape tracking rides on `p2` staying in `ret=alias`:** because `p2` is in the shell alias set it `flows_to_return`, so it classifies `Consumed` and every caller in the multi-param `MayAliasParams` branch publishes the stored arg (`transfer_summarized_call` ≈1172). A straight-line unique-vector `set_at` renders `verdict -> fN[unique:p0]`. Render-only: `base_role` `Borrowed`→`Consumed` is identical for escape transfer at call sites (both are no-ops in `transfer_summarized_call`), and `in_place_paths` is read only by `select_variant` (render). Census must be unchanged.
-- After Gap A: `set_at__Bool` summary becomes `p0=Consumed paths{[]} p1=Borrowed p2=Published ret=alias(p0)`. **The escape-tracking mechanism deliberately changes** from "p2 in `ret=alias`" (Gap B stage) to "`p2=Published`" (Gap A): the stored element leaves the result's shell alias set (so `ret=MayAliasParams([0])` and the Stage 4a single-param move can fire), and is instead published directly (`esc=Retained → base_role=Published`), so callers still publish the stored arg via `transfer_summarized_call`'s section-1 `Published` branch (≈1148). A vector element sits at `.Elem`, which is **not** a ret_path candidate, so once `p2` leaves the shell alias set it no longer `flows_to_return` — without the explicit publish it would silently degrade to `Borrowed` (a no-op at call sites, i.e. an **unsound** unpublished escape); the mandatory `publish_atom` in Task 3 is what keeps it `Published`. With both gaps the Stage 4a move fires when the vector arg is unique+last-use and the loop-carried `flags` stays `Unique`. This changes ownership facts, so census may change and must be re-baselined only if the new census is proven sound.
+- After Gap A: `set_at__Bool` summary becomes `p0=Consumed paths{[]} p1=Borrowed p2=Published ret=alias(p0)`. **The escape-tracking mechanism deliberately changes** from "p2 in `ret=alias`" (Gap B stage) to "`p2=Published`" (Gap A): the stored element leaves the result's shell alias set (so `ret=MayAliasParams([0])` and the Stage 4a single-param move can fire), and is instead published directly (`esc=Retained → base_role=Published`), so callers still publish the stored arg via `transfer_summarized_call`'s section-1 `Published` branch (≈1148). A vector element sits at `.Elem`, which is **not** a ret_path candidate, so once `p2` leaves the shell alias set it no longer `flows_to_return` — without the explicit publish it would silently degrade to `Borrowed` (a no-op at call sites, i.e. an **unsound** unpublished escape); the mandatory `publish_atom` in Task 3 is what keeps it `Published`. With both gaps the Stage 4a move fires when the vector arg is unique+last-use and the loop-carried `flags` stays `Unique`. This changes ownership facts, so census may change and must be re-baselined only if the new census is proven sound. The change is applied **only** to the `.Update` call site (new `escape_retained_call_args`); the `.Allocate` path keeps calling `absorb_retained_call_args` unchanged, so any census delta must be attributable solely to `.Update` sites (`set_at`/`append`/`Dict.set`), never to `Vector.make`/`builder_*`.
 - **Known non-goal (out of scope):** `call_result_fact` skips shell paths when propagating a callee's `in_place_paths` transitively (`if !p.is_shell()` ≈3435), so a wrapper *of* a vector wrapper (a summarized user call whose only in-place path is the shell `[]`) does not inherit the in-place requirement. The sieve case calls `set_at` directly, so this does not block it; a double wrapper over a pure vector shell update is a separate, non-soundness follow-up.
 
 ## Global Constraints
@@ -42,7 +42,8 @@ The sound targets:
 - Before committing any fixture assertion, run `target/twk ir <fixture>.tw --cfg` once and reconcile the assertion text against the current render.
 - Write all `--cfg` dumps under `/tmp/twinkle-cfg-gap/` (outside the repo).
 - Each task that changes tracked files ends with `git status --short` and a commit using the task's suggested message after its verification command passes.
-- **Soundness gating:** Gap B (Task 2) must leave the COW census unchanged. Gap A (Task 3) may change the census; it must pass `make stage2` (self-host) and any census delta must be justified as sound (fewer or equal live aliases, never more in-place mutation of a still-live value).
+- **Soundness gating:** Gap B (Task 2) must leave the COW census unchanged. Gap A (Task 3) may change the census; it must pass `make stage2` (self-host) and any census delta must be justified as sound (fewer or equal live aliases, never more in-place mutation of a still-live value). Because Gap A is scoped to the `.Update` path, every changed census site must correspond to a COW **update** (`set_at`/`append`/`Dict.set`/`Dict.remove`), never to a `Vector.make`/`builder_from`/`builder_freeze` allocation — an allocation-site delta means the scoping leaked and must be investigated before committing.
+- **`select_variant` is currently render/test-only:** it is read by fixtures and the CFG dump, not consumed by codegen (the "4c-recording pass" that would drive specialization is future work). This is *why* Gap B can create new owned variants for every `.Update` wrapper without moving the census. If anyone wires `select_variant` output into compute before this lands, Task 2 stops being census-neutral — re-check that assumption if the Task 2 census gate trips.
 - Do not run the full `cargo test`; run only the targeted `cow_analysis` census plus the boot suite.
 
 ---
@@ -120,7 +121,10 @@ it, for two independent reasons:
   element's provenance into the result's SHELL provenance, so `set_at`'s return is
   `MayAliasParams([0,2])`. The Stage 4a whole-return move only fires for a single
   aliased param, so the call publishes both origins and the loop-carried vector
-  degrades to `Shared`.
+  degrades to `Shared`. Note `absorb_retained_call_args` is shared with the
+  `.Allocate` branch (`Vector.make`/`builder_from`/`builder_freeze` retain args too),
+  so the fix is scoped to a new `.Update`-only `escape_retained_call_args` rather than
+  rewriting the shared function.
 
 Escape tracking for the stored reference element is required, but the mechanism
 changes across the two fixes:
@@ -325,6 +329,8 @@ fn cow_update_result_fact(
 }
 ```
 
+**Note — Gap B is not vector-specific.** `cow_update_result_fact` fires for *any* `.Update` builtin with a `cow_base_arg`, so `Dict.set`/`Dict.remove`/builder-push wrappers also start dirtying their base and may newly render `verdict -> ...[unique:...]`. This is the intended generalization (a COW update is a COW update), but it means a `Dict`-wrapper verdict appearing in some unrelated suite dump is **expected**, not a regression. The new fixtures cover only vectors; do not treat non-vector verdicts as failures.
+
 Then update the single caller inside `collect_field_reqs` (the line `st = transfer_flow(st, table, inst.op, inst.anf_local.id)`) to pass `sem`:
 
 ```tw
@@ -410,23 +416,27 @@ Expected: only the summary logic, the two fixtures, and the suite are staged.
 ### Task 3: Gap A — keep the stored element out of the result's shell provenance so the whole-return move can fire
 
 **Files:**
-- Read: `boot/compiler/ownership.tw` (`absorb_retained_call_args` ≈957, `field_store`, `transfer_summarized_call` ≈1122 including the Stage 4a move at ≈1166, `publish_atom`)
+- Read: `boot/compiler/ownership.tw` (`absorb_retained_call_args` ≈957, `transfer_builtin_call` ≈1043 — note the `.Allocate` call at ≈1054 and the `.Update` call at ≈1065, `field_store`, `publish_atom`/`publish_local`, `transfer_summarized_call` ≈1122 including the Stage 4a move at ≈1166)
+- Read: `boot/compiler/opt/semantics.tw` (the Allocate-effect builtins with retained args: `Vector.make` `[1]`, `builder_from` `[0]`, `builder_freeze` `[0]` — these must stay unchanged)
 - Modify: `boot/compiler/ownership.tw`
 - Create: `boot/tests/fixtures/cfg/sound_uniqueness/vector_twice.tw`
 - Create: `boot/tests/fixtures/cfg/sound_uniqueness/vector_escape.tw`
 - Modify: `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`
 
 **Interfaces:**
-- Consumes: the COW-update forward transfer (`transfer_builtin_call` → `absorb_retained_call_args`).
+- Consumes: the COW-update forward transfer (`transfer_builtin_call`'s `.Update` branch only).
 - Produces: `set_at`'s return classified `MayAliasParams([0])` (rendered `ret=alias(p0)`), with the stored element soundly published, so a unique vector argument MOVES and the result stays `Unique`.
+- **Scope guard:** the fix is a new `escape_retained_call_args` used only by the `.Update` branch. `absorb_retained_call_args` and the `.Allocate` branch are left byte-identical, so `Vector.make`/`builder_from`/`builder_freeze` summaries do not move.
 
 - [ ] **Step 1: Confirm the escape-publish requirement in `field_store` (already verified — do not re-open)**
 
-Read `field_store`, `publish_atom`, and `consume_base` to ground the fix:
+Read `field_store`, `publish_atom`/`publish_local`, and `consume_base` to ground the fix:
 
 ```bash
-rg -n "fn field_store|fn publish_atom|fn consume_base" boot/compiler/ownership.tw
+rg -n "fn field_store|fn publish_atom|fn publish_local|fn consume_base" boot/compiler/ownership.tw
 ```
+
+**Confirm before writing the fix (one line):** `publish_local` records the escape (`esc=Retained`) *independently of* the local's validity flag — i.e. calling `publish_atom` on an operand that `field_store` just invalidated (`set_valid=false`) still publishes it. The Step 4 fix runs `field_store` then `publish_atom` in that order and relies on the publish landing regardless. If `publish_local` were guarded by validity (it is not, per the current source), the ordering would need to flip; verify, don't assume.
 
 Verified fact — treat as a requirement, **not** an open question: `field_store` (≈868)
 publishes the stored operand **only on a NON-last-use** path; on a **LAST-use** store it
@@ -479,33 +489,36 @@ target/twk ir boot/tests/fixtures/cfg/sound_uniqueness/vector_escape.tw --cfg | 
 
 Expected (pre-fix, i.e. Gap B landed but Gap A not yet): `set_at__Bool` still shows `ret=alias(p0,p2)`; `twice` renders a verdict for the FIRST call only (the first call publishes `flags`, so the second no longer sees it unique). `vector_escape` does `xs[i]=v` inline, so there is **no** `fn set_at` in its dump — inspect `fn stash`'s own summary, which pre-Gap-A reads `p0=Consumed paths{[]} p1=Borrowed p2=Consumed paths{[]} ret=alias(p0,p2)`. Record that exact `stash` summary as the escape baseline; after Gap A it must become `... p2=Published ret=alias(p0)`.
 
-- [ ] **Step 4: Make the stored element a deep escape, not a shell alias**
+- [ ] **Step 4: Make the stored element a deep escape, not a shell alias (`.Update` only)**
 
-In `absorb_retained_call_args`, stop unioning the retained (stored) element's provenance into the result's shell prov. The result's shell prov must carry only the base's origins; the stored element escapes deep and is published. Replace the body of `absorb_retained_call_args` with (the `publish_atom` line is **mandatory** — see Step 1):
+Do **not** edit `absorb_retained_call_args` — it is shared with the `.Allocate` branch (`Vector.make`/`builder_from`/`builder_freeze`), which must keep absorbing its retained args into the fresh container's shell prov. Instead, add a new `.Update`-only function and route only the `.Update` call site to it.
+
+First add `escape_retained_call_args` next to `absorb_retained_call_args` in `boot/compiler/ownership.tw` (the `publish_atom` line is **mandatory** — see Step 1):
 
 ```tw
-fn absorb_retained_call_args(
+// COW `.Update` ONLY (see transfer_builtin_call's .Update branch). The stored
+// operands escape into the collection as DEEP elements. They must be PUBLISHED so
+// the caller cannot keep treating them as uniquely owned and later mutate them in
+// place (which would corrupt the copy now living inside the collection). They must
+// NOT join the result's SHELL provenance: carry_base_prov (run immediately before
+// this in the .Update chain) already set the result's shell prov to the COW base's
+// origins only, so a single-param whole-return move can fire. This is a SEPARATE
+// function from absorb_retained_call_args on purpose: the .Allocate path still
+// absorbs its retained args into the fresh container's shell and must stay unchanged.
+//
+// publish_atom is REQUIRED, not redundant with field_store: field_store publishes
+// only a NON-last-use operand; on a LAST-use store it invalidates instead
+// (set_valid=false -> cap=Consumed, esc stays Borrowed). set_at stores `value` at
+// its last use, so without this publish `value` classifies Borrowed once it leaves
+// the shell alias set (it no longer flows_to_return: an element is at .Elem, not a
+// ret_path) and is NEVER published at the caller -- an unsound escape. The publish
+// forces esc=Retained -> base_role=Published, which publishes the arg at callers.
+fn escape_retained_call_args(
   st: ForwardState,
-  result: Int,
   args: Vector<Atom>,
   retained: Vector<Int>,
   last: Vector<Int>,
 ) ForwardState {
-  // The stored operands escape into the collection as DEEP elements. They must be
-  // PUBLISHED so the caller cannot keep treating them as uniquely owned and later
-  // mutate them in place (which would corrupt the copy now living inside the
-  // collection). They must NOT join the result's SHELL provenance: the shell
-  // identity aliases only the COW base, so a single-param whole-return move can fire.
-  // (Previously the stored prov was unioned into the shell, forcing
-  // MayAliasParams([base, value]) and blocking the move.)
-  //
-  // publish_atom is REQUIRED, not redundant with field_store: field_store publishes
-  // only a NON-last-use operand; on a LAST-use store it invalidates instead
-  // (set_valid=false -> cap=Consumed, esc stays Borrowed). set_at stores `value` at
-  // its last use, so without this publish `value` classifies Borrowed once it leaves
-  // the shell alias set (it no longer flows_to_return: an element is at .Elem, not a
-  // ret_path) and is NEVER published at the caller -- an unsound escape. The publish
-  // forces esc=Retained -> base_role=Published, which publishes the arg at callers.
   for i in retained {
     if i < args.len() {
       st = .field_store(args[i], last)
@@ -515,6 +528,29 @@ fn absorb_retained_call_args(
   st
 }
 ```
+
+Then, in `transfer_builtin_call`'s `.Update` branch (≈1065), retarget only that call. Change:
+
+```tw
+      st = .consume_call_base(result, cs, args, last).carry_base_prov(result, cs, args).absorb_retained_call_args(
+        result,
+        args,
+        ri,
+        last,
+      )
+```
+
+to:
+
+```tw
+      st = .consume_call_base(result, cs, args, last).carry_base_prov(result, cs, args).escape_retained_call_args(
+        args,
+        ri,
+        last,
+      )
+```
+
+Leave the `.Allocate` branch's `absorb_retained_call_args(result, args, ri, last)` call (≈1054) **untouched**. `escape_retained_call_args` drops the `result` parameter deliberately: it never writes result prov, because `carry_base_prov` already established the base-only shell prov for the `.Update` result.
 
 - [ ] **Step 5: Add the tests**
 
@@ -594,6 +630,8 @@ make stage2
 
 Expected: `make stage2` (self-host) succeeds. The census may change: a sound change only ever removes live aliases (enabling more moves), never adds in-place mutation of a value that is still live. If the census total moved, diff the per-site census against the baseline and confirm every changed site corresponds to a vector that is provably unique + last-use at the call. If any site now elides a copy for a still-aliased vector, the change is unsound — revert and reconsider. Record the justified new baseline number in the commit body.
 
+**Scope check (the change touches only `.Update`):** every changed census site must be a COW **update** (`set_at`/`append`/`Dict.set`/`Dict.remove`). Because Step 4 left `absorb_retained_call_args` and the `.Allocate` branch untouched, a moved site at a `Vector.make`/`builder_from`/`builder_freeze` allocation means the scoping leaked — stop and investigate rather than re-baselining. If unsure a delta is `.Update`-only, dump a fixture that uses `Vector.make(n, x)` / `builder_*` and confirm its summary is byte-identical to pre-Gap-A.
+
 - [ ] **Step 8: Format and commit**
 
 Run:
@@ -608,14 +646,17 @@ git add boot/compiler/ownership.tw \
   boot/tests/fixtures/cfg/sound_uniqueness/vector_twice.tw \
   boot/tests/fixtures/cfg/sound_uniqueness/vector_escape.tw \
   boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw
-git commit -m "ownership: COW-store escapes deep, not into the result shell
+git commit -m "ownership: COW-update store escapes deep, not into the result shell
 
 A stored element previously joined the result's shell provenance, forcing
 set_at's return to MayAliasParams([base,value]) and blocking the Stage 4a
-whole-return move, so a unique vector published to Shared. Publish the stored
-element as a deep escape and keep only the base in the shell alias set, so a
-unique+last-use vector argument moves and the result stays Unique. Escape
-tracking preserved (vector_escape guard). Census re-baselined; self-host green."
+whole-return move, so a unique vector published to Shared. Add a .Update-only
+escape_retained_call_args that publishes the stored element as a deep escape and
+keeps only the base in the shell alias set, so a unique+last-use vector argument
+moves and the result stays Unique. The shared absorb_retained_call_args and the
+.Allocate path (Vector.make/builder_*) are left unchanged, so allocation
+summaries do not move. Escape tracking preserved (vector_escape guard). Census
+re-baselined; self-host green."
 ```
 
 Expected: only the transfer logic, the two fixtures, and the suite are staged.
