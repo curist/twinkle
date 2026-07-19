@@ -1,5 +1,7 @@
 # Phase 6 Part 2 — Variant/Decision Machinery Implementation Plan
 
+> **Status: archived.** Phase 6 analysis work landed; remaining variant generation, routing, and deeper path/variant machinery are tracked by the codegen/migration tracks.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn the parameter-side ownership facts from Part 1 into per-call-site ownership-specialization *decisions* — the analysis-only `VariantId`/`SpecializationFacts` the design's Phase 6 produces — starting with the variant-identity & encoding substrate every later stage builds on.
@@ -31,7 +33,7 @@ Part 1 (landed, commits `fba33602`/`e1492fcb`) reconciled `ParamSummary` to `{ b
 
 ## Stage 1: Variant identity & encoding infrastructure
 
-**Current progress:** Stage 1 is COMPLETE (commits `54c727cd` types, `5e8396f1` canonicalization, `dd12fbae` interner + `site_key`). Verified: 3050 boot tests green, self-host fixed point reached, `--census` 0 in-place, two builds byte-identical. Next Phase 6 work is **Stage 2a — dirty-path record-update requirements** (plan: `docs/plans/2026-07-18-phase6-stage2a-dirty-path-requirements.md`); Stage 2 was split into 2a/2b/2c (see the stage map).
+**Current progress:** Stage 1 is COMPLETE (commits `54c727cd` types, `5e8396f1` canonicalization, `dd12fbae` interner + `site_key`). Verified: 3050 boot tests green, self-host fixed point reached, `--census` 0 in-place, two builds byte-identical. Next Phase 6 work is **Stage 2a — dirty-path record-update requirements** (plan: `docs/plans/archive/2026-07-18-phase6-stage2a-dirty-path-requirements.md`); Stage 2 was split into 2a/2b/2c (see the stage map).
 
 **What it delivers:** a self-contained leaf module owning the variant-identity types and their canonicalization + deterministic interning. No consumer wires it yet (Stages 3–5 do), but it is fully testable in isolation and it resolves the **load-bearing determinism/encoding question** the design flags (`variant_key`/`site_key` must be pure functions of canonical inputs, `VariantId` numbering stable across builds — acceptance #14). Every later stage keys its memo and decision tables on this module.
 
@@ -490,7 +492,7 @@ These stages are **scoped, not coded** here — their exact TDD steps depend on 
 > flow-aware split below. Each has its own detailed plan.
 
 - **Stage 2a — dirty-path record-update requirements** (**plan:**
-  `docs/plans/2026-07-18-phase6-stage2a-dirty-path-requirements.md`).
+  `docs/plans/archive/2026-07-18-phase6-stage2a-dirty-path-requirements.md`).
   A self-contained forward dataflow tracking per value `{origin param, dirtied field
   paths}`; `ARecordUpdate` copies base dirty + adds `[f]`, `AAssign` copies; the
   **returned atom's** dirty set yields each param's requirements (so a discarded

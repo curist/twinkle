@@ -1,7 +1,9 @@
 # Phase 6 Part 2, Stage 2 — Field-Granular `in_place_paths` Implementation Plan
 
+> **Status: archived.** Phase 6 analysis work landed; remaining variant generation, routing, and deeper path/variant machinery are tracked by the codegen/migration tracks.
+
 > **⚠️ SUPERSEDED (2026-07-18) — DO NOT EXECUTE.** Review found this plan's direct-parameter syntactic scan does not survive real lowering: (1) real `add_type` is chained helper calls (`resolver.tw:491`), no direct `ARecordUpdate`; (2) `RecordUpdate` lowers to a **fresh SSA local** (`lower_anf.tw:785`), so in an update chain only the *first* update has `base = param` — the scan misses the rest, and the multi-field test used a shape real lowering never produces; (3) it checks whole-param flow, not update-*result* flow, so `tmp := (p.f=v); return p` is a false positive. Replaced by a **flow-aware dirty-path** design, split into two stages:
-> - **Stage 2a** — `docs/plans/2026-07-18-phase6-stage2a-dirty-path-requirements.md` (intraprocedural prov/value-flow record-update requirements; acceptance = a `register_type_entry`-shaped mutator, NOT `add_type`).
+> - **Stage 2a** — `docs/plans/archive/2026-07-18-phase6-stage2a-dirty-path-requirements.md` (intraprocedural prov/value-flow record-update requirements; acceptance = a `register_type_entry`-shaped mutator, NOT `add_type`).
 > - **Stage 2b** — helper-call summary propagation (claims `add_type`); its own plan, written after 2a lands.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

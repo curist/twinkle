@@ -99,6 +99,20 @@ Related historical context outside this folder:
 
 ---
 
+## Archived Sound Uniqueness Analysis Plans
+
+| Plan | Description |
+|------|-------------|
+| [2026-07-18-phase6-param-side-summary-facts.md](2026-07-18-phase6-param-side-summary-facts.md) | Phase 6 Part 1 parameter-side summary facts: `ParamRole`, `flows_to_return`, and shell `in_place_paths` for consumed params |
+| [2026-07-18-phase6-part2-variant-machinery.md](2026-07-18-phase6-part2-variant-machinery.md) | Phase 6 Part 2 Stage 1 variant identity, canonical keys, and deterministic `VariantId` encoding |
+| [2026-07-18-phase6-stage2-field-granular-inplace-paths.md](2026-07-18-phase6-stage2-field-granular-inplace-paths.md) | Superseded Stage 2 field-granular `in_place_paths` plan; execution split into the Stage 2a/2b plans below |
+| [2026-07-18-phase6-stage2a-dirty-path-requirements.md](2026-07-18-phase6-stage2a-dirty-path-requirements.md) | Stage 2a dirty-path record-update requirement analysis feeding field-granular `in_place_paths` |
+| [2026-07-19-phase6-stage2b-helper-call-propagation.md](2026-07-19-phase6-stage2b-helper-call-propagation.md) | Stage 2b helper-call propagation of in-place field requirements plus the generic-pass boundary guard |
+| [2026-07-19-phase6-stage3-owned-entry-reanalysis.md](2026-07-19-phase6-stage3-owned-entry-reanalysis.md) | Stage 3 owned-entry `summarize_variant` re-analysis for shell-keyed parameters |
+| [2026-07-19-phase6-stage4a-whole-return-move.md](2026-07-19-phase6-stage4a-whole-return-move.md) | Stage 4a whole-return move for proven-unique `MayAliasParams` arguments |
+| [2026-07-19-phase6-stage4c-call-site-decision.md](2026-07-19-phase6-stage4c-call-site-decision.md) | Stage 4c pure call-site variant-selection logic (`select_variant`) |
+| [2026-07-19-phase6-completion-decision-verdicts.md](2026-07-19-phase6-completion-decision-verdicts.md) | Phase 6 completion: render owned per-call-site specialization verdicts in `twk ir --cfg` |
+
 ## Archived Cross-Cutting Plans
 
 | Plan | Description |

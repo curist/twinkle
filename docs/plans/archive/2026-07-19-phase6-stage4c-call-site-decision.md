@@ -1,5 +1,7 @@
 # Phase 6 Part 2, Stage 4c — Call-Site Variant Selection (decision core) Implementation Plan
 
+> **Status: archived.** Phase 6 analysis work landed; remaining variant generation, routing, and deeper path/variant machinery are tracked by the codegen/migration tracks.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A pure function `select_variant(func_id, callee_summary, arg_unique)` that computes the **VariantId a call site selects** — the D4 shell-level key selection: each callee parameter the summary says it *consumes* (non-empty `in_place_paths`) whose argument is proven `Unique + last-use` contributes its paths to the owned `UniqueKey`; an empty key means the generic variant. This is the analysis core of the per-call-site specialization decision, unit-testable in isolation from the recording/memo machinery.

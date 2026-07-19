@@ -1,5 +1,7 @@
 # Phase 6 Part 1 — Parameter-Side Generic-Pass Facts Implementation Plan
 
+> **Status: archived.** Phase 6 analysis work landed; remaining variant generation, routing, and deeper path/variant machinery are tracked by the codegen/migration tracks.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Reconcile the interprocedural `ParamSummary` schema to the canonical Phase 6 `base_role` / `in_place_paths` / `flows_to_return` model and populate + render the coarse (shell-`[]`) parameter-side ownership facts in the existing generic summary pass.

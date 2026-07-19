@@ -1,5 +1,7 @@
 # Phase 6 Part 2, Stage 2a — Dirty-Path Record-Update Requirements Implementation Plan
 
+> **Status: archived.** Phase 6 analysis work landed; remaining variant generation, routing, and deeper path/variant machinery are tracked by the codegen/migration tracks.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A function that threads a parameter through a chain of record-update SSA results and returns the updated value classifies that parameter as `Consumed` and reports the updated field paths — via a self-contained **flow-aware dirty-path analysis** that matches real ANF lowering and ignores updates whose result never reaches the return.

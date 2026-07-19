@@ -20,25 +20,20 @@ track README(s). The focused track docs own the detailed checklists.
 
 ## Current focus
 
-**The analysis track is nearly finished.** Phases 0-5 produce auditable CFG
-ownership facts, liveness, *minimal* summaries, record shell/field and
-nested-collection ownership, and transport-wrapper / `Result`-payload return-path
-summaries — all without changing generated code. **Phase 6 (2026-07-19) has landed
-its ownership-recovery substages** and closed the Phase 5 param-threaded deferral:
-param-side `in_place_paths` (2a/2b), owned-entry re-analysis `summarize_variant` (3),
-the whole-return move so `add_type`-callers recover `Consumed` (4a), and the
-per-call-site decision *logic* `select_variant` (4c-core). Two design items were
-**re-scoped to codegen** by spikes (field-granular `field_own` seeding has no summary
-observable; the variant memo/SCC fixpoint re-analyzes a specialized *body* only for
-emission, not for the decision). The **only** analysis work left to close Phase 6 is
-the per-call-site decision **recording pass + rendering** in `twk ir --cfg`.
+**The analysis track is complete through Phase 6 (2026-07-19).** Phases 0-6
+produce auditable CFG ownership facts, liveness, summaries, record shell/field and
+nested-collection ownership, transport-wrapper / `Result`-payload return-path
+summaries, owned-entry recovery, call-site variant selection, and per-call-site
+owned-decision verdicts in `twk ir --cfg` — all without changing generated code.
+Two design items were **re-scoped to codegen** by spikes (field-granular `field_own`
+seeding has no summary observable; the variant memo/SCC fixpoint re-analyzes a
+specialized *body* only for emission, not for the analysis decision).
 
-The governing rule is **all analysis precision lands before any codegen.** So the
-current focus is the last analysis step — the Phase 6 decision recording/rendering —
-after which the **codegen track** begins: ANF-keyed decision handoff/fallback
-plumbing (consuming the recorded decisions + the re-scoped variant memo/SCC fixpoint
-and field-granular seeding), then narrow emitted slices for the existing mutable
-hooks.
+The governing rule is **all analysis precision lands before any codegen.** That gate
+is now satisfied, so the current focus moves to the **codegen track**: ANF-keyed
+decision handoff/fallback plumbing (consuming the recorded decisions + the
+re-scoped variant memo/SCC fixpoint and field-granular seeding), then narrow emitted
+slices for the existing mutable hooks.
 
 ## Standing invariants
 
@@ -66,19 +61,18 @@ Analysis phases (architecture 1A-1E; all analysis precision lands before any cod
 - Phase 5: transport-wrapper and `Result`-payload return-path summaries (1D) — **done**
   (tag-aware variant meet; one param-threaded deferral to Phase 6). Plan archived:
   [../archive/sound-uniqueness-phase5-plan.md](../archive/sound-uniqueness-phase5-plan.md).
-- Phase 6: ownership-specialization decision facts (1E) — **recovery substages done**
+- Phase 6: ownership-specialization decision facts (1E) — **done**
   (2a/2b `in_place_paths`, 3 owned-entry re-analysis, 4a whole-return move, 4c-core
-  `select_variant`; closes the Phase 5 param-threaded gate). Remaining analysis work:
-  the per-call-site decision **recording pass + rendering**. Variant memo/SCC fixpoint
-  + field-granular seeding re-scoped to codegen (spike findings). Dated plans:
-  `docs/plans/2026-07-19-phase6-*.md`.
+  `select_variant`, and completion decision verdict rendering in `twk ir --cfg`).
+  Variant memo/SCC fixpoint + field-granular seeding are re-scoped to codegen
+  (spike findings). Dated execution plans are archived under `docs/plans/archive/`.
 
 ### 2. Codegen track
 
 Detailed checklist: [codegen/README.md](codegen/README.md)
 
-This track starts only after the **full** analysis track — through the Phase 6
-(1E) specialization decisions — is complete and its facts are trustworthy. It is
+This track starts after the completed Phase 6 (1E) specialization decisions; its
+input facts are now trustworthy. It is
 intentionally split more finely than a single codegen milestone: first operation
 catalogs and dry-run decisions (Phase 7), then narrow emitted slices for vectors,
 builders, dicts, and records (Phase 8).

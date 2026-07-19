@@ -171,7 +171,7 @@ generic) — no combinatorial blow-up. No code is emitted.
 > `MayAliasParams(k)` argument that is proven `Unique + last-use`, rather than
 > publishing it). The `OwnedFromParam` return representation is deferred to the
 > codegen track / a later transitive-propagation refinement. See
-> `docs/plans/2026-07-19-phase6-stage4a-whole-return-move.md`.
+> `docs/plans/archive/2026-07-19-phase6-stage4a-whole-return-move.md`.
 
 > **Implementation note (Stage 4b — field-granular seeding is NOT an analysis
 > concern; spike finding 2026-07-19).** D10 below and the D6 mixed-ownership target
@@ -209,10 +209,12 @@ generic) — no combinatorial blow-up. No code is emitted.
 >   specializes). `ConsumedPaths` + the D6 disjoint-sibling read-rule + field-granular
 >   seeding ride to codegen with them.
 >
-> So the **only remaining analysis work** to close Phase 6 is the **recording pass**
-> (walk call sites, emit a `CallDecision` per site, using the generic summary +
-> `arg_unique`) + **rendering** (`twk ir --cfg`) — which completes Case B∩C. See
-> `docs/plans/2026-07-19-phase6-stage4c-call-site-decision.md`.
+> The analysis-track completion slice wires that direct-mutator decision into
+> `block_verdicts` and renders owned decisions in `twk ir --cfg`, completing the
+> flagship Case B∩C before codegen. Generic decisions are intentionally silent in
+> this render slice; machine-readable `SpecializationFacts`, `ConsumedPaths`, and
+> recursive/param-threaded owned-summary demand are codegen-track concerns. See
+> `docs/plans/archive/2026-07-19-phase6-completion-decision-verdicts.md`.
 
 **Mixed-ownership record (path-aware gate, D6):** a caller with a **fresh `.types`
 but shared `.values`** still selects `add_type[unique:0,.types]` — a downward-closed

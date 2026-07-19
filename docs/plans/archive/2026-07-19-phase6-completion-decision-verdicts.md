@@ -1,5 +1,7 @@
 # Phase 6 Completion — Per-Call-Site Decision Verdicts Implementation Plan
 
+> **Status: archived.** Phase 6 analysis work landed; remaining variant generation, routing, and deeper path/variant machinery are tracked by the codegen/migration tracks.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Render the per-call-site ownership-specialization decision in `twk ir --cfg` — the last analysis step of Phase 6. At each user call whose argument is proven owned, emit a verdict naming the owned variant the caller may select (`build_env#… -> f{add_type}[unique:…]`), so the specialization story is **verifiable before any codegen**. This closes the Phase 6 exit criterion (Case B∩C) and completes the analysis track.

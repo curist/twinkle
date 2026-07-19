@@ -1,5 +1,7 @@
 # Phase 6 Part 2, Stage 4a — Whole-Return Move Implementation Plan
 
+> **Status: archived.** Phase 6 analysis work landed; remaining variant generation, routing, and deeper path/variant machinery are tracked by the codegen/migration tracks.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** When a summarized call's return **aliases exactly one parameter** (`ret = MayAliasParams(k)`) and that argument is proven **`Unique` + last-use** at the call, **move** it (the result takes the argument's unique region; the argument is consumed) instead of publishing it — closing the whole-value recovery that Stages 2b/3 deferred, and improving generic precision for fresh-unique arguments.

@@ -1,19 +1,14 @@
 # Analysis Track
 
-**Status:** Phases 0-5 done. **Phase 6 — nearly complete (2026-07-19):** the
-ownership *recovery* substages are landed and the Phase 5 param-threaded deferral is
-closed — param-side `in_place_paths` (2a/2b), owned-entry re-analysis
-`summarize_variant` (3), the whole-return move so `add_type`-callers recover
-`Consumed` (4a), and the per-call-site decision *logic* `select_variant` (4c-core).
-Two design items were **re-scoped to codegen** by spikes: field-granular `field_own`
-seeding (Stage "4b") has no summary observable, and the variant memo + SCC fixpoint
-(D12) re-analyzes a specialized *body* only for emission, not for the decision. The
-**only** analysis work left to close Phase 6 is the decision **recording pass +
-rendering** (per-call-site `owned` vs `generic` in `twk ir --cfg`). Generated code
-unchanged throughout, census 0 in-place. All analysis precision lands *before* any
-codegen, per
-[../architecture.md](../architecture.md)'s governing rule that all analysis
-precision precedes codegen.
+**Status:** Phases 0-6 done (2026-07-19). Phase 6 closed the Phase 5
+param-threaded deferral and now prints the per-call-site owned specialization
+decision in `twk ir --cfg`; generated code remains unchanged and the census stays
+0 in-place. Two design items were **re-scoped to codegen** by spikes:
+field-granular `field_own` seeding (Stage "4b") has no summary observable, and the
+variant memo + SCC fixpoint (D12) re-analyzes a specialized *body* only for
+emission, not for the analysis decision. All analysis precision lands *before* any
+codegen, per [../architecture.md](../architecture.md)'s governing rule that all
+analysis precision precedes codegen.
 
 This track owns the proof-producing half of sound uniqueness: CFG structure,
 ownership facts, liveness/last-use, summaries, candidate-classification inputs,
@@ -222,10 +217,10 @@ story is verifiable before any code is emitted. Canonical semantics:
   flagship Case B∩C; a param-threaded/recursive callee needs its owned summary / the
   SCC fixpoint (re-scoped to codegen), with the recording pass sound (under-approximate
   to generic) without them.
-- [ ] **Decision recording pass + rendering** *(the remaining analysis work).* Walk
-  call sites, emit a `CallDecision` per site, and print `build_env#… ->
-  add_type[unique:0,.types]` vs `branch_env#… -> add_type[generic]` in `twk ir --cfg`.
-  Decisions only — no cloned variants emitted.
+- [x] **Decision recording pass + rendering.** Walk call sites and render the
+  selected owned variant for direct user calls whose arguments are proven owned;
+  generic decisions intentionally print no verdict in this slice to keep `--cfg`
+  readable. Decisions only — no cloned variants emitted.
 - [~] **SCC-granularity variant fixpoint + demand-driven memo + cap (D12)** —
   **re-scoped to codegen.** These re-analyze a specialized *body* (needed only when
   codegen emits one, incl. recursive Case V); the analysis *decision* is computed from

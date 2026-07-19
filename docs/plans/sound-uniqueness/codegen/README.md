@@ -1,10 +1,9 @@
 # Codegen Track
 
-**Status:** Planned; starts only after the **full** analysis track is complete —
-through record/field ownership (analysis Phase 4), transport-wrapper /
-`Result`-payload return-path summaries (Phase 5), and ownership-specialization
-decision facts (Phase 6) — so codegen consumes a trustworthy, complete fact set
-rather than rediscovering ownership. (These "Codegen Phase 7A/…" labels are the
+**Status:** Ready to start; the full analysis track is complete through Phase 6
+(record/field ownership, transport-wrapper / `Result`-payload return-path summaries,
+and ownership-specialization decision facts), so codegen consumes a trustworthy fact
+set rather than rediscovering ownership. (These "Codegen Phase 7A/…" labels are the
 codegen track's own local numbering; see the phase-numbering note in
 [../analysis/README.md](../analysis/README.md).)
 
