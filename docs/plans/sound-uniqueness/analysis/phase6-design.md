@@ -173,6 +173,47 @@ generic) — no combinatorial blow-up. No code is emitted.
 > codegen track / a later transitive-propagation refinement. See
 > `docs/plans/2026-07-19-phase6-stage4a-whole-return-move.md`.
 
+> **Implementation note (Stage 4b — field-granular seeding is NOT an analysis
+> concern; spike finding 2026-07-19).** D10 below and the D6 mixed-ownership target
+> above are written as if seeding a `[.f]` slot `Unique` makes the owned-entry
+> re-analysis "classify mixed-ownership records correctly" at the summary level. **It
+> does not.** A spike that threaded a full field-granular `field_own` seed found that
+> `summarize_variant(f, key)` renders *identically* whether a field is seeded or not:
+> `base_role` derives from shell `own`/`valid`, `in_place_paths` from
+> `collect_field_reqs`, and `ret` abstracts field ownership away. Field-level ownership
+> therefore affects only (1) **in-place emission** (which persistent op becomes an
+> in-place mutation — codegen, Phases 7–8) and (2) the mixed-ownership **`consume_dead`
+> read-rule** at a call site, and *that* is driven by the callee's `in_place_paths`
+> (already in the generic summary), not by re-analysis seeding. So field-granular
+> seeding is a **codegen-track** concern; there is no standalone analysis "Stage 4b."
+> The `.types`-consumed-but-`.values`-readable *decision* (D6) is a call-site
+> `ConsumedPaths` rule, also carried to codegen (see the Stage-4c note).
+
+> **Implementation note (Stage 4c — decision core done; recording/memo split).** The
+> per-call-site decision *logic* is `ownership.select_variant(func_id, callee_summary,
+> arg_unique)` (executed 2026-07-19): a param the callee consumes (non-empty
+> `in_place_paths`) whose arg is `arg_unique` (= `consume_dead` at the shell)
+> contributes its paths to the owned key; canonicalized via `variant_id`; empty ⇒
+> generic. **Which summary it reads is the key to the split:**
+> - For a **direct-mutator callee** (`add_type`, whose *generic* summary is already
+>   `Consumed` with `in_place_paths{[],[.types]}` because it mutates directly), the
+>   decision reads the **generic** summary — no owned-variant summary, no memo. This
+>   covers the flagship **Case B∩C** (`build_env`/`branch_env` → `add_type`).
+> - For a **param-threaded callee** (a function whose *generic* summary is
+>   `Published`/empty because it leaks under the generic pass, and which only recovers
+>   `Consumed` under owned entry), the correct decision needs its **owned** summary
+>   (`summarize_variant`), and **recursive** owned variants need the **SCC fixpoint
+>   (D12)**. Without them the recording pass is still **sound** — it under-approximates
+>   to `generic` — so this is a precision refinement, **re-scoped to the codegen track
+>   with the variant memo/SCC** (codegen demands the owned *body* anyway when it
+>   specializes). `ConsumedPaths` + the D6 disjoint-sibling read-rule + field-granular
+>   seeding ride to codegen with them.
+>
+> So the **only remaining analysis work** to close Phase 6 is the **recording pass**
+> (walk call sites, emit a `CallDecision` per site, using the generic summary +
+> `arg_unique`) + **rendering** (`twk ir --cfg`) — which completes Case B∩C. See
+> `docs/plans/2026-07-19-phase6-stage4c-call-site-decision.md`.
+
 **Mixed-ownership record (path-aware gate, D6):** a caller with a **fresh `.types`
 but shared `.values`** still selects `add_type[unique:0,.types]` — a downward-closed
 partial key — and a read of `a0.values` *after* the call stays legal, because only

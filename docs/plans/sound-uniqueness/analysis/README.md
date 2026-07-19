@@ -1,12 +1,17 @@
 # Analysis Track
 
-**Status:** Phases 0-5 done (return-path summaries complete; generated code
-unchanged, census 0 in-place). **Phase 6** — ownership-specialization decision
-facts — is next, and folds in the **one** remaining Phase 5 precision deferral:
-parameter-side ownership, so param-threaded state (a param passed through a
-transport helper) can be recovered. (The tag-aware return-site meet was *not*
-deferred — it was hardened within Phase 5; see the Phase 5 section.) All analysis
-precision lands *before* any codegen, per
+**Status:** Phases 0-5 done. **Phase 6 — nearly complete (2026-07-19):** the
+ownership *recovery* substages are landed and the Phase 5 param-threaded deferral is
+closed — param-side `in_place_paths` (2a/2b), owned-entry re-analysis
+`summarize_variant` (3), the whole-return move so `add_type`-callers recover
+`Consumed` (4a), and the per-call-site decision *logic* `select_variant` (4c-core).
+Two design items were **re-scoped to codegen** by spikes: field-granular `field_own`
+seeding (Stage "4b") has no summary observable, and the variant memo + SCC fixpoint
+(D12) re-analyzes a specialized *body* only for emission, not for the decision. The
+**only** analysis work left to close Phase 6 is the decision **recording pass +
+rendering** (per-call-site `owned` vs `generic` in `twk ir --cfg`). Generated code
+unchanged throughout, census 0 in-place. All analysis precision lands *before* any
+codegen, per
 [../architecture.md](../architecture.md)'s governing rule that all analysis
 precision precedes codegen.
 
@@ -204,22 +209,35 @@ story is verifiable before any code is emitted. Canonical semantics:
 > the `param-threaded state is NOT recovered` test in `cfg_return_paths_suite.tw`; do
 > not loosen the Phase 5 gate without the precondition.
 
-- [ ] **Per-function preconditions/postconditions + per-call-site variant
-  compatibility.** Which callers pass proven-owned args (may use an owned callee),
-  which must stay generic; whether each param is consumed / borrowed / published /
-  returned; whether the return is owned / persistent / published.
-- [ ] **SCC-granularity summary fixpoint** so recursive/mutually-recursive
-  functions (Case V's self-referential `visit`) converge; the specialization key
-  is driven by the set of caller argument facts.
-- [ ] **Demand-driven + capped.** Only call-site shapes that occur and only when
-  the fact changes codegen; read-only ref params stay out of the key; per-function
-  variant cap with a persistent fallback.
-- [ ] **Print the specialization story** (preconditions, postconditions,
-  per-call-site variant choice). Decisions only — no cloned variants emitted.
+- [x] **Per-function preconditions/postconditions.** Whether each param is consumed
+  / borrowed / published / returned (`ParamSummary.base_role` + `in_place_paths` +
+  `flows_to_return`, Stages 2a/2b); whether the return is owned / persistent /
+  published (`ret`/`ret_paths`, Phase 5 + 4a's whole-return move). Owned-entry
+  re-analysis (`summarize_variant`, Stage 3) recovers param-threaded state under a
+  proven precondition; the Phase 5 gate is unchanged.
+- [x] **Per-call-site variant selection (logic).** `ownership.select_variant(func_id,
+  callee_summary, arg_unique)` (Stage 4c-core): which callers pass proven-owned args
+  (owned key) and which stay generic. Reads the callee's generic summary — exact for
+  a direct-mutator callee (`add_type`, `Consumed` generically), which covers the
+  flagship Case B∩C; a param-threaded/recursive callee needs its owned summary / the
+  SCC fixpoint (re-scoped to codegen), with the recording pass sound (under-approximate
+  to generic) without them.
+- [ ] **Decision recording pass + rendering** *(the remaining analysis work).* Walk
+  call sites, emit a `CallDecision` per site, and print `build_env#… ->
+  add_type[unique:0,.types]` vs `branch_env#… -> add_type[generic]` in `twk ir --cfg`.
+  Decisions only — no cloned variants emitted.
+- [~] **SCC-granularity variant fixpoint + demand-driven memo + cap (D12)** —
+  **re-scoped to codegen.** These re-analyze a specialized *body* (needed only when
+  codegen emits one, incl. recursive Case V); the analysis *decision* is computed from
+  the generic summary and does not need them. `ConsumedPaths` + the D6 disjoint-sibling
+  read-rule + field-granular seeding ride to codegen with them. See the Stage-4b/4c
+  implementation notes in [phase6-design.md](phase6-design.md).
 
-Exit: Cases A/B/V and the B∩C "one callee, two caller shapes" example print a
-verifiable specialization decision (owned-specialized vs generic per call site,
-with the licensing proof); generated code unchanged.
+Exit: the B∩C "one callee, two caller shapes" example prints a verifiable
+per-call-site specialization decision (owned-specialized vs generic, with the
+licensing proof) in `twk ir --cfg`; generated code unchanged. (Recursive Case V and
+partial mixed-ownership keys are exercised once codegen re-analyzes specialized
+bodies.)
 
 ## Analysis deferrals
 

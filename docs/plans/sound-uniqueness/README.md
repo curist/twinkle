@@ -20,24 +20,25 @@ track README(s). The focused track docs own the detailed checklists.
 
 ## Current focus
 
-**The analysis track is not finished.** Phases 0-5 produce auditable CFG
+**The analysis track is nearly finished.** Phases 0-5 produce auditable CFG
 ownership facts, liveness, *minimal* summaries, record shell/field and
-nested-collection ownership, and now transport-wrapper / `Result`-payload
-return-path summaries — all without changing generated code. Phase 5 classifies
-per-return-path ownership (record fields + variant payloads), recovers it at the
-caller under a sound gate, and its variant-return meet is tag-aware (real two-tag
-`Result` and `Option`/any sum keep their payload paths). It ships with **one
-scoped deferral to Phase 6**: the caller-recovery gate accepts only fresh unique
-locals, so **param-threaded** state (a param passed through a transport helper)
-is not yet recovered — that needs Phase 6's owned-parameter preconditions. The
-remaining work is the specialization those facts feed (Phase 6 below).
+nested-collection ownership, and transport-wrapper / `Result`-payload return-path
+summaries — all without changing generated code. **Phase 6 (2026-07-19) has landed
+its ownership-recovery substages** and closed the Phase 5 param-threaded deferral:
+param-side `in_place_paths` (2a/2b), owned-entry re-analysis `summarize_variant` (3),
+the whole-return move so `add_type`-callers recover `Consumed` (4a), and the
+per-call-site decision *logic* `select_variant` (4c-core). Two design items were
+**re-scoped to codegen** by spikes (field-granular `field_own` seeding has no summary
+observable; the variant memo/SCC fixpoint re-analyzes a specialized *body* only for
+emission, not for the decision). The **only** analysis work left to close Phase 6 is
+the per-call-site decision **recording pass + rendering** in `twk ir --cfg`.
 
 The governing rule is **all analysis precision lands before any codegen.** So the
-current focus stays on the analysis track: ownership-specialization decision facts
-(Phase 6), which also closes the Phase 5 param-threaded deferral. Only once the
-full ownership-fact story is trustworthy does the **codegen track** begin —
-ANF-keyed decision handoff/fallback plumbing, then narrow emitted slices for the
-existing mutable hooks.
+current focus is the last analysis step — the Phase 6 decision recording/rendering —
+after which the **codegen track** begins: ANF-keyed decision handoff/fallback
+plumbing (consuming the recorded decisions + the re-scoped variant memo/SCC fixpoint
+and field-granular seeding), then narrow emitted slices for the existing mutable
+hooks.
 
 ## Standing invariants
 
@@ -65,8 +66,12 @@ Analysis phases (architecture 1A-1E; all analysis precision lands before any cod
 - Phase 5: transport-wrapper and `Result`-payload return-path summaries (1D) — **done**
   (tag-aware variant meet; one param-threaded deferral to Phase 6). Plan archived:
   [../archive/sound-uniqueness-phase5-plan.md](../archive/sound-uniqueness-phase5-plan.md).
-- Phase 6: ownership-specialization decision facts (1E) — not started (also closes the
-  Phase 5 param-threaded recovery gate).
+- Phase 6: ownership-specialization decision facts (1E) — **recovery substages done**
+  (2a/2b `in_place_paths`, 3 owned-entry re-analysis, 4a whole-return move, 4c-core
+  `select_variant`; closes the Phase 5 param-threaded gate). Remaining analysis work:
+  the per-call-site decision **recording pass + rendering**. Variant memo/SCC fixpoint
+  + field-granular seeding re-scoped to codegen (spike findings). Dated plans:
+  `docs/plans/2026-07-19-phase6-*.md`.
 
 ### 2. Codegen track
 
