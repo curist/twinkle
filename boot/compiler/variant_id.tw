@@ -116,7 +116,7 @@ pub fn req_cmp(a: UniqueReq, b: UniqueReq) Order {
 }
 
 fn req_eq(a: UniqueReq, b: UniqueReq) Bool {
-  case req_cmp(a, b) {
+  case a.req_cmp(b) {
     .Eq => true,
     _ => false,
   }
@@ -132,7 +132,7 @@ pub fn canonicalize_key(reqs: UniqueKey) UniqueKey {
     keep := if out.len() == 0 {
       true
     } else {
-      !req_eq(out[out.len() - 1], r)
+      !out[out.len() - 1].req_eq(r)
     }
     if keep {
       out = .append(r)
@@ -202,8 +202,8 @@ pub fn new_interner() VariantInterner {
 // existing id for an equal canonical key, or assigning the next creation-order id.
 // The returned interner carries any newly-assigned id (threaded, not mutated).
 pub fn intern(vi: VariantInterner, v: VariantId) InternResult {
-  cv := canonicalize_variant(v)
-  s := variant_canonical_string(cv)
+  cv := v.canonicalize_variant()
+  s := cv.variant_canonical_string()
   case vi.ids.get(s) {
     .Some(id) => InternResult.{ interner: vi, id },
     .None => {
