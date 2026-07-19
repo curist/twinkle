@@ -974,6 +974,56 @@ fn absorb_retained_call_args(
   st.set_prov_st(result, origins)
 }
 
+// COW `.Update` ONLY (see transfer_builtin_call's .Update branch). The stored
+// operands escape into the collection as DEEP elements. They must be PUBLISHED so
+// the caller cannot keep treating them as uniquely owned and later mutate them in
+// place (which would corrupt the copy now living inside the collection). They must
+// NOT join the result's SHELL provenance: carry_base_prov (run immediately before
+// this in the .Update chain) already set the result's shell prov to the COW base's
+// origins only, so a single-param whole-return move can fire. This is a SEPARATE
+// function from absorb_retained_call_args on purpose: the .Allocate path still
+// absorbs its retained args into the fresh container's shell and must stay unchanged.
+//
+// publish_atom is REQUIRED for an ESCAPING operand, not redundant with field_store:
+// field_store publishes only a NON-last-use operand; on a LAST-use store it
+// invalidates instead (set_valid=false -> cap=Consumed, esc stays Borrowed). set_at
+// stores its `value` PARAM at its last use, so without this publish `value` classifies
+// Borrowed once it leaves the shell alias set (it no longer flows_to_return: an element
+// is at .Elem, not a ret_path) and is NEVER published at the caller -- an unsound
+// escape. The publish forces esc=Retained -> base_role=Published.
+//
+// But publish ONLY when the operand actually escapes. The publish and the result's
+// [Elem] field fact are two faces of one decision: keep [Elem] <=> the operand is a
+// clean unique move into the container <=> it must NOT be published. `single_retention`
+// (own==Unique && last-use && single-store) is exactly that predicate, and it is what
+// the .Update field-fact block reads to keep/drop [Elem]. A single-retained unique
+// operand (e.g. a fresh local stored at last use) is genuinely consumed into the
+// result -- no surviving caller alias to protect -- so publishing it would only clobber
+// its ownership and spuriously drop [Elem] (a pessimization, more COW). A param or
+// aliased operand is NOT single-retained (params are not Unique in the generic pass,
+// nor seeded Unique for a variant unless keyed), so it still publishes and escapes
+// soundly. Invariant: result keeps [Elem] iff the operand was not published here.
+fn escape_retained_call_args(
+  st: ForwardState,
+  args: Vector<Atom>,
+  retained: Vector<Int>,
+  last: Vector<Int>,
+) ForwardState {
+  operands := retained_atoms(retained, args)
+  for i in retained {
+    if i < args.len() {
+      moved := st.single_retention(args[i], last, operands)
+      st = .field_store(args[i], last)
+      st = if moved {
+        st
+      } else {
+        st.publish_atom(args[i])
+      }
+    }
+  }
+  st
+}
+
 fn transfer_call(
   st: ForwardState,
   result: Int,
@@ -1062,8 +1112,7 @@ fn transfer_builtin_call(
         },
         .None => ff.empty(),
       }
-      st = .consume_call_base(result, cs, args, last).carry_base_prov(result, cs, args).absorb_retained_call_args(
-        result,
+      st = .consume_call_base(result, cs, args, last).carry_base_prov(result, cs, args).escape_retained_call_args(
         args,
         ri,
         last,

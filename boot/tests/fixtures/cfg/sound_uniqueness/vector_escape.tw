@@ -1,0 +1,4 @@
+pub fn stash(xs: Vector<Vector<Int>>, i: Int, v: Vector<Int>) Vector<Vector<Int>> {
+  xs[i] = v
+  xs
+}
