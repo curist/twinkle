@@ -196,6 +196,16 @@ assign L7 = L45                                    rebind cur (L7 → L7)
 match-join, loop-carried ownership, recursion/self-summary, and dict/vector
 field updates — the real shape the analysis must handle, not a toy.
 
+**Observed today (post sieve vector fix):** `visit` still stays fully conservative —
+`p0=Published p1=Published p2=Published ret=alias(p0)`, every `record_update` renders
+`shell=persistent(aliased shell) field=persistent(insufficient deep ownership)`
+`[in_place=false]`, and no owned `verdict` renders. `cur` is Published because it flows
+into the self-recursive `visit` call. Reaching the in-place target here needs the
+recursive/SCC summary to specialize the threaded record to an owned entry (variant
+seeding across the SCC) — a separate mechanism from the non-recursive `.Update` wrapper
+fix that made sieve's `set_at` consume its base. See
+`sieve-cfg-gap-notes.md` (## graph_scc.visit classification).
+
 ## Case W — transport-wrapper threading: the source-wide helper idiom
 
 Beyond direct `cur`/`ctx` returns, boot threads contexts and state through small

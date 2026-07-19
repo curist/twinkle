@@ -76,3 +76,23 @@ This is a separate loop-merge/optimistic-seeding gap (assume Unique at loop head
 verify, retract if the back-edge refutes), independent of the summary/move fixes in this
 plan. Track as a follow-up. The `sieve_loop_set` fixture pins the single-loop case that
 DOES work; a nested-loop fixture and the optimistic-seeding merge are the next plan.
+
+## graph_scc.visit classification
+
+- `graph_scc.visit` stays conservative after the sieve vector fix. It is a separate
+  recursive/SCC-summary specialization gap: the threaded state passes through a
+  self-recursive call whose summary is still generic, and its field updates target
+  dict/record fields inside a record shell that is never proven uniquely owned across
+  the recursion. Track as a follow-up.
+
+Observed today (regenerate to confirm): `visit` summary is
+`p0=Published p1=Published p2=Published ret=alias(p0)`; every `record_update` on the
+threaded record `cur` renders `shell=persistent(aliased shell)
+field=persistent(insufficient deep ownership)` with `[in_place=false]`, and no
+`verdict -> fN[unique:...]` renders. `cur` is Published because it is passed to the
+self-recursive `visit` (the generic SCC summary publishes its args), so its shell is an
+aliased shell and no owned in-place decision is reachable. This is orthogonal to the
+sieve vector wrapper: the sieve fix teaches a NON-recursive `.Update` builtin wrapper to
+consume its base in place; `visit` needs the recursive/SCC summary to specialize the
+threaded record to an owned entry — a different mechanism (variant seeding across the
+SCC), not addressed here.
