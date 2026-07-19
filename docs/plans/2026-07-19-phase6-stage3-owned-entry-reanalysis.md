@@ -292,6 +292,9 @@ pub fn summarize_function(
 // imply unique field backings (Phase 4). A `[.f]` req is ignored here; field-granular
 // seeding (distinguishing a unique .types backing from a shared .values sibling, D6) is
 // Stage 4. Downward-closed keys always carry the param's `[]` req, so its shell is seeded.
+// This does NOT canonicalize/downward-close the key -- the Stage 4 caller must pass a
+// canonical, downward-closed key (variant_id.canonicalize_key/downward_close). Stage 3 tests
+// pass keys directly; a `[[], [.f]]` key seeds the same shell as `[[]]` (the `[]` req).
 pub fn summarize_variant(
   f: CfgFunction,
   key: vid.UniqueKey,
@@ -310,13 +313,16 @@ pub fn summarize_variant(
 }
 ```
 
-- [ ] **Step 5: Run the recovery test to verify it passes**
+- [ ] **Step 5: Run the suite to verify the recovery test passes**
 
-Run (pipefail-safe): `set -o pipefail; target/twk run boot/tests/main.tw 2>&1 | grep -aA6 'stage3: owned-entry re-analysis recovers' | tail -10`
-Expected: the test passes — `gen` param0 is `Published`, `owned` param0 is not
-`Published` and `flows_to_return` is true.
+Run (pipefail-safe): `set -o pipefail; make boot-test 2>&1 | grep -aE 'Ran [0-9]+ tests|FAIL|owned-entry re-analysis recovers' | tail -5`
+Expected: `Ran N tests: N passed` (the runner prints a `x <name>` line only on failure, so a
+green run shows just the count; a failure prints the `stage3: owned-entry re-analysis recovers`
+name). The recovery test asserts `gen` param0 `Published`, `owned` param0 not `Published`,
+and `flows_to_return` true.
 
-If `owned` param0 is still `Published`: confirm `arg_unique[0]` is firing — temporarily
+If the recovery test fails with `owned` param0 still `Published`: confirm `arg_unique[0]` is
+firing — temporarily
 `println` inside the test `summary.render_summary(owned)`; it should show `p0=Borrowed`
 (or `Consumed`) with `ret` naming p0, **not** `Published`. Verify **both** seed sites are
 patched: `run_fixpoint`'s block-0 guard (the main pass, drives `esc`) **and** the
@@ -362,6 +368,15 @@ missing. Remove any print before committing.
         field_key: variant_id.UniqueKey = [variant_id.UniqueReq.{ param: 0, path: variant_id.field(0) }]
         owned := ownership.summarize_variant(caller, field_key, t, b, sem(), Dict.new())
         try assert.is_true(is_published(owned, 0)) // no shell seed -> not recovered
+
+        // A downward-closed key { [], [.f] } seeds the shell (from the [] req) and behaves
+        // exactly like { [] } -- the field req adds nothing in the shell-only Stage 3.
+        dc_key: variant_id.UniqueKey = [
+          variant_id.UniqueReq.{ param: 0, path: variant_id.shell() },
+          variant_id.UniqueReq.{ param: 0, path: variant_id.field(0) },
+        ]
+        dc := ownership.summarize_variant(caller, dc_key, t, b, sem(), Dict.new())
+        try assert.is_true(!is_published(dc, 0)) // recovered via the shell req
         .Ok({})
       },
     )
@@ -452,7 +467,7 @@ Expected: no new findings beyond the pre-existing ones (`--explain` for rational
 
 ## Self-Review
 
-- **Spec coverage:** the design's Stage 3 (D10/D11/D13, "owned-entry re-analysis `summarize_variant` seeding keyed params Unique") is implemented by the seed + wrapper (Task 1) and pinned by the `case_w_param` recovery test — exactly the fixture the design names ("update the `case_w_param_fixture` guard — the owned-variant caller recovers … the generic still publishes"). The generic guard is preserved (not relaxed), and the owned recovery is asserted alongside it.
+- **Spec coverage (scoped — the shell/ret-path slice of D10):** this plan implements the **shell-owned-entry / ret-path transport** slice of D10/D11/D13 — `summarize_variant` re-runs the analysis with the key's **shell** slots seeded `Unique` (D13's "same transfer, different entry"), pinned by the `case_w_param` recovery test (exactly the fixture the design names: "the owned-variant caller recovers … the generic still publishes"). It does **not** implement full D10 per-path seeding: `phase6-design.md` D10 says the keyed `(param, path)` slots enter `Unique` *including field/path-level ownership*, but Stage 3 seeds only the shell (`own`) and ignores `[.f]` reqs. **Field/path-level owned-entry seeding is the Stage 4 portion of D10.** So this is the D10 *shell* increment, not full D10. The generic guard is preserved (not relaxed); the owned recovery is asserted alongside it.
 - **No transfer changes (D13):** the only code added to the analysis is a block-0 seed applied at **both** forwarding sites — the `run_fixpoint` main pass (drives `esc`) and the `summarize_seeded` return-site replay (drives `ret`/`ret_paths`/`flows_to_return`). The recovery gate, transfer, and finalization are untouched. Missing the return-replay seed would silently break `flows_to_return` (review finding — now Task 1 Step 4).
 - **Shell-only, no unsound field claim:** Stage 3 seeds `own = Unique` for `[]` reqs and **no** `field_own`; it does **not** assume a unique shell implies unique field backings (Phase 4: it does not). `summarize_variant` seeds only `req.path.is_shell()` reqs — a `[.f]`-only key recovers nothing (guard test, Step 6). Field-granular seeding is Stage 4.
 - **Honest scope boundary (Stage 2b reconciled):** the whole-value `MayAliasParams` publish (`ownership.tw:1160`) is **not** recovered by seeding — so the `add_type` caller stays `Published` here; that recovery is **Stage 4**, which additionally must add a whole-return move representation (deferral table). The Stage 2b docs (which said Stage 3 closes it) are corrected as part of this review. The acceptance uses the ret-path transport case (`case_w_param`) that seeding *does* handle, so the test is meaningful, not a fake pass.

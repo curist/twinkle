@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Extend Stage 2a's dirty-path dataflow with a **call-result transfer** so that `collect_field_reqs` propagates a parameter's origin + a consuming callee's in-place field paths through helper calls (`env = env.add_type(...); env = env.bind_type(...)`), producing the transitive **candidate** requirement set that Stage 3 consumes.
+**Goal:** Extend Stage 2a's dirty-path dataflow with a **call-result transfer** so that `collect_field_reqs` propagates a parameter's origin + a consuming callee's in-place field paths through helper calls (`env = env.add_type(...); env = env.bind_type(...)`), producing the transitive **candidate** requirement set that the owned-entry stages (Stage 3 for a ret-path transport helper; **Stage 4** for a whole-value `MayAliasParams` return like `add_type`) consume.
 
 **Architecture:** Stage 2a's forward dirty-path dataflow tracks, per value, its origin parameter and dirtied field paths, but breaks the chain at every `ACall` (call results get origin *none*). Stage 2b adds one transfer rule: a call to a summarized user function whose **single returned parameter** carries in-place field requirements hands that parameter's **origin** and its **non-shell field paths** back to the call result. Still analysis-only — `twk ir --census` stays **0 in-place**.
 
-> **Scope correction (discovered during execution — load-bearing):** Stage 2b wires the propagation into `collect_field_reqs`, but it does **not** make a param-threaded caller classify `Consumed` at the summary level. A helper that returns its parameter classifies `ret = MayAliasParams(k)`, so `transfer_summarized_call` **publishes** that argument at the call site (`ownership.tw:1160`); the caller's threaded param therefore ends `Retained` and `reconcile_role` forces `Published` + empty `in_place_paths`, discarding the candidate. This is the **Phase 5 param-threaded deferral**, and closing it (param enters `Unique` → the recovery gate fires → not published → the candidate survives) is **Stage 3's owned-entry re-analysis**, not this stage. `collect_field_reqs` is a *separate* dataflow that computes the candidate regardless of publication — so Stage 2b is verified by (a) a **direct** `collect_field_reqs` unit test (the candidate is computed) and (b) a **deferral-boundary guard** (the generic summary stays `Published`, i.e. Stage 2b does not unsoundly surface `Consumed`). The Stage 2a plan's note that "`add_type` becomes an acceptance test in 2b" was imprecise: the *caller*'s `Consumed` manifestation is a later-stage acceptance.
+> **Scope correction (discovered during execution — load-bearing):** Stage 2b wires the propagation into `collect_field_reqs`, but it does **not** make a param-threaded caller classify `Consumed` at the summary level. A helper that returns its parameter classifies `ret = MayAliasParams(k)`, so `transfer_summarized_call` **publishes** that argument at the call site (`ownership.tw:1160`); the caller's threaded param therefore ends `Retained` and `reconcile_role` forces `Published` + empty `in_place_paths`, discarding the candidate. This is the **Phase 5 param-threaded deferral**, and closing it (param enters `Unique` → the recovery gate fires → not published → the candidate survives) is the **owned-entry re-analysis** — **Stage 3** for a ret-path transport helper, but **Stage 4** for a whole-value `MayAliasParams` return like `add_type` (which publishes unconditionally; see the boundary refinement below) — not this stage. `collect_field_reqs` is a *separate* dataflow that computes the candidate regardless of publication — so Stage 2b is verified by (a) a **direct** `collect_field_reqs` unit test (the candidate is computed) and (b) a **deferral-boundary guard** (the generic summary stays `Published`, i.e. Stage 2b does not unsoundly surface `Consumed`). The Stage 2a plan's note that "`add_type` becomes an acceptance test in 2b" was imprecise: the *caller*'s `Consumed` manifestation is a later-stage acceptance.
 >
 > **Boundary refinement (from Stage 3 planning — supersedes "Stage 3" below):** recovery splits by the helper's return shape. A **ret-path transport** helper (returns a fresh `Wrapper.{ f0: ctx }` via `ret_path OwnedFromParam`) is recovered in **Stage 3** by seeding the param `Unique` (the `arg_unique` gate un-publishes). But this plan's fixtures — and `add_type` — return the **whole** param, so `ret = MayAliasParams(k)`, which `transfer_summarized_call` publishes **unconditionally** (`ownership.tw:1160`), *regardless* of seeding. That whole-value case is **Stage 4** (owned-variant selection **plus** a whole-return move representation), **not Stage 3**. Where prose below says "Stage 3" for the `g`/`add_type` whole-value manifestation, read **Stage 4**. See `docs/plans/2026-07-19-phase6-stage3-owned-entry-reanalysis.md`.
 
@@ -32,7 +32,7 @@ fn build_step(env) {              // 2b: collect_field_reqs computes candidate {
 
 In Stage 2a, `add_type(env, …)`'s result has origin *none*, so `env`'s chain breaks after the first call and `collect_field_reqs` attributes nothing to `build_step`'s parameter. Stage 2b makes the call result inherit the threaded parameter's origin plus `add_type`'s consumed field paths, so `collect_field_reqs` accumulates the candidate `{[.types]}` for `build_step`'s parameter.
 
-**But the candidate does not surface as `Consumed` on `build_step`'s summary in this stage** — see the Scope correction above: `add_type` returns `alias(p0)`, so each call publishes `env`, and `reconcile_role`'s `Published` precedence discards the candidate. Stage 3's owned-entry re-analysis (param enters `Unique` → not published) is what surfaces it. Stage 2b's job is to make `collect_field_reqs` *produce* the candidate; Stage 3 makes it *survive*.
+**But the candidate does not surface as `Consumed` on `build_step`'s summary in this stage** — see the Scope correction above: `add_type` returns `alias(p0)` (whole-value `MayAliasParams`), so each call publishes `env`, and `reconcile_role`'s `Published` precedence discards the candidate. Because `MayAliasParams` publishes *unconditionally*, seeding the param `Unique` (Stage 3) does **not** recover this whole-value shape — **Stage 4** (owned-variant selection + a whole-return move representation) is what surfaces it. Stage 2b's job is to make `collect_field_reqs` *produce* the candidate; a later stage makes it *survive*.
 
 ### The propagation rule (exact)
 
@@ -56,7 +56,7 @@ The dirty-path set is a **candidate requirements readout**, not a proof — the 
 
 ### Scope
 
-**In scope (2b):** propagate origin + non-shell field paths through a call to a summarized user function whose single returned parameter carries requirements. Worked example: a caller threading a parameter through `add_type`-shaped consuming helpers → `p0=Consumed paths{[],[.f…]}`.
+**In scope (2b):** propagate origin + non-shell field paths through a call to a summarized user function whose single returned parameter carries requirements. Worked example: a caller threading a parameter through `add_type`-shaped consuming helpers — `collect_field_reqs` *produces* the candidate `{[.f…]}`, but the caller's generic summary stays `p0=Published` (the `Consumed` manifestation is Stage 4, since these helpers return whole-value `MayAliasParams`).
 
 **Explicitly out of scope (honest, not faked):**
 - **Field-projection arguments** (`helper(env.sub, …)`): Stage 2a's `FlowFact` tracks only whole-parameter origin (an `ARecordGet` result has origin *none*), so passing a *field of* a parameter to a helper does not propagate. This matches Blocker 1's field-only, shallow depth cap. Deeper argument paths are a later refinement.
@@ -343,7 +343,7 @@ paths hands that parameter's origin and non-shell field paths back to the call
 result. A parameter threaded through consuming helpers now accumulates their
 paths instead of breaking the chain at the call. Reads callee summaries via the
 threaded SummaryTable; ambiguous multi-param returns and builtins break the
-chain. Analysis only (census stays 0); candidates validated in Stage 3."
+chain. Analysis only (census stays 0); candidates validated by the owned-entry stages (3/4)."
 ```
 
 ---
@@ -355,7 +355,7 @@ acceptance: a param threaded through a helper that returns it is **published** a
 the call site in the generic pass, so the caller stays `Published` with empty
 `in_place_paths`. `collect_field_reqs` still computes the candidate (proven by the
 Task 1 unit test); this task pins that Stage 2b must **not** unsoundly surface
-`Consumed` on such a param — the manifestation is a Stage 3 acceptance.
+`Consumed` on such a param — the manifestation is a Stage 4 acceptance (these fixtures return whole-value `MayAliasParams`).
 
 **Files:**
 - Test: `boot/tests/suites/cfg_summary_suite.tw` (whole-program `compute_of` fixture)
@@ -475,18 +475,19 @@ Expected: `IDENTICAL` (the propagated paths ride the same canonical-sorted `Path
 |---|---|
 | Field-projection arguments (`helper(env.sub, …)`) propagating | later refinement (needs a deeper `FlowFact`, beyond Blocker 1's field-only shallow cap) |
 | Reference-vs-scalar field filter (needs per-field type metadata not on `CfgFunction`) | **Stage 2c** |
-| Owned-entry re-analysis validating these candidate paths | **Stage 3** |
+| Owned-entry re-analysis validating these candidate paths — ret-path transport | **Stage 3** |
+| Whole-value `MayAliasParams` recovery (the `add_type`/`build_step` caller) — owned-variant selection + whole-return move representation | **Stage 4** |
 | Call-site `consume_dead` decision + `ConsumedPaths` | **Stage 4** |
 | SCC variant fixpoint + variant cap | **Stage 5** |
 
 ## Self-Review
 
-- **Spec coverage:** The Stage 2a plan's deferral to 2b — *"helper-call propagation"* — is implemented by the `ACall` transfer (Task 1). Its **directly-observable** effect (the propagated candidate) is pinned by the Task 1 `collect_field_reqs` unit test; its **non-effect** on the generic summary (the `Published` gate) is pinned by the Task 2 boundary guard. The `add_type` *caller*'s `Consumed` manifestation is **not** claimed here — it is a Stage 3 acceptance (see the Scope correction).
+- **Spec coverage:** The Stage 2a plan's deferral to 2b — *"helper-call propagation"* — is implemented by the `ACall` transfer (Task 1). Its **directly-observable** effect (the propagated candidate) is pinned by the Task 1 `collect_field_reqs` unit test; its **non-effect** on the generic summary (the `Published` gate) is pinned by the Task 2 boundary guard. The `add_type` *caller*'s `Consumed` manifestation is **not** claimed here — it is a **Stage 4** acceptance (whole-value `MayAliasParams` return; see the Scope correction).
 - **Real-lowering fidelity:** the fixtures thread `env` through `h` via chained `ACall` results (`r1 := h(env); r2 := h(r1); r2`), the shape source `env = env.h(); env = env.h()` lowers to. `h`'s own summary comes from Stage 2a's direct `ARecordUpdate`, so the two stages compose exactly as in production.
-- **Honest scope, corrected during execution:** the original Task 2 asserted the threaded caller classifies `Consumed`. Execution proved that false — the helper returns `MayAliasParams(k)`, so the call publishes the arg (`ownership.tw:1160`) → `Published` → the candidate is discarded by `reconcile_role`. The plan now asserts the true generic-pass outcome (`Published`) and documents the Stage 3 boundary rather than pretending the manifestation lands in 2b.
+- **Honest scope, corrected during execution:** the original Task 2 asserted the threaded caller classifies `Consumed`. Execution proved that false — the helper returns `MayAliasParams(k)`, so the call publishes the arg (`ownership.tw:1160`) → `Published` → the candidate is discarded by `reconcile_role`. The plan now asserts the true generic-pass outcome (`Published`) and documents the owned-entry boundary (Stage 3 ret-path transport / Stage 4 whole-value) rather than pretending the manifestation lands in 2b.
 - **Meaningful, not a fake pass:** the Task 1 negative (fresh-returning helper → origin none) confirms propagation fires **only** through a flowing carrier; the Task 2 guard confirms Stage 2b stays sound-conservative (does not leak `Consumed` past the `Published` gate). Together they show the propagation is computed but correctly not yet surfaced.
 - **No faked filter:** scalar-vs-reference filtering stays deferred to Stage 2c; 2b reports candidate field paths and the deferral table says so.
-- **Soundness posture stated:** the propagation is a candidate readout (no census change), validated by Stage 3 — so no in-place gate is needed in 2b.
+- **Soundness posture stated:** the propagation is a candidate readout (no census change), validated by the owned-entry stages (Stage 3 ret-path transport / Stage 4 whole-value) — so no in-place gate is needed in 2b.
 - **Type consistency:** `call_result_fact(st, table, callee, args) FlowFact`, `transfer_flow(st, table, op, result)`, and `collect_field_reqs(f, table)` are used consistently; `s.params[j].in_place_paths` is a `PathSet` (`.paths` iterated, `.is_shell()` per `ParamPath`), matching the nominal refactor. The single production `collect_field_reqs` call site and the three Stage-2a unit call sites are all updated to the 2-arg form.
 - **Determinism/termination:** the transfer is monotone (dirty grows via `PathSet.add`; origin only degrades), reads callee summaries the SCC driver already fixes callee-first, and adds no new driver state — so the generic fixpoint's termination and byte-identical output are preserved (Task 3 Steps 3, 5).
 - **Verification not masked:** every `make boot-test`/`make stage2` check uses `set -o pipefail` or is run unpiped; `twk lint` is run after edits.
