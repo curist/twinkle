@@ -840,7 +840,7 @@ fn publish_atom(st: ForwardState, a: Atom) ForwardState {
 // AInit / wrap / unwrap move-vs-alias hinge.
 fn init_hinge(st: ForwardState, result: Int, a: Atom, last: Vector<Int>) ForwardState {
   case atom_local_id(a) {
-    .Some(src) => if is_last_use(last, src) {
+    .Some(src) => if local_valid_at_last(st.valid, src, last) {
       // move: result takes source ownership; source binding invalid
       o := fact_of(st.own, a)
       fields := st.field_own_get(src)
@@ -879,17 +879,11 @@ fn field_store(st: ForwardState, a: Atom, last: Vector<Int>) ForwardState {
 // Consuming-op hinge on a named base (ARecordUpdate: base is the shell).
 fn consume_base(st: ForwardState, result: Int, base: Atom, last: Vector<Int>) ForwardState {
   case atom_local_id(base) {
-    .Some(bid) => {
-      base_own := fact_of(st.own, base)
-      case base_own {
-        .Unique => if is_last_use(last, bid) {
-          st = .set_own_st(result, .Unique)
-          st.set_valid(bid, false)
-        } else {
-          st.set_own_st(result, .Unknown)
-        },
-        _ => st.set_own_st(result, .Unknown),
-      }
+    .Some(bid) => if local_reusable(st.own, st.valid, bid, last) {
+      st = .set_own_st(result, .Unique)
+      st.set_valid(bid, false)
+    } else {
+      st.set_own_st(result, .Unknown)
     },
     .None => st.set_own_st(result, .Unknown),
   }
@@ -1103,7 +1097,7 @@ fn transfer_builtin_call(
   case cs.effect {
     .Allocate => st.set_own_st(result, .Unique).absorb_retained_call_args(result, args, ri, last),
     .Update => {
-      // Capture base facts BEFORE consume (consume leaves base.field_own intact).
+      // Capture base/stored facts BEFORE consume (consume leaves base.field_own intact).
       base_fields := case cs.cow_base_arg {
         .Some(k) => if k < args.len() {
           st.atom_field_own(args[k])
@@ -1111,6 +1105,10 @@ fn transfer_builtin_call(
           ff.empty()
         },
         .None => ff.empty(),
+      }
+      kept_stored := case stored_element_atom(ri, args) {
+        .Some(x) => st.single_retention(x, last, retained_atoms(ri, args)),
+        .None => false,
       }
       st = .consume_call_base(result, cs, args, last).carry_base_prov(result, cs, args).escape_retained_call_args(
         args,
@@ -1125,11 +1123,7 @@ fn transfer_builtin_call(
             // A known collection op: untouched elements are structurally preserved,
             // so carry all of base's field facts (which for a Vector/Dict base is
             // [seg]* only), then keep or drop the touched seg by single-retention.
-            keep := case stored_element_atom(ri, args) {
-              .Some(x) => st.single_retention(x, last, retained_atoms(ri, args)),
-              .None => false,
-            }
-            if keep {
+            if kept_stored {
               base_fields
             } else {
               base_fields.remove_prefix(seg)
@@ -1180,10 +1174,11 @@ fn transfer_summarized_call(
   // 0. SNAPSHOT pre-call arg facts (before any summary effect mutates st). The
   // recovery gate must read arg ownership/provenance as it was BEFORE the call.
   pre_own := st.own
+  pre_valid := st.valid
   pre_prov := st.prov
   arg_unique: Vector<Bool> = collect a in args {
     case atom_local_id(a) {
-      .Some(id) => own_is_unique(pre_own, id) and is_last_use(last, id),
+      .Some(id) => local_reusable(pre_own, pre_valid, id, last),
       .None => false,
     }
   }
@@ -1311,6 +1306,14 @@ fn own_is_unique(own: Dict<Int, Int>, id: Int) Bool {
   }
 }
 
+fn local_valid_at_last(valid: Dict<Int, Bool>, id: Int, last: Vector<Int>) Bool {
+  valid_of_local(valid, id) and is_last_use(last, id)
+}
+
+fn local_reusable(own: Dict<Int, Int>, valid: Dict<Int, Bool>, id: Int, last: Vector<Int>) Bool {
+  own_is_unique(own, id) and local_valid_at_last(valid, id, last)
+}
+
 // Count the number of times local `id` appears among the atoms in `operands`.
 fn store_count(operands: Vector<Atom>, id: Int) Int {
   n := 0
@@ -1326,11 +1329,26 @@ fn store_count(operands: Vector<Atom>, id: Int) Int {
 }
 
 // A value operand is single-retention at this op iff it is a local that is
-// []:Unique, at last-use, and appears exactly once among `operands`.
+// []:Unique, binding-valid, at last-use, and appears exactly once among `operands`.
 fn single_retention(st: ForwardState, v: Atom, last: Vector<Int>, operands: Vector<Atom>) Bool {
   case atom_local_id(v) {
-    .Some(id) => fact_of(st.own, v).own_tag() == 0
-      and is_last_use(last, id) and store_count(operands, id) == 1,
+    .Some(id) => local_reusable(st.own, st.valid, id, last) and store_count(operands, id) == 1,
+    .None => false,
+  }
+}
+
+fn projection_move_licensed(
+  st: ForwardState,
+  result: Int,
+  base: Atom,
+  last: Vector<Int>,
+  quartet: Dict<Int, Bool>,
+  transport: Dict<Int, Bool>,
+) Bool {
+  case atom_local_id(base) {
+    .Some(bid) => local_valid_at_last(st.valid, bid, last)
+      or valid_of_local(st.valid, bid)
+      and (quartet_has(quartet, result) or transport_has(transport, result)),
     .None => false,
   }
 }
@@ -1501,6 +1519,7 @@ fn transfer_op(
       operands: Vector<Atom> = collect fa in fields {
         fa.value
       }
+      pre_store := st
       for fa in fields {
         st = .field_store(fa.value, last)
       }
@@ -1515,9 +1534,9 @@ fn transfer_op(
       pp: Dict<Int, Vector<Int>> = Dict.new()
       for fa in fields {
         seg := ff.PathSeg.Field(fa.field.id)
-        if st.single_retention(fa.value, last, operands) {
-          rf = .graft(seg, st.atom_field_own(fa.value))
-          pp = graft_path_prov(pp, seg, st, fa.value)
+        if pre_store.single_retention(fa.value, last, operands) {
+          rf = .graft(seg, pre_store.atom_field_own(fa.value))
+          pp = graft_path_prov(pp, seg, pre_store, fa.value)
         } else {
           // shell-only origin of a non-owned field: recorded for publication only
           // (no field_own[.f] entry; extra path_prov key is a sound over-publish).
@@ -1532,6 +1551,7 @@ fn transfer_op(
       st.set_path_prov(result, pp)
     },
     .AVariant(_, vid, args) => {
+      pre_store := st
       for a in args {
         st = .field_store(a, last)
       }
@@ -1546,9 +1566,9 @@ fn transfer_op(
       pp: Dict<Int, Vector<Int>> = Dict.new()
       for a, i in args {
         seg := ff.PathSeg.Payload(vid.id, i)
-        if st.single_retention(a, last, args) {
-          rf = .graft(seg, st.atom_field_own(a))
-          pp = graft_path_prov(pp, seg, st, a)
+        if pre_store.single_retention(a, last, args) {
+          rf = .graft(seg, pre_store.atom_field_own(a))
+          pp = graft_path_prov(pp, seg, pre_store, a)
         } else {
           // shell-only origin of a non-owned payload: recorded for publication only
           // (no field_own[Payload] entry; extra path_prov key is a sound over-publish).
@@ -1563,6 +1583,7 @@ fn transfer_op(
       st.set_path_prov(result, pp)
     },
     .AArrayLit(elems) => {
+      pre_store := st
       for a in elems {
         st = .field_store(a, last)
       }
@@ -1596,7 +1617,7 @@ fn transfer_op(
       // vectors so the Task 4 consuming rule has an all-owned base to preserve.
       all_owned := true
       for a in elems {
-        if !st.single_retention(a, last, elems) {
+        if !pre_store.single_retention(a, last, elems) {
           all_owned = false
         }
       }
@@ -1610,9 +1631,7 @@ fn transfer_op(
     .ARecordGet(base, f, _) => {
       pr := st.atom_field_own(base).project(.Field(f.id))
       case atom_local_id(base) {
-        .Some(bid) => if is_last_use(last, bid)
-          or quartet_has(quartet, result)
-          or transport_has(transport, result) {
+        .Some(bid) => if st.projection_move_licensed(result, base, last, quartet, transport) {
           // whole-record last-use MOVE, quartet-licensed move (Task 6), or
           // bounded transport-wrapper projection move (Task 11)
           case pr.shell {
@@ -1670,6 +1689,8 @@ fn transfer_op(
         .Some(bid) => st.path_prov_get(bid),
         .None => Dict.new(),
       }
+      pre_update := st
+      value_moved := pre_update.single_retention(v, last, [base, v])
       st = .consume_base(result, base, last) // sets result shell Unique (if base Unique+last-use) else Unknown
       st = .field_store(v, last)
       st = .set_prov_st(result, origins)
@@ -1680,9 +1701,9 @@ fn transfer_op(
         // replacement, in lockstep across field_own and path_prov.
         rf := base_fields.remove_prefix(.Field(f.id))
         pp := remove_prefix_pp(base_pp, ff.PathSeg.Field(f.id))
-        if st.single_retention(v, last, [base, v]) {
-          rf = .graft(.Field(f.id), st.atom_field_own(v))
-          pp = graft_path_prov(pp, ff.PathSeg.Field(f.id), st, v)
+        if value_moved {
+          rf = .graft(.Field(f.id), pre_update.atom_field_own(v))
+          pp = graft_path_prov(pp, ff.PathSeg.Field(f.id), pre_update, v)
         }
         st.set_field_own(result, rf).set_path_prov(result, pp)
       } else {
@@ -1751,8 +1772,10 @@ fn atom_brief(a: Atom) String {
 fn shell_verdict(st: ForwardState, base: Atom, last: Vector<Int>) String {
   case atom_local_id(base) {
     .Some(bid) => case fact_of(st.own, base) {
-      .Unique => if is_last_use(last, bid) {
+      .Unique => if local_reusable(st.own, st.valid, bid, last) {
         "reuse(unique)"
+      } else if !valid_of_local(st.valid, bid) {
+        "persistent(base consumed)"
       } else {
         "persistent(base still live)"
       },
@@ -1811,7 +1834,11 @@ fn transport_verdict(
   f: Int,
   transport: Dict<Int, Bool>,
 ) String {
-  if transport_has(transport, result) {
+  base_valid := case atom_local_id(base) {
+    .Some(bid) => valid_of_local(pre.valid, bid),
+    .None => false,
+  }
+  if transport_has(transport, result) and base_valid {
     origins := case atom_local_id(base) {
       .Some(bid) => case project_path_prov(pre.path_prov_get(bid), ff.PathSeg.Field(f)).shell {
         .Some(o) => o,
@@ -1824,7 +1851,11 @@ fn transport_verdict(
     )})"
   } else {
     reason := case atom_local_id(base) {
-      .Some(bid) => transport_reason(blk, scan, i, bid, f),
+      .Some(bid) => if !valid_of_local(pre.valid, bid) {
+        "base consumed"
+      } else {
+        transport_reason(blk, scan, i, bid, f)
+      },
       .None => "base not a local",
     }
     r := if reason == "" {
@@ -1924,9 +1955,13 @@ fn block_verdicts(
           prep.transport,
         )
         case atom_local_id(base) {
-          .Some(bid) => if is_last_use(last, bid)
-            or quartet_has(moves, inst.anf_local.id)
-            or transport_has(prep.transport, inst.anf_local.id) {
+          .Some(bid) => if pre.projection_move_licensed(
+            inst.anf_local.id,
+            base,
+            last,
+            moves,
+            prep.transport,
+          ) {
             case pre.atom_field_own(base).project(.Field(f.id)).shell {
               .Some(_) => moved_backing = mark_field_backing(moved_backing, bid, f.id),
               .None => {},
@@ -1942,7 +1977,7 @@ fn block_verdicts(
             .Some(s) => {
               au: Vector<Bool> = collect a in args {
                 case atom_local_id(a) {
-                  .Some(id) => own_is_unique(pre.own, id) and is_last_use(last, id),
+                  .Some(id) => local_reusable(pre.own, pre.valid, id, last),
                   .None => false,
                 }
               }
@@ -2079,6 +2114,80 @@ fn own_map_get(exits: Dict<Int, Dict<Int, Int>>, id: Int) Dict<Int, Int> {
   }
 }
 
+type LoopSeedSet = Dict<String, Bool>
+
+type PredParamContribution = .{ own: Ownership, valid: Bool }
+
+fn loop_seed_key(block_id: Int, local_id: Int) String {
+  "${block_id}:${local_id}"
+}
+
+fn loop_seed_active(seeds: LoopSeedSet, block_id: Int, local_id: Int) Bool {
+  case seeds.get(loop_seed_key(block_id, local_id)) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn is_loop_backedge_to_header(blocks: Vector<CfgBlock>, pred_id: Int, header_id: Int) Bool {
+  pred := block_by_id(blocks, pred_id)
+  case pred.terminator {
+    .Some(term) => case term {
+      .LoopBackEdge(target, _) => target.id == header_id,
+      _ => false,
+    },
+    .None => false,
+  }
+}
+
+fn loop_header_has_backedge(blocks: Vector<CfgBlock>, blk: CfgBlock) Bool {
+  for pe in blk.preds {
+    if is_loop_backedge_to_header(blocks, pe.target.id, blk.id.id) {
+      return true
+    }
+  }
+  false
+}
+
+fn pred_local_contribution(
+  exits: Dict<Int, Dict<Int, Int>>,
+  exit_valid: Dict<Int, Dict<Int, Bool>>,
+  pe: CfgEdge,
+  pidx: Int?,
+  lid: Int,
+) PredParamContribution {
+  pred_exit := own_map_get(exits, pe.target.id)
+  pred_valid := valid_map_get(exit_valid, pe.target.id)
+  case pidx {
+    .Some(i) => if i < pe.args.len() {
+      arg := pe.args[i]
+      ok := case atom_local_id(arg) {
+        .Some(id) => valid_of_local(pred_valid, id),
+        .None => true,
+      }
+      PredParamContribution.{ own: fact_of(pred_exit, arg), valid: ok }
+    } else {
+      PredParamContribution.{ own: .Unknown, valid: false }
+    },
+    .None => PredParamContribution.{
+      own: fact_of_local(pred_exit, lid),
+      valid: valid_of_local(pred_valid, lid),
+    },
+  }
+}
+
+fn collect_loop_seed_candidates(blocks: Vector<CfgBlock>) LoopSeedSet {
+  seeds: LoopSeedSet = Dict.new()
+  for blk in blocks {
+    if blk.name == "loop.header" and loop_header_has_backedge(blocks, blk) {
+      for lid in blk.entry.live {
+        seeds[loop_seed_key(blk.id.id, lid)] = true
+      }
+    }
+  }
+  seeds
+}
+
 // entry.ownership for every local live-in at blk:
 //  - a block param: positional join of fact(pred_exit, pred_edge.args[i]);
 //  - a live-through non-param local: same-id join of pred_exit.ownership[lid].
@@ -2113,6 +2222,24 @@ fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, Dict<Int, Int>>, process
     case acc {
       .Some(o) => entry[lid] = o.own_tag(),
       .None => {},
+    }
+  }
+  entry
+}
+
+fn join_entry_ownership_assumed(
+  blk: CfgBlock,
+  exits: Dict<Int, Dict<Int, Int>>,
+  processed: Dict<Int, Bool>,
+  seeds: LoopSeedSet,
+) Dict<Int, Int> {
+  entry := join_entry_ownership(blk, exits, processed)
+  for lid in blk.entry.live {
+    case fact_of_local(entry, lid) {
+      .Unknown => if loop_seed_active(seeds, blk.id.id, lid) {
+        entry[lid] = own_tag(.Unique)
+      },
+      _ => {},
     }
   }
   entry
@@ -2693,6 +2820,60 @@ fn change_count_get(counts: Dict<Int, Int>, id: Int) Int {
   }
 }
 
+fn validate_loop_seed(blocks: Vector<CfgBlock>, fx: FixResult, blk: CfgBlock, lid: Int) Bool {
+  pidx := param_index(blk, lid)
+
+  saw_entry := false
+  saw_backedge := false
+  for pe in blk.preds {
+    if is_loop_backedge_to_header(blocks, pe.target.id, blk.id.id) {
+      saw_backedge = true
+    } else {
+      saw_entry = true
+    }
+    contributed := pred_local_contribution(fx.exits, fx.exit_valid, pe, pidx, lid)
+    if !contributed.valid {
+      return false
+    }
+    case contributed.own {
+      .Unique => {},
+      _ => return false,
+    }
+  }
+
+  saw_entry and saw_backedge
+}
+
+fn retain_valid_loop_seeds(blocks: Vector<CfgBlock>, fx: FixResult, seeds: LoopSeedSet) LoopSeedSet {
+  kept: LoopSeedSet = Dict.new()
+  for blk in blocks {
+    for lid in blk.entry.live {
+      if loop_seed_active(seeds, blk.id.id, lid) and validate_loop_seed(blocks, fx, blk, lid) {
+        kept[loop_seed_key(blk.id.id, lid)] = true
+      }
+    }
+  }
+  kept
+}
+
+fn same_loop_seed_set(a: LoopSeedSet, b: LoopSeedSet) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+  for k in a.keys() {
+    case a.get(k) {
+      .Some(av) => case b.get(k) {
+        .Some(bv) => if av != bv {
+          return false
+        },
+        .None => return false,
+      },
+      .None => {},
+    }
+  }
+  true
+}
+
 fn run_fixpoint(
   blocks: Vector<CfgBlock>,
   params: Vector<LocalId>,
@@ -2701,6 +2882,7 @@ fn run_fixpoint(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
+  seeds: LoopSeedSet,
 ) FixResult {
   exits: Dict<Int, Dict<Int, Int>> = Dict.new()
   exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
@@ -2740,7 +2922,7 @@ fn run_fixpoint(
   for changed {
     changed = false
     for blk in blocks {
-      entry_own := join_entry_ownership(blk, exits, processed)
+      entry_own := join_entry_ownership_assumed(blk, exits, processed, seeds)
       entry_valid := join_entry_valid(blk, exit_valid, processed)
       entry_prov := join_entry_prov(blk, exit_prov, processed)
       if blk.id.id == 0 {
@@ -3033,7 +3215,18 @@ fn ownership_stage(
   sem: OptimizerSemantics,
 ) Vector<CfgBlock> {
   no_suppress: Dict<Int, Bool> = Dict.new()
-  fx := run_fixpoint(blocks, params, table, b, sem, no_suppress, Dict.new())
+  seeds := collect_loop_seed_candidates(blocks)
+  fx := run_fixpoint(blocks, params, table, b, sem, no_suppress, Dict.new(), seeds)
+  stable_seeds := false
+  for !stable_seeds {
+    kept := retain_valid_loop_seeds(blocks, fx, seeds)
+    if same_loop_seed_set(kept, seeds) {
+      stable_seeds = true
+    } else {
+      seeds = kept
+      fx = run_fixpoint(blocks, params, table, b, sem, no_suppress, Dict.new(), seeds)
+    }
+  }
   done := all_processed(blocks)
   collect blk in blocks {
     entry_own := join_entry_ownership(blk, fx.exits, done)
@@ -3800,7 +3993,8 @@ fn summarize_seeded(
     blk.exit.live = bl.live_out
     blk
   }
-  fx := run_fixpoint(blocks, f.params, table, b, sem, suppress, unique_seed)
+  empty_seeds: LoopSeedSet = Dict.new()
+  fx := run_fixpoint(blocks, f.params, table, b, sem, suppress, unique_seed, empty_seeds)
 
   raw_params: Vector<RawParam> = collect p in f.params {
     esc: EscapeEffect = .Borrowed

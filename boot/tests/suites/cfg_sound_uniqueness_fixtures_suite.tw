@@ -174,6 +174,60 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "nested loop-carried vector set_at renders an owned in-place verdict",
+      fn() {
+        out := try render_entry("nested_loop_set")
+        nested := try section_between(out, "fn nested_loop_set", "fn set_at__Bool")
+        try assert.str_contains(nested, "terminator: loop-back-edge")
+        try assert.str_contains(nested, "verdict ->")
+        try assert.str_contains(nested, "[unique:p0]")
+        for line in nested.lines() {
+          if line.contains("facts.in=") or line.contains("facts.out=") {
+            try assert.is_false(line.contains(": Shared"))
+          }
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "real-sieve-shaped nested loop renders an owned in-place verdict",
+      fn() {
+        out := try render_entry("nested_loop_sieve_shape")
+        nested := try section_between(out, "fn nested_loop_sieve_shape", "fn set_at__Bool")
+        try assert.str_contains(nested, "terminator: loop-back-edge")
+        try assert.str_contains(nested, "verdict ->")
+        try assert.str_contains(nested, "[unique:p0]")
+        for line in nested.lines() {
+          if line.contains("facts.in=") or line.contains("facts.out=") {
+            try assert.is_false(line.contains(": Shared"))
+          }
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "nested loop parameter vector stays conservative",
+      fn() {
+        out := try render_entry("nested_loop_param")
+        nested := try section_between(out, "fn nested_loop_param", "fn set_at__Bool")
+        try assert.str_contains(nested, "terminator: loop-back-edge")
+        try assert.is_false(nested.contains("verdict ->"))
+        try assert.is_false(nested.contains("[unique:p0]"))
+        .Ok({})
+      },
+    )
+    .test(
+      "nested loop fresh aliased vector stays conservative",
+      fn() {
+        out := try render_entry("nested_loop_fresh_alias")
+        nested := try section_between(out, "fn nested_loop_fresh_alias", "fn set_at__Bool")
+        try assert.str_contains(nested, "terminator: loop-back-edge")
+        try assert.is_false(nested.contains("verdict ->"))
+        try assert.is_false(nested.contains("[unique:p0]"))
+        .Ok({})
+      },
+    )
+    .test(
       "Cell-backed dict update stays conservative",
       fn() {
         out := try render_entry("cell_main")
