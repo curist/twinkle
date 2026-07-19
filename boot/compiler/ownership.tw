@@ -2308,6 +2308,25 @@ fn seed_param_prov(entry: Dict<Int, Vector<Int>>, params: Vector<LocalId>) Dict<
   entry
 }
 
+// Seed block-0 entry ownership for an owned-entry re-analysis (Stage 3): each param
+// whose local id is marked in `unique_seed` enters Unique instead of the default
+// Unknown. This is the ONLY input the return-path recovery gate lacks to fire for a
+// param argument (own_is_unique). Empty seed => identity (the generic pass).
+fn seed_param_own(entry: Dict<Int, Int>, unique_seed: Dict<Int, Bool>, params: Vector<LocalId>) Dict<
+  Int,
+  Int,
+> {
+  for p in params {
+    case unique_seed.get(p.id) {
+      .Some(u) => if u {
+        entry[p.id] = own_tag(.Unique)
+      },
+      .None => {},
+    }
+  }
+  entry
+}
+
 // ── Field-ownership join + change-detection ─────────────────────────
 fn field_own_map_get(m: Dict<Int, Dict<Int, ff.FieldMap>>, id: Int) Dict<Int, ff.FieldMap> {
   case m.get(id) {
@@ -2596,6 +2615,7 @@ fn run_fixpoint(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  unique_seed: Dict<Int, Bool>,
 ) FixResult {
   exits: Dict<Int, Dict<Int, Int>> = Dict.new()
   exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
@@ -2640,6 +2660,7 @@ fn run_fixpoint(
       entry_prov := join_entry_prov(blk, exit_prov, processed)
       if blk.id.id == 0 {
         entry_prov = seed_param_prov(entry_prov, params)
+        entry_own = seed_param_own(entry_own, unique_seed, params)
       }
       entry_field := join_entry_field_own(blk, exit_field_own, entry_own, processed)
       entry_pp := join_entry_path_prov(blk, exit_path_prov, processed)
@@ -2927,7 +2948,7 @@ fn ownership_stage(
   sem: OptimizerSemantics,
 ) Vector<CfgBlock> {
   no_suppress: Dict<Int, Bool> = Dict.new()
-  fx := run_fixpoint(blocks, params, table, b, sem, no_suppress)
+  fx := run_fixpoint(blocks, params, table, b, sem, no_suppress, Dict.new())
   done := all_processed(blocks)
   collect blk in blocks {
     entry_own := join_entry_ownership(blk, fx.exits, done)
@@ -3551,6 +3572,44 @@ pub fn collect_field_reqs(f: CfgFunction, table: SummaryTable) Dict<Int, vid.Pat
   reqs
 }
 
+// Generic summary: every reference parameter enters Unknown (empty seed). This is the
+// caller-visible/conservative summary the SCC driver fixes.
+pub fn summarize_function(
+  f: CfgFunction,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+) Summary {
+  summarize_seeded(f, table, b, sem, suppress, Dict.new())
+}
+
+// Owned-entry (ownership-specialized) summary for a VariantId key (Stage 3): re-run the
+// same analysis with each keyed parameter's SHELL seeded Unique at entry, so the return-
+// path recovery gate fires for a param-threaded transport arg. STAGE 3 IS SHELL-ONLY: it
+// seeds own=Unique for `[]` reqs and seeds NO field_own -- a unique record shell does not
+// imply unique field backings (Phase 4). A `[.f]` req is ignored here; field-granular
+// seeding (distinguishing a unique .types backing from a shared .values sibling, D6) is
+// Stage 4. Downward-closed keys always carry the param's `[]` req, so its shell is seeded.
+// This does NOT canonicalize/downward-close the key -- the Stage 4 caller must pass a
+// canonical, downward-closed key (variant_id.canonicalize_key/downward_close).
+pub fn summarize_variant(
+  f: CfgFunction,
+  key: vid.UniqueKey,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+) Summary {
+  unique_seed: Dict<Int, Bool> = Dict.new()
+  for req in key {
+    if req.path.is_shell() and req.param >= 0 and req.param < f.params.len() {
+      unique_seed[f.params[req.param].id] = true
+    }
+  }
+  summarize_seeded(f, table, b, sem, suppress, unique_seed)
+}
+
 // Classify each parameter's escape/capability by scanning EVERY block's
 // post-publish exit (fx.exits / fx.exit_valid): a param that ends Shared on any
 // block exit escapes (Retained) — even on a dead branch or via a returned
@@ -3559,13 +3618,15 @@ pub fn collect_field_reqs(f: CfgFunction, table: SummaryTable) Dict<Int, vid.Pat
 // each return block's BODY-ONLY state (before the terminator publish, so the
 // returned value isn't spuriously Shared), joined across all return blocks:
 // MayAliasParams(indices) when the return atom carries param provenance,
-// OwnedFresh for a genuinely fresh Unique, else Shared.
-pub fn summarize_function(
+// OwnedFresh for a genuinely fresh Unique, else Shared. `unique_seed` (Stage 3) enters
+// the marked params Unique at block 0 (both the main pass and the return-site replay).
+fn summarize_seeded(
   f: CfgFunction,
   table: SummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  unique_seed: Dict<Int, Bool>,
 ) Summary {
   live := compute_liveness(f.blocks)
   blocks := collect blk in f.blocks {
@@ -3574,7 +3635,7 @@ pub fn summarize_function(
     blk.exit.live = bl.live_out
     blk
   }
-  fx := run_fixpoint(blocks, f.params, table, b, sem, suppress)
+  fx := run_fixpoint(blocks, f.params, table, b, sem, suppress, unique_seed)
 
   raw_params: Vector<RawParam> = collect p in f.params {
     esc: EscapeEffect = .Borrowed
@@ -3606,6 +3667,7 @@ pub fn summarize_function(
         entry_prov := join_entry_prov(blk, fx.exit_prov, done)
         if blk.id.id == 0 {
           entry_prov = seed_param_prov(entry_prov, f.params)
+          entry_own = seed_param_own(entry_own, unique_seed, f.params)
         }
         entry_field := join_entry_field_own(blk, fx.exit_field_own, entry_own, done)
         entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)

@@ -10,6 +10,7 @@ use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.ownership
 use compiler.summary
+use compiler.variant_id
 
 fn lid(id: Int) LocalId {
   LocalId.{ id }
@@ -81,6 +82,13 @@ fn caller_own(f: cfg.CfgFunction, local_id: Int) Int {
   case f.blocks[0].exit.ownership.get(local_id) {
     .Some(tag) => tag,
     .None => 2,
+  }
+}
+
+fn is_published(s: ownership.Summary, i: Int) Bool {
+  case s.params[i].base_role {
+    .Published => true,
+    _ => false,
   }
 }
 
@@ -599,6 +607,86 @@ pub fn suite() runner.Suite {
         funcs := case_w_param_fixture()
         f := analyzed_caller(funcs, "caller")
         try assert.equal(caller_own(f, 0), own_shared()) // ctx (param) published, not recovered
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage3: owned-entry re-analysis recovers a param-threaded transport",
+      fn() {
+        // helper(x) = Wrapper.{ f0: x }  (ret_path .f0 = OwnedFromParam(0));
+        // caller(ctx) = { out := helper(ctx); out.f0 }  -- extracts the wrapped param.
+        funcs := case_w_param_fixture()
+        b := b_reg()
+        v := cfg.build_view(module_of(funcs), b)
+        t := summary.compute(v, b, sem())
+
+        // Generic caller summary: ctx (param0) is published by the failed recovery gate.
+        gen := case ownership.summary_get(t, 2) {
+          .Some(s) => s,
+          .None => error("no caller summary"),
+        }
+        try assert.is_true(is_published(gen, 0))
+
+        // Owned variant: seed ctx (param0) shell-Unique. arg_unique[0] is now true at the
+        // helper call, so the OwnedFromParam(0) recovery fires -> ctx is NOT published and
+        // its region flows to the return.
+        caller := case cfg.function_named(v, "caller") {
+          .Some(f) => f,
+          .None => error("no caller cfg"),
+        }
+        key: variant_id.UniqueKey = [variant_id.UniqueReq.{ param: 0, path: variant_id.shell() }]
+        owned := ownership.summarize_variant(caller, key, t, b, sem(), Dict.new())
+        try assert.is_true(!is_published(owned, 0)) // recovered, not leaked
+        try assert.is_true(owned.params[0].flows_to_return) // ctx's region reaches the return
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage3: summarize_variant with an empty key equals summarize_function",
+      fn() {
+        funcs := case_w_param_fixture()
+        b := b_reg()
+        v := cfg.build_view(module_of(funcs), b)
+        t := summary.compute(v, b, sem())
+        caller := case cfg.function_named(v, "caller") {
+          .Some(f) => f,
+          .None => error("no caller cfg"),
+        }
+        empty_key: variant_id.UniqueKey = []
+        variant := ownership.summarize_variant(caller, empty_key, t, b, sem(), Dict.new())
+        generic := ownership.summarize_function(caller, t, b, sem(), Dict.new())
+        try assert.is_true(summary.same_summary(variant, generic)) // empty seed == generic
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage3: a field-only ([.f]) key seeds nothing (Stage 3 is shell-only)",
+      fn() {
+        // A non-shell req is ignored by summarize_variant, so a field-only key recovers
+        // nothing -- ctx stays Published, same as the generic pass. Field-granular seeding
+        // is Stage 4. (Real downward-closed keys always carry the [] req too.)
+        funcs := case_w_param_fixture()
+        b := b_reg()
+        v := cfg.build_view(module_of(funcs), b)
+        t := summary.compute(v, b, sem())
+        caller := case cfg.function_named(v, "caller") {
+          .Some(f) => f,
+          .None => error("no caller cfg"),
+        }
+        field_key: variant_id.UniqueKey = [
+          variant_id.UniqueReq.{ param: 0, path: variant_id.field(0) },
+        ]
+        owned := ownership.summarize_variant(caller, field_key, t, b, sem(), Dict.new())
+        try assert.is_true(is_published(owned, 0)) // no shell seed -> not recovered
+
+        // A downward-closed key { [], [.f] } seeds the shell (from the [] req) and behaves
+        // exactly like { [] } -- the field req adds nothing in the shell-only Stage 3.
+        dc_key: variant_id.UniqueKey = [
+          variant_id.UniqueReq.{ param: 0, path: variant_id.shell() },
+          variant_id.UniqueReq.{ param: 0, path: variant_id.field(0) },
+        ]
+        dc := ownership.summarize_variant(caller, dc_key, t, b, sem(), Dict.new())
+        try assert.is_true(!is_published(dc, 0)) // recovered via the shell req
         .Ok({})
       },
     )
