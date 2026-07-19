@@ -164,6 +164,15 @@ vs `branch_env#… -> add_type[generic]`, each with the argument facts that lice
 it. **`add_type` materializes exactly two decisions** (one specialized key, one
 generic) — no combinatorial blow-up. No code is emitted.
 
+> **Implementation note (Stage 4a).** The `[] = OwnedFromParam(0)` whole-return
+> handoff shown here is the *representation* intended to drive codegen routing. The
+> executed Stage 4a slice does **not** add it; it achieves the same analysis-level
+> recovery via a caller-side move (`transfer_summarized_call` moves a
+> `MayAliasParams(k)` argument that is proven `Unique + last-use`, rather than
+> publishing it). The `OwnedFromParam` return representation is deferred to the
+> codegen track / a later transitive-propagation refinement. See
+> `docs/plans/2026-07-19-phase6-stage4a-whole-return-move.md`.
+
 **Mixed-ownership record (path-aware gate, D6):** a caller with a **fresh `.types`
 but shared `.values`** still selects `add_type[unique:0,.types]` — a downward-closed
 partial key — and a read of `a0.values` *after* the call stays legal, because only

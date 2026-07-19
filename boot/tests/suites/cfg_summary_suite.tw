@@ -1538,7 +1538,7 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "phase6 stage2b: param-threaded caller stays Published in the generic pass (Stage 3 boundary)",
+      "phase6 stage2b: param-threaded caller stays Published in the generic pass (Stage 4a boundary)",
       fn() {
         // fn h(env) { env.f0 = 0 ; env2 }  -- 2a gives h: p0 Consumed {[],[.f0]}, ret alias(p0).
         h_body: AnfExpr = .Let(

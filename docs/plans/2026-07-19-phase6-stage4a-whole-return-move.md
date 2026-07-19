@@ -4,7 +4,9 @@
 
 **Goal:** When a summarized call's return **aliases exactly one parameter** (`ret = MayAliasParams(k)`) and that argument is proven **`Unique` + last-use** at the call, **move** it (the result takes the argument's unique region; the argument is consumed) instead of publishing it — closing the whole-value recovery that Stages 2b/3 deferred, and improving generic precision for fresh-unique arguments.
 
-**Architecture:** `transfer_summarized_call` currently publishes every `MayAliasParams(k)` argument unconditionally, forcing the result `Shared`. Stage 4a gates that branch on the existing `arg_unique[k]` fact (`own_is_unique(pre_own) and is_last_use`): when a single aliased argument is provably unique-and-dead, apply the existing `consume_base` move (result `Unique`, argument `valid=false`) with the argument's provenance — the destructive-update condition. This is a **caller-side transfer refinement**: no new return representation, no variant selection, no field seeding. It composes with Stage 3's owned-entry seeding to finally classify the `add_type`-caller `Consumed`. Analysis-only: `twk ir --census` stays **0 in-place**.
+**Architecture:** `transfer_summarized_call` currently publishes every `MayAliasParams(k)` argument unconditionally, forcing the result `Shared`. Stage 4a gates that branch on the existing `arg_unique[k]` fact (`own_is_unique(pre_own) and is_last_use`): when a single aliased argument is provably unique-and-dead, apply the existing `consume_base` move (result **shell** `Unique`, argument `valid=false`) with the argument's provenance — the destructive-update condition. This is a **caller-side transfer refinement**: no new return representation, no variant selection, no field seeding. It composes with Stage 3's owned-entry seeding to finally classify the `add_type`-caller `Consumed`. Analysis-only: `twk ir --census` stays **0 in-place**.
+
+**Shell-only move (deliberate under-claim).** `consume_base` moves the **shell** (result `Unique` + arg `valid=false`); unlike `AAssign`'s move (`ownership.tw:1638`) it does **not** copy the argument's `field_own`/`path_prov` to the result. That is conservative, not unsound — the summary-level acceptance (the `add_type`-caller `Consumed` with `in_place_paths{[],[.f0]}`) was empirically confirmed *without* field transfer, because `in_place_paths` come from the seeding-independent `collect_field_reqs`, not from `field_own`. Field/path transfer through the move is **Stage 4b** (field-granular). Where this plan says "takes the argument's unique region," read "takes the argument's unique **shell** region."
 
 **Tech Stack:** Twinkle (`.tw`), boot compiler only. Tests via the boot suite. Build/verify with `make boot-test`.
 
@@ -19,7 +21,9 @@ Stage 4 as designed (D4/D6/D7 + the whole-return-move obligation) bundles severa
 - **Stage 4c (later):** the per-call-site **VariantId decision records** + `consume_dead` for mixed/partial keys + `ConsumedPaths` + `SpecializationFacts` (D4/D6/Blocker-3/5). This is the codegen-facing *decision*; the analysis *recoveries* it depends on land in 4a/4b.
 - **Stage 5:** SCC variant fixpoint (D12). **Stage 6:** rendering.
 
-**Correction to the Stage 3 deferral table.** It said Stage 4 "must add a whole-return owned-handoff *representation*." For the **direct** caller (a function recovering its own threaded param, or a fresh-unique local), the caller-side `arg_unique` move (4a) suffices — no summary-encoded representation is needed. A representation is only needed for **multi-level transitive** propagation (a function that recovers a param via the move and then *returns it* so its own caller can recover), which is a later refinement, not Stage 4a.
+**Correction to the Stage 3 deferral table.** It said Stage 4 "must add a whole-return owned-handoff *representation*." For the **direct** caller (a function recovering its own threaded param, or a fresh-unique local), the caller-side `arg_unique` move (4a) suffices — no summary-encoded representation is needed. A representation is only needed for **multi-level transitive** propagation (a function that recovers a param via the move and then *returns it* so its own caller can recover), which is a later refinement, not Stage 4a. (The Stage 3 deferral text is updated to point here.)
+
+**Deviation from `phase6-design.md`.** The canonical design renders `add_type`'s owned return as `[] = OwnedFromParam(0)` — a summary-encoded owned-handoff representation intended to drive codegen routing (the eventual variant clone). Stage 4a intentionally does **not** add that representation; it achieves the same *analysis-level* recovery via the caller-side `consume_base` move. The `OwnedFromParam` return representation remains a codegen-track concern (Phase 2A / 7–8) or a later transitive-propagation refinement; `phase6-design.md` carries a note to this effect. This is a scoped deviation, not a contradiction: the design's *decision* (the caller may reuse the region) is preserved; only the *mechanism* differs.
 
 ---
 
@@ -167,17 +171,71 @@ In `cfg_summary_suite.tw`, add immediately after the existing
     )
 ```
 
-- [ ] **Step 3: Run to verify both fail**
+- [ ] **Step 2b: Add the retaining-callee guard test (pins the self-protection)**
+
+In `cfg_return_paths_suite.tw`, add this guard. It must hold **both before and after** the
+move (old code publishes → `Shared`; new code declines the move → `Unknown`), so it is not a
+fail-first test — it pins that a callee which *leaks and returns* an argument never gets a fake
+whole-return move. (Verified during plan review: `out` comes back `Unknown`, tag 2.)
+
+```tw
+    .test(
+      "phase6 stage4a: a leaked-and-returned param is NOT moved (retaining callee)",
+      fn() {
+        b := b_reg()
+        // h(x) { global_set G0 = x; x }  -- leaks x (Published) AND returns it (MayAliasParams).
+        h := fdef(
+          1,
+          "h",
+          1,
+          .Let(lid(1), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))), .Atom(.ALocal(lid(0)))),
+        )
+        // caller() { x := Dict.new(); out := h(x); out }
+        caller_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+            .Atom(.ALocal(lid(1))),
+          ),
+        )
+        f := analyzed_caller([h, fdef(2, "caller", 0, caller_body)], "caller")
+        // The publish-loop demotes x to Shared before the MayAliasParams branch, so
+        // consume_base sees a non-Unique base and DECLINES the move: out is not Unique.
+        try assert.is_true(caller_own(f, 1) != own_unique())
+        .Ok({})
+      },
+    )
+```
+
+- [ ] **Step 3: Run to verify the two fail-first tests fail (the guard already passes)**
 
 Run: `set -o pipefail; make boot-test 2>&1 | grep -aE 'Ran [0-9]+ tests|FAIL|stage4a' | tail -6`
-Expected: FAIL on both `stage4a` tests — the fresh local is `Shared` (published) and the owned
-`g` is `Published` (whole-return publishes even when seeded), because the move is not yet
-implemented.
+Expected: FAIL on the two fail-first `stage4a` tests — the fresh local is `Shared` (published)
+and the owned `g` is `Published` (whole-return publishes even when seeded), because the move is
+not yet implemented. The retaining-callee guard (Step 2b) already **passes** (old code publishes
+the leaked arg).
 
 - [ ] **Step 4: Implement the whole-return move**
 
-In `ownership.tw`, replace the `MayAliasParams` branch of `transfer_summarized_call`
-(`:1156`–`:1166`):
+First update the now-stale section-1 header comment in `transfer_summarized_call`
+(`ownership.tw:1142`–`1143`), which claims `MayAliasParams` always publishes:
+
+```tw
+  // 1. Escape + return handling (mutates st: publishes Retained args, sets the
+  // result shell, publishes MayAliasParams origins).
+```
+
+to:
+
+```tw
+  // 1. Escape + return handling (mutates st: publishes Retained args, sets the
+  // result shell, and for MayAliasParams either MOVES a single proven-unique origin
+  // (Stage 4a) or publishes the origins).
+```
+
+Then replace the `MayAliasParams` branch of `transfer_summarized_call` (`:1156`–`:1166`):
 
 ```tw
     .MayAliasParams(idxs) => {
@@ -199,10 +257,12 @@ with:
     .MayAliasParams(idxs) => {
       // Whole-return move (Stage 4a): if the return aliases EXACTLY ONE param and that
       // argument is proven Unique + last-use here (arg_unique -- the destructive-update
-      // condition), MOVE it: the result takes the argument's unique region and the
-      // argument is consumed (consume_base), instead of publishing. Multi-param aliasing
-      // or a non-unique/non-last-use argument keeps the conservative publish, so a param
-      // argument in the generic pass (Unknown) still publishes.
+      // condition), MOVE it: the result takes the argument's unique SHELL and the argument
+      // is consumed (consume_base), instead of publishing. Shell-only -- field_own/path_prov
+      // are NOT transferred (Stage 4b). Multi-param aliasing or a non-unique/non-last-use
+      // argument keeps the conservative publish, so a param argument in the generic pass
+      // (Unknown) still publishes; a leaked+returned arg is published by section 1 first,
+      // so consume_base sees a non-Unique base and declines the move.
       if idxs.len() == 1 and idxs[0] < args.len() and arg_unique[idxs[0]] {
         k := idxs[0]
         st = st.consume_base(result, args[k], last)          // result Unique, args[k] valid=false
