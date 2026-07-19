@@ -85,6 +85,22 @@ fn caller_own(f: cfg.CfgFunction, local_id: Int) Int {
   }
 }
 
+// The rendered decision verdict recorded at a call's result local (or "" if none).
+fn verdict_of(f: cfg.CfgFunction, local_id: Int) String {
+  for blk in f.blocks {
+    case blk.exit.verdicts.get(local_id) {
+      .Some(s) => return s,
+      .None => {},
+    }
+  }
+  ""
+}
+
+// substring test
+fn contains_sub(hay: String, needle: String) Bool {
+  hay.contains(needle)
+}
+
 fn is_published(s: ownership.Summary, i: Int) Bool {
   case s.params[i].base_role {
     .Published => true,
@@ -755,6 +771,75 @@ pub fn suite() runner.Suite {
         // The publish-loop demotes x to Shared before the MayAliasParams branch, so
         // consume_base sees a non-Unique base and DECLINES the move: out is not Unique.
         try assert.is_true(caller_own(f, 1) != own_unique())
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 completion: build_env-shape call selects the owned variant (verdict)",
+      fn() {
+        b := b_reg()
+
+        // at(env) { env.f0 = 0 ; env2 }  -- direct mutator: Consumed {[],[.f0]}.
+        at := fdef(
+          1,
+          "at",
+          1,
+          .Let(
+            lid(1),
+            .ARecordUpdate(.ALocal(lid(0)), FieldId.{ id: 0 }, .ALitInt(0), false, TypeId.{ id: 0 }),
+            .Atom(.ALocal(lid(1))),
+          ),
+        )
+
+        // be() { e := Dict.new(); r := at(e); r }  -- e is fresh Unique + last-use at the call.
+        be_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+            .Atom(.ALocal(lid(1))),
+          ),
+        )
+        f := analyzed_caller([at, fdef(2, "be", 0, be_body)], "be")
+
+        // the at(e) call (result lid1) records an OWNED verdict naming a unique key.
+        try assert.is_true(contains_sub(verdict_of(f, 1), "unique"))
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 completion: branch_env-shape call (arg read later) selects generic (no owned verdict)",
+      fn() {
+        b := b_reg()
+        at := fdef(
+          1,
+          "at",
+          1,
+          .Let(
+            lid(1),
+            .ARecordUpdate(.ALocal(lid(0)), FieldId.{ id: 0 }, .ALitInt(0), false, TypeId.{ id: 0 }),
+            .Atom(.ALocal(lid(1))),
+          ),
+        )
+
+        // br() { e := Dict.new(); r := at(e); x := e.f0; r }  -- e read AFTER the call,
+        // so it is not last-use at the call -> arg not unique -> generic -> no owned verdict.
+        br_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+            .Let(
+              lid(2),
+              .ARecordGet(.ALocal(lid(0)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+              .Atom(.ALocal(lid(1))),
+            ),
+          ),
+        )
+        f := analyzed_caller([at, fdef(2, "br", 0, br_body)], "br")
+        try assert.equal(verdict_of(f, 1), "") // generic decisions are not rendered
         .Ok({})
       },
     )

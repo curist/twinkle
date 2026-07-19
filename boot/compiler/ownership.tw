@@ -1886,6 +1886,27 @@ fn block_verdicts(
           .None => {},
         }
       },
+      .ACall(callee, args) => case callee_func_id(callee) {
+        .Some(fid) => case call_info(sem, fid) {
+          .Some(_) => {}, // builtin semantics -> no user-call specialization verdict
+          .None => case table.summary_get(fid.id) {
+            .Some(s) => {
+              au: Vector<Bool> = collect a in args {
+                case atom_local_id(a) {
+                  .Some(id) => own_is_unique(pre.own, id) and is_last_use(last, id),
+                  .None => false,
+                }
+              }
+              dec := render_call_decision(fid.id, select_variant(fid.id, s, au))
+              if dec.len() > 0 {
+                verdicts[inst.anf_local.id] = dec
+              }
+            },
+            .None => {}, // non-summarized direct user callee -> no decision
+          },
+        },
+        _ => {}, // indirect/closure call
+      },
       _ => {},
     }
     st = .transfer_op(
@@ -3644,6 +3665,24 @@ pub fn select_variant(func_id: Int, s: Summary, arg_unique: Vector<Bool>) vid.Va
     }
   }
   vid.canonicalize_variant(vid.VariantId.{ func: func_id, unique: reqs })
+}
+
+// Render a call-site decision verdict (Stage 4c completion): the owned variant a
+// caller may select. Generic decisions (empty key) render as "" -- callers skip them
+// to keep `twk ir --cfg` readable (a generic-render refinement is deferred).
+fn render_call_decision(callee_id: Int, v: vid.VariantId) String {
+  if v.unique.len() == 0 {
+    ""
+  } else {
+    reqs: Vector<String> = collect r in v.unique {
+      if r.path.segs.len() == 0 {
+        "p${r.param}"
+      } else {
+        "p${r.param}.f${r.path.segs[0]}"
+      }
+    }
+    "-> f${callee_id}[unique:${reqs.join(",")}]"
+  }
 }
 
 // Classify each parameter's escape/capability by scanning EVERY block's
