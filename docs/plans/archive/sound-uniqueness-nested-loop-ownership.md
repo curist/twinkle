@@ -12,8 +12,8 @@
 
 - Treat `docs/plans/archive/sound-uniqueness-sieve-cfg-gap.md` and `docs/plans/sound-uniqueness/analysis/sieve-cfg-gap-notes.md` as the evidence baseline.
 - Do not change Gap A/Gap B summary behavior: `set_at__Bool` must remain `p0=Consumed paths{[]} p1=Borrowed p2=Published ret=alias(p0)`.
-- Provisional assumptions may be collected broadly for loop-header block params, but final acceptance requires every predecessor contribution for that param to be `Unique` after convergence.
-- Retraction is mandatory: if any predecessor contributes `Shared` or `Unknown` after convergence, remove the assumption, rerun, and render no owned verdict from that assumption.
+- Provisional assumptions may be collected broadly for live loop-header locals, including both block params and live-through locals, but final acceptance requires every predecessor contribution for that local to be both `Unique` and binding-valid after convergence.
+- Retraction is mandatory: if any predecessor contributes `Shared`, `Unknown`, or an invalid binding after convergence, remove the assumption, rerun, and render no owned verdict from that assumption.
 - `graph_scc.visit` remains out of scope. Its recursive/SCC summary specialization gap is separate from nested loop-header seeding.
 - Never use rendered FuncIds, block ids, or local ids in durable test assertions. Assert stable text such as function names, `loop.header`, `terminator: loop-back-edge`, `verdict ->`, `[unique:p0]`, and absence of `: Shared` in scoped fact lines.
 - Write CFG dumps under `/tmp/twinkle-cfg-gap/`, not inside the repository.
@@ -26,7 +26,7 @@
 
 - `boot/compiler/ownership.tw`
   - Add loop-backedge classification helpers for loop-header optimistic seeding.
-  - Thread block-edge context into the ownership entry join used during `run_fixpoint`.
+  - Thread live-local seed context into the ownership entry join used during `run_fixpoint`.
   - Keep final materialization in `ownership_stage` non-optimistic so rendered facts are derived from converged exits.
 - `boot/tests/fixtures/cfg/sound_uniqueness/nested_loop_set.tw`
   - Minimal positive nested-loop vector fixture without benchmark noise.
@@ -117,13 +117,15 @@ pub fn nested_loop_set(n: Int) Int {
   flags: Vector<Bool> = collect _ in range(n) { true }
   i := 0
   for i < n {
-    step := i + 1
-    k := step
-    for k < n {
-      if flags[k] {
-        flags = .set_at(k, false)
+    if flags[i] {
+      step := i + 1
+      k := step
+      for k < n {
+        if flags[k] {
+          flags = .set_at(k, false)
+        }
+        k = k + step
       }
-      k = k + step
     }
     i = i + 1
   }
@@ -131,7 +133,7 @@ pub fn nested_loop_set(n: Int) Int {
 }
 ```
 
-This keeps the minimal nested-loop shape small: `flags` is fresh before the outer loop, carried by the outer loop, and mutated through `set_at` inside an inner loop.
+This keeps the nested-loop shape small while still forcing `flags` to be live through the outer loop: `flags` is fresh before the outer loop, read by the outer loop, and mutated through `set_at` inside an inner loop.
 
 - [ ] **Step 2: Add the real-sieve-shaped positive fixture**
 
@@ -267,13 +269,13 @@ Do not commit the failing tests by themselves; continue to Task 3 and commit fix
 
 **Interfaces:**
 - Consumes: CFG `preds`, predecessor `terminator` values, and existing `join_entry_ownership` / `run_fixpoint` flow.
-- Produces: an outer assume/validate/retract loop around the existing fixpoint. Active assumptions may bootstrap `Unknown` loop-header params to `Unique` during iteration, but final rendered facts are accepted only after every converged predecessor contribution validates as `Unique`.
+- Produces: an outer assume/validate/retract loop around the existing fixpoint. Active assumptions may bootstrap `Unknown` live loop-header locals to `Unique` during iteration, but final rendered facts are accepted only after every converged predecessor contribution validates as `Unique` and binding-valid.
 
 - [ ] **Step 1: Do not use the plain join as the acceptance gate**
 
 The implementation must not require the plain `join_entry_ownership` result to already be `Unique` before seeding; that is a no-op. Instead:
-- collect provisional loop-header param assumptions up front;
-- run the normal fixpoint with those assumptions allowed to turn an `Unknown` loop-header param into `Unique`;
+- collect provisional live loop-header local assumptions up front;
+- run the normal fixpoint with those assumptions allowed to turn an `Unknown` loop-header local into `Unique`;
 - validate the converged result by inspecting every predecessor contribution for each assumed param;
 - retract any assumption whose final predecessor contributions are not all `Unique`;
 - rerun until no assumptions are retracted.
@@ -343,7 +345,7 @@ fn pred_param_contribution(
 
 Backedge classification is by predecessor terminator, not SCC membership. In nested loops, an inner-loop entry predecessor and inner-loop backedge can both belong to the same enclosing cyclic region, so SCC membership is not precise enough. Validation tracks binding validity as well as ownership: an invalid/consumed edge argument must never validate a `Unique` seed.
 
-- [ ] **Step 3: Collect provisional loop-header param assumptions**
+- [ ] **Step 3: Collect provisional live loop-header local assumptions**
 
 Add this helper near the seed-set helpers:
 
@@ -352,10 +354,8 @@ fn collect_loop_seed_candidates(blocks: Vector<CfgBlock>) LoopSeedSet {
   seeds: LoopSeedSet = Dict.new()
   for blk in blocks {
     if blk.name == "loop.header" and loop_header_has_backedge(blocks, blk) {
-      for p in blk.params {
-        if live_contains_int(blk.entry.live, p.id) {
-          seeds[loop_seed_key(blk.id.id, p.id)] = true
-        }
+      for lid in blk.entry.live {
+        seeds[loop_seed_key(blk.id.id, lid)] = true
       }
     }
   }
@@ -378,17 +378,11 @@ fn join_entry_ownership_assumed(
 ) Dict<Int, Int> {
   entry := join_entry_ownership(blk, exits, processed)
   for lid in blk.entry.live {
-    case param_index(blk, lid) {
-      .Some(_) => {
-        current := fact_of_local(entry, lid)
-        case current {
-          .Unknown => if loop_seed_active(seeds, blk.id.id, lid) {
-            entry[lid] = own_tag(.Unique)
-          },
-          _ => {},
-        }
+    case fact_of_local(entry, lid) {
+      .Unknown => if loop_seed_active(seeds, blk.id.id, lid) {
+        entry[lid] = own_tag(.Unique)
       },
-      .None => {},
+      _ => {},
     }
   }
   entry
@@ -447,7 +441,7 @@ fn atom_reusable(st: ForwardState, a: Atom, last: Vector<Int>) Bool {
 
 Then update direct destructive reuse and direct verdict gates:
 
-- `init_hinge`: move only when the source local is `local_reusable(st.own, st.valid, src, last)`. If the source is a local but not reusable, take the alias/publish path (`publish_local(src)` and result `Shared`) rather than moving from an invalid binding. Non-local inputs remain `Unknown`.
+- `init_hinge`: move only when the source local is binding-valid at last use (`local_valid_at_last(st.valid, src, last)`). This is a move-only gate, not shell reuse, so it must not require `Unique`; if the source is a local but not valid-at-last-use, take the alias/publish path (`publish_local(src)` and result `Shared`) rather than moving from an invalid binding. Non-local inputs remain `Unknown`.
 
 - `single_retention`: require `valid_of_local(st.valid, id)` in addition to `Unique`, last-use, and single-store. This keeps stored-element field facts and the Gap A publish gate from treating an invalid consumed local as a clean unique move.
 
@@ -487,9 +481,9 @@ fn shell_verdict(st: ForwardState, base: Atom, last: Vector<Int>) String {
 }
 ```
 
-- `ARecordGet` field projection move path in `transfer_op`: the destructive whole-record last-use case must use `local_reusable(st.own, st.valid, bid, last)` instead of bare `is_last_use(last, bid)`. Quartet/transport-licensed projection moves must also require `valid_of_local(st.valid, bid)` unless their recognizers are updated in the same task to prove validity explicitly. Do not move field ownership out of an invalid base.
+- `ARecordGet` field projection move path in `transfer_op`: the destructive whole-record last-use case must require binding-valid last use (`local_valid_at_last(st.valid, bid, last)`) instead of bare `is_last_use(last, bid)`. This is a move-only gate, not shell reuse, so it must not require the base shell itself to be `Unique`; the projected field's own fact supplies the field proof. Quartet/transport-licensed projection moves must also require `valid_of_local(st.valid, bid)`. Do not move field ownership out of an invalid base.
 
-- In `block_verdicts`, any direct field/backing move marker that currently uses `is_last_use(last, bid)` as a destructive move proof must use `local_reusable(pre.own, pre.valid, bid, last)` instead. Keep non-destructive licensed paths (`quartet_has(...)` / `transport_has(...)`) unchanged only if their recognizers already prove validity; otherwise add `valid_of_local(pre.valid, bid)` before rendering a move.
+- In `block_verdicts`, any direct field/backing move marker that currently uses `is_last_use(last, bid)` as a destructive move proof must use the same projection move predicate as `transfer_op`. Quartet/transport render paths must also require `valid_of_local(pre.valid, bid)` before rendering a move.
 
 Then tighten summarized user-call unique gates using the same predicate shape. In `transfer_summarized_call`, snapshot `pre_valid := st.valid` next to `pre_own` and update `arg_unique`:
 

@@ -60,25 +60,14 @@ was not published. This still publishes every wrapper param (params are not Uniq
 the generic pass, nor seeded Unique for a variant unless keyed), so the escape soundness
 the plan required is preserved; it only exempts provably-fresh unique moves.
 
-## residual loop-carried merge gap (NESTED loops) — follow-up
+## nested loop-carried merge gap (closed)
 
-The real `examples/performance/awfy/twinkle/sieve.tw` still does NOT render the in-loop
-verdict. Regenerated CFG shows the nested/inner header entering as `Unknown`, then the
-inner `if.join` / back-edge producing `Shared`; that `Shared` flows out through the
-OUTER back-edge and prevents the outer carried value from stabilizing as proven Unique.
-The cause is isolated to **loop nesting**, not the read:
-- single loop + interleaved read of the vector: CONVERGES (verdict renders, stays Unique).
-- nested loops (vector carried by an OUTER loop, mutated by an INNER loop, as in sieve):
-  does NOT converge. The inner loop header enters `Unknown`, the inner back-edge produces
-  `Shared`, and that Shared flows out through the OUTER back-edge, so the outer loop
-  can never prove the carried vector Unique — the pessimistic fixpoint (headers start
-  from the join of PROCESSED preds only) never bootstraps nested headers to Unique.
-
-This is a separate loop-merge/optimistic-seeding gap (assume Unique at loop headers,
-verify, retract if the back-edge refutes), independent of the summary/move fixes in this
-plan. Track as a follow-up. The `sieve_loop_set` fixture pins the single-loop case that
-DOES work; the active follow-up plan is
-`docs/plans/sound-uniqueness-nested-loop-ownership.md`.
+The real `examples/performance/awfy/twinkle/sieve.tw` now renders the in-loop
+`verdict -> ...[unique:p0]` for the inner `set_at` call. The fix is conservative
+provisional loop-header seeding: live loop-header locals may start as `Unique`
+during iteration, but an assumption is kept only when every entry and backedge
+predecessor contribution validates as both `Unique` and binding-valid after convergence.
+Function-parameter and fresh-alias nested-loop fixtures stay conservative.
 
 ## graph_scc.visit classification
 
