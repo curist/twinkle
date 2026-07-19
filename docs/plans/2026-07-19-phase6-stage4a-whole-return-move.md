@@ -58,6 +58,10 @@ Applying it in the `MayAliasParams` branch, gated on `arg_unique[k]`, makes a pr
 - **Generic caller with a fresh-unique local** (`build_env` shape): the local **moves** (result `Unique`, local consumed) instead of publishing — a generic precision improvement.
 - **Generic caller passing a param** (the Stage 2b guard's `g`): the param enters `Unknown` in the generic pass → `arg_unique` false → **still publishes** → `g`'s generic summary stays `Published`. **The Stage 2b guard stays green** (4a does not touch the generic param case).
 
+**Self-protecting against retaining callees.** The `MayAliasParams` branch runs *after* section 1's publish-loop, and the move calls `consume_base`, which re-reads the argument's **current** ownership. So if the callee also *leaks* the argument (`s.params[k].base_role == Published`), the publish-loop demotes it to `Shared` first, `consume_base` sees non-`Unique`, and the move **declines** — a retaining callee never gets a move even if `arg_unique` was true pre-call. This is why reusing `consume_base` (current-own re-check) rather than a raw pre-snapshot move is the safe choice.
+
+**Empirically verified (spike during plan review).** With the move applied, `summarize_variant(g, {(0,[])})` for the `add_type`-caller renders `p0=Consumed paths{[],[.f0]} ret=alias(p0)` (generic stays `p0=Published`), and the moved return classifies `alias(p0)` so `flows_to_return` propagates — confirming the `Consumed` acceptance is not subject to a Stage-3-style `flows_to_return` gap. The spike also showed the change re-baselines **exactly one** existing test (`t4 return-alias`, below).
+
 ### Determinism / monotonicity
 
 The move only sharpens a result from `Shared` to `Unique` and a param role from `Published` toward `Consumed`/`Borrowed` — **downward** in the role lattice (`Published → Consumed → Borrowed`), the direction the descending generic fixpoint already moves, so `same_summary` still converges. Codegen is unaffected (census 0), so `boot.wasm` stays byte-identical and self-host converges; only the **summary** (`--cfg`) output sharpens.
@@ -238,16 +242,46 @@ target/twk lint boot/main.tw    # expect only the pre-existing findings; fix any
 
 **Files:** possibly pre-existing test suites (re-baselining only); otherwise verification.
 
-- [ ] **Step 1: Identify and re-baseline any tests that asserted the old publish behavior**
+- [ ] **Step 1: Re-baseline the one affected test (`t4 return-alias`)**
 
-Run the full suite and inspect every failure that is **not** a new `stage4a` test:
+The plan-review spike confirmed the move re-baselines **exactly one** existing test:
+`"t4 return-alias: aliasing callee demotes the origin arg"` (`cfg_summary_suite.tw:827`). Its
+fixture is `f() { ctx := Dict.new(); r := g(ctx); 0 }` with `g(x) = x` — `ctx` is fresh
+`Unique` + last-use and its result `r` is discarded. Old behavior published `ctx` (`Shared`);
+under 4a it is **moved** (consumed, `r` `Unique`), so `ctx`'s own stays `Unique`. This is a
+sound precision gain: `ctx` is last-use so nothing observes the aliasing, and a genuinely
+*retaining* `g` would be `Published` and the move would decline (self-protection above). Update
+the assertion and the test's intent:
 
-Run: `set -o pipefail; make boot-test 2>&1 | grep -aE 'FAIL|^\s*x ' | tail -40`
-For each failure, confirm it is a fresh-unique argument now **moving** (result `Unique`/param
-recovered) where it previously published (`Shared`/`Published`) — i.e. a **sharper, sound**
-result. Update the expectation and add a one-line comment noting Stage 4a changed it. If any
-failure is *not* explainable as this precision gain, **stop** — the move may be firing where
-`arg_unique` should be false (investigate the gate), or a genuinely-shared arg is being moved
+```tw
+    .test(
+      "t4 return-alias: a unique last-use arg is MOVED into the aliasing callee (Stage 4a)",
+      fn() {
+        b := b_reg()
+        g := fdef(2, "g", 1, .Atom(.ALocal(lid(0))))
+        f_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 2 }), [.ALocal(lid(0))]),
+            .Atom(.ALitInt(0)),
+          ),
+        )
+        f := analyzed_caller([fdef(1, "f", 0, f_body), g], "f")
+        // ctx (lid0) is fresh Unique + last-use; g returns an alias of it and the result is
+        // discarded, so Stage 4a MOVES ctx (consumed) rather than demoting it to Shared.
+        try assert.equal(caller_own(f, 0), own_unique())
+        .Ok({})
+      },
+    )
+```
+
+Then re-run and confirm **no other** non-`stage4a` failures remain:
+
+Run: `set -o pipefail; make boot-test 2>&1 | grep -aE 'FAIL|^\s*x |Ran [0-9]+ tests' | tail -20`
+Expected: `Ran N tests: N passed`. If a failure other than `t4` appears, **stop** — the move
+may be firing where `arg_unique` should be false, or a genuinely-shared arg is being moved
 (unsound). Do not blanket-update.
 
 - [ ] **Step 2: Census unchanged (analysis-only invariant)**
@@ -310,6 +344,7 @@ no variant selection (Stage 4c). Analysis only: census stays 0, self-host holds.
 ## Self-Review
 
 - **Spec coverage:** closes the whole-value recovery obligation the Stage 3 deferral named — via the caller-side move, which I verified needs no new ret representation for the direct case (correcting the Stage 3 deferral wording). Pinned by two acceptances: the fresh-unique-local move (generic precision) and the `add_type`-caller owned-variant `Consumed` (the Stage 2b/3 deferral).
+- **Central acceptance empirically confirmed (review spike):** the risky part — whether the *moved* return propagates `flows_to_return` (the exact gap that bit Stage 3) — was checked by applying the move and rendering `summarize_variant(g, {(0,[])})`: it returns `p0=Consumed paths{[],[.f0]} ret=alias(p0)`. Not a hypothesis. The spike also bounded the blast radius to exactly one re-baselined test (`t4`), now pre-identified in Task 2 Step 1 rather than left to discovery.
 - **Reuses the existing move primitive (no new mechanism):** the move is `consume_base` (`ownership.tw:880`), the same one COW builtins use — result `Unique`, argument `valid=false`. No parallel proof path.
 - **Sound gate:** `arg_unique[k] = own_is_unique(pre_own) and is_last_use` is the destructive-update condition; a non-unique/non-last-use argument (every generic param arg) keeps the publish, so the Stage 2b generic guard stays green and no shared argument is ever moved.
 - **Honest scope:** multi-param moves, field seeding (4b), the VariantId call-site decision (4c), and the transitive representation are deferred with reasons; 4a is only the single-param caller-side move.
