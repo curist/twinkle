@@ -1,10 +1,10 @@
-# Sound Uniqueness Sieve CFG Gap Investigation Plan
+# Sound Uniqueness Sieve CFG Gap Investigation-Plus-Fix Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Investigate why the real AWFY sieve source does not currently render the unique-specialized `set_at` decision described in `docs/plans/sound-uniqueness/analysis/worked-examples.md`, and record the analogous conservative `graph_scc.visit` evidence as a secondary case.
+**Goal:** Investigate why the real AWFY sieve source does not currently render the unique-specialized `set_at` decision described in `docs/plans/sound-uniqueness/analysis/worked-examples.md`, add a failing test for each proven compiler gap before changing behavior, fix the smallest proven gap, and record the analogous conservative `graph_scc.visit` evidence as a secondary case.
 
-**Architecture:** Start from real on-disk sources and current `target/twk ir --cfg` output, not synthetic snippets. First preserve the observed mismatch as evidence, then isolate which analysis stage loses the proof: collect freeze introduction, loop-carried fact merge, thin-wrapper summary, call-site ownership propagation, or CFG verdict rendering. Treat `graph_scc.visit` as a related but lower-priority recursive/threaded-state case after sieve is understood.
+**Architecture:** Start from real on-disk sources and current `target/twk ir --cfg` output, not synthetic snippets. First preserve the observed mismatch as evidence, then isolate which analysis stage loses the proof: thin-wrapper summary, collect freeze introduction, loop-carried fact merge, call-site ownership propagation, or CFG verdict rendering. Once a stage is proven wrong by a focused failing test, make the narrow production fix for that stage before continuing; passing isolation tests classify that stage as not the root cause. Treat `graph_scc.visit` as a related but lower-priority recursive/threaded-state case after sieve is understood.
 
 **Tech Stack:** Twinkle boot compiler, `target/twk ir <file>.tw --cfg`, CFG ownership render, summary render, source search with `rg`, focused boot tests under `boot/tests/suites/` and fixtures under `boot/tests/fixtures/` only if the investigation needs executable regression coverage.
 
@@ -14,9 +14,13 @@
   - `examples/performance/awfy/twinkle/sieve.tw`
   - `boot/compiler/graph_scc.tw`
 - Do not use unstable rendered function-id numbers as durable assertions.
-- Do not change production compiler behavior while documenting the gap.
-- If production analysis changes become necessary, add failing tests first.
-- Prefer stable CFG fragments: `summary:`, `facts.in`, `facts.out`, `anf ... call`, `terminator: loop-back-edge`, `record_update`, `transport=`, and `verdict ->`.
+- Preserve documentation-only evidence before changing production compiler behavior.
+- This is investigation-plus-fix work: once a compiler gap is isolated, add or tighten a failing test first, then make the smallest production analysis change that makes that test pass.
+- Do not use rendered `FuncId`, local (`LNN`), or block (`BNN`) numbers in durable test assertions. Local/block numbers are acceptable only in temporary archaeology commands and evidence notes that are explicitly regenerated from the current tree.
+- Prefer stable CFG fragments in tests and reports: function names (`fn replace`, `fn loop_set_count`), `summary:`, role text (`Consumed paths{[]}`, `ret=alias(p0)`), `facts.in`, `facts.out`, `terminator: loop-back-edge`, `record_update`, `transport=`, and `verdict ->`/`unique:`.
+- Before committing any fixture assertion, run `target/twk ir <fixture>.tw --cfg` once and compare the current render shape against the assertion text. If the render shape differs, update the assertion to match stable current text before adding the production fix.
+- Assertions that reject `: Shared` must inspect only CFG fact lines, not an entire function section, so unrelated explanatory text or verdict details cannot cause false failures.
+- Each task that changes tracked files ends with `git status --short` and a commit using the task's suggested message after its verification command passes.
 - The primary question is not whether sieve has the right source shape; it does. The question is why current CFG analysis does not retain/render the unique proof.
 
 ---
@@ -142,7 +146,7 @@ sieve is the smaller and more direct thin-wrapper failure.
 **Files:**
 - Read: `examples/performance/awfy/twinkle/sieve.tw`
 - Read: `docs/plans/sound-uniqueness/analysis/worked-examples.md`
-- Create or modify if requested by this task: `docs/plans/sound-uniqueness/analysis/sieve-cfg-gap-notes.md`
+- Create if absent, otherwise modify: `docs/plans/sound-uniqueness/analysis/sieve-cfg-gap-notes.md`
 
 **Interfaces:**
 - Consumes: Current real-source CFG output for sieve.
@@ -164,10 +168,10 @@ Expected: command exits successfully and writes `/tmp/twinkle-cfg-gap/sieve.cfg`
 Run:
 
 ```bash
-rg -n "^fn run|^fn set_at__Bool|summary:|facts\.in=\{L13|facts\.in=\{L13: Shared|anf L55: call|anf L13: init|anf L64: call|anf L65: assign|loop-back-edge|verdict ->" /tmp/twinkle-cfg-gap/sieve.cfg
+rg -n "^fn run|^fn set_at__Bool|summary:|loop\.header|facts\.in=.*(Unknown|Shared)|anf .*call .*Fn|anf .*assign .*|loop-back-edge|verdict ->" /tmp/twinkle-cfg-gap/sieve.cfg
 ```
 
-Expected: output includes the loop-carried `L13` facts, the `set_at__Bool` summary, and the call/assign pair. Current expected evidence includes:
+Expected: output includes the loop-carried facts, the `set_at__Bool` summary, and the call/assign pair. Current regenerated evidence includes these temporary local ids:
 
 ```text
 anf L64: call ...
@@ -200,10 +204,22 @@ than the vector receiver.
 Run:
 
 ```bash
-git diff -- boot compiler src examples/performance/awfy/twinkle/sieve.tw
+git diff -- boot/compiler src examples/performance/awfy/twinkle/sieve.tw
 ```
 
 Expected: no production compiler or sieve source diff for this documentation-only task.
+
+- [ ] **Step 5: Commit the preserved evidence**
+
+Run:
+
+```bash
+git status --short
+git add docs/plans/sound-uniqueness/analysis/sieve-cfg-gap-notes.md
+git commit -m "docs: preserve sieve CFG gap evidence"
+```
+
+Expected: only the evidence note is staged for this task's commit.
 
 ---
 
@@ -213,12 +229,12 @@ Expected: no production compiler or sieve source diff for this documentation-onl
 - Read: `boot/compiler/summary.tw`
 - Read: `boot/compiler/ownership.tw`
 - Read: `boot/compiler/opt/semantics.tw`
-- Optional test target: `boot/tests/suites/cfg_summary_suite.tw`
-- Optional test target: `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`
+- Create: `boot/tests/fixtures/cfg/sound_uniqueness/vector_replace.tw`
+- Modify: `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`
 
 **Interfaces:**
 - Consumes: `set_at__Bool` summary from `/tmp/twinkle-cfg-gap/sieve.cfg`.
-- Produces: A yes/no answer: is the summary assigning consumption to the wrong parameter?
+- Produces: A focused fixture test proving whether vector index assignment summaries consume the receiver/base collection parameter.
 
 - [ ] **Step 1: Locate summary construction for calls and consuming paths**
 
@@ -230,9 +246,9 @@ rg -n "Consumed paths|cow_base_arg|base_arg|IndexWrite|set_at|summary|ret_paths|
 
 Expected: identify the code path that classifies a wrapper call and maps consumed paths to parameters.
 
-- [ ] **Step 2: Add or identify a minimal wrapper summary check**
+- [ ] **Step 2: Add the focused vector replacement fixture**
 
-If no existing test directly checks a vector receiver wrapper, add a failing test that compiles a small fixture equivalent to:
+Create `boot/tests/fixtures/cfg/sound_uniqueness/vector_replace.tw`:
 
 ```tw
 pub fn replace(xs: Vector<Bool>, i: Int, value: Bool) Vector<Bool> {
@@ -241,13 +257,74 @@ pub fn replace(xs: Vector<Bool>, i: Int, value: Bool) Vector<Bool> {
 }
 ```
 
-Expected failing assertion before any fix:
+Expected: the fixture compiles and lowers to a thin wrapper shape with an index-write call, assignment back to `xs`, and return of `xs`.
 
-```text
-summary should mention p0=Consumed paths{[]} and ret=alias(p0), not p2=Consumed paths{[]}
+- [ ] **Step 3: Preflight the fixture render shape before adding durable assertions**
+
+Run:
+
+```bash
+target/twk ir boot/tests/fixtures/cfg/sound_uniqueness/vector_replace.tw --cfg > /tmp/twinkle-cfg-gap/vector-replace-pre.cfg
+rg -n "^fn replace|^fn set_at__Bool|summary:|anf .*call .*Fn|anf .*assign .*" /tmp/twinkle-cfg-gap/vector-replace-pre.cfg
 ```
 
-- [ ] **Step 3: Run the focused test before changing implementation**
+Expected current pre-fix render includes:
+
+```text
+fn replace
+summary: p0=Borrowed p1=Borrowed p2=Consumed paths{[]} ret=alias(p0,p2)
+fn set_at__Bool
+```
+
+If this command does not compile, fix the fixture syntax before editing the test suite. If the summary already consumes `p0`, still add the regression test and helper below, but record that Task 2 is a coverage/classification task rather than a failing-test-first production fix.
+
+- [ ] **Step 4: Add fact-line assertion helpers and the failing summary assertion**
+
+In `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`, add this helper immediately after `section_from`:
+
+```tw
+fn assert_fact_lines_unique_without_shared(section: String, context: String) Result<Void, String> {
+  saw_unique := false
+  for line in section.lines() {
+    if line.contains("facts.in=") or line.contains("facts.out=") {
+      if line.contains(": Unique") {
+        saw_unique = true
+      }
+      try assert.is_false(line.contains(": Shared"))
+    }
+  }
+  try assert.ok(saw_unique, "expected Unique fact in ${context}")
+  .Ok({})
+}
+```
+
+Then add this test to `suite()` immediately before the existing `"Cell-backed dict update stays conservative"` test:
+
+```tw
+    .test(
+      "vector index assignment summary consumes receiver not value",
+      fn() {
+        out := try render_entry("vector_replace")
+        replace := try section_between(out, "fn replace", "fn set_at__Bool")
+        try assert.str_contains(
+          replace,
+          "summary: p0=Consumed paths{[]} p1=Borrowed p2=Borrowed ret=alias(p0)",
+        )
+        try assert.is_false(replace.contains("p2=Consumed paths{[]}"))
+        .Ok({})
+      },
+    )
+```
+
+Expected pre-fix failure: the rendered `fn replace` summary currently contains:
+
+```text
+summary: p0=Borrowed p1=Borrowed p2=Consumed paths{[]} ret=alias(p0,p2)
+```
+
+That failure proves the summary assigns consumption to the stored Bool value instead of the vector receiver.
+
+- [ ] **Step 5: Run the focused test before changing implementation**
 
 Run:
 
@@ -255,30 +332,45 @@ Run:
 target/twk run boot/tests/main.tw
 ```
 
-Expected: the new focused test fails if the summary bug is real and unhandled.
+Expected before the production fix: the new `vector index assignment summary consumes receiver not value` test fails with a missing expected summary string or with the negative `p2=Consumed paths{[]}` assertion.
 
-- [ ] **Step 4: Fix only the summary mapping if the test proves it is wrong**
+- [ ] **Step 6: Fix only the summary mapping after the failing test exists**
 
 Change the summary logic so an index-write or vector `set_at` wrapper consumes the receiver/base collection parameter, not the stored value parameter.
 
-Expected post-fix `set_at__Bool` summary shape:
+Expected post-fix summary shape for both the fixture and real sieve wrapper:
 
 ```text
 summary: p0=Consumed paths{[]} p1=Borrowed p2=Borrowed ret=alias(p0)
 ```
 
-The exact order/format may differ, but the vector receiver must be the consumed parameter.
+The exact surrounding function ids may differ, but the vector receiver must be the consumed parameter and the Bool value parameter must not be consumed.
 
-- [ ] **Step 5: Re-run sieve CFG after the summary fix**
+- [ ] **Step 7: Re-run the focused test and sieve CFG after the summary fix**
 
 Run:
 
 ```bash
+target/twk run boot/tests/main.tw
 target/twk ir examples/performance/awfy/twinkle/sieve.tw --cfg > /tmp/twinkle-cfg-gap/sieve-after-summary.cfg
-rg -n "^fn set_at__Bool|summary:|anf L64: call|verdict ->|facts\.in=\{L13" /tmp/twinkle-cfg-gap/sieve-after-summary.cfg
+rg -n "^fn set_at__Bool|summary:|verdict ->|facts\.in=" /tmp/twinkle-cfg-gap/sieve-after-summary.cfg
 ```
 
-Expected: `set_at__Bool` summary is corrected. If `L13` is still `Unknown`/`Shared`, continue to Task 3.
+Expected: the new test passes and `set_at__Bool` summary is corrected. If the real sieve still lacks a `verdict -> ...unique:` line or still shows the loop-carried vector degrading to `Unknown`/`Shared`, continue to Task 3.
+
+- [ ] **Step 8: Commit the thin-wrapper summary classification or fix**
+
+Run:
+
+```bash
+git status --short
+git add boot/tests/fixtures/cfg/sound_uniqueness/vector_replace.tw \
+  boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw \
+  boot/compiler/summary.tw boot/compiler/ownership.tw boot/compiler/opt/semantics.tw
+git commit -m "fix: classify vector index assignment ownership"
+```
+
+Expected: the commit contains the new failing-then-passing fixture test plus only the narrow production files needed for the proven summary fix. If the test proved this stage was already correct and no production fix was made, use `git commit -m "test: cover vector index assignment ownership"` instead.
 
 ---
 
@@ -288,30 +380,25 @@ Expected: `set_at__Bool` summary is corrected. If `L13` is still `Unknown`/`Shar
 - Read: `boot/compiler/ownership.tw`
 - Read: `boot/compiler/cfg.tw`
 - Read: `boot/compiler/summary.tw`
-- Optional test target: `boot/tests/suites/cfg_ownership_facts_suite.tw`
+- Read: `boot/compiler/opt/semantics.tw`
+- Create: `boot/tests/fixtures/cfg/sound_uniqueness/collect_carry_loop.tw`
+- Modify: `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`
 
 **Interfaces:**
-- Consumes: Current facts around `anf L55: call ...` and `anf L13: init L55` in sieve.
-- Produces: A yes/no answer: does the collect-builder freeze result become `Unique` before the loop?
+- Consumes: Corrected summary evidence from Task 2 and current facts around `anf ... call` / `init` for the sieve collect freeze.
+- Produces: A concrete yes/no answer: does a collect-builder freeze become a `Unique` vector fact when moved into a loop-carried local before any mutation wrapper is involved?
 
-- [ ] **Step 1: Extract the pre-loop collect freeze area**
+- [ ] **Step 1: Record the real sieve pre-loop collect area without using ids as assertions**
 
 Run:
 
 ```bash
-rg -n "anf L55: call|anf L13: init|block B2|block B12|facts\.in|facts\.out" /tmp/twinkle-cfg-gap/sieve.cfg
+rg -n "call Fn33|init L55|loop.header|facts\.in|facts\.out" /tmp/twinkle-cfg-gap/sieve-after-summary.cfg /tmp/twinkle-cfg-gap/sieve.cfg
 ```
 
-Expected current evidence includes:
+Expected current archaeology: the real sieve dump shows the collect freeze call and the later loop headers, but it does not provide a stable, direct assertion point that proves the `flags` local is unique immediately after `init`. Treat this command as evidence gathering only, not as a regression assertion.
 
-```text
-anf L55: call ...
-anf L13: init L55
-block B12 loop.header(L14, L15)
-facts.in={L14: Unknown, L15: Unknown}
-```
-
-- [ ] **Step 2: Determine whether the freeze call is recognized as a fresh vector producer**
+- [ ] **Step 2: Determine whether collect freeze is modeled as a fresh producer**
 
 Run:
 
@@ -319,39 +406,94 @@ Run:
 rg -n "builder|freeze|collect|fresh|Unique|introduce" boot/compiler/ownership.tw boot/compiler/summary.tw boot/compiler/opt/semantics.tw
 ```
 
-Expected: identify whether collect-builder freeze is represented in optimizer semantics as fresh/unique.
+Expected: identify whether collect-builder freeze is represented in optimizer semantics or ownership transfer as fresh/unique.
 
-- [ ] **Step 3: Add a tiny collect-freeze ownership test if missing**
+- [ ] **Step 3: Add a stronger collect-freshness fixture with an observable loop-carried vector fact**
 
-Use a source shape equivalent to:
+Create `boot/tests/fixtures/cfg/sound_uniqueness/collect_carry_loop.tw`:
 
 ```tw
-pub fn make_flags(n: Int) Vector<Bool> {
-  flags := collect _ in 0..n { true }
-  flags
+pub fn carry_flags(n: Int) Int {
+  flags: Vector<Bool> = collect _ in range(n) { true }
+  i := 0
+  for i < n {
+    flags = flags
+    i = i + 1
+  }
+  i
 }
 ```
 
-Expected assertion after CFG rendering:
+Why this fixture exists: a simple `make_flags() Vector<Bool>` only proves the function summary can render `ret=fresh`; it does not expose the post-freeze local fact at a loop boundary. The self-assignment in `carry_flags` forces `flags` to be a loop-carried local while avoiding `set_at`, wrapper summaries, and mutation decisions. That isolates collect freeze plus move/loop transport.
 
-```text
-The vector result from collect freeze should be treated as fresh/unique until published at return.
-```
-
-- [ ] **Step 4: Fix freshness introduction only if the test proves it is missing**
-
-Adjust ownership transfer for the collect-builder freeze call so the result is introduced as unique/fresh.
-
-- [ ] **Step 5: Re-run sieve CFG after the freshness fix**
+- [ ] **Step 4: Preflight the collect-carry fixture render shape**
 
 Run:
 
 ```bash
-target/twk ir examples/performance/awfy/twinkle/sieve.tw --cfg > /tmp/twinkle-cfg-gap/sieve-after-freeze.cfg
-rg -n "anf L55: call|anf L13: init|block B19|facts\.in=\{L13|anf L64: call|verdict ->" /tmp/twinkle-cfg-gap/sieve-after-freeze.cfg
+target/twk ir boot/tests/fixtures/cfg/sound_uniqueness/collect_carry_loop.tw --cfg > /tmp/twinkle-cfg-gap/collect-carry-pre.cfg
+rg -n "^fn carry_flags|summary:|loop.header|facts\.in=|facts\.out=|terminator: loop-back-edge|: Unique|: Shared" /tmp/twinkle-cfg-gap/collect-carry-pre.cfg
 ```
 
-Expected: `L13` should no longer enter the inner loop as `Unknown` solely because the collect result was not introduced as unique. If it still degrades, continue to Task 4.
+Expected current render includes at least one loop-carried fact line with `: Unique` and no fact line with `: Shared`. The fixture may also include a collect-builder lowering loop with `Unknown` facts before the post-freeze carry loop; `Unknown` in that earlier builder loop is not a collect-freeze failure.
+
+- [ ] **Step 5: Add the collect-carry assertion**
+
+In `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`, add this test to `suite()` immediately after the Task 2 vector replacement test:
+
+```tw
+    .test(
+      "collect freeze remains unique when carried through a borrow-free loop",
+      fn() {
+        out := try render_entry("collect_carry_loop")
+        carry := try section_from(out, "fn carry_flags")
+        try assert.str_contains(carry, "terminator: loop-back-edge")
+        try assert_fact_lines_unique_without_shared(carry, "carry_flags")
+        .Ok({})
+      },
+    )
+```
+
+Expected current outcome: this test should pass if collect freeze introduction is already sound. If it fails by rendering no fact-line `: Unique` or by rendering fact-line `: Shared` for the carried vector, collect freshness/move/loop transport is a proven root cause and must be fixed before Task 4.
+
+- [ ] **Step 6: Fix freshness introduction only if the collect-carry test fails**
+
+If the new collect-carry test fails, adjust ownership transfer for the collect-builder freeze call and the subsequent move into the loop-carried local so the carried vector is introduced as unique/fresh. Do not change loop consume-produce merge logic in this task.
+
+Expected post-fix evidence in `fn carry_flags`:
+
+```text
+terminator: loop-back-edge ...
+facts.in={..., <flags local>: Unique, ...}
+```
+
+The local id is intentionally not asserted in the test; the durable assertion is that the `carry_flags` section contains a `: Unique` loop fact and no `: Shared` fact.
+
+- [ ] **Step 7: Re-run sieve CFG after the collect-freshness classification**
+
+Run:
+
+```bash
+target/twk run boot/tests/main.tw
+target/twk ir examples/performance/awfy/twinkle/sieve.tw --cfg > /tmp/twinkle-cfg-gap/sieve-after-freeze.cfg
+rg -n "^fn run|^fn set_at__Bool|summary:|loop.header|facts\.in=|verdict ->" /tmp/twinkle-cfg-gap/sieve-after-freeze.cfg
+```
+
+Expected: the collect-carry test passes. If real sieve still lacks a unique `set_at` verdict after Tasks 2 and 3, continue to Task 4 because collect freeze has been isolated away from the remaining failure.
+
+- [ ] **Step 8: Commit the collect-freshness classification or fix**
+
+Run:
+
+```bash
+git status --short
+git add boot/tests/fixtures/cfg/sound_uniqueness/collect_carry_loop.tw \
+  boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw \
+  boot/compiler/ownership.tw boot/compiler/cfg.tw boot/compiler/summary.tw boot/compiler/opt/semantics.tw
+git commit -m "fix: preserve collect vector ownership facts"
+```
+
+Expected: the commit contains the collect-carry fixture plus only the narrow production files needed if the test exposed a freshness gap. If the test passed without a production fix, use `git commit -m "test: cover collect vector ownership facts"` instead.
 
 ---
 
@@ -360,68 +502,112 @@ Expected: `L13` should no longer enter the inner loop as `Unknown` solely becaus
 **Files:**
 - Read: `boot/compiler/ownership.tw`
 - Read: `boot/compiler/cfg.tw`
-- Optional test target: `boot/tests/suites/cfg_ownership_facts_suite.tw`
-- Optional fixture target: `boot/tests/fixtures/cfg/sound_uniqueness/`
+- Create: `boot/tests/fixtures/cfg/sound_uniqueness/sieve_loop_set.tw`
+- Modify: `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`
 
 **Interfaces:**
-- Consumes: Corrected wrapper summary and collect freshness evidence from Tasks 2 and 3.
-- Produces: A yes/no answer: does the loop fixpoint/merge preserve uniqueness across consume-produce assignment back to the same loop-carried local?
+- Consumes: Corrected wrapper summary from Task 2 and collect-carry uniqueness evidence from Task 3.
+- Produces: A focused failing test, or a passing classification, for consume-produce assignment back to the same loop-carried vector local.
 
-- [ ] **Step 1: Build a minimal loop-carried vector fixture if the real sieve is still too noisy**
+- [ ] **Step 1: Add the minimal loop-carried `set_at` fixture**
 
-Create a fixture equivalent to:
+Create `boot/tests/fixtures/cfg/sound_uniqueness/sieve_loop_set.tw`:
 
 ```tw
-pub fn loop_set(n: Int) Vector<Bool> {
-  flags := collect _ in 0..n { true }
+pub fn loop_set_count(n: Int) Int {
+  flags: Vector<Bool> = collect _ in range(n) { true }
   i := 0
   for i < n {
     flags = .set_at(i, false)
     i = i + 1
   }
-  flags
+  i
 }
 ```
 
-Expected behavior after Tasks 2 and 3:
+Why this fixture returns `Int`: returning the vector would publish it at function exit and add an unrelated source of conservatism. The fixture keeps the updated vector private, matching the real sieve property that `flags` is not returned.
 
-```text
-The loop-carried vector remains unique across the back-edge, and the `set_at` call site can select an owned variant.
-```
-
-- [ ] **Step 2: Run the minimal fixture and real sieve side by side**
+- [ ] **Step 2: Preflight the loop-carried `set_at` fixture render shape**
 
 Run:
 
 ```bash
+target/twk ir boot/tests/fixtures/cfg/sound_uniqueness/sieve_loop_set.tw --cfg > /tmp/twinkle-cfg-gap/sieve-loop-set-pre.cfg
+rg -n "^fn loop_set_count|^fn set_at__Bool|summary:|loop.header|facts\.in=|facts\.out=|terminator: loop-back-edge|verdict ->|unique:|: Shared" /tmp/twinkle-cfg-gap/sieve-loop-set-pre.cfg
+```
+
+Expected current pre-fix render includes `fn loop_set_count`, `fn set_at__Bool`, a loop back-edge, and either no `verdict -> ...unique:` decision or a fact-line `: Shared` on the loop-carried vector. If this command does not compile, fix the fixture syntax before editing the test suite.
+
+- [ ] **Step 3: Add the loop-carried consume-produce assertion**
+
+In `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`, add this test to `suite()` immediately after the Task 3 collect-carry test:
+
+```tw
+    .test(
+      "loop-carried vector set_at keeps unique decision when old value is dead",
+      fn() {
+        out := try render_entry("sieve_loop_set")
+        loop_set := try section_between(out, "fn loop_set_count", "fn set_at__Bool")
+        try assert.str_contains(loop_set, "terminator: loop-back-edge")
+        try assert.str_contains(loop_set, "verdict ->")
+        try assert.str_contains(loop_set, "unique:")
+        try assert_fact_lines_unique_without_shared(loop_set, "loop_set_count")
+        .Ok({})
+      },
+    )
+```
+
+Expected pre-fix failure if loop merge or call-site specialization is still wrong: the fixture section contains a `set_at` call/assign pair but no `verdict -> ...unique:` decision, or it contains fact-line `: Shared` for the loop-carried vector fact.
+
+- [ ] **Step 4: Run the minimal fixture and real sieve side by side**
+
+Run:
+
+```bash
+target/twk run boot/tests/main.tw
 target/twk ir boot/tests/fixtures/cfg/sound_uniqueness/sieve_loop_set.tw --cfg > /tmp/twinkle-cfg-gap/minimal-loop-set.cfg
 target/twk ir examples/performance/awfy/twinkle/sieve.tw --cfg > /tmp/twinkle-cfg-gap/sieve-loop-check.cfg
+rg -n "^fn loop_set_count|^fn set_at__Bool|summary:|loop.header|facts\.in=|verdict ->|unique:" /tmp/twinkle-cfg-gap/minimal-loop-set.cfg
+rg -n "^fn run|^fn set_at__Bool|summary:|loop.header|facts\.in=|verdict ->|unique:" /tmp/twinkle-cfg-gap/sieve-loop-check.cfg
 ```
 
-Expected: if the minimal fixture passes but real sieve fails, the remaining issue is a sieve-specific branch/join or nested-loop shape. If both fail, the loop-carried merge is the likely issue.
+Expected: if `sieve_loop_set` passes but real sieve fails, the remaining issue is a sieve-specific branch/join or nested-loop shape. If both fail, the loop-carried consume-produce merge or call-site ownership propagation is the likely issue.
 
-- [ ] **Step 3: Inspect merge behavior for consume-produce self assignment**
+- [ ] **Step 5: Inspect merge and call-site decision behavior for consume-produce self assignment**
 
 Run:
 
 ```bash
-rg -n "merge|join|loop|back-edge|facts\.in|facts\.out|assign" boot/compiler/ownership.tw boot/compiler/cfg.tw
+rg -n "merge|join|loop|back-edge|facts\.in|facts\.out|assign|select_variant|verdict|unique" boot/compiler/ownership.tw boot/compiler/cfg.tw boot/compiler/summary.tw
 ```
 
-Expected: identify where facts from the loop body and loop header are joined.
+Expected: identify where facts from the loop body and loop header are joined, and where a summarized call with a consumed receiver selects a `unique:` verdict from caller facts.
 
-- [ ] **Step 4: Add a failing test for the loop-carried merge if needed**
+- [ ] **Step 6: Fix only the proven loop/call-site gap**
 
-The test should assert stable CFG evidence, not `FuncId` values:
+If the Task 4 test fails, update only the narrow failing stage:
 
 ```text
-- loop header for the vector local does not render `Unknown`
-- call site renders `verdict -> ...[unique:...]`
+- If the receiver fact is `Unique` before the `set_at` call but the rendered decision is missing, fix call-site variant selection or CFG verdict rendering.
+- If the receiver fact is `Unique` before the body and becomes `Shared`/`Unknown` only at the back-edge, fix the loop fact merge so a local that is consumed, replaced by a unique result, and carried through the back-edge can remain unique when no old alias is live.
+- If the receiver is already non-unique before the call despite Tasks 2 and 3 passing, inspect branch/join transfer before changing the merge.
 ```
 
-- [ ] **Step 5: Fix merge only after the failing test exists**
+Expected post-fix: the new `loop-carried vector set_at keeps unique decision when old value is dead` test passes, and the real sieve CFG is ready for final verification in Task 6.
 
-Update the loop fact merge so a local that is consumed, replaced by a unique result, and carried through the back-edge can remain unique when no old alias is live.
+- [ ] **Step 7: Commit the loop-carried ownership classification or fix**
+
+Run:
+
+```bash
+git status --short
+git add boot/tests/fixtures/cfg/sound_uniqueness/sieve_loop_set.tw \
+  boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw \
+  boot/compiler/ownership.tw boot/compiler/cfg.tw boot/compiler/summary.tw
+git commit -m "fix: preserve loop-carried vector ownership"
+```
+
+Expected: the commit contains the loop-carried fixture plus only the narrow production files needed for the proven loop/call-site fix. If the test passed without a production fix, use `git commit -m "test: cover loop-carried vector ownership"` instead.
 
 ---
 
@@ -430,8 +616,8 @@ Update the loop fact merge so a local that is consumed, replaced by a unique res
 **Files:**
 - Read: `boot/compiler/graph_scc.tw`
 - Read: `docs/plans/sound-uniqueness/analysis/worked-examples.md`
-- Modify only if requested: `docs/plans/sound-uniqueness/analysis/worked-examples.md`
-- Modify only if requested: `docs/plans/sound-uniqueness/analysis/sieve-cfg-gap-notes.md`
+- Modify when classification requires wording changes: `docs/plans/sound-uniqueness/analysis/worked-examples.md`
+- Modify when classification requires the investigation note: `docs/plans/sound-uniqueness/analysis/sieve-cfg-gap-notes.md`
 
 **Interfaces:**
 - Consumes: Sieve root-cause classification from Tasks 2-4.
@@ -476,7 +662,27 @@ remains conservative, document graph_scc.visit as a separate recursive SCC-summa
 specialization gap.
 ```
 
-- [ ] **Step 4: Update worked-example wording only if implementation remains conservative**
+- [ ] **Step 4: Record graph SCC classification in the investigation note**
+
+Append one of these exact bullets to `docs/plans/sound-uniqueness/analysis/sieve-cfg-gap-notes.md` under a `## graph_scc.visit classification` heading:
+
+```markdown
+- `graph_scc.visit` improved after the sieve fix, so it belongs to the same ownership-propagation class as the sieve gap.
+```
+
+or:
+
+```markdown
+- `graph_scc.visit` remains conservative after the sieve fix. Treat it as a separate recursive/SCC-summary specialization gap: the real source has the threaded-state shape, but current summaries still publish the state parameters and render persistent field updates.
+```
+
+or:
+
+```markdown
+- `graph_scc.visit` was documentation-only in this pass. No compiler behavior changed for this case.
+```
+
+- [ ] **Step 5: Update worked-example wording only if implementation remains conservative**
 
 If current implementation intentionally does not yet support the unique-specialized
 `graph_scc.visit` target, update `worked-examples.md` to distinguish:
@@ -487,6 +693,19 @@ If current implementation intentionally does not yet support the unique-speciali
 ```
 
 Do not weaken the source-shape finding; only clarify implementation status.
+
+- [ ] **Step 6: Commit the graph SCC documentation classification**
+
+Run:
+
+```bash
+git status --short
+git add docs/plans/sound-uniqueness/analysis/sieve-cfg-gap-notes.md \
+  docs/plans/sound-uniqueness/analysis/worked-examples.md
+git commit -m "docs: classify graph SCC ownership evidence"
+```
+
+Expected: the commit contains only documentation updates for the secondary case.
 
 ---
 
@@ -499,15 +718,22 @@ Do not weaken the source-shape finding; only clarify implementation status.
 - Consumes: Investigation changes.
 - Produces: Evidence-backed final status.
 
-- [ ] **Step 1: Run formatter if any `.tw` files changed**
+- [ ] **Step 1: Run formatter on changed Twinkle files**
 
-If Task 4 added the optional fixture, run:
+Run this command if Tasks 2-4 added the planned fixtures or changed any boot compiler/test source:
 
 ```bash
-target/twk fmt boot/tests/fixtures/cfg/sound_uniqueness/sieve_loop_set.tw
+target/twk fmt \
+  boot/tests/fixtures/cfg/sound_uniqueness/vector_replace.tw \
+  boot/tests/fixtures/cfg/sound_uniqueness/collect_carry_loop.tw \
+  boot/tests/fixtures/cfg/sound_uniqueness/sieve_loop_set.tw \
+  boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw \
+  boot/compiler/summary.tw \
+  boot/compiler/ownership.tw \
+  boot/compiler/cfg.tw
 ```
 
-Expected: formatter succeeds. If no `.tw` files changed, skip this step and record that it was skipped because the work was documentation-only.
+Expected: formatter succeeds. If a listed production compiler file was not changed, it is still safe to pass it to the formatter.
 
 - [ ] **Step 2: Run focused CFG commands**
 
@@ -530,7 +756,27 @@ target/twk run boot/tests/main.tw
 
 Expected: tests pass.
 
-- [ ] **Step 4: Report one of these concrete outcomes**
+- [ ] **Step 4: Run the linter on the boot test entry**
+
+Run:
+
+```bash
+target/twk lint boot/tests/main.tw
+```
+
+Expected: linter completes. If it reports house-rule violations in files changed by this plan, fix them before reporting completion; if it reports pre-existing unrelated violations, record that they are unrelated and leave them unchanged.
+
+- [ ] **Step 5: Check final tracked-file state**
+
+Run:
+
+```bash
+git status --short
+```
+
+Expected: only intentional investigation/test/compiler/doc files are modified. There should be no untracked `/tmp/twinkle-cfg-gap` artifacts because all CFG dumps were written outside the repository.
+
+- [ ] **Step 6: Report one of these concrete outcomes**
 
 Report exactly which outcome applies:
 
