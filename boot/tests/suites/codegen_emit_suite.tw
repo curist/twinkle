@@ -2,12 +2,15 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
-use compiler.backend.prepare.{PreparedModule}
+use compiler.backend.closure_convert.{convert_closures}
+use compiler.backend.prepare.{PreparedModule, prepare_backend_with_mutable_decisions}
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedMatchArm, PreparedOp, PreparedPattern, ReprKind,
   SlotId, SlotInfo, SlotRole,
 }
-use compiler.builtins.{make_builtin_registry}
+use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
+use compiler.codegen.emit.context.{EmitCtx, LocalEntry}
+use compiler.codegen.emit.mutable_sites
 use compiler.codegen.emit.{emit_module}
 use compiler.codegen.mutable_select
 use compiler.codegen.wasm_ir.{HeapType, ValType}
@@ -16,8 +19,9 @@ use compiler.codegen.wasm_layout.{
 }
 use compiler.codegen.wasm_plan_types.{ModuleGlobalEntry, WasmTypeRegistry}
 use compiler.codegen.wat.{emit_wat_unlinked_for_test}
-use compiler.core_ir.{FuncId, LocalId, Param, VariantId}
+use compiler.core_ir.{FieldId, FuncId, LocalId, Param, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
+use compiler.pipeline
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv, ResolvedVariant, TypeEntry}
 use lib.source.span.{Span}
@@ -773,6 +777,452 @@ fn test_non_tail_closure_call_no_return_call_ref() Result<Void, String> {
   .Ok({})
 }
 
+// ── mutable_sites: emit-side extraction helpers (Phase 7C/7D, Task 3) ──────
+// A minimal EmitCtx for helper-only tests: registry/func_sym_map/prepared_funcs
+// are irrelevant to mutable_sites (it only reads ctx.builtins and
+// ctx.local_map via lookup_slot), so those fields are left empty.
+fn mk_emit_ctx(
+  builtins: BuiltinRegistry,
+  env: ResolvedEnv,
+  local_map: Dict<Int, LocalEntry>,
+  current_func_id: FuncId?,
+) EmitCtx {
+  EmitCtx.{
+    registry: empty_registry(),
+    builtins,
+    env,
+    local_map,
+    next_local: 0,
+    wasm_locals: [],
+    label_stack: [],
+    current_func_id,
+    current_pf: .None,
+    func_sym_map: Dict.new(),
+    prepared_funcs: Dict.new(),
+    extern_imports: Dict.new(),
+    is_init_func: false,
+    loop_depth: 0,
+    scratch_anyref_local: -1,
+    intrinsic_table: Dict.new(),
+  }
+}
+
+// Convert a PreparedFunc's slot map to an EmitCtx local_map, the same
+// SlotInfo -> LocalEntry projection emit_func performs at emission time.
+fn local_map_from_slots(slots: Dict<Int, SlotInfo>) Dict<Int, LocalEntry> {
+  out: Dict<Int, LocalEntry> = Dict.new()
+
+  for key, info in slots {
+    out[key] = LocalEntry.{
+      index: key,
+      val_type: info.wasm_type,
+      mono: info.mono,
+      repr: info.repr,
+      source_local: info.source_local,
+    }
+  }
+
+  out
+}
+
+fn test_base_source_local_for_args_reads_semantic_source_local() Result<Void, String> {
+  local_map: Dict<Int, LocalEntry> = Dict.new()
+  local_map[42] = LocalEntry.{
+    index: 0,
+    val_type: ValType.Anyref,
+    mono: MonoType.Vector(MonoType.Int),
+    repr: ReprKind.OpaqueAnyref,
+    source_local: lid(7),
+  }
+  ctx := mk_emit_ctx(make_builtin_registry(), resolver.empty_env(), local_map, .Some(fid(1)))
+  base := mutable_sites.base_source_local_for_args(
+    [PreparedAtom.ASlot(sid(42)), PreparedAtom.ALitInt(0), PreparedAtom.ALitInt(9)],
+    mutable_select.OperationFamily.VectorSet,
+    ctx,
+  )
+  case base {
+    .Some(local) => try assert.equal(local.id, 7),
+    .None => return .Err("missing base source local"),
+  }
+  try assert.equal(mutable_sites.field_path_key(TypeId.{ id: 10 }, FieldId.{ id: 3 }), "10:f3")
+  .Ok({})
+}
+
+fn test_select_call_for_emit_none_current_func_id_is_skip_path() Result<Void, String> {
+  builtins := make_builtin_registry()
+  local_map: Dict<Int, LocalEntry> = Dict.new()
+  local_map[0] = LocalEntry.{
+    index: 0,
+    val_type: ValType.Anyref,
+    mono: MonoType.Vector(MonoType.Int),
+    repr: ReprKind.OpaqueAnyref,
+    source_local: lid(1),
+  }
+  local_map[1] = LocalEntry.{
+    index: 1,
+    val_type: ValType.Anyref,
+    mono: MonoType.Vector(MonoType.Int),
+    repr: ReprKind.OpaqueAnyref,
+    source_local: lid(2),
+  }
+
+  // No current function — the intentional skip path (emit.tw has nothing to
+  // key a Site off of here), so select_call_for_emit must return .None rather
+  // than guess.
+  ctx := mk_emit_ctx(builtins, resolver.empty_env(), local_map, .None)
+  set_id := builtins.id("vector$set_unsafe")
+  args := [PreparedAtom.ASlot(sid(0)), PreparedAtom.ALitInt(0), PreparedAtom.ALitInt(9)]
+  result_entry := case local_map[1] {
+    .Some(e) => e,
+    .None => return .Err("missing result entry"),
+  }
+  selected := mutable_sites.select_call_for_emit(
+    mutable_select.empty_decision_table(),
+    set_id,
+    args,
+    result_entry,
+    ctx,
+  )
+  case selected {
+    .None => .Ok({}),
+    .Some(_) => .Err("expected .None when current_func_id is absent"),
+  }
+}
+
+fn test_call_family_and_selection_for_dict_set() Result<Void, String> {
+  builtins := make_builtin_registry()
+  dict_set_id := builtins.method_id("Dict", "set")
+  dict_set_in_place_id := builtins.id("dict$set_in_place")
+
+  local_map: Dict<Int, LocalEntry> = Dict.new()
+  local_map[5] = LocalEntry.{
+    index: 0,
+    val_type: ValType.Anyref,
+    mono: MonoType.Dict(MonoType.Int, MonoType.Int),
+    repr: ReprKind.OpaqueAnyref,
+    source_local: lid(11),
+  }
+  local_map[6] = LocalEntry.{
+    index: 1,
+    val_type: ValType.Anyref,
+    mono: MonoType.Dict(MonoType.Int, MonoType.Int),
+    repr: ReprKind.OpaqueAnyref,
+    source_local: lid(12),
+  }
+
+  site_func := fid(1)
+  ctx := mk_emit_ctx(builtins, resolver.empty_env(), local_map, .Some(site_func))
+
+  case mutable_sites.call_family_for_persistent(dict_set_id, ctx) {
+    .Some(.DictSet) => {},
+    _ => return .Err("expected DictSet family for Dict.set"),
+  }
+
+  args := [PreparedAtom.ASlot(sid(5)), PreparedAtom.ALitInt(1), PreparedAtom.ALitInt(9)]
+  base := mutable_sites.base_source_local_for_args(
+    args,
+    mutable_select.OperationFamily.DictSet,
+    ctx,
+  )
+  case base {
+    .Some(local) => try assert.equal(local.id, 11),
+    .None => return .Err("missing dict set base source local"),
+  }
+
+  site := mutable_select.Site.{ func: site_func, local: lid(12) }
+  decisions := mutable_select
+    .empty_decision_table()
+    .with_decision(mutable_select.MutableDecision.{
+      site,
+      family: mutable_select.OperationFamily.DictSet,
+      source_local: lid(11),
+      result_local: lid(12),
+      arg_count: 3,
+      base_arg_index: .Some(0),
+      persistent_func: .Some(dict_set_id),
+      mutable_func: .Some(dict_set_in_place_id),
+      variant_key: .None,
+      field_path_key: "",
+      proof_debug_id: "helper-dict-set",
+    })
+
+  result_entry := case local_map[6] {
+    .Some(e) => e,
+    .None => return .Err("missing dict set result entry"),
+  }
+  selected := mutable_sites.select_call_for_emit(decisions, dict_set_id, args, result_entry, ctx)
+  case selected {
+    .Some(sel) => {
+      try assert.equal(mutable_select.selection_reason_tag(sel.reason), 1)
+      try assert.equal(sel.emit_func.id, dict_set_id.id)
+      try assert.equal(sel.would_func.id, dict_set_in_place_id.id)
+    },
+    .None => return .Err("expected Some CallSelection for Dict.set"),
+  }
+  .Ok({})
+}
+
+fn test_call_family_and_selection_for_dict_remove() Result<Void, String> {
+  builtins := make_builtin_registry()
+  dict_remove_id := builtins.method_id("Dict", "remove")
+  dict_remove_in_place_id := builtins.id("dict$remove_in_place")
+
+  local_map: Dict<Int, LocalEntry> = Dict.new()
+  local_map[7] = LocalEntry.{
+    index: 0,
+    val_type: ValType.Anyref,
+    mono: MonoType.Dict(MonoType.Int, MonoType.Int),
+    repr: ReprKind.OpaqueAnyref,
+    source_local: lid(21),
+  }
+  local_map[8] = LocalEntry.{
+    index: 1,
+    val_type: ValType.Anyref,
+    mono: MonoType.Dict(MonoType.Int, MonoType.Int),
+    repr: ReprKind.OpaqueAnyref,
+    source_local: lid(22),
+  }
+
+  site_func := fid(2)
+  ctx := mk_emit_ctx(builtins, resolver.empty_env(), local_map, .Some(site_func))
+
+  case mutable_sites.call_family_for_persistent(dict_remove_id, ctx) {
+    .Some(.DictRemove) => {},
+    _ => return .Err("expected DictRemove family for Dict.remove"),
+  }
+
+  args := [PreparedAtom.ASlot(sid(7)), PreparedAtom.ALitInt(1)]
+  base := mutable_sites.base_source_local_for_args(
+    args,
+    mutable_select.OperationFamily.DictRemove,
+    ctx,
+  )
+  case base {
+    .Some(local) => try assert.equal(local.id, 21),
+    .None => return .Err("missing dict remove base source local"),
+  }
+
+  site := mutable_select.Site.{ func: site_func, local: lid(22) }
+  decisions := mutable_select
+    .empty_decision_table()
+    .with_decision(mutable_select.MutableDecision.{
+      site,
+      family: mutable_select.OperationFamily.DictRemove,
+      source_local: lid(21),
+      result_local: lid(22),
+      arg_count: 2,
+      base_arg_index: .Some(0),
+      persistent_func: .Some(dict_remove_id),
+      mutable_func: .Some(dict_remove_in_place_id),
+      variant_key: .None,
+      field_path_key: "",
+      proof_debug_id: "helper-dict-remove",
+    })
+
+  result_entry := case local_map[8] {
+    .Some(e) => e,
+    .None => return .Err("missing dict remove result entry"),
+  }
+  selected := mutable_sites.select_call_for_emit(decisions, dict_remove_id, args, result_entry, ctx)
+  case selected {
+    .Some(sel) => {
+      try assert.equal(mutable_select.selection_reason_tag(sel.reason), 1)
+      try assert.equal(sel.emit_func.id, dict_remove_id.id)
+      try assert.equal(sel.would_func.id, dict_remove_in_place_id.id)
+    },
+    .None => return .Err("expected Some CallSelection for Dict.remove"),
+  }
+  .Ok({})
+}
+
+// ── mutable_sites: pre-prepare → prepared survival (real source) ───────────
+// These prove the decision table threaded through prepare_backend_with_mutable_decisions
+// survives boundary insertion/slot assignment intact, by deriving everything
+// select_call_for_emit needs (base source local, prepared arg count) through
+// mutable_sites itself rather than calling mutable_select.select_call directly.
+type MutableAnfCallSite = .{ func: FuncId, result: LocalId, base: LocalId, arg_count: Int }
+
+fn find_mutable_anf_call_site_expr(func_id: FuncId, expr: AnfExpr, target_id: FuncId) MutableAnfCallSite? {
+  case expr {
+    .Let(result, .ACall(.AGlobalFunc(callee_fid), args), body) => {
+      if callee_fid.id == target_id.id and args.len() > 0 {
+        case args[0] {
+          .ALocal(base) => return .Some(
+            MutableAnfCallSite.{ func: func_id, result, base, arg_count: args.len() },
+          ),
+          _ => {},
+        }
+      }
+      find_mutable_anf_call_site_expr(func_id, body, target_id)
+    },
+    .Let(_, _, body) => find_mutable_anf_call_site_expr(func_id, body, target_id),
+    _ => .None,
+  }
+}
+
+fn find_mutable_anf_call_site(anf: AnfModule, fn_name: String, target_id: FuncId) MutableAnfCallSite {
+  for f in anf.functions {
+    if f.name == fn_name {
+      case find_mutable_anf_call_site_expr(f.func_id, f.body, target_id) {
+        .Some(site) => return site,
+        .None => {},
+      }
+    }
+  }
+  error("missing pre-prepare call site for ${fn_name}")
+}
+
+type MutablePreparedCallHit = .{ result: SlotId, args: Vector<PreparedAtom> }
+
+fn find_mutable_prepared_call_hit_expr(expr: PreparedExpr, target_id: FuncId) MutablePreparedCallHit? {
+  case expr {
+    .Let(result, .ACall(.AGlobalFunc(callee_fid), args), body) => {
+      if callee_fid.id == target_id.id {
+        return .Some(MutablePreparedCallHit.{ result, args })
+      }
+      find_mutable_prepared_call_hit_expr(body, target_id)
+    },
+    .Let(_, _, body) => find_mutable_prepared_call_hit_expr(body, target_id),
+    _ => .None,
+  }
+}
+
+type MutablePreparedCallSite = .{ func: PreparedFunc, result: SlotId, args: Vector<PreparedAtom> }
+
+fn find_mutable_prepared_call_site(prepared: PreparedModule, fn_name: String, target_id: FuncId) MutablePreparedCallSite {
+  for pf in prepared.funcs {
+    if pf.name == fn_name {
+      case find_mutable_prepared_call_hit_expr(pf.body, target_id) {
+        .Some(hit) => return MutablePreparedCallSite.{
+          func: pf,
+          result: hit.result,
+          args: hit.args,
+        },
+        .None => {},
+      }
+    }
+  }
+  error("missing prepared call site for ${fn_name}")
+}
+
+fn test_select_call_for_emit_survives_prepared_vector_set() Result<Void, String> {
+  src := "fn set_one(xs: Vector<Int>) Vector<Int> {\n  xs[0] = 9\n  xs\n}\n"
+  artifacts := try pipeline.compile_source(src)
+  closure_conversion := convert_closures(artifacts.opt, artifacts.env)
+  set_id := artifacts.builtins.id("vector$set_unsafe")
+  in_place_id := artifacts.builtins.id("vector$set_in_place")
+  pre := find_mutable_anf_call_site(closure_conversion.anf, "set_one", set_id)
+
+  site := mutable_select.Site.{ func: pre.func, local: pre.result }
+  decisions := mutable_select
+    .empty_decision_table()
+    .with_decision(mutable_select.MutableDecision.{
+      site,
+      family: mutable_select.OperationFamily.VectorSet,
+      source_local: pre.base,
+      result_local: pre.result,
+      arg_count: pre.arg_count,
+      base_arg_index: .Some(0),
+      persistent_func: .Some(set_id),
+      mutable_func: .Some(in_place_id),
+      variant_key: .None,
+      field_path_key: "",
+      proof_debug_id: "emit-survival-vector-set",
+    })
+
+  prepared := prepare_backend_with_mutable_decisions(
+    closure_conversion.anf,
+    artifacts.env,
+    artifacts.builtins,
+    closure_conversion.captures,
+    decisions,
+  )
+  hit := find_mutable_prepared_call_site(prepared, "set_one", set_id)
+  pf := hit.func
+  local_map := local_map_from_slots(pf.slots)
+  result_entry := case local_map[hit.result.id] {
+    .Some(e) => e,
+    .None => return .Err("missing prepared vector-set result entry"),
+  }
+  ctx := mk_emit_ctx(artifacts.builtins, artifacts.env, local_map, .Some(pf.func_id))
+
+  selected := mutable_sites.select_call_for_emit(
+    prepared.mutable_decisions,
+    set_id,
+    hit.args,
+    result_entry,
+    ctx,
+  )
+  case selected {
+    .Some(sel) => {
+      try assert.equal(mutable_select.selection_reason_tag(sel.reason), 1)
+      try assert.equal(sel.emit_func.id, set_id.id)
+      try assert.equal(sel.would_func.id, in_place_id.id)
+    },
+    .None => return .Err("expected Some CallSelection for prepared vector set survival"),
+  }
+  .Ok({})
+}
+
+fn test_select_call_for_emit_survives_prepared_dict_set() Result<Void, String> {
+  src := "fn set_one_dict(m: Dict<Int, Int>) Dict<Int, Int> {\n  m[1] = 9\n  m\n}\n"
+  artifacts := try pipeline.compile_source(src)
+  closure_conversion := convert_closures(artifacts.opt, artifacts.env)
+  dict_set_id := artifacts.builtins.method_id("Dict", "set")
+  dict_set_in_place_id := artifacts.builtins.id("dict$set_in_place")
+  pre := find_mutable_anf_call_site(closure_conversion.anf, "set_one_dict", dict_set_id)
+
+  site := mutable_select.Site.{ func: pre.func, local: pre.result }
+  decisions := mutable_select
+    .empty_decision_table()
+    .with_decision(mutable_select.MutableDecision.{
+      site,
+      family: mutable_select.OperationFamily.DictSet,
+      source_local: pre.base,
+      result_local: pre.result,
+      arg_count: pre.arg_count,
+      base_arg_index: .Some(0),
+      persistent_func: .Some(dict_set_id),
+      mutable_func: .Some(dict_set_in_place_id),
+      variant_key: .None,
+      field_path_key: "",
+      proof_debug_id: "emit-survival-dict-set",
+    })
+
+  prepared := prepare_backend_with_mutable_decisions(
+    closure_conversion.anf,
+    artifacts.env,
+    artifacts.builtins,
+    closure_conversion.captures,
+    decisions,
+  )
+  hit := find_mutable_prepared_call_site(prepared, "set_one_dict", dict_set_id)
+  pf := hit.func
+  local_map := local_map_from_slots(pf.slots)
+  result_entry := case local_map[hit.result.id] {
+    .Some(e) => e,
+    .None => return .Err("missing prepared dict-set result entry"),
+  }
+  ctx := mk_emit_ctx(artifacts.builtins, artifacts.env, local_map, .Some(pf.func_id))
+
+  selected := mutable_sites.select_call_for_emit(
+    prepared.mutable_decisions,
+    dict_set_id,
+    hit.args,
+    result_entry,
+    ctx,
+  )
+  case selected {
+    .Some(sel) => {
+      try assert.equal(mutable_select.selection_reason_tag(sel.reason), 1)
+      try assert.equal(sel.emit_func.id, dict_set_id.id)
+      try assert.equal(sel.would_func.id, dict_set_in_place_id.id)
+    },
+    .None => return .Err("expected Some CallSelection for prepared dict set survival"),
+  }
+  .Ok({})
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("codegen emit")
@@ -796,5 +1246,29 @@ pub fn suite() runner.Suite {
     .test(
       "non-tail closure call does not emit return_call_ref",
       test_non_tail_closure_call_no_return_call_ref,
+    )
+    .test(
+      "base_source_local_for_args reads semantic source local",
+      test_base_source_local_for_args_reads_semantic_source_local,
+    )
+    .test(
+      "select_call_for_emit returns .None when current_func_id is absent",
+      test_select_call_for_emit_none_current_func_id_is_skip_path,
+    )
+    .test(
+      "call_family_for_persistent + select_call_for_emit for Dict.set",
+      test_call_family_and_selection_for_dict_set,
+    )
+    .test(
+      "call_family_for_persistent + select_call_for_emit for Dict.remove",
+      test_call_family_and_selection_for_dict_remove,
+    )
+    .test(
+      "select_call_for_emit survives prepared vector$set_unsafe from real source",
+      test_select_call_for_emit_survives_prepared_vector_set,
+    )
+    .test(
+      "select_call_for_emit survives prepared Dict.set from real source",
+      test_select_call_for_emit_survives_prepared_dict_set,
     )
 }

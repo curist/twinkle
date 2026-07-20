@@ -3,11 +3,14 @@ use @std.testing as runner
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, FieldAtom}
 use compiler.backend.closure_convert.{convert_closures}
-use compiler.backend.prepare.{PreparedModule, prepare_backend}
+use compiler.backend.prepare.{
+  PreparedModule, prepare_backend, prepare_backend_with_mutable_decisions,
+}
 use compiler.backend.prepared_ir.{CaptureParam}
 use compiler.base_env
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
+use compiler.codegen.mutable_select
 use compiler.codegen.wasm_layout.{mono_to_key}
 use compiler.codegen.wasm_plan.{plan_wasm_types}
 use compiler.codegen.wasm_plan_types.{CaptureEntry, FuncSigEntry, StringPoolEntry, WasmTypeRegistry}
@@ -1027,6 +1030,79 @@ pub fn test_plan_recursive_record_terminates() Result<Void, String> {
   }
 }
 
+// ── plan_wasm_types: Phase 7C/7D mutable-decision guard ──────────────
+// Planning must stay blind to mutable_decisions in Phase 7C/7D: a module
+// whose body only calls the persistent vector$set_unsafe helper, with a
+// decision table naming the *_in_place mutable helper attached, must not
+// cause the mutable helper to be discovered by the planner. Only emit.tw
+// (a later task) is allowed to act on decisions.
+pub fn test_plan_ignores_mutable_decision_targets() Result<Void, String> {
+  builtins := simple_builtins()
+  set_id := bi.id(builtins, "vector$set_unsafe")
+  in_place_id := bi.id(builtins, "vector$set_in_place")
+
+  mono := mono1(0, MonoType.Vector(MonoType.Int))
+  f := mk_func_def(
+    100,
+    "set_one",
+    [Param.{ local: mk_local(1), ty: MonoType.Vector(MonoType.Int) }],
+    MonoType.Vector(MonoType.Int),
+    .Let(
+      mk_local(0),
+      .ACall(.AGlobalFunc(set_id), [.ALocal(mk_local(1)), .ALitInt(0), .ALitInt(9)]),
+      .Atom(.ALocal(mk_local(0))),
+    ),
+    mono,
+  )
+  anf := mk_module([f])
+  env := resolver.empty_env()
+
+  site := mutable_select.Site.{ func: mk_func(100), local: mk_local(0) }
+  decisions := mutable_select
+    .empty_decision_table()
+    .with_decision(mutable_select.MutableDecision.{
+      site,
+      family: mutable_select.OperationFamily.VectorSet,
+      source_local: mk_local(1),
+      result_local: mk_local(0),
+      arg_count: 3,
+      base_arg_index: .Some(0),
+      persistent_func: .Some(set_id),
+      mutable_func: .Some(in_place_id),
+      variant_key: .None,
+      field_path_key: "",
+      proof_debug_id: "wasm-plan-guard",
+    })
+
+  prepared := prepare_backend_with_mutable_decisions(
+    anf,
+    env,
+    builtins,
+    empty_captures(),
+    decisions,
+  )
+  reg := plan_wasm_types(prepared, env, builtins)
+
+  found_persistent := case reg.direct_builtin_calls[set_id.id] {
+    .Some(true) => true,
+    _ => false,
+  }
+  try assert.ok(found_persistent, "expected vector$set_unsafe direct_builtin_calls entry")
+
+  found_mutable := case reg.direct_builtin_calls[in_place_id.id] {
+    .Some(true) => true,
+    _ => false,
+  }
+  try assert.is_false(found_mutable)
+
+  for imp in reg.runtime_imports {
+    if imp.name == "set_in_place" {
+      return assert.fail("planning should not register the mutable in-place helper from decisions")
+    }
+  }
+  .Ok({})
+}
+
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   runner
@@ -1068,4 +1144,8 @@ pub fn suite() runner.Suite {
       test_plan_nested_record_dependencies_are_ordered,
     )
     .test("plan recursive record terminates", test_plan_recursive_record_terminates)
+    .test(
+      "plan ignores mutable decision targets (Phase 7C/7D guard)",
+      test_plan_ignores_mutable_decision_targets,
+    )
 }
