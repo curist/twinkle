@@ -38,6 +38,7 @@ You asked whether a refactor or major rewrite is warranted. Honest read after tr
 - Because `boot/compiler/*.tw` changes the self-hosted payload, rebuild with `make bundle-cli` (not `make quick-bundle-cli`) before running the boot suite against new behavior.
 - Run verification commands one at a time, never concurrently (concurrent `twk` pegs CPU).
 - **This plan is render-only by construction.** The generic ownership verdict analysis remains reached only from `boot/commands/ir.tw`'s `--cfg` path and test suites — never from the build/opt/lowering/codegen pipeline. Variant-specific verdict analysis is also called only by `--cfg` rendering/test helpers and emits diagnostics, not codegen decisions. Consequence: `make stage2` is byte-identical and the census is unchanged **by construction**, not by careful avoidance. The goal here is to close the *analysis/render* gap by making `graph_scc.visit`'s owned variant visible and testable in `--cfg`; Stage 6 must still add variant-keyed cloning/dispatch before any real in-place codegen consumes those verdicts.
+- If resuming from an uncommitted spike that added `summary.per_function_seeds(...)` and `ownership.analyze_with_variants(...)` to seed the **generic** CFG body, remove or replace that shape before continuing Task 5. It is intentionally listed as an anti-goal because it can make one conditional owned caller rewrite diagnostics for all callers of the generic body.
 
 ---
 
@@ -444,13 +445,39 @@ git commit -m "ownership: surface converged recursive variant summary in --cfg h
 
 > **Resume note for implementers:** If a prior uncommitted spike added `per_function_seeds(...)` plus `ownership.analyze_with_variants(...)` that rewrites the generic body under a seed, do not land that shape. Keep useful pieces (occurs-once guard, seedable helpers), but route owned verdicts into variant-qualified sections only.
 
+- [ ] **Step 0: Remove the seeded generic-body spike before adding the new consumer**
+
+If the working tree contains the earlier Task 5 spike, delete the generic-body seeding path before writing the new RED tests:
+
+- In `boot/commands/ir.tw` and `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`, stop computing `seeds := summary.per_function_seeds(...)` and stop calling `ownership.analyze_with_variants(...)` for the normal view. The normal view must be analyzed with `ownership.analyze_with_summaries(view, b, sem, table)`.
+- In `boot/compiler/ownership.tw`, either remove `analyze_with_variants(...)` or leave it unused/private only if later refactoring immediately replaces it with `analyze_function_with_seed(...)`. No public API should encourage seeding the generic function body.
+- In `boot/compiler/summary.tw`, remove `per_function_seeds(...)` if its only consumer is generic-body seeding. Reachability should feed variant-section rendering, not a generic `func_id -> seed` map.
+
+Focused verification:
+
+```bash
+target/twk build boot/main.tw -o /tmp/newboot.wasm
+BOOT_WASM=/tmp/newboot.wasm deno run --allow-read --allow-write --allow-env \
+  tools/js_runtime/deno_main.mjs ir boot/tests/fixtures/cfg/sound_uniqueness/recursive_thread_state.tw --cfg \
+  | rg -n "^fn scc_thread|summary:|variant:|reuse\(unique\)|persistent\(aliased shell\)"
+```
+
+Expected before the new variant-section renderer: the generic `fn scc_thread` body is conservative (`persistent(aliased shell)`), even though the Task 4 `variant:` header may still appear.
+
 - [ ] **Step 1: Add RED tests for variant-qualified rendering, not generic-body rewriting**
 
-In `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`, add a helper that extracts a variant section by stable text:
+In `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`, add a helper that extracts a variant section by stable text. Variant sections may be appended after the whole generic CFG, so do not bound them with generic function markers like `fn run`; bound them by the next `variant fn ` marker or EOF:
 
 ```tw
-fn variant_section(out: String, func_name: String, key: String, next_marker: String) Result<String, String> {
-  section_between(out, "variant fn ${func_name} [${key}]", next_marker)
+fn variant_section(out: String, func_name: String, key: String) Result<String, String> {
+  start_marker := "variant fn ${func_name} [${key}]"
+  start := try out.index_of(start_marker).ok_or("missing variant section ${start_marker}")
+  tail := out.substring(start, out.len())
+  next := case tail.substring(1, tail.len()).index_of("\nvariant fn ") {
+    .Some(i) => i + 1,
+    .None => tail.len(),
+  }
+  .Ok(tail.substring(0, next))
 }
 ```
 
@@ -463,7 +490,7 @@ Add the minimal fixture test after the nested-loop tests. It must assert the gen
         out := try render_entry("recursive_thread_state")
         generic := try section_between(out, "fn scc_thread", "fn run")
         try assert.str_contains(generic, "persistent(aliased shell)")
-        variant := try variant_section(out, "scc_thread", "unique:p0", "fn run")
+        variant := try variant_section(out, "scc_thread", "unique:p0")
         try assert.str_contains(variant, "variant: p0=Consumed paths{[]}")
         try assert.str_contains(variant, "reuse(unique)")
         try assert.is_false(variant.contains("persistent(aliased shell)"))
@@ -475,7 +502,7 @@ Add the minimal fixture test after the nested-loop tests. It must assert the gen
 Add a `graph_scc.visit` assertion to the existing visit-like fixture test (or a new test in the same suite if `visit_main` is the fixture entry):
 
 ```tw
-        variant := try variant_section(out, "visit", "unique:p0", "fn run_visit")
+        variant := try variant_section(out, "visit", "unique:p0")
         try assert.str_contains(variant, "variant: p0=Consumed paths{[]}")
         try assert.str_contains(variant, "reuse(unique)")
 ```
@@ -486,7 +513,7 @@ Run the suite with the current generic-only render:
 target/twk run boot/tests/main.tw 2>&1 | rg -n "self-recursive threaded record|visit-like threaded|FAIL|passed"
 ```
 
-Expected: FAIL because no `variant fn ...` section exists yet. If the generic body already renders `reuse(unique)`, remove the seeded generic-body spike before continuing.
+Expected: FAIL because no `variant fn ...` section exists yet. If the generic body already renders `reuse(unique)`, the seeded generic-body spike has not been removed.
 
 - [ ] **Step 2: Make optimistic variant cap handling fail closed**
 
@@ -521,6 +548,8 @@ BOOT_WASM=/tmp/newboot.wasm deno run --allow-read --allow-write --allow-env \
 ```
 
 Expected: `scc_thread` still has the Task 4 `variant:` header. If it disappears, the cap handling is retracting converged SCCs by mistake.
+
+Also inspect `run_scc_variants` before committing this task: every call to `vtable_put` must be dominated by the `converged` branch. This structural check is required because a deterministic cap-hit fixture would depend on the current widening cap and could become flaky when iteration order or caps change.
 
 - [ ] **Step 3: Factor validated loop-seed fixpoint reuse**
 
@@ -603,7 +632,7 @@ pub fn call_uniques(
 ) Vector<CallUniq>
 ```
 
-`call_uniques` must use `run_fixpoint_validated(...)`, not a raw `run_fixpoint(..., empty_seeds)`.
+`call_uniques` must use `run_fixpoint_validated(...)`, not a raw `run_fixpoint(..., empty_seeds)`. Both root scans and variant-propagation scans pass the caller's SCC set as `suppress`, matching summary SCC handling and preventing in-SCC speculative return-path details from leaking into the scan.
 
 - [ ] **Step 5: Use variant summary overlays for reachable variant analysis**
 
@@ -630,9 +659,16 @@ fn reachable_overlay(generic: SummaryTable, variants: VariantSummaryTable, reach
 }
 ```
 
-This helper intentionally supports one reachable variant per function for this plan. If a function has more than one reachable key, keep the canonical-least for render determinism and emit only that diagnostic section; Stage 6 cloning can generalize multi-specialization.
+This helper intentionally supports one reachable variant per function for this plan. If a function has more than one reachable key, keep the canonical-least for render determinism and emit only that diagnostic section; Stage 6 cloning can generalize multi-specialization. Do not render every reachable key with a single canonical-least overlay, because non-picked variants could be analyzed through the wrong recursive summary.
 
-Reachability propagation should call `ownership.call_uniques(f, overlay, b, sem, scc_set, unique_seed_for_variant(...))` so same-SCC recursive calls preserve ownership after the call.
+Reachability propagation is a fixed point over both the reachable set and the overlay derived from it:
+1. seed roots from out-of-SCC generic callers;
+2. build `overlay := reachable_overlay(generic, variants, reachable)`;
+3. rescan every currently reachable canonical-least variant body with `ownership.call_uniques(f, overlay, b, sem, scc_set, unique_seed_for_variant(...))`;
+4. mark newly demanded variants;
+5. repeat from step 2 until no new keys are marked.
+
+This rescan is required because discovering `ping` can add `pong` to the overlay, and already-reachable bodies may then preserve ownership through calls that were previously generic.
 
 - [ ] **Step 6: Render variant-qualified function sections**
 
@@ -686,7 +722,7 @@ Inside `render_cfg`, keep the generic output first:
 out := generic_analyzed.render_view_with_headers(headers)
 ```
 
-Then append one section per reachable canonical variant:
+Then append at most one section per function: the canonical-least reachable variant for that function. Move Task 4's generic-header `variant:` lines into these reachable variant sections (or stop rendering them under generic function headers) so unreachable converged candidates cannot look consumable.
 
 ```text
 variant fn visit [unique:p0]
@@ -696,10 +732,12 @@ variant fn visit [unique:p0]
 ```
 
 Build each variant section by:
-1. looking up the original `CfgFunction` in `source` (the un-analyzed pruned view);
-2. computing `unique_seed_for_variant(f, entry.variant)`;
-3. analyzing that one function with `ownership.analyze_function_with_seed(f, overlay, b, sem, seed)`;
-4. rendering it with `cfg.render_function_with_header(...)` and the title `variant fn ${f.name} [${render_variant_key(entry.variant)}]`.
+1. computing `reachable := reachable_variants(...)` and `overlay := reachable_overlay(generic, variants, reachable)` after the reachability fixed point stabilizes;
+2. for each function, picking only its canonical-least reachable variant key;
+3. looking up the original `CfgFunction` in `source` (the un-analyzed pruned view);
+4. computing `unique_seed_for_variant(f, entry.variant)`;
+5. analyzing that one function with `ownership.analyze_function_with_seed(f, overlay, b, sem, seed)`;
+6. rendering it with `cfg.render_function_with_header(...)` and the title `variant fn ${f.name} [${render_variant_key(entry.variant)}]`.
 
 Do not change the generic function body's verdicts under a seed.
 
@@ -717,6 +755,7 @@ Expected:
 - Generic `fn visit` summary remains `p0=Published p1=Published p2=Published ret=alias(p0)`.
 - Generic `fn visit` body may still show `persistent(aliased shell)`.
 - `variant fn visit [unique:p0]` exists and shows `variant: p0=Consumed paths{[]}` plus `reuse(unique)` record-update verdicts.
+- No unreachable-only function (for example `recursive_thread_param` once Task 6 lands) shows a generic-header `variant:` line that could be mistaken for a reachable owned body.
 - The minimal fixture's generic body stays conservative and its variant body renders `reuse(unique)`.
 
 - [ ] **Step 8: Commit the derisked consumer + positives**
@@ -859,6 +898,7 @@ pub fn run_mut(n: Int) Int {
         body := try section_from(out, "fn thread_param")
         try assert.is_false(body.contains("reuse(unique)"))
         try assert.is_false(out.contains("variant fn thread_param"))
+        try assert.is_false(body.contains("variant: p0=Consumed"))
         .Ok({})
       },
     )
@@ -872,6 +912,7 @@ pub fn run_mut(n: Int) Int {
         body := try section_between(out, "fn thread_alias", "fn run_alias")
         try assert.is_false(body.contains("reuse(unique)"))
         try assert.is_false(out.contains("variant fn thread_alias"))
+        try assert.is_false(body.contains("variant: p0=Consumed"))
         .Ok({})
       },
     )
@@ -882,6 +923,8 @@ pub fn run_mut(n: Int) Int {
         body := try section_between(out, "fn pick", "fn run_pick")
         try assert.is_false(body.contains("reuse(unique)"))
         try assert.is_false(out.contains("variant fn pick"))
+        try assert.is_false(body.contains("variant: p0=Consumed"))
+        try assert.is_false(body.contains("variant: p1=Consumed"))
         .Ok({})
       },
     )
@@ -889,9 +932,9 @@ pub fn run_mut(n: Int) Int {
       "mutually recursive threaded record renders owned in-place verdicts",
       fn() {
         out := try render_entry("mutual_recursion_thread")
-        ping := try variant_section(out, "ping", "unique:p0", "variant fn pong")
+        ping := try variant_section(out, "ping", "unique:p0")
         try assert.str_contains(ping, "reuse(unique)")
-        pong := try variant_section(out, "pong", "unique:p0", "fn run_mut")
+        pong := try variant_section(out, "pong", "unique:p0")
         try assert.str_contains(pong, "reuse(unique)")
         .Ok({})
       },
