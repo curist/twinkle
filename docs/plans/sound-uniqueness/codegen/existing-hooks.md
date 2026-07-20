@@ -17,11 +17,27 @@ the hooks to verify and catalog before any ownership decision emits mutable code
 
 ### Vector builders
 
-- Existing `vector$builder_*` family.
+- Existing `vector$builder_new`, `vector$builder_from`, `vector$builder_push`, and
+  `vector$builder_freeze` family.
+- Typed vector builder hooks (`vector$builder_new_i64`, `vector$builder_push_i64`,
+  `vector$builder_freeze_i64`, and the `bool` equivalents) are already present and
+  covered by current builder ABI shims.
 - Some builder use is semantic, notably `collect`, and must keep working without
   an ownership optimization decision.
 - Optimizer-selected builder regions should be treated separately from semantic
   builder lowering.
+- Runtime `rt.arr` also exports lower-level/extend helpers such as
+  `builder_extend`, but these are not currently first-cut boot builtin/shim
+  targets until cataloged.
+
+### String builders
+
+- Existing `string$builder_from`, `string$builder_extend`, and
+  `string$builder_freeze` family.
+- `compiler.builder_family.string_builder_config` and optimizer semantics already
+  model `String.concat` as a builder-region candidate with no in-place equivalent.
+- String builder buffers use the same erased-builder ABI shim path as vector
+  builders, but cast to `rt_types__StrBuilder`.
 
 ### Dict in-place helpers
 
@@ -84,3 +100,13 @@ For ownership-specialized variants, also record:
 `@std.buffer` is user-facing workaround scaffolding, not an internal hook for this
 track. Its retirement policy lives in
 [../migration/buffer-cleanup.md](../migration/buffer-cleanup.md).
+
+`Cell`, `Task`, `Channel`, host I/O, and unknown/indirect calls are publication or
+boundary surfaces for ownership analysis, not mutable-lowering targets for this
+track. They should stay persistent/conservative unless a later design explicitly
+adds a new private intrinsic family.
+
+String slicing/indexing, vector slicing/concat/gather/drop, dict reads, and record
+field reads are read/share operations or persistent constructors in the first-cut
+catalog. They matter as blockers/borrow evidence for decisions, but are not
+standalone mutable targets here.

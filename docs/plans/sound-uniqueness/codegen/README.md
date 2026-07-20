@@ -35,9 +35,9 @@ belongs to [../migration/README.md](../migration/README.md).
 No emitted-code change. Start with the concrete backend/runtime surface we already
 have before designing side tables around it.
 
-- [ ] **Inventory current hooks.** Record the existing vector builder, vector set,
-  dict in-place, record-update, and function-cloning/routing mechanisms that can
-  be reused first. Details: [existing-hooks.md](existing-hooks.md).
+- [ ] **Inventory current hooks.** Record the existing vector set, vector/string
+  builder, dict in-place, record-update, and function-cloning/routing mechanisms
+  that can be reused first. Details: [existing-hooks.md](existing-hooks.md).
 - [ ] **Verify hook signatures.** For each hook, record helper/op names, operand
   order, result behavior, monomorphized type restrictions, persistent fallback,
   and WAT/call-inspection signature.
@@ -49,10 +49,10 @@ have before designing side tables around it.
 No emitted-code change. This phase answers: “if this candidate is accepted, what
 exact existing target would codegen use?”
 
-- [ ] **Catalog mutable operation families.** For vectors, dicts, builders, record
-  shells, record-backed field collections, and ownership-specialized function
-  variants, define the persistent fallback, mutable target, source value, result
-  binding, and argument/result mapping. Details: [operation-catalog.md](operation-catalog.md).
+- [ ] **Catalog mutable operation families.** For vectors, strings, dicts,
+  builders, record shells, record-backed field collections, and ownership-specialized
+  function variants, define the persistent fallback, mutable target, source value,
+  result binding, and argument/result mapping. Details: [operation-catalog.md](operation-catalog.md).
 - [ ] **Keep unsupported families persistent.** The catalog may name future
   families, but unsupported or unmapped sites must keep the ordinary immutable
   path.
@@ -122,16 +122,24 @@ First emitted-code change. Keep the slice intentionally narrow.
 - [ ] **Render loop proof ids near emitted decisions.** Debug output should name
   the carried local, update site, borrow sites, and accepted/rejected reason.
 
-## Codegen Phase 8C — Existing vector builder lowering
+## Codegen Phase 8C — Existing builder-region lowering
 
 Builder lowering has a different region shape from indexed update and should not
-be bundled with it.
+be bundled with it. Current boot hooks cover vector builders and string concat
+builders; typed vector builder shims (`i64`/`bool`) are implementation details of
+the vector family.
 
-- [ ] **Lower existing vector builder regions from facts.** Reuse current builder
-  hooks; do not redesign builder/runtime representation yet.
+- [ ] **Lower existing vector builder regions from facts.** Reuse current
+  `vector$builder_new/from/push/freeze` hooks; do not redesign builder/runtime
+  representation yet.
+- [ ] **Lower existing string builder regions from facts.** Reuse current
+  `string$builder_from/extend/freeze` hooks for `String.concat` accumulator loops.
 - [ ] **Preserve semantic builder uses.** `collect` and any builder lowering
   required independent of optimization must keep working without an ownership
   decision.
+- [ ] **Keep unregistered builder helpers out of scope until cataloged.** The
+  runtime exports additional helpers such as vector `builder_extend`, but they are
+  not currently a first-cut boot builtin/shim target.
 
 ## Codegen Phase 8D — Dict set emission
 

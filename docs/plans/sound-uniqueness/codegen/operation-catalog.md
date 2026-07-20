@@ -29,7 +29,8 @@ Each family should define:
 | Family | Persistent fallback | First mutable target | Notes |
 |---|---|---|---|
 | Vector indexed update | `Vector.set_at` / index rebinding lowered to persistent vector update | Existing vector in-place set helper | First emitted slice. Requires `Unique` + last-use of the vector backing. |
-| Vector builder region | Persistent append/build shape or existing non-optimizer builder use | Existing `vector$builder_*` hooks | Separate from indexed update; preserve `collect` builder lowering independent of optimization. |
+| Vector builder region | Persistent append/build shape or existing non-optimizer builder use | Existing `vector$builder_new/from/push/freeze` hooks, including typed `i64`/`bool` shims when selected by current codegen | Separate from indexed update; preserve `collect` builder lowering independent of optimization. Runtime `builder_extend` exists but is not a first-cut boot builtin/shim target until cataloged. |
+| String builder region | Persistent `String.concat` accumulator shape | Existing `string$builder_from/extend/freeze` hooks | Same region shape as vector builders but no string in-place mutation; only builder lowering is in scope. |
 | Dict set | Persistent HAMT `Dict.set` | Existing dict in-place set helper | Must preserve old-version observability and insertion-order behavior. |
 | Dict remove | Persistent HAMT `Dict.remove` | Existing dict in-place remove helper, if semantics are cataloged | Do not bundle with `set` until remove semantics and ordering are verified. |
 | Record shell update | Persistent record update / field rebinding | Existing `ARecordUpdate.in_place` slot or equivalent backend hook | Shell reuse only; deep field collection ownership is a separate proof. |
@@ -42,6 +43,8 @@ These need migration work or broader policy after the first existing-hook slices
 
 - compiler-private mutable intrinsic regions;
 - private tagged collection/record representations;
+- vector concat/extend lowering through runtime `builder_extend` once a boot builtin,
+  ABI shim, and analysis decision shape are cataloged;
 - multi-key ownership specialization beyond the current cap/fallback policy.
 
 ## Inspection requirement

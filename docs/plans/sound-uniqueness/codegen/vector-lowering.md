@@ -13,7 +13,10 @@ small operation shape and directly exercises `Unique` + last-use decisions.
 3. One local owned indexed update emits the existing in-place helper.
 4. Loop-carried vector updates emit the helper only when back-edge facts certify
    ownership preservation.
-5. Builder regions are enabled separately from indexed updates.
+5. Builder regions are enabled separately from indexed updates. The same builder
+   infrastructure also covers string-concat regions; vector concat/extend through
+   runtime `builder_extend` is not first-cut until its boot builtin/shim path is
+   cataloged.
 
 ## Required proof
 

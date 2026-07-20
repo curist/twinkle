@@ -20,7 +20,7 @@ Each accepted mutable-lowering candidate should carry:
 | Field | Purpose |
 |---|---|
 | ANF key | The optimized-ANF site the decision applies to. |
-| Operation family | Vector indexed update, vector builder, dict set/remove, record shell update, record-backed field update, ownership-specialized function variant, etc. |
+| Operation family | Vector indexed update, vector/string builder region, dict set/remove, record shell update, record-backed field update, ownership-specialized function variant, etc. |
 | Source value | The collection/record value whose storage or shell may be reused. |
 | Result binding | The local that receives the post-update immutable value. |
 | Proof requirements | Required ownership fact, last-use proof, and any loop/branch/SCC proof id. |
