@@ -2356,43 +2356,35 @@ pub fn join_own_tag(a: Int, b: Int) Int {
   own_of_tag(a).join_own(own_of_tag(b)).own_tag()
 }
 
+fn and_bool(a: Bool, b: Bool) Bool {
+  a and b
+}
+
+fn bool_eq(a: Bool, b: Bool) Bool {
+  a == b
+}
+
+fn int_eq(a: Int, b: Int) Bool {
+  a == b
+}
+
+fn own_lat() Lattice<Int> {
+  Lattice.{ default: own_tag(.Unknown), join: join_own_tag, eq: int_eq }
+}
+
+fn valid_lat() Lattice<Bool> {
+  Lattice.{ default: true, join: and_bool, eq: bool_eq }
+}
+
+fn prov_lat() Lattice<Vector<Int>> {
+  Lattice.{ default: [], join: union_sorted, eq: same_live }
+}
+
 fn locked_get(locks: Dict<Int, Vector<Int>>, block_id: Int) Vector<Int> {
   case locks.get(block_id) {
     .Some(v) => v,
     .None => [],
   }
-}
-
-// Keep exact exit replacement as long as a block/local fact is converging. If a
-// fact flips back to the value it had before the current stored value, lock only
-// that local to the conservative merge on later visits. A per-block changed-visit
-// cap forces any still-changing locals to lock too, so longer cycles also fall
-// back to sound widening without blanket-widening every loop-carried fact.
-type MergeOwnOut = .{ map: Dict<Int, Int>, locked: Vector<Int> }
-
-fn merge_own_exit_targeted(
-  old: Dict<Int, Int>,
-  next: Dict<Int, Int>,
-  prev: Dict<Int, Int>,
-  locked: Vector<Int>,
-  has_prev: Bool,
-  force_lock_changed: Bool,
-) MergeOwnOut {
-  out := next
-  next_locked := locked
-  keys := int_keys_union(old.keys(), next.keys())
-  for k in keys {
-    old_fact := fact_of_local(old, k)
-    next_fact := fact_of_local(next, k)
-    prev_fact := fact_of_local(prev, k)
-    changed := old_fact.own_tag() != next_fact.own_tag()
-    oscillates := has_prev and changed and next_fact.own_tag() == prev_fact.own_tag()
-    if live_contains_int(next_locked, k) or oscillates or force_lock_changed and changed {
-      next_locked = insert_sorted(next_locked, k)
-      out[k] = old_fact.join_own(next_fact).own_tag()
-    }
-  }
-  MergeOwnOut.{ map: out, locked: next_locked }
 }
 
 // After the fixpoint every reachable block is processed, so materialize/join
@@ -2474,33 +2466,6 @@ fn same_valid_map(a: Dict<Int, Bool>, b: Dict<Int, Bool>) Bool {
   true
 }
 
-type MergeValidOut = .{ map: Dict<Int, Bool>, locked: Vector<Int> }
-
-fn merge_valid_exit_targeted(
-  old: Dict<Int, Bool>,
-  next: Dict<Int, Bool>,
-  prev: Dict<Int, Bool>,
-  locked: Vector<Int>,
-  has_prev: Bool,
-  force_lock_changed: Bool,
-) MergeValidOut {
-  out := next
-  next_locked := locked
-  keys := int_keys_union(old.keys(), next.keys())
-  for k in keys {
-    old_valid := valid_of_local(old, k)
-    next_valid := valid_of_local(next, k)
-    prev_valid := valid_of_local(prev, k)
-    changed := old_valid != next_valid
-    oscillates := has_prev and changed and next_valid == prev_valid
-    if live_contains_int(next_locked, k) or oscillates or force_lock_changed and changed {
-      next_locked = insert_sorted(next_locked, k)
-      out[k] = old_valid and next_valid
-    }
-  }
-  MergeValidOut.{ map: out, locked: next_locked }
-}
-
 // ── Provenance join (param-origin sets) ─────────────────────────────
 fn prov_map_get(m: Dict<Int, Dict<Int, Vector<Int>>>, id: Int) Dict<Int, Vector<Int>> {
   case m.get(id) {
@@ -2532,33 +2497,6 @@ fn prov_local(m: Dict<Int, Vector<Int>>, id: Int) Vector<Int> {
     .Some(v) => v,
     .None => [],
   }
-}
-
-type MergeProvOut = .{ map: Dict<Int, Vector<Int>>, locked: Vector<Int> }
-
-fn merge_prov_exit_targeted(
-  old: Dict<Int, Vector<Int>>,
-  next: Dict<Int, Vector<Int>>,
-  prev: Dict<Int, Vector<Int>>,
-  locked: Vector<Int>,
-  has_prev: Bool,
-  force_lock_changed: Bool,
-) MergeProvOut {
-  out := next
-  next_locked := locked
-  keys := int_keys_union(old.keys(), next.keys())
-  for k in keys {
-    old_prov := prov_local(old, k)
-    next_prov := prov_local(next, k)
-    prev_prov := prov_local(prev, k)
-    changed := !same_live(old_prov, next_prov)
-    oscillates := has_prev and changed and same_live(next_prov, prev_prov)
-    if live_contains_int(next_locked, k) or oscillates or force_lock_changed and changed {
-      next_locked = insert_sorted(next_locked, k)
-      out[k] = union_sorted(old_prov, next_prov)
-    }
-  }
-  MergeProvOut.{ map: out, locked: next_locked }
 }
 
 // entry.prov for every live-in local (mirroring the ownership join): a block
@@ -3054,29 +2992,32 @@ fn run_fixpoint(
       if already {
         has_prev := prev_seen_get(prev_seen, blk.id.id)
         force_lock_changed := change_count_get(changed_visits, blk.id.id) >= fixpoint_widen_cap
-        own_merge := merge_own_exit_targeted(
+        own_merge := merge_targeted(
           old_own,
           st.own,
           own_map_get(prev_exits, blk.id.id),
           locked_get(locked_own, blk.id.id),
           has_prev,
           force_lock_changed,
+          own_lat(),
         )
-        valid_merge := merge_valid_exit_targeted(
+        valid_merge := merge_targeted(
           old_valid,
           st.valid,
           valid_map_get(prev_exit_valid, blk.id.id),
           locked_get(locked_valid, blk.id.id),
           has_prev,
           force_lock_changed,
+          valid_lat(),
         )
-        prov_merge := merge_prov_exit_targeted(
+        prov_merge := merge_targeted(
           old_prov,
           st.prov,
           prov_map_get(prev_exit_prov, blk.id.id),
           locked_get(locked_prov, blk.id.id),
           has_prev,
           force_lock_changed,
+          prov_lat(),
         )
         next_own = own_merge.map
         next_valid = valid_merge.map
