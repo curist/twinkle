@@ -18,7 +18,7 @@ You asked whether a refactor or major rewrite is warranted. Honest read after tr
 - **The one real architectural decision** (Task 1 decision gate) is *where the variant fixpoint lives*:
   - **Option A — Parallel variant table (recommended).** Add a `VariantSummaryTable` keyed by `VariantId`, computed in a second pass after the generic `compute()`, seeded on demand from call-site `select_variant` decisions, fixed-pointed per SCC. The generic table stays exactly as-is (byte-identical for non-recursive/non-specialized code), which protects the census baseline and self-host.
   - **Option B — Generalize `run_scc` to key on `VariantId`.** More unifying but rewrites the driver that the whole compiler depends on; higher blast radius, harder to keep byte-identical. Reject unless the spike shows Option A cannot converge.
-- **The genuine risk is observability, not soundness.** The prior Phase 6 note flags that "4c-recording/5/6 are codegen-handoff." Stage 5 summaries are only worth building if *something reads them*. This plan makes the **rendered `--cfg` verdict** the consumer (Task 5), and that consumption is confirmed feasible without any codegen work: the ownership verdict pass already has a `unique_seed` hook (`run_fixpoint`'s 7th arg; `summarize_seeded` uses it), and it lives entirely in the `--cfg` render path (verified: `analyze_with_summaries` has no non-test caller outside `ir.tw`). So the whole plan is render-only by construction — it moves `visit`'s `--cfg` verdicts to `reuse(unique)` with `make stage2` byte-identical and census flat, guaranteed. **Real in-place codegen (making the mutation actually happen) is Stage 6 and stays out of scope.** This avoids the Stage 4c trap (analysis with zero observable effect) because the `--cfg` verdict *is* the observable.
+- **The genuine risk is conditional observability, not the variant summary itself.** Stage 5 summaries are only safe to consume when the consumer remains keyed by the same `VariantId` assumption. A generic function body can have both owned and unowned callers, so rendering that single body under a reachable owned seed would be a diagnostic shortcut with codegen-shaped footguns. The revised consumer in Task 5 therefore keeps the generic `fn visit` body conservative and renders owned verdicts only in a separate variant-qualified diagnostic section, e.g. `variant fn visit [unique:p0]`. **Real in-place codegen still requires Stage 6 specialization/cloning keyed by `VariantId`; generic-body rewrites remain out of scope.**
 
 **Recommendation:** Proceed with **Option A**, gated by the Task 1 spike. Treat rendering as the acceptance signal. Keep the generic table and codegen untouched until a follow-up Stage 6 plan.
 
@@ -29,30 +29,31 @@ You asked whether a refactor or major rewrite is warranted. Honest read after tr
 - Treat `docs/plans/archive/sound-uniqueness-nested-loop-ownership.md` (just-landed loop-header seeding) and the Phase 6 analysis notes under `docs/plans/sound-uniqueness/analysis/` as the evidence baseline.
 - Do not change any **generic** summary. `graph_scc.visit`'s generic summary must remain `p0=Published p1=Published p2=Published ret=alias(p0)`. All new behavior lives in the variant-keyed layer.
 - The census baseline (`COW_CEILING`, currently 2200; live count ~2109) must not increase unless a variant summary is actually consumed by codegen in a later plan. An analysis-only Stage 5 must keep census unchanged and the self-host byte-identical.
-- Optimism must be validated: a candidate owned variant seeds a parameter `Unique`, but the seed is only sound if (a) the seeded variant fixpoint actually converges to a non-empty `in_place_paths` for that parameter (it consumes the param — else retract, Task 3 Step 3), and (b) the variant is **reachable** in the variant-reachability closure (Task 5 Step 1b): a root discharged by an external caller with a proven-`Unique`, last-use, *occurs-once* argument, or an edge from another reachable variant's seeded analysis. Never render an owned verdict for a candidate that fails either check — fall back to the generic render. (Generic `select_variant` alone cannot bootstrap the recursive case, and a generic-call-site-only reachability check misses mutually-recursive callees; see Task 3 Step 3 and Task 5 Step 1b.)
+- Optimism must be validated: a candidate owned variant seeds a parameter `Unique`, but the seed is only sound if (a) the seeded variant fixpoint actually **converges** and proves a non-empty `in_place_paths` for that parameter (cap-hit snapshots are retracted, never published), and (b) the variant is **reachable** in the variant-reachability closure: a root discharged by an **out-of-SCC** caller with a proven-`Unique`, last-use, *occurs-once* argument, or an edge from another reachable variant's seeded analysis. Never render an owned verdict for a candidate that fails either check. Generic `select_variant` alone cannot bootstrap the recursive case, same-SCC generic calls must not root themselves, and generic-call-site-only reachability misses mutually-recursive callees.
 - Backedge/recursion classification is by call-graph SCC membership (`scc_set`), consistent with `summary.tw`. This is the interprocedural analogue of the intraprocedural loop-header seeding; do not conflate the two.
-- **Determinism:** variant memo keys are the canonical string `variant_id.variant_canonical_string(variant_id.canonicalize_variant(v))` (or its interned dense id), never `site_key` (a call-site pairing). The variant worklist and every iteration over demanded keys process keys in sorted canonical-string order. A function may acquire more than one owned variant; because a function renders exactly one body, the render picks the **canonical-least** owned key deterministically (Task 5), and multi-specialization codegen is deferred to Stage 6.
+- **Determinism:** variant memo keys are the canonical string `variant_id.variant_canonical_string(variant_id.canonicalize_variant(v))` (or its interned dense id), never `site_key` (a call-site pairing). The variant worklist and every iteration over demanded keys process keys in sorted canonical-string order. The generic function body renders once under the generic analysis; every owned verdict is rendered in a separate variant-qualified section keyed by the canonical variant string. Multi-specialization codegen is deferred to Stage 6.
 - Never use rendered FuncIds, block ids, or local ids in durable test assertions. Assert stable text such as function names (`fn visit`, `fn scc_thread`), `verdict ->`, `reuse(unique)`, `[unique:p0]`, `Consumed paths{[]}`, and the absence of `persistent(aliased shell)` on the threaded record's updates.
 - Write CFG dumps under `/tmp/twinkle-cfg-recur/`, not inside the repository.
 - After editing `.tw` files, run `target/twk fmt` on changed Twinkle files, `target/twk lint boot/main.tw`, and explicit `target/twk lint` for any new fixture entries (fixtures are not compiled by `boot/main.tw`).
 - Because `boot/compiler/*.tw` changes the self-hosted payload, rebuild with `make bundle-cli` (not `make quick-bundle-cli`) before running the boot suite against new behavior.
 - Run verification commands one at a time, never concurrently (concurrent `twk` pegs CPU).
-- **This plan is render-only by construction.** The ownership verdict analysis (`ownership.analyze_with_summaries`) is reached *only* from `boot/commands/ir.tw`'s `--cfg` path and test suites — never from the build/opt/lowering/codegen pipeline (verified: no non-test caller outside `ir.tw`). So `compute_variants`/`analyze_with_variants` change *only* what `twk ir --cfg` prints; they cannot alter the compiled payload. Consequence: `make stage2` is byte-identical and the census is unchanged **by construction**, not by careful avoidance. The goal here is to close the *analysis/render* gap (make `graph_scc.visit`'s owned decision visible and testable in `--cfg`), which is the prerequisite for — but distinct from — the separate Stage 6 that would wire these verdicts into codegen for real in-place mutation.
+- **This plan is render-only by construction.** The generic ownership verdict analysis remains reached only from `boot/commands/ir.tw`'s `--cfg` path and test suites — never from the build/opt/lowering/codegen pipeline. Variant-specific verdict analysis is also called only by `--cfg` rendering/test helpers and emits diagnostics, not codegen decisions. Consequence: `make stage2` is byte-identical and the census is unchanged **by construction**, not by careful avoidance. The goal here is to close the *analysis/render* gap by making `graph_scc.visit`'s owned variant visible and testable in `--cfg`; Stage 6 must still add variant-keyed cloning/dispatch before any real in-place codegen consumes those verdicts.
 
 ---
 
 ## File Map
 
 - `boot/compiler/summary.tw` (owns the variant layer — it imports `ownership.tw`, never the reverse)
-  - Add the `VariantId`-keyed variant summary table, the second SCC fixpoint pass (`compute_variants`), the variant-reachability pass (`reachable_variants`), and the seed-map builder (`per_function_seeds`).
-  - Change `render_cfg` to accept the variant table and append `variant:` header lines; keep the per-op verdict decision out of it (that is `ownership.analyze_with_variants`).
-  - Reuse `order_sccs`, `scc_callers`, `insert_sorted`, and the monotone-worklist shape.
+  - Add the `VariantId`-keyed variant summary table, the second SCC fixpoint pass (`compute_variants`), the variant-reachability pass (`reachable_variants`), and variant-qualified render assembly.
+  - Change `render_cfg` to accept the variant table and append `variant:` header lines. Generic per-op verdicts remain generic; owned verdicts render only in separate `variant fn ... [unique:...]` sections assembled by `summary.tw`.
+  - Reuse `order_sccs`, `scc_callers`, `insert_sorted`, and the monotone-worklist shape. Same-SCC generic calls are never reachability roots.
 - `boot/compiler/ownership.tw` (**seedable per-function helpers only — no `VariantSummaryTable` reference, or it would create a `summary ↔ ownership` import cycle**)
-  - Expose whatever `summarize_variant` / `select_variant` / `param_has_inplace_site` glue the variant driver needs (these mostly exist; add thin `pub` accessors if the spike shows a missing hook).
-  - Add `analyze_with_variants(view, b, sem, table, seeds)` next to `analyze_with_summaries` — the same per-op verdict pass, but re-analyzing each function whose `func_id` is in `seeds` under that `unique_seed`. `summary.tw` computes `seeds`; `ownership.tw` just applies them. Empty `seeds` ⇒ byte-identical to `analyze_with_summaries`.
+  - Expose whatever `summarize_variant` / `select_variant` glue the variant driver needs; `summary.tw` owns the syntactic candidate scan.
+  - Factor the validated loop-header seed cycle out of `ownership_stage` into a shared `run_fixpoint_validated(...)` helper and use it from generic analysis, seeded summaries, and call-site uniqueness scans. `graph_scc.visit` has local loops; the variant summary layer must not be weaker than the final verdict layer.
+  - Expose seedable single-function diagnostics (`analyze_function_with_seed`) and call-site scans (`call_uniques`) that accept a `SummaryTable` overlay. Do **not** add an API that rewrites the generic body verdicts under a seed.
   - Harden the shared `arg_unique` with the occurs-once guard (Task 5 Step 1a).
 - `boot/commands/ir.tw` (orchestration — has `view`, `b`, `sem`, and the generic `table`)
-  - In `render_cfg_artifacts`: compute `variants := summary.compute_variants(...)` and `seeds := summary.per_function_seeds(...)`, call `ownership.analyze_with_variants(view, b, s, table, seeds)`, and render via the variant-aware `summary.render_cfg(analyzed, table, variants)`.
+  - In `render_cfg_artifacts`: compute `variants := summary.compute_variants(...)`, render the generic analyzed view with `ownership.analyze_with_summaries(...)`, and let `summary.render_cfg(...)` append reachable variant-qualified diagnostic sections. Do not call a generic-body `analyze_with_variants` pipeline.
 - `boot/tests/fixtures/cfg/sound_uniqueness/recursive_thread_state.tw`
   - Minimal self-recursive record-threading positive fixture (the `visit` shape without graph noise).
 - `boot/tests/fixtures/cfg/sound_uniqueness/recursive_thread_param.tw`
@@ -63,8 +64,10 @@ You asked whether a refactor or major rewrite is warranted. Honest read after tr
   - Negative fixture: a function returns one of two params (`ret` aliases two params), so the exact-single-alias candidate gate must reject it — no owned verdict may render.
 - `boot/tests/fixtures/cfg/sound_uniqueness/mutual_recursion_thread.tw`
   - Positive fixture: two mutually-recursive functions thread the record (exercises multi-member SCCs, not just self-loops).
+- `boot/compiler/cfg.tw`
+  - Add `render_function_with_header(func, title, header)` so `summary.tw` can append variant-qualified diagnostic bodies without teaching `cfg.tw` about summaries or variants.
 - `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`
-  - Positive + negative regression tests. `render_entry` duplicates the CLI pipeline (`compile → build_view → prune → analyze → render`); it must gain the same `compute_variants`/`per_function_seeds`/`analyze_with_variants` steps as `ir.tw`, **or** be refactored to call `commands.ir.render_cfg_for_entry` so there is one pipeline.
+  - Positive + negative regression tests. `render_entry` duplicates the CLI pipeline (`compile → build_view → prune → generic analyze → render`); it must mirror `ir.tw` by computing variants and letting `summary.render_cfg` append variant-qualified sections, **or** be refactored to call `commands.ir.render_cfg_for_entry` so there is one pipeline.
 - `docs/plans/sound-uniqueness/analysis/README.md` and `.../sieve-cfg-gap-notes.md`
   - Record `graph_scc.visit` status after the fix (or after an explicit analysis-only landing).
 
@@ -102,7 +105,7 @@ Read `summarize_variant` (`ownership.tw:3915`) and `select_variant` (`ownership.
 
 Write `/tmp/twinkle-cfg-recur/spike-notes.md` answering:
 1. Can a parallel `VariantSummaryTable` (Option A) reach a fixed point for the `{visit}` self-loop SCC using the existing monotone-worklist shape? (Expected: yes — seed the demanded variant, iterate the self-call against the current iterate, stop on `same_summary`.)
-2. Confirm the render/verdict seeding path: `analyze_with_summaries → analyze_function → ownership_stage → run_fixpoint(..., unique_seed, seeds)`. Verify that threading a per-function `unique_seed` (plus the block-0 `seed_param_own` add, Task 5 Step 1c) makes `block_verdicts` render `reuse(unique)` for `visit`, and that `ownership_stage` reaches codegen nowhere (so this is render-only). Record any place the seed does not propagate.
+2. Confirm the render/verdict seeding path: `analyze_with_summaries → analyze_function → ownership_stage → run_fixpoint(..., unique_seed, seeds)`. Verify that a seeded **variant-qualified diagnostic analysis** can make `block_verdicts` render `reuse(unique)` for `visit`, and that `ownership_stage` reaches codegen nowhere (so this is render-only). Do not plan to overwrite the generic body verdicts under a seed.
 3. Final recommendation: Option A (default) or Option B (only if A cannot converge).
 
 - [ ] **Step 5: Commit spike notes only if a repo doc changed**
@@ -182,7 +185,7 @@ git commit -m "test(fixture): add minimal self-recursive threaded-record shape"
 - Consumes: `order_sccs`, `scc_callers`, `insert_sorted`, the monotone-worklist shape (`run_scc`), `ownership.summarize_variant`, `ownership.select_variant`, `variant_id` canonicalization/interner.
 - Produces: `compute_variants(view, b, sem, generic_table) VariantSummaryTable` — a `VariantId`-keyed table of owned summaries fixed-pointed per SCC, seeded on demand from call-site `select_variant` decisions, leaving the generic table byte-identical.
 
-> **Grounding note for the implementer:** the exact seed set and stop condition are pinned by Task 1's spike notes. The structure below mirrors the generic driver in `summary.tw` (seed → `order_sccs` → per-SCC monotone worklist → `same_summary` stop → conservative cap fallback). Reuse `same_summary`, `insert_sorted`, `int_set`, `in_set`, `build_func_index`, and `order_sccs` verbatim rather than re-deriving them.
+> **Grounding note for the implementer:** the exact seed set and stop condition are pinned by Task 1's spike notes. The structure below mirrors the generic driver in `summary.tw` (seed → `order_sccs` → per-SCC monotone worklist → `same_summary` stop), but optimistic variant cap handling is **fail-closed**: if the worklist hits its cap before convergence, retract the active variants instead of publishing the optimistic snapshot. Reuse `same_summary`, `insert_sorted`, `int_set`, `in_set`, `build_func_index`, and `order_sccs` verbatim rather than re-deriving them.
 
 - [ ] **Step 1: Add the variant table type keyed by canonical `VariantId`**
 
@@ -272,9 +275,9 @@ fn ret_aliases_exactly_param(ret: ReturnEffect, k: Int) Bool {
 }
 ```
 
-> `param_has_inplace_site(f, k)` scans `f`'s ANF for a record/COW update whose base local traces to param `k`. Task 1 Step 3 records whether `ownership` already exposes such a predicate (the verdict pass computes exactly this); if so, reuse it via a thin `pub` accessor rather than re-deriving base-tracing here. If not, add `pub fn param_has_inplace_site(f: CfgFunction, k: Int) Bool` in `ownership.tw` next to `select_variant`. `vid.shell()` is the empty (`[]`) `ParamPath` (`variant_id.tw`).
+> `param_has_inplace_site(f, k)` is a **purely syntactic** scan of `f`'s ANF for a record/COW update whose base local traces to param `k`. Do not reuse `ownership.collect_field_reqs`: that analysis is ownership-gated, and recursive publication is exactly the pin this candidate pre-filter must defeat. Seed the derived-local set with `f.params[k].id`; propagate through `AInit`, `AAssign`, direct local copies, record-update results whose base is derived, and block/loop edge arguments that feed block params. `vid.shell()` is the empty (`[]`) `ParamPath` (`variant_id.tw`).
 
-**Reachability is enforced in Task 5, not here.** A candidate that converges to a real owned variant (Step 3) is still only *rendered* if it is reachable in the variant-reachability closure (Task 5 Step 1b). Seeding broadly here is sound because nothing consumes the candidate until that check runs.
+**Reachability is enforced in Task 5, not here.** A candidate that converges to a real owned variant (Step 3) is still only *rendered* if it is reachable in the variant-reachability closure (Task 5 Steps 4-5). Seeding broadly here is sound because nothing consumes the candidate until that check runs.
 
 - [ ] **Step 3: Per-SCC variant fixpoint mirroring `run_scc`**
 
@@ -310,7 +313,9 @@ fn run_scc_variants(
   //    callee variant it depends on changed (scc_callers gives caller edges; a self-loop is
   //    its own caller). summarize_variant(f, key, overlay, ...) reads `overlay` = generic
   //    with the current in-SCC variant iterates layered on top, so the self-call resolves to
-  //    the owned key. Stop on same_summary; cap-fallback blanks ret_paths like run_scc.
+  //    the owned key. Stop only when same_summary reaches a real fixed point. If the inner
+  //    loop hits its safety cap with `changed == true`, retract every still-active candidate
+  //    in this SCC and publish no cap-time optimistic snapshot.
   // 3. VALIDATE + RETRACT: after convergence, drop (via vtable_drop) any key whose converged
   //    summary lost the hypothesis. A key survives ONLY if its converged summary has BOTH:
   //      (a) the seeded param `k` Consumed with non-empty in_place_paths (ownership proven), AND
@@ -326,7 +331,7 @@ fn run_scc_variants(
 
 Note `vid.shell_set()` (the `{[]}` `PathSet`, `variant_id.tw:52`) for the hypothesis's `in_place_paths`, matching how the fixpoint reports a shell consume.
 
-> The overlay ("generic + variant-iterate at the self-call") is the crux. Task 1 Step 3 records whether `transfer_summarized_call` can be pointed at a variant summary for an in-SCC callee via the existing `table` argument (a `SummaryTable` whose `by_func` entry for the recursive callee is temporarily the current variant iterate), or whether a small variant-lookup hook is needed next to `summary_get`. Implement whichever the spike confirms; do not change generic-table reads for out-of-SCC callees. **Multi-key caveat:** `SummaryTable.by_func` holds one summary per `func_id`, so the overlay can represent only one variant per in-SCC callee at a time. That is exact for this plan's fixtures and `graph_scc.visit` (each threaded function has a single candidate key). If a real in-SCC callee has several candidate keys, the overlay must select the key the caller's seeded analysis actually demands (`select_variant`) — flag that as a spike finding and, if it arises, restrict to single-key in-SCC functions for now rather than guessing.
+> The overlay ("generic + variant-iterate at the self-call") is the crux. Task 1 Step 3 records whether `transfer_summarized_call` can be pointed at a variant summary for an in-SCC callee via the existing `table` argument (a `SummaryTable` whose `by_func` entry for the recursive callee is temporarily the current variant iterate), or whether a small variant-lookup hook is needed next to `summary_get`. Implement whichever the spike confirms; do not change generic-table reads for out-of-SCC callees. **Multi-key caveat:** `SummaryTable.by_func` holds one summary per `func_id`, so the overlay can represent only one variant per in-SCC callee at a time. That is exact for this plan's fixtures and `graph_scc.visit` (each threaded function has a single candidate key). If a real in-SCC callee has several candidate keys, do not silently pick `keys[0]`: assert/retract for now, or explicitly select the demanded key through `select_variant` before broadening the plan.
 
 - [ ] **Step 4: Add the `compute_variants` entry point**
 
@@ -422,34 +427,156 @@ git commit -m "ownership: surface converged recursive variant summary in --cfg h
 
 ---
 
-### Task 5: Render owned verdicts from the variant summary (the consumer)
+### Task 5: Derisk the consumer and render variant-qualified owned verdicts
 
 **Files:**
-- Modify: `boot/compiler/ownership.tw` — add `analyze_with_variants(view, b, sem, table, seeds)` (seedable per-op verdict pass) and the occurs-once `arg_unique` hardening. **No `VariantSummaryTable` reference here** (avoids the `summary ↔ ownership` cycle).
-- Modify: `boot/compiler/summary.tw` — owns `VariantSummaryTable`; add `reachable_variants` and `per_function_seeds(view, b, sem, generic, variants) Dict<Int, Dict<Int, Bool>>` (func_id → unique_seed, reachable canonical-least only).
-- Modify: `boot/commands/ir.tw::render_cfg_artifacts` — compute `seeds := summary.per_function_seeds(...)`, call `ownership.analyze_with_variants(view, b, s, table, seeds)` (replacing `analyze_with_summaries`), then render.
-- Modify: `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw` — `render_entry` mirrors the `per_function_seeds` + `analyze_with_variants` change (or routes through `commands.ir.render_cfg_for_entry`); add the positive test (green now).
+- Modify: `boot/compiler/ownership.tw` — harden `arg_unique`, factor validated loop-seed fixpoint reuse, expose seedable single-function analysis and call-site uniqueness scans. **No `VariantSummaryTable` reference here** (avoids the `summary ↔ ownership` cycle).
+- Modify: `boot/compiler/summary.tw` — owns `VariantSummaryTable`; add external-SCC reachability, variant-summary overlays, and variant-qualified render sections.
+- Modify: `boot/compiler/cfg.tw` — add a tiny render helper that can render one already-analyzed `CfgFunction` with a caller-supplied title/header, keeping `cfg.tw` free of summary/ownership imports.
+- Modify: `boot/commands/ir.tw::render_cfg_artifacts` — keep the generic analyzed view generic; compute variants and pass them to `summary.render_cfg(...)` so it can append variant diagnostic sections.
+- Modify: `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw` — mirror the CLI pipeline and add positive tests against variant-qualified sections.
 
-**Module-layering rule (blocker):** `summary.tw` imports `ownership.tw`, never the reverse (`summary.tw` header comment). So the orchestrator that touches `VariantSummaryTable` **must live in `summary.tw` / `boot/commands/ir.tw`**, not `ownership.tw`. `ownership.tw` only gains seed-parameterized helpers; `summary.tw` decides which seed each function gets and calls them.
+**Module-layering rule (blocker):** `summary.tw` imports `ownership.tw`, never the reverse (`summary.tw` header comment). So anything touching `VariantSummaryTable` lives in `summary.tw` / `boot/commands/ir.tw`, not `ownership.tw`. `ownership.tw` only accepts ordinary `SummaryTable` overlays and ordinary `unique_seed` maps.
 
 **Interfaces:**
-- Consumes: the converged, retraction-filtered `VariantSummaryTable`.
-- Produces: `reuse(unique)` record-update verdicts inside `scc_thread`, `ping`/`pong`, and `graph_scc.visit`, with the generic pass and all generic summaries unchanged.
+- Consumes: the converged, retraction-filtered `VariantSummaryTable` from Task 3/4.
+- Produces: separate `variant fn ... [unique:...]` diagnostic sections whose record-update verdicts render `reuse(unique)` for `scc_thread`, `ping`/`pong`, and `graph_scc.visit`; the generic `fn ...` sections and generic summaries remain conservative/unchanged.
 
-> **Scope note:** this whole plan is render-only (see Global Constraints) — it changes `--cfg` verdicts, not codegen. The steps below make the `--cfg` per-op verdicts reflect the owned variant. If threading `unique_seed` through `ownership_stage` proves harder than the three edits in Step 1c anticipate, land the header probe (Task 4) alone — that already surfaces the converged variant — mark the per-op verdict rendering deferred in the docs, and stop. Do not fake a verdict the seeded analysis did not produce.
+> **Resume note for implementers:** If a prior uncommitted spike added `per_function_seeds(...)` plus `ownership.analyze_with_variants(...)` that rewrites the generic body under a seed, do not land that shape. Keep useful pieces (occurs-once guard, seedable helpers), but route owned verdicts into variant-qualified sections only.
 
-- [ ] **Step 1a: Harden `arg_unique` against duplicate arguments (soundness prerequisite)**
+- [ ] **Step 1: Add RED tests for variant-qualified rendering, not generic-body rewriting**
 
-`ownership.arg_unique` (`ownership.tw:1179`) marks an argument reusable on `Unique` + last-use only — it does **not** reject the same local appearing twice in one call. So `start.thread_alias(start, n)` (which lowers to `thread_alias(start, start, n)`) would mark the first `start` reusable and let Stage 4a *move* it while the second occurrence still aliases it — unsound, and it would defeat the alias negative fixture. Tighten the shared predicate: an argument local is reusable only if it **occurs exactly once among the call's arg atoms** (or every other occurrence is itself provably consumed). Apply this in the one `arg_unique` computation so both the Stage 4a move (`ownership.tw:1210`) and `select_variant`/dischargeability inherit it:
+In `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`, add a helper that extracts a variant section by stable text:
+
+```tw
+fn variant_section(out: String, func_name: String, key: String, next_marker: String) Result<String, String> {
+  section_between(out, "variant fn ${func_name} [${key}]", next_marker)
+}
+```
+
+Add the minimal fixture test after the nested-loop tests. It must assert the generic body is still conservative and the variant body is owned:
+
+```tw
+    .test(
+      "self-recursive threaded record renders an owned variant verdict",
+      fn() {
+        out := try render_entry("recursive_thread_state")
+        generic := try section_between(out, "fn scc_thread", "fn run")
+        try assert.str_contains(generic, "persistent(aliased shell)")
+        variant := try variant_section(out, "scc_thread", "unique:p0", "fn run")
+        try assert.str_contains(variant, "variant: p0=Consumed paths{[]}")
+        try assert.str_contains(variant, "reuse(unique)")
+        try assert.is_false(variant.contains("persistent(aliased shell)"))
+        .Ok({})
+      },
+    )
+```
+
+Add a `graph_scc.visit` assertion to the existing visit-like fixture test (or a new test in the same suite if `visit_main` is the fixture entry):
+
+```tw
+        variant := try variant_section(out, "visit", "unique:p0", "fn run_visit")
+        try assert.str_contains(variant, "variant: p0=Consumed paths{[]}")
+        try assert.str_contains(variant, "reuse(unique)")
+```
+
+Run the suite with the current generic-only render:
+
+```bash
+target/twk run boot/tests/main.tw 2>&1 | rg -n "self-recursive threaded record|visit-like threaded|FAIL|passed"
+```
+
+Expected: FAIL because no `variant fn ...` section exists yet. If the generic body already renders `reuse(unique)`, remove the seeded generic-body spike before continuing.
+
+- [ ] **Step 2: Make optimistic variant cap handling fail closed**
+
+In `boot/compiler/summary.tw::run_scc_variants`, track whether the inner fixpoint actually converged:
+
+```tw
+converged := false
+for changed and rounds < cap_inner {
+  changed = false
+  ...
+  rounds = rounds + 1
+}
+converged = !changed
+if !converged {
+  // The iterate started optimistic. A cap-time snapshot is not conservative.
+  // Retract every active member in this SCC and publish no survivors from this pass.
+  member_pidx = Dict.new()
+  member_key = Dict.new()
+  stable = true
+}
+```
+
+Only run `variant_valid` and publish survivors when `converged` is true. This is a blocker: no optimistic cap snapshot may render, even if it happens to satisfy `variant_valid`.
+
+Focused verification:
+
+```bash
+target/twk build boot/main.tw -o /tmp/newboot.wasm
+BOOT_WASM=/tmp/newboot.wasm deno run --allow-read --allow-write --allow-env \
+  tools/js_runtime/deno_main.mjs ir boot/tests/fixtures/cfg/sound_uniqueness/recursive_thread_state.tw --cfg \
+  | rg "^fn scc_thread|summary:|variant:"
+```
+
+Expected: `scc_thread` still has the Task 4 `variant:` header. If it disappears, the cap handling is retracting converged SCCs by mistake.
+
+- [ ] **Step 3: Factor validated loop-seed fixpoint reuse**
+
+`graph_scc.visit` carries `cur` through local `for` loops. The final ownership pass already has loop-header assume/validate/retract in `ownership_stage`, but `summarize_seeded` and call-site scans must use the same validated loop seeds or the variant summary layer is weaker than the verdict layer.
+
+In `boot/compiler/ownership.tw`, factor this helper next to `run_fixpoint`:
+
+```tw
+fn run_fixpoint_validated(
+  blocks: Vector<CfgBlock>,
+  params: Vector<LocalId>,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+  unique_seed: Dict<Int, Bool>,
+) FixResult {
+  seeds := collect_loop_seed_candidates(blocks)
+  fx := run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds)
+  stable_seeds := false
+  for !stable_seeds {
+    kept := retain_valid_loop_seeds(blocks, fx, seeds)
+    if same_loop_seed_set(kept, seeds) {
+      stable_seeds = true
+    } else {
+      seeds = kept
+      fx = run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds)
+    }
+  }
+  fx
+}
+```
+
+Then replace the duplicated loop-seed block in `ownership_stage` with `run_fixpoint_validated(...)`, and replace the `empty_seeds` calls in `summarize_seeded` and `call_uniques` with `run_fixpoint_validated(...)` using the same `table`, `suppress`, and `unique_seed` arguments.
+
+Focused verification:
+
+```bash
+target/twk build boot/main.tw -o /tmp/newboot.wasm
+BOOT_WASM=/tmp/newboot.wasm deno run --allow-read --allow-write --allow-env \
+  tools/js_runtime/deno_main.mjs ir boot/compiler/graph_scc.tw --cfg \
+  | rg -n "^fn visit|summary:|variant:" | head -20
+```
+
+Expected: `visit`'s generic `summary:` remains `p0=Published p1=Published p2=Published ret=alias(p0)`, and a `variant:` line for `visit` appears with `p0=Consumed paths{[]}` and `ret=alias(p0)`. If the variant still retracts, inspect the converged seeded summary before changing validity; do not weaken validation blindly.
+
+- [ ] **Step 4: Harden call-site uniqueness and reachability roots**
+
+In `ownership.tw`, fold the occurs-once guard into every call `arg_unique` computation used by Stage 4a moves, call-decision rendering, and public call scans:
 
 ```tw
 fn atom_occurs_once(args: Vector<Atom>, id: Int) Bool {
   count := 0
   for a in args {
     case atom_local_id(a) {
-      .Some(other) => if other == id {
-        count = count + 1
-      },
+      .Some(other) => if other == id { count = count + 1 },
       .None => {},
     }
   }
@@ -457,84 +584,154 @@ fn atom_occurs_once(args: Vector<Atom>, id: Int) Bool {
 }
 ```
 
-Fold `atom_occurs_once(args, id)` into the `arg_unique` `collect` next to `local_reusable`. This is a general hardening of the existing move gate (re-baseline the census/self-host if it changes any existing verdict; investigate before accepting a change).
+Use `local_reusable(..., id, last) and atom_occurs_once(args, id)`.
 
-- [ ] **Step 1b: Compute variant reachability over the SCC variant graph (not generic-call-site only)**
+In `summary.tw::reachable_variants`, compute a `func_id -> scc_id` map from `order_sccs(...)`. Root a candidate only from a call site whose caller's SCC differs from the callee's SCC. Same-SCC calls propagate only after the caller variant is already reachable. This prevents `recursive_thread_param` from bootstrapping itself through its self-call.
 
-A generic-call-site-only dischargeability check breaks the mutual-recursion positive: `pong`'s owned variant is reached only through `ping`'s owned variant, never by an external generic caller. Reachability must be a fixpoint over the **variant graph**:
-
-- **Root variants** — a candidate variant `V(f,{k})` is a root iff some *external* (out-of-SCC or generic) call site passes an argument into position `k` of `f` that is `arg_unique` under the **generic** analysis (and occurs once, per 1a). `run` calling `start.scc_thread(n)` and `run_mut` calling `start.ping(n)` with a fresh `start` are roots. Note `run_alias`'s `start.thread_alias(start, n)` is **not** a root — `start` occurs twice, so the occurs-once gate (1a) rejects it, which is exactly why the alias fixture stays conservative.
-- **Variant→variant edges** — from a reachable variant `V(f,{k})`, re-run `f`'s **seeded** analysis (param `k` `Unique`); for each call it makes to a callee `g` at a position that is now `arg_unique`, the demanded callee variant `select_variant(g, variant_summary(g), arg_unique)` becomes reachable.
-- A variant renders owned only if it is reachable in this closure.
+Add or expose this ownership helper without importing variants into `ownership.tw`:
 
 ```tw
-// Least-fixed-point over variant reachability. Seeds roots from external callers,
-// then propagates through seeded-analysis call sites until no new variant is added.
-// Deterministic: worklist in sorted variant_memo_key order.
-fn reachable_variants(
-  view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics,
-  generic: SummaryTable, variants: VariantSummaryTable,
-) Dict<String, Bool> {
-  // key (variant_memo_key) -> reachable. See Task 1 spike for whether an existing
-  // ownership call-scan yields (callee_id, arg_unique) under a given seed to reuse here.
-  Dict.new()
+pub type CallUniq = .{ callee: Int, arg_unique: Vector<Bool> }
+
+pub fn call_uniques(
+  f: CfgFunction,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+  unique_seed: Dict<Int, Bool>,
+) Vector<CallUniq>
+```
+
+`call_uniques` must use `run_fixpoint_validated(...)`, not a raw `run_fixpoint(..., empty_seeds)`.
+
+- [ ] **Step 5: Use variant summary overlays for reachable variant analysis**
+
+For a reachable variant body, recursive calls must transfer through converged variant summaries, not the generic table. In `summary.tw`, add a helper that overlays the canonical reachable variant summary for each function onto the generic table:
+
+```tw
+fn reachable_overlay(generic: SummaryTable, variants: VariantSummaryTable, reachable: Dict<String, Bool>) SummaryTable {
+  overlay := generic
+  for func_id, keys in variants.by_func {
+    picked := false
+    for key in keys {
+      if !picked and reach_has(reachable, key) {
+        case variants.by_key.get(key) {
+          .Some(entry) => {
+            overlay = table_put(overlay, func_id, entry.summary)
+            picked = true
+          },
+          .None => {},
+        }
+      }
+    }
+  }
+  overlay
 }
 ```
 
-- [ ] **Step 1c: Seed the per-op verdict pass per function, driven from `summary.tw`**
+This helper intentionally supports one reachable variant per function for this plan. If a function has more than one reachable key, keep the canonical-least for render determinism and emit only that diagnostic section; Stage 6 cloning can generalize multi-specialization.
 
-The per-op verdicts are materialized by `ownership.analyze_with_summaries(view, b, sem, table)` (`ir.tw:56`), not by `render_cfg`. So the consumer is a **seedable** variant of that pass:
+Reachability propagation should call `ownership.call_uniques(f, overlay, b, sem, scc_set, unique_seed_for_variant(...))` so same-SCC recursive calls preserve ownership after the call.
 
-1. In `summary.tw`, add `per_function_seeds(view, b, sem, generic, variants) Dict<Int, Dict<Int, Bool>>`: for each function, pick the **canonical-least** key in `variants.by_func[func_id]` that is reachable (Step 1b); map `func_id -> unique_seed` where `unique_seed` marks that key's params (`f.params[req.param].id -> true`, the shape `summarize_variant` builds at `ownership.tw:3923-3928`). Functions with no reachable owned variant get no entry.
-2. In `ownership.tw`, add `pub fn analyze_with_variants(view, b, sem, table, seeds: Dict<Int, Dict<Int, Bool>>) CfgView` alongside `analyze_with_summaries` (which maps `analyze_function` over `view.functions`). Thread a `unique_seed: Dict<Int, Bool>` through `analyze_function` → `ownership_stage` (defaulting to empty for the existing `analyze_with_summaries` call, so it stays byte-identical). **`ownership_stage` does not seed param ownership today** — its block-0 branch (`ownership.tw:3235`) only calls `seed_param_prov`, and it passes `Dict.new()` as `run_fixpoint`'s 7th (`unique_seed`) argument. So `ownership_stage` needs three edits: (a) accept `unique_seed`; (b) pass it to `run_fixpoint` instead of `Dict.new()`; (c) add `entry_own = seed_param_own(entry_own, unique_seed, params)` in the `blk.id.id == 0` branch (`seed_param_own` already exists at `ownership.tw:2527`; this mirrors what `summarize_seeded`'s return-site replay does at `:4029`). Then `block_verdicts` sees the seeded param `Unique` and renders `reuse(unique)`. Empty `seeds`/`unique_seed` ⇒ byte-identical output.
-3. In `boot/commands/ir.tw::render_cfg_artifacts`, replace `analyzed := ownership.analyze_with_summaries(view, b, s, table)` with `seeds := summary.per_function_seeds(view, b, s, table, variants)` then `analyzed := ownership.analyze_with_variants(view, b, s, table, seeds)`. Mirror the same two lines in the suite's `render_entry`.
+- [ ] **Step 6: Render variant-qualified function sections**
 
-This keeps the generic verdict output byte-identical for every function with no reachable owned variant (all of them today except the recovered recursive threaders), protecting self-host and the census.
-
-- [ ] **Step 2: Add the positive suite test (now green)**
-
-In `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`, add after the last nested-loop test. Use a non-prefix end marker — `fn run` is safe here because no function name starts with `run` other than `run` itself, and it renders after `scc_thread`:
+In `cfg.tw`, add a helper that renders one analyzed function with caller-supplied title/header text:
 
 ```tw
-    .test(
-      "self-recursive threaded record renders an owned in-place verdict",
-      fn() {
-        out := try render_entry("recursive_thread_state")
-        body := try section_between(out, "fn scc_thread", "fn run")
-        try assert.str_contains(body, "reuse(unique)")
-        try assert.is_false(body.contains("persistent(aliased shell)"))
-        .Ok({})
-      },
-    )
+pub fn render_function_with_header(func: CfgFunction, title: String, header: String) String {
+  lines: Vector<String> = [title]
+  if header.len() > 0 {
+    for line in header.lines() {
+      lines = .append("  ${line}")
+    }
+  }
+  for block in func.blocks {
+    lines = render_block(lines, block)
+  }
+  join_lines(lines)
+}
 ```
 
-- [ ] **Step 3: Rebuild and confirm the positive test passes**
+In `ownership.tw`, expose a seedable single-function analyzer:
+
+```tw
+pub fn analyze_function_with_seed(
+  f: CfgFunction,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  unique_seed: Dict<Int, Bool>,
+) CfgFunction
+```
+
+This should share the same internal `analyze_function` implementation used by `analyze_with_summaries`, including `run_fixpoint_validated(...)`.
+
+Change `summary.render_cfg` in Task 5 to receive both the pruned source view and the generic analyzed view, plus `b`/`sem` for variant diagnostics:
+
+```tw
+pub fn render_cfg(
+  source: CfgView,
+  generic_analyzed: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  generic: SummaryTable,
+  variants: VariantSummaryTable,
+) String
+```
+
+Inside `render_cfg`, keep the generic output first:
+
+```tw
+out := generic_analyzed.render_view_with_headers(headers)
+```
+
+Then append one section per reachable canonical variant:
+
+```text
+variant fn visit [unique:p0]
+  variant: p0=Consumed paths{[]} p1=Published p2=Published ret=alias(p0)
+  block ...
+    verdict ... shell=reuse(unique) ...
+```
+
+Build each variant section by:
+1. looking up the original `CfgFunction` in `source` (the un-analyzed pruned view);
+2. computing `unique_seed_for_variant(f, entry.variant)`;
+3. analyzing that one function with `ownership.analyze_function_with_seed(f, overlay, b, sem, seed)`;
+4. rendering it with `cfg.render_function_with_header(...)` and the title `variant fn ${f.name} [${render_variant_key(entry.variant)}]`.
+
+Do not change the generic function body's verdicts under a seed.
+
+- [ ] **Step 7: Run the focused positive checks**
 
 ```bash
 make bundle-cli
-target/twk run boot/tests/main.tw 2>&1 | rg -n "self-recursive threaded record|FAIL|passed"
-```
-
-Expected: the new test PASSES (`reuse(unique)` renders inside `scc_thread`; no `persistent(aliased shell)` on the threaded updates).
-
-- [ ] **Step 4: Confirm the real `graph_scc.visit` improves**
-
-```bash
+target/twk run boot/tests/main.tw 2>&1 | rg -n "self-recursive threaded record|visit-like threaded|FAIL|passed"
 target/twk ir boot/compiler/graph_scc.tw --cfg > /tmp/twinkle-cfg-recur/graph_scc-after.cfg
-rg -n "^fn visit|summary:|variant:|verdict ->|reuse\(unique\)|persistent\(aliased shell\)|unique:" /tmp/twinkle-cfg-recur/graph_scc-after.cfg | head -40
+rg -n "^fn visit|^variant fn visit|summary:|variant:|reuse\(unique\)|persistent\(aliased shell\)" \
+  /tmp/twinkle-cfg-recur/graph_scc-after.cfg | head -80
 ```
 
-Expected: `visit`'s **generic** summary is unchanged; a `variant:` line shows its owned key; the state-record `record_update` verdicts that previously read `persistent(aliased shell)` now render `reuse(unique)`. If `visit` still does not improve while the minimal fixture does, add a smaller fixture for the missing shape (dict-valued state fields are the likely difference — `visit` threads `indices`/`lowlinks` dicts, which need field-granular ownership beyond the shell `[]` seed; if so, scope that to a Stage 4b/field-seed follow-up rather than expanding this plan) before touching the algorithm.
+Expected:
+- Generic `fn visit` summary remains `p0=Published p1=Published p2=Published ret=alias(p0)`.
+- Generic `fn visit` body may still show `persistent(aliased shell)`.
+- `variant fn visit [unique:p0]` exists and shows `variant: p0=Consumed paths{[]}` plus `reuse(unique)` record-update verdicts.
+- The minimal fixture's generic body stays conservative and its variant body renders `reuse(unique)`.
 
-- [ ] **Step 5: Commit the consumer + test**
+- [ ] **Step 8: Commit the derisked consumer + positives**
 
 ```bash
-target/twk fmt boot/compiler/ownership.tw boot/compiler/summary.tw boot/commands/ir.tw boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw
-git add boot/compiler/ownership.tw boot/compiler/summary.tw boot/commands/ir.tw boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw
-git commit -m "ownership: render owned verdicts from recursive variant summaries"
+target/twk fmt boot/compiler/ownership.tw boot/compiler/summary.tw boot/compiler/cfg.tw \
+  boot/commands/ir.tw boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw
+target/twk lint boot/main.tw
+git add boot/compiler/ownership.tw boot/compiler/summary.tw boot/compiler/cfg.tw \
+  boot/commands/ir.tw boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw
+git commit -m "ownership: render recursive owned verdicts as variant diagnostics"
 ```
 
 ---
+
 
 ### Task 6: Negative fixtures — parameter, alias, and retraction safety
 
@@ -566,7 +763,7 @@ pub fn thread_param(a: Acc, n: Int) Acc {
 }
 ```
 
-The candidate variant for `thread_param` may even *converge* (the body would consume a unique `p0`), but its only call site is the self-call, where the generic pass sees the argument as `Unknown` (never `arg_unique`). No external caller passes a proven-unique record, so the caller-dischargeability gate (Task 5 Step 1.2) fails and the update must stay `persistent`. This isolates the dischargeability gate from the fixpoint. There is no bare-call to a same-module-typed function, so it lints clean (the recursion uses inherent `cur = .thread_param(...)`).
+The candidate variant for `thread_param` may even *converge* (the body would consume a unique `p0`), but its only call site is the self-call. Same-SCC calls are not reachability roots, and no external caller passes a proven-unique record, so no `variant fn thread_param [unique:p0]` section may render. This isolates the reachability gate from the fixpoint. There is no bare-call to a same-module-typed function, so it lints clean (the recursion uses inherent `cur = .thread_param(...)`).
 
 - [ ] **Step 2: Alias negative fixture (live alias across the recursive call)**
 
@@ -591,7 +788,7 @@ pub fn run_alias(n: Int) Int {
 }
 ```
 
-`run_alias` passes the same fresh `start` as both `cur` and `alias`, so inside `thread_alias` the update `c.total = ...` mutates a record that `alias` still observes (and `alias` is passed live into the recursive call). No owned verdict may render — the live alias blocks ownership, whether via fixpoint retraction (the seeded variant cannot converge to a clean consumed `p0`) or via the dischargeability gate (`start` is passed twice in one call, so it is not `arg_unique`). Either sound path keeps the update conservative; the test only asserts the *absence* of `reuse(unique)`. Every call is inherent (`start.thread_alias(start, n)`, `c = .thread_alias(...)`) so it lints clean; unlike the earlier draft, `c = .thread_alias(alias, n - 1)` rebinds `c: Acc` (not `c.total: Int`), so it typechecks.
+`run_alias` passes the same fresh `start` as both `cur` and `alias`, so inside `thread_alias` the update `c.total = ...` mutates a record that `alias` still observes (and `alias` is passed live into the recursive call). No owned variant section may render — the live alias blocks ownership, whether via fixpoint retraction or via the dischargeability gate (`start` occurs twice in one call, so it is not `arg_unique`). Either sound path keeps the update conservative. Every call is inherent (`start.thread_alias(start, n)`, `c = .thread_alias(...)`) so it lints clean; unlike the earlier draft, `c = .thread_alias(alias, n - 1)` rebinds `c: Acc` (not `c.total: Int`), so it typechecks.
 
 - [ ] **Step 3: Multi-param return-alias negative fixture (candidate gate)**
 
@@ -648,7 +845,7 @@ pub fn run_mut(n: Int) Int {
 }
 ```
 
-`ping`/`pong` form a two-member SCC; both should acquire owned variants and render `reuse(unique)`. This exercises variant reachability (Task 5 Step 1b): `run_mut` is an external root discharging `ping`'s owned variant, and `ping`'s *seeded* analysis then discharges `pong`'s owned variant via the `cur = .pong(...)` edge — `pong` is **not** reachable from any generic external caller, so a generic-only dischargeability check would wrongly leave it conservative.
+`ping`/`pong` form a two-member SCC; both should acquire owned variant sections and render `reuse(unique)` there while their generic bodies stay conservative if they also have unowned entries. This exercises variant reachability: `run_mut` is an external root discharging `ping`'s owned variant, and `ping`'s seeded variant analysis then discharges `pong`'s owned variant via the `cur = .pong(...)` edge — `pong` is **not** reachable from any generic external caller, so a generic-only dischargeability check would wrongly leave it conservative.
 
 - [ ] **Step 5: Add the tests**
 
@@ -661,6 +858,7 @@ pub fn run_mut(n: Int) Int {
         // end-marker prefix hazard.
         body := try section_from(out, "fn thread_param")
         try assert.is_false(body.contains("reuse(unique)"))
+        try assert.is_false(out.contains("variant fn thread_param"))
         .Ok({})
       },
     )
@@ -673,6 +871,7 @@ pub fn run_mut(n: Int) Int {
         // thread_alias" pair self-overlapped and yielded an empty section).
         body := try section_between(out, "fn thread_alias", "fn run_alias")
         try assert.is_false(body.contains("reuse(unique)"))
+        try assert.is_false(out.contains("variant fn thread_alias"))
         .Ok({})
       },
     )
@@ -682,6 +881,7 @@ pub fn run_mut(n: Int) Int {
         out := try render_entry("multi_param_return_alias")
         body := try section_between(out, "fn pick", "fn run_pick")
         try assert.is_false(body.contains("reuse(unique)"))
+        try assert.is_false(out.contains("variant fn pick"))
         .Ok({})
       },
     )
@@ -689,9 +889,9 @@ pub fn run_mut(n: Int) Int {
       "mutually recursive threaded record renders owned in-place verdicts",
       fn() {
         out := try render_entry("mutual_recursion_thread")
-        ping := try section_between(out, "fn ping", "fn pong")
+        ping := try variant_section(out, "ping", "unique:p0", "variant fn pong")
         try assert.str_contains(ping, "reuse(unique)")
-        pong := try section_between(out, "fn pong", "fn run_mut")
+        pong := try variant_section(out, "pong", "unique:p0", "fn run_mut")
         try assert.str_contains(pong, "reuse(unique)")
         .Ok({})
       },
@@ -750,13 +950,13 @@ target/twk lint boot/main.tw
 
 Expected:
 - Boot suite passes.
-- Census **unchanged** (~2109) — this plan only touches the `--cfg` render path, never codegen, so the count cannot move. Any change at all means something is wired incorrectly (e.g. `analyze_with_variants` leaked into the build pipeline) — investigate before re-baselining.
+- Census **unchanged** (~2109) — this plan only touches the `--cfg` render path, never codegen, so the count cannot move. Any change at all means something is wired incorrectly (e.g. variant diagnostic analysis leaked into the build pipeline) — investigate before re-baselining.
 - Self-host **byte-identical** (`make stage2` reaches a fixed point) for the same reason.
 - Lint clean.
 
 - [ ] **Step 2: Update the analysis notes**
 
-In `docs/plans/sound-uniqueness/analysis/sieve-cfg-gap-notes.md` and `.../README.md`, record `graph_scc.visit` as **analysis-resolved**: the owned variant now renders in `--cfg`; the codegen handoff that turns the rendered decision into a real in-place mutation is the separate Stage 6. Remove `graph_scc.visit` from any active-deferral list where it now overstates the *analysis* gap, but keep a Stage 6 (codegen consumption) follow-up note.
+In `docs/plans/sound-uniqueness/analysis/sieve-cfg-gap-notes.md` and `.../README.md`, record `graph_scc.visit` as **analysis-resolved**: the owned variant now renders in `--cfg`; the codegen handoff that turns the variant-qualified diagnostic decision into a real in-place mutation is the separate Stage 6. Remove `graph_scc.visit` from any active-deferral list where it now overstates the *analysis* gap, but keep a Stage 6 (codegen consumption) follow-up note.
 
 - [ ] **Step 3: Retire this plan and archive**
 
