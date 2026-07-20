@@ -30,10 +30,17 @@ generated code. Field-granular codegen seeding has no summary observable and rem
 codegen-owned; variant *generation* and in-place emission also remain codegen work.
 
 The governing rule is **all analysis precision lands before any codegen.** That gate
-is now satisfied, so the current focus moves to the **codegen track**: ANF-keyed
-decision handoff/fallback plumbing (consuming the recorded decisions and
-variant-qualified diagnostics), then narrow emitted slices for the existing mutable
-hooks.
+is now satisfied, so the current focus is the **codegen track**. Phases 7A/7B are
+done (2026-07-20): the surviving mutable hooks are inventoried and the
+persistent→mutable operation catalog is verified against `main`. Key finding —
+vector/dict in-place helpers, builder families, and the record `can_reuse` slot
+survive from the previous COW era, but the ownership-driven *rewrite pass* that
+selected them was removed. Semantic builder lowering such as `collect` still emits
+builders; no ownership decision currently selects vector/dict in-place helpers,
+record `can_reuse=true`, or optimizer-selected builder regions. The codegen track
+re-drives those surviving hooks from the new sound facts. **Next: Phase 7C** —
+ANF-keyed decision records + a centralized selector/handoff layer, then narrow
+emitted slices.
 
 ## Standing invariants
 

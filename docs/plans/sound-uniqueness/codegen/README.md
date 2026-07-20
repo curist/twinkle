@@ -1,11 +1,16 @@
 # Codegen Track
 
-**Status:** Ready to start; the full analysis track is complete through Phase 6
-(record/field ownership, transport-wrapper / `Result`-payload return-path summaries,
-ownership-specialization decision facts, and recursive SCC variant-qualified
-diagnostics), so codegen consumes a trustworthy fact set rather than rediscovering
-ownership. (These "Codegen Phase 7A/…" labels are the codegen track's own local
-numbering; see the phase-numbering note in [../analysis/README.md](../analysis/README.md).)
+**Status:** In progress. Phases 7A (hook inventory) and 7B (operation catalog) are
+verified against `main` (2026-07-20); the surviving mutable hooks and their
+persistent→mutable mappings are cataloged. **Next: Phase 7C** — first-cut ANF-keyed
+decision records + centralized selector/handoff contract. The full analysis track
+is complete through Phase 6 (record/field ownership, transport-wrapper /
+`Result`-payload return-path
+summaries, ownership-specialization decision facts, and recursive SCC
+variant-qualified diagnostics), so codegen consumes a trustworthy fact set rather
+than rediscovering ownership. (These "Codegen Phase 7A/…" labels are the codegen
+track's own local numbering; see the phase-numbering note in
+[../analysis/README.md](../analysis/README.md).)
 
 This track owns the practical bridge from proof facts to emitted code. It should
 first reuse today's persistent/in-place/builder mechanisms, not introduce the
@@ -37,38 +42,53 @@ belongs to [../migration/README.md](../migration/README.md).
   before broadening.
 - Existing runtime/compiler hooks are implementation targets, not independent
   legality sources.
+- Mutable-target lookup and persistent fallback stay centralized; backend families
+  do not hand-roll ownership legality or stale-decision checks.
 - Variant-qualified diagnostics never license rewriting the generic function body.
   Codegen must clone/route by exact `VariantId`, with the generic function as the
   persistent fallback.
 
-## Codegen Phase 7A — Existing hook inventory
+## Codegen Phase 7A — Existing hook inventory ✅ done (2026-07-20)
 
 No emitted-code change. Start with the concrete backend/runtime surface we already
 have before designing side tables around it.
 
-- [ ] **Inventory current hooks.** Record the existing vector set, vector/string
-  builder, dict in-place, record-update, and function-cloning/routing mechanisms
-  that can be reused first. Details: [existing-hooks.md](existing-hooks.md).
-- [ ] **Verify hook signatures.** For each hook, record helper/op names, operand
-  order, result behavior, monomorphized type restrictions, persistent fallback,
-  and WAT/call-inspection signature.
-- [ ] **Classify non-hooks.** Keep user-facing scaffolding such as `@std.buffer`
-  out of this track; migration owns later cleanup.
+- [x] **Inventory current hooks.** Recorded in [existing-hooks.md](existing-hooks.md):
+  vector set (`vector$set_in_place`), vector/typed/string builders, dict in-place
+  set/remove, and the record-update `can_reuse` slot. Function-cloning/routing has
+  no runtime hook (compiler cloning only) and is deferred to Phase 8G.
+- [x] **Verify hook signatures.** Helper/op names, operand order, result behavior
+  (all in-place helpers return the updated ref), ABIs, and persistent fallbacks are
+  in the verified hook table. **WAT/call-inspection signatures for the *mutable*
+  targets cannot be captured yet** — nothing emits them, so those await the first
+  Phase 8 emission; persistent-side call targets are observable now.
+- [x] **Classify non-hooks.** `@std.buffer`, `Cell`/`Task`/`Channel`/host I/O, and
+  read/share ops (slice/concat/gather/reads) are classified as non-targets in
+  existing-hooks.md's Non-hooks section.
 
-## Codegen Phase 7B — Operation catalog
+**Headline finding:** vector/dict runtime helpers, builder families, and record
+`can_reuse` emit support survive from the previous COW era, but the ownership-driven
+rewrite pass that selected them was removed (`opt/pipeline.tw`). Semantic builder
+lowering such as `collect` is separate and still uses builders; codegen re-drives
+ownership-optimized uses from the new sound facts (`ownership.tw`), not from scratch.
+
+## Codegen Phase 7B — Operation catalog ✅ catalog done; inspection deferred (2026-07-20)
 
 No emitted-code change. This phase answers: “if this candidate is accepted, what
 exact existing target would codegen use?”
 
-- [ ] **Catalog mutable operation families.** For vectors, strings, dicts,
-  builders, record shells, record-backed field collections, and ownership-specialized
-  function variants, define the persistent fallback, mutable target, source value,
-  result binding, and argument/result mapping. Details: [operation-catalog.md](operation-catalog.md).
-- [ ] **Keep unsupported families persistent.** The catalog may name future
-  families, but unsupported or unmapped sites must keep the ordinary immutable
-  path.
-- [ ] **Name inspection signatures.** Each catalog entry should say what `twk ir`,
-  WAT, or call-list evidence proves the mutable target would be selected.
+- [x] **Catalog mutable operation families.** [operation-catalog.md](operation-catalog.md)
+  now maps persistent fallback → mutable target with ABIs and operand mapping for
+  vector indexed update, vector/string builder regions, dict set/remove, and record
+  shell update. Record-backed field collections (8H) and ownership-specialized
+  variants (8G) remain named-but-later, as intended.
+- [x] **Keep unsupported families persistent.** The catalog's "Later families"
+  section keeps concat/extend, private representations, and multi-key specialization
+  out of the first cut; the emission-state note reiterates persistent-by-default.
+- [ ] **Name inspection signatures.** Deferred with the 7A signature item: the
+  concrete `twk ir`/WAT/call-list evidence that proves an ownership-optimized
+  mutable target was selected can only be named once Phase 8 emits one. Captured
+  as a Phase 8A acceptance criterion instead.
 
 ## Codegen Phase 7C — Decision records and handoff contract
 
@@ -79,6 +99,11 @@ and fail-safe.
   operation family, ANF key, source value, required ownership fact, last-use
   proof, persistent fallback, mutable target, argument mapping, `VariantId` when
   applicable, and proof/debug id. Details: [handoff-contract.md](handoff-contract.md).
+- [ ] **Define one catalog-driven selection helper/layer.** Backend lowering should
+  call one helper with the ANF site, operation family, decision table, catalog entry,
+  and persistent fallback; it returns either the exact mutable target + argument
+  mapping or the ordinary persistent target. Per-family emission sites must not
+  duplicate ownership legality, staleness, unsupported-family, or fallback checks.
 - [ ] **Attach decisions as ANF-keyed side tables.** Codegen-facing data should be
   stable over the optimized ANF artifact that codegen actually consumes.
 - [ ] **Define staleness handling.** If an ANF key no longer resolves, resolves to
@@ -94,9 +119,9 @@ ignored side table while deliberately returning the persistent target for every 
   default empty table behavior byte-equivalent to today's persistent output.
 - [ ] **Validate lookup/fallback paths.** Exercise present, absent, stale, and
   unsupported decisions; every non-live decision must choose persistent fallback.
-- [ ] **Keep fallback centralized.** Backend code should ask the decision table for
-  a target and receive either an exact mutable target or the ordinary persistent
-  target, not hand-roll legality checks per family.
+- [ ] **Keep fallback centralized.** Backend code should ask the Phase 7C selection
+  helper for a target and receive either an exact mutable target or the ordinary
+  persistent target, not hand-roll legality checks per family.
 
 ## Codegen Phase 7E — Dry-run rendering
 

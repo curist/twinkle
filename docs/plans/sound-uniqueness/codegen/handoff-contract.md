@@ -13,6 +13,21 @@ this seam, but the first codegen track should target existing hooks.
 Codegen never guesses mutation. A mutable path is opt-in per ANF site and must be
 licensed by a live decision.
 
+## Central selection layer
+
+Phase 7C should define one catalog-driven selector/helper before any family starts
+emitting mutable code. Backend lowering passes the ANF site, operation family,
+decision table, catalog entry, and persistent fallback to that layer. The layer
+returns either:
+
+- the exact mutable target plus argument mapping licensed by a live decision; or
+- the ordinary persistent fallback with a reason such as absent, stale,
+  unsupported, or dry-run.
+
+Per-family backend sites must not duplicate ownership legality, last-use,
+staleness, unsupported-family, or fallback checks. They may perform only the local
+mechanical emission for the target the selector returned.
+
 ## First-cut decision record
 
 Each accepted mutable-lowering candidate should carry:

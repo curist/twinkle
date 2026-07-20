@@ -1,10 +1,53 @@
 # Existing Mutable Hook Inventory
 
-**Status:** Draft inventory; verify against the boot compiler before codegen work
-starts.
+**Status:** Verified against the boot compiler on `main` (2026-07-20, Phase 7A).
+Names, ABIs, runtime symbols, and current emission state below are checked, not
+assumed. Re-verify if the builtin/runtime tables move.
 
 The first codegen implementation should reuse current mechanisms. This doc names
-the hooks to verify and catalog before any ownership decision emits mutable code.
+the hooks that already exist and the current emission state each is in.
+
+## Headline finding: hooks survive, the rewrite pass was removed
+
+The reusable surface below survives from the previous COW/uniqueness era:
+runtime/builtin helpers for vector/dict updates and builder families, plus backend
+`can_reuse` emit support for record shell updates. Ownership-specialized variants
+are later compiler cloning/routing work, not a runtime helper target. What was
+removed is the *pass that selected ownership-driven mutable code*:
+`boot/compiler/opt/pipeline.tw` documents that "the uniqueness/liveness rewrite
+(COW -> in-place, builder-region) was removed; this pipeline now only runs defer
+elimination + the general peephole passes." The active optimizer is
+`eliminate_defers` followed by a fixed point of
+`dead_let_elim` / `copy_propagate` / `constant_fold` / `branch_simplify`. None of
+them select vector/dict in-place helpers, flip record `can_reuse=true`, or choose
+optimizer-selected builder regions. Semantic builder lowering such as `collect`
+still emits builders; that is not an ownership optimization decision.
+
+Consequence for the codegen track: we are not building hooks from scratch. We are
+re-driving surviving hooks from the **new sound facts** (`ownership.tw`
+`Summary`/`ParamSummary`/`VariantId`, `select_variant`, `summarize_variant`)
+instead of the removed unsound COW analysis. The old `in_place_equivalent`
+metadata in `opt/semantics.tw` is still present and still maps persistent op →
+mutable target; today it is consumed only by `census.tw` (candidate counting) and
+by `cow_config_from_semantics` (which has no active downstream consumer).
+
+## Verified hook table
+
+| Family | Persistent op (builtin) | Mutable target (builtin) | Runtime symbol | ABI (params → results) | Backend state |
+|---|---|---|---|---|---|
+| Vector indexed update | `vector$set_unsafe` (→ `rt.arr.set`) | `vector$set_in_place` | `rt.arr.set_in_place` | `[pvec?, i32, anyref] → [pvec]` (identical to persistent) | Callable; never emitted |
+| Dict set | `Dict.set` method | `dict$set_in_place` | `rt.dict.set_in_place` | `[dict?, anyref, anyref] → [dict]` | Callable; never emitted |
+| Dict remove | `Dict.remove` method | `dict$remove_in_place` | `rt.dict.remove_in_place` | `[dict?, anyref] → [dict]` | Callable; never emitted |
+| Vector builder | persistent append/build | `vector$builder_new/from/push/freeze` | `rt.arr.builder_*` | `new []→[arr]`, `from [pvec?]→[arr]`, `push [arr?, anyref]→[]`, `freeze [arr?]→[pvec]` | Callable (also used by `collect`); optimizer region-select removed |
+| Vector builder (typed) | — | `vector$builder_{new,push,freeze}_{i64,bool}` | `rt.arr.builder_*_{i64,bool}` | `new []→[arr]`, `push [arr?, anyref]→[]`, `freeze [arr?]→[pvec_i64/pvec_bool]` | Callable shims for the vector family; selected by typed-vector routing, not ownership decisions |
+| String builder | persistent `String.concat` loop | `string$builder_from/extend/freeze` | `rt.str.builder_*` | `from [str?]→[sb]`, `extend [sb?, str?]→[]`, `freeze [sb?]→[str]` | Callable; no in-place equivalent; region-select removed |
+| Record shell update | `ARecordUpdate(.., can_reuse=false)` → copy | `ARecordUpdate(.., can_reuse=true)` → `struct.set` + return same ref | n/a (backend emit) | n/a | `emit_record_update` honors `can_reuse=true`; lower_anf always constructs `false`, no pass flips it |
+
+The verified builtin/ABI table lives in `boot/compiler/builtins.tw`; the semantics
+metadata (`effect`, `cow_base_arg`, `in_place_equivalent`, `retained_args`) lives
+in `boot/compiler/opt/semantics.tw`; the two record-update construction sites are
+`boot/compiler/lower_anf.tw` (both pass `false`); the record in-place emit is
+`boot/compiler/codegen/emit/records.tw:emit_record_update`.
 
 ## Hook categories
 
@@ -48,8 +91,13 @@ the hooks to verify and catalog before any ownership decision emits mutable code
 
 ### Record shell update
 
-- Existing `ARecordUpdate.in_place` slot or backend equivalent.
-- Current branch keeps the slot but does not set it from an ownership proof.
+- The in-place slot is the `can_reuse: Bool` field of `ARecordUpdate(Atom,
+  FieldId, Atom, Bool, TypeId)` (`boot/compiler/anf.tw`). Verified: `emit_record_update`
+  (`codegen/emit/records.tw`) honors `can_reuse=true` by emitting `struct.set` and
+  returning the same ref; `can_reuse=false` copies all fields into a fresh struct.
+- The slot is threaded through `slot_assign`/`closure_convert`, but both lower_anf
+  construction sites pass `false`, and no pass flips it — so no in-place record
+  update is emitted today.
 - Shell reuse is distinct from ownership of vector/dict storage stored in fields.
 
 ### Ownership-specialized function variants
@@ -77,17 +125,23 @@ the hooks to verify and catalog before any ownership decision emits mutable code
 
 ## Verification before use
 
-For each hook, record in [operation-catalog.md](operation-catalog.md):
+Done for the first-cut families (Phase 7A): exact helper/op names, operand order,
+result behavior, ABI, and current emission state are recorded in the verified hook
+table above and mapped to targets in [operation-catalog.md](operation-catalog.md).
+Verified specifics worth carrying forward:
 
-- exact helper/op name as emitted by the boot compiler;
-- expected operand order;
-- whether the helper returns the updated immutable value or mutates through an
-  internal handle;
-- type restrictions or monomorphized forms;
-- persistent fallback used when the hook is unavailable;
-- WAT/call-inspection signature that proves the hook was selected.
+- The vector in-place target has the **same operand/result shape** as its
+  persistent form (`[pvec?, i32, anyref] → [pvec]`), so the rewrite is a
+  drop-in call-target swap, not an argument remap.
+- All in-place helpers **return the updated reference** (they do not mutate through
+  a caller-visible handle), so the result binding is unchanged from the persistent
+  form. `rt.arr.set_in_place` mutates the leaf/tail in place and returns the vector;
+  the dict helpers mutate the HAMT root and return the dict.
+- Typed vector builder shims (`_i64`/`_bool`) are monomorphized forms of the vector
+  builder family, selected by existing typed-vector routing, not separate decisions.
 
-For ownership-specialized variants, also record:
+For ownership-specialized variants (Phase 8G — not yet inventoried here because no
+runtime hook exists; this is compiler cloning + call-site rewriting), still record:
 
 - clone naming and symbol policy;
 - call-site rewrite point;
