@@ -6,6 +6,7 @@ use commands.common.{exit_usage_error, format_compile_error, get_positional, pri
 use compiler.artifacts.{PipelineArtifacts}
 use compiler.census
 use compiler.cfg
+use compiler.codegen.dry_run
 use compiler.ir_print
 use compiler.opt.semantics as semantics
 use compiler.ownership
@@ -58,6 +59,19 @@ fn render_cfg_artifacts(artifacts: PipelineArtifacts) String {
   summary.render_cfg(view, analyzed, b, s, table, variants)
 }
 
+/// Render `--census` output: the family tally, plus (when `include_sites`) the
+/// update-site dry-run table joining candidates with ownership verdicts.
+/// Replaces the old per-site `census.render_sites` listing.
+pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) String {
+  sites := census.census_sites(artifacts.opt, artifacts.builtins)
+  out := census.tally_from_sites(sites).render_census()
+  if include_sites {
+    dry := dry_run.dry_run_sites(artifacts.opt, artifacts.builtins)
+    out = .concat(dry_run.render_dry_run(dry))
+  }
+  out
+}
+
 pub fn render_cfg_for_entry(file: String) String {
   artifacts := case pipeline.compile_entry_path(file) {
     .Ok(result) => result,
@@ -81,13 +95,7 @@ pub fn run_ir_command(parsed: ParseResult) {
   print_warnings(artifacts.warnings)
 
   if parsed.has_flag("census") {
-    sites := census.census_sites(artifacts.opt, artifacts.builtins)
-    print(census.tally_from_sites(sites).render_census())
-
-    if parsed.has_flag("sites") {
-      print(census.render_sites(sites))
-    }
-
+    print(render_census_report(artifacts, parsed.has_flag("sites")))
     return
   }
 
