@@ -17,7 +17,7 @@ use compiler.graph_scc
 use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership.{
   ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary, SummaryTable,
-  empty_summary_table, summarize_function, summary_get,
+  collect_field_reqs, empty_summary_table, summarize_function, summarize_variant, summary_get,
 }
 use compiler.variant_id as vid
 
@@ -429,6 +429,298 @@ fn run_scc(
     }
   }
   table
+}
+
+// ── Variant (ownership-specialized) summaries ───────────────────────
+// A second, VariantId-keyed fixpoint layered over the generic one. It recovers
+// the owned decision for a record threaded through a self/mutual-recursive call:
+// the generic least-fixed-point pins such a parameter Published (the self-call
+// publishes the not-yet-unique argument), so we seed a candidate owned variant
+// OPTIMISTICALLY (param Consumed, return aliasing it), run the seeded analysis to
+// a fixed point reading the same optimistic iterate at the recursive call, then
+// VALIDATE and RETRACT any candidate that does not converge. Render-only: nothing
+// in the build/codegen path calls compute_variants.
+pub type VariantEntry = .{ variant: vid.VariantId, summary: Summary }
+
+pub type VariantSummaryTable = .{
+  by_key: Dict<String, VariantEntry>, // canonical key -> { variant, summary }
+  by_func: Dict<Int, Vector<String>>, // func_id -> its canonical keys, sorted
+}
+
+pub fn empty_variant_table() VariantSummaryTable {
+  VariantSummaryTable.{ by_key: Dict.new(), by_func: Dict.new() }
+}
+
+// Canonical identity of a variant (NOT site_key, which is a call-site pairing).
+fn variant_memo_key(v: vid.VariantId) String {
+  v.canonicalize_variant().variant_canonical_string()
+}
+
+// String analogue of insert_sorted: dedup + ascending.
+fn insert_sorted_str(v: Vector<String>, s: String) Vector<String> {
+  out: Vector<String> = []
+  inserted := false
+  for x in v {
+    if x == s {
+      return v
+    }
+    if !inserted and s < x {
+      out = .append(s)
+      inserted = true
+    }
+    out = .append(x)
+  }
+  if !inserted {
+    out = .append(s)
+  }
+  out
+}
+
+fn vtable_put(t: VariantSummaryTable, v: vid.VariantId, s: Summary) VariantSummaryTable {
+  key := variant_memo_key(v)
+  t.by_key[key] = VariantEntry.{ variant: v.canonicalize_variant(), summary: s }
+  prev := case t.by_func.get(v.func) {
+    .Some(ks) => ks,
+    .None => [],
+  }
+  t.by_func[v.func] = insert_sorted_str(prev, key)
+  t
+}
+
+pub fn variant_get(t: VariantSummaryTable, v: vid.VariantId) VariantEntry? {
+  t.by_key.get(variant_memo_key(v))
+}
+
+// EXACTLY k: the alias set is the single element [k]. `contains k` would be
+// unsound -- the optimistic hypothesis rewrites the return to alias([k]), and
+// Stage 4a only moves a return that aliases exactly one param.
+fn ret_aliases_exactly_param(ret: ReturnEffect, k: Int) Bool {
+  case ret {
+    .MayAliasParams(idxs) => idxs.len() == 1 and idxs[0] == k,
+    _ => false,
+  }
+}
+
+// Does param k have an in-place update site? Reuse the generic dirty-path
+// dataflow (collect_field_reqs is keyed by param index and reports dirty paths
+// independent of the publish gate, so a Published param still shows its sites).
+fn param_has_inplace_site(f: CfgFunction, generic: SummaryTable, sem: OptimizerSemantics, k: Int) Bool {
+  reqs := collect_field_reqs(f, generic, sem)
+  case reqs.get(k) {
+    .Some(ps) => !ps.is_empty(),
+    .None => false,
+  }
+}
+
+// A param the generic summary returns as the SOLE alias AND updates in place is a
+// candidate owned variant {(k, [])}. The seed is a hypothesis; run_scc_variants
+// proves or retracts it. Determinism: functions ascending, params by index.
+fn candidate_variants(view: CfgView, generic: SummaryTable, sem: OptimizerSemantics) Vector<
+  vid.VariantId,
+> {
+  cands: Vector<vid.VariantId> = []
+  for f in view.functions {
+    s := table_get(generic, f.func_id)
+    for _ps, k in s.params {
+      if ret_aliases_exactly_param(s.ret, k) and param_has_inplace_site(f, generic, sem, k) {
+        v := vid.VariantId.{
+          func: f.func_id,
+          unique: [vid.UniqueReq.{ param: k, path: vid.shell() }],
+        }
+        cands = .append(v.canonicalize_variant())
+      }
+    }
+  }
+  cands
+}
+
+fn candidates_by_func(view: CfgView, generic: SummaryTable, sem: OptimizerSemantics) Dict<
+  Int,
+  Vector<vid.VariantId>,
+> {
+  by_func: Dict<Int, Vector<vid.VariantId>> = Dict.new()
+  for v in candidate_variants(view, generic, sem) {
+    prev := case by_func.get(v.func) {
+      .Some(vs) => vs,
+      .None => [],
+    }
+    by_func[v.func] = prev.append(v)
+  }
+  by_func
+}
+
+// The optimistic hypothesis summary for candidate key {(k, [])}: param k Consumed
+// with a shell in-place path, return aliasing exactly k. Section 1 of a call then
+// leaves the arg alone (.Consumed) and section 2 takes the Stage 4a move.
+fn optimistic_hypothesis(gs: Summary, k: Int) Summary {
+  params: Vector<ParamSummary> = collect ps, i in gs.params {
+    if i == k {
+      ParamSummary.{ base_role: .Consumed, in_place_paths: vid.shell_set(), flows_to_return: true }
+    } else {
+      ps
+    }
+  }
+  Summary.{ params, ret: .MayAliasParams([k]), ret_paths: [] }
+}
+
+fn seed_param_of(v: vid.VariantId) Int {
+  if v.unique.len() > 0 {
+    v.unique[0].param
+  } else {
+    0 - 1
+  }
+}
+
+// A converged variant survives only if it still consumes param k in place AND
+// still returns exactly alias([k]) -- an alias-forced publish fails the first,
+// a widened return fails the second.
+fn variant_valid(s: Summary, k: Int) Bool {
+  param_ok := if k >= 0 and k < s.params.len() {
+    !s.params[k].in_place_paths.is_empty()
+  } else {
+    false
+  }
+  param_ok and ret_aliases_exactly_param(s.ret, k)
+}
+
+// generic table with each in-SCC member's current variant iterate overlaid, so a
+// recursive call resolves to the owned key. (One iterate per member -- exact for
+// single-candidate functions like graph_scc.visit and the fixtures.)
+fn build_overlay(generic: SummaryTable, member_iter: Dict<Int, Summary>) SummaryTable {
+  overlay := generic
+  for m, s in member_iter {
+    overlay = table_put(overlay, m, s)
+  }
+  overlay
+}
+
+// One SCC's variant fixpoint with assume/validate/retract. Seeds each candidate
+// member optimistically, runs a monotone worklist reading the overlay at recursive
+// calls, then drops members whose converged summary failed validation and re-runs
+// until the surviving set is stable (each pass only removes members -> terminates).
+fn run_scc_variants(
+  scc: Vector<Int>,
+  index: Dict<Int, CfgFunction>,
+  generic: SummaryTable,
+  candidates: Dict<Int, Vector<vid.VariantId>>,
+  vtable: VariantSummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) VariantSummaryTable {
+  members := scc.sort()
+  scc_set := int_set(members)
+
+  // active member -> (candidate variant, seeded param k). MVP: one key per member.
+  member_key: Dict<Int, vid.VariantId> = Dict.new()
+  member_pidx: Dict<Int, Int> = Dict.new()
+  for m in members {
+    case candidates.get(m) {
+      .Some(keys) => if keys.len() > 0 {
+        v := keys[0]
+        k := seed_param_of(v)
+        if k >= 0 {
+          member_key[m] = v
+          member_pidx[m] = k
+        }
+      },
+      .None => {},
+    }
+  }
+
+  member_iter: Dict<Int, Summary> = Dict.new()
+  stable := false
+  cap_outer := members.len() + 2
+  outer := 0
+  for !stable and outer < cap_outer {
+    if member_pidx.keys().len() == 0 {
+      stable = true
+    } else {
+      // seed active members optimistically
+      member_iter = Dict.new()
+      for m, k in member_pidx {
+        member_iter[m] = optimistic_hypothesis(table_get(generic, m), k)
+      }
+
+      // monotone worklist fixpoint (Gauss-Seidel: overlay reads live iterates)
+      cap_inner := member_pidx.keys().len() * 8 + 8
+      changed := true
+      rounds := 0
+      for changed and rounds < cap_inner {
+        changed = false
+        for m, k in member_pidx {
+          f := case index.get(m) {
+            .Some(fn0) => fn0,
+            .None => error("variant: scc id ${m} not in index"),
+          }
+          key := case member_key.get(m) {
+            .Some(v) => v.unique,
+            .None => [],
+          }
+          overlay := build_overlay(generic, member_iter)
+          next := summarize_variant(f, key, overlay, b, sem, scc_set)
+          prev := case member_iter.get(m) {
+            .Some(s) => s,
+            .None => optimistic_hypothesis(table_get(generic, m), k),
+          }
+          if !same_summary(next, prev) {
+            member_iter[m] = next
+            changed = true
+          }
+        }
+        rounds = rounds + 1
+      }
+
+      // validate; retract failures and re-run, else stable
+      failed: Vector<Int> = []
+      for m, k in member_pidx {
+        conv := case member_iter.get(m) {
+          .Some(s) => s,
+          .None => optimistic_hypothesis(table_get(generic, m), k),
+        }
+        if !variant_valid(conv, k) {
+          failed = .append(m)
+        }
+      }
+      if failed.len() == 0 {
+        stable = true
+      } else {
+        for m in failed {
+          member_pidx = .remove(m)
+          member_key = .remove(m)
+        }
+      }
+    }
+    outer = outer + 1
+  }
+
+  // publish survivors
+  for m, v in member_key {
+    case member_iter.get(m) {
+      .Some(s) => if variant_valid(s, seed_param_of(v)) {
+        vtable = vtable.vtable_put(v, s)
+      },
+      .None => {},
+    }
+  }
+  vtable
+}
+
+// Whole-program variant summaries: candidates from the generic table, fixed-pointed
+// per SCC in the same callee-first order. Leaves the generic table untouched.
+pub fn compute_variants(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  generic: SummaryTable,
+) VariantSummaryTable {
+  index := build_func_index(view)
+  user_ids := user_id_set(view)
+  candidates := candidates_by_func(view, generic, sem)
+  vtable := empty_variant_table()
+  for scc in order_sccs(view, index, user_ids) {
+    vtable = run_scc_variants(scc, index, generic, candidates, vtable, b, sem)
+  }
+  vtable
 }
 
 // ── Rendering ───────────────────────────────────────────────────────
