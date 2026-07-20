@@ -1,15 +1,20 @@
 # Codegen Track
 
-**Status:** In progress. Phases 7A (hook inventory) and 7B (operation catalog) are
-verified against `main` (2026-07-20); the surviving mutable hooks and their
-persistent→mutable mappings are cataloged. **Next: Phase 7C** — first-cut ANF-keyed
-decision records + centralized selector/handoff contract. The full analysis track
-is complete through Phase 6 (record/field ownership, transport-wrapper /
-`Result`-payload return-path
-summaries, ownership-specialization decision facts, and recursive SCC
-variant-qualified diagnostics), so codegen consumes a trustworthy fact set rather
-than rediscovering ownership. (These "Codegen Phase 7A/…" labels are the codegen
-track's own local numbering; see the phase-numbering note in
+**Status:** In progress. Phases 7A (hook inventory), 7B (operation catalog), and
+the 7C/7D backend decision seam are done (2026-07-21). The surviving mutable hooks
+and their persistent→mutable mappings are cataloged, and codegen now has a
+persistent-only selector + plumbing seam: `compiler.codegen.mutable_select` (the
+decision table + selector) and `compiler.codegen.emit.mutable_sites` (prepared-site
+extraction), threaded through `PreparedModule` and `EmitCtx`. Every path still emits
+the persistent target — verified byte-identical (self-host fixed point plus a
+before/after codegen comparison over vector/dict/record updates). **Next: Phase 7E
+or the analysis-producer follow-up** — dry-run rendering, or extracting the
+`ownership.tw` render-only decisions into `MutableDecisionTable`. The full analysis
+track is complete through Phase 6 (record/field ownership, transport-wrapper /
+`Result`-payload return-path summaries, ownership-specialization decision facts, and
+recursive SCC variant-qualified diagnostics), so codegen consumes a trustworthy fact
+set rather than rediscovering ownership. (These "Codegen Phase 7A/…" labels are the
+codegen track's own local numbering; see the phase-numbering note in
 [../analysis/README.md](../analysis/README.md).)
 
 This track owns the practical bridge from proof facts to emitted code. It should
@@ -90,38 +95,52 @@ exact existing target would codegen use?”
   mutable target was selected can only be named once Phase 8 emits one. Captured
   as a Phase 8A acceptance criterion instead.
 
-## Codegen Phase 7C — Decision records and handoff contract
+## Codegen Phase 7C — Decision records and handoff contract ✅ seam done (2026-07-21)
 
 No optimized emission yet. This phase makes the analysis→backend seam explicit
 and fail-safe.
 
-- [ ] **Define first-cut decision records.** For each accepted candidate, record
-  operation family, ANF key, source value, required ownership fact, last-use
-  proof, persistent fallback, mutable target, argument mapping, `VariantId` when
-  applicable, and proof/debug id. Details: [handoff-contract.md](handoff-contract.md).
-- [ ] **Define one catalog-driven selection helper/layer.** Backend lowering should
-  call one helper with the ANF site, operation family, decision table, catalog entry,
-  and persistent fallback; it returns either the exact mutable target + argument
-  mapping or the ordinary persistent target. Per-family emission sites must not
-  duplicate ownership legality, staleness, unsupported-family, or fallback checks.
-- [ ] **Attach decisions as ANF-keyed side tables.** Codegen-facing data should be
-  stable over the optimized ANF artifact that codegen actually consumes.
-- [ ] **Define staleness handling.** If an ANF key no longer resolves, resolves to
-  the wrong op family, or has ambiguous mapping, the decision is ignored and the
-  persistent path is emitted.
+- [x] **Define first-cut backend decision records.** Implemented as
+  `compiler.codegen.mutable_select.MutableDecision`: operation family, ANF site
+  (`Site` = func + result local), source/result locals, stable argument shape
+  (arg count + base-arg index), persistent fallback, would-be mutable target,
+  optional `VariantId`, type-qualified field/path key, and `proof_debug_id`. The
+  real analysis proof-payload producer is deliberately deferred; 7C/7D proves the
+  backend seam with explicit tables first.
+- [x] **Define one catalog-driven selection helper/layer.** Implemented as
+  `compiler.codegen.mutable_select` plus prepared-site extraction in
+  `compiler.codegen.emit.mutable_sites`. Backend lowering asks the selector for
+  call or record selections and receives `emit_func` / `emit_can_reuse` values that
+  remain persistent in Phase 7D, while `would_func` / `would_reuse` preserve the
+  would-be mutable target for tests and later dry-run rendering. Per-family emit
+  sites do not duplicate ownership legality, staleness, or fallback checks.
+- [x] **Attach decisions as ANF-keyed side tables.** `PreparedModule` carries a
+  `MutableDecisionTable` across backend preparation; `prepare_backend(...)` supplies
+  an empty table by default and `prepare_backend_with_mutable_decisions(...)` exists
+  for tests and future producers. `EmitCtx` carries the same table into emission.
+- [x] **Define staleness handling.** The selector reports absent, ambiguous,
+  unsupported, wrong-family, wrong-persistent-target, source/result mismatch,
+  argument-shape mismatch, base-argument mismatch, and field-path mismatch cases,
+  and every such case emits the persistent fallback.
 
-## Codegen Phase 7D — Backend lookup and persistent fallback plumbing
+## Codegen Phase 7D — Backend lookup and persistent fallback plumbing ✅ done (2026-07-21)
 
-Still no optimized emission. This phase wires the backend to consume an empty or
-ignored side table while deliberately returning the persistent target for every site.
+Still no optimized emission. This phase wires the backend to consume the side table
+while deliberately returning the persistent target for every site.
 
-- [ ] **Thread the decision table to backend/codegen entry points.** Keep the
-  default empty table behavior byte-equivalent to today's persistent output.
-- [ ] **Validate lookup/fallback paths.** Exercise present, absent, stale, and
-  unsupported decisions; every non-live decision must choose persistent fallback.
-- [ ] **Keep fallback centralized.** Backend code should ask the Phase 7C selection
-  helper for a target and receive either an exact mutable target or the ordinary
-  persistent target, not hand-roll legality checks per family.
+- [x] **Thread the decision table to backend/codegen entry points.**
+  `PreparedModule.mutable_decisions` is copied into `EmitCtx`; the default empty
+  table preserves persistent output, verified byte-identical against the pre-seam
+  compiler.
+- [x] **Validate lookup/fallback paths.** Selector and prepared-site tests cover
+  present, absent, stale/mismatched, ambiguous, and unsupported decisions; emission
+  tests guard that vector/dict calls and record updates still emit persistent output
+  (WAT keeps the persistent runtime call / `struct.new` copy path, never the
+  `*_in_place` helper or `struct.set` reuse).
+- [x] **Keep fallback centralized.** Emission delegates prepared call/record site
+  extraction to `compiler.codegen.emit.mutable_sites` and decision classification to
+  `compiler.codegen.mutable_select`; family-specific emit code does not re-prove
+  ownership or hand-roll stale-decision checks.
 
 ## Codegen Phase 7E — Dry-run rendering
 
