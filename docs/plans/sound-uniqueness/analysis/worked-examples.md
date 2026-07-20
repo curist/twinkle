@@ -196,15 +196,18 @@ assign L7 = L45                                    rebind cur (L7 → L7)
 match-join, loop-carried ownership, recursion/self-summary, and dict/vector
 field updates — the real shape the analysis must handle, not a toy.
 
-**Observed today (post sieve vector fix):** `visit` still stays fully conservative —
-`p0=Published p1=Published p2=Published ret=alias(p0)`, every `record_update` renders
-`shell=persistent(aliased shell) field=persistent(insufficient deep ownership)`
-`[in_place=false]`, and no owned `verdict` renders. `cur` is Published because it flows
-into the self-recursive `visit` call. Reaching the in-place target here needs the
-recursive/SCC summary to specialize the threaded record to an owned entry (variant
-seeding across the SCC) — a separate mechanism from the non-recursive `.Update` wrapper
-fix that made sieve's `set_at` consume its base. See
-`sieve-cfg-gap-notes.md` (## graph_scc.visit classification).
+**Observed today:** `visit` keeps its generic body conservative while rendering the
+owned recursive case as a separate diagnostic body. The generic section still reports
+`p0=Published p1=Published p2=Published ret=alias(p0)`, and its `record_update` verdicts
+still show `shell=persistent(aliased shell) field=persistent(insufficient deep ownership)`.
+That is intentional: the unqualified `fn visit` body has no owned precondition.
+
+The owned precondition renders separately as `variant fn visit [unique:p0]`, with
+`variant: p0=Consumed paths{[]} ... ret=alias(p0)`. In that variant-qualified body,
+the threaded `State` shell updates render `shell=reuse(unique)`, while dict/vector field
+backings remain conservative with `field=persistent(insufficient deep ownership)`. This
+closes the analysis/render gap for Case V; real in-place codegen still needs emitted
+variant cloning/dispatch keyed by `VariantId`.
 
 ## Case W — transport-wrapper threading: the source-wide helper idiom
 

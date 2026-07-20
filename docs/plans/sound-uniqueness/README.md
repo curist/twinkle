@@ -20,20 +20,20 @@ track README(s). The focused track docs own the detailed checklists.
 
 ## Current focus
 
-**The analysis track is complete through Phase 6 (2026-07-19).** Phases 0-6
-produce auditable CFG ownership facts, liveness, summaries, record shell/field and
-nested-collection ownership, transport-wrapper / `Result`-payload return-path
-summaries, owned-entry recovery, call-site variant selection, and per-call-site
-owned-decision verdicts in `twk ir --cfg` — all without changing generated code.
-Two design items were **re-scoped to codegen** by spikes (field-granular `field_own`
-seeding has no summary observable; the variant memo/SCC fixpoint re-analyzes a
-specialized *body* only for emission, not for the analysis decision).
+**The analysis track is complete through Phase 6 (2026-07-19; recursive-summary
+diagnostics closed afterward).** Phases 0-6 produce auditable CFG ownership facts,
+liveness, summaries, record shell/field and nested-collection ownership,
+transport-wrapper / `Result`-payload return-path summaries, owned-entry recovery,
+call-site variant selection, per-call-site owned-decision verdicts, and recursive
+SCC variant-qualified diagnostic bodies in `twk ir --cfg` — all without changing
+generated code. Field-granular codegen seeding has no summary observable and remains
+codegen-owned; variant *generation* and in-place emission also remain codegen work.
 
 The governing rule is **all analysis precision lands before any codegen.** That gate
 is now satisfied, so the current focus moves to the **codegen track**: ANF-keyed
-decision handoff/fallback plumbing (consuming the recorded decisions + the
-re-scoped variant memo/SCC fixpoint and field-granular seeding), then narrow emitted
-slices for the existing mutable hooks.
+decision handoff/fallback plumbing (consuming the recorded decisions and
+variant-qualified diagnostics), then narrow emitted slices for the existing mutable
+hooks.
 
 ## Standing invariants
 
@@ -63,9 +63,10 @@ Analysis phases (architecture 1A-1E; all analysis precision lands before any cod
   [../archive/sound-uniqueness-phase5-plan.md](../archive/sound-uniqueness-phase5-plan.md).
 - Phase 6: ownership-specialization decision facts (1E) — **done**
   (2a/2b `in_place_paths`, 3 owned-entry re-analysis, 4a whole-return move, 4c-core
-  `select_variant`, and completion decision verdict rendering in `twk ir --cfg`).
-  Variant memo/SCC fixpoint + field-granular seeding are re-scoped to codegen
-  (spike findings). Dated execution plans are archived under `docs/plans/archive/`.
+  `select_variant`, completion decision verdict rendering, and recursive SCC
+  variant-qualified diagnostic bodies in `twk ir --cfg`). Field-granular codegen
+  seeding and emitted variant cloning remain codegen-owned. Dated execution plans
+  are archived under `docs/plans/archive/`.
 
 ### 2. Codegen track
 

@@ -182,9 +182,10 @@ precision gap remains (sound under-approximation, deferred to the Phase 6 design
 pass — see the archived plan [archive/phase5-plan.md](../../archive/sound-uniqueness-phase5-plan.md) and
 the Phase 6 section below):** the caller-recovery gate fires only for **fresh unique
 locals, not params**, so param-threaded state (the common idiom) — and Case R with a
-param scrutinee — is not yet recovered. It folds into Phase 6 parameter-ownership;
-loosening the gate earlier would be unsound. The full implementation record for
-Phase 5 is [archive/phase5-plan.md](../../archive/sound-uniqueness-phase5-plan.md).
+param scrutinee — was not recovered in Phase 5. It was closed by Phase 6
+parameter-ownership; loosening the Phase 5 gate earlier would have been unsound.
+The full implementation record for Phase 5 is
+[archive/phase5-plan.md](../../archive/sound-uniqueness-phase5-plan.md).
 
 ## Phase 6 — Ownership-specialization decision facts *(architecture: 1E)*
 
@@ -216,9 +217,9 @@ story is verifiable before any code is emitted. Canonical semantics:
   callee_summary, arg_unique)` (Stage 4c-core): which callers pass proven-owned args
   (owned key) and which stay generic. Reads the callee's generic summary — exact for
   a direct-mutator callee (`add_type`, `Consumed` generically), which covers the
-  flagship Case B∩C; a param-threaded/recursive callee needs its owned summary / the
-  SCC fixpoint (re-scoped to codegen), with the recording pass sound (under-approximate
-  to generic) without them.
+  flagship Case B∩C; param-threaded and recursive callees are handled by owned-entry
+  re-analysis plus the recursive SCC variant diagnostic fixpoint below, while emitted
+  cloned variants remain codegen work.
 - [x] **Decision recording pass + rendering.** Walk call sites and render the
   selected owned variant for direct user calls whose arguments are proven owned;
   generic decisions intentionally print no verdict in this slice to keep `--cfg`
