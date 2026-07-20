@@ -1,0 +1,16 @@
+pub type Acc = .{ total: Int, depth: Int }
+
+pub fn thread_alias(cur: Acc, alias: Acc, n: Int) Acc {
+  c := cur
+  c.total = c.total + alias.total
+  if n > 0 {
+    c = .thread_alias(alias, n - 1)
+  }
+  c
+}
+
+pub fn run_alias(n: Int) Int {
+  start := Acc.{ total: 0, depth: 0 }
+  end := start.thread_alias(start, n)
+  end.total
+}

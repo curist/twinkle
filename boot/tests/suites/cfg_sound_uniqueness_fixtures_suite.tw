@@ -290,4 +290,49 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "recursive threaded parameter stays conservative",
+      fn() {
+        out := try render_entry("recursive_thread_param")
+        body := try section_from(out, "fn thread_param")
+        try assert.is_false(body.contains("reuse(unique)"))
+        try assert.is_false(out.contains("variant fn thread_param"))
+        try assert.is_false(body.contains("variant: p0=Consumed"))
+        .Ok({})
+      },
+    )
+    .test(
+      "recursive threaded aliased record stays conservative",
+      fn() {
+        out := try render_entry("recursive_thread_alias")
+        body := try section_between(out, "fn thread_alias", "fn run_alias")
+        try assert.is_false(body.contains("reuse(unique)"))
+        try assert.is_false(out.contains("variant fn thread_alias"))
+        try assert.is_false(body.contains("variant: p0=Consumed"))
+        .Ok({})
+      },
+    )
+    .test(
+      "multi-param return alias stays conservative",
+      fn() {
+        out := try render_entry("multi_param_return_alias")
+        body := try section_between(out, "fn pick", "fn run_pick")
+        try assert.is_false(body.contains("reuse(unique)"))
+        try assert.is_false(out.contains("variant fn pick"))
+        try assert.is_false(body.contains("variant: p0=Consumed"))
+        try assert.is_false(body.contains("variant: p1=Consumed"))
+        .Ok({})
+      },
+    )
+    .test(
+      "mutually recursive threaded record renders owned variant verdicts",
+      fn() {
+        out := try render_entry("mutual_recursion_thread")
+        ping := try variant_section(out, "ping", "unique:p0")
+        try assert.str_contains(ping, "reuse(unique)")
+        pong := try variant_section(out, "pong", "unique:p0")
+        try assert.str_contains(pong, "reuse(unique)")
+        .Ok({})
+      },
+    )
 }

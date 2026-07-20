@@ -1,0 +1,18 @@
+pub type Acc = .{ total: Int, depth: Int }
+
+pub fn pick(a: Acc, b: Acc, choose_a: Bool) Acc {
+  r := if choose_a {
+    a
+  } else {
+    b
+  }
+  r.total = r.total + 1
+  r
+}
+
+pub fn run_pick(n: Int) Int {
+  x := Acc.{ total: 0, depth: 0 }
+  y := Acc.{ total: n, depth: 0 }
+  end := x.pick(y, n > 0)
+  end.total
+}

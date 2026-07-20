@@ -1,0 +1,25 @@
+pub type Acc = .{ total: Int, depth: Int }
+
+pub fn ping(a: Acc, n: Int) Acc {
+  cur := a
+  cur.total = cur.total + n
+  if n > 0 {
+    cur = .pong(n - 1)
+  }
+  cur
+}
+
+pub fn pong(a: Acc, n: Int) Acc {
+  cur := a
+  cur.depth = cur.depth + 1
+  if n > 0 {
+    cur = .ping(n - 1)
+  }
+  cur
+}
+
+pub fn run_mut(n: Int) Int {
+  start := Acc.{ total: 0, depth: 0 }
+  end := start.ping(n)
+  end.total
+}
