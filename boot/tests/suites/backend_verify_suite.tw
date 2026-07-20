@@ -9,6 +9,7 @@ use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, SlotInfo}
 use compiler.backend.verify.{verify_prepared_module, verify_prepared_module_with_level}
 use compiler.base_env
 use compiler.builtins.{BuiltinClosurePolicy, BuiltinRegistry, make_builtin_registry}
+use compiler.codegen.mutable_select
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.core_ir.{FieldId, FuncId, LocalId, Param}
@@ -147,6 +148,7 @@ fn replace_func(prepared: PreparedModule, pf: PreparedFunc) PreparedModule {
     funcs: [pf],
     typed_vector_fields: Dict.new(),
     typed_vector_payloads: Dict.new(),
+    mutable_decisions: mutable_select.empty_decision_table(),
   }
 }
 
@@ -408,6 +410,7 @@ pub fn suite() runner.Suite {
           funcs: prepared.funcs,
           typed_vector_fields: Dict.new(),
           typed_vector_payloads: Dict.new(),
+          mutable_decisions: mutable_select.empty_decision_table(),
         }
         verify_err(broken, "capture 0 uses L0, expected L1")
       },

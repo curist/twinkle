@@ -27,6 +27,7 @@ use compiler.backend.typed_param_abi.{analyze_typed_repr}
 use compiler.base_env.{first_user_type_id}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.insert_boundaries.{insert_boundaries}
+use compiler.codegen.mutable_select
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.resolver.{ResolvedEnv}
 
@@ -42,6 +43,7 @@ pub type PreparedModule = .{
   funcs: Vector<PreparedFunc>,
   typed_vector_fields: Dict<String, Bool>,
   typed_vector_payloads: Dict<String, Bool>,
+  mutable_decisions: mutable_select.MutableDecisionTable,
 }
 
 // Boundary-inserted ANF plus the prepared funcs *before* typed-vector routing.
@@ -106,6 +108,27 @@ pub fn prepare_backend(
   builtins: BuiltinRegistry,
   closure_captures: Dict<Int, Vector<CaptureParam>>,
 ) PreparedModule {
+  prepare_backend_with_mutable_decisions(
+    anf,
+    env,
+    builtins,
+    closure_captures,
+    mutable_select.empty_decision_table(),
+  )
+}
+
+// Same as prepare_backend, but threads a persistent-only mutable decision
+// table through to the resulting PreparedModule. The table is opaque to
+// preparation itself (no inference logic here reads or acts on it); it is
+// carried so later codegen phases can reach the decisions made upstream.
+// This entry point does not change emitted code.
+pub fn prepare_backend_with_mutable_decisions(
+  anf: AnfModule,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+  closure_captures: Dict<Int, Vector<CaptureParam>>,
+  mutable_decisions: mutable_select.MutableDecisionTable,
+) PreparedModule {
   pre := prepare_backend_preroute(anf, env, builtins, closure_captures)
 
   if prepared_funcs_depth_exceeds(pre.funcs, 512) {
@@ -115,6 +138,7 @@ pub fn prepare_backend(
       funcs: pre.funcs,
       typed_vector_fields: Dict.new(),
       typed_vector_payloads: Dict.new(),
+      mutable_decisions,
     }
   }
 
@@ -158,6 +182,7 @@ pub fn prepare_backend(
     funcs: funcs3,
     typed_vector_fields: typed_fields,
     typed_vector_payloads: typed_payloads,
+    mutable_decisions,
   }
 }
 
