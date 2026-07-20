@@ -33,7 +33,7 @@
 
 - Create `boot/compiler/codegen/emit/mutable_sites.tw`
   - Owns prepared-IR site extraction for emission: current function/result local site, call base source local from `PreparedAtom.ASlot(SlotId)`, family classification from persistent builtin ids, and type-qualified record field-path key creation.
-  - This helper is used by `.ACall` / `.ARecordUpdate` emission and directly unit-tested. Because Phase 7D always emits persistent output, tests can prove helper correctness and persistent-output guards, but not distinguish emit wiring by output alone.
+  - This helper is used by `.ACall` / `.ARecordUpdate` emission and directly unit-tested. Because Phase 7D always emits persistent output, tests can prove helper correctness and persistent-output guards, but not distinguish emit wiring by output alone; Task 4 therefore includes an explicit code-review gate for the `emit.tw` delegation points.
 
 - Modify `boot/compiler/backend/prepare.tw`
   - Add `mutable_decisions` to `PreparedModule`.
@@ -68,6 +68,10 @@
 ## Boundary-insertion constraint
 
 Phase 7C/7D does **not** validate non-base argument literal identity across the optimized-ANF → prepared-IR boundary. `prepare_backend` runs `insert_boundaries(...)`; for runtime helpers such as `vector$set_unsafe`, value arguments can be wrapped into temporary slots before emission. A pre-prepare decision that sees `LitInt(9)` may become a prepared call argument `Slot(wrap_temp)`. Until a producer runs in the prepared domain or records boundary-origin metadata, the selector validates only stable call-shape fields: site, family, persistent target, source/result locals, base argument index, and argument count.
+
+## Emit-wiring review constraint
+
+Phase 7D intentionally emits the same persistent WAT whether the selector is consulted or not. Tests in this plan therefore prove helper behavior, persistent-output guards, and Wasm-planning isolation, but they cannot prove identical-output `.ACall` / `.ARecordUpdate` branches actually delegated to `mutable_sites`. Task 4 includes a required review checkpoint that inspects the `emit.tw` diff and confirms both emission branches call the selector helpers before the task may be committed.
 
 ## Non-goals for this plan
 
@@ -993,7 +997,18 @@ buf2.append(.LocalSet(result_idx))
 
 Because the selector never flips `emit_can_reuse` in Phase 7D, emitted code stays persistent.
 
-- [ ] **Step 7: Format, lint, and run tests**
+- [ ] **Step 7: Review the identical-output emit wiring**
+
+Run:
+
+```bash
+git diff -- boot/compiler/codegen/emit.tw
+rg -n "select_call_for_emit|select_record_update|ARecordUpdate|ACall" boot/compiler/codegen/emit.tw
+```
+
+Expected review result before continuing: the `.ACall` branch delegates global persistent callees through `mutable_sites.select_call_for_emit(...)`, and the `.ARecordUpdate` branch delegates base/result/field checks through `mutable_sites.site_for_result(...)`, `mutable_sites.record_base_source_local(...)`, `mutable_sites.field_path_key(...)`, and `mutable_select.select_record_update(...)`. The reviewer must explicitly confirm this wiring, because emitted WAT is intentionally identical to persistent fallback in Phase 7D and cannot prove the delegation happened.
+
+- [ ] **Step 8: Format, lint, and run tests**
 
 Run:
 
@@ -1003,9 +1018,9 @@ target/twk lint boot/main.tw
 target/twk run boot/tests/main.tw
 ```
 
-Expected: helper tests prove vector/dict/record decisions can be recognized through the emit helper, emitted WAT remains persistent, and Wasm planning ignores would-be mutable targets. Do not claim WAT alone proves `emit.tw` consulted the selector in Phase 7D, because selected output is intentionally identical to fallback output.
+Expected: helper tests prove vector/dict/record decisions can be recognized through the emit helper, emitted WAT remains persistent, Wasm planning ignores would-be mutable targets, and the required code review has confirmed the identical-output `emit.tw` selector wiring. Do not claim WAT alone proves `emit.tw` consulted the selector in Phase 7D.
 
-- [ ] **Step 8: Commit Task 4**
+- [ ] **Step 9: Commit Task 4**
 
 ```bash
 git add boot/compiler/codegen/emit/context.tw boot/compiler/codegen/emit.tw boot/tests/suites/codegen_emit_suite.tw
@@ -1022,39 +1037,135 @@ git commit -m "codegen: consume mutable selector as persistent fallback"
 
 **Interfaces:**
 - Consumes: implemented selector/API names from Tasks 1–4
-- Produces: docs that name the actual helper and persistent-only behavior
+- Produces: docs that name the actual helper, persistent-only `emit_*` behavior, `would_*` dry-run data, and the deferred analysis producer
 
-- [ ] **Step 1: Update Phase 7C checklist to name the implemented API**
+- [ ] **Step 1: Update `codegen/README.md` status and Phase 7C/7D checklists**
 
-In `codegen/README.md`, replace generic wording with the actual module/function names:
+In `docs/plans/sound-uniqueness/codegen/README.md`, replace the opening status paragraph with:
 
 ```md
+**Status:** In progress. Phases 7A (hook inventory), 7B (operation catalog),
+and the 7C/7D backend decision seam are verified against `main` (2026-07-20).
+The surviving mutable hooks and their persistent→mutable mappings are cataloged,
+and codegen now has a persistent-only selector/plumbing seam. **Next: Phase 7E
+or the analysis-producer follow-up** — dry-run rendering or extracting the
+`ownership.tw` render-only decisions into `MutableDecisionTable`. The full
+analysis track is complete through Phase 6 (record/field ownership,
+transport-wrapper / `Result`-payload return-path summaries,
+ownership-specialization decision facts, and recursive SCC variant-qualified
+diagnostics), so codegen consumes a trustworthy fact set rather than
+rediscovering ownership. (These "Codegen Phase 7A/…" labels are the codegen
+track's own local numbering; see the phase-numbering note in
+[../analysis/README.md](../analysis/README.md).)
+```
+
+Then replace the Phase 7C and Phase 7D checklist blocks with:
+
+```md
+## Codegen Phase 7C — Decision records and handoff contract ✅ seam done (2026-07-20)
+
+No optimized emission yet. This phase makes the analysis→backend seam explicit
+and fail-safe.
+
+- [x] **Define first-cut backend decision records.** Implemented as
+  `compiler.codegen.mutable_select.MutableDecision`: operation family, ANF site,
+  source/result locals, stable argument shape, persistent fallback, would-be
+  mutable target, optional `VariantId`, type-qualified field/path key, and
+  `proof_debug_id`. The real analysis proof-payload producer is deliberately
+  deferred; 7C/7D proves the backend seam with explicit tables first.
 - [x] **Define one catalog-driven selection helper/layer.** Implemented as
   `compiler.codegen.mutable_select` plus prepared-site extraction in
-  `compiler.codegen.emit.mutable_sites`; backend lowering asks the selector for
-  call or record selections and receives persistent fallback in Phase 7D.
+  `compiler.codegen.emit.mutable_sites`. Backend lowering asks the selector for
+  call or record selections and receives `emit_func` / `emit_can_reuse` values
+  that remain persistent in Phase 7D, while `would_func` / `would_reuse` preserve
+  the would-be mutable target for tests and later dry-run rendering.
+- [x] **Attach decisions as ANF-keyed side tables.** `PreparedModule` carries
+  `MutableDecisionTable` across backend preparation; `prepare_backend(...)`
+  supplies an empty table by default and
+  `prepare_backend_with_mutable_decisions(...)` exists for tests and future
+  producers.
+- [x] **Define staleness handling.** The selector reports absent, ambiguous,
+  unsupported, wrong-family, wrong-persistent-target, source/result mismatch,
+  argument-shape mismatch, base-argument mismatch, and field-path mismatch cases,
+  and all such cases emit the persistent fallback.
+
+## Codegen Phase 7D — Backend lookup and persistent fallback plumbing ✅ done (2026-07-20)
+
+Still no optimized emission. This phase wires the backend to consume an empty or
+ignored side table while deliberately returning the persistent target for every site.
+
+- [x] **Thread the decision table to backend/codegen entry points.**
+  `PreparedModule.mutable_decisions` is copied into `EmitCtx`; default empty-table
+  behavior preserves persistent output.
+- [x] **Validate lookup/fallback paths.** Selector and prepared-site tests cover
+  present, absent, stale/mismatched, ambiguous, and unsupported decisions; emission
+  tests guard that vector/dict calls and record updates still use persistent output.
+- [x] **Keep fallback centralized.** Emission delegates prepared call/record site
+  extraction to `compiler.codegen.emit.mutable_sites` and decision classification
+  to `compiler.codegen.mutable_select`; family-specific emit code does not
+  re-prove ownership or hand-roll stale-decision checks.
 ```
 
-- [ ] **Step 2: Update handoff contract with the concrete persistent-only rule**
+- [ ] **Step 2: Update `handoff-contract.md` with the concrete Phase 7D selector rule**
 
-In `handoff-contract.md`, add this under “Central selection layer”:
+In `docs/plans/sound-uniqueness/codegen/handoff-contract.md`, replace the “Central selection layer” section with:
 
 ```md
-Phase 7D selectors always return the persistent emission target. They may also
-return the would-be mutable target for tests and later dry-run rendering, but no
-normal build can activate it until a Phase 8 emission slice extends Wasm planning
-and changes the selector contract deliberately.
+## Central selection layer
+
+Phase 7C/7D defines one selector/helper layer before any family starts emitting
+mutable code. Backend lowering passes the prepared site, operation family,
+decision table, stable operand shape, and persistent fallback to that layer.
+The layer returns:
+
+- `emit_func` / `emit_can_reuse`: the target that normal emission must use now;
+  in Phase 7D these are always the persistent fallback / original record-reuse
+  value, even for a live mutable decision;
+- `would_func` / `would_reuse`: the mutable target that a later dry-run renderer
+  or Phase 8 emission slice can report or enable deliberately; and
+- a reason such as absent, persistent-only, wrong family, wrong persistent target,
+  missing mutable target, source/result mismatch, argument-shape mismatch,
+  base-argument mismatch, field-path mismatch, ambiguous, or unsupported.
+
+No normal Phase 7D build can activate a mutable target. Phase 8 must extend Wasm
+planning and deliberately change the selector consumption contract before
+`would_*` data may become emitted code.
+
+Per-family backend sites must not duplicate ownership legality, last-use,
+staleness, unsupported-family, or fallback checks. They may perform only the local
+mechanical emission for the target the selector returned.
 ```
 
-- [ ] **Step 3: Record the analysis-producer follow-up**
+- [ ] **Step 3: Update the handoff decision-record table for the explicit-table seam**
 
-In `handoff-contract.md`, add:
+In `docs/plans/sound-uniqueness/codegen/handoff-contract.md`, update the first-cut decision-record text so it distinguishes the implemented backend seam from the deferred proof producer:
 
 ```md
+## First-cut decision record
+
+Phase 7C/7D implements the backend-facing record first, populated by explicit
+test tables and future producers. Each accepted mutable-lowering candidate should
+carry:
+
+| Field | Purpose |
+|---|---|
+| ANF key | The optimized-ANF site the decision applies to. |
+| Operation family | Vector indexed update, dict set/remove, record shell update, and later vector/string builder regions, record-backed field update, ownership-specialized function variant, etc. |
+| Source value | The collection/record local whose storage or shell may be reused. |
+| Result binding | The local that receives the post-update immutable value. |
+| Stable call shape | Argument count and base-argument index fields that survive optimized-ANF → prepared-IR boundary insertion. |
+| Persistent fallback | The ordinary immutable operation or generic callee to emit when the decision is absent or rejected. |
+| Mutable target | The existing helper/hook or cloned function selected by the operation catalog, stored as would-be data until Phase 8 enables emission. |
+| Variant key | The exact `VariantId` when the decision depends on an owned-specialized callee/body. Empty for purely local decisions. |
+| Field/path key | The type-qualified consumed shell/field path for record-backed or record-shell decisions. Empty for whole-value call decisions. |
+| Debug id | Stable id for `twk ir`, census, and WAT/call inspection. |
+
 Follow-up after 7D: extract the existing render-only call-decision logic from
-`ownership.tw` into a producer that populates `MutableDecisionTable` over optimized
-ANF. That producer is not part of 7C/7D backend plumbing because the seam must be
-usable and testable with explicit tables first.
+`ownership.tw` into a producer that populates `MutableDecisionTable` over
+optimized ANF. That producer must attach the actual required ownership fact,
+last-use proof, and any loop/branch/SCC proof id to the debug/proof trail, but it
+is not part of 7C/7D backend plumbing because the seam must be usable and
+testable with explicit tables first.
 ```
 
 - [ ] **Step 4: Run verification commands**
@@ -1086,6 +1197,7 @@ git commit -m "docs: mark codegen decision seam implemented"
 - The selector records would-be mutable targets but returns persistent emission targets unconditionally in this phase.
 - Existing default codegen passes an empty decision table and emits the same persistent operations as before.
 - `compiler.codegen.emit.mutable_sites` is the only place emission translates prepared slots/args/fields into selector inputs.
+- Task 4 includes a code-review checkpoint confirming `.ACall` and `.ARecordUpdate` in `emit.tw` delegate to the selector helpers, because identical persistent output cannot prove that wiring by WAT inspection alone.
 - Tests exercise absent, live persistent-only, wrong-family, wrong-persistent-target, missing-mutable-target, source-local mismatch, result-local mismatch, argument-shape mismatch, base-arg mismatch, field-path mismatch, ambiguous, unsupported-family, and record-shell fallback cases.
 - Prepared backend plumbing carries decision tables without forcing emitters or wasm planners to re-prove ownership.
 - Emission helper tests prove selector consultation with a real `EmitCtx`/slot map, including vector, dict set/remove, record base extraction, and type-qualified record field keys.
