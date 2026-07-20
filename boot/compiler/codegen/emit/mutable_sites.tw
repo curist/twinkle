@@ -5,9 +5,10 @@
 //! emission can ask the selector "what would the decision table pick here"
 //! without emit.tw re-deriving that shape itself.
 //!
-//! The decision table is always an explicit parameter, never read off `EmitCtx`
-//! — `EmitCtx` gains no `mutable_decisions` field until emit.tw is wired to call
-//! these helpers (a later task). This module makes no emitted-code change.
+//! `select_call_for_emit` takes the decision table as an explicit parameter;
+//! emit.tw passes `ctx.mutable_decisions` (see `.ACall`/`.ARecordUpdate` lowering).
+//! In Phase 7C/7D the selector always returns the persistent target, so consulting
+//! these helpers makes no emitted-code change.
 
 use compiler.backend.prepared_ir.{PreparedAtom}
 use compiler.codegen.emit.context.{EmitCtx, LocalEntry, lookup_slot}
