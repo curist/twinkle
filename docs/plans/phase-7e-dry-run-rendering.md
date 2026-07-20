@@ -34,10 +34,13 @@ Task 5 marks only the update-site dry-run done and rewords the README accordingl
 
 ## Verified facts about the current code (checked against `main` at f765af5a)
 
-- `boot/compiler/opt/semantics.tw` `CallSemantics`: `effect` (`.Update` for updates), `cow_base_arg: Int?` (base operand index; `.Some(0)` for vector-set / dict-set / dict-remove **and** for at least one update family with **`in_place_equivalent: .None`** — e.g. a vector append/other), `in_place_equivalent: FuncId?`. `pub fn call_info(sem, fid) CallSemantics?`. **Consequence:** a `.Update` site with a `reuse(unique)` verdict may still have NO mutable target, so `would_use` must require a mutable target to exist (see Task 3).
+- `boot/compiler/opt/semantics.tw` `CallSemantics`: `effect` (`.Update` for updates), `cow_base_arg: Int?` (base operand index; `.Some(0)` for vector-set / dict-set / dict-remove **and** for at least one update family with **`in_place_equivalent: .None`** — e.g. a vector append/other), `in_place_equivalent: FuncId?`. `pub fn call_info(sem, fid) CallSemantics?`. **Consequence:** a `.Update` site with a `reuse(unique)` verdict may still have NO mutable target, so `would_use` must require a mutable target to exist (see Task 3). **Only the persistent forms** (`vector$set_unsafe`, `Dict.set`, `Dict.remove`) are registered in `call_semantics`; the `*_in_place` ops are NOT — so `call_info(<in_place id>)` returns `.None`, and any in-place actual id must be resolved via the REVERSE map BEFORE calling `call_info` (see Task 3 ordering).
+- `boot/compiler/cfg.tw`: both `CfgFunction` and `AnfFunctionDef` carry `func_id`. Key the dry-run join by `func_id + local`, not by function name.
 - `boot/compiler/census.tw`: `census_sites(m, b)` walks `m.functions`; `walk_expr` sees `.Let(local, op, body)` (local id currently discarded); the `.ACall(.AGlobalFunc(fid), _)` case has `fid`; `.ARecordUpdate` has no call FuncId. `build_labels` builds `family_of` (persistent id → family) and `ip_family_of` (in-place id → family). Contains no ownership analysis.
+- **Param seeding (critical for test sources):** the generic ownership pass does NOT mark params `Unique`. `analyze_with_summaries` runs `analyze_function(f, table, b, sem, Dict.new())` with an **empty `unique_seed`**, and `seed_param_own` marks a param `Unique` only if its id is in `unique_seed`. So a bare param base (`fn f(xs) { xs[0]=9 ... }`) verdicts as `persistent(aliased shell)`, NOT `reuse(unique)`. To get a `reuse(unique)` verdict, the base must be a **freshly-allocated local** (`xs := [1, 2]`), which enters `Unique`. All "owned" test sources in this plan use a fresh local.
 - `boot/compiler/ownership.tw`:
   - `fn block_verdicts(...)` — the `.ACall(callee, args)` builtin arm is `case call_info(sem, fid) { .Some(_) => {}, ... }` (builtin update calls get no verdict; ~line 1976). `pre` (pre-instruction `ForwardState`) and `last` (`last_use_at(...)`) are in scope in the loop.
+  - `shell_verdict` renders the reuse decision as the literal `reuse(unique)` (never `in-place(...)` — that string only appears in the FIELD position of a record verdict via `update_field_verdict`). So the reusable-shell marker is `base=reuse(` (update calls, per Task 1’s format) or `shell=reuse(` (record updates).
   - `fn shell_verdict(st: ForwardState, base: Atom, last) String` → `"reuse(unique)"` / `"persistent(base consumed|base still live|aliased shell)"`. Reused as-is for update bases. `atom_brief(a)` → `"L${id}"`.
   - Driver sets `blk.exit.verdicts` (~line 3277).
   - `pub fn analyze_with_summaries(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics, table: SummaryTable) CfgView` (~line 2951).
@@ -73,9 +76,9 @@ Task 5 marks only the update-site dry-run done and rewords the README accordingl
 
 ---
 
-### Task 1: Verdict vector/dict update-call sites in `block_verdicts`
+### Task 1: Verdict update-call sites (with a COW base arg) in `block_verdicts`
 
-The one new analysis piece. It also adds these verdicts to `twk ir --cfg`, so `--cfg` goldens may need updating.
+The one new analysis piece. It emits a verdict for **every `.Update` builtin call that names a `cow_base_arg`** — that includes vector/dict set/remove (which have direct mutable targets) AND update families with no mutable target (e.g. vector append), which Task 3 relies on. It also adds these verdicts to `twk ir --cfg`, so `--cfg` goldens may need updating.
 
 **Files:**
 - Modify: `boot/compiler/ownership.tw` (the `.ACall` arm in `block_verdicts`, ~line 1976)
@@ -88,22 +91,26 @@ Read the matching suite (e.g. `cfg_ownership_suite.tw` / `cfg_ownership_facts_su
 
 - [ ] **Step 2: Write failing tests (owned → verdict present; aliased → persistent)**
 
-Add tests analyzing these and asserting the `vector$set_unsafe` site’s verdict:
+Use a **fresh local** base (a param is not seeded `Unique` in the generic pass — see Verified facts). Owned:
 ```tw
-fn set_owned(xs: Vector<Int>) Vector<Int> {
+fn set_fresh() Vector<Int> {
+  xs := [1, 2]
   xs[0] = 9
   xs
 }
 ```
-Assert the update site’s verdict contains `reuse(unique)`.
+Assert the `vector$set_unsafe` site’s verdict contains `reuse(unique)`.
+
+Aliased (fresh base kept live via an alias, so the update base is not reusable):
 ```tw
-fn set_aliased(xs: Vector<Int>) Vector<Int> {
+fn set_aliased() Int {
+  xs := [1, 2]
   ys := xs
   xs[0] = 9
-  ys
+  ys.len() + xs.len()
 }
 ```
-Assert its verdict contains `persistent(`. Before implementation the vector-set site has no verdict entry, so the first test fails.
+Assert the `vector$set_unsafe` site’s verdict contains `persistent(`. Before implementation the vector-set site has no verdict entry, so the owned test fails.
 
 - [ ] **Step 3: Run, verify failure** — `target/twk run boot/tests/main.tw` (owned-case assertion fails: missing verdict).
 
@@ -160,31 +167,36 @@ Gives the join its keys, keeping census ownership-free. Stores the **actual** ca
 
 - [ ] **Step 1: Failing test for the new fields**
 
-Compile `fn f(xs: Vector<Int>) Vector<Int> { xs[0] = 9  xs }`, find the `vector_set` site, assert `site.local` is the update binding’s ANF local id (nonzero) and `site.actual_fid == artifacts.builtins.id("vector$set_unsafe").id`.
+Compile `fn f(xs: Vector<Int>) Vector<Int> { xs[0] = 9  xs }`, find the `vector_set` site, assert `site.local` is the update binding’s ANF local id (nonzero), `site.actual_fid == artifacts.builtins.id("vector$set_unsafe").id`, and `site.func_id` equals `f`’s ANF `func_id.id` (the join key). (Census walks ANF regardless of ownership, so the param source is fine here.)
 
-- [ ] **Step 2: Run, verify failure** — compile error: no field `local` / `actual_fid`.
+- [ ] **Step 2: Run, verify failure** — compile error: no field `local` / `actual_fid` / `func_id`.
 
 - [ ] **Step 3: Add fields + capture in the walk**
 
 ```tw
-pub type CensusSite = .{ func: String, family: String, in_place: Bool, local: Int, actual_fid: Int }
+pub type CensusSite = .{ func_id: Int, func: String, family: String, in_place: Bool, local: Int, actual_fid: Int }
 ```
-Thread the `.Let` local into `walk_op`:
+Thread `func_id` (join key) alongside `func` (rendering) and the `.Let` local. In `census_sites`:
+```tw
+for f in m.functions {
+  sites = walk_expr(f.body, f.func_id.id, f.name, sites, sem, labels)
+}
+```
+Give `walk_expr`/`walk_op` a leading `func_id: Int` param; give `walk_op` a `local_id: Int` param. Set all fields on every `CensusSite`. Record updates → `actual_fid: 0 - 1`; call sites → `actual_fid: fid.id`:
 ```tw
 .Let(local, op, body) => {
-  after := walk_op(op, local.id, func, sites, sem, labels)
-  walk_expr(body, func, after, sem, labels)
+  after := walk_op(op, local.id, func_id, func, sites, sem, labels)
+  walk_expr(body, func_id, func, after, sem, labels)
 },
 ```
-Give `walk_op` a `local_id: Int` param; set it on every `CensusSite`. Record updates → `actual_fid: 0 - 1`; call sites → `actual_fid: fid.id`:
 ```tw
 .ARecordUpdate(_, _, _, in_place, _) => sites.append(CensusSite.{
-  func, family: "record_update", in_place, local: local_id, actual_fid: 0 - 1,
+  func_id, func, family: "record_update", in_place, local: local_id, actual_fid: 0 - 1,
 }),
 .ACall(callee, _) => case callee {
   .AGlobalFunc(fid) => case classify_call(fid, sem, labels) {
     .Some(fi) => sites.append(CensusSite.{
-      func, family: fi.family, in_place: fi.in_place, local: local_id, actual_fid: fid.id,
+      func_id, func, family: fi.family, in_place: fi.in_place, local: local_id, actual_fid: fid.id,
     }),
     .None => sites,
   },
@@ -221,20 +233,24 @@ git commit -m "census: carry anf local id and actual callee id on sites"
 
 Create `dry_run_suite.tw`, register it. Tests over compiled sources:
 
-Owned vector set → mutable target exists + owned ⇒ `would_use = true`:
+Owned vector set (fresh local base) → mutable target exists + owned ⇒ `would_use = true`:
 ```tw
-fn set_owned(xs: Vector<Int>) Vector<Int> { xs[0] = 9  xs }
+fn set_fresh() Vector<Int> { xs := [1, 2]  xs[0] = 9  xs }
 ```
-Assert `persistent == "vector$set_unsafe"`, `mutable == "vector$set_in_place"`, `would_use == true`, `verdict` contains `reuse(unique)`.
+Assert `persistent == "vector$set_unsafe"`, `mutable == "vector$set_in_place"`, `would_use == true`, `verdict` contains `base=reuse(`.
 
-Aliased vector set → owned-check fails ⇒ `would_use = false`, `verdict` contains `persistent(`:
+Aliased vector set (fresh base kept live) → owned-check fails ⇒ `would_use = false`, `verdict` contains `persistent(`:
 ```tw
-fn set_aliased(xs: Vector<Int>) Vector<Int> { ys := xs  xs[0] = 9  ys }
+fn set_aliased() Int { xs := [1, 2]  ys := xs  xs[0] = 9  ys.len() + xs.len() }
 ```
 
-Dict set / remove → `persistent`/`mutable` are `dict$set`/`dict$set_in_place` and `dict$remove`/`dict$remove_in_place`.
+Dict set / remove (fresh dict base) → `persistent`/`mutable` are `dict$set`/`dict$set_in_place` and `dict$remove`/`dict$remove_in_place`.
 
-Record update (owned) → `persistent == "struct.new(copy)"`, `mutable == "struct.set(reuse)"`, `would_use == true`.
+Record update (fresh-local base, so shell is reusable) → `persistent == "struct.new(copy)"`, `mutable == "struct.set(reuse)"`, `would_use == true`, `verdict` contains `shell=reuse(`:
+```tw
+type P = .{ x: Int, y: Int }
+fn r() P { p := P.{ x: 1, y: 2 }  p.x = 9  p }
+```
 
 **Update family with no mutable target** (`in_place_equivalent: .None`, e.g. vector append/other — find one via `rg -n "in_place_equivalent: .None" boot/compiler/opt/semantics.tw` and a source that emits it) → assert `mutable == "-"` and `would_use == false` **even if** the ownership verdict is `reuse(unique)`. This is the anti-regression for the would_use bug.
 
@@ -252,19 +268,17 @@ analyzed := ownership.analyze_with_summaries(view, b, sem, table)
 ```
 Do NOT call `summary.compute_variants` (only for variant rendering).
 
-**Verdict collection:** fold every block’s `blk.exit.verdicts` across `analyzed.functions` into a map keyed by `"${func}#${local}"`. Local ids repeat across functions, so the function name MUST be part of the key. Confirm how a `CfgFunction` exposes its name (read `boot/compiler/cfg.tw`) and that it matches census’s `func` string; if the block does not carry its function name directly, collect per-function during the `analyzed.functions` iteration.
+**Verdict collection:** fold every block’s `blk.exit.verdicts` across `analyzed.functions` into a map keyed by `"${func_id}#${local}"` (local ids repeat across functions, so the function id MUST be part of the key). Iterate `analyzed.functions`; each `CfgFunction` has `func_id` and blocks whose `blk.exit.verdicts` are keyed by ANF local id — combine as `"${fn.func_id}#${local}"`. This matches census’s `func_id` field (Task 2).
 
-**Target derivation (`targets_for`)** — build forward + reverse `in_place_equivalent` maps from `sem.call_semantics`, then, for a site’s `actual_fid`:
+**Target derivation (`targets_for`)** — build a REVERSE `in_place_equivalent` map (`mutable_id → persistent_id`) from `sem.call_semantics` once. **Order matters** because `*_in_place` ops are NOT in `call_semantics` (so `call_info` on them returns `.None`):
 - `actual_fid == -1` (record) → `.{ persistent: "struct.new(copy)", mutable: "struct.set(reuse)", has_mutable: true }`.
-- else if `call_info(sem, FuncId.{ id: actual_fid })` is `.Some(cs)`:
-  - `cs.in_place_equivalent` is `.Some(mid)` → persistent = name(actual_fid), mutable = name(mid), has_mutable = true. (actual is a persistent-form op)
-  - else if actual_fid is a value in the reverse map (actual is itself an in-place op) → persistent = name(reverse[actual_fid]), mutable = name(actual_fid), has_mutable = true.
-  - else → persistent = name(actual_fid), mutable = "-", has_mutable = false. (persistent-form update, no mutable target)
-- else → persistent = "?", mutable = "-", has_mutable = false.
+- else if `actual_fid` is a key in the reverse map (actual is itself an in-place op) → persistent = name(reverse[actual_fid]), mutable = name(actual_fid), has_mutable = true.
+- else if `call_info(sem, FuncId.{ id: actual_fid })` is `.Some(cs)` with `cs.in_place_equivalent == .Some(mid)` → persistent = name(actual_fid), mutable = name(mid), has_mutable = true. (persistent-form op with a mutable target)
+- else → persistent = name(actual_fid), mutable = "-", has_mutable = false. (persistent-form update with no mutable target, or unknown)
 
 `name(id)`: look up `b.by_id[id]`’s symbolic name (confirm the field on `BuiltinEntry`).
 
-**would_use** = `(verdict.contains("reuse(") or verdict.contains("in-place("))` **AND** `has_mutable`. Missing verdict → `verdict = "-"`, `would_use = false`.
+**would_use** = `has_mutable` AND the reusable-**shell** marker is present: `verdict.contains("base=reuse(")` (update calls, per Task 1’s format) OR `verdict.contains("shell=reuse(")` (record updates). Do NOT match a bare `in-place(` — that string appears only in the record FIELD position and does not imply a reusable shell. Missing verdict → `verdict = "-"`, `would_use = false`.
 
 Skeleton:
 ```tw
@@ -290,16 +304,16 @@ type Targets = .{ persistent: String, mutable: String, has_mutable: Bool }
 pub fn dry_run_sites(opt: AnfModule, b: BuiltinRegistry) Vector<DryRunSite> {
   sem := make_prelude_optimizer_semantics(b)
   sites := census.census_sites(opt, b)
-  verdicts := collect_verdicts(opt, b) // Dict<String,String> key "${func}#${local}"
+  verdicts := collect_verdicts(opt, b) // Dict<String,String> key "${func_id}#${local}"
 
   out: Vector<DryRunSite> = []
   for s in sites {
-    v := case verdicts.get("${s.func}#${s.local}") {
+    v := case verdicts.get("${s.func_id}#${s.local}") {
       .Some(text) => text,
       .None => "-",
     }
     t := targets_for(s.actual_fid, sem, b)
-    reusable := v.contains("reuse(") or v.contains("in-place(")
+    reusable := v.contains("base=reuse(") or v.contains("shell=reuse(")
     out = out.append(DryRunSite.{
       func: s.func, family: s.family, persistent: t.persistent, mutable: t.mutable,
       verdict: v, would_use: reusable and t.has_mutable, local: s.local,
@@ -358,15 +372,9 @@ if parsed.has_flag("census") {
 }
 ```
 
-- [ ] **Step 4: Run tests** — helper test passes; plain-census path unchanged.
+- [ ] **Step 4: Run tests** — helper test passes; plain-census path unchanged. (No CLI smoke check here: the pre-change `target/twk` payload won’t show the new columns until Task 5’s `make bundle-cli`; boot tests cover correctness meanwhile.)
 
-- [ ] **Step 5: Smoke check** (uses the current, pre-change `target/twk`; dry-run columns only appear after Task 5’s `make bundle-cli` — rely on boot tests until then):
-```bash
-printf 'fn f(xs: Vector<Int>) Vector<Int> {\n  xs[0] = 9\n  xs\n}\nprintln(f([1,2]).len().to_string())\n' > /tmp/7e.tw
-target/twk ir /tmp/7e.tw --census --sites
-```
-
-- [ ] **Step 6: Format, lint, commit**
+- [ ] **Step 5: Format, lint, commit**
 
 ```bash
 target/twk fmt boot/commands/ir.tw boot/tests/suites/uniqueness_census_suite.tw
@@ -403,7 +411,15 @@ git diff --check
 ```
 Expected: fmt idempotent, lint clean, boot tests green, `make bundle-cli` reaches `stage3 == stage4`, `make boot-test` green, `git diff --check` clean.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: CLI smoke check (after `make bundle-cli` — the rebuilt `target/twk` now shows the columns)**
+
+```bash
+printf 'fn f() Vector<Int> {\n  xs := [1, 2]\n  xs[0] = 9\n  xs\n}\nprintln(f().len().to_string())\n' > /tmp/7e.tw
+target/twk ir /tmp/7e.tw --census --sites
+```
+Expected: the tally table, then a per-site table with a `vector_set` row showing `persistent=vector$set_unsafe`, `mutable=vector$set_in_place`, `would_use=true`, and a `base=reuse(` verdict (the base is a fresh local).
+
+- [ ] **Step 4: Commit**
 ```bash
 git add docs/plans/sound-uniqueness/codegen/README.md
 git commit -m "docs: mark 7E update-site dry-run slice done"
@@ -424,8 +440,10 @@ git commit -m "docs: mark 7E update-site dry-run slice done"
 ## Self-review notes
 
 - Rescoped to the update-site slice; overclaims removed (variant routing and decision-table dry-run are OUT and left unchecked).
-- `would_use` now requires a mutable target (fixes the `reuse(unique)`-without-target false positive).
-- Site model stores `actual_fid`; derivation is future-proof for in-place callees via forward+reverse `in_place_equivalent` maps.
+- Owned test sources use fresh locals — params are not seeded `Unique` in the generic pass (`seed_param_own` needs a `unique_seed`; `analyze_with_summaries` passes an empty one), so a bare param base verdicts `persistent(aliased shell)`, not `reuse(unique)`.
+- `would_use` requires `has_mutable` AND a reusable-**shell** marker (`base=reuse(` for update calls, `shell=reuse(` for records) — not a bare `reuse(`/`in-place(` substring, which would misclassify a record whose `field=in-place(...)` while the shell is persistent.
+- Site model stores `actual_fid`; `targets_for` checks the reverse in-place map BEFORE `call_info`, because `*_in_place` ops are absent from `call_semantics` (so `call_info` on them is `.None`).
+- Join keyed by `func_id` (present on both `CensusSite` and `CfgFunction`), not function name.
 - Analysis sequence matches the verified `--cfg` path (`prune_dead_merge` + `summary.compute` + `analyze_with_summaries(view,b,sem,table)`; no `compute_variants`).
 - Testing targets pure functions (`render_census_report`, `render_dry_run`, `dry_run_sites`) since no stdout harness exists.
-- One confirm-before-coding item remains: how a `CfgFunction` exposes its name for the `(func, local)` join key (Task 3, read `cfg.tw`).
+- Remaining confirm-before-coding item: the symbolic-name field on `BuiltinEntry` (via `b.by_id[id]`) for `name(id)` in Task 3.
