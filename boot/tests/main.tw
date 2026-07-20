@@ -46,6 +46,7 @@ use .suites.diag_render_suite
 use .suites.diag_suite
 use .suites.dict_hash_suite
 use .suites.discovery_suite
+use .suites.dry_run_suite
 use .suites.equality_matrix_suite
 use .suites.equality_repro_suite
 use .suites.fingerprint_suite
@@ -294,4 +295,5 @@ runner.run_all([
   cfg_summary_suite.suite(),
   uniqueness_census_suite.suite(),
   uniqueness_guard_suite.suite(),
+  dry_run_suite.suite(),
 ])
