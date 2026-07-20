@@ -573,20 +573,32 @@ git commit -m "ownership: migrate five same_*_map change-detectors to same_map<T
 
 `own_map_get(m, id)` / `valid_map_get(m, id)` / `prov_map_get(m, id)` /
 `field_own_map_get(m, id)` / `path_prov_map_get(m, id)` all become
-`nested_get(m, id)`. Do a global replace:
+`nested_get(m, id)`.
+
+**Do the definition deletions FIRST, then the call-site replace.** Two gotchas: (1)
+macOS/BSD `sed` does **not** support `\b`; (2) `own_map_get` is a substring of
+`field_own_map_get`, and `prov_map_get` of `path_prov_map_get`, so an unordered
+replace corrupts the longer names into `field_nested_get(` / `path_nested_get(`.
+Delete the five `fn *_map_get` definitions first (so the sed only touches call
+sites), then run this **longest-name-first** ordered replace (no `\b` needed —
+ordering guarantees the longer name is consumed before its substring):
 
 ```bash
 cd /Users/curist/playground/rust/twinkle
-sed -i '' -E 's/\b(own|valid|prov|field_own|path_prov)_map_get\(/nested_get(/g' boot/compiler/ownership.tw
+sed -i '' \
+  -e 's/field_own_map_get(/nested_get(/g' \
+  -e 's/path_prov_map_get(/nested_get(/g' \
+  -e 's/own_map_get(/nested_get(/g' \
+  -e 's/valid_map_get(/nested_get(/g' \
+  -e 's/prov_map_get(/nested_get(/g' \
+  boot/compiler/ownership.tw
 ```
 (Type inference resolves each `nested_get`'s `T` from the argument's map type.)
 
-- [ ] **Step 2: Delete the five old accessor definitions**
+- [ ] **Step 2: Confirm exactly one `nested_get` definition remains**
 
-After the sed, the five `fn *_map_get` definitions have become `fn nested_get(` with
-their old bodies — delete those five now-duplicate definitions, keeping only the one
-generic `nested_get<T>` added in Task 2. Grep `fn nested_get` and confirm exactly one
-generic remains:
+Because the definition deletions were done first, only the generic `pub fn
+nested_get<T>` (added in Task 2) should remain. Grep to confirm exactly one:
 
 ```bash
 grep -n 'fn nested_get' boot/compiler/ownership.tw

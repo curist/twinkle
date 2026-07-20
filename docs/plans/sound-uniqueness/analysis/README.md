@@ -10,6 +10,19 @@ remain codegen work. All analysis precision lands *before* any codegen, per
 [../architecture.md](../architecture.md)'s governing rule that all analysis precision
 precedes codegen.
 
+## Post-completion cleanups
+
+- **Lattice generalization (2026-07-20).** The five parallel dataflow lattices in
+  `ownership.tw` (own/valid/prov/field_own/path_prov) were unified behind one generic
+  core — `Lattice<T>` witness + `merge_targeted<T>` (targeted widening) +
+  `same_map<T>` (change-detection) + `nested_get<T>` (nested-map access) — replacing
+  the fifteen per-lattice helpers (`merge_*_exit_targeted` ×3, `same_*_map` ×5,
+  `*_map_get` ×5) and their three `Merge*Out` types. Behavior-preserving: `twk ir
+  --cfg` byte-identical over all sound-uniqueness fixtures, census 0, 3099 boot tests
+  green, self-host fixed point reached. Optional follow-ups left for later:
+  unifying the `join_entry_*` family (different identity/combine/store per lattice)
+  and extracting the generic core into a `boot/compiler/lattice.tw` leaf module.
+
 This track owns the proof-producing half of sound uniqueness: CFG structure,
 ownership facts, liveness/last-use, summaries, candidate-classification inputs,
 and debug output. It does **not** change emitted code. The codegen track turns these

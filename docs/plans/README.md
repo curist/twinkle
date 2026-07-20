@@ -58,7 +58,6 @@ throughput.
 | Plan | Description |
 |------|-------------|
 | [sound-uniqueness/](sound-uniqueness/) | Rebuild boot compiler uniqueness analysis and mutable lowering from scratch, with printable ownership facts before codegen |
-| [lattice-generalization.md](lattice-generalization.md) | Analysis-track refactor: collapse the five parallel dataflow-lattice helpers in `ownership.tw` (`merge_*_exit_targeted`/`same_*_map`/`*_map_get`) into generic `merge_targeted<T>`/`same_map<T>`/`nested_get<T>` driven by a `Lattice<T>` witness; byte-identical, spike-validated |
 | [compiler-stack-safety.md](compiler-stack-safety.md) | Make the compiler's recursive IR tree-walks stack-safe so deeply-nested IR (wide `cond`, long side-effecting statement sequences, deep `if/else`) doesn't overflow the V8 Wasm stack. Wide `case` already fixed (flat instruction vector); runtime stack-size mitigation verified non-viable. Phased: depth-guard stopgap → iterative lowering/opt → anf/prepare/emit → serializers |
 
 ### Archived reference docs
