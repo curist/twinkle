@@ -2248,24 +2248,6 @@ fn join_entry_ownership_assumed(
   entry
 }
 
-fn same_own_map(a: Dict<Int, Int>, b: Dict<Int, Int>) Bool {
-  if a.keys().len() != b.keys().len() {
-    return false
-  }
-  for k in a.keys() {
-    case a.get(k) {
-      .Some(av) => case b.get(k) {
-        .Some(bv) => if av != bv {
-          return false
-        },
-        .None => return false,
-      },
-      .None => {},
-    }
-  }
-  true
-}
-
 fn int_keys_union(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
   out := a
   for k in b {
@@ -2448,48 +2430,12 @@ fn join_entry_valid(
   entry
 }
 
-fn same_valid_map(a: Dict<Int, Bool>, b: Dict<Int, Bool>) Bool {
-  if a.keys().len() != b.keys().len() {
-    return false
-  }
-  for k in a.keys() {
-    case a.get(k) {
-      .Some(av) => case b.get(k) {
-        .Some(bv) => if av != bv {
-          return false
-        },
-        .None => return false,
-      },
-      .None => {},
-    }
-  }
-  true
-}
-
 // ── Provenance join (param-origin sets) ─────────────────────────────
 fn prov_map_get(m: Dict<Int, Dict<Int, Vector<Int>>>, id: Int) Dict<Int, Vector<Int>> {
   case m.get(id) {
     .Some(v) => v,
     .None => Dict.new(),
   }
-}
-
-fn same_prov_map(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Bool {
-  if a.keys().len() != b.keys().len() {
-    return false
-  }
-  for k in a.keys() {
-    case a.get(k) {
-      .Some(av) => case b.get(k) {
-        .Some(bv) => if !same_live(av, bv) {
-          return false
-        },
-        .None => return false,
-      },
-      .None => {},
-    }
-  }
-  true
 }
 
 fn prov_local(m: Dict<Int, Vector<Int>>, id: Int) Vector<Int> {
@@ -2711,26 +2657,6 @@ fn meet_path_prov(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Dict<Int
   out
 }
 
-// Block field_own maps are equal iff same locals and each local's FieldMap has
-// the same path-key set (FieldMap.same).
-fn same_field_own_map(a: Dict<Int, ff.FieldMap>, b: Dict<Int, ff.FieldMap>) Bool {
-  if a.keys().len() != b.keys().len() {
-    return false
-  }
-  for k in a.keys() {
-    case a.get(k) {
-      .Some(av) => case b.get(k) {
-        .Some(bv) => if !av.same(bv) {
-          return false
-        },
-        .None => return false,
-      },
-      .None => {},
-    }
-  }
-  true
-}
-
 // Conservative widening for field_own: keep only locals present in both old and
 // next, and meet each local's FieldMap (keys intersection).
 fn merge_field_own_exit(old: Dict<Int, ff.FieldMap>, next: Dict<Int, ff.FieldMap>) Dict<
@@ -2753,26 +2679,6 @@ fn merge_field_own_exit(old: Dict<Int, ff.FieldMap>, next: Dict<Int, ff.FieldMap
     }
   }
   result
-}
-
-// Block path_prov maps are equal iff same locals and each local's per-PathKey map
-// has the same key set and equal origin vectors.
-fn same_path_prov_map(a: Dict<Int, Dict<Int, Vector<Int>>>, b: Dict<Int, Dict<Int, Vector<Int>>>) Bool {
-  if a.keys().len() != b.keys().len() {
-    return false
-  }
-  for k in a.keys() {
-    case a.get(k) {
-      .Some(av) => case b.get(k) {
-        .Some(bv) => if !same_pp_local(av, bv) {
-          return false
-        },
-        .None => return false,
-      },
-      .None => {},
-    }
-  }
-  true
 }
 
 fn same_pp_local(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Bool {
@@ -3033,11 +2939,11 @@ fn run_fixpoint(
         next_pp = merge_path_prov_exit(old_pp, st.path_prov)
       }
       if !already
-        or !same_own_map(old_own, next_own)
-        or !same_valid_map(old_valid, next_valid)
-        or !same_prov_map(old_prov, next_prov)
-        or !same_field_own_map(old_field, next_field)
-        or !same_path_prov_map(old_pp, next_pp) {
+        or !same_map(old_own, next_own, int_eq)
+        or !same_map(old_valid, next_valid, bool_eq)
+        or !same_map(old_prov, next_prov, same_live)
+        or !same_map(old_field, next_field, ff.same)
+        or !same_map(old_pp, next_pp, same_pp_local) {
         changed = true
         if already {
           prev_exits[blk.id.id] = old_own
