@@ -1,0 +1,183 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.ownership
+use compiler.ownership.{Lattice}
+
+fn ints_eq(a: Int, b: Int) Bool {
+  a == b
+}
+
+fn own_witness() Lattice<Int> {
+  Lattice.{ default: 2, join: ownership.join_own_tag, eq: ints_eq }
+}
+
+// Bool (valid) and Vector<Int> (prov) witnesses are self-contained so the suite
+// exercises the generic across all three instantiated T without depending on
+// ownership.tw internals (union_sorted/same_live are private there).
+fn and_b(a: Bool, b: Bool) Bool {
+  a and b
+}
+
+fn eq_b(a: Bool, b: Bool) Bool {
+  a == b
+}
+
+fn contains_i(v: Vector<Int>, x: Int) Bool {
+  for e in v {
+    if e == x {
+      return true
+    }
+  }
+  false
+}
+
+fn union_i(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
+  out := a
+  for x in b {
+    if !contains_i(out, x) {
+      out = .append(x)
+    }
+  }
+  out
+}
+
+fn same_i(a: Vector<Int>, b: Vector<Int>) Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  for x, i in a {
+    if x != b[i] {
+      return false
+    }
+  }
+  true
+}
+
+fn valid_witness() Lattice<Bool> {
+  Lattice.{ default: true, join: and_b, eq: eq_b }
+}
+
+fn prov_witness() Lattice<Vector<Int>> {
+  Lattice.{ default: [], join: union_i, eq: same_i }
+}
+
+fn get_or_neg(m: Dict<Int, Int>, k: Int) Int {
+  case m.get(k) {
+    .Some(v) => v,
+    .None => 0 - 1,
+  }
+}
+
+fn get_or_true(m: Dict<Int, Bool>, k: Int) Bool {
+  case m.get(k) {
+    .Some(v) => v,
+    .None => true,
+  }
+}
+
+fn get_or_empty(m: Dict<Int, Vector<Int>>, k: Int) Vector<Int> {
+  case m.get(k) {
+    .Some(v) => v,
+    .None => [],
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("cfg lattice")
+    .test(
+      "merge_targeted own: force-lock joins Unique+Shared to Shared",
+      fn() {
+        old: Dict<Int, Int> = Dict.new()
+        old[5] = 0 // Unique
+        next: Dict<Int, Int> = Dict.new()
+        next[5] = 1 // Shared
+        res := ownership.merge_targeted(old, next, Dict.new(), [], false, true, own_witness())
+        try assert.equal(res.locked.len(), 1)
+        try assert.equal(res.locked[0], 5)
+        try assert.equal(get_or_neg(res.map, 5), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "merge_targeted own: unchanged, unlocked key takes next exactly",
+      fn() {
+        old: Dict<Int, Int> = Dict.new()
+        old[3] = 0
+        next: Dict<Int, Int> = Dict.new()
+        next[3] = 0
+        res := ownership.merge_targeted(old, next, Dict.new(), [], false, false, own_witness())
+        try assert.equal(res.locked.len(), 0)
+        try assert.equal(get_or_neg(res.map, 3), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "merge_targeted own: oscillation back to prev locks + meets",
+      fn() {
+        old: Dict<Int, Int> = Dict.new()
+        old[7] = 0 // Unique
+        next: Dict<Int, Int> = Dict.new()
+        next[7] = 1 // Shared
+        prev: Dict<Int, Int> = Dict.new()
+        prev[7] = 1 // next == prev => oscillates
+        res := ownership.merge_targeted(old, next, prev, [], true, false, own_witness())
+        try assert.equal(res.locked.len(), 1)
+        try assert.equal(get_or_neg(res.map, 7), 1) // join_own(Unique,Shared)=Shared
+        .Ok({})
+      },
+    )
+    .test(
+      "merge_targeted valid: force-lock meets true & false to false",
+      fn() {
+        old: Dict<Int, Bool> = Dict.new()
+        old[2] = true
+        next: Dict<Int, Bool> = Dict.new()
+        next[2] = false
+        res := ownership.merge_targeted(old, next, Dict.new(), [], false, true, valid_witness())
+        try assert.equal(res.locked.len(), 1)
+        try assert.is_false(get_or_true(res.map, 2))
+        .Ok({})
+      },
+    )
+    .test(
+      "merge_targeted prov: force-lock unions param-origin sets",
+      fn() {
+        old: Dict<Int, Vector<Int>> = Dict.new()
+        old[4] = [1]
+        next: Dict<Int, Vector<Int>> = Dict.new()
+        next[4] = [2]
+        res := ownership.merge_targeted(old, next, Dict.new(), [], false, true, prov_witness())
+        try assert.equal(res.locked.len(), 1)
+        try assert.equal(get_or_empty(res.map, 4).len(), 2) // union([1],[2])
+        .Ok({})
+      },
+    )
+    .test(
+      "same_map: equal compare true, differing compare false",
+      fn() {
+        a: Dict<Int, Int> = Dict.new()
+        a[1] = 0
+        b: Dict<Int, Int> = Dict.new()
+        b[1] = 0
+        c: Dict<Int, Int> = Dict.new()
+        c[1] = 1
+        try assert.is_true(ownership.same_map(a, b, ints_eq))
+        try assert.is_false(ownership.same_map(a, c, ints_eq))
+        .Ok({})
+      },
+    )
+    .test(
+      "nested_get: absent id yields empty inner map",
+      fn() {
+        outer: Dict<Int, Dict<Int, Int>> = Dict.new()
+        inner: Dict<Int, Int> = Dict.new()
+        inner[2] = 9
+        outer[10] = inner
+        try assert.equal(ownership.nested_get(outer, 10).len(), 1)
+        try assert.equal(ownership.nested_get(outer, 99).len(), 0)
+        .Ok({})
+      },
+    )
+}

@@ -2274,6 +2274,88 @@ fn int_keys_union(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
   out
 }
 
+// ── Generic dataflow-lattice core (shared by own/valid/prov widening,
+//    and by every lattice's change-detection + nested-map access) ─────
+// A per-lattice witness: the absent-key default, the meet (join toward the
+// conservative top), and value equality. `merge_targeted` needs all three;
+// `same_map` needs only `eq`; `nested_get` needs neither.
+pub type Lattice<T> = .{ default: T, join: fn(T, T) T, eq: fn(T, T) Bool }
+
+pub type MergeOut<T> = .{ map: Dict<Int, T>, locked: Vector<Int> }
+
+fn lat_get<T>(m: Dict<Int, T>, k: Int, dflt: T) T {
+  case m.get(k) {
+    .Some(v) => v,
+    .None => dflt,
+  }
+}
+
+// Targeted-widening exit merge (replaces merge_own/valid/prov_exit_targeted).
+// Keep exact exit replacement (`out := next`) while a fact converges; lock a local
+// to the conservative meet once it oscillates back to `prev`, or once the per-block
+// changed-visit cap forces it. Locked locals accumulate across visits.
+// `pub` so the cfg_lattice_suite can lock behavior directly (matches how the other
+// cfg suites exercise internal ownership/field_facts helpers).
+pub fn merge_targeted<T>(
+  old: Dict<Int, T>,
+  next: Dict<Int, T>,
+  prev: Dict<Int, T>,
+  locked: Vector<Int>,
+  has_prev: Bool,
+  force_lock_changed: Bool,
+  lat: Lattice<T>,
+) MergeOut<T> {
+  out := next
+  next_locked := locked
+  keys := int_keys_union(old.keys(), next.keys())
+  for k in keys {
+    old_x := lat_get(old, k, lat.default)
+    next_x := lat_get(next, k, lat.default)
+    prev_x := lat_get(prev, k, lat.default)
+    changed := !lat.eq(old_x, next_x)
+    oscillates := has_prev and changed and lat.eq(next_x, prev_x)
+    if live_contains_int(next_locked, k) or oscillates or force_lock_changed and changed {
+      next_locked = insert_sorted(next_locked, k)
+      out[k] = lat.join(old_x, next_x)
+    }
+  }
+  MergeOut.{ map: out, locked: next_locked }
+}
+
+// Structural equality over a nested-map value (replaces same_*_map). Keys come from
+// `a`, so a length check plus per-key presence-and-eq in `b` is exact.
+pub fn same_map<T>(a: Dict<Int, T>, b: Dict<Int, T>, eq: fn(T, T) Bool) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+  for k in a.keys() {
+    case b.get(k) {
+      .Some(bv) => case a.get(k) {
+        .Some(av) => if !eq(av, bv) {
+          return false
+        },
+        .None => {},
+      },
+      .None => return false,
+    }
+  }
+  true
+}
+
+// Inner map for a block id, empty if absent (replaces *_map_get).
+pub fn nested_get<T>(m: Dict<Int, Dict<Int, T>>, id: Int) Dict<Int, T> {
+  case m.get(id) {
+    .Some(v) => v,
+    .None => Dict.new(),
+  }
+}
+
+// The own lattice stores Ownership *tags* (0=Unique,1=Shared,2=Unknown); its meet
+// routes through join_own so Unknown dominates, then Shared, then Unique.
+pub fn join_own_tag(a: Int, b: Int) Int {
+  own_of_tag(a).join_own(own_of_tag(b)).own_tag()
+}
+
 fn locked_get(locks: Dict<Int, Vector<Int>>, block_id: Int) Vector<Int> {
   case locks.get(block_id) {
     .Some(v) => v,

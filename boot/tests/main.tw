@@ -26,6 +26,7 @@ use .suites.builtins_suite
 use .suites.bundle_suite
 use .suites.byte_suite
 use .suites.cfg_field_facts_suite
+use .suites.cfg_lattice_suite
 use .suites.cfg_ownership_facts_suite
 use .suites.cfg_ownership_suite
 use .suites.cfg_return_paths_suite
@@ -283,6 +284,7 @@ runner.run_all([
   scripting_string_suite.suite(),
   scripting_vector_suite.suite(),
   cfg_field_facts_suite.suite(),
+  cfg_lattice_suite.suite(),
   cfg_ownership_suite.suite(),
   cfg_ownership_facts_suite.suite(),
   cfg_return_paths_suite.suite(),
