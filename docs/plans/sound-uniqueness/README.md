@@ -102,6 +102,9 @@ remaining ad hoc legality paths, and eventually evaluates Buffer cleanup.
 | [codegen/handoff-contract.md](codegen/handoff-contract.md) | Decision-record handoff, stale fallback, and backend lookup contract. |
 | [codegen/operation-catalog.md](codegen/operation-catalog.md) | Mutable operation families and persistent→mutable rewrite targets. |
 | [codegen/existing-hooks.md](codegen/existing-hooks.md) | Inventory of current hooks reused by first codegen slices. |
+| [codegen/vector-lowering.md](codegen/vector-lowering.md) | Vector indexed update and vector builder slice notes. |
+| [codegen/string-lowering.md](codegen/string-lowering.md) | String-concat builder-region slice notes. |
+| [codegen/dict-lowering.md](codegen/dict-lowering.md) | Dict set/remove slice notes. |
 | [migration/mutable-intrinsics.md](migration/mutable-intrinsics.md) | Later compiler-private mutable intrinsic family and hook cleanup target. |
 | [migration/buffer-cleanup.md](migration/buffer-cleanup.md) | Follow-up policy for retiring Buffer workaround usage. |
 

@@ -17,6 +17,17 @@ of the persistent target.
 inputs come from [../analysis/README.md](../analysis/README.md); later cleanup
 belongs to [../migration/README.md](../migration/README.md).
 
+## Focused slice docs
+
+| Doc | Purpose |
+|---|---|
+| [existing-hooks.md](existing-hooks.md) | Current backend/runtime hooks and non-hooks to verify before codegen work. |
+| [operation-catalog.md](operation-catalog.md) | Mutable operation families and persistent→mutable target mapping. |
+| [handoff-contract.md](handoff-contract.md) | ANF-keyed decision records, stale fallback, and variant-routing records. |
+| [vector-lowering.md](vector-lowering.md) | Vector indexed update and vector builder slice notes. |
+| [string-lowering.md](string-lowering.md) | String-concat builder-region slice notes. |
+| [dict-lowering.md](dict-lowering.md) | Dict set/remove slice notes. |
+
 ## Track invariants
 
 - Codegen consumes decisions; it does not re-prove uniqueness, last-use, field
@@ -127,7 +138,8 @@ First emitted-code change. Keep the slice intentionally narrow.
 Builder lowering has a different region shape from indexed update and should not
 be bundled with it. Current boot hooks cover vector builders and string concat
 builders; typed vector builder shims (`i64`/`bool`) are implementation details of
-the vector family.
+the vector family. Details: [vector-lowering.md](vector-lowering.md) and
+[string-lowering.md](string-lowering.md).
 
 - [ ] **Lower existing vector builder regions from facts.** Reuse current
   `vector$builder_new/from/push/freeze` hooks; do not redesign builder/runtime
