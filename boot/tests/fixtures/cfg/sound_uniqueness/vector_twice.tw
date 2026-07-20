@@ -1,0 +1,8 @@
+pub fn twice() Bool {
+  flags: Vector<Bool> = collect _ in range(10) {
+    true
+  }
+  flags = .set_at(0, false)
+  flags = .set_at(1, false)
+  flags[2]
+}

@@ -1,0 +1,338 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use commands.common.{format_compile_error}
+use compiler.cfg
+use compiler.opt.semantics as semantics
+use compiler.ownership
+use compiler.pipeline
+use compiler.summary
+use lib.module.loader
+
+fn fixtures_dir() String {
+  root := loader.find_project_root("boot")
+  "${root}/tests/fixtures/cfg/sound_uniqueness"
+}
+
+fn render_entry(name: String) Result<String, String> {
+  artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(result) => result,
+    .Err(err) => return .Err(format_compile_error(err)),
+  }
+  b := artifacts.builtins
+  view := cfg.build_view(artifacts.opt, b)
+  view = ownership.prune_dead_merge(view)
+  sem := semantics.make_prelude_optimizer_semantics(b)
+  table := summary.compute(view, b, sem)
+  variants := summary.compute_variants(view, b, sem, table)
+  analyzed := ownership.analyze_with_summaries(view, b, sem, table)
+  .Ok(summary.render_cfg(view, analyzed, b, sem, table, variants))
+}
+
+fn assert_has_all(out: String, parts: Vector<String>) Result<Void, String> {
+  for p in parts {
+    try assert.str_contains(out, p)
+  }
+  .Ok({})
+}
+
+fn section_between(out: String, start_marker: String, end_marker: String) Result<String, String> {
+  start := try out.index_of(start_marker).ok_or("missing section marker ${start_marker}")
+  tail := out.substring(start, out.len())
+  end := case tail.index_of(end_marker) {
+    .Some(i) => i,
+    .None => tail.len(),
+  }
+  .Ok(tail.substring(0, end))
+}
+
+fn section_from(out: String, start_marker: String) Result<String, String> {
+  start := try out.index_of(start_marker).ok_or("missing section marker ${start_marker}")
+  .Ok(out.substring(start, out.len()))
+}
+
+fn variant_section(out: String, func_name: String, key: String) Result<String, String> {
+  start_marker := "variant fn ${func_name} [${key}]"
+  start := try out.index_of(start_marker).ok_or("missing variant section ${start_marker}")
+  tail := out.substring(start, out.len())
+  rest := tail.substring(1, tail.len())
+  next := case rest.index_of("\nvariant fn ") {
+    .Some(i) => i + 1,
+    .None => tail.len(),
+  }
+  .Ok(tail.substring(0, next))
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("cfg sound uniqueness fixture coverage")
+    .test(
+      "multi-module env callers render owned and generic decisions",
+      fn() {
+        out := try render_entry("env_main")
+        build := try section_between(out, "fn build_owned", "fn branch_shared")
+        branch := try section_from(out, "fn branch_shared")
+
+        try assert_has_all(build, ["verdict ->", "unique:p0,p0.f0", "unique:p0,p0.f1"])
+        try assert_has_all(
+          branch,
+          ["summary: p0=Borrowed ret=shared", "transport=move([.f0] from(fresh))"],
+        )
+        try assert.is_false(branch.contains("verdict ->"))
+        .Ok({})
+      },
+    )
+    .test(
+      "multi-module Result state transport keeps handled payload paths visible",
+      fn() {
+        out := try render_entry("result_main")
+        try assert_has_all(
+          out,
+          [
+            "fn load_source",
+            "Payload(0,0)",
+            "Payload(1,0)",
+            "fn run_ok",
+            "terminator: match",
+            "transport=move([.f0] from(fresh))",
+            "transport=move([.f1] from(fresh))",
+          ],
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "vector index-write wrapper summarizes the base as in-place consumed",
+      fn() {
+        out := try render_entry("vector_replace")
+        replace := try section_from(out, "fn replace")
+
+        try assert.str_contains(replace, "p0=Consumed paths{[]}")
+
+        // After Gap A: the base still consumes in place, the stored value escapes
+        // via p2=Published (not via ret=alias), and the return aliases only the base.
+        try assert.str_contains(replace, "p2=Published")
+        try assert.str_contains(replace, "ret=alias(p0)")
+        .Ok({})
+      },
+    )
+    .test(
+      "unique straight-line vector set_at renders an owned in-place verdict",
+      fn() {
+        out := try render_entry("vector_once")
+        once := try section_between(out, "fn once", "fn set_at__Bool")
+        try assert.str_contains(once, "verdict ->")
+        try assert.str_contains(once, "[unique:p0]")
+        .Ok({})
+      },
+    )
+    .test(
+      "vector set_at return aliases only the base shell",
+      fn() {
+        out := try render_entry("vector_twice")
+        set_at := try section_from(out, "fn set_at__Bool")
+        try assert.str_contains(set_at, "ret=alias(p0)")
+        try assert.is_false(set_at.contains("ret=alias(p0,p2)"))
+        .Ok({})
+      },
+    )
+    .test(
+      "reused unique vector stays unique across sequential set_at",
+      fn() {
+        out := try render_entry("vector_twice")
+        twice := try section_between(out, "fn twice", "fn set_at__Bool")
+
+        // Both sequential set_at calls render an owned in-place verdict: the first
+        // MOVES flags (result unique), so the second still sees it unique.
+        try assert.str_contains(twice, "[unique:p0]")
+        occurrences := twice.split("[unique:p0]")
+        try assert.ok(occurrences.len() >= 3, "expected two owned verdicts in twice")
+        .Ok({})
+      },
+    )
+    .test(
+      "reference element stored into a vector is published not owned",
+      fn() {
+        out := try render_entry("vector_escape")
+        stash := try section_from(out, "fn stash")
+
+        // v (p2) is stored into xs at its LAST use and never returned, so it must be
+        // PUBLISHED (escaped): the caller cannot keep treating it as unique and later
+        // mutate it in place, which would corrupt the copy now inside xs. This is the
+        // exact soundness property the whole-return move must not break -- if the
+        // mandatory publish_atom is dropped, p2 degrades to Borrowed and this fails.
+        try assert.str_contains(stash, "p2=Published")
+
+        // ...and the return aliases ONLY the base shell, enabling the single-param move.
+        try assert.str_contains(stash, "ret=alias(p0)")
+        .Ok({})
+      },
+    )
+    .test(
+      "loop-carried vector set_at renders an owned in-place verdict",
+      fn() {
+        out := try render_entry("sieve_loop_set")
+        loop_set := try section_between(out, "fn loop_set_count", "fn set_at__Bool")
+        try assert.str_contains(loop_set, "terminator: loop-back-edge")
+        try assert.str_contains(loop_set, "verdict ->")
+        try assert.str_contains(loop_set, "[unique:p0]")
+
+        // The carried vector must not degrade to Shared on any fact line.
+        for line in loop_set.lines() {
+          if line.contains("facts.in=") or line.contains("facts.out=") {
+            try assert.is_false(line.contains(": Shared"))
+          }
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "nested loop-carried vector set_at renders an owned in-place verdict",
+      fn() {
+        out := try render_entry("nested_loop_set")
+        nested := try section_between(out, "fn nested_loop_set", "fn set_at__Bool")
+        try assert.str_contains(nested, "terminator: loop-back-edge")
+        try assert.str_contains(nested, "verdict ->")
+        try assert.str_contains(nested, "[unique:p0]")
+        for line in nested.lines() {
+          if line.contains("facts.in=") or line.contains("facts.out=") {
+            try assert.is_false(line.contains(": Shared"))
+          }
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "real-sieve-shaped nested loop renders an owned in-place verdict",
+      fn() {
+        out := try render_entry("nested_loop_sieve_shape")
+        nested := try section_between(out, "fn nested_loop_sieve_shape", "fn set_at__Bool")
+        try assert.str_contains(nested, "terminator: loop-back-edge")
+        try assert.str_contains(nested, "verdict ->")
+        try assert.str_contains(nested, "[unique:p0]")
+        for line in nested.lines() {
+          if line.contains("facts.in=") or line.contains("facts.out=") {
+            try assert.is_false(line.contains(": Shared"))
+          }
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "nested loop parameter vector stays conservative",
+      fn() {
+        out := try render_entry("nested_loop_param")
+        nested := try section_between(out, "fn nested_loop_param", "fn set_at__Bool")
+        try assert.str_contains(nested, "terminator: loop-back-edge")
+        try assert.is_false(nested.contains("verdict ->"))
+        try assert.is_false(nested.contains("[unique:p0]"))
+        .Ok({})
+      },
+    )
+    .test(
+      "nested loop fresh aliased vector stays conservative",
+      fn() {
+        out := try render_entry("nested_loop_fresh_alias")
+        nested := try section_between(out, "fn nested_loop_fresh_alias", "fn set_at__Bool")
+        try assert.str_contains(nested, "terminator: loop-back-edge")
+        try assert.is_false(nested.contains("verdict ->"))
+        try assert.is_false(nested.contains("[unique:p0]"))
+        .Ok({})
+      },
+    )
+    .test(
+      "self-recursive threaded record renders an owned variant verdict",
+      fn() {
+        out := try render_entry("recursive_thread_state")
+        generic := try section_between(out, "fn scc_thread", "fn run")
+        try assert.str_contains(generic, "persistent(aliased shell)")
+        variant := try variant_section(out, "scc_thread", "unique:p0")
+        try assert.str_contains(variant, "variant: p0=Consumed paths{[]}")
+        try assert.str_contains(variant, "reuse(unique)")
+        try assert.is_false(variant.contains("persistent(aliased shell)"))
+        .Ok({})
+      },
+    )
+    .test(
+      "Cell-backed dict update stays conservative",
+      fn() {
+        out := try render_entry("cell_main")
+        mark := try section_between(out, "fn mark", "fn run_marks")
+        try assert_has_all(
+          mark,
+          [
+            "summary: p0=Consumed paths{[],[.f1]} p1=Published ret=alias(p0)",
+            "transport=borrow",
+            "record_update",
+          ],
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "visit-like threaded state exercises loops branches and field decisions",
+      fn() {
+        out := try render_entry("visit_main")
+        try assert_has_all(
+          out,
+          [
+            "fn visit",
+            "summary: p0=Published p1=Published p2=Published ret=alias(p0)",
+            "terminator: loop-back-edge",
+            "match.join",
+            "record_update",
+            "fn run_visit",
+          ],
+        )
+        variant := try variant_section(out, "visit", "unique:p0")
+        try assert.str_contains(variant, "variant: p0=Consumed paths{[]}")
+        try assert.str_contains(variant, "reuse(unique)")
+        .Ok({})
+      },
+    )
+    .test(
+      "recursive threaded parameter stays conservative",
+      fn() {
+        out := try render_entry("recursive_thread_param")
+        body := try section_from(out, "fn thread_param")
+        try assert.is_false(body.contains("reuse(unique)"))
+        try assert.is_false(out.contains("variant fn thread_param"))
+        try assert.is_false(body.contains("variant: p0=Consumed"))
+        .Ok({})
+      },
+    )
+    .test(
+      "recursive threaded aliased record stays conservative",
+      fn() {
+        out := try render_entry("recursive_thread_alias")
+        body := try section_between(out, "fn thread_alias", "fn run_alias")
+        try assert.is_false(body.contains("reuse(unique)"))
+        try assert.is_false(out.contains("variant fn thread_alias"))
+        try assert.is_false(body.contains("variant: p0=Consumed"))
+        .Ok({})
+      },
+    )
+    .test(
+      "multi-param return alias stays conservative",
+      fn() {
+        out := try render_entry("multi_param_return_alias")
+        body := try section_between(out, "fn pick", "fn run_pick")
+        try assert.is_false(body.contains("reuse(unique)"))
+        try assert.is_false(out.contains("variant fn pick"))
+        try assert.is_false(body.contains("variant: p0=Consumed"))
+        try assert.is_false(body.contains("variant: p1=Consumed"))
+        .Ok({})
+      },
+    )
+    .test(
+      "mutually recursive threaded record renders owned variant verdicts",
+      fn() {
+        out := try render_entry("mutual_recursion_thread")
+        ping := try variant_section(out, "ping", "unique:p0")
+        try assert.str_contains(ping, "reuse(unique)")
+        pong := try variant_section(out, "pong", "unique:p0")
+        try assert.str_contains(pong, "reuse(unique)")
+        .Ok({})
+      },
+    )
+}

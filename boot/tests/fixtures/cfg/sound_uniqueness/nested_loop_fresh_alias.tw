@@ -1,0 +1,19 @@
+pub fn nested_loop_fresh_alias(n: Int) Bool {
+  flags: Vector<Bool> = collect _ in range(n) {
+    true
+  }
+  i := 0
+  for i < n {
+    alias := flags
+    step := i + 1
+    k := step
+    for k < n {
+      if alias[k] {
+        flags = .set_at(k, false)
+      }
+      k = k + step
+    }
+    i = i + 1
+  }
+  flags[0]
+}

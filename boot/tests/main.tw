@@ -25,6 +25,13 @@ use .suites.builtins_canonical_suite
 use .suites.builtins_suite
 use .suites.bundle_suite
 use .suites.byte_suite
+use .suites.cfg_field_facts_suite
+use .suites.cfg_lattice_suite
+use .suites.cfg_ownership_facts_suite
+use .suites.cfg_ownership_suite
+use .suites.cfg_return_paths_suite
+use .suites.cfg_sound_uniqueness_fixtures_suite
+use .suites.cfg_summary_suite
 use .suites.channel_suite
 use .suites.char_literal_suite
 use .suites.checker_coverage_suite
@@ -79,16 +86,11 @@ use .suites.multi_module_suite
 use .suites.occurrence_build_suite
 use .suites.occurrence_enrich_suite
 use .suites.occurrences_suite
-use .suites.opt_analysis_suite
-use .suites.opt_builder_region_suite
 use .suites.opt_const_fold_suite
 use .suites.opt_dead_let_suite
 use .suites.opt_defer_elim_suite
-use .suites.opt_liveness_suite
-use .suites.opt_loop_builder_suite
 use .suites.opt_pipeline_suite
 use .suites.opt_semantics_suite
-use .suites.opt_uniqueness_suite
 use .suites.parser_suite
 use .suites.project_config_suite
 use .suites.project_context_suite
@@ -134,6 +136,8 @@ use .suites.task_suite
 use .suites.type_registry_suite
 use .suites.typed_param_abi_suite
 use .suites.typed_record_fields_suite
+use .suites.uniqueness_census_suite
+use .suites.uniqueness_guard_suite
 use .suites.unused_imports_suite
 use .suites.utf16_suite
 use .suites.value_semantics_suite
@@ -186,15 +190,10 @@ runner.run_all([
   anf_suite.suite(),
   anf_lower_suite.suite(),
   anf_analysis_suite.suite(),
-  opt_builder_region_suite.suite(),
   opt_dead_let_suite.suite(),
   opt_const_fold_suite.suite(),
-  opt_analysis_suite.suite(),
-  opt_loop_builder_suite.suite(),
   opt_pipeline_suite.suite(),
-  opt_liveness_suite.suite(),
   opt_semantics_suite.suite(),
-  opt_uniqueness_suite.suite(),
   opt_defer_elim_suite.suite(),
   builtins_suite.suite(),
   bundle_suite.suite(),
@@ -284,4 +283,13 @@ runner.run_all([
   string_edge_cases_suite.suite(),
   scripting_string_suite.suite(),
   scripting_vector_suite.suite(),
+  cfg_field_facts_suite.suite(),
+  cfg_lattice_suite.suite(),
+  cfg_ownership_suite.suite(),
+  cfg_ownership_facts_suite.suite(),
+  cfg_return_paths_suite.suite(),
+  cfg_sound_uniqueness_fixtures_suite.suite(),
+  cfg_summary_suite.suite(),
+  uniqueness_census_suite.suite(),
+  uniqueness_guard_suite.suite(),
 ])

@@ -1,0 +1,15 @@
+pub fn nested_loop_param(flags: Vector<Bool>, n: Int) Bool {
+  i := 0
+  for i < n {
+    step := i + 1
+    k := step
+    for k < n {
+      if flags[k] {
+        flags = .set_at(k, false)
+      }
+      k = k + step
+    }
+    i = i + 1
+  }
+  flags[0]
+}

@@ -1,0 +1,4165 @@
+//! Phase 2 ownership analysis over the structural CFG view.
+//!
+//! Populates each block's entry/exit BlockFacts with a sound
+//! Unique/Shared/Unknown ownership fact, plus edge-arg-aware liveness and
+//! binding-validity. Consumes the CFG view (raw ops, params, real edge args);
+//! ANF stays authoritative and codegen does not read this.
+
+use compiler.anf.{AnfOp, Atom}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.cfg.{CfgBlock, CfgEdge, CfgFunction, CfgView, Terminator}
+use compiler.core_ir.{FuncId, LocalId}
+use compiler.field_facts as ff
+use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info, container_kind}
+use compiler.variant_id as vid
+
+pub type Ownership = { Unique, Shared, Unknown }
+
+// Conservative fallback for longer-period fixpoint cycles; two-step oscillations
+// usually lock earlier through targeted previous-value detection.
+fixpoint_widen_cap := 8
+
+// Tag encoding shared with cfg.BlockFacts.ownership (stored as Int there).
+pub fn own_tag(o: Ownership) Int {
+  case o {
+    .Unique => 0,
+    .Shared => 1,
+    .Unknown => 2,
+  }
+}
+
+pub fn own_of_tag(t: Int) Ownership {
+  cond {
+    t == 0 => .Unique,
+    t == 1 => .Shared,
+    _ => .Unknown,
+  }
+}
+
+// ── Interprocedural summaries ────────────────────────────────────────
+pub type EscapeEffect = { Borrowed, Retained }
+
+pub type ParamCapability = { NoCap, Consumed }
+
+// Phase 6 (D9): the reconciled three-way role, folding escape × capability.
+pub type ParamRole = { Borrowed, Consumed, Published }
+
+pub type ParamSummary = .{
+  base_role: ParamRole,
+  in_place_paths: vid.PathSet,
+  flows_to_return: Bool,
+}
+
+// Invariant (D9 precedence): base_role == Published  =>  in_place_paths.is_empty()
+//                            !in_place_paths.is_empty() =>  base_role == Consumed && flows_to_return
+pub type ReturnEffect = { OwnedFresh, MayAliasParams(Vector<Int>), Shared }
+
+pub type ReturnOwn = { OwnedFresh, OwnedFromParam(Int) }
+
+pub type RetVia = { Direct, Variant(Int, Int) }
+
+pub type ReturnPathOwn = .{ via: RetVia, field: Int?, own: ReturnOwn }
+
+pub type Summary = .{
+  params: Vector<ParamSummary>,
+  ret: ReturnEffect,
+  ret_paths: Vector<ReturnPathOwn>,
+}
+
+pub type SummaryTable = .{ by_func: Dict<Int, Summary> }
+
+pub fn empty_summary_table() SummaryTable {
+  SummaryTable.{ by_func: Dict.new() }
+}
+
+pub fn summary_get(t: SummaryTable, func_id: Int) Summary? {
+  t.by_func.get(func_id)
+}
+
+// ── Uses / defs extraction ──────────────────────────────────────────
+fn atom_local_id(a: Atom) Int? {
+  case a {
+    .ALocal(l) => .Some(l.id),
+    _ => .None,
+  }
+}
+
+fn push_uid(acc: Vector<Int>, a: Atom) Vector<Int> {
+  case atom_local_id(a) {
+    .Some(id) => acc.append(id),
+    .None => acc,
+  }
+}
+
+// Locals READ by an op (its ref/scalar operands).
+fn op_uses(op: AnfOp) Vector<Int> {
+  case op {
+    .ACall(callee, args) => {
+      acc := push_uid([], callee)
+      for a in args {
+        acc = push_uid(acc, a)
+      }
+      acc
+    },
+    .ABinOp(_, l, r, _) => push_uid(push_uid([], l), r),
+    .AUnOp(_, a, _) => push_uid([], a),
+    .AMakeClosure(_, caps) => collect c in caps {
+      c.id
+    },
+    .ARecord(_, fields) => {
+      acc: Vector<Int> = []
+      for fa in fields {
+        acc = push_uid(acc, fa.value)
+      }
+      acc
+    },
+    .ARecordGet(a, _, _) => push_uid([], a),
+    .ARecordUpdate(base, _, v, _, _) => push_uid(push_uid([], base), v),
+    .AVariant(_, _, args) => {
+      acc: Vector<Int> = []
+      for a in args {
+        acc = push_uid(acc, a)
+      }
+      acc
+    },
+    .AArrayLit(elems) => {
+      acc: Vector<Int> = []
+      for a in elems {
+        acc = push_uid(acc, a)
+      }
+      acc
+    },
+    .AIndex(base, idx, _, _) => push_uid(push_uid([], base), idx),
+    .AInit(a) => push_uid([], a),
+    .AAssign(_, a) => push_uid([], a),
+    .AGlobalSet(_, a) => push_uid([], a),
+    .AWrapAnyref(a, _) => push_uid([], a),
+    .AUnwrapAnyref(a, _) => push_uid([], a),
+    .AIf(_, _, _) => error("ownership: AIf reached op_uses; structural op is block-lowered"),
+    .AMatch(_, _) => error("ownership: AMatch reached op_uses; structural op is block-lowered"),
+    .ALoop(_) => error("ownership: ALoop reached op_uses; structural op is block-lowered"),
+    .ADefer(_) => error("ownership: ADefer reached op_uses; expected defer-free ANF"),
+  }
+}
+
+// Locals READ by a terminator (scrutinee/cond/return/break atoms), excluding
+// edge args (those are handled by the edge translation).
+fn term_uses(term: Terminator) Vector<Int> {
+  case term {
+    .CondBranch(test, _, _, _, _) => push_uid([], test),
+    .Match(scrut, _) => push_uid([], scrut),
+    .Return(.Some(a)) => push_uid([], a),
+    .Return(.None) => [],
+    .ValueBreak(a) => push_uid([], a),
+    _ => [],
+  }
+}
+
+// ── Quartet shell-writeback recognizer (G5: block-local peephole) ────
+fn op_mentions_local(op: AnfOp, id: Int) Bool {
+  for u in op_uses(op) {
+    if u == id {
+      return true
+    }
+  }
+  false
+}
+
+fn atom_is_local(a: Atom, id: Int) Bool {
+  case atom_local_id(a) {
+    .Some(x) => x == id,
+    .None => false,
+  }
+}
+
+fn atom_is_one_of(a: Atom, ids: Vector<Int>) Bool {
+  case atom_local_id(a) {
+    .Some(x) => live_contains_int(ids, x),
+    .None => false,
+  }
+}
+
+fn op_mentions_one_of(op: AnfOp, ids: Vector<Int>) Bool {
+  for id in ids {
+    if op_mentions_local(op, id) {
+      return true
+    }
+  }
+  false
+}
+
+fn op_moves_one_of(op: AnfOp, ids: Vector<Int>, live_after: Vector<Int>, sem: OptimizerSemantics) Bool {
+  case op {
+    .ACall(callee, args) => case callee_func_id(callee) {
+      .Some(fid) => case call_info(sem, fid) {
+        .Some(cs) => case cs.effect {
+          .Update => case cs.cow_base_arg {
+            .Some(k) => case atom_local_id(args[k]) {
+              .Some(base_id) => live_contains_int(ids, base_id)
+                and !live_contains_int(live_after, base_id),
+              .None => false,
+            },
+            .None => false,
+          },
+          _ => false,
+        },
+        .None => false,
+      },
+      .None => false,
+    },
+    _ => false,
+  }
+}
+
+fn is_record_get_of(op: AnfOp, bid: Int, fid: Int) Bool {
+  case op {
+    .ARecordGet(base, f, _) => atom_is_local(base, bid) and f.id == fid,
+    _ => false,
+  }
+}
+
+fn is_rebind_of_update(op: AnfOp, bid: Int, update_result: Int) Bool {
+  case op {
+    .AAssign(local, a) => local.id == bid and atom_is_local(a, update_result),
+    _ => false,
+  }
+}
+
+// bid must be dead after the block: not read by the terminator and not fed on
+// any outgoing edge. Reuses term_uses (covers CondBranch/Match/Return/ValueBreak).
+fn exit_mentions_local(blk: CfgBlock, id: Int) Bool {
+  case blk.terminator {
+    .Some(term) => {
+      for u in term_uses(term) {
+        if u == id {
+          return true
+        }
+      }
+    },
+    .None => {},
+  }
+  for e in blk.succs {
+    for a in e.args {
+      if atom_is_local(a, id) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+// True iff, strictly after the projection at index `i` in this block:
+//  - there is EXACTLY ONE ARecordUpdate(base=bid, field=fid, v=_) (the write-back),
+//    and its replacement `v` is the projected field or a value derived from it;
+//  - the replacement `v` is not `bid` itself and is last-use at the write-back;
+//  - before a source-level `bid = update_result` rebind, `bid` is mentioned by
+//    NO other instruction;
+//  - `bid.fid` is not read again before that rebind;
+//  - projected/derived locals only flow through known COW updates that actually
+//    consume their base according to the block liveness scan;
+//  - if there is no rebind, `bid` does NOT escape the block (not in terminator
+//    or any outgoing edge arg).
+fn quartet_ok(
+  blk: CfgBlock,
+  scan: BlockScan,
+  i: Int,
+  projected: Int,
+  bid: Int,
+  fid: Int,
+  sem: OptimizerSemantics,
+) Bool {
+  insts := blk.instructions
+  matched := false
+  update_result := -1
+  rebound := false
+  derived := [projected]
+  for j in range_from(i + 1, insts.len()) {
+    op := insts[j].op
+    is_match := case op {
+      .ARecordUpdate(base2, f2, _v, _, _) => atom_is_local(base2, bid) and f2.id == fid,
+      _ => false,
+    }
+    if is_match {
+      if matched {
+        return false
+      }
+      matched = true
+      update_result = insts[j].anf_local.id
+
+      case op {
+        .ARecordUpdate(_, _, v, _, _) => {
+          // reject self-insert: v == bid would not truly consume the field backing
+          if atom_is_local(v, bid) {
+            return false
+          }
+          case atom_local_id(v) {
+            .Some(vid) => if !live_contains_int(derived, vid)
+              or live_contains_int(scan.live_after[j], vid) {
+              return false
+            },
+            .None => return false,
+          }
+        },
+        _ => {},
+      }
+    } else if matched and is_rebind_of_update(op, bid, update_result) {
+      // After `bid = update_result`, the id denotes the updated record, not the
+      // projected shell — nothing further can invalidate the proof.
+      rebound = true
+      break
+    } else {
+      // a second read of bid.fid, or ANY other mention of bid, fails the proof
+      if is_record_get_of(op, bid, fid) {
+        return false
+      }
+      if op_mentions_local(op, bid) {
+        return false
+      }
+      if op_mentions_one_of(op, derived) {
+        if !op_moves_one_of(op, derived, scan.live_after[j], sem) {
+          return false
+        }
+        derived = insert_sorted(derived, insts[j].anf_local.id)
+      }
+    }
+  }
+  matched and (rebound or !exit_mentions_local(blk, bid))
+}
+
+// Pre-scan a block's instruction list, returning the set of ARecordGet
+// result-locals whose projection is licensed to MOVE by the quartet proof,
+// even though the base record is not whole-record-dead at the get.
+fn recognize_quartet_moves(blk: CfgBlock, scan: BlockScan, sem: OptimizerSemantics) Dict<Int, Bool> {
+  moves: Dict<Int, Bool> = Dict.new()
+  insts := blk.instructions
+  for inst, i in insts {
+    case inst.op {
+      .ARecordGet(base, f, _) => case atom_local_id(base) {
+        .Some(bid) => {
+          rget := inst.anf_local.id
+          if quartet_ok(blk, scan, i, rget, bid, f.id, sem) {
+            moves[rget] = true
+          }
+        },
+        .None => {},
+      },
+      _ => {},
+    }
+  }
+  moves
+}
+
+fn quartet_has(q: Dict<Int, Bool>, id: Int) Bool {
+  case q.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+// True iff the projection `R = record_get out.f` at index `i` is licensed to
+// MOVE the `out.f` subtree even though `out` itself is not whole-record-dead at
+// the get — the finer path-liveness Phase 4 deferred. Strictly AFTER the
+// projection in this block:
+//  - `out.f` is not read again (no second record_get out.f);
+//  - `out` is mentioned ONLY by other `record_get out.g` sibling reads (g != f)
+//    — any other mention (publish/return/store/pass-to-call/alias/terminator)
+//    fails the proof;
+//  - `out` is DEAD after the block, checked as BOTH `!exit_mentions_local`
+//    (terminator/edge) AND `!live_contains_int(blk.exit.live, out)` (live-out).
+//    The live-out check is load-bearing: exit_mentions_local alone misses `out`
+//    read in a LATER block (e.g. inside a successor if-branch).
+fn transport_ok(blk: CfgBlock, scan: BlockScan, i: Int, out_id: Int, fid: Int) Bool {
+  insts := blk.instructions
+  for j in range_from(i + 1, insts.len()) {
+    op := insts[j].op
+    if is_record_get_of(op, out_id, fid) {
+      return false // a second read of out.f
+    }
+    is_sibling := case op {
+      .ARecordGet(base, f2, _) => atom_is_local(base, out_id) and f2.id != fid,
+      _ => false,
+    }
+    if is_sibling {} else if op_mentions_local(op, out_id) {
+      return false // any other mention of out (publish/store/pass/alias)
+    }
+  }
+  !exit_mentions_local(blk, out_id) and !live_contains_int(blk.exit.live, out_id)
+}
+
+// Debug-render companion to transport_ok: the concrete reason a transport
+// projection was NOT licensed (empty String = licensed). Mirrors transport_ok's
+// checks in the same order so the rendered verdict matches the analysis.
+fn transport_reason(blk: CfgBlock, scan: BlockScan, i: Int, out_id: Int, fid: Int) String {
+  insts := blk.instructions
+  for j in range_from(i + 1, insts.len()) {
+    op := insts[j].op
+    if is_record_get_of(op, out_id, fid) {
+      return "L${out_id}.f${fid} read twice"
+    }
+    is_sibling := case op {
+      .ARecordGet(base, f2, _) => atom_is_local(base, out_id) and f2.id != fid,
+      _ => false,
+    }
+    if is_sibling {} else if op_mentions_local(op, out_id) {
+      return "L${out_id} published"
+    }
+  }
+  if exit_mentions_local(blk, out_id) {
+    return "L${out_id} escapes on exit edge"
+  }
+  if live_contains_int(blk.exit.live, out_id) {
+    return "L${out_id} live-out"
+  }
+  ""
+}
+
+// Pre-scan a block's instruction list, returning the set of ARecordGet
+// result-locals whose projection is licensed to MOVE by the transport proof,
+// even though the base record stays live for SIBLING field reads.
+fn recognize_transport_moves(blk: CfgBlock, scan: BlockScan) Dict<Int, Bool> {
+  moves: Dict<Int, Bool> = Dict.new()
+  for inst, i in blk.instructions {
+    case inst.op {
+      .ARecordGet(base, f, _) => case atom_local_id(base) {
+        .Some(bid) => if transport_ok(blk, scan, i, bid, f.id) {
+          moves[inst.anf_local.id] = true
+        },
+        .None => {},
+      },
+      _ => {},
+    }
+  }
+  moves
+}
+
+fn transport_has(d: Dict<Int, Bool>, id: Int) Bool {
+  case d.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+// Locals a straight-line op DEFINES. AAssign defines both its let-result and
+// its rebind target; every other op defines only its let-result. This matters:
+// a def must be killed before its own block's uses so a def-before-use does NOT
+// leak the local into live_in (the bug the naive gather-all formula had).
+fn op_defs(inst_result: Int, op: AnfOp) Vector<Int> {
+  case op {
+    .AAssign(target, _) => insert_sorted(insert_sorted([], inst_result), target.id),
+    _ => insert_sorted([], inst_result),
+  }
+}
+
+// ── Sorted-Int set helpers (deterministic; Int twins of cfg's LocalId ones) ──
+fn live_contains_int(v: Vector<Int>, id: Int) Bool {
+  for x in v {
+    if x == id {
+      return true
+    }
+  }
+  false
+}
+
+fn insert_sorted(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    if x == id {
+      return v
+    }
+    if !inserted and id < x {
+      out = .append(id)
+      inserted = true
+    }
+    out = .append(x)
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  out
+}
+
+fn union_sorted(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
+  out := a
+  for x in b {
+    out = insert_sorted(out, x)
+  }
+  out
+}
+
+fn diff_sorted(a: Vector<Int>, remove: Vector<Int>) Vector<Int> {
+  out: Vector<Int> = []
+  for x in a {
+    if !live_contains_int(remove, x) {
+      out = .append(x)
+    }
+  }
+  out
+}
+
+fn same_live(a: Vector<Int>, b: Vector<Int>) Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  for x, i in a {
+    if x != b[i] {
+      return false
+    }
+  }
+  true
+}
+
+// ── Backward liveness ───────────────────────────────────────────────
+type BlockLive = .{ live_in: Vector<Int>, live_out: Vector<Int> }
+
+fn live_get(live: Dict<Int, BlockLive>, id: Int) BlockLive {
+  case live.get(id) {
+    .Some(v) => v,
+    .None => error("ownership: no liveness for block ${id}"),
+  }
+}
+
+fn block_by_id(blocks: Vector<CfgBlock>, id: Int) CfgBlock {
+  for b in blocks {
+    if b.id.id == id {
+      return b
+    }
+  }
+  error("ownership: unknown block ${id}")
+}
+
+// live_out contribution of edge (pred -> succ):
+//   (succ.live_in - succ.params) ∪ { locals(edge.args[i]) | succ.params[i] ∈ succ.live_in }
+fn edge_live_contribution(succ: CfgBlock, succ_live_in: Vector<Int>, edge_args: Vector<Atom>) Vector<
+  Int,
+> {
+  param_ids := collect p in succ.params {
+    p.id
+  }
+
+  // values live past the join, named directly (not a param)
+  acc: Vector<Int> = []
+  for id in succ_live_in {
+    if !live_contains_int(param_ids, id) {
+      acc = insert_sorted(acc, id)
+    }
+  }
+
+  // params translated to the atom this edge feeds
+  for p, i in succ.params {
+    if live_contains_int(succ_live_in, p.id) {
+      case atom_local_id(edge_args[i]) {
+        .Some(src) => acc = insert_sorted(acc, src),
+        .None => {},
+      }
+    }
+  }
+  acc
+}
+
+// Backward per-instruction scan of one block. Returns live_in AND, for each
+// instruction index i, the set of locals live *immediately after* i
+// (`live_after[i]`). live_after is what Task 5 uses for last-use: a use of L at
+// i is a last-use iff L ∉ live_after[i] — which correctly handles a later
+// AAssign that redefines L (loop consume-then-reassign) and a block-live-out L.
+type BlockScan = .{ live_in: Vector<Int>, live_after: Vector<Vector<Int>> }
+
+fn scan_block_backward(blk: CfgBlock, live_out: Vector<Int>) BlockScan {
+  // Seed with live_out plus the terminator's direct uses (scrutinee/cond/
+  // return/break). Terminator EDGE args are handled by the edge translation in
+  // edge_live_contribution, not here.
+  cur := live_out
+  case blk.terminator {
+    .Some(t) => {
+      for u in term_uses(t) {
+        cur = insert_sorted(cur, u)
+      }
+    },
+    .None => {},
+  }
+  n := blk.instructions.len()
+  after_rev: Vector<Vector<Int>> = []
+  i := n - 1
+  for i >= 0 {
+    after_rev = .append(cur) // live AFTER instruction i
+    inst := blk.instructions[i]
+    cur = diff_sorted(cur, op_defs(inst.anf_local.id, inst.op)) // kill defs first
+    for u in op_uses(inst.op) {
+      // then add uses
+      cur = insert_sorted(cur, u)
+    }
+    i = i - 1
+  }
+
+  // after_rev is high->low; reverse so live_after[i] indexes by instruction i.
+  live_after: Vector<Vector<Int>> = []
+  j := after_rev.len() - 1
+  for j >= 0 {
+    live_after = .append(after_rev[j])
+    j = j - 1
+  }
+
+  // Kill this block's incoming pattern-bound locals at entry: a destructured
+  // payload is a borrow from the scrutinee, not a value flowing in from a
+  // predecessor, so it must never appear live-in (retires the Phase 2 G3
+  // over-approximation). The forward pass seeds absent locals Unknown, so no
+  // forward-seed change is needed.
+  cur = diff_sorted(cur, blk.bound)
+  BlockScan.{ live_in: cur, live_after }
+}
+
+// Per-block analysis inputs that depend ONLY on block structure + the fixed
+// liveness scan (never on the dataflow state). Computing these once — rather than
+// per fixpoint visit — keeps the O(n^2) quartet recognizer off the iteration path.
+type BlockPrep = .{ scan: BlockScan, moves: Dict<Int, Bool>, transport: Dict<Int, Bool> }
+
+fn block_prep(blk: CfgBlock, sem: OptimizerSemantics) BlockPrep {
+  scan := scan_block_backward(blk, blk.exit.live) // exit.live filled by the liveness stage
+  BlockPrep.{
+    scan,
+    moves: recognize_quartet_moves(blk, scan, sem),
+    transport: recognize_transport_moves(blk, scan),
+  }
+}
+
+// Precompute every block's prep once, keyed by block id, for the fixpoint loop.
+fn prep_blocks(blocks: Vector<CfgBlock>, sem: OptimizerSemantics) Dict<Int, BlockPrep> {
+  preps: Dict<Int, BlockPrep> = Dict.new()
+  for blk in blocks {
+    preps[blk.id.id] = block_prep(blk, sem)
+  }
+  preps
+}
+
+fn prep_get(preps: Dict<Int, BlockPrep>, blk: CfgBlock, sem: OptimizerSemantics) BlockPrep {
+  case preps.get(blk.id.id) {
+    .Some(p) => p,
+    .None => block_prep(blk, sem),
+  }
+}
+
+fn compute_liveness(blocks: Vector<CfgBlock>) Dict<Int, BlockLive> {
+  live: Dict<Int, BlockLive> = Dict.new()
+  for b in blocks {
+    live[b.id.id] = BlockLive.{ live_in: [], live_out: [] }
+  }
+  changed := true
+  for changed {
+    changed = false
+
+    // iterate in reverse block-id order (blocks are appended in ~RPO)
+    idx := blocks.len() - 1
+    for idx >= 0 {
+      blk := blocks[idx]
+
+      // live_out = ∪ over succ edges of edge_live_contribution
+      lo: Vector<Int> = []
+      for e in blk.succs {
+        succ := block_by_id(blocks, e.target.id)
+        succ_in := live_get(live, succ.id.id).live_in
+        lo = union_sorted(lo, edge_live_contribution(succ, succ_in, e.args))
+      }
+      li := scan_block_backward(blk, lo).live_in
+      prev := live_get(live, blk.id.id)
+      if !same_live(prev.live_in, li) or !same_live(prev.live_out, lo) {
+        changed = true
+        live[blk.id.id] = BlockLive.{ live_in: li, live_out: lo }
+      }
+      idx = idx - 1
+    }
+  }
+  live
+}
+
+// ── Forward ownership transfer ──────────────────────────────────────
+pub fn join_own(a: Ownership, b: Ownership) Ownership {
+  case a {
+    .Unknown => .Unknown,
+    .Shared => case b {
+      .Unknown => .Unknown,
+      _ => .Shared,
+    },
+    .Unique => b,
+  }
+}
+
+// ownership of an atom against a working map: locals resolve; non-locals Unknown.
+fn fact_of(own: Dict<Int, Int>, a: Atom) Ownership {
+  case atom_local_id(a) {
+    .Some(id) => case own.get(id) {
+      .Some(tag) => own_of_tag(tag),
+      .None => .Unknown,
+    },
+    .None => .Unknown,
+  }
+}
+
+fn set_own(own: Dict<Int, Int>, id: Int, o: Ownership) Dict<Int, Int> {
+  own[id] = o.own_tag()
+  own
+}
+
+// FuncId of a direct callee atom; .None for indirect (closure) callees.
+fn callee_func_id(a: Atom) FuncId? {
+  case a {
+    .AGlobalFunc(fid) => .Some(fid),
+    _ => .None,
+  }
+}
+
+// The locals used at instruction i whose value is dead immediately after i.
+fn last_use_at(op: AnfOp, live_after_i: Vector<Int>) Vector<Int> {
+  out: Vector<Int> = []
+  for id in op_uses(op) {
+    if !live_contains_int(live_after_i, id) {
+      out = insert_sorted(out, id)
+    }
+  }
+  out
+}
+
+fn is_last_use(last: Vector<Int>, id: Int) Bool {
+  live_contains_int(last, id)
+}
+
+type ForwardState = .{
+  own: Dict<Int, Int>,
+  valid: Dict<Int, Bool>,
+  prov: Dict<Int, Vector<Int>>,
+  field_own: Dict<Int, ff.FieldMap>,
+  path_prov: Dict<Int, Dict<Int, Vector<Int>>>,
+}
+
+fn field_own_get(st: ForwardState, id: Int) ff.FieldMap {
+  case st.field_own.get(id) {
+    .Some(m) => m,
+    .None => ff.empty(),
+  }
+}
+
+fn set_field_own(st: ForwardState, id: Int, m: ff.FieldMap) ForwardState {
+  st.field_own[id] = m
+  st
+}
+
+fn clear_field_own(st: ForwardState, id: Int) ForwardState {
+  st.field_own[id] = ff.empty()
+  st
+}
+
+fn path_prov_get(st: ForwardState, id: Int) Dict<Int, Vector<Int>> {
+  case st.path_prov.get(id) {
+    .Some(m) => m,
+    .None => Dict.new(),
+  }
+}
+
+fn set_path_prov(st: ForwardState, id: Int, m: Dict<Int, Vector<Int>>) ForwardState {
+  st.path_prov[id] = m
+  st
+}
+
+fn clear_path_prov(st: ForwardState, id: Int) ForwardState {
+  st.path_prov[id] = Dict.new()
+  st
+}
+
+fn set_own_st(st: ForwardState, id: Int, o: Ownership) ForwardState {
+  st.own = set_own(st.own, id, o)
+
+  // Downward-closed invariant: a non-Unique shell can carry no field facts.
+  st = if o.own_tag() != 0 {
+    st.clear_field_own(id).clear_path_prov(id)
+  } else {
+    st
+  }
+  st
+}
+
+// Provenance (param-origin) of an atom against a working prov map.
+fn prov_of(prov: Dict<Int, Vector<Int>>, a: Atom) Vector<Int> {
+  case atom_local_id(a) {
+    .Some(id) => case prov.get(id) {
+      .Some(v) => v,
+      .None => [],
+    },
+    .None => [],
+  }
+}
+
+fn atom_field_own(st: ForwardState, a: Atom) ff.FieldMap {
+  case atom_local_id(a) {
+    .Some(id) => st.field_own_get(id),
+    .None => ff.empty(),
+  }
+}
+
+fn set_prov_st(st: ForwardState, id: Int, origins: Vector<Int>) ForwardState {
+  st.prov[id] = origins
+  st
+}
+
+fn set_result(st: ForwardState, id: Int, o: Ownership) ForwardState {
+  st.set_own_st(id, o)
+}
+
+fn set_valid(st: ForwardState, id: Int, v: Bool) ForwardState {
+  st.valid[id] = v
+  st
+}
+
+// Publish a local Shared and, transitively, every param origin it carries. A
+// value derived from a param (wrapped into an aggregate, aliased, etc.) that
+// escapes forces its origin params to Shared too — the aggregate/escape hole.
+fn publish_local(st: ForwardState, id: Int) ForwardState {
+  pp := st.path_prov_get(id) // capture before the choke point clears it
+  st = .set_own_st(id, .Shared)
+  case st.prov.get(id) {
+    .Some(origins) => {
+      for o in origins {
+        st = .set_own_st(o, .Shared)
+      }
+    },
+    .None => {},
+  }
+  for k, os in pp {
+    for o in os {
+      st = .set_own_st(o, .Shared)
+    }
+  }
+  st
+}
+
+fn publish_atom(st: ForwardState, a: Atom) ForwardState {
+  case atom_local_id(a) {
+    .Some(id) => st.publish_local(id),
+    .None => st,
+  }
+}
+
+// AInit / wrap / unwrap move-vs-alias hinge.
+fn init_hinge(st: ForwardState, result: Int, a: Atom, last: Vector<Int>) ForwardState {
+  case atom_local_id(a) {
+    .Some(src) => if local_valid_at_last(st.valid, src, last) {
+      // move: result takes source ownership; source binding invalid
+      o := fact_of(st.own, a)
+      fields := st.field_own_get(src)
+      pp := st.path_prov_get(src)
+      st = .set_own_st(result, o)
+      st = if o.own_tag() == 0 {
+        // move: copy source's field_own AND path_prov in lockstep
+        st.set_field_own(result, fields).set_path_prov(result, pp)
+      } else {
+        st
+      }
+      st.set_valid(src, false)
+    } else {
+      // alias: both Shared
+      st = .publish_local(src)
+      st.set_own_st(result, .Shared)
+    },
+    .None => st.set_own_st(result, .Unknown),
+  }
+}
+
+// Field-store hinge: same two outcomes as AInit but the stored value goes into a
+// fresh shell (no tracked field ownership in Phase 2), so on move we only
+// invalidate the source; on alias we demote it.
+fn field_store(st: ForwardState, a: Atom, last: Vector<Int>) ForwardState {
+  case atom_local_id(a) {
+    .Some(src) => if is_last_use(last, src) {
+      st.set_valid(src, false)
+    } else {
+      st.publish_local(src)
+    },
+    .None => st,
+  }
+}
+
+// Consuming-op hinge on a named base (ARecordUpdate: base is the shell).
+fn consume_base(st: ForwardState, result: Int, base: Atom, last: Vector<Int>) ForwardState {
+  case atom_local_id(base) {
+    .Some(bid) => if local_reusable(st.own, st.valid, bid, last) {
+      st = .set_own_st(result, .Unique)
+      st.set_valid(bid, false)
+    } else {
+      st.set_own_st(result, .Unknown)
+    },
+    .None => st.set_own_st(result, .Unknown),
+  }
+}
+
+fn consume_call_base(
+  st: ForwardState,
+  result: Int,
+  cs: CallSemantics,
+  args: Vector<Atom>,
+  last: Vector<Int>,
+) ForwardState {
+  case cs.cow_base_arg {
+    .Some(k) => if k < args.len() {
+      st.consume_base(result, args[k], last)
+    } else {
+      st.set_own_st(result, .Unknown)
+    },
+    .None => st.set_own_st(result, .Unknown),
+  }
+}
+
+// Set result prov from the cow_base_arg (if any) so provenance follows COW
+// aliasing: a COW builtin's result structurally shares the base arg's backing,
+// so it must carry that base's param origins (mirrors AIndex/ARecordUpdate).
+fn carry_base_prov(st: ForwardState, result: Int, cs: CallSemantics, args: Vector<Atom>) ForwardState {
+  case cs.cow_base_arg {
+    .Some(k) => if k < args.len() {
+      st.set_prov_st(result, prov_of(st.prov, args[k]))
+    } else {
+      st
+    },
+    .None => st,
+  }
+}
+
+// The explicitly-retained payload operands for a builtin result. New prelude
+// metadata distinguishes stored payloads from read-only selector operands
+// (`vector$set_unsafe` index, `Dict.remove` key). `.None` is the legacy fallback
+// for semantics reconstructed from old CowConfig metadata: retain every non-base
+// arg, matching the previous conservative behavior.
+fn retained_arg_indices(cs: CallSemantics, args: Vector<Atom>) Vector<Int> {
+  case cs.retained_args {
+    .Some(v) => v,
+    .None => {
+      out: Vector<Int> = []
+      for _a, i in args {
+        keep := case cs.cow_base_arg {
+          .Some(k) => i != k,
+          .None => true,
+        }
+        if keep {
+          out = .append(i)
+        }
+      }
+      out
+    },
+  }
+}
+
+// Absorb retained payload args into `result` like aggregate fields: field_store
+// each retained operand and union its prov into result's prov. Keeps result's
+// existing prov (e.g. base prov already set) so a COW result carries both its
+// base's and its stored values' origins, but not lookup/index operands.
+fn absorb_retained_call_args(
+  st: ForwardState,
+  result: Int,
+  args: Vector<Atom>,
+  retained: Vector<Int>,
+  last: Vector<Int>,
+) ForwardState {
+  origins := case st.prov.get(result) {
+    .Some(v) => v,
+    .None => [],
+  }
+  for i in retained {
+    if i < args.len() {
+      origins = union_sorted(origins, prov_of(st.prov, args[i]))
+      st = .field_store(args[i], last)
+    }
+  }
+  st.set_prov_st(result, origins)
+}
+
+// COW `.Update` ONLY (see transfer_builtin_call's .Update branch). The stored
+// operands escape into the collection as DEEP elements. They must be PUBLISHED so
+// the caller cannot keep treating them as uniquely owned and later mutate them in
+// place (which would corrupt the copy now living inside the collection). They must
+// NOT join the result's SHELL provenance: carry_base_prov (run immediately before
+// this in the .Update chain) already set the result's shell prov to the COW base's
+// origins only, so a single-param whole-return move can fire. This is a SEPARATE
+// function from absorb_retained_call_args on purpose: the .Allocate path still
+// absorbs its retained args into the fresh container's shell and must stay unchanged.
+//
+// publish_atom is REQUIRED for an ESCAPING operand, not redundant with field_store:
+// field_store publishes only a NON-last-use operand; on a LAST-use store it
+// invalidates instead (set_valid=false -> cap=Consumed, esc stays Borrowed). set_at
+// stores its `value` PARAM at its last use, so without this publish `value` classifies
+// Borrowed once it leaves the shell alias set (it no longer flows_to_return: an element
+// is at .Elem, not a ret_path) and is NEVER published at the caller -- an unsound
+// escape. The publish forces esc=Retained -> base_role=Published.
+//
+// But publish ONLY when the operand actually escapes. The publish and the result's
+// [Elem] field fact are two faces of one decision: keep [Elem] <=> the operand is a
+// clean unique move into the container <=> it must NOT be published. `single_retention`
+// (own==Unique && last-use && single-store) is exactly that predicate, and it is what
+// the .Update field-fact block reads to keep/drop [Elem]. A single-retained unique
+// operand (e.g. a fresh local stored at last use) is genuinely consumed into the
+// result -- no surviving caller alias to protect -- so publishing it would only clobber
+// its ownership and spuriously drop [Elem] (a pessimization, more COW). A param or
+// aliased operand is NOT single-retained (params are not Unique in the generic pass,
+// nor seeded Unique for a variant unless keyed), so it still publishes and escapes
+// soundly. Invariant: result keeps [Elem] iff the operand was not published here.
+fn escape_retained_call_args(
+  st: ForwardState,
+  args: Vector<Atom>,
+  retained: Vector<Int>,
+  last: Vector<Int>,
+) ForwardState {
+  operands := retained_atoms(retained, args)
+  for i in retained {
+    if i < args.len() {
+      moved := st.single_retention(args[i], last, operands)
+      st = .field_store(args[i], last)
+      st = if moved {
+        st
+      } else {
+        st.publish_atom(args[i])
+      }
+    }
+  }
+  st
+}
+
+fn transfer_call(
+  st: ForwardState,
+  result: Int,
+  callee: Atom,
+  args: Vector<Atom>,
+  last: Vector<Int>,
+  table: SummaryTable,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+) ForwardState {
+  // Two-level lookup: builtins resolve via CallSemantics; a direct user callee
+  // WITHOUT builtin semantics consults its interprocedural summary; everything
+  // else (unknown/extern/indirect/closure) falls to the conservative publish
+  // bucket.
+  case callee_func_id(callee) {
+    .Some(fid) => case call_info(sem, fid) {
+      .Some(cs) => st.transfer_builtin_call(result, fid, cs, args, last, sem),
+      .None => case table.summary_get(fid.id) {
+        .Some(s) => st.transfer_summarized_call(result, s, args, last, suppress, fid.id),
+        .None => st.publish_call(result, args),
+      },
+    },
+    .None => st.publish_call(result, args), // indirect/closure callee
+  }
+}
+
+// Conservative bucket: publish every ref arg, result Unknown.
+fn publish_call(st: ForwardState, result: Int, args: Vector<Atom>) ForwardState {
+  for a in args {
+    st = .publish_atom(a)
+  }
+  st.set_own_st(result, .Unknown)
+}
+
+fn container_seg(sem: OptimizerSemantics, fid: FuncId) ff.PathSeg? {
+  case container_kind(sem, fid) {
+    .VectorLike => .Some(.Elem),
+    .DictLike => .Some(.Val),
+    .NotCollection => .None,
+  }
+}
+
+fn retained_atoms(ri: Vector<Int>, args: Vector<Atom>) Vector<Atom> {
+  out: Vector<Atom> = []
+  for i in ri {
+    if i < args.len() {
+      out = .append(args[i])
+    }
+  }
+  out
+}
+
+// The stored VALUE is the last retained operand (append [1] -> arg1;
+// vector$set_unsafe [2] -> arg2; Dict.set [1,2] -> arg2).
+fn stored_element_atom(ri: Vector<Int>, args: Vector<Atom>) Atom? {
+  if ri.len() == 0 {
+    return .None
+  }
+  k := ri[ri.len() - 1]
+  if k < args.len() {
+    .Some(args[k])
+  } else {
+    .None
+  }
+}
+
+fn transfer_builtin_call(
+  st: ForwardState,
+  result: Int,
+  fid: FuncId,
+  cs: CallSemantics,
+  args: Vector<Atom>,
+  last: Vector<Int>,
+  sem: OptimizerSemantics,
+) ForwardState {
+  ri := retained_arg_indices(cs, args)
+  case cs.effect {
+    .Allocate => st.set_own_st(result, .Unique).absorb_retained_call_args(result, args, ri, last),
+    .Update => {
+      // Capture base/stored facts BEFORE consume (consume leaves base.field_own intact).
+      base_fields := case cs.cow_base_arg {
+        .Some(k) => if k < args.len() {
+          st.atom_field_own(args[k])
+        } else {
+          ff.empty()
+        },
+        .None => ff.empty(),
+      }
+      kept_stored := case stored_element_atom(ri, args) {
+        .Some(x) => st.single_retention(x, last, retained_atoms(ri, args)),
+        .None => false,
+      }
+      st = .consume_call_base(result, cs, args, last).carry_base_prov(result, cs, args).escape_retained_call_args(
+        args,
+        ri,
+        last,
+      )
+
+      // Nested facts survive only when the result shell is Unique.
+      st = if own_is_unique(st.own, result) {
+        rf := case container_seg(sem, fid) {
+          .Some(seg) => {
+            // A known collection op: untouched elements are structurally preserved,
+            // so carry all of base's field facts (which for a Vector/Dict base is
+            // [seg]* only), then keep or drop the touched seg by single-retention.
+            if kept_stored {
+              base_fields
+            } else {
+              base_fields.remove_prefix(seg)
+            }
+          },
+          // Unknown Update op: do NOT know it preserves inner structure -> drop.
+          .None => ff.empty(),
+        }
+        st.set_field_own(result, rf)
+      } else {
+        st
+      }
+      st
+    },
+    // borrow: result not owned, but carries the cow_base_arg's provenance.
+    .ReadOnly => st.set_own_st(result, .Unknown).carry_base_prov(result, cs, args),
+    .Pure => st.set_own_st(result, .Unknown),
+    .Control => st.set_own_st(result, .Unknown),
+  }
+}
+
+fn in_set(d: Dict<Int, Bool>, k: Int) Bool {
+  case d.get(k) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+// Consume a callee summary at a direct user call. Acts ONLY on escape + return:
+// Retained args publish (demote to Shared), Borrowed args are untouched;
+// OwnedFresh result is Unique, MayAliasParams publishes every origin and shares
+// the result, Shared result is Unknown. Capability (Consumed) is recorded-only
+// and never read here — it must never invalidate a caller binding (Phase 6).
+//
+// `suppress`/`callee_id`: during an in-SCC summary fixpoint, an in-SCC callee's
+// `ret_paths` are read as EMPTY (speculative recovery blanked) so the SCC's least
+// fixed point is order-independent — `ret_paths` are non-monotone, so an in-SCC
+// snapshot must never leak into a co-member's transfer.
+fn transfer_summarized_call(
+  st: ForwardState,
+  result: Int,
+  s: Summary,
+  args: Vector<Atom>,
+  last: Vector<Int>,
+  suppress: Dict<Int, Bool>,
+  callee_id: Int,
+) ForwardState {
+  // 0. SNAPSHOT pre-call arg facts (before any summary effect mutates st). The
+  // recovery gate must read arg ownership/provenance as it was BEFORE the call.
+  pre_own := st.own
+  pre_valid := st.valid
+  pre_prov := st.prov
+  arg_unique: Vector<Bool> = collect a in args {
+    case atom_local_id(a) {
+      .Some(id) => local_reusable(pre_own, pre_valid, id, last) and store_count(args, id) == 1,
+      .None => false,
+    }
+  }
+
+  // 1. Escape + return handling (mutates st: publishes Retained args, sets the
+  // result shell, and for MayAliasParams either MOVES a single proven-unique origin
+  // (Stage 4a) or publishes the origins).
+  for ps, i in s.params {
+    if i < args.len() {
+      case ps.base_role {
+        .Published => st = .publish_atom(args[i]),
+        .Borrowed => {},
+        .Consumed => {},
+      }
+    }
+  }
+  case s.ret {
+    .OwnedFresh => st = .set_own_st(result, .Unique),
+    .Shared => st = .set_own_st(result, .Unknown),
+    .MayAliasParams(idxs) => {
+      // Whole-return move (Stage 4a): if the return aliases EXACTLY ONE param and that
+      // argument is proven Unique + last-use here (arg_unique -- the destructive-update
+      // condition), MOVE it: the result takes the argument's unique SHELL and the argument
+      // is consumed (consume_base), instead of publishing. Shell-only -- field_own/path_prov
+      // are NOT transferred (Stage 4b). Multi-param aliasing or a non-unique/non-last-use
+      // argument keeps the conservative publish, so a param argument in the generic pass
+      // (Unknown) still publishes; a leaked+returned arg is published by section 1 first,
+      // so consume_base sees a non-Unique base and declines the move.
+      if idxs.len() == 1 and idxs[0] < args.len() and arg_unique[idxs[0]] {
+        k := idxs[0]
+        st = .consume_base(result, args[k], last)
+        st = .set_prov_st(result, prov_of(pre_prov, args[k]))
+      } else {
+        origins: Vector<Int> = []
+        for k in idxs {
+          if k < args.len() {
+            st = .publish_atom(args[k])
+            origins = union_sorted(origins, prov_of(st.prov, args[k]))
+          }
+        }
+        st = .set_own_st(result, .Shared)
+        st = .set_prov_st(result, origins)
+      }
+    },
+  }
+
+  // 2. Return-path recovery, gated on the SNAPSHOT. Only a fresh result shell
+  // (OwnedFresh) can carry recovered field/payload facts.
+  result_ok := case s.ret {
+    .OwnedFresh => true,
+    _ => false,
+  }
+  result_fields := ff.empty()
+  result_pp: Dict<Int, Vector<Int>> = Dict.new()
+  eff_ret_paths := if in_set(suppress, callee_id) {
+    []
+  } else {
+    s.ret_paths
+  }
+  for rp in eff_ret_paths {
+    own_here := case rp.own {
+      .OwnedFresh => true,
+      .OwnedFromParam(k) => if k < args.len() and arg_unique[k] {
+        true
+      } else {
+        // publish-on-fail: the result may alias args[k], so publish it rather
+        // than leaving an unpublished alias.
+        if k < args.len() {
+          st = .publish_atom(args[k])
+        }
+        false
+      },
+    }
+    if own_here and result_ok {
+      origins := case rp.own {
+        .OwnedFromParam(k) => prov_of(pre_prov, args[k]),
+        .OwnedFresh => [],
+      }
+      r := record_ret_path(result_fields, result_pp, rp, origins)
+      result_fields = r.fields
+      result_pp = r.pp
+    }
+  }
+  if result_ok and !result_fields.is_empty() {
+    st.set_field_own(result, result_fields).set_path_prov(result, result_pp)
+  } else {
+    st
+  }
+}
+
+type RetPathRecord = .{ fields: ff.FieldMap, pp: Dict<Int, Vector<Int>> }
+
+// Write EXACTLY ONE key (the one this ret_path names) into both `fields` (tag
+// Unique=0) and `pp` (origins). The key is built from the ret_path's via/field:
+//   Direct + Some(f)          -> [.Field(f)]
+//   Variant(tag,i) + None     -> [.Payload(tag,i)]        (payload shell)
+//   Variant(tag,i) + Some(f)  -> [.Payload(tag,i), .Field(f)]
+// Never synthesize a sibling key.
+fn record_ret_path(
+  fields: ff.FieldMap,
+  pp: Dict<Int, Vector<Int>>,
+  rp: ReturnPathOwn,
+  origins: Vector<Int>,
+) RetPathRecord {
+  ap := case rp.via {
+    .Direct => case rp.field {
+      .Some(f) => ff.field_path(f),
+      .None => ff.AccessPath.{ segs: [] },
+    },
+    .Variant(tag, i) => case rp.field {
+      .None => ff.AccessPath.{ segs: [.Payload(tag, i)] },
+      .Some(f) => ff.AccessPath.{ segs: [.Payload(tag, i), .Field(f)] },
+    },
+  }
+  k := ff.path_key(ap)
+  fields2 := fields.set_path(ap, 0)
+  pp[k] = origins
+  .{ fields: fields2, pp }
+}
+
+fn own_is_unique(own: Dict<Int, Int>, id: Int) Bool {
+  case fact_of_local(own, id) {
+    .Unique => true,
+    _ => false,
+  }
+}
+
+fn local_valid_at_last(valid: Dict<Int, Bool>, id: Int, last: Vector<Int>) Bool {
+  valid_of_local(valid, id) and is_last_use(last, id)
+}
+
+fn local_reusable(own: Dict<Int, Int>, valid: Dict<Int, Bool>, id: Int, last: Vector<Int>) Bool {
+  own_is_unique(own, id) and local_valid_at_last(valid, id, last)
+}
+
+// Count the number of times local `id` appears among the atoms in `operands`.
+fn store_count(operands: Vector<Atom>, id: Int) Int {
+  n := 0
+  for a in operands {
+    case atom_local_id(a) {
+      .Some(oid) => if oid == id {
+        n = n + 1
+      },
+      .None => {},
+    }
+  }
+  n
+}
+
+// A value operand is single-retention at this op iff it is a local that is
+// []:Unique, binding-valid, at last-use, and appears exactly once among `operands`.
+fn single_retention(st: ForwardState, v: Atom, last: Vector<Int>, operands: Vector<Atom>) Bool {
+  case atom_local_id(v) {
+    .Some(id) => local_reusable(st.own, st.valid, id, last) and store_count(operands, id) == 1,
+    .None => false,
+  }
+}
+
+fn projection_move_licensed(
+  st: ForwardState,
+  result: Int,
+  base: Atom,
+  last: Vector<Int>,
+  quartet: Dict<Int, Bool>,
+  transport: Dict<Int, Bool>,
+) Bool {
+  case atom_local_id(base) {
+    .Some(bid) => local_valid_at_last(st.valid, bid, last)
+      or valid_of_local(st.valid, bid)
+      and (quartet_has(quartet, result) or transport_has(transport, result)),
+    .None => false,
+  }
+}
+
+// Copy `src`'s provenance under `prefix` into `pp`, mirroring ff.graft's
+// representable-inner rules so pp and field_own stay in lockstep. The [prefix]
+// entry is always the value's shell prov (empty vector = proven fresh).
+fn graft_path_prov(pp: Dict<Int, Vector<Int>>, prefix: ff.PathSeg, st: ForwardState, a: Atom) Dict<
+  Int,
+  Vector<Int>,
+> {
+  // shell_origins starts at the value's own shell prov and accumulates the origins
+  // of every inner path that CANNOT be representably rebased under `prefix` at the
+  // depth-2 cap (e.g. [Field,Field], [Field,Payload], [Payload,Payload], or any
+  // depth-2 inner that would become depth-3). Folding those origins up into the
+  // representable ancestor [prefix] keeps publication SOUND — publish_local leaks
+  // [prefix]'s origins, so a param nested arbitrarily deep still escapes. The cost
+  // is only precision: a field that transitively holds a param becomes multi-origin
+  // at [prefix], which classify_path_own then drops (sound under-claim).
+  shell_origins := prov_of(st.prov, a) // [] = fresh
+  case atom_local_id(a) {
+    .Some(sid) => {
+      for k, v in st.path_prov_get(sid) {
+        inner := ff.path_of_key(k)
+        keep := if inner.segs.len() == 1 {
+          case prefix {
+            .Field(_) => case inner.segs[0] {
+              .Elem => true,
+              .Val => true,
+              _ => false, // [Field, Field] and [Field, Payload] are not representable
+            },
+            .Payload(_, _) => case inner.segs[0] {
+              .Field(_) => true,
+              _ => false, // [Payload, Elem] and [Payload, Payload] are not representable
+            },
+            _ => false,
+          }
+        } else {
+          false // a depth-2 inner would rebase to depth-3 — never representable
+        }
+        if keep {
+          pp[ff.path_key(ff.AccessPath.{ segs: [prefix, inner.segs[0]] })] = v
+        } else {
+          shell_origins = union_sorted(shell_origins, v)
+        }
+      }
+    },
+    .None => {},
+  }
+  pp[ff.path_key(ff.AccessPath.{ segs: [prefix] })] = shell_origins
+  pp
+}
+
+// Projection inverse for path_prov, mirroring ff.project: the [seg] entry
+// becomes `shell`; each strict descendant [seg, X] becomes inner[X].
+type PathProvProjection = .{ shell: Vector<Int>?, inner: Dict<Int, Vector<Int>> }
+
+fn project_path_prov(pp: Dict<Int, Vector<Int>>, seg: ff.PathSeg) PathProvProjection {
+  shell: Vector<Int>? = .None
+  inner: Dict<Int, Vector<Int>> = Dict.new()
+  for k, v in pp {
+    p := ff.path_of_key(k)
+    if p.segs.len() >= 1 and p.segs[0].seg_eq(seg) {
+      if p.segs.len() == 1 {
+        shell = .Some(v)
+      } else {
+        inner[ff.path_key(ff.AccessPath.{ segs: [p.segs[1]] })] = v
+      }
+    }
+  }
+  PathProvProjection.{ shell, inner }
+}
+
+// Drop the entire [seg]* subtree from a path_prov map, mirroring ff.remove_prefix.
+fn remove_prefix_pp(pp: Dict<Int, Vector<Int>>, seg: ff.PathSeg) Dict<Int, Vector<Int>> {
+  out: Dict<Int, Vector<Int>> = Dict.new()
+  for k, v in pp {
+    p := ff.path_of_key(k)
+    drop := p.segs.len() >= 1 and p.segs[0].seg_eq(seg)
+    if !drop {
+      out[k] = v
+    }
+  }
+  out
+}
+
+// Per-local field_own lookup against a pred's exit map, empty default.
+fn field_map_of(m: Dict<Int, ff.FieldMap>, id: Int) ff.FieldMap {
+  case m.get(id) {
+    .Some(fm) => fm,
+    .None => ff.empty(),
+  }
+}
+
+// Seed a match-arm payload-bound local from its match predecessor's exit facts.
+// Applied at every per-block entry-state construction, AFTER the base entry facts.
+// `pred_*` are the match block's (this arm's single predecessor's) EXIT facts.
+//
+// A top-level Variant(tag, [Var(binding)]) arm projects the scrutinee's
+// [Payload(tag, i)]* facts onto `binding`: when the scrutinee is dead after the
+// match (live-in gate) the payload MOVES (binding takes the shell own + prov +
+// inner facts); otherwise it BORROWS (binding Shared, scrutinee's payload subtree
+// stripped). A .None-payload_src block (non-arm) is a no-op. The tag keeps arms
+// disjoint: an .Err arm projecting [Payload(Err,i)] recovers no [Payload(Ok,i)]
+// fact, so a foreign/borrowed payload leaves the binding Shared.
+fn seed_payload_binding(
+  st: ForwardState,
+  blk: CfgBlock,
+  pred_field: Dict<Int, ff.FieldMap>,
+  pred_pp: Dict<Int, Dict<Int, Vector<Int>>>,
+  pred_prov: Dict<Int, Vector<Int>>,
+) ForwardState {
+  case blk.payload_src {
+    .None => st,
+    .Some(ps) => {
+      seg := ff.PathSeg.Payload(ps.variant_tag, ps.payload_index)
+      src_fields := field_map_of(pred_field, ps.scrutinee)
+      src_pp := pp_of(pred_pp, ps.scrutinee)
+      proj := src_fields.project(seg) // {shell, fields}
+      proj_pp := project_path_prov(src_pp, seg) // {shell, inner}
+      case proj.shell {
+        .None => st, // no owned payload fact -> leave binding Unknown
+        .Some(t) => if !live_contains_int(blk.entry.live, ps.scrutinee) {
+          // MOVE: scrutinee dead-after -> binding takes shell own + shell prov + inner facts.
+          // set_own_st(binding, Unique) MUST precede set_field_own: the choke point
+          // clears field facts if the shell is not Unique.
+          st = .set_own_st(ps.binding, own_of_tag(t))
+          shell_origins := case proj_pp.shell {
+            .Some(o) => o,
+            .None => case pred_prov.get(ps.scrutinee) {
+              .Some(o) => o,
+              .None => [],
+            },
+          }
+          st = .set_prov_st(ps.binding, shell_origins)
+          st = .set_field_own(ps.binding, proj.fields)
+          st.set_path_prov(ps.binding, proj_pp.inner)
+        } else {
+          // BORROW: scrutinee live-in -> binding Shared; strip scrutinee's payload subtree.
+          st = .set_own_st(ps.binding, .Shared)
+          live_fields := st.field_own_get(ps.scrutinee)
+          st = .set_field_own(ps.scrutinee, live_fields.remove_prefix(seg))
+          st.set_path_prov(ps.scrutinee, remove_prefix_pp(st.path_prov_get(ps.scrutinee), seg))
+        },
+      }
+    },
+  }
+}
+
+// Apply one instruction. `last` is last_use_at(op, live_after[i]).
+// `quartet` is the pre-scanned set of ARecordGet result-locals licensed to move
+// by the block-local quartet proof (empty for callers outside a block body).
+fn transfer_op(
+  st: ForwardState,
+  result: Int,
+  op: AnfOp,
+  last: Vector<Int>,
+  quartet: Dict<Int, Bool>,
+  transport: Dict<Int, Bool>,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+) ForwardState {
+  case op {
+    .ACall(callee, args) => st.transfer_call(result, callee, args, last, table, sem, suppress),
+    .ARecord(_, fields) => {
+      operands: Vector<Atom> = collect fa in fields {
+        fa.value
+      }
+      pre_store := st
+      for fa in fields {
+        st = .field_store(fa.value, last)
+      }
+      st = .set_result(result, .Unique) // sets shell Unique; choke point leaves field_own[result] intact (empty)
+      st = .set_prov_st(result, []) // SHELL prov: fresh shell aliases no param
+
+      // Route each field's origins into path_prov under [.f] so whole-value
+      // publication still leaks the field (publish_local cascades path_prov). The
+      // single-retention fields ALSO graft their inner facts into field_own, in
+      // lockstep with graft_path_prov's [.f, inner] entries.
+      rf := ff.empty()
+      pp: Dict<Int, Vector<Int>> = Dict.new()
+      for fa in fields {
+        seg := ff.PathSeg.Field(fa.field.id)
+        if pre_store.single_retention(fa.value, last, operands) {
+          rf = .graft(seg, pre_store.atom_field_own(fa.value))
+          pp = graft_path_prov(pp, seg, pre_store, fa.value)
+        } else {
+          // shell-only origin of a non-owned field: recorded for publication only
+          // (no field_own[.f] entry; extra path_prov key is a sound over-publish).
+          pp[ff.path_key(ff.AccessPath.{ segs: [seg] })] = prov_of(st.prov, fa.value)
+        }
+      }
+      st = if rf.is_empty() {
+        st
+      } else {
+        st.set_field_own(result, rf)
+      }
+      st.set_path_prov(result, pp)
+    },
+    .AVariant(_, vid, args) => {
+      pre_store := st
+      for a in args {
+        st = .field_store(a, last)
+      }
+      st = .set_result(result, .Unique)
+      st = .set_prov_st(result, []) // SHELL prov: fresh shell aliases no param
+
+      // Route each payload's origins into path_prov under [Payload(tag,i)] so
+      // whole-value publication still leaks the payload (publish_local cascades
+      // path_prov). Single-retention payloads ALSO graft their inner facts into
+      // field_own, in lockstep with graft_path_prov's [Payload(tag,i), inner] entries.
+      rf := ff.empty()
+      pp: Dict<Int, Vector<Int>> = Dict.new()
+      for a, i in args {
+        seg := ff.PathSeg.Payload(vid.id, i)
+        if pre_store.single_retention(a, last, args) {
+          rf = .graft(seg, pre_store.atom_field_own(a))
+          pp = graft_path_prov(pp, seg, pre_store, a)
+        } else {
+          // shell-only origin of a non-owned payload: recorded for publication only
+          // (no field_own[Payload] entry; extra path_prov key is a sound over-publish).
+          pp[ff.path_key(ff.AccessPath.{ segs: [seg] })] = prov_of(st.prov, a)
+        }
+      }
+      st = if rf.is_empty() {
+        st
+      } else {
+        st.set_field_own(result, rf)
+      }
+      st.set_path_prov(result, pp)
+    },
+    .AArrayLit(elems) => {
+      pre_store := st
+      for a in elems {
+        st = .field_store(a, last)
+      }
+      st = .set_result(result, .Unique)
+      st = .set_prov_st(result, []) // SHELL prov: fresh shell aliases no param
+
+      // Route the elements' origins into path_prov[Elem] so whole-value
+      // publication still leaks them (publish_local cascades path_prov). Empty
+      // origins => proven fresh. Fold in each element's OWN path_prov origins too,
+      // so a param nested inside an element (a record/variant in an array) still
+      // escapes — [Elem, ...] deeper paths are not representable, so their origins
+      // must land on [Elem].
+      elem_origins: Vector<Int> = []
+      for e in elems {
+        elem_origins = union_sorted(elem_origins, prov_of(st.prov, e))
+        case atom_local_id(e) {
+          .Some(eid) => {
+            for k, v in st.path_prov_get(eid) {
+              elem_origins = union_sorted(elem_origins, v)
+            }
+          },
+          .None => {},
+        }
+      }
+      epp: Dict<Int, Vector<Int>> = Dict.new()
+      epp[ff.path_key(ff.elem_path())] = elem_origins
+      st = .set_path_prov(result, epp)
+
+      // [Elem]:Unique when EVERY element is single-retention. An EMPTY literal is
+      // [Elem]:Unique vacuously (no shared inner) — this bootstraps build-from-empty
+      // vectors so the Task 4 consuming rule has an all-owned base to preserve.
+      all_owned := true
+      for a in elems {
+        if !pre_store.single_retention(a, last, elems) {
+          all_owned = false
+        }
+      }
+      st = if all_owned {
+        st.set_field_own(result, ff.empty().set_path(ff.elem_path(), 0))
+      } else {
+        st
+      }
+      st
+    },
+    .ARecordGet(base, f, _) => {
+      pr := st.atom_field_own(base).project(.Field(f.id))
+      case atom_local_id(base) {
+        .Some(bid) => if st.projection_move_licensed(result, base, last, quartet, transport) {
+          // whole-record last-use MOVE, quartet-licensed move (Task 6), or
+          // bounded transport-wrapper projection move (Task 11)
+          case pr.shell {
+            .Some(t) => {
+              proj_pp := project_path_prov(st.path_prov_get(bid), ff.PathSeg.Field(f.id))
+              st = .set_own_st(result, own_of_tag(t))
+              st = .set_field_own(result, pr.fields)
+              st = .set_path_prov(result, proj_pp.inner)
+
+              // Result shell prov from the PROJECTED FIELD's provenance (not
+              // base's shell prov); opaque base falls back to base's origins.
+              st = .set_prov_st(
+                result,
+                case proj_pp.shell {
+                  .Some(o) => o,
+                  .None => prov_of(st.prov, base),
+                },
+              )
+
+              // R takes base.[.f]*; remove that subtree from base (both maps).
+              st = .set_field_own(bid, st.field_own_get(bid).remove_prefix(.Field(f.id)))
+              st.set_path_prov(bid, remove_prefix_pp(st.path_prov_get(bid), ff.PathSeg.Field(f.id)))
+            },
+            // field not deeply owned -> plain borrow, no shell claim. Publishing a
+            // borrowed field value must not publish the containing record shell;
+            // field/deep reuse remains conservative because field facts were not kept.
+            .None => {
+              st = .set_result(result, .Unknown)
+              st.set_prov_st(result, [])
+            },
+          }
+        } else {
+          // BORROW: aliasing both sides -> R Shared (choke point clears R's facts),
+          // and clear base's [.f]* subtree too (both maps).
+          st = .set_own_st(result, .Shared)
+          st = .set_field_own(bid, st.field_own_get(bid).remove_prefix(.Field(f.id)))
+          st = .set_path_prov(bid, remove_prefix_pp(st.path_prov_get(bid), ff.PathSeg.Field(f.id)))
+          st.set_prov_st(result, [])
+        },
+        // non-local base (global/literal): plain borrow
+        .None => {
+          st = .set_result(result, .Unknown)
+          st.set_prov_st(result, [])
+        },
+      }
+    },
+    .AIndex(base, _, _, _) => {
+      // borrow
+      st = .set_result(result, .Unknown)
+      st.set_prov_st(result, prov_of(st.prov, base))
+    },
+    .ARecordUpdate(base, f, v, _, _) => {
+      origins := prov_of(st.prov, base) // shell-only: drop the old union with v
+      base_fields := st.atom_field_own(base)
+      base_pp := case atom_local_id(base) {
+        // capture BEFORE consume_base clears base's path_prov on invalidate
+        .Some(bid) => st.path_prov_get(bid),
+        .None => Dict.new(),
+      }
+      pre_update := st
+      value_moved := pre_update.single_retention(v, last, [base, v])
+      st = .consume_base(result, base, last) // sets result shell Unique (if base Unique+last-use) else Unknown
+      st = .field_store(v, last)
+      st = .set_prov_st(result, origins)
+
+      // Only build field facts when the result shell is Unique (else choke point cleared it).
+      st = if own_is_unique(st.own, result) {
+        // remove the whole [.f]* subtree first, then graft the (single-retention)
+        // replacement, in lockstep across field_own and path_prov.
+        rf := base_fields.remove_prefix(.Field(f.id))
+        pp := remove_prefix_pp(base_pp, ff.PathSeg.Field(f.id))
+        if value_moved {
+          rf = .graft(.Field(f.id), pre_update.atom_field_own(v))
+          pp = graft_path_prov(pp, ff.PathSeg.Field(f.id), pre_update, v)
+        }
+        st.set_field_own(result, rf).set_path_prov(result, pp)
+      } else {
+        st
+      }
+      st
+    },
+    .AInit(a) => {
+      st = .init_hinge(result, a, last)
+      st.set_prov_st(result, prov_of(st.prov, a))
+    },
+    .AAssign(local, a) => {
+      // rebind: result local's fact = fact(a); binding becomes valid again
+      o := fact_of(st.own, a)
+      st = .set_own_st(local.id, o)
+      st = .set_prov_st(local.id, prov_of(st.prov, a))
+      st = if o.own_tag() == 0 {
+        st = .set_field_own(local.id, st.atom_field_own(a))
+
+        // copy path_prov in lockstep with field_own
+        case atom_local_id(a) {
+          .Some(aid) => st.set_path_prov(local.id, st.path_prov_get(aid)),
+          .None => st,
+        }
+      } else {
+        st
+      }
+      st.set_valid(local.id, true)
+    },
+    .AMakeClosure(_, caps) => {
+      st = .set_result(result, .Unknown) // closure ref itself: not an optimization target
+      for c in caps {
+        st = .publish_local(c.id)
+      }
+      st
+    },
+    .AGlobalSet(_, a) => {
+      st = .publish_atom(a)
+      st.set_result(result, .Unknown)
+    },
+    .AWrapAnyref(a, _) => {
+      // representationally transparent
+      st = .init_hinge(result, a, last)
+      st.set_prov_st(result, prov_of(st.prov, a))
+    },
+    .AUnwrapAnyref(a, _) => {
+      st = .init_hinge(result, a, last)
+      st.set_prov_st(result, prov_of(st.prov, a))
+    },
+    .ABinOp(_, _, _, _) => st.set_result(result, .Unknown), // scalar, neutral
+    .AUnOp(_, _, _) => st.set_result(result, .Unknown),
+    .AIf(_, _, _) => error("ownership: AIf reached transfer; structural op is block-lowered"),
+    .AMatch(_, _) => error("ownership: AMatch reached transfer; structural op is block-lowered"),
+    .ALoop(_) => error("ownership: ALoop reached transfer; structural op is block-lowered"),
+    .ADefer(_) => error("ownership: ADefer reached transfer; expected defer-free ANF"),
+  }
+}
+
+fn atom_brief(a: Atom) String {
+  case atom_local_id(a) {
+    .Some(id) => "L${id}",
+    .None => "atom",
+  }
+}
+
+fn shell_verdict(st: ForwardState, base: Atom, last: Vector<Int>) String {
+  case atom_local_id(base) {
+    .Some(bid) => case fact_of(st.own, base) {
+      .Unique => if local_reusable(st.own, st.valid, bid, last) {
+        "reuse(unique)"
+      } else if !valid_of_local(st.valid, bid) {
+        "persistent(base consumed)"
+      } else {
+        "persistent(base still live)"
+      },
+      _ => "persistent(aliased shell)",
+    },
+    .None => "persistent(aliased shell)",
+  }
+}
+
+fn update_field_verdict(
+  pre: ForwardState,
+  base: Atom,
+  f: Int,
+  shell: String,
+  field_backing_moved: Bool,
+) String {
+  if field_backing_moved {
+    return "in-place([.f${f}] unique)"
+  }
+
+  if shell.contains("base still live") {
+    return "persistent(borrow-projection: base still live)"
+  }
+
+  if !pre.atom_field_own(base).is_unique(ff.field_path(f)) {
+    return "persistent(insufficient deep ownership)"
+  }
+
+  "persistent(outer owned but inner shared)"
+}
+
+// Render the projected field's param-origin as `from pK` (K = the param's
+// local id, since seed_param_prov seeds prov[p] = [p]). Multi-origin joins
+// list all; a fresh/no-param projection renders `from(fresh)`.
+fn transport_origin_text(origins: Vector<Int>) String {
+  if origins.len() == 0 {
+    "from(fresh)"
+  } else {
+    parts := collect o in origins {
+      "p${o}"
+    }
+    "from ${parts.join(",")}"
+  }
+}
+
+// Transport verdict for an ARecordGet projection site: `move([.fK] from pJ)`
+// when the transport recognizer licensed the move, else `borrow(reason)` with a
+// concrete rejection reason. Debug-render only; mirrors transport_ok/transfer_op.
+fn transport_verdict(
+  pre: ForwardState,
+  blk: CfgBlock,
+  scan: BlockScan,
+  i: Int,
+  result: Int,
+  base: Atom,
+  f: Int,
+  transport: Dict<Int, Bool>,
+) String {
+  base_valid := case atom_local_id(base) {
+    .Some(bid) => valid_of_local(pre.valid, bid),
+    .None => false,
+  }
+  if transport_has(transport, result) and base_valid {
+    origins := case atom_local_id(base) {
+      .Some(bid) => case project_path_prov(pre.path_prov_get(bid), ff.PathSeg.Field(f)).shell {
+        .Some(o) => o,
+        .None => prov_of(pre.prov, base),
+      },
+      .None => prov_of(pre.prov, base),
+    }
+    "L${result} = record_get ${atom_brief(base)}.f${f} transport=move([.f${f}] ${transport_origin_text(
+      origins,
+    )})"
+  } else {
+    reason := case atom_local_id(base) {
+      .Some(bid) => if !valid_of_local(pre.valid, bid) {
+        "base consumed"
+      } else {
+        transport_reason(blk, scan, i, bid, f)
+      },
+      .None => "base not a local",
+    }
+    r := if reason == "" {
+      "not a transport site"
+    } else {
+      reason
+    }
+    "L${result} = record_get ${atom_brief(base)}.f${f} transport=borrow(${r})"
+  }
+}
+
+fn record_update_verdict(
+  pre: ForwardState,
+  result: Int,
+  base: Atom,
+  f: Int,
+  last: Vector<Int>,
+  field_backing_moved: Bool,
+) String {
+  shell := pre.shell_verdict(base, last)
+  field := pre.update_field_verdict(base, f, shell, field_backing_moved)
+  "L${result} = record_update ${atom_brief(base)}.f${f} shell=${shell} field=${field}"
+}
+
+fn mark_field_backing(moved: Dict<Int, Vector<Int>>, bid: Int, fid: Int) Dict<Int, Vector<Int>> {
+  fields := case moved.get(bid) {
+    .Some(v) => v,
+    .None => [],
+  }
+  moved[bid] = insert_sorted(fields, fid)
+  moved
+}
+
+fn has_moved_field_backing(moved: Dict<Int, Vector<Int>>, bid: Int, fid: Int) Bool {
+  case moved.get(bid) {
+    .Some(fields) => live_contains_int(fields, fid),
+    .None => false,
+  }
+}
+
+fn clear_moved_backing(moved: Dict<Int, Vector<Int>>, bid: Int) Dict<Int, Vector<Int>> {
+  case moved.get(bid) {
+    .Some(_) => moved.remove(bid),
+    .None => moved,
+  }
+}
+
+fn consume_moved_field_backing(moved: Dict<Int, Vector<Int>>, bid: Int, fid: Int) Dict<
+  Int,
+  Vector<Int>,
+> {
+  case moved.get(bid) {
+    .Some(fields) => {
+      kept: Vector<Int> = []
+      for f in fields {
+        if f != fid {
+          kept = insert_sorted(kept, f)
+        }
+      }
+      if kept.len() == 0 {
+        moved.remove(bid)
+      } else {
+        moved[bid] = kept
+        moved
+      }
+    },
+    .None => moved,
+  }
+}
+
+fn block_verdicts(
+  blk: CfgBlock,
+  entry: ForwardState,
+  prep: BlockPrep,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+) Dict<Int, String> {
+  scan := prep.scan
+  moves := prep.moves
+  verdicts: Dict<Int, String> = Dict.new()
+  moved_backing: Dict<Int, Vector<Int>> = Dict.new()
+  st := entry
+  for inst, i in blk.instructions {
+    last := last_use_at(inst.op, scan.live_after[i])
+    pre := st
+    case inst.op {
+      .ARecordGet(base, f, _) => {
+        verdicts[inst.anf_local.id] = pre.transport_verdict(
+          blk,
+          scan,
+          i,
+          inst.anf_local.id,
+          base,
+          f.id,
+          prep.transport,
+        )
+        case atom_local_id(base) {
+          .Some(bid) => if pre.projection_move_licensed(
+            inst.anf_local.id,
+            base,
+            last,
+            moves,
+            prep.transport,
+          ) {
+            case pre.atom_field_own(base).project(.Field(f.id)).shell {
+              .Some(_) => moved_backing = mark_field_backing(moved_backing, bid, f.id),
+              .None => {},
+            }
+          },
+          .None => {},
+        }
+      },
+      .ACall(callee, args) => case callee_func_id(callee) {
+        .Some(fid) => case call_info(sem, fid) {
+          .Some(_) => {}, // builtin semantics -> no user-call specialization verdict
+          .None => case table.summary_get(fid.id) {
+            .Some(s) => {
+              au: Vector<Bool> = collect a in args {
+                case atom_local_id(a) {
+                  .Some(id) => local_reusable(pre.own, pre.valid, id, last)
+                    and store_count(args, id) == 1,
+                  .None => false,
+                }
+              }
+              dec := render_call_decision(fid.id, select_variant(fid.id, s, au))
+              if dec.len() > 0 {
+                verdicts[inst.anf_local.id] = dec
+              }
+            },
+            .None => {}, // non-summarized direct user callee -> no decision
+          },
+        },
+        _ => {}, // indirect/closure call
+      },
+      _ => {},
+    }
+    st = .transfer_op(
+      inst.anf_local.id,
+      inst.op,
+      last,
+      moves,
+      prep.transport,
+      table,
+      b,
+      sem,
+      suppress,
+    )
+    case inst.op {
+      .ARecordUpdate(base, f, _, _, _) => {
+        field_backing_moved := case atom_local_id(base) {
+          .Some(bid) => has_moved_field_backing(moved_backing, bid, f.id),
+          .None => false,
+        }
+        verdicts[inst.anf_local.id] = pre.record_update_verdict(
+          inst.anf_local.id,
+          base,
+          f.id,
+          last,
+          field_backing_moved,
+        )
+        moved_backing = case atom_local_id(base) {
+          .Some(bid) => consume_moved_field_backing(moved_backing, bid, f.id),
+          .None => moved_backing,
+        }
+      },
+      .AAssign(local, _) => moved_backing = clear_moved_backing(moved_backing, local.id),
+      _ => {},
+    }
+  }
+  verdicts
+}
+
+// Drive the transfer over a block's straight-line instructions from its entry
+// state (no terminator publication yet).
+fn forward_block_body(
+  blk: CfgBlock,
+  entry: ForwardState,
+  prep: BlockPrep,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+) ForwardState {
+  st := entry
+  for inst, i in blk.instructions {
+    last := last_use_at(inst.op, prep.scan.live_after[i])
+    st = .transfer_op(
+      inst.anf_local.id,
+      inst.op,
+      last,
+      prep.moves,
+      prep.transport,
+      table,
+      b,
+      sem,
+      suppress,
+    )
+  }
+  st
+}
+
+// Drive the transfer over a block, then apply terminator publication for the
+// value leaving on this block's exit edge.
+fn forward_block(
+  blk: CfgBlock,
+  entry: ForwardState,
+  prep: BlockPrep,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+) ForwardState {
+  st := forward_block_body(blk, entry, prep, table, b, sem, suppress)
+  case blk.terminator {
+    // Return hands the value to the CALLER; it is not a callee leak. The caller's
+    // ret / ret_paths handling accounts for it. Return blocks are CFG leaves, so
+    // this does not affect intra-function joins (Case T). ValueBreak still targets
+    // a real post-loop successor, so it still publishes.
+    .Some(.ValueBreak(a)) => {
+      st = .publish_atom(a)
+    },
+    _ => {},
+  }
+  st
+}
+
+// ── Positional predecessor join + fixpoint ──────────────────────────
+fn param_index(blk: CfgBlock, lid: Int) Int? {
+  for p, i in blk.params {
+    if p.id == lid {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+fn fact_of_local(own: Dict<Int, Int>, id: Int) Ownership {
+  case own.get(id) {
+    .Some(tag) => own_of_tag(tag),
+    .None => .Unknown,
+  }
+}
+
+fn is_processed(processed: Dict<Int, Bool>, id: Int) Bool {
+  case processed.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+type LoopSeedSet = Dict<String, Bool>
+
+type PredParamContribution = .{ own: Ownership, valid: Bool }
+
+fn loop_seed_key(block_id: Int, local_id: Int) String {
+  "${block_id}:${local_id}"
+}
+
+fn loop_seed_active(seeds: LoopSeedSet, block_id: Int, local_id: Int) Bool {
+  case seeds.get(loop_seed_key(block_id, local_id)) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn is_loop_backedge_to_header(blocks: Vector<CfgBlock>, pred_id: Int, header_id: Int) Bool {
+  pred := block_by_id(blocks, pred_id)
+  case pred.terminator {
+    .Some(term) => case term {
+      .LoopBackEdge(target, _) => target.id == header_id,
+      _ => false,
+    },
+    .None => false,
+  }
+}
+
+fn loop_header_has_backedge(blocks: Vector<CfgBlock>, blk: CfgBlock) Bool {
+  for pe in blk.preds {
+    if is_loop_backedge_to_header(blocks, pe.target.id, blk.id.id) {
+      return true
+    }
+  }
+  false
+}
+
+fn pred_local_contribution(
+  exits: Dict<Int, Dict<Int, Int>>,
+  exit_valid: Dict<Int, Dict<Int, Bool>>,
+  pe: CfgEdge,
+  pidx: Int?,
+  lid: Int,
+) PredParamContribution {
+  pred_exit := nested_get(exits, pe.target.id)
+  pred_valid := nested_get(exit_valid, pe.target.id)
+  case pidx {
+    .Some(i) => if i < pe.args.len() {
+      arg := pe.args[i]
+      ok := case atom_local_id(arg) {
+        .Some(id) => valid_of_local(pred_valid, id),
+        .None => true,
+      }
+      PredParamContribution.{ own: fact_of(pred_exit, arg), valid: ok }
+    } else {
+      PredParamContribution.{ own: .Unknown, valid: false }
+    },
+    .None => PredParamContribution.{
+      own: fact_of_local(pred_exit, lid),
+      valid: valid_of_local(pred_valid, lid),
+    },
+  }
+}
+
+fn collect_loop_seed_candidates(blocks: Vector<CfgBlock>) LoopSeedSet {
+  seeds: LoopSeedSet = Dict.new()
+  for blk in blocks {
+    if blk.name == "loop.header" and loop_header_has_backedge(blocks, blk) {
+      for lid in blk.entry.live {
+        seeds[loop_seed_key(blk.id.id, lid)] = true
+      }
+    }
+  }
+  seeds
+}
+
+// entry.ownership for every local live-in at blk:
+//  - a block param: positional join of fact(pred_exit, pred_edge.args[i]);
+//  - a live-through non-param local: same-id join of pred_exit.ownership[lid].
+// Only processed predecessors contribute (unprocessed back-edges are skipped so an
+// uninitialized back-edge does not poison a loop header: Unique ⊔ Unknown = Unknown).
+fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, Dict<Int, Int>>, processed: Dict<Int, Bool>) Dict<
+  Int,
+  Int,
+> {
+  entry: Dict<Int, Int> = Dict.new()
+  for lid in blk.entry.live {
+    pidx := param_index(blk, lid)
+    acc: Ownership? = .None
+    for pe in blk.preds {
+      // pe.target holds the predecessor block id (see cfg.add_pred comment).
+      if is_processed(processed, pe.target.id) {
+        pred_exit := nested_get(exits, pe.target.id)
+        contributed := case pidx {
+          .Some(i) => if i < pe.args.len() {
+            fact_of(pred_exit, pe.args[i])
+          } else {
+            .Unknown
+          },
+          .None => fact_of_local(pred_exit, lid),
+        }
+        acc = case acc {
+          .None => .Some(contributed),
+          .Some(prev) => .Some(prev.join_own(contributed)),
+        }
+      }
+    }
+    case acc {
+      .Some(o) => entry[lid] = o.own_tag(),
+      .None => {},
+    }
+  }
+  entry
+}
+
+fn join_entry_ownership_assumed(
+  blk: CfgBlock,
+  exits: Dict<Int, Dict<Int, Int>>,
+  processed: Dict<Int, Bool>,
+  seeds: LoopSeedSet,
+) Dict<Int, Int> {
+  entry := join_entry_ownership(blk, exits, processed)
+  for lid in blk.entry.live {
+    case fact_of_local(entry, lid) {
+      .Unknown => if loop_seed_active(seeds, blk.id.id, lid) {
+        entry[lid] = own_tag(.Unique)
+      },
+      _ => {},
+    }
+  }
+  entry
+}
+
+fn int_keys_union(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
+  out := a
+  for k in b {
+    out = insert_sorted(out, k)
+  }
+  out
+}
+
+// ── Generic dataflow-lattice core (shared by own/valid/prov widening,
+//    and by every lattice's change-detection + nested-map access) ─────
+// A per-lattice witness: the absent-key default, the conservative combining operation,
+// and value equality. `merge_targeted` needs all three;
+// `same_map` needs only `eq`; `nested_get` needs neither.
+pub type Lattice<T> = .{ default: T, join: fn(T, T) T, eq: fn(T, T) Bool }
+
+pub type MergeOut<T> = .{ map: Dict<Int, T>, locked: Vector<Int> }
+
+fn lat_get<T>(m: Dict<Int, T>, k: Int, dflt: T) T {
+  case m.get(k) {
+    .Some(v) => v,
+    .None => dflt,
+  }
+}
+
+// Targeted-widening exit merge (replaces merge_own/valid/prov_exit_targeted).
+// Keep exact exit replacement (`out := next`) while a fact converges; lock a local
+// to the conservative meet once it oscillates back to `prev`, or once the per-block
+// changed-visit cap forces it. Locked locals accumulate across visits.
+// `pub` so the cfg_lattice_suite can lock behavior directly (matches how the other
+// cfg suites exercise internal ownership/field_facts helpers).
+pub fn merge_targeted<T>(
+  old: Dict<Int, T>,
+  next: Dict<Int, T>,
+  prev: Dict<Int, T>,
+  locked: Vector<Int>,
+  has_prev: Bool,
+  force_lock_changed: Bool,
+  lat: Lattice<T>,
+) MergeOut<T> {
+  out := next
+  next_locked := locked
+  keys := int_keys_union(old.keys(), next.keys())
+  for k in keys {
+    old_x := lat_get(old, k, lat.default)
+    next_x := lat_get(next, k, lat.default)
+    prev_x := lat_get(prev, k, lat.default)
+    changed := !lat.eq(old_x, next_x)
+    oscillates := has_prev and changed and lat.eq(next_x, prev_x)
+    if live_contains_int(next_locked, k) or oscillates or force_lock_changed and changed {
+      next_locked = insert_sorted(next_locked, k)
+      out[k] = lat.join(old_x, next_x)
+    }
+  }
+  MergeOut.{ map: out, locked: next_locked }
+}
+
+// Structural equality over a nested-map value (replaces same_*_map). Keys come from
+// `a`, so a length check plus per-key presence-and-eq in `b` is exact.
+pub fn same_map<T>(a: Dict<Int, T>, b: Dict<Int, T>, eq: fn(T, T) Bool) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+  for k in a.keys() {
+    case a.get(k) {
+      .Some(av) => case b.get(k) {
+        .Some(bv) => if !eq(av, bv) {
+          return false
+        },
+        .None => return false,
+      },
+      .None => {},
+    }
+  }
+  true
+}
+
+// Inner map for a block id, empty if absent (replaces *_map_get).
+pub fn nested_get<T>(m: Dict<Int, Dict<Int, T>>, id: Int) Dict<Int, T> {
+  case m.get(id) {
+    .Some(v) => v,
+    .None => Dict.new(),
+  }
+}
+
+// The own lattice stores Ownership *tags* (0=Unique,1=Shared,2=Unknown); its meet
+// routes through join_own so Unknown dominates, then Shared, then Unique.
+pub fn join_own_tag(a: Int, b: Int) Int {
+  own_of_tag(a).join_own(own_of_tag(b)).own_tag()
+}
+
+fn and_bool(a: Bool, b: Bool) Bool {
+  a and b
+}
+
+fn bool_eq(a: Bool, b: Bool) Bool {
+  a == b
+}
+
+fn int_eq(a: Int, b: Int) Bool {
+  a == b
+}
+
+fn own_lat() Lattice<Int> {
+  Lattice.{ default: own_tag(.Unknown), join: join_own_tag, eq: int_eq }
+}
+
+fn valid_lat() Lattice<Bool> {
+  Lattice.{ default: true, join: and_bool, eq: bool_eq }
+}
+
+fn prov_lat() Lattice<Vector<Int>> {
+  Lattice.{ default: [], join: union_sorted, eq: same_live }
+}
+
+fn locked_get(locks: Dict<Int, Vector<Int>>, block_id: Int) Vector<Int> {
+  case locks.get(block_id) {
+    .Some(v) => v,
+    .None => [],
+  }
+}
+
+// After the fixpoint every reachable block is processed, so materialize/join
+// with an all-true processed map.
+fn all_processed(blocks: Vector<CfgBlock>) Dict<Int, Bool> {
+  done: Dict<Int, Bool> = Dict.new()
+  for blk in blocks {
+    done[blk.id.id] = true
+  }
+  done
+}
+
+// ── Binding-validity meet ───────────────────────────────────────────
+fn valid_of_local(pv: Dict<Int, Bool>, id: Int) Bool {
+  case pv.get(id) {
+    .Some(v) => v,
+    .None => true, // absent => valid
+  }
+}
+
+// binding_valid meet over every live-in local (mirroring the ownership join):
+// block params meet through the positional edge arg's source-local validity;
+// live-through non-param locals meet the same id's validity. Absent => valid.
+fn join_entry_valid(
+  blk: CfgBlock,
+  exit_valid: Dict<Int, Dict<Int, Bool>>,
+  processed: Dict<Int, Bool>,
+) Dict<Int, Bool> {
+  entry: Dict<Int, Bool> = Dict.new()
+  for lid in blk.entry.live {
+    pidx := param_index(blk, lid)
+    ok := true
+    for pe in blk.preds {
+      if is_processed(processed, pe.target.id) {
+        pv := nested_get(exit_valid, pe.target.id)
+        contributed := case pidx {
+          .Some(i) => if i < pe.args.len() {
+            case atom_local_id(pe.args[i]) {
+              .Some(src) => valid_of_local(pv, src),
+              .None => true, // non-local feed is always valid
+            }
+          } else {
+            true
+          },
+          .None => valid_of_local(pv, lid),
+        }
+        if !contributed {
+          ok = false
+        }
+      }
+    }
+    entry[lid] = ok
+  }
+  entry
+}
+
+// ── Provenance join (param-origin sets) ─────────────────────────────
+// entry.prov for every live-in local (mirroring the ownership join): a block
+// param unions the origins its positional edge arg carries; a live-through
+// non-param local unions the same id's origins. Absent => empty.
+fn join_entry_prov(
+  blk: CfgBlock,
+  exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
+  processed: Dict<Int, Bool>,
+) Dict<Int, Vector<Int>> {
+  entry: Dict<Int, Vector<Int>> = Dict.new()
+  for lid in blk.entry.live {
+    pidx := param_index(blk, lid)
+    acc: Vector<Int> = []
+    for pe in blk.preds {
+      if is_processed(processed, pe.target.id) {
+        pv := nested_get(exit_prov, pe.target.id)
+        src := case pidx {
+          .Some(i) => if i < pe.args.len() {
+            prov_of(pv, pe.args[i])
+          } else {
+            []
+          },
+          .None => case pv.get(lid) {
+            .Some(v) => v,
+            .None => [],
+          },
+        }
+        acc = union_sorted(acc, src)
+      }
+    }
+    if acc.len() > 0 {
+      entry[lid] = acc
+    }
+  }
+  entry
+}
+
+// Seed block 0's entry: each param's provenance is its own id (a param origin).
+fn seed_param_prov(entry: Dict<Int, Vector<Int>>, params: Vector<LocalId>) Dict<Int, Vector<Int>> {
+  for p in params {
+    entry[p.id] = [p.id]
+  }
+  entry
+}
+
+// Seed block-0 entry ownership for an owned-entry re-analysis (Stage 3): each param
+// whose local id is marked in `unique_seed` enters Unique instead of the default
+// Unknown. This is the ONLY input the return-path recovery gate lacks to fire for a
+// param argument (own_is_unique). Empty seed => identity (the generic pass).
+fn seed_param_own(entry: Dict<Int, Int>, unique_seed: Dict<Int, Bool>, params: Vector<LocalId>) Dict<
+  Int,
+  Int,
+> {
+  for p in params {
+    case unique_seed.get(p.id) {
+      .Some(u) => if u {
+        entry[p.id] = own_tag(.Unique)
+      },
+      .None => {},
+    }
+  }
+  entry
+}
+
+// ── Field-ownership join + change-detection ─────────────────────────
+fn field_of(fo: Dict<Int, ff.FieldMap>, id: Int) ff.FieldMap {
+  case fo.get(id) {
+    .Some(m) => m,
+    .None => ff.empty(),
+  }
+}
+
+fn field_of_atom(fo: Dict<Int, ff.FieldMap>, a: Atom) ff.FieldMap {
+  case atom_local_id(a) {
+    .Some(id) => field_of(fo, id),
+    .None => ff.empty(),
+  }
+}
+
+// entry.field_own per live-in local at blk: block param -> meet over positional
+// edge args; live-through local -> meet over same-id. Only processed preds
+// contribute. A path survives only if Unique on EVERY contributing pred. Cleared
+// when the joined shell (entry_own) is non-Unique.
+fn join_entry_field_own(
+  blk: CfgBlock,
+  exit_field: Dict<Int, Dict<Int, ff.FieldMap>>,
+  entry_own: Dict<Int, Int>,
+  processed: Dict<Int, Bool>,
+) Dict<Int, ff.FieldMap> {
+  entry: Dict<Int, ff.FieldMap> = Dict.new()
+  for lid in blk.entry.live {
+    pidx := param_index(blk, lid)
+    acc: ff.FieldMap? = .None
+    for pe in blk.preds {
+      if is_processed(processed, pe.target.id) {
+        fo := nested_get(exit_field, pe.target.id)
+        src := case pidx {
+          .Some(i) => if i < pe.args.len() {
+            field_of_atom(fo, pe.args[i])
+          } else {
+            ff.empty()
+          },
+          .None => field_of(fo, lid),
+        }
+        acc = case acc {
+          .Some(cur) => .Some(cur.merge(src)),
+          .None => .Some(src),
+        }
+      }
+    }
+    case acc {
+      .Some(m) => {
+        // downward-closed: only keep when the joined shell is Unique.
+        shell_unique := case entry_own.get(lid) {
+          .Some(t) => t == 0,
+          .None => false,
+        }
+        if shell_unique and !m.is_empty() {
+          entry[lid] = m
+        }
+      },
+      .None => {},
+    }
+  }
+  entry
+}
+
+fn pp_of(pp: Dict<Int, Dict<Int, Vector<Int>>>, id: Int) Dict<Int, Vector<Int>> {
+  case pp.get(id) {
+    .Some(m) => m,
+    .None => Dict.new(),
+  }
+}
+
+fn pp_of_atom(pp: Dict<Int, Dict<Int, Vector<Int>>>, a: Atom) Dict<Int, Vector<Int>> {
+  case atom_local_id(a) {
+    .Some(id) => pp_of(pp, id),
+    .None => Dict.new(),
+  }
+}
+
+// entry.path_prov per live-in local at blk, mirroring join_entry_field_own: block
+// param -> meet over positional edge args; live-through local -> meet over same-id.
+// Only processed preds contribute. A (local, PathKey) survives only if present on
+// EVERY contributing pred; on origin conflict across preds, keep the UNION of the
+// origin vectors (a divergent origin makes the path multi-origin, which a later
+// classifier drops — sound).
+fn join_entry_path_prov(
+  blk: CfgBlock,
+  exit_pp: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>,
+  processed: Dict<Int, Bool>,
+) Dict<Int, Dict<Int, Vector<Int>>> {
+  entry: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
+  for lid in blk.entry.live {
+    pidx := param_index(blk, lid)
+    acc: Dict<Int, Vector<Int>>? = .None
+    for pe in blk.preds {
+      if is_processed(processed, pe.target.id) {
+        pp := nested_get(exit_pp, pe.target.id)
+        src := case pidx {
+          .Some(i) => if i < pe.args.len() {
+            pp_of_atom(pp, pe.args[i])
+          } else {
+            Dict.new()
+          },
+          .None => pp_of(pp, lid),
+        }
+        acc = case acc {
+          .Some(cur) => .Some(meet_path_prov(cur, src)),
+          .None => .Some(src),
+        }
+      }
+    }
+    case acc {
+      .Some(m) => if m.keys().len() > 0 {
+        entry[lid] = m
+      },
+      .None => {},
+    }
+  }
+  entry
+}
+
+// Meet two per-local path_prov maps: a PathKey survives only if present in BOTH;
+// origins are unioned.
+fn meet_path_prov(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Dict<Int, Vector<Int>> {
+  out: Dict<Int, Vector<Int>> = Dict.new()
+  for k, av in a {
+    case b.get(k) {
+      .Some(bv) => out[k] = union_sorted(av, bv),
+      .None => {},
+    }
+  }
+  out
+}
+
+// Conservative widening for field_own: keep only locals present in both old and
+// next, and meet each local's FieldMap (keys intersection).
+fn merge_field_own_exit(old: Dict<Int, ff.FieldMap>, next: Dict<Int, ff.FieldMap>) Dict<
+  Int,
+  ff.FieldMap,
+> {
+  result: Dict<Int, ff.FieldMap> = Dict.new()
+  for k in old.keys() {
+    case old.get(k) {
+      .Some(old_fm) => case next.get(k) {
+        .Some(next_fm) => {
+          merged := old_fm.merge(next_fm)
+          if !merged.is_empty() {
+            result[k] = merged
+          }
+        },
+        .None => {},
+      },
+      .None => {},
+    }
+  }
+  result
+}
+
+fn same_pp_local(a: Dict<Int, Vector<Int>>, b: Dict<Int, Vector<Int>>) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+  for k in a.keys() {
+    case a.get(k) {
+      .Some(av) => case b.get(k) {
+        .Some(bv) => if !same_live(av, bv) {
+          return false
+        },
+        .None => return false,
+      },
+      .None => {},
+    }
+  }
+  true
+}
+
+// Conservative widening for path_prov, mirroring merge_field_own_exit: keep only
+// locals present in both old and next, and meet each local's per-PathKey map
+// (key-intersection + origin union).
+fn merge_path_prov_exit(
+  old: Dict<Int, Dict<Int, Vector<Int>>>,
+  next: Dict<Int, Dict<Int, Vector<Int>>>,
+) Dict<Int, Dict<Int, Vector<Int>>> {
+  result: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
+  for k in old.keys() {
+    case old.get(k) {
+      .Some(old_pp) => case next.get(k) {
+        .Some(next_pp) => {
+          merged := meet_path_prov(old_pp, next_pp)
+          if merged.keys().len() > 0 {
+            result[k] = merged
+          }
+        },
+        .None => {},
+      },
+      .None => {},
+    }
+  }
+  result
+}
+
+// Combined ownership+validity+provenance fixpoint co-iterated to a joint fixed
+// point (they share ForwardState and forward_block). The single live driver
+// (guardrail G1).
+type FixResult = .{
+  exits: Dict<Int, Dict<Int, Int>>,
+  exit_valid: Dict<Int, Dict<Int, Bool>>,
+  exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
+  exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>>,
+  exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>,
+}
+
+fn prev_seen_get(seen: Dict<Int, Bool>, id: Int) Bool {
+  case seen.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn change_count_get(counts: Dict<Int, Int>, id: Int) Int {
+  case counts.get(id) {
+    .Some(v) => v,
+    .None => 0,
+  }
+}
+
+fn validate_loop_seed(blocks: Vector<CfgBlock>, fx: FixResult, blk: CfgBlock, lid: Int) Bool {
+  pidx := param_index(blk, lid)
+
+  saw_entry := false
+  saw_backedge := false
+  for pe in blk.preds {
+    if is_loop_backedge_to_header(blocks, pe.target.id, blk.id.id) {
+      saw_backedge = true
+    } else {
+      saw_entry = true
+    }
+    contributed := pred_local_contribution(fx.exits, fx.exit_valid, pe, pidx, lid)
+    if !contributed.valid {
+      return false
+    }
+    case contributed.own {
+      .Unique => {},
+      _ => return false,
+    }
+  }
+
+  saw_entry and saw_backedge
+}
+
+fn retain_valid_loop_seeds(blocks: Vector<CfgBlock>, fx: FixResult, seeds: LoopSeedSet) LoopSeedSet {
+  kept: LoopSeedSet = Dict.new()
+  for blk in blocks {
+    for lid in blk.entry.live {
+      if loop_seed_active(seeds, blk.id.id, lid) and validate_loop_seed(blocks, fx, blk, lid) {
+        kept[loop_seed_key(blk.id.id, lid)] = true
+      }
+    }
+  }
+  kept
+}
+
+fn same_loop_seed_set(a: LoopSeedSet, b: LoopSeedSet) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+  for k in a.keys() {
+    case a.get(k) {
+      .Some(av) => case b.get(k) {
+        .Some(bv) => if av != bv {
+          return false
+        },
+        .None => return false,
+      },
+      .None => {},
+    }
+  }
+  true
+}
+
+fn run_fixpoint(
+  blocks: Vector<CfgBlock>,
+  params: Vector<LocalId>,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+  unique_seed: Dict<Int, Bool>,
+  seeds: LoopSeedSet,
+) FixResult {
+  exits: Dict<Int, Dict<Int, Int>> = Dict.new()
+  exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
+  exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
+  exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>> = Dict.new()
+  exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>> = Dict.new()
+  prev_exits: Dict<Int, Dict<Int, Int>> = Dict.new()
+  prev_exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
+  prev_exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
+  locked_own: Dict<Int, Vector<Int>> = Dict.new()
+  locked_valid: Dict<Int, Vector<Int>> = Dict.new()
+  locked_prov: Dict<Int, Vector<Int>> = Dict.new()
+  prev_seen: Dict<Int, Bool> = Dict.new()
+  changed_visits: Dict<Int, Int> = Dict.new()
+  processed: Dict<Int, Bool> = Dict.new()
+  for blk in blocks {
+    exits[blk.id.id] = Dict.new()
+    exit_valid[blk.id.id] = Dict.new()
+    exit_prov[blk.id.id] = Dict.new()
+    exit_field_own[blk.id.id] = Dict.new()
+    exit_path_prov[blk.id.id] = Dict.new()
+    prev_exits[blk.id.id] = Dict.new()
+    prev_exit_valid[blk.id.id] = Dict.new()
+    prev_exit_prov[blk.id.id] = Dict.new()
+    locked_own[blk.id.id] = []
+    locked_valid[blk.id.id] = []
+    locked_prov[blk.id.id] = []
+    prev_seen[blk.id.id] = false
+    changed_visits[blk.id.id] = 0
+    processed[blk.id.id] = false
+  }
+
+  // Quartet moves + liveness scan are dataflow-invariant: compute once, not per
+  // fixpoint visit (keeps the O(n^2) quartet recognizer off the iteration path).
+  preps := prep_blocks(blocks, sem)
+  changed := true
+  for changed {
+    changed = false
+    for blk in blocks {
+      entry_own := join_entry_ownership_assumed(blk, exits, processed, seeds)
+      entry_valid := join_entry_valid(blk, exit_valid, processed)
+      entry_prov := join_entry_prov(blk, exit_prov, processed)
+      if blk.id.id == 0 {
+        entry_prov = seed_param_prov(entry_prov, params)
+        entry_own = seed_param_own(entry_own, unique_seed, params)
+      }
+      entry_field := join_entry_field_own(blk, exit_field_own, entry_own, processed)
+      entry_pp := join_entry_path_prov(blk, exit_path_prov, processed)
+      st := ForwardState.{
+        own: entry_own,
+        valid: entry_valid,
+        prov: entry_prov,
+        field_own: entry_field,
+        path_prov: entry_pp,
+      }
+
+      // seed a payload-bound local from its match predecessor's exit facts
+      pred_id := case blk.preds.len() == 1 {
+        true => blk.preds[0].target.id, // in a `preds` edge, CfgEdge.target holds the PREDECESSOR id
+        false => 0 - 1,
+      }
+      st = if pred_id >= 0 {
+        st.seed_payload_binding(
+          blk,
+          nested_get(exit_field_own, pred_id),
+          nested_get(exit_path_prov, pred_id),
+          nested_get(exit_prov, pred_id),
+        )
+      } else {
+        st
+      }
+      st = forward_block(blk, st, prep_get(preps, blk, sem), table, b, sem, suppress)
+      already := is_processed(processed, blk.id.id)
+      old_own := nested_get(exits, blk.id.id)
+      old_valid := nested_get(exit_valid, blk.id.id)
+      old_prov := nested_get(exit_prov, blk.id.id)
+      old_field := nested_get(exit_field_own, blk.id.id)
+      old_pp := nested_get(exit_path_prov, blk.id.id)
+      next_own := st.own
+      next_valid := st.valid
+      next_prov := st.prov
+      next_field := st.field_own
+      next_pp := st.path_prov
+      if already {
+        has_prev := prev_seen_get(prev_seen, blk.id.id)
+        force_lock_changed := change_count_get(changed_visits, blk.id.id) >= fixpoint_widen_cap
+        own_merge := merge_targeted(
+          old_own,
+          st.own,
+          nested_get(prev_exits, blk.id.id),
+          locked_get(locked_own, blk.id.id),
+          has_prev,
+          force_lock_changed,
+          own_lat(),
+        )
+        valid_merge := merge_targeted(
+          old_valid,
+          st.valid,
+          nested_get(prev_exit_valid, blk.id.id),
+          locked_get(locked_valid, blk.id.id),
+          has_prev,
+          force_lock_changed,
+          valid_lat(),
+        )
+        prov_merge := merge_targeted(
+          old_prov,
+          st.prov,
+          nested_get(prev_exit_prov, blk.id.id),
+          locked_get(locked_prov, blk.id.id),
+          has_prev,
+          force_lock_changed,
+          prov_lat(),
+        )
+        next_own = own_merge.map
+        next_valid = valid_merge.map
+        next_prov = prov_merge.map
+        locked_own[blk.id.id] = own_merge.locked
+        locked_valid[blk.id.id] = valid_merge.locked
+        locked_prov[blk.id.id] = prov_merge.locked
+
+        // field_own widening: conservative meet (key-intersection + per-path meet)
+        next_field = merge_field_own_exit(old_field, st.field_own)
+
+        // path_prov widening in lockstep: same conservative meet shape.
+        next_pp = merge_path_prov_exit(old_pp, st.path_prov)
+      }
+      if !already
+        or !same_map(old_own, next_own, int_eq)
+        or !same_map(old_valid, next_valid, bool_eq)
+        or !same_map(old_prov, next_prov, same_live)
+        or !same_map(old_field, next_field, ff.same)
+        or !same_map(old_pp, next_pp, same_pp_local) {
+        changed = true
+        if already {
+          prev_exits[blk.id.id] = old_own
+          prev_exit_valid[blk.id.id] = old_valid
+          prev_exit_prov[blk.id.id] = old_prov
+          prev_seen[blk.id.id] = true
+          changed_visits[blk.id.id] = change_count_get(changed_visits, blk.id.id) + 1
+        }
+        exits[blk.id.id] = next_own
+        exit_valid[blk.id.id] = next_valid
+        exit_prov[blk.id.id] = next_prov
+        exit_field_own[blk.id.id] = next_field
+        exit_path_prov[blk.id.id] = next_pp
+      }
+      processed[blk.id.id] = true
+    }
+  }
+  FixResult.{ exits, exit_valid, exit_prov, exit_field_own, exit_path_prov }
+}
+
+fn run_fixpoint_validated(
+  blocks: Vector<CfgBlock>,
+  params: Vector<LocalId>,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+  unique_seed: Dict<Int, Bool>,
+) FixResult {
+  seeds := collect_loop_seed_candidates(blocks)
+  fx := run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds)
+  stable_seeds := false
+  for !stable_seeds {
+    kept := retain_valid_loop_seeds(blocks, fx, seeds)
+    if same_loop_seed_set(kept, seeds) {
+      stable_seeds = true
+    } else {
+      seeds = kept
+      fx = run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds)
+    }
+  }
+  fx
+}
+
+// ── Driver ──────────────────────────────────────────────────────────
+pub fn analyze(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) CfgView {
+  analyze_with_summaries(view, b, sem, empty_summary_table())
+}
+
+pub fn analyze_with_summaries(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+) CfgView {
+  functions := collect f in view.functions {
+    analyze_function(f, table, b, sem, Dict.new())
+  }
+  CfgView.{ functions }
+}
+
+pub fn analyze_function_with_seed(
+  f: CfgFunction,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  unique_seed: Dict<Int, Bool>,
+) CfgFunction {
+  analyze_function(f, table, b, sem, unique_seed)
+}
+
+pub type CallUniq = .{ callee: Int, arg_unique: Vector<Bool> }
+
+pub fn call_uniques(
+  f: CfgFunction,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+  unique_seed: Dict<Int, Bool>,
+) Vector<CallUniq> {
+  live := compute_liveness(f.blocks)
+  blocks := collect blk in f.blocks {
+    bl := live_get(live, blk.id.id)
+    blk.entry.live = bl.live_in
+    blk.exit.live = bl.live_out
+    blk
+  }
+  fx := run_fixpoint_validated(blocks, f.params, table, b, sem, suppress, unique_seed)
+  done := all_processed(blocks)
+  out: Vector<CallUniq> = []
+  for blk in blocks {
+    entry_own := join_entry_ownership(blk, fx.exits, done)
+    entry_valid := join_entry_valid(blk, fx.exit_valid, done)
+    entry_prov := join_entry_prov(blk, fx.exit_prov, done)
+    if blk.id.id == 0 {
+      entry_prov = seed_param_prov(entry_prov, f.params)
+      entry_own = seed_param_own(entry_own, unique_seed, f.params)
+    }
+    entry_field := join_entry_field_own(blk, fx.exit_field_own, entry_own, done)
+    entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
+    st := ForwardState.{
+      own: entry_own,
+      valid: entry_valid,
+      prov: entry_prov,
+      field_own: entry_field,
+      path_prov: entry_pp,
+    }
+    pred_id := case blk.preds.len() == 1 {
+      true => blk.preds[0].target.id,
+      false => 0 - 1,
+    }
+    st = if pred_id >= 0 {
+      st.seed_payload_binding(
+        blk,
+        nested_get(fx.exit_field_own, pred_id),
+        nested_get(fx.exit_path_prov, pred_id),
+        nested_get(fx.exit_prov, pred_id),
+      )
+    } else {
+      st
+    }
+    prep := block_prep(blk, sem)
+    scan := prep.scan
+    for inst, i in blk.instructions {
+      last := last_use_at(inst.op, scan.live_after[i])
+      pre := st
+      case inst.op {
+        .ACall(callee, args) => case callee_func_id(callee) {
+          .Some(fid) => case call_info(sem, fid) {
+            .Some(_) => {},
+            .None => case table.summary_get(fid.id) {
+              .Some(_) => {
+                au: Vector<Bool> = collect a in args {
+                  case atom_local_id(a) {
+                    .Some(id) => local_reusable(pre.own, pre.valid, id, last)
+                      and store_count(args, id) == 1,
+                    .None => false,
+                  }
+                }
+                out = .append(CallUniq.{ callee: fid.id, arg_unique: au })
+              },
+              .None => {},
+            },
+          },
+          .None => {},
+        },
+        _ => {},
+      }
+      st = .transfer_op(
+        inst.anf_local.id,
+        inst.op,
+        last,
+        prep.moves,
+        prep.transport,
+        table,
+        b,
+        sem,
+        suppress,
+      )
+    }
+  }
+  out
+}
+
+// ── Pre-analysis dead-merge param pruning (G5) ──────────────────────
+// A minimal PURE view transform run BEFORE any ownership/summary analysis: it
+// drops join/loop carried block-params that are dead across the boundary (their
+// param local is not in the block's live_in), realigning the positionally-
+// aligned edge args (preds + predecessor succs) and terminator payloads. Only
+// join/loop blocks carry params; entry/straight-line blocks have empty params
+// and are untouched. Removing a *dead* param cannot change any other local's
+// liveness, so the pruned view is self-consistent and the full analysis then
+// runs fresh on it (no stale facts). Returns a NEW view; never mutate an
+// analyzed CFG.
+pub fn prune_dead_merge(view: CfgView) CfgView {
+  functions := collect f in view.functions {
+    prune_function(f)
+  }
+  CfgView.{ functions }
+}
+
+fn prune_function(f: CfgFunction) CfgFunction {
+  live := compute_liveness(f.blocks)
+
+  // block-id -> ascending positions to drop from that block's params.
+  drop_by_block: Dict<Int, Vector<Int>> = Dict.new()
+  for blk in f.blocks {
+    li := live_get(live, blk.id.id).live_in
+    positions: Vector<Int> = []
+    for p, i in blk.params {
+      if !live_contains_int(li, p.id) {
+        positions = .append(i)
+      }
+    }
+    if positions.len() > 0 {
+      drop_by_block[blk.id.id] = positions
+    }
+  }
+
+  blocks := collect blk in f.blocks {
+    prune_block(blk, drop_by_block)
+  }
+  f.blocks = blocks
+  f
+}
+
+fn drop_positions_for(drop_by_block: Dict<Int, Vector<Int>>, block_id: Int) Vector<Int> {
+  case drop_by_block.get(block_id) {
+    .Some(v) => v,
+    .None => [],
+  }
+}
+
+fn prune_block(blk: CfgBlock, drop_by_block: Dict<Int, Vector<Int>>) CfgBlock {
+  own := drop_positions_for(drop_by_block, blk.id.id)
+  blk.params = drop_positions_local(blk.params, own)
+
+  // preds: every edge into this block feeds this block's params, so drop this
+  // block's own positions from each pred edge's args.
+  blk.preds = collect e in blk.preds {
+    CfgEdge.{ target: e.target, args: drop_positions_atom(e.args, own) }
+  }
+
+  // succs: each forward edge feeds ITS target's params, so drop the target's
+  // positions from that edge's args.
+  blk.succs = collect e in blk.succs {
+    CfgEdge.{
+      target: e.target,
+      args: drop_positions_atom(e.args, drop_positions_for(drop_by_block, e.target.id)),
+    }
+  }
+
+  case blk.terminator {
+    .Some(term) => blk.terminator = .Some(prune_terminator(term, drop_by_block)),
+    .None => {},
+  }
+  blk
+}
+
+// Rebuild a block's params dropping the flagged (ascending) positions.
+fn drop_positions_local(params: Vector<LocalId>, positions: Vector<Int>) Vector<LocalId> {
+  if positions.len() == 0 {
+    return params
+  }
+  out: Vector<LocalId> = []
+  for p, i in params {
+    if !live_contains_int(positions, i) {
+      out = .append(p)
+    }
+  }
+  out
+}
+
+// Rebuild an edge's args dropping the same (ascending) positions.
+fn drop_positions_atom(args: Vector<Atom>, positions: Vector<Int>) Vector<Atom> {
+  if positions.len() == 0 {
+    return args
+  }
+  out: Vector<Atom> = []
+  for a, i in args {
+    if !live_contains_int(positions, i) {
+      out = .append(a)
+    }
+  }
+  out
+}
+
+// Drop aligned atoms from terminator payloads that feed a pruned block's params.
+// Each edge-carrying terminator variant names the target block(s) whose params
+// its payload aligns to; keep targets/identity unchanged.
+fn prune_terminator(term: Terminator, drop_by_block: Dict<Int, Vector<Int>>) Terminator {
+  case term {
+    .Branch(target, args) => .Branch(
+      target,
+      drop_positions_atom(args, drop_positions_for(drop_by_block, target.id)),
+    ),
+    .CondBranch(test, then_t, then_args, else_t, else_args) => .CondBranch(
+      test,
+      then_t,
+      drop_positions_atom(then_args, drop_positions_for(drop_by_block, then_t.id)),
+      else_t,
+      drop_positions_atom(else_args, drop_positions_for(drop_by_block, else_t.id)),
+    ),
+    .Match(scrut, edges) => {
+      pruned := collect e in edges {
+        CfgEdge.{
+          target: e.target,
+          args: drop_positions_atom(e.args, drop_positions_for(drop_by_block, e.target.id)),
+        }
+      }
+      .Match(scrut, pruned)
+    },
+    .LoopBackEdge(target, args) => .LoopBackEdge(
+      target,
+      drop_positions_atom(args, drop_positions_for(drop_by_block, target.id)),
+    ),
+    _ => term,
+  }
+}
+
+// Phase 3 threads a read-only `table` of callee summaries through the analysis
+// without restructuring the algorithm; the summary is consulted in transfer_call
+// (Task 4). The combined ownership/validity/provenance fixpoint still runs here.
+fn analyze_function(
+  f: CfgFunction,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  unique_seed: Dict<Int, Bool>,
+) CfgFunction {
+  live := compute_liveness(f.blocks)
+  blocks := collect blk in f.blocks {
+    bl := live_get(live, blk.id.id)
+    blk.entry.live = bl.live_in
+    blk.exit.live = bl.live_out
+    blk
+  }
+  blocks = ownership_stage(blocks, f.params, table, b, sem, unique_seed)
+  f.blocks = blocks
+  f
+}
+
+// Combined ownership+validity+provenance fixpoint + materialize the facts maps.
+fn ownership_stage(
+  blocks: Vector<CfgBlock>,
+  params: Vector<LocalId>,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  unique_seed: Dict<Int, Bool>,
+) Vector<CfgBlock> {
+  no_suppress: Dict<Int, Bool> = Dict.new()
+  fx := run_fixpoint_validated(blocks, params, table, b, sem, no_suppress, unique_seed)
+  done := all_processed(blocks)
+  collect blk in blocks {
+    entry_own := join_entry_ownership(blk, fx.exits, done)
+    entry_valid := join_entry_valid(blk, fx.exit_valid, done)
+    entry_prov := join_entry_prov(blk, fx.exit_prov, done)
+    if blk.id.id == 0 {
+      entry_prov = seed_param_prov(entry_prov, params)
+      entry_own = seed_param_own(entry_own, unique_seed, params)
+    }
+    entry_field := join_entry_field_own(blk, fx.exit_field_own, entry_own, done)
+    entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
+    st := ForwardState.{
+      own: entry_own,
+      valid: entry_valid,
+      prov: entry_prov,
+      field_own: entry_field,
+      path_prov: entry_pp,
+    }
+
+    // seed a payload-bound local from its match predecessor's exit facts
+    pred_id := case blk.preds.len() == 1 {
+      true => blk.preds[0].target.id, // in a `preds` edge, CfgEdge.target holds the PREDECESSOR id
+      false => 0 - 1,
+    }
+    st = if pred_id >= 0 {
+      st.seed_payload_binding(
+        blk,
+        nested_get(fx.exit_field_own, pred_id),
+        nested_get(fx.exit_path_prov, pred_id),
+        nested_get(fx.exit_prov, pred_id),
+      )
+    } else {
+      st
+    }
+    prep := block_prep(blk, sem)
+    verdicts := block_verdicts(blk, st, prep, table, b, sem, no_suppress)
+    st = forward_block(blk, st, prep, table, b, sem, no_suppress)
+    blk.entry.ownership = entry_own
+    blk.exit.ownership = st.own
+    blk.entry.binding_valid = entry_valid
+    blk.exit.binding_valid = st.valid
+    blk.entry.field_own = entry_field
+    blk.exit.field_own = st.field_own
+    blk.exit.verdicts = verdicts
+    blk
+  }
+}
+
+// ── Interprocedural summary derivation ──────────────────────────────
+fn own_is_shared(own: Dict<Int, Int>, id: Int) Bool {
+  case own.get(id) {
+    .Some(tag) => tag == own_tag(.Shared),
+    .None => false,
+  }
+}
+
+fn return_atom(blk: CfgBlock) Atom? {
+  case blk.terminator {
+    .Some(.Return(.Some(a))) => .Some(a),
+    _ => .None,
+  }
+}
+
+fn param_pos(params: Vector<LocalId>, local_id: Int) Int {
+  for p, i in params {
+    if p.id == local_id {
+      return i
+    }
+  }
+  -1
+}
+
+fn prov_to_indices(params: Vector<LocalId>, origins: Vector<Int>) Vector<Int> {
+  out: Vector<Int> = []
+  for o in origins {
+    idx := param_pos(params, o)
+    if idx >= 0 {
+      out = insert_sorted(out, idx)
+    }
+  }
+  out
+}
+
+fn join_return(a: ReturnEffect, b: ReturnEffect) ReturnEffect {
+  case a {
+    .Shared => .Shared,
+    .OwnedFresh => b,
+    .MayAliasParams(sa) => case b {
+      .Shared => .Shared,
+      .OwnedFresh => .MayAliasParams(sa),
+      .MayAliasParams(sb) => .MayAliasParams(union_sorted(sa, sb)),
+    },
+  }
+}
+
+fn param_index_of(params: Vector<LocalId>, local_id: Int) Int? {
+  for p, i in params {
+    if p.id == local_id {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+// Ascending path-key iteration order (field key 8=.f0 < 12=.f1 < ...), so
+// Direct ret_paths come out sorted by field.
+fn sorted_dict_keys(d: Dict<Int, Vector<Int>>) Vector<Int> {
+  out: Vector<Int> = []
+  for k in d.keys() {
+    out = insert_sorted(out, k)
+  }
+  out
+}
+
+// .None => drop; Some([]) => OwnedFresh; Some([k]) => OwnedFromParam(param-index-of-k);
+// Some([multi]) => drop (multi-origin path can't claim single-param ownership).
+// `fm` is the returned atom's field_own. A path_prov entry of `[]` means only that
+// the field's SHELL aliases no param directly — NOT that the field is fresh-owned:
+// a non-single-retention nested value records `path_prov[.f] = []` while its interior
+// still aliases a param (the interior is not folded on the non-retention branch). So
+// OwnedFresh is emitted ONLY when field_own PROVES the field is a Unique subtree;
+// a path_prov-only `[]` drops (sound under-claim). OwnedFromParam(k) is safe from
+// path_prov alone: it carries the param origin and the caller gates on it.
+fn classify_path_own(pp: Dict<Int, Vector<Int>>, k: Int, params: Vector<LocalId>, fm: ff.FieldMap) ReturnOwn? {
+  case pp.get(k) {
+    .None => .None,
+    .Some(os) => cond {
+      os.len() == 0 => if fm.is_unique(ff.path_of_key(k)) {
+        .Some(.OwnedFresh)
+      } else {
+        .None
+      },
+      os.len() == 1 => case param_index_of(params, os[0]) {
+        .Some(pi) => .Some(.OwnedFromParam(pi)),
+        .None => .None,
+      },
+      _ => .None,
+    },
+  }
+}
+
+fn ret_own_eq(a: ReturnOwn, b: ReturnOwn) Bool {
+  case a {
+    .OwnedFresh => case b {
+      .OwnedFresh => true,
+      .OwnedFromParam(_) => false,
+    },
+    .OwnedFromParam(ka) => case b {
+      .OwnedFresh => false,
+      .OwnedFromParam(kb) => ka == kb,
+    },
+  }
+}
+
+fn ret_via_field_eq(a: ReturnPathOwn, b: ReturnPathOwn) Bool {
+  fields_eq := case a.field {
+    .Some(fa) => case b.field {
+      .Some(fb) => fa == fb,
+      .None => false,
+    },
+    .None => case b.field {
+      .Some(_) => false,
+      .None => true,
+    },
+  }
+  if !fields_eq {
+    return false
+  }
+  case a.via {
+    .Direct => case b.via {
+      .Direct => true,
+      .Variant(_, _) => false,
+    },
+    .Variant(ta, ia) => case b.via {
+      .Direct => false,
+      .Variant(tb, ib) => ta == tb and ia == ib,
+    },
+  }
+}
+
+// Drop any OwnedFromParam(k) path whose param k backs more than one field: the
+// param is aliased across those fields and cannot be uniquely owned by either.
+// OwnedFresh paths carry no origin and always survive.
+fn drop_aliased_param_paths(rps: Vector<ReturnPathOwn>) Vector<ReturnPathOwn> {
+  counts: Dict<Int, Int> = Dict.new()
+  for r in rps {
+    case r.own {
+      .OwnedFromParam(k) => counts[k] = case counts.get(k) {
+        .Some(c) => c + 1,
+        .None => 1,
+      },
+      .OwnedFresh => {},
+    }
+  }
+  out: Vector<ReturnPathOwn> = []
+  for r in rps {
+    keep := case r.own {
+      .OwnedFromParam(k) => case counts.get(k) {
+        .Some(c) => c == 1,
+        .None => true,
+      },
+      .OwnedFresh => true,
+    }
+    if keep {
+      out = .append(r)
+    }
+  }
+  out
+}
+
+// A path survives the meet only if present in BOTH lists under the same
+// (via, field) key AND with a matching own. Any mismatch drops the path.
+// What a return site definitely hands back, for a TAG-AWARE meet: a variant with a
+// known tag, a record (Direct), or Unknown (could be any shape). An `Ok`-payload
+// claim must be met only across sites that can return `Ok`; an `Err` site is
+// irrelevant to it, and a site that returns `Ok` but with a shared/unknown payload
+// (or an Unknown-witness site) still drops the claim.
+type RetWitness = { WDirect, WVariant(Int), WUnknown }
+
+type RetSite = .{ witness: RetWitness, paths: Vector<ReturnPathOwn> }
+
+fn witness_could_produce(w: RetWitness, via: RetVia) Bool {
+  case via {
+    .Direct => case w {
+      .WDirect => true,
+      .WVariant(_) => false,
+      .WUnknown => true,
+    },
+    .Variant(tag, _) => case w {
+      .WVariant(t) => t == tag,
+      .WDirect => false,
+      .WUnknown => true,
+    },
+  }
+}
+
+// Determine a return site's witness. (1) Owned payload facts pin a variant tag;
+// (2) owned field facts pin Direct; (3) else scan the return block for the returned
+// atom's constructor op (catches shared-payload variants that own no facts);
+// (4) else Unknown (conservative — such a site drops every claim it could produce).
+fn ret_witness(blk: CfgBlock, a: Atom, fm: ff.FieldMap) RetWitness {
+  for k in fm.sorted_keys() {
+    w := case ff.path_of_key(k).segs[0] {
+      .Payload(tag, _) => RetWitness.WVariant(tag),
+      .Field(_) => .WDirect,
+      _ => .WUnknown,
+    }
+    case w {
+      .WUnknown => {},
+      _ => return w,
+    }
+  }
+  case atom_local_id(a) {
+    .Some(aid) => {
+      for inst in blk.instructions {
+        if inst.anf_local.id == aid {
+          return case inst.op {
+            .AVariant(_, vid, _) => .WVariant(vid.id),
+            .ARecord(_, _) => .WDirect,
+            _ => .WUnknown,
+          }
+        }
+      }
+    },
+    .None => {},
+  }
+  .WUnknown
+}
+
+fn find_ret_own(paths: Vector<ReturnPathOwn>, cand: ReturnPathOwn) ReturnOwn? {
+  for p in paths {
+    if p.ret_via_field_eq(cand) {
+      return .Some(p.own)
+    }
+  }
+  .None
+}
+
+fn contains_via_field(seen: Vector<ReturnPathOwn>, cand: ReturnPathOwn) Bool {
+  for e in seen {
+    if e.ret_via_field_eq(cand) {
+      return true
+    }
+  }
+  false
+}
+
+// Tag-aware meet across return sites. A path (via, field) survives with own `o` iff
+// EVERY site that could produce `via` has exactly that (via, field, o); a
+// could-produce site that lacks it, or disagrees on own, drops it. Sites of a
+// different definite tag are irrelevant. So `Ok`-payload paths meet only across
+// `Ok`-returning (or Unknown) sites, and a real two-tag Result keeps both arms'
+// paths instead of erasing them.
+fn meet_ret_paths_tagged(sites: Vector<RetSite>) Vector<ReturnPathOwn> {
+  out: Vector<ReturnPathOwn> = []
+  seen: Vector<ReturnPathOwn> = []
+  for site in sites {
+    for cand in site.paths {
+      if !contains_via_field(seen, cand) {
+        seen = .append(cand)
+        survives := true
+        agreed: ReturnOwn? = .None
+        for s2 in sites {
+          if s2.witness.witness_could_produce(cand.via) {
+            case find_ret_own(s2.paths, cand) {
+              .Some(own) => case agreed {
+                .None => agreed = .Some(own),
+                .Some(o) => if !o.ret_own_eq(own) {
+                  survives = false
+                },
+              },
+              .None => survives = false,
+            }
+          }
+        }
+        case agreed {
+          .Some(o) => if survives {
+            out = .append(ReturnPathOwn.{ via: cand.via, field: cand.field, own: o })
+          },
+          .None => {},
+        }
+      }
+    }
+  }
+  out
+}
+
+// Intermediate for the two-phase param finalization (D9): the forward fixpoint
+// yields esc/cap, and the role is assigned only after ret/ret_paths are known.
+// A NAMED nominal record — Twinkle has no anonymous structural record element type,
+// so `Vector<.{…}>` is not writable; `Vector<RawParam>` is.
+type RawParam = .{ esc: EscapeEffect, cap: ParamCapability }
+
+// D9 precedence: a leaked (Retained) param is always Published, regardless of a
+// consumed capability — a value the callee leaks cannot be handed back uniquely.
+// Otherwise a Consumed-and-return-flowing param is Consumed; else Borrowed.
+// Canonical would-mutate model: a param with a dirty (in-place-updated) path that
+// flows to the return is Consumed; else the escape/move classification stands.
+fn reconcile_role(esc: EscapeEffect, cap: ParamCapability, has_mut: Bool, flows_to_return: Bool) ParamRole {
+  case esc {
+    .Retained => .Published,
+    .Borrowed => {
+      consumes := has_mut
+        or case cap {
+          .Consumed => true,
+          .NoCap => false,
+        }
+      if consumes and flows_to_return {
+        .Consumed
+      } else {
+        .Borrowed
+      }
+    },
+  }
+}
+
+// Shell [] (downward-closed under []) plus the collected dirty field paths, which
+// are already canonical-sorted/deduped in the PathSet.
+fn build_in_place_paths(dirty: vid.PathSet) vid.PathSet {
+  vid.shell_set().union(dirty)
+}
+
+fn param_in_indices(k: Int, idxs: Vector<Int>) Bool {
+  for x in idxs {
+    if x == k {
+      return true
+    }
+  }
+  false
+}
+
+// flows_to_return (design "Requirement collection"): param k's region reaches the
+// return iff the whole-return classification names it (MayAliasParams) or a
+// ret_path hands it back (OwnedFromParam(k)). A projection of Phase 5 facts.
+fn param_flows_to_return(k: Int, ret: ReturnEffect, ret_paths: Vector<ReturnPathOwn>) Bool {
+  case ret {
+    .MayAliasParams(idxs) => if param_in_indices(k, idxs) {
+      return true
+    },
+    _ => {},
+  }
+  for rp in ret_paths {
+    case rp.own {
+      .OwnedFromParam(j) => if j == k {
+        return true
+      },
+      _ => {},
+    }
+  }
+  false
+}
+
+// ── Requirement-flow (dirty-path) dataflow ──────────────────────────
+// Self-contained forward analysis (independent of the ownership fixpoint): per
+// value, which single parameter its RECORD IDENTITY derives from (origin; -1 =
+// none/ambiguous) and the field paths dirtied by in-place record updates reaching
+// it. Reading the RETURNED atom's dirty set yields each param's in-place field
+// requirements — correctly ignoring an update whose result never reaches the return.
+type FlowFact = .{ origin: Int, dirty: vid.PathSet }
+
+fn ff_none() FlowFact {
+  FlowFact.{ origin: 0 - 1, dirty: vid.empty_set() }
+}
+
+fn flow_get(st: Dict<Int, FlowFact>, a: Atom) FlowFact {
+  case atom_local_id(a) {
+    .Some(id) => case st.get(id) {
+      .Some(ff) => ff,
+      .None => ff_none(),
+    },
+    .None => ff_none(),
+  }
+}
+
+// Per-op transfer: only ARecordUpdate (record->record, add [f]) and AAssign
+// (rebind) carry a fact forward; every other result defaults to none — the chain
+// breaks (ARecordGet is a field value; a call result is Stage 2b).
+// Transitive requirement propagation (Stage 2b): a call to a summarized user
+// function whose returned parameter carries in-place field requirements hands those
+// requirements (and that parameter's origin) back to the call result, so a parameter
+// threaded through consuming helpers (env = env.add_type(...)) accumulates their
+// field paths. Fires only when EXACTLY ONE parameter position both flows to the
+// callee's return and receives an origin-bearing argument (else the origin is
+// ambiguous -> none). Builtins and unknown callees break the chain (origin none).
+// A requirements readout, not a proof: Stage 3's owned-entry pass validates it.
+fn call_result_fact(st: Dict<Int, FlowFact>, table: SummaryTable, callee: Atom, args: Vector<Atom>) FlowFact {
+  fid := case callee {
+    .AGlobalFunc(f) => f.id,
+    _ => return ff_none(),
+  }
+  s := case table.summary_get(fid) {
+    .Some(x) => x,
+    .None => return ff_none(),
+  }
+  carrier := 0 - 1
+  count := 0
+  for ps, i in s.params {
+    if i < args.len() and ps.flows_to_return and flow_get(st, args[i]).origin >= 0 {
+      carrier = i
+      count = count + 1
+    }
+  }
+  if count != 1 {
+    return ff_none()
+  }
+  base := flow_get(st, args[carrier])
+  dirty := base.dirty
+  for p in s.params[carrier].in_place_paths.paths {
+    if !p.is_shell() {
+      dirty = .add(p)
+    }
+  }
+  FlowFact.{ origin: base.origin, dirty }
+}
+
+fn transfer_flow(
+  st: Dict<Int, FlowFact>,
+  table: SummaryTable,
+  sem: OptimizerSemantics,
+  op: AnfOp,
+  result: Int,
+) Dict<Int, FlowFact> {
+  case op {
+    .ARecordUpdate(base, fld, _, _, _) => {
+      bf := flow_get(st, base)
+      st[result] = if bf.origin >= 0 {
+        FlowFact.{ origin: bf.origin, dirty: bf.dirty.add(vid.field(fld.id)) }
+      } else {
+        ff_none()
+      }
+      st
+    },
+    .AAssign(local, a) => {
+      st[local.id] = flow_get(st, a)
+      st
+    },
+    .ACall(callee, args) => {
+      // A COW in-place update builtin (`xs[i]=v` -> VECTOR_SET, `Dict.set`, ...)
+      // dirties its base collection at the SHELL, exactly like an ARecordUpdate
+      // dirties [.f]; this is what lets a vector wrapper's base param become an
+      // in-place Consumed param. A summarized USER callee still routes through
+      // call_result_fact (Stage 2b transitive propagation); non-Update builtins
+      // and unknown callees break the chain (origin none).
+      st[result] = case callee_func_id(callee) {
+        .Some(fid) => case call_info(sem, fid) {
+          .Some(cs) => cow_update_result_fact(st, cs, args),
+          .None => call_result_fact(st, table, callee, args),
+        },
+        .None => call_result_fact(st, table, callee, args),
+      }
+      st
+    },
+    _ => st,
+  }
+}
+
+// A COW `.Update` builtin dirties its cow_base_arg at the shell: the base value's
+// backing is reused in place and handed back. Mirrors how ARecordUpdate grows dirty,
+// but with no field path — the whole shell is the dirtied region. Non-Update builtins
+// (reads, allocations) or a missing base break the chain.
+fn cow_update_result_fact(st: Dict<Int, FlowFact>, cs: CallSemantics, args: Vector<Atom>) FlowFact {
+  case cs.effect {
+    .Update => case cs.cow_base_arg {
+      .Some(k) => if k < args.len() {
+        base := flow_get(st, args[k])
+        if base.origin >= 0 {
+          FlowFact.{ origin: base.origin, dirty: base.dirty.union(vid.shell_set()) }
+        } else {
+          ff_none()
+        }
+      } else {
+        ff_none()
+      },
+      .None => ff_none(),
+    },
+    _ => ff_none(),
+  }
+}
+
+fn join_fact(a: FlowFact, b: FlowFact) FlowFact {
+  org := if a.origin == b.origin {
+    a.origin
+  } else {
+    0 - 1
+  }
+  FlowFact.{ origin: org, dirty: a.dirty.union(b.dirty) }
+}
+
+// Join predecessors' exit facts at a block entry. Mirrors join_entry_prov EXACTLY:
+// a block PARAMETER (SSA merge target) is sourced from each pred edge's arg
+// `pe.args[i]`; a non-parameter live local carries over from the pred's exit by the
+// same id (dominance). Only PROCESSED preds contribute (fixpoint correctness for
+// back-edges), so branches/merges/loops union their dirty sets under the same proven
+// logic as the ownership fixpoint.
+fn flow_join_entry(blk: CfgBlock, exits: Dict<Int, Dict<Int, FlowFact>>, processed: Dict<Int, Bool>) Dict<
+  Int,
+  FlowFact,
+> {
+  entry: Dict<Int, FlowFact> = Dict.new()
+  for lid in blk.entry.live {
+    pidx := param_index(blk, lid)
+    acc := ff_none()
+    seen := false
+    for pe in blk.preds {
+      if is_processed(processed, pe.target.id) {
+        pex := case exits.get(pe.target.id) {
+          .Some(m) => m,
+          .None => Dict.new(),
+        }
+        src := case pidx {
+          .Some(i) => if i < pe.args.len() {
+            flow_get(pex, pe.args[i])
+          } else {
+            ff_none()
+          },
+          .None => case pex.get(lid) {
+            .Some(x) => x,
+            .None => ff_none(),
+          },
+        }
+        acc = if seen {
+          acc.join_fact(src)
+        } else {
+          src
+        }
+        seen = true
+      }
+    }
+    if seen {
+      entry[lid] = acc
+    }
+  }
+  entry
+}
+
+fn flow_map_eq(a: Dict<Int, FlowFact>, b: Dict<Int, FlowFact>) Bool {
+  if a.keys().len() != b.keys().len() {
+    return false
+  }
+  for k in a.keys() {
+    af := case a.get(k) {
+      .Some(x) => x,
+      .None => ff_none(),
+    }
+    bf := case b.get(k) {
+      .Some(x) => x,
+      .None => return false,
+    }
+    if af.origin != bf.origin or !af.dirty.same(bf.dirty) {
+      return false
+    }
+  }
+  true
+}
+
+// Forward dataflow to a fixed point (dirty grows, origin only degrades ->
+// terminates), modeled on run_fixpoint's `for changed { for blk }` shape with the
+// same processed guard. Computes its own liveness so it is self-contained
+// (unit-testable on a raw CfgFunction). Returns, per parameter index, the union of
+// dirty [.f] paths carried by the value returned at any return block.
+pub fn collect_field_reqs(f: CfgFunction, table: SummaryTable, sem: OptimizerSemantics) Dict<
+  Int,
+  vid.PathSet,
+> {
+  live := compute_liveness(f.blocks)
+  blocks := collect blk in f.blocks {
+    bl := live_get(live, blk.id.id)
+    blk.entry.live = bl.live_in
+    blk.exit.live = bl.live_out
+    blk
+  }
+  exits: Dict<Int, Dict<Int, FlowFact>> = Dict.new()
+  processed: Dict<Int, Bool> = Dict.new()
+  for blk in blocks {
+    exits[blk.id.id] = Dict.new()
+    processed[blk.id.id] = false
+  }
+  changed := true
+  for changed {
+    changed = false
+    for blk in blocks {
+      entry := flow_join_entry(blk, exits, processed)
+      if blk.id.id == 0 {
+        for p, i in f.params {
+          entry[p.id] = FlowFact.{ origin: i, dirty: vid.empty_set() }
+        }
+      }
+      st := entry
+      for inst in blk.instructions {
+        st = transfer_flow(st, table, sem, inst.op, inst.anf_local.id)
+      }
+      prev := case exits.get(blk.id.id) {
+        .Some(m) => m,
+        .None => Dict.new(),
+      }
+      if !flow_map_eq(prev, st) {
+        exits[blk.id.id] = st
+        changed = true
+      }
+      processed[blk.id.id] = true
+    }
+  }
+  reqs: Dict<Int, vid.PathSet> = Dict.new()
+  for blk in blocks {
+    case return_atom(blk) {
+      .Some(a) => {
+        fexit := case exits.get(blk.id.id) {
+          .Some(m) => m,
+          .None => Dict.new(),
+        }
+        rf := flow_get(fexit, a)
+        if rf.origin >= 0 and !rf.dirty.is_empty() {
+          prev := case reqs.get(rf.origin) {
+            .Some(v) => v,
+            .None => vid.empty_set(),
+          }
+          reqs[rf.origin] = prev.union(rf.dirty)
+        }
+      },
+      .None => {},
+    }
+  }
+  reqs
+}
+
+// Generic summary: every reference parameter enters Unknown (empty seed). This is the
+// caller-visible/conservative summary the SCC driver fixes.
+pub fn summarize_function(
+  f: CfgFunction,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+) Summary {
+  summarize_seeded(f, table, b, sem, suppress, Dict.new())
+}
+
+// Owned-entry (ownership-specialized) summary for a VariantId key (Stage 3): re-run the
+// same analysis with each keyed parameter's SHELL seeded Unique at entry, so the return-
+// path recovery gate fires for a param-threaded transport arg. STAGE 3 IS SHELL-ONLY: it
+// seeds own=Unique for `[]` reqs and seeds NO field_own -- a unique record shell does not
+// imply unique field backings (Phase 4). A `[.f]` req is ignored here; field-granular
+// seeding (distinguishing a unique .types backing from a shared .values sibling, D6) is
+// Stage 4. Downward-closed keys always carry the param's `[]` req, so its shell is seeded.
+// This does NOT canonicalize/downward-close the key -- the Stage 4 caller must pass a
+// canonical, downward-closed key (variant_id.canonicalize_key/downward_close).
+pub fn summarize_variant(
+  f: CfgFunction,
+  key: vid.UniqueKey,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+) Summary {
+  unique_seed: Dict<Int, Bool> = Dict.new()
+  for req in key {
+    if req.path.is_shell() and req.param >= 0 and req.param < f.params.len() {
+      unique_seed[f.params[req.param].id] = true
+    }
+  }
+  summarize_seeded(f, table, b, sem, suppress, unique_seed)
+}
+
+// Call-site variant selection (Stage 4c, D4 shell-level): the VariantId a caller
+// selects for callee `func_id` given the callee's summary and, per argument
+// position, whether that argument is proven Unique + last-use at the call
+// (arg_unique -- the whole-value consume_dead condition). Each parameter the callee
+// CONSUMES (non-empty in_place_paths; a Borrowed/Published param never has any) whose
+// argument is arg_unique contributes its in_place_paths to the owned key. The result
+// is canonicalized + downward-closed (Stage 1); an empty key means the generic
+// variant. This is a pure decision -- it records nothing and demands no summary
+// (the recording pass + ConsumedPaths + variant memo are later 4c / Stage 5).
+pub fn select_variant(func_id: Int, s: Summary, arg_unique: Vector<Bool>) vid.VariantId {
+  reqs: vid.UniqueKey = []
+  for ps, i in s.params {
+    if i < arg_unique.len() and arg_unique[i] and !ps.in_place_paths.is_empty() {
+      for p in ps.in_place_paths.paths {
+        reqs = .append(vid.UniqueReq.{ param: i, path: p })
+      }
+    }
+  }
+  vid.canonicalize_variant(vid.VariantId.{ func: func_id, unique: reqs })
+}
+
+// Render a call-site decision verdict (Stage 4c completion): the owned variant a
+// caller may select. Generic decisions (empty key) render as "" -- callers skip them
+// to keep `twk ir --cfg` readable (a generic-render refinement is deferred).
+fn render_call_decision(callee_id: Int, v: vid.VariantId) String {
+  if v.unique.len() == 0 {
+    ""
+  } else {
+    reqs: Vector<String> = collect r in v.unique {
+      if r.path.segs.len() == 0 {
+        "p${r.param}"
+      } else {
+        "p${r.param}.f${r.path.segs[0]}"
+      }
+    }
+    "-> f${callee_id}[unique:${reqs.join(",")}]"
+  }
+}
+
+// Classify each parameter's escape/capability by scanning EVERY block's
+// post-publish exit (fx.exits / fx.exit_valid): a param that ends Shared on any
+// block exit escapes (Retained) — even on a dead branch or via a returned
+// aggregate, since publication is transitive over provenance. A param whose
+// binding is ever invalidated is Consumed. The return effect is classified from
+// each return block's BODY-ONLY state (before the terminator publish, so the
+// returned value isn't spuriously Shared), joined across all return blocks:
+// MayAliasParams(indices) when the return atom carries param provenance,
+// OwnedFresh for a genuinely fresh Unique, else Shared. `unique_seed` (Stage 3) enters
+// the marked params Unique at block 0 (both the main pass and the return-site replay).
+fn summarize_seeded(
+  f: CfgFunction,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+  unique_seed: Dict<Int, Bool>,
+) Summary {
+  live := compute_liveness(f.blocks)
+  blocks := collect blk in f.blocks {
+    bl := live_get(live, blk.id.id)
+    blk.entry.live = bl.live_in
+    blk.exit.live = bl.live_out
+    blk
+  }
+  fx := run_fixpoint_validated(blocks, f.params, table, b, sem, suppress, unique_seed)
+
+  raw_params: Vector<RawParam> = collect p in f.params {
+    esc: EscapeEffect = .Borrowed
+    cap: ParamCapability = .NoCap
+    for blk in blocks {
+      if own_is_shared(nested_get(fx.exits, blk.id.id), p.id) {
+        esc = .Retained
+      }
+      case nested_get(fx.exit_valid, blk.id.id).get(p.id) {
+        .Some(v) => if !v {
+          cap = .Consumed
+        },
+        .None => {},
+      }
+    }
+    RawParam.{ esc, cap }
+  }
+
+  done := all_processed(blocks)
+  fn_params := f.params // Vector<LocalId>; capture before .Field(f) shadow
+  ret: ReturnEffect = .OwnedFresh
+  ret_sites: Vector<RetSite> = []
+  seen := false
+  for blk in blocks {
+    case return_atom(blk) {
+      .Some(a) => {
+        entry_own := join_entry_ownership(blk, fx.exits, done)
+        entry_valid := join_entry_valid(blk, fx.exit_valid, done)
+        entry_prov := join_entry_prov(blk, fx.exit_prov, done)
+        if blk.id.id == 0 {
+          entry_prov = seed_param_prov(entry_prov, f.params)
+          entry_own = seed_param_own(entry_own, unique_seed, f.params)
+        }
+        entry_field := join_entry_field_own(blk, fx.exit_field_own, entry_own, done)
+        entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
+        st := ForwardState.{
+          own: entry_own,
+          valid: entry_valid,
+          prov: entry_prov,
+          field_own: entry_field,
+          path_prov: entry_pp,
+        }
+
+        // seed a payload-bound local from its match predecessor's exit facts
+        pred_id := case blk.preds.len() == 1 {
+          true => blk.preds[0].target.id, // in a `preds` edge, CfgEdge.target holds the PREDECESSOR id
+          false => 0 - 1,
+        }
+        st = if pred_id >= 0 {
+          st.seed_payload_binding(
+            blk,
+            nested_get(fx.exit_field_own, pred_id),
+            nested_get(fx.exit_path_prov, pred_id),
+            nested_get(fx.exit_prov, pred_id),
+          )
+        } else {
+          st
+        }
+        body := forward_block_body(blk, st, block_prep(blk, sem), table, b, sem, suppress)
+
+        // ret reflects SHELL ownership only: a fresh wrapper .{ctx:p0} has empty
+        // shell prov -> OwnedFresh; only a directly-returned param (return x, shell
+        // prov non-empty) aliases a param. Deep/field origins are the caller's
+        // concern via the return hand-off, not the shell alias set.
+        idxs := prov_to_indices(f.params, prov_of(body.prov, a))
+        r: ReturnEffect = if idxs.len() > 0 {
+          .MayAliasParams(idxs)
+        } else {
+          case fact_of(body.own, a) {
+            .Unique => .OwnedFresh,
+            _ => .Shared,
+          }
+        }
+        ret = if seen {
+          ret.join_return(r)
+        } else {
+          r
+        }
+
+        // Per-field return-path ownership: for each single-segment .Field path in
+        // the returned atom's field_own, classify its path_prov (absent=drop,
+        // empty=OwnedFresh, single=OwnedFromParam, multi=drop) and meet across
+        // return sites so a path survives only if owned at every return.
+        rp_here: Vector<ReturnPathOwn> = []
+        case atom_local_id(a) {
+          .Some(aid) => {
+            pp := body.path_prov_get(aid)
+            fm := body.field_own_get(aid)
+
+            // Classify every single-segment .Field path, then drop any param claimed
+            // by more than one field: two fields backed by the SAME param alias it,
+            // so neither can own it (OwnedFresh fields carry no origin and survive).
+            rp_all: Vector<ReturnPathOwn> = []
+            for k in sorted_dict_keys(pp) {
+              p := ff.path_of_key(k)
+              case p.segs[0] {
+                // Direct field: single-segment .Field paths only.
+                .Field(fid) => if p.segs.len() == 1 {
+                  case classify_path_own(pp, k, fn_params, fm) {
+                    .Some(own) => rp_all = .append(
+                      ReturnPathOwn.{ via: .Direct, field: .Some(fid), own },
+                    ),
+                    .None => {},
+                  }
+                },
+                // Variant payload: [Payload(tag,i)] is the payload shell (field=None),
+                // [Payload(tag,i), .Field(f)] is a payload record field (field=Some(f)).
+                .Payload(tag, i) => {
+                  fld: Int? = if p.segs.len() == 2 {
+                    case p.segs[1] {
+                      .Field(fid) => .Some(fid),
+                      _ => .None,
+                    }
+                  } else {
+                    .None
+                  }
+                  case classify_path_own(pp, k, fn_params, fm) {
+                    .Some(own) => rp_all = .append(
+                      ReturnPathOwn.{ via: .Variant(tag, i), field: fld, own },
+                    ),
+                    .None => {},
+                  }
+                },
+                _ => {}, // Elem/Val are not ret_path candidates
+              }
+            }
+            rp_here = drop_aliased_param_paths(rp_all)
+          },
+          .None => {},
+        }
+        wit := case atom_local_id(a) {
+          .Some(aid) => ret_witness(blk, a, body.field_own_get(aid)),
+          .None => .WUnknown,
+        }
+        ret_sites = .append(RetSite.{ witness: wit, paths: rp_here })
+        seen = true
+      },
+      .None => {},
+    }
+  }
+
+  ret_paths_final := meet_ret_paths_tagged(ret_sites)
+  field_reqs := collect_field_reqs(f, table, sem)
+  params: Vector<ParamSummary> = collect rp, i in raw_params {
+    flows := param_flows_to_return(i, ret, ret_paths_final)
+    dirty := case field_reqs.get(i) {
+      .Some(v) => v,
+      .None => vid.empty_set(),
+    }
+    has_mut := !dirty.is_empty()
+    role := rp.esc.reconcile_role(rp.cap, has_mut, flows)
+
+    // A Consumed param carries the shell [] plus its dirtied field paths ([.f]);
+    // move-consumed params (empty dirty) keep just the shell. Downward-closed under [].
+    ipp: vid.PathSet = case role {
+      .Consumed => build_in_place_paths(dirty),
+      _ => vid.empty_set(),
+    }
+    ParamSummary.{ base_role: role, in_place_paths: ipp, flows_to_return: flows }
+  }
+  Summary.{ params, ret, ret_paths: ret_paths_final }
+}

@@ -1,0 +1,237 @@
+//! Variant identity for Phase 6 ownership specialization (analysis-only).
+//!
+//! A `VariantId` names an ownership-specialized instance of a function: the
+//! function plus the set of `(param, field-only path)` requirements that must be
+//! proven Unique at a call site to select it. This module is a LEAF (no compiler
+//! imports) so `ownership.tw`/`summary.tw` may depend on it without a cycle.
+// A parameter in-place path. [] = the shell / whole collection; [f] = a direct
+// record field in executable Phase 6. The `segs` vector reserves future field
+// chains, but Phase 6 key construction does not create requirements for unsupported
+// deeper mutations. FIELD-ONLY: payload / Elem / Val segments are return-path/read
+// facts, never a UniqueReq path (design Blocker 1). Part 1 only ever emits the shell
+// []; Part 2 adds field-granular direct paths ([f]). Nominal wrapper (not a bare
+// Vector<Int>) so path operations resolve as inherent methods.
+pub type ParamPath = .{ segs: Vector<Int> }
+
+// Constructors: shell (the whole value) and a single direct record field.
+pub fn shell() ParamPath {
+  ParamPath.{ segs: [] }
+}
+
+pub fn field(f: Int) ParamPath {
+  ParamPath.{ segs: [f] }
+}
+
+pub fn is_shell(self: ParamPath) Bool {
+  self.segs.len() == 0
+}
+
+// Lexicographic order on field-only paths: a prefix is smaller, so the shell []
+// sorts before [f]. Delegates to the prelude's tested Vector.compare<T: Ord>.
+pub fn cmp(self: ParamPath, other: ParamPath) Order {
+  self.segs.compare(other.segs)
+}
+
+pub fn eq(self: ParamPath, other: ParamPath) Bool {
+  case self.cmp(other) {
+    .Eq => true,
+    _ => false,
+  }
+}
+
+// A canonical set of parameter in-place paths (sorted by `cmp`, deduped). Nominal
+// wrapper so set operations resolve as inherent methods, mirroring FieldMap in
+// field_facts.tw.
+pub type PathSet = .{ paths: Vector<ParamPath> }
+
+pub fn empty_set() PathSet {
+  PathSet.{ paths: [] }
+}
+
+// The shell-only set { [] } — a Consumed param's coarse Part-1 requirement.
+pub fn shell_set() PathSet {
+  PathSet.{ paths: [shell()] }
+}
+
+pub fn is_empty(self: PathSet) Bool {
+  self.paths.len() == 0
+}
+
+// Elementwise equality on canonical-ordered sets (both sides are kept sorted, so a
+// positional compare is sound).
+pub fn same(self: PathSet, other: PathSet) Bool {
+  if self.paths.len() != other.paths.len() {
+    return false
+  }
+  for p, i in self.paths {
+    if !p.eq(other.paths[i]) {
+      return false
+    }
+  }
+  true
+}
+
+// Insert `p`, keeping the set canonical-sorted (by ParamPath.cmp) and deduped.
+pub fn add(self: PathSet, p: ParamPath) PathSet {
+  out: Vector<ParamPath> = []
+  inserted := false
+  for q in self.paths {
+    if !inserted {
+      case p.cmp(q) {
+        .Eq => return self, // already present
+        .Lt => {
+          out = .append(p)
+          inserted = true
+        },
+        .Gt => {},
+      }
+    }
+    out = .append(q)
+  }
+  if !inserted {
+    out = .append(p)
+  }
+  PathSet.{ paths: out }
+}
+
+pub fn union(self: PathSet, other: PathSet) PathSet {
+  for p in other.paths {
+    self = .add(p)
+  }
+  self
+}
+
+pub type UniqueReq = .{ param: Int, path: ParamPath }
+
+pub type UniqueKey = Vector<UniqueReq> // canonical-sorted; [] => generic variant
+
+pub type VariantId = .{ func: Int, unique: UniqueKey }
+
+pub fn req_cmp(a: UniqueReq, b: UniqueReq) Order {
+  c := a.param.compare(b.param)
+  case c {
+    .Eq => a.path.cmp(b.path),
+    _ => c,
+  }
+}
+
+fn req_eq(a: UniqueReq, b: UniqueReq) Bool {
+  case a.req_cmp(b) {
+    .Eq => true,
+    _ => false,
+  }
+}
+
+// Sort by (param, path) then drop adjacent duplicates. Deterministic: req_cmp is a
+// total preorder on (param, path), so distinct reqs get a stable relative order and
+// dedup collapses equal ones — the result is canonical regardless of input order.
+pub fn canonicalize_key(reqs: UniqueKey) UniqueKey {
+  sorted := reqs.sort_by(req_cmp)
+  out: UniqueKey = []
+  for r in sorted {
+    keep := if out.len() == 0 {
+      true
+    } else {
+      !out[out.len() - 1].req_eq(r)
+    }
+    if keep {
+      out = .append(r)
+    }
+  }
+  out
+}
+
+// D3: a (k,[f]) requirement implies (k,[]). Ensure every param that appears also
+// has its shell req, then canonicalize. (Part cap keeps paths at depth <= 1, so the
+// only prefix to add is the shell.)
+pub fn downward_close(reqs: UniqueKey) UniqueKey {
+  augmented := reqs
+  seen_shell: Dict<Int, Bool> = Dict.new()
+  for r in reqs {
+    if r.path.is_shell() {
+      seen_shell[r.param] = true
+    }
+  }
+  for r in reqs {
+    if !r.path.is_shell() {
+      case seen_shell.get(r.param) {
+        .Some(_) => {},
+        .None => {
+          augmented = .append(UniqueReq.{ param: r.param, path: shell() })
+          seen_shell[r.param] = true
+        },
+      }
+    }
+  }
+  canonicalize_key(augmented)
+}
+
+// Injective canonical serialization of a VariantId. Call `canonicalize_variant`
+// first: this requires the key already canonicalized (sorted, deduped,
+// downward-closed). Delimiters ':' ';' '|' '.' are
+// safe because every component is a non-negative Int. Two VariantIds serialize
+// equal iff they are the same variant — the basis for dedup + build-stable ids.
+pub fn variant_canonical_string(v: VariantId) String {
+  parts: Vector<String> = []
+  for r in v.unique {
+    segs: Vector<String> = collect s in r.path.segs {
+      "${s}"
+    }
+    parts = .append("${r.param}:${segs.join(".")}")
+  }
+  "f${v.func}|${parts.join(";")}"
+}
+
+// A VariantId with its key canonicalized + downward-closed (D3).
+pub fn canonicalize_variant(v: VariantId) VariantId {
+  VariantId.{ func: v.func, unique: downward_close(v.unique) }
+}
+
+pub type VariantInterner = .{
+  ids: Dict<String, Int>, // canonical string -> dense creation-order id
+  by_id: Vector<VariantId>, // id -> canonicalized VariantId (creation order)
+}
+
+pub type InternResult = .{ interner: VariantInterner, id: Int }
+
+pub fn new_interner() VariantInterner {
+  VariantInterner.{ ids: Dict.new(), by_id: [] }
+}
+
+// Intern a VariantId: canonicalize it, then return its dense id — reusing the
+// existing id for an equal canonical key, or assigning the next creation-order id.
+// The returned interner carries any newly-assigned id (threaded, not mutated).
+pub fn intern(vi: VariantInterner, v: VariantId) InternResult {
+  cv := v.canonicalize_variant()
+  s := cv.variant_canonical_string()
+  case vi.ids.get(s) {
+    .Some(id) => InternResult.{ interner: vi, id },
+    .None => {
+      id := vi.by_id.len()
+      vi.ids[s] = id
+      vi.by_id = .append(cv)
+      InternResult.{ interner: vi, id }
+    },
+  }
+}
+
+pub fn variant_of_id(vi: VariantInterner, id: Int) VariantId? {
+  if id >= 0 and id < vi.by_id.len() {
+    .Some(vi.by_id[id])
+  } else {
+    .None
+  }
+}
+
+// Injective pairing of a (func_id, local_id) pair into one Int for the
+// CallDecision table key (both ids are dense, non-negative, per-mono-instance
+// stable). Szudzik-style. The CallDecision record also stores site_func/site_local
+// as fields (design "Data model"), so this is a lookup key only — no un-pairing is
+// needed in Part 2; add one only if a future consumer must recover (func, local).
+pub fn site_key(func_id: Int, local_id: Int) Int {
+  if func_id >= local_id {
+    func_id * func_id + func_id + local_id
+  } else {
+    local_id * local_id + func_id
+  }
+}

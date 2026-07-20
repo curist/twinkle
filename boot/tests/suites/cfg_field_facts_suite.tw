@@ -1,0 +1,1066 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
+use compiler.anf.{FieldAtom}
+use compiler.builtins
+use compiler.cfg
+use compiler.core_ir.{FieldId, FuncId, LocalId}
+use compiler.field_facts as ff
+use compiler.mono_type.{MonoType, TypeId}
+use compiler.opt.semantics as semantics
+use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+use compiler.ownership
+
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
+
+fn b_reg() builtins.BuiltinRegistry {
+  builtins.make_builtin_registry()
+}
+
+fn sem() semantics.OptimizerSemantics {
+  make_prelude_optimizer_semantics(b_reg())
+}
+
+fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
+  .ACall(.AGlobalFunc(b.method_id("Dict", "new")), [])
+}
+
+fn vec_set_call(b: builtins.BuiltinRegistry, base: LocalId, idx: Int, v: LocalId) AnfOp {
+  .ACall(.AGlobalFunc(b.id("vector$set_unsafe")), [.ALocal(base), .ALitInt(idx), .ALocal(v)])
+}
+
+fn vec_make_call(b: builtins.BuiltinRegistry, fill: LocalId) AnfOp {
+  .ACall(.AGlobalFunc(b.method_id("Vector", "make")), [.ALitInt(3), .ALocal(fill)])
+}
+
+fn module_of(name: String, body: AnfExpr) AnfModule {
+  func: AnfFunctionDef = AnfFunctionDef.{
+    func_id: FuncId.{ id: 1 },
+    name,
+    is_init: false,
+    params: [],
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: MonoType.Int,
+  }
+  AnfModule.{
+    functions: [func],
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+    lib_exports: [],
+  }
+}
+
+fn analyzed_func(m: AnfModule) cfg.CfgFunction {
+  b := b_reg()
+  v := cfg.build_view(m, b)
+  a := ownership.analyze(v, b, sem())
+  case cfg.function_named(a, "f") {
+    .Some(f) => f,
+    .None => error("no f"),
+  }
+}
+
+// exit field-fact count for a local in block 0.
+fn field_count(f: cfg.CfgFunction, local_id: Int) Int {
+  case f.blocks[0].exit.field_own.get(local_id) {
+    .Some(m) => m.sorted_keys().len(),
+    .None => 0,
+  }
+}
+
+fn tag_u() Int {
+  0
+}
+
+// A FieldMap with a single Unique path.
+fn one(p: ff.AccessPath) ff.FieldMap {
+  ff.empty().set_path(p, tag_u())
+}
+
+fn field_atom(fid: Int, v: LocalId) FieldAtom {
+  FieldAtom.{ field: FieldId.{ id: fid }, value: .ALocal(v) }
+}
+
+fn has_field_path(f: cfg.CfgFunction, local_id: Int, p: ff.AccessPath) Bool {
+  case f.blocks[0].exit.field_own.get(local_id) {
+    .Some(m) => m.is_unique(p),
+    .None => false,
+  }
+}
+
+fn record_get(base: LocalId, fid: Int) AnfOp {
+  .ARecordGet(.ALocal(base), FieldId.{ id: fid }, TypeId.{ id: 0 })
+}
+
+fn is_shell_unique(f: cfg.CfgFunction, local_id: Int) Bool {
+  case f.blocks[0].exit.ownership.get(local_id) {
+    .Some(t) => t == 0,
+    .None => false,
+  }
+}
+
+// Acceptance 6: field_own is downward-closed — a local may carry non-empty field
+// facts only while its shell (ownership) is Unique. Every fact must flow through
+// the set_own_st choke point, so a violation means the choke point was bypassed.
+fn facts_downward_closed(facts: cfg.BlockFacts) Result<Void, String> {
+  for lid, fm in facts.field_own {
+    if !fm.is_empty() {
+      shell_unique := case facts.ownership.get(lid) {
+        .Some(t) => t == 0,
+        .None => false,
+      }
+      if !shell_unique {
+        return .Err("L${lid} carries field facts while its shell is non-Unique")
+      }
+    }
+  }
+  .Ok({})
+}
+
+fn assert_downward_closed(f: cfg.CfgFunction) Result<Void, String> {
+  for blk in f.blocks {
+    try facts_downward_closed(blk.entry)
+    try facts_downward_closed(blk.exit)
+  }
+  .Ok({})
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("cfg field facts")
+    .test(
+      "codec: every Phase 4 path round-trips through the key",
+      fn() {
+        paths: Vector<ff.AccessPath> = [
+          ff.field_path(0),
+          ff.field_path(3),
+          ff.elem_path(),
+          ff.val_path(),
+          ff.field_elem(3),
+          ff.field_val(5),
+        ]
+        for p in paths {
+          k := ff.path_key(p)
+          try assert.is_true(ff.path_eq(ff.path_of_key(k), p))
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "codec: distinct paths get distinct keys (no collision)",
+      fn() {
+        keys: Vector<Int> = [
+          ff.path_key(ff.field_path(0)),
+          ff.path_key(ff.field_path(1)),
+          ff.path_key(ff.elem_path()),
+          ff.path_key(ff.val_path()),
+          ff.path_key(ff.field_elem(0)),
+          ff.path_key(ff.field_val(0)),
+        ]
+        for a, i in keys {
+          for b, j in keys {
+            if i != j {
+              try assert.is_true(a != b)
+            }
+          }
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "is_unique: present -> true, absent -> false",
+      fn() {
+        m := one(ff.field_path(2))
+        try assert.is_true(m.is_unique(ff.field_path(2)))
+        try assert.is_false(m.is_unique(ff.field_path(3)))
+        try assert.is_false(ff.empty().is_unique(ff.elem_path()))
+        .Ok({})
+      },
+    )
+    .test(
+      "graft: copies shell to [.f] and rebases inner [Elem] -> [.f, Elem]",
+      fn() {
+        // v has shell Unique and its own [Elem]:Unique (an all-owned vector).
+        v := one(ff.elem_path())
+        dst := ff.empty().graft(.Field(1), v)
+        try assert.is_true(dst.is_unique(ff.field_path(1)))
+        try assert.is_true(dst.is_unique(ff.field_elem(1)))
+        .Ok({})
+      },
+    )
+    .test(
+      "graft under Elem/Val prefix grafts only the shell (no deeper nesting)",
+      fn() {
+        v := one(ff.elem_path())
+        dst := ff.empty().graft(.Elem, v)
+        try assert.is_true(dst.is_unique(ff.elem_path()))
+        try assert.equal(dst.sorted_keys().len(), 1) // src's inner [Elem] is NOT rebased under a non-Field prefix
+        .Ok({})
+      },
+    )
+    .test(
+      "graft Field-prefix: inner [.f] path is silently dropped (depth-3 under-claim)",
+      fn() {
+        // src has a [.f9] path (as if from a nested record's field fact).
+        src := ff.empty().set_path(ff.field_path(9), tag_u())
+        dst := ff.empty().graft(.Field(1), src)
+        try assert.is_true(dst.is_unique(ff.field_path(1))) // [.f1] shell grafted
+        try assert.equal(dst.sorted_keys().len(), 1) // [.f1, .f9] NOT emitted
+        .Ok({})
+      },
+    )
+    .test(
+      "remove_prefix: drops [.f]* subtree, preserves siblings",
+      fn() {
+        m := ff
+          .empty()
+          .set_path(ff.field_path(1), tag_u())
+          .set_path(ff.field_elem(1), tag_u())
+          .set_path(ff.field_path(2), tag_u())
+        out := m.remove_prefix(.Field(1))
+        try assert.is_false(out.is_unique(ff.field_path(1)))
+        try assert.is_false(out.is_unique(ff.field_elem(1)))
+        try assert.is_true(out.is_unique(ff.field_path(2)))
+        .Ok({})
+      },
+    )
+    .test(
+      "project: [.f] -> shell, [.f, Elem] -> [Elem]",
+      fn() {
+        m := ff
+          .empty()
+          .set_path(ff.field_path(1), tag_u())
+          .set_path(ff.field_elem(1), tag_u())
+          .set_path(ff.field_path(2), tag_u()) // sibling, must not leak
+        pr := m.project(.Field(1))
+        try assert.is_true(case pr.shell {
+          .Some(t) => t == tag_u(),
+          .None => false,
+        })
+        try assert.is_true(pr.fields.is_unique(ff.elem_path()))
+        try assert.is_false(pr.fields.is_unique(ff.field_path(2)))
+        .Ok({})
+      },
+    )
+    .test(
+      "merge: per-path meet keeps only paths Unique in both",
+      fn() {
+        a := ff.empty().set_path(ff.field_path(1), tag_u()).set_path(ff.field_path(2), tag_u())
+        b := one(ff.field_path(1))
+        out := a.merge(b)
+        try assert.is_true(out.is_unique(ff.field_path(1)))
+        try assert.is_false(out.is_unique(ff.field_path(2)))
+        .Ok({})
+      },
+    )
+    .test(
+      "same/is_empty: structural equality by path-key set",
+      fn() {
+        try assert.is_true(one(ff.field_path(1)).same(one(ff.field_path(1))))
+        try assert.is_false(one(ff.field_path(1)).same(one(ff.field_path(2))))
+        try assert.is_true(ff.empty().is_empty())
+        try assert.is_false(one(ff.field_path(1)).is_empty())
+        .Ok({})
+      },
+    )
+    .test(
+      "plumbing: a plain fresh dict has no field facts (empty degrades to today)",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); d }  -> d is Unique shell, NO field paths yet.
+        body: AnfExpr = .Let(lid(0), dict_new_call(b), .Atom(.ALocal(lid(0))))
+        f := analyzed_func(module_of("f", body))
+        try assert.equal(field_count(f, 0), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "intro record: fresh dict field -> shell has [.f]:Unique",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); r := Wrapper.{ f0: d }; 0 }  -> r has [.f0]:Unique.
+        // Return 0 (not r) so publication doesn't clear r's field facts.
+        rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        body: AnfExpr = .Let(lid(0), dict_new_call(b), .Let(lid(1), rec, .Atom(.ALitInt(0))))
+        f := analyzed_func(module_of("f", body))
+        try assert.is_true(has_field_path(f, 1, ff.field_path(0)))
+        .Ok({})
+      },
+    )
+    .test(
+      "intro record negative: same value in two fields -> no deep claim",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); r := Two.{ a: d, b: d }; 0 }  -> neither field claimed.
+        // Return 0 so field facts are not cleared by publication.
+        rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0)), field_atom(1, lid(0))])
+        body: AnfExpr = .Let(lid(0), dict_new_call(b), .Let(lid(1), rec, .Atom(.ALitInt(0))))
+        f := analyzed_func(module_of("f", body))
+        try assert.is_false(has_field_path(f, 1, ff.field_path(0)))
+        try assert.is_false(has_field_path(f, 1, ff.field_path(1)))
+        .Ok({})
+      },
+    )
+    .test(
+      "intro record negative: shared field value -> no [.f] claim",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); keep := d (alias); r := Wrapper.{ f0: d } }
+        // d is aliased by keep, so it is NOT single-retention -> no claim.
+        inner: AnfExpr = .Let(
+          lid(2),
+          .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))]),
+          .Atom(.ALocal(lid(1))), // return keep so d has a live alias at the record
+        )
+        body: AnfExpr = .Let(lid(0), dict_new_call(b), .Let(lid(1), .AInit(.ALocal(lid(0))), inner))
+        f := analyzed_func(module_of("f", body))
+        try assert.is_false(has_field_path(f, 2, ff.field_path(0)))
+        .Ok({})
+      },
+    )
+    .test(
+      "intro update: refresh .types keeps sibling .values facts",
+      fn() {
+        b := b_reg()
+
+        // f() { t := Dict.new(); v := Dict.new(); r := Ctx.{ types: t, values: v };
+        //       t2 := Dict.new(); r2 := (r.types = t2) }  -> r2 has [.types] and [.values].
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0)), field_atom(1, lid(1))])
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(2)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            dict_new_call(b),
+            .Let(lid(2), mk, .Let(lid(3), dict_new_call(b), .Let(lid(4), upd, .Atom(.ALitInt(0))))),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert.is_true(has_field_path(f, 4, ff.field_path(0))) // refreshed .types
+        try assert.is_true(has_field_path(f, 4, ff.field_path(1))) // carried .values
+        .Ok({})
+      },
+    )
+    .test(
+      "consume keep: storing an owned inner into an all-owned vector keeps [Elem]",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); a := [d] (all-owned literal -> [Elem]);
+        //       x := Dict.new(); r := vector$set_unsafe(a, 0, x) }  -> r keeps [Elem].
+        arr: AnfOp = .AArrayLit([.ALocal(lid(0))])
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          // return a literal (not r) so r's exit field facts are observable (not published)
+          .Let(
+            lid(1),
+            arr,
+            .Let(
+              lid(2),
+              dict_new_call(b),
+              .Let(lid(3), vec_set_call(b, lid(1), 0, lid(2)), .Atom(.ALitInt(0))),
+            ),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert.is_true(has_field_path(f, 3, ff.elem_path()))
+        .Ok({})
+      },
+    )
+    .test(
+      "consume drop: storing a SHARED inner drops [Elem]",
+      fn() {
+        b := b_reg()
+
+        // x is aliased (kept live at the return), so storing it is not single-retention.
+        arr: AnfOp = .AArrayLit([.ALocal(lid(0))])
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            arr,
+            .Let(
+              lid(2),
+              dict_new_call(b),
+              .Let(
+                lid(3),
+                .AInit(.ALocal(lid(2))),
+                .Let(lid(4), vec_set_call(b, lid(1), 0, lid(2)), .Atom(.ALocal(lid(3)))),
+              ),
+            ),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert.is_false(has_field_path(f, 4, ff.elem_path()))
+        .Ok({})
+      },
+    )
+    .test(
+      "Vector.make never claims [Elem] (replicated reference)",
+      fn() {
+        b := b_reg()
+
+        // f() { x := Dict.new(); r := Vector.make(3, x) } -> NO [Elem].
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), vec_make_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert.is_false(has_field_path(f, 1, ff.elem_path()))
+        .Ok({})
+      },
+    )
+    .test(
+      "projection move: last-use base, deeply-owned field -> R Unique + base [.f] removed",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); r := Wrapper.{ f0: d }; g := r.f0 }  (r dead after get)
+        // Return ALitInt(0), not R: returning R would publish it (mark Shared) and
+        // clear its field facts, hiding the Unique shell we want to observe.
+        rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), rec, .Let(lid(2), record_get(lid(1), 0), .Atom(.ALitInt(0)))),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert.is_true(is_shell_unique(f, 2))
+        try assert.is_false(has_field_path(f, 1, ff.field_path(0)))
+        .Ok({})
+      },
+    )
+    .test(
+      "projection borrow: base still live -> R Shared and base [.f] cleared",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); r := Wrapper.{ f0: d }; g := r.f0; r }  (r live at return)
+        rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), rec, .Let(lid(2), record_get(lid(1), 0), .Atom(.ALocal(lid(1))))),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert.is_false(is_shell_unique(f, 2))
+        try assert.is_false(has_field_path(f, 1, ff.field_path(0)))
+        .Ok({})
+      },
+    )
+    .test(
+      "projection move, field not deeply owned: last-use base but no [.f] fact -> R not Unique",
+      fn() {
+        b := b_reg()
+
+        // f() { d := Dict.new(); alias := d (alias makes d Shared, no [.f0] claim);
+        //       r := Wrapper.{ f0: d }; g := r.f0 }  (r dead after get, alias returned)
+        // Because d is aliased (not single-retention), r has no [.f0] field fact.
+        // At record_get: moved=true (r is last-use), pr.shell=.None -> R is NOT Unique.
+        // Return alias so r is truly dead at record_get, and also to keep the
+        // alias live through the record construction (forcing d Shared at the store).
+        rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .AInit(.ALocal(lid(0))),
+            .Let(lid(2), rec, .Let(lid(3), record_get(lid(2), 0), .Atom(.ALocal(lid(1))))),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+
+        // R (lid(3)) must NOT be Unique: the field had no deep ownership claim.
+        try assert.is_false(is_shell_unique(f, 3))
+        .Ok({})
+      },
+    )
+    .test(
+      "quartet move: get -> Dict.set -> update licenses field in-place",
+      fn() {
+        b := b_reg()
+
+        // f() {
+        //   d := Dict.new(); env := Ctx.{ types: d };
+        //   t := env.types;                 // projection (env still live -> update below)
+        //   t2 := Dict.set(t, 1, 2);        // consume/produce
+        //   env2 := (env.types = t2);       // record_update base=env, field types (env dead after)
+        //   env2                            // returns the fresh binding; env NOT live-out
+        // }
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)],
+        )
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              record_get(lid(1), 0),
+              // Return ALitInt(0) so L4 is NOT published; then has_field_path(f, 4, ...) is observable.
+              .Let(lid(3), set2, .Let(lid(4), upd, .Atom(.ALitInt(0)))),
+            ),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+
+        // The projected t (L2) is moved Unique so the Dict.set can (later) go in place,
+        // and env2 retains [.types]:Unique.
+        try assert.is_true(is_shell_unique(f, 2))
+        try assert.is_true(has_field_path(f, 4, ff.field_path(0)))
+        .Ok({})
+      },
+    )
+    .test(
+      "quartet negative: no matching write-back -> matched stays false -> R not Unique",
+      fn() {
+        b := b_reg()
+
+        // f() {
+        //   d := Dict.new(); env := Ctx.{ types: d };
+        //   t := env.types;          // projection
+        //   t2 := Dict.set(t, 1, 2); // consume/produce
+        //   env                      // NO ARecordUpdate -> matched stays false -> not a quartet
+        // }
+        // There is no matching ARecordUpdate writing back into env.types, so quartet_ok
+        // returns false because `matched` stays false, not because of the escape guard.
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)],
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(lid(2), record_get(lid(1), 0), .Let(lid(3), set2, .Atom(.ALocal(lid(1))))),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+
+        // No write-back -> matched=false -> borrow -> R (lid 2) not Unique.
+        try assert.is_false(is_shell_unique(f, 2))
+        .Ok({})
+      },
+    )
+    .test(
+      "quartet negative: escape guard fires -> matched=true but base escapes -> R not Unique",
+      fn() {
+        b := b_reg()
+
+        // f() {
+        //   lid0 = Dict.new()
+        //   lid1 = Ctx.{ types: lid0 }         (env)
+        //   lid2 = env.types                   (projection t)
+        //   lid3 = Dict.set(lid2, 1, 2)
+        //   lid4 = (env.types = lid3)           (record_update: full quartet shape)
+        //   return env (lid1)                  <- base escapes via terminator
+        // }
+        // matched=true (write-back present), but exit_mentions_local(env) fires -> NOT a quartet.
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)],
+        )
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              record_get(lid(1), 0),
+              .Let(lid(3), set2, .Let(lid(4), upd, .Atom(.ALocal(lid(1))))),
+            ),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+
+        // Base env (lid1) escapes via return -> escape guard fires -> t (lid2) is a borrow, not Unique.
+        try assert.is_false(is_shell_unique(f, 2))
+        .Ok({})
+      },
+    )
+    .test(
+      "render: field facts + two-verdict line appear and are deterministic",
+      fn() {
+        b := b_reg()
+
+        // The push_scope quartet: fresh dict -> wrapped in record -> get field -> Dict.set -> record_update
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)],
+        )
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              record_get(lid(1), 0),
+              .Let(lid(3), set2, .Let(lid(4), upd, .Atom(.ALitInt(0)))),
+            ),
+          ),
+        )
+        m := module_of("f", body)
+        bb := b_reg()
+        v := cfg.build_view(m, bb)
+        a1 := ownership.analyze(v, bb, sem())
+        a2 := ownership.analyze(v, bb, sem())
+        out1 := cfg.render_view(a1)
+        out2 := cfg.render_view(a2)
+        try assert.is_true(out1.contains("field_facts="))
+        try assert.is_true(
+          out1.contains(
+            "verdict L4 = record_update L1.f0 shell=reuse(unique) field=in-place([.f0] unique)",
+          ),
+        )
+        try assert.is_true(out1 == out2)
+        .Ok({})
+      },
+    )
+    .test(
+      "render: replacing an unowned field with a fresh value is not field-in-place",
+      fn() {
+        b := b_reg()
+
+        // The original .f0 backing is not deeply owned: the same dict is stored in
+        // two fields. Refreshing .f0 with a fresh dict may make the RESULT own .f0,
+        // but the verdict must describe the pre-op backing, not the post-op graft.
+        rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0)), field_atom(1, lid(0))])
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(2)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            rec,
+            .Let(lid(2), dict_new_call(b), .Let(lid(3), upd, .Atom(.ALocal(lid(3))))),
+          ),
+        )
+        m := module_of("f", body)
+        v := cfg.build_view(m, b)
+        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        try assert.is_true(
+          out.contains(
+            "verdict L3 = record_update L1.f0 shell=reuse(unique) field=persistent(insufficient deep ownership)",
+          ),
+        )
+        try assert.is_false(
+          out.contains("verdict L3 = record_update L1.f0 shell=reuse(unique) field=in-place"),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "projecting a field does not make an unrelated fresh replacement field-in-place",
+      fn() {
+        b := b_reg()
+
+        // The projection proves only that L2 can move the old .f0 backing. If the
+        // write-back replaces .f0 with an unrelated fresh dict, that moved backing
+        // is discarded rather than updated in-place.
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              record_get(lid(1), 0),
+              .Let(lid(3), dict_new_call(b), .Let(lid(4), upd, .Atom(.ALocal(lid(4))))),
+            ),
+          ),
+        )
+        m := module_of("f", body)
+        v := cfg.build_view(m, b)
+        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        try assert.is_true(
+          out.contains(
+            "verdict L4 = record_update L1.f0 shell=reuse(unique) field=persistent(insufficient deep ownership)",
+          ),
+        )
+        try assert.is_false(
+          out.contains("verdict L4 = record_update L1.f0 shell=reuse(unique) field=in-place"),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "read-only use of a projected field does not make the replacement field-in-place",
+      fn() {
+        b := b_reg()
+
+        // This call mentions the projected field local, but it is not a known COW
+        // update that preserves/consumes that backing. Syntactic use alone must
+        // not license an in-place field verdict.
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        stringify: AnfOp = .ACall(.AGlobalFunc(b.method_id("Int", "to_string")), [.ALocal(lid(2))])
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              record_get(lid(1), 0),
+              .Let(lid(3), stringify, .Let(lid(4), upd, .Atom(.ALocal(lid(4))))),
+            ),
+          ),
+        )
+        m := module_of("f", body)
+        v := cfg.build_view(m, b)
+        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        try assert.is_true(
+          out.contains(
+            "verdict L4 = record_update L1.f0 shell=reuse(unique) field=persistent(insufficient deep ownership)",
+          ),
+        )
+        try assert.is_false(
+          out.contains("verdict L4 = record_update L1.f0 shell=reuse(unique) field=in-place"),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "COW update of projected field is not in-place if old backing is still used",
+      fn() {
+        b := b_reg()
+
+        // Dict.set is a known COW update, but it can only consume/update the
+        // projected field backing in-place if that backing is not used again.
+        // Returning L2 after the write-back keeps the old backing live, so the
+        // field verdict must remain persistent.
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)],
+        )
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              record_get(lid(1), 0),
+              .Let(lid(3), set2, .Let(lid(4), upd, .Atom(.ALocal(lid(2))))),
+            ),
+          ),
+        )
+        m := module_of("f", body)
+        v := cfg.build_view(m, b)
+        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        try assert.is_true(
+          out.contains(
+            "verdict L4 = record_update L1.f0 shell=reuse(unique) field=persistent(insufficient deep ownership)",
+          ),
+        )
+        try assert.is_false(
+          out.contains("verdict L4 = record_update L1.f0 shell=reuse(unique) field=in-place"),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "init move carries field facts so source-shaped record rebinds render field-in-place",
+      fn() {
+        b := b_reg()
+
+        // Source lowering for `c := Ctx.{ ... }` introduces an AInit over the
+        // freshly-built record. The move must carry field facts, or the CLI smoke
+        // shape loses [.f0] before the projection/update quartet.
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        init: AnfOp = .AInit(.ALocal(lid(1)))
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(3)), .ALitInt(1), .ALitInt(2)],
+        )
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(2)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(4)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              init,
+              .Let(
+                lid(3),
+                record_get(lid(2), 0),
+                .Let(
+                  lid(4),
+                  set2,
+                  .Let(
+                    lid(5),
+                    upd,
+                    .Let(lid(6), .AAssign(lid(2), .ALocal(lid(5))), .Atom(.ALocal(lid(2)))),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        )
+        m := module_of("f", body)
+        v := cfg.build_view(m, b)
+        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        try assert.is_true(
+          out.contains(
+            "verdict L5 = record_update L2.f0 shell=reuse(unique) field=in-place([.f0] unique)",
+          ),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "field move evidence is cleared when a source local is rebound",
+      fn() {
+        b := b_reg()
+
+        mk: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+        init: AnfOp = .AInit(.ALocal(lid(1)))
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(3)), .ALitInt(1), .ALitInt(2)],
+        )
+        upd1: AnfOp = .ARecordUpdate(
+          .ALocal(lid(2)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(4)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        upd2: AnfOp = .ARecordUpdate(
+          .ALocal(lid(2)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(7)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            mk,
+            .Let(
+              lid(2),
+              init,
+              .Let(
+                lid(3),
+                record_get(lid(2), 0),
+                .Let(
+                  lid(4),
+                  set2,
+                  .Let(
+                    lid(5),
+                    upd1,
+                    .Let(
+                      lid(6),
+                      .AAssign(lid(2), .ALocal(lid(5))),
+                      .Let(lid(7), dict_new_call(b), .Let(lid(8), upd2, .Atom(.ALocal(lid(8))))),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        )
+        m := module_of("f", body)
+        v := cfg.build_view(m, b)
+        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        try assert.is_true(
+          out.contains(
+            "verdict L5 = record_update L2.f0 shell=reuse(unique) field=in-place([.f0] unique)",
+          ),
+        )
+        try assert.is_true(
+          out.contains(
+            "verdict L8 = record_update L2.f0 shell=reuse(unique) field=persistent(outer owned but inner shared)",
+          ),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "payload path_key round-trips and stays disjoint from field keys",
+      fn() {
+        // [Payload(tag,i)] and [Payload(tag,i), Field(f)] over a spread.
+        for tag in range(3) {
+          for i in range(2) {
+            p0 := ff.AccessPath.{ segs: [.Payload(tag, i)] }
+            k0 := ff.path_key(p0)
+            try assert.equal(k0 < 0, true) // payload keys are negative
+            try assert.equal(ff.path_eq(ff.path_of_key(k0), p0), true)
+            for f in range(3) {
+              p1 := ff.AccessPath.{ segs: [.Payload(tag, i), .Field(f)] }
+              k1 := ff.path_key(p1)
+              try assert.equal(ff.path_eq(ff.path_of_key(k1), p1), true)
+
+              // disjoint from a positive field key with the same f
+              fk := ff.path_key(ff.field_path(f))
+              try assert.equal(k1 == fk, false)
+
+              // the payload shell key and its field-child key are distinct
+              try assert.equal(k0 == k1, false)
+            }
+          }
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "downward-closed: field facts never outlive a Unique shell (Acceptance 6)",
+      fn() {
+        b := b_reg()
+        rec: AnfOp = .ARecord(TypeId.{ id: 0 }, [field_atom(0, lid(0))])
+
+        // Task 3: record intro with a fresh dict field.
+        intro: AnfExpr = .Let(lid(0), dict_new_call(b), .Let(lid(1), rec, .Atom(.ALocal(lid(1)))))
+        try assert_downward_closed(analyzed_func(module_of("f", intro)))
+
+        // Task 4: store an owned inner into an all-owned vector.
+        arr: AnfOp = .AArrayLit([.ALocal(lid(0))])
+        consume: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            arr,
+            .Let(
+              lid(2),
+              dict_new_call(b),
+              .Let(lid(3), vec_set_call(b, lid(1), 0, lid(2)), .Atom(.ALocal(lid(3)))),
+            ),
+          ),
+        )
+        try assert_downward_closed(analyzed_func(module_of("f", consume)))
+
+        // Task 5: projection move (base dead after the get).
+        proj: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), rec, .Let(lid(2), record_get(lid(1), 0), .Atom(.ALocal(lid(2))))),
+        )
+        try assert_downward_closed(analyzed_func(module_of("f", proj)))
+
+        // Task 6: the push_scope quartet (intro + projection + update + rebind).
+        set2: AnfOp = .ACall(
+          .AGlobalFunc(b.method_id("Dict", "set")),
+          [.ALocal(lid(2)), .ALitInt(1), .ALitInt(2)],
+        )
+        upd: AnfOp = .ARecordUpdate(
+          .ALocal(lid(1)),
+          FieldId.{ id: 0 },
+          .ALocal(lid(3)),
+          false,
+          TypeId.{ id: 0 },
+        )
+        quartet: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            rec,
+            .Let(
+              lid(2),
+              record_get(lid(1), 0),
+              .Let(lid(3), set2, .Let(lid(4), upd, .Atom(.ALocal(lid(4))))),
+            ),
+          ),
+        )
+        try assert_downward_closed(analyzed_func(module_of("f", quartet)))
+
+        .Ok({})
+      },
+    )
+}

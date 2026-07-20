@@ -1,0 +1,20 @@
+pub fn nested_loop_sieve_shape(n: Int) Int {
+  flags: Vector<Bool> = collect _ in range(n) {
+    true
+  }
+  count := 0
+  i := 0
+  for i < n {
+    if flags[i] {
+      count = count + 1
+      step := i + 1
+      k := i + step
+      for k < n {
+        flags = .set_at(k, false)
+        k = k + step
+      }
+    }
+    i = i + 1
+  }
+  count
+}

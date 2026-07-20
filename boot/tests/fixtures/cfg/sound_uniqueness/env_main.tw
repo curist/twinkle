@@ -1,0 +1,20 @@
+use .env_lib.{Env, add_type, add_value}
+
+pub fn build_owned() Env {
+  env := Env.{ types: Dict.new(), values: Dict.new() }
+  env = add_type(env, "a", 1)
+  env = add_type(env, "b", 2)
+  env = add_value(env, "v", 3)
+  env
+}
+
+pub fn branch_shared(read_old: Bool) Int {
+  env := Env.{ types: Dict.new(), values: Dict.new() }
+  after := add_type(env, "b", 2)
+  old_len := env.types.len()
+  if read_old {
+    old_len
+  } else {
+    after.types.len()
+  }
+}

@@ -1,0 +1,9 @@
+use .cell_lib.{Marks, mark}
+
+pub fn run_marks() Marks {
+  used: Dict<String, Bool> = Dict.new()
+  marks := Marks.{ used: Cell.new(used), seen: 0 }
+  marks = mark(marks, "a")
+  marks = mark(marks, "b")
+  marks
+}

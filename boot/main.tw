@@ -44,6 +44,9 @@ ir_cmd := file_command("ir", "Compile and print compiler IR")
   .add_flag("opt", "Print optimized ANF IR")
   .add_flag("wat", "Print final linked WAT")
   .add_flag("all", "Print all available IR stages")
+  .add_flag("census", "Print the candidate-op census table (optimized ANF)")
+  .add_flag("sites", "With --census, also list each candidate site")
+  .add_flag("cfg", "Print the structural CFG ownership view (optimized ANF)")
 
 run_cmd := command
   .make("run", "Run program")

@@ -99,6 +99,21 @@ Related historical context outside this folder:
 
 ---
 
+## Archived Sound Uniqueness Analysis Plans
+
+| Plan | Description |
+|------|-------------|
+| [2026-07-18-phase6-param-side-summary-facts.md](2026-07-18-phase6-param-side-summary-facts.md) | Phase 6 Part 1 parameter-side summary facts: `ParamRole`, `flows_to_return`, and shell `in_place_paths` for consumed params |
+| [2026-07-18-phase6-part2-variant-machinery.md](2026-07-18-phase6-part2-variant-machinery.md) | Phase 6 Part 2 Stage 1 variant identity, canonical keys, and deterministic `VariantId` encoding |
+| [2026-07-18-phase6-stage2-field-granular-inplace-paths.md](2026-07-18-phase6-stage2-field-granular-inplace-paths.md) | Superseded Stage 2 field-granular `in_place_paths` plan; execution split into the Stage 2a/2b plans below |
+| [2026-07-18-phase6-stage2a-dirty-path-requirements.md](2026-07-18-phase6-stage2a-dirty-path-requirements.md) | Stage 2a dirty-path record-update requirement analysis feeding field-granular `in_place_paths` |
+| [2026-07-19-phase6-stage2b-helper-call-propagation.md](2026-07-19-phase6-stage2b-helper-call-propagation.md) | Stage 2b helper-call propagation of in-place field requirements plus the generic-pass boundary guard |
+| [2026-07-19-phase6-stage3-owned-entry-reanalysis.md](2026-07-19-phase6-stage3-owned-entry-reanalysis.md) | Stage 3 owned-entry `summarize_variant` re-analysis for shell-keyed parameters |
+| [2026-07-19-phase6-stage4a-whole-return-move.md](2026-07-19-phase6-stage4a-whole-return-move.md) | Stage 4a whole-return move for proven-unique `MayAliasParams` arguments |
+| [2026-07-19-phase6-stage4c-call-site-decision.md](2026-07-19-phase6-stage4c-call-site-decision.md) | Stage 4c pure call-site variant-selection logic (`select_variant`) |
+| [2026-07-19-phase6-completion-decision-verdicts.md](2026-07-19-phase6-completion-decision-verdicts.md) | Phase 6 completion: render owned per-call-site specialization verdicts in `twk ir --cfg` |
+| [sound-uniqueness-sieve-cfg-gap.md](sound-uniqueness-sieve-cfg-gap.md) | Completed Gap B/Gap A fix for vector `set_at` ownership summaries and whole-return moves; archived with the remaining nested-loop residual spun out to the active follow-up plan |
+
 ## Archived Cross-Cutting Plans
 
 | Plan | Description |
@@ -115,7 +130,7 @@ Related historical context outside this folder:
 | [builtin-identity-resolution.md](builtin-identity-resolution.md) | Separate compiler-owned builtin identities from user function names across lowering, backend callable materialization, and codegen dispatch |
 | [defer-implementation-drift.md](defer-implementation-drift.md) | Block-scoped defer semantics — aligned docs, interpreter, ANF defer-elim pass, pipeline ordering, and tests across Rust and boot compilers |
 | [boot-first-class-builtin-functions.md](boot-first-class-builtin-functions.md) | First-class builtin / prelude function values in the boot backend; archived after the closure-materialization pipeline and regression coverage landed |
-| [deferred-persistence.md](deferred-persistence.md) | Earlier consolidated uniqueness/persistence strategy doc now superseded by the active static-uniqueness and persistent-container plans |
+| [deferred-persistence.md](deferred-persistence.md) | Earlier consolidated uniqueness/persistence strategy doc now superseded by later uniqueness and persistent-container plans |
 | [boot-function-identity-canonicalization.md](boot-function-identity-canonicalization.md) | Canonical imported function identity across resolver, lowering, module compilation, and core linking so alias spelling no longer affects cross-module linkage |
 | [boot-module-type-identity.md](boot-module-type-identity.md) | Canonical imported nominal type identity across full/selective/transitive boot module boundaries; behavioral closure complete, deeper hidden-import cleanup deferred to the follow-on binding-model plan |
 | [boot-no-hidden-imports.md](boot-no-hidden-imports.md) | Remove hidden selective-import namespaces by splitting canonical import storage from visible bindings, completing support-type closure, and moving method lookup to receiver identity |
@@ -130,6 +145,7 @@ Related historical context outside this folder:
 | [pvec-performance-enhancements.md](pvec-performance-enhancements.md) | Incremental PVec runtime optimizations: i31ref builder tail, promote_full_tail, bulk array conversion, leaf-oriented slice/extend, true in-place set |
 | [dict-performance-enhancements.md](dict-performance-enhancements.md) | Incremental HAMT dict runtime optimizations: hot-path inlining, in-place mutation for unique dicts |
 | [dict-in-place-alias-safety.md](dict-in-place-alias-safety.md) | Deep ownership analysis ensuring in-place dict/vector mutation is alias-safe |
+| [static-uniqueness-plan.md](static-uniqueness-plan.md) | Historical static uniqueness optimizer plan from the older recognizer-heavy optimizer line; superseded for new work by [../sound-uniqueness/](../sound-uniqueness/) |
 | [typed-dict-representation.md](typed-dict-representation.md) | NOT PURSUED — Phase 0 microbenchmarks (`examples/performance/compiler/dict_*`/`set_*`) showed dict cost is allocation/insertion-order-bound, not key-handling: typed `i64` keys save ≈0 (forced `BoxedInt` build == unboxed i31 build), only `String` reads (~2×) would gain. Surfaced the real lever — O(n²) bulk `remove`. Baselines kept as a regression guard in `examples/performance/compiler/README.md` |
 | [dict-amortized-remove.md](dict-amortized-remove.md) | Replaced per-remove insertion-order-vector rebuilds with tombstoned order slots and density-triggered compaction, making `Dict.remove`/`Set.remove` amortized O(log n) and bulk remove linear |
 | [string-builder-uniqueness-plan.md](string-builder-uniqueness-plan.md) | Internal string builder runtime helpers plus static uniqueness rewrites for loop and straight-line `String.concat` accumulator regions |

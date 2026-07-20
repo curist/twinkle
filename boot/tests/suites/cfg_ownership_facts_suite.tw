@@ -1,0 +1,585 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp}
+use compiler.builtins
+use compiler.cfg
+use compiler.core_ir.{FuncId, GlobalId, LocalId, VariantId}
+use compiler.mono_type.{MonoType, TypeId}
+use compiler.opt.semantics as semantics
+use compiler.opt.semantics.{EffectKind, make_prelude_optimizer_semantics}
+use compiler.ownership
+use compiler.pipeline
+use compiler.summary
+
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
+
+fn b_reg() builtins.BuiltinRegistry {
+  builtins.make_builtin_registry()
+}
+
+fn sem() semantics.OptimizerSemantics {
+  make_prelude_optimizer_semantics(b_reg())
+}
+
+// call Dict.new() -> fresh dict (Allocate)
+fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
+  .ACall(.AGlobalFunc(b.method_id("Dict", "new")), [])
+}
+
+// call Dict.set(base, 1, 2) -> Update, cow_base_arg 0
+fn dict_set_call(b: builtins.BuiltinRegistry, base: LocalId) AnfOp {
+  .ACall(.AGlobalFunc(b.method_id("Dict", "set")), [.ALocal(base), .ALitInt(1), .ALitInt(2)])
+}
+
+fn module_of(name: String, body: AnfExpr) AnfModule {
+  func: AnfFunctionDef = AnfFunctionDef.{
+    func_id: FuncId.{ id: 1 },
+    name,
+    is_init: false,
+    params: [],
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: MonoType.Int,
+  }
+  AnfModule.{
+    functions: [func],
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+    lib_exports: [],
+  }
+}
+
+fn analyzed_func(m: AnfModule) cfg.CfgFunction {
+  b := b_reg()
+  v := cfg.build_view(m, b)
+  a := ownership.analyze(v, b, sem())
+  case cfg.function_named(a, "f") {
+    .Some(f) => f,
+    .None => error("missing f"),
+  }
+}
+
+fn block0(f: cfg.CfgFunction) cfg.CfgBlock {
+  f.blocks[0]
+}
+
+fn live_contains(live: Vector<Int>, id: Int) Bool {
+  for x in live {
+    if x == id {
+      return true
+    }
+  }
+  false
+}
+
+fn own_at_exit(f: cfg.CfgFunction, block_idx: Int, local_id: Int) ownership.Ownership {
+  blk := f.blocks[block_idx]
+  case blk.exit.ownership.get(local_id) {
+    .Some(tag) => ownership.own_of_tag(tag),
+    .None => .Unknown,
+  }
+}
+
+fn assert_own(actual: ownership.Ownership, expected: ownership.Ownership) Result<Void, String> {
+  assert.equal(ownership.own_tag(actual), ownership.own_tag(expected))
+}
+
+fn own_entry_named(f: cfg.CfgFunction, name: String, local_id: Int) ownership.Ownership {
+  for blk in f.blocks {
+    if blk.name == name {
+      case blk.entry.ownership.get(local_id) {
+        .Some(tag) => return ownership.own_of_tag(tag),
+        .None => return .Unknown,
+      }
+    }
+  }
+  .Unknown
+}
+
+fn result_param_of(f: cfg.CfgFunction, name: String) Int {
+  for blk in f.blocks {
+    if blk.name == name {
+      return blk.params[0].id
+    }
+  }
+  error("no block ${name}")
+}
+
+fn own_exit_named(f: cfg.CfgFunction, name: String, local_id: Int) ownership.Ownership {
+  for blk in f.blocks {
+    if blk.name == name {
+      case blk.exit.ownership.get(local_id) {
+        .Some(tag) => return ownership.own_of_tag(tag),
+        .None => return .Unknown,
+      }
+    }
+  }
+  .Unknown
+}
+
+fn valid_at_exit(f: cfg.CfgFunction, block_idx: Int, local_id: Int) Bool {
+  blk := f.blocks[block_idx]
+  case blk.exit.binding_valid.get(local_id) {
+    .Some(v) => v,
+    .None => true, // absent => valid
+  }
+}
+
+fn block_named(f: cfg.CfgFunction, name: String) cfg.CfgBlock? {
+  for blk in f.blocks {
+    if blk.name == name {
+      return .Some(blk)
+    }
+  }
+  .None
+}
+
+fn effect_is_update(e: EffectKind) Bool {
+  case e {
+    .Update => true,
+    _ => false,
+  }
+}
+
+// Assert a builtin FuncId classifies as Update with a cow_base_arg.
+fn assert_update_with_base(s: semantics.OptimizerSemantics, fid: FuncId, label: String) Result<
+  Void,
+  String,
+> {
+  case semantics.call_info(s, fid) {
+    .Some(cs) => {
+      try assert.is_true(effect_is_update(cs.effect))
+      case cs.cow_base_arg {
+        .Some(_) => .Ok({}),
+        .None => assert.fail("${label} missing cow_base_arg"),
+      }
+    },
+    .None => assert.fail("${label} has no CallSemantics"),
+  }
+}
+
+fn analyze_source(src: String) Result<cfg.CfgView, String> {
+  b := b_reg()
+  artifacts := try pipeline.compile_source(src)
+  .Ok(ownership.analyze(cfg.build_view(artifacts.opt, b), b, sem()))
+}
+
+// The suite is one exported builder. Task 4 creates it with the first test;
+// Tasks 5-9 append more `.test(...)` clauses. Helper `fn`s go above `suite()`.
+pub fn suite() runner.Suite {
+  runner
+    .suite("cfg ownership facts")
+    .test(
+      "phase2 t4: a live-through local is live across boundaries; a def is not live-in",
+      fn() {
+        // L0 = Dict.new(); r := if c { 1 } else { 2 }; L3 = Dict.set(L0,..); return 0
+        // L0 is defined in entry and used after the join, so it is live THROUGH the
+        // arms and live-in at the join — but not live-in at the entry block. This
+        // fails if boundary liveness is empty, unlike a single return block (whose
+        // exit.live is trivially empty because it has no successors).
+        b := b_reg()
+        then_e: AnfExpr = .Atom(.ALitInt(1))
+        else_e: AnfExpr = .Atom(.ALitInt(2))
+        after: AnfExpr = .Let(lid(3), dict_set_call(b, lid(0)), .Atom(.ALitInt(0)))
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), .AIf(.ALitBool(true), then_e, else_e), after),
+        )
+        f := analyzed_func(module_of("f", body))
+
+        // L0 is defined in the entry block, so it is not live-in there.
+        try assert.is_false(live_contains(block0(f).entry.live, 0))
+        then_blk := case block_named(f, "if.then") {
+          .Some(tb) => tb,
+          .None => return assert.fail("no if.then block"),
+        }
+        join_blk := case block_named(f, "if.join") {
+          .Some(jb) => jb,
+          .None => return assert.fail("no if.join block"),
+        }
+
+        // Live-through the arm and live-in at the join (used at L3 after it).
+        try assert.is_true(live_contains(then_blk.entry.live, 0))
+        try assert.is_true(live_contains(join_blk.entry.live, 0))
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t5 introduce: Dict.new() is Unique",
+      fn() {
+        // L0 = Dict.new(); return 0   (L0 not returned, so not published)
+        b := b_reg()
+        body: AnfExpr = .Let(lid(0), dict_new_call(b), .Atom(.ALitInt(0)))
+        f := analyzed_func(module_of("f", body))
+        try assert_own(own_at_exit(f, 0, 0), .Unique)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t5 move: init of a dead source keeps Unique (Case B)",
+      fn() {
+        // L0 = Dict.new(); L1 = init L0; return 0   (L0 dead after the init; L1 not published)
+        b := b_reg()
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), .AInit(.ALocal(lid(0))), .Atom(.ALitInt(0))),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert_own(own_at_exit(f, 0, 1), .Unique)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t5 alias: init with a still-live source demotes both (Case C)",
+      fn() {
+        // L0 = Dict.new(); L1 = init L0; L2 = Dict.set(L0,..); return L1
+        // L0 is read at L2 after the init -> alias -> both Shared.
+        b := b_reg()
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .AInit(.ALocal(lid(0))),
+            .Let(lid(2), dict_set_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
+          ),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert_own(own_at_exit(f, 0, 0), .Shared)
+        try assert_own(own_at_exit(f, 0, 1), .Shared)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t5 publish: global_set demotes to Shared",
+      fn() {
+        // L0 = Dict.new(); global_set G0 = L0; return L0
+        b := b_reg()
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))), .Atom(.ALocal(lid(0)))),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert_own(own_at_exit(f, 0, 0), .Shared)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t6 branch join: both arms allocate => Unique (Case V join)",
+      fn() {
+        // r := if c { Dict.new() } else { Dict.new() }; return r
+        b := b_reg()
+        then_e: AnfExpr = .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1))))
+        else_e: AnfExpr = .Let(lid(2), dict_new_call(b), .Atom(.ALocal(lid(2))))
+        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
+        f := analyzed_func(module_of("f", body))
+        rp := result_param_of(f, "if.join")
+        try assert_own(own_entry_named(f, "if.join", rp), .Unique)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t6 branch join: one arm publishes => Shared",
+      fn() {
+        // r := if c { d := Dict.new(); global_set G0 = d; d } else { Dict.new() }; r
+        b := b_reg()
+        then_e: AnfExpr = .Let(
+          lid(1),
+          dict_new_call(b),
+          .Let(lid(3), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))), .Atom(.ALocal(lid(1)))),
+        )
+        else_e: AnfExpr = .Let(lid(2), dict_new_call(b), .Atom(.ALocal(lid(2))))
+        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
+        f := analyzed_func(module_of("f", body))
+        rp := result_param_of(f, "if.join")
+        try assert_own(own_entry_named(f, "if.join", rp), .Shared)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t6 loop-carried: consume-then-reassign stays Unique (Case A)",
+      fn() {
+        // acc := Dict.new(); loop { acc = Dict.set(acc,..); continue }  (simplified)
+        b := b_reg()
+        loop_body: AnfExpr = .Let(
+          lid(2),
+          dict_set_call(b, lid(1)),
+          .Let(lid(3), .AAssign(lid(1), .ALocal(lid(2))), .Continue),
+        )
+        body: AnfExpr = .Let(
+          lid(1),
+          dict_new_call(b),
+          .Let(lid(0), .ALoop(loop_body), .Atom(.ALocal(lid(1)))),
+        )
+        f := analyzed_func(module_of("f", body))
+
+        // At the loop header entry, the carried accumulator L1 remains Unique. This is
+        // the load-bearing check for the live-through join (L1 is a paramless-body
+        // live-through local) and the skip-unprocessed back-edge (G4).
+        try assert_own(own_entry_named(f, "loop.header", 1), .Unique)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t6 match binding: pattern-bound local is never Unique, no trap (G3)",
+      fn() {
+        // case (a fresh dict) { .Variant(L5) => { L6 = init L5; 0 } }
+        // L5 is bound by the pattern (invisible to the analysis), used in the arm.
+        b := b_reg()
+        arm: AnfMatchArm = AnfMatchArm.{
+          pattern: .Variant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.Var(lid(5))]),
+          body: .Let(lid(6), .AInit(.ALocal(lid(5))), .Atom(.ALitInt(0))),
+        }
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(7), .AMatch(.ALocal(lid(0)), [arm]), .Atom(.ALitInt(0))),
+        )
+        f := analyzed_func(module_of("f", body))
+
+        // Sound-but-imprecise (G3): reaching here is the no-trap assertion, and the
+        // pattern-bound local is never minted Unique (Shared or Unknown).
+        o := own_exit_named(f, "match.arm.0", 5)
+        try assert.is_true(ownership.own_tag(o) != 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t7: a moved source is invalid at block exit",
+      fn() {
+        // L0 = Dict.new(); L1 = init L0; return L1  (L0 moved => invalid at exit)
+        b := b_reg()
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(1)))),
+        )
+        f := analyzed_func(module_of("f", body))
+        try assert.is_false(valid_at_exit(f, 0, 0))
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t7: a valid live-through non-param local stays valid across a boundary",
+      fn() {
+        // L0 = Dict.new(); r := if c { 1 } else { 2 }; L2 = Dict.set(L0,..); return 0
+        // L0 is live-through the if blocks WITHOUT being a join param; never moved.
+        b := b_reg()
+        then_e: AnfExpr = .Atom(.ALitInt(1))
+        else_e: AnfExpr = .Atom(.ALitInt(2))
+        after: AnfExpr = .Let(lid(2), dict_set_call(b, lid(0)), .Atom(.ALitInt(0)))
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), .AIf(.ALitBool(true), then_e, else_e), after),
+        )
+        f := analyzed_func(module_of("f", body))
+        blk := case block_named(f, "if.join") {
+          .Some(jb) => jb,
+          .None => return assert.fail("no if.join block"),
+        }
+        case blk.entry.binding_valid.get(0) {
+          .Some(v) => assert.is_true(v),
+          .None => .Ok({}), // absent => valid (also acceptable)
+        }
+      },
+    )
+    .test(
+      "phase2 t8: render shows populated facts for carried params",
+      fn() {
+        b := b_reg()
+        then_e: AnfExpr = .Let(lid(1), dict_new_call(b), .Atom(.ALocal(lid(1))))
+        else_e: AnfExpr = .Let(lid(2), dict_new_call(b), .Atom(.ALocal(lid(2))))
+        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
+        v := cfg.build_view(module_of("f", body), b)
+        a := ownership.analyze(v, b, sem())
+        out := cfg.render_view(a)
+        try assert.is_true(out.contains("Unique"))
+        try assert.is_true(out.contains("facts.in={") and out.contains("facts.out={"))
+        .Ok({})
+      },
+    )
+    .test(
+      "phase2 t8: facts are byte-identical across two analyses",
+      fn() {
+        b := b_reg()
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), dict_set_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
+        )
+        m := module_of("f", body)
+        a1 := cfg.render_view(ownership.analyze(cfg.build_view(m, b), b, sem()))
+        a2 := cfg.render_view(ownership.analyze(cfg.build_view(m, b), b, sem()))
+        try assert.is_true(a1 == a2)
+        .Ok({})
+      },
+    )
+    .test(
+      "t9 soundness guard: classifications match the transfer's assumptions",
+      fn() {
+        b := b_reg()
+        s := sem()
+        try assert_update_with_base(s, b.method_id("Dict", "set"), "Dict.set")
+        try assert_update_with_base(s, b.method_id("Vector", "append"), "Vector.append")
+        try assert_update_with_base(s, b.id("vector$set_unsafe"), "vector$set_unsafe")
+
+        // A Cell op must resolve to .None (publish bucket) or at least never Update.
+        case semantics.call_info(s, b.method_id("Cell", "set")) {
+          .None => .Ok({}),
+          .Some(cs) => assert.is_false(effect_is_update(cs.effect)),
+        }
+      },
+    )
+    .test(
+      "t9 smoke: analyze a real optimized program without trapping",
+      fn() {
+        src := "fn build() Dict<Int, Int> {\n  d := Dict.new()\n  d[1] = 2\n  d[3] = 4\n  d\n}\n"
+        v := try analyze_source(src)
+        try assert.is_true(v.functions.len() >= 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase3 prune: a dead carried join param is pruned; arity stays consistent",
+      fn() {
+        then_e: AnfExpr = .Atom(.ALitInt(1))
+        else_e: AnfExpr = .Atom(.ALitInt(2))
+        body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALitInt(0)))
+        v := cfg.build_view(module_of("f", body), b_reg())
+        pruned := ownership.prune_dead_merge(v)
+        case cfg.function_named(pruned, "f") {
+          .Some(f) => {
+            jb := case block_named(f, "if.join") {
+              .Some(x) => x,
+              .None => return assert.fail("no if.join"),
+            }
+            try assert.equal(jb.params.len(), 0)
+            try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+            .Ok({})
+          },
+          .None => assert.fail("no f"),
+        }
+      },
+    )
+    .test(
+      "phase3 prune: position-selection keeps the live carried param and realigns preds",
+      fn() {
+        // acc := Dict.new()
+        // r := if c { acc = Dict.set(acc,..); 1 } else { acc = Dict.set(acc,..); 2 }
+        // L9 := Dict.set(r,..); return 0
+        //
+        // The if.join carries TWO params: the result L1 (LIVE — read at L9 after
+        // the join) and the rebound outer accumulator L0 (DEAD — never read after
+        // the join). Pruning must drop exactly the DEAD position, leaving one param
+        // whose id is the live result. This is the position-SELECTION path a 1->0
+        // drop can't exercise. And because every edge into if.join carries two
+        // aligned args, the surviving preds edges must be realigned to one arg too:
+        // count_edge_arity_mismatches only scans succs, so we assert the preds arg
+        // count directly to close that gap.
+        b := b_reg()
+        then_e: AnfExpr = .Let(
+          lid(2),
+          dict_set_call(b, lid(0)),
+          .Let(lid(3), .AAssign(lid(0), .ALocal(lid(2))), .Atom(.ALitInt(1))),
+        )
+        else_e: AnfExpr = .Let(
+          lid(4),
+          dict_set_call(b, lid(0)),
+          .Let(lid(5), .AAssign(lid(0), .ALocal(lid(4))), .Atom(.ALitInt(2))),
+        )
+        after: AnfExpr = .Let(lid(9), dict_set_call(b, lid(1)), .Atom(.ALitInt(0)))
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(1), .AIf(.ALitBool(true), then_e, else_e), after),
+        )
+        v := cfg.build_view(module_of("f", body), b_reg())
+
+        // Sanity: before pruning the join carries both L1 (live) and L0 (dead).
+        pre := case cfg.function_named(v, "f") {
+          .Some(f) => f,
+          .None => return assert.fail("no f pre-prune"),
+        }
+        pre_jb := case block_named(pre, "if.join") {
+          .Some(x) => x,
+          .None => return assert.fail("no if.join pre-prune"),
+        }
+        try assert.equal(pre_jb.params.len(), 2)
+
+        pruned := ownership.prune_dead_merge(v)
+        f := case cfg.function_named(pruned, "f") {
+          .Some(x) => x,
+          .None => return assert.fail("no f"),
+        }
+        jb := case block_named(f, "if.join") {
+          .Some(x) => x,
+          .None => return assert.fail("no if.join"),
+        }
+
+        // Exactly one param survives, and it is the LIVE result L1 (not the dead
+        // accumulator L0). This fails if the wrong position were selected.
+        try assert.equal(jb.params.len(), 1)
+        try assert.equal(jb.params[0].id, 1)
+
+        // Every pred edge feeding if.join must have been realigned to match the
+        // one surviving param. count_edge_arity_mismatches never checks preds, so
+        // this is the load-bearing guard for the preds-realignment path.
+        for pe in jb.preds {
+          try assert.equal(pe.args.len(), jb.params.len())
+        }
+
+        // succs/terminator side stays consistent too.
+        try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "phase3 patbind: pattern-bound local is killed at arm entry (not live-in)",
+      fn() {
+        b := b_reg()
+        arm: AnfMatchArm = AnfMatchArm.{
+          pattern: .Variant(TypeId.{ id: 0 }, VariantId.{ id: 0 }, [.Var(lid(5))]),
+          body: .Let(lid(6), .AInit(.ALocal(lid(5))), .Atom(.ALitInt(0))),
+        }
+        body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(lid(7), .AMatch(.ALocal(lid(0)), [arm]), .Atom(.ALitInt(0))),
+        )
+        f := analyzed_func(module_of("f", body))
+        blk := case block_named(f, "match.arm.0") {
+          .Some(x) => x,
+          .None => return assert.fail("no match.arm.0"),
+        }
+        try assert.is_false(live_contains(blk.entry.live, 5))
+        .Ok({})
+      },
+    )
+    .test(
+      "phase3 fixpoint: resolver CFG summaries converge",
+      fn() {
+        artifacts := case pipeline.compile_entry_path("boot/compiler/resolver.tw") {
+          .Ok(result) => result,
+          .Err(_) => return assert.fail("compile resolver"),
+        }
+        b := artifacts.builtins
+        view := cfg.build_view(artifacts.opt, b)
+        view = ownership.prune_dead_merge(view)
+        s := semantics.make_prelude_optimizer_semantics(b)
+        table := summary.compute(view, b, s)
+        analyzed := ownership.analyze_with_summaries(view, b, s, table)
+        case analyzed.function_named("remap_type_def") {
+          .Some(_) => .Ok({}),
+          .None => assert.fail("no remap_type_def"),
+        }
+      },
+    )
+}

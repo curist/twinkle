@@ -1,0 +1,949 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp}
+use compiler.builtins
+use compiler.cfg
+use compiler.core_ir.{FieldId, FuncId, GlobalId, LocalId, Param, VariantId}
+use compiler.mono_type.{MonoType, TypeId}
+use compiler.opt.semantics as semantics
+use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+use compiler.ownership
+use compiler.summary
+use compiler.variant_id
+
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
+
+fn b_reg() builtins.BuiltinRegistry {
+  builtins.make_builtin_registry()
+}
+
+fn sem() semantics.OptimizerSemantics {
+  make_prelude_optimizer_semantics(b_reg())
+}
+
+fn fdef(id: Int, name: String, nparams: Int, body: AnfExpr) AnfFunctionDef {
+  params: Vector<Param> = collect i in range(nparams) {
+    Param.{ local: lid(i), ty: MonoType.Int }
+  }
+  AnfFunctionDef.{
+    func_id: FuncId.{ id },
+    name,
+    is_init: false,
+    params,
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: MonoType.Int,
+  }
+}
+
+fn module_of(funcs: Vector<AnfFunctionDef>) AnfModule {
+  AnfModule.{
+    functions: funcs,
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+    lib_exports: [],
+  }
+}
+
+fn compute_of(funcs: Vector<AnfFunctionDef>) ownership.SummaryTable {
+  b := b_reg()
+  v := cfg.build_view(module_of(funcs), b)
+  summary.compute(v, b, sem())
+}
+
+fn analyzed_caller(funcs: Vector<AnfFunctionDef>, caller: String) cfg.CfgFunction {
+  b := b_reg()
+  v := cfg.build_view(module_of(funcs), b)
+  t := summary.compute(v, b, sem())
+  a := ownership.analyze_with_summaries(v, b, sem(), t)
+  case cfg.function_named(a, caller) {
+    .Some(f) => f,
+    .None => error("no ${caller}"),
+  }
+}
+
+// Render the whole CFG (summaries + per-site verdicts, incl. transport) for a
+// fixture, mirroring the real `twk ir --cfg` render pipeline.
+fn render_cfg_for_entry_of(funcs: Vector<AnfFunctionDef>) String {
+  b := b_reg()
+  v := cfg.build_view(module_of(funcs), b)
+  v = ownership.prune_dead_merge(v)
+  t := summary.compute(v, b, sem())
+  a := ownership.analyze_with_summaries(v, b, sem(), t)
+  summary.render_cfg(v, a, b, sem(), t, summary.empty_variant_table())
+}
+
+// exit ownership of a local in the caller's entry block (block 0).
+fn caller_own(f: cfg.CfgFunction, local_id: Int) Int {
+  case f.blocks[0].exit.ownership.get(local_id) {
+    .Some(tag) => tag,
+    .None => 2,
+  }
+}
+
+// The rendered decision verdict recorded at a call's result local (or "" if none).
+fn verdict_of(f: cfg.CfgFunction, local_id: Int) String {
+  for blk in f.blocks {
+    case blk.exit.verdicts.get(local_id) {
+      .Some(s) => return s,
+      .None => {},
+    }
+  }
+  ""
+}
+
+// substring test
+fn contains_sub(hay: String, needle: String) Bool {
+  hay.contains(needle)
+}
+
+fn is_published(s: ownership.Summary, i: Int) Bool {
+  case s.params[i].base_role {
+    .Published => true,
+    _ => false,
+  }
+}
+
+fn is_borrowed(s: ownership.Summary, i: Int) Bool {
+  case s.params[i].base_role {
+    .Borrowed => true,
+    _ => false,
+  }
+}
+
+// exit ownership of a local in a GIVEN block (caller_own hardcodes block 0).
+fn own_in_block(f: cfg.CfgFunction, block_id: Int, local_id: Int) Int {
+  for blk in f.blocks {
+    if blk.id.id == block_id {
+      return case blk.exit.ownership.get(local_id) {
+        .Some(tag) => tag,
+        .None => 2,
+      }
+    }
+  }
+  2
+}
+
+fn own_unique() Int {
+  ownership.own_tag(.Unique)
+}
+
+fn own_shared() Int {
+  ownership.own_tag(.Shared)
+}
+
+fn own_unknown() Int {
+  ownership.own_tag(.Unknown)
+}
+
+fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
+  .ACall(.AGlobalFunc(b.method_id("Dict", "new")), [])
+}
+
+fn wrapper_record(field_val: LocalId) AnfOp {
+  .ARecord(TypeId.{ id: 0 }, [.{ field: FieldId.{ id: 0 }, value: .ALocal(field_val) }])
+}
+
+// Record{f0: field_val, f1: fresh}: two fields so the caller has a SIBLING to
+// read. Summary ret=OwnedFresh, ret_paths [.f0]=from(p0), [.f1]=fresh.
+fn wrapper_record2(field_val: LocalId, fresh_val: LocalId) AnfOp {
+  .ARecord(
+    TypeId.{ id: 0 },
+    [
+      .{ field: FieldId.{ id: 0 }, value: .ALocal(field_val) },
+      .{ field: FieldId.{ id: 1 }, value: .ALocal(fresh_val) },
+    ],
+  )
+}
+
+// helper(x) returns Record{f0:x, f1:<fresh Dict.new()>}. Body:
+//   f1v := Dict.new(); rec := Record{f0:x, f1:f1v}; return rec
+fn wrapper2_helper(b: builtins.BuiltinRegistry) AnfFunctionDef {
+  fdef(
+    1,
+    "helper",
+    1,
+    .Let(
+      lid(1),
+      dict_new_call(b), // f1v := Dict.new() (fresh)
+      .Let(lid(2), wrapper_record2(lid(0), lid(1)), .Atom(.ALocal(lid(2)))),
+    ),
+  )
+}
+
+// g's local id in the sibling-read caller (the projected `g := out.f0`).
+fn gsib_local() Int {
+  2
+}
+
+// g's local id in the caller (the projected `g := out.f0`).
+fn grec_local() Int {
+  2
+}
+
+// helper(x) returns Record{f0:x}: summary ret=OwnedFresh with a Direct .f0
+// ret_path owned-from-param(0). caller() threads a fresh unique ctx through it.
+fn case_w_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  helper := fdef(1, "helper", 1, .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1)))))
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // ctx := Dict.new() (fresh Unique)
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := helper(ctx)
+      .Let(
+        lid(2),
+        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }), // g := out.f0
+        .Atom(.ALocal(lid(2))),
+      ),
+    ),
+  )
+  [helper, fdef(2, "caller", 0, caller_body)]
+}
+
+// Like case_w_fixture but caller threads its own PARAM `ctx` (lid0) instead of a
+// fresh local. Params enter the generic analysis as Unknown (only prov is seeded,
+// not ownership), so the recovery gate rejects them and publish-on-fail publishes
+// ctx. Documents the Phase 5 boundary: param-threaded state needs Phase 6
+// parameter ownership. Do NOT "fix" this by making params implicitly unique.
+fn case_w_param_fixture() Vector<AnfFunctionDef> {
+  helper := fdef(1, "helper", 1, .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1)))))
+  caller_body: AnfExpr = .Let(
+    lid(1),
+    .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := helper(ctx-PARAM)
+    .Let(
+      lid(2),
+      .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }), // g := out.f0
+      .Atom(.ALocal(lid(2))),
+    ),
+  )
+  [helper, fdef(2, "caller", 1, caller_body)] // caller has 1 PARAM: ctx = lid0
+}
+
+// caller(): ctx := Dict.new(); global_set G0 = ctx (publishes ctx -> Shared);
+// out := helper(ctx). ctx is ALREADY Shared at the call, so the gate fails and
+// publish-on-fail publishes it again -- idempotently (no crash, stays Shared).
+fn case_w_shared_arg_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  helper := fdef(1, "helper", 1, .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1)))))
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b),
+    .Let(
+      lid(1),
+      .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))), // publish ctx -> Shared BEFORE the call
+      .Let(
+        lid(2),
+        .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := helper(ctx), ctx already Shared
+        .Let(
+          lid(3),
+          .ARecordGet(.ALocal(lid(2)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+          .Atom(.ALocal(lid(3))),
+        ),
+      ),
+    ),
+  )
+  [helper, fdef(2, "caller", 0, caller_body)]
+}
+
+// Same as case_w_fixture but reads ctx (lid0) AFTER the call, so ctx is not a
+// last-use at the call -> the recovery gate fails on last-use and publishes ctx.
+fn case_w_gatefail_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  helper := fdef(1, "helper", 1, .Let(lid(1), wrapper_record(lid(0)), .Atom(.ALocal(lid(1)))))
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // ctx := Dict.new() (fresh Unique)
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := helper(ctx)
+      .Let(
+        lid(2),
+        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }), // g := out.f0
+        .Let(
+          lid(3),
+          .AInit(.ALocal(lid(0))), // keep := ctx (reads ctx AFTER the call)
+          .Atom(.ALocal(lid(2))),
+        ),
+      ),
+    ),
+  )
+  [helper, fdef(2, "caller", 0, caller_body)]
+}
+
+// caller(): ctx := Dict.new(); out := helper(ctx);
+//   g := record_get out.f0; ty := record_get out.f1; return g
+// out stays live for the sibling read out.f1, but out.f0 is dead-through-out ->
+// the transport recognizer licenses the move -> g Unique.
+fn case_w_sibling_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  helper := wrapper2_helper(b)
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // ctx := Dict.new() (fresh Unique)
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := helper(ctx)
+      .Let(
+        lid(2),
+        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }), // g := out.f0
+        .Let(
+          lid(3),
+          .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 1 }, TypeId.{ id: 0 }), // ty := out.f1 (sibling)
+          .Atom(.ALocal(lid(2))), // return g
+        ),
+      ),
+    ),
+  )
+  [helper, fdef(2, "caller", 0, caller_body)]
+}
+
+// caller(): ctx := Dict.new(); out := helper(ctx); g := record_get out.f0;
+//   global_set G0 = out; return g
+// out is PUBLISHED -> transport_ok fails on the non-sibling mention -> borrow.
+fn case_w_published_out_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  helper := wrapper2_helper(b)
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // ctx := Dict.new()
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := helper(ctx)
+      .Let(
+        lid(2),
+        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }), // g := out.f0
+        .Let(
+          lid(3),
+          .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(1))), // publish out
+          .Atom(.ALocal(lid(2))), // return g
+        ),
+      ),
+    ),
+  )
+  [helper, fdef(2, "caller", 0, caller_body)]
+}
+
+// caller(): ctx := Dict.new(); out := helper(ctx); g := record_get out.f0;
+//   if cond { ty := record_get out.f1 }; return g
+// out is read in a SUCCESSOR block (the if-then), so it is LIVE-OUT of the
+// projection block. exit_mentions_local alone would miss this; the live-out
+// check catches it -> borrow.
+fn case_w_out_liveout_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  helper := wrapper2_helper(b)
+  then_branch: AnfExpr = .Let(
+    lid(4),
+    .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 1 }, TypeId.{ id: 0 }), // ty := out.f1 (in successor)
+    .Atom(.ALitInt(0)),
+  )
+  else_branch: AnfExpr = .Atom(.ALitInt(0))
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // ctx := Dict.new()
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := helper(ctx)
+      .Let(
+        lid(2),
+        .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 0 }), // g := out.f0
+        .Let(
+          lid(3),
+          .AIf(.ALitBool(true), then_branch, else_branch), // out live into then-branch
+          .Atom(.ALocal(lid(2))), // return g
+        ),
+      ),
+    ),
+  )
+  [helper, fdef(2, "caller", 0, caller_body)]
+}
+
+// f(): s := Dict.new();
+//   r := case s { .Variant(tag=0, [Var(L5)]) => 0, .Wildcard => 0 }; return 0
+// The single-Var arm records payload_src; the wildcard arm stays .None.
+fn payload_src_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  ok_arm: AnfMatchArm = AnfMatchArm.{
+    pattern: .Variant(TypeId.{ id: 1 }, VariantId.{ id: 0 }, [.Var(lid(5))]),
+    body: .Atom(.ALitInt(0)),
+  }
+  wild_arm: AnfMatchArm = AnfMatchArm.{ pattern: .Wildcard, body: .Atom(.ALitInt(0)) }
+  body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // s := Dict.new()
+    .Let(lid(7), .AMatch(.ALocal(lid(0)), [ok_arm, wild_arm]), .Atom(.ALitInt(0))),
+  )
+  [fdef(1, "f", 0, body)]
+}
+
+fn block_named(f: cfg.CfgFunction, name: String) cfg.CfgBlock {
+  for blk in f.blocks {
+    if blk.name == name {
+      return blk
+    }
+  }
+  error("no block ${name}")
+}
+
+// block id of the .Ok arm (first arm) in a case-lowered function.
+fn ok_arm_block_id(f: cfg.CfgFunction) Int {
+  block_named(f, "match.arm.0").id.id
+}
+
+// block id of the .Err arm (second arm).
+fn err_arm_block_id(f: cfg.CfgFunction) Int {
+  block_named(f, "match.arm.1").id.id
+}
+
+// The projected `state := record_get v.f0` local in the .Ok arm.
+fn ok_arm_state_local() Int {
+  20
+}
+
+// The payload binding `v` in the .Ok arm.
+fn ok_arm_payload_local() Int {
+  10
+}
+
+// The payload binding `e` in the .Err arm.
+fn err_arm_payload_local() Int {
+  11
+}
+
+// load(s) returns .Ok(Record{f0: s}). Body:
+//   inner := Record{f0: s};  v := Variant(Result, Ok, [inner]);  return v
+// Summary ret_paths: V(Ok)[0]=fresh shell, V(Ok)[0].f0 = from(p0).
+fn ok_load_helper() AnfFunctionDef {
+  fdef(
+    1,
+    "load",
+    1,
+    .Let(
+      lid(1),
+      .ARecord(TypeId.{ id: 5 }, [.{ field: FieldId.{ id: 0 }, value: .ALocal(lid(0)) }]), // inner := Record{f0: s}
+      .Let(
+        lid(2),
+        .AVariant(TypeId.{ id: 1 }, VariantId.{ id: 0 }, [.ALocal(lid(1))]), // v := .Ok(inner)
+        .Atom(.ALocal(lid(2))),
+      ),
+    ),
+  )
+}
+
+// The two-arm case body shared by the Case R callers. `ok_body` runs in the .Ok
+// arm (payload bound to L10); the .Err arm binds L11 and returns it.
+fn case_r_match(ok_body: AnfExpr) AnfOp {
+  ok_arm: AnfMatchArm = AnfMatchArm.{
+    pattern: .Variant(TypeId.{ id: 1 }, VariantId.{ id: 0 }, [.Var(lid(10))]),
+    body: ok_body,
+  }
+  err_arm: AnfMatchArm = AnfMatchArm.{
+    pattern: .Variant(TypeId.{ id: 1 }, VariantId.{ id: 1 }, [.Var(lid(11))]),
+    body: .Return(.Some(.ALocal(lid(11)))),
+  }
+  .AMatch(.ALocal(lid(1)), [ok_arm, err_arm])
+}
+
+// caller(): acc := Dict.new() (FRESH unique); out := load(acc);
+//   case out { .Ok(v) => state := record_get v.f0; return state, .Err(e) => return e }
+// acc is dead after the match (only load reads it) -> out's [Payload(Ok,0)].f0
+// carries acc; the .Ok arm seeds v from out's payload, and v is dead after the
+// projection inside the arm -> state recovers Unique.
+fn case_r_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  ok_body: AnfExpr = .Let(
+    lid(20),
+    .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 5 }), // state := v.f0
+    .Return(.Some(.ALocal(lid(20)))),
+  )
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // acc := Dict.new() (fresh Unique)
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := load(acc)
+      .Let(lid(2), case_r_match(ok_body), .Return(.Some(.ALitInt(0)))),
+    ),
+  )
+  [ok_load_helper(), fdef(2, "caller", 0, caller_body)]
+}
+
+// Case R BORROW #1 (out live-out): after the case, read out in a LATER block
+// (an if-then reads out.f0), so out is live-out of the match block -> the arm
+// seed borrow-demotes v to Shared.
+fn case_r_live_scrutinee_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  ok_body: AnfExpr = .Let(
+    lid(20),
+    .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 5 }), // state := v.f0
+    .Atom(.ALitInt(0)),
+  )
+  then_branch: AnfExpr = .Let(
+    lid(30),
+    .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 5 }), // reads out in a successor
+    .Atom(.ALitInt(0)),
+  )
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // acc := Dict.new()
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := load(acc)
+      .Let(
+        lid(2),
+        case_r_match(ok_body),
+        .Let(
+          lid(3),
+          .AIf(.ALitBool(true), then_branch, .Atom(.ALitInt(0))),
+          .Return(.Some(.ALitInt(0))),
+        ),
+      ),
+    ),
+  )
+  [ok_load_helper(), fdef(2, "caller", 0, caller_body)]
+}
+
+// Case R BORROW #2 (out read INSIDE the arm): inside the .Ok arm, after binding
+// v, read out again -> out is live-in at the arm -> the move gate must not fire
+// -> v Shared.
+fn case_r_inarm_read_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  ok_body: AnfExpr = .Let(
+    lid(20),
+    .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 5 }), // state := v.f0
+    .Let(
+      lid(21),
+      .ARecordGet(.ALocal(lid(1)), FieldId.{ id: 0 }, TypeId.{ id: 5 }), // re-read out inside the arm
+      .Return(.Some(.ALitInt(0))),
+    ),
+  )
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // acc := Dict.new()
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := load(acc)
+      .Let(lid(2), case_r_match(ok_body), .Return(.Some(.ALitInt(0)))),
+    ),
+  )
+  [ok_load_helper(), fdef(2, "caller", 0, caller_body)]
+}
+
+// caller(): acc := Dict.new(); out := load(acc);
+//   case out { .Ok(v) => 0, .Err(e) => return e }
+// `load` returns ONLY .Ok(Record{f0: acc}), so out carries ONLY the [Payload(Ok,0)]
+// fact. The .Err arm projects [Payload(Err,0)] — a DIFFERENT tag — which is absent,
+// so `e` recovers no owned fact and stays Unknown while the Ok arm's `v` is Unique.
+// Confirms the tag keeps arms disjoint: an Err arm cannot recover an Ok-only fact.
+fn case_r_tag_isolation_fixture() Vector<AnfFunctionDef> {
+  b := b_reg()
+  ok_arm: AnfMatchArm = AnfMatchArm.{
+    pattern: .Variant(TypeId.{ id: 1 }, VariantId.{ id: 0 }, [.Var(lid(10))]),
+    body: .Atom(.ALitInt(0)),
+  }
+  err_arm: AnfMatchArm = AnfMatchArm.{
+    pattern: .Variant(TypeId.{ id: 1 }, VariantId.{ id: 1 }, [.Var(lid(11))]),
+    body: .Return(.Some(.ALocal(lid(11)))),
+  }
+  caller_body: AnfExpr = .Let(
+    lid(0),
+    dict_new_call(b), // acc := Dict.new()
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]), // out := load(acc)
+      .Let(lid(2), .AMatch(.ALocal(lid(1)), [ok_arm, err_arm]), .Return(.Some(.ALitInt(0)))),
+    ),
+  )
+  [ok_load_helper(), fdef(2, "caller", 0, caller_body)]
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("cfg return paths")
+    .test(
+      "payload_src: single-Var variant arm records (scrutinee, tag, index, binding)",
+      fn() {
+        b := b_reg()
+        funcs := payload_src_fixture()
+        v := cfg.build_view(module_of(funcs), b)
+        f := case cfg.function_named(v, "f") {
+          .Some(fn0) => fn0,
+          .None => error("no f"),
+        }
+        ok_blk := block_named(f, "match.arm.0")
+        try case ok_blk.payload_src {
+          .Some(ps) => {
+            try assert.equal(ps.scrutinee, 0) // L0 is the scrutinee
+            try assert.equal(ps.variant_tag, 0) // VariantId 0
+            try assert.equal(ps.payload_index, 0)
+            try assert.equal(ps.binding, 5) // L5 is the bound payload
+            .Ok({})
+          },
+          .None => .Err("expected payload_src on the single-Var arm"),
+        }
+
+        // The wildcard arm binds nothing: no payload_src.
+        wild_blk := block_named(f, "match.arm.1")
+        try case wild_blk.payload_src {
+          .Some(_) => .Err("wildcard arm should not have payload_src"),
+          .None => .Ok({}),
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "Case W: ctx := fresh; out := helper(ctx); g := out.f0 recovers g Unique",
+      fn() {
+        // helper(x) returns Record{f0:x}  => summary ret=OwnedFresh, ret_paths [.f0]=from(p0).
+        // caller(): ctx := Dict.new() (fresh Unique); out := helper(ctx);
+        //           g := record_get out.f0; return g
+        funcs := case_w_fixture()
+        f := analyzed_caller(funcs, "caller")
+        try assert.equal(caller_own(f, grec_local()), own_unique()) // g is Unique after the projection move
+        .Ok({})
+      },
+    )
+    .test(
+      "gate fail: fresh ctx used after the call is published (gate fails on last-use)",
+      fn() {
+        // caller(): ctx := Dict.new(); out := helper(ctx); g := out.f0;
+        //           keep := ctx (reads ctx AFTER the call -> ctx not last-use at call);
+        //           return g.  Gate fails -> ctx published -> Shared.
+        funcs := case_w_gatefail_fixture()
+        f := analyzed_caller(funcs, "caller")
+        try assert.equal(caller_own(f, 0), own_shared()) // ctx (lid0) published by gate-fail
+        .Ok({})
+      },
+    )
+    .test(
+      "param-threaded state is NOT recovered: caller passing its param publishes it (Phase 6 gap)",
+      fn() {
+        // GUARD for TODO 1: a param is Unknown at entry, so the OwnedFromParam gate
+        // rejects it and publish-on-fail publishes it -- param-threaded transport is
+        // not recovered until Phase 6 parameter-ownership. Loosening the gate would be
+        // UNSOUND (a param may be shared at some caller). Do not "fix" this test.
+        funcs := case_w_param_fixture()
+        f := analyzed_caller(funcs, "caller")
+        try assert.equal(caller_own(f, 0), own_shared()) // ctx (param) published, not recovered
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage3: owned-entry re-analysis recovers a param-threaded transport",
+      fn() {
+        // helper(x) = Wrapper.{ f0: x }  (ret_path .f0 = OwnedFromParam(0));
+        // caller(ctx) = { out := helper(ctx); out.f0 }  -- extracts the wrapped param.
+        funcs := case_w_param_fixture()
+        b := b_reg()
+        v := cfg.build_view(module_of(funcs), b)
+        t := summary.compute(v, b, sem())
+
+        // Generic caller summary: ctx (param0) is published by the failed recovery gate.
+        gen := case ownership.summary_get(t, 2) {
+          .Some(s) => s,
+          .None => error("no caller summary"),
+        }
+        try assert.is_true(is_published(gen, 0))
+
+        // Owned variant: seed ctx (param0) shell-Unique. arg_unique[0] is now true at the
+        // helper call, so the OwnedFromParam(0) recovery fires -> ctx is NOT published and
+        // its region flows to the return.
+        caller := case cfg.function_named(v, "caller") {
+          .Some(f) => f,
+          .None => error("no caller cfg"),
+        }
+        key: variant_id.UniqueKey = [variant_id.UniqueReq.{ param: 0, path: variant_id.shell() }]
+        owned := ownership.summarize_variant(caller, key, t, b, sem(), Dict.new())
+
+        // Recovered as a Borrowed transport (NOT Consumed -- the param is threaded, not
+        // mutated) that flows to the return, vs the generic Published/leaked classification.
+        try assert.is_true(is_borrowed(owned, 0))
+        try assert.is_true(owned.params[0].flows_to_return) // ctx's region reaches the return
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage3: summarize_variant with an empty key equals summarize_function",
+      fn() {
+        funcs := case_w_param_fixture()
+        b := b_reg()
+        v := cfg.build_view(module_of(funcs), b)
+        t := summary.compute(v, b, sem())
+        caller := case cfg.function_named(v, "caller") {
+          .Some(f) => f,
+          .None => error("no caller cfg"),
+        }
+        empty_key: variant_id.UniqueKey = []
+        variant := ownership.summarize_variant(caller, empty_key, t, b, sem(), Dict.new())
+        generic := ownership.summarize_function(caller, t, b, sem(), Dict.new())
+        try assert.is_true(summary.same_summary(variant, generic)) // empty seed == generic
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage3: a field-only ([.f]) key seeds nothing (Stage 3 is shell-only)",
+      fn() {
+        // A non-shell req is ignored by summarize_variant, so a field-only key recovers
+        // nothing -- ctx stays Published, same as the generic pass. Field-granular seeding
+        // is Stage 4. (Real downward-closed keys always carry the [] req too.)
+        funcs := case_w_param_fixture()
+        b := b_reg()
+        v := cfg.build_view(module_of(funcs), b)
+        t := summary.compute(v, b, sem())
+        caller := case cfg.function_named(v, "caller") {
+          .Some(f) => f,
+          .None => error("no caller cfg"),
+        }
+        field_key: variant_id.UniqueKey = [
+          variant_id.UniqueReq.{ param: 0, path: variant_id.field(0) },
+        ]
+        owned := ownership.summarize_variant(caller, field_key, t, b, sem(), Dict.new())
+        try assert.is_true(is_published(owned, 0)) // no shell seed -> not recovered
+
+        // A downward-closed key { [], [.f] } seeds the shell (from the [] req) and behaves
+        // exactly like { [] } -- the field req adds nothing in the shell-only Stage 3.
+        dc_key: variant_id.UniqueKey = [
+          variant_id.UniqueReq.{ param: 0, path: variant_id.shell() },
+          variant_id.UniqueReq.{ param: 0, path: variant_id.field(0) },
+        ]
+        dc := ownership.summarize_variant(caller, dc_key, t, b, sem(), Dict.new())
+        try assert.is_true(!is_published(dc, 0)) // recovered via the shell req
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage4a: fresh-unique local moves through a whole-value (MayAliasParams) helper",
+      fn() {
+        b := b_reg()
+
+        // h(x) = x  -- returns its whole param, so ret = MayAliasParams([0]).
+        idhelper := fdef(1, "h", 1, .Atom(.ALocal(lid(0))))
+
+        // caller() { ctx := Dict.new(); out := h(ctx); out }
+        caller_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+            .Atom(.ALocal(lid(1))),
+          ),
+        )
+        funcs := [idhelper, fdef(2, "caller", 0, caller_body)]
+        f := analyzed_caller(funcs, "caller")
+
+        // ctx (lid0) is fresh Unique + last-use at the call, so the whole-return moves:
+        // out (lid1) is Unique, not Shared (which is what the unconditional publish gave).
+        try assert.equal(caller_own(f, 1), own_unique())
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 stage4a: a leaked-and-returned param is NOT moved (retaining callee)",
+      fn() {
+        b := b_reg()
+
+        // h(x) { global_set G0 = x; x }  -- leaks x (Published) AND returns it (MayAliasParams).
+        h := fdef(
+          1,
+          "h",
+          1,
+          .Let(lid(1), .AGlobalSet(GlobalId.{ id: 0 }, .ALocal(lid(0))), .Atom(.ALocal(lid(0)))),
+        )
+
+        // caller() { x := Dict.new(); out := h(x); out }
+        caller_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+            .Atom(.ALocal(lid(1))),
+          ),
+        )
+        f := analyzed_caller([h, fdef(2, "caller", 0, caller_body)], "caller")
+
+        // The publish-loop demotes x to Shared before the MayAliasParams branch, so
+        // consume_base sees a non-Unique base and DECLINES the move: out is not Unique.
+        try assert.is_true(caller_own(f, 1) != own_unique())
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 completion: build_env-shape call selects the owned variant (verdict)",
+      fn() {
+        b := b_reg()
+
+        // at(env) { env.f0 = 0 ; env2 }  -- direct mutator: Consumed {[],[.f0]}.
+        at := fdef(
+          1,
+          "at",
+          1,
+          .Let(
+            lid(1),
+            .ARecordUpdate(.ALocal(lid(0)), FieldId.{ id: 0 }, .ALitInt(0), false, TypeId.{ id: 0 }),
+            .Atom(.ALocal(lid(1))),
+          ),
+        )
+
+        // be() { e := Dict.new(); r := at(e); r }  -- e is fresh Unique + last-use at the call.
+        be_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+            .Atom(.ALocal(lid(1))),
+          ),
+        )
+        f := analyzed_caller([at, fdef(2, "be", 0, be_body)], "be")
+
+        // the at(e) call (result lid1) records an OWNED verdict naming a unique key.
+        try assert.is_true(contains_sub(verdict_of(f, 1), "unique"))
+        .Ok({})
+      },
+    )
+    .test(
+      "phase6 completion: branch_env-shape call (arg read later) selects generic (no owned verdict)",
+      fn() {
+        b := b_reg()
+        at := fdef(
+          1,
+          "at",
+          1,
+          .Let(
+            lid(1),
+            .ARecordUpdate(.ALocal(lid(0)), FieldId.{ id: 0 }, .ALitInt(0), false, TypeId.{ id: 0 }),
+            .Atom(.ALocal(lid(1))),
+          ),
+        )
+
+        // br() { e := Dict.new(); r := at(e); x := e.f0; r }  -- e read AFTER the call,
+        // so it is not last-use at the call -> arg not unique -> generic -> no owned verdict.
+        br_body: AnfExpr = .Let(
+          lid(0),
+          dict_new_call(b),
+          .Let(
+            lid(1),
+            .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALocal(lid(0))]),
+            .Let(
+              lid(2),
+              .ARecordGet(.ALocal(lid(0)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+              .Atom(.ALocal(lid(1))),
+            ),
+          ),
+        )
+        f := analyzed_caller([at, fdef(2, "br", 0, br_body)], "br")
+        try assert.equal(verdict_of(f, 1), "") // generic decisions are not rendered
+        .Ok({})
+      },
+    )
+    .test(
+      "gate fail: already-Shared arg is dropped idempotently (no double-publish)",
+      fn() {
+        // ctx is published (global_set) BEFORE the call, so it is already Shared at the
+        // call. The OwnedFromParam gate fails (not Unique), and publish-on-fail publishes
+        // it again idempotently -- the analysis completes and ctx stays Shared.
+        funcs := case_w_shared_arg_fixture()
+        f := analyzed_caller(funcs, "caller")
+        try assert.equal(caller_own(f, 0), own_shared()) // ctx stays Shared; no crash/double-publish
+        .Ok({})
+      },
+    )
+    .test(
+      "transport move: out.f0 moves even though out.f1 is read after",
+      fn() {
+        // caller(): ctx := Dict.new(); out := helper(ctx);  // helper -> Record{f0:x, f1:fresh}
+        //   g := record_get out.f0; ty := record_get out.f1; return g   (ty read keeps out live)
+        // out is live for out.f1, but out.f0 is dead-through-out -> transport move licensed -> g Unique.
+        funcs := case_w_sibling_fixture()
+        f := analyzed_caller(funcs, "caller")
+        try assert.equal(caller_own(f, gsib_local()), own_unique()) // g is Unique
+        .Ok({})
+      },
+    )
+    .test(
+      "transport borrow: publishing out forces borrow (g not cleanly Unique)",
+      fn() {
+        // caller(): ctx := Dict.new(); out := helper(ctx); g := record_get out.f0;
+        //   global_set G0 = out; return g
+        // out is published -> transport_ok fails (non-sibling mention) -> borrow.
+        funcs := case_w_published_out_fixture()
+        f := analyzed_caller(funcs, "caller")
+        try assert.equal(caller_own(f, gsib_local()), own_shared())
+        .Ok({})
+      },
+    )
+    .test(
+      "transport borrow: out live into a later block forces borrow (live-out check)",
+      fn() {
+        // caller(): ctx := Dict.new(); out := helper(ctx); g := record_get out.f0;
+        //   if cond { ty := record_get out.f1 }   // out is LIVE-OUT of the projection block
+        // exit_mentions_local alone would miss this; blk.exit.live catches it -> borrow.
+        funcs := case_w_out_liveout_fixture()
+        f := analyzed_caller(funcs, "caller")
+        try assert.equal(caller_own(f, gsib_local()), own_shared())
+        .Ok({})
+      },
+    )
+    .test(
+      "Case R: acc := fresh; out := load(acc); case out {.Ok(v)=>..} keeps v.state Unique",
+      fn() {
+        funcs := case_r_fixture()
+        f := analyzed_caller(funcs, "caller")
+        ok_blk := ok_arm_block_id(f)
+        try assert.equal(own_in_block(f, ok_blk, ok_arm_state_local()), own_unique())
+        .Ok({})
+      },
+    )
+    .test(
+      "Case R borrow: out live-out of the match block -> arm binding v Shared",
+      fn() {
+        funcs := case_r_live_scrutinee_fixture()
+        f := analyzed_caller(funcs, "caller")
+        ok_blk := ok_arm_block_id(f)
+        try assert.equal(own_in_block(f, ok_blk, ok_arm_payload_local()), own_shared())
+        .Ok({})
+      },
+    )
+    .test(
+      "Case R borrow: out re-read inside the arm (live-in) -> arm binding v Shared",
+      fn() {
+        funcs := case_r_inarm_read_fixture()
+        f := analyzed_caller(funcs, "caller")
+        ok_blk := ok_arm_block_id(f)
+        try assert.equal(own_in_block(f, ok_blk, ok_arm_payload_local()), own_shared())
+        .Ok({})
+      },
+    )
+    .test(
+      "Case R tag isolation: Err arm (different tag) does not recover the Ok-only fact",
+      fn() {
+        // load returns ONLY .Ok(Record{f0: acc}); the Err arm projects a DIFFERENT
+        // tag [Payload(Err,0)] which is absent -> e recovers nothing (stays Unknown,
+        // not Unique) while the sibling Ok arm's v is Unique.
+        funcs := case_r_tag_isolation_fixture()
+        f := analyzed_caller(funcs, "caller")
+        ok_blk := ok_arm_block_id(f)
+        err_blk := err_arm_block_id(f)
+        try assert.equal(own_in_block(f, ok_blk, ok_arm_payload_local()), own_unique()) // Ok arm recovers
+        try assert.equal(own_in_block(f, err_blk, err_arm_payload_local()), own_unknown()) // Err arm does NOT
+        .Ok({})
+      },
+    )
+    .test(
+      "cfg render with ret_paths + transport verdict is byte-identical across builds",
+      fn() {
+        funcs := case_w_sibling_fixture()
+        a := render_cfg_for_entry_of(funcs)
+        b2 := render_cfg_for_entry_of(funcs)
+        try assert.equal(a == b2, true)
+        .Ok({})
+      },
+    )
+}

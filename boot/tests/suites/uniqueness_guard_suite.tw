@@ -1,0 +1,237 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+// Module-global publication sink. Twinkle's only mutable global is a `Cell`, so a
+// value stored here has escaped into a module-global, arbitrarily-read box.
+gpub: Cell<Vector<Int>> = Cell.new([0])
+
+// Helper for the call-boundary publication guard: the callee RETAINS the vector
+// (returns it inside an aggregate), so a later rebind of the caller's binding must
+// not corrupt what the callee kept. A read-only callee returning an Int would be
+// vacuous — the Int is computed before the rebind and could never go red.
+fn keep_in_box(v: Vector<Int>) Box {
+  Box.{ items: v }
+}
+
+// Helper for the closure-capture guard.
+fn make_reader(v: Vector<Int>) fn() Int {
+  fn() Int { v[0] }
+}
+
+// Case B / V positive anchors.
+type Env = .{ types: Dict<String, Int> }
+
+fn add_type(e: Env, k: String, id: Int) Env {
+  e.types = .set(k, id)
+  e
+}
+
+type St = .{ seen: Dict<String, Int>, count: Int }
+
+fn visit(s: St, k: String) St {
+  s.seen = .set(k, s.count)
+  s.count = s.count + 1
+  s
+}
+
+// Case T: an owned handle live across a `try` error arm.
+fn parse_step(ok: Bool) Result<Int, String> {
+  if ok {
+    .Ok(1)
+  } else {
+    .Err("no")
+  }
+}
+
+fn chain(ok: Bool) Result<Int, String> {
+  v := try parse_step(ok)
+  .Ok(v + 1)
+}
+
+// Aggregate + call-boundary guard shape.
+type Box = .{ items: Vector<Int> }
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("uniqueness guards")
+    .test(
+      "case C: aliased old dict version stays observable",
+      fn() {
+        d: Dict<String, Int> = Dict.new()
+        d["a"] = 1
+        old := d
+        d["a"] = 2
+        try assert.equal(old.get("a"), .Some(1))
+        try assert.equal(d.get("a"), .Some(2))
+        .Ok({})
+      },
+    )
+    .test(
+      "slice and concat share backing without mutating the source",
+      fn() {
+        xs: Vector<Int> = [1, 2, 3, 4]
+        tail := xs.slice(1, xs.len())
+        ys := xs.concat([5])
+        try assert.equal(tail[0], 2)
+        try assert.equal(ys[4], 5)
+        try assert.equal(xs.len(), 4)
+        try assert.equal(xs[0], 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "value stored in a record keeps its pre-update version",
+      fn() {
+        xs: Vector<Int> = [7, 7]
+        b := Box.{ items: xs }
+        xs[0] = 9
+        try assert.equal(b.items[0], 7)
+        try assert.equal(xs[0], 9)
+        .Ok({})
+      },
+    )
+    .test(
+      "value stored in a variant keeps its pre-update version",
+      fn() {
+        xs: Vector<Int> = [7, 7]
+        boxed: Vector<Int>? = .Some(xs)
+        xs[0] = 9
+        case boxed {
+          .Some(v) => try assert.equal(v[0], 7),
+          .None => try assert.is_true(false),
+        }
+        try assert.equal(xs[0], 9)
+        .Ok({})
+      },
+    )
+    .test(
+      "value stored as a dict value keeps its pre-update version",
+      fn() {
+        xs: Vector<Int> = [7, 7]
+        d: Dict<String, Vector<Int>> = Dict.new()
+        d["k"] = xs
+        xs[0] = 9
+        case d.get("k") {
+          .Some(v) => try assert.equal(v[0], 7),
+          .None => try assert.is_true(false),
+        }
+        try assert.equal(xs[0], 9)
+        .Ok({})
+      },
+    )
+    .test(
+      "case Cell: cell retains the value stored before a later rebind",
+      fn() {
+        xs: Vector<Int> = [1, 2]
+        c := Cell.new(xs)
+        xs[0] = 9
+        got := c.get()
+        try assert.equal(got[0], 1)
+        try assert.equal(xs[0], 9)
+        .Ok({})
+      },
+    )
+    .test(
+      "module-global publication keeps the pre-rebind version",
+      fn() {
+        xs: Vector<Int> = [7, 7]
+        gpub.set(xs)
+        xs[0] = 9
+        got := gpub.get()
+        try assert.equal(got[0], 7)
+        try assert.equal(xs[0], 9)
+        .Ok({})
+      },
+    )
+    .test(
+      "closure capture keeps the captured version",
+      fn() {
+        xs: Vector<Int> = [3, 3]
+        reader := make_reader(xs)
+        xs[0] = 9
+        try assert.equal(reader(), 3)
+        try assert.equal(xs[0], 9)
+        .Ok({})
+      },
+    )
+    .test(
+      "task capture observes the pre-rebind version",
+      fn() {
+        xs: Vector<Int> = [7, 7]
+        captured := xs
+        t := Task.spawn(fn() Int { captured[0] })
+        xs[0] = 9
+        try assert.equal(t.await(), 7)
+        try assert.equal(xs[0], 9)
+        .Ok({})
+      },
+    )
+    .test(
+      "channel send delivers the pre-rebind version",
+      fn() {
+        ch: Channel<Vector<Int>> = Channel.bounded(1)
+        xs: Vector<Int> = [7, 7]
+        try assert.is_true(ch.send(xs))
+        xs[0] = 9
+        case ch.recv() {
+          .Some(v) => try assert.equal(v[0], 7),
+          .None => try assert.is_true(false),
+        }
+        try assert.equal(xs[0], 9)
+        .Ok({})
+      },
+    )
+    .test(
+      "vector retained by a callee survives a later rebind of the caller",
+      fn() {
+        xs: Vector<Int> = [5, 5]
+        held := keep_in_box(xs)
+        xs[0] = 100
+        try assert.equal(held.items[0], 5)
+        try assert.equal(xs[0], 100)
+        .Ok({})
+      },
+    )
+    .test(
+      "nested outer vector keeps the pre-update inner vector",
+      fn() {
+        inner: Vector<Int> = [1, 1]
+        outer: Vector<Vector<Int>> = [inner, inner]
+        inner[0] = 9
+        try assert.equal(outer[0][0], 1)
+        try assert.equal(inner[0], 9)
+        .Ok({})
+      },
+    )
+    .test(
+      "case T: try propagates ok and error arms",
+      fn() {
+        try assert.equal(chain(true), .Ok(2))
+        try assert.equal(chain(false), .Err("no"))
+        .Ok({})
+      },
+    )
+    .test(
+      "case B: owned env threading builds the expected dict",
+      fn() {
+        e := Env.{ types: Dict.new() }
+        e = .add_type("a", 1)
+        e = .add_type("b", 2)
+        try assert.equal(e.types.get("a"), .Some(1))
+        try assert.equal(e.types.get("b"), .Some(2))
+        .Ok({})
+      },
+    )
+    .test(
+      "case V: record quartet threads seen-dict and counter",
+      fn() {
+        s := St.{ seen: Dict.new(), count: 0 }
+        s = .visit("a")
+        s = .visit("b")
+        try assert.equal(s.seen.get("a"), .Some(0))
+        try assert.equal(s.seen.get("b"), .Some(1))
+        try assert.equal(s.count, 2)
+        .Ok({})
+      },
+    )
+}

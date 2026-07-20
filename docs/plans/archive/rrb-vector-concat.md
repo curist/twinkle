@@ -73,7 +73,7 @@ slice is treated here as a **co-primary** motivation, not a bonus. (The cheap
 non-RRB answer for it is [stack.md](stack.md); RRB still covers arbitrary and
 left-drop slice.)
 
-The static-uniqueness optimizer (`docs/plans/static-uniqueness-plan.md`) does
+The static-uniqueness optimizer (`docs/plans/archive/static-uniqueness-plan.md`) does
 **not** fix this. It is a constant-factor / allocation-churn optimization
 (in-place builder reuse for *append-at-end* consume-reassign chains) and changes
 nothing asymptotically. Its `concat → builder_extend` rewrite only fires for

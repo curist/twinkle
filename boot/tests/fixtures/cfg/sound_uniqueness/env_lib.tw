@@ -1,0 +1,11 @@
+pub type Env = .{ types: Dict<String, Int>, values: Dict<String, Int> }
+
+pub fn add_type(env: Env, name: String, id: Int) Env {
+  env.types = .set(name, id)
+  env
+}
+
+pub fn add_value(env: Env, name: String, id: Int) Env {
+  env.values = .set(name, id)
+  env
+}

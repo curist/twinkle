@@ -1,0 +1,112 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.census
+use compiler.pipeline
+
+// Compile a snippet and return its optimized-ANF census tally.
+fn tally(src: String) Result<census.CensusTally, String> {
+  artifacts := try pipeline.compile_source(src)
+  sites := census.census_sites(artifacts.opt, artifacts.builtins)
+  .Ok(census.tally_from_sites(sites))
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("uniqueness census")
+    .test(
+      "counts two dict.set candidates, none in-place",
+      fn() {
+        t := try tally(
+          "fn two_sets(seed: Int) Int {\n  d: Dict<String, Int> = Dict.new()\n  d[\"a\"] = seed\n  d[\"b\"] = seed\n  d.len()\n}\n",
+        )
+        try assert.equal(t.dict_set.candidates, 2)
+        try assert.equal(t.dict_set.in_place, 0)
+        try assert.equal(t.record_update.candidates, 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "counts two record updates, none in-place",
+      fn() {
+        t := try tally(
+          "type P = .{ x: Int, y: Int }\nfn move_xy(p: P) P {\n  p.x = 1\n  p.y = 2\n  p\n}\n",
+        )
+        try assert.equal(t.record_update.candidates, 2)
+        try assert.equal(t.record_update.in_place, 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "counts two vector index-sets, none in-place",
+      fn() {
+        t := try tally(
+          "fn set_two(xs: Vector<Int>) Vector<Int> {\n  xs[0] = 9\n  xs[1] = 8\n  xs\n}\n",
+        )
+        try assert.equal(t.vector_set.candidates, 2)
+        try assert.equal(t.vector_set.in_place, 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "counts two vector appends as vector_append candidates",
+      fn() {
+        // `Vector.append` is an `.Update` candidate via `builder.push_id`; this
+        // pins the family the semantics-based detector must not drop.
+        t := try tally(
+          "fn push_two(xs: Vector<Int>) Vector<Int> {\n  xs = xs.append(1)\n  xs = xs.append(2)\n  xs\n}\n",
+        )
+        try assert.equal(t.vector_append.candidates, 2)
+        try assert.equal(t.vector_append.in_place, 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "descends into both branches of an if",
+      fn() {
+        t := try tally(
+          "fn cond_set(xs: Vector<Int>, b: Bool) Vector<Int> {\n  if b {\n    xs[0] = 1\n  } else {\n    xs[1] = 2\n  }\n  xs\n}\n",
+        )
+        try assert.equal(t.vector_set.candidates, 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "descends into a loop body (one static site)",
+      fn() {
+        t := try tally(
+          "fn loop_set(xs: Vector<Int>, n: Int) Vector<Int> {\n  for i in range(n) {\n    xs[i] = i\n  }\n  xs\n}\n",
+        )
+        try assert.equal(t.vector_set.candidates, 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "descends into a match arm body",
+      fn() {
+        t := try tally(
+          "fn match_set(o: Int?, xs: Vector<Int>) Vector<Int> {\n  case o {\n    .Some(i) => {\n      xs[0] = i\n      xs\n    },\n    .None => xs,\n  }\n}\n",
+        )
+        try assert.equal(t.vector_set.candidates, 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "worked-example shapes stay on the all-COW floor",
+      fn() {
+        // Case B (add_type threading) + Case V (record quartet): candidates > 0,
+        // zero in-place — the floor this gate guards until Phase 5 flips sites.
+        t := try tally(
+          "type Env = .{ types: Dict<String, Int> }\nfn add_type(e: Env, k: String, id: Int) Env {\n  e.types = .set(k, id)\n  e\n}\nfn build() Env {\n  e := Env.{ types: Dict.new() }\n  e = add_type(e, \"a\", 1)\n  e = add_type(e, \"b\", 2)\n  e\n}\n",
+        )
+        try assert.is_true(t.dict_set.candidates > 0)
+        try assert.equal(t.dict_set.in_place, 0)
+        try assert.equal(t.record_update.in_place, 0)
+        try assert.equal(t.vector_set.in_place, 0)
+        try assert.equal(t.vector_append.in_place, 0)
+        try assert.equal(t.vector_builder.in_place, 0)
+        try assert.equal(t.other.in_place, 0)
+        .Ok({})
+      },
+    )
+}

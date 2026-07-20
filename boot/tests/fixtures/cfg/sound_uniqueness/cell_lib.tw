@@ -1,0 +1,9 @@
+pub type Marks = .{ used: Cell<Dict<String, Bool>>, seen: Int }
+
+pub fn mark(marks: Marks, name: String) Marks {
+  used := marks.used.get()
+  used[name] = true
+  marks.used.set(used)
+  marks.seen = marks.seen + 1
+  marks
+}

@@ -1,0 +1,11 @@
+pub fn loop_set_count(n: Int) Int {
+  flags: Vector<Bool> = collect _ in range(n) {
+    true
+  }
+  i := 0
+  for i < n {
+    flags = .set_at(i, false)
+    i = i + 1
+  }
+  i
+}

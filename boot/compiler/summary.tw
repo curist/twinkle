@@ -1,0 +1,1197 @@
+//! Whole-program interprocedural summary driver.
+//!
+//! Computes a `SummaryTable` bottom-up over call-graph SCCs, using the
+//! per-function `ownership.summarize_function` transfer. Edges run from a
+//! function to the user functions it directly calls (its dependencies), so
+//! `graph_scc.strongly_connected` (dependency-before-dependent order) yields the
+//! components in callee-first order: a callee's SCC is fixed before its callers'
+//! SCC, making callee summaries available when callers are analyzed.
+//!
+//! Module graph stays acyclic: summary.tw depends on ownership.tw/cfg.tw, never
+//! the reverse.
+
+use compiler.anf.{AnfOp, Atom}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.cfg.{CfgFunction, CfgView, Terminator}
+use compiler.graph_scc
+use compiler.opt.semantics.{OptimizerSemantics}
+use compiler.ownership.{
+  ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary, SummaryTable,
+  analyze_function_with_seed, call_uniques, empty_summary_table, summarize_function,
+  summarize_variant, summary_get,
+}
+use compiler.variant_id as vid
+
+// ── Determinism helpers ─────────────────────────────────────────────
+fn insert_sorted(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    if x == id {
+      return v
+    }
+    if !inserted and id < x {
+      out = .append(id)
+      inserted = true
+    }
+    out = .append(x)
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  out
+}
+
+fn same_ints(a: Vector<Int>, b: Vector<Int>) Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  for x, i in a {
+    if x != b[i] {
+      return false
+    }
+  }
+  true
+}
+
+// ── Conservative seed ───────────────────────────────────────────────
+// Sound starting point before any callee is known: every param Published (the
+// role lattice top), return Shared. Monotone transfer only moves these down.
+pub fn conservative_summary(f: CfgFunction) Summary {
+  params: Vector<ParamSummary> = collect _p in f.params {
+    ParamSummary.{ base_role: .Published, in_place_paths: vid.empty_set(), flows_to_return: false }
+  }
+  Summary.{ params, ret: .Shared, ret_paths: [] }
+}
+
+// ── Summary equality (fixpoint stop condition) ──────────────────────
+fn role_eq(a: ParamRole, b: ParamRole) Bool {
+  case a {
+    .Borrowed => case b {
+      .Borrowed => true,
+      _ => false,
+    },
+    .Consumed => case b {
+      .Consumed => true,
+      _ => false,
+    },
+    .Published => case b {
+      .Published => true,
+      _ => false,
+    },
+  }
+}
+
+fn param_summary_eq(a: ParamSummary, b: ParamSummary) Bool {
+  role_eq(a.base_role, b.base_role)
+    and a.flows_to_return == b.flows_to_return and a.in_place_paths.same(b.in_place_paths)
+}
+
+fn return_eq(a: ReturnEffect, b: ReturnEffect) Bool {
+  case a {
+    .OwnedFresh => case b {
+      .OwnedFresh => true,
+      _ => false,
+    },
+    .Shared => case b {
+      .Shared => true,
+      _ => false,
+    },
+    .MayAliasParams(sa) => case b {
+      .MayAliasParams(sb) => same_ints(sa, sb),
+      _ => false,
+    },
+  }
+}
+
+fn ret_own_eq(a: ReturnOwn, b: ReturnOwn) Bool {
+  case a {
+    .OwnedFresh => case b {
+      .OwnedFresh => true,
+      _ => false,
+    },
+    .OwnedFromParam(ka) => case b {
+      .OwnedFromParam(kb) => ka == kb,
+      _ => false,
+    },
+  }
+}
+
+fn via_kind(v: RetVia) Int {
+  case v {
+    .Direct => 0,
+    .Variant(_, _) => 1,
+  }
+}
+
+fn via_tag(v: RetVia) Int {
+  case v {
+    .Direct => 0 - 1,
+    .Variant(t, _) => t,
+  }
+}
+
+fn via_idx(v: RetVia) Int {
+  case v {
+    .Direct => 0 - 1,
+    .Variant(_, i) => i,
+  }
+}
+
+fn field_key(f: Int?) Int {
+  case f {
+    .Some(x) => x,
+    .None => 0 - 1,
+  }
+}
+
+fn own_key(o: ReturnOwn) Int {
+  case o {
+    .OwnedFresh => 0 - 1,
+    .OwnedFromParam(k) => k,
+  }
+}
+
+fn cmp_ret_path(a: ReturnPathOwn, b: ReturnPathOwn) Order {
+  c1 := via_kind(a.via).compare(via_kind(b.via))
+  case c1 {
+    .Eq => {},
+    _ => return c1,
+  }
+  c2 := via_tag(a.via).compare(via_tag(b.via))
+  case c2 {
+    .Eq => {},
+    _ => return c2,
+  }
+  c3 := via_idx(a.via).compare(via_idx(b.via))
+  case c3 {
+    .Eq => {},
+    _ => return c3,
+  }
+  c4 := field_key(a.field).compare(field_key(b.field))
+  case c4 {
+    .Eq => {},
+    _ => return c4,
+  }
+  own_key(a.own).compare(own_key(b.own))
+}
+
+fn sort_ret_paths(v: Vector<ReturnPathOwn>) Vector<ReturnPathOwn> {
+  v.sort_by(cmp_ret_path)
+}
+
+fn ret_paths_eq(a: Vector<ReturnPathOwn>, b: Vector<ReturnPathOwn>) Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  sa := sort_ret_paths(a)
+  sb := sort_ret_paths(b)
+  for r, i in sa {
+    o := sb[i]
+    same := via_kind(r.via) == via_kind(o.via)
+      and via_tag(r.via) == via_tag(o.via) and via_idx(r.via) == via_idx(o.via)
+      and field_key(r.field) == field_key(o.field) and ret_own_eq(r.own, o.own)
+    if !same {
+      return false
+    }
+  }
+  true
+}
+
+pub fn same_summary(a: Summary, b: Summary) Bool {
+  if a.params.len() != b.params.len() {
+    return false
+  }
+  for pa, i in a.params {
+    if !param_summary_eq(pa, b.params[i]) {
+      return false
+    }
+  }
+  return_eq(a.ret, b.ret) and ret_paths_eq(a.ret_paths, b.ret_paths)
+}
+
+// ── Call graph ──────────────────────────────────────────────────────
+fn user_id_set(view: CfgView) Dict<Int, Bool> {
+  set: Dict<Int, Bool> = Dict.new()
+  for f in view.functions {
+    set[f.func_id] = true
+  }
+  set
+}
+
+fn is_user(user_ids: Dict<Int, Bool>, id: Int) Bool {
+  case user_ids.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+// Direct-call user callees named in an op (dedup+sorted via insert_sorted).
+fn collect_op_callees(acc: Vector<Int>, op: AnfOp, user_ids: Dict<Int, Bool>) Vector<Int> {
+  case op {
+    .ACall(callee, _) => case callee {
+      .AGlobalFunc(fid) => if is_user(user_ids, fid.id) {
+        insert_sorted(acc, fid.id)
+      } else {
+        acc
+      },
+      _ => acc,
+    },
+    _ => acc,
+  }
+}
+
+// Every direct user-callee of `f`, deduped and sorted for a byte-stable graph.
+pub fn callee_ids(f: CfgFunction, user_ids: Dict<Int, Bool>) Vector<Int> {
+  acc: Vector<Int> = []
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      acc = collect_op_callees(acc, inst.op, user_ids)
+    }
+  }
+  acc
+}
+
+// O(1) function lookup by id, built once per compute(). The whole-program driver
+// looks functions up O(functions) times (once per SCC edge + once per worklist
+// recompute), so a per-call linear scan of view.functions made the driver
+// O(functions^2) -- the blowup that made `twk ir --cfg` on a whole program
+// intractable.
+fn build_func_index(view: CfgView) Dict<Int, CfgFunction> {
+  idx: Dict<Int, CfgFunction> = Dict.new()
+  for f in view.functions {
+    idx[f.func_id] = f
+  }
+  idx
+}
+
+fn int_set(v: Vector<Int>) Dict<Int, Bool> {
+  s: Dict<Int, Bool> = Dict.new()
+  for x in v {
+    s[x] = true
+  }
+  s
+}
+
+fn in_set(s: Dict<Int, Bool>, id: Int) Bool {
+  case s.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+// ── SCC ordering ────────────────────────────────────────────────────
+// Nodes are enumerated in ascending func_id order and edges point from each
+// function to its (sorted) callees, marshalled through decimal String labels.
+// strongly_connected returns dependency-before-dependent components, i.e. in
+// callee-first order. Decode each component's labels back to ints.
+pub fn order_sccs(view: CfgView, index: Dict<Int, CfgFunction>, user_ids: Dict<Int, Bool>) Vector<
+  Vector<Int>,
+> {
+  ids: Vector<Int> = collect f in view.functions {
+    f.func_id
+  }
+  ids = .sort() // ascending func_id order for a byte-stable graph
+
+  nodes: Vector<String> = collect id in ids {
+    id.to_string()
+  }
+  edges: Dict<String, Vector<String>> = Dict.new()
+  for id in ids {
+    callees := case index.get(id) {
+      .Some(f) => callee_ids(f, user_ids),
+      .None => [],
+    }
+    labels: Vector<String> = collect c in callees {
+      c.to_string()
+    }
+    edges[id.to_string()] = labels
+  }
+
+  comps := graph_scc.strongly_connected(nodes, edges)
+  collect comp in comps {
+    collect label in comp {
+      case Int.from_string(label) {
+        .Some(n) => n,
+        .None => error("summary: bad scc label '${label}'"),
+      }
+    }
+  }
+}
+
+// ── Per-SCC fixpoint ────────────────────────────────────────────────
+fn table_put(t: SummaryTable, id: Int, s: Summary) SummaryTable {
+  t.by_func[id] = s
+  t
+}
+
+fn table_get(t: SummaryTable, id: Int) Summary {
+  case summary_get(t, id) {
+    .Some(s) => s,
+    .None => error("summary: no seeded summary for ${id}"),
+  }
+}
+
+// callee-in-SCC -> its in-SCC callers. Lets the worklist re-summarize a member
+// only when a dependency changed. Restricted to the SCC: callees in earlier SCCs
+// are already final (callee-first order), and non-recursive members have no
+// in-SCC callee, so they are computed exactly once.
+fn scc_callers(
+  members: Vector<Int>,
+  scc_set: Dict<Int, Bool>,
+  index: Dict<Int, CfgFunction>,
+  user_ids: Dict<Int, Bool>,
+) Dict<Int, Vector<Int>> {
+  callers: Dict<Int, Vector<Int>> = Dict.new()
+  for m in members {
+    case index.get(m) {
+      .Some(f) => {
+        for c in callee_ids(f, user_ids) {
+          if in_set(scc_set, c) {
+            prev := case callers.get(c) {
+              .Some(v) => v,
+              .None => [],
+            }
+            callers[c] = insert_sorted(prev, m)
+          }
+        }
+      },
+      .None => {},
+    }
+  }
+  callers
+}
+
+// Monotone dataflow worklist over one SCC. Round 1 summarizes every member once
+// from the conservative seed; thereafter only members whose in-SCC callees
+// changed are recomputed. The role/return lattices only move down
+// (Published->Consumed->Borrowed, Shared->alias->fresh, plus the alias set only grows), so
+// this reaches the exact same least fixed point as recomputing every member every
+// pass -- but in O(edges * lattice-height) analyses instead of O(members^2).
+// Hitting the safety cap leaves each member at its current (still-sound, only
+// more conservative) summary. Determinism: members and each round's dirty set are
+// processed in ascending id order.
+fn run_scc(
+  scc: Vector<Int>,
+  index: Dict<Int, CfgFunction>,
+  user_ids: Dict<Int, Bool>,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) SummaryTable {
+  members := scc.sort()
+  scc_set := int_set(members)
+  callers := scc_callers(members, scc_set, index, user_ids)
+
+  worklist := members // round 1: compute every member once
+  cap := members.len() * 4 + 8 // safety net; the monotone fixpoint converges well within
+  rounds := 0
+  for worklist.len() > 0 and rounds < cap {
+    next_dirty: Dict<Int, Bool> = Dict.new()
+    for id in worklist {
+      f := case index.get(id) {
+        .Some(fn0) => fn0,
+        .None => error("summary: scc id ${id} not in index"),
+      }
+      next := summarize_function(f, table, b, sem, scc_set)
+      if !same_summary(table_get(table, id), next) {
+        table = table_put(table, id, next)
+        case callers.get(id) {
+          .Some(cs) => {
+            for c in cs {
+              next_dirty[c] = true
+            }
+          },
+          .None => {},
+        }
+      }
+    }
+    nd: Vector<Int> = collect k in next_dirty.keys() {
+      k
+    }
+    worklist = nd.sort()
+    rounds = rounds + 1
+  }
+
+  // Non-convergence: the worklist still holds dirty members at the cap. ret_paths
+  // are non-monotone, so a cap-time snapshot may be an over-claim; expose empty
+  // ret_paths for every member (fully conservative). params/ret stay monotone and
+  // remain sound at their current value.
+  if worklist.len() > 0 {
+    for id in members {
+      case summary_get(table, id) {
+        .Some(s) => table = table_put(
+          table,
+          id,
+          Summary.{ params: s.params, ret: s.ret, ret_paths: [] },
+        ),
+        .None => {},
+      }
+    }
+  }
+  table
+}
+
+// ── Variant (ownership-specialized) summaries ───────────────────────
+// A second, VariantId-keyed fixpoint layered over the generic one. It recovers
+// the owned decision for a record threaded through a self/mutual-recursive call:
+// the generic least-fixed-point pins such a parameter Published (the self-call
+// publishes the not-yet-unique argument), so we seed a candidate owned variant
+// OPTIMISTICALLY (param Consumed, return aliasing it), run the seeded analysis to
+// a fixed point reading the same optimistic iterate at the recursive call, then
+// VALIDATE and RETRACT any candidate that does not converge. Render-only: nothing
+// in the build/codegen path calls compute_variants.
+pub type VariantEntry = .{ variant: vid.VariantId, summary: Summary }
+
+pub type VariantSummaryTable = .{
+  by_key: Dict<String, VariantEntry>, // canonical key -> { variant, summary }
+  by_func: Dict<Int, Vector<String>>, // func_id -> its canonical keys, sorted
+}
+
+pub fn empty_variant_table() VariantSummaryTable {
+  VariantSummaryTable.{ by_key: Dict.new(), by_func: Dict.new() }
+}
+
+// Canonical identity of a variant (NOT site_key, which is a call-site pairing).
+fn variant_memo_key(v: vid.VariantId) String {
+  v.canonicalize_variant().variant_canonical_string()
+}
+
+// String analogue of insert_sorted: dedup + ascending.
+fn insert_sorted_str(v: Vector<String>, s: String) Vector<String> {
+  out: Vector<String> = []
+  inserted := false
+  for x in v {
+    if x == s {
+      return v
+    }
+    if !inserted and s < x {
+      out = .append(s)
+      inserted = true
+    }
+    out = .append(x)
+  }
+  if !inserted {
+    out = .append(s)
+  }
+  out
+}
+
+fn vtable_put(t: VariantSummaryTable, v: vid.VariantId, s: Summary) VariantSummaryTable {
+  key := variant_memo_key(v)
+  t.by_key[key] = VariantEntry.{ variant: v.canonicalize_variant(), summary: s }
+  prev := case t.by_func.get(v.func) {
+    .Some(ks) => ks,
+    .None => [],
+  }
+  t.by_func[v.func] = insert_sorted_str(prev, key)
+  t
+}
+
+pub fn variant_get(t: VariantSummaryTable, v: vid.VariantId) VariantEntry? {
+  t.by_key.get(variant_memo_key(v))
+}
+
+// EXACTLY k: the alias set is the single element [k]. `contains k` would be
+// unsound -- the optimistic hypothesis rewrites the return to alias([k]), and
+// Stage 4a only moves a return that aliases exactly one param.
+fn ret_aliases_exactly_param(ret: ReturnEffect, k: Int) Bool {
+  case ret {
+    .MayAliasParams(idxs) => idxs.len() == 1 and idxs[0] == k,
+    _ => false,
+  }
+}
+
+fn atom_local_id(a: Atom) Int? {
+  case a {
+    .ALocal(l) => .Some(l.id),
+    _ => .None,
+  }
+}
+
+type InplaceScan = .{ derived: Dict<Int, Bool>, found: Bool, changed: Bool }
+
+fn derived_has(derived: Dict<Int, Bool>, id: Int) Bool {
+  case derived.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn atom_is_derived(derived: Dict<Int, Bool>, a: Atom) Bool {
+  case atom_local_id(a) {
+    .Some(id) => derived_has(derived, id),
+    .None => false,
+  }
+}
+
+fn mark_derived(st: InplaceScan, id: Int) InplaceScan {
+  if !derived_has(st.derived, id) {
+    st.derived[id] = true
+    st.changed = true
+  }
+  st
+}
+
+fn block_param_ids(f: CfgFunction, target_id: Int) Vector<Int> {
+  for blk in f.blocks {
+    if blk.id.id == target_id {
+      return collect p in blk.params {
+        p.id
+      }
+    }
+  }
+  []
+}
+
+fn propagate_edge_args(f: CfgFunction, target_id: Int, args: Vector<Atom>, st: InplaceScan) InplaceScan {
+  params := block_param_ids(f, target_id)
+  for a, i in args {
+    if i < params.len() and atom_is_derived(st.derived, a) {
+      st = .mark_derived(params[i])
+    }
+  }
+  st
+}
+
+fn propagate_terminator(f: CfgFunction, term: Terminator, st: InplaceScan) InplaceScan {
+  case term {
+    .Branch(target, args) => propagate_edge_args(f, target.id, args, st),
+    .CondBranch(_, then_target, then_args, else_target, else_args) => {
+      st = propagate_edge_args(f, then_target.id, then_args, st)
+      propagate_edge_args(f, else_target.id, else_args, st)
+    },
+    .Match(_, edges) => {
+      for edge in edges {
+        st = propagate_edge_args(f, edge.target.id, edge.args, st)
+      }
+      st
+    },
+    .LoopBackEdge(target, args) => propagate_edge_args(f, target.id, args, st),
+    _ => st,
+  }
+}
+
+fn scan_inplace_op(op: AnfOp, dst: Int, st: InplaceScan) InplaceScan {
+  case op {
+    .AAssign(target, a) => if atom_is_derived(st.derived, a) {
+      st = .mark_derived(target.id)
+      st.mark_derived(dst)
+    } else {
+      st
+    },
+    .ARecordUpdate(base, _, _, _, _) => if atom_is_derived(st.derived, base) {
+      st.found = true
+      st.mark_derived(dst)
+    } else {
+      st
+    },
+    .AInit(a) => if atom_is_derived(st.derived, a) {
+      st.mark_derived(dst)
+    } else {
+      st
+    },
+    _ => st,
+  }
+}
+
+// Does param k have a syntactic in-place update site? This deliberately avoids
+// ownership-gated dirty-path collection: recursive publishing can hide exactly
+// the update sites this candidate pre-filter is meant to bootstrap.
+fn param_has_inplace_site(f: CfgFunction, k: Int) Bool {
+  if k < 0 or k >= f.params.len() {
+    return false
+  }
+  st := InplaceScan.{ derived: Dict.new(), found: false, changed: true }
+  st.derived[f.params[k].id] = true
+  rounds := 0
+  cap := f.blocks.len() * 16 + 128
+  for st.changed and !st.found and rounds < cap {
+    st.changed = false
+    for blk in f.blocks {
+      for inst in blk.instructions {
+        st = scan_inplace_op(inst.op, inst.anf_local.id, st)
+      }
+      case blk.terminator {
+        .Some(term) => st = propagate_terminator(f, term, st),
+        .None => {},
+      }
+    }
+    rounds = rounds + 1
+  }
+  st.found
+}
+
+// A param the generic summary returns as the SOLE alias AND updates in place is a
+// candidate owned variant {(k, [])}. The seed is a hypothesis; run_scc_variants
+// proves or retracts it. Determinism: functions ascending, params by index.
+fn candidate_variants(view: CfgView, generic: SummaryTable) Vector<vid.VariantId> {
+  cands: Vector<vid.VariantId> = []
+  for f in view.functions {
+    s := table_get(generic, f.func_id)
+    for _ps, k in s.params {
+      if ret_aliases_exactly_param(s.ret, k) and param_has_inplace_site(f, k) {
+        v := vid.VariantId.{
+          func: f.func_id,
+          unique: [vid.UniqueReq.{ param: k, path: vid.shell() }],
+        }
+        cands = .append(v.canonicalize_variant())
+      }
+    }
+  }
+  cands
+}
+
+fn candidates_by_func(view: CfgView, generic: SummaryTable) Dict<Int, Vector<vid.VariantId>> {
+  by_func: Dict<Int, Vector<vid.VariantId>> = Dict.new()
+  for v in candidate_variants(view, generic) {
+    prev := case by_func.get(v.func) {
+      .Some(vs) => vs,
+      .None => [],
+    }
+    by_func[v.func] = prev.append(v)
+  }
+  by_func
+}
+
+// The optimistic hypothesis summary for candidate key {(k, [])}: param k Consumed
+// with a shell in-place path, return aliasing exactly k. Section 1 of a call then
+// leaves the arg alone (.Consumed) and section 2 takes the Stage 4a move.
+fn optimistic_hypothesis(gs: Summary, k: Int) Summary {
+  params: Vector<ParamSummary> = collect ps, i in gs.params {
+    if i == k {
+      ParamSummary.{ base_role: .Consumed, in_place_paths: vid.shell_set(), flows_to_return: true }
+    } else {
+      ps
+    }
+  }
+  Summary.{ params, ret: .MayAliasParams([k]), ret_paths: [] }
+}
+
+fn seed_param_of(v: vid.VariantId) Int {
+  if v.unique.len() > 0 {
+    v.unique[0].param
+  } else {
+    0 - 1
+  }
+}
+
+// A converged variant survives only if it still consumes param k in place AND
+// still returns exactly alias([k]) -- an alias-forced publish fails the first,
+// a widened return fails the second.
+fn variant_valid(s: Summary, k: Int) Bool {
+  param_ok := if k >= 0 and k < s.params.len() {
+    !s.params[k].in_place_paths.is_empty()
+  } else {
+    false
+  }
+  param_ok and ret_aliases_exactly_param(s.ret, k)
+}
+
+// generic table with each in-SCC member's current variant iterate overlaid, so a
+// recursive call resolves to the owned key. (One iterate per member -- exact for
+// single-candidate functions like graph_scc.visit and the fixtures.)
+fn build_overlay(generic: SummaryTable, member_iter: Dict<Int, Summary>) SummaryTable {
+  overlay := generic
+  for m, s in member_iter {
+    overlay = table_put(overlay, m, s)
+  }
+  overlay
+}
+
+// One SCC's variant fixpoint with assume/validate/retract. Seeds each candidate
+// member optimistically, runs a monotone worklist reading the overlay at recursive
+// calls, then drops members whose converged summary failed validation and re-runs
+// until the surviving set is stable (each pass only removes members -> terminates).
+fn run_scc_variants(
+  scc: Vector<Int>,
+  index: Dict<Int, CfgFunction>,
+  generic: SummaryTable,
+  candidates: Dict<Int, Vector<vid.VariantId>>,
+  vtable: VariantSummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) VariantSummaryTable {
+  members := scc.sort()
+  scc_set := int_set(members)
+
+  // active member -> (candidate variant, seeded param k). MVP: one key per member.
+  member_key: Dict<Int, vid.VariantId> = Dict.new()
+  member_pidx: Dict<Int, Int> = Dict.new()
+  for m in members {
+    case candidates.get(m) {
+      .Some(keys) => if keys.len() > 0 {
+        v := keys[0]
+        k := seed_param_of(v)
+        if k >= 0 {
+          member_key[m] = v
+          member_pidx[m] = k
+        }
+      },
+      .None => {},
+    }
+  }
+
+  member_iter: Dict<Int, Summary> = Dict.new()
+  stable := false
+  cap_outer := members.len() + 2
+  outer := 0
+  for !stable and outer < cap_outer {
+    if member_pidx.keys().len() == 0 {
+      stable = true
+    } else {
+      // seed active members optimistically
+      member_iter = Dict.new()
+      for m, k in member_pidx {
+        member_iter[m] = optimistic_hypothesis(table_get(generic, m), k)
+      }
+
+      // monotone worklist fixpoint (Gauss-Seidel: overlay reads live iterates)
+      cap_inner := member_pidx.keys().len() * 8 + 8
+      changed := true
+      rounds := 0
+      for changed and rounds < cap_inner {
+        changed = false
+        for m, k in member_pidx {
+          f := case index.get(m) {
+            .Some(fn0) => fn0,
+            .None => error("variant: scc id ${m} not in index"),
+          }
+          key := case member_key.get(m) {
+            .Some(v) => v.unique,
+            .None => [],
+          }
+          overlay := build_overlay(generic, member_iter)
+          next := summarize_variant(f, key, overlay, b, sem, scc_set)
+          prev := case member_iter.get(m) {
+            .Some(s) => s,
+            .None => optimistic_hypothesis(table_get(generic, m), k),
+          }
+          if !same_summary(next, prev) {
+            member_iter[m] = next
+            changed = true
+          }
+        }
+        rounds = rounds + 1
+      }
+
+      if changed {
+        // The iterate started optimistic; a cap-time snapshot is not conservative.
+        member_pidx = Dict.new()
+        member_key = Dict.new()
+        stable = true
+      } else {
+        // validate; retract failures and re-run, else stable
+        failed: Vector<Int> = []
+        for m, k in member_pidx {
+          conv := case member_iter.get(m) {
+            .Some(s) => s,
+            .None => optimistic_hypothesis(table_get(generic, m), k),
+          }
+          if !variant_valid(conv, k) {
+            failed = .append(m)
+          }
+        }
+        if failed.len() == 0 {
+          stable = true
+        } else {
+          for m in failed {
+            member_pidx = .remove(m)
+            member_key = .remove(m)
+          }
+        }
+      }
+    }
+    outer = outer + 1
+  }
+
+  // publish survivors
+  for m, v in member_key {
+    case member_iter.get(m) {
+      .Some(s) => if variant_valid(s, seed_param_of(v)) {
+        vtable = .vtable_put(v, s)
+      },
+      .None => {},
+    }
+  }
+  vtable
+}
+
+// Whole-program variant summaries: candidates from the generic table, fixed-pointed
+// per SCC in the same callee-first order. Leaves the generic table untouched.
+pub fn compute_variants(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  generic: SummaryTable,
+) VariantSummaryTable {
+  index := build_func_index(view)
+  user_ids := user_id_set(view)
+  candidates := candidates_by_func(view, generic)
+  vtable := empty_variant_table()
+  for scc in order_sccs(view, index, user_ids) {
+    vtable = run_scc_variants(scc, index, generic, candidates, vtable, b, sem)
+  }
+  vtable
+}
+
+fn func_scc_ids(sccs: Vector<Vector<Int>>) Dict<Int, Int> {
+  ids: Dict<Int, Int> = Dict.new()
+  for scc, sid in sccs {
+    for f in scc {
+      ids[f] = sid
+    }
+  }
+  ids
+}
+
+fn scc_id_of(ids: Dict<Int, Int>, func_id: Int) Int {
+  case ids.get(func_id) {
+    .Some(id) => id,
+    .None => 0 - 1,
+  }
+}
+
+fn scc_set_for(sccs: Vector<Vector<Int>>, ids: Dict<Int, Int>, func_id: Int) Dict<Int, Bool> {
+  sid := scc_id_of(ids, func_id)
+  if sid >= 0 and sid < sccs.len() {
+    int_set(sccs[sid])
+  } else {
+    Dict.new()
+  }
+}
+
+fn variant_args_satisfied(v: vid.VariantId, arg_unique: Vector<Bool>) Bool {
+  for req in v.unique {
+    if req.param < 0 or req.param >= arg_unique.len() or !arg_unique[req.param] {
+      return false
+    }
+  }
+  v.unique.len() > 0
+}
+
+type ReachState = .{ reachable: Dict<String, Bool>, changed: Bool }
+
+fn reach_has(reachable: Dict<String, Bool>, key: String) Bool {
+  case reachable.get(key) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn mark_reachable(st: ReachState, key: String) ReachState {
+  if !reach_has(st.reachable, key) {
+    st.reachable[key] = true
+    st.changed = true
+  }
+  st
+}
+
+fn mark_site_variants(
+  variants: VariantSummaryTable,
+  callee: Int,
+  arg_unique: Vector<Bool>,
+  st: ReachState,
+) ReachState {
+  case variants.by_func.get(callee) {
+    .Some(keys) => {
+      for key in keys {
+        case variants.by_key.get(key) {
+          .Some(entry) => if variant_args_satisfied(entry.variant, arg_unique) {
+            st = .mark_reachable(key)
+          },
+          .None => {},
+        }
+      }
+      st
+    },
+    .None => st,
+  }
+}
+
+fn unique_seed_for_variant(f: CfgFunction, v: vid.VariantId) Dict<Int, Bool> {
+  seed: Dict<Int, Bool> = Dict.new()
+  for req in v.unique {
+    if req.path.is_shell() and req.param >= 0 and req.param < f.params.len() {
+      seed[f.params[req.param].id] = true
+    }
+  }
+  seed
+}
+
+fn render_variant_key(v: vid.VariantId) String {
+  reqs: Vector<String> = collect r in v.unique {
+    if r.path.is_shell() {
+      "p${r.param}"
+    } else if r.path.segs.len() > 0 {
+      "p${r.param}.f${r.path.segs[0]}"
+    } else {
+      "p${r.param}"
+    }
+  }
+  "unique:${reqs.join(",")}"
+}
+
+fn canonical_reachable_key(
+  variants: VariantSummaryTable,
+  reachable: Dict<String, Bool>,
+  func_id: Int,
+) String? {
+  case variants.by_func.get(func_id) {
+    .Some(keys) => {
+      for key in keys {
+        if reach_has(reachable, key) {
+          return .Some(key)
+        }
+      }
+      .None
+    },
+    .None => .None,
+  }
+}
+
+fn reachable_overlay(
+  generic: SummaryTable,
+  variants: VariantSummaryTable,
+  reachable: Dict<String, Bool>,
+) SummaryTable {
+  overlay := generic
+  for func_id, _keys in variants.by_func {
+    case variants.canonical_reachable_key(reachable, func_id) {
+      .Some(key) => case variants.by_key.get(key) {
+        .Some(entry) => overlay = table_put(overlay, func_id, entry.summary),
+        .None => {},
+      },
+      .None => {},
+    }
+  }
+  overlay
+}
+
+fn all_variant_overlay(generic: SummaryTable, variants: VariantSummaryTable) SummaryTable {
+  overlay := generic
+  for func_id, keys in variants.by_func {
+    if keys.len() > 0 {
+      case variants.by_key.get(keys[0]) {
+        .Some(entry) => overlay = table_put(overlay, func_id, entry.summary),
+        .None => {},
+      }
+    }
+  }
+  overlay
+}
+
+fn reachable_variants(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  generic: SummaryTable,
+  variants: VariantSummaryTable,
+) Dict<String, Bool> {
+  index := build_func_index(view)
+  user_ids := user_id_set(view)
+  sccs := order_sccs(view, index, user_ids)
+  scc_ids := func_scc_ids(sccs)
+  st := ReachState.{ reachable: Dict.new(), changed: false }
+
+  // Roots: only out-of-SCC callers can discharge a callee's variant. Scan them
+  // against the converged variant overlay so loop-carried fresh state in an
+  // external caller can remain unique across a call that the generic summary pins.
+  root_overlay := all_variant_overlay(generic, variants)
+  for f in view.functions {
+    caller_scc := scc_id_of(scc_ids, f.func_id)
+    suppress := scc_set_for(sccs, scc_ids, f.func_id)
+    sites := call_uniques(f, root_overlay, b, sem, suppress, Dict.new())
+    for site in sites {
+      callee_scc := scc_id_of(scc_ids, site.callee)
+      if caller_scc != callee_scc {
+        st = variants.mark_site_variants(site.callee, site.arg_unique, st)
+      }
+    }
+  }
+
+  // Variant graph fixed point: rebuild overlay from the growing reachable set and
+  // rescan currently reachable canonical variants until no new keys appear.
+  again := true
+  passes := 0
+  cap := variants.by_key.keys().len() + 2
+  for again and passes < cap {
+    st.changed = false
+    overlay := reachable_overlay(generic, variants, st.reachable)
+    for f in view.functions {
+      case variants.canonical_reachable_key(st.reachable, f.func_id) {
+        .Some(key) => case variants.by_key.get(key) {
+          .Some(entry) => {
+            seed := unique_seed_for_variant(f, entry.variant)
+            suppress := scc_set_for(sccs, scc_ids, f.func_id)
+            sites := call_uniques(f, overlay, b, sem, suppress, seed)
+            for site in sites {
+              st = variants.mark_site_variants(site.callee, site.arg_unique, st)
+            }
+          },
+          .None => {},
+        },
+        .None => {},
+      }
+    }
+    again = st.changed
+    passes = passes + 1
+  }
+  st.reachable
+}
+
+fn function_by_id(view: CfgView, func_id: Int) CfgFunction? {
+  for f in view.functions {
+    if f.func_id == func_id {
+      return .Some(f)
+    }
+  }
+  .None
+}
+
+// ── Rendering ───────────────────────────────────────────────────────
+// One-line, human-readable form of a Summary for the `twk ir --cfg` header.
+fn render_ret_paths(rps: Vector<ReturnPathOwn>) String {
+  parts: Vector<String> = []
+  for r in sort_ret_paths(rps) {
+    via := case r.via {
+      .Direct => "",
+      .Variant(t, i) => "V${t}[${i}]",
+    }
+    fld := case r.field {
+      .Some(f) => ".f${f}",
+      .None => "",
+    }
+    own := case r.own {
+      .OwnedFresh => "fresh",
+      .OwnedFromParam(k) => "from(p${k})",
+    }
+    parts = .append("${via}${fld}=${own}")
+  }
+  if parts.len() == 0 {
+    ""
+  } else {
+    "  ret_paths=${parts.join(" ")}"
+  }
+}
+
+// Renders a parameter in-place path: [] (shell) or [.f0,.f1] (field chain). The
+// field-chain arm is only reached once Phase 6 Part 2 populates in_place_paths;
+// in Part 1 every path is the shell [].
+fn render_param_path(p: vid.ParamPath) String {
+  if p.is_shell() {
+    "[]"
+  } else {
+    segs: Vector<String> = collect s in p.segs {
+      ".f${s}"
+    }
+    "[${segs.join(",")}]"
+  }
+}
+
+fn render_role(r: ParamRole) String {
+  case r {
+    .Borrowed => "Borrowed",
+    .Consumed => "Consumed",
+    .Published => "Published",
+  }
+}
+
+fn render_summary_body(s: Summary) String {
+  parts: Vector<String> = []
+  for ps, i in s.params {
+    paths := if !ps.in_place_paths.is_empty() {
+      rendered: Vector<String> = collect p in ps.in_place_paths.paths {
+        render_param_path(p)
+      }
+      " paths{${rendered.join(",")}}"
+    } else {
+      ""
+    }
+    parts = .append("p${i}=${render_role(ps.base_role)}${paths}")
+  }
+  ret := case s.ret {
+    .OwnedFresh => "fresh",
+    .Shared => "shared",
+    .MayAliasParams(idxs) => {
+      ps := collect k in idxs {
+        "p${k}"
+      }
+      "alias(${ps.join(",")})"
+    },
+  }
+  "${parts.join(" ")} ret=${ret}${render_ret_paths(s.ret_paths)}"
+}
+
+pub fn render_summary(s: Summary) String {
+  "summary: ${render_summary_body(s)}"
+}
+
+fn variant_sections(
+  source: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  generic: SummaryTable,
+  variants: VariantSummaryTable,
+  reachable: Dict<String, Bool>,
+) String {
+  overlay := reachable_overlay(generic, variants, reachable)
+  out := ""
+  for f in source.functions {
+    case variants.canonical_reachable_key(reachable, f.func_id) {
+      .Some(key) => case variants.by_key.get(key) {
+        .Some(entry) => {
+          seed := unique_seed_for_variant(f, entry.variant)
+          analyzed := analyze_function_with_seed(f, overlay, b, sem, seed)
+          title := "variant fn ${f.name} [${render_variant_key(entry.variant)}]"
+          header := "variant: ${render_summary_body(entry.summary)}"
+          out = "${out}${analyzed.render_function_with_header(title, header)}"
+        },
+        .None => {},
+      },
+      .None => {},
+    }
+  }
+  out
+}
+
+// Render the generic `--cfg` view with generic summaries, then append reachable
+// variant-qualified diagnostic bodies. Generic function bodies are never re-
+// analyzed under a variant seed.
+pub fn render_cfg(
+  source: CfgView,
+  generic_analyzed: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+  variants: VariantSummaryTable,
+) String {
+  headers: Dict<Int, String> = Dict.new()
+  for f in generic_analyzed.functions {
+    case summary_get(table, f.func_id) {
+      .Some(s) => headers[f.func_id] = render_summary(s),
+      .None => {},
+    }
+  }
+  generic_out := generic_analyzed.render_view_with_headers(headers)
+  reachable := reachable_variants(source, b, sem, table, variants)
+  "${generic_out}${variant_sections(source, b, sem, table, variants, reachable)}"
+}
+
+// ── Driver ──────────────────────────────────────────────────────────
+pub fn compute(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) SummaryTable {
+  index := build_func_index(view)
+  user_ids := user_id_set(view)
+
+  // Seed every function conservatively so the first pass is sound before callees
+  // are known.
+  table := empty_summary_table()
+  for f in view.functions {
+    table = table_put(table, f.func_id, conservative_summary(f))
+  }
+
+  for scc in order_sccs(view, index, user_ids) {
+    table = run_scc(scc, index, user_ids, table, b, sem)
+  }
+  table
+}

@@ -3,8 +3,14 @@
 use @std.proc
 
 use commands.common.{exit_usage_error, format_compile_error, get_positional, print_warnings}
+use compiler.artifacts.{PipelineArtifacts}
+use compiler.census
+use compiler.cfg
 use compiler.ir_print
+use compiler.opt.semantics as semantics
+use compiler.ownership
 use compiler.pipeline
+use compiler.summary
 use lib.argparse.app.{ParseResult}
 
 fn has_any_ir_flag(parsed: ParseResult) Bool {
@@ -40,6 +46,26 @@ fn print_ir_stage(title: String, body: String, first: Bool) Bool {
   false
 }
 
+fn render_cfg_artifacts(artifacts: PipelineArtifacts) String {
+  b := artifacts.builtins
+  view := cfg.build_view(artifacts.opt, b)
+
+  view = ownership.prune_dead_merge(view) // prune dead carried params before analysis
+  s := semantics.make_prelude_optimizer_semantics(b)
+  table := summary.compute(view, b, s)
+  variants := summary.compute_variants(view, b, s, table)
+  analyzed := ownership.analyze_with_summaries(view, b, s, table)
+  summary.render_cfg(view, analyzed, b, s, table, variants)
+}
+
+pub fn render_cfg_for_entry(file: String) String {
+  artifacts := case pipeline.compile_entry_path(file) {
+    .Ok(result) => result,
+    .Err(err) => error(format_compile_error(err)),
+  }
+  render_cfg_artifacts(artifacts)
+}
+
 pub fn run_ir_command(parsed: ParseResult) {
   file := case get_positional(parsed, 0, "file") {
     .Ok(path) => path,
@@ -53,6 +79,23 @@ pub fn run_ir_command(parsed: ParseResult) {
     },
   }
   print_warnings(artifacts.warnings)
+
+  if parsed.has_flag("census") {
+    sites := census.census_sites(artifacts.opt, artifacts.builtins)
+    print(census.tally_from_sites(sites).render_census())
+
+    if parsed.has_flag("sites") {
+      print(census.render_sites(sites))
+    }
+
+    return
+  }
+
+  if parsed.has_flag("cfg") {
+    print(render_cfg_artifacts(artifacts))
+    return
+  }
+
   first := true
 
   if should_show_ir(parsed, "core") {

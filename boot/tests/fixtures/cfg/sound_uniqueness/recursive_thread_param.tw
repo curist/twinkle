@@ -1,0 +1,10 @@
+pub type Acc = .{ total: Int, depth: Int }
+
+pub fn thread_param(a: Acc, n: Int) Acc {
+  cur := a
+  cur.total = cur.total + n
+  if n > 0 {
+    cur = .thread_param(n - 1)
+  }
+  cur
+}

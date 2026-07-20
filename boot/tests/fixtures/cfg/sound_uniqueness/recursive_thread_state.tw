@@ -1,0 +1,17 @@
+pub type Acc = .{ total: Int, depth: Int }
+
+pub fn scc_thread(a: Acc, n: Int) Acc {
+  cur := a
+  cur.total = cur.total + n
+  if n > 0 {
+    cur.depth = cur.depth + 1
+    cur = .scc_thread(n - 1)
+  }
+  cur
+}
+
+pub fn run(n: Int) Int {
+  start := Acc.{ total: 0, depth: 0 }
+  end := start.scc_thread(n)
+  end.total
+}

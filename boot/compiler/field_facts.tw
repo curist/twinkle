@@ -1,0 +1,292 @@
+//! Path-sensitive field-ownership facts for the Phase 4 ownership analysis.
+//!
+//! Pure and value-returning (Twinkle immutability), mirroring cfg.tw/summary.tw.
+//! A LEAF module: it imports neither ownership.tw nor cfg.tw, so it can be
+//! imported by both without a cycle. A local's non-shell field-ownership facts
+//! are the `FieldMap` record wrapping `paths: Dict<Int, Int>` (PathKey -> tag);
+//! the map operations are inherent methods on `FieldMap` so callers read as
+//! `fm.is_unique(p)` / `fm.graft(seg, src)` / `fm.merge(other)`. Only Unique paths
+//! are ever stored; absence of a key means "no claim" (tag is Int for symmetry
+//! with ownership.own, always 0/Unique in Phase 4).
+
+pub type PathSeg = { Field(Int), Elem, Val, Payload(Int, Int) }
+
+// segs == [] is the shell (the [] fact); it is NEVER stored in a FieldMap.
+pub type AccessPath = .{ segs: Vector<PathSeg> }
+
+// A local's non-shell field-ownership map.
+pub type FieldMap = .{ paths: Dict<Int, Int> }
+
+pub fn empty() FieldMap {
+  FieldMap.{ paths: Dict.new() }
+}
+
+// ── AccessPath constructors ─────────────────────────────────────────
+pub fn field_path(f: Int) AccessPath {
+  AccessPath.{ segs: [.Field(f)] }
+}
+
+pub fn elem_path() AccessPath {
+  AccessPath.{ segs: [.Elem] }
+}
+
+pub fn val_path() AccessPath {
+  AccessPath.{ segs: [.Val] }
+}
+
+pub fn field_elem(f: Int) AccessPath {
+  AccessPath.{ segs: [.Field(f), .Elem] }
+}
+
+pub fn field_val(f: Int) AccessPath {
+  AccessPath.{ segs: [.Field(f), .Val] }
+}
+
+pub fn seg_eq(a: PathSeg, b: PathSeg) Bool {
+  case a {
+    .Elem => case b {
+      .Elem => true,
+      _ => false,
+    },
+    .Val => case b {
+      .Val => true,
+      _ => false,
+    },
+    .Field(fa) => case b {
+      .Field(fb) => fa == fb,
+      _ => false,
+    },
+    .Payload(ta, ia) => case b {
+      .Payload(tb, ib) => ta == tb and ia == ib,
+      _ => false,
+    },
+  }
+}
+
+pub fn path_eq(a: AccessPath, b: AccessPath) Bool {
+  if a.segs.len() != b.segs.len() {
+    return false
+  }
+  for s, i in a.segs {
+    if !s.seg_eq(b.segs[i]) {
+      return false
+    }
+  }
+  true
+}
+
+// ── Reversible PathKey codec (Phase 4 shapes, depth <= 2) ────────────
+//   [Elem]            -> 1
+//   [Val]             -> 2
+//   [Field(f)]        -> 8 + f*4 + 0
+//   [Field(f), Elem]  -> 8 + f*4 + 1
+//   [Field(f), Val]   -> 8 + f*4 + 2
+// Field ids are non-negative; the low 2 bits above 8 encode the optional
+// trailing collection seg. Pure inverses -> no interned side table.
+//
+// Phase 5 payload paths use a disjoint NEGATIVE range via O(1) fixed-width
+// bit-packing. Each component is 20 bits (2^20 = 1048576, 2^40 = 1099511627776);
+// 20 bits is ample because tag/index are small per-type indices (VariantId.id and
+// a positional payload index), so packing never overflows i64 and needs no search.
+// fieldslot = 0 means no trailing Field (the payload shell); 1+f means Field(f).
+// Packed nonneg -> disjoint NEGATIVE key (offset by 1 so 0/positive keys are free).
+fn payload_key(tag: Int, index: Int, fieldslot: Int) Int {
+  if tag < 0
+    or tag >= 1048576
+    or index < 0
+    or index >= 1048576
+    or fieldslot < 0
+    or fieldslot >= 1048576 {
+    error("field_facts: payload key component out of 20-bit range")
+  }
+  packed := tag * 1099511627776 + index * 1048576 + fieldslot
+  0 - (packed + 1)
+}
+
+pub fn path_key(p: AccessPath) Int {
+  segs := p.segs
+  cond {
+    segs.len() == 0 => 0, // shell; callers must never store this
+    segs.len() == 1 => case segs[0] {
+      .Elem => 1,
+      .Val => 2,
+      .Field(f) => 8 + f * 4,
+      .Payload(tag, i) => payload_key(tag, i, 0),
+    },
+    segs.len() == 2 => case segs[0] {
+      .Field(f) => case segs[1] {
+        .Elem => 8 + f * 4 + 1,
+        .Val => 8 + f * 4 + 2,
+        _ => error("field_facts: nested seg must be Elem/Val"),
+      },
+      .Payload(tag, i) => case segs[1] {
+        .Field(f) => payload_key(tag, i, 1 + f),
+        _ => error("field_facts: payload nested seg must be Field in Phase 5"),
+      },
+      _ => error("field_facts: nested path must start at a field in Phase 4"),
+    },
+    _ => error("field_facts: path deeper than Phase 4 supports"),
+  }
+}
+
+pub fn path_of_key(k: Int) AccessPath {
+  cond {
+    k == 1 => elem_path(),
+    k == 2 => val_path(),
+    k >= 8 => {
+      base := k - 8
+      f := base / 4
+      sub := base % 4
+      cond {
+        sub == 0 => field_path(f),
+        sub == 1 => field_elem(f),
+        sub == 2 => field_val(f),
+        _ => error("field_facts: bad path key ${k}"),
+      }
+    },
+    k < 0 => {
+      packed := 0 - k - 1
+      fieldslot := packed % 1048576
+      index := packed / 1048576 % 1048576
+      tag := packed / 1099511627776
+      if fieldslot == 0 {
+        AccessPath.{ segs: [.Payload(tag, index)] }
+      } else {
+        AccessPath.{ segs: [.Payload(tag, index), .Field(fieldslot - 1)] }
+      }
+    },
+    _ => error("field_facts: bad path key ${k}"),
+  }
+}
+
+// ── FieldMap inherent methods (fm is the first param) ───────────────
+pub fn set_path(fm: FieldMap, p: AccessPath, tag: Int) FieldMap {
+  k := p.path_key()
+  if k == 0 {
+    // shell facts live in ownership.own, never in a FieldMap.
+    error("field_facts: refusing to store the shell path ([]) in a FieldMap")
+  }
+  fm.paths[k] = tag
+  fm
+}
+
+// Shell path ([]) always returns false — shell ownership lives in ownership.own,
+// not here; a FieldMap only answers about non-shell paths.
+pub fn is_unique(fm: FieldMap, p: AccessPath) Bool {
+  case fm.paths.get(p.path_key()) {
+    .Some(t) => t == 0,
+    .None => false,
+  }
+}
+
+pub fn is_empty(fm: FieldMap) Bool {
+  fm.paths.is_empty()
+}
+
+// Copy a value's facts under `prefix`. Callers graft only a value already proven
+// []:Unique, so the shell tag at [prefix] is Unique (0). `src` is the value's OWN
+// FieldMap (its inner paths). Phase 4 prefixes are a single Field(f)/Elem/Val;
+// src's own paths are at most depth-1 ([Elem]/[Val]), so the grafted result is
+// depth <= 2 (deeper is dropped, sound under-claim). Under an Elem/Val prefix no
+// deeper nesting is representable, so only the shell tag lands.
+pub fn graft(fm: FieldMap, prefix: PathSeg, src: FieldMap) FieldMap {
+  fm.paths[path_key(AccessPath.{ segs: [prefix] })] = 0
+  case prefix {
+    .Field(_) => {
+      for k, v in src.paths {
+        inner := path_of_key(k)
+
+        // Only [Elem]/[Val] inner paths can be represented as [Field(f), Elem/Val]
+        // at Phase 4/5's depth-2 limit. [Field, Field] and [Field, Payload] are not
+        // representable and are silently dropped — sound under-claim.
+        if inner.segs.len() == 1 {
+          case inner.segs[0] {
+            .Elem => fm.paths[path_key(AccessPath.{ segs: [prefix, .Elem] })] = v,
+            .Val => fm.paths[path_key(AccessPath.{ segs: [prefix, .Val] })] = v,
+            _ => {}, // Field and Payload inners not representable under Field prefix
+          }
+        }
+      }
+      fm
+    },
+    .Payload(_, _) => {
+      for k, v in src.paths {
+        inner := path_of_key(k)
+        if inner.segs.len() == 1 {
+          case inner.segs[0] {
+            .Field(_) => fm.paths[path_key(AccessPath.{ segs: [prefix, inner.segs[0]] })] = v,
+            _ => {}, // Elem/Val/Payload inners not representable at depth 2 — sound under-claim
+          }
+        }
+      }
+      fm
+    },
+    _ => fm,
+  }
+}
+
+// Projection inverse: gather every path under `prefix`, stripped of it. The
+// [prefix] fact (if present) becomes the projected value's shell; each strict
+// descendant [prefix, X] becomes an inner [X]. Siblings are ignored.
+// Payload prefixes are supported: seg_eq handles Payload structurally.
+pub type Projection = .{ shell: Int?, fields: FieldMap }
+
+pub fn project(fm: FieldMap, prefix: PathSeg) Projection {
+  shell: Int? = .None
+  inner := empty()
+  for k, v in fm.paths {
+    p := path_of_key(k)
+    if p.segs.len() >= 1 and p.segs[0].seg_eq(prefix) {
+      if p.segs.len() == 1 {
+        shell = .Some(v)
+      } else {
+        inner.paths[path_key(AccessPath.{ segs: [p.segs[1]] })] = v
+      }
+    }
+  }
+  Projection.{ shell, fields: inner }
+}
+
+// Drop the entire [prefix]* subtree (including [prefix] itself); keep siblings.
+// Payload prefixes are supported: seg_eq handles Payload structurally.
+pub fn remove_prefix(fm: FieldMap, prefix: PathSeg) FieldMap {
+  out := empty()
+  for k, v in fm.paths {
+    p := path_of_key(k)
+    drop := p.segs.len() >= 1 and p.segs[0].seg_eq(prefix)
+    if !drop {
+      out.paths[k] = v
+    }
+  }
+  out
+}
+
+// Per-path meet for joins: only Unique paths are stored, so a path survives iff
+// present in both -> key intersection.
+pub fn merge(fm: FieldMap, other: FieldMap) FieldMap {
+  out := empty()
+  for k, v in fm.paths {
+    if other.paths.has(k) {
+      out.paths[k] = v
+    }
+  }
+  out
+}
+
+// Structural equality (same set of Unique path keys) for fixpoint change-detection.
+pub fn same(fm: FieldMap, other: FieldMap) Bool {
+  if fm.paths.len() != other.paths.len() {
+    return false
+  }
+  for k in fm.paths.keys() {
+    if !other.paths.has(k) {
+      return false
+    }
+  }
+  true
+}
+
+// Deterministic sorted key list for rendering / comparison.
+pub fn sorted_keys(fm: FieldMap) Vector<Int> {
+  fm.paths.keys().sort()
+}
