@@ -1,0 +1,467 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.codegen.mutable_select
+use compiler.core_ir.{FuncId, LocalId}
+
+fn fid(id: Int) FuncId {
+  FuncId.{ id }
+}
+
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
+
+fn decision(
+  site: mutable_select.Site,
+  family: mutable_select.OperationFamily,
+  persistent: FuncId?,
+  mutable: FuncId?,
+) mutable_select.MutableDecision {
+  mutable_select.MutableDecision.{
+    site,
+    family,
+    source_local: lid(1),
+    result_local: site.local,
+    arg_count: 3,
+    base_arg_index: .Some(0),
+    persistent_func: persistent,
+    mutable_func: mutable,
+    variant_key: .None,
+    field_path_key: "1:f7",
+    proof_debug_id: "selector-test",
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("mutable_select")
+    .test(
+      "absent decision falls back to persistent",
+      fn() Result<Void, String> {
+        selected := mutable_select.select_call(
+          mutable_select.empty_decision_table(),
+          mutable_select.Site.{ func: fid(10), local: lid(20) },
+          mutable_select.OperationFamily.VectorSet,
+          fid(100),
+          .Some(0),
+          lid(1),
+          lid(20),
+          3,
+        )
+        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 0)
+        try assert.equal(selected.emit_func.id, 100)
+        assert.equal(selected.would_func.id, 100)
+      },
+    )
+    .test(
+      "live persistent-only decision reports would-be mutable target",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        table := mutable_select
+          .empty_decision_table()
+          .with_decision(
+            decision(
+              site,
+              mutable_select.OperationFamily.VectorSet,
+              .Some(fid(100)),
+              .Some(fid(101)),
+            ),
+          )
+        selected := mutable_select.select_call(
+          table,
+          site,
+          mutable_select.OperationFamily.VectorSet,
+          fid(100),
+          .Some(0),
+          lid(1),
+          lid(20),
+          3,
+        )
+        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 1)
+        try assert.equal(selected.emit_func.id, 100)
+        assert.equal(selected.would_func.id, 101)
+      },
+    )
+    .test(
+      "wrong family reports WrongFamily",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        table := mutable_select
+          .empty_decision_table()
+          .with_decision(
+            decision(site, mutable_select.OperationFamily.DictSet, .Some(fid(100)), .Some(fid(101))),
+          )
+        selected := mutable_select.select_call(
+          table,
+          site,
+          mutable_select.OperationFamily.VectorSet,
+          fid(100),
+          .Some(0),
+          lid(1),
+          lid(20),
+          3,
+        )
+        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 2)
+        assert.equal(selected.emit_func.id, 100)
+      },
+    )
+    .test(
+      "wrong persistent target reports WrongPersistentTarget",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        table := mutable_select
+          .empty_decision_table()
+          .with_decision(
+            decision(
+              site,
+              mutable_select.OperationFamily.VectorSet,
+              .Some(fid(999)),
+              .Some(fid(101)),
+            ),
+          )
+        selected := mutable_select.select_call(
+          table,
+          site,
+          mutable_select.OperationFamily.VectorSet,
+          fid(100),
+          .Some(0),
+          lid(1),
+          lid(20),
+          3,
+        )
+        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 3)
+        assert.equal(selected.emit_func.id, 100)
+      },
+    )
+    .test(
+      "missing mutable target reports MissingMutableTarget",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        table := mutable_select
+          .empty_decision_table()
+          .with_decision(
+            decision(site, mutable_select.OperationFamily.VectorSet, .Some(fid(100)), .None),
+          )
+        selected := mutable_select.select_call(
+          table,
+          site,
+          mutable_select.OperationFamily.VectorSet,
+          fid(100),
+          .Some(0),
+          lid(1),
+          lid(20),
+          3,
+        )
+        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 4)
+        assert.equal(selected.emit_func.id, 100)
+      },
+    )
+    .test(
+      "source local mismatch reports SourceLocalMismatch",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        table := mutable_select
+          .empty_decision_table()
+          .with_decision(
+            decision(
+              site,
+              mutable_select.OperationFamily.VectorSet,
+              .Some(fid(100)),
+              .Some(fid(101)),
+            ),
+          )
+        selected := mutable_select.select_call(
+          table,
+          site,
+          mutable_select.OperationFamily.VectorSet,
+          fid(100),
+          .Some(0),
+          lid(99), // decision's source_local is lid(1)
+          lid(20),
+          3,
+        )
+        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 5)
+        assert.equal(selected.emit_func.id, 100)
+      },
+    )
+    .test(
+      "result local mismatch reports ResultLocalMismatch",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        table := mutable_select
+          .empty_decision_table()
+          .with_decision(
+            decision(
+              site,
+              mutable_select.OperationFamily.VectorSet,
+              .Some(fid(100)),
+              .Some(fid(101)),
+            ),
+          )
+        selected := mutable_select.select_call(
+          table,
+          site,
+          mutable_select.OperationFamily.VectorSet,
+          fid(100),
+          .Some(0),
+          lid(1),
+          lid(77), // decision's result_local is site.local (20)
+          3,
+        )
+        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 6)
+        assert.equal(selected.emit_func.id, 100)
+      },
+    )
+    .test(
+      "arg_count mismatch reports ArgumentShapeMismatch",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        table := mutable_select
+          .empty_decision_table()
+          .with_decision(
+            decision(
+              site,
+              mutable_select.OperationFamily.VectorSet,
+              .Some(fid(100)),
+              .Some(fid(101)),
+            ),
+          )
+        selected := mutable_select.select_call(
+          table,
+          site,
+          mutable_select.OperationFamily.VectorSet,
+          fid(100),
+          .Some(0),
+          lid(1),
+          lid(20),
+          4, // decision's arg_count is 3
+        )
+        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 7)
+        assert.equal(selected.emit_func.id, 100)
+      },
+    )
+    .test(
+      "base_arg_index mismatch reports BaseArgMismatch",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        table := mutable_select
+          .empty_decision_table()
+          .with_decision(
+            decision(
+              site,
+              mutable_select.OperationFamily.VectorSet,
+              .Some(fid(100)),
+              .Some(fid(101)),
+            ),
+          )
+        selected := mutable_select.select_call(
+          table,
+          site,
+          mutable_select.OperationFamily.VectorSet,
+          fid(100),
+          .Some(1), // decision's base_arg_index is .Some(0)
+          lid(1),
+          lid(20),
+          3,
+        )
+        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 8)
+        assert.equal(selected.emit_func.id, 100)
+      },
+    )
+    .test(
+      "duplicate decisions for the same site report Ambiguous and persistent fallback",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        table := mutable_select
+          .empty_decision_table()
+          .with_decision(
+            decision(
+              site,
+              mutable_select.OperationFamily.VectorSet,
+              .Some(fid(100)),
+              .Some(fid(101)),
+            ),
+          )
+          .with_decision(
+            decision(
+              site,
+              mutable_select.OperationFamily.VectorSet,
+              .Some(fid(100)),
+              .Some(fid(102)),
+            ),
+          )
+        selected := mutable_select.select_call(
+          table,
+          site,
+          mutable_select.OperationFamily.VectorSet,
+          fid(100),
+          .Some(0),
+          lid(1),
+          lid(20),
+          3,
+        )
+        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 10)
+        assert.equal(selected.emit_func.id, 100)
+      },
+    )
+    .test(
+      "unsupported family reports UnsupportedFamily",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        table := mutable_select
+          .empty_decision_table()
+          .with_decision(
+            decision(
+              site,
+              mutable_select.OperationFamily.VectorBuilderRegion,
+              .Some(fid(100)),
+              .Some(fid(101)),
+            ),
+          )
+        selected := mutable_select.select_call(
+          table,
+          site,
+          mutable_select.OperationFamily.VectorBuilderRegion,
+          fid(100),
+          .Some(0),
+          lid(1),
+          lid(20),
+          3,
+        )
+        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 11)
+        assert.equal(selected.emit_func.id, 100)
+      },
+    )
+    .test(
+      "type-qualified record field path match reports PersistentOnly and keeps emit_can_reuse false",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        d := mutable_select.MutableDecision.{
+          site,
+          family: mutable_select.OperationFamily.RecordShellUpdate,
+          source_local: lid(1),
+          result_local: lid(20),
+          arg_count: 2,
+          base_arg_index: .Some(0),
+          persistent_func: .None,
+          mutable_func: .None,
+          variant_key: .None,
+          field_path_key: "10:f0",
+          proof_debug_id: "selector-test",
+        }
+        table := mutable_select.empty_decision_table().with_decision(d)
+        selected := mutable_select.select_record_update(
+          table,
+          site,
+          lid(1),
+          lid(20),
+          "10:f0",
+          false,
+        )
+        try assert.equal(mutable_select.record_reason_tag(selected.reason), 1)
+        try assert.ok(!selected.emit_can_reuse, "emit_can_reuse should remain false")
+        assert.ok(selected.would_reuse, "would_reuse should be true for a valid record decision")
+      },
+    )
+    .test(
+      "record selector rejects a VectorSet/DictSet decision at the same site",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        table := mutable_select
+          .empty_decision_table()
+          .with_decision(
+            decision(
+              site,
+              mutable_select.OperationFamily.VectorSet,
+              .Some(fid(100)),
+              .Some(fid(101)),
+            ),
+          )
+        selected := mutable_select.select_record_update(
+          table,
+          site,
+          lid(1),
+          lid(20),
+          "10:f0",
+          false,
+        )
+        try assert.equal(mutable_select.record_reason_tag(selected.reason), 2)
+        assert.ok(!selected.emit_can_reuse, "emit_can_reuse should remain false")
+      },
+    )
+    .test(
+      "record field id match but type id mismatch reports FieldPathMismatch",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        d := mutable_select.MutableDecision.{
+          site,
+          family: mutable_select.OperationFamily.RecordShellUpdate,
+          source_local: lid(1),
+          result_local: lid(20),
+          arg_count: 2,
+          base_arg_index: .Some(0),
+          persistent_func: .None,
+          mutable_func: .None,
+          variant_key: .None,
+          field_path_key: "10:f0",
+          proof_debug_id: "selector-test",
+        }
+        table := mutable_select.empty_decision_table().with_decision(d)
+        selected := mutable_select.select_record_update(
+          table,
+          site,
+          lid(1),
+          lid(20),
+          "11:f0",
+          false,
+        )
+        try assert.equal(mutable_select.record_reason_tag(selected.reason), 9)
+        try assert.ok(!selected.emit_can_reuse, "emit_can_reuse should remain false")
+        assert.ok(!selected.would_reuse, "would_reuse should be false on field path mismatch")
+      },
+    )
+    .test(
+      "duplicate record decisions for the same site report Ambiguous",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        d1 := mutable_select.MutableDecision.{
+          site,
+          family: mutable_select.OperationFamily.RecordShellUpdate,
+          source_local: lid(1),
+          result_local: lid(20),
+          arg_count: 2,
+          base_arg_index: .Some(0),
+          persistent_func: .None,
+          mutable_func: .None,
+          variant_key: .None,
+          field_path_key: "10:f0",
+          proof_debug_id: "selector-test",
+        }
+        d2 := mutable_select.MutableDecision.{
+          site,
+          family: mutable_select.OperationFamily.RecordShellUpdate,
+          source_local: lid(1),
+          result_local: lid(20),
+          arg_count: 2,
+          base_arg_index: .Some(0),
+          persistent_func: .None,
+          mutable_func: .None,
+          variant_key: .None,
+          field_path_key: "10:f1",
+          proof_debug_id: "selector-test",
+        }
+        table := mutable_select.empty_decision_table().with_decision(d1).with_decision(d2)
+        selected := mutable_select.select_record_update(
+          table,
+          site,
+          lid(1),
+          lid(20),
+          "10:f0",
+          false,
+        )
+        try assert.equal(mutable_select.record_reason_tag(selected.reason), 10)
+        assert.ok(!selected.emit_can_reuse, "emit_can_reuse should remain false")
+      },
+    )
+}

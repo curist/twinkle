@@ -15,36 +15,58 @@ licensed by a live decision.
 
 ## Central selection layer
 
-Phase 7C should define one catalog-driven selector/helper before any family starts
-emitting mutable code. Backend lowering passes the ANF site, operation family,
-decision table, catalog entry, and persistent fallback to that layer. The layer
-returns either:
+Phase 7C/7D defines one selector/helper layer before any family starts emitting
+mutable code. Backend lowering passes the prepared site, operation family,
+decision table, stable operand shape, and persistent fallback to that layer. The
+layer returns:
 
-- the exact mutable target plus argument mapping licensed by a live decision; or
-- the ordinary persistent fallback with a reason such as absent, stale,
-  unsupported, or dry-run.
+- `emit_func` / `emit_can_reuse`: the target that normal emission must use now; in
+  Phase 7D these are always the persistent fallback / original record-reuse value,
+  even for a live mutable decision;
+- `would_func` / `would_reuse`: the mutable target that a later dry-run renderer or
+  Phase 8 emission slice can report or enable deliberately; and
+- a reason such as absent, persistent-only, wrong family, wrong persistent target,
+  missing mutable target, source/result mismatch, argument-shape mismatch,
+  base-argument mismatch, field-path mismatch, ambiguous, or unsupported.
+
+No normal Phase 7D build can activate a mutable target. Phase 8 must extend Wasm
+planning and deliberately change the selector consumption contract before `would_*`
+data may become emitted code.
 
 Per-family backend sites must not duplicate ownership legality, last-use,
 staleness, unsupported-family, or fallback checks. They may perform only the local
 mechanical emission for the target the selector returned.
 
+The seam is implemented as `compiler.codegen.mutable_select` (the decision table,
+`select_call`, and `select_record_update`) plus prepared-site extraction in
+`compiler.codegen.emit.mutable_sites` (`select_call_for_emit`, `site_for_result`,
+`record_base_source_local`, `field_path_key`), consulted from `emit.tw`'s `.ACall`
+and `.ARecordUpdate` lowering.
+
 ## First-cut decision record
 
-Each accepted mutable-lowering candidate should carry:
+Phase 7C/7D implements the backend-facing record first, populated by explicit test
+tables and future producers. Each accepted mutable-lowering candidate should carry:
 
 | Field | Purpose |
 |---|---|
-| ANF key | The optimized-ANF site the decision applies to. |
-| Operation family | Vector indexed update, vector/string builder region, dict set/remove, record shell update, record-backed field update, ownership-specialized function variant, etc. |
-| Source value | The collection/record value whose storage or shell may be reused. |
+| ANF key | The optimized-ANF site the decision applies to (`Site` = func id + result local). |
+| Operation family | Vector indexed update, dict set/remove, record shell update, and later vector/string builder regions, record-backed field update, ownership-specialized function variant, etc. |
+| Source value | The collection/record local whose storage or shell may be reused. |
 | Result binding | The local that receives the post-update immutable value. |
-| Proof requirements | Required ownership fact, last-use proof, and any loop/branch/SCC proof id. |
+| Stable call shape | Argument count and base-argument index fields that survive optimized-ANF → prepared-IR boundary insertion. |
 | Persistent fallback | The ordinary immutable operation or generic callee to emit when the decision is absent or rejected. |
-| Mutable target | The existing helper/hook or cloned function selected by the operation catalog. |
-| Argument mapping | How persistent-call operands map to mutable-target operands. |
+| Mutable target | The existing helper/hook or cloned function selected by the operation catalog, stored as would-be data until Phase 8 enables emission. |
 | Variant key | The exact `VariantId` when the decision depends on an owned-specialized callee/body. Empty for purely local decisions. |
-| Field/path key | The consumed shell/field path for record-backed collection decisions. Empty for whole-value decisions. |
+| Field/path key | The type-qualified consumed shell/field path for record-backed or record-shell decisions. Empty for whole-value call decisions. |
 | Debug id | Stable id for `twk ir`, census, and WAT/call inspection. |
+
+Follow-up after 7D: extract the existing render-only call-decision logic from
+`ownership.tw` into a producer that populates `MutableDecisionTable` over optimized
+ANF. That producer must attach the actual required ownership fact, last-use proof,
+and any loop/branch/SCC proof id to the debug/proof trail, but it is not part of
+7C/7D backend plumbing because the seam must be usable and testable with explicit
+tables first.
 
 ## Analysis obligations
 

@@ -2,6 +2,7 @@
 
 use compiler.backend.prepared_ir.{PreparedFunc, ReprKind, SlotId}
 use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.mutable_select
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_layout.{val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
@@ -108,6 +109,7 @@ pub type EmitCtx = .{
   loop_depth: Int,
   scratch_anyref_local: Int,
   intrinsic_table: Dict<Int, IntrinsicTag>,
+  mutable_decisions: mutable_select.MutableDecisionTable,
 }
 
 pub fn current_prepared_func(ctx: EmitCtx) PreparedFunc? {

@@ -34,12 +34,15 @@ This README is the analysis worklist derived from it.
 > **Phase numbering.** The whole plan uses one monotonic integer scheme where the
 > number encodes execution order: **Phases 0-6 = analysis** (0-3 foundation, 4-6
 > the precision below), **Phases 7-8 = codegen** (decisions/handoff, then
-> emission — see [../codegen/README.md](../codegen/README.md)), and **Phases 9-10 =
-> migration** (mutable intrinsics, then follow-up precision + Buffer retirement —
-> see [../migration/README.md](../migration/README.md)). The tag on each heading
-> (e.g. *architecture: 1C*) maps the integer to architecture.md's letter scheme,
-> where **Phase 1 = all analysis (1A-1E)** and **Phase 2 = all codegen (2A+)**. All
-> analysis (0-6) precedes all codegen (7-8).
+> emission — see [../codegen/README.md](../codegen/README.md)), **Storage S1-S6 =
+> storage representation** (private mutable storage and Buffer-class storage
+> performance — see [../storage/README.md](../storage/README.md)), and **Phases
+> 9-10 = migration** (mutable intrinsics, then follow-up precision + Buffer cleanup
+> policy — see [../migration/README.md](../migration/README.md)). The tag on each
+> heading (e.g. *architecture: 1C*) maps the integer to architecture.md's letter
+> scheme, where **Phase 1 = all analysis (1A-1E)** and **Phase 2 = codegen plus
+> storage/migration follow-through (2A+)**. All analysis (0-6) precedes codegen
+> (7-8); storage representation then gates migration cleanup.
 
 ## Track invariants
 

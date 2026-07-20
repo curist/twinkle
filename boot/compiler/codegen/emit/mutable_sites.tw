@@ -1,0 +1,116 @@
+//! Emit-side extraction helpers for the Phase 7C/7D mutable-decision seam.
+//!
+//! Translates prepared slots/args/fields into `compiler.codegen.mutable_select`
+//! inputs (`Site`, `OperationFamily`, base source locals, field path keys) so
+//! emission can ask the selector "what would the decision table pick here"
+//! without emit.tw re-deriving that shape itself.
+//!
+//! `select_call_for_emit` takes the decision table as an explicit parameter;
+//! emit.tw passes `ctx.mutable_decisions` (see `.ACall`/`.ARecordUpdate` lowering).
+//! In Phase 7C/7D the selector always returns the persistent target, so consulting
+//! these helpers makes no emitted-code change.
+
+use compiler.backend.prepared_ir.{PreparedAtom}
+use compiler.codegen.emit.context.{EmitCtx, LocalEntry, lookup_slot}
+use compiler.codegen.mutable_select
+use compiler.core_ir.{FieldId, FuncId, LocalId}
+use compiler.mono_type.{TypeId}
+
+pub fn site_for_result(ctx: EmitCtx, result_entry: LocalEntry) mutable_select.Site? {
+  case ctx.current_func_id {
+    .Some(fid) => .Some(mutable_select.Site.{ func: fid, local: result_entry.source_local }),
+    .None => .None,
+  }
+}
+
+pub fn call_family_for_persistent(fid: FuncId, ctx: EmitCtx) mutable_select.OperationFamily? {
+  if fid.id == ctx.builtins.id("vector$set_unsafe").id {
+    return .Some(.VectorSet)
+  }
+  if fid.id == ctx.builtins.method_id("Dict", "set").id {
+    return .Some(.DictSet)
+  }
+  if fid.id == ctx.builtins.method_id("Dict", "remove").id {
+    return .Some(.DictRemove)
+  }
+  .None
+}
+
+fn base_arg_index_for_family(family: mutable_select.OperationFamily) Int? {
+  case family {
+    .VectorSet => .Some(0),
+    .DictSet => .Some(0),
+    .DictRemove => .Some(0),
+    _ => .None,
+  }
+}
+
+pub fn base_source_local_for_args(
+  args: Vector<PreparedAtom>,
+  family: mutable_select.OperationFamily,
+  ctx: EmitCtx,
+) LocalId? {
+  base_idx := case base_arg_index_for_family(family) {
+    .Some(i) => i,
+    .None => return .None,
+  }
+  if base_idx < 0 or base_idx >= args.len() {
+    return .None
+  }
+  case args[base_idx] {
+    .ASlot(sid) => .Some(lookup_slot(ctx, sid).source_local),
+    _ => .None,
+  }
+}
+
+pub fn record_base_source_local(base: PreparedAtom, ctx: EmitCtx) LocalId? {
+  case base {
+    .ASlot(sid) => .Some(lookup_slot(ctx, sid).source_local),
+    _ => .None,
+  }
+}
+
+pub fn field_path_key(tid: TypeId, fid: FieldId) String {
+  "${tid.id}:f${fid.id}"
+}
+
+// Combine site/family/base-local derivation with the selector to ask "what
+// would the decision table pick for this prepared call site". Returns `.None`
+// when any prepared-site requirement is unavailable (no current function, the
+// persistent callee isn't a recognized family, or the base argument isn't a
+// slot) — emit.tw's later caller falls back to emitting the persistent call
+// directly in that case.
+pub fn select_call_for_emit(
+  table: mutable_select.MutableDecisionTable,
+  persistent_fid: FuncId,
+  args: Vector<PreparedAtom>,
+  result_entry: LocalEntry,
+  ctx: EmitCtx,
+) mutable_select.CallSelection? {
+  site := case site_for_result(ctx, result_entry) {
+    .Some(s) => s,
+    .None => return .None,
+  }
+  family := case call_family_for_persistent(persistent_fid, ctx) {
+    .Some(f) => f,
+    .None => return .None,
+  }
+  base_local := case base_source_local_for_args(args, family, ctx) {
+    .Some(l) => l,
+    .None => return .None,
+  }
+  expected_base_arg_index := base_arg_index_for_family(family)
+
+  .Some(
+    mutable_select.select_call(
+      table,
+      site,
+      family,
+      persistent_fid,
+      expected_base_arg_index,
+      base_local,
+      result_entry.source_local,
+      args.len(),
+    ),
+  )
+}

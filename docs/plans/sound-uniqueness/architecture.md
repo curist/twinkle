@@ -37,6 +37,16 @@ wrappers such as `Set<K>` should benefit from this through record-field ownershi
 and wrapper-aware lowering rather than needing a wholly separate optimization
 family.
 
+This target requires private mutation-enabled storage representation, not only
+safe selection of existing hooks. Existing-hook lowering is the early integration
+proof; closing the performance and migration goal also requires storage that can
+remain mutable across proven-owned chains, preserve typed/unboxed vector storage,
+use dense byte/int regions where needed, and make dict mutation truly storage-
+efficient under the same ownership proofs. The north star is to stay in the
+lowest private representation as long as ownership and ABI compatibility allow,
+then materialize ordinary persistent PVec/HAMT values only at the latest required
+publication boundary.
+
 ## Current context
 
 The current branch intentionally removed the previous boot uniqueness,
@@ -56,6 +66,8 @@ Existing implementation pieces still matter as historical scaffolding:
 
 - runtime/codegen hooks for vector builders and in-place vector/dict helpers;
 - persistent PVec and HAMT runtime representations;
+- typed-vector storage-site work such as `PVecI64`/`PVecBool`, typed builders,
+  typed reads, and representation-boundary adapters;
 - optimizer semantics metadata for pure/read/update/allocation behavior;
 - archived plans and probes documenting earlier soundness failures.
 
@@ -591,7 +603,7 @@ is proven semantically necessary and profitable.
 
 ## Milestone plan
 
-The future work is organized into three owned tracks, and the governing rule is
+The future work is organized into four owned tracks, and the governing rule is
 **all analysis precision lands before any codegen**. Phase 1 (analysis) builds the
 CFG ownership view, migrates analysis/passes to consume it, and then completes the
 *full* ownership-fact story — minimal `Unique`/`Shared`/`Unknown` facts first
@@ -601,8 +613,11 @@ ownership-specialization **decision facts** — printed preconditions,
 postconditions, and per-call-site variant compatibility (1E). Only once those
 facts are trustworthy does Phase 2 (codegen) consume the ANF-keyed decisions
 through existing persistent/in-place/builder hooks and generate the
-ownership-specialized variants those decisions call for; a later Phase 2D cleans
-the successful hook lowering up behind compiler-private intrinsics.
+ownership-specialized variants those decisions call for. The storage track then
+adds private mutation-enabled representations that can flow through scoped
+regions and owned-specialized call chains, staying low until the latest required
+publication boundary; only after that does the migration track clean successful
+lowering up behind compiler-private intrinsics and evaluate Buffer retirement.
 
 Baseline work is a precondition. The split between analysis and codegen for
 specialization is deliberate: deciding *which* call sites need an owned variant
@@ -611,8 +626,8 @@ variants is codegen (2A). Extern copying-borrow precision, non-escaping closure
 recovery, and concurrency copy/share refinement are conservative-by-default and
 remain post-codegen follow-ups rather than gates on the first codegen. The
 detailed track checklists live in [analysis/README.md](analysis/README.md),
-[codegen/README.md](codegen/README.md), and
-[migration/README.md](migration/README.md).
+[codegen/README.md](codegen/README.md), [storage/README.md](storage/README.md),
+and [migration/README.md](migration/README.md).
 
 ### Precondition — Baseline and guardrails
 
@@ -830,11 +845,25 @@ Exit criteria: dict-heavy compiler code gets in-place HAMT updates only when the
 analysis proves the old version is unobservable. Dict-backed record wrappers
 benefit later, when field-path precision is added.
 
-### Phase 2D — Later mutable-intrinsic cleanup
+### Phase 2D — Private mutable storage representation before migration cleanup
 
-- After the fact engine and existing-hook lowering are stable, introduce explicit
-  optimizer IR nodes or annotations for mutable-region intrinsics if the
-  builder/in-place helper surface becomes too implicit.
+Existing-hook lowering proves the ownership/codegen seam, but it is not enough to
+retire Buffer or reach the full performance target. Before cleanup, add the
+mandatory storage-representation work: scoped mutable regions, private `MutVec` /
+`MutDict` or equivalent storage targets, typed/dense vector storage where
+appropriate, true mutable/transient HAMT storage for dicts, and owned-specialized
+mutable ABI so proven-owned collections can stay mutable across helper chains.
+These targets still consume the same ownership decisions; they do not create a
+second legality path. Persistent materialization is a last-responsible-boundary
+operation: stay low across internal owned edges, then materialize only when a
+persistent/generic ABI or observable publication edge requires it.
+
+### Phase 2E — Later mutable-intrinsic cleanup
+
+- After the fact engine, existing-hook lowering, and private mutable-storage
+  targets are stable, introduce explicit optimizer IR nodes or annotations for
+  mutable-region intrinsics if the builder/in-place helper surface becomes too
+  implicit.
 - Move codegen toward intrinsic region operations: begin, read, write, append,
   remove, freeze.
 - Route existing vector builder hooks and vector/dict in-place helpers through the
@@ -852,13 +881,16 @@ that concept or identified as removable compatibility scaffolding.
   runs.
 - Once ordinary code reaches the same performance class for workloads where
   mutation is the bottleneck, stop treating `Buffer` as the recommended user
-  solution for those cases.
-- Deprecate and then remove explicit Buffer APIs and benchmark variants only
-after ordinary code has a proven replacement path.
+  solution for those ordinary local-update cases.
+- Remove or archive Buffer-based benchmark workaround variants only after ordinary
+  code has a proven replacement path.
+- Treat public `@std.buffer` API deprecation, narrowing, or removal as a separate
+  later decision after remaining raw linear-memory and interop use cases are
+  reviewed.
 
-Exit criteria: `Buffer` is no longer needed to express high-performance local
-collection updates in user code. See [buffer-cleanup.md](migration/buffer-cleanup.md) for
-the focused cleanup policy.
+Exit criteria: `Buffer` is no longer needed to express high-performance ordinary
+local collection updates in user code. See [buffer-cleanup.md](migration/buffer-cleanup.md)
+for the focused cleanup policy and the later public-API decision points.
 
 ## Testing and verification
 
@@ -915,8 +947,15 @@ Expected verification style:
   in-place bit?
 - How should field-sensitive ownership be represented so wrapper records such as
   `Set<K>` naturally project to owned `Dict<K, Void>` when sound?
-- Should the first mutable vector target reuse the current PVec shape, add a new
-  private mutable PVec, or introduce typed/flat storage at the same time?
+- Scoped mutable regions are the first private-storage slice after the existing-
+  hook proof. Within that scoped-region-first direction, which backend should be
+  attempted first: current hooks, typed `PVecI64`/`PVecBool` in-place helpers,
+  dense byte/int regions, private growable `MutVec` handles, or a staged mix of
+  those?
+- How should owned-specialized mutable ABI variants carry private `MutVec` /
+  `MutDict` storage through helper chains while capping variant growth and
+  materializing persistent values only at the latest required publication
+  boundary?
 - How much interprocedural summary information is needed beyond thin wrappers?
 - Should mutable-collection decisions be represented as ANF annotations, an
   ANF-keyed side table, or both?
@@ -968,6 +1007,7 @@ Sibling subplans:
 - `docs/plans/sound-uniqueness/codegen/handoff-contract.md`
 - `docs/plans/sound-uniqueness/codegen/operation-catalog.md`
 - `docs/plans/sound-uniqueness/codegen/existing-hooks.md`
+- `docs/plans/sound-uniqueness/storage/README.md`
 - `docs/plans/sound-uniqueness/migration/mutable-intrinsics.md`
 - `docs/plans/sound-uniqueness/migration/buffer-cleanup.md`
 

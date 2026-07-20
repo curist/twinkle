@@ -1,0 +1,269 @@
+//! Central mutable-codegen decision selector for Codegen Phase 7C/7D.
+//!
+//! This module owns the decision/fallback contract. It does not prove ownership
+//! and never changes emitted code in Phase 7C/7D.
+
+use compiler.core_ir.{FuncId, LocalId}
+use compiler.variant_id as own_variant
+
+pub type OperationFamily = {
+  VectorSet,
+  DictSet,
+  DictRemove,
+  RecordShellUpdate,
+  VectorBuilderRegion,
+  StringBuilderRegion,
+  FunctionVariant,
+  RecordBackedFieldCollection,
+}
+
+pub type Site = .{ func: FuncId, local: LocalId }
+
+pub type MutableDecision = .{
+  site: Site,
+  family: OperationFamily,
+  source_local: LocalId,
+  result_local: LocalId,
+  arg_count: Int,
+  base_arg_index: Int?,
+  persistent_func: FuncId?,
+  mutable_func: FuncId?,
+  variant_key: own_variant.VariantId?,
+  field_path_key: String,
+  proof_debug_id: String,
+}
+
+pub type MutableDecisionTable = .{ by_site: Dict<Int, Vector<MutableDecision>> }
+
+pub type SelectionReason = {
+  Absent,
+  PersistentOnly,
+  WrongFamily,
+  WrongPersistentTarget,
+  MissingMutableTarget,
+  SourceLocalMismatch,
+  ResultLocalMismatch,
+  ArgumentShapeMismatch,
+  BaseArgMismatch,
+  FieldPathMismatch,
+  Ambiguous,
+  UnsupportedFamily,
+}
+
+pub type CallSelection = .{ emit_func: FuncId, would_func: FuncId, reason: SelectionReason }
+
+pub type RecordReuseSelection = .{
+  emit_can_reuse: Bool,
+  would_reuse: Bool,
+  reason: SelectionReason,
+}
+
+pub fn selection_reason_tag(r: SelectionReason) Int {
+  case r {
+    .Absent => 0,
+    .PersistentOnly => 1,
+    .WrongFamily => 2,
+    .WrongPersistentTarget => 3,
+    .MissingMutableTarget => 4,
+    .SourceLocalMismatch => 5,
+    .ResultLocalMismatch => 6,
+    .ArgumentShapeMismatch => 7,
+    .BaseArgMismatch => 8,
+    .FieldPathMismatch => 9,
+    .Ambiguous => 10,
+    .UnsupportedFamily => 11,
+  }
+}
+
+pub fn record_reason_tag(r: SelectionReason) Int {
+  r.selection_reason_tag()
+}
+
+pub fn site_key(site: Site) Int {
+  own_variant.site_key(site.func.id, site.local.id)
+}
+
+pub fn empty_decision_table() MutableDecisionTable {
+  MutableDecisionTable.{ by_site: Dict.new() }
+}
+
+pub fn with_decision(self: MutableDecisionTable, d: MutableDecision) MutableDecisionTable {
+  key := d.site.site_key()
+  existing := case self.by_site.get(key) {
+    .Some(v) => v,
+    .None => [],
+  }
+  self.by_site[key] = existing.append(d)
+  self
+}
+
+// Families this Phase 7D selector recognizes for call-site (VectorSet/DictSet/
+// DictRemove) selection. Any other family is UnsupportedFamily.
+fn is_supported_call_family(family: OperationFamily) Bool {
+  case family {
+    .VectorSet => true,
+    .DictSet => true,
+    .DictRemove => true,
+    _ => false,
+  }
+}
+
+fn decisions_at(table: MutableDecisionTable, site: Site) Vector<MutableDecision> {
+  case table.by_site.get(site.site_key()) {
+    .Some(v) => v,
+    .None => [],
+  }
+}
+
+pub fn select_call(
+  table: MutableDecisionTable,
+  site: Site,
+  expected_family: OperationFamily,
+  persistent_fallback: FuncId,
+  expected_base_arg_index: Int?,
+  source_local: LocalId,
+  result_local: LocalId,
+  arg_count: Int,
+) CallSelection {
+  fallback := CallSelection.{
+    emit_func: persistent_fallback,
+    would_func: persistent_fallback,
+    reason: .Absent,
+  }
+  ds := table.decisions_at(site)
+
+  if ds.len() == 0 {
+    return fallback
+  }
+
+  if ds.len() > 1 {
+    return CallSelection.{
+      emit_func: persistent_fallback,
+      would_func: persistent_fallback,
+      reason: .Ambiguous,
+    }
+  }
+
+  if !expected_family.is_supported_call_family() {
+    return CallSelection.{
+      emit_func: persistent_fallback,
+      would_func: persistent_fallback,
+      reason: .UnsupportedFamily,
+    }
+  }
+
+  d := ds[0]
+
+  reject := fn(reason: SelectionReason) CallSelection { CallSelection.{
+    emit_func: persistent_fallback,
+    would_func: persistent_fallback,
+    reason,
+  } }
+
+  if d.family != expected_family {
+    return reject(.WrongFamily)
+  }
+
+  if d.source_local.id != source_local.id {
+    return reject(.SourceLocalMismatch)
+  }
+
+  if d.result_local.id != result_local.id {
+    return reject(.ResultLocalMismatch)
+  }
+
+  if d.arg_count != arg_count {
+    return reject(.ArgumentShapeMismatch)
+  }
+
+  base_arg_matches := case d.base_arg_index {
+    .Some(a) => case expected_base_arg_index {
+      .Some(b) => a == b,
+      .None => false,
+    },
+    .None => case expected_base_arg_index {
+      .None => true,
+      .Some(_) => false,
+    },
+  }
+
+  if !base_arg_matches {
+    return reject(.BaseArgMismatch)
+  }
+
+  persistent_matches := case d.persistent_func {
+    .Some(pf) => pf.id == persistent_fallback.id,
+    .None => false,
+  }
+
+  if !persistent_matches {
+    return reject(.WrongPersistentTarget)
+  }
+
+  case d.mutable_func {
+    .Some(mf) => CallSelection.{
+      emit_func: persistent_fallback,
+      would_func: mf,
+      reason: .PersistentOnly,
+    },
+    .None => reject(.MissingMutableTarget),
+  }
+}
+
+pub fn select_record_update(
+  table: MutableDecisionTable,
+  site: Site,
+  source_local: LocalId,
+  result_local: LocalId,
+  field_path_key: String,
+  original_can_reuse: Bool,
+) RecordReuseSelection {
+  fallback := RecordReuseSelection.{
+    emit_can_reuse: original_can_reuse,
+    would_reuse: false,
+    reason: .Absent,
+  }
+  ds := table.decisions_at(site)
+
+  if ds.len() == 0 {
+    return fallback
+  }
+
+  if ds.len() > 1 {
+    return RecordReuseSelection.{
+      emit_can_reuse: original_can_reuse,
+      would_reuse: false,
+      reason: .Ambiguous,
+    }
+  }
+
+  d := ds[0]
+
+  reject := fn(reason: SelectionReason) RecordReuseSelection { RecordReuseSelection.{
+    emit_can_reuse: original_can_reuse,
+    would_reuse: false,
+    reason,
+  } }
+
+  if d.family != OperationFamily.RecordShellUpdate {
+    return reject(.WrongFamily)
+  }
+
+  if d.source_local.id != source_local.id {
+    return reject(.SourceLocalMismatch)
+  }
+
+  if d.result_local.id != result_local.id {
+    return reject(.ResultLocalMismatch)
+  }
+
+  if d.field_path_key != field_path_key {
+    return reject(.FieldPathMismatch)
+  }
+
+  RecordReuseSelection.{
+    emit_can_reuse: original_can_reuse,
+    would_reuse: true,
+    reason: .PersistentOnly,
+  }
+}

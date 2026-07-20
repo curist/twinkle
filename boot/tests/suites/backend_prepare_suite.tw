@@ -15,14 +15,18 @@ use @std.testing as runner
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp}
 use compiler.backend.closure_convert.{convert_closures}
-use compiler.backend.prepare.{prepare_backend}
-use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc}
+use compiler.backend.prepare.{
+  PreparedModule, prepare_backend, prepare_backend_with_mutable_decisions,
+}
+use compiler.backend.prepared_ir.{CaptureParam, PreparedExpr, PreparedFunc, SlotId}
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
+use compiler.codegen.mutable_select
 use compiler.codegen.wasm_ir.{AbiContract, ValType}
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.core_ir.{CorePattern, FuncId, LocalId, Param}
 use compiler.mono_type.{MonoType, TypeId}
+use compiler.pipeline
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv}
 
@@ -212,6 +216,73 @@ fn collect_let_lids_expr(expr: AnfExpr) Vector<Int> {
     .Let(local, _, body) => [local.id].concat(collect_let_lids_expr(body)),
     _ => [],
   }
+}
+
+// ── Mutable-decision boundary helpers ────────────────────────────────
+type VectorSetSlots = .{ result: SlotId, base: SlotId }
+
+type VectorSetSite = .{ func: PreparedFunc, result: SlotId, base: SlotId }
+
+fn find_vector_set_slots_expr(expr: PreparedExpr, set_id: FuncId) VectorSetSlots? {
+  case expr {
+    .Let(result, .ACall(.AGlobalFunc(fid), args), body) => {
+      if fid.id == set_id.id and args.len() == 3 {
+        case args[0] {
+          .ASlot(base) => return .Some(VectorSetSlots.{ result, base }),
+          _ => {},
+        }
+      }
+      find_vector_set_slots_expr(body, set_id)
+    },
+    .Let(_, _, body) => find_vector_set_slots_expr(body, set_id),
+    _ => .None,
+  }
+}
+
+fn find_vector_set_site(prepared: PreparedModule, builtins: BuiltinRegistry) VectorSetSite {
+  set_id := builtins.id("vector$set_unsafe")
+  for pf in prepared.funcs {
+    if pf.name == "set_one" {
+      case find_vector_set_slots_expr(pf.body, set_id) {
+        .Some(slots) => return VectorSetSite.{ func: pf, result: slots.result, base: slots.base },
+        .None => {},
+      }
+    }
+  }
+  error("missing vector set site")
+}
+
+type AnfVectorSetSite = .{ func: FuncId, result: LocalId, base: LocalId, arg_count: Int }
+
+fn find_vector_set_anf_expr(func_id: FuncId, expr: AnfExpr, set_id: FuncId) AnfVectorSetSite? {
+  case expr {
+    .Let(result, .ACall(.AGlobalFunc(fid), args), body) => {
+      if fid.id == set_id.id and args.len() == 3 {
+        case args[0] {
+          .ALocal(base) => return .Some(
+            AnfVectorSetSite.{ func: func_id, result, base, arg_count: args.len() },
+          ),
+          _ => {},
+        }
+      }
+      find_vector_set_anf_expr(func_id, body, set_id)
+    },
+    .Let(_, _, body) => find_vector_set_anf_expr(func_id, body, set_id),
+    _ => .None,
+  }
+}
+
+fn find_vector_set_anf(anf: AnfModule, builtins: BuiltinRegistry) AnfVectorSetSite {
+  set_id := builtins.id("vector$set_unsafe")
+  for f in anf.functions {
+    if f.name == "set_one" {
+      case find_vector_set_anf_expr(f.func_id, f.body, set_id) {
+        .Some(site) => return site,
+        .None => {},
+      }
+    }
+  }
+  error("missing pre-prepare vector set site")
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -618,6 +689,104 @@ pub fn suite() runner.Suite {
             .Ok({})
           },
         }
+      },
+    )
+    .test(
+      "prepare_backend carries mutable decision table through the backend boundary",
+      fn() {
+        b := empty_builtins()
+        anf := mk_module([
+          mk_func_def(1, "f", [], MonoType.Int, AnfExpr.Atom(.ALitInt(1)), Dict.new()),
+        ])
+        site := mutable_select.Site.{ func: fid(1), local: lid(99) }
+        decisions := mutable_select
+          .empty_decision_table()
+          .with_decision(mutable_select.MutableDecision.{
+            site,
+            family: mutable_select.OperationFamily.VectorSet,
+            source_local: lid(1),
+            result_local: lid(99),
+            arg_count: 3,
+            base_arg_index: .Some(0),
+            persistent_func: .Some(fid(100)),
+            mutable_func: .Some(fid(101)),
+            variant_key: .None,
+            field_path_key: "",
+            proof_debug_id: "prepared-boundary",
+          })
+        prepared := prepare_backend_with_mutable_decisions(
+          anf,
+          empty_env(),
+          b,
+          no_captures(),
+          decisions,
+        )
+        selected := mutable_select.select_call(
+          prepared.mutable_decisions,
+          site,
+          mutable_select.OperationFamily.VectorSet,
+          fid(100),
+          .Some(0),
+          lid(1),
+          lid(99),
+          3,
+        )
+        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "pre-prepare update decision matches prepared source locals",
+      fn() {
+        src := "fn set_one(xs: Vector<Int>) Vector<Int> {\n  xs[0] = 9\n  xs\n}\n"
+        artifacts := try pipeline.compile_source(src)
+        closure_conversion := convert_closures(artifacts.opt, artifacts.env)
+        pre := find_vector_set_anf(closure_conversion.anf, artifacts.builtins)
+        site := mutable_select.Site.{ func: pre.func, local: pre.result }
+        decisions := mutable_select
+          .empty_decision_table()
+          .with_decision(mutable_select.MutableDecision.{
+            site,
+            family: mutable_select.OperationFamily.VectorSet,
+            source_local: pre.base,
+            result_local: pre.result,
+            arg_count: pre.arg_count,
+            base_arg_index: .Some(0),
+            persistent_func: .Some(artifacts.builtins.id("vector$set_unsafe")),
+            mutable_func: .Some(artifacts.builtins.id("vector$set_in_place")),
+            variant_key: .None,
+            field_path_key: "",
+            proof_debug_id: "prepared-real-site",
+          })
+        prepared := prepare_backend_with_mutable_decisions(
+          closure_conversion.anf,
+          artifacts.env,
+          artifacts.builtins,
+          closure_conversion.captures,
+          decisions,
+        )
+        site_slots := find_vector_set_site(prepared, artifacts.builtins)
+        pf := site_slots.func
+        base_info := case pf.slots[site_slots.base.id] {
+          .Some(info) => info,
+          .None => error("missing base slot after decision threading"),
+        }
+        result_info := case pf.slots[site_slots.result.id] {
+          .Some(info) => info,
+          .None => error("missing result slot after decision threading"),
+        }
+        selected := mutable_select.select_call(
+          prepared.mutable_decisions,
+          mutable_select.Site.{ func: pf.func_id, local: result_info.source_local },
+          mutable_select.OperationFamily.VectorSet,
+          artifacts.builtins.id("vector$set_unsafe"),
+          .Some(0),
+          base_info.source_local,
+          result_info.source_local,
+          pre.arg_count,
+        )
+        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 1)
+        .Ok({})
       },
     )
 }
