@@ -69,22 +69,21 @@ during iteration, but an assumption is kept only when every entry and backedge
 predecessor contribution validates as both `Unique` and binding-valid after convergence.
 Function-parameter and fresh-alias nested-loop fixtures stay conservative.
 
-## graph_scc.visit classification
+## graph_scc.visit classification (analysis-resolved)
 
-- `graph_scc.visit` stays conservative after the sieve vector fix. It is a separate
-  recursive/SCC-summary specialization gap: the threaded state passes through a
-  self-recursive call whose summary is still generic, and its field updates target
-  dict/record fields inside a record shell that is never proven uniquely owned across
-  the recursion. Track as a follow-up.
+`graph_scc.visit` now keeps its **generic** summary/body conservative while rendering a
+separate owned diagnostic body for the reachable recursive variant. The generic section
+still reports `p0=Published p1=Published p2=Published ret=alias(p0)` and its record
+updates may still say `shell=persistent(aliased shell)`: that is the correct generic
+body because `visit` can be called without an owned precondition.
 
-Observed today (regenerate to confirm): `visit` summary is
-`p0=Published p1=Published p2=Published ret=alias(p0)`; every `record_update` on the
-threaded record `cur` renders `shell=persistent(aliased shell)
-field=persistent(insufficient deep ownership)` with `[in_place=false]`, and no
-`verdict -> fN[unique:...]` renders. `cur` is Published because it is passed to the
-self-recursive `visit` (the generic SCC summary publishes its args), so its shell is an
-aliased shell and no owned in-place decision is reachable. This is orthogonal to the
-sieve vector wrapper: the sieve fix teaches a NON-recursive `.Update` builtin wrapper to
-consume its base in place; `visit` needs the recursive/SCC summary to specialize the
-threaded record to an owned entry — a different mechanism (variant seeding across the
-SCC), not addressed here.
+The owned precondition is rendered separately as `variant fn visit [unique:p0]`, with
+`variant: p0=Consumed paths{[]} ... ret=alias(p0)`. In that variant-qualified body,
+the threaded state record's shell updates render `shell=reuse(unique)`, while dict/vector
+field backings remain conservative with `field=persistent(insufficient deep ownership)`.
+This separation is intentional: field-value publication must not publish the enclosing
+record shell, but deep field mutation still needs its own proof.
+
+This is still analysis/debug output only. Real in-place codegen remains the Stage 6
+handoff in the codegen track: codegen must clone/specialize by `VariantId` before it can
+consume these variant-qualified verdicts as mutation decisions.

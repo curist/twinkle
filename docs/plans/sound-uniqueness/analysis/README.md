@@ -1,14 +1,14 @@
 # Analysis Track
 
-**Status:** Phases 0-6 done (2026-07-19). Phase 6 closed the Phase 5
-param-threaded deferral and now prints the per-call-site owned specialization
-decision in `twk ir --cfg`; generated code remains unchanged and the census stays
-0 in-place. Two design items were **re-scoped to codegen** by spikes:
-field-granular `field_own` seeding (Stage "4b") has no summary observable, and the
-variant memo + SCC fixpoint (D12) re-analyzes a specialized *body* only for
-emission, not for the analysis decision. All analysis precision lands *before* any
-codegen, per [../architecture.md](../architecture.md)'s governing rule that all
-analysis precision precedes codegen.
+**Status:** Phases 0-6 done (2026-07-19; recursive-summary diagnostic layer
+closed afterward). Phase 6 closed the Phase 5 param-threaded deferral and prints
+owned specialization decisions in `twk ir --cfg`; generated code remains unchanged
+and the census stays 0 in-place. The recursive SCC variant memo/fixpoint (D12) now
+renders variant-qualified diagnostic bodies such as `variant fn visit [unique:p0]`,
+while generic bodies stay conservative. Variant *generation* and in-place emission
+remain codegen work. All analysis precision lands *before* any codegen, per
+[../architecture.md](../architecture.md)'s governing rule that all analysis precision
+precedes codegen.
 
 This track owns the proof-producing half of sound uniqueness: CFG structure,
 ownership facts, liveness/last-use, summaries, candidate-classification inputs,
@@ -223,18 +223,16 @@ story is verifiable before any code is emitted. Canonical semantics:
   selected owned variant for direct user calls whose arguments are proven owned;
   generic decisions intentionally print no verdict in this slice to keep `--cfg`
   readable. Decisions only — no cloned variants emitted.
-- [~] **SCC-granularity variant fixpoint + demand-driven memo + cap (D12)** —
-  **re-scoped to codegen.** These re-analyze a specialized *body* (needed only when
-  codegen emits one, incl. recursive Case V); the analysis *decision* is computed from
-  the generic summary and does not need them. `ConsumedPaths` + the D6 disjoint-sibling
-  read-rule + field-granular seeding ride to codegen with them. See the Stage-4b/4c
-  implementation notes in [phase6-design.md](phase6-design.md).
+- [x] **SCC-granularity variant fixpoint + demand-driven memo + cap (D12).**
+  Recursive/threaded functions get a `VariantId`-keyed summary fixpoint and reachable
+  variants render as separate diagnostic bodies. Generic summaries and generic bodies
+  remain conservative; optimistic cap-hit snapshots retract instead of rendering.
+  Field-granular codegen seeding and multi-specialization cloning remain codegen work.
 
 Exit: the B∩C "one callee, two caller shapes" example prints a verifiable
-per-call-site specialization decision (owned-specialized vs generic, with the
-licensing proof) in `twk ir --cfg`; generated code unchanged. (Recursive Case V and
-partial mixed-ownership keys are exercised once codegen re-analyzes specialized
-bodies.)
+per-call-site specialization decision, and recursive Case V (`graph_scc.visit`) prints
+an owned variant-qualified body in `twk ir --cfg`; generated code unchanged. Partial
+mixed-ownership keys and real cloned variant emission remain codegen follow-up.
 
 ## Analysis deferrals
 
