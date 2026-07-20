@@ -77,22 +77,75 @@ Phase 7D intentionally emits the same persistent WAT whether the selector is con
 
 Task 2 proves the vector indexed-update site identity survives optimized ANF → prepared IR. Task 3 must also prove one real compiled `Dict.set` source site survives through `mutable_sites.select_call_for_emit(...)`, because dict lowering uses a real persistent builtin call family but a different source form from vector indexed assignment. Record update receives helper and hand-built integration coverage in this phase; a real-source record-update survival proof is deferred to Phase 8F unless the implementer can add it without expanding this seam.
 
-## No-output-change baseline
+## No-output-change proof
 
-Before starting Task 1 implementation, capture the default compiler output baseline:
+Phase 7C/7D must not change the code the compiler emits. The compiler's *own*
+wasm legitimately grows this phase (a new module, a new `EmitCtx` field, the
+`emit_op` signature change), so comparing `twk build boot/main.tw` before vs.
+after is meaningless — the input source changed, so the output must differ, and
+the same unrebuilt `target/twk` binary would run the *old* codegen both times
+anyway. To isolate codegen behavior, hold a **fixed input program** constant and
+vary only the compiler. Two independent guards cover this:
+
+- **Self-host fixed point.** `make stage2` (run transitively by `make bundle-cli`
+  in Task 5) rebuilds the payload through the self-host loop and asserts
+  `stage3 == stage4`, proving the new codegen is internally self-consistent on the
+  largest real input (`boot/main.tw`).
+- **Old-vs-new codegen equivalence on the touched ops.** Compile one fixed sample
+  program — exercising vector indexed update, dict set, dict remove, and record
+  shell update — with the pre-change `target/twk` and again with the rebuilt
+  `target/twk`, and require byte-identical output.
+
+Before starting Task 1, on clean `main` with the current `target/twk`, capture the
+baseline. The sample keeps its `:=` bindings **inside a function** (a robustness
+choice that stays valid regardless of compiler version) and **calls** all four
+functions so their bodies survive DCE and are actually emitted:
 
 ```bash
-target/twk build boot/main.tw -o /tmp/twinkle-phase-7d-before.wasm
+cat > /tmp/twinkle-7d-sample.tw <<'EOF'
+type Pt = .{ x: Int, y: Int }
+
+fn vec_set(xs: Vector<Int>) Vector<Int> {
+  xs[0] = 9
+  xs
+}
+
+fn dict_set(m: Dict<Int, Int>) Dict<Int, Int> {
+  m[1] = 9
+  m
+}
+
+fn dict_del(m: Dict<Int, Int>) Dict<Int, Int> {
+  Dict.remove(m, 1)
+}
+
+fn rec_up(p: Pt) Pt {
+  p.x = 3
+  p
+}
+
+fn run() Int {
+  xs := vec_set([1, 2])
+  m := dict_del(dict_set(Dict.new()))
+  p := rec_up(Pt.{ x: 0, y: 0 })
+  xs.len() + m.len() + p.x
+}
+
+println(run().to_string())
+EOF
+target/twk build /tmp/twinkle-7d-sample.tw -o /tmp/twinkle-7d-before.wasm
 ```
 
-After Task 4 emission plumbing, rebuild and compare:
+Keep `/tmp/twinkle-7d-before.wasm` for the Task 5 comparison. This build is
+deterministic (repeated builds are byte-identical), and its WAT contains
+`rt_arr__set`, `rt_dict__set`, `rt_dict__remove`, and the record `struct.new`
+path, so any codegen drift on a touched op will change the bytes.
 
-```bash
-target/twk build boot/main.tw -o /tmp/twinkle-phase-7d-after.wasm
-cmp -s /tmp/twinkle-phase-7d-before.wasm /tmp/twinkle-phase-7d-after.wasm
-```
-
-Expected: `cmp` exits 0. If it differs, inspect before continuing; Phase 7C/7D must not change default emitted compiler output.
+The "after" comparison must run with the **rebuilt** `target/twk` (post
+`make bundle-cli`), because the `emit.tw` change only takes effect once the payload
+is rebuilt — so it lives in Task 5, not Task 4. Task 4's persistent-output proof is
+instead the WAT-substring integration tests, which compile the modified emit paths
+from source via `twk run boot/tests/main.tw`.
 
 ## Non-goals for this plan
 
@@ -1071,11 +1124,9 @@ Run:
 target/twk fmt boot/compiler/codegen/mutable_select.tw boot/compiler/codegen/emit/mutable_sites.tw boot/compiler/codegen/emit/context.tw boot/compiler/codegen/emit.tw boot/tests/suites/codegen_emit_suite.tw boot/tests/suites/mutable_select_suite.tw boot/tests/suites/wasm_plan_suite.tw
 target/twk lint boot/main.tw
 target/twk run boot/tests/main.tw
-target/twk build boot/main.tw -o /tmp/twinkle-phase-7d-after.wasm
-cmp -s /tmp/twinkle-phase-7d-before.wasm /tmp/twinkle-phase-7d-after.wasm
 ```
 
-Expected: helper tests prove vector/dict/record decisions can be recognized through the emit helper, emitted WAT remains persistent, Wasm planning ignores would-be mutable targets, the before/after compiler Wasm comparison exits 0, and the required code review has confirmed the identical-output `emit.tw` selector wiring. Do not claim WAT alone proves `emit.tw` consulted the selector in Phase 7D.
+Expected: helper tests prove vector/dict/record decisions can be recognized through the emit helper, emitted WAT remains persistent, Wasm planning ignores would-be mutable targets, and the required code review has confirmed the identical-output `emit.tw` selector wiring. Do not claim WAT alone proves `emit.tw` consulted the selector in Phase 7D. The byte-level codegen-equivalence comparison against the pre-change baseline runs in Task 5, after `make bundle-cli` rebuilds the compiler payload so the new codegen is live.
 
 - [ ] **Step 9: Commit Task 4**
 
@@ -1233,14 +1284,19 @@ Run:
 target/twk fmt boot/compiler/codegen/mutable_select.tw boot/compiler/codegen/emit/mutable_sites.tw boot/compiler/backend/prepare.tw boot/compiler/codegen/emit/context.tw boot/compiler/codegen/emit.tw boot/tests/suites/mutable_select_suite.tw boot/tests/suites/backend_prepare_suite.tw boot/tests/suites/codegen_emit_suite.tw boot/tests/suites/backend_verify_suite.tw boot/tests/suites/wasm_plan_suite.tw boot/tests/main.tw
 target/twk lint boot/main.tw
 target/twk run boot/tests/main.tw
-target/twk build boot/main.tw -o /tmp/twinkle-phase-7d-after.wasm
-cmp -s /tmp/twinkle-phase-7d-before.wasm /tmp/twinkle-phase-7d-after.wasm
+
+# Rebuild the payload so the new codegen is live and the self-host fixed point
+# (stage3 == stage4) is checked, then prove the rebuilt compiler emits
+# byte-identical wasm to the pre-change baseline for the fixed sample.
 make bundle-cli
+target/twk build /tmp/twinkle-7d-sample.tw -o /tmp/twinkle-7d-after.wasm
+cmp -s /tmp/twinkle-7d-before.wasm /tmp/twinkle-7d-after.wasm
+
 make boot-test
 git diff --check
 ```
 
-Expected: formatter is idempotent after the first run, linter reports no blocking house-rule violations, boot tests pass, default compiler Wasm output matches the pre-Task-1 baseline, `make bundle-cli` and `make boot-test` pass sequentially, and `git diff --check` prints no whitespace errors.
+Expected: formatter is idempotent after the first run, linter reports no blocking house-rule violations, boot tests pass, `make bundle-cli` reaches the `stage3 == stage4` fixed point, the rebuilt compiler emits byte-identical wasm for the fixed sample (`cmp` exits 0), `make boot-test` passes, and `git diff --check` prints no whitespace errors. Run the heavy steps (`make bundle-cli`, `make boot-test`) sequentially, never concurrently.
 
 - [ ] **Step 5: Commit Task 5**
 
@@ -1275,14 +1331,14 @@ Run before claiming the implementation is complete:
 target/twk fmt boot/compiler/codegen/mutable_select.tw boot/compiler/codegen/emit/mutable_sites.tw boot/compiler/backend/prepare.tw boot/compiler/codegen/emit/context.tw boot/compiler/codegen/emit.tw boot/tests/suites/mutable_select_suite.tw boot/tests/suites/backend_prepare_suite.tw boot/tests/suites/codegen_emit_suite.tw boot/tests/suites/backend_verify_suite.tw boot/tests/suites/wasm_plan_suite.tw boot/tests/main.tw
 target/twk lint boot/main.tw
 target/twk run boot/tests/main.tw
-target/twk build boot/main.tw -o /tmp/twinkle-phase-7d-after.wasm
-cmp -s /tmp/twinkle-phase-7d-before.wasm /tmp/twinkle-phase-7d-after.wasm
 make bundle-cli
+target/twk build /tmp/twinkle-7d-sample.tw -o /tmp/twinkle-7d-after.wasm
+cmp -s /tmp/twinkle-7d-before.wasm /tmp/twinkle-7d-after.wasm
 make boot-test
 git diff --check
 ```
 
-`boot/tests/main.tw` imports the compiler and exercises the modified preparation/emission paths from source-level integration tests, so it catches Twinkle type errors in the new modules and default codegen regressions. The final `make bundle-cli` + `make boot-test` sanity check verifies the self-hosted payload and boot suite after the seam lands.
+`boot/tests/main.tw` imports the compiler and exercises the modified preparation/emission paths from source-level integration tests, so it catches Twinkle type errors in the new modules and default codegen regressions. `make bundle-cli` rebuilds the self-hosted payload and checks the `stage3 == stage4` fixed point; the `cmp` then proves the rebuilt compiler emits byte-identical wasm for the fixed sample captured in "No-output-change proof" (so codegen on the touched ops is unchanged); `make boot-test` runs the boot suite against the new payload. Run `make bundle-cli` and `make boot-test` sequentially, never concurrently. The baseline `/tmp/twinkle-7d-before.wasm` must have been captured on clean `main` before Task 1.
 
 ## Follow-up plan after 7D
 
