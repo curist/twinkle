@@ -73,6 +73,27 @@ Phase 7C/7D does **not** validate non-base argument literal identity across the 
 
 Phase 7D intentionally emits the same persistent WAT whether the selector is consulted or not. Tests in this plan therefore prove helper behavior, persistent-output guards, and Wasm-planning isolation, but they cannot prove identical-output `.ACall` / `.ARecordUpdate` branches actually delegated to `mutable_sites`. Task 4 includes a required review checkpoint that inspects the `emit.tw` diff and confirms both emission branches call the selector helpers before the task may be committed.
 
+## Real-source survival scope
+
+Task 2 proves the vector indexed-update site identity survives optimized ANF → prepared IR. Task 3 must also prove one real compiled `Dict.set` source site survives through `mutable_sites.select_call_for_emit(...)`, because dict lowering uses a real persistent builtin call family but a different source form from vector indexed assignment. Record update receives helper and hand-built integration coverage in this phase; a real-source record-update survival proof is deferred to Phase 8F unless the implementer can add it without expanding this seam.
+
+## No-output-change baseline
+
+Before starting Task 1 implementation, capture the default compiler output baseline:
+
+```bash
+target/twk build boot/main.tw -o /tmp/twinkle-phase-7d-before.wasm
+```
+
+After Task 4 emission plumbing, rebuild and compare:
+
+```bash
+target/twk build boot/main.tw -o /tmp/twinkle-phase-7d-after.wasm
+cmp -s /tmp/twinkle-phase-7d-before.wasm /tmp/twinkle-phase-7d-after.wasm
+```
+
+Expected: `cmp` exits 0. If it differs, inspect before continuing; Phase 7C/7D must not change default emitted compiler output.
+
 ## Non-goals for this plan
 
 - Do not implement the ownership-analysis producer that populates real decisions from `ownership.tw`. That is a follow-up after the seam exists.
@@ -702,7 +723,7 @@ use compiler.core_ir.{FieldId, FuncId, LocalId}
 use compiler.mono_type.{TypeId}
 ```
 
-Add tests that construct a minimal `EmitCtx` with a slot map containing a base slot whose `source_local` differs from its `SlotId`. Assert the helper returns the semantic `source_local`, not the slot id.
+Add tests that construct a minimal `EmitCtx` with a slot map containing a base slot whose `source_local` differs from its `SlotId`. Assert the helper returns the semantic `source_local`, not the slot id. For any helper test that expects `select_call_for_emit(...)` or `site_for_result(...)` to return `.Some(...)`, set `ctx.current_func_id` to `.Some(site.func)`; leaving it `.None` is the explicit skip path and should be tested only when the expected result is `.None`.
 
 Required assertions:
 
@@ -723,7 +744,29 @@ Also add helper tests for `Dict.set` and `Dict.remove`: `call_family_for_persist
 
 Also add a helper-level selector test that calls `mutable_sites.select_call_for_emit(...)` with a non-empty decision table and asserts reason `PersistentOnly`, `would_func` is the mutable helper, and `emit_func` is the persistent fallback. This pins the logic emission is intended to delegate to.
 
-Add the actual pre-prepare-to-prepared survival proof here: compile `set_one`, capture the decision from optimized/closure-converted ANF before `prepare_backend_with_mutable_decisions`, prepare with that table, find the prepared `vector$set_unsafe` call and pass its prepared `args`, result entry, and `EmitCtx` to `mutable_sites.select_call_for_emit(...)`. Assert reason `PersistentOnly`, `would_func == vector$set_in_place`, and `emit_func == vector$set_unsafe`. This test must not call `mutable_select.select_call(...)` directly for the final assertion; it must derive the prepared base source local and prepared arg count through `mutable_sites`.
+Add the actual pre-prepare-to-prepared survival proofs here:
+
+1. Compile vector update source:
+
+```tw
+fn set_one(xs: Vector<Int>) Vector<Int> {
+  xs[0] = 9
+  xs
+}
+```
+
+Capture the decision from optimized/closure-converted ANF before `prepare_backend_with_mutable_decisions`, prepare with that table, find the prepared `vector$set_unsafe` call, build an `EmitCtx` whose `current_func_id` is `.Some(pf.func_id)`, and pass the prepared `args`, result entry, and `EmitCtx` to `mutable_sites.select_call_for_emit(...)`. Assert reason `PersistentOnly`, `would_func == vector$set_in_place`, and `emit_func == vector$set_unsafe`. This test must not call `mutable_select.select_call(...)` directly for the final assertion; it must derive the prepared base source local and prepared arg count through `mutable_sites`.
+
+2. Compile dict update source:
+
+```tw
+fn set_one_dict(m: Dict<Int, Int>) Dict<Int, Int> {
+  m[1] = 9
+  m
+}
+```
+
+Capture the pre-prepare ANF call whose callee is `artifacts.builtins.method_id("Dict", "set")`, build a `MutableDecision` with `family: mutable_select.OperationFamily.DictSet`, `persistent_func: .Some(artifacts.builtins.method_id("Dict", "set"))`, and `mutable_func: .Some(artifacts.builtins.id("dict$set_in_place"))`, then prepare with that table. Find the prepared `Dict.set` call, build an `EmitCtx` whose `current_func_id` is `.Some(pf.func_id)`, and assert `mutable_sites.select_call_for_emit(...)` returns `PersistentOnly`, `would_func == dict$set_in_place`, and `emit_func == Dict.set`. This proves at least one real dict source site preserves the same source/result locals and base argument through preparation.
 
 - [ ] **Step 2: Run tests and verify the expected failure**
 
@@ -803,7 +846,13 @@ Implement `select_call_for_emit(table, persistent_fid, args, result_entry, ctx)`
 
 - [ ] **Step 4: Add a Wasm planning guard test**
 
-In `boot/tests/suites/wasm_plan_suite.tw`, add a test that prepares a module whose body only calls the persistent vector or dict helper, attaches a decision naming the corresponding `*_in_place` helper, runs `plan_wasm_types`, and asserts the registry does not register the mutable helper unless it appears in the prepared body. Check the existing `direct_builtin_calls` / `runtime_imports` registry fields used by nearby tests; the assertion should fail if planning starts looking at would-be decision targets during Phase 7D.
+In `boot/tests/suites/wasm_plan_suite.tw`, first inspect the existing planning-test API and registry assertions:
+
+```bash
+rg -n "plan_wasm_types|direct_builtin_calls|runtime_imports" boot/tests/suites/wasm_plan_suite.tw boot/compiler/codegen -g '*.tw'
+```
+
+Then add a test that prepares a module whose body only calls the persistent vector or dict helper, attaches a decision naming the corresponding `*_in_place` helper, runs `plan_wasm_types(prepared, env, builtins)`, and asserts the registry does not register the mutable helper unless it appears in the prepared body. Use the nearby `direct_builtin_calls` / `runtime_imports` assertion style discovered by the `rg` command; the assertion should fail if planning starts looking at would-be decision targets during Phase 7D.
 
 - [ ] **Step 5: Format, lint, and run tests**
 
@@ -914,7 +963,13 @@ In `emit_func`, when constructing the per-function `EmitCtx`, include:
 mutable_decisions: base_ctx.mutable_decisions,
 ```
 
-Update every `EmitCtx.{ ... }` literal outside production emission as well, especially the minimal helper-test contexts added to `boot/tests/suites/codegen_emit_suite.tw` in Task 3. Use `mutable_decisions: mutable_select.empty_decision_table()` for neutral test contexts, or the relevant non-empty table for selector-consultation tests.
+Find every `EmitCtx.{ ... }` literal before editing:
+
+```bash
+rg -n "EmitCtx\.\{" boot -g '*.tw'
+```
+
+Update every literal outside production emission as well, especially the minimal helper-test contexts added to `boot/tests/suites/codegen_emit_suite.tw` in Task 3. Use `mutable_decisions: mutable_select.empty_decision_table()` for neutral test contexts, or the relevant non-empty table for selector-consultation tests. For selector-consultation tests, also set `current_func_id: .Some(site.func)` so `site_for_result(...)` does not take the intentional `.None` skip path.
 
 - [ ] **Step 4: Pass result slot identity into op emission**
 
@@ -1016,9 +1071,11 @@ Run:
 target/twk fmt boot/compiler/codegen/mutable_select.tw boot/compiler/codegen/emit/mutable_sites.tw boot/compiler/codegen/emit/context.tw boot/compiler/codegen/emit.tw boot/tests/suites/codegen_emit_suite.tw boot/tests/suites/mutable_select_suite.tw boot/tests/suites/wasm_plan_suite.tw
 target/twk lint boot/main.tw
 target/twk run boot/tests/main.tw
+target/twk build boot/main.tw -o /tmp/twinkle-phase-7d-after.wasm
+cmp -s /tmp/twinkle-phase-7d-before.wasm /tmp/twinkle-phase-7d-after.wasm
 ```
 
-Expected: helper tests prove vector/dict/record decisions can be recognized through the emit helper, emitted WAT remains persistent, Wasm planning ignores would-be mutable targets, and the required code review has confirmed the identical-output `emit.tw` selector wiring. Do not claim WAT alone proves `emit.tw` consulted the selector in Phase 7D.
+Expected: helper tests prove vector/dict/record decisions can be recognized through the emit helper, emitted WAT remains persistent, Wasm planning ignores would-be mutable targets, the before/after compiler Wasm comparison exits 0, and the required code review has confirmed the identical-output `emit.tw` selector wiring. Do not claim WAT alone proves `emit.tw` consulted the selector in Phase 7D.
 
 - [ ] **Step 9: Commit Task 4**
 
@@ -1176,10 +1233,14 @@ Run:
 target/twk fmt boot/compiler/codegen/mutable_select.tw boot/compiler/codegen/emit/mutable_sites.tw boot/compiler/backend/prepare.tw boot/compiler/codegen/emit/context.tw boot/compiler/codegen/emit.tw boot/tests/suites/mutable_select_suite.tw boot/tests/suites/backend_prepare_suite.tw boot/tests/suites/codegen_emit_suite.tw boot/tests/suites/backend_verify_suite.tw boot/tests/suites/wasm_plan_suite.tw boot/tests/main.tw
 target/twk lint boot/main.tw
 target/twk run boot/tests/main.tw
+target/twk build boot/main.tw -o /tmp/twinkle-phase-7d-after.wasm
+cmp -s /tmp/twinkle-phase-7d-before.wasm /tmp/twinkle-phase-7d-after.wasm
+make bundle-cli
+make boot-test
 git diff --check
 ```
 
-Expected: formatter is idempotent after the first run, linter reports no blocking house-rule violations, boot tests pass, and `git diff --check` prints no whitespace errors.
+Expected: formatter is idempotent after the first run, linter reports no blocking house-rule violations, boot tests pass, default compiler Wasm output matches the pre-Task-1 baseline, `make bundle-cli` and `make boot-test` pass sequentially, and `git diff --check` prints no whitespace errors.
 
 - [ ] **Step 5: Commit Task 5**
 
@@ -1200,7 +1261,8 @@ git commit -m "docs: mark codegen decision seam implemented"
 - Task 4 includes a code-review checkpoint confirming `.ACall` and `.ARecordUpdate` in `emit.tw` delegate to the selector helpers, because identical persistent output cannot prove that wiring by WAT inspection alone.
 - Tests exercise absent, live persistent-only, wrong-family, wrong-persistent-target, missing-mutable-target, source-local mismatch, result-local mismatch, argument-shape mismatch, base-arg mismatch, field-path mismatch, ambiguous, unsupported-family, and record-shell fallback cases.
 - Prepared backend plumbing carries decision tables without forcing emitters or wasm planners to re-prove ownership.
-- Emission helper tests prove selector consultation with a real `EmitCtx`/slot map, including vector, dict set/remove, record base extraction, and type-qualified record field keys.
+- Emission helper tests prove selector consultation with a real `EmitCtx`/slot map whose `current_func_id` is populated for live-site assertions, including vector, dict set/remove, record base extraction, and type-qualified record field keys.
+- Real-source survival tests prove prepared-site lookup for vector indexed update and dict set; record-update real-source survival is deferred to Phase 8F unless implemented opportunistically in this seam.
 - Emission integration tests prove WAT/calls still use the persistent target for vector/dict calls and record updates. They are persistent-output guards, not proof that identical-output emit paths consulted the selector.
 - Wasm planning tests prove would-be mutable targets in decisions do not register runtime imports or direct builtin calls during Phase 7D.
 - No Phase 7C/7D code path emits `vector$set_in_place`, `dict$set_in_place`, `dict$remove_in_place`, or `can_reuse=true` because of a decision.
@@ -1213,8 +1275,14 @@ Run before claiming the implementation is complete:
 target/twk fmt boot/compiler/codegen/mutable_select.tw boot/compiler/codegen/emit/mutable_sites.tw boot/compiler/backend/prepare.tw boot/compiler/codegen/emit/context.tw boot/compiler/codegen/emit.tw boot/tests/suites/mutable_select_suite.tw boot/tests/suites/backend_prepare_suite.tw boot/tests/suites/codegen_emit_suite.tw boot/tests/suites/backend_verify_suite.tw boot/tests/suites/wasm_plan_suite.tw boot/tests/main.tw
 target/twk lint boot/main.tw
 target/twk run boot/tests/main.tw
+target/twk build boot/main.tw -o /tmp/twinkle-phase-7d-after.wasm
+cmp -s /tmp/twinkle-phase-7d-before.wasm /tmp/twinkle-phase-7d-after.wasm
+make bundle-cli
+make boot-test
 git diff --check
 ```
+
+`boot/tests/main.tw` imports the compiler and exercises the modified preparation/emission paths from source-level integration tests, so it catches Twinkle type errors in the new modules and default codegen regressions. The final `make bundle-cli` + `make boot-test` sanity check verifies the self-hosted payload and boot suite after the seam lands.
 
 ## Follow-up plan after 7D
 
