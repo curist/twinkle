@@ -1974,7 +1974,19 @@ fn block_verdicts(
       },
       .ACall(callee, args) => case callee_func_id(callee) {
         .Some(fid) => case call_info(sem, fid) {
-          .Some(_) => {}, // builtin semantics -> no user-call specialization verdict
+          .Some(cs) => case cs.effect {
+            .Update => case cs.cow_base_arg {
+              .Some(bi) => if bi < args.len() {
+                base := args[bi]
+                verdicts[inst.anf_local.id] = "L${inst.anf_local.id} = update ${atom_brief(base)} base=${pre.shell_verdict(
+                  base,
+                  last,
+                )}"
+              },
+              .None => {}, // Update effect without a cow base — no verdict
+            },
+            _ => {}, // non-update builtin (read-only/allocate/control) -> no verdict
+          },
           .None => case table.summary_get(fid.id) {
             .Some(s) => {
               au: Vector<Bool> = collect a in args {
