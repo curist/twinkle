@@ -76,7 +76,7 @@ pub fn selection_reason_tag(r: SelectionReason) Int {
 }
 
 pub fn record_reason_tag(r: SelectionReason) Int {
-  selection_reason_tag(r)
+  r.selection_reason_tag()
 }
 
 pub fn site_key(site: Site) Int {
@@ -144,7 +144,7 @@ pub fn select_call(
     }
   }
 
-  if !is_supported_call_family(expected_family) {
+  if !expected_family.is_supported_call_family() {
     return CallSelection.{
       emit_func: persistent_fallback,
       would_func: persistent_fallback,
