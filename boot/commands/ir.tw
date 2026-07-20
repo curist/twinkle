@@ -53,8 +53,9 @@ fn render_cfg_artifacts(artifacts: PipelineArtifacts) String {
   view = ownership.prune_dead_merge(view) // prune dead carried params before analysis
   s := semantics.make_prelude_optimizer_semantics(b)
   table := summary.compute(view, b, s)
+  variants := summary.compute_variants(view, b, s, table)
   analyzed := ownership.analyze_with_summaries(view, b, s, table)
-  summary.render_cfg(analyzed, table)
+  summary.render_cfg(analyzed, table, variants)
 }
 
 pub fn render_cfg_for_entry(file: String) String {

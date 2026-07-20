@@ -74,7 +74,7 @@ fn render_cfg_for_entry_of(funcs: Vector<AnfFunctionDef>) String {
   v = ownership.prune_dead_merge(v)
   t := summary.compute(v, b, sem())
   a := ownership.analyze_with_summaries(v, b, sem(), t)
-  summary.render_cfg(a, t)
+  summary.render_cfg(a, t, summary.empty_variant_table())
 }
 
 // exit ownership of a local in the caller's entry block (block 0).

@@ -24,8 +24,9 @@ fn render_entry(name: String) Result<String, String> {
   view = ownership.prune_dead_merge(view)
   sem := semantics.make_prelude_optimizer_semantics(b)
   table := summary.compute(view, b, sem)
+  variants := summary.compute_variants(view, b, sem, table)
   analyzed := ownership.analyze_with_summaries(view, b, sem, table)
-  .Ok(summary.render_cfg(analyzed, table))
+  .Ok(summary.render_cfg(analyzed, table, variants))
 }
 
 fn assert_has_all(out: String, parts: Vector<String>) Result<Void, String> {

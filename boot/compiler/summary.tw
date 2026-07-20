@@ -10,14 +10,14 @@
 //! Module graph stays acyclic: summary.tw depends on ownership.tw/cfg.tw, never
 //! the reverse.
 
-use compiler.anf.{AnfOp}
+use compiler.anf.{AnfOp, Atom}
 use compiler.builtins.{BuiltinRegistry}
-use compiler.cfg.{CfgFunction, CfgView}
+use compiler.cfg.{CfgFunction, CfgView, Terminator}
 use compiler.graph_scc
 use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership.{
   ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary, SummaryTable,
-  collect_field_reqs, empty_summary_table, summarize_function, summarize_variant, summary_get,
+  empty_summary_table, summarize_function, summarize_variant, summary_get,
 }
 use compiler.variant_id as vid
 
@@ -501,28 +501,135 @@ fn ret_aliases_exactly_param(ret: ReturnEffect, k: Int) Bool {
   }
 }
 
-// Does param k have an in-place update site? Reuse the generic dirty-path
-// dataflow (collect_field_reqs is keyed by param index and reports dirty paths
-// independent of the publish gate, so a Published param still shows its sites).
-fn param_has_inplace_site(f: CfgFunction, generic: SummaryTable, sem: OptimizerSemantics, k: Int) Bool {
-  reqs := collect_field_reqs(f, generic, sem)
-  case reqs.get(k) {
-    .Some(ps) => !ps.is_empty(),
+fn atom_local_id(a: Atom) Int? {
+  case a {
+    .ALocal(l) => .Some(l.id),
+    _ => .None,
+  }
+}
+
+type InplaceScan = .{ derived: Dict<Int, Bool>, found: Bool, changed: Bool }
+
+fn derived_has(derived: Dict<Int, Bool>, id: Int) Bool {
+  case derived.get(id) {
+    .Some(v) => v,
     .None => false,
   }
+}
+
+fn atom_is_derived(derived: Dict<Int, Bool>, a: Atom) Bool {
+  case atom_local_id(a) {
+    .Some(id) => derived_has(derived, id),
+    .None => false,
+  }
+}
+
+fn mark_derived(st: InplaceScan, id: Int) InplaceScan {
+  if !derived_has(st.derived, id) {
+    st.derived[id] = true
+    st.changed = true
+  }
+  st
+}
+
+fn block_param_ids(f: CfgFunction, target_id: Int) Vector<Int> {
+  for blk in f.blocks {
+    if blk.id.id == target_id {
+      return collect p in blk.params {
+        p.id
+      }
+    }
+  }
+  []
+}
+
+fn propagate_edge_args(f: CfgFunction, target_id: Int, args: Vector<Atom>, st: InplaceScan) InplaceScan {
+  params := block_param_ids(f, target_id)
+  for a, i in args {
+    if i < params.len() and atom_is_derived(st.derived, a) {
+      st = .mark_derived(params[i])
+    }
+  }
+  st
+}
+
+fn propagate_terminator(f: CfgFunction, term: Terminator, st: InplaceScan) InplaceScan {
+  case term {
+    .Branch(target, args) => propagate_edge_args(f, target.id, args, st),
+    .CondBranch(_, then_target, then_args, else_target, else_args) => {
+      st = propagate_edge_args(f, then_target.id, then_args, st)
+      propagate_edge_args(f, else_target.id, else_args, st)
+    },
+    .Match(_, edges) => {
+      for edge in edges {
+        st = propagate_edge_args(f, edge.target.id, edge.args, st)
+      }
+      st
+    },
+    .LoopBackEdge(target, args) => propagate_edge_args(f, target.id, args, st),
+    _ => st,
+  }
+}
+
+fn scan_inplace_op(op: AnfOp, dst: Int, st: InplaceScan) InplaceScan {
+  case op {
+    .AAssign(target, a) => if atom_is_derived(st.derived, a) {
+      st = .mark_derived(target.id)
+      st.mark_derived(dst)
+    } else {
+      st
+    },
+    .ARecordUpdate(base, _, _, _, _) => if atom_is_derived(st.derived, base) {
+      st.found = true
+      st.mark_derived(dst)
+    } else {
+      st
+    },
+    .AInit(a) => if atom_is_derived(st.derived, a) {
+      st.mark_derived(dst)
+    } else {
+      st
+    },
+    _ => st,
+  }
+}
+
+// Does param k have a syntactic in-place update site? This deliberately avoids
+// ownership-gated dirty-path collection: recursive publishing can hide exactly
+// the update sites this candidate pre-filter is meant to bootstrap.
+fn param_has_inplace_site(f: CfgFunction, k: Int) Bool {
+  if k < 0 or k >= f.params.len() {
+    return false
+  }
+  st := InplaceScan.{ derived: Dict.new(), found: false, changed: true }
+  st.derived[f.params[k].id] = true
+  rounds := 0
+  cap := f.blocks.len() * 16 + 128
+  for st.changed and !st.found and rounds < cap {
+    st.changed = false
+    for blk in f.blocks {
+      for inst in blk.instructions {
+        st = scan_inplace_op(inst.op, inst.anf_local.id, st)
+      }
+      case blk.terminator {
+        .Some(term) => st = propagate_terminator(f, term, st),
+        .None => {},
+      }
+    }
+    rounds = rounds + 1
+  }
+  st.found
 }
 
 // A param the generic summary returns as the SOLE alias AND updates in place is a
 // candidate owned variant {(k, [])}. The seed is a hypothesis; run_scc_variants
 // proves or retracts it. Determinism: functions ascending, params by index.
-fn candidate_variants(view: CfgView, generic: SummaryTable, sem: OptimizerSemantics) Vector<
-  vid.VariantId,
-> {
+fn candidate_variants(view: CfgView, generic: SummaryTable) Vector<vid.VariantId> {
   cands: Vector<vid.VariantId> = []
   for f in view.functions {
     s := table_get(generic, f.func_id)
     for _ps, k in s.params {
-      if ret_aliases_exactly_param(s.ret, k) and param_has_inplace_site(f, generic, sem, k) {
+      if ret_aliases_exactly_param(s.ret, k) and param_has_inplace_site(f, k) {
         v := vid.VariantId.{
           func: f.func_id,
           unique: [vid.UniqueReq.{ param: k, path: vid.shell() }],
@@ -534,12 +641,9 @@ fn candidate_variants(view: CfgView, generic: SummaryTable, sem: OptimizerSemant
   cands
 }
 
-fn candidates_by_func(view: CfgView, generic: SummaryTable, sem: OptimizerSemantics) Dict<
-  Int,
-  Vector<vid.VariantId>,
-> {
+fn candidates_by_func(view: CfgView, generic: SummaryTable) Dict<Int, Vector<vid.VariantId>> {
   by_func: Dict<Int, Vector<vid.VariantId>> = Dict.new()
-  for v in candidate_variants(view, generic, sem) {
+  for v in candidate_variants(view, generic) {
     prev := case by_func.get(v.func) {
       .Some(vs) => vs,
       .None => [],
@@ -697,7 +801,7 @@ fn run_scc_variants(
   for m, v in member_key {
     case member_iter.get(m) {
       .Some(s) => if variant_valid(s, seed_param_of(v)) {
-        vtable = vtable.vtable_put(v, s)
+        vtable = .vtable_put(v, s)
       },
       .None => {},
     }
@@ -715,7 +819,7 @@ pub fn compute_variants(
 ) VariantSummaryTable {
   index := build_func_index(view)
   user_ids := user_id_set(view)
-  candidates := candidates_by_func(view, generic, sem)
+  candidates := candidates_by_func(view, generic)
   vtable := empty_variant_table()
   for scc in order_sccs(view, index, user_ids) {
     vtable = run_scc_variants(scc, index, generic, candidates, vtable, b, sem)
@@ -771,7 +875,7 @@ fn render_role(r: ParamRole) String {
   }
 }
 
-pub fn render_summary(s: Summary) String {
+fn render_summary_body(s: Summary) String {
   parts: Vector<String> = []
   for ps, i in s.params {
     paths := if !ps.in_place_paths.is_empty() {
@@ -794,17 +898,36 @@ pub fn render_summary(s: Summary) String {
       "alias(${ps.join(",")})"
     },
   }
-  "summary: ${parts.join(" ")} ret=${ret}${render_ret_paths(s.ret_paths)}"
+  "${parts.join(" ")} ret=${ret}${render_ret_paths(s.ret_paths)}"
 }
 
-// Render the `--cfg` view with each function's summary as a header line. The
-// header Dict is built here (func_id → rendered summary) and handed to cfg,
-// keeping cfg free of ownership/summary imports.
-pub fn render_cfg(view: CfgView, table: SummaryTable) String {
+pub fn render_summary(s: Summary) String {
+  "summary: ${render_summary_body(s)}"
+}
+
+// Render the `--cfg` view with each function's summary as a header line, plus a
+// `variant:` line per surviving owned variant. The header Dict is built here
+// (func_id → rendered summary) and handed to cfg, keeping cfg free of
+// ownership/summary imports.
+pub fn render_cfg(view: CfgView, table: SummaryTable, variants: VariantSummaryTable) String {
   headers: Dict<Int, String> = Dict.new()
   for f in view.functions {
     case summary_get(table, f.func_id) {
-      .Some(s) => headers[f.func_id] = render_summary(s),
+      .Some(s) => {
+        lines := render_summary(s)
+        case variants.by_func.get(f.func_id) {
+          .Some(keys) => {
+            for key in keys {
+              case variants.by_key.get(key) {
+                .Some(entry) => lines = "${lines}\n  variant: ${render_summary_body(entry.summary)}",
+                .None => {},
+              }
+            }
+          },
+          .None => {},
+        }
+        headers[f.func_id] = lines
+      },
       .None => {},
     }
   }
