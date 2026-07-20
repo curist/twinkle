@@ -48,11 +48,13 @@ use compiler.codegen.emit.layout_helpers.{
 }
 use compiler.codegen.emit.match as match_emit
 use compiler.codegen.emit.module_globals.{emit_module_globals}
+use compiler.codegen.emit.mutable_sites
 use compiler.codegen.emit.records as record_emit
 use compiler.codegen.emit.string_pool.{
   emit_string_data_segment, emit_string_pool_getters, emit_string_pool_globals,
 }
 use compiler.codegen.emit.variants as variant_emit
+use compiler.codegen.mutable_select
 use compiler.codegen.runtime.task_abi as task_abi
 use compiler.codegen.wasm_ir.{
   DataSegment, ExportDef, FuncDef, GlobalDef, ImportDef, Instr, TypeDef, ValType, WasmModule,
@@ -140,6 +142,7 @@ pub fn emit_module(
     loop_depth: 0,
     scratch_anyref_local: -1,
     intrinsic_table,
+    mutable_decisions: prepared.mutable_decisions,
   }
 
   // Emit user functions
@@ -1099,6 +1102,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     loop_depth: 0,
     scratch_anyref_local,
     intrinsic_table: base_ctx.intrinsic_table,
+    mutable_decisions: base_ctx.mutable_decisions,
   }
 
   // A phys_return function emits its body in tail context so every return point
@@ -1395,11 +1399,11 @@ fn emit_tail_let(
 
     case result_mono {
       .Never => {
-        buf = emit_op(cur_op, entry.index, .None, result_mono, ctx, buf)
+        buf = emit_op(cur_local, cur_op, .None, result_mono, ctx, buf)
         return buf.append(.Unreachable)
       },
       .Void => {
-        buf = emit_op(cur_op, entry.index, .Some(entry.val_type), result_mono, ctx, buf)
+        buf = emit_op(cur_local, cur_op, .Some(entry.val_type), result_mono, ctx, buf)
 
         case cur_body {
           .Let(next_local, next_op, next_body) => {
@@ -1419,7 +1423,7 @@ fn emit_tail_let(
           .None => {},
         }
 
-        buf = emit_op(cur_op, entry.index, .Some(entry.val_type), result_mono, ctx, buf)
+        buf = emit_op(cur_local, cur_op, .Some(entry.val_type), result_mono, ctx, buf)
 
         case cur_body {
           .Let(next_local, next_op, next_body) => {
@@ -1518,7 +1522,7 @@ fn emit_if_prefix(bindings: Vector<IfPrefixBinding>, ctx: EmitCtx, buf: Vector<I
       .Never => .None,
       _ => .Some(entry.val_type),
     }
-    out = emit_op(binding.op, entry.index, result_vt, entry.mono, ctx, out)
+    out = emit_op(binding.slot, binding.op, result_vt, entry.mono, ctx, out)
   }
 
   out
@@ -1747,11 +1751,11 @@ fn emit_let(
 
     case result_mono {
       .Never => {
-        buf = emit_op(cur_op, entry.index, .None, result_mono, ctx, buf)
+        buf = emit_op(cur_local, cur_op, .None, result_mono, ctx, buf)
         return buf.append(.Unreachable)
       },
       .Void => {
-        buf = emit_op(cur_op, entry.index, .Some(entry.val_type), result_mono, ctx, buf)
+        buf = emit_op(cur_local, cur_op, .Some(entry.val_type), result_mono, ctx, buf)
 
         case cur_body {
           .Let(next_local, next_op, next_body) => {
@@ -1771,7 +1775,7 @@ fn emit_let(
           .None => {},
         }
 
-        buf = emit_op(cur_op, entry.index, .Some(entry.val_type), result_mono, ctx, buf)
+        buf = emit_op(cur_local, cur_op, .Some(entry.val_type), result_mono, ctx, buf)
 
         case cur_body {
           .Let(next_local, next_op, next_body) => {
@@ -1790,13 +1794,15 @@ fn emit_let(
 
 // ── Op emission ────────────────────────────────────────────────────────
 fn emit_op(
+  result_slot: SlotId,
   op: PreparedOp,
-  result_idx: Int,
   result_vt: ValType?,
   result_mono: MonoType,
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
+  entry := lookup_slot(ctx, result_slot)
+  result_idx := entry.index
   case op {
     .AInit(atom) => emit_init_atom(atom, result_mono, result_vt, ctx, buf).append(
       .LocalSet(result_idx),
@@ -1839,7 +1845,22 @@ fn emit_op(
       buf2 := emit_unop(uop, operand, kind, ctx, buf)
       buf2.append(.LocalSet(result_idx))
     },
-    .ACall(callee, args) => emit_call(callee, args, result_idx, result_vt, result_mono, ctx, buf),
+    .ACall(callee, args) => {
+      callee2 := case callee {
+        .AGlobalFunc(fid) => case mutable_sites.select_call_for_emit(
+          ctx.mutable_decisions,
+          fid,
+          args,
+          entry,
+          ctx,
+        ) {
+          .Some(selected) => PreparedAtom.AGlobalFunc(selected.emit_func),
+          .None => callee,
+        },
+        _ => callee,
+      }
+      emit_call(callee2, args, result_idx, result_vt, result_mono, ctx, buf)
+    },
     .AIf(cond_e, then_e, else_e) => emit_if_op(
       cond_e,
       then_e,
@@ -1869,7 +1890,30 @@ fn emit_op(
       buf2.append(.LocalSet(result_idx))
     },
     .ARecordUpdate(base, fid, value, can_reuse, tid) => {
-      buf2 := emit_record_update(base, fid, value, can_reuse, tid, result_mono, ctx, buf)
+      selected: mutable_select.RecordReuseSelection? = case mutable_sites.site_for_result(
+        ctx,
+        entry,
+      ) {
+        .Some(site) => case mutable_sites.record_base_source_local(base, ctx) {
+          .Some(base_source) => .Some(
+            mutable_select.select_record_update(
+              ctx.mutable_decisions,
+              site,
+              base_source,
+              entry.source_local,
+              mutable_sites.field_path_key(tid, fid),
+              can_reuse,
+            ),
+          ),
+          .None => .None,
+        },
+        .None => .None,
+      }
+      can_reuse2 := case selected {
+        .Some(s) => s.emit_can_reuse,
+        .None => can_reuse,
+      }
+      buf2 := emit_record_update(base, fid, value, can_reuse2, tid, result_mono, ctx, buf)
       buf2.append(.LocalSet(result_idx))
     },
     .AVariant(tid, vid, args) => {

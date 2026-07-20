@@ -17,6 +17,7 @@ use compiler.codegen.wasm_ir.{HeapType, ValType}
 use compiler.codegen.wasm_layout.{
   WasmClosureLayout, WasmLayout, WasmSumLayout, WasmVariantLayout, mono_to_key,
 }
+use compiler.codegen.wasm_plan
 use compiler.codegen.wasm_plan_types.{ModuleGlobalEntry, WasmTypeRegistry}
 use compiler.codegen.wat.{emit_wat_unlinked_for_test}
 use compiler.core_ir.{FieldId, FuncId, LocalId, Param, VariantId}
@@ -804,6 +805,7 @@ fn mk_emit_ctx(
     loop_depth: 0,
     scratch_anyref_local: -1,
     intrinsic_table: Dict.new(),
+    mutable_decisions: mutable_select.empty_decision_table(),
   }
 }
 
@@ -1247,6 +1249,416 @@ fn test_select_call_for_emit_survives_prepared_dict_set() Result<Void, String> {
   .Ok({})
 }
 
+// ── Task 4: emit_op wiring keeps Phase 7D output persistent ────────────────
+// These compile real source through emit_module with a non-empty decision
+// table attached at the call/record-update site, and assert BOTH that the
+// selector helper inspected the site (reason PersistentOnly / would_* points
+// at the mutable target) AND that the emitted WAT never routes through the
+// mutable/in-place symbol. emit_module is called directly (unlinked), so
+// runtime call targets appear as "<wasm_module>__<wasm_name>" verbatim
+// (e.g. "rt.arr__set") rather than the underscore-joined form a full linked
+// build resolves them to.
+fn emit_prepared_wat(prepared: PreparedModule, env: ResolvedEnv, builtins: BuiltinRegistry) String {
+  env2 := env
+  env2.typed_vector_fields = prepared.typed_vector_fields
+  env2.typed_vector_payloads = prepared.typed_vector_payloads
+  registry := wasm_plan.plan_wasm_types(prepared, env2, builtins)
+  wasm := emit_module(prepared, registry, builtins, env2)
+  emit_wat_unlinked_for_test(wasm)
+}
+
+fn test_emit_module_keeps_vector_set_persistent_with_decision() Result<Void, String> {
+  src := "fn set_one(xs: Vector<Int>) Vector<Int> {\n  xs[0] = 9\n  xs\n}\n"
+  artifacts := try pipeline.compile_source(src)
+  closure_conversion := convert_closures(artifacts.opt, artifacts.env)
+  set_id := artifacts.builtins.id("vector$set_unsafe")
+  in_place_id := artifacts.builtins.id("vector$set_in_place")
+  pre := find_mutable_anf_call_site(closure_conversion.anf, "set_one", set_id)
+
+  site := mutable_select.Site.{ func: pre.func, local: pre.result }
+  decisions := mutable_select
+    .empty_decision_table()
+    .with_decision(mutable_select.MutableDecision.{
+      site,
+      family: mutable_select.OperationFamily.VectorSet,
+      source_local: pre.base,
+      result_local: pre.result,
+      arg_count: pre.arg_count,
+      base_arg_index: .Some(0),
+      persistent_func: .Some(set_id),
+      mutable_func: .Some(in_place_id),
+      variant_key: .None,
+      field_path_key: "",
+      proof_debug_id: "emit-wiring-vector-set",
+    })
+
+  prepared := prepare_backend_with_mutable_decisions(
+    closure_conversion.anf,
+    artifacts.env,
+    artifacts.builtins,
+    closure_conversion.captures,
+    decisions,
+  )
+  hit := find_mutable_prepared_call_site(prepared, "set_one", set_id)
+  local_map := local_map_from_slots(hit.func.slots)
+  result_entry := case local_map[hit.result.id] {
+    .Some(e) => e,
+    .None => return .Err("missing prepared vector-set result entry"),
+  }
+  ctx := mk_emit_ctx(artifacts.builtins, artifacts.env, local_map, .Some(hit.func.func_id))
+
+  selected := mutable_sites.select_call_for_emit(
+    prepared.mutable_decisions,
+    set_id,
+    hit.args,
+    result_entry,
+    ctx,
+  )
+  case selected {
+    .Some(s) => {
+      try assert.equal(mutable_select.selection_reason_tag(s.reason), 1)
+      try assert.equal(s.emit_func.id, set_id.id)
+      try assert.equal(s.would_func.id, in_place_id.id)
+    },
+    .None => return .Err("selector helper did not inspect call site"),
+  }
+
+  wat := emit_prepared_wat(prepared, artifacts.env, artifacts.builtins)
+  try assert.str_contains(wat, "rt.arr__set")
+  try assert.is_false(wat.contains("rt.arr__set_in_place"))
+  .Ok({})
+}
+
+fn test_emit_module_keeps_dict_set_persistent_with_decision() Result<Void, String> {
+  src := "fn set_one_dict(m: Dict<Int, Int>) Dict<Int, Int> {\n  m[1] = 9\n  m\n}\n"
+  artifacts := try pipeline.compile_source(src)
+  closure_conversion := convert_closures(artifacts.opt, artifacts.env)
+  dict_set_id := artifacts.builtins.method_id("Dict", "set")
+  dict_set_in_place_id := artifacts.builtins.id("dict$set_in_place")
+  pre := find_mutable_anf_call_site(closure_conversion.anf, "set_one_dict", dict_set_id)
+
+  site := mutable_select.Site.{ func: pre.func, local: pre.result }
+  decisions := mutable_select
+    .empty_decision_table()
+    .with_decision(mutable_select.MutableDecision.{
+      site,
+      family: mutable_select.OperationFamily.DictSet,
+      source_local: pre.base,
+      result_local: pre.result,
+      arg_count: pre.arg_count,
+      base_arg_index: .Some(0),
+      persistent_func: .Some(dict_set_id),
+      mutable_func: .Some(dict_set_in_place_id),
+      variant_key: .None,
+      field_path_key: "",
+      proof_debug_id: "emit-wiring-dict-set",
+    })
+
+  prepared := prepare_backend_with_mutable_decisions(
+    closure_conversion.anf,
+    artifacts.env,
+    artifacts.builtins,
+    closure_conversion.captures,
+    decisions,
+  )
+  hit := find_mutable_prepared_call_site(prepared, "set_one_dict", dict_set_id)
+  local_map := local_map_from_slots(hit.func.slots)
+  result_entry := case local_map[hit.result.id] {
+    .Some(e) => e,
+    .None => return .Err("missing prepared dict-set result entry"),
+  }
+  ctx := mk_emit_ctx(artifacts.builtins, artifacts.env, local_map, .Some(hit.func.func_id))
+
+  selected := mutable_sites.select_call_for_emit(
+    prepared.mutable_decisions,
+    dict_set_id,
+    hit.args,
+    result_entry,
+    ctx,
+  )
+  case selected {
+    .Some(s) => {
+      try assert.equal(mutable_select.selection_reason_tag(s.reason), 1)
+      try assert.equal(s.emit_func.id, dict_set_id.id)
+      try assert.equal(s.would_func.id, dict_set_in_place_id.id)
+    },
+    .None => return .Err("selector helper did not inspect call site"),
+  }
+
+  wat := emit_prepared_wat(prepared, artifacts.env, artifacts.builtins)
+  try assert.str_contains(wat, "rt.dict__set")
+  try assert.is_false(wat.contains("rt.dict__set_in_place"))
+  .Ok({})
+}
+
+fn test_emit_module_keeps_dict_remove_persistent_with_decision() Result<Void, String> {
+  src := "fn remove_one(m: Dict<Int, Int>) Dict<Int, Int> {\n  m.remove(1)\n}\n"
+  artifacts := try pipeline.compile_source(src)
+  closure_conversion := convert_closures(artifacts.opt, artifacts.env)
+  dict_remove_id := artifacts.builtins.method_id("Dict", "remove")
+  dict_remove_in_place_id := artifacts.builtins.id("dict$remove_in_place")
+  pre := find_mutable_anf_call_site(closure_conversion.anf, "remove_one", dict_remove_id)
+
+  site := mutable_select.Site.{ func: pre.func, local: pre.result }
+  decisions := mutable_select
+    .empty_decision_table()
+    .with_decision(mutable_select.MutableDecision.{
+      site,
+      family: mutable_select.OperationFamily.DictRemove,
+      source_local: pre.base,
+      result_local: pre.result,
+      arg_count: pre.arg_count,
+      base_arg_index: .Some(0),
+      persistent_func: .Some(dict_remove_id),
+      mutable_func: .Some(dict_remove_in_place_id),
+      variant_key: .None,
+      field_path_key: "",
+      proof_debug_id: "emit-wiring-dict-remove",
+    })
+
+  prepared := prepare_backend_with_mutable_decisions(
+    closure_conversion.anf,
+    artifacts.env,
+    artifacts.builtins,
+    closure_conversion.captures,
+    decisions,
+  )
+  hit := find_mutable_prepared_call_site(prepared, "remove_one", dict_remove_id)
+  local_map := local_map_from_slots(hit.func.slots)
+  result_entry := case local_map[hit.result.id] {
+    .Some(e) => e,
+    .None => return .Err("missing prepared dict-remove result entry"),
+  }
+  ctx := mk_emit_ctx(artifacts.builtins, artifacts.env, local_map, .Some(hit.func.func_id))
+
+  selected := mutable_sites.select_call_for_emit(
+    prepared.mutable_decisions,
+    dict_remove_id,
+    hit.args,
+    result_entry,
+    ctx,
+  )
+  case selected {
+    .Some(s) => {
+      try assert.equal(mutable_select.selection_reason_tag(s.reason), 1)
+      try assert.equal(s.emit_func.id, dict_remove_id.id)
+      try assert.equal(s.would_func.id, dict_remove_in_place_id.id)
+    },
+    .None => return .Err("selector helper did not inspect call site"),
+  }
+
+  wat := emit_prepared_wat(prepared, artifacts.env, artifacts.builtins)
+  try assert.str_contains(wat, "rt.dict__remove")
+  try assert.is_false(wat.contains("rt.dict__remove_in_place"))
+  .Ok({})
+}
+
+// ── Task 4: ARecordUpdate wiring keeps the copy path when can_reuse=false ──
+// `bump` keeps `q` bound to the same Point value that `p.x = p.x + 1`
+// rebinds, so ownership analysis cannot prove p is uniquely owned at the
+// update: the natural ANF/prepared can_reuse is false (copy path: StructNew
+// + StructGet, no StructSet). Attaching a decision that claims
+// would_reuse=true must not flip emitted codegen in Phase 7D.
+type AnfRecordUpdateSite = .{
+  func: FuncId,
+  result: LocalId,
+  base: LocalId,
+  fid: FieldId,
+  tid: TypeId,
+}
+
+fn find_record_update_anf_site_expr(func_id: FuncId, expr: AnfExpr) AnfRecordUpdateSite? {
+  case expr {
+    .Let(result, .ARecordUpdate(.ALocal(base), fid, _, _, tid), body) => .Some(
+      .{ func: func_id, result, base, fid, tid },
+    ),
+    .Let(_, _, body) => find_record_update_anf_site_expr(func_id, body),
+    _ => .None,
+  }
+}
+
+fn find_record_update_anf_site(anf: AnfModule, fn_name: String) AnfRecordUpdateSite {
+  for f in anf.functions {
+    if f.name == fn_name {
+      case find_record_update_anf_site_expr(f.func_id, f.body) {
+        .Some(site) => return site,
+        .None => {},
+      }
+    }
+  }
+  error("missing pre-prepare record update site for ${fn_name}")
+}
+
+type PreparedRecordUpdateHit = .{
+  result: SlotId,
+  base: PreparedAtom,
+  fid: FieldId,
+  can_reuse: Bool,
+  tid: TypeId,
+}
+
+fn find_prepared_record_update_hit_expr(expr: PreparedExpr) PreparedRecordUpdateHit? {
+  case expr {
+    .Let(result, .ARecordUpdate(base, fid, _, can_reuse, tid), body) => .Some(
+      .{ result, base, fid, can_reuse, tid },
+    ),
+    .Let(_, _, body) => find_prepared_record_update_hit_expr(body),
+    _ => .None,
+  }
+}
+
+type PreparedRecordUpdateSite = .{ func: PreparedFunc, hit: PreparedRecordUpdateHit }
+
+fn find_prepared_record_update_site(prepared: PreparedModule, fn_name: String) PreparedRecordUpdateSite {
+  for pf in prepared.funcs {
+    if pf.name == fn_name {
+      case find_prepared_record_update_hit_expr(pf.body) {
+        .Some(hit) => return PreparedRecordUpdateSite.{ func: pf, hit },
+        .None => {},
+      }
+    }
+  }
+  error("missing prepared record update site for ${fn_name}")
+}
+
+fn record_update_bump_source() String {
+  "type Point = .{ x: Int, y: Int }\nfn bump(p: Point) Point {\n  q := p\n  p.x = p.x + 1\n  println(q.x.to_string())\n  p\n}\n"
+}
+
+fn test_emit_module_keeps_record_update_persistent_with_reuse_decision() Result<Void, String> {
+  artifacts := try pipeline.compile_source(record_update_bump_source())
+  closure_conversion := convert_closures(artifacts.opt, artifacts.env)
+  pre := find_record_update_anf_site(closure_conversion.anf, "bump")
+
+  // Natural codegen must already be the copy path (no in-place proof exists
+  // for a field update on an aliased record) — otherwise this test would not
+  // be exercising the "decision claims reuse, emit stays persistent" path.
+  site := mutable_select.Site.{ func: pre.func, local: pre.result }
+  field_key := mutable_sites.field_path_key(pre.tid, pre.fid)
+  decisions := mutable_select
+    .empty_decision_table()
+    .with_decision(mutable_select.MutableDecision.{
+      site,
+      family: mutable_select.OperationFamily.RecordShellUpdate,
+      source_local: pre.base,
+      result_local: pre.result,
+      arg_count: 0,
+      base_arg_index: .None,
+      persistent_func: .None,
+      mutable_func: .None,
+      variant_key: .None,
+      field_path_key: field_key,
+      proof_debug_id: "emit-wiring-record-update",
+    })
+
+  prepared := prepare_backend_with_mutable_decisions(
+    closure_conversion.anf,
+    artifacts.env,
+    artifacts.builtins,
+    closure_conversion.captures,
+    decisions,
+  )
+  site_hit := find_prepared_record_update_site(prepared, "bump")
+  hit := site_hit.hit
+  try assert.is_false(hit.can_reuse)
+
+  local_map := local_map_from_slots(site_hit.func.slots)
+  result_entry := case local_map[hit.result.id] {
+    .Some(e) => e,
+    .None => return .Err("missing record update result entry"),
+  }
+  ctx := mk_emit_ctx(artifacts.builtins, artifacts.env, local_map, .Some(site_hit.func.func_id))
+
+  base_source := case mutable_sites.record_base_source_local(hit.base, ctx) {
+    .Some(l) => l,
+    .None => return .Err("missing record update base source local"),
+  }
+  emit_site := case mutable_sites.site_for_result(ctx, result_entry) {
+    .Some(s) => s,
+    .None => return .Err("missing site for record update result"),
+  }
+  selected := mutable_select.select_record_update(
+    prepared.mutable_decisions,
+    emit_site,
+    base_source,
+    result_entry.source_local,
+    mutable_sites.field_path_key(hit.tid, hit.fid),
+    hit.can_reuse,
+  )
+  try assert.equal(mutable_select.record_reason_tag(selected.reason), 1)
+  try assert.is_true(selected.would_reuse)
+  try assert.is_false(selected.emit_can_reuse)
+
+  wat := emit_prepared_wat(prepared, artifacts.env, artifacts.builtins)
+  try assert.is_false(wat.contains("struct.set"))
+  try assert.str_contains(wat, "struct.new")
+  .Ok({})
+}
+
+fn test_record_update_field_path_mismatch_rejects_cross_type_decision() Result<Void, String> {
+  artifacts := try pipeline.compile_source(record_update_bump_source())
+  closure_conversion := convert_closures(artifacts.opt, artifacts.env)
+  pre := find_record_update_anf_site(closure_conversion.anf, "bump")
+
+  // Same FieldId, a different (fabricated) TypeId — models a decision proven
+  // for a different record type reaching this site; the field path key must
+  // not match and the selection must decline (reason 9 = FieldPathMismatch).
+  site := mutable_select.Site.{ func: pre.func, local: pre.result }
+  wrong_tid := TypeId.{ id: pre.tid.id + 999 }
+  decisions := mutable_select
+    .empty_decision_table()
+    .with_decision(mutable_select.MutableDecision.{
+      site,
+      family: mutable_select.OperationFamily.RecordShellUpdate,
+      source_local: pre.base,
+      result_local: pre.result,
+      arg_count: 0,
+      base_arg_index: .None,
+      persistent_func: .None,
+      mutable_func: .None,
+      variant_key: .None,
+      field_path_key: mutable_sites.field_path_key(wrong_tid, pre.fid),
+      proof_debug_id: "emit-wiring-record-update-mismatch",
+    })
+
+  prepared := prepare_backend_with_mutable_decisions(
+    closure_conversion.anf,
+    artifacts.env,
+    artifacts.builtins,
+    closure_conversion.captures,
+    decisions,
+  )
+  site_hit := find_prepared_record_update_site(prepared, "bump")
+  hit := site_hit.hit
+  local_map := local_map_from_slots(site_hit.func.slots)
+  result_entry := case local_map[hit.result.id] {
+    .Some(e) => e,
+    .None => return .Err("missing record update result entry"),
+  }
+  ctx := mk_emit_ctx(artifacts.builtins, artifacts.env, local_map, .Some(site_hit.func.func_id))
+
+  base_source := case mutable_sites.record_base_source_local(hit.base, ctx) {
+    .Some(l) => l,
+    .None => return .Err("missing record update base source local"),
+  }
+  emit_site := case mutable_sites.site_for_result(ctx, result_entry) {
+    .Some(s) => s,
+    .None => return .Err("missing site for record update result"),
+  }
+  selected := mutable_select.select_record_update(
+    prepared.mutable_decisions,
+    emit_site,
+    base_source,
+    result_entry.source_local,
+    mutable_sites.field_path_key(hit.tid, hit.fid),
+    hit.can_reuse,
+  )
+  try assert.equal(mutable_select.record_reason_tag(selected.reason), 9)
+  try assert.is_false(selected.would_reuse)
+  try assert.is_false(selected.emit_can_reuse)
+  .Ok({})
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("codegen emit")
@@ -1298,5 +1710,25 @@ pub fn suite() runner.Suite {
     .test(
       "select_call_for_emit survives prepared Dict.set from real source",
       test_select_call_for_emit_survives_prepared_dict_set,
+    )
+    .test(
+      "emit_module keeps vector$set_unsafe persistent with a mutable decision attached",
+      test_emit_module_keeps_vector_set_persistent_with_decision,
+    )
+    .test(
+      "emit_module keeps Dict.set persistent with a mutable decision attached",
+      test_emit_module_keeps_dict_set_persistent_with_decision,
+    )
+    .test(
+      "emit_module keeps Dict.remove persistent with a mutable decision attached",
+      test_emit_module_keeps_dict_remove_persistent_with_decision,
+    )
+    .test(
+      "emit_module keeps ARecordUpdate on the copy path despite a would_reuse=true decision",
+      test_emit_module_keeps_record_update_persistent_with_reuse_decision,
+    )
+    .test(
+      "record update selection rejects a decision proven for a different record type",
+      test_record_update_field_path_mismatch_rejects_cross_type_decision,
     )
 }
