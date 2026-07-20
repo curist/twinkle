@@ -37,11 +37,15 @@ wrappers such as `Set<K>` should benefit from this through record-field ownershi
 and wrapper-aware lowering rather than needing a wholly separate optimization
 family.
 
-This target requires optimized storage representation, not only safe selection of
-existing hooks. Existing-hook lowering is the early integration proof; closing the
-performance and migration goal also requires repr-aware mutable lowering that
-preserves typed/unboxed vector storage, adds dense byte/int regions where needed,
-and makes dict mutation truly storage-efficient under the same ownership proofs.
+This target requires private mutation-enabled storage representation, not only
+safe selection of existing hooks. Existing-hook lowering is the early integration
+proof; closing the performance and migration goal also requires storage that can
+remain mutable across proven-owned chains, preserve typed/unboxed vector storage,
+use dense byte/int regions where needed, and make dict mutation truly storage-
+efficient under the same ownership proofs. The north star is to stay in the
+lowest private representation as long as ownership and ABI compatibility allow,
+then materialize ordinary persistent PVec/HAMT values only at the latest required
+publication boundary.
 
 ## Current context
 
@@ -610,9 +614,10 @@ postconditions, and per-call-site variant compatibility (1E). Only once those
 facts are trustworthy does Phase 2 (codegen) consume the ANF-keyed decisions
 through existing persistent/in-place/builder hooks and generate the
 ownership-specialized variants those decisions call for. The storage track then
-makes that lowering representation-aware and Buffer-class; only after that does
-the migration track clean successful lowering up behind compiler-private
-intrinsics and evaluate Buffer retirement.
+adds private mutation-enabled representations that can flow through scoped
+regions and owned-specialized call chains, staying low until the latest required
+publication boundary; only after that does the migration track clean successful
+lowering up behind compiler-private intrinsics and evaluate Buffer retirement.
 
 Baseline work is a precondition. The split between analysis and codegen for
 specialization is deliberate: deciding *which* call sites need an owned variant
@@ -840,20 +845,25 @@ Exit criteria: dict-heavy compiler code gets in-place HAMT updates only when the
 analysis proves the old version is unobservable. Dict-backed record wrappers
 benefit later, when field-path precision is added.
 
-### Phase 2D — Optimized storage representation before migration cleanup
+### Phase 2D — Private mutable storage representation before migration cleanup
 
 Existing-hook lowering proves the ownership/codegen seam, but it is not enough to
 retire Buffer or reach the full performance target. Before cleanup, add the
-mandatory storage-representation work: repr-aware mutable selection, typed vector
-mutable targets, dense byte/int regions where appropriate, and true
-mutable/transient HAMT storage for dicts. These targets still consume the same
-ownership decisions; they do not create a second legality path.
+mandatory storage-representation work: scoped mutable regions, private `MutVec` /
+`MutDict` or equivalent storage targets, typed/dense vector storage where
+appropriate, true mutable/transient HAMT storage for dicts, and owned-specialized
+mutable ABI so proven-owned collections can stay mutable across helper chains.
+These targets still consume the same ownership decisions; they do not create a
+second legality path. Persistent materialization is a last-responsible-boundary
+operation: stay low across internal owned edges, then materialize only when a
+persistent/generic ABI or observable publication edge requires it.
 
 ### Phase 2E — Later mutable-intrinsic cleanup
 
-- After the fact engine, existing-hook lowering, and optimized storage targets are
-  stable, introduce explicit optimizer IR nodes or annotations for mutable-region
-  intrinsics if the builder/in-place helper surface becomes too implicit.
+- After the fact engine, existing-hook lowering, and private mutable-storage
+  targets are stable, introduce explicit optimizer IR nodes or annotations for
+  mutable-region intrinsics if the builder/in-place helper surface becomes too
+  implicit.
 - Move codegen toward intrinsic region operations: begin, read, write, append,
   remove, freeze.
 - Route existing vector builder hooks and vector/dict in-place helpers through the
@@ -937,9 +947,15 @@ Expected verification style:
   in-place bit?
 - How should field-sensitive ownership be represented so wrapper records such as
   `Set<K>` naturally project to owned `Dict<K, Void>` when sound?
-- Which repr-aware storage targets should follow the existing-hook proof first:
-  typed `PVecI64`/`PVecBool` in-place helpers, dense byte/int regions, private
-  mutable PVec handles, or a staged mix of those?
+- Scoped mutable regions are the first private-storage slice after the existing-
+  hook proof. Within that scoped-region-first direction, which backend should be
+  attempted first: current hooks, typed `PVecI64`/`PVecBool` in-place helpers,
+  dense byte/int regions, private growable `MutVec` handles, or a staged mix of
+  those?
+- How should owned-specialized mutable ABI variants carry private `MutVec` /
+  `MutDict` storage through helper chains while capping variant growth and
+  materializing persistent values only at the latest required publication
+  boundary?
 - How much interprocedural summary information is needed beyond thin wrappers?
 - Should mutable-collection decisions be represented as ANF annotations, an
   ANF-keyed side table, or both?

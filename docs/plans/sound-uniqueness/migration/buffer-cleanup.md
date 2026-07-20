@@ -20,7 +20,11 @@ This cleanup is a follow-up, not an early milestone. Do not remove or deprecate
 `Buffer` until the sound-uniqueness work has an end-to-end path:
 
 - printed ownership facts for relevant programs;
-- mutable-intrinsic lowering for proven local update regions;
+- private mutable-storage lowering for proven local update regions;
+- owned-chain materialization behavior that keeps collections in private storage
+  until the latest required publication boundary;
+- typed/dense `Vector<Byte>` and other relevant vector storage paths for byte /
+  crypto workloads;
 - ordinary AWFY `sieve`/`bounce`/`nbody` in the same performance class as the
   current `*_mut` variants where storage mutation is the bottleneck;
 - correctness guards for aliasing, publication, closure capture, concurrency,
@@ -52,15 +56,16 @@ Buffer cleanup should happen in stages.
 
 ### Stage 1 — Stop recommending Buffer for ordinary local updates
 
-Once normal `Vector`/`Dict`/record code reaches the mutation-like path for proven
-owned regions, documentation should stop presenting `Buffer` as the recommended
-solution for ordinary local update loops.
+Once normal `Vector`/`Dict`/record code reaches the private mutable-storage path
+for proven owned regions — including latest-boundary materialization instead of
+repeated persistent freeze/thaw — documentation should stop presenting `Buffer`
+as the recommended solution for ordinary local update loops.
 
 Keep `Buffer` documented only for cases that are still genuinely outside the
 collection optimizer's scope, such as raw byte-oriented interop or deliberately
 manual linear-memory work. Crypto should not be treated as a permanent Buffer
-justification: `Vector<Byte>` should become fast enough for the standard crypto
-workloads.
+justification: typed/dense `Vector<Byte>` storage should become fast enough for
+the standard crypto workloads.
 
 ### Stage 2 — Retire benchmark workaround variants
 
@@ -115,6 +120,7 @@ target/twk run examples/performance/awfy/twinkle/main.tw
 
 The cleanup gate is not exact equality. The ordinary variants should be in the
 same performance class for the portions where storage mutation is the bottleneck,
+private mutable storage should materialize only at the latest required boundary,
 and all checksums must match.
 
 ## Open questions

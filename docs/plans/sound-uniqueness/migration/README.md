@@ -4,10 +4,10 @@
 representation track prove the end-to-end performance path.
 
 This track owns cleanup and consolidation. It should not be the first mutable
-lowering or optimized-storage implementation. First, the codegen track should
-prove that ownership facts can safely drive today's existing hooks; then the
-storage track must make that lowering representation-aware enough to reach the
-Buffer-retirement performance target.
+lowering or private mutable-storage implementation. First, the codegen track
+should prove that ownership facts can safely drive today's existing hooks; then
+the storage track must let proven-owned collections stay in private mutation-
+enabled storage long enough to reach the Buffer-retirement performance target.
 
 ## Track invariants
 
@@ -46,8 +46,8 @@ Buffer-retirement performance target.
   shared-transfer cases only when the runtime contract is explicit.
 - [ ] **Run end-of-track performance gates.** Compare ordinary AWFY variants to
   current `*_mut` workaround ceilings from the same machine/session, after the
-  storage track has delivered repr-aware mutable lowering and optimized storage
-  targets.
+  storage track has delivered private mutable storage targets and owned-chain
+  materialization behavior.
 - [ ] **Retire Buffer workaround usage when justified.** Only after ordinary code
   reaches the target class and `Vector<Byte>` covers crypto needs. This requires
   storage-representation work, not just hook consolidation. Details:
@@ -63,4 +63,4 @@ Buffer-retirement performance target.
 | Extern copying-borrow precision | Phase 10 |
 | Non-escaping closure recovery | Phase 10, optional based on workload evidence |
 | Advanced concurrency copy/share refinement | Phase 10, optional based on runtime contract |
-| Buffer retirement | Phase 10, after storage performance parity is demonstrated |
+| Buffer retirement | Phase 10, after private mutable-storage performance parity is demonstrated |

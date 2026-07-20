@@ -12,7 +12,7 @@ small:
 |---|---|---|
 | Analysis | CFG ownership view, ownership facts, liveness/last-use, summaries, candidate-classification inputs, and proof/debug output. Generated code stays unchanged. | [analysis/README.md](analysis/README.md) |
 | Codegen | Mapping proven decisions to today's persistent/in-place/builder hooks, including operation catalogs, decision lookup/fallback plumbing, and one lowering family at a time. | [codegen/README.md](codegen/README.md) |
-| Storage Representation | Mandatory performance substrate after the existing-hook proof: repr-aware mutable lowering, typed/unboxed vector targets, dense byte/int regions, and true mutable/transient dict storage needed to reach Buffer-class performance. | [storage/README.md](storage/README.md) |
+| Storage Representation | Mandatory performance substrate after the existing-hook proof: private mutation-enabled collection storage, scoped mutable regions, owned-specialized mutable ABI, typed/dense vector targets, and mutable/transient dict storage needed to reach Buffer-class performance. | [storage/README.md](storage/README.md) |
 | Migration | Later cleanup after codegen and storage-representation work: compiler-private mutable intrinsics, hook consolidation, split-brain cleanup, and Buffer retirement policy. | [migration/README.md](migration/README.md) |
 
 [architecture.md](architecture.md) remains the umbrella design and canonical scope
@@ -45,11 +45,13 @@ emitted slices.
 
 Important scope boundary: those existing-hook slices are the integration proof,
 not the whole performance/migration deliverable. The project is not complete
-until mutable lowering is also representation-aware and can preserve or select
-optimized storage forms — typed/unboxed vectors, dense byte/int regions where
-appropriate, and true mutable/transient dict storage. That storage-representation
-track happens before migration cleanup and is the gate for retiring `Buffer` as
-the ordinary local-update workaround.
+until mutable lowering can keep proven-owned collections in private mutation-
+enabled storage across the useful chain, staying low until the latest required
+publication boundary before materializing persistent `Vector`/`Dict` values.
+Typed/unboxed vectors, dense byte/int regions where appropriate, owned-
+specialized mutable ABI, and true mutable/transient dict storage all belong to
+that storage-representation track, which happens before migration cleanup and
+gates retiring `Buffer` as the ordinary local-update workaround.
 
 ## Standing invariants
 
@@ -61,8 +63,9 @@ the ordinary local-update workaround.
 - **Persistent fallback is the safety default.** Missing, stale, ambiguous, or
   unsupported mutable decisions emit the ordinary immutable path.
 - **Storage representation is mandatory for completion.** Existing hooks may prove
-  the seam, but Buffer-class performance requires repr-aware mutable lowering that
-  does not regress typed/unboxed storage to erased `anyref` paths.
+  the seam, but Buffer-class performance requires private mutable storage that can
+  preserve typed/unboxed representation and avoid repeated persistent
+  materialization inside owned chains.
 
 ## Track map
 
@@ -103,19 +106,19 @@ Detailed checklist: [storage/README.md](storage/README.md)
 
 This track starts after the existing-hook codegen path proves that sound decisions
 can select private mutation safely. It makes storage optimization explicit and
-mandatory: repr-aware vector mutation, typed/unboxed helper families, dense
-byte/int regions where persistent trie storage cannot reach the target class, and
-true mutable/transient HAMT work for dicts. It runs before migration cleanup,
-because Buffer retirement depends on storage performance rather than hook
-consolidation alone.
+mandatory: scoped mutable regions first, private `MutVec`/`MutDict` or equivalent
+storage targets, owned-specialized mutable ABI across helper chains, typed/dense
+vector storage where needed, and true mutable/transient HAMT work for dicts. It
+runs before migration cleanup, because Buffer retirement depends on storage
+performance rather than hook consolidation alone.
 
 ### 4. Migration track
 
 Detailed checklist: [migration/README.md](migration/README.md)
 
 This track is not the first codegen or storage implementation. It consolidates
-successful existing-hook and optimized-storage lowering behind compiler-private
-mutable intrinsics, removes any remaining ad hoc legality paths, and eventually
+successful existing-hook and private mutable-storage lowering behind compiler-
+private intrinsics, removes any remaining ad hoc legality paths, and eventually
 evaluates Buffer cleanup.
 
 ## Focused docs
@@ -137,7 +140,7 @@ evaluates Buffer cleanup.
 | [codegen/vector-lowering.md](codegen/vector-lowering.md) | Vector indexed update and vector builder slice notes. |
 | [codegen/string-lowering.md](codegen/string-lowering.md) | String-concat builder-region slice notes. |
 | [codegen/dict-lowering.md](codegen/dict-lowering.md) | Dict set/remove slice notes. |
-| [storage/README.md](storage/README.md) | Mandatory optimized storage-representation track for repr-aware mutable lowering, typed vectors, dense regions, true mutable/transient dict storage, and Buffer-class performance gates. |
+| [storage/README.md](storage/README.md) | Mandatory storage-representation track for private mutation-enabled collection storage, scoped mutable regions, owned-specialized mutable ABI, typed/dense vectors, mutable/transient dict storage, and Buffer-class performance gates. |
 | [migration/mutable-intrinsics.md](migration/mutable-intrinsics.md) | Later compiler-private mutable intrinsic family and hook cleanup target. |
 | [migration/buffer-cleanup.md](migration/buffer-cleanup.md) | Follow-up policy for retiring Buffer workaround usage. |
 

@@ -34,8 +34,8 @@ This README is the analysis worklist derived from it.
 > **Phase numbering.** The whole plan uses one monotonic integer scheme where the
 > number encodes execution order: **Phases 0-6 = analysis** (0-3 foundation, 4-6
 > the precision below), **Phases 7-8 = codegen** (decisions/handoff, then
-> emission — see [../codegen/README.md](../codegen/README.md)), **Storage S1-S5 =
-> storage representation** (repr-aware mutable lowering and Buffer-class storage
+> emission — see [../codegen/README.md](../codegen/README.md)), **Storage S1-S6 =
+> storage representation** (private mutable storage and Buffer-class storage
 > performance — see [../storage/README.md](../storage/README.md)), and **Phases
 > 9-10 = migration** (mutable intrinsics, then follow-up precision + Buffer cleanup
 > policy — see [../migration/README.md](../migration/README.md)). The tag on each
