@@ -33,17 +33,16 @@ Each family should define:
 | Dict set | Persistent HAMT `Dict.set` | Existing dict in-place set helper | Must preserve old-version observability and insertion-order behavior. |
 | Dict remove | Persistent HAMT `Dict.remove` | Existing dict in-place remove helper, if semantics are cataloged | Do not bundle with `set` until remove semantics and ordering are verified. |
 | Record shell update | Persistent record update / field rebinding | Existing `ARecordUpdate.in_place` slot or equivalent backend hook | Shell reuse only; deep field collection ownership is a separate proof. |
+| Ownership-specialized function variant | Generic function/callee | Cloned function keyed by canonical `VariantId` | Required for recursive and mixed-caller cases. Generic body stays the fallback. See [worked-examples Case V](../analysis/worked-examples.md#case-v--graph_sccvisit-the-whole-compiler-idiom-real). |
+| Record-backed field collection update | Persistent projected-field collection update plus persistent record update | Existing dict/vector mutable helper plus record shell slot when separately licensed | Composed family for `env.types = ...`, `Set<K>`, transport wrappers, and Case V `cur.indices[...]`/`cur.stack = ...`. Field backing and shell reuse may be accepted independently. |
 
-## Future families
+## Later families
 
-These need later analysis precision or migration work before they become first-cut
-codegen targets:
+These need migration work or broader policy after the first existing-hook slices:
 
-- field-path collection updates such as `env.types = env.types.set(...)` where
-  both shell and field backing ownership matter;
-- return-path transport wrappers such as `out.ctx` or `Ok[0].state`;
-- ownership-specialized callee variants;
-- compiler-private mutable intrinsic regions.
+- compiler-private mutable intrinsic regions;
+- private tagged collection/record representations;
+- multi-key ownership specialization beyond the current cap/fallback policy.
 
 ## Inspection requirement
 
@@ -55,4 +54,5 @@ site <debug-id>: <family> persistent=<fallback> mutable=<target> proof=<proof-id
 ```
 
 Rejected or unsupported sites should name the persistent fallback and the rejection
-reason.
+reason. Variant-family inspection must also render the generic callee, clone name,
+canonical `VariantId`, route site, and fallback reason.

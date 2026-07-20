@@ -2,10 +2,10 @@
 
 **Status:** Ready to start; the full analysis track is complete through Phase 6
 (record/field ownership, transport-wrapper / `Result`-payload return-path summaries,
-and ownership-specialization decision facts), so codegen consumes a trustworthy fact
-set rather than rediscovering ownership. (These "Codegen Phase 7A/…" labels are the
-codegen track's own local numbering; see the phase-numbering note in
-[../analysis/README.md](../analysis/README.md).)
+ownership-specialization decision facts, and recursive SCC variant-qualified
+diagnostics), so codegen consumes a trustworthy fact set rather than rediscovering
+ownership. (These "Codegen Phase 7A/…" labels are the codegen track's own local
+numbering; see the phase-numbering note in [../analysis/README.md](../analysis/README.md).)
 
 This track owns the practical bridge from proof facts to emitted code. It should
 first reuse today's persistent/in-place/builder mechanisms, not introduce the
@@ -26,6 +26,9 @@ belongs to [../migration/README.md](../migration/README.md).
   before broadening.
 - Existing runtime/compiler hooks are implementation targets, not independent
   legality sources.
+- Variant-qualified diagnostics never license rewriting the generic function body.
+  Codegen must clone/route by exact `VariantId`, with the generic function as the
+  persistent fallback.
 
 ## Codegen Phase 7A — Operation catalog and dry-run targets
 
@@ -35,10 +38,10 @@ exact existing target would codegen use?”
 - [ ] **Inventory current hooks.** Record the existing vector builder,
   vector set, dict in-place, and record-update slots that can be reused first.
   Details: [existing-hooks.md](existing-hooks.md).
-- [ ] **Catalog mutable operation families.** For vectors, dicts, builders, and
-  record shells, define the persistent fallback, mutable target, source value,
-  result binding, and argument/result mapping. Details:
-  [operation-catalog.md](operation-catalog.md).
+- [ ] **Catalog mutable operation families.** For vectors, dicts, builders, record
+  shells, record-backed field collections, and ownership-specialized function
+  variants, define the persistent fallback, mutable target, source value, result
+  binding, and argument/result mapping. Details: [operation-catalog.md](operation-catalog.md).
 - [ ] **Print dry-run rewrite targets.** Extend inspection output so accepted or
   potential candidates can say `persistent_target -> mutable_target` without
   changing codegen.
@@ -53,8 +56,8 @@ and fail-safe.
 
 - [ ] **Define first-cut decision records.** For each accepted candidate, record
   operation family, ANF key, source value, required ownership fact, last-use
-  proof, persistent fallback, mutable target, argument mapping, and proof/debug
-  id. Details: [handoff-contract.md](handoff-contract.md).
+  proof, persistent fallback, mutable target, argument mapping, `VariantId` when
+  applicable, and proof/debug id. Details: [handoff-contract.md](handoff-contract.md).
 - [ ] **Attach decisions as ANF-keyed side tables.** Codegen-facing data should be
   stable over the optimized ANF artifact that codegen actually consumes.
 - [ ] **Define staleness handling.** If an ANF key no longer resolves, resolves to
@@ -123,11 +126,48 @@ be bundled with it.
 - [ ] **Keep shell reuse separate from deep field mutation.** A fresh shell around
   shared fields does not prove ownership of vector/dict storage reachable through
   those fields.
-- [ ] **Defer field-sensitive and wrapper-backed wins.** `Set<K>` and transported
-  `out.ctx`/`out.state` style wins wait for the analysis precision that proves
-  them.
+- [ ] **Preserve variant qualification.** If shell reuse is proven only in a
+  `variant fn ... [unique:...]` diagnostic body, emit it only in the cloned
+  ownership-specialized variant, never in the generic function body.
 
-## Codegen Phase 8F — Codegen-track verification gate
+## Codegen Phase 8F — Ownership-specialized function variants and call-site routing
+
+This phase turns Phase 6's printed specialization story into real functions. It is
+required for [worked-examples Case V](../analysis/worked-examples.md#case-v--graph_sccvisit-the-whole-compiler-idiom-real):
+`graph_scc.visit`'s generic body stays conservative, while `variant fn visit
+[unique:p0]` supplies the shell-reuse decisions for owned callers and recursive calls.
+
+- [ ] **Clone functions by exact `VariantId`.** Generate ownership-specialized
+  variants only for accepted, reachable keys; keep the original function as the
+  persistent/generic fallback.
+- [ ] **Route call sites from decision records.** A caller with a live owned
+  decision calls the matching clone; absent, stale, over-cap, unsupported, or
+  ambiguous decisions call the generic function.
+- [ ] **Tie recursive and mutual-recursive calls through the same key.** Inside a
+  cloned SCC member, recursive calls that the variant analysis proved reachable
+  route to the matching clone/peer clone, not back to the generic summary by
+  accident.
+- [ ] **Keep variant count capped and inspectable.** Render clone names, source
+  `VariantId`, fallback reason, and proof id in `twk ir`/WAT inspection.
+
+## Codegen Phase 8G — Record-backed field collection updates
+
+This phase composes the dict/vector and record-shell slices for the compiler's
+common quartet (`record_get` → collection update → `record_update` → `assign`). It
+covers `Set<K>` wrappers, transported `out.ctx`/`out.state` records, and Case V's
+`cur.indices[...]`, `cur.stack = ...`, and similar field-backed updates.
+
+- [ ] **Lower field-backed dict/vector updates only with explicit field-path
+  decisions.** The decision must name the record shell path, projected collection
+  path, old-field liveness proof, persistent fallback, and mutable collection target.
+- [ ] **Allow shell-only wins without deep field wins.** A cloned `visit` variant
+  may reuse the `State` shell while a dict/vector field update remains persistent;
+  do not require all-or-nothing lowering.
+- [ ] **Preserve sibling and nested-value safety.** Reads of disjoint sibling paths
+  are allowed only when licensed; ownership of a dict/vector backing is not
+  ownership of reference-typed values stored inside it.
+
+## Codegen Phase 8H — Codegen-track verification gate
 
 - [ ] **Run correctness and aliasing guards.** The negative-aliasing suite must
   remain persistent/correct; positive anchors should lower only where proved.
