@@ -848,6 +848,30 @@ fn test_base_source_local_for_args_reads_semantic_source_local() Result<Void, St
   .Ok({})
 }
 
+fn test_record_base_source_local_reads_semantic_source_local() Result<Void, String> {
+  local_map: Dict<Int, LocalEntry> = Dict.new()
+  local_map[42] = LocalEntry.{
+    index: 0,
+    val_type: ValType.Anyref,
+    mono: MonoType.Named(TypeId.{ id: 20 }, []),
+    repr: ReprKind.OpaqueAnyref,
+    source_local: lid(7),
+  }
+  ctx := mk_emit_ctx(make_builtin_registry(), resolver.empty_env(), local_map, .Some(fid(1)))
+
+  base := mutable_sites.record_base_source_local(PreparedAtom.ASlot(sid(42)), ctx)
+  case base {
+    .Some(local) => try assert.equal(local.id, 7),
+    .None => return .Err("missing base source local for ASlot"),
+  }
+
+  non_slot := mutable_sites.record_base_source_local(PreparedAtom.ALitInt(0), ctx)
+  case non_slot {
+    .None => .Ok({}),
+    .Some(_) => .Err("expected .None for a non-slot base atom"),
+  }
+}
+
 fn test_select_call_for_emit_none_current_func_id_is_skip_path() Result<Void, String> {
   builtins := make_builtin_registry()
   local_map: Dict<Int, LocalEntry> = Dict.new()
@@ -1250,6 +1274,10 @@ pub fn suite() runner.Suite {
     .test(
       "base_source_local_for_args reads semantic source local",
       test_base_source_local_for_args_reads_semantic_source_local,
+    )
+    .test(
+      "record_base_source_local reads semantic source local, .None for non-slot atoms",
+      test_record_base_source_local_reads_semantic_source_local,
     )
     .test(
       "select_call_for_emit returns .None when current_func_id is absent",
