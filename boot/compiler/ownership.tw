@@ -2110,13 +2110,6 @@ fn is_processed(processed: Dict<Int, Bool>, id: Int) Bool {
   }
 }
 
-fn own_map_get(exits: Dict<Int, Dict<Int, Int>>, id: Int) Dict<Int, Int> {
-  case exits.get(id) {
-    .Some(m) => m,
-    .None => Dict.new(),
-  }
-}
-
 type LoopSeedSet = Dict<String, Bool>
 
 type PredParamContribution = .{ own: Ownership, valid: Bool }
@@ -2159,8 +2152,8 @@ fn pred_local_contribution(
   pidx: Int?,
   lid: Int,
 ) PredParamContribution {
-  pred_exit := own_map_get(exits, pe.target.id)
-  pred_valid := valid_map_get(exit_valid, pe.target.id)
+  pred_exit := nested_get(exits, pe.target.id)
+  pred_valid := nested_get(exit_valid, pe.target.id)
   case pidx {
     .Some(i) => if i < pe.args.len() {
       arg := pe.args[i]
@@ -2207,7 +2200,7 @@ fn join_entry_ownership(blk: CfgBlock, exits: Dict<Int, Dict<Int, Int>>, process
     for pe in blk.preds {
       // pe.target holds the predecessor block id (see cfg.add_pred comment).
       if is_processed(processed, pe.target.id) {
-        pred_exit := own_map_get(exits, pe.target.id)
+        pred_exit := nested_get(exits, pe.target.id)
         contributed := case pidx {
           .Some(i) => if i < pe.args.len() {
             fact_of(pred_exit, pe.args[i])
@@ -2387,13 +2380,6 @@ fn valid_of_local(pv: Dict<Int, Bool>, id: Int) Bool {
   }
 }
 
-fn valid_map_get(m: Dict<Int, Dict<Int, Bool>>, id: Int) Dict<Int, Bool> {
-  case m.get(id) {
-    .Some(v) => v,
-    .None => Dict.new(),
-  }
-}
-
 // binding_valid meet over every live-in local (mirroring the ownership join):
 // block params meet through the positional edge arg's source-local validity;
 // live-through non-param locals meet the same id's validity. Absent => valid.
@@ -2408,7 +2394,7 @@ fn join_entry_valid(
     ok := true
     for pe in blk.preds {
       if is_processed(processed, pe.target.id) {
-        pv := valid_map_get(exit_valid, pe.target.id)
+        pv := nested_get(exit_valid, pe.target.id)
         contributed := case pidx {
           .Some(i) => if i < pe.args.len() {
             case atom_local_id(pe.args[i]) {
@@ -2431,13 +2417,6 @@ fn join_entry_valid(
 }
 
 // ── Provenance join (param-origin sets) ─────────────────────────────
-fn prov_map_get(m: Dict<Int, Dict<Int, Vector<Int>>>, id: Int) Dict<Int, Vector<Int>> {
-  case m.get(id) {
-    .Some(v) => v,
-    .None => Dict.new(),
-  }
-}
-
 fn prov_local(m: Dict<Int, Vector<Int>>, id: Int) Vector<Int> {
   case m.get(id) {
     .Some(v) => v,
@@ -2459,7 +2438,7 @@ fn join_entry_prov(
     acc: Vector<Int> = []
     for pe in blk.preds {
       if is_processed(processed, pe.target.id) {
-        pv := prov_map_get(exit_prov, pe.target.id)
+        pv := nested_get(exit_prov, pe.target.id)
         src := case pidx {
           .Some(i) => if i < pe.args.len() {
             prov_of(pv, pe.args[i])
@@ -2509,13 +2488,6 @@ fn seed_param_own(entry: Dict<Int, Int>, unique_seed: Dict<Int, Bool>, params: V
 }
 
 // ── Field-ownership join + change-detection ─────────────────────────
-fn field_own_map_get(m: Dict<Int, Dict<Int, ff.FieldMap>>, id: Int) Dict<Int, ff.FieldMap> {
-  case m.get(id) {
-    .Some(v) => v,
-    .None => Dict.new(),
-  }
-}
-
 fn field_of(fo: Dict<Int, ff.FieldMap>, id: Int) ff.FieldMap {
   case fo.get(id) {
     .Some(m) => m,
@@ -2546,7 +2518,7 @@ fn join_entry_field_own(
     acc: ff.FieldMap? = .None
     for pe in blk.preds {
       if is_processed(processed, pe.target.id) {
-        fo := field_own_map_get(exit_field, pe.target.id)
+        fo := nested_get(exit_field, pe.target.id)
         src := case pidx {
           .Some(i) => if i < pe.args.len() {
             field_of_atom(fo, pe.args[i])
@@ -2576,16 +2548,6 @@ fn join_entry_field_own(
     }
   }
   entry
-}
-
-fn path_prov_map_get(m: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>, id: Int) Dict<
-  Int,
-  Dict<Int, Vector<Int>>,
-> {
-  case m.get(id) {
-    .Some(v) => v,
-    .None => Dict.new(),
-  }
 }
 
 fn pp_of(pp: Dict<Int, Dict<Int, Vector<Int>>>, id: Int) Dict<Int, Vector<Int>> {
@@ -2619,7 +2581,7 @@ fn join_entry_path_prov(
     acc: Dict<Int, Vector<Int>>? = .None
     for pe in blk.preds {
       if is_processed(processed, pe.target.id) {
-        pp := path_prov_map_get(exit_pp, pe.target.id)
+        pp := nested_get(exit_pp, pe.target.id)
         src := case pidx {
           .Some(i) => if i < pe.args.len() {
             pp_of_atom(pp, pe.args[i])
@@ -2876,20 +2838,20 @@ fn run_fixpoint(
       st = if pred_id >= 0 {
         st.seed_payload_binding(
           blk,
-          field_own_map_get(exit_field_own, pred_id),
-          path_prov_map_get(exit_path_prov, pred_id),
-          prov_map_get(exit_prov, pred_id),
+          nested_get(exit_field_own, pred_id),
+          nested_get(exit_path_prov, pred_id),
+          nested_get(exit_prov, pred_id),
         )
       } else {
         st
       }
       st = forward_block(blk, st, prep_get(preps, blk, sem), table, b, sem, suppress)
       already := is_processed(processed, blk.id.id)
-      old_own := own_map_get(exits, blk.id.id)
-      old_valid := valid_map_get(exit_valid, blk.id.id)
-      old_prov := prov_map_get(exit_prov, blk.id.id)
-      old_field := field_own_map_get(exit_field_own, blk.id.id)
-      old_pp := path_prov_map_get(exit_path_prov, blk.id.id)
+      old_own := nested_get(exits, blk.id.id)
+      old_valid := nested_get(exit_valid, blk.id.id)
+      old_prov := nested_get(exit_prov, blk.id.id)
+      old_field := nested_get(exit_field_own, blk.id.id)
+      old_pp := nested_get(exit_path_prov, blk.id.id)
       next_own := st.own
       next_valid := st.valid
       next_prov := st.prov
@@ -2901,7 +2863,7 @@ fn run_fixpoint(
         own_merge := merge_targeted(
           old_own,
           st.own,
-          own_map_get(prev_exits, blk.id.id),
+          nested_get(prev_exits, blk.id.id),
           locked_get(locked_own, blk.id.id),
           has_prev,
           force_lock_changed,
@@ -2910,7 +2872,7 @@ fn run_fixpoint(
         valid_merge := merge_targeted(
           old_valid,
           st.valid,
-          valid_map_get(prev_exit_valid, blk.id.id),
+          nested_get(prev_exit_valid, blk.id.id),
           locked_get(locked_valid, blk.id.id),
           has_prev,
           force_lock_changed,
@@ -2919,7 +2881,7 @@ fn run_fixpoint(
         prov_merge := merge_targeted(
           old_prov,
           st.prov,
-          prov_map_get(prev_exit_prov, blk.id.id),
+          nested_get(prev_exit_prov, blk.id.id),
           locked_get(locked_prov, blk.id.id),
           has_prev,
           force_lock_changed,
@@ -3059,9 +3021,9 @@ pub fn call_uniques(
     st = if pred_id >= 0 {
       st.seed_payload_binding(
         blk,
-        field_own_map_get(fx.exit_field_own, pred_id),
-        path_prov_map_get(fx.exit_path_prov, pred_id),
-        prov_map_get(fx.exit_prov, pred_id),
+        nested_get(fx.exit_field_own, pred_id),
+        nested_get(fx.exit_path_prov, pred_id),
+        nested_get(fx.exit_prov, pred_id),
       )
     } else {
       st
@@ -3305,9 +3267,9 @@ fn ownership_stage(
     st = if pred_id >= 0 {
       st.seed_payload_binding(
         blk,
-        field_own_map_get(fx.exit_field_own, pred_id),
-        path_prov_map_get(fx.exit_path_prov, pred_id),
-        prov_map_get(fx.exit_prov, pred_id),
+        nested_get(fx.exit_field_own, pred_id),
+        nested_get(fx.exit_path_prov, pred_id),
+        nested_get(fx.exit_prov, pred_id),
       )
     } else {
       st
@@ -4051,10 +4013,10 @@ fn summarize_seeded(
     esc: EscapeEffect = .Borrowed
     cap: ParamCapability = .NoCap
     for blk in blocks {
-      if own_is_shared(own_map_get(fx.exits, blk.id.id), p.id) {
+      if own_is_shared(nested_get(fx.exits, blk.id.id), p.id) {
         esc = .Retained
       }
-      case valid_map_get(fx.exit_valid, blk.id.id).get(p.id) {
+      case nested_get(fx.exit_valid, blk.id.id).get(p.id) {
         .Some(v) => if !v {
           cap = .Consumed
         },
@@ -4097,9 +4059,9 @@ fn summarize_seeded(
         st = if pred_id >= 0 {
           st.seed_payload_binding(
             blk,
-            field_own_map_get(fx.exit_field_own, pred_id),
-            path_prov_map_get(fx.exit_path_prov, pred_id),
-            prov_map_get(fx.exit_prov, pred_id),
+            nested_get(fx.exit_field_own, pred_id),
+            nested_get(fx.exit_path_prov, pred_id),
+            nested_get(fx.exit_prov, pred_id),
           )
         } else {
           st
