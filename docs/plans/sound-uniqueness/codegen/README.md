@@ -30,26 +30,36 @@ belongs to [../migration/README.md](../migration/README.md).
   Codegen must clone/route by exact `VariantId`, with the generic function as the
   persistent fallback.
 
-## Codegen Phase 7A — Operation catalog and dry-run targets
+## Codegen Phase 7A — Existing hook inventory
+
+No emitted-code change. Start with the concrete backend/runtime surface we already
+have before designing side tables around it.
+
+- [ ] **Inventory current hooks.** Record the existing vector builder, vector set,
+  dict in-place, record-update, and function-cloning/routing mechanisms that can
+  be reused first. Details: [existing-hooks.md](existing-hooks.md).
+- [ ] **Verify hook signatures.** For each hook, record helper/op names, operand
+  order, result behavior, monomorphized type restrictions, persistent fallback,
+  and WAT/call-inspection signature.
+- [ ] **Classify non-hooks.** Keep user-facing scaffolding such as `@std.buffer`
+  out of this track; migration owns later cleanup.
+
+## Codegen Phase 7B — Operation catalog
 
 No emitted-code change. This phase answers: “if this candidate is accepted, what
 exact existing target would codegen use?”
 
-- [ ] **Inventory current hooks.** Record the existing vector builder,
-  vector set, dict in-place, and record-update slots that can be reused first.
-  Details: [existing-hooks.md](existing-hooks.md).
 - [ ] **Catalog mutable operation families.** For vectors, dicts, builders, record
   shells, record-backed field collections, and ownership-specialized function
   variants, define the persistent fallback, mutable target, source value, result
   binding, and argument/result mapping. Details: [operation-catalog.md](operation-catalog.md).
-- [ ] **Print dry-run rewrite targets.** Extend inspection output so accepted or
-  potential candidates can say `persistent_target -> mutable_target` without
-  changing codegen.
 - [ ] **Keep unsupported families persistent.** The catalog may name future
   families, but unsupported or unmapped sites must keep the ordinary immutable
   path.
+- [ ] **Name inspection signatures.** Each catalog entry should say what `twk ir`,
+  WAT, or call-list evidence proves the mutable target would be selected.
 
-## Codegen Phase 7B — Decision records and handoff contract
+## Codegen Phase 7C — Decision records and handoff contract
 
 No optimized emission yet. This phase makes the analysis→backend seam explicit
 and fail-safe.
@@ -63,22 +73,35 @@ and fail-safe.
 - [ ] **Define staleness handling.** If an ANF key no longer resolves, resolves to
   the wrong op family, or has ambiguous mapping, the decision is ignored and the
   persistent path is emitted.
-- [ ] **Render decisions before using them.** `twk ir`/census output should show
-  decisions and proof ids so the first emitted slice is auditable.
 
-## Codegen Phase 7C — Backend lookup and persistent fallback plumbing
+## Codegen Phase 7D — Backend lookup and persistent fallback plumbing
 
-Still no optimized emission. This phase wires the backend to consume the side
-table while deliberately returning the persistent target for every site.
+Still no optimized emission. This phase wires the backend to consume an empty or
+ignored side table while deliberately returning the persistent target for every site.
 
 - [ ] **Thread the decision table to backend/codegen entry points.** Keep the
   default empty table behavior byte-equivalent to today's persistent output.
 - [ ] **Validate lookup/fallback paths.** Exercise present, absent, stale, and
   unsupported decisions; every non-live decision must choose persistent fallback.
-- [ ] **Add inspection for consumed vs ignored decisions.** Backend debug output
-  should distinguish “decision found but dry-run” from “decision absent/stale.”
+- [ ] **Keep fallback centralized.** Backend code should ask the decision table for
+  a target and receive either an exact mutable target or the ordinary persistent
+  target, not hand-roll legality checks per family.
 
-## Codegen Phase 8A — First vector indexed-update emission
+## Codegen Phase 7E — Dry-run rendering
+
+No optimized emission yet. This phase proves the seam and inspection story before
+any helper or cloned variant is emitted.
+
+- [ ] **Print dry-run rewrite targets.** Extend inspection output so accepted or
+  potential candidates can say `persistent_target -> mutable_target` without
+  changing codegen.
+- [ ] **Render consumed vs ignored decisions.** Backend debug output should
+  distinguish “decision found but dry-run” from “decision absent/stale.”
+- [ ] **Include variant routing dry-runs.** For Case V-shaped calls, render the
+  generic callee, would-be cloned callee, exact `VariantId`, route site, and
+  fallback reason.
+
+## Codegen Phase 8A — Local vector indexed-update emission
 
 First emitted-code change. Keep the slice intentionally narrow.
 
@@ -110,16 +133,29 @@ be bundled with it.
   required independent of optimization must keep working without an ownership
   decision.
 
-## Codegen Phase 8D — Dict update emission
+## Codegen Phase 8D — Dict set emission
 
 - [ ] **Lower proven-owned `Dict.set` through existing in-place helpers.** Preserve
   key lookup semantics and old-version observability.
-- [ ] **Lower proven-owned `Dict.remove` only after its helper semantics are
-  cataloged.** Insertion-order iteration and value sharing must remain correct.
 - [ ] **Keep nested value ownership conservative.** Ownership of a dict backing is
   not ownership of reference-typed values stored inside it.
+- [ ] **Inspect dict helper selection.** Positive sites should show the in-place
+  set helper; negative aliasing/old-version cases should still call the persistent
+  path.
 
-## Codegen Phase 8E — Record shell update emission
+## Codegen Phase 8E — Dict remove emission
+
+`Dict.remove` uses related machinery but has separate ordering and helper semantics;
+do not bundle it with set.
+
+- [ ] **Catalog and verify remove helper semantics first.** Insertion-order
+  iteration, missing-key behavior, and old-version observability must remain correct.
+- [ ] **Lower proven-owned `Dict.remove` through existing in-place helpers.** Fall
+  back to the persistent path for unsupported or stale decisions.
+- [ ] **Keep remove inspection distinct from set.** Debug output should make it
+  obvious which helper family was selected.
+
+## Codegen Phase 8F — Record shell update emission
 
 - [ ] **Lower simple record shell updates from facts.** Reuse record shells only
   when CFG facts explicitly permit shell reuse.
@@ -130,7 +166,7 @@ be bundled with it.
   `variant fn ... [unique:...]` diagnostic body, emit it only in the cloned
   ownership-specialized variant, never in the generic function body.
 
-## Codegen Phase 8F — Ownership-specialized function variants and call-site routing
+## Codegen Phase 8G — Ownership-specialized function variants and call-site routing
 
 This phase turns Phase 6's printed specialization story into real functions. It is
 required for [worked-examples Case V](../analysis/worked-examples.md#case-v--graph_sccvisit-the-whole-compiler-idiom-real):
@@ -150,7 +186,7 @@ required for [worked-examples Case V](../analysis/worked-examples.md#case-v--gra
 - [ ] **Keep variant count capped and inspectable.** Render clone names, source
   `VariantId`, fallback reason, and proof id in `twk ir`/WAT inspection.
 
-## Codegen Phase 8G — Record-backed field collection updates
+## Codegen Phase 8H — Record-backed field collection updates
 
 This phase composes the dict/vector and record-shell slices for the compiler's
 common quartet (`record_get` → collection update → `record_update` → `assign`). It
@@ -167,7 +203,7 @@ covers `Set<K>` wrappers, transported `out.ctx`/`out.state` records, and Case V'
   are allowed only when licensed; ownership of a dict/vector backing is not
   ownership of reference-typed values stored inside it.
 
-## Codegen Phase 8H — Codegen-track verification gate
+## Codegen Phase 8I — Codegen-track verification gate
 
 - [ ] **Run correctness and aliasing guards.** The negative-aliasing suite must
   remain persistent/correct; positive anchors should lower only where proved.
