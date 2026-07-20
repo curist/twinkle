@@ -257,11 +257,12 @@ covers `Set<K>` wrappers, transported `out.ctx`/`out.state` records, and Case V'
 - [ ] **Run performance only as an end-of-track signal.** Full AWFY comparisons
   wait until vector/dict/record paths are end-to-end enough to be meaningful.
 
-## Deferrals to migration
+## Deferrals after codegen
 
 | Deferred work | Home |
 |---|---|
+| Repr-aware mutable lowering, typed/unboxed mutable vector targets, dense byte/int regions, and true mutable/transient dict storage | [../storage/README.md](../storage/README.md) |
 | Compiler-private `begin`/`read`/`write`/`freeze` intrinsic family | [../migration/mutable-intrinsics.md](../migration/mutable-intrinsics.md) |
 | Migrating current hooks behind the intrinsic layer | [../migration/README.md](../migration/README.md) |
 | Removing remaining split-brain mutability decisions | [../migration/README.md](../migration/README.md) |
-| Buffer retirement | [../migration/buffer-cleanup.md](../migration/buffer-cleanup.md) |
+| Buffer retirement policy, after the storage performance gate shows ordinary code no longer needs Buffer as the local-update workaround | [../migration/buffer-cleanup.md](../migration/buffer-cleanup.md) |
