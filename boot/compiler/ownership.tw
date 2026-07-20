@@ -2417,13 +2417,6 @@ fn join_entry_valid(
 }
 
 // ── Provenance join (param-origin sets) ─────────────────────────────
-fn prov_local(m: Dict<Int, Vector<Int>>, id: Int) Vector<Int> {
-  case m.get(id) {
-    .Some(v) => v,
-    .None => [],
-  }
-}
-
 // entry.prov for every live-in local (mirroring the ownership join): a block
 // param unions the origins its positional edge arg carries; a live-through
 // non-param local unions the same id's origins. Absent => empty.
