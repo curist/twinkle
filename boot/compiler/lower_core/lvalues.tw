@@ -36,10 +36,12 @@ pub fn lower_lvalue_assign(
             fid_idx := find_field_index_in_type(ctx.env, base_ty, field_name)
             fid := FieldId.{ id: fid_idx }
 
-            // Use GlobalLocal for module globals, Local for function locals
-            base_kind: CoreExprKind = case ctx.module_globals[name] {
-              .Some(_) => .GlobalLocal(GlobalId.{ id: root_local.id }),
-              .None => .Local(root_local),
+            // Decide base kind local-first so a local/param shadows a
+            // same-named module global (mirrors the Ident read path in
+            // lower_core.tw). A by-name module_globals check ignores shadowing.
+            base_kind: CoreExprKind = case ctx.lookup_local(name) {
+              .Some(_) => .Local(root_local),
+              .None => .GlobalLocal(GlobalId.{ id: root_local.id }),
             }
             update := CoreExpr.{
               kind: .RecordUpdate(.{ kind: base_kind, ty: base_ty, span: s }, fid, rhs_core),
@@ -90,9 +92,13 @@ pub fn lower_lvalue_assign(
               .Dict(_, _) => ctx.builtins.method_id("Dict", "set"),
               _ => ctx.builtins.id("vector$set_unsafe"),
             }
-            base_kind: CoreExprKind = case ctx.module_globals[name] {
-              .Some(_) => .GlobalLocal(GlobalId.{ id: root_local.id }),
-              .None => .Local(root_local),
+
+            // Decide base kind local-first so a local/param shadows a
+            // same-named module global (mirrors the Ident read path in
+            // lower_core.tw). A by-name module_globals check ignores shadowing.
+            base_kind: CoreExprKind = case ctx.lookup_local(name) {
+              .Some(_) => .Local(root_local),
+              .None => .GlobalLocal(GlobalId.{ id: root_local.id }),
             }
             update := CoreExpr.{
               kind: .Call(

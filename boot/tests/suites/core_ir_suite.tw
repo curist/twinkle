@@ -379,6 +379,43 @@ fn has_call(expr: core_ir.CoreExpr) Bool {
 }
 
 // ── M0: Expression identity ─────────────────────────────────────────
+fn fn_body_by_name(lr: lower_core.LowerResult, name: String) Result<core_ir.CoreExpr, String> {
+  for f in lr.module.functions {
+    if f.name == name {
+      return .Ok(f.body)
+    }
+  }
+
+  .Err("no function named ${name}")
+}
+
+// Tag of the base (arg 0) of the first Call reached, recursing through the
+// Let/Assign/If spine that index-assign lowering produces. "GlobalLocal" here
+// means the base was miscompiled to a module-global read.
+fn first_call_base_tag(expr: core_ir.CoreExpr) String? {
+  case expr.kind {
+    .Call(_, args) => if args.len() >= 1 {
+      case args[0].kind {
+        .Local(_) => .Some("Local"),
+        .GlobalLocal(_) => .Some("GlobalLocal"),
+        _ => .Some("other"),
+      }
+    } else {
+      .None
+    },
+    .Let(_, val, body) => case first_call_base_tag(val) {
+      .Some(t) => .Some(t),
+      .None => first_call_base_tag(body),
+    },
+    .Assign(_, val) => first_call_base_tag(val),
+    .If(_, then_e, else_e) => case first_call_base_tag(then_e) {
+      .Some(t) => .Some(t),
+      .None => first_call_base_tag(else_e),
+    },
+    _ => .None,
+  }
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("core_ir")
@@ -1711,6 +1748,23 @@ pub fn suite() runner.Suite {
           try assert.ok(func.name != "wrap", "generic wrap should be dropped")
         }
 
+        .Ok({})
+      },
+    )
+    .test(
+      "index-assign base resolves to shadowing local param, not module global",
+      fn() Result<Void, String> {
+        // A param `xs` shadows a module global `xs`; the index-assign base must
+        // read the local param, not the global. Regression: lvalue lowering
+        // decided base kind by name in module_globals, ignoring shadowing.
+        src := "fn vec_set(xs: Vector<Int>) Vector<Int> {\n  xs[0] = 9\n  xs\n}\nxs := [7, 8]\nvec_set([1, 2])\n"
+        lr := try lower_src(src)
+        body := try fn_body_by_name(lr, "vec_set")
+        tag := case first_call_base_tag(body) {
+          .Some(t) => t,
+          .None => return .Err("no call found in vec_set body"),
+        }
+        try assert.equal(tag, "Local")
         .Ok({})
       },
     )
