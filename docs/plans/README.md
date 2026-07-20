@@ -58,6 +58,7 @@ throughput.
 | Plan | Description |
 |------|-------------|
 | [sound-uniqueness/](sound-uniqueness/) | Rebuild boot compiler uniqueness analysis and mutable lowering from scratch, with printable ownership facts before codegen |
+| [sound-uniqueness-recursive-summary-ownership.md](sound-uniqueness-recursive-summary-ownership.md) | Close the recursive-summary ownership gap (`graph_scc.visit`): a state record threaded through a self/mutual-recursive call is pinned `Published` by the least-fixed-point summary driver. Builds Phase 6 Stage 5 (a `VariantId`-keyed SCC fixpoint) so the recursive call resolves to an owned variant |
 | [compiler-stack-safety.md](compiler-stack-safety.md) | Make the compiler's recursive IR tree-walks stack-safe so deeply-nested IR (wide `cond`, long side-effecting statement sequences, deep `if/else`) doesn't overflow the V8 Wasm stack. Wide `case` already fixed (flat instruction vector); runtime stack-size mitigation verified non-viable. Phased: depth-guard stopgap → iterative lowering/opt → anf/prepare/emit → serializers |
 
 ### Archived reference docs
