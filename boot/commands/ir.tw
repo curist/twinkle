@@ -55,7 +55,7 @@ fn render_cfg_artifacts(artifacts: PipelineArtifacts) String {
   table := summary.compute(view, b, s)
   variants := summary.compute_variants(view, b, s, table)
   analyzed := ownership.analyze_with_summaries(view, b, s, table)
-  summary.render_cfg(analyzed, table, variants)
+  summary.render_cfg(view, analyzed, b, s, table, variants)
 }
 
 pub fn render_cfg_for_entry(file: String) String {

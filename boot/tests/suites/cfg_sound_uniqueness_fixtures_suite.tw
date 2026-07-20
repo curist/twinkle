@@ -26,7 +26,7 @@ fn render_entry(name: String) Result<String, String> {
   table := summary.compute(view, b, sem)
   variants := summary.compute_variants(view, b, sem, table)
   analyzed := ownership.analyze_with_summaries(view, b, sem, table)
-  .Ok(summary.render_cfg(analyzed, table, variants))
+  .Ok(summary.render_cfg(view, analyzed, b, sem, table, variants))
 }
 
 fn assert_has_all(out: String, parts: Vector<String>) Result<Void, String> {
@@ -49,6 +49,18 @@ fn section_between(out: String, start_marker: String, end_marker: String) Result
 fn section_from(out: String, start_marker: String) Result<String, String> {
   start := try out.index_of(start_marker).ok_or("missing section marker ${start_marker}")
   .Ok(out.substring(start, out.len()))
+}
+
+fn variant_section(out: String, func_name: String, key: String) Result<String, String> {
+  start_marker := "variant fn ${func_name} [${key}]"
+  start := try out.index_of(start_marker).ok_or("missing variant section ${start_marker}")
+  tail := out.substring(start, out.len())
+  rest := tail.substring(1, tail.len())
+  next := case rest.index_of("\nvariant fn ") {
+    .Some(i) => i + 1,
+    .None => tail.len(),
+  }
+  .Ok(tail.substring(0, next))
 }
 
 pub fn suite() runner.Suite {
@@ -229,6 +241,19 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "self-recursive threaded record renders an owned variant verdict",
+      fn() {
+        out := try render_entry("recursive_thread_state")
+        generic := try section_between(out, "fn scc_thread", "fn run")
+        try assert.str_contains(generic, "persistent(aliased shell)")
+        variant := try variant_section(out, "scc_thread", "unique:p0")
+        try assert.str_contains(variant, "variant: p0=Consumed paths{[]}")
+        try assert.str_contains(variant, "reuse(unique)")
+        try assert.is_false(variant.contains("persistent(aliased shell)"))
+        .Ok({})
+      },
+    )
+    .test(
       "Cell-backed dict update stays conservative",
       fn() {
         out := try render_entry("cell_main")
@@ -259,6 +284,9 @@ pub fn suite() runner.Suite {
             "fn run_visit",
           ],
         )
+        variant := try variant_section(out, "visit", "unique:p0")
+        try assert.str_contains(variant, "variant: p0=Consumed paths{[]}")
+        try assert.str_contains(variant, "reuse(unique)")
         .Ok({})
       },
     )

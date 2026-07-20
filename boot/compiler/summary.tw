@@ -17,7 +17,8 @@ use compiler.graph_scc
 use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership.{
   ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary, SummaryTable,
-  empty_summary_table, summarize_function, summarize_variant, summary_get,
+  analyze_function_with_seed, call_uniques, empty_summary_table, summarize_function,
+  summarize_variant, summary_get,
 }
 use compiler.variant_id as vid
 
@@ -774,23 +775,30 @@ fn run_scc_variants(
         rounds = rounds + 1
       }
 
-      // validate; retract failures and re-run, else stable
-      failed: Vector<Int> = []
-      for m, k in member_pidx {
-        conv := case member_iter.get(m) {
-          .Some(s) => s,
-          .None => optimistic_hypothesis(table_get(generic, m), k),
-        }
-        if !variant_valid(conv, k) {
-          failed = .append(m)
-        }
-      }
-      if failed.len() == 0 {
+      if changed {
+        // The iterate started optimistic; a cap-time snapshot is not conservative.
+        member_pidx = Dict.new()
+        member_key = Dict.new()
         stable = true
       } else {
-        for m in failed {
-          member_pidx = .remove(m)
-          member_key = .remove(m)
+        // validate; retract failures and re-run, else stable
+        failed: Vector<Int> = []
+        for m, k in member_pidx {
+          conv := case member_iter.get(m) {
+            .Some(s) => s,
+            .None => optimistic_hypothesis(table_get(generic, m), k),
+          }
+          if !variant_valid(conv, k) {
+            failed = .append(m)
+          }
+        }
+        if failed.len() == 0 {
+          stable = true
+        } else {
+          for m in failed {
+            member_pidx = .remove(m)
+            member_key = .remove(m)
+          }
         }
       }
     }
@@ -825,6 +833,220 @@ pub fn compute_variants(
     vtable = run_scc_variants(scc, index, generic, candidates, vtable, b, sem)
   }
   vtable
+}
+
+fn func_scc_ids(sccs: Vector<Vector<Int>>) Dict<Int, Int> {
+  ids: Dict<Int, Int> = Dict.new()
+  for scc, sid in sccs {
+    for f in scc {
+      ids[f] = sid
+    }
+  }
+  ids
+}
+
+fn scc_id_of(ids: Dict<Int, Int>, func_id: Int) Int {
+  case ids.get(func_id) {
+    .Some(id) => id,
+    .None => 0 - 1,
+  }
+}
+
+fn scc_set_for(sccs: Vector<Vector<Int>>, ids: Dict<Int, Int>, func_id: Int) Dict<Int, Bool> {
+  sid := scc_id_of(ids, func_id)
+  if sid >= 0 and sid < sccs.len() {
+    int_set(sccs[sid])
+  } else {
+    Dict.new()
+  }
+}
+
+fn variant_args_satisfied(v: vid.VariantId, arg_unique: Vector<Bool>) Bool {
+  for req in v.unique {
+    if req.param < 0 or req.param >= arg_unique.len() or !arg_unique[req.param] {
+      return false
+    }
+  }
+  v.unique.len() > 0
+}
+
+type ReachState = .{ reachable: Dict<String, Bool>, changed: Bool }
+
+fn reach_has(reachable: Dict<String, Bool>, key: String) Bool {
+  case reachable.get(key) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn mark_reachable(st: ReachState, key: String) ReachState {
+  if !reach_has(st.reachable, key) {
+    st.reachable[key] = true
+    st.changed = true
+  }
+  st
+}
+
+fn mark_site_variants(
+  variants: VariantSummaryTable,
+  callee: Int,
+  arg_unique: Vector<Bool>,
+  st: ReachState,
+) ReachState {
+  case variants.by_func.get(callee) {
+    .Some(keys) => {
+      for key in keys {
+        case variants.by_key.get(key) {
+          .Some(entry) => if variant_args_satisfied(entry.variant, arg_unique) {
+            st = .mark_reachable(key)
+          },
+          .None => {},
+        }
+      }
+      st
+    },
+    .None => st,
+  }
+}
+
+fn unique_seed_for_variant(f: CfgFunction, v: vid.VariantId) Dict<Int, Bool> {
+  seed: Dict<Int, Bool> = Dict.new()
+  for req in v.unique {
+    if req.path.is_shell() and req.param >= 0 and req.param < f.params.len() {
+      seed[f.params[req.param].id] = true
+    }
+  }
+  seed
+}
+
+fn render_variant_key(v: vid.VariantId) String {
+  reqs: Vector<String> = collect r in v.unique {
+    if r.path.is_shell() {
+      "p${r.param}"
+    } else if r.path.segs.len() > 0 {
+      "p${r.param}.f${r.path.segs[0]}"
+    } else {
+      "p${r.param}"
+    }
+  }
+  "unique:${reqs.join(",")}"
+}
+
+fn canonical_reachable_key(
+  variants: VariantSummaryTable,
+  reachable: Dict<String, Bool>,
+  func_id: Int,
+) String? {
+  case variants.by_func.get(func_id) {
+    .Some(keys) => {
+      for key in keys {
+        if reach_has(reachable, key) {
+          return .Some(key)
+        }
+      }
+      .None
+    },
+    .None => .None,
+  }
+}
+
+fn reachable_overlay(
+  generic: SummaryTable,
+  variants: VariantSummaryTable,
+  reachable: Dict<String, Bool>,
+) SummaryTable {
+  overlay := generic
+  for func_id, _keys in variants.by_func {
+    case variants.canonical_reachable_key(reachable, func_id) {
+      .Some(key) => case variants.by_key.get(key) {
+        .Some(entry) => overlay = table_put(overlay, func_id, entry.summary),
+        .None => {},
+      },
+      .None => {},
+    }
+  }
+  overlay
+}
+
+fn all_variant_overlay(generic: SummaryTable, variants: VariantSummaryTable) SummaryTable {
+  overlay := generic
+  for func_id, keys in variants.by_func {
+    if keys.len() > 0 {
+      case variants.by_key.get(keys[0]) {
+        .Some(entry) => overlay = table_put(overlay, func_id, entry.summary),
+        .None => {},
+      }
+    }
+  }
+  overlay
+}
+
+fn reachable_variants(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  generic: SummaryTable,
+  variants: VariantSummaryTable,
+) Dict<String, Bool> {
+  index := build_func_index(view)
+  user_ids := user_id_set(view)
+  sccs := order_sccs(view, index, user_ids)
+  scc_ids := func_scc_ids(sccs)
+  st := ReachState.{ reachable: Dict.new(), changed: false }
+
+  // Roots: only out-of-SCC callers can discharge a callee's variant. Scan them
+  // against the converged variant overlay so loop-carried fresh state in an
+  // external caller can remain unique across a call that the generic summary pins.
+  root_overlay := all_variant_overlay(generic, variants)
+  for f in view.functions {
+    caller_scc := scc_id_of(scc_ids, f.func_id)
+    suppress := scc_set_for(sccs, scc_ids, f.func_id)
+    sites := call_uniques(f, root_overlay, b, sem, suppress, Dict.new())
+    for site in sites {
+      callee_scc := scc_id_of(scc_ids, site.callee)
+      if caller_scc != callee_scc {
+        st = variants.mark_site_variants(site.callee, site.arg_unique, st)
+      }
+    }
+  }
+
+  // Variant graph fixed point: rebuild overlay from the growing reachable set and
+  // rescan currently reachable canonical variants until no new keys appear.
+  again := true
+  passes := 0
+  cap := variants.by_key.keys().len() + 2
+  for again and passes < cap {
+    st.changed = false
+    overlay := reachable_overlay(generic, variants, st.reachable)
+    for f in view.functions {
+      case variants.canonical_reachable_key(st.reachable, f.func_id) {
+        .Some(key) => case variants.by_key.get(key) {
+          .Some(entry) => {
+            seed := unique_seed_for_variant(f, entry.variant)
+            suppress := scc_set_for(sccs, scc_ids, f.func_id)
+            sites := call_uniques(f, overlay, b, sem, suppress, seed)
+            for site in sites {
+              st = variants.mark_site_variants(site.callee, site.arg_unique, st)
+            }
+          },
+          .None => {},
+        },
+        .None => {},
+      }
+    }
+    again = st.changed
+    passes = passes + 1
+  }
+  st.reachable
+}
+
+fn function_by_id(view: CfgView, func_id: Int) CfgFunction? {
+  for f in view.functions {
+    if f.func_id == func_id {
+      return .Some(f)
+    }
+  }
+  .None
 }
 
 // ── Rendering ───────────────────────────────────────────────────────
@@ -905,33 +1127,55 @@ pub fn render_summary(s: Summary) String {
   "summary: ${render_summary_body(s)}"
 }
 
-// Render the `--cfg` view with each function's summary as a header line, plus a
-// `variant:` line per surviving owned variant. The header Dict is built here
-// (func_id → rendered summary) and handed to cfg, keeping cfg free of
-// ownership/summary imports.
-pub fn render_cfg(view: CfgView, table: SummaryTable, variants: VariantSummaryTable) String {
-  headers: Dict<Int, String> = Dict.new()
-  for f in view.functions {
-    case summary_get(table, f.func_id) {
-      .Some(s) => {
-        lines := render_summary(s)
-        case variants.by_func.get(f.func_id) {
-          .Some(keys) => {
-            for key in keys {
-              case variants.by_key.get(key) {
-                .Some(entry) => lines = "${lines}\n  variant: ${render_summary_body(entry.summary)}",
-                .None => {},
-              }
-            }
-          },
-          .None => {},
-        }
-        headers[f.func_id] = lines
+fn variant_sections(
+  source: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  generic: SummaryTable,
+  variants: VariantSummaryTable,
+  reachable: Dict<String, Bool>,
+) String {
+  overlay := reachable_overlay(generic, variants, reachable)
+  out := ""
+  for f in source.functions {
+    case variants.canonical_reachable_key(reachable, f.func_id) {
+      .Some(key) => case variants.by_key.get(key) {
+        .Some(entry) => {
+          seed := unique_seed_for_variant(f, entry.variant)
+          analyzed := analyze_function_with_seed(f, overlay, b, sem, seed)
+          title := "variant fn ${f.name} [${render_variant_key(entry.variant)}]"
+          header := "variant: ${render_summary_body(entry.summary)}"
+          out = "${out}${analyzed.render_function_with_header(title, header)}"
+        },
+        .None => {},
       },
       .None => {},
     }
   }
-  view.render_view_with_headers(headers)
+  out
+}
+
+// Render the generic `--cfg` view with generic summaries, then append reachable
+// variant-qualified diagnostic bodies. Generic function bodies are never re-
+// analyzed under a variant seed.
+pub fn render_cfg(
+  source: CfgView,
+  generic_analyzed: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+  variants: VariantSummaryTable,
+) String {
+  headers: Dict<Int, String> = Dict.new()
+  for f in generic_analyzed.functions {
+    case summary_get(table, f.func_id) {
+      .Some(s) => headers[f.func_id] = render_summary(s),
+      .None => {},
+    }
+  }
+  generic_out := generic_analyzed.render_view_with_headers(headers)
+  reachable := reachable_variants(source, b, sem, table, variants)
+  "${generic_out}${variant_sections(source, b, sem, table, variants, reachable)}"
 }
 
 // ── Driver ──────────────────────────────────────────────────────────

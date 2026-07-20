@@ -1061,6 +1061,20 @@ pub fn render_view(view: CfgView) String {
   join_lines(lines)
 }
 
+pub fn render_function_with_header(func: CfgFunction, title: String, header: String) String {
+  lines: Vector<String> = [title]
+  if header.len() > 0 {
+    for line in header.lines() {
+      lines = .append("  ${line}")
+    }
+  }
+  for block in func.blocks {
+    lines = render_block(lines, block)
+  }
+  lines = .append("")
+  join_lines(lines)
+}
+
 // Like render_view, but each function header line is followed by an indented
 // summary line when `headers` has one for that func_id. The summary text is
 // built elsewhere (summary.tw) and passed in as a plain Dict; cfg stays free of
