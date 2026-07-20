@@ -2276,8 +2276,8 @@ fn int_keys_union(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
 
 // ── Generic dataflow-lattice core (shared by own/valid/prov widening,
 //    and by every lattice's change-detection + nested-map access) ─────
-// A per-lattice witness: the absent-key default, the meet (join toward the
-// conservative top), and value equality. `merge_targeted` needs all three;
+// A per-lattice witness: the absent-key default, the conservative combining operation,
+// and value equality. `merge_targeted` needs all three;
 // `same_map` needs only `eq`; `nested_get` needs neither.
 pub type Lattice<T> = .{ default: T, join: fn(T, T) T, eq: fn(T, T) Bool }
 
@@ -2329,14 +2329,14 @@ pub fn same_map<T>(a: Dict<Int, T>, b: Dict<Int, T>, eq: fn(T, T) Bool) Bool {
     return false
   }
   for k in a.keys() {
-    case b.get(k) {
-      .Some(bv) => case a.get(k) {
-        .Some(av) => if !eq(av, bv) {
+    case a.get(k) {
+      .Some(av) => case b.get(k) {
+        .Some(bv) => if !eq(av, bv) {
           return false
         },
-        .None => {},
+        .None => return false,
       },
-      .None => return false,
+      .None => {},
     }
   }
   true

@@ -58,6 +58,7 @@ fn valid_witness() Lattice<Bool> {
   Lattice.{ default: true, join: and_b, eq: eq_b }
 }
 
+// Plumbing-only witness: union_i is order-sensitive and consistent with same_i only when the merged-in elements are fresh — sufficient for exercising the generic, not a general set lattice.
 fn prov_witness() Lattice<Vector<Int>> {
   Lattice.{ default: [], join: union_i, eq: same_i }
 }
@@ -125,6 +126,19 @@ pub fn suite() runner.Suite {
         res := ownership.merge_targeted(old, next, prev, [], true, false, own_witness())
         try assert.equal(res.locked.len(), 1)
         try assert.equal(get_or_neg(res.map, 7), 1) // join_own(Unique,Shared)=Shared
+        .Ok({})
+      },
+    )
+    .test(
+      "merge_targeted own: already-locked key always joins",
+      fn() {
+        old: Dict<Int, Int> = Dict.new()
+        old[1] = 0
+        next: Dict<Int, Int> = Dict.new()
+        next[1] = 0 // unchanged: would not normally trigger a lock/join
+        res := ownership.merge_targeted(old, next, Dict.new(), [1], false, false, own_witness())
+        try assert.equal(res.locked.len(), 1)
+        try assert.equal(get_or_neg(res.map, 1), 0) // join(Unique,Unique)=Unique
         .Ok({})
       },
     )
