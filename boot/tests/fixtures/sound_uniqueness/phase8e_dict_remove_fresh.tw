@@ -1,0 +1,16 @@
+fn remove_loop(n: Int) Dict<Int, Int> {
+  d: Dict<Int, Int> = Dict.new()
+  i := 0
+  for i < n {
+    d = .set(i, i)
+    i = i + 1
+  }
+  j := 0
+  for j < n {
+    d = .remove(j)
+    j = j + 1
+  }
+  d
+}
+
+println(remove_loop(6).len().to_string())

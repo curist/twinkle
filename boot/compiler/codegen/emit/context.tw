@@ -110,6 +110,7 @@ pub type EmitCtx = .{
   scratch_anyref_local: Int,
   intrinsic_table: Dict<Int, IntrinsicTag>,
   mutable_decisions: mutable_select.MutableDecisionTable,
+  mutable_emit_policy: mutable_select.MutableEmitPolicy,
 }
 
 pub fn current_prepared_func(ctx: EmitCtx) PreparedFunc? {

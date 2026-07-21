@@ -8,11 +8,9 @@
 use compiler.anf.{AnfModule}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.census
-use compiler.cfg
 use compiler.codegen.mutable_catalog
-use compiler.opt.semantics.{OptimizerSemantics, make_prelude_optimizer_semantics}
-use compiler.ownership
-use compiler.summary
+use compiler.codegen.ownership_verdicts
+use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 
 pub type DryRunSite = .{
   func: String,
@@ -25,21 +23,45 @@ pub type DryRunSite = .{
   local: Int,
 }
 
-type SiteVerdict = .{ text: String, reusable_shell: Bool }
+fn absent_verdicts_for(opt: AnfModule) ownership_verdicts.VerdictTable {
+  ownership_verdicts.VerdictTable.{
+    key: ownership_verdicts.artifact_key_for_anf(opt),
+    by_key: Dict.new(),
+  }
+}
 
 /// Join census candidates with ownership verdicts and the mutable-target
-/// catalog, in census traversal order.
-pub fn dry_run_sites(opt: AnfModule, b: BuiltinRegistry) Vector<DryRunSite> {
+/// catalog, in census traversal order. Validates the supplied artifacts'
+/// optimized-ANF fingerprint against `opt`; on mismatch, every site falls back
+/// to an absent verdict rather than reading stale analysis.
+pub fn dry_run_sites_with_artifacts(
+  opt: AnfModule,
+  b: BuiltinRegistry,
+  artifacts: ownership_verdicts.OwnershipArtifacts,
+) Vector<DryRunSite> {
+  expected := ownership_verdicts.artifact_key_for_anf(opt)
+  verdicts := if expected.same_artifact_key(artifacts.key) {
+    artifacts.verdicts_from_artifacts()
+  } else {
+    absent_verdicts_for(opt)
+  }
+  dry_run_sites_with_verdict_table(opt, b, verdicts)
+}
+
+fn dry_run_sites_with_verdict_table(
+  opt: AnfModule,
+  b: BuiltinRegistry,
+  verdicts: ownership_verdicts.VerdictTable,
+) Vector<DryRunSite> {
   sem := make_prelude_optimizer_semantics(b)
   cat := mutable_catalog.build(b, sem)
   sites := census.census_sites(opt, b)
-  verdicts := collect_verdicts(opt, b, sem)
 
   out: Vector<DryRunSite> = []
   for s in sites {
-    v := case verdicts.get("${s.func_id}#${s.local}") {
+    v := case verdicts.by_key.get("${s.func_id}#${s.local}") {
       .Some(verdict) => verdict,
-      .None => SiteVerdict.{ text: "-", reusable_shell: false },
+      .None => ownership_verdicts.SiteVerdict.{ text: "-", reusable_shell: false },
     }
     t := cat.targets_for_actual(b, s.actual_fid)
     out = .append(
@@ -58,32 +80,11 @@ pub fn dry_run_sites(opt: AnfModule, b: BuiltinRegistry) Vector<DryRunSite> {
   out
 }
 
-// Run the same structural-view -> prune -> summary -> ownership analysis
-// sequence `twk ir --cfg` uses, then flatten every block's exit verdicts into a
-// map keyed by "<func_id>#<anf_local_id>" (census's join key: local ids repeat
-// across functions, so the function id must ride along).
-fn collect_verdicts(opt: AnfModule, b: BuiltinRegistry, sem: OptimizerSemantics) Dict<
-  String,
-  SiteVerdict,
-> {
-  view := cfg.build_view(opt, b)
-  view = ownership.prune_dead_merge(view)
-  table := summary.compute(view, b, sem)
-  analyzed := ownership.analyze_with_summaries(view, b, sem, table)
-
-  out: Dict<String, SiteVerdict> = Dict.new()
-  for f in analyzed.functions {
-    for blk in f.blocks {
-      for local_id, text in blk.exit.verdicts {
-        reusable := case blk.exit.verdict_reusable_shell.get(local_id) {
-          .Some(flag) => flag,
-          .None => false,
-        }
-        out["${f.func_id}#${local_id}"] = SiteVerdict.{ text, reusable_shell: reusable }
-      }
-    }
-  }
-  out
+/// Join census candidates with ownership verdicts and the mutable-target
+/// catalog, in census traversal order.
+pub fn dry_run_sites(opt: AnfModule, b: BuiltinRegistry) Vector<DryRunSite> {
+  sem := make_prelude_optimizer_semantics(b)
+  dry_run_sites_with_artifacts(opt, b, ownership_verdicts.compute_artifacts(opt, b, sem))
 }
 
 /// Tab-separated per-site listing.

@@ -1,0 +1,374 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use commands.common.{format_compile_error}
+use compiler.backend.closure_convert.{convert_closures}
+use compiler.backend.prepare.{prepare_backend_with_mutable_config}
+use compiler.codegen.mutable_audit
+use compiler.codegen.mutable_produce
+use compiler.codegen.mutable_select
+use compiler.codegen.ownership_verdicts
+use compiler.opt.semantics as semantics
+use compiler.pipeline
+use lib.module.loader
+
+fn fixtures_dir() String {
+  root := loader.find_project_root("boot")
+  "${root}/tests/fixtures/sound_uniqueness"
+}
+
+fn produce_for(name: String) Result<mutable_produce.ProducedDecisions, String> {
+  artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(result) => result,
+    .Err(err) => return .Err(format_compile_error(err)),
+  }
+  .Ok(mutable_produce.produce_update_call_decisions(artifacts.opt, artifacts.builtins))
+}
+
+// Runs a fixture through the same closure-conversion + preparation shape as
+// emission, then renders the post-prepare audit under the given emit policy.
+// This is what Task 5 adds: the audit consults the SAME selector emission
+// uses, over prepared call sites, while decisions come from pre-closure
+// ownership facts and are validated against the prepared site shape.
+fn audit_rendered_for(name: String, policy: mutable_select.MutableEmitPolicy) Result<String, String> {
+  artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(result) => result,
+    .Err(err) => return .Err(format_compile_error(err)),
+  }
+  cc := convert_closures(artifacts.opt, artifacts.env)
+  produced := mutable_produce.produce_update_call_decisions(artifacts.opt, artifacts.builtins)
+  prepared := prepare_backend_with_mutable_config(
+    cc.anf,
+    artifacts.env,
+    artifacts.builtins,
+    cc.captures,
+    produced.table,
+    policy,
+  )
+  rows := mutable_audit.audit_prepared_calls(prepared, artifacts.env, artifacts.builtins)
+  .Ok(mutable_audit.render_audit_rows(rows))
+}
+
+// Same as `audit_rendered_for`, but substitutes a decision that no longer
+// matches the prepared call site's shape (a stale decision), so the audit
+// must report a mismatch fallback reason instead of `selected`.
+fn stale_audit_rendered_for(name: String) Result<String, String> {
+  artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(result) => result,
+    .Err(err) => return .Err(format_compile_error(err)),
+  }
+  cc := convert_closures(artifacts.opt, artifacts.env)
+  produced := mutable_produce.produce_update_call_decisions(artifacts.opt, artifacts.builtins)
+  keys := produced.table.by_site.keys()
+  if keys.len() != 1 {
+    return .Err("expected exactly one decision site, found ${keys.len()}")
+  }
+  decisions := case produced.table.by_site.get(keys[0]) {
+    .Some(v) => v,
+    .None => [],
+  }
+  if decisions.len() != 1 {
+    return .Err("expected exactly one decision at the site, found ${decisions.len()}")
+  }
+  stale := decisions[0]
+  stale.arg_count = 99
+  stale_table := mutable_select.empty_decision_table().with_decision(stale)
+  prepared := prepare_backend_with_mutable_config(
+    cc.anf,
+    artifacts.env,
+    artifacts.builtins,
+    cc.captures,
+    stale_table,
+    mutable_select.phase8a_policy(),
+  )
+  rows := mutable_audit.audit_prepared_calls(prepared, artifacts.env, artifacts.builtins)
+  .Ok(mutable_audit.render_audit_rows(rows))
+}
+
+fn candidate_roots(set: mutable_produce.CandidateSet) Dict<Int, Bool> {
+  roots: Dict<Int, Bool> = Dict.new()
+  for c in set.candidates {
+    roots[c.func_id.id] = true
+  }
+  roots
+}
+
+// Scoped candidate artifacts must yield the same candidate-site verdicts as full
+// whole-program ownership analysis. If they ever diverge, the scoped path is
+// unsound and must not feed decisions.
+fn assert_selected_verdicts_match_full(name: String) Result<Void, String> {
+  artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(result) => result,
+    .Err(err) => return .Err(format_compile_error(err)),
+  }
+  b := artifacts.builtins
+  sem := semantics.make_prelude_optimizer_semantics(b)
+  set := mutable_produce.update_call_candidates(artifacts.opt, b)
+  keys := mutable_produce.candidate_keys(set)
+
+  full_artifacts := ownership_verdicts.compute_artifacts(artifacts.opt, b, sem)
+  scoped_artifacts := ownership_verdicts.compute_candidate_artifacts(
+    artifacts.opt,
+    b,
+    sem,
+    candidate_roots(set),
+  )
+  full := ownership_verdicts.verdicts_for_keys(full_artifacts, keys)
+  scoped := ownership_verdicts.verdicts_for_keys(scoped_artifacts, keys)
+
+  try assert.equal(scoped.by_key.keys().len(), full.by_key.keys().len())
+  for k in full.by_key.keys() {
+    expected := case full.by_key.get(k) {
+      .Some(v) => v,
+      .None => return .Err("missing full verdict for ${k}"),
+    }
+    actual := case scoped.by_key.get(k) {
+      .Some(v) => v,
+      .None => return .Err("missing scoped verdict for ${k}"),
+    }
+    try assert.equal(actual.text, expected.text)
+    try assert.equal(actual.reusable_shell, expected.reusable_shell)
+  }
+  .Ok({})
+}
+
+// The scoped default producer must be indistinguishable from the full
+// diagnostic producer: same decision table, same rows, same artifact_computed.
+fn assert_scoped_producer_matches_full(name: String) Result<Void, String> {
+  artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(result) => result,
+    .Err(err) => return .Err(format_compile_error(err)),
+  }
+  full := mutable_produce.produce_update_call_decisions_full(artifacts.opt, artifacts.builtins)
+  scoped := mutable_produce.produce_update_call_decisions(artifacts.opt, artifacts.builtins)
+
+  try assert.equal(scoped.table.by_site.keys().len(), full.table.by_site.keys().len())
+  try assert.equal(scoped.artifact_computed, full.artifact_computed)
+  try assert.equal(
+    mutable_produce.render_candidate_rows(scoped.rows),
+    mutable_produce.render_candidate_rows(full.rows),
+  )
+  .Ok({})
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("phase 8A mutable decision production")
+    .test(
+      "owned fresh vector set produces a decision",
+      fn() {
+        produced := try produce_for("phase8a_vector_set_fresh")
+        try assert.equal(produced.table.by_site.keys().len(), 1)
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        try assert.str_contains(rendered, "vector_set")
+        try assert.str_contains(rendered, "candidate")
+        try assert.str_contains(rendered, "decision produced")
+        try assert.str_contains(rendered, "vector$set_unsafe")
+        try assert.str_contains(rendered, "vector$set_in_place")
+        .Ok({})
+      },
+    )
+    .test(
+      "aliased vector set is ignored, falls back to persistent",
+      fn() {
+        produced := try produce_for("phase8a_vector_set_alias")
+        try assert.equal(produced.table.by_site.keys().len(), 0)
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        try assert.str_contains(rendered, "vector_set")
+        try assert.str_contains(rendered, "ignored")
+        try assert.str_contains(rendered, "persistent fallback")
+        .Ok({})
+      },
+    )
+    .test(
+      "loop-carried vector set produces a decision",
+      fn() {
+        produced := try produce_for("phase8a_vector_set_loop")
+        try assert.equal(produced.table.by_site.keys().len(), 1)
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        try assert.str_contains(rendered, "candidate")
+        try assert.str_contains(rendered, "decision produced (loop-carried")
+        proof_ids: Vector<String> = []
+        for _key, ds in produced.table.by_site {
+          for d in ds {
+            proof_ids = .append(d.proof_debug_id)
+          }
+        }
+        joined := proof_ids.join(",")
+        try assert.str_contains(joined, "phase8b-loop")
+        try assert.str_contains(joined, "carry L")
+        .Ok({})
+      },
+    )
+    .test(
+      "owned dict set produces a dict_set decision",
+      fn() {
+        produced := try produce_for("phase8d_dict_set_fresh")
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        try assert.str_contains(rendered, "dict_set")
+        try assert.str_contains(rendered, "candidate")
+        try assert.str_contains(rendered, "decision produced")
+        families: Vector<String> = []
+        for _key, ds in produced.table.by_site {
+          for d in ds {
+            fam := case d.family {
+              .DictSet => "DictSet",
+              .VectorSet => "VectorSet",
+              _ => "other",
+            }
+            families = .append(fam)
+          }
+        }
+        try assert.is_true(families.contains("DictSet"))
+        .Ok({})
+      },
+    )
+    .test(
+      "aliased dict set is ignored, falls back to persistent",
+      fn() {
+        produced := try produce_for("phase8d_dict_set_alias")
+        try assert.equal(produced.table.by_site.keys().len(), 0)
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        try assert.str_contains(rendered, "dict_set")
+        try assert.str_contains(rendered, "ignored")
+        .Ok({})
+      },
+    )
+    .test(
+      "prepared audit reports a selected decision under the phase 8A policy",
+      fn() {
+        rendered := try audit_rendered_for(
+          "phase8a_vector_set_fresh",
+          mutable_select.phase8a_policy(),
+        )
+        try assert.str_contains(rendered, "selected")
+        try assert.str_contains(rendered, "vector$set_unsafe")
+        try assert.str_contains(rendered, "vector$set_in_place")
+        .Ok({})
+      },
+    )
+    .test(
+      "prepared audit reports policy_disabled under the persistent-only policy",
+      fn() {
+        rendered := try audit_rendered_for(
+          "phase8a_vector_set_fresh",
+          mutable_select.persistent_only_policy(),
+        )
+        try assert.str_contains(rendered, "policy_disabled")
+        try assert.str_contains(rendered, "vector$set_unsafe")
+        try assert.str_contains(rendered, "vector$set_in_place")
+        .Ok({})
+      },
+    )
+    .test(
+      "prepared audit falls back to persistent for a stale decision shape",
+      fn() {
+        rendered := try stale_audit_rendered_for("phase8a_vector_set_fresh")
+        try assert.str_contains(rendered, "ArgumentShapeMismatch")
+        try assert.str_contains(rendered, "stale_or_ignored")
+        try assert.str_contains(rendered, "vector$set_unsafe")
+        .Ok({})
+      },
+    )
+    .test(
+      "phase 8A candidate collection is available before ownership analysis",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${fixtures_dir()}/phase8a_vector_set_fresh.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        set := mutable_produce.update_call_candidates(artifacts.opt, artifacts.builtins)
+        try assert.equal(set.candidates.len(), 1)
+        try assert.equal(set.candidates[0].family, "vector_set")
+        try assert.equal(set.candidates[0].loop_depth, 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "no phase 8A candidates skip ownership artifact computation",
+      fn() {
+        artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/phase8a_no_vector_set.tw") {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        set := mutable_produce.update_call_candidates(artifacts.opt, artifacts.builtins)
+        try assert.equal(set.candidates.len(), 0)
+
+        produced := mutable_produce.produce_update_call_decisions(artifacts.opt, artifacts.builtins)
+        try assert.equal(produced.table.by_site.keys().len(), 0)
+        try assert.equal(produced.rows.len(), 0)
+        try assert.equal(produced.artifact_computed, false)
+        .Ok({})
+      },
+    )
+    .test(
+      "stale ownership artifacts produce no mutable decisions",
+      fn() {
+        fresh := case pipeline.compile_entry_path("${fixtures_dir()}/phase8a_vector_set_fresh.tw") {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        alias := case pipeline.compile_entry_path("${fixtures_dir()}/phase8a_vector_set_alias.tw") {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        sem_alias := semantics.make_prelude_optimizer_semantics(alias.builtins)
+        stale := ownership_verdicts.compute_artifacts(alias.opt, alias.builtins, sem_alias)
+
+        produced := mutable_produce.produce_update_call_decisions_with_artifacts(
+          fresh.opt,
+          fresh.builtins,
+          stale,
+        )
+        try assert.equal(produced.table.by_site.keys().len(), 0)
+        try assert.equal(produced.artifact_computed, false)
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        try assert.str_contains(rendered, "stale ownership artifact")
+        .Ok({})
+      },
+    )
+    .test(
+      "scoped candidate verdicts match full verdicts (fresh)",
+      fn() {
+        try assert_selected_verdicts_match_full("phase8a_vector_set_fresh")
+        .Ok({})
+      },
+    )
+    .test(
+      "scoped candidate verdicts match full verdicts (alias)",
+      fn() {
+        try assert_selected_verdicts_match_full("phase8a_vector_set_alias")
+        .Ok({})
+      },
+    )
+    .test(
+      "scoped candidate verdicts match full verdicts (loop)",
+      fn() {
+        try assert_selected_verdicts_match_full("phase8a_vector_set_loop")
+        .Ok({})
+      },
+    )
+    .test(
+      "scoped producer matches full producer (fresh)",
+      fn() {
+        try assert_scoped_producer_matches_full("phase8a_vector_set_fresh")
+        .Ok({})
+      },
+    )
+    .test(
+      "scoped producer matches full producer (alias)",
+      fn() {
+        try assert_scoped_producer_matches_full("phase8a_vector_set_alias")
+        .Ok({})
+      },
+    )
+    .test(
+      "scoped producer matches full producer (loop)",
+      fn() {
+        try assert_scoped_producer_matches_full("phase8a_vector_set_loop")
+        .Ok({})
+      },
+    )
+}

@@ -7,7 +7,7 @@
 
 use compiler.anf.{AnfOp, Atom}
 use compiler.builtins.{BuiltinRegistry}
-use compiler.cfg.{CfgBlock, CfgEdge, CfgFunction, CfgView, Terminator}
+use compiler.cfg.{CfgBlock, CfgEdge, CfgFunction, CfgView, Terminator, empty_block_facts}
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.field_facts as ff
 use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info, container_kind}
@@ -2278,11 +2278,11 @@ fn int_keys_union(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
 
 // ── Generic dataflow-lattice core (shared by own/valid/prov widening,
 //    and by every lattice's change-detection + nested-map access) ─────
-// A per-lattice witness: the absent-key default, the conservative combining operation,
-// and value equality. `merge_targeted` needs all three;
+// `merge_targeted` takes the absent-key default, conservative combining
+// operation, and value equality directly. Keeping those callbacks as direct
+// parameters avoids materializing a generic record of function fields in the
+// self-hosted compiler, while preserving one shared merge implementation.
 // `same_map` needs only `eq`; `nested_get` needs neither.
-pub type Lattice<T> = .{ default: T, join: fn(T, T) T, eq: fn(T, T) Bool }
-
 pub type MergeOut<T> = .{ map: Dict<Int, T>, locked: Vector<Int> }
 
 fn lat_get<T>(m: Dict<Int, T>, k: Int, dflt: T) T {
@@ -2305,20 +2305,22 @@ pub fn merge_targeted<T>(
   locked: Vector<Int>,
   has_prev: Bool,
   force_lock_changed: Bool,
-  lat: Lattice<T>,
+  default_value: T,
+  join: fn(T, T) T,
+  eq: fn(T, T) Bool,
 ) MergeOut<T> {
   out := next
   next_locked := locked
   keys := int_keys_union(old.keys(), next.keys())
   for k in keys {
-    old_x := lat_get(old, k, lat.default)
-    next_x := lat_get(next, k, lat.default)
-    prev_x := lat_get(prev, k, lat.default)
-    changed := !lat.eq(old_x, next_x)
-    oscillates := has_prev and changed and lat.eq(next_x, prev_x)
+    old_x := lat_get(old, k, default_value)
+    next_x := lat_get(next, k, default_value)
+    prev_x := lat_get(prev, k, default_value)
+    changed := !eq(old_x, next_x)
+    oscillates := has_prev and changed and eq(next_x, prev_x)
     if live_contains_int(next_locked, k) or oscillates or force_lock_changed and changed {
       next_locked = insert_sorted(next_locked, k)
-      out[k] = lat.join(old_x, next_x)
+      out[k] = join(old_x, next_x)
     }
   }
   MergeOut.{ map: out, locked: next_locked }
@@ -2368,18 +2370,6 @@ fn bool_eq(a: Bool, b: Bool) Bool {
 
 fn int_eq(a: Int, b: Int) Bool {
   a == b
-}
-
-fn own_lat() Lattice<Int> {
-  Lattice.{ default: own_tag(.Unknown), join: join_own_tag, eq: int_eq }
-}
-
-fn valid_lat() Lattice<Bool> {
-  Lattice.{ default: true, join: and_bool, eq: bool_eq }
-}
-
-fn prov_lat() Lattice<Vector<Int>> {
-  Lattice.{ default: [], join: union_sorted, eq: same_live }
 }
 
 fn locked_get(locks: Dict<Int, Vector<Int>>, block_id: Int) Vector<Int> {
@@ -2887,7 +2877,9 @@ fn run_fixpoint(
           locked_get(locked_own, blk.id.id),
           has_prev,
           force_lock_changed,
-          own_lat(),
+          own_tag(.Unknown),
+          join_own_tag,
+          int_eq,
         )
         valid_merge := merge_targeted(
           old_valid,
@@ -2896,7 +2888,9 @@ fn run_fixpoint(
           locked_get(locked_valid, blk.id.id),
           has_prev,
           force_lock_changed,
-          valid_lat(),
+          true,
+          and_bool,
+          bool_eq,
         )
         prov_merge := merge_targeted(
           old_prov,
@@ -2905,7 +2899,9 @@ fn run_fixpoint(
           locked_get(locked_prov, blk.id.id),
           has_prev,
           force_lock_changed,
-          prov_lat(),
+          [],
+          union_sorted,
+          same_live,
         )
         next_own = own_merge.map
         next_valid = valid_merge.map
@@ -2983,6 +2979,45 @@ pub fn analyze_with_summaries(
 ) CfgView {
   functions := collect f in view.functions {
     analyze_function(f, table, b, sem, Dict.new())
+  }
+  CfgView.{ functions }
+}
+
+fn clear_block_analysis(blk: CfgBlock) CfgBlock {
+  blk.entry = empty_block_facts()
+  blk.exit = empty_block_facts()
+  blk
+}
+
+fn clear_function_analysis(f: CfgFunction) CfgFunction {
+  f.blocks = collect blk in f.blocks {
+    clear_block_analysis(blk)
+  }
+  f
+}
+
+// Analyze ownership only for the `selected` functions, clearing all block facts
+// on unselected functions (and clearing selected inputs before re-analysis). The
+// result is verdict-equivalent to `analyze_with_summaries` on the selected set,
+// so scoped artifacts produce the same mutable decisions as full analysis. Safe
+// on a fresh or previously-analyzed view because it clears before analyzing.
+pub fn analyze_selected_with_summaries(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+  selected: Dict<Int, Bool>,
+) CfgView {
+  functions := collect f in view.functions {
+    should_analyze := case selected.get(f.func_id) {
+      .Some(v) => v,
+      .None => false,
+    }
+    if should_analyze {
+      analyze_function(clear_function_analysis(f), table, b, sem, Dict.new())
+    } else {
+      clear_function_analysis(f)
+    }
   }
   CfgView.{ functions }
 }

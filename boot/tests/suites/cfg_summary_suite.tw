@@ -1,6 +1,7 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use commands.common.{format_compile_error}
 use commands.ir.{render_cfg_for_entry}
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
 use compiler.builder_family.{empty_builder_config}
@@ -11,6 +12,7 @@ use compiler.mono_type.{MonoType, TypeId}
 use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.ownership
+use compiler.pipeline
 use compiler.summary
 use compiler.variant_id
 use lib.module.loader
@@ -30,6 +32,27 @@ fn sem() semantics.OptimizerSemantics {
 fn fixtures_dir() String {
   root := loader.find_project_root("boot")
   "${root}/tests/fixtures/cfg"
+}
+
+fn sound_uniqueness_fixtures_dir() String {
+  root := loader.find_project_root("boot")
+  "${root}/tests/fixtures/sound_uniqueness"
+}
+
+fn func_id_by_name(view: cfg.CfgView, name: String) Result<Int, String> {
+  for f in view.functions {
+    if f.name == name {
+      return .Ok(f.func_id)
+    }
+  }
+  .Err("missing function ${name}")
+}
+
+fn dict_bool(d: Dict<Int, Bool>, key: Int) Bool {
+  case d.get(key) {
+    .Some(v) => v,
+    .None => false,
+  }
 }
 
 fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
@@ -1953,6 +1976,63 @@ pub fn suite() runner.Suite {
 
         // a repeated key is stable
         try assert.equal(variant_id.site_key(3, 5), variant_id.site_key(3, 5))
+        .Ok({})
+      },
+    )
+    .test(
+      "dependency closure includes candidate callees and excludes unrelated functions",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8a_summary_closure.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        view := ownership.prune_dead_merge(cfg.build_view(artifacts.opt, b))
+        root_id := try func_id_by_name(view, "candidate_root")
+        helper_a_id := try func_id_by_name(view, "helper_a")
+        helper_b_id := try func_id_by_name(view, "helper_b")
+        unrelated_id := try func_id_by_name(view, "unrelated")
+
+        roots: Dict<Int, Bool> = Dict.new()
+        roots[root_id] = true
+        closure := summary.dependency_closure(view, roots)
+
+        try assert.equal(dict_bool(closure, root_id), true)
+        try assert.equal(dict_bool(closure, helper_a_id), true)
+        try assert.equal(dict_bool(closure, helper_b_id), true)
+        try assert.equal(dict_bool(closure, unrelated_id), false)
+        .Ok({})
+      },
+    )
+    .test(
+      "root-scoped summaries match full summaries for candidate roots",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8a_summary_closure.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        s := semantics.make_prelude_optimizer_semantics(b)
+        view := ownership.prune_dead_merge(cfg.build_view(artifacts.opt, b))
+        root_id := try func_id_by_name(view, "candidate_root")
+        roots: Dict<Int, Bool> = Dict.new()
+        roots[root_id] = true
+
+        full := summary.compute(view, b, s)
+        scoped := summary.compute_for_roots(view, b, s, roots)
+        full_s := case ownership.summary_get(full, root_id) {
+          .Some(sm) => summary.render_summary(sm),
+          .None => return .Err("missing full summary for candidate_root"),
+        }
+        scoped_s := case ownership.summary_get(scoped, root_id) {
+          .Some(sm) => summary.render_summary(sm),
+          .None => return .Err("missing scoped summary for candidate_root"),
+        }
+        try assert.equal(scoped_s, full_s)
         .Ok({})
       },
     )

@@ -1,6 +1,7 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use commands.common.{format_compile_error}
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
 use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{PreparedModule, prepare_backend_with_mutable_decisions}
@@ -9,6 +10,7 @@ use compiler.backend.prepared_ir.{
   SlotId, SlotInfo, SlotRole,
 }
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
+use compiler.codegen.codegen
 use compiler.codegen.emit.context.{EmitCtx, LocalEntry}
 use compiler.codegen.emit.mutable_sites
 use compiler.codegen.emit.{emit_module}
@@ -19,12 +21,13 @@ use compiler.codegen.wasm_layout.{
 }
 use compiler.codegen.wasm_plan
 use compiler.codegen.wasm_plan_types.{ModuleGlobalEntry, WasmTypeRegistry}
-use compiler.codegen.wat.{emit_wat_unlinked_for_test}
+use compiler.codegen.wat.{emit_wat, emit_wat_unlinked_for_test}
 use compiler.core_ir.{FieldId, FuncId, LocalId, Param, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.pipeline
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv, ResolvedVariant, TypeEntry}
+use lib.module.loader
 use lib.source.span.{Span}
 
 fn lid(n: Int) LocalId {
@@ -113,6 +116,7 @@ fn test_param_local_id_can_overlap_module_global_id() Result<Void, String> {
     typed_vector_fields: Dict.new(),
     typed_vector_payloads: Dict.new(),
     mutable_decisions: mutable_select.empty_decision_table(),
+    mutable_emit_policy: mutable_select.persistent_only_policy(),
   }
   wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
   wat := emit_wat_unlinked_for_test(wasm)
@@ -169,6 +173,7 @@ fn make_one_func_module(
     typed_vector_fields: Dict.new(),
     typed_vector_payloads: Dict.new(),
     mutable_decisions: mutable_select.empty_decision_table(),
+    mutable_emit_policy: mutable_select.persistent_only_policy(),
   }
 }
 
@@ -394,6 +399,7 @@ fn test_tail_call_in_if_branches() Result<Void, String> {
     typed_vector_fields: Dict.new(),
     typed_vector_payloads: Dict.new(),
     mutable_decisions: mutable_select.empty_decision_table(),
+    mutable_emit_policy: mutable_select.persistent_only_policy(),
   }
   reg := empty_registry()
   wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
@@ -496,6 +502,7 @@ fn test_tail_call_in_case_arms() Result<Void, String> {
     typed_vector_fields: Dict.new(),
     typed_vector_payloads: Dict.new(),
     mutable_decisions: mutable_select.empty_decision_table(),
+    mutable_emit_policy: mutable_select.persistent_only_policy(),
   }
   reg := empty_registry()
   wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
@@ -668,6 +675,7 @@ fn test_tail_call_in_br_table_match() Result<Void, String> {
     typed_vector_fields: Dict.new(),
     typed_vector_payloads: Dict.new(),
     mutable_decisions: mutable_select.empty_decision_table(),
+    mutable_emit_policy: mutable_select.persistent_only_policy(),
   }
   env := env_with_sum_type(action_tid, "Action", ["A", "B", "C"])
   wasm := emit_module(prepared, reg, make_builtin_registry(), env)
@@ -806,6 +814,7 @@ fn mk_emit_ctx(
     scratch_anyref_local: -1,
     intrinsic_table: Dict.new(),
     mutable_decisions: mutable_select.empty_decision_table(),
+    mutable_emit_policy: mutable_select.persistent_only_policy(),
   }
 }
 
@@ -979,7 +988,10 @@ fn test_call_family_and_selection_for_dict_set() Result<Void, String> {
   selected := mutable_sites.select_call_for_emit(decisions, dict_set_id, args, result_entry, ctx)
   case selected {
     .Some(sel) => {
-      try assert.equal(mutable_select.selection_reason_tag(sel.reason), 1)
+      try assert.equal(
+        mutable_select.selection_reason_tag(sel.reason),
+        mutable_select.selection_reason_tag(.PolicyDisabled),
+      )
       try assert.equal(sel.emit_func.id, dict_set_id.id)
       try assert.equal(sel.would_func.id, dict_set_in_place_id.id)
     },
@@ -1052,12 +1064,103 @@ fn test_call_family_and_selection_for_dict_remove() Result<Void, String> {
   selected := mutable_sites.select_call_for_emit(decisions, dict_remove_id, args, result_entry, ctx)
   case selected {
     .Some(sel) => {
-      try assert.equal(mutable_select.selection_reason_tag(sel.reason), 1)
+      try assert.equal(
+        mutable_select.selection_reason_tag(sel.reason),
+        mutable_select.selection_reason_tag(.PolicyDisabled),
+      )
       try assert.equal(sel.emit_func.id, dict_remove_id.id)
       try assert.equal(sel.would_func.id, dict_remove_in_place_id.id)
     },
     .None => return .Err("expected Some CallSelection for Dict.remove"),
   }
+  .Ok({})
+}
+
+// ── select_call_with_policy: Phase 8A mutable emission policy ─────────────
+// phase8a_policy() enables VectorSet emission but keeps every other family
+// on the persistent path, so only the VectorSet decision resolves to the
+// mutable target here.
+fn test_select_call_with_phase8a_policy_emits_vector_set() Result<Void, String> {
+  b := make_builtin_registry()
+  set_id := b.id("vector$set_unsafe")
+  in_place_id := b.id("vector$set_in_place")
+  site := mutable_select.Site.{ func: fid(1), local: lid(3) }
+  decisions := mutable_select
+    .empty_decision_table()
+    .with_decision(mutable_select.MutableDecision.{
+      site,
+      family: mutable_select.OperationFamily.VectorSet,
+      source_local: lid(2),
+      result_local: lid(3),
+      arg_count: 3,
+      base_arg_index: .Some(0),
+      persistent_func: .Some(set_id),
+      mutable_func: .Some(in_place_id),
+      variant_key: .None,
+      field_path_key: "",
+      proof_debug_id: "policy-vector-set",
+    })
+
+  selected := mutable_select.select_call_with_policy(
+    decisions,
+    site,
+    mutable_select.OperationFamily.VectorSet,
+    set_id,
+    .Some(0),
+    lid(2),
+    lid(3),
+    3,
+    mutable_select.phase8a_policy(),
+  )
+
+  try assert.equal(selected.emit_func.id, in_place_id.id)
+  try assert.equal(selected.would_func.id, in_place_id.id)
+  try assert.equal(
+    mutable_select.selection_reason_tag(selected.reason),
+    mutable_select.selection_reason_tag(.MutableSelected),
+  )
+  .Ok({})
+}
+
+fn test_select_call_with_phase8a_policy_keeps_dict_set_persistent() Result<Void, String> {
+  b := make_builtin_registry()
+  set_id := b.method_id("Dict", "set")
+  in_place_id := b.id("dict$set_in_place")
+  site := mutable_select.Site.{ func: fid(1), local: lid(3) }
+  decisions := mutable_select
+    .empty_decision_table()
+    .with_decision(mutable_select.MutableDecision.{
+      site,
+      family: mutable_select.OperationFamily.DictSet,
+      source_local: lid(2),
+      result_local: lid(3),
+      arg_count: 3,
+      base_arg_index: .Some(0),
+      persistent_func: .Some(set_id),
+      mutable_func: .Some(in_place_id),
+      variant_key: .None,
+      field_path_key: "",
+      proof_debug_id: "policy-dict-set",
+    })
+
+  selected := mutable_select.select_call_with_policy(
+    decisions,
+    site,
+    mutable_select.OperationFamily.DictSet,
+    set_id,
+    .Some(0),
+    lid(2),
+    lid(3),
+    3,
+    mutable_select.phase8a_policy(),
+  )
+
+  try assert.equal(selected.emit_func.id, set_id.id)
+  try assert.equal(selected.would_func.id, in_place_id.id)
+  try assert.equal(
+    mutable_select.selection_reason_tag(selected.reason),
+    mutable_select.selection_reason_tag(.PolicyDisabled),
+  )
   .Ok({})
 }
 
@@ -1181,7 +1284,10 @@ fn test_select_call_for_emit_survives_prepared_vector_set() Result<Void, String>
   )
   case selected {
     .Some(sel) => {
-      try assert.equal(mutable_select.selection_reason_tag(sel.reason), 1)
+      try assert.equal(
+        mutable_select.selection_reason_tag(sel.reason),
+        mutable_select.selection_reason_tag(.PolicyDisabled),
+      )
       try assert.equal(sel.emit_func.id, set_id.id)
       try assert.equal(sel.would_func.id, in_place_id.id)
     },
@@ -1240,7 +1346,10 @@ fn test_select_call_for_emit_survives_prepared_dict_set() Result<Void, String> {
   )
   case selected {
     .Some(sel) => {
-      try assert.equal(mutable_select.selection_reason_tag(sel.reason), 1)
+      try assert.equal(
+        mutable_select.selection_reason_tag(sel.reason),
+        mutable_select.selection_reason_tag(.PolicyDisabled),
+      )
       try assert.equal(sel.emit_func.id, dict_set_id.id)
       try assert.equal(sel.would_func.id, dict_set_in_place_id.id)
     },
@@ -1316,7 +1425,10 @@ fn test_emit_module_keeps_vector_set_persistent_with_decision() Result<Void, Str
   )
   case selected {
     .Some(s) => {
-      try assert.equal(mutable_select.selection_reason_tag(s.reason), 1)
+      try assert.equal(
+        mutable_select.selection_reason_tag(s.reason),
+        mutable_select.selection_reason_tag(.PolicyDisabled),
+      )
       try assert.equal(s.emit_func.id, set_id.id)
       try assert.equal(s.would_func.id, in_place_id.id)
     },
@@ -1378,7 +1490,10 @@ fn test_emit_module_keeps_dict_set_persistent_with_decision() Result<Void, Strin
   )
   case selected {
     .Some(s) => {
-      try assert.equal(mutable_select.selection_reason_tag(s.reason), 1)
+      try assert.equal(
+        mutable_select.selection_reason_tag(s.reason),
+        mutable_select.selection_reason_tag(.PolicyDisabled),
+      )
       try assert.equal(s.emit_func.id, dict_set_id.id)
       try assert.equal(s.would_func.id, dict_set_in_place_id.id)
     },
@@ -1440,7 +1555,10 @@ fn test_emit_module_keeps_dict_remove_persistent_with_decision() Result<Void, St
   )
   case selected {
     .Some(s) => {
-      try assert.equal(mutable_select.selection_reason_tag(s.reason), 1)
+      try assert.equal(
+        mutable_select.selection_reason_tag(s.reason),
+        mutable_select.selection_reason_tag(.PolicyDisabled),
+      )
       try assert.equal(s.emit_func.id, dict_remove_id.id)
       try assert.equal(s.would_func.id, dict_remove_in_place_id.id)
     },
@@ -1651,6 +1769,117 @@ fn test_record_update_field_path_mismatch_rejects_cross_type_decision() Result<V
   .Ok({})
 }
 
+fn sound_uniqueness_fixtures_dir() String {
+  root := loader.find_project_root("boot")
+  "${root}/tests/fixtures/sound_uniqueness"
+}
+
+// Compiles a fixture entry file through the real link_program path (Phase 8A
+// producer + prepared-config wiring included), so these tests observe actual
+// emitted codegen rather than a hand-built prepared module.
+fn compile_fixture_to_linked_wat(path: String) Result<String, String> {
+  artifacts := case pipeline.compile_entry_path(path) {
+    .Ok(result) => result,
+    .Err(err) => return .Err(format_compile_error(err)),
+  }
+  linked := codegen.link_program(artifacts.opt, artifacts.env, artifacts.builtins)
+  .Ok(emit_wat(linked))
+}
+
+// Token-exact call match: a whole trimmed line must equal `call $<target>`,
+// so a runtime func *definition* (e.g. `(func $rt_arr__set ...)`) is never
+// mistaken for a call, and `rt_arr__set_in_place` never prefix-matches a
+// search for `rt_arr__set`.
+fn wat_has_call(wat: String, target: String) Bool {
+  needle := "call $${target}"
+
+  for line in wat.lines() {
+    if line.trim() == needle {
+      return true
+    }
+  }
+
+  false
+}
+
+fn test_link_program_emits_vector_set_in_place_for_owned_local() Result<Void, String> {
+  wat := try compile_fixture_to_linked_wat(
+    "${sound_uniqueness_fixtures_dir()}/phase8a_vector_set_fresh.tw",
+  )
+  try assert.is_true(wat_has_call(wat, "rt_arr__set_in_place"))
+  try assert.is_false(wat_has_call(wat, "rt_arr__set"))
+  .Ok({})
+}
+
+fn test_link_program_keeps_vector_set_persistent_for_aliased_local() Result<Void, String> {
+  wat := try compile_fixture_to_linked_wat(
+    "${sound_uniqueness_fixtures_dir()}/phase8a_vector_set_alias.tw",
+  )
+  try assert.is_true(wat_has_call(wat, "rt_arr__set"))
+  try assert.is_false(wat_has_call(wat, "rt_arr__set_in_place"))
+  .Ok({})
+}
+
+fn test_link_program_emits_vector_set_in_place_inside_loop() Result<Void, String> {
+  wat := try compile_fixture_to_linked_wat(
+    "${sound_uniqueness_fixtures_dir()}/phase8a_vector_set_loop.tw",
+  )
+  try assert.is_true(wat_has_call(wat, "rt_arr__set_in_place"))
+  try assert.is_false(wat_has_call(wat, "rt_arr__set"))
+  .Ok({})
+}
+
+fn test_link_program_emits_vector_set_in_place_for_nested_loop() Result<Void, String> {
+  wat := try compile_fixture_to_linked_wat(
+    "${sound_uniqueness_fixtures_dir()}/phase8b_vector_set_nested.tw",
+  )
+  try assert.is_true(wat_has_call(wat, "rt_arr__set_in_place"))
+  .Ok({})
+}
+
+fn test_link_program_keeps_vector_set_persistent_for_loop_alias() Result<Void, String> {
+  wat := try compile_fixture_to_linked_wat(
+    "${sound_uniqueness_fixtures_dir()}/phase8b_vector_set_loop_alias.tw",
+  )
+  try assert.is_true(wat_has_call(wat, "rt_arr__set"))
+  try assert.is_false(wat_has_call(wat, "rt_arr__set_in_place"))
+  .Ok({})
+}
+
+fn test_link_program_emits_dict_set_in_place_for_owned_dict() Result<Void, String> {
+  wat := try compile_fixture_to_linked_wat(
+    "${sound_uniqueness_fixtures_dir()}/phase8d_dict_set_fresh.tw",
+  )
+  try assert.is_true(wat_has_call(wat, "rt_dict__set_in_place"))
+  .Ok({})
+}
+
+fn test_link_program_keeps_dict_set_persistent_for_aliased_dict() Result<Void, String> {
+  wat := try compile_fixture_to_linked_wat(
+    "${sound_uniqueness_fixtures_dir()}/phase8d_dict_set_alias.tw",
+  )
+  try assert.is_true(wat_has_call(wat, "rt_dict__set"))
+  try assert.is_false(wat_has_call(wat, "rt_dict__set_in_place"))
+  .Ok({})
+}
+
+fn test_link_program_emits_dict_remove_in_place_for_owned_dict() Result<Void, String> {
+  wat := try compile_fixture_to_linked_wat(
+    "${sound_uniqueness_fixtures_dir()}/phase8e_dict_remove_fresh.tw",
+  )
+  try assert.is_true(wat_has_call(wat, "rt_dict__remove_in_place"))
+  .Ok({})
+}
+
+fn test_link_program_keeps_dict_remove_persistent_for_aliased_dict() Result<Void, String> {
+  wat := try compile_fixture_to_linked_wat(
+    "${sound_uniqueness_fixtures_dir()}/phase8e_dict_remove_alias.tw",
+  )
+  try assert.is_true(wat_has_call(wat, "rt_dict__remove"))
+  try assert.is_false(wat_has_call(wat, "rt_dict__remove_in_place"))
+  .Ok({})
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("codegen emit")
@@ -1696,6 +1925,14 @@ pub fn suite() runner.Suite {
       test_call_family_and_selection_for_dict_remove,
     )
     .test(
+      "select_call_with_policy emits vector$set_in_place under phase8a_policy",
+      test_select_call_with_phase8a_policy_emits_vector_set,
+    )
+    .test(
+      "select_call_with_policy keeps Dict.set persistent under phase8a_policy",
+      test_select_call_with_phase8a_policy_keeps_dict_set_persistent,
+    )
+    .test(
       "select_call_for_emit survives prepared vector$set_unsafe from real source",
       test_select_call_for_emit_survives_prepared_vector_set,
     )
@@ -1722,5 +1959,41 @@ pub fn suite() runner.Suite {
     .test(
       "record update selection rejects a decision proven for a different record type",
       test_record_update_field_path_mismatch_rejects_cross_type_decision,
+    )
+    .test(
+      "link_program emits vector$set_in_place for an owned local site (Phase 8A)",
+      test_link_program_emits_vector_set_in_place_for_owned_local,
+    )
+    .test(
+      "link_program keeps vector$set persistent for an aliased local site",
+      test_link_program_keeps_vector_set_persistent_for_aliased_local,
+    )
+    .test(
+      "link_program emits vector$set_in_place for a loop-carried owned vector",
+      test_link_program_emits_vector_set_in_place_inside_loop,
+    )
+    .test(
+      "link_program emits vector$set_in_place for a nested loop-carried owned vector",
+      test_link_program_emits_vector_set_in_place_for_nested_loop,
+    )
+    .test(
+      "link_program keeps vector set persistent for a loop-carried aliased vector",
+      test_link_program_keeps_vector_set_persistent_for_loop_alias,
+    )
+    .test(
+      "link_program emits dict$set_in_place for an owned dict",
+      test_link_program_emits_dict_set_in_place_for_owned_dict,
+    )
+    .test(
+      "link_program keeps dict$set persistent for an aliased dict",
+      test_link_program_keeps_dict_set_persistent_for_aliased_dict,
+    )
+    .test(
+      "link_program emits dict$remove_in_place for an owned dict",
+      test_link_program_emits_dict_remove_in_place_for_owned_dict,
+    )
+    .test(
+      "link_program keeps dict$remove persistent for an aliased dict",
+      test_link_program_keeps_dict_remove_persistent_for_aliased_dict,
     )
 }

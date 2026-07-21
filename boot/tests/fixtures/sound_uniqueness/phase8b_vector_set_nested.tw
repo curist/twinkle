@@ -1,0 +1,20 @@
+fn nested_set(n: Int) Vector<Bool> {
+  flags: Vector<Bool> = collect _ in range(n) {
+    true
+  }
+  i := 0
+  for i < n {
+    if flags[i] {
+      step := i + 1
+      k := i + step
+      for k < n {
+        flags[k] = false
+        k = k + step
+      }
+    }
+    i = i + 1
+  }
+  flags
+}
+
+println(nested_set(10).len().to_string())

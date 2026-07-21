@@ -44,6 +44,7 @@ pub type PreparedModule = .{
   typed_vector_fields: Dict<String, Bool>,
   typed_vector_payloads: Dict<String, Bool>,
   mutable_decisions: mutable_select.MutableDecisionTable,
+  mutable_emit_policy: mutable_select.MutableEmitPolicy,
 }
 
 // Boundary-inserted ANF plus the prepared funcs *before* typed-vector routing.
@@ -139,6 +140,7 @@ pub fn prepare_backend_with_mutable_decisions(
       typed_vector_fields: Dict.new(),
       typed_vector_payloads: Dict.new(),
       mutable_decisions,
+      mutable_emit_policy: mutable_select.persistent_only_policy(),
     }
   }
 
@@ -183,7 +185,32 @@ pub fn prepare_backend_with_mutable_decisions(
     typed_vector_fields: typed_fields,
     typed_vector_payloads: typed_payloads,
     mutable_decisions,
+    mutable_emit_policy: mutable_select.persistent_only_policy(),
   }
+}
+
+// Same as prepare_backend_with_mutable_decisions, but also threads an
+// explicit mutable emission policy through to the resulting PreparedModule,
+// so a caller can opt selected call sites into mutable/in-place emission
+// (e.g. Phase 8A's vector-set-only policy) instead of the persistent-only
+// default.
+pub fn prepare_backend_with_mutable_config(
+  anf: AnfModule,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+  closure_captures: Dict<Int, Vector<CaptureParam>>,
+  mutable_decisions: mutable_select.MutableDecisionTable,
+  mutable_emit_policy: mutable_select.MutableEmitPolicy,
+) PreparedModule {
+  prepared := prepare_backend_with_mutable_decisions(
+    anf,
+    env,
+    builtins,
+    closure_captures,
+    mutable_decisions,
+  )
+  prepared.mutable_emit_policy = mutable_emit_policy
+  prepared
 }
 
 fn prepared_funcs_depth_exceeds(funcs: Vector<PreparedFunc>, limit: Int) Bool {

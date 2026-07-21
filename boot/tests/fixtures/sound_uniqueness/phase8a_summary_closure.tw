@@ -1,0 +1,20 @@
+fn helper_b(i: Int) Int {
+  i
+}
+
+fn helper_a(i: Int) Int {
+  helper_b(i)
+}
+
+fn candidate_root() Vector<Int> {
+  xs := [10, 20]
+  idx := helper_a(0)
+  xs[idx] = 99
+  xs
+}
+
+fn unrelated(x: Int) Int {
+  x + 1
+}
+
+candidate_root().len() + unrelated(1)

@@ -1,21 +1,37 @@
 # Codegen Track
 
-**Status:** In progress. Phases 7A (hook inventory), 7B (operation catalog), and
-the 7C/7D backend decision seam are done (2026-07-21). The surviving mutable hooks
+**Status:** In progress. Phases 7A (hook inventory), 7B (operation catalog),
+the 7C/7D backend decision seam, Phase 8A local vector indexed-update
+emission, Phase 8B loop-carried vector indexed-update emission, Phase 8D
+dict-set in-place emission, and Phase 8E dict-remove in-place emission are done
+(2026-07-21). The surviving mutable hooks
 and their persistent→mutable mappings are cataloged, and codegen now has a
 persistent-only selector + plumbing seam: `compiler.codegen.mutable_select` (the
 decision table + selector), `compiler.codegen.mutable_catalog` (shared
 persistent→mutable catalog lookup), and `compiler.codegen.emit.mutable_sites`
-(prepared-site extraction), threaded through `PreparedModule` and `EmitCtx`. Every path still emits
-the persistent target — verified byte-identical (self-host fixed point plus a
-before/after codegen comparison over vector/dict/record updates). The Phase 7E
-update-site slice is done: `twk ir --census --sites` now renders persistent→mutable
-targets plus ownership verdicts for vector/dict/record update candidates, while
-still emitting persistent code. **Current focus: Phase 8A, local vector indexed-update
-emission.** The remaining 7E dry-run items are not abandoned: decision-table
-consumed/ignored rendering is an 8A inspection gate for the first emitted slice,
-and variant-routing dry-runs are an 8G gate when specialized clone routing becomes
-real. The full analysis track is complete through Phase 6 (record/field ownership,
+(prepared-site extraction), threaded through `PreparedModule` and `EmitCtx`. The
+Phase 7D seam was verified byte-identical while persistent-only; Phase 8A now
+uses that same seam to select the vector in-place helper only for proven local
+owned sites. The Phase 7E update-site slice is done: `twk ir --census --sites`
+now renders persistent→mutable
+targets plus ownership verdicts for vector/dict/record update candidates. Phase
+8A added the first emitted slice: proven local owned vector indexed updates select
+`vector$set_in_place`, while aliasing cases fall back through the persistent path.
+Phase 8B extends that to loop-carried accumulators (single and nested loops): the
+producer no longer suppresses loop-contained candidates, so index-assignment sugar
+carried across a loop selects `vector$set_in_place` when the ownership fixpoint
+proves the carried vector unique across every entry and back-edge, and aliased loop
+vectors stay persistent. Phase 8D generalized the decision producer to all
+supported call-swap families and enabled `dict$set_in_place` for owned `Dict.set`
+sites via the cumulative `enabled_emit_policy`; Phase 8E flipped that policy's
+`emit_dict_remove` so owned `Dict.remove` sites select `dict$remove_in_place`. All
+three call-swap families (vector set, dict set, dict remove) now emit in-place for
+proven-owned sites. **Current focus: Phase 8C, existing builder-region lowering**
+(a distinct region-shaped lowering), then records (8F), function variants (8G), and
+record-backed field collections (8H). The remaining 7E dry-run item is not
+abandoned: variant-routing dry-runs are an 8G
+gate when specialized clone routing becomes real. The full analysis track is
+complete through Phase 6 (record/field ownership,
 transport-wrapper / `Result`-payload return-path summaries, ownership-specialization
 decision facts, and recursive SCC variant-qualified diagnostics), so codegen consumes
 a trustworthy fact set rather than rediscovering ownership. (These "Codegen Phase
@@ -27,6 +43,15 @@ first reuse today's persistent/in-place/builder mechanisms, not introduce the
 future mutable-intrinsic layer. Source code keeps one immutable API such as
 `xs.set_at(i, v)`; internally, a proven site may select a mutable target instead
 of the persistent target.
+
+- Phase 8A mutable decision production now uses fingerprinted shared ownership
+  artifacts. Build codegen still consumes decision records only; CFG ownership
+  remains the proof source, and stale artifact keys, absent verdicts,
+  stale prepared sites, ambiguous decisions, and aliases fall back persistently.
+  Default production scopes ownership analysis to the candidate functions and
+  their dependency closure (verdict-equivalent to whole-program analysis), which
+  removed a whole-program ownership pass from every build
+  (`produce_mutable_decisions` ~22.9s → ~1.3s on `boot/main.tw`).
 
 [../architecture.md](../architecture.md) is the umbrella design. The analysis
 inputs come from [../analysis/README.md](../analysis/README.md); later cleanup
@@ -69,9 +94,9 @@ have before designing side tables around it.
   no runtime hook (compiler cloning only) and is deferred to Phase 8G.
 - [x] **Verify hook signatures.** Helper/op names, operand order, result behavior
   (all in-place helpers return the updated ref), ABIs, and persistent fallbacks are
-  in the verified hook table. **WAT/call-inspection signatures for the *mutable*
-  targets cannot be captured yet** — nothing emits them, so those await the first
-  Phase 8 emission; persistent-side call targets are observable now.
+  in the verified hook table. Phase 8A has now captured WAT/call-inspection
+  evidence for the vector mutable target; later mutable families still need their
+  own emitted-call evidence when they are enabled.
 - [x] **Classify non-hooks.** `@std.buffer`, `Cell`/`Task`/`Channel`/host I/O, and
   read/share ops (slice/concat/gather/reads) are classified as non-targets in
   existing-hooks.md's Non-hooks section.
@@ -82,7 +107,7 @@ rewrite pass that selected them was removed (`opt/pipeline.tw`). Semantic builde
 lowering such as `collect` is separate and still uses builders; codegen re-drives
 ownership-optimized uses from the new sound facts (`ownership.tw`), not from scratch.
 
-## Codegen Phase 7B — Operation catalog ✅ catalog done; inspection deferred (2026-07-20)
+## Codegen Phase 7B — Operation catalog ✅ catalog and first inspection done (2026-07-20)
 
 No emitted-code change. This phase answers: “if this candidate is accepted, what
 exact existing target would codegen use?”
@@ -95,10 +120,11 @@ exact existing target would codegen use?”
 - [x] **Keep unsupported families persistent.** The catalog's "Later families"
   section keeps concat/extend, private representations, and multi-key specialization
   out of the first cut; the emission-state note reiterates persistent-by-default.
-- [ ] **Name inspection signatures.** Deferred with the 7A signature item: the
-  concrete `twk ir`/WAT/call-list evidence that proves an ownership-optimized
-  mutable target was selected can only be named once Phase 8 emits one. Captured
-  as a Phase 8A acceptance criterion instead.
+- [x] **Name inspection signatures.** Phase 8A captured the first concrete
+  evidence: `twk ir --census --sites` renders the selected vector-set decision,
+  and `twk wat ... --calls` shows the selected `rt_arr__set_in_place` call for
+  the owned fresh fixture while aliasing and loop-contained fixtures stay on
+  `rt_arr__set`. Later families will add their own family-specific call evidence.
 
 ## Codegen Phase 7C — Decision records and handoff contract ✅ seam done (2026-07-21)
 
@@ -161,14 +187,12 @@ full decision-table and variant-routing dry-run output remains deferred.
   a mutable target exists), via `compiler.codegen.dry_run` and new update-call
   verdicts in `ownership.tw`. The dry-run path now uses typed reusable-shell flags
   from CFG facts rather than parsing verdict text.
-- [ ] **Render consumed vs ignored decisions.** Deferred to **Phase 8A's first-emission
-  inspection gate**, not skipped. This needs a real `MutableDecisionTable` producer
-  and backend decision-state renderer. Today's output is ownership-verdict dry-run
-  state, not “decision found and selected,” “decision found but ignored because
-  stale/unsupported,” or “decision absent, persistent fallback.” Before or alongside
-  the first vector `set_at` emission, add enough rendering to audit that the emitted
-  helper came from a live decision and that rejected/stale candidates fell back for
-  the documented reason.
+- [x] **Render consumed vs ignored decisions.** Completed with Phase 8A's
+  first-emission inspection gate. `twk ir --census --sites` now includes a separate
+  post-prepare `mutable decisions` table, rendered by `compiler.codegen.mutable_audit`,
+  that classifies backend selector consumption as `selected`, `policy_disabled`,
+  `stale_or_ignored`, or `absent_fallback` and names the persistent, mutable, and
+  emitted targets plus the proof id.
 - [ ] **Include variant routing dry-runs.** Deferred to **Phase 8G's clone-routing
   inspection gate**, not skipped. Current `--cfg` call diagnostics render only the
   accepted `-> f<id>[unique:...]` shape, not the full generic callee, would-be cloned
@@ -176,29 +200,44 @@ full decision-table and variant-routing dry-run output remains deferred.
   ownership-specialized function variants, add dry-run/inspection output before or
   alongside real routing so clone selection and generic fallback remain auditable.
 
-## Codegen Phase 8A — Local vector indexed-update emission
+## Codegen Phase 8A — Local vector indexed-update emission ✅ done
 
-First emitted-code change. Keep the slice intentionally narrow.
+First emitted-code change. The slice is intentionally narrow.
 
-- [ ] **Lower one local owned vector `set_at` family through the existing helper.**
-  Require explicit `Unique` + last-use decision; no dicts, no builders, no record
-  shells, no specialization.
-- [ ] **Keep interleaved reads conservative unless facts explicitly certify them.**
-  Unsupported borrow shapes fall back to persistent `Vector.set_at`.
-- [ ] **Gate with guard programs and WAT/call inspection.** Positive sites should
-  show the mutable helper; negative aliasing cases should still call the
-  persistent path.
-- [ ] **Revisit deferred 7E decision rendering here.** The first emitted slice must
-  make consumed vs ignored/stale decision state inspectable enough that helper
-  selection is auditable, not inferred from WAT alone.
+- [x] **Lower one local owned vector `set_at` family through the existing helper.**
+  Phase 8A produces ANF-keyed decisions from optimized semantic ownership facts,
+  threads them through backend preparation, and emits `vector$set_in_place` only
+  when the prepared-site selector validates the exact vector-set shape under the
+  Phase 8A policy. Dicts, builders, record shells, and specialization remain disabled.
+- [x] **Keep interleaved reads conservative unless facts explicitly certify them.**
+  Unsupported, aliased, absent, stale, and loop-contained sites fall back to the
+  persistent `Vector.set_at` path; loop-contained positives are deferred to Phase 8B.
+- [x] **Gate with guard programs and WAT/call inspection.** The fresh local vector
+  fixture emits `rt_arr__set_in_place`; the aliasing and loop-contained fixtures
+  emit `rt_arr__set`.
+- [x] **Revisit deferred 7E decision rendering here.** The post-prepare audit table
+  now renders selected, policy-disabled, stale/ignored, and absent fallback states,
+  so helper selection is auditable from decision consumption rather than inferred
+  from WAT alone.
 
-## Codegen Phase 8B — Loop-carried vector updates
+## Codegen Phase 8B — Loop-carried vector updates ✅ done
 
-- [ ] **Extend vector indexed-update lowering to loop-carried accumulators.**
-  Target shapes like `flags = flags.set_at(k, false)` and
-  `balls = balls.set_at(j, updated_ball)` where back-edge facts prove ownership.
-- [ ] **Render loop proof ids near emitted decisions.** Debug output should name
-  the carried local, update site, borrow sites, and accepted/rejected reason.
+- [x] **Extend vector indexed-update lowering to loop-carried accumulators.**
+  Index-assignment sugar (`flags[k] = false`) carried through single and nested
+  loops now selects `vector$set_in_place` when back-edge facts prove ownership.
+  The producer no longer suppresses loop-contained candidates; a decision is
+  produced whenever `reusable_shell` holds, and the analysis's entry/back-edge
+  validation is the soundness source (aliased loop vectors stay persistent
+  because `reusable_shell` is `false` for them). Note: explicit `.set_at(...)`
+  method calls lower to a prelude call whose update sits in a borrowed-param
+  body, so they are not caller-side candidates; the index-sugar form is the
+  emittable shape. Self-host reaches a fixed point with the boot compiler's own
+  loop-carried vector updates emitting in-place.
+- [x] **Render loop proof ids near emitted decisions.** Loop-carried decisions
+  carry a `phase8b-loop:<func>:carry L<base>:site L<result>:depth <n>` proof id
+  and a `decision produced (loop-carried, carry L<base>)` render reason, both
+  visible via `twk ir --census --sites` (e.g. the nested fixture renders
+  `...:depth 2` with a `selected` / `MutableSelected` audit row).
 
 ## Codegen Phase 8C — Existing builder-region lowering
 
@@ -220,27 +259,39 @@ the vector family. Details: [vector-lowering.md](vector-lowering.md) and
   runtime exports additional helpers such as vector `builder_extend`, but they are
   not currently a first-cut boot builtin/shim target.
 
-## Codegen Phase 8D — Dict set emission
+## Codegen Phase 8D — Dict set emission ✅ done
 
-- [ ] **Lower proven-owned `Dict.set` through existing in-place helpers.** Preserve
-  key lookup semantics and old-version observability.
-- [ ] **Keep nested value ownership conservative.** Ownership of a dict backing is
-  not ownership of reference-typed values stored inside it.
-- [ ] **Inspect dict helper selection.** Positive sites should show the in-place
-  set helper; negative aliasing/old-version cases should still call the persistent
-  path.
+The decision producer is now family-neutral (`produce_update_call_decisions`,
+collecting vector/dict set and remove via `is_supported_call_family`), and
+`enabled_emit_policy` is the cumulative build policy that turns on the families
+the compiler actually emits mutably.
 
-## Codegen Phase 8E — Dict remove emission
+- [x] **Lower proven-owned `Dict.set` through existing in-place helpers.** Owned
+  `Dict.set` sites select `dict$set_in_place`; a round-trip fixture confirms key
+  lookup, key-update value replacement, insertion order, and old-version
+  observability are preserved (aliased dicts stay persistent).
+- [x] **Keep nested value ownership conservative.** `dict$set_in_place` mutates
+  only the HAMT backing, never reference-typed values stored inside the dict.
+- [x] **Inspect dict helper selection.** `twk ir --census --sites` shows
+  `selected` / `dict$set_in_place` for owned sites and persistent / `absent_fallback`
+  for aliased ones. Self-host reaches a fixed point with the boot compiler's own
+  owned dict sets emitting in-place.
 
-`Dict.remove` uses related machinery but has separate ordering and helper semantics;
-do not bundle it with set.
+## Codegen Phase 8E — Dict remove emission ✅ done
 
-- [ ] **Catalog and verify remove helper semantics first.** Insertion-order
-  iteration, missing-key behavior, and old-version observability must remain correct.
-- [ ] **Lower proven-owned `Dict.remove` through existing in-place helpers.** Fall
-  back to the persistent path for unsupported or stale decisions.
-- [ ] **Keep remove inspection distinct from set.** Debug output should make it
-  obvious which helper family was selected.
+A one-flag policy extension of 8D: the producer already collected `DictRemove`
+candidates, so `enabled_emit_policy` just flips `emit_dict_remove`.
+
+- [x] **Catalog and verify remove helper semantics first.** A round-trip fixture
+  confirms `dict$remove_in_place` preserves insertion order among survivors, treats
+  absent-key removal as a no-op, and matches persistent `dict$remove` output.
+- [x] **Lower proven-owned `Dict.remove` through existing in-place helpers.** Owned
+  removes select `dict$remove_in_place`; aliased/absent/stale removes fall back to
+  persistent `dict$remove`. Self-host reaches a fixed point with the boot compiler's
+  own owned dict removes emitting in-place.
+- [x] **Keep remove inspection distinct from set.** `twk ir --census --sites`
+  reports the `dict_remove` family and `dict$remove_in_place` selection separately
+  from `dict_set`.
 
 ## Codegen Phase 8F — Record shell update emission
 

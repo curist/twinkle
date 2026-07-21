@@ -1,0 +1,8 @@
+fn dict_alias() Dict<Int, Int> {
+  d: Dict<Int, Int> = Dict.new()
+  keep := d
+  d = .set(1, 1)
+  keep
+}
+
+println(dict_alias().len().to_string())

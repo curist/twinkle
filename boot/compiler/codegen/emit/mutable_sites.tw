@@ -110,7 +110,7 @@ pub fn select_call_for_emit(
   }
 
   .Some(
-    mutable_select.select_call(
+    mutable_select.select_call_with_policy(
       table,
       site,
       family,
@@ -119,6 +119,7 @@ pub fn select_call_for_emit(
       base_local,
       result_entry.source_local,
       args.len(),
+      ctx.mutable_emit_policy,
     ),
   )
 }

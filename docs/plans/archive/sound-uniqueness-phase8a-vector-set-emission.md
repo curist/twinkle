@@ -194,6 +194,16 @@ In `boot/compiler/codegen/mutable_select.tw`, extend `SelectionReason` with dist
 
 Update `selection_reason_tag(...)` and any tests that assert old reason tags. Existing persistent-only selector tests that previously expected `.MutableAvailableNotEmitted` for a live would-be mutable target should now expect `.PolicyDisabled`, because the selector found a valid decision but the active policy did not allow emission. Phase 8A emission tests should expect `.MutableSelected`.
 
+> **Do not delete `.MutableAvailableNotEmitted`.** This change is *additive*: it adds `.MutableSelected` and `.PolicyDisabled` but leaves `.MutableAvailableNotEmitted` in place, because `select_record_update(...)` (mutable_select.tw, record path) still returns it and this plan does not touch the record path. Keep its `selection_reason_tag(...)` entry too. Only the `select_call(...)` call path stops using it.
+
+> **Expect test churn on reason tags.** After the refactor, `select_call(...)` under `persistent_only_policy()` returns `.PolicyDisabled` (was `.MutableAvailableNotEmitted`) for a valid vector decision. `emit_func` stays persistent, so persistent-*emission* assertions still pass, but any test asserting the reason *tag* must flip to `.PolicyDisabled`. Sweep for these up front:
+>
+> ```bash
+> rg -n "MutableAvailableNotEmitted" boot -S
+> ```
+>
+> and reclassify each call-path hit (leave record-path hits alone).
+
 Then add:
 
 ```tw
@@ -281,6 +291,8 @@ In every `PreparedModule` literal inside `prepare_backend_with_mutable_decisions
 ```tw
 mutable_emit_policy: mutable_select.persistent_only_policy(),
 ```
+
+> **There are two such literals**, not one: the `prepared_funcs_depth_exceeds(...)` early return and the normal end-of-function return. The `rg` sweep below catches both, but the early-return literal is easy to miss when scanning by eye — add the field to both.
 
 In `boot/compiler/codegen/emit/context.tw`, add:
 
@@ -542,6 +554,14 @@ target/twk run boot/tests/main.tw
 ```
 
 Expected: failure because `mutable_produce` does not exist.
+
+> **De-risk the positive path before writing the producer.** The whole 8A positive slice hinges on the *existing* ownership analysis already certifying `phase8a_vector_set_fresh.tw`'s `xs` as reusable — if it doesn't, Task 4's positive WAT test fails and the gap is in analysis, not codegen. Confirm now with the current dry-run inspection (no new code needed):
+>
+> ```bash
+> target/twk ir --census --sites boot/tests/fixtures/sound_uniqueness/phase8a_vector_set_fresh.tw
+> ```
+>
+> Expect the `set_fresh` vector-set row to show `would_use == true` (owned base + mutable target). If it does not, stop and resolve the analysis verdict before continuing — the producer cannot manufacture reusability it isn't given.
 
 - [ ] **Step 3: Implement the producer**
 
@@ -933,12 +953,14 @@ ctx := EmitCtx.{
 }
 ```
 
-Use `mutable_sites.select_call_for_emit(prepared.mutable_decisions, fid, args, result_entry, ctx)`. Derive audit state from the returned selector:
+Use `mutable_sites.select_call_for_emit(prepared.mutable_decisions, fid, args, result_entry, ctx)`. Note this returns `CallSelection?`, so first distinguish the two "no selection" shapes:
 
-- `selected` when `selection.reason == .MutableSelected` and `emit_func.id == would_func.id`.
-- `policy_disabled` when `selection.reason == .PolicyDisabled`.
-- `stale_or_ignored` for mismatch reasons such as `ArgumentShapeMismatch`, `SourceLocalMismatch`, `WrongPersistentTarget`, `Ambiguous`, or `MissingMutableTarget`.
-- `absent_fallback` when no decision exists for a recognized call site.
+- `.None` — the callee is not a recognized decision family, or the base argument is not a slot (no current function id, etc.). This is *not* a mutable call site; skip it entirely (do not emit an audit row) so genuinely non-mutable calls are not mislabeled.
+- `.Some(selection)` — a recognized mutable call site; derive audit state from `selection.reason`:
+  - `selected` when `selection.reason == .MutableSelected` and `emit_func.id == would_func.id`.
+  - `policy_disabled` when `selection.reason == .PolicyDisabled`.
+  - `stale_or_ignored` for mismatch reasons such as `ArgumentShapeMismatch`, `SourceLocalMismatch`, `WrongPersistentTarget`, `Ambiguous`, or `MissingMutableTarget`.
+  - `absent_fallback` when `selection.reason == .Absent` — a recognized call site with no decision in the table (distinct from the `.None` above, which is not a mutable site at all).
 
 Render a tab-separated table:
 

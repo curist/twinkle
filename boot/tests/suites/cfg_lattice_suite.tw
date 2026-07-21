@@ -2,17 +2,12 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use compiler.ownership
-use compiler.ownership.{Lattice}
 
 fn ints_eq(a: Int, b: Int) Bool {
   a == b
 }
 
-fn own_witness() Lattice<Int> {
-  Lattice.{ default: 2, join: ownership.join_own_tag, eq: ints_eq }
-}
-
-// Bool (valid) and Vector<Int> (prov) witnesses are self-contained so the suite
+// Bool (valid) and Vector<Int> (prov) operations are self-contained so the suite
 // exercises the generic across all three instantiated T without depending on
 // ownership.tw internals (union_sorted/same_live are private there).
 fn and_b(a: Bool, b: Bool) Bool {
@@ -54,15 +49,7 @@ fn same_i(a: Vector<Int>, b: Vector<Int>) Bool {
   true
 }
 
-fn valid_witness() Lattice<Bool> {
-  Lattice.{ default: true, join: and_b, eq: eq_b }
-}
-
-// Plumbing-only witness: union_i is order-sensitive and consistent with same_i only when the merged-in elements are fresh — sufficient for exercising the generic, not a general set lattice.
-fn prov_witness() Lattice<Vector<Int>> {
-  Lattice.{ default: [], join: union_i, eq: same_i }
-}
-
+// Plumbing-only operation: union_i is order-sensitive and consistent with same_i only when the merged-in elements are fresh — sufficient for exercising the generic, not a general set lattice.
 fn get_or_neg(m: Dict<Int, Int>, k: Int) Int {
   case m.get(k) {
     .Some(v) => v,
@@ -94,7 +81,17 @@ pub fn suite() runner.Suite {
         old[5] = 0 // Unique
         next: Dict<Int, Int> = Dict.new()
         next[5] = 1 // Shared
-        res := ownership.merge_targeted(old, next, Dict.new(), [], false, true, own_witness())
+        res := ownership.merge_targeted(
+          old,
+          next,
+          Dict.new(),
+          [],
+          false,
+          true,
+          2,
+          ownership.join_own_tag,
+          ints_eq,
+        )
         try assert.equal(res.locked.len(), 1)
         try assert.equal(res.locked[0], 5)
         try assert.equal(get_or_neg(res.map, 5), 1)
@@ -108,7 +105,17 @@ pub fn suite() runner.Suite {
         old[3] = 0
         next: Dict<Int, Int> = Dict.new()
         next[3] = 0
-        res := ownership.merge_targeted(old, next, Dict.new(), [], false, false, own_witness())
+        res := ownership.merge_targeted(
+          old,
+          next,
+          Dict.new(),
+          [],
+          false,
+          false,
+          2,
+          ownership.join_own_tag,
+          ints_eq,
+        )
         try assert.equal(res.locked.len(), 0)
         try assert.equal(get_or_neg(res.map, 3), 0)
         .Ok({})
@@ -123,7 +130,17 @@ pub fn suite() runner.Suite {
         next[7] = 1 // Shared
         prev: Dict<Int, Int> = Dict.new()
         prev[7] = 1 // next == prev => oscillates
-        res := ownership.merge_targeted(old, next, prev, [], true, false, own_witness())
+        res := ownership.merge_targeted(
+          old,
+          next,
+          prev,
+          [],
+          true,
+          false,
+          2,
+          ownership.join_own_tag,
+          ints_eq,
+        )
         try assert.equal(res.locked.len(), 1)
         try assert.equal(get_or_neg(res.map, 7), 1) // join_own(Unique,Shared)=Shared
         .Ok({})
@@ -136,7 +153,17 @@ pub fn suite() runner.Suite {
         old[1] = 0
         next: Dict<Int, Int> = Dict.new()
         next[1] = 0 // unchanged: would not normally trigger a lock/join
-        res := ownership.merge_targeted(old, next, Dict.new(), [1], false, false, own_witness())
+        res := ownership.merge_targeted(
+          old,
+          next,
+          Dict.new(),
+          [1],
+          false,
+          false,
+          2,
+          ownership.join_own_tag,
+          ints_eq,
+        )
         try assert.equal(res.locked.len(), 1)
         try assert.equal(get_or_neg(res.map, 1), 0) // join(Unique,Unique)=Unique
         .Ok({})
@@ -149,7 +176,7 @@ pub fn suite() runner.Suite {
         old[2] = true
         next: Dict<Int, Bool> = Dict.new()
         next[2] = false
-        res := ownership.merge_targeted(old, next, Dict.new(), [], false, true, valid_witness())
+        res := ownership.merge_targeted(old, next, Dict.new(), [], false, true, true, and_b, eq_b)
         try assert.equal(res.locked.len(), 1)
         try assert.is_false(get_or_true(res.map, 2))
         .Ok({})
@@ -162,7 +189,7 @@ pub fn suite() runner.Suite {
         old[4] = [1]
         next: Dict<Int, Vector<Int>> = Dict.new()
         next[4] = [2]
-        res := ownership.merge_targeted(old, next, Dict.new(), [], false, true, prov_witness())
+        res := ownership.merge_targeted(old, next, Dict.new(), [], false, true, [], union_i, same_i)
         try assert.equal(res.locked.len(), 1)
         try assert.equal(get_or_empty(res.map, 4).len(), 2) // union([1],[2])
         .Ok({})

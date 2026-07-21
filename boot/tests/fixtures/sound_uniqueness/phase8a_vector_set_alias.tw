@@ -1,0 +1,12 @@
+fn set_alias(xs: Vector<Int>) Vector<Int> {
+  old := xs
+  xs[0] = 9
+  n := old.len()
+  if n >= 0 {
+    xs
+  } else {
+    xs
+  }
+}
+
+println(set_alias([1, 2]).len().to_string())

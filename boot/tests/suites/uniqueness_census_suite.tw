@@ -140,11 +140,21 @@ pub fn suite() runner.Suite {
         )
         try assert.is_true(with_sites.contains("vector$set_unsafe"))
         try assert.is_true(with_sites.contains("vector$set_in_place"))
+        try assert.is_true(
+          with_sites.contains(
+            "func\tlocal\tfamily\tpersistent\tmutable\temit\tstate\treason\tproof",
+          ),
+        )
 
         without_sites := ir.render_census_report(artifacts, false)
         try assert.is_true(without_sites.contains("family\tcandidates\tin_place"))
         try assert.is_true(
           !without_sites.contains("func\tfamily\tpersistent\tmutable\twould_use\tverdict"),
+        )
+        try assert.is_true(
+          !without_sites.contains(
+            "func\tlocal\tfamily\tpersistent\tmutable\temit\tstate\treason\tproof",
+          ),
         )
         .Ok({})
       },

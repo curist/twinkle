@@ -1195,3 +1195,88 @@ pub fn compute(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) Summa
   }
   table
 }
+
+// Transitive user-callee closure of `roots` (root ids included). Used to scope
+// summary/ownership work to the functions a mutable candidate could actually
+// depend on. Deterministic: the worklist is kept sorted so closure order does
+// not vary run to run.
+pub fn dependency_closure(view: CfgView, roots: Dict<Int, Bool>) Dict<Int, Bool> {
+  index := build_func_index(view)
+  user_ids := user_id_set(view)
+  closed: Dict<Int, Bool> = Dict.new()
+  work: Vector<Int> = collect id in roots.keys() {
+    id
+  }
+  work = .sort()
+
+  for work.len() > 0 {
+    id := work[0]
+    next_work: Vector<Int> = []
+    for item, i in work {
+      if i > 0 {
+        next_work = .append(item)
+      }
+    }
+    work = next_work
+
+    already := case closed.get(id) {
+      .Some(v) => v,
+      .None => false,
+    }
+    if !already {
+      closed[id] = true
+      case index.get(id) {
+        .Some(f) => {
+          for callee in callee_ids(f, user_ids) {
+            seen := case closed.get(callee) {
+              .Some(v) => v,
+              .None => false,
+            }
+            if !seen {
+              work = .append(callee)
+            }
+          }
+          work = .sort()
+        },
+        .None => {},
+      }
+    }
+  }
+
+  closed
+}
+
+// Summaries scoped to the dependency closure of `roots`. Functions outside the
+// closure keep their conservative seed summary — that can only make a caller's
+// verdicts less precise (forcing persistent fallback), never fabricate a
+// mutable decision. SCCs that touch the closure are analyzed exactly as
+// `compute` would; SCCs entirely outside it are skipped.
+pub fn compute_for_roots(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  roots: Dict<Int, Bool>,
+) SummaryTable {
+  index := build_func_index(view)
+  user_ids := user_id_set(view)
+  wanted := dependency_closure(view, roots)
+
+  table := empty_summary_table()
+  for f in view.functions {
+    table = table_put(table, f.func_id, conservative_summary(f))
+  }
+
+  for scc in order_sccs(view, index, user_ids) {
+    run := false
+    for id in scc {
+      case wanted.get(id) {
+        .Some(true) => run = true,
+        _ => {},
+      }
+    }
+    if run {
+      table = run_scc(scc, index, user_ids, table, b, sem)
+    }
+  }
+  table
+}
