@@ -1,5 +1,8 @@
 //! Shared ownership-verdict extraction for codegen dry-runs and mutable decision production.
 
+use @std.date
+use @std.proc
+
 use compiler.anf.{AnfExpr, AnfMatchArm, AnfModule, AnfOp, Atom, FieldAtom, IndexKind, OpKind}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.cfg
@@ -9,6 +12,13 @@ use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership
 use compiler.summary
 use lib.query.keys as qkeys
+
+fn timings_enabled() Bool {
+  case proc.env("TWINKLE_TIMINGS") {
+    .Some(_) => true,
+    .None => false,
+  }
+}
 
 pub type SiteVerdict = .{ text: String, reusable_shell: Bool }
 
@@ -284,10 +294,21 @@ pub type VerdictTable = .{ key: ArtifactKey, by_key: Dict<String, SiteVerdict> }
 // sequence `twk ir --cfg` uses, carrying the optimized-ANF fingerprint so
 // downstream consumers can reject a mismatched module.
 pub fn compute_artifacts(opt: AnfModule, b: BuiltinRegistry, sem: OptimizerSemantics) OwnershipArtifacts {
+  timed := timings_enabled()
+  t0 := date.now()
   view := cfg.build_view(opt, b)
   view = ownership.prune_dead_merge(view)
+  t_view := date.now()
   table := summary.compute(view, b, sem)
+  t_summary := date.now()
   analyzed := ownership.analyze_with_summaries(view, b, sem, table)
+  t_own := date.now()
+  if timed {
+    eprintln(
+      "[time:mutable:artifacts] cfg=${t_view - t0}ms summary=${t_summary - t_view}ms ownership=${t_own
+        - t_summary}ms scope_roots=-1",
+    )
+  }
   OwnershipArtifacts.{ key: artifact_key_for_anf(opt), view, table, analyzed }
 }
 
@@ -301,10 +322,21 @@ pub fn compute_candidate_artifacts(
   sem: OptimizerSemantics,
   candidate_funcs: Dict<Int, Bool>,
 ) OwnershipArtifacts {
+  timed := timings_enabled()
+  t0 := date.now()
   view := cfg.build_view(opt, b)
   view = ownership.prune_dead_merge(view)
+  t_view := date.now()
   table := summary.compute_for_roots(view, b, sem, candidate_funcs)
+  t_summary := date.now()
   analyzed := ownership.analyze_selected_with_summaries(view, b, sem, table, candidate_funcs)
+  t_own := date.now()
+  if timed {
+    eprintln(
+      "[time:mutable:artifacts] cfg=${t_view - t0}ms summary=${t_summary - t_view}ms ownership=${t_own
+        - t_summary}ms scope_roots=${candidate_funcs.keys().len()}",
+    )
+  }
   OwnershipArtifacts.{ key: artifact_key_for_anf(opt), view, table, analyzed }
 }
 

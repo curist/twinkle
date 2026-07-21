@@ -4,6 +4,9 @@
 //! does not prove ownership; it joins ANF update sites with analysis verdict flags
 //! and the mutable operation catalog.
 
+use @std.date
+use @std.proc
+
 use compiler.anf.{AnfExpr, AnfModule, AnfOp, Atom}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.mutable_catalog
@@ -11,6 +14,13 @@ use compiler.codegen.mutable_select
 use compiler.codegen.ownership_verdicts
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+
+fn timings_enabled() Bool {
+  case proc.env("TWINKLE_TIMINGS") {
+    .Some(_) => true,
+    .None => false,
+  }
+}
 
 pub type DecisionRenderRow = .{
   func: String,
@@ -204,8 +214,16 @@ fn candidate_func_roots(set: CandidateSet) Dict<Int, Bool> {
 /// ownership pass is not paid on every build. Verdicts (and therefore
 /// decisions) match the full path — see the scoped/full equivalence tests.
 pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) ProducedDecisions {
+  timed := timings_enabled()
+  t0 := date.now()
   set := phase8a_vector_set_candidates(opt, b)
+  t_candidates := date.now()
   if set.candidates.len() == 0 {
+    if timed {
+      eprintln(
+        "[time:mutable] candidate_scan=${t_candidates - t0}ms artifact=0ms decision_join=0ms candidates=0 roots=0",
+      )
+    }
     return ProducedDecisions.{
       table: mutable_select.empty_decision_table(),
       rows: [],
@@ -214,13 +232,18 @@ pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) 
   }
 
   sem := make_prelude_optimizer_semantics(b)
-  artifacts := ownership_verdicts.compute_candidate_artifacts(
-    opt,
-    b,
-    sem,
-    set.candidate_func_roots(),
-  )
-  produce_phase8a_vector_set_decisions_with_artifacts(opt, b, artifacts)
+  roots := set.candidate_func_roots()
+  artifacts := ownership_verdicts.compute_candidate_artifacts(opt, b, sem, roots)
+  t_artifacts := date.now()
+  produced := produce_phase8a_vector_set_decisions_with_artifacts(opt, b, artifacts)
+  t_done := date.now()
+  if timed {
+    eprintln(
+      "[time:mutable] candidate_scan=${t_candidates - t0}ms artifact=${t_artifacts - t_candidates}ms decision_join=${t_done
+        - t_artifacts}ms candidates=${set.candidates.len()} roots=${roots.keys().len()}",
+    )
+  }
+  produced
 }
 
 /// Diagnostic variant that computes full whole-program ownership artifacts
