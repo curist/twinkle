@@ -11,15 +11,16 @@ the persistent target — verified byte-identical (self-host fixed point plus a
 before/after codegen comparison over vector/dict/record updates). The Phase 7E
 update-site slice is done: `twk ir --census --sites` now renders persistent→mutable
 targets plus ownership verdicts for vector/dict/record update candidates, while
-still emitting persistent code. **Next: finish the remaining 7E decision-table /
-variant-routing dry-run work, or the analysis-producer follow-up** — extracting the
-`ownership.tw` render-only decisions into `MutableDecisionTable`. The full analysis
-track is complete through Phase 6 (record/field ownership, transport-wrapper /
-`Result`-payload return-path summaries, ownership-specialization decision facts, and
-recursive SCC variant-qualified diagnostics), so codegen consumes a trustworthy fact
-set rather than rediscovering ownership. (These "Codegen Phase 7A/…" labels are the
-codegen track's own local numbering; see the phase-numbering note in
-[../analysis/README.md](../analysis/README.md).)
+still emitting persistent code. **Current focus: Phase 8A, local vector indexed-update
+emission.** The remaining 7E dry-run items are not abandoned: decision-table
+consumed/ignored rendering is an 8A inspection gate for the first emitted slice,
+and variant-routing dry-runs are an 8G gate when specialized clone routing becomes
+real. The full analysis track is complete through Phase 6 (record/field ownership,
+transport-wrapper / `Result`-payload return-path summaries, ownership-specialization
+decision facts, and recursive SCC variant-qualified diagnostics), so codegen consumes
+a trustworthy fact set rather than rediscovering ownership. (These "Codegen Phase
+7A/…" labels are the codegen track's own local numbering; see the phase-numbering
+note in [../analysis/README.md](../analysis/README.md).)
 
 This track owns the practical bridge from proof facts to emitted code. It should
 first reuse today's persistent/in-place/builder mechanisms, not introduce the
@@ -160,14 +161,20 @@ full decision-table and variant-routing dry-run output remains deferred.
   a mutable target exists), via `compiler.codegen.dry_run` and new update-call
   verdicts in `ownership.tw`. The dry-run path now uses typed reusable-shell flags
   from CFG facts rather than parsing verdict text.
-- [ ] **Render consumed vs ignored decisions.** Deferred: this needs a real
-  `MutableDecisionTable` producer and backend decision-state renderer. Today's
-  output is ownership-verdict dry-run state, not “decision found but dry-run” vs
-  “decision absent/stale.”
-- [ ] **Include variant routing dry-runs.** Deferred: current `--cfg` call
-  diagnostics render only the accepted `-> f<id>[unique:...]` shape, not the full
-  generic callee, would-be cloned callee, exact `VariantId`, route site, and
-  fallback reason.
+- [ ] **Render consumed vs ignored decisions.** Deferred to **Phase 8A's first-emission
+  inspection gate**, not skipped. This needs a real `MutableDecisionTable` producer
+  and backend decision-state renderer. Today's output is ownership-verdict dry-run
+  state, not “decision found and selected,” “decision found but ignored because
+  stale/unsupported,” or “decision absent, persistent fallback.” Before or alongside
+  the first vector `set_at` emission, add enough rendering to audit that the emitted
+  helper came from a live decision and that rejected/stale candidates fell back for
+  the documented reason.
+- [ ] **Include variant routing dry-runs.** Deferred to **Phase 8G's clone-routing
+  inspection gate**, not skipped. Current `--cfg` call diagnostics render only the
+  accepted `-> f<id>[unique:...]` shape, not the full generic callee, would-be cloned
+  callee, exact `VariantId`, route site, and fallback reason. When 8G introduces
+  ownership-specialized function variants, add dry-run/inspection output before or
+  alongside real routing so clone selection and generic fallback remain auditable.
 
 ## Codegen Phase 8A — Local vector indexed-update emission
 
@@ -181,6 +188,9 @@ First emitted-code change. Keep the slice intentionally narrow.
 - [ ] **Gate with guard programs and WAT/call inspection.** Positive sites should
   show the mutable helper; negative aliasing cases should still call the
   persistent path.
+- [ ] **Revisit deferred 7E decision rendering here.** The first emitted slice must
+  make consumed vs ignored/stale decision state inspectable enough that helper
+  selection is auditable, not inferred from WAT alone.
 
 ## Codegen Phase 8B — Loop-carried vector updates
 
@@ -262,6 +272,10 @@ required for [worked-examples Case V](../analysis/worked-examples.md#case-v--gra
   accident.
 - [ ] **Keep variant count capped and inspectable.** Render clone names, source
   `VariantId`, fallback reason, and proof id in `twk ir`/WAT inspection.
+- [ ] **Revisit deferred 7E variant-routing dry-runs here.** Before or alongside
+  real clone routing, render route-site dry-runs that name the generic callee,
+  would-be specialized callee, exact `VariantId`, accepted/rejected reason, and
+  persistent fallback path.
 
 ## Codegen Phase 8H — Record-backed field collection updates
 

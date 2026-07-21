@@ -21,37 +21,41 @@ track README(s). The focused track docs own the detailed checklists.
 
 ## Current focus
 
-**The analysis track is complete through Phase 6 (2026-07-19; recursive-summary
-diagnostics closed afterward).** Phases 0-6 produce auditable CFG ownership facts,
-liveness, summaries, record shell/field and nested-collection ownership,
-transport-wrapper / `Result`-payload return-path summaries, owned-entry recovery,
-call-site variant selection, per-call-site owned-decision verdicts, and recursive
-SCC variant-qualified diagnostic bodies in `twk ir --cfg` — all without changing
-generated code. Field-granular codegen seeding has no summary observable and remains
-codegen-owned; variant *generation* and in-place emission also remain codegen work.
+**The analysis track is complete through Phase 6.** Phases 0-6 produce auditable CFG
+ownership facts, liveness, summaries, record shell/field and nested-collection
+ownership, transport-wrapper / `Result`-payload return-path summaries, owned-entry
+recovery, call-site variant selection, per-call-site owned-decision verdicts, and
+recursive SCC variant-qualified diagnostic bodies in `twk ir --cfg` — all without
+changing generated code. Field-granular codegen seeding has no summary observable and
+remains codegen-owned; variant *generation* and in-place emission also remain codegen
+work.
 
 The governing rule is **all analysis precision lands before any codegen.** That gate
-is now satisfied, so the current focus is the **codegen track**. Phases 7A/7B are
-done (2026-07-20): the surviving mutable hooks are inventoried and the
-persistent→mutable operation catalog is verified against `main`. Key finding —
-vector/dict in-place helpers, builder families, and the record `can_reuse` slot
-survive from the previous COW era, but the ownership-driven *rewrite pass* that
-selected them was removed. Semantic builder lowering such as `collect` still emits
-builders; no ownership decision currently selects vector/dict in-place helpers,
-record `can_reuse=true`, or optimizer-selected builder regions. The codegen track
-re-drives those surviving hooks from the new sound facts. **Next: Phase 7C** —
-ANF-keyed decision records + a centralized selector/handoff layer, then narrow
-emitted slices.
+is satisfied, so the active work is the **codegen track**. Codegen Phases 7A-7D are
+done: the surviving mutable hooks are inventoried, the persistent→mutable operation
+catalog is verified, and the ANF-keyed decision-table seam is threaded through
+backend preparation and emission with centralized persistent fallback. The first
+Phase 7E dry-run slice is also done: `twk ir --census --sites` renders update-site
+persistent→mutable targets, ownership verdicts, and `would_use` state for
+vector/dict/record candidates while emitted code remains persistent.
 
-Important scope boundary: those existing-hook slices are the integration proof,
-not the whole performance/migration deliverable. The project is not complete
-until mutable lowering can keep proven-owned collections in private mutation-
-enabled storage across the useful chain, staying low until the latest required
-publication boundary before materializing persistent `Vector`/`Dict` values.
-Typed/unboxed vectors, dense byte/int regions where appropriate, owned-
-specialized mutable ABI, and true mutable/transient dict storage all belong to
-that storage-representation track, which happens before migration cleanup and
-gates retiring `Buffer` as the ordinary local-update workaround.
+**Current implementation focus: Codegen Phase 8A, local vector indexed-update
+emission.** This is the first emitted-code slice: a proven local owned `Vector.set_at`
+site may select the existing mutable helper, while absent, stale, ambiguous, or
+unsupported decisions keep the ordinary persistent path. The deferred 7E inspection
+items remain attached to later gates rather than skipped: consumed-vs-ignored
+decision rendering should be revisited with 8A's first emission, and variant-routing
+dry-runs should be revisited with 8G's ownership-specialized clone routing.
+
+Important scope boundary: the existing-hook slices are the integration proof, not
+the whole performance/migration deliverable. The project is not complete until
+mutable lowering can keep proven-owned collections in private mutation-enabled
+storage across the useful chain, staying low until the latest required publication
+boundary before materializing persistent `Vector`/`Dict` values. Typed/unboxed
+vectors, dense byte/int regions where appropriate, owned-specialized mutable ABI, and
+true mutable/transient dict storage all belong to the storage-representation track,
+which happens before migration cleanup and gates retiring `Buffer` as the ordinary
+local-update workaround.
 
 ## Standing invariants
 
@@ -95,10 +99,11 @@ Analysis phases (architecture 1A-1E; all analysis precision lands before any cod
 Detailed checklist: [codegen/README.md](codegen/README.md)
 
 This track starts after the completed Phase 6 (1E) specialization decisions; its
-input facts are now trustworthy. It is
-intentionally split more finely than a single codegen milestone: first operation
-catalogs and dry-run decisions (Phase 7), then narrow emitted slices for vectors,
-builders, dicts, and records (Phase 8).
+input facts are now trustworthy. It is intentionally split more finely than a single
+codegen milestone: operation catalogs and backend handoff/dry-run decisions (Phase 7)
+are in place through the update-site dry-run slice, and current work is the first
+narrow emitted slice for local vector indexed updates (Phase 8A). Later Phase 8 slices
+broaden to builders, dicts, records, and ownership-specialized function variants.
 
 ### 3. Storage representation track
 
