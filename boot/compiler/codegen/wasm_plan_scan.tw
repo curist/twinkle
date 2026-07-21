@@ -5,6 +5,8 @@
 //! - closure-materialized FuncIds from AMakeClosure
 //! - direct builtin FuncIds from ACall callee sites
 //! - explicit module-global references from non-init prepared bodies
+//! - mutable targets a policy-enabled decision could swap in at emission,
+//!   even when the prepared body only literally calls the persistent target
 
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.prepared_ir.{
@@ -13,6 +15,7 @@ use compiler.backend.prepared_ir.{
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.dense_table_plan.{dense_table_plan}
+use compiler.codegen.mutable_select
 use compiler.codegen.wasm_layout.{mono_to_key}
 use compiler.mono_type.{MonoType}
 
@@ -53,7 +56,35 @@ pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) Scan
     out = extract_closure_monos(func.body, func.slots, out)
   }
 
-  out
+  out.register_mutable_targets(input.mutable_decisions, input.mutable_emit_policy)
+}
+
+// A mutable target (e.g. vector$set_in_place) never appears as a literal
+// ACall callee in the prepared body — only its persistent counterpart does.
+// The swap happens later, inside emit_module. Without this, a policy-enabled
+// mutable target's runtime import is never declared during planning, and
+// emission falls back to an unqualified/unresolvable call symbol. Register
+// every mutable target the active policy could select so its import is
+// planned alongside the persistent one.
+fn register_mutable_targets(
+  out: ScanResult,
+  table: mutable_select.MutableDecisionTable,
+  policy: mutable_select.MutableEmitPolicy,
+) ScanResult {
+  cur := out
+
+  for _, decisions in table.by_site {
+    for d in decisions {
+      if mutable_select.policy_allows_call(policy, d.family) {
+        case d.mutable_func {
+          .Some(fid) => cur.direct_builtin_calls[fid.id] = true,
+          .None => {},
+        }
+      }
+    }
+  }
+
+  cur
 }
 
 // Iterate the Let spine; recurse only into shallow control-flow branch bodies.

@@ -157,7 +157,10 @@ pub fn phase8a_policy() MutableEmitPolicy {
   }
 }
 
-fn policy_allows_call(policy: MutableEmitPolicy, family: OperationFamily) Bool {
+// pub: also consulted by wasm_plan_scan so a mutable target that emission
+// might swap in (but that never literally appears as an ACall site in the
+// prepared body) still gets its runtime import declared during planning.
+pub fn policy_allows_call(policy: MutableEmitPolicy, family: OperationFamily) Bool {
   case family {
     .VectorSet => policy.emit_vector_set,
     .DictSet => policy.emit_dict_set,
