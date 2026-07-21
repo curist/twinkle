@@ -40,6 +40,7 @@ pub type BlockFacts = .{
   live: Vector<Int>,
   field_own: Dict<Int, ff.FieldMap>,
   verdicts: Dict<Int, String>,
+  verdict_reusable_shell: Dict<Int, Bool>,
 }
 
 fn empty_block_facts() BlockFacts {
@@ -49,6 +50,7 @@ fn empty_block_facts() BlockFacts {
     live: [],
     field_own: Dict.new(),
     verdicts: Dict.new(),
+    verdict_reusable_shell: Dict.new(),
   }
 }
 
@@ -875,7 +877,9 @@ pub fn empty_fact_blocks(func: CfgFunction) Int {
       and block.exit.binding_valid.keys().len() == 0 and block.entry.live.len() == 0
       and block.exit.live.len() == 0 and block.entry.field_own.keys().len() == 0
       and block.exit.field_own.keys().len() == 0 and block.entry.verdicts.keys().len() == 0
-      and block.exit.verdicts.keys().len() == 0 {
+      and block.exit.verdicts.keys().len() == 0
+      and block.entry.verdict_reusable_shell.keys().len() == 0
+      and block.exit.verdict_reusable_shell.keys().len() == 0 {
       n = n + 1
     }
   }

@@ -1252,7 +1252,7 @@ fn test_select_call_for_emit_survives_prepared_dict_set() Result<Void, String> {
 // ── Task 4: emit_op wiring keeps Phase 7D output persistent ────────────────
 // These compile real source through emit_module with a non-empty decision
 // table attached at the call/record-update site, and assert BOTH that the
-// selector helper inspected the site (reason PersistentOnly / would_* points
+// selector helper inspected the site (accepted dry-run reason / would_* points
 // at the mutable target) AND that the emitted WAT never routes through the
 // mutable/in-place symbol. emit_module is called directly (unlinked), so
 // runtime call targets appear as "<wasm_module>__<wasm_name>" verbatim
@@ -1569,22 +1569,18 @@ fn test_emit_module_keeps_record_update_persistent_with_reuse_decision() Result<
   }
   ctx := mk_emit_ctx(artifacts.builtins, artifacts.env, local_map, .Some(site_hit.func.func_id))
 
-  base_source := case mutable_sites.record_base_source_local(hit.base, ctx) {
-    .Some(l) => l,
-    .None => return .Err("missing record update base source local"),
-  }
-  emit_site := case mutable_sites.site_for_result(ctx, result_entry) {
-    .Some(s) => s,
-    .None => return .Err("missing site for record update result"),
-  }
-  selected := mutable_select.select_record_update(
+  selected := case mutable_sites.select_record_update_for_emit(
     prepared.mutable_decisions,
-    emit_site,
-    base_source,
-    result_entry.source_local,
-    mutable_sites.field_path_key(hit.tid, hit.fid),
+    hit.base,
+    hit.fid,
+    hit.tid,
     hit.can_reuse,
-  )
+    result_entry,
+    ctx,
+  ) {
+    .Some(s) => s,
+    .None => return .Err("missing record update selection"),
+  }
   try assert.equal(mutable_select.record_reason_tag(selected.reason), 1)
   try assert.is_true(selected.would_reuse)
   try assert.is_false(selected.emit_can_reuse)
@@ -1637,22 +1633,18 @@ fn test_record_update_field_path_mismatch_rejects_cross_type_decision() Result<V
   }
   ctx := mk_emit_ctx(artifacts.builtins, artifacts.env, local_map, .Some(site_hit.func.func_id))
 
-  base_source := case mutable_sites.record_base_source_local(hit.base, ctx) {
-    .Some(l) => l,
-    .None => return .Err("missing record update base source local"),
-  }
-  emit_site := case mutable_sites.site_for_result(ctx, result_entry) {
-    .Some(s) => s,
-    .None => return .Err("missing site for record update result"),
-  }
-  selected := mutable_select.select_record_update(
+  selected := case mutable_sites.select_record_update_for_emit(
     prepared.mutable_decisions,
-    emit_site,
-    base_source,
-    result_entry.source_local,
-    mutable_sites.field_path_key(hit.tid, hit.fid),
+    hit.base,
+    hit.fid,
+    hit.tid,
     hit.can_reuse,
-  )
+    result_entry,
+    ctx,
+  ) {
+    .Some(s) => s,
+    .None => return .Err("missing record update selection"),
+  }
   try assert.equal(mutable_select.record_reason_tag(selected.reason), 9)
   try assert.is_false(selected.would_reuse)
   try assert.is_false(selected.emit_can_reuse)

@@ -37,7 +37,7 @@ pub type MutableDecisionTable = .{ by_site: Dict<Int, Vector<MutableDecision>> }
 
 pub type SelectionReason = {
   Absent,
-  PersistentOnly,
+  MutableAvailableNotEmitted,
   WrongFamily,
   WrongPersistentTarget,
   MissingMutableTarget,
@@ -61,7 +61,7 @@ pub type RecordReuseSelection = .{
 pub fn selection_reason_tag(r: SelectionReason) Int {
   case r {
     .Absent => 0,
-    .PersistentOnly => 1,
+    .MutableAvailableNotEmitted => 1,
     .WrongFamily => 2,
     .WrongPersistentTarget => 3,
     .MissingMutableTarget => 4,
@@ -204,7 +204,7 @@ pub fn select_call(
     .Some(mf) => CallSelection.{
       emit_func: persistent_fallback,
       would_func: mf,
-      reason: .PersistentOnly,
+      reason: .MutableAvailableNotEmitted,
     },
     .None => reject(.MissingMutableTarget),
   }
@@ -264,6 +264,6 @@ pub fn select_record_update(
   RecordReuseSelection.{
     emit_can_reuse: original_can_reuse,
     would_reuse: true,
-    reason: .PersistentOnly,
+    reason: .MutableAvailableNotEmitted,
   }
 }

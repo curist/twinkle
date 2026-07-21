@@ -4,8 +4,9 @@
 the 7C/7D backend decision seam are done (2026-07-21). The surviving mutable hooks
 and their persistent→mutable mappings are cataloged, and codegen now has a
 persistent-only selector + plumbing seam: `compiler.codegen.mutable_select` (the
-decision table + selector) and `compiler.codegen.emit.mutable_sites` (prepared-site
-extraction), threaded through `PreparedModule` and `EmitCtx`. Every path still emits
+decision table + selector), `compiler.codegen.mutable_catalog` (shared
+persistent→mutable catalog lookup), and `compiler.codegen.emit.mutable_sites`
+(prepared-site extraction), threaded through `PreparedModule` and `EmitCtx`. Every path still emits
 the persistent target — verified byte-identical (self-host fixed point plus a
 before/after codegen comparison over vector/dict/record updates). The Phase 7E
 update-site slice is done: `twk ir --census --sites` now renders persistent→mutable
@@ -111,7 +112,8 @@ and fail-safe.
   real analysis proof-payload producer is deliberately deferred; 7C/7D proves the
   backend seam with explicit tables first.
 - [x] **Define one catalog-driven selection helper/layer.** Implemented as
-  `compiler.codegen.mutable_select` plus prepared-site extraction in
+  `compiler.codegen.mutable_select`, shared catalog lookup in
+  `compiler.codegen.mutable_catalog`, plus prepared-site extraction in
   `compiler.codegen.emit.mutable_sites`. Backend lowering asks the selector for
   call or record selections and receives `emit_func` / `emit_can_reuse` values that
   remain persistent in Phase 7D, while `would_func` / `would_reuse` preserve the
@@ -141,7 +143,8 @@ while deliberately returning the persistent target for every site.
   (WAT keeps the persistent runtime call / `struct.new` copy path, never the
   `*_in_place` helper or `struct.set` reuse).
 - [x] **Keep fallback centralized.** Emission delegates prepared call/record site
-  extraction to `compiler.codegen.emit.mutable_sites` and decision classification to
+  extraction to `compiler.codegen.emit.mutable_sites`, mutable target mapping to
+  `compiler.codegen.mutable_catalog`, and decision classification to
   `compiler.codegen.mutable_select`; family-specific emit code does not re-prove
   ownership or hand-roll stale-decision checks.
 
@@ -155,7 +158,8 @@ full decision-table and variant-routing dry-run output remains deferred.
   now shows `persistent -> mutable` per vector/dict/record update candidate, plus
   an ownership verdict and `would_use` flag (true only when the base is owned and
   a mutable target exists), via `compiler.codegen.dry_run` and new update-call
-  verdicts in `ownership.tw`.
+  verdicts in `ownership.tw`. The dry-run path now uses typed reusable-shell flags
+  from CFG facts rather than parsing verdict text.
 - [ ] **Render consumed vs ignored decisions.** Deferred: this needs a real
   `MutableDecisionTable` producer and backend decision-state renderer. Today's
   output is ownership-verdict dry-run state, not “decision found but dry-run” vs

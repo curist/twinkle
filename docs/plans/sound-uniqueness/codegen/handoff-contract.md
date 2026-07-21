@@ -38,10 +38,12 @@ staleness, unsupported-family, or fallback checks. They may perform only the loc
 mechanical emission for the target the selector returned.
 
 The seam is implemented as `compiler.codegen.mutable_select` (the decision table,
-`select_call`, and `select_record_update`) plus prepared-site extraction in
-`compiler.codegen.emit.mutable_sites` (`select_call_for_emit`, `site_for_result`,
-`record_base_source_local`, `field_path_key`), consulted from `emit.tw`'s `.ACall`
-and `.ARecordUpdate` lowering.
+`select_call`, and `select_record_update`), shared operation lookup in
+`compiler.codegen.mutable_catalog`, plus prepared-site extraction in
+`compiler.codegen.emit.mutable_sites` (`select_call_for_emit`,
+`select_record_update_for_emit`, `site_for_result`, `record_base_source_local`,
+`field_path_key`), consulted from `emit.tw`'s `.ACall` and `.ARecordUpdate`
+lowering.
 
 ## First-cut decision record
 

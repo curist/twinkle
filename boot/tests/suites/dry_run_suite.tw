@@ -1,7 +1,12 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use compiler.builtins.{make_builtin_registry}
 use compiler.codegen.dry_run
+use compiler.codegen.mutable_catalog
+use compiler.codegen.mutable_select
+use compiler.core_ir.{FuncId}
+use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.pipeline
 
 // Compile a snippet and return its dry-run sites.
@@ -19,6 +24,34 @@ fn find_site(sites: Vector<dry_run.DryRunSite>, family: String) dry_run.DryRunSi
   error("missing dry-run site for family ${family}")
 }
 
+fn expect_decision_family(
+  entry: mutable_catalog.UpdateEntry,
+  expected: mutable_select.OperationFamily,
+) Result<Void, String> {
+  case entry.decision_family {
+    .Some(actual) => if actual == expected {
+      .Ok({})
+    } else {
+      .Err("wrong decision family")
+    },
+    .None => .Err("missing decision family"),
+  }
+}
+
+fn expect_base_arg(entry: mutable_catalog.UpdateEntry, expected: Int) Result<Void, String> {
+  case entry.base_arg_index {
+    .Some(actual) => assert.equal(actual, expected),
+    .None => .Err("missing base arg index"),
+  }
+}
+
+fn expect_mutable(entry: mutable_catalog.UpdateEntry, expected: FuncId) Result<Void, String> {
+  case entry.mutable_func {
+    .Some(actual) => assert.equal(actual.id, expected.id),
+    .None => .Err("missing mutable func"),
+  }
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("dry-run sites")
@@ -31,6 +64,7 @@ pub fn suite() runner.Suite {
         s := find_site(sites, "vector_set")
         try assert.equal(s.persistent, "vector$set_unsafe")
         try assert.equal(s.mutable, "vector$set_in_place")
+        try assert.is_true(s.reusable_shell)
         try assert.is_true(s.would_use)
         try assert.str_contains(s.verdict, "base=reuse(")
         .Ok({})
@@ -43,6 +77,7 @@ pub fn suite() runner.Suite {
           "fn set_aliased() Int {\n  xs := [1, 2]\n  ys := xs\n  xs[0] = 9\n  ys.len() + xs.len()\n}\n",
         )
         s := find_site(sites, "vector_set")
+        try assert.is_false(s.reusable_shell)
         try assert.is_false(s.would_use)
         try assert.str_contains(s.verdict, "persistent(")
         .Ok({})
@@ -57,12 +92,14 @@ pub fn suite() runner.Suite {
         set_site := find_site(sites, "dict_set")
         try assert.equal(set_site.persistent, "dict$set")
         try assert.equal(set_site.mutable, "dict$set_in_place")
+        try assert.is_true(set_site.reusable_shell)
         try assert.is_true(set_site.would_use)
         try assert.str_contains(set_site.verdict, "base=reuse(")
 
         remove_site := find_site(sites, "dict_remove")
         try assert.equal(remove_site.persistent, "dict$remove")
         try assert.equal(remove_site.mutable, "dict$remove_in_place")
+        try assert.is_true(remove_site.reusable_shell)
         try assert.is_true(remove_site.would_use)
         try assert.str_contains(remove_site.verdict, "base=reuse(")
         .Ok({})
@@ -77,6 +114,7 @@ pub fn suite() runner.Suite {
         s := find_site(sites, "record_update")
         try assert.equal(s.persistent, "struct.new(copy)")
         try assert.equal(s.mutable, "struct.set(reuse)")
+        try assert.is_true(s.reusable_shell)
         try assert.is_true(s.would_use)
         try assert.str_contains(s.verdict, "shell=reuse(")
         .Ok({})
@@ -92,10 +130,53 @@ pub fn suite() runner.Suite {
           "fn append_fresh() Vector<Int> {\n  xs := [1]\n  xs = xs.append(2)\n  xs\n}\n",
         )
         s := find_site(sites, "vector_append")
+        try assert.is_true(s.reusable_shell)
         try assert.str_contains(s.verdict, "reuse(")
         try assert.equal(s.mutable, "-")
         try assert.is_false(s.would_use)
         .Ok({})
+      },
+    )
+    .test(
+      "mutable catalog centralizes update family, base arg, and target lookup",
+      fn() {
+        b := make_builtin_registry()
+        sem := make_prelude_optimizer_semantics(b)
+        cat := mutable_catalog.build(b, sem)
+
+        persistent := b.id("vector$set_unsafe")
+        mutable := b.id("vector$set_in_place")
+        entry := case cat.entry_for_persistent(persistent) {
+          .Some(e) => e,
+          .None => return .Err("missing vector set catalog entry"),
+        }
+        try assert.equal(entry.family, "vector_set")
+        try expect_decision_family(entry, mutable_select.OperationFamily.VectorSet)
+        try expect_base_arg(entry, 0)
+        try expect_mutable(entry, mutable)
+
+        classified := case cat.classify_call(mutable) {
+          .Some(c) => c,
+          .None => return .Err("missing in-place classification"),
+        }
+        try assert.equal(classified.family, "vector_set")
+        try assert.is_true(classified.in_place)
+
+        targets := cat.targets_for_actual(b, mutable.id)
+        try assert.equal(targets.persistent, "vector$set_unsafe")
+        try assert.equal(targets.mutable, "vector$set_in_place")
+        try assert.is_true(targets.has_mutable)
+
+        builder_new := case cat.entry_for_persistent(sem.builder.builder_new_id) {
+          .Some(e) => e,
+          .None => return .Err("missing vector builder new catalog entry"),
+        }
+        try assert.equal(builder_new.family, "vector_builder")
+
+        record := mutable_catalog.record_targets()
+        try assert.equal(record.persistent, "struct.new(copy)")
+        try assert.equal(record.mutable, "struct.set(reuse)")
+        assert.is_true(record.has_mutable)
       },
     )
 }

@@ -1,0 +1,181 @@
+//! Shared mutable-operation catalog for codegen inspection and selection.
+//!
+//! The optimizer semantics remain the source of truth for update effects,
+//! COW-base argument positions, and persistent→in-place helper pairings. This
+//! module adds codegen-facing family labels and target-name rendering in one
+//! place so census, dry-run output, and emit-site extraction do not each rebuild
+//! their own partial tables.
+
+use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.mutable_select
+use compiler.core_ir.{FuncId}
+use compiler.opt.semantics.{EffectKind, OptimizerSemantics}
+
+pub type UpdateEntry = .{
+  family: String,
+  decision_family: mutable_select.OperationFamily?,
+  persistent_func: FuncId,
+  base_arg_index: Int?,
+  mutable_func: FuncId?,
+}
+
+pub type ClassifiedUpdateCall = .{ family: String, in_place: Bool }
+
+pub type Targets = .{ persistent: String, mutable: String, has_mutable: Bool }
+
+pub type MutableCatalog = .{
+  by_persistent: Dict<Int, UpdateEntry>,
+  by_mutable: Dict<Int, UpdateEntry>,
+}
+
+fn empty_catalog() MutableCatalog {
+  MutableCatalog.{ by_persistent: Dict.new(), by_mutable: Dict.new() }
+}
+
+fn name_of(b: BuiltinRegistry, id: Int) String {
+  case b.by_id.get(id) {
+    .Some(entry) => entry.name,
+    .None => "fid#${id}",
+  }
+}
+
+pub fn record_targets() Targets {
+  Targets.{ persistent: "struct.new(copy)", mutable: "struct.set(reuse)", has_mutable: true }
+}
+
+pub fn base_arg_index_for_decision_family(family: mutable_select.OperationFamily) Int? {
+  case family {
+    .VectorSet => .Some(0),
+    .DictSet => .Some(0),
+    .DictRemove => .Some(0),
+    _ => .None,
+  }
+}
+
+fn decision_family_for_persistent(fid: Int, b: BuiltinRegistry) mutable_select.OperationFamily? {
+  if fid == b.id("vector$set_unsafe").id {
+    return .Some(.VectorSet)
+  }
+  if fid == b.method_id("Dict", "set").id {
+    return .Some(.DictSet)
+  }
+  if fid == b.method_id("Dict", "remove").id {
+    return .Some(.DictRemove)
+  }
+  .None
+}
+
+fn family_for_persistent(fid: Int, b: BuiltinRegistry, sem: OptimizerSemantics) String {
+  if fid == b.id("vector$set_unsafe").id {
+    return "vector_set"
+  }
+  if fid == b.method_id("Dict", "set").id {
+    return "dict_set"
+  }
+  if fid == b.method_id("Dict", "remove").id {
+    return "dict_remove"
+  }
+  if fid == sem.builder.push_id.id {
+    return "vector_append"
+  }
+  if fid == sem.builder.builder_new_id.id
+    or fid == sem.builder.builder_from_id.id
+    or fid == sem.builder.builder_push_id.id
+    or fid == sem.builder.builder_freeze_id.id {
+    return "vector_builder"
+  }
+  "other"
+}
+
+fn add_entry(self: MutableCatalog, entry: UpdateEntry) MutableCatalog {
+  self.by_persistent[entry.persistent_func.id] = entry
+  case entry.mutable_func {
+    .Some(mid) => self.by_mutable[mid.id] = entry,
+    .None => {},
+  }
+  self
+}
+
+fn is_cataloged_call(fid: Int, effect: EffectKind, b: BuiltinRegistry, sem: OptimizerSemantics) Bool {
+  family := family_for_persistent(fid, b, sem)
+  if family == "vector_builder" {
+    return true
+  }
+  case effect {
+    .Update => true,
+    _ => false,
+  }
+}
+
+pub fn build(b: BuiltinRegistry, sem: OptimizerSemantics) MutableCatalog {
+  cat := empty_catalog()
+  for fid, cs in sem.call_semantics {
+    if is_cataloged_call(fid, cs.effect, b, sem) {
+      cat = .add_entry(
+        UpdateEntry.{
+          family: family_for_persistent(fid, b, sem),
+          decision_family: decision_family_for_persistent(fid, b),
+          persistent_func: FuncId.{ id: fid },
+          base_arg_index: cs.cow_base_arg,
+          mutable_func: cs.in_place_equivalent,
+        },
+      )
+    }
+  }
+  cat
+}
+
+pub fn entry_for_persistent(self: MutableCatalog, fid: FuncId) UpdateEntry? {
+  self.by_persistent.get(fid.id)
+}
+
+pub fn entry_for_actual(self: MutableCatalog, fid: FuncId) UpdateEntry? {
+  case self.by_mutable.get(fid.id) {
+    .Some(e) => .Some(e),
+    .None => self.by_persistent.get(fid.id),
+  }
+}
+
+pub fn classify_call(self: MutableCatalog, fid: FuncId) ClassifiedUpdateCall? {
+  case self.by_mutable.get(fid.id) {
+    .Some(e) => return .Some(ClassifiedUpdateCall.{ family: e.family, in_place: true }),
+    .None => {},
+  }
+  case self.by_persistent.get(fid.id) {
+    .Some(e) => .Some(ClassifiedUpdateCall.{ family: e.family, in_place: false }),
+    .None => .None,
+  }
+}
+
+pub fn targets_for_actual(self: MutableCatalog, b: BuiltinRegistry, actual_fid: Int) Targets {
+  if actual_fid == 0 - 1 {
+    return record_targets()
+  }
+  case self.by_mutable.get(actual_fid) {
+    .Some(e) => return Targets.{
+      persistent: name_of(b, e.persistent_func.id),
+      mutable: name_of(b, actual_fid),
+      has_mutable: true,
+    },
+    .None => {},
+  }
+  case self.by_persistent.get(actual_fid) {
+    .Some(e) => case e.mutable_func {
+      .Some(mid) => return Targets.{
+        persistent: name_of(b, actual_fid),
+        mutable: name_of(b, mid.id),
+        has_mutable: true,
+      },
+      .None => return Targets.{
+        persistent: name_of(b, actual_fid),
+        mutable: "-",
+        has_mutable: false,
+      },
+    },
+    .None => {},
+  }
+
+  // Unknown calls should normally not reach dry-run candidates, but keep the
+  // inspection path defensive and persistent-only.
+  Targets.{ persistent: name_of(b, actual_fid), mutable: "-", has_mutable: false }
+}

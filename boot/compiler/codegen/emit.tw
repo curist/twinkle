@@ -54,7 +54,6 @@ use compiler.codegen.emit.string_pool.{
   emit_string_data_segment, emit_string_pool_getters, emit_string_pool_globals,
 }
 use compiler.codegen.emit.variants as variant_emit
-use compiler.codegen.mutable_select
 use compiler.codegen.runtime.task_abi as task_abi
 use compiler.codegen.wasm_ir.{
   DataSegment, ExportDef, FuncDef, GlobalDef, ImportDef, Instr, TypeDef, ValType, WasmModule,
@@ -1890,25 +1889,15 @@ fn emit_op(
       buf2.append(.LocalSet(result_idx))
     },
     .ARecordUpdate(base, fid, value, can_reuse, tid) => {
-      selected: mutable_select.RecordReuseSelection? = case mutable_sites.site_for_result(
-        ctx,
+      selected := mutable_sites.select_record_update_for_emit(
+        ctx.mutable_decisions,
+        base,
+        fid,
+        tid,
+        can_reuse,
         entry,
-      ) {
-        .Some(site) => case mutable_sites.record_base_source_local(base, ctx) {
-          .Some(base_source) => .Some(
-            mutable_select.select_record_update(
-              ctx.mutable_decisions,
-              site,
-              base_source,
-              entry.source_local,
-              mutable_sites.field_path_key(tid, fid),
-              can_reuse,
-            ),
-          ),
-          .None => .None,
-        },
-        .None => .None,
-      }
+        ctx,
+      )
       can_reuse2 := case selected {
         .Some(s) => s.emit_can_reuse,
         .None => can_reuse,

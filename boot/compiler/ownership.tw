@@ -1771,10 +1771,20 @@ fn atom_brief(a: Atom) String {
   }
 }
 
+fn shell_reusable(st: ForwardState, base: Atom, last: Vector<Int>) Bool {
+  case atom_local_id(base) {
+    .Some(bid) => case fact_of(st.own, base) {
+      .Unique => local_reusable(st.own, st.valid, bid, last),
+      _ => false,
+    },
+    .None => false,
+  }
+}
+
 fn shell_verdict(st: ForwardState, base: Atom, last: Vector<Int>) String {
   case atom_local_id(base) {
     .Some(bid) => case fact_of(st.own, base) {
-      .Unique => if local_reusable(st.own, st.valid, bid, last) {
+      .Unique => if st.shell_reusable(base, last) {
         "reuse(unique)"
       } else if !valid_of_local(st.valid, bid) {
         "persistent(base consumed)"
@@ -1928,6 +1938,8 @@ fn consume_moved_field_backing(moved: Dict<Int, Vector<Int>>, bid: Int, fid: Int
   }
 }
 
+type BlockVerdicts = .{ texts: Dict<Int, String>, reusable_shell: Dict<Int, Bool> }
+
 fn block_verdicts(
   blk: CfgBlock,
   entry: ForwardState,
@@ -1936,10 +1948,11 @@ fn block_verdicts(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
-) Dict<Int, String> {
+) BlockVerdicts {
   scan := prep.scan
   moves := prep.moves
   verdicts: Dict<Int, String> = Dict.new()
+  reusable_shell: Dict<Int, Bool> = Dict.new()
   moved_backing: Dict<Int, Vector<Int>> = Dict.new()
   st := entry
   for inst, i in blk.instructions {
@@ -1978,6 +1991,7 @@ fn block_verdicts(
             .Update => case cs.cow_base_arg {
               .Some(bi) => if bi < args.len() {
                 base := args[bi]
+                reusable_shell[inst.anf_local.id] = pre.shell_reusable(base, last)
                 verdicts[inst.anf_local.id] = "L${inst.anf_local.id} = update ${atom_brief(base)} base=${pre.shell_verdict(
                   base,
                   last,
@@ -2025,6 +2039,7 @@ fn block_verdicts(
           .Some(bid) => has_moved_field_backing(moved_backing, bid, f.id),
           .None => false,
         }
+        reusable_shell[inst.anf_local.id] = pre.shell_reusable(base, last)
         verdicts[inst.anf_local.id] = pre.record_update_verdict(
           inst.anf_local.id,
           base,
@@ -2041,7 +2056,7 @@ fn block_verdicts(
       _ => {},
     }
   }
-  verdicts
+  BlockVerdicts.{ texts: verdicts, reusable_shell }
 }
 
 // Drive the transfer over a block's straight-line instructions from its entry
@@ -3288,7 +3303,8 @@ fn ownership_stage(
     blk.exit.binding_valid = st.valid
     blk.entry.field_own = entry_field
     blk.exit.field_own = st.field_own
-    blk.exit.verdicts = verdicts
+    blk.exit.verdicts = verdicts.texts
+    blk.exit.verdict_reusable_shell = verdicts.reusable_shell
     blk
   }
 }
