@@ -1,0 +1,14 @@
+fn loop_alias(n: Int) Vector<Bool> {
+  flags: Vector<Bool> = collect _ in range(n) {
+    true
+  }
+  keep := flags
+  i := 0
+  for i < n {
+    flags[i] = false
+    i = i + 1
+  }
+  keep
+}
+
+println(loop_alias(10).len().to_string())

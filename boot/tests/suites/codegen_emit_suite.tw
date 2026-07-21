@@ -1837,6 +1837,15 @@ fn test_link_program_emits_vector_set_in_place_for_nested_loop() Result<Void, St
   .Ok({})
 }
 
+fn test_link_program_keeps_vector_set_persistent_for_loop_alias() Result<Void, String> {
+  wat := try compile_fixture_to_linked_wat(
+    "${sound_uniqueness_fixtures_dir()}/phase8b_vector_set_loop_alias.tw",
+  )
+  try assert.is_true(wat_has_call(wat, "rt_arr__set"))
+  try assert.is_false(wat_has_call(wat, "rt_arr__set_in_place"))
+  .Ok({})
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("codegen emit")
@@ -1932,5 +1941,9 @@ pub fn suite() runner.Suite {
     .test(
       "link_program emits vector$set_in_place for a nested loop-carried owned vector",
       test_link_program_emits_vector_set_in_place_for_nested_loop,
+    )
+    .test(
+      "link_program keeps vector set persistent for a loop-carried aliased vector",
+      test_link_program_keeps_vector_set_persistent_for_loop_alias,
     )
 }
