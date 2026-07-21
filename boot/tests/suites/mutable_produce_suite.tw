@@ -3,7 +3,10 @@ use @std.testing as runner
 
 use commands.common.{format_compile_error}
 use compiler.backend.closure_convert.{convert_closures}
+use compiler.backend.prepare.{prepare_backend_with_mutable_config}
+use compiler.codegen.mutable_audit
 use compiler.codegen.mutable_produce
+use compiler.codegen.mutable_select
 use compiler.pipeline
 use lib.module.loader
 
@@ -21,6 +24,65 @@ fn produce_for(name: String) Result<mutable_produce.ProducedDecisions, String> {
   .Ok(
     mutable_produce.produce_phase8a_vector_set_decisions(closure_conversion.anf, artifacts.builtins),
   )
+}
+
+// Runs a fixture through the same closure-conversion + preparation shape as
+// emission, then renders the post-prepare audit under the given emit policy.
+// This is what Task 5 adds: the audit consults the SAME selector emission
+// uses, over prepared call sites, rather than the pre-closure dry-run table.
+fn audit_rendered_for(name: String, policy: mutable_select.MutableEmitPolicy) Result<String, String> {
+  artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(result) => result,
+    .Err(err) => return .Err(format_compile_error(err)),
+  }
+  cc := convert_closures(artifacts.opt, artifacts.env)
+  produced := mutable_produce.produce_phase8a_vector_set_decisions(cc.anf, artifacts.builtins)
+  prepared := prepare_backend_with_mutable_config(
+    cc.anf,
+    artifacts.env,
+    artifacts.builtins,
+    cc.captures,
+    produced.table,
+    policy,
+  )
+  rows := mutable_audit.audit_prepared_calls(prepared, artifacts.env, artifacts.builtins)
+  .Ok(mutable_audit.render_audit_rows(rows))
+}
+
+// Same as `audit_rendered_for`, but substitutes a decision that no longer
+// matches the prepared call site's shape (a stale decision), so the audit
+// must report a mismatch fallback reason instead of `selected`.
+fn stale_audit_rendered_for(name: String) Result<String, String> {
+  artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(result) => result,
+    .Err(err) => return .Err(format_compile_error(err)),
+  }
+  cc := convert_closures(artifacts.opt, artifacts.env)
+  produced := mutable_produce.produce_phase8a_vector_set_decisions(cc.anf, artifacts.builtins)
+  keys := produced.table.by_site.keys()
+  if keys.len() != 1 {
+    return .Err("expected exactly one decision site, found ${keys.len()}")
+  }
+  decisions := case produced.table.by_site.get(keys[0]) {
+    .Some(v) => v,
+    .None => [],
+  }
+  if decisions.len() != 1 {
+    return .Err("expected exactly one decision at the site, found ${decisions.len()}")
+  }
+  stale := decisions[0]
+  stale.arg_count = 99
+  stale_table := mutable_select.empty_decision_table().with_decision(stale)
+  prepared := prepare_backend_with_mutable_config(
+    cc.anf,
+    artifacts.env,
+    artifacts.builtins,
+    cc.captures,
+    stale_table,
+    mutable_select.phase8a_policy(),
+  )
+  rows := mutable_audit.audit_prepared_calls(prepared, artifacts.env, artifacts.builtins)
+  .Ok(mutable_audit.render_audit_rows(rows))
 }
 
 pub fn suite() runner.Suite {
@@ -59,6 +121,42 @@ pub fn suite() runner.Suite {
         try assert.equal(produced.table.by_site.keys().len(), 0)
         rendered := mutable_produce.render_candidate_rows(produced.rows)
         try assert.str_contains(rendered, "loop-contained candidate deferred to Phase 8B")
+        .Ok({})
+      },
+    )
+    .test(
+      "prepared audit reports a selected decision under the phase 8A policy",
+      fn() {
+        rendered := try audit_rendered_for(
+          "phase8a_vector_set_fresh",
+          mutable_select.phase8a_policy(),
+        )
+        try assert.str_contains(rendered, "selected")
+        try assert.str_contains(rendered, "vector$set_unsafe")
+        try assert.str_contains(rendered, "vector$set_in_place")
+        .Ok({})
+      },
+    )
+    .test(
+      "prepared audit reports policy_disabled under the persistent-only policy",
+      fn() {
+        rendered := try audit_rendered_for(
+          "phase8a_vector_set_fresh",
+          mutable_select.persistent_only_policy(),
+        )
+        try assert.str_contains(rendered, "policy_disabled")
+        try assert.str_contains(rendered, "vector$set_unsafe")
+        try assert.str_contains(rendered, "vector$set_in_place")
+        .Ok({})
+      },
+    )
+    .test(
+      "prepared audit falls back to persistent for a stale decision shape",
+      fn() {
+        rendered := try stale_audit_rendered_for("phase8a_vector_set_fresh")
+        try assert.str_contains(rendered, "ArgumentShapeMismatch")
+        try assert.str_contains(rendered, "stale_or_ignored")
+        try assert.str_contains(rendered, "vector$set_unsafe")
         .Ok({})
       },
     )

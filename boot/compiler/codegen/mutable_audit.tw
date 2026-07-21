@@ -1,0 +1,292 @@
+//! Post-prepare audit of Phase 8A mutable decision consumption.
+//!
+//! Walks a `PreparedModule`'s prepared call sites and asks the SAME selector
+//! `emit.tw` consults (`mutable_sites.select_call_for_emit`) what it would
+//! pick there. This closes the decision-rendering gap left by
+//! `compiler.codegen.dry_run`: the dry-run table joins pre-closure ANF
+//! candidates with ownership verdicts, but never runs the selector itself, so
+//! it cannot show whether a produced decision was actually consumed, fell
+//! back because the policy disabled its family, or was ignored because the
+//! prepared call site no longer matches the decision's recorded shape
+//! (a stale decision). This module is read-only inspection: it never changes
+//! what emit.tw does, only reports what the same selector call would report.
+
+use compiler.backend.prepare.{PreparedModule}
+use compiler.backend.prepared_ir.{
+  PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotId, SlotInfo,
+}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.emit.context.{EmitCtx, LocalEntry, lookup_slot}
+use compiler.codegen.emit.mutable_sites
+use compiler.codegen.mutable_catalog
+use compiler.codegen.mutable_select
+use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
+use compiler.core_ir.{FuncId}
+use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+use compiler.resolver.{ResolvedEnv}
+
+pub type AuditRow = .{
+  func: String,
+  local: Int,
+  family: String,
+  persistent: String,
+  mutable: String,
+  emit: String,
+  state: String,
+  reason: String,
+  proof: String,
+}
+
+// Mirrors `compiler.backend.prepare`'s private `empty_registry()`. The audit
+// walk never emits Wasm, so a fresh empty registry is a valid EmitCtx.registry
+// stand-in: the selector never reads it.
+fn empty_registry() WasmTypeRegistry {
+  .{
+    type_defs: [],
+    layout_cache: Dict.new(),
+    in_progress: Dict.new(),
+    type_index: Dict.new(),
+    concrete_func_sigs: Dict.new(),
+    closure_materialized_funcs: Dict.new(),
+    typed_closure_funcs: Dict.new(),
+    direct_builtin_calls: Dict.new(),
+    capture_layouts: Dict.new(),
+    module_globals: Dict.new(),
+    module_globals_order: [],
+    string_pool: Dict.new(),
+    string_pool_order: [],
+    string_pool_next_offset: 0,
+    runtime_imports: [],
+    variant_singletons: Dict.new(),
+    dense_tables: Dict.new(),
+    dense_tables_order: [],
+  }
+}
+
+fn local_map_from_slots(slots: Dict<Int, SlotInfo>) Dict<Int, LocalEntry> {
+  out: Dict<Int, LocalEntry> = Dict.new()
+  for key, info in slots {
+    out[key] = LocalEntry.{
+      index: key,
+      val_type: info.wasm_type,
+      mono: info.mono,
+      repr: info.repr,
+      source_local: info.source_local,
+    }
+  }
+  out
+}
+
+fn ctx_for_func(
+  pf: PreparedFunc,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+  prepared: PreparedModule,
+) EmitCtx {
+  EmitCtx.{
+    registry: empty_registry(),
+    builtins,
+    env,
+    local_map: local_map_from_slots(pf.slots),
+    next_local: 0,
+    wasm_locals: [],
+    label_stack: [],
+    current_func_id: .Some(pf.func_id),
+    current_pf: .Some(pf),
+    func_sym_map: Dict.new(),
+    prepared_funcs: Dict.new(),
+    extern_imports: Dict.new(),
+    is_init_func: false,
+    loop_depth: 0,
+    scratch_anyref_local: -1,
+    intrinsic_table: Dict.new(),
+    mutable_decisions: prepared.mutable_decisions,
+    mutable_emit_policy: prepared.mutable_emit_policy,
+  }
+}
+
+fn name_of(b: BuiltinRegistry, fid: FuncId) String {
+  case b.entry(fid) {
+    .Some(e) => e.name,
+    .None => "fid#${fid.id}",
+  }
+}
+
+fn proof_for_site(table: mutable_select.MutableDecisionTable, site: mutable_select.Site) String {
+  key := site.site_key()
+  case table.by_site.get(key) {
+    .Some(ds) => if ds.len() > 0 {
+      ds[0].proof_debug_id
+    } else {
+      "-"
+    },
+    .None => "-",
+  }
+}
+
+// State bucket for the reason a selector call resolved to, grouping the many
+// mismatch reasons (stale decision shape) under one label distinct from a
+// genuinely absent decision.
+fn state_for_reason(reason: mutable_select.SelectionReason) String {
+  case reason {
+    .MutableSelected => "selected",
+    .PolicyDisabled => "policy_disabled",
+    .Absent => "absent_fallback",
+    _ => "stale_or_ignored",
+  }
+}
+
+fn reason_text(reason: mutable_select.SelectionReason) String {
+  case reason {
+    .Absent => "Absent",
+    .MutableAvailableNotEmitted => "MutableAvailableNotEmitted",
+    .WrongFamily => "WrongFamily",
+    .WrongPersistentTarget => "WrongPersistentTarget",
+    .MissingMutableTarget => "MissingMutableTarget",
+    .SourceLocalMismatch => "SourceLocalMismatch",
+    .ResultLocalMismatch => "ResultLocalMismatch",
+    .ArgumentShapeMismatch => "ArgumentShapeMismatch",
+    .BaseArgMismatch => "BaseArgMismatch",
+    .FieldPathMismatch => "FieldPathMismatch",
+    .Ambiguous => "Ambiguous",
+    .UnsupportedFamily => "UnsupportedFamily",
+    .MutableSelected => "MutableSelected",
+    .PolicyDisabled => "PolicyDisabled",
+  }
+}
+
+fn audit_call_site(
+  result_slot: SlotId,
+  fid: FuncId,
+  args: Vector<PreparedAtom>,
+  ctx: EmitCtx,
+  cat: mutable_catalog.MutableCatalog,
+  rows: Vector<AuditRow>,
+) Vector<AuditRow> {
+  result_entry := lookup_slot(ctx, result_slot)
+
+  selection := case mutable_sites.select_call_for_emit(
+    ctx.mutable_decisions,
+    fid,
+    args,
+    result_entry,
+    ctx,
+  ) {
+    .Some(s) => s,
+    // Not a recognized mutable call site (callee isn't a decision family, or
+    // the base argument isn't a slot) — no audit row, same as emit.tw's
+    // "fall through unchanged" behavior for `.None`.
+    .None => return rows,
+  }
+
+  entry := case cat.entry_for_persistent(fid) {
+    .Some(e) => e,
+    // select_call_for_emit already required a recognized catalog entry to
+    // return .Some, so this is unreachable in practice; keep it defensive.
+    .None => return rows,
+  }
+
+  mutable_name := case entry.mutable_func {
+    .Some(mf) => name_of(ctx.builtins, mf),
+    .None => "-",
+  }
+
+  func_name := case ctx.current_pf {
+    .Some(pf) => pf.name,
+    .None => "?",
+  }
+
+  site := mutable_select.Site.{ func: fid_of_ctx(ctx), local: result_entry.source_local }
+
+  row := AuditRow.{
+    func: func_name,
+    local: result_entry.source_local.id,
+    family: entry.family,
+    persistent: name_of(ctx.builtins, fid),
+    mutable: mutable_name,
+    emit: name_of(ctx.builtins, selection.emit_func),
+    state: state_for_reason(selection.reason),
+    reason: reason_text(selection.reason),
+    proof: proof_for_site(ctx.mutable_decisions, site),
+  }
+  rows.append(row)
+}
+
+fn fid_of_ctx(ctx: EmitCtx) FuncId {
+  case ctx.current_func_id {
+    .Some(fid) => fid,
+    .None => error("mutable_audit: audit walk requires a current function id"),
+  }
+}
+
+fn walk_prepared_expr(
+  expr: PreparedExpr,
+  ctx: EmitCtx,
+  cat: mutable_catalog.MutableCatalog,
+  rows: Vector<AuditRow>,
+) Vector<AuditRow> {
+  case expr {
+    .Let(result_slot, op, body) => {
+      rows2 := walk_prepared_op(result_slot, op, ctx, cat, rows)
+      walk_prepared_expr(body, ctx, cat, rows2)
+    },
+    _ => rows,
+  }
+}
+
+fn walk_prepared_op(
+  result_slot: SlotId,
+  op: PreparedOp,
+  ctx: EmitCtx,
+  cat: mutable_catalog.MutableCatalog,
+  rows: Vector<AuditRow>,
+) Vector<AuditRow> {
+  case op {
+    .ACall(callee, args) => case callee {
+      .AGlobalFunc(fid) => audit_call_site(result_slot, fid, args, ctx, cat, rows),
+      _ => rows,
+    },
+    .AIf(_, then_e, else_e) => {
+      after_then := walk_prepared_expr(then_e, ctx, cat, rows)
+      walk_prepared_expr(else_e, ctx, cat, after_then)
+    },
+    .AMatch(_, arms) => {
+      acc := rows
+      for arm in arms {
+        acc = walk_prepared_expr(arm.body, ctx, cat, acc)
+      }
+      acc
+    },
+    .ALoop(body) => walk_prepared_expr(body, ctx, cat, rows),
+    .ADefer(body) => walk_prepared_expr(body, ctx, cat, rows),
+    _ => rows,
+  }
+}
+
+/// Walk every prepared function's body and re-run `select_call_for_emit` at
+/// each recognized mutable call site, producing one row per site that shows
+/// what emission would (and did) select there. No emitted-code change: this
+/// is the exact selector emission uses, called with the same inputs.
+pub fn audit_prepared_calls(prepared: PreparedModule, env: ResolvedEnv, builtins: BuiltinRegistry) Vector<
+  AuditRow,
+> {
+  sem := make_prelude_optimizer_semantics(builtins)
+  cat := mutable_catalog.build(builtins, sem)
+
+  rows: Vector<AuditRow> = []
+  for pf in prepared.funcs {
+    ctx := ctx_for_func(pf, env, builtins, prepared)
+    rows = walk_prepared_expr(pf.body, ctx, cat, rows)
+  }
+  rows
+}
+
+pub fn render_audit_rows(rows: Vector<AuditRow>) String {
+  out := "func\tlocal\tfamily\tpersistent\tmutable\temit\tstate\treason\tproof\n"
+  for r in rows {
+    out = .concat(
+      "${r.func}\tL${r.local}\t${r.family}\t${r.persistent}\t${r.mutable}\t${r.emit}\t${r.state}\t${r.reason}\t${r.proof}\n",
+    )
+  }
+  out
+}
