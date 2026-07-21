@@ -106,7 +106,7 @@ pub fn with_decision(self: MutableDecisionTable, d: MutableDecision) MutableDeci
 
 // Families this Phase 7D selector recognizes for call-site (VectorSet/DictSet/
 // DictRemove) selection. Any other family is UnsupportedFamily.
-fn is_supported_call_family(family: OperationFamily) Bool {
+pub fn is_supported_call_family(family: OperationFamily) Bool {
   case family {
     .VectorSet => true,
     .DictSet => true,

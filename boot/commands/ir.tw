@@ -79,7 +79,7 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
     // selected/policy-disabled/stale-ignored/absent at emission time, not just
     // which pre-closure candidates the dry-run table joined with verdicts.
     cc := convert_closures(artifacts.opt, artifacts.env)
-    produced := mutable_produce.produce_phase8a_vector_set_decisions_with_artifacts(
+    produced := mutable_produce.produce_update_call_decisions_with_artifacts(
       artifacts.opt,
       artifacts.builtins,
       owned,

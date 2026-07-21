@@ -89,7 +89,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   // semantic ANF. Ownership summaries are pre-closure facts; backend emission
   // consumes them only after the prepared-site selector validates that the
   // closure-converted site still matches the recorded shape.
-  produced_decisions := mutable_produce.produce_phase8a_vector_set_decisions(anf, builtins)
+  produced_decisions := mutable_produce.produce_update_call_decisions(anf, builtins)
   t1p := date.now()
 
   if timed {

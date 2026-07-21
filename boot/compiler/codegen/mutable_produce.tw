@@ -39,14 +39,13 @@ pub type ProducedDecisions = .{
   artifact_computed: Bool,
 }
 
-// A raw vector-set update site found in the ANF, before it is joined with an
+// A raw update-call site found in the ANF, before it is joined with an
 // ownership verdict. `loop_depth` is how many enclosing `.ALoop` bodies the
-// site sits inside; Phase 8A only ever produces decisions for depth 0 (Phase
-// 8B is expected to take on loop-contained sites). `family`/`base_arg_index`
-// ride along from the catalog entry rather than being assumed by the
-// producer, so a future non-VectorSet family can't silently drift from what
-// the catalog (and `select_call_for_emit`, which also reads
-// `entry.base_arg_index`) actually says.
+// site sits inside; it selects loop-carried proof rendering (Phase 8B), not
+// suppression. `family`/`base_arg_index`/`decision_family` ride along from the
+// catalog entry rather than being assumed by the producer, so a future family
+// can't silently drift from what the catalog (and `select_call_for_emit`,
+// which also reads `entry.base_arg_index`) actually says.
 pub type Candidate = .{
   func_id: FuncId,
   func: String,
@@ -55,6 +54,7 @@ pub type Candidate = .{
   arg_count: Int,
   family: String,
   base_arg_index: Int,
+  decision_family: mutable_select.OperationFamily,
   persistent_func: FuncId,
   mutable_func: FuncId,
   loop_depth: Int,
@@ -62,7 +62,13 @@ pub type Candidate = .{
 
 pub type CandidateSet = .{ candidates: Vector<Candidate> }
 
-type VectorSetTarget = .{ base: LocalId, mutable_func: FuncId, family: String, base_arg_index: Int }
+type UpdateCallTarget = .{
+  base: LocalId,
+  mutable_func: FuncId,
+  family: String,
+  base_arg_index: Int,
+  decision_family: mutable_select.OperationFamily,
+}
 
 fn atom_local(a: Atom) LocalId? {
   case a {
@@ -71,17 +77,19 @@ fn atom_local(a: Atom) LocalId? {
   }
 }
 
-// A catalog entry names a Phase 8A vector-set candidate only when it carries
-// the `.VectorSet` decision family, a live mutable target, a base-argument
-// position, and the actual call argument at that position is a plain local
-// (not a literal, global, or other atom shape the ownership analysis cannot
-// key on).
-fn vector_set_target(entry: mutable_catalog.UpdateEntry, args: Vector<Atom>) VectorSetTarget? {
-  is_vector_set := case entry.decision_family {
-    .Some(.VectorSet) => true,
-    _ => false,
+// A catalog entry names an update-call candidate only when it carries a
+// supported call-swap decision family (VectorSet/DictSet/DictRemove), a live
+// mutable target, a base-argument position, and the actual argument at that
+// position is a plain local (not a literal, global, or other atom shape the
+// ownership analysis cannot key on). The decision family rides along so the
+// produced decision is tagged correctly; the emit policy — not this producer —
+// decides which families actually emit their mutable target.
+fn update_call_target(entry: mutable_catalog.UpdateEntry, args: Vector<Atom>) UpdateCallTarget? {
+  fam := case entry.decision_family {
+    .Some(f) => f,
+    .None => return .None,
   }
-  if !is_vector_set {
+  if !mutable_select.is_supported_call_family(fam) {
     return .None
   }
   mutable_fid := case entry.mutable_func {
@@ -100,7 +108,13 @@ fn vector_set_target(entry: mutable_catalog.UpdateEntry, args: Vector<Atom>) Vec
     .None => return .None,
   }
   .Some(
-    VectorSetTarget.{ base, mutable_func: mutable_fid, family: entry.family, base_arg_index: idx },
+    UpdateCallTarget.{
+      base,
+      mutable_func: mutable_fid,
+      family: entry.family,
+      base_arg_index: idx,
+      decision_family: fam,
+    },
   )
 }
 
@@ -138,7 +152,7 @@ fn walk_op(
   case op {
     .ACall(callee, args) => case callee {
       .AGlobalFunc(fid) => case cat.entry_for_persistent(fid) {
-        .Some(entry) => case vector_set_target(entry, args) {
+        .Some(entry) => case update_call_target(entry, args) {
           .Some(t) => candidates.append(Candidate.{
             func_id,
             func,
@@ -147,6 +161,7 @@ fn walk_op(
             arg_count: args.len(),
             family: t.family,
             base_arg_index: t.base_arg_index,
+            decision_family: t.decision_family,
             persistent_func: fid,
             mutable_func: t.mutable_func,
             loop_depth,
@@ -189,14 +204,15 @@ fn name_of(b: BuiltinRegistry, fid: FuncId) String {
   }
 }
 
-/// Join Phase 8A vector-set update sites with ownership verdicts, producing a
+/// Collect update-call sites (vector/dict set and remove) for joining with
+/// ownership verdicts, producing a candidate set. The join into a
 /// decision table (fed to the backend in a later phase) plus a render-ready
 /// candidate row per site explaining why each candidate did or did not
 /// produce a decision. A candidate becomes a decision when its base is
 /// certified reusable by ownership analysis; this holds for straight-line
 /// owned sites and for loop-carried owned sites, whose uniqueness is proven
 /// across every entry and back-edge predecessor before `reusable_shell` is set.
-pub fn phase8a_vector_set_candidates(opt: AnfModule, b: BuiltinRegistry) CandidateSet {
+pub fn update_call_candidates(opt: AnfModule, b: BuiltinRegistry) CandidateSet {
   sem := make_prelude_optimizer_semantics(b)
   cat := mutable_catalog.build(b, sem)
   CandidateSet.{ candidates: collect_candidates(opt, cat) }
@@ -214,10 +230,10 @@ fn candidate_func_roots(set: CandidateSet) Dict<Int, Bool> {
 /// candidate functions and their dependency closure, so a whole-program
 /// ownership pass is not paid on every build. Verdicts (and therefore
 /// decisions) match the full path — see the scoped/full equivalence tests.
-pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) ProducedDecisions {
+pub fn produce_update_call_decisions(opt: AnfModule, b: BuiltinRegistry) ProducedDecisions {
   timed := timings_enabled()
   t0 := date.now()
-  set := phase8a_vector_set_candidates(opt, b)
+  set := update_call_candidates(opt, b)
   t_candidates := date.now()
   if set.candidates.len() == 0 {
     if timed {
@@ -236,7 +252,7 @@ pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) 
   roots := set.candidate_func_roots()
   artifacts := ownership_verdicts.compute_candidate_artifacts(opt, b, sem, roots)
   t_artifacts := date.now()
-  produced := produce_phase8a_vector_set_decisions_with_artifacts(opt, b, artifacts)
+  produced := produce_update_call_decisions_with_artifacts(opt, b, artifacts)
   t_done := date.now()
   if timed {
     eprintln(
@@ -249,8 +265,8 @@ pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) 
 
 /// Diagnostic variant that computes full whole-program ownership artifacts
 /// instead of scoped ones. Kept for scoped/full equivalence testing.
-pub fn produce_phase8a_vector_set_decisions_full(opt: AnfModule, b: BuiltinRegistry) ProducedDecisions {
-  set := phase8a_vector_set_candidates(opt, b)
+pub fn produce_update_call_decisions_full(opt: AnfModule, b: BuiltinRegistry) ProducedDecisions {
+  set := update_call_candidates(opt, b)
   if set.candidates.len() == 0 {
     return ProducedDecisions.{
       table: mutable_select.empty_decision_table(),
@@ -261,7 +277,7 @@ pub fn produce_phase8a_vector_set_decisions_full(opt: AnfModule, b: BuiltinRegis
 
   sem := make_prelude_optimizer_semantics(b)
   artifacts := ownership_verdicts.compute_artifacts(opt, b, sem)
-  produce_phase8a_vector_set_decisions_with_artifacts(opt, b, artifacts)
+  produce_update_call_decisions_with_artifacts(opt, b, artifacts)
 }
 
 // Join key: local ids repeat across functions, so the function id rides along.
@@ -294,16 +310,16 @@ fn stale_artifact_rows(candidates: Vector<Candidate>) Vector<DecisionRenderRow> 
   rows
 }
 
-/// Produce Phase 8A vector-set decisions from pre-computed ownership artifacts.
+/// Produce update-call decisions from pre-computed ownership artifacts.
 /// The only artifact-fed producer API: it validates the artifacts' optimized-ANF
 /// fingerprint against `opt` before using any verdict, so stale artifacts fall
 /// back persistently rather than silently mixing verdicts from another module.
-pub fn produce_phase8a_vector_set_decisions_with_artifacts(
+pub fn produce_update_call_decisions_with_artifacts(
   opt: AnfModule,
   b: BuiltinRegistry,
   artifacts: ownership_verdicts.OwnershipArtifacts,
 ) ProducedDecisions {
-  set := phase8a_vector_set_candidates(opt, b)
+  set := update_call_candidates(opt, b)
   if set.candidates.len() == 0 {
     return ProducedDecisions.{
       table: mutable_select.empty_decision_table(),
@@ -322,15 +338,15 @@ pub fn produce_phase8a_vector_set_decisions_with_artifacts(
   }
 
   vt := artifacts.verdicts_for_keys(set.candidate_keys())
-  produce_phase8a_vector_set_decisions_from_validated_verdicts(set.candidates, b, vt.by_key, true)
+  produce_update_call_decisions_from_validated_verdicts(set.candidates, b, vt.by_key, true)
 }
 
-// Join vector-set candidates with already-validated ownership verdicts. A
+// Join update-call candidates with already-validated ownership verdicts. A
 // candidate becomes a decision when its base is certified reusable, regardless
 // of loop depth: loop-carried sites are proven owned across all predecessors by
 // the ownership fixpoint, so the mutable helper is sound there too. Loop-carried
 // decisions get a distinct `phase8b-loop` proof id naming the carried base local.
-fn produce_phase8a_vector_set_decisions_from_validated_verdicts(
+fn produce_update_call_decisions_from_validated_verdicts(
   candidates: Vector<Candidate>,
   b: BuiltinRegistry,
   verdicts: Dict<String, ownership_verdicts.SiteVerdict>,
@@ -358,7 +374,7 @@ fn produce_phase8a_vector_set_decisions_from_validated_verdicts(
       table = .with_decision(
         mutable_select.MutableDecision.{
           site: mutable_select.Site.{ func: c.func_id, local: c.result },
-          family: mutable_select.OperationFamily.VectorSet,
+          family: c.decision_family,
           source_local: c.base,
           result_local: c.result,
           arg_count: c.arg_count,
@@ -403,7 +419,7 @@ fn produce_phase8a_vector_set_decisions_from_validated_verdicts(
   ProducedDecisions.{ table, rows, artifact_computed }
 }
 
-/// Tab-separated producer-candidate table: which raw vector-set candidates
+/// Tab-separated producer-candidate table: which raw update-call candidates
 /// became decisions, and why the rest did not. Not the backend audit table.
 pub fn render_candidate_rows(rows: Vector<DecisionRenderRow>) String {
   out := "func\tlocal\tfamily\tpersistent\tmutable\tproducer_state\treason\tproof\n"

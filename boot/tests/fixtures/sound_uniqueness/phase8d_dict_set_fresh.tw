@@ -1,0 +1,19 @@
+fn dict_fresh() Dict<Int, Int> {
+  d: Dict<Int, Int> = Dict.new()
+  d = .set(1, 10)
+  d = .set(2, 20)
+  d
+}
+
+fn dict_loop(n: Int) Dict<Int, Int> {
+  d: Dict<Int, Int> = Dict.new()
+  i := 0
+  for i < n {
+    d = .set(i, i)
+    i = i + 1
+  }
+  d
+}
+
+println(dict_fresh().len().to_string())
+println(dict_loop(5).len().to_string())

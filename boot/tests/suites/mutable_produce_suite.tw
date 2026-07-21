@@ -22,7 +22,7 @@ fn produce_for(name: String) Result<mutable_produce.ProducedDecisions, String> {
     .Ok(result) => result,
     .Err(err) => return .Err(format_compile_error(err)),
   }
-  .Ok(mutable_produce.produce_phase8a_vector_set_decisions(artifacts.opt, artifacts.builtins))
+  .Ok(mutable_produce.produce_update_call_decisions(artifacts.opt, artifacts.builtins))
 }
 
 // Runs a fixture through the same closure-conversion + preparation shape as
@@ -36,10 +36,7 @@ fn audit_rendered_for(name: String, policy: mutable_select.MutableEmitPolicy) Re
     .Err(err) => return .Err(format_compile_error(err)),
   }
   cc := convert_closures(artifacts.opt, artifacts.env)
-  produced := mutable_produce.produce_phase8a_vector_set_decisions(
-    artifacts.opt,
-    artifacts.builtins,
-  )
+  produced := mutable_produce.produce_update_call_decisions(artifacts.opt, artifacts.builtins)
   prepared := prepare_backend_with_mutable_config(
     cc.anf,
     artifacts.env,
@@ -61,10 +58,7 @@ fn stale_audit_rendered_for(name: String) Result<String, String> {
     .Err(err) => return .Err(format_compile_error(err)),
   }
   cc := convert_closures(artifacts.opt, artifacts.env)
-  produced := mutable_produce.produce_phase8a_vector_set_decisions(
-    artifacts.opt,
-    artifacts.builtins,
-  )
+  produced := mutable_produce.produce_update_call_decisions(artifacts.opt, artifacts.builtins)
   keys := produced.table.by_site.keys()
   if keys.len() != 1 {
     return .Err("expected exactly one decision site, found ${keys.len()}")
@@ -109,7 +103,7 @@ fn assert_selected_verdicts_match_full(name: String) Result<Void, String> {
   }
   b := artifacts.builtins
   sem := semantics.make_prelude_optimizer_semantics(b)
-  set := mutable_produce.phase8a_vector_set_candidates(artifacts.opt, b)
+  set := mutable_produce.update_call_candidates(artifacts.opt, b)
   keys := mutable_produce.candidate_keys(set)
 
   full_artifacts := ownership_verdicts.compute_artifacts(artifacts.opt, b, sem)
@@ -145,11 +139,8 @@ fn assert_scoped_producer_matches_full(name: String) Result<Void, String> {
     .Ok(result) => result,
     .Err(err) => return .Err(format_compile_error(err)),
   }
-  full := mutable_produce.produce_phase8a_vector_set_decisions_full(
-    artifacts.opt,
-    artifacts.builtins,
-  )
-  scoped := mutable_produce.produce_phase8a_vector_set_decisions(artifacts.opt, artifacts.builtins)
+  full := mutable_produce.produce_update_call_decisions_full(artifacts.opt, artifacts.builtins)
+  scoped := mutable_produce.produce_update_call_decisions(artifacts.opt, artifacts.builtins)
 
   try assert.equal(scoped.table.by_site.keys().len(), full.table.by_site.keys().len())
   try assert.equal(scoped.artifact_computed, full.artifact_computed)
@@ -210,6 +201,39 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "owned dict set produces a dict_set decision",
+      fn() {
+        produced := try produce_for("phase8d_dict_set_fresh")
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        try assert.str_contains(rendered, "dict_set")
+        try assert.str_contains(rendered, "candidate")
+        try assert.str_contains(rendered, "decision produced")
+        families: Vector<String> = []
+        for _key, ds in produced.table.by_site {
+          for d in ds {
+            fam := case d.family {
+              .DictSet => "DictSet",
+              .VectorSet => "VectorSet",
+              _ => "other",
+            }
+            families = .append(fam)
+          }
+        }
+        try assert.is_true(families.contains("DictSet"))
+        .Ok({})
+      },
+    )
+    .test(
+      "aliased dict set is ignored, falls back to persistent",
+      fn() {
+        produced := try produce_for("phase8d_dict_set_alias")
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        try assert.str_contains(rendered, "dict_set")
+        try assert.str_contains(rendered, "ignored")
+        .Ok({})
+      },
+    )
+    .test(
       "prepared audit reports a selected decision under the phase 8A policy",
       fn() {
         rendered := try audit_rendered_for(
@@ -254,7 +278,7 @@ pub fn suite() runner.Suite {
           .Ok(result) => result,
           .Err(err) => return .Err(format_compile_error(err)),
         }
-        set := mutable_produce.phase8a_vector_set_candidates(artifacts.opt, artifacts.builtins)
+        set := mutable_produce.update_call_candidates(artifacts.opt, artifacts.builtins)
         try assert.equal(set.candidates.len(), 1)
         try assert.equal(set.candidates[0].family, "vector_set")
         try assert.equal(set.candidates[0].loop_depth, 0)
@@ -268,13 +292,10 @@ pub fn suite() runner.Suite {
           .Ok(result) => result,
           .Err(err) => return .Err(format_compile_error(err)),
         }
-        set := mutable_produce.phase8a_vector_set_candidates(artifacts.opt, artifacts.builtins)
+        set := mutable_produce.update_call_candidates(artifacts.opt, artifacts.builtins)
         try assert.equal(set.candidates.len(), 0)
 
-        produced := mutable_produce.produce_phase8a_vector_set_decisions(
-          artifacts.opt,
-          artifacts.builtins,
-        )
+        produced := mutable_produce.produce_update_call_decisions(artifacts.opt, artifacts.builtins)
         try assert.equal(produced.table.by_site.keys().len(), 0)
         try assert.equal(produced.rows.len(), 0)
         try assert.equal(produced.artifact_computed, false)
@@ -295,7 +316,7 @@ pub fn suite() runner.Suite {
         sem_alias := semantics.make_prelude_optimizer_semantics(alias.builtins)
         stale := ownership_verdicts.compute_artifacts(alias.opt, alias.builtins, sem_alias)
 
-        produced := mutable_produce.produce_phase8a_vector_set_decisions_with_artifacts(
+        produced := mutable_produce.produce_update_call_decisions_with_artifacts(
           fresh.opt,
           fresh.builtins,
           stale,
