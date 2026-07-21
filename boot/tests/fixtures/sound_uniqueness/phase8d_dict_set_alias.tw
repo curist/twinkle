@@ -1,8 +1,7 @@
 fn dict_alias() Dict<Int, Int> {
   d: Dict<Int, Int> = Dict.new()
-  d = .set(1, 1)
   keep := d
-  d = .set(2, 2)
+  d = .set(1, 1)
   keep
 }
 

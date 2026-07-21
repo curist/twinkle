@@ -90,7 +90,7 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
       artifacts.builtins,
       cc.captures,
       produced.table,
-      mutable_select.phase8a_policy(),
+      mutable_select.enabled_emit_policy(),
     )
     audit_rows := mutable_audit.audit_prepared_calls(prepared, artifacts.env, artifacts.builtins)
     out = .concat("\nmutable decisions\n")

@@ -157,6 +157,20 @@ pub fn phase8a_policy() MutableEmitPolicy {
   }
 }
 
+// The families the compiler actually emits mutably on the real build path.
+// This is the single cumulative policy; it grows as each family's phase lands.
+// Per-phase selector tests use the fixed fixtures (persistent_only_policy /
+// phase8a_policy), not this cumulative one, so enabling a family here does not
+// perturb those mechanism tests.
+pub fn enabled_emit_policy() MutableEmitPolicy {
+  MutableEmitPolicy.{
+    emit_vector_set: true,
+    emit_dict_set: true,
+    emit_dict_remove: false,
+    emit_record_shell_update: false,
+  }
+}
+
 // pub: also consulted by wasm_plan_scan so a mutable target that emission
 // might swap in (but that never literally appears as an ACall site in the
 // prepared body) still gets its runtime import declared during planning.

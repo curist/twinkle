@@ -227,6 +227,7 @@ pub fn suite() runner.Suite {
       "aliased dict set is ignored, falls back to persistent",
       fn() {
         produced := try produce_for("phase8d_dict_set_alias")
+        try assert.equal(produced.table.by_site.keys().len(), 0)
         rendered := mutable_produce.render_candidate_rows(produced.rows)
         try assert.str_contains(rendered, "dict_set")
         try assert.str_contains(rendered, "ignored")

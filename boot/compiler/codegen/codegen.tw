@@ -103,7 +103,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
     builtins,
     closure_conversion.captures,
     produced_decisions.table,
-    mutable_select.phase8a_policy(),
+    mutable_select.enabled_emit_policy(),
   )
   t2 := date.now()
 
