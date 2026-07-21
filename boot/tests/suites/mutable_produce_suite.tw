@@ -202,4 +202,30 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "stale ownership artifacts produce no mutable decisions",
+      fn() {
+        fresh := case pipeline.compile_entry_path("${fixtures_dir()}/phase8a_vector_set_fresh.tw") {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        alias := case pipeline.compile_entry_path("${fixtures_dir()}/phase8a_vector_set_alias.tw") {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        sem_alias := semantics.make_prelude_optimizer_semantics(alias.builtins)
+        stale := ownership_verdicts.compute_artifacts(alias.opt, alias.builtins, sem_alias)
+
+        produced := mutable_produce.produce_phase8a_vector_set_decisions_with_artifacts(
+          fresh.opt,
+          fresh.builtins,
+          stale,
+        )
+        try assert.equal(produced.table.by_site.keys().len(), 0)
+        try assert.equal(produced.artifact_computed, false)
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        try assert.str_contains(rendered, "stale ownership artifact")
+        .Ok({})
+      },
+    )
 }

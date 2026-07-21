@@ -203,8 +203,79 @@ pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) 
 
   sem := make_prelude_optimizer_semantics(b)
   verdicts := ownership_verdicts.update_verdicts(opt, b, sem)
-  candidates := set.candidates
+  produce_phase8a_vector_set_decisions_from_validated_verdicts(set.candidates, b, verdicts, true)
+}
 
+// Join key: local ids repeat across functions, so the function id rides along.
+pub fn candidate_keys(set: CandidateSet) Dict<String, Bool> {
+  keys: Dict<String, Bool> = Dict.new()
+  for c in set.candidates {
+    keys["${c.func_id.id}#${c.result.id}"] = true
+  }
+  keys
+}
+
+// Every candidate falls back persistently when the supplied artifacts were
+// computed over a different (stale) optimized ANF than the one being emitted.
+fn stale_artifact_rows(candidates: Vector<Candidate>) Vector<DecisionRenderRow> {
+  rows: Vector<DecisionRenderRow> = []
+  for c in candidates {
+    rows = .append(
+      DecisionRenderRow.{
+        func: c.func,
+        local: c.result.id,
+        family: c.family,
+        persistent: "fid#${c.persistent_func.id}",
+        mutable: "fid#${c.mutable_func.id}",
+        state: "ignored",
+        reason: "persistent fallback: stale ownership artifact",
+        proof: "-",
+      },
+    )
+  }
+  rows
+}
+
+/// Produce Phase 8A vector-set decisions from pre-computed ownership artifacts.
+/// The only artifact-fed producer API: it validates the artifacts' optimized-ANF
+/// fingerprint against `opt` before using any verdict, so stale artifacts fall
+/// back persistently rather than silently mixing verdicts from another module.
+pub fn produce_phase8a_vector_set_decisions_with_artifacts(
+  opt: AnfModule,
+  b: BuiltinRegistry,
+  artifacts: ownership_verdicts.OwnershipArtifacts,
+) ProducedDecisions {
+  set := phase8a_vector_set_candidates(opt, b)
+  if set.candidates.len() == 0 {
+    return ProducedDecisions.{
+      table: mutable_select.empty_decision_table(),
+      rows: [],
+      artifact_computed: false,
+    }
+  }
+
+  expected := ownership_verdicts.artifact_key_for_anf(opt)
+  if !expected.same_artifact_key(artifacts.key) {
+    return ProducedDecisions.{
+      table: mutable_select.empty_decision_table(),
+      rows: stale_artifact_rows(set.candidates),
+      artifact_computed: false,
+    }
+  }
+
+  vt := artifacts.verdicts_for_keys(set.candidate_keys())
+  produce_phase8a_vector_set_decisions_from_validated_verdicts(set.candidates, b, vt.by_key, true)
+}
+
+// Join Phase 8A vector-set candidates with already-validated ownership verdicts.
+// A candidate becomes a decision only when its base is certified reusable AND it
+// is not nested inside a loop (loop-contained candidates defer to Phase 8B).
+fn produce_phase8a_vector_set_decisions_from_validated_verdicts(
+  candidates: Vector<Candidate>,
+  b: BuiltinRegistry,
+  verdicts: Dict<String, ownership_verdicts.SiteVerdict>,
+  artifact_computed: Bool,
+) ProducedDecisions {
   table := mutable_select.empty_decision_table()
   rows: Vector<DecisionRenderRow> = []
 
@@ -269,7 +340,7 @@ pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) 
     rows = .append(row)
   }
 
-  ProducedDecisions.{ table, rows, artifact_computed: true }
+  ProducedDecisions.{ table, rows, artifact_computed }
 }
 
 /// Tab-separated producer-candidate table: which raw vector-set candidates

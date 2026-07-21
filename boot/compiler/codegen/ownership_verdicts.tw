@@ -1,29 +1,302 @@
 //! Shared ownership-verdict extraction for codegen dry-runs and mutable decision production.
 
-use compiler.anf.{AnfModule}
+use compiler.anf.{AnfExpr, AnfMatchArm, AnfModule, AnfOp, Atom, FieldAtom, IndexKind, OpKind}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.cfg
+use compiler.core_ir.{BinOp, CorePattern, LocalId, UnOp}
+use compiler.mono_type
 use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership
 use compiler.summary
+use lib.query.keys as qkeys
 
 pub type SiteVerdict = .{ text: String, reusable_shell: Bool }
 
+// ── Optimized-ANF fingerprinting ────────────────────────────────────
+//
+// An `ArtifactKey` deterministically hashes the optimized semantic ANF a set of
+// ownership artifacts was computed over. Artifact-fed producer/dry-run APIs
+// validate this key before using verdicts, so artifacts computed for a
+// different (stale) module can never feed a mutable decision. The hash covers
+// every `Atom`/`AnfExpr`/`AnfOp`/`CorePattern` variant explicitly (no
+// wildcard), so a new IR variant forces an exhaustiveness error here until it
+// is folded in.
+pub type ArtifactKey = .{ anf_hash: Int }
+
+pub fn same_artifact_key(a: ArtifactKey, b: ArtifactKey) Bool {
+  a.anf_hash == b.anf_hash
+}
+
+// `lib.query.keys` exposes `mix_word(h, word)`; fold a running hash from 0.
+fn mix_all(parts: Vector<Int>) Int {
+  h := 0
+  for p in parts {
+    h = qkeys.mix_word(h, p)
+  }
+  h
+}
+
+fn bool_tag(v: Bool) Int {
+  if v {
+    1
+  } else {
+    0
+  }
+}
+
+fn bin_tag(op: BinOp) Int {
+  case op {
+    .Add => 1,
+    .Sub => 2,
+    .Mul => 3,
+    .Div => 4,
+    .Mod => 5,
+    .Eq => 6,
+    .Ne => 7,
+    .Lt => 8,
+    .Le => 9,
+    .Gt => 10,
+    .Ge => 11,
+    .And => 12,
+    .Or => 13,
+    .BitAnd => 14,
+    .BitOr => 15,
+    .BitXor => 16,
+    .Shl => 17,
+    .Shr => 18,
+  }
+}
+
+fn un_tag(op: UnOp) Int {
+  case op {
+    .Neg => 1,
+    .Not => 2,
+  }
+}
+
+fn op_kind_tag(k: OpKind) Int {
+  case k {
+    .Int => 1,
+    .Float => 2,
+    .Bool => 3,
+    .Str => 4,
+  }
+}
+
+fn index_kind_tag(k: IndexKind) Int {
+  case k {
+    .Array => 1,
+    .Dict => 2,
+    .Str => 3,
+  }
+}
+
+fn hash_atom(a: Atom) Int {
+  case a {
+    .ALocal(l) => mix_all([qkeys.hash_text("ALocal"), l.id]),
+    .AGlobalLocal(g) => mix_all([qkeys.hash_text("AGlobalLocal"), g.id]),
+    .AGlobalFunc(f) => mix_all([qkeys.hash_text("AGlobalFunc"), f.id]),
+    .ALitInt(n) => mix_all([qkeys.hash_text("ALitInt"), n]),
+    .ALitFloat(f) => mix_all([qkeys.hash_text("ALitFloat"), qkeys.hash_text("${f}")]),
+    .ALitBool(v) => mix_all([qkeys.hash_text("ALitBool"), bool_tag(v)]),
+    .ALitStr(s) => mix_all([qkeys.hash_text("ALitStr"), qkeys.hash_text(s)]),
+    .ALitVoid => qkeys.hash_text("ALitVoid"),
+  }
+}
+
+fn hash_atom_opt(a: Atom?) Int {
+  case a {
+    .Some(x) => mix_all([qkeys.hash_text("some"), hash_atom(x)]),
+    .None => qkeys.hash_text("none"),
+  }
+}
+
+fn hash_atoms(atoms: Vector<Atom>) Int {
+  parts: Vector<Int> = [qkeys.hash_text("atoms"), atoms.len()]
+  for a in atoms {
+    parts = .append(hash_atom(a))
+  }
+  mix_all(parts)
+}
+
+fn hash_locals(locals: Vector<LocalId>) Int {
+  parts: Vector<Int> = [qkeys.hash_text("locals"), locals.len()]
+  for l in locals {
+    parts = .append(l.id)
+  }
+  mix_all(parts)
+}
+
+fn hash_fields(fields: Vector<FieldAtom>) Int {
+  parts: Vector<Int> = [qkeys.hash_text("fields"), fields.len()]
+  for fa in fields {
+    parts = .append(mix_all([fa.field.id, hash_atom(fa.value)]))
+  }
+  mix_all(parts)
+}
+
+fn hash_pattern(p: CorePattern) Int {
+  case p {
+    .Wildcard => qkeys.hash_text("PWildcard"),
+    .Var(l) => mix_all([qkeys.hash_text("PVar"), l.id]),
+    .LitInt(n) => mix_all([qkeys.hash_text("PLitInt"), n]),
+    .LitBool(v) => mix_all([qkeys.hash_text("PLitBool"), bool_tag(v)]),
+    .LitStr(s) => mix_all([qkeys.hash_text("PLitStr"), qkeys.hash_text(s)]),
+    .Variant(tid, vid, args) => {
+      parts: Vector<Int> = [qkeys.hash_text("PVariant"), tid.id, vid.id, args.len()]
+      for a in args {
+        parts = .append(hash_pattern(a))
+      }
+      mix_all(parts)
+    },
+  }
+}
+
+fn hash_arms(arms: Vector<AnfMatchArm>) Int {
+  parts: Vector<Int> = [qkeys.hash_text("arms"), arms.len()]
+  for arm, i in arms {
+    parts = .append(mix_all([i, hash_pattern(arm.pattern), hash_expr(arm.body)]))
+  }
+  mix_all(parts)
+}
+
+fn hash_op(op: AnfOp) Int {
+  case op {
+    .ACall(callee, args) => mix_all([qkeys.hash_text("ACall"), hash_atom(callee), hash_atoms(args)]),
+    .AIf(pred, then_e, else_e) => mix_all([
+      qkeys.hash_text("AIf"),
+      hash_atom(pred),
+      hash_expr(then_e),
+      hash_expr(else_e),
+    ]),
+    .AMatch(scrut, arms) => mix_all([qkeys.hash_text("AMatch"), hash_atom(scrut), hash_arms(arms)]),
+    .ALoop(body) => mix_all([qkeys.hash_text("ALoop"), hash_expr(body)]),
+    .ABinOp(bop, l, r, kind) => mix_all([
+      qkeys.hash_text("ABinOp"),
+      bin_tag(bop),
+      hash_atom(l),
+      hash_atom(r),
+      op_kind_tag(kind),
+    ]),
+    .AUnOp(uop, a, kind) => mix_all([
+      qkeys.hash_text("AUnOp"),
+      un_tag(uop),
+      hash_atom(a),
+      op_kind_tag(kind),
+    ]),
+    .AMakeClosure(fid, locals) => mix_all([
+      qkeys.hash_text("AMakeClosure"),
+      fid.id,
+      hash_locals(locals),
+    ]),
+    .ARecord(tid, fields) => mix_all([qkeys.hash_text("ARecord"), tid.id, hash_fields(fields)]),
+    .ARecordGet(a, field, tid) => mix_all([
+      qkeys.hash_text("ARecordGet"),
+      hash_atom(a),
+      field.id,
+      tid.id,
+    ]),
+    .ARecordUpdate(a, field, val, in_place, tid) => mix_all([
+      qkeys.hash_text("ARecordUpdate"),
+      hash_atom(a),
+      field.id,
+      hash_atom(val),
+      bool_tag(in_place),
+      tid.id,
+    ]),
+    .AVariant(tid, vid, args) => mix_all([
+      qkeys.hash_text("AVariant"),
+      tid.id,
+      vid.id,
+      hash_atoms(args),
+    ]),
+    .AArrayLit(args) => mix_all([qkeys.hash_text("AArrayLit"), hash_atoms(args)]),
+    .AIndex(base, idx, ikind, ty) => mix_all([
+      qkeys.hash_text("AIndex"),
+      hash_atom(base),
+      hash_atom(idx),
+      index_kind_tag(ikind),
+      qkeys.hash_text(mono_type.ty_to_string(ty)),
+    ]),
+    .AInit(a) => mix_all([qkeys.hash_text("AInit"), hash_atom(a)]),
+    .AAssign(local, a) => mix_all([qkeys.hash_text("AAssign"), local.id, hash_atom(a)]),
+    .AGlobalSet(g, a) => mix_all([qkeys.hash_text("AGlobalSet"), g.id, hash_atom(a)]),
+    .ADefer(body) => mix_all([qkeys.hash_text("ADefer"), hash_expr(body)]),
+    .AWrapAnyref(a, ty) => mix_all([
+      qkeys.hash_text("AWrapAnyref"),
+      hash_atom(a),
+      qkeys.hash_text(mono_type.ty_to_string(ty)),
+    ]),
+    .AUnwrapAnyref(a, ty) => mix_all([
+      qkeys.hash_text("AUnwrapAnyref"),
+      hash_atom(a),
+      qkeys.hash_text(mono_type.ty_to_string(ty)),
+    ]),
+  }
+}
+
+fn hash_expr(e: AnfExpr) Int {
+  case e {
+    .Let(local, op, body) => mix_all([
+      qkeys.hash_text("Let"),
+      local.id,
+      hash_op(op),
+      hash_expr(body),
+    ]),
+    .Atom(a) => mix_all([qkeys.hash_text("EAtom"), hash_atom(a)]),
+    .Return(a) => mix_all([qkeys.hash_text("Return"), hash_atom_opt(a)]),
+    .Break(a) => mix_all([qkeys.hash_text("Break"), hash_atom_opt(a)]),
+    .Continue => qkeys.hash_text("Continue"),
+  }
+}
+
+pub fn artifact_key_for_anf(opt: AnfModule) ArtifactKey {
+  parts: Vector<Int> = [qkeys.hash_text("phase8a-artifact-v1"), opt.functions.len()]
+  case opt.init_func_id {
+    .Some(fid) => parts = .append(mix_all([qkeys.hash_text("init"), fid.id])),
+    .None => parts = .append(qkeys.hash_text("no-init")),
+  }
+  for f in opt.functions {
+    parts = .append(
+      mix_all([
+        qkeys.hash_text("func"),
+        f.func_id.id,
+        qkeys.hash_text(f.name),
+        f.params.len(),
+        hash_expr(f.body),
+      ]),
+    )
+  }
+  ArtifactKey.{ anf_hash: mix_all(parts) }
+}
+
+// ── Shared ownership artifacts ──────────────────────────────────────
+pub type OwnershipArtifacts = .{
+  key: ArtifactKey,
+  view: cfg.CfgView,
+  table: ownership.SummaryTable,
+  analyzed: cfg.CfgView,
+}
+
+pub type VerdictTable = .{ key: ArtifactKey, by_key: Dict<String, SiteVerdict> }
+
 // Run the same structural-view -> prune -> summary -> ownership analysis
-// sequence `twk ir --cfg` uses, then flatten every block's exit verdicts into a
-// map keyed by "<func_id>#<anf_local_id>" (census's join key: local ids repeat
-// across functions, so the function id must ride along).
-pub fn update_verdicts(opt: AnfModule, b: BuiltinRegistry, sem: OptimizerSemantics) Dict<
-  String,
-  SiteVerdict,
-> {
+// sequence `twk ir --cfg` uses, carrying the optimized-ANF fingerprint so
+// downstream consumers can reject a mismatched module.
+pub fn compute_artifacts(opt: AnfModule, b: BuiltinRegistry, sem: OptimizerSemantics) OwnershipArtifacts {
   view := cfg.build_view(opt, b)
   view = ownership.prune_dead_merge(view)
   table := summary.compute(view, b, sem)
   analyzed := ownership.analyze_with_summaries(view, b, sem, table)
+  OwnershipArtifacts.{ key: artifact_key_for_anf(opt), view, table, analyzed }
+}
 
+// Flatten every analyzed block's exit verdicts into a table keyed by
+// "<func_id>#<anf_local_id>" (local ids repeat across functions, so the
+// function id must ride along).
+pub fn verdicts_from_artifacts(artifacts: OwnershipArtifacts) VerdictTable {
   out: Dict<String, SiteVerdict> = Dict.new()
-  for f in analyzed.functions {
+  for f in artifacts.analyzed.functions {
     for blk in f.blocks {
       for local_id, text in blk.exit.verdicts {
         reusable := case blk.exit.verdict_reusable_shell.get(local_id) {
@@ -34,5 +307,26 @@ pub fn update_verdicts(opt: AnfModule, b: BuiltinRegistry, sem: OptimizerSemanti
       }
     }
   }
-  out
+  VerdictTable.{ key: artifacts.key, by_key: out }
+}
+
+// Project the full verdict table down to just the requested join keys.
+pub fn verdicts_for_keys(artifacts: OwnershipArtifacts, keys: Dict<String, Bool>) VerdictTable {
+  all := artifacts.verdicts_from_artifacts()
+  out: Dict<String, SiteVerdict> = Dict.new()
+  for k in keys.keys() {
+    case all.by_key.get(k) {
+      .Some(v) => out[k] = v,
+      .None => {},
+    }
+  }
+  VerdictTable.{ key: artifacts.key, by_key: out }
+}
+
+// Compatibility wrapper preserving the pre-artifact call shape.
+pub fn update_verdicts(opt: AnfModule, b: BuiltinRegistry, sem: OptimizerSemantics) Dict<
+  String,
+  SiteVerdict,
+> {
+  compute_artifacts(opt, b, sem).verdicts_from_artifacts().by_key
 }
