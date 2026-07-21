@@ -6,7 +6,11 @@
 //! ARCHITECTURE NOTE: prepare_backend() is the explicit boundary between
 //! optimized semantic ANF and the backend. All backend passes must flow
 //! through that boundary. See boot/compiler/backend/prepare.tw for the
-//! migration contract and per-phase plan.
+//! migration contract and per-phase plan. Between closure conversion and
+//! that boundary, the Phase 8A producer runs over the closure-converted ANF
+//! to decide which vector-set call sites may emit in place; the resulting
+//! decision table is threaded into prepare_backend_with_mutable_config so
+//! backend prep, planning, and emission all see the same verdicts.
 
 use @std.buffer.{Buffer}
 use @std.date
@@ -80,19 +84,26 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
     log_time("closure_convert", t1 - t0)
   }
 
-  // 2. Prepare backend IR, wiring in the Phase 8A vector-set mutable
-  // decisions so proven owned local `Vector.set` sites emit the in-place
-  // runtime helper instead of the persistent one.
-  produced_mutable := mutable_produce.produce_phase8a_vector_set_decisions(
+  // 2a. Produce Phase 8A vector-set mutable decisions over the
+  // closure-converted ANF, so proven owned local `Vector.set` sites emit the
+  // in-place runtime helper instead of the persistent one.
+  produced_decisions := mutable_produce.produce_phase8a_vector_set_decisions(
     closure_conversion.anf,
     builtins,
   )
+  t1p := date.now()
+
+  if timed {
+    log_time("produce_mutable_decisions", t1p - t1)
+  }
+
+  // 2b. Prepare backend IR, wired with those decisions.
   prepared := prepare_backend_with_mutable_config(
     closure_conversion.anf,
     env,
     builtins,
     closure_conversion.captures,
-    produced_mutable.table,
+    produced_decisions.table,
     mutable_select.phase8a_policy(),
   )
   t2 := date.now()
@@ -102,7 +113,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   env2.typed_vector_payloads = prepared.typed_vector_payloads
 
   if timed {
-    log_time("prepare_backend", t2 - t1)
+    log_time("prepare_backend", t2 - t1p)
   }
 
   // 3. Verify prepared backend IR.
