@@ -4,6 +4,15 @@
 >
 > **Execution order:** Execute **after Phase 8B** (`sound-uniqueness-phase8b-loop-carried-vector-set.md`). This plan generalizes the vector-set decision producer that 8B modifies. Phase 8E (`Dict.remove`) executes after this plan and depends on the producer generalization landed here.
 
+> **Execution note (completed 2026-07-21):** Landed on branch
+> `phase8d-dict-set-emission` (stacked on 8B). The generalization + rename + policy
+> went as planned; the round-trip fixture uses `for k, v in d` (not the drafted
+> `d.get_unsafe(k)`, which is not a surface method) and prints `a=1;b=20;c=3;` / `3`.
+> The alias fixture was made a **single** aliased set (pure negative) so the WAT
+> guard is unambiguous once dict-set emission is on — the two-set form would emit
+> in-place for the owned first set. Self-host reached a fixed point; 3172 boot tests
+> pass; ownership census unchanged.
+
 **Goal:** Emit the existing `dict$set_in_place` helper for proven-owned `Dict.set` sites (straight-line and loop-carried), while every aliased, absent, stale, or unsupported dict-set site keeps the persistent `dict$set` path.
 
 **Architecture:** Like 8A/8B, this is a producer-and-policy unlock, not new analysis. The ownership analysis already proves dict-backing uniqueness — `twk ir --census --sites` already reports `would_use=true` / `base=reuse(unique)` and mutable target `dict$set_in_place` for owned `Dict.set` sites, and `would_use=false` / `persistent(aliased shell)` for aliased ones. Two things currently suppress emission: (1) the decision **producer** (`mutable_produce.tw`) only collects `VectorSet` candidate sites, so dict sites never get a `MutableDecision`; (2) the build **policy** (`phase8a_policy`) enables only `emit_vector_set`. This plan generalizes the producer to collect every supported call-swap family (`VectorSet`/`DictSet`/`DictRemove`) and introduces a cumulative build policy that enables `emit_dict_set`. The catalog (`dict$set` → `dict$set_in_place`, base arg 0), the backend selector (`is_supported_call_family` already accepts `DictSet`), `policy_allows_call`, and the runtime `dict$set_in_place` helper are all already in place. `DictRemove` candidates are collected here but stay persistent (policy off) until Phase 8E.

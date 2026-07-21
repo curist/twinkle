@@ -4,6 +4,14 @@
 >
 > **Execution order:** Execute **after Phase 8D** (`sound-uniqueness-phase8d-dict-set-emission.md`). 8D already generalized the decision producer to collect every supported call-swap family, so `DictRemove` candidates are **already produced** — they only fall back to persistent because `enabled_emit_policy` keeps `emit_dict_remove: false`. This plan is deliberately small: flip that flag and prove `Dict.remove` in-place preserves remove semantics.
 
+> **Execution note (completed 2026-07-21):** Landed on branch
+> `phase8e-dict-remove-emission` (stacked on 8D). As predicted this was a one-flag
+> change (`emit_dict_remove: false → true` in `enabled_emit_policy`); 8D's
+> generalized producer already collected `DictRemove` candidates. The round-trip
+> fixture uses `for k, v in d` and prints `a=1;c=3;d=4;` / `3` / `false` — absent-key
+> `remove("z")` is a no-op (no trap), survivors keep insertion order. Self-host
+> reached a fixed point; 3174 boot tests pass; ownership census unchanged.
+
 **Goal:** Emit the existing `dict$remove_in_place` helper for proven-owned `Dict.remove` sites, while aliased/absent/stale sites keep the persistent `dict$remove` path, preserving insertion-order iteration, missing-key behavior, and old-version observability.
 
 **Architecture:** `Dict.remove` reuses the same producer/selector/policy machinery as `Dict.set`, but has distinct helper semantics, so it gets its own phase. After 8D, the only suppression left is the policy flag. The analysis already proves ownership for remove sites — `twk ir --census --sites` reports `would_use=true` / `base=reuse(unique)` and mutable target `dict$remove_in_place` for owned removes and `would_use=false` / `persistent(aliased shell)` for aliased ones. The risk in this phase is **not** ownership — it is whether `dict$remove_in_place` is behavior-identical to persistent `dict$remove` (order, missing key, tombstone/compaction). This plan enables emission and verifies that behavior end-to-end.
