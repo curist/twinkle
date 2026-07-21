@@ -48,6 +48,8 @@ pub type SelectionReason = {
   FieldPathMismatch,
   Ambiguous,
   UnsupportedFamily,
+  MutableSelected,
+  PolicyDisabled,
 }
 
 pub type CallSelection = .{ emit_func: FuncId, would_func: FuncId, reason: SelectionReason }
@@ -72,6 +74,8 @@ pub fn selection_reason_tag(r: SelectionReason) Int {
     .FieldPathMismatch => 9,
     .Ambiguous => 10,
     .UnsupportedFamily => 11,
+    .MutableSelected => 12,
+    .PolicyDisabled => 13,
   }
 }
 
@@ -115,6 +119,52 @@ fn decisions_at(table: MutableDecisionTable, site: Site) Vector<MutableDecision>
   }
 }
 
+// Which call-site operation families Phase 8A is willing to actually emit as
+// their mutable/in-place target, rather than the persistent one. Each family
+// is gated independently so families can be enabled incrementally as their
+// in-place proof obligations are established.
+pub type MutableEmitPolicy = .{
+  emit_vector_set: Bool,
+  emit_dict_set: Bool,
+  emit_dict_remove: Bool,
+  emit_record_shell_update: Bool,
+}
+
+// The Phase 7C/7D default: never emit a mutable target, regardless of what
+// the decision table proved. Prepared modules default to this policy.
+pub fn persistent_only_policy() MutableEmitPolicy {
+  MutableEmitPolicy.{
+    emit_vector_set: false,
+    emit_dict_set: false,
+    emit_dict_remove: false,
+    emit_record_shell_update: false,
+  }
+}
+
+// Phase 8A: enable mutable emission for vector element sets only; other
+// families stay persistent until their own phases land.
+pub fn phase8a_policy() MutableEmitPolicy {
+  MutableEmitPolicy.{
+    emit_vector_set: true,
+    emit_dict_set: false,
+    emit_dict_remove: false,
+    emit_record_shell_update: false,
+  }
+}
+
+fn policy_allows_call(policy: MutableEmitPolicy, family: OperationFamily) Bool {
+  case family {
+    .VectorSet => policy.emit_vector_set,
+    .DictSet => policy.emit_dict_set,
+    .DictRemove => policy.emit_dict_remove,
+    _ => false,
+  }
+}
+
+// Phase 7C/7D entry point: always selects under the persistent-only policy,
+// so a live mutable target is reported (would_func) but never emitted
+// (emit_func stays persistent). Callers that need policy-gated emission
+// should use select_call_with_policy directly.
 pub fn select_call(
   table: MutableDecisionTable,
   site: Site,
@@ -124,6 +174,29 @@ pub fn select_call(
   source_local: LocalId,
   result_local: LocalId,
   arg_count: Int,
+) CallSelection {
+  table.select_call_with_policy(
+    site,
+    expected_family,
+    persistent_fallback,
+    expected_base_arg_index,
+    source_local,
+    result_local,
+    arg_count,
+    persistent_only_policy(),
+  )
+}
+
+pub fn select_call_with_policy(
+  table: MutableDecisionTable,
+  site: Site,
+  expected_family: OperationFamily,
+  persistent_fallback: FuncId,
+  expected_base_arg_index: Int?,
+  source_local: LocalId,
+  result_local: LocalId,
+  arg_count: Int,
+  policy: MutableEmitPolicy,
 ) CallSelection {
   fallback := CallSelection.{
     emit_func: persistent_fallback,
@@ -201,10 +274,10 @@ pub fn select_call(
   }
 
   case d.mutable_func {
-    .Some(mf) => CallSelection.{
-      emit_func: persistent_fallback,
-      would_func: mf,
-      reason: .MutableAvailableNotEmitted,
+    .Some(mf) => if policy.policy_allows_call(expected_family) {
+      CallSelection.{ emit_func: mf, would_func: mf, reason: .MutableSelected }
+    } else {
+      CallSelection.{ emit_func: persistent_fallback, would_func: mf, reason: .PolicyDisabled }
     },
     .None => reject(.MissingMutableTarget),
   }

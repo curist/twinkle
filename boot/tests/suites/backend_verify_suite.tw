@@ -149,6 +149,7 @@ fn replace_func(prepared: PreparedModule, pf: PreparedFunc) PreparedModule {
     typed_vector_fields: Dict.new(),
     typed_vector_payloads: Dict.new(),
     mutable_decisions: mutable_select.empty_decision_table(),
+    mutable_emit_policy: mutable_select.persistent_only_policy(),
   }
 }
 
@@ -411,6 +412,7 @@ pub fn suite() runner.Suite {
           typed_vector_fields: Dict.new(),
           typed_vector_payloads: Dict.new(),
           mutable_decisions: mutable_select.empty_decision_table(),
+          mutable_emit_policy: mutable_select.persistent_only_policy(),
         }
         verify_err(broken, "capture 0 uses L0, expected L1")
       },

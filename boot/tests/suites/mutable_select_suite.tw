@@ -55,7 +55,7 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "live dry-run decision reports would-be mutable target without emitting it",
+      "live dry-run decision under select_call's persistent-only policy reports would-be mutable target without emitting it",
       fn() Result<Void, String> {
         site := mutable_select.Site.{ func: fid(10), local: lid(20) }
         table := mutable_select
@@ -79,10 +79,10 @@ pub fn suite() runner.Suite {
           3,
         )
         case selected.reason {
-          .MutableAvailableNotEmitted => {},
-          _ => return .Err("expected MutableAvailableNotEmitted"),
+          .PolicyDisabled => {},
+          _ => return .Err("expected PolicyDisabled"),
         }
-        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 1)
+        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 13)
         try assert.equal(selected.emit_func.id, 100)
         assert.equal(selected.would_func.id, 101)
       },

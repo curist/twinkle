@@ -731,7 +731,10 @@ pub fn suite() runner.Suite {
           lid(99),
           3,
         )
-        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 1)
+        try assert.equal(
+          mutable_select.selection_reason_tag(selected.reason),
+          mutable_select.selection_reason_tag(.PolicyDisabled),
+        )
         .Ok({})
       },
     )
@@ -785,7 +788,10 @@ pub fn suite() runner.Suite {
           result_info.source_local,
           pre.arg_count,
         )
-        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 1)
+        try assert.equal(
+          mutable_select.selection_reason_tag(selected.reason),
+          mutable_select.selection_reason_tag(.PolicyDisabled),
+        )
         .Ok({})
       },
     )

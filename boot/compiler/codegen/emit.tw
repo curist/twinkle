@@ -142,6 +142,7 @@ pub fn emit_module(
     scratch_anyref_local: -1,
     intrinsic_table,
     mutable_decisions: prepared.mutable_decisions,
+    mutable_emit_policy: prepared.mutable_emit_policy,
   }
 
   // Emit user functions
@@ -1102,6 +1103,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     scratch_anyref_local,
     intrinsic_table: base_ctx.intrinsic_table,
     mutable_decisions: base_ctx.mutable_decisions,
+    mutable_emit_policy: base_ctx.mutable_emit_policy,
   }
 
   // A phys_return function emits its body in tail context so every return point

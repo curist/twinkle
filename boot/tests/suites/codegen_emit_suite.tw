@@ -113,6 +113,7 @@ fn test_param_local_id_can_overlap_module_global_id() Result<Void, String> {
     typed_vector_fields: Dict.new(),
     typed_vector_payloads: Dict.new(),
     mutable_decisions: mutable_select.empty_decision_table(),
+    mutable_emit_policy: mutable_select.persistent_only_policy(),
   }
   wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
   wat := emit_wat_unlinked_for_test(wasm)
@@ -169,6 +170,7 @@ fn make_one_func_module(
     typed_vector_fields: Dict.new(),
     typed_vector_payloads: Dict.new(),
     mutable_decisions: mutable_select.empty_decision_table(),
+    mutable_emit_policy: mutable_select.persistent_only_policy(),
   }
 }
 
@@ -394,6 +396,7 @@ fn test_tail_call_in_if_branches() Result<Void, String> {
     typed_vector_fields: Dict.new(),
     typed_vector_payloads: Dict.new(),
     mutable_decisions: mutable_select.empty_decision_table(),
+    mutable_emit_policy: mutable_select.persistent_only_policy(),
   }
   reg := empty_registry()
   wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
@@ -496,6 +499,7 @@ fn test_tail_call_in_case_arms() Result<Void, String> {
     typed_vector_fields: Dict.new(),
     typed_vector_payloads: Dict.new(),
     mutable_decisions: mutable_select.empty_decision_table(),
+    mutable_emit_policy: mutable_select.persistent_only_policy(),
   }
   reg := empty_registry()
   wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
@@ -668,6 +672,7 @@ fn test_tail_call_in_br_table_match() Result<Void, String> {
     typed_vector_fields: Dict.new(),
     typed_vector_payloads: Dict.new(),
     mutable_decisions: mutable_select.empty_decision_table(),
+    mutable_emit_policy: mutable_select.persistent_only_policy(),
   }
   env := env_with_sum_type(action_tid, "Action", ["A", "B", "C"])
   wasm := emit_module(prepared, reg, make_builtin_registry(), env)
@@ -806,6 +811,7 @@ fn mk_emit_ctx(
     scratch_anyref_local: -1,
     intrinsic_table: Dict.new(),
     mutable_decisions: mutable_select.empty_decision_table(),
+    mutable_emit_policy: mutable_select.persistent_only_policy(),
   }
 }
 
@@ -979,7 +985,10 @@ fn test_call_family_and_selection_for_dict_set() Result<Void, String> {
   selected := mutable_sites.select_call_for_emit(decisions, dict_set_id, args, result_entry, ctx)
   case selected {
     .Some(sel) => {
-      try assert.equal(mutable_select.selection_reason_tag(sel.reason), 1)
+      try assert.equal(
+        mutable_select.selection_reason_tag(sel.reason),
+        mutable_select.selection_reason_tag(.PolicyDisabled),
+      )
       try assert.equal(sel.emit_func.id, dict_set_id.id)
       try assert.equal(sel.would_func.id, dict_set_in_place_id.id)
     },
@@ -1052,12 +1061,103 @@ fn test_call_family_and_selection_for_dict_remove() Result<Void, String> {
   selected := mutable_sites.select_call_for_emit(decisions, dict_remove_id, args, result_entry, ctx)
   case selected {
     .Some(sel) => {
-      try assert.equal(mutable_select.selection_reason_tag(sel.reason), 1)
+      try assert.equal(
+        mutable_select.selection_reason_tag(sel.reason),
+        mutable_select.selection_reason_tag(.PolicyDisabled),
+      )
       try assert.equal(sel.emit_func.id, dict_remove_id.id)
       try assert.equal(sel.would_func.id, dict_remove_in_place_id.id)
     },
     .None => return .Err("expected Some CallSelection for Dict.remove"),
   }
+  .Ok({})
+}
+
+// ── select_call_with_policy: Phase 8A mutable emission policy ─────────────
+// phase8a_policy() enables VectorSet emission but keeps every other family
+// on the persistent path, so only the VectorSet decision resolves to the
+// mutable target here.
+fn test_select_call_with_phase8a_policy_emits_vector_set() Result<Void, String> {
+  b := make_builtin_registry()
+  set_id := b.id("vector$set_unsafe")
+  in_place_id := b.id("vector$set_in_place")
+  site := mutable_select.Site.{ func: fid(1), local: lid(3) }
+  decisions := mutable_select
+    .empty_decision_table()
+    .with_decision(mutable_select.MutableDecision.{
+      site,
+      family: mutable_select.OperationFamily.VectorSet,
+      source_local: lid(2),
+      result_local: lid(3),
+      arg_count: 3,
+      base_arg_index: .Some(0),
+      persistent_func: .Some(set_id),
+      mutable_func: .Some(in_place_id),
+      variant_key: .None,
+      field_path_key: "",
+      proof_debug_id: "policy-vector-set",
+    })
+
+  selected := mutable_select.select_call_with_policy(
+    decisions,
+    site,
+    mutable_select.OperationFamily.VectorSet,
+    set_id,
+    .Some(0),
+    lid(2),
+    lid(3),
+    3,
+    mutable_select.phase8a_policy(),
+  )
+
+  try assert.equal(selected.emit_func.id, in_place_id.id)
+  try assert.equal(selected.would_func.id, in_place_id.id)
+  try assert.equal(
+    mutable_select.selection_reason_tag(selected.reason),
+    mutable_select.selection_reason_tag(.MutableSelected),
+  )
+  .Ok({})
+}
+
+fn test_select_call_with_phase8a_policy_keeps_dict_set_persistent() Result<Void, String> {
+  b := make_builtin_registry()
+  set_id := b.method_id("Dict", "set")
+  in_place_id := b.id("dict$set_in_place")
+  site := mutable_select.Site.{ func: fid(1), local: lid(3) }
+  decisions := mutable_select
+    .empty_decision_table()
+    .with_decision(mutable_select.MutableDecision.{
+      site,
+      family: mutable_select.OperationFamily.DictSet,
+      source_local: lid(2),
+      result_local: lid(3),
+      arg_count: 3,
+      base_arg_index: .Some(0),
+      persistent_func: .Some(set_id),
+      mutable_func: .Some(in_place_id),
+      variant_key: .None,
+      field_path_key: "",
+      proof_debug_id: "policy-dict-set",
+    })
+
+  selected := mutable_select.select_call_with_policy(
+    decisions,
+    site,
+    mutable_select.OperationFamily.DictSet,
+    set_id,
+    .Some(0),
+    lid(2),
+    lid(3),
+    3,
+    mutable_select.phase8a_policy(),
+  )
+
+  try assert.equal(selected.emit_func.id, set_id.id)
+  try assert.equal(selected.would_func.id, in_place_id.id)
+  try assert.equal(
+    mutable_select.selection_reason_tag(selected.reason),
+    mutable_select.selection_reason_tag(.PolicyDisabled),
+  )
   .Ok({})
 }
 
@@ -1181,7 +1281,10 @@ fn test_select_call_for_emit_survives_prepared_vector_set() Result<Void, String>
   )
   case selected {
     .Some(sel) => {
-      try assert.equal(mutable_select.selection_reason_tag(sel.reason), 1)
+      try assert.equal(
+        mutable_select.selection_reason_tag(sel.reason),
+        mutable_select.selection_reason_tag(.PolicyDisabled),
+      )
       try assert.equal(sel.emit_func.id, set_id.id)
       try assert.equal(sel.would_func.id, in_place_id.id)
     },
@@ -1240,7 +1343,10 @@ fn test_select_call_for_emit_survives_prepared_dict_set() Result<Void, String> {
   )
   case selected {
     .Some(sel) => {
-      try assert.equal(mutable_select.selection_reason_tag(sel.reason), 1)
+      try assert.equal(
+        mutable_select.selection_reason_tag(sel.reason),
+        mutable_select.selection_reason_tag(.PolicyDisabled),
+      )
       try assert.equal(sel.emit_func.id, dict_set_id.id)
       try assert.equal(sel.would_func.id, dict_set_in_place_id.id)
     },
@@ -1316,7 +1422,10 @@ fn test_emit_module_keeps_vector_set_persistent_with_decision() Result<Void, Str
   )
   case selected {
     .Some(s) => {
-      try assert.equal(mutable_select.selection_reason_tag(s.reason), 1)
+      try assert.equal(
+        mutable_select.selection_reason_tag(s.reason),
+        mutable_select.selection_reason_tag(.PolicyDisabled),
+      )
       try assert.equal(s.emit_func.id, set_id.id)
       try assert.equal(s.would_func.id, in_place_id.id)
     },
@@ -1378,7 +1487,10 @@ fn test_emit_module_keeps_dict_set_persistent_with_decision() Result<Void, Strin
   )
   case selected {
     .Some(s) => {
-      try assert.equal(mutable_select.selection_reason_tag(s.reason), 1)
+      try assert.equal(
+        mutable_select.selection_reason_tag(s.reason),
+        mutable_select.selection_reason_tag(.PolicyDisabled),
+      )
       try assert.equal(s.emit_func.id, dict_set_id.id)
       try assert.equal(s.would_func.id, dict_set_in_place_id.id)
     },
@@ -1440,7 +1552,10 @@ fn test_emit_module_keeps_dict_remove_persistent_with_decision() Result<Void, St
   )
   case selected {
     .Some(s) => {
-      try assert.equal(mutable_select.selection_reason_tag(s.reason), 1)
+      try assert.equal(
+        mutable_select.selection_reason_tag(s.reason),
+        mutable_select.selection_reason_tag(.PolicyDisabled),
+      )
       try assert.equal(s.emit_func.id, dict_remove_id.id)
       try assert.equal(s.would_func.id, dict_remove_in_place_id.id)
     },
@@ -1694,6 +1809,14 @@ pub fn suite() runner.Suite {
     .test(
       "call_family_for_persistent + select_call_for_emit for Dict.remove",
       test_call_family_and_selection_for_dict_remove,
+    )
+    .test(
+      "select_call_with_policy emits vector$set_in_place under phase8a_policy",
+      test_select_call_with_phase8a_policy_emits_vector_set,
+    )
+    .test(
+      "select_call_with_policy keeps Dict.set persistent under phase8a_policy",
+      test_select_call_with_phase8a_policy_keeps_dict_set_persistent,
     )
     .test(
       "select_call_for_emit survives prepared vector$set_unsafe from real source",
