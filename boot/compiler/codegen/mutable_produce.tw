@@ -31,19 +31,25 @@ pub type ProducedDecisions = .{
 // A raw vector-set update site found in the ANF, before it is joined with an
 // ownership verdict. `loop_depth` is how many enclosing `.ALoop` bodies the
 // site sits inside; Phase 8A only ever produces decisions for depth 0 (Phase
-// 8B is expected to take on loop-contained sites).
+// 8B is expected to take on loop-contained sites). `family`/`base_arg_index`
+// ride along from the catalog entry rather than being assumed by the
+// producer, so a future non-VectorSet family can't silently drift from what
+// the catalog (and `select_call_for_emit`, which also reads
+// `entry.base_arg_index`) actually says.
 type Candidate = .{
   func_id: FuncId,
   func: String,
   result: LocalId,
   base: LocalId,
   arg_count: Int,
+  family: String,
+  base_arg_index: Int,
   persistent_func: FuncId,
   mutable_func: FuncId,
   loop_depth: Int,
 }
 
-type VectorSetTarget = .{ base: LocalId, mutable_func: FuncId }
+type VectorSetTarget = .{ base: LocalId, mutable_func: FuncId, family: String, base_arg_index: Int }
 
 fn atom_local(a: Atom) LocalId? {
   case a {
@@ -80,9 +86,16 @@ fn vector_set_target(entry: mutable_catalog.UpdateEntry, args: Vector<Atom>) Vec
     .Some(l) => l,
     .None => return .None,
   }
-  .Some(VectorSetTarget.{ base, mutable_func: mutable_fid })
+  .Some(
+    VectorSetTarget.{ base, mutable_func: mutable_fid, family: entry.family, base_arg_index: idx },
+  )
 }
 
+// Deliberately re-walks the same `Let`/`AIf`/`AMatch`/`ALoop`/`ADefer`
+// skeleton as `compiler.census`'s `walk_expr`/`walk_op`, differing only by
+// the loop-depth counter and the VectorSet filter: `CensusSite` doesn't carry
+// loop-depth, so census can't be reused directly here. If a new control-flow
+// `AnfOp`/`AnfExpr` variant is added, update BOTH walks.
 fn walk_expr(
   expr: AnfExpr,
   func_id: FuncId,
@@ -119,6 +132,8 @@ fn walk_op(
             result,
             base: t.base,
             arg_count: args.len(),
+            family: t.family,
+            base_arg_index: t.base_arg_index,
             persistent_func: fid,
             mutable_func: t.mutable_func,
             loop_depth,
@@ -193,7 +208,7 @@ pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) 
           source_local: c.base,
           result_local: c.result,
           arg_count: c.arg_count,
-          base_arg_index: .Some(0),
+          base_arg_index: .Some(c.base_arg_index),
           persistent_func: .Some(c.persistent_func),
           mutable_func: .Some(c.mutable_func),
           variant_key: .None,
@@ -204,7 +219,7 @@ pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) 
       DecisionRenderRow.{
         func: c.func,
         local: c.result.id,
-        family: "vector_set",
+        family: c.family,
         persistent: persistent_name,
         mutable: mutable_name,
         state: "candidate",
@@ -215,7 +230,7 @@ pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) 
       DecisionRenderRow.{
         func: c.func,
         local: c.result.id,
-        family: "vector_set",
+        family: c.family,
         persistent: persistent_name,
         mutable: mutable_name,
         state: "deferred",
@@ -226,7 +241,7 @@ pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) 
       DecisionRenderRow.{
         func: c.func,
         local: c.result.id,
-        family: "vector_set",
+        family: c.family,
         persistent: persistent_name,
         mutable: mutable_name,
         state: "ignored",
