@@ -31,6 +31,15 @@ future mutable-intrinsic layer. Source code keeps one immutable API such as
 `xs.set_at(i, v)`; internally, a proven site may select a mutable target instead
 of the persistent target.
 
+- Phase 8A mutable decision production now uses fingerprinted shared ownership
+  artifacts. Build codegen still consumes decision records only; CFG ownership
+  remains the proof source, and stale artifact keys, absent verdicts,
+  stale prepared sites, ambiguous decisions, and aliases fall back persistently.
+  Default production scopes ownership analysis to the candidate functions and
+  their dependency closure (verdict-equivalent to whole-program analysis), which
+  removed a whole-program ownership pass from every build
+  (`produce_mutable_decisions` ~22.9s → ~1.3s on `boot/main.tw`).
+
 [../architecture.md](../architecture.md) is the umbrella design. The analysis
 inputs come from [../analysis/README.md](../analysis/README.md); later cleanup
 belongs to [../migration/README.md](../migration/README.md).

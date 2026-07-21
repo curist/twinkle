@@ -46,6 +46,10 @@ ambiguous, unsupported, aliased, or loop-contained decisions keep the ordinary
 persistent path. The 8A revisit of the deferred 7E consumed-vs-ignored decision
 rendering is also complete via the post-prepare `mutable decisions` audit table;
 variant-routing dry-runs remain attached to 8G's ownership-specialized clone routing.
+A follow-up Phase 8A maintenance pass (fingerprinted shared ownership artifacts +
+candidate-scoped ownership analysis) removed the whole-program ownership pass from
+normal builds without changing decisions or emitted code; Phase 8B remains the next
+semantic expansion.
 
 Important scope boundary: the existing-hook slices are the integration proof, not
 the whole performance/migration deliverable. The project is not complete until
