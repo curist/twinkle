@@ -2,7 +2,19 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Emit the existing `vector$set_in_place` helper for proven-owned *loop-carried* `Vector.set_at` sites (single and nested loops), while every aliased, absent, stale, or unsupported loop site keeps the persistent path.
+> **Execution note (completed 2026-07-21):** Landed on branch
+> `phase8b-loop-carried-vector-set`. One deviation surfaced during execution: the
+> emittable loop-carried vector shape is **index-assignment sugar** (`flags[k] =
+> false`), which lowers to an inline `vector$set_unsafe` caller candidate — **not**
+> explicit `.set_at(...)` method calls, which lower to a prelude call whose update
+> lives in a borrowed-param body and never surfaces as a caller-side candidate. The
+> nested positive fixture and the aliased negative fixture below were therefore
+> written with index sugar rather than the `.set_at` form originally drafted. (This
+> does not affect the 8D/8E dict plans: `Dict.set`/`Dict.remove` are builtins and
+> do produce caller-side candidates.) Self-host reached a fixed point; 3168 boot
+> tests pass; ownership census unchanged.
+
+**Goal:** Emit the existing `vector$set_in_place` helper for proven-owned *loop-carried* `Vector` indexed-update sites (single and nested loops), while every aliased, absent, stale, or unsupported loop site keeps the persistent path.
 
 **Architecture:** Phase 8B is a codegen-only unlock, not new analysis. The ownership analysis already proves loop-carried uniqueness — the nested-loop-carried ownership work (archived `sound-uniqueness-nested-loop-ownership.md`) renders `verdict -> ...[unique:p0]` for loop and nested-loop `set_at`, and `twk ir --census --sites` already reports `would_use=true` / `base=reuse(unique)` for loop-contained sites. Phase 8A deliberately suppressed those decisions with a single `c.loop_depth == 0` gate in the decision *producer* (`mutable_produce.tw`); it did **not** distrust the verdict. This plan removes that gate so loop-contained reusable sites produce real `MutableDecision`s, adds loop-carried proof-id/reason rendering, and proves the emission with WAT/call inspection. The backend selector, emit policy (`phase8a_policy` enables the `VectorSet` family), and `vector$set_in_place` helper are unchanged and already handle these sites once a decision exists.
 
