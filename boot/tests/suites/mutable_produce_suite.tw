@@ -1,0 +1,65 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use commands.common.{format_compile_error}
+use compiler.backend.closure_convert.{convert_closures}
+use compiler.codegen.mutable_produce
+use compiler.pipeline
+use lib.module.loader
+
+fn fixtures_dir() String {
+  root := loader.find_project_root("boot")
+  "${root}/tests/fixtures/sound_uniqueness"
+}
+
+fn produce_for(name: String) Result<mutable_produce.ProducedDecisions, String> {
+  artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(result) => result,
+    .Err(err) => return .Err(format_compile_error(err)),
+  }
+  closure_conversion := convert_closures(artifacts.opt, artifacts.env)
+  .Ok(
+    mutable_produce.produce_phase8a_vector_set_decisions(closure_conversion.anf, artifacts.builtins),
+  )
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("phase 8A mutable decision production")
+    .test(
+      "owned fresh vector set produces a decision",
+      fn() {
+        produced := try produce_for("phase8a_vector_set_fresh")
+        try assert.equal(produced.table.by_site.keys().len(), 1)
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        try assert.str_contains(rendered, "vector_set")
+        try assert.str_contains(rendered, "candidate")
+        try assert.str_contains(rendered, "decision produced")
+        try assert.str_contains(rendered, "vector$set_unsafe")
+        try assert.str_contains(rendered, "vector$set_in_place")
+        .Ok({})
+      },
+    )
+    .test(
+      "aliased vector set is ignored, falls back to persistent",
+      fn() {
+        produced := try produce_for("phase8a_vector_set_alias")
+        try assert.equal(produced.table.by_site.keys().len(), 0)
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        try assert.str_contains(rendered, "vector_set")
+        try assert.str_contains(rendered, "ignored")
+        try assert.str_contains(rendered, "persistent fallback")
+        .Ok({})
+      },
+    )
+    .test(
+      "loop-contained vector set is deferred, not decided",
+      fn() {
+        produced := try produce_for("phase8a_vector_set_loop")
+        try assert.equal(produced.table.by_site.keys().len(), 0)
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        try assert.str_contains(rendered, "loop-contained candidate deferred to Phase 8B")
+        .Ok({})
+      },
+    )
+}

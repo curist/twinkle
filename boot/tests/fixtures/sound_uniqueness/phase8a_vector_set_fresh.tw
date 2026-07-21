@@ -1,0 +1,7 @@
+fn set_fresh() Vector<Int> {
+  xs := [1, 2]
+  xs[0] = 9
+  xs
+}
+
+println(set_fresh().len().to_string())
