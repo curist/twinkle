@@ -1,13 +1,22 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use commands.common.{format_compile_error}
 use compiler.builtins.{make_builtin_registry}
 use compiler.codegen.dry_run
 use compiler.codegen.mutable_catalog
 use compiler.codegen.mutable_select
+use compiler.codegen.ownership_verdicts
 use compiler.core_ir.{FuncId}
+use compiler.opt.semantics as semantics
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.pipeline
+use lib.module.loader
+
+fn sound_uniqueness_fixtures_dir() String {
+  root := loader.find_project_root("boot")
+  "${root}/tests/fixtures/sound_uniqueness"
+}
 
 // Compile a snippet and return its dry-run sites.
 fn sites_for(src: String) Result<Vector<dry_run.DryRunSite>, String> {
@@ -191,6 +200,47 @@ pub fn suite() runner.Suite {
         try assert.equal(record.persistent, "struct.new(copy)")
         try assert.equal(record.mutable, "struct.set(reuse)")
         assert.is_true(record.has_mutable)
+      },
+    )
+    .test(
+      "dry run with validated artifacts matches wrapper output",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8a_vector_set_fresh.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        sem := semantics.make_prelude_optimizer_semantics(artifacts.builtins)
+        owned := ownership_verdicts.compute_artifacts(artifacts.opt, artifacts.builtins, sem)
+        wrapped := dry_run.dry_run_sites(artifacts.opt, artifacts.builtins)
+        supplied := dry_run.dry_run_sites_with_artifacts(artifacts.opt, artifacts.builtins, owned)
+        try assert.equal(dry_run.render_dry_run(supplied), dry_run.render_dry_run(wrapped))
+        .Ok({})
+      },
+    )
+    .test(
+      "dry run with stale artifacts falls back to absent verdicts",
+      fn() {
+        fresh := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8a_vector_set_fresh.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        alias := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8a_vector_set_alias.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        sem_alias := semantics.make_prelude_optimizer_semantics(alias.builtins)
+        stale := ownership_verdicts.compute_artifacts(alias.opt, alias.builtins, sem_alias)
+        supplied := dry_run.dry_run_sites_with_artifacts(fresh.opt, fresh.builtins, stale)
+        rendered := dry_run.render_dry_run(supplied)
+        try assert.str_contains(rendered, "false")
+        try assert.str_contains(rendered, "-")
+        .Ok({})
       },
     )
 }

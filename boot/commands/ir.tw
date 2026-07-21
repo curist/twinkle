@@ -7,14 +7,13 @@ use compiler.artifacts.{PipelineArtifacts}
 use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{prepare_backend_with_mutable_config}
 use compiler.census
-use compiler.cfg
 use compiler.codegen.dry_run
 use compiler.codegen.mutable_audit
 use compiler.codegen.mutable_produce
 use compiler.codegen.mutable_select
+use compiler.codegen.ownership_verdicts
 use compiler.ir_print
 use compiler.opt.semantics as semantics
-use compiler.ownership
 use compiler.pipeline
 use compiler.summary
 use lib.argparse.app.{ParseResult}
@@ -54,14 +53,10 @@ fn print_ir_stage(title: String, body: String, first: Bool) Bool {
 
 fn render_cfg_artifacts(artifacts: PipelineArtifacts) String {
   b := artifacts.builtins
-  view := cfg.build_view(artifacts.opt, b)
-
-  view = ownership.prune_dead_merge(view) // prune dead carried params before analysis
   s := semantics.make_prelude_optimizer_semantics(b)
-  table := summary.compute(view, b, s)
-  variants := summary.compute_variants(view, b, s, table)
-  analyzed := ownership.analyze_with_summaries(view, b, s, table)
-  summary.render_cfg(view, analyzed, b, s, table, variants)
+  owned := ownership_verdicts.compute_artifacts(artifacts.opt, b, s)
+  variants := summary.compute_variants(owned.view, b, s, owned.table)
+  summary.render_cfg(owned.view, owned.analyzed, b, s, owned.table, variants)
 }
 
 /// Render `--census` output: the family tally, plus (when `include_sites`) the
@@ -71,7 +66,12 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
   sites := census.census_sites(artifacts.opt, artifacts.builtins)
   out := census.tally_from_sites(sites).render_census()
   if include_sites {
-    dry := dry_run.dry_run_sites(artifacts.opt, artifacts.builtins)
+    // One full artifact computation, shared by the dry-run table and the
+    // post-prepare audit below, so the report does not re-run ownership twice.
+    s := semantics.make_prelude_optimizer_semantics(artifacts.builtins)
+    owned := ownership_verdicts.compute_artifacts(artifacts.opt, artifacts.builtins, s)
+
+    dry := dry_run.dry_run_sites_with_artifacts(artifacts.opt, artifacts.builtins, owned)
     out = .concat(dry_run.render_dry_run(dry))
 
     // Post-prepare audit: re-run the same selector emission consults over the
@@ -79,9 +79,10 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
     // selected/policy-disabled/stale-ignored/absent at emission time, not just
     // which pre-closure candidates the dry-run table joined with verdicts.
     cc := convert_closures(artifacts.opt, artifacts.env)
-    produced := mutable_produce.produce_phase8a_vector_set_decisions(
+    produced := mutable_produce.produce_phase8a_vector_set_decisions_with_artifacts(
       artifacts.opt,
       artifacts.builtins,
+      owned,
     )
     prepared := prepare_backend_with_mutable_config(
       cc.anf,

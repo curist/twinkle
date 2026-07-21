@@ -23,17 +23,43 @@ pub type DryRunSite = .{
   local: Int,
 }
 
+fn absent_verdicts_for(opt: AnfModule) ownership_verdicts.VerdictTable {
+  ownership_verdicts.VerdictTable.{
+    key: ownership_verdicts.artifact_key_for_anf(opt),
+    by_key: Dict.new(),
+  }
+}
+
 /// Join census candidates with ownership verdicts and the mutable-target
-/// catalog, in census traversal order.
-pub fn dry_run_sites(opt: AnfModule, b: BuiltinRegistry) Vector<DryRunSite> {
+/// catalog, in census traversal order. Validates the supplied artifacts'
+/// optimized-ANF fingerprint against `opt`; on mismatch, every site falls back
+/// to an absent verdict rather than reading stale analysis.
+pub fn dry_run_sites_with_artifacts(
+  opt: AnfModule,
+  b: BuiltinRegistry,
+  artifacts: ownership_verdicts.OwnershipArtifacts,
+) Vector<DryRunSite> {
+  expected := ownership_verdicts.artifact_key_for_anf(opt)
+  verdicts := if expected.same_artifact_key(artifacts.key) {
+    artifacts.verdicts_from_artifacts()
+  } else {
+    absent_verdicts_for(opt)
+  }
+  dry_run_sites_with_verdict_table(opt, b, verdicts)
+}
+
+fn dry_run_sites_with_verdict_table(
+  opt: AnfModule,
+  b: BuiltinRegistry,
+  verdicts: ownership_verdicts.VerdictTable,
+) Vector<DryRunSite> {
   sem := make_prelude_optimizer_semantics(b)
   cat := mutable_catalog.build(b, sem)
   sites := census.census_sites(opt, b)
-  verdicts := ownership_verdicts.update_verdicts(opt, b, sem)
 
   out: Vector<DryRunSite> = []
   for s in sites {
-    v := case verdicts.get("${s.func_id}#${s.local}") {
+    v := case verdicts.by_key.get("${s.func_id}#${s.local}") {
       .Some(verdict) => verdict,
       .None => ownership_verdicts.SiteVerdict.{ text: "-", reusable_shell: false },
     }
@@ -52,6 +78,13 @@ pub fn dry_run_sites(opt: AnfModule, b: BuiltinRegistry) Vector<DryRunSite> {
     )
   }
   out
+}
+
+/// Join census candidates with ownership verdicts and the mutable-target
+/// catalog, in census traversal order.
+pub fn dry_run_sites(opt: AnfModule, b: BuiltinRegistry) Vector<DryRunSite> {
+  sem := make_prelude_optimizer_semantics(b)
+  dry_run_sites_with_artifacts(opt, b, ownership_verdicts.compute_artifacts(opt, b, sem))
 }
 
 /// Tab-separated per-site listing.
