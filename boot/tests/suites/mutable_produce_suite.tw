@@ -20,23 +20,24 @@ fn produce_for(name: String) Result<mutable_produce.ProducedDecisions, String> {
     .Ok(result) => result,
     .Err(err) => return .Err(format_compile_error(err)),
   }
-  closure_conversion := convert_closures(artifacts.opt, artifacts.env)
-  .Ok(
-    mutable_produce.produce_phase8a_vector_set_decisions(closure_conversion.anf, artifacts.builtins),
-  )
+  .Ok(mutable_produce.produce_phase8a_vector_set_decisions(artifacts.opt, artifacts.builtins))
 }
 
 // Runs a fixture through the same closure-conversion + preparation shape as
 // emission, then renders the post-prepare audit under the given emit policy.
 // This is what Task 5 adds: the audit consults the SAME selector emission
-// uses, over prepared call sites, rather than the pre-closure dry-run table.
+// uses, over prepared call sites, while decisions come from pre-closure
+// ownership facts and are validated against the prepared site shape.
 fn audit_rendered_for(name: String, policy: mutable_select.MutableEmitPolicy) Result<String, String> {
   artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
     .Ok(result) => result,
     .Err(err) => return .Err(format_compile_error(err)),
   }
   cc := convert_closures(artifacts.opt, artifacts.env)
-  produced := mutable_produce.produce_phase8a_vector_set_decisions(cc.anf, artifacts.builtins)
+  produced := mutable_produce.produce_phase8a_vector_set_decisions(
+    artifacts.opt,
+    artifacts.builtins,
+  )
   prepared := prepare_backend_with_mutable_config(
     cc.anf,
     artifacts.env,
@@ -58,7 +59,10 @@ fn stale_audit_rendered_for(name: String) Result<String, String> {
     .Err(err) => return .Err(format_compile_error(err)),
   }
   cc := convert_closures(artifacts.opt, artifacts.env)
-  produced := mutable_produce.produce_phase8a_vector_set_decisions(cc.anf, artifacts.builtins)
+  produced := mutable_produce.produce_phase8a_vector_set_decisions(
+    artifacts.opt,
+    artifacts.builtins,
+  )
   keys := produced.table.by_site.keys()
   if keys.len() != 1 {
     return .Err("expected exactly one decision site, found ${keys.len()}")

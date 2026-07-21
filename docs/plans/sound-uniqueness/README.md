@@ -39,13 +39,13 @@ Phase 7E dry-run slice is also done: `twk ir --census --sites` renders update-si
 persistent→mutable targets, ownership verdicts, and `would_use` state for
 vector/dict/record candidates while emitted code remains persistent.
 
-**Current implementation focus: Codegen Phase 8A, local vector indexed-update
-emission.** This is the first emitted-code slice: a proven local owned `Vector.set_at`
-site may select the existing mutable helper, while absent, stale, ambiguous, or
-unsupported decisions keep the ordinary persistent path. The deferred 7E inspection
-items remain attached to later gates rather than skipped: consumed-vs-ignored
-decision rendering should be revisited with 8A's first emission, and variant-routing
-dry-runs should be revisited with 8G's ownership-specialized clone routing.
+**Current implementation focus: Codegen Phase 8B, loop-carried vector updates.**
+Phase 8A is complete: the first emitted-code slice selects the existing mutable
+helper for a proven local owned `Vector.set_at` site, while absent, stale,
+ambiguous, unsupported, aliased, or loop-contained decisions keep the ordinary
+persistent path. The 8A revisit of the deferred 7E consumed-vs-ignored decision
+rendering is also complete via the post-prepare `mutable decisions` audit table;
+variant-routing dry-runs remain attached to 8G's ownership-specialized clone routing.
 
 Important scope boundary: the existing-hook slices are the integration proof, not
 the whole performance/migration deliverable. The project is not complete until
@@ -101,9 +101,10 @@ Detailed checklist: [codegen/README.md](codegen/README.md)
 This track starts after the completed Phase 6 (1E) specialization decisions; its
 input facts are now trustworthy. It is intentionally split more finely than a single
 codegen milestone: operation catalogs and backend handoff/dry-run decisions (Phase 7)
-are in place through the update-site dry-run slice, and current work is the first
-narrow emitted slice for local vector indexed updates (Phase 8A). Later Phase 8 slices
-broaden to builders, dicts, records, and ownership-specialized function variants.
+are in place, and the first narrow emitted slice for local vector indexed updates
+(Phase 8A) is complete. Current work moves to loop-carried vector updates (Phase 8B);
+later Phase 8 slices broaden to builders, dicts, records, and ownership-specialized
+function variants.
 
 ### 3. Storage representation track
 
