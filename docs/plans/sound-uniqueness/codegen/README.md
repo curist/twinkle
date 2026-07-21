@@ -145,7 +145,7 @@ while deliberately returning the persistent target for every site.
   `compiler.codegen.mutable_select`; family-specific emit code does not re-prove
   ownership or hand-roll stale-decision checks.
 
-## Codegen Phase 7E — Dry-run rendering 🚧 update-site slice done (2026-07-20)
+## Codegen Phase 7E — Dry-run rendering 🚧 update-site slice done (2026-07-21)
 
 No optimized emission yet. This phase proves the seam and inspection story before
 any helper or cloned variant is emitted. The first update-site slice is landed;
