@@ -192,9 +192,10 @@ fn name_of(b: BuiltinRegistry, fid: FuncId) String {
 /// Join Phase 8A vector-set update sites with ownership verdicts, producing a
 /// decision table (fed to the backend in a later phase) plus a render-ready
 /// candidate row per site explaining why each candidate did or did not
-/// produce a decision. A candidate only becomes a decision when its base is
-/// certified reusable AND it is not nested inside a loop (loop-contained
-/// candidates are deferred to Phase 8B).
+/// produce a decision. A candidate becomes a decision when its base is
+/// certified reusable by ownership analysis; this holds for straight-line
+/// owned sites and for loop-carried owned sites, whose uniqueness is proven
+/// across every entry and back-edge predecessor before `reusable_shell` is set.
 pub fn phase8a_vector_set_candidates(opt: AnfModule, b: BuiltinRegistry) CandidateSet {
   sem := make_prelude_optimizer_semantics(b)
   cat := mutable_catalog.build(b, sem)
@@ -324,9 +325,11 @@ pub fn produce_phase8a_vector_set_decisions_with_artifacts(
   produce_phase8a_vector_set_decisions_from_validated_verdicts(set.candidates, b, vt.by_key, true)
 }
 
-// Join Phase 8A vector-set candidates with already-validated ownership verdicts.
-// A candidate becomes a decision only when its base is certified reusable AND it
-// is not nested inside a loop (loop-contained candidates defer to Phase 8B).
+// Join vector-set candidates with already-validated ownership verdicts. A
+// candidate becomes a decision when its base is certified reusable, regardless
+// of loop depth: loop-carried sites are proven owned across all predecessors by
+// the ownership fixpoint, so the mutable helper is sound there too. Loop-carried
+// decisions get a distinct `phase8b-loop` proof id naming the carried base local.
 fn produce_phase8a_vector_set_decisions_from_validated_verdicts(
   candidates: Vector<Candidate>,
   b: BuiltinRegistry,
@@ -345,7 +348,13 @@ fn produce_phase8a_vector_set_decisions_from_validated_verdicts(
     persistent_name := name_of(b, c.persistent_func)
     mutable_name := name_of(b, c.mutable_func)
 
-    row: DecisionRenderRow = if verdict.reusable_shell and c.loop_depth == 0 {
+    row: DecisionRenderRow = if verdict.reusable_shell {
+      loop_carried := c.loop_depth > 0
+      proof_id := if loop_carried {
+        "phase8b-loop:${c.func}:carry L${c.base.id}:site L${c.result.id}:depth ${c.loop_depth}"
+      } else {
+        "phase8a:${c.func}:L${c.result.id}"
+      }
       table = .with_decision(
         mutable_select.MutableDecision.{
           site: mutable_select.Site.{ func: c.func_id, local: c.result },
@@ -358,9 +367,14 @@ fn produce_phase8a_vector_set_decisions_from_validated_verdicts(
           mutable_func: .Some(c.mutable_func),
           variant_key: .None,
           field_path_key: "",
-          proof_debug_id: "phase8a:${c.func}:L${c.result.id}",
+          proof_debug_id: proof_id,
         },
       )
+      reason := if loop_carried {
+        "decision produced (loop-carried, carry L${c.base.id})"
+      } else {
+        "decision produced"
+      }
       DecisionRenderRow.{
         func: c.func,
         local: c.result.id,
@@ -368,18 +382,7 @@ fn produce_phase8a_vector_set_decisions_from_validated_verdicts(
         persistent: persistent_name,
         mutable: mutable_name,
         state: "candidate",
-        reason: "decision produced",
-        proof: verdict.text,
-      }
-    } else if verdict.reusable_shell and c.loop_depth > 0 {
-      DecisionRenderRow.{
-        func: c.func,
-        local: c.result.id,
-        family: c.family,
-        persistent: persistent_name,
-        mutable: mutable_name,
-        state: "deferred",
-        reason: "loop-contained candidate deferred to Phase 8B",
+        reason,
         proof: verdict.text,
       }
     } else {

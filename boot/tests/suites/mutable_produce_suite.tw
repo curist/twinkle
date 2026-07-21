@@ -190,12 +190,22 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "loop-contained vector set is deferred, not decided",
+      "loop-carried vector set produces a decision",
       fn() {
         produced := try produce_for("phase8a_vector_set_loop")
-        try assert.equal(produced.table.by_site.keys().len(), 0)
+        try assert.equal(produced.table.by_site.keys().len(), 1)
         rendered := mutable_produce.render_candidate_rows(produced.rows)
-        try assert.str_contains(rendered, "loop-contained candidate deferred to Phase 8B")
+        try assert.str_contains(rendered, "candidate")
+        try assert.str_contains(rendered, "decision produced (loop-carried")
+        proof_ids: Vector<String> = []
+        for _key, ds in produced.table.by_site {
+          for d in ds {
+            proof_ids = .append(d.proof_debug_id)
+          }
+        }
+        joined := proof_ids.join(",")
+        try assert.str_contains(joined, "phase8b-loop")
+        try assert.str_contains(joined, "carry L")
         .Ok({})
       },
     )
