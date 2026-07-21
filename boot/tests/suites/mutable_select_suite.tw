@@ -82,7 +82,10 @@ pub fn suite() runner.Suite {
           .PolicyDisabled => {},
           _ => return .Err("expected PolicyDisabled"),
         }
-        try assert.equal(mutable_select.selection_reason_tag(selected.reason), 13)
+        try assert.equal(
+          mutable_select.selection_reason_tag(selected.reason),
+          mutable_select.selection_reason_tag(.PolicyDisabled),
+        )
         try assert.equal(selected.emit_func.id, 100)
         assert.equal(selected.would_func.id, 101)
       },

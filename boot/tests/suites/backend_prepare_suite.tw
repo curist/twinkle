@@ -16,7 +16,8 @@ use @std.testing as runner
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp}
 use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{
-  PreparedModule, prepare_backend, prepare_backend_with_mutable_decisions,
+  PreparedModule, prepare_backend, prepare_backend_with_mutable_config,
+  prepare_backend_with_mutable_decisions,
 }
 use compiler.backend.prepared_ir.{CaptureParam, PreparedExpr, PreparedFunc, SlotId}
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
@@ -735,6 +736,26 @@ pub fn suite() runner.Suite {
           mutable_select.selection_reason_tag(selected.reason),
           mutable_select.selection_reason_tag(.PolicyDisabled),
         )
+        .Ok({})
+      },
+    )
+    .test(
+      "prepare_backend_with_mutable_config carries the given mutable emit policy through",
+      fn() {
+        b := empty_builtins()
+        anf := mk_module([
+          mk_func_def(1, "f", [], MonoType.Int, AnfExpr.Atom(.ALitInt(1)), Dict.new()),
+        ])
+        prepared := prepare_backend_with_mutable_config(
+          anf,
+          empty_env(),
+          b,
+          no_captures(),
+          mutable_select.empty_decision_table(),
+          mutable_select.phase8a_policy(),
+        )
+        try assert.is_true(prepared.mutable_emit_policy.emit_vector_set)
+        try assert.is_false(prepared.mutable_emit_policy.emit_dict_set)
         .Ok({})
       },
     )

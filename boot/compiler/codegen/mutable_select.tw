@@ -1,7 +1,10 @@
 //! Central mutable-codegen decision selector for Codegen Phase 7C/7D.
 //!
 //! This module owns the decision/fallback contract. It does not prove ownership
-//! and never changes emitted code in Phase 7C/7D.
+//! and never changes emitted code in Phase 7C/7D. Phase 8A introduces
+//! `MutableEmitPolicy`, letting a caller opt specific call-site families
+//! (starting with VectorSet) into actually emitting their mutable target
+//! instead of always falling back to persistent.
 
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.variant_id as own_variant
@@ -127,6 +130,8 @@ pub type MutableEmitPolicy = .{
   emit_vector_set: Bool,
   emit_dict_set: Bool,
   emit_dict_remove: Bool,
+  // Reserved for the record-shell mutable phase: select_record_update does
+  // not yet take a policy, so this field has no reader today.
   emit_record_shell_update: Bool,
 }
 
