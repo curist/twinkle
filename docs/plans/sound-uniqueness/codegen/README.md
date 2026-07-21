@@ -2,8 +2,8 @@
 
 **Status:** In progress. Phases 7A (hook inventory), 7B (operation catalog),
 the 7C/7D backend decision seam, Phase 8A local vector indexed-update
-emission, Phase 8B loop-carried vector indexed-update emission, and Phase 8D
-dict-set in-place emission are done
+emission, Phase 8B loop-carried vector indexed-update emission, Phase 8D
+dict-set in-place emission, and Phase 8E dict-remove in-place emission are done
 (2026-07-21). The surviving mutable hooks
 and their persistent→mutable mappings are cataloged, and codegen now has a
 persistent-only selector + plumbing seam: `compiler.codegen.mutable_select` (the
@@ -23,10 +23,13 @@ carried across a loop selects `vector$set_in_place` when the ownership fixpoint
 proves the carried vector unique across every entry and back-edge, and aliased loop
 vectors stay persistent. Phase 8D generalized the decision producer to all
 supported call-swap families and enabled `dict$set_in_place` for owned `Dict.set`
-sites via the cumulative `enabled_emit_policy`. **Current focus: Phase 8E, dict
-remove (a one-flag policy extension of 8D), then Phase 8C existing builder-region
-lowering.** The remaining 7E dry-run item is not abandoned: variant-routing
-dry-runs are an 8G
+sites via the cumulative `enabled_emit_policy`; Phase 8E flipped that policy's
+`emit_dict_remove` so owned `Dict.remove` sites select `dict$remove_in_place`. All
+three call-swap families (vector set, dict set, dict remove) now emit in-place for
+proven-owned sites. **Current focus: Phase 8C, existing builder-region lowering**
+(a distinct region-shaped lowering), then records (8F), function variants (8G), and
+record-backed field collections (8H). The remaining 7E dry-run item is not
+abandoned: variant-routing dry-runs are an 8G
 gate when specialized clone routing becomes real. The full analysis track is
 complete through Phase 6 (record/field ownership,
 transport-wrapper / `Result`-payload return-path summaries, ownership-specialization
@@ -274,17 +277,21 @@ the compiler actually emits mutably.
   for aliased ones. Self-host reaches a fixed point with the boot compiler's own
   owned dict sets emitting in-place.
 
-## Codegen Phase 8E — Dict remove emission
+## Codegen Phase 8E — Dict remove emission ✅ done
 
-`Dict.remove` uses related machinery but has separate ordering and helper semantics;
-do not bundle it with set.
+A one-flag policy extension of 8D: the producer already collected `DictRemove`
+candidates, so `enabled_emit_policy` just flips `emit_dict_remove`.
 
-- [ ] **Catalog and verify remove helper semantics first.** Insertion-order
-  iteration, missing-key behavior, and old-version observability must remain correct.
-- [ ] **Lower proven-owned `Dict.remove` through existing in-place helpers.** Fall
-  back to the persistent path for unsupported or stale decisions.
-- [ ] **Keep remove inspection distinct from set.** Debug output should make it
-  obvious which helper family was selected.
+- [x] **Catalog and verify remove helper semantics first.** A round-trip fixture
+  confirms `dict$remove_in_place` preserves insertion order among survivors, treats
+  absent-key removal as a no-op, and matches persistent `dict$remove` output.
+- [x] **Lower proven-owned `Dict.remove` through existing in-place helpers.** Owned
+  removes select `dict$remove_in_place`; aliased/absent/stale removes fall back to
+  persistent `dict$remove`. Self-host reaches a fixed point with the boot compiler's
+  own owned dict removes emitting in-place.
+- [x] **Keep remove inspection distinct from set.** `twk ir --census --sites`
+  reports the `dict_remove` family and `dict$remove_in_place` selection separately
+  from `dict_set`.
 
 ## Codegen Phase 8F — Record shell update emission
 
