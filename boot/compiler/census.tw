@@ -17,7 +17,14 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{FuncId}
 use compiler.opt.semantics.{OptimizerSemantics, call_info, make_prelude_optimizer_semantics}
 
-pub type CensusSite = .{ func: String, family: String, in_place: Bool }
+pub type CensusSite = .{
+  func_id: Int,
+  func: String,
+  family: String,
+  in_place: Bool,
+  local: Int,
+  actual_fid: Int,
+}
 
 pub type FamilyCount = .{ name: String, candidates: Int, in_place: Int }
 
@@ -90,22 +97,23 @@ pub fn census_sites(m: AnfModule, b: BuiltinRegistry) Vector<CensusSite> {
   labels := build_labels(b, sem)
   sites: Vector<CensusSite> = []
   for f in m.functions {
-    sites = walk_expr(f.body, f.name, sites, sem, labels)
+    sites = walk_expr(f.body, f.func_id.id, f.name, sites, sem, labels)
   }
   sites
 }
 
 fn walk_expr(
   expr: AnfExpr,
+  func_id: Int,
   func: String,
   sites: Vector<CensusSite>,
   sem: OptimizerSemantics,
   labels: Labels,
 ) Vector<CensusSite> {
   case expr {
-    .Let(_, op, body) => {
-      after := walk_op(op, func, sites, sem, labels)
-      walk_expr(body, func, after, sem, labels)
+    .Let(local, op, body) => {
+      after := walk_op(op, local.id, func_id, func, sites, sem, labels)
+      walk_expr(body, func_id, func, after, sem, labels)
     },
     _ => sites,
   }
@@ -113,6 +121,8 @@ fn walk_expr(
 
 fn walk_op(
   op: AnfOp,
+  local_id: Int,
+  func_id: Int,
   func: String,
   sites: Vector<CensusSite>,
   sem: OptimizerSemantics,
@@ -120,30 +130,40 @@ fn walk_op(
 ) Vector<CensusSite> {
   case op {
     .ARecordUpdate(_, _, _, in_place, _) => sites.append(CensusSite.{
+      func_id,
       func,
       family: "record_update",
       in_place,
+      local: local_id,
+      actual_fid: 0 - 1,
     }),
     .ACall(callee, _) => case callee {
       .AGlobalFunc(fid) => case classify_call(fid, sem, labels) {
-        .Some(fi) => sites.append(CensusSite.{ func, family: fi.family, in_place: fi.in_place }),
+        .Some(fi) => sites.append(CensusSite.{
+          func_id,
+          func,
+          family: fi.family,
+          in_place: fi.in_place,
+          local: local_id,
+          actual_fid: fid.id,
+        }),
         .None => sites,
       },
       _ => sites,
     },
     .AIf(_, then_e, else_e) => {
-      after_then := walk_expr(then_e, func, sites, sem, labels)
-      walk_expr(else_e, func, after_then, sem, labels)
+      after_then := walk_expr(then_e, func_id, func, sites, sem, labels)
+      walk_expr(else_e, func_id, func, after_then, sem, labels)
     },
     .AMatch(_, arms) => {
       acc := sites
       for arm in arms {
-        acc = walk_expr(arm.body, func, acc, sem, labels)
+        acc = walk_expr(arm.body, func_id, func, acc, sem, labels)
       }
       acc
     },
-    .ALoop(body) => walk_expr(body, func, sites, sem, labels),
-    .ADefer(body) => walk_expr(body, func, sites, sem, labels),
+    .ALoop(body) => walk_expr(body, func_id, func, sites, sem, labels),
+    .ADefer(body) => walk_expr(body, func_id, func, sites, sem, labels),
     _ => sites,
   }
 }

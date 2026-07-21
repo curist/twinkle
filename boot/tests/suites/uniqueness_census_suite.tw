@@ -1,6 +1,8 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use commands.ir
+use compiler.anf.{AnfModule}
 use compiler.census
 use compiler.pipeline
 
@@ -9,6 +11,24 @@ fn tally(src: String) Result<census.CensusTally, String> {
   artifacts := try pipeline.compile_source(src)
   sites := census.census_sites(artifacts.opt, artifacts.builtins)
   .Ok(census.tally_from_sites(sites))
+}
+
+fn find_site(sites: Vector<census.CensusSite>, family: String) census.CensusSite {
+  for s in sites {
+    if s.family == family {
+      return s
+    }
+  }
+  error("missing census site for family ${family}")
+}
+
+fn find_func_id(m: AnfModule, name: String) Int {
+  for f in m.functions {
+    if f.name == name {
+      return f.func_id.id
+    }
+  }
+  error("missing function ${name}")
 }
 
 pub fn suite() runner.Suite {
@@ -88,6 +108,44 @@ pub fn suite() runner.Suite {
           "fn match_set(o: Int?, xs: Vector<Int>) Vector<Int> {\n  case o {\n    .Some(i) => {\n      xs[0] = i\n      xs\n    },\n    .None => xs,\n  }\n}\n",
         )
         try assert.equal(t.vector_set.candidates, 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "sites carry the anf local id and actual callee id",
+      fn() {
+        artifacts := try pipeline.compile_source(
+          "fn f(xs: Vector<Int>) Vector<Int> {\n  xs[0] = 9\n  xs\n}\n",
+        )
+        sites := census.census_sites(artifacts.opt, artifacts.builtins)
+        site := find_site(sites, "vector_set")
+        expected_fid := artifacts.builtins.id("vector$set_unsafe").id
+        f_func_id := find_func_id(artifacts.opt, "f")
+        try assert.is_true(site.local != 0)
+        try assert.equal(site.actual_fid, expected_fid)
+        try assert.equal(site.func_id, f_func_id)
+        .Ok({})
+      },
+    )
+    .test(
+      "render_census_report appends the dry-run table only when include_sites is true",
+      fn() {
+        artifacts := try pipeline.compile_source(
+          "fn f(xs: Vector<Int>) Vector<Int> {\n  xs[0] = 9\n  xs\n}\n",
+        )
+        with_sites := ir.render_census_report(artifacts, true)
+        try assert.is_true(with_sites.contains("family\tcandidates\tin_place"))
+        try assert.is_true(
+          with_sites.contains("func\tfamily\tpersistent\tmutable\twould_use\tverdict"),
+        )
+        try assert.is_true(with_sites.contains("vector$set_unsafe"))
+        try assert.is_true(with_sites.contains("vector$set_in_place"))
+
+        without_sites := ir.render_census_report(artifacts, false)
+        try assert.is_true(without_sites.contains("family\tcandidates\tin_place"))
+        try assert.is_true(
+          !without_sites.contains("func\tfamily\tpersistent\tmutable\twould_use\tverdict"),
+        )
         .Ok({})
       },
     )

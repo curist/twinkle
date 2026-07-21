@@ -582,4 +582,26 @@ pub fn suite() runner.Suite {
         }
       },
     )
+    .test(
+      "vector set_unsafe on a fresh unique base renders a reuse(unique) verdict",
+      fn() {
+        src := "fn set_fresh() Vector<Int> {\n  xs := [1, 2]\n  xs[0] = 9\n  xs\n}\n"
+        v := try analyze_source(src)
+        out := cfg.render_view(v)
+        try assert.str_contains(out, "= update L")
+        try assert.str_contains(out, "base=reuse(unique)")
+        .Ok({})
+      },
+    )
+    .test(
+      "vector set_unsafe on an aliased base renders a persistent verdict",
+      fn() {
+        src := "fn set_aliased() Int {\n  xs := [1, 2]\n  ys := xs\n  xs[0] = 9\n  ys.len() + xs.len()\n}\n"
+        v := try analyze_source(src)
+        out := cfg.render_view(v)
+        try assert.str_contains(out, "= update L")
+        try assert.str_contains(out, "base=persistent(")
+        .Ok({})
+      },
+    )
 }

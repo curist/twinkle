@@ -1,0 +1,148 @@
+//! Phase 7E update-site dry-run: joins census candidate sites with ownership
+//! verdicts and the persistent->mutable catalog pairing. Inspection only — no
+//! codegen decision rides this module. A site "would use" its mutable target
+//! only when BOTH the base is owned/reusable per the ownership verdict AND a
+//! mutable target actually exists for that call family (some `.Update`
+//! families, e.g. `Vector.append`, have no `in_place_equivalent` at all).
+
+use compiler.anf.{AnfModule}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.census
+use compiler.cfg
+use compiler.core_ir.{FuncId}
+use compiler.opt.semantics.{OptimizerSemantics, call_info, make_prelude_optimizer_semantics}
+use compiler.ownership
+use compiler.summary
+
+pub type DryRunSite = .{
+  func: String,
+  family: String,
+  persistent: String,
+  mutable: String,
+  verdict: String,
+  would_use: Bool,
+  local: Int,
+}
+
+type Targets = .{ persistent: String, mutable: String, has_mutable: Bool }
+
+/// Join census candidates with ownership verdicts and the mutable-target
+/// catalog, in census traversal order.
+pub fn dry_run_sites(opt: AnfModule, b: BuiltinRegistry) Vector<DryRunSite> {
+  sem := make_prelude_optimizer_semantics(b)
+  sites := census.census_sites(opt, b)
+  verdicts := collect_verdicts(opt, b, sem)
+  rev := build_reverse_in_place(sem)
+
+  out: Vector<DryRunSite> = []
+  for s in sites {
+    v := case verdicts.get("${s.func_id}#${s.local}") {
+      .Some(text) => text,
+      .None => "-",
+    }
+    t := targets_for(s.actual_fid, rev, sem, b)
+    reusable := v.contains("base=reuse(") or v.contains("shell=reuse(")
+    out = .append(
+      DryRunSite.{
+        func: s.func,
+        family: s.family,
+        persistent: t.persistent,
+        mutable: t.mutable,
+        verdict: v,
+        would_use: reusable and t.has_mutable,
+        local: s.local,
+      },
+    )
+  }
+  out
+}
+
+// Run the same structural-view -> prune -> summary -> ownership analysis
+// sequence `twk ir --cfg` uses, then flatten every block's exit verdicts into a
+// map keyed by "<func_id>#<anf_local_id>" (census's join key: local ids repeat
+// across functions, so the function id must ride along).
+fn collect_verdicts(opt: AnfModule, b: BuiltinRegistry, sem: OptimizerSemantics) Dict<
+  String,
+  String,
+> {
+  view := cfg.build_view(opt, b)
+  view = ownership.prune_dead_merge(view)
+  table := summary.compute(view, b, sem)
+  analyzed := ownership.analyze_with_summaries(view, b, sem, table)
+
+  out: Dict<String, String> = Dict.new()
+  for f in analyzed.functions {
+    for blk in f.blocks {
+      for local_id, text in blk.exit.verdicts {
+        out["${f.func_id}#${local_id}"] = text
+      }
+    }
+  }
+  out
+}
+
+// Reverse `in_place_equivalent` (mutable id -> persistent id) so an in-place
+// actual callee can be paired with its persistent form. Built once, since
+// `*_in_place` ops are never registered in `call_semantics` themselves — a
+// forward `call_info` lookup on an in-place id always misses.
+fn build_reverse_in_place(sem: OptimizerSemantics) Dict<Int, Int> {
+  rev: Dict<Int, Int> = Dict.new()
+  for base_id, cs in sem.call_semantics {
+    case cs.in_place_equivalent {
+      .Some(mid) => rev[mid.id] = base_id,
+      .None => {},
+    }
+  }
+  rev
+}
+
+fn name_of(b: BuiltinRegistry, id: Int) String {
+  case b.by_id.get(id) {
+    .Some(entry) => entry.name,
+    .None => "fid#${id}",
+  }
+}
+
+// Resolve the persistent/mutable pairing for a call site's actual callee.
+// Order matters: an in-place actual id is never itself a `call_semantics` key,
+// so the reverse map must be checked BEFORE falling back to `call_info`.
+fn targets_for(actual_fid: Int, rev: Dict<Int, Int>, sem: OptimizerSemantics, b: BuiltinRegistry) Targets {
+  if actual_fid == 0 - 1 {
+    return Targets.{
+      persistent: "struct.new(copy)",
+      mutable: "struct.set(reuse)",
+      has_mutable: true,
+    }
+  }
+  case rev.get(actual_fid) {
+    .Some(persistent_id) => return Targets.{
+      persistent: name_of(b, persistent_id),
+      mutable: name_of(b, actual_fid),
+      has_mutable: true,
+    },
+    .None => {},
+  }
+  case call_info(sem, FuncId.{ id: actual_fid }) {
+    .Some(cs) => case cs.in_place_equivalent {
+      .Some(mid) => return Targets.{
+        persistent: name_of(b, actual_fid),
+        mutable: name_of(b, mid.id),
+        has_mutable: true,
+      },
+      .None => {},
+    },
+    .None => {},
+  }
+  Targets.{ persistent: name_of(b, actual_fid), mutable: "-", has_mutable: false }
+}
+
+/// Tab-separated per-site listing.
+pub fn render_dry_run(sites: Vector<DryRunSite>) String {
+  out := "func\tfamily\tpersistent\tmutable\twould_use\tverdict\n"
+  for s in sites {
+    out = .concat(
+      "${s.func}\t${s.family}\t${s.persistent}\t${s.mutable}\t${s.would_use}\t${s.verdict}\n",
+    )
+  }
+  out
+}

@@ -1,0 +1,101 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.codegen.dry_run
+use compiler.pipeline
+
+// Compile a snippet and return its dry-run sites.
+fn sites_for(src: String) Result<Vector<dry_run.DryRunSite>, String> {
+  artifacts := try pipeline.compile_source(src)
+  .Ok(dry_run.dry_run_sites(artifacts.opt, artifacts.builtins))
+}
+
+fn find_site(sites: Vector<dry_run.DryRunSite>, family: String) dry_run.DryRunSite {
+  for s in sites {
+    if s.family == family {
+      return s
+    }
+  }
+  error("missing dry-run site for family ${family}")
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("dry-run sites")
+    .test(
+      "owned vector set: mutable target exists and would_use is true",
+      fn() {
+        sites := try sites_for(
+          "fn set_fresh() Vector<Int> {\n  xs := [1, 2]\n  xs[0] = 9\n  xs\n}\n",
+        )
+        s := find_site(sites, "vector_set")
+        try assert.equal(s.persistent, "vector$set_unsafe")
+        try assert.equal(s.mutable, "vector$set_in_place")
+        try assert.is_true(s.would_use)
+        try assert.str_contains(s.verdict, "base=reuse(")
+        .Ok({})
+      },
+    )
+    .test(
+      "aliased vector set: base still live, would_use is false",
+      fn() {
+        sites := try sites_for(
+          "fn set_aliased() Int {\n  xs := [1, 2]\n  ys := xs\n  xs[0] = 9\n  ys.len() + xs.len()\n}\n",
+        )
+        s := find_site(sites, "vector_set")
+        try assert.is_false(s.would_use)
+        try assert.str_contains(s.verdict, "persistent(")
+        .Ok({})
+      },
+    )
+    .test(
+      "dict set and remove: persistent/mutable pairing and owned would_use",
+      fn() {
+        sites := try sites_for(
+          "fn dict_ops() Dict<String, Int> {\n  d: Dict<String, Int> = Dict.new()\n  d[\"a\"] = 1\n  d = d.remove(\"a\")\n  d\n}\n",
+        )
+        set_site := find_site(sites, "dict_set")
+        try assert.equal(set_site.persistent, "dict$set")
+        try assert.equal(set_site.mutable, "dict$set_in_place")
+        try assert.is_true(set_site.would_use)
+        try assert.str_contains(set_site.verdict, "base=reuse(")
+
+        remove_site := find_site(sites, "dict_remove")
+        try assert.equal(remove_site.persistent, "dict$remove")
+        try assert.equal(remove_site.mutable, "dict$remove_in_place")
+        try assert.is_true(remove_site.would_use)
+        try assert.str_contains(remove_site.verdict, "base=reuse(")
+        .Ok({})
+      },
+    )
+    .test(
+      "record update: struct copy/reuse pairing and owned would_use",
+      fn() {
+        sites := try sites_for(
+          "type P = .{ x: Int, y: Int }\nfn r() P {\n  p := P.{ x: 1, y: 2 }\n  p.x = 9\n  p\n}\n",
+        )
+        s := find_site(sites, "record_update")
+        try assert.equal(s.persistent, "struct.new(copy)")
+        try assert.equal(s.mutable, "struct.set(reuse)")
+        try assert.is_true(s.would_use)
+        try assert.str_contains(s.verdict, "shell=reuse(")
+        .Ok({})
+      },
+    )
+    .test(
+      "update family with no mutable target never reports would_use",
+      fn() {
+        // `Vector.append` is an `.Update` candidate with a COW base but no
+        // `in_place_equivalent` — there is no mutable target, so `would_use`
+        // must be false even when the base is otherwise owned/reusable.
+        sites := try sites_for(
+          "fn append_fresh() Vector<Int> {\n  xs := [1]\n  xs = xs.append(2)\n  xs\n}\n",
+        )
+        s := find_site(sites, "vector_append")
+        try assert.str_contains(s.verdict, "reuse(")
+        try assert.equal(s.mutable, "-")
+        try assert.is_false(s.would_use)
+        .Ok({})
+      },
+    )
+}

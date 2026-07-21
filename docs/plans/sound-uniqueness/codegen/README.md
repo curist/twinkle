@@ -7,8 +7,11 @@ persistent-only selector + plumbing seam: `compiler.codegen.mutable_select` (the
 decision table + selector) and `compiler.codegen.emit.mutable_sites` (prepared-site
 extraction), threaded through `PreparedModule` and `EmitCtx`. Every path still emits
 the persistent target — verified byte-identical (self-host fixed point plus a
-before/after codegen comparison over vector/dict/record updates). **Next: Phase 7E
-or the analysis-producer follow-up** — dry-run rendering, or extracting the
+before/after codegen comparison over vector/dict/record updates). The Phase 7E
+update-site slice is done: `twk ir --census --sites` now renders persistent→mutable
+targets plus ownership verdicts for vector/dict/record update candidates, while
+still emitting persistent code. **Next: finish the remaining 7E decision-table /
+variant-routing dry-run work, or the analysis-producer follow-up** — extracting the
 `ownership.tw` render-only decisions into `MutableDecisionTable`. The full analysis
 track is complete through Phase 6 (record/field ownership, transport-wrapper /
 `Result`-payload return-path summaries, ownership-specialization decision facts, and
@@ -142,17 +145,23 @@ while deliberately returning the persistent target for every site.
   `compiler.codegen.mutable_select`; family-specific emit code does not re-prove
   ownership or hand-roll stale-decision checks.
 
-## Codegen Phase 7E — Dry-run rendering
+## Codegen Phase 7E — Dry-run rendering 🚧 update-site slice done (2026-07-21)
 
 No optimized emission yet. This phase proves the seam and inspection story before
-any helper or cloned variant is emitted.
+any helper or cloned variant is emitted. The first update-site slice is landed;
+full decision-table and variant-routing dry-run output remains deferred.
 
-- [ ] **Print dry-run rewrite targets.** Extend inspection output so accepted or
-  potential candidates can say `persistent_target -> mutable_target` without
-  changing codegen.
-- [ ] **Render consumed vs ignored decisions.** Backend debug output should
-  distinguish “decision found but dry-run” from “decision absent/stale.”
-- [ ] **Include variant routing dry-runs.** For Case V-shaped calls, render the
+- [x] **Print dry-run rewrite targets (update sites).** `twk ir --census --sites`
+  now shows `persistent -> mutable` per vector/dict/record update candidate, plus
+  an ownership verdict and `would_use` flag (true only when the base is owned and
+  a mutable target exists), via `compiler.codegen.dry_run` and new update-call
+  verdicts in `ownership.tw`.
+- [ ] **Render consumed vs ignored decisions.** Deferred: this needs a real
+  `MutableDecisionTable` producer and backend decision-state renderer. Today's
+  output is ownership-verdict dry-run state, not “decision found but dry-run” vs
+  “decision absent/stale.”
+- [ ] **Include variant routing dry-runs.** Deferred: current `--cfg` call
+  diagnostics render only the accepted `-> f<id>[unique:...]` shape, not the full
   generic callee, would-be cloned callee, exact `VariantId`, route site, and
   fallback reason.
 
