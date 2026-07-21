@@ -2,7 +2,8 @@
 
 **Status:** In progress. Phases 7A (hook inventory), 7B (operation catalog),
 the 7C/7D backend decision seam, Phase 8A local vector indexed-update
-emission, and Phase 8B loop-carried vector indexed-update emission are done
+emission, Phase 8B loop-carried vector indexed-update emission, and Phase 8D
+dict-set in-place emission are done
 (2026-07-21). The surviving mutable hooks
 and their persistent→mutable mappings are cataloged, and codegen now has a
 persistent-only selector + plumbing seam: `compiler.codegen.mutable_select` (the
@@ -20,9 +21,12 @@ Phase 8B extends that to loop-carried accumulators (single and nested loops): th
 producer no longer suppresses loop-contained candidates, so index-assignment sugar
 carried across a loop selects `vector$set_in_place` when the ownership fixpoint
 proves the carried vector unique across every entry and back-edge, and aliased loop
-vectors stay persistent. **Current focus: Phase 8C, existing builder-region lowering
-(or the dict-set slice, Phase 8D — a producer/policy unlock sibling of 8B).** The
-remaining 7E dry-run item is not abandoned: variant-routing dry-runs are an 8G
+vectors stay persistent. Phase 8D generalized the decision producer to all
+supported call-swap families and enabled `dict$set_in_place` for owned `Dict.set`
+sites via the cumulative `enabled_emit_policy`. **Current focus: Phase 8E, dict
+remove (a one-flag policy extension of 8D), then Phase 8C existing builder-region
+lowering.** The remaining 7E dry-run item is not abandoned: variant-routing
+dry-runs are an 8G
 gate when specialized clone routing becomes real. The full analysis track is
 complete through Phase 6 (record/field ownership,
 transport-wrapper / `Result`-payload return-path summaries, ownership-specialization
@@ -252,15 +256,23 @@ the vector family. Details: [vector-lowering.md](vector-lowering.md) and
   runtime exports additional helpers such as vector `builder_extend`, but they are
   not currently a first-cut boot builtin/shim target.
 
-## Codegen Phase 8D — Dict set emission
+## Codegen Phase 8D — Dict set emission ✅ done
 
-- [ ] **Lower proven-owned `Dict.set` through existing in-place helpers.** Preserve
-  key lookup semantics and old-version observability.
-- [ ] **Keep nested value ownership conservative.** Ownership of a dict backing is
-  not ownership of reference-typed values stored inside it.
-- [ ] **Inspect dict helper selection.** Positive sites should show the in-place
-  set helper; negative aliasing/old-version cases should still call the persistent
-  path.
+The decision producer is now family-neutral (`produce_update_call_decisions`,
+collecting vector/dict set and remove via `is_supported_call_family`), and
+`enabled_emit_policy` is the cumulative build policy that turns on the families
+the compiler actually emits mutably.
+
+- [x] **Lower proven-owned `Dict.set` through existing in-place helpers.** Owned
+  `Dict.set` sites select `dict$set_in_place`; a round-trip fixture confirms key
+  lookup, key-update value replacement, insertion order, and old-version
+  observability are preserved (aliased dicts stay persistent).
+- [x] **Keep nested value ownership conservative.** `dict$set_in_place` mutates
+  only the HAMT backing, never reference-typed values stored inside the dict.
+- [x] **Inspect dict helper selection.** `twk ir --census --sites` shows
+  `selected` / `dict$set_in_place` for owned sites and persistent / `absent_fallback`
+  for aliased ones. Self-host reaches a fixed point with the boot compiler's own
+  owned dict sets emitting in-place.
 
 ## Codegen Phase 8E — Dict remove emission
 

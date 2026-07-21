@@ -1,0 +1,20 @@
+fn build() Dict<String, Int> {
+  d: Dict<String, Int> = Dict.new()
+  d = .set("a", 1)
+  d = .set("b", 2)
+  d = .set("c", 3)
+  d = .set("b", 20)
+  d
+}
+
+fn main() {
+  d := build()
+  line := ""
+  for k, v in d {
+    line = .concat("${k}=${v};")
+  }
+  println(line)
+  println(d.len().to_string())
+}
+
+main()

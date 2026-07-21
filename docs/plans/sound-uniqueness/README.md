@@ -39,22 +39,24 @@ Phase 7E dry-run slice is also done: `twk ir --census --sites` renders update-si
 persistent→mutable targets, ownership verdicts, and `would_use` state for
 vector/dict/record candidates while emitted code remains persistent.
 
-**Current implementation focus: Codegen Phase 8C (builder regions), or the
-producer/policy-unlock dict slices 8D/8E.** Phases 8A and 8B are complete: the
-emitted-code slices select the existing `vector$set_in_place` helper for proven
-owned `Vector` indexed updates — 8A for straight-line local sites, 8B for
-loop-carried accumulators in single and nested loops — while absent, stale,
-ambiguous, unsupported, or aliased decisions keep the ordinary persistent path.
-Loop-carried decisions render a `phase8b-loop:<func>:carry L…:site L…:depth N`
-proof id. Emittable vector sites are the index-assignment sugar form (`xs[i] = v`,
-which lowers to an inline `vector$set_unsafe` caller candidate); explicit
-`.set_at(...)` method calls are prelude calls and not caller-side candidates. The
-8A revisit of the deferred 7E consumed-vs-ignored decision rendering is complete
-via the post-prepare `mutable decisions` audit table; variant-routing dry-runs
-remain attached to 8G's ownership-specialized clone routing. Dict set/remove
-(8D/8E) are proven producer/policy unlocks — the ownership analysis already
-certifies owned dict sites — and are the cheapest next slices. Detailed plans:
-`docs/plans/sound-uniqueness-phase8{b,d,e}-*.md`.
+**Current implementation focus: Codegen Phase 8E (dict remove — a one-flag
+policy extension of 8D), then Phase 8C (builder regions).** Phases 8A, 8B, and
+8D are complete: the emitted-code slices select the existing in-place helper for
+proven owned collection updates — 8A for straight-line local `Vector` indexed
+updates, 8B for loop-carried accumulators in single and nested loops, and 8D for
+owned `Dict.set` (`dict$set_in_place`) — while absent, stale, ambiguous,
+unsupported, or aliased decisions keep the ordinary persistent path. The decision
+producer is now family-neutral (`produce_update_call_decisions`, collecting all
+supported call-swap families), and `enabled_emit_policy` is the cumulative build
+policy. Loop-carried decisions render a `phase8b-loop:<func>:carry L…:site L…:depth N`
+proof id. Emittable *vector* sites are the index-assignment sugar form (`xs[i] = v`,
+an inline `vector$set_unsafe` caller candidate); explicit `.set_at(...)` calls are
+prelude calls and not caller-side candidates — whereas `Dict.set`/`Dict.remove` are
+builtins that do surface at the caller. The 8A revisit of the deferred 7E
+consumed-vs-ignored decision rendering is complete via the post-prepare `mutable
+decisions` audit table; variant-routing dry-runs remain attached to 8G's
+ownership-specialized clone routing. Detailed plans:
+`docs/plans/sound-uniqueness-phase8{d,e}-*.md` (8B archived).
 
 Important scope boundary: the existing-hook slices are the integration proof, not
 the whole performance/migration deliverable. The project is not complete until
@@ -111,9 +113,10 @@ This track starts after the completed Phase 6 (1E) specialization decisions; its
 input facts are now trustworthy. It is intentionally split more finely than a single
 codegen milestone: operation catalogs and backend handoff/dry-run decisions (Phase 7)
 are in place, and the emitted slices for local (Phase 8A) and loop-carried, single
-and nested (Phase 8B) vector indexed updates are complete. Current work moves to
-builder regions (Phase 8C) and the dict set/remove slices (Phases 8D/8E); later
-Phase 8 slices broaden to records and ownership-specialized function variants.
+and nested (Phase 8B) vector indexed updates, plus owned `Dict.set` (Phase 8D), are
+complete. Current work moves to dict remove (Phase 8E) and builder regions
+(Phase 8C); later Phase 8 slices broaden to records and ownership-specialized
+function variants.
 
 ### 3. Storage representation track
 
