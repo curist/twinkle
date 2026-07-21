@@ -26,6 +26,7 @@ pub type DecisionRenderRow = .{
 pub type ProducedDecisions = .{
   table: mutable_select.MutableDecisionTable,
   rows: Vector<DecisionRenderRow>,
+  artifact_computed: Bool,
 }
 
 // A raw vector-set update site found in the ANF, before it is joined with an
@@ -36,7 +37,7 @@ pub type ProducedDecisions = .{
 // producer, so a future non-VectorSet family can't silently drift from what
 // the catalog (and `select_call_for_emit`, which also reads
 // `entry.base_arg_index`) actually says.
-type Candidate = .{
+pub type Candidate = .{
   func_id: FuncId,
   func: String,
   result: LocalId,
@@ -48,6 +49,8 @@ type Candidate = .{
   mutable_func: FuncId,
   loop_depth: Int,
 }
+
+pub type CandidateSet = .{ candidates: Vector<Candidate> }
 
 type VectorSetTarget = .{ base: LocalId, mutable_func: FuncId, family: String, base_arg_index: Int }
 
@@ -182,11 +185,25 @@ fn name_of(b: BuiltinRegistry, fid: FuncId) String {
 /// produce a decision. A candidate only becomes a decision when its base is
 /// certified reusable AND it is not nested inside a loop (loop-contained
 /// candidates are deferred to Phase 8B).
-pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) ProducedDecisions {
+pub fn phase8a_vector_set_candidates(opt: AnfModule, b: BuiltinRegistry) CandidateSet {
   sem := make_prelude_optimizer_semantics(b)
   cat := mutable_catalog.build(b, sem)
+  CandidateSet.{ candidates: collect_candidates(opt, cat) }
+}
+
+pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) ProducedDecisions {
+  set := phase8a_vector_set_candidates(opt, b)
+  if set.candidates.len() == 0 {
+    return ProducedDecisions.{
+      table: mutable_select.empty_decision_table(),
+      rows: [],
+      artifact_computed: false,
+    }
+  }
+
+  sem := make_prelude_optimizer_semantics(b)
   verdicts := ownership_verdicts.update_verdicts(opt, b, sem)
-  candidates := collect_candidates(opt, cat)
+  candidates := set.candidates
 
   table := mutable_select.empty_decision_table()
   rows: Vector<DecisionRenderRow> = []
@@ -252,7 +269,7 @@ pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) 
     rows = .append(row)
   }
 
-  ProducedDecisions.{ table, rows }
+  ProducedDecisions.{ table, rows, artifact_computed: true }
 }
 
 /// Tab-separated producer-candidate table: which raw vector-set candidates

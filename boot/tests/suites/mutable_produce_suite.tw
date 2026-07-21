@@ -7,6 +7,8 @@ use compiler.backend.prepare.{prepare_backend_with_mutable_config}
 use compiler.codegen.mutable_audit
 use compiler.codegen.mutable_produce
 use compiler.codegen.mutable_select
+use compiler.codegen.ownership_verdicts
+use compiler.opt.semantics as semantics
 use compiler.pipeline
 use lib.module.loader
 
@@ -161,6 +163,42 @@ pub fn suite() runner.Suite {
         try assert.str_contains(rendered, "ArgumentShapeMismatch")
         try assert.str_contains(rendered, "stale_or_ignored")
         try assert.str_contains(rendered, "vector$set_unsafe")
+        .Ok({})
+      },
+    )
+    .test(
+      "phase 8A candidate collection is available before ownership analysis",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${fixtures_dir()}/phase8a_vector_set_fresh.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        set := mutable_produce.phase8a_vector_set_candidates(artifacts.opt, artifacts.builtins)
+        try assert.equal(set.candidates.len(), 1)
+        try assert.equal(set.candidates[0].family, "vector_set")
+        try assert.equal(set.candidates[0].loop_depth, 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "no phase 8A candidates skip ownership artifact computation",
+      fn() {
+        artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/phase8a_no_vector_set.tw") {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        set := mutable_produce.phase8a_vector_set_candidates(artifacts.opt, artifacts.builtins)
+        try assert.equal(set.candidates.len(), 0)
+
+        produced := mutable_produce.produce_phase8a_vector_set_decisions(
+          artifacts.opt,
+          artifacts.builtins,
+        )
+        try assert.equal(produced.table.by_site.keys().len(), 0)
+        try assert.equal(produced.rows.len(), 0)
+        try assert.equal(produced.artifact_computed, false)
         .Ok({})
       },
     )

@@ -1,0 +1,6 @@
+fn compute(x: Int) Int {
+  y := x + 1
+  y * 2
+}
+
+compute(20)
