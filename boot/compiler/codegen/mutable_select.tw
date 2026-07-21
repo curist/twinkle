@@ -166,7 +166,7 @@ pub fn enabled_emit_policy() MutableEmitPolicy {
   MutableEmitPolicy.{
     emit_vector_set: true,
     emit_dict_set: true,
-    emit_dict_remove: false,
+    emit_dict_remove: true,
     emit_record_shell_update: false,
   }
 }

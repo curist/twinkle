@@ -1,0 +1,10 @@
+fn remove_alias() Dict<Int, Int> {
+  d: Dict<Int, Int> = Dict.new()
+  d = .set(1, 1)
+  d = .set(2, 2)
+  keep := d
+  d = .remove(1)
+  keep
+}
+
+println(remove_alias().len().to_string())
