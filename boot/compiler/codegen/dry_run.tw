@@ -8,11 +8,9 @@
 use compiler.anf.{AnfModule}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.census
-use compiler.cfg
 use compiler.codegen.mutable_catalog
-use compiler.opt.semantics.{OptimizerSemantics, make_prelude_optimizer_semantics}
-use compiler.ownership
-use compiler.summary
+use compiler.codegen.ownership_verdicts
+use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 
 pub type DryRunSite = .{
   func: String,
@@ -25,21 +23,19 @@ pub type DryRunSite = .{
   local: Int,
 }
 
-type SiteVerdict = .{ text: String, reusable_shell: Bool }
-
 /// Join census candidates with ownership verdicts and the mutable-target
 /// catalog, in census traversal order.
 pub fn dry_run_sites(opt: AnfModule, b: BuiltinRegistry) Vector<DryRunSite> {
   sem := make_prelude_optimizer_semantics(b)
   cat := mutable_catalog.build(b, sem)
   sites := census.census_sites(opt, b)
-  verdicts := collect_verdicts(opt, b, sem)
+  verdicts := ownership_verdicts.update_verdicts(opt, b, sem)
 
   out: Vector<DryRunSite> = []
   for s in sites {
     v := case verdicts.get("${s.func_id}#${s.local}") {
       .Some(verdict) => verdict,
-      .None => SiteVerdict.{ text: "-", reusable_shell: false },
+      .None => ownership_verdicts.SiteVerdict.{ text: "-", reusable_shell: false },
     }
     t := cat.targets_for_actual(b, s.actual_fid)
     out = .append(
@@ -54,34 +50,6 @@ pub fn dry_run_sites(opt: AnfModule, b: BuiltinRegistry) Vector<DryRunSite> {
         local: s.local,
       },
     )
-  }
-  out
-}
-
-// Run the same structural-view -> prune -> summary -> ownership analysis
-// sequence `twk ir --cfg` uses, then flatten every block's exit verdicts into a
-// map keyed by "<func_id>#<anf_local_id>" (census's join key: local ids repeat
-// across functions, so the function id must ride along).
-fn collect_verdicts(opt: AnfModule, b: BuiltinRegistry, sem: OptimizerSemantics) Dict<
-  String,
-  SiteVerdict,
-> {
-  view := cfg.build_view(opt, b)
-  view = ownership.prune_dead_merge(view)
-  table := summary.compute(view, b, sem)
-  analyzed := ownership.analyze_with_summaries(view, b, sem, table)
-
-  out: Dict<String, SiteVerdict> = Dict.new()
-  for f in analyzed.functions {
-    for blk in f.blocks {
-      for local_id, text in blk.exit.verdicts {
-        reusable := case blk.exit.verdict_reusable_shell.get(local_id) {
-          .Some(flag) => flag,
-          .None => false,
-        }
-        out["${f.func_id}#${local_id}"] = SiteVerdict.{ text, reusable_shell: reusable }
-      }
-    }
   }
   out
 }

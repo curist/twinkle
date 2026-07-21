@@ -71,6 +71,20 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "owned vector set: would_use survives shared ownership-verdict extraction",
+      fn() {
+        // Regression guard for the ownership_verdicts extraction: dry_run_sites
+        // must still report would_use == true for a local owned vector set once
+        // verdict collection moves into a module shared with mutable decision
+        // production.
+        sites := try sites_for(
+          "fn set_fresh() Vector<Int> {\n  xs := [1, 2]\n  xs[0] = 9\n  xs\n}\n",
+        )
+        s := find_site(sites, "vector_set")
+        assert.is_true(s.would_use)
+      },
+    )
+    .test(
       "aliased vector set: base still live, would_use is false",
       fn() {
         sites := try sites_for(
