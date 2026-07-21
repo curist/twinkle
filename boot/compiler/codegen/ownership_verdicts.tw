@@ -291,6 +291,23 @@ pub fn compute_artifacts(opt: AnfModule, b: BuiltinRegistry, sem: OptimizerSeman
   OwnershipArtifacts.{ key: artifact_key_for_anf(opt), view, table, analyzed }
 }
 
+// Like `compute_artifacts`, but scopes summary and ownership work to the mutable
+// candidate functions and their dependency closure. Out-of-closure functions
+// keep conservative summaries and cleared facts; verdicts for candidate sites
+// are identical to the full analysis, so the resulting decisions match.
+pub fn compute_candidate_artifacts(
+  opt: AnfModule,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  candidate_funcs: Dict<Int, Bool>,
+) OwnershipArtifacts {
+  view := cfg.build_view(opt, b)
+  view = ownership.prune_dead_merge(view)
+  table := summary.compute_for_roots(view, b, sem, candidate_funcs)
+  analyzed := ownership.analyze_selected_with_summaries(view, b, sem, table, candidate_funcs)
+  OwnershipArtifacts.{ key: artifact_key_for_anf(opt), view, table, analyzed }
+}
+
 // Flatten every analyzed block's exit verdicts into a table keyed by
 // "<func_id>#<anf_local_id>" (local ids repeat across functions, so the
 // function id must ride along).

@@ -91,6 +91,53 @@ fn stale_audit_rendered_for(name: String) Result<String, String> {
   .Ok(mutable_audit.render_audit_rows(rows))
 }
 
+fn candidate_roots(set: mutable_produce.CandidateSet) Dict<Int, Bool> {
+  roots: Dict<Int, Bool> = Dict.new()
+  for c in set.candidates {
+    roots[c.func_id.id] = true
+  }
+  roots
+}
+
+// Scoped candidate artifacts must yield the same candidate-site verdicts as full
+// whole-program ownership analysis. If they ever diverge, the scoped path is
+// unsound and must not feed decisions.
+fn assert_selected_verdicts_match_full(name: String) Result<Void, String> {
+  artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(result) => result,
+    .Err(err) => return .Err(format_compile_error(err)),
+  }
+  b := artifacts.builtins
+  sem := semantics.make_prelude_optimizer_semantics(b)
+  set := mutable_produce.phase8a_vector_set_candidates(artifacts.opt, b)
+  keys := mutable_produce.candidate_keys(set)
+
+  full_artifacts := ownership_verdicts.compute_artifacts(artifacts.opt, b, sem)
+  scoped_artifacts := ownership_verdicts.compute_candidate_artifacts(
+    artifacts.opt,
+    b,
+    sem,
+    candidate_roots(set),
+  )
+  full := ownership_verdicts.verdicts_for_keys(full_artifacts, keys)
+  scoped := ownership_verdicts.verdicts_for_keys(scoped_artifacts, keys)
+
+  try assert.equal(scoped.by_key.keys().len(), full.by_key.keys().len())
+  for k in full.by_key.keys() {
+    expected := case full.by_key.get(k) {
+      .Some(v) => v,
+      .None => return .Err("missing full verdict for ${k}"),
+    }
+    actual := case scoped.by_key.get(k) {
+      .Some(v) => v,
+      .None => return .Err("missing scoped verdict for ${k}"),
+    }
+    try assert.equal(actual.text, expected.text)
+    try assert.equal(actual.reusable_shell, expected.reusable_shell)
+  }
+  .Ok({})
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("phase 8A mutable decision production")
@@ -225,6 +272,27 @@ pub fn suite() runner.Suite {
         try assert.equal(produced.artifact_computed, false)
         rendered := mutable_produce.render_candidate_rows(produced.rows)
         try assert.str_contains(rendered, "stale ownership artifact")
+        .Ok({})
+      },
+    )
+    .test(
+      "scoped candidate verdicts match full verdicts (fresh)",
+      fn() {
+        try assert_selected_verdicts_match_full("phase8a_vector_set_fresh")
+        .Ok({})
+      },
+    )
+    .test(
+      "scoped candidate verdicts match full verdicts (alias)",
+      fn() {
+        try assert_selected_verdicts_match_full("phase8a_vector_set_alias")
+        .Ok({})
+      },
+    )
+    .test(
+      "scoped candidate verdicts match full verdicts (loop)",
+      fn() {
+        try assert_selected_verdicts_match_full("phase8a_vector_set_loop")
         .Ok({})
       },
     )

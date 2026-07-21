@@ -7,7 +7,7 @@
 
 use compiler.anf.{AnfOp, Atom}
 use compiler.builtins.{BuiltinRegistry}
-use compiler.cfg.{CfgBlock, CfgEdge, CfgFunction, CfgView, Terminator}
+use compiler.cfg.{CfgBlock, CfgEdge, CfgFunction, CfgView, Terminator, empty_block_facts}
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.field_facts as ff
 use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info, container_kind}
@@ -2979,6 +2979,45 @@ pub fn analyze_with_summaries(
 ) CfgView {
   functions := collect f in view.functions {
     analyze_function(f, table, b, sem, Dict.new())
+  }
+  CfgView.{ functions }
+}
+
+fn clear_block_analysis(blk: CfgBlock) CfgBlock {
+  blk.entry = empty_block_facts()
+  blk.exit = empty_block_facts()
+  blk
+}
+
+fn clear_function_analysis(f: CfgFunction) CfgFunction {
+  f.blocks = collect blk in f.blocks {
+    clear_block_analysis(blk)
+  }
+  f
+}
+
+// Analyze ownership only for the `selected` functions, clearing all block facts
+// on unselected functions (and clearing selected inputs before re-analysis). The
+// result is verdict-equivalent to `analyze_with_summaries` on the selected set,
+// so scoped artifacts produce the same mutable decisions as full analysis. Safe
+// on a fresh or previously-analyzed view because it clears before analyzing.
+pub fn analyze_selected_with_summaries(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+  selected: Dict<Int, Bool>,
+) CfgView {
+  functions := collect f in view.functions {
+    should_analyze := case selected.get(f.func_id) {
+      .Some(v) => v,
+      .None => false,
+    }
+    if should_analyze {
+      analyze_function(clear_function_analysis(f), table, b, sem, Dict.new())
+    } else {
+      clear_function_analysis(f)
+    }
   }
   CfgView.{ functions }
 }
