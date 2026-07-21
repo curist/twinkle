@@ -191,6 +191,18 @@ pub fn phase8a_vector_set_candidates(opt: AnfModule, b: BuiltinRegistry) Candida
   CandidateSet.{ candidates: collect_candidates(opt, cat) }
 }
 
+fn candidate_func_roots(set: CandidateSet) Dict<Int, Bool> {
+  roots: Dict<Int, Bool> = Dict.new()
+  for c in set.candidates {
+    roots[c.func_id.id] = true
+  }
+  roots
+}
+
+/// Default Phase 8A production: scopes ownership analysis to the mutable
+/// candidate functions and their dependency closure, so a whole-program
+/// ownership pass is not paid on every build. Verdicts (and therefore
+/// decisions) match the full path — see the scoped/full equivalence tests.
 pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) ProducedDecisions {
   set := phase8a_vector_set_candidates(opt, b)
   if set.candidates.len() == 0 {
@@ -202,8 +214,30 @@ pub fn produce_phase8a_vector_set_decisions(opt: AnfModule, b: BuiltinRegistry) 
   }
 
   sem := make_prelude_optimizer_semantics(b)
-  verdicts := ownership_verdicts.update_verdicts(opt, b, sem)
-  produce_phase8a_vector_set_decisions_from_validated_verdicts(set.candidates, b, verdicts, true)
+  artifacts := ownership_verdicts.compute_candidate_artifacts(
+    opt,
+    b,
+    sem,
+    set.candidate_func_roots(),
+  )
+  produce_phase8a_vector_set_decisions_with_artifacts(opt, b, artifacts)
+}
+
+/// Diagnostic variant that computes full whole-program ownership artifacts
+/// instead of scoped ones. Kept for scoped/full equivalence testing.
+pub fn produce_phase8a_vector_set_decisions_full(opt: AnfModule, b: BuiltinRegistry) ProducedDecisions {
+  set := phase8a_vector_set_candidates(opt, b)
+  if set.candidates.len() == 0 {
+    return ProducedDecisions.{
+      table: mutable_select.empty_decision_table(),
+      rows: [],
+      artifact_computed: false,
+    }
+  }
+
+  sem := make_prelude_optimizer_semantics(b)
+  artifacts := ownership_verdicts.compute_artifacts(opt, b, sem)
+  produce_phase8a_vector_set_decisions_with_artifacts(opt, b, artifacts)
 }
 
 // Join key: local ids repeat across functions, so the function id rides along.

@@ -138,6 +138,28 @@ fn assert_selected_verdicts_match_full(name: String) Result<Void, String> {
   .Ok({})
 }
 
+// The scoped default producer must be indistinguishable from the full
+// diagnostic producer: same decision table, same rows, same artifact_computed.
+fn assert_scoped_producer_matches_full(name: String) Result<Void, String> {
+  artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(result) => result,
+    .Err(err) => return .Err(format_compile_error(err)),
+  }
+  full := mutable_produce.produce_phase8a_vector_set_decisions_full(
+    artifacts.opt,
+    artifacts.builtins,
+  )
+  scoped := mutable_produce.produce_phase8a_vector_set_decisions(artifacts.opt, artifacts.builtins)
+
+  try assert.equal(scoped.table.by_site.keys().len(), full.table.by_site.keys().len())
+  try assert.equal(scoped.artifact_computed, full.artifact_computed)
+  try assert.equal(
+    mutable_produce.render_candidate_rows(scoped.rows),
+    mutable_produce.render_candidate_rows(full.rows),
+  )
+  .Ok({})
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("phase 8A mutable decision production")
@@ -293,6 +315,27 @@ pub fn suite() runner.Suite {
       "scoped candidate verdicts match full verdicts (loop)",
       fn() {
         try assert_selected_verdicts_match_full("phase8a_vector_set_loop")
+        .Ok({})
+      },
+    )
+    .test(
+      "scoped producer matches full producer (fresh)",
+      fn() {
+        try assert_scoped_producer_matches_full("phase8a_vector_set_fresh")
+        .Ok({})
+      },
+    )
+    .test(
+      "scoped producer matches full producer (alias)",
+      fn() {
+        try assert_scoped_producer_matches_full("phase8a_vector_set_alias")
+        .Ok({})
+      },
+    )
+    .test(
+      "scoped producer matches full producer (loop)",
+      fn() {
+        try assert_scoped_producer_matches_full("phase8a_vector_set_loop")
         .Ok({})
       },
     )
