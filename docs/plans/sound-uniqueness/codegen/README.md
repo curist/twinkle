@@ -1,8 +1,9 @@
 # Codegen Track
 
 **Status:** In progress. Phases 7A (hook inventory), 7B (operation catalog),
-the 7C/7D backend decision seam, and Phase 8A local vector indexed-update
-emission are done (2026-07-21). The surviving mutable hooks
+the 7C/7D backend decision seam, Phase 8A local vector indexed-update
+emission, and Phase 8B loop-carried vector indexed-update emission are done
+(2026-07-21). The surviving mutable hooks
 and their persistent→mutable mappings are cataloged, and codegen now has a
 persistent-only selector + plumbing seam: `compiler.codegen.mutable_select` (the
 decision table + selector), `compiler.codegen.mutable_catalog` (shared
@@ -13,9 +14,14 @@ uses that same seam to select the vector in-place helper only for proven local
 owned sites. The Phase 7E update-site slice is done: `twk ir --census --sites`
 now renders persistent→mutable
 targets plus ownership verdicts for vector/dict/record update candidates. Phase
-8A adds the first emitted slice: proven local owned vector indexed updates select
-`vector$set_in_place`, while aliasing and loop-contained cases fall back through
-the persistent path. **Current focus: Phase 8B, loop-carried vector updates.** The
+8A added the first emitted slice: proven local owned vector indexed updates select
+`vector$set_in_place`, while aliasing cases fall back through the persistent path.
+Phase 8B extends that to loop-carried accumulators (single and nested loops): the
+producer no longer suppresses loop-contained candidates, so index-assignment sugar
+carried across a loop selects `vector$set_in_place` when the ownership fixpoint
+proves the carried vector unique across every entry and back-edge, and aliased loop
+vectors stay persistent. **Current focus: Phase 8C, existing builder-region lowering
+(or the dict-set slice, Phase 8D — a producer/policy unlock sibling of 8B).** The
 remaining 7E dry-run item is not abandoned: variant-routing dry-runs are an 8G
 gate when specialized clone routing becomes real. The full analysis track is
 complete through Phase 6 (record/field ownership,
@@ -207,13 +213,24 @@ First emitted-code change. The slice is intentionally narrow.
   so helper selection is auditable from decision consumption rather than inferred
   from WAT alone.
 
-## Codegen Phase 8B — Loop-carried vector updates
+## Codegen Phase 8B — Loop-carried vector updates ✅ done
 
-- [ ] **Extend vector indexed-update lowering to loop-carried accumulators.**
-  Target shapes like `flags = flags.set_at(k, false)` and
-  `balls = balls.set_at(j, updated_ball)` where back-edge facts prove ownership.
-- [ ] **Render loop proof ids near emitted decisions.** Debug output should name
-  the carried local, update site, borrow sites, and accepted/rejected reason.
+- [x] **Extend vector indexed-update lowering to loop-carried accumulators.**
+  Index-assignment sugar (`flags[k] = false`) carried through single and nested
+  loops now selects `vector$set_in_place` when back-edge facts prove ownership.
+  The producer no longer suppresses loop-contained candidates; a decision is
+  produced whenever `reusable_shell` holds, and the analysis's entry/back-edge
+  validation is the soundness source (aliased loop vectors stay persistent
+  because `reusable_shell` is `false` for them). Note: explicit `.set_at(...)`
+  method calls lower to a prelude call whose update sits in a borrowed-param
+  body, so they are not caller-side candidates; the index-sugar form is the
+  emittable shape. Self-host reaches a fixed point with the boot compiler's own
+  loop-carried vector updates emitting in-place.
+- [x] **Render loop proof ids near emitted decisions.** Loop-carried decisions
+  carry a `phase8b-loop:<func>:carry L<base>:site L<result>:depth <n>` proof id
+  and a `decision produced (loop-carried, carry L<base>)` render reason, both
+  visible via `twk ir --census --sites` (e.g. the nested fixture renders
+  `...:depth 2` with a `selected` / `MutableSelected` audit row).
 
 ## Codegen Phase 8C — Existing builder-region lowering
 
