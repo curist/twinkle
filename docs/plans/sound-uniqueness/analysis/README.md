@@ -10,15 +10,15 @@ remain codegen work. All analysis precision lands *before* any codegen, per
 [../architecture.md](../architecture.md)'s governing rule that all analysis precision
 precedes codegen.
 
-**Reopened for codegen Phase 8C (builder regions).** 8C's soundness needs a
-CFG-edge region-safety fact (`linearly_folded`: seed uniqueness, carried uniqueness,
-linear fold with no interior observation, no self-aliasing fold chunk (reject
-`acc = acc.concat(acc)` / chunks that may alias the accumulator), and
-single-post-loop-freeze with all intra-region publication/early-exit rejected) that
-the current phases do not yet produce. This is genuine analysis-track work — not one of the codegen-owned deferrals
-below — and is specified in [../codegen/builder-region-design.md](../codegen/builder-region-design.md)
-(Plan 1). It lands before 8C's rewrite, consistent with the analysis-before-codegen
-rule.
+**Not reopened for codegen Phase 8C (builder regions).** An earlier draft expected 8C to need a
+CFG-edge ownership fact (`linearly_folded` with a "carried uniqueness" obligation). Plan 1
+execution showed that obligation is both unnecessary — builder-region lowering replaces the
+accumulator with a *private* builder and never mutates it, so ownership uniqueness models the
+wrong thing — and unsatisfiable for string accumulators (`""` seeds as `.Unknown`). 8C's
+`linearly_folded` is therefore a **purely structural** fact computed by a pure-ANF detector, with
+**no analysis-track / ownership dependency**. See
+[../codegen/builder-region-design.md](../codegen/builder-region-design.md) ("The structural safety
+fact"). The analysis track stays closed through Phase 6.
 
 ## Post-completion cleanups
 

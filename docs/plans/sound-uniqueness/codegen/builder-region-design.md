@@ -1,9 +1,13 @@
 # Phase 8C — Builder-Region Lowering (Design)
 
-**Status:** Design — pending review. **Date:** 2026-07-22. **Rev 2** (incorporates review:
-region-record decision instead of a per-local boolean, CFG-edge safety fact with publication
-edges, concrete void-call ANF shape, typed-vector `builder_from` hazard, builder-specific
-candidate roots).
+**Status:** Design — in implementation. **Date:** 2026-07-22. **Rev 3** — Plan 1 execution
+revealed that ownership uniqueness (the old "condition 2") is both unnecessary for builder-region
+lowering (the rewrite replaces the accumulator with a private builder, never mutating it) *and*
+unsatisfiable for string accumulators (`""` seeds as `.Unknown`). The first-slice `linearly_folded`
+fact is therefore **purely structural** (see "The structural safety fact"), and the planned
+`fold_reusable` / `block_verdicts` / fingerprinted-artifact plumbing (B1/B2) is removed. Rev 2
+added: region-record decision instead of a per-local boolean, publication-edge rejection, concrete
+void-call ANF shape, typed-vector `builder_from` hazard, builder-specific candidate roots.
 
 This is the design for [codegen Phase 8C](README.md#codegen-phase-8c--existing-builder-region-lowering).
 It supersedes the draft slice notes in [string-lowering.md](string-lowering.md) and the
@@ -134,68 +138,67 @@ freeze points, the same local reused across independent regions, or a detector t
 opposite of this fork's intent. The decision is therefore a **region record** naming every
 boundary and the helper sequence, matching `handoff-contract.md`.
 
-## The safety fact (analysis track)
+## The structural safety fact
 
-`linearly_folded` is defined **over CFG edges of a named region**, not as a per-local flag.
-For a candidate region (accumulator local `a`, seed site, loop, fold-step sites, freeze/exit
-points) it holds iff **all** of:
+`linearly_folded` is a **purely structural** property of a candidate region, computed by the
+pure-ANF detector (sound **by rejection**). For a candidate region (accumulator local `a`, seed
+site, loop, fold-step site) it holds iff **all** of:
 
-1. **Seed uniqueness — dormant guard for the current copy-families.** In principle the seed must
-   be unique / at last use if `builder_from`/`builder_new` could *thaw or reuse* the seed's
-   storage. **Verified: neither current runtime builder thaws.** `string$builder_from`
-   (`str.tw:493`) `ArrayNew`s a fresh buffer and `ArrayCopy`s the base in; `vector$builder_from`
-   (`arr.tw:4705`) copies the base tail and structurally shares the immutable trie. So for the
-   copy-families this condition is **trivially satisfied regardless of seed aliasing** — it does
-   **not** gate non-empty seeds (see Plan 3). It stays documented as a guard that a *future*
-   thaw-style/mutable-ABI builder (migration/storage track) would have to re-establish.
-2. **Carried uniqueness.** `a` is unique across every entry and back-edge predecessor of the
-   loop (the 8B carried-uniqueness property, including multiple back-edges and nested loops).
-3. **Linear fold with no interior observation.** Each value `a` takes on is consumed exactly
-   once — by a fold step or the freeze — with no other read or join of `a` anywhere inside the
-   region. **This is entirely an analysis obligation** (review #4): the certified region records
-   the exact set of fold-step sites, and the analysis guarantees no other materialized use of `a`
-   survives. Codegen does **not** re-derive this on any path; it only checks that the ANF still
-   matches the recorded fold-step set (see Component 3).
-   **First-slice narrowing (review #4):** the first slice accepts **unconditional simple loop
-   folds only** — one fold step per iteration on the loop's main path, no conditional/skipped
-   folds and no `continue`-guarded steps. Conditional and `continue` folds (which need
-   path-sensitive join reasoning) are deferred to a later slice; until then such candidates are
-   rejected, keeping both the analysis fact and codegen validation simple and non-path-sensitive.
-4. **Single post-loop freeze — reject all intra-region publication/early-exit (first slice).**
-   The first slice supports **only** regions whose observable exits *all* flow through the
-   single post-loop freeze. Any intra-region edge that exits or publishes `a` before that freeze
-   — `return a`, value-carrying `break`, `try` early-return, closure capture, a store, an
-   unknown call, task/channel publication, or any other escape — **rejects the region**. This
-   keeps the concrete rewrite (one `builder_freeze` after the loop) sound. Per-exit freeze
-   insertion — enumerating a freeze point on each publishing edge in `BuilderRegionDecision` —
-   is deferred to a later slice; it is the only way multi-exit regions become eligible.
-5. **No self-alias in the fold step (self-concat rejection).** The chunk argument must not be
-   the accumulator, and analysis must not have to assume otherwise: `acc = acc.concat(acc)` or a
-   chunk that aliases the current accumulator is not a clean fold. The old matcher rejected this
-   cheaply via `!atom_is_local(args[1], base)`; keep that literal guard and reject any chunk the
-   analysis cannot prove disjoint from `a`.
+1. **Empty seed.** `a` is seeded with `""` (string) or `[]` (vector).
+2. **Unconditional single fold on the loop main path.** Exactly one fold step
+   (`a = a.concat/append(chunk)`) on the loop's break-dispatch main arm — no conditional/skipped
+   folds and no `continue`-guarded steps (any control flow on the main arm rejects). Conditional
+   and `continue` folds need path-sensitive join reasoning and are deferred to a later slice.
+3. **No observation/publication before the post-loop freeze.** `a` is referenced nowhere in the
+   region except the fold itself — no interior read, `return a`, value-carrying `break`, closure
+   capture, store, or call taking `a` as an argument. Multi-exit regions (per-edge freeze) are
+   deferred.
+4. **No self/chunk alias.** The fold chunk is not `a` (`a.concat(a)`) and does not otherwise
+   alias it (cheap literal guard `!atom_is_local(chunk, a)`).
 
-The analysis surfaces, per certified region, the data the producer needs to build a record:
-the region boundaries above plus the proof/debug id. It is fingerprinted by the same
-`ArtifactKey` as the other ownership artifacts.
+**Why ownership uniqueness is NOT required — the actual proof obligation.** Unlike the in-place
+call-swap families (8A/8B), which mutate a value's backing and therefore require it to be uniquely
+owned, builder-region lowering **replaces** the accumulator with a *private* builder and never
+mutates the accumulator's value:
+
+```
+acc = ""                              →  b = string$builder_from("")   // private; copies the seed
+for c in xs { acc = acc.concat(c) }   →  for c in xs { builder_extend(b, c) }   // mutates b only
+use(acc)                              →  acc = builder_freeze(b); use(acc)
+```
+
+`string$builder_from("")` allocates private builder storage and copies the seed; vector uses
+`builder_new` (a fresh private builder); `push`/`extend` mutate only the builder. So a
+shared/interned `""` seed is fine — it is read/copied into a new builder, never thawed. **The
+only ways this rewrite can miscompile are structural** — accumulator observed mid-loop (stale
+value), published before freeze (needs materialization), conditional/`continue` fold (builder
+state diverges from the persistent path), or chunk aliasing the accumulator (append content
+differs). Those are exactly conditions 2–4. Ownership uniqueness models the wrong thing here.
+
+> **Design-bug note (found during Plan 1 execution).** An earlier draft required a "carried
+> uniqueness" ownership fact (the old condition 2), imported from the in-place call-swap world. It
+> is both unnecessary (per the proof above) *and* unsatisfiable for the primary target: empty-string
+> literals seed as `.Unknown` in the ownership lattice — verified via `twk ir --census --sites`
+> (string `acc := ""` → `base=persistent(aliased shell)`; vector `[]` → `base=reuse(unique)`), so
+> string builder regions would never certify. Teaching the lattice that `ALitStr("")` is `.Unique`
+> was rejected: it would blur the meaning of `Unique` and risk unsoundness for real in-place
+> mutation of shared/interned literals. The fact is therefore structural only, and the earlier
+> `fold_reusable` / `block_verdicts` / fingerprinted-artifact plumbing (planned B1/B2) is removed.
 
 ## Architecture
 
-### Component 1 — Analysis: region safety facts
+### Component 1 — The structural fact
 
-Extend the ownership analysis (`compiler.ownership` / `compiler.summary` over `compiler.cfg`
-block-exit facts) to certify candidate builder regions per the **five conditions** above, over
-CFG edges. All load-bearing path-sensitive reasoning (linear fold, no interior observation,
-freeze-before-publication) lives **here**, not in codegen. Surface certified regions (boundaries
-+ proof id) via a region-fact module (`boot/compiler/builder_region_fact.tw`) that **consumes**
-`ownership_verdicts.tw`'s fingerprinted `OwnershipArtifacts`: the region's fold sites carry a
-`fold_reusable` fact recorded in the existing `block_verdicts` pass (keyed `"${func_id}#${local}"`,
-covered by the existing `ArtifactKey`), which the region fact composes with the structural
-conditions into a per-region verdict keyed by region identity (not a bare local). It lives in its
-own module rather than as a `SiteVerdict` field to keep the dependency acyclic (the fact already
-depends on `ownership_verdicts`), preserving the design intent — a fact surfaced through a
-fingerprinted-artifact consumer with the same staleness discipline. This is the **sole legality
-authority**.
+The "analysis" for the first slice is the **pure-ANF detector**
+(`boot/compiler/builder_region_detect.tw`), sound by rejection: any region it cannot prove
+structurally clean is not certified. A thin fact module (`boot/compiler/builder_region_fact.tw`)
+maps each detected `RegionCandidate` to a per-region `linearly_folded` verdict (= the candidate's
+`structural_ok`) carrying the region key, helper sequence, and proof id, and renders certified
+**and** rejected candidates. **No ownership artifacts, `block_verdicts` changes, `fold_reusable`
+fact, or artifact fingerprinting are involved** — detection runs directly on the optimized ANF.
+This detector is the **sole legality authority**. Conditional/`continue` and multi-exit regions
+remain deferred; when they land (Plan 5/6) they add path-sensitive reasoning *to the detector*,
+not an ownership dependency.
 
 ### Component 2 — Codegen producer: `BuilderRegionDecision` records
 
@@ -382,11 +385,13 @@ Each plan below is a committed unit of work with a concrete enabling change and 
 not an open-ended "later." Plans 1–2 are the first slice; Plans 3–7 are sequenced follow-ups,
 each small and independently shippable.
 
-- **Plan 1 — analysis region-safety facts + inspection.** CFG-edge `linearly_folded` over named
-  regions (five conditions; unconditional folds only) + surfacing certified regions through
-  `ownership_verdicts.tw` + the certified/rejected inspection render. No emitted-code change;
-  byte-identical guarantee holds. Tests: publication-edge negatives and first-slice-deferral
-  negatives.
+- **Plan 1 — the structural `linearly_folded` fact + inspection.** A pure-ANF detector
+  (`builder_region_detect.tw`) producing `RegionCandidate`s (empty seed, unconditional single
+  fold, no observation/publication, no self-alias — sound by rejection), a thin fact module
+  (`builder_region_fact.tw`) mapping `structural_ok` → `linearly_folded`, and a certified/rejected
+  inspection render in `twk ir --census --sites`. **No ownership dependency** (condition 2
+  dropped) and **no emitted-code change**. Tests: string/vector positives, all structural
+  negatives, inspection rendering.
 - **Plan 2 — producer + rewrite pass (string + vector empty-seed) + pipeline wiring.** The
   non-circular candidate/roots/artifacts/produce staging, `BuilderRegionDecision` records with
   `BuilderRegionKey` + non-overlap + centralized fresh-local allocation, the ANF-to-ANF rewrite

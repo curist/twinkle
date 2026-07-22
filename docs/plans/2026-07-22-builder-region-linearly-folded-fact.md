@@ -4,7 +4,7 @@
 
 **Goal:** Add the analysis-owned `linearly_folded` safety fact for loop-carried builder regions (empty-seed, **unconditional**-fold `String.concat` / `Vector.append` accumulators) and render certified/rejected candidates in `twk ir --census --sites`. No emitted-code change.
 
-**Architecture:** A shared, pure-ANF detector recognizes the empty-seed accumulator + break-dispatch loop skeleton, then applies a sound-**by-rejection** scan: the accumulator's only reference on the loop's main (non-break) path must be a single top-level fold — any other reference (interior read, nested/conditional fold, publication via `return`/value-`break`/closure/store/call) rejects. The detector output is composed with the current sound ownership analysis's uniqueness fact — computed by extending the existing per-block `block_verdicts` pass with a `fold_reusable` map, so **no new fixpoint** — into `linearly_folded`. The fact is surfaced through `ownership_verdicts.tw` keyed by a deterministic `BuilderRegionKey`, and rendered in the `ir` census (certified *and* rejected candidates). Plan 2 (later) adds the codegen producer/records and the rewrite; this plan stops at the fact + inspection.
+**Architecture:** A shared, pure-ANF detector recognizes the empty-seed accumulator + break-dispatch loop skeleton, then applies a sound-**by-rejection** scan: the accumulator's only reference on the loop's main (non-break) path must be a single top-level fold — any other reference (interior read, nested/conditional fold, publication via `return`/value-`break`/closure/store/call) rejects. `linearly_folded` is exactly this structural `structural_ok` verdict — **no ownership dependency**. (Ownership uniqueness, the old "condition 2", was dropped during execution: builder-region lowering replaces the accumulator with a *private* builder and never mutates it, so uniqueness models the wrong thing, and it is anyway unsatisfiable for `""`-seeded strings, which the ownership lattice marks `.Unknown`.) A thin fact module maps each candidate to a `RegionVerdict` keyed by a deterministic `BuilderRegionKey`, rendered in the `ir` census (certified *and* rejected candidates). Plan 2 (later) adds the codegen producer/records and the rewrite; this plan stops at the fact + inspection.
 
 **Tech Stack:** Twinkle (`.tw`), boot compiler (`boot/`). Tests via `@std.testing` suites compiled by `pipeline.compile_source`. Build/verify with `make boot-test`, then `make bundle-cli` for inspection/self-host.
 
@@ -14,7 +14,7 @@
 
 - **Immutability:** `acc = acc.concat(c)` is *rebind*, lowered to `Let(r, ACall(concat, [acc, chunk]), Let(_, AAssign(acc, r), …))`. Loop bodies are `AnfOp.ALoop(body)`.
 - **`=` vs `:=`:** `:=` declares; `=` rebinds. Fixtures MUST declare with `:=` and be **function-local** (top-level bindings lower to `AGlobalLocal`/`AGlobalSet`, which the detector does not match).
-- **Design doc (read first):** `docs/plans/sound-uniqueness/codegen/builder-region-design.md`. This plan implements its "Plan 1" (Component 1 fact + inspection gate). First-slice scope: empty-seed, **unconditional single fold**, single post-loop freeze, reject all intra-region publication/early-exit. The five conditions: (1) seed uniqueness — vacuous for empty seeds; (2) carried uniqueness — the ownership query; (3) linear fold / no interior observation; (4) reject intra-region publication; (5) no self-alias.
+- **Design doc (read first):** `docs/plans/sound-uniqueness/codegen/builder-region-design.md` → "The structural safety fact". This plan implements its "Plan 1" (the structural fact + inspection). First-slice scope: empty-seed, **unconditional single fold**, single post-loop freeze, reject all intra-region publication/early-exit. `linearly_folded` is **purely structural** (`= structural_ok`): (1) empty seed; (2) unconditional single fold on the loop main path; (3) no observation/publication of the accumulator before the freeze; (4) no self/chunk alias. **Ownership uniqueness is NOT a condition** — the builder rewrite replaces the accumulator with a private builder and never mutates it (proof obligation = helper privacy). The old ownership "condition 2" is removed.
 - **Why:** builder lowering steals a proven-unique, linearly-folded accumulator into a transient builder; unsafe if the accumulator is observed mid-loop or published on an exit edge. The old `opt/loop_builder.tw`/`opt/liveness.tw` (deleted `5d5ac090`) were unsound only in the *uniqueness* input; we keep the structural rejection and replace uniqueness with the current ownership analysis.
 
 ## VERIFIED real ANF shapes (from `target/twk ir <fixture> --opt`)
@@ -61,10 +61,7 @@ else (main arm):
 
 - ANF (`boot/compiler/anf.tw:19-88`): `Atom = ALocal(LocalId)|AGlobalFunc(FuncId)|ALitInt|ALitFloat|ALitBool|ALitStr(String)|ALitVoid|AGlobalLocal`. `AnfExpr = Let(LocalId,AnfOp,AnfExpr)|Atom(Atom)|Return(Atom?)|Break(Atom?)|Continue`. `AnfOp` includes `ACall(Atom,Vector<Atom>)`, `AIf(Atom,AnfExpr,AnfExpr)`, `AMatch(Atom,Vector<AnfMatchArm>)`, `ALoop(AnfExpr)`, `ADefer`, `AAssign(LocalId,Atom)`, `AInit(Atom)`, `AArrayLit(Vector<Atom>)`, `ABinOp`, `AUnOp`, `AMakeClosure(FuncId,Vector<LocalId>)`, `ARecord`, `ARecordGet`, `ARecordUpdate`, `AVariant`, `AIndex`, `AGlobalSet`, `AWrapAnyref`, `AUnwrapAnyref`. `AnfFunctionDef.{ func_id, name, body }`, `AnfModule.{ functions }`.
 - Builder families (`boot/compiler/builder_family.tw:43-51`): `string_builder_config(b).push_id == b.method_id("String","concat")`; `vector_builder_config(b).push_id == b.method_id("Vector","append")`. These are the exact FuncIds the lowered fold calls use.
-- Ownership per-block verdicts (`boot/compiler/ownership.tw:1943` `block_verdicts`): forward walk with `st: ForwardState`, `pre := st` captured pre-op, `last := last_use_at(inst.op, scan.live_after[i])`, query `pre.shell_reusable(base, last)` (line 1774) → `Unique` + valid + last-use. Written to `BlockFacts` at `ownership.tw:3340-3343`.
-- `OptimizerSemantics` carries `builder`/`string_builder` `BuilderConfig`s (`boot/compiler/opt/semantics.tw:20-21,209`).
-- Artifacts (`ownership_verdicts.tw:296-360`): `compute_artifacts` / `compute_candidate_artifacts` → `OwnershipArtifacts.{ key, analyzed }`; `artifact_key_for_anf` + `same_artifact_key` gate staleness.
-- Inspection (`boot/commands/ir.tw:65-97`): `render_census_report` computes `owned := dry_run…`/artifacts once and appends dry-run + audit tables under `include_sites`.
+- Inspection (`boot/commands/ir.tw:65-97`): `render_census_report` appends dry-run + audit tables under `include_sites`. The builder-region render is added here; it calls `region_verdicts(opt, builtins)` directly (no ownership artifacts needed).
 - Test harness (`boot/tests/suites/dry_run_suite.tw`): `use @std.testing.assert as assert`, `use @std.testing as runner`; `pub fn suite() runner.Suite` = `runner.suite("n").test("d", fn() Result<Void,String> { try assert.equal(…); .Ok({}) })`; `pipeline.compile_source(src) Result<PipelineArtifacts>` → `.opt`,`.builtins`. Register in `boot/tests/main.tw` (`use .suites.<n>` + add `<n>.suite()` to `runner.run_all([…])`).
 - **Twinkle has no tuple types.** Use nominal `.{ … }` records for multi-value returns.
 
@@ -75,11 +72,9 @@ else (main arm):
 
 ## File Structure
 
-- **Create `boot/compiler/builder_region_detect.tw`** — pure ANF detector: types (`RegionCandidate`, `BuilderRegionKey`, helper records), the break-dispatch skeleton + main-arm scan (conditions 3/4/5, sound by rejection), and `detect_candidates(m, b) Vector<RegionCandidate>` which emits **both** clean candidates and structurally-rejected near-misses (with reason). Analysis-track; shared by the fact and Plan 2's producer.
-- **Modify `boot/compiler/cfg.tw:37-54`** — add `fold_reusable: Dict<Int, Bool>` to `BlockFacts` + `empty_block_facts()`.
-- **Modify `boot/compiler/ownership.tw`** — extend `BlockVerdicts`/`block_verdicts` to record `fold_reusable` for `concat`/`append` folds; write into `blk.exit.fold_reusable`.
-- **Create `boot/compiler/builder_region_fact.tw`** — compose candidate + converged `fold_reusable` (cond 2) + empty seed (cond 1) → `RegionVerdict{ key, family, func, linearly_folded, reason, helper_sequence }`; `region_verdicts(opt, b, artifacts)`; artifact-key fingerprinted. **Architecture note (intentional):** the design says "surface the fact through `ownership_verdicts.tw`." We instead put the region-fact surface in its own module that *consumes* `ownership_verdicts`' fingerprinted `OwnershipArtifacts` — the same fingerprint/staleness discipline, just a region-shaped verdict alongside the per-site ones. A forwarding API inside `ownership_verdicts.tw` would create an import cycle (`ownership_verdicts` → `builder_region_fact` → `ownership_verdicts`), so the dependency is kept one-directional. This matches the design's *intent* (facts surfaced via a fingerprinted-artifact consumer) if not the literal module name.
-- **Modify `boot/commands/ir.tw:65-97`** — render certified/rejected candidates (full `BuilderRegionKey`, boundaries, helper sequence, proof id, reason) reusing the already-computed `owned` artifacts.
+- **Create `boot/compiler/builder_region_detect.tw`** — pure ANF detector: types (`RegionCandidate`, `BuilderRegionKey`, helper records), the break-dispatch skeleton + main-arm scan (the structural conditions, sound by rejection), and `detect_candidates(m, b) Vector<RegionCandidate>` which emits **both** clean candidates and structurally-rejected near-misses (with reason). Shared by the fact and Plan 2's producer. *(Done — Phase A.)*
+- **Create `boot/compiler/builder_region_fact.tw`** — map each `RegionCandidate` to `RegionVerdict{ key, func, family, linearly_folded, helper_sequence, proof_id, reason }` where `linearly_folded = structural_ok`; `region_verdicts(opt, b) Vector<RegionVerdict>`. **No ownership artifacts, no fingerprinting** — it depends only on the detector + builtins. (The earlier `cfg.tw`/`ownership.tw` `fold_reusable` changes are removed; see the design's "The structural safety fact".)
+- **Modify `boot/commands/ir.tw:65-97`** — render certified/rejected candidates (full `BuilderRegionKey`, boundaries, helper sequence, proof id, reason) via `region_verdicts(opt, builtins)` (no artifacts needed).
 - **Create `boot/tests/suites/builder_region_suite.tw`** + register in `boot/tests/main.tw`.
 
 ---
@@ -666,117 +661,37 @@ git commit -m "builder-region: publication/capture/non-empty-seed/multi-region n
 
 ---
 
-## Phase B — The `linearly_folded` fact (rides the ownership pass)
+## Phase B — The `linearly_folded` fact (structural)
 
-### Task B1: Add `fold_reusable` to `BlockFacts`
+The fact is **purely structural**: `linearly_folded = candidate.structural_ok`. There is **no**
+ownership dependency, no `fold_reusable`/`BlockFacts`/`block_verdicts` change, and no artifact
+fingerprinting — the earlier B1/B2 (ownership integration) are removed. Rationale: builder-region
+lowering replaces the accumulator with a *private* builder and never mutates it, so ownership
+uniqueness is unnecessary (and is unsatisfiable for `""`-seeded string accumulators, which the
+ownership lattice marks `.Unknown`). See `docs/plans/sound-uniqueness/codegen/builder-region-design.md`,
+"The structural safety fact".
 
-**Files:** Modify `boot/compiler/cfg.tw:37-54`.
+### Task B1: The structural fact module
 
-- [ ] **Step 1:** In `BlockFacts` after `verdict_reusable_shell: Dict<Int, Bool>,`:
+**Files:** Create `boot/compiler/builder_region_fact.tw`; tests in `boot/tests/suites/builder_region_suite.tw`.
 
-```tw
-  // Set at a fold call (String.concat / Vector.append) whose base is the
-  // accumulator: true iff the base is Unique + valid + at last use there
-  // (builder-region condition 2). Keyed by the fold-call result local.
-  fold_reusable: Dict<Int, Bool>,
-```
-
-In `empty_block_facts()` after `verdict_reusable_shell: Dict.new(),`: `fold_reusable: Dict.new(),`.
-
-- [ ] **Step 2:** `make boot-test` → PASS (if another `BlockFacts.{…}` literal exists and the compiler flags a missing field, add `fold_reusable: Dict.new()` there).
-- [ ] **Step 3:** Commit `git commit -am "cfg: add fold_reusable BlockFacts map (builder-region condition 2)"`.
-
----
-
-### Task B2: Record `fold_reusable` in `block_verdicts`
-
-**Files:** Modify `boot/compiler/ownership.tw` (`BlockVerdicts` 1941; `block_verdicts` 1943-2059; write 3340-3343).
-
-- [ ] **Step 1:** `BlockVerdicts` gains a field:
+- [ ] **Step 1: Fact module.** `region_verdicts(opt, b)` runs the detector and maps each
+  `RegionCandidate` to a verdict (`linearly_folded = structural_ok`), emitting certified **and**
+  rejected candidates with the region key, helper sequence, proof id, and reason.
 
 ```tw
-type BlockVerdicts = .{ texts: Dict<Int, String>, reusable_shell: Dict<Int, Bool>, fold_reusable: Dict<Int, Bool> }
-```
-
-In `block_verdicts`, after `reusable_shell: Dict<Int, Bool> = Dict.new()` add `fold_reusable: Dict<Int, Bool> = Dict.new()`.
-
-- [ ] **Step 2:** Add the `is_fold_push` helper (near other `sem` helpers):
-
-```tw
-fn is_fold_push(sem: OptimizerSemantics, fid: FuncId) Bool {
-  fid.id == sem.string_builder.push_id.id or fid.id == sem.builder.push_id.id
-}
-```
-
-- [ ] **Step 3:** In the instruction loop's `.ACall(callee, args) =>` arm, **add** a fold-reusability write at the top of the arm without altering the existing body. Wrap the arm:
-
-```tw
-      .ACall(callee, args) => {
-        case callee_func_id(callee) {
-          .Some(fid) => if is_fold_push(sem, fid) and args.len() == 2 {
-            fold_reusable[inst.anf_local.id] = pre.shell_reusable(args[0], last)
-          } else {},
-          .None => {},
-        }
-        // >>> the existing `case callee_func_id(callee) { ... }` body is preserved verbatim here <<<
-      },
-```
-
-(This only *adds* a `fold_reusable` write; it must not change any existing `verdicts`/`reusable_shell` write — that keeps 8A/8B/8D/8E byte-identical.)
-
-- [ ] **Step 4:** Return the map: `BlockVerdicts.{ texts: verdicts, reusable_shell, fold_reusable }` (line 2059). Write it at 3343: `blk.exit.fold_reusable = verdicts.fold_reusable`.
-
-- [ ] **Step 5:** Test — a clean fold site is reusable:
-
-```tw
-// in the suite
-use compiler.codegen.ownership_verdicts
-use compiler.opt.semantics.{make_prelude_optimizer_semantics}
-
-fn fold_reusable_count(src: String) Int {
-  case pipeline.compile_source(src) {
-    .Ok(a) => {
-      sem := make_prelude_optimizer_semantics(a.builtins)
-      arts := ownership_verdicts.compute_artifacts(a.opt, a.builtins, sem)
-      n := 0
-      for f in arts.analyzed.functions {
-        for blk in f.blocks {
-          for _k, v in blk.exit.fold_reusable { if v { n = n + 1 } }
-        }
-      }
-      n
-    },
-    .Err(e) => error("compile failed: ${e}"),
-  }
-}
-```
-
-```tw
-.test("clean fold site is reusable", fn() Result<Void, String> {
-  assert.is_true(fold_reusable_count("fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n") >= 1)
-})
-```
-
-- [ ] **Step 6:** `make boot-test` → PASS.
-- [ ] **Step 7:** Commit `git commit -am "ownership: record fold-site reusability (builder-region condition 2)"`.
-
----
-
-### Task B3: Compose `linearly_folded`
-
-**Files:** Create `boot/compiler/builder_region_fact.tw`; tests in the suite.
-
-- [ ] **Step 1: Fact module.** A candidate is `linearly_folded` iff `structural_ok` (conditions 1/3/4/5) AND every fold site is `fold_reusable` (condition 2). Emits certified **and** rejected verdicts.
-
-```tw
-//! Compose builder-region detection (conditions 1/3/4/5) with the ownership
-//! analysis's fold-site reusability (condition 2) into linearly_folded.
+//! The structural `linearly_folded` fact for builder regions. A candidate is
+//! linearly_folded iff it is structurally clean (empty seed, unconditional single
+//! fold, no observation/publication, no self-alias) — detection is sound by
+//! rejection. Builder-region lowering replaces the accumulator with a PRIVATE
+//! builder and never mutates it, so ownership uniqueness is NOT required (see
+//! builder-region-design.md, "The structural safety fact"). Emits certified AND
+//! rejected verdicts for inspection.
 
 use compiler.anf.{AnfModule}
 use compiler.builder_region_detect as detect
-use compiler.builder_region_detect.{RegionCandidate, BuilderRegionKey}
+use compiler.builder_region_detect.{BuilderRegionKey, RegionCandidate}
 use compiler.builtins.{BuiltinRegistry}
-use compiler.codegen.ownership_verdicts
 
 pub type RegionVerdict = .{
   key: BuilderRegionKey,
@@ -796,185 +711,74 @@ fn helper_sequence(family: String) String {
   }
 }
 
-fn fold_reusable_table(artifacts: ownership_verdicts.OwnershipArtifacts) Dict<String, Bool> {
-  out: Dict<String, Bool> = Dict.new()
-  for f in artifacts.analyzed.functions {
-    for blk in f.blocks {
-      for local_id, v in blk.exit.fold_reusable { out["${f.func_id}#${local_id}"] = v }
-    }
-  }
-  out
-}
-
-fn all_folds_reusable(c: RegionCandidate, tbl: Dict<String, Bool>) Bool {
-  for fs in c.fold_sites {
-    ok := case tbl.get("${c.func_id.id}#${fs.id}") { .Some(v) => v, .None => false }
-    if !ok { return false }
-  }
-  c.fold_sites.len() > 0
-}
-
-// Pure composition, exposed for condition-2 unit tests: given candidates, the
-// staleness flag, and the fold-reusable table, produce verdicts.
-pub fn region_verdicts_from_table(
-  cands: Vector<RegionCandidate>,
-  stale: Bool,
-  tbl: Dict<String, Bool>,
-) Vector<RegionVerdict> {
+pub fn region_verdicts(opt: AnfModule, b: BuiltinRegistry) Vector<RegionVerdict> {
+  cands := detect.detect_candidates(opt, b)
   out: Vector<RegionVerdict> = []
   for c in cands {
-    folded := c.structural_ok and !stale and all_folds_reusable(c, tbl)
-    reason := if !c.structural_ok {
-      "rejected (structural): ${c.reason}"
-    } else if stale {
-      "rejected: stale ownership artifact"
-    } else if folded {
-      "certified: empty seed, unconditional clean fold, unique base"
+    reason := if c.structural_ok {
+      "certified: empty seed, unconditional clean fold, no observation/publication"
     } else {
-      "rejected: fold base not proven unique (condition 2)"
+      "rejected (structural): ${c.reason}"
     }
     proof_id := "phase8c-region:${c.func}:seed L${c.seed_site.id}:loop L${c.loop_site.id}"
-    out = out.append(RegionVerdict.{
-      key: c.region_key(),
-      func: c.func,
-      family: c.family,
-      linearly_folded: folded,
-      helper_sequence: helper_sequence(c.family),
-      proof_id,
-      reason,
-    })
+    out = .append(
+      RegionVerdict.{
+        key: c.region_key(),
+        func: c.func,
+        family: c.family,
+        linearly_folded: c.structural_ok,
+        helper_sequence: helper_sequence(c.family),
+        proof_id,
+        reason,
+      },
+    )
   }
   out
-}
-
-pub fn region_verdicts(
-  opt: AnfModule,
-  b: BuiltinRegistry,
-  artifacts: ownership_verdicts.OwnershipArtifacts,
-) Vector<RegionVerdict> {
-  cands := detect.detect_candidates(opt, b)
-  expected := ownership_verdicts.artifact_key_for_anf(opt)
-  stale := !expected.same_artifact_key(artifacts.key)
-  tbl := if stale { Dict.new() } else { fold_reusable_table(artifacts) }
-  region_verdicts_from_table(cands, stale, tbl)
 }
 ```
 
-- [ ] **Step 2: Tests** (certified + a condition-2 rejection exercised directly via the pure `region_verdicts_from_table` with a stubbed fold-reusable table — this is the reliable way to cover condition 2, since empty-seed clean-structure folds are almost always unique in practice):
+- [ ] **Step 2: Tests.** Add to the suite the `region_fact` import + helpers + tests. (`detect` is
+  already imported from A3.)
 
 ```tw
-// in the suite
 use compiler.builder_region_fact as region_fact
 
 fn verdicts_for(src: String) Vector<region_fact.RegionVerdict> {
   case pipeline.compile_source(src) {
-    .Ok(a) => {
-      sem := make_prelude_optimizer_semantics(a.builtins)
-      arts := ownership_verdicts.compute_artifacts(a.opt, a.builtins, sem)
-      region_fact.region_verdicts(a.opt, a.builtins, arts)
-    },
+    .Ok(a) => region_fact.region_verdicts(a.opt, a.builtins),
     .Err(e) => error("compile failed: ${e}"),
   }
 }
 
 fn certified_count(src: String) Int {
   n := 0
-  for v in verdicts_for(src) { if v.linearly_folded { n = n + 1 } }
+  for v in verdicts_for(src) {
+    if v.linearly_folded {
+      n = n + 1
+    }
+  }
   n
 }
 ```
 
 ```tw
-.test("clean fold is certified", fn() Result<Void, String> {
+.test("clean string fold certifies", fn() Result<Void, String> {
   assert.equal(certified_count("fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n"), 1)
 })
-.test("rejected candidate still appears (as not-folded)", fn() Result<Void, String> {
+.test("clean vector fold certifies", fn() Result<Void, String> {
+  assert.equal(certified_count("fn m() Void {\n  acc: Vector<Int> = []\n  for x in [1, 2] { acc = acc.append(x) }\n  println(acc.len().to_string())\n}\nm()\n"), 1)
+})
+.test("conditional fold renders as a rejected candidate", fn() Result<Void, String> {
   vs := verdicts_for("fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { if c == \"a\" { acc = acc.concat(c) } }\n  println(acc)\n}\nm()\n")
-  // conditional fold: appears as a rejected candidate, not certified
   try assert.equal(vs.len(), 1)
   try assert.is_false(vs[0].linearly_folded)
   try assert.str_contains(vs[0].reason, "structural")
   .Ok({})
 })
-.test("condition 2: non-unique fold base rejects (stubbed table)", fn() Result<Void, String> {
-  src := "fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n"
-  case pipeline.compile_source(src) {
-    .Ok(a) => {
-      cands := detect.detect_candidates(a.opt, a.builtins)
-      try assert.equal(cands.len(), 1)
-      // structurally clean, but every fold site marked NOT reusable → rejected
-      false_tbl: Dict<String, Bool> = Dict.new()
-      for fs in cands[0].fold_sites { false_tbl["${cands[0].func_id.id}#${fs.id}"] = false }
-      rejected := region_fact.region_verdicts_from_table(cands, false, false_tbl)
-      try assert.is_false(rejected[0].linearly_folded)
-      try assert.str_contains(rejected[0].reason, "condition 2")
-      // same candidate, fold site marked reusable → certified
-      true_tbl: Dict<String, Bool> = Dict.new()
-      for fs in cands[0].fold_sites { true_tbl["${cands[0].func_id.id}#${fs.id}"] = true }
-      certified := region_fact.region_verdicts_from_table(cands, false, true_tbl)
-      try assert.is_true(certified[0].linearly_folded)
-      .Ok({})
-    },
-    .Err(e) => .Err(e),
-  }
-})
 ```
 
-- [ ] **Step 3:** `make boot-test` → PASS.
-- [ ] **Step 4:** Commit `git add boot/compiler/builder_region_fact.tw boot/tests/suites/builder_region_suite.tw && git commit -m "builder-region: compose linearly_folded fact + stale guard"`.
-
----
-
-### Task B4: Stale-artifact + scoped/full equivalence tests
-
-**Files:** tests only (stale handling already in B3).
-
-- [ ] **Step 1: Tests.**
-
-```tw
-.test("scoped artifacts match full for certification", fn() Result<Void, String> {
-  src := "fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n"
-  case pipeline.compile_source(src) {
-    .Ok(a) => {
-      sem := make_prelude_optimizer_semantics(a.builtins)
-      full := ownership_verdicts.compute_artifacts(a.opt, a.builtins, sem)
-      cands := detect.detect_candidates(a.opt, a.builtins)
-      roots: Dict<Int, Bool> = Dict.new()
-      for c in cands { roots[c.func_id.id] = true }
-      scoped := ownership_verdicts.compute_candidate_artifacts(a.opt, a.builtins, sem, roots)
-      vf := region_fact.region_verdicts(a.opt, a.builtins, full)
-      vs := region_fact.region_verdicts(a.opt, a.builtins, scoped)
-      try assert.equal(vf.len(), vs.len())
-      try assert.equal(vf[0].linearly_folded, vs[0].linearly_folded)
-      .Ok({})
-    },
-    .Err(e) => .Err(e),
-  }
-})
-.test("stale artifact rejects", fn() Result<Void, String> {
-  // artifacts for one module used against a different opt fingerprint
-  src_a := "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n"
-  src_b := "fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\", \"c\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n"
-  case pipeline.compile_source(src_a) {
-    .Ok(a) => case pipeline.compile_source(src_b) {
-      .Ok(bb) => {
-        sem := make_prelude_optimizer_semantics(a.builtins)
-        arts_b := ownership_verdicts.compute_artifacts(bb.opt, bb.builtins, sem)
-        vs := region_fact.region_verdicts(a.opt, a.builtins, arts_b) // mismatched
-        for v in vs { try assert.is_false(v.linearly_folded) }
-        .Ok({})
-      },
-      .Err(e) => .Err(e),
-    },
-    .Err(e) => .Err(e),
-  }
-})
-```
-
-- [ ] **Step 2:** `make boot-test` → PASS.
-- [ ] **Step 3:** Commit `git commit -am "builder-region: scoped/full equivalence + stale-artifact tests"`.
-
----
+- [ ] **Step 3:** `make boot-test` → PASS (string + vector certify; conditional renders rejected).
+- [ ] **Step 4:** `target/twk fmt` both files, then commit: `builder-region: structural linearly_folded fact (no ownership dependency)`.
 
 ## Phase C — Inspection render + verification
 
@@ -982,10 +786,10 @@ fn certified_count(src: String) Int {
 
 **Files:** Modify `boot/commands/ir.tw:65-97`.
 
-- [ ] **Step 1: Reuse the already-computed `owned` artifacts** (do NOT recompute ownership). In `render_census_report`, the `include_sites` branch already binds `owned` (the dry-run artifacts). Add after the audit block:
+- [ ] **Step 1: Add the render.** In `render_census_report`, the builder-region fact is structural, so it needs no ownership artifacts — call `region_verdicts(opt, builtins)` directly. Add the import + render helper:
 
 ```tw
-// imports at top of ir.tw (skip if already present)
+// import at top of ir.tw (skip if already present)
 use compiler.builder_region_fact as region_fact
 ```
 
@@ -1003,14 +807,14 @@ fn render_region_rows(vs: Vector<region_fact.RegionVerdict>) String {
 }
 ```
 
-Inside `render_census_report`, after the `mutable_audit` concat, reusing `owned`:
+Inside `render_census_report`, in the `include_sites` branch after the `mutable_audit` concat:
 
 ```tw
-    region_vs := region_fact.region_verdicts(artifacts.opt, artifacts.builtins, owned)
+    region_vs := region_fact.region_verdicts(artifacts.opt, artifacts.builtins)
     out = out.concat(render_region_rows(region_vs))
 ```
 
-(`owned` is the `OwnershipArtifacts` bound at `ir.tw:72` — verified — and already shared by the dry-run and audit tables. Reuse it; do not call `compute_artifacts` again.)
+(No `owned`/`compute_artifacts` needed — `region_verdicts` runs the pure-ANF detector on `artifacts.opt`.)
 
 - [ ] **Step 2:** `make bundle-cli` (heavy, alone) → builds `target/twk`.
 - [ ] **Step 3: Manual verify.**
@@ -1022,7 +826,7 @@ target/twk ir /tmp/br.tw --census --sites
 
 Expected: a `builder regions:` row, `family=string`, `linearly_folded=true`, a full key, helper sequence, proof id.
 
-- [ ] **Step 4:** Commit `git add boot/commands/ir.tw && git commit -m "ir: render builder-region certified/rejected candidates (reusing artifacts)"`.
+- [ ] **Step 4:** Commit `git add boot/commands/ir.tw && git commit -m "ir: render builder-region certified/rejected candidates"`.
 
 ---
 
@@ -1042,15 +846,15 @@ Expected: a `builder regions:` row, `family=string`, `linearly_folded=true`, a f
 - **Blockers fixed:** (1) all fixtures are function-local `:=`; (2) no tuples — `SeedFamily`/`FoundRegion`/`ScanResult` records; (3) vector seed recognized via `AInit(ALocal empty_arr_local)`, string via `AInit(ALitStr "")`.
 - **Gap 4 (conditional/continue deferral):** verified against the conditional AND continue-guard ANF dumps — the fold nests (conditional) or a top-level guard `AIf` precedes it (continue-guard). Fix: `scan_main_arm` rejects ANY control-flow op (`is_control_flow_op`) on the main arm, and `finish` requires exactly one top-level fold. Negative tests: conditional (A3), continue-guarded + nested-loop (A4).
 - **Gap 5 (inspection):** renders certified AND rejected candidates with full `BuilderRegionKey`, boundaries, helper sequence, proof id, and reason (C1).
-- **Gap 6 (coverage) — actual tests:** interior-read, conditional-fold, early `return`, self-concat, vector+string positives (A3); continue-guarded, Cell publication, chunk-alias, nested-loop, closure capture, call publication, non-empty-seed, two-region (A4); fold-site reusable (B2); certified + rejected-candidate-still-rendered + **condition-2 both directions via stubbed table** (B3); scoped/full equivalence + stale-artifact (B4). **Value-carrying `break` is checker-rejected in source** (verified), so it's covered by the defensive scan code, not a source fixture. `try` early-return and task/channel publication are subsumed by the call-publication test (any call taking `acc` as an arg rejects via `op_references_deep`); not separately fixtured.
+- **Gap 6 (coverage) — actual tests:** interior-read, conditional-fold, early `return`, self-concat, vector+string positives (A3); continue-guarded, Cell publication, chunk-alias, nested-loop, closure capture, call publication, non-empty-seed, two-region (A4); string+vector certify, conditional renders as a rejected candidate (B1). **Value-carrying `break` is checker-rejected in source** (verified), so it's covered by the defensive scan code, not a source fixture. `try` early-return and task/channel publication are subsumed by the call-publication test (any call taking `acc` as an arg rejects via `op_references_deep`); not separately fixtured.
+- **No ownership dependency:** the old condition 2 (`fold_reusable`/`block_verdicts`, planned B1/B2) is removed — `linearly_folded = structural_ok`. See the design's "The structural safety fact".
 - **Nit 7:** `fold_sites` sorted in `region_key`; `freeze_site = loop_site` documented as a Plan-1 proxy (no rewrite/freeze site exists yet).
-- **Nit 8:** C1 reuses the `owned` artifacts (`ir.tw:72`, verified); no second `compute_artifacts`.
-- **Type consistency:** `RegionCandidate`/`BuilderRegionKey`/`RegionVerdict`/`ScanResult`/`FoundRegion` field names consistent across A1/A2/A3/B3/C1; `fold_reusable` identical in `cfg.tw`/`ownership.tw`/`builder_region_fact.tw`. `region_verdicts_from_table` (pure) is called by `region_verdicts` and by the B3 condition-2 test.
+- **Type consistency:** `RegionCandidate`/`BuilderRegionKey`/`RegionVerdict`/`ScanResult`/`FoundRegion` field names consistent across A1/A2/A3/B1/C1.
 - **Deferred to Plan 2:** `BuilderRegionDecision`, the ANF rewrite, `repr_assign` string-seed erasure, ANF′ ordering, boxed-`Vector<Int>` emission fixture. This plan surfaces the fact only.
 
 ## Risks for the executor
 
-- **`block_verdicts` edit (B2) is the one soundness-sensitive change** — additive only (a new `fold_reusable` write; never touch existing `verdicts`/`reusable_shell`). Self-host (C2) is the guard.
 - **Skeleton coupling:** detection assumes the verified break-dispatch loop shape (`if <exit> { break } else { … continue }`). Non-matching loops fall back (no candidate) — sound. If a fixture unexpectedly yields 0 candidates, dump `--opt` and reconcile against the verified shapes above.
-- **`condition-2` in practice:** empty-seed + clean-structure folds are almost always unique, so a *natural* source fixture that is structurally clean yet non-unique is hard to construct (pre-loop aliasing rejects structurally). Condition 2 is therefore tested directly through the pure `region_verdicts_from_table` with a stubbed fold-reusable table (B3), exercising both the reject and certify paths deterministically. The B2 reusable-count test guards the real ownership wiring.
-- **`pipeline.compile_source` + `owned`** are verified (`dry_run_suite` uses `compile_source`; `ir.tw:72` binds `owned`). No further verification needed for those.
+- **Soundness rests on helper privacy, not ownership:** `linearly_folded` is structural because the builder rewrite (Plan 2) replaces the accumulator with a private builder (`string$builder_from("")` copies the seed; vector uses `builder_new`) and never mutates the accumulator value. This is the proof obligation Plan 2 must uphold — in particular it must **not** emit `vector$builder_from(base)` for a non-empty seed (deferred), which would break the private-builder assumption.
+- **`pipeline.compile_source`** is verified (`dry_run_suite` uses it). `region_verdicts` needs no ownership artifacts, so there is no `owned`/fingerprint plumbing to verify.
+- **Self-host (C2) still matters:** although Plan 1 adds no emitted-code change, `builder_region_fact.tw` becomes reachable from `ir.tw` (the compiler), so `make bundle-cli` / `make stage2` must stay green.
