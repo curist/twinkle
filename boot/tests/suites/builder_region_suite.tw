@@ -173,6 +173,42 @@ pub fn suite() runner.Suite {
       ) },
     )
     .test(
+      "clean string fold over a range loop is detected",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for i in range(3) { acc = acc.concat(\"x\") }\n  println(acc)\n}\nm()\n",
+        ),
+        1,
+      ) },
+    )
+    .test(
+      "clean vector fold over a range loop is detected",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc: Vector<Int> = []\n  for i in range(3) { acc = acc.append(i) }\n  println(acc.len().to_string())\n}\nm()\n",
+        ),
+        1,
+      ) },
+    )
+    .test(
+      "interior read on a range loop rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for i in range(3) { acc = acc.concat(\"x\")\n  println(acc) }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "conditional fold on a range loop rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for i in range(3) { if i > 0 { acc = acc.concat(\"x\") } }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
       "clean string fold certifies",
       fn() Result<Void, String> { assert.equal(
         certified_count(

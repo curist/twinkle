@@ -164,6 +164,16 @@ fn is_fold_attempt(op: AnfOp, acc: LocalId, push_id: FuncId) Bool {
   }
 }
 
+// Of a fold ATTEMPT (`is_fold_attempt` already true): is the chunk argument
+// (args[1]) the accumulator itself — `acc.concat(acc)` — rather than some
+// other malformed tail (e.g. a bad consume-reassign)?
+fn is_self_concat(op: AnfOp, acc: LocalId) Bool {
+  case op {
+    .ACall(_, args) => args.len() == 2 and atom_is_local(args[1], acc),
+    _ => false,
+  }
+}
+
 // Control-flow ops are rejected on the loop main arm (first slice: unconditional).
 fn is_control_flow_op(op: AnfOp) Bool {
   case op {
@@ -191,7 +201,11 @@ fn scan_main_arm(arm: AnfExpr, acc: LocalId, push_id: FuncId, folds: Vector<Loca
         ScanResult.{
           ok: false,
           fold_sites: [],
-          reason: "self-concat / chunk aliases the accumulator, or malformed fold tail",
+          reason: if is_self_concat(op, acc) {
+            "self-concat: chunk aliases the accumulator"
+          } else {
+            "malformed fold tail (bad consume-reassign)"
+          },
         }
       } else if is_control_flow_op(op) {
         // Any branch/loop on the main arm makes the fold conditional or
@@ -282,11 +296,17 @@ fn is_break_exit(e: AnfExpr) Bool {
 // Find the break-dispatch AIf on the loop body's top-level chain and return its
 // non-break (main) arm. `acc` must not be referenced before that AIf.
 //
-// Soundness note: when the top-level op is a non-break-dispatch `AIf` (or the
-// body has no break-dispatch shape at all), this returns `.None` WITHOUT itself
-// scanning that op for `acc`. That is safe only because the sole caller,
-// `find_region`, re-scans the entire `ALoop` op with `op_references_deep` when no
-// fold is found via the main arm — so any `acc` reference in an unmatched shape is
+// A non-break-dispatch AIf preceding the real break-dispatch (e.g. a range
+// loop's step-sign condition, verified: `int.eq step, 0` then `if ... then
+// true else <range-math>`) is skipped and scanning continues past it — but
+// only when it does NOT reference `acc`; if it does, the accumulator is
+// observed before the fold and this bails to `.None`.
+//
+// Soundness note: when the body has no break-dispatch shape at all (falls
+// through to the base case below), this returns `.None` WITHOUT itself
+// scanning further. That is safe only because the sole caller, `find_region`,
+// re-scans the entire `ALoop` op with `op_references_deep` when no fold is
+// found via the main arm — so any `acc` reference in an unmatched shape is
 // still caught by that fallback. Keep the two together.
 fn loop_main_arm(body: AnfExpr, acc: LocalId) AnfExpr? {
   case body {
@@ -297,7 +317,15 @@ fn loop_main_arm(body: AnfExpr, acc: LocalId) AnfExpr? {
         if is_break_exit(else_e) and !is_break_exit(then_e) {
           .Some(then_e)
         } else {
-          .None
+          // A non-break-dispatch AIf (e.g. range's step-sign condition computation)
+          // that doesn't touch acc: skip it and keep looking for the real
+          // break-dispatch. If it DOES reference acc, the accumulator is observed
+          // before the fold — reject.
+          if op_references_deep(op, acc) {
+            .None
+          } else {
+            loop_main_arm(rest, acc)
+          }
         }
       },
       _ => if op_references_deep(op, acc) {
@@ -388,7 +416,7 @@ fn detect_in_expr(
   str_push: FuncId,
   vec_push: FuncId,
   empty_arr: Dict<Int, Bool>,
-  acc: Vector<RegionCandidate>,
+  cands: Vector<RegionCandidate>,
 ) Vector<RegionCandidate> {
   case expr {
     .Let(local, op, body) => {
@@ -400,7 +428,7 @@ fn detect_in_expr(
 
       out := case seed_family(op, str_push, vec_push, ea) {
         .Some(sf) => case find_region(body, local, sf.push_id) {
-          .Some(fr) => acc.append(RegionCandidate.{
+          .Some(fr) => cands.append(RegionCandidate.{
             func_id,
             func,
             family: sf.family,
@@ -412,14 +440,14 @@ fn detect_in_expr(
             structural_ok: fr.scan.ok,
             reason: fr.scan.reason,
           }),
-          .None => acc,
+          .None => cands,
         },
-        .None => acc,
+        .None => cands,
       }
       out2 := detect_in_op(op, func_id, func, str_push, vec_push, ea, out)
       detect_in_expr(body, func_id, func, str_push, vec_push, ea, out2)
     },
-    _ => acc,
+    _ => cands,
   }
 }
 
@@ -430,23 +458,23 @@ fn detect_in_op(
   str_push: FuncId,
   vec_push: FuncId,
   empty_arr: Dict<Int, Bool>,
-  acc: Vector<RegionCandidate>,
+  cands: Vector<RegionCandidate>,
 ) Vector<RegionCandidate> {
   case op {
     .AIf(_, t, e) => {
-      a := detect_in_expr(t, func_id, func, str_push, vec_push, empty_arr, acc)
+      a := detect_in_expr(t, func_id, func, str_push, vec_push, empty_arr, cands)
       detect_in_expr(e, func_id, func, str_push, vec_push, empty_arr, a)
     },
     .AMatch(_, arms) => {
-      cur := acc
+      cur := cands
       for arm in arms {
         cur = detect_in_expr(arm.body, func_id, func, str_push, vec_push, empty_arr, cur)
       }
       cur
     },
-    .ALoop(b) => detect_in_expr(b, func_id, func, str_push, vec_push, empty_arr, acc),
-    .ADefer(b) => detect_in_expr(b, func_id, func, str_push, vec_push, empty_arr, acc),
-    _ => acc,
+    .ALoop(b) => detect_in_expr(b, func_id, func, str_push, vec_push, empty_arr, cands),
+    .ADefer(b) => detect_in_expr(b, func_id, func, str_push, vec_push, empty_arr, cands),
+    _ => cands,
   }
 }
 
