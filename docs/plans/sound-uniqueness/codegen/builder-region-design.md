@@ -1,6 +1,10 @@
 # Phase 8C — Builder-Region Lowering (Design)
 
-**Status:** Design — in implementation. **Date:** 2026-07-22. **Rev 3** — Plan 1 execution
+**Status:** Design — in implementation. **Date:** 2026-07-22. **Rev 4** — folded Plan 1's two
+must-do review follow-ups into the Plan 2 design (FU-1 fold-result deadness guard in Component 3;
+FU-2 re-folded-accumulator surfacing in Component 2); source disposition in
+[../../2026-07-22-8c-plan1-review-followups.md](../../2026-07-22-8c-plan1-review-followups.md).
+**Rev 3** — Plan 1 execution
 revealed that ownership uniqueness (the old "condition 2") is both unnecessary for builder-region
 lowering (the rewrite replaces the accumulator with a private builder, never mutating it) *and*
 unsatisfiable for string accumulators (`""` seeds as `.Unknown`). The first-slice `linearly_folded`
@@ -224,6 +228,18 @@ collect_builder_region_candidates_and_roots(opt)   // ANF walk only, no ownershi
   boundaries plus the helper sequence (`builder_new`/`builder_from("")` →
   `builder_push`/`builder_extend` → `builder_freeze`), the fresh builder/freeze/assign locals,
   the `ArtifactKey`, and a proof/debug id. Uncertified candidates emit no record.
+- **Re-folded accumulator surfacing (FU-2).** Today `seed_family` only fires on a **fresh**
+  `AInit` empty-seed binding, so a second loop that re-folds an already-bound accumulator —
+  `acc := ""; for … { acc = acc.concat(…) }; use(acc); for … { acc = acc.concat(…) }` — is not
+  surfaced *at all*, not even as a rejected candidate (silent drop). This is conservative and
+  **sound** (Plan 2 only ever touches the first loop's boundary), but an inspection-completeness
+  gap. When the producer builds `BuilderRegionDecision` records, it must also recognize a re-folded
+  accumulator whose value re-enters a subsequent loop as **its own region** (keyed distinctly by
+  its seed/loop site so it can never collide with the first region's `BuilderRegionKey`), or
+  explicitly render it as a **rejected candidate** with a "re-used accumulator, not a fresh seed"
+  reason. The two-loop-same-`acc` shape must surface two candidates (or one certified + one
+  rejected-with-reason), never a silent drop. This slots in alongside the non-overlap machinery
+  below.
 - **Non-overlap rule:** if two accepted candidate regions share a fold site, loop, or the same
   accumulator local across overlapping ranges, **reject all but one deterministically** (lowest
   `BuilderRegionKey`) so the rewrite never double-transforms a site.
@@ -255,6 +271,18 @@ iteration. The transform, per certified region:
   `ACall(builder_push/builder_extend, [builder_local, chunk])`, and **neutralize** the old
   `acc = result` binding to `AInit(.ALitVoid)` (the accumulator is no longer materialized
   inside the loop).
+  - **Fold-result deadness guard (FU-1, soundness — pre-neutralization).** Neutralizing the
+    `acc = result` reassign to `AInit(.ALitVoid)` and replacing the fold with a void push
+    *drops the fold-call result value*. That is only sound if `result` is dead after the
+    reassign. Plan 1 certification holds today **only** because `fold_chunk` matches a
+    **direct** `AAssign(acc, ALocal result)` where `result` is a synthetic single-use temp (a
+    named/live temp gets an intervening `AInit` node and is already rejected) — i.e. it rests on
+    the optimizer never copy-propagating a *live* temp into the direct reassign position. Do not
+    trust that implicitly: **before neutralizing any fold, the rewrite's structural validation
+    checks that each recorded fold-result local has no use other than the reassign** (a cheap
+    last-use / single-use check over the region). If a fold result is live elsewhere, **reject
+    the region** (persistent fallback) — never neutralize a value that is still read. This is a
+    structural deadness check, not a re-proof.
 - After the loop: `acc = builder_freeze(builder)` via fresh `freeze_local` / `assign_local`,
   rebinding the original accumulator with `AAssign(acc, freeze_local)`. This is the **single**
   freeze point; the record certifies (condition 4) that no publishing edge precedes it. (This
@@ -370,6 +398,12 @@ Rewrite (Plan 2):
 - **Multiple eligible loops in one function**, **nested candidate loops**, and **overlapping
   candidate rejection** — fresh locals never collide (centralized allocation); overlaps reject
   deterministically.
+- **FU-1 fold-result deadness** — a fixture where the fold result is (synthetically) read after
+  the `acc = result` reassign is **not** rewritten (persistent fallback); the normal single-use
+  case still rewrites. The check lives in the rewrite's structural validation, not codegen re-proof.
+- **FU-2 re-folded accumulator** — the two-loop-same-`acc` fixture surfaces **two** candidates
+  (or one certified + one rejected-with-reason "re-used accumulator, not a fresh seed"), never a
+  silent drop; the two regions carry distinct `BuilderRegionKey`s.
 - **Stale region-boundary decision** (recorded region no longer matches the ANF) → persistent
   fallback (distinct from stale-artifact fallback).
 - **Call-swap decisions recomputed on ANF′** after the builder rewrite (8A/8B/8D/8E sites still
@@ -395,14 +429,20 @@ each small and independently shippable.
 - **Plan 2 — producer + rewrite pass (string + vector empty-seed) + pipeline wiring.** The
   non-circular candidate/roots/artifacts/produce staging, `BuilderRegionDecision` records with
   `BuilderRegionKey` + non-overlap + centralized fresh-local allocation, the ANF-to-ANF rewrite
-  with the concrete void-call shape and structural-only validation, and ANF′ ordering.
+  with the concrete void-call shape and structural-only validation, and ANF′ ordering. Includes
+  the two must-do follow-ups from Plan 1's review: **FU-1** — the fold-result deadness guard in
+  the rewrite's pre-neutralization validation (soundness; Component 3) — and **FU-2** — surfacing
+  a re-folded accumulator whose value re-enters a subsequent loop as its own region or a
+  rejected-with-reason candidate (Component 2, alongside the non-overlap machinery).
   **Backend prerequisite:** extend `repr_assign`'s builder-seed recognition to mark
   `string$builder_from` result slots `OpaqueAnyref` (it currently recognizes only the vector seed
   ids), so string `builder_local`s are erased handles rather than `String`-typed slots. First
   emitted-code change. Tests: **a string builder region that actually emits and passes backend
   verification / WAT inspection** (guards the repr_assign fix); inspection + round-trip + negative
-  + stale-region + multi/nested/overlap + boxed-`Vector<Int>` fixtures; scoped-vs-full
-  equivalence; self-host fixed point.
+  + stale-region + multi/nested/overlap + boxed-`Vector<Int>` fixtures; **FU-1** fold-result-live
+  fixture (synthetic read after the reassign → not rewritten, normal case still rewritten);
+  **FU-2** two-loop-same-`acc` fixture (two candidates surface, never a silent drop);
+  scoped-vs-full equivalence; self-host fixed point.
 - **Plan 3 — non-empty seeds (string now-free; vector after a `builder_push` check).**
   - *String:* relax the seed detector to accept any seed local; the rewrite is **identical**
     (`builder_from(seed)`), and **no new proof is needed** — `str.tw`'s `builder_from` copies

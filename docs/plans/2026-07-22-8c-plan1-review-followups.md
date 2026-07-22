@@ -22,6 +22,11 @@ items worth acting on. Parent design: `docs/plans/sound-uniqueness/codegen/build
 
 ## Pending — actionable follow-ups
 
+> **Update 2026-07-22:** FU-1 and FU-2 are now folded into the Plan 2 design
+> (`sound-uniqueness/codegen/builder-region-design.md`, Rev 4) — FU-1 as the Component 3
+> pre-neutralization deadness guard, FU-2 as the Component 2 re-folded-accumulator surfacing.
+> They are Plan 2 acceptance items. FU-3 remains deferred/unscheduled.
+
 ### FU-1 (was F3) — Plan 2 must add a fold-result liveness gate *(soundness gate; blocks Plan 2 emission)*
 
 **What.** Plan 1 certification implicitly assumes the fold-call result temp is dead after the
