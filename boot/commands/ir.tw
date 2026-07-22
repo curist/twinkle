@@ -6,8 +6,11 @@ use commands.common.{exit_usage_error, format_compile_error, get_positional, pri
 use compiler.artifacts.{PipelineArtifacts}
 use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{prepare_backend_with_mutable_config}
+use compiler.builder_region_detect as detect
 use compiler.builder_region_fact as region_fact
 use compiler.census
+use compiler.codegen.builder_region
+use compiler.codegen.builder_region_produce
 use compiler.codegen.dry_run
 use compiler.codegen.mutable_audit
 use compiler.codegen.mutable_produce
@@ -60,10 +63,42 @@ fn render_cfg_artifacts(artifacts: PipelineArtifacts) String {
   summary.render_cfg(owned.view, owned.analyzed, b, s, owned.table, variants)
 }
 
+/// The certified-candidate keys still present in a (post-rewrite) module — i.e.
+/// regions whose fold was NOT replaced. Used to tell "actually rewritten" from
+/// "merely produced": a consumed region disappears from detection after the
+/// rewrite, an abandoned one still detects its concat/append fold.
+fn collect_certified_keys(cands: Vector<detect.RegionCandidate>) Vector<detect.BuilderRegionKey> {
+  out: Vector<detect.BuilderRegionKey> = []
+  for c in cands {
+    if c.structural_ok {
+      out = .append(c.region_key())
+    }
+  }
+  out
+}
+
+fn key_in(keys: Vector<detect.BuilderRegionKey>, key: detect.BuilderRegionKey) Bool {
+  for k in keys {
+    case builder_region_produce.key_cmp(k, key) {
+      .Eq => return true,
+      _ => {},
+    }
+  }
+  false
+}
+
 /// Render the builder-region candidate table: one row per certified or
-/// rejected candidate, with its full key, helper sequence, and proof id.
-fn render_region_rows(vs: Vector<region_fact.RegionVerdict>) String {
-  out := "\nbuilder regions:\nfunc\tfamily\tlinearly_folded\tkey\thelpers\tproof\treason\n"
+/// rejected candidate, with its full key, helper sequence, and proof id. The
+/// `consumed` column reports whether the rewrite ACTUALLY applied — a certified
+/// region is consumed iff it no longer detects as a candidate after
+/// `rewrite_module` (its fold was replaced by a builder call). A produced-but-
+/// splice-abandoned region still detects its fold, so it reads "no"; rejected
+/// candidates read "-".
+fn render_region_rows(
+  vs: Vector<region_fact.RegionVerdict>,
+  post_keys: Vector<detect.BuilderRegionKey>,
+) String {
+  out := "\nbuilder regions:\nfunc\tfamily\tlinearly_folded\tconsumed\tkey\thelpers\tproof\treason\n"
   for v in vs {
     fs := "["
     for id, i in v.key.fold_sites {
@@ -77,8 +112,17 @@ fn render_region_rows(vs: Vector<region_fact.RegionVerdict>) String {
     }
     fs = .concat("]")
     key := "fn${v.key.func_id} seed L${v.key.seed_site} loop L${v.key.loop_site} folds ${fs} freeze L${v.key.freeze_site} ${v.key.family}"
+    consumed := if v.linearly_folded {
+      if key_in(post_keys, v.key) {
+        "no"
+      } else {
+        "yes"
+      }
+    } else {
+      "-"
+    }
     out = .concat(
-      "${v.func}\t${v.family}\t${v.linearly_folded}\t${key}\t${v.helper_sequence}\t${v.proof_id}\t${v.reason}\n",
+      "${v.func}\t${v.family}\t${v.linearly_folded}\t${consumed}\t${key}\t${v.helper_sequence}\t${v.proof_id}\t${v.reason}\n",
     )
   }
   out
@@ -122,7 +166,14 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
     out = .concat(mutable_audit.render_audit_rows(audit_rows))
 
     region_vs := region_fact.region_verdicts(artifacts.opt, artifacts.builtins)
-    out = .concat(render_region_rows(region_vs))
+
+    // "consumed" reflects ACTUAL rewrite application, not mere production: a
+    // certified region is consumed iff it no longer detects as a candidate after
+    // rewrite_module (its fold was replaced). Produced-but-splice-abandoned
+    // regions still detect their fold, so they read "no".
+    rewritten := builder_region.rewrite_module(artifacts.opt, artifacts.builtins)
+    post_keys := collect_certified_keys(detect.detect_candidates(rewritten, artifacts.builtins))
+    out = .concat(render_region_rows(region_vs, post_keys))
   }
   out
 }

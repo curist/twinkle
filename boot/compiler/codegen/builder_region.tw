@@ -6,10 +6,11 @@
 //!   builder := builder_from(acc)   // string: from(""); vector: builder_new()
 //!   loop { ... builder_push(builder, chunk) ... }
 //!   acc := freeze(builder)
-//! This module is a pure transform over `AnfModule`; it is NOT yet wired into the
-//! compile pipeline (Task 5 does that). Every step is sound-by-abandonment: if the
-//! recorded seed/loop shape cannot be matched cleanly, or the rewritten push count
-//! does not equal the recorded fold count, the region is left persistent.
+//! This module is a pure transform over `AnfModule`, run at the top of
+//! `link_program` (producing ANF' consumed by closure conversion and the call-swap
+//! producer). Every step is sound-by-abandonment: if the recorded seed/loop shape
+//! cannot be matched cleanly, or the rewritten push count does not equal the
+//! recorded fold count, the region is left persistent.
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom}
 use compiler.builder_family.{BuilderConfig, string_builder_config, vector_builder_config}
@@ -247,7 +248,7 @@ fn splice_loop(
             loop_body: rewritten,
             cont: body,
           }
-          .Some(lower_builder_region(region, builder))
+          .Some(region.lower_builder_region(builder))
         },
         _ => .None,
       }
@@ -405,14 +406,9 @@ pub fn rewrite_func_with_decisions(
 
 pub fn rewrite_module(m: AnfModule, b: BuiltinRegistry) AnfModule {
   table := builder_region_produce.produce_builder_region_decisions(m, b)
-  new_funcs: Vector<AnfFunctionDef> = collect f in m.functions {
+  result := m
+  result.functions = collect f in m.functions {
     rewrite_func_with_decisions(f, decisions_for_func(table, f.func_id), b)
   }
-  AnfModule.{
-    functions: new_funcs,
-    init_func_id: m.init_func_id,
-    extern_imports: m.extern_imports,
-    global_monos: m.global_monos,
-    lib_exports: m.lib_exports,
-  }
+  result
 }

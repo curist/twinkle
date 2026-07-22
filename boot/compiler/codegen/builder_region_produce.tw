@@ -81,7 +81,7 @@ pub fn key_cmp(a: BuilderRegionKey, b: BuilderRegionKey) Order {
     .Eq => {},
     c => return c,
   }
-  String.compare(a.family, b.family)
+  a.family.compare(b.family)
 }
 
 fn key_less(a: BuilderRegionKey, b: BuilderRegionKey) Bool {
@@ -219,7 +219,7 @@ fn group_overlaps(g: Vector<RegionCandidate>, c: RegionCandidate) Bool {
 fn min_key_candidate(g: Vector<RegionCandidate>) RegionCandidate {
   best := g[0]
   for c in g {
-    if key_less(detect.region_key(c), detect.region_key(best)) {
+    if key_less(c.region_key(), best.region_key()) {
       best = c
     }
   }
@@ -257,13 +257,13 @@ pub fn resolve_overlaps(cands: Vector<RegionCandidate>) Vector<RegionCandidate> 
 // `region_key` order so allocation is reproducible regardless of detection or
 // grouping order.
 fn allocate_locals(f: AnfFunctionDef, cands: Vector<RegionCandidate>) Vector<BuilderRegionDecision> {
-  sorted := cands.sort_by(fn(x, y) { key_cmp(detect.region_key(x), detect.region_key(y)) })
+  sorted := cands.sort_by(fn(x, y) { key_cmp(x.region_key(), y.region_key()) })
   cur := next_local_id(f)
   out: Vector<BuilderRegionDecision> = []
   for c in sorted {
     out = .append(
       BuilderRegionDecision.{
-        key: detect.region_key(c),
+        key: c.region_key(),
         func_id: c.func_id,
         family: c.family,
         accumulator: c.accumulator,

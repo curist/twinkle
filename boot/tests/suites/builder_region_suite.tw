@@ -556,4 +556,53 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "string builder region round-trips to the persistent result",
+      fn() Result<Void, String> {
+        acc := ""
+        for c in ["a", "b", "c"] {
+          acc = .concat(c)
+        }
+        assert.equal(acc, "abc")
+      },
+    )
+    .test(
+      "vector builder region round-trips to the persistent result",
+      fn() Result<Void, String> {
+        v: Vector<Int> = []
+        for x in [1, 2, 3] {
+          v = .append(x)
+        }
+        try assert.equal(v.len(), 3)
+        try assert.equal(v[0] + v[1] + v[2], 6)
+        .Ok({})
+      },
+    )
+    .test(
+      "a rewritten region no longer detects as a candidate (consumed invariant)",
+      fn() Result<Void, String> {
+        // The census `consumed` column relies on this: a region actually replaced
+        // by the rewrite disappears from detection, so certified-before /
+        // gone-after distinguishes consumed from produced-but-abandoned.
+        a := compile_or_fail(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n",
+        )
+        before := 0
+        for c in detect.detect_candidates(a.opt, a.builtins) {
+          if c.structural_ok {
+            before = before + 1
+          }
+        }
+        rewritten := builder_region.rewrite_module(a.opt, a.builtins)
+        after := 0
+        for c in detect.detect_candidates(rewritten, a.builtins) {
+          if c.structural_ok {
+            after = after + 1
+          }
+        }
+        try assert.equal(before, 1)
+        try assert.equal(after, 0)
+        .Ok({})
+      },
+    )
 }

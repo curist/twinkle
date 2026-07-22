@@ -22,6 +22,7 @@ use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{prepare_backend_with_mutable_config}
 use compiler.backend.verify.{VerifyLevel, verify_prepared_module_with_level}
 use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.builder_region
 use compiler.codegen.emit.{emit_module}
 use compiler.codegen.intrinsics as cg_intrinsics
 use compiler.codegen.linker.{LinkedModule, link}
@@ -76,9 +77,20 @@ pub fn runtime_modules(eq_layouts: EqTypeLayouts) Vector<WasmModule> {
 pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) LinkedModule {
   timed := timings_enabled()
 
+  // 0. Builder-region rewrite -> ANF'. Runs before closure conversion and the
+  // call-swap producer so both consume the rewritten ANF (the call-swap stale-artifact
+  // guard keys off the ANF fingerprint, which must be ANF').
+  tbr := date.now()
+  anf_prime := builder_region.rewrite_module(anf, builtins)
+  tbr2 := date.now()
+
+  if timed {
+    log_time("builder_region_rewrite", tbr2 - tbr)
+  }
+
   // 1. Final closure conversion.
   t0 := date.now()
-  closure_conversion := convert_closures(anf, env)
+  closure_conversion := convert_closures(anf_prime, env)
   t1 := date.now()
 
   if timed {
@@ -89,7 +101,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   // semantic ANF. Ownership summaries are pre-closure facts; backend emission
   // consumes them only after the prepared-site selector validates that the
   // closure-converted site still matches the recorded shape.
-  produced_decisions := mutable_produce.produce_update_call_decisions(anf, builtins)
+  produced_decisions := mutable_produce.produce_update_call_decisions(anf_prime, builtins)
   t1p := date.now()
 
   if timed {
