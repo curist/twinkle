@@ -296,6 +296,17 @@ fn is_consume_reassign(body: AnfExpr, acc: LocalId, result: LocalId) Bool {
   }
 }
 
+// Control-flow ops are rejected on the loop main arm (first slice: unconditional).
+fn is_control_flow_op(op: AnfOp) Bool {
+  case op {
+    .AIf(_, _, _) => true,
+    .AMatch(_, _) => true,
+    .ALoop(_) => true,
+    .ADefer(_) => true,
+    _ => false,
+  }
+}
+
 // Scan the loop main arm: exactly one top-level fold, and acc referenced
 // NOWHERE else on the arm (condition 3/4/5, sound by rejection).
 fn scan_main_arm(arm: AnfExpr, acc: LocalId, push_id: FuncId, folds: Vector<LocalId>) ScanResult {
@@ -308,14 +319,22 @@ fn scan_main_arm(arm: AnfExpr, acc: LocalId, push_id: FuncId, folds: Vector<Loca
           _ => ScanResult.{ ok: false, fold_sites: [], reason: "malformed fold tail" },
         }
       },
-      .None => if op_references_deep(op, acc) {
-        ScanResult.{ ok: false, fold_sites: [], reason: "accumulator referenced outside the fold (interior read / nested conditional / capture)" }
+      .None => if is_control_flow_op(op) {
+        // Any branch/loop on the main arm makes the fold conditional or
+        // continue-guarded (verified: a `if skip { continue }` guard lowers to a
+        // top-level AIf here, then the fold follows). First slice is UNCONDITIONAL
+        // only, so reject all control flow on the main arm. Deferred to Plan 5.
+        ScanResult.{ ok: false, fold_sites: [], reason: "control flow on the loop main arm (conditional/continue-guarded fold) — deferred to Plan 5" }
+      } else if op_references_deep(op, acc) {
+        ScanResult.{ ok: false, fold_sites: [], reason: "accumulator referenced outside the fold (interior read / capture / publication)" }
       } else {
         scan_main_arm(body, acc, push_id, folds)
       },
     },
     .Atom(a) => reject_if_acc(a, acc, folds),
     .Return(.Some(a)) => reject_if_acc(a, acc, folds),
+    // Value-carrying break is checker-rejected in source ("break with a value is
+    // not supported"), so unreachable from first-slice source; kept defensive.
     .Break(.Some(a)) => reject_if_acc(a, acc, folds),
     .Return(.None) => finish(folds),
     .Break(.None) => finish(folds),
@@ -426,20 +445,20 @@ fn loop_main_arm(body: AnfExpr, acc: LocalId) AnfExpr? {
   }
 }
 
+type FoundRegion = .{ loop_site: LocalId, scan: ScanResult }
+
 // From `acc`'s seed binding, scan forward: `acc` untouched until a Let(loop_site,
-// ALoop(body)) whose main arm scans clean. Returns (loop_site, scan). Returns a
-// rejected candidate (structural_ok=false) if a folding loop is found but the
-// scan fails; None if no folding loop is found at all.
-fn find_region(after_seed: AnfExpr, acc: LocalId, push_id: FuncId) (LocalId, ScanResult)? {
+// ALoop(body)) whose main arm scans. Returns the loop site + scan result (a
+// rejected scan still yields a candidate so near-misses render). `.None` when no
+// fold-bearing loop for `acc` is found at all.
+fn find_region(after_seed: AnfExpr, acc: LocalId, push_id: FuncId) FoundRegion? {
   case after_seed {
     .Let(local, op, body) => case op {
       .ALoop(loop_body) => case loop_main_arm(loop_body, acc) {
         .Some(main) => {
           scan := scan_main_arm(main, acc, push_id, [])
-          // only treat as a candidate if the loop actually folds acc (>=1 fold)
-          // OR the scan explicitly rejected a fold-bearing arm.
           if scan.ok or scan.fold_sites.len() > 0 or references_fold(main, acc, push_id) {
-            .Some((local, scan))
+            .Some(FoundRegion.{ loop_site: local, scan })
           } else {
             .None   // loop that doesn't fold acc at all — not our candidate
           }
@@ -498,17 +517,17 @@ fn detect_in_expr(
 
       out := case seed_family(op, str_push, vec_push, ea) {
         .Some(sf) => case find_region(body, local, sf.push_id) {
-          .Some(pair) => acc.append(RegionCandidate.{
+          .Some(fr) => acc.append(RegionCandidate.{
             func_id,
             func,
             family: sf.family,
             push_id: sf.push_id,
             accumulator: local,
             seed_site: local,
-            loop_site: pair.first,
-            fold_sites: pair.second.fold_sites,
-            structural_ok: pair.second.ok,
-            reason: pair.second.reason,
+            loop_site: fr.loop_site,
+            fold_sites: fr.scan.fold_sites,
+            structural_ok: fr.scan.ok,
+            reason: fr.scan.reason,
           }),
           .None => acc,
         },
@@ -557,15 +576,6 @@ pub fn detect_candidates(m: AnfModule, b: BuiltinRegistry) Vector<RegionCandidat
 }
 ```
 
-Note: the `pair.first`/`pair.second` accessors assume Twinkle destructures the 2-tuple return. **Twinkle has no tuples** — change `find_region` to return a nominal record instead:
-
-```tw
-type FoundRegion = .{ loop_site: LocalId, scan: ScanResult }
-// find_region returns FoundRegion? ; use `pair.loop_site` / `pair.scan`.
-```
-
-Update `find_region`'s `.Some((local, scan))` to `.Some(FoundRegion.{ loop_site: local, scan })` and the call site to `pair.loop_site` / `pair.scan`.
-
 - [ ] **Step 4: Run.** `make boot-test` → all A3 tests PASS (string+vector detected; interior-read / conditional / early-return / self-concat all reject).
 
 If a test fails, dump the fixture's ANF (`target/twk ir /tmp/x.tw --opt`) and reconcile the skeleton match — the break-dispatch shape is verified above for index-based `for` loops.
@@ -586,8 +596,17 @@ git commit -m "builder-region: empty-seed + break-dispatch detection with reject
 - [ ] **Step 1: Add the design's required negatives** (all must reject via `op_references_deep`).
 
 ```tw
-.test("value-carrying break rejects", fn() Result<Void, String> {
-  assert.equal(clean_count("fn m() String {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  break acc }\n  acc\n}\nprintln(m())\n"), 0)
+.test("continue-guarded fold rejects (deferred to plan 5)", fn() Result<Void, String> {
+  assert.equal(clean_count("fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { if c == \"b\" { continue }\n  acc = acc.concat(c) }\n  println(acc)\n}\nm()\n"), 0)
+})
+.test("Cell publication of accumulator rejects", fn() Result<Void, String> {
+  assert.equal(clean_count("fn m() Void {\n  cell := Cell.new(\"\")\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  cell.set(acc) }\n  println(cell.get())\n}\nm()\n"), 0)
+})
+.test("chunk aliasing the accumulator rejects", fn() Result<Void, String> {
+  assert.equal(clean_count("fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { d := acc\n  acc = acc.concat(d) }\n  println(acc)\n}\nm()\n"), 0)
+})
+.test("nested loop over the accumulator rejects", fn() Result<Void, String> {
+  assert.equal(clean_count("fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { for d in [\"x\"] { acc = acc.concat(d) } }\n  println(acc)\n}\nm()\n"), 0)
 })
 .test("closure capture of accumulator rejects", fn() Result<Void, String> {
   assert.equal(clean_count("fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  f := fn() String { acc }\n  println(f()) }\n  println(acc)\n}\nm()\n"), 0)
@@ -761,15 +780,13 @@ fn all_folds_reusable(c: RegionCandidate, tbl: Dict<String, Bool>) Bool {
   c.fold_sites.len() > 0
 }
 
-pub fn region_verdicts(
-  opt: AnfModule,
-  b: BuiltinRegistry,
-  artifacts: ownership_verdicts.OwnershipArtifacts,
+// Pure composition, exposed for condition-2 unit tests: given candidates, the
+// staleness flag, and the fold-reusable table, produce verdicts.
+pub fn region_verdicts_from_table(
+  cands: Vector<RegionCandidate>,
+  stale: Bool,
+  tbl: Dict<String, Bool>,
 ) Vector<RegionVerdict> {
-  cands := detect.detect_candidates(opt, b)
-  expected := ownership_verdicts.artifact_key_for_anf(opt)
-  stale := !expected.same_artifact_key(artifacts.key)
-  tbl := if stale { Dict.new() } else { fold_reusable_table(artifacts) }
   out: Vector<RegionVerdict> = []
   for c in cands {
     folded := c.structural_ok and !stale and all_folds_reusable(c, tbl)
@@ -795,9 +812,21 @@ pub fn region_verdicts(
   }
   out
 }
+
+pub fn region_verdicts(
+  opt: AnfModule,
+  b: BuiltinRegistry,
+  artifacts: ownership_verdicts.OwnershipArtifacts,
+) Vector<RegionVerdict> {
+  cands := detect.detect_candidates(opt, b)
+  expected := ownership_verdicts.artifact_key_for_anf(opt)
+  stale := !expected.same_artifact_key(artifacts.key)
+  tbl := if stale { Dict.new() } else { fold_reusable_table(artifacts) }
+  region_verdicts_from_table(cands, stale, tbl)
+}
 ```
 
-- [ ] **Step 2: Tests** (certified + a condition-2 rejection via aliasing that still passes structural detection — pass the accumulator to a summarized helper that shares it):
+- [ ] **Step 2: Tests** (certified + a condition-2 rejection exercised directly via the pure `region_verdicts_from_table` with a stubbed fold-reusable table — this is the reliable way to cover condition 2, since empty-seed clean-structure folds are almost always unique in practice):
 
 ```tw
 // in the suite
@@ -832,6 +861,28 @@ fn certified_count(src: String) Int {
   try assert.is_false(vs[0].linearly_folded)
   try assert.str_contains(vs[0].reason, "structural")
   .Ok({})
+})
+.test("condition 2: non-unique fold base rejects (stubbed table)", fn() Result<Void, String> {
+  src := "fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n"
+  case pipeline.compile_source(src) {
+    .Ok(a) => {
+      cands := detect.detect_candidates(a.opt, a.builtins)
+      try assert.equal(cands.len(), 1)
+      // structurally clean, but every fold site marked NOT reusable → rejected
+      false_tbl: Dict<String, Bool> = Dict.new()
+      for fs in cands[0].fold_sites { false_tbl["${cands[0].func_id.id}#${fs.id}"] = false }
+      rejected := region_fact.region_verdicts_from_table(cands, false, false_tbl)
+      try assert.is_false(rejected[0].linearly_folded)
+      try assert.str_contains(rejected[0].reason, "condition 2")
+      // same candidate, fold site marked reusable → certified
+      true_tbl: Dict<String, Bool> = Dict.new()
+      for fs in cands[0].fold_sites { true_tbl["${cands[0].func_id.id}#${fs.id}"] = true }
+      certified := region_fact.region_verdicts_from_table(cands, false, true_tbl)
+      try assert.is_true(certified[0].linearly_folded)
+      .Ok({})
+    },
+    .Err(e) => .Err(e),
+  }
 })
 ```
 
@@ -925,7 +976,7 @@ Inside `render_census_report`, after the `mutable_audit` concat, reusing `owned`
     out = out.concat(render_region_rows(region_vs))
 ```
 
-(`owned` is the `OwnershipArtifacts` already computed for the dry-run at `ir.tw:74`. If its binding name differs, reuse whatever `dry_run_sites_with_artifacts` was given — do not call `compute_artifacts` again.)
+(`owned` is the `OwnershipArtifacts` bound at `ir.tw:72` — verified — and already shared by the dry-run and audit tables. Reuse it; do not call `compute_artifacts` again.)
 
 - [ ] **Step 2:** `make bundle-cli` (heavy, alone) → builds `target/twk`.
 - [ ] **Step 3: Manual verify.**
@@ -955,17 +1006,17 @@ Expected: a `builder regions:` row, `family=string`, `linearly_folded=true`, a f
 ## Self-Review checklist
 
 - **Blockers fixed:** (1) all fixtures are function-local `:=`; (2) no tuples — `SeedFamily`/`FoundRegion`/`ScanResult` records; (3) vector seed recognized via `AInit(ALocal empty_arr_local)`, string via `AInit(ALitStr "")`.
-- **Gap 4 (conditional/continue deferral):** the break-dispatch skeleton + top-level-only fold scan rejects nested (conditional) folds; `finish` requires exactly one fold. Verified against the conditional ANF dump.
-- **Gap 5 (inspection):** renders certified AND rejected candidates with full `BuilderRegionKey`, boundaries, helper sequence, proof id, and reason.
-- **Gap 6 (coverage):** interior-read, early `return`, value-`break`, closure capture, call publication, self-concat, non-empty-seed, conditional deferral, multi-region, condition-2/aliasing, stale-artifact, scoped/full equivalence — all have tests (A3/A4/B2/B3/B4).
+- **Gap 4 (conditional/continue deferral):** verified against the conditional AND continue-guard ANF dumps — the fold nests (conditional) or a top-level guard `AIf` precedes it (continue-guard). Fix: `scan_main_arm` rejects ANY control-flow op (`is_control_flow_op`) on the main arm, and `finish` requires exactly one top-level fold. Negative tests: conditional (A3), continue-guarded + nested-loop (A4).
+- **Gap 5 (inspection):** renders certified AND rejected candidates with full `BuilderRegionKey`, boundaries, helper sequence, proof id, and reason (C1).
+- **Gap 6 (coverage) — actual tests:** interior-read, conditional-fold, early `return`, self-concat, vector+string positives (A3); continue-guarded, Cell publication, chunk-alias, nested-loop, closure capture, call publication, non-empty-seed, two-region (A4); fold-site reusable (B2); certified + rejected-candidate-still-rendered + **condition-2 both directions via stubbed table** (B3); scoped/full equivalence + stale-artifact (B4). **Value-carrying `break` is checker-rejected in source** (verified), so it's covered by the defensive scan code, not a source fixture. `try` early-return and task/channel publication are subsumed by the call-publication test (any call taking `acc` as an arg rejects via `op_references_deep`); not separately fixtured.
 - **Nit 7:** `fold_sites` sorted in `region_key`; `freeze_site = loop_site` documented as a Plan-1 proxy (no rewrite/freeze site exists yet).
-- **Nit 8:** C1 reuses the `owned` artifacts already computed in `render_census_report`; no second `compute_artifacts`.
-- **Type consistency:** `RegionCandidate`/`BuilderRegionKey`/`RegionVerdict`/`ScanResult`/`FoundRegion` field names consistent across A1/A2/A3/B3/C1; `fold_reusable` identical in `cfg.tw`/`ownership.tw`/`builder_region_fact.tw`.
+- **Nit 8:** C1 reuses the `owned` artifacts (`ir.tw:72`, verified); no second `compute_artifacts`.
+- **Type consistency:** `RegionCandidate`/`BuilderRegionKey`/`RegionVerdict`/`ScanResult`/`FoundRegion` field names consistent across A1/A2/A3/B3/C1; `fold_reusable` identical in `cfg.tw`/`ownership.tw`/`builder_region_fact.tw`. `region_verdicts_from_table` (pure) is called by `region_verdicts` and by the B3 condition-2 test.
 - **Deferred to Plan 2:** `BuilderRegionDecision`, the ANF rewrite, `repr_assign` string-seed erasure, ANF′ ordering, boxed-`Vector<Int>` emission fixture. This plan surfaces the fact only.
 
 ## Risks for the executor
 
 - **`block_verdicts` edit (B2) is the one soundness-sensitive change** — additive only (a new `fold_reusable` write; never touch existing `verdicts`/`reusable_shell`). Self-host (C2) is the guard.
 - **Skeleton coupling:** detection assumes the verified break-dispatch loop shape (`if <exit> { break } else { … continue }`). Non-matching loops fall back (no candidate) — sound. If a fixture unexpectedly yields 0 candidates, dump `--opt` and reconcile against the verified shapes above.
-- **`condition-2` test:** structural detection already catches pre-loop aliasing (a use of `acc` before the loop rejects at detection). A pure condition-2 rejection (structurally clean but non-unique base) is exercised via `fold_reusable_count`; if a dedicated aliasing fixture proves hard to construct, rely on the B2 reusable-count test as the condition-2 guard and note it.
-- **Verify `pipeline.compile_source` + `owned` binding names** against `boot/commands/ir.tw` and `boot/tests/suites/dry_run_suite.tw` before writing C1/tests.
+- **`condition-2` in practice:** empty-seed + clean-structure folds are almost always unique, so a *natural* source fixture that is structurally clean yet non-unique is hard to construct (pre-loop aliasing rejects structurally). Condition 2 is therefore tested directly through the pure `region_verdicts_from_table` with a stubbed fold-reusable table (B3), exercising both the reject and certify paths deterministically. The B2 reusable-count test guards the real ownership wiring.
+- **`pipeline.compile_source` + `owned`** are verified (`dry_run_suite` uses `compile_source`; `ir.tw:72` binds `owned`). No further verification needed for those.
