@@ -1,0 +1,77 @@
+//! Pure-ANF builder-region detector. Recognizes empty-seed accumulator loops
+//! with a break-dispatch skeleton and applies a sound-BY-REJECTION scan: the
+//! accumulator's only reference on the loop main path must be one top-level
+//! fold. Emits clean candidates AND structurally-rejected near-misses (reason).
+//! Shared by builder_region_fact.tw and the Plan 2 producer.
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom}
+use compiler.builder_family.{string_builder_config, vector_builder_config}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.core_ir.{FuncId, LocalId}
+
+pub type BuilderRegionKey = .{
+  func_id: Int,
+  seed_site: Int,
+  loop_site: Int,
+  fold_sites: Vector<Int>, // sorted ascending
+  freeze_site: Int, // Plan 1 has no rewrite/freeze: set = loop_site (documented proxy)
+  family: String,
+}
+
+// A detected region candidate. `structural_ok` is true when conditions 3/4/5
+// hold; when false, `reason` explains the structural rejection. `fold_sites`
+// are the fold-call result locals (sorted).
+pub type RegionCandidate = .{
+  func_id: FuncId,
+  func: String,
+  family: String,
+  push_id: FuncId,
+  accumulator: LocalId,
+  seed_site: LocalId,
+  loop_site: LocalId,
+  fold_sites: Vector<LocalId>,
+  structural_ok: Bool,
+  reason: String,
+}
+
+type SeedFamily = .{ push_id: FuncId, family: String }
+
+type ScanResult = .{ ok: Bool, fold_sites: Vector<LocalId>, reason: String }
+
+pub fn region_key(c: RegionCandidate) BuilderRegionKey {
+  ids: Vector<Int> = collect fs in c.fold_sites {
+    fs.id
+  }
+  BuilderRegionKey.{
+    func_id: c.func_id.id,
+    seed_site: c.seed_site.id,
+    loop_site: c.loop_site.id,
+    fold_sites: sort_ints(ids),
+    freeze_site: c.loop_site.id,
+    family: c.family,
+  }
+}
+
+fn sort_ints(xs: Vector<Int>) Vector<Int> {
+  // small insertion sort; fold_sites is tiny (first slice: 1)
+  out := xs
+  i := 1
+  for i < out.len() {
+    j := i
+    for j > 0 and out[j - 1] > out[j] {
+      tmp := out[j - 1]
+      out[j - 1] = out[j]
+      out[j] = tmp
+      j = j - 1
+    }
+    i = i + 1
+  }
+  out
+}
+
+fn atom_is_local(a: Atom, local: LocalId) Bool {
+  case a {
+    .ALocal(id) => id.id == local.id,
+    _ => false,
+  }
+}

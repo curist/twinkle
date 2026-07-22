@@ -1,0 +1,8 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("builder_region")
+    .test("placeholder", fn() Result<Void, String> { assert.is_true(true) })
+}
