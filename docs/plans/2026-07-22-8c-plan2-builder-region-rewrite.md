@@ -69,7 +69,7 @@ Add to `builder_region_suite.tw`. This test compiles a string accumulator loop *
 fn links_ok(src: String) Bool {
   case pipeline.compile_source(src) {
     .Ok(a) => {
-      codegen.link_program(a.opt, a.env, a.builtins)
+      link_program(a.opt, a.env, a.builtins)
       true
     },
     .Err(e) => error("compile failed: ${e}"),
@@ -77,7 +77,7 @@ fn links_ok(src: String) Bool {
 }
 ```
 
-Add `use compiler.codegen as codegen` to the suite imports. Test:
+Add `use compiler.codegen.codegen.{link_program}` to the suite imports — `link_program` lives in the module `compiler.codegen.codegen` (existing importers use `use compiler.codegen.codegen.{codegen, runtime_modules}`); `use compiler.codegen as codegen` names a directory, not a module, and will not resolve `link_program`. Then call `link_program(a.opt, a.env, a.builtins)` directly in `links_ok`. Test:
 
 ```
 .test(
@@ -166,35 +166,74 @@ string seed. Inert until the rewrite emits the call."
 Run: `make quick-bundle-cli && target/twk run boot/tests/main.tw`
 Expected: FAIL — `vs.len()` is 1 (second loop silently dropped).
 
-- [ ] **Step 2: Detect the re-fold in `detect_in_op`'s `ALoop` arm**
+- [ ] **Step 2: Surface re-folds by claimed-loop-site, in a dedicated post-pass**
 
-The producer of top-level candidates is `detect_in_expr`, which starts a candidate only from a `seed_family` empty-seed binding. Re-folds are found in the **already-bound** case: an `.ALoop` whose body folds a local `v` for which no fresh empty seed was recorded. Extend the walk to surface those.
+**Why not seed-membership.** In ANF, loop rebinding mutates the *same* accumulator local: `acc := ""` binds `L0`, and **both** loops fold `L0` (verified — loop 1 `ACall(Fn11, [L0, …]); assign L0 = …`, loop 2 `ACall(Fn11, [L0, …]); assign L0 = …`). So a "flag loops folding a local that was *not* freshly seeded" predicate flags *neither* loop (both fold the seed `L0`). The distinguishing fact is not the accumulator but **which loop the primary region already claimed**: `find_region` claims the **first** fold-bearing loop for a seed; any *later* fold-bearing loop over the same local is the re-fold. Key off the loop-site, not the seed.
 
-In `detect_in_op` (`builder_region_detect.tw`), the `.ALoop(b)` arm currently only recurses (`detect_in_expr(b, …)`). Before recursing, check whether this loop folds a not-freshly-seeded accumulator and, if so, append a rejected candidate. Because `detect_in_op` does not currently carry the loop's binding local or the set of freshly-seeded locals, thread two new params through `detect_in_expr`/`detect_in_op`:
-- `seeded: Dict<Int, Bool>` — locals that were recognized as a fresh empty seed in this chain (set in `detect_in_expr` right where `seed_family` matches).
-- the enclosing `Let` local for an `ALoop` (available in `detect_in_expr`'s `.Let(local, op, body)` — pass `local` into `detect_in_op` for the `ALoop` case as the loop-site id).
-
-Concretely, in `detect_in_expr`'s `.Let(local, op, body)` arm, when `seed_family(op, …)` returns `.Some`, record `seeded[local.id] = true` **before** the `find_region` call, then pass `seeded` to `detect_in_op`. In `detect_in_op`'s `.ALoop(b)` arm, scan the loop body for a fold over any local `v` (reuse `references_fold(b, v, push_id)` for each push family) whose id is **not** in `seeded`; for the first such `v`, append:
+Do this as a **dedicated post-pass** (avoids threading new params through every `detect_in_expr`/`detect_in_op` arm). Restructure `detect_candidates`:
 
 ```
-RegionCandidate.{
-  func_id, func,
-  family: <family of the matching push>,
-  push_id: <matching push id>,
-  accumulator: v,
-  seed_site: v,        // no fresh seed; proxy to the accumulator local
-  loop_site: <loop Let local>,
-  fold_sites: [],
-  structural_ok: false,
-  reason: "re-used accumulator, not a fresh seed (non-empty; deferred to Plan 3)",
+pub fn detect_candidates(m: AnfModule, b: BuiltinRegistry) Vector<RegionCandidate> {
+  str_push := string_builder_config(b).push_id
+  vec_push := vector_builder_config(b).push_id
+  out: Vector<RegionCandidate> = []
+  for f in m.functions {
+    primaries := detect_in_expr(f.body, f.func_id, f.name, str_push, vec_push, Dict.new(), [])
+    // every candidate the seed path produced (certified OR structurally-rejected)
+    // has claimed its loop_site; those loops must not re-surface as re-folds.
+    claimed: Dict<Int, Bool> = Dict.new()
+    for c in primaries {
+      claimed[c.loop_site.id] = true
+    }
+    refolds := scan_refold_loops(f.body, f.func_id, f.name, str_push, vec_push, claimed, [])
+    out = out.concat(primaries).concat(refolds)
+  }
+  out
 }
 ```
 
-Keep the recursion into `b` afterward (a re-fold loop can still contain nested candidates). Guard against double-counting: a loop that IS the fresh-seed region's loop must not also be flagged as a re-fold — it won't be, because that region's accumulator id is in `seeded`.
+`scan_refold_loops` walks the function body; for each `Let(loop_local, ALoop(loop_body), rest)` whose `loop_local.id` is **not** in `claimed` and whose body contains a fold attempt over some local `v`, append a rejected candidate keyed by `loop_local`, then recurse into `loop_body` and `rest` (a re-fold loop can nest further candidates). Recurse through `AIf`/`AMatch`/`ADefer` bodies too.
 
-Implementation notes:
-- To scan "a fold over any local", you need the candidate accumulator. Rather than enumerate all locals, detect the fold call shape directly: walk the loop body for a top-level `ACall(.AGlobalFunc(push), [.ALocal(v), _])` where `push` is a known push id (`str_push`/`vec_push`), and take `v` if `!seeded.has(v.id)`. Add a small helper `first_refold_acc(body, str_push, vec_push, seeded) (LocalId, family, push_id)?` reusing the existing `is_fold_attempt`-style matching.
-- `family`/`push_id` come from which of `str_push`/`vec_push` matched.
+```
+fn scan_refold_loops(
+  e: AnfExpr, func_id: FuncId, func: String,
+  str_push: FuncId, vec_push: FuncId,
+  claimed: Dict<Int, Bool>, acc_cands: Vector<RegionCandidate>,
+) Vector<RegionCandidate> {
+  case e {
+    .Let(loop_local, .ALoop(loop_body), rest) => {
+      out := case claimed[loop_local.id] {
+        .Some(_) => acc_cands,   // this loop is a claimed primary region
+        .None => case first_refold(loop_body, str_push, vec_push) {
+          .Some(hit) => acc_cands.append(RegionCandidate.{
+            func_id, func,
+            family: hit.family,
+            push_id: hit.push_id,
+            accumulator: hit.acc,
+            seed_site: hit.acc,          // no fresh seed; proxy to the accumulator local
+            loop_site: loop_local,
+            fold_sites: [],
+            structural_ok: false,
+            reason: "re-used accumulator, not a fresh seed (non-empty; deferred to Plan 3)",
+          }),
+          .None => acc_cands,
+        },
+      }
+      out2 := scan_refold_loops(loop_body, func_id, func, str_push, vec_push, claimed, out)
+      scan_refold_loops(rest, func_id, func, str_push, vec_push, claimed, out2)
+    },
+    .Let(_, op, rest) => {
+      out := scan_refold_loops_op(op, func_id, func, str_push, vec_push, claimed, acc_cands)
+      scan_refold_loops(rest, func_id, func, str_push, vec_push, claimed, out)
+    },
+    _ => acc_cands,
+  }
+}
+```
+
+`scan_refold_loops_op` recurses into `AIf`/`AMatch`/`ADefer` sub-exprs (mirrors `detect_in_op`). `first_refold(loop_body, str_push, vec_push)` finds the first fold `ACall(.AGlobalFunc(push), [.ALocal(v), _])` where `push` matches `str_push` or `vec_push` and returns `(acc: v, family, push_id)`. **It must recurse into the break-dispatch structure the same way `references_fold`/`op_fold_ref` do** — the fold lives inside the loop's `AIf` main arm (verified in the ANF: `if L31 then break else …fold…`), **not** at `loop_body`'s top level. Build `first_refold` by mirroring `op_fold_ref`'s `AIf`/`AMatch`/`ALoop`/`ADefer` recursion, returning the matched `(v, family, push_id)` instead of a `Bool`. It does **not** need the reassign tail (a re-fold is rejected regardless of tail shape; we only need to surface it).
+
+**Note — claimed set includes rejected primaries.** A structurally-rejected primary (e.g. a conditional-fold loop) still claimed its `loop_site` via `detect_in_expr`, so it is in `claimed` and won't double-surface as a re-fold. Only loops with no primary candidate at all become re-folds.
 
 - [ ] **Step 3: Rebuild and run the FU-2 test**
 
@@ -700,7 +739,9 @@ Assert the typed-int vector accumulator loop stays **boxed** in this slice (`vec
 ```
 
 Run: `target/twk run boot/tests/main.tw`
-Expected: PASS. (If a `*_i64` builder id is resolvable, additionally assert its call count is 0.)
+Expected: PASS.
+
+**Do not probe a `*_i64` builder id via `builtins.id(...)`** — `id`/`method_id`/`id_by_canonical` all `error()` (trap) on a missing name, which would abort the test rather than fail it cleanly. The positive assertion (`vector$builder_push` count == 1, a guaranteed-present id) is sufficient to prove the boxed path emitted. If you want an explicit "no typed builder op" assertion, guard the lookup with `try_method_id` / a name-membership check first and skip if absent; never pass a possibly-absent name to `id()`.
 
 - [ ] **Step 2: Nested candidate loops — fresh locals never collide**
 
@@ -834,8 +875,10 @@ git commit -m "docs: 8C Plan 2 (builder-region rewrite) landed; update roadmap t
 - **Deferred (correctly out of scope):** non-empty seeds (Plan 3), typed routing (Plan 4), conditional/`continue` folds (Plan 5), multi-exit (Plan 6), straight-line chains (Plan 7). Not in this plan. ✓
 
 **Known execution risks to watch (not placeholders — flagged for the implementer):**
+- **FU-2 keys off claimed loop-site, NOT seed membership (T2.2):** verified in the ANF that both loops fold the *same* accumulator local (the seed `L0`), so any seed-membership predicate flags neither. The re-fold is the fold-bearing loop whose `loop_site` was **not** claimed by a primary candidate. Build `first_refold` to recurse into the break-dispatch `AIf`/`AMatch` (the fold is in the loop's main arm, not at `loop_body` top level).
 - **FU-1 fixture reachability (T4.5):** the source-level FU-1 fixture may certify-and-reject at Plan-1 level (zero certified candidates) rather than exercising the gate. The step explicitly instructs: verify with `clean_count`, and fall back to a hand-built ANF unit test that drives `fold_results_dead` to `false` if no certifying-then-FU-1-failing source exists. Do not ship the gate untested.
 - **Splice mechanics (T3.3):** locating the exact `Let(seed)…Let(loop)…cont` stretch in a flat ANF let-chain is the fiddliest part. If the optimized ANF interposes unrelated `Let`s between the seed and the loop, the walker must skip them (they don't reference `acc` — the detector already proved `acc` is untouched until the loop). Mirror `find_region`'s skip-unrelated-op traversal.
+- **Trapping id lookups (T6, T3, T4):** `builtins.id`/`method_id`/`id_by_canonical` `error()` (trap) on a missing name. Only pass **guaranteed-present** names (`String.concat`, `Vector.append`, `string$builder_*`, `vector$builder_*`) to them; use `try_method_id` or a name guard for anything possibly-absent (e.g. a `*_i64` typed builder op).
 - **Record spread-update syntax (T6.3):** `.{ …r with field: v }` is illustrative; use whatever field-copy form Twinkle supports (explicit `BuilderRegionDecision.{ key: ds[0].key, … , loop_site: bogus }`).
 
 **Type consistency:** `rewrite_module`, `rewrite_func_with_decisions`, `decisions_for_func`, `produce_builder_region_decisions`, `BuilderRegionDecision`, `BuilderRegionDecisionTable`, `fold_results_dead`, `resolve_overlaps`, `allocate_locals`, `count_calls_to`, `count_local_uses`, `find_func`, `compile_or_fail`, `links_ok` — names used consistently across tasks. `BuilderRegionKey`/`RegionCandidate`/`region_key` are the landed Plan-1 names.
