@@ -268,6 +268,19 @@ fn is_consume_reassign(body: AnfExpr, acc: LocalId, result: LocalId) Bool {
   }
 }
 
+// A base-only fold ATTEMPT: a push call with `acc` as arg0, regardless of the
+// chunk or the reassign tail. `fold_chunk` (strict: chunk != acc, consume-reassign)
+// recognizes CLEAN folds; `is_fold_attempt` also recognizes malformed ones
+// (self-concat `acc.concat(acc)`, bad tail) so they surface as rejected
+// near-misses with a reason instead of vanishing from the candidate set.
+fn is_fold_attempt(op: AnfOp, acc: LocalId, push_id: FuncId) Bool {
+  case op {
+    .ACall(.AGlobalFunc(f), args) => f.id == push_id.id and args.len() == 2
+      and atom_is_local(args[0], acc),
+    _ => false,
+  }
+}
+
 // Control-flow ops are rejected on the loop main arm (first slice: unconditional).
 fn is_control_flow_op(op: AnfOp) Bool {
   case op {
@@ -291,7 +304,12 @@ fn scan_main_arm(arm: AnfExpr, acc: LocalId, push_id: FuncId, folds: Vector<Loca
           _ => ScanResult.{ ok: false, fold_sites: [], reason: "malformed fold tail" },
         }
       },
-      .None => if is_control_flow_op(op) {
+      .None => if is_fold_attempt(op, acc, push_id) {
+        // A push call on `acc` that `fold_chunk` rejected: self-concat
+        // (`acc.concat(acc)`) or a malformed reassign tail. Surface it as a
+        // rejected near-miss with a precise reason (condition 5).
+        ScanResult.{ ok: false, fold_sites: [], reason: "self-concat / chunk aliases the accumulator, or malformed fold tail" }
+      } else if is_control_flow_op(op) {
         // Any branch/loop on the main arm makes the fold conditional or
         // continue-guarded (verified: a `if skip { continue }` guard lowers to a
         // top-level AIf here, then the fold follows). First slice is UNCONDITIONAL
@@ -393,8 +411,14 @@ Step 3, so these tests fail until then — that is the intended TDD red state):
 .test("early return of accumulator rejects", fn() Result<Void, String> {
   assert.equal(clean_count("fn m() String {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  return acc }\n  acc\n}\nprintln(m())\n"), 0)
 })
-.test("self concat rejects", fn() Result<Void, String> {
-  assert.equal(clean_count("fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(acc) }\n  println(acc)\n}\nm()\n"), 0)
+.test("self concat rejects and renders as a near-miss", fn() Result<Void, String> {
+  src := "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(acc) }\n  println(acc)\n}\nm()\n"
+  try assert.equal(clean_count(src), 0)
+  cands := candidates_for(src)
+  try assert.equal(cands.len(), 1)
+  try assert.is_false(cands[0].structural_ok)
+  try assert.str_contains(cands[0].reason, "self-concat")
+  .Ok({})
 })
 ```
 
@@ -481,14 +505,14 @@ fn find_region(after_seed: AnfExpr, acc: LocalId, push_id: FuncId) FoundRegion? 
   }
 }
 
-// Does `e` contain a fold call ACall(push,[acc,...]) anywhere (to distinguish a
-// rejected fold-bearing region from an unrelated loop)?
+// Does `e` contain a fold ATTEMPT on `acc` anywhere (to distinguish a
+// fold-bearing region — clean OR malformed, e.g. self-concat — from an unrelated
+// loop)? Uses `is_fold_attempt` (base-only) so self-concat still surfaces as a
+// candidate that the scan then rejects with a reason.
 fn references_fold(e: AnfExpr, acc: LocalId, push_id: FuncId) Bool {
   case e {
-    .Let(local, op, body) => case fold_chunk(op, body, acc, push_id, local) {
-      .Some(_) => true,
-      .None => op_fold_ref(op, acc, push_id) or references_fold(body, acc, push_id),
-    },
+    .Let(_, op, body) => is_fold_attempt(op, acc, push_id)
+      or op_fold_ref(op, acc, push_id) or references_fold(body, acc, push_id),
     _ => false,
   }
 }
