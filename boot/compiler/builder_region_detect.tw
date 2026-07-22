@@ -58,3 +58,171 @@ fn atom_is_local(a: Atom, local: LocalId) Bool {
     _ => false,
   }
 }
+
+fn expr_references(e: AnfExpr, local: LocalId) Bool {
+  case e {
+    .Let(_, op, body) => op_references_deep(op, local) or expr_references(body, local),
+    .Atom(a) => atom_is_local(a, local),
+    .Return(.Some(a)) => atom_is_local(a, local),
+    .Return(.None) => false,
+    .Break(.Some(a)) => atom_is_local(a, local),
+    .Break(.None) => false,
+    .Continue => false,
+  }
+}
+
+fn any_arg_is_local(args: Vector<Atom>, local: LocalId) Bool {
+  for a in args {
+    if atom_is_local(a, local) {
+      return true
+    }
+  }
+  false
+}
+
+fn op_references_deep(op: AnfOp, local: LocalId) Bool {
+  case op {
+    .ACall(callee, args) => atom_is_local(callee, local) or any_arg_is_local(args, local),
+    .ABinOp(_, l, r, _) => atom_is_local(l, local) or atom_is_local(r, local),
+    .AUnOp(_, inner, _) => atom_is_local(inner, local),
+    .AMakeClosure(_, fvs) => {
+      for v in fvs {
+        if v.id == local.id {
+          return true
+        }
+      }
+      false
+    },
+    .ARecord(_, fields) => {
+      for f in fields {
+        if atom_is_local(f.value, local) {
+          return true
+        }
+      }
+      false
+    },
+    .ARecordGet(t, _, _) => atom_is_local(t, local),
+    .ARecordUpdate(base, _, v, _, _) => atom_is_local(base, local) or atom_is_local(v, local),
+    .AVariant(_, _, args) => any_arg_is_local(args, local),
+    .AArrayLit(elems) => any_arg_is_local(elems, local),
+    .AIndex(base, idx, _, _) => atom_is_local(base, local) or atom_is_local(idx, local),
+    .AInit(v) => atom_is_local(v, local),
+    .AAssign(target, v) => target.id == local.id or atom_is_local(v, local),
+    .AGlobalSet(_, v) => atom_is_local(v, local),
+    .AIf(cond_e, then_e, else_e) => atom_is_local(cond_e, local)
+      or expr_references(then_e, local)
+      or expr_references(else_e, local),
+    .AMatch(scrutinee, arms) => {
+      if atom_is_local(scrutinee, local) {
+        return true
+      }
+      for arm in arms {
+        if expr_references(arm.body, local) {
+          return true
+        }
+      }
+      false
+    },
+    .ALoop(body) => expr_references(body, local),
+    .ADefer(body) => expr_references(body, local),
+    .AWrapAnyref(a, _) => atom_is_local(a, local),
+    .AUnwrapAnyref(a, _) => atom_is_local(a, local),
+  }
+}
+
+// A fold: ACall(push,[acc,chunk]) with chunk != acc, whose result is
+// consume-reassigned into acc in the immediately following Let.
+fn fold_chunk(op: AnfOp, body: AnfExpr, acc: LocalId, push_id: FuncId, result: LocalId) Atom? {
+  case op {
+    .ACall(.AGlobalFunc(f), args) => if f.id == push_id.id
+      and args.len() == 2 and atom_is_local(args[0], acc) and !atom_is_local(args[1], acc)
+      and is_consume_reassign(body, acc, result) {
+      .Some(args[1])
+    } else {
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn is_consume_reassign(body: AnfExpr, acc: LocalId, result: LocalId) Bool {
+  case body {
+    .Let(_, .AAssign(target, .ALocal(v)), _) => target.id == acc.id and v.id == result.id,
+    _ => false,
+  }
+}
+
+// Control-flow ops are rejected on the loop main arm (first slice: unconditional).
+fn is_control_flow_op(op: AnfOp) Bool {
+  case op {
+    .AIf(_, _, _) => true,
+    .AMatch(_, _) => true,
+    .ALoop(_) => true,
+    .ADefer(_) => true,
+    _ => false,
+  }
+}
+
+// Scan the loop main arm: exactly one top-level fold, and acc referenced
+// NOWHERE else on the arm (condition 3/4/5, sound by rejection).
+fn scan_main_arm(arm: AnfExpr, acc: LocalId, push_id: FuncId, folds: Vector<LocalId>) ScanResult {
+  case arm {
+    .Let(local, op, body) => case fold_chunk(op, body, acc, push_id, local) {
+      .Some(_) => {
+        // fold at top level; skip past the AAssign, continue scanning the tail
+        case body {
+          .Let(_, _, rest) => scan_main_arm(rest, acc, push_id, folds.append(local)),
+          _ => ScanResult.{ ok: false, fold_sites: [], reason: "malformed fold tail" },
+        }
+      },
+      .None => if is_control_flow_op(op) {
+        // Any branch/loop on the main arm makes the fold conditional or
+        // continue-guarded (verified: a `if skip { continue }` guard lowers to a
+        // top-level AIf here, then the fold follows). First slice is UNCONDITIONAL
+        // only, so reject all control flow on the main arm. Deferred to Plan 5.
+        ScanResult.{
+          ok: false,
+          fold_sites: [],
+          reason: "control flow on the loop main arm (conditional/continue-guarded fold) — deferred to Plan 5",
+        }
+      } else if op_references_deep(op, acc) {
+        ScanResult.{
+          ok: false,
+          fold_sites: [],
+          reason: "accumulator referenced outside the fold (interior read / capture / publication)",
+        }
+      } else {
+        scan_main_arm(body, acc, push_id, folds)
+      },
+    },
+    .Atom(a) => reject_if_acc(a, acc, folds),
+    .Return(.Some(a)) => reject_if_acc(a, acc, folds),
+    // Value-carrying break is checker-rejected in source ("break with a value is
+    // not supported"), so unreachable from first-slice source; kept defensive.
+    .Break(.Some(a)) => reject_if_acc(a, acc, folds),
+    .Return(.None) => finish(folds),
+    .Break(.None) => finish(folds),
+    .Continue => finish(folds),
+  }
+}
+
+fn reject_if_acc(a: Atom, acc: LocalId, folds: Vector<LocalId>) ScanResult {
+  if atom_is_local(a, acc) {
+    ScanResult.{ ok: false, fold_sites: [], reason: "accumulator published on an exit edge" }
+  } else {
+    finish(folds)
+  }
+}
+
+// First slice: exactly one unconditional fold.
+fn finish(folds: Vector<LocalId>) ScanResult {
+  if folds.len() == 1 {
+    ScanResult.{ ok: true, fold_sites: folds, reason: "" }
+  } else {
+    ScanResult.{
+      ok: false,
+      fold_sites: [],
+      reason: "expected exactly one unconditional fold, found ${folds.len()}",
+    }
+  }
+}
