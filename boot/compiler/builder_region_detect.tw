@@ -4,7 +4,7 @@
 //! fold. Emits clean candidates AND structurally-rejected near-misses (reason).
 //! Shared by builder_region_fact.tw and the Plan 2 producer.
 
-use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom}
+use compiler.anf.{AnfExpr, AnfModule, AnfOp, Atom}
 use compiler.builder_family.{string_builder_config, vector_builder_config}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{FuncId, LocalId}
@@ -152,6 +152,18 @@ fn is_consume_reassign(body: AnfExpr, acc: LocalId, result: LocalId) Bool {
   }
 }
 
+// A base-only fold ATTEMPT: a push call with `acc` as arg0, regardless of the
+// chunk or reassign tail. `fold_chunk` recognizes CLEAN folds; `is_fold_attempt`
+// also recognizes malformed ones (self-concat) so they surface as rejected
+// near-misses instead of vanishing.
+fn is_fold_attempt(op: AnfOp, acc: LocalId, push_id: FuncId) Bool {
+  case op {
+    .ACall(.AGlobalFunc(f), args) => f.id == push_id.id
+      and args.len() == 2 and atom_is_local(args[0], acc),
+    _ => false,
+  }
+}
+
 // Control-flow ops are rejected on the loop main arm (first slice: unconditional).
 fn is_control_flow_op(op: AnfOp) Bool {
   case op {
@@ -175,7 +187,13 @@ fn scan_main_arm(arm: AnfExpr, acc: LocalId, push_id: FuncId, folds: Vector<Loca
           _ => ScanResult.{ ok: false, fold_sites: [], reason: "malformed fold tail" },
         }
       },
-      .None => if is_control_flow_op(op) {
+      .None => if is_fold_attempt(op, acc, push_id) {
+        ScanResult.{
+          ok: false,
+          fold_sites: [],
+          reason: "self-concat / chunk aliases the accumulator, or malformed fold tail",
+        }
+      } else if is_control_flow_op(op) {
         // Any branch/loop on the main arm makes the fold conditional or
         // continue-guarded (verified: a `if skip { continue }` guard lowers to a
         // top-level AIf here, then the fold follows). First slice is UNCONDITIONAL
@@ -332,10 +350,9 @@ fn find_region(after_seed: AnfExpr, acc: LocalId, push_id: FuncId) FoundRegion? 
 // rejected fold-bearing region from an unrelated loop)?
 fn references_fold(e: AnfExpr, acc: LocalId, push_id: FuncId) Bool {
   case e {
-    .Let(local, op, body) => case fold_chunk(op, body, acc, push_id, local) {
-      .Some(_) => true,
-      .None => op_fold_ref(op, acc, push_id) or references_fold(body, acc, push_id),
-    },
+    .Let(_, op, body) => is_fold_attempt(op, acc, push_id)
+      or op_fold_ref(op, acc, push_id)
+      or references_fold(body, acc, push_id),
     _ => false,
   }
 }

@@ -71,12 +71,15 @@ pub fn suite() runner.Suite {
       ) },
     )
     .test(
-      "self concat rejects",
-      fn() Result<Void, String> { assert.equal(
-        clean_count(
-          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(acc) }\n  println(acc)\n}\nm()\n",
-        ),
-        0,
-      ) },
+      "self concat rejects and renders as a near-miss",
+      fn() Result<Void, String> {
+        src := "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(acc) }\n  println(acc)\n}\nm()\n"
+        try assert.equal(clean_count(src), 0)
+        cands := candidates_for(src)
+        try assert.equal(cands.len(), 1)
+        try assert.is_false(cands[0].structural_ok)
+        try assert.str_contains(cands[0].reason, "self-concat")
+        .Ok({})
+      },
     )
 }
