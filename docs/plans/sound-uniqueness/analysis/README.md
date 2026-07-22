@@ -10,6 +10,16 @@ remain codegen work. All analysis precision lands *before* any codegen, per
 [../architecture.md](../architecture.md)'s governing rule that all analysis precision
 precedes codegen.
 
+**Reopened for codegen Phase 8C (builder regions).** 8C's soundness needs a
+CFG-edge region-safety fact (`linearly_folded`: seed uniqueness, carried uniqueness,
+linear fold with no interior observation, no self-aliasing fold chunk (reject
+`acc = acc.concat(acc)` / chunks that may alias the accumulator), and
+single-post-loop-freeze with all intra-region publication/early-exit rejected) that
+the current phases do not yet produce. This is genuine analysis-track work — not one of the codegen-owned deferrals
+below — and is specified in [../codegen/builder-region-design.md](../codegen/builder-region-design.md)
+(Plan 1). It lands before 8C's rewrite, consistent with the analysis-before-codegen
+rule.
+
 ## Post-completion cleanups
 
 - **Lattice generalization (2026-07-20).** The five parallel dataflow lattices in

@@ -34,7 +34,11 @@ gate when specialized clone routing becomes real. The full analysis track is
 complete through Phase 6 (record/field ownership,
 transport-wrapper / `Result`-payload return-path summaries, ownership-specialization
 decision facts, and recursive SCC variant-qualified diagnostics), so codegen consumes
-a trustworthy fact set rather than rediscovering ownership. (These "Codegen Phase
+a trustworthy fact set rather than rediscovering ownership — **except** the reopened 8C
+`linearly_folded` region-safety prerequisite (Plan 1), which the analysis track does not
+yet produce and must add before 8C's rewrite (see
+[builder-region-design.md](builder-region-design.md) and
+[../analysis/README.md](../analysis/README.md)). (These "Codegen Phase
 7A/…" labels are the codegen track's own local numbering; see the phase-numbering
 note in [../analysis/README.md](../analysis/README.md).)
 
@@ -244,11 +248,25 @@ First emitted-code change. The slice is intentionally narrow.
 Builder lowering has a different region shape from indexed update and should not
 be bundled with it. Current boot hooks cover vector builders and string concat
 builders; typed vector builder shims (`i64`/`bool`) are implementation details of
-the vector family. Details: [vector-lowering.md](vector-lowering.md) and
-[string-lowering.md](string-lowering.md).
+the vector family. Full design (forks, safety fact, ANF shape, plan split):
+[builder-region-design.md](builder-region-design.md). Slice notes:
+[vector-lowering.md](vector-lowering.md) and [string-lowering.md](string-lowering.md).
 
-- [ ] **Lower existing vector builder regions from facts.** Reuse current
-  `vector$builder_new/from/push/freeze` hooks; do not redesign builder/runtime
+**First-slice narrowing (per builder-region-design.md, do not implement the broad
+shape).** The first slice is loop accumulators only, gated by an analysis
+region-safety fact and consumed as a `BuilderRegionDecision` record (not a per-local
+boolean). Vector is restricted to **empty-seed `builder_new`**; these regions stay **boxed**
+(correct, not typed — the frozen accumulator is `AAssign`-rebound, which
+`route_typed_vec` does not follow, so typed routing is a deferred follow-up).
+Non-empty `from(base)`/`builder_from` is deferred. Folds are **unconditional only**
+(conditional/`continue` deferred). Regions use a **single post-loop freeze** and
+**reject every intra-region publication/early-exit** (`return`, value-carrying
+`break`, `try`, closure capture, escaping call); per-exit freeze insertion is a later
+slice.
+
+- [ ] **Lower existing vector builder regions from facts.** Reuse the current vector builder
+  hooks, but the first slice emits only `vector$builder_new` → `builder_push` → `builder_freeze`
+  (empty seed); it never emits `vector$builder_from`. Do not redesign builder/runtime
   representation yet.
 - [ ] **Lower existing string builder regions from facts.** Reuse current
   `string$builder_from/extend/freeze` hooks for `String.concat` accumulator loops.
