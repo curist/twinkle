@@ -176,28 +176,17 @@ fn atom_is_local(a: Atom, local: LocalId) Bool {
 use @std.testing.assert as assert
 use @std.testing as runner
 
-use compiler.builder_region_detect as detect
-use compiler.pipeline
-
-fn candidates_for(src: String) Vector<detect.RegionCandidate> {
-  case pipeline.compile_source(src) {
-    .Ok(a) => detect.detect_candidates(a.opt, a.builtins),
-    .Err(e) => error("compile failed: ${e}"),
-  }
-}
-
-// count only structurally-clean candidates
-fn clean_count(src: String) Int {
-  n := 0
-  for c in candidates_for(src) { if c.structural_ok { n = n + 1 } }
-  n
-}
-
 pub fn suite() runner.Suite {
   runner.suite("builder_region")
     .test("placeholder", fn() Result<Void, String> { assert.is_true(true) })
 }
 ```
+
+**Important (Twinkle gotcha):** the suite file must contain ONLY the placeholder here — do NOT
+add `candidates_for`/`clean_count` helpers or `use compiler.builder_region_detect` yet. Twinkle
+typechecks every top-level function in a compiled module even if unused, so referencing
+`detect.detect_candidates` before A3 defines it is a hard compile error. The helpers + imports
+are added in A3 Step 1 alongside the first tests that use them.
 
 In `boot/tests/main.tw`: add `use .suites.builder_region_suite` and `builder_region_suite.suite(),` to `runner.run_all([…])`.
 
@@ -374,6 +363,35 @@ git commit -m "builder-region: deep reference scan + unconditional main-arm fold
 **Files:** Modify `boot/compiler/builder_region_detect.tw`; tests in the suite.
 
 - [ ] **Step 1: Failing tests** (real ANF-grounded fixtures, function-local `:=`).
+
+First add the imports + helpers to `builder_region_suite.tw` (these were intentionally held back
+from A1 — `detect_candidates` did not exist yet). At the top with the other `use` lines:
+
+```tw
+use compiler.builder_region_detect as detect
+use compiler.pipeline
+```
+
+Above `pub fn suite()`, add the helpers:
+
+```tw
+fn candidates_for(src: String) Vector<detect.RegionCandidate> {
+  case pipeline.compile_source(src) {
+    .Ok(a) => detect.detect_candidates(a.opt, a.builtins),
+    .Err(e) => error("compile failed: ${e}"),
+  }
+}
+
+// count only structurally-clean candidates
+fn clean_count(src: String) Int {
+  n := 0
+  for c in candidates_for(src) { if c.structural_ok { n = n + 1 } }
+  n
+}
+```
+
+Then replace the placeholder test with these (note: `detect_candidates` is added in this task's
+Step 3, so these tests fail until then — that is the intended TDD red state):
 
 ```tw
 // replace the placeholder test
