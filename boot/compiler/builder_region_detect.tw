@@ -281,6 +281,13 @@ fn is_break_exit(e: AnfExpr) Bool {
 
 // Find the break-dispatch AIf on the loop body's top-level chain and return its
 // non-break (main) arm. `acc` must not be referenced before that AIf.
+//
+// Soundness note: when the top-level op is a non-break-dispatch `AIf` (or the
+// body has no break-dispatch shape at all), this returns `.None` WITHOUT itself
+// scanning that op for `acc`. That is safe only because the sole caller,
+// `find_region`, re-scans the entire `ALoop` op with `op_references_deep` when no
+// fold is found via the main arm — so any `acc` reference in an unmatched shape is
+// still caught by that fallback. Keep the two together.
 fn loop_main_arm(body: AnfExpr, acc: LocalId) AnfExpr? {
   case body {
     .Let(_, op, rest) => case op {
