@@ -1,0 +1,324 @@
+//! Builder-region decision-record producer.
+//!
+//! Sits between the pure-ANF detector (`builder_region_detect.tw`) and the
+//! ANF-to-ANF rewrite (`builder_region.tw`). It joins certified region
+//! candidates with:
+//!   * centralized per-function fresh-local allocation (one contiguous block of
+//!     three locals per surviving region, from `next_local_id`), so the rewrite
+//!     never bumps counters itself and independent regions can never collide;
+//!   * deterministic non-overlap resolution (when two certified regions share an
+//!     accumulator, loop site, or fold site, the lowest `BuilderRegionKey` wins);
+//!   * the FU-1 fold-result deadness gate — a soundness check that rejects a
+//!     region whose fold-result temp is read anywhere but the consume-reassign
+//!     (see `fold_results_dead`).
+//! The rewrite consumes these validated records; it does not re-run detection.
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom}
+use compiler.builder_region_detect as detect
+use compiler.builder_region_detect.{BuilderRegionKey, RegionCandidate}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.core_ir.{FuncId, LocalId}
+use compiler.opt.analysis.{next_local_id}
+
+pub type BuilderRegionDecision = .{
+  key: BuilderRegionKey,
+  func_id: FuncId,
+  family: String,
+  accumulator: LocalId,
+  seed_site: LocalId,
+  loop_site: LocalId,
+  fold_sites: Vector<LocalId>, // the fold-call result locals
+  builder_local: LocalId, // fresh
+  freeze_local: LocalId, // fresh
+  assign_local: LocalId, // fresh
+}
+
+pub type BuilderRegionDecisionTable = .{ by_func: Dict<Int, Vector<BuilderRegionDecision>> }
+
+// ── Total order on BuilderRegionKey ─────────────────────────────────
+// Deterministic and independent of detection order: func_id, then seed_site,
+// then loop_site, then fold_sites lexicographically, then family.
+fn cmp_int(a: Int, b: Int) Order {
+  if a < b {
+    .Lt
+  } else if a > b {
+    .Gt
+  } else {
+    .Eq
+  }
+}
+
+fn cmp_int_vec(a: Vector<Int>, b: Vector<Int>) Order {
+  n := if a.len() < b.len() {
+    a.len()
+  } else {
+    b.len()
+  }
+  for i in range(n) {
+    c := cmp_int(a[i], b[i])
+    case c {
+      .Eq => {},
+      _ => return c,
+    }
+  }
+  cmp_int(a.len(), b.len())
+}
+
+pub fn key_cmp(a: BuilderRegionKey, b: BuilderRegionKey) Order {
+  case cmp_int(a.func_id, b.func_id) {
+    .Eq => {},
+    c => return c,
+  }
+  case cmp_int(a.seed_site, b.seed_site) {
+    .Eq => {},
+    c => return c,
+  }
+  case cmp_int(a.loop_site, b.loop_site) {
+    .Eq => {},
+    c => return c,
+  }
+  case cmp_int_vec(a.fold_sites, b.fold_sites) {
+    .Eq => {},
+    c => return c,
+  }
+  String.compare(a.family, b.family)
+}
+
+fn key_less(a: BuilderRegionKey, b: BuilderRegionKey) Bool {
+  case key_cmp(a, b) {
+    .Lt => true,
+    _ => false,
+  }
+}
+
+// ── Fold-result deadness gate (FU-1, soundness) ─────────────────────
+fn atom_use(a: Atom, local: LocalId) Int {
+  case a {
+    .ALocal(id) => if id.id == local.id {
+      1
+    } else {
+      0
+    },
+    _ => 0,
+  }
+}
+
+fn args_uses(args: Vector<Atom>, local: LocalId) Int {
+  n := 0
+  for a in args {
+    n = n + atom_use(a, local)
+  }
+  n
+}
+
+// Count occurrences of `.ALocal(local)` across the whole function body. Mirrors
+// the detector's `expr_references`/`op_references_deep` traversal shape but
+// accumulates instead of short-circuiting. The AAssign target is counted like
+// `op_references_deep` does (target.id == local); for a fold-result temp the
+// target is always the accumulator, so it never inflates the count.
+fn count_local_uses(e: AnfExpr, local: LocalId) Int {
+  case e {
+    .Let(_, op, body) => count_op_uses(op, local) + count_local_uses(body, local),
+    .Atom(a) => atom_use(a, local),
+    .Return(.Some(a)) => atom_use(a, local),
+    .Return(.None) => 0,
+    .Break(.Some(a)) => atom_use(a, local),
+    .Break(.None) => 0,
+    .Continue => 0,
+  }
+}
+
+fn count_op_uses(op: AnfOp, local: LocalId) Int {
+  case op {
+    .ACall(callee, args) => atom_use(callee, local) + args_uses(args, local),
+    .ABinOp(_, l, r, _) => atom_use(l, local) + atom_use(r, local),
+    .AUnOp(_, inner, _) => atom_use(inner, local),
+    .AMakeClosure(_, fvs) => {
+      n := 0
+      for v in fvs {
+        if v.id == local.id {
+          n = n + 1
+        }
+      }
+      n
+    },
+    .ARecord(_, fields) => {
+      n := 0
+      for f in fields {
+        n = n + atom_use(f.value, local)
+      }
+      n
+    },
+    .ARecordGet(t, _, _) => atom_use(t, local),
+    .ARecordUpdate(base, _, v, _, _) => atom_use(base, local) + atom_use(v, local),
+    .AVariant(_, _, args) => args_uses(args, local),
+    .AArrayLit(elems) => args_uses(elems, local),
+    .AIndex(base, idx, _, _) => atom_use(base, local) + atom_use(idx, local),
+    .AInit(v) => atom_use(v, local),
+    .AAssign(target, v) => if target.id == local.id {
+      1
+    } else {
+      0
+    }
+      + atom_use(v, local),
+    .AGlobalSet(_, v) => atom_use(v, local),
+    .AIf(cond_e, then_e, else_e) => atom_use(cond_e, local)
+      + count_local_uses(then_e, local) + count_local_uses(else_e, local),
+    .AMatch(scrutinee, arms) => {
+      n := atom_use(scrutinee, local)
+      for arm in arms {
+        n = n + count_local_uses(arm.body, local)
+      }
+      n
+    },
+    .ALoop(body) => count_local_uses(body, local),
+    .ADefer(body) => count_local_uses(body, local),
+    .AWrapAnyref(a, _) => atom_use(a, local),
+    .AUnwrapAnyref(a, _) => atom_use(a, local),
+  }
+}
+
+// A certified region's fold-result local must have EXACTLY ONE use — the
+// `acc = result` consume-reassign that certification matched. If the fold
+// result is read anywhere else, neutralizing that reassign (as the rewrite
+// does) would drop a live value, so reject the region (persistent fallback).
+pub fn fold_results_dead(f: AnfFunctionDef, c: RegionCandidate) Bool {
+  for r in c.fold_sites {
+    if count_local_uses(f.body, r) != 1 {
+      return false
+    }
+  }
+  true
+}
+
+// ── Non-overlap resolution ──────────────────────────────────────────
+fn shares_fold_site(a: RegionCandidate, b: RegionCandidate) Bool {
+  for x in a.fold_sites {
+    for y in b.fold_sites {
+      if x.id == y.id {
+        return true
+      }
+    }
+  }
+  false
+}
+
+fn overlaps(a: RegionCandidate, b: RegionCandidate) Bool {
+  a.accumulator.id == b.accumulator.id or a.loop_site.id == b.loop_site.id or shares_fold_site(a, b)
+}
+
+fn group_overlaps(g: Vector<RegionCandidate>, c: RegionCandidate) Bool {
+  for m in g {
+    if overlaps(m, c) {
+      return true
+    }
+  }
+  false
+}
+
+fn min_key_candidate(g: Vector<RegionCandidate>) RegionCandidate {
+  best := g[0]
+  for c in g {
+    if key_less(detect.region_key(c), detect.region_key(best)) {
+      best = c
+    }
+  }
+  best
+}
+
+// Group certified candidates by transitive overlap (shared accumulator, loop
+// site, or fold site) and keep the lowest-key member of each group. Independent
+// regions (distinct accumulators/loops/folds) form singleton groups and all
+// survive.
+pub fn resolve_overlaps(cands: Vector<RegionCandidate>) Vector<RegionCandidate> {
+  groups: Vector<Vector<RegionCandidate>> = []
+  for c in cands {
+    merged: Vector<RegionCandidate> = [c]
+    rest: Vector<Vector<RegionCandidate>> = []
+    for g in groups {
+      if group_overlaps(g, c) {
+        merged = .concat(g)
+      } else {
+        rest = .append(g)
+      }
+    }
+    groups = rest.append(merged)
+  }
+  out: Vector<RegionCandidate> = []
+  for g in groups {
+    out = .append(min_key_candidate(g))
+  }
+  out
+}
+
+// ── Centralized fresh-local allocation ──────────────────────────────
+// Assign each surviving region a contiguous block of three fresh locals
+// (builder/freeze/assign) starting at `next_local_id(f)`, in the deterministic
+// `region_key` order so allocation is reproducible regardless of detection or
+// grouping order.
+fn allocate_locals(f: AnfFunctionDef, cands: Vector<RegionCandidate>) Vector<BuilderRegionDecision> {
+  sorted := cands.sort_by(fn(x, y) { key_cmp(detect.region_key(x), detect.region_key(y)) })
+  cur := next_local_id(f)
+  out: Vector<BuilderRegionDecision> = []
+  for c in sorted {
+    out = .append(
+      BuilderRegionDecision.{
+        key: detect.region_key(c),
+        func_id: c.func_id,
+        family: c.family,
+        accumulator: c.accumulator,
+        seed_site: c.seed_site,
+        loop_site: c.loop_site,
+        fold_sites: c.fold_sites,
+        builder_local: LocalId.{ id: cur },
+        freeze_local: LocalId.{ id: cur + 1 },
+        assign_local: LocalId.{ id: cur + 2 },
+      },
+    )
+    cur = cur + 3
+  }
+  out
+}
+
+fn filter_certified(cands: Vector<RegionCandidate>, func_id: FuncId) Vector<RegionCandidate> {
+  out: Vector<RegionCandidate> = []
+  for c in cands {
+    if c.structural_ok and c.func_id.id == func_id.id {
+      out = .append(c)
+    }
+  }
+  out
+}
+
+fn filter_fu1_safe(f: AnfFunctionDef, cands: Vector<RegionCandidate>) Vector<RegionCandidate> {
+  out: Vector<RegionCandidate> = []
+  for c in cands {
+    if fold_results_dead(f, c) {
+      out = .append(c)
+    }
+  }
+  out
+}
+
+/// Join certified builder-region candidates into validated decision records:
+/// one per surviving region, carrying naming boundaries plus pre-allocated
+/// fresh locals. Rejects near-misses (via detection), overlapping duplicates
+/// (lowest key wins), and regions failing the FU-1 fold-result deadness gate.
+pub fn produce_builder_region_decisions(m: AnfModule, b: BuiltinRegistry) BuilderRegionDecisionTable {
+  cands := detect.detect_candidates(m, b)
+  by_func: Dict<Int, Vector<BuilderRegionDecision>> = Dict.new()
+  for f in m.functions {
+    certified := filter_certified(cands, f.func_id)
+
+    // FU-1 liveness is a per-candidate property, so filter it before
+    // overlap-grouping — otherwise a lower-key overlapping sibling that is
+    // FU-1-unsafe could discard a safe higher-key region in the same group.
+    fu1_safe := filter_fu1_safe(f, certified)
+    non_overlapping := resolve_overlaps(fu1_safe)
+    decisions := allocate_locals(f, non_overlapping)
+    if decisions.len() > 0 {
+      by_func[f.func_id.id] = decisions
+    }
+  }
+  BuilderRegionDecisionTable.{ by_func }
+}

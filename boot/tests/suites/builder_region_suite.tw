@@ -1,13 +1,15 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
-use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom}
 use compiler.artifacts.{PipelineArtifacts}
 use compiler.builder_region_detect as detect
 use compiler.builder_region_fact as region_fact
 use compiler.codegen.builder_region
+use compiler.codegen.builder_region_produce
 use compiler.codegen.codegen.{link_program}
-use compiler.core_ir.{FuncId}
+use compiler.core_ir.{FuncId, LocalId}
+use compiler.mono_type.{MonoType}
 use compiler.pipeline
 
 fn candidates_for(src: String) Vector<detect.RegionCandidate> {
@@ -38,6 +40,87 @@ fn compile_or_fail(src: String) PipelineArtifacts {
   case pipeline.compile_source(src) {
     .Ok(a) => a,
     .Err(e) => error(e),
+  }
+}
+
+fn decisions_for(src: String) builder_region_produce.BuilderRegionDecisionTable {
+  a := compile_or_fail(src)
+  builder_region_produce.produce_builder_region_decisions(a.opt, a.builtins)
+}
+
+fn total_decisions(t: builder_region_produce.BuilderRegionDecisionTable) Int {
+  n := 0
+  for _, v in t.by_func {
+    n = n + v.len()
+  }
+  n
+}
+
+// Hand-built ANF for the FU-1 gate. Source-level `nxt := acc.concat(c); acc =
+// nxt; println(nxt)` does not reach FU-1 (the optimizer copy-propagates `nxt`
+// back to `acc`, so the detector rejects it as an interior read before
+// certification — clean_count is 0). To drive `fold_results_dead` to reject due
+// to a LIVE fold result (not non-certification), we synthesize a function whose
+// fold-result temp (local 1) is consume-reassigned into the accumulator (local
+// 0) and, when `extra_read` is set, ALSO read by a trailing call.
+fn fu1_function(extra_read: Bool) AnfFunctionDef {
+  acc := LocalId.{ id: 0 }
+  r := LocalId.{ id: 1 }
+  tail: AnfExpr = if extra_read {
+    AnfExpr.Let(
+      LocalId.{ id: 3 },
+      AnfOp.ACall(Atom.AGlobalFunc(FuncId.{ id: 99 }), [Atom.ALocal(r)]),
+      AnfExpr.Atom(Atom.ALitVoid),
+    )
+  } else {
+    AnfExpr.Atom(Atom.ALitVoid)
+  }
+  body := AnfExpr.Let(
+    r,
+    AnfOp.AInit(Atom.ALitInt(1)),
+    AnfExpr.Let(LocalId.{ id: 2 }, AnfOp.AAssign(acc, Atom.ALocal(r)), tail),
+  )
+  AnfFunctionDef.{
+    func_id: FuncId.{ id: 7 },
+    name: "m",
+    is_init: false,
+    params: [],
+    op_result_mono: Dict.new(),
+    body,
+    return_ty: MonoType.Void,
+  }
+}
+
+fn fu1_candidate() detect.RegionCandidate {
+  detect.RegionCandidate.{
+    func_id: FuncId.{ id: 7 },
+    func: "m",
+    family: "string",
+    push_id: FuncId.{ id: 0 },
+    accumulator: LocalId.{ id: 0 },
+    seed_site: LocalId.{ id: 0 },
+    loop_site: LocalId.{ id: 0 },
+    fold_sites: [LocalId.{ id: 1 }],
+    structural_ok: true,
+    reason: "",
+  }
+}
+
+// Hand-built certified candidate for the overlap/lowest-key resolution tests.
+// Overlap keys on shared accumulator / loop_site / fold_site; the total order
+// keys on seed_site (after func_id), so varying seed_site sets the key rank.
+fn mk_candidate(seed: Int, loop_id: Int, fold: Int, acc: Int) detect.RegionCandidate {
+  detect.RegionCandidate.{
+    func_id: FuncId.{ id: 7 },
+    func: "m",
+    family: "string",
+    push_id: FuncId.{ id: 0 },
+    accumulator: LocalId.{ id: acc },
+    seed_site: LocalId.{ id: seed },
+    loop_site: LocalId.{ id: loop_id },
+    fold_sites: [LocalId.{ id: fold }],
+    structural_ok: true,
+    reason: "",
   }
 }
 
@@ -402,6 +485,74 @@ pub fn suite() runner.Suite {
         fn_m := find_func(anf2, "m")
         try assert.is_true(count_calls_to(fn_m.body, a.builtins.method_id("String", "concat")) >= 1)
         try assert.equal(count_calls_to(fn_m.body, a.builtins.id("string$builder_extend")), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "producer emits one decision for a clean string loop",
+      fn() Result<Void, String> { assert.equal(
+        total_decisions(
+          decisions_for(
+            "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n",
+          ),
+        ),
+        1,
+      ) },
+    )
+    .test(
+      "producer emits no decision for an interior-read loop",
+      fn() Result<Void, String> { assert.equal(
+        total_decisions(
+          decisions_for(
+            "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  println(acc) }\n  println(acc)\n}\nm()\n",
+          ),
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "two independent clean loops in one function both get decisions",
+      fn() Result<Void, String> { assert.equal(
+        total_decisions(
+          decisions_for(
+            "fn m() Void {\n  a := \"\"\n  for c in [\"x\"] { a = a.concat(c) }\n  println(a)\n  b := \"\"\n  for c in [\"y\"] { b = b.concat(c) }\n  println(b)\n}\nm()\n",
+          ),
+        ),
+        2,
+      ) },
+    )
+    .test(
+      "fold_results_dead rejects a live fold result, accepts a dead one (FU-1)",
+      fn() Result<Void, String> {
+        cand := fu1_candidate()
+
+        // Live: the fold-result temp is read a second time -> reject.
+        try assert.is_false(builder_region_produce.fold_results_dead(fu1_function(true), cand))
+
+        // Dead: the fold-result temp's only use is the consume-reassign -> accept.
+        try assert.is_true(builder_region_produce.fold_results_dead(fu1_function(false), cand))
+        .Ok({})
+      },
+    )
+    .test(
+      "resolve_overlaps keeps only the lowest-key overlapping candidate",
+      fn() Result<Void, String> {
+        // Both share loop_site 5 -> overlap; lower seed_site -> lower key.
+        lo := mk_candidate(1, 5, 10, 1)
+        hi := mk_candidate(2, 5, 11, 2)
+        kept := builder_region_produce.resolve_overlaps([hi, lo])
+        try assert.equal(kept.len(), 1)
+        try assert.equal(kept[0].seed_site.id, 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "resolve_overlaps keeps both disjoint candidates",
+      fn() Result<Void, String> {
+        // Distinct accumulator/loop/fold -> no overlap -> both survive.
+        a := mk_candidate(1, 5, 10, 1)
+        b := mk_candidate(2, 6, 11, 2)
+        try assert.equal(builder_region_produce.resolve_overlaps([a, b]).len(), 2)
         .Ok({})
       },
     )
