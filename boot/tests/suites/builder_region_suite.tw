@@ -1,8 +1,82 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use compiler.builder_region_detect as detect
+use compiler.pipeline
+
+fn candidates_for(src: String) Vector<detect.RegionCandidate> {
+  case pipeline.compile_source(src) {
+    .Ok(a) => detect.detect_candidates(a.opt, a.builtins),
+    .Err(e) => error("compile failed: ${e}"),
+  }
+}
+
+// count only structurally-clean candidates
+fn clean_count(src: String) Int {
+  n := 0
+  for c in candidates_for(src) {
+    if c.structural_ok {
+      n = n + 1
+    }
+  }
+  n
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("builder_region")
-    .test("placeholder", fn() Result<Void, String> { assert.is_true(true) })
+    .test(
+      "clean string fold is detected",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n",
+        ),
+        1,
+      ) },
+    )
+    .test(
+      "clean vector fold is detected",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc: Vector<Int> = []\n  for x in [1, 2] { acc = acc.append(x) }\n  println(acc.len().to_string())\n}\nm()\n",
+        ),
+        1,
+      ) },
+    )
+    .test(
+      "interior read rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  println(acc) }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "conditional fold rejects (deferred to plan 5)",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { if c == \"a\" { acc = acc.concat(c) } }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "early return of accumulator rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() String {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  return acc }\n  acc\n}\nprintln(m())\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "self concat rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(acc) }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
 }

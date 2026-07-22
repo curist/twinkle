@@ -226,3 +226,212 @@ fn finish(folds: Vector<LocalId>) ScanResult {
     }
   }
 }
+
+// Track locals bound to an empty array literal so `AInit(ALocal v)` seeds are
+// recognized (vector seeds lower via a temp; string seeds are direct).
+fn is_empty_array_value(op: AnfOp) Bool {
+  case op {
+    .AArrayLit(elems) => elems.len() == 0,
+    _ => false,
+  }
+}
+
+// Is `op` an empty seed for `local`? Returns the family. `empty_arr` is the set
+// of locals bound to an empty AArrayLit earlier in the same chain.
+fn seed_family(op: AnfOp, str_push: FuncId, vec_push: FuncId, empty_arr: Dict<Int, Bool>) SeedFamily? {
+  case op {
+    .AInit(.ALitStr(s)) => if s.len() == 0 {
+      .Some(SeedFamily.{ push_id: str_push, family: "string" })
+    } else {
+      .None
+    },
+    .AInit(.ALocal(v)) => case empty_arr.get(v.id) {
+      .Some(_) => .Some(SeedFamily.{ push_id: vec_push, family: "vector" }),
+      .None => .None,
+    },
+    _ => .None,
+  }
+}
+
+// The exit arm of a loop's break-dispatch is exactly `Break(.None)`.
+fn is_break_exit(e: AnfExpr) Bool {
+  case e {
+    .Break(.None) => true,
+    _ => false,
+  }
+}
+
+// Find the break-dispatch AIf on the loop body's top-level chain and return its
+// non-break (main) arm. `acc` must not be referenced before that AIf.
+fn loop_main_arm(body: AnfExpr, acc: LocalId) AnfExpr? {
+  case body {
+    .Let(_, op, rest) => case op {
+      .AIf(_, then_e, else_e) => if is_break_exit(then_e) and !is_break_exit(else_e) {
+        .Some(else_e)
+      } else {
+        if is_break_exit(else_e) and !is_break_exit(then_e) {
+          .Some(then_e)
+        } else {
+          .None
+        }
+      },
+      _ => if op_references_deep(op, acc) {
+        .None
+      } else {
+        loop_main_arm(rest, acc)
+      },
+    },
+    _ => .None,
+  }
+}
+
+type FoundRegion = .{ loop_site: LocalId, scan: ScanResult }
+
+// From `acc`'s seed binding, scan forward for the loop that folds `acc`. A loop
+// that folds `acc` yields the candidate (a rejected scan still yields one so
+// near-misses render). A loop or op that merely *references* `acc` without
+// folding it rejects (interior observation). An unrelated loop/op that never
+// touches `acc` is skipped and scanning continues. `.None` when no fold-bearing
+// loop for `acc` is reached before the chain ends or `acc` is observed.
+fn find_region(after_seed: AnfExpr, acc: LocalId, push_id: FuncId) FoundRegion? {
+  case after_seed {
+    .Let(local, op, body) => case op {
+      .ALoop(loop_body) => {
+        main_opt := loop_main_arm(loop_body, acc)
+        folds := case main_opt {
+          .Some(m) => references_fold(m, acc, push_id),
+          .None => references_fold(loop_body, acc, push_id),
+        }
+        if folds {
+          scan := case main_opt {
+            .Some(m) => scan_main_arm(m, acc, push_id, []),
+            .None => ScanResult.{
+              ok: false,
+              fold_sites: [],
+              reason: "fold not reachable via a break-dispatch main arm",
+            },
+          }
+          .Some(FoundRegion.{ loop_site: local, scan })
+        } else if op_references_deep(op, acc) {
+          .None // acc observed in an unrelated loop — reject
+        } else {
+          find_region(body, acc, push_id) // unrelated loop — keep scanning
+        }
+      },
+      _ => if op_references_deep(op, acc) {
+        .None
+      } else {
+        find_region(body, acc, push_id)
+      },
+    },
+    _ => .None,
+  }
+}
+
+// Does `e` contain a fold call ACall(push,[acc,...]) anywhere (to distinguish a
+// rejected fold-bearing region from an unrelated loop)?
+fn references_fold(e: AnfExpr, acc: LocalId, push_id: FuncId) Bool {
+  case e {
+    .Let(local, op, body) => case fold_chunk(op, body, acc, push_id, local) {
+      .Some(_) => true,
+      .None => op_fold_ref(op, acc, push_id) or references_fold(body, acc, push_id),
+    },
+    _ => false,
+  }
+}
+
+fn op_fold_ref(op: AnfOp, acc: LocalId, push_id: FuncId) Bool {
+  case op {
+    .AIf(_, t, e) => references_fold(t, acc, push_id) or references_fold(e, acc, push_id),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if references_fold(arm.body, acc, push_id) {
+          return true
+        }
+      }
+      false
+    },
+    .ALoop(b) => references_fold(b, acc, push_id),
+    .ADefer(b) => references_fold(b, acc, push_id),
+    _ => false,
+  }
+}
+
+fn detect_in_expr(
+  expr: AnfExpr,
+  func_id: FuncId,
+  func: String,
+  str_push: FuncId,
+  vec_push: FuncId,
+  empty_arr: Dict<Int, Bool>,
+  acc: Vector<RegionCandidate>,
+) Vector<RegionCandidate> {
+  case expr {
+    .Let(local, op, body) => {
+      // record empty-array-value locals for vector-seed recognition
+      ea := empty_arr
+      if is_empty_array_value(op) {
+        ea[local.id] = true
+      }
+
+      out := case seed_family(op, str_push, vec_push, ea) {
+        .Some(sf) => case find_region(body, local, sf.push_id) {
+          .Some(fr) => acc.append(RegionCandidate.{
+            func_id,
+            func,
+            family: sf.family,
+            push_id: sf.push_id,
+            accumulator: local,
+            seed_site: local,
+            loop_site: fr.loop_site,
+            fold_sites: fr.scan.fold_sites,
+            structural_ok: fr.scan.ok,
+            reason: fr.scan.reason,
+          }),
+          .None => acc,
+        },
+        .None => acc,
+      }
+      out2 := detect_in_op(op, func_id, func, str_push, vec_push, ea, out)
+      detect_in_expr(body, func_id, func, str_push, vec_push, ea, out2)
+    },
+    _ => acc,
+  }
+}
+
+fn detect_in_op(
+  op: AnfOp,
+  func_id: FuncId,
+  func: String,
+  str_push: FuncId,
+  vec_push: FuncId,
+  empty_arr: Dict<Int, Bool>,
+  acc: Vector<RegionCandidate>,
+) Vector<RegionCandidate> {
+  case op {
+    .AIf(_, t, e) => {
+      a := detect_in_expr(t, func_id, func, str_push, vec_push, empty_arr, acc)
+      detect_in_expr(e, func_id, func, str_push, vec_push, empty_arr, a)
+    },
+    .AMatch(_, arms) => {
+      cur := acc
+      for arm in arms {
+        cur = detect_in_expr(arm.body, func_id, func, str_push, vec_push, empty_arr, cur)
+      }
+      cur
+    },
+    .ALoop(b) => detect_in_expr(b, func_id, func, str_push, vec_push, empty_arr, acc),
+    .ADefer(b) => detect_in_expr(b, func_id, func, str_push, vec_push, empty_arr, acc),
+    _ => acc,
+  }
+}
+
+pub fn detect_candidates(m: AnfModule, b: BuiltinRegistry) Vector<RegionCandidate> {
+  str_push := string_builder_config(b).push_id
+  vec_push := vector_builder_config(b).push_id
+  out: Vector<RegionCandidate> = []
+  for f in m.functions {
+    out = detect_in_expr(f.body, f.func_id, f.name, str_push, vec_push, Dict.new(), out)
+  }
+  out
+}
