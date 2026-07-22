@@ -187,8 +187,15 @@ Extend the ownership analysis (`compiler.ownership` / `compiler.summary` over `c
 block-exit facts) to certify candidate builder regions per the **five conditions** above, over
 CFG edges. All load-bearing path-sensitive reasoning (linear fold, no interior observation,
 freeze-before-publication) lives **here**, not in codegen. Surface certified regions (boundaries
-+ proof id) through `boot/compiler/codegen/ownership_verdicts.tw`, keyed by region identity (not
-a bare local), covered by the existing `ArtifactKey`. This is the **sole legality authority**.
++ proof id) via a region-fact module (`boot/compiler/builder_region_fact.tw`) that **consumes**
+`ownership_verdicts.tw`'s fingerprinted `OwnershipArtifacts`: the region's fold sites carry a
+`fold_reusable` fact recorded in the existing `block_verdicts` pass (keyed `"${func_id}#${local}"`,
+covered by the existing `ArtifactKey`), which the region fact composes with the structural
+conditions into a per-region verdict keyed by region identity (not a bare local). It lives in its
+own module rather than as a `SiteVerdict` field to keep the dependency acyclic (the fact already
+depends on `ownership_verdicts`), preserving the design intent — a fact surfaced through a
+fingerprinted-artifact consumer with the same staleness discipline. This is the **sole legality
+authority**.
 
 ### Component 2 — Codegen producer: `BuilderRegionDecision` records
 

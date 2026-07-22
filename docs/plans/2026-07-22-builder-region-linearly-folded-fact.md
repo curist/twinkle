@@ -78,7 +78,7 @@ else (main arm):
 - **Create `boot/compiler/builder_region_detect.tw`** — pure ANF detector: types (`RegionCandidate`, `BuilderRegionKey`, helper records), the break-dispatch skeleton + main-arm scan (conditions 3/4/5, sound by rejection), and `detect_candidates(m, b) Vector<RegionCandidate>` which emits **both** clean candidates and structurally-rejected near-misses (with reason). Analysis-track; shared by the fact and Plan 2's producer.
 - **Modify `boot/compiler/cfg.tw:37-54`** — add `fold_reusable: Dict<Int, Bool>` to `BlockFacts` + `empty_block_facts()`.
 - **Modify `boot/compiler/ownership.tw`** — extend `BlockVerdicts`/`block_verdicts` to record `fold_reusable` for `concat`/`append` folds; write into `blk.exit.fold_reusable`.
-- **Create `boot/compiler/builder_region_fact.tw`** — compose candidate + converged `fold_reusable` (cond 2) + empty seed (cond 1) → `RegionVerdict{ key, family, func, linearly_folded, reason, helper_sequence }`; `region_verdicts(opt, b, artifacts)`; artifact-key fingerprinted.
+- **Create `boot/compiler/builder_region_fact.tw`** — compose candidate + converged `fold_reusable` (cond 2) + empty seed (cond 1) → `RegionVerdict{ key, family, func, linearly_folded, reason, helper_sequence }`; `region_verdicts(opt, b, artifacts)`; artifact-key fingerprinted. **Architecture note (intentional):** the design says "surface the fact through `ownership_verdicts.tw`." We instead put the region-fact surface in its own module that *consumes* `ownership_verdicts`' fingerprinted `OwnershipArtifacts` — the same fingerprint/staleness discipline, just a region-shaped verdict alongside the per-site ones. A forwarding API inside `ownership_verdicts.tw` would create an import cycle (`ownership_verdicts` → `builder_region_fact` → `ownership_verdicts`), so the dependency is kept one-directional. This matches the design's *intent* (facts surfaced via a fingerprinted-artifact consumer) if not the literal module name.
 - **Modify `boot/commands/ir.tw:65-97`** — render certified/rejected candidates (full `BuilderRegionKey`, boundaries, helper sequence, proof id, reason) reusing the already-computed `owned` artifacts.
 - **Create `boot/tests/suites/builder_region_suite.tw`** + register in `boot/tests/main.tw`.
 
@@ -447,23 +447,32 @@ fn loop_main_arm(body: AnfExpr, acc: LocalId) AnfExpr? {
 
 type FoundRegion = .{ loop_site: LocalId, scan: ScanResult }
 
-// From `acc`'s seed binding, scan forward: `acc` untouched until a Let(loop_site,
-// ALoop(body)) whose main arm scans. Returns the loop site + scan result (a
-// rejected scan still yields a candidate so near-misses render). `.None` when no
-// fold-bearing loop for `acc` is found at all.
+// From `acc`'s seed binding, scan forward for the loop that folds `acc`. A loop
+// that folds `acc` yields the candidate (a rejected scan still yields one so
+// near-misses render). A loop or op that merely *references* `acc` without
+// folding it rejects (interior observation). An unrelated loop/op that never
+// touches `acc` is skipped and scanning continues. `.None` when no fold-bearing
+// loop for `acc` is reached before the chain ends or `acc` is observed.
 fn find_region(after_seed: AnfExpr, acc: LocalId, push_id: FuncId) FoundRegion? {
   case after_seed {
     .Let(local, op, body) => case op {
-      .ALoop(loop_body) => case loop_main_arm(loop_body, acc) {
-        .Some(main) => {
-          scan := scan_main_arm(main, acc, push_id, [])
-          if scan.ok or scan.fold_sites.len() > 0 or references_fold(main, acc, push_id) {
-            .Some(FoundRegion.{ loop_site: local, scan })
-          } else {
-            .None   // loop that doesn't fold acc at all — not our candidate
+      .ALoop(loop_body) => {
+        main_opt := loop_main_arm(loop_body, acc)
+        folds := case main_opt {
+          .Some(m) => references_fold(m, acc, push_id),
+          .None => references_fold(loop_body, acc, push_id),
+        }
+        if folds {
+          scan := case main_opt {
+            .Some(m) => scan_main_arm(m, acc, push_id, []),
+            .None => ScanResult.{ ok: false, fold_sites: [], reason: "fold not reachable via a break-dispatch main arm" },
           }
-        },
-        .None => .None,
+          .Some(FoundRegion.{ loop_site: local, scan })
+        } else if op_references_deep(op, acc) {
+          .None   // acc observed in an unrelated loop — reject
+        } else {
+          find_region(body, acc, push_id)   // unrelated loop — keep scanning
+        }
       },
       _ => if op_references_deep(op, acc) { .None } else { find_region(body, acc, push_id) },
     },
