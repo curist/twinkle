@@ -3,11 +3,22 @@ use @std.testing as runner
 
 use compiler.builder_region_detect as detect
 use compiler.builder_region_fact as region_fact
+use compiler.codegen.codegen.{link_program}
 use compiler.pipeline
 
 fn candidates_for(src: String) Vector<detect.RegionCandidate> {
   case pipeline.compile_source(src) {
     .Ok(a) => detect.detect_candidates(a.opt, a.builtins),
+    .Err(e) => error("compile failed: ${e}"),
+  }
+}
+
+fn links_ok(src: String) Bool {
+  case pipeline.compile_source(src) {
+    .Ok(a) => {
+      link_program(a.opt, a.env, a.builtins)
+      true
+    },
     .Err(e) => error("compile failed: ${e}"),
   }
 }
@@ -236,6 +247,20 @@ pub fn suite() runner.Suite {
         try assert.is_false(vs[0].linearly_folded)
         try assert.str_contains(vs[0].reason, "structural")
         .Ok({})
+      },
+    )
+    .test(
+      "string accumulator loop links through the backend",
+      fn() Result<Void, String> {
+        // Forward-looking smoke/link check: nothing emits string$builder_from
+        // yet, so this exercises today's persistent path. It starts guarding
+        // the repr_assign string-seed erasure once the loop->builder rewrite
+        // lands (a later Plan 2 task).
+        assert.is_true(
+          links_ok(
+            "fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n",
+          ),
+        )
       },
     )
 }
