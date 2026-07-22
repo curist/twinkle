@@ -690,7 +690,7 @@ ownership lattice marks `.Unknown`). See `docs/plans/sound-uniqueness/codegen/bu
 
 use compiler.anf.{AnfModule}
 use compiler.builder_region_detect as detect
-use compiler.builder_region_detect.{BuilderRegionKey, RegionCandidate}
+use compiler.builder_region_detect.{BuilderRegionKey}
 use compiler.builtins.{BuiltinRegistry}
 
 pub type RegionVerdict = .{
