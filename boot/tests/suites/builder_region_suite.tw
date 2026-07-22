@@ -1,9 +1,13 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
+use compiler.artifacts.{PipelineArtifacts}
 use compiler.builder_region_detect as detect
 use compiler.builder_region_fact as region_fact
+use compiler.codegen.builder_region
 use compiler.codegen.codegen.{link_program}
+use compiler.core_ir.{FuncId}
 use compiler.pipeline
 
 fn candidates_for(src: String) Vector<detect.RegionCandidate> {
@@ -27,6 +31,50 @@ fn verdicts_for(src: String) Vector<region_fact.RegionVerdict> {
   case pipeline.compile_source(src) {
     .Ok(a) => region_fact.region_verdicts(a.opt, a.builtins),
     .Err(e) => error("compile failed: ${e}"),
+  }
+}
+
+fn compile_or_fail(src: String) PipelineArtifacts {
+  case pipeline.compile_source(src) {
+    .Ok(a) => a,
+    .Err(e) => error(e),
+  }
+}
+
+fn find_func(anf: AnfModule, name: String) AnfFunctionDef {
+  for f in anf.functions {
+    if f.name == name {
+      return f
+    }
+  }
+  error("function not found: ${name}")
+}
+
+fn count_calls_to(expr: AnfExpr, target: FuncId) Int {
+  case expr {
+    .Let(_, op, body) => count_calls_op(op, target) + count_calls_to(body, target),
+    _ => 0,
+  }
+}
+
+fn count_calls_op(op: AnfOp, target: FuncId) Int {
+  case op {
+    .ACall(.AGlobalFunc(f), _) => if f.id == target.id {
+      1
+    } else {
+      0
+    },
+    .AIf(_, t, e) => count_calls_to(t, target) + count_calls_to(e, target),
+    .AMatch(_, arms) => {
+      n := 0
+      for arm in arms {
+        n = n + count_calls_to(arm.body, target)
+      }
+      n
+    },
+    .ALoop(b) => count_calls_to(b, target),
+    .ADefer(b) => count_calls_to(b, target),
+    _ => 0,
   }
 }
 
@@ -293,6 +341,68 @@ pub fn suite() runner.Suite {
             "fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n",
           ),
         )
+      },
+    )
+    .test(
+      "rewrite emits string builder calls and drops the concat fold",
+      fn() Result<Void, String> {
+        a := compile_or_fail(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n",
+        )
+        anf2 := builder_region.rewrite_module(a.opt, a.builtins)
+        concat_id := a.builtins.method_id("String", "concat")
+        extend_id := a.builtins.id("string$builder_extend")
+        from_id := a.builtins.id("string$builder_from")
+        freeze_id := a.builtins.id("string$builder_freeze")
+        fn_m := find_func(anf2, "m")
+        try assert.equal(count_calls_to(fn_m.body, concat_id), 0)
+        try assert.equal(count_calls_to(fn_m.body, extend_id), 1)
+        try assert.equal(count_calls_to(fn_m.body, from_id), 1)
+        try assert.equal(count_calls_to(fn_m.body, freeze_id), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "rewrite emits vector builder_new/push/freeze and drops append",
+      fn() Result<Void, String> {
+        a := compile_or_fail(
+          "fn m() Void {\n  acc: Vector<Int> = []\n  for x in [1, 2] { acc = acc.append(x) }\n  println(acc.len().to_string())\n}\nm()\n",
+        )
+        anf2 := builder_region.rewrite_module(a.opt, a.builtins)
+        fn_m := find_func(anf2, "m")
+        try assert.equal(count_calls_to(fn_m.body, a.builtins.method_id("Vector", "append")), 0)
+        try assert.equal(count_calls_to(fn_m.body, a.builtins.id("vector$builder_new")), 1)
+        try assert.equal(count_calls_to(fn_m.body, a.builtins.id("vector$builder_push")), 1)
+        try assert.equal(count_calls_to(fn_m.body, a.builtins.id("vector$builder_freeze")), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "two independent builder regions in one function both rewrite",
+      fn() Result<Void, String> {
+        a := compile_or_fail(
+          "fn m() Void {\n  x := \"\"\n  for c in [\"a\"] { x = x.concat(c) }\n  println(x)\n  y := \"\"\n  for c in [\"b\"] { y = y.concat(c) }\n  println(y)\n}\nm()\n",
+        )
+        anf2 := builder_region.rewrite_module(a.opt, a.builtins)
+        fn_m := find_func(anf2, "m")
+        try assert.equal(count_calls_to(fn_m.body, a.builtins.method_id("String", "concat")), 0)
+        try assert.equal(count_calls_to(fn_m.body, a.builtins.id("string$builder_extend")), 2)
+        try assert.equal(count_calls_to(fn_m.body, a.builtins.id("string$builder_from")), 2)
+        try assert.equal(count_calls_to(fn_m.body, a.builtins.id("string$builder_freeze")), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "interior-read loop is left persistent by the rewrite",
+      fn() Result<Void, String> {
+        a := compile_or_fail(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  println(acc) }\n  println(acc)\n}\nm()\n",
+        )
+        anf2 := builder_region.rewrite_module(a.opt, a.builtins)
+        fn_m := find_func(anf2, "m")
+        try assert.is_true(count_calls_to(fn_m.body, a.builtins.method_id("String", "concat")) >= 1)
+        try assert.equal(count_calls_to(fn_m.body, a.builtins.id("string$builder_extend")), 0)
+        .Ok({})
       },
     )
 }

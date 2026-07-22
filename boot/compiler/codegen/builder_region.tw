@@ -1,0 +1,398 @@
+//! ANF-to-ANF builder-region rewrite.
+//!
+//! Turns a certified accumulator-fold loop (produced by the pure-ANF detector in
+//! `builder_region_detect.tw`) into transient-builder calls: the persistent
+//! `acc = acc.concat(chunk)` / `acc = acc.append(x)` fold becomes
+//!   builder := builder_from(acc)   // string: from(""); vector: builder_new()
+//!   loop { ... builder_push(builder, chunk) ... }
+//!   acc := freeze(builder)
+//! This module is a pure transform over `AnfModule`; it is NOT yet wired into the
+//! compile pipeline (Task 5 does that). Every step is sound-by-abandonment: if the
+//! recorded seed/loop shape cannot be matched cleanly, or the rewritten push count
+//! does not equal the recorded fold count, the region is left persistent.
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom}
+use compiler.builder_family.{BuilderConfig, string_builder_config, vector_builder_config}
+use compiler.builder_region_detect as detect
+use compiler.builtins.{BuiltinRegistry}
+use compiler.core_ir.{FuncId, LocalId}
+use compiler.mono_type.{MonoType}
+use compiler.opt.analysis.{next_local_id}
+
+// ── Region representation (ported from the deleted opt/builder_region.tw) ──
+type BuilderInit = { New, FromBase(LocalId) }
+
+type BuilderRegion = .{
+  bind_local: LocalId,
+  base_local: LocalId,
+  builder_local: LocalId,
+  freeze_local: LocalId,
+  assign_local: LocalId,
+  init: BuilderInit,
+  loop_body: AnfExpr,
+  cont: AnfExpr,
+}
+
+fn builder_init_call(init: BuilderInit, builder: BuilderConfig) AnfOp {
+  case init {
+    .New => .ACall(.AGlobalFunc(builder.builder_new_id), []),
+    .FromBase(base) => .ACall(.AGlobalFunc(builder.builder_from_id), [.ALocal(base)]),
+  }
+}
+
+fn lower_builder_region(region: BuilderRegion, builder: BuilderConfig) AnfExpr {
+  AnfExpr.Let(
+    region.builder_local,
+    region.init.builder_init_call(builder),
+    AnfExpr.Let(
+      region.bind_local,
+      .ALoop(region.loop_body),
+      AnfExpr.Let(
+        region.freeze_local,
+        .ACall(.AGlobalFunc(builder.builder_freeze_id), [.ALocal(region.builder_local)]),
+        AnfExpr.Let(
+          region.assign_local,
+          .AAssign(region.base_local, .ALocal(region.freeze_local)),
+          region.cont,
+        ),
+      ),
+    ),
+  )
+}
+
+// ── Loop-body rewrite (ported from the deleted opt/loop_builder.tw) ──
+fn atom_is_local(a: Atom, local: LocalId) Bool {
+  case a {
+    .ALocal(id) => id.id == local.id,
+    _ => false,
+  }
+}
+
+// Recognizes a top-level fold: `op = ACall(push_id, [ALocal(base), chunk])` with
+// `chunk != base`, whose result local is consume-reassigned into `base` in the
+// immediately following Let. Inline equivalent of the detector's `fold_chunk`
+// (that helper is not pub). Returns the chunk atom.
+fn loop_push_reassign_elem(
+  op: AnfOp,
+  body: AnfExpr,
+  base: LocalId,
+  push_id: FuncId,
+  result: LocalId,
+) Atom? {
+  case op {
+    .ACall(.AGlobalFunc(f), args) => if f.id == push_id.id
+      and args.len() == 2 and atom_is_local(args[0], base) and !atom_is_local(args[1], base)
+      and is_consume_reassign(body, base, result) {
+      .Some(args[1])
+    } else {
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn is_consume_reassign(body: AnfExpr, base: LocalId, result: LocalId) Bool {
+  case body {
+    .Let(_, .AAssign(target, .ALocal(v)), _) => target.id == base.id and v.id == result.id,
+    _ => false,
+  }
+}
+
+fn rewrite_loop_expr(
+  expr: AnfExpr,
+  base: LocalId,
+  builder: LocalId,
+  push_id: FuncId,
+  builder_push_id: FuncId,
+) AnfExpr {
+  case expr {
+    .Let(local, op, body) => {
+      case loop_push_reassign_elem(op, body, base, push_id, local) {
+        .Some(elem) => {
+          new_op := AnfOp.ACall(.AGlobalFunc(builder_push_id), [.ALocal(builder), elem])
+
+          case body {
+            .Let(assign_local, _, rest) => {
+              new_assign := AnfOp.AInit(.ALitVoid)
+              return AnfExpr.Let(
+                local,
+                new_op,
+                AnfExpr.Let(
+                  assign_local,
+                  new_assign,
+                  rewrite_loop_expr(rest, base, builder, push_id, builder_push_id),
+                ),
+              )
+            },
+            _ => {},
+          }
+        },
+        .None => {},
+      }
+
+      new_op := rewrite_loop_op_subexpr(op, base, builder, push_id, builder_push_id)
+      AnfExpr.Let(local, new_op, rewrite_loop_expr(body, base, builder, push_id, builder_push_id))
+    },
+    _ => expr,
+  }
+}
+
+fn rewrite_loop_op_subexpr(
+  op: AnfOp,
+  base: LocalId,
+  builder: LocalId,
+  push_id: FuncId,
+  builder_push_id: FuncId,
+) AnfOp {
+  case op {
+    .AIf(cond_e, then_e, else_e) => AnfOp.AIf(
+      cond_e,
+      rewrite_loop_expr(then_e, base, builder, push_id, builder_push_id),
+      rewrite_loop_expr(else_e, base, builder, push_id, builder_push_id),
+    ),
+    .AMatch(scrutinee, arms) => {
+      new_arms: Vector<AnfMatchArm> = collect arm in arms {
+        AnfMatchArm.{
+          pattern: arm.pattern,
+          body: rewrite_loop_expr(arm.body, base, builder, push_id, builder_push_id),
+        }
+      }
+      AnfOp.AMatch(scrutinee, new_arms)
+    },
+    .ALoop(body) => AnfOp.ALoop(rewrite_loop_expr(body, base, builder, push_id, builder_push_id)),
+    .ADefer(body) => AnfOp.ADefer(rewrite_loop_expr(body, base, builder, push_id, builder_push_id)),
+    _ => op,
+  }
+}
+
+// ── Call-site counter (coverage guard) ──
+fn count_global_call_sites(expr: AnfExpr, target: FuncId) Int {
+  case expr {
+    .Let(_, op, body) => count_op_call_sites(op, target) + count_global_call_sites(body, target),
+    _ => 0,
+  }
+}
+
+fn count_op_call_sites(op: AnfOp, target: FuncId) Int {
+  case op {
+    .ACall(callee, _) => case callee {
+      .AGlobalFunc(f) => if f.id == target.id {
+        1
+      } else {
+        0
+      },
+      _ => 0,
+    },
+    .AIf(_, t, e) => count_global_call_sites(t, target) + count_global_call_sites(e, target),
+    .AMatch(_, arms) => {
+      n := 0
+      for arm in arms {
+        n = n + count_global_call_sites(arm.body, target)
+      }
+      n
+    },
+    .ALoop(b) => count_global_call_sites(b, target),
+    .ADefer(b) => count_global_call_sites(b, target),
+    _ => 0,
+  }
+}
+
+// ── Driver ──
+fn config_for(family: String, b: BuiltinRegistry) BuilderConfig {
+  if family == "string" {
+    string_builder_config(b)
+  } else {
+    vector_builder_config(b)
+  }
+}
+
+// Splice within the seed's continuation: skip unrelated Lets on the spine until
+// the recorded loop_site Let is reached, then replace it with the lowered builder
+// region. Mirrors `find_region`'s skip-unrelated traversal. `.None` abandons.
+fn splice_loop(
+  expr: AnfExpr,
+  base: LocalId,
+  loop_site: LocalId,
+  init: BuilderInit,
+  builder: BuilderConfig,
+  push_id: FuncId,
+  builder_local: LocalId,
+  freeze_local: LocalId,
+  assign_local: LocalId,
+  fold_count: Int,
+) AnfExpr? {
+  case expr {
+    .Let(local, op, body) => if local.id == loop_site.id {
+      case op {
+        .ALoop(loop_body) => {
+          rewritten := rewrite_loop_expr(
+            loop_body,
+            base,
+            builder_local,
+            push_id,
+            builder.builder_push_id,
+          )
+
+          // Coverage guard: rewritten push count must match the recorded folds.
+          if count_global_call_sites(rewritten, builder.builder_push_id) != fold_count {
+            return .None
+          }
+          region := BuilderRegion.{
+            bind_local: local,
+            base_local: base,
+            builder_local,
+            freeze_local,
+            assign_local,
+            init,
+            loop_body: rewritten,
+            cont: body,
+          }
+          .Some(lower_builder_region(region, builder))
+        },
+        _ => .None,
+      }
+    } else {
+      case splice_loop(
+        body,
+        base,
+        loop_site,
+        init,
+        builder,
+        push_id,
+        builder_local,
+        freeze_local,
+        assign_local,
+        fold_count,
+      ) {
+        .Some(nb) => .Some(AnfExpr.Let(local, op, nb)),
+        .None => .None,
+      }
+    },
+    _ => .None,
+  }
+}
+
+// Walk the function-body spine for the seed Let (binds `base`), leaving it in
+// place and splicing the loop within its continuation. `.None` abandons.
+fn splice_seed(
+  expr: AnfExpr,
+  base: LocalId,
+  loop_site: LocalId,
+  init: BuilderInit,
+  builder: BuilderConfig,
+  push_id: FuncId,
+  builder_local: LocalId,
+  freeze_local: LocalId,
+  assign_local: LocalId,
+  fold_count: Int,
+) AnfExpr? {
+  case expr {
+    .Let(local, op, body) => if local.id == base.id {
+      case splice_loop(
+        body,
+        base,
+        loop_site,
+        init,
+        builder,
+        push_id,
+        builder_local,
+        freeze_local,
+        assign_local,
+        fold_count,
+      ) {
+        .Some(nb) => .Some(AnfExpr.Let(local, op, nb)),
+        .None => .None,
+      }
+    } else {
+      case splice_seed(
+        body,
+        base,
+        loop_site,
+        init,
+        builder,
+        push_id,
+        builder_local,
+        freeze_local,
+        assign_local,
+        fold_count,
+      ) {
+        .Some(nb) => .Some(AnfExpr.Let(local, op, nb)),
+        .None => .None,
+      }
+    },
+    _ => .None,
+  }
+}
+
+// Rewrite a single certified region in `f`. Abandons (returns `f` unchanged) if
+// the accumulator has no recorded mono, the seed/loop shape cannot be matched, or
+// the coverage guard fails.
+fn rewrite_one(f: AnfFunctionDef, c: detect.RegionCandidate, b: BuiltinRegistry) AnfFunctionDef {
+  case f.op_result_mono.get(c.accumulator.id) {
+    .Some(base_mono) => {
+      n := next_local_id(f)
+      builder_local := LocalId.{ id: n }
+      freeze_local := LocalId.{ id: n + 1 }
+      assign_local := LocalId.{ id: n + 2 }
+      builder := config_for(c.family, b)
+      init: BuilderInit = if c.family == "string" {
+        .FromBase(c.accumulator)
+      } else {
+        .New
+      }
+      case splice_seed(
+        f.body,
+        c.accumulator,
+        c.loop_site,
+        init,
+        builder,
+        c.push_id,
+        builder_local,
+        freeze_local,
+        assign_local,
+        c.fold_sites.len(),
+      ) {
+        .Some(new_body) => {
+          om := f.op_result_mono
+          om[builder_local.id] = base_mono
+          om[freeze_local.id] = base_mono
+          om[assign_local.id] = MonoType.Void
+          AnfFunctionDef.{
+            func_id: f.func_id,
+            name: f.name,
+            is_init: f.is_init,
+            params: f.params,
+            op_result_mono: om,
+            body: new_body,
+            return_ty: f.return_ty,
+          }
+        },
+        .None => f,
+      }
+    },
+    .None => f,
+  }
+}
+
+fn rewrite_func(f: AnfFunctionDef, cands: Vector<detect.RegionCandidate>, b: BuiltinRegistry) AnfFunctionDef {
+  cur := f
+  for c in cands {
+    cur = rewrite_one(cur, c, b)
+  }
+  cur
+}
+
+pub fn rewrite_module(m: AnfModule, b: BuiltinRegistry) AnfModule {
+  cands := detect.detect_candidates(m, b)
+  new_funcs: Vector<AnfFunctionDef> = collect f in m.functions {
+    fcands := cands.filter(fn(c) { c.structural_ok and c.func_id.id == f.func_id.id })
+    rewrite_func(f, fcands, b)
+  }
+  AnfModule.{
+    functions: new_funcs,
+    init_func_id: m.init_func_id,
+    extern_imports: m.extern_imports,
+    global_monos: m.global_monos,
+    lib_exports: m.lib_exports,
+  }
+}
