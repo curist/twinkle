@@ -1,5 +1,18 @@
 # Builder-Region `linearly_folded` Fact + Inspection — Implementation Plan (8C Plan 1)
 
+> **Status: COMPLETED (2026-07-22).** Implemented on branch `sound-uniqueness-8c-builder-region`
+> via subagent-driven execution. Shipped: the pure-ANF detector (`boot/compiler/builder_region_detect.tw`),
+> the structural fact (`boot/compiler/builder_region_fact.tw`, `linearly_folded = structural_ok`),
+> and the `twk ir --census --sites` render (`boot/commands/ir.tw`), with the full positive/negative
+> test matrix (3195 boot tests green, self-host fixed point held). During execution the design
+> pivoted: the ownership "condition 2" was dropped as unnecessary *and* unsatisfiable for strings,
+> making the fact purely structural (no ownership dependency, Phase B collapsed). A later enhancement
+> (F1) extended coverage to range/index loops. Review follow-ups (FU-1 liveness gate for Plan 2,
+> FU-2 second-fold surfacing, FU-3 walker refactor) are tracked in
+> [2026-07-22-8c-plan1-review-followups.md](../2026-07-22-8c-plan1-review-followups.md). The `- [ ]`
+> checkboxes below are the original TDD steps, left un-ticked per the execution precedent; the work
+> is complete and committed regardless.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add the analysis-owned `linearly_folded` safety fact for loop-carried builder regions (empty-seed, **unconditional**-fold `String.concat` / `Vector.append` accumulators) and render certified/rejected candidates in `twk ir --census --sites`. No emitted-code change.
