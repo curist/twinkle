@@ -82,4 +82,76 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "continue-guarded fold rejects (deferred to plan 5)",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { if c == \"b\" { continue }\n  acc = acc.concat(c) }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "Cell publication of accumulator rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  cell := Cell.new(\"\")\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  cell.set(acc) }\n  println(cell.get())\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "chunk aliasing the accumulator rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { d := acc\n  acc = acc.concat(d) }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "nested loop over the accumulator rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { for d in [\"x\"] { acc = acc.concat(d) } }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "closure capture of accumulator rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  f := fn() String { acc }\n  println(f()) }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "call publication of accumulator rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn use_it(s: String) Void { println(s) }\nfn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  use_it(acc) }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "non-empty seed is not detected",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"x\"\n  for c in [\"a\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "two independent regions in one function both detected",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  a := \"\"\n  for c in [\"x\"] { a = a.concat(c) }\n  b := \"\"\n  for c in [\"y\"] { b = b.concat(c) }\n  println(a)\n  println(b)\n}\nm()\n",
+        ),
+        2,
+      ) },
+    )
 }
