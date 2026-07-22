@@ -478,12 +478,160 @@ fn detect_in_op(
   }
 }
 
+// A fold hit surfaced by `first_refold`: the accumulator local folded by a
+// push call, plus the family/push it matched. Used to key a re-fold candidate.
+type RefoldHit = .{ acc: LocalId, family: String, push_id: FuncId }
+
+// Find the first fold call `ACall(push,[ALocal(v),_])` — push matching str_push
+// or vec_push — anywhere in `e`, recursing the break-dispatch structure the same
+// way `references_fold`/`op_fold_ref` do (the fold lives inside the loop's AIf
+// main arm, not at top level). Returns the accumulator local + family.
+//
+// Unlike `fold_chunk`/`is_self_concat`, this deliberately does NOT exclude the
+// self-concat shape `push(v, v)`: it is a conservative "fold-shaped call" match
+// used only to SURFACE a rejected re-fold, never for certification, so
+// over-matching just yields an (always-rejected, always-sound) extra candidate.
+fn first_refold(e: AnfExpr, str_push: FuncId, vec_push: FuncId) RefoldHit? {
+  case e {
+    .Let(_, op, body) => case op_refold_hit(op, str_push, vec_push) {
+      .Some(h) => .Some(h),
+      .None => first_refold(body, str_push, vec_push),
+    },
+    _ => .None,
+  }
+}
+
+fn op_refold_hit(op: AnfOp, str_push: FuncId, vec_push: FuncId) RefoldHit? {
+  case op {
+    .ACall(.AGlobalFunc(f), args) => if args.len() == 2 {
+      case args[0] {
+        .ALocal(v) => if f.id == str_push.id {
+          .Some(RefoldHit.{ acc: v, family: "string", push_id: str_push })
+        } else if f.id == vec_push.id {
+          .Some(RefoldHit.{ acc: v, family: "vector", push_id: vec_push })
+        } else {
+          .None
+        },
+        _ => .None,
+      }
+    } else {
+      .None
+    },
+    .AIf(_, t, e) => case first_refold(t, str_push, vec_push) {
+      .Some(h) => .Some(h),
+      .None => first_refold(e, str_push, vec_push),
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        case first_refold(arm.body, str_push, vec_push) {
+          .Some(h) => return .Some(h),
+          .None => {},
+        }
+      }
+      .None
+    },
+    // Descending into nested loops means an outer unclaimed loop whose only fold
+    // sits in a nested inner loop is flagged as a RefoldHit alongside the inner
+    // one — a conservative over-approximation that mirrors `op_fold_ref`, and is
+    // always SOUND because refold candidates are `structural_ok: false` (rejected,
+    // never rewritten).
+    .ALoop(b) => first_refold(b, str_push, vec_push),
+    .ADefer(b) => first_refold(b, str_push, vec_push),
+    _ => .None,
+  }
+}
+
+// Walk the function body for loops that re-fold an already-materialized
+// accumulator (a second fold-bearing loop whose site was NOT claimed by the
+// seed-path scan). Such loops fold a non-empty accumulator, so they can never be
+// rewritten by the first-slice empty-seed lowering; surface them as rejected
+// candidates keyed by their own loop site (both loops fold the same local, so
+// the seed identity does not distinguish them — the claimed loop site does).
+fn scan_refold_loops(
+  e: AnfExpr,
+  func_id: FuncId,
+  func: String,
+  str_push: FuncId,
+  vec_push: FuncId,
+  claimed: Dict<Int, Bool>,
+  acc_cands: Vector<RegionCandidate>,
+) Vector<RegionCandidate> {
+  case e {
+    .Let(loop_local, .ALoop(loop_body), rest) => {
+      out := case claimed[loop_local.id] {
+        .Some(_) => acc_cands, // claimed primary region loop
+        .None => case first_refold(loop_body, str_push, vec_push) {
+          .Some(hit) => acc_cands.append(RegionCandidate.{
+            func_id,
+            func,
+            family: hit.family,
+            push_id: hit.push_id,
+            accumulator: hit.acc,
+            seed_site: hit.acc, // no fresh seed; proxy to the accumulator local
+            loop_site: loop_local,
+            fold_sites: [],
+            structural_ok: false,
+            reason: "re-used accumulator, not a fresh seed (non-empty; deferred to Plan 3)",
+          }),
+          .None => acc_cands,
+        },
+      }
+      out2 := scan_refold_loops(loop_body, func_id, func, str_push, vec_push, claimed, out)
+      scan_refold_loops(rest, func_id, func, str_push, vec_push, claimed, out2)
+    },
+    .Let(_, op, rest) => {
+      out := scan_refold_loops_op(op, func_id, func, str_push, vec_push, claimed, acc_cands)
+      scan_refold_loops(rest, func_id, func, str_push, vec_push, claimed, out)
+    },
+    _ => acc_cands,
+  }
+}
+
+fn scan_refold_loops_op(
+  op: AnfOp,
+  func_id: FuncId,
+  func: String,
+  str_push: FuncId,
+  vec_push: FuncId,
+  claimed: Dict<Int, Bool>,
+  cands: Vector<RegionCandidate>,
+) Vector<RegionCandidate> {
+  case op {
+    .AIf(_, t, e) => {
+      a := scan_refold_loops(t, func_id, func, str_push, vec_push, claimed, cands)
+      scan_refold_loops(e, func_id, func, str_push, vec_push, claimed, a)
+    },
+    .AMatch(_, arms) => {
+      cur := cands
+      for arm in arms {
+        cur = scan_refold_loops(arm.body, func_id, func, str_push, vec_push, claimed, cur)
+      }
+      cur
+    },
+    // No `.ALoop` arm: an ALoop-bound Let is always matched by scan_refold_loops'
+    // first arm before the generic `.Let` arm (this function's only caller) is
+    // reached, so `op` is never `.ALoop` here — it would be dead code. Nested
+    // loops are covered by scan_refold_loops recursing into loop_body/rest.
+    .ADefer(b) => scan_refold_loops(b, func_id, func, str_push, vec_push, claimed, cands),
+    _ => cands,
+  }
+}
+
 pub fn detect_candidates(m: AnfModule, b: BuiltinRegistry) Vector<RegionCandidate> {
   str_push := string_builder_config(b).push_id
   vec_push := vector_builder_config(b).push_id
   out: Vector<RegionCandidate> = []
   for f in m.functions {
-    out = detect_in_expr(f.body, f.func_id, f.name, str_push, vec_push, Dict.new(), out)
+    primaries := detect_in_expr(f.body, f.func_id, f.name, str_push, vec_push, Dict.new(), [])
+
+    // Every candidate the seed path produced (certified OR structurally-rejected)
+    // has claimed its loop_site; those loops must not re-surface as re-folds.
+    claimed: Dict<Int, Bool> = Dict.new()
+    for c in primaries {
+      claimed[c.loop_site.id] = true
+    }
+    refolds := scan_refold_loops(f.body, f.func_id, f.name, str_push, vec_push, claimed, [])
+    out = .concat(primaries).concat(refolds)
   }
   out
 }

@@ -250,6 +250,38 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "re-folded accumulator surfaces as a rejected candidate (FU-2)",
+      fn() Result<Void, String> {
+        vs := verdicts_for(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c) }\n  println(acc)\n  for c in [\"b\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n",
+        )
+        try assert.equal(vs.len(), 2)
+        certified := 0
+        reused := 0
+        for v in vs {
+          if v.linearly_folded {
+            certified = certified + 1
+          }
+          if v.reason.contains("re-used accumulator") {
+            reused = reused + 1
+          }
+        }
+        try assert.equal(certified, 1)
+        try assert.equal(reused, 1)
+        try assert.is_false(vs[0].key.loop_site == vs[1].key.loop_site)
+        .Ok({})
+      },
+    )
+    .test(
+      "single clean fold still surfaces exactly one certified candidate (FU-2 no false positive)",
+      fn() Result<Void, String> { assert.equal(
+        certified_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n",
+        ),
+        1,
+      ) },
+    )
+    .test(
       "string accumulator loop links through the backend",
       fn() Result<Void, String> {
         // Forward-looking smoke/link check: nothing emits string$builder_from
