@@ -46,27 +46,10 @@ pub fn region_key(c: RegionCandidate) BuilderRegionKey {
     func_id: c.func_id.id,
     seed_site: c.seed_site.id,
     loop_site: c.loop_site.id,
-    fold_sites: sort_ints(ids),
+    fold_sites: ids.sort(),
     freeze_site: c.loop_site.id,
     family: c.family,
   }
-}
-
-fn sort_ints(xs: Vector<Int>) Vector<Int> {
-  // small insertion sort; fold_sites is tiny (first slice: 1)
-  out := xs
-  i := 1
-  for i < out.len() {
-    j := i
-    for j > 0 and out[j - 1] > out[j] {
-      tmp := out[j - 1]
-      out[j - 1] = out[j]
-      out[j] = tmp
-      j = j - 1
-    }
-    i = i + 1
-  }
-  out
 }
 
 fn atom_is_local(a: Atom, local: LocalId) Bool {
