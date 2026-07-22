@@ -228,7 +228,7 @@ fn op_references_deep(op: AnfOp, local: LocalId) Bool {
     .AInit(v) => atom_is_local(v, local),
     .AAssign(target, v) => target.id == local.id or atom_is_local(v, local),
     .AGlobalSet(_, v) => atom_is_local(v, local),
-    .AIf(cond, then_e, else_e) => atom_is_local(cond, local)
+    .AIf(cond_e, then_e, else_e) => atom_is_local(cond_e, local)
       or expr_references(then_e, local) or expr_references(else_e, local),
     .AMatch(scrutinee, arms) => {
       if atom_is_local(scrutinee, local) { return true }
