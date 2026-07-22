@@ -1,0 +1,241 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.builder_region_detect as detect
+use compiler.builder_region_fact as region_fact
+use compiler.pipeline
+
+fn candidates_for(src: String) Vector<detect.RegionCandidate> {
+  case pipeline.compile_source(src) {
+    .Ok(a) => detect.detect_candidates(a.opt, a.builtins),
+    .Err(e) => error("compile failed: ${e}"),
+  }
+}
+
+fn verdicts_for(src: String) Vector<region_fact.RegionVerdict> {
+  case pipeline.compile_source(src) {
+    .Ok(a) => region_fact.region_verdicts(a.opt, a.builtins),
+    .Err(e) => error("compile failed: ${e}"),
+  }
+}
+
+fn certified_count(src: String) Int {
+  n := 0
+  for v in verdicts_for(src) {
+    if v.linearly_folded {
+      n = n + 1
+    }
+  }
+  n
+}
+
+// count only structurally-clean candidates
+fn clean_count(src: String) Int {
+  n := 0
+  for c in candidates_for(src) {
+    if c.structural_ok {
+      n = n + 1
+    }
+  }
+  n
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("builder_region")
+    .test(
+      "clean string fold is detected",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n",
+        ),
+        1,
+      ) },
+    )
+    .test(
+      "clean vector fold is detected",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc: Vector<Int> = []\n  for x in [1, 2] { acc = acc.append(x) }\n  println(acc.len().to_string())\n}\nm()\n",
+        ),
+        1,
+      ) },
+    )
+    .test(
+      "interior read rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  println(acc) }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "conditional fold rejects (deferred to plan 5)",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { if c == \"a\" { acc = acc.concat(c) } }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "early return of accumulator rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() String {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  return acc }\n  acc\n}\nprintln(m())\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "self concat rejects and renders as a near-miss",
+      fn() Result<Void, String> {
+        src := "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(acc) }\n  println(acc)\n}\nm()\n"
+        try assert.equal(clean_count(src), 0)
+        cands := candidates_for(src)
+        try assert.equal(cands.len(), 1)
+        try assert.is_false(cands[0].structural_ok)
+        try assert.str_contains(cands[0].reason, "self-concat")
+        .Ok({})
+      },
+    )
+    .test(
+      "continue-guarded fold rejects (deferred to plan 5)",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { if c == \"b\" { continue }\n  acc = acc.concat(c) }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "Cell publication of accumulator rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  cell := Cell.new(\"\")\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  cell.set(acc) }\n  println(cell.get())\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "chunk aliasing the accumulator rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { d := acc\n  acc = acc.concat(d) }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "nested loop over the accumulator rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { for d in [\"x\"] { acc = acc.concat(d) } }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "closure capture of accumulator rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  f := fn() String { acc }\n  println(f()) }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "call publication of accumulator rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn use_it(s: String) Void { println(s) }\nfn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c)\n  use_it(acc) }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "non-empty seed is not detected",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"x\"\n  for c in [\"a\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "two independent regions in one function both detected",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  a := \"\"\n  for c in [\"x\"] { a = a.concat(c) }\n  b := \"\"\n  for c in [\"y\"] { b = b.concat(c) }\n  println(a)\n  println(b)\n}\nm()\n",
+        ),
+        2,
+      ) },
+    )
+    .test(
+      "clean string fold over a range loop is detected",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for i in range(3) { acc = acc.concat(\"x\") }\n  println(acc)\n}\nm()\n",
+        ),
+        1,
+      ) },
+    )
+    .test(
+      "clean vector fold over a range loop is detected",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc: Vector<Int> = []\n  for i in range(3) { acc = acc.append(i) }\n  println(acc.len().to_string())\n}\nm()\n",
+        ),
+        1,
+      ) },
+    )
+    .test(
+      "interior read on a range loop rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for i in range(3) { acc = acc.concat(\"x\")\n  println(acc) }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "conditional fold on a range loop rejects",
+      fn() Result<Void, String> { assert.equal(
+        clean_count(
+          "fn m() Void {\n  acc := \"\"\n  for i in range(3) { if i > 0 { acc = acc.concat(\"x\") } }\n  println(acc)\n}\nm()\n",
+        ),
+        0,
+      ) },
+    )
+    .test(
+      "clean string fold certifies",
+      fn() Result<Void, String> { assert.equal(
+        certified_count(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n",
+        ),
+        1,
+      ) },
+    )
+    .test(
+      "clean vector fold certifies",
+      fn() Result<Void, String> { assert.equal(
+        certified_count(
+          "fn m() Void {\n  acc: Vector<Int> = []\n  for x in [1, 2] { acc = acc.append(x) }\n  println(acc.len().to_string())\n}\nm()\n",
+        ),
+        1,
+      ) },
+    )
+    .test(
+      "conditional fold renders as a rejected candidate",
+      fn() Result<Void, String> {
+        vs := verdicts_for(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { if c == \"a\" { acc = acc.concat(c) } }\n  println(acc)\n}\nm()\n",
+        )
+        try assert.equal(vs.len(), 1)
+        try assert.is_false(vs[0].linearly_folded)
+        try assert.str_contains(vs[0].reason, "structural")
+        .Ok({})
+      },
+    )
+}

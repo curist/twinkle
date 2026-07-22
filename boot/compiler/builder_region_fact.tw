@@ -1,0 +1,55 @@
+//! The structural `linearly_folded` fact for builder regions. A candidate is
+//! linearly_folded iff it is structurally clean (empty seed, unconditional single
+//! fold, no observation/publication, no self-alias) — detection is sound by
+//! rejection. Builder-region lowering replaces the accumulator with a PRIVATE
+//! builder and never mutates it, so ownership uniqueness is NOT required (see
+//! builder-region-design.md, "The structural safety fact"). Emits certified AND
+//! rejected verdicts for inspection.
+
+use compiler.anf.{AnfModule}
+use compiler.builder_region_detect as detect
+use compiler.builder_region_detect.{BuilderRegionKey}
+use compiler.builtins.{BuiltinRegistry}
+
+pub type RegionVerdict = .{
+  key: BuilderRegionKey,
+  func: String,
+  family: String,
+  linearly_folded: Bool,
+  helper_sequence: String,
+  proof_id: String,
+  reason: String,
+}
+
+fn helper_sequence(family: String) String {
+  if family == "string" {
+    "string$builder_from(\"\") -> builder_extend* -> builder_freeze"
+  } else {
+    "vector$builder_new -> builder_push* -> builder_freeze"
+  }
+}
+
+pub fn region_verdicts(opt: AnfModule, b: BuiltinRegistry) Vector<RegionVerdict> {
+  cands := detect.detect_candidates(opt, b)
+  out: Vector<RegionVerdict> = []
+  for c in cands {
+    reason := if c.structural_ok {
+      "certified: empty seed, unconditional clean fold, no observation/publication"
+    } else {
+      "rejected (structural): ${c.reason}"
+    }
+    proof_id := "phase8c-region:${c.func}:seed L${c.seed_site.id}:loop L${c.loop_site.id}"
+    out = .append(
+      RegionVerdict.{
+        key: c.region_key(),
+        func: c.func,
+        family: c.family,
+        linearly_folded: c.structural_ok,
+        helper_sequence: helper_sequence(c.family),
+        proof_id,
+        reason,
+      },
+    )
+  }
+  out
+}

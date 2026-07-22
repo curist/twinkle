@@ -6,6 +6,7 @@ use commands.common.{exit_usage_error, format_compile_error, get_positional, pri
 use compiler.artifacts.{PipelineArtifacts}
 use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{prepare_backend_with_mutable_config}
+use compiler.builder_region_fact as region_fact
 use compiler.census
 use compiler.codegen.dry_run
 use compiler.codegen.mutable_audit
@@ -59,6 +60,30 @@ fn render_cfg_artifacts(artifacts: PipelineArtifacts) String {
   summary.render_cfg(owned.view, owned.analyzed, b, s, owned.table, variants)
 }
 
+/// Render the builder-region candidate table: one row per certified or
+/// rejected candidate, with its full key, helper sequence, and proof id.
+fn render_region_rows(vs: Vector<region_fact.RegionVerdict>) String {
+  out := "\nbuilder regions:\nfunc\tfamily\tlinearly_folded\tkey\thelpers\tproof\treason\n"
+  for v in vs {
+    fs := "["
+    for id, i in v.key.fold_sites {
+      fs = .concat(
+        if i > 0 {
+          ",${id}"
+        } else {
+          "${id}"
+        },
+      )
+    }
+    fs = .concat("]")
+    key := "fn${v.key.func_id} seed L${v.key.seed_site} loop L${v.key.loop_site} folds ${fs} freeze L${v.key.freeze_site} ${v.key.family}"
+    out = .concat(
+      "${v.func}\t${v.family}\t${v.linearly_folded}\t${key}\t${v.helper_sequence}\t${v.proof_id}\t${v.reason}\n",
+    )
+  }
+  out
+}
+
 /// Render `--census` output: the family tally, plus (when `include_sites`) the
 /// update-site dry-run table joining candidates with ownership verdicts.
 /// Replaces the old per-site `census.render_sites` listing.
@@ -95,6 +120,9 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
     audit_rows := mutable_audit.audit_prepared_calls(prepared, artifacts.env, artifacts.builtins)
     out = .concat("\nmutable decisions\n")
     out = .concat(mutable_audit.render_audit_rows(audit_rows))
+
+    region_vs := region_fact.region_verdicts(artifacts.opt, artifacts.builtins)
+    out = .concat(render_region_rows(region_vs))
   }
   out
 }

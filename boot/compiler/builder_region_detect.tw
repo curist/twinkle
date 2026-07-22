@@ -1,0 +1,489 @@
+//! Pure-ANF builder-region detector. Recognizes empty-seed accumulator loops
+//! with a break-dispatch skeleton and applies a sound-BY-REJECTION scan: the
+//! accumulator's only reference on the loop main path must be one top-level
+//! fold. Emits clean candidates AND structurally-rejected near-misses (reason).
+//! Shared by builder_region_fact.tw and the Plan 2 producer.
+
+use compiler.anf.{AnfExpr, AnfModule, AnfOp, Atom}
+use compiler.builder_family.{string_builder_config, vector_builder_config}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.core_ir.{FuncId, LocalId}
+
+pub type BuilderRegionKey = .{
+  func_id: Int,
+  seed_site: Int,
+  loop_site: Int,
+  fold_sites: Vector<Int>, // sorted ascending
+  freeze_site: Int, // Plan 1 has no rewrite/freeze: set = loop_site (documented proxy)
+  family: String,
+}
+
+// A detected region candidate. `structural_ok` is true when conditions 3/4/5
+// hold; when false, `reason` explains the structural rejection. `fold_sites`
+// are the fold-call result locals (sorted).
+pub type RegionCandidate = .{
+  func_id: FuncId,
+  func: String,
+  family: String,
+  push_id: FuncId,
+  accumulator: LocalId,
+  seed_site: LocalId,
+  loop_site: LocalId,
+  fold_sites: Vector<LocalId>,
+  structural_ok: Bool,
+  reason: String,
+}
+
+type SeedFamily = .{ push_id: FuncId, family: String }
+
+type ScanResult = .{ ok: Bool, fold_sites: Vector<LocalId>, reason: String }
+
+pub fn region_key(c: RegionCandidate) BuilderRegionKey {
+  ids: Vector<Int> = collect fs in c.fold_sites {
+    fs.id
+  }
+  BuilderRegionKey.{
+    func_id: c.func_id.id,
+    seed_site: c.seed_site.id,
+    loop_site: c.loop_site.id,
+    fold_sites: ids.sort(),
+    freeze_site: c.loop_site.id,
+    family: c.family,
+  }
+}
+
+fn atom_is_local(a: Atom, local: LocalId) Bool {
+  case a {
+    .ALocal(id) => id.id == local.id,
+    _ => false,
+  }
+}
+
+fn expr_references(e: AnfExpr, local: LocalId) Bool {
+  case e {
+    .Let(_, op, body) => op_references_deep(op, local) or expr_references(body, local),
+    .Atom(a) => atom_is_local(a, local),
+    .Return(.Some(a)) => atom_is_local(a, local),
+    .Return(.None) => false,
+    .Break(.Some(a)) => atom_is_local(a, local),
+    .Break(.None) => false,
+    .Continue => false,
+  }
+}
+
+fn any_arg_is_local(args: Vector<Atom>, local: LocalId) Bool {
+  for a in args {
+    if atom_is_local(a, local) {
+      return true
+    }
+  }
+  false
+}
+
+fn op_references_deep(op: AnfOp, local: LocalId) Bool {
+  case op {
+    .ACall(callee, args) => atom_is_local(callee, local) or any_arg_is_local(args, local),
+    .ABinOp(_, l, r, _) => atom_is_local(l, local) or atom_is_local(r, local),
+    .AUnOp(_, inner, _) => atom_is_local(inner, local),
+    .AMakeClosure(_, fvs) => {
+      for v in fvs {
+        if v.id == local.id {
+          return true
+        }
+      }
+      false
+    },
+    .ARecord(_, fields) => {
+      for f in fields {
+        if atom_is_local(f.value, local) {
+          return true
+        }
+      }
+      false
+    },
+    .ARecordGet(t, _, _) => atom_is_local(t, local),
+    .ARecordUpdate(base, _, v, _, _) => atom_is_local(base, local) or atom_is_local(v, local),
+    .AVariant(_, _, args) => any_arg_is_local(args, local),
+    .AArrayLit(elems) => any_arg_is_local(elems, local),
+    .AIndex(base, idx, _, _) => atom_is_local(base, local) or atom_is_local(idx, local),
+    .AInit(v) => atom_is_local(v, local),
+    .AAssign(target, v) => target.id == local.id or atom_is_local(v, local),
+    .AGlobalSet(_, v) => atom_is_local(v, local),
+    .AIf(cond_e, then_e, else_e) => atom_is_local(cond_e, local)
+      or expr_references(then_e, local)
+      or expr_references(else_e, local),
+    .AMatch(scrutinee, arms) => {
+      if atom_is_local(scrutinee, local) {
+        return true
+      }
+      for arm in arms {
+        if expr_references(arm.body, local) {
+          return true
+        }
+      }
+      false
+    },
+    .ALoop(body) => expr_references(body, local),
+    .ADefer(body) => expr_references(body, local),
+    .AWrapAnyref(a, _) => atom_is_local(a, local),
+    .AUnwrapAnyref(a, _) => atom_is_local(a, local),
+  }
+}
+
+// A fold: ACall(push,[acc,chunk]) with chunk != acc, whose result is
+// consume-reassigned into acc in the immediately following Let.
+fn fold_chunk(op: AnfOp, body: AnfExpr, acc: LocalId, push_id: FuncId, result: LocalId) Atom? {
+  case op {
+    .ACall(.AGlobalFunc(f), args) => if f.id == push_id.id
+      and args.len() == 2 and atom_is_local(args[0], acc) and !atom_is_local(args[1], acc)
+      and is_consume_reassign(body, acc, result) {
+      .Some(args[1])
+    } else {
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn is_consume_reassign(body: AnfExpr, acc: LocalId, result: LocalId) Bool {
+  case body {
+    .Let(_, .AAssign(target, .ALocal(v)), _) => target.id == acc.id and v.id == result.id,
+    _ => false,
+  }
+}
+
+// A base-only fold ATTEMPT: a push call with `acc` as arg0, regardless of the
+// chunk or reassign tail. `fold_chunk` recognizes CLEAN folds; `is_fold_attempt`
+// also recognizes malformed ones (self-concat) so they surface as rejected
+// near-misses instead of vanishing.
+fn is_fold_attempt(op: AnfOp, acc: LocalId, push_id: FuncId) Bool {
+  case op {
+    .ACall(.AGlobalFunc(f), args) => f.id == push_id.id
+      and args.len() == 2 and atom_is_local(args[0], acc),
+    _ => false,
+  }
+}
+
+// Of a fold ATTEMPT (`is_fold_attempt` already true): is the chunk argument
+// (args[1]) the accumulator itself — `acc.concat(acc)` — rather than some
+// other malformed tail (e.g. a bad consume-reassign)?
+fn is_self_concat(op: AnfOp, acc: LocalId) Bool {
+  case op {
+    .ACall(_, args) => args.len() == 2 and atom_is_local(args[1], acc),
+    _ => false,
+  }
+}
+
+// Control-flow ops are rejected on the loop main arm (first slice: unconditional).
+fn is_control_flow_op(op: AnfOp) Bool {
+  case op {
+    .AIf(_, _, _) => true,
+    .AMatch(_, _) => true,
+    .ALoop(_) => true,
+    .ADefer(_) => true,
+    _ => false,
+  }
+}
+
+// Scan the loop main arm: exactly one top-level fold, and acc referenced
+// NOWHERE else on the arm (condition 3/4/5, sound by rejection).
+fn scan_main_arm(arm: AnfExpr, acc: LocalId, push_id: FuncId, folds: Vector<LocalId>) ScanResult {
+  case arm {
+    .Let(local, op, body) => case fold_chunk(op, body, acc, push_id, local) {
+      .Some(_) => {
+        // fold at top level; skip past the AAssign, continue scanning the tail
+        case body {
+          .Let(_, _, rest) => scan_main_arm(rest, acc, push_id, folds.append(local)),
+          _ => ScanResult.{ ok: false, fold_sites: [], reason: "malformed fold tail" },
+        }
+      },
+      .None => if is_fold_attempt(op, acc, push_id) {
+        ScanResult.{
+          ok: false,
+          fold_sites: [],
+          reason: if is_self_concat(op, acc) {
+            "self-concat: chunk aliases the accumulator"
+          } else {
+            "malformed fold tail (bad consume-reassign)"
+          },
+        }
+      } else if is_control_flow_op(op) {
+        // Any branch/loop on the main arm makes the fold conditional or
+        // continue-guarded (verified: a `if skip { continue }` guard lowers to a
+        // top-level AIf here, then the fold follows). First slice is UNCONDITIONAL
+        // only, so reject all control flow on the main arm. Deferred to Plan 5.
+        ScanResult.{
+          ok: false,
+          fold_sites: [],
+          reason: "control flow on the loop main arm (conditional/continue-guarded fold) — deferred to Plan 5",
+        }
+      } else if op_references_deep(op, acc) {
+        ScanResult.{
+          ok: false,
+          fold_sites: [],
+          reason: "accumulator referenced outside the fold (interior read / capture / publication)",
+        }
+      } else {
+        scan_main_arm(body, acc, push_id, folds)
+      },
+    },
+    .Atom(a) => reject_if_acc(a, acc, folds),
+    .Return(.Some(a)) => reject_if_acc(a, acc, folds),
+    // Value-carrying break is checker-rejected in source ("break with a value is
+    // not supported"), so unreachable from first-slice source; kept defensive.
+    .Break(.Some(a)) => reject_if_acc(a, acc, folds),
+    .Return(.None) => finish(folds),
+    .Break(.None) => finish(folds),
+    .Continue => finish(folds),
+  }
+}
+
+fn reject_if_acc(a: Atom, acc: LocalId, folds: Vector<LocalId>) ScanResult {
+  if atom_is_local(a, acc) {
+    ScanResult.{ ok: false, fold_sites: [], reason: "accumulator published on an exit edge" }
+  } else {
+    finish(folds)
+  }
+}
+
+// First slice: exactly one unconditional fold.
+fn finish(folds: Vector<LocalId>) ScanResult {
+  if folds.len() == 1 {
+    ScanResult.{ ok: true, fold_sites: folds, reason: "" }
+  } else {
+    ScanResult.{
+      ok: false,
+      fold_sites: [],
+      reason: "expected exactly one unconditional fold, found ${folds.len()}",
+    }
+  }
+}
+
+// Track locals bound to an empty array literal so `AInit(ALocal v)` seeds are
+// recognized (vector seeds lower via a temp; string seeds are direct).
+fn is_empty_array_value(op: AnfOp) Bool {
+  case op {
+    .AArrayLit(elems) => elems.len() == 0,
+    _ => false,
+  }
+}
+
+// Is `op` an empty seed for `local`? Returns the family. `empty_arr` is the set
+// of locals bound to an empty AArrayLit earlier in the same chain.
+fn seed_family(op: AnfOp, str_push: FuncId, vec_push: FuncId, empty_arr: Dict<Int, Bool>) SeedFamily? {
+  case op {
+    .AInit(.ALitStr(s)) => if s.len() == 0 {
+      .Some(SeedFamily.{ push_id: str_push, family: "string" })
+    } else {
+      .None
+    },
+    .AInit(.ALocal(v)) => case empty_arr.get(v.id) {
+      .Some(_) => .Some(SeedFamily.{ push_id: vec_push, family: "vector" }),
+      .None => .None,
+    },
+    _ => .None,
+  }
+}
+
+// The exit arm of a loop's break-dispatch is exactly `Break(.None)`.
+fn is_break_exit(e: AnfExpr) Bool {
+  case e {
+    .Break(.None) => true,
+    _ => false,
+  }
+}
+
+// Find the break-dispatch AIf on the loop body's top-level chain and return its
+// non-break (main) arm. `acc` must not be referenced before that AIf.
+//
+// A non-break-dispatch AIf preceding the real break-dispatch (e.g. a range
+// loop's step-sign condition, verified: `int.eq step, 0` then `if ... then
+// true else <range-math>`) is skipped and scanning continues past it — but
+// only when it does NOT reference `acc`; if it does, the accumulator is
+// observed before the fold and this bails to `.None`.
+//
+// Soundness note: when the body has no break-dispatch shape at all (falls
+// through to the base case below), this returns `.None` WITHOUT itself
+// scanning further. That is safe only because the sole caller, `find_region`,
+// re-scans the entire `ALoop` op with `op_references_deep` when no fold is
+// found via the main arm — so any `acc` reference in an unmatched shape is
+// still caught by that fallback. Keep the two together.
+fn loop_main_arm(body: AnfExpr, acc: LocalId) AnfExpr? {
+  case body {
+    .Let(_, op, rest) => case op {
+      .AIf(_, then_e, else_e) => if is_break_exit(then_e) and !is_break_exit(else_e) {
+        .Some(else_e)
+      } else {
+        if is_break_exit(else_e) and !is_break_exit(then_e) {
+          .Some(then_e)
+        } else {
+          // A non-break-dispatch AIf (e.g. range's step-sign condition computation)
+          // that doesn't touch acc: skip it and keep looking for the real
+          // break-dispatch. If it DOES reference acc, the accumulator is observed
+          // before the fold — reject.
+          if op_references_deep(op, acc) {
+            .None
+          } else {
+            loop_main_arm(rest, acc)
+          }
+        }
+      },
+      _ => if op_references_deep(op, acc) {
+        .None
+      } else {
+        loop_main_arm(rest, acc)
+      },
+    },
+    _ => .None,
+  }
+}
+
+type FoundRegion = .{ loop_site: LocalId, scan: ScanResult }
+
+// From `acc`'s seed binding, scan forward for the loop that folds `acc`. A loop
+// that folds `acc` yields the candidate (a rejected scan still yields one so
+// near-misses render). A loop or op that merely *references* `acc` without
+// folding it rejects (interior observation). An unrelated loop/op that never
+// touches `acc` is skipped and scanning continues. `.None` when no fold-bearing
+// loop for `acc` is reached before the chain ends or `acc` is observed.
+fn find_region(after_seed: AnfExpr, acc: LocalId, push_id: FuncId) FoundRegion? {
+  case after_seed {
+    .Let(local, op, body) => case op {
+      .ALoop(loop_body) => {
+        main_opt := loop_main_arm(loop_body, acc)
+        folds := case main_opt {
+          .Some(m) => references_fold(m, acc, push_id),
+          .None => references_fold(loop_body, acc, push_id),
+        }
+        if folds {
+          scan := case main_opt {
+            .Some(m) => scan_main_arm(m, acc, push_id, []),
+            .None => ScanResult.{
+              ok: false,
+              fold_sites: [],
+              reason: "fold not reachable via a break-dispatch main arm",
+            },
+          }
+          .Some(FoundRegion.{ loop_site: local, scan })
+        } else if op_references_deep(op, acc) {
+          .None // acc observed in an unrelated loop — reject
+        } else {
+          find_region(body, acc, push_id) // unrelated loop — keep scanning
+        }
+      },
+      _ => if op_references_deep(op, acc) {
+        .None
+      } else {
+        find_region(body, acc, push_id)
+      },
+    },
+    _ => .None,
+  }
+}
+
+// Does `e` contain a fold call ACall(push,[acc,...]) anywhere (to distinguish a
+// rejected fold-bearing region from an unrelated loop)?
+fn references_fold(e: AnfExpr, acc: LocalId, push_id: FuncId) Bool {
+  case e {
+    .Let(_, op, body) => is_fold_attempt(op, acc, push_id)
+      or op_fold_ref(op, acc, push_id)
+      or references_fold(body, acc, push_id),
+    _ => false,
+  }
+}
+
+fn op_fold_ref(op: AnfOp, acc: LocalId, push_id: FuncId) Bool {
+  case op {
+    .AIf(_, t, e) => references_fold(t, acc, push_id) or references_fold(e, acc, push_id),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if references_fold(arm.body, acc, push_id) {
+          return true
+        }
+      }
+      false
+    },
+    .ALoop(b) => references_fold(b, acc, push_id),
+    .ADefer(b) => references_fold(b, acc, push_id),
+    _ => false,
+  }
+}
+
+fn detect_in_expr(
+  expr: AnfExpr,
+  func_id: FuncId,
+  func: String,
+  str_push: FuncId,
+  vec_push: FuncId,
+  empty_arr: Dict<Int, Bool>,
+  cands: Vector<RegionCandidate>,
+) Vector<RegionCandidate> {
+  case expr {
+    .Let(local, op, body) => {
+      // record empty-array-value locals for vector-seed recognition
+      ea := empty_arr
+      if is_empty_array_value(op) {
+        ea[local.id] = true
+      }
+
+      out := case seed_family(op, str_push, vec_push, ea) {
+        .Some(sf) => case find_region(body, local, sf.push_id) {
+          .Some(fr) => cands.append(RegionCandidate.{
+            func_id,
+            func,
+            family: sf.family,
+            push_id: sf.push_id,
+            accumulator: local,
+            seed_site: local,
+            loop_site: fr.loop_site,
+            fold_sites: fr.scan.fold_sites,
+            structural_ok: fr.scan.ok,
+            reason: fr.scan.reason,
+          }),
+          .None => cands,
+        },
+        .None => cands,
+      }
+      out2 := detect_in_op(op, func_id, func, str_push, vec_push, ea, out)
+      detect_in_expr(body, func_id, func, str_push, vec_push, ea, out2)
+    },
+    _ => cands,
+  }
+}
+
+fn detect_in_op(
+  op: AnfOp,
+  func_id: FuncId,
+  func: String,
+  str_push: FuncId,
+  vec_push: FuncId,
+  empty_arr: Dict<Int, Bool>,
+  cands: Vector<RegionCandidate>,
+) Vector<RegionCandidate> {
+  case op {
+    .AIf(_, t, e) => {
+      a := detect_in_expr(t, func_id, func, str_push, vec_push, empty_arr, cands)
+      detect_in_expr(e, func_id, func, str_push, vec_push, empty_arr, a)
+    },
+    .AMatch(_, arms) => {
+      cur := cands
+      for arm in arms {
+        cur = detect_in_expr(arm.body, func_id, func, str_push, vec_push, empty_arr, cur)
+      }
+      cur
+    },
+    .ALoop(b) => detect_in_expr(b, func_id, func, str_push, vec_push, empty_arr, cands),
+    .ADefer(b) => detect_in_expr(b, func_id, func, str_push, vec_push, empty_arr, cands),
+    _ => cands,
+  }
+}
+
+pub fn detect_candidates(m: AnfModule, b: BuiltinRegistry) Vector<RegionCandidate> {
+  str_push := string_builder_config(b).push_id
+  vec_push := vector_builder_config(b).push_id
+  out: Vector<RegionCandidate> = []
+  for f in m.functions {
+    out = detect_in_expr(f.body, f.func_id, f.name, str_push, vec_push, Dict.new(), out)
+  }
+  out
+}

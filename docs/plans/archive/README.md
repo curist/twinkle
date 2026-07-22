@@ -113,6 +113,7 @@ Related historical context outside this folder:
 | [2026-07-19-phase6-stage4c-call-site-decision.md](2026-07-19-phase6-stage4c-call-site-decision.md) | Stage 4c pure call-site variant-selection logic (`select_variant`) |
 | [2026-07-19-phase6-completion-decision-verdicts.md](2026-07-19-phase6-completion-decision-verdicts.md) | Phase 6 completion: render owned per-call-site specialization verdicts in `twk ir --cfg` |
 | [sound-uniqueness-sieve-cfg-gap.md](sound-uniqueness-sieve-cfg-gap.md) | Completed Gap B/Gap A fix for vector `set_at` ownership summaries and whole-return moves; archived with the remaining nested-loop residual spun out to the active follow-up plan |
+| [2026-07-22-builder-region-linearly-folded-fact.md](2026-07-22-builder-region-linearly-folded-fact.md) | Codegen 8C Plan 1: the **structural** `linearly_folded` builder-region fact (pure-ANF detector + `twk ir --census --sites` render, no ownership dependency — condition 2 dropped mid-execution as unnecessary/unsatisfiable-for-strings) plus range/index-loop coverage; Plan-2 rewrite deferred, follow-ups in `../2026-07-22-8c-plan1-review-followups.md` |
 
 ## Archived Cross-Cutting Plans
 

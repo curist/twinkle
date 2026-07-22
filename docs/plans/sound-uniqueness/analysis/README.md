@@ -10,6 +10,16 @@ remain codegen work. All analysis precision lands *before* any codegen, per
 [../architecture.md](../architecture.md)'s governing rule that all analysis precision
 precedes codegen.
 
+**Not reopened for codegen Phase 8C (builder regions).** An earlier draft expected 8C to need a
+CFG-edge ownership fact (`linearly_folded` with a "carried uniqueness" obligation). Plan 1
+execution showed that obligation is both unnecessary — builder-region lowering replaces the
+accumulator with a *private* builder and never mutates it, so ownership uniqueness models the
+wrong thing — and unsatisfiable for string accumulators (`""` seeds as `.Unknown`). 8C's
+`linearly_folded` is therefore a **purely structural** fact computed by a pure-ANF detector, with
+**no analysis-track / ownership dependency**. See
+[../codegen/builder-region-design.md](../codegen/builder-region-design.md) ("The structural safety
+fact"). The analysis track stays closed through Phase 6.
+
 ## Post-completion cleanups
 
 - **Lattice generalization (2026-07-20).** The five parallel dataflow lattices in
