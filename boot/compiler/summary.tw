@@ -10,6 +10,9 @@
 //! Module graph stays acyclic: summary.tw depends on ownership.tw/cfg.tw, never
 //! the reverse.
 
+use @std.date
+use @std.proc
+
 use compiler.anf.{AnfOp, Atom}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.cfg.{CfgFunction, CfgView, Terminator}
@@ -21,6 +24,13 @@ use compiler.ownership.{
   summarize_variant, summary_get,
 }
 use compiler.variant_id as vid
+
+fn timings_enabled() Bool {
+  case proc.env("TWINKLE_TIMINGS") {
+    .Some(_) => true,
+    .None => false,
+  }
+}
 
 // ── Determinism helpers ─────────────────────────────────────────────
 fn insert_sorted(v: Vector<Int>, id: Int) Vector<Int> {
@@ -379,22 +389,41 @@ fn run_scc(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
 ) SummaryTable {
+  timed := timings_enabled()
+  t0 := if timed {
+    date.now()
+  } else {
+    0.0
+  }
   members := scc.sort()
   scc_set := int_set(members)
   callers := scc_callers(members, scc_set, index, user_ids)
+  t_callers := if timed {
+    date.now()
+  } else {
+    0.0
+  }
 
   worklist := members // round 1: compute every member once
   cap := members.len() * 4 + 8 // safety net; the monotone fixpoint converges well within
   rounds := 0
+  visits := 0
+  changed_summaries := 0
   for worklist.len() > 0 and rounds < cap {
     next_dirty: Dict<Int, Bool> = Dict.new()
     for id in worklist {
+      if timed {
+        visits = visits + 1
+      }
       f := case index.get(id) {
         .Some(fn0) => fn0,
         .None => error("summary: scc id ${id} not in index"),
       }
       next := summarize_function(f, table, b, sem, scc_set)
       if !same_summary(table_get(table, id), next) {
+        if timed {
+          changed_summaries = changed_summaries + 1
+        }
         table = table_put(table, id, next)
         case callers.get(id) {
           .Some(cs) => {
@@ -427,6 +456,20 @@ fn run_scc(
         ),
         .None => {},
       }
+    }
+  }
+  if timed {
+    t_done := date.now()
+    if t_done - t0 > 50.0 or rounds > 3 or worklist.len() > 0 {
+      first := if members.len() > 0 {
+        members[0]
+      } else {
+        0 - 1
+      }
+      eprintln(
+        "[time:summary:scc] first=${first} members=${members.len()} total=${t_done - t0}ms callers=${t_callers
+          - t0}ms solve=${t_done - t_callers}ms rounds=${rounds} visits=${visits} changed=${changed_summaries} remaining=${worklist.len()}",
+      )
     }
   }
   table
@@ -1257,16 +1300,60 @@ pub fn compute_for_roots(
   sem: OptimizerSemantics,
   roots: Dict<Int, Bool>,
 ) SummaryTable {
+  timed := timings_enabled()
+  t0 := if timed {
+    date.now()
+  } else {
+    0.0
+  }
   index := build_func_index(view)
   user_ids := user_id_set(view)
+  t_index := if timed {
+    date.now()
+  } else {
+    0.0
+  }
   wanted := dependency_closure(view, roots)
-
-  table := empty_summary_table()
-  for f in view.functions {
-    table = table_put(table, f.func_id, conservative_summary(f))
+  t_closure := if timed {
+    date.now()
+  } else {
+    0.0
   }
 
-  for scc in order_sccs(view, index, user_ids) {
+  table := empty_summary_table()
+  wanted_blocks := 0
+  wanted_insts := 0
+  wanted_edges := 0
+  for f in view.functions {
+    case wanted.get(f.func_id) {
+      .Some(true) => {
+        wanted_blocks = wanted_blocks + f.blocks.len()
+        for blk in f.blocks {
+          wanted_insts = wanted_insts + blk.instructions.len()
+          wanted_edges = wanted_edges + blk.succs.len()
+        }
+      },
+      _ => {},
+    }
+    table = table_put(table, f.func_id, conservative_summary(f))
+  }
+  t_seed := if timed {
+    date.now()
+  } else {
+    0.0
+  }
+
+  sccs := order_sccs(view, index, user_ids)
+  t_order := if timed {
+    date.now()
+  } else {
+    0.0
+  }
+  run_sccs := 0
+  skipped_sccs := 0
+  run_members := 0
+  skipped_members := 0
+  for scc in sccs {
     run := false
     for id in scc {
       case wanted.get(id) {
@@ -1275,8 +1362,22 @@ pub fn compute_for_roots(
       }
     }
     if run {
+      run_sccs = run_sccs + 1
+      run_members = run_members + scc.len()
       table = run_scc(scc, index, user_ids, table, b, sem)
+    } else {
+      skipped_sccs = skipped_sccs + 1
+      skipped_members = skipped_members + scc.len()
     }
+  }
+  if timed {
+    t_done := date.now()
+    eprintln(
+      "[time:summary:roots] total=${t_done - t0}ms index=${t_index - t0}ms closure=${t_closure
+        - t_index}ms seed=${t_seed - t_closure}ms order=${t_order - t_seed}ms run=${t_done - t_order}ms funcs=${view.functions.len()} roots=${roots
+        .keys()
+        .len()} wanted=${wanted.keys().len()} wanted_blocks=${wanted_blocks} wanted_insts=${wanted_insts} wanted_edges=${wanted_edges} sccs=${sccs.len()} run_sccs=${run_sccs} skipped_sccs=${skipped_sccs} run_members=${run_members} skipped_members=${skipped_members}",
+    )
   }
   table
 }

@@ -5,6 +5,9 @@
 //! binding-validity. Consumes the CFG view (raw ops, params, real edge args);
 //! ANF stays authoritative and codegen does not read this.
 
+use @std.date
+use @std.proc
+
 use compiler.anf.{AnfOp, Atom}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.cfg.{CfgBlock, CfgEdge, CfgFunction, CfgView, Terminator, empty_block_facts}
@@ -18,6 +21,13 @@ pub type Ownership = { Unique, Shared, Unknown }
 // Conservative fallback for longer-period fixpoint cycles; two-step oscillations
 // usually lock earlier through targeted previous-value detection.
 fixpoint_widen_cap := 8
+
+fn timings_enabled() Bool {
+  case proc.env("TWINKLE_TIMINGS") {
+    .Some(_) => true,
+    .None => false,
+  }
+}
 
 // Tag encoding shared with cfg.BlockFacts.ownership (stored as Int there).
 pub fn own_tag(o: Ownership) Int {
@@ -638,14 +648,55 @@ fn prep_get(preps: Dict<Int, BlockPrep>, blk: CfgBlock, sem: OptimizerSemantics)
   }
 }
 
+fn block_instruction_count(blocks: Vector<CfgBlock>) Int {
+  n := 0
+  for blk in blocks {
+    n = n + blk.instructions.len()
+  }
+  n
+}
+
+fn block_edge_count(blocks: Vector<CfgBlock>) Int {
+  n := 0
+  for blk in blocks {
+    n = n + blk.succs.len()
+  }
+  n
+}
+
+fn block_scan_live_after_elems(scan: BlockScan) Int {
+  n := 0
+  for live_after in scan.live_after {
+    n = n + live_after.len()
+  }
+  n
+}
+
 fn compute_liveness(blocks: Vector<CfgBlock>) Dict<Int, BlockLive> {
+  compute_liveness_labeled(blocks, "-")
+}
+
+fn compute_liveness_labeled(blocks: Vector<CfgBlock>, label: String) Dict<Int, BlockLive> {
+  timed := timings_enabled()
+  t0 := if timed {
+    date.now()
+  } else {
+    0.0
+  }
   live: Dict<Int, BlockLive> = Dict.new()
   for b in blocks {
     live[b.id.id] = BlockLive.{ live_in: [], live_out: [] }
   }
   changed := true
+  rounds := 0
+  succ_edges_seen := 0
+  lookup_steps_est := 0
+  scans := 0
+  snapshot_elems := 0
+  max_live_width := 0
   for changed {
     changed = false
+    rounds = rounds + 1
 
     // iterate in reverse block-id order (blocks are appended in ~RPO)
     idx := blocks.len() - 1
@@ -655,17 +706,42 @@ fn compute_liveness(blocks: Vector<CfgBlock>) Dict<Int, BlockLive> {
       // live_out = ∪ over succ edges of edge_live_contribution
       lo: Vector<Int> = []
       for e in blk.succs {
+        if timed {
+          succ_edges_seen = succ_edges_seen + 1
+          lookup_steps_est = lookup_steps_est + blocks.len()
+        }
         succ := block_by_id(blocks, e.target.id)
         succ_in := live_get(live, succ.id.id).live_in
         lo = union_sorted(lo, edge_live_contribution(succ, succ_in, e.args))
       }
-      li := scan_block_backward(blk, lo).live_in
+      scan := scan_block_backward(blk, lo)
+      li := scan.live_in
+      if timed {
+        scans = scans + 1
+        snapshot_elems = snapshot_elems + scan.block_scan_live_after_elems()
+        if li.len() > max_live_width {
+          max_live_width = li.len()
+        }
+        if lo.len() > max_live_width {
+          max_live_width = lo.len()
+        }
+      }
       prev := live_get(live, blk.id.id)
       if !same_live(prev.live_in, li) or !same_live(prev.live_out, lo) {
         changed = true
         live[blk.id.id] = BlockLive.{ live_in: li, live_out: lo }
       }
       idx = idx - 1
+    }
+  }
+  if timed {
+    elapsed := date.now() - t0
+    if elapsed > 20.0 {
+      eprintln(
+        "[time:own:live] func=${label} ms=${elapsed} blocks=${blocks.len()} insts=${block_instruction_count(
+          blocks,
+        )} edges=${block_edge_count(blocks)} rounds=${rounds} succ_edges_seen=${succ_edges_seen} lookup_steps_est=${lookup_steps_est} scans=${scans} snapshot_elems=${snapshot_elems} max_live_width=${max_live_width}",
+      )
     }
   }
   live
@@ -2757,6 +2833,31 @@ fn retain_valid_loop_seeds(blocks: Vector<CfgBlock>, fx: FixResult, seeds: LoopS
   kept
 }
 
+// Diagnostics only: characterize how broad the optimistic loop seed set is.
+type LoopSeedStats = .{ headers: Int, param_seeds: Int, nonparam_seeds: Int }
+
+fn loop_seed_stats(blocks: Vector<CfgBlock>, seeds: LoopSeedSet) LoopSeedStats {
+  headers := 0
+  param_seeds := 0
+  nonparam_seeds := 0
+  for blk in blocks {
+    header_has_seed := false
+    for lid in blk.entry.live {
+      if loop_seed_active(seeds, blk.id.id, lid) {
+        header_has_seed = true
+        case param_index(blk, lid) {
+          .Some(_) => param_seeds = param_seeds + 1,
+          .None => nonparam_seeds = nonparam_seeds + 1,
+        }
+      }
+    }
+    if header_has_seed {
+      headers = headers + 1
+    }
+  }
+  LoopSeedStats.{ headers, param_seeds, nonparam_seeds }
+}
+
 fn same_loop_seed_set(a: LoopSeedSet, b: LoopSeedSet) Bool {
   if a.keys().len() != b.keys().len() {
     return false
@@ -2784,7 +2885,14 @@ fn run_fixpoint(
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
   seeds: LoopSeedSet,
+  label: String,
 ) FixResult {
+  timed := timings_enabled()
+  t0 := if timed {
+    date.now()
+  } else {
+    0.0
+  }
   exits: Dict<Int, Dict<Int, Int>> = Dict.new()
   exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
   exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
@@ -2819,10 +2927,27 @@ fn run_fixpoint(
   // Quartet moves + liveness scan are dataflow-invariant: compute once, not per
   // fixpoint visit (keeps the O(n^2) quartet recognizer off the iteration path).
   preps := prep_blocks(blocks, sem)
+  t_prep := if timed {
+    date.now()
+  } else {
+    0.0
+  }
   changed := true
+  rounds := 0
+  block_visits := 0
+  changed_blocks := 0
+  max_own_keys := 0
+  max_valid_keys := 0
+  max_prov_keys := 0
+  max_field_keys := 0
+  max_path_prov_keys := 0
   for changed {
     changed = false
+    rounds = rounds + 1
     for blk in blocks {
+      if timed {
+        block_visits = block_visits + 1
+      }
       entry_own := join_entry_ownership_assumed(blk, exits, processed, seeds)
       entry_valid := join_entry_valid(blk, exit_valid, processed)
       entry_prov := join_entry_prov(blk, exit_prov, processed)
@@ -2916,6 +3041,23 @@ fn run_fixpoint(
         // path_prov widening in lockstep: same conservative meet shape.
         next_pp = merge_path_prov_exit(old_pp, st.path_prov)
       }
+      if timed {
+        if next_own.keys().len() > max_own_keys {
+          max_own_keys = next_own.keys().len()
+        }
+        if next_valid.keys().len() > max_valid_keys {
+          max_valid_keys = next_valid.keys().len()
+        }
+        if next_prov.keys().len() > max_prov_keys {
+          max_prov_keys = next_prov.keys().len()
+        }
+        if next_field.keys().len() > max_field_keys {
+          max_field_keys = next_field.keys().len()
+        }
+        if next_pp.keys().len() > max_path_prov_keys {
+          max_path_prov_keys = next_pp.keys().len()
+        }
+      }
       if !already
         or !same_map(old_own, next_own, int_eq)
         or !same_map(old_valid, next_valid, bool_eq)
@@ -2923,6 +3065,9 @@ fn run_fixpoint(
         or !same_map(old_field, next_field, ff.same)
         or !same_map(old_pp, next_pp, same_pp_local) {
         changed = true
+        if timed {
+          changed_blocks = changed_blocks + 1
+        }
         if already {
           prev_exits[blk.id.id] = old_own
           prev_exit_valid[blk.id.id] = old_valid
@@ -2939,6 +3084,19 @@ fn run_fixpoint(
       processed[blk.id.id] = true
     }
   }
+  if timed {
+    t_done := date.now()
+    if t_done - t0 > 50.0 {
+      eprintln(
+        "[time:own:fixpoint] func=${label} total=${t_done - t0}ms prep=${t_prep - t0}ms solve=${t_done
+          - t_prep}ms blocks=${blocks.len()} insts=${block_instruction_count(blocks)} edges=${block_edge_count(
+          blocks,
+        )} rounds=${rounds} visits=${block_visits} changed=${changed_blocks} seeds=${seeds
+          .keys()
+          .len()} max_own=${max_own_keys} max_valid=${max_valid_keys} max_prov=${max_prov_keys} max_field=${max_field_keys} max_path_prov=${max_path_prov_keys}",
+      )
+    }
+  }
   FixResult.{ exits, exit_valid, exit_prov, exit_field_own, exit_path_prov }
 }
 
@@ -2950,9 +3108,23 @@ fn run_fixpoint_validated(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
+  label: String,
 ) FixResult {
+  timed := timings_enabled()
+  t0 := if timed {
+    date.now()
+  } else {
+    0.0
+  }
   seeds := collect_loop_seed_candidates(blocks)
-  fx := run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds)
+  initial_seed_count := seeds.keys().len()
+  initial_seed_stats := if timed {
+    loop_seed_stats(blocks, seeds)
+  } else {
+    LoopSeedStats.{ headers: 0, param_seeds: 0, nonparam_seeds: 0 }
+  }
+  fx := run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds, label)
+  reruns := 0
   stable_seeds := false
   for !stable_seeds {
     kept := retain_valid_loop_seeds(blocks, fx, seeds)
@@ -2960,7 +3132,21 @@ fn run_fixpoint_validated(
       stable_seeds = true
     } else {
       seeds = kept
-      fx = run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds)
+      reruns = reruns + 1
+      fx = run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds, label)
+    }
+  }
+  if timed {
+    t_done := date.now()
+    if reruns > 3 or t_done - t0 > 75.0 {
+      final_seed_stats := loop_seed_stats(blocks, seeds)
+      eprintln(
+        "[time:own:fixpoint_validated] func=${label} total=${t_done - t0}ms reruns=${reruns} initial_seeds=${initial_seed_count} final_seeds=${seeds
+          .keys()
+          .len()} initial_headers=${initial_seed_stats.headers} initial_param_seeds=${initial_seed_stats.param_seeds} initial_nonparam_seeds=${initial_seed_stats.nonparam_seeds} final_headers=${final_seed_stats.headers} final_param_seeds=${final_seed_stats.param_seeds} final_nonparam_seeds=${final_seed_stats.nonparam_seeds} blocks=${blocks.len()} insts=${block_instruction_count(
+          blocks,
+        )}",
+      )
     }
   }
   fx
@@ -3008,16 +3194,65 @@ pub fn analyze_selected_with_summaries(
   table: SummaryTable,
   selected: Dict<Int, Bool>,
 ) CfgView {
-  functions := collect f in view.functions {
+  timed := timings_enabled()
+  if !timed {
+    functions := collect f in view.functions {
+      should_analyze := case selected.get(f.func_id) {
+        .Some(v) => v,
+        .None => false,
+      }
+      if should_analyze {
+        analyze_function(clear_function_analysis(f), table, b, sem, Dict.new())
+      } else {
+        clear_function_analysis(f)
+      }
+    }
+    return CfgView.{ functions }
+  }
+  t0 := date.now()
+  clear_ms := 0.0
+  analyze_ms := 0.0
+  selected_funcs := 0
+  cleared_funcs := 0
+  selected_blocks := 0
+  cleared_blocks := 0
+  selected_insts := 0
+  cleared_insts := 0
+  functions: Vector<CfgFunction> = []
+  for f in view.functions {
     should_analyze := case selected.get(f.func_id) {
       .Some(v) => v,
       .None => false,
     }
     if should_analyze {
-      analyze_function(clear_function_analysis(f), table, b, sem, Dict.new())
+      selected_funcs = selected_funcs + 1
+      selected_blocks = selected_blocks + f.blocks.len()
+      selected_insts = selected_insts + block_instruction_count(f.blocks)
+      t_clear0 := date.now()
+      cleared := clear_function_analysis(f)
+      t_clear1 := date.now()
+      clear_ms = clear_ms + (t_clear1 - t_clear0)
+      t_analyze0 := date.now()
+      functions = .append(analyze_function(cleared, table, b, sem, Dict.new()))
+      t_analyze1 := date.now()
+      analyze_ms = analyze_ms + (t_analyze1 - t_analyze0)
     } else {
-      clear_function_analysis(f)
+      cleared_funcs = cleared_funcs + 1
+      cleared_blocks = cleared_blocks + f.blocks.len()
+      cleared_insts = cleared_insts + block_instruction_count(f.blocks)
+      t_clear0 := date.now()
+      functions = .append(clear_function_analysis(f))
+      t_clear1 := date.now()
+      clear_ms = clear_ms + (t_clear1 - t_clear0)
     }
+  }
+  t_done := date.now()
+  if timed {
+    eprintln(
+      "[time:own:selected] total=${t_done - t0}ms clear=${clear_ms}ms analyze=${analyze_ms}ms funcs=${view.functions.len()} selected_funcs=${selected_funcs} selected_roots=${selected
+        .keys()
+        .len()} cleared_funcs=${cleared_funcs} selected_blocks=${selected_blocks} cleared_blocks=${cleared_blocks} selected_insts=${selected_insts} cleared_insts=${cleared_insts}",
+    )
   }
   CfgView.{ functions }
 }
@@ -3042,14 +3277,23 @@ pub fn call_uniques(
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
 ) Vector<CallUniq> {
-  live := compute_liveness(f.blocks)
+  live := compute_liveness_labeled(f.blocks, "call_uniques:${f.name}")
   blocks := collect blk in f.blocks {
     bl := live_get(live, blk.id.id)
     blk.entry.live = bl.live_in
     blk.exit.live = bl.live_out
     blk
   }
-  fx := run_fixpoint_validated(blocks, f.params, table, b, sem, suppress, unique_seed)
+  fx := run_fixpoint_validated(
+    blocks,
+    f.params,
+    table,
+    b,
+    sem,
+    suppress,
+    unique_seed,
+    "call_uniques:${f.name}",
+  )
   done := all_processed(blocks)
   out: Vector<CallUniq> = []
   for blk in blocks {
@@ -3144,7 +3388,7 @@ pub fn prune_dead_merge(view: CfgView) CfgView {
 }
 
 fn prune_function(f: CfgFunction) CfgFunction {
-  live := compute_liveness(f.blocks)
+  live := compute_liveness_labeled(f.blocks, "prune:${f.name}")
 
   // block-id -> ascending positions to drop from that block's params.
   drop_by_block: Dict<Int, Vector<Int>> = Dict.new()
@@ -3272,14 +3516,34 @@ fn analyze_function(
   sem: OptimizerSemantics,
   unique_seed: Dict<Int, Bool>,
 ) CfgFunction {
-  live := compute_liveness(f.blocks)
+  timed := timings_enabled()
+  t0 := if timed {
+    date.now()
+  } else {
+    0.0
+  }
+  live := compute_liveness_labeled(f.blocks, "analyze:${f.name}")
+  t_live := if timed {
+    date.now()
+  } else {
+    0.0
+  }
   blocks := collect blk in f.blocks {
     bl := live_get(live, blk.id.id)
     blk.entry.live = bl.live_in
     blk.exit.live = bl.live_out
     blk
   }
-  blocks = ownership_stage(blocks, f.params, table, b, sem, unique_seed)
+  blocks = ownership_stage(blocks, f.params, table, b, sem, unique_seed, "analyze:${f.name}")
+  if timed {
+    t_own := date.now()
+    if t_own - t0 > 50.0 {
+      eprintln(
+        "[time:own:analyze] func=${f.name} total=${t_own - t0}ms live=${t_live - t0}ms fixpoint=${t_own
+          - t_live}ms blocks=${f.blocks.len()} insts=${block_instruction_count(f.blocks)}",
+      )
+    }
+  }
   f.blocks = blocks
   f
 }
@@ -3292,9 +3556,10 @@ fn ownership_stage(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   unique_seed: Dict<Int, Bool>,
+  label: String,
 ) Vector<CfgBlock> {
   no_suppress: Dict<Int, Bool> = Dict.new()
-  fx := run_fixpoint_validated(blocks, params, table, b, sem, no_suppress, unique_seed)
+  fx := run_fixpoint_validated(blocks, params, table, b, sem, no_suppress, unique_seed, label)
   done := all_processed(blocks)
   collect blk in blocks {
     entry_own := join_entry_ownership(blk, fx.exits, done)
@@ -3900,7 +4165,7 @@ pub fn collect_field_reqs(f: CfgFunction, table: SummaryTable, sem: OptimizerSem
   Int,
   vid.PathSet,
 > {
-  live := compute_liveness(f.blocks)
+  live := compute_liveness_labeled(f.blocks, "field_reqs:${f.name}")
   blocks := collect blk in f.blocks {
     bl := live_get(live, blk.id.id)
     blk.entry.live = bl.live_in
@@ -4056,14 +4321,39 @@ fn summarize_seeded(
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
 ) Summary {
-  live := compute_liveness(f.blocks)
+  timed := timings_enabled()
+  t0 := if timed {
+    date.now()
+  } else {
+    0.0
+  }
+  live := compute_liveness_labeled(f.blocks, "summary:${f.name}")
+  t_live := if timed {
+    date.now()
+  } else {
+    0.0
+  }
   blocks := collect blk in f.blocks {
     bl := live_get(live, blk.id.id)
     blk.entry.live = bl.live_in
     blk.exit.live = bl.live_out
     blk
   }
-  fx := run_fixpoint_validated(blocks, f.params, table, b, sem, suppress, unique_seed)
+  fx := run_fixpoint_validated(
+    blocks,
+    f.params,
+    table,
+    b,
+    sem,
+    suppress,
+    unique_seed,
+    "summary:${f.name}",
+  )
+  t_fx := if timed {
+    date.now()
+  } else {
+    0.0
+  }
 
   raw_params: Vector<RawParam> = collect p in f.params {
     esc: EscapeEffect = .Borrowed
@@ -4206,7 +4496,17 @@ fn summarize_seeded(
   }
 
   ret_paths_final := meet_ret_paths_tagged(ret_sites)
+  t_classify := if timed {
+    date.now()
+  } else {
+    0.0
+  }
   field_reqs := collect_field_reqs(f, table, sem)
+  t_field_reqs := if timed {
+    date.now()
+  } else {
+    0.0
+  }
   params: Vector<ParamSummary> = collect rp, i in raw_params {
     flows := param_flows_to_return(i, ret, ret_paths_final)
     dirty := case field_reqs.get(i) {
@@ -4223,6 +4523,16 @@ fn summarize_seeded(
       _ => vid.empty_set(),
     }
     ParamSummary.{ base_role: role, in_place_paths: ipp, flows_to_return: flows }
+  }
+  if timed {
+    t_done := date.now()
+    if t_done - t0 > 50.0 {
+      eprintln(
+        "[time:own:summarize] func=${f.name} total=${t_done - t0}ms live=${t_live - t0}ms fixpoint=${t_fx
+          - t_live}ms classify=${t_classify - t_fx}ms field_reqs=${t_field_reqs - t_classify}ms finish=${t_done
+          - t_field_reqs}ms blocks=${f.blocks.len()} insts=${block_instruction_count(f.blocks)} params=${f.params.len()}",
+      )
+    }
   }
   Summary.{ params, ret, ret_paths: ret_paths_final }
 }
