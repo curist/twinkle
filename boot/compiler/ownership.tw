@@ -2775,12 +2775,183 @@ fn merge_path_prov_exit(
 // Combined ownership+validity+provenance fixpoint co-iterated to a joint fixed
 // point (they share ForwardState and forward_block). The single live driver
 // (guardrail G1).
-type FixResult = .{
+pub type FixResult = .{
   exits: Dict<Int, Dict<Int, Int>>,
   exit_valid: Dict<Int, Dict<Int, Bool>>,
   exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
   exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>>,
   exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>,
+}
+
+// Reuse cache: func_id -> the generic (analyze-equivalent) FixResult captured
+// during the summary pass. Consumed by the analyze pass to skip re-running the
+// ownership fixpoint. See docs/plans/performance/fixresult-reuse-design.md.
+pub type FixCache = .{ by_func: Dict<Int, FixResult> }
+
+pub fn empty_fix_cache() FixCache {
+  FixCache.{ by_func: Dict.new() }
+}
+
+pub fn fix_cache_put(c: FixCache, func_id: Int, fx: FixResult) FixCache {
+  c.by_func[func_id] = fx
+  c
+}
+
+pub fn fix_cache_get(c: FixCache, func_id: Int) FixResult? {
+  c.by_func.get(func_id)
+}
+
+// Result of summarize_seeded: the whole-function Summary plus the FixResult it
+// was derived from (so the SCC driver can cache a reusable fx).
+type SeededResult = .{ summary: Summary, fx: FixResult }
+
+// summarize_function_cached: a generic Summary plus its fx and whether that fx is
+// analyze-equivalent (reusable). See summarize_function_cached below.
+pub type CachedSummary = .{ summary: Summary, fx: FixResult, reusable: Bool }
+
+// Diagnostics/verify: canonical serialization of a FixResult (all five fields,
+// sorted keys) so a cached fx can be compared against a fresh recompute under
+// TWINKLE_FIXVERIFY.
+fn fixverify_enabled() Bool {
+  case proc.env("TWINKLE_FIXVERIFY") {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+fn fixv_isort(xs: Vector<Int>) Vector<Int> {
+  out := xs
+  n := out.len()
+  for i in range(n) {
+    j := i
+    for j > 0 and out[j - 1] > out[j] {
+      tmp := out[j - 1]
+      out = .set_at(j - 1, out[j])
+      out = .set_at(j, tmp)
+      j = j - 1
+    }
+  }
+  out
+}
+
+fn fixv_join_ints(v: Vector<Int>) String {
+  s := ""
+  for x in v {
+    s = "${s}${x}."
+  }
+  s
+}
+
+fn fixv_int_int(m: Dict<Int, Int>) String {
+  s := ""
+  for k in fixv_isort(m.keys()) {
+    case m.get(k) {
+      .Some(v) => s = "${s}${k}:${v},",
+      .None => {},
+    }
+  }
+  s
+}
+
+fn fixv_int_bool(m: Dict<Int, Bool>) String {
+  s := ""
+  for k in fixv_isort(m.keys()) {
+    case m.get(k) {
+      .Some(v) => s = "${s}${k}:${v},",
+      .None => {},
+    }
+  }
+  s
+}
+
+fn fixv_int_vec(m: Dict<Int, Vector<Int>>) String {
+  s := ""
+  for k in fixv_isort(m.keys()) {
+    case m.get(k) {
+      .Some(v) => s = "${s}${k}:[${fixv_join_ints(v)}],",
+      .None => {},
+    }
+  }
+  s
+}
+
+fn fixv_outer_ii(m: Dict<Int, Dict<Int, Int>>) String {
+  s := ""
+  for bid in fixv_isort(m.keys()) {
+    case m.get(bid) {
+      .Some(inner) => s = "${s}B${bid}{${fixv_int_int(inner)}}",
+      .None => {},
+    }
+  }
+  s
+}
+
+fn fixv_outer_bb(m: Dict<Int, Dict<Int, Bool>>) String {
+  s := ""
+  for bid in fixv_isort(m.keys()) {
+    case m.get(bid) {
+      .Some(inner) => s = "${s}B${bid}{${fixv_int_bool(inner)}}",
+      .None => {},
+    }
+  }
+  s
+}
+
+fn fixv_outer_vv(m: Dict<Int, Dict<Int, Vector<Int>>>) String {
+  s := ""
+  for bid in fixv_isort(m.keys()) {
+    case m.get(bid) {
+      .Some(inner) => s = "${s}B${bid}{${fixv_int_vec(inner)}}",
+      .None => {},
+    }
+  }
+  s
+}
+
+fn fixv_outer_fm(m: Dict<Int, Dict<Int, ff.FieldMap>>) String {
+  s := ""
+  for bid in fixv_isort(m.keys()) {
+    case m.get(bid) {
+      .Some(inner) => {
+        s = "${s}B${bid}{"
+        for lid in fixv_isort(inner.keys()) {
+          case inner.get(lid) {
+            .Some(fm) => s = "${s}${lid}:(${fixv_int_int(fm.paths)})",
+            .None => {},
+          }
+        }
+        s = "${s}}"
+      },
+      .None => {},
+    }
+  }
+  s
+}
+
+fn fixv_outer_pp(m: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>) String {
+  s := ""
+  for bid in fixv_isort(m.keys()) {
+    case m.get(bid) {
+      .Some(inner) => {
+        s = "${s}B${bid}{"
+        for lid in fixv_isort(inner.keys()) {
+          case inner.get(lid) {
+            .Some(pm) => s = "${s}${lid}:(${fixv_int_vec(pm)})",
+            .None => {},
+          }
+        }
+        s = "${s}}"
+      },
+      .None => {},
+    }
+  }
+  s
+}
+
+fn render_fix_result(fx: FixResult) String {
+  "own[${fixv_outer_ii(fx.exits)}]val[${fixv_outer_bb(fx.exit_valid)}]prov[${fixv_outer_vv(
+    fx.exit_prov,
+  )}]fo[${fixv_outer_fm(fx.exit_field_own)}]pp[${fixv_outer_pp(fx.exit_path_prov)}]"
 }
 
 fn prev_seen_get(seen: Dict<Int, Bool>, id: Int) Bool {
@@ -4228,6 +4399,30 @@ pub fn collect_field_reqs(f: CfgFunction, table: SummaryTable, sem: OptimizerSem
 
 // Generic summary: every reference parameter enters Unknown (empty seed). This is the
 // caller-visible/conservative summary the SCC driver fixes.
+// The reuse gate: does `f` make a direct call to any func-id in `suppress`?
+// When false (and unique_seed is empty), the generic summary run is byte-identical
+// to the analyze run — suppress is inert and all direct callees sit in earlier,
+// finalized SCCs. Indirect/closure calls (no func-id) never disqualify.
+fn calls_suppressed(blocks: Vector<CfgBlock>, suppress: Dict<Int, Bool>) Bool {
+  for blk in blocks {
+    for inst in blk.instructions {
+      case inst.op {
+        .ACall(callee, _) => case callee_func_id(callee) {
+          .Some(fid) => case suppress.get(fid.id) {
+            .Some(active) => if active {
+              return true
+            },
+            .None => {},
+          },
+          .None => {},
+        },
+        _ => {},
+      }
+    }
+  }
+  false
+}
+
 pub fn summarize_function(
   f: CfgFunction,
   table: SummaryTable,
@@ -4235,7 +4430,21 @@ pub fn summarize_function(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
 ) Summary {
-  summarize_seeded(f, table, b, sem, suppress, Dict.new())
+  summarize_seeded(f, table, b, sem, suppress, Dict.new()).summary
+}
+
+// Generic summary plus its fx and reuse eligibility. summarize_function delegates
+// to summarize_seeded with an empty unique_seed, so reusable depends only on the
+// suppress gate. The SCC driver caches `fx` when `reusable`.
+pub fn summarize_function_cached(
+  f: CfgFunction,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+) CachedSummary {
+  r := summarize_seeded(f, table, b, sem, suppress, Dict.new())
+  CachedSummary.{ summary: r.summary, fx: r.fx, reusable: !calls_suppressed(f.blocks, suppress) }
 }
 
 // Owned-entry (ownership-specialized) summary for a VariantId key (Stage 3): re-run the
@@ -4261,7 +4470,7 @@ pub fn summarize_variant(
       unique_seed[f.params[req.param].id] = true
     }
   }
-  summarize_seeded(f, table, b, sem, suppress, unique_seed)
+  summarize_seeded(f, table, b, sem, suppress, unique_seed).summary
 }
 
 // Call-site variant selection (Stage 4c, D4 shell-level): the VariantId a caller
@@ -4320,7 +4529,7 @@ fn summarize_seeded(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
-) Summary {
+) SeededResult {
   timed := timings_enabled()
   t0 := if timed {
     date.now()
@@ -4534,5 +4743,5 @@ fn summarize_seeded(
       )
     }
   }
-  Summary.{ params, ret, ret_paths: ret_paths_final }
+  SeededResult.{ summary: Summary.{ params, ret, ret_paths: ret_paths_final }, fx }
 }
