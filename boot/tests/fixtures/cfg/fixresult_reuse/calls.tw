@@ -1,0 +1,9 @@
+fn leaf(x: Int) Int {
+  x + 1
+}
+
+fn call_leaf(x: Int) Int {
+  leaf(x) + 1
+}
+
+call_leaf(3)

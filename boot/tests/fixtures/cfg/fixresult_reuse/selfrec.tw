@@ -1,0 +1,9 @@
+fn countdown(n: Int) Int {
+  if n <= 0 {
+    0
+  } else {
+    countdown(n - 1)
+  }
+}
+
+countdown(5)

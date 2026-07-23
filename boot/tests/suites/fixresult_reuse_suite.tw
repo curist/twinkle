@@ -1,0 +1,109 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use commands.common.{format_compile_error}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.cfg
+use compiler.opt.semantics as semantics
+use compiler.opt.semantics.{OptimizerSemantics}
+use compiler.ownership
+use compiler.pipeline
+use compiler.summary
+use lib.module.loader
+
+type Setup = .{
+  view: cfg.CfgView,
+  table: ownership.SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+}
+
+fn setup_for(name: String) Result<Setup, String> {
+  path := "${loader.find_project_root("boot")}/tests/fixtures/cfg/fixresult_reuse/${name}.tw"
+  artifacts := case pipeline.compile_entry_path(path) {
+    .Ok(r) => r,
+    .Err(e) => return .Err(format_compile_error(e)),
+  }
+  b := artifacts.builtins
+  view := cfg.build_view(artifacts.opt, b)
+  view = ownership.prune_dead_merge(view)
+  sem := semantics.make_prelude_optimizer_semantics(b)
+  table := summary.compute(view, b, sem)
+  .Ok(Setup.{ view, table, b, sem })
+}
+
+fn find_func(view: cfg.CfgView, name: String) Result<cfg.CfgFunction, String> {
+  for f in view.functions {
+    if f.name == name {
+      return .Ok(f)
+    }
+  }
+  .Err("function ${name} not found")
+}
+
+fn suppress_of(ids: Vector<Int>) Dict<Int, Bool> {
+  s: Dict<Int, Bool> = Dict.new()
+  for id in ids {
+    s[id] = true
+  }
+  s
+}
+
+fn has_cache(c: ownership.FixCache, id: Int) Bool {
+  case ownership.fix_cache_get(c, id) {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("fixresult reuse gate")
+    .test(
+      "call-free leaf is reusable under empty and self suppress",
+      fn() {
+        s := try setup_for("calls")
+        leaf := try find_func(s.view, "leaf")
+        r0 := ownership.summarize_function_cached(leaf, s.table, s.b, s.sem, suppress_of([]))
+        try assert.ok(r0.reusable, "leaf reusable with empty suppress")
+        r1 := ownership.summarize_function_cached(
+          leaf,
+          s.table,
+          s.b,
+          s.sem,
+          suppress_of([leaf.func_id]),
+        )
+        try assert.ok(r1.reusable, "leaf makes no calls, so self-suppress is inert")
+        .Ok({})
+      },
+    )
+    .test(
+      "caller of a suppressed callee is not reusable",
+      fn() {
+        s := try setup_for("calls")
+        leaf := try find_func(s.view, "leaf")
+        caller := try find_func(s.view, "call_leaf")
+        r := ownership.summarize_function_cached(
+          caller,
+          s.table,
+          s.b,
+          s.sem,
+          suppress_of([leaf.func_id]),
+        )
+        try assert.is_false(r.reusable)
+        r2 := ownership.summarize_function_cached(caller, s.table, s.b, s.sem, suppress_of([]))
+        try assert.ok(r2.reusable, "caller reusable when its callee is not suppressed")
+        .Ok({})
+      },
+    )
+    .test(
+      "self-recursive function is not reusable when self-suppressed",
+      fn() {
+        s := try setup_for("selfrec")
+        cd := try find_func(s.view, "countdown")
+        r := ownership.summarize_function_cached(cd, s.table, s.b, s.sem, suppress_of([cd.func_id]))
+        try assert.is_false(r.reusable)
+        .Ok({})
+      },
+    )
+}

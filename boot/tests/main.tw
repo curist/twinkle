@@ -53,6 +53,7 @@ use .suites.equality_repro_suite
 use .suites.fingerprint_suite
 use .suites.first_class_method_suite
 use .suites.fix_suite
+use .suites.fixresult_reuse_suite
 use .suites.fmt_suite
 use .suites.graph_scc_suite
 use .suites.group_resolution_suite
@@ -295,6 +296,7 @@ runner.run_all([
   cfg_ownership_facts_suite.suite(),
   cfg_return_paths_suite.suite(),
   cfg_sound_uniqueness_fixtures_suite.suite(),
+  fixresult_reuse_suite.suite(),
   cfg_summary_suite.suite(),
   uniqueness_census_suite.suite(),
   uniqueness_guard_suite.suite(),
