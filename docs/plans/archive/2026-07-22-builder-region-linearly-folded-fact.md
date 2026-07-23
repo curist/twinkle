@@ -9,7 +9,7 @@
 > making the fact purely structural (no ownership dependency, Phase B collapsed). A later enhancement
 > (F1) extended coverage to range/index loops. Review follow-ups (FU-1 liveness gate for Plan 2,
 > FU-2 second-fold surfacing, FU-3 walker refactor) are tracked in
-> [2026-07-22-8c-plan1-review-followups.md](../2026-07-22-8c-plan1-review-followups.md). The `- [ ]`
+> [2026-07-22-8c-plan1-review-followups.md](2026-07-22-8c-plan1-review-followups.md). The `- [ ]`
 > checkboxes below are the original TDD steps, left un-ticked per the execution precedent; the work
 > is complete and committed regardless.
 

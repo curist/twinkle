@@ -243,7 +243,20 @@ First emitted-code change. The slice is intentionally narrow.
   visible via `twk ir --census --sites` (e.g. the nested fixture renders
   `...:depth 2` with a `selected` / `MutableSelected` audit row).
 
-## Codegen Phase 8C — Existing builder-region lowering
+## Codegen Phase 8C — Existing builder-region lowering ✅ first slice done (Plans 1–2)
+
+Plans 1–2 have landed: string and vector empty-seed accumulator loops lower
+end-to-end via the pure-ANF detector (`builder_region_detect.tw`), the
+`BuilderRegionDecision` producer (`builder_region_produce.tw`, with the FU-1
+fold-result deadness gate + non-overlap resolution + FU-2 re-fold surfacing), and
+the ANF-to-ANF rewrite (`codegen/builder_region.tw`) run at the top of
+`link_program` to produce ANF′. `repr_assign` erases `string$builder_from` result
+slots to `OpaqueAnyref`; `--census --sites` renders a `consumed` column reflecting
+actual rewrite application; self-host fixed point holds. Vector regions stay boxed
+(typed routing is Plan 4). Plans 3–7 (non-empty seeds, typed routing,
+conditional/`continue` folds, multi-exit, straight-line chains) remain deferred
+follow-ups per the design. The Plan 2 execution plan is archived at
+[../../archive/2026-07-22-8c-plan2-builder-region-rewrite.md](../../archive/2026-07-22-8c-plan2-builder-region-rewrite.md).
 
 Builder lowering has a different region shape from indexed update and should not
 be bundled with it. Current boot hooks cover vector builders and string concat
@@ -264,18 +277,15 @@ Non-empty `from(base)`/`builder_from` is deferred. Folds are **unconditional onl
 `break`, `try`, closure capture, escaping call); per-exit freeze insertion is a later
 slice.
 
-- [ ] **Lower existing vector builder regions from facts.** Reuse the current vector builder
-  hooks, but the first slice emits only `vector$builder_new` → `builder_push` → `builder_freeze`
-  (empty seed); it never emits `vector$builder_from`. Do not redesign builder/runtime
-  representation yet.
-- [ ] **Lower existing string builder regions from facts.** Reuse current
-  `string$builder_from/extend/freeze` hooks for `String.concat` accumulator loops.
-- [ ] **Preserve semantic builder uses.** `collect` and any builder lowering
-  required independent of optimization must keep working without an ownership
-  decision.
-- [ ] **Keep unregistered builder helpers out of scope until cataloged.** The
-  runtime exports additional helpers such as vector `builder_extend`, but they are
-  not currently a first-cut boot builtin/shim target.
+- [x] **Lower existing vector builder regions from facts.** Emits `vector$builder_new` →
+  `builder_push` → `builder_freeze` (empty seed only); never `vector$builder_from`. Boxed.
+- [x] **Lower existing string builder regions from facts.** Reuses
+  `string$builder_from/extend/freeze` for `String.concat` empty-seed accumulator loops.
+- [x] **Preserve semantic builder uses.** `collect` produces no builder-region decision
+  (guarded by the collect-free fixture); its semantic lowering is untouched.
+- [x] **Keep unregistered builder helpers out of scope until cataloged.** The rewrite emits
+  only the cataloged `builder_new`/`builder_from`/`builder_push`/`builder_extend`/`builder_freeze`
+  helpers.
 
 ## Codegen Phase 8D — Dict set emission ✅ done
 

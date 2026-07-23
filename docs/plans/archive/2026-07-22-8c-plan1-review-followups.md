@@ -20,14 +20,25 @@ items worth acting on. Parent design: `docs/plans/sound-uniqueness/codegen/build
   `case` exhaustiveness arm (`body: AnfExpr` can't be statically narrowed to `Let`), not removable
   dead code. Leave as-is.
 
-## Pending — actionable follow-ups
+## Follow-up status
 
-> **Update 2026-07-22:** FU-1 and FU-2 are now folded into the Plan 2 design
-> (`sound-uniqueness/codegen/builder-region-design.md`, Rev 4) — FU-1 as the Component 3
-> pre-neutralization deadness guard, FU-2 as the Component 2 re-folded-accumulator surfacing.
-> They are Plan 2 acceptance items. FU-3 remains deferred/unscheduled.
+> **Update 2026-07-22 (Plan 2 landed):** **FU-1 and FU-2 are DONE** — implemented and merged as
+> part of 8C Plan 2 on branch `sound-uniqueness-8c-plan2-rewrite` (self-host fixed point holds).
+> **FU-3 remains deferred/unscheduled.**
+>
+> - **FU-1 — DONE** (`bde5927b`): the fold-result deadness gate ships as `fold_results_dead` in
+>   `boot/compiler/codegen/builder_region_produce.tw` (rejects a region whose fold-result temp is
+>   read anywhere but the `acc = result` reassign, via `count_local_uses == 1`). Because the
+>   source-level fixture can't reach the gate (the optimizer copy-propagates the temp, so the
+>   detector rejects pre-certification — `clean_count == 0`), it is tested with a hand-built ANF
+>   unit test driving `fold_results_dead` to both `false` (live result) and `true` (dead).
+> - **FU-2 — DONE** (`95de916b`): re-folded accumulators surface as rejected candidates via
+>   `scan_refold_loops` in `boot/compiler/builder_region_detect.tw`, keyed off the **claimed
+>   loop-site** (not seed identity — both loops fold the same ANF local, so seed-membership was
+>   self-defeating). Tested with the two-loop-same-`acc` fixture (one certified + one
+>   "re-used accumulator" rejected, distinct loop sites).
 
-### FU-1 (was F3) — Plan 2 must add a fold-result liveness gate *(soundness gate; blocks Plan 2 emission)*
+### FU-1 (was F3) — fold-result liveness gate — ✅ DONE (`bde5927b`) *(soundness gate)*
 
 **What.** Plan 1 certification implicitly assumes the fold-call result temp is dead after the
 `acc = result` reassign. Today that holds *only* because `fold_chunk` matches a **direct**
@@ -50,7 +61,7 @@ rewritten; the normal case still is; the check is in Plan 2's validation path, n
 **Where.** Fold into `builder-region-design.md` Component 3 ("Concrete ANF rewrite shape") as a
 pre-neutralization guard.
 
-### FU-2 (was review item b) — Surface a second fold over the same accumulator local *(Plan 2)*
+### FU-2 (was review item b) — Surface a second fold over the same accumulator local — ✅ DONE (`95de916b`)
 
 **What.** `acc := ""; for … { acc = acc.concat(…) }; use(acc); for … { acc = acc.concat(…) }` —
 the second loop's region is not detected at all (not even as a rejected candidate), because
@@ -89,8 +100,11 @@ with the Core-IR `core_fold.tw` effort). Not scheduled.
 
 ## Summary
 
-- **Ship now:** Plan 1 with F1/R1/F2 applied (this branch).
-- **Plan 2 must-do:** FU-1 (liveness gate — soundness) and FU-2 (second-fold surfacing — via the
-  non-overlap machinery). Add both to `builder-region-design.md` when Plan 2 is written.
-- **Unscheduled refactor:** FU-3 (ANF walker combinator), gated on an exhaustiveness-preserving
-  `fold_children`.
+- **Plan 1** — shipped with F1/R1/F2 applied (merged).
+- **Plan 2** — shipped, and closes both must-dos: **FU-1** (fold-result deadness gate — soundness,
+  `bde5927b`) and **FU-2** (re-fold surfacing, `95de916b`). See the design doc
+  (`docs/plans/sound-uniqueness/codegen/builder-region-design.md`, Rev 5) and the archived Plan 2
+  execution doc (`docs/plans/archive/2026-07-22-8c-plan2-builder-region-rewrite.md`).
+- **Unscheduled refactor:** **FU-3** (ANF walker combinator) — still deferred, gated on an
+  exhaustiveness-preserving `fold_children` (no ANF equivalent exists yet; `op_references_deep`'s
+  no-wildcard enumeration must be preserved).

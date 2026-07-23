@@ -8,7 +8,7 @@
 
 **Tech Stack:** Twinkle boot compiler (`boot/`), self-hosted. Build via `make bundle-cli`; boot tests via `target/twk run boot/tests/main.tw`. No Rust stage0 changes (boot-codegen opt — see the no-stage0-parity rule for backend-only optimizations).
 
-**Design source:** `docs/plans/sound-uniqueness/codegen/builder-region-design.md` (Rev 4). Follow-up disposition: `docs/plans/2026-07-22-8c-plan1-review-followups.md`.
+**Design source:** `docs/plans/sound-uniqueness/codegen/builder-region-design.md` (Rev 4). Follow-up disposition: `docs/plans/archive/2026-07-22-8c-plan1-review-followups.md`.
 
 ---
 

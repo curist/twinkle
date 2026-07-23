@@ -39,9 +39,19 @@ Phase 7E dry-run slice is also done: `twk ir --census --sites` renders update-si
 persistent→mutable targets, ownership verdicts, and `would_use` state for
 vector/dict/record candidates while emitted code remains persistent.
 
-**Current implementation focus: Codegen Phase 8C (builder regions — a distinct
-region-shaped lowering), then records (8F), function variants (8G), and
-record-backed field collections (8H).** Phases 8A, 8B, 8D, and 8E are complete:
+**Current implementation focus: Codegen Phase 8C first slice is complete (builder
+regions — a distinct region-shaped lowering); next are the 8C follow-ups (non-empty
+seeds / typed routing / conditional folds, Plans 3–5), then records (8F), function
+variants (8G), and record-backed field collections (8H).** Phase 8C Plans 1–2 have
+landed: string and vector empty-seed accumulator loops (`acc = ""` / `acc = []`) now
+lower end-to-end to builder regions (`builder_from`/`builder_new` → `builder_extend`/
+`builder_push` → `builder_freeze`) via an ANF-to-ANF rewrite run at the top of
+`link_program` (producing ANF′), driven by `BuilderRegionDecision` records from a
+producer with the FU-1 fold-result deadness gate, non-overlap resolution, and
+re-folded-accumulator (FU-2) surfacing; `--census --sites` shows a `consumed` column
+reflecting actual rewrite application. Vector regions stay boxed (typed routing is
+Plan 4). Self-host fixed point holds. The Plan 2 execution plan is archived under
+`docs/plans/archive/`. Phases 8A, 8B, 8D, and 8E are complete:
 the emitted-code slices select the existing in-place helper for proven owned
 collection updates — 8A for straight-line local `Vector` indexed updates, 8B for
 loop-carried accumulators in single and nested loops, 8D for owned `Dict.set`

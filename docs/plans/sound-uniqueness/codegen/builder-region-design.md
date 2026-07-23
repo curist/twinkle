@@ -1,9 +1,15 @@
 # Phase 8C — Builder-Region Lowering (Design)
 
-**Status:** Design — in implementation. **Date:** 2026-07-22. **Rev 4** — folded Plan 1's two
+**Status:** Design — **Plans 1–2 landed** (first slice complete: string + vector empty-seed
+builder-region lowering emits end-to-end, self-host fixed point holds). Plans 3–7 remain the
+sequenced follow-ups. **Date:** 2026-07-22. **Rev 5** — Plan 2 implemented and merged: producer +
+ANF-to-ANF rewrite + `link_program` ANF′ wiring + `repr_assign` string-seed fix + FU-1 deadness
+gate + FU-2 re-fold surfacing + `--census --sites` `consumed` column (impl plan archived at
+[../../archive/2026-07-22-8c-plan2-builder-region-rewrite.md](../../archive/2026-07-22-8c-plan2-builder-region-rewrite.md)).
+**Rev 4** — folded Plan 1's two
 must-do review follow-ups into the Plan 2 design (FU-1 fold-result deadness guard in Component 3;
 FU-2 re-folded-accumulator surfacing in Component 2); source disposition in
-[../../2026-07-22-8c-plan1-review-followups.md](../../2026-07-22-8c-plan1-review-followups.md).
+[../../archive/2026-07-22-8c-plan1-review-followups.md](../../archive/2026-07-22-8c-plan1-review-followups.md).
 **Rev 3** — Plan 1 execution
 revealed that ownership uniqueness (the old "condition 2") is both unnecessary for builder-region
 lowering (the rewrite replaces the accumulator with a private builder, never mutating it) *and*
@@ -206,13 +212,21 @@ not an ownership dependency.
 
 ### Component 2 — Codegen producer: `BuilderRegionDecision` records
 
-A producer (codegen-track, sibling to `mutable_produce.tw`). The pipeline is the same
-non-circular staging the update-call producer uses (detection is a cheap ANF walk with **no**
-ownership; ownership runs *after*, scoped to the detected roots):
+A producer (codegen-track, sibling to `mutable_produce.tw`).
+
+> **As implemented (Plan 2):** because the `linearly_folded` fact is **purely structural** (no
+> ownership), the producer needs **no** roots/artifacts/scoping staging at all — it is a single
+> cheap step, `produce_builder_region_decisions(opt, b)`, that runs `detect_candidates` over the
+> whole module and joins each certified candidate with FU-1 (deadness) + non-overlap + fresh-local
+> allocation. The multi-stage sketch below was carried over from the update-call producer (which
+> *does* compute scoped ownership); it was collapsed because there is nothing ownership-shaped to
+> scope. The "scoped-vs-full equivalence" test in Testing is therefore N/A for builder regions.
+
+The update-call producer's non-circular staging looked like this (kept for contrast only):
 
 ```text
 collect_builder_region_candidates_and_roots(opt)   // ANF walk only, no ownership
-  → compute_candidate_artifacts(opt, roots)         // scoped linearly_folded facts
+  → compute_candidate_artifacts(opt, roots)         // (not needed: fact is structural)
   → produce_builder_region_decisions(opt, artifacts)
   → rewrite certified regions
 ```
@@ -337,6 +351,16 @@ stay cheap via candidate-scoping — the builder producer supplies its own roots
 below):** non-empty seeds (Plan 3), typed vector routing (Plan 4), conditional/`continue` folds
 (Plan 5), multi-exit per-edge freeze (Plan 6), straight-line chains (Plan 7).
 
+**Known first-slice limitation — branch-nested regions stay persistent (Plan 8 candidate).** The
+detector recurses into `AIf`/`AMatch`/`ADefer` branch bodies (`detect_in_op`), so a seed+loop
+region nested inside a branch — e.g. `if flag { acc := ""; for … { acc = acc.concat(…) }; use(acc) }`
+— **is certified and produced**, but the rewrite's `splice_seed`/`splice_loop` walk only the
+function-body **top-level spine**, so such a region is **abandoned at splice time and stays
+persistent** (sound; a missed optimization). This is visible in `--census --sites` as
+`linearly_folded=true` but `consumed=no`. Lifting it means teaching `splice_seed`/`splice_loop` to
+recurse into branch bodies (mirroring the detector), keyed by the recorded `loop_site`. Small,
+localized follow-up — not yet scheduled (**Plan 8**).
+
 **Permanently out (never a decision-driven target):** `collect` and any semantically-required
 builder lowering — untouched; those live in `lower_core` and must keep working with **no**
 ownership decision.
@@ -426,7 +450,7 @@ each small and independently shippable.
   inspection render in `twk ir --census --sites`. **No ownership dependency** (condition 2
   dropped) and **no emitted-code change**. Tests: string/vector positives, all structural
   negatives, inspection rendering.
-- **Plan 2 — producer + rewrite pass (string + vector empty-seed) + pipeline wiring.** The
+- **Plan 2 — producer + rewrite pass (string + vector empty-seed) + pipeline wiring. ✅ LANDED.** The
   non-circular candidate/roots/artifacts/produce staging, `BuilderRegionDecision` records with
   `BuilderRegionKey` + non-overlap + centralized fresh-local allocation, the ANF-to-ANF rewrite
   with the concrete void-call shape and structural-only validation, and ANF′ ordering. Includes
@@ -478,3 +502,21 @@ each small and independently shippable.
   freezes on that edge and round-trips.
 - **Plan 7 — straight-line concat/append chains.** The non-loop region shape (old
   `builder_region.tw`); separate detector, same decision-record + rewrite machinery.
+- **Plan 8 — branch-nested regions.** Teach the rewrite's `splice_seed`/`splice_loop` to recurse
+  into `AIf`/`AMatch`/`ADefer` branch bodies (the detector already does), so a certified region
+  nested inside a branch is actually rewritten instead of abandoned at splice (today it stays
+  persistent, shown as `consumed=no`). Test: the `if flag { acc := ""; for … { acc.concat } }`
+  fixture emits the builder sequence. *Enabling change: splice traversal only; producer/detector
+  unchanged. Localized.*
+
+**Deferred refactor — not a numbered plan (was Plan 1 review item FU-3).** The detector's
+`detect_in_expr`/`detect_in_op`, `references_fold`/`op_fold_ref`, `scan_refold_loops`/`op_refold_hit`,
+and `op_references_deep` all share the "recurse into `AIf`/`AMatch`/`ALoop`/`ADefer` children" shape,
+differing mainly in return type (Bool vs threaded `Vector`). Unifying them needs a generic ANF
+children-fold combinator; the MEMORY-noted `core_fold.tw` is **Core-IR-only and unbuilt** and has no
+ANF equivalent, so building one is its own piece of work. **Hard constraint:** `op_references_deep`'s
+**no-wildcard, per-variant exhaustive** enumeration is deliberate — a new `AnfOp` variant must force a
+compile error there; any combinator that can't guarantee this leaves `op_references_deep`
+hand-written. **Unscheduled**; revisit if/when an ANF `fold_children` is built (candidate: pair it
+with the Core-IR `core_fold.tw` effort). Full disposition:
+[../../archive/2026-07-22-8c-plan1-review-followups.md](../../archive/2026-07-22-8c-plan1-review-followups.md).
