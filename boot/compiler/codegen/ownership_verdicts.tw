@@ -327,7 +327,8 @@ pub fn compute_candidate_artifacts(
   view := cfg.build_view(opt, b)
   view = ownership.prune_dead_merge(view)
   t_view := date.now()
-  table := summary.compute_for_roots(view, b, sem, candidate_funcs)
+  summarized := summary.compute_for_roots_cached(view, b, sem, candidate_funcs)
+  table := summarized.table
   t_summary := date.now()
   analyzed := ownership.analyze_selected_with_summaries(
     view,
@@ -335,7 +336,7 @@ pub fn compute_candidate_artifacts(
     sem,
     table,
     candidate_funcs,
-    ownership.empty_fix_cache(),
+    summarized.fix_cache,
   )
   t_own := date.now()
   if timed {
