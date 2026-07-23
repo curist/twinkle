@@ -130,8 +130,8 @@ pub type MutableEmitPolicy = .{
   emit_vector_set: Bool,
   emit_dict_set: Bool,
   emit_dict_remove: Bool,
-  // Reserved for the record-shell mutable phase: select_record_update does
-  // not yet take a policy, so this field has no reader today.
+  // The record-shell mutable phase (8F): read by
+  // select_record_update_with_policy to gate `struct.set` shell reuse.
   emit_record_shell_update: Bool,
 }
 
@@ -157,6 +157,18 @@ pub fn phase8a_policy() MutableEmitPolicy {
   }
 }
 
+// Phase 8F: enable mutable emission for record shell updates only; other
+// families stay persistent. Used by the record selector's mechanism tests so
+// they are independent of the cumulative build policy.
+pub fn phase8f_policy() MutableEmitPolicy {
+  MutableEmitPolicy.{
+    emit_vector_set: false,
+    emit_dict_set: false,
+    emit_dict_remove: false,
+    emit_record_shell_update: true,
+  }
+}
+
 // The families the compiler actually emits mutably on the real build path.
 // This is the single cumulative policy; it grows as each family's phase lands.
 // Per-phase selector tests use the fixed fixtures (persistent_only_policy /
@@ -167,7 +179,7 @@ pub fn enabled_emit_policy() MutableEmitPolicy {
     emit_vector_set: true,
     emit_dict_set: true,
     emit_dict_remove: true,
-    emit_record_shell_update: false,
+    emit_record_shell_update: true,
   }
 }
 
@@ -305,6 +317,10 @@ pub fn select_call_with_policy(
   }
 }
 
+// Phase 7C/7D entry point: selects under the persistent-only policy, so a valid
+// record decision reports the would-be shell reuse (`would_reuse`) without
+// emitting it (`emit_can_reuse` stays at the original). Callers that need
+// policy-gated emission use select_record_update_with_policy directly.
 pub fn select_record_update(
   table: MutableDecisionTable,
   site: Site,
@@ -312,6 +328,25 @@ pub fn select_record_update(
   result_local: LocalId,
   field_path_key: String,
   original_can_reuse: Bool,
+) RecordReuseSelection {
+  table.select_record_update_with_policy(
+    site,
+    source_local,
+    result_local,
+    field_path_key,
+    original_can_reuse,
+    persistent_only_policy(),
+  )
+}
+
+pub fn select_record_update_with_policy(
+  table: MutableDecisionTable,
+  site: Site,
+  source_local: LocalId,
+  result_local: LocalId,
+  field_path_key: String,
+  original_can_reuse: Bool,
+  policy: MutableEmitPolicy,
 ) RecordReuseSelection {
   fallback := RecordReuseSelection.{
     emit_can_reuse: original_can_reuse,
@@ -356,9 +391,16 @@ pub fn select_record_update(
     return reject(.FieldPathMismatch)
   }
 
-  RecordReuseSelection.{
-    emit_can_reuse: original_can_reuse,
-    would_reuse: true,
-    reason: .MutableAvailableNotEmitted,
+  // Valid, well-formed record shell-update decision. Emit the in-place shell
+  // reuse only when the policy enables the record family; otherwise report it as
+  // available-but-not-emitted and keep the persistent copy.
+  if policy.emit_record_shell_update {
+    RecordReuseSelection.{ emit_can_reuse: true, would_reuse: true, reason: .MutableSelected }
+  } else {
+    RecordReuseSelection.{
+      emit_can_reuse: original_can_reuse,
+      would_reuse: true,
+      reason: .MutableAvailableNotEmitted,
+    }
   }
 }

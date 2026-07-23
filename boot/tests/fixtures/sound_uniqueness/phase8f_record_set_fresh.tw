@@ -1,0 +1,9 @@
+type Point = .{ x: Int, y: Int }
+
+fn set_fresh() Point {
+  p := Point.{ x: 1, y: 2 }
+  p.x = 9
+  p
+}
+
+println(set_fresh().x.to_string())

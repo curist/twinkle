@@ -97,11 +97,12 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
     log_time("closure_convert", t1 - t0)
   }
 
-  // 2a. Produce Phase 8A vector-set mutable decisions over the optimized
-  // semantic ANF. Ownership summaries are pre-closure facts; backend emission
-  // consumes them only after the prepared-site selector validates that the
-  // closure-converted site still matches the recorded shape.
-  produced_decisions := mutable_produce.produce_update_call_decisions(anf_prime, builtins)
+  // 2a. Produce mutable decisions over the optimized semantic ANF: update-call
+  // families (vector/dict set and remove) plus record-shell updates. Ownership
+  // summaries are pre-closure facts; backend emission consumes them only after
+  // the prepared-site selector validates that the closure-converted site still
+  // matches the recorded shape.
+  produced_decisions := mutable_produce.produce_mutable_decisions(anf_prime, builtins)
   t1p := date.now()
 
   if timed {

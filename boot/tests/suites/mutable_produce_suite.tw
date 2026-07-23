@@ -85,6 +85,14 @@ fn stale_audit_rendered_for(name: String) Result<String, String> {
   .Ok(mutable_audit.render_audit_rows(rows))
 }
 
+fn produce_all_for(name: String) Result<mutable_produce.ProducedDecisions, String> {
+  artifacts := case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(result) => result,
+    .Err(err) => return .Err(format_compile_error(err)),
+  }
+  .Ok(mutable_produce.produce_mutable_decisions(artifacts.opt, artifacts.builtins))
+}
+
 fn candidate_roots(set: mutable_produce.CandidateSet) Dict<Int, Bool> {
   roots: Dict<Int, Bool> = Dict.new()
   for c in set.candidates {
@@ -368,6 +376,40 @@ pub fn suite() runner.Suite {
       "scoped producer matches full producer (loop)",
       fn() {
         try assert_scoped_producer_matches_full("phase8a_vector_set_loop")
+        .Ok({})
+      },
+    )
+    .test(
+      "owned fresh record shell update produces a record_shell decision",
+      fn() {
+        produced := try produce_all_for("phase8f_record_set_fresh")
+        try assert.equal(produced.table.by_site.keys().len(), 1)
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        try assert.str_contains(rendered, "record_shell")
+        try assert.str_contains(rendered, "candidate")
+        try assert.str_contains(rendered, "decision produced")
+        families: Vector<String> = []
+        for _key, ds in produced.table.by_site {
+          for d in ds {
+            fam := case d.family {
+              .RecordShellUpdate => "RecordShellUpdate",
+              _ => "other",
+            }
+            families = .append(fam)
+          }
+        }
+        try assert.is_true(families.contains("RecordShellUpdate"))
+        .Ok({})
+      },
+    )
+    .test(
+      "aliased record shell update is ignored, falls back to persistent",
+      fn() {
+        produced := try produce_all_for("phase8f_record_set_alias")
+        try assert.equal(produced.table.by_site.keys().len(), 0)
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        try assert.str_contains(rendered, "record_shell")
+        try assert.str_contains(rendered, "ignored")
         .Ok({})
       },
     )

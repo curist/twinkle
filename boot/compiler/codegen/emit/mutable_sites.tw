@@ -142,13 +142,14 @@ pub fn select_record_update_for_emit(
     .None => return .None,
   }
   .Some(
-    mutable_select.select_record_update(
+    mutable_select.select_record_update_with_policy(
       table,
       site,
       base_source,
       result_entry.source_local,
       field_path_key(tid, fid),
       original_can_reuse,
+      ctx.mutable_emit_policy,
     ),
   )
 }

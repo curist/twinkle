@@ -376,6 +376,75 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "record selector emits shell reuse under a policy that enables record shell updates",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        d := mutable_select.MutableDecision.{
+          site,
+          family: mutable_select.OperationFamily.RecordShellUpdate,
+          source_local: lid(1),
+          result_local: lid(20),
+          arg_count: 2,
+          base_arg_index: .Some(0),
+          persistent_func: .None,
+          mutable_func: .None,
+          variant_key: .None,
+          field_path_key: "10:f0",
+          proof_debug_id: "selector-test",
+        }
+        table := mutable_select.empty_decision_table().with_decision(d)
+        selected := mutable_select.select_record_update_with_policy(
+          table,
+          site,
+          lid(1),
+          lid(20),
+          "10:f0",
+          false,
+          mutable_select.phase8f_policy(),
+        )
+        try assert.equal(mutable_select.record_reason_tag(selected.reason), 12)
+        try assert.ok(
+          selected.emit_can_reuse,
+          "emit_can_reuse should be true under an enabling policy",
+        )
+        assert.ok(selected.would_reuse, "would_reuse should be true for a valid record decision")
+      },
+    )
+    .test(
+      "record selector keeps shell reuse persistent under the persistent-only policy",
+      fn() Result<Void, String> {
+        site := mutable_select.Site.{ func: fid(10), local: lid(20) }
+        d := mutable_select.MutableDecision.{
+          site,
+          family: mutable_select.OperationFamily.RecordShellUpdate,
+          source_local: lid(1),
+          result_local: lid(20),
+          arg_count: 2,
+          base_arg_index: .Some(0),
+          persistent_func: .None,
+          mutable_func: .None,
+          variant_key: .None,
+          field_path_key: "10:f0",
+          proof_debug_id: "selector-test",
+        }
+        table := mutable_select.empty_decision_table().with_decision(d)
+        selected := mutable_select.select_record_update_with_policy(
+          table,
+          site,
+          lid(1),
+          lid(20),
+          "10:f0",
+          false,
+          mutable_select.persistent_only_policy(),
+        )
+        try assert.equal(mutable_select.record_reason_tag(selected.reason), 1)
+        assert.ok(
+          !selected.emit_can_reuse,
+          "emit_can_reuse should stay false under persistent-only policy",
+        )
+      },
+    )
+    .test(
       "record selector rejects a VectorSet/DictSet decision at the same site",
       fn() Result<Void, String> {
         site := mutable_select.Site.{ func: fid(10), local: lid(20) }

@@ -26,9 +26,11 @@ supported call-swap families and enabled `dict$set_in_place` for owned `Dict.set
 sites via the cumulative `enabled_emit_policy`; Phase 8E flipped that policy's
 `emit_dict_remove` so owned `Dict.remove` sites select `dict$remove_in_place`. All
 three call-swap families (vector set, dict set, dict remove) now emit in-place for
-proven-owned sites. **Current focus: Phase 8C, existing builder-region lowering**
-(a distinct region-shaped lowering), then records (8F), function variants (8G), and
-record-backed field collections (8H). The remaining 7E dry-run item is not
+proven-owned sites. Phase 8C (builder-region lowering, first slice) and Phase 8F
+(local record shell update emission) are also done. **Current focus: function
+variants (8G) and record-backed field collections (8H)**, with 8C follow-up slices
+(non-empty seeds, typed routing, conditional/multi-exit folds) deferred. The
+remaining 7E dry-run item is not
 abandoned: variant-routing dry-runs are an 8G
 gate when specialized clone routing becomes real. The full analysis track is
 complete through Phase 6 (record/field ownership,
@@ -321,16 +323,32 @@ candidates, so `enabled_emit_policy` just flips `emit_dict_remove`.
   reports the `dict_remove` family and `dict$remove_in_place` selection separately
   from `dict_set`.
 
-## Codegen Phase 8F — Record shell update emission
+## Codegen Phase 8F — Record shell update emission ✅ done
 
-- [ ] **Lower simple record shell updates from facts.** Reuse record shells only
-  when CFG facts explicitly permit shell reuse.
-- [ ] **Keep shell reuse separate from deep field mutation.** A fresh shell around
-  shared fields does not prove ownership of vector/dict storage reachable through
-  those fields.
-- [ ] **Preserve variant qualification.** If shell reuse is proven only in a
-  `variant fn ... [unique:...]` diagnostic body, emit it only in the cloned
-  ownership-specialized variant, never in the generic function body.
+Local, non-variant record shell updates now emit `struct.set` shell reuse for
+proven-owned sites, mirroring the 8A/8D/8E call families. A new record-shell
+candidate walk in `mutable_produce.tw` (`record_update_candidates` →
+`produce_record_update_decisions_with_artifacts`) joins `ARecordUpdate` sites
+with the `reusable_shell` verdict already produced by `ownership.tw`
+(`shell_reusable(base, last)`, which requires both uniqueness and last use). The
+combined `produce_mutable_decisions` producer computes one ownership-artifact set
+over the union of call and record candidate roots and merges both decision tables
+(call and record decisions live at disjoint sites). `enabled_emit_policy` now sets
+`emit_record_shell_update`, and `select_record_update_with_policy` flips
+`emit_can_reuse` to `true` (reason `MutableSelected`) for a valid decision under
+that policy; absent/ambiguous/wrong-family/mismatched/aliased sites fall back to
+the persistent `struct.new` copy. Self-host reaches a fixed point (stage3 ==
+stage4) with the boot compiler's own owned record updates emitting `struct.set`.
+
+- [x] **Lower simple record shell updates from facts.** Reuse record shells only
+  when CFG facts explicitly permit shell reuse (`reusable_shell`). Owned fresh and
+  aliased fixtures gate `struct.set` vs `struct.new` via `link_program` WAT tests.
+- [x] **Keep shell reuse separate from deep field mutation.** `emit_record_update`'s
+  reuse branch emits only `struct.set` on the record shell; it never mutates
+  reference-typed field storage. Field-backed collection updates are Phase 8H.
+- [x] **Preserve variant qualification.** The producer only records purely local
+  decisions (`variant_key: .None`); no shell reuse is emitted from a variant-qualified
+  body. Cloning/routing owned variants remains Phase 8G.
 
 ## Codegen Phase 8G — Ownership-specialized function variants and call-site routing
 
