@@ -845,6 +845,36 @@ Potential runtime investigations:
 These should be justified by compiler profiles rather than implemented as
 standalone runtime cleanups.
 
+## Update: FixResult reuse across summary/analyze passes
+
+Mutable-decision production (`compute_candidate_artifacts`) ran the combined
+ownership fixpoint **twice** per function — once in `summary.compute_for_roots`
+and once in `analyze_selected_with_summaries` — extracting different projections
+from a `FixResult` that is byte-identical between the two runs for singleton,
+non-self-recursive functions. A byte-identical experiment confirmed 456/461
+selected functions matched. The summary SCC driver now caches each reusable
+member's `FixResult` (gate: `calls_suppressed` — the function makes no direct
+call to any func-id in its own SCC, which makes both `suppress` inert and the
+summary-time `table` projection identical); the analyze pass reuses it and skips
+`run_fixpoint_validated`. A `TWINKLE_FIXVERIFY` build recomputes-and-compares as a
+standing guard.
+
+Same-session A/B (from-main compiler vs cache-active compiler, same fixed input,
+3 runs each):
+
+```text
+before: [time] produce_mutable_decisions ~21.46s   [time:mutable:artifacts] ownership ~8.53s
+after:  [time] produce_mutable_decisions ~13.73s   [time:mutable:artifacts] ownership ~0.64s
+        [time:mutable:fixcache] hits=400 misses=60 verify=false
+```
+
+~36% off `produce_mutable_decisions`; the ownership stage drops ~92% (the analyze
+fixpoint is skipped for the ~400 cache hits). The summary stage (~12s) is now the
+dominant cost and the next lever. Peak RSS +~11.7 MB (~0.5%, retaining ~400
+`FixResult`s). Acceptance: build output byte-identical (before/after compiler on a
+fixed input), `TWINKLE_FIXVERIFY` clean, census unchanged (full path), self-host
+stable, full boot suite green.
+
 ## Working rules for future updates
 
 - Keep only the current baseline plus durable lessons in this file.
