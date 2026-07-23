@@ -605,4 +605,84 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "typed Vector<Int> accumulator loop stays boxed (typed routing deferred to Plan 4)",
+      fn() Result<Void, String> {
+        // First slice keeps vector builder regions boxed: the AAssign-rebound
+        // accumulator escapes route_typed_vec, so `vector$builder_*` (not `*_i64`)
+        // is emitted. Typed routing is a deferred follow-up (Plan 4).
+        a := compile_or_fail(
+          "fn m() Void {\n  acc: Vector<Int> = []\n  for x in [1, 2, 3] { acc = acc.append(x) }\n  println(acc.len().to_string())\n}\nm()\n",
+        )
+        anf2 := builder_region.rewrite_module(a.opt, a.builtins)
+        fn_m := find_func(anf2, "m")
+        try assert.equal(count_calls_to(fn_m.body, a.builtins.id("vector$builder_new")), 1)
+        try assert.equal(count_calls_to(fn_m.body, a.builtins.id("vector$builder_push")), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "nested candidate loops both rewrite without local collision",
+      fn() Result<Void, String> {
+        // Behavioral: outer + independent inner string accumulator. A fresh-local
+        // collision would corrupt the result or fail backend verification.
+        acc := ""
+        for c in ["a", "b"] {
+          inner := ""
+          for d in ["1", "2"] {
+            inner = .concat(d)
+          }
+          acc = .concat(inner)
+        }
+        assert.equal(acc, "1212")
+      },
+    )
+    .test(
+      "stale region decision falls back to persistent",
+      fn() Result<Void, String> {
+        a := compile_or_fail(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\"] { acc = acc.concat(c) }\n  println(acc)\n}\nm()\n",
+        )
+        fn_m := find_func(a.opt, "m")
+        table := builder_region_produce.produce_builder_region_decisions(a.opt, a.builtins)
+        ds := builder_region.decisions_for_func(table, fn_m.func_id)
+        try assert.equal(ds.len(), 1)
+        d := ds[0]
+
+        // Corrupt the recorded loop_site so splice_loop never finds the loop.
+        stale := builder_region_produce.BuilderRegionDecision.{
+          key: d.key,
+          func_id: d.func_id,
+          family: d.family,
+          accumulator: d.accumulator,
+          seed_site: d.seed_site,
+          loop_site: LocalId.{ id: 999999 },
+          fold_sites: d.fold_sites,
+          builder_local: d.builder_local,
+          freeze_local: d.freeze_local,
+          assign_local: d.assign_local,
+        }
+        out := builder_region.rewrite_func_with_decisions(fn_m, [stale], a.builtins)
+
+        // Unchanged: concat remains, no builder_extend spliced.
+        try assert.equal(count_calls_to(out.body, a.builtins.id("string$builder_extend")), 0)
+        try assert.is_true(count_calls_to(out.body, a.builtins.method_id("String", "concat")) >= 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "collect comprehension is untouched by builder-region decisions",
+      fn() Result<Void, String> {
+        // collect's semantic builder lowering must not surface as an accumulator
+        // fold candidate — it produces zero decisions.
+        assert.equal(
+          total_decisions(
+            decisions_for(
+              "fn m() Void {\n  xs := collect x in range(3) { x * x }\n  println(xs.len().to_string())\n}\nm()\n",
+            ),
+          ),
+          0,
+        )
+      },
+    )
 }
