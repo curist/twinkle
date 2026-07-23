@@ -3335,7 +3335,7 @@ pub fn analyze_with_summaries(
   table: SummaryTable,
 ) CfgView {
   functions := collect f in view.functions {
-    analyze_function(f, table, b, sem, Dict.new())
+    analyze_function(f, table, b, sem, Dict.new(), .None)
   }
   CfgView.{ functions }
 }
@@ -3364,6 +3364,7 @@ pub fn analyze_selected_with_summaries(
   sem: OptimizerSemantics,
   table: SummaryTable,
   selected: Dict<Int, Bool>,
+  cache: FixCache,
 ) CfgView {
   timed := timings_enabled()
   if !timed {
@@ -3373,7 +3374,14 @@ pub fn analyze_selected_with_summaries(
         .None => false,
       }
       if should_analyze {
-        analyze_function(clear_function_analysis(f), table, b, sem, Dict.new())
+        analyze_function(
+          clear_function_analysis(f),
+          table,
+          b,
+          sem,
+          Dict.new(),
+          cache.fix_cache_get(f.func_id),
+        )
       } else {
         clear_function_analysis(f)
       }
@@ -3384,6 +3392,8 @@ pub fn analyze_selected_with_summaries(
   clear_ms := 0.0
   analyze_ms := 0.0
   selected_funcs := 0
+  cache_hits := 0
+  cache_misses := 0
   cleared_funcs := 0
   selected_blocks := 0
   cleared_blocks := 0
@@ -3399,12 +3409,18 @@ pub fn analyze_selected_with_summaries(
       selected_funcs = selected_funcs + 1
       selected_blocks = selected_blocks + f.blocks.len()
       selected_insts = selected_insts + block_instruction_count(f.blocks)
+      case cache.fix_cache_get(f.func_id) {
+        .Some(_) => cache_hits = cache_hits + 1,
+        .None => cache_misses = cache_misses + 1,
+      }
       t_clear0 := date.now()
       cleared := clear_function_analysis(f)
       t_clear1 := date.now()
       clear_ms = clear_ms + (t_clear1 - t_clear0)
       t_analyze0 := date.now()
-      functions = .append(analyze_function(cleared, table, b, sem, Dict.new()))
+      functions = .append(
+        analyze_function(cleared, table, b, sem, Dict.new(), cache.fix_cache_get(f.func_id)),
+      )
       t_analyze1 := date.now()
       analyze_ms = analyze_ms + (t_analyze1 - t_analyze0)
     } else {
@@ -3424,6 +3440,9 @@ pub fn analyze_selected_with_summaries(
         .keys()
         .len()} cleared_funcs=${cleared_funcs} selected_blocks=${selected_blocks} cleared_blocks=${cleared_blocks} selected_insts=${selected_insts} cleared_insts=${cleared_insts}",
     )
+    eprintln(
+      "[time:mutable:fixcache] hits=${cache_hits} misses=${cache_misses} verify=${fixverify_enabled()}",
+    )
   }
   CfgView.{ functions }
 }
@@ -3435,7 +3454,7 @@ pub fn analyze_function_with_seed(
   sem: OptimizerSemantics,
   unique_seed: Dict<Int, Bool>,
 ) CfgFunction {
-  analyze_function(f, table, b, sem, unique_seed)
+  analyze_function(f, table, b, sem, unique_seed, .None)
 }
 
 pub type CallUniq = .{ callee: Int, arg_unique: Vector<Bool> }
@@ -3686,6 +3705,7 @@ fn analyze_function(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   unique_seed: Dict<Int, Bool>,
+  cached_fx: FixResult?,
 ) CfgFunction {
   timed := timings_enabled()
   t0 := if timed {
@@ -3705,7 +3725,16 @@ fn analyze_function(
     blk.exit.live = bl.live_out
     blk
   }
-  blocks = ownership_stage(blocks, f.params, table, b, sem, unique_seed, "analyze:${f.name}")
+  blocks = ownership_stage(
+    blocks,
+    f.params,
+    table,
+    b,
+    sem,
+    unique_seed,
+    "analyze:${f.name}",
+    cached_fx,
+  )
   if timed {
     t_own := date.now()
     if t_own - t0 > 50.0 {
@@ -3728,9 +3757,41 @@ fn ownership_stage(
   sem: OptimizerSemantics,
   unique_seed: Dict<Int, Bool>,
   label: String,
+  cached_fx: FixResult?,
 ) Vector<CfgBlock> {
   no_suppress: Dict<Int, Bool> = Dict.new()
-  fx := run_fixpoint_validated(blocks, params, table, b, sem, no_suppress, unique_seed, label)
+
+  // Reuse the summary-pass FixResult only when unique_seed is empty (materialization
+  // still reads unique_seed). Under TWINKLE_FIXVERIFY, recompute and compare.
+  reuse: FixResult? = case cached_fx {
+    .Some(cf) => if unique_seed.keys().len() == 0 {
+      .Some(cf)
+    } else {
+      .None
+    },
+    .None => .None,
+  }
+  fx := case reuse {
+    .Some(cf) => {
+      if fixverify_enabled() {
+        fresh := run_fixpoint_validated(
+          blocks,
+          params,
+          table,
+          b,
+          sem,
+          no_suppress,
+          unique_seed,
+          label,
+        )
+        if fresh.render_fix_result() != cf.render_fix_result() {
+          error("fixverify mismatch: ${label}")
+        }
+      }
+      cf
+    },
+    .None => run_fixpoint_validated(blocks, params, table, b, sem, no_suppress, unique_seed, label),
+  }
   done := all_processed(blocks)
   collect blk in blocks {
     entry_own := join_entry_ownership(blk, fx.exits, done)

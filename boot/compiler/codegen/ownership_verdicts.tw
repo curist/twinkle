@@ -329,7 +329,14 @@ pub fn compute_candidate_artifacts(
   t_view := date.now()
   table := summary.compute_for_roots(view, b, sem, candidate_funcs)
   t_summary := date.now()
-  analyzed := ownership.analyze_selected_with_summaries(view, b, sem, table, candidate_funcs)
+  analyzed := ownership.analyze_selected_with_summaries(
+    view,
+    b,
+    sem,
+    table,
+    candidate_funcs,
+    ownership.empty_fix_cache(),
+  )
   t_own := date.now()
   if timed {
     eprintln(
