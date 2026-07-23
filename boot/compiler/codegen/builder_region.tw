@@ -12,8 +12,9 @@
 //! cannot be matched cleanly, or the rewritten push count does not equal the
 //! recorded fold count, the region is left persistent.
 
-use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp}
 use compiler.builder_family.{BuilderConfig, string_builder_config, vector_builder_config}
+use compiler.builder_region_detect.{fold_chunk}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.builder_region_produce
 use compiler.codegen.builder_region_produce.{BuilderRegionDecision, BuilderRegionDecisionTable}
@@ -62,43 +63,9 @@ fn lower_builder_region(region: BuilderRegion, builder: BuilderConfig) AnfExpr {
 }
 
 // ── Loop-body rewrite (ported from the deleted opt/loop_builder.tw) ──
-fn atom_is_local(a: Atom, local: LocalId) Bool {
-  case a {
-    .ALocal(id) => id.id == local.id,
-    _ => false,
-  }
-}
-
-// Recognizes a top-level fold: `op = ACall(push_id, [ALocal(base), chunk])` with
-// `chunk != base`, whose result local is consume-reassigned into `base` in the
-// immediately following Let. Inline equivalent of the detector's `fold_chunk`
-// (that helper is not pub). Returns the chunk atom.
-fn loop_push_reassign_elem(
-  op: AnfOp,
-  body: AnfExpr,
-  base: LocalId,
-  push_id: FuncId,
-  result: LocalId,
-) Atom? {
-  case op {
-    .ACall(.AGlobalFunc(f), args) => if f.id == push_id.id
-      and args.len() == 2 and atom_is_local(args[0], base) and !atom_is_local(args[1], base)
-      and is_consume_reassign(body, base, result) {
-      .Some(args[1])
-    } else {
-      .None
-    },
-    _ => .None,
-  }
-}
-
-fn is_consume_reassign(body: AnfExpr, base: LocalId, result: LocalId) Bool {
-  case body {
-    .Let(_, .AAssign(target, .ALocal(v)), _) => target.id == base.id and v.id == result.id,
-    _ => false,
-  }
-}
-
+// The fold-recognition (`fold_chunk`) is imported from `builder_region_detect`,
+// so the rewrite transforms exactly the shape the detector certified — one source
+// of truth, no drift when the fold shape evolves (Plans 3/5).
 fn rewrite_loop_expr(
   expr: AnfExpr,
   base: LocalId,
@@ -108,7 +75,7 @@ fn rewrite_loop_expr(
 ) AnfExpr {
   case expr {
     .Let(local, op, body) => {
-      case loop_push_reassign_elem(op, body, base, push_id, local) {
+      case fold_chunk(op, body, base, push_id, local) {
         .Some(elem) => {
           new_op := AnfOp.ACall(.AGlobalFunc(builder_push_id), [.ALocal(builder), elem])
 

@@ -622,19 +622,42 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "nested candidate loops both rewrite without local collision",
+      "nested regions currently stay persistent (spine-only splice limitation, Plan 8)",
       fn() Result<Void, String> {
-        // Behavioral: outer + independent inner string accumulator. A fresh-local
-        // collision would corrupt the result or fail backend verification.
-        acc := ""
-        for c in ["a", "b"] {
-          inner := ""
-          for d in ["1", "2"] {
-            inner = .concat(d)
-          }
-          acc = .concat(inner)
+        // A region nested inside another loop's body is NOT on the function's
+        // top-level spine, so the spine-only splice abandons it; and the outer
+        // loop is separately rejected ("control flow on the main arm" — the inner
+        // loop). So today NEITHER region rewrites: the emitted code stays fully
+        // persistent (`concat`, no `builder_extend`). Genuine two-region rewrite
+        // and fresh-local-collision freedom are covered by the sequential
+        // "two independent builder regions" test above. Flip this assertion when
+        // Plan 8 (non-spine / branch-and-nested splice) lands.
+        a := compile_or_fail(
+          "fn m() Void {\n  acc := \"\"\n  for c in [\"a\", \"b\"] {\n    inner := \"\"\n    for d in [\"1\", \"2\"] { inner = inner.concat(d) }\n    acc = acc.concat(inner)\n  }\n  println(acc)\n}\nm()\n",
+        )
+        anf2 := builder_region.rewrite_module(a.opt, a.builtins)
+        fn_m := find_func(anf2, "m")
+        try assert.equal(count_calls_to(fn_m.body, a.builtins.id("string$builder_extend")), 0)
+        try assert.is_true(count_calls_to(fn_m.body, a.builtins.method_id("String", "concat")) >= 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "two accumulators in one loop: mixed builder + persistent stays correct",
+      fn() Result<Void, String> {
+        // Non-overlap keeps only the lowest-key region when two regions share a
+        // loop site, so one accumulator becomes a builder and the other stays
+        // persistent (a sound, tracked missed-optimization — co-resident regions,
+        // Plan 9). Both results must remain correct through the mixed rewrite.
+        a := ""
+        b := ""
+        for c in ["x", "y"] {
+          a = .concat(c)
+          b = .concat(c)
         }
-        assert.equal(acc, "1212")
+        try assert.equal(a, "xy")
+        try assert.equal(b, "xy")
+        .Ok({})
       },
     )
     .test(

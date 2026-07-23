@@ -351,15 +351,38 @@ stay cheap via candidate-scoping — the builder producer supplies its own roots
 below):** non-empty seeds (Plan 3), typed vector routing (Plan 4), conditional/`continue` folds
 (Plan 5), multi-exit per-edge freeze (Plan 6), straight-line chains (Plan 7).
 
-**Known first-slice limitation — branch-nested regions stay persistent (Plan 8 candidate).** The
-detector recurses into `AIf`/`AMatch`/`ADefer` branch bodies (`detect_in_op`), so a seed+loop
-region nested inside a branch — e.g. `if flag { acc := ""; for … { acc = acc.concat(…) }; use(acc) }`
-— **is certified and produced**, but the rewrite's `splice_seed`/`splice_loop` walk only the
-function-body **top-level spine**, so such a region is **abandoned at splice time and stays
-persistent** (sound; a missed optimization). This is visible in `--census --sites` as
-`linearly_folded=true` but `consumed=no`. Lifting it means teaching `splice_seed`/`splice_loop` to
-recurse into branch bodies (mirroring the detector), keyed by the recorded `loop_site`. Small,
-localized follow-up — not yet scheduled (**Plan 8**).
+**Known first-slice limitations (all sound — persistent fallback — and surfaced by
+`--census --sites`).** Verified against the merged implementation:
+
+1. **Non-spine regions stay persistent (Plan 8 candidate).** The detector recurses into
+   `AIf`/`AMatch`/`ADefer` **and `ALoop`** children (`detect_in_op`), so a seed+loop region whose
+   seed is **not on the function's top-level spine** — nested inside a branch
+   (`if flag { acc := ""; for … { acc.concat } }`) **or inside another loop's body** — is certified
+   and produced, but the rewrite's `splice_seed`/`splice_loop` walk **only the top-level spine**, so
+   it is **abandoned at splice** (`linearly_folded=true`, `consumed=no`). (In the nested-loop case
+   the *outer* region is additionally rejected as "control flow on the main arm" — the inner loop —
+   so **neither** rewrites; verified: emitted code is all `concat`, no builder calls.) Lifting it
+   means teaching `splice_seed`/`splice_loop` to recurse into branch/loop bodies (mirroring the
+   detector), keyed by the recorded `loop_site`. Localized; not yet scheduled (**Plan 8**).
+2. **Co-resident accumulators — only one is rewritten (Plan 9 candidate).** Two certified regions
+   folding **distinct** accumulators in the **same loop**
+   (`a := ""; b := ""; for c { a = a.concat(c); b = b.concat(c) }`) share a `loop_site`, so the
+   non-overlap rule keeps only the **lowest-key** region — the other stays persistent (verified:
+   `a`=builder, `b`=persistent, both results correct). It is *forced*, not just chosen: the coverage
+   guard counts builder-pushes **per family across the whole loop**, so rewriting `a` would inflate
+   `b`'s count and abandon it anyway. Lifting it needs (a) the non-overlap rule to stop treating a
+   shared `loop_site` (with distinct accumulators and folds) as a conflict, **and** (b) the coverage
+   guard to count pushes **per builder-local** rather than per family, **and** careful handling of
+   the sequential-rewrite interaction (the second region splices into the first's already-lowered
+   structure). A real tested slice, not a bolt-on (**Plan 9**).
+3. **Dead vector seed allocation (minor).** For vector regions the seed op is `builder_new()` (which
+   ignores the accumulator), so the original `acc := []` binding becomes a **dead empty-array
+   allocation** (string's `acc := ""` is read by `builder_from`, so it is not dead). No DCE runs
+   after the link-time rewrite, so it reaches codegen. Not fixed here: dropping the seed `Let` would
+   leave the accumulator with no declared slot before its post-loop `AAssign` rebind, and the clean
+   alternative (`builder_from([])`, safe because an empty vector shares no trie nodes) contradicts
+   the design's **"never `vector$builder_from` in this slice"** rule. Track as a minor follow-up;
+   revisit alongside Plan 3/4 vector work.
 
 **Permanently out (never a decision-driven target):** `collect` and any semantically-required
 builder lowering — untouched; those live in `lower_core` and must keep working with **no**
@@ -508,15 +531,43 @@ each small and independently shippable.
   persistent, shown as `consumed=no`). Test: the `if flag { acc := ""; for … { acc.concat } }`
   fixture emits the builder sequence. *Enabling change: splice traversal only; producer/detector
   unchanged. Localized.*
+- **Plan 9 — co-resident accumulators (distinct accumulators in one loop).** Let two certified
+  regions sharing a `loop_site` (but distinct accumulators/folds) both rewrite: (1) drop `loop_site`
+  from the non-overlap conflict test (keep accumulator + fold-site conflicts), (2) make the coverage
+  guard count builder-pushes **per builder-local** instead of per family, and (3) handle the
+  sequential-rewrite interaction where the second region splices into the first's lowered structure.
+  Test: `a := ""; b := ""; for c { a=a.concat(c); b=b.concat(c) }` emits two builder sequences and
+  round-trips. *Enabling change: non-overlap + coverage guard; needs its own tests — soundness-load-
+  bearing, so not a bolt-on.*
 
-**Deferred refactor — not a numbered plan (was Plan 1 review item FU-3).** The detector's
-`detect_in_expr`/`detect_in_op`, `references_fold`/`op_fold_ref`, `scan_refold_loops`/`op_refold_hit`,
-and `op_references_deep` all share the "recurse into `AIf`/`AMatch`/`ALoop`/`ADefer` children" shape,
-differing mainly in return type (Bool vs threaded `Vector`). Unifying them needs a generic ANF
-children-fold combinator; the MEMORY-noted `core_fold.tw` is **Core-IR-only and unbuilt** and has no
-ANF equivalent, so building one is its own piece of work. **Hard constraint:** `op_references_deep`'s
-**no-wildcard, per-variant exhaustive** enumeration is deliberate — a new `AnfOp` variant must force a
-compile error there; any combinator that can't guarantee this leaves `op_references_deep`
-hand-written. **Unscheduled**; revisit if/when an ANF `fold_children` is built (candidate: pair it
-with the Core-IR `core_fold.tw` effort). Full disposition:
+**Deferred refactor — WON'T-DO unless `core_fold.tw` ships first (was Plan 1 review item FU-3).**
+The detector's `detect_in_expr`/`detect_in_op`, `references_fold`/`op_fold_ref`,
+`scan_refold_loops`/`op_refold_hit`, `op_references_deep`, and the FU-1 `count_local_uses`/
+`count_op_uses` all share the "recurse into `AIf`/`AMatch`/`ALoop`/`ADefer` children" shape, and the
+idea was to unify them behind a generic ANF `fold_children` combinator (the ANF analogue of the
+designed-but-unbuilt Core-IR `core_fold.tw`).
+
+**Disposition after the 8C review: not worth doing as a broad refactor.** Reasoning:
+
+- **It would erode the one safety net that matters.** Only `op_references_deep` and `count_op_uses`
+  (the FU-1 gate) are deliberately **no-wildcard exhaustive** — so a new `AnfOp` variant that can
+  reference a local *breaks the build there* and forces a human to classify it; missing that goes
+  silently unsound → wrong certification → miscompile (cf. the ContractCall `_ =>` no-op miscompile).
+  A generic `fold_children` hands every caller a `_ => recurse-into-children` default and removes
+  that forced review on the two soundness-critical walkers. Preserving exhaustiveness means
+  special-casing those two *out* of the combinator anyway, which guts the DRY win.
+- **The "single place to extend" benefit is already mostly present.** The other six walkers already
+  use wildcards whose defaults are *correct* for them, so a new variant is already handled correctly
+  by them and loudly by the two exhaustive ones.
+- **The walkers are semantically distinct** (Bool short-circuit vs Int accumulate vs threaded
+  `Vector` vs the `AAssign`-target-counts-as-a-use nuance vs fold-matching special cases). A
+  combinator general enough to cover all just relocates the complexity into higher-order closures —
+  harder to verify than the current explicit, self-contained recursion ("honest duplication").
+- **Low churn:** the `AnfOp` variant set is stable and these walkers rarely change, so the
+  maintenance the DRY would save is small.
+
+**Verdict: keep the explicit walkers.** Only revisit if the Core-IR `core_fold.tw` effort actually
+ships and proves the pattern pays off *while preserving the exhaustiveness compile-error*. (Contrast
+with the review's finding D — sharing the byte-identical `fold_chunk` between detector and rewrite —
+which *was* worth it: true-duplicate dedup with a real drift risk, done.) Full disposition:
 [../../archive/2026-07-22-8c-plan1-review-followups.md](../../archive/2026-07-22-8c-plan1-review-followups.md).

@@ -132,7 +132,12 @@ fn op_references_deep(op: AnfOp, local: LocalId) Bool {
 
 // A fold: ACall(push,[acc,chunk]) with chunk != acc, whose result is
 // consume-reassigned into acc in the immediately following Let.
-fn fold_chunk(op: AnfOp, body: AnfExpr, acc: LocalId, push_id: FuncId, result: LocalId) Atom? {
+// A fold: `op = ACall(push_id, [ALocal(acc), chunk])` with `chunk != acc`, whose
+// `result` local is consume-reassigned into `acc` in the immediately following
+// Let. Returns the chunk atom. Pub so the codegen rewrite (`builder_region.tw`)
+// recognizes the exact same fold shape it must transform — single source of
+// truth, so the detector and rewrite can never drift.
+pub fn fold_chunk(op: AnfOp, body: AnfExpr, acc: LocalId, push_id: FuncId, result: LocalId) Atom? {
   case op {
     .ACall(.AGlobalFunc(f), args) => if f.id == push_id.id
       and args.len() == 2 and atom_is_local(args[0], acc) and !atom_is_local(args[1], acc)
