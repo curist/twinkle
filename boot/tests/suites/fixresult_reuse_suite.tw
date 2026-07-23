@@ -106,4 +106,22 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "compute_for_roots_cached caches the singleton and excludes the mutual SCC",
+      fn() {
+        s := try setup_for("mutual")
+        ping := try find_func(s.view, "ping")
+        pong := try find_func(s.view, "pong")
+        plain := try find_func(s.view, "plain")
+        cand := suppress_of([ping.func_id, pong.func_id, plain.func_id])
+        res := summary.compute_for_roots_cached(s.view, s.b, s.sem, cand)
+        try assert.ok(
+          has_cache(res.fix_cache, plain.func_id),
+          "plain (singleton, call-free) cached",
+        )
+        try assert.is_false(has_cache(res.fix_cache, ping.func_id))
+        try assert.is_false(has_cache(res.fix_cache, pong.func_id))
+        .Ok({})
+      },
+    )
 }

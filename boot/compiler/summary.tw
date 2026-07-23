@@ -19,9 +19,9 @@ use compiler.cfg.{CfgFunction, CfgView, Terminator}
 use compiler.graph_scc
 use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership.{
-  ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary, SummaryTable,
-  analyze_function_with_seed, call_uniques, empty_summary_table, summarize_function,
-  summarize_variant, summary_get,
+  FixCache, ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary,
+  SummaryTable, analyze_function_with_seed, call_uniques, empty_fix_cache, empty_summary_table,
+  fix_cache_put, summarize_function_cached, summarize_variant, summary_get,
 }
 use compiler.variant_id as vid
 
@@ -381,6 +381,14 @@ fn scc_callers(
 // Hitting the safety cap leaves each member at its current (still-sound, only
 // more conservative) summary. Determinism: members and each round's dirty set are
 // processed in ascending id order.
+// run_scc threads a FixCache accumulator so the caller can collect reusable
+// members' FixResults captured during the summary fixpoint.
+type SccResult = .{ table: SummaryTable, cache: FixCache }
+
+// compute_for_roots_cached returns the summary table plus the reuse cache built
+// for the candidate roots. See docs/plans/performance/fixresult-reuse-design.md.
+pub type SummaryCacheResult = .{ table: SummaryTable, fix_cache: FixCache }
+
 fn run_scc(
   scc: Vector<Int>,
   index: Dict<Int, CfgFunction>,
@@ -388,7 +396,9 @@ fn run_scc(
   table: SummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
-) SummaryTable {
+  cache_ids: Dict<Int, Bool>,
+  cache_in: FixCache,
+) SccResult {
   timed := timings_enabled()
   t0 := if timed {
     date.now()
@@ -397,6 +407,7 @@ fn run_scc(
   }
   members := scc.sort()
   scc_set := int_set(members)
+  cache := cache_in
   callers := scc_callers(members, scc_set, index, user_ids)
   t_callers := if timed {
     date.now()
@@ -419,7 +430,14 @@ fn run_scc(
         .Some(fn0) => fn0,
         .None => error("summary: scc id ${id} not in index"),
       }
-      next := summarize_function(f, table, b, sem, scc_set)
+      res := summarize_function_cached(f, table, b, sem, scc_set)
+      next := res.summary
+      if res.reusable {
+        case cache_ids.get(id) {
+          .Some(true) => cache = fix_cache_put(cache, id, res.fx),
+          _ => {},
+        }
+      }
       if !same_summary(table_get(table, id), next) {
         if timed {
           changed_summaries = changed_summaries + 1
@@ -472,7 +490,7 @@ fn run_scc(
       )
     }
   }
-  table
+  SccResult.{ table, cache }
 }
 
 // ── Variant (ownership-specialized) summaries ───────────────────────
@@ -1233,8 +1251,12 @@ pub fn compute(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) Summa
     table = table_put(table, f.func_id, conservative_summary(f))
   }
 
+  no_cache_ids: Dict<Int, Bool> = Dict.new()
+  cache := empty_fix_cache()
   for scc in order_sccs(view, index, user_ids) {
-    table = run_scc(scc, index, user_ids, table, b, sem)
+    r := run_scc(scc, index, user_ids, table, b, sem, no_cache_ids, cache)
+    table = r.table
+    cache = r.cache
   }
   table
 }
@@ -1300,6 +1322,15 @@ pub fn compute_for_roots(
   sem: OptimizerSemantics,
   roots: Dict<Int, Bool>,
 ) SummaryTable {
+  compute_for_roots_cached(view, b, sem, roots).table
+}
+
+pub fn compute_for_roots_cached(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  roots: Dict<Int, Bool>,
+) SummaryCacheResult {
   timed := timings_enabled()
   t0 := if timed {
     date.now()
@@ -1343,6 +1374,7 @@ pub fn compute_for_roots(
     0.0
   }
 
+  cache := empty_fix_cache()
   sccs := order_sccs(view, index, user_ids)
   t_order := if timed {
     date.now()
@@ -1364,7 +1396,9 @@ pub fn compute_for_roots(
     if run {
       run_sccs = run_sccs + 1
       run_members = run_members + scc.len()
-      table = run_scc(scc, index, user_ids, table, b, sem)
+      r := run_scc(scc, index, user_ids, table, b, sem, roots, cache)
+      table = r.table
+      cache = r.cache
     } else {
       skipped_sccs = skipped_sccs + 1
       skipped_members = skipped_members + scc.len()
@@ -1379,5 +1413,5 @@ pub fn compute_for_roots(
         .len()} wanted=${wanted.keys().len()} wanted_blocks=${wanted_blocks} wanted_insts=${wanted_insts} wanted_edges=${wanted_edges} sccs=${sccs.len()} run_sccs=${run_sccs} skipped_sccs=${skipped_sccs} run_members=${run_members} skipped_members=${skipped_members}",
     )
   }
-  table
+  SummaryCacheResult.{ table, fix_cache: cache }
 }

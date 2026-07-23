@@ -1,0 +1,21 @@
+fn ping(n: Int) Int {
+  if n <= 0 {
+    0
+  } else {
+    pong(n - 1)
+  }
+}
+
+fn pong(n: Int) Int {
+  if n <= 0 {
+    1
+  } else {
+    ping(n - 1)
+  }
+}
+
+fn plain(x: Int) Int {
+  x * 2
+}
+
+ping(4) + plain(3)
