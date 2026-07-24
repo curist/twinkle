@@ -42,7 +42,9 @@ Three ideas, each addressing a specific failure above.
 
 2. **A seed-set-equivalence validator is the acceptance gate.** Under `TWINKLE_SEEDVERIFY`, `run_fixpoint_validated` stabilizes the seed set **twice** — once all-cold (the reference), once warm — and traps (`error("seedverify mismatch: <label>")`) if the two seed sets differ, keyed by function. This checks the thing that matters (seed selection), localizes divergence to a function, and — unlike FIXVERIFY — compares the *old algorithm against the new one*. Acceptance is **zero mismatches across the full self-build + boot suite**. The validator runs both paths (~2× cost) and is dev-only.
 
-3. **Widening is the only order-dependence; neutralize and gate it.** Each warm rerun **resets the widening counters** (`changed_visits`, `locked_*`, `prev_*`, `prev_seen`) and carries only the dataflow exit maps, so widening fires per-rerun as it would cold. And the outer loop **only warm-starts when the cold pass 1 did not widen** (`run_fixpoint` returns a `widened` flag); widening-prone functions fall back to today's all-cold reruns. The validator is the actual guarantee; the gate is what makes divergence unlikely. If the validator reports a mismatch, tighten the gate (e.g. exclude any function that widens in a cold rerun) rather than weakening the check.
+3. **Warm-start correctness is empirical; SEEDVERIFY is the sole guarantee.** Warm-start restarts `run_fixpoint` with the prior exit maps and `processed[blk] = true`, which makes **every block `already` on its first warm visit** — so the shell merges (`merge_targeted`) and, unconditionally, the field/path *conservative meets* (`merge_field_own_exit`/`merge_path_prov_exit`, key-intersection) run on visit 1, where a cold run does a direct assign. Because `field_own`/`path_prov` feed back into `own` (via `ARecordGet`/`publish_local`), this is a genuine order-dependence **beyond** widening, and it is **not** covered by the `widened` flag. Two heuristics reduce divergence but do not prove equivalence: each warm rerun **resets the widening counters** (`changed_visits`, `locked_*`, `prev_*`, `prev_seen`) so widening fires per-rerun as cold would; and the outer loop **only warm-starts when cold pass 1 did not widen** (`run_fixpoint` returns `widened`). The actual guarantee is SEEDVERIFY: if it reports zero per-function seed-set mismatches across the self-build + suite, warm-start is accepted; if it traps, warm-start-by-restart is not viable for those functions and the approach pivots (see below), rather than shipping. **Task 1 Step 7 is the go/no-go for the whole approach.**
+
+If SEEDVERIFY traps broadly (the first-visit meet diverges for many functions), the fallback is **incremental re-propagation** instead of restart-warm-start: keep a single `run_fixpoint` alive across reruns and, after removing seeds, re-enqueue only the blocks reachable from the changed loop headers onto a worklist. Because that never restarts the run, re-visited blocks are legitimately `already` (matching cold's later visits) and the spurious first-visit meet never occurs. It is more code (a dirty-set + worklist restructure) and is validated by the same SEEDVERIFY harness; it is out of scope for this plan's tasks but is the designated next step if warm-start-by-restart fails Step 7.
 
 ### Acceptance bar
 
@@ -96,8 +98,10 @@ Add near `type FixResult` (top-level):
 // Inner fixpoint result plus whether widening (force-lock) fired during it.
 type FixRun = .{ fx: FixResult, widened: Bool }
 
-// Stabilized loop-seed set plus the rerun count (for diagnostics).
-type SeedRun = .{ seeds: LoopSeedSet, reruns: Int }
+// Stabilized loop-seed set, the rerun count, and whether reruns actually
+// warm-started (false = fell back to cold: no reruns, pass-1 widened, or
+// allow_warm off). Reported in the fixpoint_validated diagnostic.
+type SeedRun = .{ seeds: LoopSeedSet, reruns: Int, warmed: Bool }
 
 fn seedverify_enabled() Bool {
   case proc.env("TWINKLE_SEEDVERIFY") {
@@ -245,7 +249,7 @@ fn stabilize_seeds(
       vfx = rr.fx
     }
   }
-  SeedRun.{ seeds, reruns }
+  SeedRun.{ seeds, reruns, warmed: warm_ok and reruns > 0 }
 }
 ```
 
@@ -282,13 +286,14 @@ Replace the body of `run_fixpoint_validated` (from `timed := timings_enabled()` 
   }
   seeds := sr.seeds
   reruns := sr.reruns
+  warmed := sr.warmed
   fx := run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds, label, .None).fx
   if timed {
     t_done := date.now()
     if reruns > 3 or t_done - t0 > 75.0 {
       final_seed_stats := loop_seed_stats(blocks, seeds)
       eprintln(
-        "[time:own:fixpoint_validated] func=${label} total=${t_done - t0}ms reruns=${reruns} initial_seeds=${initial_seed_count} final_seeds=${seeds
+        "[time:own:fixpoint_validated] func=${label} total=${t_done - t0}ms reruns=${reruns} warmed=${warmed} initial_seeds=${initial_seed_count} final_seeds=${seeds
           .keys()
           .len()} initial_headers=${initial_seed_stats.headers} initial_param_seeds=${initial_seed_stats.param_seeds} initial_nonparam_seeds=${initial_seed_stats.nonparam_seeds} final_headers=${final_seed_stats.headers} final_param_seeds=${final_seed_stats.param_seeds} final_nonparam_seeds=${final_seed_stats.nonparam_seeds} blocks=${blocks.len()} insts=${block_instruction_count(
           blocks,
@@ -305,7 +310,7 @@ Replace the body of `run_fixpoint_validated` (from `timed := timings_enabled()` 
 set -o pipefail
 target/twk fmt boot/compiler/ownership.tw
 target/twk lint boot/main.tw
-if target/twk build boot/main.tw -o /tmp/rc-t1.wasm; then echo "BUILD OK"; else echo "BUILD FAIL"; fi
+if target/twk build boot/main.tw -o /tmp/rc-t1.wasm; then echo "BUILD OK"; else echo "BUILD FAIL"; exit 1; fi
 ```
 
 Expected: fmt/lint clean (`No findings.`); `BUILD OK`.
@@ -324,33 +329,47 @@ BOOT_WASM=/tmp/rc-before.wasm deno run --allow-read --allow-write --allow-env \
   tools/js_runtime/deno_main.mjs build /tmp/rc-baseline/boot/main.tw -o /tmp/rc-out-before.wasm
 BOOT_WASM=/tmp/rc-t1.wasm deno run --allow-read --allow-write --allow-env \
   tools/js_runtime/deno_main.mjs build /tmp/rc-baseline/boot/main.tw -o /tmp/rc-out-t1.wasm
-if cmp /tmp/rc-out-before.wasm /tmp/rc-out-t1.wasm; then echo "BYTE-IDENTICAL"; else echo "DIFFER"; fi
+if cmp /tmp/rc-out-before.wasm /tmp/rc-out-t1.wasm; then echo "BYTE-IDENTICAL"; else echo "DIFFER"; exit 1; fi
 ```
 
 Expected: `BYTE-IDENTICAL` (production is unchanged all-cold; the refactor must not alter behavior). Keep `/tmp/rc-baseline` and `/tmp/rc-before.wasm` for later tasks.
 
-- [ ] **Step 7: SEEDVERIFY across the self-build (proves warm ≡ cold seed sets)**
+- [ ] **Step 7: SEEDVERIFY across the self-build — GO/NO-GO for the whole approach**
+
+This step decides whether warm-start-by-restart is viable at all (see spec §"Warm-start correctness is empirical").
 
 ```bash
 set -o pipefail
-if TWINKLE_SEEDVERIFY=1 BOOT_WASM=/tmp/rc-t1.wasm deno run --allow-read --allow-write --allow-env \
-  tools/js_runtime/deno_main.mjs build boot/main.tw -o /tmp/rc-sv.wasm 2>/tmp/rc-sv.err; then
+TWINKLE_SEEDVERIFY=1 BOOT_WASM=/tmp/rc-t1.wasm deno run --allow-read --allow-write --allow-env \
+  tools/js_runtime/deno_main.mjs build boot/main.tw -o /tmp/rc-sv.wasm >/tmp/rc-sv.out 2>&1
+status=$?
+if [ $status -eq 0 ] && ! grep -q "seedverify mismatch" /tmp/rc-sv.out; then
   echo "SEEDVERIFY CLEAN"
 else
-  echo "SEEDVERIFY TRAPPED"; grep "seedverify mismatch" /tmp/rc-sv.err | head
+  echo "SEEDVERIFY TRAPPED"; grep "seedverify mismatch" /tmp/rc-sv.out | head; exit 1
 fi
 ```
 
-Expected: `SEEDVERIFY CLEAN` — no `seedverify mismatch` trap on any function. **If it traps, STOP:** warm-start diverges for the named function (almost certainly a widening interaction the pass-1 gate didn't catch). Tighten `warm_ok` to also require that no rerun widened (thread a `widened` accumulator through the `stabilize_seeds` loop and clear `warm_ok` once any `rr.widened` is true), re-run, and record which functions fell back.
+Expected: `SEEDVERIFY CLEAN` — no `seedverify mismatch` trap on any function. **If it traps, STOP.** The divergence is most likely the first-visit field/path meet (not widening — the `widened` gate does not cover it), so tightening the widening gate will not fix it. Record the trapping functions; if only a handful trap, add a per-function exclusion (a `seeds`-keyed skip set that forces `allow_warm=false` for them) and re-run. **If many trap, warm-start-by-restart is not viable — pivot to the incremental-re-propagation approach (spec §3) instead of forcing this one.**
 
-- [ ] **Step 8: Full boot suite (also runs under SEEDVERIFY)**
+- [ ] **Step 8: Full boot suite under SEEDVERIFY (fresh payload)**
+
+Run the boot suite through the freshly built payload with SEEDVERIFY on, so the suite's fixtures are validated too (bare `target/twk test` uses the old bundled compiler and no validator). A `seedverify mismatch` on any fixture aborts the run.
 
 ```bash
 set -o pipefail
-if target/twk test; then echo "SUITE OK"; else echo "SUITE FAIL"; fi
+TWINKLE_SEEDVERIFY=1 BOOT_WASM=/tmp/rc-t1.wasm deno run --allow-read --allow-write --allow-env \
+  tools/js_runtime/deno_main.mjs run boot/tests/main.tw >/tmp/rc-t1-suite.out 2>&1
+status=$?
+tail -3 /tmp/rc-t1-suite.out
+if [ $status -eq 0 ] && ! grep -q "seedverify mismatch" /tmp/rc-t1-suite.out; then
+  echo "SUITE+SEEDVERIFY OK"
+else
+  echo "SUITE FAIL"; grep -E "seedverify mismatch|Failed tests" /tmp/rc-t1-suite.out | head; exit 1
+fi
 ```
 
-Expected: `SUITE OK`. (The boot suite compiles many fixtures; SEEDVERIFY need not be on here — Step 7 already exercised warm-start over the largest program. Optionally re-run one suite with `TWINKLE_SEEDVERIFY=1` if the fixtures exercise loopy functions.)
+Expected: `SUITE+SEEDVERIFY OK` — all boot tests pass and no fixture trips the validator.
 
 - [ ] **Step 9: Commit**
 
@@ -386,7 +405,7 @@ In `run_fixpoint_validated`, change the non-SEEDVERIFY branch:
 set -o pipefail
 target/twk fmt boot/compiler/ownership.tw
 target/twk lint boot/main.tw
-if target/twk build boot/main.tw -o /tmp/rc-t2.wasm; then echo "BUILD OK"; else echo "BUILD FAIL"; fi
+if target/twk build boot/main.tw -o /tmp/rc-t2.wasm; then echo "BUILD OK"; else echo "BUILD FAIL"; exit 1; fi
 ```
 
 Expected: clean; `BUILD OK`.
@@ -397,34 +416,44 @@ Expected: clean; `BUILD OK`.
 set -o pipefail
 BOOT_WASM=/tmp/rc-t2.wasm deno run --allow-read --allow-write --allow-env \
   tools/js_runtime/deno_main.mjs build /tmp/rc-baseline/boot/main.tw -o /tmp/rc-out-t2.wasm
-if cmp /tmp/rc-out-before.wasm /tmp/rc-out-t2.wasm; then echo "BYTE-IDENTICAL"; else echo "DIFFER"; fi
+if cmp /tmp/rc-out-before.wasm /tmp/rc-out-t2.wasm; then echo "BYTE-IDENTICAL"; else echo "DIFFER"; exit 1; fi
 ```
 
 Expected: `BYTE-IDENTICAL`. If it differs despite Task 1's SEEDVERIFY being clean, the divergence is in the *final* fx (not seed selection) — investigate, do not accept.
 
-- [ ] **Step 4: SEEDVERIFY + FIXVERIFY + suite**
+- [ ] **Step 4: SEEDVERIFY + FIXVERIFY + suite (fresh payload; each a hard gate)**
 
 ```bash
 set -o pipefail
-if TWINKLE_SEEDVERIFY=1 BOOT_WASM=/tmp/rc-t2.wasm deno run --allow-read --allow-write --allow-env \
-  tools/js_runtime/deno_main.mjs build boot/main.tw -o /tmp/rc-t2sv.wasm 2>/tmp/rc-t2sv.err; then echo "SEEDVERIFY CLEAN"; else echo "SEEDVERIFY TRAPPED"; grep "seedverify mismatch" /tmp/rc-t2sv.err | head; fi
+# SEEDVERIFY over the self-build
+TWINKLE_SEEDVERIFY=1 BOOT_WASM=/tmp/rc-t2.wasm deno run --allow-read --allow-write --allow-env \
+  tools/js_runtime/deno_main.mjs build boot/main.tw -o /tmp/rc-t2sv.wasm >/tmp/rc-t2sv.out 2>&1
+if [ $? -eq 0 ] && ! grep -q "seedverify mismatch" /tmp/rc-t2sv.out; then echo "SEEDVERIFY CLEAN"; else echo "SEEDVERIFY TRAPPED"; grep "seedverify mismatch" /tmp/rc-t2sv.out | head; exit 1; fi
+# FIXVERIFY over the self-build
 if TWINKLE_FIXVERIFY=1 BOOT_WASM=/tmp/rc-t2.wasm deno run --allow-read --allow-write --allow-env \
-  tools/js_runtime/deno_main.mjs build boot/main.tw -o /tmp/rc-t2fv.wasm; then echo "FIXVERIFY CLEAN"; else echo "FIXVERIFY TRAPPED"; fi
-if target/twk test; then echo "SUITE OK"; else echo "SUITE FAIL"; fi
+  tools/js_runtime/deno_main.mjs build boot/main.tw -o /tmp/rc-t2fv.wasm; then echo "FIXVERIFY CLEAN"; else echo "FIXVERIFY TRAPPED"; exit 1; fi
+# Boot suite under SEEDVERIFY, via the fresh payload
+TWINKLE_SEEDVERIFY=1 BOOT_WASM=/tmp/rc-t2.wasm deno run --allow-read --allow-write --allow-env \
+  tools/js_runtime/deno_main.mjs run boot/tests/main.tw >/tmp/rc-t2-suite.out 2>&1
+status=$?
+tail -3 /tmp/rc-t2-suite.out
+if [ $status -eq 0 ] && ! grep -q "seedverify mismatch" /tmp/rc-t2-suite.out; then echo "SUITE+SEEDVERIFY OK"; else echo "SUITE FAIL"; grep -E "seedverify mismatch|Failed tests" /tmp/rc-t2-suite.out | head; exit 1; fi
 ```
 
-Expected: `SEEDVERIFY CLEAN`, `FIXVERIFY CLEAN`, `SUITE OK`.
+Expected: `SEEDVERIFY CLEAN`, `FIXVERIFY CLEAN`, `SUITE+SEEDVERIFY OK`.
 
-- [ ] **Step 5: Confirm the win + how many functions fell back to cold**
+- [ ] **Step 5: Confirm the win + how many reported functions warmed vs fell back**
 
 ```bash
 set -o pipefail
 TWINKLE_TIMINGS=1 BOOT_WASM=/tmp/rc-t2.wasm deno run --allow-read --allow-write --allow-env \
-  tools/js_runtime/deno_main.mjs build /tmp/rc-baseline/boot/main.tw -o /tmp/rc-t2t.wasm 2>&1 \
-  | grep -E "produce_mutable_decisions|time:mutable:artifacts\]|fixpoint_validated.*summary:link" || true
+  tools/js_runtime/deno_main.mjs build /tmp/rc-baseline/boot/main.tw -o /tmp/rc-t2t.wasm >/tmp/rc-t2t.err 2>&1 || true
+grep -E "produce_mutable_decisions|time:mutable:artifacts\]|fixpoint_validated.*summary:link" /tmp/rc-t2t.err
+echo "reported slow funcs — warmed:   $(grep -c 'fixpoint_validated.*warmed=true'  /tmp/rc-t2t.err)"
+echo "reported slow funcs — cold:     $(grep -c 'fixpoint_validated.*warmed=false' /tmp/rc-t2t.err)"
 ```
 
-Expected: `[time:mutable:artifacts] summary=` and `[time] produce_mutable_decisions` drop vs the ~11.7s / ~13.3s baseline; record `summary:link` total. If the win is small, most slow functions widened (fell back to cold) — record that finding and consider the incremental-re-propagation follow-up.
+Expected: `[time:mutable:artifacts] summary=` and `[time] produce_mutable_decisions` drop vs the ~11.7s / ~13.3s baseline; record `summary:link` total and the warmed/cold split. (The `warmed=` field, per `[time:own:fixpoint_validated]`, covers the *reported* slow functions — the ones that drive the win; a program-wide count would need an aggregate counter, out of scope.) If the win is small, most slow functions fell back to cold — record it and consider the incremental-re-propagation follow-up.
 
 - [ ] **Step 6: Commit**
 
@@ -446,7 +475,7 @@ git commit -m "ownership: warm-start loop-seed validation reruns"
 set -o pipefail
 BOOT_WASM=/tmp/rc-t2.wasm deno run --allow-read --allow-write --allow-env \
   tools/js_runtime/deno_main.mjs build boot/main.tw -o /tmp/rc-stage3.wasm
-if cmp /tmp/rc-t2.wasm /tmp/rc-stage3.wasm; then echo "SELF-HOST STABLE"; else echo "SELF-HOST DRIFT"; fi
+if cmp /tmp/rc-t2.wasm /tmp/rc-stage3.wasm; then echo "SELF-HOST STABLE"; else echo "SELF-HOST DRIFT"; exit 1; fi
 ```
 
 Expected: `SELF-HOST STABLE`.
@@ -475,7 +504,7 @@ git commit -m "docs: record loop-seed rerun warm-start results"
 
 ## Risks and Stop Rules
 
-- **SEEDVERIFY traps (Task 1 Step 7 / Task 2 Step 4):** warm-start selected a different seed set for the named function — a widening interaction. Tighten `warm_ok` to also clear on any rerun that widened; if a function still diverges, exclude it (cold reruns) and record it. Never weaken the validator to pass.
+- **SEEDVERIFY traps (Task 1 Step 7 / Task 2 Step 4):** warm-start selected a different seed set for the named function. The most likely cause is the **first-visit field/path meet** (warm init's `processed=true` makes visit 1 take the `already` merge path, where `merge_field_own_exit`/`merge_path_prov_exit` key-intersect), which the `widened` gate does **not** cover — so do not assume widening. If only a few functions trap, add a per-function exclusion set that forces `allow_warm=false` for them, and record it. If many trap, warm-start-by-restart is not viable — **pivot to incremental re-propagation** (spec §3), which never restarts the run and so avoids the spurious first-visit merge. Never weaken the validator to pass.
 - **Byte-identity fails but SEEDVERIFY clean (Task 2 Step 3):** the divergence is in the final fx, not seed selection — the final pass is cold, so this would indicate a refactor bug in `run_fixpoint` (e.g. warm state leaking into the final call). Investigate; do not accept.
 - **Win is small:** most slow functions widen and fall back to cold. Record the count; the follow-up lever is incremental re-propagation (re-process only blocks reachable from removed seeds), which does not depend on the monotone assumption and can be validated by the same SEEDVERIFY harness.
 - **Memory / aliasing:** warm-start reuses the prior `vfx` maps by reference to seed the next run's exits; the round loop rebinds exit entries via new maps (`merge_targeted` builds fresh maps), so the passed-in warm dicts must not be mutated in place and survive into the returned `fx`. The byte-identity + self-host gates cover this.
