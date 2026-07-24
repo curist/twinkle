@@ -3,7 +3,9 @@ type MergeOut = .{ map: Dict<Int, Int>, locked: Vector<Int> }
 fn int_keys_union(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
   out := a
   for k in b {
-    out = .append(k)
+    if !out.contains(k) {
+      out = .append(k)
+    }
   }
   out
 }

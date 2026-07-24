@@ -1,0 +1,21 @@
+fn remove_after_keys(d: Dict<Int, Int>) Int {
+  ks := d.keys()
+  d = .remove(0)
+  total := 0
+  for k in ks {
+    total = total + k
+  }
+  total + d.len()
+}
+
+fn caller(n: Int) Int {
+  d: Dict<Int, Int> = Dict.new()
+  i := 0
+  for i < n {
+    d[i] = i
+    i = i + 1
+  }
+  remove_after_keys(d)
+}
+
+println(caller(3).to_string())

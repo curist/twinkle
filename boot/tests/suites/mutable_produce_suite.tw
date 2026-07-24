@@ -128,6 +128,17 @@ fn rendered_line_for_family(rendered: String, func: String, family: String) Stri
   error("missing rendered row for ${func} ${family}")
 }
 
+// A copy-carrier near miss must stay persistent (no in-place decision) and carry
+// the concrete borrow/effect rejection reason for its dict_set site.
+fn assert_rejected_copy_carrier(name: String, func: String, reason: String) Result<Void, String> {
+  produced := try produce_for(name)
+  rendered := mutable_produce.render_candidate_rows(produced.rows)
+  row := rendered_line_for_family(rendered, func, "dict_set")
+  try assert.is_false(row.contains("decision produced"))
+  try assert.str_contains(row, "copy-carrier-rejected(${reason})")
+  .Ok({})
+}
+
 fn candidate_roots(set: mutable_produce.CandidateSet) Dict<Int, Bool> {
   roots: Dict<Int, Bool> = Dict.new()
   for c in set.candidates {
@@ -373,6 +384,94 @@ pub fn suite() runner.Suite {
         helper := rendered_line_for_family(rendered, "merge_like", "dict_set")
         try assert.str_contains(helper, "persistent fallback")
         try assert.str_contains(helper, "base=persistent(aliased shell)")
+        .Ok({})
+      },
+    )
+    .test(
+      "copy-carrier positive selects an in-place dict set with a borrow-effect proof",
+      fn() {
+        produced := try produce_for("phase8d_dict_copy_carrier_positive")
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        helper := rendered_line_for_family(rendered, "merge_like", "dict_set")
+        try assert.str_contains(helper, "decision produced")
+        try assert.str_contains(helper, "copy-carrier")
+        .Ok({})
+      },
+    )
+    .test(
+      "helper-mediated copy-carrier positive selects an in-place dict set",
+      fn() {
+        produced := try produce_for("phase8d_dict_copy_carrier_helper_mediated_positive")
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        helper := rendered_line_for_family(rendered, "merge_helper_mediated", "dict_set")
+        try assert.str_contains(helper, "decision produced")
+        try assert.str_contains(helper, "copy-carrier")
+        .Ok({})
+      },
+    )
+    .test(
+      "copy-carrier get-after-write negative stays persistent with rejection reason",
+      fn() {
+        try assert_rejected_copy_carrier(
+          "phase8d_dict_copy_carrier_get_after_set_negative",
+          "get_after_set_negative",
+          "get-after-write",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "copy-carrier keys-after-write negative stays persistent with rejection reason",
+      fn() {
+        try assert_rejected_copy_carrier(
+          "phase8d_dict_copy_carrier_keys_after_set_negative",
+          "keys_after_set_negative",
+          "keys-after-write",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "copy-carrier cross-local key alias negative stays persistent with rejection reason",
+      fn() {
+        try assert_rejected_copy_carrier(
+          "phase8d_dict_copy_carrier_distinct_locals_negative",
+          "distinct_locals_negative",
+          "get-after-write",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "copy-carrier non-unique key stream negative stays persistent with rejection reason",
+      fn() {
+        try assert_rejected_copy_carrier(
+          "phase8d_dict_copy_carrier_duplicate_helper_arg_negative",
+          "duplicate_helper_arg_negative",
+          "non-unique-key-stream",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "copy-carrier unknown-source-use negative stays persistent with rejection reason",
+      fn() {
+        try assert_rejected_copy_carrier(
+          "phase8d_dict_copy_carrier_unknown_call_negative",
+          "unknown_call_negative",
+          "unknown-source-use",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "copy-carrier source-escape negative stays persistent with rejection reason",
+      fn() {
+        try assert_rejected_copy_carrier(
+          "phase8d_dict_copy_carrier_retains_source_negative",
+          "retains_source_negative",
+          "source-escape",
+        )
         .Ok({})
       },
     )
