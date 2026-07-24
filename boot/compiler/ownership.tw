@@ -3546,18 +3546,19 @@ fn run_fixpoint_validated(
     LoopSeedStats.{ headers: 0, param_seeds: 0, nonparam_seeds: 0 }
   }
 
-  // TASK 1: production is all-cold (allow_incremental = false) — byte-identical.
-  // The validator exercises incremental re-propagation and proves seed-set
-  // equivalence. TASK 2 flips the production allow_incremental to true.
+  // Production re-propagates the seed-finding reruns incrementally
+  // (allow_incremental = true); the returned fx is still a cold final pass, so
+  // the emitted program is byte-identical. Under TWINKLE_SEEDVERIFY, stabilize
+  // both all-cold and incremental and trap on any per-function divergence.
   sr := if seedverify_enabled() {
     cold := stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, false)
     incr := stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, true)
     if !same_loop_seed_set(cold.seeds, incr.seeds) {
       error("seedverify mismatch: ${label}")
     }
-    cold
+    incr
   } else {
-    stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, false)
+    stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, true)
   }
   seeds := sr.seeds
   reruns := sr.reruns
