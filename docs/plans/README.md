@@ -58,6 +58,7 @@ throughput.
 | Plan | Description |
 |------|-------------|
 | [sound-uniqueness/](sound-uniqueness/) | Rebuild boot compiler uniqueness analysis and mutable lowering from scratch, with printable ownership facts before codegen |
+| [fixpoint-map-inplace.md](fixpoint-map-inplace.md) | Make the ownership fixpoint's own loop-carried maps emit `dict$set_in_place` instead of persistent `dict$set` (self-hosting → faster compiler). In-place codegen works but the fixpoint's maps read as `aliased shell` due to interprocedural helper summaries (worked-examples Case W). Investigation-first: pin the poisoning summary, then targeted precision vs source restructure. |
 | [compiler-stack-safety.md](compiler-stack-safety.md) | Make the compiler's recursive IR tree-walks stack-safe so deeply-nested IR (wide `cond`, long side-effecting statement sequences, deep `if/else`) doesn't overflow the V8 Wasm stack. Wide `case` already fixed (flat instruction vector); runtime stack-size mitigation verified non-viable. Phased: depth-guard stopgap → iterative lowering/opt → anf/prepare/emit → serializers |
 
 ### Archived reference docs
