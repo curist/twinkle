@@ -278,3 +278,33 @@ them) and are refined *after* the first codegen, per architecture.md.
 | Advanced concurrency copy/share refinement | Post-codegen follow-up; see [concurrency-publication.md](concurrency-publication.md) |
 | General per-path liveness beyond the Phase 5 transport-wrapper shape | Post-codegen follow-up (conservative-by-default; sound without it); see [phase5-design.md](phase5-design.md) |
 | Return paths deeper than one field under a record / variant payload | Post-codegen follow-up (sound under-claim without it, bounded by a deeper `PathKey` codec); see [phase5-design.md](phase5-design.md) |
+| Read-side borrow/loan recognition for non-escaping dict reads (see below) | [borrow/effect checker plan](../../2026-07-24-ownership-borrow-effect-checker-plan.md) |
+
+## Post-codegen analysis precision
+
+Per the deferral policy above, precision that is *sound to omit* (conservative
+`Shared`/`Unknown` by default) is refined only **after** the first codegen. These
+refinements realize analysis directions [../architecture.md](../architecture.md)
+already names — *"distinguish non-escaping reads from publication"* and *"borrow
+sites vs update sites"* — at a finer granularity than the Phase 0-6 param-level
+facts. They extend the existing publication/summary model (`ParamSummary.base_role`,
+`publish_call`/`publish_atom`) rather than replacing it, and keep every track
+invariant above (facts-only, missing-proof-conservative, no reusable flag stamped
+over `persistent(aliased shell)`).
+
+- **Read-borrow / loan recognition for non-escaping dict reads.** *(in progress)*
+  Phases 0-6 model borrow at *param* granularity (`base_role = Borrowed`) and
+  recover the *return* side via the Phase 5 transport-wrapper recognizer, but a
+  value **read out of** a dict that flows through a helper's return still publishes
+  the dict (`p0=Published`) — so `run_fixpoint`'s loop-carried maps and
+  `merge_targeted`'s copy-carrier updates classify `persistent(aliased shell)`.
+  The borrow/effect checker adds the missing read-side recognizer: it models
+  `keys()`/`get()`/read-helper results as bounded **loans**, proves they do not
+  conflict with the carrier's in-place writes (SET-compatible but REMOVE-incompatible
+  under the by-reference `pd_ORDER` runtime), and suppresses only the compatible
+  read publications so the carrier stays genuinely `Unique`. This is the
+  post-codegen continuation of the read-op return-provenance gap pinned in
+  [../../fixpoint-map-inplace.md](../../fixpoint-map-inplace.md). Design + build:
+  [../../2026-07-24-ownership-borrow-effect-checker-plan.md](../../2026-07-24-ownership-borrow-effect-checker-plan.md);
+  motivating acceptance slice:
+  [../../2026-07-24-merge-targeted-owned-dict-plan.md](../../2026-07-24-merge-targeted-owned-dict-plan.md).
