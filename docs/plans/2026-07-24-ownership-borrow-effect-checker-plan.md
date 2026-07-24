@@ -4,6 +4,14 @@
 
 ## Getting started (fresh session)
 
+> **Status:** Tasks 1–2 are landed and verified on branch `fixpoint-map-inplace` (fixtures
+> + 10-red baseline; model types + `copy-carrier-candidate` diagnostic). Tasks 3–6 have
+> been re-expanded — grounded against real IR — into a dedicated bite-sized execution plan:
+> **[2026-07-24-copy-carrier-engine-impl-plan.md](2026-07-24-copy-carrier-engine-impl-plan.md)**.
+> Implement Tasks 3–6 from *that* plan; the Task 3–6 sections below remain as the design
+> rationale. The "Implementation notes (verified against `twk ir --cfg`)" section is the
+> single most important read before touching `ownership.tw`.
+
 **Read first, in order:** this plan (Goal → Framework architecture → Lineage → Global Constraints → Core Model → Tasks); then the dependent acceptance slice [2026-07-24-merge-targeted-owned-dict-plan.md](2026-07-24-merge-targeted-owned-dict-plan.md); then the Phase 0 diagnosis [fixpoint-map-inplace.md](fixpoint-map-inplace.md); then the framework landing page [sound-uniqueness/analysis/README.md](sound-uniqueness/analysis/README.md).
 
 **First move:** start at **Task 1** (fixtures + red/green assertions). Confirm the positives are red and the safety negatives green *before* touching `ownership.tw`. Then Task 2 (types + diagnostics, no behavior change) → Task 3 (uniqueness + lookup-helper recognition) → Task 4 (loan/write checking, proof-only) → Task 5 (transfer integration — positives flip) → Task 6 (seed targets + rebuild + boot-main census).
@@ -153,6 +161,56 @@ rather than treat every user call on a source-derived value as an escape:
   `set_in_place` reuses only the order/spine — it never mutates an existing value
   object — so a held value reference stays valid across a later carrier set. A
   future mutable-element container would need this invariant re-checked.
+
+---
+
+## Implementation notes (verified against `twk ir --cfg`)
+
+Grounded by dumping the optimized CFG ownership view for the fixtures. `twk ir`
+runs the *compiled binary's* analysis, so it reflects `main` (unmodified) here;
+iterate analysis edits through the boot test path, not `twk ir`.
+
+- **`out := next` is `AInit(ALocal(next))`** → `init_hinge` (ownership.tw ~1033).
+  Because `next` is read later (`Dict.get`/`dict$keys`/`lat_get`), `init_hinge`
+  takes the **alias** branch (`local_valid_at_last` false) → `publish_local(next)`,
+  demoting `next` to Shared and thus the carrier `out` to `persistent(aliased
+  shell)`. The move branch would instead invalidate `next`, breaking the later
+  reads. The copy-carrier needs a *third* outcome: `out` inherits `next`'s
+  (seeded-Unique) ownership while `next` stays valid for compatible read loans.
+- **`dict$keys` has no `CallSemantics`** → `transfer_call` falls to `publish_call`
+  → publishes its dict arg. `merge_targeted_min` reads `next.keys()` inside
+  `int_keys_union(old.keys(), next.keys())`, so `next` is published there too. Both
+  publications (alias + keys) must be suppressed at proven-safe sites.
+- **`Dict.get` is `.ReadOnly`** and `lat_get`'s summary is `p0=Borrowed …
+  ret=alias(p2)` (returns the immutable default/payload, dict param does not
+  escape), so `transfer_summarized_call`'s `.Borrowed => {}` already avoids
+  publishing the source for value reads. Reuse this `base_role == Borrowed` fact as
+  the helper-escape check; the structural lookup scan only needs to identify the
+  **key arg** so a `DictValue(key)` loan can use unique-stream key-distinctness.
+- **The vector copy-carrier already works; only the dict one is stuck.** In
+  `merge_targeted_min`, `next_locked := locked; next_locked = .append(k)` renders
+  `verdict L47 = update L20 base=reuse(unique)` — because `locked` (p3=Consumed) is
+  never read after its move. `out := next; out[k]=…` renders `verdict L50 = update
+  L19 base=persistent(aliased shell)` **solely** because `next` (p1=Published) is
+  read after the alias-move. Same shape, single delta: the post-move source read.
+- **Key-stream uniqueness is a real soundness gate, not a formality.** The fixture's
+  original `int_keys_union` was plain append (`for k in b { out = .append(k) }`), so
+  `old.keys() ++ next.keys()` can hold a duplicate key `k`. With in-place carrier
+  writes, the second occurrence's `lat_get(next, k)` observes the first iteration's
+  `out[k]` write (out aliases next), diverging from persistent semantics — a
+  miscompile. So the checker MUST require a certified `UniqueIntKeys` stream, and
+  `merge_targeted_min`'s helper was changed to a contains-guarded dedupe (sanctioned
+  by the dependent plan Step 2). Note the dedupe SHAPE is identical to the
+  `duplicate_helper_arg` negative's `union_like`; the two are distinguished purely by
+  the arg-uniqueness gate (`old.keys()`/`next.keys()` unique vs the literal `[1, 1]`).
+- **Summary reclassification is the cross-call half.** `merge_targeted_min` summary
+  is `p1=Published … ret_paths=.f0=from(p1)` (next aliased into the returned map).
+  For a caller to keep its dict Unique across the call, `next` must reclassify from
+  `Published` (Retained escape, `reconcile_role` → Published at ownership.tw ~4596)
+  to `Consumed + flows_to_return + in_place_paths`. The forward-verdict flip (seed +
+  suppress) makes the helper's own `update` in-place; the summary flip makes callers
+  keep uniqueness. The boot-main acceptance (`run_fixpoint`, `merge_targeted__`)
+  needs both.
 
 ---
 
