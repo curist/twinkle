@@ -1,11 +1,28 @@
 type MergeOut = .{ map: Dict<Int, Int>, locked: Vector<Int> }
 
+fn insert_sorted(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    if x == id {
+      return v
+    }
+    if !inserted and id < x {
+      out = .append(id)
+      inserted = true
+    }
+    out = .append(x)
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  out
+}
+
 fn int_keys_union(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
   out := a
   for k in b {
-    if !out.contains(k) {
-      out = .append(k)
-    }
+    out = insert_sorted(out, k)
   }
   out
 }
