@@ -13,6 +13,7 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.cfg.{CfgBlock, CfgEdge, CfgFunction, CfgView, Terminator, empty_block_facts}
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.field_facts as ff
+use compiler.mono_type.{MonoType}
 use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info, container_kind}
 use compiler.variant_id as vid
 
@@ -1136,6 +1137,18 @@ fn container_seg(sem: OptimizerSemantics, fid: FuncId) ff.PathSeg? {
   }
 }
 
+fn scalar_result_ty(ty: MonoType) Bool {
+  case ty {
+    .Int => true,
+    .Float => true,
+    .Bool => true,
+    .Byte => true,
+    .Void => true,
+    .Never => true,
+    _ => false,
+  }
+}
+
 fn retained_atoms(ri: Vector<Int>, args: Vector<Atom>) Vector<Atom> {
   out: Vector<Atom> = []
   for i in ri {
@@ -1754,10 +1767,18 @@ fn transfer_op(
         },
       }
     },
-    .AIndex(base, _, _, _) => {
-      // borrow
+    .AIndex(base, _, _, elem_ty) => {
+      // Borrow. A primitive element read cannot alias the collection shell, so do
+      // not carry base shell provenance into scalar results; otherwise helpers
+      // like `read_at(xs) -> Int` summarize as returning alias(p0) and publish
+      // the caller's loop-carried vector before a later update.
+      origins := if scalar_result_ty(elem_ty) {
+        []
+      } else {
+        prov_of(st.prov, base)
+      }
       st = .set_result(result, .Unknown)
-      st.set_prov_st(result, prov_of(st.prov, base))
+      st.set_prov_st(result, origins)
     },
     .ARecordUpdate(base, f, v, _, _) => {
       origins := prov_of(st.prov, base) // shell-only: drop the old union with v

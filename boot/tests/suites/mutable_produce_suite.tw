@@ -292,6 +292,25 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "dict merge helper returning updated map should preserve in-place decision",
+      fn() {
+        produced := try produce_for("phase8d_dict_merge_helper_return")
+        try assert.equal(produced.rows.len(), 2)
+        try assert.equal(produced.table.by_site.keys().len(), 2)
+
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        helper := rendered_line_for_family(rendered, "merge_like", "dict_set")
+        caller := rendered_line_for_family(rendered, "merge_helper_caller", "dict_set")
+
+        try assert.str_contains(helper, "decision produced")
+        try assert.str_contains(helper, "base=reuse(unique)")
+
+        try assert.str_contains(caller, "decision produced (loop-carried")
+        try assert.str_contains(caller, "base=reuse(unique)")
+        .Ok({})
+      },
+    )
+    .test(
       "dict remove loop read helper should preserve loop-carried in-place decision",
       fn() {
         produced := try produce_for("phase8e_dict_remove_loop_read_helper")

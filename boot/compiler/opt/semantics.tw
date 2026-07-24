@@ -114,6 +114,13 @@ pub fn make_prelude_optimizer_semantics(b: BuiltinRegistry) OptimizerSemantics {
     in_place_equivalent: .Some(b.id("dict$remove_in_place")),
     retained_args: .Some([]), // removal key is a lookup operand, not stored
   }
+  calls[b.method_id("Dict", "get").id] = CallSemantics.{
+    effect: .ReadOnly,
+    fresh_result: false,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+    retained_args: .Some([]), // lookup borrows dict/key but stores neither
+  }
   calls[builder.push_id.id] = CallSemantics.{
     effect: .Update,
     fresh_result: false,

@@ -124,6 +124,17 @@ Ranked most→least likely:
 - **If (A):** a focused analysis-precision change in the summary computation (`summary.tw` / the ownership summary in `ownership.tw`) to give the fixpoint helpers borrow-param / fresh-return summaries, gated by: no `aliased shell → reuse(unique)` flip on any site that is *actually* aliased (soundness — verify with the existing in-place equivalence/round-trip guards used by 8D/8E, `TWINKLE_FIXVERIFY`, self-host, full suite), then measure `summary:roots run`. This overlaps the sound-uniqueness analysis track; coordinate with `docs/plans/sound-uniqueness/analysis/`.
 - **If (B):** the specific source restructure, gated by census flip + behavioral equivalence (in-place changes emitted bytes, so **byte-identity is not the gate here** — the guard is the 8D/8E-style round-trip/equivalence check + self-host + suite) and a `summary:roots run` measurement.
 
+### Required exit condition for any later fix
+
+The red read-helper regressions are only the micro gate. A later fix is not done until the **original target in the compiler itself** also reports in-place mutation after rebuilding `target/twk`:
+
+```bash
+make bundle-cli
+target/twk ir boot/main.tw --census --sites | rg -n "^run_fixpoint\t|^merge_targeted|^join_entry_ownership_assumed"
+```
+
+Acceptance requires the current compiler report to show the targeted `run_fixpoint` loop-carried map updates (and any selected helper sites in scope for that fix) flipping from `dict$set` / `absent_fallback` / `persistent(aliased shell)` to `dict$set_in_place` / `selected` / `base=reuse(unique)`. If the microfixtures pass but `run_fixpoint` stays persistent, the fix is incomplete; return to Phase 0-style tracing for the remaining publishing route.
+
 ---
 
 ## Global constraints & gotchas
