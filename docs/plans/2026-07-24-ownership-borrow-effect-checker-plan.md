@@ -13,6 +13,7 @@
 ## Global Constraints
 
 - This is an internal analysis only; do not add user-visible ownership syntax or type annotations.
+- **Scope.** This plan builds only the loan/effect conflict proof engine and its integration into ownership transfer. "Framework" names the umbrella over the already-implemented engines (CFG/liveness, ownership/provenance, path/region, summary/specialization) plus this one — it is **not** a new orchestrator to design or build here. Do not add a framework coordinator, engine registry, or refactors of the existing engines beyond what the loan/effect integration requires.
 - Do not rewrite boot compiler helper source to make one benchmark faster; the checker must recognize general ANF/CFG patterns.
 - Do not globally classify `Dict.keys` as fresh while runtime `keys()` may return `pd_ORDER` by reference.
 - Do not force mutable decisions by setting reusable flags over `persistent(aliased shell)` facts; compatible read handling must preserve genuinely reusable ownership facts.

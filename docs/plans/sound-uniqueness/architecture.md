@@ -625,7 +625,9 @@ specialization is deliberate: deciding *which* call sites need an owned variant
 variants is codegen (2A). Extern copying-borrow precision, non-escaping closure
 recovery, and concurrency copy/share refinement are conservative-by-default and
 remain post-codegen follow-ups rather than gates on the first codegen. The
-detailed track checklists live in [analysis/README.md](analysis/README.md),
+detailed track checklists live in
+[analysis/phases-0-6-history.md](analysis/phases-0-6-history.md) (with the
+framework overview in [analysis/README.md](analysis/README.md)),
 [codegen/README.md](codegen/README.md), [storage/README.md](storage/README.md),
 and [migration/README.md](migration/README.md).
 

@@ -98,7 +98,7 @@ local-update workaround.
 
 ### 1. Analysis track
 
-Detailed checklist: [analysis/README.md](analysis/README.md)
+Framework overview: [analysis/README.md](analysis/README.md); detailed phase ledger: [analysis/phases-0-6-history.md](analysis/phases-0-6-history.md)
 
 Analysis phases (architecture 1A-1E; all analysis precision lands before any codegen):
 
