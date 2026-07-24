@@ -2783,6 +2783,14 @@ pub type FixResult = .{
   exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>,
 }
 
+// Inner fixpoint result plus whether widening (force-lock) fired during it.
+type FixRun = .{ fx: FixResult, widened: Bool }
+
+// Stabilized loop-seed set, the rerun count, and whether reruns actually
+// warm-started (false = fell back to cold: no reruns, pass-1 widened, or
+// allow_warm off). Reported in the fixpoint_validated diagnostic.
+type SeedRun = .{ seeds: LoopSeedSet, reruns: Int, warmed: Bool }
+
 // Reuse cache: func_id -> the generic (analyze-equivalent) FixResult captured
 // during the summary pass. Consumed by the analyze pass to skip re-running the
 // ownership fixpoint. See docs/plans/performance/fixresult-reuse-design.md.
@@ -2814,6 +2822,15 @@ pub type CachedSummary = .{ summary: Summary, fx: FixResult, reusable: Bool }
 // TWINKLE_FIXVERIFY.
 fn fixverify_enabled() Bool {
   case proc.env("TWINKLE_FIXVERIFY") {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+// Dev-only A/B gate for the loop-seed warm-start: when set, run_fixpoint_validated
+// stabilizes the seed set both all-cold and warm and traps on any divergence.
+fn seedverify_enabled() Bool {
+  case proc.env("TWINKLE_SEEDVERIFY") {
     .Some(_) => true,
     .None => false,
   }
@@ -3057,18 +3074,41 @@ fn run_fixpoint(
   unique_seed: Dict<Int, Bool>,
   seeds: LoopSeedSet,
   label: String,
-) FixResult {
+  warm: FixResult?,
+) FixRun {
   timed := timings_enabled()
   t0 := if timed {
     date.now()
   } else {
     0.0
   }
-  exits: Dict<Int, Dict<Int, Int>> = Dict.new()
-  exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
-  exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
-  exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>> = Dict.new()
-  exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>> = Dict.new()
+
+  // Dataflow exit maps seed from `warm` (accelerates seed-finding reruns); the
+  // widening state below is always fresh so widening fires per-rerun as cold would.
+  warm_started := case warm {
+    .Some(_) => true,
+    .None => false,
+  }
+  exits: Dict<Int, Dict<Int, Int>> = case warm {
+    .Some(w) => w.exits,
+    .None => Dict.new(),
+  }
+  exit_valid: Dict<Int, Dict<Int, Bool>> = case warm {
+    .Some(w) => w.exit_valid,
+    .None => Dict.new(),
+  }
+  exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = case warm {
+    .Some(w) => w.exit_prov,
+    .None => Dict.new(),
+  }
+  exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>> = case warm {
+    .Some(w) => w.exit_field_own,
+    .None => Dict.new(),
+  }
+  exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>> = case warm {
+    .Some(w) => w.exit_path_prov,
+    .None => Dict.new(),
+  }
   prev_exits: Dict<Int, Dict<Int, Int>> = Dict.new()
   prev_exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
   prev_exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
@@ -3079,11 +3119,13 @@ fn run_fixpoint(
   changed_visits: Dict<Int, Int> = Dict.new()
   processed: Dict<Int, Bool> = Dict.new()
   for blk in blocks {
-    exits[blk.id.id] = Dict.new()
-    exit_valid[blk.id.id] = Dict.new()
-    exit_prov[blk.id.id] = Dict.new()
-    exit_field_own[blk.id.id] = Dict.new()
-    exit_path_prov[blk.id.id] = Dict.new()
+    if !warm_started {
+      exits[blk.id.id] = Dict.new()
+      exit_valid[blk.id.id] = Dict.new()
+      exit_prov[blk.id.id] = Dict.new()
+      exit_field_own[blk.id.id] = Dict.new()
+      exit_path_prov[blk.id.id] = Dict.new()
+    }
     prev_exits[blk.id.id] = Dict.new()
     prev_exit_valid[blk.id.id] = Dict.new()
     prev_exit_prov[blk.id.id] = Dict.new()
@@ -3092,7 +3134,7 @@ fn run_fixpoint(
     locked_prov[blk.id.id] = []
     prev_seen[blk.id.id] = false
     changed_visits[blk.id.id] = 0
-    processed[blk.id.id] = false
+    processed[blk.id.id] = warm_started
   }
 
   // Quartet moves + liveness scan are dataflow-invariant: compute once, not per
@@ -3104,6 +3146,7 @@ fn run_fixpoint(
     0.0
   }
   changed := true
+  widened := false
   rounds := 0
   block_visits := 0
   changed_blocks := 0
@@ -3166,6 +3209,9 @@ fn run_fixpoint(
       if already {
         has_prev := prev_seen_get(prev_seen, blk.id.id)
         force_lock_changed := change_count_get(changed_visits, blk.id.id) >= fixpoint_widen_cap
+        if force_lock_changed {
+          widened = true
+        }
         own_merge := merge_targeted(
           old_own,
           st.own,
@@ -3268,7 +3314,48 @@ fn run_fixpoint(
       )
     }
   }
-  FixResult.{ exits, exit_valid, exit_prov, exit_field_own, exit_path_prov }
+  FixRun.{ fx: FixResult.{ exits, exit_valid, exit_prov, exit_field_own, exit_path_prov }, widened }
+}
+
+// Find the stable loop-seed set: pass 1 cold, then reruns until the seed set
+// stops shrinking. When `allow_warm` and pass 1 did not widen, each rerun
+// warm-starts from the prior rerun's fx (dataflow values carried, widening
+// counters reset inside run_fixpoint). The returned seeds drive the final
+// (cold) fixpoint in run_fixpoint_validated.
+fn stabilize_seeds(
+  blocks: Vector<CfgBlock>,
+  params: Vector<LocalId>,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+  unique_seed: Dict<Int, Bool>,
+  label: String,
+  allow_warm: Bool,
+) SeedRun {
+  seeds := collect_loop_seed_candidates(blocks)
+  first := run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds, label, .None)
+  vfx := first.fx
+  warm_ok := allow_warm and !first.widened
+  reruns := 0
+  stable := false
+  for !stable {
+    kept := retain_valid_loop_seeds(blocks, vfx, seeds)
+    if same_loop_seed_set(kept, seeds) {
+      stable = true
+    } else {
+      seeds = kept
+      reruns = reruns + 1
+      warm: FixResult? = if warm_ok {
+        .Some(vfx)
+      } else {
+        .None
+      }
+      rr := run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds, label, warm)
+      vfx = rr.fx
+    }
+  }
+  SeedRun.{ seeds, reruns, warmed: warm_ok and reruns > 0 }
 }
 
 fn run_fixpoint_validated(
@@ -3287,32 +3374,37 @@ fn run_fixpoint_validated(
   } else {
     0.0
   }
-  seeds := collect_loop_seed_candidates(blocks)
-  initial_seed_count := seeds.keys().len()
+  initial_seeds := collect_loop_seed_candidates(blocks)
+  initial_seed_count := initial_seeds.keys().len()
   initial_seed_stats := if timed {
-    loop_seed_stats(blocks, seeds)
+    loop_seed_stats(blocks, initial_seeds)
   } else {
     LoopSeedStats.{ headers: 0, param_seeds: 0, nonparam_seeds: 0 }
   }
-  fx := run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds, label)
-  reruns := 0
-  stable_seeds := false
-  for !stable_seeds {
-    kept := retain_valid_loop_seeds(blocks, fx, seeds)
-    if same_loop_seed_set(kept, seeds) {
-      stable_seeds = true
-    } else {
-      seeds = kept
-      reruns = reruns + 1
-      fx = run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds, label)
+
+  // TASK 1: production is all-cold (allow_warm = false) — byte-identical. The
+  // validator exercises warm-start and proves seed-set equivalence. TASK 2 flips
+  // the production allow_warm to true.
+  sr := if seedverify_enabled() {
+    cold := stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, false)
+    warm := stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, true)
+    if !same_loop_seed_set(cold.seeds, warm.seeds) {
+      error("seedverify mismatch: ${label}")
     }
+    cold
+  } else {
+    stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, false)
   }
+  seeds := sr.seeds
+  reruns := sr.reruns
+  warmed := sr.warmed
+  fx := run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds, label, .None).fx
   if timed {
     t_done := date.now()
     if reruns > 3 or t_done - t0 > 75.0 {
       final_seed_stats := loop_seed_stats(blocks, seeds)
       eprintln(
-        "[time:own:fixpoint_validated] func=${label} total=${t_done - t0}ms reruns=${reruns} initial_seeds=${initial_seed_count} final_seeds=${seeds
+        "[time:own:fixpoint_validated] func=${label} total=${t_done - t0}ms reruns=${reruns} warmed=${warmed} initial_seeds=${initial_seed_count} final_seeds=${seeds
           .keys()
           .len()} initial_headers=${initial_seed_stats.headers} initial_param_seeds=${initial_seed_stats.param_seeds} initial_nonparam_seeds=${initial_seed_stats.nonparam_seeds} final_headers=${final_seed_stats.headers} final_param_seeds=${final_seed_stats.param_seeds} final_nonparam_seeds=${final_seed_stats.nonparam_seeds} blocks=${blocks.len()} insts=${block_instruction_count(
           blocks,
