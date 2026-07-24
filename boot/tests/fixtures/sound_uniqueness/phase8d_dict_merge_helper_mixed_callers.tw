@@ -1,0 +1,26 @@
+type MergeOut = .{ map: Dict<Int, Int> }
+
+fn merge_like(next: Dict<Int, Int>, k: Int) MergeOut {
+  out := next
+  out[k] = k
+  MergeOut.{ map: out }
+}
+
+fn unique_caller(n: Int) Dict<Int, Int> {
+  state: Dict<Int, Int> = Dict.new()
+  i := 0
+  for i < n {
+    merged := merge_like(state, i)
+    state = merged.map
+    i = i + 1
+  }
+  state
+}
+
+fn shared_caller(seed: Dict<Int, Int>) Int {
+  before := seed
+  merged := merge_like(seed, 99)
+  before.len() + merged.map.len()
+}
+
+println((unique_caller(3).len() + shared_caller(Dict.new())).to_string())

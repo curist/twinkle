@@ -3618,14 +3618,31 @@ pub fn analyze(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) CfgVi
   analyze_with_summaries(view, b, sem, empty_summary_table())
 }
 
+fn entry_seed_for(entry_seeds: Dict<Int, Dict<Int, Bool>>, func_id: Int) Dict<Int, Bool> {
+  case entry_seeds.get(func_id) {
+    .Some(seed) => seed,
+    .None => Dict.new(),
+  }
+}
+
 pub fn analyze_with_summaries(
   view: CfgView,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   table: SummaryTable,
 ) CfgView {
+  analyze_with_summaries_and_entry_seeds(view, b, sem, table, Dict.new())
+}
+
+pub fn analyze_with_summaries_and_entry_seeds(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+  entry_seeds: Dict<Int, Dict<Int, Bool>>,
+) CfgView {
   functions := collect f in view.functions {
-    analyze_function(f, table, b, sem, Dict.new(), .None)
+    analyze_function(f, table, b, sem, entry_seed_for(entry_seeds, f.func_id), .None)
   }
   CfgView.{ functions }
 }
@@ -3656,6 +3673,18 @@ pub fn analyze_selected_with_summaries(
   selected: Dict<Int, Bool>,
   cache: FixCache,
 ) CfgView {
+  analyze_selected_with_summaries_and_entry_seeds(view, b, sem, table, selected, Dict.new(), cache)
+}
+
+pub fn analyze_selected_with_summaries_and_entry_seeds(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+  selected: Dict<Int, Bool>,
+  entry_seeds: Dict<Int, Dict<Int, Bool>>,
+  cache: FixCache,
+) CfgView {
   timed := timings_enabled()
   if !timed {
     functions := collect f in view.functions {
@@ -3664,14 +3693,13 @@ pub fn analyze_selected_with_summaries(
         .None => false,
       }
       if should_analyze {
-        analyze_function(
-          clear_function_analysis(f),
-          table,
-          b,
-          sem,
-          Dict.new(),
-          cache.fix_cache_get(f.func_id),
-        )
+        seed := entry_seed_for(entry_seeds, f.func_id)
+        cached := if seed.keys().len() == 0 {
+          cache.fix_cache_get(f.func_id)
+        } else {
+          .None
+        }
+        analyze_function(clear_function_analysis(f), table, b, sem, seed, cached)
       } else {
         clear_function_analysis(f)
       }
@@ -3699,7 +3727,13 @@ pub fn analyze_selected_with_summaries(
       selected_funcs = selected_funcs + 1
       selected_blocks = selected_blocks + f.blocks.len()
       selected_insts = selected_insts + block_instruction_count(f.blocks)
-      case cache.fix_cache_get(f.func_id) {
+      seed := entry_seed_for(entry_seeds, f.func_id)
+      cached := if seed.keys().len() == 0 {
+        cache.fix_cache_get(f.func_id)
+      } else {
+        .None
+      }
+      case cached {
         .Some(_) => cache_hits = cache_hits + 1,
         .None => cache_misses = cache_misses + 1,
       }
@@ -3708,9 +3742,7 @@ pub fn analyze_selected_with_summaries(
       t_clear1 := date.now()
       clear_ms = clear_ms + (t_clear1 - t_clear0)
       t_analyze0 := date.now()
-      functions = .append(
-        analyze_function(cleared, table, b, sem, Dict.new(), cache.fix_cache_get(f.func_id)),
-      )
+      functions = .append(analyze_function(cleared, table, b, sem, seed, cached))
       t_analyze1 := date.now()
       analyze_ms = analyze_ms + (t_analyze1 - t_analyze0)
     } else {

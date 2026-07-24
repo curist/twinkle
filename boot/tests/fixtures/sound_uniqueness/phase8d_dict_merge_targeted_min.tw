@@ -1,0 +1,57 @@
+type MergeOut = .{ map: Dict<Int, Int>, locked: Vector<Int> }
+
+fn int_keys_union(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
+  out := a
+  for k in b {
+    out = .append(k)
+  }
+  out
+}
+
+fn lat_get(m: Dict<Int, Int>, k: Int, dflt: Int) Int {
+  case m.get(k) {
+    .Some(v) => v,
+    .None => dflt,
+  }
+}
+
+fn merge_targeted_min(
+  old: Dict<Int, Int>,
+  next: Dict<Int, Int>,
+  prev: Dict<Int, Int>,
+  locked: Vector<Int>,
+) MergeOut {
+  out := next
+  next_locked := locked
+  keys := int_keys_union(old.keys(), next.keys())
+  for k in keys {
+    old_x := lat_get(old, k, 0)
+    next_x := lat_get(next, k, 0)
+    prev_x := lat_get(prev, k, 0)
+    changed := old_x != next_x
+    oscillates := changed and next_x == prev_x
+    if oscillates {
+      next_locked = .append(k)
+      out[k] = old_x + next_x
+    }
+  }
+  MergeOut.{ map: out, locked: next_locked }
+}
+
+fn caller(n: Int) Dict<Int, Int> {
+  state: Dict<Int, Int> = Dict.new()
+  old: Dict<Int, Int> = Dict.new()
+  prev: Dict<Int, Int> = Dict.new()
+  locked: Vector<Int> = []
+  i := 0
+  for i < n {
+    state[i] = i
+    merged := merge_targeted_min(old, state, prev, locked)
+    state = merged.map
+    locked = merged.locked
+    i = i + 1
+  }
+  state
+}
+
+println(caller(3).len().to_string())
