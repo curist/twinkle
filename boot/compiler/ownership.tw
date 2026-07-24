@@ -79,10 +79,10 @@ pub type Summary = .{
 
 pub type SummaryTable = .{
   by_func: Dict<Int, Summary>,
-  // Borrow/effect helper classification (populated by classify_helpers over the
-  // whole view during summary.compute). `dedupe_helpers[fid]` is true when the
-  // function is a certified uniqueness-preserving vector combinator (contains- or
-  // sorted-guarded append whose vector params are only read, never mutated).
+  // Borrow/effect helper classification (populated by classify_dedupe_helpers over
+  // the whole view during summary.compute). `dedupe_helpers[fid]` is true when the
+  // function is a certified uniqueness-preserving vector combinator: a sort-insert
+  // (equality-early-return) primitive, or a compositional combinator over them.
   dedupe_helpers: Dict<Int, Bool>,
 }
 
@@ -732,6 +732,488 @@ fn render_effect_proof(p: EffectProof) String {
     .None => "L?",
   }
   "borrow-effect copy-carrier source L${p.source} key ${key_txt}"
+}
+
+// ── Dedupe-helper certification (uniqueness-preserving vector combinators) ──
+//
+// A "dedupe helper" is a function whose result vector has no duplicate elements when
+// its vector inputs have none. Certifying one lets the copy-carrier engine treat a loop
+// key stream built by that helper as a UNIQUE key stream. Over-certifying is a
+// miscompile, so every recognizer here is default-deny: it returns true only after
+// structurally confirming the safe shape, and false on the first thing it does not
+// recognize. Two shapes are recognized: the `insert_sorted` sort-insert primitive
+// (equality early-return) and compositional combinators built over certified helpers.
+// local id -> its defining op, across the whole function.
+fn build_def_map(blocks: Vector<CfgBlock>) Dict<Int, AnfOp> {
+  m: Dict<Int, AnfOp> = Dict.new()
+  for blk in blocks {
+    for inst in blk.instructions {
+      m[inst.anf_local.id] = inst.op
+    }
+  }
+  m
+}
+
+// block id -> block, for pred/terminator lookups.
+fn build_block_map(blocks: Vector<CfgBlock>) Dict<Int, CfgBlock> {
+  m: Dict<Int, CfgBlock> = Dict.new()
+  for blk in blocks {
+    m[blk.id.id] = blk
+  }
+  m
+}
+
+type DictVecOps = .{ get: Int, get_unsafe: Int, keys: Int, set: Int, remove: Int, append: Int }
+
+fn dict_vec_ops(b: BuiltinRegistry) DictVecOps {
+  DictVecOps.{
+    get: b.method_id("Dict", "get").id,
+    get_unsafe: b.id("dict$get_unsafe").id,
+    keys: b.id("dict$keys").id,
+    set: b.method_id("Dict", "set").id,
+    remove: b.method_id("Dict", "remove").id,
+    append: b.method_id("Vector", "append").id,
+  }
+}
+
+fn call_target_of(op: AnfOp) Int? {
+  case op {
+    .ACall(callee, _) => case callee {
+      .AGlobalFunc(fid) => .Some(fid.id),
+      _ => .None,
+    },
+    _ => .None,
+  }
+}
+
+fn call_args_of(op: AnfOp) Vector<Atom> {
+  case op {
+    .ACall(_, args) => args,
+    _ => [],
+  }
+}
+
+fn def_get(dmap: Dict<Int, AnfOp>, id: Int) AnfOp? {
+  dmap.get(id)
+}
+
+// Does `local`'s def chain reach an `AIndex(base, _)` whose base aliases `param`
+// (through `AInit` local aliases)? Recognizes a loop element read off a vector param.
+fn traces_to_index_of(local: Int, param: Int, dmap: Dict<Int, AnfOp>) Bool {
+  cur := local
+  steps := 0
+  for steps < 64 {
+    case def_get(dmap, cur) {
+      .Some(.AInit(a)) => case atom_local_id(a) {
+        .Some(nxt) => cur = nxt,
+        .None => return false,
+      },
+      .Some(.AIndex(base, _, _, _)) => return atom_aliases_param(base, param, dmap),
+      _ => return false,
+    }
+    steps = steps + 1
+  }
+  false
+}
+
+// Does atom `a` alias `param` through `AInit` local aliases?
+fn atom_aliases_param(a: Atom, param: Int, dmap: Dict<Int, AnfOp>) Bool {
+  cur := case atom_local_id(a) {
+    .Some(id) => id,
+    .None => return false,
+  }
+  steps := 0
+  for steps < 64 {
+    if cur == param {
+      return true
+    }
+    case def_get(dmap, cur) {
+      .Some(.AInit(inner)) => case atom_local_id(inner) {
+        .Some(nxt) => cur = nxt,
+        .None => return false,
+      },
+      _ => return false,
+    }
+    steps = steps + 1
+  }
+  false
+}
+
+// A set-once boolean flag: some local initialized `false` and only ever assigned the
+// literal `true` (never reset to false). Returns its local id if exactly one exists.
+fn find_set_once_flag(blocks: Vector<CfgBlock>) Int? {
+  init_false: Dict<Int, Bool> = Dict.new()
+  assigned_true: Dict<Int, Bool> = Dict.new()
+  assigned_false: Dict<Int, Bool> = Dict.new()
+  for blk in blocks {
+    for inst in blk.instructions {
+      case inst.op {
+        .AInit(a) => case a {
+          .ALitBool(v) => if !v {
+            init_false[inst.anf_local.id] = true
+          },
+          _ => {},
+        },
+        .AAssign(target, a) => case a {
+          .ALitBool(v) => if v {
+            assigned_true[target.id] = true
+          } else {
+            assigned_false[target.id] = true
+          },
+          _ => {},
+        },
+        _ => {},
+      }
+    }
+  }
+  found: Int = 0 - 1
+  count := 0
+  for id in init_false.keys() {
+    if in_set(assigned_true, id) and !in_set(assigned_false, id) {
+      found = id
+      count = count + 1
+    }
+  }
+  if count == 1 {
+    .Some(found)
+  } else {
+    .None
+  }
+}
+
+// Is block `bid` guarded by `!flag` on entry: its single pred is a `CondBranch(cond, bid,
+// _)` (bid is the TRUE arm) where `cond` is defined by `AUnOp(.Not, ALocal(flag), _)`?
+fn block_guarded_by_not_flag(bmap: Dict<Int, CfgBlock>, dmap: Dict<Int, AnfOp>, bid: Int, flag: Int) Bool {
+  blk := case bmap.get(bid) {
+    .Some(x) => x,
+    .None => return false,
+  }
+  if blk.preds.len() != 1 {
+    return false
+  }
+  pred := case bmap.get(blk.preds[0].target.id) {
+    .Some(x) => x,
+    .None => return false,
+  }
+  case pred.terminator {
+    .Some(.CondBranch(cbr, then_id, _, _, _)) => {
+      if then_id.id != bid {
+        return false
+      }
+      cond_id := case atom_local_id(cbr) {
+        .Some(x) => x,
+        .None => return false,
+      }
+      case def_get(dmap, cond_id) {
+        .Some(.AUnOp(.Not, inner, _)) => case atom_local_id(inner) {
+          .Some(iid) => iid == flag,
+          .None => false,
+        },
+        _ => false,
+      }
+    },
+    _ => false,
+  }
+}
+
+// Does block `bid` assign `flag = true` somewhere in its own instructions (so a second
+// execution of an id-append in the same block is impossible once the flag is set)?
+fn block_sets_flag_true(bmap: Dict<Int, CfgBlock>, bid: Int, flag: Int) Bool {
+  blk := case bmap.get(bid) {
+    .Some(x) => x,
+    .None => return false,
+  }
+  for inst in blk.instructions {
+    case inst.op {
+      .AAssign(target, a) => if target.id == flag {
+        case a {
+          .ALitBool(v) => if v {
+            return true
+          },
+          _ => {},
+        }
+      },
+      _ => {},
+    }
+  }
+  false
+}
+
+// Certify the `insert_sorted` sort-insert primitive (equality early-return). Default-deny.
+// Returns true only when:
+//   1. some block `Return(Some(ALocal(vp)))` with vp a param, reached as the TRUE arm of a
+//      `CondBranch` whose cond is `ABinOp(.Eq, x, id, _)`, x a loop element off vp, id a
+//      scalar param (identified structurally: the eq operand that is a bare param);
+//   2. every `Vector.append(acc, w)` has w == the loop element x, or w == id;
+//   3. no `AAssign` targets a param;
+//   4. EXACTLY ONE append whose operand is the loop element x (each v element once);
+//   5. every append whose operand is id is flag-guarded (set-once flag): the append block
+//      either sets the flag true itself, or is entered only under `!flag`.
+fn function_is_sort_insert_primitive(f: CfgFunction, ops: DictVecOps) Bool {
+  dmap := build_def_map(f.blocks)
+  bmap := build_block_map(f.blocks)
+  param_ids: Dict<Int, Bool> = Dict.new()
+  for p in f.params {
+    param_ids[p.id] = true
+  }
+
+  // (1) find the equality early-return; record vp (vector param) and id (scalar param).
+  vp: Int = 0 - 1
+  id_param: Int = 0 - 1
+  elem_local: Int = 0 - 1
+  found_guard := false
+  for blk in f.blocks {
+    case blk.terminator {
+      .Some(.Return(ret)) => case ret {
+        .Some(a) => case atom_local_id(a) {
+          .Some(rid) => if in_set(param_ids, rid) and blk.preds.len() == 1 {
+            case bmap.get(blk.preds[0].target.id) {
+              .Some(pred) => case pred.terminator {
+                .Some(.CondBranch(cbr, then_id, _, _, _)) => if then_id.id == blk.id.id {
+                  cid := case atom_local_id(cbr) {
+                    .Some(x) => x,
+                    .None => 0 - 1,
+                  }
+                  case def_get(dmap, cid) {
+                    .Some(.ABinOp(.Eq, la, ra, _)) => {
+                      r := match_eq_operands(la, ra, rid, param_ids, dmap)
+                      if r.ok {
+                        vp = rid
+                        id_param = r.scalar
+                        elem_local = r.element
+                        found_guard = true
+                      }
+                    },
+                    _ => {},
+                  }
+                },
+                _ => {},
+              },
+              .None => {},
+            }
+          },
+          .None => {},
+        },
+        .None => {},
+      },
+      _ => {},
+    }
+  }
+  if !found_guard {
+    return false
+  }
+
+  // (3) no param is mutated via AAssign.
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      case inst.op {
+        .AAssign(target, _) => if in_set(param_ids, target.id) {
+          return false
+        },
+        _ => {},
+      }
+    }
+  }
+
+  // (2)+(4)+(5) walk appends.
+  flag := case find_set_once_flag(f.blocks) {
+    .Some(x) => x,
+    .None => 0 - 1,
+  }
+  elem_appends := 0
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      case call_target_of(inst.op) {
+        .Some(t) => if t == ops.append {
+          cargs := call_args_of(inst.op)
+          if cargs.len() != 2 {
+            return false
+          }
+          w := case atom_local_id(cargs[1]) {
+            .Some(x) => x,
+            .None => 0 - 1,
+          }
+          is_elem := w == elem_local or traces_to_index_of(w, vp, dmap)
+          is_id := w == id_param
+          if is_elem {
+            elem_appends = elem_appends + 1
+          } else if is_id {
+            // (5) flag-guarded id-append.
+            if flag < 0 {
+              return false
+            }
+            if !(block_sets_flag_true(bmap, blk.id.id, flag)
+              or block_guarded_by_not_flag(bmap, dmap, blk.id.id, flag)) {
+              return false
+            }
+          } else {
+            return false // (2) an append operand that is neither the element nor id
+          }
+        },
+        .None => {},
+      }
+    }
+  }
+  elem_appends == 1
+}
+
+type EqMatch = .{ ok: Bool, scalar: Int, element: Int }
+
+// The eq compares a loop element off `vp` against a scalar param. Return which operand is
+// the scalar param and which is the element.
+fn match_eq_operands(
+  la: Atom,
+  ra: Atom,
+  vp: Int,
+  param_ids: Dict<Int, Bool>,
+  dmap: Dict<Int, AnfOp>,
+) EqMatch {
+  lid := case atom_local_id(la) {
+    .Some(x) => x,
+    .None => 0 - 1,
+  }
+  rid := case atom_local_id(ra) {
+    .Some(x) => x,
+    .None => 0 - 1,
+  }
+
+  // la is the element (indexes vp), ra is the scalar param.
+  if traces_to_index_of(lid, vp, dmap) and in_set(param_ids, rid) and rid != vp {
+    return EqMatch.{ ok: true, scalar: rid, element: lid }
+  }
+  if traces_to_index_of(rid, vp, dmap) and in_set(param_ids, lid) and lid != vp {
+    return EqMatch.{ ok: true, scalar: lid, element: rid }
+  }
+  EqMatch.{ ok: false, scalar: 0 - 1, element: 0 - 1 }
+}
+
+// True iff EVERY `Return(Some(ALocal(l)))` returns a local in `set` (and ≥1 Return exists).
+fn return_local_in_set(f: CfgFunction, set: Dict<Int, Bool>) Bool {
+  saw := false
+  for blk in f.blocks {
+    case blk.terminator {
+      .Some(.Return(ret)) => case ret {
+        .Some(a) => case atom_local_id(a) {
+          .Some(id) => if in_set(set, id) {
+            saw = true
+          } else {
+            return false
+          },
+          .None => return false,
+        },
+        .None => return false,
+      },
+      _ => {},
+    }
+  }
+  saw
+}
+
+// Certify a compositional dedupe combinator: `out := a; loop { out = dh(out, k) }` where
+// dh is an already-certified dedupe helper. Affirmative shape (default-deny): every write
+// to an accumulator-lineage local is a known-dedupe call on the accumulator, the returned
+// local is in the accumulator lineage, and the lineage was extended ≥1 time.
+fn function_is_dedupe_combinator(f: CfgFunction, ops: DictVecOps, known: Dict<Int, Bool>) Bool {
+  param_ids: Dict<Int, Bool> = Dict.new()
+  for p in f.params {
+    param_ids[p.id] = true
+  }
+  acc_line: Dict<Int, Bool> = Dict.new()
+  saw_acc := false
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      case inst.op {
+        .AInit(a) => case atom_local_id(a) {
+          .Some(src) => if in_set(param_ids, src) or in_set(acc_line, src) {
+            acc_line[inst.anf_local.id] = true
+            saw_acc = true
+          },
+          .None => {},
+        },
+        _ => {},
+      }
+    }
+  }
+  if !saw_acc {
+    return false
+  }
+  ok := true
+  extended := false
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      case inst.op {
+        .ACall(_, cargs) => case call_target_of(inst.op) {
+          .Some(t) => if in_set(known, t)
+            and cargs.len() >= 1 and in_set(acc_line, atom_or_neg_local(cargs[0])) {
+            acc_line[inst.anf_local.id] = true
+            extended = true
+          } else if in_set(acc_line, inst.anf_local.id) {
+            ok = false
+          } else if t == ops.append
+            and cargs.len() >= 1 and in_set(acc_line, atom_or_neg_local(cargs[0])) {
+            ok = false
+          },
+          .None => {},
+        },
+        .AAssign(target, src) => if in_set(acc_line, target.id) {
+          case atom_local_id(src) {
+            .Some(sid) => if !in_set(acc_line, sid) {
+              ok = false
+            },
+            .None => ok = false,
+          }
+        },
+        _ => {},
+      }
+    }
+  }
+  ok and extended and return_local_in_set(f, acc_line)
+}
+
+fn atom_or_neg_local(a: Atom) Int {
+  case atom_local_id(a) {
+    .Some(id) => id,
+    .None => 0 - 1,
+  }
+}
+
+fn function_is_dedupe_helper(f: CfgFunction, ops: DictVecOps, known: Dict<Int, Bool>) Bool {
+  function_is_sort_insert_primitive(f, ops) or function_is_dedupe_combinator(f, ops, known)
+}
+
+// Whole-view dedupe-helper classification. Iterated to a fixpoint (bounded) so a
+// combinator certifies after the primitive it calls is known.
+pub fn classify_dedupe_helpers(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) Dict<
+  Int,
+  Bool,
+> {
+  ops := dict_vec_ops(b)
+  known: Dict<Int, Bool> = Dict.new()
+  pass := 0
+  for pass < 4 {
+    changed := false
+    for f in view.functions {
+      if !in_set(known, f.func_id) and function_is_dedupe_helper(f, ops, known) {
+        known[f.func_id] = true
+        changed = true
+      }
+    }
+    if !changed {
+      return known
+    }
+    pass = pass + 1
+  }
+  known
+}
+
+pub fn with_dedupe_helpers(
+  table: SummaryTable,
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) SummaryTable {
+  table.dedupe_helpers = classify_dedupe_helpers(view, b, sem)
+  table
 }
 
 // Per-block analysis inputs that depend ONLY on block structure + the fixed

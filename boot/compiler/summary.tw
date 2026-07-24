@@ -21,7 +21,7 @@ use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership.{
   FixCache, ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary,
   SummaryTable, analyze_function_with_seed, call_uniques, empty_fix_cache, empty_summary_table,
-  fix_cache_put, summarize_function_cached, summarize_variant, summary_get,
+  fix_cache_put, summarize_function_cached, summarize_variant, summary_get, with_dedupe_helpers,
 }
 use compiler.variant_id as vid
 
@@ -1258,6 +1258,7 @@ pub fn compute(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) Summa
     table = r.table
     cache = r.cache
   }
+  table = with_dedupe_helpers(table, view, b, sem)
   table
 }
 
