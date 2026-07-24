@@ -875,6 +875,49 @@ dominant cost and the next lever. Peak RSS +~11.7 MB (~0.5%, retaining ~400
 fixed input), `TWINKLE_FIXVERIFY` clean, census unchanged (full path), self-host
 stable, full boot suite green.
 
+## Update: loop-seed rerun warm-start (null result — not shipped in production)
+
+With the summary stage now dominant (~11.9s), the next target was the loop-seed
+validation reruns in `run_fixpoint_validated`: the outer loop optimistically
+seeds loop-carried locals `Unique`, then reruns the **cold** inner fixpoint until
+the kept-seed set stabilizes. `summary:link` alone runs 14 such reruns (~3.4s).
+
+The change (committed, but **kept off in production**): `run_fixpoint` gained a
+trailing `warm: FixResult?` param and returns `FixRun = .{ fx, widened }`; a new
+`stabilize_seeds` warm-starts each rerun from the prior rerun's `fx` (dataflow
+exit maps carried; widening counters always reset so widening fires per-rerun as
+cold would), while `run_fixpoint_validated` still returns a **cold** final pass so
+a warm-start bug can only change *which seeds stabilize*, never the emitted result.
+A `TWINKLE_SEEDVERIFY` A/B gate stabilizes the seed set both all-cold and warm and
+traps on any per-function divergence.
+
+SEEDVERIFY is clean across the self-build and the full boot suite (3226 tests),
+proving warm ≡ cold seed sets. But flipping production to warm was a **net
+regression**, not a win. Same-session A/B (cache-active branch baseline vs warm,
+same fixed input, 3 runs, medians):
+
+```text
+baseline (cold reruns):  summary ~11.9s   produce_mutable_decisions ~13.5s
+warm reruns:             summary ~12.7s   produce_mutable_decisions ~14.4s
+```
+
+Why it fails: warm-start only helps functions that do **not** widen, but the cost
+is dominated by the one function that *does*. `summary:link` (243 blocks, ~29% of
+the summary stage) hits `fixpoint_widen_cap`, so it falls back to cold and
+warm-start never touches it. The 39 functions that do warm don't get cheaper
+either: warm-start seeds all five exit maps and marks every block `processed`, so
+round 1 immediately runs the full `merge_targeted` + field/path meets over
+already-large maps, where a cold rerun's early rounds are cheap and grow. It
+trades cheap-early-rounds for expensive-early-rounds and loses.
+
+Disposition: the machinery + validator are committed (byte-identical to `main`,
+production stays all-cold); the production flip was reverted. The designated next
+lever is **incremental re-propagation** — keep a single `run_fixpoint` alive
+across reruns and re-enqueue only blocks reachable from the removed loop headers.
+It never restarts, so it avoids the spurious first-visit meet *and* attacks the
+dominant widening function (which restart-warm-start structurally cannot), and it
+is validated by the same SEEDVERIFY harness.
+
 ## Working rules for future updates
 
 - Keep only the current baseline plus durable lessons in this file.
