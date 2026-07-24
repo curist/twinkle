@@ -2,6 +2,28 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Getting started (fresh session)
+
+**Read first, in order:** this plan (Goal → Framework architecture → Lineage → Global Constraints → Core Model → Tasks); then the dependent acceptance slice [2026-07-24-merge-targeted-owned-dict-plan.md](2026-07-24-merge-targeted-owned-dict-plan.md); then the Phase 0 diagnosis [fixpoint-map-inplace.md](fixpoint-map-inplace.md); then the framework landing page [sound-uniqueness/analysis/README.md](sound-uniqueness/analysis/README.md).
+
+**First move:** start at **Task 1** (fixtures + red/green assertions). Confirm the positives are red and the safety negatives green *before* touching `ownership.tw`. Then Task 2 (types + diagnostics, no behavior change) → Task 3 (uniqueness + lookup-helper recognition) → Task 4 (loan/write checking, proof-only) → Task 5 (transfer integration — positives flip) → Task 6 (seed targets + rebuild + boot-main census).
+
+**Non-negotiable soundness invariants** (detailed in Global Constraints + Core Model):
+- **Never globally reclassify `Dict.keys` as fresh/Allocate.** Runtime `keys()` returns the internal order vector `pd_ORDER` *by reference*, so a live keys loan is SET-compatible (order grows via COW `arr_push`) but REMOVE-incompatible (`remove_in_place` destructively tombstones). Keep `Dict.keys` publishing; suppress publication only at proven-safe sites.
+- **Never stamp `reusable_shell = true` over `persistent(aliased shell)`.** Make the carrier genuinely `Unique` (suppress only compatible read publications) so the normal `shell_reusable` path fires.
+- Default-deny conflict checking; conservative key-equality; conservative loan may-liveness. Missing proof stays `Shared`/`Unknown`; a failed proof is an optimization failure, not an error.
+
+**Watch-outs the plan already encodes** (don't relearn the hard way):
+- `merge_targeted` reads `next` *only through helpers* (`lat_get`, `int_keys_union`), never raw `Dict.get` — so lookup-helper + uniqueness-helper recognition (Task 3) is on the critical path.
+- The Borrowed check is about the *source dict's mutable structures* not escaping (immutable value extraction is fine), and is **scoped to the source-derived argument only** — `int_keys_union(old.keys(), next.keys())` legitimately retains `old.keys()`.
+- Uniqueness certification is compositional and requires the helper not to mutate its vector args.
+
+**Environment:** analysis-logic edits don't affect `twk ir` until rebuilt — iterate with boot tests (`target/twk run boot/tests/main.tw`); `make bundle-cli` only before the Task 6 CLI census; run heavy commands one at a time. `run_fixpoint` itself may **not** flip (Phase 0 "breadth": multiple publication routes) — Task 6 *measures* it, doesn't assume it; a `merge_targeted__*` flip with `run_fixpoint` still persistent is a documented success.
+
+**Scope:** build only the loan/effect engine + its ownership-transfer integration; "framework" is the umbrella over existing engines, not a new orchestrator (see Global Constraints).
+
+---
+
 **Goal:** Promote Twinkle's mutable-lowering legality checks into a general internal borrow/effect framework over typed ANF/CFG. The framework orchestrates concrete proof engines — ownership/provenance, liveness/validity, path/region facts, summaries/specialization, and loan/write compatibility — so codegen receives one coherent proof artifact instead of ad-hoc recognizers. The first implemented slice replaces copy-carrier reasoning with explicit loans and effects, letting ownership safely retain uniqueness through compatible reads and reject conflicting writes.
 
 **Framework architecture:** The borrow/effect framework is an internal compiler analysis, not a user-visible type checker. Failed proofs do not reject programs; they keep persistent lowering and render diagnostics. Existing ownership work becomes the ownership/provenance proof engine inside this framework: it proves `Unique`/`Shared`/`Unknown`, move-vs-alias, path ownership, and call summaries. This plan adds the first loan/effect conflict proof engine: it models loans from owned values and writes to abstract regions, generates constraints from lowered ANF/CFG, proves that active loans do not conflict with writes, and returns proof facts that ownership transfer can use to suppress only compatible publications. The first consumer is the dict copy-carrier pattern, but the design is intentionally general enough for future vector/record/container borrow precision.
