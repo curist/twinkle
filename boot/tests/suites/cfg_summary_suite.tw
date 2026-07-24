@@ -1539,7 +1539,7 @@ pub fn suite() runner.Suite {
         }
         tbl: Dict<Int, ownership.Summary> = Dict.new()
         tbl[7] = helper
-        table := ownership.SummaryTable.{ by_func: tbl }
+        table := ownership.SummaryTable.{ by_func: tbl, dedupe_helpers: Dict.new() }
 
         // fn g(env) { r1 := helper(env); r2 := helper(r1); r2 }  -- thread env through twice.
         body: AnfExpr = .Let(
@@ -1573,7 +1573,7 @@ pub fn suite() runner.Suite {
         }
         tbl: Dict<Int, ownership.Summary> = Dict.new()
         tbl[7] = helper
-        table := ownership.SummaryTable.{ by_func: tbl }
+        table := ownership.SummaryTable.{ by_func: tbl, dedupe_helpers: Dict.new() }
 
         // fn g(env) { r1 := helper(env); r1 }  -- r1 is fresh, origin none.
         body: AnfExpr = .Let(

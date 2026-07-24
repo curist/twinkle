@@ -77,10 +77,24 @@ pub type Summary = .{
   ret_paths: Vector<ReturnPathOwn>,
 }
 
-pub type SummaryTable = .{ by_func: Dict<Int, Summary> }
+pub type SummaryTable = .{
+  by_func: Dict<Int, Summary>,
+  // Borrow/effect helper classification (populated by classify_helpers over the
+  // whole view during summary.compute). `dedupe_helpers[fid]` is true when the
+  // function is a certified uniqueness-preserving vector combinator (contains- or
+  // sorted-guarded append whose vector params are only read, never mutated).
+  dedupe_helpers: Dict<Int, Bool>,
+}
 
 pub fn empty_summary_table() SummaryTable {
-  SummaryTable.{ by_func: Dict.new() }
+  SummaryTable.{ by_func: Dict.new(), dedupe_helpers: Dict.new() }
+}
+
+pub fn table_is_dedupe_helper(t: SummaryTable, func_id: Int) Bool {
+  case t.dedupe_helpers.get(func_id) {
+    .Some(v) => v,
+    .None => false,
+  }
 }
 
 pub fn summary_get(t: SummaryTable, func_id: Int) Summary? {
@@ -617,6 +631,107 @@ fn scan_block_backward(blk: CfgBlock, live_out: Vector<Int>) BlockScan {
   // forward-seed change is needed.
   cur = diff_sorted(cur, blk.bound)
   BlockScan.{ live_in: cur, live_after }
+}
+
+// --- Borrow/effect framework model (dict copy-carrier proof engine) ---
+//
+// The borrow/effect engine models reads out of an owned source dict as `Loan`s
+// over abstract `BorrowRegion`s and mutations to the carrier as `WriteEffect`s,
+// then proves that live loans do not conflict with writes. Failed proofs never
+// reject a program; they keep persistent lowering and render a rejection reason.
+// See docs/plans/2026-07-24-ownership-borrow-effect-checker-plan.md.
+type BorrowRegion = { DictKeysOrder, DictValue(Int), DictUnknownValue, DictShell, UnknownRegion }
+
+type BorrowKind = { SharedRead, StructuralRead }
+
+type WriteEffect = {
+  DictSet(Int),
+  DictSetUnknownKey,
+  DictRemove(Int),
+  DictRemoveUnknownKey,
+  DictShellWrite,
+  UnknownWrite,
+}
+
+type Loan = .{
+  source: Int,
+  region: BorrowRegion,
+  kind: BorrowKind,
+  starts_at: Int,
+  ends_at: Int,
+  evidence: String,
+}
+
+type EffectProof = .{
+  carrier: Int,
+  source: Int,
+  update_result: Int,
+  key: Int?,
+  loans: Vector<Loan>,
+  writes: Vector<WriteEffect>,
+  reason: String,
+}
+
+// A loan live past its bounding region (returned, escaped, live-out, or on an
+// unproven CFG edge) ends at infinity for conflict purposes.
+borrow_infinity: Int = 2000000000
+
+// Whether a vector local carries a certified unique-int-key stream (used as a
+// loop key stream). Direct producers (`Dict.keys`) and compositional
+// uniqueness-preserving helpers mark `UniqueIntKeys`; everything else is
+// `UnknownStream`. Extended in Task 3.
+type StreamFact = { UnknownStream, UniqueIntKeys }
+
+// Two key locals are distinct only when a certified unique key stream proves it
+// across its own iterations; two different straight-line locals are never proven
+// distinct (conservative default-deny). Same local is the same key, not distinct.
+fn keys_proven_distinct(a: Int, b: Int, stream: StreamFact) Bool {
+  case stream {
+    .UniqueIntKeys => false, // per-iteration distinctness is applied by the loop checker, not here
+    .UnknownStream => false,
+  }
+}
+
+fn loan_ends_before_write(loan: Loan, write_index: Int) Bool {
+  loan.ends_at < write_index
+}
+
+// Region-level compatibility of a live loan with a carrier write, assuming
+// worst-case timing/key-equality. Defaults to `true` (conflict) and returns
+// `false` only for region combinations that are safe under COW carrier writes.
+// Timing (loan_ends_before_write) and key-distinctness (unique stream) are layered
+// on by the loan/write checker; this function never licenses a same-key value read.
+fn borrow_write_conflict(loan: Loan, write: WriteEffect) Bool {
+  case write {
+    .DictSet(_) => case loan.region {
+      // A COW set grows the order vector by append and never mutates an existing
+      // value object, so a keys-order loan created before the write survives.
+      .DictKeysOrder => false,
+      _ => true,
+    },
+    .DictSetUnknownKey => case loan.region {
+      .DictKeysOrder => false,
+      _ => true,
+    },
+    // Destructive remove tombstones the aliased order vector and rewrites the
+    // HAMT: it conflicts with every live loan from the same source.
+    .DictRemove(_) => true,
+    .DictRemoveUnknownKey => true,
+    .DictShellWrite => true,
+    .UnknownWrite => true,
+  }
+}
+
+fn render_effect_rejection(reason: String) String {
+  "copy-carrier-rejected(${reason})"
+}
+
+fn render_effect_proof(p: EffectProof) String {
+  key_txt := case p.key {
+    .Some(k) => "L${k}",
+    .None => "L?",
+  }
+  "borrow-effect copy-carrier source L${p.source} key ${key_txt}"
 }
 
 // Per-block analysis inputs that depend ONLY on block structure + the fixed
@@ -1894,6 +2009,27 @@ fn shell_verdict(st: ForwardState, base: Atom, last: Vector<Int>) String {
   }
 }
 
+// Task 2 coarse copy-carrier candidate: a Dict.set whose base is an aliased
+// (non-unique) shell derived from a param source is the copy-carrier shape the
+// borrow/effect engine targets. Here it only annotates the census with the
+// recognized shape (`source Lsrc key Lkey`); the loan/write proof and the
+// concrete rejection reasons are layered on in Task 4.
+fn copy_carrier_note(pre: ForwardState, base: Atom, args: Vector<Atom>, shell: String) String {
+  if !shell.contains("aliased shell") {
+    return ""
+  }
+  origins := prov_of(pre.prov, base)
+  if origins.len() == 0 {
+    return ""
+  }
+  key_txt := if args.len() > 1 {
+    atom_brief(args[1])
+  } else {
+    "L?"
+  }
+  " copy-carrier-candidate source L${origins[0]} key ${key_txt}"
+}
+
 fn update_field_verdict(
   pre: ForwardState,
   base: Atom,
@@ -2089,10 +2225,12 @@ fn block_verdicts(
               .Some(bi) => if bi < args.len() {
                 base := args[bi]
                 reusable_shell[inst.anf_local.id] = pre.shell_reusable(base, last)
-                verdicts[inst.anf_local.id] = "L${inst.anf_local.id} = update ${atom_brief(base)} base=${pre.shell_verdict(
-                  base,
-                  last,
-                )}"
+                sv := pre.shell_verdict(base, last)
+                note := case container_kind(sem, fid) {
+                  .DictLike => pre.copy_carrier_note(base, args, sv),
+                  _ => "",
+                }
+                verdicts[inst.anf_local.id] = "L${inst.anf_local.id} = update ${atom_brief(base)} base=${sv}${note}"
               },
               .None => {}, // Update effect without a cow base — no verdict
             },
