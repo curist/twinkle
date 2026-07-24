@@ -93,6 +93,17 @@ fn produce_all_for(name: String) Result<mutable_produce.ProducedDecisions, Strin
   .Ok(mutable_produce.produce_mutable_decisions(artifacts.opt, artifacts.builtins))
 }
 
+fn rendered_line_for_family(rendered: String, func: String, family: String) String {
+  prefix := "${func}\t"
+  needle := "\t${family}\t"
+  for line in rendered.lines() {
+    if line.starts_with(prefix) and line.contains(needle) {
+      return line
+    }
+  }
+  error("missing rendered row for ${func} ${family}")
+}
+
 fn candidate_roots(set: mutable_produce.CandidateSet) Dict<Int, Bool> {
   roots: Dict<Int, Bool> = Dict.new()
   for c in set.candidates {
@@ -209,6 +220,25 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "vector loop read helper should preserve loop-carried in-place decision",
+      fn() {
+        produced := try produce_for("phase8b_vector_set_loop_read_helper")
+        try assert.equal(produced.rows.len(), 2)
+        try assert.equal(produced.table.by_site.keys().len(), 2)
+
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        without_helper := rendered_line_for_family(rendered, "vector_without_helper", "vector_set")
+        with_helper := rendered_line_for_family(rendered, "vector_with_read_helper", "vector_set")
+
+        try assert.str_contains(without_helper, "decision produced (loop-carried")
+        try assert.str_contains(without_helper, "base=reuse(unique)")
+
+        try assert.str_contains(with_helper, "decision produced (loop-carried")
+        try assert.str_contains(with_helper, "base=reuse(unique)")
+        .Ok({})
+      },
+    )
+    .test(
       "owned dict set produces a dict_set decision",
       fn() {
         produced := try produce_for("phase8d_dict_set_fresh")
@@ -239,6 +269,44 @@ pub fn suite() runner.Suite {
         rendered := mutable_produce.render_candidate_rows(produced.rows)
         try assert.str_contains(rendered, "dict_set")
         try assert.str_contains(rendered, "ignored")
+        .Ok({})
+      },
+    )
+    .test(
+      "dict loop read helper should preserve loop-carried in-place decision",
+      fn() {
+        produced := try produce_for("phase8d_dict_set_loop_read_helper")
+        try assert.equal(produced.rows.len(), 2)
+        try assert.equal(produced.table.by_site.keys().len(), 2)
+
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        without_helper := rendered_line_for_family(rendered, "processed_without_helper", "dict_set")
+        with_helper := rendered_line_for_family(rendered, "processed_with_read_helper", "dict_set")
+
+        try assert.str_contains(without_helper, "decision produced (loop-carried")
+        try assert.str_contains(without_helper, "base=reuse(unique)")
+
+        try assert.str_contains(with_helper, "decision produced (loop-carried")
+        try assert.str_contains(with_helper, "base=reuse(unique)")
+        .Ok({})
+      },
+    )
+    .test(
+      "dict remove loop read helper should preserve loop-carried in-place decision",
+      fn() {
+        produced := try produce_for("phase8e_dict_remove_loop_read_helper")
+        try assert.equal(produced.rows.len(), 4)
+        try assert.equal(produced.table.by_site.keys().len(), 4)
+
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        without_helper := rendered_line_for_family(rendered, "remove_without_helper", "dict_remove")
+        with_helper := rendered_line_for_family(rendered, "remove_with_read_helper", "dict_remove")
+
+        try assert.str_contains(without_helper, "decision produced (loop-carried")
+        try assert.str_contains(without_helper, "base=reuse(unique)")
+
+        try assert.str_contains(with_helper, "decision produced (loop-carried")
+        try assert.str_contains(with_helper, "base=reuse(unique)")
         .Ok({})
       },
     )

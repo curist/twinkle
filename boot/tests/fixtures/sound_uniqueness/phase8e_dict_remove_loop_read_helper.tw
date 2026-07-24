@@ -1,0 +1,41 @@
+fn has_key(m: Dict<Int, Int>, id: Int) Bool {
+  case m.get(id) {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+fn remove_without_helper(n: Int) Dict<Int, Int> {
+  d: Dict<Int, Int> = Dict.new()
+  i := 0
+  for i < n {
+    d[i] = i
+    i = i + 1
+  }
+  j := 0
+  for j < n {
+    d = .remove(j)
+    j = j + 1
+  }
+  d
+}
+
+fn remove_with_read_helper(n: Int) Dict<Int, Int> {
+  d: Dict<Int, Int> = Dict.new()
+  i := 0
+  for i < n {
+    d[i] = i
+    i = i + 1
+  }
+  j := 0
+  for j < n {
+    if has_key(d, j) {
+      d = .remove(j)
+    }
+    j = j + 1
+  }
+  d
+}
+
+println(remove_without_helper(3).len().to_string())
+println(remove_with_read_helper(3).len().to_string())
