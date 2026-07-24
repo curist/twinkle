@@ -2213,6 +2213,32 @@ fn is_processed(processed: Dict<Int, Bool>, id: Int) Bool {
   }
 }
 
+fn is_dirty(dirty: Dict<Int, Bool>, id: Int) Bool {
+  case dirty.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn succ_get(succ: Dict<Int, Vector<Int>>, id: Int) Vector<Int> {
+  case succ.get(id) {
+    .Some(v) => v,
+    .None => [],
+  }
+}
+
+// Transpose of blk.preds: pred_id -> [successor block ids]. Used to push the
+// dirty frontier forward during incremental re-propagation.
+fn build_succ_map(blocks: Vector<CfgBlock>) Dict<Int, Vector<Int>> {
+  succ: Dict<Int, Vector<Int>> = Dict.new()
+  for blk in blocks {
+    for pe in blk.preds {
+      succ[pe.target.id] = succ_get(succ, pe.target.id).append(blk.id.id)
+    }
+  }
+  succ
+}
+
 type LoopSeedSet = Dict<String, Bool>
 
 type PredParamContribution = .{ own: Ownership, valid: Bool }
@@ -2783,12 +2809,34 @@ pub type FixResult = .{
   exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>,
 }
 
-// Inner fixpoint result plus whether widening (force-lock) fired during it.
-type FixRun = .{ fx: FixResult, widened: Bool }
+// Full inner-fixpoint solver state: the five dataflow exit maps plus the
+// widening state (prev_*/locked_*/prev_seen/changed_visits) and per-block
+// processed flags. Carried unchanged across seed-finding reruns so a rerun
+// continues the prior fixpoint instead of restarting cold.
+type FixState = .{
+  exits: Dict<Int, Dict<Int, Int>>,
+  exit_valid: Dict<Int, Dict<Int, Bool>>,
+  exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
+  exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>>,
+  exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>>,
+  prev_exits: Dict<Int, Dict<Int, Int>>,
+  prev_exit_valid: Dict<Int, Dict<Int, Bool>>,
+  prev_exit_prov: Dict<Int, Dict<Int, Vector<Int>>>,
+  locked_own: Dict<Int, Vector<Int>>,
+  locked_valid: Dict<Int, Vector<Int>>,
+  locked_prov: Dict<Int, Vector<Int>>,
+  prev_seen: Dict<Int, Bool>,
+  changed_visits: Dict<Int, Int>,
+  processed: Dict<Int, Bool>,
+}
 
-// Stabilized loop-seed set, the rerun count, and whether reruns actually
-// warm-started (false = fell back to cold: no reruns, pass-1 widened, or
-// allow_warm off). Reported in the fixpoint_validated diagnostic.
+// Inner fixpoint result: the projected FixResult, the full carry-over state (for
+// the next incremental rerun), and whether widening (force-lock) fired.
+type FixRun = .{ fx: FixResult, state: FixState, widened: Bool }
+
+// Stabilized loop-seed set, the rerun count, and whether reruns actually used
+// incremental re-propagation (false = fell back to cold: no reruns or
+// allow_incremental off). Reported in the fixpoint_validated diagnostic.
 type SeedRun = .{ seeds: LoopSeedSet, reruns: Int, warmed: Bool }
 
 // Reuse cache: func_id -> the generic (analyze-equivalent) FixResult captured
@@ -3021,6 +3069,24 @@ fn retain_valid_loop_seeds(blocks: Vector<CfgBlock>, fx: FixResult, seeds: LoopS
   kept
 }
 
+// Blocks whose optimistic loop-seed was dropped this rerun (seeds -> kept).
+// Exactly the blocks whose entry assumption changes, i.e. the initial dirty set
+// for incremental re-propagation.
+fn removed_seed_blocks(blocks: Vector<CfgBlock>, seeds: LoopSeedSet, kept: LoopSeedSet) Dict<
+  Int,
+  Bool,
+> {
+  dirty: Dict<Int, Bool> = Dict.new()
+  for blk in blocks {
+    for lid in blk.entry.live {
+      if loop_seed_active(seeds, blk.id.id, lid) and !loop_seed_active(kept, blk.id.id, lid) {
+        dirty[blk.id.id] = true
+      }
+    }
+  }
+  dirty
+}
+
 // Diagnostics only: characterize how broad the optimistic loop seed set is.
 type LoopSeedStats = .{ headers: Int, param_seeds: Int, nonparam_seeds: Int }
 
@@ -3074,7 +3140,8 @@ fn run_fixpoint(
   unique_seed: Dict<Int, Bool>,
   seeds: LoopSeedSet,
   label: String,
-  warm: FixResult?,
+  warm_state: FixState?,
+  dirty0: Dict<Int, Bool>?,
 ) FixRun {
   timed := timings_enabled()
   t0 := if timed {
@@ -3083,58 +3150,95 @@ fn run_fixpoint(
     0.0
   }
 
-  // Dataflow exit maps seed from `warm` (accelerates seed-finding reruns); the
-  // widening state below is always fresh so widening fires per-rerun as cold would.
-  warm_started := case warm {
+  // When `warm_state` is present, continue the prior fixpoint: load all 14 maps
+  // (dataflow exits AND widening state) unchanged so re-visited blocks are
+  // legitimately `already`. Otherwise init fresh (cold full sweep).
+  warm_started := case warm_state {
     .Some(_) => true,
     .None => false,
   }
-  exits: Dict<Int, Dict<Int, Int>> = case warm {
+  exits: Dict<Int, Dict<Int, Int>> = case warm_state {
     .Some(w) => w.exits,
     .None => Dict.new(),
   }
-  exit_valid: Dict<Int, Dict<Int, Bool>> = case warm {
+  exit_valid: Dict<Int, Dict<Int, Bool>> = case warm_state {
     .Some(w) => w.exit_valid,
     .None => Dict.new(),
   }
-  exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = case warm {
+  exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = case warm_state {
     .Some(w) => w.exit_prov,
     .None => Dict.new(),
   }
-  exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>> = case warm {
+  exit_field_own: Dict<Int, Dict<Int, ff.FieldMap>> = case warm_state {
     .Some(w) => w.exit_field_own,
     .None => Dict.new(),
   }
-  exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>> = case warm {
+  exit_path_prov: Dict<Int, Dict<Int, Dict<Int, Vector<Int>>>> = case warm_state {
     .Some(w) => w.exit_path_prov,
     .None => Dict.new(),
   }
-  prev_exits: Dict<Int, Dict<Int, Int>> = Dict.new()
-  prev_exit_valid: Dict<Int, Dict<Int, Bool>> = Dict.new()
-  prev_exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = Dict.new()
-  locked_own: Dict<Int, Vector<Int>> = Dict.new()
-  locked_valid: Dict<Int, Vector<Int>> = Dict.new()
-  locked_prov: Dict<Int, Vector<Int>> = Dict.new()
-  prev_seen: Dict<Int, Bool> = Dict.new()
-  changed_visits: Dict<Int, Int> = Dict.new()
-  processed: Dict<Int, Bool> = Dict.new()
-  for blk in blocks {
-    if !warm_started {
+  prev_exits: Dict<Int, Dict<Int, Int>> = case warm_state {
+    .Some(w) => w.prev_exits,
+    .None => Dict.new(),
+  }
+  prev_exit_valid: Dict<Int, Dict<Int, Bool>> = case warm_state {
+    .Some(w) => w.prev_exit_valid,
+    .None => Dict.new(),
+  }
+  prev_exit_prov: Dict<Int, Dict<Int, Vector<Int>>> = case warm_state {
+    .Some(w) => w.prev_exit_prov,
+    .None => Dict.new(),
+  }
+  locked_own: Dict<Int, Vector<Int>> = case warm_state {
+    .Some(w) => w.locked_own,
+    .None => Dict.new(),
+  }
+  locked_valid: Dict<Int, Vector<Int>> = case warm_state {
+    .Some(w) => w.locked_valid,
+    .None => Dict.new(),
+  }
+  locked_prov: Dict<Int, Vector<Int>> = case warm_state {
+    .Some(w) => w.locked_prov,
+    .None => Dict.new(),
+  }
+  prev_seen: Dict<Int, Bool> = case warm_state {
+    .Some(w) => w.prev_seen,
+    .None => Dict.new(),
+  }
+  changed_visits: Dict<Int, Int> = case warm_state {
+    .Some(w) => w.changed_visits,
+    .None => Dict.new(),
+  }
+  processed: Dict<Int, Bool> = case warm_state {
+    .Some(w) => w.processed,
+    .None => Dict.new(),
+  }
+  if !warm_started {
+    for blk in blocks {
       exits[blk.id.id] = Dict.new()
       exit_valid[blk.id.id] = Dict.new()
       exit_prov[blk.id.id] = Dict.new()
       exit_field_own[blk.id.id] = Dict.new()
       exit_path_prov[blk.id.id] = Dict.new()
+      prev_exits[blk.id.id] = Dict.new()
+      prev_exit_valid[blk.id.id] = Dict.new()
+      prev_exit_prov[blk.id.id] = Dict.new()
+      locked_own[blk.id.id] = []
+      locked_valid[blk.id.id] = []
+      locked_prov[blk.id.id] = []
+      prev_seen[blk.id.id] = false
+      changed_visits[blk.id.id] = 0
+      processed[blk.id.id] = false
     }
-    prev_exits[blk.id.id] = Dict.new()
-    prev_exit_valid[blk.id.id] = Dict.new()
-    prev_exit_prov[blk.id.id] = Dict.new()
-    locked_own[blk.id.id] = []
-    locked_valid[blk.id.id] = []
-    locked_prov[blk.id.id] = []
-    prev_seen[blk.id.id] = false
-    changed_visits[blk.id.id] = 0
-    processed[blk.id.id] = warm_started
+  }
+  succ := build_succ_map(blocks)
+  all_dirty := case dirty0 {
+    .None => true,
+    .Some(_) => false,
+  }
+  dirty: Dict<Int, Bool> = case dirty0 {
+    .Some(d) => d,
+    .None => Dict.new(),
   }
 
   // Quartet moves + liveness scan are dataflow-invariant: compute once, not per
@@ -3159,146 +3263,155 @@ fn run_fixpoint(
     changed = false
     rounds = rounds + 1
     for blk in blocks {
-      if timed {
-        block_visits = block_visits + 1
-      }
-      entry_own := join_entry_ownership_assumed(blk, exits, processed, seeds)
-      entry_valid := join_entry_valid(blk, exit_valid, processed)
-      entry_prov := join_entry_prov(blk, exit_prov, processed)
-      if blk.id.id == 0 {
-        entry_prov = seed_param_prov(entry_prov, params)
-        entry_own = seed_param_own(entry_own, unique_seed, params)
-      }
-      entry_field := join_entry_field_own(blk, exit_field_own, entry_own, processed)
-      entry_pp := join_entry_path_prov(blk, exit_path_prov, processed)
-      st := ForwardState.{
-        own: entry_own,
-        valid: entry_valid,
-        prov: entry_prov,
-        field_own: entry_field,
-        path_prov: entry_pp,
-      }
-
-      // seed a payload-bound local from its match predecessor's exit facts
-      pred_id := case blk.preds.len() == 1 {
-        true => blk.preds[0].target.id, // in a `preds` edge, CfgEdge.target holds the PREDECESSOR id
-        false => 0 - 1,
-      }
-      st = if pred_id >= 0 {
-        st.seed_payload_binding(
-          blk,
-          nested_get(exit_field_own, pred_id),
-          nested_get(exit_path_prov, pred_id),
-          nested_get(exit_prov, pred_id),
-        )
-      } else {
-        st
-      }
-      st = forward_block(blk, st, prep_get(preps, blk, sem), table, b, sem, suppress)
-      already := is_processed(processed, blk.id.id)
-      old_own := nested_get(exits, blk.id.id)
-      old_valid := nested_get(exit_valid, blk.id.id)
-      old_prov := nested_get(exit_prov, blk.id.id)
-      old_field := nested_get(exit_field_own, blk.id.id)
-      old_pp := nested_get(exit_path_prov, blk.id.id)
-      next_own := st.own
-      next_valid := st.valid
-      next_prov := st.prov
-      next_field := st.field_own
-      next_pp := st.path_prov
-      if already {
-        has_prev := prev_seen_get(prev_seen, blk.id.id)
-        force_lock_changed := change_count_get(changed_visits, blk.id.id) >= fixpoint_widen_cap
-        if force_lock_changed {
-          widened = true
-        }
-        own_merge := merge_targeted(
-          old_own,
-          st.own,
-          nested_get(prev_exits, blk.id.id),
-          locked_get(locked_own, blk.id.id),
-          has_prev,
-          force_lock_changed,
-          own_tag(.Unknown),
-          join_own_tag,
-          int_eq,
-        )
-        valid_merge := merge_targeted(
-          old_valid,
-          st.valid,
-          nested_get(prev_exit_valid, blk.id.id),
-          locked_get(locked_valid, blk.id.id),
-          has_prev,
-          force_lock_changed,
-          true,
-          and_bool,
-          bool_eq,
-        )
-        prov_merge := merge_targeted(
-          old_prov,
-          st.prov,
-          nested_get(prev_exit_prov, blk.id.id),
-          locked_get(locked_prov, blk.id.id),
-          has_prev,
-          force_lock_changed,
-          [],
-          union_sorted,
-          same_live,
-        )
-        next_own = own_merge.map
-        next_valid = valid_merge.map
-        next_prov = prov_merge.map
-        locked_own[blk.id.id] = own_merge.locked
-        locked_valid[blk.id.id] = valid_merge.locked
-        locked_prov[blk.id.id] = prov_merge.locked
-
-        // field_own widening: conservative meet (key-intersection + per-path meet)
-        next_field = merge_field_own_exit(old_field, st.field_own)
-
-        // path_prov widening in lockstep: same conservative meet shape.
-        next_pp = merge_path_prov_exit(old_pp, st.path_prov)
-      }
-      if timed {
-        if next_own.keys().len() > max_own_keys {
-          max_own_keys = next_own.keys().len()
-        }
-        if next_valid.keys().len() > max_valid_keys {
-          max_valid_keys = next_valid.keys().len()
-        }
-        if next_prov.keys().len() > max_prov_keys {
-          max_prov_keys = next_prov.keys().len()
-        }
-        if next_field.keys().len() > max_field_keys {
-          max_field_keys = next_field.keys().len()
-        }
-        if next_pp.keys().len() > max_path_prov_keys {
-          max_path_prov_keys = next_pp.keys().len()
-        }
-      }
-      if !already
-        or !same_map(old_own, next_own, int_eq)
-        or !same_map(old_valid, next_valid, bool_eq)
-        or !same_map(old_prov, next_prov, same_live)
-        or !same_map(old_field, next_field, ff.same)
-        or !same_map(old_pp, next_pp, same_pp_local) {
-        changed = true
+      do_block := all_dirty or is_dirty(dirty, blk.id.id)
+      if do_block {
+        dirty[blk.id.id] = false
         if timed {
-          changed_blocks = changed_blocks + 1
+          block_visits = block_visits + 1
         }
+        entry_own := join_entry_ownership_assumed(blk, exits, processed, seeds)
+        entry_valid := join_entry_valid(blk, exit_valid, processed)
+        entry_prov := join_entry_prov(blk, exit_prov, processed)
+        if blk.id.id == 0 {
+          entry_prov = seed_param_prov(entry_prov, params)
+          entry_own = seed_param_own(entry_own, unique_seed, params)
+        }
+        entry_field := join_entry_field_own(blk, exit_field_own, entry_own, processed)
+        entry_pp := join_entry_path_prov(blk, exit_path_prov, processed)
+        st := ForwardState.{
+          own: entry_own,
+          valid: entry_valid,
+          prov: entry_prov,
+          field_own: entry_field,
+          path_prov: entry_pp,
+        }
+
+        // seed a payload-bound local from its match predecessor's exit facts
+        pred_id := case blk.preds.len() == 1 {
+          true => blk.preds[0].target.id, // in a `preds` edge, CfgEdge.target holds the PREDECESSOR id
+          false => 0 - 1,
+        }
+        st = if pred_id >= 0 {
+          st.seed_payload_binding(
+            blk,
+            nested_get(exit_field_own, pred_id),
+            nested_get(exit_path_prov, pred_id),
+            nested_get(exit_prov, pred_id),
+          )
+        } else {
+          st
+        }
+        st = forward_block(blk, st, prep_get(preps, blk, sem), table, b, sem, suppress)
+        already := is_processed(processed, blk.id.id)
+        old_own := nested_get(exits, blk.id.id)
+        old_valid := nested_get(exit_valid, blk.id.id)
+        old_prov := nested_get(exit_prov, blk.id.id)
+        old_field := nested_get(exit_field_own, blk.id.id)
+        old_pp := nested_get(exit_path_prov, blk.id.id)
+        next_own := st.own
+        next_valid := st.valid
+        next_prov := st.prov
+        next_field := st.field_own
+        next_pp := st.path_prov
         if already {
-          prev_exits[blk.id.id] = old_own
-          prev_exit_valid[blk.id.id] = old_valid
-          prev_exit_prov[blk.id.id] = old_prov
-          prev_seen[blk.id.id] = true
-          changed_visits[blk.id.id] = change_count_get(changed_visits, blk.id.id) + 1
+          has_prev := prev_seen_get(prev_seen, blk.id.id)
+          force_lock_changed := change_count_get(changed_visits, blk.id.id) >= fixpoint_widen_cap
+          if force_lock_changed {
+            widened = true
+          }
+          own_merge := merge_targeted(
+            old_own,
+            st.own,
+            nested_get(prev_exits, blk.id.id),
+            locked_get(locked_own, blk.id.id),
+            has_prev,
+            force_lock_changed,
+            own_tag(.Unknown),
+            join_own_tag,
+            int_eq,
+          )
+          valid_merge := merge_targeted(
+            old_valid,
+            st.valid,
+            nested_get(prev_exit_valid, blk.id.id),
+            locked_get(locked_valid, blk.id.id),
+            has_prev,
+            force_lock_changed,
+            true,
+            and_bool,
+            bool_eq,
+          )
+          prov_merge := merge_targeted(
+            old_prov,
+            st.prov,
+            nested_get(prev_exit_prov, blk.id.id),
+            locked_get(locked_prov, blk.id.id),
+            has_prev,
+            force_lock_changed,
+            [],
+            union_sorted,
+            same_live,
+          )
+          next_own = own_merge.map
+          next_valid = valid_merge.map
+          next_prov = prov_merge.map
+          locked_own[blk.id.id] = own_merge.locked
+          locked_valid[blk.id.id] = valid_merge.locked
+          locked_prov[blk.id.id] = prov_merge.locked
+
+          // field_own widening: conservative meet (key-intersection + per-path meet)
+          next_field = merge_field_own_exit(old_field, st.field_own)
+
+          // path_prov widening in lockstep: same conservative meet shape.
+          next_pp = merge_path_prov_exit(old_pp, st.path_prov)
         }
-        exits[blk.id.id] = next_own
-        exit_valid[blk.id.id] = next_valid
-        exit_prov[blk.id.id] = next_prov
-        exit_field_own[blk.id.id] = next_field
-        exit_path_prov[blk.id.id] = next_pp
+        if timed {
+          if next_own.keys().len() > max_own_keys {
+            max_own_keys = next_own.keys().len()
+          }
+          if next_valid.keys().len() > max_valid_keys {
+            max_valid_keys = next_valid.keys().len()
+          }
+          if next_prov.keys().len() > max_prov_keys {
+            max_prov_keys = next_prov.keys().len()
+          }
+          if next_field.keys().len() > max_field_keys {
+            max_field_keys = next_field.keys().len()
+          }
+          if next_pp.keys().len() > max_path_prov_keys {
+            max_path_prov_keys = next_pp.keys().len()
+          }
+        }
+        if !already
+          or !same_map(old_own, next_own, int_eq)
+          or !same_map(old_valid, next_valid, bool_eq)
+          or !same_map(old_prov, next_prov, same_live)
+          or !same_map(old_field, next_field, ff.same)
+          or !same_map(old_pp, next_pp, same_pp_local) {
+          changed = true
+          if timed {
+            changed_blocks = changed_blocks + 1
+          }
+          if already {
+            prev_exits[blk.id.id] = old_own
+            prev_exit_valid[blk.id.id] = old_valid
+            prev_exit_prov[blk.id.id] = old_prov
+            prev_seen[blk.id.id] = true
+            changed_visits[blk.id.id] = change_count_get(changed_visits, blk.id.id) + 1
+          }
+          exits[blk.id.id] = next_own
+          exit_valid[blk.id.id] = next_valid
+          exit_prov[blk.id.id] = next_prov
+          exit_field_own[blk.id.id] = next_field
+          exit_path_prov[blk.id.id] = next_pp
+          if !all_dirty {
+            for s in succ_get(succ, blk.id.id) {
+              dirty[s] = true
+            }
+          }
+        }
+        processed[blk.id.id] = true
       }
-      processed[blk.id.id] = true
     }
   }
   if timed {
@@ -3314,14 +3427,34 @@ fn run_fixpoint(
       )
     }
   }
-  FixRun.{ fx: FixResult.{ exits, exit_valid, exit_prov, exit_field_own, exit_path_prov }, widened }
+  final_state := FixState.{
+    exits,
+    exit_valid,
+    exit_prov,
+    exit_field_own,
+    exit_path_prov,
+    prev_exits,
+    prev_exit_valid,
+    prev_exit_prov,
+    locked_own,
+    locked_valid,
+    locked_prov,
+    prev_seen,
+    changed_visits,
+    processed,
+  }
+  FixRun.{
+    fx: FixResult.{ exits, exit_valid, exit_prov, exit_field_own, exit_path_prov },
+    state: final_state,
+    widened,
+  }
 }
 
 // Find the stable loop-seed set: pass 1 cold, then reruns until the seed set
-// stops shrinking. When `allow_warm` and pass 1 did not widen, each rerun
-// warm-starts from the prior rerun's fx (dataflow values carried, widening
-// counters reset inside run_fixpoint). The returned seeds drive the final
-// (cold) fixpoint in run_fixpoint_validated.
+// stops shrinking. When `allow_incremental`, each rerun continues the prior
+// fixpoint (full FixState carried) and re-propagates only from the blocks whose
+// seed was dropped (dirty worklist); otherwise each rerun is a cold restart. The
+// returned seeds drive the final (cold) fixpoint in run_fixpoint_validated.
 fn stabilize_seeds(
   blocks: Vector<CfgBlock>,
   params: Vector<LocalId>,
@@ -3331,12 +3464,24 @@ fn stabilize_seeds(
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
   label: String,
-  allow_warm: Bool,
+  allow_incremental: Bool,
 ) SeedRun {
   seeds := collect_loop_seed_candidates(blocks)
-  first := run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds, label, .None)
+  first := run_fixpoint(
+    blocks,
+    params,
+    table,
+    b,
+    sem,
+    suppress,
+    unique_seed,
+    seeds,
+    label,
+    .None,
+    .None,
+  )
   vfx := first.fx
-  warm_ok := allow_warm and !first.widened
+  vstate := first.state
   reruns := 0
   stable := false
   for !stable {
@@ -3344,18 +3489,37 @@ fn stabilize_seeds(
     if same_loop_seed_set(kept, seeds) {
       stable = true
     } else {
+      dirty := removed_seed_blocks(blocks, seeds, kept)
       seeds = kept
       reruns = reruns + 1
-      warm: FixResult? = if warm_ok {
-        .Some(vfx)
+      warm_state: FixState? = if allow_incremental {
+        .Some(vstate)
       } else {
         .None
       }
-      rr := run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds, label, warm)
+      dirty0: Dict<Int, Bool>? = if allow_incremental {
+        .Some(dirty)
+      } else {
+        .None
+      }
+      rr := run_fixpoint(
+        blocks,
+        params,
+        table,
+        b,
+        sem,
+        suppress,
+        unique_seed,
+        seeds,
+        label,
+        warm_state,
+        dirty0,
+      )
       vfx = rr.fx
+      vstate = rr.state
     }
   }
-  SeedRun.{ seeds, reruns, warmed: warm_ok and reruns > 0 }
+  SeedRun.{ seeds, reruns, warmed: allow_incremental and reruns > 0 }
 }
 
 fn run_fixpoint_validated(
@@ -3382,13 +3546,13 @@ fn run_fixpoint_validated(
     LoopSeedStats.{ headers: 0, param_seeds: 0, nonparam_seeds: 0 }
   }
 
-  // TASK 1: production is all-cold (allow_warm = false) — byte-identical. The
-  // validator exercises warm-start and proves seed-set equivalence. TASK 2 flips
-  // the production allow_warm to true.
+  // TASK 1: production is all-cold (allow_incremental = false) — byte-identical.
+  // The validator exercises incremental re-propagation and proves seed-set
+  // equivalence. TASK 2 flips the production allow_incremental to true.
   sr := if seedverify_enabled() {
     cold := stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, false)
-    warm := stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, true)
-    if !same_loop_seed_set(cold.seeds, warm.seeds) {
+    incr := stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, true)
+    if !same_loop_seed_set(cold.seeds, incr.seeds) {
       error("seedverify mismatch: ${label}")
     }
     cold
@@ -3398,13 +3562,25 @@ fn run_fixpoint_validated(
   seeds := sr.seeds
   reruns := sr.reruns
   warmed := sr.warmed
-  fx := run_fixpoint(blocks, params, table, b, sem, suppress, unique_seed, seeds, label, .None).fx
+  fx := run_fixpoint(
+    blocks,
+    params,
+    table,
+    b,
+    sem,
+    suppress,
+    unique_seed,
+    seeds,
+    label,
+    .None,
+    .None,
+  ).fx
   if timed {
     t_done := date.now()
     if reruns > 3 or t_done - t0 > 75.0 {
       final_seed_stats := loop_seed_stats(blocks, seeds)
       eprintln(
-        "[time:own:fixpoint_validated] func=${label} total=${t_done - t0}ms reruns=${reruns} warmed=${warmed} initial_seeds=${initial_seed_count} final_seeds=${seeds
+        "[time:own:fixpoint_validated] func=${label} total=${t_done - t0}ms reruns=${reruns} incremental=${warmed} initial_seeds=${initial_seed_count} final_seeds=${seeds
           .keys()
           .len()} initial_headers=${initial_seed_stats.headers} initial_param_seeds=${initial_seed_stats.param_seeds} initial_nonparam_seeds=${initial_seed_stats.nonparam_seeds} final_headers=${final_seed_stats.headers} final_param_seeds=${final_seed_stats.param_seeds} final_nonparam_seeds=${final_seed_stats.nonparam_seeds} blocks=${blocks.len()} insts=${block_instruction_count(
           blocks,
