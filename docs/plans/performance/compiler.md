@@ -918,6 +918,46 @@ It never restarts, so it avoids the spurious first-visit meet *and* attacks the
 dominant widening function (which restart-warm-start structurally cannot), and it
 is validated by the same SEEDVERIFY harness.
 
+## Update: loop-seed rerun incremental re-propagation (shipped)
+
+The warm-start null result above identified the real cost model: a full-sweep
+rerun visits **every** block every round regardless of what changed, so the win
+requires touching *fewer blocks*, not fewer rounds — and the dominant
+`summary:link` widens, which warm-start-by-restart structurally could not
+accelerate (it gated on `!widened`).
+
+Incremental re-propagation attacks both. A loop seed `(blk_id, lid)` affects only
+`blk_id`'s entry (`join_entry_ownership_assumed`), and reruns only ever *remove*
+seeds, so the exact set of blocks whose entry changes on a rerun is the blocks
+whose seed was dropped. `run_fixpoint` now carries the **full** solver state
+(`FixState`: the five exit maps *plus* the widening state `prev_*`/`locked_*`/
+`prev_seen`/`changed_visits`/`processed`) across reruns and takes an optional
+dirty set. Given one, it processes a block only when dirty and dirties the
+block's successors when its exit changes — a round-based worklist. Because it
+never restarts and never resets widening, a re-visited block is legitimately
+`already`, matching a *continued* cold iteration, so it does **not** fall back on
+widening functions. Pass 1 (`dirty0 = .None`) stays a full sweep and the returned
+fx is a cold final pass, so the emitted program is byte-identical; seed-set
+equivalence vs all-cold is enforced per-function by the reused `TWINKLE_SEEDVERIFY`
+A/B (clean across the self-build + 3226 boot tests).
+
+Same-session A/B (cache-active cold-rerun baseline vs incremental, same fixed
+input, 3 runs, medians):
+
+```text
+baseline (cold reruns):  summary ~14.2s   produce_mutable_decisions ~15.85s
+incremental:             summary ~7.0s    produce_mutable_decisions ~8.6s
+        summary:link rerun set: ~3443ms -> ~660ms (incremental=true, no cold fallback)
+```
+
+~50% off the summary stage / ~46% off `produce_mutable_decisions`; **all** reported
+slow functions used incremental (zero cold fallback), including `summary:link`.
+The carried-lock hazard (a widening lock keeping a seeded local `Unique` after
+removal) did not materialize — SEEDVERIFY was clean, so the planned
+dirty-subgraph widening-reset fallback was not needed. Acceptance: build output
+byte-identical (before/after compiler on a fixed input), SEEDVERIFY + FIXVERIFY
+clean over the self-build, self-host stable, full boot suite green.
+
 ## Working rules for future updates
 
 - Keep only the current baseline plus durable lessons in this file.

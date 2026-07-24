@@ -1,5 +1,17 @@
 # Cutting the Loop-Seed Rerun Cost in `run_fixpoint_validated`
 
+> **OUTCOME (2026-07-24): warm-start-by-restart REJECTED as production lever; machinery + validator kept.**
+> Task 1 landed and is committed: `run_fixpoint` warm param + `FixRun`, `stabilize_seeds`,
+> and the `TWINKLE_SEEDVERIFY` A/B gate. SEEDVERIFY is clean across the self-build and the
+> full boot suite (warm ≡ cold seed sets, per-function). But Task 2 (flipping production to
+> warm) was a **net regression** (~+0.9s on `produce_mutable_decisions`) and was reverted:
+> production stays all-cold, byte-identical to `main`. The dominant function (`summary:link`,
+> 243 blocks, ~29% of the summary stage) **widens** and structurally cannot warm-start, and
+> the functions that do warm don't get cheaper (warm round 1 runs the full merge over
+> already-large maps). See `docs/plans/performance/compiler.md` → "loop-seed rerun warm-start
+> (null result)". Designated next lever: **incremental re-propagation** (spec §3), which never
+> restarts and so can attack the widening function; validated by the same SEEDVERIFY harness.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Cut the summary stage of `produce_mutable_decisions` (now ~88% of it) by making the loop-seed-validation reruns in `run_fixpoint_validated` cheaper — **without changing the stabilized loop-seed set** (and therefore the emitted program). Warm-start each seed-finding rerun from the previous iteration's fixpoint instead of restarting cold; keep the returned `FixResult` a fresh cold pass; gate the whole thing on a seed-set-equivalence validator.
