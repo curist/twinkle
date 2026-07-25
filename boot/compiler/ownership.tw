@@ -809,6 +809,10 @@ fn call_args_of(op: AnfOp) Vector<Atom> {
 
 type ConstThreadEdge = .{ pred: Int, join: Int, target: BlockId }
 
+type ConstThreadCond = .{ param_index: Int, alias_defs: Vector<Int> }
+
+type ConstThreadInfo = .{ param_index: Int, true_target: BlockId, false_target: BlockId }
+
 fn atom_bool_value(a: Atom) Bool? {
   case a {
     .ALitBool(v) => .Some(v),
@@ -845,20 +849,24 @@ fn block_reaching_alias_source(blk: CfgBlock, id: Int) Atom? {
   .None
 }
 
-fn cond_param_index_through_aliases(blk: CfgBlock, cond_atom: Atom) Int? {
+fn cond_param_through_aliases(blk: CfgBlock, cond_atom: Atom) ConstThreadCond? {
   case atom_local_id(cond_atom) {
     .Some(start) => {
       cur := start
       seen: Vector<Int> = []
+      alias_defs: Vector<Int> = []
       for _ in range(32) {
         if live_contains_int(seen, cur) {
           return .None
         }
         seen = insert_sorted(seen, cur)
         case param_index_by_local(blk.params, cur) {
-          .Some(i) => return .Some(i),
+          .Some(i) => return .Some(ConstThreadCond.{ param_index: i, alias_defs }),
           .None => case block_reaching_alias_source(blk, cur) {
-            .Some(.ALocal(next)) => cur = next.id,
+            .Some(.ALocal(next)) => {
+              alias_defs = insert_sorted(alias_defs, cur)
+              cur = next.id
+            },
             _ => return .None,
           },
         }
@@ -869,54 +877,36 @@ fn cond_param_index_through_aliases(blk: CfgBlock, cond_atom: Atom) Int? {
   }
 }
 
-fn instruction_is_trivial_alias(inst: CfgInstruction) Bool {
+fn instruction_is_allowed_condition_alias(inst: CfgInstruction, alias_defs: Vector<Int>) Bool {
   case inst.op {
-    .AInit(.ALocal(_)) => true,
+    .AInit(.ALocal(_)) => live_contains_int(alias_defs, inst.anf_local.id),
     _ => false,
   }
 }
 
-fn block_has_only_trivial_aliases(blk: CfgBlock) Bool {
+fn block_has_only_condition_aliases(blk: CfgBlock, alias_defs: Vector<Int>) Bool {
   for inst in blk.instructions {
-    if !instruction_is_trivial_alias(inst) {
+    if !instruction_is_allowed_condition_alias(inst, alias_defs) {
       return false
     }
   }
   true
 }
 
-fn const_thread_target_for_block(blk: CfgBlock, c: Bool) BlockId? {
+fn const_thread_info(blk: CfgBlock) ConstThreadInfo? {
   case blk.terminator {
     .Some(.CondBranch(cond_atom, true_target, true_args, false_target, false_args)) => {
       if true_args.len() != 0 or false_args.len() != 0 {
         return .None
       }
-      if !block_has_only_trivial_aliases(blk) {
-        return .None
-      }
-      case cond_param_index_through_aliases(blk, cond_atom) {
-        .Some(_) => if c {
-          .Some(true_target)
+      case cond_param_through_aliases(blk, cond_atom) {
+        .Some(info) => if block_has_only_condition_aliases(blk, info.alias_defs) {
+          .Some(ConstThreadInfo.{ param_index: info.param_index, true_target, false_target })
         } else {
-          .Some(false_target)
+          .None
         },
         .None => .None,
       }
-    },
-    _ => .None,
-  }
-}
-
-fn const_thread_param_index(blk: CfgBlock) Int? {
-  case blk.terminator {
-    .Some(.CondBranch(cond_atom, _, true_args, _, false_args)) => {
-      if true_args.len() != 0 or false_args.len() != 0 {
-        return .None
-      }
-      if !block_has_only_trivial_aliases(blk) {
-        return .None
-      }
-      cond_param_index_through_aliases(blk, cond_atom)
     },
     _ => .None,
   }
@@ -936,17 +926,19 @@ fn const_thread_edges_for_func(f: CfgFunction) Vector<ConstThreadEdge> {
   bmap := build_block_map(f.blocks)
   out: Vector<ConstThreadEdge> = []
   for blk in f.blocks {
-    case const_thread_param_index(blk) {
-      .Some(param_index) => {
+    case const_thread_info(blk) {
+      .Some(info) => {
         for pe in blk.preds {
-          if pe.args.len() > param_index {
-            case atom_bool_value(pe.args[param_index]) {
-              .Some(c) => case const_thread_target_for_block(blk, c) {
-                .Some(target) => case bmap.get(pe.target.id) {
-                  .Some(pred_blk) => if succ_edge_count_to(pred_blk, blk.id.id) == 1 {
-                    out = .append(ConstThreadEdge.{ pred: pe.target.id, join: blk.id.id, target })
-                  },
-                  .None => {},
+          if pe.args.len() > info.param_index {
+            case atom_bool_value(pe.args[info.param_index]) {
+              .Some(c) => case bmap.get(pe.target.id) {
+                .Some(pred_blk) => if succ_edge_count_to(pred_blk, blk.id.id) == 1 {
+                  target := if c {
+                    info.true_target
+                  } else {
+                    info.false_target
+                  }
+                  out = .append(ConstThreadEdge.{ pred: pe.target.id, join: blk.id.id, target })
                 },
                 .None => {},
               },
@@ -1023,11 +1015,8 @@ fn remove_pred_from_block(blk: CfgBlock, pred: Int) CfgBlock {
 }
 
 fn add_pred_to_block(blk: CfgBlock, pred: Int, args: Vector<Atom>) CfgBlock {
-  for edge in blk.preds {
-    if edge.target.id == pred {
-      return blk
-    }
-  }
+  // Preserve CFG edge multiplicity: one predecessor entry corresponds to one dynamic incoming
+  // edge, even when several arms originate from the same source block.
   blk.preds = .append(CfgEdge.{ target: BlockId.{ id: pred }, args })
   blk
 }

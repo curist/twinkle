@@ -126,6 +126,16 @@ fn block_has_pred_from(blk: cfg.CfgBlock, pred_id: Int) Bool {
   false
 }
 
+fn block_pred_count_from(blk: cfg.CfgBlock, pred_id: Int) Int {
+  n := 0
+  for edge in blk.preds {
+    if edge.target.id == pred_id {
+      n = n + 1
+    }
+  }
+  n
+}
+
 fn block_has_succ_to(blk: cfg.CfgBlock, target_id: Int) Bool {
   for edge in blk.succs {
     if edge.target.id == target_id {
@@ -184,6 +194,136 @@ fn synthetic_threading_side_effect_view() cfg.CfgView {
   cfg.CfgView.{
     functions: [
       cfg.CfgFunction.{ func_id: 9000, name: "effectful", params: [], blocks: [b0, b1, b2, b3] },
+    ],
+  }
+}
+
+fn synthetic_threading_duplicate_pred_view() cfg.CfgView {
+  b0 := cfg_empty_block(0, "entry", [])
+  b0.terminator = .Some(
+    .CondBranch(
+      .ALitBool(true),
+      cfg.BlockId.{ id: 1 },
+      [.ALitBool(false)],
+      cfg.BlockId.{ id: 3 },
+      [],
+    ),
+  )
+  b0.succs = [
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [.ALitBool(false)] },
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 3 }, args: [] },
+  ]
+
+  b1 := cfg_empty_block(1, "const.join", [lid(0)])
+  b1.instructions = [
+    cfg.CfgInstruction.{ anf_local: lid(10), op: .AInit(.ALocal(lid(0))), text: "init L0" },
+  ]
+  b1.terminator = .Some(
+    .CondBranch(.ALocal(lid(10)), cfg.BlockId.{ id: 2 }, [], cfg.BlockId.{ id: 3 }, []),
+  )
+  b1.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 0 }, args: [.ALitBool(false)] }]
+  b1.succs = [
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 2 }, args: [] },
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 3 }, args: [] },
+  ]
+
+  b2 := cfg_empty_block(2, "then", [])
+  b2.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [] }]
+  b2.terminator = .Some(.Return(.None))
+
+  b3 := cfg_empty_block(3, "else", [])
+  b3.preds = [
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 0 }, args: [] },
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [] },
+  ]
+  b3.terminator = .Some(.Return(.None))
+
+  cfg.CfgView.{
+    functions: [
+      cfg.CfgFunction.{
+        func_id: 9001,
+        name: "duplicate_pred",
+        params: [],
+        blocks: [b0, b1, b2, b3],
+      },
+    ],
+  }
+}
+
+fn synthetic_threading_unrelated_alias_view() cfg.CfgView {
+  b0 := cfg_empty_block(0, "entry", [])
+  b0.terminator = .Some(.Branch(cfg.BlockId.{ id: 1 }, [.ALitBool(false)]))
+  b0.succs = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [.ALitBool(false)] }]
+
+  b1 := cfg_empty_block(1, "alias.join", [lid(0)])
+  b1.instructions = [
+    cfg.CfgInstruction.{ anf_local: lid(10), op: .AInit(.ALocal(lid(0))), text: "init L0" },
+    cfg.CfgInstruction.{ anf_local: lid(11), op: .AInit(.ALocal(lid(12))), text: "init L12" },
+  ]
+  b1.terminator = .Some(
+    .CondBranch(.ALocal(lid(10)), cfg.BlockId.{ id: 2 }, [], cfg.BlockId.{ id: 3 }, []),
+  )
+  b1.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 0 }, args: [.ALitBool(false)] }]
+  b1.succs = [
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 2 }, args: [] },
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 3 }, args: [] },
+  ]
+
+  b2 := cfg_empty_block(2, "then", [])
+  b2.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [] }]
+  b2.terminator = .Some(.Return(.None))
+
+  b3 := cfg_empty_block(3, "else", [])
+  b3.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [] }]
+  b3.terminator = .Some(.Return(.None))
+
+  cfg.CfgView.{
+    functions: [
+      cfg.CfgFunction.{
+        func_id: 9002,
+        name: "unrelated_alias",
+        params: [],
+        blocks: [b0, b1, b2, b3],
+      },
+    ],
+  }
+}
+
+fn synthetic_threading_target_args_view() cfg.CfgView {
+  b0 := cfg_empty_block(0, "entry", [])
+  b0.terminator = .Some(.Branch(cfg.BlockId.{ id: 1 }, [.ALitBool(false)]))
+  b0.succs = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [.ALitBool(false)] }]
+
+  b1 := cfg_empty_block(1, "arg.join", [lid(0)])
+  b1.instructions = [
+    cfg.CfgInstruction.{ anf_local: lid(10), op: .AInit(.ALocal(lid(0))), text: "init L0" },
+  ]
+  b1.terminator = .Some(
+    .CondBranch(
+      .ALocal(lid(10)),
+      cfg.BlockId.{ id: 2 },
+      [.ALitInt(1)],
+      cfg.BlockId.{ id: 3 },
+      [.ALitInt(2)],
+    ),
+  )
+  b1.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 0 }, args: [.ALitBool(false)] }]
+  b1.succs = [
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 2 }, args: [.ALitInt(1)] },
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 3 }, args: [.ALitInt(2)] },
+  ]
+
+  b2 := cfg_empty_block(2, "then", [lid(20)])
+  b2.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [.ALitInt(1)] }]
+  b2.terminator = .Some(.Return(.None))
+
+  b3 := cfg_empty_block(3, "else", [lid(30)])
+  b3.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [.ALitInt(2)] }]
+  b3.terminator = .Some(.Return(.None))
+
+  cfg.CfgView.{
+    functions: [
+      cfg.CfgFunction.{ func_id: 9003, name: "target_args", params: [], blocks: [b0, b1, b2, b3] },
     ],
   }
 }
@@ -2180,6 +2320,54 @@ pub fn suite() runner.Suite {
         raw_view := synthetic_threading_side_effect_view()
         threaded_view := ownership.thread_const_branches(raw_view)
         f := try cfg_func_id_by_name(threaded_view, "effectful")
+        b0 := try cfg_block_by_id(f, 0)
+        b1 := try cfg_block_by_id(f, 1)
+        b3 := try cfg_block_by_id(f, 3)
+        try assert.equal(block_has_succ_to(b0, 1), true)
+        try assert.equal(block_has_succ_to(b0, 3), false)
+        try assert.equal(block_has_pred_from(b1, 0), true)
+        try assert.equal(block_has_pred_from(b3, 0), false)
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream CFG threading preserves duplicate predecessor edge multiplicity",
+      fn() {
+        raw_view := synthetic_threading_duplicate_pred_view()
+        threaded_view := ownership.thread_const_branches(raw_view)
+        f := try cfg_func_id_by_name(threaded_view, "duplicate_pred")
+        b0 := try cfg_block_by_id(f, 0)
+        b1 := try cfg_block_by_id(f, 1)
+        b3 := try cfg_block_by_id(f, 3)
+        try assert.equal(block_has_succ_to(b0, 1), false)
+        try assert.equal(block_has_succ_to(b0, 3), true)
+        try assert.equal(block_has_pred_from(b1, 0), false)
+        try assert.equal(block_pred_count_from(b3, 0), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream CFG threading does not skip unrelated alias definitions",
+      fn() {
+        raw_view := synthetic_threading_unrelated_alias_view()
+        threaded_view := ownership.thread_const_branches(raw_view)
+        f := try cfg_func_id_by_name(threaded_view, "unrelated_alias")
+        b0 := try cfg_block_by_id(f, 0)
+        b1 := try cfg_block_by_id(f, 1)
+        b3 := try cfg_block_by_id(f, 3)
+        try assert.equal(block_has_succ_to(b0, 1), true)
+        try assert.equal(block_has_succ_to(b0, 3), false)
+        try assert.equal(block_has_pred_from(b1, 0), true)
+        try assert.equal(block_has_pred_from(b3, 0), false)
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream CFG threading does not thread branches with target args",
+      fn() {
+        raw_view := synthetic_threading_target_args_view()
+        threaded_view := ownership.thread_const_branches(raw_view)
+        f := try cfg_func_id_by_name(threaded_view, "target_args")
         b0 := try cfg_block_by_id(f, 0)
         b1 := try cfg_block_by_id(f, 1)
         b3 := try cfg_block_by_id(f, 3)
