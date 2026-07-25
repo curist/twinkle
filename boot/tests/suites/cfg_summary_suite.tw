@@ -55,6 +55,34 @@ fn dict_bool(d: Dict<Int, Bool>, key: Int) Bool {
   }
 }
 
+fn verdict_texts(view: cfg.CfgView) Dict<String, String> {
+  out: Dict<String, String> = Dict.new()
+  for f in view.functions {
+    for blk in f.blocks {
+      for local_id, text in blk.exit.verdicts {
+        out["${f.func_id}#${local_id}"] = text
+      }
+    }
+  }
+  out
+}
+
+fn assert_same_verdict_texts(a: Dict<String, String>, b: Dict<String, String>) Result<Void, String> {
+  try assert.equal(a.keys().len(), b.keys().len())
+  for k in a.keys() {
+    av := case a.get(k) {
+      .Some(v) => v,
+      .None => return .Err("missing left verdict ${k}"),
+    }
+    bv := case b.get(k) {
+      .Some(v) => v,
+      .None => return .Err("missing right verdict ${k}"),
+    }
+    try assert.equal(av, bv)
+  }
+  .Ok({})
+}
+
 // A certified primitive under `name`, or an error naming the miss.
 fn assert_cert_primitive(
   dh: Dict<Int, ownership.DedupeCertificate>,
@@ -2437,6 +2465,27 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "key-stream threading leaves ordinary ownership verdicts unchanged",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8h_ksu_battery.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        s := make_prelude_optimizer_semantics(b)
+        view := ownership.prune_dead_merge(cfg.build_view(artifacts.opt, b))
+        threaded_table := summary.compute(view, b, s)
+        unthreaded_table := threaded_table
+        unthreaded_table.dedupe_helpers = ownership.classify_dedupe_helpers_unthreaded(view, b, s)
+        threaded := ownership.analyze_with_summaries(view, b, s, threaded_table)
+        unthreaded := ownership.analyze_with_summaries(view, b, s, unthreaded_table)
+        try assert_same_verdict_texts(verdict_texts(threaded), verdict_texts(unthreaded))
+        .Ok({})
+      },
+    )
+    .test(
       "key-stream battery: every adversarial negative is rejected (default-deny safe)",
       fn() {
         artifacts := case pipeline.compile_entry_path(
@@ -2501,6 +2550,23 @@ pub fn suite() runner.Suite {
         for name in combinators {
           try assert_cert_combinator(dh, view, name)
         }
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream boot compiler helpers certify",
+      fn() {
+        root := loader.find_project_root("boot")
+        artifacts := case pipeline.compile_entry_path("${root}/main.tw") {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        view := cfg.build_view(artifacts.opt, b)
+        dh := ownership.classify_dedupe_helpers(view, b, make_prelude_optimizer_semantics(b))
+        try assert_cert_primitive(dh, view, "insert_sorted")
+        try assert_cert_primitive(dh, view, "insert_sorted_str")
+        try assert_cert_combinator(dh, view, "int_keys_union")
         .Ok({})
       },
     )
