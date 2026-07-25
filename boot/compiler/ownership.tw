@@ -1248,6 +1248,27 @@ pub fn analyze_copy_carriers(
   facts
 }
 
+// Param INDICES (not local ids) of copy-carrier source params whose carrier is proven
+// safe to write in place. Used by uniform_entry_seeds to request a Unique entry seed for
+// the source — behind the same mixed-caller guard as consumed-path targets, so a helper
+// with a non-uniform caller stays persistent. Returns only accepted-carrier dict sources,
+// never a dedupe helper's retained key-stream vector param.
+pub fn structural_seed_params_for_borrow_effects(
+  f: CfgFunction,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+) Vector<Int> {
+  cc := analyze_copy_carriers(f.blocks, f.params, table, b, sem)
+  out: Vector<Int> = []
+  for p, i in f.params {
+    if in_set(cc.seed_params, p.id) {
+      out = .append(i)
+    }
+  }
+  out
+}
+
 // ── Dedupe-helper certification (uniqueness-preserving vector combinators) ──
 //
 // A "dedupe helper" is a function whose result vector has no duplicate elements when

@@ -321,6 +321,29 @@ fn target_params(s: ownership.Summary) Vector<Int> {
   out
 }
 
+// The full set of param indices of `f` to seed Unique: consumed-path targets UNION the
+// proven copy-carrier source indices. The same mixed-caller guard then applies to every
+// index, so a borrow-effect source with a non-uniform caller is rejected exactly like a
+// consumed-path target.
+fn seed_param_indices(
+  f: cfg.CfgFunction,
+  s: ownership.Summary,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: ownership.SummaryTable,
+) Vector<Int> {
+  idxs: Dict<Int, Bool> = Dict.new()
+  for p in target_params(s) {
+    idxs[p] = true
+  }
+  for p in ownership.structural_seed_params_for_borrow_effects(f, b, sem, table) {
+    idxs[p] = true
+  }
+  collect p in idxs.keys() {
+    p
+  }
+}
+
 fn mark_closure_expr(e: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
   case e {
     .Let(_, op, body) => mark_closure_expr(body, mark_closure_op(op, out)),
@@ -383,15 +406,18 @@ fn function_calls_target(f: cfg.CfgFunction, targets: Dict<Int, Bool>) Bool {
   false
 }
 
-fn entry_seed_targets(view: cfg.CfgView, table: ownership.SummaryTable, requested: Dict<Int, Bool>) Dict<
-  Int,
-  Bool,
-> {
+fn entry_seed_targets(
+  view: cfg.CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: ownership.SummaryTable,
+  requested: Dict<Int, Bool>,
+) Dict<Int, Bool> {
   targets: Dict<Int, Bool> = Dict.new()
   for f in view.functions {
     if int_has(requested, f.func_id) {
       case table.summary_get(f.func_id) {
-        .Some(s) => if target_params(s).len() > 0 {
+        .Some(s) => if seed_param_indices(f, s, b, sem, table).len() > 0 {
           targets[f.func_id] = true
         },
         .None => {},
@@ -422,8 +448,12 @@ fn uniform_entry_seeds(
   table: ownership.SummaryTable,
   requested: Dict<Int, Bool>,
 ) Dict<Int, Dict<Int, Bool>> {
-  targets := entry_seed_targets(view, table, requested)
+  targets := entry_seed_targets(view, b, sem, table, requested)
   unsafe := unsafe_entry_funcs(opt)
+  by_id: Dict<Int, cfg.CfgFunction> = Dict.new()
+  for f in view.functions {
+    by_id[f.func_id] = f
+  }
   seen: Dict<String, Bool> = Dict.new()
   failed: Dict<String, Bool> = Dict.new()
 
@@ -436,12 +466,17 @@ fn uniform_entry_seeds(
             .Some(x) => x,
             .None => ownership.Summary.{ params: [], ret: .Shared, ret_paths: [] },
           }
-          for p in target_params(s) {
-            key := seed_key(site.callee, p)
-            seen[key] = true
-            if p >= site.arg_unique.len() or !site.arg_unique[p] {
-              failed[key] = true
-            }
+          case by_id.get(site.callee) {
+            .Some(callee_f) => {
+              for p in seed_param_indices(callee_f, s, b, sem, table) {
+                key := seed_key(site.callee, p)
+                seen[key] = true
+                if p >= site.arg_unique.len() or !site.arg_unique[p] {
+                  failed[key] = true
+                }
+              }
+            },
+            .None => {},
           }
         }
       }
@@ -456,7 +491,7 @@ fn uniform_entry_seeds(
         .None => ownership.Summary.{ params: [], ret: .Shared, ret_paths: [] },
       }
       seed: Dict<Int, Bool> = Dict.new()
-      for p in target_params(s) {
+      for p in seed_param_indices(f, s, b, sem, table) {
         key := seed_key(f.func_id, p)
         if str_has(seen, key) and !str_has(failed, key) and p < f.params.len() {
           seed[f.params[p].id] = true
