@@ -164,6 +164,16 @@ non-certification only misses an optimization. Every recognizer below is
 default-deny — it returns `true` only when it has structurally confirmed the safe shape,
 and `false` on the first thing it does not recognize.
 
+> **⚠️ The Step-4 sort-insert primitive recognizer below is UNSOUND as written** (over-
+> certifies; two confirmed holes) and is **superseded by the design doc
+> [2026-07-25-key-stream-uniqueness-design.md](2026-07-25-key-stream-uniqueness-design.md)**,
+> which **decided Option A′ — a general proof checker** (default-deny, O0–O4 obligations, an
+> explicit `DedupeCertificate`, an adversarial negative battery, and independent review before
+> any consumer). Do NOT implement Step 4 as written — build the A′ checker per §9 of the
+> design doc instead. Steps 1–3, 5 (combinator, which the design keeps as O4), 6–10 of this
+> task remain valid. `d05096e6` shipped the unsound version — it is replaced by A′, and Task 4
+> stays blocked until A′ passes the design's acceptance gates.
+
 - [ ] **Step 1: Change the fixture's `int_keys_union` to the sort-insert shape**
 
 Edit `phase8d_dict_merge_targeted_min.tw` so its `int_keys_union` matches the real
