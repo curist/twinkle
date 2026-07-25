@@ -99,6 +99,17 @@ fn assert_not_certified(dh: Dict<Int, ownership.DedupeCertificate>, view: cfg.Cf
   }
 }
 
+fn assert_no_induction(view: cfg.CfgView, b: builtins.BuiltinRegistry, name: String) Result<
+  Void,
+  String,
+> {
+  f := try cfg_func_id_by_name(view, name)
+  case ownership.find_induction(f, 0, b) {
+    .Some(_) => .Err("${name}: unexpectedly found induction evidence"),
+    .None => .Ok({}),
+  }
+}
+
 fn cfg_func_id_by_name(view: cfg.CfgView, name: String) Result<cfg.CfgFunction, String> {
   for f in view.functions {
     if f.name == name {
@@ -2379,6 +2390,33 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "key-stream induction finds full traversal counter and rejects non-induction loops",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8h_ksu_battery.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        view := ownership.thread_const_branches(cfg.build_view(artifacts.opt, b))
+
+        insert_f := try cfg_func_id_by_name(view, "insert_sorted")
+        case ownership.find_induction(insert_f, 0, b) {
+          .Some(ind) => {
+            try assert.equal(ind.counter, 6)
+            try assert.equal(ind.element, 7)
+          },
+          .None => return .Err("insert_sorted: expected induction evidence"),
+        }
+
+        try assert_no_induction(view, b, "bad2")
+        try assert_no_induction(view, b, "unchanged_counter_backedge")
+        try assert_no_induction(view, b, "wrong_bound")
+        .Ok({})
+      },
+    )
+    .test(
       "key-stream classifier exposes an unthreaded mode",
       fn() {
         artifacts := case pipeline.compile_entry_path(
@@ -2420,6 +2458,7 @@ pub fn suite() runner.Suite {
           "second_in_loop_exit",
           "continue_before_eq",
           "unchanged_counter_backedge",
+          "wrong_bound",
           "join_side_effect",
           "rebound_vparam",
           "rebound_proof_local",

@@ -231,6 +231,28 @@ fn unchanged_counter_backedge(v: Vector<Int>, id: Int) Vector<Int> {
   out
 }
 
+// §5.3: the induction counter is bounded by a different vector than the one indexed.
+fn wrong_bound(v: Vector<Int>, id: Int, w: Vector<Int>) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  i := 0
+  for i < w.len() {
+    if v[i] == id {
+      return v
+    }
+    if !inserted and id < v[i] {
+      out = .append(id)
+      inserted = true
+    }
+    out = .append(v[i])
+    i = i + 1
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  out
+}
+
 // §5.0: a reconverging diamond whose join block carries a side effect
 // (inserted = true) before its branch — threading must NOT collapse it.
 fn join_side_effect(v: Vector<Int>, id: Int) Vector<Int> {
@@ -480,6 +502,7 @@ fn main() {
   n = n + second_in_loop_exit([1, 2], 9).len()
   n = n + continue_before_eq([1, 2], 9).len()
   n = n + unchanged_counter_backedge([1, 2], 9).len()
+  n = n + wrong_bound([1, 2], 9, [1, 2]).len()
   n = n + join_side_effect([1, 2], 9).len()
   n = n + rebound_vparam([1, 2], 9).len()
   n = n + rebound_proof_local([1, 2], 9).len()

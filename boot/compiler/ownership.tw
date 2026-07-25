@@ -777,7 +777,15 @@ fn build_block_map(blocks: Vector<CfgBlock>) Dict<Int, CfgBlock> {
   m
 }
 
-type DictVecOps = .{ get: Int, get_unsafe: Int, keys: Int, set: Int, remove: Int, append: Int }
+type DictVecOps = .{
+  get: Int,
+  get_unsafe: Int,
+  keys: Int,
+  set: Int,
+  remove: Int,
+  append: Int,
+  len: Int,
+}
 
 fn dict_vec_ops(b: BuiltinRegistry) DictVecOps {
   DictVecOps.{
@@ -787,7 +795,460 @@ fn dict_vec_ops(b: BuiltinRegistry) DictVecOps {
     set: b.method_id("Dict", "set").id,
     remove: b.method_id("Dict", "remove").id,
     append: b.method_id("Vector", "append").id,
+    len: b.method_id("Vector", "len").id,
   }
+}
+
+pub type InductionEvidence = .{ counter: Int, element: Int }
+
+type LocalDefCounts = .{ counts: Dict<Int, Int>, assign_targets: Dict<Int, Bool> }
+
+fn local_def_counts(blocks: Vector<CfgBlock>) LocalDefCounts {
+  counts: Dict<Int, Int> = Dict.new()
+  assign_targets: Dict<Int, Bool> = Dict.new()
+  for blk in blocks {
+    for inst in blk.instructions {
+      counts[inst.anf_local.id] = local_def_count_from(counts, inst.anf_local.id) + 1
+      case inst.op {
+        .AAssign(target, _) => {
+          counts[target.id] = local_def_count_from(counts, target.id) + 1
+          assign_targets[target.id] = true
+        },
+        _ => {},
+      }
+    }
+  }
+  LocalDefCounts.{ counts, assign_targets }
+}
+
+fn local_def_count_from(counts: Dict<Int, Int>, id: Int) Int {
+  case counts.get(id) {
+    .Some(n) => n,
+    .None => 0,
+  }
+}
+
+fn local_single_def(facts: LocalDefCounts, id: Int) Bool {
+  local_def_count_from(facts.counts, id) == 1
+}
+
+fn local_is_assign_target(facts: LocalDefCounts, id: Int) Bool {
+  case facts.assign_targets.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn stable_alias_root(id: Int, dmap: Dict<Int, AnfOp>, facts: LocalDefCounts) Int? {
+  cur := id
+  seen: Vector<Int> = []
+  for _ in range(32) {
+    if live_contains_int(seen, cur) {
+      return .None
+    }
+    if facts.local_is_assign_target(cur) {
+      return .None
+    }
+    seen = insert_sorted(seen, cur)
+    case dmap.get(cur) {
+      .Some(.AInit(.ALocal(next))) => if facts.local_single_def(cur)
+        and !facts.local_is_assign_target(cur) {
+        cur = next.id
+      } else {
+        return .None
+      },
+      _ => return .Some(cur),
+    }
+  }
+  .None
+}
+
+fn atom_alias_root(a: Atom, dmap: Dict<Int, AnfOp>, facts: LocalDefCounts) Int? {
+  case atom_local_id(a) {
+    .Some(id) => stable_alias_root(id, dmap, facts),
+    .None => .None,
+  }
+}
+
+fn atom_is_int(a: Atom, value: Int, dmap: Dict<Int, AnfOp>) Bool {
+  case a {
+    .ALitInt(v) => v == value,
+    .ALocal(l) => case dmap.get(l.id) {
+      .Some(.AInit(src)) => atom_is_int(src, value, dmap),
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn source_for_local_in_block(blk: CfgBlock, id: Int) Atom? {
+  i := blk.instructions.len()
+  for i > 0 {
+    i = i - 1
+    inst := blk.instructions[i]
+    case inst.op {
+      .AAssign(target, src) => if target.id == id {
+        return .Some(src)
+      },
+      .AInit(src) => if inst.anf_local.id == id {
+        return .Some(src)
+      },
+      _ => if inst.anf_local.id == id {
+        return .None
+      },
+    }
+  }
+  .None
+}
+
+fn local_param_index(blk: CfgBlock, id: Int) Int? {
+  for p, i in blk.params {
+    if p.id == id {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+fn atom_is_local_id(a: Atom, id: Int) Bool {
+  case atom_local_id(a) {
+    .Some(x) => x == id,
+    .None => false,
+  }
+}
+
+fn op_is_ctr_plus_one(op: AnfOp, ctr: Int) Bool {
+  case op {
+    .ABinOp(.Add, left, right, _) => atom_is_local_id(left, ctr)
+    and atom_is_int(right, 1, Dict.new())
+      or atom_is_int(left, 1, Dict.new()) and atom_is_local_id(right, ctr),
+    _ => false,
+  }
+}
+
+fn local_def_is_ctr_plus_one(id: Int, ctr: Int, dmap: Dict<Int, AnfOp>) Bool {
+  case dmap.get(id) {
+    .Some(op) => op_is_ctr_plus_one(op, ctr),
+    .None => false,
+  }
+}
+
+fn atom_reaches_ctr_plus_one(
+  blk: CfgBlock,
+  a: Atom,
+  ctr: Int,
+  dmap: Dict<Int, AnfOp>,
+  bmap: Dict<Int, CfgBlock>,
+  depth: Int,
+) Bool {
+  if depth > 16 {
+    return false
+  }
+  case atom_local_id(a) {
+    .Some(id) => {
+      if local_def_is_ctr_plus_one(id, ctr, dmap) {
+        return true
+      }
+      case source_for_local_in_block(blk, id) {
+        .Some(src) => return atom_reaches_ctr_plus_one(blk, src, ctr, dmap, bmap, depth + 1),
+        .None => {},
+      }
+      case local_param_index(blk, id) {
+        .Some(i) => {
+          if blk.preds.len() == 0 {
+            return false
+          }
+          for pe in blk.preds {
+            if pe.args.len() <= i {
+              return false
+            }
+            case bmap.get(pe.target.id) {
+              .Some(pred_blk) => if !atom_reaches_ctr_plus_one(
+                pred_blk,
+                pe.args[i],
+                ctr,
+                dmap,
+                bmap,
+                depth + 1,
+              ) {
+                return false
+              },
+              .None => return false,
+            }
+          }
+          return true
+        },
+        .None => {},
+      }
+      false
+    },
+    .None => false,
+  }
+}
+
+fn pred_is_loop_backedge(pred: CfgBlock, header_id: Int) Bool {
+  case pred.terminator {
+    .Some(.LoopBackEdge(target, _)) => target.id == header_id,
+    _ => false,
+  }
+}
+
+fn block_is_loop_exit_arm(blk: CfgBlock) Bool {
+  case blk.terminator {
+    .Some(.VoidBreak) => true,
+    .Some(.ValueBreak(_)) => true,
+    _ => false,
+  }
+}
+
+fn local_is_len_of_vp(
+  id: Int,
+  vp: Int,
+  ops: DictVecOps,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+) Bool {
+  case dmap.get(id) {
+    .Some(.AInit(.ALocal(src))) => local_is_len_of_vp(src.id, vp, ops, dmap, facts),
+    .Some(.ACall(callee, args)) => case callee {
+      .AGlobalFunc(fid) => if fid.id == ops.len and args.len() == 1 {
+        case atom_alias_root(args[0], dmap, facts) {
+          .Some(root) => root == vp,
+          .None => false,
+        }
+      } else {
+        false
+      },
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn atom_is_len_of_vp(
+  a: Atom,
+  vp: Int,
+  ops: DictVecOps,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+) Bool {
+  case atom_local_id(a) {
+    .Some(id) => local_is_len_of_vp(id, vp, ops, dmap, facts),
+    .None => false,
+  }
+}
+
+fn cond_comparison_op(a: Atom, dmap: Dict<Int, AnfOp>) AnfOp? {
+  case atom_local_id(a) {
+    .Some(id) => case dmap.get(id) {
+      .Some(.AInit(src)) => cond_comparison_op(src, dmap),
+      .Some(.ABinOp(_, _, _, _)) => dmap.get(id),
+      .Some(.AUnOp(.Not, inner, _)) => case cond_comparison_op(inner, dmap) {
+        .Some(.ABinOp(.Lt, left, right, kind)) => .Some(.ABinOp(.Ge, left, right, kind)),
+        .Some(.ABinOp(.Ge, left, right, kind)) => .Some(.ABinOp(.Lt, left, right, kind)),
+        _ => .None,
+      },
+      _ => .None,
+    },
+    .None => .None,
+  }
+}
+
+fn gate_checks_loop_bound(
+  gate: CfgBlock,
+  ctr: Int,
+  vp: Int,
+  ops: DictVecOps,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+  bmap: Dict<Int, CfgBlock>,
+) Bool {
+  case gate.terminator {
+    .Some(.CondBranch(cond_atom, true_target, _, false_target, _)) => case cond_comparison_op(
+      cond_atom,
+      dmap,
+    ) {
+      .Some(.ABinOp(.Ge, left, right, _)) => if atom_is_local_id(left, ctr)
+        and atom_is_len_of_vp(right, vp, ops, dmap, facts) {
+        case bmap.get(true_target.id) {
+          .Some(tblk) => if !block_is_loop_exit_arm(tblk) {
+            return false
+          },
+          .None => return false,
+        }
+        true_target.id != false_target.id
+      } else {
+        false
+      },
+      .Some(.ABinOp(.Lt, left, right, _)) => if atom_is_local_id(left, ctr)
+        and atom_is_len_of_vp(right, vp, ops, dmap, facts) {
+        case bmap.get(false_target.id) {
+          .Some(fblk) => if !block_is_loop_exit_arm(fblk) {
+            return false
+          },
+          .None => return false,
+        }
+        true_target.id != false_target.id
+      } else {
+        false
+      },
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn header_has_bound_gate(
+  header: CfgBlock,
+  ctr: Int,
+  vp: Int,
+  ops: DictVecOps,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+  bmap: Dict<Int, CfgBlock>,
+) Bool {
+  case header.terminator {
+    .Some(.Branch(target, _)) => case bmap.get(target.id) {
+      .Some(gate) => gate_checks_loop_bound(gate, ctr, vp, ops, dmap, facts, bmap),
+      .None => false,
+    },
+    _ => gate_checks_loop_bound(header, ctr, vp, ops, dmap, facts, bmap),
+  }
+}
+
+fn local_is_induction_element(
+  id: Int,
+  ctr: Int,
+  vp: Int,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+) Bool {
+  if !facts.local_single_def(id) or facts.local_is_assign_target(id) {
+    return false
+  }
+  cur := id
+  seen: Vector<Int> = []
+  for _ in range(32) {
+    if live_contains_int(seen, cur) {
+      return false
+    }
+    seen = insert_sorted(seen, cur)
+    case dmap.get(cur) {
+      .Some(.AInit(.ALocal(next))) => if facts.local_single_def(cur)
+        and !facts.local_is_assign_target(cur) {
+        cur = next.id
+      } else {
+        return false
+      },
+      .Some(.AIndex(base, idx, _, _)) => case atom_alias_root(base, dmap, facts) {
+        .Some(root) => return root == vp and atom_is_local_id(idx, ctr),
+        .None => return false,
+      },
+      _ => return false,
+    }
+  }
+  false
+}
+
+fn appended_induction_element(
+  f: CfgFunction,
+  ctr: Int,
+  vp: Int,
+  ops: DictVecOps,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+) Int? {
+  found := -1
+  matches := 0
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      case inst.op {
+        .ACall(callee, args) => case callee {
+          .AGlobalFunc(fid) => if fid.id == ops.append and args.len() == 2 {
+            case atom_local_id(args[1]) {
+              .Some(eid) => if local_is_induction_element(eid, ctr, vp, dmap, facts) {
+                found = eid
+                matches = matches + 1
+              },
+              .None => {},
+            }
+          },
+          _ => {},
+        },
+        _ => {},
+      }
+    }
+  }
+  if matches == 1 {
+    .Some(found)
+  } else {
+    .None
+  }
+}
+
+fn header_counter_ok(header: CfgBlock, ctr: Int, dmap: Dict<Int, AnfOp>, bmap: Dict<Int, CfgBlock>) Bool {
+  init_preds := 0
+  back_preds := 0
+  ctr_index := try_opt_int(local_param_index(header, ctr), 0 - 1)
+  for pe in header.preds {
+    if pe.args.len() <= ctr_index {
+      return false
+    }
+    pred := case bmap.get(pe.target.id) {
+      .Some(p) => p,
+      .None => return false,
+    }
+    if pred_is_loop_backedge(pred, header.id.id) {
+      back_preds = back_preds + 1
+      if !atom_reaches_ctr_plus_one(pred, pe.args[ctr_index], ctr, dmap, bmap, 0) {
+        return false
+      }
+    } else {
+      init_preds = init_preds + 1
+      if !atom_is_int(pe.args[ctr_index], 0, dmap) {
+        return false
+      }
+    }
+  }
+  init_preds == 1 and back_preds > 0
+}
+
+fn try_opt_int(v: Int?, fallback: Int) Int {
+  case v {
+    .Some(x) => x,
+    .None => fallback,
+  }
+}
+
+pub fn find_induction(f: CfgFunction, vp: Int, b: BuiltinRegistry) InductionEvidence? {
+  ops := dict_vec_ops(b)
+  dmap := build_def_map(f.blocks)
+  bmap := build_block_map(f.blocks)
+  facts := local_def_counts(f.blocks)
+  for header in f.blocks {
+    has_backedge := false
+    for pe in header.preds {
+      case bmap.get(pe.target.id) {
+        .Some(pred) => if pred_is_loop_backedge(pred, header.id.id) {
+          has_backedge = true
+        },
+        .None => {},
+      }
+    }
+    if has_backedge {
+      for p in header.params {
+        ctr := p.id
+        if header_counter_ok(header, ctr, dmap, bmap)
+          and header_has_bound_gate(header, ctr, vp, ops, dmap, facts, bmap) {
+          case appended_induction_element(f, ctr, vp, ops, dmap, facts) {
+            .Some(element) => return .Some(InductionEvidence.{ counter: ctr, element }),
+            .None => {},
+          }
+        }
+      }
+    }
+  }
+  .None
 }
 
 fn call_target_of(op: AnfOp) Int? {
