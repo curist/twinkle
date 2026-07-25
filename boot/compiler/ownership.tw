@@ -748,6 +748,493 @@ fn render_effect_proof(p: EffectProof) String {
   "borrow-effect copy-carrier source L${p.source} key ${key_txt}"
 }
 
+// ── Copy-carrier loan/write proof (engine plan Task 4) ──
+//
+// `analyze_copy_carriers` proves, per function, that a dict aliased from a param source
+// (`out := next`) and written by key can lower in place: every read of the source is a
+// bounded loan that ends before — or writes a distinct key from — each carrier write, the
+// written key stream is unique, and the source never otherwise escapes. Accepted carriers
+// carry an `EffectProof`; near-misses carry a concrete rejection reason. Default-deny: any
+// loan/write pair not proven safe is a conflict; any unrecognized source use is an escape.
+type CarrierProof = { CarrierAccept(EffectProof), CarrierReject(String) }
+
+type CopyCarrierFacts = .{
+  by_update: Dict<Int, CarrierProof>, // update-result local -> accept/reject
+  suppress_alias: Dict<Int, Bool>, // carrier AInit result local -> suppress source publish
+  suppress_read: Dict<Int, Bool>, // read-call result local -> suppress source publish
+  seed_params: Dict<Int, Bool>, // source param local ids to seed Unique
+}
+
+fn empty_copy_carrier_facts() CopyCarrierFacts {
+  CopyCarrierFacts.{
+    by_update: Dict.new(),
+    suppress_alias: Dict.new(),
+    suppress_read: Dict.new(),
+    seed_params: Dict.new(),
+  }
+}
+
+// An instruction paired with its whole-function program index (block-list order), so
+// loan/write ordering compares stable positions. A terminator index is reserved between
+// blocks so cross-block order stays well defined.
+type CcFlatInst = .{ g: Int, op: AnfOp, result: Int }
+
+fn cc_flatten_insts(blocks: Vector<CfgBlock>) Vector<CcFlatInst> {
+  out: Vector<CcFlatInst> = []
+  g := 0
+  for blk in blocks {
+    for inst in blk.instructions {
+      out = .append(CcFlatInst.{ g, op: inst.op, result: inst.anf_local.id })
+      g = g + 1
+    }
+    g = g + 1
+  }
+  out
+}
+
+fn cc_param_ids(params: Vector<LocalId>) Dict<Int, Bool> {
+  s: Dict<Int, Bool> = Dict.new()
+  for p in params {
+    s[p.id] = true
+  }
+  s
+}
+
+// A carrier candidate: `AInit(ALocal(src))` whose src is a param. Confirmed a real carrier
+// later by being the base of at least one dict write.
+type CcCandidate = .{ carrier: Int, source: Int }
+
+fn cc_carrier_candidates(flat: Vector<CcFlatInst>, params: Dict<Int, Bool>) Vector<CcCandidate> {
+  out: Vector<CcCandidate> = []
+  for fi in flat {
+    case fi.op {
+      .AInit(.ALocal(src)) => if in_set(params, src.id) and src.id != fi.result {
+        out = .append(CcCandidate.{ carrier: fi.result, source: src.id })
+      },
+      _ => {},
+    }
+  }
+  out
+}
+
+type CcWrite = .{ effect: WriteEffect, g: Int, result: Int, key_local: Int }
+
+fn cc_dict_writes(flat: Vector<CcFlatInst>, carrier: Int, ops: DictVecOps) Vector<CcWrite> {
+  out: Vector<CcWrite> = []
+  for fi in flat {
+    case fi.op {
+      .ACall(callee, args) => case callee_func_id(callee) {
+        .Some(f) => if args.len() >= 1 and atom_is_local_id(args[0], carrier) {
+          key_local := if args.len() >= 2 {
+            case atom_local_id(args[1]) {
+              .Some(k) => k,
+              .None => 0 - 1,
+            }
+          } else {
+            0 - 1
+          }
+          if f.id == ops.set {
+            eff: WriteEffect = if key_local >= 0 {
+              .DictSet(key_local)
+            } else {
+              .DictSetUnknownKey
+            }
+            out = .append(CcWrite.{ effect: eff, g: fi.g, result: fi.result, key_local })
+          } else if f.id == ops.remove {
+            eff: WriteEffect = if key_local >= 0 {
+              .DictRemove(key_local)
+            } else {
+              .DictRemoveUnknownKey
+            }
+            out = .append(CcWrite.{ effect: eff, g: fi.g, result: fi.result, key_local })
+          }
+        },
+        .None => {},
+      },
+      _ => {},
+    }
+  }
+  out
+}
+
+// Whether the callee's return flows from param index `i` (aliases it or owns a return path
+// from it) — i.e. the source escapes through the helper's result.
+fn cc_ret_flows_from_param(s: Summary, i: Int) Bool {
+  aliased := case s.ret {
+    .MayAliasParams(idxs) => live_contains_int(idxs, i),
+    _ => false,
+  }
+  if aliased {
+    return true
+  }
+  for rp in s.ret_paths {
+    case rp.own {
+      .OwnedFromParam(pi) => if pi == i {
+        return true
+      },
+      _ => {},
+    }
+  }
+  false
+}
+
+// The stream fact of a vector local used as a key stream: `Dict.keys` is unique; an alias
+// inherits; a certified dedupe helper preserves uniqueness only when every vector argument
+// is itself unique (the certificate's own contract); everything else is unknown.
+fn cc_key_stream_fact(
+  local: Int,
+  dmap: Dict<Int, AnfOp>,
+  ops: DictVecOps,
+  table: SummaryTable,
+  seen: Dict<Int, Bool>,
+) StreamFact {
+  if in_set(seen, local) {
+    return .UnknownStream
+  }
+  seen[local] = true
+  case dmap.get(local) {
+    .Some(.AInit(.ALocal(x))) => cc_key_stream_fact(x.id, dmap, ops, table, seen),
+    .Some(.ACall(callee, args)) => case callee_func_id(callee) {
+      .Some(f) => if f.id == ops.keys {
+        .UniqueIntKeys
+      } else if table.table_is_dedupe_helper(f.id) {
+        all_unique := true
+        for a in args {
+          case atom_local_id(a) {
+            .Some(aid) => case cc_key_stream_fact(aid, dmap, ops, table, seen) {
+              .UniqueIntKeys => {},
+              .UnknownStream => all_unique = false,
+            },
+            .None => all_unique = false,
+          }
+        }
+        if all_unique {
+          .UniqueIntKeys
+        } else {
+          .UnknownStream
+        }
+      } else {
+        .UnknownStream
+      },
+      .None => .UnknownStream,
+    },
+    _ => .UnknownStream,
+  }
+}
+
+// A write key is acceptable when it is not a loop-index key (single/literal write, N/A) or
+// when its producing loop stream is a certified unique key stream.
+fn cc_write_key_ok(key_local: Int, dmap: Dict<Int, AnfOp>, ops: DictVecOps, table: SummaryTable) Bool {
+  cur := key_local
+  for _ in range(32) {
+    if cur < 0 {
+      return true
+    }
+    case dmap.get(cur) {
+      .Some(.AInit(.ALocal(x))) => cur = x.id,
+      .Some(.AIndex(vec, _, _, _)) => return case atom_local_id(vec) {
+        .Some(v) => case cc_key_stream_fact(v, dmap, ops, table, Dict.new()) {
+          .UniqueIntKeys => true,
+          .UnknownStream => false,
+        },
+        .None => false,
+      },
+      _ => return true,
+    }
+  }
+  true
+}
+
+fn cc_arg_pos_of(args: Vector<Atom>, id: Int) Int? {
+  for a, i in args {
+    if atom_is_local_id(a, id) {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+fn cc_matching_write_key(args: Vector<Atom>, source_pos: Int, write_keys: Dict<Int, Bool>) Int {
+  for a, i in args {
+    if i != source_pos {
+      case atom_local_id(a) {
+        .Some(k) => if in_set(write_keys, k) {
+          return k
+        },
+        .None => {},
+      }
+    }
+  }
+  0 - 1
+}
+
+pub fn analyze_copy_carriers(
+  blocks: Vector<CfgBlock>,
+  params: Vector<LocalId>,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) CopyCarrierFacts {
+  facts := empty_copy_carrier_facts()
+  ops := dict_vec_ops(b)
+  dmap := build_def_map(blocks)
+  flat := cc_flatten_insts(blocks)
+  pset := cc_param_ids(params)
+  for cand in cc_carrier_candidates(flat, pset) {
+    carrier := cand.carrier
+    source := cand.source
+    writes := cc_dict_writes(flat, carrier, ops)
+    if writes.len() > 0 {
+      write_keys: Dict<Int, Bool> = Dict.new()
+      min_wg := borrow_infinity
+      has_remove := false
+      for w in writes {
+        if w.key_local >= 0 {
+          write_keys[w.key_local] = true
+        }
+        if w.g < min_wg {
+          min_wg = w.g
+        }
+        case w.effect {
+          .DictRemove(_) => has_remove = true,
+          .DictRemoveUnknownKey => has_remove = true,
+          _ => {},
+        }
+      }
+
+      reason := ""
+      loans: Vector<Loan> = []
+      read_suppress: Vector<Int> = []
+
+      // Step 4: loans on source + escape classification.
+      for fi in flat {
+        if reason == "" {
+          case fi.op {
+            .AInit(.ALocal(s)) => if s.id == source and fi.result == carrier {} else if live_contains_int(
+              op_uses(fi.op),
+              source,
+            ) {
+              reason = "source-escape"
+            },
+            .ACall(callee, args) => case callee_func_id(callee) {
+              .Some(f) => if f.id == ops.set or f.id == ops.remove {
+                if args.len() >= 1 and atom_is_local_id(args[0], carrier) {} else if args.len() >= 1
+                  and atom_is_local_id(args[0], source) {
+                  reason = "source-escape" // [S2] second in-place writer on the source
+                } else if live_contains_int(op_uses(fi.op), source) {
+                  reason = "source-escape"
+                }
+              } else if f.id == ops.get or f.id == ops.get_unsafe {
+                if args.len() >= 1 and atom_is_local_id(args[0], source) {
+                  key := if args.len() >= 2 {
+                    case atom_local_id(args[1]) {
+                      .Some(k) => k,
+                      .None => 0 - 1,
+                    }
+                  } else {
+                    0 - 1
+                  }
+                  reg: BorrowRegion = if key >= 0 {
+                    .DictValue(key)
+                  } else {
+                    .DictUnknownValue
+                  }
+                  loans = .append(
+                    Loan.{
+                      source,
+                      region: reg,
+                      kind: .SharedRead,
+                      starts_at: fi.g,
+                      ends_at: fi.g,
+                      evidence: "dict.get",
+                    },
+                  )
+                } else if live_contains_int(op_uses(fi.op), source) {
+                  reason = "source-escape"
+                }
+              } else if f.id == ops.keys {
+                if args.len() >= 1 and atom_is_local_id(args[0], source) {
+                  loans = .append(
+                    Loan.{
+                      source,
+                      region: .DictKeysOrder,
+                      kind: .StructuralRead,
+                      starts_at: fi.g,
+                      ends_at: borrow_infinity,
+                      evidence: "dict.keys",
+                    },
+                  )
+                  read_suppress = .append(fi.result)
+                } else if live_contains_int(op_uses(fi.op), source) {
+                  reason = "source-escape"
+                }
+              } else {
+                case call_info(sem, f) {
+                  .Some(cs) => case cs.effect {
+                    .Update => if live_contains_int(op_uses(fi.op), source) {
+                      reason = "source-escape"
+                    },
+                    _ => {}, // read-only/allocate/control builtin: non-retaining read
+                  },
+                  .None => if live_contains_int(op_uses(fi.op), source) {
+                    case cc_arg_pos_of(args, source) {
+                      .Some(i) => case table.summary_get(f.id) {
+                        .Some(s) => if i < s.params.len() {
+                          flows := s.cc_ret_flows_from_param(i)
+                          borrowed := case s.params[i].base_role {
+                            .Borrowed => true,
+                            _ => false,
+                          }
+                          if borrowed and !flows {
+                            key := cc_matching_write_key(args, i, write_keys)
+                            reg: BorrowRegion = if key >= 0 {
+                              .DictValue(key)
+                            } else {
+                              .DictUnknownValue
+                            }
+                            loans = .append(
+                              Loan.{
+                                source,
+                                region: reg,
+                                kind: .SharedRead,
+                                starts_at: fi.g,
+                                ends_at: fi.g,
+                                evidence: "borrowed-helper",
+                              },
+                            )
+                            read_suppress = .append(fi.result)
+                          } else if flows {
+                            reason = "source-escape"
+                          } else {
+                            reason = "unknown-source-use"
+                          }
+                        } else {
+                          reason = "unknown-source-use"
+                        },
+                        .None => reason = "unknown-source-use",
+                      },
+                      .None => reason = "unknown-source-use",
+                    }
+                  },
+                }
+              },
+              .None => if live_contains_int(op_uses(fi.op), source) {
+                reason = "source-escape"
+              },
+            },
+            _ => if live_contains_int(op_uses(fi.op), source) {
+              reason = "source-escape"
+            },
+          }
+        }
+      }
+
+      // Terminator escape sweep (return/break atoms; edge args are benign threading).
+      if reason == "" {
+        for blk in blocks {
+          case blk.terminator {
+            .Some(t) => if live_contains_int(term_uses(t), source) {
+              reason = "source-escape"
+            },
+            .None => {},
+          }
+        }
+      }
+
+      // Step 5: every loop-index write key must be a certified unique key stream.
+      if reason == "" {
+        for w in writes {
+          if !cc_write_key_ok(w.key_local, dmap, ops, table) {
+            reason = "non-unique-key-stream"
+          }
+        }
+      }
+
+      // Step 6: loan/write ordering + key-alias.
+      if reason == "" {
+        for loan in loans {
+          if reason == "" {
+            case loan.region {
+              .DictKeysOrder => if !(loan.starts_at < min_wg) {
+                reason = "keys-after-write"
+              } else if has_remove {
+                reason = "remove-conflicts-with-keys"
+              },
+              .DictValue(kr) => {
+                for w in writes {
+                  if reason == "" {
+                    case w.effect {
+                      .DictSet(kw) => if !loan.loan_ends_before_write(w.g)
+                        and !keys_proven_distinct(kr, kw, .UniqueIntKeys) {
+                        reason = "get-after-write"
+                      },
+                      .DictSetUnknownKey => if !loan.loan_ends_before_write(w.g) {
+                        reason = "get-after-write"
+                      },
+                      _ => {},
+                    }
+                  }
+                }
+              },
+              .DictUnknownValue => {
+                for w in writes {
+                  if reason == "" {
+                    case w.effect {
+                      .DictSet(_) => if !loan.loan_ends_before_write(w.g) {
+                        reason = "get-after-write"
+                      },
+                      .DictSetUnknownKey => if !loan.loan_ends_before_write(w.g) {
+                        reason = "get-after-write"
+                      },
+                      _ => {},
+                    }
+                  }
+                }
+              },
+              _ => {},
+            }
+          }
+        }
+      }
+
+      write_effects: Vector<WriteEffect> = collect w in writes {
+        w.effect
+      }
+      if reason == "" {
+        pkey: Int? = if writes[0].key_local >= 0 {
+          .Some(writes[0].key_local)
+        } else {
+          .None
+        }
+        proof := EffectProof.{
+          carrier,
+          source,
+          update_result: writes[0].result,
+          key: pkey,
+          loans,
+          writes: write_effects,
+          reason: "",
+        }
+        for w in writes {
+          cp: CarrierProof = .CarrierAccept(proof)
+          facts.by_update[w.result] = cp
+        }
+        facts.suppress_alias[carrier] = true
+        for r in read_suppress {
+          facts.suppress_read[r] = true
+        }
+        facts.seed_params[source] = true
+      } else {
+        for w in writes {
+          cp: CarrierProof = .CarrierReject(reason)
+          facts.by_update[w.result] = cp
+        }
+      }
+    }
+  }
+  facts
+}
+
 // ── Dedupe-helper certification (uniqueness-preserving vector combinators) ──
 //
 // A "dedupe helper" is a function whose result vector has no duplicate elements when
@@ -4082,27 +4569,6 @@ fn shell_verdict(st: ForwardState, base: Atom, last: Vector<Int>) String {
   }
 }
 
-// Task 2 coarse copy-carrier candidate: a Dict.set whose base is an aliased
-// (non-unique) shell derived from a param source is the copy-carrier shape the
-// borrow/effect engine targets. Here it only annotates the census with the
-// recognized shape (`source Lsrc key Lkey`); the loan/write proof and the
-// concrete rejection reasons are layered on in Task 4.
-fn copy_carrier_note(pre: ForwardState, base: Atom, args: Vector<Atom>, shell: String) String {
-  if !shell.contains("aliased shell") {
-    return ""
-  }
-  origins := prov_of(pre.prov, base)
-  if origins.len() == 0 {
-    return ""
-  }
-  key_txt := if args.len() > 1 {
-    atom_brief(args[1])
-  } else {
-    "L?"
-  }
-  " copy-carrier-candidate source L${origins[0]} key ${key_txt}"
-}
-
 fn update_field_verdict(
   pre: ForwardState,
   base: Atom,
@@ -4254,6 +4720,7 @@ fn block_verdicts(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc: CopyCarrierFacts,
 ) BlockVerdicts {
   scan := prep.scan
   moves := prep.moves
@@ -4300,7 +4767,11 @@ fn block_verdicts(
                 reusable_shell[inst.anf_local.id] = pre.shell_reusable(base, last)
                 sv := pre.shell_verdict(base, last)
                 note := case container_kind(sem, fid) {
-                  .DictLike => pre.copy_carrier_note(base, args, sv),
+                  .DictLike => case cc.by_update.get(inst.anf_local.id) {
+                    .Some(.CarrierAccept(p)) => " ${p.render_effect_proof()}",
+                    .Some(.CarrierReject(r)) => " ${render_effect_rejection(r)}",
+                    .None => "",
+                  },
                   _ => "",
                 }
                 verdicts[inst.anf_local.id] = "L${inst.anf_local.id} = update ${atom_brief(base)} base=${sv}${note}"
@@ -6293,6 +6764,7 @@ fn ownership_stage(
   cached_fx: FixResult?,
 ) Vector<CfgBlock> {
   no_suppress: Dict<Int, Bool> = Dict.new()
+  cc := analyze_copy_carriers(blocks, params, table, b, sem)
 
   // Reuse the summary-pass FixResult only when unique_seed is empty (materialization
   // still reads unique_seed). Under TWINKLE_FIXVERIFY, recompute and compare.
@@ -6360,7 +6832,7 @@ fn ownership_stage(
       st
     }
     prep := block_prep(blk, sem)
-    verdicts := block_verdicts(blk, st, prep, table, b, sem, no_suppress)
+    verdicts := block_verdicts(blk, st, prep, table, b, sem, no_suppress, cc)
     st = forward_block(blk, st, prep, table, b, sem, no_suppress)
     blk.entry.ownership = entry_own
     blk.exit.ownership = st.own
