@@ -274,6 +274,30 @@ storage performance, not merely on hook consolidation.
   and private storage operations behind compiler-private intrinsics, removes
   split-brain mutability paths, and evaluates Buffer cleanup.
 
+## Follow-up: revisit vector append in place
+
+The copy-carrier borrow/effect engine
+([../../2026-07-24-copy-carrier-engine-impl-plan.md](../../2026-07-24-copy-carrier-engine-impl-plan.md))
+surfaced a representation gap worth revisiting under this track: **vector append is not a
+`mutable_produce` update-call candidate.** `decision_family_for_persistent`
+(`boot/compiler/codegen/mutable_catalog.tw`) assigns an in-place decision family only to
+`Dict.set`, `Dict.remove`, and `vector$set_unsafe`; for a vector append (`sem.builder.push_id`)
+`update_call_target` returns `None`, so it never produces an in-place decision through the
+ownership-decision path. Vector append in place today comes *only* from the separate
+loop-builder optimization pass.
+
+Consequence: a **param-sourced vector copy-carrier** — e.g. `next_locked := locked;
+next_locked = .append(k)` in `merge_targeted_min` — is proven `base=reuse(unique)` by ownership
+analysis but does **not** flip through `mutable_produce`, because append has no decision family.
+The dict half of the same shape flips fine.
+
+Revisit whether vector append (and param-sourced vector carriers generally) should join the
+in-place decision path — either by giving append a decision family with a mutable equivalent
+(a `vector$*_in_place` / builder-backed target), or by folding it into this storage track's
+"stay low, materialize at the boundary" model so a proven-unique appended vector never
+round-trips through persistent PVec. This is orthogonal to the copy-carrier dict engine, which
+is complete.
+
 ## References
 
 - [../codegen/README.md](../codegen/README.md)
