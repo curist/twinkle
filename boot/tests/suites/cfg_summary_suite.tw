@@ -2505,6 +2505,32 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "key-stream certificates populate root-scoped summary tables",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8h_ksu_battery.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        view := cfg.build_view(artifacts.opt, b)
+        root_id := try func_id_by_name(view, "int_keys_union")
+        roots: Dict<Int, Bool> = Dict.new()
+        roots[root_id] = true
+        scoped := summary.compute_for_roots_cached(
+          view,
+          b,
+          make_prelude_optimizer_semantics(b),
+          roots,
+        )
+        try assert_cert_combinator(scoped.table.dedupe_helpers, view, "int_keys_union")
+        try assert_cert_combinator(scoped.table.dedupe_helpers, view, "union_keys")
+        try assert_cert_primitive(scoped.table.dedupe_helpers, view, "insert_sorted")
+        .Ok({})
+      },
+    )
+    .test(
       "root-scoped summaries match full summaries for candidate roots",
       fn() {
         artifacts := case pipeline.compile_entry_path(

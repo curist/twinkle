@@ -1414,5 +1414,6 @@ pub fn compute_for_roots_cached(
         .len()} wanted=${wanted.keys().len()} wanted_blocks=${wanted_blocks} wanted_insts=${wanted_insts} wanted_edges=${wanted_edges} sccs=${sccs.len()} run_sccs=${run_sccs} skipped_sccs=${skipped_sccs} run_members=${run_members} skipped_members=${skipped_members}",
     )
   }
+  table = with_dedupe_helpers(table, view, b, sem)
   SummaryCacheResult.{ table, fix_cache: cache }
 }
