@@ -2,6 +2,7 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use commands.common.{format_compile_error}
+use compiler.builtins
 use compiler.cfg
 use compiler.opt.semantics as semantics
 use compiler.ownership
@@ -12,6 +13,11 @@ use lib.module.loader
 fn fixtures_dir() String {
   root := loader.find_project_root("boot")
   "${root}/tests/fixtures/cfg/sound_uniqueness"
+}
+
+fn ksu_fixtures_dir() String {
+  root := loader.find_project_root("boot")
+  "${root}/tests/fixtures/sound_uniqueness"
 }
 
 fn render_entry(name: String) Result<String, String> {
@@ -34,6 +40,40 @@ fn assert_has_all(out: String, parts: Vector<String>) Result<Void, String> {
     try assert.str_contains(out, p)
   }
   .Ok({})
+}
+
+fn cfg_func_id_by_name(view: cfg.CfgView, name: String) Result<cfg.CfgFunction, String> {
+  for f in view.functions {
+    if f.name == name {
+      return .Ok(f)
+    }
+  }
+  .Err("missing function ${name}")
+}
+
+fn assert_o0_o2_accept(view: cfg.CfgView, b: builtins.BuiltinRegistry, name: String) Result<
+  Void,
+  String,
+> {
+  f := try cfg_func_id_by_name(view, name)
+  case ownership.sort_insert_o0_o2_evidence(f, 0, b) {
+    .Some(c) => case c.kind {
+      .SortInsertPrimitive => .Ok({}),
+      .Combinator => .Err("${name}: expected primitive O0-O2 evidence, got combinator"),
+    },
+    .None => .Err("${name}: expected primitive O0-O2 evidence"),
+  }
+}
+
+fn assert_o0_o2_reject(view: cfg.CfgView, b: builtins.BuiltinRegistry, name: String) Result<
+  Void,
+  String,
+> {
+  f := try cfg_func_id_by_name(view, name)
+  case ownership.sort_insert_o0_o2_evidence(f, 0, b) {
+    .Some(_) => .Err("${name}: unexpectedly passed primitive O0-O2 evidence"),
+    .None => .Ok({}),
+  }
 }
 
 fn section_between(out: String, start_marker: String, end_marker: String) Result<String, String> {
@@ -66,6 +106,36 @@ fn variant_section(out: String, func_name: String, key: String) Result<String, S
 pub fn suite() runner.Suite {
   runner
     .suite("cfg sound uniqueness fixture coverage")
+    .test(
+      "key-stream primitive O0-O2 accepts insert_sorted and rejects structural negatives",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${ksu_fixtures_dir()}/phase8h_ksu_battery.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        view := ownership.thread_const_branches(cfg.build_view(artifacts.opt, b))
+        try assert_o0_o2_accept(view, b, "insert_sorted")
+        negatives: Vector<String> = [
+          "bad2",
+          "nested_loop_append",
+          "fixed_index_eq_guard",
+          "second_in_loop_exit",
+          "continue_before_eq",
+          "rebound_vparam",
+          "rebound_proof_local",
+          "wrong_return",
+          "extra_acc_mutation",
+          "unchanged_counter_backedge",
+        ]
+        for name in negatives {
+          try assert_o0_o2_reject(view, b, name)
+        }
+        .Ok({})
+      },
+    )
     .test(
       "multi-module env callers render owned and generic decisions",
       fn() {
