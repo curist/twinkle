@@ -1047,22 +1047,26 @@ fn atom_is_len_of_vp(
   }
 }
 
-fn cond_comparison_op(a: Atom, dmap: Dict<Int, AnfOp>) AnfOp? {
+fn cond_comparison_op(a: Atom, dmap: Dict<Int, AnfOp>, facts: LocalDefCounts) AnfOp? {
   case atom_local_id(a) {
-    .Some(id) => case dmap.get(id) {
-      .Some(.AInit(.ALocal(src))) => if src.id == id {
-        .None
-      } else {
-        cond_comparison_op(.ALocal(src), dmap)
-      },
-      .Some(.AInit(src)) => cond_comparison_op(src, dmap),
-      .Some(.ABinOp(_, _, _, _)) => dmap.get(id),
-      .Some(.AUnOp(.Not, inner, _)) => case cond_comparison_op(inner, dmap) {
-        .Some(.ABinOp(.Lt, left, right, kind)) => .Some(.ABinOp(.Ge, left, right, kind)),
-        .Some(.ABinOp(.Ge, left, right, kind)) => .Some(.ABinOp(.Lt, left, right, kind)),
+    .Some(id) => if !facts.local_single_def(id) or facts.local_is_assign_target(id) {
+      .None
+    } else {
+      case dmap.get(id) {
+        .Some(.AInit(.ALocal(src))) => if src.id == id {
+          .None
+        } else {
+          cond_comparison_op(.ALocal(src), dmap, facts)
+        },
+        .Some(.AInit(src)) => cond_comparison_op(src, dmap, facts),
+        .Some(.ABinOp(_, _, _, _)) => dmap.get(id),
+        .Some(.AUnOp(.Not, inner, _)) => case cond_comparison_op(inner, dmap, facts) {
+          .Some(.ABinOp(.Lt, left, right, kind)) => .Some(.ABinOp(.Ge, left, right, kind)),
+          .Some(.ABinOp(.Ge, left, right, kind)) => .Some(.ABinOp(.Lt, left, right, kind)),
+          _ => .None,
+        },
         _ => .None,
-      },
-      _ => .None,
+      }
     },
     .None => .None,
   }
@@ -1081,6 +1085,7 @@ fn gate_checks_loop_bound(
     .Some(.CondBranch(cond_atom, true_target, _, false_target, _)) => case cond_comparison_op(
       cond_atom,
       dmap,
+      facts,
     ) {
       .Some(.ABinOp(.Ge, left, right, _)) => if atom_is_local_id(left, ctr)
         and atom_is_len_of_vp(right, vp, ops, dmap, facts) {
@@ -1283,6 +1288,7 @@ fn gate_loop_shape(
     .Some(.CondBranch(cond_atom, true_target, _, false_target, _)) => case cond_comparison_op(
       cond_atom,
       dmap,
+      facts,
     ) {
       .Some(.ABinOp(.Ge, left, right, _)) => if atom_is_local_id(left, ctr)
         and atom_is_len_of_vp(right, vp, ops, dmap, facts) {
@@ -1534,6 +1540,7 @@ fn accumulator_writes_ok(
   element: Int,
   ops: DictVecOps,
   dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
 ) Bool {
   for blk in f.blocks {
     for inst in blk.instructions {
@@ -1549,11 +1556,16 @@ fn accumulator_writes_ok(
         },
         .AAssign(target, src) => if target.id == acc {
           case atom_local_id(src) {
-            .Some(src_id) => case dmap.get(src_id) {
-              .Some(op) => if !append_call_ok(op, acc, id_param, element, ops) {
-                return false
-              },
-              .None => return false,
+            .Some(src_id) => if local_def_count_from(facts.counts, src_id) != 1
+              or set_has_id(facts.assign_targets, src_id) {
+              return false
+            } else {
+              case dmap.get(src_id) {
+                .Some(op) => if !append_call_ok(op, acc, id_param, element, ops) {
+                  return false
+                },
+                .None => return false,
+              }
             },
             .None => return false,
           }
@@ -1565,17 +1577,21 @@ fn accumulator_writes_ok(
   true
 }
 
-fn cond_eq_op(a: Atom, dmap: Dict<Int, AnfOp>) AnfOp? {
+fn cond_eq_op(a: Atom, dmap: Dict<Int, AnfOp>, facts: LocalDefCounts) AnfOp? {
   case atom_local_id(a) {
-    .Some(id) => case dmap.get(id) {
-      .Some(.AInit(.ALocal(src))) => if src.id == id {
-        .None
-      } else {
-        cond_eq_op(.ALocal(src), dmap)
-      },
-      .Some(.AInit(src)) => cond_eq_op(src, dmap),
-      .Some(.ABinOp(.Eq, _, _, _)) => dmap.get(id),
-      _ => .None,
+    .Some(id) => if !facts.local_single_def(id) or facts.local_is_assign_target(id) {
+      .None
+    } else {
+      case dmap.get(id) {
+        .Some(.AInit(.ALocal(src))) => if src.id == id {
+          .None
+        } else {
+          cond_eq_op(.ALocal(src), dmap, facts)
+        },
+        .Some(.AInit(src)) => cond_eq_op(src, dmap, facts),
+        .Some(.ABinOp(.Eq, _, _, _)) => dmap.get(id),
+        _ => .None,
+      }
     },
     .None => .None,
   }
@@ -1618,6 +1634,7 @@ fn find_equality_evidence(
         .Some(.CondBranch(cond_atom, true_target, _, false_target, _)) => case cond_eq_op(
           cond_atom,
           dmap,
+          facts,
         ) {
           .Some(op) => if eq_compares_element_id(op, element, id_param) {
             case bmap.get(true_target.id) {
@@ -1647,18 +1664,31 @@ fn find_equality_evidence(
   }
 }
 
-fn body_returns_are_only_equality_return(f: CfgFunction, region: Dict<Int, Bool>, eq: EqEvidence) Bool {
+fn body_exits_are_only_equality_return(f: CfgFunction, region: Dict<Int, Bool>, eq: EqEvidence) Bool {
   for blk in f.blocks {
     if set_has_id(region, blk.id.id) {
       case blk.terminator {
         .Some(.Return(_)) => if blk.id.id != eq.true_return {
           return false
         },
+        .Some(.VoidBreak) => return false,
+        .Some(.ValueBreak(_)) => return false,
         _ => {},
       }
     }
   }
   true
+}
+
+// O1 edge-domination: the equality false-edge dominates the back-edge only if
+// the guard block is the sole predecessor of the false-target. Otherwise a path
+// that bypasses the equality could rejoin at the false-target and the
+// block-avoidance reachability check would wrongly conclude domination.
+fn eq_false_target_guarded(eq: EqEvidence, bmap: Dict<Int, CfgBlock>) Bool {
+  case bmap.get(eq.false_target) {
+    .Some(blk) => blk.preds.len() == 1 and blk.preds[0].target.id == eq.guard,
+    .None => false,
+  }
 }
 
 fn reaches_loopback_avoiding(start: Int, header: Int, avoid: Int, bmap: Dict<Int, CfgBlock>) Bool {
@@ -1717,7 +1747,7 @@ fn primitive_o0_ok(
 ) Bool {
   acc_seed_is_empty(acc, dmap)
     and no_param_or_element_rebinds(f, element) and returns_are_vp_or_acc(f, vp, acc, dmap, facts)
-    and accumulator_writes_ok(f, acc, id_param, element, ops, dmap)
+    and accumulator_writes_ok(f, acc, id_param, element, ops, dmap, facts)
 }
 
 fn primitive_o1_ok(
@@ -1733,8 +1763,9 @@ fn primitive_o1_ok(
 ) Bool {
   case find_equality_evidence(f, region, vp, ind.element, id_param, dmap, facts, bmap) {
     .Some(eq) => {
-      ret_ok := body_returns_are_only_equality_return(f, region, eq)
-      dom_ok := !reaches_loopback_avoiding(shape.body_entry, shape.header, eq.false_target, bmap)
+      ret_ok := body_exits_are_only_equality_return(f, region, eq)
+      dom_ok := eq.eq_false_target_guarded(bmap)
+        and !reaches_loopback_avoiding(shape.body_entry, shape.header, eq.false_target, bmap)
       ret_ok and dom_ok
     },
     .None => false,
@@ -1841,6 +1872,30 @@ fn path_reaches(start: Int, target: Int, bmap: Dict<Int, CfgBlock>, stop_header:
   path_reaches_avoiding(start, target, 0 - 1, bmap, stop_header)
 }
 
+fn reaches_any_loopback(start: Int, bmap: Dict<Int, CfgBlock>) Bool {
+  seen: Dict<Int, Bool> = Dict.new()
+  work: Vector<Int> = [start]
+  for work.len() > 0 {
+    id := work[work.len() - 1]
+    work = .drop_last()
+    if !set_has_id(seen, id) {
+      seen[id] = true
+      case bmap.get(id) {
+        .Some(blk) => case blk.terminator {
+          .Some(.LoopBackEdge(_, _)) => return true,
+          _ => {
+            for e in blk.succs {
+              work = .append(e.target.id)
+            }
+          },
+        },
+        .None => {},
+      }
+    }
+  }
+  false
+}
+
 fn block_guarded_by_flag_false(
   block: Int,
   in_loop: Bool,
@@ -1853,7 +1908,8 @@ fn block_guarded_by_flag_false(
     guard_in_loop := set_has_id(region, g.block)
     if in_loop and guard_in_loop {
       if path_reaches(g.true_target, block, bmap, shape.header)
-        and !path_reaches(g.false_target, block, bmap, shape.header) {
+        and !path_reaches(g.false_target, block, bmap, shape.header)
+        and !path_reaches_avoiding(shape.body_entry, block, g.true_target, bmap, shape.header) {
         return true
       }
     } else if !in_loop
@@ -1927,9 +1983,55 @@ fn flag_assignments_set_once(f: CfgFunction, flag: Int) Bool {
   true
 }
 
-fn set_once_flag_ok(f: CfgFunction, flag: Int, region: Dict<Int, Bool>) Bool {
+fn flag_false_definition_block(f: CfgFunction, flag: Int) Int? {
+  found := 0 - 1
+  matches := 0
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      if inst.anf_local.id == flag {
+        case inst.op {
+          .AInit(.ALitBool(false)) => {
+            found = blk.id.id
+            matches = matches + 1
+          },
+          _ => {},
+        }
+      }
+      case inst.op {
+        .AAssign(target, .ALitBool(false)) => if target.id == flag {
+          found = blk.id.id
+          matches = matches + 1
+        },
+        _ => {},
+      }
+    }
+  }
+  if matches == 1 {
+    .Some(found)
+  } else {
+    .None
+  }
+}
+
+fn flag_false_dominates_loop(f: CfgFunction, flag: Int, shape: LoopShape, bmap: Dict<Int, CfgBlock>) Bool {
+  false_block := case flag_false_definition_block(f, flag) {
+    .Some(v) => v,
+    .None => return false,
+  }
+  path_reaches(false_block, shape.header, bmap, shape.header)
+    and !path_reaches(shape.body_entry, false_block, bmap, shape.header)
+}
+
+fn set_once_flag_ok(
+  f: CfgFunction,
+  flag: Int,
+  shape: LoopShape,
+  region: Dict<Int, Bool>,
+  bmap: Dict<Int, CfgBlock>,
+) Bool {
   flag_false_definition_count(f, flag) == 1
-    and !flag_false_def_in_loop(f, flag, region) and flag_assignments_set_once(f, flag)
+    and !flag_false_def_in_loop(f, flag, region) and flag_false_dominates_loop(f, flag, shape, bmap)
+    and flag_assignments_set_once(f, flag)
 }
 
 fn id_append_sites(f: CfgFunction, id_param: Int, ops: DictVecOps) Vector<IdAppendSite> {
@@ -1984,8 +2086,10 @@ fn block_id_append_order_ok(
   id_param: Int,
   ops: DictVecOps,
   entry_false: Bool,
+  in_loop: Bool,
 ) Bool {
   flag_false := entry_false
+  pending_true_after_append := false
   for inst in blk.instructions {
     case inst.op {
       .ACall(callee, args) => case callee {
@@ -1994,11 +2098,16 @@ fn block_id_append_order_ok(
           if !flag_false {
             return false
           }
+          flag_false = false
+          if in_loop {
+            pending_true_after_append = true
+          }
         },
         _ => {},
       },
       .AAssign(target, .ALitBool(true)) => if target.id == flag {
         flag_false = false
+        pending_true_after_append = false
       },
       .AAssign(target, .ALitBool(false)) => if target.id == flag {
         return false
@@ -2006,7 +2115,7 @@ fn block_id_append_order_ok(
       _ => {},
     }
   }
-  true
+  !pending_true_after_append
 }
 
 fn primitive_o3_flag(
@@ -2023,11 +2132,20 @@ fn primitive_o3_flag(
         .AInit(.ALitBool(false)) => inst.anf_local.id,
         _ => 0 - 1,
       }
-      if flag >= 0 and set_once_flag_ok(f, flag, region) {
+      if flag >= 0 and set_once_flag_ok(f, flag, shape, region, bmap) {
         guards := flag_guards(f, flag)
         sites := id_append_sites(f, id_param, ops)
         if sites.len() > 0 and guards.len() > 0 {
           ok := true
+          off_loop_sites := 0
+          for site in sites {
+            if !set_has_id(region, site.block) {
+              off_loop_sites = off_loop_sites + 1
+            }
+          }
+          if off_loop_sites > 1 {
+            ok = false
+          }
           checked_blocks: Dict<Int, Bool> = Dict.new()
           for site in sites {
             in_loop := set_has_id(region, site.block)
@@ -2046,6 +2164,9 @@ fn primitive_o3_flag(
               and flag_true_block_reaches_site(f, flag, site.block, region, bmap, shape.header) {
               ok = false
             }
+            if !in_loop and reaches_any_loopback(site.block, bmap) {
+              ok = false
+            }
             if !set_has_id(checked_blocks, site.block) {
               case bmap.get(site.block) {
                 .Some(site_blk) => if !block_id_append_order_ok(
@@ -2054,6 +2175,7 @@ fn primitive_o3_flag(
                   id_param,
                   ops,
                   entry_false,
+                  in_loop,
                 ) {
                   ok = false
                 },
@@ -2630,9 +2752,8 @@ pub fn thread_const_branches(view: CfgView) CfgView {
 
 // Whole-view dedupe-helper classification (design §5): a proof checker that certifies a
 // function only with concrete evidence for obligations O0–O4, returning a certificate per
-// certified func. Default-deny — the unsound structural recognizer shipped in d05096e6 was
-// removed (design §0/§4); the proof-backed certifiers land in later tasks. Until then this
-// certifies nothing, so no consumer can treat any key stream as unique.
+// certified func. Default-deny — any function that fails a primitive or combinator obligation
+// is absent from the returned map, so consumers only trust structurally proven key streams.
 pub fn classify_dedupe_helpers_unthreaded(
   view: CfgView,
   b: BuiltinRegistry,

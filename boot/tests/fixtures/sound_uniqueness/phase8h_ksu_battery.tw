@@ -99,6 +99,89 @@ fn bad(v: Vector<Int>, id: Int) Vector<Int> {
   out
 }
 
+// O3: an id append guarded by !inserted must set inserted before any loop backedge.
+fn guarded_repeat_no_set(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    if x == id {
+      return v
+    }
+    if !inserted {
+      out = .append(id)
+    }
+    out = .append(x)
+  }
+  out
+}
+
+// O3: same missing in-loop flag set, with a later possible write so the flag is
+// not folded away before CFG certification.
+fn guarded_repeat_no_set_live_flag(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    if x == id {
+      return v
+    }
+    if !inserted {
+      out = .append(id)
+    }
+    out = .append(x)
+  }
+  if v.len() < 0 {
+    inserted = true
+  }
+  out
+}
+
+// O3: an id append outside the primary induction region is only safe as a
+// terminal tail, not inside a second loop that can append id repeatedly.
+fn bad_second_loop(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    if x == id {
+      return v
+    }
+    if !inserted and id < x {
+      out = .append(id)
+      inserted = true
+    }
+    out = .append(x)
+  }
+  for y in v {
+    if !inserted {
+      out = .append(id)
+    }
+  }
+  out
+}
+
+// O3: two terminal tail id-appends guarded by the same flag would duplicate id
+// when the loop never inserts it.
+fn bad_double_tail(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    if x == id {
+      return v
+    }
+    if !inserted and id < x {
+      out = .append(id)
+      inserted = true
+    }
+    out = .append(x)
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  out
+}
+
 // O3 instruction-sensitivity: two id-appends in one !inserted block; the second
 // runs after the flag is set.
 fn two_id_one_block(v: Vector<Int>, id: Int) Vector<Int> {
@@ -191,6 +274,72 @@ fn second_in_loop_exit(v: Vector<Int>, id: Int) Vector<Int> {
 }
 
 // O1 false-edge domination: a continue before the equality guard skips the check.
+fn break_skips_eq(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    out = .append(x)
+    if x < 0 {
+      break
+    }
+    if x == id {
+      return v
+    }
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  out
+}
+
+// O1: same extra break, with the normal flag-setting insert guard preserved so
+// O3 cannot reject merely because the flag was optimized away.
+fn break_skips_eq_live_flag(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    out = .append(x)
+    if x < 0 {
+      break
+    }
+    if x == id {
+      return v
+    }
+    if !inserted and id < x {
+      out = .append(id)
+      inserted = true
+    }
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  out
+}
+
+// O1 edge-domination: a nested guard reaches the equality check on only one arm,
+// so the equality false-edge does not dominate the loop back-edge. Emits a real
+// duplicate (returns [5, 5] from [5] with id 5), so it must be rejected.
+fn evil_skip_eq(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    if x > 0 {} else {
+      if x == id {
+        return v
+      }
+    }
+    if !inserted and id < x {
+      out = .append(id)
+      inserted = true
+    }
+    out = .append(x)
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  out
+}
+
 fn continue_before_eq(v: Vector<Int>, id: Int) Vector<Int> {
   out: Vector<Int> = []
   inserted := false
@@ -272,6 +421,29 @@ fn join_side_effect(v: Vector<Int>, id: Int) Vector<Int> {
       out = .append(id)
     }
     out = .append(x)
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  out
+}
+
+// O0: an accumulator assignment source must use its reaching definition, not an
+// earlier approved append stored in the function-wide def map.
+fn stale_acc_source(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    if x == id {
+      return v
+    }
+    tmp := out.append(x)
+    tmp = [id, id]
+    out = tmp
+    if !inserted and id < x {
+      out = .append(id)
+      inserted = true
+    }
   }
   if !inserted {
     out = .append(id)
@@ -495,15 +667,23 @@ fn main() {
   n = n + int_keys_union([1], [2, 3]).len()
   n = n + merge_two([1], [2]).len()
   n = n + bad([1, 2], 9).len()
+  n = n + guarded_repeat_no_set([1, 2], 9).len()
+  n = n + guarded_repeat_no_set_live_flag([1, 2], 9).len()
+  n = n + bad_second_loop([1, 2], 9).len()
+  n = n + bad_double_tail([1, 2], 9).len()
   n = n + two_id_one_block([1, 2], 9).len()
   n = n + bad2([1, 2], 9).len()
   n = n + nested_loop_append([1, 2], 9).len()
   n = n + fixed_index_eq_guard([1, 2], 9).len()
   n = n + second_in_loop_exit([1, 2], 9).len()
+  n = n + break_skips_eq([1, 2], 9).len()
+  n = n + break_skips_eq_live_flag([1, 2], 9).len()
+  n = n + evil_skip_eq([1, 2], 9).len()
   n = n + continue_before_eq([1, 2], 9).len()
   n = n + unchanged_counter_backedge([1, 2], 9).len()
   n = n + wrong_bound([1, 2], 9, [1, 2]).len()
   n = n + join_side_effect([1, 2], 9).len()
+  n = n + stale_acc_source([1, 2], 9).len()
   n = n + rebound_vparam([1, 2], 9).len()
   n = n + rebound_proof_local([1, 2], 9).len()
   n = n + stale_notflag([1, 2], 9).len()
