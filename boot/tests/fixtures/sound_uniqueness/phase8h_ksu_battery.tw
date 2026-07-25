@@ -73,6 +73,16 @@ fn union_keys(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
   out
 }
 
+// The real self-hosted key-stream helper (design §2): same combinator shape,
+// kept under its production name so the fixture mirrors gate 2's boot-main check.
+fn int_keys_union(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
+  out := a
+  for k in b {
+    out = insert_sorted(out, k)
+  }
+  out
+}
+
 // ── Negatives ───────────────────────────────────────────────────────────
 // O3: id appended unconditionally every iteration (block merely sets the flag).
 fn bad(v: Vector<Int>, id: Int) Vector<Int> {
@@ -305,6 +315,82 @@ fn stale_notflag(v: Vector<Int>, id: Int) Vector<Int> {
   out
 }
 
+// §5.2: a len/index alias base (`w := v`) rebound mid-traversal, so it is no
+// longer a stable alias of the vector param — alias_root must refuse it.
+fn rebound_alias_base(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  w := v
+  i := 0
+  for i < w.len() {
+    if w[i] == id {
+      return v
+    }
+    if !inserted and id < w[i] {
+      out = .append(id)
+      inserted = true
+    }
+    out = .append(w[i])
+    i = i + 1
+    if i == 1 {
+      w = [id, id]
+    }
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  out
+}
+
+// §5.7 (cross-block): the !flag guard is computed in one block and branched on in
+// a later block, with a flag = true set in between — same-block freshness only,
+// so the refinement must NOT fire.
+fn cross_block_stale_notflag(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    if x == id {
+      return v
+    }
+    c := !inserted
+    if x > 100 {
+      inserted = true
+    }
+    if c {
+      out = .append(id)
+    }
+    out = .append(x)
+  }
+  out
+}
+
+// §5.0/§5.7: the id-append genuinely reconverges from the flag-true side with no
+// excluding constant (both diamond arms compute id < x), so threading does not
+// fire and the flag-true edge really reaches it — the O3 dataflow must reject.
+fn short_circuit_reconvergence_trap(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    if x == id {
+      return v
+    }
+    do_ins := if !inserted {
+      id < x
+    } else {
+      id < x
+    }
+    if do_ins {
+      out = .append(id)
+      inserted = true
+    }
+    out = .append(x)
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  out
+}
+
 // O4: passes the accumulator to a certified helper at the wrong arg position.
 fn wrong_arg_position(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
   out := a
@@ -384,6 +470,7 @@ fn main() {
   n = n + insert_sorted_str(["b", "a"], "c").len()
   n = n + union_via_insert([1], [1, 2]).len()
   n = n + union_keys([1], [2, 3]).len()
+  n = n + int_keys_union([1], [2, 3]).len()
   n = n + merge_two([1], [2]).len()
   n = n + bad([1, 2], 9).len()
   n = n + two_id_one_block([1, 2], 9).len()
@@ -397,6 +484,9 @@ fn main() {
   n = n + rebound_vparam([1, 2], 9).len()
   n = n + rebound_proof_local([1, 2], 9).len()
   n = n + stale_notflag([1, 2], 9).len()
+  n = n + rebound_alias_base([1, 2], 9).len()
+  n = n + cross_block_stale_notflag([1, 2], 9).len()
+  n = n + short_circuit_reconvergence_trap([1, 2], 9).len()
   n = n + wrong_arg_position([1], [2]).len()
   n = n + flag_reset_in_loop([1, 2], 9).len()
   n = n + param_rebind_combinator([1], [2]).len()

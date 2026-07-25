@@ -2051,7 +2051,50 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "key-stream uniqueness battery: positives certify, every adversarial negative is rejected",
+      "key-stream battery: every adversarial negative is rejected (default-deny safe)",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8h_ksu_battery.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        view := cfg.build_view(artifacts.opt, b)
+        dh := ownership.classify_dedupe_helpers(view, b, make_prelude_optimizer_semantics(b))
+
+        negatives: Vector<String> = [
+          "bad",
+          "two_id_one_block",
+          "bad2",
+          "nested_loop_append",
+          "fixed_index_eq_guard",
+          "second_in_loop_exit",
+          "continue_before_eq",
+          "unchanged_counter_backedge",
+          "join_side_effect",
+          "rebound_vparam",
+          "rebound_proof_local",
+          "stale_notflag",
+          "rebound_alias_base",
+          "cross_block_stale_notflag",
+          "short_circuit_reconvergence_trap",
+          "wrong_arg_position",
+          "flag_reset_in_loop",
+          "param_rebind_combinator",
+          "wrong_return",
+          "extra_acc_mutation",
+          "bare_append_union",
+          "passthrough",
+        ]
+        for name in negatives {
+          try assert_not_certified(dh, view, name)
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream battery: positives certify with the right kind",
       fn() {
         artifacts := case pipeline.compile_entry_path(
           "${sound_uniqueness_fixtures_dir()}/phase8h_ksu_battery.tw",
@@ -2067,34 +2110,9 @@ pub fn suite() runner.Suite {
         for name in primitives {
           try assert_cert_primitive(dh, view, name)
         }
-        combinators: Vector<String> = ["union_via_insert", "union_keys"]
+        combinators: Vector<String> = ["union_via_insert", "union_keys", "int_keys_union"]
         for name in combinators {
           try assert_cert_combinator(dh, view, name)
-        }
-
-        negatives: Vector<String> = [
-          "bad",
-          "two_id_one_block",
-          "bad2",
-          "nested_loop_append",
-          "fixed_index_eq_guard",
-          "second_in_loop_exit",
-          "continue_before_eq",
-          "unchanged_counter_backedge",
-          "join_side_effect",
-          "rebound_vparam",
-          "rebound_proof_local",
-          "stale_notflag",
-          "wrong_arg_position",
-          "flag_reset_in_loop",
-          "param_rebind_combinator",
-          "wrong_return",
-          "extra_acc_mutation",
-          "bare_append_union",
-          "passthrough",
-        ]
-        for name in negatives {
-          try assert_not_certified(dh, view, name)
         }
         .Ok({})
       },
