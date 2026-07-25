@@ -55,6 +55,50 @@ fn dict_bool(d: Dict<Int, Bool>, key: Int) Bool {
   }
 }
 
+// A certified primitive under `name`, or an error naming the miss.
+fn assert_cert_primitive(
+  dh: Dict<Int, ownership.DedupeCertificate>,
+  view: cfg.CfgView,
+  name: String,
+) Result<Void, String> {
+  id := try func_id_by_name(view, name)
+  case dh.get(id) {
+    .Some(c) => case c.kind {
+      .SortInsertPrimitive => .Ok({}),
+      .Combinator => .Err("${name}: expected SortInsertPrimitive, got Combinator"),
+    },
+    .None => .Err("${name}: expected certified as SortInsertPrimitive, not certified"),
+  }
+}
+
+// A certified combinator under `name`, or an error naming the miss.
+fn assert_cert_combinator(
+  dh: Dict<Int, ownership.DedupeCertificate>,
+  view: cfg.CfgView,
+  name: String,
+) Result<Void, String> {
+  id := try func_id_by_name(view, name)
+  case dh.get(id) {
+    .Some(c) => case c.kind {
+      .Combinator => .Ok({}),
+      .SortInsertPrimitive => .Err("${name}: expected Combinator, got SortInsertPrimitive"),
+    },
+    .None => .Err("${name}: expected certified as Combinator, not certified"),
+  }
+}
+
+// `name` must carry no certificate (rejected).
+fn assert_not_certified(dh: Dict<Int, ownership.DedupeCertificate>, view: cfg.CfgView, name: String) Result<
+  Void,
+  String,
+> {
+  id := try func_id_by_name(view, name)
+  case dh.get(id) {
+    .Some(_) => .Err("${name}: wrongly certified (should be rejected)"),
+    .None => .Ok({}),
+  }
+}
+
 fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
   .ACall(.AGlobalFunc(b.method_id("Dict", "new")), [])
 }
@@ -2019,15 +2063,13 @@ pub fn suite() runner.Suite {
         view := cfg.build_view(artifacts.opt, b)
         dh := ownership.classify_dedupe_helpers(view, b, make_prelude_optimizer_semantics(b))
 
-        positives: Vector<String> = [
-          "insert_sorted",
-          "insert_sorted_str",
-          "union_via_insert",
-          "union_keys",
-        ]
-        for name in positives {
-          id := try func_id_by_name(view, name)
-          try assert.is_true(dict_bool(dh, id))
+        primitives: Vector<String> = ["insert_sorted", "insert_sorted_str"]
+        for name in primitives {
+          try assert_cert_primitive(dh, view, name)
+        }
+        combinators: Vector<String> = ["union_via_insert", "union_keys"]
+        for name in combinators {
+          try assert_cert_combinator(dh, view, name)
         }
 
         negatives: Vector<String> = [
@@ -2052,8 +2094,7 @@ pub fn suite() runner.Suite {
           "passthrough",
         ]
         for name in negatives {
-          id := try func_id_by_name(view, name)
-          try assert.is_false(dict_bool(dh, id))
+          try assert_not_certified(dh, view, name)
         }
         .Ok({})
       },
