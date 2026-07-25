@@ -99,6 +99,95 @@ fn assert_not_certified(dh: Dict<Int, ownership.DedupeCertificate>, view: cfg.Cf
   }
 }
 
+fn cfg_func_id_by_name(view: cfg.CfgView, name: String) Result<cfg.CfgFunction, String> {
+  for f in view.functions {
+    if f.name == name {
+      return .Ok(f)
+    }
+  }
+  .Err("missing function ${name}")
+}
+
+fn cfg_block_by_id(f: cfg.CfgFunction, id: Int) Result<cfg.CfgBlock, String> {
+  for blk in f.blocks {
+    if blk.id.id == id {
+      return .Ok(blk)
+    }
+  }
+  .Err("${f.name}: missing block B${id}")
+}
+
+fn block_has_pred_from(blk: cfg.CfgBlock, pred_id: Int) Bool {
+  for edge in blk.preds {
+    if edge.target.id == pred_id {
+      return true
+    }
+  }
+  false
+}
+
+fn block_has_succ_to(blk: cfg.CfgBlock, target_id: Int) Bool {
+  for edge in blk.succs {
+    if edge.target.id == target_id {
+      return true
+    }
+  }
+  false
+}
+
+fn cfg_empty_block(id: Int, name: String, params: Vector<LocalId>) cfg.CfgBlock {
+  cfg.CfgBlock.{
+    id: cfg.BlockId.{ id },
+    name,
+    params,
+    bound: [],
+    payload_src: .None,
+    instructions: [],
+    terminator: .None,
+    preds: [],
+    succs: [],
+    entry: cfg.empty_block_facts(),
+    exit: cfg.empty_block_facts(),
+  }
+}
+
+fn synthetic_threading_side_effect_view() cfg.CfgView {
+  b0 := cfg_empty_block(0, "entry", [])
+  b0.terminator = .Some(.Branch(cfg.BlockId.{ id: 1 }, [.ALitBool(false)]))
+  b0.succs = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [.ALitBool(false)] }]
+
+  b1 := cfg_empty_block(1, "effectful.join", [lid(0)])
+  b1.instructions = [
+    cfg.CfgInstruction.{
+      anf_local: lid(10),
+      op: .AAssign(lid(10), .ALitBool(true)),
+      text: "assign L10 = true",
+    },
+  ]
+  b1.terminator = .Some(
+    .CondBranch(.ALocal(lid(0)), cfg.BlockId.{ id: 2 }, [], cfg.BlockId.{ id: 3 }, []),
+  )
+  b1.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 0 }, args: [.ALitBool(false)] }]
+  b1.succs = [
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 2 }, args: [] },
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 3 }, args: [] },
+  ]
+
+  b2 := cfg_empty_block(2, "then", [])
+  b2.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [] }]
+  b2.terminator = .Some(.Return(.None))
+
+  b3 := cfg_empty_block(3, "else", [])
+  b3.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [] }]
+  b3.terminator = .Some(.Return(.None))
+
+  cfg.CfgView.{
+    functions: [
+      cfg.CfgFunction.{ func_id: 9000, name: "effectful", params: [], blocks: [b0, b1, b2, b3] },
+    ],
+  }
+}
+
 fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
   .ACall(.AGlobalFunc(b.method_id("Dict", "new")), [])
 }
@@ -2047,6 +2136,77 @@ pub fn suite() runner.Suite {
         try assert.equal(dict_bool(closure, helper_a_id), true)
         try assert.equal(dict_bool(closure, helper_b_id), true)
         try assert.equal(dict_bool(closure, unrelated_id), false)
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream CFG threading rethreads constant false join edge only",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8h_ksu_battery.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        raw_view := cfg.build_view(artifacts.opt, b)
+        threaded_view := ownership.thread_const_branches(raw_view)
+
+        raw_f := try cfg_func_id_by_name(raw_view, "insert_sorted")
+        raw_b10 := try cfg_block_by_id(raw_f, 10)
+        raw_b11 := try cfg_block_by_id(raw_f, 11)
+        raw_b13 := try cfg_block_by_id(raw_f, 13)
+        try assert.equal(block_has_succ_to(raw_b10, 11), true)
+        try assert.equal(block_has_pred_from(raw_b11, 10), true)
+        try assert.equal(block_has_pred_from(raw_b13, 10), false)
+
+        threaded_f := try cfg_func_id_by_name(threaded_view, "insert_sorted")
+        threaded_b9 := try cfg_block_by_id(threaded_f, 9)
+        threaded_b10 := try cfg_block_by_id(threaded_f, 10)
+        threaded_b11 := try cfg_block_by_id(threaded_f, 11)
+        threaded_b13 := try cfg_block_by_id(threaded_f, 13)
+        try assert.equal(block_has_succ_to(threaded_b10, 11), false)
+        try assert.equal(block_has_succ_to(threaded_b10, 13), true)
+        try assert.equal(block_has_pred_from(threaded_b11, 10), false)
+        try assert.equal(block_has_pred_from(threaded_b13, 10), true)
+        try assert.equal(block_has_succ_to(threaded_b9, 11), true)
+        try assert.equal(block_has_pred_from(threaded_b11, 9), true)
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream CFG threading does not skip effectful branch blocks",
+      fn() {
+        raw_view := synthetic_threading_side_effect_view()
+        threaded_view := ownership.thread_const_branches(raw_view)
+        f := try cfg_func_id_by_name(threaded_view, "effectful")
+        b0 := try cfg_block_by_id(f, 0)
+        b1 := try cfg_block_by_id(f, 1)
+        b3 := try cfg_block_by_id(f, 3)
+        try assert.equal(block_has_succ_to(b0, 1), true)
+        try assert.equal(block_has_succ_to(b0, 3), false)
+        try assert.equal(block_has_pred_from(b1, 0), true)
+        try assert.equal(block_has_pred_from(b3, 0), false)
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream classifier exposes an unthreaded mode",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8h_ksu_battery.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        view := cfg.build_view(artifacts.opt, b)
+        dh := ownership.classify_dedupe_helpers_unthreaded(
+          view,
+          b,
+          make_prelude_optimizer_semantics(b),
+        )
+        try assert_not_certified(dh, view, "insert_sorted")
         .Ok({})
       },
     )

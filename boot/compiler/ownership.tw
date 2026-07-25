@@ -10,7 +10,9 @@ use @std.proc
 
 use compiler.anf.{AnfOp, Atom}
 use compiler.builtins.{BuiltinRegistry}
-use compiler.cfg.{CfgBlock, CfgEdge, CfgFunction, CfgView, Terminator, empty_block_facts}
+use compiler.cfg.{
+  BlockId, CfgBlock, CfgEdge, CfgFunction, CfgInstruction, CfgView, Terminator, empty_block_facts,
+}
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.field_facts as ff
 use compiler.mono_type.{MonoType}
@@ -805,17 +807,294 @@ fn call_args_of(op: AnfOp) Vector<Atom> {
   }
 }
 
+type ConstThreadEdge = .{ pred: Int, join: Int, target: BlockId }
+
+fn atom_bool_value(a: Atom) Bool? {
+  case a {
+    .ALitBool(v) => .Some(v),
+    _ => .None,
+  }
+}
+
+fn param_index_by_local(params: Vector<LocalId>, id: Int) Int? {
+  for p, i in params {
+    if p.id == id {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+fn block_reaching_alias_source(blk: CfgBlock, id: Int) Atom? {
+  // Walk backward so non-SSA locals use the definition reaching the terminator. A self-init
+  // (`Lx = init Lx`) is a no-op alias emitted by lowering; skip it and keep looking for the
+  // previous reaching definition.
+  i := blk.instructions.len()
+  for i > 0 {
+    i = i - 1
+    inst := blk.instructions[i]
+    if inst.anf_local.id == id {
+      case inst.op {
+        .AInit(.ALocal(src)) => if src.id != id {
+          return .Some(.ALocal(src))
+        },
+        _ => return .None,
+      }
+    }
+  }
+  .None
+}
+
+fn cond_param_index_through_aliases(blk: CfgBlock, cond_atom: Atom) Int? {
+  case atom_local_id(cond_atom) {
+    .Some(start) => {
+      cur := start
+      seen: Vector<Int> = []
+      for _ in range(32) {
+        if live_contains_int(seen, cur) {
+          return .None
+        }
+        seen = insert_sorted(seen, cur)
+        case param_index_by_local(blk.params, cur) {
+          .Some(i) => return .Some(i),
+          .None => case block_reaching_alias_source(blk, cur) {
+            .Some(.ALocal(next)) => cur = next.id,
+            _ => return .None,
+          },
+        }
+      }
+      .None
+    },
+    .None => .None,
+  }
+}
+
+fn instruction_is_trivial_alias(inst: CfgInstruction) Bool {
+  case inst.op {
+    .AInit(.ALocal(_)) => true,
+    _ => false,
+  }
+}
+
+fn block_has_only_trivial_aliases(blk: CfgBlock) Bool {
+  for inst in blk.instructions {
+    if !instruction_is_trivial_alias(inst) {
+      return false
+    }
+  }
+  true
+}
+
+fn const_thread_target_for_block(blk: CfgBlock, c: Bool) BlockId? {
+  case blk.terminator {
+    .Some(.CondBranch(cond_atom, true_target, true_args, false_target, false_args)) => {
+      if true_args.len() != 0 or false_args.len() != 0 {
+        return .None
+      }
+      if !block_has_only_trivial_aliases(blk) {
+        return .None
+      }
+      case cond_param_index_through_aliases(blk, cond_atom) {
+        .Some(_) => if c {
+          .Some(true_target)
+        } else {
+          .Some(false_target)
+        },
+        .None => .None,
+      }
+    },
+    _ => .None,
+  }
+}
+
+fn const_thread_param_index(blk: CfgBlock) Int? {
+  case blk.terminator {
+    .Some(.CondBranch(cond_atom, _, true_args, _, false_args)) => {
+      if true_args.len() != 0 or false_args.len() != 0 {
+        return .None
+      }
+      if !block_has_only_trivial_aliases(blk) {
+        return .None
+      }
+      cond_param_index_through_aliases(blk, cond_atom)
+    },
+    _ => .None,
+  }
+}
+
+fn succ_edge_count_to(blk: CfgBlock, target: Int) Int {
+  n := 0
+  for edge in blk.succs {
+    if edge.target.id == target {
+      n = n + 1
+    }
+  }
+  n
+}
+
+fn const_thread_edges_for_func(f: CfgFunction) Vector<ConstThreadEdge> {
+  bmap := build_block_map(f.blocks)
+  out: Vector<ConstThreadEdge> = []
+  for blk in f.blocks {
+    case const_thread_param_index(blk) {
+      .Some(param_index) => {
+        for pe in blk.preds {
+          if pe.args.len() > param_index {
+            case atom_bool_value(pe.args[param_index]) {
+              .Some(c) => case const_thread_target_for_block(blk, c) {
+                .Some(target) => case bmap.get(pe.target.id) {
+                  .Some(pred_blk) => if succ_edge_count_to(pred_blk, blk.id.id) == 1 {
+                    out = .append(ConstThreadEdge.{ pred: pe.target.id, join: blk.id.id, target })
+                  },
+                  .None => {},
+                },
+                .None => {},
+              },
+              .None => {},
+            }
+          }
+        }
+      },
+      .None => {},
+    }
+  }
+  out
+}
+
+fn rewrite_edge_target(edge: CfgEdge, old_target: Int, new_target: BlockId, new_args: Vector<Atom>) CfgEdge {
+  if edge.target.id == old_target {
+    CfgEdge.{ target: new_target, args: new_args }
+  } else {
+    edge
+  }
+}
+
+fn rewrite_terminator_target(
+  term: Terminator,
+  old_target: Int,
+  new_target: BlockId,
+  new_args: Vector<Atom>,
+) Terminator {
+  case term {
+    .Branch(target, args) => if target.id == old_target {
+      .Branch(new_target, new_args)
+    } else {
+      .Branch(target, args)
+    },
+    .CondBranch(test, true_target, true_args, false_target, false_args) => {
+      nt := true_target
+      nta := true_args
+      nf := false_target
+      nfa := false_args
+      if true_target.id == old_target {
+        nt = new_target
+        nta = new_args
+      }
+      if false_target.id == old_target {
+        nf = new_target
+        nfa = new_args
+      }
+      .CondBranch(test, nt, nta, nf, nfa)
+    },
+    .Match(scrut, edges) => .Match(
+      scrut,
+      collect edge in edges {
+        rewrite_edge_target(edge, old_target, new_target, new_args)
+      },
+    ),
+    .LoopBackEdge(target, args) => if target.id == old_target {
+      .LoopBackEdge(new_target, new_args)
+    } else {
+      .LoopBackEdge(target, args)
+    },
+    _ => term,
+  }
+}
+
+fn remove_pred_from_block(blk: CfgBlock, pred: Int) CfgBlock {
+  kept: Vector<CfgEdge> = []
+  for edge in blk.preds {
+    if edge.target.id != pred {
+      kept = .append(edge)
+    }
+  }
+  blk.preds = kept
+  blk
+}
+
+fn add_pred_to_block(blk: CfgBlock, pred: Int, args: Vector<Atom>) CfgBlock {
+  for edge in blk.preds {
+    if edge.target.id == pred {
+      return blk
+    }
+  }
+  blk.preds = .append(CfgEdge.{ target: BlockId.{ id: pred }, args })
+  blk
+}
+
+fn rewrite_pred_succ(blk: CfgBlock, old_target: Int, new_target: BlockId, new_args: Vector<Atom>) CfgBlock {
+  blk.succs = collect edge in blk.succs {
+    rewrite_edge_target(edge, old_target, new_target, new_args)
+  }
+  case blk.terminator {
+    .Some(term) => blk.terminator = .Some(
+      rewrite_terminator_target(term, old_target, new_target, new_args),
+    ),
+    .None => {},
+  }
+  blk
+}
+
+fn apply_const_thread_edge(f: CfgFunction, change: ConstThreadEdge) CfgFunction {
+  f.blocks = collect blk in f.blocks {
+    cond {
+      blk.id.id == change.pred => rewrite_pred_succ(blk, change.join, change.target, []),
+      blk.id.id == change.join => remove_pred_from_block(blk, change.pred),
+      blk.id.id == change.target.id => add_pred_to_block(blk, change.pred, []),
+      _ => blk,
+    }
+  }
+  f
+}
+
+fn thread_const_branches_in_func(f: CfgFunction) CfgFunction {
+  changes := const_thread_edges_for_func(f)
+  for change in changes {
+    f = apply_const_thread_edge(f, change)
+  }
+  f
+}
+
+// Analysis-only CFG-view jump-threading for the short-circuit boolean join described in
+// design §5.0. It rethreads a predecessor that supplies a literal Bool to a side-effect-free
+// branch block whose condition is that block parameter (through trivial aliases). ANF and
+// codegen remain untouched; only the view consumed by the dedupe classifier is simplified.
+pub fn thread_const_branches(view: CfgView) CfgView {
+  view.functions = collect f in view.functions {
+    thread_const_branches_in_func(f)
+  }
+  view
+}
+
 // Whole-view dedupe-helper classification (design §5): a proof checker that certifies a
 // function only with concrete evidence for obligations O0–O4, returning a certificate per
 // certified func. Default-deny — the unsound structural recognizer shipped in d05096e6 was
 // removed (design §0/§4); the proof-backed certifiers land in later tasks. Until then this
 // certifies nothing, so no consumer can treat any key stream as unique.
+pub fn classify_dedupe_helpers_unthreaded(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) Dict<Int, DedupeCertificate> {
+  certs: Dict<Int, DedupeCertificate> = Dict.new()
+  certs
+}
+
 pub fn classify_dedupe_helpers(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) Dict<
   Int,
   DedupeCertificate,
 > {
-  certs: Dict<Int, DedupeCertificate> = Dict.new()
-  certs
+  classify_dedupe_helpers_unthreaded(thread_const_branches(view), b, sem)
 }
 
 pub fn with_dedupe_helpers(
