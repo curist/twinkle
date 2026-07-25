@@ -774,6 +774,19 @@ fn empty_copy_carrier_facts() CopyCarrierFacts {
   }
 }
 
+// The union publication-suppression map (alias-move carriers + suppressed reads), keyed by
+// instruction result local, threaded through the forward fixpoint alongside the SCC suppress.
+fn cc_suppress_set(cc: CopyCarrierFacts) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+  for k in cc.suppress_alias.keys() {
+    out[k] = true
+  }
+  for k in cc.suppress_read.keys() {
+    out[k] = true
+  }
+  out
+}
+
 // An instruction paired with its whole-function program index (block-list order), so
 // loan/write ordering compares stable positions. A terminator index is reserved between
 // blocks so cross-block order stays well defined.
@@ -3590,9 +3603,28 @@ fn publish_atom(st: ForwardState, a: Atom) ForwardState {
 }
 
 // AInit / wrap / unwrap move-vs-alias hinge.
-fn init_hinge(st: ForwardState, result: Int, a: Atom, last: Vector<Int>) ForwardState {
+fn init_hinge(
+  st: ForwardState,
+  result: Int,
+  a: Atom,
+  last: Vector<Int>,
+  cc_suppress: Dict<Int, Bool>,
+) ForwardState {
   case atom_local_id(a) {
-    .Some(src) => if local_valid_at_last(st.valid, src, last) {
+    .Some(src) => if in_set(cc_suppress, result) {
+      // Copy-carrier borrow-move: the carrier inherits the source's ownership without
+      // publishing or invalidating the source, so a seeded-Unique source flows into the
+      // carrier and the normal shell_reusable path fires. Proven safe by analyze_copy_carriers.
+      o := fact_of(st.own, a)
+      fields := st.field_own_get(src)
+      pp := st.path_prov_get(src)
+      st = .set_own_st(result, o)
+      if o.own_tag() == 0 {
+        st.set_field_own(result, fields).set_path_prov(result, pp)
+      } else {
+        st
+      }
+    } else if local_valid_at_last(st.valid, src, last) {
       // move: result takes source ownership; source binding invalid
       o := fact_of(st.own, a)
       fields := st.field_own_get(src)
@@ -3779,6 +3811,7 @@ fn transfer_call(
   table: SummaryTable,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc_suppress: Dict<Int, Bool>,
 ) ForwardState {
   // Two-level lookup: builtins resolve via CallSemantics; a direct user callee
   // WITHOUT builtin semantics consults its interprocedural summary; everything
@@ -3789,15 +3822,20 @@ fn transfer_call(
       .Some(cs) => st.transfer_builtin_call(result, fid, cs, args, last, sem),
       .None => case table.summary_get(fid.id) {
         .Some(s) => st.transfer_summarized_call(result, s, args, last, suppress, fid.id),
-        .None => st.publish_call(result, args),
+        .None => st.publish_call(result, args, cc_suppress),
       },
     },
-    .None => st.publish_call(result, args), // indirect/closure callee
+    .None => st.publish_call(result, args, cc_suppress), // indirect/closure callee
   }
 }
 
-// Conservative bucket: publish every ref arg, result Unknown.
-fn publish_call(st: ForwardState, result: Int, args: Vector<Atom>) ForwardState {
+// Conservative bucket: publish every ref arg, result Unknown. A copy-carrier read
+// (result in cc_suppress, e.g. a proven `dict$keys(source)`) does not publish its
+// source, so the source stays Unique for the in-place carrier write.
+fn publish_call(st: ForwardState, result: Int, args: Vector<Atom>, cc_suppress: Dict<Int, Bool>) ForwardState {
+  if in_set(cc_suppress, result) {
+    return st.set_own_st(result, .Unknown)
+  }
   for a in args {
     st = .publish_atom(a)
   }
@@ -4276,9 +4314,19 @@ fn transfer_op(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc_suppress: Dict<Int, Bool>,
 ) ForwardState {
   case op {
-    .ACall(callee, args) => st.transfer_call(result, callee, args, last, table, sem, suppress),
+    .ACall(callee, args) => st.transfer_call(
+      result,
+      callee,
+      args,
+      last,
+      table,
+      sem,
+      suppress,
+      cc_suppress,
+    ),
     .ARecord(_, fields) => {
       operands: Vector<Atom> = collect fa in fields {
         fa.value
@@ -4486,7 +4534,7 @@ fn transfer_op(
       st
     },
     .AInit(a) => {
-      st = .init_hinge(result, a, last)
+      st = .init_hinge(result, a, last, cc_suppress)
       st.set_prov_st(result, prov_of(st.prov, a))
     },
     .AAssign(local, a) => {
@@ -4520,11 +4568,11 @@ fn transfer_op(
     },
     .AWrapAnyref(a, _) => {
       // representationally transparent
-      st = .init_hinge(result, a, last)
+      st = .init_hinge(result, a, last, cc_suppress)
       st.set_prov_st(result, prov_of(st.prov, a))
     },
     .AUnwrapAnyref(a, _) => {
-      st = .init_hinge(result, a, last)
+      st = .init_hinge(result, a, last, cc_suppress)
       st.set_prov_st(result, prov_of(st.prov, a))
     },
     .ABinOp(_, _, _, _) => st.set_result(result, .Unknown), // scalar, neutral
@@ -4724,6 +4772,7 @@ fn block_verdicts(
 ) BlockVerdicts {
   scan := prep.scan
   moves := prep.moves
+  cc_suppress := cc.cc_suppress_set()
   verdicts: Dict<Int, String> = Dict.new()
   reusable_shell: Dict<Int, Bool> = Dict.new()
   moved_backing: Dict<Int, Vector<Int>> = Dict.new()
@@ -4811,6 +4860,7 @@ fn block_verdicts(
       b,
       sem,
       suppress,
+      cc_suppress,
     )
     case inst.op {
       .ARecordUpdate(base, f, _, _, _) => {
@@ -4848,6 +4898,7 @@ fn forward_block_body(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc_suppress: Dict<Int, Bool>,
 ) ForwardState {
   st := entry
   for inst, i in blk.instructions {
@@ -4862,6 +4913,7 @@ fn forward_block_body(
       b,
       sem,
       suppress,
+      cc_suppress,
     )
   }
   st
@@ -4877,8 +4929,9 @@ fn forward_block(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc_suppress: Dict<Int, Bool>,
 ) ForwardState {
-  st := forward_block_body(blk, entry, prep, table, b, sem, suppress)
+  st := forward_block_body(blk, entry, prep, table, b, sem, suppress, cc_suppress)
   case blk.terminator {
     // Return hands the value to the CALLER; it is not a callee leak. The caller's
     // ret / ret_paths handling accounts for it. Return blocks are CFG leaves, so
@@ -5840,6 +5893,7 @@ fn run_fixpoint(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc_suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
   seeds: LoopSeedSet,
   label: String,
@@ -6004,7 +6058,7 @@ fn run_fixpoint(
         } else {
           st
         }
-        st = forward_block(blk, st, prep_get(preps, blk, sem), table, b, sem, suppress)
+        st = forward_block(blk, st, prep_get(preps, blk, sem), table, b, sem, suppress, cc_suppress)
         already := is_processed(processed, blk.id.id)
         old_own := nested_get(exits, blk.id.id)
         old_valid := nested_get(exit_valid, blk.id.id)
@@ -6165,6 +6219,7 @@ fn stabilize_seeds(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc_suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
   label: String,
   allow_incremental: Bool,
@@ -6177,6 +6232,7 @@ fn stabilize_seeds(
     b,
     sem,
     suppress,
+    cc_suppress,
     unique_seed,
     seeds,
     label,
@@ -6212,6 +6268,7 @@ fn stabilize_seeds(
         b,
         sem,
         suppress,
+        cc_suppress,
         unique_seed,
         seeds,
         label,
@@ -6232,6 +6289,7 @@ fn run_fixpoint_validated(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc_suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
   label: String,
 ) FixResult {
@@ -6254,14 +6312,36 @@ fn run_fixpoint_validated(
   // the emitted program is byte-identical. Under TWINKLE_SEEDVERIFY, stabilize
   // both all-cold and incremental and trap on any per-function divergence.
   sr := if seedverify_enabled() {
-    cold := stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, false)
-    incr := stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, true)
+    cold := stabilize_seeds(
+      blocks,
+      params,
+      table,
+      b,
+      sem,
+      suppress,
+      cc_suppress,
+      unique_seed,
+      label,
+      false,
+    )
+    incr := stabilize_seeds(
+      blocks,
+      params,
+      table,
+      b,
+      sem,
+      suppress,
+      cc_suppress,
+      unique_seed,
+      label,
+      true,
+    )
     if !same_loop_seed_set(cold.seeds, incr.seeds) {
       error("seedverify mismatch: ${label}")
     }
     incr
   } else {
-    stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, true)
+    stabilize_seeds(blocks, params, table, b, sem, suppress, cc_suppress, unique_seed, label, true)
   }
   seeds := sr.seeds
   reruns := sr.reruns
@@ -6273,6 +6353,7 @@ fn run_fixpoint_validated(
     b,
     sem,
     suppress,
+    cc_suppress,
     unique_seed,
     seeds,
     label,
@@ -6485,6 +6566,7 @@ pub fn call_uniques(
     b,
     sem,
     suppress,
+    Dict.new(), // call_uniques must see unsuppressed ownership facts (Task-6 seed guard)
     unique_seed,
     "call_uniques:${f.name}",
   )
@@ -6558,6 +6640,7 @@ pub fn call_uniques(
         b,
         sem,
         suppress,
+        Dict.new(),
       )
     }
   }
@@ -6765,7 +6848,12 @@ fn ownership_stage(
 ) Vector<CfgBlock> {
   no_suppress: Dict<Int, Bool> = Dict.new()
   cc := analyze_copy_carriers(blocks, params, table, b, sem)
+  cc_suppress := cc.cc_suppress_set()
 
+  // The copy-carrier source param is seeded Unique through the caller-guarded
+  // uniform_entry_seeds path (see structural_seed_params_for_borrow_effects), not here — so a
+  // helper with a non-uniform caller stays persistent. The borrow-move + publish suppression
+  // (cc_suppress) below are caller-agnostic and only take effect once the source is seeded.
   // Reuse the summary-pass FixResult only when unique_seed is empty (materialization
   // still reads unique_seed). Under TWINKLE_FIXVERIFY, recompute and compare.
   reuse: FixResult? = case cached_fx {
@@ -6786,6 +6874,7 @@ fn ownership_stage(
           b,
           sem,
           no_suppress,
+          cc_suppress,
           unique_seed,
           label,
         )
@@ -6795,7 +6884,17 @@ fn ownership_stage(
       }
       cf
     },
-    .None => run_fixpoint_validated(blocks, params, table, b, sem, no_suppress, unique_seed, label),
+    .None => run_fixpoint_validated(
+      blocks,
+      params,
+      table,
+      b,
+      sem,
+      no_suppress,
+      cc_suppress,
+      unique_seed,
+      label,
+    ),
   }
   done := all_processed(blocks)
   collect blk in blocks {
@@ -6833,7 +6932,7 @@ fn ownership_stage(
     }
     prep := block_prep(blk, sem)
     verdicts := block_verdicts(blk, st, prep, table, b, sem, no_suppress, cc)
-    st = forward_block(blk, st, prep, table, b, sem, no_suppress)
+    st = forward_block(blk, st, prep, table, b, sem, no_suppress, cc_suppress)
     blk.entry.ownership = entry_own
     blk.exit.ownership = st.own
     blk.entry.binding_valid = entry_valid
@@ -7621,6 +7720,7 @@ fn summarize_seeded(
     b,
     sem,
     suppress,
+    Dict.new(), // summary derivation path: copy-carrier suppression is Task 6's concern
     unique_seed,
     "summary:${f.name}",
   )
@@ -7687,7 +7787,16 @@ fn summarize_seeded(
         } else {
           st
         }
-        body := forward_block_body(blk, st, block_prep(blk, sem), table, b, sem, suppress)
+        body := forward_block_body(
+          blk,
+          st,
+          block_prep(blk, sem),
+          table,
+          b,
+          sem,
+          suppress,
+          Dict.new(),
+        )
 
         // ret reflects SHELL ownership only: a fresh wrapper .{ctx:p0} has empty
         // shell prov -> OwnedFresh; only a directly-returned param (return x, shell
