@@ -2166,6 +2166,210 @@ fn call_args_of(op: AnfOp) Vector<Atom> {
   }
 }
 
+type CombinatorLineage = .{ locals: Dict<Int, Bool>, extended: Bool }
+
+fn function_map(fs: Vector<CfgFunction>) Dict<Int, CfgFunction> {
+  out: Dict<Int, CfgFunction> = Dict.new()
+  for f in fs {
+    out[f.func_id] = f
+  }
+  out
+}
+
+fn function_param_pos(f: CfgFunction, local: Int) Int? {
+  for p, i in f.params {
+    if p.id == local {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+fn is_function_param(f: CfgFunction, local: Int) Bool {
+  case function_param_pos(f, local) {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+fn atom_in_lineage(a: Atom, lineage: Dict<Int, Bool>) Bool {
+  case atom_local_id(a) {
+    .Some(id) => set_has_id(lineage, id),
+    .None => false,
+  }
+}
+
+fn certified_call_uses_lineage_acc(
+  callee_id: Int,
+  args: Vector<Atom>,
+  known: Dict<Int, DedupeCertificate>,
+  funcs: Dict<Int, CfgFunction>,
+  lineage: Dict<Int, Bool>,
+) Bool {
+  cert := case known.get(callee_id) {
+    .Some(v) => v,
+    .None => return false,
+  }
+  callee := case funcs.get(callee_id) {
+    .Some(v) => v,
+    .None => return false,
+  }
+  pos := case function_param_pos(callee, cert.vector_param) {
+    .Some(v) => v,
+    .None => return false,
+  }
+  if pos < 0 or pos >= args.len() {
+    return false
+  }
+  atom_in_lineage(args[pos], lineage)
+}
+
+fn grow_combinator_lineage(
+  f: CfgFunction,
+  seed: Int,
+  known: Dict<Int, DedupeCertificate>,
+  funcs: Dict<Int, CfgFunction>,
+) CombinatorLineage {
+  lineage: Dict<Int, Bool> = Dict.new()
+  lineage[seed] = true
+  extended := false
+  changed := true
+  passes := 0
+  for changed and passes < f.blocks.len() + 4 {
+    changed = false
+    passes = passes + 1
+    for blk in f.blocks {
+      for inst in blk.instructions {
+        case inst.op {
+          .AInit(.ALocal(src)) => if set_has_id(lineage, src.id)
+            and !set_has_id(lineage, inst.anf_local.id) {
+            lineage[inst.anf_local.id] = true
+            changed = true
+          },
+          .AAssign(target, .ALocal(src)) => if set_has_id(lineage, src.id)
+            and !set_has_id(lineage, target.id) {
+            lineage[target.id] = true
+            changed = true
+          },
+          .ACall(callee, args) => case callee {
+            .AGlobalFunc(fid) => if certified_call_uses_lineage_acc(
+              fid.id,
+              args,
+              known,
+              funcs,
+              lineage,
+            ) {
+              extended = true
+              if !set_has_id(lineage, inst.anf_local.id) {
+                lineage[inst.anf_local.id] = true
+                changed = true
+              }
+            },
+            _ => {},
+          },
+          _ => {},
+        }
+      }
+    }
+  }
+  CombinatorLineage.{ locals: lineage, extended }
+}
+
+fn combinator_returns_lineage(f: CfgFunction, lineage: Dict<Int, Bool>) Bool {
+  for blk in f.blocks {
+    case blk.terminator {
+      .Some(.Return(.Some(a))) => if !atom_in_lineage(a, lineage) {
+        return false
+      },
+      .Some(.Return(.None)) => return false,
+      _ => {},
+    }
+  }
+  true
+}
+
+fn combinator_lineage_writes_ok(
+  f: CfgFunction,
+  known: Dict<Int, DedupeCertificate>,
+  funcs: Dict<Int, CfgFunction>,
+  lineage: Dict<Int, Bool>,
+) Bool {
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      if is_function_param(f, inst.anf_local.id) {
+        return false
+      }
+      case inst.op {
+        .AInit(.ALocal(src)) => if set_has_id(lineage, inst.anf_local.id)
+          and !set_has_id(lineage, src.id) {
+          return false
+        },
+        .AInit(_) => if set_has_id(lineage, inst.anf_local.id) {
+          return false
+        },
+        .AAssign(target, .ALocal(src)) => {
+          if is_function_param(f, target.id) {
+            return false
+          }
+          if set_has_id(lineage, target.id) and !set_has_id(lineage, src.id) {
+            return false
+          }
+        },
+        .AAssign(target, _) => {
+          if is_function_param(f, target.id) {
+            return false
+          }
+          if set_has_id(lineage, target.id) {
+            return false
+          }
+        },
+        .ACall(callee, args) => if set_has_id(lineage, inst.anf_local.id) {
+          case callee {
+            .AGlobalFunc(fid) => if !certified_call_uses_lineage_acc(
+              fid.id,
+              args,
+              known,
+              funcs,
+              lineage,
+            ) {
+              return false
+            },
+            _ => return false,
+          }
+        },
+        _ => if set_has_id(lineage, inst.anf_local.id) {
+          return false
+        },
+      }
+    }
+  }
+  true
+}
+
+fn certify_combinator(
+  f: CfgFunction,
+  known: Dict<Int, DedupeCertificate>,
+  funcs: Dict<Int, CfgFunction>,
+) DedupeCertificate? {
+  for p in f.params {
+    lin := grow_combinator_lineage(f, p.id, known, funcs)
+    if lin.extended
+      and combinator_returns_lineage(f, lin.locals)
+      and combinator_lineage_writes_ok(f, known, funcs, lin.locals) {
+      return .Some(
+        DedupeCertificate.{
+          kind: .Combinator,
+          vector_param: p.id,
+          induction_local: 0 - 1,
+          element_local: 0 - 1,
+          flag_local: 0 - 1,
+        },
+      )
+    }
+  }
+  .None
+}
+
 type ConstThreadEdge = .{ pred: Int, join: Int, target: BlockId }
 
 type ConstThreadCond = .{ param_index: Int, alias_defs: Vector<Int> }
@@ -2435,11 +2639,30 @@ pub fn classify_dedupe_helpers_unthreaded(
   sem: OptimizerSemantics,
 ) Dict<Int, DedupeCertificate> {
   certs: Dict<Int, DedupeCertificate> = Dict.new()
+  funcs := function_map(view.functions)
   for f in view.functions {
     if f.params.len() > 0 {
       case certify_sort_insert_primitive(f, f.params[0].id, b) {
         .Some(cert) => certs[f.func_id] = cert,
         .None => {},
+      }
+    }
+  }
+  changed := true
+  passes := 0
+  for changed and passes < view.functions.len() + 1 {
+    changed = false
+    passes = passes + 1
+    for f in view.functions {
+      case certs.get(f.func_id) {
+        .Some(_) => {},
+        .None => case certify_combinator(f, certs, funcs) {
+          .Some(cert) => {
+            certs[f.func_id] = cert
+            changed = true
+          },
+          .None => {},
+        },
       }
     }
   }
