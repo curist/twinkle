@@ -163,7 +163,7 @@ Separate from the in-place work: when `reruns == 0`, `stabilize_seeds` already c
 ## Update (copy-carrier borrow/effect engine landed) — boundary confirmed
 
 The copy-carrier borrow/effect engine (Tasks 4–6 of
-[2026-07-24-copy-carrier-engine-impl-plan.md](2026-07-24-copy-carrier-engine-impl-plan.md))
+[archive/2026-07-24-copy-carrier-engine-impl-plan.md](archive/2026-07-24-copy-carrier-engine-impl-plan.md))
 is implemented and self-host-stable. It solves the **param-sourced copy-carrier shape**
 (`out := source_dict; out[k] = …` where every source read is a bounded loan ending before /
 at a distinct key from each write, over a certified unique key stream): such carriers now

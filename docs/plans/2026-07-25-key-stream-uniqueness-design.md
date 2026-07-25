@@ -12,9 +12,9 @@ from §5. §1–§2 give context without prior knowledge of the borrow/effect wo
 the precise problem and why it is hard; §5 is the design; §6–§7 the failure mode and gates.
 
 **Related:**
-[2026-07-24-copy-carrier-engine-impl-plan.md](2026-07-24-copy-carrier-engine-impl-plan.md)
+[archive/2026-07-24-copy-carrier-engine-impl-plan.md](archive/2026-07-24-copy-carrier-engine-impl-plan.md)
 (the engine plan whose Task 3 this design replaces),
-[2026-07-24-ownership-borrow-effect-checker-plan.md](2026-07-24-ownership-borrow-effect-checker-plan.md)
+[archive/2026-07-24-ownership-borrow-effect-checker-plan.md](archive/2026-07-24-ownership-borrow-effect-checker-plan.md)
 (parent framework plan).
 
 ---

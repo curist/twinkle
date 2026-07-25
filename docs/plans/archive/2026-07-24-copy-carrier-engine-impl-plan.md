@@ -11,7 +11,7 @@
 > remaining aspiration — `run_fixpoint`'s loop-carried maps (and the `merge_targeted__` call
 > inside it) — is **out of scope for the copy-carrier shape** and stays as the tracked marker
 > `boot ownership fixpoint maps should produce in-place dict decisions`; see the boundary
-> writeup in [fixpoint-map-inplace.md](fixpoint-map-inplace.md). Task 3 was superseded by the
+> writeup in [fixpoint-map-inplace.md](../fixpoint-map-inplace.md). Task 3 was superseded by the
 > key-stream-uniqueness checker (see banner at Task 3 below).
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -181,8 +181,8 @@ and `false` on the first thing it does not recognize.
 > **✅ DONE — replaced by the A′ key-stream-uniqueness checker.** The unsound Step-4
 > recognizer described below (over-certified; two confirmed holes, shipped in `d05096e6`)
 > has been **superseded and rebuilt** as the general proof checker specified in
-> [2026-07-25-key-stream-uniqueness-design.md](2026-07-25-key-stream-uniqueness-design.md)
-> and implemented per [2026-07-25-key-stream-uniqueness-impl-plan.md](archive/2026-07-25-key-stream-uniqueness-impl-plan.md):
+> [2026-07-25-key-stream-uniqueness-design.md](../2026-07-25-key-stream-uniqueness-design.md)
+> and implemented per [2026-07-25-key-stream-uniqueness-impl-plan.md](2026-07-25-key-stream-uniqueness-impl-plan.md):
 > default-deny, O0–O4 obligations, an explicit `DedupeCertificate`, the full adversarial
 > negative battery, and an independent review (Task 10) that found no over-certification.
 > `SummaryTable.dedupe_helpers` is now `Dict<Int, DedupeCertificate>` populated on all summary

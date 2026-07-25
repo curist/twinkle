@@ -4,7 +4,7 @@
 work is preserved as the historical phase log in
 [phases-0-6-history.md](phases-0-6-history.md). The active next layer is the
 loan/effect checker in
-[../../2026-07-24-ownership-borrow-effect-checker-plan.md](../../2026-07-24-ownership-borrow-effect-checker-plan.md).
+[../../archive/2026-07-24-ownership-borrow-effect-checker-plan.md](../../archive/2026-07-24-ownership-borrow-effect-checker-plan.md).
 
 ## Purpose
 
@@ -29,7 +29,7 @@ proof engines:
 | Ownership/provenance | `Unique` / `Shared` / `Unknown`, fresh values, move-vs-alias, publication | Implemented in Phases 2-3; design in [fact-lattice.md](fact-lattice.md) |
 | Path/region ownership | Record shell vs field backing, nested containers, return-path/payload transport | Implemented in Phases 4-5; see [records-fields.md](records-fields.md) and [summary-specialization.md](summary-specialization.md) |
 | Summary/specialization | Borrowed/consumed/published params, return ownership, owned-entry variant decisions | Implemented as analysis facts in Phases 3 and 6; emitted variants remain codegen work |
-| Loan/effect conflicts | Non-escaping reads as loans, writes as effects, compatibility/rejection proofs | In progress; see [../../2026-07-24-ownership-borrow-effect-checker-plan.md](../../2026-07-24-ownership-borrow-effect-checker-plan.md) |
+| Loan/effect conflicts | Non-escaping reads as loans, writes as effects, compatibility/rejection proofs | In progress; see [../../archive/2026-07-24-ownership-borrow-effect-checker-plan.md](../../archive/2026-07-24-ownership-borrow-effect-checker-plan.md) |
 | Diagnostic rendering | Accepted proof tokens and active rejection reasons for codegen decisions | Implemented incrementally by each proof engine |
 
 Codegen consumes framework proof artifacts mechanically. It must not rediscover
@@ -71,10 +71,10 @@ compatibility.
 
 ## Current active plans
 
-- [Internal borrow/effect framework implementation](../../2026-07-24-ownership-borrow-effect-checker-plan.md)
+- [Internal borrow/effect framework implementation](../../archive/2026-07-24-ownership-borrow-effect-checker-plan.md)
   — builds the first loan/effect conflict engine and integrates accepted proofs
   into ownership transfer.
-- [Merge-targeted owned dict acceptance slice](../../2026-07-24-merge-targeted-owned-dict-plan.md)
+- [Merge-targeted owned dict acceptance slice](../../archive/2026-07-24-merge-targeted-owned-dict-plan.md)
   — verifies the motivating copy-carrier pattern without rewriting boot compiler
   source.
 

@@ -277,7 +277,7 @@ storage performance, not merely on hook consolidation.
 ## Follow-up: revisit vector append in place
 
 The copy-carrier borrow/effect engine
-([../../2026-07-24-copy-carrier-engine-impl-plan.md](../../2026-07-24-copy-carrier-engine-impl-plan.md))
+([../../archive/2026-07-24-copy-carrier-engine-impl-plan.md](../../archive/2026-07-24-copy-carrier-engine-impl-plan.md))
 surfaced a representation gap worth revisiting under this track: **vector append is not a
 `mutable_produce` update-call candidate.** `decision_family_for_persistent`
 (`boot/compiler/codegen/mutable_catalog.tw`) assigns an in-place decision family only to
