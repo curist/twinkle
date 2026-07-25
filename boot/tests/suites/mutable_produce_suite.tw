@@ -349,7 +349,14 @@ pub fn suite() runner.Suite {
       "dict merge-targeted helper should preserve in-place decision",
       fn() {
         produced := try produce_for("phase8d_dict_merge_targeted_min")
-        try assert.equal(produced.rows.len(), 3)
+
+        // Two mutable_produce candidates, both dict$set: merge_targeted_min's copy-carrier
+        // `out[k]=` and the caller's loop-carried `state[i]=`. The `next_locked = .append(k)`
+        // vector append is not a mutable_produce update-call candidate — only Dict.set/remove
+        // and vector$set carry an in-place decision family (decision_family_for_persistent),
+        // so update_call_target returns None for it. (Vector append in-place is handled by the
+        // separate loop-builder pass, not this decision path.)
+        try assert.equal(produced.rows.len(), 2)
         try assert.equal(produced.table.by_site.keys().len(), 2)
 
         rendered := mutable_produce.render_candidate_rows(produced.rows)
@@ -358,6 +365,7 @@ pub fn suite() runner.Suite {
 
         try assert.str_contains(helper, "decision produced")
         try assert.str_contains(helper, "base=reuse(unique)")
+        try assert.str_contains(helper, "borrow-effect copy-carrier")
 
         try assert.str_contains(caller, "decision produced (loop-carried")
         try assert.str_contains(caller, "base=reuse(unique)")
