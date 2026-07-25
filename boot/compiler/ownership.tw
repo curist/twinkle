@@ -86,7 +86,7 @@ pub type DedupeKind = { SortInsertPrimitive, Combinator }
 
 pub type DedupeCertificate = .{
   kind: DedupeKind,
-  vector_param: Int, // vp — traversed/returned vector param (primitive) or seed param (combinator)
+  vector_param: Int, // vp local id (not param index) — traversed/returned vector param (primitive) or seed param (combinator)
   induction_local: Int, // the verified 0/+1/<len(vp) counter (primitive; -1 for combinator)
   element_local: Int, // vp[induction] — the guarded + appended element (primitive; -1 combinator)
   flag_local: Int, // the set-once `inserted` flag (primitive; -1 for combinator)

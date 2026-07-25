@@ -2481,6 +2481,11 @@ pub fn suite() runner.Suite {
         unthreaded_table.dedupe_helpers = ownership.classify_dedupe_helpers_unthreaded(view, b, s)
         threaded := ownership.analyze_with_summaries(view, b, s, threaded_table)
         unthreaded := ownership.analyze_with_summaries(view, b, s, unthreaded_table)
+
+        // Full verdict identity is the correct assertion today: no consumer yet
+        // feeds `dedupe_helpers` into ownership verdicts, so §5.0 threading changes
+        // nothing rendered. When engine-plan Task 4's copy-carrier consumer lands,
+        // widen this to "identical except at intended copy-carrier sites."
         try assert_same_verdict_texts(verdict_texts(threaded), verdict_texts(unthreaded))
         .Ok({})
       },
