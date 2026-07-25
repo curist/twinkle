@@ -4,7 +4,7 @@
 
 **Goal:** Replace the unsound dedupe-helper recognizer shipped in `d05096e6` with the general **proof checker** specified in [2026-07-25-key-stream-uniqueness-design.md](2026-07-25-key-stream-uniqueness-design.md), so a certified helper's output is provably duplicate-free — the key-stream-uniqueness half of the copy-carrier engine.
 
-**Architecture:** A default-deny checker in `boot/compiler/ownership.tw` that certifies a function only with concrete evidence for obligations **O0–O4** (design §3), returning a `DedupeCertificate`. The one value-reasoning step (O3's short-circuit flag) is enabled by a minimal **analysis-only CFG-view jump-threading** simplification (§5.0) applied inside the classifier, after which O3 is a standard must-false dataflow. Driven test-first by the **adversarial negative battery** (design §7) — every counterexample from the seven design-review rounds is a failing classification test the checker must reject, while `insert_sorted`/`int_keys_union` must certify.
+**Architecture:** A default-deny checker in `boot/compiler/ownership.tw` that certifies a function only with concrete evidence for obligations **O0–O4** (design §3), returning a `DedupeCertificate`. The one value-reasoning step (O3's short-circuit flag) is enabled by a minimal **analysis-only CFG-view jump-threading** simplification (§5.0) applied inside the classifier, after which O3 is a standard must-false dataflow. Driven test-first by the **adversarial negative battery** (design §7) — every counterexample from the seven design-review rounds is a failing classification test the checker must reject, while `insert_sorted`/`insert_sorted_str`/`int_keys_union` must certify.
 
 **Tech Stack:** Twinkle boot compiler (`boot/`), self-hosted. **The design doc §5.x is the algorithm spec** — this plan references it per obligation rather than repeating code. Iterate with `target/twk run boot/tests/main.tw` (the boot-test path compiles edited source). Heavy commands (`make bundle-cli`) one at a time. After each `.tw` edit batch: `target/twk fmt <files>` then `target/twk lint boot/main.tw`.
 
@@ -49,7 +49,7 @@ through every checker below and are easy to get wrong:
 
 **Files:**
 - Create fixtures under `boot/tests/fixtures/sound_uniqueness/`:
-  - Positives: `phase8h_ksu_pos.tw` containing `insert_sorted` (verbatim from the real compiler, design §2), a `union_via_insert` combinator, and — to keep the arg-uniqueness gate live — a `union_keys` alias. (Reuse/extend `phase8g_dedupe_classify.tw`'s positives.)
+  - Positives: `phase8h_ksu_pos.tw` containing `insert_sorted` (verbatim from the real compiler, design §2), the `String`-element `insert_sorted_str` (design §5.10 gate 2 — pins that O1's OpKind-wildcarded equality evidence covers `Int` **and** `String`, both lowering to `ABinOp(.Eq/.Lt, …, opkind)`), a `union_via_insert` combinator, and — to keep the arg-uniqueness gate live — a `union_keys` alias. (Reuse/extend `phase8g_dedupe_classify.tw`'s positives.)
   - Negatives `phase8h_ksu_neg_*.tw`, one function per design §7 battery item: `bad` (repeated id), `two_id_one_block`, `bad2` (fixed-index append), `nested_loop_append`, `fixed_index_eq_guard`, `second_in_loop_exit`, `continue_before_eq`, `unchanged_counter_backedge`, `join_side_effect` (threading must not fire), `rebound_vparam`, `rebound_proof_local`, `stale_notflag`, `wrong_arg_position` (combinator), `flag_reset_in_loop`, plus O0/O4: `param_rebind_combinator`, `wrong_return`, `extra_acc_mutation`, `bare_append_union`, `passthrough`.
 - Modify `boot/tests/suites/cfg_summary_suite.tw`: one test asserting **every** positive is in `dedupe_helpers` with the right `kind`, and **every** negative is absent.
 
@@ -76,7 +76,7 @@ through every checker below and are easy to get wrong:
 **Files:** `boot/compiler/ownership.tw`, `boot/tests/suites/cfg_summary_suite.tw`.
 
 - [ ] **Step 1:** Write a failing unit test: threading `insert_sorted`'s CFG rethreads the constant `B10` edge (the `if.join` fed `false`) to the false-target; a non-constant join is untouched; a `join_side_effect` block (instructions before the branch) is **not** threaded. Assert on block preds/edges of the threaded view.
-- [ ] **Step 2:** Implement `thread_const_branches(view) CfgView` per design §5.0 (the exact pattern: `CondBranch(cond, T, [], F, [])`, `cond` a trivial-alias of a block param `p`, `B` has no non-alias instructions; rethread each pred edge supplying `ALitBool(c)` for `p`). Call it at the **top of `classify_dedupe_helpers`** so all callers share it (§5.9).
+- [ ] **Step 2:** Implement `thread_const_branches(view) CfgView` per design §5.0 (the exact pattern: `CondBranch(cond, T, [], F, [])`, `cond` a trivial-alias of a block param `p`, `B` has no non-alias instructions; rethread each pred edge supplying `ALitBool(c)` for `p`). Call it at the **top of `classify_dedupe_helpers`** so all callers share it (§5.9). Expose the test seam required by gate 5 (design §5.0): `thread_const_branches` as `pub`, **and an unthreaded classification mode** — a `pub fn classify_dedupe_helpers_unthreaded(...)` (or a `skip_threading` option threaded into `classify_dedupe_helpers`) that runs the identical certifier over the *un*-threaded view. Exposing `thread_const_branches` alone is insufficient — Task 9's verdict-equivalence check needs a real no-threading path through the full classifier.
 - [ ] **Step 3:** `fmt`+`lint`+run. Threading test passes; classification still all-positives-red (checker still stub). Commit (`ownership: analysis-only CFG-view const-branch threading`).
 
 ---
@@ -105,7 +105,7 @@ through every checker below and are easy to get wrong:
 **Files:** `boot/compiler/ownership.tw`, `boot/tests/suites/cfg_summary_suite.tw`.
 
 - [ ] **Step 1:** Implement the **set-once flag** check (§5.7: exactly one `false` definition — counting `AInit(false)` AND `AAssign(flag,false)` — that dominates the loop header; assigned only `true` elsewhere), the **must-false dataflow** (`flag_false_entry`/`_exit` with the entry→exit transfer and the *current-not-stale* `!flag`-true-edge refinement), and the **instruction-sensitive acceptance** (intra-block walk; each id-append flag-false at its instruction; tail rule: sets flag after, or terminal post-loop). On success return the `SortInsertPrimitive` certificate (`vector_param`, `induction_local`, `element_local`, `flag_local`).
-- [ ] **Step 2:** `fmt`+`lint`+`target/twk run boot/tests/main.tw`. Expected: **`insert_sorted` certifies**; `bad`, `two_id_one_block`, `stale_notflag`, `flag_reset_in_loop` are rejected. Positive `insert_sorted` test green; all primitive negatives green.
+- [ ] **Step 2:** `fmt`+`lint`+`target/twk run boot/tests/main.tw`. Expected: **`insert_sorted` and `insert_sorted_str` both certify** (element-type-agnostic via the OpKind wildcard); `bad`, `two_id_one_block`, `stale_notflag`, `flag_reset_in_loop` are rejected. Positive `insert_sorted`/`insert_sorted_str` tests green; all primitive negatives green.
 - [ ] **Step 3:** Commit (`ownership: sort-insert primitive certifier (O0-O3), proof-backed`).
 
 ---
@@ -133,8 +133,8 @@ through every checker below and are easy to get wrong:
 
 **Files:** none (verification), possibly a note in the design doc.
 
-- [ ] **Step 1:** `make bundle-cli` (one at a time). Then a test asserting the boot compiler's own `insert_sorted`/`int_keys_union` certify (compile `boot/main.tw`, classify, assert). This is design gate 2 (boot-main positives).
-- [ ] **Step 2:** Gate 5 — verdict-equivalence: a test comparing the ownership analysis's rendered verdicts on a fixture *with* vs. *without* the §5.0 threading, asserting identical except at intended copy-carrier sites; and `target/twk run boot/tests/main.tw` unchanged (regression coverage).
+- [ ] **Step 1:** `make bundle-cli` (one at a time). Then a test asserting the boot compiler's own `insert_sorted`/`insert_sorted_str`/`int_keys_union` certify (compile `boot/main.tw`, classify, assert). This is design gate 2 (boot-main positives).
+- [ ] **Step 2:** Gate 5 — verdict-equivalence: a test comparing the ownership analysis's rendered verdicts on a fixture *with* vs. *without* the §5.0 threading — the threaded default path vs. the **unthreaded classification mode** exposed in Task 3 (`classify_dedupe_helpers_unthreaded` / `skip_threading`) — asserting identical except at intended copy-carrier sites; and `target/twk run boot/tests/main.tw` unchanged (regression coverage).
 - [ ] **Step 3:** Commit.
 
 ---

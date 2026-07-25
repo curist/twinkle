@@ -295,10 +295,14 @@ this is a **`CfgView → CfgView` simplification** — and it must be applied **
 point that classifies (full `summary.compute`, the scoped/production `compute_for_roots_cached`
 path, and direct test calls) sees the **same** threaded view and cannot diverge. Do **not**
 scatter the threading into one caller (e.g. only `ownership_verdicts.tw`); centralize it in the
-classifier. **Test seam:** expose the transform as a `pub fn thread_const_branches(view:
-CfgView) CfgView` (and/or a `classify_dedupe_helpers` variant that skips threading), so gate 5
-can run the analysis with vs. without threading and diff verdicts — the classifier calls
-`thread_const_branches` internally, but it is directly callable from tests. It is
+classifier. **Test seam (two pieces, both required).** Exposing the transform alone is *not*
+enough for gate 5, because the default `classify_dedupe_helpers` always threads internally —
+there would be no way to observe classification *without* threading. So expose **both**: (a) `pub
+fn thread_const_branches(view: CfgView) CfgView` — the transform, directly callable; and (b) an
+**unthreaded classification mode** that runs the identical certifier over the *un*-threaded view
+— either a `pub fn classify_dedupe_helpers_unthreaded(...)` or a `skip_threading` flag/options
+record threaded into `classify_dedupe_helpers`. The default classification path threads; gate 5's
+verdict-equivalence test selects the unthreaded path and diffs the two verdict sets. It is
 **analysis-only**: the threaded view is local to classification, does not touch `artifacts.opt`,
 and does **not** affect emitted code — removing the "wrong CFG for all codegen" blast radius.
 (A general ANF-level jump-threading optimizer pass is a possible *separate* future change; out
@@ -367,10 +371,13 @@ defined more than once. This forces two disciplines used throughout §5:
   its value at a specific program point via a **block-local, instruction-ordered** walk (the
   reaching def at that point), not the function-wide map. §5.0 (threading, resolving `cond` to a
   param) and §5.7 (`!flag` freshness) require this instruction-ordered resolution.
-- **Frozen evidence locals.** Any local whose *stable identity* a proof relies on — the
-  induction counter, `element_local`, the len/index alias chain, the returned local, the flag —
-  must have **exactly one definition** (never an `AAssign` target beyond its sanctioned update).
-  This is enforced explicitly in §5.3/§5.4/§5.7 rather than assumed.
+- **Frozen evidence locals.** Any local whose *stable identity* a proof relies on must be pinned
+  down, with two distinct disciplines: the induction counter, `element_local`, the len/index
+  alias chain, and the returned local must have **exactly one definition** (never an `AAssign`
+  target beyond the counter's sanctioned `+1` increment). The **flag** is *set-once*, not
+  single-def: it must have **exactly one `false` definition and only sanctioned `true`
+  assignments** — never reset to false and never otherwise redefined (§5.7). This is enforced
+  explicitly in §5.3/§5.4/§5.7 rather than assumed.
 
 Helpers:
 - `build_def_map` / `build_block_map` — as above; `build_def_map` usable only for single-def
@@ -519,11 +526,12 @@ multiplicity:
 - **exactly one** static `Vector.append(acc, element_local)` site (operand is the verified
   induction element), **and**
 - that site executes **at most once per induction increment**: its block lies directly in the
-  induction loop's body region and is **not inside any inner cycle**. Concretely, reject if
-  the element-append block is contained in a strongly-connected region (back-edge cycle) other
-  than the single induction loop itself — i.e. there is no additional back-edge between the
-  induction increment and the append. (Detect inner loops via additional `LoopBackEdge`
-  terminators / a second SCC in the function's CFG.)
+  induction loop's body region and cannot be re-entered within one induction step. Concretely,
+  **reject if any non-induction back-edge (a natural loop other than the induction loop itself)
+  can re-enter the element-append site before the induction increment** — i.e. on the path from
+  the loop-body entry to the `ctr + 1` increment, the append block must not be reachable from
+  itself except by going around the induction back-edge. (Detect via `LoopBackEdge` terminators:
+  the only back-edge dominating a path back to the append must be the induction loop's own.)
 
 Skipping an element cannot create a duplicate, so conditional *omission* is fine; only a
 *second* append of `element_local` (static or via an inner loop), or an append of
@@ -656,6 +664,20 @@ is *only* the second:
   relative to those patterns" — it is a different question that *composes* with them: the
   ownership axis proves the write is legal; the content axis proves the keys are distinct.
 
+**Current consumer surface (as of this design).** The sort-insert idiom is *pervasive* in the
+boot compiler — `insert_sorted` is a shared primitive with an `Int` form defined (byte-identically)
+in both `ownership.tw` and `summary.tw`, an `insert_sorted_int` clone in `cfg.tw`, and an
+`insert_sorted_str` `String` form in `summary.tw`, driven by combinator call sites and union
+helpers (`int_keys_union`, `union_sorted`, …) throughout the ownership/summary/cfg analysis. But **exactly one** of those streams currently
+feeds a copy-carrier in-place dict write: `int_keys_union(old.keys(), next.keys())` in
+`merge_targeted` (`ownership.tw`, the §1 motivating function). Every other `insert_sorted` call
+builds an analysis-bookkeeping *vector*, not a dict key stream driving `dict$set_in_place`. So the
+checker's generality is **future-proofing for the idiom family, not present breadth**: it lights
+up one site today (engine-plan Task 4), and certifying the rest costs nothing extra but stays
+unused until more copy-carrier sites consume their streams. This is a deliberate bet that the
+idiom's ubiquity makes a structural checker better ROI than a one-off recognizer — worth naming
+so the payoff is not overstated.
+
 **Generality (honest bounds).** On its axis, the certifier is **general over an idiom family**,
 not a universal "does this dedupe" oracle — which no purely-structural checker can be:
 
@@ -663,6 +685,16 @@ not a universal "does this dedupe" oracle — which no purely-structural checker
   early-return primitive (`insert_sorted`) and *any* renaming/reordering that proves O0–O3; and
   compositional combinators (`int_keys_union` and friends) over already-certified helpers
   (O4). This is what idiomatic Twinkle and the real compiler use.
+- **Element type — `Int` *and* `String` (verified).** The primitive is element-type-agnostic by
+  construction: `Int` and `String` comparisons both lower to `ABinOp(.Eq/.Lt, …, opkind)` with
+  the element type carried in the fourth `OpKind` field (`.Int` vs `.Str`) — *not* to Eq/Ord
+  contract calls, because `is_primitive_cmp(.String)`/`uses_runtime_eq(.String)` treat `String`
+  as primitive (`boot/compiler/lower_core/operators.tw`). O1's equality evidence (§5.5) and
+  §5.3's bound comparison already **wildcard that `OpKind` field** (`ABinOp(.Eq, element_local,
+  id, _)`), so the `String` variant `insert_sorted_str` certifies by the *same* evidence as the
+  `Int` one (the `s < x` insert-guard is never structurally matched — only the `!inserted` flag
+  is). No obligation is `Int`-specific. Gate 2 (§7) pins this with an `insert_sorted_str` positive
+  fixture so a future OpKind-narrowing edit can't silently drop `String` coverage.
 - **Not covered (⇒ safe under-certification, missed optimization, never miscompile):** dedupe
   algorithms outside the single-forward-pass / induction-indexed / set-once-flag /
   accumulator-append idiom — e.g. recursive dedupers, reverse/stepped traversals, hash-set
@@ -750,9 +782,12 @@ signs off.
    `DedupeCertificate`; any obligation lacking evidence ⇒ `.None`. The certificate is the
    audit trail.
 2. **Positive tests.** `insert_sorted` certifies as `SortInsertPrimitive` (with the expected
-   `vector_param`/`induction_local`/`element_local`/`flag_local`); `int_keys_union` and the
-   fixture `union_via_insert` certify as `Combinator`; the boot-main `insert_sorted` /
-   `int_keys_union` certify (verified after `make bundle-cli`).
+   `vector_param`/`induction_local`/`element_local`/`flag_local`); the `String`-element
+   `insert_sorted_str` **also** certifies as `SortInsertPrimitive` (locks in that O1's equality
+   evidence wildcards the `OpKind` field, so `Int` and `String` streams are both covered — §5.10);
+   `int_keys_union` and the fixture `union_via_insert` certify as `Combinator`; the boot-main
+   `insert_sorted` / `insert_sorted_str` / `int_keys_union` certify (verified after
+   `make bundle-cli`).
 3. **Adversarial negative battery — every one MUST be rejected** (each added as a
    classification unit-test fixture; each targets a specific obligation):
    - **repeated id-append** — id appended unconditionally every iteration (`bad`; O3).
@@ -807,7 +842,9 @@ signs off.
    unit test: it rethreads `insert_sorted`'s constant `B10` edge, leaves a non-constant join
    untouched, and does not fire on non-empty-target-arg branches. A **verdict-equivalence
    check** compares the ownership analysis's rendered verdicts *with* vs. *without* the
-   threading applied and requires them identical except at the intended copy-carrier sites
+   threading applied — running the classifier's **unthreaded mode** (§5.0 test seam (b):
+   `classify_dedupe_helpers_unthreaded` or the `skip_threading` option) against the default
+   threaded path — and requires them identical except at the intended copy-carrier sites
    (this is the actual soundness evidence — that threading changes nothing the analysis
    concludes elsewhere). The **full boot suite** (`target/twk run boot/tests/main.tw` after
    `make bundle-cli`) is run as regression coverage — it provides confidence, not a proof, of
@@ -823,6 +860,26 @@ signs off.
   + explicit certificate + adversarial battery + independent review) rather than by narrowing
   the approach. The obligations were sharpened to O0–O4 (added output-lineage O0 and combinator
   O4; tied O1/O2 to a verified induction variable).
+- **2026-07-25 (review round 9):** Grounding the design against the current boot tree folded in
+  two **scope clarifications** (no soundness change): (A) although the sort-insert idiom is
+  pervasive (`insert_sorted` int + `insert_sorted_int` + `insert_sorted_str`, plus combinator
+  sites across `ownership.tw`/`summary.tw`/`cfg.tw`), **exactly one** stream currently feeds a
+  copy-carrier in-place write (`int_keys_union` in `merge_targeted`) → §5.10 now states the
+  consumer surface is one site and the generality is future-proofing, not present breadth; (B) a
+  worry that the `String` variant `insert_sorted_str` would be **rejected** was checked and
+  **dismissed** — `String` `==`/`<` lower to `ABinOp(.Eq/.Lt, …, .Str)` (not Eq/Ord-contract
+  calls, since `is_primitive_cmp`/`uses_runtime_eq` treat `String` as primitive), and O1/§5.3
+  already wildcard the `OpKind` field, so `String` certifies by the same evidence. §5.10 and gate
+  2 now state `Int`+`String` coverage explicitly and add an `insert_sorted_str` positive fixture
+  to guard it. Also folded four enforcement-wording cleanups (no semantic change): (1) gate 5's
+  test seam now **requires** an unthreaded classification mode (`classify_dedupe_helpers_unthreaded`
+  or a `skip_threading` option), since exposing `thread_const_branches` alone leaves no
+  no-threading path through the full classifier for the verdict-equivalence diff (§5.0, gate 5);
+  (2) §5.2 splits the flag out of "single-def" — it is *set-once* (exactly one `false` definition
+  + only sanctioned `true` assignments), not single-def; (3) §5.6's inner-loop rule is restated
+  as "reject if any non-induction back-edge / natural loop can re-enter the element-append before
+  the induction increment," dropping the "second SCC" implementation phrasing; (4) removed
+  count-based phrasing ("~9 sites") per project docs guidance.
 - **2026-07-25 (review round 8):** An eighth review found the **non-SSA / reaching-definition**
   gaps, folded in: (1) `alias_root` could root a *rebindable* local at `vp` → refuse alias
   links through `AAssign` targets, and freeze all evidence locals (element/len-index chain/
