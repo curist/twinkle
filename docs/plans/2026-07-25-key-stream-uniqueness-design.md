@@ -295,10 +295,14 @@ this is a **`CfgView → CfgView` simplification** — and it must be applied **
 point that classifies (full `summary.compute`, the scoped/production `compute_for_roots_cached`
 path, and direct test calls) sees the **same** threaded view and cannot diverge. Do **not**
 scatter the threading into one caller (e.g. only `ownership_verdicts.tw`); centralize it in the
-classifier. It is **analysis-only**: the threaded view is local to classification, does not
-touch `artifacts.opt`, and does **not** affect emitted code — which also removes the "wrong CFG
-for all codegen" blast radius. (A general ANF-level jump-threading optimizer pass is a possible
-*separate* future change; out of scope here.)
+classifier. **Test seam:** expose the transform as a `pub fn thread_const_branches(view:
+CfgView) CfgView` (and/or a `classify_dedupe_helpers` variant that skips threading), so gate 5
+can run the analysis with vs. without threading and diff verdicts — the classifier calls
+`thread_const_branches` internally, but it is directly callable from tests. It is
+**analysis-only**: the threaded view is local to classification, does not touch `artifacts.opt`,
+and does **not** affect emitted code — removing the "wrong CFG for all codegen" blast radius.
+(A general ANF-level jump-threading optimizer pass is a possible *separate* future change; out
+of scope here.)
 
 **Pattern (minimal, conservative).** For a block `B` such that:
 - `B`'s terminator is `CondBranch(cond, T, [], F, [])` — a branch with **empty** edge args to
@@ -353,19 +357,34 @@ obligation it cannot evidence.
 
 ### 5.2 Shared infrastructure
 
-Mostly already present in `ownership.tw`:
+Mostly already present in `ownership.tw`, but **ANF is non-SSA** (`AAssign(LocalId, Atom)`
+re-defines a local), so a *function-wide* "local → op" map is unsound wherever a local can be
+defined more than once. This forces two disciplines used throughout §5:
 
-- `build_def_map(blocks) Dict<Int, AnfOp>` — local id → defining op.
-- `build_block_map(blocks) Dict<Int, CfgBlock>` — block id → block (for pred/terminator/edge
-  inspection).
-- `DictVecOps` — method ids: `Vector.append`, **`Vector.len`** (needed for the induction
-  bound; add it), `Dict.get/set/remove/keys`, `dict$get_unsafe`. (`Vector.contains` is NOT
-  used — it is a prelude fn with no resolvable builtin id.)
-- Atom/alias helpers: `atom_local_id`, and `alias_root(local, dmap)` following `AInit(ALocal
-  x)` chains to a fixed point (used to see through `out := next`-style aliases and `L4 := v`).
-- Edge helpers: a block's `preds`/`succs` are `Vector<CfgEdge>`; `CfgEdge.args` holds the
-  atoms passed for the target block's params (positional). `edge_arg_for_param(edge,
-  target_block, param_index)` returns the atom supplied for a given target param.
+- **Reaching-definition, not last-write.** `build_def_map(blocks) Dict<Int, AnfOp>` (last-write)
+  is safe **only** for locals with a single definition (SSA-like temps: `AArrayLit`, `AIndex`,
+  `ABinOp`, `AInit`, `ACall` results). For any local that may be an `AAssign` target, resolve
+  its value at a specific program point via a **block-local, instruction-ordered** walk (the
+  reaching def at that point), not the function-wide map. §5.0 (threading, resolving `cond` to a
+  param) and §5.7 (`!flag` freshness) require this instruction-ordered resolution.
+- **Frozen evidence locals.** Any local whose *stable identity* a proof relies on — the
+  induction counter, `element_local`, the len/index alias chain, the returned local, the flag —
+  must have **exactly one definition** (never an `AAssign` target beyond its sanctioned update).
+  This is enforced explicitly in §5.3/§5.4/§5.7 rather than assumed.
+
+Helpers:
+- `build_def_map` / `build_block_map` — as above; `build_def_map` usable only for single-def
+  locals (assert/verify single-def before trusting it).
+- `DictVecOps` — method ids: `Vector.append`, **`Vector.len`** (add it), `Dict.get/set/remove/
+  keys`, `dict$get_unsafe`. (`Vector.contains` is NOT used — prelude fn, no builtin id.)
+- `alias_root(local, dmap)` — follows `AInit(ALocal x)` chains to a fixed point, **but only
+  through single-def locals**; if any link is an `AAssign` target, `alias_root` must refuse
+  (return the local itself / a "not a stable alias" marker), never silently root a rebindable
+  local at `vp`.
+- Edge helpers: `preds`/`succs` are `Vector<CfgEdge>`; **note the `preds` convention** — in a
+  `preds` edge, `CfgEdge.target` holds the **predecessor (source) block id**, not the
+  destination (see `ownership.tw` ~4262). `edge_arg_for_param(edge, target_block, param_index)`
+  returns the atom for a target param and must hide this ambiguity.
 
 ### 5.3 Induction-variable identification (basis for O1 + O2)
 
@@ -421,10 +440,16 @@ bound or wrong branch polarity fails step 1.
 
 For the primitive, the accumulator `acc` is a **fresh empty vector**:
 
-- **Seed.** There is a local `acc` whose def is `AInit` of an empty array literal
-  (`AArrayLit([])`). Build the accumulator lineage: `acc` plus every loop-carried rebind of
-  it (`AAssign(accLineageLocal, src)` where `src` is lineage, and loop-header params carrying
-  a lineage arg).
+- **Seed (real ANF shape).** `AInit` takes an `Atom`; the empty literal is a separate op. So
+  the seed is `acc = AInit(ALocal(arr))` where `arr`'s (single) reaching def is
+  `AArrayLit([])`. Build the accumulator lineage: `acc` plus every loop-carried rebind
+  (`AAssign(accLineageLocal, src)` where `src` is lineage, and loop-header params carrying a
+  lineage arg).
+- **Frozen evidence locals (non-SSA guard).** `element_local` and every local on the
+  `vp`-alias chain used for len/index/return evidence must have **exactly one definition** — no
+  `AAssign` targets them anywhere in the function (else a later rebind would stale the proof;
+  `alias_root` already refuses rebindable links, §5.2). The returned local must likewise be
+  either `vp` (single-def, unrebound) or a lineage local.
 - **Only approved appends reach the accumulator.** Every write into the lineage must be an
   *approved* append: `acc = Vector.append(acc, w)` with `w ∈ { element_local (O2), id_param
   (O3) }`. Any other producer of a lineage value (an unrecognized `ACall`, a `concat`, an
@@ -536,18 +561,19 @@ So O3 must be **instruction-sensitive**. Evidence:
   1. seed the entry block after the `flag = false` init with flag false;
   2. `flag_false_exit[P]` = `flag_false_entry[P]` **and** `P` contains no `flag = true`
      assignment;
-  3. edge `P → B` carries flag false = `flag_false_exit[P]`, with one guard refinement: if
-     `P`'s `CondBranch` condition **atom** resolves (through `dmap`/`AInit` aliases) to
-     `AUnOp(.Not, flag_local, _)` computed from the **current** flag value — i.e. **no**
-     `flag = true` (nor an accepted id-append) sits between that `!flag` definition and the
-     branch — then `P`'s **true** edge carries flag false **regardless of `flag_false_exit[P]`**
-     (the branch *itself* establishes `flag == false`), and its **false** edge maybe-true.
-     **Do not** additionally require the flag to be false at `P`'s entry/terminator: that would
-     wrongly reject the real primitive, where `B8`'s entry is loop-carried maybe-true yet the
-     `!inserted` branch validly establishes flag-false on its true edge. The refinement is
-     withheld **only** when the condition is **stale** — a `flag = true` lies between the
-     `!flag` computation and the branch (e.g. `c := !inserted; …; inserted = true; if c`) — in
-     which case the edge carries `flag_false_exit[P]` like any other;
+  3. edge `P → B` carries flag false = `flag_false_exit[P]`, with one guard refinement: apply it
+     **only** when the `!flag` computation is **local to `P` and provably fresh**, defined as:
+     `P`'s `CondBranch` condition atom's reaching def *in `P`* is `AUnOp(.Not, ALocal(flag), _)`,
+     that `AUnOp` occurs **in `P`** (not an earlier block), and **no `flag = true` (nor accepted
+     id-append) occurs in `P` between that `AUnOp` and the terminator** (a block-local,
+     instruction-ordered check — §5.2). Then `P`'s **true** edge carries flag false **regardless
+     of `flag_false_exit[P]`** (the branch itself establishes `flag == false`); its **false**
+     edge maybe-true. Do **not** additionally require flag-false at `P`'s entry/terminator —
+     that would wrongly reject the real primitive (`B8` entry is loop-carried maybe-true, yet
+     `L24 = !L3` and the branch are both in `B8` with no intervening set → fresh). Withhold the
+     refinement when the `!flag` op is in a **different block** than the branch (cross-block —
+     freshness unproven) or when a `flag = true` intervenes in-block (stale, e.g.
+     `c := !inserted; …; inserted = true; if c`); then the edge carries `flag_false_exit[P]`;
   4. `flag_false_entry[B]` = **AND** over incoming edges of "edge carries flag false".
 - **Intra-block instruction walk (the O3 acceptance).** For each block, walk instructions in
   order with a running `flag_is_false := flag_false_entry[B]`; on an `AAssign(flag_local,
@@ -698,6 +724,10 @@ as answering, per check, *"does this structural condition imply O\_k?"*. When th
 the fix is to tighten the enforcement, not the obligation. (The battery makes this executable:
 a wrongly-certified counterexample is a check that fails to imply its obligation.)
 
+---
+
+## 6. Failure mode and why the acceptance gates
+
 Because certification licenses in-place dict mutation, a bug in the **checker** that
 over-certifies is a **silent miscompile** in the self-hosted compiler (duplicate keys treated
 as unique → in-place write corrupts a live alias) — the highest-consequence failure class.
@@ -753,6 +783,12 @@ signs off.
      append(id); inserted = true }; append(x) }` — the in-loop `false` init re-arms the flag
      each iteration and appends `id` every time; §5.7's "one `false` def dominating the loop"
      must reject it.
+   - **rebound vector alias base** — a local `w := v; …; w = <other vector>; …` used as the
+     len/index base after the rebind (non-SSA staleness; §5.2 `alias_root` must refuse the
+     rebindable link, §5.3/§5.4 frozen-evidence).
+   - **cross-block stale `!flag` guard** — the `!flag` op is computed in one block and the
+     branch is in a later block with an intervening `flag = true` on the path (§5.7 refinement
+     must not fire — same-block-freshness only).
    - **accumulator at wrong arg position** — a combinator that passes the accumulator to a
      certified helper at a position other than that helper's certified `vector_param` (§5.8).
    - **short-circuit reconvergence trap** — an id-append that genuinely reconverges from the
@@ -787,6 +823,19 @@ signs off.
   + explicit certificate + adversarial battery + independent review) rather than by narrowing
   the approach. The obligations were sharpened to O0–O4 (added output-lineage O0 and combinator
   O4; tied O1/O2 to a verified induction variable).
+- **2026-07-25 (review round 8):** An eighth review found the **non-SSA / reaching-definition**
+  gaps, folded in: (1) `alias_root` could root a *rebindable* local at `vp` → refuse alias
+  links through `AAssign` targets, and freeze all evidence locals (element/len-index chain/
+  return) to single-def; (2) function-wide `build_def_map` (last-write) is unsound for
+  multiply-defined locals → require **block-local instruction-ordered reaching-def** resolution
+  for §5.0 threading and §5.7 flag freshness; (3) `!flag` freshness was underspecified
+  cross-block → require the `!flag` op **in the same predecessor block** as the branch with no
+  intervening `flag = true` (same-block check); (4) the empty-accumulator seed used the wrong
+  ANF shape (`AInit` takes an atom) → `AInit(ALocal(arr))` with `arr`'s def `AArrayLit([])`;
+  (5) gate 5 needs a **test seam** → expose `thread_const_branches` as `pub`. Also: clarified
+  `CfgEdge.target` is the *predecessor* in a `preds` edge, and **restored the accidentally-
+  dropped `## 6` heading** (lost when §5.11 was inserted). Added rebound-alias-base and
+  cross-block-stale-guard negatives.
 - **2026-07-25 (review round 7):** A seventh review found one blocker + one ANF-shape error,
   folded in: (1) the set-once flag could be **reset inside the loop** via an in-loop
   `inserted := false`, re-arming it each iteration (`find_set_once_flag` only guarded against

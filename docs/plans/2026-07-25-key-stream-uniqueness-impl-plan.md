@@ -22,6 +22,19 @@ This plan **rewrites** the checker. Keep the infra scaffolding (maps, `DictVecOp
 
 ---
 
+## Cross-cutting discipline (applies to Tasks 3–7)
+
+**ANF is non-SSA** — a local can be re-defined by `AAssign` (design §5.2). Two rules run
+through every checker below and are easy to get wrong:
+- **Reaching-definition, not last-write.** The function-wide `build_def_map` is trusted **only**
+  for single-def locals; §5.0 threading (resolving `cond`→param) and §5.7 `!flag` freshness use
+  **block-local, instruction-ordered** resolution.
+- **Frozen evidence locals.** The counter, `element_local`, the `vp`-alias chain, the returned
+  local, and the flag must be single-def (no `AAssign` beyond their sanctioned update);
+  `alias_root` refuses links through `AAssign` targets. The `rebound_vparam` /
+  `rebound_proof_local` / `rebound_alias_base` / `cross_block_stale_notflag` negatives exist to
+  catch violations.
+
 ## File Structure
 
 - `boot/compiler/ownership.tw` — the checker (types, threading, obligation checkers, classifier).
