@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the unsound dedupe-helper recognizer shipped in `d05096e6` with the general **proof checker** specified in [2026-07-25-key-stream-uniqueness-design.md](2026-07-25-key-stream-uniqueness-design.md), so a certified helper's output is provably duplicate-free — the key-stream-uniqueness half of the copy-carrier engine.
+**Goal:** Replace the unsound dedupe-helper recognizer shipped in `d05096e6` with the general **proof checker** specified in [2026-07-25-key-stream-uniqueness-design.md](../2026-07-25-key-stream-uniqueness-design.md), so a certified helper's output is provably duplicate-free — the key-stream-uniqueness half of the copy-carrier engine.
 
 **Architecture:** A default-deny checker in `boot/compiler/ownership.tw` that certifies a function only with concrete evidence for obligations **O0–O4** (design §3), returning a `DedupeCertificate`. The one value-reasoning step (O3's short-circuit flag) is enabled by a minimal **analysis-only CFG-view jump-threading** simplification (§5.0) applied inside the classifier, after which O3 is a standard must-false dataflow. Driven test-first by the **adversarial negative battery** (design §7) — every counterexample from the seven design-review rounds is a failing classification test the checker must reject, while `insert_sorted`/`insert_sorted_str`/`int_keys_union` must certify.
 
@@ -145,7 +145,7 @@ through every checker below and are easy to get wrong:
 ## Task 10: Gate 4 — independent review, then unblock the consumer
 
 - [ ] **Step 1:** Dispatch an independent review (subagent + human) of the *implemented* checker against design §3 (O0–O4) and the battery, specifically hunting for a `.tw` function that certifies but produces duplicates. Address findings (each becomes a new battery fixture). Repeat until clean.
-- [ ] **Step 2:** Only then unblock engine-plan Task 4 (its consumer reads `dedupe_helpers` for the stream-uniqueness fact). Update [2026-07-24-copy-carrier-engine-impl-plan.md](2026-07-24-copy-carrier-engine-impl-plan.md)'s Task-3/Step-4 banner to "done — see key-stream-uniqueness checker" and note the consumer is unblocked.
+- [ ] **Step 2:** Only then unblock engine-plan Task 4 (its consumer reads `dedupe_helpers` for the stream-uniqueness fact). Update [2026-07-24-copy-carrier-engine-impl-plan.md](../2026-07-24-copy-carrier-engine-impl-plan.md)'s Task-3/Step-4 banner to "done — see key-stream-uniqueness checker" and note the consumer is unblocked.
 - [ ] **Step 3:** Commit.
 
 ---

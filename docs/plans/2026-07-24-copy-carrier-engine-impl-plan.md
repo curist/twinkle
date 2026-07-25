@@ -164,15 +164,17 @@ non-certification only misses an optimization. Every recognizer below is
 default-deny — it returns `true` only when it has structurally confirmed the safe shape,
 and `false` on the first thing it does not recognize.
 
-> **⚠️ The Step-4 sort-insert primitive recognizer below is UNSOUND as written** (over-
-> certifies; two confirmed holes) and is **superseded by the design doc
-> [2026-07-25-key-stream-uniqueness-design.md](2026-07-25-key-stream-uniqueness-design.md)**,
-> which **decided Option A′ — a general proof checker** (default-deny, O0–O4 obligations, an
-> explicit `DedupeCertificate`, an adversarial negative battery, and independent review before
-> any consumer). Do NOT implement Step 4 as written — build the A′ checker per §9 of the
-> design doc instead. Steps 1–3, 5 (combinator, which the design keeps as O4), 6–10 of this
-> task remain valid. `d05096e6` shipped the unsound version — it is replaced by A′, and Task 4
-> stays blocked until A′ passes the design's acceptance gates.
+> **✅ DONE — replaced by the A′ key-stream-uniqueness checker.** The unsound Step-4
+> recognizer described below (over-certified; two confirmed holes, shipped in `d05096e6`)
+> has been **superseded and rebuilt** as the general proof checker specified in
+> [2026-07-25-key-stream-uniqueness-design.md](2026-07-25-key-stream-uniqueness-design.md)
+> and implemented per [2026-07-25-key-stream-uniqueness-impl-plan.md](archive/2026-07-25-key-stream-uniqueness-impl-plan.md):
+> default-deny, O0–O4 obligations, an explicit `DedupeCertificate`, the full adversarial
+> negative battery, and an independent review (Task 10) that found no over-certification.
+> `SummaryTable.dedupe_helpers` is now `Dict<Int, DedupeCertificate>` populated on all summary
+> paths. Do NOT implement Step 4 as written; the Steps 1–3, 5–10 shape below is historical
+> context. **Task 4's consumer is now UNBLOCKED** — it may read `dedupe_helpers` /
+> `table_is_dedupe_helper` for the stream-uniqueness fact.
 
 - [ ] **Step 1: Change the fixture's `int_keys_union` to the sort-insert shape**
 
