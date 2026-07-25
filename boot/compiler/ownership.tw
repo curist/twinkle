@@ -1745,6 +1745,333 @@ fn primitive_o2_ok(f: CfgFunction, region: Dict<Int, Bool>, shape: LoopShape) Bo
   no_non_induction_backedge_in_region(f, region, shape.header)
 }
 
+type FlagGuard = .{ block: Int, true_target: Int, false_target: Int }
+
+type IdAppendSite = .{ block: Int, index: Int }
+
+fn block_reaching_not_flag(blk: CfgBlock, cond_atom: Atom, flag: Int) Bool {
+  cur := case atom_local_id(cond_atom) {
+    .Some(id) => id,
+    .None => return false,
+  }
+  seen: Vector<Int> = []
+  i := blk.instructions.len()
+  for i > 0 {
+    i = i - 1
+    inst := blk.instructions[i]
+    case inst.op {
+      .AAssign(target, _) => if target.id == flag {
+        return false
+      },
+      _ => {},
+    }
+    if inst.anf_local.id == cur {
+      case inst.op {
+        .AUnOp(.Not, a, _) => return atom_is_local_id(a, flag),
+        .AInit(.ALocal(next)) => if next.id == cur or live_contains_int(seen, cur) {
+          return false
+        } else {
+          seen = insert_sorted(seen, cur)
+          cur = next.id
+        },
+        _ => return false,
+      }
+    }
+  }
+  false
+}
+
+fn flag_guards(f: CfgFunction, flag: Int) Vector<FlagGuard> {
+  out: Vector<FlagGuard> = []
+  for blk in f.blocks {
+    case blk.terminator {
+      .Some(.CondBranch(cond_atom, true_target, _, false_target, _)) => if block_reaching_not_flag(
+        blk,
+        cond_atom,
+        flag,
+      ) {
+        out = .append(
+          FlagGuard.{ block: blk.id.id, true_target: true_target.id, false_target: false_target.id },
+        )
+      },
+      _ => {},
+    }
+  }
+  out
+}
+
+fn path_reaches_avoiding(
+  start: Int,
+  target: Int,
+  avoid: Int,
+  bmap: Dict<Int, CfgBlock>,
+  stop_header: Int,
+) Bool {
+  seen: Dict<Int, Bool> = Dict.new()
+  work: Vector<Int> = [start]
+  for work.len() > 0 {
+    id := work[work.len() - 1]
+    work = .drop_last()
+    if id == target {
+      return true
+    }
+    if id != avoid and !set_has_id(seen, id) {
+      seen[id] = true
+      case bmap.get(id) {
+        .Some(blk) => case blk.terminator {
+          .Some(.LoopBackEdge(edge_target, _)) => if edge_target.id == stop_header {} else {
+            for e in blk.succs {
+              work = .append(e.target.id)
+            }
+          },
+          _ => {
+            for e in blk.succs {
+              work = .append(e.target.id)
+            }
+          },
+        },
+        .None => {},
+      }
+    }
+  }
+  false
+}
+
+fn path_reaches(start: Int, target: Int, bmap: Dict<Int, CfgBlock>, stop_header: Int) Bool {
+  path_reaches_avoiding(start, target, 0 - 1, bmap, stop_header)
+}
+
+fn block_guarded_by_flag_false(
+  block: Int,
+  in_loop: Bool,
+  shape: LoopShape,
+  region: Dict<Int, Bool>,
+  guards: Vector<FlagGuard>,
+  bmap: Dict<Int, CfgBlock>,
+) Bool {
+  for g in guards {
+    guard_in_loop := set_has_id(region, g.block)
+    if in_loop and guard_in_loop {
+      if path_reaches(g.true_target, block, bmap, shape.header)
+        and !path_reaches(g.false_target, block, bmap, shape.header) {
+        return true
+      }
+    } else if !in_loop
+      and !guard_in_loop and path_reaches(g.true_target, block, bmap, shape.header)
+      and !path_reaches(g.false_target, block, bmap, shape.header) {
+      return true
+    }
+  }
+  false
+}
+
+fn flag_false_definition_count(f: CfgFunction, flag: Int) Int {
+  n := 0
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      if inst.anf_local.id == flag {
+        case inst.op {
+          .AInit(.ALitBool(false)) => n = n + 1,
+          _ => {},
+        }
+      }
+      case inst.op {
+        .AAssign(target, .ALitBool(false)) => if target.id == flag {
+          n = n + 1
+        },
+        _ => {},
+      }
+    }
+  }
+  n
+}
+
+fn flag_false_def_in_loop(f: CfgFunction, flag: Int, region: Dict<Int, Bool>) Bool {
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      is_false := if inst.anf_local.id == flag {
+        case inst.op {
+          .AInit(.ALitBool(false)) => true,
+          _ => false,
+        }
+      } else {
+        false
+      }
+      is_assign_false := case inst.op {
+        .AAssign(target, .ALitBool(false)) => target.id == flag,
+        _ => false,
+      }
+      if (is_false or is_assign_false) and set_has_id(region, blk.id.id) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+fn flag_assignments_set_once(f: CfgFunction, flag: Int) Bool {
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      case inst.op {
+        .AAssign(target, a) => if target.id == flag {
+          case a {
+            .ALitBool(true) => {},
+            .ALitBool(false) => {},
+            _ => return false,
+          }
+        },
+        _ => {},
+      }
+    }
+  }
+  true
+}
+
+fn set_once_flag_ok(f: CfgFunction, flag: Int, region: Dict<Int, Bool>) Bool {
+  flag_false_definition_count(f, flag) == 1
+    and !flag_false_def_in_loop(f, flag, region) and flag_assignments_set_once(f, flag)
+}
+
+fn id_append_sites(f: CfgFunction, id_param: Int, ops: DictVecOps) Vector<IdAppendSite> {
+  out: Vector<IdAppendSite> = []
+  for blk in f.blocks {
+    for inst, i in blk.instructions {
+      case inst.op {
+        .ACall(callee, args) => case callee {
+          .AGlobalFunc(fid) => if fid.id == ops.append
+            and args.len() == 2 and atom_is_local_id(args[1], id_param) {
+            out = .append(IdAppendSite.{ block: blk.id.id, index: i })
+          },
+          _ => {},
+        },
+        _ => {},
+      }
+    }
+  }
+  out
+}
+
+fn flag_true_block_reaches_site(
+  f: CfgFunction,
+  flag: Int,
+  site_block: Int,
+  region: Dict<Int, Bool>,
+  bmap: Dict<Int, CfgBlock>,
+  header: Int,
+) Bool {
+  for blk in f.blocks {
+    if blk.id.id != site_block and set_has_id(region, blk.id.id) {
+      has_true := false
+      for inst in blk.instructions {
+        case inst.op {
+          .AAssign(target, .ALitBool(true)) => if target.id == flag {
+            has_true = true
+          },
+          _ => {},
+        }
+      }
+      if has_true and path_reaches(blk.id.id, site_block, bmap, header) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+fn block_id_append_order_ok(
+  blk: CfgBlock,
+  flag: Int,
+  id_param: Int,
+  ops: DictVecOps,
+  entry_false: Bool,
+) Bool {
+  flag_false := entry_false
+  for inst in blk.instructions {
+    case inst.op {
+      .ACall(callee, args) => case callee {
+        .AGlobalFunc(fid) => if fid.id == ops.append
+          and args.len() == 2 and atom_is_local_id(args[1], id_param) {
+          if !flag_false {
+            return false
+          }
+        },
+        _ => {},
+      },
+      .AAssign(target, .ALitBool(true)) => if target.id == flag {
+        flag_false = false
+      },
+      .AAssign(target, .ALitBool(false)) => if target.id == flag {
+        return false
+      },
+      _ => {},
+    }
+  }
+  true
+}
+
+fn primitive_o3_flag(
+  f: CfgFunction,
+  id_param: Int,
+  shape: LoopShape,
+  region: Dict<Int, Bool>,
+  ops: DictVecOps,
+  bmap: Dict<Int, CfgBlock>,
+) Int? {
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      flag := case inst.op {
+        .AInit(.ALitBool(false)) => inst.anf_local.id,
+        _ => 0 - 1,
+      }
+      if flag >= 0 and set_once_flag_ok(f, flag, region) {
+        guards := flag_guards(f, flag)
+        sites := id_append_sites(f, id_param, ops)
+        if sites.len() > 0 and guards.len() > 0 {
+          ok := true
+          checked_blocks: Dict<Int, Bool> = Dict.new()
+          for site in sites {
+            in_loop := set_has_id(region, site.block)
+            entry_false := block_guarded_by_flag_false(
+              site.block,
+              in_loop,
+              shape,
+              region,
+              guards,
+              bmap,
+            )
+            if !entry_false {
+              ok = false
+            }
+            if in_loop
+              and flag_true_block_reaches_site(f, flag, site.block, region, bmap, shape.header) {
+              ok = false
+            }
+            if !set_has_id(checked_blocks, site.block) {
+              case bmap.get(site.block) {
+                .Some(site_blk) => if !block_id_append_order_ok(
+                  site_blk,
+                  flag,
+                  id_param,
+                  ops,
+                  entry_false,
+                ) {
+                  ok = false
+                },
+                .None => ok = false,
+              }
+              checked_blocks[site.block] = true
+            }
+          }
+          if ok {
+            return .Some(flag)
+          }
+        }
+      }
+    }
+  }
+  .None
+}
+
 // Task-5 unit seam: evidence that O0-O2 hold for a sort-insert primitive. It deliberately
 // stops before O3's set-once-flag proof; full certification remains default-deny until O3.
 // The returned certificate carries the evidence discovered so far and uses `flag_local = -1`.
@@ -1789,10 +2116,37 @@ pub fn sort_insert_o0_o2_evidence(f: CfgFunction, vp: Int, b: BuiltinRegistry) D
 }
 
 fn certify_sort_insert_primitive(f: CfgFunction, vp: Int, b: BuiltinRegistry) DedupeCertificate? {
-  case sort_insert_o0_o2_evidence(f, vp, b) {
-    .Some(_) => .None,
-    .None => .None,
+  partial := case sort_insert_o0_o2_evidence(f, vp, b) {
+    .Some(c) => c,
+    .None => return .None,
   }
+  if f.params.len() < 2 {
+    return .None
+  }
+  id_param := f.params[1].id
+  ops := dict_vec_ops(b)
+  dmap := build_def_map(f.blocks)
+  bmap := build_block_map(f.blocks)
+  facts := local_def_counts(f.blocks)
+  ind := InductionEvidence.{ counter: partial.induction_local, element: partial.element_local }
+  shape := case find_loop_shape(f, vp, ind, b, dmap, bmap, facts) {
+    .Some(v) => v,
+    .None => return .None,
+  }
+  region := loop_region(f, shape, bmap)
+  flag := case primitive_o3_flag(f, id_param, shape, region, ops, bmap) {
+    .Some(v) => v,
+    .None => return .None,
+  }
+  .Some(
+    DedupeCertificate.{
+      kind: .SortInsertPrimitive,
+      vector_param: partial.vector_param,
+      induction_local: partial.induction_local,
+      element_local: partial.element_local,
+      flag_local: flag,
+    },
+  )
 }
 
 fn call_target_of(op: AnfOp) Int? {
@@ -2081,6 +2435,14 @@ pub fn classify_dedupe_helpers_unthreaded(
   sem: OptimizerSemantics,
 ) Dict<Int, DedupeCertificate> {
   certs: Dict<Int, DedupeCertificate> = Dict.new()
+  for f in view.functions {
+    if f.params.len() > 0 {
+      case certify_sort_insert_primitive(f, f.params[0].id, b) {
+        .Some(cert) => certs[f.func_id] = cert,
+        .None => {},
+      }
+    }
+  }
   certs
 }
 

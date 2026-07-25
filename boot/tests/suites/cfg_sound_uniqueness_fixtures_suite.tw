@@ -56,7 +56,7 @@ fn assert_o0_o2_accept(view: cfg.CfgView, b: builtins.BuiltinRegistry, name: Str
   String,
 > {
   f := try cfg_func_id_by_name(view, name)
-  case ownership.sort_insert_o0_o2_evidence(f, 0, b) {
+  case ownership.sort_insert_o0_o2_evidence(f, f.params[0].id, b) {
     .Some(c) => case c.kind {
       .SortInsertPrimitive => .Ok({}),
       .Combinator => .Err("${name}: expected primitive O0-O2 evidence, got combinator"),
@@ -70,7 +70,7 @@ fn assert_o0_o2_reject(view: cfg.CfgView, b: builtins.BuiltinRegistry, name: Str
   String,
 > {
   f := try cfg_func_id_by_name(view, name)
-  case ownership.sort_insert_o0_o2_evidence(f, 0, b) {
+  case ownership.sort_insert_o0_o2_evidence(f, f.params[0].id, b) {
     .Some(_) => .Err("${name}: unexpectedly passed primitive O0-O2 evidence"),
     .None => .Ok({}),
   }
