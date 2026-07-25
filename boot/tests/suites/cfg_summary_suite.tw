@@ -2007,10 +2007,10 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "dedupe-helper classification certifies sort-insert + combinator, rejects non-dedupe shapes",
+      "key-stream uniqueness battery: positives certify, every adversarial negative is rejected",
       fn() {
         artifacts := case pipeline.compile_entry_path(
-          "${sound_uniqueness_fixtures_dir()}/phase8g_dedupe_classify.tw",
+          "${sound_uniqueness_fixtures_dir()}/phase8h_ksu_battery.tw",
         ) {
           .Ok(result) => result,
           .Err(err) => return .Err(format_compile_error(err)),
@@ -2019,13 +2019,38 @@ pub fn suite() runner.Suite {
         view := cfg.build_view(artifacts.opt, b)
         dh := ownership.classify_dedupe_helpers(view, b, make_prelude_optimizer_semantics(b))
 
-        positives: Vector<String> = ["insert_sorted", "union_via_insert"]
+        positives: Vector<String> = [
+          "insert_sorted",
+          "insert_sorted_str",
+          "union_via_insert",
+          "union_keys",
+        ]
         for name in positives {
           id := try func_id_by_name(view, name)
           try assert.is_true(dict_bool(dh, id))
         }
 
-        negatives: Vector<String> = ["plain_union", "bad_insert", "passthrough", "wrong_return"]
+        negatives: Vector<String> = [
+          "bad",
+          "two_id_one_block",
+          "bad2",
+          "nested_loop_append",
+          "fixed_index_eq_guard",
+          "second_in_loop_exit",
+          "continue_before_eq",
+          "unchanged_counter_backedge",
+          "join_side_effect",
+          "rebound_vparam",
+          "rebound_proof_local",
+          "stale_notflag",
+          "wrong_arg_position",
+          "flag_reset_in_loop",
+          "param_rebind_combinator",
+          "wrong_return",
+          "extra_acc_mutation",
+          "bare_append_union",
+          "passthrough",
+        ]
         for name in negatives {
           id := try func_id_by_name(view, name)
           try assert.is_false(dict_bool(dh, id))
