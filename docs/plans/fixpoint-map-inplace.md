@@ -157,3 +157,36 @@ Separate from the in-place work: when `reruns == 0`, `stabilize_seeds` already c
 - `docs/plans/sound-uniqueness/analysis/worked-examples.md` — Case W (transport-wrapper) & finding #6, the pattern this matches.
 - `docs/plans/sound-uniqueness/README.md` — the analysis/codegen track this precision work belongs to.
 - Verdict/census tooling: `boot/compiler/census.tw`, `boot/compiler/codegen/ownership_verdicts.tw`.
+
+---
+
+## Update (copy-carrier borrow/effect engine landed) — boundary confirmed
+
+The copy-carrier borrow/effect engine (Tasks 4–6 of
+[2026-07-24-copy-carrier-engine-impl-plan.md](2026-07-24-copy-carrier-engine-impl-plan.md))
+is implemented and self-host-stable. It solves the **param-sourced copy-carrier shape**
+(`out := source_dict; out[k] = …` where every source read is a bounded loan ending before /
+at a distinct key from each write, over a certified unique key stream): such carriers now
+lower to `dict$set_in_place` with a `borrow-effect copy-carrier` proof. On `boot/main.tw` it
+flips 11 dict update sites with zero unresolved candidates, and `merge_targeted__` earns an
+**accepted** copy-carrier proof.
+
+**`run_fixpoint`'s maps are still out of reach, and this is why:**
+
+- `run_fixpoint`'s dict maps (`exits`, `exit_valid`, …) are **fresh-allocated then updated in
+  a loop** — not the `out := param` copy-carrier shape. Their update sites render
+  `persistent(aliased shell)` with **no** copy-carrier note at all: `analyze_copy_carriers`
+  does not even recognize them as carriers, because their non-uniqueness comes from the
+  read-op return-provenance publishing route (Phase 0's Hyp 4), not a post-move source read.
+- `merge_targeted__` (the real helper) *does* get an accepted copy-carrier proof but stays
+  `persistent(aliased shell)`: its source param is never seeded Unique because its callers —
+  inside `run_fixpoint` — do not pass the map uniquely (the `uniform_entry_seeds`
+  mixed-caller guard correctly refuses). So the helper is proven safe *for a unique caller*,
+  but its actual `run_fixpoint` caller is not unique.
+
+**Net:** the copy-carrier engine is the borrow/effect half; the remaining `run_fixpoint`
+flip needs the map-publication precision described above (make the loop-carried maps provably
+Unique at the point they are threaded into `merge_targeted__`). The
+`phase 8A mutable decision production::boot ownership fixpoint maps should produce in-place
+dict decisions` assertion stays red as the tracked marker for that remaining work; it is not
+a copy-carrier-engine failure.

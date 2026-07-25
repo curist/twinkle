@@ -1,5 +1,19 @@
 # Copy-Carrier Borrow/Effect Engine — Implementation Plan
 
+> **STATUS (Tasks 4–6 landed):** The copy-carrier borrow/effect engine is implemented and
+> self-host-stable. `analyze_copy_carriers` proves the param-sourced copy-carrier shape
+> (Task 4); the borrow-move + publish suppression are threaded through the forward fixpoint
+> (Task 5); and copy-carrier source params are seeded Unique behind the mixed-caller guard
+> via `uniform_entry_seeds` (Task 6). Both copy-carrier positives and the `merge_targeted_min`
+> fixture flip to `dict$set_in_place` with a `borrow-effect copy-carrier` proof; all six
+> negative fixtures are rejected with concrete reasons; the mixed-caller helper stays
+> persistent. On `boot/main.tw`, 11 dict sites flip with zero unresolved candidates. The one
+> remaining aspiration — `run_fixpoint`'s loop-carried maps (and the `merge_targeted__` call
+> inside it) — is **out of scope for the copy-carrier shape** and stays as the tracked marker
+> `boot ownership fixpoint maps should produce in-place dict decisions`; see the boundary
+> writeup in [fixpoint-map-inplace.md](fixpoint-map-inplace.md). Task 3 was superseded by the
+> key-stream-uniqueness checker (see banner at Task 3 below).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the dict copy-carrier borrow/effect proof engine and its ownership-transfer integration so that a dict aliased from a source param (`out := next`), written by key while the source is read through compatible loans, lowers to in-place `dict$set_in_place` — flipping `merge_targeted_min` and the helper-mediated positive to in-place while keeping every near-miss persistent with a concrete rejection reason.
