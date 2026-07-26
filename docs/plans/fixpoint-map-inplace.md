@@ -70,8 +70,16 @@ read-helper family *published* its `Dict` param whenever a value read out of it
 flowed to a return. That has since changed — measure before acting.
 
 **The read-helper route is already repaired.** Reading current summaries
-(`target/twk ir boot/main.tw --cfg`; valid no-rebuild probe — see gotcha) shows
-every helper Phase 0 named now **borrows** its dict param:
+(valid no-rebuild probe — see gotcha) shows every helper Phase 0 named now
+**borrows** its dict param. Per-param provenance prints on the `summary:` line
+**under** each `fn` header in `--cfg`, so pair the two lines with `grep -A1`:
+
+```bash
+target/twk ir boot/main.tw --cfg \
+  | grep -A1 -E '^fn (is_processed|is_dirty|fact_of|valid_of_local|nested_get|lat_get)\b' \
+  | grep -E '^fn |summary:'
+# → every summary reports p0=Borrowed  (Phase 0 reported p0=Published)
+```
 
 | helper | dict param | was (Phase 0) |
 |---|---|---|
@@ -84,8 +92,17 @@ precedent (`ownership.tw`, the `scalar_result_ty(elem_ty)` guard: "a primitive
 element read cannot alias the collection shell") is the pattern that generalized.
 
 **But `run_fixpoint` is still 30/30 `persistent(aliased shell)`** — the
-read-helper repair was necessary but not sufficient. Breadth still holds; the
-remaining publication routes are narrower and different from Phase 0's:
+read-helper repair was necessary but not sufficient. Confirm with the census
+(every `dict_set` row's in-place column is `false`):
+
+```bash
+target/twk ir boot/main.tw --census --sites \
+  | awk -F'\t' '$1=="run_fixpoint" && $2=="dict_set"{print $5}' | sort | uniq -c
+# → 30 false        (0 flipped to dict$set_in_place)
+```
+
+Breadth still holds; the remaining publication routes are narrower and different
+from Phase 0's:
 
 1. **Closure-boundary argument/value conservatism (primary residual).**
    `merge_targeted` (`p0=Published p1=Published p2=Borrowed p3=Published …
@@ -110,6 +127,29 @@ remaining publication routes are narrower and different from Phase 0's:
 3. **Outer-map threading through the `join_entry_*` family.** The
    `Dict<Int, Dict<Int, T>>` outer maps are threaded through many helpers per
    block-visit; the outer spine stays aliased even though the inner reads borrow.
+
+Route 1's provenance is reproducible directly — the `ret_paths=` clause is what
+separates legitimate publication from the false positives:
+
+```bash
+target/twk ir boot/main.tw --cfg \
+  | grep -A1 -E '^fn (merge_targeted|same_map)' | grep -E '^fn |summary:'
+```
+
+**Two things condensed restatements of this route keep getting wrong** — read
+them off that output, do not paraphrase from memory:
+
+- **The active fixpoint paths are not scalar.** `same_map__Vec_Int`,
+  `same_map__Dict_Int_Vec_Int`, and `merge_targeted__Vec_Int` all print
+  `p0=Published`, and they carry `Vector`/nested-`dict` values through the
+  `eq`/`join` closures — a scalar-only skip (Lever A) does **not** clear them.
+  The non-scalar value-provenance work (Lever B) is on the live path, not a
+  corner case; do not describe this route as "scalar publication."
+- **`merge_targeted`'s `p1`/`p3` are legitimately `Published`.** The
+  `ret_paths=.f0=from(p1) .f1=from(p3)` clause means those two maps are genuinely
+  returned — a **sound** verdict. Only `p0`/`p6` (and `same_map`'s `p0`/`p1`) are
+  the false positives to chase. Trying to "un-publish" `p1`/`p3` is forcing past a
+  correct verdict, exactly what the soundness frame forbids.
 
 ## The residual levers (scoped, deferred)
 
@@ -182,6 +222,12 @@ source*. Editing **analysis logic** (`opt/semantics.tw`, `ownership.tw` transfer
 (`make bundle-cli`). Only edits to **analyzed function bodies** (e.g. tweaking
 `nested_get` itself) are valid no-rebuild probes. Reading existing summaries — as
 in the ground-truth table above — is always valid.
+
+Second gotcha, cheaper but real: in `--cfg` the per-param `p0=…` provenance is on
+the `summary:` line **beneath** the `fn` header, not on the header itself, so a
+naive `grep 'p0='` filtered by function name matches nothing. Always pair the two
+lines (`grep -A1 -E '^fn NAME' | grep -E '^fn |summary:'`) as the ground-truth
+commands above do.
 
 ## References
 
