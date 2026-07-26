@@ -20,12 +20,33 @@ Progress + dead-ends as of 2026-07-26:
   `Unknown`, so the loop-carried maps cannot be proven Unique. A temporary cold-only
   edit rebuilt self-host and flipped `run_fixpoint` from 30/30 persistent to 28/30
   selected in-place; the remaining two persistent rows were the `dirty0`/worklist map,
-  not the core fixpoint maps.
+  not the core fixpoint maps. **Independently re-verified 2026-07-26** (fresh probe +
+  full `make bundle-cli`): identical 28-true/2-false split, flipped rows read
+  `base=reuse(unique)`, and both survivors update `L3593` — the `dirty0` worklist map,
+  whose init is a *separate* `dirty0` optional join (`ownership.tw:6017`), not a
+  `Dict.new()` map. So the number and its cause attribution both hold.
+- **Lever F (consumed-source precision, no duplication) SPIKED — not a cheap
+  extension.** The tempting analysis-only alternative — seed the never-aliased
+  `warm_state` param Unique and move its fields out so the cold/warm join becomes
+  `Unique ∨ Unique = Unique` — was traced through the owned-variant pipeline and does
+  **not** fit the existing machinery. Three structural blockers (below in the Lever F
+  entry): the owned-variant candidate model only proposes *returned copy-carrier*
+  params (`warm_state` is a read-only destructured source), the 14-separate-`case`
+  source shape would BORROW 13 of 14 maps even if seeded, and the hot prize sites pass
+  `.None` (needing value-based `.None`-constant specialization that does not exist).
 
-Not a bounded quick win, but now bounded: split the cold solver path from the warm
-incremental solver path without extracting the hot map loop into a param-taking
-helper. The lesson from Lever A still stands: trace each param's *actual*
-publication route from the census before building a lever for it — the
+Not a bounded quick win, but now bounded: make the two statically-cold callers see map
+locals that are provably fresh `Dict.new()`, so the **already-landed Phase 8B**
+loop-carried in-place path fires (the probe's flipped rows carried the
+`phase8b-loop:run_fixpoint:carry` proof id — no variant machinery needed). The earlier
+blanket rule ("do not extract the hot loop into a param-taking helper") **stands on
+current infra**: a read-only map param is not Unique, and a helper that *returns* the maps
+as a fresh `FixState` aggregate is **not** an owned-variant candidate either —
+`candidate_variants` requires `ret_aliases_exactly_param` (`.MayAliasParams([k])`, the
+whole return IS param k), which a fresh-record return (`ret=fresh ret_paths=…`) fails,
+exactly like `merge_targeted__`. So the deliverable-now path keeps the maps as **locals**
+(cold body / always-cold), not params. The lesson from Lever A still stands: trace each
+param's *actual* publication route from the census before building a lever for it — the
 "scalar-through-closure" model was assumed, not measured, and was wrong.
 
 **Goal:** Get the compiler's hottest analysis loop — the ownership fixpoint in
@@ -244,16 +265,94 @@ longer the first enabler for the main fixpoint-map optimization.
   from `func.op_result_mono[local.id]` at `ir_print.tw:313`), despite being passed
   read-only through the optimizer's fixed-point simplifications — so coverage was
   *not* the problem; the premise was.
-- **Lever E — split cold and warm `run_fixpoint` solver bodies. PROVED by probe,
-  not yet landed.** Today one function contains both shapes: cold `Dict.new()` maps
-  and warm maps loaded from `FixState`. The ownership analysis must summarize the
-  joined source, so the cold loop header's non-backedge predecessor contributes
-  `Unknown` and the loop seed is dropped even though the backedge is `Unique`. A real
-  fix should keep the hot cold solve in a body whose map locals are initialized only
-  from `Dict.new()`. Do not extract the hot loop into a helper that takes the maps as
-  parameters, or the proof will likely be lost again. Route first seed pass,
-  non-incremental reruns, and final pass to the cold body; route only incremental
-  warm reruns to the warm body.
+- **Lever E — split cold and warm `run_fixpoint` solver bodies. PROVED by probe
+  (re-verified 2026-07-26), not yet landed.** Today one function contains both shapes:
+  cold `Dict.new()` maps and warm maps loaded from `FixState`. The ownership analysis
+  must summarize the joined source, so the cold loop header's non-backedge predecessor
+  contributes `Unknown` and the loop seed is dropped even though the backedge is
+  `Unique`. A real fix should keep the hot cold solve in a body whose map locals are
+  initialized only from `Dict.new()`. The call structure already lines up: two of the
+  three `run_fixpoint` sites are statically cold — `stabilize_seeds`'s first pass
+  (`ownership.tw:6249`, `warm_state=.None`) and `run_fixpoint_validated`'s **final
+  pass** (`ownership.tw:6370`, `.None`, the `fx` that drives decisions). Only the
+  seed-stabilization rerun (`ownership.tw:6285`) passes a warm `FixState`, and only
+  under `allow_incremental`. So route the first pass and final pass to the cold body
+  and only the incremental rerun to the warm body.
+
+  **The maps must stay LOCALS (rides landed Phase 8B), two shapes:**
+  - **E-simplest (measure first): drop incremental re-propagation, make `run_fixpoint`
+    unconditionally cold.** Remove the `case warm_state`/`dirty0` joins from the source so
+    every call sees fresh `Dict.new()` map locals + a full sweep. This is the probe,
+    minus the revert: it flipped 28/30 and self-host stayed stable. No duplication —
+    mostly deletion. Cost: reruns lose incremental partial-sweep re-propagation (they go
+    cold). Since the *final* pass is already cold and reruns are chain-depth-bound and
+    near-zero for singleton SCCs, this is very likely a net win — but it removes a landed
+    optimization, so it is gated on a real `summary:roots run` measurement.
+  - **E-plain (fallback if E-simplest measures net-negative): duplicate a cold body.** Add
+    `run_fixpoint_cold` (14 bare `Dict.new()` locals, `all_dirty := true`) for the two
+    statically-cold callers (`:6249`, `:6370`); keep the existing warm `run_fixpoint` for
+    the incremental rerun (`:6285`). Keeps both optimizations at the cost of a
+    dual-maintained hot loop. Do **not** instead extract a param-taking helper — read-only
+    map params are not Unique, and a returned-aggregate helper is not an owned-variant
+    candidate (see below). A plan doc lives at `docs/plans/fixpoint-cold-warm-split.md`.
+  - **E-DRY (NOT viable on current infra — documented, needs an analysis extension).** The
+    tempting form — extract `fixpoint_iterate(maps…) FixState` and let the owned-variant
+    machinery seed the maps Unique at cold callers — does **not** work today:
+    `candidate_variants` (`summary.tw:689`) only admits params where
+    `ret_aliases_exactly_param(s.ret, k)` (`summary.tw:559`), i.e. the whole return is
+    `.MayAliasParams([k])`. A fresh `FixState.{…}` wrapper returns `ret=fresh
+    ret_paths=.fN=from(pK)…` and is ignored by the candidate model — the identical gap
+    that keeps `merge_targeted__` persistent. Making E-DRY real means extending owned-variant
+    candidate/validation/selection to **returned-aggregate fields** (a param that flows to
+    a returned aggregate field *and* has an in-place site). That is a genuine analysis
+    project shared with the `merge_targeted__` follow-up, not a spike; pursue it there, not
+    as the first `run_fixpoint` enabler.
+- **Lever F — seed the consumed `FixState?` source Unique and move its fields out.
+  SPIKED 2026-07-26; sound in principle but NOT a small extension.** The idea: prove
+  the cold/warm join `Unique` without any source split, by observing `warm_state` is
+  never aliased at any call site (two sites pass `.None`; the warm site passes a dead
+  `vstate` immediately overwritten by `rr.state`). The payload-move machinery it needs
+  already exists — `seed_payload_binding` (`ownership.tw:4280`) MOVES a variant payload
+  to its binding as Unique when the scrutinee is Unique and dead-after-match. Three
+  structural blockers stop it from being cheap:
+  1. **No seeding route.** `candidate_variants` (`summary.tw:689`) only proposes params
+     that are `ret_aliases_exactly_param(k) && param_has_inplace_site(k)` — the returned
+     copy-carrier shape. `warm_state` is a read-only source destructured into fresh map
+     locals and never flows to the return, so it is never a candidate → never seeded
+     Unique → `proj.shell=.None` → every arm stays Unknown. This is exactly why it is
+     30/30 today.
+  2. **The 14-separate-`case` shape defeats the move anyway.** `warm_state` is
+     re-matched once per map (`ownership.tw:5938–5993`), so it is live across the first
+     13 and dead-after only at the 14th. `seed_payload_binding`'s live-in gate would MOVE
+     only the last and BORROW (→ Shared) the other 13. A working Lever F would first need
+     a single-destructure restructure (`case warm_state { .Some(w) => { …14 field moves… }, .None => { …14 Dict.new()… } }`)
+     with per-field moves (`mark_field_backing`/`has_moved_field_backing`,
+     `ownership.tw:4736`).
+  3. **The hot prize sites pass `.None`, not a Unique payload.** The two statically-cold
+     sites (`:6249`, `:6370`) pass `.None`; a "warm_state Unique" variant would apply only
+     at the warm rerun site (`:6285`), missing the prize. Flipping the cold sites this way
+     would instead need *value-based* (`.None`-constant) call specialization, which does
+     not exist. Verdict: Lever F needs a new candidate shape **plus** a source restructure
+     **plus** (either `.None`-satisfies-Unique or new value-specialization) — strictly more
+     machinery than Lever E, and against the grain of the returned-carrier owned-variant
+     model. Deprioritized in favor of E-DRY.
+
+  **Why not just build the general version (settled — do not re-litigate).** The
+  capability that would make Lever F *useful* — flip the cold sites, which pass `.None` —
+  is whole-program never-aliased-param seeding (prove `warm_state` is never an aliased
+  `Some` at any call site, seed it Unique in the generic summary) or value/`.None`-constant
+  call specialization. **Both are an explicit non-goal of the sound-uniqueness track's
+  current milestone:** `sound-uniqueness/architecture.md:939` ("No whole-program alias
+  theorem prover as a first milestone") and `analysis/sound-analysis.md:175` ("Whole-program
+  analysis does not mean whole-program theorem proving"). The track's *chosen* general
+  mechanism for this class is exactly the per-call-site owned-variant / copy-carrier scheme
+  that E-DRY rides on. So Lever F is not "necessary complexity the owning track wants" — it
+  reaches past a deliberate architectural boundary to serve a single hot customer
+  (`merge_targeted__` is a *different*, returned-carrier shape and would not be served by the
+  same mechanism). If cold/warm-join imprecision later shows up across many sites,
+  whole-program never-aliased-param reasoning deserves its own *motivated* milestone in the
+  sound-uniqueness track — not a bolt-on here. The simpler option (E-DRY) is also the more
+  architecturally-aligned one; this is not a case of trading properness for simplicity.
 - **Lever B — non-scalar closure argument/value provenance.** Deferred for the
   helper/body side. The scalar skip does not cover all active fixpoint paths:
   `old_prov`/`next_prov`, `old_field`/`next_field`, and `old_pp`/`next_pp` flow
