@@ -1,7 +1,9 @@
 # Making the Ownership Fixpoint's Own Maps Mutate In-Place
 
-**Status:** Diagnosed; deferred into the sound-uniqueness analysis track.
-`run_fixpoint` still does not flip. Progress + dead-ends as of 2026-07-26:
+**Status:** Diagnosed; implementation path identified for the main `run_fixpoint`
+optimization. The clean tree still reports `run_fixpoint` as 30/30 persistent, but
+an isolated cold-only proof flipped the core loop-carried map updates to in-place.
+Progress + dead-ends as of 2026-07-26:
 - **Lever D LANDED** (commit `7ddda40f`): registering `Dict.keys` as `.ReadOnly`
   stopped `.keys()` from conservatively publishing its dict. Cleared
   `merge_targeted`'s `p0` and `same_map`'s `p0`/`p1` to `Borrowed`. Sound; flips no
@@ -12,14 +14,17 @@
   `p6` to the `lat_get` return-alias fallback instead. `p6` (a scalar default) isn't
   the flip blocker anyway (the map `p0` was already cleared by D). See the Lever A
   entry below.
-- **Real remaining blocker** (re-grounded by the above): the loop-carried maps
-  reach `merge_targeted`/the write sites without being provably **unique at the
-  caller** — the copy-carrier boundary — not a scalar-publication issue. Levers B
-  (non-scalar closure-value provenance) and C (`FixState`/`FixResult` return
-  double-embed) remain candidate analysis fixes, but the next real work is
-  caller-side uniqueness, folded into the sound-uniqueness track.
+- **Cold/warm split PROVED as the main enabler:** the hot `run_fixpoint` body joins
+  two initialization shapes in one function: cold `Dict.new()` maps and warm maps
+  loaded from `FixState`. The warm arm makes the non-backedge loop seed contribution
+  `Unknown`, so the loop-carried maps cannot be proven Unique. A temporary cold-only
+  edit rebuilt self-host and flipped `run_fixpoint` from 30/30 persistent to 28/30
+  selected in-place; the remaining two persistent rows were the `dirty0`/worklist map,
+  not the core fixpoint maps.
 
-Not a bounded quick win. The lesson from Lever A: trace each param's *actual*
+Not a bounded quick win, but now bounded: split the cold solver path from the warm
+incremental solver path without extracting the hot map loop into a param-taking
+helper. The lesson from Lever A still stands: trace each param's *actual*
 publication route from the census before building a lever for it — the
 "scalar-through-closure" model was assumed, not measured, and was wrong.
 
@@ -31,9 +36,12 @@ itself.
 
 **Tracked marker:** the red assertion `phase 8A mutable decision production::boot
 ownership fixpoint maps should produce in-place dict decisions`
-(`boot/tests/suites/mutable_produce_suite.tw`) asserts both `merge_targeted__`
-and `run_fixpoint` produce a selected in-place dict decision. Both are currently
-0. This doc owns that marker; it is an intentional target, not a regression.
+(`boot/tests/suites/mutable_produce_suite.tw`) currently asserts both
+`merge_targeted__` and `run_fixpoint` produce a selected in-place dict decision.
+The cold-only proof shows the `run_fixpoint` half is independently reachable;
+`merge_targeted__` remains a separate helper/call-variant question. If the cold/warm
+split lands first, either split this marker or keep it red until the helper side is
+also enabled.
 
 ---
 
@@ -118,64 +126,84 @@ target/twk ir boot/main.tw --census --sites \
 # → 30 false        (0 flipped to dict$set_in_place)
 ```
 
-Breadth still holds; the remaining publication routes are narrower and different
-from Phase 0's:
+### Cold/warm split proof (temporary probe, reverted)
 
-1. **Closure-boundary argument/value conservatism (primary residual).**
-   `merge_targeted` (`p0=Published p1=Published p2=Borrowed p3=Published …
-   p6=Published ret_paths=.f0=from(p1) .f1=from(p3)`) and `same_map`
-   (`p0=Published p1=Published`) publish their map params **through their opaque
-   `eq`/`join` closure params**. Traced ops in `merge_targeted__Int`:
-   `call L3069(L3077, L3078)` (the `eq` param applied to `old_x`/`next_x`).
-   Because the callee is an indirect/closure atom, `publish_call` (`ownership.tw`)
-   publishes **every** argument unconditionally. The scalar case is the easiest
-   false positive — scalar-typed arguments cannot alias anything — but the active
-   `run_fixpoint` path also uses non-scalar closure comparisons/joins
-   (`merge_targeted__Vec_Int`, `same_map__Vec_Int`, `same_map__T538`,
-   `same_map__Dict_Int_Vec_Int`) for provenance, field-ownership, and path-
-   provenance maps. Those need a broader value-provenance/borrow story, not only a
-   scalar skip. `merge_targeted`'s `p1`/`p3` are legitimately `Published`
-   (returned as `.f0`/`.f1`). Do **not** include `p6` in this closure route: a later
-   probe showed that the scalar default is published earlier by `lat_get`'s
-   `ret=alias(p2)` fallback, not by `eq`/`join`.
-2. **`FixState` + `FixResult` return double-embed.** `run_fixpoint` returns both
-   aggregates sharing the same five exit-map objects; publishing one map into two
-   aggregates aliases it. Bounded to the 5 exit maps, addressable by a source
-   restructure.
-3. **Outer-map threading through the `join_entry_*` family.** The
-   `Dict<Int, Dict<Int, T>>` outer maps are threaded through many helpers per
-   block-visit; the outer spine stays aliased even though the inner reads borrow.
+A focused seed probe on the first `run_fixpoint` loop-carried map showed the backedge
+already preserves uniqueness; the seed is dropped only because the non-backedge entry
+comes from an `Unknown` warm/cold join:
 
-Route 1's provenance is reproducible directly — the `ret_paths=` clause is what
-separates legitimate publication from the false positives:
-
-```bash
-target/twk ir boot/main.tw --cfg \
-  | grep -A1 -E '^fn (merge_targeted|same_map)' | grep -E '^fn |summary:'
+```text
+[probe:seed] label=summary:run_fixpoint block=51 lid=3558 seed=true kept=false
+[probe:seedpred] block=51 pred=49 backedge=false arg=3558 own=Unknown valid=true
+[probe:seedpred] block=51 pred=55 backedge=true  arg=3558 own=Unique  valid=true
 ```
 
-**Two things condensed restatements of this route keep getting wrong** — read
-them off that output, do not paraphrase from memory:
+The next header initially validates while the first seed is still assumed, then
+cascades to `Unknown` after block 51's seed is removed:
 
-- **The active fixpoint paths are not scalar.** `same_map__Vec_Int`,
-  `same_map__Dict_Int_Vec_Int`, and `merge_targeted__Vec_Int` all print
-  `p0=Published`, and they carry `Vector`/nested-`dict` values through the
-  `eq`/`join` closures — a scalar-only skip (Lever A) does **not** clear them.
-  The non-scalar value-provenance work (Lever B) is on the live path, not a
-  corner case; do not describe this route as "scalar publication."
-- **`merge_targeted`'s `p1`/`p3` are legitimately `Published`.** The
-  `ret_paths=.f0=from(p1) .f1=from(p3)` clause means those two maps are genuinely
-  returned — a **sound** verdict. Trying to "un-publish" `p1`/`p3` is forcing past a
-  correct verdict, exactly what the soundness frame forbids. `p6` is a separate,
-  scalar-default route through `lat_get`'s return alias; it is useful for analysis
-  correctness, but not the map blocker for the fixpoint flip.
+```text
+[probe:seed] label=summary:run_fixpoint block=71 lid=3558 seed=true kept=true
+[probe:seedpred] block=71 pred=70  backedge=false arg=3558 own=Unique valid=true
+[probe:seedpred] block=71 pred=149 backedge=true  arg=3558 own=Unique valid=true
+```
 
-## The residual levers (scoped, deferred)
+The proof edit was deliberately blunt: inside `run_fixpoint`, replace every
+`case warm_state { .Some(w) => w.<map>, .None => Dict.new() }` map initializer with
+fresh `Dict.new()` and set `warm_started := false`, while leaving the rest of the
+function unchanged. After `make bundle-cli`, the census changed to:
 
-None is a one-liner, and multiple routes likely must land together to flip
-`run_fixpoint` (breadth). This is why the recommendation is to fold into the
-sound-uniqueness analysis track (`docs/plans/sound-uniqueness/`), gated by its
-equivalence guards, rather than pursue a standalone quick win.
+```bash
+target/twk ir boot/main.tw --census --sites \
+  | awk -F'\t' '$1=="run_fixpoint" && $2=="dict_set"{print $5}' | sort | uniq -c
+# → 2 false
+# → 28 true
+```
+
+Representative flipped rows:
+
+```text
+run_fixpoint dict_set dict$set dict$set_in_place true  L3718 = update L3556 base=reuse(unique)
+run_fixpoint L3718 dict_set dict$set dict$set_in_place dict$set_in_place selected MutableSelected phase8b-loop:run_fixpoint:carry L3556:site L3718:depth 1
+```
+
+The two remaining persistent rows were updates to the `dirty0`/worklist map (`L3593`
+in the probe), not the core five exit maps or their widening state. This proves the
+main optimization path is a **source-shape split**: keep the cold map allocations in a
+cold-only solver body so the ownership pass sees fresh `Dict.new()` maps, and use a
+separate warm/incremental body only for reruns that actually need `FixState`.
+
+Breadth still holds for the `merge_targeted__` helper body, but it is no longer the
+first enabler for the hot `run_fixpoint` map churn. The post-probe ranking is:
+
+1. **Cold/warm source-shape conflation (primary for `run_fixpoint`).** The current
+   clean body contains both cold `Dict.new()` initialization and warm `FixState` loads.
+   That single source shape makes the non-backedge predecessor of the hot loop
+   contribute `Unknown`, even when the backedge is `Unique`. Splitting the cold body is
+   the path that actually flipped the core map sites in the proof.
+2. **`merge_targeted__` helper/call-variant precision (separate follow-up).** Current
+   summaries are reproducible with:
+
+   ```bash
+   target/twk ir boot/main.tw --cfg \
+     | grep -A1 -E '^fn (merge_targeted|same_map)' | grep -E '^fn |summary:'
+   ```
+
+   Post-Lever-D, `same_map__*` reports borrowed map params, and `merge_targeted__*`
+   reports `p0=Borrowed`; `p1`/`p3` are legitimately `Published` because
+   `ret_paths=.f0=from(p1) .f1=from(p3)` means they are returned. `p6` is a separate
+   scalar-default route through `lat_get`'s return alias, not a closure route. If the
+   generic `merge_targeted__` body must flip too, chase that as a distinct helper or
+   owned-variant problem, not as the first `run_fixpoint` enabler.
+3. **`FixState` + `FixResult` return double-embed / non-scalar closure precision.**
+   These remain plausible later precision levers, but the cold-only proof shows they
+   are not required to flip the core direct `run_fixpoint` map updates.
+
+## The residual levers (re-ranked after the cold-only proof)
+
+The next implementation should target the cold/warm source-shape split first. The
+probe showed this alone flips the core `run_fixpoint` updates. Levers B/C remain
+useful for the `merge_targeted__` helper body and broader precision, but they are no
+longer the first enabler for the main fixpoint-map optimization.
 
 - **Lever A — scalar-argument non-publication at the closure/indirect-call
   boundary. BUILT + MEASURED + REVERTED (2026-07-26); sound but ineffective, and
@@ -216,16 +244,27 @@ equivalence guards, rather than pursue a standalone quick win.
   from `func.op_result_mono[local.id]` at `ir_print.tw:313`), despite being passed
   read-only through the optimizer's fixed-point simplifications — so coverage was
   *not* the problem; the premise was.
-- **Lever B — non-scalar closure argument/value provenance.** The scalar skip does
-  not cover all active fixpoint paths: `old_prov`/`next_prov`, `old_field`/
-  `next_field`, and `old_pp`/`next_pp` flow through closure comparisons over
-  `Vector`, field-map, and nested-dict values. These values may be genuine
-  references, so they cannot be blanket-skipped like scalars; the analysis needs
-  to distinguish borrowing a value read from a map for an equality/join callback
-  from publishing the map shell that supplied it.
-- **Lever C — the `FixState`/`FixResult` double-embed.** A source restructure in
-  `run_fixpoint` so the five exit maps are not simultaneously published into two
-  returned aggregates.
+- **Lever E — split cold and warm `run_fixpoint` solver bodies. PROVED by probe,
+  not yet landed.** Today one function contains both shapes: cold `Dict.new()` maps
+  and warm maps loaded from `FixState`. The ownership analysis must summarize the
+  joined source, so the cold loop header's non-backedge predecessor contributes
+  `Unknown` and the loop seed is dropped even though the backedge is `Unique`. A real
+  fix should keep the hot cold solve in a body whose map locals are initialized only
+  from `Dict.new()`. Do not extract the hot loop into a helper that takes the maps as
+  parameters, or the proof will likely be lost again. Route first seed pass,
+  non-incremental reruns, and final pass to the cold body; route only incremental
+  warm reruns to the warm body.
+- **Lever B — non-scalar closure argument/value provenance.** Deferred for the
+  helper/body side. The scalar skip does not cover all active fixpoint paths:
+  `old_prov`/`next_prov`, `old_field`/`next_field`, and `old_pp`/`next_pp` flow
+  through closure comparisons over `Vector`, field-map, and nested-dict values. These
+  values may be genuine references, so they cannot be blanket-skipped like scalars;
+  the analysis needs to distinguish borrowing a value read from a map for an
+  equality/join callback from publishing the map shell that supplied it.
+- **Lever C — the `FixState`/`FixResult` double-embed.** Deferred unless the cold/warm
+  split leaves return-side publication as the next measured blocker. A source
+  restructure in `run_fixpoint` may still be needed so the five exit maps are not
+  simultaneously published into two returned aggregates.
 - **Lever D — register `Dict.keys` in the optimizer's `CallSemantics` (new,
   verified 2026-07-26; landed + measured).** `dict$keys` is a registered runtime builtin
   (`builtins.tw:516`) but has **no `CallSemantics` entry** in
@@ -250,16 +289,16 @@ equivalence guards, rather than pursue a standalone quick win.
   id, not `CallSemantics`), so the two do not interact. **Measured effect on
   provenance** (before → after): `merge_targeted p0=Published → Borrowed`;
   `same_map p0=Published p1=Published → Borrowed Borrowed` (both false positives
-  fully cleared). **But it flips no in-place decision** — `run_fixpoint` stays
-  30/30 `persistent`, `merge_targeted` stays 0 — because the actual map *writes*
-  are gated on other routes (`merge_targeted`'s `out[k]=` needs `p1`/`next` unique
-  at the caller = copy-carrier boundary; `p6` is only the scalar default-value
-  return-alias route). Lever D is thus a confirmed **necessary-not-sufficient**
-  precision fix: independently correct (`.keys()` genuinely borrows the dict and
-  returns a fresh vector, so the old conservative publish was pure imprecision
-  affecting every dict-keys loop),
-  and a prerequisite for the flip, but no standalone win. This is the hard-data
-  instance of "breadth."
+  fully cleared). **But it flips no in-place decision** — the clean tree still has
+  `run_fixpoint` at 30/30 `persistent` and `merge_targeted` at 0. Later probing
+  separated those blockers: `run_fixpoint` is blocked by cold/warm source-shape
+  conflation, while `merge_targeted__` remains a helper/copy-carrier precision
+  problem; `p6` is only the scalar default-value return-alias route. Lever D is thus
+  a confirmed **necessary-not-sufficient** precision fix: independently correct
+  (`.keys()` genuinely borrows the dict and returns a fresh vector, so the old
+  conservative publish was pure imprecision affecting every dict-keys loop), and a
+  prerequisite for the flip, but no standalone win. This is the hard-data instance
+  of "breadth."
 
 ### Route breakdown for `merge_targeted__Int` (2026-07-26; p6 route CORRECTED)
 
@@ -283,26 +322,30 @@ equivalence guards, rather than pursue a standalone quick win.
 
 **Correction to the earlier "needs A+D together" claim:** that was wrong. `p6` is not
 the map blocker and Lever A does not clear it. The map that mattered (`p0`) is cleared
-by **D alone**. The remaining blocker to the flip is **caller-side uniqueness** of the
-loop-carried maps at the `merge_targeted` call (copy-carrier boundary), plus possibly
-Lever B (non-scalar closure-value provenance for the `__Vec_Int`/`__Dict_Int_Vec_Int`
-monomorphs) and Lever C (the return double-embed) — folded into the sound-uniqueness
-track, not chased as standalone levers.
+by **D alone**. A later cold-only probe refined the remaining blocker again: for the
+hot `run_fixpoint` updates, the first enabler is not B/C but splitting the cold solver
+from the warm `FixState` solver so fresh `Dict.new()` maps are not joined with warm
+state-loaded maps. B/C remain candidate follow-ups for the standalone `merge_targeted__`
+helper verdict and broader precision.
 
 ## Copy-carrier boundary (why `merge_targeted` still won't flip on its own)
 
 The copy-carrier borrow/effect engine
 (`docs/plans/archive/2026-07-24-copy-carrier-engine-impl-plan.md`) is landed and
 self-host-stable. `merge_targeted__` earns an **accepted** copy-carrier proof for
-its `out := next; out[k] = …` shape — but it stays `persistent(aliased shell)`
-because its `run_fixpoint` callers do not pass the map **uniquely**, and the
-`uniform_entry_seeds` mixed-caller guard correctly refuses to seed it Unique. So
-`merge_targeted` is proven safe *for a unique caller* but its actual caller is not
-unique. The working hypothesis is that making the loop-carried maps provably
-Unique at the point they are threaded into `merge_targeted__` — across the closure
-provenance routes above, plus the return double-embed where relevant — will
-unblock the helper and caller sites together. Re-census, not assumption, is the
-acceptance gate.
+its `out := next; out[k] = …` shape — but the generic helper body still renders its
+own update as `persistent(aliased shell)`:
+
+```text
+merge_targeted__Int dict_set dict$set dict$set_in_place false L3110 = update L3070 base=persistent(aliased shell) borrow-effect copy-carrier source L3062 key L3076
+```
+
+The cold-only split proof did **not** flip these `merge_targeted__*` rows; it flipped
+the direct `run_fixpoint` map updates. That means the `run_fixpoint` win can land
+first via Lever E even if the helper marker remains red. Treat `merge_targeted__` as a
+separate follow-up: either a caller-selected owned variant must be made visible in the
+production/census path, or B/C-style precision work must make the generic helper body
+prove its carrier Unique. Re-census, not assumption, is the acceptance gate.
 
 ---
 
@@ -317,12 +360,16 @@ target/twk ir boot/main.tw --census --sites \
   | rg -n "^run_fixpoint\t|^merge_targeted|^join_entry_ownership_assumed"
 ```
 
-The `run_fixpoint` loop-carried map updates (and any helper sites in scope) must
-flip from `base=persistent(aliased shell)` to `base=reuse(unique)` /
-`dict$set_in_place`, the tracked marker assertion must go green, and
-`summary:roots run` must actually improve — under the soundness frame above. If
-the fixtures pass but `run_fixpoint` stays persistent, the fix is incomplete;
-return to tracing the remaining publishing route.
+For Lever E, the first acceptance gate is narrower than the historical marker:
+`run_fixpoint`'s core loop-carried map updates should flip from
+`base=persistent(aliased shell)` to `base=reuse(unique)` / `dict$set_in_place`.
+The cold-only probe's target was 28 selected rows and 2 remaining persistent
+`dirty0`/worklist rows; a real implementation should match or explain any drift.
+Then run the behavioral gates under the soundness frame above: `TWINKLE_FIXVERIFY`
+clean, self-host stable, full boot suite green, and a real `summary:roots run`
+improvement. If `run_fixpoint` flips but `merge_targeted__` remains persistent,
+that is a follow-up marker/precision issue, not evidence that the cold/warm split
+failed.
 
 ## Methodology gotcha (cost several inert probes historically)
 
