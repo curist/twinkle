@@ -8,9 +8,10 @@
   in-place decision on its own.
 - **Lever A BUILT then REVERTED** (stashed): scalar-arg non-publication. Sound and
   self-host stable, but a diagnostic **disproved its premise** — the scalar skip
-  fires on the closure args yet `p6` stays `Published`, and `p6` (a scalar default)
-  isn't the flip blocker anyway (the map `p0` was already cleared by D). See the
-  Lever A entry below.
+  fires on the closure args yet `p6` stays `Published`, and a follow-up probe traced
+  `p6` to the `lat_get` return-alias fallback instead. `p6` (a scalar default) isn't
+  the flip blocker anyway (the map `p0` was already cleared by D). See the Lever A
+  entry below.
 - **Real remaining blocker** (re-grounded by the above): the loop-carried maps
   reach `merge_targeted`/the write sites without being provably **unique at the
   caller** — the copy-carrier boundary — not a scalar-publication issue. Levers B
@@ -134,8 +135,9 @@ from Phase 0's:
    `same_map__Dict_Int_Vec_Int`) for provenance, field-ownership, and path-
    provenance maps. Those need a broader value-provenance/borrow story, not only a
    scalar skip. `merge_targeted`'s `p1`/`p3` are legitimately `Published`
-   (returned as `.f0`/`.f1`); `p0`/`p6` and `same_map`'s `p0`/`p1` are the false
-   ones, all via closure publication of values read from those maps.
+   (returned as `.f0`/`.f1`). Do **not** include `p6` in this closure route: a later
+   probe showed that the scalar default is published earlier by `lat_get`'s
+   `ret=alias(p2)` fallback, not by `eq`/`join`.
 2. **`FixState` + `FixResult` return double-embed.** `run_fixpoint` returns both
    aggregates sharing the same five exit-map objects; publishing one map into two
    aggregates aliases it. Bounded to the 5 exit maps, addressable by a source
@@ -163,9 +165,10 @@ them off that output, do not paraphrase from memory:
   corner case; do not describe this route as "scalar publication."
 - **`merge_targeted`'s `p1`/`p3` are legitimately `Published`.** The
   `ret_paths=.f0=from(p1) .f1=from(p3)` clause means those two maps are genuinely
-  returned — a **sound** verdict. Only `p0`/`p6` (and `same_map`'s `p0`/`p1`) are
-  the false positives to chase. Trying to "un-publish" `p1`/`p3` is forcing past a
-  correct verdict, exactly what the soundness frame forbids.
+  returned — a **sound** verdict. Trying to "un-publish" `p1`/`p3` is forcing past a
+  correct verdict, exactly what the soundness frame forbids. `p6` is a separate,
+  scalar-default route through `lat_get`'s return alias; it is useful for analysis
+  correctness, but not the map blocker for the fixpoint flip.
 
 ## The residual levers (scoped, deferred)
 
@@ -196,16 +199,17 @@ equivalence guards, rather than pursue a standalone quick win.
   Yet `p6` (`default_value`) **stays `Published`.** Therefore the assumed route —
   "`p6` is published because scalar values read from the maps flow through the
   `eq`/`join` closures" — is **false**: the skip fires on exactly those atoms and
-  p6 does not clear, so p6's real publication route is non-scalar and was never
-  actually traced (it was assumed). Second, and more decisive: **`p6` is
-  `default_value`, a scalar, not a loop-carried map.** The map that gates the flip
-  is `p0` (`old`), which **Lever D already cleared to `Borrowed`.** So even a
-  working scalar skip would not advance the `run_fixpoint` flip — `merge_targeted`'s
-  `out[k]=` write (where `out` aliases `p1`/`next`) is gated on **caller-side
-  uniqueness (the copy-carrier boundary)**, not on scalar-arg publication. Net:
-  Lever A neither cleared its target nor targeted the blocker. Do not re-attempt it
-  without first tracing p6's actual (non-scalar) publication route — and confirming
-  that route even matters for the flip.
+  p6 does not clear. Follow-up probing found the real route: the first
+  `lat_get__Int(old, k, default_value)` call summarizes as `ret=alias(p2)`, and
+  `transfer_summarized_call` cannot move that return alias because the default
+  argument is not Unique+last-use, so the `.MayAliasParams` fallback publishes
+  arg 2 directly. Second, and more decisive: **`p6` is `default_value`, a scalar,
+  not a loop-carried map.** The map that gates the flip is `p0` (`old`), which
+  **Lever D already cleared to `Borrowed`.** So even a working scalar skip would not
+  advance the `run_fixpoint` flip — `merge_targeted`'s `out[k]=` write (where `out`
+  aliases `p1`/`next`) is gated on **caller-side uniqueness (the copy-carrier
+  boundary)**, not on scalar-arg publication. Net: Lever A neither cleared its
+  target nor targeted the blocker.
 
   Gotcha for anyone reviving the stash: `op_result_mono` is a **complete** local→type
   map at the analyzed level (the IR printer reads the `: Int` annotation straight
@@ -249,10 +253,11 @@ equivalence guards, rather than pursue a standalone quick win.
   fully cleared). **But it flips no in-place decision** — `run_fixpoint` stays
   30/30 `persistent`, `merge_targeted` stays 0 — because the actual map *writes*
   are gated on other routes (`merge_targeted`'s `out[k]=` needs `p1`/`next` unique
-  at the caller = copy-carrier boundary; its `p6` still needs Lever A). Lever D is
-  thus a confirmed **necessary-not-sufficient** precision fix: independently
-  correct (`.keys()` genuinely borrows the dict and returns a fresh vector, so the
-  old conservative publish was pure imprecision affecting every dict-keys loop),
+  at the caller = copy-carrier boundary; `p6` is only the scalar default-value
+  return-alias route). Lever D is thus a confirmed **necessary-not-sufficient**
+  precision fix: independently correct (`.keys()` genuinely borrows the dict and
+  returns a fresh vector, so the old conservative publish was pure imprecision
+  affecting every dict-keys loop),
   and a prerequisite for the flip, but no standalone win. This is the hard-data
   instance of "breadth."
 
@@ -263,15 +268,18 @@ equivalence guards, rather than pursue a standalone quick win.
 - **`p0` (`old`) — unregistered `Dict.keys`, now fixed by Lever D.** `old.keys()`
   hit the conservative publish bucket and published the dict directly; the `.ReadOnly`
   registration cleared it to `Borrowed`.
-- **`p6` (`default_value`) — route UNKNOWN (was mis-modeled as scalar-through-closure).**
-  The tempting model: `lat_get` summarizes `ret=alias(p2)`, so
+- **`p6` (`default_value`) — `lat_get` return-alias fallback, not scalar-through-closure.**
+  The tempting model was: `lat_get` summarizes `ret=alias(p2)`, so
   `old_x := lat_get(old, k, default_value)` makes `old_x` alias `p6`; `old_x`/`next_x`
   flow into the `eq`/`join` closures, and `publish_call` publishes them → `p6`. This
-  is **disproven.** Lever A skipped exactly those scalar args (probe confirmed
-  `has3091=true has3092=true` for `__Int`) and `p6` **stayed `Published`.** So p6 has
-  another, non-scalar publication route that has **not** been traced. It is not on the
-  `run_fixpoint` critical path for the flip (p6 is a scalar default, not a map), so it
-  was not chased further.
+  is **disproven.** Lever A skipped exactly those scalar closure args and `p6`
+  **stayed `Published`.** The measured route is earlier: in `transfer_summarized_call`,
+  `lat_get__Int`'s `ret=alias(p2)` enters the `.MayAliasParams` path. Because the
+  default-value argument is not Unique+last-use, the return-alias move gate fails, so
+  the fallback publishes arg 2 (`default_value`) directly; the first such call in
+  `merge_targeted__Int` marks p6 Shared, and `summarize_seeded` observes it as
+  `.Retained` on later block exits. This is not on the `run_fixpoint` critical path
+  for the flip: p6 is a scalar default, not a loop-carried map.
 
 **Correction to the earlier "needs A+D together" claim:** that was wrong. `p6` is not
 the map blocker and Lever A does not clear it. The map that mattered (`p0`) is cleared
