@@ -3,7 +3,8 @@
 **Status:** Diagnosed; deferred into the sound-uniqueness analysis track. The
 scalar/interior read-provenance route originally blamed here has since been
 repaired upstream, but `run_fixpoint` still does not flip — the residual blockers
-are two concrete, named precision gaps recorded below. Not a bounded quick win.
+are concrete closure-boundary provenance and return-embedding precision gaps
+recorded below. Not a bounded quick win.
 
 **Goal:** Get the compiler's hottest analysis loop — the ownership fixpoint in
 `run_fixpoint` (`boot/compiler/ownership.tw`) — to emit in-place dict mutation
@@ -86,17 +87,22 @@ element read cannot alias the collection shell") is the pattern that generalized
 read-helper repair was necessary but not sufficient. Breadth still holds; the
 remaining publication routes are narrower and different from Phase 0's:
 
-1. **Closure-boundary scalar conservatism (primary residual).**
+1. **Closure-boundary argument/value conservatism (primary residual).**
    `merge_targeted` (`p0=Published p1=Published p2=Borrowed p3=Published …
    p6=Published ret_paths=.f0=from(p1) .f1=from(p3)`) and `same_map`
    (`p0=Published p1=Published`) publish their map params **through their opaque
    `eq`/`join` closure params**. Traced ops in `merge_targeted__Int`:
    `call L3069(L3077, L3078)` (the `eq` param applied to `old_x`/`next_x`).
    Because the callee is an indirect/closure atom, `publish_call` (`ownership.tw`)
-   publishes **every** argument unconditionally — including scalar-typed
-   arguments that cannot alias anything. `merge_targeted`'s `p1`/`p3` are
-   legitimately `Published` (returned as `.f0`/`.f1`); `p0`/`p6` and `same_map`'s
-   `p0`/`p1` are the false ones, all via the closure publish.
+   publishes **every** argument unconditionally. The scalar case is the easiest
+   false positive — scalar-typed arguments cannot alias anything — but the active
+   `run_fixpoint` path also uses non-scalar closure comparisons/joins
+   (`merge_targeted__Vec_Int`, `same_map__Vec_Int`, `same_map__T538`,
+   `same_map__Dict_Int_Vec_Int`) for provenance, field-ownership, and path-
+   provenance maps. Those need a broader value-provenance/borrow story, not only a
+   scalar skip. `merge_targeted`'s `p1`/`p3` are legitimately `Published`
+   (returned as `.f0`/`.f1`); `p0`/`p6` and `same_map`'s `p0`/`p1` are the false
+   ones, all via closure publication of values read from those maps.
 2. **`FixState` + `FixResult` return double-embed.** `run_fixpoint` returns both
    aggregates sharing the same five exit-map objects; publishing one map into two
    aggregates aliases it. Bounded to the 5 exit maps, addressable by a source
@@ -105,12 +111,12 @@ remaining publication routes are narrower and different from Phase 0's:
    `Dict<Int, Dict<Int, T>>` outer maps are threaded through many helpers per
    block-visit; the outer spine stays aliased even though the inner reads borrow.
 
-## The two residual levers (scoped, deferred)
+## The residual levers (scoped, deferred)
 
-Neither is a one-liner, and both likely must land together to flip `run_fixpoint`
-(breadth). This is why the recommendation is to fold into the sound-uniqueness
-analysis track (`docs/plans/sound-uniqueness/`), gated by its equivalence guards,
-rather than pursue a standalone quick win.
+None is a one-liner, and multiple routes likely must land together to flip
+`run_fixpoint` (breadth). This is why the recommendation is to fold into the
+sound-uniqueness analysis track (`docs/plans/sound-uniqueness/`), gated by its
+equivalence guards, rather than pursue a standalone quick win.
 
 - **Lever A — scalar-argument non-publication at the closure/indirect-call
   boundary.** Extend the `AIndex`/`scalar_result_ty` principle to `publish_call`:
@@ -121,7 +127,14 @@ rather than pursue a standalone quick win.
   `elem_ty`. Requires plumbing a local-id→`MonoType` oracle into the forward
   analysis, or fixing provenance at the read boundary so map-derived scalars carry
   no map provenance (partially already true for `nested_get`/`is_processed`).
-- **Lever B — the `FixState`/`FixResult` double-embed.** A source restructure in
+- **Lever B — non-scalar closure argument/value provenance.** The scalar skip does
+  not cover all active fixpoint paths: `old_prov`/`next_prov`, `old_field`/
+  `next_field`, and `old_pp`/`next_pp` flow through closure comparisons over
+  `Vector`, field-map, and nested-dict values. These values may be genuine
+  references, so they cannot be blanket-skipped like scalars; the analysis needs
+  to distinguish borrowing a value read from a map for an equality/join callback
+  from publishing the map shell that supplied it.
+- **Lever C — the `FixState`/`FixResult` double-embed.** A source restructure in
   `run_fixpoint` so the five exit maps are not simultaneously published into two
   returned aggregates.
 
@@ -134,9 +147,11 @@ its `out := next; out[k] = …` shape — but it stays `persistent(aliased shell
 because its `run_fixpoint` callers do not pass the map **uniquely**, and the
 `uniform_entry_seeds` mixed-caller guard correctly refuses to seed it Unique. So
 `merge_targeted` is proven safe *for a unique caller* but its actual caller is not
-unique. Making the loop-carried maps provably Unique at the point they are threaded
-into `merge_targeted__` (Levers A+B) is what unblocks both the helper and the
-caller sites at once.
+unique. The working hypothesis is that making the loop-carried maps provably
+Unique at the point they are threaded into `merge_targeted__` — across the closure
+provenance routes above, plus the return double-embed where relevant — will
+unblock the helper and caller sites together. Re-census, not assumption, is the
+acceptance gate.
 
 ---
 

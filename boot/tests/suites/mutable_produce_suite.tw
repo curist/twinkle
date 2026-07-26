@@ -377,8 +377,9 @@ pub fn suite() runner.Suite {
       fn() {
         // Tracked target marker for docs/plans/fixpoint-map-inplace.md.
         // Intentionally red until run_fixpoint's loop-carried maps are proven
-        // Unique where they thread into merge_targeted__ (closure-boundary scalar
-        // non-publication + the FixState/FixResult double-embed). Not a regression.
+        // Unique where they thread into merge_targeted__ (closure-boundary
+        // argument/value provenance, plus the FixState/FixResult double-embed
+        // where relevant). Not a regression.
         produced := try produce_boot_main()
         try assert.is_true(selected_decision_count(produced, "merge_targeted__", "dict_set") > 0)
         try assert.is_true(selected_decision_count(produced, "run_fixpoint", "dict_set") > 0)
