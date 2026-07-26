@@ -1,53 +1,98 @@
 # Making the Ownership Fixpoint's Own Maps Mutate In-Place
 
-**Status:** Diagnosed; implementation path identified for the main `run_fixpoint`
-optimization. The clean tree still reports `run_fixpoint` as 30/30 persistent, but
-an isolated cold-only proof flipped the core loop-carried map updates to in-place.
-Progress + dead-ends as of 2026-07-26:
-- **Lever D LANDED** (commit `7ddda40f`): registering `Dict.keys` as `.ReadOnly`
-  stopped `.keys()` from conservatively publishing its dict. Cleared
-  `merge_targeted`'s `p0` and `same_map`'s `p0`/`p1` to `Borrowed`. Sound; flips no
-  in-place decision on its own.
-- **Lever A BUILT then REVERTED** (stashed): scalar-arg non-publication. Sound and
-  self-host stable, but a diagnostic **disproved its premise** — the scalar skip
-  fires on the closure args yet `p6` stays `Published`, and a follow-up probe traced
-  `p6` to the `lat_get` return-alias fallback instead. `p6` (a scalar default) isn't
-  the flip blocker anyway (the map `p0` was already cleared by D). See the Lever A
-  entry below.
-- **Cold/warm split PROVED as the main enabler:** the hot `run_fixpoint` body joins
-  two initialization shapes in one function: cold `Dict.new()` maps and warm maps
-  loaded from `FixState`. The warm arm makes the non-backedge loop seed contribution
-  `Unknown`, so the loop-carried maps cannot be proven Unique. A temporary cold-only
-  edit rebuilt self-host and flipped `run_fixpoint` from 30/30 persistent to 28/30
-  selected in-place; the remaining two persistent rows were the `dirty0`/worklist map,
-  not the core fixpoint maps. **Independently re-verified 2026-07-26** (fresh probe +
-  full `make bundle-cli`): identical 28-true/2-false split, flipped rows read
-  `base=reuse(unique)`, and both survivors update `L3593` — the `dirty0` worklist map,
-  whose init is a *separate* `dirty0` optional join (`ownership.tw:6017`), not a
-  `Dict.new()` map. So the number and its cause attribution both hold.
-- **Lever F (consumed-source precision, no duplication) SPIKED — not a cheap
-  extension.** The tempting analysis-only alternative — seed the never-aliased
-  `warm_state` param Unique and move its fields out so the cold/warm join becomes
-  `Unique ∨ Unique = Unique` — was traced through the owned-variant pipeline and does
-  **not** fit the existing machinery. Three structural blockers (below in the Lever F
-  entry): the owned-variant candidate model only proposes *returned copy-carrier*
-  params (`warm_state` is a read-only destructured source), the 14-separate-`case`
-  source shape would BORROW 13 of 14 maps even if seeded, and the hot prize sites pass
-  `.None` (needing value-based `.None`-constant specialization that does not exist).
+**Status:** Re-scoped 2026-07-26 to the **general analysis goal.** The point of this work
+is a *universal* in-place-mutation rewrite — make the ownership analysis prove owned
+collections unique so the compiler emits in-place writes for **every** program, with the
+compiler's own hot fixpoint as one downstream beneficiary. Measured against that goal, the
+levers split into two kinds, and we only pursue the general kind:
 
-Not a bounded quick win, but now bounded: make the two statically-cold callers see map
-locals that are provably fresh `Dict.new()`, so the **already-landed Phase 8B**
-loop-carried in-place path fires (the probe's flipped rows carried the
-`phase8b-loop:run_fixpoint:carry` proof id — no variant machinery needed). The earlier
-blanket rule ("do not extract the hot loop into a param-taking helper") **stands on
-current infra**: a read-only map param is not Unique, and a helper that *returns* the maps
-as a fresh `FixState` aggregate is **not** an owned-variant candidate either —
-`candidate_variants` requires `ret_aliases_exactly_param` (`.MayAliasParams([k])`, the
-whole return IS param k), which a fresh-record return (`ret=fresh ret_paths=…`) fails,
-exactly like `merge_targeted__`. So the deliverable-now path keeps the maps as **locals**
-(cold body / always-cold), not params. The lesson from Lever A still stands: trace each
-param's *actual* publication route from the census before building a lever for it — the
-"scalar-through-closure" model was assumed, not measured, and was wrong.
+- **General analysis precision (the goal — pursue):** make the *analysis* smarter, so the
+  precision is reusable rather than hand-applied to one function. The **primary lever is now
+  the aggregate-field owned-variant extension** (see "Primary lever" below) — it unblocks
+  `merge_targeted__`, any function that returns a fresh aggregate whose fields are owned
+  carriers *when its call sites pass those inputs uniquely*, and `run_fixpoint` (the proper
+  way, via a returned-carrier helper). Lever D landed here.
+- **One-off source workarounds (non-universal — NOT the chosen path):** hand-rewrite one
+  function's source so the *existing* analysis succeeds. Teaches the analysis nothing; the
+  next persistent-collection loop still fails. The `run_fixpoint` cold/warm split is this
+  kind — kept only as a documented tactical fallback, not pursued as primary.
+
+Why the re-scope: `run_fixpoint`'s *direct* map churn is blocked by the cold/warm join
+making its map **locals** `Unknown`, and the only in-scope *analysis* fix for that (Lever F)
+is an explicit sound-uniqueness non-goal — so `run_fixpoint`-direct can only ever be won by
+source hacking, which does not generalize. The wall we kept routing around — aggregate
+return carriers not being owned-variant candidates — is the one that *is* a general
+precision gap with an in-scope fix, and it recurs (it blocks `merge_targeted__` and E-DRY).
+So the correctly-cut layer is that extension, and `run_fixpoint` rides it as a beneficiary.
+
+Progress + dead-ends as of 2026-07-26:
+- **Lever D LANDED** (commit `7ddda40f`; general): registering `Dict.keys` as `.ReadOnly`
+  stopped `.keys()` from conservatively publishing its dict. Cleared `merge_targeted`'s
+  `p0` and `same_map`'s `p0`/`p1` to `Borrowed`. Sound; a necessary precision prerequisite,
+  flips no in-place decision on its own.
+- **Aggregate-field owned-variant extension — NEW PRIMARY (general). Sized 2026-07-26:
+  bounded.** See "Primary lever" below.
+- **Cold/warm split — DEMOTED to non-universal workaround.** Re-verified it flips
+  `run_fixpoint` 28/30 (rides the landed Phase 8B loop-carried in-place path; the two
+  survivors are the separate `dirty0`/`L3593` worklist map), but it is a source restructure
+  of one function with zero universal benefit. Documented as a dead-end in the Lever E entry
+  below; not the chosen direction.
+- **Lever A BUILT then REVERTED** (stashed; general attempt that failed): scalar-arg
+  non-publication. Sound and self-host stable, but a diagnostic disproved its premise. See
+  the Lever A entry.
+- **Lever F SPIKED — out of scope.** Its useful form (flip `run_fixpoint`-direct without a
+  source hack) needs whole-program never-aliased-param seeding or `.None`-constant
+  specialization — an explicit non-goal of the sound-uniqueness track. See the Lever F entry.
+
+The lesson from Lever A still stands: trace each param's *actual* publication route from the
+census before building a lever — the "scalar-through-closure" model was assumed, not
+measured, and was wrong.
+
+## Primary lever (general): aggregate-field owned-variant carrier
+
+**Problem.** `candidate_variants` (`summary.tw:689`) proposes an owned variant only when
+`ret_aliases_exactly_param(s.ret, k)` (`summary.tw:559`) — the *whole* return is exactly
+param `k` (`.MayAliasParams([k])`). A function that builds and returns a **fresh aggregate
+whose fields are owned carriers** — `ret=OwnedFresh ret_paths=.f0=from(p1) .f1=from(p3)`,
+i.e. `merge_targeted__` — is ignored, so its internal `out[k]=` stays
+`persistent(aliased shell)` even at a caller that owns the inputs. Extending owned variants to
+aggregate-field carriers is the general precision fix; `merge_targeted__` (a clean 2-field
+carrier return) is the minimal fixture, and `run_fixpoint`'s `FixState`-returning helper
+(E-DRY) is the 14-field beneficiary.
+
+**Sizing (traced 2026-07-26): bounded — the model and caller side already support it.**
+- **Variant identity already multi-param.** `vid.UniqueKey = Vector<UniqueReq>`
+  (`variant_id.tw:106`); a variant can already key on `{(p1,shell),(p3,shell)}`.
+- **The carrier info is already computed.** Summaries already print
+  `ret_paths=.f0=from(p1) .f1=from(p3)` — per-field return provenance
+  (`ReturnPathOwn`, `ownership.tw:74`).
+- **The caller side already handles multi-carrier `OwnedFresh` returns.**
+  `transfer_summarized_call` (`ownership.tw:4053–4087`) walks `ret_paths`, gates each
+  `.OwnedFromParam(k)` on `arg_unique[k]`, recovers field ownership on success, and
+  publishes-on-fail. The "Stage 4a only moves **exactly one** param" limit
+  (`ownership.tw:4024–4048`) is a **different** path (the `.MayAliasParams` whole-return
+  move) that the aggregate case does not use — so it is not a blocker.
+- **The gap is concentrated on the summary side, and the actual singular bottleneck is the
+  SCC driver:** `candidate_variants` (`summary.tw:689` — propose from `ret_paths`, not only
+  `ret`), `optimistic_hypothesis` (`summary.tw:721` — model an `OwnedFresh`+`ret_paths`
+  return with several `Consumed` params instead of rewriting to `.MayAliasParams([k])`),
+  `variant_valid` (`summary.tw:743` — validate a carrier *set*), and — the one most easily
+  missed — **`run_scc_variants` (`summary.tw:767`), whose driver is hardwired to one seed
+  param per member: `member_pidx: Dict<Int, Int>`, `seed_param_of(v)` (returns
+  `v.unique[0].param`), and the per-`k` `optimistic_hypothesis`/`variant_valid` calls.** That
+  driver must thread the full carrier key. By contrast `variant_args_satisfied`,
+  `unique_seed_for_variant`, and `mark_site_variants` **already iterate `v.unique`** — the
+  selection/seeding half is set-based already; do not "generalize" them.
+- **Open design question (the real risk):** validation soundness for N independent carriers
+  — must each carrier stay `Consumed`-in-place independently, and do carriers interact? Prove
+  it on the 2-carrier `merge_targeted__` fixture before touching the 14-carrier E-DRY case.
+
+Acceptance is the same soundness frame below (behavioral equivalence, `TWINKLE_FIXVERIFY`,
+self-host, boot suite), with the first gate being `merge_targeted__` flipping in the census.
+
+**Implementation plan: `docs/plans/aggregate-field-owned-variants.md`** (candidate detection →
+multi-carrier hypothesis → validation → SCC driver → prove on `merge_targeted__` → `run_fixpoint`
+beneficiary via E-DRY).
 
 **Goal:** Get the compiler's hottest analysis loop — the ownership fixpoint in
 `run_fixpoint` (`boot/compiler/ownership.tw`) — to emit in-place dict mutation
@@ -103,8 +148,17 @@ proves in-place fires end-to-end when handed a unique proof
 summaries/facts. Byte-identity is **not** the acceptance gate (turning `dict$set`
 into `dict$set_in_place` changes emitted bytes by design); the gate is behavioral
 equivalence (the 8D/8E round-trip/equivalence guards), `TWINKLE_FIXVERIFY` clean,
-self-host stable, full boot suite green, plus a real `summary:roots run`
-improvement.
+self-host stable, plus a real `summary:roots run` improvement.
+
+**Boot-suite gate is phase-specific** (the tracked marker asserts both `merge_targeted__`
+and `run_fixpoint` produce an in-place decision, so the suite currently exits 1):
+- **After `merge_targeted__` flips (primary lever):** its half goes green; the
+  `run_fixpoint` half stays the *one* known-red marker until its beneficiary lands. The
+  gate is "exactly that one known failure, and it is the `run_fixpoint` marker" — not a
+  green suite.
+- **After the `run_fixpoint` beneficiary (E-DRY) lands:** the last half goes green, so the
+  full boot suite is green (or the marker is explicitly re-scoped to whatever residual
+  in-place target remains, e.g. the `dirty0` worklist map).
 
 ---
 
@@ -219,12 +273,26 @@ first enabler for the hot `run_fixpoint` map churn. The post-probe ranking is:
    These remain plausible later precision levers, but the cold-only proof shows they
    are not required to flip the core direct `run_fixpoint` map updates.
 
-## The residual levers (re-ranked after the cold-only proof)
+## The residual levers (classified: general analysis vs one-off workaround)
 
-The next implementation should target the cold/warm source-shape split first. The
-probe showed this alone flips the core `run_fixpoint` updates. Levers B/C remain
-useful for the `merge_targeted__` helper body and broader precision, but they are no
-longer the first enabler for the main fixpoint-map optimization.
+Re-scoped to the general goal (see "Primary lever" above). The levers split by whether
+they make the *analysis* more precise (universal benefit — pursue) or just rewrite one
+function's *source* so the existing analysis succeeds (one-off, non-universal — not the
+chosen path):
+
+| Lever | Kind | Status |
+|---|---|---|
+| Aggregate-field owned-variant carrier | **general analysis** | **PRIMARY** (sized, bounded — see above) |
+| D — `Dict.keys` ReadOnly | general analysis | LANDED (necessary, not sufficient) |
+| B — non-scalar closure value provenance | general analysis | candidate follow-up |
+| A — scalar-arg non-publication | general analysis | built + reverted (premise wrong) |
+| F — never-aliased source seeding | general analysis | out of scope (track non-goal) |
+| **E — cold/warm `run_fixpoint` split** | **source workaround** | demoted (tactical fallback only) |
+| **C — `FixState`/`FixResult` double-embed restructure** | **source workaround** | deprioritized (non-universal) |
+
+Levers E and C are the same *kind* of thing — hand-editing `run_fixpoint`'s source to
+dodge the analysis. Neither advances the universal rewrite; both are kept only as records,
+not as the direction. The detailed entries below retain their original diagnostic notes.
 
 - **Lever A — scalar-argument non-publication at the closure/indirect-call
   boundary. BUILT + MEASURED + REVERTED (2026-07-26); sound but ineffective, and
@@ -265,8 +333,9 @@ longer the first enabler for the main fixpoint-map optimization.
   from `func.op_result_mono[local.id]` at `ir_print.tw:313`), despite being passed
   read-only through the optimizer's fixed-point simplifications — so coverage was
   *not* the problem; the premise was.
-- **Lever E — split cold and warm `run_fixpoint` solver bodies. PROVED by probe
-  (re-verified 2026-07-26), not yet landed.** Today one function contains both shapes:
+- **Lever E — split cold and warm `run_fixpoint` solver bodies. SOURCE WORKAROUND —
+  DEMOTED (non-universal); tactical fallback only, not the chosen direction.** Proved by
+  probe (re-verified 2026-07-26), not landed. Today one function contains both shapes:
   cold `Dict.new()` maps and warm maps loaded from `FixState`. The ownership analysis
   must summarize the joined source, so the cold loop header's non-backedge predecessor
   contributes `Unknown` and the loop seed is dropped even though the backedge is
@@ -294,7 +363,8 @@ longer the first enabler for the main fixpoint-map optimization.
     the incremental rerun (`:6285`). Keeps both optimizations at the cost of a
     dual-maintained hot loop. Do **not** instead extract a param-taking helper — read-only
     map params are not Unique, and a returned-aggregate helper is not an owned-variant
-    candidate (see below). A plan doc lives at `docs/plans/fixpoint-cold-warm-split.md`.
+    candidate on *current* infra (see E-DRY below; the aggregate-field extension in
+    "Primary lever" is what would make the returned-carrier helper viable).
   - **E-DRY (NOT viable on current infra — documented, needs an analysis extension).** The
     tempting form — extract `fixpoint_iterate(maps…) FixState` and let the owned-variant
     machinery seed the maps Unique at cold callers — does **not** work today:
@@ -360,10 +430,13 @@ longer the first enabler for the main fixpoint-map optimization.
   values may be genuine references, so they cannot be blanket-skipped like scalars;
   the analysis needs to distinguish borrowing a value read from a map for an
   equality/join callback from publishing the map shell that supplied it.
-- **Lever C — the `FixState`/`FixResult` double-embed.** Deferred unless the cold/warm
-  split leaves return-side publication as the next measured blocker. A source
-  restructure in `run_fixpoint` may still be needed so the five exit maps are not
-  simultaneously published into two returned aggregates.
+- **Lever C — the `FixState`/`FixResult` double-embed. SOURCE WORKAROUND —
+  deprioritized (non-universal), same kind as Lever E.** A source restructure in
+  `run_fixpoint` so the five exit maps are not simultaneously published into two returned
+  aggregates. Note the double-embed is real (`FixRun` embeds the five exit maps in both
+  `FixResult` and `FixState`, `ownership.tw:6224`) but does **not** block the Phase 8B
+  loop-carried in-place path (the probe flipped 28/30 despite it). Kept as a record, not
+  pursued.
 - **Lever D — register `Dict.keys` in the optimizer's `CallSemantics` (new,
   verified 2026-07-26; landed + measured).** `dict$keys` is a registered runtime builtin
   (`builtins.tw:516`) but has **no `CallSemantics` entry** in
@@ -440,11 +513,12 @@ merge_targeted__Int dict_set dict$set dict$set_in_place false L3110 = update L30
 ```
 
 The cold-only split proof did **not** flip these `merge_targeted__*` rows; it flipped
-the direct `run_fixpoint` map updates. That means the `run_fixpoint` win can land
-first via Lever E even if the helper marker remains red. Treat `merge_targeted__` as a
-separate follow-up: either a caller-selected owned variant must be made visible in the
-production/census path, or B/C-style precision work must make the generic helper body
-prove its carrier Unique. Re-census, not assumption, is the acceptance gate.
+the direct `run_fixpoint` map updates. Under the re-scope, this row is exactly the
+**primary target**: `merge_targeted__` returns `ret=OwnedFresh ret_paths=.f0=from(p1)
+.f1=from(p3)`, an aggregate-field carrier the owned-variant candidate model ignores today.
+Making the aggregate-field owned-variant extension recognize it (see "Primary lever") is the
+general fix — it flips `merge_targeted__` and, via a returned-carrier helper, `run_fixpoint`
+too. Re-census, not assumption, is the acceptance gate.
 
 ---
 
@@ -459,16 +533,17 @@ target/twk ir boot/main.tw --census --sites \
   | rg -n "^run_fixpoint\t|^merge_targeted|^join_entry_ownership_assumed"
 ```
 
-For Lever E, the first acceptance gate is narrower than the historical marker:
-`run_fixpoint`'s core loop-carried map updates should flip from
-`base=persistent(aliased shell)` to `base=reuse(unique)` / `dict$set_in_place`.
-The cold-only probe's target was 28 selected rows and 2 remaining persistent
-`dirty0`/worklist rows; a real implementation should match or explain any drift.
-Then run the behavioral gates under the soundness frame above: `TWINKLE_FIXVERIFY`
-clean, self-host stable, full boot suite green, and a real `summary:roots run`
-improvement. If `run_fixpoint` flips but `merge_targeted__` remains persistent,
-that is a follow-up marker/precision issue, not evidence that the cold/warm split
-failed.
+For the **primary (aggregate-field owned-variant) lever**, the first acceptance gate is
+`merge_targeted__`'s `dict_set` row flipping from `base=persistent(aliased shell)` to a
+selected in-place decision in the census — proving the general capability on the minimal
+2-carrier fixture. Then the returned-carrier `run_fixpoint` helper (E-DRY) should flip its
+core map updates as the downstream beneficiary. Run the behavioral gates under the
+soundness frame above: `TWINKLE_FIXVERIFY` clean, self-host stable, boot suite at exactly
+the one known-red marker, and a real `summary:roots run` improvement.
+
+(For the demoted cold/warm workaround, the historical gate was narrower — `run_fixpoint`'s
+28 selected / 2 persistent `dirty0` rows — but that path is a tactical fallback, not the
+chosen direction.)
 
 ## Methodology gotcha (cost several inert probes historically)
 
