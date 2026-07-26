@@ -1,15 +1,26 @@
 # Making the Ownership Fixpoint's Own Maps Mutate In-Place
 
-**Status:** Diagnosed; deferred into the sound-uniqueness analysis track. The
-scalar/interior read-provenance route originally blamed here has since been
-repaired upstream, but `run_fixpoint` still does not flip. The residual blockers
-are now traced to a named minimum set (2026-07-26): scalar-through-closure
-publication (Lever A), non-scalar closure-value provenance (Lever B), the
-`FixState`/`FixResult` return double-embed (Lever C), and an **unregistered
-`Dict.keys`** falling into the conservative publish bucket (Lever D). Even the
-simplest monomorph needs A+D together — see the verified route breakdown below.
-Not a bounded quick win, but Lever A's oracle blocker turned out smaller than
-first recorded (the type map already exists, just unthreaded).
+**Status:** Diagnosed; deferred into the sound-uniqueness analysis track.
+`run_fixpoint` still does not flip. Progress + dead-ends as of 2026-07-26:
+- **Lever D LANDED** (commit `7ddda40f`): registering `Dict.keys` as `.ReadOnly`
+  stopped `.keys()` from conservatively publishing its dict. Cleared
+  `merge_targeted`'s `p0` and `same_map`'s `p0`/`p1` to `Borrowed`. Sound; flips no
+  in-place decision on its own.
+- **Lever A BUILT then REVERTED** (stashed): scalar-arg non-publication. Sound and
+  self-host stable, but a diagnostic **disproved its premise** — the scalar skip
+  fires on the closure args yet `p6` stays `Published`, and `p6` (a scalar default)
+  isn't the flip blocker anyway (the map `p0` was already cleared by D). See the
+  Lever A entry below.
+- **Real remaining blocker** (re-grounded by the above): the loop-carried maps
+  reach `merge_targeted`/the write sites without being provably **unique at the
+  caller** — the copy-carrier boundary — not a scalar-publication issue. Levers B
+  (non-scalar closure-value provenance) and C (`FixState`/`FixResult` return
+  double-embed) remain candidate analysis fixes, but the next real work is
+  caller-side uniqueness, folded into the sound-uniqueness track.
+
+Not a bounded quick win. The lesson from Lever A: trace each param's *actual*
+publication route from the census before building a lever for it — the
+"scalar-through-closure" model was assumed, not measured, and was wrong.
 
 **Goal:** Get the compiler's hottest analysis loop — the ownership fixpoint in
 `run_fixpoint` (`boot/compiler/ownership.tw`) — to emit in-place dict mutation
@@ -164,20 +175,43 @@ sound-uniqueness analysis track (`docs/plans/sound-uniqueness/`), gated by its
 equivalence guards, rather than pursue a standalone quick win.
 
 - **Lever A — scalar-argument non-publication at the closure/indirect-call
-  boundary.** Extend the `AIndex`/`scalar_result_ty` principle to `publish_call`
-  (`ownership.tw:3856`, the `for a in args { st = .publish_atom(a) }` loop): a
-  scalar (unboxed, immutable) argument has no interior to corrupt, so publishing it
-  is meaningless and only poisons provenance. **Blocker is smaller than first
-  recorded** (verified 2026-07-26): the local-id→`MonoType` oracle Lever A needs
-  is **not missing, only unthreaded**. `AnfFunctionDef` already carries
-  `op_result_mono: Dict<Int, MonoType>` (`anf.tw:73`) plus `params`, which together
-  type every op-result local and param — a per-function `is_scalar_atom` predicate
-  can be built from them at analysis entry. It just isn't passed into the ownership
-  pass today (`op_result_mono` has **zero** uses in `ownership.tw`). `ForwardState`
-  itself stays type-erased; the fix threads the predicate alongside `sem` down the
-  bounded path `transfer_op` (3 call sites) → `transfer_call:3849` → `publish_call`,
-  and skips `publish_atom` for scalar args. `scalar_result_ty` (`ownership.tw:3874`)
-  already exists and only accepts genuinely unboxed types, so the skip is sound.
+  boundary. BUILT + MEASURED + REVERTED (2026-07-26); sound but ineffective, and
+  the premise was wrong.** The idea: extend the `AIndex`/`scalar_result_ty`
+  principle to `publish_call` (the `for a in args { st = .publish_atom(a) }` loop) —
+  a scalar (unboxed) argument has no interior to corrupt, so publishing it is
+  meaningless and only poisons provenance. It was fully implemented: a
+  `CfgFunction.op_result_mono` field (populated in `build_function` from
+  `AnfFunctionDef.op_result_mono`), a `build_is_scalar` predicate, a ride-along
+  `ForwardState.is_scalar` field threaded through `run_fixpoint` /
+  `stabilize_seeds` / `run_fixpoint_validated` / `ownership_stage` /
+  `summarize_seeded` / `call_uniques` / `analyze_function`, and an `atom_is_scalar`
+  skip in `publish_call`. It is **self-host stable** (stage3==stage4) and
+  behaviorally clean. **The implementation is preserved in `git stash` (message
+  "Lever A: scalar-arg non-publication"); it is not committed.**
+
+  **Why it was reverted — a diagnostic probe disproved the premise.** Instrumenting
+  `summarize_seeded` showed `is_scalar` is populated correctly: for
+  `merge_targeted__Int` the closure args `L3091`/`L3092` (`old_x`/`next_x`, both
+  `Int`) report `has3091=true has3092=true`, so `publish_call` **does** skip them.
+  Yet `p6` (`default_value`) **stays `Published`.** Therefore the assumed route —
+  "`p6` is published because scalar values read from the maps flow through the
+  `eq`/`join` closures" — is **false**: the skip fires on exactly those atoms and
+  p6 does not clear, so p6's real publication route is non-scalar and was never
+  actually traced (it was assumed). Second, and more decisive: **`p6` is
+  `default_value`, a scalar, not a loop-carried map.** The map that gates the flip
+  is `p0` (`old`), which **Lever D already cleared to `Borrowed`.** So even a
+  working scalar skip would not advance the `run_fixpoint` flip — `merge_targeted`'s
+  `out[k]=` write (where `out` aliases `p1`/`next`) is gated on **caller-side
+  uniqueness (the copy-carrier boundary)**, not on scalar-arg publication. Net:
+  Lever A neither cleared its target nor targeted the blocker. Do not re-attempt it
+  without first tracing p6's actual (non-scalar) publication route — and confirming
+  that route even matters for the flip.
+
+  Gotcha for anyone reviving the stash: `op_result_mono` is a **complete** local→type
+  map at the analyzed level (the IR printer reads the `: Int` annotation straight
+  from `func.op_result_mono[local.id]` at `ir_print.tw:313`), despite being passed
+  read-only through the optimizer's fixed-point simplifications — so coverage was
+  *not* the problem; the premise was.
 - **Lever B — non-scalar closure argument/value provenance.** The scalar skip does
   not cover all active fixpoint paths: `old_prov`/`next_prov`, `old_field`/
   `next_field`, and `old_pp`/`next_pp` flow through closure comparisons over
@@ -222,29 +256,30 @@ equivalence guards, rather than pursue a standalone quick win.
   and a prerequisite for the flip, but no standalone win. This is the hard-data
   instance of "breadth."
 
-### Verified route breakdown for `merge_targeted__Int` (2026-07-26)
+### Route breakdown for `merge_targeted__Int` (2026-07-26; p6 route CORRECTED)
 
-The doc previously lumped `p0`/`p6` under "closure publication of values read from
-those maps." Tracing the summaries shows they are **two different routes**, only
-one of which is closure/scalar:
+`p0` and `p6` are **two different routes**:
 
-- **`p6` (`default_value`) — scalar-through-closure (Lever A).** `lat_get`
-  summarizes `ret=alias(p2)` — it aliases its *third arg (the default)*, not the
-  map. In `merge_targeted`, `old_x := lat_get(old, k, default_value)` therefore
-  makes `old_x` alias `default_value` = `p6`. `old_x`/`next_x` then flow into the
-  `eq`/`join` closure params; `publish_call` publishes them, publishing `p6`. For
-  `__Int` these values are scalar → exactly Lever A's target.
-- **`p0` (`old`) — unregistered `Dict.keys` (Lever D).** As above: `old.keys()`
-  hits the conservative publish bucket. Lever A cannot touch this (the published
-  atom is the dict, not a scalar).
+- **`p0` (`old`) — unregistered `Dict.keys`, now fixed by Lever D.** `old.keys()`
+  hit the conservative publish bucket and published the dict directly; the `.ReadOnly`
+  registration cleared it to `Borrowed`.
+- **`p6` (`default_value`) — route UNKNOWN (was mis-modeled as scalar-through-closure).**
+  The tempting model: `lat_get` summarizes `ret=alias(p2)`, so
+  `old_x := lat_get(old, k, default_value)` makes `old_x` alias `p6`; `old_x`/`next_x`
+  flow into the `eq`/`join` closures, and `publish_call` publishes them → `p6`. This
+  is **disproven.** Lever A skipped exactly those scalar args (probe confirmed
+  `has3091=true has3092=true` for `__Int`) and `p6` **stayed `Published`.** So p6 has
+  another, non-scalar publication route that has **not** been traced. It is not on the
+  `run_fixpoint` critical path for the flip (p6 is a scalar default, not a map), so it
+  was not chased further.
 
-So **even the simplest monomorph needs A *and* D together** — a concrete instance
-of the "breadth" claim, with the co-blocking routes now named rather than
-hypothesized. `__Vec_Int`/`__Dict_Int_Vec_Int` additionally need Lever B (the
-`lat_get`-aliased value is a genuine `Vector`/nested-`dict`, not skippable as
-scalar). This makes A+B+D (and likely C for the return double-embed) the real
-minimum set, and is the sharpened evidence for folding into the sound-uniqueness
-track rather than chasing one lever.
+**Correction to the earlier "needs A+D together" claim:** that was wrong. `p6` is not
+the map blocker and Lever A does not clear it. The map that mattered (`p0`) is cleared
+by **D alone**. The remaining blocker to the flip is **caller-side uniqueness** of the
+loop-carried maps at the `merge_targeted` call (copy-carrier boundary), plus possibly
+Lever B (non-scalar closure-value provenance for the `__Vec_Int`/`__Dict_Int_Vec_Int`
+monomorphs) and Lever C (the return double-embed) — folded into the sound-uniqueness
+track, not chased as standalone levers.
 
 ## Copy-carrier boundary (why `merge_targeted` still won't flip on its own)
 
