@@ -1486,6 +1486,46 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "aggregate owned-variant hypothesis preserves fresh aggregate return paths",
+      fn() {
+        generic := ownership.Summary.{
+          params: [
+            ownership.ParamSummary.{
+              base_role: .Published,
+              in_place_paths: variant_id.empty_set(),
+              flows_to_return: true,
+            },
+            ownership.ParamSummary.{
+              base_role: .Published,
+              in_place_paths: variant_id.empty_set(),
+              flows_to_return: true,
+            },
+            ownership.ParamSummary.{
+              base_role: .Borrowed,
+              in_place_paths: variant_id.empty_set(),
+              flows_to_return: false,
+            },
+          ],
+          ret: .OwnedFresh,
+          ret_paths: [
+            ownership.ReturnPathOwn.{ via: .Direct, field: .Some(0), own: .OwnedFromParam(0) },
+            ownership.ReturnPathOwn.{ via: .Direct, field: .Some(1), own: .OwnedFromParam(1) },
+          ],
+        }
+
+        hyp := summary.optimistic_hypothesis_multi(generic, [0, 1])
+
+        try assert.equal(
+          summary.render_summary(hyp),
+          "summary: p0=Consumed paths{[]} p1=Consumed paths{[]} p2=Borrowed ret=fresh  ret_paths=.f0=from(p0) .f1=from(p1)",
+        )
+        try assert.equal(hyp.params[0].flows_to_return, true)
+        try assert.equal(hyp.params[1].flows_to_return, true)
+        try assert.equal(hyp.params[2].flows_to_return, false)
+        .Ok({})
+      },
+    )
+    .test(
       "review: ir command cfg helper renders pruned analyzed summaries",
       fn() {
         file := "${fixtures_dir()}/ir_cfg_summary.tw"

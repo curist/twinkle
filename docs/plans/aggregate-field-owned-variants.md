@@ -191,11 +191,19 @@ git commit -m "ownership: propose owned-variant candidates for aggregate-field c
 
 ---
 
-## Task 2 — Multi-carrier optimistic hypothesis
+## Task 2 — Multi-carrier optimistic hypothesis ✅ DONE
 
-**Files:** Modify `boot/compiler/summary.tw` (`optimistic_hypothesis` + callers).
+**Files:** Modify `boot/compiler/summary.tw` (`optimistic_hypothesis` + callers) and
+`boot/tests/suites/cfg_summary_suite.tw`.
 
-- [ ] **Step 1: Add a carrier-set hypothesis** that marks every carrier `Consumed`+shell and
+**Outcome:** `pub fn optimistic_hypothesis_multi` landed with a summary-suite regression that
+pins the aggregate-preserving contract. It marks keyed carriers `Consumed paths{[]}` and preserves
+`ret=OwnedFresh` plus `ret_paths`; the existing whole-return `optimistic_hypothesis` remains for
+`.MayAliasParams([k])`. `summarize_variant` was confirmed to already seed every `req in key`.
+Self-host reaches `stage3 == stage4`; boot suite still has exactly the one known-red marker; no
+census flip yet (expected until Tasks 3–4).
+
+- [x] **Step 1: Add a carrier-set hypothesis** that marks every carrier `Consumed`+shell and
   **preserves** the aggregate return (`gs.ret` / `gs.ret_paths`) rather than rewriting to
   `.MayAliasParams([k])`.
 
@@ -212,14 +220,15 @@ fn optimistic_hypothesis_multi(gs: Summary, carriers: Vector<Int>) Summary {
       ps
     }
   }
-  Summary.{ params, ret: gs.ret, ret_paths: gs.ret_paths }
+  gs.params = params
+  gs
 }
 ```
 Keep the existing single-`k` `optimistic_hypothesis` for the whole-return path, or make it
 `optimistic_hypothesis_multi(gs, [k])` returning `.MayAliasParams([k])` — pick one; do not
 leave two divergent seeders for the same case.
 
-- [ ] **Step 2: Confirm `summarize_variant` already seeds the whole key (no change expected).**
+- [x] **Step 2: Confirm `summarize_variant` already seeds the whole key (no change expected).**
   It is defined in `boot/compiler/ownership.tw` (`pub fn summarize_variant`, ~`:7645`; `summary.tw`
   imports it). It **directly loops `for req in key { unique_seed[f.params[req.param].id] = true }`**
   then calls `summarize_seeded` — so it already seeds every param in the key, not just `unique[0]`.
@@ -227,7 +236,7 @@ leave two divergent seeders for the same case.
   rendering/reachability, not by `summarize_variant`.) No edit needed here; this step just records
   that the seeding side is already multi-param — the singular bottleneck is the driver (Task 4).
 
-- [ ] **Step 3: Rebuild (no census change expected yet — driver is Task 4).**
+- [x] **Step 3: Rebuild (no census change expected yet — driver is Task 4).**
 
 ```bash
 make bundle-cli 2>&1 | tail -1
@@ -237,7 +246,7 @@ Expected: self-host green. (Behavioral flip comes after Tasks 3–4 wire the dri
 - [ ] **Step 4: Commit.**
 
 ```bash
-git add boot/compiler/summary.tw
+git add boot/compiler/summary.tw boot/tests/suites/cfg_summary_suite.tw docs/plans/aggregate-field-owned-variants.md
 git commit -m "ownership: multi-carrier optimistic hypothesis preserving the aggregate return"
 ```
 

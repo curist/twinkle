@@ -761,6 +761,24 @@ fn optimistic_hypothesis(gs: Summary, k: Int) Summary {
   Summary.{ params, ret: .MayAliasParams([k]), ret_paths: [] }
 }
 
+// Optimistic seed for an aggregate-field carrier variant: mark every keyed
+// carrier Consumed+shell while preserving the generic fresh-aggregate return and
+// ret_paths. The SCC driver will use this for OwnedFresh aggregate candidates
+// once Tasks 3-4 wire it; kept public so cfg_summary_suite can pin the helper's
+// aggregate-preserving contract.
+pub fn optimistic_hypothesis_multi(gs: Summary, carriers: Vector<Int>) Summary {
+  cset := int_set(carriers)
+  params: Vector<ParamSummary> = collect ps, i in gs.params {
+    if in_set(cset, i) {
+      ParamSummary.{ base_role: .Consumed, in_place_paths: vid.shell_set(), flows_to_return: true }
+    } else {
+      ps
+    }
+  }
+  gs.params = params
+  gs
+}
+
 fn seed_param_of(v: vid.VariantId) Int {
   if v.unique.len() > 0 {
     v.unique[0].param
