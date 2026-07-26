@@ -189,7 +189,7 @@ equivalence guards, rather than pursue a standalone quick win.
   `run_fixpoint` so the five exit maps are not simultaneously published into two
   returned aggregates.
 - **Lever D — register `Dict.keys` in the optimizer's `CallSemantics` (new,
-  verified 2026-07-26).** `dict$keys` is a registered runtime builtin
+  verified 2026-07-26; landed + measured).** `dict$keys` is a registered runtime builtin
   (`builtins.tw:516`) but has **no `CallSemantics` entry** in
   `opt/semantics.tw` (which registers `Dict` `set`/`remove`/`get`/`new` but not
   `keys`). So `call_info` returns `.None`, it is not summarized (it's an rt
@@ -205,10 +205,22 @@ equivalence guards, rather than pursue a standalone quick win.
   no dict provenance). **Caveat — not a free one-liner:** keys-order provenance is
   load-bearing for the copy-carrier key-stream machinery (`ownership.tw:722`, "a
   keys-order loan created before the write survives"; the completed key-stream
-  uniqueness work). A naive `.ReadOnly` registration must be checked against that
-  machinery and the equivalence guards before it can be trusted — the omission may
-  be deliberate. This lever also has the **broadest** reach on `run_fixpoint`
-  proper, whose 30 maps are all iterated via `.keys()`.
+  uniqueness work). The `.ReadOnly, cow_base_arg: .None`
+  registration was applied and is **sound**: self-host reaches its stage3==stage4
+  fixed point and the full boot suite passes except the intentionally-red tracked
+  marker. Key-stream detection is independent (it matches `ops.keys` on the builtin
+  id, not `CallSemantics`), so the two do not interact. **Measured effect on
+  provenance** (before → after): `merge_targeted p0=Published → Borrowed`;
+  `same_map p0=Published p1=Published → Borrowed Borrowed` (both false positives
+  fully cleared). **But it flips no in-place decision** — `run_fixpoint` stays
+  30/30 `persistent`, `merge_targeted` stays 0 — because the actual map *writes*
+  are gated on other routes (`merge_targeted`'s `out[k]=` needs `p1`/`next` unique
+  at the caller = copy-carrier boundary; its `p6` still needs Lever A). Lever D is
+  thus a confirmed **necessary-not-sufficient** precision fix: independently
+  correct (`.keys()` genuinely borrows the dict and returns a fresh vector, so the
+  old conservative publish was pure imprecision affecting every dict-keys loop),
+  and a prerequisite for the flip, but no standalone win. This is the hard-data
+  instance of "breadth."
 
 ### Verified route breakdown for `merge_targeted__Int` (2026-07-26)
 
