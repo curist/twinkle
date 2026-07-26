@@ -1,6 +1,36 @@
 # fmt drops comments inside method chains
 
-**Status:** Bug report + fix sketch (not started)
+**Status:** FIXED (2026-07-26). Postfix `.`-access now threads interior trivia.
+The scope turned out broader than method chains: the same drop hit every postfix
+`.`-access — single field access, pure field-access spines (`rec.a.b`), mixed
+field+method chains, self-breaking closure-arg chains, and trailing comments on a
+link. All are covered by the fix and by `fmt_suite.tw` fixtures
+(`method_chain_comments`, `field_access_comments`, `method_chain_trailing_comment`).
+
+## Resolution
+
+Two sites in `boot/compiler/fmt/printer.tw`, both keyed off the tight source gap
+`[receiver.span.end, field.span.end]` (excludes the argument list):
+
+- `format_expr` `.Field`: when a comment sits in that gap, emit it on its own
+  indented line ahead of `.name` instead of gluing the receiver to the field.
+  This recursively covers field spines and the non-chain call fallback (so mixed
+  `rec.foo.bar().baz` works too).
+- `format_call` method-chain loop: `ChainSegment` now carries `gap_start`/
+  `gap_end`. A leading comment before a link is emitted on its own line and forces
+  the chain to break; a trailing comment on a link (attached to its closing paren,
+  which ends where the next link's gap begins) is emitted after the link and also
+  forces the break. Comment-free chains still collapse exactly as before.
+
+Index chains were investigated and are not a drop case: a `[` after a newline is
+not parsed as a postfix index (only `.lowercase` binds across newlines), so an
+interior comment there is never inside a real index chain.
+
+Original report and fix sketch retained below for context.
+
+---
+
+**Original status:** Bug report + fix sketch (not started)
 
 **Severity:** Correctness / silent data loss — `twk fmt` deletes user comments
 placed between the links of a method chain. Formatting is idempotent, so the

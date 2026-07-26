@@ -1294,7 +1294,21 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
     .Unary(op, inner) => format_unary(op, inner, tm),
     .Binary(op, lhs, rhs) => format_binary(op, lhs, rhs, tm),
     .Call(callee, args) => format_call(callee, args, expr.span, tm),
-    .Field(obj, name) => doc.concat([format_receiver(obj, tm), doc.text(".${name}")]),
+    .Field(obj, name) => {
+      recv := format_receiver(obj, tm)
+      gap := non_blank_trivia(tm.get_trivia_in_range(obj.span.end, expr.span.end))
+
+      if gap.len() > 0 {
+        // Comment between the receiver and `.name`: keep it on its own line
+        // ahead of the field access rather than dropping it on collapse.
+        doc.concat([
+          recv,
+          doc.concat([doc.hard_line(), emit_trivia(gap), doc.text(".${name}")]).indent(),
+        ])
+      } else {
+        doc.concat([recv, doc.text(".${name}")])
+      }
+    },
     .Index(obj, idx) => doc.concat([
       format_receiver(obj, tm),
       doc.text("["),
@@ -1641,7 +1655,12 @@ fn binop_str(op: BinOp) String {
   }
 }
 
-type ChainSegment = .{ name: String, args: Vector<Expr> }
+// gap_start/gap_end bound the source range between the previous link's end and
+// this segment's method-name token (`[receiver.span.end, field.span.end]`),
+// excluding the argument list. Interior comments in that gap are threaded onto
+// their own line ahead of the segment instead of being dropped when the chain
+// collapses.
+type ChainSegment = .{ name: String, args: Vector<Expr>, gap_start: Int, gap_end: Int }
 
 type ChainResult = .{ base: Expr, segments: Vector<ChainSegment> }
 
@@ -1671,7 +1690,9 @@ fn collect_method_chain(callee: Expr, args: Vector<Expr>) ChainResult? {
   for true {
     case cur_callee.kind {
       .Field(obj, name) => {
-        segments = .append(.{ name, args: cur_args })
+        segments = .append(
+          .{ name, args: cur_args, gap_start: obj.span.end, gap_end: cur_callee.span.end },
+        )
 
         case obj.kind {
           .Call(inner_callee, inner_args) => case inner_callee.kind {
@@ -1724,11 +1745,49 @@ fn format_call(callee: Expr, args: Vector<Expr>, container: Span, tm: TriviaMap)
   // glued to its closing paren.
   case collect_method_chain(callee, args) {
     .Some(chain) => {
+      // Any interior comment — a leading comment before a link, or a trailing
+      // comment on a link's line (attached to its closing paren) — forces the
+      // whole chain to break one link per line so no comment is dropped on
+      // collapse. A link's closing paren ends where the next link's gap starts.
+      force_break := false
+
+      for seg, i in chain.segments {
+        if non_blank_trivia(tm.get_trivia_in_range(seg.gap_start, seg.gap_end)).len() > 0 {
+          force_break = true
+        }
+
+        if i + 1 < chain.segments.len()
+          and has_comment_in_trivia(tm.get_trailing_trivia(chain.segments[i + 1].gap_start)) {
+          force_break = true
+        }
+      }
+
       tail_parts: Vector<Doc> = []
 
-      for seg in chain.segments {
-        tail_parts = .append(doc.line().if_break(doc.nil()))
+      for seg, i in chain.segments {
+        gap := non_blank_trivia(tm.get_trivia_in_range(seg.gap_start, seg.gap_end))
+
+        if gap.len() > 0 {
+          // Leading comment before this link: emit it on its own line ahead of
+          // the link (the hard line also forces the chain group to break).
+          tail_parts = .append(doc.concat([doc.hard_line(), emit_trivia(gap)]))
+        } else if force_break {
+          tail_parts = .append(doc.hard_line())
+        } else {
+          tail_parts = .append(doc.line().if_break(doc.nil()))
+        }
+
         tail_parts = .append(seg.format_chain_segment(tm))
+
+        // Trailing comment on this link's line (e.g. `.bar() // note`) is
+        // attached to the closing paren, which ends where the next link begins.
+        if i + 1 < chain.segments.len() {
+          trailing := tm.get_trailing_trivia(chain.segments[i + 1].gap_start)
+
+          if has_comment_in_trivia(trailing) {
+            tail_parts = .append(emit_trailing_trivia(trailing))
+          }
+        }
       }
 
       return doc.concat([format_receiver(chain.base, tm), doc.concat(tail_parts).indent()]).group()

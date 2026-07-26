@@ -1,0 +1,17 @@
+fn build() Int {
+  x := foo()
+    // comment A: between chain links
+    .bar()
+    // comment B: before another link
+    .baz()
+  x
+}
+
+fn pipeline(items) Vector<Int> {
+  out := items
+    // pick the mapped values
+    .map(fn(x) { x + 1 })
+    // then keep the positives
+    .filter(fn(z) { z > 0 })
+  out
+}
