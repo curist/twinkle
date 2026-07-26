@@ -140,14 +140,25 @@ fn aggregate_carrier_params(f: CfgFunction, s: Summary) Vector<Int> {
     }
 ```
 
-- [ ] **Step 3: Rebuild + confirm `merge_targeted__` now has a candidate.**
+- [ ] **Step 3: Gate on candidate *generation* via temporary instrumentation (no committed
+  test at this task).** `--cfg` only renders variants that survive into `VariantSummaryTable`;
+  after Task 1 the still-singular driver (`run_scc_variants`, Task 4) will retract or mis-seed
+  the `{p1,p3}` candidate, so a `--cfg` grep shows nothing — the wrong gate. And
+  `candidate_variants`/`render_variant_key` are **private `fn`s** in `summary.tw`, so a suite in
+  another module cannot call them directly — do not claim a committed unit test here. Instead add
+  a **temporary** `eprintln("[cand] ${render_variant_key(v)}")` at the point `candidate_variants`
+  appends the aggregate candidate, rebuild, and confirm it prints for `merge_targeted__`:
 
 ```bash
 make bundle-cli 2>&1 | tail -3   # Fixed point reached: stage3 == stage4
-target/twk ir boot/main.tw --cfg | grep -iE 'variant.*merge_targeted|merge_targeted.*unique:p1,p3'
+# Capture stderr (where the eprintln goes), drop stdout; then grep the log:
+target/twk ir boot/main.tw --census --sites >/dev/null 2>/tmp/cands.log
+grep '\[cand\].*unique:p1,p3' /tmp/cands.log
+# → [cand] unique:p1,p3   (among other candidate lines)
 ```
-Expected: a variant keyed `unique:p1,p3` appears for `merge_targeted__`. (It will not yet
-flip in-place — the hypothesis/validation are still single-carrier; Tasks 2–4.)
+  **Remove the `eprintln` before committing.** Durable coverage comes at Task 5 via the fixture
+  census once the driver (Task 4) threads the full key; the *visible-in-`--cfg`* and *census-flip*
+  gates are deferred to Task 4.
 
 - [ ] **Step 4: Commit.**
 
@@ -173,7 +184,7 @@ git commit -m "ownership: propose owned-variant candidates for aggregate-field c
 fn optimistic_hypothesis_multi(gs: Summary, carriers: Vector<Int>) Summary {
   cset := int_set(carriers)
   params: Vector<ParamSummary> = collect ps, i in gs.params {
-    if has_int(cset, i) {
+    if in_set(cset, i) {
       ParamSummary.{ base_role: .Consumed, in_place_paths: vid.shell_set(), flows_to_return: true }
     } else {
       ps
@@ -186,10 +197,13 @@ Keep the existing single-`k` `optimistic_hypothesis` for the whole-return path, 
 `optimistic_hypothesis_multi(gs, [k])` returning `.MayAliasParams([k])` — pick one; do not
 leave two divergent seeders for the same case.
 
-- [ ] **Step 2: Verify `summarize_variant` seeds all key params Unique.** Read
-  `summarize_variant` (grep in `summary.tw`); confirm it drives `unique_seed_for_variant`
-  (already set-based) so every param in the key is seeded, not just `unique[0]`. If it reads
-  a single seed param, fix it to consume the whole key.
+- [ ] **Step 2: Confirm `summarize_variant` already seeds the whole key (no change expected).**
+  It is defined in `boot/compiler/ownership.tw` (`pub fn summarize_variant`, ~`:7645`; `summary.tw`
+  imports it). It **directly loops `for req in key { unique_seed[f.params[req.param].id] = true }`**
+  then calls `summarize_seeded` — so it already seeds every param in the key, not just `unique[0]`.
+  (`unique_seed_for_variant` is a *separate* private helper in `summary.tw` used for
+  rendering/reachability, not by `summarize_variant`.) No edit needed here; this step just records
+  that the seeding side is already multi-param — the singular bottleneck is the driver (Task 4).
 
 - [ ] **Step 3: Rebuild (no census change expected yet — driver is Task 4).**
 
@@ -211,16 +225,20 @@ git commit -m "ownership: multi-carrier optimistic hypothesis preserving the agg
 
 **Files:** Modify `boot/compiler/summary.tw` (`variant_valid` + a carrier predicate).
 
-- [ ] **Step 1: Add a per-carrier-set validator.** All carriers must stay in-place AND still
-  be returned as their aggregate field.
+- [ ] **Step 1: Add a per-carrier-set validator for the AGGREGATE case only.** `variant_valid_key`
+  requires `OwnedFresh` and validates every carrier; it is **not** a replacement for the existing
+  `variant_valid(s, k)` (the whole-return `.MayAliasParams([k])` path). Both coexist — Task 4
+  dispatches between them per member. All carriers must stay in-place AND still be returned as
+  their aggregate field.
 
 ```tw
-// A converged aggregate variant survives iff EVERY carrier param still (a) has a non-empty
-// in-place path and (b) is still returned (its ret_paths entry stays OwnedFromParam).
-fn param_still_returned(s: Summary, k: Int) Bool {
+// A carrier is still returned iff the return is a FRESH aggregate (OwnedFresh) whose
+// ret_paths still carry k via OwnedFromParam. The OwnedFresh gate is load-bearing: caller-side
+// recovery (transfer_summarized_call, result_ok = OwnedFresh) ONLY applies ret_paths under an
+// OwnedFresh return, so a widened `ret=Shared` with stale/surviving ret_paths must NOT validate.
+fn carrier_returned_owned_fresh(s: Summary, k: Int) Bool {
   case s.ret {
-    .MayAliasParams(idxs) => idxs.len() == 1 and idxs[0] == k,
-    _ => {
+    .OwnedFresh => {
       for rp in s.ret_paths {
         case rp.own {
           .OwnedFromParam(j) => if j == k { return true },
@@ -229,15 +247,24 @@ fn param_still_returned(s: Summary, k: Int) Bool {
       }
       false
     },
+    _ => false, // MayAliasParams / Shared: not an aggregate-carrier return
   }
 }
 
+// A converged aggregate variant survives iff EVERY carrier param still (a) has a non-empty
+// in-place path and (b) is returned as an OwnedFresh aggregate field.
 fn variant_valid_key(s: Summary, key: vid.UniqueKey) Bool {
   if key.len() == 0 { return false }
+  // Aggregate variants require a fresh-aggregate return; a whole-return single carrier uses
+  // the existing variant_valid(s, k) path instead.
+  case s.ret {
+    .OwnedFresh => {},
+    _ => return false,
+  }
   for req in key {
     k := req.param
     in_place_ok := k >= 0 and k < s.params.len() and !s.params[k].in_place_paths.is_empty()
-    if !(in_place_ok and param_still_returned(s, k)) {
+    if !(in_place_ok and carrier_returned_owned_fresh(s, k)) {
       return false
     }
   }
@@ -265,17 +292,37 @@ git commit -m "ownership: validate multi-carrier aggregate variants over the ful
 
 **Files:** Modify `boot/compiler/summary.tw` (`run_scc_variants`).
 
-- [ ] **Step 1: Replace `member_pidx: Dict<Int, Int>` with the full key.** Use the existing
+- [ ] **Step 1: Replace `member_pidx: Dict<Int, Int>` with the full key, dispatching by candidate
+  kind so the existing whole-return path is preserved.** Use the existing
   `member_key: Dict<Int, vid.VariantId>` as the source of truth; derive the carrier list from
-  `member_key[m].unique`. Everywhere the driver currently calls `optimistic_hypothesis(gs, k)`
-  or `variant_valid(conv, k)` (the seeding loop ~`:806`, the prev-fallback ~`:829`/`:850`, the
-  validation loop ~`:852`, and the publish-survivors loop ~`:872`), pass the carrier list /
-  key instead:
-  - seed: `optimistic_hypothesis_multi(table_get(generic, m), carriers_of(member_key[m]))`
-  - validate: `variant_valid_key(conv, member_key[m].unique)`
-  where `carriers_of(v)` returns `collect req in v.unique { req.param }`.
-  Keep the "active member set is nonempty" guard by testing `member_key.keys().len()` instead
-  of `member_pidx`.
+  `member_key[m].unique` via `carriers_of(v) = collect req in v.unique { req.param }`. The
+  candidate kind is fixed by the member's **generic** return: `.OwnedFresh` ⇒ aggregate,
+  `.MayAliasParams([k])` ⇒ whole-return. At each site the driver currently calls
+  `optimistic_hypothesis(gs, k)` / `variant_valid(conv, k)` (the seeding loop ~`:806`, the
+  prev-fallback ~`:829`/`:850`, the validation loop ~`:852`, and the publish-survivors loop
+  ~`:872`), dispatch:
+
+```tw
+  is_agg := case table_get(generic, m).ret {
+    .OwnedFresh => true,
+    _ => false,   // .MayAliasParams / .Shared → whole-return (or no) variant
+  }
+  // seed:
+  seeded := if is_agg {
+    optimistic_hypothesis_multi(table_get(generic, m), carriers_of(member_key[m]))
+  } else {
+    optimistic_hypothesis(table_get(generic, m), seed_param_of(member_key[m]))
+  }
+  // validate:
+  ok := if is_agg {
+    variant_valid_key(conv, member_key[m].unique)
+  } else {
+    variant_valid(conv, seed_param_of(member_key[m]))
+  }
+```
+  Keep the "active member set is nonempty" guard by testing `member_key.keys().len()` instead of
+  `member_pidx`. **Do not blanket-replace `variant_valid` with `variant_valid_key`** — that would
+  break whole-return variants (they are not `OwnedFresh`).
 
 - [ ] **Step 2: fmt + lint.**
 
@@ -340,7 +387,7 @@ TWINKLE_TIMINGS=1 target/twk build boot/main.tw -o /tmp/stage2.wasm 2>&1 \
   | grep -E 'summary:roots|own:fixpoint'
 ```
 Record; `merge_targeted__` alone is a modest win — the large `summary:roots` drop lands with
-the `run_fixpoint` beneficiary (Task 7 / follow-up).
+the `run_fixpoint` beneficiary (the E-DRY follow-up plan).
 
 - [ ] **Step 4: Commit.**
 
@@ -357,7 +404,7 @@ git commit -m "test: aggregate-field owned-variant fixture flips 2-carrier dict 
 
 - [ ] **Step 1: Update the tracked marker (~`:380`).** With `merge_targeted__` now flipping,
   its assertion should go green. Split the marker: keep `run_fixpoint`'s in-place assertion as
-  the remaining tracked-red target (it lands via the E-DRY beneficiary, Task 7), and let the
+  the remaining tracked-red target (it lands via the E-DRY beneficiary follow-up), and let the
   `merge_targeted__` assertion pass. Re-point the comment to the E-DRY follow-up.
 
 - [ ] **Step 2: fmt + suite.**
@@ -367,7 +414,8 @@ target/twk fmt boot/tests/suites/mutable_produce_suite.tw
 target/twk test 2>&1 | tail -3
 ```
 Expected: exactly one known failure remains — the `run_fixpoint` in-place assertion — until
-Task 7. Exit 1 is expected; the failing test name must be the `run_fixpoint` one.
+the E-DRY follow-up lands. Exit 1 is expected; the failing test name must be the
+`run_fixpoint` one.
 
 - [ ] **Step 3: Commit.**
 
@@ -378,34 +426,29 @@ git commit -m "test: land merge_targeted in-place marker; run_fixpoint half awai
 
 ---
 
-## Task 7 — `run_fixpoint` beneficiary (E-DRY), as a follow-up
+## Follow-up (separate plan): `run_fixpoint` beneficiary via E-DRY
 
-Now that aggregate-field owned variants exist, the returned-carrier helper that was NOT
-viable before becomes viable. This is the 14-carrier stress case — do it only after Tasks 1–6
-are green and the 2-carrier soundness is confirmed.
+> **Not task-by-task ready — a sketch, not an executable task.** Do NOT attempt this from
+> the outline below; author a dedicated plan (`docs/plans/fixpoint-edry-beneficiary.md`)
+> **after Tasks 1–6 are green** and the 2-carrier soundness is confirmed. The full
+> `fixpoint_iterate` signature is large (14 map params plus `run_fixpoint`'s read-only
+> context — `blocks`, `succ`, `preps`, `table`, `b`, `sem`, `suppress`, `cc_suppress`,
+> `unique_seed`, `seeds`, `dirty`, `all_dirty`, `label`) and its exact shape depends on how
+> Tasks 1–6 land, so pinning it now would be a placeholder, not a plan.
 
-**Files:** Modify `boot/compiler/ownership.tw`.
+**Idea.** Once aggregate-field owned variants exist, extract a helper
+`fixpoint_iterate(<14 maps> , <read-only ctx>) FixState` from `run_fixpoint` that updates
+each map param in place and returns them all in the `FixState` — the exact
+`ret=OwnedFresh` + per-field carrier shape this plan enables. The two statically-cold
+callers (`ownership.tw:6249`, `:6370`) pass fresh `Dict.new()` maps (Unique + last-use), so
+the 14-carrier variant is selected and the map writes flip in-place. This is the 14-carrier
+stress case for the capability proven on the 2-carrier `merge_targeted__` fixture.
 
-- [ ] **Step 1: Extract `fixpoint_iterate(exits, exit_valid, …14 maps…, <read-only ctx>) FixState`**
-  from `run_fixpoint` — each of the 14 map params updated in place and returned in the
-  `FixState`. Keep `run_fixpoint` as the thin cold/warm map-builder + `FixRun` projector; the
-  cold callers (`:6249`, `:6370`) pass fresh `Dict.new()` maps (Unique + last-use).
-
-- [ ] **Step 2: Rebuild + census gate.**
-
-```bash
-make bundle-cli 2>&1 | tail -3
-target/twk ir boot/main.tw --census --sites \
-  | awk -F'\t' '$1=="fixpoint_iterate" && $2=="dict_set"{print $5}' | sort | uniq -c
-```
-Expected: the core map updates flip to `true` (the 14-carrier variant selected at the cold
-callers). If the variant is proposed but not selected, check `variant_args_satisfied` against
-the cold callers' `arg_unique` (all 14 fresh maps must be Unique + last-use).
-
-- [ ] **Step 3: Behavioral gates (as Task 5 Step 2) + the `summary:roots run` win**, then flip
-  the last marker half green and commit. Move both this plan and
-  `docs/plans/fixpoint-map-inplace.md` to `docs/plans/archive/`, and remove their rows from
-  `docs/plans/README.md`, per the house rule.
+**Acceptance target for that plan:** `fixpoint_iterate`'s `dict_set` census rows flip to
+`true`, the last (`run_fixpoint`) half of the tracked marker goes green, `TWINKLE_FIXVERIFY`
+clean, self-host stable, and a real `summary:roots run` improvement — after which both this
+plan and `docs/plans/fixpoint-map-inplace.md` move to `docs/plans/archive/` (rows removed
+from `docs/plans/README.md`), per the house rule.
 
 ---
 
@@ -425,5 +468,5 @@ the cold callers' `arg_unique` (all 14 fresh maps must be Unique + last-use).
   decision and gated on the 2-carrier `merge_targeted__` proof before the 14-carrier case.
 - Types are consistent: `aggregate_carrier_params` → `Vector<Int>`; `optimistic_hypothesis_multi`
   / `variant_valid_key` take the carrier list / `vid.UniqueKey`; `carriers_of(v)` bridges the
-  `VariantId` to the list. `param_still_returned` reuses the `ReturnPathOwn.own` /
+  `VariantId` to the list. `carrier_returned_owned_fresh` reuses the `ReturnPathOwn.own` /
   `.OwnedFromParam(k)` shape from `ownership.tw:74`.

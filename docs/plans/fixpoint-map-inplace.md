@@ -1,9 +1,10 @@
 # Making the Ownership Fixpoint's Own Maps Mutate In-Place
 
 **Status:** Re-scoped 2026-07-26 to the **general analysis goal.** The point of this work
-is a *universal* in-place-mutation rewrite — make the ownership analysis prove owned
-collections unique so the compiler emits in-place writes for **every** program, with the
-compiler's own hot fixpoint as one downstream beneficiary. Measured against that goal, the
+is a *reusable* in-place-mutation precision win — make the ownership analysis prove owned
+collections unique so the compiler emits in-place writes wherever the ownership precondition
+holds (owned value, unique + last-use at the site), rather than hand-patching one function.
+The compiler's own hot fixpoint is one downstream beneficiary. Measured against that goal, the
 levers split into two kinds, and we only pursue the general kind:
 
 - **General analysis precision (the goal — pursue):** make the *analysis* smarter, so the
@@ -104,10 +105,11 @@ itself.
 ownership fixpoint maps should produce in-place dict decisions`
 (`boot/tests/suites/mutable_produce_suite.tw`) currently asserts both
 `merge_targeted__` and `run_fixpoint` produce a selected in-place dict decision.
-The cold-only proof shows the `run_fixpoint` half is independently reachable;
-`merge_targeted__` remains a separate helper/call-variant question. If the cold/warm
-split lands first, either split this marker or keep it red until the helper side is
-also enabled.
+Under the chosen direction the **primary lever lands `merge_targeted__` first** (the
+aggregate-field owned-variant extension), so split the marker: flip the
+`merge_targeted__` half green when that lands, and keep the `run_fixpoint` half as the
+single known-red target until its **E-DRY follow-up** (the returned-carrier helper)
+lands. See the phase-specific boot-suite gate under "The soundness frame."
 
 ---
 
@@ -202,6 +204,14 @@ target/twk ir boot/main.tw --census --sites \
 ```
 
 ### Cold/warm split proof (temporary probe, reverted)
+
+> **HISTORICAL — direct-`run_fixpoint` diagnosis, superseded by the re-scope.** This section
+> records the cold-only probe that flipped `run_fixpoint` 28/30, and it ranks the cold/warm
+> "source-shape split" as the primary enabler *for `run_fixpoint`'s direct maps only*. Under
+> the re-scope (see "Status" / "Primary lever"), that source-shape split is a **demoted
+> non-universal workaround**, not the chosen direction. Read the rankings below as a record of
+> the direct-`run_fixpoint` investigation, not as current priorities; the general primary lever
+> is the aggregate-field owned-variant extension.
 
 A focused seed probe on the first `run_fixpoint` loop-carried map showed the backedge
 already preserves uniqueness; the seed is dropped only because the non-backedge entry
