@@ -2,9 +2,14 @@
 
 **Status:** Diagnosed; deferred into the sound-uniqueness analysis track. The
 scalar/interior read-provenance route originally blamed here has since been
-repaired upstream, but `run_fixpoint` still does not flip — the residual blockers
-are concrete closure-boundary provenance and return-embedding precision gaps
-recorded below. Not a bounded quick win.
+repaired upstream, but `run_fixpoint` still does not flip. The residual blockers
+are now traced to a named minimum set (2026-07-26): scalar-through-closure
+publication (Lever A), non-scalar closure-value provenance (Lever B), the
+`FixState`/`FixResult` return double-embed (Lever C), and an **unregistered
+`Dict.keys`** falling into the conservative publish bucket (Lever D). Even the
+simplest monomorph needs A+D together — see the verified route breakdown below.
+Not a bounded quick win, but Lever A's oracle blocker turned out smaller than
+first recorded (the type map already exists, just unthreaded).
 
 **Goal:** Get the compiler's hottest analysis loop — the ownership fixpoint in
 `run_fixpoint` (`boot/compiler/ownership.tw`) — to emit in-place dict mutation
@@ -159,14 +164,20 @@ sound-uniqueness analysis track (`docs/plans/sound-uniqueness/`), gated by its
 equivalence guards, rather than pursue a standalone quick win.
 
 - **Lever A — scalar-argument non-publication at the closure/indirect-call
-  boundary.** Extend the `AIndex`/`scalar_result_ty` principle to `publish_call`:
-  a scalar (unboxed, immutable) argument has no interior to corrupt, so publishing
-  it is meaningless and only poisons provenance. **Blocker:** `ForwardState`
-  carries **no type oracle** (it is keyed by local-`Int` ids, type-erased), so the
-  guard cannot read argument `MonoType`s the way the `AIndex` node can read
-  `elem_ty`. Requires plumbing a local-id→`MonoType` oracle into the forward
-  analysis, or fixing provenance at the read boundary so map-derived scalars carry
-  no map provenance (partially already true for `nested_get`/`is_processed`).
+  boundary.** Extend the `AIndex`/`scalar_result_ty` principle to `publish_call`
+  (`ownership.tw:3856`, the `for a in args { st = .publish_atom(a) }` loop): a
+  scalar (unboxed, immutable) argument has no interior to corrupt, so publishing it
+  is meaningless and only poisons provenance. **Blocker is smaller than first
+  recorded** (verified 2026-07-26): the local-id→`MonoType` oracle Lever A needs
+  is **not missing, only unthreaded**. `AnfFunctionDef` already carries
+  `op_result_mono: Dict<Int, MonoType>` (`anf.tw:73`) plus `params`, which together
+  type every op-result local and param — a per-function `is_scalar_atom` predicate
+  can be built from them at analysis entry. It just isn't passed into the ownership
+  pass today (`op_result_mono` has **zero** uses in `ownership.tw`). `ForwardState`
+  itself stays type-erased; the fix threads the predicate alongside `sem` down the
+  bounded path `transfer_op` (3 call sites) → `transfer_call:3849` → `publish_call`,
+  and skips `publish_atom` for scalar args. `scalar_result_ty` (`ownership.tw:3874`)
+  already exists and only accepts genuinely unboxed types, so the skip is sound.
 - **Lever B — non-scalar closure argument/value provenance.** The scalar skip does
   not cover all active fixpoint paths: `old_prov`/`next_prov`, `old_field`/
   `next_field`, and `old_pp`/`next_pp` flow through closure comparisons over
@@ -177,6 +188,51 @@ equivalence guards, rather than pursue a standalone quick win.
 - **Lever C — the `FixState`/`FixResult` double-embed.** A source restructure in
   `run_fixpoint` so the five exit maps are not simultaneously published into two
   returned aggregates.
+- **Lever D — register `Dict.keys` in the optimizer's `CallSemantics` (new,
+  verified 2026-07-26).** `dict$keys` is a registered runtime builtin
+  (`builtins.tw:516`) but has **no `CallSemantics` entry** in
+  `opt/semantics.tw` (which registers `Dict` `set`/`remove`/`get`/`new` but not
+  `keys`). So `call_info` returns `.None`, it is not summarized (it's an rt
+  extern), and `transfer_call` drops it into the conservative `publish_call`
+  bucket — which **publishes the dict argument**. That is the actual route by which
+  `merge_targeted`'s `p0` (`old`) is `Published`: the `old.keys()` call **is** the
+  publisher — `publish_call` marks `old` Shared directly and does not even
+  propagate provenance to the keys result (so `int_keys_union`'s own
+  `p0=Published` is incidental, operating on an empty-provenance vector). Not a
+  scalar route, not a closure route — a missing registration. The apparent fix is a
+  `Dict.get`-shaped entry (`effect: .ReadOnly, cow_base_arg: .None,
+  retained_args: .Some([])`: borrows the dict, returns a fresh keys vector carrying
+  no dict provenance). **Caveat — not a free one-liner:** keys-order provenance is
+  load-bearing for the copy-carrier key-stream machinery (`ownership.tw:722`, "a
+  keys-order loan created before the write survives"; the completed key-stream
+  uniqueness work). A naive `.ReadOnly` registration must be checked against that
+  machinery and the equivalence guards before it can be trusted — the omission may
+  be deliberate. This lever also has the **broadest** reach on `run_fixpoint`
+  proper, whose 30 maps are all iterated via `.keys()`.
+
+### Verified route breakdown for `merge_targeted__Int` (2026-07-26)
+
+The doc previously lumped `p0`/`p6` under "closure publication of values read from
+those maps." Tracing the summaries shows they are **two different routes**, only
+one of which is closure/scalar:
+
+- **`p6` (`default_value`) — scalar-through-closure (Lever A).** `lat_get`
+  summarizes `ret=alias(p2)` — it aliases its *third arg (the default)*, not the
+  map. In `merge_targeted`, `old_x := lat_get(old, k, default_value)` therefore
+  makes `old_x` alias `default_value` = `p6`. `old_x`/`next_x` then flow into the
+  `eq`/`join` closure params; `publish_call` publishes them, publishing `p6`. For
+  `__Int` these values are scalar → exactly Lever A's target.
+- **`p0` (`old`) — unregistered `Dict.keys` (Lever D).** As above: `old.keys()`
+  hits the conservative publish bucket. Lever A cannot touch this (the published
+  atom is the dict, not a scalar).
+
+So **even the simplest monomorph needs A *and* D together** — a concrete instance
+of the "breadth" claim, with the co-blocking routes now named rather than
+hypothesized. `__Vec_Int`/`__Dict_Int_Vec_Int` additionally need Lever B (the
+`lat_get`-aliased value is a genuine `Vector`/nested-`dict`, not skippable as
+scalar). This makes A+B+D (and likely C for the return double-embed) the real
+minimum set, and is the sharpened evidence for folding into the sound-uniqueness
+track rather than chasing one lever.
 
 ## Copy-carrier boundary (why `merge_targeted` still won't flip on its own)
 
