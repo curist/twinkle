@@ -799,6 +799,50 @@ fn variant_valid(s: Summary, k: Int) Bool {
   param_ok and ret_aliases_exactly_param(s.ret, k)
 }
 
+// A carrier is still returned iff the return is a FRESH aggregate (OwnedFresh) whose
+// ret_paths still carry k via OwnedFromParam. The OwnedFresh gate is load-bearing: caller-side
+// recovery (transfer_summarized_call, result_ok = OwnedFresh) ONLY applies ret_paths under an
+// OwnedFresh return, so a widened `ret=Shared` with stale/surviving ret_paths must NOT validate.
+fn carrier_returned_owned_fresh(s: Summary, k: Int) Bool {
+  case s.ret {
+    .OwnedFresh => {
+      for rp in s.ret_paths {
+        case rp.own {
+          .OwnedFromParam(j) => if j == k {
+            return true
+          },
+          .OwnedFresh => {},
+        }
+      }
+      false
+    },
+    _ => false, // MayAliasParams / Shared: not an aggregate-carrier return
+  }
+}
+
+// A converged aggregate variant survives iff EVERY carrier param still (a) has a non-empty
+// in-place path and (b) is returned as an OwnedFresh aggregate field.
+pub fn variant_valid_key(s: Summary, key: vid.UniqueKey) Bool {
+  if key.len() == 0 {
+    return false
+  }
+
+  // Aggregate variants require a fresh-aggregate return; a whole-return single carrier uses
+  // the existing variant_valid(s, k) path instead.
+  case s.ret {
+    .OwnedFresh => {},
+    _ => return false,
+  }
+  for req in key {
+    k := req.param
+    in_place_ok := k >= 0 and k < s.params.len() and !s.params[k].in_place_paths.is_empty()
+    if !(in_place_ok and carrier_returned_owned_fresh(s, k)) {
+      return false
+    }
+  }
+  true
+}
+
 // generic table with each in-SCC member's current variant iterate overlaid, so a
 // recursive call resolves to the owned key. (One iterate per member -- exact for
 // single-candidate functions like graph_scc.visit and the fixtures.)
