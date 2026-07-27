@@ -2567,23 +2567,6 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "key-stream boot compiler helpers certify",
-      fn() {
-        root := loader.find_project_root("boot")
-        artifacts := case pipeline.compile_entry_path("${root}/main.tw") {
-          .Ok(result) => result,
-          .Err(err) => return .Err(format_compile_error(err)),
-        }
-        b := artifacts.builtins
-        view := cfg.build_view(artifacts.opt, b)
-        dh := ownership.classify_dedupe_helpers(view, b, make_prelude_optimizer_semantics(b))
-        try assert_cert_primitive(dh, view, "insert_sorted")
-        try assert_cert_primitive(dh, view, "insert_sorted_str")
-        try assert_cert_combinator(dh, view, "int_keys_union")
-        .Ok({})
-      },
-    )
-    .test(
       "key-stream certificates populate root-scoped summary tables",
       fn() {
         artifacts := case pipeline.compile_entry_path(

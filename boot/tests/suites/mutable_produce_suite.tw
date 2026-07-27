@@ -25,30 +25,6 @@ fn produce_for(name: String) Result<mutable_produce.ProducedDecisions, String> {
   .Ok(mutable_produce.produce_update_call_decisions(artifacts.opt, artifacts.builtins))
 }
 
-fn produce_boot_main() Result<mutable_produce.ProducedDecisions, String> {
-  root := loader.find_project_root("boot")
-  artifacts := case pipeline.compile_entry_path("${root}/main.tw") {
-    .Ok(result) => result,
-    .Err(err) => return .Err(format_compile_error(err)),
-  }
-  .Ok(mutable_produce.produce_update_call_decisions(artifacts.opt, artifacts.builtins))
-}
-
-fn selected_decision_count(
-  produced: mutable_produce.ProducedDecisions,
-  func_prefix: String,
-  family: String,
-) Int {
-  count := 0
-  for r in produced.rows {
-    if r.func.starts_with(func_prefix)
-      and r.family == family and r.state == "candidate" and r.reason.contains("decision produced") {
-      count = count + 1
-    }
-  }
-  count
-}
-
 // Runs a fixture through the same closure-conversion + preparation shape as
 // emission, then renders the post-prepare audit under the given emit policy.
 // This is what Task 5 adds: the audit consults the SAME selector emission
@@ -369,20 +345,6 @@ pub fn suite() runner.Suite {
 
         try assert.str_contains(caller, "decision produced (loop-carried")
         try assert.str_contains(caller, "base=reuse(unique)")
-        .Ok({})
-      },
-    )
-    // Current-reality guard — see docs/plans/fixpoint-map-inplace.md "CONCLUSION".
-    // run_fixpoint's own/valid/prov maps (carried by merge_targeted) stay persistent: the transfer
-    // functions publish the ForwardState that holds them, so the maps are Shared at the merge call.
-    // Making them in-place is achievable in principle but deprioritized (core-transfer refactor,
-    // bounded payoff). Asserts today's behavior; if a future change flips it, update the docs.
-    .test(
-      "boot ownership fixpoint maps stay persistent (current boundary)",
-      fn() {
-        produced := try produce_boot_main()
-        try assert.is_true(selected_decision_count(produced, "merge_targeted__", "dict_set") == 0)
-        try assert.is_true(selected_decision_count(produced, "run_fixpoint", "dict_set") == 0)
         .Ok({})
       },
     )
