@@ -408,4 +408,64 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    // RED regression locks (transitively-published boundary). These document the
+    // current conservative behavior for multi-hop owned threading. When the
+    // transitive-consume summary work lands, these assertions must flip to owned
+    // (verdict ->/variant fn/reuse) -- their failure is the intended signal.
+    .test(
+      "RED: delegating call chain drops owned threading at every forwarder hop",
+      fn() {
+        out := try render_entry("red_delegate_chain")
+
+        // The leaf consumer is correctly summarized as Consumed.
+        try assert.str_contains(out, "p0=Consumed paths{[],[.f0]}")
+
+        // RED: each delegating hop's generic summary is polluted to Published, so
+        // no owned variant is generated and `build` selects none.
+        polluted := out.split("p0=Published p1=Published p2=Published ret=alias(p0)")
+        try assert.ok(polluted.len() >= 4, "expected >=3 delegating hops polluted to Published")
+        try assert.is_false(out.contains("verdict ->"))
+        try assert.is_false(out.contains("variant fn "))
+        .Ok({})
+      },
+    )
+    .test(
+      "RED: transport-wrapper chain keeps fresh-field move facts but drops ownership",
+      fn() {
+        out := try render_entry("red_transport_wrapper_chain")
+
+        // The wrapper's return-path summary is correct (Phase 5 machinery works).
+        try assert.str_contains(out, "ret_paths=.f0=from(p0)")
+
+        // RED: `check` still summarizes the threaded ctx as Borrowed/shared, so
+        // `build` never threads it as owned.
+        try assert.str_contains(out, "p0=Borrowed p1=Published p2=Published ret=shared")
+        try assert.is_false(out.contains("verdict ->"))
+        try assert.is_false(out.contains("variant fn "))
+        .Ok({})
+      },
+    )
+    .test(
+      "RED: mixed update+delegate composes downstream but not across build boundary",
+      fn() {
+        out := try render_entry("red_mixed_delegate_update")
+
+        // Downstream composition already works: outer's owned variant selects
+        // inner's owned variant and reuses its own shell.
+        variant := try variant_section(out, "outer", "unique:p0")
+        try assert.str_contains(variant, "reuse(unique)")
+
+        // outer's variant selects a downstream owned variant (id is unstable, so
+        // match the selection token, not a hard-coded FuncId).
+        try assert.str_contains(variant, "verdict -> f")
+
+        // RED: outer's GENERIC summary is polluted to Published by the delegation,
+        // so `build`'s call site selects no owned variant.
+        outer_generic := try section_between(out, "fn outer [", "fn build [")
+        try assert.str_contains(outer_generic, "p0=Published")
+        build_sec := try section_between(out, "fn build [", "fn $init")
+        try assert.is_false(build_sec.contains("verdict ->"))
+        .Ok({})
+      },
+    )
 }

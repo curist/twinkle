@@ -1,0 +1,31 @@
+// RED fixture (transitively-published boundary, mixed shape).
+// `outer` does its OWN field update (env.a) AND delegates to `inner` (env.b),
+// and `build` drives it in a loop. `outer` correctly earns a [unique:p0] variant
+// that selects inner's owned variant downstream, but `build`'s call to `outer`
+// reads outer's generic summary (p0=Published, polluted by the delegation) and
+// selects no owned variant. DESIRED: the loop-carried env threads owned through
+// outer and inner. CURRENT: persistent from build's boundary up.
+type Env = .{ a: Dict<String, Int>, b: Dict<String, Int> }
+
+fn inner(env: Env, k: String, v: Int) Env {
+  env.b = .set(k, v)
+  env
+}
+
+fn outer(env: Env, k: String, v: Int) Env {
+  env.a = .set(k, v)
+  env = inner(env, k, v)
+  env
+}
+
+fn build(n: Int) Env {
+  env := Env.{ a: Dict.new(), b: Dict.new() }
+  i := 0
+  for i < n {
+    env = outer(env, "k", i)
+    i = i + 1
+  }
+  env
+}
+
+println(build(3).a.len().to_string())

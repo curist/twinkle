@@ -1,0 +1,37 @@
+// RED fixture (transitively-published boundary).
+// A fresh unique Env is threaded through a 4-level delegating call chain
+// (build -> resolve -> resolve_decls -> resolve_one -> add). Only the leaf `add`
+// does its own record_update; every intermediate merely delegates and returns.
+// DESIRED: the whole chain composes to owned in-place (shell=reuse(unique)).
+// CURRENT: each delegating hop's generic summary is p0=Published, so `build`
+// selects no owned variant and everything stays persistent.
+type Env = .{ types: Dict<String, Int>, values: Dict<String, Int> }
+
+fn add(env: Env, k: String, v: Int) Env {
+  env.types = .set(k, v)
+  env
+}
+
+fn resolve_one(env: Env, k: String, v: Int) Env {
+  env = add(env, k, v)
+  env
+}
+
+fn resolve_decls(env: Env, k: String, v: Int) Env {
+  env = resolve_one(env, k, v)
+  env
+}
+
+fn resolve(env: Env, k: String, v: Int) Env {
+  env = resolve_decls(env, k, v)
+  env
+}
+
+fn build() Env {
+  env := Env.{ types: Dict.new(), values: Dict.new() }
+  env = resolve(env, "a", 1)
+  env = resolve(env, "b", 2)
+  env
+}
+
+println(build().types.len().to_string())
