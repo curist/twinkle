@@ -1,17 +1,53 @@
 # Making the Ownership Fixpoint's Own Maps Mutate In-Place
 
-> **⚠️ 2026-07-27 — the "primary lever" is blocked on a missing consumer.** A review of the
-> aggregate-field owned-variant work found three things: (1) `merge_targeted` was never actually
-> detected as a candidate (`param_has_inplace_site` is `.ARecordUpdate`-only), (2) even seeded
-> Unique its `out` is aliased at the mutation (post-copy `next` read → `persistent(aliased
-> shell)`), and (3) **the owned-variant vtable has no codegen consumer** — `compute_variants` is
-> read only by diagnostic/test rendering paths, never by `compute_artifacts`/emission — so no
-> variant flips any emitted site. Flipping `merge_targeted` needs all three fixed, in order
-> (codegen handoff → body rewrite → summary generalization). Full reviewable writeup:
-> `docs/plans/aggregate-field-owned-variants.md` → "STATUS (2026-07-27)". Treat the "Primary
-> lever" framing below as blocked until the codegen handoff exists.
+> # ⛔ CONCLUSION (2026-07-27): the `run_fixpoint`/`merge_targeted` target is UNREACHABLE by analysis. Retire the marker.
+>
+> A three-spike investigation (all self-host-verified, all reverted) settled this. **The specific
+> acceptance target of this doc — flip `run_fixpoint`'s own dataflow maps (`own`/`valid`/`prov`,
+> carried through `merge_targeted`) to in-place *by making the ownership analysis more precise* — is
+> impossible, and not because the analysis is too weak.** Sound in-place requires the mutated map to
+> be uniquely owned at the site; for these maps that ownership **genuinely does not exist**, so
+> persistent rebuild is the *correct* behavior. An analysis can only emit in-place when it can
+> *prove* unique ownership — here there is nothing true to prove.
+>
+> **Why the ownership genuinely isn't there (first-principles):** `run_fixpoint`'s per-block maps are
+> **shared dataflow state**. A block's entry map is `join(predecessors' exits)` and, for a single
+> predecessor, `join_entry_ownership` hands back the predecessor's exit map itself (`ownership.tw:5132`,
+> no copy); the fixpoint also keeps `prev_exits` widening snapshots. So every map handed to
+> `merge_targeted` aliases the live, persistent `exits` accumulator. Mutating it in place would
+> corrupt other blocks' views. This is a correctness constraint of the representation, not a local
+> analysis gap.
+>
+> **The investigation chain (each step disproved, in order):**
+> 1. *Aggregate-field owned variants* (`docs/plans/aggregate-field-owned-variants.md`): premise wrong
+>    — `param_has_inplace_site` is `.ARecordUpdate`-only so `merge_targeted` (a dict carrier) was never
+>    even a candidate; and the owned-variant vtable (`compute_variants`) has **no codegen consumer**
+>    (read only by `twk ir --cfg` + fixture rendering, never by `compute_artifacts`/emission).
+> 2. *Codegen handoff via the non-cloning uniform-caller seed path*
+>    (`docs/plans/owned-variant-codegen-handoff.md`): the body rewrite makes `merge_targeted`'s summary
+>    a clean `p1=Consumed` carrier, but no caller passes the map Unique — `run_fixpoint` hands
+>    `st.own`/`st.valid`/`st.prov`, projections of a live `ForwardState`.
+> 3. *Caller-side restructure* (`docs/plans/fixpoint-edry-fixstate.md`): even after moving each map out
+>    of `st` as a single-reader last-use (`st` dead after), instrumentation of `uniform_entry_seeds`
+>    showed `arg_unique=false` at all three call sites — because the map still aliases `exits` one
+>    level below the record. This rules out a shape/analysis fix.
+>
+> **The only escape is a different fixpoint *representation*** (sparse per-variable dataflow;
+> ownership-threaded single-consumer edges without widening snapshots; mutable arrays with versioning)
+> — a large rewrite that reintroduces copy costs elsewhere, explicitly **outside** this doc's
+> "make the analysis smarter" scope, and with **uncertain payoff** (persistent HAMTs already make a
+> merge cost ~O(changed keys), and prior levers here came back perf-neutral).
+>
+> **Decision:** (a) retire the `merge_targeted__`/`run_fixpoint` boot-suite marker as an **accepted
+> persistent boundary** (with this root cause), not a tracked-red target; (b) keep the general
+> in-place-precision goal scoped to functions where the precondition *can* hold (unique-caller
+> builder/transform code); (c) only if a profile shows these merges are actually hot, open a
+> *separate representation-change* plan — not an analysis plan. A merge-cost measurement is being
+> taken to decide (c). The historical exploration below is retained as the record.
 
-**Status:** Re-scoped 2026-07-26 to the **general analysis goal.** The point of this work
+**Status:** _(SUPERSEDED by the CONCLUSION above — this and everything below is the historical
+record of the exploration, including the now-disproved claim that the primary lever "unblocks
+`run_fixpoint`.")_ Re-scoped 2026-07-26 to the **general analysis goal.** The point of this work
 is a *reusable* in-place-mutation precision win — make the ownership analysis prove owned
 collections unique so the compiler emits in-place writes wherever the ownership precondition
 holds (owned value, unique + last-use at the site), rather than hand-patching one function.
