@@ -115,6 +115,17 @@ pub fn summary_get(t: SummaryTable, func_id: Int) Summary? {
   t.by_func.get(func_id)
 }
 
+// Per-call-site callee-summary selection. Given a callee func id and the
+// call-site arg_unique vector, a resolver may return an already-validated owned
+// variant summary to transfer instead of the generic summary; `.None` falls back
+// to generic. `summary.tw` builds concrete resolvers from its variant table; this
+// module stays free of variant-table types by taking the resolver as a callback.
+pub type VariantResolver = fn(Int, Vector<Bool>) Summary?
+
+pub fn generic_only_resolver(_callee: Int, _au: Vector<Bool>) Summary? {
+  .None
+}
+
 // ── Uses / defs extraction ──────────────────────────────────────────
 fn atom_local_id(a: Atom) Int? {
   case a {
@@ -3823,6 +3834,25 @@ fn escape_retained_call_args(
   st
 }
 
+// Call-site uniqueness vector: for each argument, is the underlying local proven
+// Unique + valid + last-use here AND the sole occurrence among the call args? This
+// is the exact `arg_unique` gate `transfer_summarized_call` uses for its move and
+// return-path recovery, factored so `transfer_call`, `block_verdicts`, and the
+// summarized transfer all compute selection from one definition.
+fn call_arg_unique(
+  own: Dict<Int, Int>,
+  valid: Dict<Int, Bool>,
+  args: Vector<Atom>,
+  last: Vector<Int>,
+) Vector<Bool> {
+  collect a in args {
+    case atom_local_id(a) {
+      .Some(id) => local_reusable(own, valid, id, last) and store_count(args, id) == 1,
+      .None => false,
+    }
+  }
+}
+
 fn transfer_call(
   st: ForwardState,
   result: Int,
@@ -3833,6 +3863,7 @@ fn transfer_call(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
   cc_suppress: Dict<Int, Bool>,
+  resolve: VariantResolver,
 ) ForwardState {
   // Two-level lookup: builtins resolve via CallSemantics; a direct user callee
   // WITHOUT builtin semantics consults its interprocedural summary; everything
@@ -3841,9 +3872,15 @@ fn transfer_call(
   case callee_func_id(callee) {
     .Some(fid) => case call_info(sem, fid) {
       .Some(cs) => st.transfer_builtin_call(result, fid, cs, args, last, sem),
-      .None => case table.summary_get(fid.id) {
-        .Some(s) => st.transfer_summarized_call(result, s, args, last, suppress, fid.id),
-        .None => st.publish_call(result, args, cc_suppress),
+      .None => {
+        au := call_arg_unique(st.own, st.valid, args, last)
+        case resolve(fid.id, au) {
+          .Some(vs) => st.transfer_summarized_call(result, vs, args, last, suppress, fid.id),
+          .None => case table.summary_get(fid.id) {
+            .Some(s) => st.transfer_summarized_call(result, s, args, last, suppress, fid.id),
+            .None => st.publish_call(result, args, cc_suppress),
+          },
+        }
       },
     },
     .None => st.publish_call(result, args, cc_suppress), // indirect/closure callee
@@ -3999,12 +4036,7 @@ fn transfer_summarized_call(
   pre_own := st.own
   pre_valid := st.valid
   pre_prov := st.prov
-  arg_unique: Vector<Bool> = collect a in args {
-    case atom_local_id(a) {
-      .Some(id) => local_reusable(pre_own, pre_valid, id, last) and store_count(args, id) == 1,
-      .None => false,
-    }
-  }
+  arg_unique := call_arg_unique(pre_own, pre_valid, args, last)
 
   // 1. Escape + return handling (mutates st: publishes Retained args, sets the
   // result shell, and for MayAliasParams either MOVES a single proven-unique origin
@@ -4336,6 +4368,7 @@ fn transfer_op(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
   cc_suppress: Dict<Int, Bool>,
+  resolve: VariantResolver,
 ) ForwardState {
   case op {
     .ACall(callee, args) => st.transfer_call(
@@ -4347,6 +4380,7 @@ fn transfer_op(
       sem,
       suppress,
       cc_suppress,
+      resolve,
     ),
     .ARecord(_, fields) => {
       operands: Vector<Atom> = collect fa in fields {
@@ -4790,6 +4824,7 @@ fn block_verdicts(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
   cc: CopyCarrierFacts,
+  resolve: VariantResolver,
 ) BlockVerdicts {
   scan := prep.scan
   moves := prep.moves
@@ -4851,15 +4886,13 @@ fn block_verdicts(
             _ => {}, // non-update builtin (read-only/allocate/control) -> no verdict
           },
           .None => case table.summary_get(fid.id) {
-            .Some(s) => {
-              au: Vector<Bool> = collect a in args {
-                case atom_local_id(a) {
-                  .Some(id) => local_reusable(pre.own, pre.valid, id, last)
-                    and store_count(args, id) == 1,
-                  .None => false,
-                }
+            .Some(base) => {
+              au := call_arg_unique(pre.own, pre.valid, args, last)
+              selected := case resolve(fid.id, au) {
+                .Some(vs) => vs,
+                .None => base,
               }
-              dec := render_call_decision(fid.id, select_variant(fid.id, s, au))
+              dec := render_call_decision(fid.id, select_variant(fid.id, selected, au))
               if dec.len() > 0 {
                 verdicts[inst.anf_local.id] = dec
               }
@@ -4882,6 +4915,7 @@ fn block_verdicts(
       sem,
       suppress,
       cc_suppress,
+      resolve,
     )
     case inst.op {
       .ARecordUpdate(base, f, _, _, _) => {
@@ -4920,6 +4954,7 @@ fn forward_block_body(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
   cc_suppress: Dict<Int, Bool>,
+  resolve: VariantResolver,
 ) ForwardState {
   st := entry
   for inst, i in blk.instructions {
@@ -4935,6 +4970,7 @@ fn forward_block_body(
       sem,
       suppress,
       cc_suppress,
+      resolve,
     )
   }
   st
@@ -4951,8 +4987,9 @@ fn forward_block(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
   cc_suppress: Dict<Int, Bool>,
+  resolve: VariantResolver,
 ) ForwardState {
-  st := forward_block_body(blk, entry, prep, table, b, sem, suppress, cc_suppress)
+  st := forward_block_body(blk, entry, prep, table, b, sem, suppress, cc_suppress, resolve)
   case blk.terminator {
     // Return hands the value to the CALLER; it is not a callee leak. The caller's
     // ret / ret_paths handling accounts for it. Return blocks are CFG leaves, so
@@ -5920,6 +5957,7 @@ fn run_fixpoint(
   label: String,
   warm_state: FixState?,
   dirty0: Dict<Int, Bool>?,
+  resolve: VariantResolver,
 ) FixRun {
   timed := timings_enabled()
   t0 := if timed {
@@ -6079,7 +6117,17 @@ fn run_fixpoint(
         } else {
           st
         }
-        st = forward_block(blk, st, prep_get(preps, blk, sem), table, b, sem, suppress, cc_suppress)
+        st = forward_block(
+          blk,
+          st,
+          prep_get(preps, blk, sem),
+          table,
+          b,
+          sem,
+          suppress,
+          cc_suppress,
+          resolve,
+        )
         already := is_processed(processed, blk.id.id)
         old_own := nested_get(exits, blk.id.id)
         old_valid := nested_get(exit_valid, blk.id.id)
@@ -6244,6 +6292,7 @@ fn stabilize_seeds(
   unique_seed: Dict<Int, Bool>,
   label: String,
   allow_incremental: Bool,
+  resolve: VariantResolver,
 ) SeedRun {
   seeds := collect_loop_seed_candidates(blocks)
   first := run_fixpoint(
@@ -6259,6 +6308,7 @@ fn stabilize_seeds(
     label,
     .None,
     .None,
+    resolve,
   )
   vfx := first.fx
   vstate := first.state
@@ -6295,6 +6345,7 @@ fn stabilize_seeds(
         label,
         warm_state,
         dirty0,
+        resolve,
       )
       vfx = rr.fx
       vstate = rr.state
@@ -6313,6 +6364,7 @@ fn run_fixpoint_validated(
   cc_suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
   label: String,
+  resolve: VariantResolver,
 ) FixResult {
   timed := timings_enabled()
   t0 := if timed {
@@ -6344,6 +6396,7 @@ fn run_fixpoint_validated(
       unique_seed,
       label,
       false,
+      resolve,
     )
     incr := stabilize_seeds(
       blocks,
@@ -6356,13 +6409,26 @@ fn run_fixpoint_validated(
       unique_seed,
       label,
       true,
+      resolve,
     )
     if !same_loop_seed_set(cold.seeds, incr.seeds) {
       error("seedverify mismatch: ${label}")
     }
     incr
   } else {
-    stabilize_seeds(blocks, params, table, b, sem, suppress, cc_suppress, unique_seed, label, true)
+    stabilize_seeds(
+      blocks,
+      params,
+      table,
+      b,
+      sem,
+      suppress,
+      cc_suppress,
+      unique_seed,
+      label,
+      true,
+      resolve,
+    )
   }
   seeds := sr.seeds
   reruns := sr.reruns
@@ -6380,6 +6446,7 @@ fn run_fixpoint_validated(
     label,
     .None,
     .None,
+    resolve,
   ).fx
   if timed {
     t_done := date.now()
@@ -6418,6 +6485,19 @@ pub fn analyze_with_summaries(
   analyze_with_summaries_and_entry_seeds(view, b, sem, table, Dict.new())
 }
 
+// Resolver-aware twin of `analyze_with_summaries`: analyzes every function with
+// per-call-site variant selection driven by `resolve`. The generic entry point
+// above is the `generic_only_resolver` case of this one.
+pub fn analyze_with_summaries_resolved(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+  resolve: VariantResolver,
+) CfgView {
+  analyze_with_summaries_and_entry_seeds_resolved(view, b, sem, table, Dict.new(), resolve)
+}
+
 pub fn analyze_with_summaries_and_entry_seeds(
   view: CfgView,
   b: BuiltinRegistry,
@@ -6425,8 +6505,26 @@ pub fn analyze_with_summaries_and_entry_seeds(
   table: SummaryTable,
   entry_seeds: Dict<Int, Dict<Int, Bool>>,
 ) CfgView {
+  analyze_with_summaries_and_entry_seeds_resolved(
+    view,
+    b,
+    sem,
+    table,
+    entry_seeds,
+    generic_only_resolver,
+  )
+}
+
+pub fn analyze_with_summaries_and_entry_seeds_resolved(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+  entry_seeds: Dict<Int, Dict<Int, Bool>>,
+  resolve: VariantResolver,
+) CfgView {
   functions := collect f in view.functions {
-    analyze_function(f, table, b, sem, entry_seed_for(entry_seeds, f.func_id), .None)
+    analyze_function(f, table, b, sem, entry_seed_for(entry_seeds, f.func_id), .None, resolve)
   }
   CfgView.{ functions }
 }
@@ -6483,7 +6581,15 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
         } else {
           .None
         }
-        analyze_function(clear_function_analysis(f), table, b, sem, seed, cached)
+        analyze_function(
+          clear_function_analysis(f),
+          table,
+          b,
+          sem,
+          seed,
+          cached,
+          generic_only_resolver,
+        )
       } else {
         clear_function_analysis(f)
       }
@@ -6526,7 +6632,9 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
       t_clear1 := date.now()
       clear_ms = clear_ms + (t_clear1 - t_clear0)
       t_analyze0 := date.now()
-      functions = .append(analyze_function(cleared, table, b, sem, seed, cached))
+      functions = .append(
+        analyze_function(cleared, table, b, sem, seed, cached, generic_only_resolver),
+      )
       t_analyze1 := date.now()
       analyze_ms = analyze_ms + (t_analyze1 - t_analyze0)
     } else {
@@ -6560,7 +6668,20 @@ pub fn analyze_function_with_seed(
   sem: OptimizerSemantics,
   unique_seed: Dict<Int, Bool>,
 ) CfgFunction {
-  analyze_function(f, table, b, sem, unique_seed, .None)
+  analyze_function(f, table, b, sem, unique_seed, .None, generic_only_resolver)
+}
+
+// Resolver-aware twin of `analyze_function_with_seed`: used to render a variant
+// body's own downstream `verdict ->` selections with variant-aware call transfer.
+pub fn analyze_function_with_seed_resolved(
+  f: CfgFunction,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  unique_seed: Dict<Int, Bool>,
+  resolve: VariantResolver,
+) CfgFunction {
+  analyze_function(f, table, b, sem, unique_seed, .None, resolve)
 }
 
 pub type CallUniq = .{ callee: Int, arg_unique: Vector<Bool> }
@@ -6580,6 +6701,12 @@ pub fn call_uniques(
     blk.exit.live = bl.live_out
     blk
   }
+
+  // call_uniques stays variant-generic: it records each call site's arg_unique
+  // vector from generic ownership facts, and `summary.reachable_variants` matches
+  // those vectors against the variant table itself. Selecting variants during this
+  // transfer would not change the recorded arg_unique values, so we pass the
+  // generic resolver and keep reachability scanning independent of selection.
   fx := run_fixpoint_validated(
     blocks,
     f.params,
@@ -6590,6 +6717,7 @@ pub fn call_uniques(
     Dict.new(), // call_uniques must see unsuppressed ownership facts (Task-6 seed guard)
     unique_seed,
     "call_uniques:${f.name}",
+    generic_only_resolver,
   )
   done := all_processed(blocks)
   out: Vector<CallUniq> = []
@@ -6662,6 +6790,7 @@ pub fn call_uniques(
         sem,
         suppress,
         Dict.new(),
+        generic_only_resolver,
       )
     }
   }
@@ -6814,6 +6943,7 @@ fn analyze_function(
   sem: OptimizerSemantics,
   unique_seed: Dict<Int, Bool>,
   cached_fx: FixResult?,
+  resolve: VariantResolver,
 ) CfgFunction {
   timed := timings_enabled()
   t0 := if timed {
@@ -6842,6 +6972,7 @@ fn analyze_function(
     unique_seed,
     "analyze:${f.name}",
     cached_fx,
+    resolve,
   )
   if timed {
     t_own := date.now()
@@ -6866,6 +6997,7 @@ fn ownership_stage(
   unique_seed: Dict<Int, Bool>,
   label: String,
   cached_fx: FixResult?,
+  resolve: VariantResolver,
 ) Vector<CfgBlock> {
   no_suppress: Dict<Int, Bool> = Dict.new()
   cc := analyze_copy_carriers(blocks, params, table, b, sem)
@@ -6898,6 +7030,7 @@ fn ownership_stage(
           cc_suppress,
           unique_seed,
           label,
+          resolve,
         )
         if fresh.render_fix_result() != cf.render_fix_result() {
           error("fixverify mismatch: ${label}")
@@ -6915,6 +7048,7 @@ fn ownership_stage(
       cc_suppress,
       unique_seed,
       label,
+      resolve,
     ),
   }
   done := all_processed(blocks)
@@ -6952,8 +7086,8 @@ fn ownership_stage(
       st
     }
     prep := block_prep(blk, sem)
-    verdicts := block_verdicts(blk, st, prep, table, b, sem, no_suppress, cc)
-    st = forward_block(blk, st, prep, table, b, sem, no_suppress, cc_suppress)
+    verdicts := block_verdicts(blk, st, prep, table, b, sem, no_suppress, cc, resolve)
+    st = forward_block(blk, st, prep, table, b, sem, no_suppress, cc_suppress, resolve)
     blk.entry.ownership = entry_own
     blk.exit.ownership = st.own
     blk.entry.binding_valid = entry_valid
@@ -7616,7 +7750,7 @@ pub fn summarize_function(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
 ) Summary {
-  summarize_seeded(f, table, b, sem, suppress, Dict.new()).summary
+  summarize_seeded(f, table, b, sem, suppress, Dict.new(), generic_only_resolver).summary
 }
 
 // Generic summary plus its fx and reuse eligibility. summarize_function delegates
@@ -7629,7 +7763,7 @@ pub fn summarize_function_cached(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
 ) CachedSummary {
-  r := summarize_seeded(f, table, b, sem, suppress, Dict.new())
+  r := summarize_seeded(f, table, b, sem, suppress, Dict.new(), generic_only_resolver)
   CachedSummary.{ summary: r.summary, fx: r.fx, reusable: !calls_suppressed(f.blocks, suppress) }
 }
 
@@ -7650,13 +7784,28 @@ pub fn summarize_variant(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
 ) Summary {
+  summarize_variant_resolved(f, key, table, b, sem, suppress, generic_only_resolver)
+}
+
+// Resolver-aware twin of `summarize_variant`: while re-analyzing this variant's
+// body, out-of-SCC calls may select already-validated owned variants via
+// `resolve`, which is what lets owned threading compose across delegating hops.
+pub fn summarize_variant_resolved(
+  f: CfgFunction,
+  key: vid.UniqueKey,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+  resolve: VariantResolver,
+) Summary {
   unique_seed: Dict<Int, Bool> = Dict.new()
   for req in key {
     if req.path.is_shell() and req.param >= 0 and req.param < f.params.len() {
       unique_seed[f.params[req.param].id] = true
     }
   }
-  summarize_seeded(f, table, b, sem, suppress, unique_seed).summary
+  summarize_seeded(f, table, b, sem, suppress, unique_seed, resolve).summary
 }
 
 // Call-site variant selection (Stage 4c, D4 shell-level): the VariantId a caller
@@ -7715,6 +7864,7 @@ fn summarize_seeded(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
+  resolve: VariantResolver,
 ) SeededResult {
   timed := timings_enabled()
   t0 := if timed {
@@ -7744,6 +7894,7 @@ fn summarize_seeded(
     Dict.new(), // summary derivation path: copy-carrier suppression is Task 6's concern
     unique_seed,
     "summary:${f.name}",
+    resolve,
   )
   t_fx := if timed {
     date.now()
@@ -7817,6 +7968,7 @@ fn summarize_seeded(
           sem,
           suppress,
           Dict.new(),
+          resolve,
         )
 
         // ret reflects SHELL ownership only: a fresh wrapper .{ctx:p0} has empty

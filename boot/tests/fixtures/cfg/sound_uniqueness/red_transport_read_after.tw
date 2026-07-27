@@ -1,0 +1,27 @@
+// NEGATIVE soundness fixture for transport-wrapper delegation.
+// `check` returns ctx through a fresh wrapper projection shape, but reads the
+// ORIGINAL `ctx` after calling `synth`. That makes ctx non-last-use at the
+// wrapper call, so ret_paths OwnedFromParam recovery must fail and the candidate
+// must retract.
+type Ctx = .{ syms: Dict<String, Int>, count: Int }
+
+type Out = .{ ctx: Ctx, ty: Int }
+
+fn synth(ctx: Ctx, name: String) Out {
+  ctx.syms = .set(name, ctx.count)
+  ctx.count = ctx.count + 1
+  Out.{ ctx, ty: ctx.count }
+}
+
+fn check(ctx: Ctx, name: String) Ctx {
+  out := synth(ctx, name)
+  println(ctx.count.to_string())
+  out.ctx
+}
+
+fn build() Ctx {
+  ctx := Ctx.{ syms: Dict.new(), count: 0 }
+  check(ctx, "x")
+}
+
+println(build().count.to_string())

@@ -1,0 +1,24 @@
+// NEGATIVE soundness fixture for delegated-consume.
+// `tap` has the same return shape as a forwarding candidate: it returns the
+// delegated Env result. But it reads the ORIGINAL `env` after delegating, so
+// `env` is not last-use at the `add` call. A seeded owned variant for `tap`
+// must therefore retract: no `variant fn tap`, no `verdict ->`, no reuse.
+type Env = .{ types: Dict<String, Int> }
+
+fn add(env: Env, k: String, v: Int) Env {
+  env.types = .set(k, v)
+  env
+}
+
+fn tap(env: Env, k: String, v: Int) Env {
+  next := add(env, k, v)
+  println(env.types.len().to_string())
+  next
+}
+
+fn build() Env {
+  env := Env.{ types: Dict.new() }
+  tap(env, "a", 1)
+}
+
+println(build().types.len().to_string())

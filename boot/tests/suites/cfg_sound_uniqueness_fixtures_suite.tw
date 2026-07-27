@@ -468,4 +468,27 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "NEG: delegated update then original read stays persistent",
+      fn() {
+        out := try render_entry("red_delegate_read_after")
+        tap := try section_from(out, "fn tap ")
+        try assert.is_false(tap.contains("verdict ->"))
+        try assert.is_false(out.contains("variant fn tap"))
+        try assert.is_false(tap.contains("reuse(unique)"))
+        .Ok({})
+      },
+    )
+    .test(
+      "NEG: transport wrapper then original read stays persistent",
+      fn() {
+        out := try render_entry("red_transport_read_after")
+        check := try section_from(out, "fn check ")
+        try assert.str_contains(out, "ret_paths=.f0=from(p0)")
+        try assert.is_false(check.contains("verdict ->"))
+        try assert.is_false(out.contains("variant fn check"))
+        try assert.is_false(check.contains("reuse(unique)"))
+        .Ok({})
+      },
+    )
 }
