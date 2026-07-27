@@ -371,6 +371,24 @@ compiler, giving the *achievable* in-place distribution:
   achievable distribution*, not a regression gate for this project's work — the
   new analysis will need its own, deterministic, boot-side census.
 
+### Boot-side census (2026-07-27, `twk ir --census --sites`)
+
+The shipped boot analysis + codegen (8A–8E) now gives a directly-measurable distribution over
+`boot/main.tw`:
+
+| Family | Sites | In-place (selected) | Persistent |
+|---|---|---|---|
+| `dict_set` | 719 | **396** | 323 (303 `persistent(aliased shell)`) |
+| `vector_set` | 18 | 7 | 11 |
+
+- The **303 `aliased shell` dict sites** are the general precision ceiling — the base is not
+  *provably* Unique. Some are genuinely aliased (must stay persistent); some are conservative
+  over-approximations (fixable in principle). `run_fixpoint`'s maps are in the conservative,
+  transitively-published sub-class (see the storage track's "run_fixpoint … canonical S4 customer"
+  follow-up).
+- `vector_append`/`vector_builder` rows are handled by the separate loop-builder pass, not this
+  decision path (only `vector_set` surfaces here) — so vector is not the opportunity; dict is.
+
 ## Cross-cutting design findings
 
 1. **Analysis runs over desugared ANF.** `collect`/`for-in` are gone; loops are

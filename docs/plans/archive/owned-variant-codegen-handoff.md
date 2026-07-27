@@ -1,5 +1,10 @@
 # Uniform-Caller Aggregate-Carrier Entry Seeding (owned-variant handoff, first cut)
 
+> **ARCHIVED (2026-07-27).** Spike showed `run_fixpoint`/`merge_targeted` cannot be seeded (no
+> unique caller; `ForwardState` is Published). Superseded by
+> [`sound-uniqueness/`](../sound-uniqueness/README.md); finding folded into
+> [`sound-uniqueness/storage/README.md`](../sound-uniqueness/storage/README.md). Kept for the record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development`
 > (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking. **Read the prerequisite finding first:**

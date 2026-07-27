@@ -298,6 +298,45 @@ in-place decision path — either by giving append a decision family with a muta
 round-trips through persistent PVec. This is orthogonal to the copy-carrier dict engine, which
 is complete.
 
+## Follow-up: `run_fixpoint`'s own dataflow maps — canonical S4 customer
+
+A 2026-07-27 investigation (three self-host-verified spikes, all reverted; the standalone
+`fixpoint-map-inplace` diagnosis doc it produced is archived) established that the compiler's
+own ownership fixpoint — `run_fixpoint`'s per-block `own`/`valid`/`prov` maps, merged via
+`merge_targeted` (`ownership.tw`) — **cannot be flipped in-place through the existing
+in-place-decision hooks (8D)**, and is instead a textbook customer for **S4 (owned-specialized
+mutable ABI)**.
+
+Findings worth keeping:
+
+- **Not a soundness wall, and not an `exits`-aliasing problem.** The per-block maps are freshly
+  allocated (`join_entry_ownership`/`_valid`/`_prov` each build a new `Dict.new()`; `ret=fresh`).
+- **The blocker is escape over-approximation across the transfer tree.** The `ForwardState`
+  record that holds the maps is threaded through `seed_payload_binding` and `forward_block`, both
+  summarized `p_st=Published, ret=alias`. The `Published` cascades transitively (the escape rule
+  `own_is_shared(exits, st)`, `ownership.tw`) from passing `st` to `Published`-param callees down
+  the whole `transfer_op` tree — it is **conservative, not a real leak** (no collection/global
+  stores a `ForwardState`; `publish_atom` only sets a key). So by the time `merge_targeted`
+  receives a map it is Shared → `arg_unique=false` at every call site (verified by instrumenting
+  `uniform_entry_seeds`), even after restructuring `run_fixpoint` to pass each map as a
+  single-reader last-use.
+- **Why the hook route is also low-yield even if it flipped.** `dict$set_in_place` operates on
+  boxed HAMT with `anyref` elements; it saves the persistent rebuild allocation only. Measured:
+  the per-block merge region is ~37% of `run_fixpoint`, `run_fixpoint` is a few seconds of a ~17s
+  full build, so the merge region is ~10% of total compile and the in-place slice is a ~1–2%
+  ceiling. Census context: 396/719 `dict_set` sites already flip via 8D; 303 remain
+  `persistent(aliased shell)` (the general precision ceiling), of which this is a hard,
+  transitively-published sub-class.
+
+**Implication for this track:** the real win for `run_fixpoint`-class *state-threading* code is
+exactly S4's north star — keep a private `MutDict` low across the `forward_block`/`transfer_op`
+helper chain and materialize only at boundaries — which requires owned-specialized variants of
+those transfer functions that preserve `ForwardState` field-ownership instead of publishing it.
+That is the analysis prerequisite S4 must address here; do **not** re-attempt it through the
+8A–8E in-place-decision hooks. (The `merge_targeted` body rewrite that hoists its `next` reads is
+a harmless, self-host-safe cleanup that yields a clean `p1=Consumed` carrier shape; it flips
+nothing on its own and can be cherry-picked if convenient.)
+
 ## References
 
 - [../codegen/README.md](../codegen/README.md)

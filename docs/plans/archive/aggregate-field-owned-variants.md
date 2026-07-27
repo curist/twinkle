@@ -1,5 +1,9 @@
 # Aggregate-Field Owned Variants — Implementation Plan
 
+> **ARCHIVED (2026-07-27).** Premise disproven (see STATUS below) and the owned-variant vtable has
+> no codegen consumer. The idea belongs to [`sound-uniqueness/`](../sound-uniqueness/README.md)
+> codegen **Phase 8G** (ownership-specialized function variants), not a standalone plan. Kept for the record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: use `superpowers:subagent-driven-development`
 > or `superpowers:executing-plans` to implement this task-by-task. Steps use checkbox
 > (`- [ ]`) syntax. This is a compiler-analysis change: the gates are census probes,

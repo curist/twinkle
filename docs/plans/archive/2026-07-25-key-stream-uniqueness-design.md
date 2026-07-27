@@ -1,5 +1,9 @@
 # Design: Key-Stream Uniqueness Certification for the Copy-Carrier Engine
 
+> **ARCHIVED (2026-07-27) — implemented.** The checker is live in `ownership.tw`
+> (`SummaryTable.dedupe_helpers`) and the copy-carrier engine that consumes it landed. Kept as the
+> design record for shipped work.
+
 **Status:** **Decided — a general proof checker.** This design certifies key-stream
 uniqueness by *proving* conservative obligations (O0–O4, §3), not by matching a shape. §5 is
 the detailed design (implementable), §6 its failure mode, §7 the acceptance gates that must

@@ -1,5 +1,10 @@
 # run_fixpoint Caller-Side: Own Carriers for merge_targeted (E-DRY / FixState)
 
+> **ARCHIVED (2026-07-27) — NOT implemented.** The caller-side restructure does not flip the maps
+> (spike disproved it; `ForwardState` is Published through the transfer tree). Superseded by
+> [`sound-uniqueness/`](../sound-uniqueness/README.md); the finding lives in
+> [`sound-uniqueness/storage/README.md`](../sound-uniqueness/storage/README.md) (S4 customer). Kept for the record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development`
 > (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax. **Read first, in order:**

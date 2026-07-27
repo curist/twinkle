@@ -1,5 +1,11 @@
 # Making the Ownership Fixpoint's Own Maps Mutate In-Place
 
+> **ARCHIVED (2026-07-27).** Superseded by [`sound-uniqueness/`](../sound-uniqueness/README.md).
+> The in-place-via-analysis-precision goal for `run_fixpoint`/`merge_targeted` is a dead end (see
+> CONCLUSION below); the durable finding — it is a canonical storage-track **S4** (owned-specialized
+> mutable ABI) customer — is folded into
+> [`sound-uniqueness/storage/README.md`](../sound-uniqueness/storage/README.md). Kept for the record.
+
 > # CONCLUSION (2026-07-27): achievable in principle, NOT worth it. Deprioritized; marker retired.
 >
 > **Can the ownership fixpoint's own maps (`own`/`valid`/`prov`, carried by `merge_targeted`) be made
