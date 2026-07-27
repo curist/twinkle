@@ -1,0 +1,28 @@
+type Out = .{ map: Dict<Int, Int>, observed: Int }
+
+fn keys_after_set_negative(next: Dict<Int, Int>) Out {
+  out := next
+  out[0] = 1
+  ks := next.keys()
+  total := 0
+  for k in ks {
+    total = total + k
+  }
+  Out.{ map: out, observed: total }
+}
+
+fn caller(n: Int) Int {
+  state: Dict<Int, Int> = Dict.new()
+  observed := 0
+  i := 0
+  for i < n {
+    state[i] = i
+    o := keys_after_set_negative(state)
+    state = o.map
+    observed = observed + o.observed
+    i = i + 1
+  }
+  observed + state.len()
+}
+
+println(caller(3).to_string())

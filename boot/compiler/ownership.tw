@@ -10,9 +10,12 @@ use @std.proc
 
 use compiler.anf.{AnfOp, Atom}
 use compiler.builtins.{BuiltinRegistry}
-use compiler.cfg.{CfgBlock, CfgEdge, CfgFunction, CfgView, Terminator, empty_block_facts}
+use compiler.cfg.{
+  BlockId, CfgBlock, CfgEdge, CfgFunction, CfgInstruction, CfgView, Terminator, empty_block_facts,
+}
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.field_facts as ff
+use compiler.mono_type.{MonoType}
 use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info, container_kind}
 use compiler.variant_id as vid
 
@@ -76,14 +79,51 @@ pub type Summary = .{
   ret_paths: Vector<ReturnPathOwn>,
 }
 
-pub type SummaryTable = .{ by_func: Dict<Int, Summary> }
+// A positive certificate names the concrete evidence for each obligation (design §5.1),
+// so a reviewer and a test can inspect *why* a function certified. `-1` marks a field that
+// does not apply to the kind (all four detail fields are combinator-inapplicable).
+pub type DedupeKind = { SortInsertPrimitive, Combinator }
+
+pub type DedupeCertificate = .{
+  kind: DedupeKind,
+  vector_param: Int, // vp local id (not param index) — traversed/returned vector param (primitive) or seed param (combinator)
+  induction_local: Int, // the verified 0/+1/<len(vp) counter (primitive; -1 for combinator)
+  element_local: Int, // vp[induction] — the guarded + appended element (primitive; -1 combinator)
+  flag_local: Int, // the set-once `inserted` flag (primitive; -1 for combinator)
+}
+
+pub type SummaryTable = .{
+  by_func: Dict<Int, Summary>,
+  // Borrow/effect helper classification (populated by classify_dedupe_helpers over the
+  // whole view during summary.compute). A func is certified iff it has an entry here — the
+  // certificate records the proof evidence for its obligations (design §3, §5.1).
+  dedupe_helpers: Dict<Int, DedupeCertificate>,
+}
 
 pub fn empty_summary_table() SummaryTable {
-  SummaryTable.{ by_func: Dict.new() }
+  SummaryTable.{ by_func: Dict.new(), dedupe_helpers: Dict.new() }
+}
+
+pub fn table_is_dedupe_helper(t: SummaryTable, func_id: Int) Bool {
+  case t.dedupe_helpers.get(func_id) {
+    .Some(_) => true,
+    .None => false,
+  }
 }
 
 pub fn summary_get(t: SummaryTable, func_id: Int) Summary? {
   t.by_func.get(func_id)
+}
+
+// Per-call-site callee-summary selection. Given a callee func id and the
+// call-site arg_unique vector, a resolver may return an already-validated owned
+// variant summary to transfer instead of the generic summary; `.None` falls back
+// to generic. `summary.tw` builds concrete resolvers from its variant table; this
+// module stays free of variant-table types by taking the resolver as a callback.
+pub type VariantResolver = fn(Int, Vector<Bool>) Summary?
+
+pub fn generic_only_resolver(_callee: Int, _au: Vector<Bool>) Summary? {
+  .None
 }
 
 // ── Uses / defs extraction ──────────────────────────────────────────
@@ -618,6 +658,2687 @@ fn scan_block_backward(blk: CfgBlock, live_out: Vector<Int>) BlockScan {
   BlockScan.{ live_in: cur, live_after }
 }
 
+// --- Borrow/effect framework model (dict copy-carrier proof engine) ---
+//
+// The borrow/effect engine models reads out of an owned source dict as `Loan`s
+// over abstract `BorrowRegion`s and mutations to the carrier as `WriteEffect`s,
+// then proves that live loans do not conflict with writes. Failed proofs never
+// reject a program; they keep persistent lowering and render a rejection reason.
+// See docs/plans/2026-07-24-ownership-borrow-effect-checker-plan.md.
+type BorrowRegion = { DictKeysOrder, DictValue(Int), DictUnknownValue, DictShell, UnknownRegion }
+
+type BorrowKind = { SharedRead, StructuralRead }
+
+type WriteEffect = {
+  DictSet(Int),
+  DictSetUnknownKey,
+  DictRemove(Int),
+  DictRemoveUnknownKey,
+  DictShellWrite,
+  UnknownWrite,
+}
+
+type Loan = .{
+  source: Int,
+  region: BorrowRegion,
+  kind: BorrowKind,
+  starts_at: Int,
+  ends_at: Int,
+  evidence: String,
+}
+
+type EffectProof = .{
+  carrier: Int,
+  source: Int,
+  update_result: Int,
+  key: Int?,
+  loans: Vector<Loan>,
+  writes: Vector<WriteEffect>,
+  reason: String,
+}
+
+// A loan live past its bounding region (returned, escaped, live-out, or on an
+// unproven CFG edge) ends at infinity for conflict purposes.
+borrow_infinity: Int = 2000000000
+
+// Whether a vector local carries a certified unique-int-key stream (used as a
+// loop key stream). Direct producers (`Dict.keys`) and compositional
+// uniqueness-preserving helpers mark `UniqueIntKeys`; everything else is
+// `UnknownStream`. Extended in Task 3.
+type StreamFact = { UnknownStream, UniqueIntKeys }
+
+// Two key locals are distinct only when a certified unique key stream proves it
+// across its own iterations; two different straight-line locals are never proven
+// distinct (conservative default-deny). Same local is the same key, not distinct.
+fn keys_proven_distinct(a: Int, b: Int, stream: StreamFact) Bool {
+  case stream {
+    .UniqueIntKeys => false, // per-iteration distinctness is applied by the loop checker, not here
+    .UnknownStream => false,
+  }
+}
+
+fn loan_ends_before_write(loan: Loan, write_index: Int) Bool {
+  loan.ends_at < write_index
+}
+
+// Region-level compatibility of a live loan with a carrier write, assuming
+// worst-case timing/key-equality. Defaults to `true` (conflict) and returns
+// `false` only for region combinations that are safe under COW carrier writes.
+// Timing (loan_ends_before_write) and key-distinctness (unique stream) are layered
+// on by the loan/write checker; this function never licenses a same-key value read.
+fn borrow_write_conflict(loan: Loan, write: WriteEffect) Bool {
+  case write {
+    .DictSet(_) => case loan.region {
+      // A COW set grows the order vector by append and never mutates an existing
+      // value object, so a keys-order loan created before the write survives.
+      .DictKeysOrder => false,
+      _ => true,
+    },
+    .DictSetUnknownKey => case loan.region {
+      .DictKeysOrder => false,
+      _ => true,
+    },
+    // Destructive remove tombstones the aliased order vector and rewrites the
+    // HAMT: it conflicts with every live loan from the same source.
+    .DictRemove(_) => true,
+    .DictRemoveUnknownKey => true,
+    .DictShellWrite => true,
+    .UnknownWrite => true,
+  }
+}
+
+fn render_effect_rejection(reason: String) String {
+  "copy-carrier-rejected(${reason})"
+}
+
+fn render_effect_proof(p: EffectProof) String {
+  key_txt := case p.key {
+    .Some(k) => "L${k}",
+    .None => "L?",
+  }
+  "borrow-effect copy-carrier source L${p.source} key ${key_txt}"
+}
+
+// ── Copy-carrier loan/write proof (engine plan Task 4) ──
+//
+// `analyze_copy_carriers` proves, per function, that a dict aliased from a param source
+// (`out := next`) and written by key can lower in place: every read of the source is a
+// bounded loan that ends before — or writes a distinct key from — each carrier write, the
+// written key stream is unique, and the source never otherwise escapes. Accepted carriers
+// carry an `EffectProof`; near-misses carry a concrete rejection reason. Default-deny: any
+// loan/write pair not proven safe is a conflict; any unrecognized source use is an escape.
+type CarrierProof = { CarrierAccept(EffectProof), CarrierReject(String) }
+
+type CopyCarrierFacts = .{
+  by_update: Dict<Int, CarrierProof>, // update-result local -> accept/reject
+  suppress_alias: Dict<Int, Bool>, // carrier AInit result local -> suppress source publish
+  suppress_read: Dict<Int, Bool>, // read-call result local -> suppress source publish
+  seed_params: Dict<Int, Bool>, // source param local ids to seed Unique
+}
+
+fn empty_copy_carrier_facts() CopyCarrierFacts {
+  CopyCarrierFacts.{
+    by_update: Dict.new(),
+    suppress_alias: Dict.new(),
+    suppress_read: Dict.new(),
+    seed_params: Dict.new(),
+  }
+}
+
+// The union publication-suppression map (alias-move carriers + suppressed reads), keyed by
+// instruction result local, threaded through the forward fixpoint alongside the SCC suppress.
+fn cc_suppress_set(cc: CopyCarrierFacts) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+  for k in cc.suppress_alias.keys() {
+    out[k] = true
+  }
+  for k in cc.suppress_read.keys() {
+    out[k] = true
+  }
+  out
+}
+
+// An instruction paired with its whole-function program index (block-list order), so
+// loan/write ordering compares stable positions. A terminator index is reserved between
+// blocks so cross-block order stays well defined.
+type CcFlatInst = .{ g: Int, op: AnfOp, result: Int }
+
+fn cc_flatten_insts(blocks: Vector<CfgBlock>) Vector<CcFlatInst> {
+  out: Vector<CcFlatInst> = []
+  g := 0
+  for blk in blocks {
+    for inst in blk.instructions {
+      out = .append(CcFlatInst.{ g, op: inst.op, result: inst.anf_local.id })
+      g = g + 1
+    }
+    g = g + 1
+  }
+  out
+}
+
+fn cc_param_ids(params: Vector<LocalId>) Dict<Int, Bool> {
+  s: Dict<Int, Bool> = Dict.new()
+  for p in params {
+    s[p.id] = true
+  }
+  s
+}
+
+// A carrier candidate: `AInit(ALocal(src))` whose src is a param. Confirmed a real carrier
+// later by being the base of at least one dict write.
+type CcCandidate = .{ carrier: Int, source: Int }
+
+fn cc_carrier_candidates(flat: Vector<CcFlatInst>, params: Dict<Int, Bool>) Vector<CcCandidate> {
+  out: Vector<CcCandidate> = []
+  for fi in flat {
+    case fi.op {
+      .AInit(.ALocal(src)) => if in_set(params, src.id) and src.id != fi.result {
+        out = .append(CcCandidate.{ carrier: fi.result, source: src.id })
+      },
+      _ => {},
+    }
+  }
+  out
+}
+
+type CcWrite = .{ effect: WriteEffect, g: Int, result: Int, key_local: Int }
+
+fn cc_dict_writes(flat: Vector<CcFlatInst>, carrier: Int, ops: DictVecOps) Vector<CcWrite> {
+  out: Vector<CcWrite> = []
+  for fi in flat {
+    case fi.op {
+      .ACall(callee, args) => case callee_func_id(callee) {
+        .Some(f) => if args.len() >= 1 and atom_is_local_id(args[0], carrier) {
+          key_local := if args.len() >= 2 {
+            case atom_local_id(args[1]) {
+              .Some(k) => k,
+              .None => 0 - 1,
+            }
+          } else {
+            0 - 1
+          }
+          if f.id == ops.set {
+            eff: WriteEffect = if key_local >= 0 {
+              .DictSet(key_local)
+            } else {
+              .DictSetUnknownKey
+            }
+            out = .append(CcWrite.{ effect: eff, g: fi.g, result: fi.result, key_local })
+          } else if f.id == ops.remove {
+            eff: WriteEffect = if key_local >= 0 {
+              .DictRemove(key_local)
+            } else {
+              .DictRemoveUnknownKey
+            }
+            out = .append(CcWrite.{ effect: eff, g: fi.g, result: fi.result, key_local })
+          }
+        },
+        .None => {},
+      },
+      _ => {},
+    }
+  }
+  out
+}
+
+// Whether the callee's return flows from param index `i` (aliases it or owns a return path
+// from it) — i.e. the source escapes through the helper's result.
+fn cc_ret_flows_from_param(s: Summary, i: Int) Bool {
+  aliased := case s.ret {
+    .MayAliasParams(idxs) => live_contains_int(idxs, i),
+    _ => false,
+  }
+  if aliased {
+    return true
+  }
+  for rp in s.ret_paths {
+    case rp.own {
+      .OwnedFromParam(pi) => if pi == i {
+        return true
+      },
+      _ => {},
+    }
+  }
+  false
+}
+
+// The stream fact of a vector local used as a key stream: `Dict.keys` is unique; an alias
+// inherits; a certified dedupe helper preserves uniqueness only when every vector argument
+// is itself unique (the certificate's own contract); everything else is unknown.
+fn cc_key_stream_fact(
+  local: Int,
+  dmap: Dict<Int, AnfOp>,
+  ops: DictVecOps,
+  table: SummaryTable,
+  seen: Dict<Int, Bool>,
+) StreamFact {
+  if in_set(seen, local) {
+    return .UnknownStream
+  }
+  seen[local] = true
+  case dmap.get(local) {
+    .Some(.AInit(.ALocal(x))) => cc_key_stream_fact(x.id, dmap, ops, table, seen),
+    .Some(.ACall(callee, args)) => case callee_func_id(callee) {
+      .Some(f) => if f.id == ops.keys {
+        .UniqueIntKeys
+      } else if table.table_is_dedupe_helper(f.id) {
+        all_unique := true
+        for a in args {
+          case atom_local_id(a) {
+            .Some(aid) => case cc_key_stream_fact(aid, dmap, ops, table, seen) {
+              .UniqueIntKeys => {},
+              .UnknownStream => all_unique = false,
+            },
+            .None => all_unique = false,
+          }
+        }
+        if all_unique {
+          .UniqueIntKeys
+        } else {
+          .UnknownStream
+        }
+      } else {
+        .UnknownStream
+      },
+      .None => .UnknownStream,
+    },
+    _ => .UnknownStream,
+  }
+}
+
+// A write key is acceptable when it is not a loop-index key (single/literal write, N/A) or
+// when its producing loop stream is a certified unique key stream.
+fn cc_write_key_ok(key_local: Int, dmap: Dict<Int, AnfOp>, ops: DictVecOps, table: SummaryTable) Bool {
+  cur := key_local
+  for _ in range(32) {
+    if cur < 0 {
+      return true
+    }
+    case dmap.get(cur) {
+      .Some(.AInit(.ALocal(x))) => cur = x.id,
+      .Some(.AIndex(vec, _, _, _)) => return case atom_local_id(vec) {
+        .Some(v) => case cc_key_stream_fact(v, dmap, ops, table, Dict.new()) {
+          .UniqueIntKeys => true,
+          .UnknownStream => false,
+        },
+        .None => false,
+      },
+      _ => return true,
+    }
+  }
+  true
+}
+
+fn cc_arg_pos_of(args: Vector<Atom>, id: Int) Int? {
+  for a, i in args {
+    if atom_is_local_id(a, id) {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+fn cc_matching_write_key(args: Vector<Atom>, source_pos: Int, write_keys: Dict<Int, Bool>) Int {
+  for a, i in args {
+    if i != source_pos {
+      case atom_local_id(a) {
+        .Some(k) => if in_set(write_keys, k) {
+          return k
+        },
+        .None => {},
+      }
+    }
+  }
+  0 - 1
+}
+
+pub fn analyze_copy_carriers(
+  blocks: Vector<CfgBlock>,
+  params: Vector<LocalId>,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) CopyCarrierFacts {
+  facts := empty_copy_carrier_facts()
+  ops := dict_vec_ops(b)
+  dmap := build_def_map(blocks)
+  flat := cc_flatten_insts(blocks)
+  pset := cc_param_ids(params)
+  for cand in cc_carrier_candidates(flat, pset) {
+    carrier := cand.carrier
+    source := cand.source
+    writes := cc_dict_writes(flat, carrier, ops)
+    if writes.len() > 0 {
+      write_keys: Dict<Int, Bool> = Dict.new()
+      min_wg := borrow_infinity
+      has_remove := false
+      for w in writes {
+        if w.key_local >= 0 {
+          write_keys[w.key_local] = true
+        }
+        if w.g < min_wg {
+          min_wg = w.g
+        }
+        case w.effect {
+          .DictRemove(_) => has_remove = true,
+          .DictRemoveUnknownKey => has_remove = true,
+          _ => {},
+        }
+      }
+
+      reason := ""
+      loans: Vector<Loan> = []
+      read_suppress: Vector<Int> = []
+
+      // Step 4: loans on source + escape classification.
+      for fi in flat {
+        if reason == "" {
+          case fi.op {
+            .AInit(.ALocal(s)) => if s.id == source and fi.result == carrier {} else if live_contains_int(
+              op_uses(fi.op),
+              source,
+            ) {
+              reason = "source-escape"
+            },
+            .ACall(callee, args) => case callee_func_id(callee) {
+              .Some(f) => if f.id == ops.set or f.id == ops.remove {
+                if args.len() >= 1 and atom_is_local_id(args[0], carrier) {} else if args.len() >= 1
+                  and atom_is_local_id(args[0], source) {
+                  reason = "source-escape" // [S2] second in-place writer on the source
+                } else if live_contains_int(op_uses(fi.op), source) {
+                  reason = "source-escape"
+                }
+              } else if f.id == ops.get or f.id == ops.get_unsafe {
+                if args.len() >= 1 and atom_is_local_id(args[0], source) {
+                  key := if args.len() >= 2 {
+                    case atom_local_id(args[1]) {
+                      .Some(k) => k,
+                      .None => 0 - 1,
+                    }
+                  } else {
+                    0 - 1
+                  }
+                  reg: BorrowRegion = if key >= 0 {
+                    .DictValue(key)
+                  } else {
+                    .DictUnknownValue
+                  }
+                  loans = .append(
+                    Loan.{
+                      source,
+                      region: reg,
+                      kind: .SharedRead,
+                      starts_at: fi.g,
+                      ends_at: fi.g,
+                      evidence: "dict.get",
+                    },
+                  )
+                } else if live_contains_int(op_uses(fi.op), source) {
+                  reason = "source-escape"
+                }
+              } else if f.id == ops.keys {
+                if args.len() >= 1 and atom_is_local_id(args[0], source) {
+                  loans = .append(
+                    Loan.{
+                      source,
+                      region: .DictKeysOrder,
+                      kind: .StructuralRead,
+                      starts_at: fi.g,
+                      ends_at: borrow_infinity,
+                      evidence: "dict.keys",
+                    },
+                  )
+                  read_suppress = .append(fi.result)
+                } else if live_contains_int(op_uses(fi.op), source) {
+                  reason = "source-escape"
+                }
+              } else {
+                case call_info(sem, f) {
+                  .Some(cs) => case cs.effect {
+                    .Update => if live_contains_int(op_uses(fi.op), source) {
+                      reason = "source-escape"
+                    },
+                    _ => {}, // read-only/allocate/control builtin: non-retaining read
+                  },
+                  .None => if live_contains_int(op_uses(fi.op), source) {
+                    case cc_arg_pos_of(args, source) {
+                      .Some(i) => case table.summary_get(f.id) {
+                        .Some(s) => if i < s.params.len() {
+                          flows := s.cc_ret_flows_from_param(i)
+                          borrowed := case s.params[i].base_role {
+                            .Borrowed => true,
+                            _ => false,
+                          }
+                          if borrowed and !flows {
+                            key := cc_matching_write_key(args, i, write_keys)
+                            reg: BorrowRegion = if key >= 0 {
+                              .DictValue(key)
+                            } else {
+                              .DictUnknownValue
+                            }
+                            loans = .append(
+                              Loan.{
+                                source,
+                                region: reg,
+                                kind: .SharedRead,
+                                starts_at: fi.g,
+                                ends_at: fi.g,
+                                evidence: "borrowed-helper",
+                              },
+                            )
+                            read_suppress = .append(fi.result)
+                          } else if flows {
+                            reason = "source-escape"
+                          } else {
+                            reason = "unknown-source-use"
+                          }
+                        } else {
+                          reason = "unknown-source-use"
+                        },
+                        .None => reason = "unknown-source-use",
+                      },
+                      .None => reason = "unknown-source-use",
+                    }
+                  },
+                }
+              },
+              .None => if live_contains_int(op_uses(fi.op), source) {
+                reason = "source-escape"
+              },
+            },
+            _ => if live_contains_int(op_uses(fi.op), source) {
+              reason = "source-escape"
+            },
+          }
+        }
+      }
+
+      // Terminator escape sweep (return/break atoms; edge args are benign threading).
+      if reason == "" {
+        for blk in blocks {
+          case blk.terminator {
+            .Some(t) => if live_contains_int(term_uses(t), source) {
+              reason = "source-escape"
+            },
+            .None => {},
+          }
+        }
+      }
+
+      // Step 5: every loop-index write key must be a certified unique key stream.
+      if reason == "" {
+        for w in writes {
+          if !cc_write_key_ok(w.key_local, dmap, ops, table) {
+            reason = "non-unique-key-stream"
+          }
+        }
+      }
+
+      // Step 6: loan/write ordering + key-alias.
+      if reason == "" {
+        for loan in loans {
+          if reason == "" {
+            case loan.region {
+              .DictKeysOrder => if !(loan.starts_at < min_wg) {
+                reason = "keys-after-write"
+              } else if has_remove {
+                reason = "remove-conflicts-with-keys"
+              },
+              .DictValue(kr) => {
+                for w in writes {
+                  if reason == "" {
+                    case w.effect {
+                      .DictSet(kw) => if !loan.loan_ends_before_write(w.g)
+                        and !keys_proven_distinct(kr, kw, .UniqueIntKeys) {
+                        reason = "get-after-write"
+                      },
+                      .DictSetUnknownKey => if !loan.loan_ends_before_write(w.g) {
+                        reason = "get-after-write"
+                      },
+                      _ => {},
+                    }
+                  }
+                }
+              },
+              .DictUnknownValue => {
+                for w in writes {
+                  if reason == "" {
+                    case w.effect {
+                      .DictSet(_) => if !loan.loan_ends_before_write(w.g) {
+                        reason = "get-after-write"
+                      },
+                      .DictSetUnknownKey => if !loan.loan_ends_before_write(w.g) {
+                        reason = "get-after-write"
+                      },
+                      _ => {},
+                    }
+                  }
+                }
+              },
+              _ => {},
+            }
+          }
+        }
+      }
+
+      write_effects: Vector<WriteEffect> = collect w in writes {
+        w.effect
+      }
+      if reason == "" {
+        pkey: Int? = if writes[0].key_local >= 0 {
+          .Some(writes[0].key_local)
+        } else {
+          .None
+        }
+        proof := EffectProof.{
+          carrier,
+          source,
+          update_result: writes[0].result,
+          key: pkey,
+          loans,
+          writes: write_effects,
+          reason: "",
+        }
+        for w in writes {
+          cp: CarrierProof = .CarrierAccept(proof)
+          facts.by_update[w.result] = cp
+        }
+        facts.suppress_alias[carrier] = true
+        for r in read_suppress {
+          facts.suppress_read[r] = true
+        }
+        facts.seed_params[source] = true
+      } else {
+        for w in writes {
+          cp: CarrierProof = .CarrierReject(reason)
+          facts.by_update[w.result] = cp
+        }
+      }
+    }
+  }
+  facts
+}
+
+// Param INDICES (not local ids) of copy-carrier source params whose carrier is proven
+// safe to write in place. Used by uniform_entry_seeds to request a Unique entry seed for
+// the source — behind the same mixed-caller guard as consumed-path targets, so a helper
+// with a non-uniform caller stays persistent. Returns only accepted-carrier dict sources,
+// never a dedupe helper's retained key-stream vector param.
+pub fn structural_seed_params_for_borrow_effects(
+  f: CfgFunction,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+) Vector<Int> {
+  cc := analyze_copy_carriers(f.blocks, f.params, table, b, sem)
+  out: Vector<Int> = []
+  for p, i in f.params {
+    if in_set(cc.seed_params, p.id) {
+      out = .append(i)
+    }
+  }
+  out
+}
+
+// ── Dedupe-helper certification (uniqueness-preserving vector combinators) ──
+//
+// A "dedupe helper" is a function whose result vector has no duplicate elements when
+// its vector inputs have none. Certifying one lets the copy-carrier engine treat a loop
+// key stream built by that helper as a UNIQUE key stream. Over-certifying is a
+// miscompile, so every recognizer here is default-deny: it returns true only after
+// structurally confirming the safe shape, and false on the first thing it does not
+// recognize. Two shapes are recognized: the `insert_sorted` sort-insert primitive
+// (equality early-return) and compositional combinators built over certified helpers.
+// local id -> its defining op, across the whole function.
+fn build_def_map(blocks: Vector<CfgBlock>) Dict<Int, AnfOp> {
+  m: Dict<Int, AnfOp> = Dict.new()
+  for blk in blocks {
+    for inst in blk.instructions {
+      m[inst.anf_local.id] = inst.op
+    }
+  }
+  m
+}
+
+// block id -> block, for pred/terminator lookups.
+fn build_block_map(blocks: Vector<CfgBlock>) Dict<Int, CfgBlock> {
+  m: Dict<Int, CfgBlock> = Dict.new()
+  for blk in blocks {
+    m[blk.id.id] = blk
+  }
+  m
+}
+
+type DictVecOps = .{
+  get: Int,
+  get_unsafe: Int,
+  keys: Int,
+  set: Int,
+  remove: Int,
+  append: Int,
+  len: Int,
+}
+
+fn dict_vec_ops(b: BuiltinRegistry) DictVecOps {
+  DictVecOps.{
+    get: b.method_id("Dict", "get").id,
+    get_unsafe: b.id("dict$get_unsafe").id,
+    keys: b.id("dict$keys").id,
+    set: b.method_id("Dict", "set").id,
+    remove: b.method_id("Dict", "remove").id,
+    append: b.method_id("Vector", "append").id,
+    len: b.method_id("Vector", "len").id,
+  }
+}
+
+pub type InductionEvidence = .{ counter: Int, element: Int }
+
+type LocalDefCounts = .{ counts: Dict<Int, Int>, assign_targets: Dict<Int, Bool> }
+
+fn local_def_counts(blocks: Vector<CfgBlock>) LocalDefCounts {
+  counts: Dict<Int, Int> = Dict.new()
+  assign_targets: Dict<Int, Bool> = Dict.new()
+  for blk in blocks {
+    for inst in blk.instructions {
+      counts[inst.anf_local.id] = local_def_count_from(counts, inst.anf_local.id) + 1
+      case inst.op {
+        .AAssign(target, _) => {
+          counts[target.id] = local_def_count_from(counts, target.id) + 1
+          assign_targets[target.id] = true
+        },
+        _ => {},
+      }
+    }
+  }
+  LocalDefCounts.{ counts, assign_targets }
+}
+
+fn local_def_count_from(counts: Dict<Int, Int>, id: Int) Int {
+  case counts.get(id) {
+    .Some(n) => n,
+    .None => 0,
+  }
+}
+
+fn local_single_def(facts: LocalDefCounts, id: Int) Bool {
+  local_def_count_from(facts.counts, id) == 1
+}
+
+fn local_is_assign_target(facts: LocalDefCounts, id: Int) Bool {
+  case facts.assign_targets.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn stable_alias_root(id: Int, dmap: Dict<Int, AnfOp>, facts: LocalDefCounts) Int? {
+  cur := id
+  seen: Vector<Int> = []
+  for _ in range(32) {
+    if live_contains_int(seen, cur) {
+      return .None
+    }
+    if facts.local_is_assign_target(cur) {
+      return .None
+    }
+    seen = insert_sorted(seen, cur)
+    case dmap.get(cur) {
+      .Some(.AInit(.ALocal(next))) => if facts.local_single_def(cur)
+        and !facts.local_is_assign_target(cur) {
+        cur = next.id
+      } else {
+        return .None
+      },
+      _ => return .Some(cur),
+    }
+  }
+  .None
+}
+
+fn atom_alias_root(a: Atom, dmap: Dict<Int, AnfOp>, facts: LocalDefCounts) Int? {
+  case atom_local_id(a) {
+    .Some(id) => stable_alias_root(id, dmap, facts),
+    .None => .None,
+  }
+}
+
+fn atom_is_int(a: Atom, value: Int, dmap: Dict<Int, AnfOp>) Bool {
+  case a {
+    .ALitInt(v) => v == value,
+    .ALocal(l) => case dmap.get(l.id) {
+      .Some(.AInit(.ALocal(src))) => if src.id == l.id {
+        false
+      } else {
+        atom_is_int(.ALocal(src), value, dmap)
+      },
+      .Some(.AInit(src)) => atom_is_int(src, value, dmap),
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn source_for_local_in_block(blk: CfgBlock, id: Int) Atom? {
+  i := blk.instructions.len()
+  for i > 0 {
+    i = i - 1
+    inst := blk.instructions[i]
+    case inst.op {
+      .AAssign(target, src) => if target.id == id {
+        return .Some(src)
+      },
+      .AInit(src) => if inst.anf_local.id == id {
+        return .Some(src)
+      },
+      _ => if inst.anf_local.id == id {
+        return .None
+      },
+    }
+  }
+  .None
+}
+
+fn local_param_index(blk: CfgBlock, id: Int) Int? {
+  for p, i in blk.params {
+    if p.id == id {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+fn atom_is_local_id(a: Atom, id: Int) Bool {
+  case atom_local_id(a) {
+    .Some(x) => x == id,
+    .None => false,
+  }
+}
+
+fn op_is_ctr_plus_one(op: AnfOp, ctr: Int) Bool {
+  case op {
+    .ABinOp(.Add, left, right, _) => atom_is_local_id(left, ctr)
+    and atom_is_int(right, 1, Dict.new())
+      or atom_is_int(left, 1, Dict.new()) and atom_is_local_id(right, ctr),
+    _ => false,
+  }
+}
+
+fn local_def_is_ctr_plus_one(id: Int, ctr: Int, dmap: Dict<Int, AnfOp>) Bool {
+  case dmap.get(id) {
+    .Some(op) => op_is_ctr_plus_one(op, ctr),
+    .None => false,
+  }
+}
+
+fn atom_reaches_ctr_plus_one(
+  blk: CfgBlock,
+  a: Atom,
+  ctr: Int,
+  dmap: Dict<Int, AnfOp>,
+  bmap: Dict<Int, CfgBlock>,
+  depth: Int,
+) Bool {
+  if depth > 16 {
+    return false
+  }
+  case atom_local_id(a) {
+    .Some(id) => {
+      if local_def_is_ctr_plus_one(id, ctr, dmap) {
+        return true
+      }
+      case source_for_local_in_block(blk, id) {
+        .Some(src) => return atom_reaches_ctr_plus_one(blk, src, ctr, dmap, bmap, depth + 1),
+        .None => {},
+      }
+      case local_param_index(blk, id) {
+        .Some(i) => {
+          if blk.preds.len() == 0 {
+            return false
+          }
+          for pe in blk.preds {
+            if pe.args.len() <= i {
+              return false
+            }
+            case bmap.get(pe.target.id) {
+              .Some(pred_blk) => if !atom_reaches_ctr_plus_one(
+                pred_blk,
+                pe.args[i],
+                ctr,
+                dmap,
+                bmap,
+                depth + 1,
+              ) {
+                return false
+              },
+              .None => return false,
+            }
+          }
+          return true
+        },
+        .None => {},
+      }
+      false
+    },
+    .None => false,
+  }
+}
+
+fn pred_is_loop_backedge(pred: CfgBlock, header_id: Int) Bool {
+  case pred.terminator {
+    .Some(.LoopBackEdge(target, _)) => target.id == header_id,
+    _ => false,
+  }
+}
+
+fn block_is_loop_exit_arm(blk: CfgBlock) Bool {
+  case blk.terminator {
+    .Some(.VoidBreak) => true,
+    .Some(.ValueBreak(_)) => true,
+    _ => false,
+  }
+}
+
+fn local_is_len_of_vp(
+  id: Int,
+  vp: Int,
+  ops: DictVecOps,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+) Bool {
+  case dmap.get(id) {
+    .Some(.AInit(.ALocal(src))) => if src.id == id {
+      false
+    } else {
+      local_is_len_of_vp(src.id, vp, ops, dmap, facts)
+    },
+    .Some(.ACall(callee, args)) => case callee {
+      .AGlobalFunc(fid) => if fid.id == ops.len and args.len() == 1 {
+        case atom_alias_root(args[0], dmap, facts) {
+          .Some(root) => root == vp,
+          .None => false,
+        }
+      } else {
+        false
+      },
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn atom_is_len_of_vp(
+  a: Atom,
+  vp: Int,
+  ops: DictVecOps,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+) Bool {
+  case atom_local_id(a) {
+    .Some(id) => local_is_len_of_vp(id, vp, ops, dmap, facts),
+    .None => false,
+  }
+}
+
+fn cond_comparison_op(a: Atom, dmap: Dict<Int, AnfOp>, facts: LocalDefCounts) AnfOp? {
+  case atom_local_id(a) {
+    .Some(id) => if !facts.local_single_def(id) or facts.local_is_assign_target(id) {
+      .None
+    } else {
+      case dmap.get(id) {
+        .Some(.AInit(.ALocal(src))) => if src.id == id {
+          .None
+        } else {
+          cond_comparison_op(.ALocal(src), dmap, facts)
+        },
+        .Some(.AInit(src)) => cond_comparison_op(src, dmap, facts),
+        .Some(.ABinOp(_, _, _, _)) => dmap.get(id),
+        .Some(.AUnOp(.Not, inner, _)) => case cond_comparison_op(inner, dmap, facts) {
+          .Some(.ABinOp(.Lt, left, right, kind)) => .Some(.ABinOp(.Ge, left, right, kind)),
+          .Some(.ABinOp(.Ge, left, right, kind)) => .Some(.ABinOp(.Lt, left, right, kind)),
+          _ => .None,
+        },
+        _ => .None,
+      }
+    },
+    .None => .None,
+  }
+}
+
+fn gate_checks_loop_bound(
+  gate: CfgBlock,
+  ctr: Int,
+  vp: Int,
+  ops: DictVecOps,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+  bmap: Dict<Int, CfgBlock>,
+) Bool {
+  case gate.terminator {
+    .Some(.CondBranch(cond_atom, true_target, _, false_target, _)) => case cond_comparison_op(
+      cond_atom,
+      dmap,
+      facts,
+    ) {
+      .Some(.ABinOp(.Ge, left, right, _)) => if atom_is_local_id(left, ctr)
+        and atom_is_len_of_vp(right, vp, ops, dmap, facts) {
+        case bmap.get(true_target.id) {
+          .Some(tblk) => if !block_is_loop_exit_arm(tblk) {
+            return false
+          },
+          .None => return false,
+        }
+        true_target.id != false_target.id
+      } else {
+        false
+      },
+      .Some(.ABinOp(.Lt, left, right, _)) => if atom_is_local_id(left, ctr)
+        and atom_is_len_of_vp(right, vp, ops, dmap, facts) {
+        case bmap.get(false_target.id) {
+          .Some(fblk) => if !block_is_loop_exit_arm(fblk) {
+            return false
+          },
+          .None => return false,
+        }
+        true_target.id != false_target.id
+      } else {
+        false
+      },
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn header_has_bound_gate(
+  header: CfgBlock,
+  ctr: Int,
+  vp: Int,
+  ops: DictVecOps,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+  bmap: Dict<Int, CfgBlock>,
+) Bool {
+  case header.terminator {
+    .Some(.Branch(target, _)) => case bmap.get(target.id) {
+      .Some(gate) => gate_checks_loop_bound(gate, ctr, vp, ops, dmap, facts, bmap),
+      .None => false,
+    },
+    _ => gate_checks_loop_bound(header, ctr, vp, ops, dmap, facts, bmap),
+  }
+}
+
+fn local_is_induction_element(
+  id: Int,
+  ctr: Int,
+  vp: Int,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+) Bool {
+  if !facts.local_single_def(id) or facts.local_is_assign_target(id) {
+    return false
+  }
+  cur := id
+  seen: Vector<Int> = []
+  for _ in range(32) {
+    if live_contains_int(seen, cur) {
+      return false
+    }
+    seen = insert_sorted(seen, cur)
+    case dmap.get(cur) {
+      .Some(.AInit(.ALocal(next))) => if facts.local_single_def(cur)
+        and !facts.local_is_assign_target(cur) {
+        cur = next.id
+      } else {
+        return false
+      },
+      .Some(.AIndex(base, idx, _, _)) => case atom_alias_root(base, dmap, facts) {
+        .Some(root) => return root == vp and atom_is_local_id(idx, ctr),
+        .None => return false,
+      },
+      _ => return false,
+    }
+  }
+  false
+}
+
+fn appended_induction_element(
+  f: CfgFunction,
+  ctr: Int,
+  vp: Int,
+  ops: DictVecOps,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+) Int? {
+  found := -1
+  matches := 0
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      case inst.op {
+        .ACall(callee, args) => case callee {
+          .AGlobalFunc(fid) => if fid.id == ops.append and args.len() == 2 {
+            case atom_local_id(args[1]) {
+              .Some(eid) => if local_is_induction_element(eid, ctr, vp, dmap, facts) {
+                found = eid
+                matches = matches + 1
+              },
+              .None => {},
+            }
+          },
+          _ => {},
+        },
+        _ => {},
+      }
+    }
+  }
+  if matches == 1 {
+    .Some(found)
+  } else {
+    .None
+  }
+}
+
+fn header_counter_ok(header: CfgBlock, ctr: Int, dmap: Dict<Int, AnfOp>, bmap: Dict<Int, CfgBlock>) Bool {
+  init_preds := 0
+  back_preds := 0
+  ctr_index := try_opt_int(local_param_index(header, ctr), 0 - 1)
+  for pe in header.preds {
+    if pe.args.len() <= ctr_index {
+      return false
+    }
+    pred := case bmap.get(pe.target.id) {
+      .Some(p) => p,
+      .None => return false,
+    }
+    if pred_is_loop_backedge(pred, header.id.id) {
+      back_preds = back_preds + 1
+      if !atom_reaches_ctr_plus_one(pred, pe.args[ctr_index], ctr, dmap, bmap, 0) {
+        return false
+      }
+    } else {
+      init_preds = init_preds + 1
+      if !atom_is_int(pe.args[ctr_index], 0, dmap) {
+        return false
+      }
+    }
+  }
+  init_preds == 1 and back_preds > 0
+}
+
+fn try_opt_int(v: Int?, fallback: Int) Int {
+  case v {
+    .Some(x) => x,
+    .None => fallback,
+  }
+}
+
+pub fn find_induction(f: CfgFunction, vp: Int, b: BuiltinRegistry) InductionEvidence? {
+  ops := dict_vec_ops(b)
+  dmap := build_def_map(f.blocks)
+  bmap := build_block_map(f.blocks)
+  facts := local_def_counts(f.blocks)
+  for header in f.blocks {
+    has_backedge := false
+    for pe in header.preds {
+      case bmap.get(pe.target.id) {
+        .Some(pred) => if pred_is_loop_backedge(pred, header.id.id) {
+          has_backedge = true
+        },
+        .None => {},
+      }
+    }
+    if has_backedge {
+      for p in header.params {
+        ctr := p.id
+        if header_counter_ok(header, ctr, dmap, bmap)
+          and header_has_bound_gate(header, ctr, vp, ops, dmap, facts, bmap) {
+          case appended_induction_element(f, ctr, vp, ops, dmap, facts) {
+            .Some(element) => return .Some(InductionEvidence.{ counter: ctr, element }),
+            .None => {},
+          }
+        }
+      }
+    }
+  }
+  .None
+}
+
+type LoopShape = .{ header: Int, body_entry: Int, exit_arm: Int }
+
+type EqEvidence = .{ guard: Int, true_return: Int, false_target: Int }
+
+fn gate_loop_shape(
+  gate: CfgBlock,
+  header: CfgBlock,
+  ctr: Int,
+  vp: Int,
+  ops: DictVecOps,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+  bmap: Dict<Int, CfgBlock>,
+) LoopShape? {
+  case gate.terminator {
+    .Some(.CondBranch(cond_atom, true_target, _, false_target, _)) => case cond_comparison_op(
+      cond_atom,
+      dmap,
+      facts,
+    ) {
+      .Some(.ABinOp(.Ge, left, right, _)) => if atom_is_local_id(left, ctr)
+        and atom_is_len_of_vp(right, vp, ops, dmap, facts) {
+        case bmap.get(true_target.id) {
+          .Some(tblk) => if block_is_loop_exit_arm(tblk) {
+            .Some(
+              LoopShape.{
+                header: header.id.id,
+                body_entry: false_target.id,
+                exit_arm: true_target.id,
+              },
+            )
+          } else {
+            .None
+          },
+          .None => .None,
+        }
+      } else {
+        .None
+      },
+      .Some(.ABinOp(.Lt, left, right, _)) => if atom_is_local_id(left, ctr)
+        and atom_is_len_of_vp(right, vp, ops, dmap, facts) {
+        case bmap.get(false_target.id) {
+          .Some(fblk) => if block_is_loop_exit_arm(fblk) {
+            .Some(
+              LoopShape.{
+                header: header.id.id,
+                body_entry: true_target.id,
+                exit_arm: false_target.id,
+              },
+            )
+          } else {
+            .None
+          },
+          .None => .None,
+        }
+      } else {
+        .None
+      },
+      _ => .None,
+    },
+    _ => .None,
+  }
+}
+
+fn find_loop_shape(
+  f: CfgFunction,
+  vp: Int,
+  ind: InductionEvidence,
+  b: BuiltinRegistry,
+  dmap: Dict<Int, AnfOp>,
+  bmap: Dict<Int, CfgBlock>,
+  facts: LocalDefCounts,
+) LoopShape? {
+  ops := dict_vec_ops(b)
+  for header in f.blocks {
+    case local_param_index(header, ind.counter) {
+      .Some(_) => if header_counter_ok(header, ind.counter, dmap, bmap) {
+        case header.terminator {
+          .Some(.Branch(target, _)) => case bmap.get(target.id) {
+            .Some(gate) => case gate_loop_shape(
+              gate,
+              header,
+              ind.counter,
+              vp,
+              ops,
+              dmap,
+              facts,
+              bmap,
+            ) {
+              .Some(shape) => return .Some(shape),
+              .None => {},
+            },
+            .None => {},
+          },
+          _ => case gate_loop_shape(header, header, ind.counter, vp, ops, dmap, facts, bmap) {
+            .Some(shape) => return .Some(shape),
+            .None => {},
+          },
+        }
+      },
+      .None => {},
+    }
+  }
+  .None
+}
+
+fn set_has_id(set: Dict<Int, Bool>, id: Int) Bool {
+  case set.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn loop_region(f: CfgFunction, shape: LoopShape, bmap: Dict<Int, CfgBlock>) Dict<Int, Bool> {
+  seen: Dict<Int, Bool> = Dict.new()
+  work: Vector<Int> = [shape.body_entry]
+  for work.len() > 0 {
+    id := work[work.len() - 1]
+    work = .drop_last()
+    if !set_has_id(seen, id) and id != shape.header and id != shape.exit_arm {
+      seen[id] = true
+      case bmap.get(id) {
+        .Some(blk) => case blk.terminator {
+          .Some(.LoopBackEdge(target, _)) => if target.id == shape.header {} else {
+            for e in blk.succs {
+              work = .append(e.target.id)
+            }
+          },
+          _ => {
+            for e in blk.succs {
+              if e.target.id != shape.exit_arm {
+                work = .append(e.target.id)
+              }
+            }
+          },
+        },
+        .None => {},
+      }
+    }
+  }
+  seen
+}
+
+fn atom_is_id_or_element(a: Atom, id_param: Int, element: Int) Bool {
+  atom_is_local_id(a, id_param) or atom_is_local_id(a, element)
+}
+
+fn append_call_ok(op: AnfOp, acc: Int, id_param: Int, element: Int, ops: DictVecOps) Bool {
+  case op {
+    .ACall(callee, args) => case callee {
+      .AGlobalFunc(fid) => if fid.id == ops.append and args.len() == 2 {
+        atom_is_local_id(args[0], acc) and atom_is_id_or_element(args[1], id_param, element)
+      } else {
+        false
+      },
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn append_value_is(op: AnfOp, value: Int, ops: DictVecOps) Bool {
+  case op {
+    .ACall(callee, args) => case callee {
+      .AGlobalFunc(fid) => if fid.id == ops.append and args.len() == 2 {
+        atom_is_local_id(args[1], value)
+      } else {
+        false
+      },
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn accumulator_from_element_append(f: CfgFunction, element: Int, ops: DictVecOps) Int? {
+  found := -1
+  matches := 0
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      if append_value_is(inst.op, element, ops) {
+        case inst.op {
+          .ACall(_, args) => case atom_local_id(args[0]) {
+            .Some(acc) => {
+              found = acc
+              matches = matches + 1
+            },
+            .None => {},
+          },
+          _ => {},
+        }
+      }
+    }
+  }
+  if matches == 1 {
+    .Some(found)
+  } else {
+    .None
+  }
+}
+
+fn acc_seed_is_empty(acc: Int, dmap: Dict<Int, AnfOp>) Bool {
+  case dmap.get(acc) {
+    .Some(.AInit(.ALocal(arr))) => case dmap.get(arr.id) {
+      .Some(.AArrayLit(elems)) => elems.len() == 0,
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn local_in_params(f: CfgFunction, id: Int) Bool {
+  for p in f.params {
+    if p.id == id {
+      return true
+    }
+  }
+  false
+}
+
+fn no_param_or_element_rebinds(f: CfgFunction, element: Int) Bool {
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      case inst.op {
+        .AAssign(target, _) => if local_in_params(f, target.id) or target.id == element {
+          return false
+        },
+        _ => {},
+      }
+    }
+  }
+  true
+}
+
+fn return_atom_ok(a: Atom, vp: Int, acc: Int, dmap: Dict<Int, AnfOp>, facts: LocalDefCounts) Bool {
+  if atom_is_local_id(a, acc) {
+    return true
+  }
+  case atom_alias_root(a, dmap, facts) {
+    .Some(root) => root == vp,
+    .None => false,
+  }
+}
+
+fn returns_are_vp_or_acc(
+  f: CfgFunction,
+  vp: Int,
+  acc: Int,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+) Bool {
+  for blk in f.blocks {
+    case blk.terminator {
+      .Some(.Return(.Some(a))) => if !return_atom_ok(a, vp, acc, dmap, facts) {
+        return false
+      },
+      .Some(.Return(.None)) => return false,
+      _ => {},
+    }
+  }
+  true
+}
+
+fn accumulator_writes_ok(
+  f: CfgFunction,
+  acc: Int,
+  id_param: Int,
+  element: Int,
+  ops: DictVecOps,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+) Bool {
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      case inst.op {
+        .ACall(callee, args) => case callee {
+          .AGlobalFunc(fid) => if fid.id == ops.append
+            and args.len() == 2 and atom_is_local_id(args[0], acc) {
+            if !atom_is_id_or_element(args[1], id_param, element) {
+              return false
+            }
+          },
+          _ => {},
+        },
+        .AAssign(target, src) => if target.id == acc {
+          case atom_local_id(src) {
+            .Some(src_id) => if local_def_count_from(facts.counts, src_id) != 1
+              or set_has_id(facts.assign_targets, src_id) {
+              return false
+            } else {
+              case dmap.get(src_id) {
+                .Some(op) => if !append_call_ok(op, acc, id_param, element, ops) {
+                  return false
+                },
+                .None => return false,
+              }
+            },
+            .None => return false,
+          }
+        },
+        _ => {},
+      }
+    }
+  }
+  true
+}
+
+fn cond_eq_op(a: Atom, dmap: Dict<Int, AnfOp>, facts: LocalDefCounts) AnfOp? {
+  case atom_local_id(a) {
+    .Some(id) => if !facts.local_single_def(id) or facts.local_is_assign_target(id) {
+      .None
+    } else {
+      case dmap.get(id) {
+        .Some(.AInit(.ALocal(src))) => if src.id == id {
+          .None
+        } else {
+          cond_eq_op(.ALocal(src), dmap, facts)
+        },
+        .Some(.AInit(src)) => cond_eq_op(src, dmap, facts),
+        .Some(.ABinOp(.Eq, _, _, _)) => dmap.get(id),
+        _ => .None,
+      }
+    },
+    .None => .None,
+  }
+}
+
+fn eq_compares_element_id(op: AnfOp, element: Int, id_param: Int) Bool {
+  case op {
+    .ABinOp(.Eq, left, right, _) => atom_is_local_id(left, element)
+    and atom_is_local_id(right, id_param)
+      or atom_is_local_id(left, id_param) and atom_is_local_id(right, element),
+    _ => false,
+  }
+}
+
+fn block_returns_vp(blk: CfgBlock, vp: Int, dmap: Dict<Int, AnfOp>, facts: LocalDefCounts) Bool {
+  case blk.terminator {
+    .Some(.Return(.Some(a))) => case atom_alias_root(a, dmap, facts) {
+      .Some(root) => root == vp,
+      .None => false,
+    },
+    _ => false,
+  }
+}
+
+fn find_equality_evidence(
+  f: CfgFunction,
+  region: Dict<Int, Bool>,
+  vp: Int,
+  element: Int,
+  id_param: Int,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+  bmap: Dict<Int, CfgBlock>,
+) EqEvidence? {
+  found: EqEvidence? = .None
+  matches := 0
+  for blk in f.blocks {
+    if set_has_id(region, blk.id.id) {
+      case blk.terminator {
+        .Some(.CondBranch(cond_atom, true_target, _, false_target, _)) => case cond_eq_op(
+          cond_atom,
+          dmap,
+          facts,
+        ) {
+          .Some(op) => if eq_compares_element_id(op, element, id_param) {
+            case bmap.get(true_target.id) {
+              .Some(tblk) => if block_returns_vp(tblk, vp, dmap, facts) {
+                found = .Some(
+                  EqEvidence.{
+                    guard: blk.id.id,
+                    true_return: true_target.id,
+                    false_target: false_target.id,
+                  },
+                )
+                matches = matches + 1
+              },
+              .None => {},
+            }
+          },
+          .None => {},
+        },
+        _ => {},
+      }
+    }
+  }
+  if matches == 1 {
+    found
+  } else {
+    .None
+  }
+}
+
+fn body_exits_are_only_equality_return(f: CfgFunction, region: Dict<Int, Bool>, eq: EqEvidence) Bool {
+  for blk in f.blocks {
+    if set_has_id(region, blk.id.id) {
+      case blk.terminator {
+        .Some(.Return(_)) => if blk.id.id != eq.true_return {
+          return false
+        },
+        .Some(.VoidBreak) => return false,
+        .Some(.ValueBreak(_)) => return false,
+        _ => {},
+      }
+    }
+  }
+  true
+}
+
+// O1 edge-domination: the equality false-edge dominates the back-edge only if
+// the guard block is the sole predecessor of the false-target. Otherwise a path
+// that bypasses the equality could rejoin at the false-target and the
+// block-avoidance reachability check would wrongly conclude domination.
+fn eq_false_target_guarded(eq: EqEvidence, bmap: Dict<Int, CfgBlock>) Bool {
+  case bmap.get(eq.false_target) {
+    .Some(blk) => blk.preds.len() == 1 and blk.preds[0].target.id == eq.guard,
+    .None => false,
+  }
+}
+
+fn reaches_loopback_avoiding(start: Int, header: Int, avoid: Int, bmap: Dict<Int, CfgBlock>) Bool {
+  seen: Dict<Int, Bool> = Dict.new()
+  work: Vector<Int> = [start]
+  for work.len() > 0 {
+    id := work[work.len() - 1]
+    work = .drop_last()
+    if id != avoid and !set_has_id(seen, id) {
+      seen[id] = true
+      case bmap.get(id) {
+        .Some(blk) => case blk.terminator {
+          .Some(.LoopBackEdge(target, _)) => if target.id == header {
+            return true
+          } else {
+            for e in blk.succs {
+              work = .append(e.target.id)
+            }
+          },
+          _ => {
+            for e in blk.succs {
+              work = .append(e.target.id)
+            }
+          },
+        },
+        .None => {},
+      }
+    }
+  }
+  false
+}
+
+fn no_non_induction_backedge_in_region(f: CfgFunction, region: Dict<Int, Bool>, header: Int) Bool {
+  for blk in f.blocks {
+    if set_has_id(region, blk.id.id) {
+      case blk.terminator {
+        .Some(.LoopBackEdge(target, _)) => if target.id != header {
+          return false
+        },
+        _ => {},
+      }
+    }
+  }
+  true
+}
+
+fn primitive_o0_ok(
+  f: CfgFunction,
+  vp: Int,
+  acc: Int,
+  id_param: Int,
+  element: Int,
+  ops: DictVecOps,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+) Bool {
+  acc_seed_is_empty(acc, dmap)
+    and no_param_or_element_rebinds(f, element) and returns_are_vp_or_acc(f, vp, acc, dmap, facts)
+    and accumulator_writes_ok(f, acc, id_param, element, ops, dmap, facts)
+}
+
+fn primitive_o1_ok(
+  f: CfgFunction,
+  vp: Int,
+  id_param: Int,
+  ind: InductionEvidence,
+  shape: LoopShape,
+  region: Dict<Int, Bool>,
+  dmap: Dict<Int, AnfOp>,
+  facts: LocalDefCounts,
+  bmap: Dict<Int, CfgBlock>,
+) Bool {
+  case find_equality_evidence(f, region, vp, ind.element, id_param, dmap, facts, bmap) {
+    .Some(eq) => {
+      ret_ok := body_exits_are_only_equality_return(f, region, eq)
+      dom_ok := eq.eq_false_target_guarded(bmap)
+        and !reaches_loopback_avoiding(shape.body_entry, shape.header, eq.false_target, bmap)
+      ret_ok and dom_ok
+    },
+    .None => false,
+  }
+}
+
+fn primitive_o2_ok(f: CfgFunction, region: Dict<Int, Bool>, shape: LoopShape) Bool {
+  no_non_induction_backedge_in_region(f, region, shape.header)
+}
+
+type FlagGuard = .{ block: Int, true_target: Int, false_target: Int }
+
+type IdAppendSite = .{ block: Int, index: Int }
+
+fn block_reaching_not_flag(blk: CfgBlock, cond_atom: Atom, flag: Int) Bool {
+  cur := case atom_local_id(cond_atom) {
+    .Some(id) => id,
+    .None => return false,
+  }
+  seen: Vector<Int> = []
+  i := blk.instructions.len()
+  for i > 0 {
+    i = i - 1
+    inst := blk.instructions[i]
+    case inst.op {
+      .AAssign(target, _) => if target.id == flag {
+        return false
+      },
+      _ => {},
+    }
+    if inst.anf_local.id == cur {
+      case inst.op {
+        .AUnOp(.Not, a, _) => return atom_is_local_id(a, flag),
+        .AInit(.ALocal(next)) => if next.id == cur or live_contains_int(seen, cur) {
+          return false
+        } else {
+          seen = insert_sorted(seen, cur)
+          cur = next.id
+        },
+        _ => return false,
+      }
+    }
+  }
+  false
+}
+
+fn flag_guards(f: CfgFunction, flag: Int) Vector<FlagGuard> {
+  out: Vector<FlagGuard> = []
+  for blk in f.blocks {
+    case blk.terminator {
+      .Some(.CondBranch(cond_atom, true_target, _, false_target, _)) => if block_reaching_not_flag(
+        blk,
+        cond_atom,
+        flag,
+      ) {
+        out = .append(
+          FlagGuard.{ block: blk.id.id, true_target: true_target.id, false_target: false_target.id },
+        )
+      },
+      _ => {},
+    }
+  }
+  out
+}
+
+fn path_reaches_avoiding(
+  start: Int,
+  target: Int,
+  avoid: Int,
+  bmap: Dict<Int, CfgBlock>,
+  stop_header: Int,
+) Bool {
+  seen: Dict<Int, Bool> = Dict.new()
+  work: Vector<Int> = [start]
+  for work.len() > 0 {
+    id := work[work.len() - 1]
+    work = .drop_last()
+    if id == target {
+      return true
+    }
+    if id != avoid and !set_has_id(seen, id) {
+      seen[id] = true
+      case bmap.get(id) {
+        .Some(blk) => case blk.terminator {
+          .Some(.LoopBackEdge(edge_target, _)) => if edge_target.id == stop_header {} else {
+            for e in blk.succs {
+              work = .append(e.target.id)
+            }
+          },
+          _ => {
+            for e in blk.succs {
+              work = .append(e.target.id)
+            }
+          },
+        },
+        .None => {},
+      }
+    }
+  }
+  false
+}
+
+fn path_reaches(start: Int, target: Int, bmap: Dict<Int, CfgBlock>, stop_header: Int) Bool {
+  path_reaches_avoiding(start, target, 0 - 1, bmap, stop_header)
+}
+
+fn reaches_any_loopback(start: Int, bmap: Dict<Int, CfgBlock>) Bool {
+  seen: Dict<Int, Bool> = Dict.new()
+  work: Vector<Int> = [start]
+  for work.len() > 0 {
+    id := work[work.len() - 1]
+    work = .drop_last()
+    if !set_has_id(seen, id) {
+      seen[id] = true
+      case bmap.get(id) {
+        .Some(blk) => case blk.terminator {
+          .Some(.LoopBackEdge(_, _)) => return true,
+          _ => {
+            for e in blk.succs {
+              work = .append(e.target.id)
+            }
+          },
+        },
+        .None => {},
+      }
+    }
+  }
+  false
+}
+
+fn block_guarded_by_flag_false(
+  block: Int,
+  in_loop: Bool,
+  shape: LoopShape,
+  region: Dict<Int, Bool>,
+  guards: Vector<FlagGuard>,
+  bmap: Dict<Int, CfgBlock>,
+) Bool {
+  for g in guards {
+    guard_in_loop := set_has_id(region, g.block)
+    if in_loop and guard_in_loop {
+      if path_reaches(g.true_target, block, bmap, shape.header)
+        and !path_reaches(g.false_target, block, bmap, shape.header)
+        and !path_reaches_avoiding(shape.body_entry, block, g.true_target, bmap, shape.header) {
+        return true
+      }
+    } else if !in_loop
+      and !guard_in_loop and path_reaches(g.true_target, block, bmap, shape.header)
+      and !path_reaches(g.false_target, block, bmap, shape.header) {
+      return true
+    }
+  }
+  false
+}
+
+fn flag_false_definition_count(f: CfgFunction, flag: Int) Int {
+  n := 0
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      if inst.anf_local.id == flag {
+        case inst.op {
+          .AInit(.ALitBool(false)) => n = n + 1,
+          _ => {},
+        }
+      }
+      case inst.op {
+        .AAssign(target, .ALitBool(false)) => if target.id == flag {
+          n = n + 1
+        },
+        _ => {},
+      }
+    }
+  }
+  n
+}
+
+fn flag_false_def_in_loop(f: CfgFunction, flag: Int, region: Dict<Int, Bool>) Bool {
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      is_false := if inst.anf_local.id == flag {
+        case inst.op {
+          .AInit(.ALitBool(false)) => true,
+          _ => false,
+        }
+      } else {
+        false
+      }
+      is_assign_false := case inst.op {
+        .AAssign(target, .ALitBool(false)) => target.id == flag,
+        _ => false,
+      }
+      if (is_false or is_assign_false) and set_has_id(region, blk.id.id) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+fn flag_assignments_set_once(f: CfgFunction, flag: Int) Bool {
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      case inst.op {
+        .AAssign(target, a) => if target.id == flag {
+          case a {
+            .ALitBool(true) => {},
+            .ALitBool(false) => {},
+            _ => return false,
+          }
+        },
+        _ => {},
+      }
+    }
+  }
+  true
+}
+
+fn flag_false_definition_block(f: CfgFunction, flag: Int) Int? {
+  found := 0 - 1
+  matches := 0
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      if inst.anf_local.id == flag {
+        case inst.op {
+          .AInit(.ALitBool(false)) => {
+            found = blk.id.id
+            matches = matches + 1
+          },
+          _ => {},
+        }
+      }
+      case inst.op {
+        .AAssign(target, .ALitBool(false)) => if target.id == flag {
+          found = blk.id.id
+          matches = matches + 1
+        },
+        _ => {},
+      }
+    }
+  }
+  if matches == 1 {
+    .Some(found)
+  } else {
+    .None
+  }
+}
+
+fn flag_false_dominates_loop(f: CfgFunction, flag: Int, shape: LoopShape, bmap: Dict<Int, CfgBlock>) Bool {
+  false_block := case flag_false_definition_block(f, flag) {
+    .Some(v) => v,
+    .None => return false,
+  }
+  path_reaches(false_block, shape.header, bmap, shape.header)
+    and !path_reaches(shape.body_entry, false_block, bmap, shape.header)
+}
+
+fn set_once_flag_ok(
+  f: CfgFunction,
+  flag: Int,
+  shape: LoopShape,
+  region: Dict<Int, Bool>,
+  bmap: Dict<Int, CfgBlock>,
+) Bool {
+  flag_false_definition_count(f, flag) == 1
+    and !flag_false_def_in_loop(f, flag, region) and flag_false_dominates_loop(f, flag, shape, bmap)
+    and flag_assignments_set_once(f, flag)
+}
+
+fn id_append_sites(f: CfgFunction, id_param: Int, ops: DictVecOps) Vector<IdAppendSite> {
+  out: Vector<IdAppendSite> = []
+  for blk in f.blocks {
+    for inst, i in blk.instructions {
+      case inst.op {
+        .ACall(callee, args) => case callee {
+          .AGlobalFunc(fid) => if fid.id == ops.append
+            and args.len() == 2 and atom_is_local_id(args[1], id_param) {
+            out = .append(IdAppendSite.{ block: blk.id.id, index: i })
+          },
+          _ => {},
+        },
+        _ => {},
+      }
+    }
+  }
+  out
+}
+
+fn flag_true_block_reaches_site(
+  f: CfgFunction,
+  flag: Int,
+  site_block: Int,
+  region: Dict<Int, Bool>,
+  bmap: Dict<Int, CfgBlock>,
+  header: Int,
+) Bool {
+  for blk in f.blocks {
+    if blk.id.id != site_block and set_has_id(region, blk.id.id) {
+      has_true := false
+      for inst in blk.instructions {
+        case inst.op {
+          .AAssign(target, .ALitBool(true)) => if target.id == flag {
+            has_true = true
+          },
+          _ => {},
+        }
+      }
+      if has_true and path_reaches(blk.id.id, site_block, bmap, header) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+fn block_id_append_order_ok(
+  blk: CfgBlock,
+  flag: Int,
+  id_param: Int,
+  ops: DictVecOps,
+  entry_false: Bool,
+  in_loop: Bool,
+) Bool {
+  flag_false := entry_false
+  pending_true_after_append := false
+  for inst in blk.instructions {
+    case inst.op {
+      .ACall(callee, args) => case callee {
+        .AGlobalFunc(fid) => if fid.id == ops.append
+          and args.len() == 2 and atom_is_local_id(args[1], id_param) {
+          if !flag_false {
+            return false
+          }
+          flag_false = false
+          if in_loop {
+            pending_true_after_append = true
+          }
+        },
+        _ => {},
+      },
+      .AAssign(target, .ALitBool(true)) => if target.id == flag {
+        flag_false = false
+        pending_true_after_append = false
+      },
+      .AAssign(target, .ALitBool(false)) => if target.id == flag {
+        return false
+      },
+      _ => {},
+    }
+  }
+  !pending_true_after_append
+}
+
+fn primitive_o3_flag(
+  f: CfgFunction,
+  id_param: Int,
+  shape: LoopShape,
+  region: Dict<Int, Bool>,
+  ops: DictVecOps,
+  bmap: Dict<Int, CfgBlock>,
+) Int? {
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      flag := case inst.op {
+        .AInit(.ALitBool(false)) => inst.anf_local.id,
+        _ => 0 - 1,
+      }
+      if flag >= 0 and set_once_flag_ok(f, flag, shape, region, bmap) {
+        guards := flag_guards(f, flag)
+        sites := id_append_sites(f, id_param, ops)
+        if sites.len() > 0 and guards.len() > 0 {
+          ok := true
+          off_loop_sites := 0
+          for site in sites {
+            if !set_has_id(region, site.block) {
+              off_loop_sites = off_loop_sites + 1
+            }
+          }
+          if off_loop_sites > 1 {
+            ok = false
+          }
+          checked_blocks: Dict<Int, Bool> = Dict.new()
+          for site in sites {
+            in_loop := set_has_id(region, site.block)
+            entry_false := block_guarded_by_flag_false(
+              site.block,
+              in_loop,
+              shape,
+              region,
+              guards,
+              bmap,
+            )
+            if !entry_false {
+              ok = false
+            }
+            if in_loop
+              and flag_true_block_reaches_site(f, flag, site.block, region, bmap, shape.header) {
+              ok = false
+            }
+            if !in_loop and reaches_any_loopback(site.block, bmap) {
+              ok = false
+            }
+            if !set_has_id(checked_blocks, site.block) {
+              case bmap.get(site.block) {
+                .Some(site_blk) => if !block_id_append_order_ok(
+                  site_blk,
+                  flag,
+                  id_param,
+                  ops,
+                  entry_false,
+                  in_loop,
+                ) {
+                  ok = false
+                },
+                .None => ok = false,
+              }
+              checked_blocks[site.block] = true
+            }
+          }
+          if ok {
+            return .Some(flag)
+          }
+        }
+      }
+    }
+  }
+  .None
+}
+
+// Task-5 unit seam: evidence that O0-O2 hold for a sort-insert primitive. It deliberately
+// stops before O3's set-once-flag proof; full certification remains default-deny until O3.
+// The returned certificate carries the evidence discovered so far and uses `flag_local = -1`.
+pub fn sort_insert_o0_o2_evidence(f: CfgFunction, vp: Int, b: BuiltinRegistry) DedupeCertificate? {
+  if f.params.len() < 2 {
+    return .None
+  }
+  id_param := f.params[1].id
+  ops := dict_vec_ops(b)
+  dmap := build_def_map(f.blocks)
+  bmap := build_block_map(f.blocks)
+  facts := local_def_counts(f.blocks)
+  ind := case find_induction(f, vp, b) {
+    .Some(v) => v,
+    .None => return .None,
+  }
+  shape := case find_loop_shape(f, vp, ind, b, dmap, bmap, facts) {
+    .Some(v) => v,
+    .None => return .None,
+  }
+  region := loop_region(f, shape, bmap)
+  acc := case accumulator_from_element_append(f, ind.element, ops) {
+    .Some(v) => v,
+    .None => return .None,
+  }
+  o0 := primitive_o0_ok(f, vp, acc, id_param, ind.element, ops, dmap, facts)
+  o1 := primitive_o1_ok(f, vp, id_param, ind, shape, region, dmap, facts, bmap)
+  o2 := primitive_o2_ok(f, region, shape)
+  if o0 and o1 and o2 {
+    .Some(
+      DedupeCertificate.{
+        kind: .SortInsertPrimitive,
+        vector_param: vp,
+        induction_local: ind.counter,
+        element_local: ind.element,
+        flag_local: 0 - 1,
+      },
+    )
+  } else {
+    .None
+  }
+}
+
+fn certify_sort_insert_primitive(f: CfgFunction, vp: Int, b: BuiltinRegistry) DedupeCertificate? {
+  partial := case sort_insert_o0_o2_evidence(f, vp, b) {
+    .Some(c) => c,
+    .None => return .None,
+  }
+  if f.params.len() < 2 {
+    return .None
+  }
+  id_param := f.params[1].id
+  ops := dict_vec_ops(b)
+  dmap := build_def_map(f.blocks)
+  bmap := build_block_map(f.blocks)
+  facts := local_def_counts(f.blocks)
+  ind := InductionEvidence.{ counter: partial.induction_local, element: partial.element_local }
+  shape := case find_loop_shape(f, vp, ind, b, dmap, bmap, facts) {
+    .Some(v) => v,
+    .None => return .None,
+  }
+  region := loop_region(f, shape, bmap)
+  flag := case primitive_o3_flag(f, id_param, shape, region, ops, bmap) {
+    .Some(v) => v,
+    .None => return .None,
+  }
+  .Some(
+    DedupeCertificate.{
+      kind: .SortInsertPrimitive,
+      vector_param: partial.vector_param,
+      induction_local: partial.induction_local,
+      element_local: partial.element_local,
+      flag_local: flag,
+    },
+  )
+}
+
+fn call_target_of(op: AnfOp) Int? {
+  case op {
+    .ACall(callee, _) => case callee {
+      .AGlobalFunc(fid) => .Some(fid.id),
+      _ => .None,
+    },
+    _ => .None,
+  }
+}
+
+fn call_args_of(op: AnfOp) Vector<Atom> {
+  case op {
+    .ACall(_, args) => args,
+    _ => [],
+  }
+}
+
+type CombinatorLineage = .{ locals: Dict<Int, Bool>, extended: Bool }
+
+fn function_map(fs: Vector<CfgFunction>) Dict<Int, CfgFunction> {
+  out: Dict<Int, CfgFunction> = Dict.new()
+  for f in fs {
+    out[f.func_id] = f
+  }
+  out
+}
+
+fn function_param_pos(f: CfgFunction, local: Int) Int? {
+  for p, i in f.params {
+    if p.id == local {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+fn is_function_param(f: CfgFunction, local: Int) Bool {
+  case function_param_pos(f, local) {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+fn atom_in_lineage(a: Atom, lineage: Dict<Int, Bool>) Bool {
+  case atom_local_id(a) {
+    .Some(id) => set_has_id(lineage, id),
+    .None => false,
+  }
+}
+
+fn certified_call_uses_lineage_acc(
+  callee_id: Int,
+  args: Vector<Atom>,
+  known: Dict<Int, DedupeCertificate>,
+  funcs: Dict<Int, CfgFunction>,
+  lineage: Dict<Int, Bool>,
+) Bool {
+  cert := case known.get(callee_id) {
+    .Some(v) => v,
+    .None => return false,
+  }
+  callee := case funcs.get(callee_id) {
+    .Some(v) => v,
+    .None => return false,
+  }
+  pos := case function_param_pos(callee, cert.vector_param) {
+    .Some(v) => v,
+    .None => return false,
+  }
+  if pos < 0 or pos >= args.len() {
+    return false
+  }
+  atom_in_lineage(args[pos], lineage)
+}
+
+fn grow_combinator_lineage(
+  f: CfgFunction,
+  seed: Int,
+  known: Dict<Int, DedupeCertificate>,
+  funcs: Dict<Int, CfgFunction>,
+) CombinatorLineage {
+  lineage: Dict<Int, Bool> = Dict.new()
+  lineage[seed] = true
+  extended := false
+  changed := true
+  passes := 0
+  for changed and passes < f.blocks.len() + 4 {
+    changed = false
+    passes = passes + 1
+    for blk in f.blocks {
+      for inst in blk.instructions {
+        case inst.op {
+          .AInit(.ALocal(src)) => if set_has_id(lineage, src.id)
+            and !set_has_id(lineage, inst.anf_local.id) {
+            lineage[inst.anf_local.id] = true
+            changed = true
+          },
+          .AAssign(target, .ALocal(src)) => if set_has_id(lineage, src.id)
+            and !set_has_id(lineage, target.id) {
+            lineage[target.id] = true
+            changed = true
+          },
+          .ACall(callee, args) => case callee {
+            .AGlobalFunc(fid) => if certified_call_uses_lineage_acc(
+              fid.id,
+              args,
+              known,
+              funcs,
+              lineage,
+            ) {
+              extended = true
+              if !set_has_id(lineage, inst.anf_local.id) {
+                lineage[inst.anf_local.id] = true
+                changed = true
+              }
+            },
+            _ => {},
+          },
+          _ => {},
+        }
+      }
+    }
+  }
+  CombinatorLineage.{ locals: lineage, extended }
+}
+
+fn combinator_returns_lineage(f: CfgFunction, lineage: Dict<Int, Bool>) Bool {
+  for blk in f.blocks {
+    case blk.terminator {
+      .Some(.Return(.Some(a))) => if !atom_in_lineage(a, lineage) {
+        return false
+      },
+      .Some(.Return(.None)) => return false,
+      _ => {},
+    }
+  }
+  true
+}
+
+fn combinator_lineage_writes_ok(
+  f: CfgFunction,
+  known: Dict<Int, DedupeCertificate>,
+  funcs: Dict<Int, CfgFunction>,
+  lineage: Dict<Int, Bool>,
+) Bool {
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      if is_function_param(f, inst.anf_local.id) {
+        return false
+      }
+      case inst.op {
+        .AInit(.ALocal(src)) => if set_has_id(lineage, inst.anf_local.id)
+          and !set_has_id(lineage, src.id) {
+          return false
+        },
+        .AInit(_) => if set_has_id(lineage, inst.anf_local.id) {
+          return false
+        },
+        .AAssign(target, .ALocal(src)) => {
+          if is_function_param(f, target.id) {
+            return false
+          }
+          if set_has_id(lineage, target.id) and !set_has_id(lineage, src.id) {
+            return false
+          }
+        },
+        .AAssign(target, _) => {
+          if is_function_param(f, target.id) {
+            return false
+          }
+          if set_has_id(lineage, target.id) {
+            return false
+          }
+        },
+        .ACall(callee, args) => if set_has_id(lineage, inst.anf_local.id) {
+          case callee {
+            .AGlobalFunc(fid) => if !certified_call_uses_lineage_acc(
+              fid.id,
+              args,
+              known,
+              funcs,
+              lineage,
+            ) {
+              return false
+            },
+            _ => return false,
+          }
+        },
+        _ => if set_has_id(lineage, inst.anf_local.id) {
+          return false
+        },
+      }
+    }
+  }
+  true
+}
+
+fn certify_combinator(
+  f: CfgFunction,
+  known: Dict<Int, DedupeCertificate>,
+  funcs: Dict<Int, CfgFunction>,
+) DedupeCertificate? {
+  for p in f.params {
+    lin := grow_combinator_lineage(f, p.id, known, funcs)
+    if lin.extended
+      and combinator_returns_lineage(f, lin.locals)
+      and combinator_lineage_writes_ok(f, known, funcs, lin.locals) {
+      return .Some(
+        DedupeCertificate.{
+          kind: .Combinator,
+          vector_param: p.id,
+          induction_local: 0 - 1,
+          element_local: 0 - 1,
+          flag_local: 0 - 1,
+        },
+      )
+    }
+  }
+  .None
+}
+
+type ConstThreadEdge = .{ pred: Int, join: Int, target: BlockId }
+
+type ConstThreadCond = .{ param_index: Int, alias_defs: Vector<Int> }
+
+type ConstThreadInfo = .{ param_index: Int, true_target: BlockId, false_target: BlockId }
+
+fn atom_bool_value(a: Atom) Bool? {
+  case a {
+    .ALitBool(v) => .Some(v),
+    _ => .None,
+  }
+}
+
+fn param_index_by_local(params: Vector<LocalId>, id: Int) Int? {
+  for p, i in params {
+    if p.id == id {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+fn block_reaching_alias_source(blk: CfgBlock, id: Int) Atom? {
+  // Walk backward so non-SSA locals use the definition reaching the terminator. A self-init
+  // (`Lx = init Lx`) is a no-op alias emitted by lowering; skip it and keep looking for the
+  // previous reaching definition.
+  i := blk.instructions.len()
+  for i > 0 {
+    i = i - 1
+    inst := blk.instructions[i]
+    if inst.anf_local.id == id {
+      case inst.op {
+        .AInit(.ALocal(src)) => if src.id != id {
+          return .Some(.ALocal(src))
+        },
+        _ => return .None,
+      }
+    }
+  }
+  .None
+}
+
+fn cond_param_through_aliases(blk: CfgBlock, cond_atom: Atom) ConstThreadCond? {
+  case atom_local_id(cond_atom) {
+    .Some(start) => {
+      cur := start
+      seen: Vector<Int> = []
+      alias_defs: Vector<Int> = []
+      for _ in range(32) {
+        if live_contains_int(seen, cur) {
+          return .None
+        }
+        seen = insert_sorted(seen, cur)
+        case param_index_by_local(blk.params, cur) {
+          .Some(i) => return .Some(ConstThreadCond.{ param_index: i, alias_defs }),
+          .None => case block_reaching_alias_source(blk, cur) {
+            .Some(.ALocal(next)) => {
+              alias_defs = insert_sorted(alias_defs, cur)
+              cur = next.id
+            },
+            _ => return .None,
+          },
+        }
+      }
+      .None
+    },
+    .None => .None,
+  }
+}
+
+fn instruction_is_allowed_condition_alias(inst: CfgInstruction, alias_defs: Vector<Int>) Bool {
+  case inst.op {
+    .AInit(.ALocal(_)) => live_contains_int(alias_defs, inst.anf_local.id),
+    _ => false,
+  }
+}
+
+fn block_has_only_condition_aliases(blk: CfgBlock, alias_defs: Vector<Int>) Bool {
+  for inst in blk.instructions {
+    if !instruction_is_allowed_condition_alias(inst, alias_defs) {
+      return false
+    }
+  }
+  true
+}
+
+fn const_thread_info(blk: CfgBlock) ConstThreadInfo? {
+  case blk.terminator {
+    .Some(.CondBranch(cond_atom, true_target, true_args, false_target, false_args)) => {
+      if true_args.len() != 0 or false_args.len() != 0 {
+        return .None
+      }
+      case cond_param_through_aliases(blk, cond_atom) {
+        .Some(info) => if block_has_only_condition_aliases(blk, info.alias_defs) {
+          .Some(ConstThreadInfo.{ param_index: info.param_index, true_target, false_target })
+        } else {
+          .None
+        },
+        .None => .None,
+      }
+    },
+    _ => .None,
+  }
+}
+
+fn succ_edge_count_to(blk: CfgBlock, target: Int) Int {
+  n := 0
+  for edge in blk.succs {
+    if edge.target.id == target {
+      n = n + 1
+    }
+  }
+  n
+}
+
+fn const_thread_edges_for_func(f: CfgFunction) Vector<ConstThreadEdge> {
+  bmap := build_block_map(f.blocks)
+  out: Vector<ConstThreadEdge> = []
+  for blk in f.blocks {
+    case const_thread_info(blk) {
+      .Some(info) => {
+        for pe in blk.preds {
+          if pe.args.len() > info.param_index {
+            case atom_bool_value(pe.args[info.param_index]) {
+              .Some(c) => case bmap.get(pe.target.id) {
+                .Some(pred_blk) => if succ_edge_count_to(pred_blk, blk.id.id) == 1 {
+                  target := if c {
+                    info.true_target
+                  } else {
+                    info.false_target
+                  }
+                  out = .append(ConstThreadEdge.{ pred: pe.target.id, join: blk.id.id, target })
+                },
+                .None => {},
+              },
+              .None => {},
+            }
+          }
+        }
+      },
+      .None => {},
+    }
+  }
+  out
+}
+
+fn rewrite_edge_target(edge: CfgEdge, old_target: Int, new_target: BlockId, new_args: Vector<Atom>) CfgEdge {
+  if edge.target.id == old_target {
+    CfgEdge.{ target: new_target, args: new_args }
+  } else {
+    edge
+  }
+}
+
+fn rewrite_terminator_target(
+  term: Terminator,
+  old_target: Int,
+  new_target: BlockId,
+  new_args: Vector<Atom>,
+) Terminator {
+  case term {
+    .Branch(target, args) => if target.id == old_target {
+      .Branch(new_target, new_args)
+    } else {
+      .Branch(target, args)
+    },
+    .CondBranch(test, true_target, true_args, false_target, false_args) => {
+      nt := true_target
+      nta := true_args
+      nf := false_target
+      nfa := false_args
+      if true_target.id == old_target {
+        nt = new_target
+        nta = new_args
+      }
+      if false_target.id == old_target {
+        nf = new_target
+        nfa = new_args
+      }
+      .CondBranch(test, nt, nta, nf, nfa)
+    },
+    .Match(scrut, edges) => .Match(
+      scrut,
+      collect edge in edges {
+        rewrite_edge_target(edge, old_target, new_target, new_args)
+      },
+    ),
+    .LoopBackEdge(target, args) => if target.id == old_target {
+      .LoopBackEdge(new_target, new_args)
+    } else {
+      .LoopBackEdge(target, args)
+    },
+    _ => term,
+  }
+}
+
+fn remove_pred_from_block(blk: CfgBlock, pred: Int) CfgBlock {
+  kept: Vector<CfgEdge> = []
+  for edge in blk.preds {
+    if edge.target.id != pred {
+      kept = .append(edge)
+    }
+  }
+  blk.preds = kept
+  blk
+}
+
+fn add_pred_to_block(blk: CfgBlock, pred: Int, args: Vector<Atom>) CfgBlock {
+  // Preserve CFG edge multiplicity: one predecessor entry corresponds to one dynamic incoming
+  // edge, even when several arms originate from the same source block.
+  blk.preds = .append(CfgEdge.{ target: BlockId.{ id: pred }, args })
+  blk
+}
+
+fn rewrite_pred_succ(blk: CfgBlock, old_target: Int, new_target: BlockId, new_args: Vector<Atom>) CfgBlock {
+  blk.succs = collect edge in blk.succs {
+    rewrite_edge_target(edge, old_target, new_target, new_args)
+  }
+  case blk.terminator {
+    .Some(term) => blk.terminator = .Some(
+      rewrite_terminator_target(term, old_target, new_target, new_args),
+    ),
+    .None => {},
+  }
+  blk
+}
+
+fn apply_const_thread_edge(f: CfgFunction, change: ConstThreadEdge) CfgFunction {
+  f.blocks = collect blk in f.blocks {
+    cond {
+      blk.id.id == change.pred => rewrite_pred_succ(blk, change.join, change.target, []),
+      blk.id.id == change.join => remove_pred_from_block(blk, change.pred),
+      blk.id.id == change.target.id => add_pred_to_block(blk, change.pred, []),
+      _ => blk,
+    }
+  }
+  f
+}
+
+fn thread_const_branches_in_func(f: CfgFunction) CfgFunction {
+  changes := const_thread_edges_for_func(f)
+  for change in changes {
+    f = apply_const_thread_edge(f, change)
+  }
+  f
+}
+
+// Analysis-only CFG-view jump-threading for the short-circuit boolean join described in
+// design §5.0. It rethreads a predecessor that supplies a literal Bool to a side-effect-free
+// branch block whose condition is that block parameter (through trivial aliases). ANF and
+// codegen remain untouched; only the view consumed by the dedupe classifier is simplified.
+pub fn thread_const_branches(view: CfgView) CfgView {
+  view.functions = collect f in view.functions {
+    thread_const_branches_in_func(f)
+  }
+  view
+}
+
+// Whole-view dedupe-helper classification (design §5): a proof checker that certifies a
+// function only with concrete evidence for obligations O0–O4, returning a certificate per
+// certified func. Default-deny — any function that fails a primitive or combinator obligation
+// is absent from the returned map, so consumers only trust structurally proven key streams.
+pub fn classify_dedupe_helpers_unthreaded(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) Dict<Int, DedupeCertificate> {
+  certs: Dict<Int, DedupeCertificate> = Dict.new()
+  funcs := function_map(view.functions)
+  for f in view.functions {
+    if f.params.len() > 0 {
+      case certify_sort_insert_primitive(f, f.params[0].id, b) {
+        .Some(cert) => certs[f.func_id] = cert,
+        .None => {},
+      }
+    }
+  }
+  changed := true
+  passes := 0
+  for changed and passes < view.functions.len() + 1 {
+    changed = false
+    passes = passes + 1
+    for f in view.functions {
+      case certs.get(f.func_id) {
+        .Some(_) => {},
+        .None => case certify_combinator(f, certs, funcs) {
+          .Some(cert) => {
+            certs[f.func_id] = cert
+            changed = true
+          },
+          .None => {},
+        },
+      }
+    }
+  }
+  certs
+}
+
+pub fn classify_dedupe_helpers(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) Dict<
+  Int,
+  DedupeCertificate,
+> {
+  classify_dedupe_helpers_unthreaded(thread_const_branches(view), b, sem)
+}
+
+pub fn with_dedupe_helpers(
+  table: SummaryTable,
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+) SummaryTable {
+  table.dedupe_helpers = classify_dedupe_helpers(view, b, sem)
+  table
+}
+
 // Per-block analysis inputs that depend ONLY on block structure + the fixed
 // liveness scan (never on the dataflow state). Computing these once — rather than
 // per fixpoint visit — keeps the O(n^2) quartet recognizer off the iteration path.
@@ -914,9 +3635,28 @@ fn publish_atom(st: ForwardState, a: Atom) ForwardState {
 }
 
 // AInit / wrap / unwrap move-vs-alias hinge.
-fn init_hinge(st: ForwardState, result: Int, a: Atom, last: Vector<Int>) ForwardState {
+fn init_hinge(
+  st: ForwardState,
+  result: Int,
+  a: Atom,
+  last: Vector<Int>,
+  cc_suppress: Dict<Int, Bool>,
+) ForwardState {
   case atom_local_id(a) {
-    .Some(src) => if local_valid_at_last(st.valid, src, last) {
+    .Some(src) => if in_set(cc_suppress, result) {
+      // Copy-carrier borrow-move: the carrier inherits the source's ownership without
+      // publishing or invalidating the source, so a seeded-Unique source flows into the
+      // carrier and the normal shell_reusable path fires. Proven safe by analyze_copy_carriers.
+      o := fact_of(st.own, a)
+      fields := st.field_own_get(src)
+      pp := st.path_prov_get(src)
+      st = .set_own_st(result, o)
+      if o.own_tag() == 0 {
+        st.set_field_own(result, fields).set_path_prov(result, pp)
+      } else {
+        st
+      }
+    } else if local_valid_at_last(st.valid, src, last) {
       // move: result takes source ownership; source binding invalid
       o := fact_of(st.own, a)
       fields := st.field_own_get(src)
@@ -1094,6 +3834,25 @@ fn escape_retained_call_args(
   st
 }
 
+// Call-site uniqueness vector: for each argument, is the underlying local proven
+// Unique + valid + last-use here AND the sole occurrence among the call args? This
+// is the exact `arg_unique` gate `transfer_summarized_call` uses for its move and
+// return-path recovery, factored so `transfer_call`, `block_verdicts`, and the
+// summarized transfer all compute selection from one definition.
+fn call_arg_unique(
+  own: Dict<Int, Int>,
+  valid: Dict<Int, Bool>,
+  args: Vector<Atom>,
+  last: Vector<Int>,
+) Vector<Bool> {
+  collect a in args {
+    case atom_local_id(a) {
+      .Some(id) => local_reusable(own, valid, id, last) and store_count(args, id) == 1,
+      .None => false,
+    }
+  }
+}
+
 fn transfer_call(
   st: ForwardState,
   result: Int,
@@ -1103,6 +3862,8 @@ fn transfer_call(
   table: SummaryTable,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc_suppress: Dict<Int, Bool>,
+  resolve: VariantResolver,
 ) ForwardState {
   // Two-level lookup: builtins resolve via CallSemantics; a direct user callee
   // WITHOUT builtin semantics consults its interprocedural summary; everything
@@ -1111,17 +3872,28 @@ fn transfer_call(
   case callee_func_id(callee) {
     .Some(fid) => case call_info(sem, fid) {
       .Some(cs) => st.transfer_builtin_call(result, fid, cs, args, last, sem),
-      .None => case table.summary_get(fid.id) {
-        .Some(s) => st.transfer_summarized_call(result, s, args, last, suppress, fid.id),
-        .None => st.publish_call(result, args),
+      .None => {
+        au := call_arg_unique(st.own, st.valid, args, last)
+        case resolve(fid.id, au) {
+          .Some(vs) => st.transfer_summarized_call(result, vs, args, last, suppress, fid.id),
+          .None => case table.summary_get(fid.id) {
+            .Some(s) => st.transfer_summarized_call(result, s, args, last, suppress, fid.id),
+            .None => st.publish_call(result, args, cc_suppress),
+          },
+        }
       },
     },
-    .None => st.publish_call(result, args), // indirect/closure callee
+    .None => st.publish_call(result, args, cc_suppress), // indirect/closure callee
   }
 }
 
-// Conservative bucket: publish every ref arg, result Unknown.
-fn publish_call(st: ForwardState, result: Int, args: Vector<Atom>) ForwardState {
+// Conservative bucket: publish every ref arg, result Unknown. A copy-carrier read
+// (result in cc_suppress, e.g. a proven `dict$keys(source)`) does not publish its
+// source, so the source stays Unique for the in-place carrier write.
+fn publish_call(st: ForwardState, result: Int, args: Vector<Atom>, cc_suppress: Dict<Int, Bool>) ForwardState {
+  if in_set(cc_suppress, result) {
+    return st.set_own_st(result, .Unknown)
+  }
   for a in args {
     st = .publish_atom(a)
   }
@@ -1133,6 +3905,18 @@ fn container_seg(sem: OptimizerSemantics, fid: FuncId) ff.PathSeg? {
     .VectorLike => .Some(.Elem),
     .DictLike => .Some(.Val),
     .NotCollection => .None,
+  }
+}
+
+fn scalar_result_ty(ty: MonoType) Bool {
+  case ty {
+    .Int => true,
+    .Float => true,
+    .Bool => true,
+    .Byte => true,
+    .Void => true,
+    .Never => true,
+    _ => false,
   }
 }
 
@@ -1252,12 +4036,7 @@ fn transfer_summarized_call(
   pre_own := st.own
   pre_valid := st.valid
   pre_prov := st.prov
-  arg_unique: Vector<Bool> = collect a in args {
-    case atom_local_id(a) {
-      .Some(id) => local_reusable(pre_own, pre_valid, id, last) and store_count(args, id) == 1,
-      .None => false,
-    }
-  }
+  arg_unique := call_arg_unique(pre_own, pre_valid, args, last)
 
   // 1. Escape + return handling (mutates st: publishes Retained args, sets the
   // result shell, and for MayAliasParams either MOVES a single proven-unique origin
@@ -1588,9 +4367,21 @@ fn transfer_op(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc_suppress: Dict<Int, Bool>,
+  resolve: VariantResolver,
 ) ForwardState {
   case op {
-    .ACall(callee, args) => st.transfer_call(result, callee, args, last, table, sem, suppress),
+    .ACall(callee, args) => st.transfer_call(
+      result,
+      callee,
+      args,
+      last,
+      table,
+      sem,
+      suppress,
+      cc_suppress,
+      resolve,
+    ),
     .ARecord(_, fields) => {
       operands: Vector<Atom> = collect fa in fields {
         fa.value
@@ -1754,10 +4545,18 @@ fn transfer_op(
         },
       }
     },
-    .AIndex(base, _, _, _) => {
-      // borrow
+    .AIndex(base, _, _, elem_ty) => {
+      // Borrow. A primitive element read cannot alias the collection shell, so do
+      // not carry base shell provenance into scalar results; otherwise helpers
+      // like `read_at(xs) -> Int` summarize as returning alias(p0) and publish
+      // the caller's loop-carried vector before a later update.
+      origins := if scalar_result_ty(elem_ty) {
+        []
+      } else {
+        prov_of(st.prov, base)
+      }
       st = .set_result(result, .Unknown)
-      st.set_prov_st(result, prov_of(st.prov, base))
+      st.set_prov_st(result, origins)
     },
     .ARecordUpdate(base, f, v, _, _) => {
       origins := prov_of(st.prov, base) // shell-only: drop the old union with v
@@ -1790,7 +4589,7 @@ fn transfer_op(
       st
     },
     .AInit(a) => {
-      st = .init_hinge(result, a, last)
+      st = .init_hinge(result, a, last, cc_suppress)
       st.set_prov_st(result, prov_of(st.prov, a))
     },
     .AAssign(local, a) => {
@@ -1824,11 +4623,11 @@ fn transfer_op(
     },
     .AWrapAnyref(a, _) => {
       // representationally transparent
-      st = .init_hinge(result, a, last)
+      st = .init_hinge(result, a, last, cc_suppress)
       st.set_prov_st(result, prov_of(st.prov, a))
     },
     .AUnwrapAnyref(a, _) => {
-      st = .init_hinge(result, a, last)
+      st = .init_hinge(result, a, last, cc_suppress)
       st.set_prov_st(result, prov_of(st.prov, a))
     },
     .ABinOp(_, _, _, _) => st.set_result(result, .Unknown), // scalar, neutral
@@ -2024,9 +4823,12 @@ fn block_verdicts(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc: CopyCarrierFacts,
+  resolve: VariantResolver,
 ) BlockVerdicts {
   scan := prep.scan
   moves := prep.moves
+  cc_suppress := cc.cc_suppress_set()
   verdicts: Dict<Int, String> = Dict.new()
   reusable_shell: Dict<Int, Bool> = Dict.new()
   moved_backing: Dict<Int, Vector<Int>> = Dict.new()
@@ -2068,25 +4870,29 @@ fn block_verdicts(
               .Some(bi) => if bi < args.len() {
                 base := args[bi]
                 reusable_shell[inst.anf_local.id] = pre.shell_reusable(base, last)
-                verdicts[inst.anf_local.id] = "L${inst.anf_local.id} = update ${atom_brief(base)} base=${pre.shell_verdict(
-                  base,
-                  last,
-                )}"
+                sv := pre.shell_verdict(base, last)
+                note := case container_kind(sem, fid) {
+                  .DictLike => case cc.by_update.get(inst.anf_local.id) {
+                    .Some(.CarrierAccept(p)) => " ${p.render_effect_proof()}",
+                    .Some(.CarrierReject(r)) => " ${render_effect_rejection(r)}",
+                    .None => "",
+                  },
+                  _ => "",
+                }
+                verdicts[inst.anf_local.id] = "L${inst.anf_local.id} = update ${atom_brief(base)} base=${sv}${note}"
               },
               .None => {}, // Update effect without a cow base — no verdict
             },
             _ => {}, // non-update builtin (read-only/allocate/control) -> no verdict
           },
           .None => case table.summary_get(fid.id) {
-            .Some(s) => {
-              au: Vector<Bool> = collect a in args {
-                case atom_local_id(a) {
-                  .Some(id) => local_reusable(pre.own, pre.valid, id, last)
-                    and store_count(args, id) == 1,
-                  .None => false,
-                }
+            .Some(base) => {
+              au := call_arg_unique(pre.own, pre.valid, args, last)
+              selected := case resolve(fid.id, au) {
+                .Some(vs) => vs,
+                .None => base,
               }
-              dec := render_call_decision(fid.id, select_variant(fid.id, s, au))
+              dec := render_call_decision(fid.id, select_variant(fid.id, selected, au))
               if dec.len() > 0 {
                 verdicts[inst.anf_local.id] = dec
               }
@@ -2108,6 +4914,8 @@ fn block_verdicts(
       b,
       sem,
       suppress,
+      cc_suppress,
+      resolve,
     )
     case inst.op {
       .ARecordUpdate(base, f, _, _, _) => {
@@ -2145,6 +4953,8 @@ fn forward_block_body(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc_suppress: Dict<Int, Bool>,
+  resolve: VariantResolver,
 ) ForwardState {
   st := entry
   for inst, i in blk.instructions {
@@ -2159,6 +4969,8 @@ fn forward_block_body(
       b,
       sem,
       suppress,
+      cc_suppress,
+      resolve,
     )
   }
   st
@@ -2174,8 +4986,10 @@ fn forward_block(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc_suppress: Dict<Int, Bool>,
+  resolve: VariantResolver,
 ) ForwardState {
-  st := forward_block_body(blk, entry, prep, table, b, sem, suppress)
+  st := forward_block_body(blk, entry, prep, table, b, sem, suppress, cc_suppress, resolve)
   case blk.terminator {
     // Return hands the value to the CALLER; it is not a callee leak. The caller's
     // ret / ret_paths handling accounts for it. Return blocks are CFG leaves, so
@@ -3137,11 +5951,13 @@ fn run_fixpoint(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc_suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
   seeds: LoopSeedSet,
   label: String,
   warm_state: FixState?,
   dirty0: Dict<Int, Bool>?,
+  resolve: VariantResolver,
 ) FixRun {
   timed := timings_enabled()
   t0 := if timed {
@@ -3301,7 +6117,17 @@ fn run_fixpoint(
         } else {
           st
         }
-        st = forward_block(blk, st, prep_get(preps, blk, sem), table, b, sem, suppress)
+        st = forward_block(
+          blk,
+          st,
+          prep_get(preps, blk, sem),
+          table,
+          b,
+          sem,
+          suppress,
+          cc_suppress,
+          resolve,
+        )
         already := is_processed(processed, blk.id.id)
         old_own := nested_get(exits, blk.id.id)
         old_valid := nested_get(exit_valid, blk.id.id)
@@ -3462,9 +6288,11 @@ fn stabilize_seeds(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc_suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
   label: String,
   allow_incremental: Bool,
+  resolve: VariantResolver,
 ) SeedRun {
   seeds := collect_loop_seed_candidates(blocks)
   first := run_fixpoint(
@@ -3474,11 +6302,13 @@ fn stabilize_seeds(
     b,
     sem,
     suppress,
+    cc_suppress,
     unique_seed,
     seeds,
     label,
     .None,
     .None,
+    resolve,
   )
   vfx := first.fx
   vstate := first.state
@@ -3509,11 +6339,13 @@ fn stabilize_seeds(
         b,
         sem,
         suppress,
+        cc_suppress,
         unique_seed,
         seeds,
         label,
         warm_state,
         dirty0,
+        resolve,
       )
       vfx = rr.fx
       vstate = rr.state
@@ -3529,8 +6361,10 @@ fn run_fixpoint_validated(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
+  cc_suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
   label: String,
+  resolve: VariantResolver,
 ) FixResult {
   timed := timings_enabled()
   t0 := if timed {
@@ -3551,14 +6385,50 @@ fn run_fixpoint_validated(
   // the emitted program is byte-identical. Under TWINKLE_SEEDVERIFY, stabilize
   // both all-cold and incremental and trap on any per-function divergence.
   sr := if seedverify_enabled() {
-    cold := stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, false)
-    incr := stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, true)
+    cold := stabilize_seeds(
+      blocks,
+      params,
+      table,
+      b,
+      sem,
+      suppress,
+      cc_suppress,
+      unique_seed,
+      label,
+      false,
+      resolve,
+    )
+    incr := stabilize_seeds(
+      blocks,
+      params,
+      table,
+      b,
+      sem,
+      suppress,
+      cc_suppress,
+      unique_seed,
+      label,
+      true,
+      resolve,
+    )
     if !same_loop_seed_set(cold.seeds, incr.seeds) {
       error("seedverify mismatch: ${label}")
     }
     incr
   } else {
-    stabilize_seeds(blocks, params, table, b, sem, suppress, unique_seed, label, true)
+    stabilize_seeds(
+      blocks,
+      params,
+      table,
+      b,
+      sem,
+      suppress,
+      cc_suppress,
+      unique_seed,
+      label,
+      true,
+      resolve,
+    )
   }
   seeds := sr.seeds
   reruns := sr.reruns
@@ -3570,11 +6440,13 @@ fn run_fixpoint_validated(
     b,
     sem,
     suppress,
+    cc_suppress,
     unique_seed,
     seeds,
     label,
     .None,
     .None,
+    resolve,
   ).fx
   if timed {
     t_done := date.now()
@@ -3597,14 +6469,62 @@ pub fn analyze(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) CfgVi
   analyze_with_summaries(view, b, sem, empty_summary_table())
 }
 
+fn entry_seed_for(entry_seeds: Dict<Int, Dict<Int, Bool>>, func_id: Int) Dict<Int, Bool> {
+  case entry_seeds.get(func_id) {
+    .Some(seed) => seed,
+    .None => Dict.new(),
+  }
+}
+
 pub fn analyze_with_summaries(
   view: CfgView,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   table: SummaryTable,
 ) CfgView {
+  analyze_with_summaries_and_entry_seeds(view, b, sem, table, Dict.new())
+}
+
+// Resolver-aware twin of `analyze_with_summaries`: analyzes every function with
+// per-call-site variant selection driven by `resolve`. The generic entry point
+// above is the `generic_only_resolver` case of this one.
+pub fn analyze_with_summaries_resolved(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+  resolve: VariantResolver,
+) CfgView {
+  analyze_with_summaries_and_entry_seeds_resolved(view, b, sem, table, Dict.new(), resolve)
+}
+
+pub fn analyze_with_summaries_and_entry_seeds(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+  entry_seeds: Dict<Int, Dict<Int, Bool>>,
+) CfgView {
+  analyze_with_summaries_and_entry_seeds_resolved(
+    view,
+    b,
+    sem,
+    table,
+    entry_seeds,
+    generic_only_resolver,
+  )
+}
+
+pub fn analyze_with_summaries_and_entry_seeds_resolved(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+  entry_seeds: Dict<Int, Dict<Int, Bool>>,
+  resolve: VariantResolver,
+) CfgView {
   functions := collect f in view.functions {
-    analyze_function(f, table, b, sem, Dict.new(), .None)
+    analyze_function(f, table, b, sem, entry_seed_for(entry_seeds, f.func_id), .None, resolve)
   }
   CfgView.{ functions }
 }
@@ -3635,6 +6555,18 @@ pub fn analyze_selected_with_summaries(
   selected: Dict<Int, Bool>,
   cache: FixCache,
 ) CfgView {
+  analyze_selected_with_summaries_and_entry_seeds(view, b, sem, table, selected, Dict.new(), cache)
+}
+
+pub fn analyze_selected_with_summaries_and_entry_seeds(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: SummaryTable,
+  selected: Dict<Int, Bool>,
+  entry_seeds: Dict<Int, Dict<Int, Bool>>,
+  cache: FixCache,
+) CfgView {
   timed := timings_enabled()
   if !timed {
     functions := collect f in view.functions {
@@ -3643,13 +6575,20 @@ pub fn analyze_selected_with_summaries(
         .None => false,
       }
       if should_analyze {
+        seed := entry_seed_for(entry_seeds, f.func_id)
+        cached := if seed.keys().len() == 0 {
+          cache.fix_cache_get(f.func_id)
+        } else {
+          .None
+        }
         analyze_function(
           clear_function_analysis(f),
           table,
           b,
           sem,
-          Dict.new(),
-          cache.fix_cache_get(f.func_id),
+          seed,
+          cached,
+          generic_only_resolver,
         )
       } else {
         clear_function_analysis(f)
@@ -3678,7 +6617,13 @@ pub fn analyze_selected_with_summaries(
       selected_funcs = selected_funcs + 1
       selected_blocks = selected_blocks + f.blocks.len()
       selected_insts = selected_insts + block_instruction_count(f.blocks)
-      case cache.fix_cache_get(f.func_id) {
+      seed := entry_seed_for(entry_seeds, f.func_id)
+      cached := if seed.keys().len() == 0 {
+        cache.fix_cache_get(f.func_id)
+      } else {
+        .None
+      }
+      case cached {
         .Some(_) => cache_hits = cache_hits + 1,
         .None => cache_misses = cache_misses + 1,
       }
@@ -3688,7 +6633,7 @@ pub fn analyze_selected_with_summaries(
       clear_ms = clear_ms + (t_clear1 - t_clear0)
       t_analyze0 := date.now()
       functions = .append(
-        analyze_function(cleared, table, b, sem, Dict.new(), cache.fix_cache_get(f.func_id)),
+        analyze_function(cleared, table, b, sem, seed, cached, generic_only_resolver),
       )
       t_analyze1 := date.now()
       analyze_ms = analyze_ms + (t_analyze1 - t_analyze0)
@@ -3723,7 +6668,20 @@ pub fn analyze_function_with_seed(
   sem: OptimizerSemantics,
   unique_seed: Dict<Int, Bool>,
 ) CfgFunction {
-  analyze_function(f, table, b, sem, unique_seed, .None)
+  analyze_function(f, table, b, sem, unique_seed, .None, generic_only_resolver)
+}
+
+// Resolver-aware twin of `analyze_function_with_seed`: used to render a variant
+// body's own downstream `verdict ->` selections with variant-aware call transfer.
+pub fn analyze_function_with_seed_resolved(
+  f: CfgFunction,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  unique_seed: Dict<Int, Bool>,
+  resolve: VariantResolver,
+) CfgFunction {
+  analyze_function(f, table, b, sem, unique_seed, .None, resolve)
 }
 
 pub type CallUniq = .{ callee: Int, arg_unique: Vector<Bool> }
@@ -3743,6 +6701,12 @@ pub fn call_uniques(
     blk.exit.live = bl.live_out
     blk
   }
+
+  // call_uniques stays variant-generic: it records each call site's arg_unique
+  // vector from generic ownership facts, and `summary.reachable_variants` matches
+  // those vectors against the variant table itself. Selecting variants during this
+  // transfer would not change the recorded arg_unique values, so we pass the
+  // generic resolver and keep reachability scanning independent of selection.
   fx := run_fixpoint_validated(
     blocks,
     f.params,
@@ -3750,8 +6714,10 @@ pub fn call_uniques(
     b,
     sem,
     suppress,
+    Dict.new(), // call_uniques must see unsuppressed ownership facts (Task-6 seed guard)
     unique_seed,
     "call_uniques:${f.name}",
+    generic_only_resolver,
   )
   done := all_processed(blocks)
   out: Vector<CallUniq> = []
@@ -3823,6 +6789,8 @@ pub fn call_uniques(
         b,
         sem,
         suppress,
+        Dict.new(),
+        generic_only_resolver,
       )
     }
   }
@@ -3975,6 +6943,7 @@ fn analyze_function(
   sem: OptimizerSemantics,
   unique_seed: Dict<Int, Bool>,
   cached_fx: FixResult?,
+  resolve: VariantResolver,
 ) CfgFunction {
   timed := timings_enabled()
   t0 := if timed {
@@ -4003,6 +6972,7 @@ fn analyze_function(
     unique_seed,
     "analyze:${f.name}",
     cached_fx,
+    resolve,
   )
   if timed {
     t_own := date.now()
@@ -4027,9 +6997,16 @@ fn ownership_stage(
   unique_seed: Dict<Int, Bool>,
   label: String,
   cached_fx: FixResult?,
+  resolve: VariantResolver,
 ) Vector<CfgBlock> {
   no_suppress: Dict<Int, Bool> = Dict.new()
+  cc := analyze_copy_carriers(blocks, params, table, b, sem)
+  cc_suppress := cc.cc_suppress_set()
 
+  // The copy-carrier source param is seeded Unique through the caller-guarded
+  // uniform_entry_seeds path (see structural_seed_params_for_borrow_effects), not here — so a
+  // helper with a non-uniform caller stays persistent. The borrow-move + publish suppression
+  // (cc_suppress) below are caller-agnostic and only take effect once the source is seeded.
   // Reuse the summary-pass FixResult only when unique_seed is empty (materialization
   // still reads unique_seed). Under TWINKLE_FIXVERIFY, recompute and compare.
   reuse: FixResult? = case cached_fx {
@@ -4050,8 +7027,10 @@ fn ownership_stage(
           b,
           sem,
           no_suppress,
+          cc_suppress,
           unique_seed,
           label,
+          resolve,
         )
         if fresh.render_fix_result() != cf.render_fix_result() {
           error("fixverify mismatch: ${label}")
@@ -4059,7 +7038,18 @@ fn ownership_stage(
       }
       cf
     },
-    .None => run_fixpoint_validated(blocks, params, table, b, sem, no_suppress, unique_seed, label),
+    .None => run_fixpoint_validated(
+      blocks,
+      params,
+      table,
+      b,
+      sem,
+      no_suppress,
+      cc_suppress,
+      unique_seed,
+      label,
+      resolve,
+    ),
   }
   done := all_processed(blocks)
   collect blk in blocks {
@@ -4096,8 +7086,8 @@ fn ownership_stage(
       st
     }
     prep := block_prep(blk, sem)
-    verdicts := block_verdicts(blk, st, prep, table, b, sem, no_suppress)
-    st = forward_block(blk, st, prep, table, b, sem, no_suppress)
+    verdicts := block_verdicts(blk, st, prep, table, b, sem, no_suppress, cc, resolve)
+    st = forward_block(blk, st, prep, table, b, sem, no_suppress, cc_suppress, resolve)
     blk.entry.ownership = entry_own
     blk.exit.ownership = st.own
     blk.entry.binding_valid = entry_valid
@@ -4487,7 +7477,13 @@ fn flow_get(st: Dict<Int, FlowFact>, a: Atom) FlowFact {
 // callee's return and receives an origin-bearing argument (else the origin is
 // ambiguous -> none). Builtins and unknown callees break the chain (origin none).
 // A requirements readout, not a proof: Stage 3's owned-entry pass validates it.
-fn call_result_fact(st: Dict<Int, FlowFact>, table: SummaryTable, callee: Atom, args: Vector<Atom>) FlowFact {
+fn call_result_fact(
+  st: Dict<Int, FlowFact>,
+  table: SummaryTable,
+  callee: Atom,
+  args: Vector<Atom>,
+  resolve: VariantResolver,
+) FlowFact {
   fid := case callee {
     .AGlobalFunc(f) => f.id,
     _ => return ff_none(),
@@ -4508,10 +7504,26 @@ fn call_result_fact(st: Dict<Int, FlowFact>, table: SummaryTable, callee: Atom, 
     return ff_none()
   }
   base := flow_get(st, args[carrier])
+
+  // Requirements readout (validated later by the seeded re-analysis): when the
+  // callee has an owned variant requiring uniqueness on the carrier param, read
+  // that variant's in-place paths, so a delegated consume through a forwarder
+  // whose GENERIC summary is Published still hands its field requirements back.
+  // Optimistically assuming the carrier is unique here is sound because Stage 3
+  // (variant_valid over the ownership transfer) proves the base_role separately.
+  au: Vector<Bool> = collect _ps, i in s.params {
+    i == carrier
+  }
+  sel := case resolve(fid, au) {
+    .Some(vs) => vs,
+    .None => s,
+  }
   dirty := base.dirty
-  for p in s.params[carrier].in_place_paths.paths {
-    if !p.is_shell() {
-      dirty = .add(p)
+  if carrier < sel.params.len() {
+    for p in sel.params[carrier].in_place_paths.paths {
+      if !p.is_shell() {
+        dirty = .add(p)
+      }
     }
   }
   FlowFact.{ origin: base.origin, dirty }
@@ -4523,6 +7535,7 @@ fn transfer_flow(
   sem: OptimizerSemantics,
   op: AnfOp,
   result: Int,
+  resolve: VariantResolver,
 ) Dict<Int, FlowFact> {
   case op {
     .ARecordUpdate(base, fld, _, _, _) => {
@@ -4548,9 +7561,9 @@ fn transfer_flow(
       st[result] = case callee_func_id(callee) {
         .Some(fid) => case call_info(sem, fid) {
           .Some(cs) => cow_update_result_fact(st, cs, args),
-          .None => call_result_fact(st, table, callee, args),
+          .None => call_result_fact(st, table, callee, args, resolve),
         },
-        .None => call_result_fact(st, table, callee, args),
+        .None => call_result_fact(st, table, callee, args, resolve),
       }
       st
     },
@@ -4657,15 +7670,126 @@ fn flow_map_eq(a: Dict<Int, FlowFact>, b: Dict<Int, FlowFact>) Bool {
   true
 }
 
+// Params recovered by a licensed move-projection of a consuming-callee wrapper
+// field. Mirrors the real `.ARecordGet` move branch (see transfer_op): the same
+// projection_move_licensed gate, the same `pr.shell` deep-owned requirement, and
+// the projected shell provenance resolving to exactly one param. Runs under the
+// summary's seed + resolver (so the callee's owned variant is selected and its
+// ret_paths recovery has set the wrapper field's provenance to the param).
+fn collect_move_recovered_params(
+  blocks: Vector<CfgBlock>,
+  params: Vector<LocalId>,
+  fx: FixResult,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+  unique_seed: Dict<Int, Bool>,
+  resolve: VariantResolver,
+) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+  done := all_processed(blocks)
+  for blk in blocks {
+    entry_own := join_entry_ownership(blk, fx.exits, done)
+    entry_valid := join_entry_valid(blk, fx.exit_valid, done)
+    entry_prov := join_entry_prov(blk, fx.exit_prov, done)
+    if blk.id.id == 0 {
+      entry_prov = seed_param_prov(entry_prov, params)
+      entry_own = seed_param_own(entry_own, unique_seed, params)
+    }
+    entry_field := join_entry_field_own(blk, fx.exit_field_own, entry_own, done)
+    entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
+    st := ForwardState.{
+      own: entry_own,
+      valid: entry_valid,
+      prov: entry_prov,
+      field_own: entry_field,
+      path_prov: entry_pp,
+    }
+    pred_id := case blk.preds.len() == 1 {
+      true => blk.preds[0].target.id,
+      false => 0 - 1,
+    }
+    st = if pred_id >= 0 {
+      st.seed_payload_binding(
+        blk,
+        nested_get(fx.exit_field_own, pred_id),
+        nested_get(fx.exit_path_prov, pred_id),
+        nested_get(fx.exit_prov, pred_id),
+      )
+    } else {
+      st
+    }
+    prep := block_prep(blk, sem)
+    scan := prep.scan
+    for inst, i in blk.instructions {
+      last := last_use_at(inst.op, scan.live_after[i])
+      case inst.op {
+        .ARecordGet(base, fld, _) => case atom_local_id(base) {
+          .Some(bid) => if st.projection_move_licensed(
+            inst.anf_local.id,
+            base,
+            last,
+            prep.moves,
+            prep.transport,
+          ) {
+            pr := st.atom_field_own(base).project(ff.PathSeg.Field(fld.id))
+            case pr.shell {
+              .Some(_) => {
+                proj_pp := project_path_prov(st.path_prov_get(bid), ff.PathSeg.Field(fld.id))
+                case proj_pp.shell {
+                  .Some(os) => if os.len() == 1 {
+                    case param_index_of(params, os[0]) {
+                      .Some(pk) => out[pk] = true,
+                      .None => {},
+                    }
+                  },
+                  .None => {},
+                }
+              },
+              .None => {},
+            }
+          },
+          .None => {},
+        },
+        _ => {},
+      }
+      st = .transfer_op(
+        inst.anf_local.id,
+        inst.op,
+        last,
+        prep.moves,
+        prep.transport,
+        table,
+        b,
+        sem,
+        suppress,
+        Dict.new(),
+        resolve,
+      )
+    }
+  }
+  out
+}
+
+fn move_recovered_has(m: Dict<Int, Bool>, k: Int) Bool {
+  case m.get(k) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
 // Forward dataflow to a fixed point (dirty grows, origin only degrades ->
 // terminates), modeled on run_fixpoint's `for changed { for blk }` shape with the
 // same processed guard. Computes its own liveness so it is self-contained
 // (unit-testable on a raw CfgFunction). Returns, per parameter index, the union of
 // dirty [.f] paths carried by the value returned at any return block.
-pub fn collect_field_reqs(f: CfgFunction, table: SummaryTable, sem: OptimizerSemantics) Dict<
-  Int,
-  vid.PathSet,
-> {
+pub fn collect_field_reqs(
+  f: CfgFunction,
+  table: SummaryTable,
+  sem: OptimizerSemantics,
+  resolve: VariantResolver,
+) Dict<Int, vid.PathSet> {
   live := compute_liveness_labeled(f.blocks, "field_reqs:${f.name}")
   blocks := collect blk in f.blocks {
     bl := live_get(live, blk.id.id)
@@ -4691,7 +7815,7 @@ pub fn collect_field_reqs(f: CfgFunction, table: SummaryTable, sem: OptimizerSem
       }
       st := entry
       for inst in blk.instructions {
-        st = transfer_flow(st, table, sem, inst.op, inst.anf_local.id)
+        st = transfer_flow(st, table, sem, inst.op, inst.anf_local.id, resolve)
       }
       prev := case exits.get(blk.id.id) {
         .Some(m) => m,
@@ -4760,7 +7884,7 @@ pub fn summarize_function(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
 ) Summary {
-  summarize_seeded(f, table, b, sem, suppress, Dict.new()).summary
+  summarize_seeded(f, table, b, sem, suppress, Dict.new(), generic_only_resolver).summary
 }
 
 // Generic summary plus its fx and reuse eligibility. summarize_function delegates
@@ -4773,7 +7897,7 @@ pub fn summarize_function_cached(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
 ) CachedSummary {
-  r := summarize_seeded(f, table, b, sem, suppress, Dict.new())
+  r := summarize_seeded(f, table, b, sem, suppress, Dict.new(), generic_only_resolver)
   CachedSummary.{ summary: r.summary, fx: r.fx, reusable: !calls_suppressed(f.blocks, suppress) }
 }
 
@@ -4794,13 +7918,28 @@ pub fn summarize_variant(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
 ) Summary {
+  summarize_variant_resolved(f, key, table, b, sem, suppress, generic_only_resolver)
+}
+
+// Resolver-aware twin of `summarize_variant`: while re-analyzing this variant's
+// body, out-of-SCC calls may select already-validated owned variants via
+// `resolve`, which is what lets owned threading compose across delegating hops.
+pub fn summarize_variant_resolved(
+  f: CfgFunction,
+  key: vid.UniqueKey,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+  resolve: VariantResolver,
+) Summary {
   unique_seed: Dict<Int, Bool> = Dict.new()
   for req in key {
     if req.path.is_shell() and req.param >= 0 and req.param < f.params.len() {
       unique_seed[f.params[req.param].id] = true
     }
   }
-  summarize_seeded(f, table, b, sem, suppress, unique_seed).summary
+  summarize_seeded(f, table, b, sem, suppress, unique_seed, resolve).summary
 }
 
 // Call-site variant selection (Stage 4c, D4 shell-level): the VariantId a caller
@@ -4859,6 +7998,7 @@ fn summarize_seeded(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
+  resolve: VariantResolver,
 ) SeededResult {
   timed := timings_enabled()
   t0 := if timed {
@@ -4885,8 +8025,10 @@ fn summarize_seeded(
     b,
     sem,
     suppress,
+    Dict.new(), // summary derivation path: copy-carrier suppression is Task 6's concern
     unique_seed,
     "summary:${f.name}",
+    resolve,
   )
   t_fx := if timed {
     date.now()
@@ -4894,9 +8036,24 @@ fn summarize_seeded(
     0.0
   }
 
-  raw_params: Vector<RawParam> = collect p in f.params {
+  move_recovered := collect_move_recovered_params(
+    blocks,
+    f.params,
+    fx,
+    table,
+    b,
+    sem,
+    suppress,
+    unique_seed,
+    resolve,
+  )
+  raw_params: Vector<RawParam> = collect p, pi in f.params {
     esc: EscapeEffect = .Borrowed
-    cap: ParamCapability = .NoCap
+    cap: ParamCapability = if move_recovered_has(move_recovered, pi) {
+      .Consumed
+    } else {
+      .NoCap
+    }
     for blk in blocks {
       if own_is_shared(nested_get(fx.exits, blk.id.id), p.id) {
         esc = .Retained
@@ -4951,7 +8108,17 @@ fn summarize_seeded(
         } else {
           st
         }
-        body := forward_block_body(blk, st, block_prep(blk, sem), table, b, sem, suppress)
+        body := forward_block_body(
+          blk,
+          st,
+          block_prep(blk, sem),
+          table,
+          b,
+          sem,
+          suppress,
+          Dict.new(),
+          resolve,
+        )
 
         // ret reflects SHELL ownership only: a fresh wrapper .{ctx:p0} has empty
         // shell prov -> OwnedFresh; only a directly-returned param (return x, shell
@@ -5040,7 +8207,7 @@ fn summarize_seeded(
   } else {
     0.0
   }
-  field_reqs := collect_field_reqs(f, table, sem)
+  field_reqs := collect_field_reqs(f, table, sem, resolve)
   t_field_reqs := if timed {
     date.now()
   } else {

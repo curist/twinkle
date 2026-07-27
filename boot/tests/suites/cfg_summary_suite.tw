@@ -55,6 +55,318 @@ fn dict_bool(d: Dict<Int, Bool>, key: Int) Bool {
   }
 }
 
+fn verdict_texts(view: cfg.CfgView) Dict<String, String> {
+  out: Dict<String, String> = Dict.new()
+  for f in view.functions {
+    for blk in f.blocks {
+      for local_id, text in blk.exit.verdicts {
+        out["${f.func_id}#${local_id}"] = text
+      }
+    }
+  }
+  out
+}
+
+fn assert_same_verdict_texts(a: Dict<String, String>, b: Dict<String, String>) Result<Void, String> {
+  try assert.equal(a.keys().len(), b.keys().len())
+  for k in a.keys() {
+    av := case a.get(k) {
+      .Some(v) => v,
+      .None => return .Err("missing left verdict ${k}"),
+    }
+    bv := case b.get(k) {
+      .Some(v) => v,
+      .None => return .Err("missing right verdict ${k}"),
+    }
+    try assert.equal(av, bv)
+  }
+  .Ok({})
+}
+
+// A certified primitive under `name`, or an error naming the miss.
+fn assert_cert_primitive(
+  dh: Dict<Int, ownership.DedupeCertificate>,
+  view: cfg.CfgView,
+  name: String,
+) Result<Void, String> {
+  id := try func_id_by_name(view, name)
+  case dh.get(id) {
+    .Some(c) => case c.kind {
+      .SortInsertPrimitive => .Ok({}),
+      .Combinator => .Err("${name}: expected SortInsertPrimitive, got Combinator"),
+    },
+    .None => .Err("${name}: expected certified as SortInsertPrimitive, not certified"),
+  }
+}
+
+// A certified combinator under `name`, or an error naming the miss.
+fn assert_cert_combinator(
+  dh: Dict<Int, ownership.DedupeCertificate>,
+  view: cfg.CfgView,
+  name: String,
+) Result<Void, String> {
+  id := try func_id_by_name(view, name)
+  case dh.get(id) {
+    .Some(c) => case c.kind {
+      .Combinator => .Ok({}),
+      .SortInsertPrimitive => .Err("${name}: expected Combinator, got SortInsertPrimitive"),
+    },
+    .None => .Err("${name}: expected certified as Combinator, not certified"),
+  }
+}
+
+// `name` must carry no certificate (rejected).
+fn assert_not_certified(dh: Dict<Int, ownership.DedupeCertificate>, view: cfg.CfgView, name: String) Result<
+  Void,
+  String,
+> {
+  id := try func_id_by_name(view, name)
+  case dh.get(id) {
+    .Some(_) => .Err("${name}: wrongly certified (should be rejected)"),
+    .None => .Ok({}),
+  }
+}
+
+fn assert_no_induction(view: cfg.CfgView, b: builtins.BuiltinRegistry, name: String) Result<
+  Void,
+  String,
+> {
+  f := try cfg_func_id_by_name(view, name)
+  case ownership.find_induction(f, 0, b) {
+    .Some(_) => .Err("${name}: unexpectedly found induction evidence"),
+    .None => .Ok({}),
+  }
+}
+
+fn cfg_func_id_by_name(view: cfg.CfgView, name: String) Result<cfg.CfgFunction, String> {
+  for f in view.functions {
+    if f.name == name {
+      return .Ok(f)
+    }
+  }
+  .Err("missing function ${name}")
+}
+
+fn cfg_block_by_id(f: cfg.CfgFunction, id: Int) Result<cfg.CfgBlock, String> {
+  for blk in f.blocks {
+    if blk.id.id == id {
+      return .Ok(blk)
+    }
+  }
+  .Err("${f.name}: missing block B${id}")
+}
+
+fn block_has_pred_from(blk: cfg.CfgBlock, pred_id: Int) Bool {
+  for edge in blk.preds {
+    if edge.target.id == pred_id {
+      return true
+    }
+  }
+  false
+}
+
+fn block_pred_count_from(blk: cfg.CfgBlock, pred_id: Int) Int {
+  n := 0
+  for edge in blk.preds {
+    if edge.target.id == pred_id {
+      n = n + 1
+    }
+  }
+  n
+}
+
+fn block_has_succ_to(blk: cfg.CfgBlock, target_id: Int) Bool {
+  for edge in blk.succs {
+    if edge.target.id == target_id {
+      return true
+    }
+  }
+  false
+}
+
+fn cfg_empty_block(id: Int, name: String, params: Vector<LocalId>) cfg.CfgBlock {
+  cfg.CfgBlock.{
+    id: cfg.BlockId.{ id },
+    name,
+    params,
+    bound: [],
+    payload_src: .None,
+    instructions: [],
+    terminator: .None,
+    preds: [],
+    succs: [],
+    entry: cfg.empty_block_facts(),
+    exit: cfg.empty_block_facts(),
+  }
+}
+
+fn synthetic_threading_side_effect_view() cfg.CfgView {
+  b0 := cfg_empty_block(0, "entry", [])
+  b0.terminator = .Some(.Branch(cfg.BlockId.{ id: 1 }, [.ALitBool(false)]))
+  b0.succs = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [.ALitBool(false)] }]
+
+  b1 := cfg_empty_block(1, "effectful.join", [lid(0)])
+  b1.instructions = [
+    cfg.CfgInstruction.{
+      anf_local: lid(10),
+      op: .AAssign(lid(10), .ALitBool(true)),
+      text: "assign L10 = true",
+    },
+  ]
+  b1.terminator = .Some(
+    .CondBranch(.ALocal(lid(0)), cfg.BlockId.{ id: 2 }, [], cfg.BlockId.{ id: 3 }, []),
+  )
+  b1.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 0 }, args: [.ALitBool(false)] }]
+  b1.succs = [
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 2 }, args: [] },
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 3 }, args: [] },
+  ]
+
+  b2 := cfg_empty_block(2, "then", [])
+  b2.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [] }]
+  b2.terminator = .Some(.Return(.None))
+
+  b3 := cfg_empty_block(3, "else", [])
+  b3.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [] }]
+  b3.terminator = .Some(.Return(.None))
+
+  cfg.CfgView.{
+    functions: [
+      cfg.CfgFunction.{ func_id: 9000, name: "effectful", params: [], blocks: [b0, b1, b2, b3] },
+    ],
+  }
+}
+
+fn synthetic_threading_duplicate_pred_view() cfg.CfgView {
+  b0 := cfg_empty_block(0, "entry", [])
+  b0.terminator = .Some(
+    .CondBranch(
+      .ALitBool(true),
+      cfg.BlockId.{ id: 1 },
+      [.ALitBool(false)],
+      cfg.BlockId.{ id: 3 },
+      [],
+    ),
+  )
+  b0.succs = [
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [.ALitBool(false)] },
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 3 }, args: [] },
+  ]
+
+  b1 := cfg_empty_block(1, "const.join", [lid(0)])
+  b1.instructions = [
+    cfg.CfgInstruction.{ anf_local: lid(10), op: .AInit(.ALocal(lid(0))), text: "init L0" },
+  ]
+  b1.terminator = .Some(
+    .CondBranch(.ALocal(lid(10)), cfg.BlockId.{ id: 2 }, [], cfg.BlockId.{ id: 3 }, []),
+  )
+  b1.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 0 }, args: [.ALitBool(false)] }]
+  b1.succs = [
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 2 }, args: [] },
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 3 }, args: [] },
+  ]
+
+  b2 := cfg_empty_block(2, "then", [])
+  b2.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [] }]
+  b2.terminator = .Some(.Return(.None))
+
+  b3 := cfg_empty_block(3, "else", [])
+  b3.preds = [
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 0 }, args: [] },
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [] },
+  ]
+  b3.terminator = .Some(.Return(.None))
+
+  cfg.CfgView.{
+    functions: [
+      cfg.CfgFunction.{
+        func_id: 9001,
+        name: "duplicate_pred",
+        params: [],
+        blocks: [b0, b1, b2, b3],
+      },
+    ],
+  }
+}
+
+fn synthetic_threading_unrelated_alias_view() cfg.CfgView {
+  b0 := cfg_empty_block(0, "entry", [])
+  b0.terminator = .Some(.Branch(cfg.BlockId.{ id: 1 }, [.ALitBool(false)]))
+  b0.succs = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [.ALitBool(false)] }]
+
+  b1 := cfg_empty_block(1, "alias.join", [lid(0)])
+  b1.instructions = [
+    cfg.CfgInstruction.{ anf_local: lid(10), op: .AInit(.ALocal(lid(0))), text: "init L0" },
+    cfg.CfgInstruction.{ anf_local: lid(11), op: .AInit(.ALocal(lid(12))), text: "init L12" },
+  ]
+  b1.terminator = .Some(
+    .CondBranch(.ALocal(lid(10)), cfg.BlockId.{ id: 2 }, [], cfg.BlockId.{ id: 3 }, []),
+  )
+  b1.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 0 }, args: [.ALitBool(false)] }]
+  b1.succs = [
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 2 }, args: [] },
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 3 }, args: [] },
+  ]
+
+  b2 := cfg_empty_block(2, "then", [])
+  b2.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [] }]
+  b2.terminator = .Some(.Return(.None))
+
+  b3 := cfg_empty_block(3, "else", [])
+  b3.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [] }]
+  b3.terminator = .Some(.Return(.None))
+
+  cfg.CfgView.{
+    functions: [
+      cfg.CfgFunction.{
+        func_id: 9002,
+        name: "unrelated_alias",
+        params: [],
+        blocks: [b0, b1, b2, b3],
+      },
+    ],
+  }
+}
+
+fn synthetic_threading_target_args_view() cfg.CfgView {
+  b0 := cfg_empty_block(0, "entry", [])
+  b0.terminator = .Some(.Branch(cfg.BlockId.{ id: 1 }, [.ALitBool(false)]))
+  b0.succs = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [.ALitBool(false)] }]
+
+  b1 := cfg_empty_block(1, "arg.join", [lid(0)])
+  b1.instructions = [
+    cfg.CfgInstruction.{ anf_local: lid(10), op: .AInit(.ALocal(lid(0))), text: "init L0" },
+  ]
+  b1.terminator = .Some(
+    .CondBranch(
+      .ALocal(lid(10)),
+      cfg.BlockId.{ id: 2 },
+      [.ALitInt(1)],
+      cfg.BlockId.{ id: 3 },
+      [.ALitInt(2)],
+    ),
+  )
+  b1.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 0 }, args: [.ALitBool(false)] }]
+  b1.succs = [
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 2 }, args: [.ALitInt(1)] },
+    cfg.CfgEdge.{ target: cfg.BlockId.{ id: 3 }, args: [.ALitInt(2)] },
+  ]
+
+  b2 := cfg_empty_block(2, "then", [lid(20)])
+  b2.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [.ALitInt(1)] }]
+  b2.terminator = .Some(.Return(.None))
+
+  b3 := cfg_empty_block(3, "else", [lid(30)])
+  b3.preds = [cfg.CfgEdge.{ target: cfg.BlockId.{ id: 1 }, args: [.ALitInt(2)] }]
+  b3.terminator = .Some(.Return(.None))
+
+  cfg.CfgView.{
+    functions: [
+      cfg.CfgFunction.{ func_id: 9003, name: "target_args", params: [], blocks: [b0, b1, b2, b3] },
+    ],
+  }
+}
+
 fn dict_new_call(b: builtins.BuiltinRegistry) AnfOp {
   .ACall(.AGlobalFunc(b.method_id("Dict", "new")), [])
 }
@@ -1448,6 +1760,7 @@ pub fn suite() runner.Suite {
           cfg_func_of("f", 1, body),
           ownership.empty_summary_table(),
           sem(),
+          ownership.generic_only_resolver,
         )
         try assert.is_true(same_ints(dirty_fields(reqs, 0), [0, 1])) // both fields, param 0
         .Ok({})
@@ -1471,6 +1784,7 @@ pub fn suite() runner.Suite {
           cfg_func_of("f", 1, body),
           ownership.empty_summary_table(),
           sem(),
+          ownership.generic_only_resolver,
         )
         try assert.equal(dirty_fields(reqs, 0).len(), 0)
         .Ok({})
@@ -1515,6 +1829,7 @@ pub fn suite() runner.Suite {
           cfg_func_of("f", 2, body),
           ownership.empty_summary_table(),
           sem(),
+          ownership.generic_only_resolver,
         )
         try assert.is_true(same_ints(dirty_fields(reqs, 0), [0, 1]))
         .Ok({})
@@ -1539,7 +1854,7 @@ pub fn suite() runner.Suite {
         }
         tbl: Dict<Int, ownership.Summary> = Dict.new()
         tbl[7] = helper
-        table := ownership.SummaryTable.{ by_func: tbl }
+        table := ownership.SummaryTable.{ by_func: tbl, dedupe_helpers: Dict.new() }
 
         // fn g(env) { r1 := helper(env); r2 := helper(r1); r2 }  -- thread env through twice.
         body: AnfExpr = .Let(
@@ -1551,7 +1866,12 @@ pub fn suite() runner.Suite {
             .Atom(.ALocal(lid(2))),
           ),
         )
-        reqs := ownership.collect_field_reqs(cfg_func_of("g", 1, body), table, sem())
+        reqs := ownership.collect_field_reqs(
+          cfg_func_of("g", 1, body),
+          table,
+          sem(),
+          ownership.generic_only_resolver,
+        )
         try assert.is_true(same_ints(dirty_fields(reqs, 0), [0])) // env's .f0 propagated
         .Ok({})
       },
@@ -1573,7 +1893,7 @@ pub fn suite() runner.Suite {
         }
         tbl: Dict<Int, ownership.Summary> = Dict.new()
         tbl[7] = helper
-        table := ownership.SummaryTable.{ by_func: tbl }
+        table := ownership.SummaryTable.{ by_func: tbl, dedupe_helpers: Dict.new() }
 
         // fn g(env) { r1 := helper(env); r1 }  -- r1 is fresh, origin none.
         body: AnfExpr = .Let(
@@ -1581,7 +1901,12 @@ pub fn suite() runner.Suite {
           .ACall(.AGlobalFunc(FuncId.{ id: 7 }), [.ALocal(lid(0))]),
           .Atom(.ALocal(lid(1))),
         )
-        reqs := ownership.collect_field_reqs(cfg_func_of("g", 1, body), table, sem())
+        reqs := ownership.collect_field_reqs(
+          cfg_func_of("g", 1, body),
+          table,
+          sem(),
+          ownership.generic_only_resolver,
+        )
         try assert.equal(dirty_fields(reqs, 0).len(), 0)
         .Ok({})
       },
@@ -2003,6 +2328,280 @@ pub fn suite() runner.Suite {
         try assert.equal(dict_bool(closure, helper_a_id), true)
         try assert.equal(dict_bool(closure, helper_b_id), true)
         try assert.equal(dict_bool(closure, unrelated_id), false)
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream CFG threading rethreads constant false join edge only",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8h_ksu_battery.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        raw_view := cfg.build_view(artifacts.opt, b)
+        threaded_view := ownership.thread_const_branches(raw_view)
+
+        raw_f := try cfg_func_id_by_name(raw_view, "insert_sorted")
+        raw_b10 := try cfg_block_by_id(raw_f, 10)
+        raw_b11 := try cfg_block_by_id(raw_f, 11)
+        raw_b13 := try cfg_block_by_id(raw_f, 13)
+        try assert.equal(block_has_succ_to(raw_b10, 11), true)
+        try assert.equal(block_has_pred_from(raw_b11, 10), true)
+        try assert.equal(block_has_pred_from(raw_b13, 10), false)
+
+        threaded_f := try cfg_func_id_by_name(threaded_view, "insert_sorted")
+        threaded_b9 := try cfg_block_by_id(threaded_f, 9)
+        threaded_b10 := try cfg_block_by_id(threaded_f, 10)
+        threaded_b11 := try cfg_block_by_id(threaded_f, 11)
+        threaded_b13 := try cfg_block_by_id(threaded_f, 13)
+        try assert.equal(block_has_succ_to(threaded_b10, 11), false)
+        try assert.equal(block_has_succ_to(threaded_b10, 13), true)
+        try assert.equal(block_has_pred_from(threaded_b11, 10), false)
+        try assert.equal(block_has_pred_from(threaded_b13, 10), true)
+        try assert.equal(block_has_succ_to(threaded_b9, 11), true)
+        try assert.equal(block_has_pred_from(threaded_b11, 9), true)
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream CFG threading does not skip effectful branch blocks",
+      fn() {
+        raw_view := synthetic_threading_side_effect_view()
+        threaded_view := ownership.thread_const_branches(raw_view)
+        f := try cfg_func_id_by_name(threaded_view, "effectful")
+        b0 := try cfg_block_by_id(f, 0)
+        b1 := try cfg_block_by_id(f, 1)
+        b3 := try cfg_block_by_id(f, 3)
+        try assert.equal(block_has_succ_to(b0, 1), true)
+        try assert.equal(block_has_succ_to(b0, 3), false)
+        try assert.equal(block_has_pred_from(b1, 0), true)
+        try assert.equal(block_has_pred_from(b3, 0), false)
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream CFG threading preserves duplicate predecessor edge multiplicity",
+      fn() {
+        raw_view := synthetic_threading_duplicate_pred_view()
+        threaded_view := ownership.thread_const_branches(raw_view)
+        f := try cfg_func_id_by_name(threaded_view, "duplicate_pred")
+        b0 := try cfg_block_by_id(f, 0)
+        b1 := try cfg_block_by_id(f, 1)
+        b3 := try cfg_block_by_id(f, 3)
+        try assert.equal(block_has_succ_to(b0, 1), false)
+        try assert.equal(block_has_succ_to(b0, 3), true)
+        try assert.equal(block_has_pred_from(b1, 0), false)
+        try assert.equal(block_pred_count_from(b3, 0), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream CFG threading does not skip unrelated alias definitions",
+      fn() {
+        raw_view := synthetic_threading_unrelated_alias_view()
+        threaded_view := ownership.thread_const_branches(raw_view)
+        f := try cfg_func_id_by_name(threaded_view, "unrelated_alias")
+        b0 := try cfg_block_by_id(f, 0)
+        b1 := try cfg_block_by_id(f, 1)
+        b3 := try cfg_block_by_id(f, 3)
+        try assert.equal(block_has_succ_to(b0, 1), true)
+        try assert.equal(block_has_succ_to(b0, 3), false)
+        try assert.equal(block_has_pred_from(b1, 0), true)
+        try assert.equal(block_has_pred_from(b3, 0), false)
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream CFG threading does not thread branches with target args",
+      fn() {
+        raw_view := synthetic_threading_target_args_view()
+        threaded_view := ownership.thread_const_branches(raw_view)
+        f := try cfg_func_id_by_name(threaded_view, "target_args")
+        b0 := try cfg_block_by_id(f, 0)
+        b1 := try cfg_block_by_id(f, 1)
+        b3 := try cfg_block_by_id(f, 3)
+        try assert.equal(block_has_succ_to(b0, 1), true)
+        try assert.equal(block_has_succ_to(b0, 3), false)
+        try assert.equal(block_has_pred_from(b1, 0), true)
+        try assert.equal(block_has_pred_from(b3, 0), false)
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream induction finds full traversal counter and rejects non-induction loops",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8h_ksu_battery.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        view := ownership.thread_const_branches(cfg.build_view(artifacts.opt, b))
+
+        insert_f := try cfg_func_id_by_name(view, "insert_sorted")
+        case ownership.find_induction(insert_f, 0, b) {
+          .Some(ind) => {
+            try assert.equal(ind.counter, 6)
+            try assert.equal(ind.element, 7)
+          },
+          .None => return .Err("insert_sorted: expected induction evidence"),
+        }
+
+        try assert_no_induction(view, b, "bad2")
+        try assert_no_induction(view, b, "unchanged_counter_backedge")
+        try assert_no_induction(view, b, "wrong_bound")
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream classifier exposes an unthreaded mode",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8h_ksu_battery.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        view := cfg.build_view(artifacts.opt, b)
+        dh := ownership.classify_dedupe_helpers_unthreaded(
+          view,
+          b,
+          make_prelude_optimizer_semantics(b),
+        )
+        try assert_not_certified(dh, view, "insert_sorted")
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream threading leaves ordinary ownership verdicts unchanged",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8h_ksu_battery.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        s := make_prelude_optimizer_semantics(b)
+        view := ownership.prune_dead_merge(cfg.build_view(artifacts.opt, b))
+        threaded_table := summary.compute(view, b, s)
+        unthreaded_table := threaded_table
+        unthreaded_table.dedupe_helpers = ownership.classify_dedupe_helpers_unthreaded(view, b, s)
+        threaded := ownership.analyze_with_summaries(view, b, s, threaded_table)
+        unthreaded := ownership.analyze_with_summaries(view, b, s, unthreaded_table)
+
+        // Full verdict identity is the correct assertion today: no consumer yet
+        // feeds `dedupe_helpers` into ownership verdicts, so §5.0 threading changes
+        // nothing rendered. When engine-plan Task 4's copy-carrier consumer lands,
+        // widen this to "identical except at intended copy-carrier sites."
+        try assert_same_verdict_texts(verdict_texts(threaded), verdict_texts(unthreaded))
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream battery: every adversarial negative is rejected (default-deny safe)",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8h_ksu_battery.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        view := cfg.build_view(artifacts.opt, b)
+        dh := ownership.classify_dedupe_helpers(view, b, make_prelude_optimizer_semantics(b))
+
+        negatives: Vector<String> = [
+          "bad",
+          "guarded_repeat_no_set",
+          "guarded_repeat_no_set_live_flag",
+          "bad_second_loop",
+          "bad_double_tail",
+          "two_id_one_block",
+          "bad2",
+          "nested_loop_append",
+          "fixed_index_eq_guard",
+          "second_in_loop_exit",
+          "break_skips_eq",
+          "break_skips_eq_live_flag",
+          "evil_skip_eq",
+          "continue_before_eq",
+          "unchanged_counter_backedge",
+          "wrong_bound",
+          "join_side_effect",
+          "stale_acc_source",
+          "rebound_vparam",
+          "rebound_proof_local",
+          "stale_notflag",
+          "rebound_alias_base",
+          "cross_block_stale_notflag",
+          "short_circuit_reconvergence_trap",
+          "wrong_arg_position",
+          "flag_reset_in_loop",
+          "param_rebind_combinator",
+          "wrong_return",
+          "extra_acc_mutation",
+          "bare_append_union",
+          "passthrough",
+        ]
+        for name in negatives {
+          try assert_not_certified(dh, view, name)
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream battery: positives certify with the right kind",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8h_ksu_battery.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        view := cfg.build_view(artifacts.opt, b)
+        dh := ownership.classify_dedupe_helpers(view, b, make_prelude_optimizer_semantics(b))
+
+        primitives: Vector<String> = ["insert_sorted", "insert_sorted_str"]
+        for name in primitives {
+          try assert_cert_primitive(dh, view, name)
+        }
+        combinators: Vector<String> = ["union_via_insert", "union_keys", "int_keys_union"]
+        for name in combinators {
+          try assert_cert_combinator(dh, view, name)
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "key-stream certificates populate root-scoped summary tables",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8h_ksu_battery.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        view := cfg.build_view(artifacts.opt, b)
+        root_id := try func_id_by_name(view, "int_keys_union")
+        roots: Dict<Int, Bool> = Dict.new()
+        roots[root_id] = true
+        scoped := summary.compute_for_roots_cached(
+          view,
+          b,
+          make_prelude_optimizer_semantics(b),
+          roots,
+        )
+        try assert_cert_combinator(scoped.table.dedupe_helpers, view, "int_keys_union")
+        try assert_cert_combinator(scoped.table.dedupe_helpers, view, "union_keys")
+        try assert_cert_primitive(scoped.table.dedupe_helpers, view, "insert_sorted")
         .Ok({})
       },
     )

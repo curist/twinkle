@@ -39,10 +39,10 @@ Phase 7E dry-run slice is also done: `twk ir --census --sites` renders update-si
 persistent→mutable targets, ownership verdicts, and `would_use` state for
 vector/dict/record candidates while emitted code remains persistent.
 
-**Current implementation focus: Codegen Phase 8C first slice is complete (builder
-regions — a distinct region-shaped lowering); next are the 8C follow-ups (non-empty
-seeds / typed routing / conditional folds, Plans 3–5), then records (8F), function
-variants (8G), and record-backed field collections (8H).** Phase 8C Plans 1–2 have
+**Current implementation focus: function variants (8G) and record-backed field
+collections (8H).** Records (Phase 8F, local record shell update emission) is done,
+alongside the builder-region first slice (8C Plans 1–2); the remaining 8C follow-ups
+(non-empty seeds / typed routing / conditional folds, Plans 3–5) are still open. Phase 8C Plans 1–2 have
 landed: string and vector empty-seed accumulator loops (`acc = ""` / `acc = []`) now
 lower end-to-end to builder regions (`builder_from`/`builder_new` → `builder_extend`/
 `builder_push` → `builder_freeze`) via an ANF-to-ANF rewrite run at the top of
@@ -98,7 +98,7 @@ local-update workaround.
 
 ### 1. Analysis track
 
-Detailed checklist: [analysis/README.md](analysis/README.md)
+Framework overview: [analysis/README.md](analysis/README.md); detailed phase ledger: [analysis/phases-0-6-history.md](analysis/phases-0-6-history.md)
 
 Analysis phases (architecture 1A-1E; all analysis precision lands before any codegen):
 
@@ -125,10 +125,11 @@ This track starts after the completed Phase 6 (1E) specialization decisions; its
 input facts are now trustworthy. It is intentionally split more finely than a single
 codegen milestone: operation catalogs and backend handoff/dry-run decisions (Phase 7)
 are in place, and the emitted slices for local (Phase 8A) and loop-carried, single
-and nested (Phase 8B) vector indexed updates, plus owned `Dict.set` (Phase 8D) and
-`Dict.remove` (Phase 8E), are complete. Current work moves to builder regions
-(Phase 8C); later Phase 8 slices broaden to records (8F), ownership-specialized
-function variants (8G), and record-backed field collections (8H).
+and nested (Phase 8B) vector indexed updates, owned `Dict.set` (Phase 8D) and
+`Dict.remove` (Phase 8E), the builder-region first slice (Phase 8C Plans 1–2), and
+local record shell update emission (Phase 8F) are complete. Current work is
+ownership-specialized function variants (Phase 8G) and record-backed field
+collections (Phase 8H), with the 8C follow-up slices (Plans 3–5) still open.
 
 ### 3. Storage representation track
 
@@ -155,6 +156,7 @@ evaluates Buffer cleanup.
 
 | Doc | Purpose |
 |---|---|
+| [transitive-consume-plan.md](../archive/transitive-consume-plan.md) | Analysis-precision fix: let owned threading compose through delegating (forwarder / transport-wrapper) call hops instead of collapsing to persistent at the first delegation — the delegation half of the transitively-published boundary. Red fixtures: `red_delegate_chain`, `red_transport_wrapper_chain`, `red_mixed_delegate_update`. |
 | [architecture.md](architecture.md) | Umbrella architecture, phases, mutable intrinsics, specialization, testing policy. |
 | [analysis/design-rationale.md](analysis/design-rationale.md) | Why static + annotation-free + no-runtime-RC: the Wasm-GC-vs-refcount reason we can't copy Koka/Roc/Lean, the annotation-free/zero-overhead/coverage tradeoff triangle, and what immutable value semantics buys. |
 | [analysis/worked-examples.md](analysis/worked-examples.md) | Real boot ANF dumps, op→ownership-event table, and census baseline. |

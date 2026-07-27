@@ -1,0 +1,62 @@
+type Out = .{ map: Dict<Int, Int> }
+
+fn lookup(m: Dict<Int, Int>, k: Int, dflt: Int) Int {
+  case m.get(k) {
+    .Some(v) => v,
+    .None => dflt,
+  }
+}
+
+fn insert_sorted(v: Vector<Int>, id: Int) Vector<Int> {
+  out: Vector<Int> = []
+  inserted := false
+  for x in v {
+    if x == id {
+      return v
+    }
+    if !inserted and id < x {
+      out = .append(id)
+      inserted = true
+    }
+    out = .append(x)
+  }
+  if !inserted {
+    out = .append(id)
+  }
+  out
+}
+
+fn union_keys(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
+  out := a
+  for k in b {
+    out = insert_sorted(out, k)
+  }
+  out
+}
+
+fn merge_helper_mediated(old: Dict<Int, Int>, next: Dict<Int, Int>) Out {
+  out := next
+  keys := union_keys(old.keys(), next.keys())
+  for k in keys {
+    old_x := lookup(old, k, 0)
+    next_x := lookup(next, k, 0)
+    out[k] = old_x + next_x
+  }
+  Out.{ map: out }
+}
+
+fn caller(n: Int) Dict<Int, Int> {
+  old: Dict<Int, Int> = Dict.new()
+  state: Dict<Int, Int> = Dict.new()
+  i := 0
+  for i < n {
+    old[i] = i
+    state[i] = i
+    out := merge_helper_mediated(old, state)
+    state = out.map
+    i = i + 1
+  }
+  state
+}
+
+println(caller(3).len().to_string())

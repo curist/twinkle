@@ -1,0 +1,6 @@
+fn f() Int {
+  y := foo()
+    .bar() // trailing on bar
+    .baz()
+  y
+}

@@ -1,0 +1,31 @@
+fn is_marked(m: Dict<Int, Bool>, id: Int) Bool {
+  case m.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn processed_without_helper(n: Int) Dict<Int, Bool> {
+  processed: Dict<Int, Bool> = Dict.new()
+  i := 0
+  for i < n {
+    processed[i] = true
+    i = i + 1
+  }
+  processed
+}
+
+fn processed_with_read_helper(n: Int) Dict<Int, Bool> {
+  processed: Dict<Int, Bool> = Dict.new()
+  i := 0
+  for i < n {
+    if !is_marked(processed, i) {
+      processed[i] = true
+    }
+    i = i + 1
+  }
+  processed
+}
+
+println(processed_without_helper(3).len().to_string())
+println(processed_with_read_helper(3).len().to_string())

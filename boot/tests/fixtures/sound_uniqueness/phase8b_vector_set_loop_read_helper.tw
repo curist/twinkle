@@ -1,0 +1,32 @@
+fn read_at(xs: Vector<Int>, id: Int) Int {
+  xs[id]
+}
+
+fn vector_without_helper(n: Int) Vector<Int> {
+  xs: Vector<Int> = collect i in range(n) {
+    i
+  }
+  i := 0
+  for i < n {
+    xs[i] = i + 1
+    i = i + 1
+  }
+  xs
+}
+
+fn vector_with_read_helper(n: Int) Vector<Int> {
+  xs: Vector<Int> = collect i in range(n) {
+    i
+  }
+  i := 0
+  for i < n {
+    if read_at(xs, i) >= 0 {
+      xs[i] = i + 1
+    }
+    i = i + 1
+  }
+  xs
+}
+
+println(vector_without_helper(3).len().to_string())
+println(vector_with_read_helper(3).len().to_string())

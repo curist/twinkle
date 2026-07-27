@@ -93,6 +93,28 @@ fn produce_all_for(name: String) Result<mutable_produce.ProducedDecisions, Strin
   .Ok(mutable_produce.produce_mutable_decisions(artifacts.opt, artifacts.builtins))
 }
 
+fn rendered_line_for_family(rendered: String, func: String, family: String) String {
+  prefix := "${func}\t"
+  needle := "\t${family}\t"
+  for line in rendered.lines() {
+    if line.starts_with(prefix) and line.contains(needle) {
+      return line
+    }
+  }
+  error("missing rendered row for ${func} ${family}")
+}
+
+// A copy-carrier near miss must stay persistent (no in-place decision) and carry
+// the concrete borrow/effect rejection reason for its dict_set site.
+fn assert_rejected_copy_carrier(name: String, func: String, reason: String) Result<Void, String> {
+  produced := try produce_for(name)
+  rendered := mutable_produce.render_candidate_rows(produced.rows)
+  row := rendered_line_for_family(rendered, func, "dict_set")
+  try assert.is_false(row.contains("decision produced"))
+  try assert.str_contains(row, "copy-carrier-rejected(${reason})")
+  .Ok({})
+}
+
 fn candidate_roots(set: mutable_produce.CandidateSet) Dict<Int, Bool> {
   roots: Dict<Int, Bool> = Dict.new()
   for c in set.candidates {
@@ -209,6 +231,25 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "vector loop read helper should preserve loop-carried in-place decision",
+      fn() {
+        produced := try produce_for("phase8b_vector_set_loop_read_helper")
+        try assert.equal(produced.rows.len(), 2)
+        try assert.equal(produced.table.by_site.keys().len(), 2)
+
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        without_helper := rendered_line_for_family(rendered, "vector_without_helper", "vector_set")
+        with_helper := rendered_line_for_family(rendered, "vector_with_read_helper", "vector_set")
+
+        try assert.str_contains(without_helper, "decision produced (loop-carried")
+        try assert.str_contains(without_helper, "base=reuse(unique)")
+
+        try assert.str_contains(with_helper, "decision produced (loop-carried")
+        try assert.str_contains(with_helper, "base=reuse(unique)")
+        .Ok({})
+      },
+    )
+    .test(
       "owned dict set produces a dict_set decision",
       fn() {
         produced := try produce_for("phase8d_dict_set_fresh")
@@ -239,6 +280,192 @@ pub fn suite() runner.Suite {
         rendered := mutable_produce.render_candidate_rows(produced.rows)
         try assert.str_contains(rendered, "dict_set")
         try assert.str_contains(rendered, "ignored")
+        .Ok({})
+      },
+    )
+    .test(
+      "dict loop read helper should preserve loop-carried in-place decision",
+      fn() {
+        produced := try produce_for("phase8d_dict_set_loop_read_helper")
+        try assert.equal(produced.rows.len(), 2)
+        try assert.equal(produced.table.by_site.keys().len(), 2)
+
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        without_helper := rendered_line_for_family(rendered, "processed_without_helper", "dict_set")
+        with_helper := rendered_line_for_family(rendered, "processed_with_read_helper", "dict_set")
+
+        try assert.str_contains(without_helper, "decision produced (loop-carried")
+        try assert.str_contains(without_helper, "base=reuse(unique)")
+
+        try assert.str_contains(with_helper, "decision produced (loop-carried")
+        try assert.str_contains(with_helper, "base=reuse(unique)")
+        .Ok({})
+      },
+    )
+    .test(
+      "dict merge helper returning updated map should preserve in-place decision",
+      fn() {
+        produced := try produce_for("phase8d_dict_merge_helper_return")
+        try assert.equal(produced.rows.len(), 2)
+        try assert.equal(produced.table.by_site.keys().len(), 2)
+
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        helper := rendered_line_for_family(rendered, "merge_like", "dict_set")
+        caller := rendered_line_for_family(rendered, "merge_helper_caller", "dict_set")
+
+        try assert.str_contains(helper, "decision produced")
+        try assert.str_contains(helper, "base=reuse(unique)")
+
+        try assert.str_contains(caller, "decision produced (loop-carried")
+        try assert.str_contains(caller, "base=reuse(unique)")
+        .Ok({})
+      },
+    )
+    .test(
+      "dict merge-targeted helper should preserve in-place decision",
+      fn() {
+        produced := try produce_for("phase8d_dict_merge_targeted_min")
+
+        // Two mutable_produce candidates, both dict$set: merge_targeted_min's copy-carrier
+        // `out[k]=` and the caller's loop-carried `state[i]=`. The `next_locked = .append(k)`
+        // vector append is not a mutable_produce update-call candidate — only Dict.set/remove
+        // and vector$set carry an in-place decision family (decision_family_for_persistent),
+        // so update_call_target returns None for it. (Vector append in-place is handled by the
+        // separate loop-builder pass, not this decision path.)
+        try assert.equal(produced.rows.len(), 2)
+        try assert.equal(produced.table.by_site.keys().len(), 2)
+
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        helper := rendered_line_for_family(rendered, "merge_targeted_min", "dict_set")
+        caller := rendered_line_for_family(rendered, "caller", "dict_set")
+
+        try assert.str_contains(helper, "decision produced")
+        try assert.str_contains(helper, "base=reuse(unique)")
+        try assert.str_contains(helper, "borrow-effect copy-carrier")
+
+        try assert.str_contains(caller, "decision produced (loop-carried")
+        try assert.str_contains(caller, "base=reuse(unique)")
+        .Ok({})
+      },
+    )
+    .test(
+      "dict merge helper with mixed callers keeps generic helper persistent",
+      fn() {
+        produced := try produce_for("phase8d_dict_merge_helper_mixed_callers")
+        try assert.equal(produced.rows.len(), 1)
+        try assert.equal(produced.table.by_site.keys().len(), 0)
+
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        helper := rendered_line_for_family(rendered, "merge_like", "dict_set")
+        try assert.str_contains(helper, "persistent fallback")
+        try assert.str_contains(helper, "base=persistent(aliased shell)")
+        .Ok({})
+      },
+    )
+    .test(
+      "copy-carrier positive selects an in-place dict set with a borrow-effect proof",
+      fn() {
+        produced := try produce_for("phase8d_dict_copy_carrier_positive")
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        helper := rendered_line_for_family(rendered, "merge_like", "dict_set")
+        try assert.str_contains(helper, "decision produced")
+        try assert.str_contains(helper, "copy-carrier")
+        .Ok({})
+      },
+    )
+    .test(
+      "helper-mediated copy-carrier positive selects an in-place dict set",
+      fn() {
+        produced := try produce_for("phase8d_dict_copy_carrier_helper_mediated_positive")
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        helper := rendered_line_for_family(rendered, "merge_helper_mediated", "dict_set")
+        try assert.str_contains(helper, "decision produced")
+        try assert.str_contains(helper, "copy-carrier")
+        .Ok({})
+      },
+    )
+    .test(
+      "copy-carrier get-after-write negative stays persistent with rejection reason",
+      fn() {
+        try assert_rejected_copy_carrier(
+          "phase8d_dict_copy_carrier_get_after_set_negative",
+          "get_after_set_negative",
+          "get-after-write",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "copy-carrier keys-after-write negative stays persistent with rejection reason",
+      fn() {
+        try assert_rejected_copy_carrier(
+          "phase8d_dict_copy_carrier_keys_after_set_negative",
+          "keys_after_set_negative",
+          "keys-after-write",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "copy-carrier cross-local key alias negative stays persistent with rejection reason",
+      fn() {
+        try assert_rejected_copy_carrier(
+          "phase8d_dict_copy_carrier_distinct_locals_negative",
+          "distinct_locals_negative",
+          "get-after-write",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "copy-carrier non-unique key stream negative stays persistent with rejection reason",
+      fn() {
+        try assert_rejected_copy_carrier(
+          "phase8d_dict_copy_carrier_duplicate_helper_arg_negative",
+          "duplicate_helper_arg_negative",
+          "non-unique-key-stream",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "copy-carrier unknown-source-use negative stays persistent with rejection reason",
+      fn() {
+        try assert_rejected_copy_carrier(
+          "phase8d_dict_copy_carrier_unknown_call_negative",
+          "unknown_call_negative",
+          "unknown-source-use",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "copy-carrier source-escape negative stays persistent with rejection reason",
+      fn() {
+        try assert_rejected_copy_carrier(
+          "phase8d_dict_copy_carrier_retains_source_negative",
+          "retains_source_negative",
+          "source-escape",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "dict remove loop read helper should preserve loop-carried in-place decision",
+      fn() {
+        produced := try produce_for("phase8e_dict_remove_loop_read_helper")
+        try assert.equal(produced.rows.len(), 4)
+        try assert.equal(produced.table.by_site.keys().len(), 4)
+
+        rendered := mutable_produce.render_candidate_rows(produced.rows)
+        without_helper := rendered_line_for_family(rendered, "remove_without_helper", "dict_remove")
+        with_helper := rendered_line_for_family(rendered, "remove_with_read_helper", "dict_remove")
+
+        try assert.str_contains(without_helper, "decision produced (loop-carried")
+        try assert.str_contains(without_helper, "base=reuse(unique)")
+
+        try assert.str_contains(with_helper, "decision produced (loop-carried")
+        try assert.str_contains(with_helper, "base=reuse(unique)")
         .Ok({})
       },
     )

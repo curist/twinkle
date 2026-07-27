@@ -1,0 +1,30 @@
+type Out = .{ map: Dict<Int, Int> }
+
+fn merge_like(old: Dict<Int, Int>, next: Dict<Int, Int>) Out {
+  out := next
+  keys := old.keys()
+  for k in keys {
+    before := case next.get(k) {
+      .Some(v) => v,
+      .None => 0,
+    }
+    out[k] = before + 1
+  }
+  Out.{ map: out }
+}
+
+fn caller(n: Int) Dict<Int, Int> {
+  old: Dict<Int, Int> = Dict.new()
+  state: Dict<Int, Int> = Dict.new()
+  i := 0
+  for i < n {
+    old[i] = i
+    state[i] = i
+    out := merge_like(old, state)
+    state = out.map
+    i = i + 1
+  }
+  state
+}
+
+println(caller(3).len().to_string())

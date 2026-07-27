@@ -1,0 +1,15 @@
+fn spine(rec) Int {
+  x := rec
+    // field A
+    .field_a
+    // field B
+    .field_b
+  x
+}
+
+fn single(rec) Int {
+  y := rec
+    // just one field
+    .only_field
+  y
+}

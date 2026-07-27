@@ -145,6 +145,12 @@ pub fn suite() runner.Suite {
     .test("preserves interleaved binary comments", assert_fmt_case("interleaved_comments"))
     .test("groups extern declarations by module", assert_fmt_case("extern_decls"))
     .test("breaks method chains consistently", assert_fmt_case("method_chain"))
+    .test("preserves comments between method-chain links", assert_fmt_case("method_chain_comments"))
+    .test("preserves comments between field-access links", assert_fmt_case("field_access_comments"))
+    .test(
+      "preserves a trailing comment on a method-chain link",
+      assert_fmt_case("method_chain_trailing_comment"),
+    )
     .test("breaks complex inline blocks", assert_fmt_case("inline_blocks"))
     .test("preserves blank lines and auto-blanks before comments", assert_fmt_case("blank_lines"))
     .test(

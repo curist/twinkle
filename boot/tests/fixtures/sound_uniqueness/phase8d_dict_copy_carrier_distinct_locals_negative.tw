@@ -1,0 +1,20 @@
+type Out = .{ map: Dict<Int, Int>, observed: Int }
+
+fn distinct_locals_negative(next: Dict<Int, Int>, a: Int, b: Int) Out {
+  out := next
+  out[a] = 1
+  observed := case next.get(b) {
+    .Some(v) => v,
+    .None => 0,
+  }
+  Out.{ map: out, observed }
+}
+
+fn caller() Int {
+  state: Dict<Int, Int> = Dict.new()
+  state[1] = 10
+  o := distinct_locals_negative(state, 1, 1)
+  o.observed + o.map.len()
+}
+
+println(caller().to_string())

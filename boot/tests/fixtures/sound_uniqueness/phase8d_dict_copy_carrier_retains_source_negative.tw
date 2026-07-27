@@ -1,0 +1,32 @@
+type Held = .{ held: Dict<Int, Int>, value: Int }
+
+fn leaky_lookup(m: Dict<Int, Int>, k: Int, dflt: Int) Held {
+  v := case m.get(k) {
+    .Some(x) => x,
+    .None => dflt,
+  }
+  Held.{ held: m, value: v }
+}
+
+fn retains_source_negative(next: Dict<Int, Int>) Dict<Int, Int> {
+  out := next
+  keys := next.keys()
+  for k in keys {
+    h := leaky_lookup(next, k, 0)
+    out[k] = h.value + 1
+  }
+  out
+}
+
+fn caller(n: Int) Int {
+  state: Dict<Int, Int> = Dict.new()
+  i := 0
+  for i < n {
+    state[i] = i
+    state = retains_source_negative(state)
+    i = i + 1
+  }
+  state.len()
+}
+
+println(caller(3).to_string())

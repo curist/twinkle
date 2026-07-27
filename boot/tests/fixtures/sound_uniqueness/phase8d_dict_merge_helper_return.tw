@@ -1,0 +1,21 @@
+type MergeOut = .{ map: Dict<Int, Int> }
+
+fn merge_like(next: Dict<Int, Int>, k: Int) MergeOut {
+  out := next
+  out[k] = k
+  MergeOut.{ map: out }
+}
+
+fn merge_helper_caller(n: Int) Dict<Int, Int> {
+  state: Dict<Int, Int> = Dict.new()
+  i := 0
+  for i < n {
+    merged := merge_like(state, i)
+    state = merged.map
+    state[i + 100] = i
+    i = i + 1
+  }
+  state
+}
+
+println(merge_helper_caller(3).len().to_string())

@@ -18,6 +18,7 @@ use compiler.codegen.mutable_select
 use compiler.codegen.ownership_verdicts
 use compiler.ir_print
 use compiler.opt.semantics as semantics
+use compiler.ownership
 use compiler.pipeline
 use compiler.summary
 use lib.argparse.app.{ParseResult}
@@ -60,7 +61,9 @@ fn render_cfg_artifacts(artifacts: PipelineArtifacts) String {
   s := semantics.make_prelude_optimizer_semantics(b)
   owned := ownership_verdicts.compute_artifacts(artifacts.opt, b, s)
   variants := summary.compute_variants(owned.view, b, s, owned.table)
-  summary.render_cfg(owned.view, owned.analyzed, b, s, owned.table, variants)
+  resolver := variants.make_variant_resolver_for_render()
+  analyzed := ownership.analyze_with_summaries_resolved(owned.view, b, s, owned.table, resolver)
+  summary.render_cfg(owned.view, analyzed, b, s, owned.table, variants)
 }
 
 /// The certified-candidate keys still present in a (post-rewrite) module — i.e.

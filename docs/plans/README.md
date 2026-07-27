@@ -57,7 +57,7 @@ throughput.
 
 | Plan | Description |
 |------|-------------|
-| [sound-uniqueness/](sound-uniqueness/) | Rebuild boot compiler uniqueness analysis and mutable lowering from scratch, with printable ownership facts before codegen |
+| [sound-uniqueness/](sound-uniqueness/) | Rebuild boot compiler uniqueness analysis and mutable lowering from scratch, with printable ownership facts before codegen. **Single home for all owned-collection in-place work** — the `fixpoint-map-inplace` / aggregate-field / owned-variant cluster was consolidated here 2026-07-27 (findings folded into `storage/README.md` + `analysis/worked-examples.md`; the standalone plans archived). The `run_fixpoint`/`merge_targeted` in-place goal is a storage-track **S4** customer, not a separate plan. |
 | [compiler-stack-safety.md](compiler-stack-safety.md) | Make the compiler's recursive IR tree-walks stack-safe so deeply-nested IR (wide `cond`, long side-effecting statement sequences, deep `if/else`) doesn't overflow the V8 Wasm stack. Wide `case` already fixed (flat instruction vector); runtime stack-size mitigation verified non-viable. Phased: depth-guard stopgap → iterative lowering/opt → anf/prepare/emit → serializers |
 
 ### Archived reference docs

@@ -1880,6 +1880,18 @@ fn test_link_program_keeps_dict_remove_persistent_for_aliased_dict() Result<Void
   .Ok({})
 }
 
+// A live `keys()` loan aliases the dict's order vector by reference, so a
+// destructive in-place remove would tombstone entries the loan still observes.
+// The borrow checker must keep this remove persistent.
+fn test_link_program_keeps_dict_remove_persistent_with_live_keys_loan() Result<Void, String> {
+  wat := try compile_fixture_to_linked_wat(
+    "${sound_uniqueness_fixtures_dir()}/phase8e_dict_remove_keys_borrow_negative.tw",
+  )
+  try assert.is_true(wat_has_call(wat, "rt_dict__remove"))
+  try assert.is_false(wat_has_call(wat, "rt_dict__remove_in_place"))
+  .Ok({})
+}
+
 // Net open-paren count for a WAT line, used to slice a single `(func ...)` block
 // out of the linked module by paren balance (WAT function bodies carry no
 // parens inside identifiers, so a raw count is safe here).
@@ -2056,6 +2068,10 @@ pub fn suite() runner.Suite {
     .test(
       "link_program keeps dict$remove persistent for an aliased dict",
       test_link_program_keeps_dict_remove_persistent_for_aliased_dict,
+    )
+    .test(
+      "link_program keeps dict$remove persistent while a keys() loan is live",
+      test_link_program_keeps_dict_remove_persistent_with_live_keys_loan,
     )
     .test(
       "link_program emits struct.set for an owned record shell update",

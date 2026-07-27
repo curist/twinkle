@@ -1,0 +1,35 @@
+fn union_like(a: Vector<Int>, b: Vector<Int>) Vector<Int> {
+  out := a
+  for k in b {
+    if !out.contains(k) {
+      out = .append(k)
+    }
+  }
+  out
+}
+
+fn duplicate_helper_arg_negative(next: Dict<Int, Int>) Dict<Int, Int> {
+  out := next
+  keys := union_like([1, 1], next.keys())
+  for k in keys {
+    before := case next.get(k) {
+      .Some(v) => v,
+      .None => 0,
+    }
+    out[k] = before + 1
+  }
+  out
+}
+
+fn caller(n: Int) Int {
+  state: Dict<Int, Int> = Dict.new()
+  i := 0
+  for i < n {
+    state[i] = i
+    state = duplicate_helper_arg_negative(state)
+    i = i + 1
+  }
+  state.len()
+}
+
+println(caller(3).to_string())

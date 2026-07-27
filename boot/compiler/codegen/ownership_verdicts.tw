@@ -290,6 +290,221 @@ pub type OwnershipArtifacts = .{
 
 pub type VerdictTable = .{ key: ArtifactKey, by_key: Dict<String, SiteVerdict> }
 
+fn int_has(d: Dict<Int, Bool>, k: Int) Bool {
+  case d.get(k) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn str_has(d: Dict<String, Bool>, k: String) Bool {
+  case d.get(k) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+fn seed_key(func_id: Int, param: Int) String {
+  "${func_id}#${param}"
+}
+
+fn target_params(s: ownership.Summary) Vector<Int> {
+  out: Vector<Int> = []
+  for ps, i in s.params {
+    case ps.base_role {
+      .Consumed => if !ps.in_place_paths.is_empty() {
+        out = .append(i)
+      },
+      _ => {},
+    }
+  }
+  out
+}
+
+// The full set of param indices of `f` to seed Unique: consumed-path targets UNION the
+// proven copy-carrier source indices. The same mixed-caller guard then applies to every
+// index, so a borrow-effect source with a non-uniform caller is rejected exactly like a
+// consumed-path target.
+fn seed_param_indices(
+  f: cfg.CfgFunction,
+  s: ownership.Summary,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: ownership.SummaryTable,
+) Vector<Int> {
+  idxs: Dict<Int, Bool> = Dict.new()
+  for p in target_params(s) {
+    idxs[p] = true
+  }
+  for p in ownership.structural_seed_params_for_borrow_effects(f, b, sem, table) {
+    idxs[p] = true
+  }
+  collect p in idxs.keys() {
+    p
+  }
+}
+
+fn mark_closure_expr(e: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
+  case e {
+    .Let(_, op, body) => mark_closure_expr(body, mark_closure_op(op, out)),
+    _ => out,
+  }
+}
+
+fn mark_closure_op(op: AnfOp, out: Dict<Int, Bool>) Dict<Int, Bool> {
+  case op {
+    .AMakeClosure(fid, _) => {
+      out[fid.id] = true
+      out
+    },
+    .AIf(_, t, e) => mark_closure_expr(e, mark_closure_expr(t, out)),
+    .AMatch(_, arms) => {
+      cur := out
+      for arm in arms {
+        cur = mark_closure_expr(arm.body, cur)
+      }
+      cur
+    },
+    .ALoop(body) => mark_closure_expr(body, out),
+    .ADefer(body) => mark_closure_expr(body, out),
+    _ => out,
+  }
+}
+
+fn unsafe_entry_funcs(opt: AnfModule) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+  for ex in opt.lib_exports {
+    case ex.target {
+      .Function(fid) => out[fid.id] = true,
+      _ => {},
+    }
+  }
+  for f in opt.functions {
+    out = mark_closure_expr(f.body, out)
+  }
+  out
+}
+
+fn op_calls_target(op: AnfOp, targets: Dict<Int, Bool>) Bool {
+  case op {
+    .ACall(callee, _) => case callee {
+      .AGlobalFunc(fid) => int_has(targets, fid.id),
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn function_calls_target(f: cfg.CfgFunction, targets: Dict<Int, Bool>) Bool {
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      if op_calls_target(inst.op, targets) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+fn entry_seed_targets(
+  view: cfg.CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: ownership.SummaryTable,
+  requested: Dict<Int, Bool>,
+) Dict<Int, Bool> {
+  targets: Dict<Int, Bool> = Dict.new()
+  for f in view.functions {
+    if int_has(requested, f.func_id) {
+      case table.summary_get(f.func_id) {
+        .Some(s) => if seed_param_indices(f, s, b, sem, table).len() > 0 {
+          targets[f.func_id] = true
+        },
+        .None => {},
+      }
+    }
+  }
+  targets
+}
+
+fn all_func_targets(view: cfg.CfgView) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+  for f in view.functions {
+    out[f.func_id] = true
+  }
+  out
+}
+
+// Whole-function owned-entry seeding for the current non-cloning codegen path.
+// A callee parameter may be seeded Unique only when every known direct call to
+// that callee passes a proven Unique + last-use argument for that consumed param,
+// and the callee is not exported or turned into a closure. Mixed caller shapes
+// must wait for true FunctionVariant cloning/dispatch; they keep the generic body.
+fn uniform_entry_seeds(
+  opt: AnfModule,
+  view: cfg.CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  table: ownership.SummaryTable,
+  requested: Dict<Int, Bool>,
+) Dict<Int, Dict<Int, Bool>> {
+  targets := entry_seed_targets(view, b, sem, table, requested)
+  unsafe := unsafe_entry_funcs(opt)
+  by_id: Dict<Int, cfg.CfgFunction> = Dict.new()
+  for f in view.functions {
+    by_id[f.func_id] = f
+  }
+  seen: Dict<String, Bool> = Dict.new()
+  failed: Dict<String, Bool> = Dict.new()
+
+  for f in view.functions {
+    if function_calls_target(f, targets) {
+      sites := ownership.call_uniques(f, table, b, sem, Dict.new(), Dict.new())
+      for site in sites {
+        if int_has(targets, site.callee) {
+          s := case table.summary_get(site.callee) {
+            .Some(x) => x,
+            .None => ownership.Summary.{ params: [], ret: .Shared, ret_paths: [] },
+          }
+          case by_id.get(site.callee) {
+            .Some(callee_f) => {
+              for p in seed_param_indices(callee_f, s, b, sem, table) {
+                key := seed_key(site.callee, p)
+                seen[key] = true
+                if p >= site.arg_unique.len() or !site.arg_unique[p] {
+                  failed[key] = true
+                }
+              }
+            },
+            .None => {},
+          }
+        }
+      }
+    }
+  }
+
+  out: Dict<Int, Dict<Int, Bool>> = Dict.new()
+  for f in view.functions {
+    if int_has(targets, f.func_id) and !int_has(unsafe, f.func_id) {
+      s := case table.summary_get(f.func_id) {
+        .Some(x) => x,
+        .None => ownership.Summary.{ params: [], ret: .Shared, ret_paths: [] },
+      }
+      seed: Dict<Int, Bool> = Dict.new()
+      for p in seed_param_indices(f, s, b, sem, table) {
+        key := seed_key(f.func_id, p)
+        if str_has(seen, key) and !str_has(failed, key) and p < f.params.len() {
+          seed[f.params[p].id] = true
+        }
+      }
+      if seed.keys().len() > 0 {
+        out[f.func_id] = seed
+      }
+    }
+  }
+  out
+}
+
 // Run the same structural-view -> prune -> summary -> ownership analysis
 // sequence `twk ir --cfg` uses, carrying the optimized-ANF fingerprint so
 // downstream consumers can reject a mismatched module.
@@ -300,8 +515,9 @@ pub fn compute_artifacts(opt: AnfModule, b: BuiltinRegistry, sem: OptimizerSeman
   view = ownership.prune_dead_merge(view)
   t_view := date.now()
   table := summary.compute(view, b, sem)
+  entry_seeds := uniform_entry_seeds(opt, view, b, sem, table, all_func_targets(view))
   t_summary := date.now()
-  analyzed := ownership.analyze_with_summaries(view, b, sem, table)
+  analyzed := ownership.analyze_with_summaries_and_entry_seeds(view, b, sem, table, entry_seeds)
   t_own := date.now()
   if timed {
     eprintln(
@@ -329,13 +545,15 @@ pub fn compute_candidate_artifacts(
   t_view := date.now()
   summarized := summary.compute_for_roots_cached(view, b, sem, candidate_funcs)
   table := summarized.table
+  entry_seeds := uniform_entry_seeds(opt, view, b, sem, table, candidate_funcs)
   t_summary := date.now()
-  analyzed := ownership.analyze_selected_with_summaries(
+  analyzed := ownership.analyze_selected_with_summaries_and_entry_seeds(
     view,
     b,
     sem,
     table,
     candidate_funcs,
+    entry_seeds,
     summarized.fix_cache,
   )
   t_own := date.now()

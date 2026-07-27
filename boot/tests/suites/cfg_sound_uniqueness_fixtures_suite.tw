@@ -2,6 +2,7 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use commands.common.{format_compile_error}
+use compiler.builtins
 use compiler.cfg
 use compiler.opt.semantics as semantics
 use compiler.ownership
@@ -12,6 +13,11 @@ use lib.module.loader
 fn fixtures_dir() String {
   root := loader.find_project_root("boot")
   "${root}/tests/fixtures/cfg/sound_uniqueness"
+}
+
+fn ksu_fixtures_dir() String {
+  root := loader.find_project_root("boot")
+  "${root}/tests/fixtures/sound_uniqueness"
 }
 
 fn render_entry(name: String) Result<String, String> {
@@ -25,7 +31,8 @@ fn render_entry(name: String) Result<String, String> {
   sem := semantics.make_prelude_optimizer_semantics(b)
   table := summary.compute(view, b, sem)
   variants := summary.compute_variants(view, b, sem, table)
-  analyzed := ownership.analyze_with_summaries(view, b, sem, table)
+  resolver := variants.make_variant_resolver_for_render()
+  analyzed := ownership.analyze_with_summaries_resolved(view, b, sem, table, resolver)
   .Ok(summary.render_cfg(view, analyzed, b, sem, table, variants))
 }
 
@@ -34,6 +41,40 @@ fn assert_has_all(out: String, parts: Vector<String>) Result<Void, String> {
     try assert.str_contains(out, p)
   }
   .Ok({})
+}
+
+fn cfg_func_id_by_name(view: cfg.CfgView, name: String) Result<cfg.CfgFunction, String> {
+  for f in view.functions {
+    if f.name == name {
+      return .Ok(f)
+    }
+  }
+  .Err("missing function ${name}")
+}
+
+fn assert_o0_o2_accept(view: cfg.CfgView, b: builtins.BuiltinRegistry, name: String) Result<
+  Void,
+  String,
+> {
+  f := try cfg_func_id_by_name(view, name)
+  case ownership.sort_insert_o0_o2_evidence(f, f.params[0].id, b) {
+    .Some(c) => case c.kind {
+      .SortInsertPrimitive => .Ok({}),
+      .Combinator => .Err("${name}: expected primitive O0-O2 evidence, got combinator"),
+    },
+    .None => .Err("${name}: expected primitive O0-O2 evidence"),
+  }
+}
+
+fn assert_o0_o2_reject(view: cfg.CfgView, b: builtins.BuiltinRegistry, name: String) Result<
+  Void,
+  String,
+> {
+  f := try cfg_func_id_by_name(view, name)
+  case ownership.sort_insert_o0_o2_evidence(f, f.params[0].id, b) {
+    .Some(_) => .Err("${name}: unexpectedly passed primitive O0-O2 evidence"),
+    .None => .Ok({}),
+  }
 }
 
 fn section_between(out: String, start_marker: String, end_marker: String) Result<String, String> {
@@ -51,6 +92,20 @@ fn section_from(out: String, start_marker: String) Result<String, String> {
   .Ok(out.substring(start, out.len()))
 }
 
+// Bounded slice of one function's section: from "fn <name> [" up to the next
+// "\nfn " (or EOF). Unlike section_from, it does not run past the function.
+fn function_section(out: String, name: String) Result<String, String> {
+  start_marker := "fn ${name} ["
+  start := try out.index_of(start_marker).ok_or("missing function ${name}")
+  tail := out.substring(start, out.len())
+  rest := tail.substring(1, tail.len())
+  next := case rest.index_of("\nfn ") {
+    .Some(i) => i + 1,
+    .None => tail.len(),
+  }
+  .Ok(tail.substring(0, next))
+}
+
 fn variant_section(out: String, func_name: String, key: String) Result<String, String> {
   start_marker := "variant fn ${func_name} [${key}]"
   start := try out.index_of(start_marker).ok_or("missing variant section ${start_marker}")
@@ -66,6 +121,39 @@ fn variant_section(out: String, func_name: String, key: String) Result<String, S
 pub fn suite() runner.Suite {
   runner
     .suite("cfg sound uniqueness fixture coverage")
+    .test(
+      "key-stream primitive O0-O2 accepts insert_sorted and rejects structural negatives",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${ksu_fixtures_dir()}/phase8h_ksu_battery.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        view := ownership.thread_const_branches(cfg.build_view(artifacts.opt, b))
+        try assert_o0_o2_accept(view, b, "insert_sorted")
+        negatives: Vector<String> = [
+          "bad2",
+          "nested_loop_append",
+          "fixed_index_eq_guard",
+          "second_in_loop_exit",
+          "break_skips_eq_live_flag",
+          "evil_skip_eq",
+          "continue_before_eq",
+          "stale_acc_source",
+          "rebound_vparam",
+          "rebound_proof_local",
+          "wrong_return",
+          "extra_acc_mutation",
+          "unchanged_counter_backedge",
+        ]
+        for name in negatives {
+          try assert_o0_o2_reject(view, b, name)
+        }
+        .Ok({})
+      },
+    )
     .test(
       "multi-module env callers render owned and generic decisions",
       fn() {
@@ -332,6 +420,101 @@ pub fn suite() runner.Suite {
         try assert.str_contains(ping, "reuse(unique)")
         pong := try variant_section(out, "pong", "unique:p0")
         try assert.str_contains(pong, "reuse(unique)")
+        .Ok({})
+      },
+    )
+    .test(
+      "delegating call chain composes owned threading end to end",
+      fn() {
+        out := try render_entry("red_delegate_chain")
+
+        // The leaf consumer is correctly summarized as Consumed.
+        try assert.str_contains(out, "p0=Consumed paths{[],[.f0]}")
+
+        // Every delegating hop now earns an owned [unique:p0] variant that selects
+        // the downstream owned variant, and the leaf reuses its shell in place.
+        try assert.str_contains(out, "variant fn resolve_one [unique:p0]")
+        try assert.str_contains(out, "variant fn resolve_decls [unique:p0]")
+        try assert.str_contains(out, "variant fn resolve [unique:p0]")
+        try assert.str_contains(out, "verdict -> f")
+        try assert.str_contains(out, "reuse(unique)")
+        .Ok({})
+      },
+    )
+    .test(
+      "transport-wrapper chain composes owned threading through returned ctx",
+      fn() {
+        out := try render_entry("red_transport_wrapper_chain")
+        try assert.str_contains(out, "ret_paths=.f0=from(p0)")
+
+        // check earns an owned variant: p0 recovered to Consumed, and it selects
+        // synth's owned behavior across the two hops. NOTE: `reuse(unique)` is NOT
+        // a signal here — check does no record_update (it recovers ctx via
+        // projection); the leaf synth's generic summary is already Consumed and it
+        // earns no variant (its return is a fresh wrapper, not ret_derived). The
+        // success signals are the recovered role + the build-boundary selection.
+        variant := try variant_section(out, "check", "unique:p0")
+        try assert.str_contains(variant, "p0=Consumed")
+        try assert.str_contains(variant, "verdict -> f")
+
+        // build selects check's owned [unique:p0] variant across the boundary.
+        build_sec := try section_between(out, "fn build [", "fn $init")
+        try assert.str_contains(build_sec, "verdict -> f")
+        try assert.str_contains(build_sec, "[unique:p0")
+        .Ok({})
+      },
+    )
+    .test(
+      "single-hop transport wrapper composes owned threading",
+      fn() {
+        out := try render_entry("transport_wrapper_single")
+        variant := try variant_section(out, "thread", "unique:p0")
+        try assert.str_contains(variant, "p0=Consumed")
+        try assert.str_contains(variant, "verdict -> f")
+        build_sec := try section_between(out, "fn build [", "fn $init")
+        try assert.str_contains(build_sec, "verdict -> f")
+        try assert.str_contains(build_sec, "[unique:p0")
+        .Ok({})
+      },
+    )
+    .test(
+      "mixed local update plus delegation composes across build boundary",
+      fn() {
+        out := try render_entry("red_mixed_delegate_update")
+
+        // Downstream composition: outer's owned variant selects inner's owned
+        // variant and reuses its own shell.
+        outer := try variant_section(out, "outer", "unique:p0")
+        try assert.str_contains(outer, "reuse(unique)")
+        try assert.str_contains(outer, "verdict -> f")
+
+        // Composition now reaches across build's boundary: the loop-carried unique
+        // env lets build's call select outer's owned variant.
+        build_sec := try section_between(out, "fn build [", "fn $init")
+        try assert.str_contains(build_sec, "verdict -> f")
+        .Ok({})
+      },
+    )
+    .test(
+      "NEG: delegated update then original read stays persistent",
+      fn() {
+        out := try render_entry("red_delegate_read_after")
+        tap := try section_from(out, "fn tap ")
+        try assert.is_false(tap.contains("verdict ->"))
+        try assert.is_false(out.contains("variant fn tap"))
+        try assert.is_false(tap.contains("reuse(unique)"))
+        .Ok({})
+      },
+    )
+    .test(
+      "NEG: transport wrapper then original read stays persistent",
+      fn() {
+        out := try render_entry("red_transport_read_after")
+        check := try function_section(out, "check")
+        try assert.str_contains(out, "ret_paths=.f0=from(p0)")
+        try assert.is_false(check.contains("verdict ->"))
+        try assert.is_false(out.contains("variant fn check"))
+        try assert.is_false(check.contains("reuse(unique)"))
         .Ok({})
       },
     )

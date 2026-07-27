@@ -1,0 +1,32 @@
+// RED fixture (transitively-published boundary, transport-wrapper form).
+// Models the checker idiom: synth returns Out{ ctx, ty }, the caller projects
+// `ctx = out.ctx` (a fresh-field move) and threads it onward. The projection
+// move is recognized at the fact level (transport=move([.f0] from(fresh))), and
+// synth carries a correct ret_paths=.f0=from(p0) summary, yet the enclosing
+// `check` still summarizes p0=Borrowed ret=shared, so `build`'s ctx never
+// threads as owned. DESIRED: ctx threads owned across the wrapper hops.
+type Ctx = .{ syms: Dict<String, Int>, count: Int }
+
+type Out = .{ ctx: Ctx, ty: Int }
+
+fn synth(ctx: Ctx, name: String) Out {
+  ctx.syms = .set(name, ctx.count)
+  ctx.count = ctx.count + 1
+  Out.{ ctx, ty: ctx.count }
+}
+
+fn check(ctx: Ctx, a: String, b: String) Ctx {
+  o1 := synth(ctx, a)
+  ctx = o1.ctx
+  o2 := synth(ctx, b)
+  ctx = o2.ctx
+  ctx
+}
+
+fn build() Ctx {
+  ctx := Ctx.{ syms: Dict.new(), count: 0 }
+  ctx = check(ctx, "x", "y")
+  ctx
+}
+
+println(build().count.to_string())

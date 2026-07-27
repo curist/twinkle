@@ -1,0 +1,26 @@
+fn observe(m: Dict<Int, Int>) Int {
+  m.len()
+}
+
+fn unknown_call_negative(next: Dict<Int, Int>) Dict<Int, Int> {
+  out := next
+  seen := observe(next)
+  keys := next.keys()
+  for k in keys {
+    out[k] = k + seen
+  }
+  out
+}
+
+fn caller(n: Int) Int {
+  state: Dict<Int, Int> = Dict.new()
+  i := 0
+  for i < n {
+    state[i] = i
+    state = unknown_call_negative(state)
+    i = i + 1
+  }
+  state.len()
+}
+
+println(caller(3).to_string())
