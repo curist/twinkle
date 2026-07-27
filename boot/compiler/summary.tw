@@ -571,7 +571,15 @@ fn atom_local_id(a: Atom) Int? {
   }
 }
 
-type InplaceScan = .{ derived: Dict<Int, Bool>, found: Bool, changed: Bool }
+// Tracks which locals carry a param-derived value (whole-value `derived`) and,
+// for transport-wrapper returns, which return FIELDS of a call result carry the
+// param-derived value (`derived_fields`: result local -> set of field ids).
+type InplaceScan = .{
+  derived: Dict<Int, Bool>,
+  derived_fields: Dict<Int, Dict<Int, Bool>>,
+  found: Bool,
+  changed: Bool,
+}
 
 fn derived_has(derived: Dict<Int, Bool>, id: Int) Bool {
   case derived.get(id) {
@@ -593,6 +601,48 @@ fn mark_derived(st: InplaceScan, id: Int) InplaceScan {
     st.changed = true
   }
   st
+}
+
+fn mark_derived_field(st: InplaceScan, id: Int, field: Int) InplaceScan {
+  inner := case st.derived_fields.get(id) {
+    .Some(m) => m,
+    .None => Dict.new(),
+  }
+  if !derived_has(inner, field) {
+    inner[field] = true
+    st.derived_fields[id] = inner
+    st.changed = true
+  }
+  st
+}
+
+fn atom_has_derived_field(st: InplaceScan, a: Atom, field: Int) Bool {
+  case atom_local_id(a) {
+    .Some(id) => case st.derived_fields.get(id) {
+      .Some(m) => derived_has(m, field),
+      .None => false,
+    },
+    .None => false,
+  }
+}
+
+// Carry any return-field facts of `a` onto `to_id` when a wrapper temporary is
+// rebound before it is projected, so simple `t2 := t1` chains stay stable.
+fn copy_derived_fields(st: InplaceScan, a: Atom, to_id: Int) InplaceScan {
+  case atom_local_id(a) {
+    .Some(from_id) => case st.derived_fields.get(from_id) {
+      .Some(m) => {
+        for field, v in m {
+          if v {
+            st = .mark_derived_field(to_id, field)
+          }
+        }
+        st
+      },
+      .None => st,
+    },
+    .None => st,
+  }
 }
 
 fn block_param_ids(f: CfgFunction, target_id: Int) Vector<Int> {
@@ -634,13 +684,53 @@ fn propagate_terminator(f: CfgFunction, term: Terminator, st: InplaceScan) Inpla
   }
 }
 
+// Transport-wrapper marking: a callee return path `ret_paths=.fN=from(pK)` says a
+// fresh wrapper result carries the derived param pK in field N. Mark that field on
+// the call result so a later `record_get result.fN` can thread it. Does NOT set
+// `found` alone: the opportunity only matters once the field is actually projected.
+fn mark_ret_path_field(
+  st: InplaceScan,
+  rp: ReturnPathOwn,
+  args: Vector<Atom>,
+  dst: Int,
+  callee_params: Vector<ParamSummary>,
+) InplaceScan {
+  case rp.via {
+    .Direct => case rp.field {
+      .Some(fid) => case rp.own {
+        .OwnedFromParam(k) => if k >= 0
+          and k < args.len() and k < callee_params.len() and atom_is_derived(st.derived, args[k])
+          and param_is_consumed(callee_params[k]) {
+          st.mark_derived_field(dst, fid)
+        } else {
+          st
+        },
+        _ => st,
+      },
+      .None => st,
+    },
+    _ => st,
+  }
+}
+
+fn param_is_consumed(ps: ParamSummary) Bool {
+  case ps.base_role {
+    .Consumed => true,
+    _ => false,
+  }
+}
+
 fn scan_inplace_op(op: AnfOp, dst: Int, st: InplaceScan, generic: SummaryTable) InplaceScan {
   case op {
-    .AAssign(target, a) => if atom_is_derived(st.derived, a) {
-      st = .mark_derived(target.id)
-      st.mark_derived(dst)
-    } else {
-      st
+    .AAssign(target, a) => {
+      st = if atom_is_derived(st.derived, a) {
+        st = .mark_derived(target.id)
+        st.mark_derived(dst)
+      } else {
+        st
+      }
+      st = .copy_derived_fields(a, target.id)
+      st.copy_derived_fields(a, dst)
     },
     .ARecordUpdate(base, _, _, _, _) => if atom_is_derived(st.derived, base) {
       st.found = true
@@ -648,51 +738,75 @@ fn scan_inplace_op(op: AnfOp, dst: Int, st: InplaceScan, generic: SummaryTable) 
     } else {
       st
     },
-    // Delegated consume: the callee returns exactly the derived argument as its
-    // sole alias (ret=alias(pK)), so threading the derived value through this call
-    // is itself an in-place update site once the callee's owned variant is selected.
-    // Use summary_get (never table_get): a global without a user summary is ignored.
+    // A param-derived owned value arrived through a wrapper field (marked below by
+    // ret_paths) and is now projected as a local value, so this function threads it.
+    .ARecordGet(base, field, _) => if st.atom_has_derived_field(base, field.id) {
+      st.found = true
+      st.mark_derived(dst)
+    } else {
+      st
+    },
     .ACall(callee, args) => case callee {
       .AGlobalFunc(fid) => case summary_get(generic, fid.id) {
         .Some(cs) => {
+          // Delegated consume: the callee returns exactly the derived argument as
+          // its sole alias (ret=alias(pK)), so threading the derived value through
+          // this call is itself an in-place update site once the callee's owned
+          // variant is selected. summary_get (never table_get): a global without a
+          // user summary is ignored.
           hit := false
           for a, j in args {
             if atom_is_derived(st.derived, a) and ret_aliases_exactly_param(cs.ret, j) {
               hit = true
             }
           }
-          if hit {
+          st = if hit {
             st.found = true
             st.mark_derived(dst)
           } else {
             st
           }
+
+          // Transport wrapper: mark a return field only when the callee CONSUMES the
+          // ret-path source param (so the linkage is a consuming recovery, not a bare
+          // field projection).
+          for rp in cs.ret_paths {
+            st = .mark_ret_path_field(rp, args, dst, cs.params)
+          }
+          st
         },
         .None => st,
       },
       _ => st,
     },
-    .AInit(a) => if atom_is_derived(st.derived, a) {
-      st.mark_derived(dst)
-    } else {
-      st
+    .AInit(a) => {
+      st = if atom_is_derived(st.derived, a) {
+        st.mark_derived(dst)
+      } else {
+        st
+      }
+      st.copy_derived_fields(a, dst)
     },
     _ => st,
   }
 }
 
-// Does param k have a syntactic in-place update site? This deliberately avoids
-// ownership-gated dirty-path collection: recursive publishing can hide exactly
-// the update sites this candidate pre-filter is meant to bootstrap.
-fn param_has_inplace_site(f: CfgFunction, k: Int, generic: SummaryTable) Bool {
+type ThreadScan = .{ found: Bool, ret_derived: Bool }
+
+// Scan param k's derived-value flow to a fixed point: does it reach an in-place
+// update opportunity (`found` -- local update, delegated consume, or a projected
+// wrapper field), and does the function RETURN a value derived from k
+// (`ret_derived`)? Deliberately avoids ownership-gated dirty-path collection:
+// recursive publishing can hide exactly the sites this pre-filter bootstraps.
+fn scan_param_threading(f: CfgFunction, k: Int, generic: SummaryTable) ThreadScan {
   if k < 0 or k >= f.params.len() {
-    return false
+    return ThreadScan.{ found: false, ret_derived: false }
   }
-  st := InplaceScan.{ derived: Dict.new(), found: false, changed: true }
+  st := InplaceScan.{ derived: Dict.new(), derived_fields: Dict.new(), found: false, changed: true }
   st.derived[f.params[k].id] = true
   rounds := 0
   cap := f.blocks.len() * 16 + 128
-  for st.changed and !st.found and rounds < cap {
+  for st.changed and rounds < cap {
     st.changed = false
     for blk in f.blocks {
       for inst in blk.instructions {
@@ -705,10 +819,21 @@ fn param_has_inplace_site(f: CfgFunction, k: Int, generic: SummaryTable) Bool {
     }
     rounds = rounds + 1
   }
-  st.found
+  ret_derived := false
+  for blk in f.blocks {
+    case blk.terminator {
+      .Some(.Return(.Some(a))) => if atom_is_derived(st.derived, a) {
+        ret_derived = true
+      },
+      _ => {},
+    }
+  }
+  ThreadScan.{ found: st.found, ret_derived }
 }
 
-// A param the generic summary returns as the SOLE alias AND updates in place is a
+// A param that both threads to the return (either the generic summary aliases it,
+// or the derived-flow scan reaches a return atom -- the transport-wrapper case
+// where the generic ret is `shared`) AND has an in-place update opportunity is a
 // candidate owned variant {(k, [])}. The seed is a hypothesis; run_scc_variants
 // proves or retracts it. Determinism: functions ascending, params by index.
 fn candidate_variants(view: CfgView, generic: SummaryTable) Vector<vid.VariantId> {
@@ -716,7 +841,9 @@ fn candidate_variants(view: CfgView, generic: SummaryTable) Vector<vid.VariantId
   for f in view.functions {
     s := table_get(generic, f.func_id)
     for _ps, k in s.params {
-      if ret_aliases_exactly_param(s.ret, k) and param_has_inplace_site(f, k, generic) {
+      scan := scan_param_threading(f, k, generic)
+      threads_to_return := ret_aliases_exactly_param(s.ret, k) or scan.ret_derived
+      if scan.found and threads_to_return {
         v := vid.VariantId.{
           func: f.func_id,
           unique: [vid.UniqueReq.{ param: k, path: vid.shell() }],
