@@ -41,9 +41,33 @@
 > **Decision:** (a) retire the `merge_targeted__`/`run_fixpoint` boot-suite marker as an **accepted
 > persistent boundary** (with this root cause), not a tracked-red target; (b) keep the general
 > in-place-precision goal scoped to functions where the precondition *can* hold (unique-caller
-> builder/transform code); (c) only if a profile shows these merges are actually hot, open a
-> *separate representation-change* plan — not an analysis plan. A merge-cost measurement is being
-> taken to decide (c). The historical exploration below is retained as the record.
+> builder/transform code); (c) the merges **are** material (measured below), so a *separate
+> representation-change* investigation is justified — but it is NOT an analysis plan and NOT the
+> in-place-via-precision route this doc pursued. The historical exploration below is retained as the
+> record.
+>
+> ## Merge-cost measurement (2026-07-27) — the cost is real, but the in-place route can't capture it
+>
+> Instrumented `run_fixpoint` (timer around the whole per-block merge region: the 3 `merge_targeted`
+> calls for `own`/`valid`/`prov` **plus** the `field_own`/`path_prov` meets), `TWINKLE_TIMINGS=1`
+> full self-host build of `boot/main.tw`:
+>
+> - **~37% of total `run_fixpoint` time is the merge region** (aggregated over 11,240 fixpoint
+>   invocations — `run_fixpoint` runs in the summary pass, the analyze pass, *and* `call_uniques`).
+>   `run_fixpoint` is one of the largest analysis costs (same order as the entire frontend), so this
+>   is **not a ghost** — the earlier "prior levers were perf-neutral" caution is about *in-place*
+>   levers specifically, which is a different thing.
+> - **But that 37% is an upper bound on the wrong target twice over:** (1) it includes the
+>   `field_own`/`path_prov` meets, which are not `merge_targeted` and not this doc's target; (2) even
+>   the `merge_targeted` slice is mostly *per-key work* (`int_keys_union` + `lat_get` + `join` per
+>   key), which in-place does **not** remove — in-place would only save the persistent-dict allocation
+>   portion. So the achievable in-place win is a fraction of a fraction of 37%, and it is unsound
+>   anyway (see above).
+> - **Implication:** the lever that could actually cash in this 37% is *avoiding the whole-map merge*,
+>   i.e. a representation change (sparse per-variable dataflow, or delta/edge-threaded exits), not
+>   making a whole-map merge mutate in place. That is the only thing worth opening a future plan for,
+>   and it should be gated on a finer profile that splits `merge_targeted` from the field/path meets
+>   and separates allocation cost from per-key work.
 
 **Status:** _(SUPERSEDED by the CONCLUSION above — this and everything below is the historical
 record of the exploration, including the now-disproved claim that the primary lever "unblocks
