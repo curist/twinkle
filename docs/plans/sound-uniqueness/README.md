@@ -125,10 +125,11 @@ This track starts after the completed Phase 6 (1E) specialization decisions; its
 input facts are now trustworthy. It is intentionally split more finely than a single
 codegen milestone: operation catalogs and backend handoff/dry-run decisions (Phase 7)
 are in place, and the emitted slices for local (Phase 8A) and loop-carried, single
-and nested (Phase 8B) vector indexed updates, plus owned `Dict.set` (Phase 8D) and
-`Dict.remove` (Phase 8E), are complete. Current work moves to builder regions
-(Phase 8C); later Phase 8 slices broaden to records (8F), ownership-specialized
-function variants (8G), and record-backed field collections (8H).
+and nested (Phase 8B) vector indexed updates, owned `Dict.set` (Phase 8D) and
+`Dict.remove` (Phase 8E), the builder-region first slice (Phase 8C Plans 1–2), and
+local record shell update emission (Phase 8F) are complete. Current work is
+ownership-specialized function variants (Phase 8G) and record-backed field
+collections (Phase 8H), with the 8C follow-up slices (Plans 3–5) still open.
 
 ### 3. Storage representation track
 
