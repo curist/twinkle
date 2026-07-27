@@ -39,10 +39,10 @@ Phase 7E dry-run slice is also done: `twk ir --census --sites` renders update-si
 persistent→mutable targets, ownership verdicts, and `would_use` state for
 vector/dict/record candidates while emitted code remains persistent.
 
-**Current implementation focus: Codegen Phase 8C first slice is complete (builder
-regions — a distinct region-shaped lowering); next are the 8C follow-ups (non-empty
-seeds / typed routing / conditional folds, Plans 3–5), then records (8F), function
-variants (8G), and record-backed field collections (8H).** Phase 8C Plans 1–2 have
+**Current implementation focus: function variants (8G) and record-backed field
+collections (8H).** Records (Phase 8F, local record shell update emission) is done,
+alongside the builder-region first slice (8C Plans 1–2); the remaining 8C follow-ups
+(non-empty seeds / typed routing / conditional folds, Plans 3–5) are still open. Phase 8C Plans 1–2 have
 landed: string and vector empty-seed accumulator loops (`acc = ""` / `acc = []`) now
 lower end-to-end to builder regions (`builder_from`/`builder_new` → `builder_extend`/
 `builder_push` → `builder_freeze`) via an ANF-to-ANF rewrite run at the top of

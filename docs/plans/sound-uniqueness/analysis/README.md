@@ -1,10 +1,11 @@
 # Internal Borrow/Effect Framework
 
-**Status:** Framework landing page. The completed Phases 0-6 ownership/provenance
-work is preserved as the historical phase log in
-[phases-0-6-history.md](phases-0-6-history.md). The active next layer is the
-loan/effect checker in
-[../../archive/2026-07-24-ownership-borrow-effect-checker-plan.md](../../archive/2026-07-24-ownership-borrow-effect-checker-plan.md).
+**Status:** Framework landing page — analysis work is complete; active work is now on the
+codegen and storage tracks (see the [top-level README](../README.md)). The completed Phases 0-6
+ownership/provenance work is preserved as the historical phase log in
+[phases-0-6-history.md](phases-0-6-history.md). The loan/effect checker that layered on top of it
+has also **landed** (the copy-carrier borrow/effect engine + key-stream dedupe checker); its plans
+are archived (see the references below).
 
 ## Purpose
 
@@ -69,13 +70,16 @@ That makes borrow/effect checking the framework layer that coordinates the earli
 ownership, liveness, path, and summary proofs with operation-specific read/write
 compatibility.
 
-## Current active plans
+## Historical / reference plans (landed, archived)
+
+These built the loan/effect layer on top of Phases 0-6. Both landed and are archived; kept here
+as the design record. No active analysis work remains — see the codegen/storage tracks.
 
 - [Internal borrow/effect framework implementation](../../archive/2026-07-24-ownership-borrow-effect-checker-plan.md)
-  — builds the first loan/effect conflict engine and integrates accepted proofs
+  — built the first loan/effect conflict engine and integrated accepted proofs
   into ownership transfer.
 - [Merge-targeted owned dict acceptance slice](../../archive/2026-07-24-merge-targeted-owned-dict-plan.md)
-  — verifies the motivating copy-carrier pattern without rewriting boot compiler
+  — verified the motivating copy-carrier pattern without rewriting boot compiler
   source.
 
 ## Historical phase log
