@@ -104,7 +104,7 @@ and unsound variants are still retracted by `variant_valid` re-analysis.
 
 ## Resolved (2026-07-27)
 
-Shipped via `docs/plans/transport-wrapper-role-recovery-plan.md`. Mechanism:
+Shipped via `docs/plans/archive/transport-wrapper-role-recovery-plan.md`. Mechanism:
 
 - **Candidacy consumption gate** — `mark_ret_path_field` gates on
   `cs.params[k].base_role == .Consumed`, so the ret-path linkage is a consuming
@@ -123,7 +123,7 @@ from the design surface above were **not** needed — the `cap` route sufficed.
 indistinguishable from a mutating one once the param is moved into a fresh wrapper
 (both summarize `p0=Consumed paths{[]}`), so a pure-transport recovered param now also
 classifies `Consumed`. Sound (arg_unique-gated); the `phase6 stage3` test was updated
-accordingly. Full record: `../../transport-wrapper-phase6-conflict-brief.md`.
+accordingly. Full record: `../../archive/transport-wrapper-phase6-conflict-brief.md`.
 
 Validation: boot census `dict_set` in-place 396→397 (no regress), self-host fixed
 point holds (stage3 == stage4), `make test` green.

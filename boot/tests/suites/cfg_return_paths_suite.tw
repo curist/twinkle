@@ -677,7 +677,7 @@ pub fn suite() runner.Suite {
         // both summarize p0=Consumed paths{[]}). The classification is sound: owned variants
         // are only selected behind the arg_unique/last-use gate (see the read-after and
         // gate-fail tests above, which remain the meaningful safety locks). See
-        // docs/plans/transport-wrapper-phase6-conflict-brief.md.
+        // docs/plans/archive/transport-wrapper-phase6-conflict-brief.md.
         try assert.is_true(is_consumed(owned, 0))
         try assert.is_true(owned.params[0].flows_to_return) // ctx's region reaches the return
         .Ok({})

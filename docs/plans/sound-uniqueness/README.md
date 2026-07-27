@@ -156,7 +156,7 @@ evaluates Buffer cleanup.
 
 | Doc | Purpose |
 |---|---|
-| [transitive-consume-plan.md](../transitive-consume-plan.md) | Analysis-precision fix: let owned threading compose through delegating (forwarder / transport-wrapper) call hops instead of collapsing to persistent at the first delegation — the delegation half of the transitively-published boundary. Red fixtures: `red_delegate_chain`, `red_transport_wrapper_chain`, `red_mixed_delegate_update`. |
+| [transitive-consume-plan.md](../archive/transitive-consume-plan.md) | Analysis-precision fix: let owned threading compose through delegating (forwarder / transport-wrapper) call hops instead of collapsing to persistent at the first delegation — the delegation half of the transitively-published boundary. Red fixtures: `red_delegate_chain`, `red_transport_wrapper_chain`, `red_mixed_delegate_update`. |
 | [architecture.md](architecture.md) | Umbrella architecture, phases, mutable intrinsics, specialization, testing policy. |
 | [analysis/design-rationale.md](analysis/design-rationale.md) | Why static + annotation-free + no-runtime-RC: the Wasm-GC-vs-refcount reason we can't copy Koka/Roc/Lean, the annotation-free/zero-overhead/coverage tradeoff triangle, and what immutable value semantics buys. |
 | [analysis/worked-examples.md](analysis/worked-examples.md) | Real boot ANF dumps, op→ownership-event table, and census baseline. |
