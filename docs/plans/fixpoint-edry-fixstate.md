@@ -71,6 +71,54 @@ TWINKLE_FIXVERIFY=1 target/twk build boot/main.tw -o /tmp/fv.wasm 2>&1 | tail -1
 
 ---
 
+## ⛔ SPIKE RESULT (2026-07-27): H1b FAILED — the maps are structurally non-unique. STOP.
+
+Task 1 (H1b) was run inline: body rewrite + reorder the merge region so `next_own := st.own` is
+`st`'s **last** use (verified: no bare `st` past `ownership.tw:6144`, so `st` is dead after), with
+all merges reading the pre-extracted locals instead of `st.*`. Self-host reached `stage3 == stage4`.
+Result:
+
+- **Body rewrite works** (again): `merge_targeted__Int` summary is `p1=Consumed paths{[]}`, a proper
+  carrier.
+- **The flip did NOT happen.** All three monomorphs stayed `... false ... persistent(aliased shell)`.
+  Making `next_own` the last-read move out of `st` did **not** make it Unique.
+
+**Root cause — deeper than record bundling; it is the dataflow itself.** `st.own` does not originate
+as a fresh value: at `ownership.tw:6050` each block's entry map is
+`entry_own := join_entry_ownership_assumed(blk, exits, ...)`, and `join_entry_ownership`
+(single-predecessor case) passes the predecessor's exit map **through from the shared `exits`
+accumulator** (no copy). So `st.own` is provenance-linked to `exits`, and `exits` is the fixpoint's
+**persistent state** — it MUST stay live (it is read as `old_own := nested_get(exits, ...)` and
+written as `exits[blk] = next_own` every iteration). A value aliased to live state is never Unique,
+so `uniform_entry_seeds` correctly never seeds `merge_targeted`'s `p1`.
+
+**Consequence — this STOPs the whole "flip merge_targeted" line, not just H1b:**
+- **H2 (structural, thread maps as top-level owned locals) does not help either.** The aliasing is
+  between the per-block map and the `exits` accumulator, not between a field and its record. Threading
+  `own`/`valid`/`prov` as loop locals still leaves each block's entry joined from `exits`. To make a
+  map Unique you would have to stop entry maps from sharing backing with `exits` — i.e. deep-copy the
+  entry map every block visit — which trades the persistent-rebuild cost we are trying to remove for
+  a full-copy cost, defeating the purpose.
+- This is almost certainly **why `fixpoint-map-inplace` has been a standing "documented boundary."**
+  The ownership fixpoint's maps are shared dataflow state by construction; in-place mutation of them
+  is unsound precisely because block exits alias each other across the DAG.
+
+**Disposition — STOP; do not implement Tasks 2–5 of this plan as a merge_targeted-flip.**
+- The **`merge_targeted` body rewrite (Task 2) is still worth landing on its own** — it is
+  behavior-preserving, self-host-safe, and turns the summary into a clean `p1=Consumed` carrier, which
+  is the correct shape for the day a Unique caller ever exists. It flips nothing today.
+- The remaining questions are for a human decision, not another spike:
+  1. Is flipping `merge_targeted`/`run_fixpoint` in-place *achievable at all* without deep-copying
+     entry maps (which likely regresses the hot path)? Evidence says no under the current shared-exits
+     dataflow.
+  2. If not, retire the `merge_targeted__`/`run_fixpoint` marker as an **accepted persistent boundary**
+     (with this root cause recorded) rather than a tracked-red target, and redirect the general
+     in-place-precision goal to carriers that are NOT shared dataflow state (the aggregate-carrier
+     lever still applies to ordinary builder/transform functions with unique callers).
+
+Tasks 2–5 below are retained only as the record of the intended approach; Task 2 (body rewrite) may be
+cherry-picked. All spike code reverted; repo clean at the plan commit.
+
 ## File structure
 
 - `boot/compiler/ownership.tw` — (1) `merge_targeted` body rewrite (`:5180`); (2) merge-region
