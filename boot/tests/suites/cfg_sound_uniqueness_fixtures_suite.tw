@@ -92,6 +92,20 @@ fn section_from(out: String, start_marker: String) Result<String, String> {
   .Ok(out.substring(start, out.len()))
 }
 
+// Bounded slice of one function's section: from "fn <name> [" up to the next
+// "\nfn " (or EOF). Unlike section_from, it does not run past the function.
+fn function_section(out: String, name: String) Result<String, String> {
+  start_marker := "fn ${name} ["
+  start := try out.index_of(start_marker).ok_or("missing function ${name}")
+  tail := out.substring(start, out.len())
+  rest := tail.substring(1, tail.len())
+  next := case rest.index_of("\nfn ") {
+    .Some(i) => i + 1,
+    .None => tail.len(),
+  }
+  .Ok(tail.substring(0, next))
+}
+
 fn variant_section(out: String, func_name: String, key: String) Result<String, String> {
   start_marker := "variant fn ${func_name} [${key}]"
   start := try out.index_of(start_marker).ok_or("missing variant section ${start_marker}")
@@ -476,7 +490,7 @@ pub fn suite() runner.Suite {
       "NEG: transport wrapper then original read stays persistent",
       fn() {
         out := try render_entry("red_transport_read_after")
-        check := try section_from(out, "fn check ")
+        check := try function_section(out, "check")
         try assert.str_contains(out, "ret_paths=.f0=from(p0)")
         try assert.is_false(check.contains("verdict ->"))
         try assert.is_false(out.contains("variant fn check"))
