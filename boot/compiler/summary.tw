@@ -20,8 +20,9 @@ use compiler.graph_scc
 use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership.{
   FixCache, ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary,
-  SummaryTable, analyze_function_with_seed, call_uniques, empty_fix_cache, empty_summary_table,
-  fix_cache_put, summarize_function_cached, summarize_variant, summary_get, with_dedupe_helpers,
+  SummaryTable, VariantResolver, analyze_function_with_seed_resolved, call_uniques, empty_fix_cache,
+  empty_summary_table, fix_cache_put, summarize_function_cached, summarize_variant_resolved,
+  summary_get, with_dedupe_helpers,
 }
 use compiler.variant_id as vid
 
@@ -823,7 +824,8 @@ fn run_scc_variants(
             .None => [],
           }
           overlay := build_overlay(generic, member_iter)
-          next := summarize_variant(f, key, overlay, b, sem, scc_set)
+          resolve := vtable.make_outscc_resolver(scc_set)
+          next := summarize_variant_resolved(f, key, overlay, b, sem, scc_set, resolve)
           prev := case member_iter.get(m) {
             .Some(s) => s,
             .None => optimistic_hypothesis(table_get(generic, m), k),
@@ -929,6 +931,73 @@ fn variant_args_satisfied(v: vid.VariantId, arg_unique: Vector<Bool>) Bool {
     }
   }
   v.unique.len() > 0
+}
+
+// A variant's specificity: more/deeper unique requirements outrank fewer/shallower
+// ones, so at a call site whose args satisfy several variants we select the most
+// demanding one it earns.
+fn variant_specificity(v: vid.VariantId) Int {
+  score := 0
+  for req in v.unique {
+    score = score + 1 + req.path.segs.len()
+  }
+  score
+}
+
+// The best owned variant summary for `callee_id` whose unique requirements are all
+// satisfied by this call site's `arg_unique`, or `.None` to fall back to generic.
+// Ties break on higher specificity, then lexicographically smallest key for
+// determinism.
+fn variant_summary_for(vtable: VariantSummaryTable, callee_id: Int, arg_unique: Vector<Bool>) Summary? {
+  best_key := ""
+  best_score := 0 - 1
+  best: Summary? = .None
+  case vtable.by_func.get(callee_id) {
+    .Some(keys) => {
+      for key in keys {
+        case vtable.by_key.get(key) {
+          .Some(entry) => if variant_args_satisfied(entry.variant, arg_unique) {
+            score := variant_specificity(entry.variant)
+            if score > best_score or score == best_score and (best_key.len() == 0 or key < best_key) {
+              best_key = key
+              best_score = score
+              best = .Some(entry.summary)
+            }
+          },
+          .None => {},
+        }
+      }
+      best
+    },
+    .None => .None,
+  }
+}
+
+// Resolver selecting any satisfied validated variant from `vtable`.
+fn make_variant_resolver(vtable: VariantSummaryTable) VariantResolver {
+  fn(callee_id: Int, arg_unique: Vector<Bool>) Summary? { vtable.variant_summary_for(
+    callee_id,
+    arg_unique,
+  ) }
+}
+
+// Validation-time resolver: in-SCC callees fall back to generic (their iterate is
+// read from the member-iterate overlay, not from `vtable`); out-of-SCC callees may
+// select already-validated variants from earlier SCCs, which is what lets owned
+// threading compose past one delegation hop.
+fn make_outscc_resolver(vtable: VariantSummaryTable, scc_set: Dict<Int, Bool>) VariantResolver {
+  fn(callee_id: Int, arg_unique: Vector<Bool>) Summary? {
+    if in_set(scc_set, callee_id) {
+      .None
+    } else {
+      vtable.variant_summary_for(callee_id, arg_unique)
+    }
+  }
+}
+
+// Render/analysis-time resolver over the whole converged variant table.
+pub fn make_variant_resolver_for_render(vtable: VariantSummaryTable) VariantResolver {
+  vtable.make_variant_resolver()
 }
 
 type ReachState = .{ reachable: Dict<String, Bool>, changed: Bool }
@@ -1197,13 +1266,14 @@ fn variant_sections(
   reachable: Dict<String, Bool>,
 ) String {
   overlay := reachable_overlay(generic, variants, reachable)
+  resolve := variants.make_variant_resolver_for_render()
   out := ""
   for f in source.functions {
     case variants.canonical_reachable_key(reachable, f.func_id) {
       .Some(key) => case variants.by_key.get(key) {
         .Some(entry) => {
           seed := unique_seed_for_variant(f, entry.variant)
-          analyzed := analyze_function_with_seed(f, overlay, b, sem, seed)
+          analyzed := analyze_function_with_seed_resolved(f, overlay, b, sem, seed, resolve)
           title := "variant fn ${f.name} [${render_variant_key(entry.variant)}]"
           header := "variant: ${render_summary_body(entry.summary)}"
           out = "${out}${analyzed.render_function_with_header(title, header)}"

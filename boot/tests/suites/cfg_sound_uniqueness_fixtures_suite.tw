@@ -31,7 +31,8 @@ fn render_entry(name: String) Result<String, String> {
   sem := semantics.make_prelude_optimizer_semantics(b)
   table := summary.compute(view, b, sem)
   variants := summary.compute_variants(view, b, sem, table)
-  analyzed := ownership.analyze_with_summaries(view, b, sem, table)
+  resolver := variants.make_variant_resolver_for_render()
+  analyzed := ownership.analyze_with_summaries_resolved(view, b, sem, table, resolver)
   .Ok(summary.render_cfg(view, analyzed, b, sem, table, variants))
 }
 
@@ -446,25 +447,20 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "RED: mixed update+delegate composes downstream but not across build boundary",
+      "mixed local update plus delegation composes across build boundary",
       fn() {
         out := try render_entry("red_mixed_delegate_update")
 
-        // Downstream composition already works: outer's owned variant selects
-        // inner's owned variant and reuses its own shell.
-        variant := try variant_section(out, "outer", "unique:p0")
-        try assert.str_contains(variant, "reuse(unique)")
+        // Downstream composition: outer's owned variant selects inner's owned
+        // variant and reuses its own shell.
+        outer := try variant_section(out, "outer", "unique:p0")
+        try assert.str_contains(outer, "reuse(unique)")
+        try assert.str_contains(outer, "verdict -> f")
 
-        // outer's variant selects a downstream owned variant (id is unstable, so
-        // match the selection token, not a hard-coded FuncId).
-        try assert.str_contains(variant, "verdict -> f")
-
-        // RED: outer's GENERIC summary is polluted to Published by the delegation,
-        // so `build`'s call site selects no owned variant.
-        outer_generic := try section_between(out, "fn outer [", "fn build [")
-        try assert.str_contains(outer_generic, "p0=Published")
+        // Composition now reaches across build's boundary: the loop-carried unique
+        // env lets build's call select outer's owned variant.
         build_sec := try section_between(out, "fn build [", "fn $init")
-        try assert.is_false(build_sec.contains("verdict ->"))
+        try assert.str_contains(build_sec, "verdict -> f")
         .Ok({})
       },
     )
