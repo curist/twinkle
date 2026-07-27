@@ -87,36 +87,73 @@ unsound cases are fenced *before* it:
 This milestone is analysis/render-only: no codegen dispatch consumes these
 variants yet, so a misclassification affects CFG diagnostics, not emitted code.
 
-## Insertion point — decide by spike
+## Mechanism: `move_recovered_params` → `cap = Consumed`
 
-Two viable places to surface the move-recovery signal. A focused, read-only spike
-(instrument the seeded summary derivation for `check` vs a borrow-return control
-like `id`) picks the one that reads an **existing** fact with the least new state:
+**Why not a return-witness flag.** The move-vs-borrow fact is *not* persisted where
+the return classifier can read it: `RetWitness` records only returned shape
+(`WDirect`/`WVariant`/`WUnknown`), and transport-move eligibility is **block-local**
+(`BlockPrep.transport`, built per block by `recognize_transport_moves` and consumed
+during `ARecordGet` transfer/rendering). So the signal must be *collected*, not read
+off an existing summary fact.
 
-- **(i) `cap` via mid-block consume** — record that the param's entry value was
-  consumed at some instruction even if the local is later rebound, and feed it
-  into `cap`. Simple signal; may require threading a small "consumed params" fact
-  through/alongside the forward pass.
-- **(ii) return-witness move flag** *(lean)* — extend the return classification so a
-  param recovered via a `transport=move … from(pK)` projection marks `pK`
-  Consumed. Localized to the summary derivation (`summarize_seeded` /
-  `reconcile_role` inputs); no new state in the hot forward pass — **if** the
-  move-vs-borrow fact is reachable from the return-block ForwardState the
-  classifier already holds.
+**The signal.** Introduce `move_recovered_params: Dict<Int, Bool>` — the params `pK`
+recovered by a licensed move-projection. Collect it by replaying the function's
+blocks (resolver-aware, under the same seed the summary uses, so the callee's owned
+variant is selected and its `ret_paths` recovery fires): at each `ARecordGet(base,
+field) -> result` site where the projection is a licensed move
+(`transport_has(prep.transport, result)`) **and** the recovered value's path
+provenance resolves to param `pK`, add `pK`. This parallels the existing
+`collect_field_reqs` replay pass — it needs per-site forward facts, so it is a small
+dedicated collection over blocks, not a read of block-exit state.
 
-Decision rule: prefer (ii) if the move-recovery is derivable from facts the return
-classifier already reads; otherwise (i).
+**Feeding it in.** In the `raw_params` loop, set `cap = .Consumed` for a param in
+`move_recovered_params` (in addition to the existing exit-validity check).
+`reconcile_role` is unchanged: for `check`, `esc=Borrowed`, `cap=Consumed`,
+`flows_to_return=true` → `Consumed`; `in_place_paths = shell ∪ dirty` is then
+non-empty (shell), so `variant_valid` accepts. No new state rides the hot forward
+fixpoint; the collection is one localized pass in the summary derivation.
+
+**Left to the plan** (not a design blocker): the exact provenance query that
+resolves a projected value to a source param, and whether the collection can reuse
+the return-block replay `summarize_seeded` already performs or needs its own block
+sweep. A short read-only spike confirms the provenance resolution before wiring
+`cap` — this is a wiring detail, not the two-way mechanism fork the prior draft
+implied.
 
 ## Testing
 
-- **Keep green:** `red_transport_read_after` (NEG) stays persistent — no
-  `variant fn check`, no `verdict ->`, no `reuse(unique)` in `check`. This is the
-  load-bearing soundness lock.
-- **Add a borrow control** (small fixture: `fn id(x){ x }` threaded from a caller)
-  asserting it stays `Borrowed`/persistent, so the move/borrow distinction is
-  pinned, not just asserted for the positive.
-- **Flip to owned:** `red_transport_wrapper_chain` composes — `variant fn check
-  [unique:p0]`, `verdict -> f`, `reuse(unique)`, and `build` selects check.
+All render assertions are **section-scoped** (`section_between` / `variant_section`
+/ `section_from`) so a broad token cannot match an unrelated function's section —
+mirroring the delegate/mixed locks already flipped.
+
+- **Keep green (NEG):** `red_transport_read_after` stays persistent — in the `check`
+  section: no `verdict ->`, no `reuse(unique)`; and no `variant fn check` in the
+  output. Load-bearing soundness lock.
+- **Borrow control — must be non-vacuous.** `fn id(x){ x }` is useless here: it is
+  never proposed (candidacy needs `scan.found`), so it never enters validation and
+  proves nothing about role recovery. Instead add a **candidate-shaped** borrow
+  transport-wrapper whose inner callee *borrows* rather than consumes the threaded
+  param, e.g.:
+
+  ```tw
+  fn peek(ctx: Ctx) Out { Out.{ ctx, ty: ctx.count } }   // reads ctx, does NOT mutate/consume
+  fn thread(ctx: Ctx) Ctx { o := peek(ctx); ctx = o.ctx; ctx }
+  ```
+
+  `peek` still carries `ret_paths=.f0=from(p0)`, so `thread` *is* proposed as a
+  candidate and enters variant validation — but the projection is a
+  `transport=borrow`, not a move, so `p0 ∉ move_recovered_params` → stays
+  `Borrowed`. Assert: `thread` enters validation yet its variant is **retracted**
+  (no `variant fn thread`, `thread`'s generic summary keeps `p0=Borrowed` with
+  empty in-place paths). The plan must *verify* this fixture genuinely reaches
+  validation (candidacy fires) so the control is not silently vacuous; a direct
+  unit assertion on `thread`'s seeded summary classification is an acceptable
+  substitute if the fixture proves awkward.
+- **Flip to owned (positive), section-scoped:**
+  - `variant_section(out, "check", "unique:p0")` contains a synth-call
+    `verdict -> f` selection **and** `reuse(unique)`;
+  - `section_between(out, "fn build [", "fn $init")` contains a `verdict -> f`
+    selecting `check`.
 - **Regression:** boot census in-place counts hold or rise; `make stage2` fixed
   point; `make test` green.
 
