@@ -186,8 +186,12 @@ bounded `function_section` helper. This includes fixing the existing
 - **Flip to owned (positive), section- and id-scoped.** Resolve `check`'s FuncId
   from the render (or match the concrete `call Fn<check_id>` site) rather than a
   bare `verdict -> f`:
-  - `variant_section(out, "check", "unique:p0")` contains the synth-call
-    `verdict -> f<synth_id>` selection **and** `reuse(unique)`;
+  - `variant_section(out, "check", "unique:p0")` contains the recovered role
+    `p0=Consumed` **and** the synth-call `verdict -> f` selection. Note
+    `reuse(unique)` is **not** a signal here: `check` does no `record_update` (it
+    recovers ctx via projection), and the leaf `synth` earns no variant (its
+    generic summary is already `Consumed`; its return is a fresh wrapper, not
+    `ret_derived`). So no `reuse(unique)` appears for this shape.
   - `section_between(out, "fn build [", "fn $init")` contains
     `verdict -> f<check_id>[unique:p0]` (or the `build`→`check` call site).
   - Add `peek`/`thread` as a **single-hop positive** so the fix is covered at
