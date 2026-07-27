@@ -442,18 +442,38 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "RED: transport-wrapper chain keeps fresh-field move facts but drops ownership",
+      "transport-wrapper chain composes owned threading through returned ctx",
       fn() {
         out := try render_entry("red_transport_wrapper_chain")
-
-        // The wrapper's return-path summary is correct (Phase 5 machinery works).
         try assert.str_contains(out, "ret_paths=.f0=from(p0)")
 
-        // RED: `check` still summarizes the threaded ctx as Borrowed/shared, so
-        // `build` never threads it as owned.
-        try assert.str_contains(out, "p0=Borrowed p1=Published p2=Published ret=shared")
-        try assert.is_false(out.contains("verdict ->"))
-        try assert.is_false(out.contains("variant fn "))
+        // check earns an owned variant: p0 recovered to Consumed, and it selects
+        // synth's owned behavior across the two hops. NOTE: `reuse(unique)` is NOT
+        // a signal here — check does no record_update (it recovers ctx via
+        // projection); the leaf synth's generic summary is already Consumed and it
+        // earns no variant (its return is a fresh wrapper, not ret_derived). The
+        // success signals are the recovered role + the build-boundary selection.
+        variant := try variant_section(out, "check", "unique:p0")
+        try assert.str_contains(variant, "p0=Consumed")
+        try assert.str_contains(variant, "verdict -> f")
+
+        // build selects check's owned [unique:p0] variant across the boundary.
+        build_sec := try section_between(out, "fn build [", "fn $init")
+        try assert.str_contains(build_sec, "verdict -> f")
+        try assert.str_contains(build_sec, "[unique:p0")
+        .Ok({})
+      },
+    )
+    .test(
+      "single-hop transport wrapper composes owned threading",
+      fn() {
+        out := try render_entry("transport_wrapper_single")
+        variant := try variant_section(out, "thread", "unique:p0")
+        try assert.str_contains(variant, "p0=Consumed")
+        try assert.str_contains(variant, "verdict -> f")
+        build_sec := try section_between(out, "fn build [", "fn $init")
+        try assert.str_contains(build_sec, "verdict -> f")
+        try assert.str_contains(build_sec, "[unique:p0")
         .Ok({})
       },
     )

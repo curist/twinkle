@@ -7670,6 +7670,115 @@ fn flow_map_eq(a: Dict<Int, FlowFact>, b: Dict<Int, FlowFact>) Bool {
   true
 }
 
+// Params recovered by a licensed move-projection of a consuming-callee wrapper
+// field. Mirrors the real `.ARecordGet` move branch (see transfer_op): the same
+// projection_move_licensed gate, the same `pr.shell` deep-owned requirement, and
+// the projected shell provenance resolving to exactly one param. Runs under the
+// summary's seed + resolver (so the callee's owned variant is selected and its
+// ret_paths recovery has set the wrapper field's provenance to the param).
+fn collect_move_recovered_params(
+  blocks: Vector<CfgBlock>,
+  params: Vector<LocalId>,
+  fx: FixResult,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+  unique_seed: Dict<Int, Bool>,
+  resolve: VariantResolver,
+) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+  done := all_processed(blocks)
+  for blk in blocks {
+    entry_own := join_entry_ownership(blk, fx.exits, done)
+    entry_valid := join_entry_valid(blk, fx.exit_valid, done)
+    entry_prov := join_entry_prov(blk, fx.exit_prov, done)
+    if blk.id.id == 0 {
+      entry_prov = seed_param_prov(entry_prov, params)
+      entry_own = seed_param_own(entry_own, unique_seed, params)
+    }
+    entry_field := join_entry_field_own(blk, fx.exit_field_own, entry_own, done)
+    entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
+    st := ForwardState.{
+      own: entry_own,
+      valid: entry_valid,
+      prov: entry_prov,
+      field_own: entry_field,
+      path_prov: entry_pp,
+    }
+    pred_id := case blk.preds.len() == 1 {
+      true => blk.preds[0].target.id,
+      false => 0 - 1,
+    }
+    st = if pred_id >= 0 {
+      st.seed_payload_binding(
+        blk,
+        nested_get(fx.exit_field_own, pred_id),
+        nested_get(fx.exit_path_prov, pred_id),
+        nested_get(fx.exit_prov, pred_id),
+      )
+    } else {
+      st
+    }
+    prep := block_prep(blk, sem)
+    scan := prep.scan
+    for inst, i in blk.instructions {
+      last := last_use_at(inst.op, scan.live_after[i])
+      case inst.op {
+        .ARecordGet(base, fld, _) => case atom_local_id(base) {
+          .Some(bid) => if st.projection_move_licensed(
+            inst.anf_local.id,
+            base,
+            last,
+            prep.moves,
+            prep.transport,
+          ) {
+            pr := st.atom_field_own(base).project(ff.PathSeg.Field(fld.id))
+            case pr.shell {
+              .Some(_) => {
+                proj_pp := project_path_prov(st.path_prov_get(bid), ff.PathSeg.Field(fld.id))
+                case proj_pp.shell {
+                  .Some(os) => if os.len() == 1 {
+                    case param_index_of(params, os[0]) {
+                      .Some(pk) => out[pk] = true,
+                      .None => {},
+                    }
+                  },
+                  .None => {},
+                }
+              },
+              .None => {},
+            }
+          },
+          .None => {},
+        },
+        _ => {},
+      }
+      st = .transfer_op(
+        inst.anf_local.id,
+        inst.op,
+        last,
+        prep.moves,
+        prep.transport,
+        table,
+        b,
+        sem,
+        suppress,
+        Dict.new(),
+        resolve,
+      )
+    }
+  }
+  out
+}
+
+fn move_recovered_has(m: Dict<Int, Bool>, k: Int) Bool {
+  case m.get(k) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
 // Forward dataflow to a fixed point (dirty grows, origin only degrades ->
 // terminates), modeled on run_fixpoint's `for changed { for blk }` shape with the
 // same processed guard. Computes its own liveness so it is self-contained
@@ -7927,9 +8036,24 @@ fn summarize_seeded(
     0.0
   }
 
-  raw_params: Vector<RawParam> = collect p in f.params {
+  move_recovered := collect_move_recovered_params(
+    blocks,
+    f.params,
+    fx,
+    table,
+    b,
+    sem,
+    suppress,
+    unique_seed,
+    resolve,
+  )
+  raw_params: Vector<RawParam> = collect p, pi in f.params {
     esc: EscapeEffect = .Borrowed
-    cap: ParamCapability = .NoCap
+    cap: ParamCapability = if move_recovered_has(move_recovered, pi) {
+      .Consumed
+    } else {
+      .NoCap
+    }
     for blk in blocks {
       if own_is_shared(nested_get(fx.exits, blk.id.id), p.id) {
         esc = .Retained

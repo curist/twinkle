@@ -115,6 +115,13 @@ fn is_borrowed(s: ownership.Summary, i: Int) Bool {
   }
 }
 
+fn is_consumed(s: ownership.Summary, i: Int) Bool {
+  case s.params[i].base_role {
+    .Consumed => true,
+    _ => false,
+  }
+}
+
 // exit ownership of a local in a GIVEN block (caller_own hardcodes block 0).
 fn own_in_block(f: cfg.CfgFunction, block_id: Int, local_id: Int) Int {
   for blk in f.blocks {
@@ -660,9 +667,18 @@ pub fn suite() runner.Suite {
         key: variant_id.UniqueKey = [variant_id.UniqueReq.{ param: 0, path: variant_id.shell() }]
         owned := ownership.summarize_variant(caller, key, t, b, sem(), Dict.new())
 
-        // Recovered as a Borrowed transport (NOT Consumed -- the param is threaded, not
-        // mutated) that flows to the return, vs the generic Published/leaked classification.
-        try assert.is_true(is_borrowed(owned, 0))
+        // Recovered as an owned/reusable transport that flows to the return, vs the generic
+        // Published/leaked classification. NOTE: this now classifies Consumed, not Borrowed.
+        // Transport-wrapper role recovery (collect_move_recovered_params) marks a param
+        // recovered via a licensed move-projection Consumed -- the param is uniquely owned
+        // and threaded, so reuse is licensed. The old Borrowed classification distinguished
+        // "threaded, not mutated" from "mutated", but that distinction is not representable
+        // once the param is moved into a fresh wrapper (a pure wrapper and a mutating wrapper
+        // both summarize p0=Consumed paths{[]}). The classification is sound: owned variants
+        // are only selected behind the arg_unique/last-use gate (see the read-after and
+        // gate-fail tests above, which remain the meaningful safety locks). See
+        // docs/plans/transport-wrapper-phase6-conflict-brief.md.
+        try assert.is_true(is_consumed(owned, 0))
         try assert.is_true(owned.params[0].flows_to_return) // ctx's region reaches the return
         .Ok({})
       },

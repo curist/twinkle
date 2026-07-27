@@ -1,0 +1,24 @@
+// Single-hop transport wrapper. `wrap` consumes ctx (stores it into a fresh Out)
+// and returns it via ret_paths=.f0=from(p0); `thread` projects it back and returns
+// it. DESIRED: thread earns [unique:p0], build selects it.
+type Ctx = .{ syms: Dict<String, Int>, count: Int }
+
+type Out = .{ ctx: Ctx, ty: Int }
+
+fn wrap(ctx: Ctx, name: String) Out {
+  ctx.syms = .set(name, ctx.count)
+  Out.{ ctx, ty: ctx.count }
+}
+
+fn thread(ctx: Ctx, name: String) Ctx {
+  o := wrap(ctx, name)
+  ctx = o.ctx
+  ctx
+}
+
+fn build() Ctx {
+  ctx := Ctx.{ syms: Dict.new(), count: 0 }
+  thread(ctx, "a")
+}
+
+println(build().count.to_string())
