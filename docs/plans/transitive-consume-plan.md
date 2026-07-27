@@ -603,6 +603,27 @@ Expected:
 - `red_delegate_read_after`: no `variant fn tap`, no `verdict ->` in `fn tap`, no `reuse(unique)` in `fn tap`.
 - `red_transport_read_after`: no `variant fn check`, no `verdict ->` in `fn check`, no `reuse(unique)` in `fn check`.
 
+- [ ] **Step 9: Leaf-validation probe (gate before Task 5)**
+
+Task 5 stacks transitive composition on top of the assumption that a single-hop
+leaf update variant still **validates and renders its own in-place body** through
+the new resolver-aware render pipeline. Confirm that spine is intact *before*
+broadening candidacy, so a Task 5 failure is unambiguously about composition, not
+about Task 4 having broken reachable-variant rendering.
+
+Use `red_mixed_delegate_update`, whose `outer` variant is reachable in the
+baseline (`variant fn outer [unique:p0]` renders today). Run:
+```bash
+target/twk ir boot/tests/fixtures/cfg/sound_uniqueness/red_mixed_delegate_update.tw --cfg 2>&1 \
+  | awk '/variant fn outer \[unique:p0\]/{p=1} p{print} /^fn |^variant fn (check|synth|tap|resolve)/{if(!/outer/)p=0}'
+```
+
+Expected: the `variant fn outer [unique:p0]` section still renders after the
+Task 4 pipeline rewiring, and its body contains `reuse(unique)` — the leaf update
+executes in place inside the validated, reachable variant. If this section is
+missing or shows no `reuse(unique)`, stop: Task 4's resolver-aware render broke
+leaf-variant rendering, and Task 5 cannot be diagnosed on top of it.
+
 ---
 
 ## Task 5: Broaden candidacy for delegated-consume (`ret=alias(pK)`)
