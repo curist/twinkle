@@ -72,6 +72,46 @@ target/twk test 2>&1 | tail -1
 
 ---
 
+## ⛔ SPIKE RESULT (2026-07-27): Assumption A FAILED at the caller side — this plan cannot flip merge_targeted
+
+Task 1 was run inline. All three edits (COW detection, seed union, body rewrite) applied and
+self-host reached `stage3 == stage4`. Measured outcome:
+
+- **The body rewrite worked.** `merge_targeted__`'s generic summary moved from `p1=Published` to
+  **`p1=Consumed paths{[]}`** — p1 is now a proper whole-value carrier (returned `ret_paths=.f0=from(p1)`),
+  even a `target_params` seed candidate, without needing the aggregate path. So Findings 1–2 of the
+  prerequisite doc are addressed by the rewrite alone.
+- **The flip still did NOT happen.** All three monomorphs stayed
+  `... false ... base=persistent(aliased shell) borrow-effect copy-carrier source`. p1 is a valid
+  seed *candidate* but `uniform_entry_seeds` does **not** seed it.
+- **Root cause (caller-side, deeper than "mixed callers"):** `merge_targeted`'s only call sites are
+  `ownership.tw:6100/6111/6122` inside `run_fixpoint`, and each passes `next` as
+  **`st.own` / `st.valid` / `st.prov`** — field projections of a **live `ForwardState` record**.
+  A field projection of a live record is never Unique + last-use, so `uniform_entry_seeds`'
+  `failed` guard correctly declines to seed p1. **No caller passes `next` Unique**, so the flip is
+  impossible via the uniform-caller seed path.
+
+**Consequence — clone-dispatch would NOT help either.** The fallback (emit a Unique variant clone +
+dispatch) only fires at a call site that passes the carrier Unique. There is **no such site**; all
+three pass a shared record field. So the true blocker is not "which handoff" — it is that the caller
+(`run_fixpoint`) holds its maps as fields of a live `ForwardState` and hands *projections* to
+`merge_targeted`.
+
+**The real lever is caller-side (this reorders the roadmap):** `run_fixpoint` must pass its maps as
+**owned, moved-out locals** rather than live-record fields — i.e. the E-DRY `fixpoint_iterate`
+refactor (thread the maps as returned carriers in a `FixState`, consuming them each iteration)
+is not a *beneficiary* of this work, it is the **prerequisite** that creates a Unique caller. Only
+then does `merge_targeted` (body-rewritten, p1 a carrier) get seeded and flip.
+
+**Disposition:** the body rewrite (Task 3) is a real, self-host-safe improvement worth keeping on its
+own; the seed union (Task 4) and COW detection (Task 2b) are sound but flip nothing until a Unique
+caller exists. **Tasks 2–6 are on hold.** Next step: author `docs/plans/fixpoint-edry-fixstate.md`
+for the caller-side refactor (move the `ForwardState` maps to owned carriers), with the
+`merge_targeted` flip as its acceptance gate — the code below is the reusable analysis half, gated on
+that. All spike edits were reverted (repo clean at the plan commit).
+
+---
+
 ## File structure
 
 - `boot/compiler/summary.tw` — extend the in-place-site scan to COW `.Update` builtins (dict/vector),
