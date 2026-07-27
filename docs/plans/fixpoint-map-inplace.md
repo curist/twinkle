@@ -16,17 +16,25 @@
 >   `merge_targeted` body rewrite **and** restructuring `run_fixpoint` so each map is a single-reader
 >   last-use out of a dead `st`, `uniform_entry_seeds` still reported `arg_unique=false` at all three
 >   sites (three self-host-verified spikes, all reverted).
-> - **What flipping it would take:** make `forward_block` and its callee tree preserve field-ownership
->   of the `ForwardState` maps (return them as owned carriers instead of publishing) — a large,
->   invasive refactor of the compiler's core transfer function (a 5-map record threaded through the
->   whole instruction-processing tree). Feasibility is uncertain: the `Published` may be partly a real
->   escape, not just conservatism.
-> - **Payoff is bounded.** The per-block merge region is ~37% of `run_fixpoint` time (measured:
->   `TWINKLE_TIMINGS` self-host build, 11,240 fixpoint invocations), but that includes the
->   `field_own`/`path_prov` meets (not `merge_targeted`) and is mostly *per-key work* (`int_keys_union`
->   + `lat_get` + `join`) that in-place does not remove — in-place saves only the persistent-dict
->   allocation, a sub-fraction. The larger, more certain lever for that 37% is a different
->   representation (sparse/delta dataflow), a separate project.
+> - **The `Published` is conservative, not a real leak (traced).** The `ForwardState` is never stored
+>   into any collection or global (grep-verified; the one `exits[blk]=st` at `ownership.tw:7557` is a
+>   *different* analysis where `st` is a `Dict<Int,FlowFact>`), and `publish_atom` only sets a key in
+>   `st.own`. `st` is marked `Published` purely by the escape rule at `ownership.tw:7758`
+>   (`own_is_shared(exits, st)`), which cascades transitively: passing `st` to a `Published`-param
+>   callee (`transfer_call`, etc.) marks it Shared, up the whole `transfer_op` tree. So it is an
+>   analysis over-approximation of a big mutable record threaded through a deep call tree — a genuine
+>   precision fix *in principle*.
+> - **What flipping it would take:** make the escape/ownership analysis keep the `ForwardState`
+>   uniquely-threaded (field-ownership preserved) through `forward_block` → `transfer_op` → every
+>   per-op handler → `transfer_call` … — i.e. across the entire transfer tree, not one spot. That is
+>   the large, delicate refactor.
+> - **Payoff is bounded — ~1–2% of total compile, ceiling.** The per-block merge region is ~37% of
+>   `run_fixpoint` (measured), and `run_fixpoint` is a few seconds of a ~17s full build ⇒ the merge
+>   region is ~10% of total compile. But that 37% includes the `field_own`/`path_prov` meets (not
+>   `merge_targeted`) and is mostly *per-key work* (`int_keys_union` + `lat_get` + `join`) that
+>   in-place does not remove — in-place saves only the persistent-dict allocation. Net achievable
+>   in-place win for these maps: ~1–2% of compile at most. The larger, more certain lever for the 37%
+>   is a different representation (sparse/delta dataflow), a separate project.
 >
 > **Decision: deprioritized.** Not fundamentally impossible, but the flip needs a core-transfer
 > refactor of uncertain feasibility for a bounded win. The boot-suite marker is retired from

@@ -31,46 +31,16 @@ ir --census/--cfg`, `TWINKLE_FIXVERIFY`, `TWINKLE_TIMINGS`, boot suite.
 
 ---
 
-## The exact blocker (verified, with line references at HEAD)
+## Pre-spike blocker hypothesis (disproven)
 
-`run_fixpoint`'s per-block merge region (`boot/compiler/ownership.tw`):
+The original hypothesis was that `run_fixpoint` lost uniqueness because it read each map twice from a
+live `ForwardState` (`next_own := st.own`, then `merge_targeted(..., st.own, ...)`). The planned fix
+was to extract each map once and pass that single-reader, last-use local to `merge_targeted`.
 
-```
-6089    next_own := st.own            // reader #1 of st.own
-6090    next_valid := st.valid
-6091    next_prov := st.prov
-...
-6100    own_merge := merge_targeted(old_own, st.own, ...)     // reader #2 of st.own  ← the carrier arg
-6111    valid_merge := merge_targeted(old_valid, st.valid, ...)
-6122    prov_merge := merge_targeted(old_prov, st.prov, ...)
-6133    next_own = own_merge.map      // result stored back
-6134    next_valid = valid_merge.map
-6135    next_prov = prov_merge.map
-```
-
-`st: ForwardState` (`ownership.tw:3511`) bundles `own`/`valid`/`prov`/`field_own`/`path_prov` as
-`Dict` fields. Each map is read at least twice off the **same live `st`** (lines 6089 + 6102, etc.),
-so `st.own` at the `merge_targeted` call is aliased ⇒ `uniform_entry_seeds` cannot seed
-`merge_targeted`'s `p1` Unique ⇒ `persistent(aliased shell)`. Fixing this means giving
-`merge_targeted` a single-reader, last-use `next` argument.
-
-**Ground truth to record before starting:**
-
-```bash
-# merge_targeted persistent across all three monomorphs today:
-target/twk ir boot/main.tw --census --sites 2>/dev/null \
-  | grep -E '^merge_targeted__(Int|Bool|Vec_Int)' | grep dict_set
-# → all three: ... false ... base=persistent(aliased shell) borrow-effect copy-carrier source ...
-
-# Ownership-analysis timing baseline (this is the hot fixpoint — guard against regressions):
-TWINKLE_TIMINGS=1 target/twk build boot/main.tw -o /tmp/stage2.wasm 2>&1 \
-  | grep -E 'own:fixpoint|summary:roots|time:mutable:artifacts'
-# Record the numbers.
-
-# Pre-existing tracked-red fixverify baseline (measure DELTA, not absolute):
-TWINKLE_FIXVERIFY=1 target/twk build boot/main.tw -o /tmp/fv.wasm 2>&1 | tail -1
-# → fixverify mismatch: analyze:unique_analysis_diags
-```
+Task 1 tested that shape and disproved it: even with every `st.*` field pre-extracted and `st` dead
+before the merge calls, `uniform_entry_seeds` still reported `arg_unique=false` for all three
+`run_fixpoint → merge_targeted__{Int,Bool,Vec_Int}` sites. The real blocker is the one recorded below:
+`ForwardState` is already Published by the transfer functions before the merge region.
 
 ---
 
@@ -95,16 +65,15 @@ reasoning and decision live in `docs/plans/fixpoint-map-inplace.md` → "CONCLUS
 body rewrite may be cherry-picked standalone. Tasks below are retained only as the record of the
 intended approach. All spike code reverted.
 
-## File structure
+## Historical file structure for the abandoned task set
 
-- `boot/compiler/ownership.tw` — (1) `merge_targeted` body rewrite (`:5180`); (2) merge-region
-  restructure inside `run_fixpoint` (`:6089–6145`). Possibly a small helper if the spike shows a
-  clean extraction is what grants uniqueness. No `ForwardState` type change unless the spike proves
-  it necessary (prefer the localized restructure).
-- `boot/tests/suites/mutable_produce_suite.tw` — split the tracked marker so the `merge_targeted__`
-  half goes green.
-- `docs/plans/` — closeout (this file, `fixpoint-map-inplace.md`, `owned-variant-codegen-handoff.md`,
-  `README.md`).
+- `boot/compiler/ownership.tw` — the proposed `merge_targeted` body rewrite (`:5180`) and the now-
+  disproven merge-region restructure inside `run_fixpoint` (`:6089–6145`). A future attempt would need
+  to preserve `ForwardState` field ownership through the transfer functions instead.
+- `boot/tests/suites/mutable_produce_suite.tw` — now holds the current-reality guard that asserts the
+  boot fixpoint maps stay persistent today.
+- `docs/plans/` — closeout context (this file, `fixpoint-map-inplace.md`,
+  `owned-variant-codegen-handoff.md`, `README.md`).
 
 ---
 
@@ -273,163 +242,19 @@ whole-value carrier; the in-place flip still needs a Unique caller (Task 3)."
 
 ---
 
-## Task 3 — Restructure the merge region so all three maps are Unique last-use args
+## Superseded Task 3 — merge-region restructure
 
-**Files:** `boot/compiler/ownership.tw` (`run_fixpoint` merge region, `:6089–6145`).
-
-Apply the winning shape from Task 1 (H1 or H1b) to **all three** merged maps (`own`, `valid`,
-`prov`), so each is moved out of `st` exactly once and read only by its `merge_targeted` call.
-
-- [ ] **Step 1: Apply the restructure to `own`, `valid`, `prov`.** Use the exact shape Task 1 proved.
-  For H1b (the more likely winner), that means: remove the unconditional `next_own := st.own` /
-  `next_valid := st.valid` / `next_prov := st.prov` pre-binds, bind `cur_own`/`cur_valid`/`cur_prov`
-  once, and set `next_own`/`next_valid`/`next_prov` in each branch (`= *_merge.map` in `already`,
-  `= cur_*` in `!already`) so the `already` branch's only reader of each `cur_*` is `merge_targeted`.
-  (Paste the concrete winning code recorded in Task 1 here at execution time — do not improvise a
-  different shape.)
-
-- [ ] **Step 2: fmt, lint, rebuild, and measure the flip across ALL monomorphs.**
-
-```bash
-target/twk fmt boot/compiler/ownership.tw
-target/twk lint boot/main.tw
-make bundle-cli 2>&1 | tail -2
-target/twk ir boot/main.tw --census --sites 2>/dev/null \
-  | grep -E '^merge_targeted__(Int|Bool|Vec_Int)' | grep dict_set
-```
-Expected: **all three** rows flip to `... true ... reuse(unique)`. If only some flip, the three maps
-differ in their alias shape — investigate before proceeding.
-
-- [ ] **Step 3: fixverify delta gate.** The pre-existing `analyze:unique_analysis_diags` mismatch is
-  the baseline; the flip must not add a *different* mismatch key.
-
-```bash
-TWINKLE_FIXVERIFY=1 target/twk build boot/main.tw -o /tmp/fv.wasm 2>&1 | tail -3
-```
-Expected: the **same** single `analyze:unique_analysis_diags` line (or fewer). A new key = unsound
-in-place mutation of a still-aliased map — STOP and diagnose.
-
-- [ ] **Step 4: Behavioral + perf gate (this is the hot fixpoint).**
-
-```bash
-target/twk test 2>&1 | tail -3                    # only the run_fixpoint marker half may remain red
-TWINKLE_TIMINGS=1 target/twk build boot/main.tw -o /tmp/stage2.wasm 2>&1 \
-  | grep -E 'own:fixpoint|summary:roots|time:mutable:artifacts'
-```
-Expected: no correctness regressions; `own:fixpoint` time **not worse** than the recorded baseline
-(in-place should be neutral-to-faster). A regression means the restructure changed allocation
-behavior adversely — investigate.
-
-- [ ] **Step 5: Commit.**
-
-```bash
-git add boot/compiler/ownership.tw
-git commit -m "ownership: pass merge_targeted its maps as owned last-use args in run_fixpoint
-
-Moves own/valid/prov out of the live ForwardState so each is a single-reader, last-use argument
-to merge_targeted, letting uniform_entry_seeds seed its p1 Unique. merge_targeted's dict update
-now emits in-place across all monomorphs. No analysis change — reuses the existing target_params
-+ uniform-caller seed path."
-```
+Task 3 would have landed the single-reader merge-region restructure for all three maps. Task 1 proved
+that shape does not make the caller arguments Unique, so the task is intentionally omitted. Do not
+revive it without first addressing `ForwardState` publication through `seed_payload_binding` /
+`forward_block`.
 
 ---
 
-## Task 4 — Land the `merge_targeted` half of the tracked marker
+## Superseded task tail
 
-**Files:** `boot/tests/suites/mutable_produce_suite.tw` (the marker at `:380–388`).
-
-- [ ] **Step 1: Split the marker.** The current single test asserts both `merge_targeted__` and
-  `run_fixpoint` flip and fails because neither did. Replace it with two tests — `merge_targeted__`
-  (now green, all monomorphs) and `run_fixpoint` (still tracked-red):
-
-```tw
-    .test(
-      "boot merge_targeted produces in-place dict decisions (all monomorphs)",
-      fn() {
-        produced := try produce_boot_main()
-        try assert.is_true(selected_decision_count(produced, "merge_targeted__Int", "dict_set") > 0)
-        try assert.is_true(selected_decision_count(produced, "merge_targeted__Bool", "dict_set") > 0)
-        try assert.is_true(selected_decision_count(produced, "merge_targeted__Vec_Int", "dict_set") > 0)
-        .Ok({})
-      },
-    )
-    // Tracked target marker for docs/plans/fixpoint-map-inplace.md — the run_fixpoint half.
-    // Intentionally red until run_fixpoint's OWN loop-carried maps (exits/locked writes, the
-    // dirty0 worklist) are proven Unique. Not a regression.
-    .test(
-      "boot run_fixpoint maps should produce in-place dict decisions",
-      fn() {
-        produced := try produce_boot_main()
-        try assert.is_true(selected_decision_count(produced, "run_fixpoint", "dict_set") > 0)
-        .Ok({})
-      },
-    )
-```
-
-- [ ] **Step 2: fmt + suite.**
-
-```bash
-target/twk fmt boot/tests/suites/mutable_produce_suite.tw
-target/twk test 2>&1 | tail -3
-```
-Expected: the `merge_targeted` test PASSES; exactly one known failure remains and it is the
-`run_fixpoint` marker (exit 1 expected). Any other failing test → stop.
-
-- [ ] **Step 3: Commit.**
-
-```bash
-git add boot/tests/suites/mutable_produce_suite.tw
-git commit -m "test: land merge_targeted in-place marker; run_fixpoint half remains tracked-red"
-```
-
----
-
-## Task 5 — Docs closeout
-
-**Files:** `docs/plans/owned-variant-codegen-handoff.md`, `docs/plans/fixpoint-map-inplace.md`,
-`docs/plans/README.md`, this file.
-
-- [ ] **Step 1: Record the landing.** In `owned-variant-codegen-handoff.md`, note the caller-side
-  prerequisite is done via this plan (uniform-caller seed path, no cloning). In
-  `fixpoint-map-inplace.md`, mark the `merge_targeted` half of the boundary cleared; the remaining
-  target is `run_fixpoint`'s OWN maps (`exits`/`locked` writes + the `dirty0` worklist), which are a
-  separate, narrower follow-up (they are not `merge_targeted` carriers).
-
-- [ ] **Step 2: Commit.**
-
-```bash
-git add docs/plans/
-git commit -m "docs: merge_targeted flips via owned-carrier run_fixpoint restructure"
-```
-
----
-
-## Out of scope
-
-- **`run_fixpoint`'s own loop-carried maps** (`exits[blk]=`, `locked_*[blk]=`, the `dirty0`
-  worklist). Making those in-place is the remaining `run_fixpoint` marker half; it is a *different*
-  shape (nested-dict writes / worklist mutation, not `merge_targeted` carriers) and gets its own plan
-  once this lands.
-- **The H2 structural extraction** (thread all 5 `ForwardState` maps as top-level owned locals via a
-  `FixState`-returning `forward_block`). Only pursue if Task 1's spike shows H1/H1b cannot grant
-  uniqueness because `st` outlives the merge — in which case re-scope this plan around H2.
-- **Field-granular / `field_own` / `path_prov` carriers.** Those two maps are merged via
-  `merge_field_own_exit` / `merge_path_prov_exit`, not `merge_targeted`; unrelated.
-
-## Self-review notes
-
-- **Spec coverage:** caller-side blocker → Task 1 spike (proves the restructure) + Task 3 (lands it);
-  body rewrite → Task 2; acceptance → Task 3 census (all monomorphs) + Task 4 marker; risk controls →
-  Task 3 fixverify-delta + perf gates (hot fixpoint). Docs → Task 5.
-- **Why spike-first:** the exact restructure that grants uniqueness (H1 vs H1b vs structural H2)
-  cannot be known without measuring — the copy-bind uniqueness guard's behavior on
-  `cur_own := st.own` with `st` dead is the unknown. Task 1 measures it on one map before touching
-  all three, and has an explicit escalation to H2 with a STOP.
-- **No new analysis / no new risk surface:** this plan only changes source shape
-  (`merge_targeted` body + the merge region). The seed path (`target_params` → `uniform_entry_seeds`)
-  and the verdict pass are unchanged; the prior spike already showed the body rewrite alone yields
-  `p1=Consumed paths{[]}`. Every flip is still gated by `uniform_entry_seeds` (all-callers-Unique)
-  and the verdict pass (reusable-at-site), plus the fixverify-delta check.
-- **Type consistency:** no new types. `merge_targeted` signature unchanged; `run_fixpoint` locals
-  `cur_own`/`cur_valid`/`cur_prov` are `Dict<...>` matching `st.own`/`st.valid`/`st.prov`
-  (`ForwardState`, `ownership.tw:3511`); `MergeOut.{ map, locked }` result usage unchanged.
+The remaining pre-spike tasks that would have split the old tracked marker and landed the caller
+restructure are intentionally omitted here. They were based on the disproven single-reader/liveness
+hypothesis and conflict with the current verdict: `merge_targeted__` and `run_fixpoint` are guarded as
+persistent today, not tracked as red in-place targets. Any future attempt should start from the
+`ForwardState` publication blocker in the conclusion, with fresh profiling and a new plan.
