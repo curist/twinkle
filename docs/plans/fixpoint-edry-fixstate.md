@@ -14,23 +14,17 @@
 all three `merge_targeted__` monomorphs flipping in the census and the `merge_targeted__` half of the
 tracked marker going green, self-host stable, and no ownership-analysis perf regression.
 
-> **⚠️ This plan's core hypothesis was DISPROVEN by its own Task 1 spike — see the
-> "⛔ SPIKE RESULT" section below. The Architecture paragraph is the pre-spike hypothesis, retained
-> for context. The body rewrite (Task 2) is worth landing standalone; the caller restructure
-> (Tasks 3+) does NOT work, because the maps alias the persistent `exits` accumulator, not just the
-> `ForwardState` record.**
+> **⚠️ This plan is NOT being implemented — its Task 1 spike showed the restructure does not flip the
+> maps. The caller restructure (Tasks 3+) does not help: the maps are non-unique because the transfer
+> functions (`seed_payload_binding`/`forward_block`) publish the `ForwardState` that holds them, so the
+> maps are Shared before the merge. Full decision: `docs/plans/fixpoint-map-inplace.md` → CONCLUSION.
+> The `merge_targeted` body rewrite (Task 2) is still landable standalone.**
 
-**Architecture (pre-spike hypothesis — see the disproof below):** the prior owned-variant spike
-showed the body rewrite yields callee-side readiness (`merge_targeted` summary → `p1=Consumed`
-carrier); the *hypothesis* here was that the only remaining blocker is that `run_fixpoint` reads
-`st.own`/`st.valid`/`st.prov` (fields of a live `ForwardState`) and passes projections, so
-restructuring the merge region to move each map out of `st` exactly once (read only by
-`merge_targeted`, `st` dead afterward) would make the argument a Unique last-use — reusing the
-existing analysis (`uniform_entry_seeds` + `seed_param_indices`' `target_params` path), no new
-analysis/cloning. **Task 1 measured this and it FAILED** (`arg_unique=false` at all sites even after
-the restructure): the maps are non-unique because they alias the shared `exits` accumulator, one
-level below the record. Caller uniqueness therefore **remains unproven-and-in-fact-unavailable**, not
-proven.
+**Architecture (pre-spike hypothesis — did not hold):** the hypothesis was that the only blocker is
+`run_fixpoint` passing `st.own`/`st.valid`/`st.prov` as projections of a live `ForwardState`, so moving
+each map out of `st` as a single-reader last-use would make the argument Unique. Task 1 showed it does
+not: `arg_unique=false` persisted, because the `ForwardState` is already Published by the transfer
+functions it threads through (see SPIKE RESULT).
 
 **Tech stack:** Twinkle self-hosted compiler (`boot/`), `make bundle-cli`, `target/twk
 ir --census/--cfg`, `TWINKLE_FIXVERIFY`, `TWINKLE_TIMINGS`, boot suite.
@@ -80,70 +74,26 @@ TWINKLE_FIXVERIFY=1 target/twk build boot/main.tw -o /tmp/fv.wasm 2>&1 | tail -1
 
 ---
 
-## ⛔ SPIKE RESULT (2026-07-27): H1b FAILED — the maps are structurally non-unique. STOP.
+## SPIKE RESULT (2026-07-27): failed; root cause found. See the CONCLUSION in `fixpoint-map-inplace.md`.
 
-Task 1 was run inline with the **full pre-extraction shape** (not the own-only-with-`st`-live shape
-whose false-fail risk a reviewer flagged): all five `st.*` fields are bound to locals before the
-conditional, `next_own := st.own` is `st`'s **last** use (verified: no bare `st` past
-`ownership.tw:6144`, so `st` is dead after), and every merge reads the pre-extracted locals
-(`next_valid`/`next_prov`/`next_field`/`next_pp`), so no later `st.*` read keeps any map aliased via
-`st`. Self-host reached `stage3 == stage4`. Result:
+Task 1 was run inline (body rewrite + full merge-region restructure: every `st.*` field pre-extracted,
+`next_own := st.own` as `st`'s last use, `st` dead after, merges read the locals). Self-host green. The
+`merge_targeted` body rewrite worked (summary → `p1=Consumed paths{[]}`), but the flip did **not**
+happen — instrumenting `uniform_entry_seeds` showed `arg_unique=false` at all three
+`run_fixpoint → merge_targeted__{Int,Bool,Vec_Int}` sites even for the last-read `own` map out of a
+dead `st`.
 
-- **Body rewrite works** (again): `merge_targeted__Int` summary is `p1=Consumed paths{[]}`, a proper
-  carrier.
-- **The flip did NOT happen.** All three monomorphs stayed `... false ... persistent(aliased shell)`.
+**Root cause:** the maps are **not** aliased to `exits` (the joins are fresh, `ret=fresh`). They are
+non-unique because the `ForwardState` holding them is threaded through `seed_payload_binding`
+(`p_st=Published, ret=alias`) and `forward_block` (`p_st=Published, ret=alias`) — the analysis marks
+that record, and its map fields, **Published**, so the map is Shared at the merge call.
 
-- **Direct proof of the caller-side rejection (not inferred).** Temporary instrumentation in
-  `uniform_entry_seeds` (`ownership_verdicts.tw`, printing `site.arg_unique[p]` per merge_targeted
-  call site) reported, on the build path (`compute_candidate_artifacts` → `uniform_entry_seeds`):
-  ```
-  caller=run_fixpoint callee=merge_targeted__Int      p=1 arg_unique=false
-  caller=run_fixpoint callee=merge_targeted__Bool     p=1 arg_unique=false
-  caller=run_fixpoint callee=merge_targeted__Vec_Int  p=1 arg_unique=false
-  ```
-  So `call_uniques` computes the `next` argument as **not Unique** at every site — even `own`, which
-  is the last-read move out of a dead `st`. Because `next_own` *is* last-use at the call (passed, then
-  reassigned), the "not unique" verdict is about the **value**, not liveness. That **rules out the
-  st-liveness false-fail** (it would have left `own` unique) and confirms the failure is the value
-  aliasing, not the restructure shape. (Methodology note: this replaces the earlier plan's weaker
-  `p1=Consumed` "seeded" check — that only proves callee candidacy; the `arg_unique` probe / census
-  flip is what proves caller acceptance.)
-
-**Root cause — deeper than record bundling; it is the dataflow itself.** `st.own` does not originate
-as a fresh value: at `ownership.tw:6050` each block's entry map is
-`entry_own := join_entry_ownership_assumed(blk, exits, ...)`, and `join_entry_ownership`
-(single-predecessor case) passes the predecessor's exit map **through from the shared `exits`
-accumulator** (no copy). So `st.own` is provenance-linked to `exits`, and `exits` is the fixpoint's
-**persistent state** — it MUST stay live (it is read as `old_own := nested_get(exits, ...)` and
-written as `exits[blk] = next_own` every iteration). A value aliased to live state is never Unique,
-so `uniform_entry_seeds` correctly never seeds `merge_targeted`'s `p1`.
-
-**Consequence — this STOPs the whole "flip merge_targeted" line, not just H1b:**
-- **H2 (structural, thread maps as top-level owned locals) does not help either.** The aliasing is
-  between the per-block map and the `exits` accumulator, not between a field and its record. Threading
-  `own`/`valid`/`prov` as loop locals still leaves each block's entry joined from `exits`. To make a
-  map Unique you would have to stop entry maps from sharing backing with `exits` — i.e. deep-copy the
-  entry map every block visit — which trades the persistent-rebuild cost we are trying to remove for
-  a full-copy cost, defeating the purpose.
-- This is almost certainly **why `fixpoint-map-inplace` has been a standing "documented boundary."**
-  The ownership fixpoint's maps are shared dataflow state by construction; in-place mutation of them
-  is unsound precisely because block exits alias each other across the DAG.
-
-**Disposition — STOP; do not implement Tasks 2–5 of this plan as a merge_targeted-flip.**
-- The **`merge_targeted` body rewrite (Task 2) is still worth landing on its own** — it is
-  behavior-preserving, self-host-safe, and turns the summary into a clean `p1=Consumed` carrier, which
-  is the correct shape for the day a Unique caller ever exists. It flips nothing today.
-- The remaining questions are for a human decision, not another spike:
-  1. Is flipping `merge_targeted`/`run_fixpoint` in-place *achievable at all* without deep-copying
-     entry maps (which likely regresses the hot path)? Evidence says no under the current shared-exits
-     dataflow.
-  2. If not, retire the `merge_targeted__`/`run_fixpoint` marker as an **accepted persistent boundary**
-     (with this root cause recorded) rather than a tracked-red target, and redirect the general
-     in-place-precision goal to carriers that are NOT shared dataflow state (the aggregate-carrier
-     lever still applies to ordinary builder/transform functions with unique callers).
-
-Tasks 2–5 below are retained only as the record of the intended approach; Task 2 (body rewrite) may be
-cherry-picked. All spike code reverted; repo clean at the plan commit.
+**Verdict:** achievable in principle (an analysis-depth limit, not a soundness wall) but not worth it —
+flipping it needs the core transfer functions to preserve `ForwardState` field-ownership (a large,
+delicate refactor) for a bounded, allocation-only win. **This plan is not being implemented.** The full
+reasoning and decision live in `docs/plans/fixpoint-map-inplace.md` → "CONCLUSION"; the `merge_targeted`
+body rewrite may be cherry-picked standalone. Tasks below are retained only as the record of the
+intended approach. All spike code reverted.
 
 ## File structure
 

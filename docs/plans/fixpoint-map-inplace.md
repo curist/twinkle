@@ -1,73 +1,40 @@
 # Making the Ownership Fixpoint's Own Maps Mutate In-Place
 
-> # ⛔ CONCLUSION (2026-07-27): the `run_fixpoint`/`merge_targeted` target is UNREACHABLE by analysis. Retire the marker.
+> # CONCLUSION (2026-07-27): achievable in principle, NOT worth it. Deprioritized; marker retired.
 >
-> A three-spike investigation (all self-host-verified, all reverted) settled this. **The specific
-> acceptance target of this doc — flip `run_fixpoint`'s own dataflow maps (`own`/`valid`/`prov`,
-> carried through `merge_targeted`) to in-place *by making the ownership analysis more precise* — is
-> impossible, and not because the analysis is too weak.** Sound in-place requires the mutated map to
-> be uniquely owned at the site; for these maps that ownership **genuinely does not exist**, so
-> persistent rebuild is the *correct* behavior. An analysis can only emit in-place when it can
-> *prove* unique ownership — here there is nothing true to prove.
+> **Can the ownership fixpoint's own maps (`own`/`valid`/`prov`, carried by `merge_targeted`) be made
+> in-place?** Yes in principle — it is an analysis-depth limit, not a fundamental/soundness wall — but
+> it is not worth pursuing. Verdict and evidence, stated once:
 >
-> **Why the ownership genuinely isn't there (first-principles):** `run_fixpoint`'s per-block maps are
-> **shared dataflow state**. A block's entry map is `join(predecessors' exits)` and, for a single
-> predecessor, `join_entry_ownership` hands back the predecessor's exit map itself (`ownership.tw:5132`,
-> no copy); the fixpoint also keeps `prev_exits` widening snapshots. So every map handed to
-> `merge_targeted` aliases the live, persistent `exits` accumulator. Mutating it in place would
-> corrupt other blocks' views. This is a correctness constraint of the representation, not a local
-> analysis gap.
+> - **Not impossible.** The maps are freshly allocated each block entry: `join_entry_ownership` /
+>   `join_entry_valid` / `join_entry_prov` each build a new `Dict.new()` from predecessor *facts*
+>   (`twk ir --cfg` → all `ret=fresh`). They do **not** alias the `exits` accumulator.
+> - **The blocker is the transfer functions' summaries.** Those fresh maps live in a `ForwardState`
+>   record threaded through `seed_payload_binding` (`p_st=Published, ret=alias`) and `forward_block`
+>   (`p_st=Published, ret=alias`). The analysis marks that record — hence its map fields — **Published**,
+>   so by the time `merge_targeted` receives a map it is Shared. Direct evidence: after the
+>   `merge_targeted` body rewrite **and** restructuring `run_fixpoint` so each map is a single-reader
+>   last-use out of a dead `st`, `uniform_entry_seeds` still reported `arg_unique=false` at all three
+>   sites (three self-host-verified spikes, all reverted).
+> - **What flipping it would take:** make `forward_block` and its callee tree preserve field-ownership
+>   of the `ForwardState` maps (return them as owned carriers instead of publishing) — a large,
+>   invasive refactor of the compiler's core transfer function (a 5-map record threaded through the
+>   whole instruction-processing tree). Feasibility is uncertain: the `Published` may be partly a real
+>   escape, not just conservatism.
+> - **Payoff is bounded.** The per-block merge region is ~37% of `run_fixpoint` time (measured:
+>   `TWINKLE_TIMINGS` self-host build, 11,240 fixpoint invocations), but that includes the
+>   `field_own`/`path_prov` meets (not `merge_targeted`) and is mostly *per-key work* (`int_keys_union`
+>   + `lat_get` + `join`) that in-place does not remove — in-place saves only the persistent-dict
+>   allocation, a sub-fraction. The larger, more certain lever for that 37% is a different
+>   representation (sparse/delta dataflow), a separate project.
 >
-> **The investigation chain (each step disproved, in order):**
-> 1. *Aggregate-field owned variants* (`docs/plans/aggregate-field-owned-variants.md`): premise wrong
->    — `param_has_inplace_site` is `.ARecordUpdate`-only so `merge_targeted` (a dict carrier) was never
->    even a candidate; and the owned-variant vtable (`compute_variants`) has **no codegen consumer**
->    (read only by `twk ir --cfg` + fixture rendering, never by `compute_artifacts`/emission).
-> 2. *Codegen handoff via the non-cloning uniform-caller seed path*
->    (`docs/plans/owned-variant-codegen-handoff.md`): the body rewrite makes `merge_targeted`'s summary
->    a clean `p1=Consumed` carrier, but no caller passes the map Unique — `run_fixpoint` hands
->    `st.own`/`st.valid`/`st.prov`, projections of a live `ForwardState`.
-> 3. *Caller-side restructure* (`docs/plans/fixpoint-edry-fixstate.md`): even after moving each map out
->    of `st` as a single-reader last-use (`st` dead after), instrumentation of `uniform_entry_seeds`
->    showed `arg_unique=false` at all three call sites — because the map still aliases `exits` one
->    level below the record. This rules out a shape/analysis fix.
->
-> **The only escape is a different fixpoint *representation*** (sparse per-variable dataflow;
-> ownership-threaded single-consumer edges without widening snapshots; mutable arrays with versioning)
-> — a large rewrite that reintroduces copy costs elsewhere, explicitly **outside** this doc's
-> "make the analysis smarter" scope, and with **uncertain payoff** (persistent HAMTs already make a
-> merge cost ~O(changed keys), and prior levers here came back perf-neutral).
->
-> **Decision:** (a) retire the `merge_targeted__`/`run_fixpoint` boot-suite marker as an **accepted
-> persistent boundary** (with this root cause), not a tracked-red target; (b) keep the general
-> in-place-precision goal scoped to functions where the precondition *can* hold (unique-caller
-> builder/transform code); (c) the merges **are** material (measured below), so a *separate
-> representation-change* investigation is justified — but it is NOT an analysis plan and NOT the
-> in-place-via-precision route this doc pursued. The historical exploration below is retained as the
-> record.
->
-> ## Merge-cost measurement (2026-07-27) — the cost is real, but the in-place route can't capture it
->
-> Instrumented `run_fixpoint` (timer around the whole per-block merge region: the 3 `merge_targeted`
-> calls for `own`/`valid`/`prov` **plus** the `field_own`/`path_prov` meets), `TWINKLE_TIMINGS=1`
-> full self-host build of `boot/main.tw`:
->
-> - **~37% of total `run_fixpoint` time is the merge region** (aggregated over 11,240 fixpoint
->   invocations — `run_fixpoint` runs in the summary pass, the analyze pass, *and* `call_uniques`).
->   `run_fixpoint` is one of the largest analysis costs (same order as the entire frontend), so this
->   is **not a ghost** — the earlier "prior levers were perf-neutral" caution is about *in-place*
->   levers specifically, which is a different thing.
-> - **But that 37% is an upper bound on the wrong target twice over:** (1) it includes the
->   `field_own`/`path_prov` meets, which are not `merge_targeted` and not this doc's target; (2) even
->   the `merge_targeted` slice is mostly *per-key work* (`int_keys_union` + `lat_get` + `join` per
->   key), which in-place does **not** remove — in-place would only save the persistent-dict allocation
->   portion. So the achievable in-place win is a fraction of a fraction of 37%, and it is unsound
->   anyway (see above).
-> - **Implication:** the lever that could actually cash in this 37% is *avoiding the whole-map merge*,
->   i.e. a representation change (sparse per-variable dataflow, or delta/edge-threaded exits), not
->   making a whole-map merge mutate in place. That is the only thing worth opening a future plan for,
->   and it should be gated on a finer profile that splits `merge_targeted` from the field/path meets
->   and separates allocation cost from per-key work.
+> **Decision: deprioritized.** Not fundamentally impossible, but the flip needs a core-transfer
+> refactor of uncertain feasibility for a bounded win. The boot-suite marker is retired from
+> tracked-red to a **current-reality guard** (asserts these maps are persistent today; it flips and
+> forces a docs update if that ever changes). The general in-place-precision goal stays alive for
+> functions with provably-unique callers (the aggregate-carrier lever). Reopen only behind a finer
+> profile that isolates `merge_targeted` from the field/path meets and separates allocation from
+> per-key work. The historical exploration below is retained as the record.
 
 **Status:** _(SUPERSEDED by the CONCLUSION above — this and everything below is the historical
 record of the exploration, including the now-disproved claim that the primary lever "unblocks

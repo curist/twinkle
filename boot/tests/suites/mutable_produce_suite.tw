@@ -372,16 +372,13 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
-    // Accepted persistent boundary — see docs/plans/fixpoint-map-inplace.md "CONCLUSION".
-    // run_fixpoint's own/valid/prov maps are shared dataflow state: each block's entry is
-    // join(neighbors' exits) (single-pred join passes the exit through, ownership.tw), plus
-    // widening snapshots (prev_exits). So they are never uniquely owned, in-place mutation would
-    // be unsound, and persistent rebuild is CORRECT. merge_targeted carries them, so its dict
-    // update stays persistent by design. A three-spike investigation proved this is unreachable
-    // by analysis precision. This asserts the boundary holds; if a future fixpoint
-    // *representation* change ever moves it, this test flips and the docs must be updated.
+    // Current-reality guard — see docs/plans/fixpoint-map-inplace.md "CONCLUSION".
+    // run_fixpoint's own/valid/prov maps (carried by merge_targeted) stay persistent: the transfer
+    // functions publish the ForwardState that holds them, so the maps are Shared at the merge call.
+    // Making them in-place is achievable in principle but deprioritized (core-transfer refactor,
+    // bounded payoff). Asserts today's behavior; if a future change flips it, update the docs.
     .test(
-      "boot ownership fixpoint maps stay persistent (accepted boundary)",
+      "boot ownership fixpoint maps stay persistent (current boundary)",
       fn() {
         produced := try produce_boot_main()
         try assert.is_true(selected_decision_count(produced, "merge_targeted__", "dict_set") == 0)
