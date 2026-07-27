@@ -1760,6 +1760,7 @@ pub fn suite() runner.Suite {
           cfg_func_of("f", 1, body),
           ownership.empty_summary_table(),
           sem(),
+          ownership.generic_only_resolver,
         )
         try assert.is_true(same_ints(dirty_fields(reqs, 0), [0, 1])) // both fields, param 0
         .Ok({})
@@ -1783,6 +1784,7 @@ pub fn suite() runner.Suite {
           cfg_func_of("f", 1, body),
           ownership.empty_summary_table(),
           sem(),
+          ownership.generic_only_resolver,
         )
         try assert.equal(dirty_fields(reqs, 0).len(), 0)
         .Ok({})
@@ -1827,6 +1829,7 @@ pub fn suite() runner.Suite {
           cfg_func_of("f", 2, body),
           ownership.empty_summary_table(),
           sem(),
+          ownership.generic_only_resolver,
         )
         try assert.is_true(same_ints(dirty_fields(reqs, 0), [0, 1]))
         .Ok({})
@@ -1863,7 +1866,12 @@ pub fn suite() runner.Suite {
             .Atom(.ALocal(lid(2))),
           ),
         )
-        reqs := ownership.collect_field_reqs(cfg_func_of("g", 1, body), table, sem())
+        reqs := ownership.collect_field_reqs(
+          cfg_func_of("g", 1, body),
+          table,
+          sem(),
+          ownership.generic_only_resolver,
+        )
         try assert.is_true(same_ints(dirty_fields(reqs, 0), [0])) // env's .f0 propagated
         .Ok({})
       },
@@ -1893,7 +1901,12 @@ pub fn suite() runner.Suite {
           .ACall(.AGlobalFunc(FuncId.{ id: 7 }), [.ALocal(lid(0))]),
           .Atom(.ALocal(lid(1))),
         )
-        reqs := ownership.collect_field_reqs(cfg_func_of("g", 1, body), table, sem())
+        reqs := ownership.collect_field_reqs(
+          cfg_func_of("g", 1, body),
+          table,
+          sem(),
+          ownership.generic_only_resolver,
+        )
         try assert.equal(dirty_fields(reqs, 0).len(), 0)
         .Ok({})
       },

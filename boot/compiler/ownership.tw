@@ -7477,7 +7477,13 @@ fn flow_get(st: Dict<Int, FlowFact>, a: Atom) FlowFact {
 // callee's return and receives an origin-bearing argument (else the origin is
 // ambiguous -> none). Builtins and unknown callees break the chain (origin none).
 // A requirements readout, not a proof: Stage 3's owned-entry pass validates it.
-fn call_result_fact(st: Dict<Int, FlowFact>, table: SummaryTable, callee: Atom, args: Vector<Atom>) FlowFact {
+fn call_result_fact(
+  st: Dict<Int, FlowFact>,
+  table: SummaryTable,
+  callee: Atom,
+  args: Vector<Atom>,
+  resolve: VariantResolver,
+) FlowFact {
   fid := case callee {
     .AGlobalFunc(f) => f.id,
     _ => return ff_none(),
@@ -7498,10 +7504,26 @@ fn call_result_fact(st: Dict<Int, FlowFact>, table: SummaryTable, callee: Atom, 
     return ff_none()
   }
   base := flow_get(st, args[carrier])
+
+  // Requirements readout (validated later by the seeded re-analysis): when the
+  // callee has an owned variant requiring uniqueness on the carrier param, read
+  // that variant's in-place paths, so a delegated consume through a forwarder
+  // whose GENERIC summary is Published still hands its field requirements back.
+  // Optimistically assuming the carrier is unique here is sound because Stage 3
+  // (variant_valid over the ownership transfer) proves the base_role separately.
+  au: Vector<Bool> = collect _ps, i in s.params {
+    i == carrier
+  }
+  sel := case resolve(fid, au) {
+    .Some(vs) => vs,
+    .None => s,
+  }
   dirty := base.dirty
-  for p in s.params[carrier].in_place_paths.paths {
-    if !p.is_shell() {
-      dirty = .add(p)
+  if carrier < sel.params.len() {
+    for p in sel.params[carrier].in_place_paths.paths {
+      if !p.is_shell() {
+        dirty = .add(p)
+      }
     }
   }
   FlowFact.{ origin: base.origin, dirty }
@@ -7513,6 +7535,7 @@ fn transfer_flow(
   sem: OptimizerSemantics,
   op: AnfOp,
   result: Int,
+  resolve: VariantResolver,
 ) Dict<Int, FlowFact> {
   case op {
     .ARecordUpdate(base, fld, _, _, _) => {
@@ -7538,9 +7561,9 @@ fn transfer_flow(
       st[result] = case callee_func_id(callee) {
         .Some(fid) => case call_info(sem, fid) {
           .Some(cs) => cow_update_result_fact(st, cs, args),
-          .None => call_result_fact(st, table, callee, args),
+          .None => call_result_fact(st, table, callee, args, resolve),
         },
-        .None => call_result_fact(st, table, callee, args),
+        .None => call_result_fact(st, table, callee, args, resolve),
       }
       st
     },
@@ -7652,10 +7675,12 @@ fn flow_map_eq(a: Dict<Int, FlowFact>, b: Dict<Int, FlowFact>) Bool {
 // same processed guard. Computes its own liveness so it is self-contained
 // (unit-testable on a raw CfgFunction). Returns, per parameter index, the union of
 // dirty [.f] paths carried by the value returned at any return block.
-pub fn collect_field_reqs(f: CfgFunction, table: SummaryTable, sem: OptimizerSemantics) Dict<
-  Int,
-  vid.PathSet,
-> {
+pub fn collect_field_reqs(
+  f: CfgFunction,
+  table: SummaryTable,
+  sem: OptimizerSemantics,
+  resolve: VariantResolver,
+) Dict<Int, vid.PathSet> {
   live := compute_liveness_labeled(f.blocks, "field_reqs:${f.name}")
   blocks := collect blk in f.blocks {
     bl := live_get(live, blk.id.id)
@@ -7681,7 +7706,7 @@ pub fn collect_field_reqs(f: CfgFunction, table: SummaryTable, sem: OptimizerSem
       }
       st := entry
       for inst in blk.instructions {
-        st = transfer_flow(st, table, sem, inst.op, inst.anf_local.id)
+        st = transfer_flow(st, table, sem, inst.op, inst.anf_local.id, resolve)
       }
       prev := case exits.get(blk.id.id) {
         .Some(m) => m,
@@ -8058,7 +8083,7 @@ fn summarize_seeded(
   } else {
     0.0
   }
-  field_reqs := collect_field_reqs(f, table, sem)
+  field_reqs := collect_field_reqs(f, table, sem, resolve)
   t_field_reqs := if timed {
     date.now()
   } else {

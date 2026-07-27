@@ -634,7 +634,7 @@ fn propagate_terminator(f: CfgFunction, term: Terminator, st: InplaceScan) Inpla
   }
 }
 
-fn scan_inplace_op(op: AnfOp, dst: Int, st: InplaceScan) InplaceScan {
+fn scan_inplace_op(op: AnfOp, dst: Int, st: InplaceScan, generic: SummaryTable) InplaceScan {
   case op {
     .AAssign(target, a) => if atom_is_derived(st.derived, a) {
       st = .mark_derived(target.id)
@@ -648,6 +648,30 @@ fn scan_inplace_op(op: AnfOp, dst: Int, st: InplaceScan) InplaceScan {
     } else {
       st
     },
+    // Delegated consume: the callee returns exactly the derived argument as its
+    // sole alias (ret=alias(pK)), so threading the derived value through this call
+    // is itself an in-place update site once the callee's owned variant is selected.
+    // Use summary_get (never table_get): a global without a user summary is ignored.
+    .ACall(callee, args) => case callee {
+      .AGlobalFunc(fid) => case summary_get(generic, fid.id) {
+        .Some(cs) => {
+          hit := false
+          for a, j in args {
+            if atom_is_derived(st.derived, a) and ret_aliases_exactly_param(cs.ret, j) {
+              hit = true
+            }
+          }
+          if hit {
+            st.found = true
+            st.mark_derived(dst)
+          } else {
+            st
+          }
+        },
+        .None => st,
+      },
+      _ => st,
+    },
     .AInit(a) => if atom_is_derived(st.derived, a) {
       st.mark_derived(dst)
     } else {
@@ -660,7 +684,7 @@ fn scan_inplace_op(op: AnfOp, dst: Int, st: InplaceScan) InplaceScan {
 // Does param k have a syntactic in-place update site? This deliberately avoids
 // ownership-gated dirty-path collection: recursive publishing can hide exactly
 // the update sites this candidate pre-filter is meant to bootstrap.
-fn param_has_inplace_site(f: CfgFunction, k: Int) Bool {
+fn param_has_inplace_site(f: CfgFunction, k: Int, generic: SummaryTable) Bool {
   if k < 0 or k >= f.params.len() {
     return false
   }
@@ -672,7 +696,7 @@ fn param_has_inplace_site(f: CfgFunction, k: Int) Bool {
     st.changed = false
     for blk in f.blocks {
       for inst in blk.instructions {
-        st = scan_inplace_op(inst.op, inst.anf_local.id, st)
+        st = scan_inplace_op(inst.op, inst.anf_local.id, st, generic)
       }
       case blk.terminator {
         .Some(term) => st = propagate_terminator(f, term, st),
@@ -692,7 +716,7 @@ fn candidate_variants(view: CfgView, generic: SummaryTable) Vector<vid.VariantId
   for f in view.functions {
     s := table_get(generic, f.func_id)
     for _ps, k in s.params {
-      if ret_aliases_exactly_param(s.ret, k) and param_has_inplace_site(f, k) {
+      if ret_aliases_exactly_param(s.ret, k) and param_has_inplace_site(f, k, generic) {
         v := vid.VariantId.{
           func: f.func_id,
           unique: [vid.UniqueReq.{ param: k, path: vid.shell() }],
