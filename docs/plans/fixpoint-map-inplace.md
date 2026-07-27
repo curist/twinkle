@@ -1,5 +1,16 @@
 # Making the Ownership Fixpoint's Own Maps Mutate In-Place
 
+> **⚠️ 2026-07-27 — the "primary lever" is blocked on a missing consumer.** A review of the
+> aggregate-field owned-variant work found three things: (1) `merge_targeted` was never actually
+> detected as a candidate (`param_has_inplace_site` is `.ARecordUpdate`-only), (2) even seeded
+> Unique its `out` is aliased at the mutation (post-copy `next` read → `persistent(aliased
+> shell)`), and (3) **the owned-variant vtable has no codegen consumer** — `compute_variants` is
+> read only by diagnostic/test rendering paths, never by `compute_artifacts`/emission — so no
+> variant flips any emitted site. Flipping `merge_targeted` needs all three fixed, in order
+> (codegen handoff → body rewrite → summary generalization). Full reviewable writeup:
+> `docs/plans/aggregate-field-owned-variants.md` → "STATUS (2026-07-27)". Treat the "Primary
+> lever" framing below as blocked until the codegen handoff exists.
+
 **Status:** Re-scoped 2026-07-26 to the **general analysis goal.** The point of this work
 is a *reusable* in-place-mutation precision win — make the ownership analysis prove owned
 collections unique so the compiler emits in-place writes wherever the ownership precondition

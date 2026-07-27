@@ -14,6 +14,124 @@
 > it is gated on the uniqueness precondition — not "every program." It supersedes the dropped
 > one-off `run_fixpoint` cold/warm-split workaround.
 
+---
+
+## ⚠️ STATUS (2026-07-27): core premise DISPROVEN — Tasks 4–6 blocked on a missing consumer
+
+> A review of the committed Tasks 1–3 traced the actual detection and emission paths and
+> found the plan's premise is wrong, and — more fundamentally — that the entire owned-variant
+> apparatus it generalizes **has no codegen consumer today**. This section is the reviewable
+> writeup. Every claim cites a `file:line` you can grep at HEAD; please grill/fact-check.
+
+### Finding 1 — `merge_targeted` was never a candidate (Task 1's verification was wrong)
+
+Candidate detection gates each carrier param on `param_has_inplace_site`
+(`boot/compiler/summary.tw:662`), whose scan `scan_inplace_op` (`:636`) sets `found = true`
+**only** on `.ARecordUpdate` (record field update). Every other op — including `.ACall`,
+which is what a dict `out[k]=v` lowers to (`dict$set`) and a vector `xs[i]=v` (`VECTOR_SET`) —
+falls through `_ => st` (`:655`) and is invisible. Therefore:
+
+- `aggregate_carrier_params(merge_targeted, …)` (`:690`) returns **`carriers=0`** — measured
+  directly with a temporary `eprintln`. merge_targeted has a fresh-aggregate return
+  (`ret=fresh ret_paths=.f0=from(p1) .f1=from(p3)`) but **no ARecordUpdate site**, so it is
+  **not** proposed as a candidate.
+- Task 1's commit message (`7d6b76f3`: "merge_targeted is one of them … as a SINGLE carrier
+  `{p1}`") is **incorrect**. The 25 record-based `{p0}` candidates are real; the "3× `{p1}`
+  merge_targeted monomorphs" never existed. The `[cand] unique:p1` lines the Task 1 step
+  claimed to see do not reproduce.
+
+**Repair for detection** (built and verified in the investigation, then reverted): extend
+`scan_inplace_op` to also set `found` on a COW `.Update` builtin whose `cow_base_arg` is a
+derived collection — recognized via `call_info(sem, fid).effect == .Update` + `cow_base_arg`
+(`boot/compiler/opt/semantics.tw:234`, `:27`), mirroring how `ownership.tw:7397` already
+dirties a COW base at the shell. With this, merge_targeted correctly detects `carriers=1`.
+This repair is necessary but **not sufficient** (Findings 2–3), so it was not committed.
+
+### Finding 2 — even seeded Unique, `merge_targeted`'s `out` is aliased at the mutation
+
+The per-site verdict is `shell_verdict` (`boot/compiler/ownership.tw:4625`): a dict/vector
+update emits in-place **iff the base's ownership fact is `.Unique`** at the mutation, else
+`_ => "persistent(aliased shell)"` (`:4635`). merge_targeted (`ownership.tw:5180`) does:
+
+```tw
+out := next                                 // out aliases p1's backing
+…
+next_x := lat_get(next, k, default_value)   // reads `next` AFTER the loop's out[k]= writes
+out[k] = join(old_x, next_x)                // in-place write to the SHARED backing
+```
+
+The forward verdict pass treats a param as Unique only if `seed_param_indices`
+(`boot/compiler/codegen/ownership_verdicts.tw:328`) contains it — a set that is
+**consumed-path targets (`target_params`, `:311`) ∪ copy-carrier sources
+(`structural_seed_params_for_borrow_effects`, `ownership.tw:1256`)**. p1 *is* seeded (as a
+copy-carrier source — the census reason literally reads `borrow-effect copy-carrier source`),
+yet `out` still resolves to Shared at the write because the post-copy `lat_get(next, …)` read
+keeps `next` alias-live. Hence `persistent(aliased shell)` — the "documented boundary."
+
+A **body rewrite** (hoist the `int_keys_union(old.keys(), next.keys())` read above
+`out := next`, then read values via `out` instead of `next`) is behavior-preserving (keys are
+unique, so `out[k]` is untouched until its own iteration) and removes the post-copy `next`
+read. It was tried in the investigation and, on its own, **still did not flip** — because with
+the copy-carrier read gone, p1 also drops out of `structural_seed_params_for_borrow_effects`,
+and the *base* summary never marks p1 Consumed (base analysis does not seed params Unique), so
+p1 is seeded Unique by **no** path. This is what makes Finding 3 the gating prerequisite.
+
+### Finding 3 — the owned-variant vtable has **no codegen consumer** (this is the real blocker)
+
+`compute_variants` (`boot/compiler/summary.tw`) produces the `VariantSummaryTable`. The only
+non-test reference to it in the whole tree is the **diagnostic** `twk ir --cfg` command:
+
+```
+boot/commands/ir.tw:62:  variants := summary.compute_variants(owned.view, b, s, owned.table)
+```
+
+The emission path never touches it: `compute_artifacts`
+(`boot/compiler/codegen/ownership_verdicts.tw:511`) computes only the **base** summary
+(`summary.compute`, `:517`) + `uniform_entry_seeds` (`:518`) and runs
+`analyze_with_summaries_and_entry_seeds` (`:520`) — no variant table in scope. `mutable_produce`
+/ `mutable_select` / `prepare_backend` likewise never mention it (verified by grep across
+`boot/compiler/codegen/` and `boot/compiler/backend/`).
+
+**Consequence:** the entire owned-variant apparatus is **diagnostic-only** right now. No
+owned-variant — validated or not, whole-return or aggregate, record or dict — can flip *any*
+emitted site, because nothing downstream reads the vtable. This is the unbuilt "**2c —
+codegen-handoff**" item from `docs/plans/sound-uniqueness/`. It means the summary-side
+generalization Tasks 4–6 build is inert regardless of correctness.
+
+### Revised design — to actually flip `merge_targeted` you need ALL THREE, in this order
+
+| # | Change | Where | Why it's required | Soundness obligation | Verify |
+|---|---|---|---|---|---|
+| **1. Codegen handoff** *(missing — the gate)* | Make the verdict/emission path consume validated owned-variants: for each published variant, emit a **separate, caller-guarded** variant function, and in **that** function's forward verdict pass union the variant's carrier params into the Unique seed set (extend `seed_param_indices` / thread the vtable into `compute_artifacts` → `analyze_with_summaries_and_entry_seeds`). The **base** function keeps its persistent verdict. | `codegen/ownership_verdicts.tw:328,511,518,520`; `mutable_produce`/`mutable_select` dispatch by `variant_key` (the field already exists, set `.None` today); call-site selection already recovers `arg_unique` via `transfer_summarized_call`. | Without a consumer the vtable is inert (Finding 3). This is the ONLY component that turns a validated variant into a real in-place site. | Seeding a carrier Unique is sound **only inside the guarded variant** — a variant body may assume its key params are Unique because the variant is emitted/selected exclusively when the caller passes them Unique + last-use. The base body must stay persistent. `TWINKLE_FIXVERIFY` must stay clean (note: the pre-existing `analyze:unique_analysis_diags` mismatch is the tracked-red baseline, present even before Task 1 — measure the delta, not the absolute). | A fixture where caller passes a fresh dict Unique: `selected_decision_count(produce_for(fx), fn, "dict_set") > 0`. |
+| **2. Body rewrite of `merge_targeted`** | Hoist `keys := int_keys_union(old.keys(), next.keys())` above `out := next`; read `next_x := lat_get(out, k, …)` instead of `lat_get(next, k, …)`. | `ownership.tw:5180` | Even a Unique seed gives `persistent(base still live)` while `next` is read after `out := next` (Finding 2). The rewrite makes `out` genuinely Unique at the write. | Behavior-preserving: union keys are unique, so `out[k]` is unread/unwritten until its own iteration; `out == next` backing at that point. Must be covered by existing `merge_targeted`/fixpoint tests + the boot suite (self-host uses this fn). | Self-host `stage3 == stage4`; boot suite unchanged except the target marker. |
+| **3. Summary generalization** *(this plan)* | Aggregate-field candidate detection (Task 1) **+ the dict/vector-carrier repair from Finding 1** + kind-dispatched SCC driver (Task 4) + `variant_valid_key` (Task 3). | `summary.tw:636,662,690,713` + driver | Produces the *validated variant* that #1 consumes and that #2 makes consumable. Load-bearing only once #1 exists. | Validation (`variant_valid_key`) already gates: carrier stays Consumed w/ in-place path AND returned `OwnedFromParam` under `OwnedFresh`. | `twk ir --cfg` shows the published variant; then #1's fixture flips. |
+
+**Sequencing correction:** this plan built #3 first, but **#1 is the prerequisite** and does not
+exist. #3 and #2 change nothing observable until #1 lands. Recommended: pause Tasks 4–6, author
+`docs/plans/owned-variant-codegen-handoff.md` for #1 with body-rewritten `merge_targeted` as its
+first customer, and fold #3's detection repair (Finding 1) into that plan so the first end-to-end
+flip is provable.
+
+### Points worth grilling (open questions for the reviewer)
+
+- **Is a per-variant verdict pass the right shape, or should `seed_param_indices` just union the
+  vtable's carriers for the base pass?** The latter is simpler but unsound unless every caller is
+  uniform-Unique — the "mixed-caller guard" (`ownership_verdicts.tw:325`) already exists for the
+  copy-carrier case; does it extend to variant carriers, or must the variant be a distinct emitted
+  function? (Leaning: distinct function, because a non-uniform caller must still hit the base.)
+- **Does emitting a second function per variant interact with monomorphization** (one clone per
+  (func, type-args))? A variant is a third axis (func, type-args, unique-key) — dedup/interning is
+  in `variant_id.tw` but the emission/naming path is unbuilt.
+- **Is merge_targeted even called Unique + last-use by anyone?** If no caller passes `next` fresh,
+  the variant is never selected and the whole chain is moot for this specific function — worth
+  confirming against `run_fixpoint`'s call sites before investing (the E-DRY beneficiary assumed
+  the cold callers pass fresh `Dict.new()`).
+- **The pre-existing `analyze:unique_analysis_diags` fixverify mismatch** — is it the
+  merge_targeted/run_fixpoint boundary, or an unrelated red? #1's acceptance must define the
+  expected post-flip fixverify state, not just "clean."
+
+---
+
 **Goal:** Teach the owned-variant machinery to recognize a function that returns a **fresh
 aggregate whose fields are owned carriers** — `ret=OwnedFresh` with
 `ret_paths=.f0=from(p1) .f1=from(p3)` — as an owned-variant candidate, so that at call
@@ -108,11 +226,20 @@ target/twk test 2>&1 | tail -1
 
 ---
 
-## Task 1 — Aggregate-carrier candidate detection ✅ DONE (commit `7d6b76f3`)
+## Task 1 — Aggregate-carrier candidate detection ✅ CODE LANDED (`7d6b76f3`), ⚠️ OUTCOME CORRECTED
 
 **Files:** Modify `boot/compiler/summary.tw` (`candidate_variants`).
 
-**Outcome:** `aggregate_carrier_params` + the aggregate branch in `candidate_variants` landed.
+> **⚠️ The original outcome below is WRONG — see Finding 1 in the STATUS section.** The 25
+> record-based `{p0}` candidates are real, but the "3 `{p1}` merge_targeted monomorphs" **never
+> existed**: `param_has_inplace_site` only detects `.ARecordUpdate`, so merge_targeted's dict
+> carrier scores `carriers=0` and is not proposed. Detecting it needs the COW-`.Update` repair
+> (Finding 1), which is necessary-but-not-sufficient (Findings 2–3). The committed code is
+> sound (it just never fires for dict carriers); the *claim* that it detected merge_targeted is
+> the defect.
+
+**Outcome (as originally recorded — retained for the record, do not trust the merge_targeted
+count):** `aggregate_carrier_params` + the aggregate branch in `candidate_variants` landed.
 28 aggregate candidates detected in boot/main (25 `{p0}`, 3 `{p1}` = the merge_targeted
 monomorphs). Self-host byte-identical, boot suite still at the one known-red marker (the new
 candidates are inert — the current MayAliasParams driver retracts them; Tasks 2–4 make them
@@ -320,6 +447,15 @@ git commit -m "ownership: validate multi-carrier aggregate variants over the ful
 ---
 
 ## Task 4 — Generalize the SCC driver from single param to full key
+
+> **⚠️ BLOCKED / INERT until the codegen handoff (#1) exists — see STATUS Finding 3.** This
+> driver change was implemented and self-host-verified in the investigation (kind-dispatched
+> seed/validate over the full `member_key`; it correctly publishes record-aggregate variants
+> the old MayAliasParams driver retracted). It was **reverted** because the published vtable has
+> no codegen consumer, so it flips nothing emitted. Re-apply it only alongside #1, and gate on a
+> real `selected_decision_count` flip — **not** the `--census --sites merge_targeted` row (that
+> renders the base body, which stays persistent regardless; see Finding 2). The Task 4 census
+> gate as originally written checks the wrong thing.
 
 **Files:** Modify `boot/compiler/summary.tw` (`run_scc_variants`).
 
