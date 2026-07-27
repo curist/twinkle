@@ -1,5 +1,15 @@
 # Transitive-Consume Delegation Implementation Plan
 
+> **STATUS (2026-07-27): LANDED, across two plans.** The **delegated-consume** and
+> **mixed local-update+delegation** shapes (Tasks 1–5 here) landed: the resolver spine,
+> variant resolvers, render pipeline, and delegated-consume candidacy compose
+> `build → resolve → … → add` end to end. The **transport-wrapper** shape (this plan's
+> Task 6/7 transport portions) is delivered separately by
+> `transport-wrapper-role-recovery-plan.md` (candidacy consumption gate +
+> `collect_move_recovered_params` → `cap=Consumed`), including the Phase 6 boundary
+> decision recorded in `transport-wrapper-phase6-conflict-brief.md`. The Task 6–9 steps
+> below are superseded for the transport shape; kept for history.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let owned in-place threading compose through delegating call hops of arbitrary depth, so chains such as `build → resolve → resolve_decls → resolve_one → add` reach the leaf in-place update instead of collapsing to persistent at the first forwarding function.

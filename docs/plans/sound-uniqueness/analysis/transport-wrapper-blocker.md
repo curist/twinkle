@@ -101,3 +101,29 @@ Candidate levers (to be brainstormed):
 All three are analysis/render-only under the current milestone (no codegen
 dispatch); an over-broad classification affects CFG diagnostics, not emitted code,
 and unsound variants are still retracted by `variant_valid` re-analysis.
+
+## Resolved (2026-07-27)
+
+Shipped via `docs/plans/transport-wrapper-role-recovery-plan.md`. Mechanism:
+
+- **Candidacy consumption gate** — `mark_ret_path_field` gates on
+  `cs.params[k].base_role == .Consumed`, so the ret-path linkage is a consuming
+  recovery, not a bare field projection.
+- **`collect_move_recovered_params`** (`ownership.tw`) — replays each block from the
+  seeded fixpoint and records params recovered by a licensed move-projection whose
+  projected shell provenance names the param, mirroring the real `.ARecordGet` move
+  branch (`projection_move_licensed` + `pr.shell` + `project_path_prov` →
+  `param_index_of`). Fed into `cap = .Consumed` in `summarize_seeded`.
+
+Transport-wrapper chains (`build → check → synth`) and the single-hop `wrap/thread`
+now compose; the read-after NEG stays persistent (`esc=Retained`). Levers A and C
+from the design surface above were **not** needed — the `cap` route sufficed.
+
+**Phase 6 boundary decision (Option A):** a pure (non-mutating) transport wrapper is
+indistinguishable from a mutating one once the param is moved into a fresh wrapper
+(both summarize `p0=Consumed paths{[]}`), so a pure-transport recovered param now also
+classifies `Consumed`. Sound (arg_unique-gated); the `phase6 stage3` test was updated
+accordingly. Full record: `../../transport-wrapper-phase6-conflict-brief.md`.
+
+Validation: boot census `dict_set` in-place 396→397 (no regress), self-host fixed
+point holds (stage3 == stage4), `make test` green.

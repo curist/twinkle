@@ -173,16 +173,25 @@ bounded `function_section` helper. This includes fixing the existing
   `reuse(unique)` inside it, and no `variant fn check` in the output. Load-bearing
   soundness lock (the read-after arg is not last-use → recovery fails → `ctx`
   published → `esc=Retained` → `Published`).
-- **Over-fire control — must be non-vacuous.** Add a candidate-shaped fixture whose
-  threaded param reaches a licensed move-projection that is **not** a
-  consuming-callee recovery (a plain owned-field projection), and assert its variant
-  is **retracted** (param stays `Borrowed`, empty in-place paths). The plan must
-  *verify* the fixture actually enters variant validation (candidacy fires) so the
-  control is not silently vacuous; a direct unit assertion on the seeded summary
-  classification is an acceptable substitute. If no candidate-shaped non-recovery
-  move-projection can be constructed, record that as evidence the gate is
-  unreachable-by-construction and rely on the read-after NEG instead — do not ship a
-  vacuous green.
+- **Over-fire control — RESOLVED: unreachable-by-construction (no test shipped).**
+  The intended over-fire control was a candidate-shaped licensed move-projection that
+  is *not* a consuming-callee recovery (a plain owned-field projection). No such
+  candidate can be constructed under the current candidacy: transport-wrapper
+  candidacy fires only through `mark_ret_path_field`, which requires the callee to
+  return the param via `ret_paths=OwnedFromParam(k)` with `base_role == .Consumed`
+  (a consuming recovery); a bare `x := r.field` projection of a still-owned record
+  param produces no `ret_paths`-derived candidacy and no `scan.found`, so it is never
+  proposed. Delegated-consume candidacy (the `.ACall` ret-alias arm) likewise
+  requires `ret_aliases_exactly_param`. So a non-recovery move-projection cannot reach
+  variant validation, and `collect_move_recovered_params` cannot over-fire on one.
+  The soundness locks are therefore the read-after NEG (`red_transport_read_after`,
+  arg_unique gate) plus the `base_role == .Consumed` candidacy gate. Per the "no
+  vacuous green" rule, no over-fire test is added.
+
+  Note (Phase 6 boundary): a *pure* transport wrapper (consuming-via-wrap but
+  non-mutating) IS a legitimate candidate and now classifies `Consumed` — this is the
+  intended, sound outcome, not an over-fire. See
+  `transport-wrapper-phase6-conflict-brief.md`.
 - **Flip to owned (positive), section- and id-scoped.** Resolve `check`'s FuncId
   from the render (or match the concrete `call Fn<check_id>` site) rather than a
   bare `verdict -> f`:
