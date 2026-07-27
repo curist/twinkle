@@ -683,33 +683,9 @@ fn param_has_inplace_site(f: CfgFunction, k: Int) Bool {
   st.found
 }
 
-// Params returned as a field of an OwnedFresh aggregate (a ret_paths .OwnedFromParam
-// entry) AND updated in place: the carrier set for an aggregate-field candidate variant.
-// Sorted+deduped via insert_sorted for determinism; a param backing several return fields
-// counts once. Empty unless the whole return is a fresh aggregate.
-fn aggregate_carrier_params(f: CfgFunction, s: Summary) Vector<Int> {
-  case s.ret {
-    .OwnedFresh => {
-      out: Vector<Int> = []
-      for rp in s.ret_paths {
-        case rp.own {
-          .OwnedFromParam(k) => if param_has_inplace_site(f, k) {
-            out = insert_sorted(out, k)
-          },
-          .OwnedFresh => {},
-        }
-      }
-      out
-    },
-    _ => [],
-  }
-}
-
 // A param the generic summary returns as the SOLE alias AND updates in place is a
 // candidate owned variant {(k, [])}. The seed is a hypothesis; run_scc_variants
-// proves or retracts it. Determinism: functions ascending, params by index. A function
-// that returns a FRESH aggregate whose fields are owned carriers instead yields one
-// aggregate candidate keyed on all carriers (Task 1 of aggregate-field-owned-variants).
+// proves or retracts it. Determinism: functions ascending, params by index.
 fn candidate_variants(view: CfgView, generic: SummaryTable) Vector<vid.VariantId> {
   cands: Vector<vid.VariantId> = []
   for f in view.functions {
@@ -722,14 +698,6 @@ fn candidate_variants(view: CfgView, generic: SummaryTable) Vector<vid.VariantId
         }
         cands = .append(v.canonicalize_variant())
       }
-    }
-    carriers := aggregate_carrier_params(f, s)
-    if carriers.len() > 0 {
-      reqs: Vector<vid.UniqueReq> = collect k in carriers {
-        vid.UniqueReq.{ param: k, path: vid.shell() }
-      }
-      av := vid.VariantId.{ func: f.func_id, unique: reqs }
-      cands = .append(av.canonicalize_variant())
     }
   }
   cands
@@ -761,24 +729,6 @@ fn optimistic_hypothesis(gs: Summary, k: Int) Summary {
   Summary.{ params, ret: .MayAliasParams([k]), ret_paths: [] }
 }
 
-// Optimistic seed for an aggregate-field carrier variant: mark every keyed
-// carrier Consumed+shell while preserving the generic fresh-aggregate return and
-// ret_paths. The SCC driver will use this for OwnedFresh aggregate candidates
-// once Tasks 3-4 wire it; kept public so cfg_summary_suite can pin the helper's
-// aggregate-preserving contract.
-pub fn optimistic_hypothesis_multi(gs: Summary, carriers: Vector<Int>) Summary {
-  cset := int_set(carriers)
-  params: Vector<ParamSummary> = collect ps, i in gs.params {
-    if in_set(cset, i) {
-      ParamSummary.{ base_role: .Consumed, in_place_paths: vid.shell_set(), flows_to_return: true }
-    } else {
-      ps
-    }
-  }
-  gs.params = params
-  gs
-}
-
 fn seed_param_of(v: vid.VariantId) Int {
   if v.unique.len() > 0 {
     v.unique[0].param
@@ -797,50 +747,6 @@ fn variant_valid(s: Summary, k: Int) Bool {
     false
   }
   param_ok and ret_aliases_exactly_param(s.ret, k)
-}
-
-// A carrier is still returned iff the return is a FRESH aggregate (OwnedFresh) whose
-// ret_paths still carry k via OwnedFromParam. The OwnedFresh gate is load-bearing: caller-side
-// recovery (transfer_summarized_call, result_ok = OwnedFresh) ONLY applies ret_paths under an
-// OwnedFresh return, so a widened `ret=Shared` with stale/surviving ret_paths must NOT validate.
-fn carrier_returned_owned_fresh(s: Summary, k: Int) Bool {
-  case s.ret {
-    .OwnedFresh => {
-      for rp in s.ret_paths {
-        case rp.own {
-          .OwnedFromParam(j) => if j == k {
-            return true
-          },
-          .OwnedFresh => {},
-        }
-      }
-      false
-    },
-    _ => false, // MayAliasParams / Shared: not an aggregate-carrier return
-  }
-}
-
-// A converged aggregate variant survives iff EVERY carrier param still (a) has a non-empty
-// in-place path and (b) is returned as an OwnedFresh aggregate field.
-pub fn variant_valid_key(s: Summary, key: vid.UniqueKey) Bool {
-  if key.len() == 0 {
-    return false
-  }
-
-  // Aggregate variants require a fresh-aggregate return; a whole-return single carrier uses
-  // the existing variant_valid(s, k) path instead.
-  case s.ret {
-    .OwnedFresh => {},
-    _ => return false,
-  }
-  for req in key {
-    k := req.param
-    in_place_ok := k >= 0 and k < s.params.len() and !s.params[k].in_place_paths.is_empty()
-    if !(in_place_ok and carrier_returned_owned_fresh(s, k)) {
-      return false
-    }
-  }
-  true
 }
 
 // generic table with each in-SCC member's current variant iterate overlaid, so a
