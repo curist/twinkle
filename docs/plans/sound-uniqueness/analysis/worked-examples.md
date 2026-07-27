@@ -383,9 +383,27 @@ The shipped boot analysis + codegen (8A–8E) now gives a directly-measurable di
 
 - The **303 `aliased shell` dict sites** are the general precision ceiling — the base is not
   *provably* Unique. Some are genuinely aliased (must stay persistent); some are conservative
-  over-approximations (fixable in principle). `run_fixpoint`'s maps are in the conservative,
-  transitively-published sub-class (see the storage track's "run_fixpoint … canonical S4 customer"
-  follow-up).
+  over-approximations (fixable in principle). Two distinct sub-classes live here:
+  - The **transitively-published** sub-class — the per-block `own`/`valid`/`prov` maps that reach
+    `merge_targeted`, where `Published` cascades through the `ForwardState` transfer tree. These
+    are the conservative-fixable candidates (caller-side uniqueness / copy-carrier shape).
+  - `run_fixpoint`'s **own** `exits`/`exit_*` accumulator maps are a separate, **accepted persistent
+    boundary** — *not* transitively-published. Their `own` fact is `Unknown` at the update sites
+    solely because the `exits = case warm_state { .Some(w) => w.<map>, .None => Dict.new() }`
+    initializer joins a fresh (Unique) cold arm with a projection off the **Borrowed** `warm_state`
+    param, and `Unique ⊔ Borrowed-projection = Unknown` at the loop phi (the back-edge itself
+    already carries `Unique`). Keeping these persistent is **sound**: the warm arm is genuinely
+    aliased — every map is double-stored into both `FixState` and `FixResult` of the returned
+    `FixRun` (`ownership.tw` ~6256-6273) and fed back via `warm_state` across iterations. It is
+    also **conservative** for the ~28/30 init-loop sites guarded by `if !warm_started` (they only
+    execute on the fresh cold arm; a cold-only rewrite empirically flips 28/30 — see
+    `../../archive/fixpoint-map-inplace.md`). None of the landed machinery (copy-carrier,
+    delegated-consume, transport-wrapper role recovery) reaches it: the uniqueness loss is at an
+    in-function control-flow join, not a call/wrapper boundary, and the maps genuinely escape.
+    Closing the gap needs a distinct mechanism — path/provenance-splitting the cold-vs-warm local,
+    or consuming `warm_state` and dropping the `FixState`/`FixResult` double-store — both
+    out-of-scope non-goals (the aggregate-field owned-variant carrier that would have reached it
+    was built and removed, `62bc1a47`; spike `e8a6f91c`).
 - `vector_append`/`vector_builder` rows are handled by the separate loop-builder pass, not this
   decision path (only `vector_set` surfaces here) — so vector is not the opportunity; dict is.
 
