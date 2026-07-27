@@ -84,18 +84,20 @@ self-host reached `stage3 == stage4`. Measured outcome:
 - **The flip still did NOT happen.** All three monomorphs stayed
   `... false ... base=persistent(aliased shell) borrow-effect copy-carrier source`. p1 is a valid
   seed *candidate* but `uniform_entry_seeds` does **not** seed it.
-- **Root cause (caller-side, deeper than "mixed callers"):** `merge_targeted`'s only call sites are
-  `ownership.tw:6100/6111/6122` inside `run_fixpoint`, and each passes `next` as
-  **`st.own` / `st.valid` / `st.prov`** — field projections of a **live `ForwardState` record**.
-  A field projection of a live record is never Unique + last-use, so `uniform_entry_seeds`'
-  `failed` guard correctly declines to seed p1. **No caller passes `next` Unique**, so the flip is
-  impossible via the uniform-caller seed path.
+- **Root cause (caller-side, deeper than "mixed callers"):** on the `boot/main.tw` (production)
+  path, `merge_targeted`'s only call sites are `ownership.tw:6100/6111/6122` inside `run_fixpoint`,
+  and each passes `next` as **`st.own` / `st.valid` / `st.prov`** — field projections of a **live
+  `ForwardState` record**. A field projection of a live record is never Unique + last-use, so
+  `uniform_entry_seeds`' `failed` guard correctly declines to seed p1. **No caller passes `next`
+  Unique**, so the flip is impossible via the uniform-caller seed path. (Nuance: `merge_targeted` is
+  *also* called directly from `boot/tests/suites/cfg_lattice_suite.tw`, but tests are not in the
+  `boot/main.tw` census/emission path, so they don't affect the production seed decision.)
 
-**Consequence — clone-dispatch would NOT help either.** The fallback (emit a Unique variant clone +
-dispatch) only fires at a call site that passes the carrier Unique. There is **no such site**; all
-three pass a shared record field. So the true blocker is not "which handoff" — it is that the caller
-(`run_fixpoint`) holds its maps as fields of a live `ForwardState` and hands *projections* to
-`merge_targeted`.
+**Consequence — even future clone-dispatch still needs a Unique call-site argument.** There is no
+codegen clone-dispatch today; but even if it existed, a variant clone is only selected at a call site
+that passes the carrier Unique. There is **no such site** — all three pass a shared record field. So
+the true blocker is not "which handoff" — it is that the caller (`run_fixpoint`) holds its maps as
+fields of a live `ForwardState` and hands *projections* to `merge_targeted`.
 
 **The real lever is caller-side (this reorders the roadmap):** `run_fixpoint` must pass its maps as
 **owned, moved-out locals** rather than live-record fields — i.e. the E-DRY `fixpoint_iterate`

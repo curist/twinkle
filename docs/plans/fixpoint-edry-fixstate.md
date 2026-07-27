@@ -14,14 +14,23 @@
 all three `merge_targeted__` monomorphs flipping in the census and the `merge_targeted__` half of the
 tracked marker going green, self-host stable, and no ownership-analysis perf regression.
 
-**Architecture:** The spike proved the analysis + body rewrite are sufficient; the only blocker is
-that `run_fixpoint` reads `st.own`/`st.valid`/`st.prov` (fields of a live `ForwardState`) and passes
-those projections to `merge_targeted`, so uniqueness is never available. This plan (a) lands the
-`merge_targeted` body rewrite, then (b) restructures the merge region so each map is **moved out of
-`st` exactly once and read only by `merge_targeted`** with `st` dead afterward — making the argument
-a Unique last-use. It reuses the existing analysis end-to-end (`uniform_entry_seeds` +
-`seed_param_indices`' `target_params` path); **no new analysis, no cloning, no `compute_variants`
-consumption.** The exact restructure shape is the load-bearing unknown, so Task 1 is a measured spike.
+> **⚠️ This plan's core hypothesis was DISPROVEN by its own Task 1 spike — see the
+> "⛔ SPIKE RESULT" section below. The Architecture paragraph is the pre-spike hypothesis, retained
+> for context. The body rewrite (Task 2) is worth landing standalone; the caller restructure
+> (Tasks 3+) does NOT work, because the maps alias the persistent `exits` accumulator, not just the
+> `ForwardState` record.**
+
+**Architecture (pre-spike hypothesis — see the disproof below):** the prior owned-variant spike
+showed the body rewrite yields callee-side readiness (`merge_targeted` summary → `p1=Consumed`
+carrier); the *hypothesis* here was that the only remaining blocker is that `run_fixpoint` reads
+`st.own`/`st.valid`/`st.prov` (fields of a live `ForwardState`) and passes projections, so
+restructuring the merge region to move each map out of `st` exactly once (read only by
+`merge_targeted`, `st` dead afterward) would make the argument a Unique last-use — reusing the
+existing analysis (`uniform_entry_seeds` + `seed_param_indices`' `target_params` path), no new
+analysis/cloning. **Task 1 measured this and it FAILED** (`arg_unique=false` at all sites even after
+the restructure): the maps are non-unique because they alias the shared `exits` accumulator, one
+level below the record. Caller uniqueness therefore **remains unproven-and-in-fact-unavailable**, not
+proven.
 
 **Tech stack:** Twinkle self-hosted compiler (`boot/`), `make bundle-cli`, `target/twk
 ir --census/--cfg`, `TWINKLE_FIXVERIFY`, `TWINKLE_TIMINGS`, boot suite.
@@ -73,15 +82,32 @@ TWINKLE_FIXVERIFY=1 target/twk build boot/main.tw -o /tmp/fv.wasm 2>&1 | tail -1
 
 ## ⛔ SPIKE RESULT (2026-07-27): H1b FAILED — the maps are structurally non-unique. STOP.
 
-Task 1 (H1b) was run inline: body rewrite + reorder the merge region so `next_own := st.own` is
-`st`'s **last** use (verified: no bare `st` past `ownership.tw:6144`, so `st` is dead after), with
-all merges reading the pre-extracted locals instead of `st.*`. Self-host reached `stage3 == stage4`.
-Result:
+Task 1 was run inline with the **full pre-extraction shape** (not the own-only-with-`st`-live shape
+whose false-fail risk a reviewer flagged): all five `st.*` fields are bound to locals before the
+conditional, `next_own := st.own` is `st`'s **last** use (verified: no bare `st` past
+`ownership.tw:6144`, so `st` is dead after), and every merge reads the pre-extracted locals
+(`next_valid`/`next_prov`/`next_field`/`next_pp`), so no later `st.*` read keeps any map aliased via
+`st`. Self-host reached `stage3 == stage4`. Result:
 
 - **Body rewrite works** (again): `merge_targeted__Int` summary is `p1=Consumed paths{[]}`, a proper
   carrier.
 - **The flip did NOT happen.** All three monomorphs stayed `... false ... persistent(aliased shell)`.
-  Making `next_own` the last-read move out of `st` did **not** make it Unique.
+
+- **Direct proof of the caller-side rejection (not inferred).** Temporary instrumentation in
+  `uniform_entry_seeds` (`ownership_verdicts.tw`, printing `site.arg_unique[p]` per merge_targeted
+  call site) reported, on the build path (`compute_candidate_artifacts` → `uniform_entry_seeds`):
+  ```
+  caller=run_fixpoint callee=merge_targeted__Int      p=1 arg_unique=false
+  caller=run_fixpoint callee=merge_targeted__Bool     p=1 arg_unique=false
+  caller=run_fixpoint callee=merge_targeted__Vec_Int  p=1 arg_unique=false
+  ```
+  So `call_uniques` computes the `next` argument as **not Unique** at every site — even `own`, which
+  is the last-read move out of a dead `st`. Because `next_own` *is* last-use at the call (passed, then
+  reassigned), the "not unique" verdict is about the **value**, not liveness. That **rules out the
+  st-liveness false-fail** (it would have left `own` unique) and confirms the failure is the value
+  aliasing, not the restructure shape. (Methodology note: this replaces the earlier plan's weaker
+  `p1=Consumed` "seeded" check — that only proves callee candidacy; the `arg_unique` probe / census
+  flip is what proves caller acceptance.)
 
 **Root cause — deeper than record bundling; it is the dataflow itself.** `st.own` does not originate
 as a fresh value: at `ownership.tw:6050` each block's entry map is
