@@ -6,6 +6,7 @@ use @std.proc
 use compiler.anf.{AnfExpr, AnfMatchArm, AnfModule, AnfOp, Atom, FieldAtom, IndexKind, OpKind}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.cfg
+use compiler.codegen.variant_route
 use compiler.core_ir.{BinOp, CorePattern, LocalId, UnOp}
 use compiler.mono_type
 use compiler.opt.semantics.{OptimizerSemantics}
@@ -538,21 +539,53 @@ pub fn compute_candidate_artifacts(
   sem: OptimizerSemantics,
   candidate_funcs: Dict<Int, Bool>,
 ) OwnershipArtifacts {
+  compute_candidate_artifacts_seeded(opt, b, sem, candidate_funcs, variant_route.empty_seed_table())
+}
+
+// Like `compute_candidate_artifacts`, but layers per-clone owned entry seeds over
+// the uniform ones: each `owned_seeds` func has its named param locals certified
+// `Unique` at block 0 (the routing gate proved every caller passes a unique
+// last-use value). Seeded clone funcs are also folded into the analysis scope so
+// their bodies are summarized and analyzed. Passing an empty table reproduces the
+// unseeded behavior exactly.
+pub fn compute_candidate_artifacts_seeded(
+  opt: AnfModule,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  candidate_funcs: Dict<Int, Bool>,
+  owned_seeds: variant_route.OwnedSeedTable,
+) OwnershipArtifacts {
   timed := timings_enabled()
   t0 := date.now()
   view := cfg.build_view(opt, b)
   view = ownership.prune_dead_merge(view)
   t_view := date.now()
-  summarized := summary.compute_for_roots_cached(view, b, sem, candidate_funcs)
+
+  scope := candidate_funcs
+  for fid, _spec in owned_seeds.by_func {
+    scope[fid] = true
+  }
+
+  summarized := summary.compute_for_roots_cached(view, b, sem, scope)
   table := summarized.table
-  entry_seeds := uniform_entry_seeds(opt, view, b, sem, table, candidate_funcs)
+  entry_seeds := uniform_entry_seeds(opt, view, b, sem, table, scope)
+  for fid, spec in owned_seeds.by_func {
+    merged := case entry_seeds.get(fid) {
+      .Some(m) => m,
+      .None => Dict.new(),
+    }
+    for loc, _flag in spec.seed_locals {
+      merged[loc] = true
+    }
+    entry_seeds[fid] = merged
+  }
   t_summary := date.now()
   analyzed := ownership.analyze_selected_with_summaries_and_entry_seeds(
     view,
     b,
     sem,
     table,
-    candidate_funcs,
+    scope,
     entry_seeds,
     summarized.fix_cache,
   )
@@ -560,7 +593,7 @@ pub fn compute_candidate_artifacts(
   if timed {
     eprintln(
       "[time:mutable:artifacts] cfg=${t_view - t0}ms summary=${t_summary - t_view}ms ownership=${t_own
-        - t_summary}ms scope_roots=${candidate_funcs.keys().len()}",
+        - t_summary}ms scope_roots=${scope.keys().len()}",
     )
   }
   OwnershipArtifacts.{ key: artifact_key_for_anf(opt), view, table, analyzed }

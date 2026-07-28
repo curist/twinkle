@@ -4,6 +4,8 @@ use @std.testing as runner
 use commands.common.{format_compile_error}
 use compiler.artifacts.{PipelineArtifacts}
 use compiler.cfg
+use compiler.codegen.mutable_produce
+use compiler.codegen.variant_route
 use compiler.opt.semantics as semantics
 use compiler.ownership
 use compiler.pipeline
@@ -43,6 +45,22 @@ fn sited_calls_in(art: PipelineArtifacts, fn_name: String) Result<
   }
 }
 
+fn cfg_func_of(art: PipelineArtifacts, func_id: Int) Result<cfg.CfgFunction, String> {
+  view := ownership.prune_dead_merge(cfg.build_view(art.opt, art.builtins))
+  case view.functions.find(fn(f) { f.func_id == func_id }) {
+    .Some(f) => .Ok(f),
+    .None => .Err("no cfg function with id ${func_id}"),
+  }
+}
+
+fn decision_count(produced: mutable_produce.ProducedDecisions) Int {
+  n := 0
+  for _key, ds in produced.table.by_site {
+    n = n + ds.len()
+  }
+  n
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("variant_specialize")
@@ -72,6 +90,29 @@ pub fn suite() runner.Suite {
           },
           .None => .Err("expected a unique-base call site in caller"),
         }
+      },
+    )
+    .test(
+      "seeding recursive visit's owned param adds a vector in-place decision",
+      fn() Result<Void, String> {
+        // The generic `visit` body stays p0=Published (recursion), so uniform
+        // entry seeds give no in-place decision; the owned variant seed must.
+        art := try compile_fixture("visit_rec")
+        vt := variants_of(art)
+        variant := summary.variant_ids_of(vt)[0]
+        visit_cfg := try cfg_func_of(art, variant.func)
+        seed := summary.seed_for_variant(visit_cfg, variant)
+        spec := variant_route.CloneSpec.{ seed_locals: seed, variant }
+        seeds := variant_route.empty_seed_table().set_clone(variant.func, spec)
+        generic := mutable_produce.produce_mutable_decisions(art.opt, art.builtins)
+        seeded := mutable_produce.produce_mutable_decisions_seeded(art.opt, art.builtins, seeds)
+        try assert.ok(
+          decision_count(seeded) > decision_count(generic),
+          "owned seed must add a decision: generic=${decision_count(generic)} seeded=${decision_count(
+            seeded,
+          )}",
+        )
+        .Ok({})
       },
     )
 }
