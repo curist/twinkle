@@ -1,0 +1,18 @@
+pub fn visit(seen: Vector<Int>, n: Int) Vector<Int> {
+  seen[0] = n
+  if n <= 0 {
+    seen
+  } else {
+    visit(seen, n - 1)
+  }
+}
+
+pub fn aliased() Int {
+  m: Vector<Int> = collect _ in range(2) {
+    0
+  }
+  r := visit(m, 3)
+  m.at(1) + r.at(0)
+}
+
+println(aliased().to_string())

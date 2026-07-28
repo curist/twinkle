@@ -1,0 +1,11 @@
+pub type S = .{ a: Int, b: Int }
+
+pub fn setb(s: S, v: Int) S {
+  s.b = v
+  s
+}
+
+pub fn caller() Int {
+  m := S.{ a: 1, b: 2 }
+  m.setb(9).b
+}

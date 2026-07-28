@@ -1124,6 +1124,55 @@ fn variant_summary_for(vtable: VariantSummaryTable, callee_id: Int, arg_unique: 
   }
 }
 
+// Phase 8G public façade: codegen selects/enumerates published variants and
+// builds owned entry seeds through these wrappers, so `variant_specialize.tw`
+// never depends on the private selection internals below.
+// Every published (validated) VariantId in the table, in by_func iteration order.
+pub fn variant_ids_of(vt: VariantSummaryTable) Vector<vid.VariantId> {
+  out: Vector<vid.VariantId> = []
+  for _fid, keys in vt.by_func {
+    for k in keys {
+      case vt.by_key.get(k) {
+        .Some(e) => out = .append(e.variant),
+        .None => {},
+      }
+    }
+  }
+  out
+}
+
+// The most-specific published variant of `callee_id` whose owned key is satisfied
+// by `arg_unique` (each required param proven Unique + last-use at the call), or
+// `.None` when the callee has no satisfied published variant.
+pub fn select_variant_for_args(vt: VariantSummaryTable, callee_id: Int, arg_unique: Vector<Bool>) vid.VariantId? {
+  best: vid.VariantId? = .None
+  best_spec := 0 - 1
+  case vt.by_func.get(callee_id) {
+    .Some(keys) => {
+      for k in keys {
+        case vt.by_key.get(k) {
+          .Some(e) => if variant_args_satisfied(e.variant, arg_unique) {
+            sp := variant_specificity(e.variant)
+            if sp > best_spec {
+              best_spec = sp
+              best = .Some(e.variant)
+            }
+          },
+          .None => {},
+        }
+      }
+    },
+    .None => {},
+  }
+  best
+}
+
+// The param-local -> seed-Unique map that certifies variant `v`'s owned params at
+// entry of function `f`.
+pub fn seed_for_variant(f: CfgFunction, v: vid.VariantId) Dict<Int, Bool> {
+  unique_seed_for_variant(f, v)
+}
+
 // Resolver selecting any satisfied validated variant from `vtable`.
 fn make_variant_resolver(vtable: VariantSummaryTable) VariantResolver {
   fn(callee_id: Int, arg_unique: Vector<Bool>) Summary? { vtable.variant_summary_for(

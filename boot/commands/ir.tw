@@ -16,6 +16,7 @@ use compiler.codegen.mutable_audit
 use compiler.codegen.mutable_produce
 use compiler.codegen.mutable_select
 use compiler.codegen.ownership_verdicts
+use compiler.codegen.variant_specialize
 use compiler.ir_print
 use compiler.opt.semantics as semantics
 use compiler.ownership
@@ -177,6 +178,16 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
     rewritten := builder_region.rewrite_module(artifacts.opt, artifacts.builtins)
     post_keys := collect_certified_keys(detect.detect_candidates(rewritten, artifacts.builtins))
     out = .concat(render_region_rows(region_vs, post_keys))
+
+    // Phase 8G variant-routing dry-run: which callees get an ownership-specialized
+    // clone, the caller/recursive sites routed to it, and the accept/fallback verdict.
+    spec := variant_specialize.specialize_module(rewritten, artifacts.builtins)
+    routes_txt := variant_specialize.render_routes(spec.routes)
+    if routes_txt.len() > 0 {
+      out = .concat("\nvariant routes\n")
+      out = .concat(routes_txt)
+      out = .concat("\n")
+    }
   }
   out
 }

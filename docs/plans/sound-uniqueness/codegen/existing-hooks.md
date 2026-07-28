@@ -106,8 +106,11 @@ in `boot/compiler/opt/semantics.tw`; the two record-update construction sites ar
 - The original function remains the generic/persistent fallback.
 - Clone names should encode or otherwise link to the canonical `VariantId` for
   inspection, while preserving stable internal ids for codegen.
-- Recursive and mutually-recursive clones must route in-SCC calls to the matching
-  owned clone/peer clone, not accidentally to the generic function.
+- Recursive clones route in-SCC calls to a peer clone **that was independently
+  cloned** — for a single recursive function, the self-call. **As built (Phase 8G):**
+  a peer demanded only from inside another clone is not created on demand; its
+  recursive call stays on the generic function (sound, just unspecialized). Full SCC
+  closure of mutual recursion is a follow-up.
 - [Worked-examples Case V](../analysis/worked-examples.md#case-v--graph_sccvisit-the-whole-compiler-idiom-real)
   is the anchor: `graph_scc.visit`'s generic body stays conservative, and the
   `visit[unique:p0]` clone may consume the variant-qualified shell-reuse verdicts.
@@ -146,7 +149,8 @@ runtime hook exists; this is compiler cloning + call-site rewriting), still reco
 - clone naming and symbol policy;
 - call-site rewrite point;
 - generic fallback path;
-- recursive/mutual-recursive routing behavior;
+- recursive routing behavior (self + independently-cloned peers; mutual-recursion
+  SCC closure is a follow-up);
 - cap/fallback behavior when a variant key is unavailable.
 
 ## Non-hooks

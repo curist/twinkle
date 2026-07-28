@@ -1,0 +1,18 @@
+pub fn fill(xs: Vector<Int>, i: Int) Vector<Int> {
+  xs[i] = i * i
+  if i <= 0 {
+    xs
+  } else {
+    fill(xs, i - 1)
+  }
+}
+
+pub fn go() Int {
+  m: Vector<Int> = collect _ in range(5) {
+    0
+  }
+  filled := fill(m, 4)
+  filled.at(0) + filled.at(1) + filled.at(2) + filled.at(3) + filled.at(4)
+}
+
+println(go().to_string())

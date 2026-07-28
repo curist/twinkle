@@ -12,6 +12,7 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.mutable_catalog
 use compiler.codegen.mutable_select
 use compiler.codegen.ownership_verdicts
+use compiler.codegen.variant_route
 use compiler.core_ir.{FieldId, FuncId, LocalId}
 use compiler.mono_type.{TypeId}
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
@@ -460,6 +461,20 @@ fn merge_produced(a: ProducedDecisions, b: ProducedDecisions) ProducedDecisions 
 /// computation scoped to the union of both candidate root sets. Call and record
 /// decisions live at disjoint sites, so the merged table never collides.
 pub fn produce_mutable_decisions(opt: AnfModule, b: BuiltinRegistry) ProducedDecisions {
+  produce_mutable_decisions_seeded(opt, b, variant_route.empty_seed_table())
+}
+
+// Seeded producer for Phase 8G: computes ownership artifacts with the clone
+// funcs in `owned_seeds` seeded owned at entry, so a clone body's update sites
+// certify reusable where the generic body does not. Decisions whose site sits in
+// a seeded (clone) func are stamped with the source `VariantId` for audit — the
+// emit path never reads `variant_key`. Passing an empty table reproduces the
+// unseeded production exactly.
+pub fn produce_mutable_decisions_seeded(
+  opt: AnfModule,
+  b: BuiltinRegistry,
+  owned_seeds: variant_route.OwnedSeedTable,
+) ProducedDecisions {
   call_set := update_call_candidates(opt, b)
   record_set := record_update_candidates(opt)
   if call_set.candidates.len() == 0 and record_set.candidates.len() == 0 {
@@ -472,11 +487,51 @@ pub fn produce_mutable_decisions(opt: AnfModule, b: BuiltinRegistry) ProducedDec
 
   sem := make_prelude_optimizer_semantics(b)
   roots := merge_roots(call_set.candidate_func_roots(), record_set.record_candidate_func_roots())
-  artifacts := ownership_verdicts.compute_candidate_artifacts(opt, b, sem, roots)
+  for fid, _spec in owned_seeds.by_func {
+    roots[fid] = true
+  }
+  artifacts := ownership_verdicts.compute_candidate_artifacts_seeded(
+    opt,
+    b,
+    sem,
+    roots,
+    owned_seeds,
+  )
 
   call_produced := produce_update_call_decisions_with_artifacts(opt, b, artifacts)
   record_produced := produce_record_update_decisions_with_artifacts(opt, artifacts)
-  call_produced.merge_produced(record_produced)
+  merged := call_produced.merge_produced(record_produced)
+  ProducedDecisions.{
+    table: stamp_variant_keys(merged.table, owned_seeds),
+    rows: merged.rows,
+    artifact_computed: merged.artifact_computed,
+  }
+}
+
+// Stamp `variant_key` on every decision whose site func is a seeded clone, so the
+// census/audit trail names the owning variant. Rebuilds the table (decisions are
+// immutable records); emission ignores `variant_key`.
+fn stamp_variant_keys(
+  table: mutable_select.MutableDecisionTable,
+  owned_seeds: variant_route.OwnedSeedTable,
+) mutable_select.MutableDecisionTable {
+  if owned_seeds.by_func.keys().len() == 0 {
+    return table
+  }
+  out := mutable_select.empty_decision_table()
+  for _key, ds in table.by_site {
+    for d in ds {
+      stamped := case owned_seeds.by_func.get(d.site.func.id) {
+        .Some(spec) => {
+          d.variant_key = .Some(spec.variant)
+          d
+        },
+        .None => d,
+      }
+      out = .with_decision(stamped)
+    }
+  }
+  out
 }
 
 fn name_of(b: BuiltinRegistry, fid: FuncId) String {

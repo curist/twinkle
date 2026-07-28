@@ -1,0 +1,309 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use commands.common.{format_compile_error}
+use compiler.anf.{AnfExpr, AnfModule, AnfOp}
+use compiler.artifacts.{PipelineArtifacts}
+use compiler.cfg
+use compiler.codegen.mutable_produce
+use compiler.codegen.variant_route
+use compiler.codegen.variant_specialize
+use compiler.opt.semantics as semantics
+use compiler.ownership
+use compiler.pipeline
+use compiler.summary
+use lib.module.loader
+
+fn fixtures_dir() String {
+  "${loader.find_project_root("boot")}/tests/fixtures/cfg/sound_uniqueness"
+}
+
+fn compile_fixture(name: String) Result<PipelineArtifacts, String> {
+  case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(a) => .Ok(a),
+    .Err(e) => .Err(format_compile_error(e)),
+  }
+}
+
+fn compile_fixture_wat(name: String) Result<String, String> {
+  case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(a) => .Ok(pipeline.emit_wat(a)),
+    .Err(e) => .Err(format_compile_error(e)),
+  }
+}
+
+// Extract a single WAT function body: the `(func …)` block whose header contains
+// `marker`, sliced to the next top-level `(func …)` so assertions are scoped to
+// that one function rather than the whole module.
+fn wat_func_body(wat: String, marker: String) String? {
+  parts := wat.split("\n  (func ")
+  for p in parts {
+    lines := p.split("\n")
+    header := case lines.first() {
+      .Some(h) => h,
+      .None => "",
+    }
+    if header.contains(marker) {
+      return .Some(p)
+    }
+  }
+  .None
+}
+
+fn wat_has_call(body: String, target: String) Bool {
+  needle := "call ${target}"
+  for line in body.split("\n") {
+    if line.trim() == needle {
+      return true
+    }
+  }
+  false
+}
+
+fn variants_of(art: PipelineArtifacts) summary.VariantSummaryTable {
+  b := art.builtins
+  view := ownership.prune_dead_merge(cfg.build_view(art.opt, b))
+  sem := semantics.make_prelude_optimizer_semantics(b)
+  table := summary.compute(view, b, sem)
+  summary.compute_variants(view, b, sem, table)
+}
+
+fn sited_calls_in(art: PipelineArtifacts, fn_name: String) Result<
+  Vector<ownership.SitedCallUniq>,
+  String,
+> {
+  b := art.builtins
+  view := ownership.prune_dead_merge(cfg.build_view(art.opt, b))
+  sem := semantics.make_prelude_optimizer_semantics(b)
+  table := summary.compute(view, b, sem)
+  case view.functions.find(fn(f) { f.name == fn_name }) {
+    .Some(f) => .Ok(ownership.call_uniques_sited(f, table, b, sem, Dict.new(), Dict.new())),
+    .None => .Err("no function named ${fn_name}"),
+  }
+}
+
+fn cfg_func_of(art: PipelineArtifacts, func_id: Int) Result<cfg.CfgFunction, String> {
+  view := ownership.prune_dead_merge(cfg.build_view(art.opt, art.builtins))
+  case view.functions.find(fn(f) { f.func_id == func_id }) {
+    .Some(f) => .Ok(f),
+    .None => .Err("no cfg function with id ${func_id}"),
+  }
+}
+
+fn decision_count(produced: mutable_produce.ProducedDecisions) Int {
+  n := 0
+  for _key, ds in produced.table.by_site {
+    n = n + ds.len()
+  }
+  n
+}
+
+fn in_dict(d: Dict<Int, variant_route.CloneSpec>, k: Int) Bool {
+  case d.get(k) {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+// Whether the named function's body contains an ACall to `target_func`.
+fn calls_target(anf: AnfModule, caller_name: String, target_func: Int) Bool {
+  case anf.functions.find(fn(f) { f.name == caller_name }) {
+    .Some(f) => expr_calls(f.body, target_func),
+    .None => false,
+  }
+}
+
+fn func_id_calls(anf: AnfModule, func_id: Int, target_func: Int) Bool {
+  case anf.functions.find(fn(f) { f.func_id.id == func_id }) {
+    .Some(f) => expr_calls(f.body, target_func),
+    .None => false,
+  }
+}
+
+fn expr_calls(e: AnfExpr, target: Int) Bool {
+  case e {
+    .Let(_local, op, body) => op_calls(op, target) or expr_calls(body, target),
+    _ => false,
+  }
+}
+
+fn op_calls(op: AnfOp, target: Int) Bool {
+  case op {
+    .ACall(callee, _args) => case callee {
+      .AGlobalFunc(fid) => fid.id == target,
+      _ => false,
+    },
+    .AIf(_p, t, el) => expr_calls(t, target) or expr_calls(el, target),
+    .AMatch(_s, arms) => arms.any(fn(a) { expr_calls(a.body, target) }),
+    .ALoop(body) => expr_calls(body, target),
+    .ADefer(body) => expr_calls(body, target),
+    _ => false,
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("variant_specialize")
+    .test(
+      "setb publishes a variant selectable when the record arg is unique",
+      fn() Result<Void, String> {
+        art := try compile_fixture("setb")
+        vt := variants_of(art)
+        ids := summary.variant_ids_of(vt)
+        try assert.ok(ids.len() >= 1, "setb must publish at least one variant")
+        setb_id := ids[0].func
+        v := summary.select_variant_for_args(vt, setb_id, [true, true])
+        try assert.ok(v != .None, "unique record arg must select the owned variant")
+        .Ok({})
+      },
+    )
+    .test(
+      "call_uniques_sited reports setb's unique-base call site",
+      fn() Result<Void, String> {
+        art := try compile_fixture("setb")
+        sited := try sited_calls_in(art, "caller")
+        hit := sited.find(fn(s) { s.arg_unique.len() > 0 and s.arg_unique[0] })
+        case hit {
+          .Some(s) => {
+            try assert.ok(s.site_key >= 0, "site_key present")
+            .Ok({})
+          },
+          .None => .Err("expected a unique-base call site in caller"),
+        }
+      },
+    )
+    .test(
+      "seeding recursive visit's owned param adds a vector in-place decision",
+      fn() Result<Void, String> {
+        // The generic `visit` body stays p0=Published (recursion), so uniform
+        // entry seeds give no in-place decision; the owned variant seed must.
+        art := try compile_fixture("visit_rec")
+        vt := variants_of(art)
+        variant := summary.variant_ids_of(vt)[0]
+        visit_cfg := try cfg_func_of(art, variant.func)
+        seed := summary.seed_for_variant(visit_cfg, variant)
+        spec := variant_route.CloneSpec.{ seed_locals: seed, variant }
+        seeds := variant_route.empty_seed_table().set_clone(variant.func, spec)
+        generic := mutable_produce.produce_mutable_decisions(art.opt, art.builtins)
+        seeded := mutable_produce.produce_mutable_decisions_seeded(art.opt, art.builtins, seeds)
+        try assert.ok(
+          decision_count(seeded) > decision_count(generic),
+          "owned seed must add a decision: generic=${decision_count(generic)} seeded=${decision_count(
+            seeded,
+          )}",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "specialize clones visit and routes the go call site",
+      fn() Result<Void, String> {
+        art := try compile_fixture("visit_rec")
+        spec := variant_specialize.specialize_module(art.opt, art.builtins)
+        try assert.equal(spec.anf.functions.len(), art.opt.functions.len() + 1)
+        accepted := spec.routes.filter(fn(r) { r.fallback_reason == .None })
+        try assert.equal(accepted.len(), 1)
+        r := accepted[0]
+        try assert.ok(in_dict(spec.seeds.by_func, r.clone_func), "clone has an owned seed")
+        try assert.ok(r.route_sites.len() >= 1, "at least one caller site routed")
+        try assert.ok(calls_target(spec.anf, "go", r.clone_func), "go routed to clone")
+        .Ok({})
+      },
+    )
+    .test(
+      "cloned visit emits vector set_in_place inside the clone body",
+      fn() Result<Void, String> {
+        // Slice the clone's own `(func …)` block (name contains `visit_v`) and
+        // assert the in-place CALL token appears there — clone-scoped and
+        // token-exact, not a module-wide substring match.
+        wat := try compile_fixture_wat("visit_rec")
+        clone := case wat_func_body(wat, "visit_v") {
+          .Some(body) => body,
+          .None => return .Err("clone function (visit_v) not found in WAT"),
+        }
+        try assert.ok(
+          wat_has_call(clone, "$rt_arr__set_in_place"),
+          "clone body must contain exact call instruction to rt_arr__set_in_place",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "aliased vector base keeps the caller on the generic (no in-place)",
+      fn() Result<Void, String> {
+        // In `aliased`, `m` is read after `visit(m, 3)`, so it is not last-use at
+        // the call: no route, no clone, no in-place emission.
+        wat := try compile_fixture_wat("visit_aliased")
+        try assert.is_false(wat_has_call(wat, "$rt_arr__set_in_place"))
+        .Ok({})
+      },
+    )
+    .test(
+      "recursive clone retargets its self-call to the clone",
+      fn() Result<Void, String> {
+        art := try compile_fixture("visit_rec")
+        spec := variant_specialize.specialize_module(art.opt, art.builtins)
+        case spec.routes.find(fn(x) { x.fallback_reason == .None and x.recursive_routes.len() >= 1 }) {
+          .Some(route) => {
+            try assert.ok(
+              func_id_calls(spec.anf, route.clone_func, route.clone_func),
+              "clone body's self-call must retarget to the clone",
+            )
+            .Ok({})
+          },
+          .None => .Err("expected an accepted recursive variant with a retargeted self-call"),
+        }
+      },
+    )
+    .test(
+      "render_routes names generic, clone, and the canonical key",
+      fn() Result<Void, String> {
+        art := try compile_fixture("visit_rec")
+        spec := variant_specialize.specialize_module(art.opt, art.builtins)
+        out := variant_specialize.render_routes(spec.routes)
+        try assert.str_contains(out, "visit")
+        try assert.str_contains(out, "-> f")
+        try assert.str_contains(out, "|0:")
+        try assert.str_contains(out, "routed")
+        .Ok({})
+      },
+    )
+    .test(
+      "explicit cap is never exceeded per generic function",
+      fn() Result<Void, String> {
+        // Uses the explicit-cap entry so the assertion stays independent from
+        // the production default.
+        art := try compile_fixture("visit_rec")
+        cap := 4
+        spec := variant_specialize.specialize_module_with_cap(art.opt, art.builtins, cap)
+        per: Dict<Int, Int> = Dict.new()
+        for r in spec.routes {
+          if r.fallback_reason == .None {
+            n := case per.get(r.generic_func) {
+              .Some(x) => x,
+              .None => 0,
+            }
+            per[r.generic_func] = n + 1
+          }
+        }
+        for _g, n in per {
+          try assert.ok(n <= cap, "cap respected")
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "cap 0 clones nothing and records the overflow as an OverCap route",
+      fn() Result<Void, String> {
+        art := try compile_fixture("visit_rec")
+        spec := variant_specialize.specialize_module_with_cap(art.opt, art.builtins, 0)
+        try assert.equal(spec.anf.functions.len(), art.opt.functions.len())
+        overcap := spec.routes.filter(fn(r) { r.fallback_reason
+          == .Some(variant_route.FallbackReason.OverCap) })
+        try assert.ok(overcap.len() >= 1, "overflow group must be recorded as OverCap")
+        accepted := spec.routes.filter(fn(r) { r.fallback_reason == .None })
+        try assert.equal(accepted.len(), 0)
+        .Ok({})
+      },
+    )
+}
