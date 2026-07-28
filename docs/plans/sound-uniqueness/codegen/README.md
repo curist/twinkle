@@ -389,6 +389,24 @@ scan to callers of published callees kept the pass at ~12s on `boot/main.tw`
 (down from ~38s in the first cut). Self-host reaches a fixed point (stage3 ==
 stage4) with the boot compiler's own owned recursive calls emitting in-place.
 
+**Why the lever is recursion (empirically established).** A **non-recursive**
+owned-param function (`fn setb(s: S, v) { s.b = v; s }`) already gets its in-place
+win from `uniform_entry_seeds` on the *generic* body — probing `--census --sites`
+shows `shell=reuse(unique)` / `would_use: true` with no clone. Cloning it adds
+nothing. 8G only changes the outcome where the generic body is forced conservative
+**despite** ownability — i.e. **recursion**: a recursive function's summary stays
+`p0=Published`, so uniform seeds do not apply, and only the owned *variant* seed on
+a clone unlocks in-place. All 8G fixtures use the recursive shape for that reason.
+
+**Scope-outs (analysis-track follow-ups, not codegen).** `compute_variants`
+publishes variants only for **user** functions whose owned param threads to the
+return, so two shapes are out of 8G's reach today and were left for the analysis
+track: (a) **non-recursive user vector wrappers** (`fn bump(xs: Vector<Int>, i) {
+xs[i]=0; xs }`) do not publish a variant; and (b) **prelude-wrapper calls**
+(`flags = .set_at(...)`) call a prelude helper, which is never a user function.
+Collections behind a **record field** (`s.xs[i]=v`) render `field=persistent
+(insufficient deep ownership)` and belong to **Phase 8H**, not 8G.
+
 ## Codegen Phase 8H — Record-backed field collection updates
 
 This phase composes the dict/vector and record-shell slices for the compiler's
