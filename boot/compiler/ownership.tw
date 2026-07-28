@@ -16,7 +16,9 @@ use compiler.cfg.{
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.field_facts as ff
 use compiler.mono_type.{MonoType}
-use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info, container_kind, sem_field_is_primitive}
+use compiler.opt.semantics.{
+  CallSemantics, OptimizerSemantics, call_info, container_kind, sem_field_is_primitive,
+}
 use compiler.variant_id as vid
 
 pub type Ownership = { Unique, Shared, Unknown }
@@ -116,13 +118,25 @@ pub fn summary_get(t: SummaryTable, func_id: Int) Summary? {
 }
 
 // Per-call-site callee-summary selection. Given a callee func id and the
-// call-site arg_unique vector, a resolver may return an already-validated owned
-// variant summary to transfer instead of the generic summary; `.None` falls back
-// to generic. `summary.tw` builds concrete resolvers from its variant table; this
-// module stays free of variant-table types by taking the resolver as a callback.
-pub type VariantResolver = fn(Int, Vector<Bool>) Summary?
+// call-site proven path set for each argument, a resolver may return an
+// already-validated owned variant summary to transfer instead of the generic
+// summary; `.None` falls back to generic. `summary.tw` builds concrete resolvers
+// from its variant table; this module stays free of variant-table types by taking
+// the resolver as a callback.
+pub type VariantResolver = fn(Int, Vector<vid.PathSet>) Summary?
 
-pub fn generic_only_resolver(_callee: Int, _au: Vector<Bool>) Summary? {
+// Requirement-discovery counterpart for transitive field collection. The caller
+// names the single carrier param whose returned value flows from the callee; the
+// resolver may return the strongest already-validated variant summary whose
+// requirements belong only to that carrier. Real call-site selection still goes
+// through `VariantResolver` and remains proof/satisfaction based.
+pub type VariantRequirementResolver = fn(Int, Int) Summary?
+
+pub fn generic_only_resolver(_callee: Int, _paths: Vector<vid.PathSet>) Summary? {
+  .None
+}
+
+pub fn generic_only_requirement_resolver(_callee: Int, _carrier: Int) Summary? {
   .None
 }
 
@@ -3874,7 +3888,8 @@ fn transfer_call(
       .Some(cs) => st.transfer_builtin_call(result, fid, cs, args, last, sem),
       .None => {
         au := call_arg_unique(st.own, st.valid, args, last)
-        case resolve(fid.id, au) {
+        paths := st.call_arg_paths(args, au)
+        case resolve(fid.id, paths) {
           .Some(vs) => st.transfer_summarized_call(result, vs, args, last, suppress, fid.id),
           .None => case table.summary_get(fid.id) {
             .Some(s) => st.transfer_summarized_call(result, s, args, last, suppress, fid.id),
@@ -4893,7 +4908,8 @@ fn block_verdicts(
           .None => case table.summary_get(fid.id) {
             .Some(base) => {
               au := call_arg_unique(pre.own, pre.valid, args, last)
-              selected := case resolve(fid.id, au) {
+              paths := pre.call_arg_paths(args, au)
+              selected := case resolve(fid.id, paths) {
                 .Some(vs) => vs,
                 .None => base,
               }
@@ -6712,11 +6728,9 @@ pub type SitedCallUniq = .{
 // already owns Unique for that atom is added ({[], [f]}). Elem/Val/payload paths
 // are deliberately excluded in 8H: field-path claims require whole-arg last-use,
 // so a call followed by a sibling-field read stays on the generic function.
-fn call_arg_paths(
-  pre: ForwardState,
-  args: Vector<Atom>,
-  arg_unique: Vector<Bool>,
-) Vector<vid.PathSet> {
+fn call_arg_paths(pre: ForwardState, args: Vector<Atom>, arg_unique: Vector<Bool>) Vector<
+  vid.PathSet,
+> {
   collect arg, i in args {
     paths := if i < arg_unique.len() and arg_unique[i] {
       vid.shell_set()
@@ -6729,7 +6743,7 @@ fn call_arg_paths(
         p := ff.path_of_key(k)
         if p.segs.len() == 1 {
           case p.segs[0] {
-            .Field(f) => paths = paths.add(vid.field(f)),
+            .Field(f) => paths = .add(vid.field(f)),
             _ => {},
           }
         }
@@ -6844,7 +6858,7 @@ pub fn call_uniques_sited(
                     callee: fid.id,
                     args,
                     arg_unique: au,
-                    arg_paths: call_arg_paths(pre, args, au),
+                    arg_paths: pre.call_arg_paths(args, au),
                   },
                 )
               },
@@ -7560,6 +7574,7 @@ fn call_result_fact(
   callee: Atom,
   args: Vector<Atom>,
   resolve: VariantResolver,
+  require: VariantRequirementResolver,
 ) FlowFact {
   fid := case callee {
     .AGlobalFunc(f) => f.id,
@@ -7588,20 +7603,36 @@ fn call_result_fact(
   // whose GENERIC summary is Published still hands its field requirements back.
   // Optimistically assuming the carrier is unique here is sound because Stage 3
   // (variant_valid over the ownership transfer) proves the base_role separately.
-  au: Vector<Bool> = collect _ps, i in s.params {
-    i == carrier
+  paths: Vector<vid.PathSet> = collect _ps, i in s.params {
+    if i == carrier {
+      vid.shell_set()
+    } else {
+      vid.empty_set()
+    }
   }
-  sel := case resolve(fid, au) {
+  selected := case resolve(fid, paths) {
     .Some(vs) => vs,
     .None => s,
   }
+  required := require(fid, carrier)
   dirty := base.dirty
-  if carrier < sel.params.len() {
-    for p in sel.params[carrier].in_place_paths.paths {
-      if !p.is_shell() {
+  if carrier < s.params.len() {
+    for p in s.params[carrier].in_place_paths.paths {
+      dirty = .add(p)
+    }
+  }
+  if carrier < selected.params.len() {
+    for p in selected.params[carrier].in_place_paths.paths {
+      dirty = .add(p)
+    }
+  }
+  case required {
+    .Some(vs) => if carrier < vs.params.len() {
+      for p in vs.params[carrier].in_place_paths.paths {
         dirty = .add(p)
       }
-    }
+    },
+    .None => {},
   }
   FlowFact.{ origin: base.origin, dirty }
 }
@@ -7613,19 +7644,20 @@ fn transfer_flow(
   op: AnfOp,
   result: Int,
   resolve: VariantResolver,
+  require: VariantRequirementResolver,
 ) Dict<Int, FlowFact> {
   case op {
     .ARecordUpdate(base, fld, _, _, tid) => {
       bf := flow_get(st, base)
       st[result] = if bf.origin >= 0 {
-        // Only a reference-typed field backing (separate GC heap object) is a
+        // Every returned record update consumes the record shell. Only a
+        // reference-typed field backing (separate GC heap object) adds a
         // field-granular in-place requirement; a field the type table proves
         // primitive is covered by shell uniqueness and must not inflate the
-        // param's dirty path set. Unknown fields stay conservatively kept.
-        new_dirty := if sem_field_is_primitive(sem, tid, fld) {
-          bf.dirty
-        } else {
-          bf.dirty.add(vid.field(fld.id))
+        // param's field path set. Unknown fields stay conservatively kept.
+        new_dirty := bf.dirty.add(vid.shell())
+        if !sem_field_is_primitive(sem, tid, fld) {
+          new_dirty = .add(vid.field(fld.id))
         }
         FlowFact.{ origin: bf.origin, dirty: new_dirty }
       } else {
@@ -7647,9 +7679,9 @@ fn transfer_flow(
       st[result] = case callee_func_id(callee) {
         .Some(fid) => case call_info(sem, fid) {
           .Some(cs) => cow_update_result_fact(st, cs, args),
-          .None => call_result_fact(st, table, callee, args, resolve),
+          .None => call_result_fact(st, table, callee, args, resolve, require),
         },
-        .None => call_result_fact(st, table, callee, args, resolve),
+        .None => call_result_fact(st, table, callee, args, resolve, require),
       }
       st
     },
@@ -7875,6 +7907,7 @@ pub fn collect_field_reqs(
   table: SummaryTable,
   sem: OptimizerSemantics,
   resolve: VariantResolver,
+  require: VariantRequirementResolver,
 ) Dict<Int, vid.PathSet> {
   live := compute_liveness_labeled(f.blocks, "field_reqs:${f.name}")
   blocks := collect blk in f.blocks {
@@ -7901,7 +7934,7 @@ pub fn collect_field_reqs(
       }
       st := entry
       for inst in blk.instructions {
-        st = transfer_flow(st, table, sem, inst.op, inst.anf_local.id, resolve)
+        st = transfer_flow(st, table, sem, inst.op, inst.anf_local.id, resolve, require)
       }
       prev := case exits.get(blk.id.id) {
         .Some(m) => m,
@@ -7970,7 +8003,16 @@ pub fn summarize_function(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
 ) Summary {
-  summarize_seeded(f, table, b, sem, suppress, Dict.new(), generic_only_resolver).summary
+  summarize_seeded(
+    f,
+    table,
+    b,
+    sem,
+    suppress,
+    Dict.new(),
+    generic_only_resolver,
+    generic_only_requirement_resolver,
+  ).summary
 }
 
 // Generic summary plus its fx and reuse eligibility. summarize_function delegates
@@ -7983,7 +8025,16 @@ pub fn summarize_function_cached(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
 ) CachedSummary {
-  r := summarize_seeded(f, table, b, sem, suppress, Dict.new(), generic_only_resolver)
+  r := summarize_seeded(
+    f,
+    table,
+    b,
+    sem,
+    suppress,
+    Dict.new(),
+    generic_only_resolver,
+    generic_only_requirement_resolver,
+  )
   CachedSummary.{ summary: r.summary, fx: r.fx, reusable: !calls_suppressed(f.blocks, suppress) }
 }
 
@@ -8004,7 +8055,16 @@ pub fn summarize_variant(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
 ) Summary {
-  summarize_variant_resolved(f, key, table, b, sem, suppress, generic_only_resolver)
+  summarize_variant_resolved(
+    f,
+    key,
+    table,
+    b,
+    sem,
+    suppress,
+    generic_only_resolver,
+    generic_only_requirement_resolver,
+  )
 }
 
 // Resolver-aware twin of `summarize_variant`: while re-analyzing this variant's
@@ -8018,6 +8078,7 @@ pub fn summarize_variant_resolved(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
   resolve: VariantResolver,
+  require: VariantRequirementResolver,
 ) Summary {
   unique_seed: Dict<Int, Bool> = Dict.new()
   for req in key {
@@ -8025,7 +8086,7 @@ pub fn summarize_variant_resolved(
       unique_seed[f.params[req.param].id] = true
     }
   }
-  summarize_seeded(f, table, b, sem, suppress, unique_seed, resolve).summary
+  summarize_seeded(f, table, b, sem, suppress, unique_seed, resolve, require).summary
 }
 
 // Call-site variant selection (Stage 4c, D4 shell-level): the VariantId a caller
@@ -8085,6 +8146,7 @@ fn summarize_seeded(
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
   resolve: VariantResolver,
+  require: VariantRequirementResolver,
 ) SeededResult {
   timed := timings_enabled()
   t0 := if timed {
@@ -8293,7 +8355,7 @@ fn summarize_seeded(
   } else {
     0.0
   }
-  field_reqs := collect_field_reqs(f, table, sem, resolve)
+  field_reqs := collect_field_reqs(f, table, sem, resolve, require)
   t_field_reqs := if timed {
     date.now()
   } else {

@@ -1761,6 +1761,7 @@ pub fn suite() runner.Suite {
           ownership.empty_summary_table(),
           sem(),
           ownership.generic_only_resolver,
+          ownership.generic_only_requirement_resolver,
         )
         try assert.is_true(same_ints(dirty_fields(reqs, 0), [0, 1])) // both fields, param 0
         .Ok({})
@@ -1785,6 +1786,7 @@ pub fn suite() runner.Suite {
           ownership.empty_summary_table(),
           sem(),
           ownership.generic_only_resolver,
+          ownership.generic_only_requirement_resolver,
         )
         try assert.equal(dirty_fields(reqs, 0).len(), 0)
         .Ok({})
@@ -1830,6 +1832,7 @@ pub fn suite() runner.Suite {
           ownership.empty_summary_table(),
           sem(),
           ownership.generic_only_resolver,
+          ownership.generic_only_requirement_resolver,
         )
         try assert.is_true(same_ints(dirty_fields(reqs, 0), [0, 1]))
         .Ok({})
@@ -1871,6 +1874,7 @@ pub fn suite() runner.Suite {
           table,
           sem(),
           ownership.generic_only_resolver,
+          ownership.generic_only_requirement_resolver,
         )
         try assert.is_true(same_ints(dirty_fields(reqs, 0), [0])) // env's .f0 propagated
         .Ok({})
@@ -1906,6 +1910,7 @@ pub fn suite() runner.Suite {
           table,
           sem(),
           ownership.generic_only_resolver,
+          ownership.generic_only_requirement_resolver,
         )
         try assert.equal(dirty_fields(reqs, 0).len(), 0)
         .Ok({})

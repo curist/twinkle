@@ -4,11 +4,7 @@ use @std.testing as runner
 use commands.common.{format_compile_error}
 use compiler.artifacts.{PipelineArtifacts}
 use compiler.cfg
-use compiler.codegen.mutable_produce
-use compiler.codegen.variant_route
-use compiler.codegen.variant_specialize
 use compiler.opt.semantics as semantics
-use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.ownership
 use compiler.pipeline
 use compiler.resolver
@@ -72,9 +68,9 @@ fn wat_has_instr(body: String, needle: String) Bool {
 }
 
 fn sem_for(art: PipelineArtifacts) semantics.OptimizerSemantics {
-  semantics.make_prelude_optimizer_semantics(art.builtins).with_ref_fields(
-    resolver.build_ref_field_table(art.env),
-  )
+  semantics
+    .make_prelude_optimizer_semantics(art.builtins)
+    .with_ref_fields(resolver.build_ref_field_table(art.env))
 }
 
 fn variants_of(art: PipelineArtifacts) summary.VariantSummaryTable {
@@ -85,34 +81,115 @@ fn variants_of(art: PipelineArtifacts) summary.VariantSummaryTable {
   summary.compute_variants(view, b, sem, table)
 }
 
+fn canon_keys(vt: summary.VariantSummaryTable) Vector<String> {
+  collect v in summary.variant_ids_of(vt) {
+    vid.variant_canonical_string(v)
+  }
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("field_backed_collection")
     .test(
-      "field-path variant is selected only when the call arg proves that field path",
+      "env-aware production semantics classify primitive record fields",
+      fn() Result<Void, String> {
+        art := try compile_fixture("setb")
+        tbl := resolver.build_ref_field_table(art.env)
+        found := false
+        for _tid, fields in tbl {
+          for _idx, is_ref in fields {
+            if !is_ref {
+              found = true
+            }
+          }
+        }
+        try assert.ok(found, "primitive Int fields must be recorded as non-reference")
+        .Ok({})
+      },
+    )
+    .test(
+      "primitive-field record update publishes exactly one shell variant",
+      fn() Result<Void, String> {
+        art := try compile_fixture("setb")
+        vt := variants_of(art)
+        ids := summary.variant_ids_of(vt)
+        try assert.ok(
+          !ids.any(fn(v) {
+            v.unique.any(fn(req) { !req.path.is_shell() })
+          }),
+          "setb must not publish a field-path variant for its primitive field",
+        )
+        setb_id := case ids.first() {
+          .Some(v) => v.func,
+          .None => return .Err("no variant"),
+        }
+        shell_paths: Vector<vid.PathSet> = [vid.shell_set(), vid.shell_set()]
+        try assert.is_some(summary.select_variant_for_arg_paths(vt, setb_id, shell_paths))
+        .Ok({})
+      },
+    )
+    .test(
+      "field-backed recursive member publishes both shell and full variants",
+      fn() Result<Void, String> {
+        art := try compile_fixture("field_visit_rec")
+        vt := variants_of(art)
+        keys := canon_keys(vt)
+        try assert.ok(
+          keys.any(fn(k) { k.ends_with("|0:") }),
+          "shell-tier variant must be published",
+        )
+        try assert.ok(
+          keys.any(fn(k) { k.contains("|0:;0:0") }),
+          "full-tier variant must be published",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "shell paths select the shell tier, field paths select the full tier",
       fn() Result<Void, String> {
         art := try compile_fixture("field_visit_rec")
         vt := variants_of(art)
         ids := summary.variant_ids_of(vt)
-        field_variant := ids.find(fn(v) {
+        full := case ids.find(fn(v) {
           v.unique.any(fn(req) { !req.path.is_shell() })
-        })
-        case field_variant {
-          .Some(v) => {
-            shell_only: Vector<vid.PathSet> = [vid.shell_set()]
-            try assert.is_none(summary.select_variant_for_arg_paths(vt, v.func, shell_only))
-            exact: Vector<vid.PathSet> = [vid.shell_set().add(vid.field(0))]
-            case summary.select_variant_for_arg_paths(vt, v.func, exact) {
-              .Some(sel) => try assert.equal(
-                sel.variant_canonical_string(),
-                v.variant_canonical_string(),
-              ),
-              .None => return .Err("expected exact field path to select the variant"),
-            }
-            .Ok({})
-          },
-          .None => .Err("expected a published field-path variant"),
+        }) {
+          .Some(v) => v,
+          .None => return .Err("no full variant"),
         }
+        callee := full.func
+        shell_only: Vector<vid.PathSet> = [vid.shell_set(), vid.shell_set()]
+        case summary.select_variant_for_arg_paths(vt, callee, shell_only) {
+          .Some(sel) => try assert.ok(
+            !sel.unique.any(fn(req) { !req.path.is_shell() }),
+            "shell-only args must select the shell tier",
+          ),
+          .None => return .Err("shell args must select the shell tier, not None"),
+        }
+        exact: Vector<vid.PathSet> = [vid.shell_set().add(vid.field(0)), vid.shell_set()]
+        case summary.select_variant_for_arg_paths(vt, callee, exact) {
+          .Some(sel) => try assert.equal(
+            sel.variant_canonical_string(),
+            full.variant_canonical_string(),
+          ),
+          .None => return .Err("field args must select the full tier"),
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "delegating call chain publishes full field tiers at every hop",
+      fn() Result<Void, String> {
+        art := try compile_fixture("red_delegate_chain")
+        keys := canon_keys(variants_of(art))
+        full_count := 0
+        for k in keys {
+          if k.contains("|0:;0:0") {
+            full_count = full_count + 1
+          }
+        }
+        try assert.ok(full_count >= 4, "leaf and delegating hops must publish full tiers")
+        .Ok({})
       },
     )
     .test(
@@ -121,7 +198,9 @@ pub fn suite() runner.Suite {
         art := try compile_fixture("field_visit_rec")
         vt := variants_of(art)
         ids := summary.variant_ids_of(vt)
-        field_variant := ids.find(fn(v) { v.unique.any(fn(req) { !req.path.is_shell() }) })
+        field_variant := ids.find(fn(v) {
+          v.unique.any(fn(req) { !req.path.is_shell() })
+        })
         case field_variant {
           .Some(v) => {
             key := vid.variant_canonical_string(v)
@@ -133,7 +212,7 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "variant reachability keeps field-path variants visible in cfg render inputs",
+      "both variant tiers stay reachable for cfg rendering",
       fn() Result<Void, String> {
         art := try compile_fixture("field_visit_rec")
         vt := variants_of(art)
@@ -141,10 +220,8 @@ pub fn suite() runner.Suite {
         sem := sem_for(art)
         generic := summary.compute(view, art.builtins, sem)
         keys := summary.reachable_variant_keys_for_test(view, art.builtins, sem, generic, vt)
-        try assert.ok(
-          keys.any(fn(k) { k.contains("|0:;0:0") }),
-          "field-path variant key must remain reachable for cfg rendering",
-        )
+        try assert.ok(keys.any(fn(k) { k.ends_with("|0:") }), "shell tier must be reachable")
+        try assert.ok(keys.any(fn(k) { k.contains("|0:;0:0") }), "full tier must be reachable")
         .Ok({})
       },
     )

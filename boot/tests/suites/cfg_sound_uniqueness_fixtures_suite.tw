@@ -29,9 +29,9 @@ fn render_entry(name: String) Result<String, String> {
   b := artifacts.builtins
   view := cfg.build_view(artifacts.opt, b)
   view = ownership.prune_dead_merge(view)
-  sem := semantics.make_prelude_optimizer_semantics(b).with_ref_fields(
-    resolver.build_ref_field_table(artifacts.env),
-  )
+  sem := semantics
+    .make_prelude_optimizer_semantics(b)
+    .with_ref_fields(resolver.build_ref_field_table(artifacts.env))
   table := summary.compute(view, b, sem)
   variants := summary.compute_variants(view, b, sem, table)
   resolver := variants.make_variant_resolver_for_render()
@@ -164,7 +164,7 @@ pub fn suite() runner.Suite {
         build := try section_between(out, "fn build_owned", "fn branch_shared")
         branch := try section_from(out, "fn branch_shared")
 
-        try assert_has_all(build, ["verdict ->", "unique:p0,p0.f0", "unique:p0,p0.f1"])
+        try assert_has_all(build, ["verdict ->", "unique:p0,p0.f0", "unique:p0"])
         try assert_has_all(
           branch,
           ["summary: p0=Borrowed ret=shared", "transport=move([.f0] from(fresh))"],
@@ -352,7 +352,7 @@ pub fn suite() runner.Suite {
         try assert_has_all(
           mark,
           [
-            "summary: p0=Consumed paths{[],[.f1]} p1=Published ret=alias(p0)",
+            "summary: p0=Consumed paths{[]} p1=Published ret=alias(p0)",
             "transport=borrow",
             "record_update",
           ],
@@ -436,9 +436,12 @@ pub fn suite() runner.Suite {
 
         // Every delegating hop now earns an owned [unique:p0] variant that selects
         // the downstream owned variant, and the leaf reuses its shell in place.
-        try assert.str_contains(out, "variant fn resolve_one [unique:p0]")
-        try assert.str_contains(out, "variant fn resolve_decls [unique:p0]")
-        try assert.str_contains(out, "variant fn resolve [unique:p0]")
+        shell_resolve_one := try variant_section(out, "resolve_one", "unique:p0")
+        shell_resolve_decls := try variant_section(out, "resolve_decls", "unique:p0")
+        shell_resolve := try variant_section(out, "resolve", "unique:p0")
+        try assert.str_contains(shell_resolve_one, "p0=Consumed paths{[]}")
+        try assert.str_contains(shell_resolve_decls, "p0=Consumed paths{[]}")
+        try assert.str_contains(shell_resolve, "p0=Consumed paths{[]}")
         try assert.str_contains(out, "verdict -> f")
         try assert.str_contains(out, "reuse(unique)")
         .Ok({})

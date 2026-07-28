@@ -174,9 +174,9 @@ fn collect_groups(
     if cfg_calls_published(f, published) {
       sited := ownership.call_uniques_sited(f, table, b, sem, Dict.new(), Dict.new())
       for s in sited {
-        case summary.select_variant_for_arg_paths(vt, s.callee, s.arg_paths) {
+        case vt.select_variant_for_arg_paths(s.callee, s.arg_paths) {
           .Some(variant) => if variant.unique.len() > 0 {
-            key := vid.variant_canonical_string(variant)
+            key := variant.variant_canonical_string()
             prev := case by_key.get(key) {
               .Some(g) => g,
               .None => {
@@ -310,7 +310,7 @@ pub fn specialize_module_with_cap(anf: AnfModule, b: BuiltinRegistry, cap: Int) 
     for sk in g.route_sites {
       site_to_clone[sk] = clone_id
     }
-    variant_to_clone[vid.variant_canonical_string(g.variant)] = clone_id
+    variant_to_clone[g.variant.variant_canonical_string()] = clone_id
     survivors = .append(
       Group.{
         callee: g.callee,
@@ -327,7 +327,7 @@ pub fn specialize_module_with_cap(anf: AnfModule, b: BuiltinRegistry, cap: Int) 
   // site-key space, disjoint from caller sites.
   routes: Vector<variant_route.VariantRoute> = []
   for g in survivors {
-    rec := recursive_routes_for(g, view, table, vt, b, sem, variant_to_clone)
+    rec := g.recursive_routes_for(view, table, vt, b, sem, variant_to_clone)
     rec_keys: Vector<Int> = []
     for r in rec {
       site_to_clone[r.site_key] = r.target
@@ -342,7 +342,7 @@ pub fn specialize_module_with_cap(anf: AnfModule, b: BuiltinRegistry, cap: Int) 
         route_sites: g.route_sites,
         recursive_routes: rec_keys,
         fallback_reason: .None,
-        proof_debug_id: "8g:${vid.variant_canonical_string(g.variant)}",
+        proof_debug_id: "8g:${g.variant.variant_canonical_string()}",
       },
     )
   }
@@ -397,8 +397,8 @@ fn recursive_routes_for(
   sited := ownership.call_uniques_sited(ccfg, table, b, sem, Dict.new(), seed)
   out: Vector<RecRoute> = []
   for s in sited {
-    case summary.select_variant_for_arg_paths(vt, s.callee, s.arg_paths) {
-      .Some(w) => case variant_to_clone.get(vid.variant_canonical_string(w)) {
+    case vt.select_variant_for_arg_paths(s.callee, s.arg_paths) {
+      .Some(w) => case variant_to_clone.get(w.variant_canonical_string()) {
         .Some(target) => out = .append(
           RecRoute.{ site_key: vid.site_key(g.clone_id, s.site_local), target },
         ),
@@ -422,7 +422,7 @@ fn overcap_routes(overflow: Vector<Group>) Vector<variant_route.VariantRoute> {
       route_sites: g.route_sites,
       recursive_routes: [],
       fallback_reason: .Some(.OverCap),
-      proof_debug_id: "8g:${vid.variant_canonical_string(g.variant)}",
+      proof_debug_id: "8g:${g.variant.variant_canonical_string()}",
     }
   }
 }
@@ -456,9 +456,7 @@ pub fn render_routes(routes: Vector<variant_route.VariantRoute>) String {
   lines: Vector<String> = ["generic -> clone [variant] sites rec verdict proof"]
   for r in routes {
     lines = .append(
-      "f${r.generic_func} -> f${r.clone_func} \"${r.clone_name}\" [${vid.variant_canonical_string(
-        r.variant,
-      )}] sites=${r.route_sites.len()} rec=${r.recursive_routes.len()} ${fallback_reason_str(
+      "f${r.generic_func} -> f${r.clone_func} \"${r.clone_name}\" [${r.variant.variant_canonical_string()}] sites=${r.route_sites.len()} rec=${r.recursive_routes.len()} ${fallback_reason_str(
         r.fallback_reason,
       )} proof=${r.proof_debug_id}",
     )

@@ -20,10 +20,9 @@ use compiler.graph_scc
 use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership.{
   FixCache, ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary,
-  SummaryTable, VariantResolver, analyze_function_with_seed_resolved, call_uniques_sited,
-  empty_fix_cache,
-  empty_summary_table, fix_cache_put, summarize_function_cached, summarize_variant_resolved,
-  summary_get, with_dedupe_helpers,
+  SummaryTable, VariantRequirementResolver, VariantResolver, analyze_function_with_seed_resolved,
+  call_uniques_sited, empty_fix_cache, empty_summary_table, fix_cache_put, summarize_function_cached,
+  summarize_variant_resolved, summary_get, with_dedupe_helpers,
 }
 use compiler.variant_id as vid
 
@@ -890,17 +889,46 @@ fn seed_param_of(v: vid.VariantId) Int {
   }
 }
 
-// Build the published VariantId for member `func_id`, param `param`, from the
-// converged summary's in-place paths. The shell-only candidate is only the
-// optimistic discovery seed; the final key names the exact field paths (e.g.
-// `{[], [f]}`) the converged variant actually consumes in place, so selection
-// requires a caller to prove those exact paths.
+// Build the published VariantId for member `func_id`, param `param`, from a set
+// of in-place paths. The shell tier passes `shell_set()`; the full tier passes the
+// converged summary's exact field paths (e.g. `{[], [f]}`).
 fn variant_for_paths(func_id: Int, param: Int, paths: vid.PathSet) vid.VariantId {
   reqs: vid.UniqueKey = []
   for p in paths.paths {
     reqs = .append(vid.UniqueReq.{ param, path: p })
   }
   vid.canonicalize_variant(vid.VariantId.{ func: func_id, unique: reqs })
+}
+
+// Whether `ps` owns any path beyond the shell — i.e. a genuine (reference-typed)
+// field-backing path that warrants a full-tier variant.
+fn has_non_shell_path(ps: vid.PathSet) Bool {
+  for p in ps.paths {
+    if !p.is_shell() {
+      return true
+    }
+  }
+  false
+}
+
+// Shell-tier summary: identical to the converged summary except param `k`'s
+// in-place paths collapse to the shell {[]}. A shell-tier caller proving only
+// whole-record uniqueness must NOT inherit field-backing requirements, so the full
+// `in_place_paths` are never attached to the shell key.
+fn project_summary_to_shell(s: Summary, k: Int) Summary {
+  params: Vector<ParamSummary> = collect ps, i in s.params {
+    if i == k {
+      ParamSummary.{
+        base_role: ps.base_role,
+        in_place_paths: vid.shell_set(),
+        flows_to_return: ps.flows_to_return,
+      }
+    } else {
+      ps
+    }
+  }
+  s.params = params
+  s
 }
 
 // A converged variant survives only if it still consumes param k in place AND
@@ -990,7 +1018,8 @@ fn run_scc_variants(
           }
           overlay := build_overlay(generic, member_iter)
           resolve := vtable.make_outscc_resolver(scc_set)
-          next := summarize_variant_resolved(f, key, overlay, b, sem, scc_set, resolve)
+          require := vtable.make_outscc_requirement_resolver(scc_set)
+          next := summarize_variant_resolved(f, key, overlay, b, sem, scc_set, resolve, require)
           prev := case member_iter.get(m) {
             .Some(s) => s,
             .None => optimistic_hypothesis(table_get(generic, m), k),
@@ -1033,14 +1062,20 @@ fn run_scc_variants(
     outer = outer + 1
   }
 
-  // publish survivors under their exact converged field-path keys
+  // publish survivors: shell tier always (projected to shell-only paths, preserves
+  // 8G record-shell reuse that composes through delegation), plus a full tier when a
+  // reference-typed field path survived the converged summary.
   for m, v in member_key {
     case member_iter.get(m) {
       .Some(s) => {
         k := seed_param_of(v)
         if variant_valid(s, k) {
-          pv := variant_for_paths(m, k, s.params[k].in_place_paths)
-          vtable = .vtable_put(pv, s)
+          shell_v := variant_for_paths(m, k, vid.shell_set())
+          vtable = .vtable_put(shell_v, project_summary_to_shell(s, k))
+          full_paths := s.params[k].in_place_paths
+          if has_non_shell_path(full_paths) {
+            vtable = .vtable_put(variant_for_paths(m, k, full_paths), s)
+          }
         }
       },
       .None => {},
@@ -1139,10 +1174,10 @@ fn variant_specificity(v: vid.VariantId) Int {
 }
 
 // The best owned variant summary for `callee_id` whose unique requirements are all
-// satisfied by this call site's `arg_unique`, or `.None` to fall back to generic.
-// Ties break on higher specificity, then lexicographically smallest key for
-// determinism.
-fn variant_summary_for(vtable: VariantSummaryTable, callee_id: Int, arg_unique: Vector<Bool>) Summary? {
+// satisfied by this call site's proven argument paths, or `.None` to fall back to
+// generic. Ties break on higher specificity, then lexicographically smallest key
+// for determinism.
+fn variant_summary_for(vtable: VariantSummaryTable, callee_id: Int, arg_paths: Vector<vid.PathSet>) Summary? {
   best_key := ""
   best_score := 0 - 1
   best: Summary? = .None
@@ -1150,7 +1185,7 @@ fn variant_summary_for(vtable: VariantSummaryTable, callee_id: Int, arg_unique: 
     .Some(keys) => {
       for key in keys {
         case vtable.by_key.get(key) {
-          .Some(entry) => if variant_args_satisfied(entry.variant, arg_unique) {
+          .Some(entry) => if variant_paths_satisfied(entry.variant, arg_paths) {
             score := variant_specificity(entry.variant)
             if score > best_score or score == best_score and (best_key.len() == 0 or key < best_key) {
               best_key = key
@@ -1219,7 +1254,7 @@ pub fn select_variant_for_arg_paths(
 // Shell-only compatibility wrapper over `select_variant_for_arg_paths`: `true`
 // proves {[]}, `false` proves {}.
 pub fn select_variant_for_args(vt: VariantSummaryTable, callee_id: Int, arg_unique: Vector<Bool>) vid.VariantId? {
-  select_variant_for_arg_paths(vt, callee_id, arg_unique_to_paths(arg_unique))
+  vt.select_variant_for_arg_paths(callee_id, arg_unique_to_paths(arg_unique))
 }
 
 // The param-local -> seed-Unique map that certifies variant `v`'s owned params at
@@ -1230,9 +1265,61 @@ pub fn seed_for_variant(f: CfgFunction, v: vid.VariantId) Dict<Int, Bool> {
 
 // Resolver selecting any satisfied validated variant from `vtable`.
 fn make_variant_resolver(vtable: VariantSummaryTable) VariantResolver {
-  fn(callee_id: Int, arg_unique: Vector<Bool>) Summary? { vtable.variant_summary_for(
+  fn(callee_id: Int, arg_paths: Vector<vid.PathSet>) Summary? { vtable.variant_summary_for(
     callee_id,
-    arg_unique,
+    arg_paths,
+  ) }
+}
+
+fn variant_only_requires_carrier(v: vid.VariantId, carrier: Int) Bool {
+  if v.unique.len() == 0 {
+    return false
+  }
+  has_shell := false
+  for req in v.unique {
+    if req.param != carrier {
+      return false
+    }
+    if req.path.is_shell() {
+      has_shell = true
+    }
+  }
+  has_shell
+}
+
+// Requirement resolver: field-requirement discovery is asking what a delegating
+// wrapper must itself require, not what a concrete call site has already proven.
+// Therefore it may read the strongest single-carrier published variant without
+// treating that as a real selection decision.
+fn variant_requirement_summary_for(vtable: VariantSummaryTable, callee_id: Int, carrier: Int) Summary? {
+  best_key := ""
+  best_score := 0 - 1
+  best: Summary? = .None
+  case vtable.by_func.get(callee_id) {
+    .Some(keys) => {
+      for key in keys {
+        case vtable.by_key.get(key) {
+          .Some(entry) => if variant_only_requires_carrier(entry.variant, carrier) {
+            score := variant_specificity(entry.variant)
+            if score > best_score or score == best_score and (best_key.len() == 0 or key < best_key) {
+              best_key = key
+              best_score = score
+              best = .Some(entry.summary)
+            }
+          },
+          .None => {},
+        }
+      }
+      best
+    },
+    .None => .None,
+  }
+}
+
+fn make_variant_requirement_resolver(vtable: VariantSummaryTable) VariantRequirementResolver {
+  fn(callee_id: Int, carrier: Int) Summary? { vtable.variant_requirement_summary_for(
+    callee_id,
+    carrier,
   ) }
 }
 
@@ -1241,11 +1328,21 @@ fn make_variant_resolver(vtable: VariantSummaryTable) VariantResolver {
 // select already-validated variants from earlier SCCs, which is what lets owned
 // threading compose past one delegation hop.
 fn make_outscc_resolver(vtable: VariantSummaryTable, scc_set: Dict<Int, Bool>) VariantResolver {
-  fn(callee_id: Int, arg_unique: Vector<Bool>) Summary? {
+  fn(callee_id: Int, arg_paths: Vector<vid.PathSet>) Summary? {
     if in_set(scc_set, callee_id) {
       .None
     } else {
-      vtable.variant_summary_for(callee_id, arg_unique)
+      vtable.variant_summary_for(callee_id, arg_paths)
+    }
+  }
+}
+
+fn make_outscc_requirement_resolver(vtable: VariantSummaryTable, scc_set: Dict<Int, Bool>) VariantRequirementResolver {
+  fn(callee_id: Int, carrier: Int) Summary? {
+    if in_set(scc_set, callee_id) {
+      .None
+    } else {
+      vtable.variant_requirement_summary_for(callee_id, carrier)
     }
   }
 }
@@ -1253,6 +1350,10 @@ fn make_outscc_resolver(vtable: VariantSummaryTable, scc_set: Dict<Int, Bool>) V
 // Render/analysis-time resolver over the whole converged variant table.
 pub fn make_variant_resolver_for_render(vtable: VariantSummaryTable) VariantResolver {
   vtable.make_variant_resolver()
+}
+
+pub fn make_variant_requirement_resolver_for_render(vtable: VariantSummaryTable) VariantRequirementResolver {
+  vtable.make_variant_requirement_resolver()
 }
 
 type ReachState = .{ reachable: Dict<String, Bool>, changed: Bool }
