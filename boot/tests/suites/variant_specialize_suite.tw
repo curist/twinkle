@@ -2,10 +2,12 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use commands.common.{format_compile_error}
+use compiler.anf.{AnfExpr, AnfModule, AnfOp}
 use compiler.artifacts.{PipelineArtifacts}
 use compiler.cfg
 use compiler.codegen.mutable_produce
 use compiler.codegen.variant_route
+use compiler.codegen.variant_specialize
 use compiler.opt.semantics as semantics
 use compiler.ownership
 use compiler.pipeline
@@ -61,6 +63,42 @@ fn decision_count(produced: mutable_produce.ProducedDecisions) Int {
   n
 }
 
+fn in_dict(d: Dict<Int, variant_route.CloneSpec>, k: Int) Bool {
+  case d.get(k) {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+// Whether the named function's body contains an ACall to `target_func`.
+fn calls_target(anf: AnfModule, caller_name: String, target_func: Int) Bool {
+  case anf.functions.find(fn(f) { f.name == caller_name }) {
+    .Some(f) => expr_calls(f.body, target_func),
+    .None => false,
+  }
+}
+
+fn expr_calls(e: AnfExpr, target: Int) Bool {
+  case e {
+    .Let(_local, op, body) => op_calls(op, target) or expr_calls(body, target),
+    _ => false,
+  }
+}
+
+fn op_calls(op: AnfOp, target: Int) Bool {
+  case op {
+    .ACall(callee, _args) => case callee {
+      .AGlobalFunc(fid) => fid.id == target,
+      _ => false,
+    },
+    .AIf(_p, t, el) => expr_calls(t, target) or expr_calls(el, target),
+    .AMatch(_s, arms) => arms.any(fn(a) { expr_calls(a.body, target) }),
+    .ALoop(body) => expr_calls(body, target),
+    .ADefer(body) => expr_calls(body, target),
+    _ => false,
+  }
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("variant_specialize")
@@ -112,6 +150,21 @@ pub fn suite() runner.Suite {
             seeded,
           )}",
         )
+        .Ok({})
+      },
+    )
+    .test(
+      "specialize clones visit and routes the go call site",
+      fn() Result<Void, String> {
+        art := try compile_fixture("visit_rec")
+        spec := variant_specialize.specialize_module(art.opt, art.builtins)
+        try assert.equal(spec.anf.functions.len(), art.opt.functions.len() + 1)
+        accepted := spec.routes.filter(fn(r) { r.fallback_reason == .None })
+        try assert.equal(accepted.len(), 1)
+        r := accepted[0]
+        try assert.ok(in_dict(spec.seeds.by_func, r.clone_func), "clone has an owned seed")
+        try assert.ok(r.route_sites.len() >= 1, "at least one caller site routed")
+        try assert.ok(calls_target(spec.anf, "go", r.clone_func), "go routed to clone")
         .Ok({})
       },
     )
