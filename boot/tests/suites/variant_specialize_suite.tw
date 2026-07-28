@@ -29,6 +29,20 @@ fn variants_of(art: PipelineArtifacts) summary.VariantSummaryTable {
   summary.compute_variants(view, b, sem, table)
 }
 
+fn sited_calls_in(art: PipelineArtifacts, fn_name: String) Result<
+  Vector<ownership.SitedCallUniq>,
+  String,
+> {
+  b := art.builtins
+  view := ownership.prune_dead_merge(cfg.build_view(art.opt, b))
+  sem := semantics.make_prelude_optimizer_semantics(b)
+  table := summary.compute(view, b, sem)
+  case view.functions.find(fn(f) { f.name == fn_name }) {
+    .Some(f) => .Ok(ownership.call_uniques_sited(f, table, b, sem, Dict.new(), Dict.new())),
+    .None => .Err("no function named ${fn_name}"),
+  }
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("variant_specialize")
@@ -43,6 +57,21 @@ pub fn suite() runner.Suite {
         v := summary.select_variant_for_args(vt, setb_id, [true, true])
         try assert.ok(v != .None, "unique record arg must select the owned variant")
         .Ok({})
+      },
+    )
+    .test(
+      "call_uniques_sited reports setb's unique-base call site",
+      fn() Result<Void, String> {
+        art := try compile_fixture("setb")
+        sited := try sited_calls_in(art, "caller")
+        hit := sited.find(fn(s) { s.arg_unique.len() > 0 and s.arg_unique[0] })
+        case hit {
+          .Some(s) => {
+            try assert.ok(s.site_key >= 0, "site_key present")
+            .Ok({})
+          },
+          .None => .Err("expected a unique-base call site in caller"),
+        }
       },
     )
 }

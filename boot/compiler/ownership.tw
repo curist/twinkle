@@ -6686,6 +6686,20 @@ pub fn analyze_function_with_seed_resolved(
 
 pub type CallUniq = .{ callee: Int, arg_unique: Vector<Bool> }
 
+// A call site's argument-uniqueness plus its ANF identity: the caller function,
+// the call's result local, and the injective `vid.site_key(caller, result)` used
+// to key routing decisions in Phase 8G. `args` are `Atom`s (a call arg can be a
+// literal, not just a local). This is the site-carrying form of `call_uniques`;
+// `call_uniques` projects it to the callee/arg_unique pair for existing callers.
+pub type SitedCallUniq = .{
+  caller_func: Int,
+  site_local: Int,
+  site_key: Int,
+  callee: Int,
+  args: Vector<Atom>,
+  arg_unique: Vector<Bool>,
+}
+
 pub fn call_uniques(
   f: CfgFunction,
   table: SummaryTable,
@@ -6694,6 +6708,19 @@ pub fn call_uniques(
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
 ) Vector<CallUniq> {
+  collect s in call_uniques_sited(f, table, b, sem, suppress, unique_seed) {
+    CallUniq.{ callee: s.callee, arg_unique: s.arg_unique }
+  }
+}
+
+pub fn call_uniques_sited(
+  f: CfgFunction,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+  unique_seed: Dict<Int, Bool>,
+) Vector<SitedCallUniq> {
   live := compute_liveness_labeled(f.blocks, "call_uniques:${f.name}")
   blocks := collect blk in f.blocks {
     bl := live_get(live, blk.id.id)
@@ -6720,7 +6747,7 @@ pub fn call_uniques(
     generic_only_resolver,
   )
   done := all_processed(blocks)
-  out: Vector<CallUniq> = []
+  out: Vector<SitedCallUniq> = []
   for blk in blocks {
     entry_own := join_entry_ownership(blk, fx.exits, done)
     entry_valid := join_entry_valid(blk, fx.exit_valid, done)
@@ -6770,7 +6797,16 @@ pub fn call_uniques(
                     .None => false,
                   }
                 }
-                out = .append(CallUniq.{ callee: fid.id, arg_unique: au })
+                out = .append(
+                  SitedCallUniq.{
+                    caller_func: f.func_id,
+                    site_local: inst.anf_local.id,
+                    site_key: vid.site_key(f.func_id, inst.anf_local.id),
+                    callee: fid.id,
+                    args,
+                    arg_unique: au,
+                  },
+                )
               },
               .None => {},
             },
