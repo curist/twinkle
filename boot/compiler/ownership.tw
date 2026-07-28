@@ -4813,7 +4813,11 @@ fn consume_moved_field_backing(moved: Dict<Int, Vector<Int>>, bid: Int, fid: Int
   }
 }
 
-type BlockVerdicts = .{ texts: Dict<Int, String>, reusable_shell: Dict<Int, Bool> }
+type BlockVerdicts = .{
+  texts: Dict<Int, String>,
+  reusable_shell: Dict<Int, Bool>,
+  field_backing_reusable: Dict<Int, Bool>,
+}
 
 fn block_verdicts(
   blk: CfgBlock,
@@ -4831,6 +4835,7 @@ fn block_verdicts(
   cc_suppress := cc.cc_suppress_set()
   verdicts: Dict<Int, String> = Dict.new()
   reusable_shell: Dict<Int, Bool> = Dict.new()
+  field_backing_reusable: Dict<Int, Bool> = Dict.new()
   moved_backing: Dict<Int, Vector<Int>> = Dict.new()
   st := entry
   for inst, i in blk.instructions {
@@ -4924,6 +4929,7 @@ fn block_verdicts(
           .None => false,
         }
         reusable_shell[inst.anf_local.id] = pre.shell_reusable(base, last)
+        field_backing_reusable[inst.anf_local.id] = field_backing_moved
         verdicts[inst.anf_local.id] = pre.record_update_verdict(
           inst.anf_local.id,
           base,
@@ -4940,7 +4946,7 @@ fn block_verdicts(
       _ => {},
     }
   }
-  BlockVerdicts.{ texts: verdicts, reusable_shell }
+  BlockVerdicts.{ texts: verdicts, reusable_shell, field_backing_reusable }
 }
 
 // Drive the transfer over a block's straight-line instructions from its entry
@@ -7132,6 +7138,7 @@ fn ownership_stage(
     blk.exit.field_own = st.field_own
     blk.exit.verdicts = verdicts.texts
     blk.exit.verdict_reusable_shell = verdicts.reusable_shell
+    blk.exit.verdict_field_backing_reusable = verdicts.field_backing_reusable
     blk
   }
 }

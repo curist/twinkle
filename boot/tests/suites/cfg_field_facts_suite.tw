@@ -93,6 +93,16 @@ fn has_field_path(f: cfg.CfgFunction, local_id: Int, p: ff.AccessPath) Bool {
   }
 }
 
+fn field_backing_reusable(f: cfg.CfgFunction, local: Int) Bool {
+  for blk in f.blocks {
+    case blk.exit.verdict_field_backing_reusable.get(local) {
+      .Some(v) => return v,
+      .None => {},
+    }
+  }
+  false
+}
+
 fn record_get(base: LocalId, fid: Int) AnfOp {
   .ARecordGet(.ALocal(base), FieldId.{ id: fid }, TypeId.{ id: 0 })
 }
@@ -539,6 +549,7 @@ pub fn suite() runner.Suite {
         // and env2 retains [.types]:Unique.
         try assert.is_true(is_shell_unique(f, 2))
         try assert.is_true(has_field_path(f, 4, ff.field_path(0)))
+        try assert.is_true(field_backing_reusable(f, 4))
         .Ok({})
       },
     )
@@ -706,6 +717,7 @@ pub fn suite() runner.Suite {
         try assert.is_false(
           out.contains("verdict L3 = record_update L1.f0 shell=reuse(unique) field=in-place"),
         )
+        try assert.is_false(field_backing_reusable(analyzed_func(m), 3))
         .Ok({})
       },
     )

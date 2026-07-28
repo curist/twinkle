@@ -21,7 +21,7 @@ fn timings_enabled() Bool {
   }
 }
 
-pub type SiteVerdict = .{ text: String, reusable_shell: Bool }
+pub type SiteVerdict = .{ text: String, reusable_shell: Bool, field_backing_reusable: Bool }
 
 // ── Optimized-ANF fingerprinting ────────────────────────────────────
 //
@@ -611,7 +611,15 @@ pub fn verdicts_from_artifacts(artifacts: OwnershipArtifacts) VerdictTable {
           .Some(flag) => flag,
           .None => false,
         }
-        out["${f.func_id}#${local_id}"] = SiteVerdict.{ text, reusable_shell: reusable }
+        field_reusable := case blk.exit.verdict_field_backing_reusable.get(local_id) {
+          .Some(flag) => flag,
+          .None => false,
+        }
+        out["${f.func_id}#${local_id}"] = SiteVerdict.{
+          text,
+          reusable_shell: reusable,
+          field_backing_reusable: field_reusable,
+        }
       }
     }
   }

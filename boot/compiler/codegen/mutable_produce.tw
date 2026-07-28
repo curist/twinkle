@@ -347,7 +347,11 @@ fn produce_record_decisions_from_validated_verdicts(
     key := "${c.func_id.id}#${c.result.id}"
     verdict := case verdicts.get(key) {
       .Some(v) => v,
-      .None => ownership_verdicts.SiteVerdict.{ text: "-", reusable_shell: false },
+      .None => ownership_verdicts.SiteVerdict.{
+        text: "-",
+        reusable_shell: false,
+        field_backing_reusable: false,
+      },
     }
 
     row: DecisionRenderRow = if verdict.reusable_shell {
@@ -696,7 +700,11 @@ fn produce_update_call_decisions_from_validated_verdicts(
     key := "${c.func_id.id}#${c.result.id}"
     verdict := case verdicts.get(key) {
       .Some(v) => v,
-      .None => ownership_verdicts.SiteVerdict.{ text: "-", reusable_shell: false },
+      .None => ownership_verdicts.SiteVerdict.{
+        text: "-",
+        reusable_shell: false,
+        field_backing_reusable: false,
+      },
     }
     persistent_name := name_of(b, c.persistent_func)
     mutable_name := name_of(b, c.mutable_func)
