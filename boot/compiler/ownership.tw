@@ -5435,6 +5435,40 @@ fn seed_param_own(entry: Dict<Int, Int>, unique_seed: Dict<Int, Bool>, params: V
   entry
 }
 
+// Field-ownership twin of `seed_param_own`: copy a seeded field map onto each
+// parameter local present in `field_seed`, so a clone body enters with its
+// variant-owned reference-typed field paths already Unique. A no-op when
+// `field_seed` is empty (the common case: only ownership-specialized clones carry
+// field seeds).
+fn seed_param_field_own(
+  entry_field: Dict<Int, ff.FieldMap>,
+  field_seed: Dict<Int, ff.FieldMap>,
+  params: Vector<LocalId>,
+) Dict<Int, ff.FieldMap> {
+  for p in params {
+    case field_seed.get(p.id) {
+      .Some(fm) => entry_field[p.id] = fm,
+      .None => {},
+    }
+  }
+  entry_field
+}
+
+// Entry seeds for a clone's block-0 analysis: whole-value Unique params plus
+// per-param reference-typed field ownership. The field-aware entry-seed APIs carry
+// this; the legacy `Dict<Int, Bool>` APIs are wrappers with an empty `field_own`.
+pub type EntrySeedFacts = .{ unique_locals: Dict<Int, Bool>, field_own: Dict<Int, ff.FieldMap> }
+
+pub fn empty_entry_seed_facts() EntrySeedFacts {
+  EntrySeedFacts.{ unique_locals: Dict.new(), field_own: Dict.new() }
+}
+
+// Fix-cache reuse is only safe when NO entry seed is applied (a seeded clone must
+// be re-analyzed cold). True iff both the unique-local and field-own seeds are empty.
+fn entry_seed_facts_empty(facts: EntrySeedFacts) Bool {
+  facts.unique_locals.keys().len() == 0 and facts.field_own.keys().len() == 0
+}
+
 // ── Field-ownership join + change-detection ─────────────────────────
 fn field_of(fo: Dict<Int, ff.FieldMap>, id: Int) ff.FieldMap {
   case fo.get(id) {
@@ -6491,10 +6525,10 @@ pub fn analyze(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) CfgVi
   analyze_with_summaries(view, b, sem, empty_summary_table())
 }
 
-fn entry_seed_for(entry_seeds: Dict<Int, Dict<Int, Bool>>, func_id: Int) Dict<Int, Bool> {
+fn entry_seed_facts_for(entry_seeds: Dict<Int, EntrySeedFacts>, func_id: Int) EntrySeedFacts {
   case entry_seeds.get(func_id) {
-    .Some(seed) => seed,
-    .None => Dict.new(),
+    .Some(facts) => facts,
+    .None => empty_entry_seed_facts(),
   }
 }
 
@@ -6525,7 +6559,7 @@ pub fn analyze_with_summaries_and_entry_seeds(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   table: SummaryTable,
-  entry_seeds: Dict<Int, Dict<Int, Bool>>,
+  entry_seeds: Dict<Int, EntrySeedFacts>,
 ) CfgView {
   analyze_with_summaries_and_entry_seeds_resolved(
     view,
@@ -6542,11 +6576,12 @@ pub fn analyze_with_summaries_and_entry_seeds_resolved(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   table: SummaryTable,
-  entry_seeds: Dict<Int, Dict<Int, Bool>>,
+  entry_seeds: Dict<Int, EntrySeedFacts>,
   resolve: VariantResolver,
 ) CfgView {
   functions := collect f in view.functions {
-    analyze_function(f, table, b, sem, entry_seed_for(entry_seeds, f.func_id), .None, resolve)
+    facts := entry_seed_facts_for(entry_seeds, f.func_id)
+    analyze_function(f, table, b, sem, facts.unique_locals, facts.field_own, .None, resolve)
   }
   CfgView.{ functions }
 }
@@ -6586,7 +6621,7 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
   sem: OptimizerSemantics,
   table: SummaryTable,
   selected: Dict<Int, Bool>,
-  entry_seeds: Dict<Int, Dict<Int, Bool>>,
+  entry_seeds: Dict<Int, EntrySeedFacts>,
   cache: FixCache,
 ) CfgView {
   timed := timings_enabled()
@@ -6597,8 +6632,8 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
         .None => false,
       }
       if should_analyze {
-        seed := entry_seed_for(entry_seeds, f.func_id)
-        cached := if seed.keys().len() == 0 {
+        facts := entry_seed_facts_for(entry_seeds, f.func_id)
+        cached := if facts.entry_seed_facts_empty() {
           cache.fix_cache_get(f.func_id)
         } else {
           .None
@@ -6608,7 +6643,8 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
           table,
           b,
           sem,
-          seed,
+          facts.unique_locals,
+          facts.field_own,
           cached,
           generic_only_resolver,
         )
@@ -6639,8 +6675,8 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
       selected_funcs = selected_funcs + 1
       selected_blocks = selected_blocks + f.blocks.len()
       selected_insts = selected_insts + block_instruction_count(f.blocks)
-      seed := entry_seed_for(entry_seeds, f.func_id)
-      cached := if seed.keys().len() == 0 {
+      facts := entry_seed_facts_for(entry_seeds, f.func_id)
+      cached := if facts.entry_seed_facts_empty() {
         cache.fix_cache_get(f.func_id)
       } else {
         .None
@@ -6655,7 +6691,16 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
       clear_ms = clear_ms + (t_clear1 - t_clear0)
       t_analyze0 := date.now()
       functions = .append(
-        analyze_function(cleared, table, b, sem, seed, cached, generic_only_resolver),
+        analyze_function(
+          cleared,
+          table,
+          b,
+          sem,
+          facts.unique_locals,
+          facts.field_own,
+          cached,
+          generic_only_resolver,
+        ),
       )
       t_analyze1 := date.now()
       analyze_ms = analyze_ms + (t_analyze1 - t_analyze0)
@@ -6690,7 +6735,7 @@ pub fn analyze_function_with_seed(
   sem: OptimizerSemantics,
   unique_seed: Dict<Int, Bool>,
 ) CfgFunction {
-  analyze_function(f, table, b, sem, unique_seed, .None, generic_only_resolver)
+  analyze_function(f, table, b, sem, unique_seed, Dict.new(), .None, generic_only_resolver)
 }
 
 // Resolver-aware twin of `analyze_function_with_seed`: used to render a variant
@@ -6703,7 +6748,7 @@ pub fn analyze_function_with_seed_resolved(
   unique_seed: Dict<Int, Bool>,
   resolve: VariantResolver,
 ) CfgFunction {
-  analyze_function(f, table, b, sem, unique_seed, .None, resolve)
+  analyze_function(f, table, b, sem, unique_seed, Dict.new(), .None, resolve)
 }
 
 pub type CallUniq = .{ callee: Int, arg_unique: Vector<Bool> }
@@ -7032,6 +7077,7 @@ fn analyze_function(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   unique_seed: Dict<Int, Bool>,
+  field_seed: Dict<Int, ff.FieldMap>,
   cached_fx: FixResult?,
   resolve: VariantResolver,
 ) CfgFunction {
@@ -7060,6 +7106,7 @@ fn analyze_function(
     b,
     sem,
     unique_seed,
+    field_seed,
     "analyze:${f.name}",
     cached_fx,
     resolve,
@@ -7085,6 +7132,7 @@ fn ownership_stage(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   unique_seed: Dict<Int, Bool>,
+  field_seed: Dict<Int, ff.FieldMap>,
   label: String,
   cached_fx: FixResult?,
   resolve: VariantResolver,
@@ -7151,6 +7199,9 @@ fn ownership_stage(
       entry_own = seed_param_own(entry_own, unique_seed, params)
     }
     entry_field := join_entry_field_own(blk, fx.exit_field_own, entry_own, done)
+    if blk.id.id == 0 {
+      entry_field = seed_param_field_own(entry_field, field_seed, params)
+    }
     entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
     st := ForwardState.{
       own: entry_own,

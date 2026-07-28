@@ -146,6 +146,33 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "variant field requirements seed deep field ownership in clones",
+      fn() Result<Void, String> {
+        art := try compile_fixture("field_visit_rec")
+        spec := variant_specialize.specialize_module(art.opt, art.builtins)
+
+        // The field-tier clone (variant requires a non-shell path) must carry a
+        // field seed; the shell-tier clone legitimately carries none.
+        routed := spec.routes.find(fn(r) {
+          case r.fallback_reason {
+            .Some(_) => false,
+            .None => r.variant.unique.any(fn(req) { !req.path.is_shell() }),
+          }
+        })
+        case routed {
+          .Some(r) => {
+            seed := case spec.seeds.by_func.get(r.clone_func) {
+              .Some(s) => s,
+              .None => return .Err("clone missing seed"),
+            }
+            try assert.ok(seed.field_seed_paths.keys().len() > 0, "clone must carry a field seed")
+            .Ok({})
+          },
+          .None => .Err("expected a routed field-backed recursive variant"),
+        }
+      },
+    )
+    .test(
       "field-backed recursive member publishes both shell and full variants",
       fn() Result<Void, String> {
         art := try compile_fixture("field_visit_rec")

@@ -321,7 +321,15 @@ pub fn specialize_module_with_cap_sem(
     }
     funcs = .append(clone)
     seed := summary.seed_for_variant(ccfg, g.variant)
-    seeds = .set_clone(clone_id, variant_route.CloneSpec.{ seed_locals: seed, variant: g.variant })
+    field_seed := summary.field_seed_for_variant(ccfg, g.variant)
+    seeds = .set_clone(
+      clone_id,
+      variant_route.CloneSpec.{
+        seed_locals: seed,
+        field_seed_paths: field_seed,
+        variant: g.variant,
+      },
+    )
     for sk in g.route_sites {
       site_to_clone[sk] = clone_id
     }

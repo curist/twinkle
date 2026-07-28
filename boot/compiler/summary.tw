@@ -16,6 +16,7 @@ use @std.proc
 use compiler.anf.{AnfOp, Atom}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.cfg.{CfgFunction, CfgView, Terminator}
+use compiler.field_facts as ff
 use compiler.graph_scc
 use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership.{
@@ -1261,6 +1262,28 @@ pub fn select_variant_for_args(vt: VariantSummaryTable, callee_id: Int, arg_uniq
 // entry of function `f`.
 pub fn seed_for_variant(f: CfgFunction, v: vid.VariantId) Dict<Int, Bool> {
   unique_seed_for_variant(f, v)
+}
+
+// The param-local -> field-ownership seed for variant `v`: for each depth-one
+// reference-typed field requirement `[.fN]` on a param, seed that param local's
+// entry field ownership with `[.fN]:Unique`, so a clone body can prove the
+// reference-typed field backing owned. Field-only and depth-one because a
+// `VariantId` never publishes `Elem`/`Val` requirements. Tag `0` is the Unique tag
+// documented in `field_facts.tw`.
+pub fn field_seed_for_variant(f: CfgFunction, v: vid.VariantId) Dict<Int, ff.FieldMap> {
+  out: Dict<Int, ff.FieldMap> = Dict.new()
+  for req in v.unique {
+    if !req.path.is_shell()
+      and req.param >= 0 and req.param < f.params.len() and req.path.segs.len() == 1 {
+      local := f.params[req.param].id
+      existing := case out.get(local) {
+        .Some(m) => m,
+        .None => ff.empty(),
+      }
+      out[local] = existing.set_path(ff.field_path(req.path.segs[0]), 0)
+    }
+  }
+  out
 }
 
 // Resolver selecting any satisfied validated variant from `vtable`.

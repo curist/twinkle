@@ -516,7 +516,11 @@ pub fn compute_artifacts(opt: AnfModule, b: BuiltinRegistry, sem: OptimizerSeman
   view = ownership.prune_dead_merge(view)
   t_view := date.now()
   table := summary.compute(view, b, sem)
-  entry_seeds := uniform_entry_seeds(opt, view, b, sem, table, all_func_targets(view))
+  shell_seeds := uniform_entry_seeds(opt, view, b, sem, table, all_func_targets(view))
+  entry_seeds: Dict<Int, ownership.EntrySeedFacts> = Dict.new()
+  for fid, shell in shell_seeds {
+    entry_seeds[fid] = ownership.EntrySeedFacts.{ unique_locals: shell, field_own: Dict.new() }
+  }
   t_summary := date.now()
   analyzed := ownership.analyze_with_summaries_and_entry_seeds(view, b, sem, table, entry_seeds)
   t_own := date.now()
@@ -568,16 +572,26 @@ pub fn compute_candidate_artifacts_seeded(
 
   summarized := summary.compute_for_roots_cached(view, b, sem, scope)
   table := summarized.table
-  entry_seeds := uniform_entry_seeds(opt, view, b, sem, table, scope)
+  shell_seeds := uniform_entry_seeds(opt, view, b, sem, table, scope)
+  entry_seeds: Dict<Int, ownership.EntrySeedFacts> = Dict.new()
+  for fid, shell in shell_seeds {
+    entry_seeds[fid] = ownership.EntrySeedFacts.{ unique_locals: shell, field_own: Dict.new() }
+  }
+
+  // Layer each clone's owned seeds: whole-value Unique locals from `seed_locals`,
+  // plus reference-typed field ownership from `field_seed_paths` (Phase 8H).
   for fid, spec in owned_seeds.by_func {
-    merged := case entry_seeds.get(fid) {
-      .Some(m) => m,
+    merged_unique := case entry_seeds.get(fid) {
+      .Some(fx) => fx.unique_locals,
       .None => Dict.new(),
     }
     for loc, _flag in spec.seed_locals {
-      merged[loc] = true
+      merged_unique[loc] = true
     }
-    entry_seeds[fid] = merged
+    entry_seeds[fid] = ownership.EntrySeedFacts.{
+      unique_locals: merged_unique,
+      field_own: spec.field_seed_paths,
+    }
   }
   t_summary := date.now()
   analyzed := ownership.analyze_selected_with_summaries_and_entry_seeds(

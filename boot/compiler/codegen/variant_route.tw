@@ -9,9 +9,14 @@
 //! the call sites routed to it, and the fallback reason when a site stayed
 //! generic.
 
+use compiler.field_facts as ff
 use compiler.variant_id as vid
 
-pub type CloneSpec = .{ seed_locals: Dict<Int, Bool>, variant: vid.VariantId }
+pub type CloneSpec = .{
+  seed_locals: Dict<Int, Bool>,
+  field_seed_paths: Dict<Int, ff.FieldMap>,
+  variant: vid.VariantId,
+}
 
 pub type OwnedSeedTable = .{ by_func: Dict<Int, CloneSpec> }
 
