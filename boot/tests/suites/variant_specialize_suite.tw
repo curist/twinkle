@@ -221,4 +221,39 @@ pub fn suite() runner.Suite {
         }
       },
     )
+    .test(
+      "render_routes names generic, clone, and the canonical key",
+      fn() Result<Void, String> {
+        art := try compile_fixture("visit_rec")
+        spec := variant_specialize.specialize_module(art.opt, art.builtins)
+        out := variant_specialize.render_routes(spec.routes)
+        try assert.str_contains(out, "visit")
+        try assert.str_contains(out, "-> f")
+        try assert.str_contains(out, "|0:")
+        try assert.str_contains(out, "accepted")
+        .Ok({})
+      },
+    )
+    .test(
+      "variant cap is positive and never exceeded per generic function",
+      fn() Result<Void, String> {
+        art := try compile_fixture("visit_rec")
+        spec := variant_specialize.specialize_module(art.opt, art.builtins)
+        try assert.ok(variant_specialize.variant_cap() >= 1, "cap must be positive")
+        per: Dict<Int, Int> = Dict.new()
+        for r in spec.routes {
+          if r.fallback_reason == .None {
+            n := case per.get(r.generic_func) {
+              .Some(x) => x,
+              .None => 0,
+            }
+            per[r.generic_func] = n + 1
+          }
+        }
+        for _g, n in per {
+          try assert.ok(n <= variant_specialize.variant_cap(), "cap respected")
+        }
+        .Ok({})
+      },
+    )
 }

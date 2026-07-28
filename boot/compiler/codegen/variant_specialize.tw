@@ -47,9 +47,49 @@ fn spec_timings_enabled() Bool {
   }
 }
 
+// Max ownership-specialized clones per generic function — a safety valve against a
+// function admitting many variants. The decision producer already drops non-wins;
+// this bounds the profitable-but-many case.
+pub fn variant_cap() Int {
+  4
+}
+
+// Keep at most `cap` groups per generic callee, preferring the ones with the most
+// routed caller sites (then, deterministically, the earlier group). Overflow
+// groups are dropped, leaving their callers on the generic function.
+fn apply_cap(groups: Vector<Group>, cap: Int) Vector<Group> {
+  seen: Dict<Int, Int> = Dict.new()
+  out: Vector<Group> = []
+  ranked := groups.sort_by(fn(a, b) {
+    c := b.route_sites.len().compare(a.route_sites.len())
+    case c {
+      .Eq => a.callee.compare(b.callee),
+      _ => c,
+    }
+  })
+  for g in ranked {
+    n := case seen.get(g.callee) {
+      .Some(x) => x,
+      .None => 0,
+    }
+    if n < cap {
+      seen[g.callee] = n + 1
+      out = .append(g)
+    }
+  }
+  out
+}
+
 // A candidate specialization: one published variant of one callee, plus the
-// caller site keys whose argument uniqueness satisfied it.
-type Group = .{ callee: Int, variant: vid.VariantId, route_sites: Vector<Int>, clone_id: Int }
+// caller site keys whose argument uniqueness satisfied it. `clone_name` is the
+// clone's mangled-source name (empty until the clone is built).
+type Group = .{
+  callee: Int,
+  variant: vid.VariantId,
+  route_sites: Vector<Int>,
+  clone_id: Int,
+  clone_name: String,
+}
 
 fn max_func_id(anf: AnfModule) Int {
   m := 0
@@ -129,7 +169,13 @@ fn collect_groups(
               .Some(g) => g,
               .None => {
                 order = .append(key)
-                Group.{ callee: s.callee, variant, route_sites: [], clone_id: 0 - 1 }
+                Group.{
+                  callee: s.callee,
+                  variant,
+                  route_sites: [],
+                  clone_id: 0 - 1,
+                  clone_name: "",
+                }
               },
             }
             by_key[key] = Group.{
@@ -137,6 +183,7 @@ fn collect_groups(
               variant: prev.variant,
               route_sites: prev.route_sites.append(s.site_key),
               clone_id: 0 - 1,
+              clone_name: "",
             }
           },
           .None => {},
@@ -192,7 +239,7 @@ pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {
   groups0 := collect_groups(view, table, b, sem, vt, published)
   t3 := date.now()
   updatable := updatable_funcs(anf, b)
-  groups_up := groups0.filter(fn(g) { in_set(updatable, g.callee) })
+  groups_up := apply_cap(groups0.filter(fn(g) { in_set(updatable, g.callee) }), variant_cap())
   t4 := date.now()
   if timed {
     eprintln(
@@ -242,7 +289,13 @@ pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {
     }
     variant_to_clone[vid.variant_canonical_string(g.variant)] = clone_id
     survivors = .append(
-      Group.{ callee: g.callee, variant: g.variant, route_sites: g.route_sites, clone_id },
+      Group.{
+        callee: g.callee,
+        variant: g.variant,
+        route_sites: g.route_sites,
+        clone_id,
+        clone_name: clone.name,
+      },
     )
   }
 
@@ -262,7 +315,7 @@ pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {
         generic_func: g.callee,
         variant: g.variant,
         clone_func: g.clone_id,
-        clone_name: "f${g.callee}$v${g.clone_id}",
+        clone_name: g.clone_name,
         route_sites: g.route_sites,
         recursive_routes: rec_keys,
         fallback_reason: .None,
@@ -329,6 +382,41 @@ fn recursive_routes_for(
     }
   }
   out
+}
+
+fn fallback_reason_str(r: variant_route.FallbackReason?) String {
+  case r {
+    .None => "accepted",
+    .Some(reason) => case reason {
+      .AbsentProof => "fallback:absent-proof",
+      .StaleKey => "fallback:stale-key",
+      .OverCap => "fallback:over-cap",
+      .Unsupported => "fallback:unsupported",
+      .Ambiguous => "fallback:ambiguous",
+      .ZeroWin => "fallback:zero-win",
+    },
+  }
+}
+
+// One line per variant route: the generic callee, the would-be/actual clone, the
+// canonical variant key, how many caller sites and recursive sites route to it,
+// the accept/fallback verdict, and the proof id. Rendered under the census
+// `--sites` view so clone selection is auditable without reading WAT.
+pub fn render_routes(routes: Vector<variant_route.VariantRoute>) String {
+  if routes.len() == 0 {
+    return ""
+  }
+  lines: Vector<String> = ["generic -> clone [variant] sites rec verdict proof"]
+  for r in routes {
+    lines = .append(
+      "f${r.generic_func} -> f${r.clone_func} \"${r.clone_name}\" [${vid.variant_canonical_string(
+        r.variant,
+      )}] sites=${r.route_sites.len()} rec=${r.recursive_routes.len()} ${fallback_reason_str(
+        r.fallback_reason,
+      )} proof=${r.proof_debug_id}",
+    )
+  }
+  lines.join("\n")
 }
 
 // Rewrite `ACall(AGlobalFunc(_), args)` targets whose site key is in
