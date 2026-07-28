@@ -200,12 +200,11 @@ full decision-table and variant-routing dry-run output remains deferred.
   that classifies backend selector consumption as `selected`, `policy_disabled`,
   `stale_or_ignored`, or `absent_fallback` and names the persistent, mutable, and
   emitted targets plus the proof id.
-- [ ] **Include variant routing dry-runs.** Deferred to **Phase 8G's clone-routing
-  inspection gate**, not skipped. Current `--cfg` call diagnostics render only the
-  accepted `-> f<id>[unique:...]` shape, not the full generic callee, would-be cloned
-  callee, exact `VariantId`, route site, and fallback reason. When 8G introduces
-  ownership-specialized function variants, add dry-run/inspection output before or
-  alongside real routing so clone selection and generic fallback remain auditable.
+- [x] **Include variant routing dry-runs.** Closed by Phase 8G's `render_routes`
+  under `twk ir --census --sites` (the `variant routes` table): one line per group
+  names the generic callee, the clone func + real name, the exact canonical
+  `VariantId`, caller/recursive site counts, and the verdict (`routed` /
+  `fallback:over-cap` / …).
 
 ## Codegen Phase 8A — Local vector indexed-update emission ✅ done
 
@@ -369,10 +368,14 @@ owned-seeded clone supplies the in-place decisions for owned callers and recursi
   other site keeps the generic callee. Emission is unchanged — the clone is an
   ordinary function whose owned seed makes the live 8A–8F seeded producer emit
   `Site`-keyed in-place decisions at its own (disjoint) sites.
-- [x] **Tie recursive/mutual-recursive calls through the same key.** A clone's
-  in-SCC recursive calls that are themselves satisfied under the owned seed
-  retarget to the matching peer clone (self for a single recursive function), so
-  the recursion is specialized end to end (`go → clone → clone …`), all in-place.
+- [x] **Tie recursion through the same key (self + independently-cloned peers).** A
+  clone's in-SCC recursive calls that are satisfied under the owned seed retarget to
+  a peer clone **that was independently cloned** — for a single recursive function
+  this is the self-call, so recursion is specialized end to end (`go → clone → clone
+  …`), all in-place. **Not yet:** a peer demanded only from inside another clone is
+  not created on demand; its recursive call stays generic (sound, just unspecialized).
+  Full SCC closure of mutual recursion is a follow-up (no mutual-recursion fixture
+  exercises it today).
 - [x] **Keep variant count capped and inspectable.** `variant_cap()` (default 4)
   bounds clones per generic function. `render_routes` prints one line per route
   (generic → clone name, canonical variant key, caller/recursive site counts,

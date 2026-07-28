@@ -230,7 +230,7 @@ pub fn suite() runner.Suite {
         try assert.str_contains(out, "visit")
         try assert.str_contains(out, "-> f")
         try assert.str_contains(out, "|0:")
-        try assert.str_contains(out, "accepted")
+        try assert.str_contains(out, "routed")
         .Ok({})
       },
     )
@@ -253,6 +253,20 @@ pub fn suite() runner.Suite {
         for _g, n in per {
           try assert.ok(n <= variant_specialize.variant_cap(), "cap respected")
         }
+        .Ok({})
+      },
+    )
+    .test(
+      "cap 0 clones nothing and records the overflow as an OverCap route",
+      fn() Result<Void, String> {
+        art := try compile_fixture("visit_rec")
+        spec := variant_specialize.specialize_module_with_cap(art.opt, art.builtins, 0)
+        try assert.equal(spec.anf.functions.len(), art.opt.functions.len())
+        overcap := spec.routes.filter(fn(r) { r.fallback_reason
+          == .Some(variant_route.FallbackReason.OverCap) })
+        try assert.ok(overcap.len() >= 1, "overflow group must be recorded as OverCap")
+        accepted := spec.routes.filter(fn(r) { r.fallback_reason == .None })
+        try assert.equal(accepted.len(), 0)
         .Ok({})
       },
     )

@@ -9,7 +9,10 @@
 //!   3. keeps clones whose callee has a supported update site (a cheap AST-level
 //!      structural filter — see `updatable_funcs`), and
 //!   4. routes satisfying caller sites and each clone's in-SCC recursive calls to
-//!      the matching clone.
+//!      a peer clone that was independently cloned (self, for a single recursive
+//!      function). A peer demanded ONLY from inside another clone is not created
+//!      on demand — its recursive call stays generic (sound, just not specialized);
+//!      full SCC closure of mutual recursion is a follow-up.
 //!
 //! The clone body is a structural copy of the generic (only in-SCC recursive call
 //! targets are rewritten). Emission is unchanged: the clone is an ordinary
@@ -47,19 +50,51 @@ fn spec_timings_enabled() Bool {
   }
 }
 
-// Max ownership-specialized clones per generic function — a safety valve against a
-// function admitting many variants. The decision producer already drops non-wins;
-// this bounds the profitable-but-many case.
-pub fn variant_cap() Int {
-  4
+// Parse a non-negative decimal cap from the environment; `.None` on any non-digit.
+fn parse_cap_env(s: String) Int? {
+  if s.len() == 0 {
+    return .None
+  }
+  acc := 0
+  i := 0
+  for i < s.len() {
+    cp := case s.code_point_at(i) {
+      .Some(c) => c,
+      .None => return .None,
+    }
+    if cp < 48 or cp > 57 {
+      return .None
+    }
+    acc = acc * 10 + (cp - 48)
+    i = i + 1
+  }
+  .Some(acc)
 }
 
+// Max ownership-specialized clones per generic function — a safety valve against a
+// function admitting many variants. Default 4, overridable via TWINKLE_VARIANT_CAP.
+// The seeded producer in `link_program` still decides in-place per site; this only
+// bounds the profitable-but-many case.
+pub fn variant_cap() Int {
+  case proc.env("TWINKLE_VARIANT_CAP") {
+    .Some(s) => case parse_cap_env(s) {
+      .Some(n) => n,
+      .None => 4,
+    },
+    .None => 4,
+  }
+}
+
+type CapResult = .{ kept: Vector<Group>, overflow: Vector<Group> }
+
 // Keep at most `cap` groups per generic callee, preferring the ones with the most
-// routed caller sites (then, deterministically, the earlier group). Overflow
-// groups are dropped, leaving their callers on the generic function.
-fn apply_cap(groups: Vector<Group>, cap: Int) Vector<Group> {
+// routed caller sites (then, deterministically, the earlier callee id). Overflow
+// groups are returned separately: their callers stay on the generic function and
+// they are recorded as `OverCap` routes for inspection.
+fn apply_cap(groups: Vector<Group>, cap: Int) CapResult {
   seen: Dict<Int, Int> = Dict.new()
-  out: Vector<Group> = []
+  kept: Vector<Group> = []
+  overflow: Vector<Group> = []
   ranked := groups.sort_by(fn(a, b) {
     c := b.route_sites.len().compare(a.route_sites.len())
     case c {
@@ -74,10 +109,12 @@ fn apply_cap(groups: Vector<Group>, cap: Int) Vector<Group> {
     }
     if n < cap {
       seen[g.callee] = n + 1
-      out = .append(g)
+      kept = .append(g)
+    } else {
+      overflow = .append(g)
     }
   }
-  out
+  CapResult.{ kept, overflow }
 }
 
 // A candidate specialization: one published variant of one callee, plus the
@@ -216,6 +253,12 @@ fn updatable_funcs(anf: AnfModule, b: BuiltinRegistry) Dict<Int, Bool> {
 }
 
 pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {
+  specialize_module_with_cap(anf, b, variant_cap())
+}
+
+// Explicit-cap entry (used by tests to exercise overflow without touching the
+// process environment). `specialize_module` delegates here with `variant_cap()`.
+pub fn specialize_module_with_cap(anf: AnfModule, b: BuiltinRegistry, cap: Int) SpecializeResult {
   timed := spec_timings_enabled()
   sem := make_prelude_optimizer_semantics(b)
 
@@ -239,7 +282,8 @@ pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {
   groups0 := collect_groups(view, table, b, sem, vt, published)
   t3 := date.now()
   updatable := updatable_funcs(anf, b)
-  groups_up := apply_cap(groups0.filter(fn(g) { in_set(updatable, g.callee) }), variant_cap())
+  capped := apply_cap(groups0.filter(fn(g) { in_set(updatable, g.callee) }), cap)
+  groups_up := capped.kept
   t4 := date.now()
   if timed {
     eprintln(
@@ -247,7 +291,11 @@ pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {
     )
   }
   if groups_up.len() == 0 {
-    return SpecializeResult.{ anf, seeds: variant_route.empty_seed_table(), routes: [] }
+    return SpecializeResult.{
+      anf,
+      seeds: variant_route.empty_seed_table(),
+      routes: overcap_routes(capped.overflow),
+    }
   }
 
   // Build clones + owned seeds for each structurally-updatable satisfying group.
@@ -323,6 +371,9 @@ pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {
       },
     )
   }
+  for r in overcap_routes(capped.overflow) {
+    routes = .append(r)
+  }
 
   // Route caller sites and in-clone recursive sites to their clones.
   routed_funcs := collect f in funcs {
@@ -384,9 +435,30 @@ fn recursive_routes_for(
   out
 }
 
+// Overflow groups (beyond the per-callee cap) as inspection-only routes: no clone
+// is built, so callers stay on the generic function.
+fn overcap_routes(overflow: Vector<Group>) Vector<variant_route.VariantRoute> {
+  collect g in overflow {
+    variant_route.VariantRoute.{
+      generic_func: g.callee,
+      variant: g.variant,
+      clone_func: 0 - 1,
+      clone_name: "",
+      route_sites: g.route_sites,
+      recursive_routes: [],
+      fallback_reason: .Some(.OverCap),
+      proof_debug_id: "8g:${vid.variant_canonical_string(g.variant)}",
+    }
+  }
+}
+
+// `routed` (not "accepted"): a `.None` route means the clone was built and its
+// callers retargeted, but — with no separate decision gate — `link_program`'s
+// seeded producer decides in-place per site, so a routed clone may still emit the
+// persistent path. Fallback reasons name why a group stayed on the generic.
 fn fallback_reason_str(r: variant_route.FallbackReason?) String {
   case r {
-    .None => "accepted",
+    .None => "routed",
     .Some(reason) => case reason {
       .AbsentProof => "fallback:absent-proof",
       .StaleKey => "fallback:stale-key",
