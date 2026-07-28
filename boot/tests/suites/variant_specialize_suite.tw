@@ -85,6 +85,13 @@ fn calls_target(anf: AnfModule, caller_name: String, target_func: Int) Bool {
   }
 }
 
+fn func_id_calls(anf: AnfModule, func_id: Int, target_func: Int) Bool {
+  case anf.functions.find(fn(f) { f.func_id.id == func_id }) {
+    .Some(f) => expr_calls(f.body, target_func),
+    .None => false,
+  }
+}
+
 fn expr_calls(e: AnfExpr, target: Int) Bool {
   case e {
     .Let(_local, op, body) => op_calls(op, target) or expr_calls(body, target),
@@ -195,6 +202,23 @@ pub fn suite() runner.Suite {
         wat := try compile_fixture_wat("visit_aliased")
         try assert.is_false(wat.contains("call $rt_arr__set_in_place"))
         .Ok({})
+      },
+    )
+    .test(
+      "recursive clone retargets its self-call to the clone",
+      fn() Result<Void, String> {
+        art := try compile_fixture("visit_rec")
+        spec := variant_specialize.specialize_module(art.opt, art.builtins)
+        case spec.routes.find(fn(x) { x.fallback_reason == .None and x.recursive_routes.len() >= 1 }) {
+          .Some(route) => {
+            try assert.ok(
+              func_id_calls(spec.anf, route.clone_func, route.clone_func),
+              "clone body's self-call must retarget to the clone",
+            )
+            .Ok({})
+          },
+          .None => .Err("expected an accepted recursive variant with a retargeted self-call"),
+        }
       },
     )
 }

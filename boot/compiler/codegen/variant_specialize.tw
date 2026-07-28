@@ -2,27 +2,31 @@
 //!
 //! An ANF->ANF pass, run in `link_program` between the builder-region rewrite
 //! and closure conversion. It:
-//!   1. runs `compute_variants` to find published owned variants,
-//!   2. scans every caller site (`call_uniques_sited`) and, where a site's
-//!      argument uniqueness satisfies a published variant, physically clones the
-//!      callee under an owned entry seed,
-//!   3. runs the ordinary seeded decision producer over the whole module with
-//!      the clones present (the "decision gate") and keeps only clones that
-//!      actually yield an in-place decision, and
-//!   4. routes the satisfying caller sites to the surviving clones.
+//!   1. builds the summary + variant tables and finds published owned variants,
+//!   2. scans callers of published callees (`call_uniques_sited`) and, where a
+//!      site's argument uniqueness satisfies a published variant, physically
+//!      clones the callee under an owned entry seed,
+//!   3. keeps clones whose callee has a supported update site (a cheap AST-level
+//!      structural filter — see `updatable_funcs`), and
+//!   4. routes satisfying caller sites and each clone's in-SCC recursive calls to
+//!      the matching clone.
 //!
-//! The clone body is a byte-identical structural copy of the generic (Task 4:
-//! non-recursive slice — no in-body retargeting; recursive/SCC retargeting is a
-//! later slice). Emission is unchanged: the clone is an ordinary function whose
-//! owned seed makes the live 8A-8F producer emit `Site`-keyed in-place decisions
-//! at its own (disjoint) sites. Absent a satisfying published variant, or when a
-//! clone yields no decision, the caller keeps the generic callee.
+//! The clone body is a structural copy of the generic (only in-SCC recursive call
+//! targets are rewritten). Emission is unchanged: the clone is an ordinary
+//! function whose owned seed makes the live 8A-8F producer emit `Site`-keyed
+//! in-place decisions at its own (disjoint) sites. There is no separate decision
+//! gate — `link_program` already runs the seeded producer over the result and is
+//! the in-place decision authority, so a clone that yields no decision simply
+//! emits the persistent path (a harmless duplicate the structural filter makes
+//! rare). Absent a satisfying published variant, the caller keeps the generic.
+
+use @std.date
+use @std.proc
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.cfg
 use compiler.codegen.mutable_produce
-use compiler.codegen.ownership_verdicts
 use compiler.codegen.variant_route
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.opt.semantics.{OptimizerSemantics, make_prelude_optimizer_semantics}
@@ -34,6 +38,13 @@ pub type SpecializeResult = .{
   anf: AnfModule,
   seeds: variant_route.OwnedSeedTable,
   routes: Vector<variant_route.VariantRoute>,
+}
+
+fn spec_timings_enabled() Bool {
+  case proc.env("TWINKLE_TIMINGS") {
+    .Some(_) => true,
+    .None => false,
+  }
 }
 
 // A candidate specialization: one published variant of one callee, plus the
@@ -58,39 +69,78 @@ fn cfg_func_of(view: cfg.CfgView, func_id: Int) cfg.CfgFunction? {
   view.functions.find(fn(f) { f.func_id == func_id })
 }
 
+fn in_set(s: Dict<Int, Bool>, id: Int) Bool {
+  case s.get(id) {
+    .Some(v) => v,
+    .None => false,
+  }
+}
+
+// The set of callee func ids that have at least one published variant.
+fn published_callee_set(vt: summary.VariantSummaryTable) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+  for fid, _keys in vt.by_func {
+    out[fid] = true
+  }
+  out
+}
+
+// Cheap syntactic check: does `f` call any published-variant callee? Used to skip
+// the per-function ownership fixpoint (`call_uniques_sited`) on the vast majority
+// of functions that can never route to a clone.
+fn cfg_calls_published(f: cfg.CfgFunction, published: Dict<Int, Bool>) Bool {
+  for blk in f.blocks {
+    for inst in blk.instructions {
+      case inst.op {
+        .ACall(callee, _args) => case callee {
+          .AGlobalFunc(fid) => if in_set(published, fid.id) {
+            return true
+          },
+          _ => {},
+        },
+        _ => {},
+      }
+    }
+  }
+  false
+}
+
 // Collect candidate (callee, variant) groups from every satisfying caller site.
-// Groups are keyed by the variant's canonical string and accumulate their route
-// site keys. `clone_id` is assigned later (only for surviving groups).
+// Only callers that syntactically call a published callee are analyzed. Groups are
+// keyed by the variant's canonical string and accumulate their route site keys.
 fn collect_groups(
-  anf: AnfModule,
+  view: cfg.CfgView,
+  table: ownership.SummaryTable,
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
-  owned: ownership_verdicts.OwnershipArtifacts,
   vt: summary.VariantSummaryTable,
+  published: Dict<Int, Bool>,
 ) Vector<Group> {
   order: Vector<String> = []
   by_key: Dict<String, Group> = Dict.new()
-  for f in owned.view.functions {
-    sited := ownership.call_uniques_sited(f, owned.table, b, sem, Dict.new(), Dict.new())
-    for s in sited {
-      case summary.select_variant_for_args(vt, s.callee, s.arg_unique) {
-        .Some(variant) => if variant.unique.len() > 0 {
-          key := vid.variant_canonical_string(variant)
-          prev := case by_key.get(key) {
-            .Some(g) => g,
-            .None => {
-              order = .append(key)
-              Group.{ callee: s.callee, variant, route_sites: [], clone_id: 0 - 1 }
-            },
-          }
-          by_key[key] = Group.{
-            callee: prev.callee,
-            variant: prev.variant,
-            route_sites: prev.route_sites.append(s.site_key),
-            clone_id: 0 - 1,
-          }
-        },
-        .None => {},
+  for f in view.functions {
+    if cfg_calls_published(f, published) {
+      sited := ownership.call_uniques_sited(f, table, b, sem, Dict.new(), Dict.new())
+      for s in sited {
+        case summary.select_variant_for_args(vt, s.callee, s.arg_unique) {
+          .Some(variant) => if variant.unique.len() > 0 {
+            key := vid.variant_canonical_string(variant)
+            prev := case by_key.get(key) {
+              .Some(g) => g,
+              .None => {
+                order = .append(key)
+                Group.{ callee: s.callee, variant, route_sites: [], clone_id: 0 - 1 }
+              },
+            }
+            by_key[key] = Group.{
+              callee: prev.callee,
+              variant: prev.variant,
+              route_sites: prev.route_sites.append(s.site_key),
+              clone_id: 0 - 1,
+            }
+          },
+          .None => {},
+        }
       }
     }
   }
@@ -102,28 +152,74 @@ fn collect_groups(
   }
 }
 
-pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {
-  sem := make_prelude_optimizer_semantics(b)
-  owned := ownership_verdicts.compute_artifacts(anf, b, sem)
-  vt := summary.compute_variants(owned.view, b, sem, owned.table)
+// Func ids whose body has a supported update site (vector/dict set-remove or record
+// shell update). A clone can only produce an in-place decision if its callee has
+// one, so this cheap AST-level scan replaces a full seeded decision-gate pass.
+fn updatable_funcs(anf: AnfModule, b: BuiltinRegistry) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+  call_set := mutable_produce.update_call_candidates(anf, b)
+  for c in call_set.candidates {
+    out[c.func_id.id] = true
+  }
+  rec_set := mutable_produce.record_update_candidates(anf)
+  for c in rec_set.candidates {
+    out[c.func_id.id] = true
+  }
+  out
+}
 
-  groups0 := collect_groups(anf, b, sem, owned, vt)
-  if groups0.len() == 0 {
+pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {
+  timed := spec_timings_enabled()
+  sem := make_prelude_optimizer_semantics(b)
+
+  // Only the summary table + variant table are needed (never the whole-program
+  // per-block ownership analysis), so build those directly rather than the full
+  // `compute_artifacts`, whose `analyze` pass would be discarded here.
+  t0 := date.now()
+  view := ownership.prune_dead_merge(cfg.build_view(anf, b))
+  table := summary.compute(view, b, sem)
+  t1 := date.now()
+  vt := summary.compute_variants(view, b, sem, table)
+  t2 := date.now()
+  if vt.by_func.keys().len() == 0 {
+    if timed {
+      eprintln("[time:8g] table=${t1 - t0}ms variants=${t2 - t1}ms (no variants)")
+    }
     return SpecializeResult.{ anf, seeds: variant_route.empty_seed_table(), routes: [] }
   }
 
-  // Assign clone ids and build the clone functions + owned seeds. Clones are
-  // appended unrouted; the decision gate below runs on this module.
+  published := published_callee_set(vt)
+  groups0 := collect_groups(view, table, b, sem, vt, published)
+  t3 := date.now()
+  updatable := updatable_funcs(anf, b)
+  groups_up := groups0.filter(fn(g) { in_set(updatable, g.callee) })
+  t4 := date.now()
+  if timed {
+    eprintln(
+      "[time:8g] table=${t1 - t0}ms variants=${t2 - t1}ms groups=${t3 - t2}ms filter=${t4 - t3}ms groups0=${groups0.len()} updatable=${groups_up.len()}",
+    )
+  }
+  if groups_up.len() == 0 {
+    return SpecializeResult.{ anf, seeds: variant_route.empty_seed_table(), routes: [] }
+  }
+
+  // Build clones + owned seeds for each structurally-updatable satisfying group.
+  // No separate decision gate: `link_program` runs the seeded producer over this
+  // module and is the in-place decision authority; a clone that yields no decision
+  // merely emits the persistent path (a harmless duplicate). The updatable filter
+  // keeps such duplicates rare.
   next := max_func_id(anf) + 1
-  groups: Vector<Group> = []
   funcs := anf.functions
   seeds := variant_route.empty_seed_table()
-  for g in groups0 {
+  site_to_clone: Dict<Int, Int> = Dict.new()
+  variant_to_clone: Dict<String, Int> = Dict.new()
+  survivors: Vector<Group> = []
+  for g in groups_up {
     orig := case func_def_of(anf, g.callee) {
       .Some(fd) => fd,
       .None => return SpecializeResult.{ anf, seeds: variant_route.empty_seed_table(), routes: [] },
     }
-    ccfg := case cfg_func_of(owned.view, g.callee) {
+    ccfg := case cfg_func_of(view, g.callee) {
       .Some(cf) => cf,
       .None => return SpecializeResult.{ anf, seeds: variant_route.empty_seed_table(), routes: [] },
     }
@@ -141,75 +237,42 @@ pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {
     funcs = .append(clone)
     seed := summary.seed_for_variant(ccfg, g.variant)
     seeds = .set_clone(clone_id, variant_route.CloneSpec.{ seed_locals: seed, variant: g.variant })
-    groups = .append(
+    for sk in g.route_sites {
+      site_to_clone[sk] = clone_id
+    }
+    variant_to_clone[vid.variant_canonical_string(g.variant)] = clone_id
+    survivors = .append(
       Group.{ callee: g.callee, variant: g.variant, route_sites: g.route_sites, clone_id },
     )
   }
 
-  gated := AnfModule.{
-    functions: funcs,
-    init_func_id: anf.init_func_id,
-    extern_imports: anf.extern_imports,
-    global_monos: anf.global_monos,
-    lib_exports: anf.lib_exports,
-  }
-
-  // Decision gate: keep only clones that actually produce an in-place decision.
-  produced := mutable_produce.produce_mutable_decisions_seeded(gated, b, seeds)
-  live_clones := clone_ids_with_decisions(produced)
-
-  final_seeds := variant_route.empty_seed_table()
-  site_to_clone: Dict<Int, Int> = Dict.new()
+  // Retarget each clone's in-SCC recursive calls (self for a single recursive
+  // function) to the matching peer clone. Recursive routes live in the clone's own
+  // site-key space, disjoint from caller sites.
   routes: Vector<variant_route.VariantRoute> = []
-  kept_funcs := anf.functions
-  for g in groups {
-    won := case live_clones.get(g.clone_id) {
-      .Some(v) => v,
-      .None => false,
+  for g in survivors {
+    rec := recursive_routes_for(g, view, table, vt, b, sem, variant_to_clone)
+    rec_keys: Vector<Int> = []
+    for r in rec {
+      site_to_clone[r.site_key] = r.target
+      rec_keys = .append(r.site_key)
     }
-    clone_name := "f${g.callee}$v${g.clone_id}"
-    if won {
-      case func_def_of(gated, g.clone_id) {
-        .Some(cf) => kept_funcs = .append(cf),
-        .None => {},
-      }
-      case seeds.by_func.get(g.clone_id) {
-        .Some(spec) => final_seeds = .set_clone(g.clone_id, spec),
-        .None => {},
-      }
-      for sk in g.route_sites {
-        site_to_clone[sk] = g.clone_id
-      }
-      routes = .append(
-        variant_route.VariantRoute.{
-          generic_func: g.callee,
-          variant: g.variant,
-          clone_func: g.clone_id,
-          clone_name,
-          route_sites: g.route_sites,
-          recursive_routes: [],
-          fallback_reason: .None,
-          proof_debug_id: "8g:${vid.variant_canonical_string(g.variant)}",
-        },
-      )
-    } else {
-      routes = .append(
-        variant_route.VariantRoute.{
-          generic_func: g.callee,
-          variant: g.variant,
-          clone_func: g.clone_id,
-          clone_name,
-          route_sites: g.route_sites,
-          recursive_routes: [],
-          fallback_reason: .Some(.ZeroWin),
-          proof_debug_id: "8g:${vid.variant_canonical_string(g.variant)}",
-        },
-      )
-    }
+    routes = .append(
+      variant_route.VariantRoute.{
+        generic_func: g.callee,
+        variant: g.variant,
+        clone_func: g.clone_id,
+        clone_name: "f${g.callee}$v${g.clone_id}",
+        route_sites: g.route_sites,
+        recursive_routes: rec_keys,
+        fallback_reason: .None,
+        proof_debug_id: "8g:${vid.variant_canonical_string(g.variant)}",
+      },
+    )
   }
 
-  // Route surviving caller sites to their clones.
-  routed_funcs := collect f in kept_funcs {
+  // Route caller sites and in-clone recursive sites to their clones.
+  routed_funcs := collect f in funcs {
     AnfFunctionDef.{
       func_id: f.func_id,
       name: f.name,
@@ -228,14 +291,41 @@ pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {
     global_monos: anf.global_monos,
     lib_exports: anf.lib_exports,
   }
-  SpecializeResult.{ anf: out, seeds: final_seeds, routes }
+  SpecializeResult.{ anf: out, seeds, routes }
 }
 
-fn clone_ids_with_decisions(produced: mutable_produce.ProducedDecisions) Dict<Int, Bool> {
-  out: Dict<Int, Bool> = Dict.new()
-  for _key, ds in produced.table.by_site {
-    for d in ds {
-      out[d.site.func.id] = true
+type RecRoute = .{ site_key: Int, target: Int }
+
+// Recursive in-SCC routes for a surviving clone: analyze the generic callee under
+// the clone's owned seed (its body is a verbatim copy, so locals line up), and
+// for each call whose seeded argument uniqueness satisfies a variant that has a
+// surviving clone, retarget it — keyed in the CLONE's site-key space. For a single
+// recursive function this retargets the self-call to the clone itself.
+fn recursive_routes_for(
+  g: Group,
+  view: cfg.CfgView,
+  table: ownership.SummaryTable,
+  vt: summary.VariantSummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  variant_to_clone: Dict<String, Int>,
+) Vector<RecRoute> {
+  ccfg := case cfg_func_of(view, g.callee) {
+    .Some(cf) => cf,
+    .None => return [],
+  }
+  seed := summary.seed_for_variant(ccfg, g.variant)
+  sited := ownership.call_uniques_sited(ccfg, table, b, sem, Dict.new(), seed)
+  out: Vector<RecRoute> = []
+  for s in sited {
+    case summary.select_variant_for_args(vt, s.callee, s.arg_unique) {
+      .Some(w) => case variant_to_clone.get(vid.variant_canonical_string(w)) {
+        .Some(target) => out = .append(
+          RecRoute.{ site_key: vid.site_key(g.clone_id, s.site_local), target },
+        ),
+        .None => {},
+      },
+      .None => {},
     }
   }
   out
