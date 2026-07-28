@@ -7615,21 +7615,32 @@ fn call_result_fact(
     .None => s,
   }
   required := require(fid, carrier)
+
+  // Only non-shell (reference-typed field) paths belong in `dirty`; the shell is
+  // unioned by `build_in_place_paths`. Adding shell here pollutes every carrier
+  // flow fact and cascades into far more re-summarization (see call_result_fact
+  // perf regression).
   dirty := base.dirty
   if carrier < s.params.len() {
     for p in s.params[carrier].in_place_paths.paths {
-      dirty = .add(p)
+      if !p.is_shell() {
+        dirty = .add(p)
+      }
     }
   }
   if carrier < selected.params.len() {
     for p in selected.params[carrier].in_place_paths.paths {
-      dirty = .add(p)
+      if !p.is_shell() {
+        dirty = .add(p)
+      }
     }
   }
   case required {
     .Some(vs) => if carrier < vs.params.len() {
       for p in vs.params[carrier].in_place_paths.paths {
-        dirty = .add(p)
+        if !p.is_shell() {
+          dirty = .add(p)
+        }
       }
     },
     .None => {},
@@ -7655,6 +7666,11 @@ fn transfer_flow(
         // field-granular in-place requirement; a field the type table proves
         // primitive is covered by shell uniqueness and must not inflate the
         // param's field path set. Unknown fields stay conservatively kept.
+        // The shell marks that this param was record-update-consumed, so
+        // `has_mut` (dirty non-empty) flags it Consumed even when the field is
+        // primitive (e.g. `setb`'s Int field, whose field path is filtered out).
+        // The shell is not propagated onward through `call_result_fact` (which
+        // filters shell), so it stays local and does not cascade.
         new_dirty := bf.dirty.add(vid.shell())
         if !sem_field_is_primitive(sem, tid, fld) {
           new_dirty = .add(vid.field(fld.id))
