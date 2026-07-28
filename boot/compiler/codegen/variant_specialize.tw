@@ -50,39 +50,14 @@ fn spec_timings_enabled() Bool {
   }
 }
 
-// Parse a non-negative decimal cap from the environment; `.None` on any non-digit.
-fn parse_cap_env(s: String) Int? {
-  if s.len() == 0 {
-    return .None
-  }
-  acc := 0
-  i := 0
-  for i < s.len() {
-    cp := case s.code_point_at(i) {
-      .Some(c) => c,
-      .None => return .None,
-    }
-    if cp < 48 or cp > 57 {
-      return .None
-    }
-    acc = acc * 10 + (cp - 48)
-    i = i + 1
-  }
-  .Some(acc)
-}
-
 // Max ownership-specialized clones per generic function — a safety valve against a
-// function admitting many variants. Default 4, overridable via TWINKLE_VARIANT_CAP.
-// The seeded producer in `link_program` still decides in-place per site; this only
-// bounds the profitable-but-many case.
+// function admitting many variants. A fixed default (not env-tunable, so the value
+// stays deterministic and the whole compiler + test suite are env-insensitive;
+// `TWINKLE_VARIANT_SPECIALIZE=0` already disables the pass entirely). Tests exercise
+// other caps via `specialize_module_with_cap`. The seeded producer in `link_program`
+// still decides in-place per site; this only bounds the profitable-but-many case.
 pub fn variant_cap() Int {
-  case proc.env("TWINKLE_VARIANT_CAP") {
-    .Some(s) => case parse_cap_env(s) {
-      .Some(n) => n,
-      .None => 4,
-    },
-    .None => 4,
-  }
+  4
 }
 
 type CapResult = .{ kept: Vector<Group>, overflow: Vector<Group> }

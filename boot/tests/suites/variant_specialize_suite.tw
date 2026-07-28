@@ -32,6 +32,34 @@ fn compile_fixture_wat(name: String) Result<String, String> {
   }
 }
 
+// Extract a single WAT function body: the `(func …)` block whose header contains
+// `marker`, sliced to the next top-level `(func …)` so assertions are scoped to
+// that one function rather than the whole module.
+fn wat_func_body(wat: String, marker: String) String? {
+  parts := wat.split("\n  (func ")
+  for p in parts {
+    lines := p.split("\n")
+    header := case lines.first() {
+      .Some(h) => h,
+      .None => "",
+    }
+    if header.contains(marker) {
+      return .Some(p)
+    }
+  }
+  .None
+}
+
+fn wat_has_call(body: String, target: String) Bool {
+  needle := "call ${target}"
+  for line in body.split("\n") {
+    if line.trim() == needle {
+      return true
+    }
+  }
+  false
+}
+
 fn variants_of(art: PipelineArtifacts) summary.VariantSummaryTable {
   b := art.builtins
   view := ownership.prune_dead_merge(cfg.build_view(art.opt, b))
@@ -183,14 +211,20 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "cloned visit emits vector set_in_place end-to-end",
+      "cloned visit emits vector set_in_place inside the clone body",
       fn() Result<Void, String> {
-        // Through link_program: the clone (visit$vN) is emitted and calls the
-        // in-place helper; the generic visit keeps `call $rt_arr__set`. Only the
-        // clone emits the in-place call, so the call token is clone-attributable.
+        // Slice the clone's own `(func …)` block (name contains `visit_v`) and
+        // assert the in-place CALL token appears there — clone-scoped and
+        // token-exact, not a module-wide substring match.
         wat := try compile_fixture_wat("visit_rec")
-        try assert.str_contains(wat, "visit_v")
-        try assert.str_contains(wat, "call $rt_arr__set_in_place")
+        clone := case wat_func_body(wat, "visit_v") {
+          .Some(body) => body,
+          .None => return .Err("clone function (visit_v) not found in WAT"),
+        }
+        try assert.ok(
+          wat_has_call(clone, "$rt_arr__set_in_place"),
+          "clone body must contain exact call instruction to rt_arr__set_in_place",
+        )
         .Ok({})
       },
     )
@@ -200,7 +234,7 @@ pub fn suite() runner.Suite {
         // In `aliased`, `m` is read after `visit(m, 3)`, so it is not last-use at
         // the call: no route, no clone, no in-place emission.
         wat := try compile_fixture_wat("visit_aliased")
-        try assert.is_false(wat.contains("call $rt_arr__set_in_place"))
+        try assert.is_false(wat_has_call(wat, "$rt_arr__set_in_place"))
         .Ok({})
       },
     )
@@ -235,11 +269,13 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "variant cap is positive and never exceeded per generic function",
+      "explicit cap is never exceeded per generic function",
       fn() Result<Void, String> {
+        // Uses the explicit-cap entry so the assertion stays independent from
+        // the production default.
         art := try compile_fixture("visit_rec")
-        spec := variant_specialize.specialize_module(art.opt, art.builtins)
-        try assert.ok(variant_specialize.variant_cap() >= 1, "cap must be positive")
+        cap := 4
+        spec := variant_specialize.specialize_module_with_cap(art.opt, art.builtins, cap)
         per: Dict<Int, Int> = Dict.new()
         for r in spec.routes {
           if r.fallback_reason == .None {
@@ -251,7 +287,7 @@ pub fn suite() runner.Suite {
           }
         }
         for _g, n in per {
-          try assert.ok(n <= variant_specialize.variant_cap(), "cap respected")
+          try assert.ok(n <= cap, "cap respected")
         }
         .Ok({})
       },
