@@ -1,0 +1,48 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use commands.common.{format_compile_error}
+use compiler.artifacts.{PipelineArtifacts}
+use compiler.cfg
+use compiler.opt.semantics as semantics
+use compiler.ownership
+use compiler.pipeline
+use compiler.summary
+use lib.module.loader
+
+fn fixtures_dir() String {
+  "${loader.find_project_root("boot")}/tests/fixtures/cfg/sound_uniqueness"
+}
+
+fn compile_fixture(name: String) Result<PipelineArtifacts, String> {
+  case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(a) => .Ok(a),
+    .Err(e) => .Err(format_compile_error(e)),
+  }
+}
+
+fn variants_of(art: PipelineArtifacts) summary.VariantSummaryTable {
+  b := art.builtins
+  view := ownership.prune_dead_merge(cfg.build_view(art.opt, b))
+  sem := semantics.make_prelude_optimizer_semantics(b)
+  table := summary.compute(view, b, sem)
+  summary.compute_variants(view, b, sem, table)
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("variant_specialize")
+    .test(
+      "setb publishes a variant selectable when the record arg is unique",
+      fn() Result<Void, String> {
+        art := try compile_fixture("setb")
+        vt := variants_of(art)
+        ids := summary.variant_ids_of(vt)
+        try assert.ok(ids.len() >= 1, "setb must publish at least one variant")
+        setb_id := ids[0].func
+        v := summary.select_variant_for_args(vt, setb_id, [true, true])
+        try assert.ok(v != .None, "unique record arg must select the owned variant")
+        .Ok({})
+      },
+    )
+}
