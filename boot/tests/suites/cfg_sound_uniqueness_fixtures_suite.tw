@@ -7,6 +7,7 @@ use compiler.cfg
 use compiler.opt.semantics as semantics
 use compiler.ownership
 use compiler.pipeline
+use compiler.resolver
 use compiler.summary
 use lib.module.loader
 
@@ -28,7 +29,9 @@ fn render_entry(name: String) Result<String, String> {
   b := artifacts.builtins
   view := cfg.build_view(artifacts.opt, b)
   view = ownership.prune_dead_merge(view)
-  sem := semantics.make_prelude_optimizer_semantics(b)
+  sem := semantics.make_prelude_optimizer_semantics(b).with_ref_fields(
+    resolver.build_ref_field_table(artifacts.env),
+  )
   table := summary.compute(view, b, sem)
   variants := summary.compute_variants(view, b, sem, table)
   resolver := variants.make_variant_resolver_for_render()

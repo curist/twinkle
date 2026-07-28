@@ -11,6 +11,7 @@ use compiler.codegen.variant_specialize
 use compiler.opt.semantics as semantics
 use compiler.ownership
 use compiler.pipeline
+use compiler.resolver
 use compiler.summary
 use lib.module.loader
 
@@ -63,7 +64,9 @@ fn wat_has_call(body: String, target: String) Bool {
 fn variants_of(art: PipelineArtifacts) summary.VariantSummaryTable {
   b := art.builtins
   view := ownership.prune_dead_merge(cfg.build_view(art.opt, b))
-  sem := semantics.make_prelude_optimizer_semantics(b)
+  sem := semantics.make_prelude_optimizer_semantics(b).with_ref_fields(
+    resolver.build_ref_field_table(art.env),
+  )
   table := summary.compute(view, b, sem)
   summary.compute_variants(view, b, sem, table)
 }

@@ -174,7 +174,7 @@ fn collect_groups(
     if cfg_calls_published(f, published) {
       sited := ownership.call_uniques_sited(f, table, b, sem, Dict.new(), Dict.new())
       for s in sited {
-        case summary.select_variant_for_args(vt, s.callee, s.arg_unique) {
+        case summary.select_variant_for_arg_paths(vt, s.callee, s.arg_paths) {
           .Some(variant) => if variant.unique.len() > 0 {
             key := vid.variant_canonical_string(variant)
             prev := case by_key.get(key) {
@@ -397,7 +397,7 @@ fn recursive_routes_for(
   sited := ownership.call_uniques_sited(ccfg, table, b, sem, Dict.new(), seed)
   out: Vector<RecRoute> = []
   for s in sited {
-    case summary.select_variant_for_args(vt, s.callee, s.arg_unique) {
+    case summary.select_variant_for_arg_paths(vt, s.callee, s.arg_paths) {
       .Some(w) => case variant_to_clone.get(vid.variant_canonical_string(w)) {
         .Some(target) => out = .append(
           RecRoute.{ site_key: vid.site_key(g.clone_id, s.site_local), target },

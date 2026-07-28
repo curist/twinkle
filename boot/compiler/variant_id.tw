@@ -101,6 +101,16 @@ pub fn union(self: PathSet, other: PathSet) PathSet {
   self
 }
 
+// Whether `p` is a member of this set.
+pub fn contains(self: PathSet, p: ParamPath) Bool {
+  for q in self.paths {
+    if q.eq(p) {
+      return true
+    }
+  }
+  false
+}
+
 pub type UniqueReq = .{ param: Int, path: ParamPath }
 
 pub type UniqueKey = Vector<UniqueReq> // canonical-sorted; [] => generic variant

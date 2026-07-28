@@ -16,7 +16,7 @@ use compiler.cfg.{
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.field_facts as ff
 use compiler.mono_type.{MonoType}
-use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info, container_kind}
+use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info, container_kind, sem_field_is_primitive}
 use compiler.variant_id as vid
 
 pub type Ownership = { Unique, Shared, Unknown }
@@ -6704,6 +6704,39 @@ pub type SitedCallUniq = .{
   callee: Int,
   args: Vector<Atom>,
   arg_unique: Vector<Bool>,
+  arg_paths: Vector<vid.PathSet>,
+}
+
+// One path set per argument. A whole-argument last-use (`arg_unique[i]`) proves
+// the shell path {[]}; on top of that, every depth-one Field the pre-call state
+// already owns Unique for that atom is added ({[], [f]}). Elem/Val/payload paths
+// are deliberately excluded in 8H: field-path claims require whole-arg last-use,
+// so a call followed by a sibling-field read stays on the generic function.
+fn call_arg_paths(
+  pre: ForwardState,
+  args: Vector<Atom>,
+  arg_unique: Vector<Bool>,
+) Vector<vid.PathSet> {
+  collect arg, i in args {
+    paths := if i < arg_unique.len() and arg_unique[i] {
+      vid.shell_set()
+    } else {
+      vid.empty_set()
+    }
+    if i < arg_unique.len() and arg_unique[i] {
+      fmap := pre.atom_field_own(arg)
+      for k in fmap.sorted_keys() {
+        p := ff.path_of_key(k)
+        if p.segs.len() == 1 {
+          case p.segs[0] {
+            .Field(f) => paths = paths.add(vid.field(f)),
+            _ => {},
+          }
+        }
+      }
+    }
+    paths
+  }
 }
 
 pub fn call_uniques(
@@ -6811,6 +6844,7 @@ pub fn call_uniques_sited(
                     callee: fid.id,
                     args,
                     arg_unique: au,
+                    arg_paths: call_arg_paths(pre, args, au),
                   },
                 )
               },
@@ -7581,10 +7615,19 @@ fn transfer_flow(
   resolve: VariantResolver,
 ) Dict<Int, FlowFact> {
   case op {
-    .ARecordUpdate(base, fld, _, _, _) => {
+    .ARecordUpdate(base, fld, _, _, tid) => {
       bf := flow_get(st, base)
       st[result] = if bf.origin >= 0 {
-        FlowFact.{ origin: bf.origin, dirty: bf.dirty.add(vid.field(fld.id)) }
+        // Only a reference-typed field backing (separate GC heap object) is a
+        // field-granular in-place requirement; a field the type table proves
+        // primitive is covered by shell uniqueness and must not inflate the
+        // param's dirty path set. Unknown fields stay conservatively kept.
+        new_dirty := if sem_field_is_primitive(sem, tid, fld) {
+          bf.dirty
+        } else {
+          bf.dirty.add(vid.field(fld.id))
+        }
+        FlowFact.{ origin: bf.origin, dirty: new_dirty }
       } else {
         ff_none()
       }

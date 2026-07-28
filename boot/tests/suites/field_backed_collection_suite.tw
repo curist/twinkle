@@ -1,0 +1,151 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use commands.common.{format_compile_error}
+use compiler.artifacts.{PipelineArtifacts}
+use compiler.cfg
+use compiler.codegen.mutable_produce
+use compiler.codegen.variant_route
+use compiler.codegen.variant_specialize
+use compiler.opt.semantics as semantics
+use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+use compiler.ownership
+use compiler.pipeline
+use compiler.resolver
+use compiler.summary
+use compiler.variant_id as vid
+use lib.module.loader
+
+fn fixtures_dir() String {
+  "${loader.find_project_root("boot")}/tests/fixtures/cfg/sound_uniqueness"
+}
+
+fn compile_fixture(name: String) Result<PipelineArtifacts, String> {
+  case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(a) => .Ok(a),
+    .Err(e) => .Err(format_compile_error(e)),
+  }
+}
+
+fn compile_fixture_wat(name: String) Result<String, String> {
+  case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(a) => .Ok(pipeline.emit_wat(a)),
+    .Err(e) => .Err(format_compile_error(e)),
+  }
+}
+
+// Extract a single WAT function body: the `(func …)` block whose header contains
+// `marker`, sliced to the next top-level `(func …)`.
+fn wat_func_body(wat: String, marker: String) String? {
+  parts := wat.split("\n  (func ")
+  for p in parts {
+    lines := p.split("\n")
+    header := case lines.first() {
+      .Some(h) => h,
+      .None => "",
+    }
+    if header.contains(marker) {
+      return .Some(p)
+    }
+  }
+  .None
+}
+
+fn wat_func_body_result(wat: String, marker: String) Result<String, String> {
+  case wat_func_body(wat, marker) {
+    .Some(body) => .Ok(body),
+    .None => .Err("function body marker not found: ${marker}"),
+  }
+}
+
+// Whether `body` calls a mangled runtime helper whose name contains `needle` as a
+// call target. Matching the full `call $…needle…` token (not a bare substring)
+// keeps `rt_dict__set` from matching inside `rt_dict__set_in_place`.
+fn wat_has_instr(body: String, needle: String) Bool {
+  for line in body.split("\n") {
+    trimmed := line.trim()
+    if trimmed.contains(needle) {
+      return true
+    }
+  }
+  false
+}
+
+fn sem_for(art: PipelineArtifacts) semantics.OptimizerSemantics {
+  semantics.make_prelude_optimizer_semantics(art.builtins).with_ref_fields(
+    resolver.build_ref_field_table(art.env),
+  )
+}
+
+fn variants_of(art: PipelineArtifacts) summary.VariantSummaryTable {
+  b := art.builtins
+  view := ownership.prune_dead_merge(cfg.build_view(art.opt, b))
+  sem := sem_for(art)
+  table := summary.compute(view, b, sem)
+  summary.compute_variants(view, b, sem, table)
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("field_backed_collection")
+    .test(
+      "field-path variant is selected only when the call arg proves that field path",
+      fn() Result<Void, String> {
+        art := try compile_fixture("field_visit_rec")
+        vt := variants_of(art)
+        ids := summary.variant_ids_of(vt)
+        field_variant := ids.find(fn(v) {
+          v.unique.any(fn(req) { !req.path.is_shell() })
+        })
+        case field_variant {
+          .Some(v) => {
+            shell_only: Vector<vid.PathSet> = [vid.shell_set()]
+            try assert.is_none(summary.select_variant_for_arg_paths(vt, v.func, shell_only))
+            exact: Vector<vid.PathSet> = [vid.shell_set().add(vid.field(0))]
+            case summary.select_variant_for_arg_paths(vt, v.func, exact) {
+              .Some(sel) => try assert.equal(
+                sel.variant_canonical_string(),
+                v.variant_canonical_string(),
+              ),
+              .None => return .Err("expected exact field path to select the variant"),
+            }
+            .Ok({})
+          },
+          .None => .Err("expected a published field-path variant"),
+        }
+      },
+    )
+    .test(
+      "published recursive field variant includes the exact field path",
+      fn() Result<Void, String> {
+        art := try compile_fixture("field_visit_rec")
+        vt := variants_of(art)
+        ids := summary.variant_ids_of(vt)
+        field_variant := ids.find(fn(v) { v.unique.any(fn(req) { !req.path.is_shell() }) })
+        case field_variant {
+          .Some(v) => {
+            key := vid.variant_canonical_string(v)
+            try assert.str_contains(key, "|0:;0:0")
+            .Ok({})
+          },
+          .None => .Err("expected canonical field-path variant for visit"),
+        }
+      },
+    )
+    .test(
+      "variant reachability keeps field-path variants visible in cfg render inputs",
+      fn() Result<Void, String> {
+        art := try compile_fixture("field_visit_rec")
+        vt := variants_of(art)
+        view := ownership.prune_dead_merge(cfg.build_view(art.opt, art.builtins))
+        sem := sem_for(art)
+        generic := summary.compute(view, art.builtins, sem)
+        keys := summary.reachable_variant_keys_for_test(view, art.builtins, sem, generic, vt)
+        try assert.ok(
+          keys.any(fn(k) { k.contains("|0:;0:0") }),
+          "field-path variant key must remain reachable for cfg rendering",
+        )
+        .Ok({})
+      },
+    )
+}

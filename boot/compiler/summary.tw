@@ -20,7 +20,8 @@ use compiler.graph_scc
 use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership.{
   FixCache, ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary,
-  SummaryTable, VariantResolver, analyze_function_with_seed_resolved, call_uniques, empty_fix_cache,
+  SummaryTable, VariantResolver, analyze_function_with_seed_resolved, call_uniques_sited,
+  empty_fix_cache,
   empty_summary_table, fix_cache_put, summarize_function_cached, summarize_variant_resolved,
   summary_get, with_dedupe_helpers,
 }
@@ -889,6 +890,19 @@ fn seed_param_of(v: vid.VariantId) Int {
   }
 }
 
+// Build the published VariantId for member `func_id`, param `param`, from the
+// converged summary's in-place paths. The shell-only candidate is only the
+// optimistic discovery seed; the final key names the exact field paths (e.g.
+// `{[], [f]}`) the converged variant actually consumes in place, so selection
+// requires a caller to prove those exact paths.
+fn variant_for_paths(func_id: Int, param: Int, paths: vid.PathSet) vid.VariantId {
+  reqs: vid.UniqueKey = []
+  for p in paths.paths {
+    reqs = .append(vid.UniqueReq.{ param, path: p })
+  }
+  vid.canonicalize_variant(vid.VariantId.{ func: func_id, unique: reqs })
+}
+
 // A converged variant survives only if it still consumes param k in place AND
 // still returns exactly alias([k]) -- an alias-forced publish fails the first,
 // a widened return fails the second.
@@ -1019,11 +1033,15 @@ fn run_scc_variants(
     outer = outer + 1
   }
 
-  // publish survivors
+  // publish survivors under their exact converged field-path keys
   for m, v in member_key {
     case member_iter.get(m) {
-      .Some(s) => if variant_valid(s, seed_param_of(v)) {
-        vtable = .vtable_put(v, s)
+      .Some(s) => {
+        k := seed_param_of(v)
+        if variant_valid(s, k) {
+          pv := variant_for_paths(m, k, s.params[k].in_place_paths)
+          vtable = .vtable_put(pv, s)
+        }
       },
       .None => {},
     }
@@ -1075,13 +1093,38 @@ fn scc_set_for(sccs: Vector<Vector<Int>>, ids: Dict<Int, Int>, func_id: Int) Dic
   }
 }
 
-fn variant_args_satisfied(v: vid.VariantId, arg_unique: Vector<Bool>) Bool {
+// Convert a shell-only `arg_unique` vector to path sets: a Unique+last-use arg
+// proves the shell path {[]}; a non-unique arg proves nothing {}.
+fn arg_unique_to_paths(arg_unique: Vector<Bool>) Vector<vid.PathSet> {
+  collect u in arg_unique {
+    if u {
+      vid.shell_set()
+    } else {
+      vid.empty_set()
+    }
+  }
+}
+
+// Whether every unique requirement of `v` is proven by `arg_paths`: the required
+// param is in range and its proven path set contains the required path.
+fn variant_paths_satisfied(v: vid.VariantId, arg_paths: Vector<vid.PathSet>) Bool {
+  if v.unique.len() == 0 {
+    return false
+  }
   for req in v.unique {
-    if req.param < 0 or req.param >= arg_unique.len() or !arg_unique[req.param] {
+    if req.param < 0 or req.param >= arg_paths.len() {
+      return false
+    }
+    if !arg_paths[req.param].contains(req.path) {
       return false
     }
   }
-  v.unique.len() > 0
+  true
+}
+
+// Shell-only compatibility wrapper: `true` proves {[]}, `false` proves {}.
+fn variant_args_satisfied(v: vid.VariantId, arg_unique: Vector<Bool>) Bool {
+  variant_paths_satisfied(v, arg_unique_to_paths(arg_unique))
 }
 
 // A variant's specificity: more/deeper unique requirements outrank fewer/shallower
@@ -1141,20 +1184,26 @@ pub fn variant_ids_of(vt: VariantSummaryTable) Vector<vid.VariantId> {
   out
 }
 
-// The most-specific published variant of `callee_id` whose owned key is satisfied
-// by `arg_unique` (each required param proven Unique + last-use at the call), or
-// `.None` when the callee has no satisfied published variant.
-pub fn select_variant_for_args(vt: VariantSummaryTable, callee_id: Int, arg_unique: Vector<Bool>) vid.VariantId? {
+// The most-specific published variant of `callee_id` whose exact field-path
+// requirements are all proven by `arg_paths`, or `.None`. Ties break on higher
+// specificity, then lexicographically smallest key for determinism.
+pub fn select_variant_for_arg_paths(
+  vt: VariantSummaryTable,
+  callee_id: Int,
+  arg_paths: Vector<vid.PathSet>,
+) vid.VariantId? {
   best: vid.VariantId? = .None
   best_spec := 0 - 1
+  best_key := ""
   case vt.by_func.get(callee_id) {
     .Some(keys) => {
       for k in keys {
         case vt.by_key.get(k) {
-          .Some(e) => if variant_args_satisfied(e.variant, arg_unique) {
+          .Some(e) => if variant_paths_satisfied(e.variant, arg_paths) {
             sp := variant_specificity(e.variant)
-            if sp > best_spec {
+            if sp > best_spec or sp == best_spec and (best_key.len() == 0 or k < best_key) {
               best_spec = sp
+              best_key = k
               best = .Some(e.variant)
             }
           },
@@ -1165,6 +1214,12 @@ pub fn select_variant_for_args(vt: VariantSummaryTable, callee_id: Int, arg_uniq
     .None => {},
   }
   best
+}
+
+// Shell-only compatibility wrapper over `select_variant_for_arg_paths`: `true`
+// proves {[]}, `false` proves {}.
+pub fn select_variant_for_args(vt: VariantSummaryTable, callee_id: Int, arg_unique: Vector<Bool>) vid.VariantId? {
+  select_variant_for_arg_paths(vt, callee_id, arg_unique_to_paths(arg_unique))
 }
 
 // The param-local -> seed-Unique map that certifies variant `v`'s owned params at
@@ -1220,14 +1275,14 @@ fn mark_reachable(st: ReachState, key: String) ReachState {
 fn mark_site_variants(
   variants: VariantSummaryTable,
   callee: Int,
-  arg_unique: Vector<Bool>,
+  arg_paths: Vector<vid.PathSet>,
   st: ReachState,
 ) ReachState {
   case variants.by_func.get(callee) {
     .Some(keys) => {
       for key in keys {
         case variants.by_key.get(key) {
-          .Some(entry) => if variant_args_satisfied(entry.variant, arg_unique) {
+          .Some(entry) => if variant_paths_satisfied(entry.variant, arg_paths) {
             st = .mark_reachable(key)
           },
           .None => {},
@@ -1331,11 +1386,11 @@ fn reachable_variants(
   for f in view.functions {
     caller_scc := scc_id_of(scc_ids, f.func_id)
     suppress := scc_set_for(sccs, scc_ids, f.func_id)
-    sites := call_uniques(f, root_overlay, b, sem, suppress, Dict.new())
+    sites := call_uniques_sited(f, root_overlay, b, sem, suppress, Dict.new())
     for site in sites {
       callee_scc := scc_id_of(scc_ids, site.callee)
       if caller_scc != callee_scc {
-        st = variants.mark_site_variants(site.callee, site.arg_unique, st)
+        st = variants.mark_site_variants(site.callee, site.arg_paths, st)
       }
     }
   }
@@ -1354,9 +1409,9 @@ fn reachable_variants(
           .Some(entry) => {
             seed := unique_seed_for_variant(f, entry.variant)
             suppress := scc_set_for(sccs, scc_ids, f.func_id)
-            sites := call_uniques(f, overlay, b, sem, suppress, seed)
+            sites := call_uniques_sited(f, overlay, b, sem, suppress, seed)
             for site in sites {
-              st = variants.mark_site_variants(site.callee, site.arg_unique, st)
+              st = variants.mark_site_variants(site.callee, site.arg_paths, st)
             }
           },
           .None => {},
@@ -1368,6 +1423,18 @@ fn reachable_variants(
     passes = passes + 1
   }
   st.reachable
+}
+
+// Test hook: the canonical variant keys `reachable_variants` marks reachable, so
+// tests can assert field-path variants stay visible to cfg rendering inputs.
+pub fn reachable_variant_keys_for_test(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  generic: SummaryTable,
+  variants: VariantSummaryTable,
+) Vector<String> {
+  reachable_variants(view, b, sem, generic, variants).keys()
 }
 
 fn function_by_id(view: CfgView, func_id: Int) CfgFunction? {
