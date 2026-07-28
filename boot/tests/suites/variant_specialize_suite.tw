@@ -25,6 +25,13 @@ fn compile_fixture(name: String) Result<PipelineArtifacts, String> {
   }
 }
 
+fn compile_fixture_wat(name: String) Result<String, String> {
+  case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(a) => .Ok(pipeline.emit_wat(a)),
+    .Err(e) => .Err(format_compile_error(e)),
+  }
+}
+
 fn variants_of(art: PipelineArtifacts) summary.VariantSummaryTable {
   b := art.builtins
   view := ownership.prune_dead_merge(cfg.build_view(art.opt, b))
@@ -165,6 +172,28 @@ pub fn suite() runner.Suite {
         try assert.ok(in_dict(spec.seeds.by_func, r.clone_func), "clone has an owned seed")
         try assert.ok(r.route_sites.len() >= 1, "at least one caller site routed")
         try assert.ok(calls_target(spec.anf, "go", r.clone_func), "go routed to clone")
+        .Ok({})
+      },
+    )
+    .test(
+      "cloned visit emits vector set_in_place end-to-end",
+      fn() Result<Void, String> {
+        // Through link_program: the clone (visit$vN) is emitted and calls the
+        // in-place helper; the generic visit keeps `call $rt_arr__set`. Only the
+        // clone emits the in-place call, so the call token is clone-attributable.
+        wat := try compile_fixture_wat("visit_rec")
+        try assert.str_contains(wat, "visit_v")
+        try assert.str_contains(wat, "call $rt_arr__set_in_place")
+        .Ok({})
+      },
+    )
+    .test(
+      "aliased vector base keeps the caller on the generic (no in-place)",
+      fn() Result<Void, String> {
+        // In `aliased`, `m` is read after `visit(m, 3)`, so it is not last-use at
+        // the call: no route, no clone, no in-place emission.
+        wat := try compile_fixture_wat("visit_aliased")
+        try assert.is_false(wat.contains("call $rt_arr__set_in_place"))
         .Ok({})
       },
     )

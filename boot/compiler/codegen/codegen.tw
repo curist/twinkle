@@ -35,6 +35,8 @@ use compiler.codegen.runtime.core as rt_core
 use compiler.codegen.runtime.dict as rt_dict
 use compiler.codegen.runtime.str as rt_str
 use compiler.codegen.runtime.types as rt_types
+use compiler.codegen.variant_route
+use compiler.codegen.variant_specialize
 use compiler.codegen.wasm.{emit_linked_wasm, emit_linked_wasm_buffer}
 use compiler.codegen.wasm_ir.{ExportMeta, ExternMeta, MemoryExportDef, WasmModule}
 use compiler.codegen.wasm_layout.{EqTypeLayouts, collect_eq_type_layouts}
@@ -53,6 +55,15 @@ fn timings_enabled() Bool {
 
 fn log_time(label: String, ms: Float) {
   eprintln("[time] ${label}: ${ms.to_string()}ms")
+}
+
+// Phase 8G ownership specialization is on by default; TWINKLE_VARIANT_SPECIALIZE=0
+// is the kill-switch (both compilers fall back to the generic persistent path).
+fn variant_specialize_enabled() Bool {
+  case proc.env("TWINKLE_VARIANT_SPECIALIZE") {
+    .Some("0") => false,
+    _ => true,
+  }
 }
 
 fn verify_level_from_env() VerifyLevel {
@@ -88,9 +99,29 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
     log_time("builder_region_rewrite", tbr2 - tbr)
   }
 
+  // 0b. Ownership-specialized function variants (Phase 8G) -> ANF''. Physically
+  // clones callees under a proven owned precondition and routes satisfying caller
+  // sites to the clone, so the seeded decision producer emits in-place at the
+  // clone's own sites. Disabled via TWINKLE_VARIANT_SPECIALIZE=0.
+  spec := if variant_specialize_enabled() {
+    variant_specialize.specialize_module(anf_prime, builtins)
+  } else {
+    variant_specialize.SpecializeResult.{
+      anf: anf_prime,
+      seeds: variant_route.empty_seed_table(),
+      routes: [],
+    }
+  }
+  anf_spec := spec.anf
+  tvs := date.now()
+
+  if timed {
+    log_time("variant_specialize", tvs - tbr2)
+  }
+
   // 1. Final closure conversion.
   t0 := date.now()
-  closure_conversion := convert_closures(anf_prime, env)
+  closure_conversion := convert_closures(anf_spec, env)
   t1 := date.now()
 
   if timed {
@@ -102,7 +133,11 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   // summaries are pre-closure facts; backend emission consumes them only after
   // the prepared-site selector validates that the closure-converted site still
   // matches the recorded shape.
-  produced_decisions := mutable_produce.produce_mutable_decisions(anf_prime, builtins)
+  produced_decisions := mutable_produce.produce_mutable_decisions_seeded(
+    anf_spec,
+    builtins,
+    spec.seeds,
+  )
   t1p := date.now()
 
   if timed {
