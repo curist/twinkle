@@ -4,6 +4,7 @@ use @std.testing as runner
 use commands.common.{format_compile_error}
 use compiler.artifacts.{PipelineArtifacts}
 use compiler.cfg
+use compiler.codegen.mutable_produce
 use compiler.codegen.variant_specialize
 use compiler.opt.semantics as semantics
 use compiler.ownership
@@ -142,6 +143,27 @@ pub fn suite() runner.Suite {
             "a primitive-field record must not produce a field-tier route",
           )
         }
+        .Ok({})
+      },
+    )
+    .test(
+      "detects field-backed dict and vector quartets",
+      fn() Result<Void, String> {
+        dict_art := try compile_fixture("field_dict_update")
+        dict_candidates := mutable_produce.field_backed_collection_candidates(
+          dict_art.opt,
+          dict_art.builtins,
+        )
+        try assert.equal(dict_candidates.candidates.len(), 1)
+        try assert.str_contains(dict_candidates.candidates[0].family, "dict")
+
+        vec_art := try compile_fixture("field_vector_update")
+        vec_candidates := mutable_produce.field_backed_collection_candidates(
+          vec_art.opt,
+          vec_art.builtins,
+        )
+        try assert.equal(vec_candidates.candidates.len(), 1)
+        try assert.str_contains(vec_candidates.candidates[0].family, "vector")
         .Ok({})
       },
     )

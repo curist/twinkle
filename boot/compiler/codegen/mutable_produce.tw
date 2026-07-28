@@ -583,6 +583,206 @@ fn candidate_func_roots(set: CandidateSet) Dict<Int, Bool> {
   roots
 }
 
+// ── Phase 8H: field-backed collection update quartets ────────────────
+// A record field whose reference-typed backing is projected out, updated by a
+// COW collection helper, and written back into the same record field, all within
+// one straight-line `Let` chain:
+//   Lproj = ARecordGet(Lrecord, F, T)
+//   Lupd  = ACall(persistent vector/dict update, base = Lproj)
+//   Lrec  = ARecordUpdate(Lrecord, F, Lupd, T)
+// `family`/`base_arg_index`/`decision_family`/`persistent_func`/`mutable_func`
+// ride along from the catalog entry exactly as for an ordinary update-call
+// candidate; the extra fields name the record shell, projection, and write-back
+// so a decision can be keyed to the collection update site.
+pub type FieldBackedCandidate = .{
+  func_id: FuncId,
+  func: String,
+  record_base: LocalId,
+  projected_collection: LocalId,
+  update_result: LocalId,
+  record_update_result: LocalId,
+  tid: TypeId,
+  fid: FieldId,
+  field_path_key: String,
+  arg_count: Int,
+  family: String,
+  base_arg_index: Int,
+  decision_family: mutable_select.OperationFamily,
+  persistent_func: FuncId,
+  mutable_func: FuncId,
+  loop_depth: Int,
+}
+
+pub type FieldBackedCandidateSet = .{ candidates: Vector<FieldBackedCandidate> }
+
+type ProjectionInfo = .{
+  record_base: LocalId,
+  tid: TypeId,
+  fid: FieldId,
+  projected: LocalId,
+  loop_depth: Int,
+}
+
+type PendingUpdate = .{
+  proj: ProjectionInfo,
+  target: UpdateCallTarget,
+  persistent_func: FuncId,
+  arg_count: Int,
+}
+
+// Block-local projection/pending maps plus the globally-accumulating candidate
+// list. Nested control-flow bodies get fresh projection/pending maps (a quartet
+// must be visible in one straight-line chain), but candidates accumulate across
+// the whole function.
+type FbState = .{
+  proj: Dict<Int, ProjectionInfo>,
+  pending: Dict<Int, PendingUpdate>,
+  cands: Vector<FieldBackedCandidate>,
+}
+
+fn fb_fresh(st: FbState) FbState {
+  FbState.{ proj: Dict.new(), pending: Dict.new(), cands: st.cands }
+}
+
+fn fb_walk_op(
+  op: AnfOp,
+  result: LocalId,
+  func_id: FuncId,
+  func: String,
+  loop_depth: Int,
+  st: FbState,
+  cat: mutable_catalog.MutableCatalog,
+) FbState {
+  case op {
+    .ARecordGet(base, fid, tid) => case atom_local(base) {
+      .Some(rb) => {
+        st.proj[result.id] = ProjectionInfo.{
+          record_base: rb,
+          tid,
+          fid,
+          projected: result,
+          loop_depth,
+        }
+        st
+      },
+      .None => st,
+    },
+    .ACall(callee, args) => case callee {
+      .AGlobalFunc(fid) => case cat.entry_for_persistent(fid) {
+        .Some(entry) => case update_call_target(entry, args) {
+          .Some(t) => case st.proj.get(t.base.id) {
+            .Some(proj) => {
+              st.pending[result.id] = PendingUpdate.{
+                proj,
+                target: t,
+                persistent_func: fid,
+                arg_count: args.len(),
+              }
+              st
+            },
+            .None => st,
+          },
+          .None => st,
+        },
+        .None => st,
+      },
+      _ => st,
+    },
+    .ARecordUpdate(base, fid, value, _in_place, tid) => case atom_local(base) {
+      .Some(rb) => case atom_local(value) {
+        .Some(upd) => case st.pending.get(upd.id) {
+          .Some(pu) => if pu.proj.record_base.id == rb.id
+            and pu.proj.fid.id == fid.id and pu.proj.tid.id == tid.id {
+            st.cands = .append(
+              FieldBackedCandidate.{
+                func_id,
+                func,
+                record_base: rb,
+                projected_collection: pu.proj.projected,
+                update_result: upd,
+                record_update_result: result,
+                tid,
+                fid,
+                field_path_key: record_field_path_key(tid, fid),
+                arg_count: pu.arg_count,
+                family: pu.target.family,
+                base_arg_index: pu.target.base_arg_index,
+                decision_family: pu.target.decision_family,
+                persistent_func: pu.persistent_func,
+                mutable_func: pu.target.mutable_func,
+                loop_depth: pu.proj.loop_depth,
+              },
+            )
+            st
+          } else {
+            st
+          },
+          .None => st,
+        },
+        .None => st,
+      },
+      .None => st,
+    },
+    .AIf(_, then_e, else_e) => {
+      // Nested branches get fresh projection/pending maps (a quartet must be
+      // straight-line-visible); candidates accumulate back onto `st`.
+      st.cands = fb_walk_expr(then_e, func_id, func, loop_depth, st.fb_fresh(), cat).cands
+      st.cands = fb_walk_expr(else_e, func_id, func, loop_depth, st.fb_fresh(), cat).cands
+      st
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        st.cands = fb_walk_expr(arm.body, func_id, func, loop_depth, st.fb_fresh(), cat).cands
+      }
+      st
+    },
+    .ALoop(body) => {
+      st.cands = fb_walk_expr(body, func_id, func, loop_depth + 1, st.fb_fresh(), cat).cands
+      st
+    },
+    .ADefer(body) => {
+      st.cands = fb_walk_expr(body, func_id, func, loop_depth, st.fb_fresh(), cat).cands
+      st
+    },
+    _ => st,
+  }
+}
+
+fn fb_walk_expr(
+  expr: AnfExpr,
+  func_id: FuncId,
+  func: String,
+  loop_depth: Int,
+  st: FbState,
+  cat: mutable_catalog.MutableCatalog,
+) FbState {
+  case expr {
+    .Let(local, op, body) => {
+      after := fb_walk_op(op, local, func_id, func, loop_depth, st, cat)
+      fb_walk_expr(body, func_id, func, loop_depth, after, cat)
+    },
+    _ => st,
+  }
+}
+
+pub fn field_backed_collection_candidates(opt: AnfModule, b: BuiltinRegistry) FieldBackedCandidateSet {
+  sem := make_prelude_optimizer_semantics(b)
+  cat := mutable_catalog.build(b, sem)
+  cands: Vector<FieldBackedCandidate> = []
+  for f in opt.functions {
+    st := fb_walk_expr(
+      f.body,
+      f.func_id,
+      f.name,
+      0,
+      FbState.{ proj: Dict.new(), pending: Dict.new(), cands },
+      cat,
+    )
+    cands = st.cands
+  }
+  FieldBackedCandidateSet.{ candidates: cands }
+}
+
 /// Default Phase 8A production: scopes ownership analysis to the mutable
 /// candidate functions and their dependency closure, so a whole-program
 /// ownership pass is not paid on every build. Verdicts (and therefore
