@@ -231,11 +231,26 @@ pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {
   specialize_module_with_cap(anf, b, variant_cap())
 }
 
+// Env-aware entry: codegen-path callers pass semantics whose `ref_fields` table is
+// populated from the resolver, so primitive record fields are filtered from variant
+// requirements exactly as on the analysis/test path.
+pub fn specialize_module_with_sem(anf: AnfModule, b: BuiltinRegistry, sem: OptimizerSemantics) SpecializeResult {
+  specialize_module_with_cap_sem(anf, b, sem, variant_cap())
+}
+
 // Explicit-cap entry (used by tests to exercise overflow without touching the
 // process environment). `specialize_module` delegates here with `variant_cap()`.
 pub fn specialize_module_with_cap(anf: AnfModule, b: BuiltinRegistry, cap: Int) SpecializeResult {
+  specialize_module_with_cap_sem(anf, b, make_prelude_optimizer_semantics(b), cap)
+}
+
+pub fn specialize_module_with_cap_sem(
+  anf: AnfModule,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  cap: Int,
+) SpecializeResult {
   timed := spec_timings_enabled()
-  sem := make_prelude_optimizer_semantics(b)
 
   // Only the summary table + variant table are needed (never the whole-program
   // per-block ownership analysis), so build those directly rather than the full

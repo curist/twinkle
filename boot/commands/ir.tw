@@ -21,6 +21,7 @@ use compiler.ir_print
 use compiler.opt.semantics as semantics
 use compiler.ownership
 use compiler.pipeline
+use compiler.resolver.{build_ref_field_table}
 use compiler.summary
 use lib.argparse.app.{ParseResult}
 
@@ -59,7 +60,9 @@ fn print_ir_stage(title: String, body: String, first: Bool) Bool {
 
 fn render_cfg_artifacts(artifacts: PipelineArtifacts) String {
   b := artifacts.builtins
-  s := semantics.make_prelude_optimizer_semantics(b)
+  s := semantics
+    .make_prelude_optimizer_semantics(b)
+    .with_ref_fields(build_ref_field_table(artifacts.env))
   owned := ownership_verdicts.compute_artifacts(artifacts.opt, b, s)
   variants := summary.compute_variants(owned.view, b, s, owned.table)
   resolver := variants.make_variant_resolver_for_render()
@@ -141,7 +144,9 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
   if include_sites {
     // One full artifact computation, shared by the dry-run table and the
     // post-prepare audit below, so the report does not re-run ownership twice.
-    s := semantics.make_prelude_optimizer_semantics(artifacts.builtins)
+    s := semantics
+      .make_prelude_optimizer_semantics(artifacts.builtins)
+      .with_ref_fields(build_ref_field_table(artifacts.env))
     owned := ownership_verdicts.compute_artifacts(artifacts.opt, artifacts.builtins, s)
 
     dry := dry_run.dry_run_sites_with_artifacts(artifacts.opt, artifacts.builtins, owned)
@@ -181,7 +186,13 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
 
     // Phase 8G variant-routing dry-run: which callees get an ownership-specialized
     // clone, the caller/recursive sites routed to it, and the accept/fallback verdict.
-    spec := variant_specialize.specialize_module(rewritten, artifacts.builtins)
+    spec := variant_specialize.specialize_module_with_sem(
+      rewritten,
+      artifacts.builtins,
+      semantics
+        .make_prelude_optimizer_semantics(artifacts.builtins)
+        .with_ref_fields(build_ref_field_table(artifacts.env)),
+    )
     routes_txt := variant_specialize.render_routes(spec.routes)
     if routes_txt.len() > 0 {
       out = .concat("\nvariant routes\n")

@@ -4,6 +4,7 @@ use @std.testing as runner
 use commands.common.{format_compile_error}
 use compiler.artifacts.{PipelineArtifacts}
 use compiler.cfg
+use compiler.codegen.variant_specialize
 use compiler.opt.semantics as semantics
 use compiler.ownership
 use compiler.pipeline
@@ -125,6 +126,22 @@ pub fn suite() runner.Suite {
         }
         shell_paths: Vector<vid.PathSet> = [vid.shell_set(), vid.shell_set()]
         try assert.is_some(summary.select_variant_for_arg_paths(vt, setb_id, shell_paths))
+        .Ok({})
+      },
+    )
+    .test(
+      "env-aware production specialization drops primitive field tiers",
+      fn() Result<Void, String> {
+        art := try compile_fixture("setb")
+
+        // Mirrors codegen.link_program's env-aware production entry.
+        spec := variant_specialize.specialize_module_with_sem(art.opt, art.builtins, sem_for(art))
+        for r in spec.routes {
+          try assert.ok(
+            !vid.variant_canonical_string(r.variant).contains(";0:"),
+            "a primitive-field record must not produce a field-tier route",
+          )
+        }
         .Ok({})
       },
     )

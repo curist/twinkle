@@ -44,7 +44,8 @@ use compiler.codegen.wasm_plan.{plan_wasm_types}
 use compiler.codegen.wat.{emit_wat}
 use compiler.core_ir.{LibType}
 use compiler.mono_type.{MonoType}
-use compiler.resolver.{ResolvedEnv}
+use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+use compiler.resolver.{ResolvedEnv, build_ref_field_table}
 
 fn timings_enabled() Bool {
   case proc.env("TWINKLE_TIMINGS") {
@@ -88,6 +89,12 @@ pub fn runtime_modules(eq_layouts: EqTypeLayouts) Vector<WasmModule> {
 pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) LinkedModule {
   timed := timings_enabled()
 
+  // Env-aware semantics: the reference-typed record-field table lets ownership
+  // specialization and mutable-decision production classify primitive vs
+  // reference-typed fields exactly as the analysis/test path does. Built once and
+  // threaded through both codegen stages below.
+  sem_env := make_prelude_optimizer_semantics(builtins).with_ref_fields(build_ref_field_table(env))
+
   // 0. Builder-region rewrite -> ANF'. Runs before closure conversion and the
   // call-swap producer so both consume the rewritten ANF (the call-swap stale-artifact
   // guard keys off the ANF fingerprint, which must be ANF').
@@ -104,7 +111,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   // sites to the clone, so the seeded decision producer emits in-place at the
   // clone's own sites. Disabled via TWINKLE_VARIANT_SPECIALIZE=0.
   spec := if variant_specialize_enabled() {
-    variant_specialize.specialize_module(anf_prime, builtins)
+    variant_specialize.specialize_module_with_sem(anf_prime, builtins, sem_env)
   } else {
     variant_specialize.SpecializeResult.{
       anf: anf_prime,
@@ -133,10 +140,11 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   // summaries are pre-closure facts; backend emission consumes them only after
   // the prepared-site selector validates that the closure-converted site still
   // matches the recorded shape.
-  produced_decisions := mutable_produce.produce_mutable_decisions_seeded(
+  produced_decisions := mutable_produce.produce_mutable_decisions_seeded_with_sem(
     anf_spec,
     builtins,
     spec.seeds,
+    sem_env,
   )
   t1p := date.now()
 
