@@ -27,12 +27,13 @@ sites via the cumulative `enabled_emit_policy`; Phase 8E flipped that policy's
 `emit_dict_remove` so owned `Dict.remove` sites select `dict$remove_in_place`. All
 three call-swap families (vector set, dict set, dict remove) now emit in-place for
 proven-owned sites. Phase 8C (builder-region lowering, first slice) and Phase 8F
-(local record shell update emission) are also done. **Current focus: function
-variants (8G) and record-backed field collections (8H)**, with 8C follow-up slices
-(non-empty seeds, typed routing, conditional/multi-exit folds) deferred. The
-remaining 7E dry-run item is not
-abandoned: variant-routing dry-runs are an 8G
-gate when specialized clone routing becomes real. The full analysis track is
+(local record shell update emission) are also done. Phase 8G
+(ownership-specialized function variants + call-site routing) is done: a clone of a
+recursive owned function emits `vector$set_in_place` (and record shell reuse) end to
+end via `variant_specialize.tw`; self-host reaches a fixed point. **Current focus:
+record-backed field collections (8H)**, with 8C follow-up slices
+(non-empty seeds, typed routing, conditional/multi-exit folds) deferred. The 7E
+variant-routing dry-run item is closed by 8G's `render_routes`. The full analysis track is
 complete through Phase 6 (record/field ownership,
 transport-wrapper / `Result`-payload return-path summaries, ownership-specialization
 decision facts, and recursive SCC variant-qualified diagnostics), so codegen consumes
@@ -350,29 +351,43 @@ stage4) with the boot compiler's own owned record updates emitting `struct.set`.
   decisions (`variant_key: .None`); no shell reuse is emitted from a variant-qualified
   body. Cloning/routing owned variants remains Phase 8G.
 
-## Codegen Phase 8G — Ownership-specialized function variants and call-site routing
+## Codegen Phase 8G — Ownership-specialized function variants and call-site routing ✅ done
 
-This phase turns Phase 6's printed specialization story into real functions. It is
-required for [worked-examples Case V](../analysis/worked-examples.md#case-v--graph_sccvisit-the-whole-compiler-idiom-real):
-`graph_scc.visit`'s generic body stays conservative, while `variant fn visit
-[unique:p0]` supplies the shell-reuse decisions for owned callers and recursive calls.
+Landed as `boot/compiler/codegen/variant_specialize.tw`, an ANF→ANF pass in
+`link_program` (between the builder-region rewrite and closure conversion), gated by
+`TWINKLE_VARIANT_SPECIALIZE` (default on). It turns Phase 6's printed specialization
+story into real functions, realizing [worked-examples Case V](../analysis/worked-examples.md#case-v--graph_sccvisit-the-whole-compiler-idiom-real):
+the generic recursive body stays conservative (`p0=Published`), while an
+owned-seeded clone supplies the in-place decisions for owned callers and recursion.
 
-- [ ] **Clone functions by exact `VariantId`.** Generate ownership-specialized
-  variants only for accepted, reachable keys; keep the original function as the
-  persistent/generic fallback.
-- [ ] **Route call sites from decision records.** A caller with a live owned
-  decision calls the matching clone; absent, stale, over-cap, unsupported, or
-  ambiguous decisions call the generic function.
-- [ ] **Tie recursive and mutual-recursive calls through the same key.** Inside a
-  cloned SCC member, recursive calls that the variant analysis proved reachable
-  route to the matching clone/peer clone, not back to the generic summary by
-  accident.
-- [ ] **Keep variant count capped and inspectable.** Render clone names, source
-  `VariantId`, fallback reason, and proof id in `twk ir`/WAT inspection.
-- [ ] **Revisit deferred 7E variant-routing dry-runs here.** Before or alongside
-  real clone routing, render route-site dry-runs that name the generic callee,
-  would-be specialized callee, exact `VariantId`, accepted/rejected reason, and
-  persistent fallback path.
+- [x] **Clone functions by exact `VariantId`.** `specialize_module` builds the
+  summary + variant tables, finds callers whose argument uniqueness satisfies a
+  published variant (`call_uniques_sited` + `select_variant_for_args`), and
+  physically clones the callee under an owned entry seed. The generic function
+  remains the persistent fallback.
+- [x] **Route call sites.** Satisfying caller sites retarget to the clone; every
+  other site keeps the generic callee. Emission is unchanged — the clone is an
+  ordinary function whose owned seed makes the live 8A–8F seeded producer emit
+  `Site`-keyed in-place decisions at its own (disjoint) sites.
+- [x] **Tie recursive/mutual-recursive calls through the same key.** A clone's
+  in-SCC recursive calls that are themselves satisfied under the owned seed
+  retarget to the matching peer clone (self for a single recursive function), so
+  the recursion is specialized end to end (`go → clone → clone …`), all in-place.
+- [x] **Keep variant count capped and inspectable.** `variant_cap()` (default 4)
+  bounds clones per generic function. `render_routes` prints one line per route
+  (generic → clone name, canonical variant key, caller/recursive site counts,
+  accept/fallback verdict, proof id) under `twk ir --census --sites`.
+- [x] **Closed the deferred 7E variant-routing dry-run** via `render_routes`.
+
+**Design note (perf-driven).** There is no separate seeded *decision gate*:
+`link_program` already runs the seeded producer over the specialized module and is
+the in-place decision authority, so a cheap AST-level structural filter
+(`updatable_funcs` — callee has a supported update site) replaces it, and a clone
+that yields no decision merely emits the persistent path. Skipping the discarded
+whole-program `analyze`, removing the redundant gate, and pre-filtering the caller
+scan to callers of published callees kept the pass at ~12s on `boot/main.tw`
+(down from ~38s in the first cut). Self-host reaches a fixed point (stage3 ==
+stage4) with the boot compiler's own owned recursive calls emitting in-place.
 
 ## Codegen Phase 8H — Record-backed field collection updates
 

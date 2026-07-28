@@ -12,6 +12,29 @@
 
 ---
 
+## As-built note (archived on completion)
+
+Landed as `boot/compiler/codegen/variant_specialize.tw`; self-host reaches a fixed
+point (stage3 == stage4) with the pass on. Two deviations from the plan below, both
+made during execution and reflected in the codegen-track README:
+
+1. **Anchor pivoted from `setb` to `visit`/`fill`.** Empirically, non-recursive
+   record/vector functions (`setb`) already get their in-place win from *uniform
+   entry seeds*, so cloning them adds nothing. 8G's real lever is the **recursive**
+   case, where the generic body stays `p0=Published` and only the owned variant seed
+   unlocks in-place. All emit/parity fixtures use the recursive shape.
+2. **No separate decision gate (perf).** The plan's whole-module seeded gate cost
+   ~12s/compile and duplicated the producer `link_program` already runs. It was
+   replaced by a cheap AST-level structural filter (`updatable_funcs`); `link_program`'s
+   single seeded producer is the in-place decision authority. Combined with skipping
+   the discarded whole-program `analyze` and pre-filtering the caller scan, this kept
+   the pass at ~12s (first cut was ~38s; full bundle ~98s vs ~180s).
+
+The canonical as-built description lives in
+`docs/plans/sound-uniqueness/codegen/README.md` §"Codegen Phase 8G".
+
+---
+
 ## What actually publishes a variant (empirically verified — read this first)
 
 A throwaway probe ran `summary.compute_variants(view, b, sem, table)` on four fixtures and dumped `vt.by_func`. Results (canonical keys like `f295|0:` = func 295, param 0, shell path):

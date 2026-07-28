@@ -39,8 +39,13 @@ Phase 7E dry-run slice is also done: `twk ir --census --sites` renders update-si
 persistent→mutable targets, ownership verdicts, and `would_use` state for
 vector/dict/record candidates while emitted code remains persistent.
 
-**Current implementation focus: function variants (8G) and record-backed field
-collections (8H).** Records (Phase 8F, local record shell update emission) is done,
+**Current implementation focus: record-backed field collections (8H).** Function
+variants (Phase 8G) are done: `variant_specialize.tw` clones a recursive owned
+function under an owned entry seed and routes owned callers (and the clone's own
+recursion) to it, so the boot compiler's owned recursive vector/record updates emit
+in-place end to end; `twk ir --census --sites` renders the `variant routes` table and
+self-host reaches a fixed point. Records (Phase 8F, local record shell update
+emission) is done,
 alongside the builder-region first slice (8C Plans 1–2); the remaining 8C follow-ups
 (non-empty seeds / typed routing / conditional folds, Plans 3–5) are still open. Phase 8C Plans 1–2 have
 landed: string and vector empty-seed accumulator loops (`acc = ""` / `acc = []`) now
@@ -126,10 +131,10 @@ input facts are now trustworthy. It is intentionally split more finely than a si
 codegen milestone: operation catalogs and backend handoff/dry-run decisions (Phase 7)
 are in place, and the emitted slices for local (Phase 8A) and loop-carried, single
 and nested (Phase 8B) vector indexed updates, owned `Dict.set` (Phase 8D) and
-`Dict.remove` (Phase 8E), the builder-region first slice (Phase 8C Plans 1–2), and
-local record shell update emission (Phase 8F) are complete. Current work is
-ownership-specialized function variants (Phase 8G) and record-backed field
-collections (Phase 8H), with the 8C follow-up slices (Plans 3–5) still open.
+`Dict.remove` (Phase 8E), the builder-region first slice (Phase 8C Plans 1–2),
+local record shell update emission (Phase 8F), and ownership-specialized function
+variants + call-site routing (Phase 8G) are complete. Current work is record-backed
+field collections (Phase 8H), with the 8C follow-up slices (Plans 3–5) still open.
 
 ### 3. Storage representation track
 
