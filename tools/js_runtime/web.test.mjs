@@ -2,7 +2,11 @@ import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { command } from "./web.mjs";
+
+const execFileAsync = promisify(execFile);
 
 before(() => {
   globalThis.fetch = async (url) => {
@@ -86,4 +90,32 @@ test("web command installs task scheduler when GC module metadata is unavailable
     WebAssembly.Module.imports = originalImports;
     WebAssembly.Module.exports = originalExports;
   }
+});
+
+test("web command satisfies internal task imports without JSPI when they are unused", async () => {
+  const script = String.raw`
+    import { readFile } from "node:fs/promises";
+    import { fileURLToPath } from "node:url";
+    globalThis.fetch = async (url) => {
+      const buf = await readFile(fileURLToPath(url));
+      return { arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
+    };
+    WebAssembly.Module.imports = () => { throw new Error("import introspection unavailable"); };
+    WebAssembly.Module.exports = () => { throw new Error("export introspection unavailable"); };
+    Object.defineProperty(WebAssembly, "Suspending", { value: undefined, configurable: true });
+    Object.defineProperty(WebAssembly, "promising", { value: undefined, configurable: true });
+    const { command } = await import("./tools/js_runtime/web.mjs");
+    const result = await command(["run", "/input/main.tw"], {
+      source: "println(\"hello\")\n",
+      env: { NO_COLOR: "1" },
+    });
+    console.log(JSON.stringify({ exitCode: result.exitCode, stdout: result.stdout }));
+  `;
+
+  const { stdout } = await execFileAsync(process.execPath, ["--input-type=module", "-e", script], {
+    cwd: fileURLToPath(new URL("../..", import.meta.url)),
+  });
+  const result = JSON.parse(stdout);
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /hello/);
 });

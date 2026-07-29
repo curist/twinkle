@@ -382,7 +382,8 @@ function instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, e
 //
 // Current internal namespaces:
 //   - twinkle_runtime.*  core runtime, stdlib host surface, async run_wasm/sleep
-//   - task.*             JSPI cooperative scheduler intrinsics
+//   - task.*             JSPI cooperative scheduler intrinsics, or non-JSPI
+//                        fail-on-use stubs so unused task imports still link
 //   - twinkle.lib.cb_*   generated callback shims for build --lib exports
 //
 // If the compiler gains another runtime-owned import namespace, pre-populate it
@@ -674,6 +675,27 @@ export function instantiateBridge() {
 export const hasJspi =
   typeof WebAssembly.Suspending === "function" &&
   typeof WebAssembly.promising === "function";
+
+function makeTaskUnavailableImports() {
+  const unavailable = () => {
+    throw new Error(
+      "Task concurrency requires a JSPI-capable runtime " +
+      "(WebAssembly.Suspending/promising). This engine does not provide it.",
+    );
+  };
+  return {
+    task_create: unavailable,
+    suspend_await: unavailable,
+    suspend_yield: unavailable,
+    channel_new: unavailable,
+    channel_bounded: unavailable,
+    channel_send: unavailable,
+    channel_recv: unavailable,
+    channel_recv_is_value: unavailable,
+    channel_recv_value: unavailable,
+    channel_close: unavailable,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Cooperative task scheduler (JSPI binding of the abstract suspension intrinsics)
@@ -1135,18 +1157,23 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
   const mainModule = new WebAssembly.Module(wasmBytes);
   const externMeta = readExternMeta(mainModule);
 
-  // Install the cooperative task scheduler before auto-bridging so the task
-  // intrinsic imports are recognized as host-provided rather than treated as
-  // unresolved externs. If module metadata is unavailable in a JSPI runtime,
-  // install it speculatively; after instantiation we check the real exports to
-  // decide whether to drive __twinkle_start through the scheduler.
+  // Install task imports before auto-bridging so the internal task namespace is
+  // recognized as host-provided rather than treated as unresolved user externs.
+  // JSPI runtimes get the cooperative scheduler. Non-JSPI runtimes get stubs
+  // that throw only if Task/Channel operations are actually called; this lets
+  // boot/compiler modules that merely import task symbols still run synchronous
+  // commands in browsers without WebAssembly.Suspending/promising.
   const taskNeed = moduleNeedsTasks(mainModule);
   const taskNeedUnknown = taskNeed === null;
   const needsTasks = taskNeed === true;
   let scheduler = null;
-  if ((needsTasks || taskNeedUnknown) && jspi) {
-    scheduler = createTaskScheduler();
-    hostImports.task = scheduler.imports;
+  if (needsTasks || taskNeedUnknown) {
+    if (jspi) {
+      scheduler = createTaskScheduler();
+      hostImports.task = scheduler.imports;
+    } else {
+      hostImports.task = makeTaskUnavailableImports();
+    }
   }
 
   // Provide host-callback imports (twinkle.lib.cb_*) before auto-bridging so
@@ -1429,14 +1456,10 @@ function provideCallbackImports(hostImports, exportMeta, b, registry) {
 export async function loadLibBytes(wasmBytes, opts = {}) {
   const { mainModule, hostImports, b, runtime, imports, externMeta, exportMeta, callbackRegistry, jspi, needsTasks, scheduler } = prepareWasm(wasmBytes, opts, { jspi: hasJspi });
 
-  if (needsTasks && !hasJspi) {
-    throw new Error("Task concurrency requires a JSPI-capable runtime.");
-  }
-
   const registry = callbackRegistry;
   const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta, scheduler);
   runtime.instance = instance;
-  const runsTasks = needsTasks || typeof instance.exports.__task_run === "function";
+  const runsTasks = !!scheduler && (needsTasks || typeof instance.exports.__task_run === "function");
 
   if (instance.exports.__twinkle_start) {
     if (runsTasks) {
@@ -1475,13 +1498,6 @@ export async function loadLibBytes(wasmBytes, opts = {}) {
 
 export async function runWasmBytesAsync(wasmBytes, opts = {}) {
   const { mainModule, hostImports, b, runtime, imports, externMeta, jspi, needsTasks, scheduler } = prepareWasm(wasmBytes, opts, { jspi: hasJspi });
-
-  if (needsTasks && !hasJspi) {
-    throw new Error(
-      "Task concurrency requires a JSPI-capable runtime " +
-      "(WebAssembly.Suspending/promising). This engine does not provide it.",
-    );
-  }
 
   if (hasJspi) {
     const suspendHost = scheduler
@@ -1541,7 +1557,7 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
     const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta, scheduler);
     runtime.instance = instance;
     if (instance.exports.__twinkle_start) {
-      const runsTasks = needsTasks || typeof instance.exports.__task_run === "function";
+      const runsTasks = !!scheduler && (needsTasks || typeof instance.exports.__task_run === "function");
       if (runsTasks) {
         // Stackful task path: drive top-level (pseudo-task 0) and the spawned
         // task bodies through the cooperative scheduler.

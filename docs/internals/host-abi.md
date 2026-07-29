@@ -20,7 +20,9 @@ import module:
 A separate `"task"` namespace carries the cooperative-concurrency intrinsics
 (`task_create`, `suspend_await`, `channel_*`, …) and appears only when a program
 uses `Task`/`Channel`; it is provided by the JSPI scheduler in the JS runtime.
-This is an internal runtime namespace, not a user extern namespace.
+This is an internal runtime namespace, not a user extern namespace. Browser hosts
+without JSPI may still provide fail-on-use task stubs so modules that import but
+do not execute task operations can link and run synchronous paths.
 
 Generated `build --lib` callback shims use the internal `"twinkle.lib"`
 namespace (`cb_*` imports). Like `"twinkle_runtime"` and `"task"`, these imports
