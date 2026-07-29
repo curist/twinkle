@@ -433,26 +433,13 @@ fn quartet_has(q: Dict<Int, Bool>, id: Int) Bool {
 //    The live-out check is load-bearing: exit_mentions_local alone misses `out`
 //    read in a LATER block (e.g. inside a successor if-branch).
 fn transport_ok(blk: CfgBlock, scan: BlockScan, i: Int, out_id: Int, fid: Int) Bool {
-  insts := blk.instructions
-  for j in range_from(i + 1, insts.len()) {
-    op := insts[j].op
-    if is_record_get_of(op, out_id, fid) {
-      return false // a second read of out.f
-    }
-    is_sibling := case op {
-      .ARecordGet(base, f2, _) => atom_is_local(base, out_id) and f2.id != fid,
-      _ => false,
-    }
-    if is_sibling {} else if op_mentions_local(op, out_id) {
-      return false // any other mention of out (publish/store/pass/alias)
-    }
-  }
-  !exit_mentions_local(blk, out_id) and !live_contains_int(blk.exit.live, out_id)
+  transport_reason(blk, scan, i, out_id, fid) == ""
 }
 
-// Debug-render companion to transport_ok: the concrete reason a transport
-// projection was NOT licensed (empty String = licensed). Mirrors transport_ok's
-// checks in the same order so the rendered verdict matches the analysis.
+// The concrete reason a transport projection was NOT licensed (empty String =
+// licensed). This is the single source of truth for the transport proof:
+// `transport_ok` is the boolean projection of an empty reason, so the analysis
+// verdict and the debug render can never drift apart.
 fn transport_reason(blk: CfgBlock, scan: BlockScan, i: Int, out_id: Int, fid: Int) String {
   insts := blk.instructions
   for j in range_from(i + 1, insts.len()) {
