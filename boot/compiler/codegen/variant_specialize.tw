@@ -50,15 +50,7 @@ fn spec_timings_enabled() Bool {
   }
 }
 
-// Max ownership-specialized clones per generic function — a safety valve against a
-// function admitting many variants. A fixed default (not env-tunable, so the value
-// stays deterministic and the whole compiler + test suite are env-insensitive;
-// `TWINKLE_VARIANT_SPECIALIZE=0` already disables the pass entirely). Tests exercise
-// other caps via `specialize_module_with_cap`. The seeded producer in `link_program`
-// still decides in-place per site; this only bounds the profitable-but-many case.
-pub fn variant_cap() Int {
-  4
-}
+pub variant_cap: Int = 4
 
 type CapResult = .{ kept: Vector<Group>, overflow: Vector<Group> }
 
@@ -235,18 +227,18 @@ fn updatable_funcs(anf: AnfModule, b: BuiltinRegistry) Dict<Int, Bool> {
 }
 
 pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {
-  specialize_module_with_cap(anf, b, variant_cap())
+  specialize_module_with_cap(anf, b, variant_cap)
 }
 
 // Env-aware entry: codegen-path callers pass semantics whose `ref_fields` table is
 // populated from the resolver, so primitive record fields are filtered from variant
 // requirements exactly as on the analysis/test path.
 pub fn specialize_module_with_sem(anf: AnfModule, b: BuiltinRegistry, sem: OptimizerSemantics) SpecializeResult {
-  specialize_module_with_cap_sem(anf, b, sem, variant_cap())
+  specialize_module_with_cap_sem(anf, b, sem, variant_cap)
 }
 
 // Explicit-cap entry (used by tests to exercise overflow without touching the
-// process environment). `specialize_module` delegates here with `variant_cap()`.
+// process environment). `specialize_module` delegates here with `variant_cap`.
 pub fn specialize_module_with_cap(anf: AnfModule, b: BuiltinRegistry, cap: Int) SpecializeResult {
   specialize_module_with_cap_sem(anf, b, make_prelude_optimizer_semantics(b), cap)
 }
@@ -393,14 +385,8 @@ pub fn specialize_module_with_cap_sem(
     }
   }
 
-  out := AnfModule.{
-    functions: routed_funcs,
-    init_func_id: anf.init_func_id,
-    extern_imports: anf.extern_imports,
-    global_monos: anf.global_monos,
-    lib_exports: anf.lib_exports,
-  }
-  SpecializeResult.{ anf: out, seeds, routes }
+  anf.functions = routed_funcs
+  SpecializeResult.{ anf, seeds, routes }
 }
 
 type RecRoute = .{ site_key: Int, target: Int }

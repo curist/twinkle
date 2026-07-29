@@ -1660,16 +1660,25 @@ fn variant_sections(
   resolve := variants.make_variant_resolver_for_render()
   out := ""
   for f in source.functions {
-    case variants.canonical_reachable_key(reachable, f.func_id) {
-      .Some(key) => case variants.by_key.get(key) {
-        .Some(entry) => {
-          seed := unique_seed_for_variant(f, entry.variant)
-          analyzed := analyze_function_with_seed_resolved(f, overlay, b, sem, seed, resolve)
-          title := "variant fn ${f.name} [${render_variant_key(entry.variant)}]"
-          header := "variant: ${render_summary_body(entry.summary)}"
-          out = "${out}${analyzed.render_function_with_header(title, header)}"
-        },
-        .None => {},
+    // Render EVERY reachable published variant of `f` (both the shell tier and any
+    // full field-path tier), in `by_func` key order, so the dual-tier publication
+    // is visible in `--cfg`.
+    case variants.by_func.get(f.func_id) {
+      .Some(keys) => {
+        for key in keys {
+          if reach_has(reachable, key) {
+            case variants.by_key.get(key) {
+              .Some(entry) => {
+                seed := unique_seed_for_variant(f, entry.variant)
+                analyzed := analyze_function_with_seed_resolved(f, overlay, b, sem, seed, resolve)
+                title := "variant fn ${f.name} [${render_variant_key(entry.variant)}]"
+                header := "variant: ${render_summary_body(entry.summary)}"
+                out = "${out}${analyzed.render_function_with_header(title, header)}"
+              },
+              .None => {},
+            }
+          }
+        }
       },
       .None => {},
     }
