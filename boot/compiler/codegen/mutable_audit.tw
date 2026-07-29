@@ -124,6 +124,20 @@ fn proof_for_site(table: mutable_select.MutableDecisionTable, site: mutable_sele
   }
 }
 
+// The field path key of the decision at `site` (empty when the site has no
+// decision or its decision is a whole-local update). A non-empty key marks a
+// Phase 8H record-backed collection update.
+fn field_path_for_site(table: mutable_select.MutableDecisionTable, site: mutable_select.Site) String {
+  case table.by_site.get(site.site_key()) {
+    .Some(ds) => if ds.len() > 0 {
+      ds[0].field_path_key
+    } else {
+      ""
+    },
+    .None => "",
+  }
+}
+
 // State bucket for the reason a selector call resolved to, grouping the many
 // mismatch reasons (stale decision shape) under one label distinct from a
 // genuinely absent decision.
@@ -198,10 +212,20 @@ fn audit_call_site(
 
   site := mutable_select.Site.{ func: fid_of_ctx(ctx), local: result_entry.source_local }
 
+  // Phase 8H: a call decision that carries a field path is a record-backed
+  // collection update (the collection lives in a record field), so name its
+  // family `record_backed_<catalog family>` in the audit.
+  field_path := field_path_for_site(ctx.mutable_decisions, site)
+  family_name := if field_path.len() > 0 {
+    "record_backed_${entry.family}"
+  } else {
+    entry.family
+  }
+
   row := AuditRow.{
     func: func_name,
     local: result_entry.source_local.id,
-    family: entry.family,
+    family: family_name,
     persistent: name_of(ctx.builtins, fid),
     mutable: mutable_name,
     emit: name_of(ctx.builtins, selection.emit_func),
