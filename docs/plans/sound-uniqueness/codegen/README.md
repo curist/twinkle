@@ -436,12 +436,22 @@ first slice: direct, ANF-visible field-backed updates (`env.types[k] = v`,
   table (`OptimizerSemantics.ref_fields`, built from the resolver) keeps primitive
   fields out of variant requirements.
 
-**Deferred to a follow-up slice (recognized as quartets, but in-place emission not
-yet achieved):** `Set<K>` wrappers (need the prelude `Set.insert` specialized for a
-unique receiver) and transported `out.ctx`/`out.state` records with a sibling read
-(need path-level consume-dead across a multi-level record-field projection). The
-first-slice detector requires whole-argument last-use and the quartet in one
-straight-line `Let` chain.
+**Deferred to a follow-up slice:**
+
+- **`Set<K>` wrappers and transported `out.ctx`/`out.state` records** are recognized
+  as record-backed dict quartets (`twk ir --census --sites` shows `record_backed_dict`),
+  but their in-place *emission* is not yet achieved: `Set` needs the prelude
+  `Set.insert` specialized for a unique receiver, and the transport shape needs
+  path-level consume-dead across a multi-level record-field projection (a sibling
+  `out.tag` read keeps `out` live). The first-slice detector requires whole-argument
+  last-use and the quartet in one straight-line `Let` chain.
+- **Field-tier recursive self-routing.** A recursive field clone (`visit$v` for
+  `[unique:p0,p0.f0]`) emits its own field-backed collection update in-place, but its
+  in-SCC recursive call currently stays on the generic function: `recursive_routes_for`
+  re-analyzes the clone under a shell-only seed, so the recursive call proves only the
+  shell tier. Field-aware recursive-route seeding (threading `field_seed_for_variant`
+  through `call_uniques_sited` and the ownership fixpoint) is the follow-up; the
+  emitted program stays correct (later iterations use the persistent path).
 
 ## Codegen Phase 8I — Codegen-track verification gate
 
