@@ -1,0 +1,15 @@
+pub type Env = .{ types: Dict<Int, Int>, spare: Dict<Int, Int> }
+
+pub fn put(e: Env, k: Int, v: Int) Env {
+  e.types[k] = v
+  e
+}
+
+pub fn go() Bool {
+  shared := Dict.new().set(0, 0)
+  env := Env.{ types: shared, spare: shared }
+  env = put(env, 1, 20)
+  shared.has(0)
+}
+
+println(go().to_string())

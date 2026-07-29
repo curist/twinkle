@@ -1,0 +1,9 @@
+pub fn go() Int {
+  s: Set<Int> = Set.new()
+  for i in range(5) {
+    s = .insert(i)
+  }
+  s.len()
+}
+
+println(go().to_string())

@@ -1,0 +1,20 @@
+pub type Env = .{ types: Dict<Int, Int>, spare: Dict<Int, Int> }
+
+pub fn put(e: Env, k: Int, v: Int) Env {
+  e.types[k] = v
+  e
+}
+
+pub fn go() Int {
+  env := Env.{ types: Dict.new(), spare: Dict.new() }
+  keep := env
+  for i in range(5) {
+    env = put(env, i, i * 10)
+  }
+  case keep.types.get(0) {
+    .Some(_) => 999,
+    .None => 0,
+  }
+}
+
+println(go().to_string())

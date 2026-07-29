@@ -1,0 +1,21 @@
+pub type Env = .{ types: Dict<Int, Int>, spare: Dict<Int, Int> }
+
+pub fn put(e: Env, k: Int, v: Int) Env {
+  e.types[k] = v
+  e
+}
+
+pub fn leak_ret(e: Env, sink: Cell<Dict<Int, Int>>) Env {
+  sink.set(e.types)
+  e
+}
+
+pub fn go() Int {
+  sink: Cell<Dict<Int, Int>> = Cell.new(Dict.new())
+  env := Env.{ types: Dict.new(), spare: Dict.new() }
+  env = leak_ret(env, sink)
+  env = put(env, 0, 10)
+  sink.get().len()
+}
+
+println(go().to_string())
