@@ -79,7 +79,11 @@ mutable_select.MutableDecision.{
 - **Modify** `boot/compiler/ownership.tw` — record `field_backing_reusable` at `ARecordUpdate` verdict sites; add field-path entry seed plumbing for codegen-owned analysis.
 - **Modify** `boot/compiler/codegen/ownership_verdicts.tw` — carry `field_backing_reusable` through `SiteVerdict` and artifact projections.
 - **Modify** `boot/compiler/codegen/variant_route.tw` — extend `CloneSpec` with field-path seed data while preserving shell seeds.
-- **Modify** `boot/compiler/summary.tw` — add a public field-seed helper derived from `VariantId` requirements.
+- **Modify** `boot/compiler/summary.tw` — dual-tier variant publication (shell + full), path-aware selection/reachability/render, and a public field-seed helper derived from `VariantId` requirements.
+- **Modify** `boot/compiler/opt/semantics.tw` — `OptimizerSemantics.ref_fields` + `with_ref_fields` + `sem_field_is_primitive` (reference-typed field classification).
+- **Modify** `boot/compiler/resolver.tw` — `build_ref_field_table(env)` mapping record fields to reference-typed vs primitive.
+- **Modify** `boot/compiler/codegen/codegen.tw` — build env-aware semantics once in `link_program` and thread it to specialization/decision production.
+- **Modify** `boot/tests/suites/variant_specialize_suite.tw` and `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw` — env-aware `variants_of`/`render_entry` so the reference-typed filter is exercised; 8G render assertions unchanged.
 - **Modify** `boot/compiler/codegen/mutable_produce.tw` — add field-backed quartet candidates, structured proof join, non-overlap with ordinary call decisions, and rows.
 - **Modify** `boot/compiler/codegen/mutable_audit.tw` and `boot/commands/ir.tw` — render field-backed call decisions in `--census --sites` audit output.
 - **Modify** `boot/compiler/codegen/variant_specialize.tw` — ensure the structural `updatable_funcs` filter sees field-backed collection candidates.
@@ -201,17 +205,275 @@ git commit -m "analysis: expose structured field-backing verdicts for codegen"
 
 ---
 
-## Task 2: Path-granular variant publication and selection
+## Task 2: Dual-tier variant publication and selection
 
-**Files:** Modify `boot/compiler/variant_id.tw`; Modify `boot/compiler/summary.tw`; Modify `boot/compiler/ownership.tw`; Modify `boot/compiler/codegen/variant_specialize.tw`; Create `boot/tests/suites/field_backed_collection_suite.tw`; Create `boot/tests/fixtures/cfg/sound_uniqueness/field_visit_rec.tw`; Modify `boot/tests/main.tw`.
+> **Revised 2026-07-28.** The first draft of this task ("publish exact field-path
+> variants … instead of the shell-only candidate") *replaced* each 8G shell-only
+> variant with a shell+field variant. That regressed 8G: shell uniqueness composes
+> through delegation today, but field uniqueness does not until Task 3 seeds fields,
+> so field-requiring variants become unreachable and the shell-reuse win is lost. See
+> `docs/plans/2026-07-28-8h-task2-findings.md`. This revision publishes **both** proof
+> tiers additively and never removes the shell variant. A WIP commit
+> (`7089f09a`, branch `codegen-8h-record-backed-field-collections`) already contains
+> the reusable pieces (`arg_paths`, `select_variant_for_arg_paths`, `PathSet.contains`,
+> the reference-typed field filter); this task keeps those and corrects publication,
+> production-semantics plumbing, the resolver, and rendering.
 
-**Interfaces:**
-- Produces: `summary.select_variant_for_arg_paths(vt, callee_id, arg_paths: Vector<vid.PathSet>) vid.VariantId?`.
-- Produces: `ownership.SitedCallUniq.arg_paths: Vector<vid.PathSet>` while preserving `arg_unique: Vector<Bool>` for existing callers.
-- Changes: `summary.compute_variants` publishes exact downward-closed field-path keys discovered in each converged variant summary's `in_place_paths`, not just shell-only keys.
-- Consumers: Task 3 field seeds may trust `VariantId` field requirements because Task 2 proves those exact paths at each routed call site.
+**Model.** For a member whose converged owned summary has `in_place_paths = {[], [.f0]}`,
+publish two variants:
 
-- [ ] **Step 1: Create the field-recursive fixture and failing path-granular selection test.** Create `field_visit_rec.tw`:
+- **Shell tier** — key `{[]}` (renders `[unique:p0]`), summary **projected to shell-only
+  paths**. Preserves 8G record-shell reuse; selected by callers proving only whole-record
+  uniqueness; composes through delegation. The shell summary MUST be projected — attaching
+  the full `{[],[.f0]}` summary to the shell key would let shell-only callers propagate
+  field requirements they never proved.
+- **Full tier** — key `{[], [.f0]}` (renders `[unique:p0,p0.f0]`), the converged summary
+  unchanged. Selected only by callers proving whole-record **plus** field-backing
+  uniqueness; usable once Task 3 seeds fields into clones.
+
+A member whose only in-place path is the shell (e.g. `setb`'s primitive `s.b = v` after the
+reference-typed filter drops `[.f1]`) publishes exactly one shell variant — never zero, never
+a field variant.
+
+Both selection and reachability read `arg_paths` (per-argument proven `PathSet`s): shell-only
+paths match only the shell variant; shell+field paths match both and `variant_specificity`
+picks the full one. Shell uniqueness never implies field uniqueness.
+
+**Non-goal for Task 2:** field-backed collection *emission* does not need to work yet — that
+is Task 3+ (clone entry field-seeds). Task 2's job is to publish and select the right variant
+proof tiers without regressing shell-only specialization.
+
+**Files:** Modify `boot/compiler/variant_id.tw`, `boot/compiler/summary.tw`,
+`boot/compiler/ownership.tw`, `boot/compiler/opt/semantics.tw`, `boot/compiler/resolver.tw`,
+`boot/compiler/codegen/variant_specialize.tw`, `boot/compiler/codegen/mutable_produce.tw`,
+`boot/compiler/codegen/codegen.tw`, `boot/commands/ir.tw`,
+`boot/tests/suites/field_backed_collection_suite.tw`,
+`boot/tests/suites/variant_specialize_suite.tw`,
+`boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`, `boot/tests/main.tw`;
+Create `boot/tests/fixtures/cfg/sound_uniqueness/field_visit_rec.tw`.
+
+**Interfaces produced:**
+- `semantics.OptimizerSemantics.ref_fields: Dict<Int, Dict<Int, Bool>>` + `with_ref_fields` +
+  `sem_field_is_primitive`.
+- `resolver.build_ref_field_table(env) Dict<Int, Dict<Int, Bool>>`.
+- `variant_specialize.specialize_module_with_sem(anf, b, sem)` and
+  `mutable_produce.produce_mutable_decisions_seeded_with_sem(anf, b, seeds, sem)`, with the
+  existing arg-less `sem` builders kept as empty-`ref_fields` wrappers.
+- `ownership.SitedCallUniq.arg_paths: Vector<vid.PathSet>` (preserving `arg_unique`).
+- `summary.select_variant_for_arg_paths(vt, callee_id, arg_paths) vid.VariantId?`.
+- Path-aware `ownership.VariantResolver = fn(Int, Vector<vid.PathSet>) Summary?` with a
+  shell-only bool wrapper.
+- `summary.compute_variants` publishes both a shell-tier and (when a reference-typed field
+  path survives) a full-tier variant per member.
+
+> **Reuse note.** Sub-tasks 2.1–2.4 largely already exist on WIP commit `7089f09a`. Where a
+> step says "already on the WIP branch — keep as-is", verify the committed code matches the
+> shown shape and move on; do not rewrite it. New/corrected logic (dual publication, shell
+> projection, env-aware production, path-aware resolver, multi-variant render) has full code.
+
+---
+
+### Task 2.1: Env-aware production semantics
+
+The reference-typed field table must reach the *production* specialization/decision paths, not
+just tests. Today `link_program` and `twk ir` build semantics with empty `ref_fields`, so
+production would misclassify fields even though tests pass.
+
+- [ ] **Step 1: Confirm the semantics primitives exist (WIP).** In `boot/compiler/opt/semantics.tw`
+  verify (already on WIP `7089f09a`): `OptimizerSemantics.ref_fields: Dict<Int, Dict<Int, Bool>>`
+  defaulted `Dict.new()` in every constructor; `with_ref_fields(sem, rf)`; and
+
+```twinkle
+// Whether field `fld` of record `tid` is KNOWN to be a scalar primitive stored inline.
+// Only an explicit `false` (not-reference) entry answers true; an absent record or field
+// answers false ("unknown", conservatively kept). Unknown fields are NOT treated as
+// primitive — they are simply not proven primitive.
+pub fn sem_field_is_primitive(sem: OptimizerSemantics, tid: TypeId, fld: FieldId) Bool {
+  case sem.ref_fields.get(tid.id) {
+    .Some(m) => case m.get(fld.id) { .Some(is_ref) => !is_ref, .None => false },
+    .None => false,
+  }
+}
+```
+
+  And in `boot/compiler/resolver.tw` verify `build_ref_field_table(env)` maps each record
+  `TypeId.id -> (field index -> is-reference)` where a field is reference-typed unless its
+  `MonoType` is `Int/Float/Bool/Byte/Void/Never`.
+
+- [ ] **Step 2: Write the failing production-parity test.** In `field_backed_collection_suite.tw`
+  add a helper and test that the production census path classifies a primitive field the same
+  as the analysis path (i.e. does NOT invent a field variant for `setb`):
+
+```twinkle
+fn sem_for(art: PipelineArtifacts) semantics.OptimizerSemantics {
+  semantics.make_prelude_optimizer_semantics(art.builtins).with_ref_fields(
+    resolver.build_ref_field_table(art.env),
+  )
+}
+
+.test(
+  "env-aware production semantics classify primitive record fields",
+  fn() Result<Void, String> {
+    art := try compile_fixture("setb")
+    tbl := resolver.build_ref_field_table(art.env)
+    // setb's record S = .{ a: Int, b: Int }: both fields primitive (is-ref == false).
+    found := false
+    for _tid, fields in tbl {
+      for _idx, is_ref in fields {
+        if !is_ref { found = true }
+      }
+    }
+    try assert.ok(found, "primitive Int fields must be recorded as non-reference")
+    .Ok({})
+  },
+)
+```
+
+- [ ] **Step 3: Run and verify the red state.**
+
+```bash
+target/twk run boot/tests/main.tw
+```
+
+Expected: fails to resolve `resolver.build_ref_field_table`/`with_ref_fields`/`sem_for` only
+if the WIP is not present; otherwise this test passes and you proceed to plumbing (Step 4).
+
+- [ ] **Step 4: Add sem-accepting entry points.** In `boot/compiler/codegen/variant_specialize.tw`
+  split the sem construction out:
+
+```twinkle
+pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {
+  specialize_module_with_sem(anf, b, make_prelude_optimizer_semantics(b))
+}
+
+pub fn specialize_module_with_sem(anf: AnfModule, b: BuiltinRegistry, sem: OptimizerSemantics) SpecializeResult {
+  specialize_module_with_cap_sem(anf, b, sem, variant_cap())
+}
+
+pub fn specialize_module_with_cap(anf: AnfModule, b: BuiltinRegistry, cap: Int) SpecializeResult {
+  specialize_module_with_cap_sem(anf, b, make_prelude_optimizer_semantics(b), cap)
+}
+```
+
+  Rename the existing `specialize_module_with_cap` body to
+  `specialize_module_with_cap_sem(anf, b, sem, cap)` and delete its internal
+  `sem := make_prelude_optimizer_semantics(b)` line (use the `sem` parameter).
+
+  In `boot/compiler/codegen/mutable_produce.tw` do the same for the seeded producer:
+
+```twinkle
+pub fn produce_mutable_decisions_seeded(opt: AnfModule, b: BuiltinRegistry, owned_seeds: variant_route.OwnedSeedTable) ProducedDecisions {
+  produce_mutable_decisions_seeded_with_sem(opt, b, owned_seeds, make_prelude_optimizer_semantics(b))
+}
+```
+
+  Rename the existing body to
+  `produce_mutable_decisions_seeded_with_sem(opt, b, owned_seeds, sem)` and drop its internal
+  `sem := make_prelude_optimizer_semantics(b)`.
+
+- [ ] **Step 5: Build env-aware semantics once in `link_program`.** In
+  `boot/compiler/codegen/codegen.tw` (`link_program` has `env` in scope), add near the top:
+
+```twinkle
+sem_env := make_prelude_optimizer_semantics(builtins).with_ref_fields(resolver.build_ref_field_table(env))
+```
+
+  Change the specialize call to `variant_specialize.specialize_module_with_sem(anf_prime, builtins, sem_env)`
+  and the producer call to
+  `mutable_produce.produce_mutable_decisions_seeded_with_sem(anf_spec, builtins, spec.seeds, sem_env)`.
+  Add `use compiler.resolver` if not already imported.
+
+- [ ] **Step 6: Make `twk ir` env-aware.** In `boot/commands/ir.tw`, everywhere the census/cfg
+  paths build `make_prelude_optimizer_semantics(...)`, wrap with
+  `.with_ref_fields(resolver.build_ref_field_table(artifacts.env))` and route
+  `specialize_module` / `produce_mutable_decisions_seeded` through the `_with_sem` variants so
+  `--cfg` and `--census --sites` match the compiled program and the test suite.
+
+- [ ] **Step 7: Run, fmt, lint, verify green.**
+
+```bash
+target/twk fmt boot/compiler/codegen/variant_specialize.tw boot/compiler/codegen/mutable_produce.tw boot/compiler/codegen/codegen.tw boot/commands/ir.tw boot/tests/suites/field_backed_collection_suite.tw
+target/twk lint boot/main.tw
+target/twk run boot/tests/main.tw
+```
+
+Expected: parity test passes; existing suites still green (no behavior change yet — empty vs
+populated `ref_fields` only differs once the filter/publication land below).
+
+- [ ] **Step 8: Commit.**
+
+```bash
+git add boot/compiler/codegen/variant_specialize.tw boot/compiler/codegen/mutable_produce.tw boot/compiler/codegen/codegen.tw boot/commands/ir.tw boot/compiler/opt/semantics.tw boot/compiler/resolver.tw boot/tests/suites/field_backed_collection_suite.tw
+git commit -m "codegen(8H): thread env-aware reference-typed field semantics into production"
+```
+
+---
+
+### Task 2.2: Reference-typed field filter and primitive shell-only preservation
+
+- [ ] **Step 1: Confirm the dirty-path gate (WIP).** In `boot/compiler/ownership.tw`,
+  `transfer_flow`'s `.ARecordUpdate(base, fld, _, _, tid)` arm must add `[.f]` to the dirty set
+  only when the field is not proven primitive:
+
+```twinkle
+new_dirty := if sem_field_is_primitive(sem, tid, fld) {
+  bf.dirty
+} else {
+  bf.dirty.add(vid.field(fld.id))
+}
+```
+
+  This is directional (drop primitive `[.f]` requirements) but `build_in_place_paths` always
+  unions the shell, so a consumed record still yields `in_place_paths = {[]}`. Dropping a
+  primitive dirty path must NEVER erase shell consumption.
+
+- [ ] **Step 2: Write the failing `setb` shell-only regression.** In `field_backed_collection_suite.tw`:
+
+```twinkle
+.test(
+  "primitive-field record update publishes exactly one shell variant",
+  fn() Result<Void, String> {
+    art := try compile_fixture("setb")
+    vt := variants_of(art)
+    ids := summary.variant_ids_of(vt)
+    // No field-path variant for a primitive field.
+    try assert.ok(
+      !ids.any(fn(v) { v.unique.any(fn(req) { !req.path.is_shell() }) }),
+      "setb must not publish a field-path variant for its primitive field",
+    )
+    // A shell-only unique caller still selects the shell variant.
+    setb_id := case ids.first() { .Some(v) => v.func, .None => return .Err("no variant") }
+    shell_paths: Vector<vid.PathSet> = [vid.shell_set(), vid.shell_set()]
+    try assert.is_some(summary.select_variant_for_arg_paths(vt, setb_id, shell_paths))
+    .Ok({})
+  },
+)
+```
+
+  Make `variants_of` in BOTH `field_backed_collection_suite.tw` and `variant_specialize_suite.tw`
+  build its semantics with `sem_for(art)` (populated `ref_fields`) so the filter is exercised.
+
+- [ ] **Step 3: Run and verify.**
+
+```bash
+target/twk run boot/tests/main.tw
+```
+
+Expected: passes once the gate (Step 1) and env-aware `variants_of` (Step 2) are in place.
+
+- [ ] **Step 4: Commit.**
+
+```bash
+git add boot/compiler/ownership.tw boot/tests/suites/field_backed_collection_suite.tw boot/tests/suites/variant_specialize_suite.tw
+git commit -m "codegen(8H): drop primitive record-field paths from ownership requirements"
+```
+
+---
+
+### Task 2.3: Dual-tier variant publication
+
+- [ ] **Step 1: Create the field-recursive fixture.** Create
+  `boot/tests/fixtures/cfg/sound_uniqueness/field_visit_rec.tw`:
 
 ```twinkle
 pub type State = .{ xs: Vector<Int>, spare: Vector<Int> }
@@ -231,53 +493,74 @@ pub fn go() Int {
 println(go().to_string())
 ```
 
-Create `field_backed_collection_suite.tw` with the standard imports and helpers from `variant_specialize_suite.tw`, plus `use compiler.variant_id as vid` and a `wat_func_body_result` wrapper:
+  (Runtime output is `0` — the recursion's last write is `n=0`. Task 8 asserts specialize
+  on/off parity, not a specific value.)
+
+- [ ] **Step 2: Write the failing dual-publication test.** In `field_backed_collection_suite.tw`:
 
 ```twinkle
-fn wat_func_body_result(wat: String, marker: String) Result<String, String> {
-  case wat_func_body(wat, marker) {
-    .Some(body) => .Ok(body),
-    .None => .Err("function body marker not found: ${marker}"),
+fn canon_keys(vt: summary.VariantSummaryTable) Vector<String> {
+  collect v in summary.variant_ids_of(vt) {
+    vid.variant_canonical_string(v)
   }
 }
-```
 
-Register the suite in `boot/tests/main.tw`. Add this failing test; it must assert both sides:
-
-```twinkle
 .test(
-  "field-path variant is selected only when the call arg proves that field path",
+  "field-backed recursive member publishes both shell and full variants",
+  fn() Result<Void, String> {
+    art := try compile_fixture("field_visit_rec")
+    vt := variants_of(art)
+    keys := canon_keys(vt)
+    // visit is func f_visit; the shell tier is `…|0:` and the full tier `…|0:;0:0`.
+    try assert.ok(keys.any(fn(k) { k.ends_with("|0:") }), "shell-tier variant must be published")
+    try assert.ok(keys.any(fn(k) { k.contains("|0:;0:0") }), "full-tier variant must be published")
+    .Ok({})
+  },
+)
+
+.test(
+  "shell paths select the shell tier, field paths select the full tier",
   fn() Result<Void, String> {
     art := try compile_fixture("field_visit_rec")
     vt := variants_of(art)
     ids := summary.variant_ids_of(vt)
-    field_variant := ids.find(fn(v) {
-      v.unique.any(fn(req) { !req.path.is_shell() })
-    })
-    case field_variant {
-      .Some(v) => {
-        shell_only: Vector<vid.PathSet> = [vid.shell_set()]
-        try assert.equal(summary.select_variant_for_arg_paths(vt, v.func, shell_only), .None)
-        exact: Vector<vid.PathSet> = [vid.shell_set().add(vid.field(0))]
-        try assert.equal(summary.select_variant_for_arg_paths(vt, v.func, exact), .Some(v))
-        .Ok({})
-      },
-      .None => .Err("expected a published field-path variant"),
+    full := case ids.find(fn(v) { v.unique.any(fn(req) { !req.path.is_shell() }) }) {
+      .Some(v) => v,
+      .None => return .Err("no full variant"),
     }
+    callee := full.func
+    shell_only: Vector<vid.PathSet> = [vid.shell_set(), vid.shell_set()]
+    case summary.select_variant_for_arg_paths(vt, callee, shell_only) {
+      .Some(sel) => try assert.ok(
+        !sel.unique.any(fn(req) { !req.path.is_shell() }),
+        "shell-only args must select the shell tier",
+      ),
+      .None => return .Err("shell args must select the shell tier, not None"),
+    }
+    exact: Vector<vid.PathSet> = [vid.shell_set().add(vid.field(0)), vid.shell_set()]
+    case summary.select_variant_for_arg_paths(vt, callee, exact) {
+      .Some(sel) => try assert.equal(
+        vid.variant_canonical_string(sel),
+        vid.variant_canonical_string(full),
+      ),
+      .None => return .Err("field args must select the full tier"),
+    }
+    .Ok({})
   },
 )
 ```
 
-- [ ] **Step 2: Run and verify the red state.**
+- [ ] **Step 3: Run and verify the red state.**
 
 ```bash
-make quick-bundle-cli
 target/twk run boot/tests/main.tw
 ```
 
-Expected: compile failure naming `select_variant_for_arg_paths` or failure because no field-path variant is published.
+Expected: fails — only one variant is published per member (or the WIP publishes only the
+full tier).
 
-- [ ] **Step 3: Publish exact field-path variants from converged variant summaries.** In `summary.run_scc_variants`, keep the existing shell candidate as the optimistic seed for discovering a variant. When a candidate survives validation, construct the final published key from the converged summary's `params[k].in_place_paths`:
+- [ ] **Step 4: Publish both tiers from the single convergence.** In `summary.tw`, add the
+  helpers and rewrite the `run_scc_variants` publish loop. Keep `variant_for_paths`:
 
 ```twinkle
 fn variant_for_paths(func_id: Int, param: Int, paths: vid.PathSet) vid.VariantId {
@@ -287,75 +570,79 @@ fn variant_for_paths(func_id: Int, param: Int, paths: vid.PathSet) vid.VariantId
   }
   vid.canonicalize_variant(vid.VariantId.{ func: func_id, unique: reqs })
 }
-```
 
-Use `variant_for_paths(m, k, s.params[k].in_place_paths)` for the `VariantEntry.variant` and `by_func` key instead of the original shell-only candidate. Keep the shell-only optimistic hypothesis: it is a discovery mechanism, not the final published key. Add this concrete test to `field_backed_collection_suite.tw`:
-
-```twinkle
-.test(
-  "published recursive field variant includes the exact field path",
-  fn() Result<Void, String> {
-    art := try compile_fixture("field_visit_rec")
-    vt := variants_of(art)
-    ids := summary.variant_ids_of(vt)
-    field_variant := ids.find(fn(v) { v.unique.any(fn(req) { !req.path.is_shell() }) })
-    case field_variant {
-      .Some(v) => {
-        key := vid.variant_canonical_string(v)
-        try assert.str_contains(key, "|0:;0:0")
-        .Ok({})
-      },
-      .None => .Err("expected canonical field-path variant for visit"),
-    }
-  },
-)
-```
-
-- [ ] **Step 4: Add path-set satisfaction.** In `summary.tw`, add:
-
-```twinkle
-fn variant_paths_satisfied(v: vid.VariantId, arg_paths: Vector<vid.PathSet>) Bool {
-  if v.unique.len() == 0 { return false }
-  for req in v.unique {
-    if req.param < 0 or req.param >= arg_paths.len() {
-      return false
-    }
-    if !arg_paths[req.param].contains(req.path) {
-      return false
+fn has_non_shell_path(ps: vid.PathSet) Bool {
+  for p in ps.paths {
+    if !p.is_shell() {
+      return true
     }
   }
-  true
+  false
 }
 
-pub fn select_variant_for_arg_paths(
-  vt: VariantSummaryTable,
-  callee_id: Int,
-  arg_paths: Vector<vid.PathSet>,
-) vid.VariantId? {
-  best: vid.VariantId? = .None
-  best_spec := 0 - 1
-  best_key := ""
-  case vt.by_func.get(callee_id) {
-    .Some(keys) => for k in keys {
-      case vt.by_key.get(k) {
-        .Some(e) => if variant_paths_satisfied(e.variant, arg_paths) {
-          sp := variant_specificity(e.variant)
-          if sp > best_spec or sp == best_spec and (best_key.len() == 0 or k < best_key) {
-            best_spec = sp
-            best_key = k
-            best = .Some(e.variant)
+// Shell-tier summary: identical to the converged summary except param k's in-place
+// paths collapse to the shell {[]}. A shell-tier caller proving only whole-record
+// uniqueness must NOT inherit field-backing requirements.
+fn project_summary_to_shell(s: Summary, k: Int) Summary {
+  params: Vector<ParamSummary> = collect ps, i in s.params {
+    if i == k {
+      ParamSummary.{ base_role: ps.base_role, in_place_paths: vid.shell_set(), flows_to_return: ps.flows_to_return }
+    } else {
+      ps
+    }
+  }
+  Summary.{ params, ret: s.ret, ret_paths: s.ret_paths }
+}
+```
+
+  Replace the publish-survivors loop with:
+
+```twinkle
+  // publish survivors: shell tier always, full tier when a reference-typed field
+  // path survived the converged summary.
+  for m, v in member_key {
+    case member_iter.get(m) {
+      .Some(s) => {
+        k := seed_param_of(v)
+        if variant_valid(s, k) {
+          shell_v := variant_for_paths(m, k, vid.shell_set())
+          vtable = .vtable_put(shell_v, project_summary_to_shell(s, k))
+          full_paths := s.params[k].in_place_paths
+          if has_non_shell_path(full_paths) {
+            vtable = .vtable_put(variant_for_paths(m, k, full_paths), s)
           }
-        },
-        .None => {},
-      }
-    },
-    .None => {},
+        }
+      },
+      .None => {},
+    }
   }
-  best
-}
 ```
 
-Add `pub fn contains(self: PathSet, p: ParamPath) Bool` to `variant_id.tw`:
+- [ ] **Step 5: Run and verify green.**
+
+```bash
+target/twk run boot/tests/main.tw
+```
+
+Expected: `field_visit_rec` publishes both `…|0:` and `…|0:;0:0`; shell paths select the shell
+tier, field paths select the full tier; `setb` still publishes only its shell variant.
+
+- [ ] **Step 6: Commit.**
+
+```bash
+git add boot/compiler/summary.tw boot/tests/suites/field_backed_collection_suite.tw boot/tests/fixtures/cfg/sound_uniqueness/field_visit_rec.tw boot/tests/main.tw
+git commit -m "analysis(8H): publish shell and full ownership variant tiers"
+```
+
+---
+
+### Task 2.4: Path-aware selection and routing (remove the bool/path split-brain)
+
+The WIP already has `select_variant_for_arg_paths`, `variant_paths_satisfied`,
+`PathSet.contains`, `arg_paths`, and `call_arg_paths`. This sub-task confirms them and unifies
+the resolver so ownership analysis and codegen routing use the same path-based selection.
+
+- [ ] **Step 1: Confirm the path primitives (WIP).** Verify in `variant_id.tw`:
 
 ```twinkle
 pub fn contains(self: PathSet, p: ParamPath) Bool {
@@ -366,75 +653,155 @@ pub fn contains(self: PathSet, p: ParamPath) Bool {
 }
 ```
 
-Reimplement `variant_args_satisfied` and `select_variant_for_args` as compatibility wrappers that convert `true` to `vid.shell_set()` and `false` to `vid.empty_set()`.
+  and in `summary.tw` `variant_paths_satisfied` + `select_variant_for_arg_paths` (tie-break on
+  specificity then lexicographically smallest key), with `variant_args_satisfied` /
+  `select_variant_for_args` kept as shell-only bool wrappers over the path forms. Verify in
+  `ownership.tw` `SitedCallUniq.arg_paths` and `call_arg_paths` (shell from whole-arg last-use,
+  plus depth-1 reference field paths from `atom_field_own`; no `Elem`/`Val`/payload paths).
 
-- [ ] **Step 5: Extend call-site uniqueness facts with exact paths.** In `ownership.tw`, extend `SitedCallUniq`:
+- [ ] **Step 2: Make `VariantResolver` path-aware.** In `ownership.tw` change the type to
+  `VariantResolver = fn(Int, Vector<vid.PathSet>) Summary?`. At the analysis call sites that
+  currently build `au: Vector<Bool>` and call `resolve(fid.id, au)`, build `arg_paths` with
+  `call_arg_paths(pre, args, au)` and call `resolve(fid.id, arg_paths)`. In `summary.tw`,
+  change `variant_summary_for` to take `arg_paths: Vector<vid.PathSet>` and use
+  `variant_paths_satisfied`, and provide a shell-only bool wrapper
+  `variant_summary_for_bool(vtable, callee, arg_unique)` = `variant_summary_for(vtable, callee, arg_unique_to_paths(arg_unique))`
+  for any caller that still only has bools. `generic_only_resolver` and
+  `make_variant_resolver`/`make_outscc_resolver` update to the path signature.
 
-```twinkle
-arg_paths: Vector<vid.PathSet>,
+- [ ] **Step 3: Route clones with path-granular proof.** In
+  `variant_specialize.collect_groups` and `recursive_routes_for`, select via
+  `summary.select_variant_for_arg_paths(vt, s.callee, s.arg_paths)` (already on WIP). Confirm the
+  safety boundary: a shell-unique record with a shared field must not route to a clone whose
+  `VariantId` requires that field.
+
+- [ ] **Step 4: Run, fmt, lint, verify.**
+
+```bash
+target/twk fmt boot/compiler/ownership.tw boot/compiler/summary.tw boot/compiler/variant_id.tw boot/compiler/codegen/variant_specialize.tw
+target/twk lint boot/main.tw
+target/twk run boot/tests/main.tw
 ```
 
-At each `ACall`, compute one path set per argument with a helper shaped as:
+Expected: existing 8G routing tests pass; `field_visit_rec` selection tests pass.
 
-```twinkle
-fn call_arg_paths(pre: ForwardState, args: Vector<Atom>, arg_unique: Vector<Bool>) Vector<vid.PathSet> {
-  collect arg, i in args {
-    paths := if i < arg_unique.len() and arg_unique[i] { vid.shell_set() } else { vid.empty_set() }
-    if i < arg_unique.len() and arg_unique[i] {
-      fmap := pre.atom_field_own(arg)
-      for k in fmap.sorted_keys() {
-        p := ff.path_of_key(k)
-        if p.segs.len() == 1 {
-          case p.segs[0] {
-            .Field(f) => paths = paths.add(vid.field(f)),
-            _ => {},
-          }
-        }
-      }
-    }
-    paths
-  }
-}
+- [ ] **Step 5: Commit.**
+
+```bash
+git add boot/compiler/ownership.tw boot/compiler/summary.tw boot/compiler/variant_id.tw boot/compiler/codegen/variant_specialize.tw
+git commit -m "analysis(8H): unify variant selection on proven argument paths"
 ```
 
-Do not include `Elem`, `Val`, or payload paths in `arg_paths` for 8H. This deliberately requires the whole argument to be last-use (`arg_unique[i]`) before any field path is claimed, so a call followed by a sibling-field read remains on the generic function in 8H even when a future path-level consume-dead analysis could prove it safe.
+---
 
-- [ ] **Step 6: Route clones with path-granular proof.** In `variant_specialize.collect_groups` and `recursive_routes_for`, call `summary.select_variant_for_arg_paths(vt, s.callee, s.arg_paths)`. Keep `select_variant_for_args` only for shell-only compatibility helpers. This is the safety boundary: a shell-unique record with a shared field must not route to a clone whose `VariantId` requires that field.
+### Task 2.5: Multi-variant reachability and rendering
 
-- [ ] **Step 7: Update variant reachability and diagnostic rendering to use path sets.** In `summary.reachable_variants`, replace both `call_uniques(...).arg_unique` scans with `call_uniques_sited(...).arg_paths` scans. Change `mark_site_variants` to take `Vector<vid.PathSet>` and use `variant_paths_satisfied`. Keep `unique_seed_for_variant` shell-only for diagnostic re-analysis: it may render less field ownership than codegen's Task 3 seeded artifacts, but it must not drop field-path variants from reachability or print a shell-only key for them. Add a small public test hook, `summary.reachable_variant_keys_for_test(view, b, sem, generic, variants) Vector<String>`, that returns the canonical keys from `reachable_variants`; use it only from tests. Add this test to `field_backed_collection_suite.tw`:
+Reachability/render assume one effective variant per function
+(`canonical_reachable_key`, `reachable_overlay`, `all_variant_overlay`,
+`make_variant_resolver_for_render`). With shell and full tiers coexisting they must render each
+reachable variant independently and select per call-site via the resolver, not by overlaying one
+global summary per function. Crucially, because the shell tier is preserved, the 8G
+delegating-chain fixtures keep their `[unique:p0]` shell variant reachable — those tests pass
+**unchanged**.
+
+- [ ] **Step 1: Reachability marks both tiers.** In `summary.reachable_variants`, scan
+  `call_uniques_sited(...).arg_paths` (not `.arg_unique`) and change `mark_site_variants` to take
+  `Vector<vid.PathSet>` and call `variant_paths_satisfied` against every key in
+  `variants.by_func[callee]` — so a shell-only site marks the shell variant reachable and a
+  field-proving site marks both. In the reachability fixpoint, replace the single
+  `reachable_overlay`/`all_variant_overlay` "one summary per func" overlay with a resolver built
+  from the currently-reachable set that selects per call-site by `arg_paths`
+  (reuse `make_variant_resolver` from Task 2.4). Keep `unique_seed_for_variant` shell-only for
+  diagnostic re-analysis; it may render less field ownership than Task 3's seeded artifacts but
+  must not drop reachable variant keys.
+
+- [ ] **Step 2: Render each reachable variant.** In `summary.render_cfg` (the loop at the
+  `title := "variant fn ${f.name} [${render_variant_key(entry.variant)}]"` site), iterate every
+  reachable variant key for the function instead of a single canonical key, emitting one
+  `variant fn …` section per key in `by_func` order. `render_variant_key` already renders shell as
+  `[unique:p0]` and full as `[unique:p0,p0.f0]`.
+
+- [ ] **Step 3: Add the reachability visibility test + hook.** Keep the
+  `reachable_variant_keys_for_test(view, b, sem, generic, variants) Vector<String>` hook. In
+  `field_backed_collection_suite.tw` (using `sem_for(art)`):
 
 ```twinkle
 .test(
-  "variant reachability keeps field-path variants visible in cfg render inputs",
+  "both variant tiers stay reachable for cfg rendering",
   fn() Result<Void, String> {
     art := try compile_fixture("field_visit_rec")
     vt := variants_of(art)
     view := ownership.prune_dead_merge(cfg.build_view(art.opt, art.builtins))
-    sem := semantics.make_prelude_optimizer_semantics(art.builtins)
+    sem := sem_for(art)
     generic := summary.compute(view, art.builtins, sem)
     keys := summary.reachable_variant_keys_for_test(view, art.builtins, sem, generic, vt)
-    try assert.ok(keys.any(fn(k) { k.contains("|0:;0:0") }), "field-path variant key must remain reachable for cfg rendering")
+    try assert.ok(keys.any(fn(k) { k.ends_with("|0:") }), "shell tier must be reachable")
+    try assert.ok(keys.any(fn(k) { k.contains("|0:;0:0") }), "full tier must be reachable")
     .Ok({})
   },
 )
 ```
 
-- [ ] **Step 8: Run and verify green.**
+- [ ] **Step 4: Make `render_entry` env-aware and confirm 8G renders unchanged.** In
+  `boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw`, build `render_entry`'s `sem` with
+  `.with_ref_fields(resolver.build_ref_field_table(artifacts.env))` (and route through the
+  variant resolver). The delegating-chain and mixed-delegate render assertions
+  (`variant fn resolve_one [unique:p0]`, etc.) must remain **unchanged and passing** — the shell
+  tier is what they assert. Re-check the `Cell-backed dict update stays conservative` test: with
+  dual tiers it must still show no owned variant for the Cell-backed shape.
+
+- [ ] **Step 5: Run, fmt, lint, verify green.**
 
 ```bash
-target/twk fmt boot/compiler/variant_id.tw boot/compiler/summary.tw boot/compiler/ownership.tw boot/compiler/codegen/variant_specialize.tw boot/tests/suites/field_backed_collection_suite.tw boot/tests/main.tw boot/tests/fixtures/cfg/sound_uniqueness/field_visit_rec.tw
+target/twk fmt boot/compiler/summary.tw boot/tests/suites/field_backed_collection_suite.tw boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw
 target/twk lint boot/main.tw
-make quick-bundle-cli
 target/twk run boot/tests/main.tw
 ```
 
-Expected: field-path variants publish only when `in_place_paths` contains that path; shell-only `arg_unique` no longer satisfies field-path variants; existing 8G shell-only routing tests still pass.
+Expected: `field_visit_rec` renders both tiers; the 8G delegate-chain/mixed/Cell tests pass
+unchanged.
 
-- [ ] **Step 9: Commit.**
+- [ ] **Step 6: Commit.**
 
 ```bash
-git add boot/compiler/variant_id.tw boot/compiler/summary.tw boot/compiler/ownership.tw boot/compiler/codegen/variant_specialize.tw boot/tests/suites/field_backed_collection_suite.tw boot/tests/main.tw boot/tests/fixtures/cfg/sound_uniqueness/field_visit_rec.tw
-git commit -m "analysis: publish and select ownership variants by exact field paths"
+git add boot/compiler/summary.tw boot/tests/suites/field_backed_collection_suite.tw boot/tests/suites/cfg_sound_uniqueness_fixtures_suite.tw
+git commit -m "analysis(8H): render and reach multiple variant tiers per function"
+```
+
+---
+
+### Task 2.6: Production regression and full-suite gate
+
+- [ ] **Step 1: Add a production-path regression.** In `field_backed_collection_suite.tw`, assert
+  `twk ir --census --sites` on `setb` (primitive field) shows no `record_backed`/field variant
+  and that `field_visit_rec` shows the shell tier. Implement `ir_sites_text(name)` matching
+  `commands.ir.render_census_report(artifacts, true)` (also used by Task 8):
+
+```twinkle
+.test(
+  "production census does not invent field variants for primitive fields",
+  fn() Result<Void, String> {
+    sites := ir_sites_text("setb")
+    try assert.ok(!sites.contains("p0.f"), "setb must not show a field-path variant in census")
+    .Ok({})
+  },
+)
+```
+
+- [ ] **Step 2: Run the full suite.**
+
+```bash
+target/twk run boot/tests/main.tw
+```
+
+Expected: all suites green, including the pre-existing 8G routing/render tests and the new
+dual-tier tests.
+
+- [ ] **Step 3: Commit.**
+
+```bash
+git add boot/tests/suites/field_backed_collection_suite.tw
+git commit -m "codegen(8H): regression-guard primitive fields on the production census path"
 ```
 
 ---

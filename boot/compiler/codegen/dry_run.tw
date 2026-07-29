@@ -61,7 +61,11 @@ fn dry_run_sites_with_verdict_table(
   for s in sites {
     v := case verdicts.by_key.get("${s.func_id}#${s.local}") {
       .Some(verdict) => verdict,
-      .None => ownership_verdicts.SiteVerdict.{ text: "-", reusable_shell: false },
+      .None => ownership_verdicts.SiteVerdict.{
+        text: "-",
+        reusable_shell: false,
+        field_backing_reusable: false,
+      },
     }
     t := cat.targets_for_actual(b, s.actual_fid)
     out = .append(

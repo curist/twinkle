@@ -14,6 +14,16 @@
 //!      on demand — its recursive call stays generic (sound, just not specialized);
 //!      full SCC closure of mutual recursion is a follow-up.
 //!
+//! Recursive-route seeding is currently SHELL-ONLY (`recursive_routes_for` re-
+//! analyzes the clone under `seed_for_variant`, which seeds whole-value uniqueness
+//! but not reference-typed field ownership). So a Phase 8H FULL-tier field clone
+//! (e.g. `visit$v` for `[unique:p0,p0.f0]`) emits its own record-field collection
+//! update in-place, but its in-SCC recursive call proves only the shell tier and
+//! therefore stays on the generic function rather than re-entering the field clone.
+//! Field-aware recursive-route seeding (threading `field_seed_for_variant` through
+//! `call_uniques_sited`/the ownership fixpoint) is a follow-up; the emitted program
+//! stays correct (later iterations use the persistent path).
+//!
 //! The clone body is a structural copy of the generic (only in-SCC recursive call
 //! targets are rewritten). Emission is unchanged: the clone is an ordinary
 //! function whose owned seed makes the live 8A-8F producer emit `Site`-keyed
@@ -50,15 +60,7 @@ fn spec_timings_enabled() Bool {
   }
 }
 
-// Max ownership-specialized clones per generic function — a safety valve against a
-// function admitting many variants. A fixed default (not env-tunable, so the value
-// stays deterministic and the whole compiler + test suite are env-insensitive;
-// `TWINKLE_VARIANT_SPECIALIZE=0` already disables the pass entirely). Tests exercise
-// other caps via `specialize_module_with_cap`. The seeded producer in `link_program`
-// still decides in-place per site; this only bounds the profitable-but-many case.
-pub fn variant_cap() Int {
-  4
-}
+pub variant_cap: Int = 4
 
 type CapResult = .{ kept: Vector<Group>, overflow: Vector<Group> }
 
@@ -174,9 +176,9 @@ fn collect_groups(
     if cfg_calls_published(f, published) {
       sited := ownership.call_uniques_sited(f, table, b, sem, Dict.new(), Dict.new())
       for s in sited {
-        case summary.select_variant_for_args(vt, s.callee, s.arg_unique) {
+        case vt.select_variant_for_arg_paths(s.callee, s.arg_paths) {
           .Some(variant) => if variant.unique.len() > 0 {
-            key := vid.variant_canonical_string(variant)
+            key := variant.variant_canonical_string()
             prev := case by_key.get(key) {
               .Some(g) => g,
               .None => {
@@ -216,26 +218,48 @@ fn collect_groups(
 // one, so this cheap AST-level scan replaces a full seeded decision-gate pass.
 fn updatable_funcs(anf: AnfModule, b: BuiltinRegistry) Dict<Int, Bool> {
   out: Dict<Int, Bool> = Dict.new()
-  call_set := mutable_produce.update_call_candidates(anf, b)
-  for c in call_set.candidates {
+
+  // One combined pass yields update-call, record-shell, and field-backed
+  // candidates together. A function whose only mutable site is a field-backed
+  // collection quartet is still updatable. Structural filter only — no ownership
+  // proof.
+  all_cands := mutable_produce.collect_all_candidates_for(anf, b)
+  for c in all_cands.calls {
     out[c.func_id.id] = true
   }
-  rec_set := mutable_produce.record_update_candidates(anf)
-  for c in rec_set.candidates {
+  for c in all_cands.records {
+    out[c.func_id.id] = true
+  }
+  for c in all_cands.fields.candidates {
     out[c.func_id.id] = true
   }
   out
 }
 
 pub fn specialize_module(anf: AnfModule, b: BuiltinRegistry) SpecializeResult {
-  specialize_module_with_cap(anf, b, variant_cap())
+  specialize_module_with_cap(anf, b, variant_cap)
+}
+
+// Env-aware entry: codegen-path callers pass semantics whose `ref_fields` table is
+// populated from the resolver, so primitive record fields are filtered from variant
+// requirements exactly as on the analysis/test path.
+pub fn specialize_module_with_sem(anf: AnfModule, b: BuiltinRegistry, sem: OptimizerSemantics) SpecializeResult {
+  specialize_module_with_cap_sem(anf, b, sem, variant_cap)
 }
 
 // Explicit-cap entry (used by tests to exercise overflow without touching the
-// process environment). `specialize_module` delegates here with `variant_cap()`.
+// process environment). `specialize_module` delegates here with `variant_cap`.
 pub fn specialize_module_with_cap(anf: AnfModule, b: BuiltinRegistry, cap: Int) SpecializeResult {
+  specialize_module_with_cap_sem(anf, b, make_prelude_optimizer_semantics(b), cap)
+}
+
+pub fn specialize_module_with_cap_sem(
+  anf: AnfModule,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  cap: Int,
+) SpecializeResult {
   timed := spec_timings_enabled()
-  sem := make_prelude_optimizer_semantics(b)
 
   // Only the summary table + variant table are needed (never the whole-program
   // per-block ownership analysis), so build those directly rather than the full
@@ -306,11 +330,19 @@ pub fn specialize_module_with_cap(anf: AnfModule, b: BuiltinRegistry, cap: Int) 
     }
     funcs = .append(clone)
     seed := summary.seed_for_variant(ccfg, g.variant)
-    seeds = .set_clone(clone_id, variant_route.CloneSpec.{ seed_locals: seed, variant: g.variant })
+    field_seed := summary.field_seed_for_variant(ccfg, g.variant)
+    seeds = .set_clone(
+      clone_id,
+      variant_route.CloneSpec.{
+        seed_locals: seed,
+        field_seed_paths: field_seed,
+        variant: g.variant,
+      },
+    )
     for sk in g.route_sites {
       site_to_clone[sk] = clone_id
     }
-    variant_to_clone[vid.variant_canonical_string(g.variant)] = clone_id
+    variant_to_clone[g.variant.variant_canonical_string()] = clone_id
     survivors = .append(
       Group.{
         callee: g.callee,
@@ -327,7 +359,7 @@ pub fn specialize_module_with_cap(anf: AnfModule, b: BuiltinRegistry, cap: Int) 
   // site-key space, disjoint from caller sites.
   routes: Vector<variant_route.VariantRoute> = []
   for g in survivors {
-    rec := recursive_routes_for(g, view, table, vt, b, sem, variant_to_clone)
+    rec := g.recursive_routes_for(view, table, vt, b, sem, variant_to_clone)
     rec_keys: Vector<Int> = []
     for r in rec {
       site_to_clone[r.site_key] = r.target
@@ -342,7 +374,7 @@ pub fn specialize_module_with_cap(anf: AnfModule, b: BuiltinRegistry, cap: Int) 
         route_sites: g.route_sites,
         recursive_routes: rec_keys,
         fallback_reason: .None,
-        proof_debug_id: "8g:${vid.variant_canonical_string(g.variant)}",
+        proof_debug_id: "8g:${g.variant.variant_canonical_string()}",
       },
     )
   }
@@ -363,14 +395,8 @@ pub fn specialize_module_with_cap(anf: AnfModule, b: BuiltinRegistry, cap: Int) 
     }
   }
 
-  out := AnfModule.{
-    functions: routed_funcs,
-    init_func_id: anf.init_func_id,
-    extern_imports: anf.extern_imports,
-    global_monos: anf.global_monos,
-    lib_exports: anf.lib_exports,
-  }
-  SpecializeResult.{ anf: out, seeds, routes }
+  anf.functions = routed_funcs
+  SpecializeResult.{ anf, seeds, routes }
 }
 
 type RecRoute = .{ site_key: Int, target: Int }
@@ -397,8 +423,8 @@ fn recursive_routes_for(
   sited := ownership.call_uniques_sited(ccfg, table, b, sem, Dict.new(), seed)
   out: Vector<RecRoute> = []
   for s in sited {
-    case summary.select_variant_for_args(vt, s.callee, s.arg_unique) {
-      .Some(w) => case variant_to_clone.get(vid.variant_canonical_string(w)) {
+    case vt.select_variant_for_arg_paths(s.callee, s.arg_paths) {
+      .Some(w) => case variant_to_clone.get(w.variant_canonical_string()) {
         .Some(target) => out = .append(
           RecRoute.{ site_key: vid.site_key(g.clone_id, s.site_local), target },
         ),
@@ -422,7 +448,7 @@ fn overcap_routes(overflow: Vector<Group>) Vector<variant_route.VariantRoute> {
       route_sites: g.route_sites,
       recursive_routes: [],
       fallback_reason: .Some(.OverCap),
-      proof_debug_id: "8g:${vid.variant_canonical_string(g.variant)}",
+      proof_debug_id: "8g:${g.variant.variant_canonical_string()}",
     }
   }
 }
@@ -456,9 +482,7 @@ pub fn render_routes(routes: Vector<variant_route.VariantRoute>) String {
   lines: Vector<String> = ["generic -> clone [variant] sites rec verdict proof"]
   for r in routes {
     lines = .append(
-      "f${r.generic_func} -> f${r.clone_func} \"${r.clone_name}\" [${vid.variant_canonical_string(
-        r.variant,
-      )}] sites=${r.route_sites.len()} rec=${r.recursive_routes.len()} ${fallback_reason_str(
+      "f${r.generic_func} -> f${r.clone_func} \"${r.clone_name}\" [${r.variant.variant_canonical_string()}] sites=${r.route_sites.len()} rec=${r.recursive_routes.len()} ${fallback_reason_str(
         r.fallback_reason,
       )} proof=${r.proof_debug_id}",
     )

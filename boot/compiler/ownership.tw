@@ -16,7 +16,9 @@ use compiler.cfg.{
 use compiler.core_ir.{FuncId, LocalId}
 use compiler.field_facts as ff
 use compiler.mono_type.{MonoType}
-use compiler.opt.semantics.{CallSemantics, OptimizerSemantics, call_info, container_kind}
+use compiler.opt.semantics.{
+  CallSemantics, OptimizerSemantics, call_info, container_kind, sem_field_is_primitive,
+}
 use compiler.variant_id as vid
 
 pub type Ownership = { Unique, Shared, Unknown }
@@ -116,13 +118,25 @@ pub fn summary_get(t: SummaryTable, func_id: Int) Summary? {
 }
 
 // Per-call-site callee-summary selection. Given a callee func id and the
-// call-site arg_unique vector, a resolver may return an already-validated owned
-// variant summary to transfer instead of the generic summary; `.None` falls back
-// to generic. `summary.tw` builds concrete resolvers from its variant table; this
-// module stays free of variant-table types by taking the resolver as a callback.
-pub type VariantResolver = fn(Int, Vector<Bool>) Summary?
+// call-site proven path set for each argument, a resolver may return an
+// already-validated owned variant summary to transfer instead of the generic
+// summary; `.None` falls back to generic. `summary.tw` builds concrete resolvers
+// from its variant table; this module stays free of variant-table types by taking
+// the resolver as a callback.
+pub type VariantResolver = fn(Int, Vector<vid.PathSet>) Summary?
 
-pub fn generic_only_resolver(_callee: Int, _au: Vector<Bool>) Summary? {
+// Requirement-discovery counterpart for transitive field collection. The caller
+// names the single carrier param whose returned value flows from the callee; the
+// resolver may return the strongest already-validated variant summary whose
+// requirements belong only to that carrier. Real call-site selection still goes
+// through `VariantResolver` and remains proof/satisfaction based.
+pub type VariantRequirementResolver = fn(Int, Int) Summary?
+
+pub fn generic_only_resolver(_callee: Int, _paths: Vector<vid.PathSet>) Summary? {
+  .None
+}
+
+pub fn generic_only_requirement_resolver(_callee: Int, _carrier: Int) Summary? {
   .None
 }
 
@@ -419,26 +433,13 @@ fn quartet_has(q: Dict<Int, Bool>, id: Int) Bool {
 //    The live-out check is load-bearing: exit_mentions_local alone misses `out`
 //    read in a LATER block (e.g. inside a successor if-branch).
 fn transport_ok(blk: CfgBlock, scan: BlockScan, i: Int, out_id: Int, fid: Int) Bool {
-  insts := blk.instructions
-  for j in range_from(i + 1, insts.len()) {
-    op := insts[j].op
-    if is_record_get_of(op, out_id, fid) {
-      return false // a second read of out.f
-    }
-    is_sibling := case op {
-      .ARecordGet(base, f2, _) => atom_is_local(base, out_id) and f2.id != fid,
-      _ => false,
-    }
-    if is_sibling {} else if op_mentions_local(op, out_id) {
-      return false // any other mention of out (publish/store/pass/alias)
-    }
-  }
-  !exit_mentions_local(blk, out_id) and !live_contains_int(blk.exit.live, out_id)
+  transport_reason(blk, scan, i, out_id, fid) == ""
 }
 
-// Debug-render companion to transport_ok: the concrete reason a transport
-// projection was NOT licensed (empty String = licensed). Mirrors transport_ok's
-// checks in the same order so the rendered verdict matches the analysis.
+// The concrete reason a transport projection was NOT licensed (empty String =
+// licensed). This is the single source of truth for the transport proof:
+// `transport_ok` is the boolean projection of an empty reason, so the analysis
+// verdict and the debug render can never drift apart.
 fn transport_reason(blk: CfgBlock, scan: BlockScan, i: Int, out_id: Int, fid: Int) String {
   insts := blk.instructions
   for j in range_from(i + 1, insts.len()) {
@@ -3874,7 +3875,8 @@ fn transfer_call(
       .Some(cs) => st.transfer_builtin_call(result, fid, cs, args, last, sem),
       .None => {
         au := call_arg_unique(st.own, st.valid, args, last)
-        case resolve(fid.id, au) {
+        paths := st.call_arg_paths(args, au)
+        case resolve(fid.id, paths) {
           .Some(vs) => st.transfer_summarized_call(result, vs, args, last, suppress, fid.id),
           .None => case table.summary_get(fid.id) {
             .Some(s) => st.transfer_summarized_call(result, s, args, last, suppress, fid.id),
@@ -4813,7 +4815,11 @@ fn consume_moved_field_backing(moved: Dict<Int, Vector<Int>>, bid: Int, fid: Int
   }
 }
 
-type BlockVerdicts = .{ texts: Dict<Int, String>, reusable_shell: Dict<Int, Bool> }
+type BlockVerdicts = .{
+  texts: Dict<Int, String>,
+  reusable_shell: Dict<Int, Bool>,
+  field_backing_reusable: Dict<Int, Bool>,
+}
 
 fn block_verdicts(
   blk: CfgBlock,
@@ -4831,6 +4837,7 @@ fn block_verdicts(
   cc_suppress := cc.cc_suppress_set()
   verdicts: Dict<Int, String> = Dict.new()
   reusable_shell: Dict<Int, Bool> = Dict.new()
+  field_backing_reusable: Dict<Int, Bool> = Dict.new()
   moved_backing: Dict<Int, Vector<Int>> = Dict.new()
   st := entry
   for inst, i in blk.instructions {
@@ -4888,7 +4895,8 @@ fn block_verdicts(
           .None => case table.summary_get(fid.id) {
             .Some(base) => {
               au := call_arg_unique(pre.own, pre.valid, args, last)
-              selected := case resolve(fid.id, au) {
+              paths := pre.call_arg_paths(args, au)
+              selected := case resolve(fid.id, paths) {
                 .Some(vs) => vs,
                 .None => base,
               }
@@ -4924,6 +4932,7 @@ fn block_verdicts(
           .None => false,
         }
         reusable_shell[inst.anf_local.id] = pre.shell_reusable(base, last)
+        field_backing_reusable[inst.anf_local.id] = field_backing_moved
         verdicts[inst.anf_local.id] = pre.record_update_verdict(
           inst.anf_local.id,
           base,
@@ -4940,7 +4949,7 @@ fn block_verdicts(
       _ => {},
     }
   }
-  BlockVerdicts.{ texts: verdicts, reusable_shell }
+  BlockVerdicts.{ texts: verdicts, reusable_shell, field_backing_reusable }
 }
 
 // Drive the transfer over a block's straight-line instructions from its entry
@@ -5411,6 +5420,40 @@ fn seed_param_own(entry: Dict<Int, Int>, unique_seed: Dict<Int, Bool>, params: V
     }
   }
   entry
+}
+
+// Field-ownership twin of `seed_param_own`: copy a seeded field map onto each
+// parameter local present in `field_seed`, so a clone body enters with its
+// variant-owned reference-typed field paths already Unique. A no-op when
+// `field_seed` is empty (the common case: only ownership-specialized clones carry
+// field seeds).
+fn seed_param_field_own(
+  entry_field: Dict<Int, ff.FieldMap>,
+  field_seed: Dict<Int, ff.FieldMap>,
+  params: Vector<LocalId>,
+) Dict<Int, ff.FieldMap> {
+  for p in params {
+    case field_seed.get(p.id) {
+      .Some(fm) => entry_field[p.id] = fm,
+      .None => {},
+    }
+  }
+  entry_field
+}
+
+// Entry seeds for a clone's block-0 analysis: whole-value Unique params plus
+// per-param reference-typed field ownership. The field-aware entry-seed APIs carry
+// this; the legacy `Dict<Int, Bool>` APIs are wrappers with an empty `field_own`.
+pub type EntrySeedFacts = .{ unique_locals: Dict<Int, Bool>, field_own: Dict<Int, ff.FieldMap> }
+
+pub fn empty_entry_seed_facts() EntrySeedFacts {
+  EntrySeedFacts.{ unique_locals: Dict.new(), field_own: Dict.new() }
+}
+
+// Fix-cache reuse is only safe when NO entry seed is applied (a seeded clone must
+// be re-analyzed cold). True iff both the unique-local and field-own seeds are empty.
+fn entry_seed_facts_empty(facts: EntrySeedFacts) Bool {
+  facts.unique_locals.keys().len() == 0 and facts.field_own.keys().len() == 0
 }
 
 // ── Field-ownership join + change-detection ─────────────────────────
@@ -6469,10 +6512,10 @@ pub fn analyze(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) CfgVi
   analyze_with_summaries(view, b, sem, empty_summary_table())
 }
 
-fn entry_seed_for(entry_seeds: Dict<Int, Dict<Int, Bool>>, func_id: Int) Dict<Int, Bool> {
+fn entry_seed_facts_for(entry_seeds: Dict<Int, EntrySeedFacts>, func_id: Int) EntrySeedFacts {
   case entry_seeds.get(func_id) {
-    .Some(seed) => seed,
-    .None => Dict.new(),
+    .Some(facts) => facts,
+    .None => empty_entry_seed_facts(),
   }
 }
 
@@ -6503,7 +6546,7 @@ pub fn analyze_with_summaries_and_entry_seeds(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   table: SummaryTable,
-  entry_seeds: Dict<Int, Dict<Int, Bool>>,
+  entry_seeds: Dict<Int, EntrySeedFacts>,
 ) CfgView {
   analyze_with_summaries_and_entry_seeds_resolved(
     view,
@@ -6520,11 +6563,12 @@ pub fn analyze_with_summaries_and_entry_seeds_resolved(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   table: SummaryTable,
-  entry_seeds: Dict<Int, Dict<Int, Bool>>,
+  entry_seeds: Dict<Int, EntrySeedFacts>,
   resolve: VariantResolver,
 ) CfgView {
   functions := collect f in view.functions {
-    analyze_function(f, table, b, sem, entry_seed_for(entry_seeds, f.func_id), .None, resolve)
+    facts := entry_seed_facts_for(entry_seeds, f.func_id)
+    analyze_function(f, table, b, sem, facts.unique_locals, facts.field_own, .None, resolve)
   }
   CfgView.{ functions }
 }
@@ -6564,7 +6608,7 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
   sem: OptimizerSemantics,
   table: SummaryTable,
   selected: Dict<Int, Bool>,
-  entry_seeds: Dict<Int, Dict<Int, Bool>>,
+  entry_seeds: Dict<Int, EntrySeedFacts>,
   cache: FixCache,
 ) CfgView {
   timed := timings_enabled()
@@ -6575,8 +6619,8 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
         .None => false,
       }
       if should_analyze {
-        seed := entry_seed_for(entry_seeds, f.func_id)
-        cached := if seed.keys().len() == 0 {
+        facts := entry_seed_facts_for(entry_seeds, f.func_id)
+        cached := if facts.entry_seed_facts_empty() {
           cache.fix_cache_get(f.func_id)
         } else {
           .None
@@ -6586,7 +6630,8 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
           table,
           b,
           sem,
-          seed,
+          facts.unique_locals,
+          facts.field_own,
           cached,
           generic_only_resolver,
         )
@@ -6617,8 +6662,8 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
       selected_funcs = selected_funcs + 1
       selected_blocks = selected_blocks + f.blocks.len()
       selected_insts = selected_insts + block_instruction_count(f.blocks)
-      seed := entry_seed_for(entry_seeds, f.func_id)
-      cached := if seed.keys().len() == 0 {
+      facts := entry_seed_facts_for(entry_seeds, f.func_id)
+      cached := if facts.entry_seed_facts_empty() {
         cache.fix_cache_get(f.func_id)
       } else {
         .None
@@ -6633,7 +6678,16 @@ pub fn analyze_selected_with_summaries_and_entry_seeds(
       clear_ms = clear_ms + (t_clear1 - t_clear0)
       t_analyze0 := date.now()
       functions = .append(
-        analyze_function(cleared, table, b, sem, seed, cached, generic_only_resolver),
+        analyze_function(
+          cleared,
+          table,
+          b,
+          sem,
+          facts.unique_locals,
+          facts.field_own,
+          cached,
+          generic_only_resolver,
+        ),
       )
       t_analyze1 := date.now()
       analyze_ms = analyze_ms + (t_analyze1 - t_analyze0)
@@ -6668,7 +6722,7 @@ pub fn analyze_function_with_seed(
   sem: OptimizerSemantics,
   unique_seed: Dict<Int, Bool>,
 ) CfgFunction {
-  analyze_function(f, table, b, sem, unique_seed, .None, generic_only_resolver)
+  analyze_function(f, table, b, sem, unique_seed, Dict.new(), .None, generic_only_resolver)
 }
 
 // Resolver-aware twin of `analyze_function_with_seed`: used to render a variant
@@ -6681,7 +6735,7 @@ pub fn analyze_function_with_seed_resolved(
   unique_seed: Dict<Int, Bool>,
   resolve: VariantResolver,
 ) CfgFunction {
-  analyze_function(f, table, b, sem, unique_seed, .None, resolve)
+  analyze_function(f, table, b, sem, unique_seed, Dict.new(), .None, resolve)
 }
 
 pub type CallUniq = .{ callee: Int, arg_unique: Vector<Bool> }
@@ -6698,6 +6752,38 @@ pub type SitedCallUniq = .{
   callee: Int,
   args: Vector<Atom>,
   arg_unique: Vector<Bool>,
+  arg_paths: Vector<vid.PathSet>,
+}
+
+// One path set per argument. A whole-argument last-use (`arg_unique[i]`) proves
+// the shell path {[]}; on top of that, every depth-one Field the pre-call state
+// already owns Unique for that atom is added ({[], [f]}). Elem/Val/payload paths
+// are deliberately excluded in 8H: field-path claims require whole-arg last-use,
+// so a call followed by a sibling-field read stays on the generic function.
+fn call_arg_paths(pre: ForwardState, args: Vector<Atom>, arg_unique: Vector<Bool>) Vector<
+  vid.PathSet,
+> {
+  collect arg, i in args {
+    uniq := i < arg_unique.len() and arg_unique[i]
+    paths := if uniq {
+      vid.shell_set()
+    } else {
+      vid.empty_set()
+    }
+    if uniq {
+      fmap := pre.atom_field_own(arg)
+      for k in fmap.sorted_keys() {
+        p := ff.path_of_key(k)
+        if p.segs.len() == 1 {
+          case p.segs[0] {
+            .Field(f) => paths = .add(vid.field(f)),
+            _ => {},
+          }
+        }
+      }
+    }
+    paths
+  }
 }
 
 pub fn call_uniques(
@@ -6805,6 +6891,7 @@ pub fn call_uniques_sited(
                     callee: fid.id,
                     args,
                     arg_unique: au,
+                    arg_paths: pre.call_arg_paths(args, au),
                   },
                 )
               },
@@ -6978,6 +7065,7 @@ fn analyze_function(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   unique_seed: Dict<Int, Bool>,
+  field_seed: Dict<Int, ff.FieldMap>,
   cached_fx: FixResult?,
   resolve: VariantResolver,
 ) CfgFunction {
@@ -7006,6 +7094,7 @@ fn analyze_function(
     b,
     sem,
     unique_seed,
+    field_seed,
     "analyze:${f.name}",
     cached_fx,
     resolve,
@@ -7031,6 +7120,7 @@ fn ownership_stage(
   b: BuiltinRegistry,
   sem: OptimizerSemantics,
   unique_seed: Dict<Int, Bool>,
+  field_seed: Dict<Int, ff.FieldMap>,
   label: String,
   cached_fx: FixResult?,
   resolve: VariantResolver,
@@ -7097,6 +7187,9 @@ fn ownership_stage(
       entry_own = seed_param_own(entry_own, unique_seed, params)
     }
     entry_field := join_entry_field_own(blk, fx.exit_field_own, entry_own, done)
+    if blk.id.id == 0 {
+      entry_field = seed_param_field_own(entry_field, field_seed, params)
+    }
     entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
     st := ForwardState.{
       own: entry_own,
@@ -7132,6 +7225,7 @@ fn ownership_stage(
     blk.exit.field_own = st.field_own
     blk.exit.verdicts = verdicts.texts
     blk.exit.verdict_reusable_shell = verdicts.reusable_shell
+    blk.exit.verdict_field_backing_reusable = verdicts.field_backing_reusable
     blk
   }
 }
@@ -7519,6 +7613,7 @@ fn call_result_fact(
   callee: Atom,
   args: Vector<Atom>,
   resolve: VariantResolver,
+  require: VariantRequirementResolver,
 ) FlowFact {
   fid := case callee {
     .AGlobalFunc(f) => f.id,
@@ -7547,20 +7642,47 @@ fn call_result_fact(
   // whose GENERIC summary is Published still hands its field requirements back.
   // Optimistically assuming the carrier is unique here is sound because Stage 3
   // (variant_valid over the ownership transfer) proves the base_role separately.
-  au: Vector<Bool> = collect _ps, i in s.params {
-    i == carrier
+  paths: Vector<vid.PathSet> = collect _ps, i in s.params {
+    if i == carrier {
+      vid.shell_set()
+    } else {
+      vid.empty_set()
+    }
   }
-  sel := case resolve(fid, au) {
+  selected := case resolve(fid, paths) {
     .Some(vs) => vs,
     .None => s,
   }
+  required := require(fid, carrier)
+
+  // Only non-shell (reference-typed field) paths belong in `dirty`; the shell is
+  // unioned by `build_in_place_paths`. Adding shell here pollutes every carrier
+  // flow fact and cascades into far more re-summarization (see call_result_fact
+  // perf regression).
   dirty := base.dirty
-  if carrier < sel.params.len() {
-    for p in sel.params[carrier].in_place_paths.paths {
+  if carrier < s.params.len() {
+    for p in s.params[carrier].in_place_paths.paths {
       if !p.is_shell() {
         dirty = .add(p)
       }
     }
+  }
+  if carrier < selected.params.len() {
+    for p in selected.params[carrier].in_place_paths.paths {
+      if !p.is_shell() {
+        dirty = .add(p)
+      }
+    }
+  }
+  case required {
+    .Some(vs) => if carrier < vs.params.len() {
+      for p in vs.params[carrier].in_place_paths.paths {
+        if !p.is_shell() {
+          dirty = .add(p)
+        }
+      }
+    },
+    .None => {},
   }
   FlowFact.{ origin: base.origin, dirty }
 }
@@ -7572,12 +7694,27 @@ fn transfer_flow(
   op: AnfOp,
   result: Int,
   resolve: VariantResolver,
+  require: VariantRequirementResolver,
 ) Dict<Int, FlowFact> {
   case op {
-    .ARecordUpdate(base, fld, _, _, _) => {
+    .ARecordUpdate(base, fld, _, _, tid) => {
       bf := flow_get(st, base)
       st[result] = if bf.origin >= 0 {
-        FlowFact.{ origin: bf.origin, dirty: bf.dirty.add(vid.field(fld.id)) }
+        // Every returned record update consumes the record shell. Only a
+        // reference-typed field backing (separate GC heap object) adds a
+        // field-granular in-place requirement; a field the type table proves
+        // primitive is covered by shell uniqueness and must not inflate the
+        // param's field path set. Unknown fields stay conservatively kept.
+        // The shell marks that this param was record-update-consumed, so
+        // `has_mut` (dirty non-empty) flags it Consumed even when the field is
+        // primitive (e.g. `setb`'s Int field, whose field path is filtered out).
+        // The shell is not propagated onward through `call_result_fact` (which
+        // filters shell), so it stays local and does not cascade.
+        new_dirty := bf.dirty.add(vid.shell())
+        if !sem_field_is_primitive(sem, tid, fld) {
+          new_dirty = .add(vid.field(fld.id))
+        }
+        FlowFact.{ origin: bf.origin, dirty: new_dirty }
       } else {
         ff_none()
       }
@@ -7597,9 +7734,9 @@ fn transfer_flow(
       st[result] = case callee_func_id(callee) {
         .Some(fid) => case call_info(sem, fid) {
           .Some(cs) => cow_update_result_fact(st, cs, args),
-          .None => call_result_fact(st, table, callee, args, resolve),
+          .None => call_result_fact(st, table, callee, args, resolve, require),
         },
-        .None => call_result_fact(st, table, callee, args, resolve),
+        .None => call_result_fact(st, table, callee, args, resolve, require),
       }
       st
     },
@@ -7825,6 +7962,7 @@ pub fn collect_field_reqs(
   table: SummaryTable,
   sem: OptimizerSemantics,
   resolve: VariantResolver,
+  require: VariantRequirementResolver,
 ) Dict<Int, vid.PathSet> {
   live := compute_liveness_labeled(f.blocks, "field_reqs:${f.name}")
   blocks := collect blk in f.blocks {
@@ -7851,7 +7989,7 @@ pub fn collect_field_reqs(
       }
       st := entry
       for inst in blk.instructions {
-        st = transfer_flow(st, table, sem, inst.op, inst.anf_local.id, resolve)
+        st = transfer_flow(st, table, sem, inst.op, inst.anf_local.id, resolve, require)
       }
       prev := case exits.get(blk.id.id) {
         .Some(m) => m,
@@ -7920,7 +8058,16 @@ pub fn summarize_function(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
 ) Summary {
-  summarize_seeded(f, table, b, sem, suppress, Dict.new(), generic_only_resolver).summary
+  summarize_seeded(
+    f,
+    table,
+    b,
+    sem,
+    suppress,
+    Dict.new(),
+    generic_only_resolver,
+    generic_only_requirement_resolver,
+  ).summary
 }
 
 // Generic summary plus its fx and reuse eligibility. summarize_function delegates
@@ -7933,7 +8080,16 @@ pub fn summarize_function_cached(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
 ) CachedSummary {
-  r := summarize_seeded(f, table, b, sem, suppress, Dict.new(), generic_only_resolver)
+  r := summarize_seeded(
+    f,
+    table,
+    b,
+    sem,
+    suppress,
+    Dict.new(),
+    generic_only_resolver,
+    generic_only_requirement_resolver,
+  )
   CachedSummary.{ summary: r.summary, fx: r.fx, reusable: !calls_suppressed(f.blocks, suppress) }
 }
 
@@ -7954,7 +8110,16 @@ pub fn summarize_variant(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
 ) Summary {
-  summarize_variant_resolved(f, key, table, b, sem, suppress, generic_only_resolver)
+  summarize_variant_resolved(
+    f,
+    key,
+    table,
+    b,
+    sem,
+    suppress,
+    generic_only_resolver,
+    generic_only_requirement_resolver,
+  )
 }
 
 // Resolver-aware twin of `summarize_variant`: while re-analyzing this variant's
@@ -7968,6 +8133,7 @@ pub fn summarize_variant_resolved(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
   resolve: VariantResolver,
+  require: VariantRequirementResolver,
 ) Summary {
   unique_seed: Dict<Int, Bool> = Dict.new()
   for req in key {
@@ -7975,7 +8141,7 @@ pub fn summarize_variant_resolved(
       unique_seed[f.params[req.param].id] = true
     }
   }
-  summarize_seeded(f, table, b, sem, suppress, unique_seed, resolve).summary
+  summarize_seeded(f, table, b, sem, suppress, unique_seed, resolve, require).summary
 }
 
 // Call-site variant selection (Stage 4c, D4 shell-level): the VariantId a caller
@@ -8035,6 +8201,7 @@ fn summarize_seeded(
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
   resolve: VariantResolver,
+  require: VariantRequirementResolver,
 ) SeededResult {
   timed := timings_enabled()
   t0 := if timed {
@@ -8243,7 +8410,7 @@ fn summarize_seeded(
   } else {
     0.0
   }
-  field_reqs := collect_field_reqs(f, table, sem, resolve)
+  field_reqs := collect_field_reqs(f, table, sem, resolve, require)
   t_field_reqs := if timed {
     date.now()
   } else {

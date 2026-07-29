@@ -410,22 +410,48 @@ xs[i]=0; xs }`) do not publish a variant; and (b) **prelude-wrapper calls**
 Collections behind a **record field** (`s.xs[i]=v`) render `field=persistent
 (insufficient deep ownership)` and belong to **Phase 8H**, not 8G.
 
-## Codegen Phase 8H — Record-backed field collection updates
+## Codegen Phase 8H — Record-backed field collection updates — DONE
 
 This phase composes the dict/vector and record-shell slices for the compiler's
-common quartet (`record_get` → collection update → `record_update` → `assign`). It
-covers `Set<K>` wrappers, transported `out.ctx`/`out.state` records, and Case V's
-`cur.indices[...]`, `cur.stack = ...`, and similar field-backed updates.
+common quartet (`record_get` → collection update → `record_update`). It lands the
+first slice: direct, ANF-visible field-backed updates (`env.types[k] = v`,
+`st.xs[i] = v`) for both local and recursive-clone functions.
 
-- [ ] **Lower field-backed dict/vector updates only with explicit field-path
-  decisions.** The decision must name the record shell path, projected collection
-  path, old-field liveness proof, persistent fallback, and mutable collection target.
-- [ ] **Allow shell-only wins without deep field wins.** A cloned `visit` variant
-  may reuse the `State` shell while a dict/vector field update remains persistent;
-  do not require all-or-nothing lowering.
-- [ ] **Preserve sibling and nested-value safety.** Reads of disjoint sibling paths
-  are allowed only when licensed; ownership of a dict/vector backing is not
-  ownership of reference-typed values stored inside it.
+- [x] **Lower field-backed dict/vector updates only with explicit field-path
+  decisions.** `field_backing_reusable` is a **structured** verdict bit (not parsed
+  from verdict text); the produced call decision names the record shell, projected
+  collection, update result, write-back, persistent fallback, mutable target, and a
+  `phase8h:` proof id. Emitted helpers are ordinary vector/dict call swaps with a
+  non-empty `field_path_key` audit field (`twk ir --census --sites` shows
+  `record_backed_<family>`).
+- [x] **Allow shell-only wins without deep field wins.** Variant publication is
+  **dual-tier**: a shell variant (projected to shell-only paths, preserves 8G shell
+  reuse and composes through delegation) plus a full variant (exact reference-typed
+  field paths). A shell-unique caller keeps shell reuse even when the deep field
+  update stays persistent.
+- [x] **Preserve sibling and nested-value safety.** A shared sibling field does not
+  block an owned updated field; a shell reuse never mutates a shared field backing.
+  Field-path seeds come from the exact canonical `VariantId` (a unique record shell
+  never implies unique reference-typed field storage); the reference-typed field
+  table (`OptimizerSemantics.ref_fields`, built from the resolver) keeps primitive
+  fields out of variant requirements.
+
+**Deferred to a follow-up slice:**
+
+- **`Set<K>` wrappers and transported `out.ctx`/`out.state` records** are recognized
+  as record-backed dict quartets (`twk ir --census --sites` shows `record_backed_dict`),
+  but their in-place *emission* is not yet achieved: `Set` needs the prelude
+  `Set.insert` specialized for a unique receiver, and the transport shape needs
+  path-level consume-dead across a multi-level record-field projection (a sibling
+  `out.tag` read keeps `out` live). The first-slice detector requires whole-argument
+  last-use and the quartet in one straight-line `Let` chain.
+- **Field-tier recursive self-routing.** A recursive field clone (`visit$v` for
+  `[unique:p0,p0.f0]`) emits its own field-backed collection update in-place, but its
+  in-SCC recursive call currently stays on the generic function: `recursive_routes_for`
+  re-analyzes the clone under a shell-only seed, so the recursive call proves only the
+  shell tier. Field-aware recursive-route seeding (threading `field_seed_for_variant`
+  through `call_uniques_sited` and the ownership fixpoint) is the follow-up; the
+  emitted program stays correct (later iterations use the persistent path).
 
 ## Codegen Phase 8I — Codegen-track verification gate
 

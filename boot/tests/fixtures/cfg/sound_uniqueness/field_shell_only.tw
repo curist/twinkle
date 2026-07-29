@@ -1,0 +1,9 @@
+pub type Env = .{ types: Dict<Int, Int>, values: Dict<Int, Int> }
+
+pub fn replace_shared_field(shared: Dict<Int, Int>, fresh: Dict<Int, Int>) Env {
+  env := Env.{ types: shared, values: shared }
+  env.types = fresh
+  env
+}
+
+println(replace_shared_field(Dict.new(), Dict.new()).types.len().to_string())

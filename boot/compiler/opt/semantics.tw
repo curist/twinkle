@@ -10,7 +10,8 @@ use compiler.builder_family.{
   BuilderConfig, empty_builder_config, string_builder_config, vector_builder_config,
 }
 use compiler.builtins.{BuiltinRegistry}
-use compiler.core_ir.{FuncId, LocalId}
+use compiler.core_ir.{FieldId, FuncId, LocalId}
+use compiler.mono_type.{TypeId}
 
 pub type CowOpEntry = .{ base_arg: Int, in_place_id: FuncId? }
 
@@ -50,6 +51,35 @@ pub type OptimizerSemantics = .{
   builder: BuilderConfig,
   string_builder: BuilderConfig,
   container_kinds: Dict<Int, Int>,
+  // record TypeId.id -> (field index -> is-reference-typed). Empty means "unknown",
+  // treated as primitive: the ownership dirty-path analysis then only claims a
+  // record field as a field-granular in-place requirement when the field is a
+  // reference-typed (separate GC heap) backing. Populated from the resolver's type
+  // table via `with_ref_fields` on the codegen/inspection paths; left empty on
+  // analysis-only paths where field-granular variant keys are not published.
+  ref_fields: Dict<Int, Dict<Int, Bool>>,
+}
+
+// Attach a reference-typed-field table (see `build_ref_field_table`) to `sem`.
+pub fn with_ref_fields(sem: OptimizerSemantics, ref_fields: Dict<Int, Dict<Int, Bool>>) OptimizerSemantics {
+  sem.ref_fields = ref_fields
+  sem
+}
+
+// Whether field `fld` of record type `tid` is KNOWN to be a scalar primitive
+// stored inline in the struct. Only an explicit `false` (not-reference) entry
+// answers true; an absent record or field answers false ("unknown"). This makes
+// the ownership dirty-path gate conservative: a field path is dropped only when
+// the type table proves the field primitive, so an unpopulated `ref_fields`
+// (analysis-only paths) keeps every field path exactly as before.
+pub fn sem_field_is_primitive(sem: OptimizerSemantics, tid: TypeId, fld: FieldId) Bool {
+  case sem.ref_fields.get(tid.id) {
+    .Some(m) => case m.get(fld.id) {
+      .Some(is_ref) => !is_ref,
+      .None => false,
+    },
+    .None => false,
+  }
 }
 
 fn control_call() CallSemantics {
@@ -78,6 +108,7 @@ pub fn empty_optimizer_semantics() OptimizerSemantics {
     builder: empty_builder_config(),
     string_builder: empty_builder_config(),
     container_kinds: Dict.new(),
+    ref_fields: Dict.new(),
   }
 }
 
@@ -220,7 +251,13 @@ pub fn make_prelude_optimizer_semantics(b: BuiltinRegistry) OptimizerSemantics {
   container_kinds[b.id("vector$set_unsafe").id] = 1
   container_kinds[builder.push_id.id] = 1
   container_kinds[b.method_id("Dict", "set").id] = 2
-  OptimizerSemantics.{ call_semantics: calls, builder, string_builder, container_kinds }
+  OptimizerSemantics.{
+    call_semantics: calls,
+    builder,
+    string_builder,
+    container_kinds,
+    ref_fields: Dict.new(),
+  }
 }
 
 pub fn container_kind(sem: OptimizerSemantics, fid: FuncId) ContainerKind {
@@ -315,6 +352,7 @@ pub fn optimizer_semantics_from_cow_config(config: CowConfig) OptimizerSemantics
     builder: config.builder,
     string_builder: config.string_builder,
     container_kinds: Dict.new(),
+    ref_fields: Dict.new(),
   }
 }
 

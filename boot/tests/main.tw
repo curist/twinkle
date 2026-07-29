@@ -22,6 +22,7 @@ use .suites.backend_verify_suite
 use .suites.base_env_guardrail_suite
 use .suites.builder_region_suite
 use .suites.variant_specialize_suite
+use .suites.field_backed_collection_suite
 use .suites.builtin_identity_collision_suite
 use .suites.builtins_canonical_suite
 use .suites.builtins_suite
@@ -304,4 +305,5 @@ runner.run_all([
   dry_run_suite.suite(),
   builder_region_suite.suite(),
   variant_specialize_suite.suite(),
+  field_backed_collection_suite.suite(),
 ])

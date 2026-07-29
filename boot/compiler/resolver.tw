@@ -293,6 +293,43 @@ pub fn record_info(env: ResolvedEnv, tid: TypeId) RecordInfo? {
   }
 }
 
+// A record field is reference-typed (a separate GC heap object: String, Vector,
+// Dict, record, closure, Optional, …) unless it is a scalar primitive stored
+// inline in the struct. Generic (`Var`) fields are boxed anyref in the struct, so
+// they count as reference-typed. Mirrors `scalar_result_ty` in ownership.tw.
+fn field_ty_is_reference(ty: MonoType) Bool {
+  case ty {
+    .Int => false,
+    .Float => false,
+    .Bool => false,
+    .Byte => false,
+    .Void => false,
+    .Never => false,
+    _ => true,
+  }
+}
+
+// Table: record TypeId.id -> (field index -> is-reference-typed), covering every
+// record type in `env`. Consumed by the ownership dirty-path analysis (via
+// `OptimizerSemantics.ref_fields`) so a primitive-field record update is not
+// mistaken for a field-granular reference-backing in-place requirement.
+pub fn build_ref_field_table(env: ResolvedEnv) Dict<Int, Dict<Int, Bool>> {
+  out: Dict<Int, Dict<Int, Bool>> = Dict.new()
+  for entry in env.types {
+    case entry.def {
+      .Some(.Record(_name, _params, fields)) => {
+        fmap: Dict<Int, Bool> = Dict.new()
+        for f, i in fields {
+          fmap[i] = field_ty_is_reference(f.ty)
+        }
+        out[entry.id.id] = fmap
+      },
+      _ => {},
+    }
+  }
+  out
+}
+
 pub fn lookup_registered_type(env: ResolvedEnv, name: String) TypeEntry? {
   case env.type_index[name] {
     .Some(i) => .Some(env.types[i]),

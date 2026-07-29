@@ -41,6 +41,7 @@ pub type BlockFacts = .{
   field_own: Dict<Int, ff.FieldMap>,
   verdicts: Dict<Int, String>,
   verdict_reusable_shell: Dict<Int, Bool>,
+  verdict_field_backing_reusable: Dict<Int, Bool>,
 }
 
 pub fn empty_block_facts() BlockFacts {
@@ -51,6 +52,7 @@ pub fn empty_block_facts() BlockFacts {
     field_own: Dict.new(),
     verdicts: Dict.new(),
     verdict_reusable_shell: Dict.new(),
+    verdict_field_backing_reusable: Dict.new(),
   }
 }
 

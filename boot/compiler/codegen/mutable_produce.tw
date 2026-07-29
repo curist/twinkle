@@ -15,7 +15,7 @@ use compiler.codegen.ownership_verdicts
 use compiler.codegen.variant_route
 use compiler.core_ir.{FieldId, FuncId, LocalId}
 use compiler.mono_type.{TypeId}
-use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+use compiler.opt.semantics.{OptimizerSemantics, make_prelude_optimizer_semantics}
 
 fn timings_enabled() Bool {
   case proc.env("TWINKLE_TIMINGS") {
@@ -347,7 +347,11 @@ fn produce_record_decisions_from_validated_verdicts(
     key := "${c.func_id.id}#${c.result.id}"
     verdict := case verdicts.get(key) {
       .Some(v) => v,
-      .None => ownership_verdicts.SiteVerdict.{ text: "-", reusable_shell: false },
+      .None => ownership_verdicts.SiteVerdict.{
+        text: "-",
+        reusable_shell: false,
+        field_backing_reusable: false,
+      },
     }
 
     row: DecisionRenderRow = if verdict.reusable_shell {
@@ -412,7 +416,19 @@ pub fn produce_record_update_decisions_with_artifacts(
   opt: AnfModule,
   artifacts: ownership_verdicts.OwnershipArtifacts,
 ) ProducedDecisions {
-  set := record_update_candidates(opt)
+  record_update_candidates(opt).produce_record_from_set(
+    artifacts,
+    ownership_verdicts.artifact_key_for_anf(opt),
+  )
+}
+
+// Join a pre-built record-shell candidate set with the artifacts, using a caller-
+// supplied `expected` key (see `produce_field_backed_from_set`).
+fn produce_record_from_set(
+  set: RecordCandidateSet,
+  artifacts: ownership_verdicts.OwnershipArtifacts,
+  expected: ownership_verdicts.ArtifactKey,
+) ProducedDecisions {
   if set.candidates.len() == 0 {
     return ProducedDecisions.{
       table: mutable_select.empty_decision_table(),
@@ -421,7 +437,6 @@ pub fn produce_record_update_decisions_with_artifacts(
     }
   }
 
-  expected := ownership_verdicts.artifact_key_for_anf(opt)
   if !expected.same_artifact_key(artifacts.key) {
     return ProducedDecisions.{
       table: mutable_select.empty_decision_table(),
@@ -475,9 +490,29 @@ pub fn produce_mutable_decisions_seeded(
   b: BuiltinRegistry,
   owned_seeds: variant_route.OwnedSeedTable,
 ) ProducedDecisions {
-  call_set := update_call_candidates(opt, b)
-  record_set := record_update_candidates(opt)
-  if call_set.candidates.len() == 0 and record_set.candidates.len() == 0 {
+  produce_mutable_decisions_seeded_with_sem(
+    opt,
+    b,
+    owned_seeds,
+    make_prelude_optimizer_semantics(b),
+  )
+}
+
+// Env-aware seeded producer: codegen-path callers pass semantics whose `ref_fields`
+// table is populated, so ownership artifacts classify record fields identically to
+// the analysis/test path.
+pub fn produce_mutable_decisions_seeded_with_sem(
+  opt: AnfModule,
+  b: BuiltinRegistry,
+  owned_seeds: variant_route.OwnedSeedTable,
+  sem: OptimizerSemantics,
+) ProducedDecisions {
+  all_cands := collect_all_candidates_for(opt, b)
+  call_set := CandidateSet.{ candidates: all_cands.calls }
+  record_set := RecordCandidateSet.{ candidates: all_cands.records }
+  fb_set := all_cands.fields
+  if call_set.candidates.len() == 0
+    and record_set.candidates.len() == 0 and fb_set.candidates.len() == 0 {
     return ProducedDecisions.{
       table: mutable_select.empty_decision_table(),
       rows: [],
@@ -485,8 +520,10 @@ pub fn produce_mutable_decisions_seeded(
     }
   }
 
-  sem := make_prelude_optimizer_semantics(b)
   roots := merge_roots(call_set.candidate_func_roots(), record_set.record_candidate_func_roots())
+  for fid, _flag in fb_set.field_backed_candidate_func_roots() {
+    roots[fid] = true
+  }
   for fid, _spec in owned_seeds.by_func {
     roots[fid] = true
   }
@@ -498,9 +535,17 @@ pub fn produce_mutable_decisions_seeded(
     owned_seeds,
   )
 
-  call_produced := produce_update_call_decisions_with_artifacts(opt, b, artifacts)
-  record_produced := produce_record_update_decisions_with_artifacts(opt, artifacts)
-  merged := call_produced.merge_produced(record_produced)
+  // Compute the ANF fingerprint once and reuse the candidate sets already built
+  // above, so the three producers neither re-walk the module nor re-hash the ANF.
+  expected := ownership_verdicts.artifact_key_for_anf(opt)
+
+  // Field-backed decisions first, then ordinary call decisions excluding the
+  // sites those already claimed, then record-shell decisions.
+  fb_produced := fb_set.produce_field_backed_from_set(b, artifacts, expected)
+  exclude := fb_produced.field_backed_accepted_site_keys()
+  call_produced := call_set.produce_update_call_from_set(b, artifacts, expected, exclude)
+  record_produced := record_set.produce_record_from_set(artifacts, expected)
+  merged := fb_produced.merge_produced(call_produced).merge_produced(record_produced)
   ProducedDecisions.{
     table: stamp_variant_keys(merged.table, owned_seeds),
     rows: merged.rows,
@@ -561,6 +606,574 @@ fn candidate_func_roots(set: CandidateSet) Dict<Int, Bool> {
     roots[c.func_id.id] = true
   }
   roots
+}
+
+// ── Phase 8H: field-backed collection update quartets ────────────────
+// A record field whose reference-typed backing is projected out, updated by a
+// COW collection helper, and written back into the same record field, all within
+// one straight-line `Let` chain:
+//   Lproj = ARecordGet(Lrecord, F, T)
+//   Lupd  = ACall(persistent vector/dict update, base = Lproj)
+//   Lrec  = ARecordUpdate(Lrecord, F, Lupd, T)
+// `family`/`base_arg_index`/`decision_family`/`persistent_func`/`mutable_func`
+// ride along from the catalog entry exactly as for an ordinary update-call
+// candidate; the extra fields name the record shell, projection, and write-back
+// so a decision can be keyed to the collection update site.
+pub type FieldBackedCandidate = .{
+  func_id: FuncId,
+  func: String,
+  record_base: LocalId,
+  projected_collection: LocalId,
+  update_result: LocalId,
+  record_update_result: LocalId,
+  tid: TypeId,
+  fid: FieldId,
+  field_path_key: String,
+  arg_count: Int,
+  family: String,
+  base_arg_index: Int,
+  decision_family: mutable_select.OperationFamily,
+  persistent_func: FuncId,
+  mutable_func: FuncId,
+  loop_depth: Int,
+}
+
+pub type FieldBackedCandidateSet = .{ candidates: Vector<FieldBackedCandidate> }
+
+type ProjectionInfo = .{
+  record_base: LocalId,
+  tid: TypeId,
+  fid: FieldId,
+  projected: LocalId,
+  loop_depth: Int,
+}
+
+type PendingUpdate = .{
+  proj: ProjectionInfo,
+  target: UpdateCallTarget,
+  persistent_func: FuncId,
+  arg_count: Int,
+}
+
+// Block-local projection/pending maps plus the globally-accumulating candidate
+// list. Nested control-flow bodies get fresh projection/pending maps (a quartet
+// must be visible in one straight-line chain), but candidates accumulate across
+// the whole function.
+type FbState = .{
+  proj: Dict<Int, ProjectionInfo>,
+  pending: Dict<Int, PendingUpdate>,
+  cands: Vector<FieldBackedCandidate>,
+}
+
+fn fb_fresh(st: FbState) FbState {
+  FbState.{ proj: Dict.new(), pending: Dict.new(), cands: st.cands }
+}
+
+fn fb_walk_op(
+  op: AnfOp,
+  result: LocalId,
+  func_id: FuncId,
+  func: String,
+  loop_depth: Int,
+  st: FbState,
+  cat: mutable_catalog.MutableCatalog,
+) FbState {
+  case op {
+    .ARecordGet(base, fid, tid) => case atom_local(base) {
+      .Some(rb) => {
+        st.proj[result.id] = ProjectionInfo.{
+          record_base: rb,
+          tid,
+          fid,
+          projected: result,
+          loop_depth,
+        }
+        st
+      },
+      .None => st,
+    },
+    .ACall(callee, args) => case callee {
+      .AGlobalFunc(fid) => case cat.entry_for_persistent(fid) {
+        .Some(entry) => case update_call_target(entry, args) {
+          .Some(t) => case st.proj.get(t.base.id) {
+            .Some(proj) => {
+              st.pending[result.id] = PendingUpdate.{
+                proj,
+                target: t,
+                persistent_func: fid,
+                arg_count: args.len(),
+              }
+              st
+            },
+            .None => st,
+          },
+          .None => st,
+        },
+        .None => st,
+      },
+      _ => st,
+    },
+    .ARecordUpdate(base, fid, value, _in_place, tid) => case atom_local(base) {
+      .Some(rb) => case atom_local(value) {
+        .Some(upd) => case st.pending.get(upd.id) {
+          .Some(pu) => if pu.proj.record_base.id == rb.id
+            and pu.proj.fid.id == fid.id and pu.proj.tid.id == tid.id {
+            st.cands = .append(
+              FieldBackedCandidate.{
+                func_id,
+                func,
+                record_base: rb,
+                projected_collection: pu.proj.projected,
+                update_result: upd,
+                record_update_result: result,
+                tid,
+                fid,
+                field_path_key: record_field_path_key(tid, fid),
+                arg_count: pu.arg_count,
+                family: pu.target.family,
+                base_arg_index: pu.target.base_arg_index,
+                decision_family: pu.target.decision_family,
+                persistent_func: pu.persistent_func,
+                mutable_func: pu.target.mutable_func,
+                loop_depth: pu.proj.loop_depth,
+              },
+            )
+            st
+          } else {
+            st
+          },
+          .None => st,
+        },
+        .None => st,
+      },
+      .None => st,
+    },
+    .AIf(_, then_e, else_e) => {
+      // Nested branches get fresh projection/pending maps (a quartet must be
+      // straight-line-visible); candidates accumulate back onto `st`.
+      st.cands = fb_walk_expr(then_e, func_id, func, loop_depth, st.fb_fresh(), cat).cands
+      st.cands = fb_walk_expr(else_e, func_id, func, loop_depth, st.fb_fresh(), cat).cands
+      st
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        st.cands = fb_walk_expr(arm.body, func_id, func, loop_depth, st.fb_fresh(), cat).cands
+      }
+      st
+    },
+    .ALoop(body) => {
+      st.cands = fb_walk_expr(body, func_id, func, loop_depth + 1, st.fb_fresh(), cat).cands
+      st
+    },
+    .ADefer(body) => {
+      st.cands = fb_walk_expr(body, func_id, func, loop_depth, st.fb_fresh(), cat).cands
+      st
+    },
+    _ => st,
+  }
+}
+
+fn fb_walk_expr(
+  expr: AnfExpr,
+  func_id: FuncId,
+  func: String,
+  loop_depth: Int,
+  st: FbState,
+  cat: mutable_catalog.MutableCatalog,
+) FbState {
+  case expr {
+    .Let(local, op, body) => {
+      after := fb_walk_op(op, local, func_id, func, loop_depth, st, cat)
+      fb_walk_expr(body, func_id, func, loop_depth, after, cat)
+    },
+    _ => st,
+  }
+}
+
+pub fn field_backed_collection_candidates(opt: AnfModule, b: BuiltinRegistry) FieldBackedCandidateSet {
+  sem := make_prelude_optimizer_semantics(b)
+  cat := mutable_catalog.build(b, sem)
+  cands: Vector<FieldBackedCandidate> = []
+  for f in opt.functions {
+    st := fb_walk_expr(
+      f.body,
+      f.func_id,
+      f.name,
+      0,
+      FbState.{ proj: Dict.new(), pending: Dict.new(), cands },
+      cat,
+    )
+    cands = st.cands
+  }
+  FieldBackedCandidateSet.{ candidates: cands }
+}
+
+fn field_backed_candidate_keys(set: FieldBackedCandidateSet) Dict<String, Bool> {
+  keys: Dict<String, Bool> = Dict.new()
+  for c in set.candidates {
+    keys["${c.func_id.id}#${c.record_update_result.id}"] = true
+  }
+  keys
+}
+
+fn field_backed_candidate_func_roots(set: FieldBackedCandidateSet) Dict<Int, Bool> {
+  roots: Dict<Int, Bool> = Dict.new()
+  for c in set.candidates {
+    roots[c.func_id.id] = true
+  }
+  roots
+}
+
+fn field_backed_stale_rows(candidates: Vector<FieldBackedCandidate>) Vector<DecisionRenderRow> {
+  rows: Vector<DecisionRenderRow> = []
+  for c in candidates {
+    rows = .append(
+      DecisionRenderRow.{
+        func: c.func,
+        local: c.update_result.id,
+        family: "record_backed_${c.family}",
+        persistent: "-",
+        mutable: "-",
+        state: "ignored",
+        reason: "persistent fallback: stale ownership artifact",
+        proof: "-",
+      },
+    )
+  }
+  rows
+}
+
+// ── Single-pass combined candidate collection ───────────────────────
+// `update_call_candidates`, `record_update_candidates`, and
+// `field_backed_collection_candidates` each walk the whole module with the same
+// `Let`/`AIf`/`AMatch`/`ALoop`/`ADefer` skeleton. Consumers that need all three
+// (the seeded decision producer and the specializer's `updatable_funcs`) would
+// otherwise traverse the module three times and rebuild the catalog twice. This
+// collector produces every kind in one pass, yielding vectors byte-identical to
+// the three dedicated walks (same op order, same catalog). The single-kind
+// entry points remain for callers that want just one kind. Keep the per-op logic
+// here in sync with `walk_op`, `record_walk_op`, and `fb_walk_op`.
+pub type AllCandidates = .{
+  calls: Vector<Candidate>,
+  records: Vector<RecordCandidate>,
+  fields: FieldBackedCandidateSet,
+}
+
+// Whole-function candidate accumulators plus the field-backed detector's
+// block-local projection/pending maps (reset on nested control flow, exactly as
+// `fb_walk_*`, since a quartet must be visible in one straight-line `Let` chain).
+type ScanState = .{
+  calls: Vector<Candidate>,
+  records: Vector<RecordCandidate>,
+  fields: Vector<FieldBackedCandidate>,
+  proj: Dict<Int, ProjectionInfo>,
+  pending: Dict<Int, PendingUpdate>,
+}
+
+// Reset the block-local projection/pending maps for a nested scope while carrying
+// the whole-function accumulators forward.
+fn scan_reset(st: ScanState) ScanState {
+  st.proj = Dict.new()
+  st.pending = Dict.new()
+  st
+}
+
+// Restore the outer block-local maps after a nested scope, keeping accumulators.
+fn scan_restore(inner: ScanState, outer: ScanState) ScanState {
+  inner.proj = outer.proj
+  inner.pending = outer.pending
+  inner
+}
+
+fn scan_op(
+  op: AnfOp,
+  result: LocalId,
+  func_id: FuncId,
+  func: String,
+  loop_depth: Int,
+  st: ScanState,
+  cat: mutable_catalog.MutableCatalog,
+) ScanState {
+  case op {
+    // Field-backed detector: record the projected field backing.
+    .ARecordGet(base, fid, tid) => case atom_local(base) {
+      .Some(rb) => {
+        st.proj[result.id] = ProjectionInfo.{
+          record_base: rb,
+          tid,
+          fid,
+          projected: result,
+          loop_depth,
+        }
+        st
+      },
+      .None => st,
+    },
+    .ACall(callee, args) => case callee {
+      .AGlobalFunc(fid) => case cat.entry_for_persistent(fid) {
+        .Some(entry) => case update_call_target(entry, args) {
+          .Some(t) => {
+            // Ordinary update-call candidate.
+            st.calls = .append(
+              Candidate.{
+                func_id,
+                func,
+                result,
+                base: t.base,
+                arg_count: args.len(),
+                family: t.family,
+                base_arg_index: t.base_arg_index,
+                decision_family: t.decision_family,
+                persistent_func: fid,
+                mutable_func: t.mutable_func,
+                loop_depth,
+              },
+            )
+
+            // Field-backed detector: pending update on a projected local.
+            case st.proj.get(t.base.id) {
+              .Some(proj) => st.pending[result.id] = PendingUpdate.{
+                proj,
+                target: t,
+                persistent_func: fid,
+                arg_count: args.len(),
+              },
+              .None => {},
+            }
+            st
+          },
+          .None => st,
+        },
+        .None => st,
+      },
+      _ => st,
+    },
+    .ARecordUpdate(base, fid, value, _in_place, tid) => {
+      // Record-shell candidate.
+      case atom_local(base) {
+        .Some(bl) => st.records = .append(
+          RecordCandidate.{
+            func_id,
+            func,
+            result,
+            base: bl,
+            tid,
+            fid,
+            field_path_key: record_field_path_key(tid, fid),
+            loop_depth,
+          },
+        ),
+        .None => {},
+      }
+
+      // Field-backed candidate: write-back closes a projected/updated quartet.
+      case atom_local(base) {
+        .Some(rb) => case atom_local(value) {
+          .Some(upd) => case st.pending.get(upd.id) {
+            .Some(pu) => if pu.proj.record_base.id == rb.id
+              and pu.proj.fid.id == fid.id and pu.proj.tid.id == tid.id {
+              st.fields = .append(
+                FieldBackedCandidate.{
+                  func_id,
+                  func,
+                  record_base: rb,
+                  projected_collection: pu.proj.projected,
+                  update_result: upd,
+                  record_update_result: result,
+                  tid,
+                  fid,
+                  field_path_key: record_field_path_key(tid, fid),
+                  arg_count: pu.arg_count,
+                  family: pu.target.family,
+                  base_arg_index: pu.target.base_arg_index,
+                  decision_family: pu.target.decision_family,
+                  persistent_func: pu.persistent_func,
+                  mutable_func: pu.target.mutable_func,
+                  loop_depth: pu.proj.loop_depth,
+                },
+              )
+            },
+            .None => {},
+          },
+          .None => {},
+        },
+        .None => {},
+      }
+      st
+    },
+    .AIf(_, then_e, else_e) => {
+      after_then := scan_expr(then_e, func_id, func, loop_depth, st.scan_reset(), cat)
+      after_else := scan_expr(else_e, func_id, func, loop_depth, after_then.scan_reset(), cat)
+      after_else.scan_restore(st)
+    },
+    .AMatch(_, arms) => {
+      acc := st
+      for arm in arms {
+        acc = scan_expr(arm.body, func_id, func, loop_depth, acc.scan_reset(), cat)
+      }
+      acc.scan_restore(st)
+    },
+    .ALoop(body) => scan_expr(body, func_id, func, loop_depth + 1, st.scan_reset(), cat).scan_restore(
+      st,
+    ),
+    .ADefer(body) => scan_expr(body, func_id, func, loop_depth, st.scan_reset(), cat).scan_restore(
+      st,
+    ),
+    _ => st,
+  }
+}
+
+fn scan_expr(
+  expr: AnfExpr,
+  func_id: FuncId,
+  func: String,
+  loop_depth: Int,
+  st: ScanState,
+  cat: mutable_catalog.MutableCatalog,
+) ScanState {
+  case expr {
+    .Let(local, op, body) => {
+      after := scan_op(op, local, func_id, func, loop_depth, st, cat)
+      scan_expr(body, func_id, func, loop_depth, after, cat)
+    },
+    _ => st,
+  }
+}
+
+fn collect_all_candidates(opt: AnfModule, cat: mutable_catalog.MutableCatalog) AllCandidates {
+  st := ScanState.{ calls: [], records: [], fields: [], proj: Dict.new(), pending: Dict.new() }
+  for f in opt.functions {
+    st = scan_expr(f.body, f.func_id, f.name, 0, st.scan_reset(), cat)
+  }
+  AllCandidates.{
+    calls: st.calls,
+    records: st.records,
+    fields: FieldBackedCandidateSet.{ candidates: st.fields },
+  }
+}
+
+pub fn collect_all_candidates_for(opt: AnfModule, b: BuiltinRegistry) AllCandidates {
+  sem := make_prelude_optimizer_semantics(b)
+  collect_all_candidates(opt, mutable_catalog.build(b, sem))
+}
+
+// Join field-backed quartets with the record-update site's structured
+// `field_backing_reusable` verdict. When true, emit an ordinary call-swap
+// `MutableDecision` at the collection update site (family stays the real
+// vector/dict call family, so the existing call selector emits its in-place
+// helper); otherwise render a persistent-fallback row with the concrete reason.
+fn produce_field_backed_from_verdicts(
+  candidates: Vector<FieldBackedCandidate>,
+  b: BuiltinRegistry,
+  verdicts: Dict<String, ownership_verdicts.SiteVerdict>,
+  artifact_computed: Bool,
+) ProducedDecisions {
+  table := mutable_select.empty_decision_table()
+  rows: Vector<DecisionRenderRow> = []
+  for c in candidates {
+    key := "${c.func_id.id}#${c.record_update_result.id}"
+    verdict := case verdicts.get(key) {
+      .Some(v) => v,
+      .None => ownership_verdicts.SiteVerdict.{
+        text: "-",
+        reusable_shell: false,
+        field_backing_reusable: false,
+      },
+    }
+    persistent_name := name_of(b, c.persistent_func)
+    mutable_name := name_of(b, c.mutable_func)
+    row: DecisionRenderRow = if verdict.field_backing_reusable {
+      proof_id := "phase8h:${c.func}:record L${c.record_base.id}.f${c.fid.id}:get L${c.projected_collection.id}:update L${c.update_result.id}:write L${c.record_update_result.id}"
+      table = .with_decision(
+        mutable_select.MutableDecision.{
+          site: mutable_select.Site.{ func: c.func_id, local: c.update_result },
+          family: c.decision_family,
+          source_local: c.projected_collection,
+          result_local: c.update_result,
+          arg_count: c.arg_count,
+          base_arg_index: .Some(c.base_arg_index),
+          persistent_func: .Some(c.persistent_func),
+          mutable_func: .Some(c.mutable_func),
+          variant_key: .None,
+          field_path_key: c.field_path_key,
+          proof_debug_id: proof_id,
+        },
+      )
+      DecisionRenderRow.{
+        func: c.func,
+        local: c.update_result.id,
+        family: "record_backed_${c.family}",
+        persistent: persistent_name,
+        mutable: mutable_name,
+        state: "candidate",
+        reason: "field-backed decision produced",
+        proof: proof_id,
+      }
+    } else {
+      DecisionRenderRow.{
+        func: c.func,
+        local: c.update_result.id,
+        family: "record_backed_${c.family}",
+        persistent: persistent_name,
+        mutable: mutable_name,
+        state: "ignored",
+        reason: "persistent fallback: no structured field proof",
+        proof: verdict.text,
+      }
+    }
+    rows = .append(row)
+  }
+  ProducedDecisions.{ table, rows, artifact_computed }
+}
+
+pub fn produce_field_backed_collection_decisions_with_artifacts(
+  opt: AnfModule,
+  b: BuiltinRegistry,
+  artifacts: ownership_verdicts.OwnershipArtifacts,
+) ProducedDecisions {
+  field_backed_collection_candidates(opt, b).produce_field_backed_from_set(
+    b,
+    artifacts,
+    ownership_verdicts.artifact_key_for_anf(opt),
+  )
+}
+
+// Join a pre-built field-backed candidate set with the artifacts, using a caller-
+// supplied `expected` key so the orchestrator can compute candidates and the ANF
+// fingerprint once and share them across all three producers.
+fn produce_field_backed_from_set(
+  set: FieldBackedCandidateSet,
+  b: BuiltinRegistry,
+  artifacts: ownership_verdicts.OwnershipArtifacts,
+  expected: ownership_verdicts.ArtifactKey,
+) ProducedDecisions {
+  if set.candidates.len() == 0 {
+    return ProducedDecisions.{
+      table: mutable_select.empty_decision_table(),
+      rows: [],
+      artifact_computed: false,
+    }
+  }
+  if !expected.same_artifact_key(artifacts.key) {
+    return ProducedDecisions.{
+      table: mutable_select.empty_decision_table(),
+      rows: field_backed_stale_rows(set.candidates),
+      artifact_computed: false,
+    }
+  }
+  vt := artifacts.verdicts_for_keys(set.field_backed_candidate_keys())
+  produce_field_backed_from_verdicts(set.candidates, b, vt.by_key, true)
+}
+
+// The `site_key`s already claimed by accepted field-backed decisions, so the
+// ordinary call producer can skip the same collection-update call and avoid a
+// duplicate decision at that site (which the selector would treat as Ambiguous).
+fn field_backed_accepted_site_keys(fb: ProducedDecisions) Dict<Int, Bool> {
+  keys: Dict<Int, Bool> = Dict.new()
+  for k, _ds in fb.table.by_site {
+    keys[k] = true
+  }
+  keys
 }
 
 /// Default Phase 8A production: scopes ownership analysis to the mutable
@@ -656,7 +1269,35 @@ pub fn produce_update_call_decisions_with_artifacts(
   b: BuiltinRegistry,
   artifacts: ownership_verdicts.OwnershipArtifacts,
 ) ProducedDecisions {
-  set := update_call_candidates(opt, b)
+  produce_update_call_decisions_with_artifacts_excluding(opt, b, artifacts, Dict.new())
+}
+
+// Like `produce_update_call_decisions_with_artifacts`, but skips any call whose
+// `site_key` is already claimed by an accepted field-backed decision (Phase 8H),
+// so the same collection-update call never produces two decisions at one site.
+pub fn produce_update_call_decisions_with_artifacts_excluding(
+  opt: AnfModule,
+  b: BuiltinRegistry,
+  artifacts: ownership_verdicts.OwnershipArtifacts,
+  exclude_sites: Dict<Int, Bool>,
+) ProducedDecisions {
+  update_call_candidates(opt, b).produce_update_call_from_set(
+    b,
+    artifacts,
+    ownership_verdicts.artifact_key_for_anf(opt),
+    exclude_sites,
+  )
+}
+
+// Join a pre-built update-call candidate set with the artifacts, using a caller-
+// supplied `expected` key (see `produce_field_backed_from_set`).
+fn produce_update_call_from_set(
+  set: CandidateSet,
+  b: BuiltinRegistry,
+  artifacts: ownership_verdicts.OwnershipArtifacts,
+  expected: ownership_verdicts.ArtifactKey,
+  exclude_sites: Dict<Int, Bool>,
+) ProducedDecisions {
   if set.candidates.len() == 0 {
     return ProducedDecisions.{
       table: mutable_select.empty_decision_table(),
@@ -665,7 +1306,6 @@ pub fn produce_update_call_decisions_with_artifacts(
     }
   }
 
-  expected := ownership_verdicts.artifact_key_for_anf(opt)
   if !expected.same_artifact_key(artifacts.key) {
     return ProducedDecisions.{
       table: mutable_select.empty_decision_table(),
@@ -675,7 +1315,13 @@ pub fn produce_update_call_decisions_with_artifacts(
   }
 
   vt := artifacts.verdicts_for_keys(set.candidate_keys())
-  produce_update_call_decisions_from_validated_verdicts(set.candidates, b, vt.by_key, true)
+  produce_update_call_decisions_from_validated_verdicts(
+    set.candidates,
+    b,
+    vt.by_key,
+    true,
+    exclude_sites,
+  )
 }
 
 // Join update-call candidates with already-validated ownership verdicts. A
@@ -688,15 +1334,29 @@ fn produce_update_call_decisions_from_validated_verdicts(
   b: BuiltinRegistry,
   verdicts: Dict<String, ownership_verdicts.SiteVerdict>,
   artifact_computed: Bool,
+  exclude_sites: Dict<Int, Bool>,
 ) ProducedDecisions {
   table := mutable_select.empty_decision_table()
   rows: Vector<DecisionRenderRow> = []
 
   for c in candidates {
+    sk := mutable_select.site_key(mutable_select.Site.{ func: c.func_id, local: c.result })
+    if case exclude_sites.get(sk) {
+      .Some(v) => v,
+      .None => false,
+    } {
+      // An accepted field-backed decision already owns this collection-update
+      // site; do not produce a duplicate whole-local decision here.
+      continue
+    }
     key := "${c.func_id.id}#${c.result.id}"
     verdict := case verdicts.get(key) {
       .Some(v) => v,
-      .None => ownership_verdicts.SiteVerdict.{ text: "-", reusable_shell: false },
+      .None => ownership_verdicts.SiteVerdict.{
+        text: "-",
+        reusable_shell: false,
+        field_backing_reusable: false,
+      },
     }
     persistent_name := name_of(b, c.persistent_func)
     mutable_name := name_of(b, c.mutable_func)
