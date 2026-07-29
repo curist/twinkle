@@ -420,7 +420,16 @@ fn recursive_routes_for(
     .None => return [],
   }
   seed := summary.seed_for_variant(ccfg, g.variant)
-  sited := ownership.call_uniques_sited(ccfg, table, b, sem, Dict.new(), seed)
+  field_seed := summary.field_seed_for_variant(ccfg, g.variant)
+  sited := ownership.call_uniques_sited_with_field_seed(
+    ccfg,
+    table,
+    b,
+    sem,
+    Dict.new(),
+    seed,
+    field_seed,
+  )
   out: Vector<RecRoute> = []
   for s in sited {
     case vt.select_variant_for_arg_paths(s.callee, s.arg_paths) {

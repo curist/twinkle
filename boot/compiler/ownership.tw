@@ -5996,6 +5996,7 @@ fn run_fixpoint(
   suppress: Dict<Int, Bool>,
   cc_suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
+  field_seed: Dict<Int, ff.FieldMap>,
   seeds: LoopSeedSet,
   label: String,
   warm_state: FixState?,
@@ -6136,6 +6137,9 @@ fn run_fixpoint(
           entry_own = seed_param_own(entry_own, unique_seed, params)
         }
         entry_field := join_entry_field_own(blk, exit_field_own, entry_own, processed)
+        if blk.id.id == 0 {
+          entry_field = seed_param_field_own(entry_field, field_seed, params)
+        }
         entry_pp := join_entry_path_prov(blk, exit_path_prov, processed)
         st := ForwardState.{
           own: entry_own,
@@ -6347,6 +6351,7 @@ fn stabilize_seeds(
     suppress,
     cc_suppress,
     unique_seed,
+    Dict.new(),
     seeds,
     label,
     .None,
@@ -6384,6 +6389,7 @@ fn stabilize_seeds(
         suppress,
         cc_suppress,
         unique_seed,
+        Dict.new(),
         seeds,
         label,
         warm_state,
@@ -6406,6 +6412,7 @@ fn run_fixpoint_validated(
   suppress: Dict<Int, Bool>,
   cc_suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
+  field_seed: Dict<Int, ff.FieldMap>,
   label: String,
   resolve: VariantResolver,
 ) FixResult {
@@ -6485,6 +6492,7 @@ fn run_fixpoint_validated(
     suppress,
     cc_suppress,
     unique_seed,
+    field_seed,
     seeds,
     label,
     .None,
@@ -6807,6 +6815,22 @@ pub fn call_uniques_sited(
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
 ) Vector<SitedCallUniq> {
+  call_uniques_sited_with_field_seed(f, table, b, sem, suppress, unique_seed, Dict.new())
+}
+
+// Field-aware twin: seeds depth-one reference-typed field ownership at the entry,
+// so a caller's recursive-route re-analysis (Phase 8H) can prove a variant's
+// `[.f]` requirement — not just whole-value shell uniqueness. `field_seed` is
+// empty for every generic caller (the shell-only path stays byte-identical).
+pub fn call_uniques_sited_with_field_seed(
+  f: CfgFunction,
+  table: SummaryTable,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  suppress: Dict<Int, Bool>,
+  unique_seed: Dict<Int, Bool>,
+  field_seed: Dict<Int, ff.FieldMap>,
+) Vector<SitedCallUniq> {
   live := compute_liveness_labeled(f.blocks, "call_uniques:${f.name}")
   blocks := collect blk in f.blocks {
     bl := live_get(live, blk.id.id)
@@ -6829,6 +6853,7 @@ pub fn call_uniques_sited(
     suppress,
     Dict.new(), // call_uniques must see unsuppressed ownership facts (Task-6 seed guard)
     unique_seed,
+    field_seed,
     "call_uniques:${f.name}",
     generic_only_resolver,
   )
@@ -6843,6 +6868,9 @@ pub fn call_uniques_sited(
       entry_own = seed_param_own(entry_own, unique_seed, f.params)
     }
     entry_field := join_entry_field_own(blk, fx.exit_field_own, entry_own, done)
+    if blk.id.id == 0 {
+      entry_field = seed_param_field_own(entry_field, field_seed, f.params)
+    }
     entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
     st := ForwardState.{
       own: entry_own,
@@ -7155,6 +7183,7 @@ fn ownership_stage(
           no_suppress,
           cc_suppress,
           unique_seed,
+          Dict.new(),
           label,
           resolve,
         )
@@ -7173,6 +7202,7 @@ fn ownership_stage(
       no_suppress,
       cc_suppress,
       unique_seed,
+      Dict.new(),
       label,
       resolve,
     ),
@@ -8230,6 +8260,7 @@ fn summarize_seeded(
     suppress,
     Dict.new(), // summary derivation path: copy-carrier suppression is Task 6's concern
     unique_seed,
+    Dict.new(),
     "summary:${f.name}",
     resolve,
   )
