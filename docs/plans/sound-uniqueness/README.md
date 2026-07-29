@@ -48,8 +48,9 @@ collections (Phase 8H) are done: the direct field-backed dict/vector quartet
 (`env.types[k]=v`, recursive `cur.xs[i]=v`) lowers to in-place helpers for both
 local and clone functions via dual-tier variant publication + codegen-owned
 field-path seeds; `twk ir --census --sites` renders `record_backed_<family>` rows.
-`Set`/transport shapes are recognized as quartets but their in-place emission is
-deferred to a follow-up slice. Function
+A straight-line owned `Set.insert`/`Set.remove` already lowers in place (via its
+routed full-tier prelude clone, e.g. `insert__Int$v300`); loop-carried Sets and the
+transported `out.ctx` shape are follow-ups. Function
 variants (Phase 8G) are done: `variant_specialize.tw` clones a recursive owned
 function under an owned entry seed and routes owned callers (and the clone's own
 recursion) to it, so the boot compiler's owned recursive vector/record updates emit

@@ -436,15 +436,27 @@ first slice: direct, ANF-visible field-backed updates (`env.types[k] = v`,
   table (`OptimizerSemantics.ref_fields`, built from the resolver) keeps primitive
   fields out of variant requirements.
 
+**Set — works for straight-line owned use; loop-carried is a follow-up.**
+`Set<K>` needs no Set-specific optimizer: `Set.insert`/`Set.remove` mutate the
+`entries: Dict` field, so they surface as ordinary record-backed dict quartets. On
+a straight-line owned receiver they already lower **in place** — variant
+specialization reaches the monomorphized prelude `insert__Int`, publishes its
+full-tier variant `[unique:p0,p0.f0]`, and a caller proving the field path routes
+to the clone (e.g. `field_set_wrapper`'s `go` calls `insert__Int$v300`, which emits
+`rt_dict__set_in_place`). (Verify by inspecting the **routed clone**, not the caller
+function — the caller only holds the call.) What is **not** yet in place is a
+*loop-carried* or threaded Set (`for i { s = s.insert(i) }`): the caller proves only
+the shell tier `[unique:p0]`, so it routes to the shell clone and stays persistent.
+That is the loop-carried/threaded field-ownership follow-up
+(`docs/plans/2026-07-29-loop-threaded-field-ownership.md`).
+
 **Deferred to a follow-up slice:**
 
-- **`Set<K>` wrappers and transported `out.ctx`/`out.state` records** are recognized
-  as record-backed dict quartets (`twk ir --census --sites` shows `record_backed_dict`),
-  but their in-place *emission* is not yet achieved: `Set` needs the prelude
-  `Set.insert` specialized for a unique receiver, and the transport shape needs
-  path-level consume-dead across a multi-level record-field projection (a sibling
-  `out.tag` read keeps `out` live). The first-slice detector requires whole-argument
-  last-use and the quartet in one straight-line `Let` chain.
+- **Transported `out.ctx`/`out.state` records.** Recognized as record-backed dict
+  quartets, but in-place *emission* needs path-level consume-dead across a
+  multi-level record-field projection (a sibling `out.tag` read keeps `out` live).
+  The first-slice detector requires whole-argument last-use and the quartet in one
+  straight-line `Let` chain.
 - **Field-tier recursive self-routing.** A recursive field clone (`visit$v` for
   `[unique:p0,p0.f0]`) emits its own field-backed collection update in-place, but its
   in-SCC recursive call currently stays on the generic function: `recursive_routes_for`
@@ -458,9 +470,10 @@ first slice: direct, ANF-visible field-backed updates (`env.types[k] = v`,
 The 8A–8H codegen track is certified by the boot suite plus scoped WAT/runtime
 spot-checks over the `sound_uniqueness` fixtures. Performance stays deferred by
 design (see below): the storage-representation track (typed/dense vectors,
-mutable regions) and the 8H follow-ups (transport/`Set` in-place, field-tier
-recursive self-routing) are not yet in place, so ordinary vector/dict/record
-paths are not end-to-end enough for AWFY to be meaningful.
+mutable regions) and the 8H follow-ups (loop-carried/threaded field ownership,
+transport in-place, field-tier recursive self-routing) are not yet in place, so
+ordinary vector/dict/record paths are not end-to-end enough for AWFY to be
+meaningful.
 
 - [x] **Correctness and aliasing guards.** Boot suite green
   (`target/twk run boot/tests/main.tw`); `field_backed_collection_suite`,
@@ -475,12 +488,15 @@ paths are not end-to-end enough for AWFY to be meaningful.
 - [x] **Emitted helper calls.** Scoped `twk wat --func <fn> --calls` verifies the
   chosen family per site rather than relying on timing: positives emit
   `rt_dict__set_in_place` / `rt_arr__set_in_place` inside their own function
-  (`field_dict_update`, `field_vector_update`, the `visit$v` clone); aliased
-  negatives emit the persistent `rt_dict__set` / `rt_arr__set`; `Set`/transport
-  shapes are recognized as record-backed dict quartets but still emit
-  persistently (8H follow-up). A module-wide grep is *not* authoritative — prelude
-  and runtime code use the in-place builders internally, so the inspection must be
-  scoped to the user function, exactly as the suite's `wat_func_body_result` does.
+  (`field_dict_update`, `field_vector_update`, the `visit$v` clone); a
+  straight-line owned `Set.insert` lowers in place too, but in its **routed clone**
+  (`field_set_wrapper`'s `go` calls `insert__Int$v300`, which emits
+  `rt_dict__set_in_place`); aliased negatives and the transport shape emit the
+  persistent `rt_dict__set` / `rt_arr__set`; loop-carried Sets stay persistent (8H
+  follow-up). A module-wide grep is *not* authoritative — prelude and runtime code
+  use the in-place builders internally, and a routed clone's in-place op lives in
+  the clone, not the caller; scope the inspection to the emitting function, exactly
+  as the suite's `wat_func_body_result` does.
 - [ ] **Performance.** Deferred by design (rationale above); full AWFY comparisons
   wait until the storage track makes vector/dict/record paths end-to-end.
 
