@@ -39,7 +39,11 @@ Phase 7E dry-run slice is also done: `twk ir --census --sites` renders update-si
 persistent→mutable targets, ownership verdicts, and `would_use` state for
 vector/dict/record candidates while emitted code remains persistent.
 
-**Current implementation focus: Phase 8I verification gate.** Record-backed field
+**Current implementation focus: storage-representation track (post-codegen).** The
+8A–8H codegen track is complete and the Phase 8I verification gate has passed
+(correctness/aliasing guards green, emitted helper families spot-checked;
+performance deferred by design until the storage track makes the paths end-to-end
+— see [codegen/README.md](codegen/README.md)). Record-backed field
 collections (Phase 8H) are done: the direct field-backed dict/vector quartet
 (`env.types[k]=v`, recursive `cur.xs[i]=v`) lowers to in-place helpers for both
 local and clone functions via dual-tier variant publication + codegen-owned
@@ -139,8 +143,11 @@ are in place, and the emitted slices for local (Phase 8A) and loop-carried, sing
 and nested (Phase 8B) vector indexed updates, owned `Dict.set` (Phase 8D) and
 `Dict.remove` (Phase 8E), the builder-region first slice (Phase 8C Plans 1–2),
 local record shell update emission (Phase 8F), and ownership-specialized function
-variants + call-site routing (Phase 8G) are complete. Current work is record-backed
-field collections (Phase 8H), with the 8C follow-up slices (Plans 3–5) still open.
+variants + call-site routing (Phase 8G) are complete. Record-backed field
+collections (Phase 8H) and the Phase 8I verification gate are done; the
+codegen track is complete, with the 8C follow-up slices (Plans 3–5) and the
+8H follow-ups (transport/`Set` in-place, field-tier recursive self-routing) still
+open. Remaining performance work moves to the storage-representation track.
 
 ### 3. Storage representation track
 

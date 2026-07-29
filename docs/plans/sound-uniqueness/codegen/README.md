@@ -453,14 +453,36 @@ first slice: direct, ANF-visible field-backed updates (`env.types[k] = v`,
   through `call_uniques_sited` and the ownership fixpoint) is the follow-up; the
   emitted program stays correct (later iterations use the persistent path).
 
-## Codegen Phase 8I — Codegen-track verification gate
+## Codegen Phase 8I — Codegen-track verification gate — DONE (perf deferred)
 
-- [ ] **Run correctness and aliasing guards.** The negative-aliasing suite must
-  remain persistent/correct; positive anchors should lower only where proved.
-- [ ] **Inspect emitted helper calls.** Use WAT/call inspection to verify chosen
-  helper families rather than relying on timing.
-- [ ] **Run performance only as an end-of-track signal.** Full AWFY comparisons
-  wait until vector/dict/record paths are end-to-end enough to be meaningful.
+The 8A–8H codegen track is certified by the boot suite plus scoped WAT/runtime
+spot-checks over the `sound_uniqueness` fixtures. Performance stays deferred by
+design (see below): the storage-representation track (typed/dense vectors,
+mutable regions) and the 8H follow-ups (transport/`Set` in-place, field-tier
+recursive self-routing) are not yet in place, so ordinary vector/dict/record
+paths are not end-to-end enough for AWFY to be meaningful.
+
+- [x] **Correctness and aliasing guards.** Boot suite green
+  (`target/twk run boot/tests/main.tw`); `field_backed_collection_suite`,
+  `cfg_sound_uniqueness_fixtures_suite`, `mutable_produce_suite`, and
+  `variant_specialize_suite` cover the positive anchors and the negatives. Spot
+  checks: aliased field updates stay persistent and keep the old handle
+  observable (`field_dict_alias_old` → `false`, `field_vector_alias_old` → `0`);
+  a shared sibling does not block an owned field (`field_dict_sibling_shared`
+  sets in place); shell reuse never mutates a shared field backing
+  (`field_shell_only`); specialize on/off agree (`field_visit_rec` → `0` both
+  ways).
+- [x] **Emitted helper calls.** Scoped `twk wat --func <fn> --calls` verifies the
+  chosen family per site rather than relying on timing: positives emit
+  `rt_dict__set_in_place` / `rt_arr__set_in_place` inside their own function
+  (`field_dict_update`, `field_vector_update`, the `visit$v` clone); aliased
+  negatives emit the persistent `rt_dict__set` / `rt_arr__set`; `Set`/transport
+  shapes are recognized as record-backed dict quartets but still emit
+  persistently (8H follow-up). A module-wide grep is *not* authoritative — prelude
+  and runtime code use the in-place builders internally, so the inspection must be
+  scoped to the user function, exactly as the suite's `wat_func_body_result` does.
+- [ ] **Performance.** Deferred by design (rationale above); full AWFY comparisons
+  wait until the storage track makes vector/dict/record paths end-to-end.
 
 ## Deferrals after codegen
 
