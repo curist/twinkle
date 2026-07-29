@@ -218,19 +218,19 @@ fn collect_groups(
 // one, so this cheap AST-level scan replaces a full seeded decision-gate pass.
 fn updatable_funcs(anf: AnfModule, b: BuiltinRegistry) Dict<Int, Bool> {
   out: Dict<Int, Bool> = Dict.new()
-  call_set := mutable_produce.update_call_candidates(anf, b)
-  for c in call_set.candidates {
-    out[c.func_id.id] = true
-  }
-  rec_set := mutable_produce.record_update_candidates(anf)
-  for c in rec_set.candidates {
-    out[c.func_id.id] = true
-  }
 
-  // Phase 8H: a function whose only mutable site is a field-backed collection
-  // quartet is still updatable. Structural filter only — no ownership proof.
-  field_set := mutable_produce.field_backed_collection_candidates(anf, b)
-  for c in field_set.candidates {
+  // One combined pass yields update-call, record-shell, and field-backed
+  // candidates together. A function whose only mutable site is a field-backed
+  // collection quartet is still updatable. Structural filter only — no ownership
+  // proof.
+  all_cands := mutable_produce.collect_all_candidates_for(anf, b)
+  for c in all_cands.calls {
+    out[c.func_id.id] = true
+  }
+  for c in all_cands.records {
+    out[c.func_id.id] = true
+  }
+  for c in all_cands.fields.candidates {
     out[c.func_id.id] = true
   }
   out
