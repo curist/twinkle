@@ -224,6 +224,13 @@ fn updatable_funcs(anf: AnfModule, b: BuiltinRegistry) Dict<Int, Bool> {
   for c in rec_set.candidates {
     out[c.func_id.id] = true
   }
+
+  // Phase 8H: a function whose only mutable site is a field-backed collection
+  // quartet is still updatable. Structural filter only — no ownership proof.
+  field_set := mutable_produce.field_backed_collection_candidates(anf, b)
+  for c in field_set.candidates {
+    out[c.func_id.id] = true
+  }
   out
 }
 

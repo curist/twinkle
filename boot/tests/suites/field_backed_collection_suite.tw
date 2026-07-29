@@ -243,6 +243,21 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "recursive owned record-field clone emits vector set in-place",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("field_visit_rec")
+        body := try wat_func_body_result(wat, "visit_v")
+        try assert.ok(
+          wat_has_instr(body, "rt_arr__set_in_place"),
+          "owned field clone must update xs in place",
+        )
+        routes := ir_sites_text("field_visit_rec")
+        try assert.str_contains(routes, "variant routes")
+        try assert.str_contains(routes, "record_backed_vector")
+        .Ok({})
+      },
+    )
+    .test(
       "record shell reuse does not require deep field reuse",
       fn() Result<Void, String> {
         art := try compile_fixture("field_shell_only")
