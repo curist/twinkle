@@ -1,0 +1,7 @@
+pub fn go() Bool {
+  seen: Set<Int> = Set.new()
+  seen = .insert(1)
+  seen.contains(1)
+}
+
+println(go().to_string())

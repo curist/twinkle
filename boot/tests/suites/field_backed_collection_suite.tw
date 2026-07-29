@@ -243,6 +243,30 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "Set.insert reaches the record-backed dict path with no Set-specific lowering",
+      fn() Result<Void, String> {
+        // `Set.insert` mutates its `entries: Dict` field, so it surfaces as an
+        // ordinary record-backed dict quartet — there is no Set-specific optimizer
+        // rule. (In-place EMISSION requires specializing the prelude `Set.insert`
+        // itself for a unique receiver, which is a follow-up beyond the first
+        // slice; here we assert the quartet is recognized through `entries`.)
+        try assert.str_contains(ir_sites_text("field_set_wrapper"), "record_backed_dict")
+        .Ok({})
+      },
+    )
+    .test(
+      "transported ctx field update surfaces a record-backed dict quartet",
+      fn() Result<Void, String> {
+        // `next := out.ctx; next.types[..] = ..` is recognized as a field-backed
+        // dict quartet after the record-field projection. Proving `next.types`
+        // owned through a two-level projection with a sibling `out.tag` read needs
+        // path-level consume-dead (deferred per the plan's scope), so the emitted
+        // helper stays persistent for now; the quartet is still surfaced.
+        try assert.str_contains(ir_sites_text("field_transport_ctx"), "record_backed_dict")
+        .Ok({})
+      },
+    )
+    .test(
       "recursive owned record-field clone emits vector set in-place",
       fn() Result<Void, String> {
         wat := try compile_fixture_wat("field_visit_rec")
