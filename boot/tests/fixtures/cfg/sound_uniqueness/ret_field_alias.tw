@@ -9,7 +9,11 @@ pub fn go() Bool {
   shared := Dict.new().set(0, 0)
   env := Env.{ types: shared, spare: shared }
   env = put(env, 1, 20)
-  shared.has(0)
+
+  // `put` inserts key 1 into env.types. Because `types`/`spare` alias `shared`,
+  // that update must build a NEW dict, not mutate `shared` in place. If it wrongly
+  // mutated in place, `shared` would gain key 1. Sound result: shared has no key 1.
+  shared.has(1)
 }
 
 println(go().to_string())

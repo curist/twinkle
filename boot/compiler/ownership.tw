@@ -4083,21 +4083,16 @@ fn transfer_summarized_call(
   }
 
   // 2. Return-path recovery, gated on the SNAPSHOT. A fresh result shell
-  // (OwnedFresh) carries recovered field/payload facts; a return that may-alias
-  // ONLY unique (consumed, last-use) params also carries them, since the whole-
-  // return move (section 1) already took the argument's unique shell. Any non-
-  // unique alias keeps the conservative shell result.
+  // (OwnedFresh) carries recovered field/payload facts; so does a return that
+  // aliases EXACTLY ONE unique (consumed, last-use) param -- the case where
+  // section 1 performed the whole-return MOVE, giving the result that argument's
+  // unique shell. This must match section 1's move condition: a multi-param alias
+  // publishes and leaves the result Shared, so recovering field facts onto it would
+  // be unsound (they belong only on a uniquely-owned shell). Any other return keeps
+  // the conservative shell result.
   result_ok := case s.ret {
     .OwnedFresh => true,
-    .MayAliasParams(ks) => {
-      ok := ks.len() > 0
-      for k in ks {
-        if !(k < args.len() and arg_unique[k]) {
-          ok = false
-        }
-      }
-      ok
-    },
+    .MayAliasParams(ks) => ks.len() == 1 and ks[0] < args.len() and arg_unique[ks[0]],
     .Shared => false,
   }
   result_fields := ff.empty()
