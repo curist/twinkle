@@ -21,8 +21,6 @@ use .suites.backend_repr_suite
 use .suites.backend_verify_suite
 use .suites.base_env_guardrail_suite
 use .suites.builder_region_suite
-use .suites.variant_specialize_suite
-use .suites.field_backed_collection_suite
 use .suites.builtin_identity_collision_suite
 use .suites.builtins_canonical_suite
 use .suites.builtins_suite
@@ -52,6 +50,7 @@ use .suites.discovery_suite
 use .suites.dry_run_suite
 use .suites.equality_matrix_suite
 use .suites.equality_repro_suite
+use .suites.field_backed_collection_suite
 use .suites.fingerprint_suite
 use .suites.first_class_method_suite
 use .suites.fix_suite
@@ -113,6 +112,7 @@ use .suites.render_suite
 use .suites.repr_policy_suite
 use .suites.resolver_passes_suite
 use .suites.resolver_suite
+use .suites.return_field_ownership_suite
 use .suites.rewrite_suite
 use .suites.route_typed_vec_suite
 use .suites.runtime_suite
@@ -148,6 +148,7 @@ use .suites.uniqueness_guard_suite
 use .suites.unused_imports_suite
 use .suites.utf16_suite
 use .suites.value_semantics_suite
+use .suites.variant_specialize_suite
 use .suites.wasm_ir_suite
 use .suites.wasm_layout_suite
 use .suites.wasm_plan_suite
@@ -306,4 +307,5 @@ runner.run_all([
   builder_region_suite.suite(),
   variant_specialize_suite.suite(),
   field_backed_collection_suite.suite(),
+  return_field_ownership_suite.suite(),
 ])

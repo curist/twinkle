@@ -1,0 +1,140 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use commands.common.{format_compile_error}
+use commands.ir
+use compiler.artifacts.{PipelineArtifacts}
+use compiler.pipeline
+use lib.module.loader
+
+fn fixtures_dir() String {
+  "${loader.find_project_root("boot")}/tests/fixtures/cfg/sound_uniqueness"
+}
+
+fn compile_fixture(name: String) Result<PipelineArtifacts, String> {
+  case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(a) => .Ok(a),
+    .Err(e) => .Err(format_compile_error(e)),
+  }
+}
+
+fn compile_fixture_wat(name: String) Result<String, String> {
+  case pipeline.compile_entry_path("${fixtures_dir()}/${name}.tw") {
+    .Ok(a) => .Ok(pipeline.emit_wat(a)),
+    .Err(e) => .Err(format_compile_error(e)),
+  }
+}
+
+// Extract a single WAT function body: the `(func …)` block whose header contains
+// `marker`, sliced to the next top-level `(func …)`.
+fn wat_func_body(wat: String, marker: String) String? {
+  parts := wat.split("\n  (func ")
+  for p in parts {
+    lines := p.split("\n")
+    header := case lines.first() {
+      .Some(h) => h,
+      .None => "",
+    }
+    if header.contains(marker) {
+      return .Some(p)
+    }
+  }
+  .None
+}
+
+fn wat_func_body_result(wat: String, marker: String) Result<String, String> {
+  case wat_func_body(wat, marker) {
+    .Some(body) => .Ok(body),
+    .None => .Err("function body marker not found: ${marker}"),
+  }
+}
+
+fn wat_has_instr(body: String, needle: String) Bool {
+  for line in body.split("\n") {
+    if line.trim().contains(needle) {
+      return true
+    }
+  }
+  false
+}
+
+// Same compile/render path as `twk ir --census --sites`. The routed-clone lines
+// carry each call's resolved variant key: `|0:;0:0` is the full field tier,
+// `|0:` (terminal `]`) is the shell tier.
+fn ir_sites_text(name: String) String {
+  case compile_fixture(name) {
+    .Ok(art) => ir.render_census_report(art, true),
+    .Err(e) => "compile error: ${e}",
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("return_field_ownership")
+    .test(
+      "sequential returning calls compose full-tier field ownership",
+      fn() Result<Void, String> {
+        sites := ir_sites_text("ret_field_seq")
+        try assert.ok(sites.contains("|0:;0:0"), "put must publish a full field-tier clone")
+
+        // The first call already routes full-tier; the discriminating signal is that
+        // the SECOND call no longer falls back to the shell tier (`|0:]`).
+        try assert.ok(
+          !sites.contains("|0:]"),
+          "no put call may fall back to the shell tier once field ownership crosses the return",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "loop of returning calls reaches the full-tier clone",
+      fn() Result<Void, String> {
+        try assert.ok(
+          ir_sites_text("ret_field_loop").contains("|0:;0:0"),
+          "the loop-carried put call must route to the full field tier",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "loop-carried Set.insert reaches the full-tier clone",
+      fn() Result<Void, String> {
+        try assert.ok(
+          ir_sites_text("loop_set_insert").contains("|0:;0:0"),
+          "the loop-carried Set.insert call must route to the full field tier",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "direct in-loop field update still lowers in place (regression)",
+      fn() Result<Void, String> {
+        body := try wat_func_body_result(try compile_fixture_wat("loop_field_dict_update"), "go")
+        try assert.ok(
+          wat_has_instr(body, "rt_dict__set_in_place"),
+          "direct loop field update must stay in place",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "aliased returning-call source stays persistent",
+      fn() Result<Void, String> {
+        try assert.ok(
+          !ir_sites_text("ret_field_alias").contains("|0:;0:0"),
+          "an aliased field backing must not route a full-tier field variant",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "leaked-then-returned field stays persistent",
+      fn() Result<Void, String> {
+        try assert.ok(
+          !ir_sites_text("leak_ret").contains("|0:;0:0"),
+          "a callee that leaks its field must not carry field ownership back through the return",
+        )
+        .Ok({})
+      },
+    )
+}
