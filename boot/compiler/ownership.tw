@@ -6777,12 +6777,13 @@ fn call_arg_paths(pre: ForwardState, args: Vector<Atom>, arg_unique: Vector<Bool
   vid.PathSet,
 > {
   collect arg, i in args {
-    paths := if i < arg_unique.len() and arg_unique[i] {
+    uniq := i < arg_unique.len() and arg_unique[i]
+    paths := if uniq {
       vid.shell_set()
     } else {
       vid.empty_set()
     }
-    if i < arg_unique.len() and arg_unique[i] {
+    if uniq {
       fmap := pre.atom_field_own(arg)
       for k in fmap.sorted_keys() {
         p := ff.path_of_key(k)
