@@ -14,15 +14,14 @@
 //!      on demand — its recursive call stays generic (sound, just not specialized);
 //!      full SCC closure of mutual recursion is a follow-up.
 //!
-//! Recursive-route seeding is currently SHELL-ONLY (`recursive_routes_for` re-
-//! analyzes the clone under `seed_for_variant`, which seeds whole-value uniqueness
-//! but not reference-typed field ownership). So a Phase 8H FULL-tier field clone
-//! (e.g. `visit$v` for `[unique:p0,p0.f0]`) emits its own record-field collection
-//! update in-place, but its in-SCC recursive call proves only the shell tier and
-//! therefore stays on the generic function rather than re-entering the field clone.
-//! Field-aware recursive-route seeding (threading `field_seed_for_variant` through
-//! `call_uniques_sited`/the ownership fixpoint) is a follow-up; the emitted program
-//! stays correct (later iterations use the persistent path).
+//! Recursive-route seeding is field-aware: `recursive_routes_for` re-analyzes the
+//! clone under both `seed_for_variant` (whole-value uniqueness) and
+//! `field_seed_for_variant` (reference-typed field ownership), the latter threaded
+//! through `call_uniques_sited_with_field_seed` and the ownership fixpoint's final
+//! cold pass so it propagates across blocks. So a Phase 8H FULL-tier field clone
+//! (e.g. `visit$v` for `[unique:p0,p0.f0]`) both emits its own record-field
+//! collection update in-place AND routes its in-SCC recursive call back to itself,
+//! staying in-place across every recursion depth (census `rec=1`).
 //!
 //! The clone body is a structural copy of the generic (only in-SCC recursive call
 //! targets are rewritten). Emission is unchanged: the clone is an ordinary
