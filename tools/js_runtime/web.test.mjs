@@ -68,3 +68,22 @@ test("web run retries missing externs when all import metadata APIs are unavaila
     WebAssembly.Module.customSections = originalCustomSections;
   }
 });
+
+test("web command installs task scheduler when GC module metadata is unavailable", async () => {
+  const originalImports = WebAssembly.Module.imports;
+  const originalExports = WebAssembly.Module.exports;
+  WebAssembly.Module.imports = () => { throw new Error("import introspection unavailable"); };
+  WebAssembly.Module.exports = () => { throw new Error("export introspection unavailable"); };
+  try {
+    const result = await command(["run", "/input/main.tw"], {
+      source: "println(\"hello\")\n",
+      env: { NO_COLOR: "1" },
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /hello/);
+  } finally {
+    WebAssembly.Module.imports = originalImports;
+    WebAssembly.Module.exports = originalExports;
+  }
+});

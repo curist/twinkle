@@ -20,6 +20,11 @@ import module:
 A separate `"task"` namespace carries the cooperative-concurrency intrinsics
 (`task_create`, `suspend_await`, `channel_*`, …) and appears only when a program
 uses `Task`/`Channel`; it is provided by the JSPI scheduler in the JS runtime.
+This is an internal runtime namespace, not a user extern namespace.
+
+Generated `build --lib` callback shims use the internal `"twinkle.lib"`
+namespace (`cb_*` imports). Like `"twinkle_runtime"` and `"task"`, these imports
+must be installed by the host runtime before any generic user-extern resolution.
 
 The reference host implementation lives in `tools/js_runtime/runtime.mjs`
 (`makeHostImports`). The Rust compiler only builds Wasm; it does not run it, so
@@ -181,6 +186,14 @@ bridged (see the `hasJspi` block in `runtime.mjs`). Under a synchronous runtime,
   needs to provide functions the specific module actually imports. Console I/O and
   `f64_to_string` are present in nearly every program; `twinkle_runtime.*` OS
   imports appear only when the corresponding stdlib APIs are used.
+
+- **Internal namespaces are not user externs.** `twinkle_runtime.*`, `task.*`,
+  and `twinkle.lib.cb_*` are runtime-owned. Install them before attempting
+  generic extern auto-bridging or LinkError-based fallback resolution. This is
+  especially important in browser hosts: some engines can instantiate Wasm-GC
+  modules but reject `WebAssembly.Module.imports`, `exports`, or
+  `customSections`, so fallback resolution may otherwise misreport an internal
+  import such as `task.task_create` as a missing user-provided extern.
 
 - **`twinkle_runtime.error` must not return.** It should trap/abort the Wasm
   instance. The same applies to `twinkle_runtime.exit`.

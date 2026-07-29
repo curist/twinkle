@@ -372,6 +372,22 @@ function instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, e
 // ---------------------------------------------------------------------------
 // Host imports
 // ---------------------------------------------------------------------------
+//
+// Internal import namespaces are *not* user externs. They must be installed in
+// `hostImports` before autoBridgeExternImports() and instantiateWithExternRetry()
+// run, because Safari may reject WebAssembly.Module.imports/exports/customSections
+// on Wasm-GC modules and the retry path then learns imports one LinkError at a
+// time. If an internal namespace is missing at that point, it will be reported
+// as a misleading "Missing host import(s)" user-extern error.
+//
+// Current internal namespaces:
+//   - twinkle_runtime.*  core runtime, stdlib host surface, async run_wasm/sleep
+//   - task.*             JSPI cooperative scheduler intrinsics
+//   - twinkle.lib.cb_*   generated callback shims for build --lib exports
+//
+// If the compiler gains another runtime-owned import namespace, pre-populate it
+// here (or immediately before auto-bridging) and add a Safari-metadata regression
+// test in web.test.mjs.
 
 function write(stream, text) {
   stream.write(text);
@@ -1072,11 +1088,13 @@ function moduleNeedsTasks(wasmModule) {
     // Import introspection unavailable (e.g. Safari on GC modules). Fall back to
     // the export side: the compiler emits the `__task_run` export iff the module
     // uses task operations, so it's an equivalent signal that survives when
-    // `Module.imports` does not.
+    // `Module.imports` does not. If exports are unavailable too, report
+    // "unknown" so the JSPI async path can provision the internal task imports
+    // before the Safari LinkError retry path mistakes them for user externs.
     try {
       return WebAssembly.Module.exports(wasmModule).some((e) => e.name === "__task_run");
     } catch {
-      return false;
+      return null;
     }
   }
 }
@@ -1119,10 +1137,14 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
 
   // Install the cooperative task scheduler before auto-bridging so the task
   // intrinsic imports are recognized as host-provided rather than treated as
-  // unresolved externs. Only when the module actually imports task operations.
-  const needsTasks = moduleNeedsTasks(mainModule);
+  // unresolved externs. If module metadata is unavailable in a JSPI runtime,
+  // install it speculatively; after instantiation we check the real exports to
+  // decide whether to drive __twinkle_start through the scheduler.
+  const taskNeed = moduleNeedsTasks(mainModule);
+  const taskNeedUnknown = taskNeed === null;
+  const needsTasks = taskNeed === true;
   let scheduler = null;
-  if (needsTasks && jspi) {
+  if ((needsTasks || taskNeedUnknown) && jspi) {
     scheduler = createTaskScheduler();
     hostImports.task = scheduler.imports;
   }
@@ -1414,9 +1436,10 @@ export async function loadLibBytes(wasmBytes, opts = {}) {
   const registry = callbackRegistry;
   const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta, scheduler);
   runtime.instance = instance;
+  const runsTasks = needsTasks || typeof instance.exports.__task_run === "function";
 
   if (instance.exports.__twinkle_start) {
-    if (needsTasks) {
+    if (runsTasks) {
       scheduler.promisingTaskRun = WebAssembly.promising(instance.exports.__task_run);
       const start = WebAssembly.promising(instance.exports.__twinkle_start);
       scheduler.current = 0;
@@ -1461,7 +1484,7 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
   }
 
   if (hasJspi) {
-    const suspendHost = needsTasks
+    const suspendHost = scheduler
       ? (op) => scheduler.wrapHostSuspending(op)
       : (op) => new WebAssembly.Suspending(op);
 
@@ -1518,7 +1541,8 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
     const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta, scheduler);
     runtime.instance = instance;
     if (instance.exports.__twinkle_start) {
-      if (needsTasks) {
+      const runsTasks = needsTasks || typeof instance.exports.__task_run === "function";
+      if (runsTasks) {
         // Stackful task path: drive top-level (pseudo-task 0) and the spawned
         // task bodies through the cooperative scheduler.
         scheduler.promisingTaskRun = WebAssembly.promising(instance.exports.__task_run);
