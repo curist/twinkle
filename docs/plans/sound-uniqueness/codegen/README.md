@@ -457,23 +457,24 @@ That is the loop-carried/threaded field-ownership follow-up
   multi-level record-field projection (a sibling `out.tag` read keeps `out` live).
   The first-slice detector requires whole-argument last-use and the quartet in one
   straight-line `Let` chain.
-- **Field-tier recursive self-routing.** A recursive field clone (`visit$v` for
-  `[unique:p0,p0.f0]`) emits its own field-backed collection update in-place, but its
-  in-SCC recursive call currently stays on the generic function: `recursive_routes_for`
-  re-analyzes the clone under a shell-only seed, so the recursive call proves only the
-  shell tier. Field-aware recursive-route seeding (threading `field_seed_for_variant`
-  through `call_uniques_sited` and the ownership fixpoint) is the follow-up; the
-  emitted program stays correct (later iterations use the persistent path).
+
+**Field-tier recursive self-routing — done.** A FULL-tier field clone (`visit$v`
+for `[unique:p0,p0.f0]`) now routes its in-SCC recursive call back to itself, so an
+owned recursive record-field collection update stays in-place at every depth (census
+`rec=1`, the clone calls itself). `recursive_routes_for` re-analyzes the clone under
+`field_seed_for_variant` as well as the shell seed; the field seed threads through
+`call_uniques_sited_with_field_seed` and the ownership fixpoint's final cold pass so
+it propagates across blocks. Only `field_visit_rec` changed vs baseline (byte-
+identical elsewhere); self-host reaches a fixed point.
 
 ## Codegen Phase 8I — Codegen-track verification gate — DONE (perf deferred)
 
 The 8A–8H codegen track is certified by the boot suite plus scoped WAT/runtime
 spot-checks over the `sound_uniqueness` fixtures. Performance stays deferred by
 design (see below): the storage-representation track (typed/dense vectors,
-mutable regions) and the 8H follow-ups (loop-carried/threaded field ownership,
-transport in-place, field-tier recursive self-routing) are not yet in place, so
-ordinary vector/dict/record paths are not end-to-end enough for AWFY to be
-meaningful.
+mutable regions) and the remaining 8H follow-ups (loop-carried/threaded field
+ownership, transport in-place) are not yet in place, so ordinary vector/dict/record
+paths are not end-to-end enough for AWFY to be meaningful.
 
 - [x] **Correctness and aliasing guards.** Boot suite green
   (`target/twk run boot/tests/main.tw`); `field_backed_collection_suite`,

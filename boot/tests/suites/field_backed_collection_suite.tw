@@ -360,6 +360,42 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "field-tier recursive clone routes its own recursive call to itself",
+      fn() Result<Void, String> {
+        art := try compile_fixture("field_visit_rec")
+        spec := variant_specialize.specialize_module(art.opt, art.builtins)
+
+        // The full-tier clone is the routed clone whose variant requires a
+        // non-shell path.
+        full := case spec.routes.find(fn(r) {
+          case r.fallback_reason {
+            .Some(_) => false,
+            .None => r.variant.unique.any(fn(req) { !req.path.is_shell() }),
+          }
+        }) {
+          .Some(r) => r,
+          .None => return .Err("no full-tier clone route"),
+        }
+        try assert.ok(
+          full.recursive_routes.len() > 0,
+          "the field clone's in-SCC recursive call must route back to the clone (rec>0)",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "recursive field clone stays in-place across depth (rec routed, in-place emit)",
+      fn() Result<Void, String> {
+        body := try wat_func_body_result(try compile_fixture_wat("field_visit_rec"), "visit_v")
+        try assert.ok(
+          wat_has_instr(body, "rt_arr__set_in_place"),
+          "the recursive field clone must set xs in place",
+        )
+        try assert.str_contains(ir_sites_text("field_visit_rec"), "rec=1")
+        .Ok({})
+      },
+    )
+    .test(
       "field-backed recursive member publishes both shell and full variants",
       fn() Result<Void, String> {
         art := try compile_fixture("field_visit_rec")
