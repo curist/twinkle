@@ -4082,11 +4082,23 @@ fn transfer_summarized_call(
     },
   }
 
-  // 2. Return-path recovery, gated on the SNAPSHOT. Only a fresh result shell
-  // (OwnedFresh) can carry recovered field/payload facts.
+  // 2. Return-path recovery, gated on the SNAPSHOT. A fresh result shell
+  // (OwnedFresh) carries recovered field/payload facts; a return that may-alias
+  // ONLY unique (consumed, last-use) params also carries them, since the whole-
+  // return move (section 1) already took the argument's unique shell. Any non-
+  // unique alias keeps the conservative shell result.
   result_ok := case s.ret {
     .OwnedFresh => true,
-    _ => false,
+    .MayAliasParams(ks) => {
+      ok := ks.len() > 0
+      for k in ks {
+        if !(k < args.len() and arg_unique[k]) {
+          ok = false
+        }
+      }
+      ok
+    },
+    .Shared => false,
   }
   result_fields := ff.empty()
   result_pp: Dict<Int, Vector<Int>> = Dict.new()
@@ -6815,7 +6827,16 @@ pub fn call_uniques_sited(
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
 ) Vector<SitedCallUniq> {
-  call_uniques_sited_with_field_seed(f, table, b, sem, suppress, unique_seed, Dict.new())
+  call_uniques_sited_with_field_seed(
+    f,
+    table,
+    b,
+    sem,
+    suppress,
+    unique_seed,
+    Dict.new(),
+    generic_only_resolver,
+  )
 }
 
 // Field-aware twin: seeds depth-one reference-typed field ownership at the entry,
@@ -6830,6 +6851,7 @@ pub fn call_uniques_sited_with_field_seed(
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
   field_seed: Dict<Int, ff.FieldMap>,
+  resolve: VariantResolver,
 ) Vector<SitedCallUniq> {
   live := compute_liveness_labeled(f.blocks, "call_uniques:${f.name}")
   blocks := collect blk in f.blocks {
@@ -6839,11 +6861,12 @@ pub fn call_uniques_sited_with_field_seed(
     blk
   }
 
-  // call_uniques stays variant-generic: it records each call site's arg_unique
-  // vector from generic ownership facts, and `summary.reachable_variants` matches
-  // those vectors against the variant table itself. Selecting variants during this
-  // transfer would not change the recorded arg_unique values, so we pass the
-  // generic resolver and keep reachability scanning independent of selection.
+  // For shell-only reachability scanning the generic resolver suffices (selecting
+  // variants would not change the recorded arg_unique vectors). But a return-carried
+  // field-ownership caller (`env = put(env,..); env = put(env,..)`) needs `resolve`
+  // to select the field tier at the FIRST call so its `ret_paths` recover `.f` on the
+  // result, letting the SECOND call's `arg_paths` prove the field tier. Generic
+  // callers pass `generic_only_resolver` and stay byte-identical.
   fx := run_fixpoint_validated(
     blocks,
     f.params,
@@ -6855,7 +6878,7 @@ pub fn call_uniques_sited_with_field_seed(
     unique_seed,
     field_seed,
     "call_uniques:${f.name}",
-    generic_only_resolver,
+    resolve,
   )
   done := all_processed(blocks)
   out: Vector<SitedCallUniq> = []
@@ -6941,7 +6964,7 @@ pub fn call_uniques_sited_with_field_seed(
         sem,
         suppress,
         Dict.new(),
-        generic_only_resolver,
+        resolve,
       )
     }
   }
@@ -7888,6 +7911,7 @@ fn collect_move_recovered_params(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
+  field_seed: Dict<Int, ff.FieldMap>,
   resolve: VariantResolver,
 ) Dict<Int, Bool> {
   out: Dict<Int, Bool> = Dict.new()
@@ -7901,6 +7925,9 @@ fn collect_move_recovered_params(
       entry_own = seed_param_own(entry_own, unique_seed, params)
     }
     entry_field := join_entry_field_own(blk, fx.exit_field_own, entry_own, done)
+    if blk.id.id == 0 {
+      entry_field = seed_param_field_own(entry_field, field_seed, params)
+    }
     entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
     st := ForwardState.{
       own: entry_own,
@@ -8095,6 +8122,7 @@ pub fn summarize_function(
     sem,
     suppress,
     Dict.new(),
+    Dict.new(),
     generic_only_resolver,
     generic_only_requirement_resolver,
   ).summary
@@ -8116,6 +8144,7 @@ pub fn summarize_function_cached(
     b,
     sem,
     suppress,
+    Dict.new(),
     Dict.new(),
     generic_only_resolver,
     generic_only_requirement_resolver,
@@ -8166,12 +8195,26 @@ pub fn summarize_variant_resolved(
   require: VariantRequirementResolver,
 ) Summary {
   unique_seed: Dict<Int, Bool> = Dict.new()
+  field_seed: Dict<Int, ff.FieldMap> = Dict.new()
   for req in key {
-    if req.path.is_shell() and req.param >= 0 and req.param < f.params.len() {
-      unique_seed[f.params[req.param].id] = true
+    if req.param >= 0 and req.param < f.params.len() {
+      pl := f.params[req.param].id
+      if req.path.is_shell() {
+        unique_seed[pl] = true
+      } else if req.path.segs.len() == 1 {
+        // Stage 4 field-granular seeding: a `[.f]` requirement enters the clone
+        // body with that direct record field already Unique, so an in-place field
+        // update inside preserves the field's ownership and the return-path
+        // derivation can carry `.f = from(param)` back to the caller.
+        fm := case field_seed.get(pl) {
+          .Some(existing) => existing,
+          .None => ff.empty(),
+        }
+        field_seed[pl] = fm.set_path(ff.field_path(req.path.segs[0]), 0)
+      }
     }
   }
-  summarize_seeded(f, table, b, sem, suppress, unique_seed, resolve, require).summary
+  summarize_seeded(f, table, b, sem, suppress, unique_seed, field_seed, resolve, require).summary
 }
 
 // Call-site variant selection (Stage 4c, D4 shell-level): the VariantId a caller
@@ -8230,6 +8273,7 @@ fn summarize_seeded(
   sem: OptimizerSemantics,
   suppress: Dict<Int, Bool>,
   unique_seed: Dict<Int, Bool>,
+  field_seed: Dict<Int, ff.FieldMap>,
   resolve: VariantResolver,
   require: VariantRequirementResolver,
 ) SeededResult {
@@ -8260,7 +8304,7 @@ fn summarize_seeded(
     suppress,
     Dict.new(), // summary derivation path: copy-carrier suppression is Task 6's concern
     unique_seed,
-    Dict.new(),
+    field_seed,
     "summary:${f.name}",
     resolve,
   )
@@ -8279,6 +8323,7 @@ fn summarize_seeded(
     sem,
     suppress,
     unique_seed,
+    field_seed,
     resolve,
   )
   raw_params: Vector<RawParam> = collect p, pi in f.params {
@@ -8318,6 +8363,9 @@ fn summarize_seeded(
           entry_own = seed_param_own(entry_own, unique_seed, f.params)
         }
         entry_field := join_entry_field_own(blk, fx.exit_field_own, entry_own, done)
+        if blk.id.id == 0 {
+          entry_field = seed_param_field_own(entry_field, field_seed, f.params)
+        }
         entry_pp := join_entry_path_prov(blk, fx.exit_path_prov, done)
         st := ForwardState.{
           own: entry_own,

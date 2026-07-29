@@ -173,7 +173,19 @@ fn collect_groups(
   by_key: Dict<String, Group> = Dict.new()
   for f in view.functions {
     if cfg_calls_published(f, published) {
-      sited := ownership.call_uniques_sited(f, table, b, sem, Dict.new(), Dict.new())
+      // Variant-aware scan: resolving the field tier at a return-carrying call lets
+      // its `ret_paths` recover `.f` on the result, so a subsequent (sequential or
+      // loop-carried) call proves the field tier from `arg_paths`.
+      sited := ownership.call_uniques_sited_with_field_seed(
+        f,
+        table,
+        b,
+        sem,
+        Dict.new(),
+        Dict.new(),
+        Dict.new(),
+        vt.make_variant_resolver_for_render(),
+      )
       for s in sited {
         case vt.select_variant_for_arg_paths(s.callee, s.arg_paths) {
           .Some(variant) => if variant.unique.len() > 0 {
@@ -428,6 +440,7 @@ fn recursive_routes_for(
     Dict.new(),
     seed,
     field_seed,
+    ownership.generic_only_resolver,
   )
   out: Vector<RecRoute> = []
   for s in sited {

@@ -1075,7 +1075,31 @@ fn run_scc_variants(
           vtable = .vtable_put(shell_v, project_summary_to_shell(s, k))
           full_paths := s.params[k].in_place_paths
           if has_non_shell_path(full_paths) {
-            vtable = .vtable_put(variant_for_paths(m, k, full_paths), s)
+            full_v := variant_for_paths(m, k, full_paths)
+
+            // Re-analyze the full-tier variant with its FIELD paths seeded owned
+            // (Stage 4): the shell-seeded `s` proves the field is updated in place
+            // but cannot carry its ownership back (empty ret_paths), so a caller
+            // threading the field through a return can't compose. Seeding `[.f]`
+            // Unique lets the return-path derivation recover `.f = from(param)`.
+            f_full := case index.get(m) {
+              .Some(fn0) => fn0,
+              .None => error("variant: scc id ${m} not in index"),
+            }
+            overlay := build_overlay(generic, member_iter)
+            resolve := vtable.make_outscc_resolver(scc_set)
+            require := vtable.make_outscc_requirement_resolver(scc_set)
+            full_summary := summarize_variant_resolved(
+              f_full,
+              full_v.unique,
+              overlay,
+              b,
+              sem,
+              scc_set,
+              resolve,
+              require,
+            )
+            vtable = .vtable_put(full_v, full_summary)
           }
         }
       },
