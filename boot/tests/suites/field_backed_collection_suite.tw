@@ -384,6 +384,18 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "recursive field clone stays in-place across depth (rec routed, in-place emit)",
+      fn() Result<Void, String> {
+        body := try wat_func_body_result(try compile_fixture_wat("field_visit_rec"), "visit_v")
+        try assert.ok(
+          wat_has_instr(body, "rt_arr__set_in_place"),
+          "the recursive field clone must set xs in place",
+        )
+        try assert.str_contains(ir_sites_text("field_visit_rec"), "rec=1")
+        .Ok({})
+      },
+    )
+    .test(
       "field-backed recursive member publishes both shell and full variants",
       fn() Result<Void, String> {
         art := try compile_fixture("field_visit_rec")
