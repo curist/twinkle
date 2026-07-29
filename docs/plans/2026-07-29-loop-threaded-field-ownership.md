@@ -1,64 +1,77 @@
-# Loop-Carried / Threaded Field Ownership Implementation Plan
+# Return-Field Ownership Through Calls Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. This plan is **investigation-led**: Task 1 pins the exact proof gap before any fix is written. Do not skip it.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. This plan is **soundness-critical** analysis-precision work; Task 4's aliased-negative sweep and the self-host gate are non-negotiable.
 
-**Goal:** Prove a loop-carried (and simple threaded) record's reference-typed field backing uniquely owned, so a record-backed collection update on that field lowers in place across loop iterations — not just on a straight-line first use.
+> **Revised 2026-07-29 after a spike.** The first draft framed this as a *loop-carried
+> / `join_entry_field_own` back-edge* problem and proposed loop-seed/join changes.
+> Investigation falsified that: a **direct** loop-carried record-field update already
+> lowers in place, and a *non-loop* sequential pair of calls already fails. The real
+> trigger and root cause below replace the original Tasks 1–3.
 
-**Architecture:** A single field-backed update on a freshly-built record already lowers in place (the full-tier variant `[unique:p0,p0.f0]` is proven at the caller and routed). The gap is loop-carried state: for `for i { s = s.insert(i) }`, the caller proves only the **shell** tier `[unique:p0]`, so `insert`/`remove` route to the shell clone and stay persistent. The ownership fixpoint's loop machinery seeds and joins **whole-value** (shell) uniqueness across back-edges but not reference-typed **field paths**: `join_entry_field_own` keeps a joined field map only when the shell is Unique, and `collect_loop_seed_candidates` seeds shell ownership only. This plan extends loop-carried ownership to preserve depth-one field paths across the back-edge, soundly (never over a shared or escaping field backing).
+**Goal:** Let reference-typed field ownership survive a function return, so a value produced by a field-preserving call (`env = put(env, k, v)`, `s = s.insert(k)`) can prove its field path at a *subsequent* call and lower that call's record-backed collection update in place.
 
-**Tech Stack:** Twinkle boot compiler (`boot/`), self-hosted. Build via `make quick-bundle-cli`; boot tests via `target/twk run boot/tests/main.tw`; inspect with `target/twk ir <fixture> --census --sites` and `target/twk wat <fixture> --func <fn> --calls`. No Rust stage0 changes.
+**Architecture:** Field-backed in-place emission already works when the receiver's field is proven owned at the call (fresh construction gives this directly, so a *first* call from a freshly-built record routes to the full-tier clone). It breaks on the *next* call because the value now comes from a return: the forward call-result recovery (`ownership.tw`) reads the callee's **generic** summary `ret_paths`, which carry no field ownership for a parameter-returning function (the generic body can't prove the field owned without a seed), and the recovery is additionally gated to `OwnedFresh` returns via `result_ok`. The fix makes return-field recovery **variant-aware** — resolve the callee's variant by the current call's argument field paths and read *that* variant's `ret_paths` — and relaxes `result_ok` for a result that may-alias only **unique** (consumed) params.
 
-**Design source:** `docs/plans/sound-uniqueness/codegen/README.md` §"Codegen Phase 8H"; `docs/plans/sound-uniqueness/analysis/records-fields.md`; the as-built ownership fixpoint in `boot/compiler/ownership.tw`.
+**Tech Stack:** Twinkle boot compiler (`boot/`), self-hosted. Iterate with `make quick-bundle-cli` for the boot suite; use `make bundle-cli` before any `twk ir`/`twk wat` inspection (those run the *embedded* `boot.wasm`, which `quick-bundle-cli` does not rebuild). No Rust stage0 changes.
+
+**Design source:** `docs/plans/sound-uniqueness/codegen/README.md` §"Codegen Phase 8H"; `docs/plans/sound-uniqueness/analysis/records-fields.md`; the as-built forward ownership transfer and variant summaries in `boot/compiler/ownership.tw` / `summary.tw`.
 
 ---
 
 ## Global Constraints
 
-- **Soundness first.** A loop-carried field may be proven owned **only** when every back-edge predecessor exits with that field genuinely owned and the shell is Unique across the loop. A shared, aliased, or escaping field backing must stay persistent. The existing negative fixtures (`field_dict_alias_old`, `field_vector_alias_old`, `red_*`, `visit_aliased`) must remain persistent and keep their old-handle observability.
-- Field-path claims stay **depth-one** (`[.f]`), matching `call_arg_paths` and `VariantId`. No `Elem`/`Val`/payload paths.
+- **Soundness first.** Field ownership may cross a return **only** when the callee's return exclusively owns the field — i.e. it may-alias only params that are unique (whole-argument last-use) at the call, and the callee's field-tier variant proves that field owned. Any shared/aliased source must stay persistent. The negative fixtures (`field_dict_alias_old`, `field_vector_alias_old`, `red_*`, `visit_aliased`) must remain persistent and keep old-handle observability.
+- Field-path claims stay **depth-one** (`[.f]`), matching `call_arg_paths`, `ret_paths` (`field: Int?`), and `VariantId`. No `Elem`/`Val`/payload-field composition beyond what `ret_paths` already models.
 - No new operation families, no runtime-helper ABI changes, no source-semantics changes.
-- Byte-identical output for every fixture with no loop-carried/threaded reference-typed field update (verify against the `sound_uniqueness` WAT set).
-- After editing `.tw` files: `target/twk fmt <files>` then `target/twk lint boot/main.tw`.
-- Do not run tree-sitter tests. Every task that changes analysis must pass `make stage2` (self-host fixed point) before it is considered done.
+- Byte-identical output for every fixture whose behavior does not involve return-carried field ownership (verify against the `sound_uniqueness` WAT set).
+- Watch perf: the forward recovery and `call_result_fact` are on a hot, cascade-sensitive path (see commit `3631c29b` "stop shell paths cascading through call_result_fact"). Do not widen what flows through `call_result_fact`'s `dirty`; scope changes to the field-path recovery.
+- After editing `.tw`: `target/twk fmt <files>` then `target/twk lint boot/main.tw`. Do not run tree-sitter tests.
 
-## Orientation — evidence and mechanism
+## Orientation — the grounded gap (with spike evidence)
 
-Probe (`for i in range(5) { s = s.insert(i) }; s = s.remove(2)`), census today:
+Boundary map (all `Env = .{ types: Dict, spare: Dict }`, updating `.types`; `put(e,k,v){ e.types[k]=v; e }`):
 
-```text
-f298 -> f301 "insert__Int$v301" [f298|0:] sites=1 rec=0 routed     # SHELL tier only
-f299 -> f302 "remove__Int$v302" [f299|0:] sites=1 rec=0 routed     # SHELL tier only
-insert__Int$v301 ... field=persistent(insufficient deep ownership) # not in place
-```
+| Case | Result | Why |
+|---|---|---|
+| Direct in-loop `env.types[i]=v` | ✅ in-place | no call boundary; `go` proves the field directly |
+| `env = put(env,0,10)` (single) | ✅ in-place, full-tier clone | arg `env` is freshly built → field owned at the call |
+| `env=put(...); env=put(...)` (sequential 2) | ❌ 2nd persistent, shell tier | 2nd arg came from a return with no recoverable field |
+| loop of `env=put(...)`, `Set.insert` in a loop | ❌ persistent, shell tier | iteration ≥2 is the sequential-2 case |
 
-Contrast: `field_set_wrapper.tw` (single `seen = seen.insert(1)` on a fresh Set) proves the **full** tier `[unique:p0,p0.f0]` and its clone emits `rt_dict__set_in_place`. So `insert`'s return **does** propagate `.entries` field ownership on a straight-line use; the loss happens specifically across the **loop back-edge**.
+Root cause, two parts (both confirmed by spike):
 
-Relevant code (`boot/compiler/ownership.tw`):
+1. **Forward recovery reads the generic summary.** In `ownership.tw` the ACall forward transfer recovers the result's `field_own` from `s.ret_paths` where `s := table.summary_get(fid)` is the **generic** summary (around line 4093). A field `ret_path` is only emitted when the *body proves the field owned* (`body.field_own_get(aid)` in the derivation around line 8391). A parameter-returning function's generic body cannot prove its field owned (no seed), so its generic `ret_paths` have **no** field entry. Only the field-tier **variant** summary (`put [unique:p0,p0.f0]`) proves and carries it — and the forward recovery never consults variant summaries.
+2. **`result_ok` gates to `OwnedFresh`.** Even given a field `ret_path`, recovery is skipped unless the callee's `ret` is `OwnedFresh` (line ~4087). `put`/`insert` return their parameter, so `ret = MayAliasParams([0])`, and recovery is blocked.
 
-- `call_arg_paths` (`ownership.tw:6763`) — derives a call's per-argument `PathSet` from `pre.atom_field_own(arg)`. If the caller's field ownership of `s` includes `[.entries]` at the call, the full tier is selected. This is the consumer; it does not need to change.
-- `join_entry_field_own` (`ownership.tw:5478`) — at a block entry, joins predecessors' exit field maps for each live local, but **only keeps the map when the joined shell is Unique** ("downward-closed"). At a loop header the shell may be Unknown/optimistically-seeded, and the field map is dropped.
-- `collect_loop_seed_candidates` (`ownership.tw:5127`) + `loop_seed_active` (`5073`) — optimistically seed **shell** ownership for loop-header locals; consulted in the `.Unknown` ownership case (`5187`). There is no field-path analogue.
-- `run_fixpoint_validated` (`ownership.tw:6400`) drives the seeded fixpoint; `stabilize_seeds` / `validate_loop_seed` (`5893`) / `retain_valid_loop_seeds` (`5917`) grow and validate the optimistic shell seeds.
+**Spike result (do not re-run; recorded here):** relaxing `result_ok` to accept `MayAliasParams(ks)` when every `k` is `arg_unique[k]` compiled and kept all 3294 tests green, but the sequential/loop/Set cases still proved shell-tier — because part (1) (generic summary lacks the field `ret_path`) is the dominant blocker. So the core work is **variant-aware recovery**, with the `result_ok` relaxation as a necessary companion.
 
-**Working hypothesis (to be confirmed in Task 1):** the loop header joins `s` with shell Unique (via the shell loop-seed) but `join_entry_field_own` still drops `[.entries]` because either (a) the back-edge exit field map for `s` is empty, or (b) the field map is present but discarded by a shell/field ordering issue in the join. The fix likely extends the loop-seed/join to carry a **validated** field path across the back-edge, gated by the same downward-closed shell-Unique rule.
+## Fix approach
+
+In the ACall forward recovery, before reading `ret_paths`:
+- compute this call's argument field paths (`pre.call_arg_paths(args, arg_unique)` is already available in the transfer),
+- resolve the callee variant with those paths (`resolve(fid, arg_paths)` — the same `VariantResolver` the transfer already threads), and
+- read **that variant's** `ret_paths` (falling back to the generic summary when no variant is selected).
+
+Then a first call from a fresh record resolves the full variant → its `ret_paths` carry `.types` → the result's `field_own` gets `.types`; the second call's arg now has `.types` → resolves the full variant again → composes. Pair with the `result_ok` relaxation so a `MayAliasParams(unique)` return is eligible.
 
 ## File Structure
 
 - **Create** fixtures under `boot/tests/fixtures/cfg/sound_uniqueness/`:
-  - `loop_field_dict_update.tw` — loop-carried record-field dict update (the general case, no Set).
-  - `loop_field_dict_alias.tw` — same shape but the field backing is aliased before the loop (negative; must stay persistent).
-  - `loop_set_insert.tw` — loop-carried `Set.insert` (the Set wrapper case).
-- **Modify** `boot/compiler/ownership.tw` — extend loop-carried ownership to preserve depth-one field paths across back-edges (exact functions determined by Task 1).
-- **Create** `boot/tests/suites/loop_field_ownership_suite.tw` — positive/negative census + WAT tests.
-- **Modify** `boot/tests/main.tw` — register the suite.
+  - `ret_field_seq.tw` — two sequential `put` calls (minimal reproducer; positive).
+  - `ret_field_loop.tw` — loop of `put` calls (positive).
+  - `loop_set_insert.tw` — loop-carried `Set.insert` (positive, the wrapper case).
+  - `ret_field_alias.tw` — the source param is aliased before the returning call (negative; must stay persistent).
+  - `loop_field_dict_update.tw` — direct in-loop update (regression guard: already works, must keep working in place).
+- **Modify** `boot/compiler/ownership.tw` — variant-aware return-field recovery in the ACall forward transfer; relax `result_ok` for `MayAliasParams(unique)`.
+- **Create** `boot/tests/suites/return_field_ownership_suite.tw`; **Modify** `boot/tests/main.tw`.
 
 ---
 
-## Task 1: Investigation — pin the exact point field ownership is lost
+## Task 1: Fixtures — the working boundary and the failing cases
 
-**Files:** Create `boot/tests/fixtures/cfg/sound_uniqueness/loop_field_dict_update.tw` (used as the probe). No production changes.
+**Files:** Create the five fixtures above.
 
-- [ ] **Step 1: Create the general (non-Set) loop fixture.** `loop_field_dict_update.tw`:
+- [ ] **Step 1: Regression guard (already works).** `loop_field_dict_update.tw`:
 
 ```twinkle
 pub type Env = .{ types: Dict<Int, Int>, spare: Dict<Int, Int> }
@@ -77,64 +90,30 @@ pub fn go() Int {
 println(go().to_string())
 ```
 
-Runtime output is `30`. This is the pure lever — a record field, no prelude wrapper.
-
-- [ ] **Step 2: Confirm the gap reproduces without Set.**
-
-```bash
-target/twk ir boot/tests/fixtures/cfg/sound_uniqueness/loop_field_dict_update.tw --census --sites | grep -E "record_backed|field=|in_place"
-target/twk wat boot/tests/fixtures/cfg/sound_uniqueness/loop_field_dict_update.tw --func go --calls | grep -i in_place
-```
-
-Expected: the quartet is recognized (`record_backed_dict`) but the decision is `ignored ... field=persistent(insufficient deep ownership)` and `go` emits the persistent `rt_dict__set`, not in place. (If it already emits in place, the Set-only probe was a wrapper artifact — record that and narrow the plan to the Set path.)
-
-- [ ] **Step 3: Instrument the join.** Add a temporary `eprintln` in `join_entry_field_own` (`ownership.tw:5478`) that, for the loop-header block and the loop-carried local, prints: the joined `shell_unique` bool, whether each back-edge predecessor `is_processed`, and the `src` field map (`src.is_empty()`). Rebuild and read:
-
-```bash
-make quick-bundle-cli
-target/twk ir boot/tests/fixtures/cfg/sound_uniqueness/loop_field_dict_update.tw --cfg 2>&1 | grep -i "joindbg"
-```
-
-- [ ] **Step 4: Classify the cause and record the decision.**
-  - **Cause A — back-edge exit field map is empty:** the loop body's exit does not carry `[.types]` owned (the in-place update result's field ownership is not surviving to the block exit / back-edge). Fix target: the transfer/materialization that produces the back-edge exit field_own.
-  - **Cause B — shell not Unique at the header when the field map is present:** the shell loop-seed isn't marking `s`/`env` Unique at the header at the moment the field map would be kept. Fix target: order/interaction of the shell loop-seed with `join_entry_field_own`.
-  - **Cause C — a field-specific loop seed is required:** the optimistic seed set (`collect_loop_seed_candidates`) must gain a field-path analogue that `validate_loop_seed`/`retain_valid_loop_seeds` grow and prune exactly like the shell seed. Fix target: the loop-seed machinery.
-
-- [ ] **Step 5: Remove the instrumentation and write the finding into Task 2.** Commit only the fixture:
-
-```bash
-git add boot/tests/fixtures/cfg/sound_uniqueness/loop_field_dict_update.tw
-git commit -m "test(loop-field): add loop-carried record-field dict fixture and record proof-gap finding
-
-Cause <A|B|C>: <one-line summary of where field ownership is lost across the back-edge>."
-```
-
----
-
-## Task 2: Failing tests — loop-carried field update should lower in place; aliased must not
-
-**Files:** Create `boot/tests/fixtures/cfg/sound_uniqueness/loop_field_dict_alias.tw`, `boot/tests/fixtures/cfg/sound_uniqueness/loop_set_insert.tw`; Create `boot/tests/suites/loop_field_ownership_suite.tw`; Modify `boot/tests/main.tw`.
-
-- [ ] **Step 1: Create the negative (aliased) fixture.** `loop_field_dict_alias.tw`:
+- [ ] **Step 2: Positive reproducers.** `ret_field_seq.tw`:
 
 ```twinkle
 pub type Env = .{ types: Dict<Int, Int>, spare: Dict<Int, Int> }
 
-pub fn go() Bool {
-  shared := Dict.new().set(0, 0)
-  env := Env.{ types: shared, spare: shared }
-  for i in range(3) {
-    env.types[i] = i * 10
+pub fn put(e: Env, k: Int, v: Int) Env {
+  e.types[k] = v
+  e
+}
+
+pub fn go() Int {
+  env := Env.{ types: Dict.new(), spare: Dict.new() }
+  env = put(env, 0, 10)
+  env = put(env, 1, 20)
+  case env.types.get(1) {
+    .Some(v) => v,
+    .None => 0,
   }
-  shared.has(0)
 }
 
 println(go().to_string())
 ```
 
-`types` and `spare` alias `shared`, so the loop must NOT mutate `types` in place. Runtime output is `true`.
-
-- [ ] **Step 2: Create the Set loop fixture.** `loop_set_insert.tw`:
+`ret_field_loop.tw` is the same with `for i in range(5) { env = put(env, i, i * 10) }` (output `30` via `.get(3)`). `loop_set_insert.tw`:
 
 ```twinkle
 pub fn go() Int {
@@ -148,71 +127,142 @@ pub fn go() Int {
 println(go().to_string())
 ```
 
-Runtime output is `5`.
+- [ ] **Step 3: Negative (aliased source).** `ret_field_alias.tw`:
 
-- [ ] **Step 3: Write the suite (positive in-place, negative persistent).** Create `loop_field_ownership_suite.tw` (mirror helpers from `field_backed_collection_suite.tw`: `compile_fixture_wat`, `wat_func_body_result`, `wat_has_instr`, `ir_sites_text`):
+```twinkle
+pub type Env = .{ types: Dict<Int, Int>, spare: Dict<Int, Int> }
+
+pub fn put(e: Env, k: Int, v: Int) Env {
+  e.types[k] = v
+  e
+}
+
+pub fn go() Bool {
+  shared := Dict.new().set(0, 0)
+  env := Env.{ types: shared, spare: shared }
+  env = put(env, 1, 20)
+  shared.has(0)
+}
+
+println(go().to_string())
+```
+
+`types` and `spare` alias `shared`, so `put`'s field update must NOT mutate in place. Output `true`.
+
+- [ ] **Step 4: Confirm runtime values compile.** `target/twk run <each fixture>` prints `30`/`20`/`5`/`true` (and `30` for `loop_field_dict_update`). Commit the fixtures.
+
+```bash
+git add boot/tests/fixtures/cfg/sound_uniqueness/ret_field_*.tw boot/tests/fixtures/cfg/sound_uniqueness/loop_set_insert.tw boot/tests/fixtures/cfg/sound_uniqueness/loop_field_dict_update.tw
+git commit -m "test(ret-field): fixtures for return-carried field ownership (positive, negative, regression)"
+```
+
+---
+
+## Task 2: Failing suite — positives lower in place, negative stays persistent
+
+**Files:** Create `boot/tests/suites/return_field_ownership_suite.tw`; Modify `boot/tests/main.tw`.
+
+- [ ] **Step 1: Write the suite** (reuse the helper shape from `field_backed_collection_suite.tw`: `compile_fixture_wat`, `wat_func_body_result`, `wat_has_instr`, `ir_sites_text`). The positive signal is the callee clone routing to the full tier and its body emitting the in-place helper; check both a user-function case and the Set case, plus the regression guard, plus the aliased negative:
 
 ```twinkle
 .test(
-  "loop-carried owned record-field dict update lowers in place",
+  "sequential returning calls compose full-tier field ownership",
+  fn() Result<Void, String> {
+    try assert.str_contains(ir_sites_text("ret_field_seq"), "|0:;0:0")
+    .Ok({})
+  },
+)
+.test(
+  "loop of returning calls stays in place",
+  fn() Result<Void, String> {
+    try assert.str_contains(ir_sites_text("ret_field_loop"), "|0:;0:0")
+    .Ok({})
+  },
+)
+.test(
+  "loop-carried Set.insert reaches the full-tier clone",
+  fn() Result<Void, String> {
+    try assert.str_contains(ir_sites_text("loop_set_insert"), "|0:;0:0")
+    .Ok({})
+  },
+)
+.test(
+  "direct in-loop field update still lowers in place (regression)",
   fn() Result<Void, String> {
     body := try wat_func_body_result(try compile_fixture_wat("loop_field_dict_update"), "go")
-    try assert.ok(wat_has_instr(body, "rt_dict__set_in_place"), "owned loop field update must set in place")
+    try assert.ok(wat_has_instr(body, "rt_dict__set_in_place"), "direct loop field update must stay in place")
     .Ok({})
   },
 )
 .test(
-  "aliased loop-carried field update stays persistent",
+  "aliased returning-call source stays persistent",
   fn() Result<Void, String> {
-    body := try wat_func_body_result(try compile_fixture_wat("loop_field_dict_alias"), "go")
-    try assert.ok(wat_has_instr(body, "rt_dict__set"), "aliased loop field must use persistent set")
-    try assert.ok(!wat_has_instr(body, "rt_dict__set_in_place"), "aliased loop field must not mutate")
-    .Ok({})
-  },
-)
-.test(
-  "loop-carried Set.insert reaches the full-tier clone and sets in place",
-  fn() Result<Void, String> {
-    sites := ir_sites_text("loop_set_insert")
-    try assert.str_contains(sites, "|0:;0:0")  // full tier published/routed
+    try assert.ok(
+      !ir_sites_text("ret_field_alias").contains("|0:;0:0"),
+      "an aliased field backing must not publish/route a full-tier field variant",
+    )
     .Ok({})
   },
 )
 ```
 
-- [ ] **Step 4: Register and run red.** Add the suite to `boot/tests/main.tw`, then:
+- [ ] **Step 2: Register in `boot/tests/main.tw`, run red.**
 
 ```bash
 make quick-bundle-cli
 target/twk run boot/tests/main.tw
 ```
 
-Expected: the positive dict test and the Set full-tier test FAIL (persistent today); the aliased-negative test PASSES already (correctly persistent).
+Expected: the three positive `|0:;0:0` tests FAIL; the regression and aliased-negative tests PASS already.
 
-- [ ] **Step 5: Commit the red tests.**
+- [ ] **Step 3: Commit the red suite.**
 
 ```bash
-git add boot/tests/fixtures/cfg/sound_uniqueness/loop_field_dict_alias.tw boot/tests/fixtures/cfg/sound_uniqueness/loop_set_insert.tw boot/tests/suites/loop_field_ownership_suite.tw boot/tests/main.tw
-git commit -m "test(loop-field): red tests for loop-carried field in-place + aliased persistence"
+git add boot/tests/suites/return_field_ownership_suite.tw boot/tests/main.tw
+git commit -m "test(ret-field): red tests for return-carried field ownership"
 ```
 
 ---
 
-## Task 3: Extend loop-carried ownership to preserve depth-one field paths
+## Task 3: Variant-aware return-field recovery + `result_ok` relaxation
 
-**Files:** Modify `boot/compiler/ownership.tw`. Exact functions per Task 1's Cause A/B/C.
+**Files:** Modify `boot/compiler/ownership.tw`.
 
-The implementation is written after Task 1 pins the cause; the following are the concrete shapes for each cause. Implement only the one Task 1 identified (or the minimal combination it shows).
+- [ ] **Step 1: Confirm the forward-recovery context.** In the ACall forward transfer (the block ending around line 4122 that does `st.set_field_own(result, result_fields)`), verify `resolve: VariantResolver`, `args`, and `arg_unique` are in scope, and that `pre.call_arg_paths(args, arg_unique)` (or the already-computed `paths`) is available. If `arg_unique` is not yet computed here, compute it exactly as the sited-call scan does (`local_reusable(...) and store_count(...) == 1`).
 
-- [ ] **Step 1 (Cause A — back-edge exit field map empty): carry the in-place update result's field ownership to the block exit.** In the forward transfer for the field-backed `ARecordUpdate` result, ensure the rebuilt record's `[.f]` field_own is set Unique when the update was proven owned, so it survives to `blk.exit` and thus to `join_entry_field_own` on the back-edge. Verify via the Task 1 instrumentation that the back-edge `src` field map is now non-empty.
+- [ ] **Step 2: Resolve the callee variant by arg field paths.** Before the `eff_ret_paths` read, select the summary whose `ret_paths` to use:
 
-- [ ] **Step 2 (Cause B — join ordering): keep the joined field map when the loop-seeded shell is Unique.** In `join_entry_field_own` (`ownership.tw:5478`), make the `shell_unique` check consult the same optimistic loop-seed the shell fixpoint uses (`loop_seed_active`) for the header block, so a field map validated on the back-edge is retained under the identical soundness gate as the shell.
+```twinkle
+arg_paths := pre.call_arg_paths(args, arg_unique)
+eff_summary := case resolve(callee_id, arg_paths) {
+  .Some(vs) => vs,
+  .None => s,
+}
+```
 
-- [ ] **Step 3 (Cause C — field loop seed): add a validated field-path loop seed.** Give the loop-seed machinery a depth-one field-path analogue: seed `[.f]` optimistically at a loop header for a field whose back-edge predecessor exits it owned, and extend `validate_loop_seed`/`retain_valid_loop_seeds` to **retract** the field seed whenever the shell seed is retracted or the field is not genuinely owned on the back-edge. The field seed must never outlive its shell seed (downward-closed).
+Change `eff_ret_paths` to read `eff_summary.ret_paths` (still blanked to `[]` when `in_set(suppress, callee_id)`), and use `eff_summary.ret` for the `result_ok` classification below.
 
-- [ ] **Step 2/3 shared invariant.** Whatever the cause, the retained field path must be justified by the back-edge, not assumed: an aliased field backing (`loop_field_dict_alias`) exits the loop body with `[.types]` **not** owned, so the join/seed must drop it and the update stays persistent.
+- [ ] **Step 3: Relax `result_ok` for unique may-alias returns.** Replace the `OwnedFresh`-only gate (line ~4087) with:
 
-- [ ] **Step 4: Format, lint, build, run the Task 2 tests green.**
+```twinkle
+result_ok := case eff_summary.ret {
+  .OwnedFresh => true,
+  .MayAliasParams(ks) => {
+    ok := ks.len() > 0
+    for k in ks {
+      if !(k < args.len() and arg_unique[k]) {
+        ok = false
+      }
+    }
+    ok
+  },
+  .Shared => false,
+}
+```
+
+The existing `own_here` check (`OwnedFromParam(k)` requires `arg_unique[k]`, else publish-on-fail) already keeps a shared source from recovering — the aliased negative (`ret_field_alias`) exits with `shared` not unique, so `own_here`/`result_ok` both refuse it.
+
+- [ ] **Step 4: Format, lint, build, run the Task 2 suite green.**
 
 ```bash
 target/twk fmt boot/compiler/ownership.tw
@@ -221,46 +271,32 @@ make quick-bundle-cli
 target/twk run boot/tests/main.tw
 ```
 
-Expected: the positive dict + Set tests pass; the aliased-negative test still passes; all other suites green.
+Expected: the three positive tests pass; regression + aliased-negative still pass; all other suites green. If a positive still fails, re-open Step 2 — confirm the field-tier variant summary actually carries the `.types` `ret_path` (inspect via a temporary `render` of `eff_summary.ret_paths`); if the variant summary lacks it, the gap is in `summarize_variant`'s `ret_paths` propagation and must be fixed there first.
 
 - [ ] **Step 5: Commit.**
 
 ```bash
 git add boot/compiler/ownership.tw
-git commit -m "analysis(loop-field): preserve depth-one field ownership across loop back-edges
+git commit -m "analysis(ret-field): variant-aware return-field ownership recovery
 
-Cause <A|B|C> fix: <one line>. Aliased/shared field backings stay persistent."
+Resolve the callee variant by the call's argument field paths and recover the
+selected variant's ret_paths field ownership; relax result_ok for a return that
+may-alias only unique (consumed) params. Composes field ownership through
+parameter-returning calls (put/Set.insert) so a second/loop call proves the full
+tier. Aliased sources stay persistent (own_here still gates on arg_unique)."
 ```
 
 ---
 
-## Task 4: Soundness sweep, byte-identical fallback, and self-host gate
+## Task 4: Soundness sweep, byte-identical fallback, self-host gate
 
-**Files:** Modify `boot/tests/suites/loop_field_ownership_suite.tw` (runtime-parity assertions).
+**Files:** Modify `boot/tests/suites/return_field_ownership_suite.tw` (runtime-parity assertions).
 
-- [ ] **Step 1: Runtime correctness for positives and negatives.**
+- [ ] **Step 1: Runtime correctness + specialize on/off parity** for `ret_field_seq` (20), `ret_field_loop` (30), `loop_set_insert` (5), `ret_field_alias` (true), `loop_field_dict_update` (30). `on == off` for each.
 
-```bash
-target/twk run boot/tests/fixtures/cfg/sound_uniqueness/loop_field_dict_update.tw   # expect 30
-target/twk run boot/tests/fixtures/cfg/sound_uniqueness/loop_field_dict_alias.tw    # expect true
-target/twk run boot/tests/fixtures/cfg/sound_uniqueness/loop_set_insert.tw          # expect 5
-```
+- [ ] **Step 2: Negative-aliasing sweep.** Re-run the 8I scoped helper inspection over `field_dict_alias_old`, `field_vector_alias_old`, `red_delegate_read_after`, `red_transport_read_after`, `visit_aliased` and confirm each user function still emits the persistent helper (no new `set_in_place`). This is the primary soundness guard — return-carried ownership must not leak through an alias.
 
-Specialize on/off parity for each:
-
-```bash
-for f in loop_field_dict_update loop_field_dict_alias loop_set_insert; do
-  a=$(target/twk run boot/tests/fixtures/cfg/sound_uniqueness/$f.tw)
-  b=$(TWINKLE_VARIANT_SPECIALIZE=0 target/twk run boot/tests/fixtures/cfg/sound_uniqueness/$f.tw)
-  echo "$f: on=$a off=$b"; test "$a" = "$b" || echo "  PARITY FAIL"
-done
-```
-
-Expected: outputs `30` / `true` / `5`; on == off for all three.
-
-- [ ] **Step 2: Existing negative fixtures still persistent.** Confirm no aliasing regression: re-run the scoped helper inspection from the 8I gate over `field_dict_alias_old`, `field_vector_alias_old`, `red_delegate_read_after`, `red_transport_read_after`, `visit_aliased` and confirm each user function still emits the persistent helper (no new `set_in_place`).
-
-- [ ] **Step 3: Byte-identical fallback.** Baseline the `sound_uniqueness` fixture WAT set before Task 1; after Task 3, only fixtures with a loop-carried/threaded owned field update (`loop_field_dict_update`, `loop_set_insert`) may change. Every other fixture's WAT must be byte-identical.
+- [ ] **Step 3: Byte-identical fallback.** Baseline the `sound_uniqueness` WAT set before Task 3; after, only fixtures that actually carry field ownership through a return (`ret_field_seq`, `ret_field_loop`, `loop_set_insert`) may change. Every other fixture must be byte-identical.
 
 - [ ] **Step 4: Self-host gate.**
 
@@ -271,41 +307,32 @@ target/twk run boot/tests/main.tw
 make stage2
 ```
 
-Expected: lint clean; bundle succeeds; boot suite green; self-host reaches a fixed point (stage3 == stage4).
+Expected: lint clean; bundle succeeds; boot suite green; self-host fixed point (stage3 == stage4). Watch the `make stage2` timing — if the recovery change regresses compiler throughput (the `call_result_fact` cascade risk), narrow the variant resolution to calls whose args actually carry a non-shell path.
 
 - [ ] **Step 5: Commit and update docs.**
 
 ```bash
-git add boot/tests/suites/loop_field_ownership_suite.tw
-git commit -m "test(loop-field): runtime parity, negative-aliasing sweep, byte-identical fallback"
+git add boot/tests/suites/return_field_ownership_suite.tw
+git commit -m "test(ret-field): runtime parity, aliasing sweep, byte-identical fallback"
 ```
 
-Then in `docs/plans/sound-uniqueness/codegen/README.md`, correct the Set entry in the 8H "Deferred" list (the fresh-Set case already lowers in place; loop-carried Set now does too) and note loop-carried field ownership landed. Remove this plan's row from `docs/plans/README.md` and move this file to `docs/plans/archive/`.
+Then in `docs/plans/sound-uniqueness/codegen/README.md`, note that loop-carried/threaded and `Set.insert`-in-a-loop field updates now lower in place via return-carried field ownership. Remove this plan's row from `docs/plans/README.md` and move this file to `docs/plans/archive/`.
 
 ---
 
-## Prerequisite doc correction (do first, independently)
-
-Before Task 1, correct two statements that current evidence falsifies (they were written from inspecting the caller function instead of the routed clone):
-
-- `docs/plans/sound-uniqueness/codegen/README.md` — the 8H "Deferred" note says `Set` "in-place emission is not yet achieved." Reality: a fresh Set's `insert`/`remove` already routes to a full-tier clone that emits `rt_dict__set_in_place`. Reword to: recognized *and lowered in place for straight-line owned use*; only loop-carried/threaded Sets stay persistent (this plan).
-- `docs/plans/sound-uniqueness/README.md` and the committed 8I note ("Set … still emit persistently") — same correction.
-
-Commit this doc fix separately (`docs(8H/8I): correct Set in-place status`) so the plan's history starts from an accurate baseline.
-
 ## Scope Boundary
 
-Delivers loop-carried and simple threaded depth-one field ownership. It does **not** deliver:
+Delivers depth-one field ownership crossing a return, composing through parameter-returning calls (user functions and `Set.insert`/`remove`). It does **not** deliver:
 
-- Path-level consume-dead with post-call sibling reads (the `field_transport_ctx` transport shape) — that remains a separate deferral.
+- Path-level consume-dead with post-call sibling reads (the `field_transport_ctx` transport shape) — still a separate deferral.
 - `Elem`/`Val` nested-value ownership (dict/vector element values).
-- Cross-function field ownership beyond the depth-one return-path already proven by summaries.
-- Recursive-clone self-routing (that is the field-tier recursive self-routing plan).
+- Return-field ownership for `OwnedFresh` wrappers that *construct* a new record around a borrowed field (only the may-alias-unique and fresh cases).
+- Multi-carrier returns (a return that aliases more than one param) beyond the all-unique gate.
 
 ## Self-Review Checklist
 
-1. **Spec coverage:** investigation (Task 1), red positive+negative tests (Task 2), the cause-specific fix (Task 3), soundness sweep + byte-identical + self-host (Task 4), plus the prerequisite doc correction. ✓
-2. **Investigation-led, no guessing:** Task 3's fix is selected by Task 1's observed cause (A/B/C), not assumed. ✓
-3. **Soundness anchor:** every retained field path is justified by a back-edge that exits the field owned under the downward-closed shell-Unique rule; `loop_field_dict_alias` is the guard that this holds. ✓
-4. **Type consistency:** depth-one `[.f]` paths, `join_entry_field_own`, `loop_seed_active`, `call_arg_paths`, and full-tier `|0:;0:0` keys are used consistently across tasks. ✓
-5. **Fallback safety:** byte-identical for all non-loop-field fixtures; existing negative-aliasing fixtures re-swept in Task 4 Step 2. ✓
+1. **Spec coverage:** fixtures incl. regression + negative (Task 1), red positives/negative (Task 2), variant-aware recovery + `result_ok` (Task 3), soundness sweep + byte-identical + self-host (Task 4). ✓
+2. **Grounded, not guessed:** root cause and fix location confirmed by the recorded spike (result_ok necessary-but-insufficient; generic summary lacks the field ret_path; variant summary carries it). ✓
+3. **Soundness anchor:** recovery gated on `arg_unique` (unique source) and the callee's proven field-tier variant; `ret_field_alias` + the existing negative sweep are the guards. ✓
+4. **Type consistency:** `result_ok`, `eff_summary`, `ret_paths`, `MayAliasParams`, `arg_unique`, `call_arg_paths`, and full-tier `|0:;0:0` are used consistently. ✓
+5. **Perf awareness:** variant resolution is added to the forward recovery, not to `call_result_fact`'s cascade; Task 4 Step 4 watches self-host timing and offers a narrowing fallback. ✓
