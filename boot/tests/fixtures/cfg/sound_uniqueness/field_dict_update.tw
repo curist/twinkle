@@ -8,3 +8,5 @@ pub fn go() Int {
     .None => 0,
   }
 }
+
+println(go().to_string())

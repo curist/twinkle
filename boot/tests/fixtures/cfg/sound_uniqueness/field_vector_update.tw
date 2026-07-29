@@ -11,3 +11,5 @@ pub fn go() Int {
   st.xs[0] = 7
   st.xs.at(0)
 }
+
+println(go().to_string())
