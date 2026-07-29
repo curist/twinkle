@@ -2,6 +2,7 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use commands.common.{format_compile_error}
+use commands.ir
 use compiler.artifacts.{PipelineArtifacts}
 use compiler.cfg
 use compiler.codegen.mutable_produce
@@ -86,6 +87,14 @@ fn variants_of(art: PipelineArtifacts) summary.VariantSummaryTable {
 fn canon_keys(vt: summary.VariantSummaryTable) Vector<String> {
   collect v in summary.variant_ids_of(vt) {
     vid.variant_canonical_string(v)
+  }
+}
+
+// Same compile/render path as `twk ir --census --sites`.
+fn ir_sites_text(name: String) String {
+  case compile_fixture(name) {
+    .Ok(art) => ir.render_census_report(art, true),
+    .Err(e) => "compile error: ${e}",
   }
 }
 
@@ -230,6 +239,44 @@ pub fn suite() runner.Suite {
           !wat_has_instr(body, "rt_arr__set_in_place"),
           "aliased field vector must stay persistent",
         )
+        .Ok({})
+      },
+    )
+    .test(
+      "record shell reuse does not require deep field reuse",
+      fn() Result<Void, String> {
+        art := try compile_fixture("field_shell_only")
+        prod := mutable_produce.produce_mutable_decisions(art.opt, art.builtins)
+        try assert.ok(
+          prod.rows.any(fn(r) { r.family == "record_shell"
+            and r.reason.contains("decision produced") }),
+          "shell reuse decision must be produced",
+        )
+        try assert.ok(
+          !prod.rows.any(fn(r) { r.family.contains("record_backed")
+            and r.reason.contains("field-backed decision produced") }),
+          "shared field backing must not produce a field-backed decision",
+        )
+        wat := try compile_fixture_wat("field_shell_only")
+        body := try wat_func_body_result(wat, "replace_shared_field")
+        try assert.ok(wat_has_instr(body, "struct.set"), "shell update may reuse the record shell")
+        try assert.ok(
+          !wat_has_instr(body, "rt_dict__set_in_place"),
+          "shared field backing must not mutate",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "shared sibling field does not block owned updated field",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("field_dict_sibling_shared")
+        body := try wat_func_body_result(wat, "go")
+        try assert.ok(
+          wat_has_instr(body, "rt_dict__set_in_place"),
+          "owned types field should set in-place even when values sibling is shared",
+        )
+        try assert.str_contains(ir_sites_text("field_dict_sibling_shared"), "record_backed_dict")
         .Ok({})
       },
     )
