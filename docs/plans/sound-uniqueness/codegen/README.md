@@ -436,19 +436,25 @@ first slice: direct, ANF-visible field-backed updates (`env.types[k] = v`,
   table (`OptimizerSemantics.ref_fields`, built from the resolver) keeps primitive
   fields out of variant requirements.
 
-**Set — works for straight-line owned use; loop-carried is a follow-up.**
+**Set — straight-line, loop-carried, and threaded owned use all lower in place.**
 `Set<K>` needs no Set-specific optimizer: `Set.insert`/`Set.remove` mutate the
 `entries: Dict` field, so they surface as ordinary record-backed dict quartets. On
-a straight-line owned receiver they already lower **in place** — variant
-specialization reaches the monomorphized prelude `insert__Int`, publishes its
-full-tier variant `[unique:p0,p0.f0]`, and a caller proving the field path routes
-to the clone (e.g. `field_set_wrapper`'s `go` calls `insert__Int$v300`, which emits
+a straight-line owned receiver they lower **in place** — variant specialization
+reaches the monomorphized prelude `insert__Int`, publishes its full-tier variant
+`[unique:p0,p0.f0]`, and a caller proving the field path routes to the clone (e.g.
+`field_set_wrapper`'s `go` calls `insert__Int$v300`, which emits
 `rt_dict__set_in_place`). (Verify by inspecting the **routed clone**, not the caller
-function — the caller only holds the call.) What is **not** yet in place is a
-*loop-carried* or threaded Set (`for i { s = s.insert(i) }`): the caller proves only
-the shell tier `[unique:p0]`, so it routes to the shell clone and stays persistent.
-That is the loop-carried/threaded field-ownership follow-up
-(`docs/plans/2026-07-29-loop-threaded-field-ownership.md`).
+function — the caller only holds the call.)
+
+A *loop-carried* or threaded receiver (`for i { s = s.insert(i) }`,
+`env = put(env,..); env = put(env,..)`) now also reaches the full tier via
+**return-carried field ownership**: the field-tier variant's summary carries a
+`ret_paths` field fact (Stage 4 field-granular seeding re-analyzes the variant with
+its `[.f]` requirement Unique), and the sited routing scan resolves variants so the
+first call's `ret_paths` recover `.f` on its result — letting the sequential/loop
+second call prove the field tier from `arg_paths` (`ret_field_seq`/`ret_field_loop`/
+`loop_set_insert` fixtures route `sites=2` full-tier). Aliased or leaked-field
+sources still route the shell tier and stay persistent.
 
 **Deferred to a follow-up slice:**
 
