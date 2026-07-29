@@ -89,6 +89,16 @@ fn canon_keys(vt: summary.VariantSummaryTable) Vector<String> {
   }
 }
 
+fn selected_field_backed_count(p: mutable_produce.ProducedDecisions) Int {
+  n := 0
+  for r in p.rows {
+    if r.family.contains("record_backed_") and r.reason.contains("field-backed decision produced") {
+      n = n + 1
+    }
+  }
+  n
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("field_backed_collection")
@@ -164,6 +174,19 @@ pub fn suite() runner.Suite {
         )
         try assert.equal(vec_candidates.candidates.len(), 1)
         try assert.str_contains(vec_candidates.candidates[0].family, "vector")
+        .Ok({})
+      },
+    )
+    .test(
+      "field-backed decisions require structured field proof",
+      fn() Result<Void, String> {
+        dict_art := try compile_fixture("field_dict_update")
+        dict_prod := mutable_produce.produce_mutable_decisions(dict_art.opt, dict_art.builtins)
+        try assert.equal(selected_field_backed_count(dict_prod), 1)
+
+        alias_art := try compile_fixture("field_dict_alias_old")
+        alias_prod := mutable_produce.produce_mutable_decisions(alias_art.opt, alias_art.builtins)
+        try assert.equal(selected_field_backed_count(alias_prod), 0)
         .Ok({})
       },
     )

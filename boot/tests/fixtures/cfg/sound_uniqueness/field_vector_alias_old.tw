@@ -1,0 +1,16 @@
+pub type State = .{ xs: Vector<Int>, spare: Vector<Int> }
+
+pub fn go() Int {
+  xs: Vector<Int> = collect _ in range(1) {
+    0
+  }
+  spare: Vector<Int> = collect _ in range(1) {
+    99
+  }
+  st := State.{ xs, spare }
+  old := st.xs
+  st.xs[0] = 7
+  old.at(0)
+}
+
+println(go().to_string())

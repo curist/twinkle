@@ -498,7 +498,9 @@ pub fn produce_mutable_decisions_seeded_with_sem(
 ) ProducedDecisions {
   call_set := update_call_candidates(opt, b)
   record_set := record_update_candidates(opt)
-  if call_set.candidates.len() == 0 and record_set.candidates.len() == 0 {
+  fb_set := field_backed_collection_candidates(opt, b)
+  if call_set.candidates.len() == 0
+    and record_set.candidates.len() == 0 and fb_set.candidates.len() == 0 {
     return ProducedDecisions.{
       table: mutable_select.empty_decision_table(),
       rows: [],
@@ -507,6 +509,9 @@ pub fn produce_mutable_decisions_seeded_with_sem(
   }
 
   roots := merge_roots(call_set.candidate_func_roots(), record_set.record_candidate_func_roots())
+  for fid, _flag in fb_set.field_backed_candidate_func_roots() {
+    roots[fid] = true
+  }
   for fid, _spec in owned_seeds.by_func {
     roots[fid] = true
   }
@@ -518,9 +523,18 @@ pub fn produce_mutable_decisions_seeded_with_sem(
     owned_seeds,
   )
 
-  call_produced := produce_update_call_decisions_with_artifacts(opt, b, artifacts)
+  // Field-backed decisions first, then ordinary call decisions excluding the
+  // sites those already claimed, then record-shell decisions.
+  fb_produced := produce_field_backed_collection_decisions_with_artifacts(opt, b, artifacts)
+  exclude := fb_produced.field_backed_accepted_site_keys()
+  call_produced := produce_update_call_decisions_with_artifacts_excluding(
+    opt,
+    b,
+    artifacts,
+    exclude,
+  )
   record_produced := produce_record_update_decisions_with_artifacts(opt, artifacts)
-  merged := call_produced.merge_produced(record_produced)
+  merged := fb_produced.merge_produced(call_produced).merge_produced(record_produced)
   ProducedDecisions.{
     table: stamp_variant_keys(merged.table, owned_seeds),
     rows: merged.rows,
@@ -783,6 +797,146 @@ pub fn field_backed_collection_candidates(opt: AnfModule, b: BuiltinRegistry) Fi
   FieldBackedCandidateSet.{ candidates: cands }
 }
 
+fn field_backed_candidate_keys(set: FieldBackedCandidateSet) Dict<String, Bool> {
+  keys: Dict<String, Bool> = Dict.new()
+  for c in set.candidates {
+    keys["${c.func_id.id}#${c.record_update_result.id}"] = true
+  }
+  keys
+}
+
+fn field_backed_candidate_func_roots(set: FieldBackedCandidateSet) Dict<Int, Bool> {
+  roots: Dict<Int, Bool> = Dict.new()
+  for c in set.candidates {
+    roots[c.func_id.id] = true
+  }
+  roots
+}
+
+fn field_backed_stale_rows(candidates: Vector<FieldBackedCandidate>) Vector<DecisionRenderRow> {
+  rows: Vector<DecisionRenderRow> = []
+  for c in candidates {
+    rows = .append(
+      DecisionRenderRow.{
+        func: c.func,
+        local: c.update_result.id,
+        family: "record_backed_${c.family}",
+        persistent: "-",
+        mutable: "-",
+        state: "ignored",
+        reason: "persistent fallback: stale ownership artifact",
+        proof: "-",
+      },
+    )
+  }
+  rows
+}
+
+// Join field-backed quartets with the record-update site's structured
+// `field_backing_reusable` verdict. When true, emit an ordinary call-swap
+// `MutableDecision` at the collection update site (family stays the real
+// vector/dict call family, so the existing call selector emits its in-place
+// helper); otherwise render a persistent-fallback row with the concrete reason.
+fn produce_field_backed_from_verdicts(
+  candidates: Vector<FieldBackedCandidate>,
+  b: BuiltinRegistry,
+  verdicts: Dict<String, ownership_verdicts.SiteVerdict>,
+  artifact_computed: Bool,
+) ProducedDecisions {
+  table := mutable_select.empty_decision_table()
+  rows: Vector<DecisionRenderRow> = []
+  for c in candidates {
+    key := "${c.func_id.id}#${c.record_update_result.id}"
+    verdict := case verdicts.get(key) {
+      .Some(v) => v,
+      .None => ownership_verdicts.SiteVerdict.{
+        text: "-",
+        reusable_shell: false,
+        field_backing_reusable: false,
+      },
+    }
+    persistent_name := name_of(b, c.persistent_func)
+    mutable_name := name_of(b, c.mutable_func)
+    row: DecisionRenderRow = if verdict.field_backing_reusable {
+      proof_id := "phase8h:${c.func}:record L${c.record_base.id}.f${c.fid.id}:get L${c.projected_collection.id}:update L${c.update_result.id}:write L${c.record_update_result.id}"
+      table = .with_decision(
+        mutable_select.MutableDecision.{
+          site: mutable_select.Site.{ func: c.func_id, local: c.update_result },
+          family: c.decision_family,
+          source_local: c.projected_collection,
+          result_local: c.update_result,
+          arg_count: c.arg_count,
+          base_arg_index: .Some(c.base_arg_index),
+          persistent_func: .Some(c.persistent_func),
+          mutable_func: .Some(c.mutable_func),
+          variant_key: .None,
+          field_path_key: c.field_path_key,
+          proof_debug_id: proof_id,
+        },
+      )
+      DecisionRenderRow.{
+        func: c.func,
+        local: c.update_result.id,
+        family: "record_backed_${c.family}",
+        persistent: persistent_name,
+        mutable: mutable_name,
+        state: "candidate",
+        reason: "field-backed decision produced",
+        proof: proof_id,
+      }
+    } else {
+      DecisionRenderRow.{
+        func: c.func,
+        local: c.update_result.id,
+        family: "record_backed_${c.family}",
+        persistent: persistent_name,
+        mutable: mutable_name,
+        state: "ignored",
+        reason: "persistent fallback: no structured field proof",
+        proof: verdict.text,
+      }
+    }
+    rows = .append(row)
+  }
+  ProducedDecisions.{ table, rows, artifact_computed }
+}
+
+pub fn produce_field_backed_collection_decisions_with_artifacts(
+  opt: AnfModule,
+  b: BuiltinRegistry,
+  artifacts: ownership_verdicts.OwnershipArtifacts,
+) ProducedDecisions {
+  set := field_backed_collection_candidates(opt, b)
+  if set.candidates.len() == 0 {
+    return ProducedDecisions.{
+      table: mutable_select.empty_decision_table(),
+      rows: [],
+      artifact_computed: false,
+    }
+  }
+  expected := ownership_verdicts.artifact_key_for_anf(opt)
+  if !expected.same_artifact_key(artifacts.key) {
+    return ProducedDecisions.{
+      table: mutable_select.empty_decision_table(),
+      rows: field_backed_stale_rows(set.candidates),
+      artifact_computed: false,
+    }
+  }
+  vt := artifacts.verdicts_for_keys(set.field_backed_candidate_keys())
+  produce_field_backed_from_verdicts(set.candidates, b, vt.by_key, true)
+}
+
+// The `site_key`s already claimed by accepted field-backed decisions, so the
+// ordinary call producer can skip the same collection-update call and avoid a
+// duplicate decision at that site (which the selector would treat as Ambiguous).
+fn field_backed_accepted_site_keys(fb: ProducedDecisions) Dict<Int, Bool> {
+  keys: Dict<Int, Bool> = Dict.new()
+  for k, _ds in fb.table.by_site {
+    keys[k] = true
+  }
+  keys
+}
+
 /// Default Phase 8A production: scopes ownership analysis to the mutable
 /// candidate functions and their dependency closure, so a whole-program
 /// ownership pass is not paid on every build. Verdicts (and therefore
@@ -876,6 +1030,18 @@ pub fn produce_update_call_decisions_with_artifacts(
   b: BuiltinRegistry,
   artifacts: ownership_verdicts.OwnershipArtifacts,
 ) ProducedDecisions {
+  produce_update_call_decisions_with_artifacts_excluding(opt, b, artifacts, Dict.new())
+}
+
+// Like `produce_update_call_decisions_with_artifacts`, but skips any call whose
+// `site_key` is already claimed by an accepted field-backed decision (Phase 8H),
+// so the same collection-update call never produces two decisions at one site.
+pub fn produce_update_call_decisions_with_artifacts_excluding(
+  opt: AnfModule,
+  b: BuiltinRegistry,
+  artifacts: ownership_verdicts.OwnershipArtifacts,
+  exclude_sites: Dict<Int, Bool>,
+) ProducedDecisions {
   set := update_call_candidates(opt, b)
   if set.candidates.len() == 0 {
     return ProducedDecisions.{
@@ -895,7 +1061,13 @@ pub fn produce_update_call_decisions_with_artifacts(
   }
 
   vt := artifacts.verdicts_for_keys(set.candidate_keys())
-  produce_update_call_decisions_from_validated_verdicts(set.candidates, b, vt.by_key, true)
+  produce_update_call_decisions_from_validated_verdicts(
+    set.candidates,
+    b,
+    vt.by_key,
+    true,
+    exclude_sites,
+  )
 }
 
 // Join update-call candidates with already-validated ownership verdicts. A
@@ -908,11 +1080,21 @@ fn produce_update_call_decisions_from_validated_verdicts(
   b: BuiltinRegistry,
   verdicts: Dict<String, ownership_verdicts.SiteVerdict>,
   artifact_computed: Bool,
+  exclude_sites: Dict<Int, Bool>,
 ) ProducedDecisions {
   table := mutable_select.empty_decision_table()
   rows: Vector<DecisionRenderRow> = []
 
   for c in candidates {
+    sk := mutable_select.site_key(mutable_select.Site.{ func: c.func_id, local: c.result })
+    if case exclude_sites.get(sk) {
+      .Some(v) => v,
+      .None => false,
+    } {
+      // An accepted field-backed decision already owns this collection-update
+      // site; do not produce a duplicate whole-local decision here.
+      continue
+    }
     key := "${c.func_id.id}#${c.result.id}"
     verdict := case verdicts.get(key) {
       .Some(v) => v,

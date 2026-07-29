@@ -1,0 +1,10 @@
+pub type Env = .{ types: Dict<Int, Int>, values: Dict<Int, Int> }
+
+pub fn go() Bool {
+  env := Env.{ types: Dict.new(), values: Dict.new() }
+  old := env.types
+  env.types[1] = 20
+  old.has(1)
+}
+
+println(go().to_string())
