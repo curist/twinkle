@@ -396,6 +396,7 @@ Expected: the table supports or rejects the hypothesis that the trigger is candi
 
 **Files:**
 - Modify: `boot/compiler/summary.tw`
+- Possibly modify: `boot/compiler/ownership.tw`
 - Possibly modify: `boot/compiler/codegen/variant_specialize.tw`
 - Possibly modify: `boot/compiler/codegen/ownership_verdicts.tw`
 - Test: add or update a focused suite under `boot/tests/suites/`
@@ -404,7 +405,60 @@ Expected: the table supports or rejects the hypothesis that the trigger is candi
 - Consumes: hot component identified in Tasks 2 and 3.
 - Produces: one minimal fix with an automated regression guard.
 
-Choose exactly one fix path based on evidence.
+Choose exactly one fix path based on evidence. If none of Fix Paths A-C match the evidence, use Fix Path D first to localize the pre-round ownership summarization hotspot and then either return to A-C or apply the minimal confirmed source/analysis fix.
+
+### Fix Path D: pre-round ownership summarization hotspot
+
+Use this path if `TWINKLE_SUMMARY_TRACE=1` stops at `trace:summary:scc:start` for a specific SCC without a matching first `trace:summary:scc:round`, and Task 3 does not show candidate/root growth. The goal is to identify whether the hot work is liveness/prep, ownership fixpoint, classification, field-requirement finishing, or a particular source-level callee pattern.
+
+- [ ] **Step D1: Add temporary per-function summary markers around `summarize_function_cached`.**
+
+In `boot/compiler/summary.tw`, inside `run_scc`, add `TWINKLE_TIMINGS`-guarded markers immediately before and after each `summarize_function_cached` call. Include the function name, id, block count, instruction count, and elapsed time. Keep the output off unless `TWINKLE_TIMINGS` is set.
+
+Expected: the next trace says whether the hot function enters ownership summarization and whether it returns.
+
+- [ ] **Step D2: If the function does not return, add temporary intra-function ownership markers.**
+
+In `boot/compiler/ownership.tw`, instrument the major sections of the summarization path already summarized by `[time:own:summarize]`: liveness, fixpoint, classify, field requirements, and finish. If existing timing markers only print after return, add begin/end markers around the same sections so a timeout reveals the active subsection.
+
+Expected: the next trace identifies the non-returning subsection for `set_prelude_function_origins` or another hot function.
+
+- [ ] **Step D3: Rebuild the diagnostic stage1 after markers.**
+
+Run:
+
+```bash
+target/twk fmt boot/compiler/summary.tw boot/compiler/ownership.tw
+./target/release/twk check boot/main.tw
+./target/release/twk build boot/main.tw -o /tmp/boot-stage1-diag.wasm
+```
+
+Expected: the diagnostic stage1 compiler is refreshed.
+
+- [ ] **Step D4: Run a bounded trace with the new markers.**
+
+Run:
+
+```bash
+set -o pipefail
+TWINKLE_TIMINGS=1 \
+TWINKLE_SUMMARY_TRACE=1 \
+BOOT_WASM=/tmp/boot-stage1-diag.wasm \
+timeout 180s deno run --allow-read --allow-write --allow-env tools/js_runtime/deno_main.mjs build -o /tmp/stage2-hot-function-trace.wasm 2>&1 | tee /tmp/stage2-hot-function-trace.log
+```
+
+Expected: the log identifies the exact active subsection for the hot SCC. Record the decisive marker lines in Investigation Results.
+
+- [ ] **Step D5: Choose the smallest confirmed fix.**
+
+Based on D4, choose one:
+
+- If the hotspot is duplicate worklist growth in scoped roots, return to Fix Path A.
+- If the hotspot is whole-view dedupe, return to Fix Path B.
+- If the hotspot is unneeded 8G publication for non-updatable functions, continue with Fix Path C.
+- If the hotspot is a source-level compiler helper that is semantically simple but analysis-hostile, rewrite that helper only after proving the rewrite preserves behavior and add regression coverage for the helper behavior or the stage2 path.
+
+Expected: the plan names the selected root cause and fix before implementation.
 
 ### Fix Path A: `dependency_closure` queue blow-up
 
