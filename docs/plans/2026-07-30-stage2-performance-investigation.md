@@ -1,0 +1,534 @@
+# Stage2 Performance Investigation Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Reduce `make stage2` wall-clock time after the sound-uniqueness hang fix without weakening sound-uniqueness codegen or fixed-point verification.
+
+**Architecture:** Start with a measured full self-host loop baseline, then isolate repeated expensive phases across stage1, stage2, stage3, and stage4 compiler builds. Optimize only the largest measured repeated cost, with preference for safe artifact reuse or scope reduction before algorithmic rewrites. Preserve diagnostics that help future performance work while keeping ordinary logs readable.
+
+**Tech Stack:** Twinkle boot compiler (`boot/`), Rust stage0 (`target/release/twk`), Deno JS runtime harness (`tools/js_runtime/deno_main.mjs`), `make stage2`, `TWINKLE_TIMINGS=1`, sound-uniqueness phases 8G and mutable-decision production.
+
+## Global Constraints
+
+- Root cause before optimization: every code change must be tied to measured phase evidence.
+- Do not weaken soundness checks, disable Phase 8G, or skip mutable decision production in normal builds.
+- Keep `make stage2` fixed-point verification intact: stage3 and stage4 wasm must compare equal.
+- After editing `.tw` files, run `target/twk fmt` on the exact files changed and `target/twk lint boot/main.tw`.
+- Never run `tree-sitter test` from the agent.
+- For timeout commands piped through `tee`, use `set -o pipefail` when the exit status matters.
+- Treat `target/twk` as possibly stale after boot compiler changes; use explicit `BOOT_WASM=/tmp/...` Deno runtime runs when verifying newly built boot wasm behavior before rebundling.
+
+---
+
+## Current Evidence
+
+The previous hang investigation is archived at `docs/plans/archive/2026-07-30-sound-uniqueness-stage2-hang-investigation.md`.
+
+Confirmed facts from that investigation:
+
+- The apparent hang was caused by non-converging dirty-path flow equality in `collect_field_reqs`.
+- Commit `d7d59eea` fixed the convergence bug by comparing missing facts as `ff_none()` and treating two originless flow facts as equal.
+- A direct default boot build with the fixed stage1 wasm completed and wrote `/tmp/stage2-fixed2.wasm`.
+- The fixed direct build still showed expensive repeated phases:
+
+```text
+[time] variant_specialize: 14270.945708ms
+[time] produce_mutable_decisions: 13508.953749999997ms
+[time:mutable:artifacts] cfg=789.5232079999987ms summary=11688.846584000003ms ownership=837.1659999999974ms scope_roots=541
+```
+
+This means `make stage2` no longer hangs, but each self-hosted compiler build may spend substantial time recomputing sound-uniqueness summaries and call-site uniqueness data. Because `make stage2` runs several compiler builds, repeated phase costs multiply.
+
+---
+
+## File Structure
+
+- Modify: `docs/plans/2026-07-30-stage2-performance-investigation.md`
+  - Owns measurements, decisions, final root cause, and verification evidence for this follow-up investigation.
+- Possibly modify: `boot/compiler/codegen/variant_specialize.tw`
+  - Owns Phase 8G timing, updatable prefiltering, variant publication, and clone routing.
+- Possibly modify: `boot/compiler/codegen/mutable_produce.tw`
+  - Owns mutable candidate collection, candidate/root counts, and mutable producer phase markers.
+- Possibly modify: `boot/compiler/codegen/ownership_verdicts.tw`
+  - Owns scoped summary/ownership artifact production for mutable decisions.
+- Possibly modify: `boot/compiler/summary.tw`
+  - Owns whole-program and scoped summary computation, `compute_variants`, `compute_for_roots_cached`, and summary timing output.
+- Possibly modify: `boot/compiler/ownership.tw`
+  - Owns `call_uniques_sited`, summarization cost, and ownership helper behavior used by summary and variant collection.
+- Test: add or update focused tests under `boot/tests/suites/`
+  - Add regression coverage only for the confirmed optimization semantics.
+- No planned changes to `tree-sitter-twinkle/`.
+
+---
+
+## Task 1: Capture a full `make stage2` timing baseline
+
+**Files:**
+- Modify: `docs/plans/2026-07-30-stage2-performance-investigation.md`
+
+**Interfaces:**
+- Consumes: existing `make stage2`, `TWINKLE_TIMINGS=1`, and current boot compiler.
+- Produces: one baseline log and a stage-by-stage timing table.
+
+- [ ] **Step 1: Ensure the working tree starts clean.**
+
+Run:
+
+```bash
+git status --short
+```
+
+Expected: no output. If there is output, stop and record the dirty files before running long measurements.
+
+- [ ] **Step 2: Run a full timed self-host loop.**
+
+Run:
+
+```bash
+set -o pipefail
+TWINKLE_TIMINGS=1 make stage2 2>&1 | tee /tmp/twinkle-stage2-baseline.log
+```
+
+Expected: the command completes with `Self-host loop completed successfully.` and `Fixed point reached: stage3 == stage4`.
+
+- [ ] **Step 3: Extract high-level stage boundaries.**
+
+Run:
+
+```bash
+rg "^==>|Self-host loop completed|Fixed point reached|\[time\] (compile_modules|core_link|monomorphize|lower_anf|optimize|builder_region_rewrite|variant_specialize|closure_convert|produce_mutable_decisions|prepare_backend|verify|plan_wasm_types|emit_module|link|wasm_dce|emit_wasm_binary)" /tmp/twinkle-stage2-baseline.log > /tmp/twinkle-stage2-baseline-phases.log
+```
+
+Expected: `/tmp/twinkle-stage2-baseline-phases.log` contains phase lines for each compiler build performed by `make stage2`.
+
+- [ ] **Step 4: Extract sound-uniqueness phase details.**
+
+Run:
+
+```bash
+rg "time:8g|time:mutable|time:summary:roots|time:own:selected|time:mutable:fixcache" /tmp/twinkle-stage2-baseline.log > /tmp/twinkle-stage2-baseline-su.log
+```
+
+Expected: `/tmp/twinkle-stage2-baseline-su.log` shows whether 8G summary/variants/groups/filter or mutable scoped summary dominates each stage.
+
+- [ ] **Step 5: Record the baseline table.**
+
+Add a `## Baseline Results` section to this plan with this table filled from `/tmp/twinkle-stage2-baseline-phases.log` and `/tmp/twinkle-stage2-baseline-su.log`:
+
+```markdown
+## Baseline Results
+
+| Build step | Compiler wasm | Output | Total observation | Dominant phases | Sound-uniqueness detail |
+|---|---|---|---|---|---|
+| stage0 -> stage1 | Rust stage0 | `target/boot-stage1.wasm` | measured | measured | not applicable or measured |
+| stage1 bridge/check | `target/boot-stage1.wasm` | bridge + project check | measured | measured | measured if present |
+| stage1 -> stage2 | `target/boot-stage1.wasm` | `target/boot.wasm` | measured | measured | measured |
+| stage2 -> stage3 | `target/boot.wasm` | `/tmp/twinkle-selfhost/stage3.wasm` | measured | measured | measured |
+| stage3 -> stage4 | `target/boot.wasm` after stage3 adoption | `/tmp/twinkle-selfhost/stage4.wasm` | measured | measured | measured |
+```
+
+Expected: the table identifies the repeated dominant phase before any optimization is proposed.
+
+- [ ] **Step 6: Commit the baseline-only plan update.**
+
+Run:
+
+```bash
+git add docs/plans/2026-07-30-stage2-performance-investigation.md
+git commit -m "Measure stage2 performance baseline"
+```
+
+Expected: commit contains only the plan update with measured baseline data.
+
+---
+
+## Task 2: Localize repeated sound-uniqueness recomputation
+
+**Files:**
+- Possibly modify: `boot/compiler/codegen/variant_specialize.tw`
+- Possibly modify: `boot/compiler/codegen/mutable_produce.tw`
+- Possibly modify: `boot/compiler/codegen/ownership_verdicts.tw`
+- Possibly modify: `boot/compiler/summary.tw`
+- Possibly modify: `boot/compiler/ownership.tw`
+- Modify: `docs/plans/2026-07-30-stage2-performance-investigation.md`
+
+**Interfaces:**
+- Consumes: baseline from Task 1.
+- Produces: a precise recomputation map naming the repeated expensive functions or artifacts.
+
+- [ ] **Step 1: Decide whether existing timings are sufficient.**
+
+Read `/tmp/twinkle-stage2-baseline-su.log` and answer in the plan:
+
+```markdown
+### Recompute Localization
+
+- Is Phase 8G dominated by `summary.compute`, `summary.compute_variants`, `collect_groups`, or `updatable_filter`?
+- Is mutable production dominated by scoped CFG, scoped summary, selected ownership, decision join, or fix-cache misses?
+- Which expensive subphase repeats with similar cost across stage1->stage2, stage2->stage3, and stage3->stage4?
+```
+
+Expected: if the log already identifies the dominant repeated subphase, skip to Step 4. If not, add instrumentation in Step 2.
+
+- [ ] **Step 2: Add temporary timing markers only where baseline is ambiguous.**
+
+If needed, add `TWINKLE_TIMINGS`-guarded markers around specific candidate calls. Use existing timing style and keep normal builds unchanged when `TWINKLE_TIMINGS` is unset.
+
+Candidate marker locations:
+
+```twinkle
+// boot/compiler/codegen/variant_specialize.tw
+view := ownership.prune_dead_merge(cfg.build_view(anf, b))
+table := summary.compute(view, b, sem)
+vt := summary.compute_variants(view, b, sem, table)
+groups0 := collect_groups(view, table, b, sem, vt, published)
+updatable := updatable_funcs(anf, b)
+
+// boot/compiler/codegen/ownership_verdicts.tw
+summarized := summary.compute_for_roots_cached(view, b, sem, scope)
+artifacts := ownership.compute_selected_artifacts(...)
+
+// boot/compiler/summary.tw
+call sites of call_uniques_sited, run_scc_variants, and with_dedupe_helpers
+```
+
+Expected: markers compile and produce useful subphase boundaries without verbose per-function logs.
+
+- [ ] **Step 3: Rebuild and rerun one representative compiler build.**
+
+Run:
+
+```bash
+target/twk fmt boot/compiler/codegen/variant_specialize.tw boot/compiler/codegen/mutable_produce.tw boot/compiler/codegen/ownership_verdicts.tw boot/compiler/summary.tw boot/compiler/ownership.tw
+./target/release/twk check boot/main.tw
+./target/release/twk build boot/main.tw -o /tmp/boot-stage1-perf.wasm
+set -o pipefail
+TWINKLE_TIMINGS=1 BOOT_WASM=/tmp/boot-stage1-perf.wasm deno run --allow-read --allow-write --allow-env tools/js_runtime/deno_main.mjs build -o /tmp/stage2-perf-localize.wasm 2>&1 | tee /tmp/stage2-perf-localize.log
+```
+
+Expected: `/tmp/stage2-perf-localize.log` reaches `WASM output: /tmp/stage2-perf-localize.wasm` and identifies the dominant repeated subphase.
+
+- [ ] **Step 4: Record the recomputation hypothesis.**
+
+Add a `## Recompute Localization Results` section:
+
+```markdown
+## Recompute Localization Results
+
+- Dominant repeated cost:
+- Why it repeats:
+- Candidate artifact that could be reused or scoped:
+- Safety constraints for changing it:
+- Rejected hypotheses:
+```
+
+Expected: the next task has one target and a falsifiable safety argument.
+
+- [ ] **Step 5: Commit localization evidence and intentional retained markers.**
+
+If source markers were added and are worth retaining, commit them with the plan update. If markers were temporary, remove them before committing.
+
+Run:
+
+```bash
+git add docs/plans/2026-07-30-stage2-performance-investigation.md boot/compiler/codegen/variant_specialize.tw boot/compiler/codegen/mutable_produce.tw boot/compiler/codegen/ownership_verdicts.tw boot/compiler/summary.tw boot/compiler/ownership.tw
+git commit -m "Localize stage2 sound-uniqueness cost"
+```
+
+Expected: commit contains only useful diagnostics or the plan evidence.
+
+---
+
+## Task 3: Choose and test one optimization path
+
+**Files:**
+- Possibly modify: `boot/compiler/codegen/variant_specialize.tw`
+- Possibly modify: `boot/compiler/codegen/ownership_verdicts.tw`
+- Possibly modify: `boot/compiler/summary.tw`
+- Possibly modify: `boot/compiler/ownership.tw`
+- Test: add or update focused tests under `boot/tests/suites/`
+- Modify: `docs/plans/2026-07-30-stage2-performance-investigation.md`
+
+**Interfaces:**
+- Consumes: recomputation target from Task 2.
+- Produces: one measured optimization with regression coverage.
+
+Choose exactly one path based on Task 2 evidence.
+
+### Optimization Path A: reuse one summary table between Phase 8G and mutable production
+
+Use this path only if Task 2 proves both phases compute equivalent whole-program or compatible scoped summaries over the same post-8G module.
+
+- [ ] **Step A1: Prove module identity and semantic compatibility.**
+
+Record whether the mutable producer runs before or after 8G clone insertion and whether the summary table from 8G is still valid for mutable candidates.
+
+Expected: if function ids or bodies differ after 8G, do not reuse the 8G table directly; switch to Path B or C.
+
+- [ ] **Step A2: Introduce an explicit artifact carrier only if safe.**
+
+Use a named record rather than hidden globals. Example shape if proven safe:
+
+```twinkle
+type SoundUniquenessArtifacts = .{
+  view: cfg.CfgView,
+  summary: summary.SummaryTable,
+  variants: summary.VariantSummaryTable,
+}
+```
+
+Expected: callers can see which module version the artifacts describe.
+
+- [ ] **Step A3: Add equivalence coverage.**
+
+Add a focused test proving reused artifacts produce the same mutable decisions as recomputed artifacts for a module with 8G clones and field-backed candidates.
+
+Expected: test fails if stale pre-clone summaries are accidentally reused after clone insertion.
+
+### Optimization Path B: scope Phase 8G expensive publication earlier
+
+Use this path if Task 2 proves Phase 8G spends most time publishing variants or scanning call groups for functions that `updatable_funcs` later discards.
+
+- [ ] **Step B1: Move or duplicate the cheap updatable prefilter before expensive publication.**
+
+Compute `updatable := updatable_funcs(anf, b)` before the expensive operation identified in Task 2. Do not skip summaries for callees that can influence updatable roots unless the dependency proof is explicit.
+
+Expected: non-updatable functions no longer drive expensive 8G publication or group scans where safe.
+
+- [ ] **Step B2: Preserve recursive routing semantics.**
+
+Add or run coverage for recursive field-tier routing and self/mutual-recursive variants.
+
+Run:
+
+```bash
+target/twk run boot/tests/main.tw
+```
+
+Expected: existing variant routing and field-backed collection tests still pass when run with a fresh `target/twk` after bundling, or run focused suites via a fresh `BOOT_WASM` during development.
+
+### Optimization Path C: reduce repeated `call_uniques_sited` work
+
+Use this path if Task 2 shows `collect_groups`, variant publication, or mutable scoped summary repeatedly reruns `call_uniques_sited` for the same functions and seeds.
+
+- [ ] **Step C1: Identify cache key inputs.**
+
+Document the exact inputs that determine `call_uniques_sited` output: function id, summary table, builtin registry, optimizer semantics, variant resolver, field seed, and any suppress/seed maps.
+
+Expected: if a stable key cannot be defined without unsafe aliasing, do not cache.
+
+- [ ] **Step C2: Add a local cache with explicit lifetime.**
+
+Keep the cache local to one compiler build and one CFG/module version. Do not use process-global mutable state.
+
+Expected: repeated calls in one phase reuse results; separate module versions recompute.
+
+- [ ] **Step C3: Add hit/miss timing output.**
+
+When `TWINKLE_TIMINGS=1`, print cache hits and misses in the same style as existing `time:mutable:fixcache` output.
+
+Expected: optimized run shows meaningful hits and lower repeated cost.
+
+### Optimization Path D: improve scoped summary closure or SCC scheduling
+
+Use this path if Task 2 shows scoped summary remains dominant and recomputes many functions irrelevant to mutable roots.
+
+- [ ] **Step D1: Measure closure size and skipped SCCs before changing logic.**
+
+Use existing `time:summary:roots` output:
+
+```text
+funcs=4100 roots=541 wanted=3435 wanted_blocks=48435 wanted_insts=109570 wanted_edges=59419 sccs=3808 run_sccs=3148 skipped_sccs=660
+```
+
+Expected: the plan records whether closure size, not per-function cost, dominates.
+
+- [ ] **Step D2: Add a regression test for dependency closure semantics if changing closure logic.**
+
+The test must compare reachable function membership, not timing. Use a small call graph where several roots share callees and one callee reaches a leaf.
+
+Expected: reachable set remains unchanged after optimization.
+
+- [ ] **Step D3: Optimize only the proven closure or scheduling hotspot.**
+
+Examples that require proof before implementation:
+
+```twinkle
+// Mark queued callees before enqueueing to avoid duplicate worklist entries.
+// Keep deterministic sorted processing.
+queued: Dict<Int, Bool> = Dict.new()
+```
+
+Expected: same reachable set, fewer queued duplicates or fewer unnecessary SCC runs.
+
+---
+
+## Task 4: Verify the optimization on the self-host loop
+
+**Files:**
+- Modify: implementation files selected in Task 3.
+- Modify: `docs/plans/2026-07-30-stage2-performance-investigation.md`
+
+**Interfaces:**
+- Consumes: optimization from Task 3.
+- Produces: measured `make stage2` improvement with fixed-point verification intact.
+
+- [ ] **Step 1: Run compiler checks and focused tests.**
+
+Run the checks relevant to changed files. At minimum:
+
+```bash
+./target/release/twk check boot/main.tw
+target/twk lint boot/main.tw
+```
+
+If tests were added or changed, run their focused suite through the freshest available compiler. If `target/twk` is stale, use a newly built `BOOT_WASM` with the Deno runtime.
+
+Expected: checks pass and focused tests pass.
+
+- [ ] **Step 2: Run a timed representative build.**
+
+Run:
+
+```bash
+./target/release/twk build boot/main.tw -o /tmp/boot-stage1-optimized.wasm
+set -o pipefail
+TWINKLE_TIMINGS=1 BOOT_WASM=/tmp/boot-stage1-optimized.wasm deno run --allow-read --allow-write --allow-env tools/js_runtime/deno_main.mjs build -o /tmp/stage2-optimized.wasm 2>&1 | tee /tmp/stage2-optimized.log
+```
+
+Expected: build reaches `WASM output: /tmp/stage2-optimized.wasm`; relevant dominant phase is lower than baseline.
+
+- [ ] **Step 3: Run full `make stage2` with timings.**
+
+Run:
+
+```bash
+set -o pipefail
+TWINKLE_TIMINGS=1 make stage2 2>&1 | tee /tmp/twinkle-stage2-optimized.log
+```
+
+Expected: command completes with `Self-host loop completed successfully.` and `Fixed point reached: stage3 == stage4`.
+
+- [ ] **Step 4: Compare baseline and optimized logs.**
+
+Run:
+
+```bash
+rg "\[time\] variant_specialize|\[time\] produce_mutable_decisions|time:mutable:artifacts|time:8g|time:summary:roots" /tmp/twinkle-stage2-baseline.log /tmp/twinkle-stage2-optimized.log > /tmp/twinkle-stage2-comparison.log
+```
+
+Expected: comparison log shows which phase improved and whether any phase regressed.
+
+- [ ] **Step 5: Record verification results.**
+
+Add a `## Optimization Results` section:
+
+```markdown
+## Optimization Results
+
+- Root cause of remaining slowness:
+- Optimization implemented:
+- Representative build before/after:
+- Full `make stage2` before/after:
+- Fixed-point result:
+- Tests/checks:
+- Regressions or deferrals:
+```
+
+Expected: results are evidence-based and do not claim full test success unless full tests were actually run and passed.
+
+- [ ] **Step 6: Commit implementation and results.**
+
+Run:
+
+```bash
+git add docs/plans/2026-07-30-stage2-performance-investigation.md boot/compiler/codegen/variant_specialize.tw boot/compiler/codegen/mutable_produce.tw boot/compiler/codegen/ownership_verdicts.tw boot/compiler/summary.tw boot/compiler/ownership.tw boot/tests/suites
+git commit -m "Optimize stage2 sound-uniqueness build cost"
+```
+
+Expected: commit contains the optimization, coverage, and measured results.
+
+---
+
+## Task 5: Cleanup diagnostics and document retained performance tools
+
+**Files:**
+- Possibly modify: `boot/compiler/codegen/variant_specialize.tw`
+- Possibly modify: `boot/compiler/codegen/mutable_produce.tw`
+- Possibly modify: `boot/compiler/codegen/ownership_verdicts.tw`
+- Possibly modify: `boot/compiler/summary.tw`
+- Possibly modify: `boot/compiler/ownership.tw`
+- Possibly modify: `docs/plans/sound-uniqueness/codegen/README.md`
+- Modify: `docs/plans/2026-07-30-stage2-performance-investigation.md`
+
+**Interfaces:**
+- Consumes: final optimization and verification from Task 4.
+- Produces: clean diagnostics and handoff notes.
+
+- [ ] **Step 1: Remove noisy temporary markers.**
+
+Search for temporary trace labels added during this plan:
+
+```bash
+rg "hot-function|perf-localize|temporary|trace:own:field_reqs|trace:summary:func" boot/compiler
+```
+
+Expected: no noisy temporary markers remain unless explicitly documented.
+
+- [ ] **Step 2: Keep useful timing lines intentionally.**
+
+Retain concise high-level timing lines that are generally useful under `TWINKLE_TIMINGS=1`, such as phase totals, cache hit/miss summaries, and scoped summary aggregate counts.
+
+Expected: ordinary `TWINKLE_TIMINGS=1` output remains readable.
+
+- [ ] **Step 3: Document retained flags or diagnostics.**
+
+If new timing output or env flags remain, update `docs/plans/sound-uniqueness/codegen/README.md` with:
+
+```markdown
+### Performance diagnostics
+
+- `TWINKLE_TIMINGS=1`: prints phase totals for 8G, mutable production, scoped summary, and retained cache summaries.
+- Use this when comparing `make stage2` before/after compiler optimization work.
+```
+
+Expected: future agents know which diagnostics are intentional.
+
+- [ ] **Step 4: Final checks.**
+
+Run:
+
+```bash
+target/twk fmt boot/compiler/codegen/variant_specialize.tw boot/compiler/codegen/mutable_produce.tw boot/compiler/codegen/ownership_verdicts.tw boot/compiler/summary.tw boot/compiler/ownership.tw
+./target/release/twk check boot/main.tw
+target/twk lint boot/main.tw
+```
+
+Expected: formatting is stable, type checking succeeds, and lint reports no findings.
+
+- [ ] **Step 5: Final plan handoff.**
+
+Add a final handoff section:
+
+```markdown
+## Final Handoff
+
+- Baseline log:
+- Optimized log:
+- Optimization commit:
+- Remaining performance deferrals:
+- Commands verified:
+```
+
+Expected: the plan is useful as an archived record after work completes.
+
+- [ ] **Step 6: Commit cleanup.**
+
+Run:
+
+```bash
+git add docs/plans/2026-07-30-stage2-performance-investigation.md docs/plans/sound-uniqueness/codegen/README.md boot/compiler/codegen/variant_specialize.tw boot/compiler/codegen/mutable_produce.tw boot/compiler/codegen/ownership_verdicts.tw boot/compiler/summary.tw boot/compiler/ownership.tw
+git commit -m "Document stage2 performance diagnostics"
+```
+
+Expected: final commit contains cleanup and documentation only.
