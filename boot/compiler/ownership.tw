@@ -8052,7 +8052,28 @@ pub fn collect_field_reqs(
   resolve: VariantResolver,
   require: VariantRequirementResolver,
 ) Dict<Int, vid.PathSet> {
-  live := compute_liveness_labeled(f.blocks, "field_reqs:${f.name}")
+  collect_field_reqs_with_live(
+    f,
+    table,
+    sem,
+    resolve,
+    require,
+    compute_liveness_labeled(f.blocks, "field_reqs:${f.name}"),
+  )
+}
+
+// Liveness-injecting core: `summarize_function` already computes liveness over the
+// same `f.blocks`, so it passes it in rather than recomputing (liveness is a pure
+// function of the blocks). The public `collect_field_reqs` computes its own so it
+// stays self-contained / unit-testable on a raw CfgFunction.
+pub fn collect_field_reqs_with_live(
+  f: CfgFunction,
+  table: SummaryTable,
+  sem: OptimizerSemantics,
+  resolve: VariantResolver,
+  require: VariantRequirementResolver,
+  live: Dict<Int, BlockLive>,
+) Dict<Int, vid.PathSet> {
   blocks := collect blk in f.blocks {
     bl := live_get(live, blk.id.id)
     blk.entry.live = bl.live_in
@@ -8520,7 +8541,10 @@ fn summarize_seeded(
   } else {
     0.0
   }
-  field_reqs := collect_field_reqs(f, table, sem, resolve, require)
+
+  // Reuse the liveness already computed above (same f.blocks) instead of letting
+  // collect_field_reqs recompute it.
+  field_reqs := collect_field_reqs_with_live(f, table, sem, resolve, require, live)
   t_field_reqs := if timed {
     date.now()
   } else {
