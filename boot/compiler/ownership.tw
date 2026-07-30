@@ -5739,6 +5739,16 @@ fn fixverify_enabled() Bool {
   }
 }
 
+// Drive the cold ownership fixpoint with the successor-based worklist (skipping
+// no-op re-visits) instead of a full sweep every round. On by default;
+// TWINKLE_COLD_WORKLIST=0 restores the legacy full sweep for A/B.
+fn cold_worklist_enabled() Bool {
+  case proc.env("TWINKLE_COLD_WORKLIST") {
+    .Some(v) => v != "0",
+    .None => true,
+  }
+}
+
 // Dev-only A/B gate for the loop-seed warm-start: when set, run_fixpoint_validated
 // stabilizes the seed set both all-cold and warm and traps on any divergence.
 fn seedverify_enabled() Bool {
@@ -6099,13 +6109,28 @@ fn run_fixpoint(
     }
   }
   succ := build_succ_map(blocks)
+
+  // Cold start (dirty0 = None): seed every block dirty and drive the same
+  // successor-based worklist reruns use, so no-op re-visits — a block whose
+  // predecessor exits are unchanged since its last visit — are skipped. Such a
+  // visit recomputes the identical exit (deterministic transfer over unchanged
+  // inputs), records no change, and never increments the widening counter, so
+  // skipping it is state- and widening-neutral: the fixed point is identical to
+  // the full sweep, in the same block order and rounds. TWINKLE_COLD_WORKLIST=0
+  // restores the legacy full sweep for A/B.
+  cold_worklist := cold_worklist_enabled()
   all_dirty := case dirty0 {
-    .None => true,
+    .None => !cold_worklist,
     .Some(_) => false,
   }
-  dirty: Dict<Int, Bool> = case dirty0 {
-    .Some(d) => d,
-    .None => Dict.new(),
+  dirty: Dict<Int, Bool> = Dict.new()
+  case dirty0 {
+    .Some(d) => dirty = d,
+    .None => if cold_worklist {
+      for blk in blocks {
+        dirty[blk.id.id] = true
+      }
+    },
   }
 
   // Quartet moves + liveness scan are dataflow-invariant: compute once, not per
