@@ -112,6 +112,51 @@ Open proof obligations for Task 3 (resolve before relying on reuse):
 
 ---
 
+## Baseline Results
+
+Full `TWINKLE_TIMINGS=1 make stage2` on branch `stage2-perf-summary-reuse`
+(clean tree, fixed point reached: stage3 == stage4). Log at
+`/tmp/twinkle-stage2-baseline.log`.
+
+The loop performs one tiny bridge build (29 modules), a project check (no
+codegen), and **three heavy boot/main codegen builds** (256 modules each). The
+three heavy builds have an identical sound-uniqueness workload every time:
+`groups0=65 updatable=27 scope_roots=544`.
+
+| Build step | Compiler wasm | variant_specialize (8G) | 8G whole-prog summary `table` | produce_mutable_decisions | mutable scoped `summary` |
+|---|---|---|---|---|---|
+| bridge build | stage1 | 0.30s | 0.23s | 0.19s | 0.15s |
+| project check | stage1 | n/a (check, no codegen) | — | — | — |
+| stage1 → stage2 | `boot-stage1.wasm` | 11.38s | 8.26s | 10.53s | 9.14s |
+| stage2 → stage3 | `boot.wasm` | 12.43s | 9.16s | 12.17s | 10.40s |
+| stage3 → stage4 | `boot.wasm` | 12.77s | 9.41s | 12.61s | 10.74s |
+
+Dominant repeated cost (per heavy build): **two large summary passes** —
+8G's whole-program `summary.compute` (~8.3–9.4s) and the mutable producer's
+scoped `summary.compute_for_roots_cached` (~9.1–10.7s). Together ~20s of each
+~24s codegen, repeated across all three heavy builds (~60s of summary work
+total). Everything else (monomorphize ~0.09s, optimize ~0.4s, emit ~1s) is
+negligible by comparison. This matches and confirms the single-build probe.
+
+## Recompute Localization Results
+
+- **Dominant repeated cost:** two whole-module-scale summary passes per heavy
+  build — 8G `summary.compute` (whole-program, pre-clone) and the mutable
+  producer `summary.compute_for_roots_cached` (scoped to 544 roots, post-clone).
+- **Why it repeats:** the mutable producer's "scope" (544 roots) closes over
+  ~84% of the module, so it re-summarizes almost every function 8G already
+  summarized, on a module that differs only by 27 added clones plus rewritten
+  caller sites.
+- **Candidate artifact to reuse/scope:** 8G's per-function summary entries.
+  Carry them into the mutable producer; recompute only the invalidation set
+  `{27 clone ids} ∪ {rewritten-site host funcs}` and its transitive callers.
+- **Safety constraints:** a per-function entry may only be reused if its body is
+  unchanged AND none of its (transitive) callees' summaries changed; otherwise
+  recompute. 8G must expose the exact set of functions it structurally modified.
+- **Rejected hypotheses:** Path A (hand 8G's whole-program table directly to the
+  mutable producer) — unsound because the 27 clones are absent from 8G's table
+  and the mutable pass is a different, scoped computation. See the Probe section.
+
 ## File Structure
 
 - Modify: `docs/plans/2026-07-30-stage2-performance-investigation.md`
