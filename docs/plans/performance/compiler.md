@@ -1082,6 +1082,37 @@ recompute liveness the summary pass already did, but across pass boundaries
 threaded per-view liveness cache. `prune:` runs on pre-prune blocks and can't
 share. ~0.3–0.5s/build ceiling if pursued.
 
+## Current baseline: 2026-07-31 (sound-uniqueness codegen consolidated)
+
+Net effect of this arc (summary-reuse → cold worklist → liveness reuse) on the
+two dominant codegen phases, per heavy self-host build:
+
+```text
+                            start        now
+variant_specialize (8G)   ~11.5-12.8s -> ~7.5s
+produce_mutable_decisions ~10.5-12.6s -> ~5.0s
+```
+
+Sound-uniqueness codegen roughly halved (~23-25s → ~12.5s/build), full
+`make stage2` wall ~73s. All three changes validated at the same bar: output
+byte-identical (A/B per change), 3321 boot tests pass, fixed point stage3 ==
+stage4. Landed pieces:
+
+- **summary-reuse** — the mutable producer seeds its scoped summary from 8G's
+  carried whole-program table (`summary.compute_for_roots_reusing`), recomputing
+  only the clone-affected closure. `TWINKLE_SUMMARY_REUSE=0` /
+  `TWINKLE_SUMMARY_REUSE_VERIFY=1`.
+- **cold worklist** — the cold ownership fixpoint skips no-op block re-visits.
+  `TWINKLE_COLD_WORKLIST=0`.
+- **liveness reuse** — `collect_field_reqs` reuses the summary pass's liveness.
+
+Remaining floor / next levers (diminishing, all documented above): 8G's
+whole-program summary fixpoint is inherent (it decides clones); the ~14
+seed-validation reruns are largely exhausted (rec #3); cross-pass liveness sharing
+for `call_uniques`/`analyze` is ~0.3-0.5s but needs a threaded per-view cache. The
+`call_uniques` fixpoint-reuse lever (rec #1) is proven not viable (resolver is
+load-bearing).
+
 ## Working rules for future updates
 
 - Keep only the current baseline plus durable lessons in this file.
