@@ -22,7 +22,7 @@ use compiler.backend.prepared_ir.{CaptureParam, PreparedExpr, PreparedFunc, Prep
 use compiler.backend.repr_assign.{assign_repr_for_module}
 use compiler.backend.route_typed_vec.{route_typed_vectors}
 use compiler.backend.slot_assign.{assign_slots_for_module}
-use compiler.backend.tailify.{tailify_funcs}
+use compiler.backend.tailify.{never_returning_funcs, tailify_funcs}
 use compiler.backend.typed_param_abi.{analyze_typed_repr}
 use compiler.base_env.{first_user_type_id}
 use compiler.builtins.{BuiltinRegistry}
@@ -155,9 +155,14 @@ pub fn prepare_backend_with_mutable_decisions(
   // types via the payload+Return path. Both must see the same transformed funcs.
   timed := prepare_timings_enabled()
   r0 := date.now()
-  funcs_t := tailify_funcs(pre.funcs, builtins)
+
+  // Computed once from the full pre-tailify funcs and shared with both passes;
+  // tailify does not change any function's return type, so the same set is valid
+  // for the tailified funcs analyzed just below.
+  never := never_returning_funcs(pre.funcs)
+  funcs_t := tailify_funcs(pre.funcs, builtins, never)
   r1 := date.now()
-  repr := analyze_typed_repr(funcs_t, builtins, first_user_type_id())
+  repr := analyze_typed_repr(funcs_t, builtins, first_user_type_id(), never)
   r2 := date.now()
   typed_fields := repr.typed_fields
   typed_payloads := repr.typed_payloads

@@ -13,6 +13,14 @@
 //! ANF (direct calls, first-class funcref atoms in any position, and closure
 //! construction) and drops the rest. Codegen resolves functions by mangled
 //! symbol, not array position, so removing an unreferenced function is safe.
+//!
+//! Relationship to `codegen/linker_dce.eliminate_dead_wasm`: that pass already
+//! strips dead functions from the *final linked wasm*, so this sweep is not what
+//! keeps the binary small. It runs here, on the ANF (`a.opt`), for two earlier
+//! benefits the wasm-level pass cannot provide: (1) ANF-level analyses that walk
+//! the whole module (e.g. `builder_region_detect.detect_candidates`) see only
+//! live functions, and (2) the backend (`prepare`/`tailify`/`typed_param_abi`/
+//! codegen) never spends time analyzing witnesses that would be discarded anyway.
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom}
 
@@ -120,6 +128,10 @@ pub fn sweep_dead_functions(m: AnfModule) AnfModule {
     .None => {},
   }
 
+  // After module linking there may be several per-source-module init functions,
+  // while `init_func_id` names only the synthesized entry init (mirrors
+  // opt/pipeline.tw's compute_pinned). Seed every `is_init` function as a root so
+  // module-level side effects and their transitive callees are never dropped.
   for f in m.functions {
     if f.is_init and !reachable.has(f.func_id.id) {
       reachable[f.func_id.id] = true

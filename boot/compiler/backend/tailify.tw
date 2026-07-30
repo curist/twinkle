@@ -65,9 +65,9 @@ pub fn prep_op_diverges(op: PreparedOp, reg: BuiltinRegistry, never: Dict<Int, B
 // (consumed-typed-only) with no store-escape relaxation. Gated to typed-vector
 // families (Vector<Int>/Vector<Bool>, see elem_family_of) to keep the IR-shape
 // change confined to accessor-shaped functions.
-pub fn tailify_funcs(funcs: Vector<PreparedFunc>, reg: BuiltinRegistry) Vector<PreparedFunc> {
-  never := never_returning_funcs(funcs)
-
+pub fn tailify_funcs(funcs: Vector<PreparedFunc>, reg: BuiltinRegistry, never: Dict<Int, Bool>) Vector<
+  PreparedFunc,
+> {
   collect pf in funcs {
     tailify_func(pf, reg, never)
   }

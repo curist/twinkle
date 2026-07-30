@@ -27,7 +27,7 @@ use compiler.backend.route_typed_vec.{
   RouteIds, aliases_for, analyze_typed_fields, analyze_typed_payloads, bool_key_maps_equal,
   build_copy_map, materialize_slot_repr, route_ids, slot_typed_after_route, v_group_typeable,
 }
-use compiler.backend.tailify.{never_returning_funcs, prep_op_diverges}
+use compiler.backend.tailify.{prep_op_diverges}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.elem_family.{elem_family_of}
 use compiler.mono_type.{MonoType}
@@ -471,6 +471,7 @@ pub fn analyze_typed_repr(
   funcs: Vector<PreparedFunc>,
   builtins: BuiltinRegistry,
   first_user_tid: Int,
+  never: Dict<Int, Bool>,
 ) ReprAnalysis {
   // A record-field store is non-coercing, so a field producer must already be
   // physically the field's type. Two producer kinds qualify: a local builder/make
@@ -492,11 +493,11 @@ pub fn analyze_typed_repr(
     }
   }
 
-  // Never-returning funcs must be derived from the full set: a diverging call
-  // target (e.g. the `error` wrapper) rarely carries a typed-vector slot itself,
-  // so it is absent from rfuncs, yet a call to it inside an rfuncs body still
-  // diverges and must be recognized as such.
-  never := never_returning_funcs(funcs)
+  // `never` is supplied by the caller (see prepare.tw), computed once from the
+  // full pre-tailify function list and shared with tailify_funcs. It must reflect
+  // the full set, not `rfuncs`: a diverging call target (e.g. the `error` wrapper)
+  // rarely carries a typed-vector slot itself, so it is absent from rfuncs, yet a
+  // call to it inside an rfuncs body still diverges and must be recognized.
   tf := analyze_typed_fields(rfuncs, builtins, Dict.new())
   tp_params := all_vec_int_param_indices(rfuncs)
   cap := rfuncs.len() + 4

@@ -1,0 +1,52 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.pipeline
+
+fn func_names(src: String) Result<Vector<String>, String> {
+  a := try pipeline.compile_source(src)
+  .Ok(
+    collect f in a.opt.functions {
+      f.name
+    },
+  )
+}
+
+fn has_fn(names: Vector<String>, needle: String) Bool {
+  for n in names {
+    if n == needle {
+      return true
+    }
+  }
+
+  false
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("dce_funcs")
+    .test(
+      "drops an unreachable Stringify witness pulled in by a generic print sink",
+      fn() {
+        // `join` (prelude Vector.to_string helper) is reachable only through
+        // Vector.to_string, which println<String> never calls — monomorphization
+        // over-includes it. The sweep must remove it from a.opt.
+        names := try func_names("println(\"hi\")\n")
+        try assert.ok(!has_fn(names, "join"), "dead witness `join` should be swept")
+        .Ok({})
+      },
+    )
+    .test(
+      "keeps a function referenced only as a first-class funcref argument",
+      fn() {
+        // `dbl` is never called directly; it reaches runtime solely as an
+        // AGlobalFunc atom in `apply`'s argument list. The sweep must follow
+        // funcref atoms in every position, not just call callees.
+        src := "fn dbl(n: Int) Int { n * 2 }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(apply(dbl, 3).to_string())\n"
+        names := try func_names(src)
+        try assert.ok(has_fn(names, "dbl"), "funcref-only `dbl` must survive the sweep")
+        try assert.ok(has_fn(names, "apply"), "called `apply` must survive the sweep")
+        .Ok({})
+      },
+    )
+}

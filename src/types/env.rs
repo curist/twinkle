@@ -1061,7 +1061,19 @@ impl ValueEnv {
             extern_namespaces: HashSet::new(),
         };
 
-        // Register built-in functions
+        // Register built-in functions.
+        //
+        // NOTE (stage0 bootstrap limitation): the boot compiler makes the public
+        // print/error family generic over `T: Stringify` via prelude wrappers in
+        // `boot/prelude/io.tw`. Stage0 does NOT: these entries stay strictly
+        // `fn(String)`, and stage0 never wires io.tw's generic wrappers into call
+        // resolution (register_prelude_exports skips functions whose first param is
+        // a generic type variable). Every `print`/`println`/`error`/... call inside
+        // `boot/**` must therefore pass a `String` (interpolation is fine); a
+        // non-string call such as `println(some_int)` will typecheck under the
+        // self-hosted boot compiler but break `make stage2`'s stage0 step here until
+        // stage0 gains real generic print dispatch. This is why the redundant-print-
+        // stringify auto-fix must not be applied blanket over boot source.
         env.builtins.insert(
             "println".to_string(),
             MonoType::Function {
