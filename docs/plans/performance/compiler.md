@@ -1063,6 +1063,25 @@ few extra benign intermediate steps; none crossed the widen cap here, but a
 pathological input theoretically could. Validate output byte-identity on any
 change that touches the cold-pass iteration.
 
+## Update: reuse summary-pass liveness in field_reqs (shipped)
+
+Profiling the post-worklist 8G summary (`table` ~6.3s) showed the fixpoint down to
+~57%, with liveness (~18%) and `collect_field_reqs` (~21%) as the remaining fat.
+Liveness is computed in five places on the same blocks (`summary:`, `field_reqs:`,
+`call_uniques:`, `analyze:`, `prune:`); `summarize_function` computed it once for
+its own fixpoint and then `collect_field_reqs` recomputed it over the identical
+`f.blocks`. Threaded the already-computed liveness in via a new
+`collect_field_reqs_with_live` (the public `collect_field_reqs` still self-computes
+for unit tests). 8G summary `table` ~6.3s → ~5.5s; `variant_specialize` ~8.1s →
+~7.5s. **Byte-identical by construction** — liveness over identical blocks is
+identical — confirmed by A/B output diff.
+
+Remaining liveness redundancy (not yet shared): `call_uniques:` and `analyze:`
+recompute liveness the summary pass already did, but across pass boundaries
+(8G `collect_groups`; the post-clone mutable analyze view), so sharing needs a
+threaded per-view liveness cache. `prune:` runs on pre-prune blocks and can't
+share. ~0.3–0.5s/build ceiling if pursued.
+
 ## Working rules for future updates
 
 - Keep only the current baseline plus durable lessons in this file.
