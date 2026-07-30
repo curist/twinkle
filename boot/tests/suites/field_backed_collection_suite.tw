@@ -85,8 +85,8 @@ fn variants_of(art: PipelineArtifacts) summary.VariantSummaryTable {
 }
 
 fn canon_keys(vt: summary.VariantSummaryTable) Vector<String> {
-  collect v in summary.variant_ids_of(vt) {
-    vid.variant_canonical_string(v)
+  collect v in vt.variant_ids_of() {
+    v.variant_canonical_string()
   }
 }
 
@@ -133,7 +133,7 @@ pub fn suite() runner.Suite {
       fn() Result<Void, String> {
         art := try compile_fixture("setb")
         vt := variants_of(art)
-        ids := summary.variant_ids_of(vt)
+        ids := vt.variant_ids_of()
         try assert.ok(
           !ids.any(fn(v) {
             v.unique.any(fn(req) { !req.path.is_shell() })
@@ -145,7 +145,7 @@ pub fn suite() runner.Suite {
           .None => return .Err("no variant"),
         }
         shell_paths: Vector<vid.PathSet> = [vid.shell_set(), vid.shell_set()]
-        try assert.is_some(summary.select_variant_for_arg_paths(vt, setb_id, shell_paths))
+        try assert.is_some(vt.select_variant_for_arg_paths(setb_id, shell_paths))
         .Ok({})
       },
     )
@@ -158,7 +158,7 @@ pub fn suite() runner.Suite {
         spec := variant_specialize.specialize_module_with_sem(art.opt, art.builtins, sem_for(art))
         for r in spec.routes {
           try assert.ok(
-            !vid.variant_canonical_string(r.variant).contains(";0:"),
+            !r.variant.variant_canonical_string().contains(";0:"),
             "a primitive-field record must not produce a field-tier route",
           )
         }
@@ -417,7 +417,7 @@ pub fn suite() runner.Suite {
       fn() Result<Void, String> {
         art := try compile_fixture("field_visit_rec")
         vt := variants_of(art)
-        ids := summary.variant_ids_of(vt)
+        ids := vt.variant_ids_of()
         full := case ids.find(fn(v) {
           v.unique.any(fn(req) { !req.path.is_shell() })
         }) {
@@ -426,7 +426,7 @@ pub fn suite() runner.Suite {
         }
         callee := full.func
         shell_only: Vector<vid.PathSet> = [vid.shell_set(), vid.shell_set()]
-        case summary.select_variant_for_arg_paths(vt, callee, shell_only) {
+        case vt.select_variant_for_arg_paths(callee, shell_only) {
           .Some(sel) => try assert.ok(
             !sel.unique.any(fn(req) { !req.path.is_shell() }),
             "shell-only args must select the shell tier",
@@ -434,7 +434,7 @@ pub fn suite() runner.Suite {
           .None => return .Err("shell args must select the shell tier, not None"),
         }
         exact: Vector<vid.PathSet> = [vid.shell_set().add(vid.field(0)), vid.shell_set()]
-        case summary.select_variant_for_arg_paths(vt, callee, exact) {
+        case vt.select_variant_for_arg_paths(callee, exact) {
           .Some(sel) => try assert.equal(
             sel.variant_canonical_string(),
             full.variant_canonical_string(),
@@ -464,13 +464,13 @@ pub fn suite() runner.Suite {
       fn() Result<Void, String> {
         art := try compile_fixture("field_visit_rec")
         vt := variants_of(art)
-        ids := summary.variant_ids_of(vt)
+        ids := vt.variant_ids_of()
         field_variant := ids.find(fn(v) {
           v.unique.any(fn(req) { !req.path.is_shell() })
         })
         case field_variant {
           .Some(v) => {
-            key := vid.variant_canonical_string(v)
+            key := v.variant_canonical_string()
             try assert.str_contains(key, "|0:;0:0")
             .Ok({})
           },

@@ -50,7 +50,7 @@ fn suppress_of(ids: Vector<Int>) Dict<Int, Bool> {
 }
 
 fn has_cache(c: ownership.FixCache, id: Int) Bool {
-  case ownership.fix_cache_get(c, id) {
+  case c.fix_cache_get(id) {
     .Some(_) => true,
     .None => false,
   }

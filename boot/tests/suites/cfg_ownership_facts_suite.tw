@@ -57,7 +57,7 @@ fn analyzed_func(m: AnfModule) cfg.CfgFunction {
   b := b_reg()
   v := cfg.build_view(m, b)
   a := ownership.analyze(v, b, sem())
-  case cfg.function_named(a, "f") {
+  case a.function_named("f") {
     .Some(f) => f,
     .None => error("missing f"),
   }
@@ -85,7 +85,7 @@ fn own_at_exit(f: cfg.CfgFunction, block_idx: Int, local_id: Int) ownership.Owne
 }
 
 fn assert_own(actual: ownership.Ownership, expected: ownership.Ownership) Result<Void, String> {
-  assert.equal(ownership.own_tag(actual), ownership.own_tag(expected))
+  assert.equal(actual.own_tag(), expected.own_tag())
 }
 
 fn own_entry_named(f: cfg.CfgFunction, name: String, local_id: Int) ownership.Ownership {
@@ -150,7 +150,7 @@ fn assert_update_with_base(s: semantics.OptimizerSemantics, fid: FuncId, label: 
   Void,
   String,
 > {
-  case semantics.call_info(s, fid) {
+  case s.call_info(fid) {
     .Some(cs) => {
       try assert.is_true(effect_is_update(cs.effect))
       case cs.cow_base_arg {
@@ -347,7 +347,7 @@ pub fn suite() runner.Suite {
         // Sound-but-imprecise (G3): reaching here is the no-trap assertion, and the
         // pattern-bound local is never minted Unique (Shared or Unknown).
         o := own_exit_named(f, "match.arm.0", 5)
-        try assert.is_true(ownership.own_tag(o) != 0)
+        try assert.is_true(o.own_tag() != 0)
         .Ok({})
       },
     )
@@ -400,7 +400,7 @@ pub fn suite() runner.Suite {
         body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALocal(lid(0))))
         v := cfg.build_view(module_of("f", body), b)
         a := ownership.analyze(v, b, sem())
-        out := cfg.render_view(a)
+        out := a.render_view()
         try assert.is_true(out.contains("Unique"))
         try assert.is_true(out.contains("facts.in={") and out.contains("facts.out={"))
         .Ok({})
@@ -416,8 +416,8 @@ pub fn suite() runner.Suite {
           .Let(lid(1), dict_set_call(b, lid(0)), .Atom(.ALocal(lid(1)))),
         )
         m := module_of("f", body)
-        a1 := cfg.render_view(ownership.analyze(cfg.build_view(m, b), b, sem()))
-        a2 := cfg.render_view(ownership.analyze(cfg.build_view(m, b), b, sem()))
+        a1 := ownership.analyze(cfg.build_view(m, b), b, sem()).render_view()
+        a2 := ownership.analyze(cfg.build_view(m, b), b, sem()).render_view()
         try assert.is_true(a1 == a2)
         .Ok({})
       },
@@ -432,7 +432,7 @@ pub fn suite() runner.Suite {
         try assert_update_with_base(s, b.id("vector$set_unsafe"), "vector$set_unsafe")
 
         // A Cell op must resolve to .None (publish bucket) or at least never Update.
-        case semantics.call_info(s, b.method_id("Cell", "set")) {
+        case s.call_info(b.method_id("Cell", "set")) {
           .None => .Ok({}),
           .Some(cs) => assert.is_false(effect_is_update(cs.effect)),
         }
@@ -455,14 +455,14 @@ pub fn suite() runner.Suite {
         body: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), then_e, else_e), .Atom(.ALitInt(0)))
         v := cfg.build_view(module_of("f", body), b_reg())
         pruned := ownership.prune_dead_merge(v)
-        case cfg.function_named(pruned, "f") {
+        case pruned.function_named("f") {
           .Some(f) => {
             jb := case block_named(f, "if.join") {
               .Some(x) => x,
               .None => return assert.fail("no if.join"),
             }
             try assert.equal(jb.params.len(), 0)
-            try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+            try assert.equal(f.count_edge_arity_mismatches(), 0)
             .Ok({})
           },
           .None => assert.fail("no f"),
@@ -504,7 +504,7 @@ pub fn suite() runner.Suite {
         v := cfg.build_view(module_of("f", body), b_reg())
 
         // Sanity: before pruning the join carries both L1 (live) and L0 (dead).
-        pre := case cfg.function_named(v, "f") {
+        pre := case v.function_named("f") {
           .Some(f) => f,
           .None => return assert.fail("no f pre-prune"),
         }
@@ -515,7 +515,7 @@ pub fn suite() runner.Suite {
         try assert.equal(pre_jb.params.len(), 2)
 
         pruned := ownership.prune_dead_merge(v)
-        f := case cfg.function_named(pruned, "f") {
+        f := case pruned.function_named("f") {
           .Some(x) => x,
           .None => return assert.fail("no f"),
         }
@@ -537,7 +537,7 @@ pub fn suite() runner.Suite {
         }
 
         // succs/terminator side stays consistent too.
-        try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+        try assert.equal(f.count_edge_arity_mismatches(), 0)
         .Ok({})
       },
     )
@@ -587,7 +587,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "fn set_fresh() Vector<Int> {\n  xs := [1, 2]\n  xs[0] = 9\n  xs\n}\n"
         v := try analyze_source(src)
-        out := cfg.render_view(v)
+        out := v.render_view()
         try assert.str_contains(out, "= update L")
         try assert.str_contains(out, "base=reuse(unique)")
         .Ok({})
@@ -598,7 +598,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "fn set_aliased() Int {\n  xs := [1, 2]\n  ys := xs\n  xs[0] = 9\n  ys.len() + xs.len()\n}\n"
         v := try analyze_source(src)
-        out := cfg.render_view(v)
+        out := v.render_view()
         try assert.str_contains(out, "= update L")
         try assert.str_contains(out, "base=persistent(")
         .Ok({})

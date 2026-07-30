@@ -59,7 +59,7 @@ fn analyzed_func(m: AnfModule) cfg.CfgFunction {
   b := b_reg()
   v := cfg.build_view(m, b)
   a := ownership.analyze(v, b, sem())
-  case cfg.function_named(a, "f") {
+  case a.function_named("f") {
     .Some(f) => f,
     .None => error("no f"),
   }
@@ -73,13 +73,11 @@ fn field_count(f: cfg.CfgFunction, local_id: Int) Int {
   }
 }
 
-fn tag_u() Int {
-  0
-}
+tag_u: Int = 0
 
 // A FieldMap with a single Unique path.
 fn one(p: ff.AccessPath) ff.FieldMap {
-  ff.empty().set_path(p, tag_u())
+  ff.empty().set_path(p, tag_u)
 }
 
 fn field_atom(fid: Int, v: LocalId) FieldAtom {
@@ -217,7 +215,7 @@ pub fn suite() runner.Suite {
       "graft Field-prefix: inner [.f] path is silently dropped (depth-3 under-claim)",
       fn() {
         // src has a [.f9] path (as if from a nested record's field fact).
-        src := ff.empty().set_path(ff.field_path(9), tag_u())
+        src := ff.empty().set_path(ff.field_path(9), tag_u)
         dst := ff.empty().graft(.Field(1), src)
         try assert.is_true(dst.is_unique(ff.field_path(1))) // [.f1] shell grafted
         try assert.equal(dst.sorted_keys().len(), 1) // [.f1, .f9] NOT emitted
@@ -229,9 +227,9 @@ pub fn suite() runner.Suite {
       fn() {
         m := ff
           .empty()
-          .set_path(ff.field_path(1), tag_u())
-          .set_path(ff.field_elem(1), tag_u())
-          .set_path(ff.field_path(2), tag_u())
+          .set_path(ff.field_path(1), tag_u)
+          .set_path(ff.field_elem(1), tag_u)
+          .set_path(ff.field_path(2), tag_u)
         out := m.remove_prefix(.Field(1))
         try assert.is_false(out.is_unique(ff.field_path(1)))
         try assert.is_false(out.is_unique(ff.field_elem(1)))
@@ -244,12 +242,12 @@ pub fn suite() runner.Suite {
       fn() {
         m := ff
           .empty()
-          .set_path(ff.field_path(1), tag_u())
-          .set_path(ff.field_elem(1), tag_u())
-          .set_path(ff.field_path(2), tag_u()) // sibling, must not leak
+          .set_path(ff.field_path(1), tag_u)
+          .set_path(ff.field_elem(1), tag_u)
+          .set_path(ff.field_path(2), tag_u) // sibling, must not leak
         pr := m.project(.Field(1))
         try assert.is_true(case pr.shell {
-          .Some(t) => t == tag_u(),
+          .Some(t) => t == tag_u,
           .None => false,
         })
         try assert.is_true(pr.fields.is_unique(ff.elem_path()))
@@ -260,7 +258,7 @@ pub fn suite() runner.Suite {
     .test(
       "merge: per-path meet keeps only paths Unique in both",
       fn() {
-        a := ff.empty().set_path(ff.field_path(1), tag_u()).set_path(ff.field_path(2), tag_u())
+        a := ff.empty().set_path(ff.field_path(1), tag_u).set_path(ff.field_path(2), tag_u)
         b := one(ff.field_path(1))
         out := a.merge(b)
         try assert.is_true(out.is_unique(ff.field_path(1)))
@@ -669,8 +667,8 @@ pub fn suite() runner.Suite {
         v := cfg.build_view(m, bb)
         a1 := ownership.analyze(v, bb, sem())
         a2 := ownership.analyze(v, bb, sem())
-        out1 := cfg.render_view(a1)
-        out2 := cfg.render_view(a2)
+        out1 := a1.render_view()
+        out2 := a2.render_view()
         try assert.is_true(out1.contains("field_facts="))
         try assert.is_true(
           out1.contains(
@@ -708,7 +706,7 @@ pub fn suite() runner.Suite {
         )
         m := module_of("f", body)
         v := cfg.build_view(m, b)
-        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        out := ownership.analyze(v, b, sem()).render_view()
         try assert.is_true(
           out.contains(
             "verdict L3 = record_update L1.f0 shell=reuse(unique) field=persistent(insufficient deep ownership)",
@@ -752,7 +750,7 @@ pub fn suite() runner.Suite {
         )
         m := module_of("f", body)
         v := cfg.build_view(m, b)
-        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        out := ownership.analyze(v, b, sem()).render_view()
         try assert.is_true(
           out.contains(
             "verdict L4 = record_update L1.f0 shell=reuse(unique) field=persistent(insufficient deep ownership)",
@@ -796,7 +794,7 @@ pub fn suite() runner.Suite {
         )
         m := module_of("f", body)
         v := cfg.build_view(m, b)
-        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        out := ownership.analyze(v, b, sem()).render_view()
         try assert.is_true(
           out.contains(
             "verdict L4 = record_update L1.f0 shell=reuse(unique) field=persistent(insufficient deep ownership)",
@@ -844,7 +842,7 @@ pub fn suite() runner.Suite {
         )
         m := module_of("f", body)
         v := cfg.build_view(m, b)
-        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        out := ownership.analyze(v, b, sem()).render_view()
         try assert.is_true(
           out.contains(
             "verdict L4 = record_update L1.f0 shell=reuse(unique) field=persistent(insufficient deep ownership)",
@@ -904,7 +902,7 @@ pub fn suite() runner.Suite {
         )
         m := module_of("f", body)
         v := cfg.build_view(m, b)
-        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        out := ownership.analyze(v, b, sem()).render_view()
         try assert.is_true(
           out.contains(
             "verdict L5 = record_update L2.f0 shell=reuse(unique) field=in-place([.f0] unique)",
@@ -969,7 +967,7 @@ pub fn suite() runner.Suite {
         )
         m := module_of("f", body)
         v := cfg.build_view(m, b)
-        out := cfg.render_view(ownership.analyze(v, b, sem()))
+        out := ownership.analyze(v, b, sem()).render_view()
         try assert.is_true(
           out.contains(
             "verdict L5 = record_update L2.f0 shell=reuse(unique) field=in-place([.f0] unique)",

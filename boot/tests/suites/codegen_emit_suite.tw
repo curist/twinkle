@@ -1639,12 +1639,10 @@ fn find_prepared_record_update_site(prepared: PreparedModule, fn_name: String) P
   error("missing prepared record update site for ${fn_name}")
 }
 
-fn record_update_bump_source() String {
-  "type Point = .{ x: Int, y: Int }\nfn bump(p: Point) Point {\n  q := p\n  p.x = p.x + 1\n  println(q.x.to_string())\n  p\n}\n"
-}
+record_update_bump_source: String = "type Point = .{ x: Int, y: Int }\nfn bump(p: Point) Point {\n  q := p\n  p.x = p.x + 1\n  println(q.x.to_string())\n  p\n}\n"
 
 fn test_emit_module_keeps_record_update_persistent_with_reuse_decision() Result<Void, String> {
-  artifacts := try pipeline.compile_source(record_update_bump_source())
+  artifacts := try pipeline.compile_source(record_update_bump_source)
   closure_conversion := convert_closures(artifacts.opt, artifacts.env)
   pre := find_record_update_anf_site(closure_conversion.anf, "bump")
 
@@ -1710,7 +1708,7 @@ fn test_emit_module_keeps_record_update_persistent_with_reuse_decision() Result<
 }
 
 fn test_record_update_field_path_mismatch_rejects_cross_type_decision() Result<Void, String> {
-  artifacts := try pipeline.compile_source(record_update_bump_source())
+  artifacts := try pipeline.compile_source(record_update_bump_source)
   closure_conversion := convert_closures(artifacts.opt, artifacts.env)
   pre := find_record_update_anf_site(closure_conversion.anf, "bump")
 

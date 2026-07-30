@@ -22,12 +22,12 @@ fn view(src: String) Result<cfg.CfgView, String> {
 
 fn rendered(src: String) Result<String, String> {
   v := try view(src)
-  .Ok(cfg.render_view(v))
+  .Ok(v.render_view())
 }
 
 fn function(src: String, name: String) Result<cfg.CfgFunction, String> {
   v := try view(src)
-  case cfg.function_named(v, name) {
+  case v.function_named(name) {
     .Some(f) => .Ok(f),
     .None => .Err("missing CFG function ${name}"),
   }
@@ -162,10 +162,10 @@ pub fn suite() runner.Suite {
       "straight-line function has entry block, return terminator, and empty facts",
       fn() {
         f := try function("fn id(x: Int) Int {\n  y := x + 1\n  y\n}\n", "id")
-        try assert.equal(cfg.count_blocks(f), 1)
-        try assert.equal(cfg.count_terminator(f, "return"), 1)
-        try assert.equal(cfg.empty_fact_blocks(f), cfg.count_blocks(f))
-        try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+        try assert.equal(f.count_blocks(), 1)
+        try assert.equal(f.count_terminator("return"), 1)
+        try assert.equal(f.empty_fact_blocks(), f.count_blocks())
+        try assert.equal(f.count_edge_arity_mismatches(), 0)
         out := try rendered("fn id(x: Int) Int {\n  y := x + 1\n  y\n}\n")
         try assert.is_true(out.contains("// CFG ownership view"))
         try assert.is_true(out.contains("facts.in={} facts.out={}"))
@@ -180,14 +180,14 @@ pub fn suite() runner.Suite {
           "fn choose(b: Bool, a: Int, c: Int) Int {\n  x := 0\n  if b {\n    x = a\n  } else {\n    x = c\n  }\n  x\n}\n",
           "choose",
         )
-        try assert.equal(cfg.count_terminator(f, "condbranch"), 1)
+        try assert.equal(f.count_terminator("condbranch"), 1)
 
         // Both arms must fall through and branch into the join (not return),
         // otherwise the join block is orphaned.
-        try assert.equal(cfg.count_terminator(f, "branch"), 2)
-        try assert.is_true(cfg.max_param_count(f) >= 1)
-        try assert.equal(cfg.empty_fact_blocks(f), cfg.count_blocks(f))
-        try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+        try assert.equal(f.count_terminator("branch"), 2)
+        try assert.is_true(f.max_param_count() >= 1)
+        try assert.equal(f.empty_fact_blocks(), f.count_blocks())
+        try assert.equal(f.count_edge_arity_mismatches(), 0)
         .Ok({})
       },
     )
@@ -206,11 +206,11 @@ pub fn suite() runner.Suite {
           "fn partial(b: Bool) Int {\n  x := 0\n  if b {\n    x = 1\n  } else {\n  }\n  x\n}\n",
           "partial",
         )
-        try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+        try assert.equal(f.count_edge_arity_mismatches(), 0)
 
         // The empty else arm still falls through to the join, so both arms
         // branch into it and the join is reachable.
-        try assert.equal(cfg.count_terminator(f, "branch"), 2)
+        try assert.equal(f.count_terminator("branch"), 2)
         .Ok({})
       },
     )
@@ -221,14 +221,14 @@ pub fn suite() runner.Suite {
           "fn pick(o: Int?, seed: Int) Int {\n  acc := seed\n  case o {\n    .Some(v) => {\n      acc = v\n    },\n    .None => {\n      acc = seed + 1\n    },\n  }\n  acc\n}\n",
           "pick",
         )
-        try assert.equal(cfg.count_terminator(f, "match"), 1)
+        try assert.equal(f.count_terminator("match"), 1)
 
         // Both arms must fall through and branch into the join (not return),
         // otherwise the join block is orphaned.
-        try assert.equal(cfg.count_terminator(f, "branch"), 2)
-        try assert.is_true(cfg.max_param_count(f) >= 1)
-        try assert.equal(cfg.empty_fact_blocks(f), cfg.count_blocks(f))
-        try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+        try assert.equal(f.count_terminator("branch"), 2)
+        try assert.is_true(f.max_param_count() >= 1)
+        try assert.equal(f.empty_fact_blocks(), f.count_blocks())
+        try assert.equal(f.count_edge_arity_mismatches(), 0)
         .Ok({})
       },
     )
@@ -242,11 +242,11 @@ pub fn suite() runner.Suite {
 
         // The run-to-completion path (and any continue) takes a back-edge to
         // the header; the range guard's break exits the loop.
-        try assert.is_true(cfg.count_terminator(f, "loop-back-edge") >= 1)
-        try assert.is_true(cfg.count_terminator(f, "void-break") >= 1)
-        try assert.is_true(cfg.max_param_count(f) >= 1)
-        try assert.equal(cfg.empty_fact_blocks(f), cfg.count_blocks(f))
-        try assert.equal(cfg.count_edge_arity_mismatches(f), 0)
+        try assert.is_true(f.count_terminator("loop-back-edge") >= 1)
+        try assert.is_true(f.count_terminator("void-break") >= 1)
+        try assert.is_true(f.max_param_count() >= 1)
+        try assert.equal(f.empty_fact_blocks(), f.count_blocks())
+        try assert.equal(f.count_edge_arity_mismatches(), 0)
         .Ok({})
       },
     )
@@ -276,14 +276,14 @@ pub fn suite() runner.Suite {
       "direct ANF value break is rendered as a value-break terminator",
       fn() {
         v := cfg.build_view(direct_value_break_module(), builtins.make_builtin_registry())
-        out := cfg.render_view(v)
+        out := v.render_view()
         try assert.is_true(out.contains("terminator: value-break L0"))
 
         // The value-break exit edge feeds the loop-result param the break payload:
         // carried params are [L0, L1] with result L1, so the exit edge args are
         // [ALocal(L0), ALocal(L0)] (the carried L0 forwards itself; the result L1
         // takes the payload L0). Assert those exact atoms, not just the rendered text.
-        vf := case cfg.function_named(v, "value_break_direct") {
+        vf := case v.function_named("value_break_direct") {
           .Some(f) => f,
           .None => return assert.fail("no value_break_direct function"),
         }
@@ -334,7 +334,7 @@ pub fn suite() runner.Suite {
       fn() {
         v := try view("fn f(x: Int) Int {\n  x\n}\n")
         analyzed := ownership.analyze(v, builtins.make_builtin_registry(), sem_for())
-        case cfg.function_named(analyzed, "f") {
+        case analyzed.function_named("f") {
           .Some(func) => assert.is_true(func.blocks.len() >= 1),
           .None => assert.fail("f missing after analyze"),
         }
