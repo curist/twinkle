@@ -173,9 +173,10 @@ Expected: the log reaches `begin produce_mutable_decisions`, `begin ownership_ar
 | Run | I/O wrapper shape | 8G | Mutable producer | Candidate counts | Root count | Last phase |
 |---|---|---|---|---|---|---|
 | bypass | generic | off | off | no mutable candidates collected | no mutable roots collected | completed: `WASM output: /tmp/stage2-no-su.wasm` |
-| default trace | generic | on | on | not measured in Task 1 | not measured in Task 1 | timeout after `[time:8g:phase] begin summary_table`; no `variant_specialize:` completion |
-| mutable-only trace | generic | off | on | not measured in Task 1 | `roots=514` | timeout after `[time:mutable:artifact:phase] begin scoped_summary`; no `end ownership_artifacts` |
-| summary trace | generic | on | on | not measured in Task 2 | not measured in Task 2 | timeout inside SCC solving before first round for `set_prelude_function_origins` |
+| default trace | generic | on | on | not collected; 8G stalls before mutable producer | not collected | timeout after `[time:8g:phase] begin summary_table`; no `variant_specialize:` completion |
+| mutable-only current | generic | off | on | `calls=791 records=638 fields=191` from `/tmp/stage2-candidate-current.log` | `roots=514 seeds=0` from `/tmp/stage2-candidate-current.log` | timeout after `[time:summary:scc] first=643`; no `end ownership_artifacts` |
+| string-only diagnostic | string-only | off | on | `calls=791 records=638 fields=191` from `/tmp/stage2-candidate-string-io.log` | `roots=514 seeds=0` from `/tmp/stage2-candidate-string-io.log` | timeout after `[time:summary:scc] first=643`; no `end ownership_artifacts` |
+| summary trace | generic | on | on | not collected; 8G stalls before mutable producer | not collected | timeout inside SCC solving before first round for `set_prelude_function_origins` |
 
 Task 1 evidence is recorded in `/Users/curist/playground/rust/twinkle/.superpowers/sdd/2026-07-30-sound-uniqueness-stage2-hang-investigation/task-1-report.md`. The diagnostic stage1 compiler used for these runs is `/tmp/boot-stage1-diag.wasm`; trace logs are `/tmp/stage2-default-trace.log` and `/tmp/stage2-mutable-only-trace.log`.
 
@@ -187,6 +188,8 @@ Task 2 evidence is recorded in `/Users/curist/playground/rust/twinkle/.superpowe
 ```
 
 No `trace:summary:scc:round`, `trace:summary:scc:end`, or `time:summary:scc` marker appeared for `first=733` before timeout. This localizes the default stall to pre-round summary work for the base-env/prelude-origin function `set_prelude_function_origins`; `with_dedupe_helpers` was not reached, so Task 2 added no dedupe markers and required no stage1 rebuild.
+
+Task 3 evidence is recorded in `/Users/curist/playground/rust/twinkle/.superpowers/sdd/2026-07-30-sound-uniqueness-stage2-hang-investigation/task-3-report.md`. The diagnostic source-only rollback to string I/O produced the same mutable candidate counts and root count as the generic I/O run (`calls=791 records=638 fields=191`, `roots=514 seeds=0`). Both runs timed out in scoped summary after the last completed SCC marker `first=643`, so the measured data rejects simple candidate/root growth as the trigger and points toward analysis behavior on an unchanged root set.
 
 ---
 
@@ -278,7 +281,7 @@ Expected: the diagnostic stage1 compiler is refreshed.
 - Consumes: candidate counts from Task 1 logs.
 - Produces: a comparison table that separates “small trigger” from “analysis blow-up.”
 
-- [ ] **Step 1: Capture current generic-I/O candidate counts.**
+- [x] **Step 1: Capture current generic-I/O candidate counts.**
 
 Run:
 
@@ -293,7 +296,7 @@ rg "time:mutable:phase|scope_roots|trace:summary:roots" /tmp/stage2-candidate-cu
 
 Expected: the log includes concrete counts in the form `calls=791 records=638 fields=191` and a concrete root count such as `roots=514`.
 
-- [ ] **Step 2: Create a diagnostic source-only rollback of `boot/prelude/io.tw`.**
+- [x] **Step 2: Create a diagnostic source-only rollback of `boot/prelude/io.tw`.**
 
 Back up the current generic wrapper source before replacing it:
 
@@ -343,7 +346,7 @@ If any command after the replacement fails or times out, immediately restore the
 
 Expected: a diagnostic stage1 compiler with ordinary `io.tw` wrappers but no generic `Stringify` calls.
 
-- [ ] **Step 3: Capture string-only I/O candidate counts.**
+- [x] **Step 3: Capture string-only I/O candidate counts.**
 
 Run:
 
@@ -358,7 +361,7 @@ rg "time:mutable:phase|scope_roots|trace:summary:roots" /tmp/stage2-candidate-st
 
 Expected: candidate/root counts can be compared to Step 1.
 
-- [ ] **Step 4: Restore generic `boot/prelude/io.tw`.**
+- [x] **Step 4: Restore generic `boot/prelude/io.tw`.**
 
 Restore from the backup created in Step 2:
 
@@ -370,7 +373,7 @@ target/twk fmt boot/prelude/io.tw
 
 Expected: the working tree is back to the intended generic I/O behavior.
 
-- [ ] **Step 5: Record the comparison in this plan or a follow-up note.**
+- [x] **Step 5: Record the comparison in this plan or a follow-up note.**
 
 Add an “Investigation Results” section with:
 
