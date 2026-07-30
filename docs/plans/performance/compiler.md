@@ -958,6 +958,64 @@ dirty-subgraph widening-reset fallback was not needed. Acceptance: build output
 byte-identical (before/after compiler on a fixed input), SEEDVERIFY + FIXVERIFY
 clean over the self-build, self-host stable, full boot suite green.
 
+## Investigation: ownership fixpoint is the remaining floor
+
+After the summary-reuse landing (the mutable-decision producer seeds its scoped
+summary from Phase 8G's carried whole-program table via
+`summary.compute_for_roots_reusing`; `produce_mutable_decisions` ~10–13s →
+~7.5–9.4s per heavy build), the largest untouched cost is 8G's own whole-program
+`summary.compute` (~9s/build) and the ownership fixpoint it drives.
+
+Where per-function ownership time goes (`[time:own:summarize]` /
+`[time:own:fixpoint*]` over a full `make stage2`):
+
+- The inner dataflow **fixpoint solve is ~76%** of each hot function — e.g.
+  `link` (243 blocks): total 884ms = fixpoint 676ms + liveness 96ms + field_reqs
+  105ms + classify 7ms, and inside the fixpoint solve 281ms vs prep 1.6ms.
+- A few giant functions dominate: `link` (243 blk), `analyze_copy_carriers`
+  (259), `run_fixpoint` (160). Per-function wins on these outweigh the long tail.
+- Big functions rerun the validated fixpoint up to 14× for optimistic loop-seed
+  validation (`link`: 875→213 seeds).
+
+Fixpoint time by consumer across the loop (`[time:own:fixpoint_validated]`):
+
+```text
+summary:*       14.9s   8G summary.compute, all funcs
+call_uniques:*   7.4s   8G collect_groups, published-callee callers
+analyze:*        0.03s  mutable producer — already reuses fix_cache
+```
+
+### Three optimization recommendations
+
+1. **Reuse the summary fixpoint for 8G's `call_uniques` (recommended).** 8G runs
+   the ownership fixpoint twice per published-callee caller: once in
+   `summary.compute` (which builds no `fix_cache` — it passes `no_cache_ids`),
+   then again in `call_uniques_sited` during `collect_groups`. For generic callers
+   the two fixpoints are identical — `call_uniques_sited_with_field_seed` itself
+   notes the generic resolver "would not change the recorded arg_unique vectors";
+   only field-return-carried callers need the variant resolver. Have
+   `summary.compute` cache reusable `fx` and let `call_uniques` skip the fixpoint
+   and run only its sited extraction, mirroring the shipped summary→analyze reuse
+   and gated by `TWINKLE_FIXVERIFY`. Est. ~2.4s/build (~7s/`make stage2`). Best
+   effort/risk ratio — reuses proven machinery.
+
+2. **Cut the inner solve on the 3–4 giant functions.** Solve dominates and scales
+   with blocks × rounds × per-block co-iterated exit-map work. Levers: skip
+   per-block work for blocks with no ownership-relevant instructions, or reduce
+   rounds via better block ordering. Broad, but the widening / cold-fallback
+   hazards documented above make this higher-risk; needs its own investigation
+   with SEEDVERIFY/FIXVERIFY guards.
+
+3. **Rerun-count reduction — largely exhausted.** Warm-start-by-restart was
+   rejected (net negative; `link` widens) and incremental re-propagation is
+   shipped. Remaining headroom means changing the seed-validation algorithm itself
+   (batched / dependency-ordered seed retraction), which is soundness-critical;
+   low priority until #1 and #2 are spent.
+
+Next measurement: prototype #1 behind a flag, confirm FIXVERIFY-clean over the
+self-build + boot suite, and A/B the `[time:8g] groups=` wall plus
+`variant_specialize` / `produce_mutable_decisions` totals same-session.
+
 ## Working rules for future updates
 
 - Keep only the current baseline plus durable lessons in this file.
