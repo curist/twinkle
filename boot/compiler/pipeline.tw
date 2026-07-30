@@ -68,7 +68,11 @@ fn compile_source_impl(src: String, lib_build: Bool) Result<PipelineArtifacts, S
     .Ok(result) => .Ok(result.artifacts),
     .Err(err) => case err {
       .LowerDiagnostics(diags) => .Err(format_lower_diags_inline(a_result.env, src, diags)),
-      .Internal(msg) => .Err("internal: ${msg}"),
+      .Internal(msg) => if msg.starts_with("internal:") {
+        .Err(msg)
+      } else {
+        .Err("internal: ${msg}")
+      },
     },
   }
 }

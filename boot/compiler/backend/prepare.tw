@@ -157,7 +157,7 @@ pub fn prepare_backend_with_mutable_decisions(
   // param typeability. A typeable param stored into a payload/field is a clean
   // typed producer, so real dataframe columns built via helpers like
   // `int_col(values: Vector<Int>)` can type even without a direct `collect`
-  // producer. Layout (via PreparedModule.typed_vector_* -> env) and routing MUST
+  // producer. BackendContext construction from PreparedModule and routing MUST
   // see the same dicts so struct field types and read/producer routing agree.
   // Tailify tail-position control-flow results (Vector<Int> returns) BEFORE both
   // analysis and routing so a store-form accessor's live arm becomes a Return and
