@@ -4,7 +4,7 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
-use compiler.backend.prepare.{PreparedModule, prepare_backend}
+use compiler.backend.prepare.{PreparedModule, backend_context, prepare_backend}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, SlotInfo}
 use compiler.backend.verify.{verify_prepared_module, verify_prepared_module_with_level}
 use compiler.base_env
@@ -159,7 +159,11 @@ fn rewrite_func(pf: PreparedFunc, slots: Dict<Int, SlotInfo>) PreparedFunc {
 }
 
 fn verify_err(prepared: PreparedModule, expected: String) Result<Void, String> {
-  assert.err_contains(verify_prepared_module(prepared, empty_env(), empty_builtins()), expected)
+  env := empty_env()
+  assert.err_contains(
+    verify_prepared_module(prepared, backend_context(env, prepared), empty_builtins()),
+    expected,
+  )
 }
 
 fn verify_err_with_env(
@@ -168,14 +172,17 @@ fn verify_err_with_env(
   builtins: BuiltinRegistry,
   expected: String,
 ) Result<Void, String> {
-  assert.err_contains(verify_prepared_module(prepared, env, builtins), expected)
+  assert.err_contains(
+    verify_prepared_module(prepared, backend_context(env, prepared), builtins),
+    expected,
+  )
 }
 
 fn verify_ok_with_env(prepared: PreparedModule, env: ResolvedEnv, builtins: BuiltinRegistry) Result<
   Void,
   String,
 > {
-  case verify_prepared_module(prepared, env, builtins) {
+  case verify_prepared_module(prepared, backend_context(env, prepared), builtins) {
     .Ok(_) => .Ok({}),
     .Err(msg) => .Err("expected verify ok, got: ${msg}"),
   }
@@ -235,7 +242,10 @@ pub fn suite() runner.Suite {
           mk_mono_map([10], [MonoType.Int]),
           .Int,
         )
-        assert.is_ok(verify_prepared_module(prepared, empty_env(), empty_builtins()))
+        env := empty_env()
+        assert.is_ok(
+          verify_prepared_module(prepared, backend_context(env, prepared), empty_builtins()),
+        )
       },
     )
     .test(
@@ -267,7 +277,12 @@ pub fn suite() runner.Suite {
         body: AnfExpr = .Return(.Some(.ALitInt(1)))
         prepared := prepared_module([], body, Dict.new(), .Void)
         assert.is_ok(
-          verify_prepared_module_with_level(prepared, empty_env(), empty_builtins(), .Basic),
+          verify_prepared_module_with_level(
+            prepared,
+            backend_context(empty_env(), prepared),
+            empty_builtins(),
+            .Basic,
+          ),
         )
       },
     )
@@ -318,7 +333,10 @@ pub fn suite() runner.Suite {
           mk_mono_map([10, 11], [MonoType.Never, MonoType.Never]),
           .Int,
         )
-        assert.is_ok(verify_prepared_module(prepared, empty_env(), empty_builtins()))
+        env := empty_env()
+        assert.is_ok(
+          verify_prepared_module(prepared, backend_context(env, prepared), empty_builtins()),
+        )
       },
     )
     .test(

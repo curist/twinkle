@@ -12,7 +12,7 @@ use compiler.codegen.emit.context.{EmitCtx, LocalEntry, lookup_func_sym, lookup_
 use compiler.codegen.emit.helper_collectors.{is_sum_mono}
 use compiler.codegen.emit.layout_helpers.{cached_layout_of, cell_inner_mono, cell_struct_sym}
 use compiler.codegen.wasm_ir.{FuncDef, Instr, ValType}
-use compiler.codegen.wasm_layout.{layout_of, val_type_of_mono}
+use compiler.codegen.wasm_layout.{layout_of_backend, val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{FuncSigEntry}
 use compiler.core_ir.{FuncId}
 use compiler.elem_family.{family_by_pvec_name}
@@ -35,7 +35,7 @@ pub fn emit_make_closure(fid: FuncId, free_vars: Vector<SlotId>, ctx: EmitCtx, b
   for fv in free_vars {
     entry := lookup_slot(ctx, fv)
     env_buf = .append(.LocalGet(entry.index))
-    env_buf = emit_box_to_anyref(entry.mono, ctx.env, env_buf)
+    env_buf = emit_box_to_anyref(entry.mono, ctx.backend, env_buf)
   }
 
   if free_vars.len() > 0 {
@@ -68,7 +68,7 @@ fn emit_materialized_closure(fid: FuncId, env_buf: Vector<Instr>, ctx: EmitCtx, 
   // Try to create the concrete 3-field struct with a typed funcref.
   // This enables return_call_ref for tail-position closure calls.
   case typed_closure_mono_for_func(fid, ctx) {
-    .Some(cl_mono) => case layout_of(cl_mono, ctx.env) {
+    .Some(cl_mono) => case layout_of_backend(cl_mono, ctx.backend) {
       .Closure(cl) => {
         typed_tramp_sym := "$typed_tramp_${fid.id}"
         buf
@@ -203,7 +203,7 @@ pub fn emit_global_closure_call(
   out = if args.len() > 0 {
     for a in args {
       out = fns.emit_atom(a, ctx, out)
-      out = emit_box_to_anyref(fns.atom_mono(a, ctx), ctx.env, out)
+      out = emit_box_to_anyref(fns.atom_mono(a, ctx), ctx.backend, out)
     }
 
     out.append(.ArrayNewFixed("rt_types__Array", args.len()))
@@ -226,7 +226,7 @@ pub fn emit_global_closure_call(
           .append(.RefCast(true, .Named("rt_types__Variant")))
           .append(.Call(variant_to_sum_helper_sym(result_mono)))
       } else {
-        emit_unbox_from_anyref(result_mono, ctx.env, out)
+        emit_unbox_from_anyref(result_mono, ctx.backend, out)
       }
       out.append(.LocalSet(result_idx))
     },
@@ -252,7 +252,7 @@ fn emit_universal_closure_call(
   out = if args.len() > 0 {
     for a in args {
       out = fns.emit_atom(a, ctx, out)
-      out = emit_box_to_anyref(fns.atom_mono(a, ctx), ctx.env, out)
+      out = emit_box_to_anyref(fns.atom_mono(a, ctx), ctx.backend, out)
     }
 
     out.append(.ArrayNewFixed("rt_types__Array", args.len()))
@@ -278,7 +278,7 @@ fn emit_universal_closure_call(
           .append(.RefCast(true, .Named("rt_types__Variant")))
           .append(.Call(variant_to_sum_helper_sym(result_mono)))
       } else {
-        emit_unbox_from_anyref(result_mono, ctx.env, out)
+        emit_unbox_from_anyref(result_mono, ctx.backend, out)
       }
       out.append(.LocalSet(result_idx))
     },
@@ -363,7 +363,7 @@ fn emit_universal_closure_call_and_return(
   out = if args.len() > 0 {
     for a in args {
       out = fns.emit_atom(a, ctx, out)
-      out = emit_box_to_anyref(fns.atom_mono(a, ctx), ctx.env, out)
+      out = emit_box_to_anyref(fns.atom_mono(a, ctx), ctx.backend, out)
     }
 
     out.append(.ArrayNewFixed("rt_types__Array", args.len()))
@@ -391,7 +391,7 @@ fn emit_universal_closure_call_and_return(
           .append(.RefCast(true, .Named("rt_types__Variant")))
           .append(.Call(variant_to_sum_helper_sym(result_mono)))
       } else {
-        emit_unbox_from_anyref(result_mono, ctx.env, out)
+        emit_unbox_from_anyref(result_mono, ctx.backend, out)
       }
       out.append(.Return)
     },
@@ -480,7 +480,7 @@ fn emit_builtin_universal_trampoline(
         body = .append(.LocalGet(1)).append(.RefCast(true, .Named("rt_types__Array"))).append(
           .I32Const(i),
         ).append(.ArrayGet("rt_types__Array"))
-        body = emit_unbox_from_anyref(mono, ctx.env, body)
+        body = emit_unbox_from_anyref(mono, ctx.backend, body)
       }
 
       body = emit_builtin_trampoline_target(entry, wrapper_kind, ctx, body)
@@ -493,7 +493,7 @@ fn emit_builtin_universal_trampoline(
         _ => if is_sum_mono(sig.return_type, ctx.env) {
           body = .append(.Call(sum_to_variant_helper_sym(sig.return_type)))
         } else {
-          body = emit_box_to_anyref(sig.return_type, ctx.env, body)
+          body = emit_box_to_anyref(sig.return_type, ctx.backend, body)
         },
       }
 
@@ -518,18 +518,18 @@ fn emit_builtin_cell_update_universal_trampoline(
   body = .append(.LocalGet(1)).append(.RefCast(true, .Named("rt_types__Array"))).append(
     .I32Const(0),
   ).append(.ArrayGet("rt_types__Array"))
-  body = emit_unbox_from_anyref(cell_mono, ctx.env, body)
+  body = emit_unbox_from_anyref(cell_mono, ctx.backend, body)
   body = .append(.LocalSet(2))
   body = .append(.LocalGet(1)).append(.RefCast(true, .Named("rt_types__Array"))).append(
     .I32Const(1),
   ).append(.ArrayGet("rt_types__Array"))
-  body = emit_unbox_from_anyref(closure_mono, ctx.env, body)
+  body = emit_unbox_from_anyref(closure_mono, ctx.backend, body)
   body = .append(.LocalSet(3))
   body = .append(.LocalGet(2))
   body = .append(.LocalGet(3)).append(.StructGet("rt_types__Closure", 1))
   body = .append(.LocalGet(2)).append(.StructGet(sym, 0))
   body = if sym != "$Cell_anyref" {
-    emit_box_to_anyref(inner_mono, ctx.env, body)
+    emit_box_to_anyref(inner_mono, ctx.backend, body)
   } else {
     body
   }
@@ -538,7 +538,7 @@ fn emit_builtin_cell_update_universal_trampoline(
     .CallRef("rt_types__ClosureFunc"),
   )
   body = if sym != "$Cell_anyref" {
-    emit_unbox_from_anyref(inner_mono, ctx.env, body)
+    emit_unbox_from_anyref(inner_mono, ctx.backend, body)
   } else {
     body
   }
@@ -565,12 +565,14 @@ fn emit_builtin_iterator_unfold_universal_trampoline(
   body = .append(.LocalGet(1)).append(.RefCast(true, .Named("rt_types__Array"))).append(
     .I32Const(0),
   ).append(.ArrayGet("rt_types__Array"))
-  body = emit_unbox_from_anyref(seed_mono, ctx.env, body)
-  body = emit_box_to_anyref(seed_mono, ctx.env, body)
+  body = emit_unbox_from_anyref(seed_mono, ctx.backend, body)
+  body = emit_box_to_anyref(seed_mono, ctx.backend, body)
   body = .append(.LocalGet(1)).append(.RefCast(true, .Named("rt_types__Array"))).append(
     .I32Const(1),
   ).append(.ArrayGet("rt_types__Array"))
-  body = emit_unbox_from_anyref(step_mono, ctx.env, body).append(.StructNew("rt_types__IterState"))
+  body = emit_unbox_from_anyref(step_mono, ctx.backend, body).append(
+    .StructNew("rt_types__IterState"),
+  )
   FuncDef.{ name: tramp_sym, params: [.Anyref, .Anyref], results: [.Anyref], locals: [], body }
 }
 
@@ -586,11 +588,11 @@ fn emit_builtin_host_write_bytes_universal_trampoline(
   body = .append(.LocalGet(1)).append(.RefCast(true, .Named("rt_types__Array"))).append(
     .I32Const(0),
   ).append(.ArrayGet("rt_types__Array"))
-  body = emit_unbox_from_anyref(path_mono, ctx.env, body)
+  body = emit_unbox_from_anyref(path_mono, ctx.backend, body)
   body = .append(.LocalGet(1)).append(.RefCast(true, .Named("rt_types__Array"))).append(
     .I32Const(1),
   ).append(.ArrayGet("rt_types__Array"))
-  body = emit_unbox_from_anyref(bytes_mono, ctx.env, body).append(.Call("rt_arr__to_array"))
+  body = emit_unbox_from_anyref(bytes_mono, ctx.backend, body).append(.Call("rt_arr__to_array"))
   body = emit_builtin_trampoline_target(entry, .Some(.HostWriteBytes), ctx, body)
   body = .append(.I32Const(0)).append(.RefI31)
   FuncDef.{ name: tramp_sym, params: [.Anyref, .Anyref], results: [.Anyref], locals: [], body }
@@ -628,11 +630,11 @@ fn emit_capture_extract(cap: SlotInfo, ctx: EmitCtx, body: Vector<Instr>) Vector
     .Ref(_, ht) => case ht {
       .Named(n) => case family_by_pvec_name(n) {
         .Some(fam) => body.append(.RefCast(false, .Named(fam.pvec_type))),
-        .None => emit_unbox_from_anyref(cap.mono, ctx.env, body),
+        .None => emit_unbox_from_anyref(cap.mono, ctx.backend, body),
       },
-      _ => emit_unbox_from_anyref(cap.mono, ctx.env, body),
+      _ => emit_unbox_from_anyref(cap.mono, ctx.backend, body),
     },
-    _ => emit_unbox_from_anyref(cap.mono, ctx.env, body),
+    _ => emit_unbox_from_anyref(cap.mono, ctx.backend, body),
   }
 }
 
@@ -660,7 +662,7 @@ fn emit_universal_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx
     body = .append(.RefCast(true, .Named("rt_types__Array")))
     body = .append(.I32Const(i))
     body = .append(.ArrayGet("rt_types__Array"))
-    body = emit_unbox_from_anyref(p.mono, ctx.env, body)
+    body = emit_unbox_from_anyref(p.mono, ctx.backend, body)
   }
 
   body = .append(.Call(func_sym))
@@ -674,7 +676,7 @@ fn emit_universal_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx
     _ => if is_sum_mono(func.return_mono, ctx.env) {
       body = .append(.Call(sum_to_variant_helper_sym(func.return_mono)))
     } else {
-      body = emit_box_to_anyref(func.return_mono, ctx.env, body)
+      body = emit_box_to_anyref(func.return_mono, ctx.backend, body)
     },
   }
 

@@ -15,7 +15,9 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use compiler.backend.closure_convert.{convert_closures}
-use compiler.backend.prepare.{PreparedModule, prepare_backend, prepare_backend_preroute}
+use compiler.backend.prepare.{
+  PreparedModule, backend_context, prepare_backend, prepare_backend_preroute,
+}
 use compiler.backend.prepared_ir.{PreparedFunc, SlotInfo}
 use compiler.backend.route_typed_vec.{analyze_typed_fields, route_typed_vectors}
 use compiler.backend.verify.{verify_prepared_module_with_level}
@@ -410,10 +412,12 @@ pub fn suite() runner.Suite {
         vi := try verify_inputs(bool_call_result_field_src())
         try assert.equal(typed_count(vi.prepared.typed_vector_fields), 1)
 
-        env2 := vi.env
-        env2.typed_vector_fields = vi.prepared.typed_vector_fields
-
-        case verify_prepared_module_with_level(vi.prepared, env2, vi.builtins, .Full) {
+        case verify_prepared_module_with_level(
+          vi.prepared,
+          backend_context(vi.env, vi.prepared),
+          vi.builtins,
+          .Full,
+        ) {
           .Ok(_) => .Ok({}),
           .Err(msg) => .Err("typed-return Bool field store must verify, got: ${msg}"),
         }
@@ -425,10 +429,12 @@ pub fn suite() runner.Suite {
         vi := try verify_inputs(bool_field_gather_result_src())
         try assert.equal(typed_count(vi.prepared.typed_vector_fields), 1)
 
-        env2 := vi.env
-        env2.typed_vector_fields = vi.prepared.typed_vector_fields
-
-        case verify_prepared_module_with_level(vi.prepared, env2, vi.builtins, .Full) {
+        case verify_prepared_module_with_level(
+          vi.prepared,
+          backend_context(vi.env, vi.prepared),
+          vi.builtins,
+          .Full,
+        ) {
           .Ok(_) => .Ok({}),
           .Err(msg) => .Err("typed field gather result must verify, got: ${msg}"),
         }
@@ -439,13 +445,15 @@ pub fn suite() runner.Suite {
       fn() {
         vi := try verify_inputs(positive_src())
 
-        // env2 mirrors the live pipeline: typed_vector_fields carries the routed
-        // module's decisions, so layout_of yields PVecI64 for the typed field and
-        // the routed producer slot (also PVecI64) matches.
-        env2 := vi.env
-        env2.typed_vector_fields = vi.prepared.typed_vector_fields
-
-        case verify_prepared_module_with_level(vi.prepared, env2, vi.builtins, .Full) {
+        // The backend context mirrors the live pipeline: prepared facts carry the
+        // routed module's decisions, so layout yields PVecI64 for the typed field
+        // and the routed producer slot (also PVecI64) matches.
+        case verify_prepared_module_with_level(
+          vi.prepared,
+          backend_context(vi.env, vi.prepared),
+          vi.builtins,
+          .Full,
+        ) {
           .Ok(_) => .Ok({}),
           .Err(msg) => .Err("expected verify to accept matching env, got: ${msg}"),
         }
@@ -460,10 +468,12 @@ pub fn suite() runner.Suite {
         // only by V8). Routing must now type the whole alias group, and the strict
         // non-coercing local-store check in the verifier must accept the result.
         vi := try verify_inputs(field_read_copy_src())
-        env2 := vi.env
-        env2.typed_vector_fields = vi.prepared.typed_vector_fields
-
-        case verify_prepared_module_with_level(vi.prepared, env2, vi.builtins, .Full) {
+        case verify_prepared_module_with_level(
+          vi.prepared,
+          backend_context(vi.env, vi.prepared),
+          vi.builtins,
+          .Full,
+        ) {
           .Ok(_) => .Ok({}),
           .Err(msg) => .Err("B5 field-read copy must verify, got: ${msg}"),
         }
@@ -478,16 +488,21 @@ pub fn suite() runner.Suite {
         // slot is PVecI64. Without that the mismatch below would be vacuous.
         try assert.ok(typed_count(vi.prepared.typed_vector_fields) >= 1, "expected a typed field")
 
-        // Drop typed_vector_fields: layout_of now reports the field as a boxed
-        // PVec, but the routed producer atom is still PVecI64 — exactly the
-        // representation mismatch an over-eager routing pass would emit. The
+        // Drop the prepared typed_vector_fields: layout now reports the field as
+        // a boxed PVec, but the routed producer atom is still PVecI64 — exactly
+        // the representation mismatch an over-eager routing pass would emit. The
         // field-store check must reject it (the generic Ref->Ref coercibility
         // rule would otherwise let it through, which is how the original routing
         // bug reached V8 instead of being caught here).
-        env_boxed := vi.env
-        env_boxed.typed_vector_fields = Dict.new()
+        prepared_boxed := vi.prepared
+        prepared_boxed.typed_vector_fields = Dict.new()
 
-        case verify_prepared_module_with_level(vi.prepared, env_boxed, vi.builtins, .Full) {
+        case verify_prepared_module_with_level(
+          prepared_boxed,
+          backend_context(vi.env, prepared_boxed),
+          vi.builtins,
+          .Full,
+        ) {
           .Ok(_) => .Err("expected verify to reject PVecI64-into-boxed-field mismatch"),
           .Err(_) => .Ok({}),
         }

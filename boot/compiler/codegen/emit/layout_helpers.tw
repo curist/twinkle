@@ -2,7 +2,7 @@
 
 use compiler.codegen.emit.context.{EmitCtx}
 use compiler.codegen.wasm_layout.{
-  WasmLayout, WasmRecordLayout, WasmSumLayout, layout_of, mono_to_key,
+  WasmLayout, WasmRecordLayout, WasmSumLayout, layout_of, layout_of_backend, mono_to_key,
 }
 use compiler.core_ir.{FieldId}
 use compiler.mono_type.{MonoType}
@@ -37,7 +37,7 @@ pub fn cached_layout_of(mono: MonoType, ctx: EmitCtx) WasmLayout {
 
   case ctx.registry.layout_cache[key] {
     .Some(layout) => layout,
-    .None => layout_of(mono, ctx.env),
+    .None => layout_of_backend(mono, ctx.backend),
   }
 }
 

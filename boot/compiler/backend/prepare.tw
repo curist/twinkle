@@ -18,6 +18,7 @@ use @std.date
 use @std.proc
 
 use compiler.anf.{AnfModule}
+use compiler.backend.context.{BackendContext}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedExpr, PreparedFunc, PreparedOp}
 use compiler.backend.repr_assign.{assign_repr_for_module}
 use compiler.backend.route_typed_vec.{route_typed_vectors}
@@ -52,6 +53,14 @@ pub type PreparedModule = .{
 // tooling can inspect the routing decision on un-routed slots (routing mutates
 // producer slots to PVecI64, which would hide them from a second analysis pass).
 pub type PreRouteModule = .{ anf: AnfModule, funcs: Vector<PreparedFunc> }
+
+pub fn backend_context(env: ResolvedEnv, prepared: PreparedModule) BackendContext {
+  .{
+    env,
+    typed_vector_fields: prepared.typed_vector_fields,
+    typed_vector_payloads: prepared.typed_vector_payloads,
+  }
+}
 
 // Run the backend preparation steps up to (but not including) typed-vector
 // routing. prepare_backend builds on this and then routes; tests use it to get

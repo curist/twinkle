@@ -1,8 +1,11 @@
 //! Small general helpers for Wasm emission.
 
+use compiler.backend.context.{BackendContext}
 use compiler.backend.prepared_ir.{PreparedExpr, PreparedMatchArm, PreparedPattern, ReprKind}
 use compiler.codegen.wasm_ir.{Instr}
-use compiler.codegen.wasm_layout.{WasmSumLayout, WasmVariantLayout, layout_of, mono_to_key}
+use compiler.codegen.wasm_layout.{
+  WasmLayout, WasmSumLayout, WasmVariantLayout, layout_of, layout_of_backend, mono_to_key,
+}
 use compiler.core_ir.{VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv}
@@ -71,8 +74,14 @@ pub fn pattern_is_trivial(p: PreparedPattern) Bool {
 }
 
 pub fn get_sum_layout(mono: MonoType, env: ResolvedEnv) WasmSumLayout {
-  layout := layout_of(mono, env)
+  sum_layout_from(layout_of(mono, env), mono)
+}
 
+pub fn get_sum_layout_backend(mono: MonoType, ctx: BackendContext) WasmSumLayout {
+  sum_layout_from(layout_of_backend(mono, ctx), mono)
+}
+
+fn sum_layout_from(layout: WasmLayout, mono: MonoType) WasmSumLayout {
   case layout {
     .Sum(s) => s,
     _ => error("get_sum_layout: expected Sum, got other for ${mono_to_key(mono)}"),

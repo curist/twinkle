@@ -51,7 +51,7 @@ pub fn emit_array_literal(
         ctx,
         out,
       )
-      out = emit_box_to_anyref(elem_mono, ctx.env, out)
+      out = emit_box_to_anyref(elem_mono, ctx.backend, out)
     }
 
     return out.append(.ArrayNewFixed("rt_types__Array", n)).append(.StructNew("rt_types__PVec"))
@@ -76,7 +76,7 @@ pub fn emit_array_literal(
       ctx,
       out,
     )
-    out = emit_box_to_anyref(elem_mono, ctx.env, out)
+    out = emit_box_to_anyref(elem_mono, ctx.backend, out)
     out = .append(.Call("rt_arr__push"))
   }
 
@@ -173,7 +173,7 @@ pub fn emit_index_op(
             some_instrs: Vector<Instr> = fns.emit_atom(base, ctx, [])
             some_instrs = fns.emit_erased_container_ingress(index, ctx, some_instrs)
             some_instrs = .append(.Call("rt_dict__get"))
-            some_instrs = emit_erased_container_egress(value_mono, ctx.env, some_instrs)
+            some_instrs = emit_erased_container_egress(value_mono, ctx.backend, some_instrs)
             out := fns.emit_atom(base, ctx, buf)
             out = fns.emit_erased_container_ingress(index, ctx, out)
             out
@@ -196,7 +196,7 @@ pub fn emit_index_op(
             some_instrs = .concat(fns.emit_atom(base, ctx, []))
             some_instrs = .concat(fns.emit_erased_container_ingress(index, ctx, []))
             some_instrs = .append(.Call("rt_dict__get"))
-            some_instrs = emit_erased_container_egress(value_mono, ctx.env, some_instrs)
+            some_instrs = emit_erased_container_egress(value_mono, ctx.backend, some_instrs)
             some_instrs = .append(.StructNew(sum_layout.sym))
             out := fns.emit_atom(base, ctx, buf)
             out = fns.emit_erased_container_ingress(index, ctx, out)

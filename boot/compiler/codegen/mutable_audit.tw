@@ -11,7 +11,7 @@
 //! (a stale decision). This module is read-only inspection: it never changes
 //! what emit.tw does, only reports what the same selector call would report.
 
-use compiler.backend.prepare.{PreparedModule}
+use compiler.backend.prepare.{PreparedModule, backend_context}
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotId, SlotInfo,
 }
@@ -87,6 +87,7 @@ fn ctx_for_func(
     registry: empty_registry(),
     builtins,
     env,
+    backend: backend_context(env, prepared),
     local_map: local_map_from_slots(pf.slots),
     next_local: 0,
     wasm_locals: [],

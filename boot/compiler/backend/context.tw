@@ -1,0 +1,9 @@
+//! Explicit backend context for prepared facts that are consumed after preparation.
+
+use compiler.resolver.{ResolvedEnv}
+
+pub type BackendContext = .{
+  env: ResolvedEnv,
+  typed_vector_fields: Dict<String, Bool>,
+  typed_vector_payloads: Dict<String, Bool>,
+}

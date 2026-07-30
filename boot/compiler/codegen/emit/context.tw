@@ -1,5 +1,6 @@
 //! Shared context types and lookup helpers for Wasm emission.
 
+use compiler.backend.context.{BackendContext}
 use compiler.backend.prepared_ir.{PreparedFunc, ReprKind, SlotId}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.mutable_select
@@ -92,6 +93,7 @@ pub type EmitCtx = .{
   registry: WasmTypeRegistry,
   builtins: BuiltinRegistry,
   env: ResolvedEnv,
+  backend: BackendContext,
   local_map: Dict<Int, LocalEntry>,
   next_local: Int,
   wasm_locals: Vector<ValType>,

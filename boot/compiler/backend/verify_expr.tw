@@ -2,6 +2,7 @@
 
 use compiler.anf.{OpKind}
 use compiler.backend.callable_targets as callable_targets
+use compiler.backend.context.{BackendContext}
 use compiler.backend.facts as facts
 use compiler.backend.prepared_ir.{PreparedFieldAtom, PreparedMatchArm}
 use compiler.backend.prepared_ir.{
@@ -14,7 +15,7 @@ use compiler.backend.verify_common.{
 }
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
-use compiler.codegen.wasm_layout.{layout_of, val_type_of_mono}
+use compiler.codegen.wasm_layout.{layout_of_backend, val_type_of_mono}
 use compiler.codegen.wasm_type_util.{heap_type_eq, val_type_eq}
 use compiler.core_ir.{FieldId, FuncId, LocalId, VariantId}
 use compiler.elem_family.{all_families}
@@ -32,6 +33,7 @@ pub type VerifyCtx = .{
   closure_captures: Dict<Int, Vector<CaptureParam>>,
   funcs_by_id: Dict<Int, PreparedFunc>,
   env: ResolvedEnv,
+  backend: BackendContext,
   module_globals: Dict<Int, MonoType>,
   builtins: BuiltinRegistry,
 }
@@ -708,8 +710,8 @@ fn verify_atom_coercible_to_val_type(
   )
 }
 
-fn record_field_val_type(result_mono: MonoType, fid: Int, env: ResolvedEnv) ValType? {
-  case layout_of(result_mono, env) {
+fn record_field_val_type(result_mono: MonoType, fid: Int, backend: BackendContext) ValType? {
+  case layout_of_backend(result_mono, backend) {
     .Record(rec) => {
       for fl in rec.fields {
         if fl.field_id.id == fid {
@@ -774,8 +776,8 @@ fn pvec_repr_mismatch(ctx: VerifyCtx, atom: PreparedAtom, expected_vt: ValType) 
 // type and the caller stores it into the result slot with no coercion (see
 // emit_record_get). So the result slot's physical repr must equal the field's.
 // A PVecI64 field read into a boxed PVec result slot (the pre-B5-fix shape) is
-// invalid Wasm; layout_of consults env.typed_vector_fields (set from the routed
-// module before verify), so the field val_type here reflects routing.
+// invalid Wasm; layout_of_backend consults the prepared typed-vector facts, so
+// the field val_type here reflects routing without mutating the source env.
 fn verify_record_get_result_repr(
   ctx: VerifyCtx,
   result_info: SlotInfo,
@@ -786,7 +788,7 @@ fn verify_record_get_result_repr(
     .Some(m) => m,
     .None => return .Ok({}),
   }
-  field_vt := case record_field_val_type(record_mono, fid.id, ctx.env) {
+  field_vt := case record_field_val_type(record_mono, fid.id, ctx.backend) {
     .Some(vt) => vt,
     .None => return .Ok({}),
   }
@@ -852,7 +854,7 @@ fn verify_record_field_payloads(
   context: String,
 ) Result<Void, String> {
   for field in fields {
-    expected_vt := case record_field_val_type(result_info.mono, field.field.id, ctx.env) {
+    expected_vt := case record_field_val_type(result_info.mono, field.field.id, ctx.backend) {
       .Some(vt) => vt,
       .None => return fail_slot(
         ctx.pf,
@@ -889,7 +891,7 @@ fn verify_record_update_value(
   fid: FieldId,
   value: PreparedAtom,
 ) Result<Void, String> {
-  expected_vt := case record_field_val_type(result_info.mono, fid.id, ctx.env) {
+  expected_vt := case record_field_val_type(result_info.mono, fid.id, ctx.backend) {
     .Some(vt) => vt,
     .None => return fail_slot(
       ctx.pf,
@@ -919,7 +921,7 @@ fn verify_variant_payloads(
   vid: VariantId,
   args: Vector<PreparedAtom>,
 ) Result<Void, String> {
-  payload_types: Vector<ValType> = case layout_of(result_info.mono, ctx.env) {
+  payload_types: Vector<ValType> = case layout_of_backend(result_info.mono, ctx.backend) {
     .Sum(sum) => {
       for variant in sum.variants {
         if variant.variant_id.id == vid.id {

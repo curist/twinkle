@@ -1,24 +1,25 @@
 //! Runtime bridge function emission helpers.
 
+use compiler.backend.context.{BackendContext}
 use compiler.codegen.emit.anyref.{
   emit_box_to_anyref, emit_erased_container_egress, sum_to_variant_helper_sym,
   variant_to_sum_helper_sym,
 }
 use compiler.codegen.emit.defaults.{emit_default_value}
-use compiler.codegen.emit.helpers.{get_sum_layout, variant_field_mono}
+use compiler.codegen.emit.helpers.{get_sum_layout_backend, variant_field_mono}
 use compiler.codegen.emit.runtime_abi.{host_read_file_result_helper_sym}
 use compiler.codegen.wasm_ir.{FuncDef, Instr, ValType}
-use compiler.codegen.wasm_layout.{layout_of, mono_to_key, val_type_of_mono}
+use compiler.codegen.wasm_layout.{layout_of_backend, mono_to_key, val_type_of_mono}
 use compiler.elem_family.{pvec_family_of}
 use compiler.mono_type.{MonoType}
-use compiler.resolver.{ResolvedEnv}
 
 pub fn iterator_next_helper_sym(result_mono: MonoType) String {
   "iterator_next_helper_${mono_to_key(result_mono)}"
 }
 
-pub fn emit_sum_to_variant_helper(sum_mono: MonoType, env: ResolvedEnv) FuncDef {
-  sum_layout := get_sum_layout(sum_mono, env)
+pub fn emit_sum_to_variant_helper(sum_mono: MonoType, ctx: BackendContext) FuncDef {
+  env := ctx.env
+  sum_layout := get_sum_layout_backend(sum_mono, ctx)
   sum_ref := ValType.Ref(true, .Named(sum_layout.sym))
   variant_ref := ValType.Ref(true, .Named("rt_types__Variant"))
   else_body: Vector<Instr> = [.Unreachable]
@@ -35,7 +36,7 @@ pub fn emit_sum_to_variant_helper(sum_mono: MonoType, env: ResolvedEnv) FuncDef 
         .Some(fam) => then_body = .append(.Call(fam.box_call)),
         .None => {},
       }
-      then_body = emit_box_to_anyref(field_mono, env, then_body)
+      then_body = emit_box_to_anyref(field_mono, ctx, then_body)
     }
 
     then_body = .append(.ArrayNewFixed("rt_types__Array", variant.payload_types.len()))
@@ -59,8 +60,9 @@ pub fn emit_sum_to_variant_helper(sum_mono: MonoType, env: ResolvedEnv) FuncDef 
   }
 }
 
-pub fn emit_variant_to_sum_helper(sum_mono: MonoType, env: ResolvedEnv) FuncDef {
-  sum_layout := get_sum_layout(sum_mono, env)
+pub fn emit_variant_to_sum_helper(sum_mono: MonoType, ctx: BackendContext) FuncDef {
+  env := ctx.env
+  sum_layout := get_sum_layout_backend(sum_mono, ctx)
   sum_ref := ValType.Ref(true, .Named(sum_layout.sym))
   else_body: Vector<Instr> = [.Unreachable]
 
@@ -72,7 +74,7 @@ pub fn emit_variant_to_sum_helper(sum_mono: MonoType, env: ResolvedEnv) FuncDef 
         for i in 0..sum_variant.payload_types.len() {
           field_mono := variant_field_mono(sum_mono, sum_variant.variant_id, i, env)
           then_body = .concat([.LocalGet(2), .I32Const(i), .ArrayGet("rt_types__Array")])
-          then_body = emit_erased_container_egress(field_mono, env, then_body)
+          then_body = emit_erased_container_egress(field_mono, ctx, then_body)
           case pvec_family_of(sum_variant.payload_types[i]) {
             .Some(fam) => then_body = .append(.Call(fam.unbox_call)),
             .None => {},
@@ -117,7 +119,9 @@ pub fn option_from_variant_helper_sym(inner_mono: MonoType) String {
   "option_from_variant_helper_${mono_to_key(inner_mono)}"
 }
 
-pub fn emit_option_from_variant_helper(inner_mono: MonoType, env: ResolvedEnv) FuncDef {
+pub fn emit_option_from_variant_helper(inner_mono: MonoType, ctx: BackendContext) FuncDef {
+  env := ctx.env
+
   // Option<ExternRef> → nullable externref, no struct wrapper
   case inner_mono {
     .ExternRef(_) => {
@@ -149,7 +153,7 @@ pub fn emit_option_from_variant_helper(inner_mono: MonoType, env: ResolvedEnv) F
   }
 
   result_mono := MonoType.Optional(inner_mono)
-  result_layout := get_sum_layout(result_mono, env)
+  result_layout := get_sum_layout_backend(result_mono, ctx)
   payload_vt := val_type_of_mono(inner_mono, env)
   none_body: Vector<Instr> = [.I32Const(0)]
   some_variant := result_layout.variants[1]
@@ -167,7 +171,7 @@ pub fn emit_option_from_variant_helper(inner_mono: MonoType, env: ResolvedEnv) F
     .I32Const(0),
     .ArrayGet("rt_types__Array"),
   ]
-  some_body = emit_erased_container_egress(inner_mono, env, some_body)
+  some_body = emit_erased_container_egress(inner_mono, ctx, some_body)
   some_body = .append(.StructNew(result_layout.sym))
   FuncDef.{
     name: option_from_variant_helper_sym(inner_mono),
@@ -183,9 +187,9 @@ pub fn emit_option_from_variant_helper(inner_mono: MonoType, env: ResolvedEnv) F
   }
 }
 
-pub fn emit_host_read_file_result_helper(env: ResolvedEnv) FuncDef {
+pub fn emit_host_read_file_result_helper(ctx: BackendContext) FuncDef {
   result_mono := MonoType.Result(MonoType.Vector(MonoType.Byte), MonoType.String)
-  result_layout := get_sum_layout(result_mono, env)
+  result_layout := get_sum_layout_backend(result_mono, ctx)
   pvec_ref := ValType.Ref(true, .Named("rt_types__PVec"))
   str_ref := ValType.Ref(true, .Named("rt_types__String"))
   variant_ref := ValType.Ref(true, .Named("rt_types__Variant"))
@@ -226,19 +230,20 @@ pub fn emit_host_read_file_result_helper(env: ResolvedEnv) FuncDef {
   }
 }
 
-pub fn emit_iterator_next_helper(result_mono: MonoType, env: ResolvedEnv) FuncDef {
+pub fn emit_iterator_next_helper(result_mono: MonoType, ctx: BackendContext) FuncDef {
+  env := ctx.env
   iter_item_mono := case result_mono {
     .Optional(inner) => inner,
     _ => error(
       "emit_iterator_next_helper: expected Option<IterItem>, got ${mono_to_key(result_mono)}",
     ),
   }
-  option_layout := case layout_of(result_mono, env) {
+  option_layout := case layout_of_backend(result_mono, ctx) {
     .Sum(s) => s,
     _ => error("emit_iterator_next_helper: expected Option sum layout"),
   }
   option_sym := option_layout.sym
-  iter_item_layout := case layout_of(iter_item_mono, env) {
+  iter_item_layout := case layout_of_backend(iter_item_mono, ctx) {
     .Record(r) => r,
     _ => error("emit_iterator_next_helper: expected IterItem record layout"),
   }
@@ -269,7 +274,7 @@ pub fn emit_iterator_next_helper(result_mono: MonoType, env: ResolvedEnv) FuncDe
     .I32Const(0),
     .ArrayGet("rt_types__Array"),
   ]
-  some_body = emit_erased_container_egress(value_mono, env, some_body)
+  some_body = emit_erased_container_egress(value_mono, ctx, some_body)
   some_body = .concat(
     [
       .LocalGet(3),

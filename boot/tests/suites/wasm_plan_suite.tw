@@ -4,7 +4,7 @@ use @std.testing as runner
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, FieldAtom}
 use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{
-  PreparedModule, prepare_backend, prepare_backend_with_mutable_decisions,
+  PreparedModule, backend_context, prepare_backend, prepare_backend_with_mutable_decisions,
 }
 use compiler.backend.prepared_ir.{CaptureParam}
 use compiler.base_env
@@ -151,13 +151,14 @@ fn prepare(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) Prepared
 }
 
 fn plan(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) WasmTypeRegistry {
-  plan_wasm_types(prepare(anf, env, builtins), env, builtins)
+  prepared := prepare(anf, env, builtins)
+  plan_wasm_types(prepared, backend_context(env, prepared), builtins)
 }
 
 fn plan_with_closures(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) WasmTypeRegistry {
   closure_conversion := convert_closures(anf, env)
   prepared := prepare_backend(closure_conversion.anf, env, builtins, closure_conversion.captures)
-  plan_wasm_types(prepared, env, builtins)
+  plan_wasm_types(prepared, backend_context(env, prepared), builtins)
 }
 
 // ── Registry types construction ─────────────────────────────────────
@@ -1081,7 +1082,7 @@ pub fn test_plan_ignores_mutable_decision_targets() Result<Void, String> {
     empty_captures(),
     decisions,
   )
-  reg := plan_wasm_types(prepared, env, builtins)
+  reg := plan_wasm_types(prepared, backend_context(env, prepared), builtins)
 
   found_persistent := case reg.direct_builtin_calls[set_id.id] {
     .Some(true) => true,

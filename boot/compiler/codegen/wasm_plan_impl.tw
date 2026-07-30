@@ -5,6 +5,7 @@ use @std.date
 use @std.proc
 
 use compiler.backend.callable_targets as callable_targets
+use compiler.backend.context.{BackendContext}
 use compiler.backend.facts as facts
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.prepared_ir.{PreparedFunc}
@@ -12,7 +13,8 @@ use compiler.builtins as bi
 use compiler.builtins.{BuiltinEntry, BuiltinRegistry, RuntimeInfo}
 use compiler.codegen.wasm_ir.{FieldDef, HeapType, ImportDef, TypeDef, ValType}
 use compiler.codegen.wasm_layout.{
-  WasmClosureLayout, WasmLayout, layout_of, mono_to_key, val_type_of, variant_singleton_eligible,
+  WasmClosureLayout, WasmLayout, layout_of_backend, mono_to_key, val_type_of,
+  variant_singleton_eligible,
 }
 use compiler.codegen.wasm_plan_scan.{ScanResult, scan_module_bodies}
 use compiler.codegen.wasm_plan_types.{
@@ -27,10 +29,11 @@ use compiler.type_util.{subst_type_params}
 // ── plan_wasm_types ─────────────────────────────────────────────────
 pub fn plan_wasm_types_impl(
   input: PreparedModule,
-  env: ResolvedEnv,
+  ctx: BackendContext,
   builtins: BuiltinRegistry,
   precomputed_captures: Dict<Int, Vector<CaptureEntry>>,
 ) WasmTypeRegistry {
+  env := ctx.env
   timed := case proc.env("TWINKLE_TIMINGS") {
     .Some(_) => true,
     .None => false,
@@ -68,7 +71,7 @@ pub fn plan_wasm_types_impl(
         env,
         "function '${func.name}' capture slot S${sid.id} / L${info.source_local.id}",
       )
-      reg = register_mono(reg, info.mono, env)
+      reg = register_mono(reg, info.mono, ctx)
       total_slot_reg = total_slot_reg + 1
     }
 
@@ -79,7 +82,7 @@ pub fn plan_wasm_types_impl(
         env,
         "function '${func.name}' parameter slot S${sid.id} / L${info.source_local.id}",
       )
-      reg = register_mono(reg, info.mono, env)
+      reg = register_mono(reg, info.mono, ctx)
       total_slot_reg = total_slot_reg + 1
     }
 
@@ -90,12 +93,12 @@ pub fn plan_wasm_types_impl(
         env,
         "function '${func.name}' local slot S${sid.id} / L${info.source_local.id}",
       )
-      reg = register_mono(reg, info.mono, env)
+      reg = register_mono(reg, info.mono, ctx)
       total_slot_reg = total_slot_reg + 1
     }
 
     validate_concrete_mono(func.return_mono, env, "function '${func.name}' return type")
-    reg = register_mono(reg, func.return_mono, env)
+    reg = register_mono(reg, func.return_mono, ctx)
     total_slot_reg = total_slot_reg + 1
   }
 
@@ -130,7 +133,7 @@ pub fn plan_wasm_types_impl(
     case scan.closure_materialized_monos[fid] {
       .Some(.Function(params, ret)) => {
         reg.concrete_func_sigs[fid] = FuncSigEntry.{ param_types: params, return_type: ret }
-        reg = register_mono(reg, .Function(params, ret), env)
+        reg = register_mono(reg, .Function(params, ret), ctx)
 
         case bi.entry(builtins, FuncId.{ id: fid }) {
           .Some(entry) => {
@@ -140,7 +143,7 @@ pub fn plan_wasm_types_impl(
         }
       },
       _ => {
-        reg = register_func_sig_by_id(reg, FuncId.{ id: fid }, funcs_by_id, builtins, env)
+        reg = register_func_sig_by_id(reg, FuncId.{ id: fid }, funcs_by_id, builtins, ctx)
       },
     }
 
@@ -190,15 +193,15 @@ pub fn plan_wasm_types_impl(
   reg = ensure_boundary_imports(reg)
 
   // always-emitted helpers (emit.tw lines 127-130) — ensure their types are registered
-  reg = register_mono(reg, MonoType.Result(MonoType.Vector(MonoType.Byte), MonoType.String), env)
-  reg = register_mono(reg, MonoType.Optional(MonoType.String), env)
-  reg = register_mono(reg, MonoType.Optional(MonoType.Int), env)
-  reg = register_mono(reg, MonoType.Optional(MonoType.Float), env)
+  reg = register_mono(reg, MonoType.Result(MonoType.Vector(MonoType.Byte), MonoType.String), ctx)
+  reg = register_mono(reg, MonoType.Optional(MonoType.String), ctx)
+  reg = register_mono(reg, MonoType.Optional(MonoType.Int), ctx)
+  reg = register_mono(reg, MonoType.Optional(MonoType.Float), ctx)
 
   // Hoist payload-free variant literals to shared immutable globals (one
   // struct.new at module init instead of per-use). Runs after all layouts are
   // resolved so each constructed nullary variant's sum layout is available.
-  reg = resolve_variant_singletons(reg, scan, env)
+  reg = resolve_variant_singletons(reg, scan, ctx)
   result := topo_sort_type_defs(reg)
   t4 := date.now()
 
@@ -316,7 +319,8 @@ fn ensure_boundary_imports(reg: WasmTypeRegistry) WasmTypeRegistry {
 }
 
 // ── Type registration ───────────────────────────────────────────────
-fn register_mono(reg: WasmTypeRegistry, ty: MonoType, env: ResolvedEnv) WasmTypeRegistry {
+fn register_mono(reg: WasmTypeRegistry, ty: MonoType, ctx: BackendContext) WasmTypeRegistry {
+  env := ctx.env
   case ty {
     .Never => reg,
     .ErrorType => reg,
@@ -332,8 +336,8 @@ fn register_mono(reg: WasmTypeRegistry, ty: MonoType, env: ResolvedEnv) WasmType
           }
 
           reg.in_progress[key] = true
-          reg = register_mono_dependencies(reg, ty, env)
-          layout := layout_of(ty, env)
+          reg = register_mono_dependencies(reg, ty, ctx)
+          layout := layout_of_backend(ty, ctx)
           reg.layout_cache[key] = layout
           reg.in_progress[key] = false
           reg = register_layout_type_def(reg, layout)
@@ -344,26 +348,27 @@ fn register_mono(reg: WasmTypeRegistry, ty: MonoType, env: ResolvedEnv) WasmType
   }
 }
 
-fn register_mono_dependencies(reg: WasmTypeRegistry, ty: MonoType, env: ResolvedEnv) WasmTypeRegistry {
+fn register_mono_dependencies(reg: WasmTypeRegistry, ty: MonoType, ctx: BackendContext) WasmTypeRegistry {
+  env := ctx.env
   case ty {
-    .Named(tid, args) => register_named_dependencies(reg, tid, args, env),
-    .Vector(elem) => register_mono(reg, elem, env),
+    .Named(tid, args) => register_named_dependencies(reg, tid, args, ctx),
+    .Vector(elem) => register_mono(reg, elem, ctx),
     .Dict(k, v) => {
-      reg = register_mono(reg, k, env)
-      register_mono(reg, v, env)
+      reg = register_mono(reg, k, ctx)
+      register_mono(reg, v, ctx)
     },
     .Function(params, ret) => {
-      reg = register_mono_list(reg, params, env)
+      reg = register_mono_list(reg, params, ctx)
 
       case ret {
         .Never => reg,
-        _ => register_mono(reg, ret, env),
+        _ => register_mono(reg, ret, ctx),
       }
     },
-    .Optional(inner) => register_mono(reg, inner, env),
+    .Optional(inner) => register_mono(reg, inner, ctx),
     .Result(ok, err) => {
-      reg = register_mono(reg, ok, env)
-      register_mono(reg, err, env)
+      reg = register_mono(reg, ok, ctx)
+      register_mono(reg, err, ctx)
     },
     _ => reg,
   }
@@ -373,8 +378,9 @@ fn register_named_dependencies(
   reg: WasmTypeRegistry,
   tid: TypeId,
   args: Vector<MonoType>,
-  env: ResolvedEnv,
+  ctx: BackendContext,
 ) WasmTypeRegistry {
+  env := ctx.env
   entry := find_type_entry(env, tid)
   def := case entry.def {
     .Some(d) => d,
@@ -413,7 +419,7 @@ fn register_named_dependencies(
       cur := reg
 
       for f in fields {
-        cur = register_mono(cur, subst_type_params(f.ty, type_params, args), env)
+        cur = register_mono(cur, subst_type_params(f.ty, type_params, args), ctx)
       }
 
       cur
@@ -429,7 +435,7 @@ fn register_named_dependencies(
 
       for v in variants {
         for field_ty in v.fields {
-          cur = register_mono(cur, subst_type_params(field_ty, type_params, args), env)
+          cur = register_mono(cur, subst_type_params(field_ty, type_params, args), ctx)
         }
       }
 
@@ -442,13 +448,13 @@ fn register_named_dependencies(
         )
       }
 
-      register_mono(reg, subst_type_params(target, type_params, args), env)
+      register_mono(reg, subst_type_params(target, type_params, args), ctx)
     },
   }
 }
 
-fn register_mono_list(reg: WasmTypeRegistry, types: Vector<MonoType>, env: ResolvedEnv) WasmTypeRegistry {
-  types.fold(reg, fn(cur, ty) { register_mono(cur, ty, env) })
+fn register_mono_list(reg: WasmTypeRegistry, types: Vector<MonoType>, ctx: BackendContext) WasmTypeRegistry {
+  types.fold(reg, fn(cur, ty) { register_mono(cur, ty, ctx) })
 }
 
 fn find_type_entry(env: ResolvedEnv, tid: TypeId) TypeEntry {
@@ -474,9 +480,9 @@ fn with_type_defs_and_index(
 // Register a shared immutable global for each eligible payload-free variant
 // literal that some body actually constructs. Keyed by "${sum.sym}#${vid}" so
 // emission can look it up from the use-site's sum layout and variant id.
-fn resolve_variant_singletons(reg: WasmTypeRegistry, scan: ScanResult, env: ResolvedEnv) WasmTypeRegistry {
+fn resolve_variant_singletons(reg: WasmTypeRegistry, scan: ScanResult, ctx: BackendContext) WasmTypeRegistry {
   for key, req in scan.nullary_variants {
-    case layout_of(req.mono, env) {
+    case layout_of_backend(req.mono, ctx) {
       .Sum(sum) => if variant_singleton_eligible(sum) {
         reg.variant_singletons["${sum.sym}#${req.vid}"] = VariantSingletonEntry.{
           global_sym: "variant_singleton_${mono_to_key(req.mono)}_v${req.vid}",
@@ -601,15 +607,16 @@ fn register_func_sig_by_id(
   fid: FuncId,
   funcs_by_id: Dict<Int, PreparedFunc>,
   builtins: BuiltinRegistry,
-  env: ResolvedEnv,
+  ctx: BackendContext,
 ) WasmTypeRegistry {
+  env := ctx.env
   case callable_targets.semantic_sig(fid, funcs_by_id, builtins, env) {
     .Some(target) => {
       reg.concrete_func_sigs[fid.id] = FuncSigEntry.{
         param_types: target.semantic_params,
         return_type: target.semantic_ret,
       }
-      reg = register_mono(reg, .Function(target.semantic_params, target.semantic_ret), env)
+      reg = register_mono(reg, .Function(target.semantic_params, target.semantic_ret), ctx)
 
       case bi.entry(builtins, fid) {
         .Some(entry) => analyze_builtin_call(reg, entry),

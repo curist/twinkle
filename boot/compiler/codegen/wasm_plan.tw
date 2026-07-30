@@ -4,15 +4,15 @@
 //! prepared-backend facts; planner traversal of `prepared.anf` is limited to
 //! body-discovery concerns like strings and builtin calls.
 
+use compiler.backend.context.{BackendContext}
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.prepared_ir.{CaptureParam}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_plan_impl as impl
 use compiler.codegen.wasm_plan_types.{CaptureEntry, WasmTypeRegistry}
-use compiler.resolver.{ResolvedEnv}
 
-pub fn plan_wasm_types(input: PreparedModule, env: ResolvedEnv, builtins: BuiltinRegistry) WasmTypeRegistry {
-  impl.plan_wasm_types_impl(input, env, builtins, to_capture_entries(input.closure_captures))
+pub fn plan_wasm_types(input: PreparedModule, ctx: BackendContext, builtins: BuiltinRegistry) WasmTypeRegistry {
+  impl.plan_wasm_types_impl(input, ctx, builtins, to_capture_entries(input.closure_captures))
 }
 
 fn to_capture_entries(precomputed: Dict<Int, Vector<CaptureParam>>) Dict<Int, Vector<CaptureEntry>> {

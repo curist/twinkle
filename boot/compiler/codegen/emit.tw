@@ -8,6 +8,7 @@
 //!   - Pattern match arm chains are delegated to codegen.emit.match
 
 use compiler.anf.{AnfFunctionDef, AnfModule, IndexKind, OpKind}
+use compiler.backend.context.{BackendContext}
 use compiler.backend.facts as facts
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.prepared_ir.{
@@ -58,7 +59,7 @@ use compiler.codegen.runtime.task_abi as task_abi
 use compiler.codegen.wasm_ir.{
   DataSegment, ExportDef, FuncDef, GlobalDef, ImportDef, Instr, TypeDef, ValType, WasmModule,
 }
-use compiler.codegen.wasm_layout.{layout_of, mono_to_key, val_type_of_mono}
+use compiler.codegen.wasm_layout.{layout_of_backend, mono_to_key, val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.codegen.wasm_type_util.{val_type_eq}
 use compiler.core_ir.{BinOp, FieldId, FuncId, LibExport, LibField, LibType, UnOp, VariantId}
@@ -99,8 +100,9 @@ pub fn emit_module(
   prepared: PreparedModule,
   reg: WasmTypeRegistry,
   builtins: BuiltinRegistry,
-  env: ResolvedEnv,
+  backend: BackendContext,
 ) WasmModule {
+  env := backend.env
   anf := prepared.anf
 
   // Build FuncId → symbol map and prepared-function lookup
@@ -128,6 +130,7 @@ pub fn emit_module(
     registry: reg,
     builtins,
     env,
+    backend,
     local_map: Dict.new(),
     next_local: 0,
     wasm_locals: [],
@@ -173,7 +176,7 @@ pub fn emit_module(
   iterator_helpers := collect_iterator_next_helpers(prepared.funcs, builtins)
 
   for mono in iterator_helpers {
-    funcs = .append(emit_iterator_next_helper(mono, env))
+    funcs = .append(emit_iterator_next_helper(mono, backend))
   }
 
   sum_helpers := collect_sum_variant_helpers(
@@ -183,15 +186,15 @@ pub fn emit_module(
   )
 
   for mono in sum_helpers {
-    funcs = .append(emit_sum_to_variant_helper(mono, env)).append(
-      emit_variant_to_sum_helper(mono, env),
+    funcs = .append(emit_sum_to_variant_helper(mono, backend)).append(
+      emit_variant_to_sum_helper(mono, backend),
     )
   }
 
-  funcs = .append(emit_host_read_file_result_helper(env)).append(
-    emit_option_from_variant_helper(MonoType.String, env),
-  ).append(emit_option_from_variant_helper(MonoType.Int, env)).append(
-    emit_option_from_variant_helper(MonoType.Float, env),
+  funcs = .append(emit_host_read_file_result_helper(backend)).append(
+    emit_option_from_variant_helper(MonoType.String, backend),
+  ).append(emit_option_from_variant_helper(MonoType.Int, backend)).append(
+    emit_option_from_variant_helper(MonoType.Float, backend),
   )
 
   // Generate option_from_variant helpers for dict_get inner types
@@ -205,7 +208,7 @@ pub fn emit_module(
     key := mono_to_key(inner)
 
     if !already_generated.has(key) {
-      funcs = .append(emit_option_from_variant_helper(inner, env))
+      funcs = .append(emit_option_from_variant_helper(inner, backend))
       already_generated[key] = true
     }
   }
@@ -236,7 +239,7 @@ pub fn emit_module(
   singleton_globals: Vector<GlobalDef> = []
 
   for k, entry in reg.variant_singletons {
-    case layout_of(entry.mono, env) {
+    case layout_of_backend(entry.mono, backend) {
       .Sum(sum) => {
         singleton_globals = .append(
           variant_emit.build_variant_singleton_global(sum, entry.vid, entry.global_sym),
@@ -462,7 +465,7 @@ fn emit_lib_exports(
   for key, sig in cb_sigs {
     case sig {
       .Fn(params, ret) => {
-        art := emit_callback_artifacts(key, params, ret, base_ctx.env)
+        art := emit_callback_artifacts(key, params, ret, base_ctx.backend)
         imports = .append(art.import_def)
         funcs = .append(art.tramp).append(art.ctor)
         exports = .append(ExportDef.{ wasm_name: art.ctor.name, func_sym: art.ctor.name })
@@ -575,8 +578,8 @@ fn emit_lib_exports(
   for name, rec in records {
     case rec {
       .Rec(rec_name, sym, fields) => {
-        funcs = .append(emit_record_read(rec_name, sym, fields, base_ctx.env)).append(
-          emit_record_make(rec_name, sym, fields, base_ctx.env),
+        funcs = .append(emit_record_read(rec_name, sym, fields, base_ctx.backend)).append(
+          emit_record_make(rec_name, sym, fields, base_ctx.backend),
         )
         exports = .append(
           ExportDef.{
@@ -763,13 +766,13 @@ fn collect_records(t: LibType, acc: Dict<String, LibType>) Dict<String, LibType>
 // `__lib_read_rec_<name>(s: anyref) -> rt_types__Array`: box each struct field
 // into a flat array (compound/ref fields pass through as anyref for the host to
 // recurse into).
-fn emit_record_read(name: String, sym: String, fields: Vector<LibField>, env: ResolvedEnv) FuncDef {
+fn emit_record_read(name: String, sym: String, fields: Vector<LibField>, backend: BackendContext) FuncDef {
   body: Vector<Instr> = []
   idx := 0
 
   for f in fields {
     body = .append(.LocalGet(0)).append(.RefCast(false, .Named(sym))).append(.StructGet(sym, idx))
-    body = emit_box_lib_field(f.ty, env, body)
+    body = emit_box_lib_field(f.ty, backend, body)
     idx = idx + 1
   }
 
@@ -785,13 +788,13 @@ fn emit_record_read(name: String, sym: String, fields: Vector<LibField>, env: Re
 
 // `__lib_make_rec_<name>(a: rt_types__Array) -> (ref struct)`: unbox each array
 // element to its field type and build the struct.
-fn emit_record_make(name: String, sym: String, fields: Vector<LibField>, env: ResolvedEnv) FuncDef {
+fn emit_record_make(name: String, sym: String, fields: Vector<LibField>, backend: BackendContext) FuncDef {
   body: Vector<Instr> = []
   idx := 0
 
   for f in fields {
     body = .append(.LocalGet(0)).append(.I32Const(idx)).append(.ArrayGet("rt_types__Array"))
-    body = emit_unbox_lib_field(f.ty, env, body)
+    body = emit_unbox_lib_field(f.ty, backend, body)
     idx = idx + 1
   }
 
@@ -807,21 +810,21 @@ fn emit_record_make(name: String, sym: String, fields: Vector<LibField>, env: Re
 
 // Box a struct field value (already on the stack) to anyref: numeric leaves box
 // into BoxedInt/BoxedFloat/i31; ref-typed fields (String/compound) pass through.
-fn emit_box_lib_field(ty: LibType, env: ResolvedEnv, buf: Vector<Instr>) Vector<Instr> {
+fn emit_box_lib_field(ty: LibType, backend: BackendContext, buf: Vector<Instr>) Vector<Instr> {
   case ty {
-    .Int => emit_box_to_anyref(.Int, env, buf),
-    .Float => emit_box_to_anyref(.Float, env, buf),
-    .Bool => emit_box_to_anyref(.Bool, env, buf),
+    .Int => emit_box_to_anyref(.Int, backend, buf),
+    .Float => emit_box_to_anyref(.Float, backend, buf),
+    .Bool => emit_box_to_anyref(.Bool, backend, buf),
     _ => buf,
   }
 }
 
 // Unbox an anyref array element (on the stack) to a struct field's native type.
-fn emit_unbox_lib_field(ty: LibType, env: ResolvedEnv, buf: Vector<Instr>) Vector<Instr> {
+fn emit_unbox_lib_field(ty: LibType, backend: BackendContext, buf: Vector<Instr>) Vector<Instr> {
   case ty {
-    .Int => emit_unbox_from_anyref(.Int, env, buf),
-    .Float => emit_unbox_from_anyref(.Float, env, buf),
-    .Bool => emit_unbox_from_anyref(.Bool, env, buf),
+    .Int => emit_unbox_from_anyref(.Int, backend, buf),
+    .Float => emit_unbox_from_anyref(.Float, backend, buf),
+    .Bool => emit_unbox_from_anyref(.Bool, backend, buf),
     .Str => buf.append(.RefCast(false, .Named("rt_types__String"))),
     .Vec(_) => buf.append(.RefCast(false, .Named("rt_types__PVec"))),
     .Dct(_, _) => buf.append(.RefCast(false, .Named("rt_types__PDict"))),
@@ -883,7 +886,12 @@ fn any_export_uses_dict(exports: Vector<LibExport>) Bool {
 type CbArtifacts = .{ import_def: ImportDef, tramp: FuncDef, ctor: FuncDef }
 
 // Build the three wasm artifacts for one callback signature `key`.
-fn emit_callback_artifacts(key: String, params: Vector<LibType>, ret: LibType, env: ResolvedEnv) CbArtifacts {
+fn emit_callback_artifacts(
+  key: String,
+  params: Vector<LibType>,
+  ret: LibType,
+  backend: BackendContext,
+) CbArtifacts {
   native_params := collect p in params {
     lib_boundary_val_type(p)
   }
@@ -916,13 +924,13 @@ fn emit_callback_artifacts(key: String, params: Vector<LibType>, ret: LibType, e
     body = .append(.LocalGet(1)).append(.RefCast(false, .Named("rt_types__Array"))).append(
       .I32Const(i),
     ).append(.ArrayGet("rt_types__Array"))
-    body = emit_unbox_from_anyref(lib_type_to_mono(params[i]), env, body)
+    body = emit_unbox_from_anyref(lib_type_to_mono(params[i]), backend, body)
   }
 
   body = .append(.Call(import_sym))
   body = case ret {
     .Void => body.append(.I32Const(0)).append(.RefI31),
-    _ => emit_box_to_anyref(lib_type_to_mono(ret), env, body),
+    _ => emit_box_to_anyref(lib_type_to_mono(ret), backend, body),
   }
   tramp := FuncDef.{
     name: "__lib_cb_tramp_${key}",
@@ -1089,6 +1097,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     registry: base_ctx.registry,
     builtins: base_ctx.builtins,
     env: base_ctx.env,
+    backend: base_ctx.backend,
     local_map,
     next_local: idx,
     wasm_locals: extra_locals,
@@ -2551,7 +2560,7 @@ fn emit_intrinsic_vector_get(
     then_instrs: Vector<Instr> = emit_atom(args[0], ctx, [])
       .concat(emit_checked_i32_narrow(args[1], ctx, []))
       .concat([.Call("rt_arr__get")])
-      .concat(emit_erased_container_egress(elem_mono, ctx.env, []))
+      .concat(emit_erased_container_egress(elem_mono, ctx.backend, []))
     else_instrs: Vector<Instr> = [Instr.RefNull(.Extern)]
     buf2 := emit_atom(args[1], ctx, buf)
     buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
@@ -2583,7 +2592,7 @@ fn emit_intrinsic_vector_get(
     .concat(emit_atom(args[0], ctx, []))
     .concat(emit_checked_i32_narrow(args[1], ctx, []))
     .concat([.Call("rt_arr__get")])
-    .concat(emit_erased_container_egress(elem_mono, ctx.env, []))
+    .concat(emit_erased_container_egress(elem_mono, ctx.backend, []))
     .concat([.StructNew(sum_layout.sym)])
   else_instrs: Vector<Instr> = [Instr.I32Const(0)]
     .concat(default_payload)
@@ -2727,7 +2736,7 @@ fn emit_intrinsic_dict_get_unsafe(
 ) Vector<Instr> {
   buf2 := emit_atom(args[0], ctx, buf) // dict
   buf3 := emit_erased_container_ingress(args[1], ctx, buf2) // key (erased)
-  emit_erased_container_egress(result_mono, ctx.env, buf3.append(.Call("rt_dict__get"))).append(
+  emit_erased_container_egress(result_mono, ctx.backend, buf3.append(.Call("rt_dict__get"))).append(
     .LocalSet(result_idx),
   )
 }
@@ -3117,7 +3126,7 @@ fn emit_intrinsic_cell_get(
   buf2 := emit_atom(args[0], ctx, buf)
   buf3 := buf2.append(.StructGet(sym, 0))
   buf4 := if sym == "$Cell_anyref" {
-    emit_unbox_from_anyref(inner_mono, ctx.env, buf3)
+    emit_unbox_from_anyref(inner_mono, ctx.backend, buf3)
   } else {
     buf3
   }
@@ -3156,7 +3165,7 @@ fn emit_intrinsic_cell_update(
   buf5 := emit_atom(args[0], ctx, buf4)
   buf6 := buf5.append(.StructGet(sym, 0)) // current cell value
   buf7 := if sym != "$Cell_anyref" {
-    emit_box_to_anyref(inner_mono, ctx.env, buf6)
+    emit_box_to_anyref(inner_mono, ctx.backend, buf6)
   } else {
     buf6
   }
@@ -3164,7 +3173,7 @@ fn emit_intrinsic_cell_update(
   buf9 := emit_atom(args[1], ctx, buf8)
   buf10 := buf9.append(.StructGet("rt_types__Closure", 0)).append(.CallRef("rt_types__ClosureFunc"))
   buf11 := if sym != "$Cell_anyref" {
-    emit_unbox_from_anyref(inner_mono, ctx.env, buf10)
+    emit_unbox_from_anyref(inner_mono, ctx.backend, buf10)
   } else {
     buf10
   }
@@ -3212,7 +3221,7 @@ fn emit_intrinsic_task_await(
   buf = .append(.RefCast(false, .Named("rt_types__Task")))
   buf = .append(.StructGet("rt_types__Task", 0)) // task id
   buf = .append(.Call(task_abi.sym_suspend_await)) // -> anyref result
-  buf = emit_unbox_from_anyref(result_mono, ctx.env, buf)
+  buf = emit_unbox_from_anyref(result_mono, ctx.backend, buf)
   buf.append(.LocalSet(result_idx))
 }
 
@@ -3286,7 +3295,7 @@ fn emit_intrinsic_channel_recv(
     .LocalGet(raw_local),
     .Call(task_abi.sym_channel_recv_value),
   ]
-  some_body = emit_erased_container_egress(elem_mono, ctx.env, some_body)
+  some_body = emit_erased_container_egress(elem_mono, ctx.backend, some_body)
   some_body = .append(.StructNew(sum_layout.sym))
   none_body: Vector<Instr> = [.I32Const(0)]
   none_body = .concat(default_payload).append(.StructNew(sum_layout.sym))
@@ -4018,14 +4027,14 @@ fn emit_wrap_anyref(atom: PreparedAtom, mono: MonoType, ctx: EmitCtx, buf: Vecto
   Instr,
 > {
   buf = emit_atom(atom, ctx, buf)
-  emit_box_to_anyref(mono, ctx.env, buf)
+  emit_box_to_anyref(mono, ctx.backend, buf)
 }
 
 fn emit_unwrap_anyref(atom: PreparedAtom, mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<
   Instr,
 > {
   buf = emit_atom(atom, ctx, buf)
-  emit_unbox_from_anyref(mono, ctx.env, buf)
+  emit_unbox_from_anyref(mono, ctx.backend, buf)
 }
 
 // ── Checked i32 narrowing ──────────────────────────────────────────────

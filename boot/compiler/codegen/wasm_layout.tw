@@ -3,6 +3,7 @@
 //! Every concrete MonoType maps to exactly one WasmLayout.
 //! This is the single source of truth — no shadow metadata.
 
+use compiler.backend.context.{BackendContext}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.core_ir.{FieldId, VariantId}
 use compiler.elem_family.{elem_family_of}
@@ -106,6 +107,19 @@ pub fn nominal_struct_sym(name: String, ty: MonoType) String {
 
 // ── layout_of ───────────────────────────────────────────────────────
 pub fn layout_of(ty: MonoType, env: ResolvedEnv) WasmLayout {
+  layout_of_with_facts(ty, env, env.typed_vector_fields, env.typed_vector_payloads)
+}
+
+pub fn layout_of_backend(ty: MonoType, ctx: BackendContext) WasmLayout {
+  layout_of_with_facts(ty, ctx.env, ctx.typed_vector_fields, ctx.typed_vector_payloads)
+}
+
+fn layout_of_with_facts(
+  ty: MonoType,
+  env: ResolvedEnv,
+  typed_vector_fields: Dict<String, Bool>,
+  typed_vector_payloads: Dict<String, Bool>,
+) WasmLayout {
   case ty {
     .Int => .Scalar(.WI64),
     .Float => .Scalar(.WF64),
@@ -116,7 +130,7 @@ pub fn layout_of(ty: MonoType, env: ResolvedEnv) WasmLayout {
     .ExternRef(_) => .Scalar(.WExternref),
     .String => .Scalar(.WAnyref),
     .Never => error("layout_of called on Never — must be handled as unreachable"),
-    .Named(tid, args) => layout_of_named(tid, args, env),
+    .Named(tid, args) => layout_of_named(tid, args, env, typed_vector_fields, typed_vector_payloads),
     .Vector(elem) => .Vector_(layout_hint_of(elem, env)),
     .Dict(k, v) => .Dict_(layout_hint_of(k, env), layout_hint_of(v, env)),
     .Function(params, ret) => layout_of_function(params, ret, env),
@@ -190,7 +204,13 @@ fn layout_of_iterator(args: Vector<MonoType>, env: ResolvedEnv) WasmLayout {
   )
 }
 
-fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLayout {
+fn layout_of_named(
+  tid: TypeId,
+  args: Vector<MonoType>,
+  env: ResolvedEnv,
+  typed_vector_fields: Dict<String, Bool>,
+  typed_vector_payloads: Dict<String, Bool>,
+) WasmLayout {
   if is_cell_type(env, tid) {
     inner := if args.len() > 0 {
       args[0]
@@ -255,7 +275,7 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
         // Typed-field key uses the field's position i, which equals its FieldId.id
         // (record fields are numbered 0..n-1 positionally); matches the "${tid}:${fid}"
         // keys the typed-field analysis produces from ARecord/ARecordGet FieldIds.
-        vt: ValType = if env.typed_vector_fields.has("${tid.id}:${i}") {
+        vt: ValType = if typed_vector_fields.has("${tid.id}:${i}") {
           case elem_family_of(field_ty) {
             .Some(fam) => .Ref(true, .Named(fam.pvec_type)),
             .None => val_type_of_mono(field_ty, env),
@@ -274,7 +294,16 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
         )
       }
 
-      layout_of_sum_def(tid, args, name, type_params, variants, env)
+      layout_of_sum_def(
+        tid,
+        args,
+        name,
+        type_params,
+        variants,
+        env,
+        typed_vector_fields,
+        typed_vector_payloads,
+      )
     },
     .Alias(name, type_params, target) => {
       if args.len() < type_params.len() {
@@ -284,7 +313,12 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
       }
 
       // Resolve alias and compute layout of the target
-      layout_of(subst_type_params(target, type_params, args), env)
+      layout_of_with_facts(
+        subst_type_params(target, type_params, args),
+        env,
+        typed_vector_fields,
+        typed_vector_payloads,
+      )
     },
   }
 }
@@ -296,6 +330,8 @@ fn layout_of_sum_def(
   type_params: Vector<ResolvedTypeParam>,
   variants: Vector<ResolvedVariant>,
   env: ResolvedEnv,
+  typed_vector_fields: Dict<String, Bool>,
+  typed_vector_payloads: Dict<String, Bool>,
 ) WasmLayout {
   sym := nominal_struct_sym(name, .Named(tid, args))
 
@@ -304,7 +340,7 @@ fn layout_of_sum_def(
   var_layouts := collect v, i in variants {
     payload_types := collect f, j in v.fields {
       field_ty := subst_type_params(f, type_params, args)
-      vt: ValType = if env.typed_vector_payloads.has("${tid.id}:${i}:${j}") {
+      vt: ValType = if typed_vector_payloads.has("${tid.id}:${i}:${j}") {
         case elem_family_of(field_ty) {
           .Some(fam) => .Ref(true, .Named(fam.pvec_type)),
           .None => val_type_of_mono(field_ty, env),

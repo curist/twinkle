@@ -19,7 +19,7 @@ use @std.proc
 
 use compiler.anf.{AnfModule}
 use compiler.backend.closure_convert.{ClosureConversion, convert_closures}
-use compiler.backend.prepare.{PreparedModule, prepare_backend_with_mutable_config}
+use compiler.backend.prepare.{PreparedModule, backend_context, prepare_backend_with_mutable_config}
 use compiler.backend.verify.{VerifyLevel, verify_prepared_module_with_level}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.builder_region
@@ -223,14 +223,12 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   prepared_codegen := prepare_codegen(anf, env, builtins)
   prepared := prepared_codegen.prepared
 
-  env2 := env
-  env2.typed_vector_fields = prepared.typed_vector_fields
-  env2.typed_vector_payloads = prepared.typed_vector_payloads
+  backend_ctx := backend_context(env, prepared)
   t2 := date.now()
 
   // 3. Verify prepared backend IR.
   log_phase("begin verify")
-  case verify_prepared_module_with_level(prepared, env2, builtins, verify_level_from_env()) {
+  case verify_prepared_module_with_level(prepared, backend_ctx, builtins, verify_level_from_env()) {
     .Ok(_) => {},
     .Err(msg) => error(msg),
   }
@@ -243,7 +241,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
 
   // 4. Plan Wasm types from prepared backend IR.
   log_phase("begin plan_wasm_types")
-  registry := plan_wasm_types(prepared, env2, builtins)
+  registry := plan_wasm_types(prepared, backend_ctx, builtins)
   t4 := date.now()
 
   if timed {
@@ -252,7 +250,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
 
   // 5. Emit user module from prepared backend IR.
   log_phase("begin emit_module")
-  user_module := emit_module(prepared, registry, builtins, env2)
+  user_module := emit_module(prepared, registry, builtins, backend_ctx)
   t5 := date.now()
 
   if timed {

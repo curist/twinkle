@@ -59,7 +59,7 @@ pub fn emit_coerce_stack(
         },
         _ => buf,
       }
-      return emit_box_to_anyref(mono, ctx.env, pre)
+      return emit_box_to_anyref(mono, ctx.backend, pre)
     },
     _ => {},
   }
@@ -86,10 +86,10 @@ pub fn emit_coerce_stack(
       }
 
       case typed_dest {
-        .Some(fam) => return emit_unbox_from_anyref(mono, ctx.env, buf).append(
+        .Some(fam) => return emit_unbox_from_anyref(mono, ctx.backend, buf).append(
           .Call(fam.unbox_call),
         ),
-        .None => return emit_unbox_from_anyref(mono, ctx.env, buf),
+        .None => return emit_unbox_from_anyref(mono, ctx.backend, buf),
       }
     },
     _ => {},
