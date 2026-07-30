@@ -507,6 +507,31 @@ paths are not end-to-end enough for AWFY to be meaningful.
 - [ ] **Performance.** Deferred by design (rationale above); full AWFY comparisons
   wait until the storage track makes vector/dict/record paths end-to-end.
 
+## Performance diagnostics
+
+`TWINKLE_TIMINGS=1` prints phase totals across the codegen path, including the
+two dominant sound-uniqueness passes:
+
+- `[time] variant_specialize` / `[time:8g] table=… variants=… groups=…` — Phase
+  8G, which computes the whole-program summary used to decide clones.
+- `[time] produce_mutable_decisions` / `[time:mutable:artifacts] summary=…` — the
+  mutable-decision producer's scoped summary + ownership analysis.
+- `[time:summary:reuse] total=… reused=… clones=… unsafe=… skipped_sccs=…` — the
+  reuse fast path (`summary.compute_for_roots_reusing`) that seeds the mutable
+  producer's summary from 8G's carried table and re-summarizes only the
+  clone-affected closure. `reused` is the count of functions taken verbatim from
+  the carried table; `unsafe` is the recomputed closure (clones + callers).
+
+Reuse controls:
+
+- `TWINKLE_SUMMARY_REUSE=0` — disable reuse and always recompute the scoped
+  summary from scratch (the pre-optimization path). Use to A/B a build.
+- `TWINKLE_SUMMARY_REUSE_VERIFY=1` — also compute the summary the from-scratch way
+  and assert per-function equality (`[summary:reuse:verify] ok`, or a hard error
+  listing mismatching func ids). Use when changing 8G's clone/routing shape or the
+  summary operator, to re-prove reuse soundness on the real module before trusting
+  the fast path.
+
 ## Deferrals after codegen
 
 | Deferred work | Home |

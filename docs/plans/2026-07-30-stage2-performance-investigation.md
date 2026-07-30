@@ -1,5 +1,12 @@
 # Stage2 Performance Investigation Implementation Plan
 
+> **Status: COMPLETE.** Landed `summary.compute_for_roots_reusing` (branch
+> `stage2-perf-summary-reuse`): the mutable-decision producer seeds its scoped
+> summary from Phase 8G's carried whole-program table and recomputes only the
+> clone-affected closure. `produce_mutable_decisions` ~10–13s → ~7.5–9.4s per
+> heavy self-host build; fixed point stage3 == stage4 intact; reuse machine-verified
+> equal to from-scratch on every build. See Optimization Results and Final Handoff.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Reduce `make stage2` wall-clock time after the sound-uniqueness hang fix without weakening sound-uniqueness codegen or fixed-point verification.
@@ -156,6 +163,45 @@ negligible by comparison. This matches and confirms the single-build probe.
 - **Rejected hypotheses:** Path A (hand 8G's whole-program table directly to the
   mutable producer) — unsound because the 27 clones are absent from 8G's table
   and the mutable pass is a different, scoped computation. See the Probe section.
+
+## Optimization Results
+
+Implemented the incremental-reuse target (a sound refinement of Task 3 Path A,
+Path-C-flavored): 8G's whole-program summary is carried into the mutable producer
+via `SpecializeResult.summary` and used to seed `compute_for_roots_reusing`, which
+recomputes only the clone-affected closure.
+
+- **Root cause of remaining slowness:** the mutable producer re-summarized ~3400
+  functions (its 544-root "scope" closes over ~84% of the module) that 8G had
+  already summarized on a module differing only by 27 clones + redirected sites.
+- **Optimization implemented:** `summary.compute_for_roots_reusing` — seed the
+  provably-reusable set (body unchanged AND all callees reusable) from the carried
+  table; propagate the changed frontier (clones + funcs calling a clone) backward
+  to transitive callers; run the fixpoint only over that closure. All root SCCs
+  still run, so the root-keyed `fix_cache` handed to the ownership pass is
+  unchanged. Threaded through `variant_specialize` → `codegen`/`ir` →
+  `mutable_produce` → `ownership_verdicts`. `TWINKLE_SUMMARY_REUSE=0` disables it;
+  `TWINKLE_SUMMARY_REUSE_VERIFY=1` also computes the from-scratch table and asserts
+  per-function equality.
+- **Representative build before/after** (stage1→stage2, `TWINKLE_TIMINGS=1`):
+  `produce_mutable_decisions` 10.53s → 7.51s; its summary substep 9.14s → 3.92s
+  (the residual ~2.2s in the "summary" bucket is `uniform_entry_seeds`, outside
+  this optimization). `variant_specialize` unchanged (8G still computes the table
+  we now reuse).
+- **Full `make stage2` before/after** (per heavy build, `produce_mutable_decisions`):
+  stage1→2 10.53s→7.51s, stage2→3 12.17s→9.10s, stage3→4 12.61s→9.37s (~3s each,
+  ~9s across the loop). Reuse stats every heavy build: `funcs=4111 reused=3282
+  clones=27 unsafe=229 skipped_sccs=3232`.
+- **Fixed-point result:** `Fixed point reached: stage3 == stage4`, loop completes.
+- **Tests/checks:** `TWINKLE_SUMMARY_REUSE_VERIFY=1 make stage2` — all four builds
+  report `[summary:reuse:verify] ok` with zero mismatches; `target/twk run
+  boot/tests/main.tw` — 3321 passed (incl. a new `cfg_summary_suite` test asserting
+  reuse == from-scratch for a full carried table and for one with a simulated
+  clone-absent entry); `twk lint boot/main.tw` — no findings.
+- **Regressions or deferrals:** none observed. `variant_specialize`'s own
+  whole-program summary is inherent (it decides clones) and unchanged. The reused
+  path still runs all 544 root SCCs to keep the fix_cache identical; skipping those
+  too would need the ownership pass to tolerate an incomplete cache (deferred).
 
 ## File Structure
 
@@ -648,3 +694,30 @@ git commit -m "Document stage2 performance diagnostics"
 ```
 
 Expected: final commit contains cleanup and documentation only.
+
+---
+
+## Final Handoff
+
+- **Baseline log:** `/tmp/twinkle-stage2-baseline.log` (see Baseline Results table).
+- **Optimized log:** `/tmp/twinkle-stage2-optimized.log` / `/tmp/stage2-time.txt`
+  (per-heavy-build `produce_mutable_decisions` 7.51s / 9.10s / 9.37s).
+- **Verify log:** `/tmp/twinkle-stage2-verify.log` — `TWINKLE_SUMMARY_REUSE_VERIFY=1
+  make stage2`, four `[summary:reuse:verify] ok`, fixed point reached.
+- **Implementation commit:** "Reuse Phase 8G summary to seed mutable-decision
+  producer" on branch `stage2-perf-summary-reuse` (`summary.tw`,
+  `variant_specialize.tw`, `codegen.tw`, `mutable_produce.tw`,
+  `ownership_verdicts.tw`, `ir.tw`, `cfg_summary_suite.tw`).
+- **Retained diagnostics:** `[time:summary:reuse]` under `TWINKLE_TIMINGS=1`;
+  `TWINKLE_SUMMARY_REUSE` / `TWINKLE_SUMMARY_REUSE_VERIFY` env flags. Documented in
+  `docs/plans/sound-uniqueness/codegen/README.md` → Performance diagnostics.
+- **Remaining performance deferrals:** 8G's own whole-program summary (~8–9s/build)
+  is inherent to clone selection and untouched. The reuse path still runs all 544
+  root SCCs to keep the ownership `fix_cache` byte-identical; skipping those would
+  need the ownership pass to tolerate an incomplete cache. `uniform_entry_seeds`
+  (~2s) inside the mutable "summary" bucket is now the next-largest sub-cost.
+- **Commands verified:** `TWINKLE_SUMMARY_REUSE_VERIFY=1 make stage2` (0 mismatches,
+  fixed point); `make stage2` (fixed point, timings); `target/twk run
+  boot/tests/main.tw` (3321 passed); `twk lint boot/main.tw` (no findings).
+- **Not done:** `make bundle-cli` — `target/twk` still embeds the pre-optimization
+  compiler; rebundle to ship the CLI with reuse enabled.
