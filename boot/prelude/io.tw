@@ -1,0 +1,30 @@
+//! Generic print/error sinks backed by the `Stringify` contract.
+//!
+//! These public wrappers accept any `T: Stringify` value and render it with
+//! `.to_string()` before handing a `String` to the hidden string-only runtime
+//! sinks (`__print_string`, ...). The runtime/host ABI stays string-only.
+
+/// Print a Stringify value to stdout.
+pub fn print<T: Stringify>(value: T) Void {
+  __print_string(value.to_string())
+}
+
+/// Print a Stringify value to stdout followed by a newline.
+pub fn println<T: Stringify>(value: T) Void {
+  __println_string(value.to_string())
+}
+
+/// Trap with an unrecoverable error message rendered from a Stringify value.
+pub fn error<T: Stringify>(value: T) Never {
+  __error_string(value.to_string())
+}
+
+/// Print a Stringify value to stderr.
+pub fn eprint<T: Stringify>(value: T) Void {
+  __eprint_string(value.to_string())
+}
+
+/// Print a Stringify value to stderr followed by a newline.
+pub fn eprintln<T: Stringify>(value: T) Void {
+  __eprintln_string(value.to_string())
+}

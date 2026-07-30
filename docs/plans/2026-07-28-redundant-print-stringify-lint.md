@@ -354,7 +354,7 @@ fn is_public_prelude_io_sink(ctx: LintCtx, name: String) Bool {
     return false
   }
 
-  case ctx.env.lookup_function_origin(name) {
+  case ctx.env.function_origins[name] {
     .Some(origin) => origin.func_name == name and origin.module_path.ends_with("/prelude/io.tw"),
     .None => false,
   }

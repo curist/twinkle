@@ -508,8 +508,8 @@ pub fn suite() runner.Suite {
         state := state_with_doc("file:///a.tw", source)
         step := state.handle_message(hover_request(1, "file:///a.tw", 0, 1))
         content := try hover_content(step)
-        try assert.str_contains(content, "fn(s: String) Void")
-        try assert.str_contains(content, "Print a string to stdout followed by a newline.")
+        try assert.str_contains(content, "fn<T: Stringify>(value: T) Void")
+        try assert.str_contains(content, "Print a Stringify value to stdout followed by a newline.")
         .Ok({})
       },
     )

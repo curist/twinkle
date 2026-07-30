@@ -102,6 +102,17 @@ fn test_phase2_return_inside_for() Result<Void, String> {
   .Ok({})
 }
 
+fn test_generic_io_stringifies_before_sink() Result<Void, String> {
+  // Generic print family accepts non-String Stringify values; codegen lowers
+  // them through `.to_string()` before reaching the string-only runtime sink.
+  wat := try assert_codegen_src_compiles(
+    "println(42)\nprintln(true)\n",
+    "generic io stringifies before sink",
+  )
+  try assert.str_contains(wat, "println")
+  .Ok({})
+}
+
 fn test_phase3_string_get_fixture() Result<Void, String> {
   wat := try assert_codegen_path_compiles("tests/run/string_get.tw", "phase 3 string.get fixture")
   try assert.str_contains(wat, "Option_opt_i32b")
@@ -908,6 +919,10 @@ pub fn suite() runner.Suite {
     )
     .test("phase 2 return inside if compiles through boot codegen", test_phase2_return_inside_if)
     .test("phase 2 return inside for compiles through boot codegen", test_phase2_return_inside_for)
+    .test(
+      "generic print family stringifies before runtime sink",
+      test_generic_io_stringifies_before_sink,
+    )
     .test(
       "phase 3 string.get fixture compiles through boot codegen",
       test_phase3_string_get_fixture,

@@ -21,6 +21,12 @@ fn timings_enabled() Bool {
   }
 }
 
+fn artifact_phase(label: String) {
+  if timings_enabled() {
+    eprintln("[time:mutable:artifact:phase] ${label}")
+  }
+}
+
 pub type SiteVerdict = .{ text: String, reusable_shell: Bool, field_backing_reusable: Bool }
 
 // ── Optimized-ANF fingerprinting ────────────────────────────────────
@@ -511,10 +517,12 @@ fn uniform_entry_seeds(
 // downstream consumers can reject a mismatched module.
 pub fn compute_artifacts(opt: AnfModule, b: BuiltinRegistry, sem: OptimizerSemantics) OwnershipArtifacts {
   timed := timings_enabled()
+  artifact_phase("begin full_cfg")
   t0 := date.now()
   view := cfg.build_view(opt, b)
   view = ownership.prune_dead_merge(view)
   t_view := date.now()
+  artifact_phase("begin full_summary")
   table := summary.compute(view, b, sem)
   shell_seeds := uniform_entry_seeds(opt, view, b, sem, table, all_func_targets(view))
   entry_seeds: Dict<Int, ownership.EntrySeedFacts> = Dict.new()
@@ -522,6 +530,7 @@ pub fn compute_artifacts(opt: AnfModule, b: BuiltinRegistry, sem: OptimizerSeman
     entry_seeds[fid] = ownership.EntrySeedFacts.{ unique_locals: shell, field_own: Dict.new() }
   }
   t_summary := date.now()
+  artifact_phase("begin full_ownership")
   analyzed := ownership.analyze_with_summaries_and_entry_seeds(view, b, sem, table, entry_seeds)
   t_own := date.now()
   if timed {
@@ -560,10 +569,12 @@ pub fn compute_candidate_artifacts_seeded(
   owned_seeds: variant_route.OwnedSeedTable,
 ) OwnershipArtifacts {
   timed := timings_enabled()
+  artifact_phase("begin scoped_cfg")
   t0 := date.now()
   view := cfg.build_view(opt, b)
   view = ownership.prune_dead_merge(view)
   t_view := date.now()
+  artifact_phase("begin scoped_summary")
 
   scope := candidate_funcs
   for fid, _spec in owned_seeds.by_func {
@@ -594,6 +605,7 @@ pub fn compute_candidate_artifacts_seeded(
     }
   }
   t_summary := date.now()
+  artifact_phase("begin scoped_ownership")
   analyzed := ownership.analyze_selected_with_summaries_and_entry_seeds(
     view,
     b,

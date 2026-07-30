@@ -707,15 +707,15 @@ pub fn suite() runner.Suite {
         builtins := bi.make_builtin_registry()
 
         // Spot-check a few key entries via builtins.by_id
-        // println: (ref null $String) → void
-        println_fid := builtins.id("println")
+        // __println_string: (ref null $String) → void
+        println_fid := builtins.id("__println_string")
 
         case builtins.by_id[println_fid.id] {
           .Some(entry) => {
             try assert.equal(entry.abi.param_types.len(), 1)
             try assert.equal(entry.abi.result_types.len(), 0)
           },
-          .None => return assert.fail("missing entry for println"),
+          .None => return assert.fail("missing entry for __println_string"),
         }
 
         // dict$set: (ref null $Dict, anyref, anyref) → (ref $Dict)

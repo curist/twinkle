@@ -165,11 +165,11 @@ i.clamp(0, xs.len())   // or directly
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `print` | `fn(s: String) Void` | Print to stdout (no newline) |
-| `println` | `fn(s: String) Void` | Print to stdout with newline |
-| `eprint` | `fn(s: String) Void` | Print to stderr (no newline) |
-| `eprintln` | `fn(s: String) Void` | Print to stderr with newline |
-| `error` | `fn(s: String) Void` | Trap with error message (unrecoverable) |
+| `print` | `fn<T: Stringify>(value: T) Void` | Print a Stringify value to stdout (no newline) |
+| `println` | `fn<T: Stringify>(value: T) Void` | Print a Stringify value to stdout with newline |
+| `eprint` | `fn<T: Stringify>(value: T) Void` | Print a Stringify value to stderr (no newline) |
+| `eprintln` | `fn<T: Stringify>(value: T) Void` | Print a Stringify value to stderr with newline |
+| `error` | `fn<T: Stringify>(value: T) Never` | Trap with an unrecoverable error message rendered from a Stringify value |
 
 ## Type Conversions
 

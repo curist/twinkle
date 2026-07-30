@@ -1098,6 +1098,46 @@ impl ValueEnv {
             },
         );
 
+        // Hidden string-only runtime sinks. The public print/error family are
+        // generic `T: Stringify` wrappers in prelude/io.tw that render a value
+        // and delegate to these string-only sinks. Only needed so stage0 can
+        // compile io.tw during bootstrap.
+        env.builtins.insert(
+            "__print_string".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::Void),
+            },
+        );
+        env.builtins.insert(
+            "__println_string".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::Void),
+            },
+        );
+        env.builtins.insert(
+            "__error_string".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::Never),
+            },
+        );
+        env.builtins.insert(
+            "__eprint_string".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::Void),
+            },
+        );
+        env.builtins.insert(
+            "__eprintln_string".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::String],
+                ret: Box::new(MonoType::Void),
+            },
+        );
+
         env.builtins.insert(
             "string_len".to_string(),
             MonoType::Function {

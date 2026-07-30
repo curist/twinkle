@@ -685,7 +685,7 @@ builtin witness rules, or compiler-supported derivation where noted in
 
 | Contract | Method | Backs |
 |---|---|---|
-| `Stringify` | `to_string(self) String` | string interpolation, generic stringification |
+| `Stringify` | `to_string(self) String` | string interpolation, generic stringification, print/error sinks |
 | `Eq` | `eq(self, Self) Bool` | `==`, `!=` |
 | `Ord` | `compare(self, Self) Order` | `<`, `<=`, `>`, `>=`, canonical sorting APIs |
 
@@ -839,6 +839,11 @@ fn to_string(u: User) String { "${u.name} (${u.age})" }
 user: User = .{ name: "Ada", age: 30 }
 "user=${user}"                    // uses User.to_string()
 ```
+
+The print/error sink family (`print`, `println`, `eprint`, `eprintln`, and
+`error`) uses the same `Stringify` proof as interpolation. At runtime these
+functions still pass strings to the host; the generic wrapper renders the value
+first.
 
 Explicit `to_string` calls work inside and outside interpolation. Unary-minus
 literals must be parenthesized before a method call, since `-1.to_string()` parses

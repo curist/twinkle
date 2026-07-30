@@ -21,7 +21,7 @@ use lib.module.core_lib
 
 /// One file's worth of resolved signatures, tagged with an optional receiver
 /// type name.  receiver=None means the functions are free (e.g. range.tw).
-pub type SignatureGroup = .{ receiver: String?, sigs: Vector<FunctionSig> }
+pub type SignatureGroup = .{ stem: String, receiver: String?, sigs: Vector<FunctionSig> }
 
 // ── receiver mapping ─────────────────────────────────────────────────────────
 fn receiver_for_stem(stem: String) String? {
@@ -229,7 +229,7 @@ fn extract_doc_comment(source: String, decl_start: Int) String? {
   }
 }
 
-fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Result<
+fn load_group_from_source(src: String, stem: String, receiver: String?, env: ResolvedEnv) Result<
   SignatureGroup,
   String,
 > {
@@ -288,7 +288,7 @@ fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Resu
     }
   }
 
-  .Ok(SignatureGroup.{ receiver, sigs })
+  .Ok(SignatureGroup.{ stem, receiver, sigs })
 }
 
 // ── public API ───────────────────────────────────────────────────────────────
@@ -335,7 +335,7 @@ pub fn load_signatures(signatures_dir: String, type_env: ResolvedEnv) Result<
         .Err(_) => return .Err("cannot read ${file_path}"),
       },
     }
-    group := try load_group_from_source(src, receiver, type_env)
+    group := try load_group_from_source(src, stem, receiver, type_env)
     groups = .append(group)
   }
 

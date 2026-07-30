@@ -45,6 +45,7 @@ Used by:
 
 - string interpolation: `"value=${expr}"`
 - generic `.to_string()` calls on `T: Stringify`
+- generic print/error sinks: `print`, `println`, `eprint`, `eprintln`, and `error`
 - APIs that require canonical string rendering
 
 Builtin satisfaction:
