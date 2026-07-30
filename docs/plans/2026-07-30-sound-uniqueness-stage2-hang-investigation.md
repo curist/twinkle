@@ -175,8 +175,18 @@ Expected: the log reaches `begin produce_mutable_decisions`, `begin ownership_ar
 | bypass | generic | off | off | no mutable candidates collected | no mutable roots collected | completed: `WASM output: /tmp/stage2-no-su.wasm` |
 | default trace | generic | on | on | not measured in Task 1 | not measured in Task 1 | timeout after `[time:8g:phase] begin summary_table`; no `variant_specialize:` completion |
 | mutable-only trace | generic | off | on | not measured in Task 1 | `roots=514` | timeout after `[time:mutable:artifact:phase] begin scoped_summary`; no `end ownership_artifacts` |
+| summary trace | generic | on | on | not measured in Task 2 | not measured in Task 2 | timeout inside SCC solving before first round for `set_prelude_function_origins` |
 
 Task 1 evidence is recorded in `/Users/curist/playground/rust/twinkle/.superpowers/sdd/2026-07-30-sound-uniqueness-stage2-hang-investigation/task-1-report.md`. The diagnostic stage1 compiler used for these runs is `/tmp/boot-stage1-diag.wasm`; trace logs are `/tmp/stage2-default-trace.log` and `/tmp/stage2-mutable-only-trace.log`.
+
+Task 2 evidence is recorded in `/Users/curist/playground/rust/twinkle/.superpowers/sdd/2026-07-30-sound-uniqueness-stage2-hang-investigation/task-2-report.md`. The default summary trace timed out after:
+
+```text
+[trace:summary:scc:end] first=732 first_name=register_methods_from_groups members=1 blocks=9 insts=15 edges=10 rounds=1 visits=1 changed=1 remaining=0
+[trace:summary:scc:start] first=733 first_name=set_prelude_function_origins members=1 blocks=11 insts=36 edges=12
+```
+
+No `trace:summary:scc:round`, `trace:summary:scc:end`, or `time:summary:scc` marker appeared for `first=733` before timeout. This localizes the default stall to pre-round summary work for the base-env/prelude-origin function `set_prelude_function_origins`; `with_dedupe_helpers` was not reached, so Task 2 added no dedupe markers and required no stage1 rebuild.
 
 ---
 
@@ -191,7 +201,7 @@ Task 1 evidence is recorded in `/Users/curist/playground/rust/twinkle/.superpowe
 - Consumes: `TWINKLE_SUMMARY_TRACE=1` from Task 1.
 - Produces: a specific phase boundary inside `summary.compute`: SCC solving, `with_dedupe_helpers`, or variant table input preparation.
 
-- [ ] **Step 1: Run a bounded default trace with SCC details.**
+- [x] **Step 1: Run a bounded default trace with SCC details.**
 
 Run:
 
@@ -205,7 +215,7 @@ timeout 180s deno run --allow-read --allow-write --allow-env tools/js_runtime/de
 
 Expected: the log shows repeated `[trace:summary:scc:start]`, `[trace:summary:scc:round]`, and `[trace:summary:scc:end]` lines until the timeout.
 
-- [ ] **Step 2: Identify the last completed and first incomplete summary marker.**
+- [x] **Step 2: Identify the last completed and first incomplete summary marker.**
 
 Run:
 
@@ -219,7 +229,7 @@ Expected: one of these outcomes is clear:
 - all SCCs end and last line is `trace:summary:compute:dedupe:start`, so `with_dedupe_helpers` is hot;
 - all summary markers end and 8G does not reach `begin variant_table`, so code between markers is hot.
 
-- [ ] **Step 3: If a specific SCC is hot, capture its identity.**
+- [x] **Step 3: If a specific SCC is hot, capture its identity.**
 
 Record the line containing:
 
@@ -229,7 +239,7 @@ Record the line containing:
 
 Expected: the plan notes the function name and whether the SCC is parser-related, resolver-related, base-env-related, or prelude-generated.
 
-- [ ] **Step 4: If dedupe is hot, add temporary subphase markers in `with_dedupe_helpers`.**
+- [x] **Step 4: If dedupe is hot, add temporary subphase markers in `with_dedupe_helpers`.**
 
 In `boot/compiler/ownership.tw`, locate `pub fn with_dedupe_helpers(...)` and add `TWINKLE_TIMINGS`-guarded markers around each major loop. Use this format:
 
@@ -241,7 +251,7 @@ if timings_enabled() {
 
 Expected: the next trace identifies the hot dedupe loop without changing normal behavior when `TWINKLE_TIMINGS` is unset.
 
-- [ ] **Step 5: Rebuild stage1 after any added markers.**
+- [x] **Step 5: Rebuild stage1 after any added markers.**
 
 Run:
 
