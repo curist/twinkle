@@ -1,14 +1,13 @@
 # Compiler Performance Plan
 
-This document tracks the current performance shape of the self-hosted boot
-compiler and the next investigations worth doing. It is the compiler-throughput
-side of the performance effort; generated-program runtime performance is tracked
-in [compiled-programs.md](compiled-programs.md).
+Compiler-throughput side of the performance effort — the shape of the
+self-hosted boot compiler and the levers worth chasing. Generated-program
+runtime performance lives in [compiled-programs.md](compiled-programs.md).
 
-Older measurements from the April compiler are intentionally collapsed into
-lessons learned: the compiler, runtime data structures, module graph, and
-generated code shape have changed enough that those raw numbers are no longer
-useful as baselines.
+This file keeps the **current baseline plus durable lessons**, not a timeline.
+Older dated snapshots have been collapsed into the lessons below; the compiler,
+runtime data structures, module graph, and codegen shape have all changed enough
+that the raw April–June numbers are no longer useful as baselines.
 
 ## How to measure
 
@@ -18,203 +17,26 @@ Build with the bundled CLI and enable compiler timings:
 TWINKLE_TIMINGS=1 target/twk build boot/main.tw -o /tmp/twinkle-boot.wasm
 ```
 
-For wall-clock checks, run the same build without timing output:
+For wall-clock, run the same build without timing output:
 
 ```bash
 /usr/bin/time -p target/twk build boot/main.tw -o /tmp/twinkle-boot.wasm
 ```
 
-Use same-session A/B comparisons for optimization work. Whole-pipeline timings
-are noisy enough that a single sample should not justify a change by itself.
+Use **same-session A/B comparisons** for optimization work. Whole-pipeline
+timings are noisy (±15% on `lower`/`emit_module`), so a single sample never
+justifies a change on its own. For codegen/ownership work, gate every change on
+**byte-identical output** (A/B diff) plus the `make stage2` fixed point
+(stage3 == stage4).
 
-## Current baseline: 2026-07-03 (post frontend + link wins)
+## Current baseline (2026-07-31)
 
-After the 2026-07-03 session (frontend import/typecheck wins detailed below, plus
-the linker `ns_prefix` hoist). Compiling `boot/main.tw` (234 modules) with the
-bundled CLI. Representative phase timing (single instrumented run; run-to-run
-noise on `lower`/`emit_module` is ±15%):
-
-```text
-compile_modules   ~1960ms   (frontend; still the largest bucket)
-emit_module        ~465 - 560ms
-optimize           ~460ms
-prepare_backend    ~358ms
-verify             ~330ms
-core_link          ~272ms
-link               ~227ms
-emit_wasm_binary   ~207ms
-plan_wasm_types    ~121ms
-lower_anf          ~110ms
-monomorphize        ~74ms
-wasm_dce            ~60ms
-closure_convert     ~22ms
-```
-
-Frontend sub-timing:
+Compiling `boot/main.tw` (~239 modules / ~3340 functions) with the bundled CLI.
+Wall-clock (timing off): **~4.95–5.08s**. Representative whole-pipeline phase
+timing (single instrumented run; treat as shape, not exact):
 
 ```text
-typecheck   ~358ms   (bodies ~252, finalize ~102, setup ~2)
-import_merge ~225ms   (module ~62, selective ~126, prelude ~35)
-lower       ~215 - 288ms
-plan_deps   ~196ms
-resolve     ~157ms
-load_source ~136ms
-parse       ~112ms
-publish      ~67ms
-env_extend   ~52ms
-```
-
-Wall-clock (timing off): **~4.85s**, down from the ~5.06s pre-session baseline.
-
-## Update: 2026-07-09 (post typed-vector family work)
-
-Measured sequentially with the bundled CLI after the typed-vector element-family
-work and Bool family follow-ups. Do not run the wall-clock build concurrently
-with an instrumented build; doing so inflates the wall number through contention.
-
-Wall-clock checks without timing output:
-
-```text
-real 5.06s
-real 5.08s
-real 5.10s
-```
-
-Representative phase timing:
-
-```text
-compile_modules   ~1984ms
-prepare_backend    ~566ms
-emit_module        ~521ms
-optimize           ~476ms
-verify             ~408ms
-core_link          ~279ms
-link               ~212ms
-emit_wasm_binary   ~209ms
-plan_wasm_types    ~125ms
-lower_anf          ~115ms
-monomorphize        ~75ms
-wasm_dce            ~57ms
-closure_convert     ~23ms
-```
-
-Frontend sub-timing:
-
-```text
-typecheck    ~374ms   (bodies ~262, finalize ~107, setup ~2)
-lower        ~273ms
-import_merge ~242ms   (module ~69, selective ~135, prelude ~36)
-plan_deps    ~196ms
-resolve      ~164ms
-load_source  ~138ms
-parse        ~110ms
-publish       ~65ms
-env_extend    ~53ms
-```
-
-Shape check against the 2026-07-03 baseline: the frontend story still mostly
-lines up (`compile_modules` remains the dominant bucket, and import/typecheck are
-still the important sub-buckets), but the backend tier is heavier now.
-`prepare_backend` and `verify` are the clearest drift: both grew after the typed
-vector ABI/family work expanded the prepared IR, slot metadata, and verifier
-surface. `emit_module` and `optimize` remain in the previous range or close to it.
-The current wall-clock is therefore back near the pre-session ~5.06s baseline,
-not the post-frontend/link-win ~4.85s low-water mark.
-
-What moved this session (all self-host- and 2960-test-validated), each a
-"stop doing unnecessary work / defer until needed" change:
-
-- **import_merge ~485 → ~225ms (~54%)** — lazy origin index + skip identity TypeId
-  remaps (below).
-- **typecheck ~425 → ~358ms** — Pass 0 `with_functions`-skip (~52→2ms) + finalize
-  meta-free zonk skip (below).
-- **link ~320 → ~227ms (~29%)** — hoist the O(len²) `ns_prefix` build out of the
-  per-instruction rewrite path (below).
-
-Backend phases (`emit_module`, `optimize`, `prepare_backend`, `verify`) are now
-the largest remaining tier; they transform IR and are more correctness-sensitive,
-so treat them as measure-first rather than obvious wins.
-
-### Linker: hoist `ns_prefix` (landed)
-
-The wasm linker's Phase 4 rewrites every instruction of every function to qualify
-local symbols. `qualify(ns, sym)` recomputed `ns_prefix(ns)` on every renamed
-`Call` / `GlobalGet` / `RefFunc` / type / artifact — and `ns_prefix` is an
-O(len²) char-by-char string build (`out = "${out}${ch}"` per char), so it rebuilt
-the same per-module prefix hundreds of thousands of times. Compute it once per
-module in each phase loop and thread the prefix through
-`qualify` / `rename_func` / `rewrite_instrs`. Identical output, computed once.
-`link` ~320 → ~227ms.
-
-### LSP interactive latency: skip unused occurrence index (landed)
-
-Same "defer until needed" pattern on the interactive path. Every editor snapshot
-(`workspace_snapshot` / `editor_snapshot`) eagerly built the file's occurrence
-index (`build_occurrences_cached`), which walks the whole module AST on a cache
-miss — and that miss happens on every keystroke edit, exactly when completion and
-signature help fire. But hover, completion, and signature help never read
-`snap.occurrences`; only definition, references, document-highlight, rename, and
-semantic-tokens do. Added a `with_occurrences` gate + `workspace_snapshot_lite` /
-`workspace_snapshot_cached_lite` paths and routed every occurrence-free request
-through them: hover, completion, signature-help, document-symbol, folding-range,
-inlay-hint, and workspace-symbol. This is an interactive-latency win (not a
-batch-build metric), so it's not in the phase table above; validated by the LSP
-test suites. The occurrence-consuming handlers (definition, type-definition,
-references, prepare-rename, rename, document-highlight, semantic-tokens) keep the
-full path.
-
-## Update: 2026-07-11 (prepare_backend: typed-vector analysis scope filter)
-
-`prepare_backend` had grown to the second-largest backend phase (~565–589ms) after
-the typed-vector family work, with no sub-timing. Added a `[time:prepare]`
-breakdown (kept, alongside `[time:check]` / `[time:imports]`) over its six stages:
-
-```text
-insert_boundaries   ~98ms
-assign_slots       ~133ms
-assign_repr         ~74ms
-tailify             ~1ms
-analyze_typed_repr ~226ms   (~40% of prepare_backend)
-route_typed_vectors ~26ms
-```
-
-`analyze_typed_repr` (the joint typed-field/payload/param/return/capture fixpoint
-in `backend/typed_param_abi.tw`) was the clear hotspot. Instrumentation showed it
-converges in **1 primary round + 0 capture rounds** — cost is per-pass, not
-iteration count. Each pass runs `analyze_typed_payloads` + `analyze_typed_params`
-+ `analyze_typed_fields` over **all 3339 functions**, and the field scan does
-~4 whole-body walks *per element family* per function (`build_copy_map`,
-`collect_candidates`, the producer collectors, `scan_consumers`). `analyze_typed_fields`
-alone was ~109ms.
-
-### Scope filter (landed)
-
-Every producer, consumer, field-store, param, return, payload, and capture the
-analysis can classify is backed by a slot whose **MonoType** is `Vector<Int>` /
-`Vector<Bool>` (`elem_family_of` over mono, not repr): `collect_candidates`,
-`field_store_sites` (`atom_in_family`), `scan_consumers` (result slot in family),
-and the param/return/capture predicates all gate on a family slot. So a function
-with **no** family-typed slot contributes nothing to any of the fixpoint dicts.
-
-**Landed**: filter `funcs` to the vector-relevant subset once at the top of
-`analyze_typed_repr` (`func_has_family_slot`) and run every internal pass over that
-subset. In the boot build only **155 of 3340** functions are vector-relevant
-(~4.6%), so the per-function whole-body walks now run over the small subset instead
-of the whole program. Output dicts are identical (skipped funcs contribute nothing),
-proven by the self-host byte-identical fixed point plus all 2982 boot tests and the
-dataframe typed-vector suite (42 tests) green.
-
-Result: **analyze_typed_repr ~226 → ~39ms**; **prepare_backend ~565 → ~384ms**.
-Wall-clock moved from the ~5.09–5.35s session-start range to a steadier ~4.95–5.08s
-(the ~180ms phase win is a few percent of a noisy whole-build number, but the phase
-drop is repeatable). Remaining `prepare_backend` cost is now `assign_slots` (~133ms)
-and `insert_boundaries` (~98ms) / `assign_repr` (~74ms) — the genuine per-function
-slot/boundary work, measure-first before touching.
-
-Post-session phase table (239 modules, single instrumented run):
-
-```text
-compile_modules   ~1950ms
+compile_modules   ~1950ms   (frontend; still the largest bucket)
 emit_module        ~519ms
 optimize           ~474ms
 verify             ~400ms
@@ -229,895 +51,192 @@ wasm_dce            ~57ms
 closure_convert     ~23ms
 ```
 
-### Backend phases probed and set aside this session
-
-- **verify (~400ms)** — `verify_prepared_func_expr` walked every body twice: a
-  worklist-based `prepared_depth_exceeds` guard (boxing each child into a GC
-  `Vector`) then the native-recursive `verify_expr`. Fused into a single stack-safe
-  walk (`verify_expr_at`: iterate the Let spine, recurse only into branch bodies
-  with a depth counter that bails past 512). **Perf-neutral** — `expr_walk` is
-  dominated by per-node type checks, not the pre-walk — but a correctness/cleanup
-  win: removes a listed not-yet-converted worklist residual and now verifies
-  long-spine functions the old guard skipped wholesale. Byte-identical fixed point.
-- **emit_module (~519ms)** — coarse timing shows **~407ms is the per-function
-  `emit_func` loop** (~0.12ms/func over 3337 funcs); the helper/global/export tail
-  is ~135ms. The per-function codegen walk is the irreducible core, not a broad
-  local win.
-- **optimize (~474ms)** — the fixed-point loop (avg ~2.1 rounds/func) runs
-  dead_let + copy_prop + const_fold + branch_simp each round, each a full body
-  walk. `dead_let` alone does three walks per call (`count_uses` +
-  `collect_assigned_locals` + rewrite). A `count_uses`/`collect_assigned_locals`
-  fusion is the cleanest identified lever but modest (~25ms) in the hot,
-  COW-correctness-sensitive optimizer — deferred as measure-first if optimize is
-  revisited.
-
-## Current baseline: 2026-06-28
-
-Measured on the `scc-module-groups` branch after the SCC frontend landed, using
-`target/twk build boot/main.tw`. Two same-session timing runs plus one wall-clock
-run with timing disabled.
-
-Representative phase timing (range across the two runs):
+Frontend sub-timing (the dominant bucket, spread across many small costs):
 
 ```text
-compile_modules    ~2002 - 2017ms
-emit_module         ~444 - 445ms
-optimize            ~423 - 449ms
-prepare_backend     ~327 - 328ms
-verify              ~303 - 305ms
-core_link           ~247 - 250ms
-emit_wasm_binary    ~191 - 219ms
-link                ~202 - 204ms
-plan_wasm_types     ~110 - 111ms
-lower_anf           ~104 - 106ms
-monomorphize         ~71 - 72ms
-wasm_dce             ~53 - 55ms
-closure_convert      ~21 - 22ms
+typecheck    ~358ms   (bodies ~260, finalize ~101, setup ~2)
+import_merge ~226ms   (module ~62, selective ~126, prelude ~35)
+lower        ~215–273ms
+plan_deps    ~196ms
+resolve      ~164ms
+load_source  ~136ms
+parse        ~110ms
+publish       ~65ms
+env_extend    ~53ms
 ```
 
-Wall-clock check without timing output:
+**Sound-uniqueness codegen** runs as separate late phases not in the table above.
+After the summary-reuse → cold-worklist → liveness-reuse → incremental arc, per
+heavy self-host build:
 
 ```text
-real 4.67s
-user 7.61s
-sys  0.47s
+variant_specialize (8G)   ~11.5–12.8s -> ~7.5s
+produce_mutable_decisions ~10.5–12.6s -> ~5.0s
 ```
 
-Frontend subphase timing currently has an instrumentation gap after the SCC
-driver swap: `dep_hashes`, `env_extend`, `import_merge`, and the detailed import
-edge counters report zero because the old recursive `analyze_dependencies`
-instrumentation no longer owns import-env construction. The non-zero frontend
-buckets from the same runs were:
+That arc roughly halved sound-uniqueness codegen (~23–25s → ~12.5s/build); full
+`make stage2` wall ~73s.
 
-```text
-load_source       ~122ms
-parse              ~96 - 97ms
-plan_deps         ~177 - 189ms
-resolve           ~142 - 144ms
-typecheck         ~376 - 379ms
-publish            ~55 - 60ms
-unused_imports     ~17 - 18ms
-lower             ~257 - 260ms
-```
+### Shape interpretation
 
-Interpretation: the backend shape is still close to the June 25 recovered
-baseline. The frontend bucket grew after the SCC driver landed, but the missing
-import-env sub-timings mean the old “import merge dominates” claim cannot be
-revalidated from this run. Restoring import/env/deps-hash timing in the SCC path
-is the next observability task before drawing fine-grained frontend conclusions.
+- The bottleneck is the **frontend** (`compile_modules`), but it is now many
+  small reasonable costs across a large module graph, not one runaway stage.
+  `typecheck` and `import_merge` are the top two sub-buckets.
+- The backend tier (`emit_module`, `optimize`, `verify`, `prepare_backend`) is
+  broad and close together — sub-timings matter, and these transform IR so they
+  are more correctness-sensitive. Treat them as measure-first, not obvious wins.
+- The heaviest absolute cost in a full `make stage2` is the sound-uniqueness
+  codegen phases, whose remaining floor is the 8G whole-program ownership
+  fixpoint (it decides clones, so it is largely inherent).
 
-Optimizer subphase shape:
+## Landed wins (durable lessons)
 
-```text
-funcs=3051  total_rounds=6518  avg_rounds=2.14  at_cap=25
+Grouped by area. Each is a "stop doing unnecessary work / defer until needed"
+change, validated self-host-stable + boot-suite-green, byte-identical where the
+change touches codegen.
 
-dead_let       ~126 - 137ms
-copy_prop      ~117 - 120ms
-uniqueness      ~89 - 93ms
-defer_elim      ~7 - 8ms
-const_fold      ~7 - 9ms
-branch_simp     ~7ms
-```
+**Frontend**
 
-Backend planning and verification details:
+- **Import merge — lazy origin index + skip identity TypeId remaps**
+  (~485 → ~226ms, ~53%). `plan_export_type_ids` rebuilt a full inverted
+  `origin → TypeId` index eagerly per edge though it's only read on a name-lookup
+  miss (the minority), and `remap_function_sig`/`remap_type_def` walked and
+  reallocated every signature/type-def to apply id→**itself** no-op remaps.
+  Build the index lazily on first miss; omit identity mappings and short-circuit
+  the remap when the map is empty. *Lesson: no-op remaps still walk and realloc
+  trees; build derived indices lazily on the first real consumer.*
+- **Typecheck — Pass 0 rebuild skip + finalize no-meta guard** (~425 → ~358ms).
+  Pass 0 only mutates function `ret` types, so calling `with_functions` (which
+  re-filters every visible function's index/bindings/origins) was pure waste —
+  swap the ret-updated vector in directly (setup ~52 → ~2ms). The finalize sweep
+  zonked ~157k `type_map` entries and rebuilt every type tree even when nothing
+  resolved — skip `zonk` on meta-free entries (~114 → ~101ms). `bodies` (~260ms,
+  the bidirectional inference walk) is the irreducible core. *Lesson: don't
+  rebuild an index that doesn't depend on what the pass mutates; a meta-free type
+  is unaffected by substitution.*
+- **Linker — hoist `ns_prefix`** (`link` ~320 → ~227ms). Phase 4 recomputed the
+  per-module `ns_prefix` (an O(len²) char-by-char string build) on every renamed
+  instruction. Compute once per module and thread it through. *Lesson: hoist any
+  per-item recompute that only depends on the enclosing scope.*
+- **LSP — skip the occurrence index on occurrence-free requests.** Every editor
+  snapshot eagerly built the file's occurrence index (a full AST walk on cache
+  miss, on every keystroke), but hover/completion/signature-help never read it.
+  Gated behind `with_occurrences` + `_lite` snapshot paths. Interactive-latency
+  win, not a batch-build metric. *Lesson: gate expensive per-snapshot derivations
+  on the consumers that actually need them.*
 
-```text
-plan_wasm_types: 125308 slot registration calls, 1070 unique types
-verify:          122257 slots; expr_walk ~196 - 201ms dominates slot_checks ~103 - 105ms
-```
+**Backend / codegen**
 
-## Update: 2026-07-02 (post awfy-c5 in-place work)
+- **`prepare_backend` — typed-vector analysis scope filter**
+  (`analyze_typed_repr` ~226 → ~39ms; `prepare_backend` ~565 → ~384ms). The joint
+  typed-repr fixpoint did ~4 whole-body walks per element-family per function over
+  **all** 3340 functions, but only **155** have a `Vector<Int>`/`Vector<Bool>`
+  slot; a function with no family slot contributes nothing to any fixpoint dict.
+  Filter to the family-slot subset once at the top. *Lesson: gate a whole-program
+  analysis to the functions it can actually classify — output is identical, skipped
+  funcs contribute nothing.*
+- **Deep-IR traversal shape (the worklist tax).** A stack-safety pass once
+  converted many backend/optimizer IR walks to `Vector`-backed worklists that box
+  every child into a GC vector (~2–9× slower per node than native frames),
+  regressing every post-monomorphize phase. Recovery shape: **iterate the deep
+  direction — the linear `Let` spine — and recurse only into control-flow branch
+  bodies, whose nesting is shallow.** Reserve an explicit worklist / depth-gated
+  fallback only for the one or two walks where nesting itself is genuinely
+  unbounded (`slot_assign`'s else-if chains). *Lesson: a Vector worklist over IR
+  nodes is a real per-node tax; iterate the unbounded spine, recurse the bounded
+  nesting.*
 
-Measured on `codegen-void-elim` after the awfy-c5 in-place `set_at` work landed
-(uniqueness alias-invalidation + method-form `set_at` loop rewrite). Compiling
-`boot/main.tw` (234 modules) with the bundled CLI.
+**Sound-uniqueness codegen** (roughly halved the two dominant late phases)
 
-```text
-compile_modules   ~2209ms   (still dominates: ~44% of wall-clock)
-emit_module        ~476ms
-optimize           ~448 - 462ms
-prepare_backend    ~376ms
-verify             ~328ms
-core_link          ~276ms
-emit_wasm_binary   ~270ms
-link               ~214ms
-plan_wasm_types    ~121ms
-lower_anf          ~115ms
-monomorphize        ~73ms
-wasm_dce            ~60ms
-closure_convert     ~22ms
-```
+- **Summary-reuse.** The mutable-decision producer seeds its scoped summary from
+  8G's carried whole-program ownership table, recomputing only the
+  clone-affected closure instead of running the fixpoint a second time.
+- **Cold ownership fixpoint worklist.** The cold pass swept every block every
+  round (~63% no-op re-visits on `summary:link`). Seed all blocks dirty at a cold
+  start and drive the existing successor-based worklist, re-processing a block only
+  when a predecessor's exit changed. **Order-preserving only** — a skipped visit is
+  a provable no-op, so block order/rounds/change-sequence are unchanged and output
+  stays byte-identical. *Lesson: skipping no-op visits is safe; reordering is not —
+  widening is visit-order-sensitive, so a priority/SCC worklist could diverge.*
+- **Liveness reuse in `field_reqs`.** `summarize_function` computed liveness for
+  its own fixpoint, then `collect_field_reqs` recomputed it over the identical
+  blocks — thread the computed liveness in. Byte-identical by construction.
+- **Loop-seed incremental re-propagation.** Big functions rerun the validated
+  fixpoint up to ~14× to validate optimistic loop-carried `Unique` seeds. A rerun
+  only ever *removes* seeds, changing exactly the dropped-seed blocks' entries.
+  Carry the **full** solver state (exit maps + widening state) across reruns and
+  process only a dirty set. `summary:link` rerun ~3443 → ~660ms, no cold fallback.
+  *Lesson: when reruns only shrink the input, re-propagate incrementally from the
+  changed blocks instead of restarting.*
 
-Wall-clock: `real ~5.06s`. Shape is unchanged from the 2026-06-28 baseline —
-`compile_modules` still dominates, then `emit_module`/`optimize`. That frontend
-bucket remains the only lever worth chasing for compile speed.
+**Perf-neutral / measured-and-rejected (don't re-try without new evidence)**
 
-**The awfy-c5 in-place work is perf-neutral for self-compilation.** Same-session
-A/B on identical input (both compilers building the same `boot/main.tw`):
-current `~5.06s` vs the pre-1a compiler `~5.26s` — a ~1–4% edge within noise, not
-a real speedup and not a regression. The `set_at`→in-place lever that gave
-user programs sieve ~7× / bounce ~9× does not apply here: the compiler's hot
-loops accumulate via `Vector.append` (builder) and `Dict`, and it has only ~9
-`.set_at` sites total, all in the regexp stdlib — off the compile hot path. The
-1a alias-invalidation added per-op optimizer work but `optimize` is unchanged
-(the added work is offset/within noise).
+- **Loop-seed warm-start-by-restart** — net regression. Warm-start seeds all exit
+  maps and marks blocks processed, so early rounds run full meets over large maps
+  (cold's early rounds are cheap and grow), and the dominant widening function
+  falls back to cold anyway. Superseded by incremental re-propagation above.
+- **`call_uniques` fixpoint reuse** — not viable. `summary.compute` runs the
+  generic resolver; `call_uniques` runs the render resolver, which is strictly
+  *more precise* (owned-variant selection changes call effects). Reusing the
+  summary `fx` **loses clones** — a codegen change, not a transparent speedup.
+- **Empty-`subst` fast path in `zonk_with_meta`** — perf-neutral; finalize cost
+  concentrates in meta-bearing modules the fast path doesn't accelerate.
+- **awfy-c5 in-place `set_at`** — perf-neutral for self-compilation. The lever
+  that gives user programs large wins doesn't apply: the compiler's hot loops
+  accumulate via `Vector.append` (builder) and `Dict`, with only ~9 `.set_at`
+  sites total, all off the compile hot path.
 
-## Update: 2026-07-03 (SCC frontend sub-timings restored)
-
-The frontend import/env/deps instrumentation lost in the SCC driver swap is back.
-The old recursive analyzer timed import-env construction inside
-`analyze_module_impl`; under the SCC driver that work moved into
-`build_import_env` and `dependency_hashes` (called from `resolve_singleton` /
-`resolve_group`), which were uninstrumented, so `import_merge`, `env_extend`,
-`dep_hashes`, and every `[time:imports]` counter reported zero. `build_import_env`
-now threads `AnalysisState` back out and accumulates the same buckets the old path
-did (env extend, per-kind merge time, edge/export-entry counts, `[time:imports:top]`
-attribution); the two `dependency_hashes` call sites are wrapped for `dep_hashes`.
-Group (cyclic-SCC) sibling merges inside steps B/D are left untimed — that path is
-off the boot compile hot path.
-
-Representative frontend timing (single instrumented run, `boot/main.tw`, 234
-modules):
-
-```text
-import_merge      ~470ms   (module ~93, selective ~157, prelude ~216)
-typecheck         ~434ms
-lower             ~218ms
-plan_deps         ~205ms
-resolve           ~165ms
-load_source       ~122ms
-parse             ~100ms
-publish           ~65ms
-env_extend        ~57ms
-unused_imports    ~17ms
-dep_hashes        ~6ms
-```
-
-```text
-import edges:       3671   (module 410, selective 753, prelude 2508)
-export entries processed while merging: ~157817
-```
-
-Interpretation: the old "import merge dominates the frontend" claim is
-revalidated — `import_merge` (~470ms) is again the single largest frontend bucket,
-now just ahead of `typecheck` (~434ms). Within import merge the cost is cumulative
-across many tiny edges (largest individual edge is single-digit microseconds), and
-the prelude bucket (2508 edges, ~216ms) is the biggest sub-share because the
-prelude surface is imported into nearly every module. Selective imports (~157ms)
-still register the full imported interface before binding only selected names.
-
-Best next optimization target: **import merge**, specifically the prelude and
-selective sub-buckets. Because no single edge dominates, the lever is a
-representation change (cache/remap an imported interface view per `(dependency,
-alias, kind/items)` within a session, or shrink prelude re-registration), not a
-local edge tweak. `typecheck` is the co-equal runner-up and now has its own
-sub-counters (below).
-
-### Typecheck sub-timings (`[time:check]`)
-
-`checker.check` now stamps a per-module `CheckTiming` onto `CheckResult`
-(pass-boundary `date.now()` samples, always on — the six samples/module are
-negligible). The frontend driver folds these into aggregate buckets on cache
-misses only (a hit did no work), printed as `[time:check]`. Representative run:
-
-```text
-setup      ~52ms    Pass 0: fresh-meta assignment + env.with_functions rebuild
-toplevel   ~1ms     Pass 1 + Pass 3 top-level lets/statements
-bodies     ~260ms   Pass 2 (+ conditional Pass 4): function-body inference
-finalize   ~111ms   whole-type_map zonk sweep + fn-ret zonk + pub-value zonk
-
-subst_entries      ~5855     total |subst| summed across modules
-type_map_entries   ~157120   total entries zonked in the finalize sweep
-```
-
-Interpretation:
-
-- **bodies (~260ms, ~61% of typecheck)** is the irreducible core: bidirectional
-  inference walking every function body. No cheap structural win here — it scales
-  with the amount of code checked.
-- **finalize (~114ms → ~101ms, ~26%)** was the clearest lever. It zonks ~157k
-  `type_map` entries at end of each module, and `zonk_with_meta` fully
-  deconstructs and *rebuilds* every type tree even when nothing resolves. Two
-  candidate cheap wins were measured:
-  - **Empty-`subst` fast path inside `zonk_with_meta`** (skip the rebuild when the
-    substitution has no bindings) — **measured-and-rejected**: perf-neutral for
-    self-compilation. `subst_entries` averages ~25/module but finalize cost
-    concentrates in the *meta-bearing* modules (non-empty subst), which the fast
-    path does not accelerate; it only adds a branch to the hottest recursive
-    function for no gain.
-  - **Per-entry no-meta guard at the finalize sweep** (skip `zonk` entirely for a
-    `type_map` entry that contains no `MetaVar`, since a meta-free type is
-    unaffected by any substitution) — **landed**: ~11% off finalize (~114→~101ms).
-    Most final `type_map` entries are already-concrete types, so this avoids the
-    bulk of the rebuild allocation, and it leaves the inference-path `zonk`
-    untouched. Modest in whole-build terms (~0.25%) but correct, localized, and
-    risk-free.
-  A larger remaining lever is subtree sharing inside `zonk_with_meta` itself
-  (reuse an unchanged child instead of reallocating), which would also help the
-  meta-bearing entries the finalize guard still fully zonks — deferred as it needs
-  a change-tracking return shape, not a one-line guard.
-- **setup (~52ms → ~2ms, was ~12%)** was Pass 0 calling `with_functions` per
-  module, which rebuilds `func_index` and re-filters `function_bindings` /
-  `function_origins` over *every* visible function (thousands, imports included).
-  But Pass 0 only mutates function `ret` types, and none of the index / bindings /
-  origins depend on `ret` — so the rebuild was pure waste. **Landed**: when
-  `function_bindings` is already populated (the common case after resolve), swap
-  the ret-updated vector in directly and skip the rebuild; the empty-bindings case
-  still routes through `with_functions` so its `bind_all_when_empty` seeding is
-  preserved. ~50ms off typecheck (~96% off setup), self-host + all boot tests
-  green.
-
-Net effect of the finalize + setup wins: typecheck ~425ms → ~367ms. The remaining
-typecheck cost is now clearly **bodies (~260ms)** — the irreducible inference walk —
-and **finalize (~103ms)**, whose deeper subtree-sharing lever is noted above.
-
-Recommended next: import-merge representation work (the largest single frontend
-bucket), then the subtree-sharing `zonk_with_meta` rewrite if finalize is revisited.
-
-### Import merge: lazy origin index (landed)
-
-`plan_export_type_ids` runs once per import edge (all 3671 of them) and rebuilt
-`build_type_origin_index` — a full inverted `origin → TypeId` Dict over the env's
-*entire* `type_origins` map — eagerly every time, even though that index is only
-consulted when an exported type is **not** already registered by name but carries
-an origin. That miss case is the minority: re-merged types (especially the 2508
-prelude edges) resolve by name against shared/already-merged state and never touch
-the index. Building it eagerly was ~700k+ throwaway string-keyed inserts.
-
-**Landed**: build the index lazily on the first name-lookup miss and reuse it
-within the call. Provably identical results (the env is not mutated inside
-`plan_export_type_ids`, so a deferred build has the same contents), zero external
-changes. Import merge dropped **~485ms → ~330ms (~32%)**, concentrated in the
-prelude sub-bucket (**~216ms → ~49ms**) since prelude types resolve by name.
-
-Post-change per-kind shape:
-
-```text
-import_merge  ~330ms   (module ~87, selective ~171, prelude ~49)
-```
-
-`selective` (~171ms, 753 edges) was then the largest import sub-bucket. It
-registers the *full* imported interface before binding only the selected names
-(`merge_selective_via_registration`), so `use module.{a, b}` pays whole-interface
-registration cost — a probe measured **753 selective edges selecting 1732 items
-but registering ~85k entries (~49×)**, dominated by ~30.8k support functions and
-~48.8k types.
-
-The obvious follow-up — a per-selected-item support closure — turned out **not**
-to be a clean win: the exporter's `support_functions` are, by construction
-(`extract_exports_for_module`'s method fixpoint), exactly the method-functions of
-support types, all genuinely needed for method resolution on inferred values. So a
-selective fast path would have to re-run that fixpoint per edge at import time
-(complex, correctness-critical for method resolution, and self-offsetting in cost).
-Deferred; would be cleaner as an exporter-side per-visible-export closure.
-
-### Import merge: skip identity TypeId remaps (landed)
-
-The probe instead surfaced a safe, broadly-applicable lever. Because TypeIds are
-globally unique across modules, `plan_export_type_ids` almost always maps an
-exported type's id **to itself**, yet `remap_function_sig` / `remap_type_def` still
-walked and reallocated every signature and type definition to apply those no-op
-remaps — on every registered function and type across all three merge kinds.
-
-**Landed** (transparent — every consumer already treats a missing `type_ids` entry
-as "keep the original id"): omit identity mappings in `plan_export_type_ids`, and
-short-circuit `remap_function_sig` / `remap_type_def` when `type_ids` is empty
-(set the name, skip the tree walk). Import merge dropped **~330ms → ~226ms**,
-across all kinds: selective ~171→~126ms, module ~87→~62ms, prelude ~49→~35ms.
-Cumulative with the lazy origin index, import merge fell **~485ms → ~226ms (~53%)**
-over the session.
-
-A fully-synced reverse `origin → TypeId` index field on the env was considered and
-set aside: `type_origins` has external write sites (e.g. `inject_group_member_types`),
-so keeping a field in sync is correctness-risky in this TypeId-dedup-critical path
-for no gain over the lazy build.
-
-## Previous baseline: 2026-06-25
-
-Measured compiling `boot/main.tw` (222 modules / 3029 functions), self-hosted
-boot compiler. Two same-session timing runs. These backend numbers were taken
-via the `deno` runtime driving the freshly built `target/boot.wasm`
-(`BOOT_WASM=target/boot.wasm deno run … tools/js_runtime/deno_main.mjs build
-boot/main.tw …`); the internal `[time]` phase numbers are harness-independent and
-comparable to earlier snapshots, but wall-clock under this runner (~4.5s) carries
-more startup/runtime overhead than the compiled standalone `target/twk` used for
-the June 20 wall-clock (~4.1s), so do not compare the two wall-clock figures
-directly.
-
-Representative phase timing (range across the two runs):
-
-```text
-compile_modules    ~1740 - 1770ms
-emit_module         ~448 - 511ms
-optimize            ~426 - 459ms
-prepare_backend     ~330 - 345ms
-verify              ~303 - 308ms
-emit_wasm_binary    ~190 - 200ms
-core_link           ~252 - 270ms
-link                ~208 - 230ms
-plan_wasm_types     ~108 - 110ms
-lower_anf           ~107 - 122ms
-monomorphize         ~70 - 90ms
-wasm_dce             ~53 - 66ms
-closure_convert      ~20 - 22ms
-```
-
-The frontend (`compile_modules`) remains the largest bucket and was not affected
-by the backend regression/recovery described below; its subphase shape is
-unchanged from June 20 (import merge and typecheck still dominate).
-
-### Deep-IR stack-safety regression (f1a80dd3) and recovery
-
-Between June 20 and 25, `f1a80dd3` ("compiler: improve stack safety for deep IR")
-converted many backend/optimizer IR traversals from native recursion to explicit
-`Vector`-backed worklists, to stop deeply-nested IR from overflowing the host
-stack. The worklists box every child node into a GC `Vector<anyref>` and pay an
-`append`/`drop_last` per node — roughly 2-9× slower per node than native call
-frames — and several ran unconditionally on every function. This regressed the
-post-monomorphize phases sharply while leaving the frontend untouched:
-
-```text
-                  June 20    regressed   recovered
-optimize           ~350       ~687        ~430
-  defer_elim       ~18        ~112        ~7.7
-closure_convert    ~22        ~155        ~20
-prepare_backend    ~327       ~796        ~330
-plan_wasm_types    ~105       ~148        ~110
-emit_module        ~398       ~557        ~448
-```
-
-The recovery (committed in this branch) replaces those worklists with a single
-shape: **walk the deep direction — the linear `Let` spine — iteratively, and
-recurse only into control-flow branch bodies (`if`/`match`/`loop`/`defer`), whose
-nesting is shallow.** This keeps native-call speed without per-node GC boxing
-while staying stack-safe on long `Let` chains. Touched: `opt/defer_elim`,
-`opt/use_count`, `backend/closure_convert`, `backend/route_typed_vec`,
-`backend/prepare`, `codegen/wasm_plan_scan`, `codegen/insert_boundaries`.
-
-`backend/slot_assign`'s `lower_expr` is the exception: it must build the
-`PreparedExpr` and handle deep **else-if chains** (the genuine deep-recursion
-case), so it uses a **depth-gated hybrid** — the fast iterative-spine path for
-the common shallow case, falling back to the original work-stack walk past a
-depth limit (256) so deeply-nested IR still cannot overflow. Each change was
-gated on the self-host fixed point (`stage3 == stage4`, byte-identical output).
-
-Durable lesson: a `Vector` worklist over IR nodes is a real per-node tax; prefer
-iterating the unbounded *spine* and recursing only the bounded *nesting*, and
-reserve an explicit worklist (or a depth-gated fallback) for the one or two walks
-where nesting itself is genuinely unbounded.
-
-Residual gap to the June 20 backend numbers is small and lives in the not-yet-
-converted worklists (`lower_anf`, `anf_analysis`, `core_linker/dce`,
-`codegen/emit`, `codegen/emit/helper_collectors`, `opt/pipeline`,
-`backend/verify_expr`), worth ~100ms in aggregate if a follow-up wants them.
-
-Frontend subphase timing (range across the two runs):
-
-```text
-import_merge      ~408 - 443ms
-typecheck         ~369 - 406ms
-lower             ~248 - 257ms
-plan_deps         ~189 - 204ms
-resolve           ~130 - 144ms
-load_source       ~123 - 139ms
-parse              ~93 - 106ms
-publish            ~56 - 62ms
-env_extend         ~17 - 20ms
-unused_imports     ~14 - 17ms
-dep_hashes          ~6ms
-```
-
-Import/interface merging is still the standout frontend cost, but `typecheck`
-(~168ms → ~390ms) and `lower` (~143ms → ~250ms) have grown the most in absolute
-terms and are now firmly in the same tier. The instrumented frontend buckets
-account for nearly all of `compile_modules`.
-
-Deeper import timing shows this is cumulative rather than one pathological edge:
-
-```text
-import edges:       3426
-module imports:      357, ~77ms total
-selective imports:   717, ~180ms total
-prelude imports:    2352, ~180ms total
-export entries processed while merging: ~144900
-```
-
-Selective and prelude imports are now tied as the largest import-merge buckets.
-Prelude edges grew the most (1440 → 2352) as the prelude surface widened, so
-their cumulative cost has caught up to selective imports despite each prelude
-edge being individually tiny. The selective path still registers the full
-imported interface first, then binds only selected names, so many `use
-module.{...}` edges still pay full-interface registration cost. No single import
-edge dominates; the largest observed edges were only a few microseconds, so this
-remains cumulative modular overhead rather than an isolated pathological
-dependency.
-
-Optimizer subphase shape:
-
-```text
-funcs=2939  total_rounds=6271  avg_rounds=2.13  at_cap=24
-
-uniqueness     ~96ms
-dead_let       ~90ms
-copy_prop      ~90ms
-defer_elim     ~18ms
-const_fold     ~12ms
-branch_simp    ~11ms
-```
-
-Backend planning and verification details:
-
-```text
-plan_wasm_types: ~120358 slot registration calls, 1022 unique types
-verify:          ~117419 slots; expr_walk ~194ms dominates slot_checks ~99ms
-```
-
-## What changed since the old plan
+## Historical lessons (still apply)
 
 The old investigation started from a much slower compiler where associative-list
 `Dict`, flat copy-on-write vectors, repeated layout derivation, and temporary
-code-section copies dominated large parts of the pipeline. Those specific
-bottlenecks have already been addressed or made less central by later compiler
-changes.
-
-Important historical lessons that still apply:
-
-- Replacing the linear `Dict` with a persistent HAMT changed the shape of nearly
-  every phase by removing O(n) environment and symbol-table lookups.
-- Accumulator-style emission helped where code repeatedly built small temporary
-  vectors and concatenated them into larger buffers.
-- Reusing per-pass facts was often better than structural rewrites:
-  - emission reuses layout caches instead of repeatedly deriving record/sum
-    layouts;
-  - repr assignment caches mono-derived representation, value-type, and layout
-    facts;
-  - wasm code-section emission caches name-to-index lookups and writes sections
-    directly into the final output buffer.
-- The most reliable optimization workflow has been: instrument the hot subphase,
-  identify repeated derivation or copying, then remove that repeated work with a
-  small targeted cache or accumulator change.
-
-## Current interpretation
-
-The bottleneck has moved back to the frontend, but the frontend profile is now
-mostly many small reasonable costs across a large module graph rather than one
-obvious runaway stage. `compile_modules` is larger than any single backend
-phase, yet its main buckets are spread over 222 modules and thousands of import
-edges.
-
-The next tier is broad rather than a single obvious hotspot: optimization,
-module emission, backend preparation, wasm binary emission, linking, and
-verification are all close enough that local sub-timings matter. `emit_wasm_binary`
-serializes the ~3.0 MiB compiler payload in roughly 190ms on the normal
-Buffer-backed `.wasm` output path, dominated by code section encoding; this is
-worth keeping efficient but is not a large enough fraction of the build to be a
-primary speed lever.
-
-The current module graph (222 modules / 3029 functions) is much larger than both
-the historical 84-module workload and the May 174-module snapshot, so older
-absolute timings should not be used for regressions. Treat this snapshot as the
-active baseline.
-
-## Plan
-
-### 1. Frontend: `compile_modules`
-
-This remains the largest whole-pipeline bucket, but the latest sub-timing makes
-it less likely that there is a simple broad frontend win. The main cost is not
-parsing or name resolution; it is cumulative import/interface merging.
-
-Current frontend timing shape:
-
-```text
-import_merge      ~408 - 443ms
-typecheck         ~369 - 406ms
-lower             ~248 - 257ms
-plan_deps         ~189 - 204ms
-resolve           ~130 - 144ms
-load_source       ~123 - 139ms
-parse              ~93 - 106ms
-publish            ~56 - 62ms
-unused_imports     ~14 - 17ms
-env_extend         ~17 - 20ms
-dep_hashes          ~6ms
-```
-
-Interpretation:
-
-- Import merging is the best-understood frontend hotspot, but the measured cost
-  is distributed across many small edges. A meaningful improvement probably
-  requires a broader interface/environment representation change rather than a
-  local tweak.
-- Typecheck has grown faster than the module count (~1.7ms/module now, up from
-  ~1ms in May) and has joined import merging as a top frontend bucket; it is now
-  worth its own subphase instrumentation. Lower, source loading, and dependency
-  planning are each still around one millisecond or less per module. Further
-  digging may find small fast paths, but outside typecheck they should not be
-  expected to produce a large structural speedup.
-
-Possible future probes, if frontend work resumes:
-
-- split selective import registration internally into type registration,
-  function registration, value registration, method registration, and final
-  binding work;
-- prototype a selective-import fast path only if we are willing to compute the
-  needed support-entry closure for selected exports;
-- consider caching/remapping an imported interface view per `(dependency,
-  alias, import kind/items)` within one compilation session;
-- add typechecker counters for empty substitution, alias expansion, and zonk;
-- measure whether `load_source` is real file I/O cost or source hashing / path
-  canonicalization / overlay lookup overhead.
-
-Prefer small repeated-work eliminations over parser or checker rewrites unless
-instrumentation proves the structural cost is real.
-
-### 2. Optimizer: `optimize`
-
-The optimizer remains a top-tier phase, but its cost is spread across a few
-passes rather than one runaway pass.
-
-Next checks:
-
-- `dead_let`, `copy_prop`, and `uniqueness` should each get direct subphase A/B
-  timing before optimization work.
-- Look for repeated traversals over the same ANF body that can be fused without
-  making pass behavior harder to reason about.
-- Check whether use-count, free-variable, purity, or uniqueness facts can be
-  shared within one optimization round.
-- Investigate the functions hitting the optimization round cap; confirm whether
-  they represent real missed simplification or just harmless churn.
-
-Avoid broad optimizer restructuring until a specific repeated traversal or fact
-recomputation is identified.
-
-### 3. Code generation and wasm emission
-
-`emit_module`, `prepare_backend`, `emit_wasm_binary`, and `link` are now in a
-similar range. Work here should be driven by sub-timings, not by the old
-assumption that code-section encoding is always the only target.
-
-Areas to probe:
-
-- `emit_module`: residual layout/type/value-type lookup churn, helper discovery,
-  and instruction-vector building in large functions.
-- `prepare_backend`: remaining slot/repr assignment scans and repeated
-  mono-derived facts not covered by the existing cache.
-- `emit_wasm_binary`: code-section body encoding is still the largest wasm
-  subphase. The serializer now writes into `@std.buffer.Buffer` and the build
-  command writes that buffer directly via `fs.write_buffer`, avoiding the old
-  final `Vector<Byte>` materialization on the normal `.wasm` output path. The
-  internal `code_section` timing drops substantially and total binary emission
-  is now around 190ms in same-session checks. A `TWINKLE_WRITE_BYTES_FALLBACK=1`
-  escape hatch keeps the first bootstrap generation working when it was emitted
-  by an older compiler that did not export the buffer linear memory. The whole
-  binary emission phase is only a modest share of the build, so even a strong
-  local win here is useful but not transformative.
-- `link`: current timings are higher than the older post-HAMT snapshots; measure
-  symbol resolution, map merges, and final module assembly separately.
-
-### 4. Verification and wasm type planning
-
-These are not the first targets, but they are large enough to watch for obvious
-repeated work.
-
-Checks:
-
-- `verify` is dominated by expression walking; look for avoidable rewalking of
-  unchanged bodies or repeated slot-entry lookups.
-- `plan_wasm_types` performs many slot registration calls for a much smaller set
-  of unique types; confirm whether repeated registrations are cheap cache hits or
-  still doing unnecessary work.
-
-### 5. Runtime data-structure follow-ups
-
-The compiler now runs on the erased persistent `PVec` runtime described in
-[../archive/persistent-vector.md](../archive/persistent-vector.md). Keep measuring
-vector-heavy compiler paths before changing vector layout.
-
-Potential runtime investigations:
-
-- typed vector families to reduce `anyref` traffic in hot homogeneous vectors;
-- RRB-style concat/slice improvements if instruction-buffer concatenation still
-  appears in profiles;
-- CHAMP-style HAMT layout improvements if dictionary allocation or iteration
-  locality shows up again.
-
-These should be justified by compiler profiles rather than implemented as
-standalone runtime cleanups.
-
-## Update: FixResult reuse across summary/analyze passes
-
-Mutable-decision production (`compute_candidate_artifacts`) ran the combined
-ownership fixpoint **twice** per function — once in `summary.compute_for_roots`
-and once in `analyze_selected_with_summaries` — extracting different projections
-from a `FixResult` that is byte-identical between the two runs for singleton,
-non-self-recursive functions. A byte-identical experiment confirmed 456/461
-selected functions matched. The summary SCC driver now caches each reusable
-member's `FixResult` (gate: `calls_suppressed` — the function makes no direct
-call to any func-id in its own SCC, which makes both `suppress` inert and the
-summary-time `table` projection identical); the analyze pass reuses it and skips
-`run_fixpoint_validated`. A `TWINKLE_FIXVERIFY` build recomputes-and-compares as a
-standing guard.
-
-Same-session A/B (from-main compiler vs cache-active compiler, same fixed input,
-3 runs each):
-
-```text
-before: [time] produce_mutable_decisions ~21.46s   [time:mutable:artifacts] ownership ~8.53s
-after:  [time] produce_mutable_decisions ~13.73s   [time:mutable:artifacts] ownership ~0.64s
-        [time:mutable:fixcache] hits=400 misses=60 verify=false
-```
-
-~36% off `produce_mutable_decisions`; the ownership stage drops ~92% (the analyze
-fixpoint is skipped for the ~400 cache hits). The summary stage (~12s) is now the
-dominant cost and the next lever. Peak RSS +~11.7 MB (~0.5%, retaining ~400
-`FixResult`s). Acceptance: build output byte-identical (before/after compiler on a
-fixed input), `TWINKLE_FIXVERIFY` clean, census unchanged (full path), self-host
-stable, full boot suite green.
-
-## Update: loop-seed rerun warm-start (null result — not shipped in production)
-
-With the summary stage now dominant (~11.9s), the next target was the loop-seed
-validation reruns in `run_fixpoint_validated`: the outer loop optimistically
-seeds loop-carried locals `Unique`, then reruns the **cold** inner fixpoint until
-the kept-seed set stabilizes. `summary:link` alone runs 14 such reruns (~3.4s).
-
-The change (committed, but **kept off in production**): `run_fixpoint` gained a
-trailing `warm: FixResult?` param and returns `FixRun = .{ fx, widened }`; a new
-`stabilize_seeds` warm-starts each rerun from the prior rerun's `fx` (dataflow
-exit maps carried; widening counters always reset so widening fires per-rerun as
-cold would), while `run_fixpoint_validated` still returns a **cold** final pass so
-a warm-start bug can only change *which seeds stabilize*, never the emitted result.
-A `TWINKLE_SEEDVERIFY` A/B gate stabilizes the seed set both all-cold and warm and
-traps on any per-function divergence.
-
-SEEDVERIFY is clean across the self-build and the full boot suite (3226 tests),
-proving warm ≡ cold seed sets. But flipping production to warm was a **net
-regression**, not a win. Same-session A/B (cache-active branch baseline vs warm,
-same fixed input, 3 runs, medians):
-
-```text
-baseline (cold reruns):  summary ~11.9s   produce_mutable_decisions ~13.5s
-warm reruns:             summary ~12.7s   produce_mutable_decisions ~14.4s
-```
-
-Why it fails: warm-start only helps functions that do **not** widen, but the cost
-is dominated by the one function that *does*. `summary:link` (243 blocks, ~29% of
-the summary stage) hits `fixpoint_widen_cap`, so it falls back to cold and
-warm-start never touches it. The 39 functions that do warm don't get cheaper
-either: warm-start seeds all five exit maps and marks every block `processed`, so
-round 1 immediately runs the full `merge_targeted` + field/path meets over
-already-large maps, where a cold rerun's early rounds are cheap and grow. It
-trades cheap-early-rounds for expensive-early-rounds and loses.
-
-Disposition: the machinery + validator are committed (byte-identical to `main`,
-production stays all-cold); the production flip was reverted. The designated next
-lever is **incremental re-propagation** — keep a single `run_fixpoint` alive
-across reruns and re-enqueue only blocks reachable from the removed loop headers.
-It never restarts, so it avoids the spurious first-visit meet *and* attacks the
-dominant widening function (which restart-warm-start structurally cannot), and it
-is validated by the same SEEDVERIFY harness.
-
-## Update: loop-seed rerun incremental re-propagation (shipped)
-
-The warm-start null result above identified the real cost model: a full-sweep
-rerun visits **every** block every round regardless of what changed, so the win
-requires touching *fewer blocks*, not fewer rounds — and the dominant
-`summary:link` widens, which warm-start-by-restart structurally could not
-accelerate (it gated on `!widened`).
-
-Incremental re-propagation attacks both. A loop seed `(blk_id, lid)` affects only
-`blk_id`'s entry (`join_entry_ownership_assumed`), and reruns only ever *remove*
-seeds, so the exact set of blocks whose entry changes on a rerun is the blocks
-whose seed was dropped. `run_fixpoint` now carries the **full** solver state
-(`FixState`: the five exit maps *plus* the widening state `prev_*`/`locked_*`/
-`prev_seen`/`changed_visits`/`processed`) across reruns and takes an optional
-dirty set. Given one, it processes a block only when dirty and dirties the
-block's successors when its exit changes — a round-based worklist. Because it
-never restarts and never resets widening, a re-visited block is legitimately
-`already`, matching a *continued* cold iteration, so it does **not** fall back on
-widening functions. Pass 1 (`dirty0 = .None`) stays a full sweep and the returned
-fx is a cold final pass, so the emitted program is byte-identical; seed-set
-equivalence vs all-cold is enforced per-function by the reused `TWINKLE_SEEDVERIFY`
-A/B (clean across the self-build + 3226 boot tests).
-
-Same-session A/B (cache-active cold-rerun baseline vs incremental, same fixed
-input, 3 runs, medians):
-
-```text
-baseline (cold reruns):  summary ~14.2s   produce_mutable_decisions ~15.85s
-incremental:             summary ~7.0s    produce_mutable_decisions ~8.6s
-        summary:link rerun set: ~3443ms -> ~660ms (incremental=true, no cold fallback)
-```
-
-~50% off the summary stage / ~46% off `produce_mutable_decisions`; **all** reported
-slow functions used incremental (zero cold fallback), including `summary:link`.
-The carried-lock hazard (a widening lock keeping a seeded local `Unique` after
-removal) did not materialize — SEEDVERIFY was clean, so the planned
-dirty-subgraph widening-reset fallback was not needed. Acceptance: build output
-byte-identical (before/after compiler on a fixed input), SEEDVERIFY + FIXVERIFY
-clean over the self-build, self-host stable, full boot suite green.
-
-## Investigation: ownership fixpoint is the remaining floor
-
-After the summary-reuse landing (the mutable-decision producer seeds its scoped
-summary from Phase 8G's carried whole-program table via
-`summary.compute_for_roots_reusing`; `produce_mutable_decisions` ~10–13s →
-~7.5–9.4s per heavy build), the largest untouched cost is 8G's own whole-program
-`summary.compute` (~9s/build) and the ownership fixpoint it drives.
-
-Where per-function ownership time goes (`[time:own:summarize]` /
-`[time:own:fixpoint*]` over a full `make stage2`):
-
-- The inner dataflow **fixpoint solve is ~76%** of each hot function — e.g.
-  `link` (243 blocks): total 884ms = fixpoint 676ms + liveness 96ms + field_reqs
-  105ms + classify 7ms, and inside the fixpoint solve 281ms vs prep 1.6ms.
-- A few giant functions dominate: `link` (243 blk), `analyze_copy_carriers`
-  (259), `run_fixpoint` (160). Per-function wins on these outweigh the long tail.
-- Big functions rerun the validated fixpoint up to 14× for optimistic loop-seed
-  validation (`link`: 875→213 seeds).
-
-Fixpoint time by consumer across the loop (`[time:own:fixpoint_validated]`):
-
-```text
-summary:*       14.9s   8G summary.compute, all funcs
-call_uniques:*   7.4s   8G collect_groups, published-callee callers
-analyze:*        0.03s  mutable producer — already reuses fix_cache
-```
-
-### Three optimization recommendations
-
-1. **Reuse the summary fixpoint for 8G's `call_uniques` — PROTOTYPED, NOT
-   VIABLE.** 8G runs the ownership fixpoint twice per published-callee caller:
-   once in `summary.compute` (no `fix_cache` — `no_cache_ids`), then again in
-   `call_uniques_sited` during `collect_groups`. The hypothesis was that the two
-   are redundant. They are **not**: `summary.compute` runs the generic resolver
-   (the variant table does not exist yet — it is built *from* the summary), while
-   `call_uniques` runs `make_variant_resolver_for_render()`. Selecting an owned
-   variant changes a call's ownership effect, so the render-resolver `fx` is
-   strictly *more precise* than the generic `fx` — the `call_uniques_sited` comment
-   only claims the *extracted* `arg_unique` vectors match for shell-only callers,
-   not the full `fx`. A prototype (build the cache in `summary.compute_cached`,
-   reuse it in `call_uniques`, exclude callers of field-tier callees, gate with
-   `TWINKLE_8G_CU_REUSE` + `TWINKLE_FIXVERIFY`) confirmed the problem: byte-diff of
-   reuse-on vs reuse-off output showed reuse **loses clones** (`updatable` 27→22,
-   `groups0` 65→48) — a codegen change, not a transparent speedup — for a win of
-   only `groups` ~2.19s→1.63s (~0.55s/build, far below the ~2.4s hoped, since the
-   compute_cached cache-build offsets it and field-tier callers still recompute).
-   Field-tier exclusion did not close the gap; the render-resolver divergence set
-   is broader than "calls a field-tier callee" and has no cheap static
-   characterization. **Lesson:** unlike summary→analyze (both generic resolver,
-   sound reuse), summary→`call_uniques` cannot share an `fx` without either a
-   correct (currently unknown) safe-caller predicate or making the summary pass use
-   the render resolver — which needs the variant table it produces (circular) or a
-   second full summary pass (no win). Prototype reverted.
-
-2. **Cut the inner solve on the 3–4 giant functions — SHIPPED (cold worklist).**
-   See the update below: the cold pass now skips no-op block re-visits.
-
-3. **Rerun-count reduction — largely exhausted.** Warm-start-by-restart was
-   rejected (net negative; `link` widens) and incremental re-propagation is
-   shipped. Remaining headroom means changing the seed-validation algorithm itself
-   (batched / dependency-ordered seed retraction), which is soundness-critical;
-   low priority until #1 and #2 are spent.
-
-Next measurement: prototype #1 behind a flag, confirm FIXVERIFY-clean over the
-self-build + boot suite, and A/B the `[time:8g] groups=` wall plus
-`variant_specialize` / `produce_mutable_decisions` totals same-session.
-
-## Update: cold ownership fixpoint worklist (shipped)
-
-`run_fixpoint`'s cold pass (`dirty0 = None`) swept **every** block every round
-until convergence — including blocks whose predecessor exits were unchanged since
-their last visit. On `summary:link` (243 blocks, 17 rounds) that was 4131
-block-visits of which only ~1540 changed: **~63% no-ops**. The successor-based
-dirty worklist already existed for the incremental reruns but was gated off for
-the cold pass (`all_dirty = true`).
-
-Fix: seed every block dirty at a cold start and drive the same worklist, so a
-block is re-processed only when a predecessor's exit changed. A skipped visit is
-provably a no-op — deterministic transfer over unchanged inputs yields the same
-exit, records no change, and never increments the widening counter — so the block
-order, rounds, and *change sequence* are preserved.
-
-Results (A/B `TWINKLE_COLD_WORKLIST=0` vs `1`, same stage1):
-
-```text
-summary:link fixpoint:  ~183ms -> ~86ms   (visits 4131 -> 1607)
-variant_specialize:     ~11.5s -> ~8.1s   per heavy build (8G whole-prog summary)
-produce_mutable_decisions: ~7.5-9.4s -> ~5.4-6.9s per heavy build
-```
-
-Acceptance: **output byte-identical** over the full boot build (A/B diff), 3321
-boot tests pass, `make stage2` fixed point (stage3 == stage4) intact.
-`TWINKLE_COLD_WORKLIST=0` restores the legacy full sweep.
-
-Risk note (durable lesson): this is safe because it does **not** reorder — it
-keeps the exact Gauss-Seidel block order and rounds and only skips no-op visits.
-A general worklist (priority/SCC/arbitrary dequeue) *would* be unsafe: the
-widening (`changed_visits` vs `fixpoint_widen_cap`) is visit-order-sensitive, so a
-different order can trigger widening at different points and diverge. Even this
-narrow change is byte-identical *empirically*, not by construction — the diagnostic
-change-count shifts slightly (1540 -> 1526 on link), i.e. the full sweep takes a
-few extra benign intermediate steps; none crossed the widen cap here, but a
-pathological input theoretically could. Validate output byte-identity on any
-change that touches the cold-pass iteration.
-
-## Update: reuse summary-pass liveness in field_reqs (shipped)
-
-Profiling the post-worklist 8G summary (`table` ~6.3s) showed the fixpoint down to
-~57%, with liveness (~18%) and `collect_field_reqs` (~21%) as the remaining fat.
-Liveness is computed in five places on the same blocks (`summary:`, `field_reqs:`,
-`call_uniques:`, `analyze:`, `prune:`); `summarize_function` computed it once for
-its own fixpoint and then `collect_field_reqs` recomputed it over the identical
-`f.blocks`. Threaded the already-computed liveness in via a new
-`collect_field_reqs_with_live` (the public `collect_field_reqs` still self-computes
-for unit tests). 8G summary `table` ~6.3s → ~5.5s; `variant_specialize` ~8.1s →
-~7.5s. **Byte-identical by construction** — liveness over identical blocks is
-identical — confirmed by A/B output diff.
-
-Remaining liveness redundancy (not yet shared): `call_uniques:` and `analyze:`
-recompute liveness the summary pass already did, but across pass boundaries
-(8G `collect_groups`; the post-clone mutable analyze view), so sharing needs a
-threaded per-view liveness cache. `prune:` runs on pre-prune blocks and can't
-share. ~0.3–0.5s/build ceiling if pursued.
-
-## Current baseline: 2026-07-31 (sound-uniqueness codegen consolidated)
-
-Net effect of this arc (summary-reuse → cold worklist → liveness reuse) on the
-two dominant codegen phases, per heavy self-host build:
-
-```text
-                            start        now
-variant_specialize (8G)   ~11.5-12.8s -> ~7.5s
-produce_mutable_decisions ~10.5-12.6s -> ~5.0s
-```
-
-Sound-uniqueness codegen roughly halved (~23-25s → ~12.5s/build), full
-`make stage2` wall ~73s. All three changes validated at the same bar: output
-byte-identical (A/B per change), 3321 boot tests pass, fixed point stage3 ==
-stage4. Landed pieces:
-
-- **summary-reuse** — the mutable producer seeds its scoped summary from 8G's
-  carried whole-program table (`summary.compute_for_roots_reusing`), recomputing
-  only the clone-affected closure. `TWINKLE_SUMMARY_REUSE=0` /
-  `TWINKLE_SUMMARY_REUSE_VERIFY=1`.
-- **cold worklist** — the cold ownership fixpoint skips no-op block re-visits.
-  `TWINKLE_COLD_WORKLIST=0`.
-- **liveness reuse** — `collect_field_reqs` reuses the summary pass's liveness.
-
-Remaining floor / next levers (diminishing, all documented above): 8G's
-whole-program summary fixpoint is inherent (it decides clones); the ~14
-seed-validation reruns are largely exhausted (rec #3); cross-pass liveness sharing
-for `call_uniques`/`analyze` is ~0.3-0.5s but needs a threaded per-view cache. The
-`call_uniques` fixpoint-reuse lever (rec #1) is proven not viable (resolver is
-load-bearing).
+code-section copies dominated. Those specific bottlenecks are gone, but the
+lessons transfer:
+
+- Replacing the linear `Dict` with a persistent HAMT reshaped nearly every phase
+  by removing O(n) environment/symbol-table lookups.
+- Accumulator-style emission helps where code repeatedly builds small temporary
+  vectors and concatenates them.
+- **Reusing per-pass facts beats structural rewrites**: emission reuses layout
+  caches; repr assignment caches mono-derived repr/value-type/layout facts; wasm
+  code-section emission caches name→index and writes directly into the output
+  buffer.
+- The most reliable workflow: instrument the hot subphase, find repeated
+  derivation or copying, remove it with a small targeted cache or accumulator —
+  not a parser/checker rewrite.
+
+## Open levers / next probes
+
+Diminishing and all measure-first; prefer small repeated-work eliminations over
+broad rewrites unless instrumentation proves the structural cost is real.
+
+- **Frontend — import merge representation.** Cost is cumulative across many tiny
+  edges (largest single edge is single-digit µs), so the lever is a
+  representation change, not an edge tweak. The `selective` bucket (~126ms) still
+  registers the full imported interface before binding selected names; a
+  per-selected-item support closure would need the exporter's method fixpoint
+  re-run per edge (deferred — cleaner as an exporter-side per-visible-export
+  closure). `typecheck` `bodies` (~260ms) is the irreducible inference walk;
+  `finalize`'s remaining lever is subtree-sharing inside `zonk_with_meta` (needs a
+  change-tracking return shape).
+- **Backend.** `emit_module` is ~407ms in the per-function `emit_func` loop
+  (~0.12ms/func) — the irreducible codegen walk, not a broad local win.
+  `optimize`'s cleanest identified lever is a `count_uses`/`collect_assigned_locals`
+  fusion in `dead_let` (~25ms, modest, COW-correctness-sensitive). `verify` is
+  dominated by per-node type checks, not the pre-walk.
+- **Sound-uniqueness floor.** 8G's whole-program summary fixpoint is inherent (it
+  decides clones). Seed-validation reruns are largely exhausted (remaining
+  headroom means a soundness-critical batched/dependency-ordered seed-retraction
+  algorithm). Cross-pass liveness sharing for `call_uniques`/`analyze` is
+  ~0.3–0.5s but needs a threaded per-view liveness cache.
+- **Runtime data structures** — justify by compiler profiles, not standalone
+  cleanups: typed vector families to cut `anyref` traffic in hot homogeneous
+  vectors; RRB-style concat/slice if instruction-buffer concat reappears;
+  CHAMP-style HAMT layout if dict allocation/iteration locality resurfaces.
 
 ## Working rules for future updates
 
 - Keep only the current baseline plus durable lessons in this file.
-- Move obsolete raw snapshots out of the main narrative instead of appending a
-  long timeline.
-- Record ranges or representative same-session A/B results, not isolated single
-  numbers.
+- Collapse obsolete snapshots into lessons instead of appending a timeline.
+- Record ranges or representative same-session A/B results, not isolated numbers.
 - State what changed, why it matters, and what the next measurement should prove.
