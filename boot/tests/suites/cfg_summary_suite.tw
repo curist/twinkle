@@ -1768,6 +1768,38 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "collect_field_reqs: loop-carried none facts converge",
+      fn() {
+        // Regression for the set_prelude_function_origins hang: loop-carried flow
+        // maps may alternate between absent and explicit none facts for temporary
+        // locals. The dataflow equality must compare those states semantically so
+        // the dirty-path fixed point reaches the returned record update.
+        loop_body: AnfExpr = .Let(
+          lid(2),
+          .ARecordUpdate(.ALocal(lid(0)), FieldId.{ id: 0 }, .ALitInt(1), false, TypeId.{ id: 0 }),
+          .Let(
+            lid(3),
+            .AAssign(lid(0), .ALocal(lid(2))),
+            .Let(
+              lid(4),
+              .AIf(.ALocal(lid(1)), .Break(.Some(.ALocal(lid(0)))), .Continue),
+              .Atom(.ALitVoid),
+            ),
+          ),
+        )
+        body: AnfExpr = .Let(lid(5), .ALoop(loop_body), .Atom(.ALocal(lid(5))))
+        reqs := ownership.collect_field_reqs(
+          cfg_func_of("loop_rebind", 2, body),
+          ownership.empty_summary_table(),
+          sem(),
+          ownership.generic_only_resolver,
+          ownership.generic_only_requirement_resolver,
+        )
+        try assert.is_true(same_ints(dirty_fields(reqs, 0), [0]))
+        .Ok({})
+      },
+    )
+    .test(
       "collect_field_reqs: discarded update, original param returned -> no dirty",
       fn() {
         b := b_reg()

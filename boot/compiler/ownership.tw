@@ -7871,20 +7871,31 @@ fn flow_join_entry(blk: CfgBlock, exits: Dict<Int, Dict<Int, FlowFact>>, process
   entry
 }
 
-fn flow_map_eq(a: Dict<Int, FlowFact>, b: Dict<Int, FlowFact>) Bool {
-  if a.keys().len() != b.keys().len() {
-    return false
+fn flow_fact_at(m: Dict<Int, FlowFact>, k: Int) FlowFact {
+  case m.get(k) {
+    .Some(x) => x,
+    .None => ff_none(),
   }
+}
+
+fn flow_fact_eq(a: FlowFact, b: FlowFact) Bool {
+  if a.origin < 0 and b.origin < 0 {
+    return true
+  }
+  a.origin == b.origin and a.dirty.same(b.dirty)
+}
+
+fn flow_map_eq(a: Dict<Int, FlowFact>, b: Dict<Int, FlowFact>) Bool {
+  // Missing facts are semantically `ff_none()` (see flow_get). Compare maps by
+  // that semantic value rather than by physical key shape; loop joins can
+  // otherwise oscillate forever between absent and explicit none facts.
   for k in a.keys() {
-    af := case a.get(k) {
-      .Some(x) => x,
-      .None => ff_none(),
+    if !flow_fact_at(a, k).flow_fact_eq(flow_fact_at(b, k)) {
+      return false
     }
-    bf := case b.get(k) {
-      .Some(x) => x,
-      .None => return false,
-    }
-    if af.origin != bf.origin or !af.dirty.same(bf.dirty) {
+  }
+  for k in b.keys() {
+    if !flow_fact_at(a, k).flow_fact_eq(flow_fact_at(b, k)) {
       return false
     }
   }

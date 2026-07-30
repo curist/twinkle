@@ -177,6 +177,8 @@ Expected: the log reaches `begin produce_mutable_decisions`, `begin ownership_ar
 | mutable-only current | generic | off | on | `calls=791 records=638 fields=191` from `/tmp/stage2-candidate-current.log` | `roots=514 seeds=0` from `/tmp/stage2-candidate-current.log` | timeout after `[time:summary:scc] first=643`; no `end ownership_artifacts` |
 | string-only diagnostic | string-only | off | on | `calls=791 records=638 fields=191` from `/tmp/stage2-candidate-string-io.log` | `roots=514 seeds=0` from `/tmp/stage2-candidate-string-io.log` | timeout after `[time:summary:scc] first=643`; no `end ownership_artifacts` |
 | summary trace | generic | on | on | not collected; 8G stalls before mutable producer | not collected | timeout inside SCC solving before first round for `set_prelude_function_origins` |
+| hot-function trace | generic | on | on | not collected; diagnostic trace run | not collected | localized to `collect_field_reqs` rounds for `set_prelude_function_origins`; originless dirty-flow facts kept the fixed point changing |
+| fixed default build | generic | on | on | `calls=825 records=700 fields=219` after 8G clones | `roots=541 seeds=27` | completed: `WASM output: /tmp/stage2-fixed2.wasm` |
 
 Task 1 evidence is recorded in `/Users/curist/playground/rust/twinkle/.superpowers/sdd/2026-07-30-sound-uniqueness-stage2-hang-investigation/task-1-report.md`. The diagnostic stage1 compiler used for these runs is `/tmp/boot-stage1-diag.wasm`; trace logs are `/tmp/stage2-default-trace.log` and `/tmp/stage2-mutable-only-trace.log`.
 
@@ -190,6 +192,8 @@ Task 2 evidence is recorded in `/Users/curist/playground/rust/twinkle/.superpowe
 No `trace:summary:scc:round`, `trace:summary:scc:end`, or `time:summary:scc` marker appeared for `first=733` before timeout. This localizes the default stall to pre-round summary work for the base-env/prelude-origin function `set_prelude_function_origins`; `with_dedupe_helpers` was not reached, so Task 2 added no dedupe markers and required no stage1 rebuild.
 
 Task 3 evidence is recorded in `/Users/curist/playground/rust/twinkle/.superpowers/sdd/2026-07-30-sound-uniqueness-stage2-hang-investigation/task-3-report.md`. The diagnostic source-only rollback to string I/O produced the same mutable candidate counts and root count as the generic I/O run (`calls=791 records=638 fields=191`, `roots=514 seeds=0`). Both runs timed out in scoped summary after the last completed SCC marker `first=643`, so the measured data rejects simple candidate/root growth as the trigger and points toward analysis behavior on an unchanged root set.
+
+Task 4 evidence is recorded in `/Users/curist/playground/rust/twinkle/.superpowers/sdd/2026-07-30-sound-uniqueness-stage2-hang-investigation/task-4-report.md`. Temporary markers from Fix Path D showed the non-returning subsection was dirty-path field-requirement analysis (`collect_field_reqs`) for `set_prelude_function_origins`. The root cause was non-semantic equality in the flow-fact fixed point: missing facts and explicit `ff_none()` compared different, and originless dirty facts compared by dirty paths even though originless facts cannot emit requirements. The fix normalizes `flow_map_eq` around semantic flow facts and treats two originless facts as equal. With the fix, the default stage2 build completed through 8G and mutable production and wrote `/tmp/stage2-fixed2.wasm`.
 
 ---
 
@@ -411,19 +415,19 @@ Choose exactly one fix path based on evidence. If none of Fix Paths A-C match th
 
 Use this path if `TWINKLE_SUMMARY_TRACE=1` stops at `trace:summary:scc:start` for a specific SCC without a matching first `trace:summary:scc:round`, and Task 3 does not show candidate/root growth. The goal is to identify whether the hot work is liveness/prep, ownership fixpoint, classification, field-requirement finishing, or a particular source-level callee pattern.
 
-- [ ] **Step D1: Add temporary per-function summary markers around `summarize_function_cached`.**
+- [x] **Step D1: Add temporary per-function summary markers around `summarize_function_cached`.**
 
 In `boot/compiler/summary.tw`, inside `run_scc`, add `TWINKLE_TIMINGS`-guarded markers immediately before and after each `summarize_function_cached` call. Include the function name, id, block count, instruction count, and elapsed time. Keep the output off unless `TWINKLE_TIMINGS` is set.
 
 Expected: the next trace says whether the hot function enters ownership summarization and whether it returns.
 
-- [ ] **Step D2: If the function does not return, add temporary intra-function ownership markers.**
+- [x] **Step D2: If the function does not return, add temporary intra-function ownership markers.**
 
 In `boot/compiler/ownership.tw`, instrument the major sections of the summarization path already summarized by `[time:own:summarize]`: liveness, fixpoint, classify, field requirements, and finish. If existing timing markers only print after return, add begin/end markers around the same sections so a timeout reveals the active subsection.
 
 Expected: the next trace identifies the non-returning subsection for `set_prelude_function_origins` or another hot function.
 
-- [ ] **Step D3: Rebuild the diagnostic stage1 after markers.**
+- [x] **Step D3: Rebuild the diagnostic stage1 after markers.**
 
 Run:
 
@@ -435,7 +439,7 @@ target/twk fmt boot/compiler/summary.tw boot/compiler/ownership.tw
 
 Expected: the diagnostic stage1 compiler is refreshed.
 
-- [ ] **Step D4: Run a bounded trace with the new markers.**
+- [x] **Step D4: Run a bounded trace with the new markers.**
 
 Run:
 
@@ -449,7 +453,7 @@ timeout 180s deno run --allow-read --allow-write --allow-env tools/js_runtime/de
 
 Expected: the log identifies the exact active subsection for the hot SCC. Record the decisive marker lines in Investigation Results.
 
-- [ ] **Step D5: Choose the smallest confirmed fix.**
+- [x] **Step D5: Choose the smallest confirmed fix.**
 
 Based on D4, choose one:
 
