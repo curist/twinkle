@@ -21,6 +21,15 @@ fn timings_enabled() Bool {
   }
 }
 
+// Reuse Phase 8G's summary to seed the mutable producer's scoped summary. On by
+// default; set TWINKLE_SUMMARY_REUSE=0 to force the from-scratch path.
+fn summary_reuse_enabled() Bool {
+  case proc.env("TWINKLE_SUMMARY_REUSE") {
+    .Some(v) => v != "0",
+    .None => true,
+  }
+}
+
 fn artifact_phase(label: String) {
   if timings_enabled() {
     eprintln("[time:mutable:artifact:phase] ${label}")
@@ -552,7 +561,14 @@ pub fn compute_candidate_artifacts(
   sem: OptimizerSemantics,
   candidate_funcs: Dict<Int, Bool>,
 ) OwnershipArtifacts {
-  compute_candidate_artifacts_seeded(opt, b, sem, candidate_funcs, variant_route.empty_seed_table())
+  compute_candidate_artifacts_seeded(
+    opt,
+    b,
+    sem,
+    candidate_funcs,
+    variant_route.empty_seed_table(),
+    ownership.empty_summary_table(),
+  )
 }
 
 // Like `compute_candidate_artifacts`, but layers per-clone owned entry seeds over
@@ -567,6 +583,7 @@ pub fn compute_candidate_artifacts_seeded(
   sem: OptimizerSemantics,
   candidate_funcs: Dict<Int, Bool>,
   owned_seeds: variant_route.OwnedSeedTable,
+  carried: ownership.SummaryTable,
 ) OwnershipArtifacts {
   timed := timings_enabled()
   artifact_phase("begin scoped_cfg")
@@ -581,7 +598,15 @@ pub fn compute_candidate_artifacts_seeded(
     scope[fid] = true
   }
 
-  summarized := summary.compute_for_roots_cached(view, b, sem, scope)
+  // Reuse Phase 8G's whole-program summary as the seed when available (carried
+  // non-empty and not disabled), recomputing only the clone-affected closure.
+  // Falls back to the from-scratch scoped summary otherwise.
+  use_reuse := carried.by_func.keys().len() > 0 and summary_reuse_enabled()
+  summarized := if use_reuse {
+    summary.compute_for_roots_reusing(view, b, sem, scope, carried)
+  } else {
+    summary.compute_for_roots_cached(view, b, sem, scope)
+  }
   table := summarized.table
   shell_seeds := uniform_entry_seeds(opt, view, b, sem, table, scope)
   entry_seeds: Dict<Int, ownership.EntrySeedFacts> = Dict.new()

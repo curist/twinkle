@@ -48,6 +48,13 @@ fn func_id_by_name(view: cfg.CfgView, name: String) Result<Int, String> {
   .Err("missing function ${name}")
 }
 
+fn render_summary_at(t: ownership.SummaryTable, id: Int) String {
+  case t.summary_get(id) {
+    .Some(sm) => summary.render_summary(sm),
+    .None => "<none>",
+  }
+}
+
 fn dict_bool(d: Dict<Int, Bool>, key: Int) Bool {
   case d.get(key) {
     .Some(v) => v,
@@ -2666,6 +2673,52 @@ pub fn suite() runner.Suite {
           .None => return .Err("missing scoped summary for candidate_root"),
         }
         try assert.equal(scoped_s, full_s)
+        .Ok({})
+      },
+    )
+    .test(
+      "summary reuse matches from-scratch, including absent (clone) entries",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8a_summary_closure.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+        s := semantics.make_prelude_optimizer_semantics(b)
+        view := ownership.prune_dead_merge(cfg.build_view(artifacts.opt, b))
+        root_id := try func_id_by_name(view, "candidate_root")
+        roots: Dict<Int, Bool> = Dict.new()
+        roots[root_id] = true
+
+        carried := summary.compute(view, b, s)
+        cached := summary.compute_for_roots_cached(view, b, s, roots).table
+
+        // (1) A full carried table makes every function provably reusable; the
+        // reuse path must still reproduce the from-scratch scoped table exactly.
+        reused := summary.compute_for_roots_reusing(view, b, s, roots, carried).table
+        for f in view.functions {
+          try assert.equal(
+            render_summary_at(reused, f.func_id),
+            render_summary_at(cached, f.func_id),
+          )
+        }
+
+        // (2) Drop the root's entry to simulate a clone (a func absent from the
+        // pre-clone carried table): it and its callers must be recomputed, and the
+        // result must still match the from-scratch table.
+        carried_missing := ownership.SummaryTable.{
+          by_func: carried.by_func.remove(root_id),
+          dedupe_helpers: carried.dedupe_helpers,
+        }
+        reused2 := summary.compute_for_roots_reusing(view, b, s, roots, carried_missing).table
+        for f in view.functions {
+          try assert.equal(
+            render_summary_at(reused2, f.func_id),
+            render_summary_at(cached, f.func_id),
+          )
+        }
         .Ok({})
       },
     )

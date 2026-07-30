@@ -50,6 +50,16 @@ pub type SpecializeResult = .{
   anf: AnfModule,
   seeds: variant_route.OwnedSeedTable,
   routes: Vector<variant_route.VariantRoute>,
+  // Whole-program summary table computed here over the pre-clone module. The
+  // mutable-decision producer reuses it to seed its scoped summary instead of
+  // recomputing from scratch (see summary.compute_for_roots_reusing). Empty when
+  // 8G is disabled, so callers fall back to a from-scratch summary.
+  summary: ownership.SummaryTable,
+}
+
+// Sentinel carried summary meaning "no reuse available"; callers recompute.
+pub fn no_reuse_summary() ownership.SummaryTable {
+  ownership.empty_summary_table()
 }
 
 fn spec_timings_enabled() Bool {
@@ -294,7 +304,12 @@ pub fn specialize_module_with_cap_sem(
     if timed {
       eprintln("[time:8g] table=${t1 - t0}ms variants=${t2 - t1}ms (no variants)")
     }
-    return SpecializeResult.{ anf, seeds: variant_route.empty_seed_table(), routes: [] }
+    return SpecializeResult.{
+      anf,
+      seeds: variant_route.empty_seed_table(),
+      routes: [],
+      summary: table,
+    }
   }
 
   spec_phase("begin collect_groups")
@@ -316,6 +331,7 @@ pub fn specialize_module_with_cap_sem(
       anf,
       seeds: variant_route.empty_seed_table(),
       routes: overcap_routes(capped.overflow),
+      summary: table,
     }
   }
 
@@ -334,11 +350,21 @@ pub fn specialize_module_with_cap_sem(
   for g in groups_up {
     orig := case func_def_of(anf, g.callee) {
       .Some(fd) => fd,
-      .None => return SpecializeResult.{ anf, seeds: variant_route.empty_seed_table(), routes: [] },
+      .None => return SpecializeResult.{
+        anf,
+        seeds: variant_route.empty_seed_table(),
+        routes: [],
+        summary: table,
+      },
     }
     ccfg := case cfg_func_of(view, g.callee) {
       .Some(cf) => cf,
-      .None => return SpecializeResult.{ anf, seeds: variant_route.empty_seed_table(), routes: [] },
+      .None => return SpecializeResult.{
+        anf,
+        seeds: variant_route.empty_seed_table(),
+        routes: [],
+        summary: table,
+      },
     }
     clone_id := next
     next = next + 1
@@ -422,7 +448,7 @@ pub fn specialize_module_with_cap_sem(
 
   anf.functions = routed_funcs
   spec_phase("end specialize_module")
-  SpecializeResult.{ anf, seeds, routes }
+  SpecializeResult.{ anf, seeds, routes, summary: table }
 }
 
 type RecRoute = .{ site_key: Int, target: Int }

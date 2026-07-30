@@ -132,6 +132,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
       anf: anf_prime,
       seeds: variant_route.empty_seed_table(),
       routes: [],
+      summary: variant_specialize.no_reuse_summary(),
     }
   }
   anf_spec := spec.anf
@@ -163,6 +164,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
       builtins,
       spec.seeds,
       sem_env,
+      spec.summary,
     )
   } else {
     mutable_produce.ProducedDecisions.{

@@ -41,6 +41,16 @@ fn summary_trace_enabled() Bool {
   }
 }
 
+// When set, `compute_for_roots_reusing` also computes the table the unreused way
+// and asserts per-function equality — machine-checking the reuse soundness proof
+// on the real module before the fast path is trusted.
+fn reuse_verify_enabled() Bool {
+  case proc.env("TWINKLE_SUMMARY_REUSE_VERIFY") {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
 fn scc_stats(members: Vector<Int>, index: Dict<Int, CfgFunction>) String {
   blocks := 0
   insts := 0
@@ -1992,5 +2002,188 @@ pub fn compute_for_roots_cached(
   if trace {
     eprintln("[trace:summary:roots:end]")
   }
+  SummaryCacheResult.{ table, fix_cache: cache }
+}
+
+// Like `compute_for_roots_cached`, but seeds the fixpoint from a whole-program
+// summary `carried` (built by Phase 8G over the pre-clone module) instead of
+// recomputing every function from scratch. Sound because 8G only (a) appends
+// clone functions and (b) redirects specific call sites from an original callee
+// to its clone; every other function's body is byte-identical, so its summary is
+// unchanged. A function is provably reusable iff its body is unchanged AND every
+// callee is reusable; the "changed" frontier (clones + funcs whose body now calls
+// a clone) is propagated backward to all their transitive callers, and only that
+// affected closure is re-summarized. All root SCCs still run so the returned
+// `fix_cache` (root-keyed only) is identical to `compute_for_roots_cached`.
+//
+// The output table equals `compute_for_roots_cached`'s exactly; set
+// TWINKLE_SUMMARY_REUSE_VERIFY=1 to assert that on the real module.
+pub fn compute_for_roots_reusing(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  roots: Dict<Int, Bool>,
+  carried: SummaryTable,
+) SummaryCacheResult {
+  timed := timings_enabled()
+  t0 := if timed {
+    date.now()
+  } else {
+    0.0
+  }
+  index := build_func_index(view)
+  user_ids := user_id_set(view)
+
+  // Clone ids = post-clone funcs absent from the pre-clone carried table.
+  clone_ids: Dict<Int, Bool> = Dict.new()
+  for f in view.functions {
+    case carried.by_func.get(f.func_id) {
+      .Some(_) => {},
+      .None => clone_ids[f.func_id] = true,
+    }
+  }
+
+  // Directly-changed = clones plus every function whose body now calls a clone
+  // (the only body edits `rewrite_expr` makes are orig->clone site redirections).
+  direct_changed: Dict<Int, Bool> = Dict.new()
+  for id, _flag in clone_ids {
+    direct_changed[id] = true
+  }
+  callers_map: Dict<Int, Vector<Int>> = Dict.new()
+  for f in view.functions {
+    for c in callee_ids(f, user_ids) {
+      case clone_ids.get(c) {
+        .Some(true) => direct_changed[f.func_id] = true,
+        _ => {},
+      }
+      prev := case callers_map.get(c) {
+        .Some(v) => v,
+        .None => [],
+      }
+      callers_map[c] = prev.append(f.func_id)
+    }
+  }
+
+  // Propagate "changed" backward: a caller of any changed function is itself
+  // unsafe to reuse. Everything not reached stays provably reusable.
+  unsafe: Dict<Int, Bool> = Dict.new()
+  work: Vector<Int> = collect id in direct_changed.keys() {
+    id
+  }
+  wi := 0
+  for wi < work.len() {
+    id := work[wi]
+    wi = wi + 1
+    already := case unsafe.get(id) {
+      .Some(true) => true,
+      _ => false,
+    }
+    if !already {
+      unsafe[id] = true
+      case callers_map.get(id) {
+        .Some(cs) => {
+          for c in cs {
+            case unsafe.get(c) {
+              .Some(true) => {},
+              _ => work = .append(c),
+            }
+          }
+        },
+        .None => {},
+      }
+    }
+  }
+
+  wanted := dependency_closure(view, roots)
+
+  // Seed reusable+wanted funcs from the carried table (= their fixed point);
+  // everyone else conservative, matching `compute_for_roots_cached`'s seeding for
+  // out-of-closure and changed funcs.
+  table := empty_summary_table()
+  reused := 0
+  for f in view.functions {
+    is_unsafe := case unsafe.get(f.func_id) {
+      .Some(true) => true,
+      _ => false,
+    }
+    is_wanted := case wanted.get(f.func_id) {
+      .Some(true) => true,
+      _ => false,
+    }
+    seed := if !is_unsafe and is_wanted {
+      case carried.by_func.get(f.func_id) {
+        .Some(s) => {
+          reused = reused + 1
+          s
+        },
+        .None => conservative_summary(f),
+      }
+    } else {
+      conservative_summary(f)
+    }
+    table = table_put(table, f.func_id, seed)
+  }
+
+  cache := empty_fix_cache()
+  sccs := order_sccs(view, index, user_ids)
+  run_sccs := 0
+  skipped_sccs := 0
+  for scc in sccs {
+    in_wanted := false
+    all_safe := true
+    has_root := false
+    for id in scc {
+      case wanted.get(id) {
+        .Some(true) => in_wanted = true,
+        _ => {},
+      }
+      case unsafe.get(id) {
+        .Some(true) => all_safe = false,
+        _ => {},
+      }
+      case roots.get(id) {
+        .Some(true) => has_root = true,
+        _ => {},
+      }
+    }
+
+    // Skip an SCC only when it is entirely reusable and holds no cache root; such
+    // members keep their carried seed, which is already their fixed point.
+    if in_wanted and (!all_safe or has_root) {
+      run_sccs = run_sccs + 1
+      r := run_scc(scc, index, user_ids, table, b, sem, roots, cache)
+      table = r.table
+      cache = r.cache
+    } else {
+      skipped_sccs = skipped_sccs + 1
+    }
+  }
+  table = with_dedupe_helpers(table, view, b, sem)
+
+  if timed {
+    t_done := date.now()
+    eprintln(
+      "[time:summary:reuse] total=${t_done - t0}ms funcs=${view.functions.len()} wanted=${wanted
+        .keys()
+        .len()} reused=${reused} clones=${clone_ids.keys().len()} unsafe=${unsafe.keys().len()} run_sccs=${run_sccs} skipped_sccs=${skipped_sccs}",
+    )
+  }
+
+  // Machine-check the reuse proof against the from-scratch computation.
+  if reuse_verify_enabled() {
+    fresh := compute_for_roots_cached(view, b, sem, roots).table
+    mismatches := 0
+    for f in view.functions {
+      if !same_summary(table_get(table, f.func_id), table_get(fresh, f.func_id)) {
+        mismatches = mismatches + 1
+        eprintln("[summary:reuse:verify] MISMATCH func=${f.func_id}")
+      }
+    }
+    if mismatches > 0 {
+      error("summary reuse verify: ${mismatches} function summaries differ from fresh")
+    }
+    eprintln("[summary:reuse:verify] ok funcs=${view.functions.len()} reused=${reused}")
+  }
+
   SummaryCacheResult.{ table, fix_cache: cache }
 }
