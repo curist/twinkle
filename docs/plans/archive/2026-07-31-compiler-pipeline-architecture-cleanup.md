@@ -9,7 +9,10 @@ make one orchestration seam harder to accidentally drift.
 
 ## Status
 
-Draft. No implementation has started.
+Complete. All four increments landed on branch `stage2-perf-summary-reuse`
+across commits `8c7e002e` (increment 1), `ac5d9b59` (increment 2),
+`71753d97` (increment 3), `eb0745b3` (increment 4), and `de3441b4` (review
+nit cleanup).
 
 ## Why this exists
 
