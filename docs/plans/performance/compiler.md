@@ -29,64 +29,65 @@ justifies a change on its own. For codegen/ownership work, gate every change on
 **byte-identical output** (A/B diff) plus the `make stage2` fixed point
 (stage3 == stage4).
 
-## Current baseline (2026-07-31)
+## Current baseline (2026-07-31, sound-uniqueness on by default)
 
-Compiling `boot/main.tw` (~239 modules / ~3340 functions) with the bundled CLI.
-Wall-clock (timing off): **~4.95–5.08s**. Representative whole-pipeline phase
-timing (single instrumented run; treat as shape, not exact):
-
-```text
-compile_modules   ~1950ms   (frontend; still the largest bucket)
-emit_module        ~519ms
-optimize           ~474ms
-verify             ~400ms
-prepare_backend    ~384ms
-core_link          ~280ms
-link               ~216ms
-emit_wasm_binary   ~209ms
-plan_wasm_types    ~123ms
-lower_anf          ~115ms
-monomorphize        ~76ms
-wasm_dce            ~57ms
-closure_convert     ~23ms
-```
-
-Frontend sub-timing (the dominant bucket, spread across many small costs):
+Compiling `boot/main.tw` (~257 modules / ~4123 functions) with the bundled CLI,
+sound-uniqueness codegen enabled (the default). Wall-clock (timing off):
+**~20s**. The two sound-uniqueness ownership phases dominate everything —
+**~13.5s of the ~20s**:
 
 ```text
-typecheck    ~358ms   (bodies ~260, finalize ~101, setup ~2)
-import_merge ~226ms   (module ~62, selective ~126, prelude ~35)
-lower        ~215–273ms
-plan_deps    ~196ms
-resolve      ~164ms
-load_source  ~136ms
-parse        ~110ms
-publish       ~65ms
-env_extend    ~53ms
+variant_specialize        ~7.7s   ← 8G whole-program ownership summary + variants
+produce_mutable_decisions  ~5.9s   ← scoped summary reuse + ownership analyze
+compile_modules            ~2.5s   (frontend)
+emit_module                ~0.95s
+prepare_backend            ~0.52s
+verify                     ~0.48s
+optimize                   ~0.47s
+core_link                  ~0.31s
+link                       ~0.26s
+emit_wasm_binary           ~0.25s
+plan_wasm_types            ~0.15s
+lower_anf                  ~0.14s
+monomorphize               ~0.09s
 ```
 
-**Sound-uniqueness codegen** runs as separate late phases not in the table above.
-After the summary-reuse → cold-worklist → liveness-reuse → incremental arc, per
-heavy self-host build:
+Sub-breakdown of the two dominant phases:
 
 ```text
-variant_specialize (8G)   ~11.5–12.8s -> ~7.5s
-produce_mutable_decisions ~10.5–12.6s -> ~5.0s
+variant_specialize:        table (summary.compute) ~5806ms   groups ~1616ms   variants ~671ms
+produce_mutable_decisions: summary (reuse path)    ~4786ms   cfg ~987ms       ownership ~813ms
 ```
 
-That arc roughly halved sound-uniqueness codegen (~23–25s → ~12.5s/build); full
-`make stage2` wall ~73s.
+The frontend numbers (`compile_modules ~2.5s`, `typecheck` ~358ms, `import_merge`
+~226ms, etc.) are unchanged from the pre-sound-uniqueness measurements below and
+are now a small fraction of the build. Older frontend phase/sub-timing tables
+were measured with sound-uniqueness codegen off (`TWINKLE_VARIANT_SPECIALIZE=0`)
+and so omit these two phases; their shape still holds for the front half.
+
+### The dominant redundancy: the whole-program summary is computed ~twice
+
+`variant_specialize`'s `summary.compute` (5806ms) runs the ownership fixpoint over
+**all ~4123 functions** to build the summary + variant tables, producing a
+`FixResult` per function but passing `no_cache_ids` — so **every FixResult is
+discarded**. `produce_mutable_decisions` then reuses the summary *table* (landed
+summary-reuse) but re-runs ~588 SCCs, mostly to reconstruct the FixResults for the
+~548 mutation-candidate roots (`has_root` forces a re-run to fill the cache). The
+giant functions are summarized twice at near-identical cost — `link` 428+422ms,
+`analyze_copy_carriers` 161+147ms, `run_fixpoint` 146+141ms,
+`extract_exports_for_module` 107+102ms. This is the primary algorithmic lever (see
+the FixCache-reuse update below).
 
 ### Shape interpretation
 
-- The bottleneck is the **frontend** (`compile_modules`), but it is now many
-  small reasonable costs across a large module graph, not one runaway stage.
-  `typecheck` and `import_merge` are the top two sub-buckets.
+- The frontend (`compile_modules`) is no longer the bottleneck — it is a small
+  fraction once sound-uniqueness codegen is on. Its cost is still many small
+  reasonable costs across a large module graph (`typecheck`, `import_merge` top).
 - The backend tier (`emit_module`, `optimize`, `verify`, `prepare_backend`) is
   broad and close together — sub-timings matter, and these transform IR so they
   are more correctness-sensitive. Treat them as measure-first, not obvious wins.
-- The heaviest absolute cost in a full `make stage2` is the sound-uniqueness
-  codegen phases, whose remaining floor is the 8G whole-program ownership
+- The heaviest absolute cost is the sound-uniqueness codegen phases, whose
+  remaining floor is the 8G whole-program ownership
   fixpoint (it decides clones, so it is largely inherent).
 
 ## Landed wins (durable lessons)
