@@ -41,6 +41,77 @@ This means `make stage2` no longer hangs, but each self-hosted compiler build ma
 
 ---
 
+## Probe: Path A viability and the real summary-reuse target
+
+Before running the full baseline, a targeted probe traced how the two dominant
+phases compute their summaries. Measured on one real `target/twk build boot/main.tw`
+build with `TWINKLE_TIMINGS=1`:
+
+```text
+[time:8g] table=8960ms variants=1072ms groups=2410ms filter=16ms groups0=65 updatable=27
+[time] variant_specialize: 12500ms
+[time:mutable:artifacts] cfg=1093ms summary=10733ms ownership=798ms scope_roots=544
+[time] produce_mutable_decisions: 12772ms
+```
+
+Pipeline facts (`boot/compiler/codegen/codegen.tw:114-177`):
+
+- `builder_region.rewrite_module` → `anf_prime`.
+- Phase 8G (`variant_specialize.specialize_module_with_sem(anf_prime, ...)`) →
+  `anf_spec`. 8G builds a **whole-program** summary (`summary.compute`,
+  `variant_specialize.tw:288`) over the **pre-clone** `anf_prime`, then
+  physically inserts clones with **fresh func ids** (`max_func_id(anf)+1`,
+  `variant_specialize.tw:328`) and rewrites caller sites.
+- The mutable producer (`produce_mutable_decisions_seeded_with_sem(anf_spec, ...)`)
+  runs over the **post-clone** `anf_spec` and builds a **scoped** summary
+  (`summary.compute_for_roots_cached`, `ownership_verdicts.tw:584`, scoped to
+  544 candidate roots + clone ids). `scope_roots=544` in the log confirms it
+  uses the scoped `compute_candidate_artifacts_seeded` path, not the
+  whole-program `compute_artifacts` (which prints `scope_roots=-1`).
+
+**Verdict on Path A (reuse one summary table between 8G and mutable production):
+NOT VIABLE as written.** Its precondition — "both phases compute equivalent
+whole-program or compatible scoped summaries over the same post-8G module" —
+fails on both counts:
+
+1. Different module version. In the real boot build 8G creates **27 clones**
+   (`updatable=27`), so `anf_spec ≠ anf_prime`. 8G's table has zero entries for
+   the 27 clones — the exact functions the mutable producer must reason about.
+   Handing that table forward is unsound. (Only when 8G creates no clones and
+   returns `anf` unchanged would the modules match.)
+2. Different computation. The mutable side is a scoped-for-roots summary, not a
+   re-run of 8G's whole-program table. There is no single table to hand over.
+
+**Real target (Path C flavored): incremental per-function summary reuse with an
+explicit invalidation set.** The mutable producer's "scoped" summary is barely
+scoped — 544 roots pull in a near-total dependency closure (~3435 of ~4100
+functions per the Path D closure example), so it re-summarizes ~84% of the
+program that 8G already summarized. Yet 8G structurally touched only ~27 clones
+plus the caller functions whose call sites it rewrote; every other function has a
+byte-identical body pre/post-clone and an identical, reusable summary entry. The
+sound optimization is to carry 8G's per-function summary entries into the mutable
+producer and recompute only the invalidation set:
+
+```text
+invalidate = { 27 clone func ids } ∪ { host funcs of the rewritten call sites }
+```
+
+8G already tracks all of these (clone ids, `site_to_clone`, `variant_to_clone`,
+`rewrite_calls` sites), so the invalidation set is available without new analysis.
+
+Open proof obligations for Task 3 (resolve before relying on reuse):
+
+- Confirm a per-function summary entry is a pure function of that function's body
+  plus its callees' summaries, so a cross-module entry is substitutable. The
+  `_cached` in `compute_for_roots_cached` suggests a memo to piggyback on.
+- Confirm 8G can hand the mutable producer the exact set of rewritten-site host
+  functions (it can — `site_to_clone` keys are the sites).
+- A summary entry that depends on a callee whose summary changed must itself be
+  invalidated (transitive closure of the invalidation set over the call graph),
+  or reuse must be limited to entries provably independent of changed callees.
+
+---
+
 ## File Structure
 
 - Modify: `docs/plans/2026-07-30-stage2-performance-investigation.md`
