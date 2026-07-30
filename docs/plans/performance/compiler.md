@@ -987,17 +987,30 @@ analyze:*        0.03s  mutable producer — already reuses fix_cache
 
 ### Three optimization recommendations
 
-1. **Reuse the summary fixpoint for 8G's `call_uniques` (recommended).** 8G runs
-   the ownership fixpoint twice per published-callee caller: once in
-   `summary.compute` (which builds no `fix_cache` — it passes `no_cache_ids`),
-   then again in `call_uniques_sited` during `collect_groups`. For generic callers
-   the two fixpoints are identical — `call_uniques_sited_with_field_seed` itself
-   notes the generic resolver "would not change the recorded arg_unique vectors";
-   only field-return-carried callers need the variant resolver. Have
-   `summary.compute` cache reusable `fx` and let `call_uniques` skip the fixpoint
-   and run only its sited extraction, mirroring the shipped summary→analyze reuse
-   and gated by `TWINKLE_FIXVERIFY`. Est. ~2.4s/build (~7s/`make stage2`). Best
-   effort/risk ratio — reuses proven machinery.
+1. **Reuse the summary fixpoint for 8G's `call_uniques` — PROTOTYPED, NOT
+   VIABLE.** 8G runs the ownership fixpoint twice per published-callee caller:
+   once in `summary.compute` (no `fix_cache` — `no_cache_ids`), then again in
+   `call_uniques_sited` during `collect_groups`. The hypothesis was that the two
+   are redundant. They are **not**: `summary.compute` runs the generic resolver
+   (the variant table does not exist yet — it is built *from* the summary), while
+   `call_uniques` runs `make_variant_resolver_for_render()`. Selecting an owned
+   variant changes a call's ownership effect, so the render-resolver `fx` is
+   strictly *more precise* than the generic `fx` — the `call_uniques_sited` comment
+   only claims the *extracted* `arg_unique` vectors match for shell-only callers,
+   not the full `fx`. A prototype (build the cache in `summary.compute_cached`,
+   reuse it in `call_uniques`, exclude callers of field-tier callees, gate with
+   `TWINKLE_8G_CU_REUSE` + `TWINKLE_FIXVERIFY`) confirmed the problem: byte-diff of
+   reuse-on vs reuse-off output showed reuse **loses clones** (`updatable` 27→22,
+   `groups0` 65→48) — a codegen change, not a transparent speedup — for a win of
+   only `groups` ~2.19s→1.63s (~0.55s/build, far below the ~2.4s hoped, since the
+   compute_cached cache-build offsets it and field-tier callers still recompute).
+   Field-tier exclusion did not close the gap; the render-resolver divergence set
+   is broader than "calls a field-tier callee" and has no cheap static
+   characterization. **Lesson:** unlike summary→analyze (both generic resolver,
+   sound reuse), summary→`call_uniques` cannot share an `fx` without either a
+   correct (currently unknown) safe-caller predicate or making the summary pass use
+   the render resolver — which needs the variant table it produces (circular) or a
+   second full summary pass (no win). Prototype reverted.
 
 2. **Cut the inner solve on the 3–4 giant functions.** Solve dominates and scales
    with blocks × rounds × per-block co-iterated exit-map work. Levers: skip
