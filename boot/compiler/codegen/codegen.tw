@@ -18,8 +18,8 @@ use @std.date
 use @std.proc
 
 use compiler.anf.{AnfModule}
-use compiler.backend.closure_convert.{convert_closures}
-use compiler.backend.prepare.{prepare_backend_with_mutable_config}
+use compiler.backend.closure_convert.{ClosureConversion, convert_closures}
+use compiler.backend.prepare.{PreparedModule, prepare_backend_with_mutable_config}
 use compiler.backend.verify.{VerifyLevel, verify_prepared_module_with_level}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.builder_region
@@ -44,7 +44,7 @@ use compiler.codegen.wasm_plan.{plan_wasm_types}
 use compiler.codegen.wat.{emit_wat}
 use compiler.core_ir.{LibType}
 use compiler.mono_type.{MonoType}
-use compiler.opt.semantics.{make_prelude_optimizer_semantics}
+use compiler.opt.semantics.{OptimizerSemantics, make_prelude_optimizer_semantics}
 use compiler.resolver.{ResolvedEnv, build_ref_field_table}
 
 fn timings_enabled() Bool {
@@ -99,7 +99,20 @@ pub fn runtime_modules(eq_layouts: EqTypeLayouts) Vector<WasmModule> {
   ]
 }
 
-pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) LinkedModule {
+// Shared result for the semantic-ANF-to-prepared-backend codegen preparation
+// sequence. `prepared` is the backend boundary consumed by verification,
+// planning, and emission; the earlier fields are exposed for inspection tools
+// that render the authoritative ownership/mutable audit.
+pub type PreparedCodegen = .{
+  optimizer_semantics: OptimizerSemantics,
+  builder_anf: AnfModule,
+  specialization: variant_specialize.SpecializeResult,
+  closure_conversion: ClosureConversion,
+  produced_decisions: mutable_produce.ProducedDecisions,
+  prepared: PreparedModule,
+}
+
+pub fn prepare_codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) PreparedCodegen {
   timed := timings_enabled()
 
   // Env-aware semantics: the reference-typed record-field table lets ownership
@@ -108,7 +121,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   // threaded through both codegen stages below.
   sem_env := make_prelude_optimizer_semantics(builtins).with_ref_fields(build_ref_field_table(env))
 
-  // 0. Builder-region rewrite -> ANF'. Runs before closure conversion and the
+  // Builder-region rewrite -> ANF'. Runs before closure conversion and the
   // call-swap producer so both consume the rewritten ANF (the call-swap stale-artifact
   // guard keys off the ANF fingerprint, which must be ANF').
   log_phase("begin builder_region_rewrite")
@@ -120,7 +133,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
     log_time("builder_region_rewrite", tbr2 - tbr)
   }
 
-  // 0b. Ownership-specialized function variants (Phase 8G) -> ANF''. Physically
+  // Ownership-specialized function variants (Phase 8G) -> ANF''. Physically
   // clones callees under a proven owned precondition and routes satisfying caller
   // sites to the clone, so the seeded decision producer emits in-place at the
   // clone's own sites. Disabled via TWINKLE_VARIANT_SPECIALIZE=0.
@@ -142,7 +155,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
     log_time("variant_specialize", tvs - tbr2)
   }
 
-  // 1. Final closure conversion.
+  // Final closure conversion.
   log_phase("begin closure_convert")
   t0 := date.now()
   closure_conversion := convert_closures(anf_spec, env)
@@ -152,7 +165,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
     log_time("closure_convert", t1 - t0)
   }
 
-  // 2a. Produce mutable decisions over the optimized semantic ANF: update-call
+  // Produce mutable decisions over the optimized semantic ANF: update-call
   // families (vector/dict set and remove) plus record-shell updates. Ownership
   // summaries are pre-closure facts; backend emission consumes them only after
   // the prepared-site selector validates that the closure-converted site still
@@ -179,7 +192,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
     log_time("produce_mutable_decisions", t1p - t1)
   }
 
-  // 2b. Prepare backend IR, wired with those decisions.
+  // Prepare backend IR, wired with those decisions.
   log_phase("begin prepare_backend")
   prepared := prepare_backend_with_mutable_config(
     closure_conversion.anf,
@@ -191,13 +204,29 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   )
   t2 := date.now()
 
-  env2 := env
-  env2.typed_vector_fields = prepared.typed_vector_fields
-  env2.typed_vector_payloads = prepared.typed_vector_payloads
-
   if timed {
     log_time("prepare_backend", t2 - t1p)
   }
+
+  PreparedCodegen.{
+    optimizer_semantics: sem_env,
+    builder_anf: anf_prime,
+    specialization: spec,
+    closure_conversion,
+    produced_decisions,
+    prepared,
+  }
+}
+
+pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) LinkedModule {
+  timed := timings_enabled()
+  prepared_codegen := prepare_codegen(anf, env, builtins)
+  prepared := prepared_codegen.prepared
+
+  env2 := env
+  env2.typed_vector_fields = prepared.typed_vector_fields
+  env2.typed_vector_payloads = prepared.typed_vector_payloads
+  t2 := date.now()
 
   // 3. Verify prepared backend IR.
   log_phase("begin verify")

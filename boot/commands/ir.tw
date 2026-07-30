@@ -4,17 +4,14 @@ use @std.proc
 
 use commands.common.{exit_usage_error, format_compile_error, get_positional, print_warnings}
 use compiler.artifacts.{PipelineArtifacts}
-use compiler.backend.closure_convert.{convert_closures}
-use compiler.backend.prepare.{prepare_backend_with_mutable_config}
 use compiler.builder_region_detect as detect
 use compiler.builder_region_fact as region_fact
 use compiler.census
-use compiler.codegen.builder_region
 use compiler.codegen.builder_region_produce
+use compiler.codegen.codegen
 use compiler.codegen.dry_run
 use compiler.codegen.mutable_audit
 use compiler.codegen.mutable_produce
-use compiler.codegen.mutable_select
 use compiler.codegen.ownership_verdicts
 use compiler.codegen.variant_specialize
 use compiler.ir_print
@@ -142,10 +139,8 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
   sites := census.census_sites(artifacts.opt, artifacts.builtins)
   out := census.tally_from_sites(sites).render_census()
   if include_sites {
-    // Env-aware semantics shared across the dry-run and the authoritative audit.
-    s := semantics
-      .make_prelude_optimizer_semantics(artifacts.builtins)
-      .with_ref_fields(build_ref_field_table(artifacts.env))
+    prepared_codegen := codegen.prepare_codegen(artifacts.opt, artifacts.env, artifacts.builtins)
+    s := prepared_codegen.optimizer_semantics
     owned := ownership_verdicts.compute_artifacts(artifacts.opt, artifacts.builtins, s)
 
     // Pre-specialization candidate table (whole-local update sites joined with
@@ -154,29 +149,13 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
     out = .concat("pre-specialization candidates\n")
     out = .concat(dry_run.render_dry_run(dry))
 
-    // Authoritative post-prepare audit: mirror `link_program` exactly — builder
-    // rewrite, ownership specialization, seeded mutable production over the
-    // SPECIALIZED ANF (so field-backed clone decisions are present), then prepare
-    // and re-run the emit selector. This is the authority for what actually emits,
-    // including `record_backed_<family>` rows with `MutableSelected`.
-    rewritten := builder_region.rewrite_module(artifacts.opt, artifacts.builtins)
-    spec := variant_specialize.specialize_module_with_sem(rewritten, artifacts.builtins, s)
-    produced := mutable_produce.produce_mutable_decisions_seeded_with_sem(
-      spec.anf,
-      artifacts.builtins,
-      spec.seeds,
-      s,
-      spec.summary,
-    )
-    cc := convert_closures(spec.anf, artifacts.env)
-    prepared := prepare_backend_with_mutable_config(
-      cc.anf,
-      artifacts.env,
-      artifacts.builtins,
-      cc.captures,
-      produced.table,
-      mutable_select.enabled_emit_policy(),
-    )
+    // Authoritative post-prepare audit: consume the same prepared-codegen result
+    // as `link_program`, then re-run the emit selector. This is the authority for
+    // what actually emits, including `record_backed_<family>` rows with
+    // `MutableSelected`.
+    spec := prepared_codegen.specialization
+    produced := prepared_codegen.produced_decisions
+    prepared := prepared_codegen.prepared
     audit_rows := mutable_audit.audit_prepared_calls(prepared, artifacts.env, artifacts.builtins)
     out = .concat("\nmutable decisions\n")
     out = .concat(mutable_audit.render_audit_rows(audit_rows))
@@ -187,7 +166,9 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
     // certified region is consumed iff it no longer detects as a candidate after
     // rewrite_module (its fold was replaced). Produced-but-splice-abandoned
     // regions still detect their fold, so they read "no".
-    post_keys := collect_certified_keys(detect.detect_candidates(rewritten, artifacts.builtins))
+    post_keys := collect_certified_keys(
+      detect.detect_candidates(prepared_codegen.builder_anf, artifacts.builtins),
+    )
     out = .concat(render_region_rows(region_vs, post_keys))
 
     // Phase 8G variant-routing: which callees get an ownership-specialized clone.
