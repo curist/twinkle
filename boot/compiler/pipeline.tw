@@ -4,18 +4,11 @@ use compiler.artifacts.{CompileError, PipelineArtifacts}
 use compiler.base_env.{builtin_env}
 use compiler.builtins.{make_builtin_registry}
 use compiler.codegen.codegen.{codegen, codegen_wasm, codegen_wasm_buffer}
-use compiler.core_ir.{CompiledModule, ExternalRef, ExternalValueRef, LibExport}
-use compiler.core_linker
 use compiler.imports
-use compiler.lower_anf
 use compiler.module_compiler
-use compiler.monomorphize
-use compiler.opt.dce_funcs
-use compiler.opt.pipeline.{optimize_module}
 use compiler.query.analyze
 use compiler.query.cache as query_cache
 use compiler.query.diag_render
-use compiler.query.stage_runner
 use compiler.resolver.{ResolvedEnv}
 use lib.module.loader
 use lib.source.diagnostics as diag
@@ -60,109 +53,24 @@ fn compile_source_impl(src: String, lib_build: Bool) Result<PipelineArtifacts, S
     return .Err(format_analysis_diags_inline(a_result.env, src, a_result.diagnostics))
   }
 
-  // Phase 2: Lower every analyzed module to Core IR.
-  // Source-string compilation uses the same dependency-aware path as entry-file
-  // compilation so prelude-backed methods link through their real module origins
-  // instead of becoming unresolved builtin-shaped imports.
-  cur_cache := a_result.state.cache
   canonical := imports.canonical_module_path(virtual_path, a_result.state.canonical_roots)
-  compiled_modules: Vector<CompiledModule> = []
-  lib_warnings: Vector<analyze.AnalysisDiag> = []
+  graph := module_compiler.compile_analyzed_graph(
+    canonical,
+    a_result.env,
+    a_result.state,
+    builtins,
+    lib_build,
+    a_result.diagnostics,
+    .{ enabled: false, modules_start: 0.0 },
+  )
 
-  for module_path in a_result.state.module_order {
-    parsed := try query_cache
-      .latest_parsed(cur_cache, module_path)
-      .ok_or("internal: missing parsed cache for '${module_path}'")
-    typed := try query_cache
-      .latest_typed(cur_cache, module_path)
-      .ok_or("internal: missing typed cache for '${module_path}'")
-    runner := try a_result.state.module_runners[module_path].ok_or(
-      "internal: missing runner for '${module_path}'",
-    )
-    lowered_out := stage_runner.lower(runner, cur_cache, parsed, typed, builtins)
-    cur_cache = lowered_out.store
-    lowered := lowered_out.value
-
-    if lowered.diagnostics.len() > 0 {
-      return .Err(format_diags_inline(a_result.env, src, lowered.diagnostics))
-    }
-
-    external_refs: Dict<Int, ExternalRef> = Dict.new()
-
-    for fid, origin in lowered.imported_func_origins {
-      external_refs[fid] = ExternalRef.{
-        module_path: origin.module_path,
-        func_name: origin.func_name,
-      }
-    }
-
-    value_exports: Dict<String, Int> = Dict.new()
-
-    for name, lid in lowered.pub_value_globals {
-      value_exports[name] = lid.id
-    }
-
-    value_refs: Dict<Int, ExternalValueRef> = Dict.new()
-
-    for lid, origin in lowered.imported_value_origins {
-      value_refs[lid] = origin
-    }
-
-    lib_exports: Vector<LibExport> = []
-
-    if lib_build and module_path == canonical {
-      selected := module_compiler.select_lib_exports(
-        parsed.module,
-        typed,
-        lowered,
-        module_path,
-        a_result.env,
-      )
-      lib_exports = selected.exports
-      lib_warnings = .concat(selected.warnings)
-    }
-
-    compiled_modules = .append(
-      .{
-        path: module_path,
-        core: lowered.module,
-        func_table: lowered.func_table,
-        external_refs,
-        extern_imports: lowered.module.extern_imports,
-        builtin_count: builtins.next_id,
-        value_exports,
-        value_refs,
-        defined_global_count: lowered.next_global_local_id,
-        lib_exports,
-      },
-    )
+  case graph {
+    .Ok(result) => .Ok(result.artifacts),
+    .Err(err) => case err {
+      .LowerDiagnostics(diags) => .Err(format_lower_diags_inline(a_result.env, src, diags)),
+      .Internal(msg) => .Err("internal: ${msg}"),
+    },
   }
-
-  if compiled_modules.len() == 0 {
-    return .Err("internal: no modules compiled")
-  }
-
-  // Phase 3: Link, monomorphize, ANF lower, optimize
-  core := core_linker.link(compiled_modules, canonical, a_result.env, builtins.next_id)
-  mono := monomorphize.monomorphize(core)
-  anf := lower_anf.lower_module(mono)
-  opt := dce_funcs.sweep_dead_functions(optimize_module(anf))
-
-  // Collect warnings
-  warnings: Vector<analyze.AnalysisDiag> = []
-
-  for d in a_result.diagnostics {
-    case d.kind {
-      .Warning(_) => {
-        warnings = .append(d)
-      },
-      .Error(_) => {},
-    }
-  }
-
-  warnings = .concat(lib_warnings)
-
-  .Ok(PipelineArtifacts.{ env: a_result.env, builtins, core, mono, anf, opt, warnings })
 }
 
 /// Format analysis diagnostics using the in-memory source (for virtual paths).
@@ -193,6 +101,16 @@ fn format_analysis_diag_inline(env: ResolvedEnv, src: String, d: analyze.Analysi
   }
   rep := diag_render.to_report(d.kind, ctx)
   render.render(rep, reg, config)
+}
+
+fn format_lower_diags_inline(env: ResolvedEnv, src: String, diags: Vector<analyze.AnalysisDiag>) String {
+  kinds: Vector<diag.DiagKind> = []
+
+  for d in diags {
+    kinds = .append(d.kind)
+  }
+
+  format_diags_inline(env, src, kinds)
 }
 
 fn format_diags_inline(env: ResolvedEnv, src: String, diags: Vector<diag.DiagKind>) String {

@@ -14,7 +14,7 @@ use @std.proc
 use compiler.artifacts.{CompileError, PipelineArtifacts}
 use compiler.ast.{Module}
 use compiler.base_env.{builtin_env}
-use compiler.builtins.{make_builtin_registry}
+use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.checker.{CheckResult}
 use compiler.codegen.wasm_layout.{nominal_struct_sym}
 use compiler.core_ir.{
@@ -26,6 +26,7 @@ use compiler.lower_anf
 use compiler.lower_core.{LowerResult}
 use compiler.mono_type.{MonoType, ty_to_string}
 use compiler.monomorphize
+use compiler.opt.dce_funcs
 use compiler.opt.pipeline.{optimize_module}
 use compiler.query.analyze
 use compiler.query.cache as query_cache
@@ -79,10 +80,48 @@ fn compile_entry_with_lib(entry_path: String, lib_build: Bool) Result<
     return .Err(.Internal("analysis failed"))
   }
 
+  graph := compile_analyzed_graph(
+    canonical_entry,
+    a_result.env,
+    a_result.state,
+    builtins,
+    lib_build,
+    a_result.diagnostics,
+    .{ enabled: timed, modules_start: t_modules_start },
+  )
+
+  case graph {
+    .Ok(result) => .Ok(result.artifacts),
+    .Err(err) => case err {
+      .LowerDiagnostics(diags) => .Err(.Diagnostics(.{ diagnostics: diags, env: a_result.env })),
+      .Internal(msg) => .Err(.Internal(msg)),
+    },
+  }
+}
+
+pub type CompileGraphTiming = .{ enabled: Bool, modules_start: Float }
+
+pub type CompileGraphSuccess = .{ artifacts: PipelineArtifacts }
+
+pub type CompileGraphError = { LowerDiagnostics(Vector<analyze.AnalysisDiag>), Internal(String) }
+
+/// Compile an already-analyzed dependency graph through the shared post-analysis
+/// tail: lower every module, assemble link inputs, link, monomorphize, lower to
+/// ANF, optimize, and sweep dead ANF functions. Callers remain responsible for
+/// constructing analysis state and formatting any diagnostics for their public API.
+pub fn compile_analyzed_graph(
+  canonical_entry: String,
+  env: ResolvedEnv,
+  state: analyze.AnalysisState,
+  builtins: BuiltinRegistry,
+  lib_build: Bool,
+  analysis_diagnostics: Vector<analyze.AnalysisDiag>,
+  timing: CompileGraphTiming,
+) Result<CompileGraphSuccess, CompileGraphError> {
   // Collect warnings from analysis diagnostics (returned in result).
   compile_warnings: Vector<analyze.AnalysisDiag> = []
 
-  for d in a_result.diagnostics {
+  for d in analysis_diagnostics {
     case d.kind {
       .Warning(_) => {
         compile_warnings = .append(d)
@@ -91,27 +130,27 @@ fn compile_entry_with_lib(entry_path: String, lib_build: Bool) Result<
     }
   }
 
-  // Phase 2: Lower each analyzed module to Core IR
+  // Phase 2: Lower each analyzed module to Core IR.
   compiled_modules: Vector<CompiledModule> = []
-  cur_cache := a_result.state.cache
+  cur_cache := state.cache
   lower_total_ms := 0.0
 
-  for module_path in a_result.state.module_order {
-    // Retrieve cached artifacts
+  for module_path in state.module_order {
+    // Retrieve cached artifacts.
     parsed := try query_cache
       .latest_parsed(cur_cache, module_path)
       .ok_or(.Internal("internal: missing parsed cache for '${module_path}'"))
     typed := try query_cache
       .latest_typed(cur_cache, module_path)
       .ok_or(.Internal("internal: missing typed cache for '${module_path}'"))
-    runner := try a_result.state.module_runners[module_path].ok_or(
+    runner := try state.module_runners[module_path].ok_or(
       .Internal("internal: missing runner for '${module_path}'"),
     )
     t_lower0 := date.now()
     lowered_out := stage_runner.lower(runner, cur_cache, parsed, typed, builtins)
     cur_cache = lowered_out.store
 
-    if timed {
+    if timing.enabled {
       lower_total_ms = lower_total_ms + (date.now() - t_lower0)
     }
 
@@ -126,11 +165,11 @@ fn compile_entry_with_lib(entry_path: String, lib_build: Bool) Result<
           kind: d,
           stage: "lower",
           data: .None,
-          type_names: analyze.type_name_snapshot(a_result.env),
+          type_names: analyze.type_name_snapshot(env),
         }
       }
 
-      return .Err(.Diagnostics(.{ diagnostics: lower_diags, env: a_result.env }))
+      return .Err(.LowerDiagnostics(lower_diags))
     }
 
     // Build external_refs from lowering's canonical imported origins.
@@ -160,7 +199,7 @@ fn compile_entry_with_lib(entry_path: String, lib_build: Bool) Result<
     lib_exports: Vector<LibExport> = []
 
     if lib_build and module_path == canonical_entry {
-      selected := select_lib_exports(parsed.module, typed, lowered, module_path, a_result.env)
+      selected := select_lib_exports(parsed.module, typed, lowered, module_path, env)
       lib_exports = selected.exports
       compile_warnings = .concat(selected.warnings)
     }
@@ -183,11 +222,11 @@ fn compile_entry_with_lib(entry_path: String, lib_build: Bool) Result<
 
   t_modules_end := date.now()
 
-  if timed {
+  if timing.enabled {
     n := compiled_modules.len()
-    ft := a_result.state.timings
-    fc := a_result.state.counts
-    eprintln("[time] compile_modules (${n} modules): ${t_modules_end - t_modules_start}ms")
+    ft := state.timings
+    fc := state.counts
+    eprintln("[time] compile_modules (${n} modules): ${t_modules_end - timing.modules_start}ms")
     eprintln(
       "[time:frontend] load=${ft.load_source}ms  parse=${ft.parse}ms  plan_deps=${ft.plan_deps}ms  dep_hashes=${ft.dep_hashes}ms",
     )
@@ -209,7 +248,7 @@ fn compile_entry_with_lib(entry_path: String, lib_build: Bool) Result<
     eprintln(
       "[time:imports] edges=${fc.import_edges}  module=${fc.import_module_edges}  selective=${fc.import_selective_edges}  prelude=${fc.import_prelude_edges}  export_entries=${fc.import_export_entries}",
     )
-    top_imports := a_result.state.import_timings.sort_by(fn(a, b) { a.ms.compare(b.ms) })
+    top_imports := state.import_timings.sort_by(fn(a, b) { a.ms.compare(b.ms) })
     top_n := if top_imports.len() < 8 {
       top_imports.len()
     } else {
@@ -228,37 +267,37 @@ fn compile_entry_with_lib(entry_path: String, lib_build: Bool) Result<
     return .Err(.Internal("no modules compiled"))
   }
 
-  // Phase 3: Link, monomorphize, ANF lower, optimize
+  // Phase 3: Link, monomorphize, ANF lower, optimize, and sweep dead ANF funcs.
   t0 := date.now()
-  core := core_linker.link(compiled_modules, canonical_entry, a_result.env, builtins.next_id)
+  core := core_linker.link(compiled_modules, canonical_entry, env, builtins.next_id)
   t1 := date.now()
 
-  if timed {
+  if timing.enabled {
     eprintln("[time] core_link: ${t1 - t0}ms")
   }
 
   mono := monomorphize.monomorphize(core)
   t2 := date.now()
 
-  if timed {
+  if timing.enabled {
     eprintln("[time] monomorphize: ${t2 - t1}ms")
   }
 
   anf := lower_anf.lower_module(mono)
   t3 := date.now()
 
-  if timed {
+  if timing.enabled {
     eprintln("[time] lower_anf: ${t3 - t2}ms")
   }
 
-  opt := optimize_module(anf)
+  opt := dce_funcs.sweep_dead_functions(optimize_module(anf))
   t4 := date.now()
 
-  if timed {
+  if timing.enabled {
     eprintln("[time] optimize: ${t4 - t3}ms")
   }
 
-  .Ok(.{ env: a_result.env, builtins, core, mono, anf, opt, warnings: compile_warnings })
+  .Ok(.{ artifacts: .{ env, builtins, core, mono, anf, opt, warnings: compile_warnings } })
 }
 
 pub type LibSelection = .{ exports: Vector<LibExport>, warnings: Vector<analyze.AnalysisDiag> }
