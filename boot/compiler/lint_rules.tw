@@ -105,6 +105,20 @@ pub fn describe(rule: String) RuleInfo? {
         ,
       },
     ),
+    "redundant-print-stringify" => .Some(
+      .{
+        brief: "print/error sinks accept Stringify values directly; skip explicit stringification",
+        detailed:
+          \\The print/error sink family is generic over `T: Stringify`, so wrapping
+          \\a value in a one-hole interpolation or calling `.to_string()` before
+          \\printing is redundant ceremony. Prefer `println(foo)` over interpolating
+          \\only `foo`, and `eprintln(err)` over `eprintln(err.to_string())`.
+          \\
+          \\The rule only auto-fixes whole-argument stringification; formatted
+          \\messages (interpolations with surrounding text) are left untouched.
+        ,
+      },
+    ),
     _ => .None,
   }
 }

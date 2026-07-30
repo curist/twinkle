@@ -1280,6 +1280,47 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "print family accepts Stringify values",
+      fn() {
+        src := "fn demo() Void {\n  print(1)\n  println(true)\n  eprint(2.5)\n  eprintln(0x2a)\n}"
+        _ := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "println accepts user Stringify witness",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn to_string(p: Point) String { \"\${p.x},\${p.y}\" }\nfn demo() Void { println(Point.{ x: 1, y: 2 }) }"
+        _ := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "println accepts generic Stringify bound",
+      fn() {
+        src := "fn log<T: Stringify>(x: T) Void { println(x) }\nfn demo() Void { log(42) }"
+        _ := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "println rejects non Stringify value",
+      fn() {
+        msgs := try check_errs_builtins("type Hidden = .{}\nfn demo() Void { println(Hidden.{}) }")
+        try assert.ok(msgs.len() > 0, "expected diagnostics")
+        try assert.ok(msgs[0].contains("Stringify"), "diagnostic should mention Stringify")
+        .Ok({})
+      },
+    )
+    .test(
+      "error accepts Stringify and still diverges",
+      fn() {
+        src := "fn fail() Int { error(42) }"
+        _ := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
       "integration no errors",
       fn() {
         src := "type Point = .{ x: Int, y: Int }\nfn dist(p: Point) Int { p.x + p.y }\nfn main() Int { dist(.{ x: 1, y: 2 }) }"

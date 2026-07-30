@@ -12,6 +12,7 @@ use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{prepare_backend_preroute}
 use compiler.backend.prepared_ir.{PreparedFunc}
 use compiler.backend.route_typed_vec.{analyze_typed_payloads}
+use compiler.backend.tailify.{never_returning_funcs}
 use compiler.backend.typed_param_abi.{analyze_typed_repr, param_uses_typed_only}
 use compiler.base_env.{first_user_type_id}
 use compiler.builtins.{BuiltinRegistry}
@@ -184,7 +185,12 @@ pub fn suite() runner.Suite {
 
         // Joint fixpoint: `int_col`'s `values` param is typeable and thus a clean
         // typed producer, so the payload types.
-        repr := analyze_typed_repr(p.funcs, p.builtins, first_user_type_id())
+        repr := analyze_typed_repr(
+          p.funcs,
+          p.builtins,
+          first_user_type_id(),
+          never_returning_funcs(p.funcs),
+        )
         try assert.ok(
           typed_count(repr.typed_payloads) >= 1,
           "joint fixpoint should type the param-fed payload",
@@ -200,7 +206,12 @@ pub fn suite() runner.Suite {
       "a captured typed-local vector is a typeable capture (M1b)",
       fn() {
         p := try prepare_src(typed_capture_src())
-        repr := analyze_typed_repr(p.funcs, p.builtins, first_user_type_id())
+        repr := analyze_typed_repr(
+          p.funcs,
+          p.builtins,
+          first_user_type_id(),
+          never_returning_funcs(p.funcs),
+        )
         try assert.ok(
           repr.capture_abi.keys().len() >= 1,
           "comparator capturing a local collect should be a typeable capture",
@@ -212,7 +223,12 @@ pub fn suite() runner.Suite {
       "a captured boxed-return vector is NOT a typeable capture (support gate)",
       fn() {
         p := try prepare_src(boxed_capture_src())
-        repr := analyze_typed_repr(p.funcs, p.builtins, first_user_type_id())
+        repr := analyze_typed_repr(
+          p.funcs,
+          p.builtins,
+          first_user_type_id(),
+          never_returning_funcs(p.funcs),
+        )
         try assert.equal(repr.capture_abi.keys().len(), 0)
         .Ok({})
       },

@@ -34,6 +34,43 @@ fn timings_enabled() Bool {
   }
 }
 
+fn summary_trace_enabled() Bool {
+  case proc.env("TWINKLE_SUMMARY_TRACE") {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+fn scc_stats(members: Vector<Int>, index: Dict<Int, CfgFunction>) String {
+  blocks := 0
+  insts := 0
+  edges := 0
+  first := if members.len() > 0 {
+    members[0]
+  } else {
+    0 - 1
+  }
+  first_name := "<none>"
+
+  for id in members {
+    case index.get(id) {
+      .Some(f) => {
+        if id == first {
+          first_name = f.name
+        }
+        blocks = blocks + f.blocks.len()
+        for blk in f.blocks {
+          insts = insts + blk.instructions.len()
+          edges = edges + blk.succs.len()
+        }
+      },
+      .None => {},
+    }
+  }
+
+  "first=${first} first_name=${first_name} members=${members.len()} blocks=${blocks} insts=${insts} edges=${edges}"
+}
+
 // ── Determinism helpers ─────────────────────────────────────────────
 fn insert_sorted(v: Vector<Int>, id: Int) Vector<Int> {
   out: Vector<Int> = []
@@ -408,6 +445,10 @@ fn run_scc(
     0.0
   }
   members := scc.sort()
+  trace := summary_trace_enabled()
+  if trace {
+    eprintln("[trace:summary:scc:start] ${scc_stats(members, index)}")
+  }
   scc_set := int_set(members)
   cache := cache_in
   callers := scc_callers(members, scc_set, index, user_ids)
@@ -460,6 +501,15 @@ fn run_scc(
     }
     worklist = nd.sort()
     rounds = rounds + 1
+    if trace {
+      eprintln(
+        "[trace:summary:scc:round] first=${if members.len() > 0 {
+          members[0]
+        } else {
+          0 - 1
+        }} round=${rounds} visits=${visits} changed=${changed_summaries} next=${worklist.len()}",
+      )
+    }
   }
 
   // Non-convergence: the worklist still holds dirty members at the cap. ret_paths
@@ -477,6 +527,11 @@ fn run_scc(
         .None => {},
       }
     }
+  }
+  if trace {
+    eprintln(
+      "[trace:summary:scc:end] ${scc_stats(members, index)} rounds=${rounds} visits=${visits} changed=${changed_summaries} remaining=${worklist.len()}",
+    )
   }
   if timed {
     t_done := date.now()
@@ -1735,6 +1790,10 @@ pub fn render_cfg(
 
 // ── Driver ──────────────────────────────────────────────────────────
 pub fn compute(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) SummaryTable {
+  trace := summary_trace_enabled()
+  if trace {
+    eprintln("[trace:summary:compute:start] funcs=${view.functions.len()}")
+  }
   index := build_func_index(view)
   user_ids := user_id_set(view)
 
@@ -1752,7 +1811,13 @@ pub fn compute(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) Summa
     table = r.table
     cache = r.cache
   }
+  if trace {
+    eprintln("[trace:summary:compute:dedupe:start]")
+  }
   table = with_dedupe_helpers(table, view, b, sem)
+  if trace {
+    eprintln("[trace:summary:compute:end]")
+  }
   table
 }
 
@@ -1826,6 +1891,12 @@ pub fn compute_for_roots_cached(
   sem: OptimizerSemantics,
   roots: Dict<Int, Bool>,
 ) SummaryCacheResult {
+  trace := summary_trace_enabled()
+  if trace {
+    eprintln(
+      "[trace:summary:roots:start] funcs=${view.functions.len()} roots=${roots.keys().len()}",
+    )
+  }
   timed := timings_enabled()
   t0 := if timed {
     date.now()
@@ -1839,7 +1910,13 @@ pub fn compute_for_roots_cached(
   } else {
     0.0
   }
+  if trace {
+    eprintln("[trace:summary:roots:closure:start]")
+  }
   wanted := dependency_closure(view, roots)
+  if trace {
+    eprintln("[trace:summary:roots:closure:end] wanted=${wanted.keys().len()}")
+  }
   t_closure := if timed {
     date.now()
   } else {
@@ -1908,6 +1985,12 @@ pub fn compute_for_roots_cached(
         .len()} wanted=${wanted.keys().len()} wanted_blocks=${wanted_blocks} wanted_insts=${wanted_insts} wanted_edges=${wanted_edges} sccs=${sccs.len()} run_sccs=${run_sccs} skipped_sccs=${skipped_sccs} run_members=${run_members} skipped_members=${skipped_members}",
     )
   }
+  if trace {
+    eprintln("[trace:summary:roots:dedupe:start]")
+  }
   table = with_dedupe_helpers(table, view, b, sem)
+  if trace {
+    eprintln("[trace:summary:roots:end]")
+  }
   SummaryCacheResult.{ table, fix_cache: cache }
 }

@@ -16,7 +16,7 @@ use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{prepare_backend_preroute}
 use compiler.backend.prepared_ir.{PreparedFunc, SlotInfo}
 use compiler.backend.route_typed_vec.{route_typed_vectors}
-use compiler.backend.tailify.{tailify_funcs}
+use compiler.backend.tailify.{never_returning_funcs, tailify_funcs}
 use compiler.backend.typed_param_abi.{analyze_typed_repr}
 use compiler.base_env.{first_user_type_id}
 use compiler.builtins.{BuiltinRegistry}
@@ -142,11 +142,12 @@ pub fn suite() runner.Suite {
       "store-form accessor types (return ABI + caller slots) only after tailify",
       fn() {
         p := try prepare_src(accessor_src())
+        never := never_returning_funcs(p.funcs)
 
         // Without tailify: the store-form live arm stores into the result slot
         // (not a Return), so return_is_typed cannot fire — no typed return, and
         // the caller's `keys` stays boxed.
-        repr0 := analyze_typed_repr(p.funcs, p.builtins, first_user_type_id())
+        repr0 := analyze_typed_repr(p.funcs, p.builtins, first_user_type_id(), never)
         routed0 := route_typed_vectors(
           p.funcs,
           p.builtins,
@@ -159,8 +160,8 @@ pub fn suite() runner.Suite {
 
         // With tailify: the live arm becomes a Return, as_ints gets a PVecI64
         // return ABI, and the group-aware caller routing types `keys` too.
-        funcs_t := tailify_funcs(p.funcs, p.builtins)
-        repr1 := analyze_typed_repr(funcs_t, p.builtins, first_user_type_id())
+        funcs_t := tailify_funcs(p.funcs, p.builtins, never)
+        repr1 := analyze_typed_repr(funcs_t, p.builtins, first_user_type_id(), never)
         routed1 := route_typed_vectors(
           funcs_t,
           p.builtins,

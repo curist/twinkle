@@ -152,10 +152,10 @@ pub fn suite() runner.Suite {
       fn() Result<Void, String> {
         art := try compile_fixture("setb")
         vt := variants_of(art)
-        ids := summary.variant_ids_of(vt)
+        ids := vt.variant_ids_of()
         try assert.ok(ids.len() >= 1, "setb must publish at least one variant")
         setb_id := ids[0].func
-        v := summary.select_variant_for_args(vt, setb_id, [true, true])
+        v := vt.select_variant_for_args(setb_id, [true, true])
         try assert.ok(v != .None, "unique record arg must select the owned variant")
         .Ok({})
       },
@@ -182,7 +182,7 @@ pub fn suite() runner.Suite {
         // entry seeds give no in-place decision; the owned variant seed must.
         art := try compile_fixture("visit_rec")
         vt := variants_of(art)
-        variant := summary.variant_ids_of(vt)[0]
+        variant := vt.variant_ids_of()[0]
         visit_cfg := try cfg_func_of(art, variant.func)
         seed := summary.seed_for_variant(visit_cfg, variant)
         spec := variant_route.CloneSpec.{ seed_locals: seed, field_seed_paths: Dict.new(), variant }

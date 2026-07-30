@@ -410,7 +410,7 @@ fn summ1(name: String, nparams: Int, body: AnfExpr) ownership.Summary {
   b := b_reg()
   m := module_of([fdef(1, name, nparams, body)])
   v := cfg.build_view(m, b)
-  case cfg.function_named(v, name) {
+  case v.function_named(name) {
     .Some(f) => ownership.summarize_function(
       f,
       ownership.empty_summary_table(),
@@ -427,7 +427,7 @@ fn summ1(name: String, nparams: Int, body: AnfExpr) ownership.Summary {
 fn cfg_func_of(name: String, nparams: Int, body: AnfExpr) cfg.CfgFunction {
   b := b_reg()
   v := cfg.build_view(module_of([fdef(1, name, nparams, body)]), b)
-  case cfg.function_named(v, name) {
+  case v.function_named(name) {
     .Some(f) => f,
     .None => error("missing ${name}"),
   }
@@ -532,7 +532,7 @@ fn compute_of(funcs: Vector<AnfFunctionDef>) ownership.SummaryTable {
 }
 
 fn summ_of(t: ownership.SummaryTable, func_id: Int) ownership.Summary {
-  case ownership.summary_get(t, func_id) {
+  case t.summary_get(func_id) {
     .Some(s) => s,
     .None => error("no summary ${func_id}"),
   }
@@ -543,7 +543,7 @@ fn analyzed_caller(funcs: Vector<AnfFunctionDef>, caller: String) cfg.CfgFunctio
   v := cfg.build_view(module_of(funcs), b)
   t := summary.compute(v, b, sem())
   a := ownership.analyze_with_summaries(v, b, sem(), t)
-  case cfg.function_named(a, caller) {
+  case a.function_named(caller) {
     .Some(f) => f,
     .None => error("no ${caller}"),
   }
@@ -1448,7 +1448,7 @@ pub fn suite() runner.Suite {
         )
         b := b_reg()
         v := cfg.build_view(module_of([fdef(1, "f", 1, body)]), b)
-        f := case cfg.function_named(v, "f") {
+        f := case v.function_named("f") {
           .Some(found) => found,
           .None => error("missing f"),
         }
@@ -1768,6 +1768,38 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "collect_field_reqs: loop-carried none facts converge",
+      fn() {
+        // Regression for the set_prelude_function_origins hang: loop-carried flow
+        // maps may alternate between absent and explicit none facts for temporary
+        // locals. The dataflow equality must compare those states semantically so
+        // the dirty-path fixed point reaches the returned record update.
+        loop_body: AnfExpr = .Let(
+          lid(2),
+          .ARecordUpdate(.ALocal(lid(0)), FieldId.{ id: 0 }, .ALitInt(1), false, TypeId.{ id: 0 }),
+          .Let(
+            lid(3),
+            .AAssign(lid(0), .ALocal(lid(2))),
+            .Let(
+              lid(4),
+              .AIf(.ALocal(lid(1)), .Break(.Some(.ALocal(lid(0)))), .Continue),
+              .Atom(.ALitVoid),
+            ),
+          ),
+        )
+        body: AnfExpr = .Let(lid(5), .ALoop(loop_body), .Atom(.ALocal(lid(5))))
+        reqs := ownership.collect_field_reqs(
+          cfg_func_of("loop_rebind", 2, body),
+          ownership.empty_summary_table(),
+          sem(),
+          ownership.generic_only_resolver,
+          ownership.generic_only_requirement_resolver,
+        )
+        try assert.is_true(same_ints(dirty_fields(reqs, 0), [0]))
+        .Ok({})
+      },
+    )
+    .test(
       "collect_field_reqs: discarded update, original param returned -> no dirty",
       fn() {
         b := b_reg()
@@ -1988,7 +2020,7 @@ pub fn suite() runner.Suite {
         // Owned variant: seed env Unique -> each h(env) whole-return MOVES env (arg_unique)
         // instead of publishing -> env recovered + consumed, and the Stage 2b dirty
         // candidate survives -> Consumed with field paths.
-        g_cfg := case cfg.function_named(v, "g") {
+        g_cfg := case v.function_named("g") {
           .Some(fn_) => fn_,
           .None => error("no g"),
         }
@@ -2069,10 +2101,7 @@ pub fn suite() runner.Suite {
         sa := one_param_summary(.Consumed, a)
         va := ownership.select_variant(9, sa, [true])
         vb := ownership.select_variant(9, sa, [true])
-        try assert.equal(
-          variant_id.variant_canonical_string(va),
-          variant_id.variant_canonical_string(vb),
-        )
+        try assert.equal(va.variant_canonical_string(), vb.variant_canonical_string())
         try assert.equal(va.unique.len(), 3) // shell + two fields, deduped/sorted
         .Ok({})
       },
@@ -2226,9 +2255,9 @@ pub fn suite() runner.Suite {
           ],
         }
 
-        r1 := variant_id.intern(vi, va)
-        r2 := variant_id.intern(r1.interner, vb)
-        r3 := variant_id.intern(r2.interner, va2) // canonically equal to va
+        r1 := vi.intern(va)
+        r2 := r1.interner.intern(vb)
+        r3 := r2.interner.intern(va2) // canonically equal to va
 
         try assert.equal(r1.id, 0) // creation order
         try assert.equal(r2.id, 1)
@@ -2250,11 +2279,11 @@ pub fn suite() runner.Suite {
           variant_id.UniqueReq.{ param: 0, path: variant_id.shell() },
           variant_id.UniqueReq.{ param: 0, path: variant_id.field(3) },
         ]
-        r1 := variant_id.intern(vi, variant_id.VariantId.{ func: 9, unique: k1 })
-        r2 := variant_id.intern(r1.interner, variant_id.VariantId.{ func: 9, unique: k2 })
+        r1 := vi.intern(variant_id.VariantId.{ func: 9, unique: k1 })
+        r2 := r1.interner.intern(variant_id.VariantId.{ func: 9, unique: k2 })
         try assert.equal(r1.id, r2.id) // canonicalization makes them one variant
 
-        got := variant_id.variant_of_id(r2.interner, r1.id)
+        got := r2.interner.variant_of_id(r1.id)
         case got {
           .Some(v) => {
             try assert.equal(v.func, 9)
@@ -2283,14 +2312,14 @@ pub fn suite() runner.Suite {
             variant_id.UniqueReq.{ param: 0, path: variant_id.field(4) },
           ],
         }
-        sa := variant_id.variant_canonical_string(variant_id.canonicalize_variant(va))
-        sb := variant_id.variant_canonical_string(variant_id.canonicalize_variant(vb))
+        sa := va.canonicalize_variant().variant_canonical_string()
+        sb := vb.canonicalize_variant().variant_canonical_string()
         try assert.equal(sa, "f7|0:;0:3") // exact, human-checkable form
         try assert.is_true(sa != sb) // distinct keys => distinct strings
 
         // the generic (empty-key) variant — the most common case — serializes to "f{n}|"
         generic := variant_id.VariantId.{ func: 7, unique: [] }
-        sg := variant_id.variant_canonical_string(variant_id.canonicalize_variant(generic))
+        sg := generic.canonicalize_variant().variant_canonical_string()
         try assert.equal(sg, "f7|")
         .Ok({})
       },
@@ -2628,11 +2657,11 @@ pub fn suite() runner.Suite {
 
         full := summary.compute(view, b, s)
         scoped := summary.compute_for_roots(view, b, s, roots)
-        full_s := case ownership.summary_get(full, root_id) {
+        full_s := case full.summary_get(root_id) {
           .Some(sm) => summary.render_summary(sm),
           .None => return .Err("missing full summary for candidate_root"),
         }
-        scoped_s := case ownership.summary_get(scoped, root_id) {
+        scoped_s := case scoped.summary_get(root_id) {
           .Some(sm) => summary.render_summary(sm),
           .None => return .Err("missing scoped summary for candidate_root"),
         }

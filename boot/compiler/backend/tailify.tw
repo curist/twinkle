@@ -5,31 +5,51 @@ use compiler.backend.prepared_ir.{PreparedExpr, PreparedFunc, PreparedMatchArm, 
 use compiler.builtins.{BuiltinRegistry, is_noreturn}
 use compiler.elem_family.{elem_family_of}
 
+// Func ids whose declared return type is `Never`. A call to such a function
+// diverges just like a call to an is_noreturn builtin. This is how the generic
+// `error`/`eprint` prelude wrappers (and user `Never` functions like proc.exit)
+// are recognized: after they became ordinary functions, `is_noreturn` (builtins
+// only) no longer catches them, so the tail-match typed-return rewrite would
+// otherwise revert accessor functions to the boxed store form.
+pub fn never_returning_funcs(funcs: Vector<PreparedFunc>) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+
+  for pf in funcs {
+    case pf.return_mono {
+      .Never => out[pf.func_id.id] = true,
+      _ => {},
+    }
+  }
+
+  out
+}
+
 // PreparedExpr mirror of expr_always_diverges, but noreturn-aware: a call to an
-// is_noreturn builtin diverges, and (unlike emit/helpers.tw's version) it recurses
-// into if/match ops. Both are required — adding only the error-call case misses
-// `Let(r, AMatch[all arms diverge], ...)`.
-pub fn prep_diverges(expr: PreparedExpr, reg: BuiltinRegistry) Bool {
+// is_noreturn builtin or a `Never`-returning function diverges, and (unlike
+// emit/helpers.tw's version) it recurses into if/match ops. Both are required —
+// adding only the error-call case misses `Let(r, AMatch[all arms diverge], ...)`.
+pub fn prep_diverges(expr: PreparedExpr, reg: BuiltinRegistry, never: Dict<Int, Bool>) Bool {
   case expr {
     .Return(_) => true,
     .Break(_) => true,
     .Continue => true,
     .Atom(_) => false,
-    .Let(_, op, body) => prep_op_diverges(op, reg) or prep_diverges(body, reg),
+    .Let(_, op, body) => prep_op_diverges(op, reg, never) or prep_diverges(body, reg, never),
   }
 }
 
-pub fn prep_op_diverges(op: PreparedOp, reg: BuiltinRegistry) Bool {
+pub fn prep_op_diverges(op: PreparedOp, reg: BuiltinRegistry, never: Dict<Int, Bool>) Bool {
   case op {
-    .ACall(.AGlobalFunc(fid), _) => is_noreturn(reg, fid),
-    .AIf(_, then_e, else_e) => prep_diverges(then_e, reg) and prep_diverges(else_e, reg),
+    .ACall(.AGlobalFunc(fid), _) => is_noreturn(reg, fid) or never.has(fid.id),
+    .AIf(_, then_e, else_e) => prep_diverges(then_e, reg, never)
+      and prep_diverges(else_e, reg, never),
     .AMatch(_, arms) => {
       if arms.len() == 0 {
         return true
       }
 
       for arm in arms {
-        if !prep_diverges(arm.body, reg) {
+        if !prep_diverges(arm.body, reg, never) {
           return false
         }
       }
@@ -45,13 +65,15 @@ pub fn prep_op_diverges(op: PreparedOp, reg: BuiltinRegistry) Bool {
 // (consumed-typed-only) with no store-escape relaxation. Gated to typed-vector
 // families (Vector<Int>/Vector<Bool>, see elem_family_of) to keep the IR-shape
 // change confined to accessor-shaped functions.
-pub fn tailify_funcs(funcs: Vector<PreparedFunc>, reg: BuiltinRegistry) Vector<PreparedFunc> {
+pub fn tailify_funcs(funcs: Vector<PreparedFunc>, reg: BuiltinRegistry, never: Dict<Int, Bool>) Vector<
+  PreparedFunc,
+> {
   collect pf in funcs {
-    tailify_func(pf, reg)
+    tailify_func(pf, reg, never)
   }
 }
 
-fn tailify_func(pf: PreparedFunc, reg: BuiltinRegistry) PreparedFunc {
+fn tailify_func(pf: PreparedFunc, reg: BuiltinRegistry, never: Dict<Int, Bool>) PreparedFunc {
   is_typed_vec := case elem_family_of(pf.return_mono) {
     .Some(_) => true,
     .None => false,
@@ -61,7 +83,7 @@ fn tailify_func(pf: PreparedFunc, reg: BuiltinRegistry) PreparedFunc {
     return pf
   }
 
-  pf.body = tailify_spine(pf.body, reg)
+  pf.body = tailify_spine(pf.body, reg, never)
   pf
 }
 
@@ -76,11 +98,11 @@ fn tailify_func(pf: PreparedFunc, reg: BuiltinRegistry) PreparedFunc {
 // value arms, or an explicit-return diverging arm), revert to the store form —
 // which keeps r assigned and stays correct (just boxed). The dataframe accessors
 // keep their `error(...)` value arm as a fall-through store, so they still type.
-fn tailify_spine(expr: PreparedExpr, reg: BuiltinRegistry) PreparedExpr {
+fn tailify_spine(expr: PreparedExpr, reg: BuiltinRegistry, never: Dict<Int, Bool>) PreparedExpr {
   case expr {
     .Let(s, op, rest) => case rest {
       .Atom(.ASlot(s2)) => if s2.id == s.id {
-        rewritten := tailify_result_op(op, reg)
+        rewritten := tailify_result_op(op, reg, never)
 
         if op_has_fallthrough_arm(rewritten) {
           .Let(s, rewritten, rest)
@@ -88,9 +110,9 @@ fn tailify_spine(expr: PreparedExpr, reg: BuiltinRegistry) PreparedExpr {
           .Let(s, op, rest)
         }
       } else {
-        .Let(s, op, tailify_spine(rest, reg))
+        .Let(s, op, tailify_spine(rest, reg, never))
       },
-      _ => .Let(s, op, tailify_spine(rest, reg)),
+      _ => .Let(s, op, tailify_spine(rest, reg, never)),
     },
     _ => expr,
   }
@@ -127,17 +149,19 @@ fn op_has_fallthrough_arm(op: PreparedOp) Bool {
   }
 }
 
-fn tailify_result_op(op: PreparedOp, reg: BuiltinRegistry) PreparedOp {
+fn tailify_result_op(op: PreparedOp, reg: BuiltinRegistry, never: Dict<Int, Bool>) PreparedOp {
   case op {
-    .AMatch(scrut, arms) => .AMatch(scrut, tailify_arms(arms, reg)),
-    .AIf(c, t, e) => .AIf(c, tailify_arm(t, reg), tailify_arm(e, reg)),
+    .AMatch(scrut, arms) => .AMatch(scrut, tailify_arms(arms, reg, never)),
+    .AIf(c, t, e) => .AIf(c, tailify_arm(t, reg, never), tailify_arm(e, reg, never)),
     _ => op,
   }
 }
 
-fn tailify_arms(arms: Vector<PreparedMatchArm>, reg: BuiltinRegistry) Vector<PreparedMatchArm> {
+fn tailify_arms(arms: Vector<PreparedMatchArm>, reg: BuiltinRegistry, never: Dict<Int, Bool>) Vector<
+  PreparedMatchArm,
+> {
   collect arm in arms {
-    PreparedMatchArm.{ pattern: arm.pattern, body: tailify_arm(arm.body, reg) }
+    PreparedMatchArm.{ pattern: arm.pattern, body: tailify_arm(arm.body, reg, never) }
   }
 }
 
@@ -145,14 +169,14 @@ fn tailify_arms(arms: Vector<PreparedMatchArm>, reg: BuiltinRegistry) Vector<Pre
 // spine) are left untouched (prep_diverges already treats a Return-terminated arm as
 // diverging, so this is idempotent). Nested control-flow in the arm tail is returned
 // as-is (conservative: its result may be boxed — correct, just not typed).
-fn tailify_arm(body: PreparedExpr, reg: BuiltinRegistry) PreparedExpr {
-  if prep_diverges(body, reg) {
+fn tailify_arm(body: PreparedExpr, reg: BuiltinRegistry, never: Dict<Int, Bool>) PreparedExpr {
+  if prep_diverges(body, reg, never) {
     return body
   }
 
   case body {
     .Atom(a) => .Return(.Some(a)),
-    .Let(s, op, rest) => .Let(s, op, tailify_arm(rest, reg)),
+    .Let(s, op, rest) => .Let(s, op, tailify_arm(rest, reg, never)),
     _ => body,
   }
 }

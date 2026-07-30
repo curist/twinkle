@@ -24,6 +24,12 @@ fn timings_enabled() Bool {
   }
 }
 
+fn mutable_phase(label: String) {
+  if timings_enabled() {
+    eprintln("[time:mutable:phase] ${label}")
+  }
+}
+
 pub type DecisionRenderRow = .{
   func: String,
   local: Int,
@@ -507,7 +513,11 @@ pub fn produce_mutable_decisions_seeded_with_sem(
   owned_seeds: variant_route.OwnedSeedTable,
   sem: OptimizerSemantics,
 ) ProducedDecisions {
+  mutable_phase("begin candidate_scan")
   all_cands := collect_all_candidates_for(opt, b)
+  mutable_phase(
+    "end candidate_scan calls=${all_cands.calls.len()} records=${all_cands.records.len()} fields=${all_cands.fields.candidates.len()}",
+  )
   call_set := CandidateSet.{ candidates: all_cands.calls }
   record_set := RecordCandidateSet.{ candidates: all_cands.records }
   fb_set := all_cands.fields
@@ -527,6 +537,9 @@ pub fn produce_mutable_decisions_seeded_with_sem(
   for fid, _spec in owned_seeds.by_func {
     roots[fid] = true
   }
+  mutable_phase(
+    "begin ownership_artifacts roots=${roots.keys().len()} seeds=${owned_seeds.by_func.keys().len()}",
+  )
   artifacts := ownership_verdicts.compute_candidate_artifacts_seeded(
     opt,
     b,
@@ -534,6 +547,7 @@ pub fn produce_mutable_decisions_seeded_with_sem(
     roots,
     owned_seeds,
   )
+  mutable_phase("end ownership_artifacts")
 
   // Compute the ANF fingerprint once and reuse the candidate sets already built
   // above, so the three producers neither re-walk the module nor re-hash the ANF.
@@ -541,10 +555,12 @@ pub fn produce_mutable_decisions_seeded_with_sem(
 
   // Field-backed decisions first, then ordinary call decisions excluding the
   // sites those already claimed, then record-shell decisions.
+  mutable_phase("begin decision_join")
   fb_produced := fb_set.produce_field_backed_from_set(b, artifacts, expected)
   exclude := fb_produced.field_backed_accepted_site_keys()
   call_produced := call_set.produce_update_call_from_set(b, artifacts, expected, exclude)
   record_produced := record_set.produce_record_from_set(artifacts, expected)
+  mutable_phase("end decision_join")
   merged := fb_produced.merge_produced(call_produced).merge_produced(record_produced)
   ProducedDecisions.{
     table: stamp_variant_keys(merged.table, owned_seeds),

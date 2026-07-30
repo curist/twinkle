@@ -577,6 +577,13 @@ const COMMON_BOOTSTRAP_FUNC_NAMES: &[(&str, FuncId)] = &[
     ("error", prelude_ids::ERROR),
     ("eprint", prelude_ids::EPRINT),
     ("eprintln", prelude_ids::EPRINTLN),
+    // Hidden string-only sinks used by prelude/io.tw wrappers; reuse the same
+    // intrinsic ids (and rt.core targets) as the public names above.
+    ("__print_string", prelude_ids::PRINT),
+    ("__println_string", prelude_ids::PRINTLN),
+    ("__error_string", prelude_ids::ERROR),
+    ("__eprint_string", prelude_ids::EPRINT),
+    ("__eprintln_string", prelude_ids::EPRINTLN),
     ("Dict.new", prelude_ids::DICT_NEW),
     ("Vector.len", prelude_ids::VECTOR_LEN),
     ("Vector.concat", prelude_ids::VECTOR_CONCAT),

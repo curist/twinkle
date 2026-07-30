@@ -261,29 +261,6 @@ fn register_methods_from_groups(env: ResolvedEnv, groups: Vector<signatures.Sign
   cur
 }
 
-fn prelude_module_stem(receiver: String?) String? {
-  case receiver {
-    .None => .Some("range"),
-    .Some(recv) => case recv {
-      "Bool" => .Some("bool"),
-      "Byte" => .Some("byte"),
-      "Cell" => .Some("cell"),
-      "Channel" => .Some("channel"),
-      "Dict" => .Some("dict"),
-      "Float" => .Some("float"),
-      "Int" => .Some("int"),
-      "Iterator" => .Some("iterator"),
-      "Option" => .Some("option"),
-      "Order" => .Some("order"),
-      "Result" => .Some("result"),
-      "Set" => .Some("set"),
-      "String" => .Some("string"),
-      "Vector" => .Some("vector"),
-      _ => .None,
-    },
-  }
-}
-
 fn set_prelude_function_origins(
   env: ResolvedEnv,
   groups: Vector<signatures.SignatureGroup>,
@@ -291,12 +268,8 @@ fn set_prelude_function_origins(
   canonical_roots: imports.CanonicalRoots,
 ) ResolvedEnv {
   for group in groups {
-    stem := case prelude_module_stem(group.receiver) {
-      .Some(s) => s,
-      .None => continue,
-    }
     module_path := imports.canonical_module_path(
-      path.join(prelude_dir, "${stem}.tw"),
+      path.join(prelude_dir, "${group.stem}.tw"),
       canonical_roots,
     )
 
@@ -311,6 +284,9 @@ fn set_prelude_function_origins(
 
 fn bind_public_free_builtins(env: ResolvedEnv) ResolvedEnv {
   for name in [
+    // Public print/error sinks bind to the generic prelude wrappers in
+    // prelude/io.tw. The hidden string-only sinks they delegate to are bound
+    // just below so the wrapper bodies can call them by name.
     "print",
     "println",
     "error",
@@ -319,6 +295,12 @@ fn bind_public_free_builtins(env: ResolvedEnv) ResolvedEnv {
     "range",
     "range_from",
     "range_step",
+    // Hidden string-only runtime sinks (called only from prelude/io.tw).
+    "__print_string",
+    "__println_string",
+    "__error_string",
+    "__eprint_string",
+    "__eprintln_string",
   ] {
     env = .bind_function(name, name)
   }
@@ -358,39 +340,11 @@ pub fn builtin_env() ResolvedEnv {
   // vector builders, and host ops.
   t := MonoType.Var("T")
   hardcoded := [
-    builtin_doc_sig("print", [], ["s"], [.String], .Some(.Void), .Some("Print a string to stdout.")),
-    builtin_doc_sig(
-      "println",
-      [],
-      ["s"],
-      [.String],
-      .Some(.Void),
-      .Some("Print a string to stdout followed by a newline."),
-    ),
-    builtin_doc_sig(
-      "error",
-      [],
-      ["msg"],
-      [.String],
-      .Some(.Never),
-      .Some("Trap with an unrecoverable error message."),
-    ),
-    builtin_doc_sig(
-      "eprint",
-      [],
-      ["s"],
-      [.String],
-      .Some(.Void),
-      .Some("Print a string to stderr."),
-    ),
-    builtin_doc_sig(
-      "eprintln",
-      [],
-      ["s"],
-      [.String],
-      .Some(.Void),
-      .Some("Print a string to stderr followed by a newline."),
-    ),
+    builtin_sig("__print_string", [], ["s"], [.String], .Some(.Void)),
+    builtin_sig("__println_string", [], ["s"], [.String], .Some(.Void)),
+    builtin_sig("__error_string", [], ["msg"], [.String], .Some(.Never)),
+    builtin_sig("__eprint_string", [], ["s"], [.String], .Some(.Void)),
+    builtin_sig("__eprintln_string", [], ["s"], [.String], .Some(.Void)),
     builtin_sig("vector$builder_new", ["T"], [], [], .Some(.Vector(t))),
     builtin_sig("vector$builder_push", ["T"], ["xs", "value"], [.Vector(t), t], .Some(.Void)),
     builtin_sig("vector$builder_freeze", ["T"], ["xs"], [.Vector(t)], .Some(.Vector(t))),

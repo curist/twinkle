@@ -134,7 +134,7 @@ fn assert_selected_verdicts_match_full(name: String) Result<Void, String> {
   b := artifacts.builtins
   sem := semantics.make_prelude_optimizer_semantics(b)
   set := mutable_produce.update_call_candidates(artifacts.opt, b)
-  keys := mutable_produce.candidate_keys(set)
+  keys := set.candidate_keys()
 
   full_artifacts := ownership_verdicts.compute_artifacts(artifacts.opt, b, sem)
   scoped_artifacts := ownership_verdicts.compute_candidate_artifacts(

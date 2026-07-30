@@ -10,6 +10,11 @@ fn findings(src: String) Vector<lint.LintFinding> {
   lint.lint_module(parsed.value, base_env.builtin_env(), src)
 }
 
+fn apply_first_edit(src: String, finding: lint.LintFinding) String {
+  edit := finding.edits[0]
+  src.slice(0, edit.start).concat(edit.replacement).concat(src.slice(edit.end, src.len()))
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("lint_pass")
@@ -474,6 +479,106 @@ pub fn suite() runner.Suite {
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].rule, "inline-record-copy")
         try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-print-stringify: fixes single interpolation argument",
+      fn() {
+        src := "fn demo(foo: String) Void {\n  println(\"\${foo}\")\n}\n"
+        fs := findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "redundant-print-stringify")
+        try assert.equal(fs[0].edits.len(), 1)
+        try assert.equal(
+          apply_first_edit(src, fs[0]),
+          "fn demo(foo: String) Void {\n  println(foo)\n}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-print-stringify: fixes expression interpolation argument",
+      fn() {
+        src := "fn demo(x: Int) Void {\n  eprintln(\"\${x + 1}\")\n}\n"
+        fs := findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "redundant-print-stringify")
+        try assert.equal(fs[0].edits[0].replacement, "x + 1")
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-print-stringify: fixes direct to_string argument",
+      fn() {
+        src := "fn demo(foo: String) Void {\n  print(foo.to_string())\n}\n"
+        fs := findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "redundant-print-stringify")
+        try assert.equal(
+          apply_first_edit(src, fs[0]),
+          "fn demo(foo: String) Void {\n  print(foo)\n}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-print-stringify: fixes error to_string while preserving trap call",
+      fn() {
+        src := "fn demo(err: String) Int {\n  error(err.to_string())\n}\n"
+        fs := findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "redundant-print-stringify")
+        try assert.equal(
+          apply_first_edit(src, fs[0]),
+          "fn demo(err: String) Int {\n  error(err)\n}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-print-stringify: does not fix interpolation with surrounding text",
+      fn() {
+        fs := findings("fn demo(foo: String) Void {\n  println(\"foo=\${foo}\")\n}\n")
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-print-stringify: does not fix multiple interpolations",
+      fn() {
+        fs := findings("fn demo(a: String, b: String) Void {\n  println(\"\${a}\${b}\")\n}\n")
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-print-stringify: does not fix non-sink calls",
+      fn() {
+        fs := findings(
+          "fn consume(s: String) Void {}\nfn demo(foo: String) Void {\n  consume(foo.to_string())\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-print-stringify: does not fix method calls named println",
+      fn() {
+        fs := findings(
+          "fn demo(logger: Logger, foo: String) Void {\n  logger.println(foo.to_string())\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "redundant-print-stringify: does not fix locally shadowed sink name",
+      fn() {
+        fs := findings(
+          "fn demo(println: fn(String) Void, foo: String) Void {\n  println(foo.to_string())\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
         .Ok({})
       },
     )

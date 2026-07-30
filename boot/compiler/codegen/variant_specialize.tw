@@ -59,6 +59,12 @@ fn spec_timings_enabled() Bool {
   }
 }
 
+fn spec_phase(label: String) {
+  if spec_timings_enabled() {
+    eprintln("[time:8g:phase] ${label}")
+  }
+}
+
 pub variant_cap: Int = 4
 
 type CapResult = .{ kept: Vector<Group>, overflow: Vector<Group> }
@@ -275,10 +281,13 @@ pub fn specialize_module_with_cap_sem(
   // Only the summary table + variant table are needed (never the whole-program
   // per-block ownership analysis), so build those directly rather than the full
   // `compute_artifacts`, whose `analyze` pass would be discarded here.
+  spec_phase("begin cfg_build")
   t0 := date.now()
   view := ownership.prune_dead_merge(cfg.build_view(anf, b))
+  spec_phase("begin summary_table")
   table := summary.compute(view, b, sem)
   t1 := date.now()
+  spec_phase("begin variant_table")
   vt := summary.compute_variants(view, b, sem, table)
   t2 := date.now()
   if vt.by_func.keys().len() == 0 {
@@ -288,9 +297,11 @@ pub fn specialize_module_with_cap_sem(
     return SpecializeResult.{ anf, seeds: variant_route.empty_seed_table(), routes: [] }
   }
 
+  spec_phase("begin collect_groups")
   published := published_callee_set(vt)
   groups0 := collect_groups(view, table, b, sem, vt, published)
   t3 := date.now()
+  spec_phase("begin updatable_filter")
   updatable := updatable_funcs(anf, b)
   capped := apply_cap(groups0.filter(fn(g) { in_set(updatable, g.callee) }), cap)
   groups_up := capped.kept
@@ -313,6 +324,7 @@ pub fn specialize_module_with_cap_sem(
   // module and is the in-place decision authority; a clone that yields no decision
   // merely emits the persistent path (a harmless duplicate). The updatable filter
   // keeps such duplicates rare.
+  spec_phase("begin clone_build groups=${groups_up.len()}")
   next := max_func_id(anf) + 1
   funcs := anf.functions
   seeds := variant_route.empty_seed_table()
@@ -368,6 +380,7 @@ pub fn specialize_module_with_cap_sem(
   // Retarget each clone's in-SCC recursive calls (self for a single recursive
   // function) to the matching peer clone. Recursive routes live in the clone's own
   // site-key space, disjoint from caller sites.
+  spec_phase("begin recursive_routes survivors=${survivors.len()}")
   routes: Vector<variant_route.VariantRoute> = []
   for g in survivors {
     rec := g.recursive_routes_for(view, table, vt, b, sem, variant_to_clone)
@@ -394,6 +407,7 @@ pub fn specialize_module_with_cap_sem(
   }
 
   // Route caller sites and in-clone recursive sites to their clones.
+  spec_phase("begin rewrite_calls sites=${site_to_clone.keys().len()}")
   routed_funcs := collect f in funcs {
     AnfFunctionDef.{
       func_id: f.func_id,
@@ -407,6 +421,7 @@ pub fn specialize_module_with_cap_sem(
   }
 
   anf.functions = routed_funcs
+  spec_phase("end specialize_module")
   SpecializeResult.{ anf, seeds, routes }
 }
 

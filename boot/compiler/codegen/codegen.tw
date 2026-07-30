@@ -58,6 +58,19 @@ fn log_time(label: String, ms: Float) {
   eprintln("[time] ${label}: ${ms.to_string()}ms")
 }
 
+fn log_phase(label: String) {
+  if timings_enabled() {
+    eprintln("[time:phase] ${label}")
+  }
+}
+
+fn mutable_produce_enabled() Bool {
+  case proc.env("TWINKLE_MUTABLE_PRODUCE") {
+    .Some("0") => false,
+    _ => true,
+  }
+}
+
 // Phase 8G ownership specialization is on by default; TWINKLE_VARIANT_SPECIALIZE=0
 // is the kill-switch (both compilers fall back to the generic persistent path).
 fn variant_specialize_enabled() Bool {
@@ -98,6 +111,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   // 0. Builder-region rewrite -> ANF'. Runs before closure conversion and the
   // call-swap producer so both consume the rewritten ANF (the call-swap stale-artifact
   // guard keys off the ANF fingerprint, which must be ANF').
+  log_phase("begin builder_region_rewrite")
   tbr := date.now()
   anf_prime := builder_region.rewrite_module(anf, builtins)
   tbr2 := date.now()
@@ -110,6 +124,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   // clones callees under a proven owned precondition and routes satisfying caller
   // sites to the clone, so the seeded decision producer emits in-place at the
   // clone's own sites. Disabled via TWINKLE_VARIANT_SPECIALIZE=0.
+  log_phase("begin variant_specialize")
   spec := if variant_specialize_enabled() {
     variant_specialize.specialize_module_with_sem(anf_prime, builtins, sem_env)
   } else {
@@ -127,6 +142,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   }
 
   // 1. Final closure conversion.
+  log_phase("begin closure_convert")
   t0 := date.now()
   closure_conversion := convert_closures(anf_spec, env)
   t1 := date.now()
@@ -140,12 +156,21 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   // summaries are pre-closure facts; backend emission consumes them only after
   // the prepared-site selector validates that the closure-converted site still
   // matches the recorded shape.
-  produced_decisions := mutable_produce.produce_mutable_decisions_seeded_with_sem(
-    anf_spec,
-    builtins,
-    spec.seeds,
-    sem_env,
-  )
+  log_phase("begin produce_mutable_decisions")
+  produced_decisions := if mutable_produce_enabled() {
+    mutable_produce.produce_mutable_decisions_seeded_with_sem(
+      anf_spec,
+      builtins,
+      spec.seeds,
+      sem_env,
+    )
+  } else {
+    mutable_produce.ProducedDecisions.{
+      table: mutable_select.empty_decision_table(),
+      rows: [],
+      artifact_computed: false,
+    }
+  }
   t1p := date.now()
 
   if timed {
@@ -153,6 +178,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   }
 
   // 2b. Prepare backend IR, wired with those decisions.
+  log_phase("begin prepare_backend")
   prepared := prepare_backend_with_mutable_config(
     closure_conversion.anf,
     env,
@@ -172,6 +198,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   }
 
   // 3. Verify prepared backend IR.
+  log_phase("begin verify")
   case verify_prepared_module_with_level(prepared, env2, builtins, verify_level_from_env()) {
     .Ok(_) => {},
     .Err(msg) => error(msg),
@@ -184,6 +211,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   }
 
   // 4. Plan Wasm types from prepared backend IR.
+  log_phase("begin plan_wasm_types")
   registry := plan_wasm_types(prepared, env2, builtins)
   t4 := date.now()
 
@@ -192,6 +220,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   }
 
   // 5. Emit user module from prepared backend IR.
+  log_phase("begin emit_module")
   user_module := emit_module(prepared, registry, builtins, env2)
   t5 := date.now()
 
@@ -200,6 +229,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   }
 
   // 6. Link with runtime
+  log_phase("begin link")
   eq_layouts := collect_eq_type_layouts(registry.layout_cache)
   modules := runtime_modules(eq_layouts).append(user_module)
   linked := case link(modules, .None) {
@@ -231,6 +261,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   linked.export_meta = collect_export_meta(anf)
 
   // 7. Wasm-level dead code elimination
+  log_phase("begin wasm_dce")
   linked = eliminate_dead_wasm(linked)
 
   // 8. Conditional linear-memory emission: rt.buf's memory + globals survive

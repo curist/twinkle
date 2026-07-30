@@ -726,7 +726,7 @@ pub fn test_plan_callable_separation_tracks_closure_and_direct_calls() Result<Vo
         .ACall(.AGlobalFunc(bi.id(builtins, "int$to_string")), [.ALitInt(7)]),
         .Let(
           mk_local(13),
-          .ACall(.AGlobalFunc(bi.id(builtins, "println")), [.ALocal(mk_local(12))]),
+          .ACall(.AGlobalFunc(bi.id(builtins, "__println_string")), [.ALocal(mk_local(12))]),
           .Atom(.ALocal(mk_local(11))),
         ),
       ),
@@ -735,7 +735,7 @@ pub fn test_plan_callable_separation_tracks_closure_and_direct_calls() Result<Vo
   )
   reg := plan(mk_module([caller, map]), env, builtins)
   int_to_string := bi.id(builtins, "int$to_string").id
-  println_id := bi.id(builtins, "println").id
+  println_id := bi.id(builtins, "__println_string").id
   try assert.ok(
     case reg.closure_materialized_funcs[int_to_string] {
       .Some(true) => true,
@@ -771,8 +771,8 @@ pub fn test_plan_callable_separation_tracks_closure_and_direct_calls() Result<Vo
 pub fn test_plan_runtime_imports() Result<Void, String> {
   builtins := simple_builtins()
 
-  // A function that calls println (a runtime builtin)
-  print_id := bi.id(builtins, "println")
+  // A function that calls the hidden println sink (a runtime builtin)
+  print_id := bi.id(builtins, "__println_string")
   mono := mono1(0, MonoType.Void)
   f := mk_func_def(
     100,

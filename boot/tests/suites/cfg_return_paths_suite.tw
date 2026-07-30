@@ -60,7 +60,7 @@ fn analyzed_caller(funcs: Vector<AnfFunctionDef>, caller: String) cfg.CfgFunctio
   v := cfg.build_view(module_of(funcs), b)
   t := summary.compute(v, b, sem())
   a := ownership.analyze_with_summaries(v, b, sem(), t)
-  case cfg.function_named(a, caller) {
+  case a.function_named(caller) {
     .Some(f) => f,
     .None => error("no ${caller}"),
   }
@@ -183,14 +183,10 @@ fn wrapper2_helper(b: builtins.BuiltinRegistry) AnfFunctionDef {
 }
 
 // g's local id in the sibling-read caller (the projected `g := out.f0`).
-fn gsib_local() Int {
-  2
-}
+gsib_local: Int = 2
 
 // g's local id in the caller (the projected `g := out.f0`).
-fn grec_local() Int {
-  2
-}
+grec_local: Int = 2
 
 // helper(x) returns Record{f0:x}: summary ret=OwnedFresh with a Direct .f0
 // ret_path owned-from-param(0). caller() threads a fresh unique ctx through it.
@@ -408,19 +404,13 @@ fn err_arm_block_id(f: cfg.CfgFunction) Int {
 }
 
 // The projected `state := record_get v.f0` local in the .Ok arm.
-fn ok_arm_state_local() Int {
-  20
-}
+ok_arm_state_local: Int = 20
 
 // The payload binding `v` in the .Ok arm.
-fn ok_arm_payload_local() Int {
-  10
-}
+ok_arm_payload_local: Int = 10
 
 // The payload binding `e` in the .Err arm.
-fn err_arm_payload_local() Int {
-  11
-}
+err_arm_payload_local: Int = 11
 
 // load(s) returns .Ok(Record{f0: s}). Body:
 //   inner := Record{f0: s};  v := Variant(Result, Ok, [inner]);  return v
@@ -578,7 +568,7 @@ pub fn suite() runner.Suite {
         b := b_reg()
         funcs := payload_src_fixture()
         v := cfg.build_view(module_of(funcs), b)
-        f := case cfg.function_named(v, "f") {
+        f := case v.function_named("f") {
           .Some(fn0) => fn0,
           .None => error("no f"),
         }
@@ -611,7 +601,7 @@ pub fn suite() runner.Suite {
         //           g := record_get out.f0; return g
         funcs := case_w_fixture()
         f := analyzed_caller(funcs, "caller")
-        try assert.equal(caller_own(f, grec_local()), own_unique()) // g is Unique after the projection move
+        try assert.equal(caller_own(f, grec_local), own_unique()) // g is Unique after the projection move
         .Ok({})
       },
     )
@@ -651,7 +641,7 @@ pub fn suite() runner.Suite {
         t := summary.compute(v, b, sem())
 
         // Generic caller summary: ctx (param0) is published by the failed recovery gate.
-        gen := case ownership.summary_get(t, 2) {
+        gen := case t.summary_get(2) {
           .Some(s) => s,
           .None => error("no caller summary"),
         }
@@ -660,7 +650,7 @@ pub fn suite() runner.Suite {
         // Owned variant: seed ctx (param0) shell-Unique. arg_unique[0] is now true at the
         // helper call, so the OwnedFromParam(0) recovery fires -> ctx is NOT published and
         // its region flows to the return.
-        caller := case cfg.function_named(v, "caller") {
+        caller := case v.function_named("caller") {
           .Some(f) => f,
           .None => error("no caller cfg"),
         }
@@ -690,7 +680,7 @@ pub fn suite() runner.Suite {
         b := b_reg()
         v := cfg.build_view(module_of(funcs), b)
         t := summary.compute(v, b, sem())
-        caller := case cfg.function_named(v, "caller") {
+        caller := case v.function_named("caller") {
           .Some(f) => f,
           .None => error("no caller cfg"),
         }
@@ -711,7 +701,7 @@ pub fn suite() runner.Suite {
         b := b_reg()
         v := cfg.build_view(module_of(funcs), b)
         t := summary.compute(v, b, sem())
-        caller := case cfg.function_named(v, "caller") {
+        caller := case v.function_named("caller") {
           .Some(f) => f,
           .None => error("no caller cfg"),
         }
@@ -879,7 +869,7 @@ pub fn suite() runner.Suite {
         // out is live for out.f1, but out.f0 is dead-through-out -> transport move licensed -> g Unique.
         funcs := case_w_sibling_fixture()
         f := analyzed_caller(funcs, "caller")
-        try assert.equal(caller_own(f, gsib_local()), own_unique()) // g is Unique
+        try assert.equal(caller_own(f, gsib_local), own_unique()) // g is Unique
         .Ok({})
       },
     )
@@ -891,7 +881,7 @@ pub fn suite() runner.Suite {
         // out is published -> transport_ok fails (non-sibling mention) -> borrow.
         funcs := case_w_published_out_fixture()
         f := analyzed_caller(funcs, "caller")
-        try assert.equal(caller_own(f, gsib_local()), own_shared())
+        try assert.equal(caller_own(f, gsib_local), own_shared())
         .Ok({})
       },
     )
@@ -903,7 +893,7 @@ pub fn suite() runner.Suite {
         // exit_mentions_local alone would miss this; blk.exit.live catches it -> borrow.
         funcs := case_w_out_liveout_fixture()
         f := analyzed_caller(funcs, "caller")
-        try assert.equal(caller_own(f, gsib_local()), own_shared())
+        try assert.equal(caller_own(f, gsib_local), own_shared())
         .Ok({})
       },
     )
@@ -913,7 +903,7 @@ pub fn suite() runner.Suite {
         funcs := case_r_fixture()
         f := analyzed_caller(funcs, "caller")
         ok_blk := ok_arm_block_id(f)
-        try assert.equal(own_in_block(f, ok_blk, ok_arm_state_local()), own_unique())
+        try assert.equal(own_in_block(f, ok_blk, ok_arm_state_local), own_unique())
         .Ok({})
       },
     )
@@ -923,7 +913,7 @@ pub fn suite() runner.Suite {
         funcs := case_r_live_scrutinee_fixture()
         f := analyzed_caller(funcs, "caller")
         ok_blk := ok_arm_block_id(f)
-        try assert.equal(own_in_block(f, ok_blk, ok_arm_payload_local()), own_shared())
+        try assert.equal(own_in_block(f, ok_blk, ok_arm_payload_local), own_shared())
         .Ok({})
       },
     )
@@ -933,7 +923,7 @@ pub fn suite() runner.Suite {
         funcs := case_r_inarm_read_fixture()
         f := analyzed_caller(funcs, "caller")
         ok_blk := ok_arm_block_id(f)
-        try assert.equal(own_in_block(f, ok_blk, ok_arm_payload_local()), own_shared())
+        try assert.equal(own_in_block(f, ok_blk, ok_arm_payload_local), own_shared())
         .Ok({})
       },
     )
@@ -947,8 +937,8 @@ pub fn suite() runner.Suite {
         f := analyzed_caller(funcs, "caller")
         ok_blk := ok_arm_block_id(f)
         err_blk := err_arm_block_id(f)
-        try assert.equal(own_in_block(f, ok_blk, ok_arm_payload_local()), own_unique()) // Ok arm recovers
-        try assert.equal(own_in_block(f, err_blk, err_arm_payload_local()), own_unknown()) // Err arm does NOT
+        try assert.equal(own_in_block(f, ok_blk, ok_arm_payload_local), own_unique()) // Ok arm recovers
+        try assert.equal(own_in_block(f, err_blk, err_arm_payload_local), own_unknown()) // Err arm does NOT
         .Ok({})
       },
     )

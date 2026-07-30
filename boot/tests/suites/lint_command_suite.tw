@@ -193,6 +193,7 @@ pub fn suite() runner.Suite {
           "unused-must-use",
           "unused-imports",
           "inherent-calls",
+          "redundant-print-stringify",
         ]
 
         for id in ids {
@@ -264,6 +265,33 @@ pub fn suite() runner.Suite {
 
         // detailed block is indented under the header
         try assert.is_true(explained.contains("\n      // Avoid"))
+        .Ok({})
+      },
+    )
+    .test(
+      "render_report: redundant-print-stringify shows direct Stringify guidance",
+      fn() {
+        findings := [
+          lint.Finding.{
+            path: "a.tw",
+            start: 5,
+            message: "`println` accepts any `Stringify` value; pass the value directly instead of redundant interpolation",
+            rule: "redundant-print-stringify",
+            edits: [FixEdit.{ start: 10, end: 18, replacement: "foo" }],
+          },
+        ]
+        out := lint.render_report(findings, Dict.new(), true, false)
+        try assert.is_true(out.contains("print/error sinks accept Stringify values directly"))
+        try assert.is_true(out.contains("println(foo)"))
+        .Ok({})
+      },
+    )
+    .test(
+      "apply_edits: redundant-print-stringify edit replaces only the argument",
+      fn() {
+        src := "println(\"\${foo}\")\n"
+        out := lint.apply_edits(src, [FixEdit.{ start: 8, end: 16, replacement: "foo" }])
+        try assert.equal(out, "println(foo)\n")
         .Ok({})
       },
     )

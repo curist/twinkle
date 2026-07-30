@@ -41,6 +41,7 @@ use .suites.codegen_emit_suite
 use .suites.codegen_integration_suite
 use .suites.core_fold_suite
 use .suites.core_ir_suite
+use .suites.dce_funcs_suite
 use .suites.defer_suite
 use .suites.dependency_graph_suite
 use .suites.diag_render_suite
@@ -203,6 +204,7 @@ runner.run_all([
   opt_pipeline_suite.suite(),
   opt_semantics_suite.suite(),
   opt_defer_elim_suite.suite(),
+  dce_funcs_suite.suite(),
   builtins_suite.suite(),
   bundle_suite.suite(),
   builtin_identity_collision_suite.suite(),
