@@ -457,6 +457,7 @@ fn select_edits(
   fix_unused: Bool,
   fix_inherent: Bool,
   fix_inline_copy: Bool,
+  fix_redundant: Bool,
 ) Dict<String, Vector<FixEdit>> {
   edits_by_file: Dict<String, Vector<FixEdit>> = Dict.new()
 
@@ -464,6 +465,7 @@ fn select_edits(
     selected := f.rule == "unused-imports" and fix_unused
       or f.rule == "inherent-calls" and fix_inherent
       or f.rule == "inline-record-copy" and fix_inline_copy
+      or f.rule == "redundant-print-stringify" and fix_redundant
 
     if selected and f.edits.len() > 0 {
       case edits_by_file[f.path] {
@@ -488,9 +490,10 @@ pub fn run_lint_command(parsed: ParseResult) {
   fix_unused := fix_all or parsed.has_flag("fix-unused-imports")
   fix_inherent := fix_all or parsed.has_flag("fix-inherent-calls")
   fix_inline_copy := fix_all or parsed.has_flag("fix-inline-record-copy")
+  fix_redundant := fix_all or parsed.has_flag("fix-redundant-print-stringify")
   explain := parsed.has_flag("explain")
   color := default_config().color
-  any_apply := fix_unused or fix_inherent or fix_inline_copy
+  any_apply := fix_unused or fix_inherent or fix_inline_copy or fix_redundant
 
   if !any_apply {
     result := gather_lint_multi(targets)
@@ -525,7 +528,13 @@ pub fn run_lint_command(parsed: ParseResult) {
       proc.exit(1)
     }
 
-    edits := select_edits(current.findings, fix_unused, fix_inherent, fix_inline_copy)
+    edits := select_edits(
+      current.findings,
+      fix_unused,
+      fix_inherent,
+      fix_inline_copy,
+      fix_redundant,
+    )
 
     if edits.len() == 0 {
       break

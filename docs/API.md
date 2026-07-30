@@ -171,6 +171,12 @@ i.clamp(0, xs.len())   // or directly
 | `eprintln` | `fn<T: Stringify>(value: T) Void` | Print a Stringify value to stderr with newline |
 | `error` | `fn<T: Stringify>(value: T) Never` | Trap with an unrecoverable error message rendered from a Stringify value |
 
+Because these functions are generic over `Stringify`, pass values directly:
+`println(value)` instead of `println("${value}")` or `println(value.to_string())`.
+`twk lint` flags the redundant forms (`redundant-print-stringify`) and
+`twk lint --fix-redundant-print-stringify` rewrites them when the whole argument
+is only stringification.
+
 ## Type Conversions
 
 | Function | Signature | Description |

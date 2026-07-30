@@ -35,6 +35,10 @@ lint_cmd := command
   .add_flag("fix-unused-imports", "Apply only the unused-import rewrite")
   .add_flag("fix-inherent-calls", "Apply only the inherent-method-call rewrite")
   .add_flag("fix-inline-record-copy", "Apply only the inline-record-copy rebind rewrite")
+  .add_flag(
+    "fix-redundant-print-stringify",
+    "Apply only the redundant print/error stringification rewrite",
+  )
   .add_flag("explain", "Show the full rationale for each reported rule")
 
 ir_cmd := file_command("ir", "Compile and print compiler IR")
