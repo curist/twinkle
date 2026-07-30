@@ -1,0 +1,176 @@
+//! Dead-function elimination: drop monomorphized functions that are unreachable
+//! from the module roots.
+//!
+//! Monomorphization instantiates a function for every (func, type-args) pair it
+//! reaches, but its reachability is conservative for contract-method dispatch: a
+//! generic `T: Stringify` call such as `value.to_string()` pulls in *every*
+//! Stringify witness (e.g. `Vector.to_string`, which references `join`), not just
+//! the concrete one. After specialization those extra witnesses are never called,
+//! yet they were previously emitted into every binary that uses `print`/`error`.
+//!
+//! This pass computes the functions reachable from the module roots — the init
+//! function and any lib exports — by following every `FuncId` reference in the
+//! ANF (direct calls, first-class funcref atoms in any position, and closure
+//! construction) and drops the rest. Codegen resolves functions by mangled
+//! symbol, not array position, so removing an unreferenced function is safe.
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom}
+
+fn atom_ref(a: Atom, acc: Dict<Int, Bool>) Dict<Int, Bool> {
+  case a {
+    .AGlobalFunc(fid) => {
+      acc[fid.id] = true
+      acc
+    },
+    _ => acc,
+  }
+}
+
+fn atoms_ref(atoms: Vector<Atom>, acc: Dict<Int, Bool>) Dict<Int, Bool> {
+  cur := acc
+
+  for a in atoms {
+    cur = atom_ref(a, cur)
+  }
+
+  cur
+}
+
+// Collect every FuncId referenced by an op: called targets, first-class funcref
+// atoms in any position, closure construction, and nested control-flow bodies.
+// Exhaustive (no `_` arm) so a new AnfOp variant is a compile error here rather
+// than a silently-missed reference that would drop a live function.
+fn op_refs(op: AnfOp, acc: Dict<Int, Bool>) Dict<Int, Bool> {
+  case op {
+    .ACall(callee, args) => atoms_ref(args, atom_ref(callee, acc)),
+    .AIf(c, then_e, else_e) => expr_refs(else_e, expr_refs(then_e, atom_ref(c, acc))),
+    .AMatch(scrut, arms) => {
+      cur := atom_ref(scrut, acc)
+
+      for arm in arms {
+        cur = expr_refs(arm.body, cur)
+      }
+
+      cur
+    },
+    .ALoop(inner) => expr_refs(inner, acc),
+    .ABinOp(_, l, r, _) => atom_ref(r, atom_ref(l, acc)),
+    .AUnOp(_, x, _) => atom_ref(x, acc),
+    .AMakeClosure(fid, _) => {
+      acc[fid.id] = true
+      acc
+    },
+    .ARecord(_, fields) => {
+      cur := acc
+
+      for f in fields {
+        cur = atom_ref(f.value, cur)
+      }
+
+      cur
+    },
+    .ARecordGet(x, _, _) => atom_ref(x, acc),
+    .ARecordUpdate(base, _, v, _, _) => atom_ref(v, atom_ref(base, acc)),
+    .AVariant(_, _, atoms) => atoms_ref(atoms, acc),
+    .AArrayLit(atoms) => atoms_ref(atoms, acc),
+    .AIndex(x, i, _, _) => atom_ref(i, atom_ref(x, acc)),
+    .AInit(x) => atom_ref(x, acc),
+    .AAssign(_, x) => atom_ref(x, acc),
+    .AGlobalSet(_, x) => atom_ref(x, acc),
+    .ADefer(inner) => expr_refs(inner, acc),
+    .AWrapAnyref(x, _) => atom_ref(x, acc),
+    .AUnwrapAnyref(x, _) => atom_ref(x, acc),
+  }
+}
+
+fn expr_refs(e: AnfExpr, acc: Dict<Int, Bool>) Dict<Int, Bool> {
+  case e {
+    .Let(_, op, body) => expr_refs(body, op_refs(op, acc)),
+    .Atom(a) => atom_ref(a, acc),
+    .Return(oa) => case oa {
+      .Some(a) => atom_ref(a, acc),
+      .None => acc,
+    },
+    .Break(oa) => case oa {
+      .Some(a) => atom_ref(a, acc),
+      .None => acc,
+    },
+    .Continue => acc,
+  }
+}
+
+// Drop functions unreachable from the module roots. If no root is found (a
+// degenerate module with neither an init function nor lib exports), the module is
+// returned unchanged rather than emptied.
+pub fn sweep_dead_functions(m: AnfModule) AnfModule {
+  by_id: Dict<Int, AnfFunctionDef> = Dict.new()
+
+  for f in m.functions {
+    by_id[f.func_id.id] = f
+  }
+
+  reachable: Dict<Int, Bool> = Dict.new()
+  work: Vector<Int> = []
+
+  case m.init_func_id {
+    .Some(fid) => {
+      reachable[fid.id] = true
+      work = .append(fid.id)
+    },
+    .None => {},
+  }
+
+  for f in m.functions {
+    if f.is_init and !reachable.has(f.func_id.id) {
+      reachable[f.func_id.id] = true
+      work = .append(f.func_id.id)
+    }
+  }
+
+  for ex in m.lib_exports {
+    case ex.target {
+      .Function(fid) => if !reachable.has(fid.id) {
+        reachable[fid.id] = true
+        work = .append(fid.id)
+      },
+      .Value(_) => {},
+    }
+  }
+
+  // Degenerate module with no roots: leave it untouched.
+  if work.len() == 0 {
+    return m
+  }
+
+  i := 0
+
+  for i < work.len() {
+    fid := work[i]
+    i = i + 1
+
+    case by_id[fid] {
+      .Some(f) => {
+        refs := expr_refs(f.body, Dict.new())
+
+        for rid in refs.keys() {
+          if !reachable.has(rid) {
+            reachable[rid] = true
+            work = .append(rid)
+          }
+        }
+      },
+      .None => {},
+    }
+  }
+
+  kept: Vector<AnfFunctionDef> = collect f in m.functions {
+    if reachable.has(f.func_id.id) {
+      f
+    } else {
+      continue
+    }
+  }
+
+  m.functions = kept
+  m
+}

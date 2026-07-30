@@ -10,6 +10,7 @@ use compiler.imports
 use compiler.lower_anf
 use compiler.module_compiler
 use compiler.monomorphize
+use compiler.opt.dce_funcs
 use compiler.opt.pipeline.{optimize_module}
 use compiler.query.analyze
 use compiler.query.cache as query_cache
@@ -145,7 +146,7 @@ fn compile_source_impl(src: String, lib_build: Bool) Result<PipelineArtifacts, S
   core := core_linker.link(compiled_modules, canonical, a_result.env, builtins.next_id)
   mono := monomorphize.monomorphize(core)
   anf := lower_anf.lower_module(mono)
-  opt := optimize_module(anf)
+  opt := dce_funcs.sweep_dead_functions(optimize_module(anf))
 
   // Collect warnings
   warnings: Vector<analyze.AnalysisDiag> = []

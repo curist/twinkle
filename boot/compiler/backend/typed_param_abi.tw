@@ -27,7 +27,7 @@ use compiler.backend.route_typed_vec.{
   RouteIds, aliases_for, analyze_typed_fields, analyze_typed_payloads, bool_key_maps_equal,
   build_copy_map, materialize_slot_repr, route_ids, slot_typed_after_route, v_group_typeable,
 }
-use compiler.backend.tailify.{prep_op_diverges}
+use compiler.backend.tailify.{never_returning_funcs, prep_op_diverges}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.elem_family.{elem_family_of}
 use compiler.mono_type.{MonoType}
@@ -125,6 +125,7 @@ pub fn analyze_typed_params(
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
+  never: Dict<Int, Bool>,
 ) ParamAbi {
   ids := route_ids(builtins)
   typeable: Dict<String, Dict<Int, String>> = Dict.new()
@@ -145,7 +146,7 @@ pub fn analyze_typed_params(
       typeable[key] = idxs
     }
 
-    case return_family(pf, ids, builtins, typed_fields, typed_payloads) {
+    case return_family(pf, ids, builtins, typed_fields, typed_payloads, never) {
       .Some(fam_key) => ret[key] = fam_key,
       .None => {},
     }
@@ -316,10 +317,11 @@ fn return_family(
   builtins: BuiltinRegistry,
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
+  never: Dict<Int, Bool>,
 ) String? {
   fam_key := try family_key_of(pf.return_mono)
 
-  slots := return_atom_slots(pf.body, [], builtins)
+  slots := return_atom_slots(pf.body, [], builtins, never)
 
   if slots.len() == 0 {
     return .None
@@ -337,20 +339,25 @@ fn return_family(
 // Collect the slot ids of every returned atom: tail `.Atom(ASlot)` and
 // `.Return(.Some(ASlot))`. A non-slot return atom (literal, global) yields no
 // slot and makes the caller treat the return as not-typed (empty => false).
-fn return_atom_slots(expr: PreparedExpr, acc: Vector<Int>, reg: BuiltinRegistry) Vector<Int> {
+fn return_atom_slots(
+  expr: PreparedExpr,
+  acc: Vector<Int>,
+  reg: BuiltinRegistry,
+  never: Dict<Int, Bool>,
+) Vector<Int> {
   case expr {
     .Let(_, op, body) => {
-      acc2 := return_atom_slots_op(op, acc, reg)
+      acc2 := return_atom_slots_op(op, acc, reg, never)
 
       // If the op never falls through (all arms diverge, or a noreturn call), the
       // body is dead code — do not collect its atoms. This drops both the dead
       // trailing `Atom(r)` after an all-diverging match and a diverging arm's own
       // `Let(t, error(...), Atom(t))` tail. A value-producing arm still reaches
       // its `Return(Some(v))` (collected below) because that arm does not diverge.
-      if prep_op_diverges(op, reg) {
+      if prep_op_diverges(op, reg, never) {
         acc2
       } else {
-        return_atom_slots(body, acc2, reg)
+        return_atom_slots(body, acc2, reg, never)
       }
     },
     .Atom(a) => append_slot(a, acc),
@@ -359,23 +366,28 @@ fn return_atom_slots(expr: PreparedExpr, acc: Vector<Int>, reg: BuiltinRegistry)
   }
 }
 
-fn return_atom_slots_op(op: PreparedOp, acc: Vector<Int>, reg: BuiltinRegistry) Vector<Int> {
+fn return_atom_slots_op(
+  op: PreparedOp,
+  acc: Vector<Int>,
+  reg: BuiltinRegistry,
+  never: Dict<Int, Bool>,
+) Vector<Int> {
   case op {
     .AIf(_, then_e, else_e) => {
-      acc2 := return_atom_slots(then_e, acc, reg)
-      return_atom_slots(else_e, acc2, reg)
+      acc2 := return_atom_slots(then_e, acc, reg, never)
+      return_atom_slots(else_e, acc2, reg, never)
     },
     .AMatch(_, arms) => {
       cur := acc
 
       for arm in arms {
-        cur = return_atom_slots(arm.body, cur, reg)
+        cur = return_atom_slots(arm.body, cur, reg, never)
       }
 
       cur
     },
-    .ALoop(inner) => return_atom_slots(inner, acc, reg),
-    .ADefer(inner) => return_atom_slots(inner, acc, reg),
+    .ALoop(inner) => return_atom_slots(inner, acc, reg, never),
+    .ADefer(inner) => return_atom_slots(inner, acc, reg, never),
     _ => acc,
   }
 }
@@ -480,6 +492,11 @@ pub fn analyze_typed_repr(
     }
   }
 
+  // Never-returning funcs must be derived from the full set: a diverging call
+  // target (e.g. the `error` wrapper) rarely carries a typed-vector slot itself,
+  // so it is absent from rfuncs, yet a call to it inside an rfuncs body still
+  // diverges and must be recognized as such.
+  never := never_returning_funcs(funcs)
   tf := analyze_typed_fields(rfuncs, builtins, Dict.new())
   tp_params := all_vec_int_param_indices(rfuncs)
   cap := rfuncs.len() + 4
@@ -491,7 +508,7 @@ pub fn analyze_typed_repr(
 
   for !done {
     tpay = analyze_typed_payloads(rfuncs, builtins, first_user_tid, tp_params)
-    abi = analyze_typed_params(rfuncs, builtins, tf, tpay)
+    abi = analyze_typed_params(rfuncs, builtins, tf, tpay, never)
     new_tf := analyze_typed_fields(rfuncs, builtins, abi.typeable_return)
 
     stable := param_maps_equal(abi.typeable_params, tp_params) and bool_key_maps_equal(new_tf, tf)
