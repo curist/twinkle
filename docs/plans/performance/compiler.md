@@ -1012,12 +1012,8 @@ analyze:*        0.03s  mutable producer — already reuses fix_cache
    the render resolver — which needs the variant table it produces (circular) or a
    second full summary pass (no win). Prototype reverted.
 
-2. **Cut the inner solve on the 3–4 giant functions.** Solve dominates and scales
-   with blocks × rounds × per-block co-iterated exit-map work. Levers: skip
-   per-block work for blocks with no ownership-relevant instructions, or reduce
-   rounds via better block ordering. Broad, but the widening / cold-fallback
-   hazards documented above make this higher-risk; needs its own investigation
-   with SEEDVERIFY/FIXVERIFY guards.
+2. **Cut the inner solve on the 3–4 giant functions — SHIPPED (cold worklist).**
+   See the update below: the cold pass now skips no-op block re-visits.
 
 3. **Rerun-count reduction — largely exhausted.** Warm-start-by-restart was
    rejected (net negative; `link` widens) and incremental re-propagation is
@@ -1028,6 +1024,44 @@ analyze:*        0.03s  mutable producer — already reuses fix_cache
 Next measurement: prototype #1 behind a flag, confirm FIXVERIFY-clean over the
 self-build + boot suite, and A/B the `[time:8g] groups=` wall plus
 `variant_specialize` / `produce_mutable_decisions` totals same-session.
+
+## Update: cold ownership fixpoint worklist (shipped)
+
+`run_fixpoint`'s cold pass (`dirty0 = None`) swept **every** block every round
+until convergence — including blocks whose predecessor exits were unchanged since
+their last visit. On `summary:link` (243 blocks, 17 rounds) that was 4131
+block-visits of which only ~1540 changed: **~63% no-ops**. The successor-based
+dirty worklist already existed for the incremental reruns but was gated off for
+the cold pass (`all_dirty = true`).
+
+Fix: seed every block dirty at a cold start and drive the same worklist, so a
+block is re-processed only when a predecessor's exit changed. A skipped visit is
+provably a no-op — deterministic transfer over unchanged inputs yields the same
+exit, records no change, and never increments the widening counter — so the block
+order, rounds, and *change sequence* are preserved.
+
+Results (A/B `TWINKLE_COLD_WORKLIST=0` vs `1`, same stage1):
+
+```text
+summary:link fixpoint:  ~183ms -> ~86ms   (visits 4131 -> 1607)
+variant_specialize:     ~11.5s -> ~8.1s   per heavy build (8G whole-prog summary)
+produce_mutable_decisions: ~7.5-9.4s -> ~5.4-6.9s per heavy build
+```
+
+Acceptance: **output byte-identical** over the full boot build (A/B diff), 3321
+boot tests pass, `make stage2` fixed point (stage3 == stage4) intact.
+`TWINKLE_COLD_WORKLIST=0` restores the legacy full sweep.
+
+Risk note (durable lesson): this is safe because it does **not** reorder — it
+keeps the exact Gauss-Seidel block order and rounds and only skips no-op visits.
+A general worklist (priority/SCC/arbitrary dequeue) *would* be unsafe: the
+widening (`changed_visits` vs `fixpoint_widen_cap`) is visit-order-sensitive, so a
+different order can trigger widening at different points and diverge. Even this
+narrow change is byte-identical *empirically*, not by construction — the diagnostic
+change-count shifts slightly (1540 -> 1526 on link), i.e. the full sweep takes a
+few extra benign intermediate steps; none crossed the widen cap here, but a
+pathological input theoretically could. Validate output byte-identity on any
+change that touches the cold-pass iteration.
 
 ## Working rules for future updates
 
