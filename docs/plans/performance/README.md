@@ -19,6 +19,13 @@ scattered across `docs/plans/`.
 | [vector/](vector/README.md) | `Vector<T>`, `sort_by`, typed vector representation, and dataframe `order_by` performance. |
 | [dataframe/](dataframe/README.md) | Dataframe stress-test design, friction log, and app-level benchmark context. |
 
+## Active compiler-perf plans
+
+| Plan | Goal | Status |
+|------|------|--------|
+| [2026-07-31-ownership-cfg-liveness-reuse.md](2026-07-31-ownership-cfg-liveness-reuse.md) | Reuse 8G's pruned CFG + summary-pass liveness in the mutable producer (scope-independent, low-risk; ~1.2s). | Planned |
+| [2026-07-31-scope-8g-summary.md](2026-07-31-scope-8g-summary.md) | Investigate scoping 8G's whole-program `summary.compute` (the ~5.8s phase) to the variant-relevant closure; soundness-gated (can change codegen). | Investigation |
+
 ## Current runtime priority stack
 
 1. **Sound uniqueness and mutable lowering.** Rebuild the boot compiler's
