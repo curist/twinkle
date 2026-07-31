@@ -8,6 +8,7 @@ use compiler.anf.{AnfExpr, AnfModule, AnfOp, Atom}
 use compiler.builder_family.{string_builder_config, vector_builder_config}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{FuncId, LocalId}
+use compiler.mono_type.{MonoType}
 
 pub type BuilderRegionKey = .{
   func_id: Int,
@@ -273,18 +274,36 @@ fn is_empty_array_value(op: AnfOp) Bool {
   }
 }
 
-// Is `op` an empty seed for `local`? Returns the family. `empty_arr` is the set
-// of locals bound to an empty AArrayLit earlier in the same chain.
-fn seed_family(op: AnfOp, str_push: FuncId, vec_push: FuncId, empty_arr: Dict<Int, Bool>) SeedFamily? {
+// Is `op` a builder-region seed for `local`? Returns the family. `empty_arr` is
+// the set of locals bound to an empty AArrayLit earlier in the same chain.
+//
+// String seeds accept ANY string source (a literal of any length, or a
+// `String`-typed local/param): the rewrite lowers them to
+// `string$builder_from(acc)`, which COPIES the seed into a private builder and
+// never mutates it, so a non-empty (or shared/interned/aliased) seed is sound —
+// no ownership proof needed (Plan 3, string half). `acc_mono` is the accumulator
+// local's mono type, used to classify an `AInit(.ALocal)` seed whose source is not
+// structurally an empty array. Vector seeds remain empty-array only; non-empty
+// vector seeds are gated on a `builder_push` shared-trie check and deferred to
+// Plan 3's vector half.
+fn seed_family(
+  op: AnfOp,
+  str_push: FuncId,
+  vec_push: FuncId,
+  empty_arr: Dict<Int, Bool>,
+  acc_mono: MonoType?,
+) SeedFamily? {
   case op {
-    .AInit(.ALitStr(s)) => if s.len() == 0 {
-      .Some(SeedFamily.{ push_id: str_push, family: "string" })
-    } else {
-      .None
-    },
+    .AInit(.ALitStr(_)) => .Some(SeedFamily.{ push_id: str_push, family: "string" }),
     .AInit(.ALocal(v)) => case empty_arr.get(v.id) {
       .Some(_) => .Some(SeedFamily.{ push_id: vec_push, family: "vector" }),
-      .None => .None,
+      .None => case acc_mono {
+        // A non-empty `String`-typed local seed (`acc := prefix`) — sound because
+        // `builder_from` copies. A non-empty vector local is left uncertified here
+        // (Plan 3 vector half); find_region gates any false positive regardless.
+        .Some(.String) => .Some(SeedFamily.{ push_id: str_push, family: "string" }),
+        _ => .None,
+      },
     },
     _ => .None,
   }
@@ -421,6 +440,7 @@ fn detect_in_expr(
   str_push: FuncId,
   vec_push: FuncId,
   empty_arr: Dict<Int, Bool>,
+  mono: Dict<Int, MonoType>,
   cands: Vector<RegionCandidate>,
 ) Vector<RegionCandidate> {
   case expr {
@@ -431,7 +451,7 @@ fn detect_in_expr(
         ea[local.id] = true
       }
 
-      out := case seed_family(op, str_push, vec_push, ea) {
+      out := case seed_family(op, str_push, vec_push, ea, mono.get(local.id)) {
         .Some(sf) => case find_region(body, local, sf.push_id) {
           .Some(fr) => cands.append(RegionCandidate.{
             func_id,
@@ -449,8 +469,8 @@ fn detect_in_expr(
         },
         .None => cands,
       }
-      out2 := detect_in_op(op, func_id, func, str_push, vec_push, ea, out)
-      detect_in_expr(body, func_id, func, str_push, vec_push, ea, out2)
+      out2 := detect_in_op(op, func_id, func, str_push, vec_push, ea, mono, out)
+      detect_in_expr(body, func_id, func, str_push, vec_push, ea, mono, out2)
     },
     _ => cands,
   }
@@ -463,22 +483,23 @@ fn detect_in_op(
   str_push: FuncId,
   vec_push: FuncId,
   empty_arr: Dict<Int, Bool>,
+  mono: Dict<Int, MonoType>,
   cands: Vector<RegionCandidate>,
 ) Vector<RegionCandidate> {
   case op {
     .AIf(_, t, e) => {
-      a := detect_in_expr(t, func_id, func, str_push, vec_push, empty_arr, cands)
-      detect_in_expr(e, func_id, func, str_push, vec_push, empty_arr, a)
+      a := detect_in_expr(t, func_id, func, str_push, vec_push, empty_arr, mono, cands)
+      detect_in_expr(e, func_id, func, str_push, vec_push, empty_arr, mono, a)
     },
     .AMatch(_, arms) => {
       cur := cands
       for arm in arms {
-        cur = detect_in_expr(arm.body, func_id, func, str_push, vec_push, empty_arr, cur)
+        cur = detect_in_expr(arm.body, func_id, func, str_push, vec_push, empty_arr, mono, cur)
       }
       cur
     },
-    .ALoop(b) => detect_in_expr(b, func_id, func, str_push, vec_push, empty_arr, cands),
-    .ADefer(b) => detect_in_expr(b, func_id, func, str_push, vec_push, empty_arr, cands),
+    .ALoop(b) => detect_in_expr(b, func_id, func, str_push, vec_push, empty_arr, mono, cands),
+    .ADefer(b) => detect_in_expr(b, func_id, func, str_push, vec_push, empty_arr, mono, cands),
     _ => cands,
   }
 }
@@ -627,7 +648,16 @@ pub fn detect_candidates(m: AnfModule, b: BuiltinRegistry) Vector<RegionCandidat
   vec_push := vector_builder_config(b).push_id
   out: Vector<RegionCandidate> = []
   for f in m.functions {
-    primaries := detect_in_expr(f.body, f.func_id, f.name, str_push, vec_push, Dict.new(), [])
+    primaries := detect_in_expr(
+      f.body,
+      f.func_id,
+      f.name,
+      str_push,
+      vec_push,
+      Dict.new(),
+      f.op_result_mono,
+      [],
+    )
 
     // Every candidate the seed path produced (certified OR structurally-rejected)
     // has claimed its loop_site; those loops must not re-surface as re-folds.

@@ -1,8 +1,11 @@
 # Phase 8C — Builder-Region Lowering (Design)
 
 **Status:** Design — **Plans 1–2 landed** (first slice complete: string + vector empty-seed
-builder-region lowering emits end-to-end, self-host fixed point holds). Plans 3–7 remain the
-sequenced follow-ups. **Date:** 2026-07-22. **Rev 5** — Plan 2 implemented and merged: producer +
+builder-region lowering emits end-to-end, self-host fixed point holds). **Plan 3 string half
+landed** (non-empty string seeds — literals of any length and `String`-typed local/param seeds —
+now certify and rewrite via `builder_from(seed)`; self-host fixed point holds, boot compiler
+rewrites 7 string regions). Plan 3 vector half + Plans 4–9 remain the sequenced follow-ups.
+**Date:** 2026-07-22. **Rev 5** — Plan 2 implemented and merged: producer +
 ANF-to-ANF rewrite + `link_program` ANF′ wiring + `repr_assign` string-seed fix + FU-1 deadness
 gate + FU-2 re-fold surfacing + `--census --sites` `consumed` column (impl plan archived at
 [../../archive/2026-07-22-8c-plan2-builder-region-rewrite.md](../../archive/2026-07-22-8c-plan2-builder-region-rewrite.md)).
@@ -490,12 +493,18 @@ each small and independently shippable.
   fixture (synthetic read after the reassign → not rewritten, normal case still rewritten);
   **FU-2** two-loop-same-`acc` fixture (two candidates surface, never a silent drop);
   scoped-vs-full equivalence; self-host fixed point.
-- **Plan 3 — non-empty seeds (string now-free; vector after a `builder_push` check).**
-  - *String:* relax the seed detector to accept any seed local; the rewrite is **identical**
-    (`builder_from(seed)`), and **no new proof is needed** — `str.tw`'s `builder_from` copies
-    (condition 1 is vacuous for it). Test: `acc = prefix; for … { acc = acc.concat(…) }` emits the
-    builder sequence and round-trips.
-    *Enabling change:* detector only. *Path is clear and verified.*
+- **Plan 3 — non-empty seeds (string ✅ LANDED; vector after a `builder_push` check).**
+  - *String:* ✅ **LANDED.** `seed_family` (`builder_region_detect.tw`) now certifies any string
+    literal seed (empty or not) and, via the accumulator's `op_result_mono`, a `String`-typed
+    `AInit(.ALocal)` seed (`acc := prefix`). The rewrite is **unchanged** — string already lowered
+    to `.FromBase(acc)` → `builder_from(acc)`, which **copies** the seed into a private builder, so
+    no ownership/uniqueness proof is needed (condition 1 is vacuous for `str.tw`'s `builder_from`).
+    The mono type is threaded through `detect_in_expr`/`detect_in_op` only to classify an ambiguous
+    non-empty local seed as string vs (deferred) vector; a false positive is still gated by
+    `find_region` (no concat fold → no candidate). Tests: `acc := "x"` literal and `acc := prefix`
+    param seeds detect/certify/rewrite (`builder_from`/`extend`/`freeze`, no `concat`) and round-trip;
+    non-empty **vector** seed stays uncertified (boundary guard). Self-host fixed point holds; the
+    boot compiler rewrites 7 string regions.
   - *Vector:* first confirm `vector$builder_push` never mutates a **shared** trie node in place
     (the boxed `builder_from` shares the base's immutable trie root). If confirmed, relax the
     vector seed to `builder_from(base)` (stays boxed). Test: non-empty vector accumulator

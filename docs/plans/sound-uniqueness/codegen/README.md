@@ -255,9 +255,19 @@ the ANF-to-ANF rewrite (`codegen/builder_region.tw`) run at the top of
 `link_program` to produce ANF′. `repr_assign` erases `string$builder_from` result
 slots to `OpaqueAnyref`; `--census --sites` renders a `consumed` column reflecting
 actual rewrite application; self-host fixed point holds. Vector regions stay boxed
-(typed routing is Plan 4). Plans 3–7 (non-empty seeds, typed routing,
-conditional/`continue` folds, multi-exit, straight-line chains) remain deferred
-follow-ups per the design. The Plan 2 execution plan is archived at
+(typed routing is Plan 4).
+
+**Plan 3's string half has since landed.** Non-empty string seeds — string literals
+of any length and `String`-typed local/param seeds (`acc := prefix`) — now certify and
+rewrite via `builder_from(seed)`. The rewrite was already `.FromBase(acc)` (which
+**copies** the seed into a private builder, so no ownership/uniqueness proof is needed);
+only the detector's `seed_family` needed to accept them, threading the accumulator's
+`op_result_mono` to classify an ambiguous non-empty `AInit(.ALocal)` seed as string vs
+(deferred) vector — with `find_region` gating any false positive. Self-host fixed point
+holds; the boot compiler rewrites 7 string regions. Plan 3's **vector** half + Plans 4–9
+(typed routing, conditional/`continue` folds, multi-exit, straight-line chains,
+branch-nested/co-resident regions) remain deferred follow-ups per the design. The Plan 2
+execution plan is archived at
 [../../archive/2026-07-22-8c-plan2-builder-region-rewrite.md](../../archive/2026-07-22-8c-plan2-builder-region-rewrite.md).
 
 Builder lowering has a different region shape from indexed update and should not
