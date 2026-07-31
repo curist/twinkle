@@ -1,5 +1,19 @@
 # Nested Return-Path Ownership (depth-cap lift) Implementation Plan
 
+> ## ⚠️ SPIKE RESULT (2026-08-01) — READ FIRST. This plan's core premise ("layer 4") is FALSIFIED; the win is a much smaller fix.
+>
+> The Task 1 validating spike (branch `spike-nested-retpath`) applied S-a + S-b + S-c + touches 4/5/5b/6/8 and found the dict **still stayed persistent** — a FOURTH blocker neither this plan nor the three prior spikes identified. Diagnosis (via a full `render_entry` dump of `field_transport_ctx`):
+>
+> - `pass`'s summary stays `ret_paths=.f0=from(p0)` — the depth-2 `.f0.f0` **is never produced**. A shell-owned param (`p0=Consumed paths{[]}`) carries **no subfield facts**, so building `Out.{ ctx, tag }` grafts only the shell. The `ReturnPathOwn` depth-2 representation (touches 4/5/6/8 — **the entire "layer 4" this plan is built around**) has no producer feeding it.
+> - The subfield ownership **exists at the call site** (`go`'s fresh ctx `L8:[.f0]=U,[.f1]=U`) but is lost across `pass` because `record_ret_path` writes **only the shell key** named by the ret_path.
+>
+> **The actual fix — "Fix A" (consumer-side deep graft), VALIDATED end-to-end:** at the call-application loop (`ownership.tw`, the `for rp in eff_ret_paths` loop ~4205), when `ret.fN = from(pK)` wraps a unique param wholesale (`.Direct`, `field2=.None`), **graft `args[K]`'s owned field subtree under `.fN`** (`result_fields.graft(.Field(fN), st.atom_field_own(arg))` + `graft_path_prov`). ~15 lines. With this:
+> - `field_transport_ctx` flips: `field=in-place([.f0] unique)`; `out` gains `[.f0,.f0]=U,[.f0,.f1]=U`.
+> - `make stage2` reaches the **fixed point** (`stage3 == stage4`) — self-host byte-stable with the compiler's own `BuildCtx`/`BuildExprOut` idiom.
+> - All `red_*` aliasing negatives pass. Two pre-existing tests fail because they assert **old** behavior my S-a/S-c changes intentionally relax (graft depth-3 drop; sibling-read borrow) — both need updating, neither is a soundness regression.
+>
+> **Consequence for scope:** Fix A needs only **S-a + S-b + S-c + the ~15-line graft**. Touches **4, 5, 5b, 6, 8 (all of layer 4) are UNNECESSARY** and should be dropped. The real plan is a fraction of this one. **Open soundness obligation for the polished plan:** prove `ret.fN=from(pK)` implies `out.fN` IS `pK` wholesale (shell identity ⇒ subtree identity), and add negatives for a wrapper that transforms the field or aliases a subfield twice. The sections below are the (now-superseded) layer-4 design; keep them only as the record of why layer 4 was abandoned.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (inline) task-by-task. Heavy verification (full boot suite, `make stage2`) runs **sequentially, never backgrounded**. **Task 1 is a validating spike — do it before any polish; if it fails to flip end-to-end, STOP and re-report (three prior spikes each falsified an assumption).**
 
 **Goal:** Make the transported-record dict update `next := out.ctx; next.types[k] = v` (`field_transport_ctx`, and the real `cfg.tw` `BuildCtx`/`BuildExprOut` idiom) emit `rt_dict__set_in_place`, by lifting the ownership depth cap so a **two-level field path** (`out.ctx.types` = `[Field, Field]`) can be represented, **returned across a call boundary**, and projected back to a proven-owned collection.
