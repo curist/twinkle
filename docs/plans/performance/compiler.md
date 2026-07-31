@@ -111,6 +111,9 @@ so a function can have a soundly-reusable summary yet a non-reusable FixResult
 (one whose fix transitively reads a clone-affected callee via an edge the
 summary-level closure doesn't track). The two passes' per-function fixes are
 therefore *different computations over different tables*, not redundant work.
+Whether a *provably-safe subset* (fixes that match under both tables, cheaply
+characterizable) exists is an open investigation:
+[2026-07-31-8g-fixcache-reuse.md](2026-07-31-8g-fixcache-reuse.md).
 **Lesson (same shape as rec #1 below):** a FixResult carries more context than the
 Summary it yields; reuse that is sound at the summary tier is not automatically
 sound at the fix tier. Validate any cross-pass fix reuse with `TWINKLE_FIXVERIFY`,
