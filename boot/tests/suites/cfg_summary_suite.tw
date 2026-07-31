@@ -2722,4 +2722,46 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "build_view_reusing + prune_dead_merge_selective reproduce a from-scratch pruned view",
+      fn() {
+        artifacts := case pipeline.compile_entry_path(
+          "${sound_uniqueness_fixtures_dir()}/phase8a_summary_closure.tw",
+        ) {
+          .Ok(result) => result,
+          .Err(err) => return .Err(format_compile_error(err)),
+        }
+        b := artifacts.builtins
+
+        // The pre-clone pruned view stands in for Phase 8G's carried view.
+        prior := ownership.prune_dead_merge(cfg.build_view(artifacts.opt, b))
+        fresh := ownership.prune_dead_merge(cfg.build_view(artifacts.opt, b))
+        root_id := try func_id_by_name(prior, "candidate_root")
+
+        // (1) Empty changed set: every function is reused verbatim from `prior`,
+        // and selective prune touches nothing — must equal the from-scratch view.
+        all_reused := ownership.prune_dead_merge_selective(
+          cfg.build_view_reusing(artifacts.opt, prior, Dict.new()),
+          Dict.new(),
+        )
+        for f in fresh.functions {
+          reused_f := try cfg.function_named(all_reused, f.name).ok_or("missing reused func")
+          try assert.equal(cfg.count_blocks(reused_f), cfg.count_blocks(f))
+        }
+
+        // (2) Mark one function changed: it is rebuilt fresh + pruned, the rest are
+        // reused. Result must still match the from-scratch pruned view exactly.
+        changed: Dict<Int, Bool> = Dict.new()
+        changed[root_id] = true
+        mixed := ownership.prune_dead_merge_selective(
+          cfg.build_view_reusing(artifacts.opt, prior, changed),
+          changed,
+        )
+        for f in fresh.functions {
+          mixed_f := try cfg.function_named(mixed, f.name).ok_or("missing mixed func")
+          try assert.equal(cfg.count_blocks(mixed_f), cfg.count_blocks(f))
+        }
+        .Ok({})
+      },
+    )
 }
