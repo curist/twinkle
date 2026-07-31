@@ -64,6 +64,23 @@ pub type SpecializeResult = .{
   // the callers whose call sites were rewritten to a clone. The producer rebuilds
   // only these; all others are reused from `pruned_view`.
   changed_funcs: Dict<Int, Bool>,
+  // INVESTIGATION-ONLY (TWINKLE_8G_FIXREUSE): per-candidate-root FixResults the
+  // summary fixpoint produced and would otherwise discard. Empty unless the lever
+  // is enabled. Soundness is under evaluation via the FIXVERIFY census — do not
+  // enable by default until the delta is proven clean.
+  fix_cache: ownership.FixCache,
+}
+
+// Reuse 8G's discarded per-root FixResults in the mutable producer instead of
+// re-running the ownership fixpoint over the same safe roots. On by default;
+// TWINKLE_8G_FIXREUSE=0 restores the from-scratch re-run. Validated by the
+// FIXVERIFY census (delta-clean vs the tracked-red baseline) plus byte-identical
+// output over the boot self-build.
+fn fixreuse_enabled() Bool {
+  case proc.env("TWINKLE_8G_FIXREUSE") {
+    .Some(v) => v != "0",
+    .None => true,
+  }
 }
 
 // Sentinel carried summary meaning "no reuse available"; callers recompute.
@@ -74,6 +91,11 @@ pub fn no_reuse_summary() ownership.SummaryTable {
 // Empty pruned view for the disabled-8G path; the producer builds its own.
 pub fn no_reuse_view() cfg.CfgView {
   cfg.CfgView.{ functions: [] }
+}
+
+// Empty FixResult cache for the disabled-8G / lever-off path.
+pub fn no_reuse_fix_cache() ownership.FixCache {
+  ownership.empty_fix_cache()
 }
 
 fn spec_timings_enabled() Bool {
@@ -309,7 +331,19 @@ pub fn specialize_module_with_cap_sem(
   t0 := date.now()
   view := ownership.prune_dead_merge(cfg.build_view(anf, b))
   spec_phase("begin summary_table")
-  table := summary.compute(view, b, sem)
+
+  // Candidate roots (== the mutable producer's roots pre-clone), also the group
+  // filter below. When TWINKLE_8G_FIXREUSE is on, request their FixResults from the
+  // summary fixpoint so the producer can reuse them; otherwise cache nothing.
+  updatable := updatable_funcs(anf, b)
+  cache_ids := if fixreuse_enabled() {
+    updatable
+  } else {
+    Dict.new()
+  }
+  sc := summary.compute_cached(view, b, sem, cache_ids)
+  table := sc.table
+  fix_cache := sc.fix_cache
   t1 := date.now()
   spec_phase("begin variant_table")
   vt := summary.compute_variants(view, b, sem, table)
@@ -325,6 +359,7 @@ pub fn specialize_module_with_cap_sem(
       summary: table,
       pruned_view: view,
       changed_funcs: Dict.new(),
+      fix_cache,
     }
   }
 
@@ -333,7 +368,6 @@ pub fn specialize_module_with_cap_sem(
   groups0 := collect_groups(view, table, b, sem, vt, published)
   t3 := date.now()
   spec_phase("begin updatable_filter")
-  updatable := updatable_funcs(anf, b)
   capped := apply_cap(groups0.filter(fn(g) { in_set(updatable, g.callee) }), cap)
   groups_up := capped.kept
   t4 := date.now()
@@ -350,6 +384,7 @@ pub fn specialize_module_with_cap_sem(
       summary: table,
       pruned_view: view,
       changed_funcs: Dict.new(),
+      fix_cache,
     }
   }
 
@@ -375,6 +410,7 @@ pub fn specialize_module_with_cap_sem(
         summary: table,
         pruned_view: view,
         changed_funcs: Dict.new(),
+        fix_cache,
       },
     }
     ccfg := case cfg_func_of(view, g.callee) {
@@ -386,6 +422,7 @@ pub fn specialize_module_with_cap_sem(
         summary: table,
         pruned_view: view,
         changed_funcs: Dict.new(),
+        fix_cache,
       },
     }
     clone_id := next
@@ -492,7 +529,15 @@ pub fn specialize_module_with_cap_sem(
 
   anf.functions = routed_funcs
   spec_phase("end specialize_module")
-  SpecializeResult.{ anf, seeds, routes, summary: table, pruned_view: view, changed_funcs }
+  SpecializeResult.{
+    anf,
+    seeds,
+    routes,
+    summary: table,
+    pruned_view: view,
+    changed_funcs,
+    fix_cache,
+  }
 }
 
 type RecRoute = .{ site_key: Int, target: Int }

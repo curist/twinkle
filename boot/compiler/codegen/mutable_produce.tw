@@ -17,7 +17,7 @@ use compiler.codegen.variant_route
 use compiler.core_ir.{FieldId, FuncId, LocalId}
 use compiler.mono_type.{TypeId}
 use compiler.opt.semantics.{OptimizerSemantics, make_prelude_optimizer_semantics}
-use compiler.ownership.{SummaryTable, empty_summary_table}
+use compiler.ownership.{FixCache, SummaryTable, empty_fix_cache, empty_summary_table}
 
 fn timings_enabled() Bool {
   case proc.env("TWINKLE_TIMINGS") {
@@ -506,6 +506,7 @@ pub fn produce_mutable_decisions_seeded(
     empty_summary_table(),
     cfg.CfgView.{ functions: [] },
     Dict.new(),
+    empty_fix_cache(),
   )
 }
 
@@ -520,6 +521,7 @@ pub fn produce_mutable_decisions_seeded_with_sem(
   carried: SummaryTable,
   prior_view: cfg.CfgView,
   changed_funcs: Dict<Int, Bool>,
+  carried_fix: FixCache,
 ) ProducedDecisions {
   mutable_phase("begin candidate_scan")
   all_cands := collect_all_candidates_for(opt, b)
@@ -557,6 +559,7 @@ pub fn produce_mutable_decisions_seeded_with_sem(
     carried,
     prior_view,
     changed_funcs,
+    carried_fix,
   )
   mutable_phase("end ownership_artifacts")
 

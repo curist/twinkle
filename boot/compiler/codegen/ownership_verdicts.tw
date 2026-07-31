@@ -580,6 +580,7 @@ pub fn compute_candidate_artifacts(
     ownership.empty_summary_table(),
     cfg.CfgView.{ functions: [] },
     Dict.new(),
+    ownership.empty_fix_cache(),
   )
 }
 
@@ -598,6 +599,7 @@ pub fn compute_candidate_artifacts_seeded(
   carried: ownership.SummaryTable,
   prior_view: cfg.CfgView,
   changed_funcs: Dict<Int, Bool>,
+  carried_fix: ownership.FixCache,
 ) OwnershipArtifacts {
   timed := timings_enabled()
   artifact_phase("begin scoped_cfg")
@@ -628,7 +630,7 @@ pub fn compute_candidate_artifacts_seeded(
   // Falls back to the from-scratch scoped summary otherwise.
   use_reuse := carried.by_func.keys().len() > 0 and summary_reuse_enabled()
   summarized := if use_reuse {
-    summary.compute_for_roots_reusing(view, b, sem, scope, carried)
+    summary.compute_for_roots_reusing(view, b, sem, scope, carried, carried_fix)
   } else {
     summary.compute_for_roots_cached(view, b, sem, scope)
   }

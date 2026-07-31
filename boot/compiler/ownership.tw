@@ -5739,6 +5739,17 @@ fn fixverify_enabled() Bool {
   }
 }
 
+// Census mode: on a fixverify mismatch, print the label and CONTINUE instead of
+// trapping, so a single build reports the complete mismatch set (not just the
+// first). Used to measure the delta against the tracked-red baseline
+// (`analyze:unique_analysis_diags`) when evaluating a fix-reuse change.
+fn fixverify_census_enabled() Bool {
+  case proc.env("TWINKLE_FIXVERIFY_CENSUS") {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
 // Drive the cold ownership fixpoint with the successor-based worklist (skipping
 // no-op re-visits) instead of a full sweep every round. On by default;
 // TWINKLE_COLD_WORKLIST=0 restores the legacy full sweep for A/B.
@@ -7251,7 +7262,11 @@ fn ownership_stage(
           resolve,
         )
         if fresh.render_fix_result() != cf.render_fix_result() {
-          error("fixverify mismatch: ${label}")
+          if fixverify_census_enabled() {
+            eprintln("[fixverify:census] ${label}")
+          } else {
+            error("fixverify mismatch: ${label}")
+          }
         }
       }
       cf

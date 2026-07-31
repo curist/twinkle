@@ -22,8 +22,8 @@ use compiler.opt.semantics.{OptimizerSemantics}
 use compiler.ownership.{
   FixCache, ParamRole, ParamSummary, RetVia, ReturnEffect, ReturnOwn, ReturnPathOwn, Summary,
   SummaryTable, VariantRequirementResolver, VariantResolver, analyze_function_with_seed_resolved,
-  call_uniques_sited, empty_fix_cache, empty_summary_table, fix_cache_put, summarize_function_cached,
-  summarize_variant_resolved, summary_get, with_dedupe_helpers,
+  call_uniques_sited, empty_fix_cache, empty_summary_table, fix_cache_get, fix_cache_put,
+  summarize_function_cached, summarize_variant_resolved, summary_get, with_dedupe_helpers,
 }
 use compiler.variant_id as vid
 
@@ -1800,6 +1800,21 @@ pub fn render_cfg(
 
 // ── Driver ──────────────────────────────────────────────────────────
 pub fn compute(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) SummaryTable {
+  compute_cached(view, b, sem, Dict.new()).table
+}
+
+// Like `compute`, but also caches the (analyze-equivalent) FixResult for every
+// func id in `cache_ids`. The summary fixpoint already produces a FixResult per
+// function; without a cache request it discards them all. Used by the (flag-gated,
+// under investigation) 8G FixResult-reuse lever, which requests the mutation
+// candidate roots so the producer can reuse those fixes. A cached fx is stored
+// only when `summarize_function_cached` reports it reusable.
+pub fn compute_cached(
+  view: CfgView,
+  b: BuiltinRegistry,
+  sem: OptimizerSemantics,
+  cache_ids: Dict<Int, Bool>,
+) SummaryCacheResult {
   trace := summary_trace_enabled()
   if trace {
     eprintln("[trace:summary:compute:start] funcs=${view.functions.len()}")
@@ -1814,10 +1829,9 @@ pub fn compute(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) Summa
     table = table_put(table, f.func_id, conservative_summary(f))
   }
 
-  no_cache_ids: Dict<Int, Bool> = Dict.new()
   cache := empty_fix_cache()
   for scc in order_sccs(view, index, user_ids) {
-    r := run_scc(scc, index, user_ids, table, b, sem, no_cache_ids, cache)
+    r := run_scc(scc, index, user_ids, table, b, sem, cache_ids, cache)
     table = r.table
     cache = r.cache
   }
@@ -1828,7 +1842,7 @@ pub fn compute(view: CfgView, b: BuiltinRegistry, sem: OptimizerSemantics) Summa
   if trace {
     eprintln("[trace:summary:compute:end]")
   }
-  table
+  SummaryCacheResult.{ table, fix_cache: cache }
 }
 
 // Transitive user-callee closure of `roots` (root ids included). Used to scope
@@ -2024,6 +2038,7 @@ pub fn compute_for_roots_reusing(
   sem: OptimizerSemantics,
   roots: Dict<Int, Bool>,
   carried: SummaryTable,
+  carried_fix: FixCache,
 ) SummaryCacheResult {
   timed := timings_enabled()
   t0 := if timed {
@@ -2124,14 +2139,36 @@ pub fn compute_for_roots_reusing(
     table = table_put(table, f.func_id, seed)
   }
 
+  // Pre-seed the FixResult cache from a carrier (Phase 8G's discarded fixes) for
+  // every safe root. An empty `carried_fix` (the default / lever-off path) seeds
+  // nothing, so behavior is unchanged. INVESTIGATION-ONLY: this is only sound if
+  // a safe root's carried fix equals what `run_scc` recomputes here under the
+  // scoped table — see the fixcache-reuse plan; gate the population upstream.
   cache := empty_fix_cache()
+  reused_fix := 0
+  for id, _flag in roots {
+    is_unsafe := case unsafe.get(id) {
+      .Some(true) => true,
+      _ => false,
+    }
+    if !is_unsafe {
+      case fix_cache_get(carried_fix, id) {
+        .Some(fx) => {
+          cache = fix_cache_put(cache, id, fx)
+          reused_fix = reused_fix + 1
+        },
+        .None => {},
+      }
+    }
+  }
+
   sccs := order_sccs(view, index, user_ids)
   run_sccs := 0
   skipped_sccs := 0
   for scc in sccs {
     in_wanted := false
     all_safe := true
-    has_root := false
+    root_missing_fix := false
     for id in scc {
       case wanted.get(id) {
         .Some(true) => in_wanted = true,
@@ -2142,14 +2179,19 @@ pub fn compute_for_roots_reusing(
         _ => {},
       }
       case roots.get(id) {
-        .Some(true) => has_root = true,
+        .Some(true) => case fix_cache_get(cache, id) {
+          .None => root_missing_fix = true,
+          _ => {},
+        },
         _ => {},
       }
     }
 
-    // Skip an SCC only when it is entirely reusable and holds no cache root; such
-    // members keep their carried seed, which is already their fixed point.
-    if in_wanted and (!all_safe or has_root) {
+    // Run an SCC when it is in the closure and either touches the clone-affected
+    // set or holds a cache root whose fix was not pre-seeded. An all-safe SCC whose
+    // roots are all pre-seeded is skipped: members keep their carried seed (their
+    // fixed point) and roots keep the carried fix.
+    if in_wanted and (!all_safe or root_missing_fix) {
       run_sccs = run_sccs + 1
       r := run_scc(scc, index, user_ids, table, b, sem, roots, cache)
       table = r.table
@@ -2165,7 +2207,9 @@ pub fn compute_for_roots_reusing(
     eprintln(
       "[time:summary:reuse] total=${t_done - t0}ms funcs=${view.functions.len()} wanted=${wanted
         .keys()
-        .len()} reused=${reused} clones=${clone_ids.keys().len()} unsafe=${unsafe.keys().len()} run_sccs=${run_sccs} skipped_sccs=${skipped_sccs}",
+        .len()} reused=${reused} reused_fix=${reused_fix} clones=${clone_ids.keys().len()} unsafe=${unsafe
+        .keys()
+        .len()} run_sccs=${run_sccs} skipped_sccs=${skipped_sccs}",
     )
   }
 

@@ -150,6 +150,7 @@ pub fn prepare_codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegist
       summary: variant_specialize.no_reuse_summary(),
       pruned_view: variant_specialize.no_reuse_view(),
       changed_funcs: Dict.new(),
+      fix_cache: variant_specialize.no_reuse_fix_cache(),
     }
   }
   anf_spec := spec.anf
@@ -184,6 +185,7 @@ pub fn prepare_codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegist
       spec.summary,
       spec.pruned_view,
       spec.changed_funcs,
+      spec.fix_cache,
     )
   } else {
     mutable_produce.ProducedDecisions.{

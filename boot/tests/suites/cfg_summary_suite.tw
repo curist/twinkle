@@ -2697,7 +2697,14 @@ pub fn suite() runner.Suite {
 
         // (1) A full carried table makes every function provably reusable; the
         // reuse path must still reproduce the from-scratch scoped table exactly.
-        reused := summary.compute_for_roots_reusing(view, b, s, roots, carried).table
+        reused := summary.compute_for_roots_reusing(
+          view,
+          b,
+          s,
+          roots,
+          carried,
+          ownership.empty_fix_cache(),
+        ).table
         for f in view.functions {
           try assert.equal(
             render_summary_at(reused, f.func_id),
@@ -2712,7 +2719,14 @@ pub fn suite() runner.Suite {
           by_func: carried.by_func.remove(root_id),
           dedupe_helpers: carried.dedupe_helpers,
         }
-        reused2 := summary.compute_for_roots_reusing(view, b, s, roots, carried_missing).table
+        reused2 := summary.compute_for_roots_reusing(
+          view,
+          b,
+          s,
+          roots,
+          carried_missing,
+          ownership.empty_fix_cache(),
+        ).table
         for f in view.functions {
           try assert.equal(
             render_summary_at(reused2, f.func_id),
