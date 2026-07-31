@@ -90,35 +90,31 @@ the FixCache-reuse update below).
   remaining floor is the 8G whole-program ownership
   fixpoint (it decides clones, so it is largely inherent).
 
-### Inconclusive: reuse 8G's FixResults in the mutable producer (revert was misattributed)
+### Landed: reuse 8G's FixResults in the mutable producer (`TWINKLE_8G_FIXREUSE`)
 
-The apparent redundancy — 8G computes a FixResult per function and discards it,
-then the mutable producer re-runs the fixpoint over the candidate roots — was
-prototyped (carry 8G's per-candidate-root `FixCache` in `SpecializeResult`,
-pre-seed the mutable producer's cache, skip re-running the all-safe root SCCs).
-The win was real (`summary:reuse` ~2999 → ~1339ms, `produce_mutable_decisions`
-~5.9 → ~4.6s, wall ~20 → ~19s) and **output was byte-identical** on the boot
-self-build. It was reverted after `TWINKLE_FIXVERIFY` reported
-`analyze:unique_analysis_diags`.
+8G's `summary.compute` produces a FixResult per function and discarded them all;
+the producer then re-ran the ownership fixpoint over the ~548 candidate roots to
+reconstruct them. Now 8G caches the candidate roots' fixes (`compute_cached`),
+carries them in `SpecializeResult`, and the producer pre-seeds its scoped-summary
+cache so the safe-root SCCs are skipped. **summary:reuse ~3105 → ~1513ms;
+produce_mutable_decisions ~5923 → ~4256ms; wall ~21.45 → ~19.97s median.**
 
-**Correction (2026-07-31):** that reasoning was wrong.
-`analyze:unique_analysis_diags` is a **pre-existing, tracked-red FIXVERIFY
-baseline** — it mismatches on plain `main` too (with the lever's flag off *and*
-with `TWINKLE_SUMMARY_REUSE=0`), and the archived owned-variant plans already
-name it as "the tracked-red baseline, present even before Task 1 — measure the
-delta, not the absolute" (`archive/owned-variant-codegen-handoff.md`,
-`archive/aggregate-field-owned-variants.md`). FIXVERIFY errors on the **first**
-mismatch, so seeing that name proves nothing about the lever; the correct gate is
-**no NEW mismatch beyond the baseline** (a delta / census), which was never run.
-Combined with the byte-identical output, the fix-reuse lever is **inconclusive,
-not disproven** — quite possibly sound.
+This lever was **reverted once as "FIXVERIFY-unsound," which was wrong** — a
+misdiagnosis worth its own lesson. `analyze:unique_analysis_diags` (and the
+`merge_targeted__{Bool,Int,Vec_Int}` monomorphizations) are a **pre-existing,
+tracked-red FIXVERIFY baseline**: they mismatch on plain `main` too (lever off,
+even with `TWINKLE_SUMMARY_REUSE=0`), documented in the archived owned-variant
+plans as "measure the delta, not the absolute." `TWINKLE_FIXVERIFY` errors on the
+**first** mismatch, so seeing that name proves nothing. A `TWINKLE_FIXVERIFY_CENSUS`
+mode (list the full mismatch set, don't trap) showed the lever-on set is
+byte-for-byte the same four functions as lever-off — **zero new mismatches** — and
+output is byte-identical over the whole self-build.
 
-The right way to settle it is the census in
-[2026-07-31-8g-fixcache-reuse.md](2026-07-31-8g-fixcache-reuse.md) Phase 0: turn
-FIXVERIFY into a full mismatch list and compare the set with the flag on vs off.
-**Durable lesson:** `analyze:unique_analysis_diags` is a known FIXVERIFY red;
-acceptance for any ownership change is *delta against that baseline* (plus
-byte-identity + stage2), never "FIXVERIFY prints nothing."
+**Durable lesson:** acceptance for any ownership/fix change is the **FIXVERIFY
+delta** (census set with the change vs without) plus byte-identity + `make stage2`,
+never "`TWINKLE_FIXVERIFY` prints nothing." A first-mismatch trap over a codebase
+with a known-red baseline will misattribute an unrelated failure to your change —
+exactly what sank this lever's first attempt.
 
 ## Landed wins (durable lessons)
 

@@ -25,7 +25,6 @@ scattered across `docs/plans/`.
 |------|------|--------|
 | [2026-07-31-ownership-cfg-liveness-reuse.md](2026-07-31-ownership-cfg-liveness-reuse.md) | Reuse 8G's pruned CFG + summary-pass liveness in the mutable producer (scope-independent, low-risk; ~1.2s). | Planned |
 | [2026-07-31-scope-8g-summary.md](2026-07-31-scope-8g-summary.md) | Investigate scoping 8G's whole-program `summary.compute` (the ~5.8s phase) to the variant-relevant closure; soundness-gated (can change codegen). | Investigation |
-| [2026-07-31-8g-fixcache-reuse.md](2026-07-31-8g-fixcache-reuse.md) | Investigate whether a *provably-safe subset* of 8G's discarded FixResults can be reused by the mutable producer. Naive version reverted (FIXVERIFY-unsound); Phase 0 tests for a cheap characterization, else null result. | Investigation |
 
 ## Current runtime priority stack
 

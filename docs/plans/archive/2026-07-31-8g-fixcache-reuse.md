@@ -1,5 +1,16 @@
 # Safe 8G→Producer FixResult Reuse — Soundness Investigation Plan
 
+> **✅ LANDED (2026-07-31).** The Phase 0 census resolved it in favor of the lever:
+> `TWINKLE_FIXVERIFY_CENSUS` showed the lever-on mismatch set is identical to the
+> lever-off baseline (`analyze:unique_analysis_diags` + `merge_targeted__{Bool,
+> Int,Vec_Int}`) — zero new mismatches — and output is byte-identical over the
+> self-build. Shipped default-on behind `TWINKLE_8G_FIXREUSE` (kill-switch `=0`):
+> `summary:reuse` ~3105→1513ms, `produce_mutable_decisions` ~5923→4256ms, wall
+> ~21.45→19.97s median. The earlier "not viable" call was a misattribution to the
+> pre-existing tracked-red baseline (FIXVERIFY traps on the first mismatch). See
+> the landed-win writeup in [../performance/compiler.md](../performance/compiler.md).
+> Plan retained below for the census methodology.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax. **Investigation-first: the naive version is already known to fail `TWINKLE_FIXVERIFY`. Phase 0 decides whether a sound version can exist at all — a null-result exit is an expected outcome, not a failure.**
 
 **Goal:** Determine whether Phase 8G's per-function `FixResult`s (computed inside `summary.compute` and currently discarded) can be reused by the mutable-decision producer for a **provably-characterizable subset** of functions, skipping the producer's re-run of the ownership fixpoint over those functions. If such a subset exists and is cheap to compute, land it; otherwise document why not.
