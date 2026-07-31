@@ -319,7 +319,30 @@ git commit -m "Test: build_view_reusing equivalence to build_view"
 
 ---
 
-## Lever B: Cross-pass liveness sharing (call_uniques / analyze)
+## Lever B: Cross-pass liveness sharing (call_uniques / analyze) — ⏸️ DEPRIORITIZED (B0 done 2026-07-31)
+
+**Status: measured, deprioritized — not built.** B0 investigation completed after
+Levers A + fix-reuse landed; the finding is that Lever B is sound but low-ROI now:
+
+- **Liveness is not skippable on the fix-reuse path.** `analyze_copy_carriers`
+  (`ownership.tw:7231`) runs unconditionally before the fix-cache reuse check and
+  consumes the live-stamped blocks, so a fix-cache hit still needs liveness.
+- **The summary→analyze overlap eroded.** Fix-reuse now skips the ~390 pre-seeded
+  safe-root SCCs in the summary phase (`run_sccs` 591→201), so there is no
+  summary-side liveness to share for most of analyze's scope. Full coverage would
+  require *also* carrying 8G's liveness (sound — liveness is invariant under
+  specialization's call-target rewrites, unlike FixResults — but more plumbing).
+- **`call_uniques` liveness is fragmented** across 3 contexts/views (summary
+  variant computation `summary.tw:1602/1625`, 8G `collect_groups`, verdicts
+  dry-run `ownership_verdicts.tw:488`) — no single clean boundary.
+- **Plumbing is disproportionate:** a sound `LiveCache` must replicate the entire
+  fix_cache + 8G-carry surface (`SeededResult`, `CachedSummary`, `run_scc`/
+  `SccResult`, `SummaryCacheResult`, `SpecializeResult`, `analyze_selected`,
+  `analyze_function`) on the hottest ownership code, for a **~0.3s** reachable win
+  (vs fix-reuse 1.5s, CFG 0.8s).
+
+**Recommendation:** leave unbuilt unless a later change re-enlarges the overlap or
+the ~0.3s becomes material. The task breakdown below is retained for reference.
 
 Only pursue after Lever A lands (or is decisively rejected). This is smaller (~0.3–0.5s) and its viability is already argued in compiler.md ("Remaining liveness redundancy").
 
