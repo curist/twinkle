@@ -41,7 +41,7 @@ These are the standing gates. A task is "green" only when all of its listed gate
   <FLAG>=1 target/twk build boot/main.tw -o /tmp/on.wasm
   cmp /tmp/off.wasm /tmp/on.wasm && echo IDENTICAL
   ```
-- **FIXVERIFY:** `TWINKLE_FIXVERIFY=1 <FLAG>=1 target/twk build boot/main.tw -o /tmp/v.wasm 2>&1 | grep -i mismatch` → no output (a mismatch calls `error()` and exits non-zero).
+- **FIXVERIFY delta:** `analyze:unique_analysis_diags` is a **pre-existing tracked-red baseline** (mismatches on `main`, flag off). The gate is therefore **no NEW mismatch beyond it**, not "prints nothing": confirm the flag on produces the *same* mismatch as the flag off (plain FIXVERIFY errors on the first, so a byte-identical A/B is the practical proxy; use the census mode from the fixcache-reuse plan if a set comparison is needed).
 - **Self-host fixed point:** `make stage2` → prints `Fixed point reached: stage3 == stage4`.
 - **Same-session A/B timing:** run each variant 3× sequentially (never concurrently — see [feedback_sequential_heavy_verification]), compare medians of the relevant `[time]`/`[time:mutable:artifacts]` lines under `TWINKLE_TIMINGS=1`.
 
@@ -49,7 +49,14 @@ After any `.tw` edit: `target/twk fmt <file>` then `target/twk lint boot/main.tw
 
 ---
 
-## Lever A: Incremental CFG reuse (8G → mutable producer)
+## Lever A: Incremental CFG reuse (8G → mutable producer) — ✅ LANDED (2026-07-31)
+
+**Status:** shipped behind `TWINKLE_CFG_REUSE` (default on). Headroom measured at
+4057/4127 functions reusable; producer `cfg` phase ~845 → ~49ms; output
+byte-identical (flag on vs off, and vs the no-reuse reference); FIXVERIFY delta
+zero (only the pre-existing `analyze:unique_analysis_diags` baseline); `make
+stage2` fixed point; 3322 boot tests pass (incl. the new equivalence test). The
+task breakdown below is retained for reference.
 
 **Files:**
 - Modify: `boot/compiler/codegen/variant_specialize.tw` (carry the pruned view + changed-func set in `SpecializeResult`)

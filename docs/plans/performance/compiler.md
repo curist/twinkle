@@ -90,34 +90,35 @@ the FixCache-reuse update below).
   remaining floor is the 8G whole-program ownership
   fixpoint (it decides clones, so it is largely inherent).
 
-### Null result: reuse 8G's FixResults in the mutable producer (not viable)
+### Inconclusive: reuse 8G's FixResults in the mutable producer (revert was misattributed)
 
-The apparent redundancy above — 8G computes a FixResult per function and discards
-it, then the mutable producer re-runs the fixpoint over the candidate roots — is
-**not** soundly exploitable. Prototyped (carry 8G's per-candidate-root `FixCache`
-in `SpecializeResult`, pre-seed the mutable producer's cache, skip re-running the
-all-safe root SCCs) and reverted: the win was real (`summary:reuse` ~2999 →
-~1339ms, `produce_mutable_decisions` ~5.9 → ~4.6s, wall ~20 → ~19s, output
-byte-identical on the boot self-build) but `TWINKLE_FIXVERIFY` flagged a real
-divergence (`analyze:unique_analysis_diags`).
+The apparent redundancy — 8G computes a FixResult per function and discards it,
+then the mutable producer re-runs the fixpoint over the candidate roots — was
+prototyped (carry 8G's per-candidate-root `FixCache` in `SpecializeResult`,
+pre-seed the mutable producer's cache, skip re-running the all-safe root SCCs).
+The win was real (`summary:reuse` ~2999 → ~1339ms, `produce_mutable_decisions`
+~5.9 → ~4.6s, wall ~20 → ~19s) and **output was byte-identical** on the boot
+self-build. It was reverted after `TWINKLE_FIXVERIFY` reported
+`analyze:unique_analysis_diags`.
 
-Root cause: 8G's `summary.compute` computes each FixResult against the
-**whole-program** summary table; the mutable producer's analyze uses a **scoped**
-table (conservative for out-of-closure funcs, recomputed post-clone for
-clone-affected ones). The summary reuse is sound because the summary-level
-`unsafe` backward closure covers everything a *summary* depends on — but a
-FixResult's dependency footprint is **broader** than the summary it projects to,
-so a function can have a soundly-reusable summary yet a non-reusable FixResult
-(one whose fix transitively reads a clone-affected callee via an edge the
-summary-level closure doesn't track). The two passes' per-function fixes are
-therefore *different computations over different tables*, not redundant work.
-Whether a *provably-safe subset* (fixes that match under both tables, cheaply
-characterizable) exists is an open investigation:
-[2026-07-31-8g-fixcache-reuse.md](2026-07-31-8g-fixcache-reuse.md).
-**Lesson (same shape as rec #1 below):** a FixResult carries more context than the
-Summary it yields; reuse that is sound at the summary tier is not automatically
-sound at the fix tier. Validate any cross-pass fix reuse with `TWINKLE_FIXVERIFY`,
-not just summary equality.
+**Correction (2026-07-31):** that reasoning was wrong.
+`analyze:unique_analysis_diags` is a **pre-existing, tracked-red FIXVERIFY
+baseline** — it mismatches on plain `main` too (with the lever's flag off *and*
+with `TWINKLE_SUMMARY_REUSE=0`), and the archived owned-variant plans already
+name it as "the tracked-red baseline, present even before Task 1 — measure the
+delta, not the absolute" (`archive/owned-variant-codegen-handoff.md`,
+`archive/aggregate-field-owned-variants.md`). FIXVERIFY errors on the **first**
+mismatch, so seeing that name proves nothing about the lever; the correct gate is
+**no NEW mismatch beyond the baseline** (a delta / census), which was never run.
+Combined with the byte-identical output, the fix-reuse lever is **inconclusive,
+not disproven** — quite possibly sound.
+
+The right way to settle it is the census in
+[2026-07-31-8g-fixcache-reuse.md](2026-07-31-8g-fixcache-reuse.md) Phase 0: turn
+FIXVERIFY into a full mismatch list and compare the set with the flag on vs off.
+**Durable lesson:** `analyze:unique_analysis_diags` is a known FIXVERIFY red;
+acceptance for any ownership change is *delta against that baseline* (plus
+byte-identity + stage2), never "FIXVERIFY prints nothing."
 
 ## Landed wins (durable lessons)
 
@@ -165,6 +166,20 @@ change touches codegen.
   Filter to the family-slot subset once at the top. *Lesson: gate a whole-program
   analysis to the functions it can actually classify — output is identical, skipped
   funcs contribute nothing.*
+- **Reuse 8G's pruned CFG in the mutable producer** (`TWINKLE_CFG_REUSE`; producer
+  `cfg` phase ~845 → ~49ms). The mutable-decision producer rebuilt the whole
+  post-clone CFG view (`build_view |> prune_dead_merge`) from scratch, though
+  Phase 8G already built and pruned a per-function view over the pre-clone module
+  and specialization only edits clone bodies + rewrites a few callers' call
+  targets (in the boot build only ~70 of ~4127 functions change). Track exactly
+  which functions the routing rewrite changed, carry 8G's pruned view + that set
+  in `SpecializeResult`, and rebuild only the changed functions
+  (`build_view_reusing` + `prune_dead_merge_selective`), reusing the rest.
+  Byte-identical because `build_view`/`prune_dead_merge` are purely per-function
+  and `prune_function` is idempotent, so a reused already-pruned `CfgFunction`
+  equals a fresh rebuild. *Lesson: unlike FixResults (scope-dependent), a
+  `CfgFunction` is a purely structural per-function fact — safe to carry across
+  the 8G→producer boundary for every function specialization didn't touch.*
 - **Deep-IR traversal shape (the worklist tax).** A stack-safety pass once
   converted many backend/optimizer IR walks to `Vector`-backed worklists that box
   every child into a GC vector (~2–9× slower per node than native frames),

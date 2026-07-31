@@ -20,9 +20,18 @@
 
 ## Verification harness
 
-- **FIXVERIFY (the authoritative gate):** `TWINKLE_FIXVERIFY=1 TWINKLE_8G_FIXREUSE=1 target/twk build boot/main.tw -o /tmp/v.wasm 2>&1 | grep -i mismatch` → **no output**. A single mismatch = unsound.
-- **Byte-identity A/B:** `TWINKLE_8G_FIXREUSE=0` vs `=1`, `cmp` (necessary but *not sufficient* — see above).
-- Boot suite (3321), `make stage2` fixed point, 3× same-session `[time:summary:reuse]` / `produce_mutable_decisions` A/B.
+- **FIXVERIFY delta (the authoritative gate):** `analyze:unique_analysis_diags` is a
+  **pre-existing tracked-red baseline** (it mismatches on plain `main`, flag off,
+  even with `TWINKLE_SUMMARY_REUSE=0`; the archived owned-variant plans document it
+  as "measure the delta, not the absolute"). Plain `TWINKLE_FIXVERIFY=1` errors on
+  that first mismatch and tells you nothing — so this plan **requires the census
+  mode** (Phase 0 Step 2): the gate is **the mismatch SET with the flag on equals
+  the set with the flag off**, i.e. no NEW mismatch beyond the baseline. A single
+  new name = unsound.
+- **Byte-identity A/B:** `TWINKLE_8G_FIXREUSE=0` vs `=1`, `cmp`. Necessary but *not
+  sufficient* on its own — the reverted prototype was byte-identical; pair it with
+  the FIXVERIFY-delta census before trusting.
+- Boot suite (3322), `make stage2` fixed point, 3× same-session `[time:summary:reuse]` / `produce_mutable_decisions` A/B.
 
 ---
 
@@ -72,12 +81,12 @@ git commit -m "8G fixreuse: diagnostic census + predicate classification (defaul
 
 Add the Phase-0 predicate as the additional pre-seed condition: a candidate root's 8G `FixResult` is pre-seeded (and its SCC skipped) only when it passes the predicate (e.g. its dependency closure is disjoint from `unsafe`). All other roots are recomputed by the producer exactly as today.
 
-- [ ] **Step 2: FIXVERIFY-clean over the whole self-build**
+- [ ] **Step 2: FIXVERIFY-delta clean over the whole self-build (census mode)**
 
 ```bash
-TWINKLE_FIXVERIFY=1 TWINKLE_8G_FIXREUSE=1 target/twk build boot/main.tw -o /tmp/v.wasm 2>&1 | grep -i mismatch
+TWINKLE_FIXVERIFY=1 TWINKLE_FIXVERIFY_CENSUS=1 TWINKLE_8G_FIXREUSE=1 target/twk build boot/main.tw -o /tmp/v.wasm 2>&1 | grep '\[fixverify:census\]'
 ```
-Expected: **no output**. If any mismatch remains, the predicate is insufficient — return to Phase 0 Step 4 to widen it, or conclude non-viable.
+Expected: the mismatch set equals the flag-off baseline (`analyze:unique_analysis_diags` only). If any NEW name appears, the predicate is insufficient — return to Phase 0 Step 4 to widen it, or conclude non-viable.
 
 - [ ] **Step 3: Byte-identity A/B + boot suite + stage2**
 
