@@ -1,5 +1,18 @@
 # Scope 8G's Whole-Program `summary.compute` — Soundness Investigation Plan
 
+> **❌ NULL RESULT (Phase 1, 2026-07-31) — not viable.** Instrumented the required
+> `variant_scope` (downward closure of the mutation candidates ∪ the upward caller
+> closure of published callees ∪ those callers' callee closure):
+> `total=4106 updatable=523 down_wanted=3235 (79%) up_callers=873 union=3857 (93.9%)`.
+> The scope is **93.9% of the program** — the `collect_groups` caller scan needs
+> accurate summaries for an 873-func *upward* caller closure that sits outside the
+> 79% downward `wanted` floor. Scoping to 94% saves <7% of the ~5.9s summary phase
+> (~350ms) while carrying real codegen-soundness risk (a dropped variant) and a
+> producer-reuse interaction (8G's summary is the producer's reuse base, imposing
+> the 79% floor by itself). Below the plan's own 0.85 stop-gate — **stopped at
+> Phase 1; Phase 2/3 not attempted.** Investigation-only instrumentation reverted.
+> Recorded in [compiler.md](compiler.md). Plan retained below for the methodology.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax. **This is investigation-first: no perf change ships until the soundness gate in Phase 2 passes.**
 
 **Goal:** Determine whether Phase 8G's `variant_specialize` can compute its ownership summary over a *scoped* subset of functions (a "variant-relevant closure") instead of all ~4123 functions, without dropping any published owned variant — and if so, land it. The `table` sub-phase (`summary.compute`) is ~5806ms, the single largest sound-uniqueness cost.

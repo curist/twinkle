@@ -116,6 +116,22 @@ never "`TWINKLE_FIXVERIFY` prints nothing." A first-mismatch trap over a codebas
 with a known-red baseline will misattribute an unrelated failure to your change —
 exactly what sank this lever's first attempt.
 
+### Null result: scope 8G's whole-program `summary.compute`
+
+The largest single sound-uniqueness cost is 8G's `summary.compute` (~5.8s over all
+~4106 funcs). Scoping it to a "variant-relevant closure" was investigated and
+**rejected at the measurement gate**: the required scope is **93.9% of the
+program** (`down_wanted=3235` ≈ 79%, `up_callers=873`, `union=3857/4106`).
+`candidate_variants` reads every function's summary, and `collect_groups` needs
+accurate summaries for the *upward caller closure* of published callees (873 funcs
+outside the downward `wanted` closure) to judge caller arg-uniqueness. On top of
+that, 8G's summary is the producer's reuse base, so it must stay accurate for the
+producer's `wanted` (~79%) regardless — a hard floor. Scoping to 94% saves <7%
+(~350ms) while risking a dropped variant (codegen change). Below the 0.85
+stop-gate; not pursued past Phase 1. *Lesson: a whole-program analysis whose
+consumers include an upward caller scan can't be scoped to a downward closure —
+the caller closure drags the scope back to ~whole-program.*
+
 ## Landed wins (durable lessons)
 
 Grouped by area. Each is a "stop doing unnecessary work / defer until needed"
