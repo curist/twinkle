@@ -30,6 +30,16 @@ fn summary_reuse_enabled() Bool {
   }
 }
 
+// Reuse Phase 8G's per-function pruned CFG (rebuilding only clones + rewritten
+// callers) instead of building the post-clone view from scratch. On by default;
+// set TWINKLE_CFG_REUSE=0 to force the from-scratch build.
+fn cfg_reuse_enabled() Bool {
+  case proc.env("TWINKLE_CFG_REUSE") {
+    .Some(v) => v != "0",
+    .None => true,
+  }
+}
+
 fn artifact_phase(label: String) {
   if timings_enabled() {
     eprintln("[time:mutable:artifact:phase] ${label}")
@@ -568,6 +578,8 @@ pub fn compute_candidate_artifacts(
     candidate_funcs,
     variant_route.empty_seed_table(),
     ownership.empty_summary_table(),
+    cfg.CfgView.{ functions: [] },
+    Dict.new(),
   )
 }
 
@@ -584,12 +596,25 @@ pub fn compute_candidate_artifacts_seeded(
   candidate_funcs: Dict<Int, Bool>,
   owned_seeds: variant_route.OwnedSeedTable,
   carried: ownership.SummaryTable,
+  prior_view: cfg.CfgView,
+  changed_funcs: Dict<Int, Bool>,
 ) OwnershipArtifacts {
   timed := timings_enabled()
   artifact_phase("begin scoped_cfg")
   t0 := date.now()
-  view := cfg.build_view(opt, b)
-  view = ownership.prune_dead_merge(view)
+
+  // Reuse Phase 8G's pruned per-function CFG when available: rebuild only the
+  // clones + rewritten callers (`changed_funcs`), reuse the rest verbatim, and
+  // prune only the rebuilt ones (the reused ones are already pruned). Byte-identical
+  // to the from-scratch build; TWINKLE_CFG_REUSE=0 forces the from-scratch path.
+  view := if cfg_reuse_enabled() and prior_view.functions.len() > 0 {
+    ownership.prune_dead_merge_selective(
+      cfg.build_view_reusing(opt, prior_view, changed_funcs),
+      changed_funcs,
+    )
+  } else {
+    ownership.prune_dead_merge(cfg.build_view(opt, b))
+  }
   t_view := date.now()
   artifact_phase("begin scoped_summary")
 

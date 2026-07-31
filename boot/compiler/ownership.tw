@@ -7008,6 +7008,26 @@ pub fn prune_dead_merge(view: CfgView) CfgView {
   CfgView.{ functions }
 }
 
+// Prune only the functions in `changed`; pass the rest through untouched. Used
+// with `cfg.build_view_reusing`, whose reused functions came from an
+// already-pruned view (Phase 8G's), so re-pruning them is redundant: prune is
+// idempotent over an already-pruned function, so skipping it is byte-identical.
+// Freshly-built clones / rewritten callers (in `changed`) are pruned normally.
+pub fn prune_dead_merge_selective(view: CfgView, changed: Dict<Int, Bool>) CfgView {
+  functions := collect f in view.functions {
+    is_changed := case changed.get(f.func_id) {
+      .Some(v) => v,
+      .None => false,
+    }
+    if is_changed {
+      prune_function(f)
+    } else {
+      f
+    }
+  }
+  CfgView.{ functions }
+}
+
 fn prune_function(f: CfgFunction) CfgFunction {
   live := compute_liveness_labeled(f.blocks, "prune:${f.name}")
 

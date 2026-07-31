@@ -55,11 +55,25 @@ pub type SpecializeResult = .{
   // recomputing from scratch (see summary.compute_for_roots_reusing). Empty when
   // 8G is disabled, so callers fall back to a from-scratch summary.
   summary: ownership.SummaryTable,
+  // 8G's per-function pruned CFG view over the PRE-clone module. Every function
+  // absent from `changed_funcs` has a byte-identical CfgFunction post-clone
+  // (specialization only edits clone bodies + rewrites call targets in callers),
+  // so the producer reuses it instead of rebuilding. Empty when 8G is disabled.
+  pruned_view: cfg.CfgView,
+  // Func ids whose CfgFunction changed under specialization: the clones (new) and
+  // the callers whose call sites were rewritten to a clone. The producer rebuilds
+  // only these; all others are reused from `pruned_view`.
+  changed_funcs: Dict<Int, Bool>,
 }
 
 // Sentinel carried summary meaning "no reuse available"; callers recompute.
 pub fn no_reuse_summary() ownership.SummaryTable {
   ownership.empty_summary_table()
+}
+
+// Empty pruned view for the disabled-8G path; the producer builds its own.
+pub fn no_reuse_view() cfg.CfgView {
+  cfg.CfgView.{ functions: [] }
 }
 
 fn spec_timings_enabled() Bool {
@@ -309,6 +323,8 @@ pub fn specialize_module_with_cap_sem(
       seeds: variant_route.empty_seed_table(),
       routes: [],
       summary: table,
+      pruned_view: view,
+      changed_funcs: Dict.new(),
     }
   }
 
@@ -332,6 +348,8 @@ pub fn specialize_module_with_cap_sem(
       seeds: variant_route.empty_seed_table(),
       routes: overcap_routes(capped.overflow),
       summary: table,
+      pruned_view: view,
+      changed_funcs: Dict.new(),
     }
   }
 
@@ -355,6 +373,8 @@ pub fn specialize_module_with_cap_sem(
         seeds: variant_route.empty_seed_table(),
         routes: [],
         summary: table,
+        pruned_view: view,
+        changed_funcs: Dict.new(),
       },
     }
     ccfg := case cfg_func_of(view, g.callee) {
@@ -364,6 +384,8 @@ pub fn specialize_module_with_cap_sem(
         seeds: variant_route.empty_seed_table(),
         routes: [],
         summary: table,
+        pruned_view: view,
+        changed_funcs: Dict.new(),
       },
     }
     clone_id := next
@@ -432,23 +454,45 @@ pub fn specialize_module_with_cap_sem(
     routes = .append(r)
   }
 
-  // Route caller sites and in-clone recursive sites to their clones.
+  // Route caller sites and in-clone recursive sites to their clones. Record which
+  // functions the rewrite actually edited (`changed_callers`) so CFG reuse can
+  // rebuild only those plus the clones.
   spec_phase("begin rewrite_calls sites=${site_to_clone.keys().len()}")
+  changed_callers: Dict<Int, Bool> = Dict.new()
   routed_funcs := collect f in funcs {
+    rr := rewrite_expr(f.body, f.func_id.id, site_to_clone)
+    if rr.changed {
+      changed_callers[f.func_id.id] = true
+    }
     AnfFunctionDef.{
       func_id: f.func_id,
       name: f.name,
       is_init: f.is_init,
       params: f.params,
       op_result_mono: f.op_result_mono,
-      body: rewrite_expr(f.body, f.func_id.id, site_to_clone),
+      body: rr.expr,
       return_ty: f.return_ty,
     }
+  }
+  if timed {
+    reusable := routed_funcs.len() - survivors.len() - changed_callers.keys().len()
+    eprintln(
+      "[time:8g:cfgreuse] total_funcs=${routed_funcs.len()} clones=${survivors.len()} rewritten_callers=${changed_callers
+        .keys()
+        .len()} reusable=${reusable}",
+    )
+  }
+
+  // Functions whose CfgFunction changed post-clone: the rewritten callers plus the
+  // clones (which are absent from `view`, so the producer always rebuilds them).
+  changed_funcs := changed_callers
+  for g in survivors {
+    changed_funcs[g.clone_id] = true
   }
 
   anf.functions = routed_funcs
   spec_phase("end specialize_module")
-  SpecializeResult.{ anf, seeds, routes, summary: table }
+  SpecializeResult.{ anf, seeds, routes, summary: table, pruned_view: view, changed_funcs }
 }
 
 type RecRoute = .{ site_key: Int, target: Int }
@@ -552,42 +596,62 @@ pub fn render_routes(routes: Vector<variant_route.VariantRoute>) String {
   lines.join("\n")
 }
 
+// The rewritten expr plus whether any call target actually changed. `changed`
+// lets the caller record exactly which functions specialization edited, so a
+// later CFG-reuse pass can rebuild only those and reuse the rest unchanged.
+type RewriteResult = .{ expr: AnfExpr, changed: Bool }
+
+type RewriteOpResult = .{ op: AnfOp, changed: Bool }
+
 // Rewrite `ACall(AGlobalFunc(_), args)` targets whose site key is in
 // `site_to_clone` to the clone func id, recursing through control-flow ops. Only
-// call targets change; every other atom/op is preserved.
-fn rewrite_expr(e: AnfExpr, caller: Int, site_to_clone: Dict<Int, Int>) AnfExpr {
+// call targets change; every other atom/op is preserved. Reports whether it
+// changed anything.
+fn rewrite_expr(e: AnfExpr, caller: Int, site_to_clone: Dict<Int, Int>) RewriteResult {
   case e {
     .Let(local, op, body) => {
-      op2 := rewrite_op(op, local, caller, site_to_clone)
-      body2 := rewrite_expr(body, caller, site_to_clone)
-      .Let(local, op2, body2)
+      opr := rewrite_op(op, local, caller, site_to_clone)
+      br := rewrite_expr(body, caller, site_to_clone)
+      RewriteResult.{ expr: .Let(local, opr.op, br.expr), changed: opr.changed or br.changed }
     },
-    _ => e,
+    _ => RewriteResult.{ expr: e, changed: false },
   }
 }
 
-fn rewrite_op(op: AnfOp, result: LocalId, caller: Int, site_to_clone: Dict<Int, Int>) AnfOp {
+fn rewrite_op(op: AnfOp, result: LocalId, caller: Int, site_to_clone: Dict<Int, Int>) RewriteOpResult {
   case op {
     .ACall(callee, args) => case site_to_clone.get(vid.site_key(caller, result.id)) {
       .Some(clone_id) => case callee {
-        .AGlobalFunc(_) => .ACall(.AGlobalFunc(FuncId.{ id: clone_id }), args),
-        _ => op,
+        .AGlobalFunc(_) => RewriteOpResult.{
+          op: .ACall(.AGlobalFunc(FuncId.{ id: clone_id }), args),
+          changed: true,
+        },
+        _ => RewriteOpResult.{ op, changed: false },
       },
-      .None => op,
+      .None => RewriteOpResult.{ op, changed: false },
     },
-    .AIf(pred, then_e, else_e) => .AIf(
-      pred,
-      rewrite_expr(then_e, caller, site_to_clone),
-      rewrite_expr(else_e, caller, site_to_clone),
-    ),
-    .AMatch(scrut, arms) => .AMatch(
-      scrut,
-      collect arm in arms {
-        AnfMatchArm.{ pattern: arm.pattern, body: rewrite_expr(arm.body, caller, site_to_clone) }
-      },
-    ),
-    .ALoop(body) => .ALoop(rewrite_expr(body, caller, site_to_clone)),
-    .ADefer(body) => .ADefer(rewrite_expr(body, caller, site_to_clone)),
-    _ => op,
+    .AIf(pred, then_e, else_e) => {
+      tr := rewrite_expr(then_e, caller, site_to_clone)
+      er := rewrite_expr(else_e, caller, site_to_clone)
+      RewriteOpResult.{ op: .AIf(pred, tr.expr, er.expr), changed: tr.changed or er.changed }
+    },
+    .AMatch(scrut, arms) => {
+      any_changed := false
+      new_arms := collect arm in arms {
+        ar := rewrite_expr(arm.body, caller, site_to_clone)
+        any_changed = any_changed or ar.changed
+        AnfMatchArm.{ pattern: arm.pattern, body: ar.expr }
+      }
+      RewriteOpResult.{ op: .AMatch(scrut, new_arms), changed: any_changed }
+    },
+    .ALoop(body) => {
+      br := rewrite_expr(body, caller, site_to_clone)
+      RewriteOpResult.{ op: .ALoop(br.expr), changed: br.changed }
+    },
+    .ADefer(body) => {
+      br := rewrite_expr(body, caller, site_to_clone)
+      RewriteOpResult.{ op: .ADefer(br.expr), changed: br.changed }
+    },
+    _ => RewriteOpResult.{ op, changed: false },
   }
 }

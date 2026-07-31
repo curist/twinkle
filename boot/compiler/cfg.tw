@@ -834,6 +834,34 @@ pub fn build_view(m: AnfModule, _builtins: BuiltinRegistry) CfgView {
   CfgView.{ functions }
 }
 
+// Build a view for `m`, reusing already-built CfgFunctions from `prior` for every
+// function whose id is NOT in `changed`. `prior` must agree with `m` on all
+// unchanged functions (same body => same CfgFunction), which holds for Phase 8G's
+// pre-clone view vs the post-clone module: specialization only edits clone bodies
+// and rewrites call targets in `changed` callers. Functions in `changed` (and any
+// absent from `prior`, e.g. the clones) are built fresh.
+pub fn build_view_reusing(m: AnfModule, prior: CfgView, changed: Dict<Int, Bool>) CfgView {
+  by_id: Dict<Int, CfgFunction> = Dict.new()
+  for f in prior.functions {
+    by_id[f.func_id] = f
+  }
+  functions := collect f in m.functions {
+    is_changed := case changed.get(f.func_id.id) {
+      .Some(v) => v,
+      .None => false,
+    }
+    if is_changed {
+      build_function(f)
+    } else {
+      case by_id.get(f.func_id.id) {
+        .Some(cf) => cf,
+        .None => build_function(f),
+      }
+    }
+  }
+  CfgView.{ functions }
+}
+
 pub fn function_named(view: CfgView, name: String) CfgFunction? {
   for func in view.functions {
     if func.name == name {
