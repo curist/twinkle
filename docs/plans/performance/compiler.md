@@ -90,6 +90,32 @@ the FixCache-reuse update below).
   remaining floor is the 8G whole-program ownership
   fixpoint (it decides clones, so it is largely inherent).
 
+### Null result: reuse 8G's FixResults in the mutable producer (not viable)
+
+The apparent redundancy above — 8G computes a FixResult per function and discards
+it, then the mutable producer re-runs the fixpoint over the candidate roots — is
+**not** soundly exploitable. Prototyped (carry 8G's per-candidate-root `FixCache`
+in `SpecializeResult`, pre-seed the mutable producer's cache, skip re-running the
+all-safe root SCCs) and reverted: the win was real (`summary:reuse` ~2999 →
+~1339ms, `produce_mutable_decisions` ~5.9 → ~4.6s, wall ~20 → ~19s, output
+byte-identical on the boot self-build) but `TWINKLE_FIXVERIFY` flagged a real
+divergence (`analyze:unique_analysis_diags`).
+
+Root cause: 8G's `summary.compute` computes each FixResult against the
+**whole-program** summary table; the mutable producer's analyze uses a **scoped**
+table (conservative for out-of-closure funcs, recomputed post-clone for
+clone-affected ones). The summary reuse is sound because the summary-level
+`unsafe` backward closure covers everything a *summary* depends on — but a
+FixResult's dependency footprint is **broader** than the summary it projects to,
+so a function can have a soundly-reusable summary yet a non-reusable FixResult
+(one whose fix transitively reads a clone-affected callee via an edge the
+summary-level closure doesn't track). The two passes' per-function fixes are
+therefore *different computations over different tables*, not redundant work.
+**Lesson (same shape as rec #1 below):** a FixResult carries more context than the
+Summary it yields; reuse that is sound at the summary tier is not automatically
+sound at the fix tier. Validate any cross-pass fix reuse with `TWINKLE_FIXVERIFY`,
+not just summary equality.
+
 ## Landed wins (durable lessons)
 
 Grouped by area. Each is a "stop doing unnecessary work / defer until needed"
