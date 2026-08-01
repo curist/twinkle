@@ -4204,6 +4204,29 @@ fn transfer_summarized_call(
       r := record_ret_path(result_fields, result_pp, rp, origins)
       result_fields = r.fields
       result_pp = r.pp
+
+      // Fix A (deep wrapper graft): when the callee wraps a unique param wholesale
+      // into a direct field (ret.fN = from(pK)), out.fN IS args[k], so out.fN's owned
+      // subtree == args[k]'s owned subtree. record_ret_path wrote only the shell
+      // [.fN]; graft args[k]'s inner field ownership under .fN too, so a caller
+      // projecting out.fN recovers the deep field ownership the arg carried. Sound
+      // because OwnedFromParam(K) is assignable only when out.fN IS pK wholesale
+      // (deep ownership requires pr.shell=Some; rests on the field-own/path-prov
+      // lockstep). graft/graft_path_prov skip non-owned/non-representable inners.
+      case rp.via {
+        .Direct => case rp.field {
+          .Some(fN) => case rp.own {
+            .OwnedFromParam(k) => {
+              arg := args[k]
+              result_fields = .graft(ff.PathSeg.Field(fN), st.atom_field_own(arg))
+              result_pp = graft_path_prov(result_pp, ff.PathSeg.Field(fN), st, arg)
+            },
+            .OwnedFresh => {},
+          },
+          .None => {},
+        },
+        .Variant(_, _) => {},
+      }
     }
   }
   if result_ok and !result_fields.is_empty() {

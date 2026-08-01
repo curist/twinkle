@@ -255,13 +255,17 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "transported ctx field update surfaces a record-backed dict quartet",
+      "transported ctx field update lowers dict set in place (transport deep-graft)",
       fn() Result<Void, String> {
-        // `next := out.ctx; next.types[..] = ..` is recognized as a field-backed
-        // dict quartet after the record-field projection. Proving `next.types`
-        // owned through a two-level projection with a sibling `out.tag` read needs
-        // path-level consume-dead (deferred per the plan's scope), so the emitted
-        // helper stays persistent for now; the quartet is still surfaced.
+        // next := out.ctx; next.types[..] = ..  with a sibling out.tag read in the
+        // trailing case. out.ctx is consume-dead (read once, only sibling out.tag
+        // read afterward), so the projection moves and the dict set flips in place.
+        wat := try compile_fixture_wat("field_transport_ctx")
+        body := try wat_func_body_result(wat, "go")
+        try assert.ok(
+          wat_has_instr(body, "rt_dict__set_in_place"),
+          "transported ctx dict update must set in place",
+        )
         try assert.str_contains(ir_sites_text("field_transport_ctx"), "record_backed_dict")
         .Ok({})
       },
