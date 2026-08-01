@@ -31,22 +31,47 @@ Use `make quick-bundle-cli` only when `target/boot.wasm` is already fresh. Each 
 
 ---
 
+## Grounding corrections (verified against code, 2026-08-01)
+
+The task bodies below were drafted against a few stale/incorrect assumptions. These were checked against the tree; **where a task conflicts with this section, this section wins.**
+
+1. **The ops are codegen-internal — NOT source-callable (decision 2026-08-01, supersedes the plan's "test-only source visibility").** The plan proposed exposing `Vector.__mutvec_*` from the signatures prelude so Phase 1 could unit-test each op by name. That was rejected: registering them in `boot/prelude/signatures/vector.tw` makes them real methods on *every* `Vector<Int>` (LSP/autocomplete pollution) **and** a runtime footgun — calling one on an ordinary vector traps, because the ABI `ref.cast`s the argument to `MutVecI64` while a user vector is a `PVecI64`/boxed `PVec`. Follow the existing internal-op precedent instead (the typed vector builders `vector$builder_new_i64` etc.): register each with **`.None` canonical** in `builtins.tw` `builtin_specs()`, add **no** signature stub and **no** `checker.tw` arm. They are unused (hence DCE'd from every program) until the region pass emits them in Phase 4. **Consequence for Phase 1 tasks:** there is no `mutvec_runtime_suite` and no "run to see it fail / verify pass" via name-calls — Phase 1 lands the substrate (type + ops + ABI + repr) and is verified only by (a) `make bundle-cli` reaching a fixed point and (b) the ops passing the backend verifier when the region pass first emits them in Phase 4. Per-op behavioral coverage (grow-by-doubling, OOB traps on set/get, negative `make`) moves to **Phase 4/5 region + standalone trap fixtures** that drive the ops through real lowered code. Delete every Phase-1 step that writes/registers/asserts a name-callable `Vector.__mutvec_*` test.
+
+2. **Two type layers, kept distinct.** Add a `mutvec_n()`/`mutvec_()` helper (`ref_null`/`ref_nn("rt_types__MutVecI64")`) beside `pvec_n()`/`pvec_()` in `builtins.tw`, then give each op a `builtin_abi` arm modeled on `"vector$set_in_place" => abi([pvec_n(), .I32, .Anyref], [pvec_()])`:
+   - `"vector$__mutvec_new_i64" => abi([.I32], [mutvec_()])`
+   - `"vector$__mutvec_make_i64" => abi([.I32, .I64], [mutvec_()])`
+   - `"vector$__mutvec_push_i64" => abi([mutvec_n(), .I64], [mutvec_()])`
+   - `"vector$__mutvec_set_i64" => abi([mutvec_n(), .I32, .I64], [mutvec_()])`
+   - `"vector$__mutvec_get_i64" => abi([mutvec_n(), .I32], [.I64])`
+   - `"vector$__mutvec_len_i64" => abi([mutvec_n()], [.I32])`
+   - `"vector$__mutvec_freeze_i64" => abi([mutvec_n()], [pvec_i64_()])`
+   Do **not** leave these on `empty_abi()`.
+
+3. **(Moot after §1.)** The original worry was that a source-callable handle local would need a boxed-`anyref` slot to survive without the `MutVec(I64)` repr; empirically it did not survive (3 test failures + a `val_type_of_mono called on Never` crash), which is part of why §1 dropped source visibility. With the ops internal-only, the handle only ever exists inside a region the Phase-4 pass fully controls (producer → `mutvec_*` → freeze), and Phase 2's `ReprKind.MutVec` is what types those slots — there is no un-repr'd source-level handle to worry about.
+
+4. **Struct constructor is positional:** `.Struct(name, [fields], supertype_opt, is_final)` — see `PVecI64` at `types.tw:49`. Task 1 Step 1's record-form literal is wrong; the corrected form is inlined in that step. Also add a `t_MUTVEC_I64 := "rt_types__MutVecI64"` constant near `t_ARRAY_I64` (`arr.tw:26`) and use it for `StructGet`/`StructSet`/`StructNew`.
+
+5. **ReprKind exhaustive-match sites** are `prepared_ir.tw`, `repr_policy.tw`, `repr_assign.tw`, `verify_common.tw`, `verify_expr.tw` — **not** `verify_slots.tw`. Task 5 Step 2's `cargo run … build` loop still finds them all; just expect those filenames.
+
+6. **Append new `builtin_specs()` entries at the END of the list, never mid-list.** `builtin_specs()` order *is* the 0-based FuncId assignment, and other code depends on those ids. Inserting the seven `rt(...)` specs after `builder_freeze_i64` (as an early draft did) shifted every later builtin's FuncId and produced 3 boot-suite failures plus a `val_type_of_mono called on Never` codegen crash, while `make bundle-cli` still reached a (self-consistent) fixed point — so the self-host green light does **not** catch this; only `make boot-test` does. The file already documents the rule ("// Appended at end to preserve FuncId assignment of earlier builtins."); follow it. `builtin_abi` arms are keyed by name, so their position is irrelevant. **Always run `make boot-test` after touching `builtin_specs()`, not just `make bundle-cli`.**
+
+---
+
 ## File Structure
 
 **Create:**
 - `boot/compiler/codegen/mutvec_region.tw` — the ANF→ANF detection + rewrite pass (`rewrite_module`), the region decision record type, the exit classifier.
-- `boot/tests/suites/mutvec_runtime_suite.tw` — behavioral unit tests for the runtime ops.
-- `boot/tests/suites/mutvec_region_suite.tw` — positive/negative region-lowering fixtures.
+- `boot/tests/suites/mutvec_region_suite.tw` — positive/negative region-lowering fixtures (the only behavioral surface; the ops are exercised through lowered code, never by name — see Grounding corrections §1).
 - `boot/bench/mutvec_slice1_bench.tw` — the compiled-program speedup check.
 
 **Modify:**
-- `boot/compiler/codegen/runtime/types.tw:9-90` — add the `MutVecI64` GC struct type.
-- `boot/compiler/codegen/runtime/arr.tw:140-210` (`module()` func list) — add the six `mutvec_*_i64` FuncDefs.
-- `boot/compiler/builtins.tw` (`builtin_specs()`, `builtin_abi()`) — register the ops as internal builtins.
-- `prelude/signatures/vector.tw` — signature stubs so tests can name the internal ops (boot resolves via these; symlinked from `boot/`).
+- `boot/compiler/codegen/runtime/types.tw` — add the `MutVecI64` GC struct type (positional `.Struct`, after the `PVecBool` entry; see §4).
+- `boot/compiler/codegen/runtime/arr.tw` — add `t_MUTVEC_I64` + `mutvec_MIN_CAP` constants and the seven `mutvec_*_i64` FuncDefs, and register them in the `module()` func list (after `family_i64().pvec_make_fn()`).
+- `boot/compiler/builtins.tw` (`builtin_specs()`, `builtin_abi()`) — register the ops as **`.None`** internal builtins + their wasm ABI (see Grounding corrections §1–§2). Add the `mutvec_n()`/`mutvec_()` ValType helpers.
 - `boot/compiler/backend/prepared_ir.tw:48-59` (`ReprKind`) — add `MutVec(ElemRepr)`.
 - `boot/compiler/backend/repr_assign.tw` — assign/lower `MutVec(I64)` and its wasm type.
 - `boot/compiler/backend/repr_policy.tw` — map the family (reuse `ElemRepr`).
+- `boot/compiler/backend/verify_common.tw`, `boot/compiler/backend/verify_expr.tw` — exhaustive `ReprKind` match arms (see Grounding corrections §5).
 - `boot/compiler/codegen/codegen.tw:78,131` — add `mutvec_region_enabled()` and insert the pass before `builder_region.rewrite_module`.
 - `boot/tests/main.tw` — register the two new suites.
 
@@ -100,15 +125,18 @@ The fixture bodies below are shown as the **meat** of a `.test("desc", fn() { �
 - [ ] **Step 1: Add the GC struct type.** In `types.tw`, in the `module()` type list (alongside the `ArrayI64`/`PVecI64` entries at ~26/50), add:
 
 ```
-.Struct("MutVecI64", .{
-  fields: [
+.Struct(
+  "MutVecI64",
+  [
     .{ name: .Some("data"), mutable: true, ty: .Ref(false, .Named("ArrayI64")) },
     .{ name: .Some("len"), mutable: true, ty: .I32 },
   ],
-}),
+  .None,
+  true,
+),
 ```
 
-The emitted type name is `rt_types__MutVecI64` (the `rt_types__` prefix is applied like `t_ARRAY` in `arr.tw:16`).
+(Positional `.Struct(name, fields, supertype_opt, is_final)` — matching `PVecI64` at `types.tw:49`.) The emitted, linked type name is `rt_types__MutVecI64` (the `rt_types__` prefix is applied like `t_ARRAY_I64 := "rt_types__ArrayI64"` at `arr.tw:26`); add a `t_MUTVEC_I64` constant beside it in `arr.tw` and use it for all `StructGet`/`StructSet`/`StructNew`/`ArrayNew` type-name arguments.
 
 - [ ] **Step 2: Write the failing test.** Create `boot/tests/suites/mutvec_runtime_suite.tw` per Test conventions, with two tests:
 
