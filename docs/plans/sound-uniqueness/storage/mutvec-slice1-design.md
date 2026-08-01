@@ -18,8 +18,9 @@ region's boundary — reproducing the spike's speedup on a compiled program.
 - Element type **`Int`** only (`MutVecI64`, backed by the existing `ArrayI64` GC
   array).
 - Region shape: an owned local vector born from a `collect` / `Vector.make` /
-  `[]`-seed producer, undergoing **indexed-update** (`xs[i] = v`) and/or **append**
-  (`xs = xs.append(v)`), then **frozen to `PVecI64` at a single boundary**, after
+  `[]`-seed producer, carrying **at least one indexed-update** (`xs[i] = v`),
+  optionally with **append** (`xs = xs.append(v)`), then **frozen to `PVecI64` at a
+  single boundary**, after
   which the persistent value — never the mutable handle — flows to its consumer (a
   return, or a use/call expecting a persistent `Vector`).
 - A dedicated ANF→ANF region pass that performs the representation change and
@@ -95,7 +96,7 @@ returns the same ref, for ANF SSA threading):
 | op | signature | notes |
 |---|---|---|
 | `mutvec_new_i64` | `(cap: i32) -> MutVecI64` | allocate `ArrayI64(max(cap, MIN_CAP))`, `len = 0`; `cap = 0` (the `[]`-seed) is allowed and rounds up to `MIN_CAP`. `cap` is a capacity hint, **not** a length |
-| `mutvec_make_i64` | `(n: i32, fill: i64) -> MutVecI64` | allocate `ArrayI64(max(n, MIN_CAP))`, fill `data[0..n) = fill`, `len = n` — the producer for `Vector.make(n, v)`, mirroring the existing `pvec_make_fn`. Without this, rewriting `Vector.make` to `mutvec_new_i64(n)` (len 0) would make a following `xs[i]=v` trap |
+| `mutvec_make_i64` | `(n: i32, fill: i64) -> MutVecI64` | `actual_len = max(0, n)`; allocate `ArrayI64(max(actual_len, MIN_CAP))`, fill `data[0..actual_len) = fill`, `len = actual_len`. The producer for `Vector.make(n, v)`, mirroring `pvec_make_fn`. **Negative `n` must yield an empty vector**, matching the current signed-`Int` `pvec_make` loop (its `i >= n` guard breaks immediately for `n <= 0`) — storing a negative `len` would corrupt `mutvec_len_i64` and every bounds check. Without this op, rewriting `Vector.make` to `mutvec_new_i64(n)` (len 0) would make a following `xs[i]=v` trap |
 | `mutvec_push_i64` | `(mv, x: i64) -> mv` | if `len == capacity` grow first (see growth), then `data[len] = x; len += 1` |
 | `mutvec_set_i64` | `(mv, i: i32, x: i64) -> mv` | **explicit logical-length check**: trap if `i < 0 || i >= len`, else `data[i] = x`. Not a bare `array.set` — `capacity >= len`, so relying on Wasm array bounds would wrongly permit writes in `[len, capacity)` |
 | `mutvec_get_i64` | `(mv, i: i32) -> i64` | **explicit logical-length check**: trap if `i < 0 || i >= len`, else `data[i]` |
@@ -199,34 +200,65 @@ detection helpers** with `builder_region_detect` but not modifying it.
   `mutvec_push_i64`; in-region set → `mutvec_set_i64`; in-region read →
   `mutvec_get_i64`; in-region length → `mutvec_len_i64`; boundary → relocated
   `mutvec_freeze_i64`.
-- **Region decision record.** Each claimed region carries a record naming the
-  producer/begin site, the backing family (`MutVecI64`), every in-region op site,
-  the single freezable materialization exit, and the post-freeze `PVecI64` value —
-  satisfying the storage-track lifecycle contract (README "Region decision-record
-  lifecycle"). Backend emitters consume the record; they do not re-prove ownership.
+- **Region decision record (full lifecycle schema).** This record is the interface
+  the backend/`repr_assign` consumes *without re-proving anything*, so it must carry
+  every field the README "Region decision-record lifecycle" requires, not a subset.
+  For slice 1 each claimed region names:
+  - **stable region id + proof/debug id** (deterministic, for census + audit);
+  - **begin site**, **source value**, and **source physical repr** (the producer
+    slot's repr before the change — e.g. a boxed builder or `TypedVec(I64)`);
+  - **selected private storage family**: `MutVec(I64)`;
+  - **every in-region op site** with its storage-compatible operand/result shape
+    (`mutvec_new`/`make`/`push`/`set`/`get`/`len`), so no op is emitted against an
+    incompatible repr;
+  - **the materialization exit** (slice 1: exactly one freezable point) and the
+    **post-materialization value** (`TypedVec(I64)` / `PVecI64`);
+  - **the handle-invalidation point** — the program point after the freeze beyond
+    which the `MutVec` handle is dead and must not be read;
+  - **fallback behavior** if the region is later found stale/ambiguous/missing its
+    exit: emit the ordinary persistent path.
+  - **Validations** the selector runs before accepting the record: no path from
+    `begin` reaches a publication sink with an unfrozen handle; no use of the handle
+    after materialization; no double-begin for the same live storage and no
+    double-freeze of the same handle; all op sites use a compatible family/repr.
+
+  Backend emitters consume the record; they do not re-prove ownership, region exits,
+  or handle validity. **The concrete record type (field names/encoding) and exactly
+  which fields `repr_assign` keys off are pinned down by the implementation plan**,
+  but the schema above is the required content.
 
 ### 5. Pipeline placement and non-overlap ordering
 
-The current codegen order is `builder_region.rewrite_module` (→ ANF′) →
+The current codegen order is `builder_region.rewrite_module(m, b)` (→ ANF′) →
 `variant_specialize` (→ ANF″) → `closure_convert`, with the call-swap /
 mutable-decision producer consuming the rewritten ANF (its stale-artifact guard
-keys off the ANF′ fingerprint). Slice 1 inserts the MutVec pass as follows:
+keys off the ANF′ fingerprint). `builder_region.rewrite_module` takes no exclusion
+input and computes its decisions internally.
 
-1. **`mutvec_region.rewrite_module` runs first**, producing ANF^m, and records the
-   set of local ids it claimed (the region handles).
-2. **`builder_region.rewrite_module` runs on ANF^m**, unchanged, and **skips any
-   region that references a MutVec-claimed local** (a defensive exclusion; in
-   practice the domains are already disjoint — builder-regions claim append-only
-   accumulators with no indexed-update, and MutVec requires an indexed-update).
-3. `variant_specialize` and the call-swap producer then consume the doubly-rewritten
-   ANF. Because MutVec has already rewritten a claimed region's `vector$set_unsafe`
-   into `mutvec_set_i64`, the call-swap producer sees no `vector$set_unsafe` there
-   and so does **not** additionally emit `set_in_place` for it — no double claim.
-   Unclaimed `xs[i]=v` sites still get `set_in_place` exactly as today.
+**Non-overlap contract (chosen: "MutVec erases builder-visible shapes"; the other
+two options are rejected for slice 1).** `mutvec_region.rewrite_module` runs
+**first**, producing ANF^m, and **fully rewrites every region it claims** — the
+producer becomes `mutvec_new_i64`/`mutvec_make_i64`, appends become
+`mutvec_push_i64`, indexed updates become `mutvec_set_i64`. Because a claimed
+region is fully lowered, **no builder-visible shape (`acc=[]`-seed + append, or a
+collect builder chain) survives at those sites**, so `builder_region.rewrite_module`
+runs on ANF^m **genuinely unchanged and needs no exclusion parameter** — it simply
+finds nothing to claim there. This is why the builder pass stays byte-identical
+without modification. (Rejected alternatives: adding an exclusion-set parameter to
+the builder API; or a shared up-front decision producer arbitrating both — the
+latter is the eventual Approach-A convergence, not slice 1.)
 
-This ordering is deterministic, and by construction each region is claimed by at
-most one pass. The call-swap stale-artifact guard continues to key off the final
-rewritten ANF fingerprint.
+The domains are also disjoint by construction: builder-regions only claim
+append-only accumulators (no indexed-update), while MutVec *requires* an
+indexed-update. So the erasure argument and the disjointness argument both hold.
+
+Downstream: `variant_specialize` and the call-swap producer consume the
+doubly-rewritten ANF. Because a claimed region's `vector$set_unsafe` is already
+`mutvec_set_i64`, the call-swap producer sees nothing to claim there and does
+**not** emit `set_in_place` for it — no double claim; unclaimed `xs[i]=v` sites
+still get `set_in_place` exactly as today. The ordering is deterministic, each
+region is claimed by at most one pass, and the stale-artifact guard keys off the
+final rewritten ANF fingerprint.
 
 ## Non-goals and regression management
 
@@ -267,10 +299,21 @@ slice 1 is chosen specifically to make that merge cheap.
   and `n = 0`).
 - **Region lowering:** positive fixtures — collect-born + indexed-update;
   `Vector.make`-born + indexed-update; +append; in-region `get`/`len`;
-  materialize-at-return — assert `mutvec_*` emission and a single boundary freeze;
-  negative fixtures (aliased / escaping / non-Int / no-indexed-update /
-  multiple-exit / handle-passed-to-call / captured) assert the region is **not**
-  claimed and the existing path is emitted unchanged.
+  materialize-at-return — assert `mutvec_*` emission and a single boundary freeze.
+  **Negative fixtures, one per rejected class**, each asserting the region is **not**
+  claimed and the existing path is emitted unchanged:
+  - not-owned / aliased handle;
+  - element type not `Int`;
+  - no indexed-update (append-only — stays on the boxed builder);
+  - unsupported in-region op on the handle (concat, slice);
+  - multiple exits carrying the live handle;
+  - early `return` of the handle;
+  - `break value` carrying the handle;
+  - `try` / early-return arm carrying the handle;
+  - closure capture of the handle;
+  - handle stored into an escaping aggregate (record / variant / dict / vector);
+  - handle passed to a call (still mutable);
+  - handle reaching a host/import boundary.
 - **Regression:** `--census --sites` diff shows only additive `mutvec` rows;
   existing builder/`set_in_place`/persistent rows unchanged. Self-host fixed point.
 - **Performance (end-of-slice gate):** compiled microbench reproduces the spike's
