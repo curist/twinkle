@@ -1,0 +1,24 @@
+pub type Inner = .{ types: Dict<Int, Int>, values: Dict<Int, Int> }
+
+pub type Ctx = .{ inner: Inner, meta: Int }
+
+pub type Out = .{ ic: Inner, tag: Int }
+
+// out.ic = ctx.inner is a PROJECTION of the param; its shell is not the param, so
+// it is a borrow/Unknown, never ret.ic=from(pK). Fix A must not fire.
+pub fn pass(ctx: Ctx) Out {
+  Out.{ ic: ctx.inner, tag: 1 }
+}
+
+pub fn go() Int {
+  ctx := Ctx.{ inner: Inner.{ types: Dict.new(), values: Dict.new() }, meta: 0 }
+  out := pass(ctx)
+  next := out.ic
+  next.types[2] = 40
+  case next.types.get(2) {
+    .Some(v) => v + out.tag,
+    .None => out.tag,
+  }
+}
+
+println(go().to_string())

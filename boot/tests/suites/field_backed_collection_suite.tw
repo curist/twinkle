@@ -271,6 +271,74 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "transport reject: out.ctx re-read in a successor stays persistent",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("transport_field_reread_after")
+        body := try wat_func_body_result(wat, "go")
+        try assert.ok(
+          !wat_has_instr(body, "rt_dict__set_in_place"),
+          "re-read out.ctx must not move; dict set stays persistent",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "transport reject: loop-carried out.ctx stays persistent",
+      fn() Result<Void, String> {
+        wat := try compile_fixture_wat("transport_field_loop")
+        body := try wat_func_body_result(wat, "go")
+        try assert.ok(
+          !wat_has_instr(body, "rt_dict__set_in_place"),
+          "loop-carried projection must not move; dict set stays persistent",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "transport reject: out.ctx.types read in a join after a branch update stays persistent",
+      fn() Result<Void, String> {
+        // The branch updates next.types; the join reads out.ctx.types afterward, so
+        // an in-place update in the branch would leak. out.f0 is read in >1 block and
+        // out is live into the join -> must stay persistent.
+        wat := try compile_fixture_wat("transport_field_join_read")
+        body := try wat_func_body_result(wat, "go")
+        try assert.ok(
+          !wat_has_instr(body, "rt_dict__set_in_place"),
+          "branch update read in the join must stay persistent",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "transport reject: fresh-wrapper (out.ctx built fresh in pass) stays persistent",
+      fn() Result<Void, String> {
+        // pass returns a FRESH Ctx -> out.ctx is OwnedFresh, so Fix A's
+        // OwnedFromParam arm does not fire and no subfield ownership crosses the
+        // return; next.types is not deeply owned and the dict set stays persistent.
+        wat := try compile_fixture_wat("transport_fresh_wrap")
+        body := try wat_func_body_result(wat, "go")
+        try assert.ok(
+          !wat_has_instr(body, "rt_dict__set_in_place"),
+          "fresh-wrapper must not deep-graft; dict set stays persistent",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "transport reject: projection-wrapper (out.ic = ctx.inner) stays persistent",
+      fn() Result<Void, String> {
+        // out.ic is a PROJECTION of the param, never ret.ic=from(pK); Fix A must not
+        // fire, so next.types has no deep ownership and the dict set stays persistent.
+        wat := try compile_fixture_wat("transport_proj_wrap")
+        body := try wat_func_body_result(wat, "go")
+        try assert.ok(
+          !wat_has_instr(body, "rt_dict__set_in_place"),
+          "projection-wrapper must not deep-graft; dict set stays persistent",
+        )
+        .Ok({})
+      },
+    )
+    .test(
       "recursive owned record-field clone emits vector set in-place",
       fn() Result<Void, String> {
         wat := try compile_fixture_wat("field_visit_rec")

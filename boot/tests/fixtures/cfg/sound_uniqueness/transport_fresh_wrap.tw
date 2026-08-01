@@ -1,0 +1,22 @@
+pub type Ctx = .{ types: Dict<Int, Int>, values: Dict<Int, Int> }
+
+pub type Out = .{ ctx: Ctx, tag: Int }
+
+// Returns a FRESH Ctx (not the param): out.ctx shell is fresh -> OwnedFresh, so
+// Fix A's OwnedFromParam arm must NOT fire on it.
+pub fn pass(ctx: Ctx) Out {
+  Out.{ ctx: Ctx.{ types: Dict.new(), values: Dict.new() }, tag: 1 }
+}
+
+pub fn go() Int {
+  ctx := Ctx.{ types: Dict.new(), values: Dict.new() }
+  out := pass(ctx)
+  next := out.ctx
+  next.types[2] = 40
+  case next.types.get(2) {
+    .Some(v) => v + out.tag,
+    .None => out.tag,
+  }
+}
+
+println(go().to_string())

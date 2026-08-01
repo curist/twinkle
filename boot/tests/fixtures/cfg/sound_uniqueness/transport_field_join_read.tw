@@ -10,13 +10,17 @@ pub fn go(flag: Bool) Int {
   ctx := Ctx.{ types: Dict.new(), values: Dict.new() }
   out := pass(ctx)
   if flag {
-    a := out.ctx
-    a.types[1] = 1
-    a.types.len()
+    next := out.ctx
+    next.types[2] = 40
   } else {
-    b := out.ctx // second projection of out.ctx in a different block
-    b.types[2] = 2
-    b.types.len()
+    {}
+  }
+
+  // out.ctx.types is read in the JOIN, after the branch's update: an in-place
+  // update in the branch would leak here (must read .None -> out.tag).
+  case out.ctx.types.get(2) {
+    .Some(v) => v + out.tag,
+    .None => out.tag,
   }
 }
 
