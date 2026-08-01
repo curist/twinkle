@@ -1,0 +1,158 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.codegen.mutvec_region
+use compiler.pipeline
+
+// Debug harness: lower a source snippet through the real pipeline and return the
+// proof ids of every claimed MutVec region. Lives here (not in mutvec_region.tw)
+// so the codegen module never imports the pipeline (avoids an import cycle).
+fn region_ids(src: String) Vector<String> {
+  case pipeline.compile_source(src) {
+    .Ok(a) => collect r in mutvec_region.detect_regions(a.opt, a.builtins) {
+      r.proof_id
+    },
+    .Err(e) => error("compile failed: ${e}"),
+  }
+}
+
+fn region_count(src: String) Int {
+  region_ids(src).len()
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("mutvec region")
+    .test(
+      "collect-born indexed-update region is claimed",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f(n: Int) Vector<Int> {\n  xs := collect i in range(n) { i }\n  xs[0] = 42\n  xs\n}\nprintln(f(5).len().to_string())\n",
+          ),
+          1,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "Vector.make-born indexed-update region is claimed",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f() Vector<Int> {\n  xs := Vector.make(3, 0)\n  xs[1] = 9\n  xs\n}\nprintln(f().len().to_string())\n",
+          ),
+          1,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "indexed-update plus in-region append is claimed",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f(n: Int) Vector<Int> {\n  xs := collect i in range(n) { i }\n  xs[0] = 7\n  xs = xs.append(99)\n  xs\n}\nprintln(f(4).len().to_string())\n",
+          ),
+          1,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "append-only region is NOT claimed (no indexed update)",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f(n: Int) Vector<Int> {\n  acc: Vector<Int> = []\n  for i in range(n) { acc = acc.append(i) }\n  acc\n}\nprintln(f(5).len().to_string())\n",
+          ),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "handle passed to a call is NOT claimed (escape)",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn sink(v: Vector<Int>) Int { v.len() }\nfn f(n: Int) Int {\n  xs := collect i in range(n) { i }\n  xs[0] = 1\n  sink(xs)\n}\nprintln(f(5).to_string())\n",
+          ),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "handle stored in a record is NOT claimed (escape)",
+      fn() {
+        try assert.equal(
+          region_count(
+            "type Box = .{ v: Vector<Int> }\nfn f(n: Int) Box {\n  xs := collect i in range(n) { i }\n  xs[0] = 1\n  Box.{ v: xs }\n}\nprintln(f(5).v.len().to_string())\n",
+          ),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "in-region get and len are supported (claimed)",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f(n: Int) Vector<Int> {\n  xs := collect i in range(n) { i }\n  xs[0] = xs[1]\n  m := xs.len()\n  xs\n}\nprintln(f(5).len().to_string())\n",
+          ),
+          1,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "non-Int element type is NOT claimed",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f(n: Int) Vector<Float> {\n  xs := collect i in range(n) { 1.0 }\n  xs[0] = 2.0\n  xs\n}\nprintln(f(5).len().to_string())\n",
+          ),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "unsupported in-region op (slice) is NOT claimed",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f(n: Int) Vector<Int> {\n  xs := collect i in range(n) { i }\n  xs[0] = 1\n  xs = xs.slice(0, 1)\n  xs\n}\nprintln(f(5).len().to_string())\n",
+          ),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "multiple exits carrying the handle are NOT claimed",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f(n: Int) Vector<Int> {\n  xs := collect i in range(n) { i }\n  xs[0] = 1\n  if n > 3 { return xs }\n  xs\n}\nprintln(f(5).len().to_string())\n",
+          ),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "handle captured by a closure is NOT claimed (escape)",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f(n: Int) fn() Int {\n  xs := collect i in range(n) { i }\n  xs[0] = 1\n  fn() { xs.len() }\n}\nprintln(f(5)().to_string())\n",
+          ),
+          0,
+        )
+        .Ok({})
+      },
+    )
+}

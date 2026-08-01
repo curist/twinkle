@@ -53,14 +53,17 @@ pub fn region_key(c: RegionCandidate) BuilderRegionKey {
   }
 }
 
-fn atom_is_local(a: Atom, local: LocalId) Bool {
+// Shared with the MutVec region detector (mutvec_region.tw); pub-exported so the
+// two typed-vector-region passes share one reference-scan implementation ahead of
+// their eventual convergence.
+pub fn atom_is_local(a: Atom, local: LocalId) Bool {
   case a {
     .ALocal(id) => id.id == local.id,
     _ => false,
   }
 }
 
-fn expr_references(e: AnfExpr, local: LocalId) Bool {
+pub fn expr_references(e: AnfExpr, local: LocalId) Bool {
   case e {
     .Let(_, op, body) => op_references_deep(op, local) or expr_references(body, local),
     .Atom(a) => atom_is_local(a, local),
@@ -72,7 +75,7 @@ fn expr_references(e: AnfExpr, local: LocalId) Bool {
   }
 }
 
-fn any_arg_is_local(args: Vector<Atom>, local: LocalId) Bool {
+pub fn any_arg_is_local(args: Vector<Atom>, local: LocalId) Bool {
   for a in args {
     if atom_is_local(a, local) {
       return true
@@ -81,7 +84,7 @@ fn any_arg_is_local(args: Vector<Atom>, local: LocalId) Bool {
   false
 }
 
-fn op_references_deep(op: AnfOp, local: LocalId) Bool {
+pub fn op_references_deep(op: AnfOp, local: LocalId) Bool {
   case op {
     .ACall(callee, args) => atom_is_local(callee, local) or any_arg_is_local(args, local),
     .ABinOp(_, l, r, _) => atom_is_local(l, local) or atom_is_local(r, local),

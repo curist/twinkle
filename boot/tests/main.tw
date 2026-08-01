@@ -21,6 +21,7 @@ use .suites.backend_repr_suite
 use .suites.backend_verify_suite
 use .suites.base_env_guardrail_suite
 use .suites.builder_region_suite
+use .suites.mutvec_region_suite
 use .suites.builtin_identity_collision_suite
 use .suites.builtins_canonical_suite
 use .suites.builtins_suite
@@ -307,6 +308,7 @@ runner.run_all([
   uniqueness_guard_suite.suite(),
   dry_run_suite.suite(),
   builder_region_suite.suite(),
+  mutvec_region_suite.suite(),
   variant_specialize_suite.suite(),
   field_backed_collection_suite.suite(),
   return_field_ownership_suite.suite(),

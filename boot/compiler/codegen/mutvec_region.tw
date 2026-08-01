@@ -1,0 +1,368 @@
+//! MutVec region detector (storage slice 1) — analysis only, no emit yet.
+//!
+//! Recognizes an owned local `Vector<Int>` that carries at least one indexed
+//! update and is published at a single return boundary — the genuinely-new shape
+//! the builder-region pass never claims (it only handles append-only folds). The
+//! scan is sound-by-rejection: it keys on an indexed update (`vector$set_unsafe`)
+//! whose base is a locally-born owned handle, then requires EVERY use of that
+//! handle to be a supported in-region op (set / append / index-read / len) and
+//! EXACTLY ONE terminal to return it. Any other use — passing the handle to a
+//! call, storing it in an aggregate, capturing it, a second exit, a `break value`
+//! — rejects the region (persistent fallback). Reuses builder_region_detect's
+//! reference-scan helpers so the two typed-vector-region passes converge cheaply.
+
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
+use compiler.builder_region_detect.{atom_is_local, op_references_deep}
+use compiler.builtins
+use compiler.builtins.{BuiltinRegistry}
+use compiler.core_ir.{FuncId, LocalId}
+
+pub type MutVecProducer = { CollectSeed, MakeSeed, ArrayLitSeed }
+
+pub type MutVecOpKind = { Set, Push, Get, Len }
+
+pub type MutVecOpSite = .{ site: LocalId, kind: MutVecOpKind }
+
+// A detected, claimable MutVec region. Slice 1 records the handle (the owned
+// Vector<Int> SSA local), its producer class, and every in-region op site. The
+// materialization exit is implied by the single-return invariant the detector
+// enforces; later tasks enrich this record (freeze site, invalidation point).
+pub type MutVecRegion = .{
+  func_id: FuncId,
+  func: String,
+  proof_id: String,
+  handle: LocalId,
+  producer: MutVecProducer,
+  op_sites: Vector<MutVecOpSite>,
+}
+
+// Resolved builtin FuncIds the detector keys on. Both freeze families count as a
+// collect producer: a `collect` over Vector<Int> lowers to the boxed builder
+// unless typed-vector routing promoted it to the i64 builder, so accept either
+// (the Int-mono gate is what actually restricts slice 1 to Int).
+type OpIds = .{
+  set_unsafe: FuncId,
+  append: FuncId,
+  len: FuncId,
+  make: FuncId,
+  freeze_box: FuncId,
+  freeze_i64: FuncId,
+}
+
+fn resolve_ids(b: BuiltinRegistry) OpIds {
+  .{
+    set_unsafe: builtins.id(b, "vector$set_unsafe"),
+    append: builtins.id(b, "vector$append"),
+    len: builtins.id(b, "vector$len"),
+    make: builtins.id(b, "vector$make"),
+    freeze_box: builtins.id(b, "vector$builder_freeze"),
+    freeze_i64: builtins.id(b, "vector$builder_freeze_i64"),
+  }
+}
+
+// ── Definition map (local id -> its defining op), for producer classification ──
+fn collect_defs(e: AnfExpr, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
+  case e {
+    .Let(local, op, body) => {
+      defs[local.id] = op
+      collect_defs(body, collect_defs_in_op(op, defs))
+    },
+    _ => defs,
+  }
+}
+
+fn collect_defs_in_op(op: AnfOp, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
+  case op {
+    .AIf(_, t, e) => collect_defs(e, collect_defs(t, defs)),
+    .AMatch(_, arms) => {
+      cur := defs
+      for arm in arms {
+        cur = collect_defs(arm.body, cur)
+      }
+      cur
+    },
+    .ALoop(b) => collect_defs(b, defs),
+    .ADefer(b) => collect_defs(b, defs),
+    _ => defs,
+  }
+}
+
+// Classify a producer op directly: a builder freeze (collect), a Vector.make, or
+// an array literal.
+fn producer_of_op(op: AnfOp, ids: OpIds) MutVecProducer? {
+  case op {
+    .AArrayLit(_) => .Some(.ArrayLitSeed),
+    .ACall(.AGlobalFunc(f), _) => if f.id == ids.make.id {
+      .Some(.MakeSeed)
+    } else if f.id == ids.freeze_box.id or f.id == ids.freeze_i64.id {
+      .Some(.CollectSeed)
+    } else {
+      .None
+    },
+    _ => .None,
+  }
+}
+
+// A handle is owned-born iff its defining op is a supported producer — either
+// directly, or through one `AInit` copy (both `collect` and `Vector.make` bind a
+// temp that an `AInit` re-binds to the source-level handle local).
+fn classify_producer(h: LocalId, defs: Dict<Int, AnfOp>, ids: OpIds) MutVecProducer? {
+  case defs.get(h.id) {
+    .Some(op) => case op {
+      .AInit(.ALocal(src)) => case defs.get(src.id) {
+        .Some(srcop) => producer_of_op(srcop, ids),
+        .None => .None,
+      },
+      _ => producer_of_op(op, ids),
+    },
+    .None => .None, // parameter or undefined — not a locally-born owned value
+  }
+}
+
+// ── Handle-use scan (sound-by-rejection) ──
+type UseScan = .{ supported: Bool, set_count: Int, exit_count: Int, op_sites: Vector<MutVecOpSite> }
+
+fn empty_scan() UseScan {
+  .{ supported: true, set_count: 0, exit_count: 0, op_sites: [] }
+}
+
+fn reject(s: UseScan) UseScan {
+  .{ supported: false, set_count: s.set_count, exit_count: s.exit_count, op_sites: s.op_sites }
+}
+
+fn record_op(s: UseScan, site: LocalId, kind: MutVecOpKind) UseScan {
+  .{
+    supported: s.supported,
+    set_count: case kind {
+      .Set => s.set_count + 1,
+      _ => s.set_count,
+    },
+    exit_count: s.exit_count,
+    op_sites: s.op_sites.append(MutVecOpSite.{ site, kind }),
+  }
+}
+
+fn bump_exit(s: UseScan) UseScan {
+  .{
+    supported: s.supported,
+    set_count: s.set_count,
+    exit_count: s.exit_count + 1,
+    op_sites: s.op_sites,
+  }
+}
+
+fn scan_uses(e: AnfExpr, h: LocalId, ids: OpIds, s: UseScan) UseScan {
+  case e {
+    .Let(local, op, body) => {
+      s2 := scan_use_op(op, local, h, ids, s)
+      scan_uses(body, h, ids, s2)
+    },
+    .Atom(a) => if atom_is_local(a, h) {
+      s.bump_exit()
+    } else {
+      s
+    },
+    .Return(.Some(a)) => if atom_is_local(a, h) {
+      s.bump_exit()
+    } else {
+      s
+    },
+    .Return(.None) => s,
+    // A `break value` carrying the handle is a second, non-freezable publication
+    // path — reject the whole region.
+    .Break(.Some(a)) => if atom_is_local(a, h) {
+      s.reject()
+    } else {
+      s
+    },
+    .Break(.None) => s,
+    .Continue => s,
+  }
+}
+
+fn scan_use_op(op: AnfOp, local: LocalId, h: LocalId, ids: OpIds, s: UseScan) UseScan {
+  case op {
+    // Control flow: never a direct use of the handle; recurse into sub-exprs.
+    .AIf(cnd, t, e) => {
+      s0 := if atom_is_local(cnd, h) {
+        s.reject()
+      } else {
+        s
+      }
+      scan_uses(e, h, ids, scan_uses(t, h, ids, s0))
+    },
+    .AMatch(scrut, arms) => {
+      s0 := if atom_is_local(scrut, h) {
+        s.reject()
+      } else {
+        s
+      }
+      cur := s0
+      for arm in arms {
+        cur = scan_uses(arm.body, h, ids, cur)
+      }
+      cur
+    },
+    .ALoop(body) => scan_uses(body, h, ids, s),
+    .ADefer(body) => scan_uses(body, h, ids, s),
+    // Leaf ops: only classify when this op references the handle at all.
+    _ => if op_references_deep(op, h) {
+      classify_leaf_use(op, local, h, ids, s)
+    } else {
+      s
+    },
+  }
+}
+
+fn classify_leaf_use(op: AnfOp, local: LocalId, h: LocalId, ids: OpIds, s: UseScan) UseScan {
+  case op {
+    .ACall(.AGlobalFunc(f), args) => if f.id == ids.set_unsafe.id
+      and args.len() == 3 and atom_is_local(args[0], h) and !atom_is_local(args[1], h)
+      and !atom_is_local(args[2], h) {
+      s.record_op(local, .Set)
+    } else if f.id == ids.append.id
+      and args.len() == 2 and atom_is_local(args[0], h) and !atom_is_local(args[1], h) {
+      s.record_op(local, .Push)
+    } else if f.id == ids.len.id and args.len() == 1 and atom_is_local(args[0], h) {
+      s.record_op(local, .Len)
+    } else {
+      // Handle passed to some other call, or as a non-base argument — escape.
+      s.reject()
+    },
+    // Any other callee form (closure/local callee) carrying the handle — escape.
+    .ACall(_, _) => s.reject(),
+    .AIndex(base, idx, _, _) => if atom_is_local(base, h) and !atom_is_local(idx, h) {
+      s.record_op(local, .Get)
+    } else {
+      s.reject()
+    },
+    // SSA rebind of the handle itself (`assign H = <op result>`): supported. The
+    // handle flowing INTO a different local via assign is an alias escape.
+    .AAssign(target, _) => if target.id == h.id {
+      s
+    } else {
+      s.reject()
+    },
+    // `L = init H` copies the handle into another local — an alias that may escape.
+    .AInit(_) => s.reject(),
+    // Stored into a record/variant/array, captured by a closure, wrapped — escape.
+    _ => s.reject(),
+  }
+}
+
+// ── Eligibility ──
+fn handle_is_vector_int(f: AnfFunctionDef, h: LocalId) Bool {
+  case f.op_result_mono.get(h.id) {
+    .Some(mono) => case mono {
+      .Vector(inner) => case inner {
+        .Int => true,
+        _ => false,
+      },
+      _ => false,
+    },
+    .None => false,
+  }
+}
+
+fn eligible(f: AnfFunctionDef, h: LocalId, defs: Dict<Int, AnfOp>, ids: OpIds) MutVecRegion? {
+  if !handle_is_vector_int(f, h) {
+    return .None
+  }
+  producer := case classify_producer(h, defs, ids) {
+    .Some(p) => p,
+    .None => return .None,
+  }
+  scan := scan_uses(f.body, h, ids, empty_scan())
+  if !scan.supported {
+    return .None
+  }
+
+  // The genuinely-new shape requires >=1 indexed update, and slice 1 freezes a
+  // single boundary, so exactly one terminal may carry the handle.
+  if scan.set_count < 1 {
+    return .None
+  }
+  if scan.exit_count != 1 {
+    return .None
+  }
+  .Some(
+    MutVecRegion.{
+      func_id: f.func_id,
+      func: f.name,
+      proof_id: "mv:${f.func_id.id}:${h.id}",
+      handle: h,
+      producer,
+      op_sites: scan.op_sites,
+    },
+  )
+}
+
+// ── Candidate handles: every distinct base local of a vector$set_unsafe call ──
+fn collect_set_bases(e: AnfExpr, ids: OpIds, seen: Dict<Int, Bool>, out: Vector<LocalId>) Vector<
+  LocalId,
+> {
+  case e {
+    .Let(_, op, body) => {
+      r := collect_set_bases_in_op(op, ids, seen, out)
+      collect_set_bases(body, ids, seen, r)
+    },
+    _ => out,
+  }
+}
+
+fn collect_set_bases_in_op(op: AnfOp, ids: OpIds, seen: Dict<Int, Bool>, out: Vector<LocalId>) Vector<
+  LocalId,
+> {
+  case op {
+    .ACall(.AGlobalFunc(f), args) => if f.id == ids.set_unsafe.id and args.len() == 3 {
+      case args[0] {
+        .ALocal(base) => if seen.has(base.id) {
+          out
+        } else {
+          seen[base.id] = true
+          out.append(base)
+        },
+        _ => out,
+      }
+    } else {
+      out
+    },
+    .AIf(_, t, e) => collect_set_bases(e, ids, seen, collect_set_bases(t, ids, seen, out)),
+    .AMatch(_, arms) => {
+      cur := out
+      for arm in arms {
+        cur = collect_set_bases(arm.body, ids, seen, cur)
+      }
+      cur
+    },
+    .ALoop(b) => collect_set_bases(b, ids, seen, out),
+    .ADefer(b) => collect_set_bases(b, ids, seen, out),
+    _ => out,
+  }
+}
+
+fn detect_in_func(f: AnfFunctionDef, ids: OpIds) Vector<MutVecRegion> {
+  defs := collect_defs(f.body, Dict.new())
+  bases := collect_set_bases(f.body, ids, Dict.new(), [])
+  regions: Vector<MutVecRegion> = []
+  for h in bases {
+    case eligible(f, h, defs, ids) {
+      .Some(r) => regions = .append(r),
+      .None => {},
+    }
+  }
+  regions
+}
+
+// Detect every claimable MutVec region in the module. Analysis only — produces
+// decision records; no ANF is rewritten here.
+pub fn detect_regions(m: AnfModule, b: BuiltinRegistry) Vector<MutVecRegion> {
+  ids := resolve_ids(b)
+  out: Vector<MutVecRegion> = []
+  for f in m.functions {
+    for r in detect_in_func(f, ids) {
+      out = .append(r)
+    }
+  }
+  out
+}
