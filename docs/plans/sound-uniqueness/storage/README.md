@@ -308,6 +308,10 @@ Acceptance requirements:
 - no S2 region includes dict remove/set semantics;
 - fallback emits the ordinary persistent vector/builder path.
 
+**Design spec:** the first S1/S2/S3 vector slice is specified in
+[mutvec-slice1-design.md](mutvec-slice1-design.md) (Int-only `MutVecI64`,
+dedicated region pass, converging to a unified typed-vector-region pass).
+
 ### S3 — Private mutable vector storage targets
 
 The primary private vector storage target is **`MutVec<T>` — a growable mutable
