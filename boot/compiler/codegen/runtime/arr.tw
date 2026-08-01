@@ -1754,9 +1754,8 @@ fn pvec_make_fn(f: PVecFamily) FuncDef {
 // A `MutVecI64` is `struct { data: ArrayI64 (mut), len: i32 (mut) }`. Reads and
 // writes are O(1) `array.get`/`array.set` at the logical length; the backing
 // grows by doubling. These ops are codegen-internal (the `mutvec_region` pass
-// emits them) and are exposed name-callable only for unit testing. Each mutating
-// op returns the same struct ref so the ANF SSA thread stays linear.
-
+// will emit them) and have no source-callable signatures. Each mutating op
+// returns the same struct ref so the ANF SSA thread stays linear.
 // mutvec_new_i64(cap) -> MutVecI64: ArrayI64(max(cap, MIN_CAP)) zero-filled,
 // len = 0. cap is a capacity hint (0 is the []-seed, rounded up to MIN_CAP).
 fn mutvec_new_i64_fn() FuncDef {

@@ -1,10 +1,11 @@
 # Storage Representation Track
 
-**Status:** Planned; starts after existing-hook codegen lowering proves the
-analysis/codegen seam, and before migration cleanup or Buffer retirement.
-Representation decisions for S2/S3/S5 and vector append settled 2026-08-01 (see
-[Settled decisions](#settled-decisions)); crossover thresholds inside them are
-spike-gated.
+**Status:** Planned / in progress. MutVec slice 1 is currently at an inert
+checkpoint: runtime substrate, physical repr plumbing, and analysis-only region
+detection have landed; emit/flag wiring, backend region-record handoff, census,
+and performance validation remain pending. Representation decisions for S2/S3/S5
+and vector append settled 2026-08-01 (see [Settled decisions](#settled-decisions));
+crossover thresholds inside them are spike-gated.
 
 This track owns the mandatory performance substrate for closing the
 sound-uniqueness project. Existing-hook lowering is the early integration proof:

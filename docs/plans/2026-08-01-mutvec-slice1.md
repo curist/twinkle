@@ -17,7 +17,7 @@
 This feature spans hand-written Wasm-GC IR, an ANF dataflow pass, and backend repr assignment. Two conventions in this plan:
 
 1. **Runtime op bodies are specified as deltas from named, verified analogue functions** (exact `file:line`). The analogue is real working code; adapt it with the stated field/instruction changes and confirm against the backend verifier (`TWINKLE_VERIFY_LEVEL=basic` dumps codegen even when the verifier rejects). This is grounding in existing code, not a placeholder.
-2. **The ANF pass reuses `builder_region_detect` patterns.** That module already walks ANF for owned accumulator regions; the new pass mirrors its structure. Read `boot/compiler/codegen/builder_region_detect.tw` and `builder_region.tw` in full before Phase 3.
+2. **The ANF pass reuses `builder_region_detect` patterns.** That module already walks ANF for owned accumulator regions; the new pass mirrors its structure. Read `boot/compiler/builder_region_detect.tw` and `boot/compiler/codegen/builder_region.tw` in full before Phase 3.
 
 **Rebuild loop:** `target/twk` is the compiled boot compiler. After editing any `boot/` compiler source, you MUST rebuild it before behavior changes take effect:
 
@@ -63,7 +63,7 @@ The task bodies below were drafted against a few stale/incorrect assumptions. Th
 
 **Create:**
 - `boot/compiler/codegen/mutvec_region.tw` — the ANF→ANF detection + rewrite pass (`rewrite_module`), the region decision record type, the exit classifier.
-- `boot/tests/suites/mutvec_region_suite.tw` — positive/negative region-lowering fixtures (the only behavioral surface; the ops are exercised through lowered code, never by name — see Grounding corrections §1).
+- `boot/tests/suites/mutvec_region_suite.tw` — positive/negative region-detection and region-lowering fixtures. Before emit lands it exercises detection only; after emit lands it is the behavioral surface for the internal ops.
 - `boot/bench/mutvec_slice1_bench.tw` — the compiled-program speedup check.
 
 **Modify:**
@@ -75,576 +75,125 @@ The task bodies below were drafted against a few stale/incorrect assumptions. Th
 - `boot/compiler/backend/repr_policy.tw` — map the family (reuse `ElemRepr`).
 - `boot/compiler/backend/verify_common.tw`, `boot/compiler/backend/verify_expr.tw` — exhaustive `ReprKind` match arms (see Grounding corrections §5).
 - `boot/compiler/codegen/codegen.tw:78,131` — add `mutvec_region_enabled()` and insert the pass before `builder_region.rewrite_module`.
-- `boot/tests/main.tw` — register the two new suites.
+- `boot/tests/main.tw` — register the MutVec region suite. Do not add a source-callable MutVec runtime suite.
 
-**Do NOT modify:** `builder_region.tw`, `builder_region_detect.tw` (except to `pub`-export helpers the new pass shares), the `set_in_place` decision path, or any `src/` (stage0) — deferred to the flag-on slice.
+**Do NOT modify:** `builder_region.tw`, `boot/compiler/builder_region_detect.tw` (except to `pub`-export helpers the new pass shares), the `set_in_place` decision path, or any `src/` (stage0) — deferred to the flag-on slice.
 
 ---
 
-## Phase 1: Runtime substrate (S3)
+## Phase 1: Runtime substrate (S3) — completed as internal-only substrate
 
-Goal: the six `mutvec_*_i64` ops exist, are registered as internal builtins named `Vector.__mutvec_*`, and each is behaviorally unit-tested from Twinkle. These are codegen-internal but exposed name-callable **for testing only**; boot/main.tw never calls them, so stage0 and self-host are unaffected (unused runtime funcs are DCE'd).
-
-### Test conventions (apply to every suite test below)
-
-Boot suites use `@std.testing`, not an `expect`/`to_equal` API. Every suite file has this shape (see `boot/tests/suites/stdlib_buffer_suite.tw`):
-
-```
-use @std.testing.assert as assert
-use @std.testing as runner
-
-pub fn suite() runner.Suite {
-  runner
-    .suite("mutvec runtime")
-    .test("desc", fn() {
-      // ... body ...
-      try assert.equal(actual, expected)
-      .Ok({})
-    })
-    .test("next desc", fn() { /* ... */ .Ok({}) })
-}
-```
-
-- Assertions are `try assert.equal(actual, expected)`; each test body ends with `.Ok({})` and the closure returns `Result<Void, String>`.
-- **Register** a suite by adding `use .suites.mutvec_runtime_suite` (and `..._region_suite`) to `boot/tests/main.tw` and appending `.suite()` to the run list exactly as the neighboring suites are registered.
-- **Trap tests cannot run in-process** (a trap aborts the program). Test each trap with a standalone fixture under `boot/tests/suites/fixtures/` run as its own process, asserting a non-zero exit:
-
-```bash
-TWINKLE_MUTVEC=0 target/twk run boot/tests/suites/fixtures/mutvec_set_oob.tw; test $? -ne 0 && echo TRAP_OK
-```
-
-The fixture bodies below are shown as the **meat** of a `.test("desc", fn() { … .Ok({}) })` wrapper (or a standalone `fixtures/*.tw` for traps); wrap them per this convention when writing the file.
-
-### Task 1: `MutVecI64` type + `new` / `len` / `push` (with growth)
+Goal: the seven `mutvec_*_i64` runtime ops exist, are registered as codegen-internal builtins, and carry explicit backend ABI. They are **not source-callable**: no `Vector.__mutvec_*` signatures, no canonical source names, and no checker arms. Behavioral testing waits until Phase 4 emits the ops through real lowered regions.
 
 **Files:**
-- Modify: `boot/compiler/codegen/runtime/types.tw:9-90`
-- Modify: `boot/compiler/codegen/runtime/arr.tw` (`module()` list ~140-210; add FuncDefs near the `pvec_builder_*` group ~1610-1740)
-- Modify: `boot/compiler/builtins.tw`
-- Modify: `prelude/signatures/vector.tw`
-- Test: `boot/tests/suites/mutvec_runtime_suite.tw`
+- `boot/compiler/codegen/runtime/types.tw`
+- `boot/compiler/codegen/runtime/arr.tw`
+- `boot/compiler/builtins.tw`
 
-- [ ] **Step 1: Add the GC struct type.** In `types.tw`, in the `module()` type list (alongside the `ArrayI64`/`PVecI64` entries at ~26/50), add:
+- [x] Add `rt_types__MutVecI64` as a Wasm-GC struct with mutable `data: ArrayI64` and `len: i32` fields.
+- [x] Add runtime ops: `mutvec_new_i64`, `mutvec_make_i64`, `mutvec_push_i64`, `mutvec_set_i64`, `mutvec_get_i64`, `mutvec_len_i64`, `mutvec_freeze_i64`.
+- [x] Preserve vector semantics in the substrate: grow by doubling with a nonzero `MIN_CAP`, clamp negative `make` lengths to empty, and bounds-check `get`/`set` against logical `len`, not backing capacity.
+- [x] Append internal builtin specs at the end of `builtin_specs()` with `.None` canonical names, and add explicit `builtin_abi()` arms using `rt_types__MutVecI64`.
+- [x] Verify the inert substrate with self-host/boot-test gates. Because no codegen path emits these ops yet, runtime behavior is intentionally covered later by Phase 4 region fixtures rather than by source-level name calls.
 
-```
-.Struct(
-  "MutVecI64",
-  [
-    .{ name: .Some("data"), mutable: true, ty: .Ref(false, .Named("ArrayI64")) },
-    .{ name: .Some("len"), mutable: true, ty: .I32 },
-  ],
-  .None,
-  true,
-),
-```
-
-(Positional `.Struct(name, fields, supertype_opt, is_final)` — matching `PVecI64` at `types.tw:49`.) The emitted, linked type name is `rt_types__MutVecI64` (the `rt_types__` prefix is applied like `t_ARRAY_I64 := "rt_types__ArrayI64"` at `arr.tw:26`); add a `t_MUTVEC_I64` constant beside it in `arr.tw` and use it for all `StructGet`/`StructSet`/`StructNew`/`ArrayNew` type-name arguments.
-
-- [ ] **Step 2: Write the failing test.** Create `boot/tests/suites/mutvec_runtime_suite.tw` per Test conventions, with two tests:
-
-```
-.test("mutvec new/push/len", fn() {
-  v := Vector.__mutvec_new_i64(4)
-  v = v.__mutvec_push_i64(10)
-  v = v.__mutvec_push_i64(20)
-  v = v.__mutvec_push_i64(30)
-  try assert.equal(v.__mutvec_len_i64(), 3)
-  .Ok({})
-})
-.test("mutvec push grows past capacity", fn() {
-  v := Vector.__mutvec_new_i64(2)
-  i := 0
-  for i < 10 {
-    v = v.__mutvec_push_i64(i * i)
-    i = i + 1
-  }
-  try assert.equal(v.__mutvec_len_i64(), 10)
-  try assert.equal(v.__mutvec_get_i64(9), 81)   // needs Task 2's get
-  .Ok({})
-})
-```
-
-(`__mutvec_get_i64` lands in Task 2; keep the grow test but temporarily drop its `get` assertion — or land both green by the end of Task 2.)
-
-- [ ] **Step 3: Register the suite in the runner.** In `boot/tests/main.tw`, add `use .suites.mutvec_runtime_suite` (and later `use .suites.mutvec_region_suite`) and append `.suite()` to the run list exactly as neighboring suites are registered.
-
-- [ ] **Step 4: Run the test to see it fail (no rebuild needed — the builtin is undefined yet).**
-
-Run: `target/twk run boot/tests/main.tw`
-Expected: FAIL — `Vector has no method '__mutvec_new_i64'` / undefined builtin.
-
-- [ ] **Step 5: Add the runtime FuncDefs.** In `arr.tw`, add `mutvec_new_i64_fn()`, `mutvec_push_i64_fn()`, `mutvec_len_i64_fn()` and add them to the `module()` funcs list. Model them on these verified analogues:
-
-  - `mutvec_new_i64_fn` → `MutVecI64` : allocate `ArrayI64(max(cap, MIN_CAP))` via `.ArrayNew("ArrayI64")` (default-filled) or `.ArrayNewDefault`, push `0` (i32) for `len`, `.StructNew("MutVecI64")`. Mirror the allocation style in `pvec_builder_new_fn` (`arr.tw:1610`). `MIN_CAP = 4` as an `.I32Const`.
-  - `mutvec_len_i64_fn(mv)` → i32 : `.LocalGet(0)`, `.RefAsNonNull`, `.StructGet("MutVecI64", 1)` (field index 1 = `len`). Mirror the field-read style in `pvec_builder_freeze_fn` (`arr.tw:1629`).
-  - `mutvec_push_i64_fn(mv, x)` → `MutVecI64` : read `len` and `capacity = array.len(data)`; if `len == capacity`, grow — allocate `ArrayI64(max(MIN_CAP, capacity*2))`, `.ArrayCopy("ArrayI64","ArrayI64")` old→new for `capacity` elems, `.StructSet("MutVecI64", 0, new_data)`; then `.ArraySet("ArrayI64")` `data[len] = x`, `.StructSet("MutVecI64", 1, len+1)`, return `mv`. The `array.len`, `array.copy`, grow-and-copy pattern appears in `push_tail_fn` (`arr.tw:1011`) and the freeze copy in `pvec_builder_freeze_fn` (`arr.tw:1664-1673`). **Growth uses `max(MIN_CAP, capacity*2)` so `capacity==0` cannot stay 0.**
-
-- [ ] **Step 6: Register the builtins.** In `builtins.tw` `builtin_specs()`, append (near the vector builder entries):
-
-```
-rt("vector$__mutvec_new_i64", "rt.arr", "mutvec_new_i64", .Some("Vector.__mutvec_new_i64")),
-rt("vector$__mutvec_push_i64", "rt.arr", "mutvec_push_i64", .Some("Vector.__mutvec_push_i64")),
-rt("vector$__mutvec_len_i64", "rt.arr", "mutvec_len_i64", .Some("Vector.__mutvec_len_i64")),
-```
-
-Add ABI arms in `builtin_abi()` (default `empty_abi()` is wrong for a self-returning mutating op — copy the arm shape used by `set_in_place`/builder ops so the base arg is treated as the mutated/returned handle). Add signature stubs in `prelude/signatures/vector.tw` so the typechecker resolves the names (e.g. `pub fn __mutvec_new_i64(cap: Int) MutVecXXX` — see the note below on the source-visible return type).
-
-  **Return-type note:** these internal ops return a `MutVecI64`, which has no source `MonoType`. For the *test-only* signature stubs, type them as returning the opaque handle the same way builder ops are typed in `prelude/signatures/vector.tw` (builder ops return an internal handle type). Follow the existing builder-op stub exactly; do not invent a new source type.
-
-- [ ] **Step 7: Rebuild the compiler.**
-
-Run: `make bundle-cli`
-Expected: ends with `Fixed point reached`.
-
-- [ ] **Step 8: Run the test to verify it passes.**
-
-Run: `target/twk run boot/tests/main.tw`
-Expected: the `mutvec new/push/len` test PASSES (the grow test needs Task 2's `get`).
-
-- [ ] **Step 9: Commit.**
-
-```bash
-git add boot/compiler/codegen/runtime/types.tw boot/compiler/codegen/runtime/arr.tw boot/compiler/builtins.tw prelude/signatures/vector.tw boot/tests/suites/mutvec_runtime_suite.tw boot/tests/main.tw
-git commit -m "feat(mutvec): MutVecI64 type + new/push/len runtime ops"
-```
-
-### Task 2: `get` / `set` with logical-length bounds traps
-
-**Files:**
-- Modify: `boot/compiler/codegen/runtime/arr.tw`, `boot/compiler/builtins.tw`, `prelude/signatures/vector.tw`
-- Test: `boot/tests/suites/mutvec_runtime_suite.tw`
-
-- [ ] **Step 1a: Write the in-process happy-path test.** Add to the suite (per Test conventions):
-
-```
-.test("mutvec set then get", fn() {
-  v := Vector.__mutvec_new_i64(4)
-  v = v.__mutvec_push_i64(0)
-  v = v.__mutvec_push_i64(0)
-  v = v.__mutvec_set_i64(1, 99)
-  try assert.equal(v.__mutvec_get_i64(1), 99)
-  .Ok({})
-})
-```
-
-- [ ] **Step 1b: Write the trap fixtures (standalone, run as their own process — traps abort, so they can't be in-suite).** Create two files:
-
-`boot/tests/suites/fixtures/mutvec_set_oob.tw` (index 1 is in `[len=1, capacity=8)` — must trap, proving logical-length checking, not array bounds):
-
-```
-fn f() Int {
-  v := Vector.__mutvec_new_i64(8)
-  v = v.__mutvec_push_i64(0)
-  v = v.__mutvec_set_i64(1, 5)
-  v.__mutvec_len_i64()
-}
-println(f())
-```
-
-`boot/tests/suites/fixtures/mutvec_get_oob.tw`:
-
-```
-fn f() Int {
-  v := Vector.__mutvec_new_i64(8)
-  v = v.__mutvec_push_i64(0)
-  v.__mutvec_get_i64(3)
-}
-println(f())
-```
-
-- [ ] **Step 2: Run to see it fail.**
-
-Run: `target/twk run boot/tests/main.tw`
-Expected: FAIL — `__mutvec_set_i64` undefined.
-
-- [ ] **Step 3: Implement `get`/`set` with explicit checks.** Add `mutvec_get_i64_fn` and `mutvec_set_i64_fn` to `arr.tw` + `module()`:
-
-  - Both compute `len := StructGet(MutVecI64,1)`; guard `if i < 0 || i >= len { unreachable/trap }` using `.I32LtS` / `.I32GeS` + `.If(.None, [.Unreachable], [])` (see the trap style already used in `arr.tw` for OOB — grep `Unreachable`). **Do not** rely on `array.set`/`array.get` bounds: `capacity >= len`, so `array` bounds would wrongly allow `[len, capacity)`.
-  - `get`: after the check, `.StructGet(MutVecI64,0)` (data), `.LocalGet(i)`, `.ArrayGet("ArrayI64")`.
-  - `set`: after the check, `data`, `i`, `x`, `.ArraySet("ArrayI64")`, then `.LocalGet(0)` (return `mv`).
-
-- [ ] **Step 4: Register the two builtins** in `builtins.tw` + `prelude/signatures/vector.tw` (mirror Task 1 Step 6).
-
-- [ ] **Step 5: Rebuild.** Run: `make bundle-cli` → `Fixed point reached`.
-
-- [ ] **Step 6: Verify pass (in-process).** Run: `target/twk run boot/tests/main.tw` — the `set then get` test and the Task-1 grow test PASS.
-
-- [ ] **Step 7: Verify the trap fixtures abort.** Run each and confirm a non-zero exit:
-
-```bash
-target/twk run boot/tests/suites/fixtures/mutvec_set_oob.tw; test $? -ne 0 && echo SET_TRAP_OK
-target/twk run boot/tests/suites/fixtures/mutvec_get_oob.tw; test $? -ne 0 && echo GET_TRAP_OK
-```
-
-Expected: both print `*_TRAP_OK` (the program traps on the OOB logical index).
-
-- [ ] **Step 8: Commit.**
-
-```bash
-git add boot/compiler/codegen/runtime/arr.tw boot/compiler/builtins.tw prelude/signatures/vector.tw boot/tests/suites/mutvec_runtime_suite.tw boot/tests/suites/fixtures/mutvec_set_oob.tw boot/tests/suites/fixtures/mutvec_get_oob.tw
-git commit -m "feat(mutvec): get/set with logical-length bounds traps"
-```
-
-### Task 3: `make` with `max(0, n)` clamp
-
-**Files:** `boot/compiler/codegen/runtime/arr.tw`, `builtins.tw`, `prelude/signatures/vector.tw`, `boot/tests/suites/mutvec_runtime_suite.tw`
-
-- [ ] **Step 1: Write the failing tests** (suite bodies, per Test conventions):
-
-```
-.test("mutvec make prefilled", fn() {
-  v := Vector.__mutvec_make_i64(3, 7)
-  try assert.equal(v.__mutvec_len_i64(), 3)
-  try assert.equal(v.__mutvec_get_i64(0), 7)
-  try assert.equal(v.__mutvec_get_i64(2), 7)
-  .Ok({})
-})
-.test("mutvec make zero is empty", fn() {
-  v := Vector.__mutvec_make_i64(0, 7)
-  try assert.equal(v.__mutvec_len_i64(), 0)
-  .Ok({})
-})
-.test("mutvec make negative is empty (no trap)", fn() {
-  v := Vector.__mutvec_make_i64(0 - 2, 7)
-  try assert.equal(v.__mutvec_len_i64(), 0)
-  .Ok({})
-})
-```
-
-- [ ] **Step 2: Run to see it fail.** `target/twk run boot/tests/main.tw` → FAIL undefined.
-
-- [ ] **Step 3: Implement `mutvec_make_i64_fn(n, fill)`.** Model on `pvec_make_fn` (`arr.tw:1698`): compute `actual_len := max(0, n)` via `.LocalGet(n)`, `.I32Const(0)`, `.I32GtS` + `.Select` (or an `if`); allocate `ArrayI64(max(actual_len, MIN_CAP))`; fill `data[0..actual_len)` with `fill` using the `pvec_make_fn` loop shape (its `i >= size` guard already exits immediately when `size <= 0`, which is exactly the empty-on-negative behavior to preserve); set `len = actual_len`; `StructNew`. Register builtin + signature stub.
-
-- [ ] **Step 4: Rebuild.** `make bundle-cli` → `Fixed point reached`.
-
-- [ ] **Step 5: Verify pass.** `target/twk run boot/tests/main.tw` → PASS.
-
-- [ ] **Step 6: Commit.**
-
-```bash
-git add -A && git commit -m "feat(mutvec): make with max(0,n) clamp (negative -> empty)"
-```
-
-### Task 4: `freeze` → `PVecI64`
-
-**Files:** `boot/compiler/codegen/runtime/arr.tw`, `builtins.tw`, `prelude/signatures/vector.tw`, `boot/tests/suites/mutvec_runtime_suite.tw`
-
-- [ ] **Step 1: Write the failing test** (suite body, per Test conventions):
-
-```
-.test("mutvec freeze to persistent vector", fn() {
-  v := Vector.__mutvec_new_i64(2)
-  i := 0
-  for i < 5 {
-    v = v.__mutvec_push_i64(i * 2)
-    i = i + 1
-  }
-  frozen: Vector<Int> = v.__mutvec_freeze_i64()
-  try assert.equal(frozen.len(), 5)
-  try assert.equal(frozen[4], 8)
-  .Ok({})
-})
-```
-
-- [ ] **Step 2: Run to see it fail.** FAIL undefined.
-
-- [ ] **Step 3: Implement `mutvec_freeze_i64_fn(mv) -> PVecI64`.** Reuse the typed builder: `Call("builder_new_i64")`, loop `j in 0..len` pushing `data[j]` via `Call("builder_push_i64_raw")`, then `Call("builder_freeze_i64")`. This mirrors `pvec_make_fn`'s builder loop (`arr.tw:1698`) but reads source elements from the `MutVecI64` backing rather than a constant fill. Register builtin; the signature stub returns `Vector<Int>` (the real persistent type).
-
-- [ ] **Step 4: Rebuild.** `make bundle-cli` → `Fixed point reached`.
-
-- [ ] **Step 5: Verify pass.** `target/twk run boot/tests/main.tw` → PASS.
-
-- [ ] **Step 6: Confirm self-host unaffected.** Run: `make boot-test` (full boot suite) → all green. The new runtime funcs are unused by `boot/main.tw` and DCE'd from it.
-
-- [ ] **Step 7: Commit.**
-
-```bash
-git add -A && git commit -m "feat(mutvec): freeze to PVecI64 via typed builder"
-```
+**Do not add:** `boot/prelude/signatures/vector.tw` stubs, a source-callable `mutvec_runtime_suite`, or `.Some("Vector.__mutvec_…")` canonical names. Those were rejected because they expose an internal handle ABI as public vector methods and can trap when called on ordinary persistent vectors.
 
 ---
 
-## Phase 2: Physical repr (`ReprKind.MutVec`)
+## Phase 2: Physical repr (`ReprKind.MutVec`) — completed as plumbing
 
-Goal: the backend can carry a slot as `MutVec(I64)` and lower it to the `rt_types__MutVecI64` wasm ref, distinct from `TypedVec(I64)` and never `Anyref`. This is a supporting change; it is exercised end-to-end in Phase 4.
-
-### Task 5: Add the `MutVec(ElemRepr)` repr variant
+Goal: the backend can describe a slot as `MutVec(I64)` and lower it to `rt_types__MutVecI64`, distinct from `TypedVec(I64)` / `PVecI64` and never `Anyref`. This phase only adds the representation category; Phase 4 is responsible for assigning it from region records.
 
 **Files:**
-- Modify: `boot/compiler/backend/prepared_ir.tw:48-59` (`ReprKind`)
-- Modify: `boot/compiler/backend/repr_assign.tw`
-- Modify: `boot/compiler/backend/repr_policy.tw`
-- Modify: `boot/compiler/backend/verify_slots.tw` (if it exhaustively matches `ReprKind`)
+- `boot/compiler/backend/prepared_ir.tw`
+- `boot/compiler/backend/repr_assign.tw`
+- `boot/compiler/backend/verify_common.tw`
+- `boot/compiler/backend/verify_expr.tw`
+- `boot/compiler/codegen/emit/helpers.tw`
+- `boot/compiler/codegen/wasm_layout.tw`
+- `boot/tests/suites/backend_repr_suite.tw`
 
-- [ ] **Step 1: Add the variant.** In `prepared_ir.tw`, add to `ReprKind`:
-
-```
-MutVec(ElemRepr),
-```
-
-- [ ] **Step 2: Make the compiler build (exhaustive-match fallout).** Rebuild and fix every non-exhaustive `case … ReprKind` the compiler now flags:
-
-Run: `cargo run --release -- build boot/main.tw -o /tmp/x.wasm` (fast boot typecheck via stage0, ~10s)
-Expected: type errors listing each `case` on `ReprKind` missing `MutVec`. For each, add a `MutVec(er)` arm:
-  - wasm-type lowering (`repr_assign.tw` / wherever `TypedVec(er)` maps to the `PVecI64` ref): map `MutVec(I64)` → `.Ref(true, .Named("MutVecI64"))`.
-  - `verify_slots.tw` expected-wasm-type: same ref.
-  - any repr-display/debug arm: `"MutVec(i64)"`.
-Repeat until `cargo run … build` succeeds.
-
-- [ ] **Step 3: Rebuild the compiler.** `make bundle-cli` → `Fixed point reached` (proves the new variant, unused so far, doesn't perturb self-host).
-
-- [ ] **Step 4: Commit.**
-
-```bash
-git add boot/compiler/backend/prepared_ir.tw boot/compiler/backend/repr_assign.tw boot/compiler/backend/repr_policy.tw boot/compiler/backend/verify_slots.tw
-git commit -m "feat(mutvec): ReprKind.MutVec(ElemRepr) physical repr -> rt_types__MutVecI64"
-```
+- [x] Add `ReprKind.MutVec(ElemRepr)` at the end of the enum.
+- [x] Add `wasm_layout.mutvec_i64_wasm_type()` and map `.MutVec(_)` to `rt_types__MutVecI64` wherever wasm slot types are derived or verified.
+- [x] Add exhaustive-match arms in compiler and backend-repr tests.
+- [x] Keep default `Vector<Int>` representation unchanged; no slot becomes `MutVec` until a Phase 4 region record explicitly assigns it.
 
 ---
 
-## Phase 3: Region detection (analysis, no emit yet)
+## Phase 3: Region detection (analysis, no emit yet) — current checkpoint
 
-Goal: `mutvec_region.tw` can identify a claimable region and produce a region decision record, observable via a debug dump, without changing emitted code yet. Read `builder_region_detect.tw` fully first.
-
-### Task 6: Region decision record type + eligibility predicate
+Goal: `mutvec_region.detect_regions` identifies conservative, claimable Int-vector regions and returns audit records without changing emitted ANF. The detector is intentionally sound-by-rejection and remains inert until Phase 4 consumes richer records.
 
 **Files:**
-- Create: `boot/compiler/codegen/mutvec_region.tw`
-- Modify: `boot/compiler/codegen/builder_region_detect.tw` (only to `pub`-export helpers you reuse: local-reference scans `expr_references`/`op_references_deep`, seed detection, loop-arm helpers)
-- Test: `boot/tests/suites/mutvec_region_suite.tw`
+- `boot/compiler/codegen/mutvec_region.tw`
+- `boot/compiler/builder_region_detect.tw` (only shared helper exports)
+- `boot/tests/suites/mutvec_region_suite.tw`
 
-- [ ] **Step 1: Define the region decision record.** In `mutvec_region.tw`, define the full lifecycle schema from the design (§4 "Region decision record"):
+### Task 6: Eligibility predicate — completed for detector-only use
 
-```
-pub type MutVecRegion = .{
-  region_id: Int,
-  proof_id: String,
-  begin_local: LocalId,          // producer/handle SSA local
-  producer: MutVecProducer,      // { NewSeed, MakeSeed, CollectSeed }
-  source_repr: String,           // pre-change physical repr, for audit
-  op_sites: Vector<MutVecOpSite>,// each in-region op + its shape
-  freeze_at: MutVecExit,         // the single freezable exit
-  post_repr: String,             // "TypedVec(i64)" after freeze
-  invalidate_after: AnfPoint,    // handle dead past here
-}
+- [x] Reuse `builder_region_detect` reference-scan helpers without moving the detector under `codegen/`.
+- [x] Classify supported producers through the real ANF shapes: collect/builder freeze, `Vector.make`, and array literal seeds, including one `AInit` indirection from producer temp to source handle.
+- [x] Gate candidates to semantic `Vector<Int>`.
+- [x] Key candidate regions on at least one `vector$set_unsafe` base. Append-only regions remain builder/persistent territory.
+- [x] Whitelist only in-region `set`, append, index read, and `len`; reject other uses of the handle.
+- [x] Add positive detector coverage for collect, `Vector.make`, set+append, and get/len; add negative coverage for append-only, non-Int, call escape, record escape, slice, multiple exits, early return, parameter-sourced/not locally born, and closure capture.
 
-pub type MutVecProducer = { NewSeed, MakeSeed, CollectSeed }
-pub type MutVecOpSite = .{ site: AnfPoint, kind: MutVecOpKind }
-pub type MutVecOpKind = { New, Make, Push, Set, Get, Len }
-pub type MutVecExit = .{ at: AnfPoint, into: MutVecExitKind }
-pub type MutVecExitKind = { Return, PersistentConsumer }
-```
+### Task 7: Exit classifier — partially completed; finish before emit
 
-Use the concrete `LocalId` / ANF point types from `compiler.anf` (see `builder_region_detect.tw:7` imports); match their real names.
+- [x] Reject nested early returns carrying the handle, including the single-early-return shape where the top-level fallback returns a different value.
+- [x] Reject `break value` in the scanner implementation when it directly carries the handle.
+- [ ] Add the rest of the required negative fixture matrix before Phase 4 consumes detector output: aliased/not-owned handle, variant storage, dict storage, vector storage, explicit `break value` fixture, `try`/early-return arm, host/import boundary, and concat.
+- [ ] Enrich `MutVecRegion` from the current detector-only shape into the full lifecycle record required by the design: stable region id, begin/source value, source physical repr, selected storage family, all op sites with operand/result shapes, materialization exit, post-freeze value, invalidation point, fallback behavior, and validation results.
+- [ ] Add tests that inspect record contents, not just region counts/proof ids, so missing exit/invalidation/source-repr data cannot reach backend handoff unnoticed.
 
-- [ ] **Step 2: Write the failing detection test.** In `mutvec_region_suite.tw`, add a test that calls a `pub fn detect_regions(func_anf) Vector<MutVecRegion>` on a hand-built or parsed fixture and asserts one region is found for the collect-born + indexed-update shape, and zero for an append-only shape. Since building ANF by hand is verbose, prefer driving detection through a debug entry: add `pub fn debug_regions(src: String) Vector<String>` that lowers a source snippet to ANF and returns claimed-region proof ids. Test:
-
-```
-.test("detects collect-born indexed-update region", fn() {
-  ids := mutvec_region.debug_regions("
-    fn f(n: Int) Vector<Int> {
-      xs := collect i in range(n) { i }
-      xs[0] = 42
-      xs
-    }
-  ")
-  try assert.equal(ids.len(), 1)
-  .Ok({})
-})
-.test("does not claim append-only region", fn() {
-  ids := mutvec_region.debug_regions("
-    fn f(n: Int) Vector<Int> {
-      acc: Vector<Int> = []
-      for i in range(n) { acc = acc.append(i) }
-      acc
-    }
-  ")
-  try assert.equal(ids.len(), 0)
-  .Ok({})
-})
-```
-
-If a source→ANF debug harness is impractical, instead assert via `twk ir` (Task 11) and mark these as pending until then — but prefer the debug entry for granular TDD.
-
-- [ ] **Step 3: Run to see it fail.** `target/twk run boot/tests/main.tw` → FAIL (`debug_regions` undefined).
-
-- [ ] **Step 4: Implement the eligibility predicate.** In `mutvec_region.tw`, walk each function's ANF (mirroring `builder_region_detect.detect_in_expr`/`detect_in_op`). A region is eligible iff ALL hold:
-  - producer is `collect` builder chain, `Vector.make`, or `[]`-seed, binding local `L`, element type `Int` (check via the mono type of `L`);
-  - `L` (through SSA rebinds) has **≥1 indexed-update** (`vector$set_unsafe`) — the genuinely-new shape;
-  - every other use of `L` is a supported op (`set`, append `push`, index read, `len`) or the single boundary;
-  - ownership: `L` is a local, single-writer per step (reuse the owned/liveness helpers `builder_region_detect` already uses).
-  Return `MutVecRegion` records; do not rewrite anything yet. Add `debug_regions`.
-
-- [ ] **Step 5: Rebuild.** `make bundle-cli` → `Fixed point reached`.
-
-- [ ] **Step 6: Verify pass.** `target/twk run boot/tests/main.tw` → the two detection tests PASS.
-
-- [ ] **Step 7: Commit.**
-
-```bash
-git add boot/compiler/codegen/mutvec_region.tw boot/compiler/codegen/builder_region_detect.tw boot/tests/suites/mutvec_region_suite.tw
-git commit -m "feat(mutvec): region decision record + eligibility detection"
-```
-
-### Task 7: Exit classifier (reject unsound exits)
-
-**Files:** `boot/compiler/codegen/mutvec_region.tw`, `boot/tests/suites/mutvec_region_suite.tw`
-
-- [ ] **Step 1: Write failing tests — one per rejected class.** Add `debug_regions` tests asserting `ids.len() == 0` for each: handle passed to a call; closure capture of the handle; stored into a record/variant/dict/vector; `break value` carrying the handle; early `return` of the handle (multiple exits); `try`/early-return arm; non-`Int` element; unsupported op (`concat`/`slice`); and one positive control (single-return boundary) asserting `== 1`. Example:
-
-```
-.test("rejects handle passed to a call", fn() {
-  ids := mutvec_region.debug_regions("
-    fn sink(v: Vector<Int>) Int { v.len() }
-    fn f(n: Int) Int {
-      xs := collect i in range(n) { i }
-      xs[0] = 1
-      sink(xs)     // handle-to-call before any freeze boundary
-    }
-  ")
-  try assert.equal(ids.len(), 0)
-  .Ok({})
-})
-```
-
-Write the remaining eleven analogously (do not abbreviate — each rejected class needs its own fixture).
-
-- [ ] **Step 2: Run to see them fail.** Some will wrongly pass (region still claimed) until the classifier lands.
-
-- [ ] **Step 3: Implement the exit classifier.** In `mutvec_region.tw`, before accepting a region, require **exactly one** exit that carries the live handle and that it is a freeze-point (a `return` of the handle, or a last use feeding a persistent-`Vector` consumer where the freeze is inserted before it). Reject (drop the region → persistent fallback) if the handle: reaches >1 exit; is passed to any call while still a handle; is captured by a closure; is stored into an aggregate; leaves via `break value` / `try` / early-return; or reaches a host/import boundary. Reuse `builder_region_detect`'s reference-scanning helpers to find every use of the handle local.
-
-- [ ] **Step 4: Rebuild.** `make bundle-cli` → `Fixed point reached`.
-
-- [ ] **Step 5: Verify pass.** `target/twk run boot/tests/main.tw` → all twelve classifier tests PASS.
-
-- [ ] **Step 6: Commit.**
-
-```bash
-git add -A && git commit -m "feat(mutvec): exit classifier rejects unsound region exits"
-```
+**Stop rule:** do not wire `detect_regions` into lowering while the record is detector-only. Backend emitters must consume the full lifecycle schema without re-proving exits or handle validity.
 
 ---
 
-## Phase 4: Emit + repr handoff + flag wiring
+## Phase 4: Atomic emit + repr handoff + flag wiring
 
-Goal: with `TWINKLE_MUTVEC=1`, claimed regions emit `mutvec_*` ops with one relocated freeze and correct results; with the flag off, output is byte-identical to today.
+Goal: with `TWINKLE_MUTVEC=1`, claimed regions emit `mutvec_*` ops, keep the handle physically `MutVec(I64)` across the region, materialize exactly once at the boundary, and leave flag-off output unchanged. Rewrite, flag wiring, and repr assignment are one atomic slice: do not land a flag-on path that emits `mutvec_*` before handle slots are assigned from the region record.
 
-### Task 8: `rewrite_module` — emit ops and relocate the freeze
+**Files:**
+- `boot/compiler/codegen/mutvec_region.tw`
+- `boot/compiler/codegen/codegen.tw`
+- backend prepare/repr plumbing that carries region records into `repr_assign`
+- `boot/tests/suites/mutvec_region_suite.tw` and `boot/tests/suites/fixtures/`
 
-**Files:** `boot/compiler/codegen/mutvec_region.tw`, `boot/tests/suites/mutvec_region_suite.tw`
+### Task 8: Write failing end-to-end fixtures first
 
-- [ ] **Step 1: Write the failing behavioral fixture.** The pass reads the accepted region record (Task 6/7) and rewrites. Prefer a standalone fixture run over an in-process helper, since the flag is read from the env at compile time.
+- [ ] Add a collect-born indexed-update fixture that returns a `Vector<Int>` and prints indexed results. Flag-off WAT should show the current persistent/`set_in_place` path and no `mutvec_*`.
+- [ ] Add `Vector.make` and set+append fixtures.
+- [ ] Add standalone trap fixtures that exercise `mutvec_set_i64`/`mutvec_get_i64` logical-length OOB only through lowered regions once emit exists.
+- [ ] Add fixture coverage for negative region classes so flag-on WAT still contains no `mutvec_*` when the detector rejects.
 
-Create `boot/tests/suites/fixtures/mutvec_indexed_run.tw`:
+The first flag-on WAT check should fail by absence of `mutvec_*` calls. After implementation it should show `mutvec_new_i64`/`mutvec_make_i64`, in-region ops, exactly one `mutvec_freeze_i64`, and no boxed `set_in_place` for claimed sites.
 
-```
-fn f() Vector<Int> {
-  xs := collect i in range(5) { i }
-  xs[2] = 99
-  xs
-}
-println(f()[2])
-println(f()[4])
-```
+### Task 9: Complete the lifecycle record and ANF rewrite
 
-Assert (this is the "run to see it fail" and later the "verify pass" command):
+- [ ] Extend `MutVecRegion` to the full lifecycle schema from Phase 3 before rewriting.
+- [ ] Implement `rewrite_module` so a claimed region is fully lowered: producer -> `vector$__mutvec_new_i64` or `vector$__mutvec_make_i64`, append -> `vector$__mutvec_push_i64`, indexed update -> `vector$__mutvec_set_i64`, index read -> `vector$__mutvec_get_i64`, len -> `vector$__mutvec_len_i64`, boundary -> `vector$__mutvec_freeze_i64`.
+- [ ] Remove or bypass the producer's immediate persistent freeze only for claimed regions, and insert the single materialization at the recorded boundary.
+- [ ] Leave all unclaimed code byte-identical so `builder_region` and mutable-decision hooks see their existing shapes.
 
-```bash
-TWINKLE_MUTVEC=1 target/twk run boot/tests/suites/fixtures/mutvec_indexed_run.tw
-# Expected after Task 8: prints
-# 99
-# 4
-```
+### Task 10: Thread records into backend prepare and assign `MutVec(I64)`
 
-- [ ] **Step 2: Run to see it fail.** `TWINKLE_MUTVEC=1 target/twk run boot/tests/suites/fixtures/mutvec_indexed_run.tw` — before `rewrite_module` exists this is a no-op path (still correct output via `set_in_place`, but Step 4's WAT check in Task 9 confirms no `mutvec_*` yet). The failing signal for this task is the WAT check: `TWINKLE_MUTVEC=1 target/twk wat …mutvec_indexed_run.tw --func f --calls` shows **no** `mutvec_` calls.
+- [ ] Carry accepted region records alongside the rewritten ANF into backend preparation.
+- [ ] In `repr_assign`, mark every live mutable handle slot named by the record as `ReprKind.MutVec(.I64)` and the post-freeze slot as `TypedVec(.I64)` / `PVecI64`. Do not re-derive ownership or exits in the backend.
+- [ ] Verify WAT locals for a claimed fixture include `rt_types__MutVecI64` handle refs and the returned/published value is `PVecI64`.
 
-- [ ] **Step 3: Implement `pub fn rewrite_module(m, b) AnfModule`.** For each accepted `MutVecRegion`: replace the producer with `Call(vector$__mutvec_new_i64 | __mutvec_make_i64)`; rewrite in-region append→`__mutvec_push_i64`, `vector$set_unsafe`→`__mutvec_set_i64`, index read→`__mutvec_get_i64`, len→`__mutvec_len_i64`; **remove the producer's immediate freeze and insert `__mutvec_freeze_i64` at `freeze_at`**. Mirror the ANF-splicing style of `builder_region.rewrite_module` (`builder_region.tw:374`). Leave unclaimed code untouched. (The pass is not yet wired into `codegen.tw` — that is Task 9 — so at this step call `rewrite_module` from the `debug_regions`/a direct unit path, or land Task 9's wiring first if you prefer to test through the flag. Recommended: do Task 9 immediately after Step 3, then run Step 5.)
+### Task 11: Wire `TWINKLE_MUTVEC` after rewrite+repr are ready
 
-- [ ] **Step 4: Rebuild.** `make bundle-cli` → `Fixed point reached`.
-
-- [ ] **Step 5: Verify pass.** `TWINKLE_MUTVEC=1 target/twk run boot/tests/suites/fixtures/mutvec_indexed_run.tw` prints `99` then `4`; and `TWINKLE_MUTVEC=1 target/twk wat …mutvec_indexed_run.tw --func f --calls` shows `mutvec_new_i64`/`mutvec_set_i64`/`mutvec_freeze_i64` with exactly one freeze.
-
-- [ ] **Step 6: Commit.**
-
-```bash
-git add -A && git commit -m "feat(mutvec): rewrite_module emits mutvec ops + relocates freeze"
-```
-
-### Task 9: Wire the flag + pass ordering into codegen
-
-**Files:** `boot/compiler/codegen/codegen.tw:78,126-136`
-
-- [ ] **Step 1: Add the flag.** Near `variant_specialize_enabled()` (`codegen.tw:78`):
-
-```
-// MutVec region lowering (storage slice 1) is OFF by default; TWINKLE_MUTVEC=1 enables it.
-// Off during self-host so stage0/fixed point are untouched until the stage0 mirror lands.
-fn mutvec_region_enabled() Bool {
-  case proc.env("TWINKLE_MUTVEC") {
-    .Some(v) => v == "1",
-    .None => false,
-  }
-}
-```
-
-- [ ] **Step 2: Insert the pass before builder_region.** Change the `anf_prime` step (`codegen.tw:131`) so MutVec runs first when enabled:
-
-```
-anf_mv := if mutvec_region_enabled() {
-  mutvec_region.rewrite_module(anf, builtins)
-} else {
-  anf
-}
-anf_prime := builder_region.rewrite_module(anf_mv, builtins)
-```
-
-Add the `use compiler.codegen.mutvec_region` import. (No exclusion parameter to `builder_region` — claimed regions no longer contain builder-visible shapes.)
-
-- [ ] **Step 3: Write the flag-off regression test.** Compile the Task-8 fixture WITHOUT the flag and assert it still emits `set_in_place` (not `mutvec_*`):
-
-Run: `target/twk wat boot/tests/suites/fixtures/mutvec_indexed.tw --func f --calls` (create that fixture file)
-Expected: contains `rt_arr__set_in_place`, no `mutvec_`.
-
-And with the flag:
-
-Run: `TWINKLE_MUTVEC=1 target/twk wat boot/tests/suites/fixtures/mutvec_indexed.tw --func f --calls`
-Expected: contains `mutvec_new_i64`/`mutvec_set_i64`/`mutvec_freeze_i64`, exactly one `freeze`, no `set_in_place`.
-
-- [ ] **Step 4: Rebuild + verify.** `make bundle-cli` → run both `wat` commands, confirm expected output.
-
-- [ ] **Step 5: Commit.**
-
-```bash
-git add boot/compiler/codegen/codegen.tw boot/tests/suites/fixtures/mutvec_indexed.tw
-git commit -m "feat(mutvec): gate region pass behind TWINKLE_MUTVEC, run before builder_region"
-```
-
-### Task 10: Repr handoff — mark handle slots `MutVec(I64)` in prepare
-
-**Files:** `boot/compiler/backend/repr_assign.tw`, `boot/compiler/backend/prepare.tw`, `boot/compiler/codegen/mutvec_region.tw` (surface the record to the backend)
-
-- [ ] **Step 1: Write the failing test.** With the flag on, assert the handle slot's wasm type is the `MutVecI64` ref (not boxed `PVec`, not `PVecI64`) via a WAT check on locals:
-
-Run: `TWINKLE_MUTVEC=1 target/twk build boot/tests/suites/fixtures/mutvec_indexed.tw -o /tmp/mv.wat` then grep the `f` function's locals.
-Expected: a local typed `(ref null $rt_types__MutVecI64)`; the returned value is `PVecI64`.
-
-- [ ] **Step 2: Run to see it fail.** Likely the slot is boxed/`anyref` or the module fails verification.
-
-- [ ] **Step 3: Implement the handoff.** Make the `MutVecRegion` records available to backend prepare (thread them alongside the ANF, mirroring how builder-region facts or variant routes are surfaced). In `repr_assign.tw`, mark each region's `begin_local`/handle slots `MutVec(I64)` and the post-freeze slot `TypedVec(I64)`, driven by the record — not re-derived. Ensure no region slot resolves to `OpaqueAnyref`.
-
-- [ ] **Step 4: Rebuild + verify.** `make bundle-cli`; re-run the WAT check → the handle local is `$rt_types__MutVecI64`. Also run `TWINKLE_MUTVEC=1 target/twk run boot/tests/suites/fixtures/mutvec_indexed.tw` and confirm correct output (end-to-end through real repr).
-
-- [ ] **Step 5: Commit.**
-
-```bash
-git add -A && git commit -m "feat(mutvec): repr_assign marks handle slots MutVec(I64) from region record"
-```
+- [ ] Add `mutvec_region_enabled()` in `codegen.tw` (`TWINKLE_MUTVEC=1`, default off).
+- [ ] Run `mutvec_region.rewrite_module` immediately before `builder_region.rewrite_module` only when the flag is enabled.
+- [ ] Confirm flag-off WAT and `--census --sites` output for existing paths are unchanged except for intentionally additive analysis rows.
+- [ ] Run focused fixtures, then `make bundle-cli` and `make boot-test`.
 
 ---
 
 ## Phase 5: Census, negatives, regression, performance
 
-### Task 11: Census region-audit rows
+### Task 12: Census region-audit rows
 
 **Files:** the census/`--sites` renderer (find via `grep -rn "would_use\|--sites\|census" boot/compiler`), `boot/tests/suites/mutvec_region_suite.tw`
 
@@ -665,7 +214,7 @@ Expected: a line matching `mutvec` with the region proof id and `consumed`.
 git add -A && git commit -m "feat(mutvec): census --sites region-audit rows"
 ```
 
-### Task 12: Full negative + positive fixture matrix
+### Task 13: Full negative + positive fixture matrix
 
 **Files:** `boot/tests/suites/mutvec_region_suite.tw`, `boot/tests/suites/fixtures/`
 
@@ -681,7 +230,7 @@ git add -A && git commit -m "feat(mutvec): census --sites region-audit rows"
 git add -A && git commit -m "test(mutvec): full positive/negative region fixture matrix"
 ```
 
-### Task 13: Self-host + regression gate
+### Task 14: Self-host + regression gate
 
 - [ ] **Step 1: Full self-host.** Run: `make bundle-cli` → `Fixed point reached` (flag off by default → boot self-compilation byte-identical).
 - [ ] **Step 2: Boot suite.** Run: `make boot-test` → all green.
@@ -693,7 +242,7 @@ git add -A && git commit -m "test(mutvec): full positive/negative region fixture
 git add -A && git commit -m "test(mutvec): self-host + regression gate green (flag off)"
 ```
 
-### Task 14: Performance validation (end-of-slice gate)
+### Task 15: Performance validation (end-of-slice gate)
 
 **Files:** `boot/bench/mutvec_slice1_bench.tw`
 
@@ -723,5 +272,4 @@ git commit -m "docs(mutvec): record slice 1 landed (flag-gated) + next-slice not
 - `Bool` / `Float` / boxed element families.
 - Thaw-from-`PVec` for param-sourced owned vectors, and owned-specialized mutable ABI across calls (S4).
 - Standalone append-only loops (no indexed-update) — stay on the boxed builder until the unified-pass convergence (Approach A).
-- Removing the `Vector.__mutvec_*` test-only source visibility once codegen is the sole caller (optional cleanup).
 ```

@@ -621,11 +621,11 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("vector$builder_freeze_bool", "rt.arr", "builder_freeze_bool", .None),
     rt("vector$gather_bool", "rt.arr", "gather_bool", .None),
     // Appended at end to preserve FuncId assignment of earlier builtins.
-    // MutVecI64 storage ops (slice 1). Codegen-internal, emitted only by the
-    // mutvec_region pass; `.None` canonical keeps them out of user source (same
-    // pattern as the typed vector builders). Verified end-to-end through region
-    // fixtures, not by name-calling. Unused until the region pass lands, so they
-    // are DCE'd from every program in the meantime.
+    // MutVecI64 storage ops (slice 1). Codegen-internal; `.None` canonical keeps
+    // them out of user source (same pattern as the typed vector builders). Unused
+    // until the region pass emits them, so they are DCE'd from every program in
+    // the meantime. Behavioral coverage arrives through lowered region fixtures,
+    // not by name-calling these ops from source.
     rt("vector$__mutvec_new_i64", "rt.arr", "mutvec_new_i64", .None),
     rt("vector$__mutvec_make_i64", "rt.arr", "mutvec_make_i64", .None),
     rt("vector$__mutvec_push_i64", "rt.arr", "mutvec_push_i64", .None),

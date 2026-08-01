@@ -1,6 +1,6 @@
 # MutVec slice 1 — design spec
 
-**Status:** Design approved 2026-08-01; ready for an implementation plan.
+**Status:** Design approved 2026-08-01; implementation in progress. Runtime substrate, physical repr plumbing, and analysis-only region detection are current checkpoint; emit/flag wiring and backend region-record handoff remain pending.
 **Track:** Storage representation (S1/S2/S3) — see [README.md](README.md).
 **Backed by:** [spike-tier0-vector.md](spike-tier0-vector.md) (unboxed flat mutation
 15–35× faster than boxed PVec `set_in_place`; cheap one-time freeze; no meaningful

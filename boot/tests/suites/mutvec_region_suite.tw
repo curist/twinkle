@@ -144,6 +144,30 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "sole early return carrying the handle is NOT claimed",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f(n: Int) Vector<Int> {\n  xs := collect i in range(n) { i }\n  xs[0] = 1\n  if n > 3 { return xs }\n  []\n}\nprintln(f(5).len().to_string())\n",
+          ),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "parameter-sourced handle is NOT claimed (not locally born)",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f(xs: Vector<Int>) Vector<Int> {\n  xs[0] = 1\n  xs\n}\nprintln(f([1, 2]).len().to_string())\n",
+          ),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
       "handle captured by a closure is NOT claimed (escape)",
       fn() {
         try assert.equal(
