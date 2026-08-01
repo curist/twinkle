@@ -223,13 +223,20 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "graft Field-prefix: inner [.f] path is silently dropped (depth-3 under-claim)",
+      "graft Field-prefix: inner [.f] path is kept as [.f, .f] (depth-2 representable)",
       fn() {
-        // src has a [.f9] path (as if from a nested record's field fact).
+        // src has a [.f9] path (as if from a nested record's field fact). Under a
+        // Field prefix it grafts to [.f1, .f9] — now representable at depth 2.
         src := ff.empty().set_path(ff.field_path(9), tag_u)
         dst := ff.empty().graft(.Field(1), src)
         try assert.is_true(dst.is_unique(ff.field_path(1))) // [.f1] shell grafted
-        try assert.equal(dst.sorted_keys().len(), 1) // [.f1, .f9] NOT emitted
+        try assert.is_true(dst.is_unique(ff.AccessPath.{ segs: [.Field(1), .Field(9)] }))
+        try assert.equal(dst.sorted_keys().len(), 2) // [.f1] and [.f1, .f9]
+
+        // A depth-2 inner ([.f9, .f8]) would rebase to depth-3 and is still dropped.
+        src3 := ff.empty().set_path(ff.AccessPath.{ segs: [.Field(9), .Field(8)] }, tag_u)
+        dst3 := ff.empty().graft(.Field(1), src3)
+        try assert.equal(dst3.sorted_keys().len(), 1) // only [.f1] shell; depth-3 dropped
         .Ok({})
       },
     )

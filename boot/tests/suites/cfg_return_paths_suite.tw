@@ -886,14 +886,16 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "transport borrow: out live into a later block forces borrow (live-out check)",
+      "transport move: out live only for sibling reads across a block is licensed",
       fn() {
         // caller(): ctx := Dict.new(); out := helper(ctx); g := record_get out.f0;
-        //   if cond { ty := record_get out.f1 }   // out is LIVE-OUT of the projection block
-        // exit_mentions_local alone would miss this; blk.exit.live catches it -> borrow.
+        //   if cond { ty := record_get out.f1 }   // out live-out ONLY for sibling f1.
+        // Under the field-path cross-block relaxation (S-c), out.f0 is read exactly
+        // once and every other out mention is the disjoint sibling out.f1, so the
+        // projection MOVES: g is Unique. (Was Shared under the old whole-local check.)
         funcs := case_w_out_liveout_fixture()
         f := analyzed_caller(funcs, "caller")
-        try assert.equal(caller_own(f, gsib_local), own_shared())
+        try assert.equal(caller_own(f, gsib_local), own_unique())
         .Ok({})
       },
     )
