@@ -1,0 +1,147 @@
+//! Tier-0 storage-track spike: flat mutable proxy vs persistent Vector.
+//!
+//! Measures the two vector update strategies the storage-representation track is
+//! deciding between (docs/plans/sound-uniqueness/storage/README.md):
+//!
+//!   inplace    : an owned `Vector<Int>` updated k times via `xs[i] = v`. On
+//!                main this flips to boxed PVec `set_in_place` (8A/8B), so it is
+//!                the CURRENT best the compiler already ships: O(log n) trie walk,
+//!                no per-op allocation, but boxed `anyref` elements. This is the
+//!                real bar `MutVec` must beat.
+//!   rebuild    : the same loop with the owned value aliased each iteration so
+//!                the in-place decision cannot fire — a true persistent PVec
+//!                rebuild (O(log n) WITH allocation per op). The naive baseline.
+//!   flat proxy : a `@std.buffer` i64 region standing in for a growable
+//!                `MutVec<Int>` (unboxed O(1) writes), then a one-shot O(n)
+//!                `collect` freeze into a persistent `Vector<Int>`.
+//!
+//! The proxy uses linear memory rather than a Wasm GC `array`, so it slightly
+//! UNDERSTATES the real MutVec case (GC `array.get/set` is at least as fast and
+//! avoids the linear-memory pointer arithmetic). It is enough to establish the
+//! n x k crossover shape before any runtime/codegen work.
+//!
+//! Phases are timed separately so end-to-end and mutate-region crossovers can
+//! both be read from one run.
+
+use @std.buffer
+use @std.date
+
+/// Reproducible pseudo-random state (glibc LCG constants), so the persistent and
+/// flat paths hit the exact same index stream for a fair comparison.
+fn next_lcg(s: Int) Int {
+  s * 1103515245 + 12345 & 0x7fffffff
+}
+
+/// Persistent path: build an owned Vector<Int>, apply k rebinding updates.
+// Owned indexed-update loop. On main this flips to boxed PVec set_in_place.
+fn bench_inplace(n: Int, k: Int) Void {
+  t0 := date.now()
+  xs := collect i in range(n) {
+    i
+  }
+  t1 := date.now()
+
+  s := 1
+  j := 0
+  for j < k {
+    s = next_lcg(s)
+    idx := s % n
+    xs[idx] = j
+    j = j + 1
+  }
+  t2 := date.now()
+
+  guard := xs[0] + xs[n - 1] + xs[n / 2]
+  build_ms := t1 - t0
+  mut_ms := t2 - t1
+  println("  inplace     build=${build_ms}ms  mutate=${mut_ms}ms  guard=${guard}")
+}
+
+// Same loop, but aliasing `xs` each iteration (read after the update) defeats the
+// uniqueness proof, forcing a true persistent rebuild per op.
+fn bench_rebuild(n: Int, k: Int) Void {
+  t0 := date.now()
+  xs := collect i in range(n) {
+    i
+  }
+  t1 := date.now()
+
+  s := 1
+  j := 0
+  sink := 0
+  for j < k {
+    s = next_lcg(s)
+    idx := s % n
+    keep := xs
+    xs[idx] = j
+    sink = sink + keep[0]
+    j = j + 1
+  }
+  t2 := date.now()
+
+  guard := xs[0] + xs[n - 1] + xs[n / 2] + sink - sink
+  build_ms := t1 - t0
+  mut_ms := t2 - t1
+  println("  rebuild     build=${build_ms}ms  mutate=${mut_ms}ms  guard=${guard}")
+}
+
+/// Flat proxy path: buffer-backed mutable region, k unboxed writes, one freeze.
+fn bench_flat(n: Int, k: Int) Void {
+  t0 := date.now()
+  buf := buffer.new(n * 8)
+  view := buf.view_i64(0, n)
+  init := 0
+  for init < n {
+    view.set(init, init)
+    init = init + 1
+  }
+  t1 := date.now()
+
+  s := 1
+  j := 0
+  for j < k {
+    s = next_lcg(s)
+    idx := s % n
+    view.set(idx, j)
+    j = j + 1
+  }
+  t2 := date.now()
+
+  frozen := collect i in range(n) {
+    view.at(i)
+  }
+  t3 := date.now()
+
+  guard := frozen[0] + frozen[n - 1] + frozen[n / 2]
+  buf.free()
+
+  init_ms := t1 - t0
+  mut_ms := t2 - t1
+  freeze_ms := t3 - t2
+  println(
+    "  flat        init=${init_ms}ms  mutate=${mut_ms}ms  freeze=${freeze_ms}ms  guard=${guard}",
+  )
+}
+
+fn run(n: Int, k: Int) Void {
+  ratio := k * 100 / n
+  println("── n=${n}  k=${k}  (k/n=${ratio}%) ──")
+  bench_inplace(n, k)
+  bench_rebuild(n, k)
+  bench_flat(n, k)
+}
+
+fn sweep(n: Int) Void {
+  run(n, n / 4)
+  run(n, n)
+  run(n, n * 4)
+  run(n, n * 16)
+}
+
+sweep(256)
+sweep(4096)
+sweep(65536)
+// Largest size: skip the 16x ratio to keep the persistent run bounded.
+run(1048576, 262144)
+run(1048576, 1048576)
+run(1048576, 4194304)

@@ -2,6 +2,9 @@
 
 **Status:** Planned; starts after existing-hook codegen lowering proves the
 analysis/codegen seam, and before migration cleanup or Buffer retirement.
+Representation decisions for S2/S3/S5 and vector append settled 2026-08-01 (see
+[Settled decisions](#settled-decisions)); crossover thresholds inside them are
+spike-gated.
 
 This track owns the mandatory performance substrate for closing the
 sound-uniqueness project. Existing-hook lowering is the early integration proof:
@@ -15,6 +18,118 @@ boundary. In shorthand: **stay low as long as possible, then materialize at the
 boundary**. Existing `PVec`/`PDict` hooks remain useful compatibility and
 proof-of-integration targets, but the end state should not require every internal
 update chain to stay in persistent PVec/HAMT form.
+
+## Settled decisions
+
+These resolve the previously-open S2/S3/S5 representation questions. They are
+design commitments, not yet-implemented code; the crossover thresholds inside them
+are spike-gated (see [Spike-first methodology](#spike-first-methodology)).
+
+### Backing representation: Wasm GC, not linear memory
+
+Private mutable storage is backed by **Wasm GC collections**, consistent with the
+language's no-linear-memory-by-default rule. The vector target is `MutVec<T>` — a
+**growable mutable GC `array` plus a length field, grown by doubling** — not a
+reused `PVec` and not a linear-memory buffer.
+
+Why this over reusing PVec `set_in_place`:
+
+- PVec `set_in_place` walks the 32-branch trie (**O(log n)**) over **boxed
+  `anyref`** elements.
+- `MutVec` read/write is `array.get`/`array.set` — **O(1) and unboxed**. Typed
+  element sites use typed element arrays (`array<i64>`, `array<i32>` for `Bool`,
+  packed `array<i8>` for `Byte`), preserving the typed/unboxed representation the
+  "representation-aware lowering" track invariant requires.
+
+Materializing `MutVec -> PVec` is an **O(n) single-pass copy** (approaching O(1)
+for a vector small enough to become a PVec tail directly). Because the stay-low
+model freezes once per owned chain, this is paid once at the boundary, not per
+update.
+
+**S3 prerequisite to confirm:** Wasm GC **packed arrays** (`array i8`/`array i16`,
+`array.get_u/_s`) must be supported by the target runtime/toolchain. Packed
+`array i8` is what lets `Vector<Byte>` become dense unboxed GC storage without
+linear memory — the S6 path to retiring `Buffer` on its own terms.
+
+### Flat mutable vs transient persistent is a symmetric 2×2
+
+Every flat mutable backing carries an O(n) freeze cost; every collection also has
+a *transient* persistent form that freezes in ~O(1) at the price of O(log32 n)
+ops. The choice has the same shape for vectors and dicts:
+
+| | flat mutable (`MutVec`, flat hashmap) | transient persistent (transient PVec / HAMT) |
+|---|---|---|
+| op cost | O(1) | O(log32 n) |
+| freeze cost | O(n) | ~O(1) |
+
+The freeze concern therefore applies to **both** families; what differs is the
+freeze *constant* and the size of the win from going flat:
+
+- **Vector:** flat `MutVec` freeze is a contiguous copy (cheap, cache-friendly),
+  and the flat form's win is large (unboxed, typed, true O(1) random access). Flat
+  wins despite the O(n) freeze; a transient PVec is not needed. *(Assumed from the
+  constant-factor argument; spike-verifiable — see below.)*
+- **Dict:** measurement revised this (see
+  [spike-tier0-dict.md](spike-tier0-dict.md)). A **transient HAMT is _not_ the
+  lever**: for dicts the per-op cost is HAMT traversal + hashing (not allocation),
+  so `dict$set_in_place` ≈ persistent rebuild and a transient HAMT — which keeps
+  the same traversal — cannot beat the shipped in-place path. The real win is
+  **flat unboxed storage (`MutDict`)**: 40–70× faster on mutate, but with an O(n)
+  freeze that *is* a full dict build. That freeze creates a **real crossover at
+  k/n ≈ 1** — flat wins only when mutations exceed distinct keys and *loses* for
+  build-once/lookup-heavy dicts. So `MutDict` is **conditional**: gated on a proven
+  update-dense / wide region (the S4 stay-low-across-a-chain case), with persistent
+  fallback otherwise. It keeps an insertion-order sidecar, and old-version
+  observability stays gated on the ownership proof.
+
+### Size-dependence and where the decision lives
+
+The flat-vs-transient crossover is governed by data size **n**, mutations per
+element **k/n**, and how often the chain materializes — not by n alone.
+Critically, **static ownership analysis never knows n**, so the representation
+cannot be picked per-site from size at compile time. That leaves two design
+endpoints, and the spike decides between them:
+
+1. **Cliff-free default** — pick the form with no size-dependent freeze penalty
+   (transient) and accept its op constant everywhere, *if* the spike shows flat's
+   advantage is within noise across realistic sizes.
+2. **Runtime size-tagged dispatch** — the "private tagged representation" pressure
+   valve — justified only if the spike finds a crossover *inside* the range real
+   workloads hit.
+
+If flat `MutVec` wins or ties up through large n, runtime dispatch is dropped and
+the design simplifies to "flat for vectors, transient for dicts."
+
+### Spike-first methodology
+
+The representation choices above are validated by benchmark before the real
+backends are built:
+
+- **Tier 0 (proxy, no new runtime):** approximate flat mutable storage with
+  `@std.buffer` for the mutate phase plus a `collect`/builder freeze into
+  `Vector`; compare against today's persistent `Vector`/`Dict` baseline. Sweep
+  **n × k** (e.g. n in {16, 256, 4K, 64K, 1M}, k in {n/4, n, 4n, 16n}) and record
+  mutate-phase, freeze-phase, and end-to-end separately. This slightly understates
+  the real GC-array case (GC `array.get/set` is at least as fast and stays
+  unboxed) but establishes the crossover shape before committing runtime + codegen
+  work.
+- **Tier 1 (real):** once a minimal `MutVec` GC-array runtime op exists, re-measure
+  against the proxy and against the transient forms.
+
+Benches live alongside the existing `boot/bench/` set.
+
+**Tier-0 vector result (2026-08-01, [spike-tier0-vector.md](spike-tier0-vector.md)):**
+unboxed flat mutation is **15–35× faster than boxed PVec `set_in_place`** (widening
+with n), and the O(n) freeze is a cheap one-time tax with **no meaningful crossover**
+in the range that matters. This confirms "build `MutVec`, flat for vectors, no
+runtime size dispatch."
+
+**Tier-0 dict result (2026-08-01, [spike-tier0-dict.md](spike-tier0-dict.md)):**
+flat `MutDict` mutate is **40–70× faster** than boxed HAMT `set_in_place`, but its
+O(n) freeze *is* a full dict build, producing a **real crossover at k/n ≈ 1**.
+`dict$set_in_place` ≈ persistent rebuild (traversal/hashing dominate, not
+allocation), so a **transient HAMT is not a useful lever** — reversing the earlier
+S5 default. `MutDict` is a *conditional* win, gated on proven update-density.
 
 ## Track invariants
 
@@ -177,11 +292,13 @@ and mutable/transient HAMT behavior are deferred to S5 so dict ordering,
 old-version observability, and nested-value semantics are handled in the same
 slice as dict storage.
 
-The initial vector implementation may reuse existing PVec hooks where
-appropriate, but the interface should be shaped so a later `MutVec` backend can
-replace the storage without changing ownership legality. Even in the first slice,
-materialization should be placed at the latest boundary the implementation can
-soundly identify, not after every internal update.
+The storage backend for these regions is the S3 `MutVec` GC-array target (see
+[Settled decisions](#settled-decisions)). Reusing existing PVec hooks is allowed
+only as an interim proof-of-seam if the `MutVec` runtime op is not yet ready;
+because the goal is max performance, the region interface should be shaped to go
+straight to `MutVec` rather than treating boxed-PVec reuse as the destination.
+Even in the first slice, materialization should be placed at the latest boundary
+the implementation can soundly identify, not after every internal update.
 
 Acceptance requirements:
 
@@ -193,26 +310,27 @@ Acceptance requirements:
 
 ### S3 — Private mutable vector storage targets
 
-Add or formalize private vector storage targets for update-heavy regions. The
-implementation may include typed PVec in-place helpers, growable mutable arrays,
-dense byte/int regions, or a combination selected by region shape.
-
-Potential typed helper targets:
+The primary private vector storage target is **`MutVec<T>` — a growable mutable
+Wasm GC `array` plus a length field, grown by doubling** (decision folded into
+[Settled decisions](#settled-decisions)). The element array is typed per site:
 
 ```text
-vector$set_in_place_i64   PVecI64?, i32, i64 -> PVecI64
-vector$set_in_place_bool  PVecBool?, i32, i32 -> PVecBool
+MutVec<Int>    backed by  array<i64>
+MutVec<Bool>   backed by  array<i32>
+MutVec<Byte>   backed by  packed array<i8>   (S6/Buffer-retirement enabler)
+MutVec<T:ref>  backed by  array<anyref>
 ```
 
-Potential private storage target:
+Typed PVec in-place helpers (`vector$set_in_place_i64` / `_bool`) may still be
+emitted as an interim step, but the destination is `MutVec`, not a boxed-PVec
+hook. The important property is representation preservation across the hot update
+path: no erased `anyref` element traffic for typed/unboxed sites unless crossing a
+real boundary.
 
-```text
-MutVec<T> / MutVecI64 / MutVecByte
-```
-
-The important property is representation preservation across the hot update path:
-no erased `anyref` element traffic for typed/unboxed sites unless crossing a real
-boundary.
+Open sub-decisions carried into implementation: growth policy (doubling vs 1.5×)
+and initial capacity heuristic; the freeze primitive (`MutVec -> PVec` O(n) copy,
+with an O(1) small-vector tail-handoff fast path). Both are settled by the S3
+spike.
 
 ### S4 — Owned-specialized mutable ABI across calls
 
@@ -236,10 +354,27 @@ Requirements:
 ### S5 — True mutable/transient dict storage
 
 Introduce dict scoped regions and extend dict lowering beyond helper-call
-selection to the HAMT storage algorithm or to a private mutable hashmap/transient-
-HAMT representation. The final target should let owned dict update chains remain
-mutable internally and materialize to ordinary `Dict<K, V>` only when publication
-requires it.
+selection. The Tier-0 dict spike ([spike-tier0-dict.md](spike-tier0-dict.md))
+settled the representation: the target is a **flat unboxed mutable hashmap
+(`MutDict`)** with an insertion-order sidecar — **not** a transient HAMT, which
+the spike showed keeps the dominant traversal cost and so cannot beat the shipped
+`dict$set_in_place`. `MutDict` mutate is 40–70× faster, but its O(n) flat→HAMT
+freeze *is* a full dict build, so it only pays off when **k/n ≳ 1** (updates
+exceed distinct keys). `MutDict` is therefore **conditional**: emit it only for a
+proven update-dense / wide region where the freeze amortizes across many ops
+(the S4 stay-low-across-a-chain case — e.g. `run_fixpoint`'s transfer maps), and
+fall back to the persistent path for build-once / lookup-heavy dicts. The final
+target lets such owned dict update chains remain mutable internally and
+materialize to ordinary `Dict<K, V>` only when publication requires it.
+
+Publication is three-tier, not binary (see
+[spike-tier0-dict.md](spike-tier0-dict.md) boundary result): old-version-dead →
+in-place; old version observed but consumers stay in the private flat
+representation → **clone the flat backing** (a bulk `array.copy`, measured 14–40×
+cheaper than freeze); old version escapes the persistent `Dict` ABI → freeze to
+HAMT (deferred to the true edge). Cheap clone-on-fork is what keeps `MutDict` low
+across fork-heavy chains like `run_fixpoint`, so the S5 selector keys on
+ops-per-fork and whether the snapshot stays flat — not k/n alone.
 
 Dict region decisions must satisfy the same lifecycle contract as S2/S4, plus the
 dict-specific semantic gates below.
@@ -291,12 +426,14 @@ next_locked = .append(k)` in `merge_targeted_min` — is proven `base=reuse(uniq
 analysis but does **not** flip through `mutable_produce`, because append has no decision family.
 The dict half of the same shape flips fine.
 
-Revisit whether vector append (and param-sourced vector carriers generally) should join the
-in-place decision path — either by giving append a decision family with a mutable equivalent
-(a `vector$*_in_place` / builder-backed target), or by folding it into this storage track's
-"stay low, materialize at the boundary" model so a proven-unique appended vector never
-round-trips through persistent PVec. This is orthogonal to the copy-carrier dict engine, which
-is complete.
+**Decision (2026-08-01):** once `MutVec<T>` exists (S3), vector append gets its own
+in-place decision family. On `MutVec` append is `array.set` at `len` plus a
+`len++` (amortized O(1) via doubling), the *same* backend as indexed update, so
+append and `xs[i] = v` unify under one storage form. This closes the gap so
+param-sourced vector copy-carriers (e.g. `next_locked := locked; next_locked =
+.append(k)` in `merge_targeted_min`) flip, matching their dict half. The dependency
+is strict: this is an S3-gated follow-up, not doable through the boxed-PVec hooks
+alone. Orthogonal to the copy-carrier dict engine, which is complete.
 
 ## Follow-up: `run_fixpoint`'s own dataflow maps — canonical S4 customer
 

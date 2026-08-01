@@ -1,0 +1,324 @@
+//! Tier-0 storage-track spike: flat mutable hashmap proxy vs persistent Dict.
+//!
+//! S5's open question is whether a flat mutable hashmap's O(n) freeze (rehash +
+//! reorder into a HAMT) kills its benefit versus a transient HAMT (~O(1) freeze,
+//! O(log32 n) ops). This spike measures the concrete freeze cost and the mutate
+//! savings a flat hashmap would give over the CURRENT boxed HAMT in-place path.
+//!
+//!   inplace : owned `Dict<Int,Int>` updated k times via `m[k]=v`; flips to boxed
+//!             HAMT `dict$set_in_place` (8D) on main — the current best shipped.
+//!   rebuild : same loop with `m` aliased each iteration so the in-place proof
+//!             cannot fire; true persistent HAMT rebuild. Naive baseline.
+//!   flat    : a `@std.buffer` open-addressing int→int table (proxy for a flat
+//!             mutable hashmap): O(1) probed writes with an insertion-order
+//!             sidecar, then a freeze that inserts every entry (in order) into a
+//!             fresh persistent `Dict` — exactly the flat->HAMT materialization.
+//!
+//! Keys are sparse (a bijective multiplicative map over 0..n-1) so the proxy
+//! exercises real hashing/probing rather than degenerating to array indexing.
+//! The transient-HAMT alternative is not built; its ops cost ~= inplace and its
+//! freeze ~= 0, so `inplace mutate` doubles as the transient mutate proxy and the
+//! flat `freeze` column is the tax transient avoids.
+//!
+//! All three apply the identical key/value write stream, so their materialized
+//! contents — and the printed guard — must match. That cross-strategy guard match
+//! is the proxy's correctness self-check.
+
+use @std.buffer
+use @std.buffer.{I64View}
+use @std.date
+
+// Odd multiplier: `i * kmult + 1` is a bijection mod 2^64, giving n distinct,
+// well-spread, nonzero keys (0 is reserved as the empty-slot sentinel).
+kmult: Int = 0x9e3779b97f4a7c15
+
+fn key_of(i: Int) Int {
+  i * kmult + 1
+}
+
+// Dict index read yields Int?; unwrap for guard arithmetic (all probed keys are
+// present, so .None only appears if the proxy is wrong).
+fn dget(m: Dict<Int, Int>, k: Int) Int {
+  case m[k] {
+    .Some(v) => v,
+    .None => 0 - 1,
+  }
+}
+
+fn next_lcg(s: Int) Int {
+  s * 1103515245 + 12345 & 0x7fffffff
+}
+
+// Smallest power of two >= 2n, so the open-addressing table stays at load <= 0.5.
+fn next_cap(n: Int) Int {
+  c := 1
+  for c < n * 2 {
+    c = c * 2
+  }
+  c
+}
+
+// Multiplicative hash with a high-bit fold so low-bit key structure does not
+// produce a collision-free (unrealistic) mapping. Masked non-negative so `>>` is
+// a logical shift.
+fn ht_hash(k: Int, cap: Int) Int {
+  h := k * kmult & 0x7fffffffffffffff
+  h = h ^ h >> 32
+  h = h ^ h >> 16
+  h & cap - 1
+}
+
+// Insert/overwrite; returns the new insertion-order length.
+fn ht_set(keys: I64View, vals: I64View, order: I64View, ol: Int, cap: Int, k: Int, v: Int) Int {
+  slot := ht_hash(k, cap)
+  out := ol
+  done := false
+  for !done {
+    cur := keys.at(slot)
+    cond {
+      cur == 0 => {
+        keys.set(slot, k)
+        vals.set(slot, v)
+        order.set(out, k)
+        out = out + 1
+        done = true
+      },
+      cur == k => {
+        vals.set(slot, v)
+        done = true
+      },
+      _ => {
+        slot = slot + 1 & cap - 1
+      },
+    }
+  }
+  out
+}
+
+fn ht_get(keys: I64View, vals: I64View, cap: Int, k: Int) Int {
+  slot := ht_hash(k, cap)
+  res := 0
+  done := false
+  for !done {
+    cur := keys.at(slot)
+    cond {
+      cur == k => {
+        res = vals.at(slot)
+        done = true
+      },
+      cur == 0 => {
+        res = 0 - 1
+        done = true
+      },
+      _ => {
+        slot = slot + 1 & cap - 1
+      },
+    }
+  }
+  res
+}
+
+// Owned dict indexed-update loop. On main this flips to boxed dict$set_in_place.
+fn bench_inplace(n: Int, k: Int) Void {
+  t0 := date.now()
+  m := Dict.new()
+  i := 0
+  for i < n {
+    m[key_of(i)] = i
+    i = i + 1
+  }
+  t1 := date.now()
+
+  s := 1
+  j := 0
+  for j < k {
+    s = next_lcg(s)
+    m[key_of(s % n)] = j
+    j = j + 1
+  }
+  t2 := date.now()
+
+  guard := dget(m, key_of(0)) + dget(m, key_of(n - 1)) + dget(m, key_of(n / 2))
+  build_ms := t1 - t0
+  mut_ms := t2 - t1
+  println("  inplace     build=${build_ms}ms  mutate=${mut_ms}ms  guard=${guard}")
+}
+
+// Same loop, aliasing `m` each iteration (read after the update) to defeat the
+// uniqueness proof, forcing a true persistent HAMT rebuild per op.
+fn bench_rebuild(n: Int, k: Int) Void {
+  t0 := date.now()
+  m := Dict.new()
+  i := 0
+  for i < n {
+    m[key_of(i)] = i
+    i = i + 1
+  }
+  t1 := date.now()
+
+  s := 1
+  j := 0
+  sink := 0
+  for j < k {
+    s = next_lcg(s)
+    keep := m
+    m[key_of(s % n)] = j
+    sink = sink + dget(keep, key_of(0))
+    j = j + 1
+  }
+  t2 := date.now()
+
+  guard := dget(m, key_of(0)) + dget(m, key_of(n - 1)) + dget(m, key_of(n / 2)) + sink - sink
+  build_ms := t1 - t0
+  mut_ms := t2 - t1
+  println("  rebuild     build=${build_ms}ms  mutate=${mut_ms}ms  guard=${guard}")
+}
+
+// Flat proxy: buffer-backed open addressing, then freeze into a persistent Dict.
+fn bench_flat(n: Int, k: Int) Void {
+  cap := next_cap(n)
+  t0 := date.now()
+  kbuf := buffer.new(cap * 8)
+  vbuf := buffer.new(cap * 8)
+  obuf := buffer.new(n * 8)
+  keys := kbuf.view_i64(0, cap)
+  vals := vbuf.view_i64(0, cap)
+  order := obuf.view_i64(0, n)
+
+  slot := 0
+  for slot < cap {
+    keys.set(slot, 0)
+    slot = slot + 1
+  }
+  ol := 0
+  i := 0
+  for i < n {
+    ol = ht_set(keys, vals, order, ol, cap, key_of(i), i)
+    i = i + 1
+  }
+  t1 := date.now()
+
+  s := 1
+  j := 0
+  for j < k {
+    s = next_lcg(s)
+    ol = ht_set(keys, vals, order, ol, cap, key_of(s % n), j)
+    j = j + 1
+  }
+  t2 := date.now()
+
+  m := Dict.new()
+  i = 0
+  for i < ol {
+    ordk := order.at(i)
+    m[ordk] = ht_get(keys, vals, cap, ordk)
+    i = i + 1
+  }
+  t3 := date.now()
+
+  guard := dget(m, key_of(0)) + dget(m, key_of(n - 1)) + dget(m, key_of(n / 2))
+  kbuf.free()
+  vbuf.free()
+  obuf.free()
+
+  init_ms := t1 - t0
+  mut_ms := t2 - t1
+  freeze_ms := t3 - t2
+  println(
+    "  flat        init=${init_ms}ms  mutate=${mut_ms}ms  freeze=${freeze_ms}ms  guard=${guard}",
+  )
+}
+
+// Boundary cost: given a flat MutDict of n entries, compare the two ways to
+// produce a snapshot at a publication point —
+//   freeze : rebuild a persistent HAMT (n inserts, changes representation)
+//   clone  : copy the flat backing (stays flat; here a per-element i64 loop, an
+//            UPPER bound — a real GC MutDict would use one bulk array.copy)
+// Clone only applies when the snapshot's consumers can stay in the private flat
+// representation; a true persistent-Dict boundary still needs the HAMT build.
+fn bench_boundary(n: Int) Void {
+  cap := next_cap(n)
+  kbuf := buffer.new(cap * 8)
+  vbuf := buffer.new(cap * 8)
+  obuf := buffer.new(n * 8)
+  keys := kbuf.view_i64(0, cap)
+  vals := vbuf.view_i64(0, cap)
+  order := obuf.view_i64(0, n)
+  slot := 0
+  for slot < cap {
+    keys.set(slot, 0)
+    slot = slot + 1
+  }
+  ol := 0
+  i := 0
+  for i < n {
+    ol = ht_set(keys, vals, order, ol, cap, key_of(i), i)
+    i = i + 1
+  }
+
+  tf0 := date.now()
+  m := Dict.new()
+  i = 0
+  for i < ol {
+    ordk := order.at(i)
+    m[ordk] = ht_get(keys, vals, cap, ordk)
+    i = i + 1
+  }
+  tf1 := date.now()
+  gf := dget(m, key_of(n / 2))
+
+  tc0 := date.now()
+  kbuf2 := buffer.new(cap * 8)
+  vbuf2 := buffer.new(cap * 8)
+  obuf2 := buffer.new(n * 8)
+  keys2 := kbuf2.view_i64(0, cap)
+  vals2 := vbuf2.view_i64(0, cap)
+  order2 := obuf2.view_i64(0, n)
+  p := 0
+  for p < cap {
+    keys2.set(p, keys.at(p))
+    vals2.set(p, vals.at(p))
+    p = p + 1
+  }
+  p = 0
+  for p < ol {
+    order2.set(p, order.at(p))
+    p = p + 1
+  }
+  tc1 := date.now()
+  gc := ht_get(keys2, vals2, cap, key_of(n / 2))
+
+  freeze_ms := tf1 - tf0
+  clone_ms := tc1 - tc0
+  println("── boundary n=${n} ──")
+  println("  freeze_to_hamt=${freeze_ms}ms  clone_flat=${clone_ms}ms  (gf=${gf} gc=${gc})")
+
+  kbuf.free()
+  vbuf.free()
+  obuf.free()
+  kbuf2.free()
+  vbuf2.free()
+  obuf2.free()
+}
+
+fn run(n: Int, k: Int) Void {
+  ratio := k * 100 / n
+  println("── n=${n}  k=${k}  (k/n=${ratio}%) ──")
+  bench_inplace(n, k)
+  bench_rebuild(n, k)
+  bench_flat(n, k)
+}
+
+fn sweep(n: Int) Void {
+  run(n, n / 4)
+  run(n, n)
+  run(n, n * 4)
+}
+
+sweep(4096)
+sweep(65536)
+run(1048576, 262144)
+run(1048576, 1048576)
+
+bench_boundary(65536)
+bench_boundary(1048576)
