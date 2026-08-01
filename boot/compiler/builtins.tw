@@ -94,6 +94,14 @@ fn pvec_bool_() ValType {
   ref_nn("rt_types__PVecBool")
 }
 
+fn mutvec_n() ValType {
+  ref_null("rt_types__MutVecI64")
+}
+
+fn mutvec_() ValType {
+  ref_nn("rt_types__MutVecI64")
+}
+
 fn dict_n() ValType {
   ref_null("rt_types__PDict")
 }
@@ -151,6 +159,13 @@ fn builtin_abi(name: String) AbiContract {
     "vector$builder_new_i64" => abi([], [arr_()]),
     "vector$builder_push_i64" => abi([arr_n(), .Anyref], []),
     "vector$builder_freeze_i64" => abi([arr_n()], [pvec_i64_()]),
+    "vector$__mutvec_new_i64" => abi([.I32], [mutvec_()]),
+    "vector$__mutvec_make_i64" => abi([.I32, .I64], [mutvec_()]),
+    "vector$__mutvec_push_i64" => abi([mutvec_n(), .I64], [mutvec_()]),
+    "vector$__mutvec_set_i64" => abi([mutvec_n(), .I32, .I64], [mutvec_()]),
+    "vector$__mutvec_get_i64" => abi([mutvec_n(), .I32], [.I64]),
+    "vector$__mutvec_len_i64" => abi([mutvec_n()], [.I32]),
+    "vector$__mutvec_freeze_i64" => abi([mutvec_n()], [pvec_i64_()]),
     "vector$len_bool" => abi([pvec_bool_n()], [.I32]),
     "vector$get_bool" => abi([pvec_bool_n(), .I32], [.I32]),
     "vector$builder_new_bool" => abi([], [arr_()]),
@@ -605,6 +620,19 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("vector$builder_push_bool", "rt.arr", "builder_push_bool", .None),
     rt("vector$builder_freeze_bool", "rt.arr", "builder_freeze_bool", .None),
     rt("vector$gather_bool", "rt.arr", "gather_bool", .None),
+    // Appended at end to preserve FuncId assignment of earlier builtins.
+    // MutVecI64 storage ops (slice 1). Codegen-internal, emitted only by the
+    // mutvec_region pass; `.None` canonical keeps them out of user source (same
+    // pattern as the typed vector builders). Verified end-to-end through region
+    // fixtures, not by name-calling. Unused until the region pass lands, so they
+    // are DCE'd from every program in the meantime.
+    rt("vector$__mutvec_new_i64", "rt.arr", "mutvec_new_i64", .None),
+    rt("vector$__mutvec_make_i64", "rt.arr", "mutvec_make_i64", .None),
+    rt("vector$__mutvec_push_i64", "rt.arr", "mutvec_push_i64", .None),
+    rt("vector$__mutvec_set_i64", "rt.arr", "mutvec_set_i64", .None),
+    rt("vector$__mutvec_get_i64", "rt.arr", "mutvec_get_i64", .None),
+    rt("vector$__mutvec_len_i64", "rt.arr", "mutvec_len_i64", .None),
+    rt("vector$__mutvec_freeze_i64", "rt.arr", "mutvec_freeze_i64", .None),
   ]
 }
 

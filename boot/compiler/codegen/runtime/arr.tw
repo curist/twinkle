@@ -29,6 +29,12 @@ t_ARRAY_BOOL := "rt_types__ArrayBool"
 
 t_ARRAY_F64 := "rt_types__ArrayF64"
 
+t_MUTVEC_I64 := "rt_types__MutVecI64"
+
+// Minimum backing capacity for a MutVecI64; also the growth floor so that a
+// zero-capacity seed and `capacity * 2 == 0` both round up to a usable size.
+mutvec_MIN_CAP := 4
+
 t_BOXED_INT := "rt_types__BoxedInt"
 
 t_BOXED_FLOAT := "rt_types__BoxedFloat"
@@ -182,6 +188,13 @@ pub fn module() WasmModule {
     family_i64().pvec_builder_push_raw_fn(),
     family_i64().pvec_builder_freeze_fn(),
     family_i64().pvec_make_fn(),
+    mutvec_new_i64_fn(),
+    mutvec_make_i64_fn(),
+    mutvec_push_i64_fn(),
+    mutvec_set_i64_fn(),
+    mutvec_get_i64_fn(),
+    mutvec_len_i64_fn(),
+    mutvec_freeze_i64_fn(),
     box_i64_fn(),
     unbox_i64_fn(),
     family_bool().pvec_len_fn(),
@@ -1733,6 +1746,277 @@ fn pvec_make_fn(f: PVecFamily) FuncDef {
       ),
       .LocalGet(2),
       .Call(f.builder_freeze_name),
+    ],
+  }
+}
+
+// ── MutVecI64 — flat, unboxed, growable mutable vector (storage slice 1) ──
+// A `MutVecI64` is `struct { data: ArrayI64 (mut), len: i32 (mut) }`. Reads and
+// writes are O(1) `array.get`/`array.set` at the logical length; the backing
+// grows by doubling. These ops are codegen-internal (the `mutvec_region` pass
+// emits them) and are exposed name-callable only for unit testing. Each mutating
+// op returns the same struct ref so the ANF SSA thread stays linear.
+
+// mutvec_new_i64(cap) -> MutVecI64: ArrayI64(max(cap, MIN_CAP)) zero-filled,
+// len = 0. cap is a capacity hint (0 is the []-seed, rounded up to MIN_CAP).
+fn mutvec_new_i64_fn() FuncDef {
+  .{
+    name: "mutvec_new_i64",
+    params: [.I32],
+    results: [.Ref(false, .Named(t_MUTVEC_I64))],
+    locals: [],
+    body: [
+      .I64Const(0),
+      .LocalGet(0),
+      .I32Const(mutvec_MIN_CAP),
+      .LocalGet(0),
+      .I32Const(mutvec_MIN_CAP),
+      .I32GeS,
+      .Select,
+      .ArrayNew(t_ARRAY_I64),
+      .I32Const(0),
+      .StructNew(t_MUTVEC_I64),
+    ],
+  }
+}
+
+// mutvec_make_i64(n, fill) -> MutVecI64: len = max(0, n) prefilled with `fill`.
+// Negative n yields an empty vector (matching the signed pvec_make loop), never
+// a negative len. Capacity is max(len, MIN_CAP); slots past len are also `fill`
+// but unreachable through the logical-length bounds checks.
+fn mutvec_make_i64_fn() FuncDef {
+  // p0 = n, p1 = fill; L2 = actual_len
+  .{
+    name: "mutvec_make_i64",
+    params: [.I32, .I64],
+    results: [.Ref(false, .Named(t_MUTVEC_I64))],
+    locals: [.I32],
+    body: [
+      .LocalGet(0),
+      .I32Const(0),
+      .LocalGet(0),
+      .I32Const(0),
+      .I32GeS,
+      .Select,
+      .LocalSet(2),
+      .LocalGet(1),
+      .LocalGet(2),
+      .I32Const(mutvec_MIN_CAP),
+      .LocalGet(2),
+      .I32Const(mutvec_MIN_CAP),
+      .I32GeS,
+      .Select,
+      .ArrayNew(t_ARRAY_I64),
+      .LocalGet(2),
+      .StructNew(t_MUTVEC_I64),
+    ],
+  }
+}
+
+// mutvec_push_i64(mv, x) -> mv: grow-by-doubling if full, then data[len]=x; len++.
+fn mutvec_push_i64_fn() FuncDef {
+  // p0 = mv, p1 = x; L2 = data, L3 = len, L4 = capacity, L5 = new_data
+  .{
+    name: "mutvec_push_i64",
+    params: [.Ref(true, .Named(t_MUTVEC_I64)), .I64],
+    results: [.Ref(false, .Named(t_MUTVEC_I64))],
+    locals: [arr_i64_null(), .I32, .I32, arr_i64_null()],
+    body: [
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_MUTVEC_I64, 0),
+      .LocalSet(2),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_MUTVEC_I64, 1),
+      .LocalSet(3),
+      .LocalGet(2),
+      .RefAsNonNull,
+      .ArrayLen,
+      .LocalSet(4),
+      .LocalGet(3),
+      .LocalGet(4),
+      .I32Eq,
+      .If(
+        .None,
+        [
+          .I64Const(0),
+          .LocalGet(4),
+          .I32Const(2),
+          .I32Mul,
+          .I32Const(mutvec_MIN_CAP),
+          .LocalGet(4),
+          .I32Const(2),
+          .I32Mul,
+          .I32Const(mutvec_MIN_CAP),
+          .I32GeS,
+          .Select,
+          .ArrayNew(t_ARRAY_I64),
+          .LocalSet(5),
+          .LocalGet(5),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(2),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(4),
+          .ArrayCopy(t_ARRAY_I64, t_ARRAY_I64),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .LocalGet(5),
+          .RefAsNonNull,
+          .StructSet(t_MUTVEC_I64, 0),
+          .LocalGet(5),
+          .RefAsNonNull,
+          .LocalSet(2),
+        ],
+        [],
+      ),
+      .LocalGet(2),
+      .RefAsNonNull,
+      .LocalGet(3),
+      .LocalGet(1),
+      .ArraySet(t_ARRAY_I64),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .LocalGet(3),
+      .I32Const(1),
+      .I32Add,
+      .StructSet(t_MUTVEC_I64, 1),
+      .LocalGet(0),
+      .RefAsNonNull,
+    ],
+  }
+}
+
+// mutvec_set_i64(mv, i, x) -> mv: logical-length-checked write (traps on OOB).
+// The explicit `i < 0 || i >= len` check is mandatory: capacity >= len, so a bare
+// array bound would wrongly permit writes into the unused [len, capacity) region.
+fn mutvec_set_i64_fn() FuncDef {
+  // p0 = mv, p1 = i, p2 = x; L3 = len
+  .{
+    name: "mutvec_set_i64",
+    params: [.Ref(true, .Named(t_MUTVEC_I64)), .I32, .I64],
+    results: [.Ref(false, .Named(t_MUTVEC_I64))],
+    locals: [.I32],
+    body: [
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_MUTVEC_I64, 1),
+      .LocalSet(3),
+      .LocalGet(1),
+      .I32Const(0),
+      .I32LtS,
+      .LocalGet(1),
+      .LocalGet(3),
+      .I32GeS,
+      .I32Or,
+      .If(.None, [.Unreachable], []),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_MUTVEC_I64, 0),
+      .LocalGet(1),
+      .LocalGet(2),
+      .ArraySet(t_ARRAY_I64),
+      .LocalGet(0),
+      .RefAsNonNull,
+    ],
+  }
+}
+
+// mutvec_get_i64(mv, i) -> i64: logical-length-checked read (traps on OOB).
+fn mutvec_get_i64_fn() FuncDef {
+  // p0 = mv, p1 = i; L2 = len
+  .{
+    name: "mutvec_get_i64",
+    params: [.Ref(true, .Named(t_MUTVEC_I64)), .I32],
+    results: [.I64],
+    locals: [.I32],
+    body: [
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_MUTVEC_I64, 1),
+      .LocalSet(2),
+      .LocalGet(1),
+      .I32Const(0),
+      .I32LtS,
+      .LocalGet(1),
+      .LocalGet(2),
+      .I32GeS,
+      .I32Or,
+      .If(.None, [.Unreachable], []),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_MUTVEC_I64, 0),
+      .LocalGet(1),
+      .ArrayGet(t_ARRAY_I64),
+    ],
+  }
+}
+
+// mutvec_len_i64(mv) -> i32: logical length.
+fn mutvec_len_i64_fn() FuncDef {
+  .{
+    name: "mutvec_len_i64",
+    params: [.Ref(true, .Named(t_MUTVEC_I64))],
+    results: [.I32],
+    locals: [],
+    body: [.LocalGet(0), .RefAsNonNull, .StructGet(t_MUTVEC_I64, 1)],
+  }
+}
+
+// mutvec_freeze_i64(mv) -> PVecI64: O(n) build through the typed builder, reading
+// data[0..len]. This is the materialization boundary; it reuses the existing
+// typed-builder machinery so no new persistent-build code is required.
+fn mutvec_freeze_i64_fn() FuncDef {
+  // p0 = mv; L1 = builder, L2 = len, L3 = j, L4 = data
+  .{
+    name: "mutvec_freeze_i64",
+    params: [.Ref(true, .Named(t_MUTVEC_I64))],
+    results: [pvec_i64_ref()],
+    locals: [arr_null(), .I32, .I32, arr_i64_null()],
+    body: [
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_MUTVEC_I64, 1),
+      .LocalSet(2),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_MUTVEC_I64, 0),
+      .LocalSet(4),
+      .Call("builder_new_i64"),
+      .LocalSet(1),
+      .I32Const(0),
+      .LocalSet(3),
+      .Block(
+        "brk",
+        .None,
+        [
+          .Loop(
+            "lp",
+            .None,
+            [
+              .LocalGet(3),
+              .LocalGet(2),
+              .I32GeS,
+              .BrIf("brk"),
+              .LocalGet(1),
+              .LocalGet(4),
+              .RefAsNonNull,
+              .LocalGet(3),
+              .ArrayGet(t_ARRAY_I64),
+              .Call("builder_push_i64_raw"),
+              .LocalGet(3),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(3),
+              .Br("lp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(1),
+      .Call("builder_freeze_i64"),
     ],
   }
 }

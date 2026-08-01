@@ -68,6 +68,19 @@ pub fn module() WasmModule {
         .None,
         true,
       ),
+      // MutVecI64 — flat, unboxed, growable mutable Int vector (storage slice 1).
+      // Backed by the existing ArrayI64 GC array plus a logical length; capacity
+      // is `array.len(data)`. The mutvec_region pass lowers proven-owned Int
+      // vector regions into this and freezes back to PVecI64 at the boundary.
+      .Struct(
+        "MutVecI64",
+        [
+          .{ name: .Some("data"), mutable: true, ty: .Ref(false, .Named("ArrayI64")) },
+          .{ name: .Some("len"), mutable: true, ty: .I32 },
+        ],
+        .None,
+        true,
+      ),
       .Struct(
         "HamtEntry",
         [
