@@ -119,8 +119,9 @@ code is needed.
 - `collect i in range(n) { … }` / `[]`-seed → `mutvec_new_i64(hint)` then a push
   loop; `len` grows from 0 via `mutvec_push_i64` (capacity hint = the range size
   when statically known, else `MIN_CAP`). Reaches `len = n` through pushes.
-- `Vector.make(n, v)` → `mutvec_make_i64(n, v)`; `len = n` immediately, so a
-  following `xs[i] = v` is in bounds.
+- `Vector.make(n, v)` → `mutvec_make_i64(n, v)`; `len = actual_len = max(0, n)`
+  immediately (negative `n` → empty, matching `pvec_make`), so a following
+  `xs[i] = v` is in bounds for the `n > 0` case.
 
 ### 3. How `MutVecI64` is represented in the compiler (physical repr, not a MonoType)
 
@@ -295,8 +296,8 @@ slice 1 is chosen specifically to make that merge cheap.
   `mutvec_*_i64` op, including grow-by-doubling across the capacity boundary, the
   OOB trap on **both** `mutvec_set_i64` and `mutvec_get_i64` (each `i >= len`, and
   the in-`[len, capacity)` case that a bare `array` bound would miss), and
-  `mutvec_make_i64(n, v)` producing `len = n` prefilled (including `n < MIN_CAP`
-  and `n = 0`).
+  `mutvec_make_i64(n, v)` producing `len = max(0, n)` prefilled — covering
+  `n < MIN_CAP`, `n = 0`, and **`n < 0` (empty vector, no trap)**.
 - **Region lowering:** positive fixtures — collect-born + indexed-update;
   `Vector.make`-born + indexed-update; +append; in-region `get`/`len`;
   materialize-at-return — assert `mutvec_*` emission and a single boundary freeze.
