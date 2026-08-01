@@ -19,8 +19,9 @@ region's boundary — reproducing the spike's speedup on a compiled program.
   array).
 - Region shape: an owned local vector born from a `collect` / `Vector.make` /
   `[]`-seed producer, undergoing **indexed-update** (`xs[i] = v`) and/or **append**
-  (`xs = xs.append(v)`), then materialized at a single publication boundary
-  (return, or last use feeding a persistent-typed consumer).
+  (`xs = xs.append(v)`), then **frozen to `PVecI64` at a single boundary**, after
+  which the persistent value — never the mutable handle — flows to its consumer (a
+  return, or a use/call expecting a persistent `Vector`).
 - A dedicated ANF→ANF region pass that performs the representation change and
   relocates the materialization freeze to the boundary.
 
@@ -93,7 +94,8 @@ returns the same ref, for ANF SSA threading):
 
 | op | signature | notes |
 |---|---|---|
-| `mutvec_new_i64` | `(cap: i32) -> MutVecI64` | allocate `ArrayI64(max(cap, MIN_CAP))`, `len = 0`; `cap = 0` (the `[]`-seed) is allowed and rounds up to `MIN_CAP` |
+| `mutvec_new_i64` | `(cap: i32) -> MutVecI64` | allocate `ArrayI64(max(cap, MIN_CAP))`, `len = 0`; `cap = 0` (the `[]`-seed) is allowed and rounds up to `MIN_CAP`. `cap` is a capacity hint, **not** a length |
+| `mutvec_make_i64` | `(n: i32, fill: i64) -> MutVecI64` | allocate `ArrayI64(max(n, MIN_CAP))`, fill `data[0..n) = fill`, `len = n` — the producer for `Vector.make(n, v)`, mirroring the existing `pvec_make_fn`. Without this, rewriting `Vector.make` to `mutvec_new_i64(n)` (len 0) would make a following `xs[i]=v` trap |
 | `mutvec_push_i64` | `(mv, x: i64) -> mv` | if `len == capacity` grow first (see growth), then `data[len] = x; len += 1` |
 | `mutvec_set_i64` | `(mv, i: i32, x: i64) -> mv` | **explicit logical-length check**: trap if `i < 0 || i >= len`, else `data[i] = x`. Not a bare `array.set` — `capacity >= len`, so relying on Wasm array bounds would wrongly permit writes in `[len, capacity)` |
 | `mutvec_get_i64` | `(mv, i: i32) -> i64` | **explicit logical-length check**: trap if `i < 0 || i >= len`, else `data[i]` |
@@ -107,11 +109,17 @@ OOB exactly; the Wasm array bound is a weaker backstop only.
 **Growth:** `new_capacity = max(MIN_CAP, capacity * 2)` — the `max` is required
 because `capacity * 2 == 0` when `capacity == 0`, so a `[]`-seed (`mutvec_new_i64(0)`
 → `MIN_CAP`) and doubling both stay well-defined. `MIN_CAP` is a small constant
-(e.g. 4). When the region is born from `collect range(n)` / `Vector.make(n, …)`,
-the producer's size feeds the initial `cap` so no growth reallocation is needed on
-the common path. Growth copies via `array.copy` into the larger backing and
-`struct.set`s `data`. The freeze reuses the typed builder machinery, so no new
-persistent-build code is needed.
+(e.g. 4). Growth copies via `array.copy` into the larger backing and `struct.set`s
+`data`. The freeze reuses the typed builder machinery, so no new persistent-build
+code is needed.
+
+**Producer → op mapping** (how each region seed reaches its starting `len`):
+
+- `collect i in range(n) { … }` / `[]`-seed → `mutvec_new_i64(hint)` then a push
+  loop; `len` grows from 0 via `mutvec_push_i64` (capacity hint = the range size
+  when statically known, else `MIN_CAP`). Reaches `len = n` through pushes.
+- `Vector.make(n, v)` → `mutvec_make_i64(n, v)`; `len = n` immediately, so a
+  following `xs[i] = v` is in bounds.
 
 ### 3. How `MutVecI64` is represented in the compiler (physical repr, not a MonoType)
 
@@ -130,9 +138,21 @@ same machinery:
   invariant end to end (typed producer → typed mutable region → typed persistent
   result, no boxing detour).
 
-So the "retype the producer's builder as `MutVecI64`" step is a `ReprKind`
-assignment on the prepared-IR slot, reusing `repr_assign`, not a new `MonoType`
-and not an `Anyref` erasure.
+**Stage handoff (two stages, not one).** `mutvec_region.rewrite_module` runs early,
+on ANF, and does **not** assign `ReprKind` — `repr_assign` runs later, during backend
+preparation (`assign_repr_for_module`, "called after `assign_slots_for_module` in
+`prepare_backend()`"). So "retype the producer's builder as `MutVecI64`" is a
+two-stage handoff:
+
+1. the ANF pass emits the `mutvec_*` runtime ABI calls and attaches the region
+   decision record (naming the handle slots);
+2. backend prepare / `repr_assign` consumes those — the `mutvec_*` op ABIs and the
+   record — and marks the named slots `MutVec(I64)` (and the post-freeze slot
+   `TypedVec(I64)`).
+
+No new `MonoType`, no `Anyref` erasure. The exact record fields `repr_assign` keys
+off, and how it threads through `prepare`, are pinned down by the implementation
+plan.
 
 ### 4. S2/S1 — the dedicated region pass (`boot/compiler/codegen/mutvec_region*.tw`)
 
@@ -157,20 +177,28 @@ detection helpers** with `builder_region_detect` but not modifying it.
   type proves to `Int`. Otherwise it is not claimed and the existing path applies.
   This is the guard that prevents representation downgrades — a typed site either
   gets `MutVecI64` or stays persistent, never an `anyref` detour.
-- **Exit handling (soundness-critical).** "Single publication boundary" means the
-  region is claimed **only if every control-flow exit that carries the live handle
-  is a freezable materialization point**, not "find one boundary and ignore the
-  rest." Slice 1 is conservative: it requires **exactly one** exit — a return or a
-  last-use that feeds a persistent-`PVecI64` consumer — and **rejects** the region
-  (persistent fallback) if the handle can leave by any other path: multiple exits,
-  early `return`, `break value`, a `try`/early-return arm, closure capture,
-  storage into an escaping aggregate (record/variant/dict/vector), a call taking
-  the handle, or a host/import boundary. A rejected region is emitted unchanged by
-  the existing passes. Widening to multi-exit freezing is deferred to a later
-  slice / S4.
-- **Emit.** Producer builder → `mutvec_new_i64`; in-region push → `mutvec_push_i64`;
-  in-region set → `mutvec_set_i64`; in-region read → `mutvec_get_i64`; in-region
-  length → `mutvec_len_i64`; boundary → relocated `mutvec_freeze_i64`.
+- **Exit handling (soundness-critical).** The freeze is inserted at the boundary,
+  and only the resulting `PVecI64` flows onward — so the distinction is **the
+  frozen value vs the still-mutable handle**. A terminal consumer that receives the
+  *frozen persistent value* is a valid boundary: a return, or a call/expression
+  expecting a persistent `Vector` (the freeze is inserted immediately before it, so
+  the callee gets `PVecI64`, its normal ABI). What is **rejected** is the *mutable
+  handle* leaving the region — passed to a call while still mutable, captured by a
+  closure, stored into an escaping aggregate (record/variant/dict/vector), or
+  reachable at more than one exit. "Single publication boundary" therefore means
+  the region is claimed **only if every control-flow exit carrying the live handle
+  reduces to one freezable point**, not "find one boundary and ignore the rest."
+  Slice 1 is conservative: it requires **exactly one** such freeze point and
+  rejects (persistent fallback) multiple exits, early `return`, `break value`, a
+  `try`/early-return arm, closure capture, escaping-aggregate storage of the
+  handle, or a host/import boundary carrying the handle. A rejected region is
+  emitted unchanged by the existing passes. Multi-exit freezing is deferred to a
+  later slice / S4.
+- **Emit.** Producer → `mutvec_new_i64` (collect / `[]`-seed builder) or
+  `mutvec_make_i64` (`Vector.make`, see Producer → op mapping); in-region push →
+  `mutvec_push_i64`; in-region set → `mutvec_set_i64`; in-region read →
+  `mutvec_get_i64`; in-region length → `mutvec_len_i64`; boundary → relocated
+  `mutvec_freeze_i64`.
 - **Region decision record.** Each claimed region carries a record naming the
   producer/begin site, the backing family (`MutVecI64`), every in-region op site,
   the single freezable materialization exit, and the post-freeze `PVecI64` value —
@@ -232,12 +260,17 @@ slice 1 is chosen specifically to make that merge cheap.
 ## Testing
 
 - **Runtime substrate:** targeted codegen/execution coverage for each
-  `mutvec_*_i64` op, including grow-by-doubling across the capacity boundary and
-  the OOB trap on `mutvec_set_i64`.
-- **Region lowering:** positive fixtures (collect-born + indexed-update; +append;
-  materialize-at-return) assert `mutvec_*` emission and a single boundary freeze;
-  negative fixtures (aliased / escaping / non-Int / no-indexed-update) assert the
-  region is **not** claimed and the existing path is emitted unchanged.
+  `mutvec_*_i64` op, including grow-by-doubling across the capacity boundary, the
+  OOB trap on **both** `mutvec_set_i64` and `mutvec_get_i64` (each `i >= len`, and
+  the in-`[len, capacity)` case that a bare `array` bound would miss), and
+  `mutvec_make_i64(n, v)` producing `len = n` prefilled (including `n < MIN_CAP`
+  and `n = 0`).
+- **Region lowering:** positive fixtures — collect-born + indexed-update;
+  `Vector.make`-born + indexed-update; +append; in-region `get`/`len`;
+  materialize-at-return — assert `mutvec_*` emission and a single boundary freeze;
+  negative fixtures (aliased / escaping / non-Int / no-indexed-update /
+  multiple-exit / handle-passed-to-call / captured) assert the region is **not**
+  claimed and the existing path is emitted unchanged.
 - **Regression:** `--census --sites` diff shows only additive `mutvec` rows;
   existing builder/`set_in_place`/persistent rows unchanged. Self-host fixed point.
 - **Performance (end-of-slice gate):** compiled microbench reproduces the spike's
