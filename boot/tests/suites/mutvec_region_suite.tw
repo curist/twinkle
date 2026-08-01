@@ -20,6 +20,49 @@ fn region_count(src: String) Int {
   region_ids(src).len()
 }
 
+// Content inspection: pull the sole detected region so tests can assert on the
+// recorded producer class and op-site kinds, not just the region count.
+fn sole_region(src: String) mutvec_region.MutVecRegion {
+  case pipeline.compile_source(src) {
+    .Ok(a) => {
+      rs := mutvec_region.detect_regions(a.opt, a.builtins)
+      if rs.len() != 1 {
+        error("expected exactly one region, got ${rs.len().to_string()}")
+      }
+      rs[0]
+    },
+    .Err(e) => error("compile failed: ${e}"),
+  }
+}
+
+fn producer_name(p: mutvec_region.MutVecProducer) String {
+  case p {
+    .CollectSeed => "collect",
+    .MakeSeed => "make",
+    .ArrayLitSeed => "arraylit",
+  }
+}
+
+fn op_kind_name(k: mutvec_region.MutVecOpKind) String {
+  case k {
+    .Set => "set",
+    .Push => "push",
+    .Get => "get",
+    .Len => "len",
+  }
+}
+
+// Count in-region op sites of the named kind (set / push / get / len).
+fn kind_count(r: mutvec_region.MutVecRegion, name: String) Int {
+  c := 0
+  for s in r.op_sites {
+    if op_kind_name(s.kind) == name {
+      c = c + 1
+    }
+  }
+  c
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("mutvec region")
@@ -176,6 +219,112 @@ pub fn suite() runner.Suite {
           ),
           0,
         )
+        .Ok({})
+      },
+    )
+    .test(
+      "handle stored in a variant is NOT claimed (escape)",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f(n: Int) Vector<Int>? {\n  xs := collect i in range(n) { i }\n  xs[0] = 1\n  .Some(xs)\n}\ncase f(5) {\n  .Some(v) => println(v.len().to_string()),\n  .None => println(\"none\"),\n}\n",
+          ),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "handle stored in a dict is NOT claimed (escape)",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f(n: Int) Dict<Int, Vector<Int>> {\n  xs := collect i in range(n) { i }\n  xs[0] = 1\n  m: Dict<Int, Vector<Int>> = Dict.new()\n  m[0] = xs\n  m\n}\nprintln(f(5).len().to_string())\n",
+          ),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "handle stored in an outer vector is NOT claimed (escape)",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f(n: Int) Vector<Vector<Int>> {\n  xs := collect i in range(n) { i }\n  xs[0] = 1\n  outer: Vector<Vector<Int>> = []\n  outer = outer.append(xs)\n  outer\n}\nprintln(f(5).len().to_string())\n",
+          ),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "unsupported in-region op (concat) is NOT claimed",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f(n: Int) Vector<Int> {\n  xs := collect i in range(n) { i }\n  xs[0] = 1\n  xs = xs.concat([9])\n  xs\n}\nprintln(f(5).len().to_string())\n",
+          ),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "aliased handle (second live name) is NOT claimed (escape)",
+      fn() {
+        try assert.equal(
+          region_count(
+            "fn f(n: Int) Int {\n  xs := collect i in range(n) { i }\n  xs[0] = 1\n  ys := xs\n  xs.len() + ys.len()\n}\nprintln(f(5).to_string())\n",
+          ),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "record: collect producer with a single set op site",
+      fn() {
+        r := sole_region(
+          "fn f(n: Int) Vector<Int> {\n  xs := collect i in range(n) { i }\n  xs[0] = 42\n  xs\n}\nprintln(f(5).len().to_string())\n",
+        )
+        try assert.equal(producer_name(r.producer), "collect")
+        try assert.equal(kind_count(r, "set"), 1)
+        try assert.equal(kind_count(r, "push"), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "record: Vector.make producer is classified as make",
+      fn() {
+        r := sole_region(
+          "fn f() Vector<Int> {\n  xs := Vector.make(3, 0)\n  xs[1] = 9\n  xs\n}\nprintln(f().len().to_string())\n",
+        )
+        try assert.equal(producer_name(r.producer), "make")
+        try assert.equal(kind_count(r, "set"), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "record: set + append records both a set and a push op site",
+      fn() {
+        r := sole_region(
+          "fn f(n: Int) Vector<Int> {\n  xs := collect i in range(n) { i }\n  xs[0] = 7\n  xs = xs.append(99)\n  xs\n}\nprintln(f(4).len().to_string())\n",
+        )
+        try assert.equal(kind_count(r, "set"), 1)
+        try assert.equal(kind_count(r, "push"), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "record: in-region get and len are recorded as op sites",
+      fn() {
+        r := sole_region(
+          "fn f(n: Int) Vector<Int> {\n  xs := collect i in range(n) { i }\n  xs[0] = xs[1]\n  m := xs.len()\n  xs\n}\nprintln(f(5).len().to_string())\n",
+        )
+        try assert.equal(kind_count(r, "set"), 1)
+        try assert.equal(kind_count(r, "get"), 1)
+        try assert.equal(kind_count(r, "len"), 1)
         .Ok({})
       },
     )
