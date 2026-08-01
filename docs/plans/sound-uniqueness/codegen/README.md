@@ -466,13 +466,18 @@ second call prove the field tier from `arg_paths` (`ret_field_seq`/`ret_field_lo
 `loop_set_insert` fixtures route `sites=2` full-tier). Aliased or leaked-field
 sources still route the shell tier and stay persistent.
 
-**Deferred to a follow-up slice:**
-
-- **Transported `out.ctx`/`out.state` records.** Recognized as record-backed dict
-  quartets, but in-place *emission* needs path-level consume-dead across a
-  multi-level record-field projection (a sibling `out.tag` read keeps `out` live).
-  The first-slice detector requires whole-argument last-use and the quartet in one
-  straight-line `Let` chain.
+**Transported `out.ctx`/`out.state` records — DONE** (`2026-08-01-transport-deep-graft`).
+`next := out.ctx; next.types[k] = v` now emits `rt_dict__set_in_place`. Two coordinated
+changes landed: (1) a **field-path cross-block transport licensing** relaxation licenses
+the projection `next := out.ctx` to MOVE even when `out` stays live for *sibling* field
+reads (`out.tag`) in successor blocks — provided `out.ctx` is read exactly once
+function-wide, `out` never crosses a block boundary as a value, and the projection is not
+loop-carried; and (2) a **call-site deep graft** (`ownership.tw`) carries the argument's
+owned subfield ownership across a wholesale-param wrapper return (`ret.fN = from(pK)`), so
+`out` deeply owns `.ctx.types`. Sound because `OwnedFromParam(K)` is assignable only when
+`out.fN` IS `pK` wholesale. Negatives (re-read after, loop-carried, join-read, fresh-
+wrapper, projection-wrapper) stay persistent; `field_facts` now represents `[Field,Field]`
+paths (depth-2). Self-host fixed point holds.
 
 **Field-tier recursive self-routing — done.** A FULL-tier field clone (`visit$v`
 for `[unique:p0,p0.f0]`) now routes its in-SCC recursive call back to itself, so an
@@ -489,7 +494,7 @@ The 8A–8H codegen track is certified by the boot suite plus scoped WAT/runtime
 spot-checks over the `sound_uniqueness` fixtures. Performance stays deferred by
 design (see below): the storage-representation track (typed/dense vectors,
 mutable regions) and the remaining 8H follow-ups (loop-carried/threaded field
-ownership, transport in-place) are not yet in place, so ordinary vector/dict/record
+ownership; transport in-place landed 2026-08-01) are not yet in place, so ordinary vector/dict/record
 paths are not end-to-end enough for AWFY to be meaningful.
 
 - [x] **Correctness and aliasing guards.** Boot suite green
@@ -508,9 +513,10 @@ paths are not end-to-end enough for AWFY to be meaningful.
   (`field_dict_update`, `field_vector_update`, the `visit$v` clone); a
   straight-line owned `Set.insert` lowers in place too, but in its **routed clone**
   (`field_set_wrapper`'s `go` calls `insert__Int$v300`, which emits
-  `rt_dict__set_in_place`); aliased negatives and the transport shape emit the
-  persistent `rt_dict__set` / `rt_arr__set`; loop-carried Sets stay persistent (8H
-  follow-up). A module-wide grep is *not* authoritative — prelude and runtime code
+  `rt_dict__set_in_place`); the transport shape (`field_transport_ctx`) now emits
+  `rt_dict__set_in_place` too (transport deep-graft, 2026-08-01); aliased negatives
+  emit the persistent `rt_dict__set` / `rt_arr__set`; loop-carried Sets stay
+  persistent (8H follow-up). A module-wide grep is *not* authoritative — prelude and runtime code
   use the in-place builders internally, and a routed clone's in-place op lives in
   the clone, not the caller; scope the inspection to the emitting function, exactly
   as the suite's `wat_func_body_result` does.

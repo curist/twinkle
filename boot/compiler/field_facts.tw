@@ -81,6 +81,7 @@ pub fn path_eq(a: AccessPath, b: AccessPath) Bool {
 //   [Field(f)]        -> 8 + f*4 + 0
 //   [Field(f), Elem]  -> 8 + f*4 + 1
 //   [Field(f), Val]   -> 8 + f*4 + 2
+//   [Field(f), Field(f2)] -> ff2_base + f*1048576 + f2   (disjoint range above)
 // Field ids are non-negative; the low 2 bits above 8 encode the optional
 // trailing collection seg. Pure inverses -> no interned side table.
 //
@@ -105,18 +106,16 @@ fn payload_key(tag: Int, index: Int, fieldslot: Int) Int {
 
 // Depth-2 [Field(f), Field(f2)] paths use a disjoint POSITIVE range above the
 // single-field keys. Single-field keys are 8 + f*4 + {0,1,2}; for f < 1048576
-// they stay below ff2_base(), so the ranges are disjoint (the single-field arm
+// they stay below ff2_base, so the ranges are disjoint (the single-field arm
 // relies on the same f < 1048576 invariant — enforced here for the two-field
 // components). f2 in the low 20 bits, f in the next 20.
-fn ff2_base() Int {
-  4194312
-} // == 8 + 1048576 * 4
+ff2_base: Int = 4194312 // == 8 + 1048576 * 4
 
 fn ff2_key(f: Int, f2: Int) Int {
   if f < 0 or f >= 1048576 or f2 < 0 or f2 >= 1048576 {
     error("field_facts: [Field,Field] key component out of 20-bit range")
   }
-  ff2_base() + f * 1048576 + f2
+  ff2_base + f * 1048576 + f2
 }
 
 pub fn path_key(p: AccessPath) Int {
@@ -150,8 +149,8 @@ pub fn path_of_key(k: Int) AccessPath {
   cond {
     k == 1 => elem_path(),
     k == 2 => val_path(),
-    k >= ff2_base() => {
-      rel := k - ff2_base()
+    k >= ff2_base => {
+      rel := k - ff2_base
       AccessPath.{ segs: [.Field(rel / 1048576), .Field(rel % 1048576)] }
     },
     k >= 8 => {
@@ -217,9 +216,9 @@ pub fn graft(fm: FieldMap, prefix: PathSeg, src: FieldMap) FieldMap {
       for k, v in src.paths {
         inner := path_of_key(k)
 
-        // Only [Elem]/[Val] inner paths can be represented as [Field(f), Elem/Val]
-        // at Phase 4/5's depth-2 limit. [Field, Field] and [Field, Payload] are not
-        // representable and are silently dropped — sound under-claim.
+        // [Elem]/[Val]/[Field] inner paths are representable under a Field prefix at
+        // the depth-2 limit ([Field,Elem], [Field,Val], [Field,Field]). [Field,Payload]
+        // and any depth-2 inner (would rebase to depth-3) are dropped — sound under-claim.
         if inner.segs.len() == 1 {
           case inner.segs[0] {
             .Elem => fm.paths[path_key(AccessPath.{ segs: [prefix, .Elem] })] = v,
