@@ -1,0 +1,23 @@
+pub type Ctx = .{ types: Dict<Int, Int>, values: Dict<Int, Int> }
+
+pub type Out = .{ ctx: Ctx, tag: Int }
+
+pub fn pass(ctx: Ctx) Out {
+  Out.{ ctx, tag: 1 }
+}
+
+pub fn go(flag: Bool) Int {
+  ctx := Ctx.{ types: Dict.new(), values: Dict.new() }
+  out := pass(ctx)
+  if flag {
+    a := out.ctx
+    a.types[1] = 1
+    a.types.len()
+  } else {
+    b := out.ctx // second projection of out.ctx in a different block
+    b.types[2] = 2
+    b.types.len()
+  }
+}
+
+println(go(true).to_string())

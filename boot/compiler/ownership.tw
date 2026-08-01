@@ -420,27 +420,86 @@ fn quartet_has(q: Dict<Int, Bool>, id: Int) Bool {
   }
 }
 
-// True iff the projection `R = record_get out.f` at index `i` is licensed to
-// MOVE the `out.f` subtree even though `out` itself is not whole-record-dead at
-// the get — the finer path-liveness Phase 4 deferred. Strictly AFTER the
-// projection in this block:
-//  - `out.f` is not read again (no second record_get out.f);
-//  - `out` is mentioned ONLY by other `record_get out.g` sibling reads (g != f)
-//    — any other mention (publish/return/store/pass-to-call/alias/terminator)
-//    fails the proof;
-//  - `out` is DEAD after the block, checked as BOTH `!exit_mentions_local`
-//    (terminator/edge) AND `!live_contains_int(blk.exit.live, out)` (live-out).
-//    The live-out check is load-bearing: exit_mentions_local alone misses `out`
-//    read in a LATER block (e.g. inside a successor if-branch).
-fn transport_ok(blk: CfgBlock, scan: BlockScan, i: Int, out_id: Int, fid: Int) Bool {
-  transport_reason(blk, scan, i, out_id, fid) == ""
+// Does `out_id` appear in ANY block's terminator or outgoing edge args? If so,
+// `out` crosses a block boundary as a value and could be read as `.fid` through
+// an aliased successor block-param this scan cannot see — reject (condition 2).
+fn out_crosses_block_boundary(blocks: Vector<CfgBlock>, out_id: Int) Bool {
+  for blk in blocks {
+    if exit_mentions_local(blk, out_id) {
+      return true
+    }
+  }
+  false
+}
+
+// In every block OTHER than `proj_block_id`, every mention of `out_id` must be a
+// sibling read `record_get out.g` (g != fid). Any other mention rejects
+// (condition 3). A `record_get out.fid` in another block is a non-sibling mention
+// -> rejects (this also backstops condition 4 across other blocks).
+fn out_field_dead_other_blocks(blocks: Vector<CfgBlock>, proj_block_id: Int, out_id: Int, fid: Int) Bool {
+  for blk in blocks {
+    if blk.id.id == proj_block_id {} else {
+      for inst in blk.instructions {
+        op := inst.op
+        is_sibling := case op {
+          .ARecordGet(base, f2, _) => atom_is_local(base, out_id) and f2.id != fid,
+          _ => false,
+        }
+        if is_sibling {} else if op_mentions_local(op, out_id) {
+          return false
+        }
+      }
+    }
+  }
+  true
+}
+
+// Count EVERY `record_get out.fid` across all blocks (condition 4). Unlike
+// out_field_dead_other_blocks this does NOT skip the projection block, so a
+// second projection of out.fid BEFORE index i in the projection block is counted
+// too — closing the before-projection re-read gap at the contract level.
+fn out_field_read_count(blocks: Vector<CfgBlock>, out_id: Int, fid: Int) Int {
+  n := 0
+  for blk in blocks {
+    for inst in blk.instructions {
+      if is_record_get_of(inst.op, out_id, fid) {
+        n = n + 1
+      }
+    }
+  }
+  n
+}
+
+// True iff the projection `R = record_get out.f` at index `i` is licensed to MOVE
+// the `out.f` subtree even though `out` is not whole-record-dead at the get.
+// Field-path-sensitive ACROSS blocks: licenses the move even when `out` stays
+// live-out for SIBLING field reads (out.g, g != f) in successor blocks, provided
+// `out.f` is read exactly once function-wide, `out` never crosses a block boundary
+// as a value, and the projection is not loop-carried. `blocks` empty (summary
+// passes) => condition 4's read-count is 0 => never licensed (conservative, sound).
+fn transport_ok(
+  blk: CfgBlock,
+  scan: BlockScan,
+  i: Int,
+  out_id: Int,
+  fid: Int,
+  blocks: Vector<CfgBlock>,
+) Bool {
+  transport_reason(blk, scan, i, out_id, fid, blocks) == ""
 }
 
 // The concrete reason a transport projection was NOT licensed (empty String =
 // licensed). This is the single source of truth for the transport proof:
 // `transport_ok` is the boolean projection of an empty reason, so the analysis
 // verdict and the debug render can never drift apart.
-fn transport_reason(blk: CfgBlock, scan: BlockScan, i: Int, out_id: Int, fid: Int) String {
+fn transport_reason(
+  blk: CfgBlock,
+  scan: BlockScan,
+  i: Int,
+  out_id: Int,
+  fid: Int,
+  blocks: Vector<CfgBlock>,
+) String {
   insts := blk.instructions
   for j in range_from(i + 1, insts.len()) {
     op := insts[j].op
@@ -455,11 +514,26 @@ fn transport_reason(blk: CfgBlock, scan: BlockScan, i: Int, out_id: Int, fid: In
       return "L${out_id} published"
     }
   }
-  if exit_mentions_local(blk, out_id) {
-    return "L${out_id} escapes on exit edge"
+
+  // Condition 5 (loop guard): out live-IN to the projection block means a
+  // loop-carried projection re-reading the same out.f each iteration — reject.
+  if live_contains_int(blk.entry.live, out_id) {
+    return "L${out_id} live-in (loop-carried projection)"
   }
-  if live_contains_int(blk.exit.live, out_id) {
-    return "L${out_id} live-out"
+
+  // Condition 2: out must not cross a block boundary as a value.
+  if out_crosses_block_boundary(blocks, out_id) {
+    return "L${out_id} crosses a block boundary"
+  }
+
+  // Condition 4: out.fid read exactly once in the whole function.
+  if out_field_read_count(blocks, out_id, fid) != 1 {
+    return "L${out_id}.f${fid} read more than once"
+  }
+
+  // Condition 3: every OTHER-block mention of out is a sibling read.
+  if !out_field_dead_other_blocks(blocks, blk.id.id, out_id, fid) {
+    return "L${out_id}.f${fid} not field-dead across blocks"
   }
   ""
 }
@@ -467,12 +541,15 @@ fn transport_reason(blk: CfgBlock, scan: BlockScan, i: Int, out_id: Int, fid: In
 // Pre-scan a block's instruction list, returning the set of ARecordGet
 // result-locals whose projection is licensed to MOVE by the transport proof,
 // even though the base record stays live for SIBLING field reads.
-fn recognize_transport_moves(blk: CfgBlock, scan: BlockScan) Dict<Int, Bool> {
+fn recognize_transport_moves(blk: CfgBlock, scan: BlockScan, blocks: Vector<CfgBlock>) Dict<
+  Int,
+  Bool,
+> {
   moves: Dict<Int, Bool> = Dict.new()
   for inst, i in blk.instructions {
     case inst.op {
       .ARecordGet(base, f, _) => case atom_local_id(base) {
-        .Some(bid) => if transport_ok(blk, scan, i, bid, f.id) {
+        .Some(bid) => if transport_ok(blk, scan, i, bid, f.id, blocks) {
           moves[inst.anf_local.id] = true
         },
         .None => {},
@@ -3345,12 +3422,15 @@ pub fn with_dedupe_helpers(
 // per fixpoint visit — keeps the O(n^2) quartet recognizer off the iteration path.
 type BlockPrep = .{ scan: BlockScan, moves: Dict<Int, Bool>, transport: Dict<Int, Bool> }
 
-fn block_prep(blk: CfgBlock, sem: OptimizerSemantics) BlockPrep {
+// `blocks` is the whole function's block list — the transport recognizer needs it
+// for the field-path cross-block conditions. Summary/seed callers pass `[]` (no
+// transport moves; conservative). Only `ownership_stage` passes the real list.
+fn block_prep(blk: CfgBlock, sem: OptimizerSemantics, blocks: Vector<CfgBlock>) BlockPrep {
   scan := scan_block_backward(blk, blk.exit.live) // exit.live filled by the liveness stage
   BlockPrep.{
     scan,
     moves: recognize_quartet_moves(blk, scan, sem),
-    transport: recognize_transport_moves(blk, scan),
+    transport: recognize_transport_moves(blk, scan, blocks),
   }
 }
 
@@ -3358,7 +3438,7 @@ fn block_prep(blk: CfgBlock, sem: OptimizerSemantics) BlockPrep {
 fn prep_blocks(blocks: Vector<CfgBlock>, sem: OptimizerSemantics) Dict<Int, BlockPrep> {
   preps: Dict<Int, BlockPrep> = Dict.new()
   for blk in blocks {
-    preps[blk.id.id] = block_prep(blk, sem)
+    preps[blk.id.id] = block_prep(blk, sem, blocks)
   }
   preps
 }
@@ -3366,7 +3446,7 @@ fn prep_blocks(blocks: Vector<CfgBlock>, sem: OptimizerSemantics) Dict<Int, Bloc
 fn prep_get(preps: Dict<Int, BlockPrep>, blk: CfgBlock, sem: OptimizerSemantics) BlockPrep {
   case preps.get(blk.id.id) {
     .Some(p) => p,
-    .None => block_prep(blk, sem),
+    .None => block_prep(blk, sem, []),
   }
 }
 
@@ -4730,6 +4810,7 @@ fn transport_verdict(
   base: Atom,
   f: Int,
   transport: Dict<Int, Bool>,
+  blocks: Vector<CfgBlock>,
 ) String {
   base_valid := case atom_local_id(base) {
     .Some(bid) => valid_of_local(pre.valid, bid),
@@ -4751,7 +4832,7 @@ fn transport_verdict(
       .Some(bid) => if !valid_of_local(pre.valid, bid) {
         "base consumed"
       } else {
-        transport_reason(blk, scan, i, bid, f)
+        transport_reason(blk, scan, i, bid, f, blocks)
       },
       .None => "base not a local",
     }
@@ -4839,6 +4920,7 @@ fn block_verdicts(
   suppress: Dict<Int, Bool>,
   cc: CopyCarrierFacts,
   resolve: VariantResolver,
+  blocks: Vector<CfgBlock>,
 ) BlockVerdicts {
   scan := prep.scan
   moves := prep.moves
@@ -4861,6 +4943,7 @@ fn block_verdicts(
           base,
           f.id,
           prep.transport,
+          blocks,
         )
         case atom_local_id(base) {
           .Some(bid) => if pre.projection_move_licensed(
@@ -6948,7 +7031,7 @@ pub fn call_uniques_sited_with_field_seed(
     } else {
       st
     }
-    prep := block_prep(blk, sem)
+    prep := block_prep(blk, sem, [])
     scan := prep.scan
     for inst, i in blk.instructions {
       last := last_use_at(inst.op, scan.live_after[i])
@@ -7323,8 +7406,8 @@ fn ownership_stage(
     } else {
       st
     }
-    prep := block_prep(blk, sem)
-    verdicts := block_verdicts(blk, st, prep, table, b, sem, no_suppress, cc, resolve)
+    prep := block_prep(blk, sem, blocks)
+    verdicts := block_verdicts(blk, st, prep, table, b, sem, no_suppress, cc, resolve, blocks)
     st = forward_block(blk, st, prep, table, b, sem, no_suppress, cc_suppress, resolve)
     blk.entry.ownership = entry_own
     blk.exit.ownership = st.own
@@ -8017,7 +8100,7 @@ fn collect_move_recovered_params(
     } else {
       st
     }
-    prep := block_prep(blk, sem)
+    prep := block_prep(blk, sem, [])
     scan := prep.scan
     for inst, i in blk.instructions {
       last := last_use_at(inst.op, scan.live_after[i])
@@ -8481,7 +8564,7 @@ fn summarize_seeded(
         body := forward_block_body(
           blk,
           st,
-          block_prep(blk, sem),
+          block_prep(blk, sem, []),
           table,
           b,
           sem,

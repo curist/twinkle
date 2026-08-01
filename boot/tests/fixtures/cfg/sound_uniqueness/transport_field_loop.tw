@@ -1,0 +1,21 @@
+pub type Ctx = .{ types: Dict<Int, Int>, values: Dict<Int, Int> }
+
+pub type Out = .{ ctx: Ctx, tag: Int }
+
+pub fn pass(ctx: Ctx) Out {
+  Out.{ ctx, tag: 1 }
+}
+
+pub fn go() Int {
+  ctx := Ctx.{ types: Dict.new(), values: Dict.new() }
+  out := pass(ctx)
+  acc := 0
+  for i in range(3) {
+    next := out.ctx // loop-carried: re-reads the SAME out.ctx each iter
+    next.types[i] = i
+    acc = acc + out.tag
+  }
+  acc
+}
+
+println(go().to_string())
