@@ -4242,7 +4242,8 @@ fn graft_path_prov(pp: Dict<Int, Vector<Int>>, prefix: ff.PathSeg, st: ForwardSt
             .Field(_) => case inner.segs[0] {
               .Elem => true,
               .Val => true,
-              _ => false, // [Field, Field] and [Field, Payload] are not representable
+              .Field(_) => true, // [Field, Field] now representable (S-b lockstep with codec)
+              _ => false, // [Field, Payload] is not representable
             },
             .Payload(_, _) => case inner.segs[0] {
               .Field(_) => true,
