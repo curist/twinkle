@@ -142,6 +142,17 @@ pub fn suite() runner.Suite {
   runner
     .suite("cfg field facts")
     .test(
+      "codec round-trips [Field, Field] depth-2 paths",
+      fn() Result<Void, String> {
+        p := ff.AccessPath.{ segs: [.Field(0), .Field(1)] }
+        k := ff.path_key(p)
+        back := ff.path_of_key(k)
+        try assert.ok(ff.path_eq(p, back), "round-trip [.f0,.f1] must be identity")
+        try assert.ok(k >= 4194312, "[Field,Field] keys live above the single-field range")
+        .Ok({})
+      },
+    )
+    .test(
       "codec: every Phase 4 path round-trips through the key",
       fn() {
         paths: Vector<ff.AccessPath> = [
