@@ -56,6 +56,13 @@ pub type ReprKind = {
   ErasedSum,
   OpaqueAnyref,
   DeadValue,
+  // MutVec is a typed vector's flat mutable backing (storage slice 1). Physically
+  // rt_types__MutVecI64, distinct from TypedVec's PVecI64 and never Anyref. Carried
+  // on a handle slot from the region producer up to its materialization freeze.
+  // Appended at end as the safe convention for a tagged enum (variant order is the
+  // integer tag). Any exhaustive `case … ReprKind` — in the compiler and in the
+  // backend_repr_suite tests — needs a matching `.MutVec(_)` arm.
+  MutVec(ElemRepr),
 }
 
 // SlotInfo is the complete backend record for one physical slot.

@@ -489,6 +489,14 @@ fn val_type_key(layout: WasmLayout) String {
   }
 }
 
+// Physical wasm type of a MutVecI64 handle slot (storage slice 1). Distinct from
+// val_type_of_mono(Vector<Int>) — which yields PVecI64 — because the semantic mono
+// stays Vector<Int> while the handle is physically a mutable MutVecI64 across its
+// region. ReprKind.MutVec slots lower to this; the freeze materializes to PVecI64.
+pub fn mutvec_i64_wasm_type() ValType {
+  .Ref(true, .Named("rt_types__MutVecI64"))
+}
+
 // ── val_type_of_mono ────────────────────────────────────────────────
 pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
   case ty {

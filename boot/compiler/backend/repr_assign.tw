@@ -22,7 +22,7 @@
 use compiler.backend.prepared_ir.{PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
-use compiler.codegen.wasm_layout.{WasmLayout, layout_of, mono_to_key, val_type_of_mono}
+use compiler.codegen.wasm_layout.{WasmLayout, layout_of, mono_to_key, mutvec_i64_wasm_type, val_type_of_mono}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
 
@@ -364,6 +364,9 @@ fn wasm_type_of_repr_cached(
     // A typed vector's physical type follows its semantic mono; at activation
     // val_type_of_mono(Vector<Int>) yields PVecI64. Inert until then.
     .TypedVec(_) => cached_val_type_of_mono(mono, env, cache),
+    // A MutVec handle slot is physically MutVecI64, independent of its semantic
+    // mono (still Vector<Int>). Slice 1 is I64-only.
+    .MutVec(_) => .{ val_type: mutvec_i64_wasm_type(), cache },
     // Function values remain heap refs; the correctness path uses the base
     // closure ABI, while future specialization can still refine this later.
     .ClosureRef => cached_val_type_of_mono(mono, env, cache),

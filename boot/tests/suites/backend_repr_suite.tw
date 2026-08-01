@@ -119,6 +119,10 @@ fn assert_repr(mono: MonoType, expected: ReprKind) Result<Void, String> {
       .ErasedSum => true,
       _ => false,
     },
+    .MutVec(_) => case got {
+      .MutVec(_) => true,
+      _ => false,
+    },
   }
 
   if repr_ok {
@@ -185,6 +189,10 @@ fn assert_slot_repr(pf: PreparedFunc, lid_id: Int, expected: ReprKind) Result<Vo
         },
         .ErasedSum => case info.repr {
           .ErasedSum => true,
+          _ => false,
+        },
+        .MutVec(_) => case info.repr {
+          .MutVec(_) => true,
           _ => false,
         },
       }
