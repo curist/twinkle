@@ -60,7 +60,7 @@ pub fn lint_module(module: Module, env: ResolvedEnv, source: String) Vector<Lint
     case item {
       .Function(decl) => {
         out = .concat(lint_record_copy(decl, env))
-        out = .concat(lint_constant_fn(decl, source))
+        out = .concat(lint_constant_fn(decl, module, source))
         out = .concat(
           lint_block(
             decl.body,
@@ -109,10 +109,230 @@ fn is_numeric_literal(e: Expr) Bool {
   }
 }
 
+// References to a name across a module: the spans of every nullary call `name()`
+// (safe to repoint to a bare `name`), and whether `name` ever appears in any
+// OTHER position (a bare identifier, a punned record field, or a call with
+// arguments) — which makes converting the function to a constant unsafe.
+//
+// Over-counting `has_bare` only makes the constant-fn auto-fix refuse more often
+// (sound); MISSING an occurrence would wrongly convert, so the traversal below is
+// exhaustive over every expression position, including record-field punning.
+type NameRefs = .{ call_spans: Vector<Span>, has_bare: Bool }
+
+fn empty_name_refs() NameRefs {
+  .{ call_spans: [], has_bare: false }
+}
+
+fn merge_name_refs(a: NameRefs, b: NameRefs) NameRefs {
+  .{ call_spans: a.call_spans.concat(b.call_spans), has_bare: a.has_bare or b.has_bare }
+}
+
+fn refs_in_opt_expr(e: Expr?, name: String) NameRefs {
+  case e {
+    .Some(x) => refs_in_expr(x, name),
+    .None => empty_name_refs(),
+  }
+}
+
+fn refs_in_block(b: Block, name: String) NameRefs {
+  out := empty_name_refs()
+
+  for s in b.stmts {
+    out = .merge_name_refs(refs_in_stmt(s, name))
+  }
+
+  out.merge_name_refs(refs_in_opt_expr(b.tail, name))
+}
+
+fn refs_in_stmt(s: Stmt, name: String) NameRefs {
+  case s {
+    .Let(x) => refs_in_expr(x.value, name),
+    .For(x) => {
+      out := refs_in_opt_expr(x.iter, name)
+      out = .merge_name_refs(refs_in_opt_expr(x.condition, name))
+      out.merge_name_refs(refs_in_block(x.body, name))
+    },
+    .Return(x) => refs_in_opt_expr(x.value, name),
+    .Break(x) => refs_in_opt_expr(x.value, name),
+    .Continue(_) => empty_name_refs(),
+    .Defer(x) => refs_in_expr(x.expr, name),
+    .Expr(x) => refs_in_expr(x.expr, name),
+    .ErrorStmt(_) => empty_name_refs(),
+  }
+}
+
+fn refs_in_entries(entries: Vector<RecordEntry>, name: String) NameRefs {
+  out := empty_name_refs()
+
+  for e in entries {
+    case e.value {
+      .Some(v) => out = .merge_name_refs(refs_in_expr(v, name)),
+      // Punned field `.{ name }` is a bare variable reference to `name`.
+      .None => if e.name == name {
+        out = .merge_name_refs(.{ call_spans: [], has_bare: true })
+      },
+    }
+  }
+
+  out
+}
+
+fn refs_in_expr(expr: Expr, name: String) NameRefs {
+  case expr.kind {
+    .Ident(n) => if n == name {
+      .{ call_spans: [], has_bare: true }
+    } else {
+      empty_name_refs()
+    },
+    .IntLit(_) => empty_name_refs(),
+    .FloatLit(_) => empty_name_refs(),
+    .StringLit(_) => empty_name_refs(),
+    .BoolLit(_) => empty_name_refs(),
+    .ErrorExpr => empty_name_refs(),
+    .Unary(_, e) => refs_in_expr(e, name),
+    .Binary(_, l, r) => refs_in_expr(l, name).merge_name_refs(refs_in_expr(r, name)),
+    .Call(callee, args) => {
+      is_target_call := case callee.kind {
+        .Ident(n) => n == name and args.len() == 0,
+        _ => false,
+      }
+
+      // A clean `name()` call site: record its span, do NOT descend into the
+      // callee (that Ident is the call, not a bare use). Any other shape —
+      // `name(x)`, `name` as a value — reaches the callee Ident below and marks
+      // has_bare, refusing the fix.
+      out: NameRefs = if is_target_call {
+        .{ call_spans: [expr.span], has_bare: false }
+      } else {
+        refs_in_expr(callee, name)
+      }
+
+      for a in args {
+        out = .merge_name_refs(refs_in_expr(a, name))
+      }
+
+      out
+    },
+    .Field(base, _) => refs_in_expr(base, name),
+    .Index(base, idx) => refs_in_expr(base, name).merge_name_refs(refs_in_expr(idx, name)),
+    .BlockExpr(b) => refs_in_block(b, name),
+    .If(c, then_b, else_e) => {
+      out := refs_in_expr(c, name)
+      out = .merge_name_refs(refs_in_block(then_b, name))
+      out.merge_name_refs(refs_in_opt_expr(else_e, name))
+    },
+    .Case(scrut, arms) => {
+      out := refs_in_expr(scrut, name)
+
+      for arm in arms {
+        out = .merge_name_refs(refs_in_expr(arm.expr, name))
+      }
+
+      out
+    },
+    .Cond(arms) => {
+      out := empty_name_refs()
+
+      for arm in arms {
+        out = .merge_name_refs(refs_in_opt_expr(arm.condition, name))
+        out = .merge_name_refs(refs_in_expr(arm.body, name))
+      }
+
+      out
+    },
+    .Array(elems) => {
+      out := empty_name_refs()
+
+      for e in elems {
+        out = .merge_name_refs(refs_in_expr(e, name))
+      }
+
+      out
+    },
+    .Record(entries) => refs_in_entries(entries, name),
+    .NamedRecord(_, entries) => refs_in_entries(entries, name),
+    .Variant(_, args) => {
+      out := empty_name_refs()
+
+      for a in args {
+        out = .merge_name_refs(refs_in_expr(a, name))
+      }
+
+      out
+    },
+    .Closure(_, _, body) => refs_in_block(body, name),
+    .Collect(c) => {
+      out := refs_in_opt_expr(c.iter, name)
+      out = .merge_name_refs(refs_in_opt_expr(c.condition, name))
+      out.merge_name_refs(refs_in_block(c.body, name))
+    },
+    .StringInterp(parts) => {
+      out := empty_name_refs()
+
+      for p in parts {
+        case p {
+          .Interpolation(e) => out = .merge_name_refs(refs_in_expr(e, name)),
+          .Literal(_) => {},
+        }
+      }
+
+      out
+    },
+  }
+}
+
+fn collect_name_refs(module: Module, name: String) NameRefs {
+  out := empty_name_refs()
+
+  for item in module.items {
+    case item {
+      .Function(decl) => out = .merge_name_refs(refs_in_block(decl.body, name)),
+      .Stmt(stmt) => out = .merge_name_refs(refs_in_stmt(stmt, name)),
+      _ => {},
+    }
+  }
+
+  out
+}
+
+// A safe, module-local constant-fn auto-fix (edits) when the flagged function is
+// private (no cross-module callers the single-module linter cannot see), never
+// used as a value, and its definition textually precedes every call site (a
+// top-level `:=` constant is not forward-referenceable, unlike a hoisted `fn`).
+// Empty when any guard fails — the finding then stays report-only.
+fn constant_fn_edits(decl: FunctionDecl, module: Module, def_replacement: String) Vector<FixEdit> {
+  if decl.is_pub {
+    return []
+  }
+
+  refs := collect_name_refs(module, decl.name)
+
+  if refs.has_bare {
+    return []
+  }
+
+  for span in refs.call_spans {
+    if span.start < decl.span.end {
+      return []
+    }
+  }
+  edits: Vector<FixEdit> = [
+    FixEdit.{ start: decl.span.start, end: decl.span.end, replacement: def_replacement },
+  ]
+
+  for span in refs.call_spans {
+    edits = .append(FixEdit.{ start: span.start, end: span.end, replacement: decl.name })
+  }
+
+  edits
+}
+
 /// Flag a zero-argument function whose whole body is a single scalar constant —
-/// a module constant wearing a function costume. Report-only: safe call-site
-/// rewriting needs a closed-world reference graph Twinkle does not have.
-fn lint_constant_fn(decl: FunctionDecl, source: String) Vector<LintFinding> {
+/// a module constant wearing a function costume. Auto-fixable (def -> module
+/// constant + call sites drop `()`) only for a private function whose every use
+/// is a call after the definition; otherwise report-only, since a public
+/// function may have callers this single-module pass cannot see.
+fn lint_constant_fn(decl: FunctionDecl, module: Module, source: String) Vector<LintFinding> {
   if decl.params.len() > 0 or decl.type_params.len() > 0 {
     return []
   }
@@ -143,11 +363,12 @@ fn lint_constant_fn(decl: FunctionDecl, source: String) Vector<LintFinding> {
     .None => "${vis}${decl.name} := ${literal_text}",
   }
   [
-    report_finding(
-      decl.name_span,
-      "`${decl.name}` returns only a constant; declare a module constant instead: `${suggestion}` (call sites drop `()`)",
-      "constant-fn",
-    ),
+    .{
+      span: decl.name_span,
+      message: "`${decl.name}` returns only a constant; declare a module constant instead: `${suggestion}` (call sites drop `()`)",
+      rule: "constant-fn",
+      edits: constant_fn_edits(decl, module, suggestion),
+    },
   ]
 }
 

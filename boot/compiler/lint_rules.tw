@@ -63,6 +63,23 @@ pub fn describe(rule: String) RuleInfo? {
         ,
       },
     ),
+    "constant-fn" => .Some(
+      .{
+        brief: "a nullary function returning only a constant should be a module constant",
+        detailed:
+          \\A zero-argument function whose whole body is a single constant literal is
+          \\a module constant wearing a function costume. Declare it as a constant
+          \\(`name := lit`) and drop the `()` at call sites.
+          \\
+          \\Auto-fixable with `twk lint --fix-constant-fn` ONLY when it is safe from
+          \\a single-module view: the function is private (a `pub` one may have
+          \\callers in other modules this pass cannot see), is never used as a value
+          \\(only called), and its definition textually precedes every call site (a
+          \\top-level `:=` constant is not forward-referenceable, unlike a hoisted
+          \\`fn`). Otherwise the finding is report-only.
+        ,
+      },
+    ),
     "unreachable-code" => .Some(
       .{
         brief: "code after a diverging statement never runs",
