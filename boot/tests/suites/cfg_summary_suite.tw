@@ -2759,8 +2759,8 @@ pub fn suite() runner.Suite {
           Dict.new(),
         )
         for f in fresh.functions {
-          reused_f := try cfg.function_named(all_reused, f.name).ok_or("missing reused func")
-          try assert.equal(cfg.count_blocks(reused_f), cfg.count_blocks(f))
+          reused_f := try all_reused.function_named(f.name).ok_or("missing reused func")
+          try assert.equal(reused_f.count_blocks(), f.count_blocks())
         }
 
         // (2) Mark one function changed: it is rebuilt fresh + pruned, the rest are
@@ -2772,8 +2772,8 @@ pub fn suite() runner.Suite {
           changed,
         )
         for f in fresh.functions {
-          mixed_f := try cfg.function_named(mixed, f.name).ok_or("missing mixed func")
-          try assert.equal(cfg.count_blocks(mixed_f), cfg.count_blocks(f))
+          mixed_f := try mixed.function_named(f.name).ok_or("missing mixed func")
+          try assert.equal(mixed_f.count_blocks(), f.count_blocks())
         }
         .Ok({})
       },
