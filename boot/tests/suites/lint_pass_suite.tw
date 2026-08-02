@@ -533,6 +533,111 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "prefer-case-dispatch: fixes string equality dispatch with default",
+      fn() {
+        src := "fn f(method_name: String) Int? {\n  cond {\n    method_name == \"len\" => .Some(1),\n    method_name == \"at\" => .Some(2),\n    _ => .None,\n  }\n}\n"
+        fs := findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "prefer-case-dispatch")
+        try assert.equal(fs[0].edits.len(), 1)
+        try assert.equal(
+          apply_first_edit(src, fs[0]),
+          "fn f(method_name: String) Int? {\n  case method_name {\n    \"len\" => .Some(1),\n    \"at\" => .Some(2),\n    _ => .None,\n  }\n}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-case-dispatch: fixes integer equality dispatch without default",
+      fn() {
+        src := "fn f(c: Int) Int {\n  cond {\n    c == 123 => 1,\n    c == 91 => 2,\n  }\n}\n"
+        fs := findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "prefer-case-dispatch")
+        try assert.equal(
+          apply_first_edit(src, fs[0]),
+          "fn f(c: Int) Int {\n  case c {\n    123 => 1,\n    91 => 2,\n  }\n}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-case-dispatch: fixes variant equality dispatch",
+      fn() {
+        src := "fn f(kind: Kind) Int {\n  cond {\n    kind == .A => 1,\n    kind == .B(2) => 2,\n    _ => 0,\n  }\n}\n"
+        fs := findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "prefer-case-dispatch")
+        try assert.equal(
+          apply_first_edit(src, fs[0]),
+          "fn f(kind: Kind) Int {\n  case kind {\n    .A => 1,\n    .B(2) => 2,\n    _ => 0,\n  }\n}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-case-dispatch: fixes inline cond after case arrow",
+      fn() {
+        src := "fn f(tag: Tag, method_name: String) Int? {\n  case tag {\n    .Read => cond {\n      method_name == \"len\" => .Some(1),\n      _ => .None,\n    },\n    _ => .None,\n  }\n}\n"
+        fs := findings(src)
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].rule, "prefer-case-dispatch")
+        try assert.equal(
+          apply_first_edit(src, fs[0]),
+          "fn f(tag: Tag, method_name: String) Int? {\n  case tag {\n    .Read => case method_name {\n      \"len\" => .Some(1),\n      _ => .None,\n    },\n    _ => .None,\n  }\n}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-case-dispatch: does not flag real predicate dispatch",
+      fn() {
+        fs := findings(
+          "fn f(n: Int) Int {\n  cond {\n    n < 26 => 1,\n    n < 52 => 2,\n    _ => 3,\n  }\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-case-dispatch: does not fix bare identifier pattern comparison",
+      fn() {
+        fs := findings(
+          "fn f(x: Int, y: Int) Int {\n  cond {\n    x == y => 1,\n    _ => 0,\n  }\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-case-dispatch: does not flag mixed scrutinees",
+      fn() {
+        fs := findings(
+          "fn f(x: Int, y: Int) Int {\n  cond {\n    x == 1 => 1,\n    y == 2 => 2,\n    _ => 0,\n  }\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-case-dispatch: does not flag effectful scrutinee expressions",
+      fn() {
+        fs := findings(
+          "fn f() Int {\n  cond {\n    next() == 1 => 1,\n    next() == 2 => 2,\n    _ => 0,\n  }\n}\n",
+        )
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-case-dispatch: does not flag not-equals dispatch",
+      fn() {
+        fs := findings("fn f(x: Int) Int {\n  cond {\n    x != 1 => 1,\n    _ => 0,\n  }\n}\n")
+        try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
       "redundant-print-stringify: fixes single interpolation argument",
       fn() {
         src := "fn demo(foo: String) Void {\n  println(\"\${foo}\")\n}\n"

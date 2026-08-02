@@ -7,7 +7,9 @@
 //! `source` is the module's source text; structural lints that suggest a literal
 //! spelling (constant-fn) slice it by span rather than re-rendering AST values.
 
-use compiler.ast.{Block, Expr, ForStmt, FunctionDecl, LetStmt, Module, RecordEntry, Stmt, TypeExpr}
+use compiler.ast.{
+  Block, CondArm, Expr, ForStmt, FunctionDecl, LetStmt, Module, RecordEntry, Stmt, TypeExpr,
+}
 use compiler.resolver.{ResolvedEnv}
 use lib.source.report.{FixEdit}
 use lib.source.span.{Span}
@@ -724,6 +726,134 @@ fn multiline_string_finding(expr: Expr, value: String, source: String) LintFindi
   }
 }
 
+// ── prefer-case-dispatch ─────────────────────────────────────────────
+type CaseDispatchArm = .{ pattern: Expr?, body: Expr }
+
+type CaseDispatchCandidate = .{ scrutinee: Expr, arms: Vector<CaseDispatchArm> }
+
+type EqualityDispatchParts = .{ scrutinee: Expr, pattern: Expr }
+
+fn same_source_expr(a: Expr, b: Expr, source: String) Bool {
+  source.slice(a.span.start, a.span.end) == source.slice(b.span.start, b.span.end)
+}
+
+fn stable_case_scrutinee_expr(e: Expr) Bool {
+  case e.kind {
+    .Ident(_) => true,
+    .Field(base, _) => stable_case_scrutinee_expr(base),
+    _ => false,
+  }
+}
+
+fn case_pattern_expr(e: Expr) Bool {
+  case e.kind {
+    .IntLit(_) => true,
+    .StringLit(_) => true,
+    .BoolLit(_) => true,
+    .Variant(_, args) => {
+      for a in args {
+        if !case_pattern_expr(a) {
+          return false
+        }
+      }
+      true
+    },
+    _ => false,
+  }
+}
+
+fn equality_dispatch_parts(condition: Expr) EqualityDispatchParts? {
+  case condition.kind {
+    .Binary(.Eq, left, right) => if stable_case_scrutinee_expr(left) and case_pattern_expr(right) {
+      .Some(.{ scrutinee: left, pattern: right })
+    } else if stable_case_scrutinee_expr(right) and case_pattern_expr(left) {
+      .Some(.{ scrutinee: right, pattern: left })
+    } else {
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn case_dispatch_candidate(arms: Vector<CondArm>, source: String) CaseDispatchCandidate? {
+  converted: Vector<CaseDispatchArm> = []
+  scrutinee: Expr? = .None
+
+  for arm in arms {
+    case arm.condition {
+      .Some(c) => {
+        parts := try equality_dispatch_parts(c)
+
+        case scrutinee {
+          .Some(s) => if !same_source_expr(s, parts.scrutinee, source) {
+            return .None
+          },
+          .None => scrutinee = .Some(parts.scrutinee),
+        }
+
+        converted = .append(.{ pattern: .Some(parts.pattern), body: arm.body })
+      },
+      .None => converted = .append(.{ pattern: .None, body: arm.body }),
+    }
+  }
+
+  s := try scrutinee
+  .Some(.{ scrutinee: s, arms: converted })
+}
+
+fn leading_line_indent(source: String, start: Int) String {
+  line_start := start
+
+  for line_start > 0 and source.slice(line_start - 1, line_start) != "\n" {
+    line_start = line_start - 1
+  }
+
+  i := line_start
+
+  for i < source.len() {
+    ch := source.slice(i, i + 1)
+
+    if ch != " " and ch != "\t" {
+      return source.slice(line_start, i)
+    }
+
+    i = i + 1
+  }
+
+  source.slice(line_start, i)
+}
+
+fn render_case_dispatch(c: CaseDispatchCandidate, indent: String, source: String) String {
+  arm_indent := "${indent}  "
+  lines: Vector<String> = ["case ${source.slice(c.scrutinee.span.start, c.scrutinee.span.end)} {"]
+
+  for arm in c.arms {
+    lhs := case arm.pattern {
+      .Some(p) => source.slice(p.span.start, p.span.end),
+      .None => "_",
+    }
+    body := source.slice(arm.body.span.start, arm.body.span.end)
+    lines = .append("${arm_indent}${lhs} => ${body},")
+  }
+
+  lines = .append("${indent}}")
+  lines.join("\n")
+}
+
+fn prefer_case_dispatch_finding(expr: Expr, arms: Vector<CondArm>, source: String) LintFinding? {
+  indent := leading_line_indent(source, expr.span.start)
+  candidate := try case_dispatch_candidate(arms, source)
+  replacement := candidate.render_case_dispatch(indent, source)
+  .Some(
+    .{
+      span: expr.span,
+      message: "`cond` is doing equality dispatch over one value; use `case` instead",
+      rule: "prefer-case-dispatch",
+      edits: [FixEdit.{ start: expr.span.start, end: expr.span.end, replacement }],
+    },
+  )
+}
+
 fn lint_expr(expr: Expr, ctx: LintCtx) Vector<LintFinding> {
   case expr.kind {
     .BlockExpr(b) => lint_block(b, ctx),
@@ -747,6 +877,11 @@ fn lint_expr(expr: Expr, ctx: LintCtx) Vector<LintFinding> {
     },
     .Cond(arms) => {
       out: Vector<LintFinding> = []
+
+      case prefer_case_dispatch_finding(expr, arms, ctx.source) {
+        .Some(f) => out = .append(f),
+        .None => {},
+      }
 
       for arm in arms {
         case arm.condition {
