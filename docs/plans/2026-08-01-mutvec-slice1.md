@@ -248,22 +248,15 @@ git add -A && git commit -m "test(mutvec): full positive/negative region fixture
 git add -A && git commit -m "test(mutvec): self-host + regression gate green (flag off)"
 ```
 
-### Task 15: Performance validation (end-of-slice gate)
+### Task 15: Performance validation (end-of-slice gate) — DONE (commit `8ddae21e`)
 
 **Files:** `boot/bench/mutvec_slice1_bench.tw`
 
-- [ ] **Step 1: Write the bench.** Port the `mutvec_spike.tw` indexed-update shape as ordinary owned Twinkle (`collect` + `xs[i]=v` loop over n×k + return), timed with `@std.date`, at n ∈ {65536, 1048576}.
-- [ ] **Step 2: Baseline (flag off).** Run: `target/twk run boot/bench/mutvec_slice1_bench.tw` — record mutate times (this is the current `set_in_place` path).
-- [ ] **Step 3: MutVec (flag on).** Run: `TWINKLE_MUTVEC=1 target/twk run boot/bench/mutvec_slice1_bench.tw` — record mutate times.
-- [ ] **Step 4: Assert the win.** Flag-on mutate should be ~an order of magnitude faster at large n, tracking the spike (`spike-tier0-vector.md`: 15–35× on the isolated microbench; expect somewhat less end-to-end but clearly large). If not, stop and diagnose (likely the handle slot fell back to boxed repr — re-check Task 10).
-- [ ] **Step 5: Commit + record.**
-
-```bash
-git add boot/bench/mutvec_slice1_bench.tw
-git commit -m "bench(mutvec): slice 1 speedup validation vs set_in_place"
-```
-
-- [ ] **Step 6: Update the design/README status.** Note slice 1 landed (flag-gated), the measured speedup, and that the stage0 mirror + flag-on-by-default is the next slice, in `docs/plans/sound-uniqueness/storage/README.md` (S3 line) and `mutvec-slice1-design.md` status.
+- [x] **Step 1: Write the bench.** collect + `xs[i]=v` loop + return, timed with `@std.date`.
+- [x] **Step 2–3: Baseline vs MutVec.** Run both ways (env-gated).
+- [x] **Step 4: Result — NOT a uniform win (bench corrected the plan's premise).** The baseline is now typed `set_in_place_i64`, not boxed, so the spike's 15–35× does not carry over. Measured: MutVec's O(1) write vs the baseline's O(log n) trie walk, minus a one-time O(n) freeze-trie-build. Mutation-density crossover (n=1M): k=2M → 1.5× slower; k=20M → 2.5×; k=60M → 3.9×. n=65536, k=2M → 1.7×. So it is a strong win only for mutation-heavy owned vectors and a regression otherwise.
+- [x] **Step 5: Commit.** `8ddae21e`.
+- [x] **Step 6: Record status.** Crossover documented in the bench header, this plan (Phase 6 decision), and memory. The "stage0 mirror" next-slice note was wrong and is removed; Phase 6 (remove flag) is blocked by this bench (keep opt-in).
 
 ```bash
 git add docs/plans/sound-uniqueness/storage/README.md docs/plans/sound-uniqueness/storage/mutvec-slice1-design.md
@@ -272,7 +265,9 @@ git commit -m "docs(mutvec): record slice 1 landed (flag-gated) + next-slice not
 
 ---
 
-## Phase 6: Enable unconditionally (remove the flag)
+## Phase 6: Enable unconditionally (remove the flag) — BLOCKED by the bench
+
+> **Decision (from Phase 5 bench, 2026-08-02): do NOT remove the flag yet.** The bench (`boot/bench/mutvec_slice1_bench.tw`) shows MutVec trades an O(1) per-write for a one-time O(n) freeze-trie-build, so it **regresses build-heavy/low-mutation returned vectors** (n=1M, k=2M: 1.5× slower) while winning big on mutation-heavy ones (k=20M: 2.5×, k=60M: 3.9×). Enabling it unconditionally would regress low-mutation-density user code, which fails this phase's own Step 5 gate. Also: boot's own source claims **0** regions, so unconditional-on gives the compiler self-build nothing anyway. Keep MutVec **opt-in (flag-gated)** until either the freeze tax is reduced (e.g. the frozen PVecI64 adopting the flat backing without a full rebuild) or the detector becomes mutation-density-aware. The mechanics below stay valid for when/if that changes.
 
 Goal: retire `TWINKLE_MUTVEC` and run the pass always. **No stage0 mirror is needed** — the self-host fixed point is boot-compiler-only (the loop compares stage3 vs stage4, both boot-compiled; stage0's output, stage1, is never compared). stage0 (Rust) has no mutvec pass and never runs it; it only makes a functionally-correct stage1, and mutvec applies from stage2 onward. Convergence only requires the boot compiler's mutvec output to be deterministic, so `src/` stays untouched.
 
