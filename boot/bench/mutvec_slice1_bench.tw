@@ -1,0 +1,69 @@
+//! MutVec slice 1 — end-to-end speedup of a claimed region vs the current baseline.
+//!
+//! `build_and_mutate` is the exact shape the MutVec region pass claims: an owned
+//! `Vector<Int>` born from a `collect`, updated k times by index, then RETURNED
+//! (the single freeze boundary). Run it two ways to compare:
+//!
+//!   target/twk run boot/bench/mutvec_slice1_bench.tw                  # baseline
+//!   TWINKLE_MUTVEC=1 target/twk run boot/bench/mutvec_slice1_bench.tw # MutVec
+//!
+//! IMPORTANT baseline note: the baseline here is NOT boxed PVec. Sub-project A's
+//! typed indexed-write (`set_in_place_i64`) already makes this shape a flat i64
+//! in-place trie write. So this measures MutVec (direct flat-array write, no trie
+//! navigation) vs typed persistent in-place — expect a modest win, not the 15-35x
+//! the Tier-0 spike showed against boxed `set_in_place`.
+//!
+//! Measured crossover (this machine) — MutVec trades an O(1) per-write (vs the
+//! baseline's O(log n) trie walk) for a one-time O(n) freeze that rebuilds the
+//! PVecI64 trie from the flat backing. So the win is mutation-density-driven:
+//!
+//!   n=1048576  k=2M   baseline 45ms  MutVec 69ms   (1.5x SLOWER — freeze tax)
+//!   n=1048576  k=20M  baseline 182ms MutVec 72ms   (2.5x faster)
+//!   n=1048576  k=60M  baseline 486ms MutVec 125ms  (3.9x faster)
+//!   n=65536    k=2M   baseline 24ms  MutVec 15ms   (1.7x faster — cheap freeze)
+//!
+//! Consequence: MutVec is a strong win for mutation-heavy owned vectors but a
+//! regression for build-heavy/low-mutation returned vectors, so it must stay
+//! opt-in (flag-gated) rather than unconditionally on.
+
+use @std.date
+
+// Reproducible index stream (glibc LCG), so both runs touch identical indices.
+fn next_lcg(s: Int) Int {
+  s * 1103515245 + 12345 & 0x7fffffff
+}
+
+// collect-born owned Vector<Int> + k indexed updates + return. Claimed by the
+// MutVec pass under the flag; the typed `set_in_place_i64` path otherwise.
+fn build_and_mutate(n: Int, k: Int) Vector<Int> {
+  xs := collect i in range(n) {
+    i
+  }
+  s := 1
+  j := 0
+  for j < k {
+    s = next_lcg(s)
+    idx := s % n
+    xs[idx] = j
+    j = j + 1
+  }
+  xs
+}
+
+fn run(n: Int, k: Int) Void {
+  // warm one iteration so codegen/JIT effects do not skew the timed run
+  warm := build_and_mutate(1024, 1024)
+  warm_guard := warm[0]
+
+  t0 := date.now()
+  xs := build_and_mutate(n, k)
+  t1 := date.now()
+
+  guard := xs[0] + xs[n - 1] + xs[n / 2] + warm_guard - warm_guard
+  println("  n=${n}  k=${k}  build+mutate=${t1 - t0}ms  guard=${guard}")
+}
+
+println("MutVec slice 1 bench — collect + indexed-update + return")
+println("(baseline = typed set_in_place_i64; TWINKLE_MUTVEC=1 = MutVec)")
+run(65536, 2000000)
+run(1048576, 2000000)
