@@ -552,41 +552,38 @@ fn lint_expr(expr: Expr, ctx: LintCtx) Vector<LintFinding> {
       out = .concat(lint_block(c.body, ctx))
       out
     },
-    .Call(callee, args) => {
-      // A constant `.concat` chain (>=2 links) spanning lines is reported at the
-      // outermost node and its all-literal children are not walked further.
-      chain: ConcatChain? = case constant_concat_chain(expr) {
-        .Some(c) => if c.links >= 2 and c.value.contains("\n") and multiline_safe(c.value) {
-          .Some(c)
-        } else {
-          .None
-        },
-        .None => .None,
-      }
+    .Call(callee, args) => case constant_concat_chain(expr) {
+      // A constant string-literal `.concat` chain: fire iff it is a >=2-link,
+      // multi-line, `\\`-safe value; otherwise leave it ENTIRELY alone. Never
+      // descend into the chain to convert a sub-portion — that would emit a
+      // mangled `(\\...).concat(...)` hybrid (e.g. when the whole value is
+      // rejected for an interpolation but a prefix sub-chain is safe). Either
+      // way its children are all literals, so nothing else to lint inside.
+      .Some(c) => if c.links >= 2 and c.value.contains("\n") and multiline_safe(c.value) {
+        [multiline_string_finding(expr, c.value, ctx.source)]
+      } else {
+        []
+      },
+      .None => {
+        out: Vector<LintFinding> = []
 
-      case chain {
-        .Some(c) => [multiline_string_finding(expr, c.value, ctx.source)],
-        .None => {
-          out: Vector<LintFinding> = []
+        case callee.kind {
+          .Ident(name) => if args.len() == 1 and ctx.is_public_prelude_io_sink(name) {
+            case redundant_stringify_arg(args[0], ctx.source) {
+              .Some(arg) => out = .append(redundant_print_stringify_finding(expr, name, arg)),
+              .None => {},
+            }
+          },
+          _ => {},
+        }
 
-          case callee.kind {
-            .Ident(name) => if args.len() == 1 and ctx.is_public_prelude_io_sink(name) {
-              case redundant_stringify_arg(args[0], ctx.source) {
-                .Some(arg) => out = .append(redundant_print_stringify_finding(expr, name, arg)),
-                .None => {},
-              }
-            },
-            _ => {},
-          }
+        out = .concat(lint_expr(callee, ctx))
 
-          out = .concat(lint_expr(callee, ctx))
-
-          for a in args {
-            out = .concat(lint_expr(a, ctx))
-          }
-          out
-        },
-      }
+        for a in args {
+          out = .concat(lint_expr(a, ctx))
+        }
+        out
+      },
     },
     .Binary(_, l, r) => lint_expr(l, ctx).concat(lint_expr(r, ctx)),
     .Unary(_, e) => lint_expr(e, ctx),
