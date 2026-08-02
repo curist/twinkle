@@ -272,9 +272,18 @@ git commit -m "docs(mutvec): record slice 1 landed (flag-gated) + next-slice not
 
 ---
 
+## Phase 6: Enable unconditionally (remove the flag)
+
+Goal: retire `TWINKLE_MUTVEC` and run the pass always. **No stage0 mirror is needed** — the self-host fixed point is boot-compiler-only (the loop compares stage3 vs stage4, both boot-compiled; stage0's output, stage1, is never compared). stage0 (Rust) has no mutvec pass and never runs it; it only makes a functionally-correct stage1, and mutvec applies from stage2 onward. Convergence only requires the boot compiler's mutvec output to be deterministic, so `src/` stays untouched.
+
+- [ ] **Step 1:** Delete `mutvec_region_enabled()` in `codegen.tw` and call `mutvec_region.rewrite_module` unconditionally before `builder_region`.
+- [ ] **Step 2:** Remove the env read and any flag-off test scaffolding; the pass now runs when compiling boot itself, so boot's own eligible regions become mutvec.
+- [ ] **Step 3: Self-host gate.** `make bundle-cli` must still print `Fixed point reached` (stage3 == stage4) — this is the real test that the pass is deterministic and correct over the whole compiler, not a handful of fixtures. If it diverges or traps, a real bug in the pass surfaced on boot's own code; diagnose before landing.
+- [ ] **Step 4:** `make boot-test` + `make rust-test` green.
+- [ ] **Step 5 (decision gate):** confirm the census/bench show a net win on boot's own build (or at least no regression) before removing the flag for good — MutVec's ~2.6× is over the typed `set_in_place_i64` baseline, so the whole-compiler impact depends on how many of boot's hot regions are claimed. If the net is neutral/negative, keep the flag off-by-default instead of removing it, and record why.
+
 ## Deferred to later slices (explicitly out of scope)
 
-- **Enabling the codepath unconditionally** — the next slice removes the `TWINKLE_MUTVEC` env var entirely and always runs the pass (no flag). **No stage0 mirror is needed.** The self-host fixed point is boot-compiler-only: the loop compares stage3 vs stage4, both produced by boot-compiled compilers; stage0's output (stage1) is never in the comparison. stage0 (Rust) has no mutvec pass and never runs it — it only produces a functionally-correct stage1, which then applies mutvec from stage2 onward. Convergence just requires the boot compiler's mutvec output to be deterministic (it is), so `src/` stays untouched.
 - `Bool` / `Float` / boxed element families.
 - Thaw-from-`PVec` for param-sourced owned vectors, and owned-specialized mutable ABI across calls (S4).
 - Standalone append-only loops (no indexed-update) — stay on the boxed builder until the unified-pass convergence (Approach A).
