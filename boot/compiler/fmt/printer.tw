@@ -1034,7 +1034,15 @@ fn format_block(block: Block, tm: TriviaMap) Doc {
       trivia := non_blank_trivia(raw_trivia)
       has_author_blank = .append(block.stmts.len() > 0 and has_blank_in_trivia(raw_trivia))
       has_leading_comment = .append(block.stmts.len() > 0 and has_comment_in_trivia(raw_trivia))
-      tail_doc := format_expr(expr, tm)
+
+      // A block tail is a safe `\\` multi-line position: only the block's `}`
+      // follows (on its own line), so it cannot swallow a delimiter. Preserve the
+      // author's `\\` block here like the binding/return tail introducers do,
+      // instead of collapsing it to a single-line cooked string.
+      tail_doc := case multiline_block_doc_for(expr, tm) {
+        .Some(block_doc) => block_doc,
+        .None => format_expr(expr, tm),
+      }
 
       if trivia.len() > 0 {
         tail_doc = doc.concat([emit_trivia(trivia), tail_doc])
