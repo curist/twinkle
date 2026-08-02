@@ -47,6 +47,8 @@ type OpIds = .{
   append: FuncId,
   len: FuncId,
   make: FuncId,
+  builder_new: FuncId,
+  builder_push: FuncId,
   freeze_box: FuncId,
   freeze_i64: FuncId,
 }
@@ -57,6 +59,8 @@ fn resolve_ids(b: BuiltinRegistry) OpIds {
     append: builtins.id(b, "vector$append"),
     len: builtins.id(b, "vector$len"),
     make: builtins.id(b, "vector$make"),
+    builder_new: builtins.id(b, "vector$builder_new"),
+    builder_push: builtins.id(b, "vector$builder_push"),
     freeze_box: builtins.id(b, "vector$builder_freeze"),
     freeze_i64: builtins.id(b, "vector$builder_freeze_i64"),
   }
@@ -418,41 +422,73 @@ fn producer_source(h: LocalId, defs: Dict<Int, AnfOp>) LocalId? {
   }
 }
 
-// Swap a single op that references the handle (or defines the producer source)
-// to its mutvec twin. Non-matching ops pass through; control-flow ops recurse so
+// Region info threaded through the rewrite walk (ctx-first so the walk reads as
+// inherent-method steps). Exactly one producer field is populated per region:
+// `make_src` for MakeSeed; `builder_new_local` + `builder_aliases` + `freeze_temp`
+// for CollectSeed (the builder chain feeding the handle).
+type RwCtx = .{
+  h: LocalId,
+  ids: OpIds,
+  mids: MutVecIds,
+  make_src: Int, // Vector.make producer result local, else -1
+  builder_new_local: Int, // collect builder_new result local, else -1
+  builder_aliases: Dict<Int, Bool>, // collect builder-alias locals (freeze-arg init chain)
+  freeze_temp: Int, // collect builder_freeze result local (-> init passthrough), else -1
+}
+
+fn atom_in_set(a: Atom, ids: Dict<Int, Bool>) Bool {
+  case a {
+    .ALocal(l) => ids.has(l.id),
+    _ => false,
+  }
+}
+
+// Swap a single op that references the handle (or the producer/builder chain) to
+// its mutvec twin. Non-matching ops pass through; control-flow ops recurse so
 // in-region reads/sets nested in branches or the collect loop are covered.
-fn rewrite_op(op: AnfOp, local: LocalId, h: LocalId, src: LocalId, ids: OpIds, mids: MutVecIds) AnfOp {
+fn rewrite_op(ctx: RwCtx, op: AnfOp, local: LocalId) AnfOp {
   case op {
-    .ACall(.AGlobalFunc(f), args) => if local.id == src.id
-      and f.id == ids.make.id and args.len() == 2 {
-      .ACall(.AGlobalFunc(mids.make_i64), args)
-    } else if f.id == ids.set_unsafe.id and args.len() == 3 and atom_is_local(args[0], h) {
-      .ACall(.AGlobalFunc(mids.set_i64), args)
-    } else if f.id == ids.append.id and args.len() == 2 and atom_is_local(args[0], h) {
-      .ACall(.AGlobalFunc(mids.push_i64), args)
-    } else if f.id == ids.len.id and args.len() == 1 and atom_is_local(args[0], h) {
-      .ACall(.AGlobalFunc(mids.len_i64), args)
+    .ACall(.AGlobalFunc(f), args) => if local.id == ctx.make_src
+      and f.id == ctx.ids.make.id and args.len() == 2 {
+      // producer: Vector.make -> mutvec_make_i64 (same args; fill coerces i64)
+      .ACall(.AGlobalFunc(ctx.mids.make_i64), args)
+    } else if local.id == ctx.builder_new_local
+      and f.id == ctx.ids.builder_new.id and args.len() == 0 {
+      // producer: collect builder_new() -> mutvec_new_i64(0) (0 rounds to MIN_CAP)
+      .ACall(.AGlobalFunc(ctx.mids.new_i64), [.ALitInt(0)])
+    } else if local.id == ctx.freeze_temp and f.id == ctx.ids.freeze_box.id and args.len() == 1 {
+      // producer: collect builder_freeze(b) is elided — the handle IS the mutvec;
+      // slide materialization to the boundary. Passthrough the builder alias.
+      .AInit(args[0])
+    } else if f.id == ctx.ids.builder_push.id
+      and args.len() == 2 and atom_in_set(args[0], ctx.builder_aliases) {
+      // collect loop: builder_push(b, x) -> mutvec_push_i64(b, x)
+      .ACall(.AGlobalFunc(ctx.mids.push_i64), args)
+    } else if f.id == ctx.ids.set_unsafe.id and args.len() == 3 and atom_is_local(args[0], ctx.h) {
+      .ACall(.AGlobalFunc(ctx.mids.set_i64), args)
+    } else if f.id == ctx.ids.append.id and args.len() == 2 and atom_is_local(args[0], ctx.h) {
+      .ACall(.AGlobalFunc(ctx.mids.push_i64), args)
+    } else if f.id == ctx.ids.len.id and args.len() == 1 and atom_is_local(args[0], ctx.h) {
+      .ACall(.AGlobalFunc(ctx.mids.len_i64), args)
     } else {
       op
     },
-    .AIndex(base, idx, _, _) => if atom_is_local(base, h) and !atom_is_local(idx, h) {
-      .ACall(.AGlobalFunc(mids.get_i64), [base, idx])
+    .AIndex(base, idx, _, _) => if atom_is_local(base, ctx.h) and !atom_is_local(idx, ctx.h) {
+      .ACall(.AGlobalFunc(ctx.mids.get_i64), [base, idx])
     } else {
       op
     },
-    .AIf(cnd, t, e) => .AIf(
-      cnd,
-      rewrite_expr(t, h, src, ids, mids, -1),
-      rewrite_expr(e, h, src, ids, mids, -1),
-    ),
+    // Nested control flow is never the tail exit (detector rejects a handle
+    // terminal there), so recurse with freeze disabled (-1).
+    .AIf(cnd, t, e) => .AIf(cnd, ctx.rewrite_expr(t, -1), ctx.rewrite_expr(e, -1)),
     .AMatch(scrut, arms) => .AMatch(
       scrut,
       collect arm in arms {
-        AnfMatchArm.{ pattern: arm.pattern, body: rewrite_expr(arm.body, h, src, ids, mids, -1) }
+        AnfMatchArm.{ pattern: arm.pattern, body: ctx.rewrite_expr(arm.body, -1) }
       },
     ),
-    .ALoop(body) => .ALoop(rewrite_expr(body, h, src, ids, mids, -1)),
-    .ADefer(body) => .ADefer(rewrite_expr(body, h, src, ids, mids, -1)),
+    .ALoop(body) => .ALoop(ctx.rewrite_expr(body, -1)),
+    .ADefer(body) => .ADefer(ctx.rewrite_expr(body, -1)),
     _ => op,
   }
 }
@@ -461,8 +497,8 @@ fn rewrite_op(op: AnfOp, local: LocalId, h: LocalId, src: LocalId, ids: OpIds, m
 // handle (the detector proved exactly one such terminal, at the top-level tail).
 // `freeze_local < 0` means "not at the top-level tail" (inside a branch/loop),
 // where the detector guarantees no handle-carrying terminal appears.
-fn freeze_at_exit(a: Atom, ret: Bool, h: LocalId, mids: MutVecIds, freeze_local: Int) AnfExpr {
-  if freeze_local < 0 or !atom_is_local(a, h) {
+fn freeze_at_exit(ctx: RwCtx, a: Atom, ret: Bool, freeze_local: Int) AnfExpr {
+  if freeze_local < 0 or !atom_is_local(a, ctx.h) {
     if ret {
       .Return(.Some(a))
     } else {
@@ -473,7 +509,7 @@ fn freeze_at_exit(a: Atom, ret: Bool, h: LocalId, mids: MutVecIds, freeze_local:
     frozen: Atom = .ALocal(fresh)
     .Let(
       fresh,
-      .ACall(.AGlobalFunc(mids.freeze_i64), [.ALocal(h)]),
+      .ACall(.AGlobalFunc(ctx.mids.freeze_i64), [.ALocal(ctx.h)]),
       if ret {
         .Return(.Some(frozen))
       } else {
@@ -483,29 +519,146 @@ fn freeze_at_exit(a: Atom, ret: Bool, h: LocalId, mids: MutVecIds, freeze_local:
   }
 }
 
-fn rewrite_expr(
-  e: AnfExpr,
-  h: LocalId,
-  src: LocalId,
-  ids: OpIds,
-  mids: MutVecIds,
-  freeze_local: Int,
-) AnfExpr {
+fn rewrite_expr(ctx: RwCtx, e: AnfExpr, freeze_local: Int) AnfExpr {
   case e {
     .Let(local, op, body) => .Let(
       local,
-      rewrite_op(op, local, h, src, ids, mids),
-      rewrite_expr(body, h, src, ids, mids, freeze_local),
+      ctx.rewrite_op(op, local),
+      ctx.rewrite_expr(body, freeze_local),
     ),
-    .Atom(a) => freeze_at_exit(a, false, h, mids, freeze_local),
-    .Return(.Some(a)) => freeze_at_exit(a, true, h, mids, freeze_local),
+    .Atom(a) => ctx.freeze_at_exit(a, false, freeze_local),
+    .Return(.Some(a)) => ctx.freeze_at_exit(a, true, freeze_local),
     _ => e,
   }
 }
 
-// Lower a single MakeSeed region. `freeze_local` is a pre-allocated fresh local
-// for the boundary freeze result (a PVecI64). Returns the rewritten function.
-fn rewrite_make_region(
+// ── Post-rewrite retyping of mutvec_push result locals ──
+// mutvec_push_i64 returns the handle (MutVecI64); the boxed builder_push it
+// replaces returned Void, so the collect loop's discarded push-result binding
+// (and its init copies) carry a Void mono and get no slot. Retype them to
+// Vector<Int> so a slot is allocated and mutvec_repr marks it MutVec(I64).
+fn collect_push_results(e: AnfExpr, mids: MutVecIds, acc: Dict<Int, Bool>) Dict<Int, Bool> {
+  case e {
+    .Let(local, op, body) => collect_push_results(
+      body,
+      mids,
+      collect_push_results_op(local, op, mids, acc),
+    ),
+    _ => acc,
+  }
+}
+
+fn collect_push_results_op(local: LocalId, op: AnfOp, mids: MutVecIds, acc: Dict<Int, Bool>) Dict<
+  Int,
+  Bool,
+> {
+  case op {
+    .ACall(.AGlobalFunc(f), _) => if f.id == mids.push_i64.id {
+      acc[local.id] = true
+      acc
+    } else {
+      acc
+    },
+    .AInit(.ALocal(s)) => if acc.has(s.id) {
+      acc[local.id] = true
+      acc
+    } else {
+      acc
+    },
+    .AIf(_, t, e) => collect_push_results(e, mids, collect_push_results(t, mids, acc)),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        acc = collect_push_results(arm.body, mids, acc)
+      }
+      acc
+    },
+    .ALoop(b) => collect_push_results(b, mids, acc),
+    .ADefer(b) => collect_push_results(b, mids, acc),
+    _ => acc,
+  }
+}
+
+// Trace the builder-alias init chain back from the freeze argument to its
+// builder_new, gathering every alias local. `.None` if the shape is unexpected.
+type BuilderTrace = .{ aliases: Dict<Int, Bool>, new_local: Int }
+
+fn trace_builder(cur: Int, defs: Dict<Int, AnfOp>, ids: OpIds, aliases: Dict<Int, Bool>) BuilderTrace? {
+  aliases[cur] = true
+  case defs.get(cur) {
+    .Some(op) => case op {
+      .AInit(.ALocal(prev)) => trace_builder(prev.id, defs, ids, aliases),
+      .ACall(.AGlobalFunc(g), a) => if g.id == ids.builder_new.id and a.len() == 0 {
+        .Some(.{ aliases, new_local: cur })
+      } else {
+        .None
+      },
+      _ => .None,
+    },
+    .None => .None,
+  }
+}
+
+// Build the rewrite context for a claimable region, or `.None` if its concrete
+// ANF shape has drifted from what the detector expects (persistent fallback).
+fn build_ctx(r: MutVecRegion, defs: Dict<Int, AnfOp>, ids: OpIds, mids: MutVecIds) RwCtx? {
+  empty: RwCtx = .{
+    h: r.handle,
+    ids,
+    mids,
+    make_src: -1,
+    builder_new_local: -1,
+    builder_aliases: Dict.new(),
+    freeze_temp: -1,
+  }
+  case r.producer {
+    .MakeSeed => {
+      src := case producer_source(r.handle, defs) {
+        .Some(s) => s,
+        .None => return .None,
+      }
+      case defs.get(src.id) {
+        .Some(.ACall(.AGlobalFunc(g), a)) => if g.id != ids.make.id or a.len() != 2 {
+          return .None
+        },
+        _ => return .None,
+      }
+      empty.make_src = src.id
+      .Some(empty)
+    },
+    .CollectSeed => {
+      freeze_temp := case producer_source(r.handle, defs) {
+        .Some(s) => s,
+        .None => return .None,
+      }
+
+      // freeze_temp's op must be the boxed builder_freeze(builder_arg).
+      builder_arg := case defs.get(freeze_temp.id) {
+        .Some(.ACall(.AGlobalFunc(g), a)) => if g.id == ids.freeze_box.id and a.len() == 1 {
+          case a[0] {
+            .ALocal(b) => b,
+            _ => return .None,
+          }
+        } else {
+          return .None
+        },
+        _ => return .None,
+      }
+      trace := case trace_builder(builder_arg.id, defs, ids, Dict.new()) {
+        .Some(t) => t,
+        .None => return .None,
+      }
+      empty.builder_new_local = trace.new_local
+      empty.builder_aliases = trace.aliases
+      empty.freeze_temp = freeze_temp.id
+      .Some(empty)
+    },
+    .ArrayLitSeed => .None, // not lowered yet
+  }
+}
+
+// Lower a single region. `freeze_local` is a pre-allocated fresh local for the
+// boundary freeze result (a PVecI64).
+fn rewrite_region(
   f: AnfFunctionDef,
   r: MutVecRegion,
   ids: OpIds,
@@ -513,19 +666,15 @@ fn rewrite_make_region(
   freeze_local: Int,
 ) AnfFunctionDef {
   defs := collect_defs(f.body, Dict.new())
-  src := case producer_source(r.handle, defs) {
-    .Some(s) => s,
+  ctx := case r.build_ctx(defs, ids, mids) {
+    .Some(c) => c,
     .None => return f, // shape drifted — persistent fallback
   }
-
-  // Defensive: the source must actually be a Vector.make call.
-  case defs.get(src.id) {
-    .Some(.ACall(.AGlobalFunc(g), a)) => if g.id != ids.make.id or a.len() != 2 {
-      return f
-    },
-    _ => return f,
+  new_body := ctx.rewrite_expr(f.body, freeze_local)
+  results := collect_push_results(new_body, mids, Dict.new())
+  for rid in results.keys() {
+    f.op_result_mono[rid] = MonoType.Vector(.Int)
   }
-  new_body := rewrite_expr(f.body, r.handle, src, ids, mids, freeze_local)
   f.op_result_mono[freeze_local] = MonoType.Vector(.Int)
   f.body = new_body
   f
@@ -533,18 +682,16 @@ fn rewrite_make_region(
 
 fn rewrite_func(f: AnfFunctionDef, regions: Vector<MutVecRegion>, ids: OpIds, mids: MutVecIds) AnfFunctionDef {
   base := next_local_id(f)
-  cur := f
   i := 0
   for r in regions {
     case r.producer {
-      // Increment 1: MakeSeed only. CollectSeed / ArrayLitSeed regions are left
-      // to the persistent path until the builder-chain retype lands.
-      .MakeSeed => cur = rewrite_make_region(cur, r, ids, mids, base + i),
-      _ => {},
+      .MakeSeed => f = rewrite_region(f, r, ids, mids, base + i),
+      .CollectSeed => f = rewrite_region(f, r, ids, mids, base + i),
+      .ArrayLitSeed => {},
     }
     i = i + 1
   }
-  cur
+  f
 }
 
 fn regions_for(all: Vector<MutVecRegion>, func_id: FuncId) Vector<MutVecRegion> {

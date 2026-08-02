@@ -407,11 +407,19 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "rewrite: collect region is NOT lowered yet (increment 1 is make-only)",
+      "rewrite: collect region lowers builder chain + set + single boundary freeze",
       fn() {
         src := "fn f(n: Int) Vector<Int> {\n  xs := collect i in range(n) { i }\n  xs[0] = 42\n  xs\n}\nprintln(f(5).len().to_string())\n"
-        try assert.equal(rewritten_calls(src, "vector$__mutvec_set_i64"), 0)
-        try assert.equal(rewritten_calls(src, "vector$__mutvec_freeze_i64"), 0)
+
+        // builder_new -> mutvec_new_i64, loop builder_push -> mutvec_push_i64
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_new_i64"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_push_i64"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_set_i64"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_freeze_i64"), 1)
+
+        // the boxed builder chain + set are fully replaced on the claimed handle
+        try assert.equal(rewritten_calls(src, "vector$builder_freeze"), 0)
+        try assert.equal(rewritten_calls(src, "vector$set_unsafe"), 0)
         .Ok({})
       },
     )
