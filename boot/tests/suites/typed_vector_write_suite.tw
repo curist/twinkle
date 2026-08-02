@@ -153,6 +153,100 @@ fn dict_escape_src() String {
     .concat("println(f(4).len().to_string())\n")
 }
 
+fn set_append_src() String {
+  "fn typed_set_append(n: Int) Int {\n"
+    .concat("  xs := collect i in range(n) { i }\n")
+    .concat("  xs[0] = 42\n")
+    .concat("  xs = xs.append(99)\n")
+    .concat("  xs[1] + xs[n]\n")
+    .concat("}\n")
+    .concat("println(typed_set_append(5).to_string())\n")
+}
+
+fn append_only_src() String {
+  "fn append_only_acc(n: Int) Int {\n"
+    .concat("  acc: Vector<Int> = []\n")
+    .concat("  i := 0\n")
+    .concat("  for i < n {\n")
+    .concat("    acc = acc.append(i)\n")
+    .concat("    i = i + 1\n")
+    .concat("  }\n")
+    .concat("  acc[n - 1]\n")
+    .concat("}\n")
+    .concat("println(append_only_acc(5).to_string())\n")
+}
+
+fn float_set_append_src() String {
+  "fn float_set_append(n: Int) Float {\n"
+    .concat("  xs := collect i in range(n) { 1.0 }\n")
+    .concat("  xs[0] = 1.5\n")
+    .concat("  xs = xs.append(2.5)\n")
+    .concat("  xs[n]\n")
+    .concat("}\n")
+    .concat("println(float_set_append(4).to_string())\n")
+}
+
+fn record_escape_set_append_src() String {
+  "type Holder = .{ xs: Vector<Int> }\n"
+    .concat("fn record_escape_set_append(n: Int) Int {\n")
+    .concat("  xs := collect i in range(n) { i }\n")
+    .concat("  xs[0] = 1\n")
+    .concat("  xs = xs.append(9)\n")
+    .concat("  h := Holder.{ xs: xs }\n")
+    .concat("  h.xs[0] + h.xs[n]\n")
+    .concat("}\n")
+    .concat("println(record_escape_set_append(4).to_string())\n")
+}
+
+fn linked_wat_for_src(src: String) Result<String, String> {
+  artifacts := try pipeline.compile_source(src)
+  .Ok(pipeline.emit_wat(artifacts))
+}
+
+fn user_func_wat(src: String, name: String) Result<String, String> {
+  wat := try linked_wat_for_src(src)
+  out := ""
+  found := false
+  in_func := false
+
+  for line in wat.lines() {
+    if in_func {
+      if line.starts_with("  (func ") {
+        return .Ok(out)
+      }
+      out = .concat(line).concat("\n")
+    } else if line.contains("(func $user__$") and line.contains("_".concat(name).concat(" ")) {
+      found = true
+      in_func = true
+      out = .concat(line).concat("\n")
+    }
+  }
+
+  if found {
+    .Ok(out)
+  } else {
+    .Err("missing user WAT function for ${name}")
+  }
+}
+
+fn assert_call_present(fn_wat: String, wasm_name: String) Result<Void, String> {
+  assert.str_contains(fn_wat, "call $".concat(wasm_name))
+}
+
+fn assert_call_absent_exact(fn_wat: String, wasm_name: String) Result<Void, String> {
+  token := "call $".concat(wasm_name)
+  try assert.is_false(fn_wat.contains(token.concat("\n")))
+  try assert.is_false(fn_wat.contains(token.concat(")")))
+  .Ok({})
+}
+
+fn assert_boxed_pvec_absent(fn_wat: String) Result<Void, String> {
+  try assert.is_false(fn_wat.contains("$rt_types__PVec)"))
+  try assert.is_false(fn_wat.contains("$rt_types__PVec "))
+  try assert.is_false(fn_wat.contains("$rt_types__PVec\n"))
+  .Ok({})
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("typed vector write")
@@ -203,6 +297,47 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "collect indexed set plus append emits typed vector write/read/push path",
+      fn() {
+        fn_wat := try user_func_wat(set_append_src(), "typed_set_append")
+        try assert.str_contains(fn_wat, "$rt_types__PVecI64)")
+        try assert_call_present(fn_wat, "rt_arr__push_i64")
+        try assert_call_present(fn_wat, "rt_arr__set_in_place_i64")
+        try assert_call_present(fn_wat, "rt_arr__get_i64")
+        try assert_call_absent_exact(fn_wat, "rt_arr__push")
+        try assert_call_absent_exact(fn_wat, "rt_arr__get")
+        try assert_boxed_pvec_absent(fn_wat)
+        .Ok({})
+      },
+    )
+    .test(
+      "append-only accumulator stays boxed",
+      fn() {
+        fn_wat := try user_func_wat(append_only_src(), "append_only_acc")
+        try assert_call_absent_exact(fn_wat, "rt_arr__push_i64")
+        try assert.is_false(fn_wat.contains("$rt_types__PVecI64"))
+        .Ok({})
+      },
+    )
+    .test(
+      "Vector<Float> set plus append stays boxed",
+      fn() {
+        fn_wat := try user_func_wat(float_set_append_src(), "float_set_append")
+        try assert_call_absent_exact(fn_wat, "rt_arr__push_i64")
+        try assert.is_false(fn_wat.contains("$rt_types__PVecI64"))
+        .Ok({})
+      },
+    )
+    .test(
+      "set plus append vector stored in a record stays boxed",
+      fn() {
+        fn_wat := try user_func_wat(record_escape_set_append_src(), "record_escape_set_append")
+        try assert_call_absent_exact(fn_wat, "rt_arr__push_i64")
+        try assert.is_false(fn_wat.contains("$rt_types__PVecI64"))
+        .Ok({})
+      },
+    )
+    .test(
       "owned indexed set (in-place) reads back; untouched slots unchanged",
       fn() {
         xs := collect i in range(5) {
@@ -240,6 +375,34 @@ pub fn suite() runner.Suite {
         try assert.equal(xs[1500], 777)
         try assert.equal(xs[1499], 1499)
         try assert.equal(ys[1500], 1500) // functional set: alias unchanged
+        .Ok({})
+      },
+    )
+    .test(
+      "set plus append crosses the tail boundary",
+      fn() {
+        xs := collect i in range(32) {
+          i
+        }
+        xs[0] = 7
+        xs = .append(1234)
+        try assert.equal(xs[32], 1234)
+        try assert.equal(xs.len(), 33)
+        try assert.equal(xs[0], 7)
+        .Ok({})
+      },
+    )
+    .test(
+      "set plus append crosses the new-root boundary",
+      fn() {
+        xs := collect i in range(1056) {
+          i
+        }
+        xs[0] = 7
+        xs = .append(4321)
+        try assert.equal(xs[1056], 4321)
+        try assert.equal(xs.len(), 1057)
+        try assert.equal(xs[0], 7)
         .Ok({})
       },
     )

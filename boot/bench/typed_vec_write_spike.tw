@@ -1,18 +1,19 @@
 //! Typed Vector<Int> indexed-write promotion (sub-project A) perf spike.
 //!
 //! The exact shape the promotion targets: an owned `Vector<Int>` built by
-//! `collect`, updated in place k times via `xs[i] = v`, then read back n times,
-//! then returned. Run it two ways to isolate the win:
+//! `collect`, updated in place k times via `xs[i] = v`, appended to persistently,
+//! read back, then returned. Run it two ways to isolate the win:
 //!
 //!   TWINKLE_TYPED_VEC_WRITE=0 target/twk run boot/bench/typed_vec_write_spike.tw   # boxed
 //!   target/twk run boot/bench/typed_vec_write_spike.tw                              # typed
 //!
 //! Flag-off keeps the boxed PVec path (set_in_place + boxed `anyref` leaves, a
 //! BoxedInt pointer-chase per read). Flag-on promotes to PVecI64: unboxed i64
-//! leaf storage for the writes and, more importantly, typed `get_i64` reads with
-//! no pointer-chase. The lever is keeping the vector typed end to end so the read
-//! loop is flat; the write itself is flat-i64 storage, not a boxing removal (the
-//! set value is boxed on both paths).
+//! leaf storage for the writes/appends and, more importantly, typed `get_i64`
+//! reads with no pointer-chase. The lever is keeping the vector typed end to end
+//! so the read loop is flat; the write itself is flat-i64 storage, not a boxing
+//! removal. The appended value is still boxed by the ABI and unboxed inside the
+//! typed push.
 
 use @std.date
 
@@ -21,7 +22,7 @@ fn next_lcg(s: Int) Int {
   s * 1103515245 + 12345 & 0x7fffffff
 }
 
-fn bench(n: Int, k: Int) Void {
+fn bench(n: Int, k: Int) Int {
   t0 := date.now()
   xs := collect i in range(n) {
     i
@@ -39,26 +40,39 @@ fn bench(n: Int, k: Int) Void {
   }
   t2 := date.now()
 
-  // Read loop: the typed-read hot path. Two passes over n to weight reads.
+  // A few persistent appends keep the same typed vector group alive without
+  // claiming the ABI-level element box disappears.
+  app := 0
+  for app < 8 {
+    xs = .append(s + app)
+    app = app + 1
+  }
+  t3 := date.now()
+  total := n + 8
+
+  // Read loop: the typed-read hot path. Two passes over the appended vector to
+  // weight reads and make the appended tail observable.
   acc := 0
   pass := 0
   for pass < 2 {
     r := 0
-    for r < n {
+    for r < total {
       acc = acc + xs[r]
       r = r + 1
     }
     pass = pass + 1
   }
-  t3 := date.now()
+  t4 := date.now()
 
   build_ms := t1 - t0
   write_ms := t2 - t1
-  read_ms := t3 - t2
+  append_ms := t3 - t2
+  read_ms := t4 - t3
+  guard := acc - acc + xs[0] + xs[total - 1]
   println(
-    "  n=${n} k=${k}  build=${build_ms}ms  write=${write_ms}ms  read=${read_ms}ms  guard=${acc - acc
-      + xs[0]}",
+    "  n=${n} k=${k}  build=${build_ms}ms  write=${write_ms}ms  append=${append_ms}ms  read=${read_ms}ms  guard=${guard}",
   )
+  guard
 }
 
 println("── typed indexed-write read+write spike ──")
