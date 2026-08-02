@@ -2523,7 +2523,7 @@ fn do_set_i64_fn() FuncDef {
           .LocalGet(1),
           .RefCast(false, .Named(t_ARRAY_I64)),
           .LocalSet(7),
-          .RefNull(.None_),
+          .I64Const(0),
           .LocalGet(7),
           .RefAsNonNull,
           .ArrayLen,
@@ -2628,7 +2628,7 @@ fn set_i64_fn() FuncDef {
       .If(
         .Some(pvec_i64_ref()),
         [
-          .RefNull(.None_),
+          .I64Const(0),
           .LocalGet(0),
           .RefAsNonNull,
           .StructGet(t_PVEC_I64, pv_TAIL),

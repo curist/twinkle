@@ -175,7 +175,7 @@ pub fn prepare_backend_with_mutable_decisions(
   r2 := date.now()
   typed_fields := repr.typed_fields
   typed_payloads := repr.typed_payloads
-  funcs3 := route_typed_vectors(
+  routed := route_typed_vectors(
     funcs_t,
     builtins,
     typed_fields,
@@ -183,6 +183,7 @@ pub fn prepare_backend_with_mutable_decisions(
     repr.capture_abi,
     repr.param_abi.typeable_return,
   )
+  funcs3 := routed.funcs
   r3 := date.now()
 
   if timed {

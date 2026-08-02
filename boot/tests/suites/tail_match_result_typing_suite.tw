@@ -155,7 +155,7 @@ pub fn suite() runner.Suite {
           repr0.typed_payloads,
           repr0.capture_abi,
           repr0.param_abi.typeable_return,
-        )
+        ).funcs
         try assert.equal(repr0.param_abi.typeable_return.keys().len(), 0)
 
         // With tailify: the live arm becomes a Return, as_ints gets a PVecI64
@@ -169,7 +169,7 @@ pub fn suite() runner.Suite {
           repr1.typed_payloads,
           repr1.capture_abi,
           repr1.param_abi.typeable_return,
-        )
+        ).funcs
 
         try assert.ok(
           repr1.param_abi.typeable_return.keys().len() >= 1,

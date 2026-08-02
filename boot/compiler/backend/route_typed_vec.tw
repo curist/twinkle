@@ -13,6 +13,8 @@
 //! Runs after assign_repr_for_module (so wasm_type overrides stick and push
 //! elements are already boxed — the typed builder_push takes the boxed element).
 
+use @std.proc
+
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, PreparedPattern, ReprKind, SlotId, SlotInfo,
 }
@@ -42,9 +44,22 @@ pub type RouteIds = .{
   make: Int,
   len: Int,
   gather: Int,
+  // Boxed `vector$set_unsafe` id — the family-agnostic call routing swaps to the
+  // family's typed `set` (i64 only). `-1` under the TWINKLE_TYPED_VEC_WRITE=0
+  // kill-switch, disabling every indexed-write branch (accept / write-result
+  // fixpoint / rebind exception / rewrite swap / site reporting).
+  set_unsafe: Int,
 }
 
 pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
+  set_unsafe := case proc.env("TWINKLE_TYPED_VEC_WRITE") {
+    .Some(v) => if v == "0" {
+      -1
+    } else {
+      builtins.id("vector$set_unsafe").id
+    },
+    .None => builtins.id("vector$set_unsafe").id,
+  }
   .{
     builder_new: builtins.id("vector$builder_new").id,
     builder_push: builtins.id("vector$builder_push").id,
@@ -52,8 +67,18 @@ pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
     make: builtins.id("vector$make").id,
     len: builtins.id("vector$len").id,
     gather: builtins.id("vector$gather").id,
+    set_unsafe,
   }
 }
+
+// A set site routing swapped `set_unsafe -> set_i64`, keyed by the emit "site"
+// (func id + the set call's RESULT local, per mutable_select.site_key). Phase 3's
+// decision remap consumes these to retarget the owned-site in-place decision to
+// set_in_place_i64.
+pub type SwappedSetSite = .{ func_id: Int, result_local: Int }
+
+// Routed module: the rewritten funcs plus every swapped set site.
+pub type RoutedModule = .{ funcs: Vector<PreparedFunc>, swapped_sites: Vector<SwappedSetSite> }
 
 type FamilyIds = .{
   fam: ElemFamily,
@@ -63,6 +88,10 @@ type FamilyIds = .{
   len: Int,
   get: Int,
   gather: Int,
+  // Typed functional `set` id, populated only for the i64 family; `-1` for bool
+  // (no typed set in this sub-project). `rewrite_op` guards on `set >= 0`, so the
+  // bool family can never swap a `set_unsafe`.
+  set: Int,
 }
 
 fn families_ids(builtins: BuiltinRegistry) Vector<FamilyIds> {
@@ -75,6 +104,11 @@ fn families_ids(builtins: BuiltinRegistry) Vector<FamilyIds> {
       len: builtins.id("vector$len${f.suffix}").id,
       get: builtins.id("vector$get${f.suffix}").id,
       gather: builtins.id("vector$gather${f.suffix}").id,
+      set: if f.mono_key == "vec_i64" {
+        builtins.id("vector$set_i64").id
+      } else {
+        -1
+      },
     }
   }
 }
@@ -86,12 +120,18 @@ pub fn route_typed_vectors(
   typed_payloads: Dict<String, Bool>,
   capture_abi: Dict<String, Dict<Int, String>>,
   typeable_return: Dict<String, String>,
-) Vector<PreparedFunc> {
+) RoutedModule {
   ids := route_ids(builtins)
+  routed_funcs: Vector<PreparedFunc> = []
+  swapped_sites: Vector<SwappedSetSite> = []
 
-  collect pf in funcs {
-    route_func(pf, ids, builtins, typed_fields, typed_payloads, capture_abi, typeable_return)
+  for pf in funcs {
+    r := route_func(pf, ids, builtins, typed_fields, typed_payloads, capture_abi, typeable_return)
+    routed_funcs = .append(r.func)
+    swapped_sites = .concat(r.sites)
   }
+
+  .{ funcs: routed_funcs, swapped_sites }
 }
 
 // Slot ids bound directly from a call to a function whose return family matches
@@ -460,8 +500,39 @@ fn compute_eligible_v(
     gather_steps = gather_steps + 1
   }
 
+  // 2e. Indexed-write results. A `set_unsafe(base, i, x)` whose base is already
+  //     eligible produces a PVecI64 result (set_i64/set_in_place_i64 return the
+  //     family PVec), so its result slot must join eligible_v — else the ACall
+  //     result store is an un-coerced PVecI64 -> PVec (fact 9-i). Runs against the
+  //     fully-populated eligible_v so it covers every eligible base source
+  //     (builder candidate, typed field/payload read, typed-return call, gather
+  //     result). A write result can be the base of a later set, so iterate.
+  //     i64-family + kill-switch gated; every result added here corresponds to a
+  //     set rewrite_op will swap (same base-in-eligible_v guard).
+  if fi.fam.mono_key == "vec_i64" and ids.set_unsafe >= 0 {
+    write_changed := true
+    write_steps := 0
+
+    for write_changed and write_steps < 512 {
+      write_changed = false
+
+      for sid in collect_set_results(pf.body, eligible_v, ids.set_unsafe, []) {
+        for a in aliases_for(sid, copy_map).keys() {
+          if !eligible_v.has(a) {
+            eligible_v[a] = true
+            write_changed = true
+          }
+        }
+      }
+
+      write_steps = write_steps + 1
+    }
+  }
+
   .{ eligible_v, eligible_b, has_phys_return }
 }
+
+type FuncRoute = .{ func: PreparedFunc, sites: Vector<SwappedSetSite> }
 
 // Route one function through every element family in turn. Each pass threads the
 // active family's typed builtin ids and PVec type; families are independent
@@ -476,11 +547,12 @@ fn route_func(
   typed_payloads: Dict<String, Bool>,
   capture_abi: Dict<String, Dict<Int, String>>,
   typeable_return: Dict<String, String>,
-) PreparedFunc {
+) FuncRoute {
   cur := pf
+  sites: Vector<SwappedSetSite> = []
 
   for fi in families_ids(builtins) {
-    cur = route_func_family(
+    r := route_func_family(
       cur,
       fi,
       ids,
@@ -490,9 +562,11 @@ fn route_func(
       capture_abi,
       typeable_return,
     )
+    cur = r.func
+    sites = .concat(r.sites)
   }
 
-  cur
+  .{ func: cur, sites }
 }
 
 fn route_func_family(
@@ -504,7 +578,7 @@ fn route_func_family(
   typed_payloads: Dict<String, Bool>,
   capture_abi: Dict<String, Dict<Int, String>>,
   typeable_return: Dict<String, String>,
-) PreparedFunc {
+) FuncRoute {
   sets := compute_eligible_v(
     pf,
     fi,
@@ -520,8 +594,13 @@ fn route_func_family(
   has_phys_return := sets.has_phys_return
 
   if eligible_v.keys().len() == 0 {
-    return pf
+    return .{ func: pf, sites: [] }
   }
+
+  // Record the set sites this pass swaps (base in eligible_v) from the ORIGINAL
+  // body, before rewrite retargets the callee — the scan keys on set_unsafe. Slot
+  // ids are stable across rewrite, so the result-local site key is unchanged.
+  sites := collect_swapped_set_sites(pf.body, eligible_v, ids, fi, pf.func_id)
 
   // 3. Swap builder/len calls to the family's typed variants and retype the slots.
   //    - Result slots (eligible_v) become the family PVec (typed reads).
@@ -556,7 +635,7 @@ fn route_func_family(
     pf.phys_return = .Some(.Ref(true, .Named(fi.fam.pvec_type)))
   }
 
-  pf
+  .{ func: pf, sites }
 }
 
 // Whole-program slot_repr projection: for every function in `funcs`, run the
@@ -857,6 +936,143 @@ fn collect_gather_results_op_branches(
   cur
 }
 
+fn union_slots(a: Dict<Int, Bool>, b: Dict<Int, Bool>) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+
+  for k in a.keys() {
+    out[k] = true
+  }
+
+  for k in b.keys() {
+    out[k] = true
+  }
+
+  out
+}
+
+// Collect the result sids of `ACall(set_unsafe, [base, _, _])` whose base slot is
+// in `vs`. Single pass; the fixpoint (a write result feeding a later set) is the
+// caller's. Mirrors collect_gather_results.
+fn collect_set_results(expr: PreparedExpr, vs: Dict<Int, Bool>, set_id: Int, acc: Vector<Int>) Vector<
+  Int,
+> {
+  cur := expr
+  cur_acc := acc
+  done := false
+
+  for !done {
+    case cur {
+      .Let(slot, op, body) => {
+        cur_acc = collect_set_result_from_op(slot, op, vs, set_id, cur_acc)
+        cur_acc = collect_set_results_op_branches(op, vs, set_id, cur_acc)
+        cur = body
+      },
+      _ => done = true,
+    }
+  }
+
+  cur_acc
+}
+
+fn collect_set_result_from_op(
+  slot: SlotId,
+  op: PreparedOp,
+  vs: Dict<Int, Bool>,
+  set_id: Int,
+  acc: Vector<Int>,
+) Vector<Int> {
+  case op {
+    .ACall(.AGlobalFunc(fid), args) => if fid.id == set_id
+      and args.len() == 3 and slot_in(args[0], vs) {
+      acc.append(slot.id)
+    } else {
+      acc
+    },
+    _ => acc,
+  }
+}
+
+fn collect_set_results_op_branches(
+  op: PreparedOp,
+  vs: Dict<Int, Bool>,
+  set_id: Int,
+  acc: Vector<Int>,
+) Vector<Int> {
+  cur := acc
+
+  case op {
+    .AIf(_, then_e, else_e) => {
+      cur = collect_set_results(then_e, vs, set_id, cur)
+      cur = collect_set_results(else_e, vs, set_id, cur)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        cur = collect_set_results(arm.body, vs, set_id, cur)
+      }
+    },
+    .ALoop(inner) => cur = collect_set_results(inner, vs, set_id, cur),
+    .ADefer(inner) => cur = collect_set_results(inner, vs, set_id, cur),
+    _ => {},
+  }
+
+  cur
+}
+
+// The write-result closure of group `vs`: every `set_unsafe(base, i, x)` result
+// whose base is in `vs` (∪ prior results), to a fixpoint. i64-family + kill-switch
+// gated (returns empty otherwise). Used by the escape classifier so an accepted
+// in-region indexed write and its rebind are non-escaping (fact 9); the physical
+// slot inclusion is compute_eligible_v's own fixpoint against full eligible_v.
+fn collect_write_results(body: PreparedExpr, vs: Dict<Int, Bool>, ids: RouteIds, fam: ElemFamily) Dict<
+  Int,
+  Bool,
+> {
+  wr: Dict<Int, Bool> = Dict.new()
+
+  if fam.mono_key != "vec_i64" or ids.set_unsafe < 0 {
+    return wr
+  }
+
+  changed := true
+  steps := 0
+
+  for changed and steps < 512 {
+    changed = false
+    vs_ext := union_slots(vs, wr)
+
+    for sid in collect_set_results(body, vs_ext, ids.set_unsafe, []) {
+      if !wr.has(sid) {
+        wr[sid] = true
+        changed = true
+      }
+    }
+
+    steps = steps + 1
+  }
+
+  wr
+}
+
+// The set sites this family pass will swap: `set_unsafe(base, i, x)` with base in
+// eligible_v (exactly rewrite_op's swap condition). Empty for the bool family
+// (fi.set < 0) and under the kill-switch (ids.set_unsafe = -1 -> no match), so no
+// bool/off site is ever remapped. Keyed by the set call's RESULT local.
+fn collect_swapped_set_sites(
+  body: PreparedExpr,
+  eligible_v: Dict<Int, Bool>,
+  ids: RouteIds,
+  fi: FamilyIds,
+  func_id: FuncId,
+) Vector<SwappedSetSite> {
+  if fi.set < 0 {
+    return []
+  }
+
+  collect sid in collect_set_results(body, eligible_v, ids.set_unsafe, []) {
+    .{ func_id: func_id.id, result_local: sid }
+  }
+}
+
 // Collect the result sids of `ARecordGet(_, fid, tid)` reads whose field key
 // "${tid}:${fid}" is in `typed_fields` — these read from a physically-typed
 // field, so the loaded Vector<Int> is already PVecI64 and the result slot is a
@@ -1133,7 +1349,20 @@ fn v_group_escapes(
   fam: ElemFamily,
   in_tail: Bool,
 ) Bool {
-  vuse := classify_expr(expr, vs, relaxed, ids, builtins, slots, fam, in_tail, true)
+  write_results := collect_write_results(expr, vs, ids, fam)
+  vs_ext := union_slots(vs, write_results)
+  vuse := classify_expr(
+    expr,
+    vs_ext,
+    write_results,
+    relaxed,
+    ids,
+    builtins,
+    slots,
+    fam,
+    in_tail,
+    true,
+  )
   vuse.escapes or !all_in(vuse.field_keys, typed_fields) or vuse.payload_keys.len() > 0
 }
 
@@ -1207,6 +1436,7 @@ fn atom_in_family(atom: PreparedAtom, slots: Dict<Int, SlotInfo>, fam: ElemFamil
 fn classify_v_group(
   expr: PreparedExpr,
   vs: Dict<Int, Bool>,
+  write_results: Dict<Int, Bool>,
   relaxed: Dict<Int, Bool>,
   ids: RouteIds,
   builtins: BuiltinRegistry,
@@ -1216,7 +1446,7 @@ fn classify_v_group(
   // The whole function body starts in tail position: its trailing `.Atom` is a
   // function return (a typed-return boundary, not an escape). gather_read_ok is
   // false: this is the PRODUCER view, where a candidate feeding gather stays boxed.
-  classify_expr(expr, vs, relaxed, ids, builtins, slots, fam, true, false)
+  classify_expr(expr, vs, write_results, relaxed, ids, builtins, slots, fam, true, false)
 }
 
 // Shared eligibility predicate: a typed-vector slot group `aliases` is typeable
@@ -1241,7 +1471,9 @@ pub fn v_group_typeable(
     .Some(f) => f,
     .None => return false,
   }
-  vuse := classify_v_group(body, aliases, relaxed, ids, builtins, slots, fam)
+  write_results := collect_write_results(body, aliases, ids, fam)
+  aliases_ext := union_slots(aliases, write_results)
+  vuse := classify_v_group(body, aliases_ext, write_results, relaxed, ids, builtins, slots, fam)
   all_field_keys_typed := vuse.field_keys.len() == 0 or all_in(vuse.field_keys, typed_fields)
 
   // A producer that flows into a variant payload is only routable if every such
@@ -1363,6 +1595,7 @@ pub fn slot_typed_after_route(
 fn classify_expr(
   expr: PreparedExpr,
   vs: Dict<Int, Bool>,
+  write_results: Dict<Int, Bool>,
   relaxed: Dict<Int, Bool>,
   ids: RouteIds,
   builtins: BuiltinRegistry,
@@ -1376,10 +1609,21 @@ fn classify_expr(
       // An op binds a slot, so its sub-expressions (arm/loop/defer bodies) are
       // never a function return — classify_op passes them in_tail=false. The Let
       // body inherits this expression's tail position.
-      op_use := classify_op(op, vs, relaxed, ids, builtins, slots, fam, gather_read_ok)
+      op_use := classify_op(
+        op,
+        vs,
+        write_results,
+        relaxed,
+        ids,
+        builtins,
+        slots,
+        fam,
+        gather_read_ok,
+      )
       body_use := classify_expr(
         body,
         vs,
+        write_results,
         relaxed,
         ids,
         builtins,
@@ -1416,6 +1660,7 @@ fn classify_expr(
 fn classify_op(
   op: PreparedOp,
   vs: Dict<Int, Bool>,
+  write_results: Dict<Int, Bool>,
   relaxed: Dict<Int, Bool>,
   ids: RouteIds,
   builtins: BuiltinRegistry,
@@ -1432,6 +1677,14 @@ fn classify_op(
       .AGlobalFunc(fid) => if fid.id == ids.len and args.len() == 1 and slot_in(args[0], vs) {
         use_esc(false)
       } else if gather_read_ok and fid.id == ids.gather and args.len() == 2 and slot_in(args[0], vs) {
+        use_esc(false)
+      } else if fam.mono_key == "vec_i64"
+        and fid.id == ids.set_unsafe and args.len() == 3 and slot_in(args[0], vs)
+        and !slot_in(args[1], vs) and !slot_in(args[2], vs) {
+        // set_unsafe(v, i, x) writing an in-region i64 vector: the base is the
+        // candidate, index/value are not group slots. Non-escaping — routing swaps
+        // it to set_i64 and its result rejoins the group (fact 9). i64 only; the
+        // rebind that follows is accepted by the .AAssign write-result exception.
         use_esc(false)
       } else if user_direct_call_accepts_boxed_arg(fid, args, vs, builtins) {
         use_esc(false)
@@ -1450,6 +1703,7 @@ fn classify_op(
       then_use := classify_expr(
         then_e,
         vs,
+        write_results,
         relaxed,
         ids,
         builtins,
@@ -1461,6 +1715,7 @@ fn classify_op(
       else_use := classify_expr(
         else_e,
         vs,
+        write_results,
         relaxed,
         ids,
         builtins,
@@ -1478,6 +1733,7 @@ fn classify_op(
         arm_use := classify_expr(
           arm.body,
           vs,
+          write_results,
           relaxed,
           ids,
           builtins,
@@ -1494,6 +1750,7 @@ fn classify_op(
     .ALoop(inner) => classify_expr(
       inner,
       vs,
+      write_results,
       relaxed,
       ids,
       builtins,
@@ -1505,6 +1762,7 @@ fn classify_op(
     .ADefer(inner) => classify_expr(
       inner,
       vs,
+      write_results,
       relaxed,
       ids,
       builtins,
@@ -1586,7 +1844,18 @@ fn classify_op(
     // Reassigning a v-group slot from a value not in the group stores that
     // (boxed) value into a slot the group would retype to PVecI64 — e.g. a loop
     // `acc = acc.take(...)` where take returns the boxed family. Disqualify.
-    .AAssign(dst, a) => use_esc(slot_in(a, vs) or vs.has(dst.id)),
+    //
+    // Exception (fact 9-ii): the in-place rebind of an accepted in-region indexed
+    // write — `xs = <set_unsafe(xs, i, x) result>` — is legitimate. Its source is a
+    // write_results slot (a set result whose base is in the group), which routing
+    // swaps to set_i64 (PVecI64 -> PVecI64), so the rebind is not a boxed store.
+    // write_results (not vs) is the discriminator: a `take`/`drop` combinator
+    // result is never a write result, so the original disqualification still fires.
+    .AAssign(dst, a) => if vs.has(dst.id) and slot_in(a, write_results) {
+      use_esc(false)
+    } else {
+      use_esc(slot_in(a, vs) or vs.has(dst.id))
+    },
     .AGlobalSet(_, a) => use_esc(slot_in(a, vs)),
     .AWrapAnyref(a, _) => use_esc(slot_in(a, vs)),
     .AUnwrapAnyref(a, _) => use_esc(slot_in(a, vs)),
@@ -1876,7 +2145,16 @@ fn scan_func_payload_producers(
 
     for v_slot in sources {
       aliases := aliases_for(v_slot, copy_map)
-      vuse := classify_v_group(pf.body, aliases, Dict.new(), ids, builtins, pf.slots, fam)
+      vuse := classify_v_group(
+        pf.body,
+        aliases,
+        Dict.new(),
+        Dict.new(),
+        ids,
+        builtins,
+        pf.slots,
+        fam,
+      )
       keys := distinct_keys(user_payload_keys(vuse.payload_keys, first_user_tid))
 
       if keys.len() == 0 {
@@ -1982,7 +2260,16 @@ fn scan_func_producers_consumers(
     // won't re-flag the store as boxed.
     for v in producer_vs {
       aliases := aliases_for(v, copy_map)
-      vuse := classify_v_group(pf.body, aliases, Dict.new(), ids, builtins, pf.slots, fam)
+      vuse := classify_v_group(
+        pf.body,
+        aliases,
+        Dict.new(),
+        Dict.new(),
+        ids,
+        builtins,
+        pf.slots,
+        fam,
+      )
       keys := distinct_keys(vuse.field_keys)
 
       if !vuse.escapes and keys.len() == 1 {
@@ -2273,6 +2560,14 @@ fn rewrite_op(
         ),
         fid.id == ids.len and args.len() == 1 and arg0_in(args, eligible_v) => .Some(fi.len),
         fid.id == ids.gather and args.len() == 2 and arg0_in(args, eligible_v) => .Some(fi.gather),
+        // set_unsafe(v, i, x) -> the family's typed functional set. `fi.set >= 0`
+        // excludes the bool family (and the kill-switch, where set_unsafe is -1 so
+        // `fid.id == ids.set_unsafe` never matches anyway). Only the base must be
+        // eligible; the value stays boxed anyref (fact 5). Owned sites are later
+        // remapped to set_in_place_i64 at emit (Phase 3).
+        fid.id == ids.set_unsafe and fi.set >= 0 and args.len() == 3 and arg0_in(args, eligible_v) => .Some(
+          fi.set,
+        ),
         _ => .None,
       }
 

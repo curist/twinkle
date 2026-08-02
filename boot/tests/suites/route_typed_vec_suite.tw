@@ -166,7 +166,7 @@ pub fn suite() runner.Suite {
           empty,
           Dict.new(),
           Dict.new(),
-        )
+        ).funcs
         try assert.ok(
           !funcs_call_fid(routed_empty, gid),
           "gather_i64 must not fire without the typed payload set",
@@ -174,7 +174,7 @@ pub fn suite() runner.Suite {
 
         // Real set: the payload read `v` and the gather RESULT retype to PVecI64,
         // and the gather call routes to gather_i64.
-        routed := route_typed_vectors(p.funcs, p.builtins, tf, tp, Dict.new(), Dict.new())
+        routed := route_typed_vectors(p.funcs, p.builtins, tf, tp, Dict.new(), Dict.new()).funcs
         try assert.ok(funcs_call_fid(routed, gid), "expected gather to route to gather_i64")
         try assert.ok(
           pvec_i64_slot_count(routed) > pvec_i64_slot_count(routed_empty),
