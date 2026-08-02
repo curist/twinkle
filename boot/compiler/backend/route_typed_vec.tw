@@ -44,6 +44,9 @@ pub type RouteIds = .{
   make: Int,
   len: Int,
   gather: Int,
+  // Boxed `vector$append` id. `-1` under TWINKLE_TYPED_VEC_WRITE=0, so append
+  // cannot join the typed-vector write group while indexed writes are disabled.
+  append: Int,
   // Boxed `vector$set_unsafe` id — the family-agnostic call routing swaps to the
   // family's typed `set` (i64 only). `-1` under the TWINKLE_TYPED_VEC_WRITE=0
   // kill-switch, disabling every indexed-write branch (accept / write-result
@@ -52,13 +55,19 @@ pub type RouteIds = .{
 }
 
 pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
-  set_unsafe := case proc.env("TWINKLE_TYPED_VEC_WRITE") {
-    .Some(v) => if v == "0" {
-      -1
-    } else {
-      builtins.id("vector$set_unsafe").id
-    },
-    .None => builtins.id("vector$set_unsafe").id,
+  write_enabled := case proc.env("TWINKLE_TYPED_VEC_WRITE") {
+    .Some(v) => v != "0",
+    .None => true,
+  }
+  set_unsafe := if write_enabled {
+    builtins.id("vector$set_unsafe").id
+  } else {
+    -1
+  }
+  append := if write_enabled {
+    builtins.id("vector$append").id
+  } else {
+    -1
   }
   .{
     builder_new: builtins.id("vector$builder_new").id,
@@ -67,6 +76,7 @@ pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
     make: builtins.id("vector$make").id,
     len: builtins.id("vector$len").id,
     gather: builtins.id("vector$gather").id,
+    append,
     set_unsafe,
   }
 }
@@ -502,23 +512,23 @@ fn compute_eligible_v(
     gather_steps = gather_steps + 1
   }
 
-  // 2e. Indexed-write results. A `set_unsafe(base, i, x)` whose base is already
-  //     eligible produces a PVecI64 result (set_i64/set_in_place_i64 return the
-  //     family PVec), so its result slot must join eligible_v — else the ACall
-  //     result store is an un-coerced PVecI64 -> PVec (fact 9-i). Runs against the
-  //     fully-populated eligible_v so it covers every eligible base source
-  //     (builder candidate, typed field/payload read, typed-return call, gather
-  //     result). A write result can be the base of a later set, so iterate.
-  //     i64-family + kill-switch gated; every result added here corresponds to a
-  //     set rewrite_op will swap (same base-in-eligible_v guard).
-  if fi.fam.mono_key == "vec_i64" and ids.set_unsafe >= 0 {
+  // 2e. Write results. A `set_unsafe(base, i, x)` or `append(base, x)` whose base
+  //     is already eligible produces a PVecI64 result, so its result slot must join
+  //     eligible_v — else the ACall result store is an un-coerced PVecI64 -> PVec
+  //     (fact 9-i). Runs against the fully-populated eligible_v so it covers every
+  //     eligible base source (builder candidate, typed field/payload read,
+  //     typed-return call, gather result). A write result can be the base of a
+  //     later write, so iterate. i64-family + kill-switch gated; set results added
+  //     here correspond to calls rewrite_op will swap, while append remains an
+  //     intrinsic whose typed call is selected by the append emitter.
+  if fi.fam.mono_key == "vec_i64" and ids.set_unsafe >= 0 and ids.append >= 0 {
     write_changed := true
     write_steps := 0
 
     for write_changed and write_steps < 512 {
       write_changed = false
 
-      for sid in collect_set_results(pf.body, eligible_v, ids.set_unsafe, []) {
+      for sid in collect_write_call_results(pf.body, eligible_v, ids, []) {
         for a in aliases_for(sid, copy_map).keys() {
           if !eligible_v.has(a) {
             eligible_v[a] = true
@@ -1020,18 +1030,97 @@ fn collect_set_results_op_branches(
   cur
 }
 
-// The write-result closure of group `vs`: every `set_unsafe(base, i, x)` result
-// whose base is in `vs` (∪ prior results), to a fixpoint. i64-family + kill-switch
-// gated (returns empty otherwise). Used by the escape classifier so an accepted
-// in-region indexed write and its rebind are non-escaping (fact 9); the physical
-// slot inclusion is compute_eligible_v's own fixpoint against full eligible_v.
+// Collect the result sids of `ACall(append, [base, _])` whose base slot is in
+// `vs`. Single pass; the fixpoint (a write result feeding a later append/set) is
+// the caller's.
+fn collect_append_results(expr: PreparedExpr, vs: Dict<Int, Bool>, append_id: Int, acc: Vector<Int>) Vector<
+  Int,
+> {
+  cur := expr
+  cur_acc := acc
+  done := false
+
+  for !done {
+    case cur {
+      .Let(slot, op, body) => {
+        cur_acc = collect_append_result_from_op(slot, op, vs, append_id, cur_acc)
+        cur_acc = collect_append_results_op_branches(op, vs, append_id, cur_acc)
+        cur = body
+      },
+      _ => done = true,
+    }
+  }
+
+  cur_acc
+}
+
+fn collect_append_result_from_op(
+  slot: SlotId,
+  op: PreparedOp,
+  vs: Dict<Int, Bool>,
+  append_id: Int,
+  acc: Vector<Int>,
+) Vector<Int> {
+  case op {
+    .ACall(.AGlobalFunc(fid), args) => if fid.id == append_id
+      and args.len() == 2 and slot_in(args[0], vs) {
+      acc.append(slot.id)
+    } else {
+      acc
+    },
+    _ => acc,
+  }
+}
+
+fn collect_append_results_op_branches(
+  op: PreparedOp,
+  vs: Dict<Int, Bool>,
+  append_id: Int,
+  acc: Vector<Int>,
+) Vector<Int> {
+  cur := acc
+
+  case op {
+    .AIf(_, then_e, else_e) => {
+      cur = collect_append_results(then_e, vs, append_id, cur)
+      cur = collect_append_results(else_e, vs, append_id, cur)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        cur = collect_append_results(arm.body, vs, append_id, cur)
+      }
+    },
+    .ALoop(inner) => cur = collect_append_results(inner, vs, append_id, cur),
+    .ADefer(inner) => cur = collect_append_results(inner, vs, append_id, cur),
+    _ => {},
+  }
+
+  cur
+}
+
+fn collect_write_call_results(
+  body: PreparedExpr,
+  vs: Dict<Int, Bool>,
+  ids: RouteIds,
+  acc: Vector<Int>,
+) Vector<Int> {
+  cur := collect_set_results(body, vs, ids.set_unsafe, acc)
+  collect_append_results(body, vs, ids.append, cur)
+}
+
+// The write-result closure of group `vs`: every `set_unsafe(base, i, x)` or
+// `append(base, x)` result whose base is in `vs` (∪ prior results), to a fixpoint.
+// i64-family + kill-switch gated (returns empty otherwise). Used by the escape
+// classifier so an accepted in-region write and its rebind are non-escaping (fact
+// 9); the physical slot inclusion is compute_eligible_v's own fixpoint against
+// full eligible_v.
 fn collect_write_results(body: PreparedExpr, vs: Dict<Int, Bool>, ids: RouteIds, fam: ElemFamily) Dict<
   Int,
   Bool,
 > {
   wr: Dict<Int, Bool> = Dict.new()
 
-  if fam.mono_key != "vec_i64" or ids.set_unsafe < 0 {
+  if fam.mono_key != "vec_i64" or ids.set_unsafe < 0 or ids.append < 0 {
     return wr
   }
 
@@ -1042,7 +1131,7 @@ fn collect_write_results(body: PreparedExpr, vs: Dict<Int, Bool>, ids: RouteIds,
     changed = false
     vs_ext := union_slots(vs, wr)
 
-    for sid in collect_set_results(body, vs_ext, ids.set_unsafe, []) {
+    for sid in collect_write_call_results(body, vs_ext, ids, []) {
       if !wr.has(sid) {
         wr[sid] = true
         changed = true
@@ -1696,6 +1785,13 @@ fn classify_op(
         // candidate, index/value are not group slots. Non-escaping — routing swaps
         // it to set_i64 and its result rejoins the group (fact 9). i64 only; the
         // rebind that follows is accepted by the .AAssign write-result exception.
+        use_esc(false)
+      } else if fam.mono_key == "vec_i64"
+        and fid.id == ids.append and args.len() == 2 and slot_in(args[0], vs)
+        and !slot_in(args[1], vs) {
+        // append(v, x) keeps the typed i64 vector in-region: base is the group,
+        // appended value is not, and the result rejoins the write group so a
+        // following rebind is accepted by the same write-result exception.
         use_esc(false)
       } else if user_direct_call_accepts_boxed_arg(fid, args, vs, builtins) {
         use_esc(false)

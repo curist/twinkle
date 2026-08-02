@@ -2534,11 +2534,22 @@ fn emit_intrinsic_vector_append(
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
-  // vector_append(vec, elem) → rt_arr__push(vec, elem)
-  buf2 := emit_atom(args[0], ctx, buf) // vec (PVec, nullable)
-  buf3 := buf2.append(.RefAsNonNull) // push takes non-null PVec
+  // vector_append(vec, elem) → rt_arr__push(_i64 when the base is typed PVecI64)
+  base_vt := atom_val_type(args[0], ctx)
+  buf2 := emit_atom(args[0], ctx, buf) // vec (PVec/PVecI64, nullable)
+  buf3 := buf2.append(.RefAsNonNull) // push takes a non-null vector
   buf4 := emit_erased_container_ingress(args[1], ctx, buf3)
-  buf4.append(.Call("rt_arr__push")).append(.LocalSet(result_idx))
+
+  case pvec_family_of(base_vt) {
+    .Some(fam) => if fam.mono_key == "vec_i64" {
+      buf4.append(.Call("rt_arr__push_i64")).append(.LocalSet(result_idx))
+    } else {
+      error(
+        "append emitter reached typed non-i64 vector base (${fam.mono_key}); routing should have demoted it",
+      )
+    },
+    .None => buf4.append(.Call("rt_arr__push")).append(.LocalSet(result_idx)),
+  }
 }
 
 // ── vector_get: bounds-checked → Option<T> ─────────────────────────────
