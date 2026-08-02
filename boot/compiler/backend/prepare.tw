@@ -154,7 +154,8 @@ fn remap_set_decision(
 }
 
 // Remap every swapped set site's decision(s) to the typed i64 targets. Keyed by
-// the set call's result local (stable across the callee swap); other fields
+// the set result's source local (site.result_source_local — what the emit
+// selector keys on, stable across the callee swap); other decision fields
 // (site, source/result local, base_arg_index, arg_count, family) are unchanged.
 fn remap_swapped_set_decisions(
   table: mutable_select.MutableDecisionTable,
@@ -170,7 +171,7 @@ fn remap_swapped_set_decisions(
   for site in sites {
     key := mutable_select.site_key(mutable_select.Site.{
       func: FuncId.{ id: site.func_id },
-      local: .{ id: site.result_local },
+      local: .{ id: site.result_source_local },
     })
 
     case t.by_site.get(key) {

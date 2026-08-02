@@ -71,11 +71,13 @@ pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
   }
 }
 
-// A set site routing swapped `set_unsafe -> set_i64`, keyed by the emit "site"
-// (func id + the set call's RESULT local, per mutable_select.site_key). Phase 3's
-// decision remap consumes these to retarget the owned-site in-place decision to
-// set_in_place_i64.
-pub type SwappedSetSite = .{ func_id: Int, result_local: Int }
+// A set site routing swapped `set_unsafe -> set_i64`. `result_source_local` is
+// the emit "site" key's local: the set-result slot's SOURCE local (its
+// pre-prepare ANF id), because the emit selector keys sites on
+// `result_entry.source_local` (emit/mutable_sites.tw site_for_result), NOT the
+// slot-assigned prepared id. Phase 3's decision remap consumes these to retarget
+// the owned-site in-place decision to set_in_place_i64.
+pub type SwappedSetSite = .{ func_id: Int, result_source_local: Int }
 
 // Routed module: the rewritten funcs plus every swapped set site.
 pub type RoutedModule = .{ funcs: Vector<PreparedFunc>, swapped_sites: Vector<SwappedSetSite> }
@@ -1078,7 +1080,7 @@ fn collect_swapped_set_sites(
       .Some(info) => info.source_local.id,
       .None => sid,
     }
-    .{ func_id: func_id.id, result_local: src }
+    .{ func_id: func_id.id, result_source_local: src }
   }
 }
 
