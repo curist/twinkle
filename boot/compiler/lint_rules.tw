@@ -128,9 +128,10 @@ pub fn describe(rule: String) RuleInfo? {
           \\string literal: the `\\` form is raw (no `\n`/`\"` escaping) with one
           \\source line per logical line. The rule fires only on a fully-constant
           \\chain of >=2 links whose value spans lines, so runtime string building
-          \\(a computed receiver or argument) never matches. Auto-fixable with
-          \\`twk lint --fix-prefer-multiline-string` (skipped when the value holds
-          \\a tab or CR, which a `\\` line cannot carry faithfully).
+          \\(a computed receiver or argument) never matches. It also skips values a
+          \\`\\` line cannot carry unchanged — a dollar-brace interpolation (a `\\`
+          \\line still interpolates), a tab, or a CR. Auto-fixable with
+          \\`twk lint --fix-prefer-multiline-string`.
           \\
           \\    // Avoid
           \\    "type P = .{ x: Int }\n".concat("fn f() Int { 1 }\n")

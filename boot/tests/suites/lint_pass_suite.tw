@@ -629,6 +629,20 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "prefer-multiline-string: value containing an interpolation is not flagged",
+      fn() {
+        // A `\\` line still interpolates `${...}`, so a >=2-link chain whose value
+        // carries `${` must NOT be rewritten. `${` is spelled via a split so this
+        // test's own source has no interpolation.
+        db := "$".concat("{x}")
+        src := "fn f() String {\n  \"a"
+          .concat(db)
+          .concat("\\n\".concat(\"b\\n\").concat(\"c\\n\")\n}\n")
+        try assert.equal(ml_findings(src).len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
       "prefer-multiline-string: runtime concat (computed receiver) is not flagged",
       fn() {
         try assert.equal(

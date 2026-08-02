@@ -456,10 +456,14 @@ fn spaces(n: Int) String {
   out
 }
 
-// A `\\` line cannot faithfully carry a tab or CR (they would have to be literal
-// control bytes in source), so the rewrite is unsafe for such values.
+// Whether `value` can be represented by a `\\` multi-line literal without
+// changing it. `\\` lines still interpolate `${...}` (backslash is literal, so
+// there is no way to escape it), so a value containing `${` would be
+// re-interpreted — exclude it. A tab or CR would also have to be a literal
+// control byte in source, so exclude those too. (`\\` detected via `$`+`{` so
+// this source itself carries no interpolation.)
 fn multiline_safe(value: String) Bool {
-  !value.contains("\t") and !value.contains("\r")
+  !value.contains("\t") and !value.contains("\r") and !value.contains("$".concat("{"))
 }
 
 // Build the `\\` multi-line literal for `value`: one `\\`-prefixed line per `\n`
@@ -482,23 +486,20 @@ fn multiline_literal(value: String, col: Int) String {
   out
 }
 
+// Only called for `multiline_safe` values (the rule does not fire otherwise), so
+// the `\\` rewrite always reproduces the value exactly.
 fn multiline_string_finding(expr: Expr, value: String, source: String) LintFinding {
-  edits: Vector<FixEdit> = if multiline_safe(value) {
-    [
+  .{
+    span: expr.span,
+    message: "chained string-literal `.concat` builds a multi-line string; use a `\\\\` multi-line string literal instead",
+    rule: "prefer-multiline-string",
+    edits: [
       FixEdit.{
         start: expr.span.start,
         end: expr.span.end,
         replacement: multiline_literal(value, column_at(source, expr.span.start)),
       },
-    ]
-  } else {
-    []
-  }
-  .{
-    span: expr.span,
-    message: "chained string-literal `.concat` builds a multi-line string; use a `\\\\` multi-line string literal instead",
-    rule: "prefer-multiline-string",
-    edits,
+    ],
   }
 }
 
@@ -555,7 +556,7 @@ fn lint_expr(expr: Expr, ctx: LintCtx) Vector<LintFinding> {
       // A constant `.concat` chain (>=2 links) spanning lines is reported at the
       // outermost node and its all-literal children are not walked further.
       chain: ConcatChain? = case constant_concat_chain(expr) {
-        .Some(c) => if c.links >= 2 and c.value.contains("\n") {
+        .Some(c) => if c.links >= 2 and c.value.contains("\n") and multiline_safe(c.value) {
           .Some(c)
         } else {
           .None
