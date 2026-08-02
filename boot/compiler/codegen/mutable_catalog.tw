@@ -56,6 +56,9 @@ fn decision_family_for_persistent(fid: Int, b: BuiltinRegistry) mutable_select.O
   if fid == b.id("vector$set_unsafe").id {
     return .Some(.VectorSet)
   }
+  if fid == b.id("vector$set_i64").id {
+    return .Some(.VectorSet)
+  }
   if fid == b.method_id("Dict", "set").id {
     return .Some(.DictSet)
   }
@@ -67,6 +70,9 @@ fn decision_family_for_persistent(fid: Int, b: BuiltinRegistry) mutable_select.O
 
 fn family_for_persistent(fid: Int, b: BuiltinRegistry, sem: OptimizerSemantics) String {
   if fid == b.id("vector$set_unsafe").id {
+    return "vector_set"
+  }
+  if fid == b.id("vector$set_i64").id {
     return "vector_set"
   }
   if fid == b.method_id("Dict", "set").id {

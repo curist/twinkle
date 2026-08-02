@@ -131,6 +131,17 @@ pub fn make_prelude_optimizer_semantics(b: BuiltinRegistry) OptimizerSemantics {
     in_place_equivalent: .Some(b.id("vector$set_in_place")),
     retained_args: .Some([2]), // base, index, value: only value is stored
   }
+
+  // Typed i64 mirror (sub-project A): the router swaps set_unsafe -> set_i64 for
+  // promoted Vector<Int> writes, so its persistent op needs the same Update
+  // semantics + in-place pairing to the typed in-place op.
+  calls[b.id("vector$set_i64").id] = CallSemantics.{
+    effect: .Update,
+    fresh_result: false,
+    cow_base_arg: .Some(0),
+    in_place_equivalent: .Some(b.id("vector$set_in_place_i64")),
+    retained_args: .Some([2]), // base, index, value: only value is stored
+  }
   calls[b.method_id("Dict", "set").id] = CallSemantics.{
     effect: .Update,
     fresh_result: false,

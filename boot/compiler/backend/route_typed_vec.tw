@@ -600,7 +600,7 @@ fn route_func_family(
   // Record the set sites this pass swaps (base in eligible_v) from the ORIGINAL
   // body, before rewrite retargets the callee — the scan keys on set_unsafe. Slot
   // ids are stable across rewrite, so the result-local site key is unchanged.
-  sites := collect_swapped_set_sites(pf.body, eligible_v, ids, fi, pf.func_id)
+  sites := collect_swapped_set_sites(pf.body, eligible_v, ids, fi, pf.func_id, pf.slots)
 
   // 3. Swap builder/len calls to the family's typed variants and retype the slots.
   //    - Result slots (eligible_v) become the family PVec (typed reads).
@@ -1056,20 +1056,29 @@ fn collect_write_results(body: PreparedExpr, vs: Dict<Int, Bool>, ids: RouteIds,
 // The set sites this family pass will swap: `set_unsafe(base, i, x)` with base in
 // eligible_v (exactly rewrite_op's swap condition). Empty for the bool family
 // (fi.set < 0) and under the kill-switch (ids.set_unsafe = -1 -> no match), so no
-// bool/off site is ever remapped. Keyed by the set call's RESULT local.
+// bool/off site is ever remapped. Keyed by the set result's SOURCE local — the
+// emit selector's site key is `result_entry.source_local` (emit/mutable_sites.tw
+// site_for_result), the pre-prepare ANF local the decision was recorded on, NOT
+// the slot-assigned prepared id — so map each result slot through its
+// source_local (SlotInfo.source_local) to hit the decision table.
 fn collect_swapped_set_sites(
   body: PreparedExpr,
   eligible_v: Dict<Int, Bool>,
   ids: RouteIds,
   fi: FamilyIds,
   func_id: FuncId,
+  slots: Dict<Int, SlotInfo>,
 ) Vector<SwappedSetSite> {
   if fi.set < 0 {
     return []
   }
 
   collect sid in collect_set_results(body, eligible_v, ids.set_unsafe, []) {
-    .{ func_id: func_id.id, result_local: sid }
+    src := case slots[sid] {
+      .Some(info) => info.source_local.id,
+      .None => sid,
+    }
+    .{ func_id: func_id.id, result_local: src }
   }
 }
 

@@ -21,7 +21,7 @@ use compiler.anf.{AnfModule}
 use compiler.backend.context.{BackendContext}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedExpr, PreparedFunc, PreparedOp}
 use compiler.backend.repr_assign.{assign_repr_for_module}
-use compiler.backend.route_typed_vec.{route_typed_vectors}
+use compiler.backend.route_typed_vec.{SwappedSetSite, route_typed_vectors}
 use compiler.backend.slot_assign.{assign_slots_for_module}
 use compiler.backend.tailify.{never_returning_funcs, tailify_funcs}
 use compiler.backend.typed_param_abi.{analyze_typed_repr}
@@ -30,6 +30,7 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.insert_boundaries.{insert_boundaries}
 use compiler.codegen.mutable_select
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
+use compiler.core_ir.{FuncId}
 use compiler.resolver.{ResolvedEnv}
 
 // PreparedModule is the codegen contract between optimized ANF and emission.
@@ -127,6 +128,62 @@ pub fn prepare_backend(
   )
 }
 
+// Retarget one decision's persistent/mutable funcs from the boxed set family to
+// the typed i64 family. A no-op for any decision not recorded against set_unsafe
+// / set_in_place (so a site's non-VectorSet decisions pass through unchanged).
+fn remap_set_decision(
+  d: mutable_select.MutableDecision,
+  set_unsafe_id: Int,
+  set_i64_id: Int,
+  set_in_place_id: Int,
+  set_in_place_i64_id: Int,
+) mutable_select.MutableDecision {
+  case d.persistent_func {
+    .Some(f) => if f.id == set_unsafe_id {
+      d.persistent_func = .Some(FuncId.{ id: set_i64_id })
+    },
+    .None => {},
+  }
+  case d.mutable_func {
+    .Some(f) => if f.id == set_in_place_id {
+      d.mutable_func = .Some(FuncId.{ id: set_in_place_i64_id })
+    },
+    .None => {},
+  }
+  d
+}
+
+// Remap every swapped set site's decision(s) to the typed i64 targets. Keyed by
+// the set call's result local (stable across the callee swap); other fields
+// (site, source/result local, base_arg_index, arg_count, family) are unchanged.
+fn remap_swapped_set_decisions(
+  table: mutable_select.MutableDecisionTable,
+  sites: Vector<SwappedSetSite>,
+  builtins: BuiltinRegistry,
+) mutable_select.MutableDecisionTable {
+  set_unsafe_id := builtins.id("vector$set_unsafe").id
+  set_i64_id := builtins.id("vector$set_i64").id
+  set_in_place_id := builtins.id("vector$set_in_place").id
+  set_in_place_i64_id := builtins.id("vector$set_in_place_i64").id
+  t := table
+
+  for site in sites {
+    key := mutable_select.site_key(mutable_select.Site.{
+      func: FuncId.{ id: site.func_id },
+      local: .{ id: site.result_local },
+    })
+
+    case t.by_site.get(key) {
+      .Some(ds) => t.by_site[key] = collect d in ds {
+        remap_set_decision(d, set_unsafe_id, set_i64_id, set_in_place_id, set_in_place_i64_id)
+      },
+      .None => {},
+    }
+  }
+
+  t
+}
+
 // Same as prepare_backend, but threads a persistent-only mutable decision
 // table through to the resulting PreparedModule. The table is opaque to
 // preparation itself (no inference logic here reads or acts on it); it is
@@ -184,6 +241,15 @@ pub fn prepare_backend_with_mutable_decisions(
     repr.param_abi.typeable_return,
   )
   funcs3 := routed.funcs
+
+  // Remap the mutable-codegen decision for every site routing swapped
+  // set_unsafe -> set_i64: retarget persistent_func -> set_i64 and mutable_func
+  // -> set_in_place_i64. The decision was recorded pre-route against set_unsafe;
+  // without this the emit selector's persistent_matches gate rejects it (the
+  // owned site would fall back to the functional set_i64) and its boxed
+  // set_in_place target is type-unsound on a PVecI64 base (fact 4-b). Site keys
+  // and shapes are stable across the callee swap.
+  decisions := remap_swapped_set_decisions(mutable_decisions, routed.swapped_sites, builtins)
   r3 := date.now()
 
   if timed {
@@ -199,7 +265,7 @@ pub fn prepare_backend_with_mutable_decisions(
     funcs: funcs3,
     typed_vector_fields: typed_fields,
     typed_vector_payloads: typed_payloads,
-    mutable_decisions,
+    mutable_decisions: decisions,
     mutable_emit_policy: mutable_select.persistent_only_policy(),
   }
 }
