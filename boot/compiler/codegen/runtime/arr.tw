@@ -195,6 +195,7 @@ pub fn module() WasmModule {
     mutvec_get_i64_fn(),
     mutvec_len_i64_fn(),
     mutvec_freeze_i64_fn(),
+    push_i64_fn(),
     get_leaf_i64_fn(),
     set_in_place_i64_fn(),
     do_set_i64_fn(),
@@ -1750,6 +1751,118 @@ fn pvec_make_fn(f: PVecFamily) FuncDef {
       ),
       .LocalGet(2),
       .Call(f.builder_freeze_name),
+    ],
+  }
+}
+
+// push_i64(vec: PVecI64, val: anyref) -> PVecI64
+// Persistent typed append for Vector<Int>. The element crosses the public vector
+// ABI as BoxedInt, but storage stays ArrayI64 after a single unbox. Full tails
+// are promoted through promote_full_tail_i64 with a prefix whose length excludes
+// that tail, matching the builder append path's length contract.
+fn push_i64_fn() FuncDef {
+  p_vec := 0
+  p_val := 1
+  l_elem := 2
+  l_len := 3
+  l_tail_len := 4
+  l_tail := 5
+  l_new_tail := 6
+  l_prefix := 7
+  l_promoted := 8
+
+  .{
+    name: "push_i64",
+    params: [pvec_i64_ref(), .Anyref],
+    results: [pvec_i64_ref()],
+    locals: [.I64, .I32, .I32, arr_i64_null(), arr_i64_null(), pvec_i64_null(), pvec_i64_null()],
+    body: [
+      .LocalGet(p_val),
+      .RefCast(false, .Named(t_BOXED_INT)),
+      .StructGet(t_BOXED_INT, 0),
+      .LocalSet(l_elem),
+      .LocalGet(p_vec),
+      .StructGet(t_PVEC_I64, pv_LEN),
+      .LocalSet(l_len),
+      .LocalGet(p_vec),
+      .StructGet(t_PVEC_I64, pv_TAIL),
+      .LocalSet(l_tail),
+      .LocalGet(l_tail),
+      .RefAsNonNull,
+      .ArrayLen,
+      .LocalSet(l_tail_len),
+      .LocalGet(l_tail_len),
+      .I32Const(rt_BF),
+      .I32LtS,
+      .If(
+        .Some(pvec_i64_ref()),
+        [
+          .I64Const(0),
+          .LocalGet(l_tail_len),
+          .I32Const(1),
+          .I32Add,
+          .ArrayNew(t_ARRAY_I64),
+          .LocalSet(l_new_tail),
+          .LocalGet(l_new_tail),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(l_tail),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(l_tail_len),
+          .ArrayCopy(t_ARRAY_I64, t_ARRAY_I64),
+          .LocalGet(l_new_tail),
+          .RefAsNonNull,
+          .LocalGet(l_tail_len),
+          .LocalGet(l_elem),
+          .ArraySet(t_ARRAY_I64),
+          .LocalGet(l_len),
+          .I32Const(1),
+          .I32Add,
+          .LocalGet(p_vec),
+          .StructGet(t_PVEC_I64, pv_SHIFT),
+          .LocalGet(p_vec),
+          .StructGet(t_PVEC_I64, pv_ROOT),
+          .LocalGet(l_new_tail),
+          .RefAsNonNull,
+          .StructNew(t_PVEC_I64),
+        ],
+        [
+          .LocalGet(l_len),
+          .I32Const(rt_BF),
+          .I32Sub,
+          .LocalGet(p_vec),
+          .StructGet(t_PVEC_I64, pv_SHIFT),
+          .LocalGet(p_vec),
+          .StructGet(t_PVEC_I64, pv_ROOT),
+          .GlobalGet("empty_leaf_i64"),
+          .StructNew(t_PVEC_I64),
+          .LocalSet(l_prefix),
+          .LocalGet(l_prefix),
+          .RefAsNonNull,
+          .LocalGet(l_tail),
+          .RefAsNonNull,
+          .Call("promote_full_tail_i64"),
+          .LocalSet(l_promoted),
+          .LocalGet(l_elem),
+          .ArrayNewFixed(t_ARRAY_I64, 1),
+          .LocalSet(l_new_tail),
+          .LocalGet(l_promoted),
+          .RefAsNonNull,
+          .StructGet(t_PVEC_I64, pv_LEN),
+          .I32Const(1),
+          .I32Add,
+          .LocalGet(l_promoted),
+          .RefAsNonNull,
+          .StructGet(t_PVEC_I64, pv_SHIFT),
+          .LocalGet(l_promoted),
+          .RefAsNonNull,
+          .StructGet(t_PVEC_I64, pv_ROOT),
+          .LocalGet(l_new_tail),
+          .RefAsNonNull,
+          .StructNew(t_PVEC_I64),
+        ],
+      ),
     ],
   }
 }
