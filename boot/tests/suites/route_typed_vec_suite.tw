@@ -118,7 +118,7 @@ fn op_calls_fid(op: PreparedOp, fid_id: Int) Bool {
 // A Vector<Int> in a typed variant payload (IntCol), gathered inside a function
 // and stored back into the same typed payload. data is a clean collect producer
 // so analyze_typed_payloads types the IntCol payload.
-fn gather_src() String {
+gather_source :=
   \\type Col = { IntCol(Vector<Int>) }
   \\fn make_col(n: Int) Col {
   \\  xs := collect i in range(n) { i * 2 }
@@ -140,7 +140,6 @@ fn gather_src() String {
   \\out := gather_col(col, idx)
   \\first(out)
   \\
-}
 
 pub fn suite() runner.Suite {
   runner
@@ -148,7 +147,7 @@ pub fn suite() runner.Suite {
     .test(
       "typed payload gather routes to gather_i64 and retypes the receiver+result",
       fn() {
-        p := try prepare_src(gather_src())
+        p := try prepare_src(gather_source)
         tf := analyze_typed_fields(p.funcs, p.builtins, Dict.new())
         tp := analyze_typed_payloads(p.funcs, p.builtins, first_user_type_id(), Dict.new())
 

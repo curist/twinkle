@@ -55,7 +55,7 @@ fn find_vec_param(funcs: Vector<PreparedFunc>) Result<VecParam, String> {
 }
 
 // A Vector<Int> param used only via index + len -> typeable.
-fn indexed_src() String {
+indexed_source :=
   \\fn use_indexed(xs: Vector<Int>, n: Int) Int {
   \\  t := 0
   \\  for k in range(n) { t = t + xs[k] }
@@ -63,18 +63,16 @@ fn indexed_src() String {
   \\}
   \\use_indexed([1, 2, 3], 3)
   \\
-}
 
 // A Vector<Int> param captured into a closure -> not typeable (the anyref env
 // would make typed reads unsound; the group escapes through AMakeClosure).
-fn captured_src() String {
+captured_source :=
   \\fn make_reader(xs: Vector<Int>) fn() Int {
   \\  fn() { xs.len() }
   \\}
   \\f := make_reader([1, 2, 3])
   \\f()
   \\
-}
 
 fn typed_count(d: Dict<String, Bool>) Int {
   n := 0
@@ -95,7 +93,7 @@ fn typed_count(d: Dict<String, Bool>) Int {
 // (`int_col(values)` -> `.IntCol(values)`), with no direct collect->payload
 // producer. Builder-only payload analysis can't type it; the joint fixpoint can,
 // because `values` is a typeable param and thus a clean typed producer.
-fn int_col_src() String {
+int_col_source :=
   \\type Col = { IntCol(Vector<Int>) }
   \\fn int_col(values: Vector<Int>) Col {
   \\  .IntCol(values)
@@ -110,11 +108,10 @@ fn int_col_src() String {
   \\}
   \\firstv(build(8))
   \\
-}
 
 // A local `collect` captured into a sort comparator and read via index: the
 // capture is typeable (its free var is a typed local producer).
-fn typed_capture_src() String {
+typed_capture_source :=
   \\fn run(n: Int) Int {
   \\  keys := collect i in range(n) { i * 2 }
   \\  idx := collect i in range(n) { i }
@@ -123,11 +120,10 @@ fn typed_capture_src() String {
   \\}
   \\run(8)
   \\
-}
 
 // The same shape but `keys` comes from a function return (a boxed PVec): the
 // capture MUST NOT be typed (the trampoline downcast to PVecI64 would trap).
-fn boxed_capture_src() String {
+boxed_capture_source :=
   \\fn mkkeys(n: Int) Vector<Int> {
   \\  out: Vector<Int> = []
   \\  for i in range(n) { out = out.append(i * 2) }
@@ -141,7 +137,6 @@ fn boxed_capture_src() String {
   \\}
   \\run(8)
   \\
-}
 
 pub fn suite() runner.Suite {
   runner
@@ -149,7 +144,7 @@ pub fn suite() runner.Suite {
     .test(
       "param used only via index + len is typeable",
       fn() {
-        p := try prepare_src(indexed_src())
+        p := try prepare_src(indexed_source)
         vp := try find_vec_param(p.funcs)
         pf := p.funcs[vp.func_index]
 
@@ -165,7 +160,7 @@ pub fn suite() runner.Suite {
     .test(
       "param captured into a closure is not typeable",
       fn() {
-        p := try prepare_src(captured_src())
+        p := try prepare_src(captured_source)
         vp := try find_vec_param(p.funcs)
         pf := p.funcs[vp.func_index]
 
@@ -181,7 +176,7 @@ pub fn suite() runner.Suite {
     .test(
       "joint fixpoint types a payload whose only producer is a typeable param",
       fn() {
-        p := try prepare_src(int_col_src())
+        p := try prepare_src(int_col_source)
 
         // Builder-only payload analysis: no direct collect->.IntCol producer, so
         // ColData.IntCol stays untyped.
@@ -210,7 +205,7 @@ pub fn suite() runner.Suite {
     .test(
       "a captured typed-local vector is a typeable capture (M1b)",
       fn() {
-        p := try prepare_src(typed_capture_src())
+        p := try prepare_src(typed_capture_source)
         repr := analyze_typed_repr(
           p.funcs,
           p.builtins,
@@ -227,7 +222,7 @@ pub fn suite() runner.Suite {
     .test(
       "a captured boxed-return vector is NOT a typeable capture (support gate)",
       fn() {
-        p := try prepare_src(boxed_capture_src())
+        p := try prepare_src(boxed_capture_source)
         repr := analyze_typed_repr(
           p.funcs,
           p.builtins,

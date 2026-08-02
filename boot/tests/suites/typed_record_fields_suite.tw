@@ -110,7 +110,7 @@ fn typed_count(d: Dict<String, Bool>) Int {
 }
 
 // Source fixtures (escaped newlines — Twinkle string literals don't span lines).
-fn positive_src() String {
+positive_source :=
   \\type Box = .{ xs: Vector<Int> }
   \\fn make(n: Int) Int {
   \\  ys := collect i in range(n) { i * 2 }
@@ -120,14 +120,13 @@ fn positive_src() String {
   \\}
   \\make(5)
   \\
-}
 
 // B5 regression: a typed field read copied through an extra local before use.
 // `zs := b.xs` (field read) then `ws := zs` (plain copy) — the field-read result
 // is physically PVecI64, so every copy in the alias group must retype too or the
 // copy store is an un-coerced PVecI64 -> PVec mismatch (invalid wasm). Field-read
 // routing was single-slot before the group-aware fix, leaving copies boxed.
-fn field_read_copy_src() String {
+field_read_copy_source :=
   \\type Box = .{ xs: Vector<Int> }
   \\fn make(n: Int) Int {
   \\  ys := collect i in range(n) { i * 2 }
@@ -138,9 +137,8 @@ fn field_read_copy_src() String {
   \\}
   \\make(5)
   \\
-}
 
-fn boxed_src() String {
+boxed_source :=
   \\type Box = .{ xs: Vector<Int> }
   \\fn wrap(ys: Vector<Int>) Int {
   \\  b := Box.{ xs: ys }
@@ -149,7 +147,6 @@ fn boxed_src() String {
   \\}
   \\wrap([1, 2, 3])
   \\
-}
 
 bad_consumer_source :=
   \\type Box = .{ xs: Vector<Int> }
@@ -161,11 +158,7 @@ bad_consumer_source :=
   \\}
   \\use_box(5)
 
-fn bad_consumer_src() String {
-  bad_consumer_source
-}
-
-fn multi_field_src() String {
+multi_field_source :=
   \\type Pair = .{ a: Vector<Int>, b: Vector<Int> }
   \\fn dup(n: Int) Int {
   \\  ys := collect i in range(n) { i * 2 }
@@ -176,14 +169,13 @@ fn multi_field_src() String {
   \\}
   \\dup(5)
   \\
-}
 
 // A collect whose result is a variant payload escapes: the payload slot stays a
 // boxed PVec, so routing the producer to PVecI64 would create an unboxed store
 // the boundary pass never covered (an invalid-wasm slot mismatch). The self-copy
 // `Lx = init Lx` that lowering emits before the variant must not break the alias
 // chain that makes this escape visible.
-fn variant_payload_src() String {
+variant_payload_source :=
   \\type CD = { IntCol(Vector<Int>), Other(Int) }
   \\fn build(n: Int) CD {
   \\  ys := collect i in range(n) { i * 2 }
@@ -191,14 +183,13 @@ fn variant_payload_src() String {
   \\}
   \\build(5)
   \\
-}
 
 // A typed Vector<Int> field set via ARecordUpdate rebinding (`c.data = <typed
 // collect>`). The original Col literal also seeds the field with a typed collect,
 // and the only field consumer is `c.data[k]` (index read). Both producers are
 // typed-routable and no consumer escapes, so the field stays typed and the
 // PVecI64-into-PVecI64 copy-through is sound.
-fn record_update_src() String {
+record_update_source :=
   \\type Col = .{ data: Vector<Int>, n: Int }
   \\fn build(n: Int) Col {
   \\  c := Col.{ data: collect i in range(n) { i }, n }
@@ -212,13 +203,12 @@ fn record_update_src() String {
   \\}
   \\sum(build(5))
   \\
-}
 
 // A record with two independently-typed Vector<Int> fields: `a` and `b` each get
 // their OWN collect producer (distinct vectors), and each is read via index.
 // Contrast multi_field_src, which stores the SAME vector into both fields (and so
 // demotes both). Two distinct typed producers => both fields typed.
-fn two_typed_fields_src() String {
+two_typed_fields_source :=
   \\type Pair = .{ a: Vector<Int>, b: Vector<Int>, n: Int }
   \\fn mk(n: Int) Pair {
   \\  Pair.{ a: collect i in range(n) { i }, b: collect i in range(n) { i * 3 }, n }
@@ -230,12 +220,11 @@ fn two_typed_fields_src() String {
   \\}
   \\use_pair(mk(5))
   \\
-}
 
 // A field fed by a typed-return call result must retype the call-result slot to
 // the same physical field family. Otherwise the field analysis can decide the
 // field is PVecBool while routing stores the boxed PVec call slot into it.
-fn bool_call_result_field_src() String {
+bool_call_result_field_source :=
   \\type BoolCol = .{ mask: Vector<Bool> }
   \\fn no_nulls(n: Int) Vector<Bool> { Vector.make(n, false) }
   \\fn mk(n: Int) BoolCol { BoolCol.{ mask: no_nulls(n) } }
@@ -246,12 +235,11 @@ fn bool_call_result_field_src() String {
   \\}
   \\read(mk(8), 8)
   \\
-}
 
 // A typed field read can feed a typed gather result, which can then be stored
 // back into the same typed field. This is the dataframe `Column.nulls` shape:
 // `Column.{ nulls: c.nulls.gather(idx) }`.
-fn bool_field_gather_result_src() String {
+bool_field_gather_result_source :=
   \\type BoolCol = .{ mask: Vector<Bool> }
   \\fn no_nulls(n: Int) Vector<Bool> { Vector.make(n, false) }
   \\fn mk(n: Int) BoolCol { BoolCol.{ mask: no_nulls(n) } }
@@ -266,7 +254,6 @@ fn bool_field_gather_result_src() String {
   \\idx := collect i in range(8) { i }
   \\read(gather_col(mk(8), idx), 8)
   \\
-}
 
 pub fn suite() runner.Suite {
   runner
@@ -274,7 +261,7 @@ pub fn suite() runner.Suite {
     .test(
       "positive: collect into field, read via index, is typed",
       fn() {
-        d := try analyze_src(positive_src())
+        d := try analyze_src(positive_source)
         try assert.equal(typed_count(d), 1)
         .Ok({})
       },
@@ -282,7 +269,7 @@ pub fn suite() runner.Suite {
     .test(
       "boxed producer: field fed by a parameter stays boxed",
       fn() {
-        d := try analyze_src(boxed_src())
+        d := try analyze_src(boxed_source)
         try assert.equal(typed_count(d), 0)
         .Ok({})
       },
@@ -290,7 +277,7 @@ pub fn suite() runner.Suite {
     .test(
       "bad consumer: field read that escapes stays boxed",
       fn() {
-        d := try analyze_src(bad_consumer_src())
+        d := try analyze_src(bad_consumer_source)
         try assert.equal(typed_count(d), 0)
         .Ok({})
       },
@@ -298,7 +285,7 @@ pub fn suite() runner.Suite {
     .test(
       "multi-field producer: one vector into two fields demotes both",
       fn() {
-        d := try analyze_src(multi_field_src())
+        d := try analyze_src(multi_field_source)
         try assert.equal(typed_count(d), 0)
         .Ok({})
       },
@@ -306,7 +293,7 @@ pub fn suite() runner.Suite {
     .test(
       "positive case decides exactly one true key, no spurious entries",
       fn() {
-        d := try analyze_src(positive_src())
+        d := try analyze_src(positive_source)
         only_true := true
 
         for k in d.keys() {
@@ -326,7 +313,7 @@ pub fn suite() runner.Suite {
     .test(
       "routing with the typed-field set retypes producer + field-read slots to PVecI64",
       fn() {
-        p := try prepare_src(positive_src())
+        p := try prepare_src(positive_source)
         tf := analyze_typed_fields(p.funcs, p.builtins, Dict.new())
 
         // Sanity: the analysis flagged the column field as typed.
@@ -364,7 +351,7 @@ pub fn suite() runner.Suite {
       fn() {
         // The boxed source has no typed-routable producer, so analyze yields an
         // empty set and routing must leave everything boxed regardless.
-        p := try prepare_src(boxed_src())
+        p := try prepare_src(boxed_source)
         tf := analyze_typed_fields(p.funcs, p.builtins, Dict.new())
         try assert.equal(typed_count(tf), 0)
 
@@ -380,7 +367,7 @@ pub fn suite() runner.Suite {
         // producer boxed. Routing it to PVecI64 once produced invalid wasm (a
         // PVecI64 stored straight into the PVec payload slot). Pass the analyzed
         // field set (empty here) just like the live pipeline does.
-        p := try prepare_src(variant_payload_src())
+        p := try prepare_src(variant_payload_source)
         tf := analyze_typed_fields(p.funcs, p.builtins, Dict.new())
         routed := route_typed_vectors(p.funcs, p.builtins, tf, Dict.new(), Dict.new(), Dict.new()).funcs
         try assert.equal(pvec_i64_slot_count(routed), 0)
@@ -394,10 +381,10 @@ pub fn suite() runner.Suite {
         // the original literal and the update value are typed-routable collects and
         // the only consumer is an index read, so the field is decided typed and
         // routing yields PVecI64 slots — the PVecI64-into-PVecI64 copy is sound.
-        d := try analyze_src(record_update_src())
+        d := try analyze_src(record_update_source)
         try assert.equal(typed_count(d), 1)
 
-        p := try prepare_src(record_update_src())
+        p := try prepare_src(record_update_source)
         tf := analyze_typed_fields(p.funcs, p.builtins, Dict.new())
         try assert.equal(typed_count(tf), 1)
         routed := route_typed_vectors(p.funcs, p.builtins, tf, Dict.new(), Dict.new(), Dict.new()).funcs
@@ -413,7 +400,7 @@ pub fn suite() runner.Suite {
       fn() {
         // Each field has its OWN collect producer (distinct vectors), unlike
         // multi_field_src which stores one vector into both. Both fields typed.
-        d := try analyze_src(two_typed_fields_src())
+        d := try analyze_src(two_typed_fields_source)
         try assert.equal(typed_count(d), 2)
         .Ok({})
       },
@@ -421,7 +408,7 @@ pub fn suite() runner.Suite {
     .test(
       "typed-return call result stored into a typed Bool field verifies",
       fn() {
-        vi := try verify_inputs(bool_call_result_field_src())
+        vi := try verify_inputs(bool_call_result_field_source)
         try assert.equal(typed_count(vi.prepared.typed_vector_fields), 1)
 
         case verify_prepared_module_with_level(
@@ -438,7 +425,7 @@ pub fn suite() runner.Suite {
     .test(
       "typed field gather result stored back into the Bool field verifies",
       fn() {
-        vi := try verify_inputs(bool_field_gather_result_src())
+        vi := try verify_inputs(bool_field_gather_result_source)
         try assert.equal(typed_count(vi.prepared.typed_vector_fields), 1)
 
         case verify_prepared_module_with_level(
@@ -455,7 +442,7 @@ pub fn suite() runner.Suite {
     .test(
       "verify accepts PVecI64 producer into a typed field under the matching env",
       fn() {
-        vi := try verify_inputs(positive_src())
+        vi := try verify_inputs(positive_source)
 
         // The backend context mirrors the live pipeline: prepared facts carry the
         // routed module's decisions, so layout yields PVecI64 for the typed field
@@ -479,7 +466,7 @@ pub fn suite() runner.Suite {
         // store was an un-coerced PVecI64 -> PVec mismatch (invalid wasm, caught
         // only by V8). Routing must now type the whole alias group, and the strict
         // non-coercing local-store check in the verifier must accept the result.
-        vi := try verify_inputs(field_read_copy_src())
+        vi := try verify_inputs(field_read_copy_source)
         case verify_prepared_module_with_level(
           vi.prepared,
           backend_context(vi.env, vi.prepared),
@@ -494,7 +481,7 @@ pub fn suite() runner.Suite {
     .test(
       "verify rejects a PVecI64 producer stored into a boxed-PVec field slot",
       fn() {
-        vi := try verify_inputs(positive_src())
+        vi := try verify_inputs(positive_source)
 
         // Sanity: the routed module actually typed the field, so its producer
         // slot is PVecI64. Without that the mismatch below would be vacuous.

@@ -122,7 +122,7 @@ fn pvec_i64_slot_count(funcs: Vector<PreparedFunc>) Int {
 
 // A store-form accessor with a clean `collect` producer and a caller that reads
 // the result via index/len — the exact dataframe accessor shape.
-fn accessor_src() String {
+accessor_source :=
   \\type Col = { IntCol(Vector<Int>), Other }
   \\fn as_ints(c: Col) Vector<Int> { case c { .IntCol(v) => v, _ => error("x") } }
   \\fn mk() Col { .IntCol(collect i in range(5) { i }) }
@@ -134,7 +134,6 @@ fn accessor_src() String {
   \\}
   \\go()
   \\
-}
 
 pub fn suite() runner.Suite {
   runner
@@ -142,7 +141,7 @@ pub fn suite() runner.Suite {
     .test(
       "store-form accessor types (return ABI + caller slots) only after tailify",
       fn() {
-        p := try prepare_src(accessor_src())
+        p := try prepare_src(accessor_source)
         never := never_returning_funcs(p.funcs)
 
         // Without tailify: the store-form live arm stores into the result slot

@@ -109,7 +109,7 @@ fn op_calls_fid(op: PreparedOp, fid_id: Int) Bool {
 }
 
 // collect-born producer with an indexed set + a read + return.
-fn collect_set_src() String {
+collect_set_source :=
   \\fn f(n: Int) Vector<Int> {
   \\  xs := collect i in range(n) { i }
   \\  xs[0] = 42
@@ -119,10 +119,9 @@ fn collect_set_src() String {
   \\}
   \\println(f(5).len().to_string())
   \\
-}
 
 // Vector.make-born producer with an indexed set.
-fn make_set_src() String {
+make_set_source :=
   \\fn f() Vector<Int> {
   \\  xs := Vector.make(3, 0)
   \\  xs[1] = 9
@@ -130,10 +129,9 @@ fn make_set_src() String {
   \\}
   \\println(f().len().to_string())
   \\
-}
 
 // Negative: Vector<Float> indexed set (no typed float family, so no promotion).
-fn float_set_src() String {
+float_set_source :=
   \\fn f(n: Int) Vector<Float> {
   \\  xs := collect i in range(n) { 1.0 }
   \\  xs[0] = 1.5
@@ -141,11 +139,10 @@ fn float_set_src() String {
   \\}
   \\println(f(4).len().to_string())
   \\
-}
 
 // Negative: a Vector<Int> with an indexed set that escapes into a dict value —
 // the dict store disqualifies the group, so it stays boxed.
-fn dict_escape_src() String {
+dict_escape_source :=
   \\fn f(n: Int) Dict<Int, Vector<Int>> {
   \\  m := Dict.new()
   \\  xs := collect i in range(n) { i }
@@ -155,9 +152,8 @@ fn dict_escape_src() String {
   \\}
   \\println(f(4).len().to_string())
   \\
-}
 
-fn set_append_src() String {
+set_append_source :=
   \\fn typed_set_append(n: Int) Int {
   \\  xs := collect i in range(n) { i }
   \\  xs[0] = 42
@@ -166,9 +162,8 @@ fn set_append_src() String {
   \\}
   \\println(typed_set_append(5).to_string())
   \\
-}
 
-fn append_only_src() String {
+append_only_source :=
   \\fn append_only_acc(n: Int) Int {
   \\  acc: Vector<Int> = []
   \\  i := 0
@@ -180,9 +175,8 @@ fn append_only_src() String {
   \\}
   \\println(append_only_acc(5).to_string())
   \\
-}
 
-fn float_set_append_src() String {
+float_set_append_source :=
   \\fn float_set_append(n: Int) Float {
   \\  xs := collect i in range(n) { 1.0 }
   \\  xs[0] = 1.5
@@ -191,9 +185,8 @@ fn float_set_append_src() String {
   \\}
   \\println(float_set_append(4).to_string())
   \\
-}
 
-fn record_escape_set_append_src() String {
+record_escape_set_append_source :=
   \\type Holder = .{ xs: Vector<Int> }
   \\fn record_escape_set_append(n: Int) Int {
   \\  xs := collect i in range(n) { i }
@@ -204,7 +197,6 @@ fn record_escape_set_append_src() String {
   \\}
   \\println(record_escape_set_append(4).to_string())
   \\
-}
 
 fn linked_wat_for_src(src: String) Result<String, String> {
   artifacts := try pipeline.compile_source(src)
@@ -261,7 +253,7 @@ pub fn suite() runner.Suite {
     .test(
       "collect-born indexed set swaps set_unsafe -> set_i64 and retypes to PVecI64",
       fn() {
-        p := try route_src(collect_set_src())
+        p := try route_src(collect_set_source)
         set_i64 := p.builtins.id("vector$set_i64").id
         try assert.ok(funcs_call_fid(p.funcs, set_i64), "expected the set to route to set_i64")
         try assert.ok(pvec_i64_slot_count(p.funcs) > 0, "expected PVecI64 vector slots")
@@ -271,7 +263,7 @@ pub fn suite() runner.Suite {
     .test(
       "Vector.make-born indexed set promotes to set_i64 + PVecI64",
       fn() {
-        p := try route_src(make_set_src())
+        p := try route_src(make_set_source)
         set_i64 := p.builtins.id("vector$set_i64").id
         try assert.ok(funcs_call_fid(p.funcs, set_i64), "expected the set to route to set_i64")
         try assert.ok(pvec_i64_slot_count(p.funcs) > 0, "expected PVecI64 vector slots")
@@ -281,7 +273,7 @@ pub fn suite() runner.Suite {
     .test(
       "Vector<Float> indexed set stays boxed (only vec_i64 promotes)",
       fn() {
-        p := try route_src(float_set_src())
+        p := try route_src(float_set_source)
         set_i64 := p.builtins.id("vector$set_i64").id
         try assert.is_false(funcs_call_fid(p.funcs, set_i64))
         try assert.equal(pvec_i64_slot_count(p.funcs), 0)
@@ -291,7 +283,7 @@ pub fn suite() runner.Suite {
     .test(
       "indexed-set vector stored into a dict stays boxed",
       fn() {
-        p := try route_src(dict_escape_src())
+        p := try route_src(dict_escape_source)
         set_i64 := p.builtins.id("vector$set_i64").id
         set_unsafe := p.builtins.id("vector$set_unsafe").id
         try assert.is_false(funcs_call_fid(p.funcs, set_i64))
@@ -307,7 +299,7 @@ pub fn suite() runner.Suite {
     .test(
       "collect indexed set plus append emits typed vector write/read/push path",
       fn() {
-        fn_wat := try user_func_wat(set_append_src(), "typed_set_append")
+        fn_wat := try user_func_wat(set_append_source, "typed_set_append")
         try assert.str_contains(fn_wat, "$rt_types__PVecI64)")
         try assert_call_present(fn_wat, "rt_arr__push_i64")
         try assert_call_present(fn_wat, "rt_arr__set_in_place_i64")
@@ -321,7 +313,7 @@ pub fn suite() runner.Suite {
     .test(
       "append-only accumulator stays boxed",
       fn() {
-        fn_wat := try user_func_wat(append_only_src(), "append_only_acc")
+        fn_wat := try user_func_wat(append_only_source, "append_only_acc")
         try assert_call_absent_exact(fn_wat, "rt_arr__push_i64")
         try assert.is_false(fn_wat.contains("$rt_types__PVecI64"))
         .Ok({})
@@ -330,7 +322,7 @@ pub fn suite() runner.Suite {
     .test(
       "Vector<Float> set plus append stays boxed",
       fn() {
-        fn_wat := try user_func_wat(float_set_append_src(), "float_set_append")
+        fn_wat := try user_func_wat(float_set_append_source, "float_set_append")
         try assert_call_absent_exact(fn_wat, "rt_arr__push_i64")
         try assert.is_false(fn_wat.contains("$rt_types__PVecI64"))
         .Ok({})
@@ -339,7 +331,7 @@ pub fn suite() runner.Suite {
     .test(
       "set plus append vector stored in a record stays boxed",
       fn() {
-        fn_wat := try user_func_wat(record_escape_set_append_src(), "record_escape_set_append")
+        fn_wat := try user_func_wat(record_escape_set_append_source, "record_escape_set_append")
         try assert_call_absent_exact(fn_wat, "rt_arr__push_i64")
         try assert.is_false(fn_wat.contains("$rt_types__PVecI64"))
         .Ok({})
