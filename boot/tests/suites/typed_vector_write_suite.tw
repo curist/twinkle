@@ -1,20 +1,245 @@
+//! Typed Vector<Int> indexed-write promotion (sub-project A).
+//!
+//! Two harness styles:
+//!  - Routing assertions: compile a snippet, run prepare_backend_preroute +
+//!    route_typed_vectors, and inspect the routed IR by builtin FuncId (exact,
+//!    no WAT-substring trap). A promoted indexed set swaps set_unsafe -> set_i64
+//!    and the vector slots retype to PVecI64; negatives keep neither.
+//!  - Execution assertions: ordinary Twinkle that runs as part of the suite (the
+//!    current promoting compiler builds it), proving the in-place vs functional
+//!    (COW) semantics of a promoted write end to end. The emit-time in-place
+//!    op selection (set_in_place_i64) is exercised here, since route_typed_vectors
+//!    alone emits the functional set_i64 (in-place is chosen later at emit).
+
 use @std.testing.assert as assert
 use @std.testing as runner
 
-// Typed Vector<Int> indexed-write promotion (sub-project A).
-//
-// Placeholder during Phase 1: the runtime ops (set_i64 / set_in_place_i64 /
-// get_leaf_i64 / do_set_i64) exist but nothing routes to them yet, so they
-// cannot be exercised by name from source. Real coverage (WAT-level promotion
-// assertions + in-place/functional/OOB behavior) arrives in Phase 5 once
-// routing emits the typed ops through promoted regions.
+use compiler.backend.closure_convert.{convert_closures}
+use compiler.backend.prepare.{prepare_backend_preroute}
+use compiler.backend.prepared_ir.{PreparedExpr, PreparedFunc, PreparedOp, SlotInfo}
+use compiler.backend.route_typed_vec.{route_typed_vectors}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.pipeline
+
+type RouteInputs = .{ funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry }
+
+// Prepare + route a snippet with empty whole-program facts: a local
+// collect/make producer promotes on its own (candidate path), which is all these
+// fixtures exercise.
+fn route_src(src: String) Result<RouteInputs, String> {
+  artifacts := try pipeline.compile_source(src)
+  cc := convert_closures(artifacts.opt, artifacts.env)
+  pre := prepare_backend_preroute(cc.anf, artifacts.env, artifacts.builtins, cc.captures)
+  routed := route_typed_vectors(
+    pre.funcs,
+    artifacts.builtins,
+    Dict.new(),
+    Dict.new(),
+    Dict.new(),
+    Dict.new(),
+  ).funcs
+  .Ok(.{ funcs: routed, builtins: artifacts.builtins })
+}
+
+fn is_pvec_i64(info: SlotInfo) Bool {
+  case info.wasm_type {
+    .Ref(_, ht) => case ht {
+      .Named(n) => n == "rt_types__PVecI64",
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn pvec_i64_slot_count(funcs: Vector<PreparedFunc>) Int {
+  n := 0
+
+  for pf in funcs {
+    for sid in pf.slots.keys() {
+      case pf.slots[sid] {
+        .Some(info) => if is_pvec_i64(info) {
+          n = n + 1
+        },
+        .None => {},
+      }
+    }
+  }
+
+  n
+}
+
+// True if any function body calls the builtin whose FuncId is `fid_id`.
+fn funcs_call_fid(funcs: Vector<PreparedFunc>, fid_id: Int) Bool {
+  for pf in funcs {
+    if expr_calls_fid(pf.body, fid_id) {
+      return true
+    }
+  }
+
+  false
+}
+
+fn expr_calls_fid(expr: PreparedExpr, fid_id: Int) Bool {
+  case expr {
+    .Let(_, op, body) => op_calls_fid(op, fid_id) or expr_calls_fid(body, fid_id),
+    _ => false,
+  }
+}
+
+fn op_calls_fid(op: PreparedOp, fid_id: Int) Bool {
+  case op {
+    .ACall(callee, _) => case callee {
+      .AGlobalFunc(fid) => fid.id == fid_id,
+      _ => false,
+    },
+    .AIf(_, then_e, else_e) => expr_calls_fid(then_e, fid_id) or expr_calls_fid(else_e, fid_id),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if expr_calls_fid(arm.body, fid_id) {
+          return true
+        }
+      }
+
+      false
+    },
+    .ALoop(inner) => expr_calls_fid(inner, fid_id),
+    .ADefer(inner) => expr_calls_fid(inner, fid_id),
+    _ => false,
+  }
+}
+
+// collect-born producer with an indexed set + a read + return.
+fn collect_set_src() String {
+  "fn f(n: Int) Vector<Int> {\n"
+    .concat("  xs := collect i in range(n) { i }\n")
+    .concat("  xs[0] = 42\n")
+    .concat("  y := xs[1]\n")
+    .concat("  println(y.to_string())\n")
+    .concat("  xs\n")
+    .concat("}\n")
+    .concat("println(f(5).len().to_string())\n")
+}
+
+// Vector.make-born producer with an indexed set.
+fn make_set_src() String {
+  "fn f() Vector<Int> {\n"
+    .concat("  xs := Vector.make(3, 0)\n")
+    .concat("  xs[1] = 9\n")
+    .concat("  xs\n")
+    .concat("}\n")
+    .concat("println(f().len().to_string())\n")
+}
+
+// Negative: Vector<Float> indexed set (no typed float family, so no promotion).
+fn float_set_src() String {
+  "fn f(n: Int) Vector<Float> {\n"
+    .concat("  xs := collect i in range(n) { 1.0 }\n")
+    .concat("  xs[0] = 1.5\n")
+    .concat("  xs\n")
+    .concat("}\n")
+    .concat("println(f(4).len().to_string())\n")
+}
+
+// Negative: a Vector<Int> with an indexed set that escapes into a dict value —
+// the dict store disqualifies the group, so it stays boxed.
+fn dict_escape_src() String {
+  "fn f(n: Int) Dict<Int, Vector<Int>> {\n"
+    .concat("  m := Dict.new()\n")
+    .concat("  xs := collect i in range(n) { i }\n")
+    .concat("  xs[0] = 1\n")
+    .concat("  m[0] = xs\n")
+    .concat("  m\n")
+    .concat("}\n")
+    .concat("println(f(4).len().to_string())\n")
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("typed vector write")
     .test(
-      "placeholder — routing not yet wired",
+      "collect-born indexed set swaps set_unsafe -> set_i64 and retypes to PVecI64",
       fn() {
-        try assert.equal(1, 1)
+        p := try route_src(collect_set_src())
+        set_i64 := p.builtins.id("vector$set_i64").id
+        try assert.ok(funcs_call_fid(p.funcs, set_i64), "expected the set to route to set_i64")
+        try assert.ok(pvec_i64_slot_count(p.funcs) > 0, "expected PVecI64 vector slots")
+        .Ok({})
+      },
+    )
+    .test(
+      "Vector.make-born indexed set promotes to set_i64 + PVecI64",
+      fn() {
+        p := try route_src(make_set_src())
+        set_i64 := p.builtins.id("vector$set_i64").id
+        try assert.ok(funcs_call_fid(p.funcs, set_i64), "expected the set to route to set_i64")
+        try assert.ok(pvec_i64_slot_count(p.funcs) > 0, "expected PVecI64 vector slots")
+        .Ok({})
+      },
+    )
+    .test(
+      "Vector<Float> indexed set stays boxed (only vec_i64 promotes)",
+      fn() {
+        p := try route_src(float_set_src())
+        set_i64 := p.builtins.id("vector$set_i64").id
+        try assert.is_false(funcs_call_fid(p.funcs, set_i64))
+        try assert.equal(pvec_i64_slot_count(p.funcs), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "indexed-set vector stored into a dict stays boxed",
+      fn() {
+        p := try route_src(dict_escape_src())
+        set_i64 := p.builtins.id("vector$set_i64").id
+        set_unsafe := p.builtins.id("vector$set_unsafe").id
+        try assert.is_false(funcs_call_fid(p.funcs, set_i64))
+
+        // The boxed set path is retained.
+        try assert.ok(
+          funcs_call_fid(p.funcs, set_unsafe),
+          "expected the boxed set_unsafe to remain",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "owned indexed set (in-place) reads back; untouched slots unchanged",
+      fn() {
+        xs := collect i in range(5) {
+          i
+        }
+        xs[2] = 99
+        try assert.equal(xs[2], 99)
+        try assert.equal(xs[3], 3)
+        try assert.equal(xs[0], 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "functional set through a kept alias leaves the original unchanged (COW)",
+      fn() {
+        xs := collect i in range(5) {
+          i
+        }
+        ys := xs
+        xs[0] = 42
+        try assert.equal(ys[0], 0) // alias observes the original
+        try assert.equal(xs[0], 42) // rebound name observes the new value
+        .Ok({})
+      },
+    )
+    .test(
+      "deep-trie set (> 1024 elements) reads back correctly",
+      fn() {
+        n := 2000
+        xs := collect i in range(n) {
+          i
+        }
+        ys := xs
+        xs[1500] = 777
+        try assert.equal(xs[1500], 777)
+        try assert.equal(xs[1499], 1499)
+        try assert.equal(ys[1500], 1500) // functional set: alias unchanged
         .Ok({})
       },
     )
