@@ -274,7 +274,7 @@ git commit -m "docs(mutvec): record slice 1 landed (flag-gated) + next-slice not
 
 ## Deferred to later slices (explicitly out of scope)
 
-- **stage0 mirror** (`src/runtime/arr.rs`, `src/runtime/types.rs`, `src/ir/lower.rs`, `src/intrinsics/*`, `src/codegen/prelude.rs`, `src/types/env.rs`) and **flipping `TWINKLE_MUTVEC` on by default** — required together, because turning the pass on during self-host changes boot's own emitted code, so stage0 must produce identical mutvec output to hold the fixed point.
+- **Enabling the codepath unconditionally** — the next slice removes the `TWINKLE_MUTVEC` env var entirely and always runs the pass (no flag). **No stage0 mirror is needed.** The self-host fixed point is boot-compiler-only: the loop compares stage3 vs stage4, both produced by boot-compiled compilers; stage0's output (stage1) is never in the comparison. stage0 (Rust) has no mutvec pass and never runs it — it only produces a functionally-correct stage1, which then applies mutvec from stage2 onward. Convergence just requires the boot compiler's mutvec output to be deterministic (it is), so `src/` stays untouched.
 - `Bool` / `Float` / boxed element families.
 - Thaw-from-`PVec` for param-sourced owned vectors, and owned-specialized mutable ABI across calls (S4).
 - Standalone append-only loops (no indexed-update) — stay on the boxed builder until the unified-pass convergence (Approach A).
