@@ -5,6 +5,7 @@ use commands.lint as lintcmd
 use compiler.base_env
 use compiler.lint
 use compiler.parser
+use lib.source.report.{FixEdit}
 
 fn findings(src: String) Vector<lint.LintFinding> {
   parsed := parser.parse(src, 0)
@@ -37,6 +38,31 @@ fn cf_findings(src: String) Vector<lint.LintFinding> {
 fn apply_first_edit(src: String, finding: lint.LintFinding) String {
   edit := finding.edits[0]
   src.slice(0, edit.start).concat(edit.replacement).concat(src.slice(edit.end, src.len()))
+}
+
+// Re-analyze and apply every rule's edits until nothing changes — the same
+// fixpoint `run_lint_command` runs, so one rewrite enabling another (a
+// `.concat` chain -> `\\` body -> module constant) converges in one pass.
+fn fix_to_fixpoint(src: String) String {
+  cur := src
+  i := 0
+
+  for i < 10 {
+    edits: Vector<FixEdit> = []
+
+    for f in findings(cur) {
+      edits = .concat(f.edits)
+    }
+
+    if edits.len() == 0 {
+      return cur
+    }
+
+    cur = lintcmd.apply_edits(cur, edits)
+    i = i + 1
+  }
+
+  cur
 }
 
 pub fn suite() runner.Suite {
@@ -722,6 +748,57 @@ pub fn suite() runner.Suite {
         fs := cf_findings("fn n() Int {\n  42\n}\nfn f() Int {\n  apply(n)\n}\n")
         try assert.equal(fs.len(), 1)
         try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "constant-fn: name in a punned record field stays report-only",
+      fn() {
+        // `.{ n }` is a bare reference to `n`, not a call, so converting is unsafe.
+        fs := cf_findings("fn n() Int {\n  42\n}\nfn f() P {\n  .{ n }\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "constant-fn: name called with arguments stays report-only",
+      fn() {
+        fs := cf_findings("fn n() Int {\n  42\n}\nfn f() Int {\n  n(1)\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.equal(fs[0].edits.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "constant-fn: private String-returning builder is auto-fixed",
+      fn() {
+        src := "fn label() String {\n  \"hi\"\n}\nfn shout() String {\n  label().concat(\"!\")\n}\n"
+        fs := cf_findings(src)
+        try assert.equal(fs.len(), 1)
+        fixed := lintcmd.apply_edits(src, fs[0].edits)
+        try assert.ok(fixed.contains("label: String = \"hi\""), "def -> String constant")
+        try assert.ok(fixed.contains("label.concat(\"!\")"), "call site drops ()")
+        try assert.equal(cf_findings(fixed).len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "fixpoint: a concat-chain builder becomes a \\\\ module constant in one pass",
+      fn() {
+        // prefer-multiline-string turns the chain into a `\\` body, which then
+        // makes constant-fn fire and hoist it to a module constant + repoint the
+        // call site — the interference the run_lint_command fixpoint resolves.
+        src := "fn tmpl() String {\n  \"a\\n\".concat(\"b\\n\").concat(\"c\\n\")\n}\nfn caller() Int {\n  tmpl().len()\n}\n"
+        fixed := fix_to_fixpoint(src)
+        try assert.ok(fixed.contains("tmpl: String ="), "hoisted to a module constant")
+        try assert.ok(fixed.contains("\\\\a"), "body is a \\\\ multi-line literal")
+        try assert.ok(fixed.contains("tmpl.len()"), "call site dropped ()")
+        try assert.is_false(fixed.contains(".concat("))
+        try assert.is_false(fixed.contains("tmpl()"))
+
+        // Fully converged: no findings remain.
+        try assert.equal(findings(fixed).len(), 0)
         .Ok({})
       },
     )
