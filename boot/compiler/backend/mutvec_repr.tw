@@ -1,0 +1,230 @@
+//! MutVec physical-repr assignment (storage slice 1).
+//!
+//! After `mutvec_region.rewrite_module` lowers a claimed region to `mutvec_*`
+//! runtime ops, the handle slots still carry the default boxed `Vector<Int>`
+//! repr (`TypedRef`) because `repr_assign` derives reprs from MonoType, which
+//! stays `Vector<Int>`. This pass is the site-aware override that marks those
+//! slots with their true physical repr — exactly the role `route_typed_vec`
+//! plays for PVecI64 slots. It reads the already-rewritten prepared IR (it does
+//! NOT re-prove ownership or exits — the region rewrite already committed to
+//! those): a slot that flows through a `mutvec_*` op is `MutVec(I64)`; the
+//! `mutvec_freeze_i64` result is the persistent `TypedVec(I64)` (PVecI64).
+
+use compiler.backend.prepared_ir.{
+  PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo,
+}
+use compiler.backend.repr_assign.{wasm_type_of_repr}
+use compiler.builtins
+use compiler.builtins.{BuiltinRegistry}
+use compiler.resolver.{ResolvedEnv}
+
+type MutVecIds = .{
+  new_i64: Int,
+  make_i64: Int,
+  push_i64: Int,
+  set_i64: Int,
+  get_i64: Int,
+  len_i64: Int,
+  freeze_i64: Int,
+}
+
+fn resolve_ids(b: BuiltinRegistry) MutVecIds {
+  .{
+    new_i64: builtins.id(b, "vector$__mutvec_new_i64").id,
+    make_i64: builtins.id(b, "vector$__mutvec_make_i64").id,
+    push_i64: builtins.id(b, "vector$__mutvec_push_i64").id,
+    set_i64: builtins.id(b, "vector$__mutvec_set_i64").id,
+    get_i64: builtins.id(b, "vector$__mutvec_get_i64").id,
+    len_i64: builtins.id(b, "vector$__mutvec_len_i64").id,
+    freeze_i64: builtins.id(b, "vector$__mutvec_freeze_i64").id,
+  }
+}
+
+fn slot_id(a: PreparedAtom) Int? {
+  case a {
+    .ASlot(s) => .Some(s.id),
+    _ => .None,
+  }
+}
+
+// Seed/propagation state threaded through returns (Twinkle dicts are immutable —
+// mutating a dict arg does not reach the caller, so we accumulate functionally).
+type SeedAcc = .{ handle: Dict<Int, Bool>, frozen: Dict<Int, Bool> }
+
+fn mark_handle(acc: SeedAcc, sid: Int) SeedAcc {
+  acc.handle[sid] = true
+  acc
+}
+
+fn mark_frozen(acc: SeedAcc, sid: Int) SeedAcc {
+  acc.frozen[sid] = true
+  acc
+}
+
+fn mark_arg0(acc: SeedAcc, args: Vector<PreparedAtom>) SeedAcc {
+  if args.len() >= 1 {
+    case slot_id(args[0]) {
+      .Some(sid) => acc.mark_handle(sid),
+      .None => acc,
+    }
+  } else {
+    acc
+  }
+}
+
+// Seed: any slot that is the result or arg0 of a mutvec op is a handle; the
+// freeze result is the persistent frozen slot. `acc` is first so the walk reads
+// as inherent-method chains (acc.seed_op(...).seed_expr(...)).
+fn seed_expr(acc: SeedAcc, e: PreparedExpr, ids: MutVecIds) SeedAcc {
+  case e {
+    .Let(slot, op, body) => acc.seed_op(slot.id, op, ids).seed_expr(body, ids),
+    _ => acc,
+  }
+}
+
+fn seed_op(acc: SeedAcc, rid: Int, op: PreparedOp, ids: MutVecIds) SeedAcc {
+  case op {
+    .ACall(.AGlobalFunc(f), args) => {
+      a1 := if f.id == ids.new_i64
+        or f.id == ids.make_i64
+        or f.id == ids.push_i64
+        or f.id == ids.set_i64 {
+        acc.mark_handle(rid)
+      } else {
+        acc
+      }
+      a2 := if f.id == ids.freeze_i64 {
+        a1.mark_frozen(rid)
+      } else {
+        a1
+      }
+      if f.id == ids.set_i64
+        or f.id == ids.get_i64
+        or f.id == ids.len_i64
+        or f.id == ids.push_i64
+        or f.id == ids.freeze_i64 {
+        a2.mark_arg0(args)
+      } else {
+        a2
+      }
+    },
+    .AIf(_, t, e) => acc.seed_expr(t, ids).seed_expr(e, ids),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        acc = .seed_expr(arm.body, ids)
+      }
+      acc
+    },
+    .ALoop(inner) => acc.seed_expr(inner, ids),
+    .ADefer(inner) => acc.seed_expr(inner, ids),
+    _ => acc,
+  }
+}
+
+// Propagate handle-ness through `dst = init src` / `dst = assign src` copies of
+// the producer chain (e.g. the collect builder alias inits). Threads the handle
+// set through returns; the driver re-runs to a fixpoint via the changed flag.
+type PropAcc = .{ handle: Dict<Int, Bool>, changed: Bool }
+
+fn propagate_expr(acc: PropAcc, e: PreparedExpr) PropAcc {
+  case e {
+    .Let(slot, op, body) => acc.propagate_op(slot.id, op).propagate_expr(body),
+    _ => acc,
+  }
+}
+
+fn prop_copy(acc: PropAcc, dst: Int, src_atom: PreparedAtom) PropAcc {
+  case slot_id(src_atom) {
+    .Some(src) => if acc.handle.has(src) and !acc.handle.has(dst) {
+      acc.handle[dst] = true
+      acc.changed = true
+      acc
+    } else {
+      acc
+    },
+    .None => acc,
+  }
+}
+
+fn propagate_op(acc: PropAcc, rid: Int, op: PreparedOp) PropAcc {
+  case op {
+    .AInit(a) => acc.prop_copy(rid, a),
+    .AAssign(target, a) => acc.prop_copy(target.id, a),
+    .AIf(_, t, e) => acc.propagate_expr(t).propagate_expr(e),
+    .AMatch(_, arms) => {
+      for arm in arms {
+        acc = .propagate_expr(arm.body)
+      }
+      acc
+    },
+    .ALoop(inner) => acc.propagate_expr(inner),
+    .ADefer(inner) => acc.propagate_expr(inner),
+    _ => acc,
+  }
+}
+
+// Run init/assign propagation to a fixpoint.
+fn propagate_fixpoint(body: PreparedExpr, handle: Dict<Int, Bool>) Dict<Int, Bool> {
+  cur := handle
+  changed := true
+  for changed {
+    r: PropAcc = .{ handle: cur, changed: false }
+    r2 := r.propagate_expr(body)
+    cur = r2.handle
+    changed = r2.changed
+  }
+  cur
+}
+
+fn override_slot(info: SlotInfo, repr: ReprKind, env: ResolvedEnv) SlotInfo {
+  .{
+    slot: info.slot,
+    source_local: info.source_local,
+    role: info.role,
+    mono: info.mono,
+    repr,
+    wasm_type: wasm_type_of_repr(repr, info.mono, env),
+  }
+}
+
+fn assign_in_func(pf: PreparedFunc, ids: MutVecIds, env: ResolvedEnv) PreparedFunc {
+  init: SeedAcc = .{ handle: Dict.new(), frozen: Dict.new() }
+  seeded := init.seed_expr(pf.body, ids)
+  frozen := seeded.frozen
+
+  // No mutvec op in this function -> untouched (byte-identical).
+  if seeded.handle.keys().len() == 0 and frozen.keys().len() == 0 {
+    return pf
+  }
+
+  // Fixpoint the init/assign propagation of the producer chain.
+  handle := propagate_fixpoint(pf.body, seeded.handle)
+
+  // Body ops reference slots by info.slot.id, which may differ from the pf.slots
+  // dict key; seed/frozen are populated with the former, so look up by it.
+  new_slots: Dict<Int, SlotInfo> = Dict.new()
+  for sid, info in pf.slots {
+    new_slots[sid] = if handle.has(info.slot.id) {
+      override_slot(info, .MutVec(.I64), env)
+    } else if frozen.has(info.slot.id) {
+      override_slot(info, .TypedVec(.I64), env)
+    } else {
+      info
+    }
+  }
+
+  pf.slots = new_slots
+  pf
+}
+
+// Override the physical repr of every MutVec handle slot and freeze result across
+// the module. A no-op for functions with no mutvec op (the common case), so the
+// flag-off pipeline is unaffected.
+pub fn assign_mutvec_reprs(funcs: Vector<PreparedFunc>, env: ResolvedEnv, builtins: BuiltinRegistry) Vector<
+  PreparedFunc,
+> {
+  ids := resolve_ids(builtins)
+  collect pf in funcs {
+    assign_in_func(pf, ids, env)
+  }
+}

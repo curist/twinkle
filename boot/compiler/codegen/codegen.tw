@@ -30,6 +30,7 @@ use compiler.codegen.linker.{LinkedModule, link}
 use compiler.codegen.linker_dce.{eliminate_dead_wasm}
 use compiler.codegen.mutable_produce
 use compiler.codegen.mutable_select
+use compiler.codegen.mutvec_region
 use compiler.codegen.runtime.arr as rt_arr
 use compiler.codegen.runtime.buf as rt_buf
 use compiler.codegen.runtime.core as rt_core
@@ -82,6 +83,15 @@ fn variant_specialize_enabled() Bool {
   }
 }
 
+// MutVec region lowering is default-OFF (opt-in via TWINKLE_MUTVEC=1) while the
+// slice is being built, so self-host and unclaimed codegen stay byte-identical.
+fn mutvec_region_enabled() Bool {
+  case proc.env("TWINKLE_MUTVEC") {
+    .Some("1") => true,
+    _ => false,
+  }
+}
+
 fn verify_level_from_env() VerifyLevel {
   case proc.env("TWINKLE_VERIFY_LEVEL") {
     .Some("basic") => .Basic,
@@ -126,9 +136,19 @@ pub fn prepare_codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegist
   // Builder-region rewrite -> ANF'. Runs before closure conversion and the
   // call-swap producer so both consume the rewritten ANF (the call-swap stale-artifact
   // guard keys off the ANF fingerprint, which must be ANF').
+  // MutVec region lowering runs immediately before builder_region and fully
+  // rewrites every region it claims, so builder_region sees no surviving
+  // builder-visible shape at those sites (no exclusion parameter needed). Off by
+  // default; unclaimed code is byte-identical.
+  anf_mutvec := if mutvec_region_enabled() {
+    mutvec_region.rewrite_module(anf, builtins)
+  } else {
+    anf
+  }
+
   log_phase("begin builder_region_rewrite")
   tbr := date.now()
-  anf_prime := builder_region.rewrite_module(anf, builtins)
+  anf_prime := builder_region.rewrite_module(anf_mutvec, builtins)
   tbr2 := date.now()
 
   if timed {

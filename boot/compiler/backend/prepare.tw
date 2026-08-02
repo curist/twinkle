@@ -19,6 +19,7 @@ use @std.proc
 
 use compiler.anf.{AnfModule}
 use compiler.backend.context.{BackendContext}
+use compiler.backend.mutvec_repr
 use compiler.backend.prepared_ir.{CaptureParam, PreparedExpr, PreparedFunc, PreparedOp}
 use compiler.backend.repr_assign.{assign_repr_for_module}
 use compiler.backend.route_typed_vec.{SwappedSetSite, route_typed_vectors}
@@ -251,6 +252,11 @@ pub fn prepare_backend_with_mutable_decisions(
   // set_in_place target is type-unsound on a PVecI64 base (fact 4-b). Site keys
   // and shapes are stable across the callee swap.
   decisions := remap_swapped_set_decisions(mutable_decisions, routed.swapped_sites, builtins)
+
+  // MutVec repr handoff: mark the handle slots of every mutvec-lowered region
+  // (from codegen's mutvec_region pass) as MutVec(I64) and the freeze result as
+  // TypedVec(I64). A no-op when TWINKLE_MUTVEC is off (no mutvec ops present).
+  funcs4 := mutvec_repr.assign_mutvec_reprs(funcs3, env, builtins)
   r3 := date.now()
 
   if timed {
@@ -263,7 +269,7 @@ pub fn prepare_backend_with_mutable_decisions(
   .{
     anf: pre.anf,
     closure_captures,
-    funcs: funcs3,
+    funcs: funcs4,
     typed_vector_fields: typed_fields,
     typed_vector_payloads: typed_payloads,
     mutable_decisions: decisions,

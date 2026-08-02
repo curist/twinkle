@@ -1,6 +1,8 @@
 use @std.testing.assert as assert
 use @std.testing as runner
 
+use compiler.anf.{AnfExpr, AnfOp}
+use compiler.builtins
 use compiler.codegen.mutvec_region
 use compiler.pipeline
 
@@ -61,6 +63,58 @@ fn kind_count(r: mutvec_region.MutVecRegion, name: String) Int {
     }
   }
   c
+}
+
+// ── Rewrite-level inspection (Phase 4) ──
+// The suite compiles mutvec_region.tw from disk, so rewrite_module is exercised
+// directly here (flag-independent). An in-suite run has one fixed process env, so
+// the TWINKLE_MUTVEC-gated codegen path + end-to-end WAT are validated externally;
+// this checks the ANF->ANF rewrite fires (or doesn't) by counting mutvec op calls.
+fn count_calls_expr(e: AnfExpr, fid: Int) Int {
+  case e {
+    .Let(_, op, body) => count_calls_op(op, fid) + count_calls_expr(body, fid),
+    _ => 0,
+  }
+}
+
+fn count_calls_op(op: AnfOp, fid: Int) Int {
+  case op {
+    .ACall(callee, _) => case callee {
+      .AGlobalFunc(f) => if f.id == fid {
+        1
+      } else {
+        0
+      },
+      _ => 0,
+    },
+    .AIf(_, t, e) => count_calls_expr(t, fid) + count_calls_expr(e, fid),
+    .AMatch(_, arms) => {
+      n := 0
+      for arm in arms {
+        n = n + count_calls_expr(arm.body, fid)
+      }
+      n
+    },
+    .ALoop(b) => count_calls_expr(b, fid),
+    .ADefer(b) => count_calls_expr(b, fid),
+    _ => 0,
+  }
+}
+
+// Count calls to the named builtin across the whole rewritten module.
+fn rewritten_calls(src: String, name: String) Int {
+  case pipeline.compile_source(src) {
+    .Ok(a) => {
+      m := mutvec_region.rewrite_module(a.opt, a.builtins)
+      fid := builtins.id(a.builtins, name)
+      c := 0
+      for f in m.functions {
+        c = c + count_calls_expr(f.body, fid.id)
+      }
+      c
+    },
+    .Err(e) => error("compile failed: ${e}"),
+  }
 }
 
 pub fn suite() runner.Suite {
@@ -325,6 +379,49 @@ pub fn suite() runner.Suite {
         try assert.equal(kind_count(r, "set"), 1)
         try assert.equal(kind_count(r, "get"), 1)
         try assert.equal(kind_count(r, "len"), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "rewrite: Vector.make region lowers producer + set + single boundary freeze",
+      fn() {
+        src := "fn f() Vector<Int> {\n  xs := Vector.make(3, 0)\n  xs[1] = 9\n  xs\n}\nprintln(f().len().to_string())\n"
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_make_i64"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_set_i64"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_freeze_i64"), 1)
+
+        // The boxed producer + set are fully replaced on the claimed handle.
+        try assert.equal(rewritten_calls(src, "vector$set_unsafe"), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "rewrite: Vector.make region lowers in-region get and len",
+      fn() {
+        src := "fn f() Vector<Int> {\n  xs := Vector.make(3, 0)\n  xs[0] = xs[1]\n  m := xs.len()\n  xs\n}\nprintln(f().len().to_string())\n"
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_make_i64"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_get_i64"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_len_i64"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_freeze_i64"), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "rewrite: collect region is NOT lowered yet (increment 1 is make-only)",
+      fn() {
+        src := "fn f(n: Int) Vector<Int> {\n  xs := collect i in range(n) { i }\n  xs[0] = 42\n  xs\n}\nprintln(f(5).len().to_string())\n"
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_set_i64"), 0)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_freeze_i64"), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "rewrite: unclaimed (append-only) region emits no mutvec ops",
+      fn() {
+        src := "fn f(n: Int) Vector<Int> {\n  acc: Vector<Int> = []\n  for i in range(n) { acc = acc.append(i) }\n  acc\n}\nprintln(f(5).len().to_string())\n"
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_new_i64"), 0)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_push_i64"), 0)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_freeze_i64"), 0)
         .Ok({})
       },
     )
