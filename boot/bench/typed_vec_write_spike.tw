@@ -1,0 +1,68 @@
+//! Typed Vector<Int> indexed-write promotion (sub-project A) perf spike.
+//!
+//! The exact shape the promotion targets: an owned `Vector<Int>` built by
+//! `collect`, updated in place k times via `xs[i] = v`, then read back n times,
+//! then returned. Run it two ways to isolate the win:
+//!
+//!   TWINKLE_TYPED_VEC_WRITE=0 target/twk run boot/bench/typed_vec_write_spike.tw   # boxed
+//!   target/twk run boot/bench/typed_vec_write_spike.tw                              # typed
+//!
+//! Flag-off keeps the boxed PVec path (set_in_place + boxed `anyref` leaves, a
+//! BoxedInt pointer-chase per read). Flag-on promotes to PVecI64: unboxed i64
+//! leaf storage for the writes and, more importantly, typed `get_i64` reads with
+//! no pointer-chase. The lever is keeping the vector typed end to end so the read
+//! loop is flat; the write itself is flat-i64 storage, not a boxing removal (the
+//! set value is boxed on both paths).
+
+use @std.date
+
+/// Reproducible pseudo-random index stream (glibc LCG constants).
+fn next_lcg(s: Int) Int {
+  s * 1103515245 + 12345 & 0x7fffffff
+}
+
+fn bench(n: Int, k: Int) Void {
+  t0 := date.now()
+  xs := collect i in range(n) {
+    i
+  }
+  t1 := date.now()
+
+  // Owned in-place write loop.
+  s := 1
+  j := 0
+  for j < k {
+    s = next_lcg(s)
+    idx := s % n
+    xs[idx] = j
+    j = j + 1
+  }
+  t2 := date.now()
+
+  // Read loop: the typed-read hot path. Two passes over n to weight reads.
+  acc := 0
+  pass := 0
+  for pass < 2 {
+    r := 0
+    for r < n {
+      acc = acc + xs[r]
+      r = r + 1
+    }
+    pass = pass + 1
+  }
+  t3 := date.now()
+
+  build_ms := t1 - t0
+  write_ms := t2 - t1
+  read_ms := t3 - t2
+  println(
+    "  n=${n} k=${k}  build=${build_ms}ms  write=${write_ms}ms  read=${read_ms}ms  guard=${acc - acc
+      + xs[0]}",
+  )
+}
+
+println("── typed indexed-write read+write spike ──")
+bench(65536, 65536)
+bench(65536, 262144)
+bench(1048576, 1048576)
+bench(1048576, 4194304)
