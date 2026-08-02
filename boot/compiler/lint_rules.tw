@@ -158,6 +158,33 @@ pub fn describe(rule: String) RuleInfo? {
         ,
       },
     ),
+    "prefer-case-dispatch" => .Some(
+      .{
+        brief: "use `case` for equality dispatch over one value",
+        detailed:
+          \\A `cond` is best for ordered predicate checks such as ranges,
+          \\thresholds, and mixed boolean conditions. When every arm compares the
+          \\same value to a literal or variant, `case` says the same thing with
+          \\less ceremony and lets the reader see the dispatch key once:
+          \\
+          \\    // Avoid
+          \\    cond {
+          \\      method_name == "len" => len_doc,
+          \\      method_name == "at" => at_doc,
+          \\      _ => .None,
+          \\    }
+          \\
+          \\    // Prefer
+          \\    case method_name {
+          \\      "len" => len_doc,
+          \\      "at" => at_doc,
+          \\      _ => .None,
+          \\    }
+          \\
+          \\The auto-fix preserves whether a default arm is present.
+        ,
+      },
+    ),
     _ => .None,
   }
 }

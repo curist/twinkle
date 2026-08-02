@@ -67,6 +67,41 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "select_edits: prefer-case-dispatch keeps existing rules and skips overlaps",
+      fn() {
+        findings := [
+          lint.Finding.{
+            path: "a.tw",
+            start: 0,
+            message: "parent cond",
+            rule: "prefer-case-dispatch",
+            edits: [FixEdit.{ start: 0, end: 100, replacement: "case x {\n  1 => y,\n}" }],
+          },
+          lint.Finding.{
+            path: "a.tw",
+            start: 20,
+            message: "nested cond",
+            rule: "prefer-case-dispatch",
+            edits: [FixEdit.{ start: 20, end: 40, replacement: "case x {\n  2 => z,\n}" }],
+          },
+          lint.Finding.{
+            path: "a.tw",
+            start: 120,
+            message: "multi-line string",
+            rule: "prefer-multiline-string",
+            edits: [FixEdit.{ start: 120, end: 150, replacement: "\\a\n\\b\n" }],
+          },
+        ]
+
+        edits := lint.select_edits_for_test(findings, false, false, false, false, true, false, true)
+        selected := try edits["a.tw"].ok_or("expected edits for a.tw")
+        try assert.equal(selected.len(), 2)
+        try assert.equal(selected[0].start, 0)
+        try assert.equal(selected[1].start, 120)
+        .Ok({})
+      },
+    )
+    .test(
       "unique_analysis_diags dedupes shared dependency diagnostics",
       fn() {
         first := analysis_diag("/tmp/shared.tw", 4, 8, "boom")
@@ -194,6 +229,7 @@ pub fn suite() runner.Suite {
           "unused-imports",
           "inherent-calls",
           "redundant-print-stringify",
+          "prefer-case-dispatch",
         ]
 
         for id in ids {
@@ -283,6 +319,25 @@ pub fn suite() runner.Suite {
         out := lint.render_report(findings, Dict.new(), true, false)
         try assert.is_true(out.contains("print/error sinks accept Stringify values directly"))
         try assert.is_true(out.contains("println(foo)"))
+        .Ok({})
+      },
+    )
+    .test(
+      "render_report: prefer-case-dispatch explains case equality dispatch",
+      fn() {
+        findings := [
+          lint.Finding.{
+            path: "a.tw",
+            start: 5,
+            message: "`cond` is doing equality dispatch over one value; use `case` instead",
+            rule: "prefer-case-dispatch",
+            edits: [FixEdit.{ start: 5, end: 20, replacement: "case x {\n  1 => y,\n}" }],
+          },
+        ]
+        out := lint.render_report(findings, Dict.new(), true, false)
+        try assert.is_true(out.contains("use `case` for equality dispatch over one value"))
+        try assert.is_true(out.contains("cond {"))
+        try assert.is_true(out.contains("case method_name"))
         .Ok({})
       },
     )

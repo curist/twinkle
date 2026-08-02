@@ -450,6 +450,19 @@ fn report_lint_result(result: LintResult, explain: Bool, color: Bool) {
   }
 }
 
+fn edits_overlap(a: FixEdit, b: FixEdit) Bool {
+  a.start < b.end and b.start < a.end
+}
+
+fn overlaps_any(edit: FixEdit, edits: Vector<FixEdit>) Bool {
+  for existing in edits {
+    if edits_overlap(edit, existing) {
+      return true
+    }
+  }
+  false
+}
+
 /// Edits for the selected rules, grouped by file path (skips report-only and
 /// rules not requested).
 fn select_edits(
@@ -460,6 +473,7 @@ fn select_edits(
   fix_redundant: Bool,
   fix_ml: Bool,
   fix_constant_fn: Bool,
+  fix_case_dispatch: Bool,
 ) Dict<String, Vector<FixEdit>> {
   edits_by_file: Dict<String, Vector<FixEdit>> = Dict.new()
 
@@ -470,16 +484,55 @@ fn select_edits(
       or f.rule == "redundant-print-stringify" and fix_redundant
       or f.rule == "prefer-multiline-string" and fix_ml
       or f.rule == "constant-fn" and fix_constant_fn
+      or f.rule == "prefer-case-dispatch" and fix_case_dispatch
 
     if selected and f.edits.len() > 0 {
-      case edits_by_file[f.path] {
-        .Some(existing) => edits_by_file[f.path] = existing.concat(f.edits),
-        .None => edits_by_file[f.path] = f.edits,
+      existing := case edits_by_file[f.path] {
+        .Some(es) => es,
+        .None => [],
+      }
+      accepted := existing
+      conflicts := false
+
+      for e in f.edits {
+        if overlaps_any(e, accepted) {
+          conflicts = true
+        } else {
+          accepted = .append(e)
+        }
+      }
+
+      if !conflicts {
+        edits_by_file[f.path] = accepted
+      } else if existing.len() > 0 {
+        edits_by_file[f.path] = existing
       }
     }
   }
 
   edits_by_file
+}
+
+pub fn select_edits_for_test(
+  findings: Vector<Finding>,
+  fix_unused: Bool,
+  fix_inherent: Bool,
+  fix_inline_copy: Bool,
+  fix_redundant: Bool,
+  fix_ml: Bool,
+  fix_constant_fn: Bool,
+  fix_case_dispatch: Bool,
+) Dict<String, Vector<FixEdit>> {
+  select_edits(
+    findings,
+    fix_unused,
+    fix_inherent,
+    fix_inline_copy,
+    fix_redundant,
+    fix_ml,
+    fix_constant_fn,
+    fix_case_dispatch,
+  )
 }
 
 pub fn run_lint_command(parsed: ParseResult) {
@@ -497,6 +550,7 @@ pub fn run_lint_command(parsed: ParseResult) {
   fix_redundant := fix_all or parsed.has_flag("fix-redundant-print-stringify")
   fix_ml := fix_all or parsed.has_flag("fix-prefer-multiline-string")
   fix_constant_fn := fix_all or parsed.has_flag("fix-constant-fn")
+  fix_case_dispatch := fix_all or parsed.has_flag("fix-prefer-case-dispatch")
   explain := parsed.has_flag("explain")
   color := default_config().color
   any_apply := fix_unused
@@ -505,6 +559,7 @@ pub fn run_lint_command(parsed: ParseResult) {
     or fix_redundant
     or fix_ml
     or fix_constant_fn
+    or fix_case_dispatch
 
   if !any_apply {
     result := gather_lint_multi(targets)
@@ -547,6 +602,7 @@ pub fn run_lint_command(parsed: ParseResult) {
       fix_redundant,
       fix_ml,
       fix_constant_fn,
+      fix_case_dispatch,
     )
 
     if edits.len() == 0 {
