@@ -148,15 +148,18 @@ fn boxed_src() String {
     .concat("wrap([1, 2, 3])\n")
 }
 
+bad_consumer_source :=
+  \\type Box = .{ xs: Vector<Int> }
+  \\fn use_box(n: Int) Vector<Int> {
+  \\  ys := collect i in range(n) { i * 2 }
+  \\  b := Box.{ xs: ys }
+  \\  zs := b.xs
+  \\  zs.concat([0])
+  \\}
+  \\use_box(5)
+
 fn bad_consumer_src() String {
-  "type Box = .{ xs: Vector<Int> }\n"
-    .concat("fn use_box(n: Int) Vector<Int> {\n")
-    .concat("  ys := collect i in range(n) { i * 2 }\n")
-    .concat("  b := Box.{ xs: ys }\n")
-    .concat("  zs := b.xs\n")
-    .concat("  zs.append(0)\n")
-    .concat("}\n")
-    .concat("use_box(5)\n")
+  bad_consumer_source
 }
 
 fn multi_field_src() String {
