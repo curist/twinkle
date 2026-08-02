@@ -778,6 +778,7 @@ fn equality_dispatch_parts(condition: Expr) EqualityDispatchParts? {
 fn case_dispatch_candidate(arms: Vector<CondArm>, source: String) CaseDispatchCandidate? {
   converted: Vector<CaseDispatchArm> = []
   scrutinee: Expr? = .None
+  has_default := false
 
   for arm in arms {
     case arm.condition {
@@ -793,8 +794,15 @@ fn case_dispatch_candidate(arms: Vector<CondArm>, source: String) CaseDispatchCa
 
         converted = .append(.{ pattern: .Some(parts.pattern), body: arm.body })
       },
-      .None => converted = .append(.{ pattern: .None, body: arm.body }),
+      .None => {
+        has_default = true
+        converted = .append(.{ pattern: .None, body: arm.body })
+      },
     }
+  }
+
+  if !has_default {
+    return .None
   }
 
   s := try scrutinee

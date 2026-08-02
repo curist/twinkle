@@ -12,7 +12,7 @@
 
 - Treat the boot compiler in `boot/` as the primary implementation.
 - Keep the lint structural; do not require typechecking beyond the existing lint pass context.
-- Preserve source meaning: a `cond` without `_` rewrites to a `case` without `_`; a `cond` with `_` keeps the default arm.
+- Preserve source meaning: v1 only reports/autofixes equality-dispatch `cond` expressions with an explicit `_` default arm. No-default `cond` in statement position falls through as `Void` when unmatched, while no-default `case` traps, so no-default conds are intentionally left alone.
 - Auto-fix only when the shared scrutinee is stable to evaluate once instead of per arm; v1 accepts bare identifiers and field-only paths.
 - Auto-fix only when each compared RHS can be a pattern with the same meaning as equality: `Int`, `String`, and `Bool` literals and variant patterns, not bare identifiers, floats, or arbitrary expressions.
 - After editing `.tw` files, run `target/twk fmt` on changed Twinkle files and `target/twk lint boot/main.tw`.
@@ -86,16 +86,12 @@ Append these tests near the other auto-fixable structural lint tests in `boot/te
       },
     )
     .test(
-      "prefer-case-dispatch: fixes integer equality dispatch without default",
+      "prefer-case-dispatch: does not flag statement-position equality dispatch without default",
       fn() {
-        src := "fn f(c: Int) Int {\n  cond {\n    c == 123 => 1,\n    c == 91 => 2,\n  }\n}\n"
-        fs := findings(src)
-        try assert.equal(fs.len(), 1)
-        try assert.equal(fs[0].rule, "prefer-case-dispatch")
-        try assert.equal(
-          apply_first_edit(src, fs[0]),
-          "fn f(c: Int) Int {\n  case c {\n    123 => 1,\n    91 => 2,\n  }\n}\n",
+        fs := findings(
+          "fn f(c: Int) Void {\n  cond {\n    c == 123 => println(\"one\"),\n    c == 91 => println(\"two\"),\n  }\n}\n",
         )
+        try assert.equal(fs.len(), 0)
         .Ok({})
       },
     )
@@ -502,7 +498,10 @@ In `boot/compiler/lint_rules.tw`, add this case before `_ => .None`:
           \\      _ => .None,
           \\    }
           \\
-          \\The auto-fix preserves whether a default arm is present.
+          \\The auto-fix only applies when the `cond` has an explicit default
+          \\arm. No-default conds are intentionally left alone because an
+          \\unmatched no-default `cond` in statement position falls through as
+          \\`Void`, while an unmatched no-default `case` traps.
         ,
       },
     ),
@@ -735,7 +734,7 @@ Expected: the filtered test runs pass, and the AWFY JSON and Towers examples bui
 
 **Interfaces:**
 - Consumes: `twk lint --fix-prefer-case-dispatch` flag from Task 2.
-- Produces: evidence that CLI autofix rewrites both with-default and without-default forms.
+- Produces: evidence that CLI autofix rewrites with-default equality dispatch and leaves no-default statement-position conds alone to preserve fall-through semantics.
 
 - [ ] **Step 1: Create a temporary lint fixture**
 
@@ -751,10 +750,10 @@ fn doc(method_name: String) Int? {
   }
 }
 
-fn tag(c: Int) Int {
+fn log_tag(c: Int) Void {
   cond {
-    c == 123 => 1,
-    c == 91 => 2,
+    c == 123 => println("one"),
+    c == 91 => println("two"),
   }
 }
 EOF
@@ -769,7 +768,7 @@ target/twk build boot/main.tw -o /tmp/twk-prefer-case-dispatch.wasm
 env BOOT_WASM=/tmp/twk-prefer-case-dispatch.wasm deno run -A tools/js_runtime/deno_main.mjs lint /tmp/prefer_case_dispatch.tw --explain
 ```
 
-Expected: exits non-zero and prints `prefer-case-dispatch` with both findings.
+Expected: exits non-zero and prints one `prefer-case-dispatch` finding for `doc`; `log_tag` is not reported because it has no default arm.
 
 - [ ] **Step 3: Apply only the new rule's autofix**
 
@@ -786,10 +785,10 @@ Expected: prints `Fixed: /tmp/prefer_case_dispatch.tw` and reports no remaining 
 Run:
 
 ```bash
-rg -n "case method_name|case c|cond" /tmp/prefer_case_dispatch.tw
+rg -n "case method_name|cond|log_tag" /tmp/prefer_case_dispatch.tw
 ```
 
-Expected: output contains `case method_name` and `case c`; output does not contain `cond`.
+Expected: output contains `case method_name`; the `log_tag` no-default `cond` remains unchanged and no longer produces a `prefer-case-dispatch` finding.
 
 - [ ] **Step 5: Run focused tests for the feature**
 
@@ -835,6 +834,6 @@ Expected: commit succeeds with the lint implementation, tests, command plumbing,
 
 ## Self-Review Notes
 
-- Spec coverage: the plan covers detection, autofix, missing-default preservation, overlap-safe edit selection, rule metadata, command flag selection, known compiler/test/example source rewrites, and verification.
+- Spec coverage: the plan covers detection, default-required autofix policy, no-default fall-through preservation, overlap-safe edit selection, rule metadata, command flag selection, known compiler/test/example source rewrites, and verification.
 - Placeholder scan: no task contains open-ended placeholders; each implementation step names concrete files, code, or commands.
 - Type consistency: the rule id is consistently `prefer-case-dispatch`; the command flag is consistently `--fix-prefer-case-dispatch`; lint findings carry `FixEdit` replacements through existing command plumbing without dropping existing `prefer-multiline-string` or `constant-fn` selection.

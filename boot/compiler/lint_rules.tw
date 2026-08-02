@@ -181,7 +181,11 @@ pub fn describe(rule: String) RuleInfo? {
           \\      _ => .None,
           \\    }
           \\
-          \\The auto-fix preserves whether a default arm is present.
+          \\The auto-fix only applies when the `cond` has an explicit default
+          \\arm. A no-default `cond` in statement position falls through as
+          \\`Void` when no predicate matches, while a no-default `case` traps
+          \\on an unmatched value, so no-default conds are intentionally left
+          \\alone to preserve source meaning.
         ,
       },
     ),

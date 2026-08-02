@@ -548,16 +548,12 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "prefer-case-dispatch: fixes integer equality dispatch without default",
+      "prefer-case-dispatch: does not flag statement-position equality dispatch without default",
       fn() {
-        src := "fn f(c: Int) Int {\n  cond {\n    c == 123 => 1,\n    c == 91 => 2,\n  }\n}\n"
-        fs := findings(src)
-        try assert.equal(fs.len(), 1)
-        try assert.equal(fs[0].rule, "prefer-case-dispatch")
-        try assert.equal(
-          apply_first_edit(src, fs[0]),
-          "fn f(c: Int) Int {\n  case c {\n    123 => 1,\n    91 => 2,\n  }\n}\n",
+        fs := findings(
+          "fn f(c: Int) Void {\n  cond {\n    c == 123 => println(\"one\"),\n    c == 91 => println(\"two\"),\n  }\n}\n",
         )
+        try assert.equal(fs.len(), 0)
         .Ok({})
       },
     )
