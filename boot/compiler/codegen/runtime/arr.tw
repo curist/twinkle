@@ -2081,16 +2081,18 @@ fn mutvec_len_i64_fn() FuncDef {
   }
 }
 
-// mutvec_freeze_i64(mv) -> PVecI64: O(n) build through the typed builder, reading
-// data[0..len]. This is the materialization boundary; it reuses the existing
-// typed-builder machinery so no new persistent-build code is required.
+// mutvec_freeze_i64(mv) -> PVecI64: materialization boundary. When the live
+// prefix fits in a single tail (len <= rt_BF) the result is a trie-less PVecI64
+// (shift=0, root=null, tail=copy(data[0..len])) built with one bulk ArrayCopy —
+// no per-element builder push. Larger vectors fall back to the O(n) typed-builder
+// build, reading data[0..len].
 fn mutvec_freeze_i64_fn() FuncDef {
-  // p0 = mv; L1 = builder, L2 = len, L3 = j, L4 = data
+  // p0 = mv; L1 = builder, L2 = len, L3 = j, L4 = data, L5 = tail
   .{
     name: "mutvec_freeze_i64",
     params: [.Ref(true, .Named(t_MUTVEC_I64))],
     results: [pvec_i64_ref()],
-    locals: [arr_null(), .I32, .I32, arr_i64_null()],
+    locals: [arr_null(), .I32, .I32, arr_i64_null(), arr_i64_null()],
     body: [
       .LocalGet(0),
       .RefAsNonNull,
@@ -2100,39 +2102,71 @@ fn mutvec_freeze_i64_fn() FuncDef {
       .RefAsNonNull,
       .StructGet(t_MUTVEC_I64, 0),
       .LocalSet(4),
-      .Call("builder_new_i64"),
-      .LocalSet(1),
-      .I32Const(0),
-      .LocalSet(3),
-      .Block(
-        "brk",
-        .None,
+      // Fast path: len <= rt_BF fits entirely in the tail — no trie, one bulk copy.
+      .LocalGet(2),
+      .I32Const(rt_BF),
+      .I32LeS,
+      .If(
+        .Some(pvec_i64_ref()),
         [
-          .Loop(
-            "lp",
+          // tail = ArrayI64(len) filled 0, then ArrayCopy data[0..len] -> tail[0..len]
+          .I64Const(0),
+          .LocalGet(2),
+          .ArrayNew(t_ARRAY_I64),
+          .LocalSet(5),
+          .LocalGet(5),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(4),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(2),
+          .ArrayCopy(t_ARRAY_I64, t_ARRAY_I64),
+          // PVecI64{ len, shift=0, root=null, tail }
+          .LocalGet(2),
+          .I32Const(0),
+          .RefNull(.Named(t_VEC_INTERNAL)),
+          .LocalGet(5),
+          .RefAsNonNull,
+          .StructNew(t_PVEC_I64),
+        ],
+        [
+          // Slow path: len > rt_BF — build through the typed builder.
+          .Call("builder_new_i64"),
+          .LocalSet(1),
+          .I32Const(0),
+          .LocalSet(3),
+          .Block(
+            "brk",
             .None,
             [
-              .LocalGet(3),
-              .LocalGet(2),
-              .I32GeS,
-              .BrIf("brk"),
-              .LocalGet(1),
-              .LocalGet(4),
-              .RefAsNonNull,
-              .LocalGet(3),
-              .ArrayGet(t_ARRAY_I64),
-              .Call("builder_push_i64_raw"),
-              .LocalGet(3),
-              .I32Const(1),
-              .I32Add,
-              .LocalSet(3),
-              .Br("lp"),
+              .Loop(
+                "lp",
+                .None,
+                [
+                  .LocalGet(3),
+                  .LocalGet(2),
+                  .I32GeS,
+                  .BrIf("brk"),
+                  .LocalGet(1),
+                  .LocalGet(4),
+                  .RefAsNonNull,
+                  .LocalGet(3),
+                  .ArrayGet(t_ARRAY_I64),
+                  .Call("builder_push_i64_raw"),
+                  .LocalGet(3),
+                  .I32Const(1),
+                  .I32Add,
+                  .LocalSet(3),
+                  .Br("lp"),
+                ],
+              ),
             ],
           ),
+          .LocalGet(1),
+          .Call("builder_freeze_i64"),
         ],
       ),
-      .LocalGet(1),
-      .Call("builder_freeze_i64"),
     ],
   }
 }
