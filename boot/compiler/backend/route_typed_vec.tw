@@ -1952,10 +1952,10 @@ fn classify_op(
     // (boxed) value into a slot the group would retype to PVecI64 — e.g. a loop
     // `acc = acc.take(...)` where take returns the boxed family. Disqualify.
     //
-    // Exception (fact 9-ii): the in-place rebind of an accepted in-region indexed
-    // write — `xs = <set_unsafe(xs, i, x) result>` — is legitimate. Its source is a
-    // write_results slot (a set result whose base is in the group), which routing
-    // swaps to set_i64 (PVecI64 -> PVecI64), so the rebind is not a boxed store.
+    // Exception: rebinding from an accepted in-region write result is legitimate:
+    // `xs = <set_unsafe(xs, i, x) result>` routes to set_i64, and
+    // `xs = <append(xs, x) result>` emits push_i64. Both sources are PVecI64 ->
+    // PVecI64 when their base is in the group, so the rebind is not a boxed store.
     // write_results (not vs) is the discriminator: a `take`/`drop` combinator
     // result is never a write result, so the original disqualification still fires.
     .AAssign(dst, a) => if vs.has(dst.id) and slot_in(a, write_results) {
