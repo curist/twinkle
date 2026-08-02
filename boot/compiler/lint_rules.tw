@@ -119,6 +119,27 @@ pub fn describe(rule: String) RuleInfo? {
         ,
       },
     ),
+    "prefer-multiline-string" => .Some(
+      .{
+        brief: "a multi-line string built by chaining `.concat` string literals should use a `\\\\` literal",
+        detailed:
+          \\Building a multi-line constant by chaining `.concat` over string
+          \\literals (each ending in `\n`) reads worse than a `\\` multi-line
+          \\string literal: the `\\` form is raw (no `\n`/`\"` escaping) with one
+          \\source line per logical line. The rule fires only on a fully-constant
+          \\chain of >=2 links whose value spans lines, so runtime string building
+          \\(a computed receiver or argument) never matches. Auto-fixable with
+          \\`twk lint --fix-prefer-multiline-string` (skipped when the value holds
+          \\a tab or CR, which a `\\` line cannot carry faithfully).
+          \\
+          \\    // Avoid
+          \\    "type P = .{ x: Int }\n".concat("fn f() Int { 1 }\n")
+          \\    // Prefer
+          \\    \\type P = .{ x: Int }
+          \\    \\fn f() Int { 1 }
+        ,
+      },
+    ),
     _ => .None,
   }
 }

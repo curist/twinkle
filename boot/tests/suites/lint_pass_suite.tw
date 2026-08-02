@@ -10,6 +10,19 @@ fn findings(src: String) Vector<lint.LintFinding> {
   lint.lint_module(parsed.value, base_env.builtin_env(), src)
 }
 
+// Findings for a single rule — the suite runs the whole rule set, so other
+// rules (e.g. constant-fn on a one-expression body) would otherwise inflate a
+// bare count.
+fn ml_findings(src: String) Vector<lint.LintFinding> {
+  collect f in findings(src) {
+    if f.rule == "prefer-multiline-string" {
+      f
+    } else {
+      continue
+    }
+  }
+}
+
 fn apply_first_edit(src: String, finding: lint.LintFinding) String {
   edit := finding.edits[0]
   src.slice(0, edit.start).concat(edit.replacement).concat(src.slice(edit.end, src.len()))
@@ -579,6 +592,67 @@ pub fn suite() runner.Suite {
           "fn demo(println: fn(String) Void, foo: String) Void {\n  println(foo.to_string())\n}\n",
         )
         try assert.equal(fs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-multiline-string: >=2-link \\n chain is flagged and fixable",
+      fn() {
+        fs := ml_findings("fn f() String {\n  \"a\\n\".concat(\"b\\n\").concat(\"c\\n\")\n}\n")
+        try assert.equal(fs.len(), 1)
+        try assert.ok(fs[0].edits.len() == 1, "expected an auto-fix edit")
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-multiline-string: single literal is not flagged",
+      fn() {
+        try assert.equal(ml_findings("fn f() String {\n  \"a\\nb\\n\"\n}\n").len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-multiline-string: one concat link is below threshold",
+      fn() {
+        try assert.equal(ml_findings("fn f() String {\n  \"a\\n\".concat(\"b\\n\")\n}\n").len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-multiline-string: no newline in value is not flagged",
+      fn() {
+        try assert.equal(
+          ml_findings("fn f() String {\n  \"a\".concat(\"b\").concat(\"c\")\n}\n").len(),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-multiline-string: runtime concat (computed receiver) is not flagged",
+      fn() {
+        try assert.equal(
+          ml_findings("fn f(x: String) String {\n  x.concat(\"b\\n\").concat(\"c\\n\")\n}\n").len(),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "prefer-multiline-string: fix splits on value newlines, not concat boundaries",
+      fn() {
+        // Value "al\npha\nbe\nta!\n" — the "be"/"ta!" split falls INSIDE the
+        // concat pieces ("...\n".concat("be\nta").concat("!\n")), so the fix must
+        // re-split on the VALUE's newlines, not the concat boundaries.
+        src := "fn f() String {\n  \"al\\npha\\n\".concat(\"be\\nta\").concat(\"!\\n\")\n}\n"
+        fs := ml_findings(src)
+        try assert.equal(fs.len(), 1)
+        fixed := apply_first_edit(src, fs[0])
+        try assert.ok(fixed.contains("\\\\al\n"), "expected \\\\al line")
+        try assert.ok(fixed.contains("\\\\pha\n"), "expected \\\\pha line")
+        try assert.ok(fixed.contains("\\\\be\n"), "expected \\\\be line")
+        try assert.ok(fixed.contains("\\\\ta!\n"), "expected \\\\ta! line")
+        try assert.is_false(fixed.contains(".concat("))
         .Ok({})
       },
     )

@@ -388,6 +388,120 @@ fn redundant_print_stringify_finding(call: Expr, sink: String, arg: RedundantStr
   }
 }
 
+// ── prefer-multiline-string ──────────────────────────────────────────
+// A constant string built by chaining `.concat` over string literals reads
+// worse than a `\\` multi-line string literal (raw, one source line per logical
+// line, no `\n`/`\"` escaping). Fold such a chain to its value; fire when it has
+// >=2 concat links and the value spans lines.
+type ConcatChain = .{ value: String, links: Int }
+
+// `.Some(value, links)` when `e` is a string literal or a chain of
+// `<literal-chain>.concat(<literal>)`; `.None` for any non-constant piece (a
+// computed receiver/argument), so runtime string building never matches.
+fn constant_concat_chain(e: Expr) ConcatChain? {
+  case e.kind {
+    .StringLit(s) => .Some(.{ value: s, links: 0 }),
+    .Call(callee, args) => if args.len() == 1 {
+      case callee.kind {
+        .Field(base, name) => if name == "concat" {
+          case constant_concat_chain(base) {
+            .Some(bc) => case args[0].kind {
+              .StringLit(s) => .Some(.{ value: bc.value.concat(s), links: bc.links + 1 }),
+              _ => .None,
+            },
+            .None => .None,
+          }
+        } else {
+          .None
+        },
+        _ => .None,
+      }
+    } else {
+      .None
+    },
+    _ => .None,
+  }
+}
+
+// 0-based column of byte `offset` in `source` (chars since the last newline).
+// Used to indent the emitted `\\` continuation lines under the first one.
+fn column_at(source: String, offset: Int) Int {
+  n := 0
+  i := offset
+  done := false
+
+  for !done {
+    if i <= 0 {
+      done = true
+    } else if source.slice(i - 1, i) == "\n" {
+      done = true
+    } else {
+      n = n + 1
+      i = i - 1
+    }
+  }
+
+  n
+}
+
+fn spaces(n: Int) String {
+  out := ""
+  k := 0
+
+  for k < n {
+    out = .concat(" ")
+    k = k + 1
+  }
+
+  out
+}
+
+// A `\\` line cannot faithfully carry a tab or CR (they would have to be literal
+// control bytes in source), so the rewrite is unsafe for such values.
+fn multiline_safe(value: String) Bool {
+  !value.contains("\t") and !value.contains("\r")
+}
+
+// Build the `\\` multi-line literal for `value`: one `\\`-prefixed line per `\n`
+// segment (a trailing `\n` becomes a trailing empty `\\` line), continuation
+// lines indented to `col`. `\\` lines join with `\n` and are raw, so this
+// reproduces `value` exactly.
+fn multiline_literal(value: String, col: Int) String {
+  indent := spaces(col)
+  out := ""
+
+  for line, idx in value.split("\n") {
+    prefix := if idx == 0 {
+      ""
+    } else {
+      "\n".concat(indent)
+    }
+    out = .concat(prefix).concat("\\\\").concat(line)
+  }
+
+  out
+}
+
+fn multiline_string_finding(expr: Expr, value: String, source: String) LintFinding {
+  edits: Vector<FixEdit> = if multiline_safe(value) {
+    [
+      FixEdit.{
+        start: expr.span.start,
+        end: expr.span.end,
+        replacement: multiline_literal(value, column_at(source, expr.span.start)),
+      },
+    ]
+  } else {
+    []
+  }
+  .{
+    span: expr.span,
+    message: "chained string-literal `.concat` builds a multi-line string; use a `\\\\` multi-line string literal instead",
+    rule: "prefer-multiline-string",
+    edits,
+  }
+}
+
 fn lint_expr(expr: Expr, ctx: LintCtx) Vector<LintFinding> {
   case expr.kind {
     .BlockExpr(b) => lint_block(b, ctx),
@@ -438,24 +552,40 @@ fn lint_expr(expr: Expr, ctx: LintCtx) Vector<LintFinding> {
       out
     },
     .Call(callee, args) => {
-      out: Vector<LintFinding> = []
-
-      case callee.kind {
-        .Ident(name) => if args.len() == 1 and ctx.is_public_prelude_io_sink(name) {
-          case redundant_stringify_arg(args[0], ctx.source) {
-            .Some(arg) => out = .append(redundant_print_stringify_finding(expr, name, arg)),
-            .None => {},
-          }
+      // A constant `.concat` chain (>=2 links) spanning lines is reported at the
+      // outermost node and its all-literal children are not walked further.
+      chain: ConcatChain? = case constant_concat_chain(expr) {
+        .Some(c) => if c.links >= 2 and c.value.contains("\n") {
+          .Some(c)
+        } else {
+          .None
         },
-        _ => {},
+        .None => .None,
       }
 
-      out = .concat(lint_expr(callee, ctx))
+      case chain {
+        .Some(c) => [multiline_string_finding(expr, c.value, ctx.source)],
+        .None => {
+          out: Vector<LintFinding> = []
 
-      for a in args {
-        out = .concat(lint_expr(a, ctx))
+          case callee.kind {
+            .Ident(name) => if args.len() == 1 and ctx.is_public_prelude_io_sink(name) {
+              case redundant_stringify_arg(args[0], ctx.source) {
+                .Some(arg) => out = .append(redundant_print_stringify_finding(expr, name, arg)),
+                .None => {},
+              }
+            },
+            _ => {},
+          }
+
+          out = .concat(lint_expr(callee, ctx))
+
+          for a in args {
+            out = .concat(lint_expr(a, ctx))
+          }
+          out
+        },
       }
-      out
     },
     .Binary(_, l, r) => lint_expr(l, ctx).concat(lint_expr(r, ctx)),
     .Unary(_, e) => lint_expr(e, ctx),
