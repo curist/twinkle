@@ -198,6 +198,16 @@ record_escape_set_append_source :=
   \\println(record_escape_set_append(4).to_string())
   \\
 
+collect_return_set_append_source :=
+  \\fn f(n: Int) Vector<Int> {
+  \\  xs := collect i in range(n) { i }
+  \\  xs[0] = 42
+  \\  xs = xs.append(99)
+  \\  xs
+  \\}
+  \\println(f(5).len().to_string())
+  \\
+
 fn linked_wat_for_src(src: String) Result<String, String> {
   artifacts := try pipeline.compile_source(src)
   .Ok(pipeline.emit_wat(artifacts))
@@ -334,6 +344,18 @@ pub fn suite() runner.Suite {
         fn_wat := try user_func_wat(record_escape_set_append_source, "record_escape_set_append")
         try assert_call_absent_exact(fn_wat, "rt_arr__push_i64")
         try assert.is_false(fn_wat.contains("$rt_types__PVecI64"))
+        .Ok({})
+      },
+    )
+    .test(
+      "collect set plus append return keeps typed PVecI64 ABI",
+      fn() {
+        fn_wat := try user_func_wat(collect_return_set_append_source, "f")
+        try assert.str_contains(fn_wat, "(result (ref null $rt_types__PVecI64))")
+        try assert_call_present(fn_wat, "rt_arr__push_i64")
+        try assert_call_present(fn_wat, "rt_arr__set_in_place_i64")
+        try assert_call_absent_exact(fn_wat, "rt_arr__box_i64")
+        try assert_boxed_pvec_absent(fn_wat)
         .Ok({})
       },
     )

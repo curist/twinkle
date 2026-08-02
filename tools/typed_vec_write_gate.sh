@@ -79,9 +79,7 @@ println(f(5).to_string())
 EOF
 
 # Vector.make producer (no loop), called twice so `f` is not inlined and its
-# return type stays inspectable. Unlike a collect-born producer (whose return ABI
-# is boxed by a pre-existing return_atom_slots limitation), a Vector.make producer
-# gets a typed PVecI64 return, so this is the fixture for the return-type check.
+# return type stays inspectable.
 cat > "$TMP/make.tw" <<'EOF'
 fn f(n: Int) Vector<Int> {
   xs := Vector.make(n, 0)
@@ -102,6 +100,18 @@ fn f(n: Int) Int {
   xs[1] + xs[n]
 }
 println(f(5).to_string())
+EOF
+
+# Exact plan shape: a collect-born set+append vector returned from the function
+# should expose the typed PVecI64 return ABI end to end.
+cat > "$TMP/set_append_return.tw" <<'EOF'
+fn f(n: Int) Vector<Int> {
+  xs := collect i in range(n) { i }
+  xs[0] = 42
+  xs = xs.append(99)
+  xs
+}
+println(f(5).len().to_string())
 EOF
 
 # Out-of-bounds indexed set on an owned vector → runtime trap.
@@ -140,7 +150,20 @@ no_call  "$TMP/set_append_on_f.wat" "rt_arr__get"              || fail "set+appe
 no_pvec_i64 "$TMP/set_append_on_f.wat" && fail "set+append flag-on: expected PVecI64 locals"
 echo "ok: set+append flag-on emits push_i64 + set_in_place_i64 + get_i64, no boxed vector calls"
 
-# ── 4. Owned, flag OFF: boxed path, no typed vector ops ──
+# ── 4. Set+append returned from collect, flag ON: typed return ABI, no boxing ──
+"$TWK" build "$TMP/set_append_return.tw" -o "$TMP/set_append_return_on.wat" >/dev/null
+user_f_body "$TMP/set_append_return_on.wat" "$TMP/set_append_return_on_f.wat"
+user_f_type_line "$TMP/set_append_return_on.wat" | grep -q '(result (ref null $rt_types__PVecI64))' \
+  || fail "set+append return flag-on: expected f to return PVecI64, got: $(user_f_type_line "$TMP/set_append_return_on.wat")"
+has_call "$TMP/set_append_return_on_f.wat" "rt_arr__set_in_place_i64" || fail "set+append return flag-on: expected set_in_place_i64"
+has_call "$TMP/set_append_return_on_f.wat" "rt_arr__push_i64"         || fail "set+append return flag-on: expected push_i64"
+no_call  "$TMP/set_append_return_on_f.wat" "rt_arr__push"             || fail "set+append return flag-on: boxed push present"
+no_call  "$TMP/set_append_return_on_f.wat" "rt_arr__box_i64"          || fail "set+append return flag-on: unexpected box_i64"
+has_pvec "$TMP/set_append_return_on_f.wat" && fail "set+append return flag-on: boxed PVec locals present"
+no_pvec_i64 "$TMP/set_append_return_on_f.wat" && fail "set+append return flag-on: expected PVecI64 locals"
+echo "ok: collect set+append flag-on exposes PVecI64 return ABI without boxing"
+
+# ── 5. Owned, flag OFF: boxed path, no typed vector ops ──
 TWINKLE_TYPED_VEC_WRITE=0 "$TWK" build "$TMP/owned.tw" -o "$TMP/owned_off.wat" >/dev/null
 has_call "$TMP/owned_off.wat" "rt_arr__set_in_place"    || fail "owned flag-off: expected boxed set_in_place"
 has_call "$TMP/owned_off.wat" "rt_arr__get"             || fail "owned flag-off: expected boxed get"
@@ -149,7 +172,7 @@ no_call  "$TMP/owned_off.wat" "rt_arr__set_in_place_i64" || fail "owned flag-off
 no_call  "$TMP/owned_off.wat" "rt_arr__get_i64"         || fail "owned flag-off: typed get_i64 present"
 echo "ok: owned flag-off stays boxed (kill-switch flips the whole path)"
 
-# ── 5. Set+append, flag OFF: boxed set + boxed append/read ──
+# ── 6. Set+append, flag OFF: boxed set + boxed append/read ──
 TWINKLE_TYPED_VEC_WRITE=0 "$TWK" build "$TMP/set_append.tw" -o "$TMP/set_append_off.wat" >/dev/null
 user_f_body "$TMP/set_append_off.wat" "$TMP/set_append_off_f.wat"
 has_call "$TMP/set_append_off_f.wat" "rt_arr__set_in_place" || fail "set+append flag-off: expected boxed set_in_place"
@@ -162,13 +185,23 @@ no_call  "$TMP/set_append_off_f.wat" "rt_arr__get_i64"          || fail "set+app
 no_pvec_i64 "$TMP/set_append_off_f.wat"                         || fail "set+append flag-off: typed PVecI64 present"
 echo "ok: set+append flag-off stays boxed, including append"
 
-# ── 6. Shared alias, flag ON: functional typed set, NOT in-place ──
+# ── 7. Set+append returned from collect, flag OFF: boxed return ABI ──
+TWINKLE_TYPED_VEC_WRITE=0 "$TWK" build "$TMP/set_append_return.tw" -o "$TMP/set_append_return_off.wat" >/dev/null
+user_f_body "$TMP/set_append_return_off.wat" "$TMP/set_append_return_off_f.wat"
+user_f_type_line "$TMP/set_append_return_off.wat" | grep -q '(result (ref null $rt_types__PVec))' \
+  || fail "set+append return flag-off: expected f to return boxed PVec, got: $(user_f_type_line "$TMP/set_append_return_off.wat")"
+has_call "$TMP/set_append_return_off_f.wat" "rt_arr__push" || fail "set+append return flag-off: expected boxed push"
+no_call  "$TMP/set_append_return_off_f.wat" "rt_arr__push_i64" || fail "set+append return flag-off: typed push_i64 present"
+no_pvec_i64 "$TMP/set_append_return_off_f.wat" || fail "set+append return flag-off: typed PVecI64 present"
+echo "ok: collect set+append flag-off keeps boxed return ABI"
+
+# ── 8. Shared alias, flag ON: functional typed set, NOT in-place ──
 "$TWK" build "$TMP/shared.tw" -o "$TMP/shared_on.wat" >/dev/null
 has_call "$TMP/shared_on.wat" "rt_arr__set_i64"           || fail "shared flag-on: expected functional set_i64"
 no_call  "$TMP/shared_on.wat" "rt_arr__set_in_place_i64"  || fail "shared flag-on: unexpected in-place on a shared vector"
 echo "ok: shared/non-owned flag-on emits functional set_i64 (no in-place)"
 
-# ── 7. Runtime: owned set reads back; alias unchanged; OOB traps ──
+# ── 9. Runtime: owned set reads back; alias unchanged; OOB traps ──
 out=$("$TWK" run "$TMP/owned.tw" 2>&1); [ "$(printf '%s\n' "$out" | tail -1)" = "5" ] \
   || fail "owned run: expected len 5, got: $out"
 out=$("$TWK" run "$TMP/shared.tw" 2>&1); [ "$(printf '%s\n' "$out" | tail -1)" = "42" ] \
