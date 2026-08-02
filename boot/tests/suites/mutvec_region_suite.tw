@@ -433,4 +433,41 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "no-escape scratch buffer is claimed with escapes=false",
+      fn() {
+        // xs is built, mutated by index, read-reduced to a scalar, and never
+        // returned as a vector — a pure local scratch buffer.
+        src := "fn f(n: Int) Int {\n  xs := collect i in range(n) { i }\n  xs[0] = 42\n  t := 0\n  for i in range(xs.len()) { t = t + xs[i] }\n  t\n}\nprintln(f(5).to_string())\n"
+        try assert.equal(region_count(src), 1)
+        r := sole_region(src)
+        try assert.equal(r.escapes, false)
+        .Ok({})
+      },
+    )
+    .test(
+      "rewrite: no-escape region lowers ops but emits NO freeze",
+      fn() {
+        src := "fn f(n: Int) Int {\n  xs := collect i in range(n) { i }\n  xs[0] = 42\n  t := 0\n  for i in range(xs.len()) { t = t + xs[i] }\n  t\n}\nprintln(f(5).to_string())\n"
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_new_i64"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_set_i64"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_get_i64"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_len_i64"), 1)
+
+        // The distinguishing property: a non-escaping handle is never materialized.
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_freeze_i64"), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "Vector.make no-escape scratch buffer is claimed with escapes=false",
+      fn() {
+        src := "fn f(n: Int) Int {\n  xs := Vector.make(n, 0)\n  xs[0] = 9\n  s := 0\n  j := 0\n  for j < xs.len() { s = s + xs[j]\n    j = j + 1 }\n  s\n}\nprintln(f(4).to_string())\n"
+        try assert.equal(region_count(src), 1)
+        r := sole_region(src)
+        try assert.equal(r.escapes, false)
+        try assert.equal(producer_name(r.producer), "make")
+        .Ok({})
+      },
+    )
 }

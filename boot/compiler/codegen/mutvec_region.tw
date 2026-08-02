@@ -26,9 +26,11 @@ pub type MutVecOpKind = { Set, Push, Get, Len }
 pub type MutVecOpSite = .{ site: LocalId, kind: MutVecOpKind }
 
 // A detected, claimable MutVec region. Slice 1 records the handle (the owned
-// Vector<Int> SSA local), its producer class, and every in-region op site. The
-// materialization exit is implied by the single-return invariant the detector
-// enforces; later tasks enrich this record (freeze site, invalidation point).
+// Vector<Int> SSA local), its producer class, and every in-region op site.
+// `escapes` distinguishes the two lowered shapes: when true the handle leaves
+// at a single return and is materialized by a boundary freeze; when false the
+// handle is a pure local scratch buffer (read-only reductions only) that is
+// never published, so no freeze is emitted at all.
 pub type MutVecRegion = .{
   func_id: FuncId,
   func: String,
@@ -36,6 +38,7 @@ pub type MutVecRegion = .{
   handle: LocalId,
   producer: MutVecProducer,
   op_sites: Vector<MutVecOpSite>,
+  escapes: Bool,
 }
 
 // Resolved builtin FuncIds the detector keys on. Both freeze families count as a
@@ -295,12 +298,14 @@ fn eligible(f: AnfFunctionDef, h: LocalId, defs: Dict<Int, AnfOp>, ids: OpIds) M
     return .None
   }
 
-  // The genuinely-new shape requires >=1 indexed update, and slice 1 freezes a
-  // single boundary, so exactly one terminal may carry the handle.
+  // The genuinely-new shape requires >=1 indexed update. Two claimable exit
+  // shapes: exactly one terminal carries the handle (escapes -> boundary freeze),
+  // or none does (a pure local scratch buffer -> no freeze). Two or more
+  // handle-carrying terminals is still rejected (multiple materialization points).
   if scan.set_count < 1 {
     return .None
   }
-  if scan.exit_count != 1 {
+  if scan.exit_count > 1 {
     return .None
   }
   .Some(
@@ -311,6 +316,7 @@ fn eligible(f: AnfFunctionDef, h: LocalId, defs: Dict<Int, AnfOp>, ids: OpIds) M
       handle: h,
       producer,
       op_sites: scan.op_sites,
+      escapes: scan.exit_count == 1,
     },
   )
 }
@@ -670,12 +676,23 @@ fn rewrite_region(
     .Some(c) => c,
     .None => return f, // shape drifted — persistent fallback
   }
-  new_body := ctx.rewrite_expr(f.body, freeze_local)
+
+  // Non-escaping regions never carry the handle to a terminal, so no boundary
+  // freeze is inserted (freeze_local disabled with -1) and no PVecI64 result slot
+  // is reserved — the handle stays a MutVecI64 that is read and then dropped.
+  exit_local := if r.escapes {
+    freeze_local
+  } else {
+    -1
+  }
+  new_body := ctx.rewrite_expr(f.body, exit_local)
   results := collect_push_results(new_body, mids, Dict.new())
   for rid in results.keys() {
     f.op_result_mono[rid] = MonoType.Vector(.Int)
   }
-  f.op_result_mono[freeze_local] = MonoType.Vector(.Int)
+  if r.escapes {
+    f.op_result_mono[freeze_local] = MonoType.Vector(.Int)
+  }
   f.body = new_body
   f
 }
