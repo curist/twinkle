@@ -119,26 +119,27 @@ fn op_calls_fid(op: PreparedOp, fid_id: Int) Bool {
 // and stored back into the same typed payload. data is a clean collect producer
 // so analyze_typed_payloads types the IntCol payload.
 fn gather_src() String {
-  "type Col = { IntCol(Vector<Int>) }\n"
-    .concat("fn make_col(n: Int) Col {\n")
-    .concat("  xs := collect i in range(n) { i * 2 }\n")
-    .concat("  .IntCol(xs)\n")
-    .concat("}\n")
-    .concat("fn gather_col(c: Col, idx: Vector<Int>) Col {\n")
-    .concat("  case c {\n")
-    .concat("    .IntCol(v) => .IntCol(v.gather(idx)),\n")
-    .concat("  }\n")
-    .concat("}\n")
-    .concat("fn first(c: Col) Int {\n")
-    .concat("  case c {\n")
-    .concat("    .IntCol(v) => v[0],\n")
-    .concat("  }\n")
-    .concat("}\n")
-    .concat("n := 8\n")
-    .concat("col := make_col(n)\n")
-    .concat("idx := collect i in range(n) { n - 1 - i }\n")
-    .concat("out := gather_col(col, idx)\n")
-    .concat("first(out)\n")
+  \\type Col = { IntCol(Vector<Int>) }
+  \\fn make_col(n: Int) Col {
+  \\  xs := collect i in range(n) { i * 2 }
+  \\  .IntCol(xs)
+  \\}
+  \\fn gather_col(c: Col, idx: Vector<Int>) Col {
+  \\  case c {
+  \\    .IntCol(v) => .IntCol(v.gather(idx)),
+  \\  }
+  \\}
+  \\fn first(c: Col) Int {
+  \\  case c {
+  \\    .IntCol(v) => v[0],
+  \\  }
+  \\}
+  \\n := 8
+  \\col := make_col(n)
+  \\idx := collect i in range(n) { n - 1 - i }
+  \\out := gather_col(col, idx)
+  \\first(out)
+  \\
 }
 
 pub fn suite() runner.Suite {

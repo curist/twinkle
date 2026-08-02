@@ -111,14 +111,15 @@ fn typed_count(d: Dict<String, Bool>) Int {
 
 // Source fixtures (escaped newlines — Twinkle string literals don't span lines).
 fn positive_src() String {
-  "type Box = .{ xs: Vector<Int> }\n"
-    .concat("fn make(n: Int) Int {\n")
-    .concat("  ys := collect i in range(n) { i * 2 }\n")
-    .concat("  b := Box.{ xs: ys }\n")
-    .concat("  zs := b.xs\n")
-    .concat("  zs[0] + zs.len()\n")
-    .concat("}\n")
-    .concat("make(5)\n")
+  \\type Box = .{ xs: Vector<Int> }
+  \\fn make(n: Int) Int {
+  \\  ys := collect i in range(n) { i * 2 }
+  \\  b := Box.{ xs: ys }
+  \\  zs := b.xs
+  \\  zs[0] + zs.len()
+  \\}
+  \\make(5)
+  \\
 }
 
 // B5 regression: a typed field read copied through an extra local before use.
@@ -127,25 +128,27 @@ fn positive_src() String {
 // copy store is an un-coerced PVecI64 -> PVec mismatch (invalid wasm). Field-read
 // routing was single-slot before the group-aware fix, leaving copies boxed.
 fn field_read_copy_src() String {
-  "type Box = .{ xs: Vector<Int> }\n"
-    .concat("fn make(n: Int) Int {\n")
-    .concat("  ys := collect i in range(n) { i * 2 }\n")
-    .concat("  b := Box.{ xs: ys }\n")
-    .concat("  zs := b.xs\n")
-    .concat("  ws := zs\n")
-    .concat("  ws[0] + ws.len()\n")
-    .concat("}\n")
-    .concat("make(5)\n")
+  \\type Box = .{ xs: Vector<Int> }
+  \\fn make(n: Int) Int {
+  \\  ys := collect i in range(n) { i * 2 }
+  \\  b := Box.{ xs: ys }
+  \\  zs := b.xs
+  \\  ws := zs
+  \\  ws[0] + ws.len()
+  \\}
+  \\make(5)
+  \\
 }
 
 fn boxed_src() String {
-  "type Box = .{ xs: Vector<Int> }\n"
-    .concat("fn wrap(ys: Vector<Int>) Int {\n")
-    .concat("  b := Box.{ xs: ys }\n")
-    .concat("  zs := b.xs\n")
-    .concat("  zs[0] + zs.len()\n")
-    .concat("}\n")
-    .concat("wrap([1, 2, 3])\n")
+  \\type Box = .{ xs: Vector<Int> }
+  \\fn wrap(ys: Vector<Int>) Int {
+  \\  b := Box.{ xs: ys }
+  \\  zs := b.xs
+  \\  zs[0] + zs.len()
+  \\}
+  \\wrap([1, 2, 3])
+  \\
 }
 
 bad_consumer_source :=
@@ -163,15 +166,16 @@ fn bad_consumer_src() String {
 }
 
 fn multi_field_src() String {
-  "type Pair = .{ a: Vector<Int>, b: Vector<Int> }\n"
-    .concat("fn dup(n: Int) Int {\n")
-    .concat("  ys := collect i in range(n) { i * 2 }\n")
-    .concat("  p := Pair.{ a: ys, b: ys }\n")
-    .concat("  ra := p.a\n")
-    .concat("  rb := p.b\n")
-    .concat("  ra[0] + ra.len() + rb[0] + rb.len()\n")
-    .concat("}\n")
-    .concat("dup(5)\n")
+  \\type Pair = .{ a: Vector<Int>, b: Vector<Int> }
+  \\fn dup(n: Int) Int {
+  \\  ys := collect i in range(n) { i * 2 }
+  \\  p := Pair.{ a: ys, b: ys }
+  \\  ra := p.a
+  \\  rb := p.b
+  \\  ra[0] + ra.len() + rb[0] + rb.len()
+  \\}
+  \\dup(5)
+  \\
 }
 
 // A collect whose result is a variant payload escapes: the payload slot stays a
@@ -180,12 +184,13 @@ fn multi_field_src() String {
 // `Lx = init Lx` that lowering emits before the variant must not break the alias
 // chain that makes this escape visible.
 fn variant_payload_src() String {
-  "type CD = { IntCol(Vector<Int>), Other(Int) }\n"
-    .concat("fn build(n: Int) CD {\n")
-    .concat("  ys := collect i in range(n) { i * 2 }\n")
-    .concat("  CD.IntCol(ys)\n")
-    .concat("}\n")
-    .concat("build(5)\n")
+  \\type CD = { IntCol(Vector<Int>), Other(Int) }
+  \\fn build(n: Int) CD {
+  \\  ys := collect i in range(n) { i * 2 }
+  \\  CD.IntCol(ys)
+  \\}
+  \\build(5)
+  \\
 }
 
 // A typed Vector<Int> field set via ARecordUpdate rebinding (`c.data = <typed
@@ -194,18 +199,19 @@ fn variant_payload_src() String {
 // typed-routable and no consumer escapes, so the field stays typed and the
 // PVecI64-into-PVecI64 copy-through is sound.
 fn record_update_src() String {
-  "type Col = .{ data: Vector<Int>, n: Int }\n"
-    .concat("fn build(n: Int) Col {\n")
-    .concat("  c := Col.{ data: collect i in range(n) { i }, n }\n")
-    .concat("  c.data = collect i in range(n) { i * 2 }\n")
-    .concat("  c\n")
-    .concat("}\n")
-    .concat("fn sum(c: Col) Int {\n")
-    .concat("  t := 0\n")
-    .concat("  for k in range(c.n) { t = t + c.data[k] }\n")
-    .concat("  t\n")
-    .concat("}\n")
-    .concat("sum(build(5))\n")
+  \\type Col = .{ data: Vector<Int>, n: Int }
+  \\fn build(n: Int) Col {
+  \\  c := Col.{ data: collect i in range(n) { i }, n }
+  \\  c.data = collect i in range(n) { i * 2 }
+  \\  c
+  \\}
+  \\fn sum(c: Col) Int {
+  \\  t := 0
+  \\  for k in range(c.n) { t = t + c.data[k] }
+  \\  t
+  \\}
+  \\sum(build(5))
+  \\
 }
 
 // A record with two independently-typed Vector<Int> fields: `a` and `b` each get
@@ -213,50 +219,53 @@ fn record_update_src() String {
 // Contrast multi_field_src, which stores the SAME vector into both fields (and so
 // demotes both). Two distinct typed producers => both fields typed.
 fn two_typed_fields_src() String {
-  "type Pair = .{ a: Vector<Int>, b: Vector<Int>, n: Int }\n"
-    .concat("fn mk(n: Int) Pair {\n")
-    .concat("  Pair.{ a: collect i in range(n) { i }, b: collect i in range(n) { i * 3 }, n }\n")
-    .concat("}\n")
-    .concat("fn use_pair(p: Pair) Int {\n")
-    .concat("  t := 0\n")
-    .concat("  for k in range(p.n) { t = t + p.a[k] + p.b[k] }\n")
-    .concat("  t\n")
-    .concat("}\n")
-    .concat("use_pair(mk(5))\n")
+  \\type Pair = .{ a: Vector<Int>, b: Vector<Int>, n: Int }
+  \\fn mk(n: Int) Pair {
+  \\  Pair.{ a: collect i in range(n) { i }, b: collect i in range(n) { i * 3 }, n }
+  \\}
+  \\fn use_pair(p: Pair) Int {
+  \\  t := 0
+  \\  for k in range(p.n) { t = t + p.a[k] + p.b[k] }
+  \\  t
+  \\}
+  \\use_pair(mk(5))
+  \\
 }
 
 // A field fed by a typed-return call result must retype the call-result slot to
 // the same physical field family. Otherwise the field analysis can decide the
 // field is PVecBool while routing stores the boxed PVec call slot into it.
 fn bool_call_result_field_src() String {
-  "type BoolCol = .{ mask: Vector<Bool> }\n"
-    .concat("fn no_nulls(n: Int) Vector<Bool> { Vector.make(n, false) }\n")
-    .concat("fn mk(n: Int) BoolCol { BoolCol.{ mask: no_nulls(n) } }\n")
-    .concat("fn read(c: BoolCol, n: Int) Int {\n")
-    .concat("  s := 0\n")
-    .concat("  for i in range(n) { if c.mask[i] { s = s + 1 } }\n")
-    .concat("  s\n")
-    .concat("}\n")
-    .concat("read(mk(8), 8)\n")
+  \\type BoolCol = .{ mask: Vector<Bool> }
+  \\fn no_nulls(n: Int) Vector<Bool> { Vector.make(n, false) }
+  \\fn mk(n: Int) BoolCol { BoolCol.{ mask: no_nulls(n) } }
+  \\fn read(c: BoolCol, n: Int) Int {
+  \\  s := 0
+  \\  for i in range(n) { if c.mask[i] { s = s + 1 } }
+  \\  s
+  \\}
+  \\read(mk(8), 8)
+  \\
 }
 
 // A typed field read can feed a typed gather result, which can then be stored
 // back into the same typed field. This is the dataframe `Column.nulls` shape:
 // `Column.{ nulls: c.nulls.gather(idx) }`.
 fn bool_field_gather_result_src() String {
-  "type BoolCol = .{ mask: Vector<Bool> }\n"
-    .concat("fn no_nulls(n: Int) Vector<Bool> { Vector.make(n, false) }\n")
-    .concat("fn mk(n: Int) BoolCol { BoolCol.{ mask: no_nulls(n) } }\n")
-    .concat("fn gather_col(c: BoolCol, idx: Vector<Int>) BoolCol {\n")
-    .concat("  BoolCol.{ mask: c.mask.gather(idx) }\n")
-    .concat("}\n")
-    .concat("fn read(c: BoolCol, n: Int) Int {\n")
-    .concat("  s := 0\n")
-    .concat("  for i in range(n) { if c.mask[i] { s = s + 1 } }\n")
-    .concat("  s\n")
-    .concat("}\n")
-    .concat("idx := collect i in range(8) { i }\n")
-    .concat("read(gather_col(mk(8), idx), 8)\n")
+  \\type BoolCol = .{ mask: Vector<Bool> }
+  \\fn no_nulls(n: Int) Vector<Bool> { Vector.make(n, false) }
+  \\fn mk(n: Int) BoolCol { BoolCol.{ mask: no_nulls(n) } }
+  \\fn gather_col(c: BoolCol, idx: Vector<Int>) BoolCol {
+  \\  BoolCol.{ mask: c.mask.gather(idx) }
+  \\}
+  \\fn read(c: BoolCol, n: Int) Int {
+  \\  s := 0
+  \\  for i in range(n) { if c.mask[i] { s = s + 1 } }
+  \\  s
+  \\}
+  \\idx := collect i in range(8) { i }
+  \\read(gather_col(mk(8), idx), 8)
+  \\
 }
 
 pub fn suite() runner.Suite {

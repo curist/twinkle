@@ -123,16 +123,17 @@ fn pvec_i64_slot_count(funcs: Vector<PreparedFunc>) Int {
 // A store-form accessor with a clean `collect` producer and a caller that reads
 // the result via index/len — the exact dataframe accessor shape.
 fn accessor_src() String {
-  "type Col = { IntCol(Vector<Int>), Other }\n"
-    .concat("fn as_ints(c: Col) Vector<Int> { case c { .IntCol(v) => v, _ => error(\"x\") } }\n")
-    .concat("fn mk() Col { .IntCol(collect i in range(5) { i }) }\n")
-    .concat("fn go() Int {\n")
-    .concat("  keys := as_ints(mk())\n")
-    .concat("  total := 0\n")
-    .concat("  for i in range(keys.len()) { total = total + keys[i] }\n")
-    .concat("  total\n")
-    .concat("}\n")
-    .concat("go()\n")
+  \\type Col = { IntCol(Vector<Int>), Other }
+  \\fn as_ints(c: Col) Vector<Int> { case c { .IntCol(v) => v, _ => error("x") } }
+  \\fn mk() Col { .IntCol(collect i in range(5) { i }) }
+  \\fn go() Int {
+  \\  keys := as_ints(mk())
+  \\  total := 0
+  \\  for i in range(keys.len()) { total = total + keys[i] }
+  \\  total
+  \\}
+  \\go()
+  \\
 }
 
 pub fn suite() runner.Suite {

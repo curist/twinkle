@@ -110,92 +110,100 @@ fn op_calls_fid(op: PreparedOp, fid_id: Int) Bool {
 
 // collect-born producer with an indexed set + a read + return.
 fn collect_set_src() String {
-  "fn f(n: Int) Vector<Int> {\n"
-    .concat("  xs := collect i in range(n) { i }\n")
-    .concat("  xs[0] = 42\n")
-    .concat("  y := xs[1]\n")
-    .concat("  println(y.to_string())\n")
-    .concat("  xs\n")
-    .concat("}\n")
-    .concat("println(f(5).len().to_string())\n")
+  \\fn f(n: Int) Vector<Int> {
+  \\  xs := collect i in range(n) { i }
+  \\  xs[0] = 42
+  \\  y := xs[1]
+  \\  println(y.to_string())
+  \\  xs
+  \\}
+  \\println(f(5).len().to_string())
+  \\
 }
 
 // Vector.make-born producer with an indexed set.
 fn make_set_src() String {
-  "fn f() Vector<Int> {\n"
-    .concat("  xs := Vector.make(3, 0)\n")
-    .concat("  xs[1] = 9\n")
-    .concat("  xs\n")
-    .concat("}\n")
-    .concat("println(f().len().to_string())\n")
+  \\fn f() Vector<Int> {
+  \\  xs := Vector.make(3, 0)
+  \\  xs[1] = 9
+  \\  xs
+  \\}
+  \\println(f().len().to_string())
+  \\
 }
 
 // Negative: Vector<Float> indexed set (no typed float family, so no promotion).
 fn float_set_src() String {
-  "fn f(n: Int) Vector<Float> {\n"
-    .concat("  xs := collect i in range(n) { 1.0 }\n")
-    .concat("  xs[0] = 1.5\n")
-    .concat("  xs\n")
-    .concat("}\n")
-    .concat("println(f(4).len().to_string())\n")
+  \\fn f(n: Int) Vector<Float> {
+  \\  xs := collect i in range(n) { 1.0 }
+  \\  xs[0] = 1.5
+  \\  xs
+  \\}
+  \\println(f(4).len().to_string())
+  \\
 }
 
 // Negative: a Vector<Int> with an indexed set that escapes into a dict value —
 // the dict store disqualifies the group, so it stays boxed.
 fn dict_escape_src() String {
-  "fn f(n: Int) Dict<Int, Vector<Int>> {\n"
-    .concat("  m := Dict.new()\n")
-    .concat("  xs := collect i in range(n) { i }\n")
-    .concat("  xs[0] = 1\n")
-    .concat("  m[0] = xs\n")
-    .concat("  m\n")
-    .concat("}\n")
-    .concat("println(f(4).len().to_string())\n")
+  \\fn f(n: Int) Dict<Int, Vector<Int>> {
+  \\  m := Dict.new()
+  \\  xs := collect i in range(n) { i }
+  \\  xs[0] = 1
+  \\  m[0] = xs
+  \\  m
+  \\}
+  \\println(f(4).len().to_string())
+  \\
 }
 
 fn set_append_src() String {
-  "fn typed_set_append(n: Int) Int {\n"
-    .concat("  xs := collect i in range(n) { i }\n")
-    .concat("  xs[0] = 42\n")
-    .concat("  xs = xs.append(99)\n")
-    .concat("  xs[1] + xs[n]\n")
-    .concat("}\n")
-    .concat("println(typed_set_append(5).to_string())\n")
+  \\fn typed_set_append(n: Int) Int {
+  \\  xs := collect i in range(n) { i }
+  \\  xs[0] = 42
+  \\  xs = xs.append(99)
+  \\  xs[1] + xs[n]
+  \\}
+  \\println(typed_set_append(5).to_string())
+  \\
 }
 
 fn append_only_src() String {
-  "fn append_only_acc(n: Int) Int {\n"
-    .concat("  acc: Vector<Int> = []\n")
-    .concat("  i := 0\n")
-    .concat("  for i < n {\n")
-    .concat("    acc = acc.append(i)\n")
-    .concat("    i = i + 1\n")
-    .concat("  }\n")
-    .concat("  acc[n - 1]\n")
-    .concat("}\n")
-    .concat("println(append_only_acc(5).to_string())\n")
+  \\fn append_only_acc(n: Int) Int {
+  \\  acc: Vector<Int> = []
+  \\  i := 0
+  \\  for i < n {
+  \\    acc = acc.append(i)
+  \\    i = i + 1
+  \\  }
+  \\  acc[n - 1]
+  \\}
+  \\println(append_only_acc(5).to_string())
+  \\
 }
 
 fn float_set_append_src() String {
-  "fn float_set_append(n: Int) Float {\n"
-    .concat("  xs := collect i in range(n) { 1.0 }\n")
-    .concat("  xs[0] = 1.5\n")
-    .concat("  xs = xs.append(2.5)\n")
-    .concat("  xs[n]\n")
-    .concat("}\n")
-    .concat("println(float_set_append(4).to_string())\n")
+  \\fn float_set_append(n: Int) Float {
+  \\  xs := collect i in range(n) { 1.0 }
+  \\  xs[0] = 1.5
+  \\  xs = xs.append(2.5)
+  \\  xs[n]
+  \\}
+  \\println(float_set_append(4).to_string())
+  \\
 }
 
 fn record_escape_set_append_src() String {
-  "type Holder = .{ xs: Vector<Int> }\n"
-    .concat("fn record_escape_set_append(n: Int) Int {\n")
-    .concat("  xs := collect i in range(n) { i }\n")
-    .concat("  xs[0] = 1\n")
-    .concat("  xs = xs.append(9)\n")
-    .concat("  h := Holder.{ xs: xs }\n")
-    .concat("  h.xs[0] + h.xs[n]\n")
-    .concat("}\n")
-    .concat("println(record_escape_set_append(4).to_string())\n")
+  \\type Holder = .{ xs: Vector<Int> }
+  \\fn record_escape_set_append(n: Int) Int {
+  \\  xs := collect i in range(n) { i }
+  \\  xs[0] = 1
+  \\  xs = xs.append(9)
+  \\  h := Holder.{ xs: xs }
+  \\  h.xs[0] + h.xs[n]
+  \\}
+  \\println(record_escape_set_append(4).to_string())
+  \\
 }
 
 fn linked_wat_for_src(src: String) Result<String, String> {

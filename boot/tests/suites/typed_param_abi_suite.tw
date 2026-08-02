@@ -56,22 +56,24 @@ fn find_vec_param(funcs: Vector<PreparedFunc>) Result<VecParam, String> {
 
 // A Vector<Int> param used only via index + len -> typeable.
 fn indexed_src() String {
-  "fn use_indexed(xs: Vector<Int>, n: Int) Int {\n"
-    .concat("  t := 0\n")
-    .concat("  for k in range(n) { t = t + xs[k] }\n")
-    .concat("  t + xs.len()\n")
-    .concat("}\n")
-    .concat("use_indexed([1, 2, 3], 3)\n")
+  \\fn use_indexed(xs: Vector<Int>, n: Int) Int {
+  \\  t := 0
+  \\  for k in range(n) { t = t + xs[k] }
+  \\  t + xs.len()
+  \\}
+  \\use_indexed([1, 2, 3], 3)
+  \\
 }
 
 // A Vector<Int> param captured into a closure -> not typeable (the anyref env
 // would make typed reads unsound; the group escapes through AMakeClosure).
 fn captured_src() String {
-  "fn make_reader(xs: Vector<Int>) fn() Int {\n"
-    .concat("  fn() { xs.len() }\n")
-    .concat("}\n")
-    .concat("f := make_reader([1, 2, 3])\n")
-    .concat("f()\n")
+  \\fn make_reader(xs: Vector<Int>) fn() Int {
+  \\  fn() { xs.len() }
+  \\}
+  \\f := make_reader([1, 2, 3])
+  \\f()
+  \\
 }
 
 fn typed_count(d: Dict<String, Bool>) Int {
@@ -94,48 +96,51 @@ fn typed_count(d: Dict<String, Bool>) Int {
 // producer. Builder-only payload analysis can't type it; the joint fixpoint can,
 // because `values` is a typeable param and thus a clean typed producer.
 fn int_col_src() String {
-  "type Col = { IntCol(Vector<Int>) }\n"
-    .concat("fn int_col(values: Vector<Int>) Col {\n")
-    .concat("  .IntCol(values)\n")
-    .concat("}\n")
-    .concat("fn firstv(c: Col) Int {\n")
-    .concat("  case c {\n")
-    .concat("    .IntCol(v) => v[0],\n")
-    .concat("  }\n")
-    .concat("}\n")
-    .concat("fn build(n: Int) Col {\n")
-    .concat("  int_col(collect i in range(n) { i })\n")
-    .concat("}\n")
-    .concat("firstv(build(8))\n")
+  \\type Col = { IntCol(Vector<Int>) }
+  \\fn int_col(values: Vector<Int>) Col {
+  \\  .IntCol(values)
+  \\}
+  \\fn firstv(c: Col) Int {
+  \\  case c {
+  \\    .IntCol(v) => v[0],
+  \\  }
+  \\}
+  \\fn build(n: Int) Col {
+  \\  int_col(collect i in range(n) { i })
+  \\}
+  \\firstv(build(8))
+  \\
 }
 
 // A local `collect` captured into a sort comparator and read via index: the
 // capture is typeable (its free var is a typed local producer).
 fn typed_capture_src() String {
-  "fn run(n: Int) Int {\n"
-    .concat("  keys := collect i in range(n) { i * 2 }\n")
-    .concat("  idx := collect i in range(n) { i }\n")
-    .concat("  sorted := idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })\n")
-    .concat("  sorted[0]\n")
-    .concat("}\n")
-    .concat("run(8)\n")
+  \\fn run(n: Int) Int {
+  \\  keys := collect i in range(n) { i * 2 }
+  \\  idx := collect i in range(n) { i }
+  \\  sorted := idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })
+  \\  sorted[0]
+  \\}
+  \\run(8)
+  \\
 }
 
 // The same shape but `keys` comes from a function return (a boxed PVec): the
 // capture MUST NOT be typed (the trampoline downcast to PVecI64 would trap).
 fn boxed_capture_src() String {
-  "fn mkkeys(n: Int) Vector<Int> {\n"
-    .concat("  out: Vector<Int> = []\n")
-    .concat("  for i in range(n) { out = out.append(i * 2) }\n")
-    .concat("  out\n")
-    .concat("}\n")
-    .concat("fn run(n: Int) Int {\n")
-    .concat("  keys := mkkeys(n)\n")
-    .concat("  idx := collect i in range(n) { i }\n")
-    .concat("  sorted := idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })\n")
-    .concat("  sorted[0]\n")
-    .concat("}\n")
-    .concat("run(8)\n")
+  \\fn mkkeys(n: Int) Vector<Int> {
+  \\  out: Vector<Int> = []
+  \\  for i in range(n) { out = out.append(i * 2) }
+  \\  out
+  \\}
+  \\fn run(n: Int) Int {
+  \\  keys := mkkeys(n)
+  \\  idx := collect i in range(n) { i }
+  \\  sorted := idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })
+  \\  sorted[0]
+  \\}
+  \\run(8)
+  \\
 }
 
 pub fn suite() runner.Suite {
