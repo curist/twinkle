@@ -27,6 +27,18 @@ call_targets() { grep -Eo 'call \$rt_arr__[A-Za-z0-9_]+' "$1" | sort -u; }
 has_call()  { call_targets "$1" | grep -qx "call \$$2"; }
 no_call()   { ! call_targets "$1" | grep -qx "call \$$2"; }
 
+# The functype line of the user function `f`. Scoped to the promoted function —
+# a raw module grep for PVecI64 is vacuous, since the PVecI64 type/global and
+# PVecI64-returning runtime ops are emitted regardless of the flag.
+user_f_type_line() {
+  wat=$1
+  type_name=$(grep -Eo '\(func \$user__\$f[0-9]+_f \(type \$functype_[0-9]+\)' "$wat" \
+    | head -1 \
+    | sed -E 's/.*\$(functype_[0-9]+).*/\1/')
+  [ -n "$type_name" ] || fail "missing user f function type in $wat"
+  awk -v t="$type_name" '$0 ~ "\\(type \\$" t " " { print; found = 1; exit } END { exit found ? 0 : 1 }' "$wat"
+}
+
 # ── Fixtures ────────────────────────────────────────────────────────
 # Owned: locally built, indexed-set, read, returned → in-place + typed read.
 cat > "$TMP/owned.tw" <<'EOF'
@@ -51,6 +63,20 @@ fn f(n: Int) Int {
 println(f(5).to_string())
 EOF
 
+# Vector.make producer (no loop), called twice so `f` is not inlined and its
+# return type stays inspectable. Unlike a collect-born producer (whose return ABI
+# is boxed by a pre-existing return_atom_slots limitation), a Vector.make producer
+# gets a typed PVecI64 return, so this is the fixture for the return-type check.
+cat > "$TMP/make.tw" <<'EOF'
+fn f(n: Int) Vector<Int> {
+  xs := Vector.make(n, 0)
+  xs[1] = 9
+  xs
+}
+println(f(3).len().to_string())
+println(f(5).len().to_string())
+EOF
+
 # Out-of-bounds indexed set on an owned vector → runtime trap.
 cat > "$TMP/oob.tw" <<'EOF'
 fn f(n: Int) Vector<Int> {
@@ -68,24 +94,30 @@ has_call "$TMP/owned_on.wat" "rt_arr__get_i64"          || fail "owned flag-on: 
 no_call  "$TMP/owned_on.wat" "rt_arr__set_in_place"     || fail "owned flag-on: boxed set_in_place present"
 no_call  "$TMP/owned_on.wat" "rt_arr__set"              || fail "owned flag-on: boxed set present"
 no_call  "$TMP/owned_on.wat" "rt_arr__get"              || fail "owned flag-on: boxed get present"
-grep -q 'rt_types__PVecI64' "$TMP/owned_on.wat"         || fail "owned flag-on: expected PVecI64 type"
 echo "ok: owned flag-on emits set_in_place_i64 + get_i64, no boxed vector ops"
 
-# ── 2. Owned, flag OFF: boxed path, no typed vector ops ──
+# ── 2. Vector.make, flag ON: typed PVecI64 return ABI ──
+"$TWK" build "$TMP/make.tw" -o "$TMP/make_on.wat" >/dev/null
+user_f_type_line "$TMP/make_on.wat" | grep -q '(result (ref null $rt_types__PVecI64))' \
+  || fail "Vector.make flag-on: expected f to return PVecI64, got: $(user_f_type_line "$TMP/make_on.wat")"
+echo "ok: Vector.make flag-on exposes PVecI64 return ABI"
+
+# ── 3. Owned, flag OFF: boxed path, no typed vector ops ──
 TWINKLE_TYPED_VEC_WRITE=0 "$TWK" build "$TMP/owned.tw" -o "$TMP/owned_off.wat" >/dev/null
 has_call "$TMP/owned_off.wat" "rt_arr__set_in_place"    || fail "owned flag-off: expected boxed set_in_place"
 has_call "$TMP/owned_off.wat" "rt_arr__get"             || fail "owned flag-off: expected boxed get"
+no_call  "$TMP/owned_off.wat" "rt_arr__set_i64"         || fail "owned flag-off: typed set_i64 present"
 no_call  "$TMP/owned_off.wat" "rt_arr__set_in_place_i64" || fail "owned flag-off: typed set_in_place_i64 present"
 no_call  "$TMP/owned_off.wat" "rt_arr__get_i64"         || fail "owned flag-off: typed get_i64 present"
 echo "ok: owned flag-off stays boxed (kill-switch flips the whole path)"
 
-# ── 3. Shared alias, flag ON: functional typed set, NOT in-place ──
+# ── 4. Shared alias, flag ON: functional typed set, NOT in-place ──
 "$TWK" build "$TMP/shared.tw" -o "$TMP/shared_on.wat" >/dev/null
 has_call "$TMP/shared_on.wat" "rt_arr__set_i64"           || fail "shared flag-on: expected functional set_i64"
 no_call  "$TMP/shared_on.wat" "rt_arr__set_in_place_i64"  || fail "shared flag-on: unexpected in-place on a shared vector"
 echo "ok: shared/non-owned flag-on emits functional set_i64 (no in-place)"
 
-# ── 4. Runtime: owned set reads back; alias unchanged; OOB traps ──
+# ── 5. Runtime: owned set reads back; alias unchanged; OOB traps ──
 out=$("$TWK" run "$TMP/owned.tw" 2>&1); [ "$(printf '%s\n' "$out" | tail -1)" = "5" ] \
   || fail "owned run: expected len 5, got: $out"
 out=$("$TWK" run "$TMP/shared.tw" 2>&1); [ "$(printf '%s\n' "$out" | tail -1)" = "42" ] \
