@@ -44,9 +44,9 @@ pub fn own_tag(o: Ownership) Int {
 }
 
 pub fn own_of_tag(t: Int) Ownership {
-  cond {
-    t == 0 => .Unique,
-    t == 1 => .Shared,
+  case t {
+    0 => .Unique,
+    1 => .Shared,
     _ => .Unknown,
   }
 }

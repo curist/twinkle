@@ -30,16 +30,16 @@ pub fn hex_digit_value(ch: Byte) Int {
 
 // Code point for a single-character escape, or -1 if `ch` does not name one.
 fn simple_escape_code(ch: Byte) Int {
-  cond {
-    ch == 'n' => 10,
-    ch == 't' => 9,
-    ch == 'r' => 13,
-    ch == '\\' => 92,
-    ch == '"' => 34,
-    ch == '\'' => 39,
-    ch == '$' => 36,
-    ch == '0' => 0,
-    ch == 'e' => 27,
+  case ch {
+    'n' => 10,
+    't' => 9,
+    'r' => 13,
+    '\\' => 92,
+    '"' => 34,
+    '\'' => 39,
+    '$' => 36,
+    '0' => 0,
+    'e' => 27,
     _ => -1,
   }
 }

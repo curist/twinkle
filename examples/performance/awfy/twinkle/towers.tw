@@ -1,17 +1,17 @@
 type Pegs = .{ a: Vector<Int>, b: Vector<Int>, c: Vector<Int>, moves: Int }
 
 fn peg(p: Pegs, which: Int) Vector<Int> {
-  cond {
-    which == 0 => p.a,
-    which == 1 => p.b,
+  case which {
+    0 => p.a,
+    1 => p.b,
     _ => p.c,
   }
 }
 
 fn set_peg(p: Pegs, which: Int, v: Vector<Int>) Pegs {
-  cond {
-    which == 0 => Pegs.{ a: v, b: p.b, c: p.c, moves: p.moves },
-    which == 1 => Pegs.{ a: p.a, b: v, c: p.c, moves: p.moves },
+  case which {
+    0 => Pegs.{ a: v, b: p.b, c: p.c, moves: p.moves },
+    1 => Pegs.{ a: p.a, b: v, c: p.c, moves: p.moves },
     _ => Pegs.{ a: p.a, b: p.b, c: v, moves: p.moves },
   }
 }

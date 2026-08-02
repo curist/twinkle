@@ -107,16 +107,16 @@ fn parse_obj(s: String, pos: Int) PResult {
 fn parse_value(s: String, pos: Int) PResult {
   p := skip_ws(s, pos)
   c := bat(s, p)
-  cond {
-    c == 123 => parse_obj(s, p),
-    c == 91 => parse_arr(s, p),
-    c == 34 => {
+  case c {
+    123 => parse_obj(s, p),
+    91 => parse_arr(s, p),
+    34 => {
       sr := parse_str(s, p)
       PResult.{ value: .JStr(sr.str), pos: sr.pos }
     },
-    c == 116 => PResult.{ value: .JBool(true), pos: p + 4 },
-    c == 102 => PResult.{ value: .JBool(false), pos: p + 5 },
-    c == 110 => PResult.{ value: .JNull, pos: p + 4 },
+    116 => PResult.{ value: .JBool(true), pos: p + 4 },
+    102 => PResult.{ value: .JBool(false), pos: p + 5 },
+    110 => PResult.{ value: .JNull, pos: p + 4 },
     _ => {
       nr := parse_num(s, p)
       PResult.{ value: .JNum(nr.num), pos: nr.pos }

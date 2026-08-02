@@ -157,10 +157,10 @@ pub fn path_of_key(k: Int) AccessPath {
       base := k - 8
       f := base / 4
       sub := base % 4
-      cond {
-        sub == 0 => field_path(f),
-        sub == 1 => field_elem(f),
-        sub == 2 => field_val(f),
+      case sub {
+        0 => field_path(f),
+        1 => field_elem(f),
+        2 => field_val(f),
         _ => error("field_facts: bad path key ${k}"),
       }
     },

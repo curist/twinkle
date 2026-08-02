@@ -1906,9 +1906,9 @@ fn test_link_program_keeps_dict_remove_persistent_with_live_keys_loan() Result<V
 fn wat_net_parens(line: String) Int {
   depth := 0
   for ch in line.chars() {
-    cond {
-      ch == "(" => depth = depth + 1,
-      ch == ")" => depth = depth - 1,
+    case ch {
+      "(" => depth = depth + 1,
+      ")" => depth = depth - 1,
       _ => {},
     }
   }

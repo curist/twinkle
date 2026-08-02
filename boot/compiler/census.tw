@@ -144,28 +144,28 @@ fn inc(fc: FamilyCount, in_place: Bool) FamilyCount {
 pub fn tally_from_sites(sites: Vector<CensusSite>) CensusTally {
   t := empty_tally()
   for s in sites {
-    t = cond {
-      s.family == "record_update" => {
+    t = case s.family {
+      "record_update" => {
         t.record_update = .inc(s.in_place)
         t
       },
-      s.family == "dict_set" => {
+      "dict_set" => {
         t.dict_set = .inc(s.in_place)
         t
       },
-      s.family == "dict_remove" => {
+      "dict_remove" => {
         t.dict_remove = .inc(s.in_place)
         t
       },
-      s.family == "vector_set" => {
+      "vector_set" => {
         t.vector_set = .inc(s.in_place)
         t
       },
-      s.family == "vector_append" => {
+      "vector_append" => {
         t.vector_append = .inc(s.in_place)
         t
       },
-      s.family == "vector_builder" => {
+      "vector_builder" => {
         t.vector_builder = .inc(s.in_place)
         t
       },

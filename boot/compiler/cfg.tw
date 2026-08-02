@@ -982,9 +982,9 @@ fn terminator_text(term: Terminator) String {
 }
 
 fn own_tag_text(tag: Int) String {
-  cond {
-    tag == 0 => "Unique",
-    tag == 1 => "Shared",
+  case tag {
+    0 => "Unique",
+    1 => "Shared",
     _ => "Unknown",
   }
 }

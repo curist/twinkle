@@ -21,9 +21,9 @@ fn detect_string_form(source: String, offset: Int) StringForm {
   }
 
   c := source[offset]
-  cond {
-    c == 'r' => .Raw,
-    c == '\\' => .Multiline,
+  case c {
+    'r' => .Raw,
+    '\\' => .Multiline,
     _ => .Cooked,
   }
 }

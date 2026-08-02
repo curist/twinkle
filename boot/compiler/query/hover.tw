@@ -284,18 +284,16 @@ fn contract_method_hover(contract: BuiltinContract, method_name: String) String?
     } else {
       .None
     },
-    .IndexRead => cond {
-      method_name == "len" => .Some("fn len(self: Self) Int\n\nContract method from `IndexRead`."),
-      method_name == "at" => .Some(
-        "fn at(self: Self, index: Int) E\n\nContract method from `IndexRead`.",
-      ),
+    .IndexRead => case method_name {
+      "len" => .Some("fn len(self: Self) Int\n\nContract method from `IndexRead`."),
+      "at" => .Some("fn at(self: Self, index: Int) E\n\nContract method from `IndexRead`."),
       _ => .None,
     },
-    .IndexWrite => cond {
-      method_name == "set_at" => .Some(
+    .IndexWrite => case method_name {
+      "set_at" => .Some(
         "fn set_at(self: Self, index: Int, value: E) Self\n\nContract method from `IndexWrite`.",
       ),
-      method_name == "append" => .Some(
+      "append" => .Some(
         "fn append(self: Self, value: E) Self\n\nContract method from `IndexWrite`.",
       ),
       _ => .None,
