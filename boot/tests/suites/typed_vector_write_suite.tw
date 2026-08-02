@@ -1,0 +1,21 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+// Typed Vector<Int> indexed-write promotion (sub-project A).
+//
+// Placeholder during Phase 1: the runtime ops (set_i64 / set_in_place_i64 /
+// get_leaf_i64 / do_set_i64) exist but nothing routes to them yet, so they
+// cannot be exercised by name from source. Real coverage (WAT-level promotion
+// assertions + in-place/functional/OOB behavior) arrives in Phase 5 once
+// routing emits the typed ops through promoted regions.
+pub fn suite() runner.Suite {
+  runner
+    .suite("typed vector write")
+    .test(
+      "placeholder — routing not yet wired",
+      fn() {
+        try assert.equal(1, 1)
+        .Ok({})
+      },
+    )
+}

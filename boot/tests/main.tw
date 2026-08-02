@@ -21,7 +21,6 @@ use .suites.backend_repr_suite
 use .suites.backend_verify_suite
 use .suites.base_env_guardrail_suite
 use .suites.builder_region_suite
-use .suites.mutvec_region_suite
 use .suites.builtin_identity_collision_suite
 use .suites.builtins_canonical_suite
 use .suites.builtins_suite
@@ -91,6 +90,7 @@ use .suites.module_loader_suite
 use .suites.multi_module_suite
 use .suites.mutable_produce_suite
 use .suites.mutable_select_suite
+use .suites.mutvec_region_suite
 use .suites.occurrence_build_suite
 use .suites.occurrence_enrich_suite
 use .suites.occurrences_suite
@@ -145,6 +145,7 @@ use .suites.task_suite
 use .suites.type_registry_suite
 use .suites.typed_param_abi_suite
 use .suites.typed_record_fields_suite
+use .suites.typed_vector_write_suite
 use .suites.uniqueness_census_suite
 use .suites.uniqueness_guard_suite
 use .suites.unused_imports_suite
@@ -219,6 +220,7 @@ runner.run_all([
   backend_verify_suite.suite(),
   repr_policy_suite.suite(),
   route_typed_vec_suite.suite(),
+  typed_vector_write_suite.suite(),
   tail_match_result_typing_suite.suite(),
   typed_param_abi_suite.suite(),
   wat_suite.suite(),

@@ -159,6 +159,8 @@ fn builtin_abi(name: String) AbiContract {
     "vector$builder_new_i64" => abi([], [arr_()]),
     "vector$builder_push_i64" => abi([arr_n(), .Anyref], []),
     "vector$builder_freeze_i64" => abi([arr_n()], [pvec_i64_()]),
+    "vector$set_i64" => abi([pvec_i64_n(), .I32, .Anyref], [pvec_i64_()]),
+    "vector$set_in_place_i64" => abi([pvec_i64_n(), .I32, .Anyref], [pvec_i64_()]),
     "vector$__mutvec_new_i64" => abi([.I32], [mutvec_()]),
     "vector$__mutvec_make_i64" => abi([.I32, .I64], [mutvec_()]),
     "vector$__mutvec_push_i64" => abi([mutvec_n(), .I64], [mutvec_()]),
@@ -633,6 +635,14 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("vector$__mutvec_get_i64", "rt.arr", "mutvec_get_i64", .None),
     rt("vector$__mutvec_len_i64", "rt.arr", "mutvec_len_i64", .None),
     rt("vector$__mutvec_freeze_i64", "rt.arr", "mutvec_freeze_i64", .None),
+    // Appended at end to preserve FuncId assignment of earlier builtins.
+    // Typed indexed-write ops (sub-project A). Routing emits these as
+    // ACall(AGlobalFunc(...)) for promoted Vector<Int> writes; get_leaf_i64 /
+    // do_set_i64 are internal helpers reached only from these bodies (not
+    // registered, like their boxed twins). `.None` canonical keeps them out of
+    // user source. Behavioral coverage arrives via promoted-region fixtures.
+    rt("vector$set_i64", "rt.arr", "set_i64", .None),
+    rt("vector$set_in_place_i64", "rt.arr", "set_in_place_i64", .None),
   ]
 }
 
