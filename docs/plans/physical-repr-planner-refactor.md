@@ -10,6 +10,15 @@
 > [`typed-vector-representation.md`](performance/vector/typed-vector-representation.md)
 > before starting.
 
+> **Governing doctrine:** this is the sole implementor of
+> [`physical-repr-ownership-design.md`](physical-repr-ownership-design.md) — the master
+> ownership doctrine. Read it first; it fixes the invariants this plan realizes
+> (single materialized `PhysPlan`; `route` the only mutator of durable reprs while
+> `mutvec_repr` owns transient `MutVecI64` handles; verify on physical `ValType`
+> edges via an `is_declared_coercion` capability; emit coerces-only). The substrate
+> is **concrete** (`PhysRepr = { Boxed, TypedI64 }`), not generic — dict/record are
+> documented, uncoded extension points there.
+
 **Goal:** Refactor typed-vector physical representation decisions so mono/use analysis, physical repr/ABI planning, slot mutation, and emission verification have explicit ownership boundaries instead of drifting across `typed_param_abi`, `route_typed_vec`, `mutvec_repr`, and emit.
 
 **Architecture:** Keep the current route-based tactical behavior intact while extracting a first-class `PhysPlan` layer that represents physical slot/site/ABI facts as data. Existing analyses continue to derive semantic/use eligibility; `route_typed_vec` becomes the applicator of a materialized physical plan; `mutvec_repr` remains responsible only for live `MutVecI64` handles; emit remains a coercion safety net and stops re-deriving typedness. This is the long-term cleanup following the MutVec escape-return tactical fix, which has **already landed on this branch** (`d51a9568` "keep escaping regions PVecI64 across the return (no rebox)") and proves `mutvec_freeze_i64` belongs in the typed-producer source framework. The precondition is met; this plan builds on it.
@@ -841,9 +850,16 @@ git commit -m "backend: materialize typed return ABI from PhysPlan"
 > hard `error`. Do not enable strict rejection by default in the same commit that
 > introduces the check.
 
-- [ ] **Step 1: Add physical vector repr classifier helper.**
+The verifier check is built as the **doctrine's reusable edge-skeleton**: it operates
+on physical `ValType` edges plus an `is_declared_coercion` capability, and never
+mentions `PhysRepr`. This is the one substrate piece that stays reusable for a future
+dict/record customer without any genericity — they supply their own coercion
+predicate and reuse the same skeleton.
 
-In `verify_common.tw`:
+- [ ] **Step 1: Add the physical-repr edge-skeleton + vector coercion capability.**
+
+In `verify_common.tw`, add a classifier (for readable diagnostics) and the
+type-agnostic edge check driven by a capability:
 
 ```tw
 pub type VecPhys = { NotVector, BoxedPVec, TypedPVecI64, MutVecI64 }
@@ -862,15 +878,63 @@ pub fn vec_phys_of_val_type(vt: ValType) VecPhys {
     _ => .NotVector,
   }
 }
+
+// The reusable edge-skeleton. `is_declared_coercion` is the per-customer capability:
+// the vector customer declares PVec <-> PVecI64 coercible (emit boxes/unboxes there);
+// MutVecI64 edges are produced by the freeze producer, not by a copy edge.
+pub type ReprEdgeCap = .{ is_declared_coercion: fn(from: ValType, to: ValType) Bool }
+
+pub fn vec_repr_edge_cap() ReprEdgeCap {
+  .{
+    is_declared_coercion: fn(from, to) {
+      f := vec_phys_of_val_type(from)
+      t := vec_phys_of_val_type(to)
+      // PVec <-> PVecI64 is a declared coercion (emit inserts box_i64/unbox_i64).
+      (is_boxed_or_typed(f) and is_boxed_or_typed(t))
+    },
+  }
+}
+
+fn is_boxed_or_typed(p: VecPhys) Bool {
+  case p {
+    .BoxedPVec => true,
+    .TypedPVecI64 => true,
+    _ => false,
+  }
+}
+
+// Returns .Some(message) when the edge is an illegal non-coercing physical mismatch.
+pub fn check_repr_edge(from: ValType, to: ValType, cap: ReprEdgeCap, ctx: String) String? {
+  fp := vec_phys_of_val_type(from)
+  tp := vec_phys_of_val_type(to)
+  cond {
+    // Not both vector physical types → not this check's concern.
+    fp == .NotVector or tp == .NotVector => .None,
+    // Equal physical class (incl. MutVecI64 == MutVecI64) is fine. Compare the
+    // classified VecPhys (a plain enum), not raw ValType, so no ValType `==` is needed.
+    fp == tp => .None,
+    cap.is_declared_coercion(from, to) => .None,
+    _ => .Some("physical vector repr mismatch at ${ctx}: producer ${from.to_string()} vs destination ${to.to_string()}"),
+  }
+}
 ```
 
 - [ ] **Step 2: Check local copy/storage edges.**
 
-In `verify_expr.tw`, extend existing slot/value verification so `AInit(atom)` and `AAssign(target, atom)` compare `vec_phys_of_val_type(atom_vt)` to destination slot `wasm_type` when both are vector physical types. Equal is accepted. Mismatch is accepted only if the emit site is known to call `emit_coerce_stack`; local copy/assign is non-coercing, so `BoxedPVec` vs `TypedPVecI64` is a candidate defect — **report it (report-only mode) rather than `error` on first landing** (see the task-level warning above), and only escalate to a hard failure once the suite/self-host inventory confirms no valid edge relies on emit coercion here.
+In `verify_expr.tw`, extend existing slot/value verification so `AInit(atom)` and
+`AAssign(target, atom)` call `check_repr_edge(atom_vt, dest_slot_wasm_type,
+vec_repr_edge_cap(), "AInit"/"AAssign")`. A returned `.Some(msg)` is a candidate
+defect: local copy/assign is non-coercing, so a `BoxedPVec` vs `TypedPVecI64`
+mismatch with no declared coercion is a bug. **Report it (report-only mode) rather
+than `error` on first landing** (see the task-level warning above), gated behind the
+`TWINKLE_VERIFY_VEC_REPR=1` flag; only escalate to a hard failure once the
+suite/self-host inventory confirms no valid edge relies on it.
 
 - [ ] **Step 3: Check record-get result edge.**
 
-For `ARecordGet(base, field, type_id)`, compare the field layout physical type to the result slot physical type. This catches the field-read copy class before Wasm validation.
+For `ARecordGet(base, field, type_id)`, call `check_repr_edge(field_layout_vt,
+result_slot_vt, vec_repr_edge_cap(), "ARecordGet")`. This catches the field-read copy
+class before Wasm validation, through the same skeleton.
 
 - [ ] **Step 4: Add negative tests using existing verifier test patterns.**
 
@@ -1033,7 +1097,87 @@ git commit -m "docs: define typed-vector physical repr ownership boundaries"
 
 ---
 
-## Task 11: Final validation and performance guard
+## Task 11: Emit typedness-audit and gate (the safety-net removal)
+
+**Files:**
+- Modify: `boot/compiler/codegen/emit.tw` (only where an audit finds a re-derivation)
+- Modify: `boot/tests/suites/backend_repr_suite.tw`
+
+**Interfaces:**
+- Consumes: prepared `SlotInfo.wasm_type` / `phys_return` / `PhysPlan`, and the
+  strict verifier edge-skeleton from Task 8.
+- Produces: an emit that reads prepared physical types and never re-derives typed-vector
+  eligibility from `MonoType`.
+
+This is sequenced **last on purpose**: it is the only step that touches the coercion
+safety net, and the doctrine's target — "emit inserts coercions only at declared
+boundaries and never re-derives typedness" — is what lets the verifier be trusted.
+**Gate:** do not start until Task 8's edge-skeleton has been flipped to strict
+`error` and is green across `make boot-test` + self-host fixed point. With the
+verifier strict, any emit change that drops a needed coercion is caught immediately;
+without it, this task is flying blind.
+
+Note: emit today is mostly the coercion *applier* (it inserts `box_i64`/`unbox_i64`
+at physical mismatches) and mostly *reads* physical types. Keep the coercion
+insertion — the doctrine wants it. The audit targets only sites that recompute
+*whether a vector site is typed* from `MonoType` instead of reading the prepared
+`SlotInfo`/`PhysPlan`. The task may legitimately conclude "no re-derivation found"
+and close as a documented confirmation.
+
+- [ ] **Step 1: Audit emit for typedness re-derivation.**
+
+Search emit for sites that decide typed-vector physical form from semantic type
+rather than prepared physical type:
+
+```bash
+rg -n "PVecI64|val_type_of_mono|Vector\(\.Int\)|is_typed|TypedVec" boot/compiler/codegen/emit.tw
+```
+
+For each hit, classify it: **(a) reads prepared type** (`SlotInfo.wasm_type`,
+`phys_return`, atom val type) → leave as-is; **(b) applies a declared coercion**
+(`box_i64`/`unbox_i64` at a physical mismatch) → leave as-is, the doctrine keeps it;
+**(c) re-derives eligibility** (recomputes typed-vs-boxed from `MonoType`/mono keys
+where a prepared physical type is already available) → this is the removal target.
+Record the classification inline in a comment at each (c) site.
+
+- [ ] **Step 2: Replace each re-derivation with a prepared-type read.**
+
+For every class-(c) site, replace the `MonoType`-driven decision with a read of the
+already-materialized physical type (the slot's `wasm_type`, the callee `phys_return`,
+or `PhysPlan.*_repr`). If the audit found no class-(c) sites, skip to Step 4 and
+record the confirmation.
+
+- [ ] **Step 3: Add a regression fixture.**
+
+In `backend_repr_suite.tw`, add a prepared-IR fixture where a typed producer flows to
+a consumer and assert emit selects the typed op purely from prepared physical types
+(no dependence on a re-derived mono decision). Prefer prepared-IR inspection over WAT
+substring matching.
+
+- [ ] **Step 4: Format, rebuild, validate under the strict verifier.**
+
+Run (with the Task 8 verifier strict, i.e. no report-only flag needed):
+
+```bash
+target/twk fmt boot/compiler/codegen/emit.tw boot/tests/suites/backend_repr_suite.tw
+make bundle-cli
+target/twk lint boot/main.tw
+make boot-test
+```
+
+Expected: fixed point, no lint findings, boot tests pass, and the strict verifier
+raises no new physical-repr mismatch (proving no coercion was dropped).
+
+- [ ] **Step 5: Commit.**
+
+```bash
+git add boot/compiler/codegen/emit.tw boot/tests/suites/backend_repr_suite.tw
+git commit -m "emit: read prepared vector physical types, stop re-deriving typedness"
+```
+
+---
+
+## Task 12: Final validation and performance guard
 
 **Files:**
 - Modify only if validation reveals stale docs or comments.
@@ -1111,7 +1255,8 @@ fi
 - **Scope creep into typed parameter ABI.** This plan clarifies and materializes current return/capture/field/payload/local slot decisions. It does not add named-function typed parameter ABI. If a task starts specializing function params, stop and split a separate typed-param ABI plan.
 - **Fixpoint performance.** Folding more facts into a materialized plan can increase prepare cost. This plan first projects and applies existing facts, then materializes route's result. Do not move all source categories into a multi-round `PhysPlan` fixpoint until boot compile timings are measured.
 - **Verifier false positives.** Add checks only for edges whose emitter behavior is known. Non-coercing local/copy/result edges are first; direct-call and variant/record construction coercing edges need exact declared-coercion modeling before strict rejection.
-- **MutVec regression.** The tactical fix depends on route recognizing `mutvec_freeze_i64` and mutvec_repr not clobbering freeze slots. Keep the WAT checks in Task 11 as a regression gate.
+- **MutVec regression.** The tactical fix depends on route recognizing `mutvec_freeze_i64` and mutvec_repr not clobbering freeze slots. Keep the WAT checks in Task 12 as a regression gate.
+- **Emit safety-net removal (Task 11).** Removing typedness re-derivation is gated on the Task 8 verifier being strict and green; if the audit is uncertain whether a site is a declared coercion (keep) vs a re-derivation (remove), leave it and record it — a missed removal is harmless, a wrong one drops a coercion. Never run Task 11 while the verifier is still report-only.
 - **Stopping at dual-carrying.** Tasks 2–7 deliberately run the plan *alongside* the legacy maps for behavior-preserving safety. That is a transitional state, not the goal. If Task 9 (legacy-map removal) is skipped or deferred, the "single materialized plan" objective is not met and the round-trip scaffolding from Task 4 becomes permanent debt. Treat Task 9 as load-bearing, not optional cleanup.
 - **Verifier can reject valid code.** Task 8 is the only task that can break a currently-passing build. It must land report-only behind a flag and be inventoried before any hard rejection is enabled by default (see the Task 8 warning).
 - **Rollback.** Each task is behavior-preserving or tightly gated. Revert the latest task commit if a verifier or projection refactor rejects valid current code. Reverting Task 1 removes only the unused plan model; reverting later tasks should restore the previous route map plumbing without changing language semantics.
