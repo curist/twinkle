@@ -1,0 +1,59 @@
+// Emit-level positive matrix for the MutVec region pass (Task 13). One claimable
+// region per supported producer shape. boot-test's mutvec suite covers the ANF
+// rewrite (flag-independent); the flag-on EMIT is a manual gate because a boot
+// run has one fixed process env, so verify with these commands (mangled fn names
+// carry a numeric suffix — match the tail with a substring):
+//
+//   TWINKLE_MUTVEC=1 target/twk run <this file>                       # -> deterministic sum
+//   TWINKLE_MUTVEC=1 target/twk wat <this file> --func from_collect --calls  # mutvec_new/push/set + 1 freeze
+//   TWINKLE_MUTVEC=1 target/twk wat <this file> --func from_make    --calls  # mutvec_make/set + 1 freeze
+//   TWINKLE_MUTVEC=1 target/twk wat <this file> --func with_append  --calls  # mutvec_push + set + 1 freeze
+//   TWINKLE_MUTVEC=1 target/twk wat <this file> --func scratch_sum  --calls  # mutvec_get/len, NO freeze
+//
+// Every escaping producer materializes at exactly one boundary (one
+// mutvec_freeze_i64); the non-escaping scratch buffer emits none.
+// collect-born, indexed set, returned -> boundary freeze.
+fn from_collect(n: Int) Vector<Int> {
+  xs := collect i in range(n) {
+    i
+  }
+  xs[0] = 42
+  xs
+}
+
+// Vector.make-born, indexed set, returned -> boundary freeze.
+fn from_make(n: Int) Vector<Int> {
+  xs := Vector.make(n, 0)
+  xs[1] = 9
+  xs
+}
+
+// collect-born, indexed set + in-region append, returned -> boundary freeze.
+fn with_append(n: Int) Vector<Int> {
+  xs := collect i in range(n) {
+    i
+  }
+  xs[0] = 7
+  xs = .append(99)
+  xs
+}
+
+// collect-born, indexed set + read-reduced to a scalar, never published ->
+// pure scratch buffer, NO freeze.
+fn scratch_sum(n: Int) Int {
+  xs := collect i in range(n) {
+    i
+  }
+  xs[0] = 100
+  t := 0
+  for i in range(xs.len()) {
+    t = t + xs[i]
+  }
+  t
+}
+
+fn main() Int {
+  from_collect(5).len() + from_make(4).len() + with_append(3).len() + scratch_sum(5)
+}
+
+println(main().to_string())

@@ -1,0 +1,33 @@
+// Emit-level OOB trap gates for the MutVec runtime ops (Task 13). A lowered
+// region's mutvec_set_i64 / mutvec_get_i64 must bounds-check against the LOGICAL
+// length (not the doubled backing capacity) and trap on an out-of-range index,
+// exactly like the persistent path — never silently read/write past the end.
+// Both are runtime traps, so this is a manual gate (uncomment one call in `main`):
+//
+//   TWINKLE_MUTVEC=1 target/twk run <this file>   # -> traps (index out of bounds)
+//   (flag-off traps identically via the persistent path; MutVec must not diverge)
+// Region is claimed by the in-bounds set; the OOB set then traps in mutvec_set_i64.
+fn oob_set(n: Int) Vector<Int> {
+  xs := collect i in range(n) {
+    i
+  }
+  xs[0] = 1
+  xs[n + 100] = 7
+  xs
+}
+
+// Region is claimed by the in-bounds set; the OOB read then traps in mutvec_get_i64.
+fn oob_get(n: Int) Int {
+  xs := collect i in range(n) {
+    i
+  }
+  xs[0] = 1
+  xs[n + 100]
+}
+
+fn main() Int {
+  // Select exactly one to exercise the corresponding trap:
+  oob_set(5).len()
+}
+
+println(main().to_string())
