@@ -16,6 +16,7 @@ use compiler.builder_region_detect.{atom_is_local, op_references_deep}
 use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{FuncId, LocalId}
+use compiler.elem_family.{elem_family_suffix, mutvec_families}
 use compiler.mono_type.{MonoType}
 use compiler.opt.analysis.{next_local_id}
 
@@ -39,12 +40,18 @@ pub type MutVecRegion = .{
   producer: MutVecProducer,
   op_sites: Vector<MutVecOpSite>,
   escapes: Bool,
+  // The element family the region was claimed for, as a builtin-name suffix
+  // (`"_i64"`). The rewrite resolves its `mutvec_*` op ids per this suffix. Only
+  // families in `mutvec_families()` are ever stamped here (Int today).
+  family: String,
 }
 
-// Resolved builtin FuncIds the detector keys on. Both freeze families count as a
-// collect producer: a `collect` over Vector<Int> lowers to the boxed builder
-// unless typed-vector routing promoted it to the i64 builder, so accept either
-// (the Int-mono gate is what actually restricts slice 1 to Int).
+// Resolved builtin FuncIds the detector keys on. The boxed `freeze_box` and each
+// family's typed builder freeze both count as a collect producer: a `collect`
+// over a claimable vector lowers to the boxed builder unless typed-vector routing
+// promoted it to the family builder, so accept either (the element-family gate is
+// what actually restricts the claim set). `typed_freeze` maps a family suffix to
+// its `vector$builder_freeze<suffix>` id, resolved per registered mutvec family.
 type OpIds = .{
   set_unsafe: FuncId,
   append: FuncId,
@@ -53,7 +60,15 @@ type OpIds = .{
   builder_new: FuncId,
   builder_push: FuncId,
   freeze_box: FuncId,
-  freeze_i64: FuncId,
+  typed_freeze: Dict<String, Int>,
+}
+
+fn typed_freeze_ids(b: BuiltinRegistry) Dict<String, Int> {
+  out: Dict<String, Int> = Dict.new()
+  for f in mutvec_families() {
+    out[f.suffix] = builtins.id(b, "vector$builder_freeze${f.suffix}").id
+  }
+  out
 }
 
 fn resolve_ids(b: BuiltinRegistry) OpIds {
@@ -65,7 +80,7 @@ fn resolve_ids(b: BuiltinRegistry) OpIds {
     builder_new: builtins.id(b, "vector$builder_new"),
     builder_push: builtins.id(b, "vector$builder_push"),
     freeze_box: builtins.id(b, "vector$builder_freeze"),
-    freeze_i64: builtins.id(b, "vector$builder_freeze_i64"),
+    typed_freeze: typed_freeze_ids(b),
   }
 }
 
@@ -97,13 +112,19 @@ fn collect_defs_in_op(op: AnfOp, defs: Dict<Int, AnfOp>) Dict<Int, AnfOp> {
 }
 
 // Classify a producer op directly: a builder freeze (collect), a Vector.make, or
-// an array literal.
-fn producer_of_op(op: AnfOp, ids: OpIds) MutVecProducer? {
+// an array literal. `suffix` is the claimed family's suffix, so the typed builder
+// freeze recognized matches the handle's element family (boxed freeze always
+// counts).
+fn producer_of_op(op: AnfOp, ids: OpIds, suffix: String) MutVecProducer? {
+  typed_freeze := case ids.typed_freeze[suffix] {
+    .Some(i) => i,
+    .None => -1,
+  }
   case op {
     .AArrayLit(_) => .Some(.ArrayLitSeed),
     .ACall(.AGlobalFunc(f), _) => if f.id == ids.make.id {
       .Some(.MakeSeed)
-    } else if f.id == ids.freeze_box.id or f.id == ids.freeze_i64.id {
+    } else if f.id == ids.freeze_box.id or f.id == typed_freeze {
       .Some(.CollectSeed)
     } else {
       .None
@@ -115,14 +136,14 @@ fn producer_of_op(op: AnfOp, ids: OpIds) MutVecProducer? {
 // A handle is owned-born iff its defining op is a supported producer — either
 // directly, or through one `AInit` copy (both `collect` and `Vector.make` bind a
 // temp that an `AInit` re-binds to the source-level handle local).
-fn classify_producer(h: LocalId, defs: Dict<Int, AnfOp>, ids: OpIds) MutVecProducer? {
+fn classify_producer(h: LocalId, defs: Dict<Int, AnfOp>, ids: OpIds, suffix: String) MutVecProducer? {
   case defs.get(h.id) {
     .Some(op) => case op {
       .AInit(.ALocal(src)) => case defs.get(src.id) {
-        .Some(srcop) => producer_of_op(srcop, ids),
+        .Some(srcop) => producer_of_op(srcop, ids, suffix),
         .None => .None,
       },
-      _ => producer_of_op(op, ids),
+      _ => producer_of_op(op, ids, suffix),
     },
     .None => .None, // parameter or undefined — not a locally-born owned value
   }
@@ -272,24 +293,22 @@ fn classify_leaf_use(op: AnfOp, local: LocalId, h: LocalId, ids: OpIds, s: UseSc
 }
 
 // ── Eligibility ──
-fn handle_is_vector_int(f: AnfFunctionDef, h: LocalId) Bool {
+// The mutvec family suffix a handle is claimable for, driven off its element
+// MonoType (`.Vector(.Int)` -> `"_i64"`), or `.None` when no family has mutvec
+// ops for that element type. Replaces the hard-coded `Vector<Int>` gate.
+fn handle_vector_family(f: AnfFunctionDef, h: LocalId) String? {
   case f.op_result_mono.get(h.id) {
-    .Some(mono) => case mono {
-      .Vector(inner) => case inner {
-        .Int => true,
-        _ => false,
-      },
-      _ => false,
-    },
-    .None => false,
+    .Some(mono) => elem_family_suffix(mono),
+    .None => .None,
   }
 }
 
 fn eligible(f: AnfFunctionDef, h: LocalId, defs: Dict<Int, AnfOp>, ids: OpIds) MutVecRegion? {
-  if !handle_is_vector_int(f, h) {
-    return .None
+  family := case handle_vector_family(f, h) {
+    .Some(s) => s,
+    .None => return .None,
   }
-  producer := case classify_producer(h, defs, ids) {
+  producer := case classify_producer(h, defs, ids, family) {
     .Some(p) => p,
     .None => return .None,
   }
@@ -317,6 +336,7 @@ fn eligible(f: AnfFunctionDef, h: LocalId, defs: Dict<Int, AnfOp>, ids: OpIds) M
       producer,
       op_sites: scan.op_sites,
       escapes: scan.exit_count == 1,
+      family,
     },
   )
 }
@@ -397,26 +417,27 @@ pub fn detect_regions(m: AnfModule, b: BuiltinRegistry) Vector<MutVecRegion> {
 }
 
 // ── Rewrite (S2): lower a claimed region to mutvec_* ops ──────────────────────
-// The mutvec runtime op FuncIds the rewrite emits.
+// The mutvec runtime op FuncIds the rewrite emits, resolved for one element
+// family via its `suffix` (`"_i64"` -> `vector$__mutvec_new_i64`, ...).
 type MutVecIds = .{
-  new_i64: FuncId,
-  make_i64: FuncId,
-  push_i64: FuncId,
-  set_i64: FuncId,
-  get_i64: FuncId,
-  len_i64: FuncId,
-  freeze_i64: FuncId,
+  new: FuncId,
+  make: FuncId,
+  push: FuncId,
+  set: FuncId,
+  get: FuncId,
+  len: FuncId,
+  freeze: FuncId,
 }
 
-fn resolve_mutvec_ids(b: BuiltinRegistry) MutVecIds {
+fn resolve_mutvec_ids(b: BuiltinRegistry, suffix: String) MutVecIds {
   .{
-    new_i64: builtins.id(b, "vector$__mutvec_new_i64"),
-    make_i64: builtins.id(b, "vector$__mutvec_make_i64"),
-    push_i64: builtins.id(b, "vector$__mutvec_push_i64"),
-    set_i64: builtins.id(b, "vector$__mutvec_set_i64"),
-    get_i64: builtins.id(b, "vector$__mutvec_get_i64"),
-    len_i64: builtins.id(b, "vector$__mutvec_len_i64"),
-    freeze_i64: builtins.id(b, "vector$__mutvec_freeze_i64"),
+    new: builtins.id(b, "vector$__mutvec_new${suffix}"),
+    make: builtins.id(b, "vector$__mutvec_make${suffix}"),
+    push: builtins.id(b, "vector$__mutvec_push${suffix}"),
+    set: builtins.id(b, "vector$__mutvec_set${suffix}"),
+    get: builtins.id(b, "vector$__mutvec_get${suffix}"),
+    len: builtins.id(b, "vector$__mutvec_len${suffix}"),
+    freeze: builtins.id(b, "vector$__mutvec_freeze${suffix}"),
   }
 }
 
@@ -462,11 +483,11 @@ fn rewrite_op(ctx: RwCtx, op: AnfOp, local: LocalId) AnfOp {
     .ACall(.AGlobalFunc(f), args) => if local.id == ctx.make_src
       and f.id == ctx.ids.make.id and args.len() == 2 {
       // producer: Vector.make -> mutvec_make_i64 (same args; fill coerces i64)
-      .ACall(.AGlobalFunc(ctx.mids.make_i64), args)
+      .ACall(.AGlobalFunc(ctx.mids.make), args)
     } else if local.id == ctx.builder_new_local
       and f.id == ctx.ids.builder_new.id and args.len() == 0 {
       // producer: collect builder_new() -> mutvec_new_i64(0) (0 rounds to MIN_CAP)
-      .ACall(.AGlobalFunc(ctx.mids.new_i64), [.ALitInt(0)])
+      .ACall(.AGlobalFunc(ctx.mids.new), [.ALitInt(0)])
     } else if local.id == ctx.freeze_temp and f.id == ctx.ids.freeze_box.id and args.len() == 1 {
       // producer: collect builder_freeze(b) is elided — the handle IS the mutvec;
       // slide materialization to the boundary. Passthrough the builder alias.
@@ -474,18 +495,18 @@ fn rewrite_op(ctx: RwCtx, op: AnfOp, local: LocalId) AnfOp {
     } else if f.id == ctx.ids.builder_push.id
       and args.len() == 2 and atom_in_set(args[0], ctx.builder_aliases) {
       // collect loop: builder_push(b, x) -> mutvec_push_i64(b, x)
-      .ACall(.AGlobalFunc(ctx.mids.push_i64), args)
+      .ACall(.AGlobalFunc(ctx.mids.push), args)
     } else if f.id == ctx.ids.set_unsafe.id and args.len() == 3 and atom_is_local(args[0], ctx.h) {
-      .ACall(.AGlobalFunc(ctx.mids.set_i64), args)
+      .ACall(.AGlobalFunc(ctx.mids.set), args)
     } else if f.id == ctx.ids.append.id and args.len() == 2 and atom_is_local(args[0], ctx.h) {
-      .ACall(.AGlobalFunc(ctx.mids.push_i64), args)
+      .ACall(.AGlobalFunc(ctx.mids.push), args)
     } else if f.id == ctx.ids.len.id and args.len() == 1 and atom_is_local(args[0], ctx.h) {
-      .ACall(.AGlobalFunc(ctx.mids.len_i64), args)
+      .ACall(.AGlobalFunc(ctx.mids.len), args)
     } else {
       op
     },
     .AIndex(base, idx, _, _) => if atom_is_local(base, ctx.h) and !atom_is_local(idx, ctx.h) {
-      .ACall(.AGlobalFunc(ctx.mids.get_i64), [base, idx])
+      .ACall(.AGlobalFunc(ctx.mids.get), [base, idx])
     } else {
       op
     },
@@ -520,7 +541,7 @@ fn freeze_at_exit(ctx: RwCtx, a: Atom, ret: Bool, freeze_local: Int) AnfExpr {
     frozen: Atom = .ALocal(fresh)
     .Let(
       fresh,
-      .ACall(.AGlobalFunc(ctx.mids.freeze_i64), [.ALocal(ctx.h)]),
+      .ACall(.AGlobalFunc(ctx.mids.freeze), [.ALocal(ctx.h)]),
       if ret {
         .Return(.Some(frozen))
       } else {
@@ -564,7 +585,7 @@ fn collect_push_results_op(local: LocalId, op: AnfOp, mids: MutVecIds, acc: Dict
   Bool,
 > {
   case op {
-    .ACall(.AGlobalFunc(f), _) => if f.id == mids.push_i64.id {
+    .ACall(.AGlobalFunc(f), _) => if f.id == mids.push.id {
       acc[local.id] = true
       acc
     } else {
@@ -690,22 +711,32 @@ fn rewrite_region(
   } else {
     -1
   }
+
+  // The vector mono of the claimed handle (`Vector<Int>` for the i64 family)
+  // retypes the push-result and freeze-result slots so a slot is allocated and
+  // mutvec_repr marks it MutVec(elem). Read off the handle rather than hard-coded
+  // so it follows the region's family.
+  vec_mono := case f.op_result_mono.get(r.handle.id) {
+    .Some(m) => m,
+    .None => MonoType.Vector(.Int),
+  }
   new_body := ctx.rewrite_expr(f.body, exit_local)
   results := collect_push_results(new_body, mids, Dict.new())
   for rid in results.keys() {
-    f.op_result_mono[rid] = MonoType.Vector(.Int)
+    f.op_result_mono[rid] = vec_mono
   }
   if r.escapes {
-    f.op_result_mono[freeze_local] = MonoType.Vector(.Int)
+    f.op_result_mono[freeze_local] = vec_mono
   }
   f.body = new_body
   f
 }
 
-fn rewrite_func(f: AnfFunctionDef, regions: Vector<MutVecRegion>, ids: OpIds, mids: MutVecIds) AnfFunctionDef {
+fn rewrite_func(f: AnfFunctionDef, regions: Vector<MutVecRegion>, ids: OpIds, b: BuiltinRegistry) AnfFunctionDef {
   base := next_local_id(f)
   i := 0
   for r in regions {
+    mids := resolve_mutvec_ids(b, r.family)
     case r.producer {
       .MakeSeed => f = rewrite_region(f, r, ids, mids, base + i),
       .CollectSeed => f = rewrite_region(f, r, ids, mids, base + i),
@@ -731,11 +762,10 @@ fn regions_for(all: Vector<MutVecRegion>, func_id: FuncId) Vector<MutVecRegion> 
 // before builder_region. Unclaimed code is byte-identical.
 pub fn rewrite_module(m: AnfModule, b: BuiltinRegistry) AnfModule {
   ids := resolve_ids(b)
-  mids := resolve_mutvec_ids(b)
   regions := detect_regions(m, b)
   result := m
   result.functions = collect f in m.functions {
-    rewrite_func(f, regions_for(regions, f.func_id), ids, mids)
+    rewrite_func(f, regions_for(regions, f.func_id), ids, b)
   }
   result
 }

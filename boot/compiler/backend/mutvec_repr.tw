@@ -21,30 +21,51 @@ use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo,
 }
 use compiler.backend.repr_assign.{wasm_type_of_repr}
+use compiler.backend.repr_policy.{candidate_typed_vec_family}
 use compiler.builtins
 use compiler.builtins.{BuiltinRegistry}
+use compiler.elem_family.{mutvec_families}
 use compiler.resolver.{ResolvedEnv}
 
+// The mutvec op FuncIds keyed by the role they play in the seed, aggregated
+// across every registered mutvec family (Int today). Membership sets rather than
+// per-family fields so the seed stays family-agnostic: a slot flowing through any
+// family's mutvec op is a handle, and the family-specific physical repr is chosen
+// per slot from its MonoType (see `override_slot`).
 type MutVecIds = .{
-  new_i64: Int,
-  make_i64: Int,
-  push_i64: Int,
-  set_i64: Int,
-  get_i64: Int,
-  len_i64: Int,
-  freeze_i64: Int,
+  // `new`/`make`/`push`/`set` results are MutVec handles.
+  handle_results: Dict<Int, Bool>,
+  // `freeze` results are the materialized (persistent) PVec slot.
+  frozen_results: Dict<Int, Bool>,
+  // `set`/`get`/`len`/`push`/`freeze` take the handle as arg0.
+  arg0_handles: Dict<Int, Bool>,
 }
 
 fn resolve_ids(b: BuiltinRegistry) MutVecIds {
-  .{
-    new_i64: builtins.id(b, "vector$__mutvec_new_i64").id,
-    make_i64: builtins.id(b, "vector$__mutvec_make_i64").id,
-    push_i64: builtins.id(b, "vector$__mutvec_push_i64").id,
-    set_i64: builtins.id(b, "vector$__mutvec_set_i64").id,
-    get_i64: builtins.id(b, "vector$__mutvec_get_i64").id,
-    len_i64: builtins.id(b, "vector$__mutvec_len_i64").id,
-    freeze_i64: builtins.id(b, "vector$__mutvec_freeze_i64").id,
+  handle: Dict<Int, Bool> = Dict.new()
+  frozen: Dict<Int, Bool> = Dict.new()
+  arg0: Dict<Int, Bool> = Dict.new()
+  for f in mutvec_families() {
+    s := f.suffix
+    new_id := builtins.id(b, "vector$__mutvec_new${s}").id
+    make_id := builtins.id(b, "vector$__mutvec_make${s}").id
+    push_id := builtins.id(b, "vector$__mutvec_push${s}").id
+    set_id := builtins.id(b, "vector$__mutvec_set${s}").id
+    get_id := builtins.id(b, "vector$__mutvec_get${s}").id
+    len_id := builtins.id(b, "vector$__mutvec_len${s}").id
+    freeze_id := builtins.id(b, "vector$__mutvec_freeze${s}").id
+    handle[new_id] = true
+    handle[make_id] = true
+    handle[push_id] = true
+    handle[set_id] = true
+    frozen[freeze_id] = true
+    arg0[set_id] = true
+    arg0[get_id] = true
+    arg0[len_id] = true
+    arg0[push_id] = true
+    arg0[freeze_id] = true
   }
+  .{ handle_results: handle, frozen_results: frozen, arg0_handles: arg0 }
 }
 
 fn slot_id(a: PreparedAtom) Int? {
@@ -92,24 +113,17 @@ fn seed_expr(acc: SeedAcc, e: PreparedExpr, ids: MutVecIds) SeedAcc {
 fn seed_op(acc: SeedAcc, rid: Int, op: PreparedOp, ids: MutVecIds) SeedAcc {
   case op {
     .ACall(.AGlobalFunc(f), args) => {
-      a1 := if f.id == ids.new_i64
-        or f.id == ids.make_i64
-        or f.id == ids.push_i64
-        or f.id == ids.set_i64 {
+      a1 := if ids.handle_results.has(f.id) {
         acc.mark_handle(rid)
       } else {
         acc
       }
-      a2 := if f.id == ids.freeze_i64 {
+      a2 := if ids.frozen_results.has(f.id) {
         a1.mark_frozen(rid)
       } else {
         a1
       }
-      if f.id == ids.set_i64
-        or f.id == ids.get_i64
-        or f.id == ids.len_i64
-        or f.id == ids.push_i64
-        or f.id == ids.freeze_i64 {
+      if ids.arg0_handles.has(f.id) {
         a2.mark_arg0(args)
       } else {
         a2
@@ -218,7 +232,14 @@ fn assign_in_func(pf: PreparedFunc, ids: MutVecIds, env: ResolvedEnv) PreparedFu
   new_slots: Dict<Int, SlotInfo> = Dict.new()
   for sid, info in pf.slots {
     new_slots[sid] = if handle.has(info.slot.id) {
-      override_slot(info, .MutVec(.I64), env)
+      // The ElemRepr follows the handle slot's element family (its mono is the
+      // claimed `Vector<T>`); `.I64` for the i64 family. Physical wasm type is
+      // still the shared MutVec layout downstream, so the tag is classificatory.
+      elem := case candidate_typed_vec_family(info.mono) {
+        .Some(e) => e,
+        .None => .I64,
+      }
+      override_slot(info, .MutVec(elem), env)
     } else {
       info
     }

@@ -79,3 +79,33 @@ pub fn elem_family_of(mono: MonoType) ElemFamily? {
 
   .None
 }
+
+// Families with MutVec runtime ops registered — the single source of truth for
+// which owned vectors the region pass can claim into flat mutable storage. A
+// strict subset of all_families (typed reads exist for more families than have
+// mutvec write ops). Widen as each family's mutvec_* ops land (Int now;
+// Bool/Float/Byte later per docs/plans/mutvec-later-slices.md).
+pub fn mutvec_families() Vector<ElemFamily> {
+  [family_i64()]
+}
+
+// The mutvec-claimable builtin-name suffix for a vector element MonoType, or
+// `.None` when no MutVec ops are registered for it. This is the ONE decision
+// point the region detector and the repr handoff share: given a handle's element
+// MonoType it yields the family suffix (`"_i64"`) used to resolve `mutvec_*`
+// builtin ids per region. Phase 3/4 widen the claim set purely by extending
+// `mutvec_families`.
+pub fn elem_family_suffix(mono: MonoType) String? {
+  case elem_family_of(mono) {
+    .Some(f) => {
+      for m in mutvec_families() {
+        if m.mono_key == f.mono_key {
+          return .Some(f.suffix)
+        }
+      }
+
+      .None
+    },
+    .None => .None,
+  }
+}

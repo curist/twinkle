@@ -19,7 +19,7 @@ use compiler.backend.prepared_ir.{
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.core_ir.{FuncId}
-use compiler.elem_family.{ElemFamily, all_families, elem_family_of}
+use compiler.elem_family.{ElemFamily, all_families, elem_family_of, mutvec_families}
 
 fn with_repr_wasm(info: SlotInfo, repr: ReprKind, wasm_type: ValType) SlotInfo {
   info.repr = repr
@@ -47,7 +47,27 @@ pub type RouteIds = .{
   // Boxed `vector$set_unsafe` id — the family-agnostic call routing swaps to the
   // family's typed `set` (i64 only).
   set_unsafe: Int,
-  mutvec_freeze_i64: Int,
+  // `vector$__mutvec_freeze<suffix>` ids keyed by family mono_key, for
+  // mutvec-supported families only (Int today). A slot bound from a family's
+  // mutvec_freeze is a typed producer of that family's PVec.
+  mutvec_freeze: Dict<String, Int>,
+}
+
+fn mutvec_freeze_ids(builtins: BuiltinRegistry) Dict<String, Int> {
+  out: Dict<String, Int> = Dict.new()
+  for f in mutvec_families() {
+    out[f.mono_key] = builtins.id("vector$__mutvec_freeze${f.suffix}").id
+  }
+  out
+}
+
+// True iff `id` is the mutvec_freeze op of the active family `fam` (mutvec-only
+// families; `.None` for families without registered mutvec ops).
+fn is_mutvec_freeze(id: Int, ids: RouteIds, fam: ElemFamily) Bool {
+  case ids.mutvec_freeze[fam.mono_key] {
+    .Some(mf) => id == mf,
+    .None => false,
+  }
 }
 
 pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
@@ -60,7 +80,7 @@ pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
     gather: builtins.id("vector$gather").id,
     append: builtins.id("vector$append").id,
     set_unsafe: builtins.id("vector$set_unsafe").id,
-    mutvec_freeze_i64: builtins.id("vector$__mutvec_freeze_i64").id,
+    mutvec_freeze: mutvec_freeze_ids(builtins),
   }
 }
 
@@ -852,7 +872,7 @@ fn collect_candidate_from_op(
         },
         .None => acc,
       },
-      fid.id == ids.mutvec_freeze_i64 and args.len() == 1 => case slots[slot.id] {
+      is_mutvec_freeze(fid.id, ids, fam) and args.len() == 1 => case slots[slot.id] {
         .Some(info) => if slot_in_family(info, fam) {
           acc.append(.{ v: slot.id, b: -1, make: true })
         } else {
