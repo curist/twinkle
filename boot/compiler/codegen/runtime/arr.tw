@@ -183,6 +183,7 @@ pub fn module() WasmModule {
     family_i64().pvec_len_fn(),
     family_i64().pvec_get_fn(),
     family_i64().pvec_promote_full_tail_fn(),
+    family_i64().pvec_builder_append_leaf_range_fn(),
     family_i64().pvec_builder_new_fn(),
     builder_push_i64_fn(),
     family_i64().pvec_builder_push_raw_fn(),
@@ -1383,6 +1384,7 @@ type PVecFamily = .{
   builder_freeze_name: String,
   promote_name: String,
   gather_name: String,
+  builder_append_leaf_range_name: String,
   pvec_ty: String,
   pvec_null: ValType,
   pvec_ref: ValType,
@@ -1405,6 +1407,7 @@ fn family_boxed() PVecFamily {
     builder_freeze_name: "builder_freeze",
     promote_name: "",
     gather_name: "",
+    builder_append_leaf_range_name: "builder_append_leaf_range",
     pvec_ty: t_PVEC,
     pvec_null: pvec_null(),
     pvec_ref: pvec_ref(),
@@ -1428,6 +1431,7 @@ fn family_i64() PVecFamily {
     builder_freeze_name: "builder_freeze_i64",
     promote_name: "promote_full_tail_i64",
     gather_name: "gather_i64",
+    builder_append_leaf_range_name: "builder_append_leaf_range_i64",
     pvec_ty: t_PVEC_I64,
     pvec_null: pvec_i64_null(),
     pvec_ref: pvec_i64_ref(),
@@ -1451,6 +1455,7 @@ fn family_bool() PVecFamily {
     builder_freeze_name: "builder_freeze_bool",
     promote_name: "promote_full_tail_bool",
     gather_name: "gather_bool",
+    builder_append_leaf_range_name: "builder_append_leaf_range_bool",
     pvec_ty: t_PVEC_BOOL,
     pvec_null: pvec_bool_null(),
     pvec_ref: pvec_bool_ref(),
@@ -2084,8 +2089,11 @@ fn mutvec_len_i64_fn() FuncDef {
 // mutvec_freeze_i64(mv) -> PVecI64: materialization boundary. When the live
 // prefix fits in a single tail (len <= rt_BF) the result is a trie-less PVecI64
 // (shift=0, root=null, tail=copy(data[0..len])) built with one bulk ArrayCopy —
-// no per-element builder push. Larger vectors fall back to the O(n) typed-builder
-// build, reading data[0..len].
+// no per-element builder push. Larger vectors bulk-copy the whole flat backing
+// into a typed builder in ONE `builder_append_leaf_range_i64` call (n/32 leaf
+// ArrayCopies + radix promotes), then freeze — not n per-element pushes. This
+// makes the freeze cheap enough that the flat build + freeze beats a direct trie
+// build even with zero mutations.
 fn mutvec_freeze_i64_fn() FuncDef {
   // p0 = mv; L1 = builder, L2 = len, L3 = j, L4 = data, L5 = tail
   .{
@@ -2131,38 +2139,17 @@ fn mutvec_freeze_i64_fn() FuncDef {
           .StructNew(t_PVEC_I64),
         ],
         [
-          // Slow path: len > rt_BF — build through the typed builder.
+          // Slow path: len > rt_BF — bulk-copy the entire flat backing into a
+          // typed builder in one call (n/32 ArrayCopy + promotes, not n pushes),
+          // then freeze. Roughly halves the freeze cost vs per-element push.
           .Call("builder_new_i64"),
           .LocalSet(1),
+          .LocalGet(1),
+          .LocalGet(4),
+          .RefAsNonNull,
           .I32Const(0),
-          .LocalSet(3),
-          .Block(
-            "brk",
-            .None,
-            [
-              .Loop(
-                "lp",
-                .None,
-                [
-                  .LocalGet(3),
-                  .LocalGet(2),
-                  .I32GeS,
-                  .BrIf("brk"),
-                  .LocalGet(1),
-                  .LocalGet(4),
-                  .RefAsNonNull,
-                  .LocalGet(3),
-                  .ArrayGet(t_ARRAY_I64),
-                  .Call("builder_push_i64_raw"),
-                  .LocalGet(3),
-                  .I32Const(1),
-                  .I32Add,
-                  .LocalSet(3),
-                  .Br("lp"),
-                ],
-              ),
-            ],
-          ),
+          .LocalGet(2),
+          .Call("builder_append_leaf_range_i64"),
           .LocalGet(1),
           .Call("builder_freeze_i64"),
         ],
@@ -5763,6 +5750,176 @@ fn builder_append_leaf_range_fn() FuncDef {
                   .I32Const(0),
                   .RefI31,
                   .ArraySet(ta),
+                ],
+                [],
+              ),
+              .Br("lp"),
+            ],
+          ),
+        ],
+      ),
+    ],
+  }
+}
+
+// builder_append_leaf_range_i64/bool(builder: Array?, leaf: Array, start, len) -> void
+// Typed analogue of `builder_append_leaf_range`: bulk-copy a contiguous typed leaf
+// range into a typed builder's tail, promoting full tails through the typed
+// `promote_full_tail_<fam>`. The outer builder is the shared boxed 3-slot $Array
+// (slot 0 = PVec, 1 = tail_len i31, 2 = tail_buf); only the element array
+// (slot 2 + the leaf source + the copy) and the promote/pvec casts are typed.
+// Lets `mutvec_freeze_i64` materialize the whole flat backing in one call — n/32
+// bulk ArrayCopy + promotes — instead of routing every element through push.
+fn pvec_builder_append_leaf_range_fn(f: PVecFamily) FuncDef {
+  bo := t_ARRAY // outer builder 3-slot array
+  el := f.arr_ty // typed element/leaf array
+
+  // p0=builder, p1=leaf, p2=start, p3=len
+  // L4=tail_buf, L5=tail_len, L6=space, L7=take, L8=pvec_so_far
+  .{
+    name: f.builder_append_leaf_range_name,
+    params: [arr_null(), f.arr_ref, .I32, .I32],
+    results: [],
+    locals: [f.arr_null, .I32, .I32, .I32, f.pvec_null],
+    body: [
+      .Block(
+        "brk",
+        .None,
+        [
+          .Loop(
+            "lp",
+            .None,
+            [
+              .LocalGet(3),
+              .I32Eqz,
+              .BrIf("brk"),
+              .LocalGet(0),
+              .RefAsNonNull,
+              .I32Const(2),
+              .ArrayGet(bo),
+              .RefCast(true, .Named(el)),
+              .LocalSet(4),
+              .LocalGet(0),
+              .RefAsNonNull,
+              .I32Const(1),
+              .ArrayGet(bo),
+              .RefCast(false, .I31),
+              .I31GetU,
+              .LocalSet(5),
+              .LocalGet(5),
+              .I32Const(rt_BF),
+              .I32Eq,
+              .If(
+                .None,
+                [
+                  .LocalGet(0),
+                  .RefAsNonNull,
+                  .I32Const(0),
+                  .ArrayGet(bo),
+                  .RefCast(true, .Named(f.pvec_ty)),
+                  .LocalSet(8),
+                  .LocalGet(0),
+                  .RefAsNonNull,
+                  .I32Const(0),
+                  .LocalGet(8),
+                  .RefAsNonNull,
+                  .LocalGet(4),
+                  .RefAsNonNull,
+                  .Call(f.promote_name),
+                  .ArraySet(bo),
+                  f.zero_value,
+                  .I32Const(rt_BF),
+                  .ArrayNew(el),
+                  .LocalSet(4),
+                  .LocalGet(0),
+                  .RefAsNonNull,
+                  .I32Const(2),
+                  .LocalGet(4),
+                  .ArraySet(bo),
+                  .LocalGet(0),
+                  .RefAsNonNull,
+                  .I32Const(1),
+                  .I32Const(0),
+                  .RefI31,
+                  .ArraySet(bo),
+                  .Br("lp"),
+                ],
+                [],
+              ),
+              .I32Const(rt_BF),
+              .LocalGet(5),
+              .I32Sub,
+              .LocalSet(6),
+              .LocalGet(3),
+              .LocalGet(6),
+              .I32LtS,
+              .If(.Some(.I32), [.LocalGet(3)], [.LocalGet(6)]),
+              .LocalSet(7),
+              .LocalGet(4),
+              .RefAsNonNull,
+              .LocalGet(5),
+              .LocalGet(1),
+              .LocalGet(2),
+              .LocalGet(7),
+              .ArrayCopy(el, el),
+              .LocalGet(5),
+              .LocalGet(7),
+              .I32Add,
+              .LocalSet(5),
+              .LocalGet(0),
+              .RefAsNonNull,
+              .I32Const(1),
+              .LocalGet(5),
+              .RefI31,
+              .ArraySet(bo),
+              .LocalGet(2),
+              .LocalGet(7),
+              .I32Add,
+              .LocalSet(2),
+              .LocalGet(3),
+              .LocalGet(7),
+              .I32Sub,
+              .LocalSet(3),
+              .LocalGet(5),
+              .I32Const(rt_BF),
+              .I32Eq,
+              .LocalGet(3),
+              .I32Const(0),
+              .I32GtS,
+              .I32And,
+              .If(
+                .None,
+                [
+                  .LocalGet(0),
+                  .RefAsNonNull,
+                  .I32Const(0),
+                  .ArrayGet(bo),
+                  .RefCast(true, .Named(f.pvec_ty)),
+                  .LocalSet(8),
+                  .LocalGet(0),
+                  .RefAsNonNull,
+                  .I32Const(0),
+                  .LocalGet(8),
+                  .RefAsNonNull,
+                  .LocalGet(4),
+                  .RefAsNonNull,
+                  .Call(f.promote_name),
+                  .ArraySet(bo),
+                  f.zero_value,
+                  .I32Const(rt_BF),
+                  .ArrayNew(el),
+                  .LocalSet(4),
+                  .LocalGet(0),
+                  .RefAsNonNull,
+                  .I32Const(2),
+                  .LocalGet(4),
+                  .ArraySet(bo),
+                  .LocalGet(0),
+                  .RefAsNonNull,
+                  .I32Const(1),
+                  .I32Const(0),
+                  .RefI31,
+                  .ArraySet(bo),
                 ],
                 [],
               ),

@@ -13,18 +13,21 @@
 //! navigation) vs typed persistent in-place — expect a modest win, not the 15-35x
 //! the Tier-0 spike showed against boxed `set_in_place`.
 //!
-//! Measured crossover (this machine) — MutVec trades an O(1) per-write (vs the
-//! baseline's O(log n) trie walk) for a one-time O(n) freeze that rebuilds the
-//! PVecI64 trie from the flat backing. So the win is mutation-density-driven:
+//! Measured (this machine, min-of-6). MutVec's per-write is O(1) (a direct flat
+//! store) vs the baseline's O(log n) trie walk; the boundary freeze is now a bulk
+//! `builder_append_leaf_range_i64` (n/32 ArrayCopies + radix promotes), cheap
+//! enough that MutVec wins at EVERY mutation density — including zero writes,
+//! where the earlier per-element-push freeze made it ~1.2-1.5x SLOWER:
 //!
-//!   n=1048576  k=2M   baseline 45ms  MutVec 69ms   (1.5x SLOWER — freeze tax)
-//!   n=1048576  k=20M  baseline 182ms MutVec 72ms   (2.5x faster)
-//!   n=1048576  k=60M  baseline 486ms MutVec 125ms  (3.9x faster)
-//!   n=65536    k=2M   baseline 24ms  MutVec 15ms   (1.7x faster — cheap freeze)
+//!   n=1048576  k=0    baseline 17ms  MutVec 14ms   (1.23x faster)
+//!   n=1048576  k=500k baseline 14ms  MutVec 9ms    (1.60x faster)
+//!   n=1048576  k=2M   baseline 28ms  MutVec 12ms   (2.35x faster)
+//!   n=1048576  k=8M   baseline 87ms  MutVec 30ms   (2.87x faster)
+//!   n=65536    k=2M   baseline 14ms  MutVec 6ms    (2.35x faster)
 //!
-//! Consequence: MutVec is a strong win for mutation-heavy owned vectors but a
-//! regression for build-heavy/low-mutation returned vectors, so it must stay
-//! opt-in (flag-gated) rather than unconditionally on.
+//! The bulk-freeze optimization removed the low-density crossover that had kept
+//! MutVec opt-in; the win now grows with mutation density but is present even at
+//! k=0, so the pass is safe to run unconditionally.
 
 use @std.date
 
