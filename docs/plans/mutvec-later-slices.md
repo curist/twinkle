@@ -209,8 +209,18 @@ Goal: an owned `Vector<T>` for reference `T` (records/strings/nested vectors) wi
 
 **Files:** `arr.tw` (register `family_boxed().pvec_mutvec_*_fn()`), `builtins.tw`, `mutvec_region.tw` (`elem_family` accepts reference types), fixtures.
 
-- [ ] **Step 1: Decide with a bench, not on principle.** Write a mutation-heavy `Vector<record>` bench; if MutVec-boxed doesn't clear a meaningful margin over the persistent path, **stop here and leave boxed deferred** — record the number.
-- [ ] **Step 2 (only if the bench justifies it):** register boxed ops, widen `elem_family`, add fixtures, gate. Watch aliasing: the region detector already requires the vector handle owned/non-escaping, so a mutable ref array is sound; confirm no element-aliasing assumption is introduced.
+- [x] **Step 1: Decide with a bench, not on principle.** DONE — `boot/bench/mutvec_boxed_spike.tw`. **The margin clears the bar, but with an important floor.** The baseline for an owned `Vector<Record>` is already `set_in_place` (the optimizer promotes the unique `set_unsafe`), i.e. an O(log n) trie-navigation + in-place store — the hard baseline, the same regime as `set_in_place_i64`. The spike isolates the per-write cost (subtracting a `k=0` build row) into three shapes at identical n/k/index-stream:
+
+  | per write (n=1M, k=2M) | ns/write | what it is |
+  |---|---|---|
+  | `record_alloc` (`xs[i] = Record.{…}`) | ~51 | alloc + trie-nav + store |
+  | `record_shared` (`xs[i] = shared`) | ~39 | trie-nav + store |
+  | `int_mutvec` (`xs[i] = j`) | ~1.2 | flat store (MutVec) |
+
+  **Finding:** the trie navigation (~38 ns/write) is the single largest per-write cost — *larger than the record allocation itself* (~13 ns/write, the `record_alloc − record_shared` delta). MutVec-boxed removes only the trie nav (the allocation is unavoidable — records are immutable, every update builds a new one — and is a floor it cannot cross), projecting the realistic `record_alloc` write phase from ~103 ms to ~alloc+flat-store+anyref-freeze-barriers ≈ 35–45 ms → **~2.3–2.9× on the write phase, ~1.5–2.2× on total time**, growing with mutation density (k=8M widens it). It never reaches the i64 family's ratios because of the allocation floor and the anyref freeze/store write barriers.
+
+  **So the O(1)-write-vs-trie lever alone is worth ~2× on mutation-heavy owned record vectors** — the plan's "Low–Med value" prior was about *how narrow the workload is*, not about the ratio being small. Boxed is a real ~2× lever, buildable cheaply now that the family machinery is parameterized (`family_boxed()` already exists as a `PVecFamily`), but only for the high-mutation-count owned-record-vector niche. **Recommendation: keep deferred until a concrete such workload appears** (per the plan's driver note this track optimizes user numeric/sim code, and mutation-heavy reference-vector code is narrower than the Float/Byte numeric case that just landed); revisit as that workload's customer, not on principle. The number is recorded; the gate is cleared, so Step 2 is *justified on ratio* whenever the workload materializes.
+- [ ] **Step 2 (only if a workload justifies it):** register boxed ops (`family_boxed()` mutvec_fns), widen `elem_family` to accept reference element types (`elem_family_of` currently returns `.None` for non-primitive `Vector<T>`), add the `MutVec` (anyref-backed) struct + builtins, fixtures, gate. Watch aliasing: the region detector already requires the vector handle owned/non-escaping, so a mutable ref array is sound; confirm no element-aliasing assumption is introduced (storing the same element ref into many slots is fine — the spike's `record_shared` does exactly that).
 
 ---
 

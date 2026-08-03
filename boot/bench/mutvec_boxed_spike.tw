@@ -1,0 +1,115 @@
+//! MutVec later-slices Phase 5 (Boxed family) — Step 1 spike.
+//!
+//! DECIDE-WITH-A-BENCH, don't build on principle. A boxed `Vector<Record>` has NO
+//! unboxing win (elements are already GC refs); MutVec-boxed's only lever is
+//! replacing the baseline's O(log n) trie navigation per indexed write with an
+//! O(1) flat-array store, at the cost of one O(n) boundary freeze. So the question
+//! is: how big is the trie-navigation share of a realistic per-write cost?
+//!
+//! Baseline today: a uniquely-owned boxed vector's `xs[i] = v` is already promoted
+//! to `set_in_place` (true in-place mutation), NOT a path-copying `set`. So this
+//! measures the SAME regime as i64's set_in_place_i64 — the hard-to-beat baseline.
+//!
+//!   target/twk run boot/bench/mutvec_boxed_spike.tw
+//!
+//! Three shapes at identical (n, k, index stream) isolate where the time goes:
+//!
+//!   record_alloc  : xs[idx] = Item.{...}   -> per write = ALLOC + trie-nav + store
+//!   record_shared : xs[idx] = shared_cell  -> per write = trie-nav + store (no alloc)
+//!   int_mutvec    : xs[idx] = j            -> per write = flat store (MutVec, no trie)
+//!
+//! MutVec-boxed would turn `record_alloc` into (ALLOC + flat store): it removes only
+//! the (record_shared - int_mutvec) trie-nav share, and keeps the ALLOC that
+//! (record_alloc - record_shared) measures. If ALLOC dominates, the achievable win
+//! on the realistic `record_alloc` workload is small regardless of the trie savings.
+
+use @std.date
+
+type Item = .{ a: Int, b: Int }
+
+// Reproducible index stream (glibc LCG), so every shape touches identical indices.
+fn next_lcg(s: Int) Int {
+  s * 1103515245 + 12345 & 0x7fffffff
+}
+
+// Realistic boxed workload: each write allocates a fresh immutable record.
+fn record_alloc(n: Int, k: Int) Vector<Item> {
+  xs := collect i in range(n) {
+    Item.{ a: i, b: 0 }
+  }
+  s := 1
+  j := 0
+  for j < k {
+    s = next_lcg(s)
+    idx := s % n
+    xs[idx] = Item.{ a: idx, b: j }
+    j = j + 1
+  }
+  xs
+}
+
+// Same writes, but reusing one shared record — isolates trie-nav + store with the
+// per-write allocation removed. This is the pure cost MutVec-boxed would attack.
+fn record_shared(n: Int, k: Int) Vector<Item> {
+  xs := collect i in range(n) {
+    Item.{ a: i, b: 0 }
+  }
+  shared := Item.{ a: 0, b: 0 }
+  s := 1
+  j := 0
+  for j < k {
+    s = next_lcg(s)
+    idx := s % n
+    xs[idx] = shared
+    j = j + 1
+  }
+  xs
+}
+
+// i64 sibling of identical shape — flat store via the (live, unconditional) MutVec
+// path: the no-trie, no-alloc floor a perfect MutVec-boxed would approach.
+fn int_mutvec(n: Int, k: Int) Vector<Int> {
+  xs := collect i in range(n) {
+    i
+  }
+  s := 1
+  j := 0
+  for j < k {
+    s = next_lcg(s)
+    idx := s % n
+    xs[idx] = j
+    j = j + 1
+  }
+  xs
+}
+
+fn run(n: Int, k: Int) Void {
+  // warm each shape once so JIT/codegen effects do not skew the timed runs
+  wa := record_alloc(1024, 1024)
+  ws := record_shared(1024, 1024)
+  wi := int_mutvec(1024, 1024)
+  warm_guard := wa[0].a + ws[0].a + wi[0]
+
+  t0 := date.now()
+  ra := record_alloc(n, k)
+  t1 := date.now()
+  rs := record_shared(n, k)
+  t2 := date.now()
+  ii := int_mutvec(n, k)
+  t3 := date.now()
+
+  guard := ra[0].b + rs[0].a + ii[0] + warm_guard - warm_guard
+  println("n=${n}  k=${k}")
+  println("  record_alloc  (alloc+trie+store) = ${t1 - t0}ms")
+  println("  record_shared (trie+store)       = ${t2 - t1}ms")
+  println("  int_mutvec    (flat store)        = ${t3 - t2}ms")
+  println("  guard=${guard}")
+}
+
+println("MutVec Phase 5 boxed spike — where does a Vector<Record> write's time go?")
+// k=0 rows isolate the shared build cost; subtract to get pure per-write cost.
+run(65536, 0)
+run(65536, 2000000)
+run(1048576, 0)
+run(1048576, 2000000)
+run(1048576, 8000000)
