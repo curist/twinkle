@@ -113,11 +113,32 @@ Goal: the region pass and repr handoff choose the family from the vector's eleme
 
 ### Task 2.1: `MonoType → family` classifier
 
-- [ ] **Step 1: Add a shared `elem_family(mono) PVecFamily?`** helper (Int→i64, Bool→bool, Float→f64, reference types→boxed; `.None` for unsupported), used by both the detector's element gate (`handle_is_vector_int` → `handle_vector_family`) and `mutvec_repr` (to pick `ReprKind.MutVec(<fam>)`). Keep it returning `.Some(family_i64())` only until Phase 3/4 register the other families' ops, so the claim set is unchanged.
-- [ ] **Step 2: Parameterize the rewrite's `MutVecIds`** so `rewrite_region` emits `vector$__mutvec_set_<fam>` etc. based on the region's family (still only i64 in practice this phase).
-- [ ] **Step 3: Route** — generalize the `mutvec_freeze_i64`-is-a-typed-producer hook (`route_ids.mutvec_freeze_i64`) to a per-family set, so each `mutvec_freeze_<fam>` types its `PVec<fam>` result. i64 stays byte-identical.
+Landed 2026-08-03 (commit 420bb6e0). Deviation from the plan's literal text: the
+single decision point is `elem_family_suffix(mono) String?` (a family SUFFIX tag,
+not the emission-side `PVecFamily`), backed by `mutvec_families()` — the detector/
+repr/route key on builtin FuncIds + MonoType, not on the Instr-carrying PVecFamily.
 
-- [ ] **Step 4: Gate.** `make bundle-cli` fixed point + `make boot-test` green + byte-identical `boot/main.tw` WAT (only i64 in play). Commit.
+- [x] **Step 1: shared classifier** — `elem_family_suffix(mono)` in `elem_family.tw`
+  (Int→`"_i64"`, else `.None`), backed by `mutvec_families()` (source of truth for
+  registered mutvec families). Drives the detector's element gate
+  (`handle_is_vector_int` → `handle_vector_family`) and `mutvec_repr`'s ElemRepr
+  choice (via `candidate_typed_vec_family`). Only Int claimable, so the claim set
+  is unchanged.
+- [x] **Step 2: Parameterize the rewrite's `MutVecIds`** — generic fields resolved
+  per region via `resolve_mutvec_ids(b, suffix)`; `MutVecRegion` carries `family`.
+  The typed builder-freeze producer recognizer (`OpIds.freeze_i64`, the GOTCHA)
+  is now `OpIds.typed_freeze: Dict<suffix,id>`, matched against the claimed family.
+- [x] **Step 3: Route** — `route_ids.mutvec_freeze_i64` → `mutvec_freeze:
+  Dict<mono_key,id>` per family; the `collect_candidate_from_op` hook matches the
+  active family's `mutvec_freeze`. i64 byte-identical.
+- [x] **Step 4: Gate.** `make bundle-cli` fixed point + `make boot-test` (3410
+  passed). Behavior-neutrality proven by compiling fixed i64-mutvec programs
+  (`mutvec_producers`, `mutvec_slice1_bench`, `mutvec_spike`) with pre- and
+  post-change `twk` and diffing to byte-identity. NOTE: the whole-file
+  `boot/main.tw` WAT diff is NOT a valid gate — Phase 2 necessarily changes the
+  compiler's own struct types (`MutVecIds`/`RouteIds`/`OpIds`/`MutVecRegion`),
+  which perturbs its self-compiled WAT (type renumbering cascade). Use a FIXED
+  user program compiled by old vs new `twk` instead.
 
 ---
 
