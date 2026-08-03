@@ -17,7 +17,7 @@ pub type ElemFamily = .{
 }
 
 pub fn all_families() Vector<ElemFamily> {
-  [family_i64(), family_bool()]
+  [family_i64(), family_bool(), family_float()]
 }
 
 fn family_i64() ElemFamily {
@@ -46,6 +46,19 @@ fn family_bool() ElemFamily {
   }
 }
 
+fn family_float() ElemFamily {
+  .{
+    mono_key: "vec_f64",
+    suffix: "_f64",
+    pvec_type: "rt_types__PVecF64",
+    elem_wasm: .F64,
+    get_call: "rt_arr__get_f64",
+    make_call: "rt_arr__make_f64",
+    box_call: "rt_arr__box_f64",
+    unbox_call: "rt_arr__unbox_f64",
+  }
+}
+
 pub fn family_by_pvec_name(name: String) ElemFamily? {
   for f in all_families() {
     if f.pvec_type == name {
@@ -68,6 +81,7 @@ pub fn elem_family_of(mono: MonoType) ElemFamily? {
   key := case mono {
     .Vector(.Int) => "vec_i64",
     .Vector(.Bool) => "vec_bool",
+    .Vector(.Float) => "vec_f64",
     _ => "other",
   }
 
@@ -86,7 +100,7 @@ pub fn elem_family_of(mono: MonoType) ElemFamily? {
 // mutvec write ops). Widen as each family's mutvec_* ops land (Int now;
 // Bool/Float/Byte later per docs/plans/mutvec-later-slices.md).
 pub fn mutvec_families() Vector<ElemFamily> {
-  [family_i64(), family_bool()]
+  [family_i64(), family_bool(), family_float()]
 }
 
 // The mutvec-claimable builtin-name suffix for a vector element MonoType, or

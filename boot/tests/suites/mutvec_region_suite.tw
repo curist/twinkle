@@ -217,11 +217,13 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "non-Int element type is NOT claimed",
+      "unclaimable element type (String) is NOT claimed",
       fn() {
+        // Int/Bool/Float are mutvec families; a reference element type (String) has
+        // no typed mutvec family, so the region stays persistent.
         try assert.equal(
           region_count(
-            "fn f(n: Int) Vector<Float> {\n  xs := collect i in range(n) { 1.0 }\n  xs[0] = 2.0\n  xs\n}\nprintln(f(5).len().to_string())\n",
+            "fn f(n: Int) Vector<String> {\n  xs := collect i in range(n) { \"a\" }\n  xs[0] = \"b\"\n  xs\n}\nprintln(f(5).len().to_string())\n",
           ),
           0,
         )
@@ -449,6 +451,23 @@ pub fn suite() runner.Suite {
         try assert.equal(rewritten_calls(src, "vector$__mutvec_freeze_bool"), 1)
 
         // No i64 mutvec ops, and the boxed builder + set are fully replaced.
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_set_i64"), 0)
+        try assert.equal(rewritten_calls(src, "vector$builder_freeze"), 0)
+        try assert.equal(rewritten_calls(src, "vector$set_unsafe"), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "rewrite: collect Vector<Float> region lowers to f64 mutvec ops + single freeze",
+      fn() {
+        src := "fn f(n: Int) Vector<Float> {\n  xs := collect i in range(n) { i.to_float() }\n  xs[0] = 1.5\n  xs\n}\nprintln(f(5).len().to_string())\n"
+        try assert.equal(region_count(src), 1)
+
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_new_f64"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_push_f64"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_set_f64"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_freeze_f64"), 1)
+
         try assert.equal(rewritten_calls(src, "vector$__mutvec_set_i64"), 0)
         try assert.equal(rewritten_calls(src, "vector$builder_freeze"), 0)
         try assert.equal(rewritten_calls(src, "vector$set_unsafe"), 0)

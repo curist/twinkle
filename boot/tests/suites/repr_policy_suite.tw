@@ -20,9 +20,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "Vector<Float> unsupported in M1a → None",
+      "Vector<Float> → Some(F64)",
       fn() {
-        try assert.is_true(candidate_typed_vec_family(.Vector(.Float)) == .None)
+        try assert.is_true(candidate_typed_vec_family(.Vector(.Float)) == .Some(.F64))
         .Ok({})
       },
     )

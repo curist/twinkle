@@ -68,6 +68,17 @@ pub fn module() WasmModule {
         .None,
         true,
       ),
+      .Struct(
+        "PVecF64",
+        [
+          .{ name: .Some("len"), mutable: false, ty: .I32 },
+          .{ name: .Some("shift"), mutable: false, ty: .I32 },
+          .{ name: .Some("root"), mutable: false, ty: .Ref(true, .Named("VecInternal")) },
+          .{ name: .Some("tail"), mutable: false, ty: .Ref(false, .Named("ArrayF64")) },
+        ],
+        .None,
+        true,
+      ),
       // MutVecI64 — flat, unboxed, growable mutable Int vector (storage slice 1).
       // Backed by the existing ArrayI64 GC array plus a logical length; capacity
       // is `array.len(data)`. The mutvec_region pass lowers proven-owned Int
@@ -88,6 +99,18 @@ pub fn module() WasmModule {
         "MutVecBool",
         [
           .{ name: .Some("data"), mutable: true, ty: .Ref(false, .Named("ArrayBool")) },
+          .{ name: .Some("len"), mutable: true, ty: .I32 },
+        ],
+        .None,
+        true,
+      ),
+      // MutVecF64 — float sibling of MutVecI64 (mutvec later-slices Phase 4).
+      // Backed by ArrayF64; the mutvec_region pass lowers proven-owned Vector<Float>
+      // regions into this and freezes back to PVecF64 at the boundary.
+      .Struct(
+        "MutVecF64",
+        [
+          .{ name: .Some("data"), mutable: true, ty: .Ref(false, .Named("ArrayF64")) },
           .{ name: .Some("len"), mutable: true, ty: .I32 },
         ],
         .None,

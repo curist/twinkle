@@ -1,0 +1,47 @@
+// Float MutVec fixture (mutvec later-slices Phase 4). A collect-born Vector<Float>
+// mutated by index and returned is a claimable region, lowering to mutvec_*_f64
+// with a single boundary freeze (asserted structurally in mutvec_region_suite).
+// This runs the lowered path and cross-checks its result against an independent
+// boxed computation that is never a claimable region.
+//
+//   target/twk run <this file>                          # -> deterministic OK <sum>
+//   target/twk wat <this file> --func from_collect --calls  # mutvec_new/push/set_f64 + 1 freeze
+// collect-born, indexed set, returned -> claimable float region.
+fn from_collect(n: Int) Vector<Float> {
+  xs := collect i in range(n) {
+    i.to_float() * 0.5
+  }
+  xs[0] = 100.0
+  xs[1] = 200.0
+  xs
+}
+
+// Independent reference: the same logical vector built without any indexed write,
+// so it is never a claimable region and stays on the persistent/boxed path.
+fn reference(n: Int) Vector<Float> {
+  collect i in range(n) {
+    cond {
+      i == 0 => 100.0,
+      i == 1 => 200.0,
+      _ => i.to_float() * 0.5,
+    }
+  }
+}
+
+fn sum(xs: Vector<Float>) Float {
+  t := 0.0
+  for i in range(xs.len()) {
+    t = t + xs[i]
+  }
+  t
+}
+
+n := 20
+got := from_collect(n)
+want := reference(n)
+ok := got.len() == want.len() and sum(got) == sum(want)
+println(if ok {
+  "OK ${sum(got).to_string()}"
+} else {
+  "MISMATCH"
+})

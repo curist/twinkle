@@ -67,6 +67,8 @@ t_ARRAY_F64 := "rt_types__ArrayF64"
 
 t_MUTVEC_I64 := "rt_types__MutVecI64"
 
+t_MUTVEC_F64 := "rt_types__MutVecF64"
+
 // Minimum backing capacity for a MutVecI64; also the growth floor so that a
 // zero-capacity seed and `capacity * 2 == 0` both round up to a usable size.
 mutvec_MIN_CAP := 4
@@ -118,6 +120,10 @@ fn arr_f64_null() ValType {
   .Ref(true, .Named(t_ARRAY_F64))
 }
 
+fn arr_f64_ref() ValType {
+  .Ref(false, .Named(t_ARRAY_F64))
+}
+
 fn ref_eq_() ValType {
   .Ref(false, .Eq)
 }
@@ -162,6 +168,18 @@ fn arr_bool_null() ValType {
 
 fn arr_bool_ref() ValType {
   .Ref(false, .Named(t_ARRAY_BOOL))
+}
+
+// Typed float persistent vector helpers (rt.arr_f64 family). Mirrors the i64
+// family with f64 leaves (ArrayF64) — one f64 per Float element.
+t_PVEC_F64 := "rt_types__PVecF64"
+
+fn pvec_f64_null() ValType {
+  .Ref(true, .Named(t_PVEC_F64))
+}
+
+fn pvec_f64_ref() ValType {
+  .Ref(false, .Named(t_PVEC_F64))
 }
 
 // PVec field indices
@@ -268,6 +286,19 @@ pub fn module() WasmModule {
     family_bool().pvec_box_fn(),
     unbox_bool_fn(),
     family_bool().pvec_gather_fn(),
+    family_float().pvec_len_fn(),
+    family_float().pvec_get_fn(),
+    family_float().pvec_promote_full_tail_fn(),
+    // mutvec_freeze_f64's slow path calls builder_append_leaf_range_f64.
+    family_float().pvec_builder_append_leaf_range_fn(),
+    family_float().pvec_builder_new_fn(),
+    family_float().pvec_builder_push_fn(),
+    family_float().pvec_builder_push_raw_fn(),
+    family_float().pvec_builder_freeze_fn(),
+    family_float().pvec_make_fn(),
+    family_float().pvec_box_fn(),
+    unbox_f64_fn(),
+    family_float().pvec_gather_fn(),
     family_boxed().pvec_builder_new_fn(),
     builder_from_fn(),
     builder_push_fn(),
@@ -279,7 +310,9 @@ pub fn module() WasmModule {
     to_array_fn(),
     from_read_file_result_fn(),
     make_empty_fn(),
-  ].concat(family_bool().mutvec_fns())
+  ]
+    .concat(family_bool().mutvec_fns())
+    .concat(family_float().mutvec_fns())
   exports := collect f in funcs {
     ExportDef.{ wasm_name: f.name, func_sym: f.name }
   }
@@ -336,6 +369,24 @@ pub fn module() WasmModule {
           .RefNull(.Named(t_VEC_INTERNAL)),
           .GlobalGet("empty_leaf_bool"),
           .StructNew(t_PVEC_BOOL),
+        ],
+      },
+      .{
+        name: "empty_leaf_f64",
+        mutable: false,
+        ty: arr_f64_ref(),
+        init: [.ArrayNewFixed(t_ARRAY_F64, 0)],
+      },
+      .{
+        name: "empty_pvec_f64",
+        mutable: false,
+        ty: pvec_f64_ref(),
+        init: [
+          .I32Const(0),
+          .I32Const(0),
+          .RefNull(.Named(t_VEC_INTERNAL)),
+          .GlobalGet("empty_leaf_f64"),
+          .StructNew(t_PVEC_F64),
         ],
       },
     ],
@@ -1384,6 +1435,36 @@ fn family_bool() PVecFamily {
     leaf_store: [.RefCast(false, .I31), .I31GetU],
     elem_box: [.RefI31],
     mutvec_ty: "rt_types__MutVecBool",
+  }
+}
+
+// Typed float family (mutvec later-slices Phase 4). Mirrors family_i64 with f64
+// leaves (ArrayF64) and BoxedFloat boxing.
+fn family_float() PVecFamily {
+  .{
+    len_name: "len_f64",
+    get_name: "get_f64",
+    make_name: "make_f64",
+    builder_new_name: "builder_new_f64",
+    builder_push_raw_name: "builder_push_f64_raw",
+    builder_freeze_name: "builder_freeze_f64",
+    promote_name: "promote_full_tail_f64",
+    gather_name: "gather_f64",
+    builder_append_leaf_range_name: "builder_append_leaf_range_f64",
+    pvec_ty: t_PVEC_F64,
+    pvec_null: pvec_f64_null(),
+    pvec_ref: pvec_f64_ref(),
+    arr_ty: t_ARRAY_F64,
+    arr_null: arr_f64_null(),
+    arr_ref: arr_f64_ref(),
+    elem_ty: .F64,
+    empty_pvec_global: "empty_pvec_f64",
+    empty_leaf_global: "empty_leaf_f64",
+    zero_value: .F64Const(0.0),
+    suffix: "_f64",
+    leaf_store: [.RefCast(false, .Named(t_BOXED_FLOAT)), .StructGet(t_BOXED_FLOAT, 0)],
+    elem_box: [.StructNew(t_BOXED_FLOAT)],
+    mutvec_ty: t_MUTVEC_F64,
   }
 }
 
@@ -2851,6 +2932,57 @@ fn unbox_i64_fn() FuncDef {
       ),
       .LocalGet(3),
       .Call("builder_freeze_i64"),
+    ],
+  }
+}
+
+// unbox_f64(vec: PVec?) -> PVecF64
+// Float sibling of unbox_i64: rebuild a typed PVecF64 from a boxed PVec. Reads
+// each BoxedFloat via `get` and pushes it into builder_push_f64 (which unboxes
+// via the family leaf_store), so a boxed Vector<Float> can re-enter typed code.
+fn unbox_f64_fn() FuncDef {
+  // p0=vec (boxed PVec); L1=n, L2=i, L3=typed builder (boxed Array handle)
+  .{
+    name: "unbox_f64",
+    params: [pvec_null()],
+    results: [pvec_f64_null()],
+    locals: [.I32, .I32, arr_null()],
+    body: [
+      .LocalGet(0),
+      .Call("len"),
+      .LocalSet(1),
+      .I32Const(0),
+      .LocalSet(2),
+      .Call("builder_new_f64"),
+      .LocalSet(3),
+      .Block(
+        "brk",
+        .None,
+        [
+          .Loop(
+            "lp",
+            .None,
+            [
+              .LocalGet(2),
+              .LocalGet(1),
+              .I32GeS,
+              .BrIf("brk"),
+              .LocalGet(3),
+              .LocalGet(0),
+              .LocalGet(2),
+              .Call("get"),
+              .Call("builder_push_f64"),
+              .LocalGet(2),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(2),
+              .Br("lp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(3),
+      .Call("builder_freeze_f64"),
     ],
   }
 }
