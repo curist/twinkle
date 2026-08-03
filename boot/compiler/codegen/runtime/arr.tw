@@ -158,7 +158,7 @@ pub fn module() WasmModule {
     family_boxed().pvec_get_leaf_fn(),
     new_path_fn(),
     push_tail_fn(),
-    do_set_fn(),
+    family_boxed().pvec_do_set_fn(),
     push_fn(),
     promote_full_tail_fn(),
     make_fn(),
@@ -199,7 +199,7 @@ pub fn module() WasmModule {
     push_i64_fn(),
     family_i64().pvec_get_leaf_fn(),
     set_in_place_i64_fn(),
-    do_set_i64_fn(),
+    family_i64().pvec_do_set_fn(),
     set_i64_fn(),
     box_i64_fn(),
     unbox_i64_fn(),
@@ -1006,100 +1006,6 @@ fn push_tail_fn() FuncDef {
 }
 
 // do_set(level: i32, node: eqref, idx: i32, val: anyref) -> eqref
-fn do_set_fn() FuncDef {
-  // p0=level, p1=node, p2=idx, p3=val
-  // L4=new_children, L5=sub_idx, L6=new_leaf, L7=old_leaf
-  .{
-    name: "do_set",
-    params: [.I32, ref_eq_(), .I32, .Anyref],
-    results: [ref_eq_()],
-    locals: [vec_children_null(), .I32, arr_null(), arr_null()],
-    body: [
-      .LocalGet(0),
-      .I32Eqz,
-      .If(
-        .Some(ref_eq_()),
-        [
-          .LocalGet(1),
-          .RefCast(false, .Named(t_ARRAY)),
-          .LocalSet(7),
-          .RefNull(.None_),
-          .LocalGet(7),
-          .RefAsNonNull,
-          .ArrayLen,
-          .ArrayNew(t_ARRAY),
-          .LocalSet(6),
-          .LocalGet(6),
-          .RefAsNonNull,
-          .I32Const(0),
-          .LocalGet(7),
-          .RefAsNonNull,
-          .I32Const(0),
-          .LocalGet(7),
-          .RefAsNonNull,
-          .ArrayLen,
-          .ArrayCopy(t_ARRAY, t_ARRAY),
-          .LocalGet(6),
-          .RefAsNonNull,
-          .LocalGet(2),
-          .I32Const(rt_MASK),
-          .I32And,
-          .LocalGet(3),
-          .ArraySet(t_ARRAY),
-          .LocalGet(6),
-          .RefAsNonNull,
-          .RefCast(false, .Eq),
-        ],
-        [
-          .LocalGet(1),
-          .RefCast(false, .Named(t_VEC_INTERNAL)),
-          .LocalGet(2),
-          .LocalGet(0),
-          .Call("vi_nav"),
-          .LocalSet(2),
-          .LocalSet(5),
-          .RefNull(.Eq),
-          .I32Const(rt_BF),
-          .ArrayNew(t_VEC_CHILDREN),
-          .LocalSet(4),
-          .LocalGet(4),
-          .RefAsNonNull,
-          .I32Const(0),
-          .LocalGet(1),
-          .RefCast(false, .Named(t_VEC_INTERNAL)),
-          .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
-          .I32Const(0),
-          .I32Const(rt_BF),
-          .ArrayCopy(t_VEC_CHILDREN, t_VEC_CHILDREN),
-          .LocalGet(4),
-          .RefAsNonNull,
-          .LocalGet(5),
-          .LocalGet(0),
-          .I32Const(rt_BITS),
-          .I32Sub,
-          .LocalGet(1),
-          .RefCast(false, .Named(t_VEC_INTERNAL)),
-          .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
-          .LocalGet(5),
-          .ArrayGet(t_VEC_CHILDREN),
-          .RefAsNonNull,
-          .LocalGet(2),
-          .LocalGet(3),
-          .Call("do_set"),
-          .ArraySet(t_VEC_CHILDREN),
-          .LocalGet(4),
-          .RefAsNonNull,
-          .LocalGet(1),
-          .RefCast(false, .Named(t_VEC_INTERNAL)),
-          .StructGet(t_VEC_INTERNAL, vi_SIZES),
-          .StructNew(t_VEC_INTERNAL),
-          .RefCast(false, .Eq),
-        ],
-      ),
-    ],
-  }
-}
-
 // push(vec: PVec, val: anyref) -> PVec
 fn push_fn() FuncDef {
   p_vec := 0
@@ -1298,6 +1204,10 @@ type PVecFamily = .{
   empty_leaf_global: String,
   zero_value: Instr,
   suffix: String,
+  // Converts the incoming boxed `anyref` value (on the stack) to this family's
+  // leaf element type, spliced at every leaf store. Empty for boxed (store the
+  // anyref as-is); i64 unboxes a BoxedInt; bool decodes a ref.i31.
+  leaf_store: Vector<Instr>,
 }
 
 fn family_boxed() PVecFamily {
@@ -1329,6 +1239,7 @@ fn family_boxed() PVecFamily {
     empty_leaf_global: "empty_leaf",
     zero_value: .RefNull(.None_),
     suffix: "",
+    leaf_store: [],
   }
 }
 
@@ -1354,6 +1265,7 @@ fn family_i64() PVecFamily {
     empty_leaf_global: "empty_leaf_i64",
     zero_value: .I64Const(0),
     suffix: "_i64",
+    leaf_store: [.RefCast(false, .Named(t_BOXED_INT)), .StructGet(t_BOXED_INT, 0)],
   }
 }
 
@@ -1379,6 +1291,7 @@ fn family_bool() PVecFamily {
     empty_leaf_global: "empty_leaf_bool",
     zero_value: .I32Const(0),
     suffix: "_bool",
+    leaf_store: [.RefCast(false, .I31), .I31GetU],
   }
 }
 
@@ -1636,6 +1549,106 @@ fn pvec_get_leaf_fn(f: PVecFamily) FuncDef {
       .LocalGet(p_idx),
       .I32Const(rt_MASK),
       .I32And,
+    ],
+  }
+}
+
+// do_set/do_set_i64(level, node, idx, val) -> eqref
+// Internal-node navigation is shared (children are `ref eq`); only the leaf
+// copy/store is family-typed. The boxed value is converted to the element type
+// by f.leaf_store at the leaf store (empty for boxed), and the fresh-leaf fill
+// is f.zero_value.
+fn pvec_do_set_fn(f: PVecFamily) FuncDef {
+  // p0=level, p1=node, p2=idx, p3=val
+  // L4=new_children, L5=sub_idx, L6=new_leaf, L7=old_leaf
+  leaf_pre: Vector<Instr> = [
+    .LocalGet(1),
+    .RefCast(false, .Named(f.arr_ty)),
+    .LocalSet(7),
+    f.zero_value,
+    .LocalGet(7),
+    .RefAsNonNull,
+    .ArrayLen,
+    .ArrayNew(f.arr_ty),
+    .LocalSet(6),
+    .LocalGet(6),
+    .RefAsNonNull,
+    .I32Const(0),
+    .LocalGet(7),
+    .RefAsNonNull,
+    .I32Const(0),
+    .LocalGet(7),
+    .RefAsNonNull,
+    .ArrayLen,
+    .ArrayCopy(f.arr_ty, f.arr_ty),
+    .LocalGet(6),
+    .RefAsNonNull,
+    .LocalGet(2),
+    .I32Const(rt_MASK),
+    .I32And,
+    .LocalGet(3),
+  ]
+  leaf_then := leaf_pre
+    .concat(f.leaf_store)
+    .concat([.ArraySet(f.arr_ty), .LocalGet(6), .RefAsNonNull, .RefCast(false, .Eq)])
+
+  .{
+    name: "do_set${f.suffix}",
+    params: [.I32, ref_eq_(), .I32, .Anyref],
+    results: [ref_eq_()],
+    locals: [vec_children_null(), .I32, f.arr_null, f.arr_null],
+    body: [
+      .LocalGet(0),
+      .I32Eqz,
+      .If(
+        .Some(ref_eq_()),
+        leaf_then,
+        [
+          .LocalGet(1),
+          .RefCast(false, .Named(t_VEC_INTERNAL)),
+          .LocalGet(2),
+          .LocalGet(0),
+          .Call("vi_nav"),
+          .LocalSet(2),
+          .LocalSet(5),
+          .RefNull(.Eq),
+          .I32Const(rt_BF),
+          .ArrayNew(t_VEC_CHILDREN),
+          .LocalSet(4),
+          .LocalGet(4),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(1),
+          .RefCast(false, .Named(t_VEC_INTERNAL)),
+          .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
+          .I32Const(0),
+          .I32Const(rt_BF),
+          .ArrayCopy(t_VEC_CHILDREN, t_VEC_CHILDREN),
+          .LocalGet(4),
+          .RefAsNonNull,
+          .LocalGet(5),
+          .LocalGet(0),
+          .I32Const(rt_BITS),
+          .I32Sub,
+          .LocalGet(1),
+          .RefCast(false, .Named(t_VEC_INTERNAL)),
+          .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
+          .LocalGet(5),
+          .ArrayGet(t_VEC_CHILDREN),
+          .RefAsNonNull,
+          .LocalGet(2),
+          .LocalGet(3),
+          .Call("do_set${f.suffix}"),
+          .ArraySet(t_VEC_CHILDREN),
+          .LocalGet(4),
+          .RefAsNonNull,
+          .LocalGet(1),
+          .RefCast(false, .Named(t_VEC_INTERNAL)),
+          .StructGet(t_VEC_INTERNAL, vi_SIZES),
+          .StructNew(t_VEC_INTERNAL),
+          .RefCast(false, .Eq),
+        ],
+      ),
     ],
   }
 }
@@ -2543,105 +2556,6 @@ fn set_in_place_fn() FuncDef {
       .ArraySet(t_ARRAY),
       .LocalGet(p_vec),
       .RefAsNonNull,
-    ],
-  }
-}
-
-// do_set_i64(level: i32, node: eqref, idx: i32, val: anyref) -> eqref
-// Typed i64 mirror of do_set: internal-node navigation is shared; only the leaf
-// copy/store uses ArrayI64, and the boxed value is unboxed at the leaf store.
-fn do_set_i64_fn() FuncDef {
-  // p0=level, p1=node, p2=idx, p3=val
-  // L4=new_children, L5=sub_idx, L6=new_leaf, L7=old_leaf
-  .{
-    name: "do_set_i64",
-    params: [.I32, ref_eq_(), .I32, .Anyref],
-    results: [ref_eq_()],
-    locals: [vec_children_null(), .I32, arr_i64_null(), arr_i64_null()],
-    body: [
-      .LocalGet(0),
-      .I32Eqz,
-      .If(
-        .Some(ref_eq_()),
-        [
-          .LocalGet(1),
-          .RefCast(false, .Named(t_ARRAY_I64)),
-          .LocalSet(7),
-          .I64Const(0),
-          .LocalGet(7),
-          .RefAsNonNull,
-          .ArrayLen,
-          .ArrayNew(t_ARRAY_I64),
-          .LocalSet(6),
-          .LocalGet(6),
-          .RefAsNonNull,
-          .I32Const(0),
-          .LocalGet(7),
-          .RefAsNonNull,
-          .I32Const(0),
-          .LocalGet(7),
-          .RefAsNonNull,
-          .ArrayLen,
-          .ArrayCopy(t_ARRAY_I64, t_ARRAY_I64),
-          .LocalGet(6),
-          .RefAsNonNull,
-          .LocalGet(2),
-          .I32Const(rt_MASK),
-          .I32And,
-          .LocalGet(3),
-          .RefCast(false, .Named(t_BOXED_INT)),
-          .StructGet(t_BOXED_INT, 0),
-          .ArraySet(t_ARRAY_I64),
-          .LocalGet(6),
-          .RefAsNonNull,
-          .RefCast(false, .Eq),
-        ],
-        [
-          .LocalGet(1),
-          .RefCast(false, .Named(t_VEC_INTERNAL)),
-          .LocalGet(2),
-          .LocalGet(0),
-          .Call("vi_nav"),
-          .LocalSet(2),
-          .LocalSet(5),
-          .RefNull(.Eq),
-          .I32Const(rt_BF),
-          .ArrayNew(t_VEC_CHILDREN),
-          .LocalSet(4),
-          .LocalGet(4),
-          .RefAsNonNull,
-          .I32Const(0),
-          .LocalGet(1),
-          .RefCast(false, .Named(t_VEC_INTERNAL)),
-          .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
-          .I32Const(0),
-          .I32Const(rt_BF),
-          .ArrayCopy(t_VEC_CHILDREN, t_VEC_CHILDREN),
-          .LocalGet(4),
-          .RefAsNonNull,
-          .LocalGet(5),
-          .LocalGet(0),
-          .I32Const(rt_BITS),
-          .I32Sub,
-          .LocalGet(1),
-          .RefCast(false, .Named(t_VEC_INTERNAL)),
-          .StructGet(t_VEC_INTERNAL, vi_CHILDREN),
-          .LocalGet(5),
-          .ArrayGet(t_VEC_CHILDREN),
-          .RefAsNonNull,
-          .LocalGet(2),
-          .LocalGet(3),
-          .Call("do_set_i64"),
-          .ArraySet(t_VEC_CHILDREN),
-          .LocalGet(4),
-          .RefAsNonNull,
-          .LocalGet(1),
-          .RefCast(false, .Named(t_VEC_INTERNAL)),
-          .StructGet(t_VEC_INTERNAL, vi_SIZES),
-          .StructNew(t_VEC_INTERNAL),
-          .RefCast(false, .Eq),
-        ],
-      ),
     ],
   }
 }
