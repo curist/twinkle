@@ -185,7 +185,7 @@ pub fn module() WasmModule {
     family_i64().pvec_promote_full_tail_fn(),
     family_i64().pvec_builder_append_leaf_range_fn(),
     family_i64().pvec_builder_new_fn(),
-    builder_push_i64_fn(),
+    family_i64().pvec_builder_push_fn(),
     family_i64().pvec_builder_push_raw_fn(),
     family_i64().pvec_builder_freeze_fn(),
     family_i64().pvec_make_fn(),
@@ -207,7 +207,7 @@ pub fn module() WasmModule {
     family_bool().pvec_get_fn(),
     family_bool().pvec_promote_full_tail_fn(),
     family_bool().pvec_builder_new_fn(),
-    builder_push_bool_fn(),
+    family_bool().pvec_builder_push_fn(),
     family_bool().pvec_builder_push_raw_fn(),
     family_bool().pvec_builder_freeze_fn(),
     family_bool().pvec_make_fn(),
@@ -2474,6 +2474,102 @@ fn pvec_gather_fn(f: PVecFamily) FuncDef {
 // Push one raw (unboxed) element into a typed builder, promoting the full tail
 // into the trie at the 32-element boundary. The element arrives unboxed so the
 // typed reader (get_i64/get_bool) feeds it directly with no transient box.
+// builder_push_i64/bool(builder: Array?, elem: boxed anyref) -> void
+// Typed builder push taking a boxed element (so the typed-vector router can swap
+// builder_push -> builder_push_<fam> without rewriting the push argument). Unbox
+// via f.leaf_store into L5, then the body matches builder_push_raw. The boxed
+// builder_push stays standalone: it stores the anyref param directly with no
+// unbox scratch local, so it has a different local model (not this fold).
+fn pvec_builder_push_fn(f: PVecFamily) FuncDef {
+  ta := t_ARRAY
+
+  // p0=builder, p1=elem (boxed); L2=tail_buf, L3=tail_len, L4=pvec_so_far, L5=elem.
+  head: Vector<Instr> = [.LocalGet(1)]
+
+  .{
+    name: "builder_push${f.suffix}",
+    params: [arr_null(), .Anyref],
+    results: [],
+    locals: [f.arr_null, .I32, f.pvec_null, f.elem_ty],
+    body: head
+      .concat(f.leaf_store)
+      .concat([
+        .LocalSet(5),
+        .LocalGet(0),
+        .RefAsNonNull,
+        .I32Const(2),
+        .ArrayGet(ta),
+        .RefCast(true, .Named(f.arr_ty)),
+        .LocalSet(2),
+        .LocalGet(0),
+        .RefAsNonNull,
+        .I32Const(1),
+        .ArrayGet(ta),
+        .RefCast(false, .I31),
+        .I31GetU,
+        .LocalSet(3),
+        .LocalGet(3),
+        .I32Const(rt_BF),
+        .I32LtS,
+        .If(
+          .None,
+          [
+            .LocalGet(2),
+            .RefAsNonNull,
+            .LocalGet(3),
+            .LocalGet(5),
+            .ArraySet(f.arr_ty),
+            .LocalGet(0),
+            .RefAsNonNull,
+            .I32Const(1),
+            .LocalGet(3),
+            .I32Const(1),
+            .I32Add,
+            .RefI31,
+            .ArraySet(ta),
+          ],
+          [
+            .LocalGet(0),
+            .RefAsNonNull,
+            .I32Const(0),
+            .ArrayGet(ta),
+            .RefCast(true, .Named(f.pvec_ty)),
+            .LocalSet(4),
+            .LocalGet(0),
+            .RefAsNonNull,
+            .I32Const(0),
+            .LocalGet(4),
+            .RefAsNonNull,
+            .LocalGet(2),
+            .RefAsNonNull,
+            .Call(f.promote_name),
+            .ArraySet(ta),
+            f.zero_value,
+            .I32Const(rt_BF),
+            .ArrayNew(f.arr_ty),
+            .LocalSet(2),
+            .LocalGet(2),
+            .RefAsNonNull,
+            .I32Const(0),
+            .LocalGet(5),
+            .ArraySet(f.arr_ty),
+            .LocalGet(0),
+            .RefAsNonNull,
+            .I32Const(2),
+            .LocalGet(2),
+            .ArraySet(ta),
+            .LocalGet(0),
+            .RefAsNonNull,
+            .I32Const(1),
+            .I32Const(1),
+            .RefI31,
+            .ArraySet(ta),
+          ],
+        ),
+      ]),
+  }
+}
+
 fn pvec_builder_push_raw_fn(f: PVecFamily) FuncDef {
   ta := t_ARRAY
 
@@ -2570,101 +2666,6 @@ fn pvec_builder_push_raw_fn(f: PVecFamily) FuncDef {
 // are i64-specific. Reads return raw i64 — no BoxedInt pointer-chase or cast.
 // ═══════════════════════════════════════════════════════════════════════
 // builder_push_i64(builder: Array?, elem: i64) -> void
-fn builder_push_i64_fn() FuncDef {
-  ta := t_ARRAY
-  tai := t_ARRAY_I64
-  tbi := t_BOXED_INT
-
-  // p0=builder, p1=elem (BoxedInt anyref); L2=tail_buf, L3=tail_len,
-  // L4=pvec_so_far, L5=elem unboxed to i64. Takes a boxed element so the
-  // typed-vector router can swap builder_push -> builder_push_i64 without
-  // rewriting the (already-boxed) push argument; the unbox is one-time build
-  // cost, not the hot read path.
-  .{
-    name: "builder_push_i64",
-    params: [arr_null(), .Anyref],
-    results: [],
-    locals: [arr_i64_null(), .I32, pvec_i64_null(), .I64],
-    body: [
-      .LocalGet(1),
-      .RefCast(false, .Named(tbi)),
-      .StructGet(tbi, 0),
-      .LocalSet(5),
-      .LocalGet(0),
-      .RefAsNonNull,
-      .I32Const(2),
-      .ArrayGet(ta),
-      .RefCast(true, .Named(tai)),
-      .LocalSet(2),
-      .LocalGet(0),
-      .RefAsNonNull,
-      .I32Const(1),
-      .ArrayGet(ta),
-      .RefCast(false, .I31),
-      .I31GetU,
-      .LocalSet(3),
-      .LocalGet(3),
-      .I32Const(rt_BF),
-      .I32LtS,
-      .If(
-        .None,
-        [
-          .LocalGet(2),
-          .RefAsNonNull,
-          .LocalGet(3),
-          .LocalGet(5),
-          .ArraySet(tai),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .I32Const(1),
-          .LocalGet(3),
-          .I32Const(1),
-          .I32Add,
-          .RefI31,
-          .ArraySet(ta),
-        ],
-        [
-          .LocalGet(0),
-          .RefAsNonNull,
-          .I32Const(0),
-          .ArrayGet(ta),
-          .RefCast(true, .Named(t_PVEC_I64)),
-          .LocalSet(4),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .I32Const(0),
-          .LocalGet(4),
-          .RefAsNonNull,
-          .LocalGet(2),
-          .RefAsNonNull,
-          .Call("promote_full_tail_i64"),
-          .ArraySet(ta),
-          .I64Const(0),
-          .I32Const(rt_BF),
-          .ArrayNew(tai),
-          .LocalSet(2),
-          .LocalGet(2),
-          .RefAsNonNull,
-          .I32Const(0),
-          .LocalGet(5),
-          .ArraySet(tai),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .I32Const(2),
-          .LocalGet(2),
-          .ArraySet(ta),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .I32Const(1),
-          .I32Const(1),
-          .RefI31,
-          .ArraySet(ta),
-        ],
-      ),
-    ],
-  }
-}
-
 // box_i64(vec: PVecI64?) -> PVec
 // Representation-boundary adapter for returning a locally typed Vector<Int>
 // through the ordinary boxed Vector<Int> ABI. This pays one boxing pass at the
@@ -4358,97 +4359,6 @@ fn gather_fn() FuncDef {
 // unwrapping a BoxedInt struct. Leaves are ArrayBool (i32) and the prefix is a
 // PVecBool. Boxed element in so the typed-vector router can swap
 // builder_push -> builder_push_bool without rewriting the push argument.
-fn builder_push_bool_fn() FuncDef {
-  ta := t_ARRAY
-  tab := t_ARRAY_BOOL
-
-  // p0=builder, p1=elem (i31 anyref); L2=tail_buf, L3=tail_len,
-  // L4=pvec_so_far, L5=elem decoded to i32.
-  .{
-    name: "builder_push_bool",
-    params: [arr_null(), .Anyref],
-    results: [],
-    locals: [arr_bool_null(), .I32, pvec_bool_null(), .I32],
-    body: [
-      .LocalGet(1),
-      .RefCast(false, .I31),
-      .I31GetU,
-      .LocalSet(5),
-      .LocalGet(0),
-      .RefAsNonNull,
-      .I32Const(2),
-      .ArrayGet(ta),
-      .RefCast(true, .Named(tab)),
-      .LocalSet(2),
-      .LocalGet(0),
-      .RefAsNonNull,
-      .I32Const(1),
-      .ArrayGet(ta),
-      .RefCast(false, .I31),
-      .I31GetU,
-      .LocalSet(3),
-      .LocalGet(3),
-      .I32Const(rt_BF),
-      .I32LtS,
-      .If(
-        .None,
-        [
-          .LocalGet(2),
-          .RefAsNonNull,
-          .LocalGet(3),
-          .LocalGet(5),
-          .ArraySet(tab),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .I32Const(1),
-          .LocalGet(3),
-          .I32Const(1),
-          .I32Add,
-          .RefI31,
-          .ArraySet(ta),
-        ],
-        [
-          .LocalGet(0),
-          .RefAsNonNull,
-          .I32Const(0),
-          .ArrayGet(ta),
-          .RefCast(true, .Named(t_PVEC_BOOL)),
-          .LocalSet(4),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .I32Const(0),
-          .LocalGet(4),
-          .RefAsNonNull,
-          .LocalGet(2),
-          .RefAsNonNull,
-          .Call("promote_full_tail_bool"),
-          .ArraySet(ta),
-          .I32Const(0),
-          .I32Const(rt_BF),
-          .ArrayNew(tab),
-          .LocalSet(2),
-          .LocalGet(2),
-          .RefAsNonNull,
-          .I32Const(0),
-          .LocalGet(5),
-          .ArraySet(tab),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .I32Const(2),
-          .LocalGet(2),
-          .ArraySet(ta),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .I32Const(1),
-          .I32Const(1),
-          .RefI31,
-          .ArraySet(ta),
-        ],
-      ),
-    ],
-  }
-}
-
 // box_bool(vec: PVecBool?) -> PVec
 // Reverse of unbox_bool: rebuild a boxed PVec from a typed PVecBool. Reads each
 // raw i32 leaf via get_bool and wraps it into a ref.i31 (Bool fits an i31)
