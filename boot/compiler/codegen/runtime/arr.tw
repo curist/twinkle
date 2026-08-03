@@ -225,13 +225,13 @@ pub fn module() WasmModule {
     family_i64().pvec_builder_push_raw_fn(),
     family_i64().pvec_builder_freeze_fn(),
     family_i64().pvec_make_fn(),
-    mutvec_new_i64_fn(),
-    mutvec_make_i64_fn(),
-    mutvec_push_i64_fn(),
-    mutvec_set_i64_fn(),
-    mutvec_get_i64_fn(),
-    mutvec_len_i64_fn(),
-    mutvec_freeze_i64_fn(),
+    family_i64().pvec_mutvec_new_fn(),
+    family_i64().pvec_mutvec_make_fn(),
+    family_i64().pvec_mutvec_push_fn(),
+    family_i64().pvec_mutvec_set_fn(),
+    family_i64().pvec_mutvec_get_fn(),
+    family_i64().pvec_mutvec_len_fn(),
+    family_i64().pvec_mutvec_freeze_fn(),
     push_i64_fn(),
     family_i64().pvec_get_leaf_fn(),
     family_i64().pvec_set_in_place_fn(),
@@ -1272,6 +1272,10 @@ type PVecFamily = .{
   // anyref, used by box_<fam> at the representation boundary. Empty for boxed;
   // i64 wraps a BoxedInt; bool wraps a ref.i31.
   elem_box: Vector<Instr>,
+  // Qualified name of this family's flat mutable `MutVec<Fam>` GC struct (data:
+  // Array<elem> mut + len: i32 mut), the region-pass lowering target that
+  // freezes to `pvec_ty`. mutvec ops carry RAW `elem_ty` elements (no boxing).
+  mutvec_ty: String,
 }
 
 fn family_boxed() PVecFamily {
@@ -1305,6 +1309,7 @@ fn family_boxed() PVecFamily {
     suffix: "",
     leaf_store: [],
     elem_box: [],
+    mutvec_ty: "rt_types__MutVec",
   }
 }
 
@@ -1332,6 +1337,7 @@ fn family_i64() PVecFamily {
     suffix: "_i64",
     leaf_store: [.RefCast(false, .Named(t_BOXED_INT)), .StructGet(t_BOXED_INT, 0)],
     elem_box: [.StructNew(t_BOXED_INT)],
+    mutvec_ty: t_MUTVEC_I64,
   }
 }
 
@@ -1359,6 +1365,7 @@ fn family_bool() PVecFamily {
     suffix: "_bool",
     leaf_store: [.RefCast(false, .I31), .I31GetU],
     elem_box: [.RefI31],
+    mutvec_ty: "rt_types__MutVecBool",
   }
 }
 
@@ -2083,31 +2090,33 @@ fn push_i64_fn() FuncDef {
   }
 }
 
-// ── MutVecI64 — flat, unboxed, growable mutable vector (storage slice 1) ──
-// A `MutVecI64` is `struct { data: ArrayI64 (mut), len: i32 (mut) }`. Reads and
-// writes are O(1) `array.get`/`array.set` at the logical length; the backing
-// grows by doubling. These ops are codegen-internal (the `mutvec_region` pass
-// will emit them) and have no source-callable signatures. Each mutating op
-// returns the same struct ref so the ANF SSA thread stays linear.
-// mutvec_new_i64(cap) -> MutVecI64: ArrayI64(max(cap, MIN_CAP)) zero-filled,
+// ── MutVec<Fam> — flat, unboxed, growable mutable vector (storage slice 1) ──
+// A `MutVec<Fam>` is `struct { data: Array<elem> (mut), len: i32 (mut) }`. Reads
+// and writes are O(1) `array.get`/`array.set` at the logical length; the backing
+// grows by doubling, and it freezes to `pvec_ty`. These ops are family-generated
+// from `PVecFamily` (carrying RAW `elem_ty` elements — no boxing) and registered
+// per family; they are codegen-internal (the `mutvec_region` pass emits them)
+// with no source-callable signatures. Each mutating op returns the same struct
+// ref so the ANF SSA thread stays linear. Only i64 is registered today (slice 1).
+// mutvec_new_<fam>(cap) -> MutVec<Fam>: Array<elem>(max(cap, MIN_CAP)) zero-filled,
 // len = 0. cap is a capacity hint (0 is the []-seed, rounded up to MIN_CAP).
-fn mutvec_new_i64_fn() FuncDef {
+fn pvec_mutvec_new_fn(f: PVecFamily) FuncDef {
   .{
-    name: "mutvec_new_i64",
+    name: "mutvec_new${f.suffix}",
     params: [.I32],
-    results: [.Ref(false, .Named(t_MUTVEC_I64))],
+    results: [.Ref(false, .Named(f.mutvec_ty))],
     locals: [],
     body: [
-      .I64Const(0),
+      f.zero_value,
       .LocalGet(0),
       .I32Const(mutvec_MIN_CAP),
       .LocalGet(0),
       .I32Const(mutvec_MIN_CAP),
       .I32GeS,
       .Select,
-      .ArrayNew(t_ARRAY_I64),
+      .ArrayNew(f.arr_ty),
       .I32Const(0),
-      .StructNew(t_MUTVEC_I64),
+      .StructNew(f.mutvec_ty),
     ],
   }
 }
@@ -2116,12 +2125,12 @@ fn mutvec_new_i64_fn() FuncDef {
 // Negative n yields an empty vector (matching the signed pvec_make loop), never
 // a negative len. Capacity is max(len, MIN_CAP); slots past len are also `fill`
 // but unreachable through the logical-length bounds checks.
-fn mutvec_make_i64_fn() FuncDef {
+fn pvec_mutvec_make_fn(f: PVecFamily) FuncDef {
   // p0 = n, p1 = fill; L2 = actual_len
   .{
-    name: "mutvec_make_i64",
-    params: [.I32, .I64],
-    results: [.Ref(false, .Named(t_MUTVEC_I64))],
+    name: "mutvec_make${f.suffix}",
+    params: [.I32, f.elem_ty],
+    results: [.Ref(false, .Named(f.mutvec_ty))],
     locals: [.I32],
     body: [
       .LocalGet(0),
@@ -2138,29 +2147,29 @@ fn mutvec_make_i64_fn() FuncDef {
       .I32Const(mutvec_MIN_CAP),
       .I32GeS,
       .Select,
-      .ArrayNew(t_ARRAY_I64),
+      .ArrayNew(f.arr_ty),
       .LocalGet(2),
-      .StructNew(t_MUTVEC_I64),
+      .StructNew(f.mutvec_ty),
     ],
   }
 }
 
 // mutvec_push_i64(mv, x) -> mv: grow-by-doubling if full, then data[len]=x; len++.
-fn mutvec_push_i64_fn() FuncDef {
+fn pvec_mutvec_push_fn(f: PVecFamily) FuncDef {
   // p0 = mv, p1 = x; L2 = data, L3 = len, L4 = capacity, L5 = new_data
   .{
-    name: "mutvec_push_i64",
-    params: [.Ref(true, .Named(t_MUTVEC_I64)), .I64],
-    results: [.Ref(false, .Named(t_MUTVEC_I64))],
-    locals: [arr_i64_null(), .I32, .I32, arr_i64_null()],
+    name: "mutvec_push${f.suffix}",
+    params: [.Ref(true, .Named(f.mutvec_ty)), f.elem_ty],
+    results: [.Ref(false, .Named(f.mutvec_ty))],
+    locals: [f.arr_null, .I32, .I32, f.arr_null],
     body: [
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_MUTVEC_I64, 0),
+      .StructGet(f.mutvec_ty, 0),
       .LocalSet(2),
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_MUTVEC_I64, 1),
+      .StructGet(f.mutvec_ty, 1),
       .LocalSet(3),
       .LocalGet(2),
       .RefAsNonNull,
@@ -2172,7 +2181,7 @@ fn mutvec_push_i64_fn() FuncDef {
       .If(
         .None,
         [
-          .I64Const(0),
+          f.zero_value,
           .LocalGet(4),
           .I32Const(2),
           .I32Mul,
@@ -2183,7 +2192,7 @@ fn mutvec_push_i64_fn() FuncDef {
           .I32Const(mutvec_MIN_CAP),
           .I32GeS,
           .Select,
-          .ArrayNew(t_ARRAY_I64),
+          .ArrayNew(f.arr_ty),
           .LocalSet(5),
           .LocalGet(5),
           .RefAsNonNull,
@@ -2192,12 +2201,12 @@ fn mutvec_push_i64_fn() FuncDef {
           .RefAsNonNull,
           .I32Const(0),
           .LocalGet(4),
-          .ArrayCopy(t_ARRAY_I64, t_ARRAY_I64),
+          .ArrayCopy(f.arr_ty, f.arr_ty),
           .LocalGet(0),
           .RefAsNonNull,
           .LocalGet(5),
           .RefAsNonNull,
-          .StructSet(t_MUTVEC_I64, 0),
+          .StructSet(f.mutvec_ty, 0),
           .LocalGet(5),
           .RefAsNonNull,
           .LocalSet(2),
@@ -2208,13 +2217,13 @@ fn mutvec_push_i64_fn() FuncDef {
       .RefAsNonNull,
       .LocalGet(3),
       .LocalGet(1),
-      .ArraySet(t_ARRAY_I64),
+      .ArraySet(f.arr_ty),
       .LocalGet(0),
       .RefAsNonNull,
       .LocalGet(3),
       .I32Const(1),
       .I32Add,
-      .StructSet(t_MUTVEC_I64, 1),
+      .StructSet(f.mutvec_ty, 1),
       .LocalGet(0),
       .RefAsNonNull,
     ],
@@ -2224,17 +2233,17 @@ fn mutvec_push_i64_fn() FuncDef {
 // mutvec_set_i64(mv, i, x) -> mv: logical-length-checked write (traps on OOB).
 // The explicit `i < 0 || i >= len` check is mandatory: capacity >= len, so a bare
 // array bound would wrongly permit writes into the unused [len, capacity) region.
-fn mutvec_set_i64_fn() FuncDef {
+fn pvec_mutvec_set_fn(f: PVecFamily) FuncDef {
   // p0 = mv, p1 = i, p2 = x; L3 = len
   .{
-    name: "mutvec_set_i64",
-    params: [.Ref(true, .Named(t_MUTVEC_I64)), .I32, .I64],
-    results: [.Ref(false, .Named(t_MUTVEC_I64))],
+    name: "mutvec_set${f.suffix}",
+    params: [.Ref(true, .Named(f.mutvec_ty)), .I32, f.elem_ty],
+    results: [.Ref(false, .Named(f.mutvec_ty))],
     locals: [.I32],
     body: [
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_MUTVEC_I64, 1),
+      .StructGet(f.mutvec_ty, 1),
       .LocalSet(3),
       .LocalGet(1),
       .I32Const(0),
@@ -2246,10 +2255,10 @@ fn mutvec_set_i64_fn() FuncDef {
       .If(.None, [.Unreachable], []),
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_MUTVEC_I64, 0),
+      .StructGet(f.mutvec_ty, 0),
       .LocalGet(1),
       .LocalGet(2),
-      .ArraySet(t_ARRAY_I64),
+      .ArraySet(f.arr_ty),
       .LocalGet(0),
       .RefAsNonNull,
     ],
@@ -2257,17 +2266,17 @@ fn mutvec_set_i64_fn() FuncDef {
 }
 
 // mutvec_get_i64(mv, i) -> i64: logical-length-checked read (traps on OOB).
-fn mutvec_get_i64_fn() FuncDef {
+fn pvec_mutvec_get_fn(f: PVecFamily) FuncDef {
   // p0 = mv, p1 = i; L2 = len
   .{
-    name: "mutvec_get_i64",
-    params: [.Ref(true, .Named(t_MUTVEC_I64)), .I32],
-    results: [.I64],
+    name: "mutvec_get${f.suffix}",
+    params: [.Ref(true, .Named(f.mutvec_ty)), .I32],
+    results: [f.elem_ty],
     locals: [.I32],
     body: [
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_MUTVEC_I64, 1),
+      .StructGet(f.mutvec_ty, 1),
       .LocalSet(2),
       .LocalGet(1),
       .I32Const(0),
@@ -2279,21 +2288,21 @@ fn mutvec_get_i64_fn() FuncDef {
       .If(.None, [.Unreachable], []),
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_MUTVEC_I64, 0),
+      .StructGet(f.mutvec_ty, 0),
       .LocalGet(1),
-      .ArrayGet(t_ARRAY_I64),
+      .ArrayGet(f.arr_ty),
     ],
   }
 }
 
 // mutvec_len_i64(mv) -> i32: logical length.
-fn mutvec_len_i64_fn() FuncDef {
+fn pvec_mutvec_len_fn(f: PVecFamily) FuncDef {
   .{
-    name: "mutvec_len_i64",
-    params: [.Ref(true, .Named(t_MUTVEC_I64))],
+    name: "mutvec_len${f.suffix}",
+    params: [.Ref(true, .Named(f.mutvec_ty))],
     results: [.I32],
     locals: [],
-    body: [.LocalGet(0), .RefAsNonNull, .StructGet(t_MUTVEC_I64, 1)],
+    body: [.LocalGet(0), .RefAsNonNull, .StructGet(f.mutvec_ty, 1)],
   }
 }
 
@@ -2305,33 +2314,34 @@ fn mutvec_len_i64_fn() FuncDef {
 // ArrayCopies + radix promotes), then freeze — not n per-element pushes. This
 // makes the freeze cheap enough that the flat build + freeze beats a direct trie
 // build even with zero mutations.
-fn mutvec_freeze_i64_fn() FuncDef {
-  // p0 = mv; L1 = builder, L2 = len, L3 = j, L4 = data, L5 = tail
+fn pvec_mutvec_freeze_fn(f: PVecFamily) FuncDef {
+  // p0 = mv; L1 = builder (universal boxed 3-slot Array), L2 = len, L3 = j,
+  // L4 = data, L5 = tail
   .{
-    name: "mutvec_freeze_i64",
-    params: [.Ref(true, .Named(t_MUTVEC_I64))],
-    results: [pvec_i64_ref()],
-    locals: [arr_null(), .I32, .I32, arr_i64_null(), arr_i64_null()],
+    name: "mutvec_freeze${f.suffix}",
+    params: [.Ref(true, .Named(f.mutvec_ty))],
+    results: [f.pvec_ref],
+    locals: [arr_null(), .I32, .I32, f.arr_null, f.arr_null],
     body: [
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_MUTVEC_I64, 1),
+      .StructGet(f.mutvec_ty, 1),
       .LocalSet(2),
       .LocalGet(0),
       .RefAsNonNull,
-      .StructGet(t_MUTVEC_I64, 0),
+      .StructGet(f.mutvec_ty, 0),
       .LocalSet(4),
       // Fast path: len <= rt_BF fits entirely in the tail — no trie, one bulk copy.
       .LocalGet(2),
       .I32Const(rt_BF),
       .I32LeS,
       .If(
-        .Some(pvec_i64_ref()),
+        .Some(f.pvec_ref),
         [
-          // tail = ArrayI64(len) filled 0, then ArrayCopy data[0..len] -> tail[0..len]
-          .I64Const(0),
+          // tail = Array<elem>(len) filled zero, then ArrayCopy data[0..len] -> tail[0..len]
+          f.zero_value,
           .LocalGet(2),
-          .ArrayNew(t_ARRAY_I64),
+          .ArrayNew(f.arr_ty),
           .LocalSet(5),
           .LocalGet(5),
           .RefAsNonNull,
@@ -2340,29 +2350,29 @@ fn mutvec_freeze_i64_fn() FuncDef {
           .RefAsNonNull,
           .I32Const(0),
           .LocalGet(2),
-          .ArrayCopy(t_ARRAY_I64, t_ARRAY_I64),
-          // PVecI64{ len, shift=0, root=null, tail }
+          .ArrayCopy(f.arr_ty, f.arr_ty),
+          // PVec<fam>{ len, shift=0, root=null, tail }
           .LocalGet(2),
           .I32Const(0),
           .RefNull(.Named(t_VEC_INTERNAL)),
           .LocalGet(5),
           .RefAsNonNull,
-          .StructNew(t_PVEC_I64),
+          .StructNew(f.pvec_ty),
         ],
         [
           // Slow path: len > rt_BF — bulk-copy the entire flat backing into a
           // typed builder in one call (n/32 ArrayCopy + promotes, not n pushes),
           // then freeze. Roughly halves the freeze cost vs per-element push.
-          .Call("builder_new_i64"),
+          .Call(f.builder_new_name),
           .LocalSet(1),
           .LocalGet(1),
           .LocalGet(4),
           .RefAsNonNull,
           .I32Const(0),
           .LocalGet(2),
-          .Call("builder_append_leaf_range_i64"),
+          .Call(f.builder_append_leaf_range_name),
           .LocalGet(1),
-          .Call("builder_freeze_i64"),
+          .Call(f.builder_freeze_name),
         ],
       ),
     ],
