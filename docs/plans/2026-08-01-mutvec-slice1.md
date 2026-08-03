@@ -255,9 +255,22 @@ Goal: retire `TWINKLE_MUTVEC` and run the pass always. **No stage0 mirror is nee
 - [ ] **Step 4:** `make boot-test` + `make rust-test` green.
 - [ ] **Step 5 (decision gate):** confirm the census/bench show a net win on boot's own build (or at least no regression) before removing the flag for good — MutVec's ~2.6× is over the typed `set_in_place_i64` baseline, so the whole-compiler impact depends on how many of boot's hot regions are claimed. If the net is neutral/negative, keep the flag off-by-default instead of removing it, and record why.
 
-## Deferred to later slices (explicitly out of scope)
+## Slice 1 complete — deferred work moved to a successor plan
 
-- `Bool` / `Float` / boxed element families.
-- Thaw-from-`PVec` for param-sourced owned vectors, and owned-specialized mutable ABI across calls (S4).
-- Standalone append-only loops (no indexed-update) — stay on the boxed builder until the unified-pass convergence (Approach A).
-```
+Slice 1 is done: owned `Vector<Int>` regions lower to flat mutable `MutVecI64`
+and freeze to `PVecI64`, the pass runs **unconditionally** (the `TWINKLE_MUTVEC`
+flag was retired), the bulk-freeze made it a strict win at every mutation
+density, and boot's own two regions lower correctly (self-host fixed point).
+
+The deferred work is captured, with its real dependencies and value ranking, in
+**[docs/plans/mutvec-later-slices.md](mutvec-later-slices.md)**:
+
+- `Bool` / `Float` / boxed element families — generalize the seven `mutvec_*`
+  ops over `PVecFamily` (depends on [rt-arr-family-dedup.md](rt-arr-family-dedup.md);
+  Float additionally needs a typed `PVecF64`).
+- S4: thaw-from-`PVec` for param-sourced owned vectors (depends on the
+  sound-uniqueness track).
+- Append-only-loop / `builder_region` unification (Approach A).
+
+The interim deep-module bailout guard added while landing this slice is
+superseded by [compiler-stack-safety.md](compiler-stack-safety.md) Phase 2.
