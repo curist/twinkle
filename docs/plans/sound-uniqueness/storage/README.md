@@ -15,10 +15,19 @@ not, by itself, the full performance story.
 The storage-track north star is compiler-private mutation-enabled collection
 storage that can flow through a proven-owned chain and materialize back to the
 ordinary persistent representation only at the latest required publication
-boundary. In shorthand: **stay low as long as possible, then materialize at the
-boundary**. Existing `PVec`/`PDict` hooks remain useful compatibility and
-proof-of-integration targets, but the end state should not require every internal
-update chain to stay in persistent PVec/HAMT form.
+boundary. In shorthand: **stay low as long as possible, then materialize only if a
+boundary demands it** — and if the value never escapes the owned region,
+**never materialize at all**. Materialization is a boundary *adapter*, not an
+inevitable final step: a value that dies inside the owned region (mutated, then
+read-reduced to a scalar and dropped, never published as a collection) has no
+publication boundary, so there is nothing to freeze. This is the collections
+analog of escape analysis — freeze is the cost of crossing out, and code that
+never crosses out never pays it. (Already realized for vectors: the MutVec region
+detector accepts the no-escape scratch-buffer shape and emits no `mutvec_freeze` —
+commit `f83ecf78`, `MutVecRegion.escapes == false`.) Existing `PVec`/`PDict` hooks
+remain useful compatibility and proof-of-integration targets, but the end state
+should not require every internal update chain to stay in persistent PVec/HAMT
+form.
 
 ## Settled decisions
 
@@ -178,7 +187,11 @@ boundary, but "final" must be read per proven-owned path rather than as only a
 function's last statement. A function can have multiple publication exits —
 return, `break value`, `try` error arm, closure capture, unknown call, record /
 variant storage that escapes — and each such edge may be the latest safe point on
-that path.
+that path. It can also have **zero** publication exits: if no path ever publishes
+the value as a collection (it is consumed entirely by in-region reads and then
+dropped), there is no boundary and **no freeze is emitted** — the lowest private
+representation is also the final one. Count the publication exits first; freeze is
+per-exit, so zero exits means zero freezes.
 
 The goal is to keep the value in the lowest private representation across all
 internal edges that preserve ownership: local loops, helper calls, owned-
