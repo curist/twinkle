@@ -1,5 +1,28 @@
 # rt.arr Family Deduplication Implementation Plan
 
+> **COMPLETED 2026-08-03** (branch `refactor/rt-arr-family-dedup`, merged to main).
+> Outcome — the audit found the plan's original gate unworkable and several
+> "folds" to be genuine divergences, so the shape differs from the task list:
+> - **Gate corrected first:** `twk wat --func <name>` substring-matches boot's
+>   self-hosted WAT (capturing the compiler's own builder functions the fold
+>   deletes) and half the folded variants are DCE'd, so it can't work. Replaced
+>   with an old-vs-new-`twk` diff over only the emitted `rt_arr__*` funcs on a
+>   fixed corpus (harness kept in the branch history; see Global Constraints).
+> - **Folded (gate byte-identical):** `get_leaf` (+`PVecFamily.suffix`), `do_set`
+>   (+`leaf_store`), `set`/`set_in_place`, boxed `builder_append_leaf_range`,
+>   `builder_push` (i64+bool), `box` (i64+bool, +`elem_box`).
+> - **Kept standalone — genuine divergence, documented in the `PVecFamily` doc
+>   block in `arr.tw`:** `promote_full_tail` & `gather` (relaxed-RRB / no boxed
+>   raw-pusher), `push`/`push_i64` (relaxed-vs-radix + different local model),
+>   boxed `builder_push` (no unbox scratch local), `unbox_i64`/`unbox_bool`
+>   (different push conventions, never emitted so ungatable).
+> - **Delivered for `mutvec-later-slices`:** `PVecFamily` now carries `suffix`,
+>   `leaf_store`, and `elem_box` — its hard prerequisite is met (Phase 4 still
+>   needs the separate `PVecF64`). NOTE: that plan's Phase 1 gate has the same
+>   `twk wat --func` flaw corrected here; use the `rt_arr__`-only diff instead.
+>
+> Historical task-by-task plan follows.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Remove the per-element-type copy-paste in `boot/compiler/codegen/runtime/arr.tw` by folding the hand-duplicated core trie ops (`get_leaf`, `do_set`, `set`, `set_in_place`, `push`/`push_tail`/`new_path`, `builder_push`, `box`/`unbox`) into the existing `PVecFamily`-parameterized builder pattern, and migrating the grandfathered boxed family onto the family builders it currently bypasses.
