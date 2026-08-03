@@ -54,6 +54,7 @@ dataframe columns).
 | [boundary-tracklist.md](boundary-tracklist.md) | "Where are we" map — every boundary a typed vector must cross (A/B/C), per-item ✅/🟡/⬜, and the `order_by` critical path |
 | [typed-vector-representation.md](typed-vector-representation.md) | The umbrella: per-phase status + the long-term representation answer |
 | [generic-sort-by-vector-read-perf.md](generic-sort-by-vector-read-perf.md) | The read-wall measurement / decomposition — the reference for `order_by` cost |
+| [../../physical-repr-planner-refactor.md](../../physical-repr-planner-refactor.md) | Backend structural refactor (lives at `docs/plans/` top level): materialize typed-vector physical repr/ABI decisions as a queryable `PhysPlan`, giving analysis/route/mutvec/verify/emit explicit ownership boundaries. Long-term cleanup following the MutVec escape-return fix |
 
 ## Archived / record (`archive/`)
 
