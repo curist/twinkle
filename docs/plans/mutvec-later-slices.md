@@ -173,12 +173,16 @@ Per-family typed-storage prerequisite (each its own mini-slice; gate = boot-test
 
 **Files:** the typed family first (`arr.tw`/`types.tw`), then `arr.tw`/`builtins.tw`/`mutvec_region.tw` for the f64/byte mutvec ops, `mutvec_region_suite.tw` + `fixtures/mutvec_float.tw` / `fixtures/mutvec_byte.tw`.
 
-- [ ] **Step 0 (prerequisite): land the needed typed family/families** (`PVecF64` and/or `PVecByte`) per the per-family notes above. Verify `Vector<Float>` / `Vector<Byte>` collect/index/return works typed end-to-end.
-- [ ] **Step 1: Failing detector test** for an owned `Vector<Float>` (and/or `Vector<Byte>`) set region (expects `1`).
-- [ ] **Step 2: Register the mutvec ops + widen `elem_family`** to Float (and/or Byte).
-- [ ] **Step 3: `fixtures/mutvec_float.tw` / `mutvec_byte.tw`** — collect + indexed set + return; WAT shows `mutvec_*_<fam>` + one freeze; result matches a boxed baseline.
-- [ ] **Step 4: Bench.** Extend `boot/bench/mutvec_slice1_bench.tw` with the new-family variant(s); confirm the same mutation-density win profile as i64. For Byte, a codec/parse-shaped bench is the honest workload.
-- [ ] **Step 5: Gate + commit.** boot-test + rust-test + fixed point.
+**Float slice — DONE (commit 5032b4ed).** typed `PVecF64` family + mutvec ride-along, mirroring Bool. `fixtures/mutvec_float.tw` self-checks OK; 3412 boot tests; fixed point; i64/bool neutral. Two things learned:
+- **Codegen gotcha (bit Byte too):** `emit/runtime_abi.tw` keeps THREE hardcoded per-family builder-name lists — `is_builder_buffer_arg` / `is_builder_void_push` / `is_builder_seed` — that must gain `_byte`. Missing `_f64` caused the anyref→Array builder-arg shim to misfire (handle cast to PVec → V8 rejected the module). These are the ONLY per-family hardcoded names left; everything else is family-driven.
+- **DRY:** the six typed-vector builtins are now generated from `typed_vec_specs` (`typed_vec_abi` + `typed_vec_rt_defs`), parallel to the mutvec generators. Byte = one `typed_vec_specs` row + one `mutvec_specs` row + concats.
+
+Byte slice — REMAINING. Its extra work vs Float:
+- [ ] **Step 0a: new GC type** `ArrayByte = array i8` in `types.tw` (native `array.new`/`get_u`/`set`); `PVecByte` + `MutVecByte` structs.
+- [ ] **Step 0b: `ElemRepr` collision fix** — extend `ElemRepr = { I64, F64, I32 }` with a distinct `Byte` variant so `candidate_typed_vec_family(Vector<Byte>)` and `mutvec_wasm_type` tell byte from bool; update the exhaustive `ElemRepr` matches (repr_assign/verify_common/wasm_layout/emit helpers).
+- [ ] **Step 0c: `MonoType.Byte`/`Vector<Byte>`** wiring in `elem_family_of` + `family_byte()` (PVecFamily: `arr_ty` ArrayByte, i31 boxing = reuse bool's `leaf_store`/`elem_box`, `elem_ty .I32`; the get op reads i8 via `array.get_u`) + the families lists + `typed_vec_specs`/`mutvec_specs` rows + the `runtime_abi.tw` `_byte` entries.
+- [ ] **Step 1–3: detector test + `fixtures/mutvec_byte.tw`** (a codec/readfile-shaped round-trip; verify a boxed `Vector<Byte>` round-trips through the typed rep).
+- [ ] **Step 4–5: gate + commit.** fixed point + boot-test + i64/bool/float neutral.
 
 ---
 
