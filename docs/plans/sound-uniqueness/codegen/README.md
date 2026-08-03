@@ -1,5 +1,20 @@
 # Codegen Track
 
+> **Orientation (read first).**
+> - **Landed:** in-place emission for the three call-swap families (vector `set`,
+>   dict `set`, dict `remove`), local record-shell updates, ownership-specialized
+>   function variants, and the 8C builder-region *first slice* (empty-seed loops +
+>   non-empty **string** seeds). Analysis track complete through Phase 6.
+> - **Current focus:** record-backed field collections (8H).
+> - **Biggest un-landed boot-compiler win:** the **8C builder-region follow-up
+>   slices** (Plans 3-vector / 4 / 5) — see
+>   [Where the general boot-compiler win is](#where-the-general-boot-compiler-win-is)
+>   below. This is a *different* pass from the `mutvec` indexed-write work, which
+>   targets user numerics, not the self-build.
+>
+> The detailed chronological status paragraph below is the historical record; the
+> orientation above is the current summary.
+
 **Status:** In progress. Phases 7A (hook inventory), 7B (operation catalog),
 the 7C/7D backend decision seam, Phase 8A local vector indexed-update
 emission, Phase 8B loop-carried vector indexed-update emission, Phase 8D
@@ -44,6 +59,42 @@ yet produce and must add before 8C's rewrite (see
 [../analysis/README.md](../analysis/README.md)). (These "Codegen Phase
 7A/…" labels are the codegen track's own local numbering; see the phase-numbering
 note in [../analysis/README.md](../analysis/README.md).)
+
+## Where the general boot-compiler win is
+
+The landed in-place families above already cover boot's **keyed** mutation
+(`Dict.set`/`remove` → `*_in_place`) and **record-shell** updates. What they do
+*not* cover is boot's single most common collection idiom: **append-fold loops**
+(`acc = acc.append(x)`, `acc = acc.concat(s)` / `String.concat`). Those are the
+domain of the **8C builder-region pass**, and its follow-up slices are the largest
+un-landed self-build lever.
+
+`target/twk ir boot/main.tw --census --sites` makes the surface concrete: the 8C
+detector surfaces **~870** append/builder candidate regions and certifies fewer
+than ~100 today. The rest are rejected by two deferred slices:
+
+| Deferred slice | Boot regions rejected (census bucket) | What it unlocks |
+|---|---|---|
+| **Plan 3 (vector half)** — non-empty vector seeds | ~450 (`re-used accumulator, not a fresh seed`) | in-place builder instead of persistent append |
+| **Plan 5** — conditional / `continue`-guarded folds | ~316 (`control flow on the loop main arm`) | certify folds behind an `if`/`continue` |
+| **Plan 4** — typed routing | (the vector regions above + certified) | unbox `Vector<Int>` accumulators to flat i64 — the biggest per-region win |
+
+These regions sit in the hottest passes (`lower_expr`, `monomorphize`,
+`apply_subst_to_kind`, `atomize`, `gather_lint`, …). Caveat on the counts: they are
+raw reason buckets, an upper bound — the realized win per region depends on whether
+it is currently *persistent* (an explicit `append`/`concat` loop, where 8C is a real
+allocation win) or already a *builder* (a `collect`, where the win is only Plan 4
+unboxing). `--census --sites`' `consumed` column and the
+[builder-region-design.md](builder-region-design.md) win breakdown are authoritative
+per region.
+
+**Recommended order for a general boot win:** Plan 3-vector (cheapest — the design
+calls it a one-line `builder_push` shared-trie check) → Plan 4 (the typed-unboxing
+multiplier) → Plan 5 (most detector work). By contrast, broadening the `mutvec`
+indexed-write pass across element families
+([../../mutvec-later-slices.md](../../mutvec-later-slices.md)) adds ~0 boot regions
+(boot claims ~2 scratch `Int` mutvec regions and appends rather than index-writes) —
+it is a *user-numerics* optimization, not a self-build lever.
 
 This track owns the practical bridge from proof facts to emitted code. It should
 first reuse today's persistent/in-place/builder mechanisms, not introduce the
@@ -245,7 +296,7 @@ First emitted-code change. The slice is intentionally narrow.
   visible via `twk ir --census --sites` (e.g. the nested fixture renders
   `...:depth 2` with a `selected` / `MutableSelected` audit row).
 
-## Codegen Phase 8C — Existing builder-region lowering ✅ first slice done (Plans 1–2)
+## Codegen Phase 8C — Existing builder-region lowering 🚧 Plans 1–3(string) landed · Plans 3v/4/5/6/7–9 TODO
 
 Plans 1–2 have landed: string and vector empty-seed accumulator loops lower
 end-to-end via the pure-ANF detector (`builder_region_detect.tw`), the
@@ -269,6 +320,29 @@ holds; the boot compiler rewrites 7 string regions. Plan 3's **vector** half + P
 branch-nested/co-resident regions) remain deferred follow-ups per the design. The Plan 2
 execution plan is archived at
 [../../archive/2026-07-22-8c-plan2-builder-region-rewrite.md](../../archive/2026-07-22-8c-plan2-builder-region-rewrite.md).
+
+### Deferred 8C follow-up slices (TODO)
+
+Landed so far: Plans 1–2 + Plan 3 (string half). The remaining slices below are
+**not implemented** — this is the "8C is not finished" checklist the ✅ above does
+not cover. Region counts are the current `boot/main.tw` `--census --sites` deferral
+tallies (raw reason buckets, an upper bound on eligible regions, not a proven
+per-plan count). Full design + sequencing:
+[builder-region-design.md](builder-region-design.md).
+
+- [ ] **Plan 3 (vector half)** — non-empty vector seeds (`acc := base` then push in
+  loop). Design calls it a one-line `builder_push` shared-trie check. ~450 boot
+  regions currently rejected as "re-used accumulator, not a fresh seed (non-empty)".
+- [ ] **Plan 4 — typed routing** (the real vector win): teach `route_typed_vec` to
+  follow the freeze→accumulator `AAssign` as a copy edge so `Vector<Int>` builder
+  accumulators unbox to flat i64 instead of staying boxed. Applies to the certified
+  vector regions today + everything Plan-3-vector adds.
+- [ ] **Plan 5 — conditional / `continue`-guarded folds**: path-sensitive join
+  reasoning in the detector so folds behind an `if`/`continue` on the loop main arm
+  certify. ~316 boot regions currently rejected as "control flow on the loop main arm".
+- [ ] **Plan 6 — multi-exit regions** (per-edge freeze insertion).
+- [ ] **Plans 7–9** — straight-line concat/append chains, branch-nested /
+  co-resident regions.
 
 Builder lowering has a different region shape from indexed update and should not
 be bundled with it. Current boot hooks cover vector builders and string concat

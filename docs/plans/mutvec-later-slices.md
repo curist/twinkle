@@ -2,6 +2,20 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Scope / driver (read before picking this up):** This plan optimizes **user
+> workloads**, not the compiler's own self-build. MutVec claims *owned, indexed-write*
+> `Vector<T>` regions (`xs[i] = v`); the boot compiler almost never does that — it
+> appends and uses `Dict<Int,_>` for keyed-int maps, so it claims only ~2 scratch
+> `Int` regions today and element-family broadening adds ~0 more. The real customer is
+> numeric code (the Float family — see the value ranking below). **For a general
+> boot-compiler speedup, this is the wrong plan** — advance the 8C builder-region
+> follow-up slices instead (`docs/plans/sound-uniqueness/codegen/README.md` →
+> "Where the general boot-compiler win is"; Plans 3-vector / 4 / 5). Note that **8C
+> Plan 4 (typed routing)** is the *append-side* analog of MutVec's typed storage — it
+> unboxes `Vector<Int>` builder accumulators to flat i64 — so the two plans are the
+> two halves of the same typed-storage story (MutVec = index-write side, 8C Plan 4 =
+> append side).
+
 **Goal:** Extend MutVec beyond the landed slice-1 (owned `Vector<Int>` → flat mutable `MutVecI64` → freeze to `PVecI64`, now unconditional) to the remaining element families (`Bool`, `Float`, boxed) and, further out, to param-sourced owned vectors — reusing the `PVecFamily` abstraction rather than hand-duplicating per element type.
 
 **Architecture:** Slice 1 proved the mechanism — a region pass (`codegen/mutvec_region.tw`) claims an owned, locally-born `Vector<Int>` carrying ≥1 indexed update, rewrites it to `mutvec_*` ops with a single boundary freeze, and a backend repr pass (`backend/mutvec_repr.tw`) types the handle slots `MutVec(I64)`. That mechanism is **element-agnostic** except for three seams: (1) the seven `mutvec_*_i64` runtime ops are hand-written for i64; (2) the detector gates on `Vector<Int>`; (3) `mutvec_repr` hard-codes `.MutVec(.I64)`. This plan drives all three off the element type. The runtime seam piggybacks on **`docs/plans/rt-arr-family-dedup.md`**, which folds the PVec trie ops into the `PVecFamily`-parameterized builder and enriches `PVecFamily` with `suffix` / `leaf_store` / `elem_box` — exactly the fields a family-generated mutvec op needs. `ReprKind.MutVec(ElemRepr)` is already generic, so the backend seam is a `MonoType → family` lookup, not new machinery.
@@ -148,7 +162,7 @@ Goal: an owned `Vector<T>` for reference `T` (records/strings/nested vectors) wi
 ## Explicitly deferred (out of scope for this plan)
 
 - **S4 — thaw-from-`PVec` / param-sourced owned vectors.** The detector requires the vector to be **locally born** (collect/make) so ownership is trivial. Claiming an owned vector arriving as a `PVec` parameter needs (a) a cross-function proof that the parameter is uniquely owned and (b) an owned-specialized mutable ABI so callers hand off ownership and the callee thaws→mutates→refreezes. Both live on the **sound-uniqueness track** (`docs/plans/sound-uniqueness/`, storage S4). Not startable until that lands; revisit as an S4 customer, not here.
-- **Append-only loop unification (Approach A).** Append-only accumulator loops are already handled correctly by `builder_region`. MutVec deliberately claims only ≥1-indexed-update regions. Merging the two passes into one is a risk-only refactor (the builder path is proven and byte-identical-critical); keep them separate until there is a concrete reason to unify.
+- **Append-only loop unification (Approach A).** Append-only accumulator loops are already handled correctly by `builder_region`. MutVec deliberately claims only ≥1-indexed-update regions. Merging the two passes into one is a risk-only refactor (the builder path is proven and byte-identical-critical); keep them separate until there is a concrete reason to unify. The typed-storage win for the append idiom lives on the **8C track as Plan 4 (typed routing)**, not here — see `docs/plans/sound-uniqueness/codegen/builder-region-design.md`.
 
 ## Testing strategy (summary)
 
