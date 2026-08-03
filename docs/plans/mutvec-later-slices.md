@@ -142,16 +142,20 @@ repr/route key on builtin FuncIds + MonoType, not on the Instr-carrying PVecFami
 
 ---
 
-## Phase 3: Bool family (end-to-end)
+## Phase 3: Bool family (end-to-end) — DONE (commit 1440419d)
 
-Goal: an owned `Vector<Bool>` region lowers to `MutVecBool` and freezes to `PVecBool`. `family_bool` / `PVecBool` already exist, so this is registering the ops + widening the classifier.
+Goal: an owned `Vector<Bool>` region lowers to `MutVecBool` and freezes to `PVecBool`. Phase 2 paid off — enabling Bool was one entry in `mutvec_families()`; the rest was registering ops + the GC struct.
 
-**Files:** `arr.tw` (register `family_bool().pvec_mutvec_*_fn()`), `types.tw` (`MutVecBool` struct), `builtins.tw` (bool ops + ABI, END), `mutvec_region.tw` (`elem_family` accepts Bool), `boot/tests/suites/mutvec_region_suite.tw` + `fixtures/`.
+**The per-op registration is now family-parameterized** (so Float/Byte are near-zero churn). Adding a family = one `mutvec_specs()` row + one `mutvec_fns()` concat + one `MutVec<Fam>` struct + one `mutvec_families()` entry + one `mutvec_wasm_type` arm:
+- `builtins.tw`: `MutVecFamilySpec` + `mutvec_specs()` drive `mutvec_abi` (order-independent, i64 inline ABI removed) and `mutvec_rt_defs` (rt() entries; i64 stays inline for FuncId stability, new families `.concat`ed at end).
+- `arr.tw`: `mutvec_fns(f)` returns a family's seven ops; bool via `.concat(family_bool().mutvec_fns())`. NOTE: bool also needed `builder_append_leaf_range_bool` emitted (mutvec_freeze's bulk-freeze slow path calls it).
+- `types.tw`: `MutVecBool` GC struct (`ArrayBool` + len).
+- `wasm_layout.tw`: `mutvec_i64_wasm_type()` → `mutvec_wasm_type(ElemRepr)`; the two backend `.MutVec(_)` arms dispatch on element family. (Gotcha for Phase 4: Bool and Byte both map to `ElemRepr.I32`, so that dispatch can't distinguish them — Byte needs its own repr/struct handling.)
 
-- [ ] **Step 1: Failing test.** Add a detector test asserting `region_count("fn f(n:Int) Vector<Bool> { xs := collect i in range(n) { i > 2 }; xs[0] = true; xs }")` is `1` (currently `0` — Bool not yet claimed). Run to see it fail.
-- [ ] **Step 2: Register bool ops + widen `elem_family` to Bool.** `make bundle-cli` fixed point.
-- [ ] **Step 3: Emit fixture.** Add `fixtures/mutvec_bool.tw` (collect-bool + indexed set + return); verify WAT shows `mutvec_*_bool` + one `mutvec_freeze_bool`, and flag/run result matches a boxed-baseline computation.
-- [ ] **Step 4: Gate.** boot-test green (the new detector test passes); self-host fixed point. Commit.
+- [x] **Step 1: Detector test** in `mutvec_region_suite.tw` (collect-bool + set + return → region_count 1, lowers to `mutvec_*_bool`).
+- [x] **Step 2: Register bool ops + `mutvec_families() += family_bool()`.** `make bundle-cli` fixed point.
+- [x] **Step 3: Fixture** `fixtures/mutvec_bool.tw` — collect-bool + indexed set + return; lowers to `mutvec_*_bool` + one `mutvec_freeze_bool`; self-checks against an independent boxed baseline ("OK 7").
+- [x] **Step 4: Gate.** 3411 boot tests; self-host fixed point; i64 behaviorally identical (fixed i64 programs identical modulo uniform builtin-id renumbering + the added struct). Side effect: the `phase8b_vector_set_nested` Vector<Bool> sieve now lowers to mutvec instead of the generic `set_in_place` — intended supersession; that test was updated (ArrayLit-seeded owned vectors stay unclaimed, so phase8a keeps set_in_place coverage).
 
 ---
 
