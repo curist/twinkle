@@ -1,7 +1,43 @@
-//! rt.arr — persistent bit-partitioned trie vector operations.
+//! rt.arr — codegen for the persistent-vector runtime (Wasm-GC).
 //!
-//! Mirrors stage0 src/runtime/arr.rs.
-//! Branching factor 32, tail buffer, O(log32 N) get/set, amortized O(1) push.
+//! This module *emits* the `rt.arr` runtime: each `*_fn()` builds a `FuncDef`
+//! of raw Wasm `Instr`s, and `module()` assembles them into the vector runtime
+//! linked into every compiled program. It is a peer of the stage0 emitter
+//! `src/runtime/arr.rs` — the two are independent but must stay behaviorally
+//! equivalent, which byte-identical emitted WAT guarantees.
+//!
+//! ## Data model
+//! A persistent vector is a 32-way (branching factor `rt_BF`) bit-partitioned
+//! trie with a tail buffer: O(log32 N) get/set, amortized O(1) push/drop_last.
+//! Internal nodes (`VecInternal`) hold `ref eq` children, so trie navigation is
+//! element-type-agnostic — only the leaf array and the PVec struct are typed.
+//! Relaxed (RRB) nodes carry a size table so unbalanced concat/slice stay
+//! O(log N); typed vectors are radix-only and rebuild instead of relaxing.
+//!
+//! ## Representation families
+//! The same trie backs several element representations:
+//!   - boxed  `PVec`     — `anyref` (`Array`) leaves; the universal form.
+//!   - i64    `PVecI64`  — unboxed `ArrayI64` leaves for `Vector<Int>`.
+//!   - bool   `PVecBool` — packed `ArrayBool` (i32) leaves for `Vector<Bool>`.
+//! Ops that read as one algorithm across families are emitted once by a
+//! `pvec_*_fn(f: PVecFamily)` builder, keyed off the family's type names,
+//! ValTypes, and the `leaf_store`/`elem_box` conversion hooks. Ops that
+//! genuinely diverge stay per-family — see the `PVecFamily` doc for the exact
+//! list and the reasons (relaxed-RRB vs radix, differing local models).
+//!
+//! ## Map of the file
+//!   - Constants, qualified type names, and ref-type helpers.
+//!   - Core trie ops: new_path / push_tail / do_set / get_leaf / wrap_leaf /
+//!     concat_trees / make_relaxed — the shared trie machinery.
+//!   - Public boxed API: make / push / set / set_in_place / slice / concat /
+//!     drop_last / pop_tail, plus from_array / to_array and friends.
+//!   - `PVecFamily` and the `pvec_*_fn` family builders shared across boxed,
+//!     i64, and bool.
+//!   - `MutVecI64`: a flat, unboxed, growable *mutable* vector (storage slice
+//!     1) emitted by the mutvec_region pass — a struct-of-array, not a trie.
+//!   - Typed sort (`VecElem` / `sort_typed`): a comparison-type axis over i64/f64.
+//!   - box/unbox boundary adapters between the boxed and typed representations.
+//!   - Builder machinery: a transient tail+trie builder for O(1) bulk construction.
 
 use compiler.codegen.wasm_ir.{ExportDef, FuncDef, Instr, ValType, WasmModule}
 
@@ -1183,6 +1219,30 @@ fn make_fn() FuncDef {
   }
 }
 
+// PVecFamily parameterizes the per-element-type persistent-vector runtime: one
+// pvec_*_fn(f) builder emits the boxed, i64, and bool variants of an op, keyed
+// off the family's type names, ValTypes, and the leaf_store/elem_box conversion
+// hooks. Ops that read as one algorithm across families live here.
+//
+// Deliberately NOT family-folded (do not "finish" these — they are not
+// duplication):
+//   - MutVecI64 (mutvec_*): a flat, non-trie mutable structure, not a PVec.
+//   - The boxed-only RRB structural ops (slice/concat/drop_last/pop_tail,
+//     append_centre/wrap_leaf/concat_trees): typed vectors are radix-only and
+//     rebuild instead of carrying relaxed nodes.
+//   - VecElem / sort_typed: a comparison-type axis, not a storage-family axis.
+//   - push / push_i64: same relaxed-vs-radix split — boxed push overflows via
+//     wrap_leaf+concat_trees (relaxed-capable) and stores the anyref directly;
+//     push_i64 pre-unboxes and overflows via promote_full_tail_i64 (radix).
+//   - promote_full_tail (boxed): wrap_leaf+concat_trees vs the family builder's
+//     radix push_tail; gather (boxed): pushes boxed values via builder_push
+//     with no raw pusher.
+//   - builder_push (boxed): uses promote_full_tail but stores the anyref param
+//     directly with no unbox scratch local (3 locals vs the typed 4), so it has
+//     a different local model than pvec_builder_push_fn.
+//   - unbox_i64 / unbox_bool: divergent push conventions (i64 pushes the boxed
+//     value into builder_push_i64; bool unboxes inline into builder_push_bool_raw),
+//     and coercion-boundary adapters the WAT gate never emits.
 type PVecFamily = .{
   len_name: String,
   get_name: String,
