@@ -263,14 +263,14 @@ flag was retired), the bulk-freeze made it a strict win at every mutation
 density, and boot's own two regions lower correctly (self-host fixed point).
 
 The deferred work is captured, with its real dependencies and value ranking, in
-**[docs/plans/mutvec-later-slices.md](mutvec-later-slices.md)**:
+**[docs/plans/mutvec-later-slices.md](../mutvec-later-slices.md)**:
 
 - `Bool` / `Float` / boxed element families — generalize the seven `mutvec_*`
-  ops over `PVecFamily` (depends on [rt-arr-family-dedup.md](rt-arr-family-dedup.md);
+  ops over `PVecFamily` (depends on [rt-arr-family-dedup.md](../rt-arr-family-dedup.md);
   Float additionally needs a typed `PVecF64`).
 - S4: thaw-from-`PVec` for param-sourced owned vectors (depends on the
   sound-uniqueness track).
 - Append-only-loop / `builder_region` unification (Approach A).
 
 The interim deep-module bailout guard added while landing this slice is
-superseded by [compiler-stack-safety.md](compiler-stack-safety.md) Phase 2.
+superseded by [compiler-stack-safety.md](../compiler-stack-safety.md) Phase 2.
