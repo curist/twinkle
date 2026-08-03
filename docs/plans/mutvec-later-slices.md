@@ -163,6 +163,10 @@ Goal: an owned `Vector<Bool>` region lowers to `MutVecBool` and freezes to `PVec
 
 Goal: owned `Vector<Float>` lowers to `MutVecF64` → `PVecF64`, and owned `Vector<Byte>` lowers to `MutVecByte` → `PVecByte`. **Land the typed-storage family first** (separate; the dedup plan's payoff), then the mutvec ride-along is the same shape as Phase 3. Float and Byte are **independent siblings of identical shape** — do whichever is wanted; doing both together is cheap and de-risks the family abstraction beyond i64/bool.
 
+**Scope decided 2026-08-04 — both families, Float first.** Each family is the **same subset Bool has**: typed reads (`get`/`len`) + `collect`/`make`/`builder_*`/`box`/`gather` + the mutvec ride-along. It does **not** include the full `set_in_place` write-routing (that is i64-only today; extending it to Float/Byte is tracked as **Phase 6** below). Two decisions from the scoping discussion:
+- **Float is clean:** `ArrayF64`, `BoxedFloat`, and the sort-axis `elem_f64()` already exist, and `ElemRepr.F64` is distinct — the `mutvec_wasm_type` dispatch already has an `.F64` arm. No new GC array type, no collision.
+- **Byte needs the `ElemRepr` collision fix:** `candidate_typed_vec_family` maps both `Vector<Bool>` and `Vector<Byte>` to `ElemRepr.I32`, so the mutvec-handle wasm-type dispatch can't tell them apart. Resolve by **extending `ElemRepr` with a distinct `Byte` variant** (repr_policy). This lives **entirely in the transient mutvec-handle domain** — `ElemRepr` is only really consumed by `mutvec_wasm_type` (`ReprKind.TypedVec(ElemRepr)` is inert; durable typed reads take their wasm type from the mono, and route types durable slots from `fi.fam.pvec_type`). So it is **orthogonal to `physical-repr-planner-refactor.md`**, whose doctrine explicitly excludes mutvec transient handles from `PhysPlan`. That refactor is not a prerequisite: route's durable typed-read path is already family-generic (iterates `all_families()`), so adding Float/Byte durable reads is just `all_families()`/`ElemFamily` entries.
+
 Per-family typed-storage prerequisite (each its own mini-slice; gate = boot-test + fixed point):
 - **Float:** `rt_types__PVecF64` struct + `family_float()` + get/make/builder ops + route recognizing `builder_freeze_f64`. `ArrayF64` already exists; boxing is `BoxedFloat`.
 - **Byte:** define `ArrayByte` = `array i8` in `types.tw` (the one genuinely new GC type — native `array.new`/`get_u`/`set`), then `rt_types__PVecByte` struct + `family_byte()` + get/make/builder ops + route recognizing `builder_freeze_byte`. `elem_ty` is `.I32` (i8 read via `array.get_u`); boxing is `ref.i31`, so `leaf_store`/`elem_box` **reuse bool's** (`RefCast(.I31)`+`I31GetU` / `RefI31`). Verify a boxed `Vector<Byte>` (e.g. a `readfile` result) round-trips through the typed rep. Note the Buffer relationship (value-ranking row): this is the in-language byte path, not a Buffer replacement.
@@ -186,6 +190,22 @@ Goal: an owned `Vector<T>` for reference `T` (records/strings/nested vectors) wi
 
 - [ ] **Step 1: Decide with a bench, not on principle.** Write a mutation-heavy `Vector<record>` bench; if MutVec-boxed doesn't clear a meaningful margin over the persistent path, **stop here and leave boxed deferred** — record the number.
 - [ ] **Step 2 (only if the bench justifies it):** register boxed ops, widen `elem_family`, add fixtures, gate. Watch aliasing: the region detector already requires the vector handle owned/non-escaping, so a mutable ref array is sound; confirm no element-aliasing assumption is introduced.
+
+---
+
+## Phase 6 (deferred, tracked): extend in-place write routing (`set_in_place`) to Float/Byte
+
+**Depends on:** Phase 4 (the Float/Byte typed `PVec` families). Independent of Phase 5. Deferred, but tracked here so the Float/Byte write story is complete rather than silently i64-only.
+
+**The gap it closes (perf parity, not correctness).** Phase 4 gives Float/Byte the mutvec fast path for **owned, locally-born** (collect/make) indexed-write regions — the sieve / numeric-buffer case. It does **not** cover owned typed vectors that mutvec can't claim: a uniquely-owned `Vector<Float>` arriving as a **parameter**, or written outside a claimable region. i64 has a second fast path for those — route's typed functional `set` promoted to `set_in_place` when the base is provably unique (the `typed_vector_write` track). For Float/Byte those writes stay **persistent** (boxed rebuild) after Phase 4 — always correct, just not in-place. This phase gives Float/Byte the same second path.
+
+**This is the `typed_vector_write` / 8C-Plan-4 track**, tracked here for the Float/Byte completeness story. The machinery is i64-specific today:
+- `route_typed_vec.tw`: `FamilyIds.set` is `if f.mono_key == "vec_i64" { set_i64 } else { -1 }`; the write-result group closure (`compute_eligible_v` step 2e; `collect_write_results`, gated `fi.fam.mono_key == "vec_i64"`) — generalize both to a per-family typed `set` id.
+- `arr.tw`: register `family_float()/family_byte()` `.pvec_set_fn()` / `.pvec_set_in_place_fn()` / `.pvec_do_set_fn()` / `.pvec_get_leaf_fn()` (family-generated; Bool intentionally skips these).
+- `builtins.tw`: `set_<fam>` / `set_in_place_<fam>` ABI + rt() (appended at END).
+- Confirm the ownership decision-remap (`SwappedSetSite` → in-place, from `project_typed_vector_write`) is family-agnostic or generalize it.
+
+Steps: [ ] register per-family set / set_in_place ops; [ ] generalize route's `FamilyIds.set` + write-result group off the `"vec_i64"` literal; [ ] fixture: an owned param-sourced `Vector<Float>` indexed write emits `set_in_place_f64` (not persistent `set`); [ ] gate = fixed point + boot-test + i64/bool byte-neutral (normalized WAT).
 
 ---
 
