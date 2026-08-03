@@ -4,6 +4,7 @@
 //! This is the single source of truth — no shadow metadata.
 
 use compiler.backend.context.{BackendContext}
+use compiler.backend.repr_policy.{ElemRepr}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.core_ir.{FieldId, VariantId}
 use compiler.elem_family.{elem_family_of}
@@ -489,12 +490,18 @@ fn val_type_key(layout: WasmLayout) String {
   }
 }
 
-// Physical wasm type of a MutVecI64 handle slot (storage slice 1). Distinct from
-// val_type_of_mono(Vector<Int>) — which yields PVecI64 — because the semantic mono
-// stays Vector<Int> while the handle is physically a mutable MutVecI64 across its
-// region. ReprKind.MutVec slots lower to this; the freeze materializes to PVecI64.
-pub fn mutvec_i64_wasm_type() ValType {
-  .Ref(true, .Named("rt_types__MutVecI64"))
+// Physical wasm type of a MutVec handle slot, per element family. Distinct from
+// val_type_of_mono(Vector<T>) — which yields PVec<Fam> — because the semantic mono
+// stays Vector<T> while the handle is physically a mutable MutVec<Fam> across its
+// region. ReprKind.MutVec(elem) slots lower to this; the freeze materializes to
+// PVec<Fam>. `.F64` is reserved (no MutVecF64 struct until that family lands).
+pub fn mutvec_wasm_type(elem: ElemRepr) ValType {
+  name := case elem {
+    .I64 => "rt_types__MutVecI64",
+    .I32 => "rt_types__MutVecBool",
+    .F64 => "rt_types__MutVecF64",
+  }
+  .Ref(true, .Named(name))
 }
 
 // ── val_type_of_mono ────────────────────────────────────────────────

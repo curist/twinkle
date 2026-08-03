@@ -86,7 +86,7 @@ pub fn elem_family_of(mono: MonoType) ElemFamily? {
 // mutvec write ops). Widen as each family's mutvec_* ops land (Int now;
 // Bool/Float/Byte later per docs/plans/mutvec-later-slices.md).
 pub fn mutvec_families() Vector<ElemFamily> {
-  [family_i64()]
+  [family_i64(), family_bool()]
 }
 
 // The mutvec-claimable builtin-name suffix for a vector element MonoType, or

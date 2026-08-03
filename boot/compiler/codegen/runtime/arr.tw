@@ -179,6 +179,21 @@ vi_CHILDREN := 0
 vi_SIZES := 1
 
 // ── Module ──────────────────────────────────────────────────────────
+// The seven mutvec runtime ops for one element family, so adding a family is one
+// `.concat(mutvec_fns(family_X()))` below rather than seven lines. i64 stays
+// listed inline to keep its emitted function indices (byte-identity gate).
+fn mutvec_fns(f: PVecFamily) Vector<FuncDef> {
+  [
+    f.pvec_mutvec_new_fn(),
+    f.pvec_mutvec_make_fn(),
+    f.pvec_mutvec_push_fn(),
+    f.pvec_mutvec_set_fn(),
+    f.pvec_mutvec_get_fn(),
+    f.pvec_mutvec_len_fn(),
+    f.pvec_mutvec_freeze_fn(),
+  ]
+}
+
 pub fn module() WasmModule {
   funcs := [
     tailoff_fn(),
@@ -242,6 +257,9 @@ pub fn module() WasmModule {
     family_bool().pvec_len_fn(),
     family_bool().pvec_get_fn(),
     family_bool().pvec_promote_full_tail_fn(),
+    // mutvec_freeze_bool's slow path calls builder_append_leaf_range_bool (the
+    // bulk-freeze route), so it must be emitted like the i64 family's.
+    family_bool().pvec_builder_append_leaf_range_fn(),
     family_bool().pvec_builder_new_fn(),
     family_bool().pvec_builder_push_fn(),
     family_bool().pvec_builder_push_raw_fn(),
@@ -261,7 +279,7 @@ pub fn module() WasmModule {
     to_array_fn(),
     from_read_file_result_fn(),
     make_empty_fn(),
-  ]
+  ].concat(family_bool().mutvec_fns())
   exports := collect f in funcs {
     ExportDef.{ wasm_name: f.name, func_sym: f.name }
   }

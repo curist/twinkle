@@ -436,6 +436,26 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "rewrite: collect Vector<Bool> region lowers to bool mutvec ops + single freeze",
+      fn() {
+        src := "fn f(n: Int) Vector<Bool> {\n  xs := collect i in range(n) { i > 2 }\n  xs[0] = true\n  xs\n}\nprintln(f(5).len().to_string())\n"
+        try assert.equal(region_count(src), 1)
+
+        // builder_new -> mutvec_new_bool, loop builder_push -> mutvec_push_bool,
+        // indexed set -> mutvec_set_bool, single boundary freeze -> mutvec_freeze_bool.
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_new_bool"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_push_bool"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_set_bool"), 1)
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_freeze_bool"), 1)
+
+        // No i64 mutvec ops, and the boxed builder + set are fully replaced.
+        try assert.equal(rewritten_calls(src, "vector$__mutvec_set_i64"), 0)
+        try assert.equal(rewritten_calls(src, "vector$builder_freeze"), 0)
+        try assert.equal(rewritten_calls(src, "vector$set_unsafe"), 0)
+        .Ok({})
+      },
+    )
+    .test(
       "rewrite: unclaimed (append-only) region emits no mutvec ops",
       fn() {
         src := "fn f(n: Int) Vector<Int> {\n  acc: Vector<Int> = []\n  for i in range(n) { acc = acc.append(i) }\n  acc\n}\nprintln(f(5).len().to_string())\n"

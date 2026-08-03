@@ -81,6 +81,18 @@ pub fn module() WasmModule {
         .None,
         true,
       ),
+      // MutVecBool — bool sibling of MutVecI64 (mutvec later-slices Phase 3).
+      // Backed by ArrayBool (array i32); the mutvec_region pass lowers proven-owned
+      // Vector<Bool> regions into this and freezes back to PVecBool at the boundary.
+      .Struct(
+        "MutVecBool",
+        [
+          .{ name: .Some("data"), mutable: true, ty: .Ref(false, .Named("ArrayBool")) },
+          .{ name: .Some("len"), mutable: true, ty: .I32 },
+        ],
+        .None,
+        true,
+      ),
       .Struct(
         "HamtEntry",
         [

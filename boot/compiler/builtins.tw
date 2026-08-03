@@ -102,6 +102,14 @@ fn mutvec_() ValType {
   ref_nn("rt_types__MutVecI64")
 }
 
+fn mutvec_bool_n() ValType {
+  ref_null("rt_types__MutVecBool")
+}
+
+fn mutvec_bool_() ValType {
+  ref_nn("rt_types__MutVecBool")
+}
+
 fn dict_n() ValType {
   ref_null("rt_types__PDict")
 }
@@ -130,7 +138,69 @@ fn abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
   AbiContract.{ param_types: params, result_types: results }
 }
 
+// One MutVec element family's wiring inputs. Adding a family (Float/Byte/...) is
+// a single entry here plus its GC struct + runtime ops + `mutvec_families()` —
+// the ABI and rt() registration below are generated from this, no per-op churn.
+type MutVecFamilySpec = .{
+  suffix: String, // "_i64" / "_bool"
+  elem: ValType, // element param/result ValType (.I64 / .I32)
+  mv_null: ValType, // ref null MutVec<Fam> (arg0)
+  mv_nn: ValType, // ref MutVec<Fam> (results)
+  pvec_nn: ValType, // ref PVec<Fam> (freeze result)
+}
+
+fn mutvec_specs() Vector<MutVecFamilySpec> {
+  [
+    .{ suffix: "_i64", elem: .I64, mv_null: mutvec_n(), mv_nn: mutvec_(), pvec_nn: pvec_i64_() },
+    .{
+      suffix: "_bool",
+      elem: .I32,
+      mv_null: mutvec_bool_n(),
+      mv_nn: mutvec_bool_(),
+      pvec_nn: pvec_bool_(),
+    },
+  ]
+}
+
+// ABI for any `vector$__mutvec_<op><suffix>` op, generated from its family spec.
+// `.None` for non-mutvec names, so `builtin_abi` falls through to its name case.
+fn mutvec_abi(name: String) AbiContract? {
+  for s in mutvec_specs() {
+    cond {
+      name == "vector$__mutvec_new${s.suffix}" => return .Some(abi([.I32], [s.mv_nn])),
+      name == "vector$__mutvec_make${s.suffix}" => return .Some(abi([.I32, s.elem], [s.mv_nn])),
+      name == "vector$__mutvec_push${s.suffix}" => return .Some(abi([s.mv_null, s.elem], [s.mv_nn])),
+      name == "vector$__mutvec_set${s.suffix}" => return .Some(
+        abi([s.mv_null, .I32, s.elem], [s.mv_nn]),
+      ),
+      name == "vector$__mutvec_get${s.suffix}" => return .Some(abi([s.mv_null, .I32], [s.elem])),
+      name == "vector$__mutvec_len${s.suffix}" => return .Some(abi([s.mv_null], [.I32])),
+      name == "vector$__mutvec_freeze${s.suffix}" => return .Some(abi([s.mv_null], [s.pvec_nn])),
+      _ => {},
+    }
+  }
+  .None
+}
+
+// rt() registration for one family's seven mutvec ops. Appended at the END of
+// builtin_specs (preserving earlier FuncIds); i64 stays grandfathered inline.
+fn mutvec_rt_defs(suffix: String) Vector<BuiltinSpec> {
+  [
+    rt("vector$__mutvec_new${suffix}", "rt.arr", "mutvec_new${suffix}", .None),
+    rt("vector$__mutvec_make${suffix}", "rt.arr", "mutvec_make${suffix}", .None),
+    rt("vector$__mutvec_push${suffix}", "rt.arr", "mutvec_push${suffix}", .None),
+    rt("vector$__mutvec_set${suffix}", "rt.arr", "mutvec_set${suffix}", .None),
+    rt("vector$__mutvec_get${suffix}", "rt.arr", "mutvec_get${suffix}", .None),
+    rt("vector$__mutvec_len${suffix}", "rt.arr", "mutvec_len${suffix}", .None),
+    rt("vector$__mutvec_freeze${suffix}", "rt.arr", "mutvec_freeze${suffix}", .None),
+  ]
+}
+
 fn builtin_abi(name: String) AbiContract {
+  case mutvec_abi(name) {
+    .Some(found) => return found,
+    .None => {},
+  }
   case name {
     // Runtime helpers
     "__print_string" => abi([str_n()], []),
@@ -161,13 +231,6 @@ fn builtin_abi(name: String) AbiContract {
     "vector$builder_freeze_i64" => abi([arr_n()], [pvec_i64_()]),
     "vector$set_i64" => abi([pvec_i64_n(), .I32, .Anyref], [pvec_i64_()]),
     "vector$set_in_place_i64" => abi([pvec_i64_n(), .I32, .Anyref], [pvec_i64_()]),
-    "vector$__mutvec_new_i64" => abi([.I32], [mutvec_()]),
-    "vector$__mutvec_make_i64" => abi([.I32, .I64], [mutvec_()]),
-    "vector$__mutvec_push_i64" => abi([mutvec_n(), .I64], [mutvec_()]),
-    "vector$__mutvec_set_i64" => abi([mutvec_n(), .I32, .I64], [mutvec_()]),
-    "vector$__mutvec_get_i64" => abi([mutvec_n(), .I32], [.I64]),
-    "vector$__mutvec_len_i64" => abi([mutvec_n()], [.I32]),
-    "vector$__mutvec_freeze_i64" => abi([mutvec_n()], [pvec_i64_()]),
     "vector$len_bool" => abi([pvec_bool_n()], [.I32]),
     "vector$get_bool" => abi([pvec_bool_n(), .I32], [.I32]),
     "vector$builder_new_bool" => abi([], [arr_()]),
@@ -643,7 +706,7 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     // user source. Behavioral coverage arrives via promoted-region fixtures.
     rt("vector$set_i64", "rt.arr", "set_i64", .None),
     rt("vector$set_in_place_i64", "rt.arr", "set_in_place_i64", .None),
-  ]
+  ].concat(mutvec_rt_defs("_bool"))
 }
 
 // ── Full registry ──

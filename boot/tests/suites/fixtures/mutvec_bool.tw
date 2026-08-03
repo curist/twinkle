@@ -1,0 +1,49 @@
+// Bool MutVec fixture (mutvec later-slices Phase 3). A collect-born Vector<Bool>
+// mutated by index and returned is a claimable region, lowering to mutvec_*_bool
+// with a single boundary freeze (asserted structurally in mutvec_region_suite).
+// This runs the lowered path and cross-checks its result against an independent
+// boxed computation that is never a claimable region.
+//
+//   target/twk run <this file>                          # -> deterministic OK <count>
+//   target/twk wat <this file> --func from_collect --calls  # mutvec_new/push/set_bool + 1 freeze
+// collect-born, indexed set, returned -> claimable bool region.
+fn from_collect(n: Int) Vector<Bool> {
+  xs := collect i in range(n) {
+    i % 3 == 0
+  }
+  xs[0] = false
+  xs[1] = true
+  xs
+}
+
+// Independent reference: the same logical vector built without any indexed write,
+// so it is never a claimable region and stays on the persistent/boxed path.
+fn reference(n: Int) Vector<Bool> {
+  collect i in range(n) {
+    cond {
+      i == 0 => false,
+      i == 1 => true,
+      _ => i % 3 == 0,
+    }
+  }
+}
+
+fn count_true(xs: Vector<Bool>) Int {
+  t := 0
+  for i in range(xs.len()) {
+    if xs[i] {
+      t = t + 1
+    }
+  }
+  t
+}
+
+n := 20
+got := from_collect(n)
+want := reference(n)
+ok := got.len() == want.len() and count_true(got) == count_true(want)
+println(if ok {
+  "OK ${count_true(got).to_string()}"
+} else {
+  "MISMATCH"
+})
