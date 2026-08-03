@@ -85,7 +85,7 @@ fn variant_specialize_enabled() Bool {
 
 // MutVec region lowering is default-OFF (opt-in via TWINKLE_MUTVEC=1) while the
 // slice is being built, so self-host and unclaimed codegen stay byte-identical.
-fn mutvec_region_enabled() Bool {
+pub fn mutvec_region_enabled() Bool {
   case proc.env("TWINKLE_MUTVEC") {
     .Some("1") => true,
     _ => false,

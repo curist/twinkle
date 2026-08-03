@@ -322,28 +322,33 @@ fn eligible(f: AnfFunctionDef, h: LocalId, defs: Dict<Int, AnfOp>, ids: OpIds) M
 }
 
 // ── Candidate handles: every distinct base local of a vector$set_unsafe call ──
-fn collect_set_bases(e: AnfExpr, ids: OpIds, seen: Dict<Int, Bool>, out: Vector<LocalId>) Vector<
-  LocalId,
-> {
+// Dedup is against the threaded `out` accumulator, not a side Dict: a Twinkle
+// Dict is persistent, so a `seen[id]=true` mutation would not survive across the
+// Let-chain (only `out` is returned), and a handle written twice would be
+// collected — and then rewritten — twice. Membership scans `out`, which is tiny.
+fn base_seen(out: Vector<LocalId>, id: Int) Bool {
+  for b in out {
+    if b.id == id {
+      return true
+    }
+  }
+  false
+}
+
+fn collect_set_bases(e: AnfExpr, ids: OpIds, out: Vector<LocalId>) Vector<LocalId> {
   case e {
-    .Let(_, op, body) => {
-      r := collect_set_bases_in_op(op, ids, seen, out)
-      collect_set_bases(body, ids, seen, r)
-    },
+    .Let(_, op, body) => collect_set_bases(body, ids, collect_set_bases_in_op(op, ids, out)),
     _ => out,
   }
 }
 
-fn collect_set_bases_in_op(op: AnfOp, ids: OpIds, seen: Dict<Int, Bool>, out: Vector<LocalId>) Vector<
-  LocalId,
-> {
+fn collect_set_bases_in_op(op: AnfOp, ids: OpIds, out: Vector<LocalId>) Vector<LocalId> {
   case op {
     .ACall(.AGlobalFunc(f), args) => if f.id == ids.set_unsafe.id and args.len() == 3 {
       case args[0] {
-        .ALocal(base) => if seen.has(base.id) {
+        .ALocal(base) => if base_seen(out, base.id) {
           out
         } else {
-          seen[base.id] = true
           out.append(base)
         },
         _ => out,
@@ -351,23 +356,23 @@ fn collect_set_bases_in_op(op: AnfOp, ids: OpIds, seen: Dict<Int, Bool>, out: Ve
     } else {
       out
     },
-    .AIf(_, t, e) => collect_set_bases(e, ids, seen, collect_set_bases(t, ids, seen, out)),
+    .AIf(_, t, e) => collect_set_bases(e, ids, collect_set_bases(t, ids, out)),
     .AMatch(_, arms) => {
       cur := out
       for arm in arms {
-        cur = collect_set_bases(arm.body, ids, seen, cur)
+        cur = collect_set_bases(arm.body, ids, cur)
       }
       cur
     },
-    .ALoop(b) => collect_set_bases(b, ids, seen, out),
-    .ADefer(b) => collect_set_bases(b, ids, seen, out),
+    .ALoop(b) => collect_set_bases(b, ids, out),
+    .ADefer(b) => collect_set_bases(b, ids, out),
     _ => out,
   }
 }
 
 fn detect_in_func(f: AnfFunctionDef, ids: OpIds) Vector<MutVecRegion> {
   defs := collect_defs(f.body, Dict.new())
-  bases := collect_set_bases(f.body, ids, Dict.new(), [])
+  bases := collect_set_bases(f.body, ids, [])
   regions: Vector<MutVecRegion> = []
   for h in bases {
     case eligible(f, h, defs, ids) {

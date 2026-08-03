@@ -12,6 +12,7 @@ use compiler.codegen.codegen
 use compiler.codegen.dry_run
 use compiler.codegen.mutable_audit
 use compiler.codegen.mutable_produce
+use compiler.codegen.mutvec_region
 use compiler.codegen.ownership_verdicts
 use compiler.codegen.variant_specialize
 use compiler.ir_print
@@ -132,6 +133,83 @@ fn render_region_rows(
   out
 }
 
+fn mutvec_producer_name(p: mutvec_region.MutVecProducer) String {
+  case p {
+    .CollectSeed => "collect",
+    .MakeSeed => "make",
+    .ArrayLitSeed => "arraylit",
+  }
+}
+
+fn mutvec_op_kind_name(k: mutvec_region.MutVecOpKind) String {
+  case k {
+    .Set => "set",
+    .Push => "push",
+    .Get => "get",
+    .Len => "len",
+  }
+}
+
+fn mutvec_op_sites(r: mutvec_region.MutVecRegion) String {
+  fs := "["
+  for site, i in r.op_sites {
+    entry := "${mutvec_op_kind_name(site.kind)}@L${site.site.id}"
+    fs = .concat(
+      if i > 0 {
+        ",${entry}"
+      } else {
+        entry
+      },
+    )
+  }
+  fs = .concat("]")
+  fs
+}
+
+fn mutvec_proof_present(rs: Vector<mutvec_region.MutVecRegion>, proof_id: String) Bool {
+  for r in rs {
+    if r.proof_id == proof_id {
+      return true
+    }
+  }
+  false
+}
+
+/// Render the MutVec region-audit table: one additive row per claimed
+/// `MutVec(I64)` region, sourced from `mutvec_region.detect_regions`. `consumed`
+/// reports whether `rewrite_module` ACTUALLY lowered the region — a consumed
+/// region no longer detects (its `set_unsafe` base became `mutvec_set_i64`),
+/// while a produced-but-abandoned region still detects, so it reads "no". `exit`
+/// is `freeze` when the handle escapes at a single return boundary (materialized)
+/// or `scratch` when it is a pure local buffer never published (no freeze). Flag-
+/// independent by design: the census caller gates it behind `TWINKLE_MUTVEC`.
+pub fn render_mutvec_rows(artifacts: PipelineArtifacts) String {
+  b := artifacts.builtins
+  regions := mutvec_region.detect_regions(artifacts.opt, b)
+  if regions.len() == 0 {
+    return ""
+  }
+  post := mutvec_region.detect_regions(mutvec_region.rewrite_module(artifacts.opt, b), b)
+  out := "\nmutvec regions:\nregion_id\tbegin_site\tfamily\top_sites\texit\twould_use\tconsumed\n"
+  for r in regions {
+    consumed := if mutvec_proof_present(post, r.proof_id) {
+      "no"
+    } else {
+      "yes"
+    }
+    exit := if r.escapes {
+      "freeze"
+    } else {
+      "scratch"
+    }
+    begin_site := "${mutvec_producer_name(r.producer)}@L${r.handle.id}"
+    out = .concat(
+      "${r.proof_id}\t${begin_site}\tMutVecI64\t${mutvec_op_sites(r)}\t${exit}\tyes\t${consumed}\n",
+    )
+  }
+  out
+}
+
 /// Render `--census` output: the family tally, plus (when `include_sites`) the
 /// update-site dry-run table joining candidates with ownership verdicts.
 /// Replaces the old per-site `census.render_sites` listing.
@@ -185,6 +263,12 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
     if fb_rows.len() > 0 {
       out = .concat("\nfield-backed decisions\n")
       out = .concat(mutable_produce.render_candidate_rows(fb_rows))
+    }
+
+    // MutVec region audit (additive): only when TWINKLE_MUTVEC is enabled, since
+    // the pass is inert flag-off and would otherwise report regions nothing emits.
+    if codegen.mutvec_region_enabled() {
+      out = .concat(render_mutvec_rows(artifacts))
     }
   }
   out

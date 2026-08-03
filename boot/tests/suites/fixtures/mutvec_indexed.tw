@@ -1,0 +1,39 @@
+// Census fixture for the MutVec region-audit rows (Task 12).
+//
+// Two claimable MutVec(I64) regions in one module:
+//   `build`   — collect-born, indexed set + index read + len, RETURNED (escapes
+//               -> boundary freeze -> exit=freeze).
+//   `reduce`  — Vector.make-born, indexed set + read-reduced to a scalar, never
+//               published (a pure scratch buffer -> exit=scratch, no freeze).
+//
+// Under TWINKLE_MUTVEC=1 the `--census --sites` view must print a `mutvec
+// regions:` section with one row per region (region_id, begin_site, family,
+// op_sites, exit, would_use, consumed). Flag-off, no mutvec rows appear.
+//
+//   TWINKLE_MUTVEC=1 target/twk ir <this file> --census --sites   # -> mutvec rows
+//   target/twk ir <this file> --census --sites                    # -> no mutvec rows
+fn build(n: Int) Vector<Int> {
+  xs := collect i in range(n) {
+    i
+  }
+  xs[0] = xs[1]
+  m := xs.len()
+  xs[m - 1] = m
+  xs
+}
+
+fn reduce(n: Int) Int {
+  ys := Vector.make(n, 0)
+  ys[0] = 9
+  t := 0
+  for i in range(ys.len()) {
+    t = t + ys[i]
+  }
+  t
+}
+
+fn main() Int {
+  build(5).len() + reduce(4)
+}
+
+println(main().to_string())
