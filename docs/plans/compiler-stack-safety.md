@@ -153,7 +153,59 @@ codegen. So a partial fix only moves the wall.
   elimination, preserving correctness while avoiding a crash. Continue replacing
   the remaining recursive optimizer walkers so this fallback can be removed.
 - **Phase 2:** Make `prepare` + `emit_expr` stack-safe, and finish any remaining
-  general-recursion gaps in `lower_anf`.
+  general-recursion gaps in `lower_anf`. **The `prepare` typed-vector routing
+  bailout is now a correctness item, not just a missed optimization — see
+  "Phase 2 detail" below.**
+
+### Phase 2 detail: the `prepare` typed-vector routing bailout (now a correctness concern)
+
+`prepare_backend_with_mutable_decisions` (`backend/prepare.tw:203`) guards the
+recursive typed-vector analyses with a **module-wide** early return: if *any*
+function's prepared depth exceeds 512, the whole module skips
+`analyze_typed_repr` + `route_typed_vectors` and falls back to persistent/boxed.
+For the ordinary typed-vector path this is a safe (if coarse) missed
+optimization. **For MutVec it is a soundness hole:** the MutVec rewrite runs
+earlier (codegen) and commits to `mutvec_*` ops whose handle slots have **no
+valid boxed form**, so skipping the repr handoff left them boxed and produced a
+runtime `illegal cast` (diagnosed 2026-08-03 on branch `mutvec-slice1-phase4`:
+`owned indexed set` compiled fine in isolation but the full test suite has a
+>512-deep function, tripping the module-wide bailout and force-boxing every
+function including the shallow MutVec ones).
+
+Interim stopgap already shipped on `mutvec-slice1-phase4`: `prepare.tw` also
+calls `mutvec_repr.assign_mutvec_reprs` inside the bailout branch so handle slots
+are never left boxed. It is correct but re-walks deep functions recursively (a
+smaller instance of the very risk the bailout exists for). **This phase
+supersedes and removes that stopgap.**
+
+Concrete work for this phase (all validated by the **byte-identical WAT** gate —
+these are pure traversal-order refactors, so `boot/main.tw`'s emitted WAT must be
+unchanged; capture `shasum` before, compare after each commit):
+
+1. Convert the spine-recursive `PreparedExpr` walkers in
+   `backend/route_typed_vec.tw` (~30: `build_copy_map`, the `collect_*_results`
+   / `collect_*_reads` / `collect_candidates` / `collect_swapped_set_sites`
+   families, `classify_expr`, …), `backend/typed_param_abi.tw`
+   (`collect_make_closure_sites`, `return_atom_slots_expr`, `analyze_typed_params`,
+   `analyze_typed_captures`), and `backend/mutvec_repr.tw` (`seed_expr`,
+   `propagate_expr`) from spine recursion to iteration. Recipe (identical to
+   `prepared_depth_exceeds_at`): the `.Let(slot, op, body) => …self(body, acc')`
+   tail becomes `cur = body` inside a `for !done` loop with a rebound accumulator;
+   the base arm sets `done = true`; the `_op` helpers that recurse only into
+   control-flow children (`AIf`/`AMatch`/`ALoop`/`ADefer`) stay recursive (bounded
+   by nesting, not spine length). One walker per commit so a byte-identical
+   regression is bisectable.
+2. Narrow `prepare.tw:203` from a module-wide early return to a **per-function**
+   guard: thread a `deep_funcs` set (funcs still over a raised, control-flow-only
+   limit) into routing so only those functions stay boxed while the rest of the
+   module optimizes. `mutvec_repr.assign_mutvec_reprs` stays on the main path
+   (now stack-safe after the `seed`/`propagate` conversion).
+3. Remove the interim MutVec bailout guard (step above) once (1)+(2) land.
+
+Acceptance for this sub-phase: a deep-spine function coexisting with a claimable
+MutVec/typed region compiles without overflow **and** the region still optimizes
+(not force-boxed); `TWINKLE_MUTVEC=1` full boot-suite runs with no `illegal
+cast`; self-host fixed point holds; byte-identical WAT for non-deep modules.
 - **Phase 3:** Make the serializers (`wasm.tw` `encode_instrs_cached` +
   `collect_ref_funcs_instr`; `wat.tw` `emit_instr`) iterative. The binary
   serializer prototype from this session is a good starting point.

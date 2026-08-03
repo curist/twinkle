@@ -201,10 +201,23 @@ pub fn prepare_backend_with_mutable_decisions(
   pre := prepare_backend_preroute(anf, env, builtins, closure_captures)
 
   if prepared_funcs_depth_exceeds(pre.funcs, 512) {
+    // Deep-module fallback: skip typed-vector routing to stay stack-safe. But the
+    // mutvec rewrite already committed to `mutvec_*` ops upstream (in codegen),
+    // and the handle slots have no valid boxed representation — leaving them at
+    // the default boxed `Vector<Int>` repr makes the emitter `ref.cast` a
+    // `MutVecI64` value to the boxed PVec slot, which traps. So the mutvec repr
+    // handoff MUST run even here (route owns only the freeze *result*, which has a
+    // sound boxed fallback via box_i64, so skipping route reboxes rather than
+    // traps). A no-op for modules with no mutvec op.
+    //
+    // INTERIM STOPGAP: this call re-walks deep functions recursively, a smaller
+    // instance of the stack risk this bailout exists to avoid. It is superseded
+    // by docs/plans/compiler-stack-safety.md Phase 2 (make the routing walkers
+    // iterative + narrow this bailout to per-function), which removes it.
     return .{
       anf: pre.anf,
       closure_captures,
-      funcs: pre.funcs,
+      funcs: mutvec_repr.assign_mutvec_reprs(pre.funcs, env, builtins),
       typed_vector_fields: Dict.new(),
       typed_vector_payloads: Dict.new(),
       mutable_decisions,
