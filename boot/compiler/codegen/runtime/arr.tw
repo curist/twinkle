@@ -163,8 +163,8 @@ pub fn module() WasmModule {
     promote_full_tail_fn(),
     make_fn(),
     family_boxed().pvec_get_fn(),
-    set_fn(),
-    set_in_place_fn(),
+    family_boxed().pvec_set_fn(),
+    family_boxed().pvec_set_in_place_fn(),
     family_boxed().pvec_len_fn(),
     concat_fn(),
     slice_trim_right_fn(),
@@ -198,9 +198,9 @@ pub fn module() WasmModule {
     mutvec_freeze_i64_fn(),
     push_i64_fn(),
     family_i64().pvec_get_leaf_fn(),
-    set_in_place_i64_fn(),
+    family_i64().pvec_set_in_place_fn(),
     family_i64().pvec_do_set_fn(),
-    set_i64_fn(),
+    family_i64().pvec_set_fn(),
     box_i64_fn(),
     unbox_i64_fn(),
     family_bool().pvec_len_fn(),
@@ -1653,6 +1653,126 @@ fn pvec_do_set_fn(f: PVecFamily) FuncDef {
   }
 }
 
+// set/set_i64(vec, idx, val) -> PVec (functional; rebuilds the tail or trie path)
+fn pvec_set_fn(f: PVecFamily) FuncDef {
+  // p0=vec, p1=idx, p2=val, L3=tailoff, L4=new_tail
+  tail_pre: Vector<Instr> = [
+    f.zero_value,
+    .LocalGet(0),
+    .RefAsNonNull,
+    .StructGet(f.pvec_ty, pv_TAIL),
+    .ArrayLen,
+    .ArrayNew(f.arr_ty),
+    .LocalSet(4),
+    .LocalGet(4),
+    .RefAsNonNull,
+    .I32Const(0),
+    .LocalGet(0),
+    .RefAsNonNull,
+    .StructGet(f.pvec_ty, pv_TAIL),
+    .I32Const(0),
+    .LocalGet(0),
+    .RefAsNonNull,
+    .StructGet(f.pvec_ty, pv_TAIL),
+    .ArrayLen,
+    .ArrayCopy(f.arr_ty, f.arr_ty),
+    .LocalGet(4),
+    .RefAsNonNull,
+    .LocalGet(1),
+    .LocalGet(3),
+    .I32Sub,
+    .LocalGet(2),
+  ]
+  tail_then := tail_pre
+    .concat(f.leaf_store)
+    .concat([
+      .ArraySet(f.arr_ty),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(f.pvec_ty, pv_LEN),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(f.pvec_ty, pv_SHIFT),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(f.pvec_ty, pv_ROOT),
+      .LocalGet(4),
+      .RefAsNonNull,
+      .StructNew(f.pvec_ty),
+    ])
+
+  .{
+    name: "set${f.suffix}",
+    params: [f.pvec_null, .I32, .Anyref],
+    results: [f.pvec_ref],
+    locals: [.I32, f.arr_null],
+    body: [
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(f.pvec_ty, pv_LEN),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(f.pvec_ty, pv_TAIL),
+      .ArrayLen,
+      .I32Sub,
+      .LocalSet(3),
+      .LocalGet(1),
+      .LocalGet(3),
+      .I32GeS,
+      .If(
+        .Some(f.pvec_ref),
+        tail_then,
+        [
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(f.pvec_ty, pv_LEN),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(f.pvec_ty, pv_SHIFT),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(f.pvec_ty, pv_SHIFT),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(f.pvec_ty, pv_ROOT),
+          .RefAsNonNull,
+          .RefCast(false, .Eq),
+          .LocalGet(1),
+          .LocalGet(2),
+          .Call("do_set${f.suffix}"),
+          .RefCast(true, .Named(t_VEC_INTERNAL)),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(f.pvec_ty, pv_TAIL),
+          .StructNew(f.pvec_ty),
+        ],
+      ),
+    ],
+  }
+}
+
+// set_in_place/set_in_place_i64(vec, idx, val) -> PVec
+// True in-place mutation for vectors proven unique by the optimizer: locate the
+// leaf via get_leaf, convert the value with f.leaf_store, mutate the leaf directly.
+fn pvec_set_in_place_fn(f: PVecFamily) FuncDef {
+  // p0=vec, p1=idx, p2=val
+  head: Vector<Instr> = [
+    .LocalGet(0),
+    .RefAsNonNull,
+    .LocalGet(1),
+    .Call("get_leaf${f.suffix}"),
+    .LocalGet(2),
+  ]
+
+  .{
+    name: "set_in_place${f.suffix}",
+    params: [f.pvec_null, .I32, .Anyref],
+    results: [f.pvec_ref],
+    locals: [],
+    body: head.concat(f.leaf_store).concat([.ArraySet(f.arr_ty), .LocalGet(0), .RefAsNonNull]),
+  }
+}
+
 // builder_new/builder_new_i64() -> Array
 fn pvec_builder_new_fn(f: PVecFamily) FuncDef {
   .{
@@ -2442,249 +2562,6 @@ fn pvec_builder_push_raw_fn(f: PVecFamily) FuncDef {
 }
 
 // set(vec: PVec?, idx: i32, val: anyref) -> PVec
-fn set_fn() FuncDef {
-  // p0=vec, p1=idx, p2=val, L3=tailoff, L4=new_tail
-  .{
-    name: "set",
-    params: [pvec_null(), .I32, .Anyref],
-    results: [pvec_ref()],
-    locals: [.I32, arr_null()],
-    body: [
-      .LocalGet(0),
-      .RefAsNonNull,
-      .StructGet(t_PVEC, pv_LEN),
-      .LocalGet(0),
-      .RefAsNonNull,
-      .StructGet(t_PVEC, pv_TAIL),
-      .ArrayLen,
-      .I32Sub,
-      .LocalSet(3),
-      .LocalGet(1),
-      .LocalGet(3),
-      .I32GeS,
-      .If(
-        .Some(pvec_ref()),
-        [
-          .RefNull(.None_),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC, pv_TAIL),
-          .ArrayLen,
-          .ArrayNew(t_ARRAY),
-          .LocalSet(4),
-          .LocalGet(4),
-          .RefAsNonNull,
-          .I32Const(0),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC, pv_TAIL),
-          .I32Const(0),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC, pv_TAIL),
-          .ArrayLen,
-          .ArrayCopy(t_ARRAY, t_ARRAY),
-          .LocalGet(4),
-          .RefAsNonNull,
-          .LocalGet(1),
-          .LocalGet(3),
-          .I32Sub,
-          .LocalGet(2),
-          .ArraySet(t_ARRAY),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC, pv_LEN),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC, pv_SHIFT),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC, pv_ROOT),
-          .LocalGet(4),
-          .RefAsNonNull,
-          .StructNew(t_PVEC),
-        ],
-        [
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC, pv_LEN),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC, pv_SHIFT),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC, pv_SHIFT),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC, pv_ROOT),
-          .RefAsNonNull,
-          .RefCast(false, .Eq),
-          .LocalGet(1),
-          .LocalGet(2),
-          .Call("do_set"),
-          .RefCast(true, .Named(t_VEC_INTERNAL)),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC, pv_TAIL),
-          .StructNew(t_PVEC),
-        ],
-      ),
-    ],
-  }
-}
-
-// set_in_place(vec: PVec?, idx: i32, val: anyref) -> PVec
-// True in-place mutation for vectors proven unique by the optimizer.
-fn set_in_place_fn() FuncDef {
-  p_vec := 0
-  p_idx := 1
-  p_val := 2
-
-  // p0=vec, p1=idx, p2=val
-  // Reuses get_leaf to find the leaf/tail, then mutates directly.
-  .{
-    name: "set_in_place",
-    params: [pvec_null(), .I32, .Anyref],
-    results: [pvec_ref()],
-    locals: [],
-    body: [
-      .LocalGet(p_vec),
-      .RefAsNonNull,
-      .LocalGet(p_idx),
-      .Call("get_leaf"),
-      .LocalGet(p_val),
-      .ArraySet(t_ARRAY),
-      .LocalGet(p_vec),
-      .RefAsNonNull,
-    ],
-  }
-}
-
-// set_i64(vec: PVecI64?, idx: i32, val: anyref) -> PVecI64
-// Typed i64 mirror of set (functional). The boxed value is unboxed at the leaf
-// store; do_set_i64 handles the trie path.
-fn set_i64_fn() FuncDef {
-  // p0=vec, p1=idx, p2=val, L3=tailoff, L4=new_tail
-  .{
-    name: "set_i64",
-    params: [pvec_i64_null(), .I32, .Anyref],
-    results: [pvec_i64_ref()],
-    locals: [.I32, arr_i64_null()],
-    body: [
-      .LocalGet(0),
-      .RefAsNonNull,
-      .StructGet(t_PVEC_I64, pv_LEN),
-      .LocalGet(0),
-      .RefAsNonNull,
-      .StructGet(t_PVEC_I64, pv_TAIL),
-      .ArrayLen,
-      .I32Sub,
-      .LocalSet(3),
-      .LocalGet(1),
-      .LocalGet(3),
-      .I32GeS,
-      .If(
-        .Some(pvec_i64_ref()),
-        [
-          .I64Const(0),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC_I64, pv_TAIL),
-          .ArrayLen,
-          .ArrayNew(t_ARRAY_I64),
-          .LocalSet(4),
-          .LocalGet(4),
-          .RefAsNonNull,
-          .I32Const(0),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC_I64, pv_TAIL),
-          .I32Const(0),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC_I64, pv_TAIL),
-          .ArrayLen,
-          .ArrayCopy(t_ARRAY_I64, t_ARRAY_I64),
-          .LocalGet(4),
-          .RefAsNonNull,
-          .LocalGet(1),
-          .LocalGet(3),
-          .I32Sub,
-          .LocalGet(2),
-          .RefCast(false, .Named(t_BOXED_INT)),
-          .StructGet(t_BOXED_INT, 0),
-          .ArraySet(t_ARRAY_I64),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC_I64, pv_LEN),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC_I64, pv_SHIFT),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC_I64, pv_ROOT),
-          .LocalGet(4),
-          .RefAsNonNull,
-          .StructNew(t_PVEC_I64),
-        ],
-        [
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC_I64, pv_LEN),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC_I64, pv_SHIFT),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC_I64, pv_SHIFT),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC_I64, pv_ROOT),
-          .RefAsNonNull,
-          .RefCast(false, .Eq),
-          .LocalGet(1),
-          .LocalGet(2),
-          .Call("do_set_i64"),
-          .RefCast(true, .Named(t_VEC_INTERNAL)),
-          .LocalGet(0),
-          .RefAsNonNull,
-          .StructGet(t_PVEC_I64, pv_TAIL),
-          .StructNew(t_PVEC_I64),
-        ],
-      ),
-    ],
-  }
-}
-
-// set_in_place_i64(vec: PVecI64?, idx: i32, val: anyref) -> PVecI64
-// Typed i64 mirror of set_in_place: locate the leaf via get_leaf_i64, unbox the
-// value, and mutate the ArrayI64 leaf directly. For optimizer-proven-unique vecs.
-fn set_in_place_i64_fn() FuncDef {
-  p_vec := 0
-  p_idx := 1
-  p_val := 2
-
-  // p0=vec, p1=idx, p2=val
-  .{
-    name: "set_in_place_i64",
-    params: [pvec_i64_null(), .I32, .Anyref],
-    results: [pvec_i64_ref()],
-    locals: [],
-    body: [
-      .LocalGet(p_vec),
-      .RefAsNonNull,
-      .LocalGet(p_idx),
-      .Call("get_leaf_i64"),
-      .LocalGet(p_val),
-      .RefCast(false, .Named(t_BOXED_INT)),
-      .StructGet(t_BOXED_INT, 0),
-      .ArraySet(t_ARRAY_I64),
-      .LocalGet(p_vec),
-      .RefAsNonNull,
-    ],
-  }
-}
-
 // ═══════════════════════════════════════════════════════════════════════
 // Typed i64 persistent vector (PVecI64) — de-risking spike for the typed
 // Vector<Int> representation. Mirrors the boxed ops above with i64 leaves and
