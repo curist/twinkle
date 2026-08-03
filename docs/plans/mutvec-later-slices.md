@@ -159,7 +159,7 @@ Goal: an owned `Vector<Bool>` region lowers to `MutVecBool` and freezes to `PVec
 
 ---
 
-## Phase 4: Float and Byte families (end-to-end) — depend on a new typed `PVec`
+## Phase 4: Float and Byte families (end-to-end) — DONE (Float 5032b4ed, Byte f5b661eb)
 
 Goal: owned `Vector<Float>` lowers to `MutVecF64` → `PVecF64`, and owned `Vector<Byte>` lowers to `MutVecByte` → `PVecByte`. **Land the typed-storage family first** (separate; the dedup plan's payoff), then the mutvec ride-along is the same shape as Phase 3. Float and Byte are **independent siblings of identical shape** — do whichever is wanted; doing both together is cheap and de-risks the family abstraction beyond i64/bool.
 
@@ -177,12 +177,29 @@ Per-family typed-storage prerequisite (each its own mini-slice; gate = boot-test
 - **Codegen gotcha (bit Byte too):** `emit/runtime_abi.tw` keeps THREE hardcoded per-family builder-name lists — `is_builder_buffer_arg` / `is_builder_void_push` / `is_builder_seed` — that must gain `_byte`. Missing `_f64` caused the anyref→Array builder-arg shim to misfire (handle cast to PVec → V8 rejected the module). These are the ONLY per-family hardcoded names left; everything else is family-driven.
 - **DRY:** the six typed-vector builtins are now generated from `typed_vec_specs` (`typed_vec_abi` + `typed_vec_rt_defs`), parallel to the mutvec generators. Byte = one `typed_vec_specs` row + one `mutvec_specs` row + concats.
 
-Byte slice — REMAINING. Its extra work vs Float:
-- [ ] **Step 0a: new GC type** `ArrayByte = array i8` in `types.tw` (native `array.new`/`get_u`/`set`); `PVecByte` + `MutVecByte` structs.
-- [ ] **Step 0b: `ElemRepr` collision fix** — extend `ElemRepr = { I64, F64, I32 }` with a distinct `Byte` variant so `candidate_typed_vec_family(Vector<Byte>)` and `mutvec_wasm_type` tell byte from bool; update the exhaustive `ElemRepr` matches (repr_assign/verify_common/wasm_layout/emit helpers).
-- [ ] **Step 0c: `MonoType.Byte`/`Vector<Byte>`** wiring in `elem_family_of` + `family_byte()` (PVecFamily: `arr_ty` ArrayByte, i31 boxing = reuse bool's `leaf_store`/`elem_box`, `elem_ty .I32`; the get op reads i8 via `array.get_u`) + the families lists + `typed_vec_specs`/`mutvec_specs` rows + the `runtime_abi.tw` `_byte` entries.
-- [ ] **Step 1–3: detector test + `fixtures/mutvec_byte.tw`** (a codec/readfile-shaped round-trip; verify a boxed `Vector<Byte>` round-trips through the typed rep).
-- [ ] **Step 4–5: gate + commit.** fixed point + boot-test + i64/bool/float neutral.
+**Byte slice — DONE (commit f5b661eb).** Typed packed `PVecByte` family (`ArrayByte
+= array i8`) + mutvec ride-along, mirroring Bool/Float. Two byte-specific seams:
+- **Packed-read hook.** A packed i8 leaf must be read with `array.get_u`, not the
+  `array.get` the full-width families emit (i8 otherwise sign-extends into the i32
+  result). Added `PVecFamily.leaf_get` (`ArrayGet` for i64/i32/f64, `ArrayGetU` for
+  byte), spliced at the four leaf-read sites (`get` + `mutvec_get`); writes truncate,
+  so `ArraySet`/`ArrayCopy` are unchanged. This was the only place packing surfaced —
+  it did not balloon, so packed i8 (1 byte/element) was kept over the array-i32 fallback.
+- **ElemRepr collision fix.** Byte's element wasm is i32 like Bool, so `elem_wasm`
+  can't distinguish them for the mutvec-handle wasm type. Extended `ElemRepr` with a
+  distinct `Byte` variant, keyed directly off the family (`mono_key == "vec_byte"`) in
+  `candidate_typed_vec_family`, plus a `.Byte => MutVecByte` arm in `mutvec_wasm_type`.
+  `ElemRepr` is only materially matched by `mutvec_wasm_type` (`TypedVec(ElemRepr)` is
+  inert; `ReprKind` has its own I64/F64/I32), so no other exhaustive match needed a Byte arm.
+
+Everything else was the declarative Float shape: `types.tw` structs, `arr.tw`
+`family_byte()` + op registrations + `unbox_byte` + `mutvec_fns` concat, `elem_family.tw`
+family entry, one `typed_vec_specs`/`mutvec_specs` row each, and the three `runtime_abi.tw`
+`_byte` builder-name entries. Fixture `fixtures/mutvec_byte.tw` runs a UTF-8 byte vector
+through the lowered collect+set+return path and cross-checks a boxed reference; detector
+test in `mutvec_region_suite`; `repr_policy` gets `Vector<Byte> -> Some(Byte)`. Gate:
+self-host fixed point; boot-test green; fixture prints OK; i64/bool/float WAT byte-identical
+(normalized id renumbering).
 
 ---
 
