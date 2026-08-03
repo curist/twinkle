@@ -1,0 +1,40 @@
+// Escaping MutVec region: collect-born owned Vector<Int>, one indexed update,
+// returned. Under TWINKLE_MUTVEC=1 the boundary must freeze once to PVecI64 and
+// return it WITHOUT a box_i64/unbox_i64 rebuild, and typed callers must read the
+// result directly (no rebuild). A boxed consumer boxes exactly once, on demand.
+//
+// The emit-level ABI is only exercised under the flag at runtime, so the box/unbox
+// assertions are MANUAL gates (boot-test's mutvec suite covers the ANF rewrite, not
+// emit). Verify with (the esc mangled name's numeric id varies, so match the tail):
+//   TWINKLE_MUTVEC=1 target/twk wat <this file> --func _esc  --calls | grep -cE 'box_i64|unbox_i64'  # -> 0
+//   TWINKLE_MUTVEC=1 target/twk wat <this file> --func read_typed --calls | grep -cE 'box_i64|unbox' # -> 0
+//   TWINKLE_MUTVEC=1 target/twk wat <this file> --func via_sink --calls | grep -cE 'box_i64'         # -> 1
+fn esc(n: Int, seed: Int) Vector<Int> {
+  xs := collect i in range(n) {
+    i + seed
+  }
+  xs[0] = seed
+  xs
+}
+
+// Typed consumer: reads the PVecI64 result directly (no rebuild expected).
+fn read_typed(n: Int) Int {
+  v := esc(n, 1)
+  v[0] + v.len()
+}
+
+// Boxed consumer: `sink` takes a boxed Vector<Int>, so passing esc()'s PVecI64
+// result forces exactly one on-demand box_i64 at this call boundary.
+fn sink(v: Vector<Int>) Int {
+  v.len()
+}
+
+fn via_sink(n: Int) Int {
+  sink(esc(n, 1))
+}
+
+fn main() Int {
+  read_typed(5) + via_sink(5)
+}
+
+println(main().to_string())

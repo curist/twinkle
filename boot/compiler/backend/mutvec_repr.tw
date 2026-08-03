@@ -1,14 +1,21 @@
 //! MutVec physical-repr assignment (storage slice 1).
 //!
 //! After `mutvec_region.rewrite_module` lowers a claimed region to `mutvec_*`
-//! runtime ops, the handle slots still carry the default boxed `Vector<Int>`
+//! runtime ops, the live handle slots still carry the default boxed `Vector<Int>`
 //! repr (`TypedRef`) because `repr_assign` derives reprs from MonoType, which
 //! stays `Vector<Int>`. This pass is the site-aware override that marks those
-//! slots with their true physical repr — exactly the role `route_typed_vec`
-//! plays for PVecI64 slots. It reads the already-rewritten prepared IR (it does
-//! NOT re-prove ownership or exits — the region rewrite already committed to
-//! those): a slot that flows through a `mutvec_*` op is `MutVec(I64)`; the
-//! `mutvec_freeze_i64` result is the persistent `TypedVec(I64)` (PVecI64).
+//! handle slots as `MutVec(I64)` — the role `route_typed_vec` plays for PVecI64
+//! slots. It reads the already-rewritten prepared IR (it does NOT re-prove
+//! ownership or exits — the region rewrite already committed to those): a slot
+//! that flows through a `mutvec_*` op is a `MutVec(I64)` handle.
+//!
+//! The `mutvec_freeze_i64` *result* slot (the materialized PVecI64) is NOT owned
+//! here — `route_typed_vec` recognizes `mutvec_freeze_i64` as a typed producer
+//! and types it explicitly to the PVecI64 wasm type (and sets phys_return + types
+//! caller result slots). Marking it here with the inert `TypedVec(I64)` repr was
+//! actively wrong — it reverted route's PVecI64 to the boxed default and forced a
+//! box+unbox rebuild at the return boundary — so this pass leaves frozen slots to
+//! route.
 
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo,
@@ -200,14 +207,18 @@ fn assign_in_func(pf: PreparedFunc, ids: MutVecIds, env: ResolvedEnv) PreparedFu
   // Fixpoint the init/assign propagation of the producer chain.
   handle := propagate_fixpoint(pf.body, seeded.handle)
 
-  // Body ops reference slots by info.slot.id, which may differ from the pf.slots
-  // dict key; seed/frozen are populated with the former, so look up by it.
+  // Only handle slots are overridden here. The freeze-result (materialized
+  // PVecI64) slot is left to route_typed_vec, which recognizes mutvec_freeze_i64
+  // as a typed producer and types it explicitly to the PVecI64 wasm type (and in
+  // turn sets phys_return + types caller result slots). Overriding it here with
+  // `.TypedVec(.I64)` was actively wrong: TypedVec is inert — wasm_type_of_repr
+  // falls through to val_type_of_mono(Vector<Int>), the boxed default — so it
+  // reverted route's PVecI64 back to a boxed PVec, forcing a box+unbox rebuild at
+  // the return boundary. Handles have no such producer, so they still need MutVec.
   new_slots: Dict<Int, SlotInfo> = Dict.new()
   for sid, info in pf.slots {
     new_slots[sid] = if handle.has(info.slot.id) {
       override_slot(info, .MutVec(.I64), env)
-    } else if frozen.has(info.slot.id) {
-      override_slot(info, .TypedVec(.I64), env)
     } else {
       info
     }

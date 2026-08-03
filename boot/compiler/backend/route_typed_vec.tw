@@ -52,6 +52,7 @@ pub type RouteIds = .{
   // kill-switch, disabling every indexed-write branch (accept / write-result
   // fixpoint / rebind exception / rewrite swap / site reporting).
   set_unsafe: Int,
+  mutvec_freeze_i64: Int,
 }
 
 pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
@@ -78,6 +79,7 @@ pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
     gather: builtins.id("vector$gather").id,
     append,
     set_unsafe,
+    mutvec_freeze_i64: builtins.id("vector$__mutvec_freeze_i64").id,
   }
 }
 
@@ -862,6 +864,14 @@ fn collect_candidate_from_op(
       // `Vector.make(n, fill)` directly produces the family PVec into `slot` when
       // that slot maps to the active family. No builder handle to thread.
       fid.id == ids.make and args.len() == 2 => case slots[slot.id] {
+        .Some(info) => if slot_in_family(info, fam) {
+          acc.append(.{ v: slot.id, b: -1, make: true })
+        } else {
+          acc
+        },
+        .None => acc,
+      },
+      fid.id == ids.mutvec_freeze_i64 and args.len() == 1 => case slots[slot.id] {
         .Some(info) => if slot_in_family(info, fam) {
           acc.append(.{ v: slot.id, b: -1, make: true })
         } else {
