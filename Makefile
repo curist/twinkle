@@ -33,7 +33,6 @@ help:
 # Fast day-to-day validation for boot compiler changes.
 boot-test: target/twk
 	target/twk test
-	tools/typed_vec_write_gate.sh
 
 rust-test:
 	cargo test --release

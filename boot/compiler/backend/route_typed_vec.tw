@@ -13,8 +13,6 @@
 //! Runs after assign_repr_for_module (so wasm_type overrides stick and push
 //! elements are already boxed — the typed builder_push takes the boxed element).
 
-use @std.proc
-
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, PreparedPattern, ReprKind, SlotId, SlotInfo,
 }
@@ -44,32 +42,15 @@ pub type RouteIds = .{
   make: Int,
   len: Int,
   gather: Int,
-  // Boxed `vector$append` id. `-1` under TWINKLE_TYPED_VEC_WRITE=0, so append
-  // cannot join the typed-vector write group while indexed writes are disabled.
+  // Boxed `vector$append` id, so append can join the typed-vector write group.
   append: Int,
   // Boxed `vector$set_unsafe` id — the family-agnostic call routing swaps to the
-  // family's typed `set` (i64 only). `-1` under the TWINKLE_TYPED_VEC_WRITE=0
-  // kill-switch, disabling every indexed-write branch (accept / write-result
-  // fixpoint / rebind exception / rewrite swap / site reporting).
+  // family's typed `set` (i64 only).
   set_unsafe: Int,
   mutvec_freeze_i64: Int,
 }
 
 pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
-  write_enabled := case proc.env("TWINKLE_TYPED_VEC_WRITE") {
-    .Some(v) => v != "0",
-    .None => true,
-  }
-  set_unsafe := if write_enabled {
-    builtins.id("vector$set_unsafe").id
-  } else {
-    -1
-  }
-  append := if write_enabled {
-    builtins.id("vector$append").id
-  } else {
-    -1
-  }
   .{
     builder_new: builtins.id("vector$builder_new").id,
     builder_push: builtins.id("vector$builder_push").id,
@@ -77,8 +58,8 @@ pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
     make: builtins.id("vector$make").id,
     len: builtins.id("vector$len").id,
     gather: builtins.id("vector$gather").id,
-    append,
-    set_unsafe,
+    append: builtins.id("vector$append").id,
+    set_unsafe: builtins.id("vector$set_unsafe").id,
     mutvec_freeze_i64: builtins.id("vector$__mutvec_freeze_i64").id,
   }
 }
