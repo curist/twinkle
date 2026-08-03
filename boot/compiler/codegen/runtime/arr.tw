@@ -201,7 +201,7 @@ pub fn module() WasmModule {
     family_i64().pvec_set_in_place_fn(),
     family_i64().pvec_do_set_fn(),
     family_i64().pvec_set_fn(),
-    box_i64_fn(),
+    family_i64().pvec_box_fn(),
     unbox_i64_fn(),
     family_bool().pvec_len_fn(),
     family_bool().pvec_get_fn(),
@@ -211,7 +211,7 @@ pub fn module() WasmModule {
     family_bool().pvec_builder_push_raw_fn(),
     family_bool().pvec_builder_freeze_fn(),
     family_bool().pvec_make_fn(),
-    box_bool_fn(),
+    family_bool().pvec_box_fn(),
     unbox_bool_fn(),
     family_bool().pvec_gather_fn(),
     family_boxed().pvec_builder_new_fn(),
@@ -1208,6 +1208,10 @@ type PVecFamily = .{
   // leaf element type, spliced at every leaf store. Empty for boxed (store the
   // anyref as-is); i64 unboxes a BoxedInt; bool decodes a ref.i31.
   leaf_store: Vector<Instr>,
+  // Inverse of leaf_store: converts a raw element (on the stack) to a boxed
+  // anyref, used by box_<fam> at the representation boundary. Empty for boxed;
+  // i64 wraps a BoxedInt; bool wraps a ref.i31.
+  elem_box: Vector<Instr>,
 }
 
 fn family_boxed() PVecFamily {
@@ -1240,6 +1244,7 @@ fn family_boxed() PVecFamily {
     zero_value: .RefNull(.None_),
     suffix: "",
     leaf_store: [],
+    elem_box: [],
   }
 }
 
@@ -1266,6 +1271,7 @@ fn family_i64() PVecFamily {
     zero_value: .I64Const(0),
     suffix: "_i64",
     leaf_store: [.RefCast(false, .Named(t_BOXED_INT)), .StructGet(t_BOXED_INT, 0)],
+    elem_box: [.StructNew(t_BOXED_INT)],
   }
 }
 
@@ -1292,6 +1298,7 @@ fn family_bool() PVecFamily {
     zero_value: .I32Const(0),
     suffix: "_bool",
     leaf_store: [.RefCast(false, .I31), .I31GetU],
+    elem_box: [.RefI31],
   }
 }
 
@@ -2666,54 +2673,41 @@ fn pvec_builder_push_raw_fn(f: PVecFamily) FuncDef {
 // are i64-specific. Reads return raw i64 — no BoxedInt pointer-chase or cast.
 // ═══════════════════════════════════════════════════════════════════════
 // builder_push_i64(builder: Array?, elem: i64) -> void
-// box_i64(vec: PVecI64?) -> PVec
-// Representation-boundary adapter for returning a locally typed Vector<Int>
-// through the ordinary boxed Vector<Int> ABI. This pays one boxing pass at the
-// boundary while preserving raw i64 storage for in-function indexed reads.
-fn box_i64_fn() FuncDef {
-  tbi := t_BOXED_INT
-
+// box/box_i64/box_bool(vec) -> PVec
+// Representation-boundary adapter for returning a locally typed Vector through
+// the ordinary boxed Vector ABI: read each raw element via get_<fam>, box it
+// with f.elem_box, and push into the universal boxed builder. This pays one
+// boxing pass at the boundary while preserving raw storage for indexed reads.
+fn pvec_box_fn(f: PVecFamily) FuncDef {
   // p0=vec; L1=n, L2=i, L3=boxed_builder
+  box_loop: Vector<Instr> = [
+    .LocalGet(2),
+    .LocalGet(1),
+    .I32GeS,
+    .BrIf("brk"),
+    .LocalGet(3),
+    .LocalGet(0),
+    .LocalGet(2),
+    .Call(f.get_name),
+  ]
+  loop_body := box_loop
+    .concat(f.elem_box)
+    .concat([.Call("builder_push"), .LocalGet(2), .I32Const(1), .I32Add, .LocalSet(2), .Br("lp")])
+
   .{
-    name: "box_i64",
-    params: [pvec_i64_null()],
+    name: "box${f.suffix}",
+    params: [f.pvec_null],
     results: [pvec_ref()],
     locals: [.I32, .I32, arr_null()],
     body: [
       .LocalGet(0),
-      .Call("len_i64"),
+      .Call(f.len_name),
       .LocalSet(1),
       .I32Const(0),
       .LocalSet(2),
       .Call("builder_new"),
       .LocalSet(3),
-      .Block(
-        "brk",
-        .None,
-        [
-          .Loop(
-            "lp",
-            .None,
-            [
-              .LocalGet(2),
-              .LocalGet(1),
-              .I32GeS,
-              .BrIf("brk"),
-              .LocalGet(3),
-              .LocalGet(0),
-              .LocalGet(2),
-              .Call("get_i64"),
-              .StructNew(tbi),
-              .Call("builder_push"),
-              .LocalGet(2),
-              .I32Const(1),
-              .I32Add,
-              .LocalSet(2),
-              .Br("lp"),
-            ],
-          ),
-        ],
-      ),
+      .Block("brk", .None, [.Loop("lp", .None, loop_body)]),
       .LocalGet(3),
       .Call("builder_freeze"),
     ],
@@ -4363,54 +4357,6 @@ fn gather_fn() FuncDef {
 // Reverse of unbox_bool: rebuild a boxed PVec from a typed PVecBool. Reads each
 // raw i32 leaf via get_bool and wraps it into a ref.i31 (Bool fits an i31)
 // before pushing into the universal boxed builder.
-fn box_bool_fn() FuncDef {
-  // p0=vec; L1=n, L2=i, L3=boxed_builder
-  .{
-    name: "box_bool",
-    params: [pvec_bool_null()],
-    results: [pvec_ref()],
-    locals: [.I32, .I32, arr_null()],
-    body: [
-      .LocalGet(0),
-      .Call("len_bool"),
-      .LocalSet(1),
-      .I32Const(0),
-      .LocalSet(2),
-      .Call("builder_new"),
-      .LocalSet(3),
-      .Block(
-        "brk",
-        .None,
-        [
-          .Loop(
-            "lp",
-            .None,
-            [
-              .LocalGet(2),
-              .LocalGet(1),
-              .I32GeS,
-              .BrIf("brk"),
-              .LocalGet(3),
-              .LocalGet(0),
-              .LocalGet(2),
-              .Call("get_bool"),
-              .RefI31,
-              .Call("builder_push"),
-              .LocalGet(2),
-              .I32Const(1),
-              .I32Add,
-              .LocalSet(2),
-              .Br("lp"),
-            ],
-          ),
-        ],
-      ),
-      .LocalGet(3),
-      .Call("builder_freeze"),
-    ],
-  }
-}
-
 // unbox_bool(vec: PVec?) -> PVecBool
 // Reverse of box_bool: rebuild a typed PVecBool from a boxed PVec. Each boxed
 // element is a ref.i31 (Bool fits an i31), decoded with RefCast(.I31)+I31GetU
