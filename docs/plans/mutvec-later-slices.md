@@ -16,7 +16,7 @@
 > two halves of the same typed-storage story (MutVec = index-write side, 8C Plan 4 =
 > append side).
 
-**Goal:** Extend MutVec beyond the landed slice-1 (owned `Vector<Int>` → flat mutable `MutVecI64` → freeze to `PVecI64`, now unconditional) to the remaining element families (`Bool`, `Float`, boxed) and, further out, to param-sourced owned vectors — reusing the `PVecFamily` abstraction rather than hand-duplicating per element type.
+**Goal:** Extend MutVec beyond the landed slice-1 (owned `Vector<Int>` → flat mutable `MutVecI64` → freeze to `PVecI64`, now unconditional) to the remaining element families (`Bool`, `Float`, `Byte`, boxed) and, further out, to param-sourced owned vectors — reusing the `PVecFamily` abstraction rather than hand-duplicating per element type. `Float` and `Byte` each need a new typed `PVec` family first (the dedup payoff); they are the same shape of work and can land together.
 
 **Architecture:** Slice 1 proved the mechanism — a region pass (`codegen/mutvec_region.tw`) claims an owned, locally-born `Vector<Int>` carrying ≥1 indexed update, rewrites it to `mutvec_*` ops with a single boundary freeze, and a backend repr pass (`backend/mutvec_repr.tw`) types the handle slots `MutVec(I64)`. That mechanism is **element-agnostic** except for three seams: (1) the seven `mutvec_*_i64` runtime ops are hand-written for i64; (2) the detector gates on `Vector<Int>`; (3) `mutvec_repr` hard-codes `.MutVec(.I64)`. This plan drives all three off the element type. The runtime seam piggybacks on **`docs/plans/rt-arr-family-dedup.md`**, which folds the PVec trie ops into the `PVecFamily`-parameterized builder and enriches `PVecFamily` with `suffix` / `leaf_store` / `elem_box` — exactly the fields a family-generated mutvec op needs. `ReprKind.MutVec(ElemRepr)` is already generic, so the backend seam is a `MonoType → family` lookup, not new machinery.
 
@@ -27,7 +27,7 @@
 ## Prerequisites & dependencies (read first)
 
 - **`docs/plans/rt-arr-family-dedup.md` — HARD prerequisite for a clean runtime fold.** It enriches `PVecFamily` with `suffix`, `leaf_store` (anyref→element leaf conversion), and `elem_box` (the inverse), and proves the byte-identical-WAT family-fold methodology. Without it, generalizing the mutvec ops means adding a *fourth* copy-paste axis (`mutvec_new_bool_fn`, `mutvec_new_f64_fn`, …). With it, the mutvec ops fold the same way the trie ops do. Do not start Phase 1 until dedup's `PVecFamily` fields (at least `suffix` + `leaf_store`) exist.
-- **`PVecF64` typed storage — HARD prerequisite for the Float family (Phase 4).** There is no typed float persistent vector today: `Vector<Float>` is stored boxed (each f64 boxed to anyref). A `MutVecF64` needs somewhere to freeze *into*. Adding `PVecF64` (struct + `family_float` + its builder/get/make ops) is the explicit **payoff** the dedup plan names (its line 505) — once the family fold lands, instantiating `family_float()` is cheap. Phase 4 depends on it; do that first (it is a storage feature in its own right, valuable independently of mutvec).
+- **A new typed-storage family — HARD prerequisite for Float and for Byte (Phase 4).** Neither `Vector<Float>` nor `Vector<Byte>` has a typed persistent vector today; both are stored **boxed** (each element boxed to anyref), and a `MutVec<fam>` needs a typed `PVec<fam>` to freeze *into*. Adding one — `PVecF64` (struct + `family_float()` + get/make/builder ops) and/or `PVecByte` (struct + `family_byte()` + ops) — is the explicit **payoff** the dedup plan names (its line 505): once the family fold lands, instantiating a new `family_*()` is cheap. **Float and Byte are the same shape of work** (one typed family each) and can land together as sibling families — they differ only in element type, boxing, and leaf array (see the Byte note in the value ranking). Each is a storage feature valuable independently of mutvec; do the needed family/families first, then its Phase-4 mutvec ride-along.
 - **`Bool` needs neither** — `PVecBool` / `family_bool` already exist, so Bool (Phase 3) can follow Phases 1–2 directly.
 - **`docs/plans/compiler-stack-safety.md` — related (soft).** MutVec currently ships an **interim guard**: `backend/prepare.tw`'s deep-module depth bailout calls `mutvec_repr.assign_mutvec_reprs` inside the bailout branch, because that bailout otherwise skips the repr handoff and leaves mutvec handle slots boxed → `illegal cast`. That guard is superseded and removed by **compiler-stack-safety Phase 2** (make the routing walkers iterative + narrow the bailout to per-function). Relevance here: `assign_mutvec_reprs` is family-driven, so once this plan's **Phase 2** generalizes it off the element `MonoType`, the bailout-path call generalizes *for free* — do **not** entrench a per-family special case in the bailout branch; keep it going through the one `assign_mutvec_reprs`, so compiler-stack-safety can delete the branch in one move.
 
@@ -35,7 +35,8 @@
 
 | Family | Value | Blocked on | Notes |
 |---|---|---|---|
-| **Float** | **High** | `PVecF64` + Phases 1–2 | Numerics mutate `Vector<Float>` heavily; the real prize. |
+| **Float** | **High** | `PVecF64` + Phases 1–2 | Numerics mutate `Vector<Float>` heavily; the real prize. `ArrayF64` already exists; boxing is `BoxedFloat`. |
+| **Byte** | **High** | `PVecByte` (`array i8`) + Phases 1–2 | `Vector<Byte>` is already real and already **boxed** — it is the `readfile` result type (`Result<Vector<Byte>, String>`) and the natural type for codecs/parsing/binary formats. A typed `array i8` `PVecByte` unboxes it at **1 byte/element** (native GC `array.get_u`; `elem_ty` `.I32`, i31 boxing — reuses bool's `leaf_store`/`elem_box`). **Complements `@std.buffer`, does not replace it:** a Byte GC vector covers *in-language* byte work with `v[i]`/`v[a..b]` sugar and no linear-memory opt-in, but GC arrays aren't addressable, so Buffer stays for FFI / linear-memory / shared-memory. Only new work vs Float: define the `ArrayByte` = `array i8` GC type (Float's `ArrayF64` already exists). |
 | **Bool** | Low | Phases 1–2 | Cheap ride-along; bool vectors are rare. Do it because it falls out of the fold, not for its own sake. |
 | **Boxed** (records/strings/nested) | Low–Med | Phases 1–2 | No *unboxing* win (elements are already refs); only O(1)-write-vs-trie. Phase 5, optional — do only for a measured mutation-heavy reference-vector workload. |
 
@@ -133,17 +134,21 @@ Goal: an owned `Vector<Bool>` region lowers to `MutVecBool` and freezes to `PVec
 
 ---
 
-## Phase 4: Float family (end-to-end) — depends on `PVecF64`
+## Phase 4: Float and Byte families (end-to-end) — depend on a new typed `PVec`
 
-Goal: owned `Vector<Float>` lowers to `MutVecF64` → `PVecF64`. **Do the `PVecF64` typed-storage work first** (separate; the dedup plan's payoff): add the `rt_types__PVecF64` struct, `family_float()`, and its `get`/`make`/`builder` ops so `Vector<Float>` has a typed persistent representation. Then Phase 4 is the same shape as Phase 3.
+Goal: owned `Vector<Float>` lowers to `MutVecF64` → `PVecF64`, and owned `Vector<Byte>` lowers to `MutVecByte` → `PVecByte`. **Land the typed-storage family first** (separate; the dedup plan's payoff), then the mutvec ride-along is the same shape as Phase 3. Float and Byte are **independent siblings of identical shape** — do whichever is wanted; doing both together is cheap and de-risks the family abstraction beyond i64/bool.
 
-**Files:** (PVecF64 first, per the dedup payoff) then `arr.tw`/`types.tw`/`builtins.tw`/`mutvec_region.tw` for the f64 mutvec ops, `mutvec_region_suite.tw` + `fixtures/mutvec_float.tw`.
+Per-family typed-storage prerequisite (each its own mini-slice; gate = boot-test + fixed point):
+- **Float:** `rt_types__PVecF64` struct + `family_float()` + get/make/builder ops + route recognizing `builder_freeze_f64`. `ArrayF64` already exists; boxing is `BoxedFloat`.
+- **Byte:** define `ArrayByte` = `array i8` in `types.tw` (the one genuinely new GC type — native `array.new`/`get_u`/`set`), then `rt_types__PVecByte` struct + `family_byte()` + get/make/builder ops + route recognizing `builder_freeze_byte`. `elem_ty` is `.I32` (i8 read via `array.get_u`); boxing is `ref.i31`, so `leaf_store`/`elem_box` **reuse bool's** (`RefCast(.I31)`+`I31GetU` / `RefI31`). Verify a boxed `Vector<Byte>` (e.g. a `readfile` result) round-trips through the typed rep. Note the Buffer relationship (value-ranking row): this is the in-language byte path, not a Buffer replacement.
 
-- [ ] **Step 0 (prerequisite): land `PVecF64`.** Struct + `family_float()` + get/make/builder ops + route recognizing `builder_freeze_f64`. Verify `Vector<Float>` collect/index/return works typed end-to-end (this is its own mini-slice; gate = boot-test + fixed point).
-- [ ] **Step 1: Failing detector test** for an owned `Vector<Float>` set region (expects `1`).
-- [ ] **Step 2: Register f64 mutvec ops + widen `elem_family` to Float.**
-- [ ] **Step 3: `fixtures/mutvec_float.tw`** — collect-float + indexed set + return; WAT shows `mutvec_*_f64` + one freeze; numeric result matches baseline.
-- [ ] **Step 4: Bench.** Extend `boot/bench/mutvec_slice1_bench.tw` with a `Vector<Float>` variant; confirm the same mutation-density win profile as i64.
+**Files:** the typed family first (`arr.tw`/`types.tw`), then `arr.tw`/`builtins.tw`/`mutvec_region.tw` for the f64/byte mutvec ops, `mutvec_region_suite.tw` + `fixtures/mutvec_float.tw` / `fixtures/mutvec_byte.tw`.
+
+- [ ] **Step 0 (prerequisite): land the needed typed family/families** (`PVecF64` and/or `PVecByte`) per the per-family notes above. Verify `Vector<Float>` / `Vector<Byte>` collect/index/return works typed end-to-end.
+- [ ] **Step 1: Failing detector test** for an owned `Vector<Float>` (and/or `Vector<Byte>`) set region (expects `1`).
+- [ ] **Step 2: Register the mutvec ops + widen `elem_family`** to Float (and/or Byte).
+- [ ] **Step 3: `fixtures/mutvec_float.tw` / `mutvec_byte.tw`** — collect + indexed set + return; WAT shows `mutvec_*_<fam>` + one freeze; result matches a boxed baseline.
+- [ ] **Step 4: Bench.** Extend `boot/bench/mutvec_slice1_bench.tw` with the new-family variant(s); confirm the same mutation-density win profile as i64. For Byte, a codec/parse-shaped bench is the honest workload.
 - [ ] **Step 5: Gate + commit.** boot-test + rust-test + fixed point.
 
 ---
