@@ -82,22 +82,22 @@ fn assign_repr_for_func(
 
   // Refine each slot.
   new_slots: Dict<Int, SlotInfo> = Dict.new()
-  cache2 := cache
 
   for sid_int, info in pf.slots {
     sid := info.slot.id
     result := case info.role {
-      .DeadPlaceholder => ReprWasmResult.{ repr: .DeadValue, wasm_type: .Anyref, cache: cache2 },
+      .DeadPlaceholder => .{ repr: .DeadValue, wasm_type: .Anyref, cache },
       _ => case wrap_slots[sid] {
-        .Some(_) => ReprWasmResult.{ repr: .OpaqueAnyref, wasm_type: .Anyref, cache: cache2 },
+        .Some(_) => .{ repr: .OpaqueAnyref, wasm_type: .Anyref, cache },
         .None => case unwrap_monos[sid] {
-          .Some(target_mono) => repr_and_wasm_type_of(target_mono, info.mono, env, cache2),
-          .None => repr_and_wasm_type_of(info.mono, info.mono, env, cache2),
+          .Some(target_mono) => repr_and_wasm_type_of(target_mono, info.mono, env, cache),
+          .None => repr_and_wasm_type_of(info.mono, info.mono, env, cache),
         },
       },
     }
-    cache2 = result.cache
-    new_slots[sid_int] = SlotInfo.{
+    cache = result.cache
+
+    new_slots[sid_int] = .{
       slot: info.slot,
       source_local: info.source_local,
       role: info.role,
@@ -107,21 +107,9 @@ fn assign_repr_for_func(
     }
   }
 
-  ReprAssignResult.{
-    func: PreparedFunc.{
-      func_id: pf.func_id,
-      name: pf.name,
-      is_init: pf.is_init,
-      captures: pf.captures,
-      params: pf.params,
-      locals: pf.locals,
-      slots: new_slots,
-      body: pf.body,
-      return_mono: pf.return_mono,
-      phys_return: pf.phys_return,
-    },
-    cache: cache2,
-  }
+  pf.slots = new_slots
+
+  .{ func: pf, cache }
 }
 
 // ── Body scanning ────────────────────────────────────────────────────
@@ -195,10 +183,9 @@ fn cached_layout_of(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache) Ca
       layout := layout_of(mono, env)
       .{
         layout,
-        cache: ReprAssignCache.{
-          repr_cache: cache.repr_cache,
-          val_type_cache: cache.val_type_cache,
-          layout_cache: cache.layout_cache.set(key, layout),
+        cache: {
+          cache.layout_cache = .set(key, layout)
+          cache
         },
       }
     },
@@ -214,10 +201,9 @@ fn cached_val_type_of_mono(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCa
       vt := val_type_of_mono(mono, env)
       .{
         val_type: vt,
-        cache: ReprAssignCache.{
-          repr_cache: cache.repr_cache,
-          val_type_cache: cache.val_type_cache.set(key, vt),
-          layout_cache: cache.layout_cache,
+        cache: {
+          cache.val_type_cache = .set(key, vt)
+          cache
         },
       }
     },
@@ -252,7 +238,7 @@ fn repr_of_named(mono: MonoType, env: ResolvedEnv) ReprKind {
   result := repr_of_named_cached(
     mono,
     env,
-    ReprAssignCache.{ repr_cache: Dict.new(), val_type_cache: Dict.new(), layout_cache: Dict.new() },
+    .{ repr_cache: Dict.new(), val_type_cache: Dict.new(), layout_cache: Dict.new() },
   )
   result.repr
 }
@@ -302,7 +288,7 @@ fn repr_and_wasm_type_of(
 ) ReprWasmResult {
   repr_result := cached_repr_of_mono(repr_mono, env, cache)
   vt_result := wasm_type_of_repr_cached(repr_result.repr, wasm_mono, env, repr_result.cache)
-  ReprWasmResult.{ repr: repr_result.repr, wasm_type: vt_result.val_type, cache: vt_result.cache }
+  .{ repr: repr_result.repr, wasm_type: vt_result.val_type, cache: vt_result.cache }
 }
 
 fn cached_repr_of_mono(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache) CachedReprResult {
@@ -329,14 +315,8 @@ fn cached_repr_of_mono(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache)
         .Named(_, _) => repr_of_named_cached(mono, env, cache),
         _ => .{ repr: .OpaqueAnyref, cache },
       }
-      .{
-        repr: result.repr,
-        cache: ReprAssignCache.{
-          repr_cache: result.cache.repr_cache.set(key, result.repr),
-          val_type_cache: result.cache.val_type_cache,
-          layout_cache: result.cache.layout_cache,
-        },
-      }
+      result.cache.repr_cache = .set(key, result.repr)
+      result
     },
   }
 }

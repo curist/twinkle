@@ -174,13 +174,10 @@ fn collect_typed_return_call_results(
           collect_typed_return_call_results(else_e, typeable_return, fam, a)
         },
         .AMatch(_, arms) => {
-          cur := acc
-
           for arm in arms {
-            cur = collect_typed_return_call_results(arm.body, typeable_return, fam, cur)
+            acc = collect_typed_return_call_results(arm.body, typeable_return, fam, acc)
           }
-
-          cur
+          acc
         },
         .ALoop(inner) => collect_typed_return_call_results(inner, typeable_return, fam, acc),
         .ADefer(inner) => collect_typed_return_call_results(inner, typeable_return, fam, acc),
@@ -204,8 +201,8 @@ fn collect_relaxed_captures(
 ) Dict<Int, Bool> {
   case body {
     .Let(_, op, rest) => {
-      acc2 := relaxed_captures_op(op, capture_abi, fam, acc)
-      collect_relaxed_captures(rest, capture_abi, fam, acc2)
+      acc = relaxed_captures_op(op, capture_abi, fam, acc)
+      collect_relaxed_captures(rest, capture_abi, fam, acc)
     },
     _ => acc,
   }
@@ -233,17 +230,15 @@ fn relaxed_captures_op(
       acc
     },
     .AIf(_, then_e, else_e) => {
-      acc2 := collect_relaxed_captures(then_e, capture_abi, fam, acc)
-      collect_relaxed_captures(else_e, capture_abi, fam, acc2)
+      acc = collect_relaxed_captures(then_e, capture_abi, fam, acc)
+      collect_relaxed_captures(else_e, capture_abi, fam, acc)
     },
     .AMatch(_, arms) => {
-      cur := acc
-
       for arm in arms {
-        cur = collect_relaxed_captures(arm.body, capture_abi, fam, cur)
+        acc = collect_relaxed_captures(arm.body, capture_abi, fam, acc)
       }
 
-      cur
+      acc
     },
     .ALoop(inner) => collect_relaxed_captures(inner, capture_abi, fam, acc),
     .ADefer(inner) => collect_relaxed_captures(inner, capture_abi, fam, acc),
@@ -797,21 +792,20 @@ fn collect_candidates(
   acc: Vector<Cand>,
 ) Vector<Cand> {
   cur := expr
-  cur_acc := acc
   done := false
 
   for !done {
     case cur {
       .Let(slot, op, body) => {
-        cur_acc = collect_candidate_from_op(slot, op, slots, ids, fam, cur_acc)
-        cur_acc = collect_candidates_op_branches(op, slots, ids, fam, cur_acc)
+        acc = collect_candidate_from_op(slot, op, slots, ids, fam, acc)
+        acc = collect_candidates_op_branches(op, slots, ids, fam, acc)
         cur = body
       },
       _ => done = true,
     }
   }
 
-  cur_acc
+  acc
 }
 
 fn collect_candidates_op_branches(
@@ -1277,20 +1271,19 @@ fn collect_typed_payload_reads(
   acc: Vector<Int>,
 ) Vector<Int> {
   cur := expr
-  cur_acc := acc
   done := false
 
   for !done {
     case cur {
       .Let(_, op, body) => {
-        cur_acc = collect_typed_payload_reads_op(op, typed_payloads, slots, fam, cur_acc)
+        acc = collect_typed_payload_reads_op(op, typed_payloads, slots, fam, acc)
         cur = body
       },
       _ => done = true,
     }
   }
 
-  cur_acc
+  acc
 }
 
 fn collect_typed_payload_reads_op(
@@ -1300,25 +1293,23 @@ fn collect_typed_payload_reads_op(
   fam: ElemFamily,
   acc: Vector<Int>,
 ) Vector<Int> {
-  cur := acc
-
   case op {
     .AMatch(_, arms) => {
       for arm in arms {
-        cur = collect_payload_bindings(arm.pattern, typed_payloads, slots, fam, cur)
-        cur = collect_typed_payload_reads(arm.body, typed_payloads, slots, fam, cur)
+        acc = collect_payload_bindings(arm.pattern, typed_payloads, slots, fam, acc)
+        acc = collect_typed_payload_reads(arm.body, typed_payloads, slots, fam, acc)
       }
     },
     .AIf(_, then_e, else_e) => {
-      cur = collect_typed_payload_reads(then_e, typed_payloads, slots, fam, cur)
-      cur = collect_typed_payload_reads(else_e, typed_payloads, slots, fam, cur)
+      acc = collect_typed_payload_reads(then_e, typed_payloads, slots, fam, acc)
+      acc = collect_typed_payload_reads(else_e, typed_payloads, slots, fam, acc)
     },
-    .ALoop(inner) => cur = collect_typed_payload_reads(inner, typed_payloads, slots, fam, cur),
-    .ADefer(inner) => cur = collect_typed_payload_reads(inner, typed_payloads, slots, fam, cur),
+    .ALoop(inner) => acc = collect_typed_payload_reads(inner, typed_payloads, slots, fam, acc),
+    .ADefer(inner) => acc = collect_typed_payload_reads(inner, typed_payloads, slots, fam, acc),
     _ => {},
   }
 
-  cur
+  acc
 }
 
 // Record the bound slot of every `Var` subpattern at a payload index whose site
@@ -1334,21 +1325,19 @@ fn collect_payload_bindings(
 ) Vector<Int> {
   case pattern {
     .Variant(tid, vid, subpats) => {
-      cur := acc
-
       for sub, idx in subpats {
         key := "${tid.id}:${vid.id}:${idx}"
 
         case sub {
           .Var(s) => if typed_payloads.has(key) and slot_in_family_id(s.id, slots, fam) {
-            cur = .append(s.id)
+            acc = .append(s.id)
           },
-          .Variant(_, _, _) => cur = collect_payload_bindings(sub, typed_payloads, slots, fam, cur),
+          .Variant(_, _, _) => acc = collect_payload_bindings(sub, typed_payloads, slots, fam, acc),
           _ => {},
         }
       }
 
-      cur
+      acc
     },
     _ => acc,
   }
@@ -1360,7 +1349,7 @@ fn collect_payload_bindings(
 pub fn build_copy_map(expr: PreparedExpr, acc: Dict<Int, Int>) Dict<Int, Int> {
   case expr {
     .Let(slot, op, body) => {
-      acc2 := case op {
+      acc = case op {
         // A self-copy (`Lx = init Lx`, emitted as a redundant rebind) must not
         // overwrite a real `Lx -> src` mapping: doing so turns the chain into a
         // self-loop, hiding forward aliases from aliases_for() and letting an
@@ -1374,8 +1363,8 @@ pub fn build_copy_map(expr: PreparedExpr, acc: Dict<Int, Int>) Dict<Int, Int> {
         },
         _ => acc,
       }
-      acc3 := copy_map_op(op, acc2)
-      build_copy_map(body, acc3)
+      acc = copy_map_op(op, acc)
+      build_copy_map(body, acc)
     },
     _ => acc,
   }
@@ -1384,17 +1373,14 @@ pub fn build_copy_map(expr: PreparedExpr, acc: Dict<Int, Int>) Dict<Int, Int> {
 fn copy_map_op(op: PreparedOp, acc: Dict<Int, Int>) Dict<Int, Int> {
   case op {
     .AIf(_, then_e, else_e) => {
-      acc2 := build_copy_map(then_e, acc)
-      build_copy_map(else_e, acc2)
+      acc = build_copy_map(then_e, acc)
+      build_copy_map(else_e, acc)
     },
     .AMatch(_, arms) => {
-      cur := acc
-
       for arm in arms {
-        cur = build_copy_map(arm.body, cur)
+        acc = build_copy_map(arm.body, acc)
       }
-
-      cur
+      acc
     },
     .ALoop(inner) => build_copy_map(inner, acc),
     .ADefer(inner) => build_copy_map(inner, acc),
@@ -2602,16 +2588,14 @@ fn field_store_sites_op(
 ) Vector<FieldStoreSite> {
   case op {
     .ARecord(tid, fields) => {
-      cur := acc
-
       for f in fields {
         if atom_in_family(f.value, slots, fam) {
           key := "${tid.id}:${f.field.id}"
-          cur = .append(.{ key, value: f.value })
+          acc = .append(.{ key, value: f.value })
         }
       }
 
-      cur
+      acc
     },
     .ARecordUpdate(_, fid, val, _, tid) => if atom_in_family(val, slots, fam) {
       key := "${tid.id}:${fid.id}"
@@ -2620,17 +2604,15 @@ fn field_store_sites_op(
       acc
     },
     .AIf(_, then_e, else_e) => {
-      acc2 := field_store_sites(then_e, slots, fam, acc)
-      field_store_sites(else_e, slots, fam, acc2)
+      acc = field_store_sites(then_e, slots, fam, acc)
+      field_store_sites(else_e, slots, fam, acc)
     },
     .AMatch(_, arms) => {
-      cur := acc
-
       for arm in arms {
-        cur = field_store_sites(arm.body, slots, fam, cur)
+        acc = field_store_sites(arm.body, slots, fam, acc)
       }
 
-      cur
+      acc
     },
     .ALoop(inner) => field_store_sites(inner, slots, fam, acc),
     .ADefer(inner) => field_store_sites(inner, slots, fam, acc),
