@@ -83,15 +83,6 @@ fn variant_specialize_enabled() Bool {
   }
 }
 
-// MutVec region lowering is default-OFF (opt-in via TWINKLE_MUTVEC=1) while the
-// slice is being built, so self-host and unclaimed codegen stay byte-identical.
-pub fn mutvec_region_enabled() Bool {
-  case proc.env("TWINKLE_MUTVEC") {
-    .Some("1") => true,
-    _ => false,
-  }
-}
-
 fn verify_level_from_env() VerifyLevel {
   case proc.env("TWINKLE_VERIFY_LEVEL") {
     .Some("basic") => .Basic,
@@ -138,13 +129,10 @@ pub fn prepare_codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegist
   // guard keys off the ANF fingerprint, which must be ANF').
   // MutVec region lowering runs immediately before builder_region and fully
   // rewrites every region it claims, so builder_region sees no surviving
-  // builder-visible shape at those sites (no exclusion parameter needed). Off by
-  // default; unclaimed code is byte-identical.
-  anf_mutvec := if mutvec_region_enabled() {
-    mutvec_region.rewrite_module(anf, builtins)
-  } else {
-    anf
-  }
+  // builder-visible shape at those sites (no exclusion parameter needed).
+  // Unclaimed code is byte-identical, so boot's own self-host (which claims no
+  // regions) stays at the fixed point.
+  anf_mutvec := mutvec_region.rewrite_module(anf, builtins)
 
   log_phase("begin builder_region_rewrite")
   tbr := date.now()

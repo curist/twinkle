@@ -269,8 +269,8 @@ pub fn prepare_backend_with_mutable_decisions(
   // MutVec repr handoff: mark the live handle slots of every mutvec-lowered
   // region (from codegen's mutvec_region pass) as MutVec(I64). The freeze-result
   // PVecI64 slot is owned by route_typed_vec above (it recognizes
-  // mutvec_freeze_i64 as a typed producer), not here. A no-op when TWINKLE_MUTVEC
-  // is off (no mutvec ops present).
+  // mutvec_freeze_i64 as a typed producer), not here. A no-op for modules that
+  // claim no regions (no mutvec ops present).
   funcs4 := mutvec_repr.assign_mutvec_reprs(funcs3, env, builtins)
   r3 := date.now()
 

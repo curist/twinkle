@@ -181,8 +181,8 @@ fn mutvec_proof_present(rs: Vector<mutvec_region.MutVecRegion>, proof_id: String
 /// region no longer detects (its `set_unsafe` base became `mutvec_set_i64`),
 /// while a produced-but-abandoned region still detects, so it reads "no". `exit`
 /// is `freeze` when the handle escapes at a single return boundary (materialized)
-/// or `scratch` when it is a pure local buffer never published (no freeze). Flag-
-/// independent by design: the census caller gates it behind `TWINKLE_MUTVEC`.
+/// or `scratch` when it is a pure local buffer never published (no freeze).
+/// Empty when the module claims no regions, so an all-boxed program shows nothing.
 pub fn render_mutvec_rows(artifacts: PipelineArtifacts) String {
   b := artifacts.builtins
   regions := mutvec_region.detect_regions(artifacts.opt, b)
@@ -265,11 +265,10 @@ pub fn render_census_report(artifacts: PipelineArtifacts, include_sites: Bool) S
       out = .concat(mutable_produce.render_candidate_rows(fb_rows))
     }
 
-    // MutVec region audit (additive): only when TWINKLE_MUTVEC is enabled, since
-    // the pass is inert flag-off and would otherwise report regions nothing emits.
-    if codegen.mutvec_region_enabled() {
-      out = .concat(render_mutvec_rows(artifacts))
-    }
+    // MutVec region audit (additive): one row per claimed MutVec(I64) region.
+    // Empty for modules that claim none, so existing census output is unchanged
+    // there.
+    out = .concat(render_mutvec_rows(artifacts))
   }
   out
 }

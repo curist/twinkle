@@ -307,16 +307,22 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "collect indexed set plus append emits typed vector write/read/push path",
+      "collect indexed set plus append lowers through the mutvec scratch path",
       fn() {
+        // An owned collect + indexed set (+ append) that is read locally and never
+        // published is a MutVec scratch region: it lowers to mutvec_* ops with no
+        // boundary freeze (nothing escapes), replacing the boxed set path.
         fn_wat := try user_func_wat(set_append_source, "typed_set_append")
-        try assert.str_contains(fn_wat, "$rt_types__PVecI64)")
-        try assert_call_present(fn_wat, "rt_arr__push_i64")
-        try assert_call_present(fn_wat, "rt_arr__set_in_place_i64")
-        try assert_call_present(fn_wat, "rt_arr__get_i64")
-        try assert_call_absent_exact(fn_wat, "rt_arr__push")
-        try assert_call_absent_exact(fn_wat, "rt_arr__get")
-        try assert_boxed_pvec_absent(fn_wat)
+        try assert_call_present(fn_wat, "rt_arr__mutvec_new_i64")
+        try assert_call_present(fn_wat, "rt_arr__mutvec_set_i64")
+        try assert_call_present(fn_wat, "rt_arr__mutvec_push_i64")
+        try assert_call_present(fn_wat, "rt_arr__mutvec_get_i64")
+
+        // scratch: never materialized
+        try assert_call_absent_exact(fn_wat, "rt_arr__mutvec_freeze_i64")
+
+        // the boxed set path is fully replaced on the claimed handle
+        try assert_call_absent_exact(fn_wat, "rt_arr__set_unsafe")
         .Ok({})
       },
     )
@@ -348,14 +354,20 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "collect set plus append return keeps typed PVecI64 ABI",
+      "collect set plus append return lowers to mutvec + single freeze, PVecI64 ABI",
       fn() {
+        // An owned collect + indexed set (+ append) that is RETURNED is a MutVec
+        // escaping region: it lowers to mutvec_* ops with exactly one boundary
+        // freeze, and route keeps the frozen PVecI64 as the return without a rebox.
         fn_wat := try user_func_wat(collect_return_set_append_source, "f")
         try assert.str_contains(fn_wat, "(result (ref null $rt_types__PVecI64))")
-        try assert_call_present(fn_wat, "rt_arr__push_i64")
-        try assert_call_present(fn_wat, "rt_arr__set_in_place_i64")
+        try assert_call_present(fn_wat, "rt_arr__mutvec_new_i64")
+        try assert_call_present(fn_wat, "rt_arr__mutvec_set_i64")
+        try assert_call_present(fn_wat, "rt_arr__mutvec_push_i64")
+        try assert_call_present(fn_wat, "rt_arr__mutvec_freeze_i64")
+
+        // returned frozen PVecI64 is not reboxed
         try assert_call_absent_exact(fn_wat, "rt_arr__box_i64")
-        try assert_boxed_pvec_absent(fn_wat)
         .Ok({})
       },
     )

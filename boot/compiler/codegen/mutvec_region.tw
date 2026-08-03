@@ -728,7 +728,7 @@ fn regions_for(all: Vector<MutVecRegion>, func_id: FuncId) Vector<MutVecRegion> 
 
 // Rewrite every claimed MutVec region in the module to its flat mutable form.
 // Pure ANF->ANF transform, run immediately before builder_region.rewrite_module
-// under the TWINKLE_MUTVEC flag. Unclaimed code is byte-identical.
+// before builder_region. Unclaimed code is byte-identical.
 pub fn rewrite_module(m: AnfModule, b: BuiltinRegistry) AnfModule {
   ids := resolve_ids(b)
   mids := resolve_mutvec_ids(b)

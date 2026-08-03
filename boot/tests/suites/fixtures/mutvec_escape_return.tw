@@ -1,14 +1,14 @@
 // Escaping MutVec region: collect-born owned Vector<Int>, one indexed update,
-// returned. Under TWINKLE_MUTVEC=1 the boundary must freeze once to PVecI64 and
+// returned. Under the boundary must freeze once to PVecI64 and
 // return it WITHOUT a box_i64/unbox_i64 rebuild, and typed callers must read the
 // result directly (no rebuild). A boxed consumer boxes exactly once, on demand.
 //
 // The emit-level ABI is only exercised under the flag at runtime, so the box/unbox
 // assertions are MANUAL gates (boot-test's mutvec suite covers the ANF rewrite, not
 // emit). Verify with (the esc mangled name's numeric id varies, so match the tail):
-//   TWINKLE_MUTVEC=1 target/twk wat <this file> --func _esc  --calls | grep -cE 'box_i64|unbox_i64'  # -> 0
-//   TWINKLE_MUTVEC=1 target/twk wat <this file> --func read_typed --calls | grep -cE 'box_i64|unbox' # -> 0
-//   TWINKLE_MUTVEC=1 target/twk wat <this file> --func via_sink --calls | grep -cE 'box_i64'         # -> 1
+//   target/twk wat <this file> --func _esc  --calls | grep -cE 'box_i64|unbox_i64'  # -> 0
+//   target/twk wat <this file> --func read_typed --calls | grep -cE 'box_i64|unbox' # -> 0
+//   target/twk wat <this file> --func via_sink --calls | grep -cE 'box_i64'         # -> 1
 fn esc(n: Int, seed: Int) Vector<Int> {
   xs := collect i in range(n) {
     i + seed

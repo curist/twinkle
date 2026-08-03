@@ -4,8 +4,7 @@
 //! `Vector<Int>` born from a `collect`, updated k times by index, then RETURNED
 //! (the single freeze boundary). Run it two ways to compare:
 //!
-//!   target/twk run boot/bench/mutvec_slice1_bench.tw                  # baseline
-//!   TWINKLE_MUTVEC=1 target/twk run boot/bench/mutvec_slice1_bench.tw # MutVec
+//!   target/twk run boot/bench/mutvec_slice1_bench.tw   # MutVec (always on)
 //!
 //! IMPORTANT baseline note: the baseline here is NOT boxed PVec. Sub-project A's
 //! typed indexed-write (`set_in_place_i64`) already makes this shape a flat i64
@@ -67,6 +66,5 @@ fn run(n: Int, k: Int) Void {
 }
 
 println("MutVec slice 1 bench — collect + indexed-update + return")
-println("(baseline = typed set_in_place_i64; TWINKLE_MUTVEC=1 = MutVec)")
 run(65536, 2000000)
 run(1048576, 2000000)

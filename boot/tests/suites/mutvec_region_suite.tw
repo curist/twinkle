@@ -68,9 +68,9 @@ fn kind_count(r: mutvec_region.MutVecRegion, name: String) Int {
 
 // ── Rewrite-level inspection (Phase 4) ──
 // The suite compiles mutvec_region.tw from disk, so rewrite_module is exercised
-// directly here (flag-independent). An in-suite run has one fixed process env, so
-// the TWINKLE_MUTVEC-gated codegen path + end-to-end WAT are validated externally;
-// this checks the ANF->ANF rewrite fires (or doesn't) by counting mutvec op calls.
+// directly here. End-to-end WAT/emit behavior is covered by the standalone
+// fixtures under fixtures/. This checks the ANF->ANF rewrite fires (or doesn't)
+// by counting mutvec op calls.
 fn count_calls_expr(e: AnfExpr, fid: Int) Int {
   case e {
     .Let(_, op, body) => count_calls_op(op, fid) + count_calls_expr(body, fid),
@@ -539,12 +539,27 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "census: mutvec rows are gated out of the full report when flag is off",
+      "census: full --sites report carries the mutvec section for a claimed module",
       fn() {
-        // The boot suite runs flag-off (TWINKLE_MUTVEC unset), so the full census
-        // report must NOT carry mutvec rows even though the region is claimable.
+        // The pass runs unconditionally, so the full census report surfaces the
+        // region rows whenever a module claims one.
         case pipeline.compile_source(
           "fn f(n: Int) Vector<Int> {\n  xs := collect i in range(n) { i }\n  xs[0] = 42\n  xs\n}\nprintln(f(5).len().to_string())\n",
+        ) {
+          .Ok(a) => {
+            full := ir.render_census_report(a, true)
+            try assert.is_true(full.contains("mutvec regions:"))
+            .Ok({})
+          },
+          .Err(e) => error("compile failed: ${e}"),
+        }
+      },
+    )
+    .test(
+      "census: a module claiming no regions carries no mutvec section",
+      fn() {
+        case pipeline.compile_source(
+          "fn f(n: Int) Vector<Int> {\n  acc: Vector<Int> = []\n  for i in range(n) { acc = acc.append(i) }\n  acc\n}\nprintln(f(5).len().to_string())\n",
         ) {
           .Ok(a) => {
             full := ir.render_census_report(a, true)

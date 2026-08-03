@@ -4,11 +4,11 @@
 // run has one fixed process env, so verify with these commands (mangled fn names
 // carry a numeric suffix — match the tail with a substring):
 //
-//   TWINKLE_MUTVEC=1 target/twk run <this file>                       # -> deterministic sum
-//   TWINKLE_MUTVEC=1 target/twk wat <this file> --func from_collect --calls  # mutvec_new/push/set + 1 freeze
-//   TWINKLE_MUTVEC=1 target/twk wat <this file> --func from_make    --calls  # mutvec_make/set + 1 freeze
-//   TWINKLE_MUTVEC=1 target/twk wat <this file> --func with_append  --calls  # mutvec_push + set + 1 freeze
-//   TWINKLE_MUTVEC=1 target/twk wat <this file> --func scratch_sum  --calls  # mutvec_get/len, NO freeze
+//   target/twk run <this file>                       # -> deterministic sum
+//   target/twk wat <this file> --func from_collect --calls  # mutvec_new/push/set + 1 freeze
+//   target/twk wat <this file> --func from_make    --calls  # mutvec_make/set + 1 freeze
+//   target/twk wat <this file> --func with_append  --calls  # mutvec_push + set + 1 freeze
+//   target/twk wat <this file> --func scratch_sum  --calls  # mutvec_get/len, NO freeze
 //
 // Every escaping producer materializes at exactly one boundary (one
 // mutvec_freeze_i64); the non-escaping scratch buffer emits none.

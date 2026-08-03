@@ -4,7 +4,7 @@
 // exactly like the persistent path — never silently read/write past the end.
 // Both are runtime traps, so this is a manual gate (uncomment one call in `main`):
 //
-//   TWINKLE_MUTVEC=1 target/twk run <this file>   # -> traps (index out of bounds)
+//   target/twk run <this file>   # -> traps (index out of bounds)
 //   (flag-off traps identically via the persistent path; MutVec must not diverge)
 // Region is claimed by the in-bounds set; the OOB set then traps in mutvec_set_i64.
 fn oob_set(n: Int) Vector<Int> {
