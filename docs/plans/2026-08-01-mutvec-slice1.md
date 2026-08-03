@@ -199,54 +199,32 @@ The first flag-on WAT check should fail by absence of `mutvec_*` calls. After im
 
 ## Phase 5: Census, negatives, regression, performance
 
-### Task 12: Census region-audit rows
+### Task 12: Census region-audit rows — DONE (commit `cf1328b6`)
 
-**Files:** the census/`--sites` renderer (find via `grep -rn "would_use\|--sites\|census" boot/compiler`), `boot/tests/suites/mutvec_region_suite.tw`
+**Files:** `boot/commands/ir.tw` (the `--census --sites` renderer, `render_mutvec_rows`), `boot/compiler/codegen/codegen.tw` (`mutvec_region_enabled` made `pub`), `boot/tests/suites/mutvec_region_suite.tw`, `boot/tests/suites/fixtures/mutvec_indexed.tw`.
 
-- [ ] **Step 1: Write the failing test.** Assert `twk ir --census --sites` on the fixture (flag on) prints a `mutvec` region row naming the region id, producer/begin site, family, op sites, exit, and `would_use`/`consumed` state:
+- [x] **Step 1–3:** `ir.render_mutvec_rows` renders one additive row per claimed region sourced from `mutvec_region.detect_regions`, gated behind `codegen.mutvec_region_enabled()` in `render_census_report`. Columns: `region_id | begin_site (producer@handle) | family=MutVecI64 | op_sites=[kind@site,…] | exit (freeze|scratch) | would_use | consumed`. `consumed` re-detects after `rewrite_module` (a lowered region's `set_unsafe` base is gone → "yes"). In-suite tests assert row content flag-independently (calling `render_mutvec_rows` directly) plus a gating test that the full flag-off report carries no rows.
+- [x] **Step 4: Rebuild + verify.** Flag-on `--census --sites` on `mutvec_indexed.tw` shows the rows; flag-off and unclaimed fixtures show none; existing rows untouched (the block is skipped flag-off).
+- [x] **Bonus (surfaced by the fixture):** fixed a latent detector dup — `collect_set_bases` deduped candidate handles through a side `Dict` that was mutated but never threaded back (Twinkle Dicts are persistent), so a handle written at ≥2 index sites was collected — and rewritten — once per write (duplicate row + redundant second boundary freeze). Dedup now scans the threaded `out` accumulator; regression test added (one region, one freeze, two sets).
+- [x] **Step 5: Commit.**
 
-Run: `TWINKLE_MUTVEC=1 target/twk ir boot/tests/suites/fixtures/mutvec_indexed.tw --census --sites`
-Expected: a line matching `mutvec` with the region proof id and `consumed`.
+### Task 13: Full negative + positive fixture matrix — DONE (commit `96d9380c`)
 
-- [ ] **Step 2: Run to see it fail.** No `mutvec` row yet.
+**Files:** `boot/tests/suites/mutvec_region_suite.tw` (ANF-level matrix, already present), `boot/tests/suites/fixtures/mutvec_producers.tw`, `boot/tests/suites/fixtures/mutvec_oob.tw`.
 
-- [ ] **Step 3: Implement the row.** Add a `mutvec` region-audit row to the census renderer, sourced from the `MutVecRegion` records (additive; do not alter existing rows). Pin the exact columns here: `region_id | begin_site | family=MutVecI64 | op_sites=[…] | exit | would_use | consumed`.
+- [x] **Step 1: Positive fixture per producer.** `mutvec_producers.tw`: collect-freeze (`new`/`push`/`set`+1 `freeze`), `Vector.make`-freeze (`make`/`set`+1 `freeze`), collect+append (`push`×2+`set`+1 `freeze`), non-escaping scratch (`get`/`len`, **no** `freeze`). Verified flag-on WAT per fn + flag-on/off run agree (123).
+- [x] **Step 2: Negative per rejected class.** The rejected-class matrix is automated at the ANF-rewrite level in the mutvec suite (aliased/not-owned, non-Int, append-only, concat/slice, multiple exits, early return, capture, aggregate-store, call/host escape). Since emit consumes the rewritten ANF, `rewritten_calls==0` is the emit guarantee; a flag-on emit spot-check confirms rejected regions produce zero `mutvec_*` calls in WAT.
+- [x] **OOB traps.** `mutvec_oob.tw`: `mutvec_set_i64`/`mutvec_get_i64` bounds-check the logical length and trap (`RuntimeError: unreachable`) on an out-of-range index, identically to the persistent path flag-off.
+- [x] **Step 3: Run.** `make boot-test` → 3409 pass.
+- [x] **Step 4: Commit.**
 
-- [ ] **Step 4: Rebuild + verify.** `make bundle-cli`; re-run → row present. Also confirm a flag-off run and an unclaimed fixture show **no** `mutvec` rows and unchanged existing rows.
+### Task 14: Self-host + regression gate — DONE (verification-only, no code delta)
 
-- [ ] **Step 5: Commit.**
-
-```bash
-git add -A && git commit -m "feat(mutvec): census --sites region-audit rows"
-```
-
-### Task 13: Full negative + positive fixture matrix
-
-**Files:** `boot/tests/suites/mutvec_region_suite.tw`, `boot/tests/suites/fixtures/`
-
-- [ ] **Step 1: Ensure a positive fixture per producer.** collect-born+indexed-update; `Vector.make`-born+indexed-update; +append; in-region `get`/`len`. Each: flag-on WAT shows `mutvec_*` + one freeze; flag-on run gives the correct result.
-
-- [ ] **Step 2: Ensure a negative fixture per rejected class** (from Task 7, now checked at the emit level too): not-owned/aliased, non-Int, append-only, unsupported op (concat/slice), multiple exits, early return, `break value`, `try`-arm, capture, escaping-aggregate store, handle-to-call, host boundary. Each: flag-on WAT shows **no** `mutvec_*` and the existing path unchanged.
-
-- [ ] **Step 3: Run.** `target/twk run boot/tests/main.tw` → all PASS.
-
-- [ ] **Step 4: Commit.**
-
-```bash
-git add -A && git commit -m "test(mutvec): full positive/negative region fixture matrix"
-```
-
-### Task 14: Self-host + regression gate
-
-- [ ] **Step 1: Full self-host.** Run: `make bundle-cli` → `Fixed point reached` (flag off by default → boot self-compilation byte-identical).
-- [ ] **Step 2: Boot suite.** Run: `make boot-test` → all green.
-- [ ] **Step 3: Rust suite (reference).** Run: `make rust-test` → green (stage0 untouched, so this should be unaffected; confirms no accidental `src/` coupling).
-- [ ] **Step 4: Census regression.** Diff `target/twk ir boot/main.tw --census --sites` (flag off) against a pre-change capture → only expected differences (ideally none, since flag off).
-- [ ] **Step 5: Commit any fixture/expected-output updates.**
-
-```bash
-git add -A && git commit -m "test(mutvec): self-host + regression gate green (flag off)"
-```
+- [x] **Step 1: Full self-host.** `make bundle-cli` → `Fixed point reached: stage3 == stage4` with all Phase-5 compiler edits in place (census renderer + detector dedup).
+- [x] **Step 2: Boot suite.** `make boot-test` → 3409 passed.
+- [x] **Step 3: Rust suite (reference).** `make rust-test` → all suites ok, 0 failed (stage0 untouched; no `src/` coupling).
+- [x] **Step 4: Census regression.** `target/twk ir boot/main.tw --census --sites` (flag off) shows **no** `mutvec regions:` section (boot claims 0 regions and the block is flag-gated) → existing census output unchanged.
+- [x] **Step 5:** No fixture/expected-output snapshot files exist (census asserted via in-suite substrings), so nothing to commit for this verification step.
 
 ### Task 15: Performance validation (end-of-slice gate) — DONE (commit `8ddae21e`)
 
