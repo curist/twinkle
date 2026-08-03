@@ -1,0 +1,50 @@
+// Byte MutVec fixture (mutvec later-slices Phase 4). A collect-born Vector<Byte>
+// mutated by index and returned is a claimable region, lowering to mutvec_*_byte
+// with a single boundary freeze (asserted structurally in mutvec_region_suite).
+// The source is a real UTF-8 byte vector (the codec/readfile-shaped workload); the
+// lowered path's result is cross-checked against an independent boxed computation
+// that is never a claimable region.
+//
+//   target/twk run <this file>                              # -> deterministic OK <sum>
+//   target/twk wat <this file> --func from_collect --calls  # mutvec_new/push/set_byte + 1 freeze
+// collect-born (over the boxed source), indexed set, returned -> claimable byte region.
+fn from_collect(src: Vector<Byte>) Vector<Byte> {
+  n := src.len()
+  xs := collect i in range(n) {
+    src[i]
+  }
+  xs[0] = src[n - 1]
+  xs[1] = src[n - 2]
+  xs
+}
+
+// Independent reference: the same logical vector built without any indexed write,
+// so it is never a claimable region and stays on the persistent/boxed path.
+fn reference(src: Vector<Byte>) Vector<Byte> {
+  n := src.len()
+  collect i in range(n) {
+    cond {
+      i == 0 => src[n - 1],
+      i == 1 => src[n - 2],
+      _ => src[i],
+    }
+  }
+}
+
+fn sum(xs: Vector<Byte>) Int {
+  t := 0
+  for i in range(xs.len()) {
+    t = t + xs[i].to_int()
+  }
+  t
+}
+
+src := "The quick brown fox jumps over the lazy dog".utf8_bytes()
+got := from_collect(src)
+want := reference(src)
+ok := got.len() == want.len() and sum(got) == sum(want)
+println(if ok {
+  "OK ${sum(got).to_string()}"
+} else {
+  "MISMATCH"
+})

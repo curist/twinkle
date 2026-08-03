@@ -27,6 +27,15 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "Vector<Byte> → Some(Byte)",
+      fn() {
+        // Byte reads into i32 like Bool, but keys a distinct ElemRepr so its
+        // mutvec handle resolves to MutVecByte rather than MutVecBool.
+        try assert.is_true(candidate_typed_vec_family(.Vector(.Byte)) == .Some(.Byte))
+        .Ok({})
+      },
+    )
+    .test(
       "Vector<String> stays boxed → None",
       fn() {
         try assert.is_true(candidate_typed_vec_family(.Vector(.String)) == .None)

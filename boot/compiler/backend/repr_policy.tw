@@ -9,10 +9,11 @@ use compiler.codegen.wasm_ir.{ValType}
 use compiler.elem_family.{elem_family_of}
 use compiler.mono_type.{MonoType}
 
-/// The primitive storage class of a typed vector's elements. M1a implements only
-/// I64; F64/I32 are reserved so ReprKind.TypedVec(ElemRepr) keeps its final shape
-/// without churn as more primitive families are added.
-pub type ElemRepr = { I64, F64, I32 }
+/// The primitive storage class of a typed vector's elements. Byte is distinct
+/// from I32 even though a byte is read into an i32: Bool and Byte both surface as
+/// i32 values but freeze into different mutable handles (MutVecBool vs MutVecByte),
+/// so mutvec_wasm_type must tell them apart via this tag.
+pub type ElemRepr = { I64, F64, I32, Byte }
 
 /// candidate_typed_vec_family returns the *candidate* typed element family for a
 /// Vector<T> whose T is a currently-supported primitive, else .None. Whether a
@@ -22,7 +23,16 @@ pub type ElemRepr = { I64, F64, I32 }
 /// registered family is a candidate.
 pub fn candidate_typed_vec_family(mono: MonoType) ElemRepr? {
   case elem_family_of(mono) {
-    .Some(fam) => .Some(elem_repr_of(fam.elem_wasm)),
+    // Byte's physical element wasm is i32 (read via array.get_u), identical to
+    // Bool's, so elem_wasm can't distinguish them — key the tag off the family
+    // directly so the byte family gets its own MutVecByte handle type.
+    .Some(fam) => .Some(
+      if fam.mono_key == "vec_byte" {
+        .Byte
+      } else {
+        elem_repr_of(fam.elem_wasm)
+      },
+    ),
     .None => .None,
   }
 }

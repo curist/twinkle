@@ -65,9 +65,13 @@ t_ARRAY_BOOL := "rt_types__ArrayBool"
 
 t_ARRAY_F64 := "rt_types__ArrayF64"
 
+t_ARRAY_BYTE := "rt_types__ArrayByte"
+
 t_MUTVEC_I64 := "rt_types__MutVecI64"
 
 t_MUTVEC_F64 := "rt_types__MutVecF64"
+
+t_MUTVEC_BYTE := "rt_types__MutVecByte"
 
 // Minimum backing capacity for a MutVecI64; also the growth floor so that a
 // zero-capacity seed and `capacity * 2 == 0` both round up to a usable size.
@@ -180,6 +184,27 @@ fn pvec_f64_null() ValType {
 
 fn pvec_f64_ref() ValType {
   .Ref(false, .Named(t_PVEC_F64))
+}
+
+// Typed byte persistent vector helpers (rt.arr_byte family). Mirrors bool's i31
+// boxing but stores into a PACKED ArrayByte (array i8) — one byte per element —
+// so leaf reads go through array.get_u (see family_byte().leaf_get).
+t_PVEC_BYTE := "rt_types__PVecByte"
+
+fn pvec_byte_null() ValType {
+  .Ref(true, .Named(t_PVEC_BYTE))
+}
+
+fn pvec_byte_ref() ValType {
+  .Ref(false, .Named(t_PVEC_BYTE))
+}
+
+fn arr_byte_null() ValType {
+  .Ref(true, .Named(t_ARRAY_BYTE))
+}
+
+fn arr_byte_ref() ValType {
+  .Ref(false, .Named(t_ARRAY_BYTE))
 }
 
 // PVec field indices
@@ -299,6 +324,19 @@ pub fn module() WasmModule {
     family_float().pvec_box_fn(),
     unbox_f64_fn(),
     family_float().pvec_gather_fn(),
+    family_byte().pvec_len_fn(),
+    family_byte().pvec_get_fn(),
+    family_byte().pvec_promote_full_tail_fn(),
+    // mutvec_freeze_byte's slow path calls builder_append_leaf_range_byte.
+    family_byte().pvec_builder_append_leaf_range_fn(),
+    family_byte().pvec_builder_new_fn(),
+    family_byte().pvec_builder_push_fn(),
+    family_byte().pvec_builder_push_raw_fn(),
+    family_byte().pvec_builder_freeze_fn(),
+    family_byte().pvec_make_fn(),
+    family_byte().pvec_box_fn(),
+    unbox_byte_fn(),
+    family_byte().pvec_gather_fn(),
     family_boxed().pvec_builder_new_fn(),
     builder_from_fn(),
     builder_push_fn(),
@@ -313,6 +351,7 @@ pub fn module() WasmModule {
   ]
     .concat(family_bool().mutvec_fns())
     .concat(family_float().mutvec_fns())
+    .concat(family_byte().mutvec_fns())
   exports := collect f in funcs {
     ExportDef.{ wasm_name: f.name, func_sym: f.name }
   }
@@ -387,6 +426,24 @@ pub fn module() WasmModule {
           .RefNull(.Named(t_VEC_INTERNAL)),
           .GlobalGet("empty_leaf_f64"),
           .StructNew(t_PVEC_F64),
+        ],
+      },
+      .{
+        name: "empty_leaf_byte",
+        mutable: false,
+        ty: arr_byte_ref(),
+        init: [.ArrayNewFixed(t_ARRAY_BYTE, 0)],
+      },
+      .{
+        name: "empty_pvec_byte",
+        mutable: false,
+        ty: pvec_byte_ref(),
+        init: [
+          .I32Const(0),
+          .I32Const(0),
+          .RefNull(.Named(t_VEC_INTERNAL)),
+          .GlobalGet("empty_leaf_byte"),
+          .StructNew(t_PVEC_BYTE),
         ],
       },
     ],
@@ -1328,6 +1385,10 @@ type PVecFamily = .{
   arr_ty: String,
   arr_null: ValType,
   arr_ref: ValType,
+  // Leaf-array read instruction: `.ArrayGet(arr_ty)` for full-width leaves
+  // (i64/i32/f64), but `.ArrayGetU(arr_ty)` for the packed i8 byte family, whose
+  // storage would otherwise sign-extend. Spliced at every leaf read.
+  leaf_get: Instr,
   elem_ty: ValType,
   empty_pvec_global: String,
   empty_leaf_global: String,
@@ -1371,6 +1432,7 @@ fn family_boxed() PVecFamily {
     arr_ty: t_ARRAY,
     arr_null: arr_null(),
     arr_ref: arr_ref(),
+    leaf_get: .ArrayGet(t_ARRAY),
     elem_ty: .Anyref,
     empty_pvec_global: "empty_pvec",
     empty_leaf_global: "empty_leaf",
@@ -1399,6 +1461,7 @@ fn family_i64() PVecFamily {
     arr_ty: t_ARRAY_I64,
     arr_null: arr_i64_null(),
     arr_ref: arr_i64_ref(),
+    leaf_get: .ArrayGet(t_ARRAY_I64),
     elem_ty: .I64,
     empty_pvec_global: "empty_pvec_i64",
     empty_leaf_global: "empty_leaf_i64",
@@ -1427,6 +1490,7 @@ fn family_bool() PVecFamily {
     arr_ty: t_ARRAY_BOOL,
     arr_null: arr_bool_null(),
     arr_ref: arr_bool_ref(),
+    leaf_get: .ArrayGet(t_ARRAY_BOOL),
     elem_ty: .I32,
     empty_pvec_global: "empty_pvec_bool",
     empty_leaf_global: "empty_leaf_bool",
@@ -1457,6 +1521,7 @@ fn family_float() PVecFamily {
     arr_ty: t_ARRAY_F64,
     arr_null: arr_f64_null(),
     arr_ref: arr_f64_ref(),
+    leaf_get: .ArrayGet(t_ARRAY_F64),
     elem_ty: .F64,
     empty_pvec_global: "empty_pvec_f64",
     empty_leaf_global: "empty_leaf_f64",
@@ -1465,6 +1530,40 @@ fn family_float() PVecFamily {
     leaf_store: [.RefCast(false, .Named(t_BOXED_FLOAT)), .StructGet(t_BOXED_FLOAT, 0)],
     elem_box: [.StructNew(t_BOXED_FLOAT)],
     mutvec_ty: t_MUTVEC_F64,
+  }
+}
+
+// Typed byte family (mutvec later-slices Phase 4). Stores one byte per element in
+// a PACKED ArrayByte (array i8) — the 1-byte/element codec win. Reuses bool's i31
+// boxing (leaf_store/elem_box) since Byte values ride the anyref ABI as ref.i31,
+// but reads its packed leaves via array.get_u (leaf_get) so i8 storage does not
+// sign-extend into the i32 result.
+fn family_byte() PVecFamily {
+  .{
+    len_name: "len_byte",
+    get_name: "get_byte",
+    make_name: "make_byte",
+    builder_new_name: "builder_new_byte",
+    builder_push_raw_name: "builder_push_byte_raw",
+    builder_freeze_name: "builder_freeze_byte",
+    promote_name: "promote_full_tail_byte",
+    gather_name: "gather_byte",
+    builder_append_leaf_range_name: "builder_append_leaf_range_byte",
+    pvec_ty: t_PVEC_BYTE,
+    pvec_null: pvec_byte_null(),
+    pvec_ref: pvec_byte_ref(),
+    arr_ty: t_ARRAY_BYTE,
+    arr_null: arr_byte_null(),
+    arr_ref: arr_byte_ref(),
+    leaf_get: .ArrayGetU(t_ARRAY_BYTE),
+    elem_ty: .I32,
+    empty_pvec_global: "empty_pvec_byte",
+    empty_leaf_global: "empty_leaf_byte",
+    zero_value: .I32Const(0),
+    suffix: "_byte",
+    leaf_store: [.RefCast(false, .I31), .I31GetU],
+    elem_box: [.RefI31],
+    mutvec_ty: t_MUTVEC_BYTE,
   }
 }
 
@@ -1504,7 +1603,7 @@ fn pvec_get_fn(f: PVecFamily) FuncDef {
           .LocalGet(1),
           .I32Const(rt_MASK),
           .I32And,
-          .ArrayGet(f.arr_ty),
+          f.leaf_get,
         ],
         [
           .LocalGet(2),
@@ -1526,7 +1625,7 @@ fn pvec_get_fn(f: PVecFamily) FuncDef {
               .LocalGet(1),
               .LocalGet(3),
               .I32Sub,
-              .ArrayGet(f.arr_ty),
+              f.leaf_get,
             ],
             [
               .LocalGet(0),
@@ -1619,7 +1718,7 @@ fn pvec_get_fn(f: PVecFamily) FuncDef {
               .LocalGet(1),
               .I32Const(rt_MASK),
               .I32And,
-              .ArrayGet(f.arr_ty),
+              f.leaf_get,
             ],
           ),
         ],
@@ -2389,7 +2488,7 @@ fn pvec_mutvec_get_fn(f: PVecFamily) FuncDef {
       .RefAsNonNull,
       .StructGet(f.mutvec_ty, 0),
       .LocalGet(1),
-      .ArrayGet(f.arr_ty),
+      f.leaf_get,
     ],
   }
 }
@@ -2983,6 +3082,58 @@ fn unbox_f64_fn() FuncDef {
       ),
       .LocalGet(3),
       .Call("builder_freeze_f64"),
+    ],
+  }
+}
+
+// unbox_byte(vec: PVec?) -> PVecByte
+// Byte sibling of unbox_f64: rebuild a typed PVecByte from a boxed PVec. Reads
+// each boxed Byte (ref.i31) via `get` and pushes it into builder_push_byte (which
+// unboxes via the family leaf_store), so a boxed Vector<Byte> — e.g. a readfile
+// result — can re-enter typed code.
+fn unbox_byte_fn() FuncDef {
+  // p0=vec (boxed PVec); L1=n, L2=i, L3=typed builder (boxed Array handle)
+  .{
+    name: "unbox_byte",
+    params: [pvec_null()],
+    results: [pvec_byte_null()],
+    locals: [.I32, .I32, arr_null()],
+    body: [
+      .LocalGet(0),
+      .Call("len"),
+      .LocalSet(1),
+      .I32Const(0),
+      .LocalSet(2),
+      .Call("builder_new_byte"),
+      .LocalSet(3),
+      .Block(
+        "brk",
+        .None,
+        [
+          .Loop(
+            "lp",
+            .None,
+            [
+              .LocalGet(2),
+              .LocalGet(1),
+              .I32GeS,
+              .BrIf("brk"),
+              .LocalGet(3),
+              .LocalGet(0),
+              .LocalGet(2),
+              .Call("get"),
+              .Call("builder_push_byte"),
+              .LocalGet(2),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(2),
+              .Br("lp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(3),
+      .Call("builder_freeze_byte"),
     ],
   }
 }

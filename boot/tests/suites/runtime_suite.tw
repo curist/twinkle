@@ -935,8 +935,30 @@ fn test_rt_arr_no_buf_imports() Result<Void, String> {
 fn test_rt_arr_has_globals() Result<Void, String> {
   m := rt_arr.module()
 
-  // empty_leaf/empty_pvec (boxed) + i64 + bool + f64 typed empties (2 each).
-  try assert.equal(m.globals.len(), 8)
+  // Each vector family registers a shared empty leaf array and an empty PVec
+  // singleton; assert those exist by name (a bare count would break on every
+  // unrelated global and prove nothing about which ones are present).
+  expected := [
+    "empty_leaf",
+    "empty_pvec",
+    "empty_leaf_i64",
+    "empty_pvec_i64",
+    "empty_leaf_bool",
+    "empty_pvec_bool",
+    "empty_leaf_f64",
+    "empty_pvec_f64",
+    "empty_leaf_byte",
+    "empty_pvec_byte",
+  ]
+  for want in expected {
+    found := false
+    for g in m.globals {
+      if g.name == want {
+        found = true
+      }
+    }
+    try assert.ok(found, "rt.arr should register global ${want}")
+  }
   .Ok({})
 }
 

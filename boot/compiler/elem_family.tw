@@ -17,7 +17,7 @@ pub type ElemFamily = .{
 }
 
 pub fn all_families() Vector<ElemFamily> {
-  [family_i64(), family_bool(), family_float()]
+  [family_i64(), family_bool(), family_float(), family_byte()]
 }
 
 fn family_i64() ElemFamily {
@@ -59,6 +59,21 @@ fn family_float() ElemFamily {
   }
 }
 
+// Byte reads into an i32 (packed array.get_u), same elem_wasm as bool; the two
+// are told apart downstream via mono_key ("vec_byte"), see candidate_typed_vec_family.
+fn family_byte() ElemFamily {
+  .{
+    mono_key: "vec_byte",
+    suffix: "_byte",
+    pvec_type: "rt_types__PVecByte",
+    elem_wasm: .I32,
+    get_call: "rt_arr__get_byte",
+    make_call: "rt_arr__make_byte",
+    box_call: "rt_arr__box_byte",
+    unbox_call: "rt_arr__unbox_byte",
+  }
+}
+
 pub fn family_by_pvec_name(name: String) ElemFamily? {
   for f in all_families() {
     if f.pvec_type == name {
@@ -82,6 +97,7 @@ pub fn elem_family_of(mono: MonoType) ElemFamily? {
     .Vector(.Int) => "vec_i64",
     .Vector(.Bool) => "vec_bool",
     .Vector(.Float) => "vec_f64",
+    .Vector(.Byte) => "vec_byte",
     _ => "other",
   }
 
@@ -97,10 +113,9 @@ pub fn elem_family_of(mono: MonoType) ElemFamily? {
 // Families with MutVec runtime ops registered — the single source of truth for
 // which owned vectors the region pass can claim into flat mutable storage. A
 // strict subset of all_families (typed reads exist for more families than have
-// mutvec write ops). Widen as each family's mutvec_* ops land (Int now;
-// Bool/Float/Byte later per docs/plans/mutvec-later-slices.md).
+// mutvec write ops). Widen as each family's mutvec_* ops land.
 pub fn mutvec_families() Vector<ElemFamily> {
-  [family_i64(), family_bool(), family_float()]
+  [family_i64(), family_bool(), family_float(), family_byte()]
 }
 
 // The mutvec-claimable builtin-name suffix for a vector element MonoType, or

@@ -102,6 +102,14 @@ fn pvec_f64_() ValType {
   ref_nn("rt_types__PVecF64")
 }
 
+fn pvec_byte_n() ValType {
+  ref_null("rt_types__PVecByte")
+}
+
+fn pvec_byte_() ValType {
+  ref_nn("rt_types__PVecByte")
+}
+
 fn mutvec_n() ValType {
   ref_null("rt_types__MutVecI64")
 }
@@ -124,6 +132,14 @@ fn mutvec_f64_n() ValType {
 
 fn mutvec_f64_() ValType {
   ref_nn("rt_types__MutVecF64")
+}
+
+fn mutvec_byte_n() ValType {
+  ref_null("rt_types__MutVecByte")
+}
+
+fn mutvec_byte_() ValType {
+  ref_nn("rt_types__MutVecByte")
 }
 
 fn dict_n() ValType {
@@ -182,6 +198,13 @@ fn mutvec_specs() Vector<MutVecFamilySpec> {
       mv_nn: mutvec_f64_(),
       pvec_nn: pvec_f64_(),
     },
+    .{
+      suffix: "_byte",
+      elem: .I32,
+      mv_null: mutvec_byte_n(),
+      mv_nn: mutvec_byte_(),
+      pvec_nn: pvec_byte_(),
+    },
   ]
 }
 
@@ -235,6 +258,7 @@ fn typed_vec_specs() Vector<TypedVecFamilySpec> {
     .{ suffix: "_i64", elem: .I64, pvec_n: pvec_i64_n(), pvec_nn: pvec_i64_() },
     .{ suffix: "_bool", elem: .I32, pvec_n: pvec_bool_n(), pvec_nn: pvec_bool_() },
     .{ suffix: "_f64", elem: .F64, pvec_n: pvec_f64_n(), pvec_nn: pvec_f64_() },
+    .{ suffix: "_byte", elem: .I32, pvec_n: pvec_byte_n(), pvec_nn: pvec_byte_() },
   ]
 }
 
@@ -774,8 +798,10 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("vector$set_in_place_i64", "rt.arr", "set_in_place_i64", .None),
   ]
     .concat(typed_vec_rt_defs("_f64"))
+    .concat(typed_vec_rt_defs("_byte"))
     .concat(mutvec_rt_defs("_bool"))
     .concat(mutvec_rt_defs("_f64"))
+    .concat(mutvec_rt_defs("_byte"))
 }
 
 // ── Full registry ──

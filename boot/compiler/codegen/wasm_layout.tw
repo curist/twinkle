@@ -500,6 +500,7 @@ pub fn mutvec_wasm_type(elem: ElemRepr) ValType {
     .I64 => "rt_types__MutVecI64",
     .I32 => "rt_types__MutVecBool",
     .F64 => "rt_types__MutVecF64",
+    .Byte => "rt_types__MutVecByte",
   }
   .Ref(true, .Named(name))
 }
