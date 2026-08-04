@@ -17,7 +17,7 @@ use compiler.backend.phys_plan
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, PreparedPattern, ReprKind, SlotId, SlotInfo,
 }
-use compiler.backend.repr_policy.{ElemRepr, candidate_typed_vec_family, mono_key_of_elem_repr}
+use compiler.backend.repr_policy.{candidate_typed_vec_family, mono_key_of_elem_repr}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_layout.{pvec_wasm_type}
@@ -95,14 +95,10 @@ pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
 // the owned-site in-place decision to set_in_place_i64.
 pub type SwappedSetSite = .{ func_id: Int, result_source_local: Int }
 
-// Routed module: the rewritten funcs, every swapped set site, and the physical
-// plan carrying the typed-vector slot overrides route materialized (returns and
-// captures come in on the passed plan; slot entries are added during routing).
-pub type RoutedModule = .{
-  funcs: Vector<PreparedFunc>,
-  swapped_sites: Vector<SwappedSetSite>,
-  plan: phys_plan.PhysPlan,
-}
+// Routed module: the rewritten funcs and every swapped set site. The typed-vector
+// slot overrides route applies land directly on each slot's SlotInfo.repr (the
+// single source of truth); there is no separate output plan to carry them.
+pub type RoutedModule = .{ funcs: Vector<PreparedFunc>, swapped_sites: Vector<SwappedSetSite> }
 
 type FamilyIds = .{
   fam: ElemFamily,
@@ -199,25 +195,13 @@ pub fn route_typed_vectors(
   routed_funcs: Vector<PreparedFunc> = []
   swapped_sites: Vector<SwappedSetSite> = []
 
-  // Seed the accumulator from the passed plan (already holding returns/captures);
-  // each routed func adds its typed-vector slot overrides via set_slot_repr.
-  acc_plan := plan
-
   for pf in funcs {
     r := route_func(pf, ids, builtins, typed_fields, typed_payloads, src, plan)
     routed_funcs = .append(r.func)
     swapped_sites = .concat(r.sites)
-
-    for e in r.slot_plan {
-      acc_plan = .set_slot_repr(e.func_id, e.slot_id, e.elem)
-    }
-
-    for e in r.return_plan {
-      acc_plan = .set_return_repr(e.func_id, e.elem)
-    }
   }
 
-  .{ funcs: routed_funcs, swapped_sites, plan: acc_plan }
+  .{ funcs: routed_funcs, swapped_sites }
 }
 
 // Slot ids bound directly from a call to a function whose return family matches
@@ -609,23 +593,7 @@ fn compute_eligible_v(
   .{ eligible_v, eligible_b, has_phys_return }
 }
 
-// A typed-vector slot override route discovered: slot (func_id, slot_id) becomes
-// ReprKind.TypedVec(elem). Folded into the whole-program plan by route_typed_vectors.
-type SlotPlanEntry = .{ func_id: Int, slot_id: Int, elem: ElemRepr }
-
-// A typed-return override route discovered: func_id's phys_return becomes
-// pvec_wasm_type(elem). Only populated by the backfill case (the incoming plan
-// already lacked a returns entry route's own eligibility just proved typed) —
-// folded into the whole-program plan by route_typed_vectors so routed.plan
-// carries the same fact PreparedFunc.phys_return was derived from.
-type ReturnPlanEntry = .{ func_id: Int, elem: ElemRepr }
-
-type FuncRoute = .{
-  func: PreparedFunc,
-  sites: Vector<SwappedSetSite>,
-  slot_plan: Vector<SlotPlanEntry>,
-  return_plan: Vector<ReturnPlanEntry>,
-}
+type FuncRoute = .{ func: PreparedFunc, sites: Vector<SwappedSetSite> }
 
 // Route one function through every element family in turn. Each pass threads the
 // active family's typed builtin ids and PVec type; families are independent
@@ -643,18 +611,14 @@ fn route_func(
 ) FuncRoute {
   cur := pf
   sites: Vector<SwappedSetSite> = []
-  slot_plan: Vector<SlotPlanEntry> = []
-  return_plan: Vector<ReturnPlanEntry> = []
 
   for fi in families_ids(builtins) {
     r := route_func_family(cur, fi, ids, builtins, typed_fields, typed_payloads, src, plan)
     cur = r.func
     sites = .concat(r.sites)
-    slot_plan = .concat(r.slot_plan)
-    return_plan = .concat(r.return_plan)
   }
 
-  .{ func: cur, sites, slot_plan, return_plan }
+  .{ func: cur, sites }
 }
 
 fn route_func_family(
@@ -673,7 +637,7 @@ fn route_func_family(
   has_phys_return := sets.has_phys_return
 
   if eligible_v.keys().len() == 0 {
-    return .{ func: pf, sites: [], slot_plan: [], return_plan: [] }
+    return .{ func: pf, sites: [] }
   }
 
   // Record the set sites this pass swaps (base in eligible_v) from the ORIGINAL
@@ -689,7 +653,6 @@ fn route_func_family(
   //      must be OpaqueAnyref/anyref (matching how the boxed builder is erased).
   new_body := rewrite(pf.body, eligible_v, eligible_b, ids, fi)
   new_slots: Dict<Int, SlotInfo> = pf.slots
-  slot_plan: Vector<SlotPlanEntry> = []
 
   for sid_int, info in pf.slots {
     // A typed-vector value slot: set repr = TypedVec(elem) and DERIVE its
@@ -697,13 +660,16 @@ fn route_func_family(
     // ValType route wrote directly before, now with the invariant restored. `elem`
     // comes from the slot's OWN mono; by construction an eligible_v slot's mono is
     // in the active family `fi`, so pvec_wasm_type(elem) == the family PVec type.
-    // Record the override in the func-local plan as we go.
+    // SlotInfo.repr IS the plan now — downstream readers (emit, verify,
+    // mutvec_repr) consult the slot directly, so there is no separate
+    // side-table to record this override into.
     if eligible_v.has(info.slot.id) {
       case candidate_typed_vec_family(info.mono) {
-        .Some(elem) => {
-          new_slots[sid_int] = with_repr_wasm(info, .TypedVec(elem), pvec_wasm_type(elem))
-          slot_plan = .append(.{ func_id: pf.func_id.id, slot_id: info.slot.id, elem })
-        },
+        .Some(elem) => new_slots[sid_int] = with_repr_wasm(
+          info,
+          .TypedVec(elem),
+          pvec_wasm_type(elem),
+        ),
         .None => {},
       }
     } else {
@@ -725,8 +691,7 @@ fn route_func_family(
 
   // Backfill: has_phys_return is true (route's own eligibility just proved this
   // function's return is typed) but the incoming plan has no entry for it yet —
-  // derive the family from the return mono and record it so routed.plan carries
-  // the same fact route is about to apply to phys_return.
+  // derive the family from the return mono directly.
   backfill_elem := case existing_return {
     .Some(_) => .None,
     .None => if has_phys_return {
@@ -734,11 +699,6 @@ fn route_func_family(
     } else {
       .None
     },
-  }
-
-  return_plan: Vector<ReturnPlanEntry> = case backfill_elem {
-    .Some(elem) => [.{ func_id: pf.func_id.id, elem }],
-    .None => [],
   }
 
   effective_return := case existing_return {
@@ -757,7 +717,7 @@ fn route_func_family(
     },
   }
 
-  .{ func: pf, sites, slot_plan, return_plan }
+  .{ func: pf, sites }
 }
 
 // Whole-program slot_repr projection: for every function in `funcs`, run the

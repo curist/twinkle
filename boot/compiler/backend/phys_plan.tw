@@ -8,20 +8,12 @@
 use compiler.backend.repr_policy.{ElemRepr}
 
 // Field names differ from the accessor names below on purpose: a `pub fn
-// slot_repr(plan: PhysPlan, ...)` whose first param is PhysPlan auto-registers as an
-// inherent method, and a same-named field would be a FieldMethodCollision.
-pub type PhysPlan = .{
-  slots: Dict<String, ElemRepr>,
-  returns: Dict<String, ElemRepr>,
-  captures: Dict<String, ElemRepr>,
-}
+// return_repr(plan: PhysPlan, ...)` whose first param is PhysPlan auto-registers as
+// an inherent method, and a same-named field would be a FieldMethodCollision.
+pub type PhysPlan = .{ returns: Dict<String, ElemRepr>, captures: Dict<String, ElemRepr> }
 
 pub fn empty() PhysPlan {
-  .{ slots: Dict.new(), returns: Dict.new(), captures: Dict.new() }
-}
-
-pub fn slot_key(func_id: Int, slot_id: Int) String {
-  "${func_id}:${slot_id}"
+  .{ returns: Dict.new(), captures: Dict.new() }
 }
 
 pub fn abi_key(func_id: Int, index: Int) String {
@@ -31,27 +23,13 @@ pub fn abi_key(func_id: Int, index: Int) String {
 // Accessors return ElemRepr? directly: .Some(elem) is a typed override, .None the
 // boxed default. Callers derive ReprKind via .TypedVec(elem) and ValType via
 // pvec_wasm_type(elem).
-pub fn slot_repr(plan: PhysPlan, func_id: Int, slot_id: Int) ElemRepr? {
-  plan.slots[slot_key(func_id, slot_id)]
-}
-
-// Record a typed-vector slot override: the slot at (func_id, slot_id) physically
-// holds the family's typed PVec (ReprKind.TypedVec(elem), ValType
-// pvec_wasm_type(elem)). Called by route as it applies TypedVec so the plan
-// materializes the same eligibility route just decided.
-pub fn set_slot_repr(plan: PhysPlan, func_id: Int, slot_id: Int, elem: ElemRepr) PhysPlan {
-  plan.slots[slot_key(func_id, slot_id)] = elem
-  plan
-}
-
 pub fn return_repr(plan: PhysPlan, func_id: Int) ElemRepr? {
   plan.returns["${func_id}"]
 }
 
 // Record a typed-return override: `func_id`'s physical result ABI is the
-// family's typed PVec (pvec_wasm_type(elem)). Called by route as it derives
-// PreparedFunc.phys_return, so the plan carries the same fact route just
-// applied (route_typed_vec's has_phys_return backfill case).
+// family's typed PVec (pvec_wasm_type(elem)). The write-side counterpart to
+// return_repr, kept as part of the PhysPlan surface alongside it.
 pub fn set_return_repr(plan: PhysPlan, func_id: Int, elem: ElemRepr) PhysPlan {
   plan.returns["${func_id}"] = elem
   plan

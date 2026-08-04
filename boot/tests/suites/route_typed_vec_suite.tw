@@ -64,13 +64,6 @@ fn pvec_i64_slot_count(funcs: Vector<PreparedFunc>) Int {
   n
 }
 
-fn has_plan_slot(plan: phys_plan.PhysPlan, func_id: Int, slot_id: Int) Bool {
-  case plan.slot_repr(func_id, slot_id) {
-    .Some(_) => true,
-    .None => false,
-  }
-}
-
 fn typed_count(d: Dict<String, Bool>) Int {
   n := 0
 
@@ -319,7 +312,7 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "route sets repr = TypedVec, derives wasm_type, and records the slot plan",
+      "route sets repr = TypedVec and derives wasm_type",
       fn() {
         p := try prepare_src(gather_source)
         tf := analyze_typed_fields(p.funcs, p.builtins, Dict.new())
@@ -334,8 +327,7 @@ pub fn suite() runner.Suite {
             case pf.slots[sid] {
               .Some(info) => case info.repr {
                 // Every routed typed-vector slot carries TypedVec(elem) (not the
-                // boxed TypedRef default), a wasm_type derived from that repr, and
-                // a matching entry in routed.plan.
+                // boxed TypedRef default) and a wasm_type derived from that repr.
                 .TypedVec(elem) => {
                   typed_slots = typed_slots + 1
 
@@ -346,10 +338,6 @@ pub fn suite() runner.Suite {
                   try assert.ok(
                     is_pvec_i64(info),
                     "i64 producer TypedVec slot must be physically PVecI64",
-                  )
-                  try assert.ok(
-                    has_plan_slot(routed.plan, pf.func_id.id, info.slot.id),
-                    "routed.plan must carry a slots entry for each routed TypedVec slot",
                   )
                 },
                 _ => {},
@@ -377,13 +365,11 @@ pub fn suite() runner.Suite {
         g_routed := try find_func(routed.funcs, "g").ok_or("g missing after route")
         phys_ret := try g_routed.phys_return.ok_or("g must expose a typed phys_return")
 
-        ret_elem := try routed.plan
-          .return_repr(gid)
-          .ok_or("routed.plan must carry g's typed return entry")
+        ret_elem := try plan.return_repr(gid).ok_or("plan must carry g's typed return entry")
 
         try assert.ok(
           val_type_eq(phys_ret, pvec_wasm_type(ret_elem)),
-          "phys_return must equal pvec_wasm_type(routed.plan's return elem)",
+          "phys_return must equal pvec_wasm_type(plan's return elem)",
         )
         try assert.ok(
           val_type_eq(phys_ret, pvec_wasm_type(ElemRepr.I32)),

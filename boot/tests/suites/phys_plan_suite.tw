@@ -7,14 +7,12 @@ use compiler.backend.typed_param_abi.{ParamAbi, ReprAnalysis, phys_plan_from_ana
 use compiler.codegen.wasm_layout.{pvec_wasm_type}
 
 fn test_keys_are_stable() Result<Void, String> {
-  try assert.equal(phys_plan.slot_key(7, 3), "7:3")
   try assert.equal(phys_plan.abi_key(8, 0), "8:0")
   .Ok({})
 }
 
 fn test_absent_entries_are_none() Result<Void, String> {
   p := phys_plan.empty()
-  try assert.is_true(p.slot_repr(1, 2) == .None)
   try assert.is_true(p.return_repr(1) == .None)
   try assert.is_true(p.capture_repr(1, 0) == .None)
   .Ok({})

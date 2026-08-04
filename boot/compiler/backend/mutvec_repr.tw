@@ -15,7 +15,6 @@
 //! caller result slots). Marking it here with `TypedVec(I64)` would duplicate and
 //! conflict with that ownership, so this pass leaves frozen slots to route.
 
-use compiler.backend.phys_plan
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo,
 }
@@ -207,7 +206,7 @@ fn override_slot(info: SlotInfo, repr: ReprKind, env: ResolvedEnv) SlotInfo {
   }
 }
 
-fn assign_in_func(pf: PreparedFunc, ids: MutVecIds, env: ResolvedEnv, plan: phys_plan.PhysPlan) PreparedFunc {
+fn assign_in_func(pf: PreparedFunc, ids: MutVecIds, env: ResolvedEnv) PreparedFunc {
   init: SeedAcc = .{ handle: Dict.new(), frozen: Dict.new() }
   seeded := init.seed_expr(pf.body, ids)
   frozen := seeded.frozen
@@ -228,7 +227,10 @@ fn assign_in_func(pf: PreparedFunc, ids: MutVecIds, env: ResolvedEnv, plan: phys
   // have no such producer, so they still need MutVec.
   new_slots: Dict<Int, SlotInfo> = Dict.new()
   for sid, info in pf.slots {
-    route_typed := plan.slot_repr(pf.func_id.id, info.slot.id) != .None
+    route_typed := case info.repr {
+      .TypedVec(_) => true,
+      _ => false,
+    }
     if route_typed and handle.has(info.slot.id) {
       error(
         "mutvec_repr: slot S${info.slot.id.to_string()} is both route-owned Typed and MutVec handle in ${pf.name}",
@@ -256,14 +258,11 @@ fn assign_in_func(pf: PreparedFunc, ids: MutVecIds, env: ResolvedEnv, plan: phys
 // freeze *result* slot is route-owned, not touched here — see the module doc and
 // assign_in_func). A no-op for functions with no mutvec op (the common case), so
 // the flag-off pipeline is unaffected.
-pub fn assign_mutvec_reprs(
-  funcs: Vector<PreparedFunc>,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-  plan: phys_plan.PhysPlan,
-) Vector<PreparedFunc> {
+pub fn assign_mutvec_reprs(funcs: Vector<PreparedFunc>, env: ResolvedEnv, builtins: BuiltinRegistry) Vector<
+  PreparedFunc,
+> {
   ids := resolve_ids(builtins)
   collect pf in funcs {
-    assign_in_func(pf, ids, env, plan)
+    assign_in_func(pf, ids, env)
   }
 }
