@@ -215,12 +215,17 @@ pub fn route_typed_vectors(
       typed_payloads,
       route_capture_abi,
       route_typeable_return,
+      plan,
     )
     routed_funcs = .append(r.func)
     swapped_sites = .concat(r.sites)
 
     for e in r.slot_plan {
-      acc_plan = acc_plan.set_slot_repr(e.func_id, e.slot_id, e.elem)
+      acc_plan = .set_slot_repr(e.func_id, e.slot_id, e.elem)
+    }
+
+    for e in r.return_plan {
+      acc_plan = .set_return_repr(e.func_id, e.elem)
     }
   }
 
@@ -624,10 +629,18 @@ fn compute_eligible_v(
 // ReprKind.TypedVec(elem). Folded into the whole-program plan by route_typed_vectors.
 type SlotPlanEntry = .{ func_id: Int, slot_id: Int, elem: ElemRepr }
 
+// A typed-return override route discovered: func_id's phys_return becomes
+// pvec_wasm_type(elem). Only populated by the backfill case (the incoming plan
+// already lacked a returns entry route's own eligibility just proved typed) —
+// folded into the whole-program plan by route_typed_vectors so routed.plan
+// carries the same fact PreparedFunc.phys_return was derived from.
+type ReturnPlanEntry = .{ func_id: Int, elem: ElemRepr }
+
 type FuncRoute = .{
   func: PreparedFunc,
   sites: Vector<SwappedSetSite>,
   slot_plan: Vector<SlotPlanEntry>,
+  return_plan: Vector<ReturnPlanEntry>,
 }
 
 // Route one function through every element family in turn. Each pass threads the
@@ -643,10 +656,12 @@ fn route_func(
   typed_payloads: Dict<String, Bool>,
   capture_abi: Dict<String, Dict<Int, String>>,
   typeable_return: Dict<String, String>,
+  plan: phys_plan.PhysPlan,
 ) FuncRoute {
   cur := pf
   sites: Vector<SwappedSetSite> = []
   slot_plan: Vector<SlotPlanEntry> = []
+  return_plan: Vector<ReturnPlanEntry> = []
 
   for fi in families_ids(builtins) {
     r := route_func_family(
@@ -658,13 +673,15 @@ fn route_func(
       typed_payloads,
       capture_abi,
       typeable_return,
+      plan,
     )
     cur = r.func
     sites = .concat(r.sites)
     slot_plan = .concat(r.slot_plan)
+    return_plan = .concat(r.return_plan)
   }
 
-  .{ func: cur, sites, slot_plan }
+  .{ func: cur, sites, slot_plan, return_plan }
 }
 
 fn route_func_family(
@@ -676,6 +693,7 @@ fn route_func_family(
   typed_payloads: Dict<String, Bool>,
   capture_abi: Dict<String, Dict<Int, String>>,
   typeable_return: Dict<String, String>,
+  plan: phys_plan.PhysPlan,
 ) FuncRoute {
   sets := compute_eligible_v(
     pf,
@@ -692,7 +710,7 @@ fn route_func_family(
   has_phys_return := sets.has_phys_return
 
   if eligible_v.keys().len() == 0 {
-    return .{ func: pf, sites: [], slot_plan: [] }
+    return .{ func: pf, sites: [], slot_plan: [], return_plan: [] }
   }
 
   // Record the set sites this pass swaps (base in eligible_v) from the ORIGINAL
@@ -735,13 +753,48 @@ fn route_func_family(
   pf.slots = new_slots
   pf.body = new_body
 
-  // Typed-return bridge: expose a physical typed result ABI. The returned slot is
-  // now the family PVec (retyped above), so emit's return coercion is a no-op.
-  if has_phys_return {
-    pf.phys_return = .Some(.Ref(true, .Named(fi.fam.pvec_type)))
+  // Typed-return bridge: expose a physical typed result ABI, DERIVED from the
+  // plan's returns entry (pvec_wasm_type(elem)) rather than hand-written — so a
+  // non-i64 family return gets its own family PVec, not always fi.fam. The
+  // returned slot is already the family PVec (retyped above), so emit's return
+  // coercion is a no-op.
+  existing_return := plan.return_repr(pf.func_id.id)
+
+  // Backfill: has_phys_return is true (route's own eligibility just proved this
+  // function's return is typed) but the incoming plan has no entry for it yet —
+  // derive the family from the return mono and record it so routed.plan carries
+  // the same fact route is about to apply to phys_return.
+  backfill_elem := case existing_return {
+    .Some(_) => .None,
+    .None => if has_phys_return {
+      candidate_typed_vec_family(pf.return_mono)
+    } else {
+      .None
+    },
   }
 
-  .{ func: pf, sites, slot_plan }
+  return_plan: Vector<ReturnPlanEntry> = case backfill_elem {
+    .Some(elem) => [.{ func_id: pf.func_id.id, elem }],
+    .None => [],
+  }
+
+  effective_return := case existing_return {
+    .Some(elem) => .Some(elem),
+    .None => backfill_elem,
+  }
+
+  case effective_return {
+    .Some(elem) => pf.phys_return = .Some(pvec_wasm_type(elem)),
+    .None => if has_phys_return {
+      // Shouldn't happen given the backfill above (candidate_typed_vec_family
+      // is total over any mono a registered family recognizes): kept as a
+      // fallback so no existing program's phys_return silently changes if
+      // neither the plan nor return_mono can name a family.
+      pf.phys_return = .Some(.Ref(true, .Named(fi.fam.pvec_type)))
+    },
+  }
+
+  .{ func: pf, sites, slot_plan, return_plan }
 }
 
 // Whole-program slot_repr projection: for every function in `funcs`, run the

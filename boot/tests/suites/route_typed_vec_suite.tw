@@ -137,6 +137,18 @@ fn find_func_id(funcs: Vector<PreparedFunc>, name: String) Int? {
   .None
 }
 
+// Find the (only) function named `name`, so its phys_return override can be
+// inspected directly.
+fn find_func(funcs: Vector<PreparedFunc>, name: String) PreparedFunc? {
+  for pf in funcs {
+    if pf.name == name {
+      return .Some(pf)
+    }
+  }
+
+  .None
+}
+
 // Find the SlotId.id a call to `fid_id` binds its result to inside `expr`
 // (the first `let slot = call(...)` site found), or .None.
 fn find_call_result_slot(expr: PreparedExpr, fid_id: Int) Int? {
@@ -186,6 +198,23 @@ return_source :=
   \\  collect i in range(4) { i }
   \\}
   \\fn caller() Int {
+  \\  v := g()
+  \\  v[0]
+  \\}
+  \\caller()
+  \\
+
+// Bool-family analogue of return_source: `g` returns Vector<Bool>, consumed by
+// `caller` via indexed read only. Exercises the non-i64 branch of the
+// PhysPlan-derived phys_return: pvec_wasm_type(elem) must select PVecBool, not
+// the i64 default a hand-written `.Ref(true, .Named(fi.fam.pvec_type))` would
+// also produce (so this fixture is the one that actually distinguishes
+// "derived from the plan's elem" from "hand-written from the active family").
+bool_return_source :=
+  \\fn g() Vector<Bool> {
+  \\  collect i in range(4) { i % 2 == 0 }
+  \\}
+  \\fn caller() Bool {
   \\  v := g()
   \\  v[0]
   \\}
@@ -371,6 +400,43 @@ pub fn suite() runner.Suite {
         }
 
         try assert.ok(typed_slots > 0, "expected at least one TypedVec slot after route")
+        .Ok({})
+      },
+    )
+    .test(
+      "phys_return is derived from PhysPlan.return_repr, not hand-written from the active family",
+      fn() {
+        p := try prepare_src(bool_return_source)
+        gid := try find_func_id(p.funcs, "g").ok_or("g not found")
+
+        plan := phys_plan.empty()
+        plan.returns["${gid}"] = ElemRepr.I32
+
+        routed := route_typed_vectors(
+          p.funcs,
+          p.builtins,
+          plan,
+          Dict.new(),
+          Dict.new(),
+          Dict.new(),
+          Dict.new(),
+        )
+
+        g_routed := try find_func(routed.funcs, "g").ok_or("g missing after route")
+        phys_ret := try g_routed.phys_return.ok_or("g must expose a typed phys_return")
+
+        ret_elem := try routed.plan
+          .return_repr(gid)
+          .ok_or("routed.plan must carry g's typed return entry")
+
+        try assert.ok(
+          val_type_eq(phys_ret, pvec_wasm_type(ret_elem)),
+          "phys_return must equal pvec_wasm_type(routed.plan's return elem)",
+        )
+        try assert.ok(
+          val_type_eq(phys_ret, pvec_wasm_type(ElemRepr.I32)),
+          "expected the Bool family's own PVecBool, not an i64-family default",
+        )
         .Ok({})
       },
     )
