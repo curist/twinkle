@@ -1,0 +1,44 @@
+//! Per-site physical-repr OVERRIDES for typed-vector ABI sites, keyed by a
+//! monomorphized function id. An entry is the typed family (ElemRepr); absent means
+//! "no override -> the MonoType default (boxed PVec)". The site's ReprKind is
+//! TypedVec(elem) and its ValType is pvec_wasm_type(elem). Record fields / variant
+//! payloads are NOT here (per-instantiation family, owned by wasm_layout); MutVec*
+//! handles are ReprKind.MutVec owned by mutvec_repr.
+
+use compiler.backend.repr_policy.{ElemRepr}
+
+// Field names differ from the accessor names below on purpose: a `pub fn
+// slot_repr(plan: PhysPlan, ...)` whose first param is PhysPlan auto-registers as an
+// inherent method, and a same-named field would be a FieldMethodCollision.
+pub type PhysPlan = .{
+  slots: Dict<String, ElemRepr>,
+  returns: Dict<String, ElemRepr>,
+  captures: Dict<String, ElemRepr>,
+}
+
+pub fn empty() PhysPlan {
+  .{ slots: Dict.new(), returns: Dict.new(), captures: Dict.new() }
+}
+
+pub fn slot_key(func_id: Int, slot_id: Int) String {
+  "${func_id}:${slot_id}"
+}
+
+pub fn abi_key(func_id: Int, index: Int) String {
+  "${func_id}:${index}"
+}
+
+// Accessors return ElemRepr? directly: .Some(elem) is a typed override, .None the
+// boxed default. Callers derive ReprKind via .TypedVec(elem) and ValType via
+// pvec_wasm_type(elem).
+pub fn slot_repr(plan: PhysPlan, func_id: Int, slot_id: Int) ElemRepr? {
+  plan.slots[slot_key(func_id, slot_id)]
+}
+
+pub fn return_repr(plan: PhysPlan, func_id: Int) ElemRepr? {
+  plan.returns["${func_id}"]
+}
+
+pub fn capture_repr(plan: PhysPlan, func_id: Int, index: Int) ElemRepr? {
+  plan.captures[abi_key(func_id, index)]
+}

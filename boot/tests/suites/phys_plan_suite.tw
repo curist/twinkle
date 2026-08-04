@@ -1,0 +1,46 @@
+use @std.testing.assert as assert
+use @std.testing as runner
+
+use compiler.backend.phys_plan
+use compiler.backend.repr_policy
+use compiler.codegen.wasm_layout.{pvec_wasm_type}
+
+fn test_keys_are_stable() Result<Void, String> {
+  try assert.equal(phys_plan.slot_key(7, 3), "7:3")
+  try assert.equal(phys_plan.abi_key(8, 0), "8:0")
+  .Ok({})
+}
+
+fn test_absent_entries_are_none() Result<Void, String> {
+  p := phys_plan.empty()
+  try assert.is_true(phys_plan.slot_repr(p, 1, 2) == .None)
+  try assert.is_true(phys_plan.return_repr(p, 1) == .None)
+  try assert.is_true(phys_plan.capture_repr(p, 1, 0) == .None)
+  .Ok({})
+}
+
+fn assert_pvec_name(elem: repr_policy.ElemRepr, want: String) Result<Void, String> {
+  case pvec_wasm_type(elem) {
+    .Ref(_, ht) => case ht {
+      .Named(name) => assert.equal(name, want),
+      _ => .Err("expected named heap type"),
+    },
+    _ => .Err("expected ref valtype"),
+  }
+}
+
+fn test_pvec_wasm_type_per_family() Result<Void, String> {
+  try assert_pvec_name(.I64, "rt_types__PVecI64")
+  try assert_pvec_name(.I32, "rt_types__PVecBool")
+  try assert_pvec_name(.F64, "rt_types__PVecF64")
+  try assert_pvec_name(.Byte, "rt_types__PVecByte")
+  .Ok({})
+}
+
+pub fn suite() runner.Suite {
+  runner
+    .suite("physical representation plan")
+    .test("keys are stable", test_keys_are_stable)
+    .test("absent entries are none", test_absent_entries_are_none)
+    .test("pvec_wasm_type per family", test_pvec_wasm_type_per_family)
+}

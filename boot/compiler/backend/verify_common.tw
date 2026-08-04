@@ -2,7 +2,7 @@
 
 use compiler.backend.prepared_ir.{PreparedFunc, ReprKind, SlotInfo, SlotRole}
 use compiler.codegen.wasm_ir.{HeapType, ValType}
-use compiler.codegen.wasm_layout.{mutvec_wasm_type, val_type_of_mono}
+use compiler.codegen.wasm_layout.{mutvec_wasm_type, pvec_wasm_type, val_type_of_mono}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
 
@@ -23,8 +23,8 @@ pub fn expected_wasm_type(repr: ReprKind, mono: MonoType, env: ResolvedEnv) ValT
     .I32 => .I32,
     .TypedRef(m) => val_type_of_mono(m, env),
     .TypedSum(m) => val_type_of_mono(m, env),
-    // Typed vector follows its semantic mono (PVecI64 after activation).
-    .TypedVec(_) => val_type_of_mono(mono, env),
+    // Typed vector slot is physically its family's typed PVec struct.
+    .TypedVec(e) => pvec_wasm_type(e),
     .MutVec(e) => mutvec_wasm_type(e),
     .ClosureRef => val_type_of_mono(mono, env),
     .ErasedSum => .Anyref,

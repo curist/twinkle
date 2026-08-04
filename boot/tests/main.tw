@@ -100,6 +100,7 @@ use .suites.opt_defer_elim_suite
 use .suites.opt_pipeline_suite
 use .suites.opt_semantics_suite
 use .suites.parser_suite
+use .suites.phys_plan_suite
 use .suites.project_config_suite
 use .suites.project_context_suite
 use .suites.project_scaffold_suite
@@ -219,6 +220,7 @@ runner.run_all([
   backend_repr_suite.suite(),
   backend_verify_suite.suite(),
   repr_policy_suite.suite(),
+  phys_plan_suite.suite(),
   route_typed_vec_suite.suite(),
   typed_vector_write_suite.suite(),
   tail_match_result_typing_suite.suite(),

@@ -12,10 +12,8 @@
 //! The `mutvec_freeze_i64` *result* slot (the materialized PVecI64) is NOT owned
 //! here — `route_typed_vec` recognizes `mutvec_freeze_i64` as a typed producer
 //! and types it explicitly to the PVecI64 wasm type (and sets phys_return + types
-//! caller result slots). Marking it here with the inert `TypedVec(I64)` repr was
-//! actively wrong — it reverted route's PVecI64 to the boxed default and forced a
-//! box+unbox rebuild at the return boundary — so this pass leaves frozen slots to
-//! route.
+//! caller result slots). Marking it here with `TypedVec(I64)` would duplicate and
+//! conflict with that ownership, so this pass leaves frozen slots to route.
 
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo,
@@ -225,10 +223,8 @@ fn assign_in_func(pf: PreparedFunc, ids: MutVecIds, env: ResolvedEnv) PreparedFu
   // PVecI64) slot is left to route_typed_vec, which recognizes mutvec_freeze_i64
   // as a typed producer and types it explicitly to the PVecI64 wasm type (and in
   // turn sets phys_return + types caller result slots). Overriding it here with
-  // `.TypedVec(.I64)` was actively wrong: TypedVec is inert — wasm_type_of_repr
-  // falls through to val_type_of_mono(Vector<Int>), the boxed default — so it
-  // reverted route's PVecI64 back to a boxed PVec, forcing a box+unbox rebuild at
-  // the return boundary. Handles have no such producer, so they still need MutVec.
+  // `.TypedVec(.I64)` would duplicate and conflict with that ownership. Handles
+  // have no such producer, so they still need MutVec.
   new_slots: Dict<Int, SlotInfo> = Dict.new()
   for sid, info in pf.slots {
     new_slots[sid] = if handle.has(info.slot.id) {
