@@ -23,6 +23,18 @@ fn seeded_concat(prefix: String, chunks: Vector<String>) String {
   acc
 }
 
+// A non-empty vector param seed (`acc := base`, an `AInit(.ALocal)` seed),
+// exercised end-to-end by the Plan 3 vector-half round-trip test. When compiled
+// by a twk that has the vector-half rewrite, `acc := base` lowers to
+// vector$builder_from(base); the base value must remain observably unchanged.
+fn seeded_append(base: Vector<Int>, xs: Vector<Int>) Vector<Int> {
+  acc := base
+  for x in xs {
+    acc = .append(x)
+  }
+  acc
+}
+
 fn candidates_for(src: String) Vector<detect.RegionCandidate> {
   case pipeline.compile_source(src) {
     .Ok(a) => detect.detect_candidates(a.opt, a.builtins),
@@ -579,6 +591,20 @@ pub fn suite() runner.Suite {
           "fn build(base: Vector<Int>) Vector<Int> {\n  acc := base\n  for x in [1, 2] { acc = acc.append(x) }\n  acc\n}\nprintln(build([9]).len().to_string())\n",
         ),
       ) },
+    )
+    .test(
+      "non-empty vector seed round-trips and leaves the base unchanged (Plan 3 vector half)",
+      fn() Result<Void, String> {
+        base: Vector<Int> = [1, 2, 3]
+        out := seeded_append(base, [4, 5])
+        try assert.equal(out.len(), 5)
+        try assert.equal(out[0] + out[1] + out[2] + out[3] + out[4], 15)
+
+        // The rewrite must copy, not alias: base is still [1, 2, 3].
+        try assert.equal(base.len(), 3)
+        try assert.equal(base[0] + base[1] + base[2], 6)
+        .Ok({})
+      },
     )
     .test(
       "two independent builder regions in one function both rewrite",

@@ -3,11 +3,25 @@
 > **Orientation (read first).**
 > - **Landed:** in-place emission for the three call-swap families (vector `set`,
 >   dict `set`, dict `remove`), local record-shell updates, ownership-specialized
->   function variants, and the 8C builder-region *first slice* (empty-seed loops +
->   non-empty **string** seeds). Analysis track complete through Phase 6.
-> - **Current focus:** record-backed field collections (8H).
+>   function variants, and the 8C builder-region *first slice + Plan 3* (empty-seed
+>   loops + non-empty **string and vector** seeds). Analysis track complete through
+>   Phase 6.
+> - **Current focus:** the **8C builder-region follow-up slices**. Record-backed
+>   field collections (8H) and the codegen verification gate (8I) have landed, and
+>   **Plan 3 (vector half) landed 2026-08-05 (commit `16e5cd95`, round-trip/self-host
+>   confirmed in Task 3)**: `seed_family` now certifies a non-empty `Vector<_>`-typed
+>   local/param seed (`acc := base`) and the rewrite lowers it to
+>   `vector$builder_from(base)` → `builder_push*` → `builder_freeze`, safe because
+>   `vector$builder_from` deep-copies the seed's tail into a private array
+>   (`arr.tw:5399/5414`) and `builder_push` + promotion are persistent path-copy — a
+>   non-empty-base seed never mutates a node shared with the base. Regions stay
+>   **boxed** (the `AAssign`-rebound accumulator does not route typed). Census: the
+>   "re-used accumulator, not a fresh seed" bucket moved 452 → 375; certified vector
+>   builder regions (`linearly_folded = true`) now number 115. **Plan 4 (typed
+>   routing) is the verified next step** — see
+>   [Plan 4](builder-region-design.md#implementation-plans) for the two viable paths.
 > - **Biggest un-landed boot-compiler win:** the **8C builder-region follow-up
->   slices** (Plans 3-vector / 4 / 5) — see
+>   slices** (Plan 4 / 5) — see
 >   [Where the general boot-compiler win is](#where-the-general-boot-compiler-win-is)
 >   below. This is a *different* pass from the `mutvec` indexed-write work, which
 >   targets user numerics, not the self-build.
@@ -45,18 +59,23 @@ proven-owned sites. Phase 8C (builder-region lowering, first slice) and Phase 8F
 (local record shell update emission) are also done. Phase 8G
 (ownership-specialized function variants + call-site routing) is done: a clone of a
 recursive owned function emits `vector$set_in_place` (and record shell reuse) end to
-end via `variant_specialize.tw`; self-host reaches a fixed point. **Current focus:
-record-backed field collections (8H)**, with 8C follow-up slices
-(non-empty seeds, typed routing, conditional/multi-exit folds) deferred. The 7E
+end via `variant_specialize.tw`; self-host reaches a fixed point. Record-backed field
+collections (8H) and the verification gate (8I) subsequently landed; **Plan 3 (both
+string and vector non-empty seeds) has since landed too**, and the live frontier is
+now the remaining 8C follow-up slices (typed routing — Plan 4 — and
+conditional/multi-exit folds — Plans 5–6), which were deferred at the time this
+paragraph was written. The 7E
 variant-routing dry-run item is closed by 8G's `render_routes`. The full analysis track is
 complete through Phase 6 (record/field ownership,
 transport-wrapper / `Result`-payload return-path summaries, ownership-specialization
 decision facts, and recursive SCC variant-qualified diagnostics), so codegen consumes
-a trustworthy fact set rather than rediscovering ownership — **except** the reopened 8C
-`linearly_folded` region-safety prerequisite (Plan 1), which the analysis track does not
-yet produce and must add before 8C's rewrite (see
-[builder-region-design.md](builder-region-design.md) and
-[../analysis/README.md](../analysis/README.md)). (These "Codegen Phase
+a trustworthy fact set rather than rediscovering ownership. (The 8C `linearly_folded`
+region-safety fact is **purely structural** — computed by the pure-ANF detector
+`builder_region_detect.tw`, sound by rejection, with **no** analysis-track dependency —
+and already landed with Plans 1–2; the earlier "reopened analysis prerequisite" framing
+was the pre-Rev-3 design and no longer applies. See
+[builder-region-design.md](builder-region-design.md) Rev 3 and
+[../analysis/README.md](../analysis/README.md).) (These "Codegen Phase
 7A/…" labels are the codegen track's own local numbering; see the phase-numbering
 note in [../analysis/README.md](../analysis/README.md).)
 
@@ -69,15 +88,18 @@ The landed in-place families above already cover boot's **keyed** mutation
 domain of the **8C builder-region pass**, and its follow-up slices are the largest
 un-landed self-build lever.
 
-`target/twk ir boot/main.tw --census --sites` makes the surface concrete: the 8C
-detector surfaces **~870** append/builder candidate regions and certifies fewer
-than ~100 today. The rest are rejected by two deferred slices:
+`target/twk ir boot/main.tw --census --sites` makes the surface concrete. As of
+Plan 3 landing (2026-08-05): 115 vector regions and 7 string regions now certify
+(`linearly_folded = true`); the remaining deferred bucket is:
 
 | Deferred slice | Boot regions rejected (census bucket) | What it unlocks |
 |---|---|---|
-| **Plan 3 (vector half)** — non-empty vector seeds | ~450 (`re-used accumulator, not a fresh seed`) | in-place builder instead of persistent append |
 | **Plan 5** — conditional / `continue`-guarded folds | ~316 (`control flow on the loop main arm`) | certify folds behind an `if`/`continue` |
-| **Plan 4** — typed routing | (the vector regions above + certified) | unbox `Vector<Int>` accumulators to flat i64 — the biggest per-region win |
+| **Plan 4** — typed routing | 115 certified vector regions today (+ everything Plan 5 adds) | unbox `Vector<Int>` accumulators to flat i64 — the biggest per-region win |
+
+(The 375 remaining "re-used accumulator" rejections are genuine refolds — an
+already-bound accumulator re-entering a second loop — not fresh non-empty seeds;
+those now certify per Plan 3 and are no longer in this bucket.)
 
 These regions sit in the hottest passes (`lower_expr`, `monomorphize`,
 `apply_subst_to_kind`, `atomize`, `gather_lint`, …). Caveat on the counts: they are
@@ -88,10 +110,10 @@ unboxing). `--census --sites`' `consumed` column and the
 [builder-region-design.md](builder-region-design.md) win breakdown are authoritative
 per region.
 
-**Recommended order for a general boot win:** Plan 3-vector (cheapest — the design
-calls it a one-line `builder_push` shared-trie check) → Plan 4 (the typed-unboxing
-multiplier) → Plan 5 (most detector work). By contrast, broadening the `mutvec`
-indexed-write pass across element families
+**Recommended order for a general boot win:** Plan 4 (the typed-unboxing
+multiplier, now unblocked by Plan 3's 115 certified vector regions) → Plan 5 (most
+detector work). By contrast, broadening the `mutvec` indexed-write pass across
+element families
 ([../../mutvec-later-slices.md](../../mutvec-later-slices.md)) adds ~0 boot regions
 (boot claims ~2 scratch `Int` mutvec regions and appends rather than index-writes) —
 it is a *user-numerics* optimization, not a self-build lever.
@@ -296,7 +318,7 @@ First emitted-code change. The slice is intentionally narrow.
   visible via `twk ir --census --sites` (e.g. the nested fixture renders
   `...:depth 2` with a `selected` / `MutableSelected` audit row).
 
-## Codegen Phase 8C — Existing builder-region lowering 🚧 Plans 1–3(string) landed · Plans 3v/4/5/6/7–9 TODO
+## Codegen Phase 8C — Existing builder-region lowering 🚧 Plans 1–3 landed · Plans 4/5/6/7–9 TODO
 
 Plans 1–2 have landed: string and vector empty-seed accumulator loops lower
 end-to-end via the pure-ANF detector (`builder_region_detect.tw`), the
@@ -308,35 +330,46 @@ slots to `OpaqueAnyref`; `--census --sites` renders a `consumed` column reflecti
 actual rewrite application; self-host fixed point holds. Vector regions stay boxed
 (typed routing is Plan 4).
 
-**Plan 3's string half has since landed.** Non-empty string seeds — string literals
-of any length and `String`-typed local/param seeds (`acc := prefix`) — now certify and
-rewrite via `builder_from(seed)`. The rewrite was already `.FromBase(acc)` (which
-**copies** the seed into a private builder, so no ownership/uniqueness proof is needed);
-only the detector's `seed_family` needed to accept them, threading the accumulator's
-`op_result_mono` to classify an ambiguous non-empty `AInit(.ALocal)` seed as string vs
-(deferred) vector — with `find_region` gating any false positive. Self-host fixed point
-holds; the boot compiler rewrites 7 string regions. Plan 3's **vector** half + Plans 4–9
-(typed routing, conditional/`continue` folds, multi-exit, straight-line chains,
+**Plan 3 (string + vector) has since landed in full.** Non-empty string seeds —
+string literals of any length and `String`-typed local/param seeds (`acc :=
+prefix`) — certify and rewrite via `builder_from(seed)`; the rewrite was already
+`.FromBase(acc)` (which **copies** the seed into a private builder, so no
+ownership/uniqueness proof is needed), so only the detector's `seed_family` needed
+to accept them, threading the accumulator's `op_result_mono` to classify an
+ambiguous non-empty `AInit(.ALocal)` seed as string vs vector — with `find_region`
+gating any false positive. Self-host fixed point holds; the boot compiler rewrites
+7 string regions. **The vector half landed 2026-08-05 (commit `16e5cd95`)**: the
+same `seed_family` mono-type branch now also certifies a non-empty `Vector<_>`-typed
+local/param seed, and the rewrite lowers it to `vector$builder_from(base)` →
+`builder_push*` → `builder_freeze` — safe because `vector$builder_from` deep-copies
+the seed's tail into a private array and `builder_push`/promotion never mutate a
+node reachable from the base. Round-trip/base-unchanged correctness and the
+self-host fixed point were reconfirmed with the boot compiler compiling itself
+through its own now-claimed vector loops
+(`boot/tests/suites/builder_region_suite.tw`, "non-empty vector seed round-trips
+and leaves the base unchanged"). Census: the "re-used accumulator" rejected bucket
+moved 452 → 375; certified vector regions (`linearly_folded = true`) now number
+115. Regions still lower via `builder_from`/`builder_push`/`builder_freeze` and
+stay **boxed** — typed routing is Plan 4. Plans 4–9 (typed routing,
+conditional/`continue` folds, multi-exit, straight-line chains,
 branch-nested/co-resident regions) remain deferred follow-ups per the design. The Plan 2
 execution plan is archived at
 [../../archive/2026-07-22-8c-plan2-builder-region-rewrite.md](../../archive/2026-07-22-8c-plan2-builder-region-rewrite.md).
 
 ### Deferred 8C follow-up slices (TODO)
 
-Landed so far: Plans 1–2 + Plan 3 (string half). The remaining slices below are
-**not implemented** — this is the "8C is not finished" checklist the ✅ above does
+Landed so far: Plans 1–3 (string + vector). The remaining slices below are **not
+implemented** — this is the "8C is not finished" checklist the ✅ above does
 not cover. Region counts are the current `boot/main.tw` `--census --sites` deferral
 tallies (raw reason buckets, an upper bound on eligible regions, not a proven
 per-plan count). Full design + sequencing:
 [builder-region-design.md](builder-region-design.md).
 
-- [ ] **Plan 3 (vector half)** — non-empty vector seeds (`acc := base` then push in
-  loop). Design calls it a one-line `builder_push` shared-trie check. ~450 boot
-  regions currently rejected as "re-used accumulator, not a fresh seed (non-empty)".
-- [ ] **Plan 4 — typed routing** (the real vector win): teach `route_typed_vec` to
-  follow the freeze→accumulator `AAssign` as a copy edge so `Vector<Int>` builder
-  accumulators unbox to flat i64 instead of staying boxed. Applies to the certified
-  vector regions today + everything Plan-3-vector adds.
+- [ ] **Plan 4 — typed routing** (the real vector win, **verified next step**):
+  teach `route_typed_vec` to follow the freeze→accumulator `AAssign` as a copy edge
+  (or switch to a `Let`-binding rewrite that avoids `AAssign` entirely) so
+  `Vector<Int>` builder accumulators unbox to flat i64 instead of staying boxed.
+  Applies to the 115 certified vector regions today.
 - [ ] **Plan 5 — conditional / `continue`-guarded folds**: path-sensitive join
   reasoning in the detector so folds behind an `if`/`continue` on the loop main arm
   certify. ~316 boot regions currently rejected as "control flow on the loop main arm".
@@ -351,20 +384,21 @@ the vector family. Full design (forks, safety fact, ANF shape, plan split):
 [builder-region-design.md](builder-region-design.md). Slice notes:
 [vector-lowering.md](vector-lowering.md) and [string-lowering.md](string-lowering.md).
 
-**First-slice narrowing (per builder-region-design.md, do not implement the broad
-shape).** The first slice is loop accumulators only, gated by an analysis
-region-safety fact and consumed as a `BuilderRegionDecision` record (not a per-local
-boolean). Vector is restricted to **empty-seed `builder_new`**; these regions stay **boxed**
-(correct, not typed — the frozen accumulator is `AAssign`-rebound, which
-`route_typed_vec` does not follow, so typed routing is a deferred follow-up).
-Non-empty `from(base)`/`builder_from` is deferred. Folds are **unconditional only**
-(conditional/`continue` deferred). Regions use a **single post-loop freeze** and
-**reject every intra-region publication/early-exit** (`return`, value-carrying
-`break`, `try`, closure capture, escaping call); per-exit freeze insertion is a later
-slice.
+**First-slice + Plan 3 narrowing (per builder-region-design.md, do not implement the
+broad shape).** Loop accumulators only, gated by an analysis region-safety fact and
+consumed as a `BuilderRegionDecision` record (not a per-local boolean). Vector
+seeds now cover both **empty (`builder_new`)** and **non-empty (`builder_from(base)`,
+Plan 3, landed)**; these regions stay **boxed** either way (correct, not typed — the
+frozen accumulator is `AAssign`-rebound, which `route_typed_vec` does not follow, so
+typed routing is Plan 4). Folds are **unconditional only** (conditional/`continue`
+deferred to Plan 5). Regions use a **single post-loop freeze** and **reject every
+intra-region publication/early-exit** (`return`, value-carrying `break`, `try`,
+closure capture, escaping call); per-exit freeze insertion is a later slice.
 
-- [x] **Lower existing vector builder regions from facts.** Emits `vector$builder_new` →
-  `builder_push` → `builder_freeze` (empty seed only); never `vector$builder_from`. Boxed.
+- [x] **Lower existing vector builder regions from facts.** Empty seeds emit
+  `vector$builder_new` → `builder_push` → `builder_freeze`; non-empty local/param
+  seeds (Plan 3, landed) emit `vector$builder_from(base)` → `builder_push` →
+  `builder_freeze`. Boxed either way.
 - [x] **Lower existing string builder regions from facts.** Reuses
   `string$builder_from/extend/freeze` for `String.concat` empty-seed accumulator loops.
 - [x] **Preserve semantic builder uses.** `collect` produces no builder-region decision
