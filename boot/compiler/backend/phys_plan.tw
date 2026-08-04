@@ -27,14 +27,6 @@ pub fn return_repr(plan: PhysPlan, func_id: Int) ElemRepr? {
   plan.returns["${func_id}"]
 }
 
-// Record a typed-return override: `func_id`'s physical result ABI is the
-// family's typed PVec (pvec_wasm_type(elem)). The write-side counterpart to
-// return_repr, kept as part of the PhysPlan surface alongside it.
-pub fn set_return_repr(plan: PhysPlan, func_id: Int, elem: ElemRepr) PhysPlan {
-  plan.returns["${func_id}"] = elem
-  plan
-}
-
 pub fn capture_repr(plan: PhysPlan, func_id: Int, index: Int) ElemRepr? {
   plan.captures[abi_key(func_id, index)]
 }
