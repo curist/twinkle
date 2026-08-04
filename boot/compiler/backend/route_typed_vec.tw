@@ -17,6 +17,7 @@ use compiler.backend.phys_plan
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, PreparedPattern, ReprKind, SlotId, SlotInfo,
 }
+use compiler.backend.repr_policy.{mono_key_of_elem_repr}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.core_ir.{FuncId}
@@ -129,6 +130,51 @@ fn families_ids(builtins: BuiltinRegistry) Vector<FamilyIds> {
   }
 }
 
+// Reconstruct route's `typeable_return` map (func_id.id String -> family
+// mono_key) from `plan.returns` (func_id.id String -> ElemRepr). Transitional
+// scaffolding: a map -> PhysPlan -> map round-trip. The target is route
+// querying `phys_plan.return_repr` at its decision sites directly; this
+// adapter and its caller-side legacy `typeable_return` parameter are dropped
+// once every call site moves to the point query (Task 9).
+fn typeable_return_from_plan(plan: phys_plan.PhysPlan) Dict<String, String> {
+  out: Dict<String, String> = Dict.new()
+
+  for key, elem in plan.returns {
+    out[key] = mono_key_of_elem_repr(elem)
+  }
+
+  out
+}
+
+// Reconstruct route's `capture_abi` map (func_id.id String -> capture index ->
+// family mono_key) from `plan.captures` (keyed by phys_plan.abi_key,
+// "${func_id}:${index}"). Transitional scaffolding: re-parses the interpolated
+// key with split/from_string, dropped once route queries `phys_plan.capture_repr`
+// at its decision sites directly (Task 9).
+fn capture_abi_from_plan(plan: phys_plan.PhysPlan) Dict<String, Dict<Int, String>> {
+  out: Dict<String, Dict<Int, String>> = Dict.new()
+
+  for key, elem in plan.captures {
+    parts := key.split(":")
+
+    if parts.len() == 2 {
+      func_key := parts[0]
+      idx := Int.from_string(parts[1]).unwrap_or(-1)
+
+      if idx >= 0 {
+        cur := case out[func_key] {
+          .Some(m) => m,
+          .None => Dict.new(),
+        }
+        cur[idx] = mono_key_of_elem_repr(elem)
+        out[func_key] = cur
+      }
+    }
+  }
+
+  out
+}
+
 pub fn route_typed_vectors(
   funcs: Vector<PreparedFunc>,
   builtins: BuiltinRegistry,
@@ -138,15 +184,27 @@ pub fn route_typed_vectors(
   capture_abi: Dict<String, Dict<Int, String>>,
   typeable_return: Dict<String, String>,
 ) RoutedModule {
-  // Inert for now: PhysPlan is threaded through but not yet consumed by
-  // routing decisions.
-  _ := plan.returns.keys().len()
+  // Route's return/capture typing now comes from `plan`, not the separately
+  // passed `capture_abi` / `typeable_return` legacy maps (kept as parameters
+  // until Task 9 drops them). Behavior-preserving because the real prepare.tw
+  // path builds `plan` via phys_plan_from_analysis(repr) from these SAME maps,
+  // so the derived maps below round-trip to the originals.
+  route_capture_abi := capture_abi_from_plan(plan)
+  route_typeable_return := typeable_return_from_plan(plan)
   ids := route_ids(builtins)
   routed_funcs: Vector<PreparedFunc> = []
   swapped_sites: Vector<SwappedSetSite> = []
 
   for pf in funcs {
-    r := route_func(pf, ids, builtins, typed_fields, typed_payloads, capture_abi, typeable_return)
+    r := route_func(
+      pf,
+      ids,
+      builtins,
+      typed_fields,
+      typed_payloads,
+      route_capture_abi,
+      route_typeable_return,
+    )
     routed_funcs = .append(r.func)
     swapped_sites = .concat(r.sites)
   }

@@ -62,3 +62,17 @@ pub fn elem_repr_of_mono_key(key: String) ElemRepr? {
     _ => .None,
   }
 }
+
+/// Inverse of elem_repr_of_mono_key: bridge PhysPlan's ElemRepr repr-kind tag
+/// back to the family mono_key string the func-id-keyed ABI analyses (route's
+/// typeable_return / capture_abi maps) carry. Used by the route_typed_vec
+/// transitional adapters (typeable_return_from_plan / capture_abi_from_plan) to
+/// reconstruct those maps from a PhysPlan.
+pub fn mono_key_of_elem_repr(elem: ElemRepr) String {
+  case elem {
+    .I64 => "vec_i64",
+    .I32 => "vec_bool",
+    .F64 => "vec_f64",
+    .Byte => "vec_byte",
+  }
+}

@@ -18,6 +18,7 @@ use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.phys_plan
 use compiler.backend.prepare.{prepare_backend_preroute}
 use compiler.backend.prepared_ir.{PreparedExpr, PreparedFunc, PreparedOp, SlotInfo}
+use compiler.backend.repr_policy.{ElemRepr}
 use compiler.backend.route_typed_vec.{
   analyze_typed_fields, analyze_typed_payloads, route_typed_vectors,
 }
@@ -116,6 +117,72 @@ fn op_calls_fid(op: PreparedOp, fid_id: Int) Bool {
   }
 }
 
+// Find the func_id.id of the (only) function named `name`.
+fn find_func_id(funcs: Vector<PreparedFunc>, name: String) Int? {
+  for pf in funcs {
+    if pf.name == name {
+      return .Some(pf.func_id.id)
+    }
+  }
+
+  .None
+}
+
+// Find the SlotId.id a call to `fid_id` binds its result to inside `expr`
+// (the first `let slot = call(...)` site found), or .None.
+fn find_call_result_slot(expr: PreparedExpr, fid_id: Int) Int? {
+  case expr {
+    .Let(slot, op, body) => case op {
+      .ACall(callee, _) => case callee {
+        .AGlobalFunc(fid) => if fid.id == fid_id {
+          .Some(slot.id)
+        } else {
+          find_call_result_slot(body, fid_id)
+        },
+        _ => find_call_result_slot(body, fid_id),
+      },
+      _ => find_call_result_slot(body, fid_id),
+    },
+    _ => .None,
+  }
+}
+
+type CallSite = .{ func_index: Int, slot: Int }
+
+// Find the (func_index, slot) of the first call-result binding to `fid_id`
+// across every function's body.
+fn find_call_result_slot_in_funcs(funcs: Vector<PreparedFunc>, fid_id: Int) CallSite? {
+  for pf, fi in funcs {
+    case find_call_result_slot(pf.body, fid_id) {
+      .Some(sid) => return .Some(.{ func_index: fi, slot: sid }),
+      .None => {},
+    }
+  }
+
+  .None
+}
+
+fn find_slot_info(funcs: Vector<PreparedFunc>, func_index: Int, slot_id: Int) SlotInfo? {
+  funcs[func_index].slots[slot_id]
+}
+
+// A function `g` returning Vector<Int> and a caller reading `g()` by index
+// only. `g`'s own body has no typed producer visible to route in isolation
+// (its collect result is consumed by len/return only within `g`, but the
+// point of this fixture is `caller`'s call-result slot: is it retyped to
+// PVecI64 purely because `plan.returns` says so, with the legacy
+// `typeable_return` map passed empty).
+return_source :=
+  \\fn g() Vector<Int> {
+  \\  collect i in range(4) { i }
+  \\}
+  \\fn caller() Int {
+  \\  v := g()
+  \\  v[0]
+  \\}
+  \\caller()
+  \\
+
 // A Vector<Int> in a typed variant payload (IntCol), gathered inside a function
 // and stored back into the same typed payload. data is a clean collect producer
 // so analyze_typed_payloads types the IntCol payload.
@@ -189,6 +256,58 @@ pub fn suite() runner.Suite {
         try assert.ok(
           pvec_i64_slot_count(routed) > pvec_i64_slot_count(routed_empty),
           "typed payload set must retype the gather receiver + result slots",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "route reads return typing from PhysPlan, not the legacy typeable_return map",
+      fn() {
+        p := try prepare_src(return_source)
+        gid := try find_func_id(p.funcs, "g").ok_or("g not found")
+        caller := try find_call_result_slot_in_funcs(p.funcs, gid).ok_or(
+          "no call to g found in caller",
+        )
+
+        // Baseline: empty plan AND empty legacy typeable_return -> boxed, the
+        // call-result slot must NOT be PVecI64.
+        boxed := route_typed_vectors(
+          p.funcs,
+          p.builtins,
+          phys_plan.empty(),
+          Dict.new(),
+          Dict.new(),
+          Dict.new(),
+          Dict.new(),
+        ).funcs
+        boxed_slot := try find_slot_info(boxed, caller.func_index, caller.slot).ok_or(
+          "call-result slot missing after boxed route",
+        )
+        try assert.ok(
+          !is_pvec_i64(boxed_slot),
+          "call-result slot must stay boxed with no plan and no legacy map",
+        )
+
+        // Plan carries the typed return; legacy typeable_return/capture_abi are
+        // BOTH still empty, so a pass here proves the typing came from the plan.
+        plan := phys_plan.empty()
+        plan.returns["${gid}"] = ElemRepr.I64
+
+        routed := route_typed_vectors(
+          p.funcs,
+          p.builtins,
+          plan,
+          Dict.new(),
+          Dict.new(),
+          Dict.new(),
+          Dict.new(),
+        ).funcs
+        routed_slot := try find_slot_info(routed, caller.func_index, caller.slot).ok_or(
+          "call-result slot missing after plan-driven route",
+        )
+        try assert.ok(
+          is_pvec_i64(routed_slot),
+          "call-result slot should be PVecI64 when the PLAN carries the typed return",
         )
         .Ok({})
       },
