@@ -19,10 +19,12 @@ use compiler.backend.phys_plan
 use compiler.backend.prepare.{
   PreparedModule, backend_context, prepare_backend, prepare_backend_preroute,
 }
-use compiler.backend.prepared_ir.{PreparedFunc, SlotInfo}
+use compiler.backend.prepared_ir.{PreparedFunc, SlotId, SlotInfo}
 use compiler.backend.route_typed_vec.{analyze_typed_fields, route_typed_vectors}
 use compiler.backend.verify.{verify_prepared_module_with_level}
 use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.wasm_layout.{pvec_wasm_type, val_type_of_mono}
+use compiler.core_ir.{FuncId, LocalId}
 use compiler.pipeline
 use compiler.resolver.{ResolvedEnv}
 
@@ -255,6 +257,83 @@ bool_field_gather_result_source :=
   \\idx := collect i in range(8) { i }
   \\read(gather_col(mk(8), idx), 8)
   \\
+
+// A hand-built prepared func: a PVecI64 producer slot (ys) copied straight into a
+// destination slot (ws) via AInit — a non-coercing local-copy edge the emitter
+// inserts no conversion for. `typed_dest` picks the destination physical repr:
+//   false → boxed rt_types__PVec (a real defect: Task 8's edge check must reject),
+//   true  → matching PVecI64 (sound: the invariant holds and the edge accepts).
+// Both slots keep the wasm_type == f(repr, mono) invariant so the failure surfaces
+// at the edge check, not the slot-metadata check.
+fn copy_func(env: ResolvedEnv, typed_dest: Bool) PreparedFunc {
+  ys := SlotInfo.{
+    slot: SlotId.{ id: 0 },
+    source_local: LocalId.{ id: 0 },
+    role: .Param,
+    mono: .Vector(.Int),
+    repr: .TypedVec(.I64),
+    wasm_type: pvec_wasm_type(.I64),
+  }
+  ws := if typed_dest {
+    SlotInfo.{
+      slot: SlotId.{ id: 1 },
+      source_local: LocalId.{ id: 1 },
+      role: .Local,
+      mono: .Vector(.Int),
+      repr: .TypedVec(.I64),
+      wasm_type: pvec_wasm_type(.I64),
+    }
+  } else {
+    SlotInfo.{
+      slot: SlotId.{ id: 1 },
+      source_local: LocalId.{ id: 1 },
+      role: .Local,
+      mono: .Vector(.Int),
+      repr: .TypedRef(.Vector(.Int)),
+      wasm_type: val_type_of_mono(.Vector(.Int), env),
+    }
+  }
+  slots: Dict<Int, SlotInfo> = Dict.new()
+  slots[0] = ys
+  slots[1] = ws
+  PreparedFunc.{
+    func_id: FuncId.{ id: 900 },
+    name: "copy_probe",
+    is_init: false,
+    captures: [],
+    params: [SlotId.{ id: 0 }],
+    locals: [SlotId.{ id: 1 }],
+    slots,
+    body: .Let(SlotId.{ id: 1 }, .AInit(.ASlot(SlotId.{ id: 0 })), .Return(.None)),
+    return_mono: .Void,
+    phys_return: .None,
+  }
+}
+
+// Swap a hand-built func into a compiled scaffold module so verify runs on it with
+// real env/builtins and the module's default sub-records.
+fn verify_copy_probe(typed_dest: Bool) Result<Void, String> {
+  vi := try verify_inputs(positive_source)
+  m := vi.prepared
+  m.funcs = [copy_func(vi.env, typed_dest)]
+  m.closure_captures = Dict.new()
+  m.typed_vector_fields = Dict.new()
+
+  case verify_prepared_module_with_level(m, backend_context(vi.env, m), vi.builtins, .Full) {
+    .Ok(_) => if typed_dest {
+      .Ok({})
+    } else {
+      .Err("expected verify to reject the boxed-copy mismatch")
+    },
+    .Err(msg) => if typed_dest {
+      .Err("expected verify to accept the matching typed copy, got: ${msg}")
+    } else if msg.contains("physical vector repr mismatch") {
+      .Ok({})
+    } else {
+      .Err("wrong rejection message: ${msg}")
+    },
+  }
+}
 
 pub fn suite() runner.Suite {
   runner
@@ -540,5 +619,13 @@ pub fn suite() runner.Suite {
           .Err(_) => .Ok({}),
         }
       },
+    )
+    .test(
+      "verify rejects a PVecI64 producer copied into a boxed slot (physical repr edge)",
+      fn() { verify_copy_probe(false) },
+    )
+    .test(
+      "verify accepts a PVecI64 producer copied into a matching typed slot (invariant holds)",
+      fn() { verify_copy_probe(true) },
     )
 }

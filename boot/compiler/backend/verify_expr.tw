@@ -11,7 +11,8 @@ use compiler.backend.prepared_ir.{
 }
 use compiler.backend.repr_assign.{repr_of_mono}
 use compiler.backend.verify_common.{
-  fail_func, fail_slot, mono_eq, mono_name, repr_name, slot_role_name, val_type_name,
+  EdgeClass, check_repr_edge, fail_func, fail_slot, mono_eq, mono_name, repr_name, slot_role_name,
+  val_type_name, vec_repr_edge_cap,
 }
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
@@ -303,6 +304,12 @@ fn verify_op(ctx: VerifyCtx, result_info: SlotInfo, op: PreparedOp, depth: Int) 
       .DeadPlaceholder => ctx.verify_dead_placeholder_value(result_info, atom, "init value"),
       _ => {
         try ctx.verify_atom_use(atom, "init value")
+
+        case ctx.infer_atom_val_type(atom) {
+          .Some(vt) => try ctx.check_vec_edge(vt, result_info.wasm_type, .NonCoercing, "AInit"),
+          .None => {},
+        }
+
         ctx.verify_value_for_slot(result_info, atom, "init value")
       },
     },
@@ -310,6 +317,12 @@ fn verify_op(ctx: VerifyCtx, result_info: SlotInfo, op: PreparedOp, depth: Int) 
       target_info := try facts.slot_info_result(ctx.pf, target, "assign target")
       try ctx.reject_dead_use(target_info, "assign target")
       try ctx.verify_atom_use(atom, "assign value")
+
+      case ctx.infer_atom_val_type(atom) {
+        .Some(vt) => try ctx.check_vec_edge(vt, target_info.wasm_type, .NonCoercing, "AAssign"),
+        .None => {},
+      }
+
       ctx.verify_value_for_slot(target_info, atom, "assign value")
     },
     // The expected-type check against the linked-global oracle is wired in a
@@ -797,6 +810,12 @@ fn verify_record_get_result_repr(
     .None => return .Ok({}),
   }
 
+  // Record-get result edge (Task 8): struct.get yields the field's physical type
+  // and the result slot stores it with no coercion — NonCoercing. The generalized
+  // skeleton check runs first (report-only in Cycle A); the pre-existing
+  // pvec_vt_mismatch hard error below stays as the specific backstop.
+  try ctx.check_vec_edge(field_vt, result_info.wasm_type, .NonCoercing, "ARecordGet")
+
   if pvec_vt_mismatch(result_info.wasm_type, field_vt) {
     return fail_slot(
       ctx.pf,
@@ -1128,6 +1147,23 @@ fn verify_value_for_slot(ctx: VerifyCtx, target: SlotInfo, atom: PreparedAtom, c
       )
     },
     .None => .Ok({}),
+  }
+}
+
+// Physical vector-repr edge check (Task 8). Delegates to the reusable
+// verify_common skeleton, which classifies both physical ValTypes and consults an
+// edge-class-aware coercion capability. This is the generalized non-coercing-edge
+// check; it runs first at each wired edge (local copy AInit/AAssign, record-get
+// result) ahead of the pre-existing specific pvec backstops. A full suite +
+// self-host inventory (report-only behind TWINKLE_VERIFY_VEC_REPR=1) confirmed no
+// valid module relies on any of these NonCoercing edges, so it is a hard error.
+fn check_vec_edge(ctx: VerifyCtx, from: ValType, to: ValType, edge: EdgeClass, context: String) Result<
+  Void,
+  String,
+> {
+  case check_repr_edge(from, to, edge, vec_repr_edge_cap(), context) {
+    .None => .Ok({}),
+    .Some(msg) => fail_func(ctx.pf, msg),
   }
 }
 
