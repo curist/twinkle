@@ -1,0 +1,79 @@
+// Multi-family typed-vector validation fixture (physical-repr-planner-refactor,
+// Task 12). Self-host output is i64-dominated, so a wrong bool/f64/byte family
+// tag or a `pvec_wasm_type` mismatch would NOT perturb the stage3==stage4 fixed
+// point — it would only show up when a non-i64 typed path is actually executed.
+// This exercises the two ABI facts PhysPlan now owns for a non-i64 family
+// (Float): a typed RETURN threaded through a caller, and a typed CAPTURE (a
+// closure that reads a captured Vector<Float> typed-only). A wrong family tag
+// here traps or computes a wrong value, not just a differently-shaped WAT.
+//
+//   target/twk run <this file>                                      -> deterministic OK <sum> <min>
+//   target/twk wat <this file> --func sum_typed     | grep -c PVecF64  -> >=1
+//   target/twk wat <this file> --func sum_typed     | grep -c PVecI64  -> 0
+//   target/twk wat <this file> --func sorted_first  | grep -c PVecF64  -> >=1
+//   target/twk wat <this file> --func sorted_first  | grep -c PVecI64  -> 0
+// Typed RETURN: a collect-born Vector<Float>, returned and consumed typed-only
+// (index + len) by its single caller.
+fn build_scores(n: Int) Vector<Float> {
+  collect i in range(n) {
+    i.to_float() * 1.5
+  }
+}
+
+fn sum_typed(n: Int) Float {
+  scores := build_scores(n)
+  t := 0.0
+  for i in range(scores.len()) {
+    t = t + scores[i]
+  }
+  t
+}
+
+// Typed CAPTURE: a local collect-born Vector<Float> captured by a sort
+// comparator closure and read typed-only via index inside the closure body.
+fn sorted_first(n: Int) Float {
+  keys := collect i in range(n) {
+    (n - i).to_float() * 0.25
+  }
+  idx := collect i in range(n) {
+    i
+  }
+  sorted := idx.sort_by(fn(a, b) { Float.compare(keys[a], keys[b]) })
+  keys[sorted[0]]
+}
+
+// Independent boxed reference computations (no typed return/capture path) to
+// cross-check the results are numerically correct, not merely "didn't trap".
+fn ref_sum(n: Int) Float {
+  t := 0.0
+  for i in range(n) {
+    t = t + i.to_float() * 1.5
+  }
+  t
+}
+
+fn ref_sorted_first(n: Int) Float {
+  min_key := 1000000.0
+  min_val := 0.0
+  for i in range(n) {
+    k := (n - i).to_float() * 0.25
+    if k < min_key {
+      min_key = k
+      min_val = k
+    }
+  }
+  min_val
+}
+
+n := 12
+got_sum := sum_typed(n)
+want_sum := ref_sum(n)
+got_min := sorted_first(n)
+want_min := ref_sorted_first(n)
+
+ok := got_sum == want_sum and got_min == want_min
+println(if ok {
+  "OK ${got_sum.to_string()} ${got_min.to_string()}"
+} else {
+  "MISMATCH"
+})

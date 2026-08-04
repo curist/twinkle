@@ -48,3 +48,31 @@ fn elem_repr_of(vt: ValType) ElemRepr {
     _ => .I32,
   }
 }
+
+/// Bridge from a family's `mono_key` string (the form the func-id-keyed ABI
+/// analyses carry) to the ElemRepr repr-kind tag PhysPlan stores. Used by
+/// phys_plan_from_analysis to project typeable_return / capture_abi entries
+/// (which already ARE the family mono_key) into PhysPlan's ElemRepr entries.
+pub fn elem_repr_of_mono_key(key: String) ElemRepr? {
+  case key {
+    "vec_i64" => .Some(.I64),
+    "vec_bool" => .Some(.I32),
+    "vec_f64" => .Some(.F64),
+    "vec_byte" => .Some(.Byte),
+    _ => .None,
+  }
+}
+
+/// Inverse of elem_repr_of_mono_key: bridge PhysPlan's ElemRepr repr-kind tag
+/// back to the family mono_key string the func-id-keyed ABI analyses (route's
+/// typeable_return / capture_abi maps) carry. Used by route_typed_vec's
+/// elig_return_family / elig_capture_family eligibility-oracle helpers to answer
+/// FromPlan queries in the same mono_key currency as the FromMaps side.
+pub fn mono_key_of_elem_repr(elem: ElemRepr) String {
+  case elem {
+    .I64 => "vec_i64",
+    .I32 => "vec_bool",
+    .F64 => "vec_f64",
+    .Byte => "vec_byte",
+  }
+}

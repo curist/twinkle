@@ -4,6 +4,10 @@
 cross to stay fast, so "how many more rabbit holes?" has an answer. The end goal is
 the dataframe `order_by` win (drop the ~7× gap vs Clojure ~0.34s @ 1M).
 
+For who owns deciding/applying/recording a physical repr (route vs `PhysPlan` vs
+`mutvec_repr` vs emit vs verify), see the [ownership
+contract](typed-vector-representation.md#physical-representation-ownership-contract).
+
 **Where we are (2026-07-10, branch `typed-vector-crossfn-abi`):** C2 (oracle
 unification) typed the captured key column into the comparator. A separate B6
 attempt — a buffer-backed sort kernel (`@std.sort.ints_by`) — was built, measured

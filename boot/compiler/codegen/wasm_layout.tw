@@ -505,6 +505,19 @@ pub fn mutvec_wasm_type(elem: ElemRepr) ValType {
   .Ref(true, .Named(name))
 }
 
+// Physical wasm type of a typed-vector slot/return/capture, per element family.
+// ReprKind.TypedVec(elem) sites lower to this — the family's typed PVec struct,
+// distinct from the boxed PVec that val_type_of_mono(Vector<T>) yields by default.
+pub fn pvec_wasm_type(elem: ElemRepr) ValType {
+  name := case elem {
+    .I64 => "rt_types__PVecI64",
+    .I32 => "rt_types__PVecBool",
+    .F64 => "rt_types__PVecF64",
+    .Byte => "rt_types__PVecByte",
+  }
+  .Ref(true, .Named(name))
+}
+
 // ── val_type_of_mono ────────────────────────────────────────────────
 pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
   case ty {

@@ -3,7 +3,9 @@ use @std.testing as runner
 
 use commands.ir
 use compiler.anf.{AnfExpr, AnfOp}
+use compiler.backend.prepared_ir.{PreparedFunc, SlotInfo}
 use compiler.builtins
+use compiler.codegen.codegen.{prepare_codegen}
 use compiler.codegen.mutvec_region
 use compiler.pipeline
 
@@ -127,6 +129,37 @@ fn mutvec_census(src: String) String {
     .Ok(a) => ir.render_mutvec_rows(a),
     .Err(e) => error("compile failed: ${e}"),
   }
+}
+
+// ── Task 6: mutvec repr respects route-owned typed slots ──
+// Run a source snippet through the REAL codegen pipeline (mutvec_region rewrite
+// -> route_typed_vec -> mutvec_repr, exactly as prepare_codegen wires it) and
+// return the prepared functions, so this inspects the same PreparedModule the
+// emitter consumes rather than a hand-assembled fixture.
+fn prepared_funcs(src: String) Vector<PreparedFunc> {
+  case pipeline.compile_source(src) {
+    .Ok(a) => prepare_codegen(a.opt, a.env, a.builtins).prepared.funcs,
+    .Err(e) => error("compile failed: ${e}"),
+  }
+}
+
+fn is_named_wasm_type(info: SlotInfo, want: String) Bool {
+  case info.wasm_type {
+    .Ref(_, ht) => case ht {
+      .Named(n) => n == want,
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn find_prepared_func(funcs: Vector<PreparedFunc>, name: String) PreparedFunc? {
+  for pf in funcs {
+    if pf.name == name {
+      return .Some(pf)
+    }
+  }
+  .None
 }
 
 pub fn suite() runner.Suite {
@@ -624,6 +657,61 @@ pub fn suite() runner.Suite {
           },
           .Err(e) => error("compile failed: ${e}"),
         }
+      },
+    )
+    .test(
+      "prepared IR: mutvec_repr never rewrites route's typed freeze slot",
+      fn() {
+        // Same escaping-region fixture as the census tests above, run through the
+        // real prepare_codegen pipeline: mutvec_region rewrite claims the region
+        // (live handle for xs, freeze at the return boundary), then route_typed_vec
+        // recognizes the freeze result as a typed PVecI64 producer and records it
+        // in the routed plan, then mutvec_repr assigns the handle slots. This
+        // checks all three passes agree on the boundary between them.
+        funcs := prepared_funcs(
+          "fn esc(n: Int) Vector<Int> {\n  xs := collect i in range(n) { i }\n  xs[0] = 42\n  xs\n}\nprintln(esc(5).len().to_string())\n",
+        )
+        pf := try find_prepared_func(funcs, "esc").ok_or("esc not found in prepared funcs")
+
+        mutvec_slots := 0
+        pvec_slots := 0
+
+        for sid in pf.slots.keys() {
+          case pf.slots[sid] {
+            .Some(info) => case info.repr {
+              .MutVec(_) => {
+                mutvec_slots = mutvec_slots + 1
+
+                // A live handle slot must be physically MutVecI64, never the
+                // route-owned frozen PVecI64 wasm type.
+                try assert.ok(
+                  is_named_wasm_type(info, "rt_types__MutVecI64"),
+                  "MutVec-repr slot S${sid.to_string()} must be wasm type rt_types__MutVecI64",
+                )
+              },
+              .TypedVec(_) => {
+                pvec_slots = pvec_slots + 1
+
+                // The freeze-result / return slot is route-owned: it must stay
+                // PVecI64 and must never be rewritten to the MutVec wasm type.
+                try assert.ok(
+                  is_named_wasm_type(info, "rt_types__PVecI64"),
+                  "TypedVec-repr slot S${sid.to_string()} must be wasm type rt_types__PVecI64",
+                )
+                try assert.ok(
+                  !is_named_wasm_type(info, "rt_types__MutVecI64"),
+                  "route-owned TypedVec slot S${sid.to_string()} must not be MutVecI64",
+                )
+              },
+              _ => {},
+            },
+            .None => {},
+          }
+        }
+
+        try assert.ok(mutvec_slots >= 1, "expected at least one live MutVec handle slot")
+        try assert.ok(pvec_slots >= 1, "expected the freeze-result slot to be route-owned PVecI64")
+        .Ok({})
       },
     )
 }

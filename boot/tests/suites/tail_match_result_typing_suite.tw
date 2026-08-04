@@ -13,6 +13,7 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use compiler.backend.closure_convert.{convert_closures}
+use compiler.backend.phys_plan
 use compiler.backend.prepare.{prepare_backend_preroute}
 use compiler.backend.prepared_ir.{PreparedFunc, SlotInfo}
 use compiler.backend.route_typed_vec.{route_typed_vectors}
@@ -151,10 +152,9 @@ pub fn suite() runner.Suite {
         routed0 := route_typed_vectors(
           p.funcs,
           p.builtins,
+          phys_plan.empty(),
           repr0.typed_fields,
           repr0.typed_payloads,
-          repr0.capture_abi,
-          repr0.param_abi.typeable_return,
         ).funcs
         try assert.equal(repr0.param_abi.typeable_return.keys().len(), 0)
 
@@ -165,10 +165,9 @@ pub fn suite() runner.Suite {
         routed1 := route_typed_vectors(
           funcs_t,
           p.builtins,
+          phys_plan.empty(),
           repr1.typed_fields,
           repr1.typed_payloads,
-          repr1.capture_abi,
-          repr1.param_abi.typeable_return,
         ).funcs
 
         try assert.ok(

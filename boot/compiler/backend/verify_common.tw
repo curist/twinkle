@@ -2,7 +2,8 @@
 
 use compiler.backend.prepared_ir.{PreparedFunc, ReprKind, SlotInfo, SlotRole}
 use compiler.codegen.wasm_ir.{HeapType, ValType}
-use compiler.codegen.wasm_layout.{mutvec_wasm_type, val_type_of_mono}
+use compiler.codegen.wasm_layout.{mutvec_wasm_type, pvec_wasm_type, val_type_of_mono}
+use compiler.elem_family.{family_by_pvec_name}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
 
@@ -23,8 +24,8 @@ pub fn expected_wasm_type(repr: ReprKind, mono: MonoType, env: ResolvedEnv) ValT
     .I32 => .I32,
     .TypedRef(m) => val_type_of_mono(m, env),
     .TypedSum(m) => val_type_of_mono(m, env),
-    // Typed vector follows its semantic mono (PVecI64 after activation).
-    .TypedVec(_) => val_type_of_mono(mono, env),
+    // Typed vector slot is physically its family's typed PVec struct.
+    .TypedVec(e) => pvec_wasm_type(e),
     .MutVec(e) => mutvec_wasm_type(e),
     .ClosureRef => val_type_of_mono(mono, env),
     .ErasedSum => .Anyref,
@@ -237,4 +238,129 @@ fn mono_vec_eq(a: Vector<MonoType>, b: Vector<MonoType>) Bool {
   }
 
   true
+}
+
+// ── Physical-repr edge skeleton ─────────────────────────────────────────
+//
+// A reusable, type-agnostic check for physical vector-repr mismatches at a
+// slot/value edge. It works purely on physical `ValType`s plus an edge-class-aware
+// coercion capability — never on `ReprKind` and never on the PhysPlan object. A
+// future dict/record customer reuses `check_repr_edge` with its own predicate.
+// TypedPVec carries the family mono_key so cross-family edges (PVecI64 vs PVecF64)
+// are distinguishable. MutVec covers every rt_types__MutVec* handle type.
+pub type VecPhys = { NotVector, BoxedPVec, TypedPVec(String), MutVec }
+
+// Whether the emitter inserts a coercion at this edge. Boxed <-> typed is legal on
+// a Coercing edge (emit boxes/unboxes) and a DEFECT on a NonCoercing one (no
+// coercion is emitted — the pair reaches the Wasm validator as a type error).
+pub type EdgeClass = { Coercing, NonCoercing }
+
+pub fn vec_phys_of_val_type(vt: ValType) VecPhys {
+  case vt {
+    .Ref(_, ht) => case ht {
+      .Named(n) => cond {
+        // MutVec* first: "rt_types__PVec" is a prefix of the typed PVec names, so
+        // check the exact boxed name, not a prefix.
+        n.starts_with("rt_types__MutVec") => .MutVec,
+        n == "rt_types__PVec" => .BoxedPVec,
+        _ => case family_by_pvec_name(n) {
+          .Some(f) => .TypedPVec(f.mono_key),
+          .None => .NotVector,
+        },
+      },
+      _ => .NotVector,
+    },
+    _ => .NotVector,
+  }
+}
+
+// The reusable edge-skeleton capability. `is_declared_coercion` takes the edge
+// class: a boxed <-> typed pair is a declared coercion ONLY on a Coercing edge
+// (call arg / return / variant construct+extract — emit inserts that family's
+// box/unbox). On a NonCoercing edge (record-field read/store, capture store, local
+// copy/assign) the emitter inserts nothing, so boxed <-> typed is a real defect.
+// Two *different* typed families are never coercible on any edge (PVecI64 vs
+// PVecF64 is a bug), and MutVec* edges are produced by the freeze producer, not by
+// a copy edge.
+pub type ReprEdgeCap = .{ is_declared_coercion: fn(ValType, ValType, EdgeClass) Bool }
+
+pub fn vec_repr_edge_cap() ReprEdgeCap {
+  .{
+    is_declared_coercion: fn(from, to, edge) {
+      case edge {
+        .NonCoercing => false,
+        .Coercing => {
+          f := vec_phys_of_val_type(from)
+          t := vec_phys_of_val_type(to)
+
+          // exactly one boxed and one typed family PVec
+          f.is_boxed() and t.is_typed_pvec() or f.is_typed_pvec() and t.is_boxed()
+        },
+      }
+    },
+  }
+}
+
+fn is_boxed(p: VecPhys) Bool {
+  case p {
+    .BoxedPVec => true,
+    _ => false,
+  }
+}
+
+fn is_typed_pvec(p: VecPhys) Bool {
+  case p {
+    .TypedPVec(_) => true,
+    _ => false,
+  }
+}
+
+// Two VecPhys are the same physical class iff same variant AND, for typed, same
+// family.
+fn vec_phys_eq(a: VecPhys, b: VecPhys) Bool {
+  case a {
+    .NotVector => case b {
+      .NotVector => true,
+      _ => false,
+    },
+    .BoxedPVec => case b {
+      .BoxedPVec => true,
+      _ => false,
+    },
+    .MutVec => case b {
+      .MutVec => true,
+      _ => false,
+    },
+    .TypedPVec(fa) => case b {
+      .TypedPVec(fb) => fa == fb,
+      _ => false,
+    },
+  }
+}
+
+fn is_not_vector(p: VecPhys) Bool {
+  case p {
+    .NotVector => true,
+    _ => false,
+  }
+}
+
+// Returns .Some(message) when the edge is an illegal physical mismatch for its
+// class. `val_type_name` stringifies a ValType — it is NOT Stringify, so do not
+// use `${vt}` / `vt.to_string()`.
+pub fn check_repr_edge(from: ValType, to: ValType, edge: EdgeClass, cap: ReprEdgeCap, ctx: String) String? {
+  fp := vec_phys_of_val_type(from)
+  tp := vec_phys_of_val_type(to)
+  cond {
+    // Not both vector physical types → not this check's concern.
+    fp.is_not_vector() or tp.is_not_vector() => .None,
+    // Equal physical class (same family, incl. MutVec == MutVec) is fine.
+    fp.vec_phys_eq(tp) => .None,
+    cap.is_declared_coercion(from, to, edge) => .None,
+    _ => .Some(
+      "physical vector repr mismatch at ${ctx}: producer ${val_type_name(from)} vs destination ${val_type_name(
+        to,
+      )}",
+    ),
+  }
 }

@@ -25,7 +25,7 @@ use compiler.backend.repr_assign.{assign_repr_for_module}
 use compiler.backend.route_typed_vec.{SwappedSetSite, route_typed_vectors}
 use compiler.backend.slot_assign.{assign_slots_for_module}
 use compiler.backend.tailify.{never_returning_funcs, tailify_funcs}
-use compiler.backend.typed_param_abi.{analyze_typed_repr}
+use compiler.backend.typed_param_abi.{analyze_typed_repr, phys_plan_from_analysis}
 use compiler.base_env.{first_user_type_id}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.insert_boundaries.{insert_boundaries}
@@ -244,17 +244,11 @@ pub fn prepare_backend_with_mutable_decisions(
   funcs_t := tailify_funcs(pre.funcs, builtins, never)
   r1 := date.now()
   repr := analyze_typed_repr(funcs_t, builtins, first_user_type_id(), never)
+  phys := phys_plan_from_analysis(repr)
   r2 := date.now()
   typed_fields := repr.typed_fields
   typed_payloads := repr.typed_payloads
-  routed := route_typed_vectors(
-    funcs_t,
-    builtins,
-    typed_fields,
-    typed_payloads,
-    repr.capture_abi,
-    repr.param_abi.typeable_return,
-  )
+  routed := route_typed_vectors(funcs_t, builtins, phys, typed_fields, typed_payloads)
   funcs3 := routed.funcs
 
   // Remap the mutable-codegen decision for every site routing swapped

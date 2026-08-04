@@ -22,7 +22,9 @@
 //! coerces at construction/extraction, and a param that escapes (e.g. into a
 //! closure env) is removed in the first round and its payload re-evaluated.
 
+use compiler.backend.phys_plan
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotId}
+use compiler.backend.repr_policy.{elem_repr_of_mono_key}
 use compiler.backend.route_typed_vec.{
   RouteIds, aliases_for, analyze_typed_fields, analyze_typed_payloads, bool_key_maps_equal,
   build_copy_map, materialize_slot_repr, route_ids, slot_typed_after_route, v_group_typeable,
@@ -47,6 +49,35 @@ pub type ReprAnalysis = .{
   // (M1b). A captured typed vector read typed-only inside the closure body; the
   // trampoline downcasts the anyref env slot to the family PVec.
   capture_abi: Dict<String, Dict<Int, String>>,
+}
+
+// Project the func-id-keyed ABI facts (typeable_return, capture_abi) into a
+// PhysPlan. Only these two project: their values already ARE the family
+// mono_key, so every family (not just vec_i64) survives the projection.
+// typed_fields / typed_payloads do NOT project — they are (TypeId, field)-keyed
+// presence maps whose physical family is per-instantiation (owned by
+// wasm_layout), so no single Typed(fam) entry can name them. This is a pure
+// projection: it changes no routing behavior, only builds a plan object.
+pub fn phys_plan_from_analysis(r: ReprAnalysis) phys_plan.PhysPlan {
+  p := phys_plan.empty()
+
+  // The map value is the family mono_key — map it to ElemRepr, every family.
+  for func_key, fam_key in r.param_abi.typeable_return {
+    case elem_repr_of_mono_key(fam_key) {
+      .Some(elem) => p.returns[func_key] = elem,
+      .None => {},
+    }
+  }
+  for func_key, captures in r.capture_abi {
+    for idx, fam_key in captures {
+      case elem_repr_of_mono_key(fam_key) {
+        .Some(elem) => p.captures["${func_key}:${idx}"] = elem,
+        .None => {},
+      }
+    }
+  }
+
+  p
 }
 
 // A function is relevant to typed-vector analysis only if some slot carries a

@@ -41,6 +41,12 @@ type FileResult = .{ path: String, count: Int }
 
 pub type LintResult = .{ findings: Vector<Finding>, diagnostics: Vector<analyze.AnalysisDiag> }
 
+/// A LintResult plus the warm analysis cache produced while gathering it. The
+/// `--fix` loop threads this store back into the next pass so unchanged modules
+/// (and shared dependencies) are cache hits; only files an applied edit touched
+/// — and their reverse-dependency closure — are re-analyzed.
+type GatherOut = .{ result: LintResult, store: query_cache.Store }
+
 /// Apply a set of non-overlapping edits to source text. Edits are sorted by
 /// start offset descending and spliced end-to-start, so earlier offsets stay
 /// valid as later edits are applied. Pure.
@@ -103,15 +109,19 @@ fn parse_fix_edits(data: json.Json?) Vector<FixEdit> {
   out
 }
 
-/// Run the frontend (review mode) and collect every finding/error for `file`.
-fn gather_lint(file: String, sink: query_progress.ProgressSink?) LintResult {
+/// Run the frontend (review mode) and collect every finding/error for `file`,
+/// reusing `store` as the analysis cache and returning it warmed. Re-reading a
+/// file whose contents changed since `store` last saw it invalidates that module
+/// and its dependents (see cache.note_source_hash), so a warm store is safe to
+/// carry across `--fix` passes.
+fn gather_lint(file: String, sink: query_progress.ProgressSink?, store: query_cache.Store) GatherOut {
   dir := path.dirname(file)
   project_root := loader.find_project_root(dir)
   canonical_roots := imports.make_canonical_roots(project_root)
   canonical_entry := imports.canonical_module_path(file, canonical_roots)
   base_env := builtin_env()
   entry_id := identity.from_path(canonical_entry)
-  a_state := analyze.new_state(base_env, query_cache.empty(), overlay.empty(), project_root)
+  a_state := analyze.new_state(base_env, store, overlay.empty(), project_root)
   case sink {
     .Some(s) => a_state = .with_progress(s),
     .None => {},
@@ -173,13 +183,15 @@ fn gather_lint(file: String, sink: query_progress.ProgressSink?) LintResult {
     )
   }
 
-  .{ findings, diagnostics }
+  .{ result: .{ findings, diagnostics }, store: a_result.state.cache }
 }
 
 // Gather results across several entries, deduping diagnostics/findings for
 // modules reached through more than one entry and dropping bundled stdlib/prelude
-// sources (which are analyzed as dependencies but never rewritten).
-pub fn gather_lint_multi(files: Vector<String>) LintResult {
+// sources (which are analyzed as dependencies but never rewritten). `store`
+// carries the analysis cache across entries (shared dependencies are analyzed
+// once) and is returned warmed so the `--fix` loop can reuse it across passes.
+fn gather_lint_multi_cached(files: Vector<String>, store: query_cache.Store) GatherOut {
   seen_findings: Dict<String, Bool> = Dict.new()
   seen_diags: Dict<String, Bool> = Dict.new()
   findings: Vector<Finding> = []
@@ -198,7 +210,9 @@ pub fn gather_lint_multi(files: Vector<String>) LintResult {
   }
 
   for file in files {
-    result := gather_lint(file, .Some(sink))
+    out := gather_lint(file, .Some(sink), store)
+    store = out.store
+    result := out.result
     unique := unique_analysis_diags(result.diagnostics, seen_diags)
     seen_diags = unique.seen
     diagnostics = .concat(unique.diagnostics)
@@ -218,7 +232,12 @@ pub fn gather_lint_multi(files: Vector<String>) LintResult {
   }
 
   meter.get().finish()
-  .{ findings, diagnostics }
+  .{ result: .{ findings, diagnostics }, store }
+}
+
+// Single-shot gather with a fresh cache (report-only path and external callers).
+pub fn gather_lint_multi(files: Vector<String>) LintResult {
+  gather_lint_multi_cached(files, query_cache.empty()).result
 }
 
 // Entry files to lint: the explicit positionals, or — in project mode — the
@@ -573,29 +592,30 @@ pub fn run_lint_command(parsed: ParseResult) {
     proc.exit(1)
   }
 
-  initial := gather_lint_multi(targets)
-  if initial.diagnostics.len() > 0 {
-    initial.report_lint_result(explain, color)
-    proc.exit(1)
-  }
-
   // Apply the selected rules to a fixpoint: one rewrite can enable another
   // (e.g. an inherent-call rewrite orphans an import), so re-analyze and apply
   // again until nothing changes. Each rewrite is meaning-preserving and only
-  // removes findings, so this converges in a couple of passes.
+  // removes findings, so this converges in a couple of passes; the cap is a
+  // guard against two rules ever oscillating, not an expected iteration count.
+  // The cache is threaded across passes: applying an edit re-reads that file,
+  // invalidating it and its dependents, so each pass only re-analyzes what a
+  // fix actually changed rather than re-scanning every target.
+  max_fix_passes := 20
+  store := query_cache.empty()
   applied: Dict<String, Int> = Dict.new()
   iterations := 0
 
-  for iterations < 20 {
-    current := gather_lint_multi(targets)
+  for iterations < max_fix_passes {
+    current := gather_lint_multi_cached(targets, store)
+    store = current.store
 
-    if current.diagnostics.len() > 0 {
-      current.report_lint_result(explain, color)
+    if current.result.diagnostics.len() > 0 {
+      current.result.report_lint_result(explain, color)
       proc.exit(1)
     }
 
     edits := select_edits(
-      current.findings,
+      current.result.findings,
       fix_unused,
       fix_inherent,
       fix_inline_copy,
@@ -632,7 +652,7 @@ pub fn run_lint_command(parsed: ParseResult) {
   }
 
   // Whatever is left: report-only lints, plus rewrites for rules not requested.
-  remaining := gather_lint_multi(targets)
+  remaining := gather_lint_multi_cached(targets, store).result
   remaining.report_lint_result(explain, color)
 
   if remaining.diagnostics.len() > 0 {
