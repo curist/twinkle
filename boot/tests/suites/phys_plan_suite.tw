@@ -3,6 +3,7 @@ use @std.testing as runner
 
 use compiler.backend.phys_plan
 use compiler.backend.repr_policy
+use compiler.backend.typed_param_abi.{ParamAbi, ReprAnalysis, phys_plan_from_analysis}
 use compiler.codegen.wasm_layout.{pvec_wasm_type}
 
 fn test_keys_are_stable() Result<Void, String> {
@@ -37,10 +38,34 @@ fn test_pvec_wasm_type_per_family() Result<Void, String> {
   .Ok({})
 }
 
+fn test_analysis_projection_sets_abi_entries() Result<Void, String> {
+  // A typed non-i64 return + capture must survive projection, not be dropped.
+  typeable_return: Dict<String, String> = Dict.new()
+  typeable_return["7"] = "vec_f64"
+  captures: Dict<Int, String> = Dict.new()
+  captures[0] = "vec_bool"
+  capture_abi: Dict<String, Dict<Int, String>> = Dict.new()
+  capture_abi["8"] = captures
+
+  r := ReprAnalysis.{
+    typed_fields: Dict.new(),
+    typed_payloads: Dict.new(),
+    param_abi: ParamAbi.{ typeable_params: Dict.new(), typeable_return },
+    capture_abi,
+  }
+  p := phys_plan_from_analysis(r)
+
+  try assert.is_true(phys_plan.return_repr(p, 7) == .Some(.F64))
+  try assert.is_true(phys_plan.capture_repr(p, 8, 0) == .Some(.I32))
+  try assert.is_true(phys_plan.return_repr(p, 9) == .None)
+  .Ok({})
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("physical representation plan")
     .test("keys are stable", test_keys_are_stable)
     .test("absent entries are none", test_absent_entries_are_none)
     .test("pvec_wasm_type per family", test_pvec_wasm_type_per_family)
+    .test("analysis projection sets ABI entries", test_analysis_projection_sets_abi_entries)
 }
