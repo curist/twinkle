@@ -358,13 +358,22 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "non-empty vector seed stays deferred (Plan 3 vector half not landed)",
+      "non-empty vector array-literal seed is now certified (Plan 3 vector half)",
       fn() Result<Void, String> { assert.equal(
         clean_count(
           "fn m() Void {\n  acc: Vector<Int> = [1]\n  for x in [2, 3] { acc = acc.append(x) }\n  println(acc.len().to_string())\n}\nm()\n",
         ),
-        0,
+        1,
       ) },
+    )
+    .test(
+      "non-empty vector param seed is detected and certified (Plan 3 vector half)",
+      fn() Result<Void, String> {
+        src := "fn build(base: Vector<Int>) Vector<Int> {\n  acc := base\n  for x in [1, 2] { acc = acc.append(x) }\n  acc\n}\nprintln(build([9]).len().to_string())\n"
+        try assert.equal(clean_count(src), 1)
+        try assert.equal(certified_count(src), 1)
+        .Ok({})
+      },
     )
     .test(
       "rewrite emits string builder calls for a non-empty literal seed (Plan 3)",
@@ -543,8 +552,33 @@ pub fn suite() runner.Suite {
         try assert.equal(count_calls_to(fn_m.body, a.builtins.id("vector$builder_new")), 1)
         try assert.equal(count_calls_to(fn_m.body, a.builtins.id("vector$builder_push")), 1)
         try assert.equal(count_calls_to(fn_m.body, a.builtins.id("vector$builder_freeze")), 1)
+        try assert.equal(count_calls_to(fn_m.body, a.builtins.id("vector$builder_from")), 0)
         .Ok({})
       },
+    )
+    .test(
+      "non-empty vector param seed rewrites to builder_from/push/freeze (Plan 3 vector half)",
+      fn() Result<Void, String> {
+        a := compile_or_fail(
+          "fn build(base: Vector<Int>) Vector<Int> {\n  acc := base\n  for x in [1, 2] { acc = acc.append(x) }\n  acc\n}\nprintln(build([9]).len().to_string())\n",
+        )
+        anf2 := builder_region.rewrite_module(a.opt, a.builtins)
+        fn_b := find_func(anf2, "build")
+        try assert.equal(count_calls_to(fn_b.body, a.builtins.method_id("Vector", "append")), 0)
+        try assert.equal(count_calls_to(fn_b.body, a.builtins.id("vector$builder_from")), 1)
+        try assert.equal(count_calls_to(fn_b.body, a.builtins.id("vector$builder_push")), 1)
+        try assert.equal(count_calls_to(fn_b.body, a.builtins.id("vector$builder_freeze")), 1)
+        try assert.equal(count_calls_to(fn_b.body, a.builtins.id("vector$builder_new")), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "non-empty vector seed loop links through the backend (Plan 3 vector half)",
+      fn() Result<Void, String> { assert.is_true(
+        links_ok(
+          "fn build(base: Vector<Int>) Vector<Int> {\n  acc := base\n  for x in [1, 2] { acc = acc.append(x) }\n  acc\n}\nprintln(build([9]).len().to_string())\n",
+        ),
+      ) },
     )
     .test(
       "two independent builder regions in one function both rewrite",

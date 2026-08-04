@@ -281,15 +281,15 @@ fn is_empty_array_value(op: AnfOp) Bool {
 // Is `op` a builder-region seed for `local`? Returns the family. `empty_arr` is
 // the set of locals bound to an empty AArrayLit earlier in the same chain.
 //
-// String seeds accept ANY string source (a literal of any length, or a
-// `String`-typed local/param): the rewrite lowers them to
-// `string$builder_from(acc)`, which COPIES the seed into a private builder and
-// never mutates it, so a non-empty (or shared/interned/aliased) seed is sound —
-// no ownership proof needed (Plan 3, string half). `acc_mono` is the accumulator
-// local's mono type, used to classify an `AInit(.ALocal)` seed whose source is not
-// structurally an empty array. Vector seeds remain empty-array only; non-empty
-// vector seeds are gated on a `builder_push` shared-trie check and deferred to
-// Plan 3's vector half.
+// String and Vector seeds both accept a non-empty local/param source (a
+// literal of any length, or a `String`- or `Vector<_>`-typed local/param): the
+// rewrite lowers them to `string$builder_from(acc)` / `vector$builder_from(acc)`,
+// which COPY the seed into a private builder (the runtime deep-copies the
+// seed's tail, `ArrayCopy` at `arr.tw:5414`) and never mutate it, so a non-empty
+// (or shared/interned/aliased) seed is sound — no ownership proof needed (Plan
+// 3, string and vector halves). `acc_mono` is the accumulator local's mono
+// type, used to classify an `AInit(.ALocal)` seed whose source is not
+// structurally an empty array.
 fn seed_family(
   op: AnfOp,
   str_push: FuncId,
@@ -304,10 +304,12 @@ fn seed_family(
     .AInit(.ALocal(v)) => case empty_arr.get(v.id) {
       .Some(_) => .Some(SeedFamily.{ push_id: vec_push, family: "vector", from_base: false }),
       .None => case acc_mono {
-        // A non-empty `String`-typed local seed (`acc := prefix`) — sound because
-        // `builder_from` copies. A non-empty vector local is left uncertified here
-        // (Plan 3 vector half); find_region gates any false positive regardless.
+        // A non-empty `String`- or `Vector<_>`-typed local seed (`acc := base`)
+        // — sound because `builder_from` copies.
         .Some(.String) => .Some(SeedFamily.{ push_id: str_push, family: "string", from_base: true }),
+        .Some(.Vector(_)) => .Some(
+          SeedFamily.{ push_id: vec_push, family: "vector", from_base: true },
+        ),
         _ => .None,
       },
     },
@@ -604,7 +606,7 @@ fn scan_refold_loops(
             loop_site: loop_local,
             fold_sites: [],
             structural_ok: false,
-            reason: "re-used accumulator, not a fresh seed (non-empty; deferred to Plan 3)",
+            reason: "re-used accumulator, not a fresh seed (refold, not a builder-region seed)",
             from_base: false,
           }),
           .None => acc_cands,
