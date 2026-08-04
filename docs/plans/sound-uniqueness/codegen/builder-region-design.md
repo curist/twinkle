@@ -513,15 +513,17 @@ each small and independently shippable.
   - *Vector:* ✅ **LANDED (commit `16e5cd95`; round-trip/self-host confirmed in Task 3, 2026-08-05).**
     `vector$builder_from` (`arr.tw:5379`) allocates a **fresh** `rt_BF` tail array and
     `ArrayCopy`s the base's tail into it (`arr.tw:5399`/`5414`), so the builder's mutable tail is
-    a private copy; `builder_push` (`arr.tw:2758`) does its in-place `ArraySet` only on that
-    private tail, and when the tail fills it calls `promote`, which is persistent path-copy
-    (never mutates the shared root). So seeding from a non-empty base never mutates a node
-    reachable from that base. `seed_family` (`builder_region_detect.tw`) now certifies a
+    a private copy; the boxed `builder_push_fn` (`arr.tw:5442`) does its in-place `ArraySet` only
+    on that private tail, and when the tail fills it calls `promote`, which is persistent
+    path-copy (never mutates the shared root). So seeding from a non-empty base never mutates a
+    node reachable from that base. `seed_family` (`builder_region_detect.tw`) now certifies a
     non-empty `Vector<_>`-typed `AInit(.ALocal)` seed (`acc := base`) with `from_base: true`, and
     the rewrite lowers it to `vector$builder_from(base)` → `builder_push*` → `builder_freeze`.
     Test: `seeded_append(base, xs)` round-trips (`boot/tests/suites/builder_region_suite.tw`,
-    "non-empty vector seed round-trips and leaves the base unchanged") and asserts `base` is
-    observably unchanged after the loop — the aliasing-soundness witness. Self-host fixed point
+    "non-empty vector seed round-trips, forces a tail promotion, and leaves a shared-root base
+    unchanged") with a 40-element base (non-null root) and a 30-element append that crosses the
+    `rt_BF`=32 tail boundary, forcing `promote_full_tail` over the shared root, and asserts `base`
+    is observably unchanged after the loop — the aliasing-soundness witness. Self-host fixed point
     (stage3 == stage4) reconfirmed with the boot compiler compiling itself through its own
     now-claimed non-empty vector loops. Census: the "re-used accumulator, not a fresh seed"
     rejected bucket moved from 452 to 375 (fresh non-empty vector seeds reclassified as
