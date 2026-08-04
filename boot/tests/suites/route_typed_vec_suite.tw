@@ -15,6 +15,7 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use compiler.backend.closure_convert.{convert_closures}
+use compiler.backend.phys_plan
 use compiler.backend.prepare.{prepare_backend_preroute}
 use compiler.backend.prepared_ir.{PreparedExpr, PreparedFunc, PreparedOp, SlotInfo}
 use compiler.backend.route_typed_vec.{
@@ -162,6 +163,7 @@ pub fn suite() runner.Suite {
         routed_empty := route_typed_vectors(
           p.funcs,
           p.builtins,
+          phys_plan.empty(),
           empty,
           empty,
           Dict.new(),
@@ -174,7 +176,15 @@ pub fn suite() runner.Suite {
 
         // Real set: the payload read `v` and the gather RESULT retype to PVecI64,
         // and the gather call routes to gather_i64.
-        routed := route_typed_vectors(p.funcs, p.builtins, tf, tp, Dict.new(), Dict.new()).funcs
+        routed := route_typed_vectors(
+          p.funcs,
+          p.builtins,
+          phys_plan.empty(),
+          tf,
+          tp,
+          Dict.new(),
+          Dict.new(),
+        ).funcs
         try assert.ok(funcs_call_fid(routed, gid), "expected gather to route to gather_i64")
         try assert.ok(
           pvec_i64_slot_count(routed) > pvec_i64_slot_count(routed_empty),

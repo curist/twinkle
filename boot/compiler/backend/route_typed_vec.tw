@@ -13,6 +13,7 @@
 //! Runs after assign_repr_for_module (so wasm_type overrides stick and push
 //! elements are already boxed — the typed builder_push takes the boxed element).
 
+use compiler.backend.phys_plan
 use compiler.backend.prepared_ir.{
   PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, PreparedPattern, ReprKind, SlotId, SlotInfo,
 }
@@ -131,11 +132,15 @@ fn families_ids(builtins: BuiltinRegistry) Vector<FamilyIds> {
 pub fn route_typed_vectors(
   funcs: Vector<PreparedFunc>,
   builtins: BuiltinRegistry,
+  plan: phys_plan.PhysPlan,
   typed_fields: Dict<String, Bool>,
   typed_payloads: Dict<String, Bool>,
   capture_abi: Dict<String, Dict<Int, String>>,
   typeable_return: Dict<String, String>,
 ) RoutedModule {
+  // Inert for now: PhysPlan is threaded through but not yet consumed by
+  // routing decisions.
+  _ := plan.returns.keys().len()
   ids := route_ids(builtins)
   routed_funcs: Vector<PreparedFunc> = []
   swapped_sites: Vector<SwappedSetSite> = []
