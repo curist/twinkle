@@ -20,6 +20,7 @@ use @std.proc
 use compiler.anf.{AnfModule}
 use compiler.backend.context.{BackendContext}
 use compiler.backend.mutvec_repr
+use compiler.backend.phys_plan
 use compiler.backend.prepared_ir.{CaptureParam, PreparedExpr, PreparedFunc, PreparedOp}
 use compiler.backend.repr_assign.{assign_repr_for_module}
 use compiler.backend.route_typed_vec.{SwappedSetSite, route_typed_vectors}
@@ -217,7 +218,7 @@ pub fn prepare_backend_with_mutable_decisions(
     return .{
       anf: pre.anf,
       closure_captures,
-      funcs: mutvec_repr.assign_mutvec_reprs(pre.funcs, env, builtins),
+      funcs: mutvec_repr.assign_mutvec_reprs(pre.funcs, env, builtins, phys_plan.empty()),
       typed_vector_fields: Dict.new(),
       typed_vector_payloads: Dict.new(),
       mutable_decisions,
@@ -278,7 +279,7 @@ pub fn prepare_backend_with_mutable_decisions(
   // PVecI64 slot is owned by route_typed_vec above (it recognizes
   // mutvec_freeze_i64 as a typed producer), not here. A no-op for modules that
   // claim no regions (no mutvec ops present).
-  funcs4 := mutvec_repr.assign_mutvec_reprs(funcs3, env, builtins)
+  funcs4 := mutvec_repr.assign_mutvec_reprs(funcs3, env, builtins, routed_plan)
   r3 := date.now()
 
   if timed {
