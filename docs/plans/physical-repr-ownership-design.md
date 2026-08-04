@@ -1,33 +1,57 @@
 # Physical Representation Ownership — Master Design
 
-**Status:** Design approved 2026-08-03, with amendment: the substrate is **concrete**
-(a vector `PhysPlan`), not generic `PhysPlan<R>`. The doctrine below is the durable
-artifact; the only implementor is the typed-vector sub-plan
+**Status:** Design approved 2026-08-03. The doctrine below is the durable artifact;
+the only implementor is the typed-vector sub-plan
 ([physical-repr-planner-refactor.md](physical-repr-planner-refactor.md)).
+
+The goal is clean SoC across the three layers `MonoType → ReprKind → ValType`, with
+**no compromise**: one physical-repr vocabulary (`ReprKind`, whose `TypedVec(ElemRepr)`
+names a typed vector), `ValType` a pure function of it, and the standing invariant
+`wasm_type == wasm_type_of_repr(repr, mono)` at every slot. `PhysPlan` is the
+concrete (non-generic) record of the per-site repr *overrides* for func-id-keyed
+sites; it carries the family as an `ElemRepr` tag. Typed vectors span four families
+(`I64` / `I32` / `F64` / `Byte` → `PVecI64` / `PVecBool` / `PVecF64` / `PVecByte`).
 
 ## Problem
 
-"MonoType / repr / wasm-type separation of concerns" names **two** distinct layers,
-and only one is messy. Conflating them is what makes a "general refactor" look
-bigger than it is.
+"MonoType / repr / wasm-type separation of concerns" is the real subject. The three
+layers should be a pure pipeline; today they are not, and fixing that — not merely
+tidying ownership — is the endeavor.
 
-**Layer 1 — semantic type → default physical representation. Already unified.**
-`repr_assign.tw` is the single place mapping every `MonoType` to a `ReprKind`
-(`repr_of_mono`, `repr_assign.tw:229`) and then to a Wasm `ValType`
-(`wasm_type_of_repr`). `SlotInfo` (`prepared_ir.tw:74`) carries
-`{ mono, repr, wasm_type }` for every slot. This covers vector, dict, record,
-string, closure — all of it — and is a pure function of `MonoType`, so it is
-site-independent. It is **clean and out of scope**; this endeavor does not touch it.
+The three layers are `MonoType` (semantic) → `ReprKind` (physical representation) →
+`ValType` (concrete Wasm type). `SlotInfo` (`prepared_ir.tw:74`) carries all three,
+`{ mono, repr, wasm_type }`, for every slot. Good SoC means each is a pure function
+of the last: **`wasm_type == wasm_type_of_repr(repr, mono)` for every slot, always**
+(`wasm_type_of_repr` actually threads `env` too — `(repr, mono)` is the shorthand used
+throughout this doc; see the `ValType` doctrine rule for the real signature).
 
-**Layer 2 — per-*site* physical specialization. Exists only for vectors, and that
-is the mess.** The optimization "*this particular* storage site / ABI edge uses a
-non-default physical representation" (unboxed `PVecI64` / `MutVecI64` instead of
-boxed `PVec`) is bolted on *after* Layer 1 by `route_typed_vec.tw` +
-`mutvec_repr.tw`, which **override** `SlotInfo.repr`/`wasm_type`. That override —
-whole-program eligibility analysis in one file, application in another, late
-patching in a third, plus emit re-deriving typedness as a safety net — has no
-explicit ownership boundary. A stale frozen-slot override already demonstrated how
-late repr mutation can clobber an earlier decision.
+**Layer 1 — the default `MonoType → ReprKind → ValType` — is *mostly* clean but has
+a live leak.** `repr_assign.tw` maps each `MonoType` to a `ReprKind` (`repr_of_mono`,
+`repr_assign.tw:229`) and each `ReprKind` to a `ValType` (`wasm_type_of_repr`). For
+records, dicts, strings, closures this is a clean pure function. But the vector case
+is broken: `ReprKind` already has a `TypedVec(ElemRepr)` variant meant to name a
+typed vector, yet it is **inert** — `wasm_type_of_repr(.TypedVec(_))` ignores the
+`ElemRepr` and routes through `val_type_of_mono(mono)` (`repr_assign.tw:348`, and its
+twin `verify_common.tw:27`), which yields the *boxed* `PVec`. So the repr layer cannot
+express "typed vector of family X" as a `ValType`.
+
+**Layer 2 — per-*site* physical specialization for vectors — routes *around* Layer
+1, breaking the invariant.** The optimization "*this* site uses an unboxed typed PVec
+(`PVecI64` / `PVecBool` / `PVecF64` / `PVecByte`) or a transient `MutVec*` handle
+instead of the boxed `PVec`" is applied by `route_typed_vec.tw` +
+`mutvec_repr.tw` — but because `TypedVec` is inert, route **keeps `repr` at its boxed
+default and overwrites only `wasm_type`** (`with_repr_wasm(info, info.repr,
+.Ref(…PVecI64))`, `route_typed_vec.tw:627`). After routing a typed slot, `repr` says
+boxed and `wasm_type` says `PVecI64` — **the invariant is broken at exactly the typed
+sites.** That is the real mess: not just scattered ownership, but a middle layer
+(`repr`) that downstream cannot trust, forcing `emit` to re-derive typedness as a
+safety net and the verifier to work on raw `ValType`. A stale frozen-slot override
+already showed how late `wasm_type` mutation can clobber an earlier decision.
+
+The fix restores the invariant: make `TypedVec(ElemRepr)` **live** (family-aware
+`wasm_type_of_repr`), have route set `repr = TypedVec(elem)` and *derive* `wasm_type`
+from it, and record the per-site decision in one queryable place. Then the three
+layers are a pure pipeline again and nothing downstream re-derives anything.
 
 ## Why this is not "one refactor covering vector, dict, record"
 
@@ -64,29 +88,54 @@ parts; vectors are its first exerciser.
 
 ## The ownership doctrine (the durable artifact)
 
-Type-agnostic contract every current and future repr customer obeys:
+The three layers are a pure pipeline. Each rule below keeps it that way.
 
-- `MonoType` is **semantic**. It never proves a storage site is physically
-  specialized.
-- `repr_assign` owns the **default** `MonoType → ReprKind → ValType`. Unchanged by
-  this endeavor.
-- A **materialized `PhysPlan`** is the single source of truth for every
-  *site-dependent override*: which slot / field / payload / return / capture uses a
-  non-default physical representation.
-- **`route` is the only mutator of plan-owned (durable) reprs** — prepared slot
-  `repr`/`wasm_type` for durable storage sites and ABI edges. It *decides*
-  eligibility (its own analysis) and *records* the decision into the plan; the plan
-  is the queryable, verifiable record, not a second decision engine. **`mutvec_repr`
-  owns transient `MutVecI64` handle reprs**, which are **not** `PhysPlan` variants:
-  a handle never reaches a durable ABI edge, so it never enters the plan. The
-  doctrine reads "only mutator of *durable* reprs," not "only mutator" — the two
-  ownerships do not overlap.
-- **`verify` checks every physical edge** against actual Wasm `ValType`s before Wasm
-  validation.
-- **`emit` inserts coercions only at declared representation boundaries** and never
-  re-derives typedness from `MonoType`.
-- Any future per-site specialization, for any type, plugs into this substrate — it
-  does **not** add a new bespoke route/patch pass.
+- **`MonoType` is semantic.** It never proves a storage site is physically
+  specialized. (It *is* still read to pick a family from a concrete element type —
+  that is structural derivation, not a specialization decision, and is permitted, in
+  `repr_assign` / `wasm_layout` only.)
+- **`ReprKind` is the single physical-representation vocabulary.** A typed vector is
+  `TypedVec(ElemRepr)`; the boxed default is `TypedRef(mono)`; a transient handle is
+  `MutVec(ElemRepr)`. There is **no second repr enum** — the plan, route, verify, and
+  emit all speak `ReprKind` (and its `ElemRepr` family tag). `TypedVec` is **live**,
+  not inert.
+- **`ValType` is a pure function of `ReprKind`.** `wasm_type_of_repr(repr, mono, env)`
+  (its real signature — `repr_assign.tw:324`; `env` resolves nominal struct types, and
+  is elided as `wasm_type_of_repr(repr, mono)` in the invariant shorthand) is the
+  *only* producer of a slot's `wasm_type`, and `wasm_type_of_repr(.TypedVec(elem), …)`
+  yields that family's PVec. The standing invariant, checkable at any point:
+  **`SlotInfo.wasm_type == wasm_type_of_repr(SlotInfo.repr, SlotInfo.mono, env)`.**
+  Nobody writes a slot's `wasm_type` independently of its `repr`. The **one**
+  `ValType`-without-`ReprKind` site is `PreparedFunc.phys_return` (the return-ABI
+  override): it has no companion slot `repr`, is *derived* from the plan's `returns`
+  `ElemRepr` via `pvec_wasm_type(elem)`, and is checked by the coercing-edge verify —
+  not the per-slot invariant.
+- **`PhysPlan` records the per-*function* repr *overrides*** — the sites keyed by a
+  monomorphized function id (local slots, function returns, closure captures), each
+  single-family (a function is monomorphized to a distinct id per instantiation). An
+  entry names the override as an `ElemRepr` (absent = the boxed default). It is the
+  queryable decision record, not a second decision engine.
+- **`route` decides eligibility (its own analysis), records it in the plan, and
+  *applies* it as a pure recompute:** `repr := TypedVec(elem)`, then
+  `wasm_type := wasm_type_of_repr(repr, mono)`. It never overwrites `wasm_type`
+  independently — so the invariant holds by construction and there is no stale-slot
+  clobber to fear. **`mutvec_repr`** sets `repr := MutVec(elem)` for transient handle
+  slots the same way (derive `wasm_type` from `repr`); handles never reach a durable
+  ABI edge, so they never enter the plan. The two ownerships do not overlap.
+- **Field/payload physical family is Layer-1 structural.** A record/variant type is
+  not monomorphized (one `TypeId`, `Var("T")` fields), so a `Vector<T>` field's family
+  is a function of the concrete instantiation `(TypeId, type args)`, which
+  `wasm_layout` derives per-instantiation. A `(TypeId, field)` key cannot name it, so
+  the plan does not carry field/payload family — only their *eligibility* (the
+  existing presence gate). `wasm_layout` still owns *which* family a field is.
+- **`verify` asserts the invariant** (`wasm_type == wasm_type_of_repr(repr, mono)`)
+  per slot, plus per-edge-class coercion checks on `ValType` edges (see below).
+- **`emit` reads `repr` / `wasm_type`** (guaranteed consistent) and inserts coercions
+  only at declared boundaries. Because `repr` is trustworthy, emit has **nothing to
+  re-derive** — the old `MonoType`-driven typedness safety net is removed, not merely
+  audited.
+- Any future per-site specialization, for any type, adds a `ReprKind` variant and
+  plugs into this substrate — it does **not** add a new bespoke route/patch pass.
 
 ## Substrate (built by the vector sub-plan)
 
@@ -96,75 +145,111 @@ doctrine, which needs zero generics. Re-generalize to `PhysPlan<R>` only when a
 second customer lands; doing it now buys nothing and forces `R?`-accessor +
 per-customer-default ceremony in a traitless language for no payoff.
 
-### `phys_plan.tw` — concrete vector plan container
+### The repr layer: revive `TypedVec`, add `pvec_wasm_type`
+The substrate's foundation is making `ReprKind.TypedVec(ElemRepr)` a live physical
+repr (`ElemRepr = { I64, F64, I32, Byte }`, `repr_policy.tw`). Add the family →
+`ValType` map — the exact mirror of the existing `mutvec_wasm_type`, placed beside it
+in `codegen/wasm_layout.tw` (that is where `mutvec_wasm_type` lives — *not*
+`repr_policy.tw`):
 ```
-pub type PhysRepr = { Boxed, TypedI64 }
-
-pub type PhysPlan = .{
-  slot_repr:    Dict<String, PhysRepr>,
-  field_repr:   Dict<String, PhysRepr>,
-  payload_repr: Dict<String, PhysRepr>,
-  return_repr:  Dict<String, PhysRepr>,
-  capture_repr: Dict<String, PhysRepr>,
+pub fn pvec_wasm_type(elem: ElemRepr) ValType {
+  name := case elem {
+    .I64  => "rt_types__PVecI64",
+    .I32  => "rt_types__PVecBool",
+    .F64  => "rt_types__PVecF64",
+    .Byte => "rt_types__PVecByte",
+  }
+  .Ref(true, .Named(name))
 }
 ```
-- Point-query accessors return `PhysRepr` with the **default baked in**: an absent
-  entry is `.Boxed`. No `Option` ceremony, no per-customer wrapper — that ceremony
-  existed only to keep a generic `R` honest, and it is gone with the generic.
-- Site-key helpers (`slot_key(func,slot)` / `field_key(type,field)` /
-  `payload_key(type,variant,i)` / `abi_key(func,i)`) live here for now. They are the
-  one genuinely type-agnostic piece; extract them to a shared module the day a
-  second customer needs them, not speculatively.
-- `MutVecI64` is **not** a `PhysRepr` variant — it is a `mutvec_repr`-owned transient
-  handle repr (see doctrine).
+and point `wasm_type_of_repr(.TypedVec(elem))` (and the twin in `verify_common.tw`) at
+it instead of `val_type_of_mono(mono)`. That single change makes the invariant
+`wasm_type == wasm_type_of_repr(repr, mono)` *expressible* for typed vectors; route
+setting `repr := TypedVec(elem)` makes it *hold*.
+
+### `phys_plan.tw` — concrete vector plan container
+The plan records a per-site repr **override**. The only override is boxed → typed
+vector, whose payload is the family `ElemRepr`; an absent entry means "no override →
+the `MonoType` default". So the plan carries `ElemRepr`, not a second repr enum:
+```
+// Field names differ from the accessor names below on purpose: a `pub fn
+// slot_repr(plan: PhysPlan, ...)` whose first param is PhysPlan auto-registers as an
+// inherent method, and a same-named field would be a FieldMethodCollision.
+pub type PhysPlan = .{
+  slots:    Dict<String, ElemRepr>,  // "${func}:${slot}"  -> typed family override
+  returns:  Dict<String, ElemRepr>,  // "${func}"          -> typed family override
+  captures: Dict<String, ElemRepr>,  // "${func}:${index}" -> typed family override
+}
+```
+- **Only func-id-keyed sites.** Slots, returns, and captures belong to a
+  monomorphized function id, so each has one concrete family — the plan records it
+  authoritatively. Record fields and variant payloads are **not** in the plan: their
+  family is per-instantiation and owned by `wasm_layout` (see doctrine). Their
+  *eligibility* stays in the existing `typed_fields` / `typed_payloads` presence
+  maps, which `route` keeps consuming.
+- Point-query accessors return `ElemRepr?`: `.Some(elem)` is a typed override,
+  `.None` is the boxed default. The site's `ReprKind` is `TypedVec(elem)` and its
+  `ValType` is `pvec_wasm_type(elem)` — never hardcoded to `PVecI64`.
+- Site-key helpers (`slot_key(func,slot)` / `abi_key(func,i)`) live here for now.
+  They are the one genuinely type-agnostic piece; extract them to a shared module the
+  day a second customer needs them, not speculatively.
+- `MutVec*` handles are `ReprKind.MutVec(elem)` reprs owned by `mutvec_repr`, never a
+  plan override (see doctrine).
 - `set_*` helpers record typed sites; `empty()` constructs the all-empty plan.
 
-### Verify edge-skeleton — on `ValType` + a coercion capability
-The shared verifier helper operates on **physical `ValType` edges plus a coercion
-predicate capability**, never on a semantic repr tag:
+### Verify — the invariant first, then edge classes
+The primary check is structural and cheap: for every slot,
+**`wasm_type == wasm_type_of_repr(repr, mono)`**. Once route derives `wasm_type` from
+`repr`, this can only fail if some pass wrote one without the other — so it catches
+the entire class of "stale slot / clobbered override" bugs directly, and it is
+type-agnostic (no vector knowledge). The edge-skeleton below is the second line: it
+checks producer/destination `ValType`s across copy/call boundaries.
+
+The shared edge helper operates on **physical `ValType` edges plus a coercion
+predicate capability**, never on a repr tag. **Whether a `boxed PVec ↔ typed PVec`
+pair is a legal coercion depends on the edge class**, so the capability takes the
+edge class, not just the two `ValType`s:
 ```
+// edge class: does the emitter insert a coercion here?
+type EdgeClass = { Coercing, NonCoercing }
 // capability record
-.{ is_declared_coercion: fn(from: ValType, to: ValType) Bool }
+.{ is_declared_coercion: fn(from: ValType, to: ValType, edge: EdgeClass) Bool }
 ```
-At a copy / assign / result edge it compares producer `ValType` to destination
-`ValType`: equal is accepted; a mismatch is accepted only if
-`is_declared_coercion(from, to)` holds; otherwise it reports a physical-repr
-mismatch. This keeps the existing `verify_expr.tw` intact — we **add** a helper
-rather than rework the verifier — and is already type-agnostic (it never mentions
-`PhysRepr`), so a future customer reuses it by supplying its own coercion predicate
-(vectors declare `PVec ↔ PVecI64`; `MutVecI64` edges are produced by the freeze
-producer). This is the one substrate piece that stays reusable without any
-genericity.
+- **Coercing edges** — call args, function returns, variant construct/extract: the
+  emitter inserts that family's `box`/`unbox` (`route_typed_vec.tw` records that
+  variant construction and extraction both coerce; call/return go through
+  `emit_coerce_stack`). A boxed↔typed-family pair here is a **declared coercion**.
+- **Non-coercing edges** — record-field read/store, closure-capture store, local
+  copy/assign: the emitter inserts **nothing** (fields carry no coercion). A
+  boxed↔typed mismatch here is a **real defect**, exactly what the existing
+  `verify_expr.tw` `pvec_vt_mismatch` check rejects.
+- **Cross-family typed↔typed** (`PVecI64` vs `PVecF64`) is **never** a declared
+  coercion, on any edge class.
+
+At an edge the helper compares producer `ValType` to destination `ValType`: equal is
+accepted; otherwise accepted only if `is_declared_coercion(from, to, edge)` holds;
+else it reports a physical-repr mismatch. Reuse the existing per-edge split — the
+non-coercing sites already error via `pvec_vt_mismatch`, the coercing sites already
+gate on `can_emit_coerce_stack` — rather than collapsing both into one `(from,to)`
+predicate. The vector classifier enumerates every family PVec (derive it from
+`family_by_pvec_name` in `elem_family.tw`, not hardcoded `PVec`/`PVecI64`). It works
+purely on `ValType`, so a future customer reuses it with its own predicate — the one
+substrate piece reusable without genericity.
 
 ### Staging pattern in `prepare.tw`
 Canonical, documented order:
-`analysis (facts) → materialize PhysPlan → apply (route) → verify edges → emit (coerce-only)`.
-
-## Vector sub-plan alignment
-
-The reviewed vector plan is already concrete (its Task 1 defines
-`PhysRepr = { Boxed, TypedI64 }` and a concrete `PhysPlan`), so this amendment
-*removes* churn rather than adding it — there is no generic rebase to do. Two seams
-still align to the doctrine when the plan is finalized:
-- Its verifier Task adopts the `ValType` + `is_declared_coercion` edge-skeleton above
-  (instead of an ad-hoc classifier), so the skeleton lands reusable.
-- The emit "stop re-deriving typedness" change is sequenced **last**, gated on the
-  edge-skeleton being proven complete — it is the only step that removes a safety
-  net (see Handoff below).
-Everything else in that plan stands, behavior-preserving and per-task.
+`analysis (facts) → materialize PhysPlan → apply (route: set repr, derive wasm_type) → verify (invariant + edges) → emit (coerce-only, no re-derivation)`.
 
 ## Parked extension points (no code)
 
-- **Dict.** A future unboxed/typed-dict customer would define its own repr set
-  (e.g. `{ Boxed, TypedIntKeys, ... }`), reuse the site-key helpers (extracted to a
-  shared module at that point), add a dict eligibility analysis, and supply a dict
-  coercion predicate to the verify skeleton — which is already type-agnostic and
-  needs no change. Landing this second customer is also the trigger to generalize
-  the container to `PhysPlan<R>`. Not built — prior investigation rejected typed
+- **Dict.** A future unboxed/typed-dict customer adds its own `ReprKind` variant(s)
+  (e.g. `TypedDict(...)`), a `wasm_type_of_repr` arm for it, a dict eligibility
+  analysis, and a dict coercion predicate for the verify skeleton (already
+  `ValType`-only, needs no change). Not built — prior investigation rejected typed
   dict on cost grounds; revisit only with a measured win.
 - **Record.** No alternate physical form exists today (fields are already typed in
-  the struct). A future packed / specialized-layout customer would plug in the same
-  way. Not built.
+  the struct). A future packed / specialized-layout customer would add a `ReprKind`
+  variant the same way. Not built.
 
 ## Files
 
@@ -172,42 +257,61 @@ All code is created/modified by the **vector sub-plan**; this master doc ships o
 the doctrine.
 
 **Create:**
-- `boot/compiler/backend/phys_plan.tw` — concrete `PhysPlan` + `PhysRepr` + site-key
-  helpers + accessors (default `.Boxed`) + `set_*` + `empty`.
-- `boot/tests/suites/phys_plan_suite.tw` — concrete container + site-key +
+- `boot/compiler/backend/phys_plan.tw` — concrete `PhysPlan` (slots / returns /
+  captures over `ElemRepr`) + site-key helpers + accessors (default `.None`) +
+  `set_*` + `empty`.
+- `boot/tests/suites/phys_plan_suite.tw` — container + site-key + invariant +
   edge-skeleton tests.
 - shared verify edge-skeleton helper in `verify_common.tw` (added, not a rewrite).
 
-**Modify:**
+**Modify (the repr-layer fix that makes SoC possible):**
+- `boot/compiler/codegen/wasm_layout.tw` — add `pvec_wasm_type(elem: ElemRepr)` beside its twin `mutvec_wasm_type`.
+- `boot/compiler/backend/repr_assign.tw` (`.TypedVec` arm at `repr_assign.tw:348`) + `verify_common.tw` (twin at `verify_common.tw:27`) — point `wasm_type_of_repr(.TypedVec(elem), …)` (and its twin) at `pvec_wasm_type(elem)`, retiring the inert `val_type_of_mono(mono)` route.
 - `boot/compiler/backend/prepare.tw` — document + wire the canonical staging order.
 - `docs/plans/README.md`, `docs/plans/performance/vector/README.md` — link this
   umbrella doctrine and the sub-plan.
+
+**Explicitly out of the plan's authority (leave as-is):**
+- `boot/compiler/codegen/wasm_layout.tw`'s **existing per-instantiation field/payload
+  derivation** — it derives each record field / variant payload physical family
+  per-instantiation from the concrete substituted element type. This is Layer-1
+  structural derivation on a concrete type, *not* a re-derivation the emit-audit
+  removes. A future worker must not "fix" it into a `PhysPlan` read — a `(TypeId,
+  field)` key cannot name a per-instantiation family. (This is orthogonal to *adding*
+  `pvec_wasm_type` to the same file, which the plan does do — adding a new helper is
+  fine; rewriting the field/payload derivation is not.)
 
 ## Handoff to the implementation plan
 
 Constraints the impl-plan agent must carry (these gate the sub-plan):
 
-1. **Concrete, not generic.** Build the vector `PhysPlan` (`PhysRepr = { Boxed,
-   TypedI64 }`) above — no `PhysPlan<R>` container and no generic test suite.
+1. **One repr vocabulary; the invariant holds by construction.** Revive
+   `ReprKind.TypedVec(ElemRepr)` (add `pvec_wasm_type`, fix `wasm_type_of_repr`); do
+   **not** introduce a second repr enum. The `PhysPlan` carries `ElemRepr` overrides
+   over `slots` / `returns` / `captures` — func-id-keyed only, all four families
+   (`I64` / `I32` / `F64` / `Byte`). Route sets `repr = TypedVec(elem)` and derives
+   `wasm_type`; it never writes `wasm_type` independently. Field/payload family is
+   **not** the plan's to own — it is `wasm_layout`'s per-instantiation derivation.
    Dict/record stay parked as docs only.
 2. **Preserve the tactical invariant byte-for-byte.** `route` recognizes
    `vector$__mutvec_freeze_i64` as a typed producer; `mutvec_repr` does not override
    freeze-result slots. Self-host fixed point is the gate on **every** task.
-3. **Sequence the emit "stop re-deriving typedness" change last**, gated on the
-   verify edge-skeleton being proven complete — it is the only step that removes a
-   safety net, so it carries the real risk.
+3. **Sequence the emit "stop re-deriving typedness" removal last**, after the
+   invariant (`wasm_type == wasm_type_of_repr(repr, mono)`) and the edge-skeleton are
+   green. Once `repr` is trustworthy the re-derivation is dead code, but it is the
+   only step that deletes a safety net, so it lands last and carries the real risk.
 4. **Baseline the sub-timings first.** Record `analyze_typed_repr` /
    `route_typed_vectors` numbers before Task 1 (every `PhysPlan` lookup is a
    `Dict<String,_>` string-key alloc); the perf guard diffs against this baseline.
 
 ## Non-goals
 
-- Touching Layer 1 (`repr_assign` default MonoType→repr→ValType). It is already
-  unified.
+- Changing the **default** `MonoType → ReprKind` assignments, or the boxed default for
+  vectors. Making `TypedVec → ValType` live (the inert-leak fix) *is* in scope — it is
+  what the invariant needs — but nothing else in Layer 1 moves.
 - A universal "accept all collection types" injection interface. The repr *set* is
-  per-customer by design.
-- A generic `PhysPlan<R>` container. Concrete-only until a second real customer
-  lands; genericity now is speculative against this design's own findings.
+  per-customer by design (each customer adds a `ReprKind` variant).
+- A generic `PhysPlan<R>` container. Concrete-only until a second real customer lands.
 - Building dict or record specialization. Parked until a measured customer exists.
 - Making `Vector<Int>` (or any type) globally specialized. Overrides stay
   per-storage-site / per-ABI-edge.
