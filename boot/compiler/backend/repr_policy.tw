@@ -65,9 +65,9 @@ pub fn elem_repr_of_mono_key(key: String) ElemRepr? {
 
 /// Inverse of elem_repr_of_mono_key: bridge PhysPlan's ElemRepr repr-kind tag
 /// back to the family mono_key string the func-id-keyed ABI analyses (route's
-/// typeable_return / capture_abi maps) carry. Used by the route_typed_vec
-/// transitional adapters (typeable_return_from_plan / capture_abi_from_plan) to
-/// reconstruct those maps from a PhysPlan.
+/// typeable_return / capture_abi maps) carry. Used by route_typed_vec's
+/// elig_return_family / elig_capture_family eligibility-oracle helpers to answer
+/// FromPlan queries in the same mono_key currency as the FromMaps side.
 pub fn mono_key_of_elem_repr(elem: ElemRepr) String {
   case elem {
     .I64 => "vec_i64",

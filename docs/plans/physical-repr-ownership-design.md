@@ -110,11 +110,15 @@ The three layers are a pure pipeline. Each rule below keeps it that way.
   override): it has no companion slot `repr`, is *derived* from the plan's `returns`
   `ElemRepr` via `pvec_wasm_type(elem)`, and is checked by the coercing-edge verify —
   not the per-slot invariant.
-- **`PhysPlan` records the per-*function* repr *overrides*** — the sites keyed by a
-  monomorphized function id (local slots, function returns, closure captures), each
-  single-family (a function is monomorphized to a distinct id per instantiation). An
-  entry names the override as an `ElemRepr` (absent = the boxed default). It is the
-  queryable decision record, not a second decision engine.
+- **`PhysPlan` records the per-*function* repr *overrides*** — the func-id-keyed ABI
+  sites (function returns, closure captures), each single-family (a function is
+  monomorphized to a distinct id per instantiation). An entry names the override as
+  an `ElemRepr` (absent = the boxed default). It is the queryable decision record,
+  not a second decision engine. Local-slot overrides are **not** in `PhysPlan` — they
+  live authoritatively on `SlotInfo.repr` itself (route sets `repr := TypedVec(elem)`
+  and derives `wasm_type` from it in place); a slot side-table (`PhysPlan.slots`) was
+  built, then dropped as redundant once route wrote straight to `SlotInfo.repr` — see
+  the note in `phys_plan.tw` below.
 - **`route` decides eligibility (its own analysis), records it in the plan, and
   *applies* it as a pure recompute:** `repr := TypedVec(elem)`, then
   `wasm_type := wasm_type_of_repr(repr, mono)`. It never overwrites `wasm_type`
@@ -168,34 +172,44 @@ it instead of `val_type_of_mono(mono)`. That single change makes the invariant
 setting `repr := TypedVec(elem)` makes it *hold*.
 
 ### `phys_plan.tw` — concrete vector plan container
-The plan records a per-site repr **override**. The only override is boxed → typed
-vector, whose payload is the family `ElemRepr`; an absent entry means "no override →
-the `MonoType` default". So the plan carries `ElemRepr`, not a second repr enum:
+The plan records a per-*function* repr **override**. The only override is boxed →
+typed vector, whose payload is the family `ElemRepr`; an absent entry means "no
+override → the `MonoType` default". So the plan carries `ElemRepr`, not a second
+repr enum:
 ```
 // Field names differ from the accessor names below on purpose: a `pub fn
-// slot_repr(plan: PhysPlan, ...)` whose first param is PhysPlan auto-registers as an
-// inherent method, and a same-named field would be a FieldMethodCollision.
+// return_repr(plan: PhysPlan, ...)` whose first param is PhysPlan auto-registers as
+// an inherent method, and a same-named field would be a FieldMethodCollision.
 pub type PhysPlan = .{
-  slots:    Dict<String, ElemRepr>,  // "${func}:${slot}"  -> typed family override
   returns:  Dict<String, ElemRepr>,  // "${func}"          -> typed family override
   captures: Dict<String, ElemRepr>,  // "${func}:${index}" -> typed family override
 }
 ```
-- **Only func-id-keyed sites.** Slots, returns, and captures belong to a
-  monomorphized function id, so each has one concrete family — the plan records it
-  authoritatively. Record fields and variant payloads are **not** in the plan: their
-  family is per-instantiation and owned by `wasm_layout` (see doctrine). Their
-  *eligibility* stays in the existing `typed_fields` / `typed_payloads` presence
-  maps, which `route` keeps consuming.
+**Superseded: no `slots` side-table.** An earlier iteration also carried
+`slots: Dict<String, ElemRepr>` keyed by `"${func}:${slot}"`. It was dropped — local
+slots don't need a func-id-keyed lookup table because `route` writes the decision
+straight onto the slot it already holds: `repr := TypedVec(elem)`, `wasm_type`
+derived from it, both on `SlotInfo` in place. The side-table was pure redundancy
+once that direct write existed, so it was removed rather than kept in sync. Only
+`returns` and `captures` are true out-of-band ABI facts — a function's return value
+and a closure's captures aren't `SlotInfo`s the function body owns, so they need
+their own queryable record; a local slot already has one (itself).
+- **Only func-id-keyed ABI sites.** Returns and captures belong to a monomorphized
+  function id, so each has one concrete family — the plan records it authoritatively.
+  Record fields and variant payloads are **not** in the plan: their family is
+  per-instantiation and owned by `wasm_layout` (see doctrine). Their *eligibility*
+  stays in the existing `typed_fields` / `typed_payloads` presence maps, which
+  `route` keeps consuming.
 - Point-query accessors return `ElemRepr?`: `.Some(elem)` is a typed override,
   `.None` is the boxed default. The site's `ReprKind` is `TypedVec(elem)` and its
   `ValType` is `pvec_wasm_type(elem)` — never hardcoded to `PVecI64`.
-- Site-key helpers (`slot_key(func,slot)` / `abi_key(func,i)`) live here for now.
-  They are the one genuinely type-agnostic piece; extract them to a shared module the
-  day a second customer needs them, not speculatively.
+- The `abi_key(func,i)` site-key helper lives here for now. It is the one genuinely
+  type-agnostic piece; extract it to a shared module the day a second customer needs
+  it, not speculatively.
 - `MutVec*` handles are `ReprKind.MutVec(elem)` reprs owned by `mutvec_repr`, never a
   plan override (see doctrine).
-- `set_*` helpers record typed sites; `empty()` constructs the all-empty plan.
+- `set_*` helpers record typed capture/return sites; `empty()` constructs the
+  all-empty plan.
 
 ### Verify — the invariant first, then edge classes
 The primary check is structural and cheap: for every slot,
@@ -257,9 +271,9 @@ All code is created/modified by the **vector sub-plan**; this master doc ships o
 the doctrine.
 
 **Create:**
-- `boot/compiler/backend/phys_plan.tw` — concrete `PhysPlan` (slots / returns /
-  captures over `ElemRepr`) + site-key helpers + accessors (default `.None`) +
-  `set_*` + `empty`.
+- `boot/compiler/backend/phys_plan.tw` — concrete `PhysPlan` (returns / captures
+  over `ElemRepr`) + site-key helper + accessors (default `.None`) + `set_*` +
+  `empty`.
 - `boot/tests/suites/phys_plan_suite.tw` — container + site-key + invariant +
   edge-skeleton tests.
 - shared verify edge-skeleton helper in `verify_common.tw` (added, not a rewrite).
@@ -288,8 +302,9 @@ Constraints the impl-plan agent must carry (these gate the sub-plan):
 1. **One repr vocabulary; the invariant holds by construction.** Revive
    `ReprKind.TypedVec(ElemRepr)` (add `pvec_wasm_type`, fix `wasm_type_of_repr`); do
    **not** introduce a second repr enum. The `PhysPlan` carries `ElemRepr` overrides
-   over `slots` / `returns` / `captures` — func-id-keyed only, all four families
-   (`I64` / `I32` / `F64` / `Byte`). Route sets `repr = TypedVec(elem)` and derives
+   over `returns` / `captures` — func-id-keyed only, all four families (`I64` / `I32`
+   / `F64` / `Byte`). Local-slot overrides are not plan-keyed; route writes them
+   straight onto `SlotInfo.repr`. Route sets `repr = TypedVec(elem)` and derives
    `wasm_type`; it never writes `wasm_type` independently. Field/payload family is
    **not** the plan's to own — it is `wasm_layout`'s per-instantiation derivation.
    Dict/record stay parked as docs only.
