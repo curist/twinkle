@@ -14,9 +14,9 @@ fn test_keys_are_stable() Result<Void, String> {
 
 fn test_absent_entries_are_none() Result<Void, String> {
   p := phys_plan.empty()
-  try assert.is_true(phys_plan.slot_repr(p, 1, 2) == .None)
-  try assert.is_true(phys_plan.return_repr(p, 1) == .None)
-  try assert.is_true(phys_plan.capture_repr(p, 1, 0) == .None)
+  try assert.is_true(p.slot_repr(1, 2) == .None)
+  try assert.is_true(p.return_repr(1) == .None)
+  try assert.is_true(p.capture_repr(1, 0) == .None)
   .Ok({})
 }
 
@@ -55,9 +55,9 @@ fn test_analysis_projection_sets_abi_entries() Result<Void, String> {
   }
   p := phys_plan_from_analysis(r)
 
-  try assert.is_true(phys_plan.return_repr(p, 7) == .Some(.F64))
-  try assert.is_true(phys_plan.capture_repr(p, 8, 0) == .Some(.I32))
-  try assert.is_true(phys_plan.return_repr(p, 9) == .None)
+  try assert.is_true(p.return_repr(7) == .Some(.F64))
+  try assert.is_true(p.capture_repr(8, 0) == .Some(.I32))
+  try assert.is_true(p.return_repr(9) == .None)
   .Ok({})
 }
 

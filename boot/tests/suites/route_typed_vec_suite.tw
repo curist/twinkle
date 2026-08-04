@@ -65,7 +65,7 @@ fn pvec_i64_slot_count(funcs: Vector<PreparedFunc>) Int {
 }
 
 fn has_plan_slot(plan: phys_plan.PhysPlan, func_id: Int, slot_id: Int) Bool {
-  case phys_plan.slot_repr(plan, func_id, slot_id) {
+  case plan.slot_repr(func_id, slot_id) {
     .Some(_) => true,
     .None => false,
   }
