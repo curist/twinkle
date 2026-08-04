@@ -259,6 +259,11 @@ pub fn prepare_backend_with_mutable_decisions(
   )
   funcs3 := routed.funcs
 
+  // The materialized physical plan (returns/captures plus the typed-vector slot
+  // overrides route just applied). Not consumed downstream yet; later tasks query
+  // it in place of the drifting slot oracle.
+  routed_plan := routed.plan
+
   // Remap the mutable-codegen decision for every site routing swapped
   // set_unsafe -> set_i64: retarget persistent_func -> set_i64 and mutable_func
   // -> set_in_place_i64. The decision was recorded pre-route against set_unsafe;

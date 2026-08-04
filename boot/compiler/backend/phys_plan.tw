@@ -35,6 +35,15 @@ pub fn slot_repr(plan: PhysPlan, func_id: Int, slot_id: Int) ElemRepr? {
   plan.slots[slot_key(func_id, slot_id)]
 }
 
+// Record a typed-vector slot override: the slot at (func_id, slot_id) physically
+// holds the family's typed PVec (ReprKind.TypedVec(elem), ValType
+// pvec_wasm_type(elem)). Called by route as it applies TypedVec so the plan
+// materializes the same eligibility route just decided.
+pub fn set_slot_repr(plan: PhysPlan, func_id: Int, slot_id: Int, elem: ElemRepr) PhysPlan {
+  plan.slots[slot_key(func_id, slot_id)] = elem
+  plan
+}
+
 pub fn return_repr(plan: PhysPlan, func_id: Int) ElemRepr? {
   plan.returns["${func_id}"]
 }

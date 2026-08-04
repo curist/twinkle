@@ -292,7 +292,11 @@ fn verify_op(ctx: VerifyCtx, result_info: SlotInfo, op: PreparedOp, depth: Int) 
     .AIndex(base, index, _, _) => {
       try ctx.verify_atom_use(base, "index base")
       try ctx.verify_atom_use(index, "index operand")
-      try ctx.require_local_repr_if_local(base, [.TypedRef(.Void)], "index base")
+
+      // A typed-vector index base (route retyped it to TypedVec, physically the
+      // family's PVec) is a valid base too — emit selects the typed read from the
+      // base wasm_type, so TypedVec is accepted alongside the boxed TypedRef.
+      try ctx.require_local_repr_if_local(base, [.TypedRef(.Void), .TypedVec(.I64)], "index base")
       .Ok({})
     },
     .AInit(atom) => case result_info.role {

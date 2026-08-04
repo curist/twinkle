@@ -24,6 +24,8 @@ use compiler.backend.route_typed_vec.{
 }
 use compiler.base_env.{first_user_type_id}
 use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.wasm_layout.{pvec_wasm_type}
+use compiler.codegen.wasm_type_util.{val_type_eq}
 use compiler.pipeline
 
 type RouteInputs = .{ funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry }
@@ -60,6 +62,13 @@ fn pvec_i64_slot_count(funcs: Vector<PreparedFunc>) Int {
   }
 
   n
+}
+
+fn has_plan_slot(plan: phys_plan.PhysPlan, func_id: Int, slot_id: Int) Bool {
+  case phys_plan.slot_repr(plan, func_id, slot_id) {
+    .Some(_) => true,
+    .None => false,
+  }
 }
 
 fn typed_count(d: Dict<String, Bool>) Int {
@@ -309,6 +318,59 @@ pub fn suite() runner.Suite {
           is_pvec_i64(routed_slot),
           "call-result slot should be PVecI64 when the PLAN carries the typed return",
         )
+        .Ok({})
+      },
+    )
+    .test(
+      "route sets repr = TypedVec, derives wasm_type, and records the slot plan",
+      fn() {
+        p := try prepare_src(gather_source)
+        tf := analyze_typed_fields(p.funcs, p.builtins, Dict.new())
+        tp := analyze_typed_payloads(p.funcs, p.builtins, first_user_type_id(), Dict.new())
+
+        routed := route_typed_vectors(
+          p.funcs,
+          p.builtins,
+          phys_plan.empty(),
+          tf,
+          tp,
+          Dict.new(),
+          Dict.new(),
+        )
+
+        typed_slots := 0
+
+        for pf in routed.funcs {
+          for sid in pf.slots.keys() {
+            case pf.slots[sid] {
+              .Some(info) => case info.repr {
+                // Every routed typed-vector slot carries TypedVec(elem) (not the
+                // boxed TypedRef default), a wasm_type derived from that repr, and
+                // a matching entry in routed.plan.
+                .TypedVec(elem) => {
+                  typed_slots = typed_slots + 1
+
+                  try assert.ok(
+                    val_type_eq(info.wasm_type, pvec_wasm_type(elem)),
+                    "TypedVec slot wasm_type must equal pvec_wasm_type(elem)",
+                  )
+                  try assert.ok(
+                    is_pvec_i64(info),
+                    "i64 producer TypedVec slot must be physically PVecI64",
+                  )
+                  try assert.ok(
+                    has_plan_slot(routed.plan, pf.func_id.id, info.slot.id),
+                    "routed.plan must carry a slots entry for each routed TypedVec slot",
+                  )
+                },
+                _ => {},
+              },
+              .None => {},
+            }
+          }
+        }
+
+        try assert.ok(typed_slots > 0, "expected at least one TypedVec slot after route")
         .Ok({})
       },
     )
