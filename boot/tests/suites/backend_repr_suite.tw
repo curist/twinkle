@@ -16,14 +16,20 @@ use @std.testing.assert as assert
 use @std.testing as runner
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
-use compiler.backend.prepare.{prepare_backend}
-use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, ReprKind, SlotInfo}
+use compiler.backend.closure_convert.{convert_closures}
+use compiler.backend.phys_plan
+use compiler.backend.prepare.{prepare_backend, prepare_backend_preroute}
+use compiler.backend.prepared_ir.{CaptureParam, PreparedExpr, PreparedFunc, ReprKind, SlotInfo}
 use compiler.backend.repr_assign.{repr_of_mono}
+use compiler.backend.repr_policy.{ElemRepr}
+use compiler.backend.route_typed_vec.{route_typed_vectors}
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.codegen.wasm_ir.{AbiContract, ValType}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.core_ir.{FuncId, LocalId, Param}
+use compiler.elem_family.{pvec_family_of}
 use compiler.mono_type.{MonoType}
+use compiler.pipeline
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv}
 
@@ -290,6 +296,92 @@ fn prepared_pf(params: Vector<Param>, body: AnfExpr, mono_map: Dict<Int, MonoTyp
   prepared.funcs[0]
 }
 
+// ── Emit-decision fixture: typed op chosen purely from prepared physical type ──
+// A typed producer flows to a consumer. emit_intrinsic_vector_append picks the
+// typed op via `pvec_family_of(atom_val_type(base))` — i.e. purely from the base
+// slot's prepared `wasm_type`, never from its `mono`. This fixture holds the mono
+// constant (Vector<Int>) and flips only the prepared physical type, then asserts
+// the exact emit selector (`pvec_family_of`) follows the physical type.
+type RouteInputs = .{ funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry }
+
+// `g` returns Vector<Int>; `caller` binds `v := g()`. With no PhysPlan the
+// call-result slot stays boxed; with `plan.returns[g]=I64` it becomes PVecI64 —
+// same source, same slot mono, different prepared physical type.
+route_source :=
+  \\fn g() Vector<Int> {
+  \\  collect i in range(4) { i }
+  \\}
+  \\fn caller() Int {
+  \\  v := g()
+  \\  v[0]
+  \\}
+  \\caller()
+  \\
+
+fn preroute_inputs(src: String) Result<RouteInputs, String> {
+  artifacts := try pipeline.compile_source(src)
+  cc := convert_closures(artifacts.opt, artifacts.env)
+  prepared := prepare_backend_preroute(cc.anf, artifacts.env, artifacts.builtins, cc.captures)
+  .Ok(.{ funcs: prepared.funcs, builtins: artifacts.builtins })
+}
+
+fn is_vector_int(m: MonoType) Bool {
+  case m {
+    .Vector(e) => case e {
+      .Int => true,
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn find_func_id(funcs: Vector<PreparedFunc>, name: String) Int? {
+  for pf in funcs {
+    if pf.name == name {
+      return .Some(pf.func_id.id)
+    }
+  }
+
+  .None
+}
+
+type CallSite = .{ func_index: Int, slot: Int }
+
+// Locate the (func_index, slot) of the first `let slot = call(fid_id)` binding.
+fn find_call_result_slot(expr: PreparedExpr, fid_id: Int) Int? {
+  case expr {
+    .Let(slot, op, body) => case op {
+      .ACall(.AGlobalFunc(fid), _) => if fid.id == fid_id {
+        .Some(slot.id)
+      } else {
+        find_call_result_slot(body, fid_id)
+      },
+      _ => find_call_result_slot(body, fid_id),
+    },
+    _ => .None,
+  }
+}
+
+fn find_call_site(funcs: Vector<PreparedFunc>, fid_id: Int) CallSite? {
+  for pf, fi in funcs {
+    case find_call_result_slot(pf.body, fid_id) {
+      .Some(sid) => return .Some(.{ func_index: fi, slot: sid }),
+      .None => {},
+    }
+  }
+
+  .None
+}
+
+// The emit selector: `pvec_family_of(base_vt).mono_key == "vec_i64"` is exactly
+// how emit_intrinsic_vector_append decides `rt_arr__push_i64` vs `rt_arr__push`.
+fn emit_picks_i64_op(info: SlotInfo) Bool {
+  case pvec_family_of(info.wasm_type) {
+    .Some(fam) => fam.mono_key == "vec_i64",
+    .None => false,
+  }
+}
+
 // ── repr_of_mono tests ────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   runner
@@ -477,6 +569,50 @@ pub fn suite() runner.Suite {
         // So L10 should get I64 repr (from AUnwrapAnyref target mono = Int)
         try assert_slot_repr(pf, 10, .I64)
         try assert_wasm_type(pf, 10, .I64)
+        .Ok({})
+      },
+    )
+    .test(
+      "emit selects typed vector op purely from prepared physical type, not mono",
+      fn() {
+        inputs := try preroute_inputs(route_source)
+        gid := try find_func_id(inputs.funcs, "g").ok_or("g not found")
+        site := try find_call_site(inputs.funcs, gid).ok_or("no call to g in caller")
+
+        // Boxed route (empty PhysPlan): the call-result slot stays a boxed PVec.
+        boxed := route_typed_vectors(
+          inputs.funcs,
+          inputs.builtins,
+          phys_plan.empty(),
+          Dict.new(),
+          Dict.new(),
+        ).funcs
+        boxed_slot := try boxed[site.func_index].slots[site.slot].ok_or("boxed slot missing")
+
+        // Typed route: PhysPlan carries g's typed return, so the SAME slot's
+        // prepared wasm_type becomes PVecI64 — the mono is unchanged.
+        plan := phys_plan.empty()
+        plan.returns["${gid}"] = ElemRepr.I64
+        routed := route_typed_vectors(inputs.funcs, inputs.builtins, plan, Dict.new(), Dict.new()).funcs
+        typed_slot := try routed[site.func_index].slots[site.slot].ok_or("typed slot missing")
+
+        // The semantic type is identical in both routings; only the prepared
+        // physical type differs. A mono-driven decision could not tell them apart.
+        try assert.ok(
+          is_vector_int(boxed_slot.mono) and is_vector_int(typed_slot.mono),
+          "both slots must carry the same Vector<Int> mono",
+        )
+
+        // emit's exact selector follows the prepared physical type: boxed → the
+        // generic op, PVecI64 → the typed op.
+        try assert.ok(
+          !emit_picks_i64_op(boxed_slot),
+          "boxed physical type must select the generic rt_arr__push",
+        )
+        try assert.ok(
+          emit_picks_i64_op(typed_slot),
+          "PVecI64 physical type must select the typed rt_arr__push_i64",
+        )
         .Ok({})
       },
     )
