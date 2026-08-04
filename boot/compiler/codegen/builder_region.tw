@@ -306,7 +306,7 @@ fn rewrite_one_decision(f: AnfFunctionDef, d: BuilderRegionDecision, b: BuiltinR
       // `vector_builder_config(b).push_id` for the same family + registry, so
       // the decision record need not carry it.
       builder := config_for(d.family, b)
-      init: BuilderInit = if d.family == "string" {
+      init: BuilderInit = if d.from_base {
         .FromBase(d.accumulator)
       } else {
         .New

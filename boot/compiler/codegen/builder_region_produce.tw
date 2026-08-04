@@ -31,6 +31,7 @@ pub type BuilderRegionDecision = .{
   builder_local: LocalId, // fresh
   freeze_local: LocalId, // fresh
   assign_local: LocalId, // fresh
+  from_base: Bool,
 }
 
 pub type BuilderRegionDecisionTable = .{ by_func: Dict<Int, Vector<BuilderRegionDecision>> }
@@ -273,6 +274,7 @@ fn allocate_locals(f: AnfFunctionDef, cands: Vector<RegionCandidate>) Vector<Bui
         builder_local: LocalId.{ id: cur },
         freeze_local: LocalId.{ id: cur + 1 },
         assign_local: LocalId.{ id: cur + 2 },
+        from_base: c.from_base,
       },
     )
     cur = cur + 3

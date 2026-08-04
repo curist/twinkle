@@ -114,6 +114,7 @@ fn fu1_candidate() detect.RegionCandidate {
     fold_sites: [LocalId.{ id: 1 }],
     structural_ok: true,
     reason: "",
+    from_base: true,
   }
 }
 
@@ -132,6 +133,7 @@ fn mk_candidate(seed: Int, loop_id: Int, fold: Int, acc: Int) detect.RegionCandi
     fold_sites: [LocalId.{ id: fold }],
     structural_ok: true,
     reason: "",
+    from_base: true,
   }
 }
 
@@ -768,6 +770,7 @@ pub fn suite() runner.Suite {
           builder_local: d.builder_local,
           freeze_local: d.freeze_local,
           assign_local: d.assign_local,
+          from_base: d.from_base,
         }
         out := builder_region.rewrite_func_with_decisions(fn_m, [stale], a.builtins)
 

@@ -33,9 +33,10 @@ pub type RegionCandidate = .{
   fold_sites: Vector<LocalId>,
   structural_ok: Bool,
   reason: String,
+  from_base: Bool,
 }
 
-type SeedFamily = .{ push_id: FuncId, family: String }
+type SeedFamily = .{ push_id: FuncId, family: String, from_base: Bool }
 
 type ScanResult = .{ ok: Bool, fold_sites: Vector<LocalId>, reason: String }
 
@@ -297,14 +298,16 @@ fn seed_family(
   acc_mono: MonoType?,
 ) SeedFamily? {
   case op {
-    .AInit(.ALitStr(_)) => .Some(SeedFamily.{ push_id: str_push, family: "string" }),
+    .AInit(.ALitStr(_)) => .Some(
+      SeedFamily.{ push_id: str_push, family: "string", from_base: true },
+    ),
     .AInit(.ALocal(v)) => case empty_arr.get(v.id) {
-      .Some(_) => .Some(SeedFamily.{ push_id: vec_push, family: "vector" }),
+      .Some(_) => .Some(SeedFamily.{ push_id: vec_push, family: "vector", from_base: false }),
       .None => case acc_mono {
         // A non-empty `String`-typed local seed (`acc := prefix`) — sound because
         // `builder_from` copies. A non-empty vector local is left uncertified here
         // (Plan 3 vector half); find_region gates any false positive regardless.
-        .Some(.String) => .Some(SeedFamily.{ push_id: str_push, family: "string" }),
+        .Some(.String) => .Some(SeedFamily.{ push_id: str_push, family: "string", from_base: true }),
         _ => .None,
       },
     },
@@ -467,6 +470,7 @@ fn detect_in_expr(
             fold_sites: fr.scan.fold_sites,
             structural_ok: fr.scan.ok,
             reason: fr.scan.reason,
+            from_base: sf.from_base,
           }),
           .None => cands,
         },
@@ -601,6 +605,7 @@ fn scan_refold_loops(
             fold_sites: [],
             structural_ok: false,
             reason: "re-used accumulator, not a fresh seed (non-empty; deferred to Plan 3)",
+            from_base: false,
           }),
           .None => acc_cands,
         },
