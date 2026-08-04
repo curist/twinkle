@@ -1,5 +1,20 @@
 # Physical Representation Planner Refactor Implementation Plan
 
+> **⏸ RESUMPTION STATUS (in-progress via subagent-driven-development).**
+> Tasks **1–5 are COMPLETE and review-clean** on branch `physical-repr-planner-refactor`
+> (HEAD `0e651493`, base `c9023796`). **Resume at Task 6.** The authoritative,
+> detailed progress record (commits, per-task notes, deferred/parked findings) is the
+> SDD ledger at `.superpowers/sdd/physical-repr-planner-refactor/progress.md` — read it
+> first when resuming. Landed so far: `TypedVec` is live (`pvec_wasm_type` in
+> `codegen/wasm_layout.tw`); `PhysPlan` exists, is projected from analysis, threaded
+> through prepare, and route reads returns/captures from it; **the invariant
+> `wasm_type == wasm_type_of_repr(repr, mono, env)` is restored at typed slots** (route
+> now sets `repr = TypedVec(elem)` and derives `wasm_type`). Line numbers in the task
+> bodies below have drifted from the current source (each task drifted ~15–60 lines) —
+> re-grep anchors rather than trusting them. **Cross-task delta:** Task 5's repr-reader
+> audit already broadened `verify_expr.tw:~299` (the `AIndex` base arm) to accept
+> `.TypedVec` alongside `.TypedRef`; Task 8 touches that file — do not re-narrow it.
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 > **Where this sits:** this plan lives at the `docs/plans/` top level because it is
