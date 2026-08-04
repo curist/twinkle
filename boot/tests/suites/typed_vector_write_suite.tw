@@ -257,6 +257,48 @@ fn assert_boxed_pvec_absent(fn_wat: String) Result<Void, String> {
   .Ok({})
 }
 
+// ── Multi-family execution guard (physical-repr-planner-refactor, Task 12) ──
+//
+// Self-host output is i64-dominated, so a wrong bool/f64/byte family tag or a
+// pvec_wasm_type mismatch would NOT perturb the stage3==stage4 fixed point. This
+// is a standing execution guard for the Float family, run by every `make
+// boot-test` (this suite compiles and runs as ordinary Twinkle, so route_typed_vec
+// physically routes these functions the same way it would any user program): a
+// typed RETURN threaded through a caller, and a typed CAPTURE (a sort_by
+// comparator closure reading a captured local Vector<Float> typed-only). A wrong
+// family tag traps (struct-type mismatch) or reads garbage bits into a wrong
+// numeric result, not just a differently-shaped WAT — matching WAT evidence for
+// this same computation lives in fixtures/typed_vec_family_return_capture.tw.
+// Typed RETURN: a collect-born Vector<Float>, returned and consumed typed-only
+// (index + len) by its single caller.
+fn family_build_scores(n: Int) Vector<Float> {
+  collect i in range(n) {
+    i.to_float() * 1.5
+  }
+}
+
+fn family_sum_typed(n: Int) Float {
+  scores := family_build_scores(n)
+  t := 0.0
+  for i in range(scores.len()) {
+    t = t + scores[i]
+  }
+  t
+}
+
+// Typed CAPTURE: a local collect-born Vector<Float> captured by a sort
+// comparator closure and read typed-only via index inside the closure body.
+fn family_sorted_first(n: Int) Float {
+  keys := collect i in range(n) {
+    (n - i).to_float() * 0.25
+  }
+  idx := collect i in range(n) {
+    i
+  }
+  sorted := idx.sort_by(fn(a, b) { Float.compare(keys[a], keys[b]) })
+  keys[sorted[0]]
+}
+
 pub fn suite() runner.Suite {
   runner
     .suite("typed vector write")
@@ -437,6 +479,17 @@ pub fn suite() runner.Suite {
         try assert.equal(xs[1056], 4321)
         try assert.equal(xs.len(), 1057)
         try assert.equal(xs[0], 7)
+        .Ok({})
+      },
+    )
+    .test(
+      "Float family: typed return + typed capture compute correct results",
+      fn() {
+        // typed RETURN path: build_scores -> sum_typed, i in 0..11, Σ i*1.5 = 99.0
+        try assert.equal(family_sum_typed(12), 99.0)
+
+        // typed CAPTURE path: keys[i] = (12-i)*0.25 for i in 0..11 -> min is 0.25
+        try assert.equal(family_sorted_first(12), 0.25)
         .Ok({})
       },
     )
